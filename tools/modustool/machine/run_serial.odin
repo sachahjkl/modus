@@ -1,6 +1,7 @@
 package machine
 
 import "core:fmt"
+import "core:io"
 import "core:os"
 import "modustool:build"
 
@@ -22,8 +23,9 @@ Serial_Line_Renderer :: struct {
 	catalog:   ^build.Fact_Catalog,
 	held:      [dynamic]u8, // The start of a line that can be a line of a fact.
 	passing:   bool, // The line now written is no line of a fact: its bytes go out as they come.
-	write:     proc(data: rawptr, text: string), // Where the text goes.
+	write:     proc(data: rawptr, text: string) -> bool, // Where the text goes; false when it cannot go.
 	write_data: rawptr,
+	failed:    bool, // A write failed: the renderer writes nothing more.
 }
 
 // serial_line_could_be_fact says if the start of a line can still become
@@ -63,12 +65,25 @@ serial_line_could_be_fact :: proc(start: []u8) -> bool {
 	return len(start) < SERIAL_LINE_HELD_MOST
 }
 
+// serial_renderer_write gives a text to the writer of the renderer, and
+// keeps a failure: the renderer stops at the first one.
+@(private = "file")
+serial_renderer_write :: proc(renderer: ^Serial_Line_Renderer, text: string) {
+	if renderer.failed || len(text) == 0 {
+		return
+	}
+	if !renderer.write(renderer.write_data, text) {
+		renderer.failed = true
+	}
+}
+
 // serial_renderer_feed takes bytes of the serial line as they come, and
 // writes each line of a fact that ends as its sentence and each other byte
 // as it is. A line of a fact that the catalog does not render stays raw.
-serial_renderer_feed :: proc(renderer: ^Serial_Line_Renderer, bytes: []u8) {
+// It gives false when a write failed, now or before.
+serial_renderer_feed :: proc(renderer: ^Serial_Line_Renderer, bytes: []u8) -> bool {
 	rest := bytes
-	for len(rest) > 0 {
+	for len(rest) > 0 && !renderer.failed {
 		end := -1
 		for value, index in rest {
 			if value == '\n' {
@@ -79,15 +94,15 @@ serial_renderer_feed :: proc(renderer: ^Serial_Line_Renderer, bytes: []u8) {
 		piece := end < 0 ? rest : rest[:end + 1]
 		rest = rest[len(piece):]
 		if renderer.passing {
-			renderer.write(renderer.write_data, string(piece))
+			serial_renderer_write(renderer, string(piece))
 		} else {
 			append(&renderer.held, ..piece)
 			if end >= 0 {
 				rendered, _ := build.fact_lines_render(renderer.catalog, string(renderer.held[:]))
-				renderer.write(renderer.write_data, rendered)
+				serial_renderer_write(renderer, rendered)
 				clear(&renderer.held)
 			} else if !serial_line_could_be_fact(renderer.held[:]) {
-				renderer.write(renderer.write_data, string(renderer.held[:]))
+				serial_renderer_write(renderer, string(renderer.held[:]))
 				clear(&renderer.held)
 				renderer.passing = true
 			}
@@ -96,16 +111,33 @@ serial_renderer_feed :: proc(renderer: ^Serial_Line_Renderer, bytes: []u8) {
 			renderer.passing = false
 		}
 	}
+	return !renderer.failed
 }
 
 // serial_renderer_end writes the bytes that a line held when the line
-// stops with no end of line.
-serial_renderer_end :: proc(renderer: ^Serial_Line_Renderer) {
+// stops with no end of line. It gives false when a write failed.
+serial_renderer_end :: proc(renderer: ^Serial_Line_Renderer) -> bool {
 	if len(renderer.held) > 0 {
-		renderer.write(renderer.write_data, string(renderer.held[:]))
+		serial_renderer_write(renderer, string(renderer.held[:]))
 		clear(&renderer.held)
 	}
 	delete(renderer.held)
+	return !renderer.failed
+}
+
+// bytes_write_whole writes each byte through a writer that can take a part
+// at each call, as a pipe or a terminal does. It stops at the first error,
+// and at a call that takes no byte, which would loop for ever.
+bytes_write_whole :: proc(write_part: proc(data: rawptr, bytes: []u8) -> (count: int, ok: bool), data: rawptr, bytes: []u8) -> bool {
+	rest := bytes
+	for len(rest) > 0 {
+		count, ok := write_part(data, rest)
+		if !ok || count <= 0 || count > len(rest) {
+			return false
+		}
+		rest = rest[count:]
+	}
+	return true
 }
 
 // run_with_rendered_serial runs a machine whose serial line is the standard
@@ -135,23 +167,45 @@ run_with_rendered_serial :: proc(command: []string) -> bool {
 	}
 	renderer := Serial_Line_Renderer {
 		catalog = &catalog,
-		write = proc(data: rawptr, text: string) {
-			_, _ = os.write_string(os.stdout, text)
+		write = proc(data: rawptr, text: string) -> bool {
+			write_part :: proc(data: rawptr, bytes: []u8) -> (count: int, ok: bool) {
+				written, error := os.write(os.stdout, bytes)
+				return written, error == nil
+			}
+			return bytes_write_whole(write_part, nil, transmute([]u8)text)
 		},
 	}
 	buffer: [4096]u8
+	written := true
 	for {
 		count, read_error := os.read(output_read, buffer[:])
-		if count > 0 {
-			serial_renderer_feed(&renderer, buffer[:count])
+		// After a failed write the output is still read, and dropped: QEMU
+		// would stop at a full pipe, and the machine with it.
+		if count > 0 && written {
+			written = serial_renderer_feed(&renderer, buffer[:count])
+			if !written {
+				fmt.eprintln("modustool: the serial line of the machine cannot be written on the output of the tool; the rest of the log is not shown")
+			}
 			// A run lasts hours: the sentences of each read are written.
 			free_all(context.temp_allocator)
 		}
-		if read_error != nil || count == 0 {
+		if read_error != nil {
+			// The end of the output is the stop of QEMU; any other error
+			// loses the log, and the developer must know it.
+			if read_error != io.Error.EOF {
+				fmt.eprintfln("modustool: the serial line of the machine cannot be read: %v", read_error)
+			}
+			break
+		}
+		if count == 0 {
 			break
 		}
 	}
-	serial_renderer_end(&renderer)
+	if !written {
+		delete(renderer.held)
+	} else if !serial_renderer_end(&renderer) {
+		fmt.eprintln("modustool: the end of the serial line of the machine cannot be written on the output of the tool")
+	}
 	os.close(output_read)
 	state, wait_error := os.process_wait(host_process)
 	if wait_error != nil || !state.success {

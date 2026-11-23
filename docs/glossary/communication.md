@@ -102,7 +102,7 @@ Do not use: role (a role is a contract, and the grants of a program are its star
 
 A module category is the one word, in the header of a module file, that says what the module is to a reader: an application, a system tool, a developer tool, a service, a library, a demonstration or a test.
 
-The start menu and the manual group the modules by it; the start menu never lists a test. The tool writes it from the table of the modules, and refuses a category that the module group of the source does not allow. The module tags beside it are words of what the module is about, which the filter of the manual matches. No loader and no root service decides anything by the category: a right comes from a start grant set.
+The manual groups the modules by it, and the build writes the lists of the start menu from it; the start menu never lists a test. The tool writes it from the table of the modules, and refuses a category that the module group of the source does not allow. The module tags beside it are words of what the module is about, which the filter of the manual matches. No loader and no root service decides anything by the category: a right comes from a start grant set.
 
 The design: `src/md/infrastructure/repository_layout.md`, `src/md/features/desktop_shell_look.md`.
 
@@ -112,7 +112,7 @@ Do not use: module group (the folder), kind, type of module, role.
 
 A test module is a module that only a machine test starts or imports, and that is wrong on purpose or shows nothing of its own.
 
-Examples: `test_callee` and `test_caller`, the loader test of an import; `hostile_exports`, exports that are wrong on purpose; `lonely`, a module whose import is not in the boot image; `debug_target`, the module that the test of the debugger debugs. A test module is in the module group `tests`. A module that shows a property to a principal is a demonstration, not a test module, even when a machine test starts it.
+Examples: `test_callee` and `test_caller`, the loader test of an import; `debug_target`, the module that the test of the debugger debugs. A test module is in the module group `tests`. A module that shows a property to a principal is a demonstration, not a test module, even when a machine test starts it.
 
 The design: `src/md/infrastructure/repository_layout.md`.
 

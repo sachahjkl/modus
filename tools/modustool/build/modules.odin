@@ -67,6 +67,9 @@ build_modules :: proc() -> bool {
 			return false
 		}
 	}
+	// The lists of the start menu come from the table of the modules: the
+	// compositor that this build compiles lists them.
+	start_menu_names_write() or_return
 	// One process for each module, several at once (parallel_build.odin).
 	// A module whose inputs are the same is kept (incremental_build.odin).
 	build_modules_in_parallel() or_return
@@ -560,6 +563,16 @@ module_objects_link :: proc(folder: string, objects: string, export_names: []str
 // for the number of each export that an import slot names. It runs no compiler.
 module_convert :: proc(build: foundation.Module_Build) -> bool {
 	description := describe_package(build.source) or_return
+	// The category of the row, from the row itself and never from its name:
+	// a module from outside the repository can have the name of a module of
+	// the system, and its folder is in no module group, so it states none.
+	category_problem: string
+	description.category, category_problem = foundation.module_category_of_row(build)
+	if category_problem != "" {
+		fmt.eprintfln("modustool: %s", category_problem)
+		return false
+	}
+	description.tags = build.tags
 	// The log facts of the sources that the compiler read and that the
 	// code of the module reaches: the table Facts and the records of their
 	// types.

@@ -23,10 +23,11 @@ category_test_file :: proc(category_word: u8, tag_word: u16, reserved: u8) -> [s
 	return file
 }
 
-// The border of the category and of the tags: a word one past the last
-// category, the largest byte, a tag bit one past the last tag, the highest
-// bit, and a reserved byte that is not 0 are refused, by validate and by
-// the reader, which then gives no category. The last cases are taken:
+// The border of the category and of the tags is the header: a word one past
+// the last category, the largest byte, a tag bit one past the last tag, the
+// highest bit, every bit, a reserved byte of 1 and the largest are each
+// refused by header alone, and so by validate and by the reader, which then
+// gives no category. The last cases are taken:
 // None, each category, each tag at once.
 @(test)
 a_category_or_a_tag_that_names_nothing_is_refused :: proc(t: ^testing.T) {
@@ -46,6 +47,8 @@ a_category_or_a_tag_that_names_nothing_is_refused :: proc(t: ^testing.T) {
 	}
 	for item in refused {
 		file := category_test_file(item.category, item.tags, item.reserved)
+		_, header_error := header(file[:])
+		testing.expectf(t, header_error == .Unknown_Category, "%v is not refused by the header: %v", item, header_error)
 		testing.expectf(t, validate(file[:]) == .Unknown_Category, "%v is not refused: %v", item, validate(file[:]))
 		category, tags, ok := module_category_of(file[:])
 		testing.expectf(t, !ok && category == .None && tags == {}, "%v gives a category", item)

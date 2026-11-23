@@ -32,27 +32,37 @@ Icon :: enum u8 {
 	Contrast, // A square half filled: the appearance.
 }
 
-// icon_of gives the icon of the window or the module of a name: its icon
-// in name_icons, the icon of a module of the system that the start menu
-// does not list, or Window. The compositor asks once for each window, when
-// the window takes its title.
+// icon_of gives the icon of the window or the module of a name, or Window
+// for a name of no known kind, as the nickname of a disk process. The
+// compositor asks once for each window, when the window takes its title;
+// the tool writes the icon of each line of the start menu from it
+// (start_menu_names.odin).
 icon_of :: proc "contextless" (name: string) -> Icon {
-	for known, index in names {
-		if known == name {
-			return name_icons[index]
-		}
-	}
 	switch name {
-	case "terminal":
+	case "console", "terminal", "kernel_events":
 		return .Console
-	case "edit", "agenda":
+	case "boot", "monitor", "budget", "crowd", "limits", "processors", "scheduler", "tally", "threads", "workers":
+		return .Monitor
+	case "log", "edit", "agenda", "interface_font", "notes", "tables":
 		return .Document
-	case "debugger":
+	case "manual", "hall_of_fame":
+		return .Manual
+	case "settings":
+		return .Settings
+	case "clock":
+		return .Clock
+	case "pages", "address_space", "disk", "imports":
+		return .Disk
+	case "remote", "remote_display", "network", "flow", "net", "quic_echo", "rings", "server":
+		return .Network
+	case "debugger", "debugger_window", "inspect", "errors", "extended_state", "fault", "fault_ring", "locks", "return_fault":
 		return .Debugger
+	case "cryptography_vectors", "origin", "rights":
+		return .Grant
+	case "frames", "heron", "life", "paint", "plasma", "vector_glyphs":
+		return .Picture
 	case "sound", "tone":
 		return .Sound
-	case "remote_display", "network":
-		return .Network
 	case "browser":
 		return .Globe
 	}

@@ -20,37 +20,13 @@ Menu_Section :: enum u8 {
 	Demonstrations, // The demonstrations: the right pane, closed until the principal opens it.
 }
 
-// The modules that the start menu offers, by section, each section in the
-// order of the alphabet: the first APPLICATION_COUNT are the applications,
-// the next TOOL_COUNT the tools, the others the demonstrations. A host test
-// of the tool checks the section of each name against its category in the
-// table of the modules.
-@(rodata)
-names := [?]string {
-	// The tools.
-	"boot", "console", "debugger_window", "inspect", "log", "manual", "monitor", "pages", "remote", "settings",
-	// The demonstrations.
-	"address_space", "budget", "clock", "crowd", "cryptography_vectors", "disk", "errors", "extended_state", "fault", "fault_ring",
-	"flow", "frames", "hall_of_fame", "heron", "imports", "interface_elements", "interface_font", "interface_through_module", "kernel_events", "life",
-	"limits", "locks", "net", "notes", "origin", "paint", "plasma", "pointers", "processors", "quic_echo",
-	"randomness", "return_fault", "rights", "rings", "scheduler", "server", "tables", "tally", "threads", "vector_glyphs",
-	"workers",
-}
-
-// The icon of each module of names, at the same index.
-@(rodata)
-name_icons := [?]Icon {
-	.Monitor, .Console, .Debugger, .Debugger, .Document, .Manual, .Monitor, .Disk, .Network, .Settings, // boot to settings.
-	.Disk, .Monitor, .Clock, .Monitor, .Grant, .Disk, .Debugger, .Debugger, .Debugger, .Debugger, // address_space to fault_ring.
-	.Network, .Picture, .Manual, .Picture, .Disk, .Window, .Document, .Window, .Console, .Picture, // flow to life.
-	.Monitor, .Debugger, .Network, .Document, .Grant, .Picture, .Picture, .Window, .Monitor, .Network, // limits to quic_echo.
-	.Window, .Debugger, .Grant, .Network, .Monitor, .Network, .Document, .Monitor, .Monitor, .Picture, // randomness to vector_glyphs.
-	.Monitor, // workers.
-}
-#assert(len(name_icons) == len(names))
-
-APPLICATION_COUNT :: 0 // The applications: the first names. None yet; notes becomes the first.
-TOOL_COUNT :: 10 // The tools: the names after the applications.
+// The modules that the start menu offers (names), the icon of each
+// (name_icons), APPLICATION_COUNT and TOOL_COUNT are in
+// start_menu_names.odin, which the build of the tool writes from the table
+// of the modules: each module of the boot image with an entry whose
+// category is an application, a system tool, a developer tool or a
+// demonstration, by section, each section in the order of the alphabet. A
+// new module of such a category gets its line with no list to change.
 LEFT_COUNT :: APPLICATION_COUNT + TOOL_COUNT // The names of the left pane.
 DEMONSTRATION_COUNT :: len(names) - LEFT_COUNT // The names of the right pane.
 #assert(LEFT_COUNT < len(names))
@@ -168,7 +144,7 @@ LINE_HEIGHT :: 24 // One line of a menu.
 HEADING_HEIGHT :: 24 // The heading of the right pane.
 ACTION_LINE_HEIGHT :: 28
 ACTIONS_GAP :: 16 // Between the last pinned line and the quick actions, at least.
-COLUMNS :: 2 // The right pane has two columns of names.
+COLUMNS :: 3 // The right pane has three columns of names: the demonstrations fit a screen of 720 pixels.
 COLUMN_LEAST :: 160 // The width of a column, at least: the quick actions fit.
 TITLE :: 40 // The title of the menu of the windows, as the title of a card.
 

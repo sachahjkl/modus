@@ -54,8 +54,34 @@ header :: proc "contextless" (file: []u8) -> (value: Header, error: Error) {
 		return {}, .Unknown_Feature
 	case value.machine != .X86_64:
 		return {}, .Unknown_Machine
+	case !header_category_words_valid(file):
+		return {}, .Unknown_Category
 	}
 	return value, .None
+}
+
+// header_category_words_valid is the border of the category and the tags of
+// a header: the category byte names a member, each tag bit names a member,
+// and the reserved byte is 0. It reads the bytes of the file as numbers, so
+// a word that names no member is never held as the enum. The caller read a
+// whole header from the file.
+@(private)
+header_category_words_valid :: proc "contextless" (file: []u8) -> bool {
+	category_word := file[offset_of(Header, category)]
+	reserved_word := file[offset_of(Header, reserved)]
+	tag_word := u16(file[offset_of(Header, tags)]) | u16(file[offset_of(Header, tags) + 1]) << 8
+	return category_word <= u8(max(Module_Category)) && tag_word & ~MODULE_TAG_BITS == 0 && reserved_word == 0
+}
+
+// module_category_of gives the category and the tags of a module file from
+// its header. ok is false for a file that the header refuses, a category
+// byte or a tag bit among them: a reader never shows a guess.
+module_category_of :: proc "contextless" (file: []u8) -> (category: Module_Category, tags: Module_Tags, ok: bool) {
+	head, error := header(file)
+	if error != .None {
+		return .None, {}, false
+	}
+	return head.category, head.tags, true
 }
 
 // table gives the directory entry of a table. A table that the file does not
@@ -139,9 +165,6 @@ validate :: proc "contextless" (file: []u8) -> Error {
 	}
 	if head.entry_export >= max(count(file, .Exports), 1) {
 		return .Bad_Export
-	}
-	if !header_category_valid(head) {
-		return .Unknown_Category
 	}
 	// Each loader writes the hash there: a place outside writable data
 	// would let a file make the loader write into its code.

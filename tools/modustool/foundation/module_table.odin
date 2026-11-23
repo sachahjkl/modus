@@ -57,6 +57,19 @@ Module_Build :: struct {
 	category:      module.Module_Category,
 	// What the module is about: the words that the manual filters on.
 	tags:          module.Module_Tags,
+	// Whether the start menu has a line for the module, when its category
+	// is one that the menu lists (src/md/features/desktop_shell_look.md,
+	// "The start menu"). A row that is not Listed says why in a comment.
+	menu:          Menu_Presence,
+}
+
+// Menu_Presence says whether the start menu lists a module of a category
+// that the menu lists. The zero value lists it: a new module is in the menu
+// unless its row says why not.
+Menu_Presence :: enum u8 {
+	Listed       = 0, // A principal starts it alone, and sees or hears it.
+	Partner_Only = 1, // Another process, or the tool, starts it as a part of its own work: alone it does nothing.
+	Log_Only     = 2, // It opens no window: its result is lines of the log, which the console shows.
 }
 
 // MODULE_GROUP_CATEGORIES gives the categories that a module of each group
@@ -98,18 +111,6 @@ module_category_of_row :: proc(row: Module_Build) -> (category: module.Module_Ca
 	return .None, fmt.tprintf("the row %s of the group %v states the category %v: a module of that group is one of %v", row.name, group, row.category, choices)
 }
 
-// module_category_of_name gives the category and the tags that the file of
-// a module of the table states: .None and no tags for a name of no row, a
-// module from outside the repository.
-module_category_of_name :: proc(name: string) -> (category: module.Module_Category, tags: module.Module_Tags) {
-	for row in module_builds {
-		if row.name == name {
-			category, _ = module_category_of_row(row)
-			return category, row.tags
-		}
-	}
-	return .None, {}
-}
 
 // A work of others in C whose source is not in the repository. The flake
 // fetches its source at one commit, applies the patches of `folder`, copies
@@ -180,7 +181,8 @@ module_builds := [?]Module_Build {
 	{name = "fault", source = DEMONSTRATION_MODULE_SOURCES + "fault", entry = true, image = true},
 	{name = "hall_of_fame", source = DEMONSTRATION_MODULE_SOURCES + "hall_of_fame", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "heron", source = DEMONSTRATION_MODULE_SOURCES + "heron", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "node", source = DEMONSTRATION_MODULE_SOURCES + "node", entry = true, image = true},
+	// Partner_Only: rings starts six nodes and gives each its rings.
+	{name = "node", source = DEMONSTRATION_MODULE_SOURCES + "node", entry = true, image = true, menu = .Partner_Only},
 	{name = "rings", source = DEMONSTRATION_MODULE_SOURCES + "rings", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "threads", source = DEMONSTRATION_MODULE_SOURCES + "threads", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "workers", source = DEMONSTRATION_MODULE_SOURCES + "workers", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
@@ -193,18 +195,22 @@ module_builds := [?]Module_Build {
 	{name = "tally", source = DEMONSTRATION_MODULE_SOURCES + "tally", entry = true, image = true},
 	{name = "manual", source = SYSTEM_MODULE_SOURCES + "manual", category = .System_Tool, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "clock", source = DEMONSTRATION_MODULE_SOURCES + "clock", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "processor_frame", source = DEMONSTRATION_MODULE_SOURCES + "processor_frame", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	// Log_Only: no window; modustool measure starts it and reads its measures.
+	{name = "processor_frame", source = DEMONSTRATION_MODULE_SOURCES + "processor_frame", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true, menu = .Log_Only},
 	{name = "randomness", source = DEMONSTRATION_MODULE_SOURCES + "randomness", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "extended_state", source = DEMONSTRATION_MODULE_SOURCES + "extended_state", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "return_fault", source = DEMONSTRATION_MODULE_SOURCES + "return_fault", entry = true, image = true},
 	{name = "fault_ring", source = DEMONSTRATION_MODULE_SOURCES + "fault_ring", entry = true, image = true},
-	{name = "debugged", source = DEMONSTRATION_MODULE_SOURCES + "debugged", entry = true, image = true},
+	// Log_Only: no window; it debugs its own children, and the console shows its cases.
+	{name = "debugged", source = DEMONSTRATION_MODULE_SOURCES + "debugged", entry = true, image = true, menu = .Log_Only},
 	{name = "debugger", source = SYSTEM_MODULE_SOURCES + "debugger", category = .Service, entry = true, image = true},
 	{name = "debug_target", source = TEST_MODULE_SOURCES + "debug_target", entry = true, image = true},
 	{name = "replay_probe", source = TEST_MODULE_SOURCES + "replay_probe", entry = true, image = true},
 	{name = "kernel_events", source = DEMONSTRATION_MODULE_SOURCES + "kernel_events", entry = true, image = true},
-	{name = "guest_demo", source = DEMONSTRATION_MODULE_SOURCES + "guest_demo", entry = true, image = true},
-	{name = "counters", source = DEMONSTRATION_MODULE_SOURCES + "counters", entry = true, image = true},
+	// Log_Only: no window; the console shows what its guest did.
+	{name = "guest_demo", source = DEMONSTRATION_MODULE_SOURCES + "guest_demo", entry = true, image = true, menu = .Log_Only},
+	// Log_Only: no window; the console shows its cases.
+	{name = "counters", source = DEMONSTRATION_MODULE_SOURCES + "counters", entry = true, image = true, menu = .Log_Only},
 	{name = "terminal", source = SYSTEM_MODULE_SOURCES + "terminal", category = .Service, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "serial_terminal", source = SYSTEM_MODULE_SOURCES + "serial_terminal", category = .Service, entry = true, image = true},
 	{name = "grid_terminal", source = SYSTEM_MODULE_SOURCES + "grid_terminal", category = .Service, entry = true, image = true},
@@ -232,7 +238,8 @@ module_builds := [?]Module_Build {
 	{name = "boot", source = SYSTEM_MODULE_SOURCES + "boot", category = .Developer_Tool, entry = true, image = true},
 	{name = "pages", source = SYSTEM_MODULE_SOURCES + "pages", category = .Developer_Tool, entry = true, image = true},
 	{name = "frames", source = DEMONSTRATION_MODULE_SOURCES + "frames", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "twin", source = DEMONSTRATION_MODULE_SOURCES + "twin", entry = true, image = true},
+	// Partner_Only: frames starts its twins to share pages with them.
+	{name = "twin", source = DEMONSTRATION_MODULE_SOURCES + "twin", entry = true, image = true, menu = .Partner_Only},
 	{name = "locks", source = DEMONSTRATION_MODULE_SOURCES + "locks", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	// It takes nearly every page of the machine and stops the machine at its
 	// end: only the image of its test holds it, so no start policy of
@@ -245,7 +252,8 @@ module_builds := [?]Module_Build {
 	{name = "stops_failed", source = TEST_MODULE_SOURCES + "stops_failed", entry = true, image = true, only_in_image = BOOT_IMAGE_MISSING_CONSOLE},
 	{name = "scheduler", source = DEMONSTRATION_MODULE_SOURCES + "scheduler", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "address_space", source = DEMONSTRATION_MODULE_SOURCES + "address_space", entry = true, image = true},
-	{name = "locker", source = DEMONSTRATION_MODULE_SOURCES + "locker", entry = true, image = true},
+	// Partner_Only: locks starts the lockers that load the kernel.
+	{name = "locker", source = DEMONSTRATION_MODULE_SOURCES + "locker", entry = true, image = true, menu = .Partner_Only},
 	{name = "log", source = SYSTEM_MODULE_SOURCES + "log", category = .System_Tool, entry = true, image = true},
 	{name = "log_reader", source = TEST_MODULE_SOURCES + "log_reader", entry = true, image = true},
 	{name = "block", source = SYSTEM_MODULE_SOURCES + "block", category = .Service, entry = true, image = true},
@@ -260,7 +268,8 @@ module_builds := [?]Module_Build {
 	{name = "network", source = SYSTEM_MODULE_SOURCES + "network", category = .Service, entry = true, image = true},
 	{name = "net", source = DEMONSTRATION_MODULE_SOURCES + "net", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "server", source = DEMONSTRATION_MODULE_SOURCES + "server", entry = true, image = true},
-	{name = "fetch", source = DEMONSTRATION_MODULE_SOURCES + "fetch", entry = true, image = true},
+	// Partner_Only: its server is the listener of the tool in the test of TCP.
+	{name = "fetch", source = DEMONSTRATION_MODULE_SOURCES + "fetch", entry = true, image = true, menu = .Partner_Only},
 	{name = "module_files", source = SYSTEM_MODULE_SOURCES + "module_files", category = .Service, entry = true, image = true},
 	{name = "inspect", source = SYSTEM_MODULE_SOURCES + "inspect", category = .Developer_Tool, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "debugger_window", source = SYSTEM_MODULE_SOURCES + "debugger_window", category = .Developer_Tool, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
@@ -294,13 +303,13 @@ module_builds := [?]Module_Build {
 	{name = "remote_display", source = SYSTEM_MODULE_SOURCES + "remote_display", category = .Service, entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "unlock", source = SYSTEM_MODULE_SOURCES + "unlock", category = .Service, entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "sample", source = DEMONSTRATION_MODULE_SOURCES + "sample", image = true},
-	{name = "hostile_exports", source = TEST_MODULE_SOURCES + "hostile_exports", image = true},
+	{name = "hostile_exports", source = DEMONSTRATION_MODULE_SOURCES + "hostile_exports", image = true},
 	{name = "calendar", source = LIBRARY_MODULE_SOURCES + "calendar", image = true},
-	{name = "calendar_fixed", source = TEST_MODULE_SOURCES + "calendar_fixed", image = true},
-	{name = "calendar_changed", source = TEST_MODULE_SOURCES + "calendar_changed", image = true},
+	{name = "calendar_fixed", source = DEMONSTRATION_MODULE_SOURCES + "calendar_fixed", image = true},
+	{name = "calendar_changed", source = DEMONSTRATION_MODULE_SOURCES + "calendar_changed", image = true},
 	{name = "agenda", source = DEMONSTRATION_MODULE_SOURCES + "agenda", imports = {"calendar"}, image = true},
 	// Its import is not in the boot image: a loader refuses it.
-	{name = "lonely", source = TEST_MODULE_SOURCES + "lonely", imports = {"test_callee"}, image = true},
+	{name = "lonely", source = DEMONSTRATION_MODULE_SOURCES + "lonely", imports = {"test_callee"}, image = true},
 	{name = "imports", source = DEMONSTRATION_MODULE_SOURCES + "imports", entry = true, imports = {"calendar"}, image = true},
 	{name = "errors", source = DEMONSTRATION_MODULE_SOURCES + "errors", entry = true, image = true},
 	{name = "interface_elements", source = DEMONSTRATION_MODULE_SOURCES + "interface_elements", entry = true, image = true},
@@ -320,8 +329,10 @@ module_builds := [?]Module_Build {
 	// starts the reader, then the writer, whose start carries the wiring
 	// row between them (src/md/features/module_outputs.md, "The wiring rows
 	// of a start list").
-	{name = "wired_reader", source = DEMONSTRATION_MODULE_SOURCES + "wired_reader", entry = true, image = true},
-	{name = "wired_writer", source = DEMONSTRATION_MODULE_SOURCES + "wired_writer", entry = true, image = true},
+	// Partner_Only: the start list wires it to wired_writer.
+	{name = "wired_reader", source = DEMONSTRATION_MODULE_SOURCES + "wired_reader", entry = true, image = true, menu = .Partner_Only},
+	// Partner_Only: the start list wires it to wired_reader.
+	{name = "wired_writer", source = DEMONSTRATION_MODULE_SOURCES + "wired_writer", entry = true, image = true, menu = .Partner_Only},
 	{name = "vector_glyphs", source = DEMONSTRATION_MODULE_SOURCES + "vector_glyphs", entry = true, image = true},
 	{name = "interface_font", source = DEMONSTRATION_MODULE_SOURCES + "interface_font", entry = true, image = true},
 	{name = "pointers", source = DEMONSTRATION_MODULE_SOURCES + "pointers", entry = true, image = true},

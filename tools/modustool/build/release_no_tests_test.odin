@@ -76,6 +76,12 @@ the_release_image_drops_each_test_module :: proc(t: ^testing.T) {
 	}
 	build_image := boot_image_encode(files, 4)
 	testing.expect(t, release_test_module_problem(build_image, "the build") != "", "an image with a test module is taken")
+	// The image of the build may hold a test module, never a module of the
+	// one image of a test.
+	testing.expect(t, release_only_in_image_problem(build_image, "the build") != "", "the module of the image of a test is taken")
+	without_fuzzing := boot_image_encode(files[:3], 3)
+	testing.expect_value(t, release_only_in_image_problem(without_fuzzing, "the build"), "")
+	testing.expect(t, release_only_in_image_problem(nil, "no bytes") != "", "no bytes are a boot image")
 	image, problem := release_boot_image_of(build_image)
 	testing.expect_value(t, problem, "")
 	modules, image_resources, valid := info.image_tables(image)
@@ -100,4 +106,33 @@ the_release_image_drops_each_test_module :: proc(t: ^testing.T) {
 	testing.expect(t, problem != "", "no bytes are taken")
 	_, problem = release_boot_image_of(build_image[:8])
 	testing.expect(t, problem != "", "a cut header is taken")
+}
+// No module that a release ships names a test module that the tests hold:
+// by an import, by a quoted name in a source, or by a replacement row. The
+// demonstrations imports, errors and tables named calendar_fixed,
+// calendar_changed, lonely and hostile_exports, and the release lost them.
+// The reader of a quoted name: none, the name inside another word, the
+// name alone, and an empty name, which names nothing.
+@(test)
+no_shipped_module_names_a_test_module :: proc(t: ^testing.T) {
+	names := []string{"", "flood", "probe"}
+	_, found := quoted_name_in("", names)
+	testing.expect(t, !found, "an empty text names a module")
+	_, found = quoted_name_in("start(\"flooding\")", names)
+	testing.expect(t, !found, "a longer word names a module")
+	_, found = quoted_name_in("flood", names)
+	testing.expect(t, !found, "a word with no quotes names a module")
+	name: string
+	name, found = quoted_name_in("start(\"probe\")", names)
+	testing.expect(t, found && name == "probe")
+	_, found = quoted_name_in("\"\"", names[:1])
+	testing.expect(t, !found, "an empty name is named")
+	_, found = quoted_name_in("\t// > start(\"probe\")\n", names)
+	testing.expect(t, !found, "a line of comment names a module")
+	name, found = quoted_name_in("// start(\"flood\")\nstart(\"probe\")", names)
+	testing.expect(t, found && name == "probe", "a name after a comment is not found")
+	testing.expect(t, len(release_test_module_names()) > 0, "no test module is in a boot image")
+	for problem in release_names_problems() {
+		testing.expectf(t, false, "%s", problem)
+	}
 }

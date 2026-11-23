@@ -1390,7 +1390,10 @@ scenario := [?]Step {
 	{kind = .Type, text = "monitor.count(\"processors\")"},
 	{kind = .Wait, text = "[console] error: monitor.count: refused with the status "},
 	{kind = .Type, text = "where(help(), name = \"paint.write\")"},
-	{kind = .Wait, text = "paint.write(x: Integer, y: Integer, text: Text, color: Integer)"},
+	// The help table fits the window of the console, so the signature
+	// breaks between two words, in its own column.
+	{kind = .Wait, text = "[console] paint.write  paint.write(x: Integer, y: Integer,"},
+	{kind = .Wait, text = "text: Text, color: Integer) -> Integer"},
 	// One line for three calls: each result is a line of the log, and the
 	// check of the log below needs each record since the boot.
 	{kind = .Type, text = "paint.line(40, 30, 440, 250, 1) + paint.line(40, 250, 440, 30, 3) + paint.write(150, 20, \"drawn by isolated calls\", 0)"},

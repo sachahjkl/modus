@@ -337,6 +337,24 @@ release_test_module_problem :: proc(image: []u8, image_name: string) -> string {
 	return ""
 }
 
+// release_only_in_image_problem names the first module of a boot image that
+// only the one image of a test holds (a row with only_in_image), such as
+// operation_fuzzing, which holds the machine with the right Physical; ""
+// when the image holds none. An image that is not a boot image is refused.
+release_only_in_image_problem :: proc(image: []u8, image_name: string) -> string {
+	modules, _, valid := info.image_tables(image)
+	if !valid {
+		return fmt.tprintf("%s is not a boot image", image_name)
+	}
+	for &entry in modules {
+		name := system_description.name_of(&entry.name)
+		if row, found := module_row_of_name(name); found && row.only_in_image != "" {
+			return fmt.tprintf("%s holds the module %s, which only the boot image of a test holds", image_name, name)
+		}
+	}
+	return ""
+}
+
 // The start of the boot line of each test kernel: the counted kernel, the
 // kernel with the check of the return skipped. The kernel that ships holds
 // no such text, because each such line is under a setting that is false
@@ -387,12 +405,15 @@ kernel_test_texts_check :: proc() -> bool {
 }
 
 // release_volume_problem says why a boot volume must not be packaged, or
-// gives "". build_image is the boot image of the build (build/boot.image),
-// and kernel_module the bytes of its kernel module, which must not be a
-// test kernel (release_test_kernel_problem). The boot image of the volume
-// must hold each module and resource of build_image, with the same name and
-// the same bytes, in the same order, then only the three resources that the
-// build of a volume adds; its signed system description must name the
+// gives "". tested_image is the boot image of the build (build/boot.image),
+// which the machine tests boot, with its test modules; kernel_module is the
+// bytes of its kernel module, which must not be a test kernel
+// (release_test_kernel_problem). tested_image must hold no module of the one
+// image of a test (release_only_in_image_problem). The boot image of the
+// volume must hold no test module, and each module and resource of the
+// release image made again from tested_image (release_boot_image_of), with
+// the same name and the same bytes, in the same order, then only the three
+// resources that the build of a volume adds; its signed system description must name the
 // BLAKE3 hash of kernel_module for the kernel. So the boot image of the test
 // of the seal (another root service under the name root), the boot image of
 // a measure run (one resource more), a module that a test changed, a
@@ -400,9 +421,19 @@ kernel_test_texts_check :: proc() -> bool {
 // signed boot image beside the volume, which the same build of the volume
 // wrote: the boot image inside the volume is in the boot program, and the
 // tool has no reader of a boot program.
-release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging, build_image: []u8, kernel_module: []u8) -> string {
+release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging, tested_image: []u8, kernel_module: []u8) -> string {
 	if problem := release_test_kernel_problem(kernel_module); problem != "" {
 		return problem
+	}
+	// The image that the tests booted holds the test modules, and never a
+	// module of the one image of a test: the derivation below would drop
+	// such a module in silence.
+	if problem := release_only_in_image_problem(tested_image, "the boot image of the build"); problem != "" {
+		return problem
+	}
+	build_image, derive_problem := release_boot_image_of(tested_image)
+	if derive_problem != "" {
+		return derive_problem
 	}
 	kernel_hash := blake3.hash(kernel_module)
 	signed_by, signed_by_error := os.read_entire_file(signed_by_file_path(volume_path), context.temp_allocator)
@@ -428,13 +459,9 @@ release_volume_problem :: proc(volume_path: string, packaging: Release_Packaging
 	if !valid || !build_valid {
 		return fmt.tprintf("%s or the boot image of the build is not a boot image", image_path)
 	}
-	// A module that only the image of a test holds is refused by its name,
-	// in the volume and in the boot image of the build: the comparison
-	// below alone would pass a build whose own image held it.
+	// A test module in the volume is refused by the group of its row: the
+	// comparison below alone would pass it if the derivation kept it.
 	if problem := release_test_module_problem(image, image_path); problem != "" {
-		return problem
-	}
-	if problem := release_test_module_problem(build_image, "the boot image of the build"); problem != "" {
 		return problem
 	}
 	added := RELEASE_VOLUME_RESOURCES
@@ -723,13 +750,8 @@ release_files_write :: proc(volume_path, release_number, disk_folder, output_fol
 	// The volume is compared with the release image made again from the
 	// boot image that the tests booted: no other image can pass.
 	tested_image := foundation.read_file(BOOT_IMAGE) or_return
-	build_image, release_problem := release_boot_image_of(tested_image)
-	if release_problem != "" {
-		fmt.eprintfln("modustool: release: %s", release_problem)
-		return
-	}
 	kernel_module := foundation.read_file(foundation.module_path(system_description.KERNEL_ENTRY_NAME)) or_return
-	if problem := release_volume_problem(volume_path, packaging, build_image, kernel_module); problem != "" {
+	if problem := release_volume_problem(volume_path, packaging, tested_image, kernel_module); problem != "" {
 		fmt.eprintfln("modustool: release: %s", problem)
 		return
 	}

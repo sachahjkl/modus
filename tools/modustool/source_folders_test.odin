@@ -144,6 +144,10 @@ the_category_of_a_module_agrees_with_its_group :: proc(t: ^testing.T) {
 		{row = {name = "a", source = foundation.LIBRARY_MODULE_SOURCES + "a", category = .Service}, refused = true},
 		{row = {name = "kernel", source = foundation.SOURCE_FOLDER_KERNEL, kernel = true, category = .Service}, refused = true},
 		{row = {name = "kernel", source = foundation.SOURCE_FOLDER_KERNEL, kernel = true}, category = .None},
+		// A module from outside the repository with the name of a module of
+		// the system: its folder is in no group, and it states none.
+		{row = {name = "console", source = "/home/a_developer/console", image = true}, category = .None},
+		{row = {name = "console", source = "", image = true}, category = .None},
 		{row = {name = "a", source = foundation.SYSTEM_MODULE_SOURCES + "a", category = .Developer_Tool}, category = .Developer_Tool},
 		{row = {name = "a", source = foundation.APPLICATION_MODULE_SOURCES + "a"}, category = .Application},
 		{row = {name = "a", source = foundation.DEMONSTRATION_MODULE_SOURCES + "a"}, category = .Demonstration},

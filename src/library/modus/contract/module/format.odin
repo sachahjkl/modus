@@ -71,7 +71,7 @@ Header :: struct {
 	table_count:     u32, // The number of entries of the table directory.
 	memory_size:     u64, // The size of the address range of the loaded module.
 	entry_export:    u32, // An index in the export table. 0: the module has no entry.
-	category:        Module_Category, // What the module is to a reader: the start menu and the manual group the modules by it.
+	category:        Module_Category, // What the module is to a reader: the manual groups its list by it; the start menu has it from the table of the modules of the tool.
 	reserved:        u8, // 0.
 	tags:            Module_Tags, // What the module is about: the manual filters on these words.
 }
@@ -80,9 +80,10 @@ Header :: struct {
 // The module category: what a module is to a reader, one word for each
 // module (docs/glossary/communication.md, "Module category"). The tool
 // writes it from the table of the modules, and refuses a category that
-// disagrees with the module group, the folder of the source. The start
-// menu and the manual group the modules by it; no loader and no root
-// service decides anything by it. The values cross the border of the file:
+// disagrees with the module group, the folder of the source. The manual
+// groups the modules of the boot image by it; the start menu reads no
+// module file, and its lists come from the same table. No loader and no
+// root service decides anything by it. The values cross the border of the file:
 // they are fixed.
 Module_Category :: enum u8 {
 	None           = 0, // The file states no category: a kernel, or a file that a host test writes.
@@ -119,28 +120,6 @@ Module_Tags :: bit_set[Module_Tag; u16]
 // 0: a reader refuses each other.
 MODULE_TAG_BITS :: u16(1 << len(Module_Tag) - 1)
 #assert(int(max(Module_Tag)) == len(Module_Tag) - 1)
-
-// module_category_of gives the category and the tags of a module file from
-// its header. ok is false for a file that the header refuses, a category
-// byte that names no member, a tag bit that names no member, or a reserved
-// byte that is not 0: a reader never shows a guess.
-module_category_of :: proc "contextless" (file: []u8) -> (category: Module_Category, tags: Module_Tags, ok: bool) {
-	head, error := header(file)
-	if error != .None || !header_category_valid(head) {
-		return .None, {}, false
-	}
-	return head.category, head.tags, true
-}
-
-// header_category_valid is the border of the category word and the tags of
-// a header: the byte names a member, each tag bit names a member, and the
-// reserved byte is 0. The byte is copied as a number before the check, so
-// a value of the file that names no member is never held as the enum.
-header_category_valid :: proc "contextless" (head: Header) -> bool {
-	category_word := transmute(u8)head.category
-	tag_word := transmute(u16)head.tags
-	return category_word <= u8(Module_Category.Test) && tag_word & ~MODULE_TAG_BITS == 0 && head.reserved == 0
-}
 
 // The number of a table is its index in the table directory.
 Table_Kind :: enum u32 {
