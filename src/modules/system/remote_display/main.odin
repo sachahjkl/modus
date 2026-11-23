@@ -313,15 +313,22 @@ screen_reverting: bool
 // The growth of the budgets (src/md/features/screen_of_memory.md, "The
 // growth of the budgets"). The root ring of this process carries
 // Screen_Budget. screen_start is the size of the first face: the budget of
-// this process pays its copies at it and below; a larger size is paid by
-// the extra budget that the root service gives, which this process closes
-// when its face opens again at a size at most screen_start.
+// this process pays its copies at it and below; each larger size is paid
+// by an extra budget of that size, which the root service gives for it.
+// After each answer to a size, this process closes each extra budget that
+// holds none of its copies.
 requests: ring.Ring
 request_tag: u32
 screen_start: protocol.Screen
-extra_budget: system.Handle
-extra_budget_pages: u64
-copies_in_extra: bool // The copies of the face in force are objects of the extra budget.
+Service_Extra :: struct {
+	handle:        system.Handle, // 0: none.
+	growth:        u64, // The number of its growth, which names it in a release.
+	width, height: u64, // The size that it pays.
+}
+// The extra budget of the size in force, and during a replacement the one
+// of the size that replaces it.
+extras: [memory_screen.EXTRAS_PER_PROCESS]Service_Extra
+copies_growth: u64 // The growth of the extra budget that holds the copies of the face in force; 0: the budget of this process.
 // A Grow went for the ask of a viewer: its answer sends the size to the
 // compositor, or the refusal to the viewer.
 grow_waits: bool
@@ -1056,6 +1063,8 @@ capture_size_event :: proc "contextless" (width, height, refusal_word: u64) {
 			return
 		}
 		size_ask_in_flight = false
+		// The extra budget of a refused size holds no copy: it goes back.
+		extras_give_back()
 		viewer := &viewers[size_ask_place]
 		if viewer.bound && viewer.generation == size_ask_generation {
 			viewer_size_refuse(viewer, size_ask_sent, refusal)
@@ -1070,7 +1079,10 @@ capture_size_event :: proc "contextless" (width, height, refusal_word: u64) {
 			screen_change_asker_place, screen_change_asker_generation = size_ask_place, size_ask_generation
 		}
 		size_ask_in_flight = false
-		if width != u64(screen.width) || height != u64(screen.height) {
+		if width == u64(screen.width) && height == u64(screen.height) {
+			// Nothing changes: an extra budget of a size not taken goes back.
+			extras_give_back()
+		} else {
 			// The compositor gives sizes of its screen, which the border of
 			// capture_size_take checks again when the change applies.
 			screen_change = {u32(min(width, u64(max(u32)))), u32(min(height, u64(max(u32))))}
@@ -1116,21 +1128,17 @@ screen_asks_work :: proc "contextless" () {
 		}
 		needed := copies_pages_of(u64(ask.width), u64(ask.height))
 		larger := !screen_paid_at_start(ask)
-		// One extra budget at a time: a size that it does not pay waits for a
-		// size at most the start size, which gives it back.
-		if larger && extra_budget != 0 && needed > extra_budget_pages {
-			viewer_size_refuse(&viewer, ask, .Grown_Already)
-			continue
-		}
 		now := system.time()
 		if refusal := memory_screen.resize_interval_decide(now, viewer.size_asked_at, screen_changed_at); refusal != .None {
 			viewer_size_refuse(&viewer, ask, refusal)
 			continue
 		}
 		viewer.size_asked_at = now
-		if larger && extra_budget == 0 {
-			// The budgets of both processes grow first: the answer of the
-			// root service sends the size on (root_completions_work).
+		if larger {
+			// The budgets of both processes grow for this size first: the
+			// answer of the root service sends the size on
+			// (root_completions_work). A size above the start size held by
+			// an extra budget is replaced by the extra budget of the new one.
 			request_tag += 1
 			if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Screen_Budget), tag = request_tag, values = {0 = u64(root_ring.Screen_Budget_Step.Grow), 1 = u64(ask.width), 2 = u64(ask.height)}}) {
 				viewer_size_refuse(&viewer, ask, .Service_Budget)
@@ -1139,15 +1147,14 @@ screen_asks_work :: proc "contextless" () {
 			grow_waits, grow_tag, grow_ask, grow_place, grow_generation = true, request_tag, ask, place, viewer.generation
 			return
 		}
-		// The copies of today are freed before the new ones are made, from
-		// the budget that pays their size.
-		paying := larger ? extra_budget : 0
+		// The copies of today are freed before the new ones are made: when
+		// the budget of this process holds them, their pages count.
 		pages_left: u64
-		if budget, budget_status := system.budget_read(paying); budget_status == .Ok {
+		if budget, budget_status := system.budget_read(); budget_status == .Ok {
 			pages_left = u64(budget.pages)
 		}
 		held: u64
-		if copies_in_extra == larger {
+		if copies_growth == 0 {
 			held = copies_pages_of(u64(screen.width), u64(screen.height))
 		}
 		refusal := memory_screen.service_resize_decide(u64(ask.width), u64(ask.height), needed, held, pages_left)
@@ -1190,9 +1197,18 @@ root_completions_work :: proc "contextless" () {
 		viewer := &viewers[grow_place]
 		asker_bound := viewer.bound && viewer.generation == grow_generation
 		if record.kind == u32(system.Status.Ok) {
-			extra_budget, extra_budget_pages = system.Handle(record.values[0]), record.values[1]
+			extra_take(system.Handle(record.values[0]), record.values[2], u64(grow_ask.width), u64(grow_ask.height))
 			if asker_bound && capture_state == .Open {
 				screen_size_send(grow_ask, grow_place, grow_generation)
+				continue
+			}
+			// The viewer left, or the face closed: the growth is not left
+			// open. This process closes its new extra budget; the compositor
+			// closes its own after an answer to the size in force, which
+			// changes nothing.
+			extras_give_back()
+			if capture_state == .Open {
+				screen_size_send({screen.width, screen.height}, grow_place, grow_generation)
 			}
 			continue
 		}
@@ -1205,19 +1221,50 @@ root_completions_work :: proc "contextless" () {
 	}
 }
 
-// extra_budget_give_back closes the extra budget once the face holds no
-// copy of it, and tells the root service, which closes its own handle: the
-// pages return.
-extra_budget_give_back :: proc "contextless" () {
-	if extra_budget == 0 || copies_in_extra {
-		return
+// extra_take keeps the extra budget of a growth. A number of 0, or a third
+// one, is closed with no use: the root service ends it at the stop of this
+// process.
+extra_take :: proc "contextless" (handle: system.Handle, growth, width, height: u64) {
+	for &extra in extras {
+		if extra.handle == 0 && growth != 0 {
+			extra = {handle, growth, width, height}
+			return
+		}
 	}
-	system.close(extra_budget)
-	extra_budget, extra_budget_pages = 0, 0
-	request_tag += 1
-	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Screen_Budget), tag = request_tag, values = {0 = u64(root_ring.Screen_Budget_Step.Release)}}) {
-		// The root service ends the budget at the stop of this process.
-		system.log_fact(.Warning, Screen_Budget_Release_Not_Sent{})
+	if handle != 0 {
+		system.close(handle)
+	}
+	system.log_fact(.Warning, Screen_Budget_Not_Taken{width = width, height = height})
+}
+
+// extra_of_size gives the newest extra budget of a size. ok false: none
+// pays it.
+extra_of_size :: proc "contextless" (width, height: u64) -> (extra: Service_Extra, ok: bool) {
+	for held in extras {
+		if held.handle != 0 && held.width == width && held.height == height && held.growth > extra.growth {
+			extra, ok = held, true
+		}
+	}
+	return
+}
+
+// extras_give_back closes each extra budget that holds none of the copies
+// of the face in force: the old one of a replacement, or the new one of a
+// size that was refused or never sent. It tells the root service the
+// number of each, and the root service closes its own handle: the pages
+// return.
+extras_give_back :: proc "contextless" () {
+	for &extra in extras {
+		if extra.handle == 0 || extra.growth == copies_growth {
+			continue
+		}
+		system.close(extra.handle)
+		request_tag += 1
+		if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Screen_Budget), tag = request_tag, values = {0 = u64(root_ring.Screen_Budget_Step.Release), 1 = extra.growth}}) {
+			// The root service ends the budget at the stop of this process.
+			system.log_fact(.Warning, Screen_Budget_Release_Not_Sent{})
+		}
+		extra = {}
 	}
 }
 
@@ -1354,13 +1401,17 @@ capture_size_take :: proc "contextless" (width, height: u64, refuse := true) -> 
 	copy_pages := mirror_pages_of(width, height)
 	mirror_release()
 	status: system.Status
-	// A size past the size of the first face is paid by the extra budget.
+	// A size past the size of the first face is paid by the extra budget of
+	// that size.
 	larger := !screen_paid_at_start({u32(width), u32(height)})
-	paying := larger ? extra_budget : 0
-	if larger && paying == 0 {
+	paying, paying_known := extra_of_size(width, height)
+	if !larger {
+		paying = {}
+	}
+	if larger && !paying_known {
 		status = .No_Budget
 	} else {
-		mirror_memory, status = system.memory_create(copy_pages, paying)
+		mirror_memory, status = system.memory_create(copy_pages, paying.handle)
 	}
 	mirror_address: rawptr
 	if status == .Ok {
@@ -1370,7 +1421,7 @@ capture_size_take :: proc "contextless" (width, height: u64, refuse := true) -> 
 	}
 	if status == .Ok {
 		mirror = ([^]u32)(mirror_address)
-		if capture_memory, status = system.memory_create(pages, paying); status != .Ok {
+		if capture_memory, status = system.memory_create(pages, paying.handle); status != .Ok {
 			capture_memory = 0
 		}
 	}
@@ -1412,10 +1463,10 @@ capture_size_take :: proc "contextless" (width, height: u64, refuse := true) -> 
 	if screen_start.width == 0 {
 		screen_start = screen
 	}
-	// The copies of a size at most the start size leave the extra budget
-	// with no object: it goes back.
-	copies_in_extra = larger
-	extra_budget_give_back()
+	// The old copies are gone: each extra budget that holds none of the new
+	// ones goes back.
+	copies_growth = paying.growth
+	extras_give_back()
 	viewers_tell()
 	return true
 }

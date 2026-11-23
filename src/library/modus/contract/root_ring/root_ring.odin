@@ -490,14 +490,18 @@ Root_Command :: enum u32 {
 	// (memory_screen.screen_budget_grow_decide), gives the compositor its
 	// handle with Screen_Budget_Give on the control ring, then answers:
 	// values[0] the handle of the extra budget of the sender, with Read and
-	// Spend, values[1] its pages. A refusal has the status No_Budget, the
-	// kind Refused (unit Pages), the width as the value and the
-	// memory_screen.Grow_Refusal as the value found; nothing is made.
+	// Spend, values[1] its pages, values[2] the number of the growth, never
+	// 0. A growth while the sender holds an extra budget is a replacement:
+	// the share pays both. A refusal has the status No_Budget, the kind
+	// Refused (unit Pages), the width as the value and the
+	// memory_screen.Grow_Refusal as the value found; nothing is made, and the
+	// extra budgets in force stay.
 	//
-	// Release: values[1..6] 0. The sender closed its extra budget: the root
-	// service closes its own handle, and the pages return when the budget
-	// ends. Refused with Bad_State and the kind Absent when the sender holds
-	// none.
+	// Release: values[1] the number of a growth, values[2..6] 0. The sender
+	// closed its extra budget of that growth: the root service closes its
+	// own handle, and the pages return when the budget ends. Refused with
+	// Bad_State and the kind Absent when the sender holds none of that
+	// growth.
 	Screen_Budget = 33,
 }
 
@@ -510,6 +514,42 @@ Screen_Budget_Step :: enum u64 {
 // screen_budget_step_of_word is the border of values[0] of a Screen_Budget.
 screen_budget_step_of_word :: proc "contextless" (word: u64) -> (step: Screen_Budget_Step, ok: bool) {
 	return enum_word.member_of_word(Screen_Budget_Step, word)
+}
+
+// The words of a Screen_Budget that passed its border.
+Screen_Budget_Words :: struct {
+	step:          Screen_Budget_Step,
+	width, height: u64, // Grow: the size, which the decision checks against its bounds.
+	growth:        u64, // Release: the number of a growth, never 0.
+}
+
+// screen_budget_words_of_values is the border of the values of a
+// Screen_Budget: a step that names no member, a number of growth of 0 in a
+// Release, or a word that must be 0 and is not, is refused, with the place
+// of the word (1 to 7) for its error record.
+screen_budget_words_of_values :: proc "contextless" (values: [7]u64) -> (words: Screen_Budget_Words, refused_place: int, ok: bool) {
+	step, step_ok := screen_budget_step_of_word(values[0])
+	if !step_ok {
+		return {}, 1, false
+	}
+	first_free: int
+	switch step {
+	case .Grow:
+		words = {step = step, width = values[1], height = values[2]}
+		first_free = 3
+	case .Release:
+		if values[1] == 0 {
+			return {}, 2, false
+		}
+		words = {step = step, growth = values[1]}
+		first_free = 2
+	}
+	for place in first_free ..< len(values) {
+		if values[place] != 0 {
+			return {}, place + 1, false
+		}
+	}
+	return words, 0, true
 }
 
 // values[5] of a Debug_Start: what it does.

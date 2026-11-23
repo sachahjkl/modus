@@ -223,7 +223,31 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 	for word in ([?]u64{0, u64(max(Screen_Budget_Step)) + 1, max(u64)}) {
 		_, step_ok := screen_budget_step_of_word(word)
 		testing.expectf(t, !step_ok, "the step word %d was taken", word)
+		_, place, words_ok := screen_budget_words_of_values({0 = word, 1 = 2560, 2 = 1440})
+		testing.expect(t, !words_ok && place == 1)
 	}
+	// A Release names a growth: 0 is none; each word after the words of
+	// a step must be 0, at its place.
+	_, release_place, release_ok := screen_budget_words_of_values({0 = u64(Screen_Budget_Step.Release)})
+	testing.expect(t, !release_ok && release_place == 2, "a release of growth 0 was taken")
+	for place in 2 ..< 7 {
+		for word in ([?]u64{1, max(u64)}) {
+			values := [7]u64{0 = u64(Screen_Budget_Step.Release), 1 = 4}
+			values[place] = word
+			_, refused, ok := screen_budget_words_of_values(values)
+			testing.expectf(t, !ok && refused == place + 1, "a release with %d at %d was taken", word, place)
+		}
+	}
+	for place in 3 ..< 7 {
+		values := [7]u64{0 = u64(Screen_Budget_Step.Grow), 1 = 2560, 2 = 1440}
+		values[place] = 1
+		_, refused, ok := screen_budget_words_of_values(values)
+		testing.expectf(t, !ok && refused == place + 1, "a growth with a word at %d was taken", place)
+	}
+	grow, _, grow_ok := screen_budget_words_of_values({0 = u64(Screen_Budget_Step.Grow), 1 = 2560, 2 = 1440})
+	testing.expect(t, grow_ok && grow == {step = .Grow, width = 2560, height = 1440})
+	release, _, last_ok := screen_budget_words_of_values({0 = u64(Screen_Budget_Step.Release), 1 = max(u64)})
+	testing.expect(t, last_ok && release == {step = .Release, growth = max(u64)})
 	testing.expect(t, !sender_allowed(.Start, {.Plans}))
 	testing.expect(t, !sender_allowed(.Connect, {.Plans}))
 	testing.expect(t, !sender_allowed(.Start, {.Connect, .Principals, .Debugger}))

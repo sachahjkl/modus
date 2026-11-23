@@ -431,7 +431,6 @@ Resize_Refusal :: enum u32 {
 	Compositor_Budget = 3, // The pages left in the budget of the compositor do not pay a new frame and a new background.
 	Service_Budget    = 4, // The pages left in the budget of the service of the remote display do not pay its copies.
 	Too_Soon          = 5, // The screen changed size, or the viewer asked one, less than the least time ago.
-	Grown_Already     = 6, // The screen is past its start size, with an extra budget open: a size at most the start size comes first.
 }
 
 // The words of each cause in a line of the log.
@@ -443,7 +442,6 @@ RESIZE_REFUSAL_SENTENCES := [Resize_Refusal]string {
 	.Compositor_Budget = "the budget of the compositor does not pay a frame and a background of that size",
 	.Service_Budget    = "the budget of remote_display does not pay its copies of that size",
 	.Too_Soon          = "the screen changed size, or the viewer asked one, less than a second ago",
-	.Grown_Already     = "the screen is past its start size already: a size at most its start size comes first",
 }
 
 // resize_refusal_of_word is the border of a word of Resize_Refusal: a word
@@ -561,10 +559,11 @@ Grow_Refusal :: enum u64 {
 	Not_The_Service       = 1, // The sender does not hold the start grant Screen_Capture.
 	No_Screen_Of_Memory   = 2, // The machine has a screen of a device, or no compositor draws into a screen of memory.
 	Outside_Bounds        = 3, // The size is outside MIN_WIDTH x MIN_HEIGHT to MAX_WIDTH x MAX_HEIGHT.
-	Extra_Open            = 4, // The compositor or the service holds an extra budget: at most one for each.
-	Past_Compositor_Share = 5, // The budget of the compositor and its extra budget pass the share of a process.
-	Past_Service_Share    = 6, // The budget of the service and its extra budget pass the share of a process.
-	No_Pages              = 7, // The budget of the root service did not make an extra budget.
+	Compositor_Replacing  = 4, // The compositor holds two extra budgets: its replacement is not finished.
+	Service_Replacing     = 5, // The service holds two extra budgets: its replacement is not finished.
+	Past_Compositor_Share = 6, // The budget of the compositor, its extra budget and the new one pass the share of a process.
+	Past_Service_Share    = 7, // The budget of the service, its extra budget and the new one pass the share of a process.
+	No_Pages              = 8, // The budget of the root service did not make an extra budget.
 }
 
 // The words of each refusal of a growth in a line of the log.
@@ -574,7 +573,8 @@ GROW_REFUSAL_SENTENCES := [Grow_Refusal]string {
 	.Not_The_Service       = "the sender does not hold the start grant Screen_Capture",
 	.No_Screen_Of_Memory   = "the compositor does not draw into a screen of memory",
 	.Outside_Bounds        = "the size is outside 320 x 240 to 7680 x 4320",
-	.Extra_Open            = "the compositor or remote_display holds an extra budget already",
+	.Compositor_Replacing  = "the compositor holds two extra budgets: a replacement is not finished",
+	.Service_Replacing     = "remote_display holds two extra budgets: a replacement is not finished",
 	.Past_Compositor_Share = "the budget of the compositor would pass the share of a process",
 	.Past_Service_Share    = "the budget of remote_display would pass the share of a process",
 	.No_Pages              = "the budget of the root service did not make the extra budgets",
@@ -600,11 +600,9 @@ resize_refusal_of_grow :: proc "contextless" (refusal: Grow_Refusal) -> Resize_R
 		return .Device_Screen
 	case .Outside_Bounds:
 		return .Outside_Bounds
-	case .Extra_Open:
-		return .Grown_Already
-	case .Past_Compositor_Share:
+	case .Compositor_Replacing, .Past_Compositor_Share:
 		return .Compositor_Budget
-	case .Not_The_Service, .Past_Service_Share, .No_Pages:
+	case .Not_The_Service, .Service_Replacing, .Past_Service_Share, .No_Pages:
 	}
 	return .Service_Budget
 }
@@ -614,17 +612,23 @@ Grow_Facts :: struct {
 	from_service:          bool, // The sender holds the start grant Screen_Capture.
 	screen_of_memory:      bool, // The machine has no screen of a device, and the compositor draws into a screen of memory.
 	width, height:         u64,
-	compositor_extra_open: bool,
-	service_extra_open:    bool,
-	compositor_paid:       u64, // The pages of the budget of the compositor at its start.
-	service_paid:          u64, // The pages of the budget of the service at its start.
+	compositor_extras:     int, // The extra budgets that the compositor holds: 0, 1, or 2 during a replacement.
+	service_extras:        int, // The extra budgets that the service holds.
+	compositor_paid:       u64, // The pages of the budget of the compositor at its start, and of the extra budgets that it holds.
+	service_paid:          u64, // The pages of the budget of the service at its start, and of the extra budgets that it holds.
 	share:                 u64, // The largest budget of a process of the machine, in pages.
 }
 
+// The extra budgets that a process holds at most: the one of the size in
+// force, and the one of the size that replaces it.
+EXTRAS_PER_PROCESS :: 2
+
 // screen_budget_grow_decide decides a growth for both processes together:
-// the sender, the screen, the size, the extra budgets that are open, then
-// the share of each process, in this order. It gives the pages of each
-// extra budget, or the refusal and no pages.
+// the sender, the screen, the size, the extra budgets that each process
+// holds, then the share of each process, in this order. A process that
+// holds one extra budget keeps it until its new pictures are made, so the
+// share pays both. It gives the pages of each new extra budget, or the
+// refusal and no pages.
 //
 // Example: a growth to 2560 x 1440 gives the compositor 7200 pages and the
 // service 10801 pages, when each sum stays inside the share.
@@ -636,8 +640,10 @@ screen_budget_grow_decide :: proc "contextless" (facts: Grow_Facts) -> (refusal:
 		return .No_Screen_Of_Memory, 0, 0
 	case !size_in_bounds(facts.width, facts.height):
 		return .Outside_Bounds, 0, 0
-	case facts.compositor_extra_open || facts.service_extra_open:
-		return .Extra_Open, 0, 0
+	case facts.compositor_extras >= EXTRAS_PER_PROCESS:
+		return .Compositor_Replacing, 0, 0
+	case facts.service_extras >= EXTRAS_PER_PROCESS:
+		return .Service_Replacing, 0, 0
 	}
 	compositor_pages = compositor_grow_pages(facts.width, facts.height)
 	service_pages = service_copies_pages(facts.width, facts.height)

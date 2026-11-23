@@ -879,9 +879,9 @@ Screen_Budget_Taken :: struct {
 	pages:  value_kinds.Size_In_Pages,
 }
 
-// The root service gave a handle that is no budget, or a second extra
-// budget: it is closed with no use.
-@(log_fact = "compositor: closed an extra budget for {width} x {height} with no use: it is no budget, or one is held already")
+// The root service gave a handle that is no budget, an extra budget with no
+// number, or a third one: it is closed with no use.
+@(log_fact = "compositor: closed an extra budget for {width} x {height} with no use: it is no budget, has no number, or two are held already")
 Screen_Budget_Not_Taken :: struct {
 	width:  u64,
 	height: u64,

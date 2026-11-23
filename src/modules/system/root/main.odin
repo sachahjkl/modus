@@ -1264,7 +1264,7 @@ control_ring_serve :: proc "contextless" () {
 		case .Appearance_Next:
 			settings_appearance_next_start() // text_settings.odin
 		case .Screen_Budget_Release:
-			screen_budget_release(.Compositor, role_holder_name(.Display)) // screen_budgets.odin
+			screen_budget_release(.Compositor, record.values[0], role_holder_name(.Display)) // screen_budgets.odin
 		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started, .Settings_Raise, .Screen_Budget_Give:
 			// This service sends these to the compositor, and takes none
 			// from it.

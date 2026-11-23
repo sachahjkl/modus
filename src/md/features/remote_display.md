@@ -132,11 +132,11 @@ A viewer with the input asks the screen of memory for a size; the design of the 
 | Direction | Kind | Body | Border |
 |---|---|---|---|
 | Viewer to service | `Screen_Size_Ask` (21) | the width and the height (8 bytes) | each side inside 320 × 240 to 7680 × 4320 (`modus:contract/memory_screen`); else the connection ends with `Bad_Record` |
-| Service to viewer | `Screen_Size_Refused` (9) | the width and the height that the viewer asked, the cause (`memory_screen.Resize_Refusal`: `Device_Screen`, `Outside_Bounds`, `Compositor_Budget`, `Service_Budget`, `Too_Soon`, `Grown_Already`), a reserved word (16 bytes) | the size passes the limit of a screen; the cause names a member that is not `None`; the reserved word is 0 |
+| Service to viewer | `Screen_Size_Refused` (9) | the width and the height that the viewer asked, the cause (`memory_screen.Resize_Refusal`: `Device_Screen`, `Outside_Bounds`, `Compositor_Budget`, `Service_Budget`, `Too_Soon`), a reserved word (16 bytes) | the size passes the limit of a screen; the cause names a member that is not `None`; the reserved word is 0 |
 | Service to viewer | `Screen_Size` (1) | as before | it comes again after a change, between two viewer frames: the next viewer frame is the whole screen |
 
 - **Only a viewer with the input asks.** A viewer with the view alone that asks ends with `Input_Not_Allowed`, as for a key: a size changes the desktop of the principal.
-- **A refusal is a record, not an end.** `Device_Screen` (the machine has a screen of a device), `Outside_Bounds`, `Compositor_Budget`, `Service_Budget`, `Too_Soon` (less than one second after the last change, or after the last ask of the viewer) and `Grown_Already` (the budgets grew already for a larger size) are states of the machine: the viewer keeps its session and can ask another size.
+- **A refusal is a record, not an end.** `Device_Screen` (the machine has a screen of a device), `Outside_Bounds`, `Compositor_Budget`, `Service_Budget` and `Too_Soon` (less than one second after the last change, or after the last ask of the viewer) are states of the machine: the viewer keeps its session and can ask another size.
 - **The records that cross a change.** Until the viewer takes a viewer frame at the size in force, its records are read against the largest side of each screen since it last saw that size, and each place and each rectangle is cut to the screen in force.
 
 ### The authority

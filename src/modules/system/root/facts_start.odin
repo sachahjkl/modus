@@ -17,10 +17,11 @@ import "modus:contract/value_kinds"
 
 // The budgets of a screen of memory grew for a size that a viewer asked
 // (src/md/features/screen_of_memory.md, "The growth of the budgets").
-@(log_fact = "root: the budgets of the screen of memory grow for {width} x {height}: an extra budget of {compositor_pages} for the compositor and of {service_pages} for remote_display")
+@(log_fact = "root: the budgets of the screen of memory grow for {width} x {height}, growth {growth}: an extra budget of {compositor_pages} for the compositor and of {service_pages} for remote_display")
 Screen_Budget_Grown :: struct {
 	width:            u64,
 	height:           u64,
+	growth:           u64,
 	compositor_pages: value_kinds.Size_In_Pages,
 	service_pages:    value_kinds.Size_In_Pages,
 }
@@ -34,16 +35,18 @@ Screen_Budget_Refused :: struct {
 	grow_refusal: [96]u8,
 }
 
-// A process closed its extra budget of a screen of memory: this service
-// closed its own handle.
-@(log_fact = "root: {holder} gave back its extra budget of the screen of memory: its pages return")
+// A process closed its extra budget of a growth of a screen of memory: this
+// service closed its own handle.
+@(log_fact = "root: {holder} gave back its extra budget of growth {growth} of the screen of memory: its pages return")
 Screen_Budget_Released :: struct {
+	growth: u64,
 	holder: value_kinds.Module_Name_Field,
 }
 
-// A release of an extra budget from a process that holds none.
-@(log_fact = "root: refused the release of an extra budget of the screen of memory from {holder}, which holds none")
+// A release of an extra budget of a growth that the process does not hold.
+@(log_fact = "root: refused the release of the extra budget of growth {growth} of the screen of memory from {holder}, which holds none of it")
 Screen_Budget_Release_Refused :: struct {
+	growth: u64,
 	holder: value_kinds.Module_Name_Field,
 }
 

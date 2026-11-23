@@ -3,8 +3,9 @@ package root
 // The growth of the budgets of a screen of memory (src/md/features/screen_of_memory.md,
 // "The growth of the budgets"): one command of the service of the remote
 // display makes one extra budget for the compositor and one for that
-// service, both or neither, within the share of each process; each one ends
-// when its process closes it, or at the stop of its process.
+// service, both or neither, within the share of each process; a growth while
+// one is held replaces it; each one ends when its process closes it, or at
+// the stop of its process.
 
 import "internal:root/screen_budgets"
 import "modus:contract/errors"
@@ -26,28 +27,22 @@ GROW_REFUSAL_FIELD_BYTES :: 96
 // Grow or Release.
 screen_budget_command :: proc "contextless" (item: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
 	command := root_ring.Root_Command.Screen_Budget
-	step, step_ok := root_ring.screen_budget_step_of_word(record.values[0])
-	if !step_ok {
-		values^ = root_ring.word_refusal(command, 1, record.values[0], u64(max(root_ring.Screen_Budget_Step)))
+	words, refused_place, words_ok := root_ring.screen_budget_words_of_values(record.values)
+	if !words_ok {
+		word := record.values[refused_place - 1]
+		most := refused_place == 1 ? u64(max(root_ring.Screen_Budget_Step)) : 0
+		values^ = root_ring.word_refusal(command, i64(refused_place), word, most)
 		return .Bad_Operation
 	}
-	// The words after the size are 0: a word that names nothing is refused.
-	first_free := step == .Grow ? 3 : 1
-	for place in first_free ..< len(record.values) {
-		if record.values[place] != 0 {
-			values^ = root_ring.word_refusal(command, i64(place + 1), record.values[place], 0)
-			return .Bad_Operation
-		}
-	}
-	switch step {
+	switch words.step {
 	case .Release:
-		if !screen_budget_release(.Service, system.name_of(item.name[:])) {
-			values^ = errors.ring_fail(u32(command), .Absent, .Pages, 1, i64(step))
+		if !screen_budget_release(.Service, words.growth, system.name_of(item.name[:])) {
+			values^ = errors.ring_fail(u32(command), .Absent, .Pages, 2, i64(min(words.growth, u64(max(i64)))))
 			return .Bad_State
 		}
 		return .Ok
 	case .Grow:
-		return screen_budget_grow(item, record.values[1], record.values[2], values)
+		return screen_budget_grow(item, words.width, words.height, values)
 	}
 	return .Bad_Operation
 }
@@ -69,13 +64,17 @@ screen_budget_grow :: proc "contextless" (item: ^Started, width, height: u64, va
 		screen_of_memory      = desktop_of_memory && compositor != nil,
 		width                 = width,
 		height                = height,
-		compositor_extra_open = screen_budgets.open(&screen_budget_table, .Compositor),
-		service_extra_open    = screen_budgets.open(&screen_budget_table, .Service),
-		service_paid          = item.budget_pages,
 		share                 = u64(largest_budget.pages),
 	}
+	// The pages of each process: its budget at its start and the extra
+	// budgets that it holds, which a replacement keeps until its new
+	// pictures are made.
+	compositor_extra_pages, service_extra_pages: u64
+	facts.compositor_extras, compositor_extra_pages = screen_budgets.held(&screen_budget_table, .Compositor)
+	facts.service_extras, service_extra_pages = screen_budgets.held(&screen_budget_table, .Service)
+	facts.service_paid = pages_sum(item.budget_pages, service_extra_pages)
 	if compositor != nil {
-		facts.compositor_paid = compositor.budget_pages
+		facts.compositor_paid = pages_sum(compositor.budget_pages, compositor_extra_pages)
 	}
 	refusal, compositor_pages, service_pages := memory_screen.screen_budget_grow_decide(facts)
 	// The compositor learns of its extra budget on the control ring before
@@ -109,11 +108,19 @@ screen_budget_grow :: proc "contextless" (item: ^Started, width, height: u64, va
 			refusal = .No_Pages
 		}
 	}
-	if refusal == .None && !system.send(&control.commands, ring.Record{kind = u32(display.Control.Screen_Budget_Give), values = {0 = u64(given_compositor), 1 = compositor_pages, 2 = width, 3 = height}}) {
-		refusal = .No_Pages
+	growth: u64
+	if refusal == .None {
+		if growth = screen_budgets.grow_take(&screen_budget_table, u64(compositor_budget), compositor_pages, u64(service_budget), service_pages); growth == 0 {
+			// The decision read the table: only a number past the last one
+			// is left, after 2^64 growths.
+			refusal = .No_Pages
+		}
 	}
-	if refusal == .None && !screen_budgets.grow_take(&screen_budget_table, {u64(compositor_budget), compositor_pages}, {u64(service_budget), service_pages}) {
-		refusal = .Extra_Open
+	if refusal == .None && !system.send(&control.commands, ring.Record{kind = u32(display.Control.Screen_Budget_Give), values = {0 = u64(given_compositor), 1 = compositor_pages, 2 = width, 3 = height, 4 = growth}}) {
+		// The room was checked before; the table takes the growth back.
+		screen_budgets.release(&screen_budget_table, .Compositor, growth)
+		screen_budgets.release(&screen_budget_table, .Service, growth)
+		refusal = .No_Pages
 	}
 	if refusal != .None {
 		for handle in ([2]system.Handle{compositor_budget, service_budget}) {
@@ -126,31 +133,41 @@ screen_budget_grow :: proc "contextless" (item: ^Started, width, height: u64, va
 		return .No_Budget
 	}
 	budget_pages_note()
-	system.log_fact(.Info, Screen_Budget_Grown{width = width, height = height, compositor_pages = value_kinds.Size_In_Pages(compositor_pages), service_pages = value_kinds.Size_In_Pages(service_pages)})
-	values^ = {0 = u64(given_service), 1 = service_pages}
+	system.log_fact(.Info, Screen_Budget_Grown{width = width, height = height, growth = growth, compositor_pages = value_kinds.Size_In_Pages(compositor_pages), service_pages = value_kinds.Size_In_Pages(service_pages)})
+	values^ = {0 = u64(given_service), 1 = service_pages, 2 = growth}
 	return .Ok
 }
 
-// screen_budget_release ends the extra budget of a process that closed its
-// handle: this service closes its own, and the pages return when the
-// budget ends. false: the process holds none.
-screen_budget_release :: proc "contextless" (side: screen_budgets.Side, holder: string) -> bool {
-	handle, held := screen_budgets.release(&screen_budget_table, side)
+// pages_sum adds two counts of pages, held at the largest count: a sum
+// past it passes every share.
+@(private = "file")
+pages_sum :: proc "contextless" (a, b: u64) -> u64 {
+	return a > max(u64) - b ? max(u64) : a + b
+}
+
+// screen_budget_release ends the extra budget of a growth of a process that
+// closed its handle: this service closes its own, and the pages return
+// when the budget ends. false: the process holds none of that growth.
+screen_budget_release :: proc "contextless" (side: screen_budgets.Side, growth: u64, holder: string) -> bool {
+	handle, held := screen_budgets.release(&screen_budget_table, side, growth)
 	if !held {
-		system.log_fact(.Warning, Screen_Budget_Release_Refused{holder = module_name_field(holder)})
+		system.log_fact(.Warning, Screen_Budget_Release_Refused{growth = growth, holder = module_name_field(holder)})
 		return false
 	}
 	system.close(system.Handle(handle))
 	budget_pages_note()
-	system.log_fact(.Info, Screen_Budget_Released{holder = module_name_field(holder)})
+	system.log_fact(.Info, Screen_Budget_Released{growth = growth, holder = module_name_field(holder)})
 	return true
 }
 
-// screen_budget_stopped ends the extra budget of a process that stopped.
+// screen_budget_stopped ends each extra budget of a process that stopped,
+// also in the middle of a replacement.
 screen_budget_stopped :: proc "contextless" (side: screen_budgets.Side, holder: string) {
-	if handle := screen_budgets.stop(&screen_budget_table, side); handle != 0 {
-		system.close(system.Handle(handle))
-		budget_pages_note()
-		system.log_fact(.Info, Screen_Budget_Ended_At_Stop{holder = module_name_field(holder)})
+	for handle in screen_budgets.stop(&screen_budget_table, side) {
+		if handle != 0 {
+			system.close(system.Handle(handle))
+			budget_pages_note()
+			system.log_fact(.Info, Screen_Budget_Ended_At_Stop{holder = module_name_field(holder)})
+		}
 	}
 }

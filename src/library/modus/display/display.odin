@@ -572,10 +572,11 @@ Control :: enum u32 {
 	// root to compositor: the extra budget of a growth of the screen of
 	// memory (src/md/features/screen_of_memory.md, "The growth of the
 	// budgets"). values: the handle (in the compositor) with Read and Spend,
-	// its pages, the width and the height that it pays.
+	// its pages, the width and the height that it pays, the number of its
+	// growth.
 	Screen_Budget_Give      = 10,
-	// compositor to root: the compositor closed its extra budget, as no
-	// picture of it is left. No values.
+	// compositor to root: the compositor closed its extra budget of a growth,
+	// as no picture of it is left. values: the number of the growth.
 	Screen_Budget_Release   = 11,
 }
 

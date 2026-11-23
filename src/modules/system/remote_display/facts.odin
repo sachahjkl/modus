@@ -233,6 +233,14 @@ Screen_Budget_Answer_Refused :: struct {
 	status: op.Status,
 }
 
+// The root service gave an extra budget with no number, or a third one: it
+// is closed with no use.
+@(log_fact = "remote_display: closed an extra budget for {width} x {height} with no use: it has no number, or two are held already")
+Screen_Budget_Not_Taken :: struct {
+	width:  u64,
+	height: u64,
+}
+
 // The root ring had no room for the release of the extra budget.
 @(log_fact = "remote_display: the root ring has no room for the release of the extra budget of the screen of memory: its pages return at the stop of this process")
 Screen_Budget_Release_Not_Sent :: struct {}

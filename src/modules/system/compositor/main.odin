@@ -931,7 +931,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Settings_Raise:
 				settings_raise(record.values[0], record.values[1]) // tray_widgets.odin
 			case .Screen_Budget_Give:
-				screen_budget_take(system.Handle(record.values[0]), record.values[1], record.values[2], record.values[3]) // screen_of_memory.odin
+				screen_budget_take(system.Handle(record.values[0]), record.values[1], record.values[2], record.values[3], record.values[4]) // screen_of_memory.odin
 			case .None, .Start, .Stop, .Appearance_Next, .Screen_Budget_Release:
 				// The border refused None above. Start, Stop and
 				// Appearance_Next go from the compositor to the root service,

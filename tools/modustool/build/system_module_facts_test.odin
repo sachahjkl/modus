@@ -397,9 +397,7 @@ the_late_facts_of_the_device_services_write_the_lines_of_before :: proc(t: ^test
 		for word in status_words() {
 			facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Screen_Budget_Answer_Refused", {{"status", word}}), line_of_before("remote_display: the root service refused a command of the budgets of the screen of memory: status ", status_text(word)))
 		}
-		for word in status_words() {
-			facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Screen_Budget_Answer_Refused", {{"status", word}}), line_of_before("remote_display: the root service refused a command of the budgets of the screen of memory: status ", status_text(word)))
-		}
+		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Screen_Budget_Not_Taken", {{"width", count}, {"height", other}}), line_of_before("remote_display: closed an extra budget for ", count, " x ", other, " with no use: it has no number, or two are held already"))
 		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Screen_Change_Reverted", {{"width", count}, {"height", other}, {"back_width", other}, {"back_height", count}}), line_of_before("remote_display: no copies of the screen of ", count, " x ", other, ": the screen goes back to ", other, " x ", count))
 		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Screen_Changed", {{"width", count}, {"height", other}, {"viewers", count}}), line_of_before("remote_display: the screen is now ", count, " x ", other, ": ", count, " viewers receive its size and the whole screen"))
 		facts_expect_line(t, fact_test_render(t, remote_display, "remote_display_service", "Capture_Size_Refusal_Refused", {{"width", count}, {"height", other}, {"refusal_word", count}}), line_of_before("remote_display: refused an answer of the compositor: a refusal of ", count, " x ", other, " with the word ", count, ", which no ask in flight names or which names no cause"))
