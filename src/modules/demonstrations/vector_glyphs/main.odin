@@ -1,6 +1,6 @@
-// The choice of the vector font (docs/FONTS.md, "The font file"): the same
-// lines of the system in each candidate font and in Spleen 8x16, one word of
-// each enlarged, and the measures of the text path.
+// The choice of the vector font: the same lines of the system in each
+// candidate font and in Spleen 8x16, one word of each enlarged, and the
+// measures of the text path. The design: docs/FONTS.md, "The font file".
 //
 // The module carries the subsets of the candidates of resources/fonts, and
 // its process opens each one as the font of the cells of a font set of its

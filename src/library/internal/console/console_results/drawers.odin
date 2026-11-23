@@ -6,6 +6,7 @@ import op "modus:contract/operation"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:sentence"
+import "modus:text_rendering"
 
 // What a part of a drawn result is. The caller of a drawer chooses the
 // color of each part: a value has the color of its value kind
@@ -75,16 +76,25 @@ value_kind_part :: proc "contextless" (kind: value_kinds.Value_Kind) -> Part {
 // of a line it sets `continuation`: the column where the rest of the line
 // starts when the window of the caller is narrower than the line, so that a
 // long value goes on under its own start and is never cut.
+//
+// `width` is the columns of the window of the caller, or 0 when its lines
+// have no bound. With a width, a drawer breaks a text between two words in
+// its own column, so that a reader reads whole words under their head; the
+// continuation is then only the last resort of a line that cannot fit.
 Sink :: struct {
 	data:         rawptr, // The state of the caller.
 	write:        proc "contextless" (sink: ^Sink, text: string, part: Part), // One part of the line.
 	end_line:     proc "contextless" (sink: ^Sink), // The line ends.
 	continuation: int, // The column where a line that is too long goes on.
+	width:        int, // The columns of the window of the caller; 0 for no bound.
 }
 
 COLUMN_LIMIT :: 40 // The most columns of a drawn table: the fields of a record that join makes.
 CONTINUATION_MOST :: 48 // A line goes on under its last column only when that column starts at or before this one.
 COLUMN_GAP :: 2 // The spaces between two columns.
+// The least columns that a column of text keeps when a table is narrowed to
+// its window: narrower, a column of words becomes a column of letters.
+WRAP_COLUMN_LEAST :: 12
 BYTES_IN_A_ROW :: 16 // The bytes of one row of a view of bytes.
 // The bytes of the text of one cell: the values of a log fact in
 // hexadecimal, two digits for each byte, are the longest; a hash takes 64,
@@ -275,19 +285,27 @@ cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> C
 	return {}
 }
 
+// text_columns gives the columns of the terminal that a text takes: one
+// for each character, two for a wide one, none for a combining mark
+// (text_rendering.cell_count), as the console places it. A count of bytes
+// would make a column of "é" one too wide.
+text_columns :: proc "contextless" (text: string) -> int {
+	return text_rendering.cell_count(transmute([]u8)text)
+}
+
 // cell_write writes one cell in a column of a width: a number at the right
 // of its column, a text at the left. The last column has no spaces after
 // its text.
 cell_write :: proc "contextless" (sink: ^Sink, text: string, width: int, number: bool, last: bool, part: Part) {
 	if number {
-		blanks(sink, width - len(text))
+		blanks(sink, width - text_columns(text))
 	}
 	sink.write(sink, text, part)
 	if last {
 		return
 	}
 	if !number {
-		blanks(sink, width - len(text))
+		blanks(sink, width - text_columns(text))
 	}
 	blanks(sink, COLUMN_GAP)
 }
@@ -407,6 +425,22 @@ draw_record :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: 
 		blanks(sink, COLUMN_GAP)
 		sink.write(sink, name, .Label)
 		blanks(sink, width - len(name) + COLUMN_GAP)
+		value_start := COLUMN_GAP + width + COLUMN_GAP
+		value_columns := sink.width - value_start
+		if sink.width > 0 && column_wraps(item) && value_columns >= WRAP_COLUMN_LEAST && text_columns(cell.text) > value_columns {
+			// A long text goes on under its own start, broken between
+			// two words.
+			line, rest := wrap_segment(cell.text, value_columns)
+			sink.write(sink, line, cell.part)
+			for rest != "" {
+				sink.end_line(sink)
+				line, rest = wrap_segment(rest, value_columns)
+				blanks(sink, value_start)
+				sink.write(sink, line, cell.part)
+			}
+			sink.end_line(sink)
+			continue
+		}
 		sink.write(sink, cell.text, cell.part)
 		// The unit is in the color of the value, as a value run of the log
 		// covers the number and its unit.
@@ -452,9 +486,10 @@ draw_table :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: [
 		row := bytes[index * size:][:size]
 		for number in 0 ..< field_count {
 			buffer: [CELL_TEXT_CAPACITY]u8
-			widths[number] = max(widths[number], len(cell_of(row, items[number], buffer[:]).text))
+			widths[number] = max(widths[number], text_columns(cell_of(row, items[number], buffer[:]).text))
 		}
 	}
+	wrapped := columns_fit(widths[:field_count], items[:field_count], units[:field_count], sink.width)
 	last_start := 0
 	for number in 0 ..< field_count - 1 {
 		last_start += widths[number] + COLUMN_GAP
@@ -466,13 +501,7 @@ draw_table :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: [
 	}
 	sink.end_line(sink)
 	for index in 0 ..< shown {
-		row := bytes[index * size:][:size]
-		for number in 0 ..< field_count {
-			buffer: [CELL_TEXT_CAPACITY]u8
-			cell := cell_of(row, items[number], buffer[:])
-			cell_write(sink, cell.text, widths[number], cell.number, number == field_count - 1, cell.part)
-		}
-		sink.end_line(sink)
+		draw_row(sink, bytes[index * size:][:size], items[:field_count], widths[:field_count], wrapped)
 	}
 	sink.continuation = 0
 	count_text: [24]u8
@@ -488,6 +517,162 @@ draw_table :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: [
 	sink.end_line(sink)
 }
 
+// column_wraps says if the cells of a field can go on in more lines of
+// their own column: a plain Text, whose words a reader reads across a
+// break. A number, a hash, a status and a module name are one word that a
+// break would make wrong.
+column_wraps :: proc "contextless" (item: module.Field) -> bool {
+	type, type_ok := module.field_type(item)
+	kind, kind_ok := module.field_kind(item)
+	return type_ok && kind_ok && type == .Text && kind == .Plain
+}
+
+// columns_fit narrows the columns of text of a table until one line of it
+// fits in width columns, the widest column first, never under the length
+// of its head or WRAP_COLUMN_LEAST. It gives true when the lines fit, with
+// the widths changed; false, with the widths unchanged, when the window has
+// no bound or the columns cannot fit, and the continuation then takes the
+// rest of each line.
+columns_fit :: proc "contextless" (widths: []int, items: []module.Field, units: []string, width: int) -> bool {
+	if width <= 0 || len(widths) == 0 || len(widths) > COLUMN_LIMIT || len(items) != len(widths) || len(units) != len(widths) {
+		return false
+	}
+	total := COLUMN_GAP * (len(widths) - 1)
+	for column_width in widths {
+		total += column_width
+	}
+	if total <= width {
+		return true
+	}
+	narrowed: [COLUMN_LIMIT]int
+	least: [COLUMN_LIMIT]int
+	for number in 0 ..< len(widths) {
+		narrowed[number] = widths[number]
+		least[number] = widths[number]
+		if column_wraps(items[number]) {
+			least[number] = min(widths[number], max(head_length(int(items[number].name_count), units[number]), WRAP_COLUMN_LEAST))
+		}
+	}
+	for excess := total - width; excess > 0; excess -= 1 {
+		widest := -1
+		for number in 0 ..< len(widths) {
+			if narrowed[number] > least[number] && (widest < 0 || narrowed[number] > narrowed[widest]) {
+				widest = number
+			}
+		}
+		if widest < 0 {
+			return false
+		}
+		narrowed[widest] -= 1
+	}
+	copy(widths, narrowed[:len(widths)])
+	return true
+}
+
+// wrap_segment gives the first line of a text in a column of width columns
+// of the terminal (text_columns), and the rest after it. It breaks at a
+// line feed, or at the last space that fits, and drops the spaces at the
+// break. A word longer than the column alone is cut after its last whole
+// character that fits, because no space is left to break at; a first
+// character wider than the column goes whole, as a part of a character is
+// no text. Spaces at the start stay before a word that fits after them,
+// and go when they alone would fill the line: a line of spaces only says
+// nothing. A width of 0 or less gives the text whole: such a column cannot
+// hold a part.
+wrap_segment :: proc "contextless" (text: string, width: int) -> (line: string, rest: string) {
+	if width <= 0 {
+		return text, ""
+	}
+	bytes := transmute([]u8)text
+	fit, _ := text_rendering.cell_part(bytes, width)
+	for index in 0 ..< min(len(text), fit + 1) {
+		if text[index] == '\n' {
+			return text[:index], text[index + 1:]
+		}
+	}
+	if fit >= len(text) {
+		return text, ""
+	}
+	break_at := 0
+	for index := fit; index > 0; index -= 1 {
+		if text[index] == ' ' {
+			break_at = index
+			break
+		}
+	}
+	end := break_at
+	for end > 0 && text[end - 1] == ' ' {
+		end -= 1
+	}
+	if break_at > 0 && end == 0 {
+		// Spaces alone before the break: they go, and the line starts at
+		// the first word.
+		start := 0
+		for start < len(text) && text[start] == ' ' {
+			start += 1
+		}
+		return wrap_segment(text[start:], width)
+	}
+	if break_at == 0 {
+		cut := fit
+		if cut == 0 {
+			_, length, _ := text_encoding.character_decode(bytes, 0)
+			cut = min(max(length, 1), len(text))
+		}
+		return text[:cut], text[cut:]
+	}
+	start := break_at
+	for start < len(text) && text[start] == ' ' {
+		start += 1
+	}
+	return text[:end], text[start:]
+}
+
+// draw_row draws the cells of one row of a table in their columns. When
+// wrapped, the text of a column of text that is wider than its column goes
+// on in the lines under the row, in its own column, broken between words.
+draw_row :: proc "contextless" (sink: ^Sink, row: []u8, items: []module.Field, widths: []int, wrapped: bool) {
+	count := min(len(items), len(widths), COLUMN_LIMIT)
+	// The rest of the text of each column that goes on, and the part of its
+	// cell, which each line of it keeps. A rest points into the row: only a
+	// plain Text wraps (column_wraps), and cell_of gives its text from the
+	// row, not from the buffer of the loop, which the next column reuses.
+	rests: [COLUMN_LIMIT]string
+	parts: [COLUMN_LIMIT]Part
+	more := false
+	for number in 0 ..< count {
+		buffer: [CELL_TEXT_CAPACITY]u8
+		cell := cell_of(row, items[number], buffer[:])
+		text := cell.text
+		if wrapped && column_wraps(items[number]) {
+			text, rests[number] = wrap_segment(cell.text, widths[number])
+			parts[number] = cell.part
+			more = more || rests[number] != ""
+		}
+		cell_write(sink, text, widths[number], cell.number, number == count - 1, cell.part)
+	}
+	sink.end_line(sink)
+	for more {
+		more = false
+		// The spaces before the next part: they are written only when a
+		// part comes, so that a line has no spaces at its end.
+		pending := 0
+		for number in 0 ..< count {
+			if rests[number] == "" {
+				pending += widths[number] + COLUMN_GAP
+				continue
+			}
+			line: string
+			line, rests[number] = wrap_segment(rests[number], widths[number])
+			more = more || rests[number] != ""
+			blanks(sink, pending)
+			sink.write(sink, line, parts[number])
+			pending = widths[number] - text_columns(line) + COLUMN_GAP
+		}
+		sink.end_line(sink)
+	}
+}
+
 // ---- A Stream: a table drawn one row at a time.
 //
 // A Stream has no rows to measure before its draw: each record comes
@@ -501,8 +686,9 @@ Stream_Columns :: struct {
 	items:  [COLUMN_LIMIT]module.Field,
 	units:  [COLUMN_LIMIT]string,
 	widths: [COLUMN_LIMIT]int,
-	count:  int,
-	size:   int, // The bytes of one record.
+	count:   int,
+	size:    int, // The bytes of one record.
+	wrapped: bool, // The columns of text fit the window of the sink of the head, and their texts go on under them.
 }
 
 // integer_digits gives the most characters of the decimal text of an
@@ -610,7 +796,10 @@ stream_continuation :: proc "contextless" (columns: ^Stream_Columns) -> int {
 }
 
 // draw_stream_head draws the line of the names of the fields of a Stream.
+// It narrows the columns of text to the window of the sink first: the rows
+// after it are drawn in the same columns.
 draw_stream_head :: proc "contextless" (sink: ^Sink, columns: ^Stream_Columns, file: []u8) {
+	columns.wrapped = columns_fit(columns.widths[:columns.count], columns.items[:columns.count], columns.units[:columns.count], sink.width)
 	sink.continuation = stream_continuation(columns)
 	for number in 0 ..< columns.count {
 		item := columns.items[number]
@@ -628,12 +817,7 @@ draw_stream_row :: proc "contextless" (sink: ^Sink, columns: ^Stream_Columns, ro
 		return
 	}
 	sink.continuation = stream_continuation(columns)
-	for number in 0 ..< columns.count {
-		buffer: [CELL_TEXT_CAPACITY]u8
-		cell := cell_of(row, columns.items[number], buffer[:])
-		cell_write(sink, cell.text, columns.widths[number], cell.number, number == columns.count - 1, cell.part)
-	}
-	sink.end_line(sink)
+	draw_row(sink, row, columns.items[:columns.count], columns.widths[:columns.count], columns.wrapped)
 	sink.continuation = 0
 }
 

@@ -1,5 +1,6 @@
 // The counters of a thread: a process counts the events of the processor
-// for its own code (docs/ARCHITECTURE.md, "The counters of a thread").
+// for its own code. The design: docs/ARCHITECTURE.md, "The counters of a
+// thread".
 //
 // **What it is for.** It is the proof of the thread counters, and the
 // smallest process that uses them. It counts a loop of known length, and it

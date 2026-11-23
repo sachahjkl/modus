@@ -999,3 +999,28 @@ record_streams_are_written_and_read_back :: proc(t: ^testing.T) {
 	testing.expect_value(t, (^u32)(&memory[OUTPUT_PLACE])^, 1)
 	testing.expect_value(t, (^u32)(&memory[INPUT_PLACE])^, 1)
 }
+// The category and the tags of the parts reach the header: the written file
+// passes validate, and the reader gives them back, for no category, the
+// last one with every tag, and one in the middle with one tag.
+@(test)
+the_category_and_the_tags_reach_the_header :: proc(t: ^testing.T) {
+	Case :: struct {
+		category: module.Module_Category,
+		tags:     module.Module_Tags,
+	}
+	every_tag: module.Module_Tags
+	for tag in module.Module_Tag {
+		every_tag += {tag}
+	}
+	cases := [3]Case{{.None, {}}, {.Test, every_tag}, {.System_Tool, {.Text}}}
+	for item in cases {
+		storage: Test_Storage
+		parts := test_parts(&storage)
+		parts.category, parts.tags = item.category, item.tags
+		file := write_to_memory(t, parts)
+		defer delete(file)
+		testing.expect_value(t, module.validate(file), module.Error.None)
+		category, tags, ok := module.module_category_of(file)
+		testing.expectf(t, ok && category == item.category && tags == item.tags, "%v: the file gives %v %v %v", item, category, tags, ok)
+	}
+}

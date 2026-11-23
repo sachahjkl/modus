@@ -203,37 +203,41 @@ bar_item_step :: proc "contextless" (item: Bar_Item, plate_count: int, viewer_ma
 	return bar_item_at((place + step) % count, plate_count, viewer_mark)
 }
 
-// The lines of the start menu in the order of the keys: each name, then
-// each quick action.
+// The most lines of the start menu in the order of the keys: each name,
+// then each quick action, with the demonstrations open.
 START_MENU_KEY_LINES :: len(names) + ACTION_COUNT
 
 // The quick actions in the order of their lines, from the top.
 @(rodata)
-start_actions_in_order := [ACTION_COUNT]Start_Action{.Bar_Edge, .Magnifier}
+start_actions_in_order := [ACTION_COUNT]Start_Action{.Demonstrations, .Bar_Edge, .Magnifier}
 
 // start_menu_step gives the chosen line or quick action of the start menu
 // after Down (forward) or Up, around the ends: line is a name, or -1 with
-// action a quick action. With nothing chosen, Down chooses the first name
-// and Up the last quick action.
-start_menu_step :: proc "contextless" (line: int, action: Start_Action, forward: bool) -> (next_line: int, next_action: Start_Action) {
+// action a quick action. Only the lines that the menu shows are steps: the
+// names of the layout (shown_count), then the quick actions. With nothing
+// chosen, Down chooses the first name and Up the last quick action; a line
+// that the menu does not show counts as nothing chosen.
+start_menu_step :: proc "contextless" (layout: Layout, line: int, action: Start_Action, forward: bool) -> (next_line: int, next_action: Start_Action) {
+	shown := shown_count(layout)
+	lines := shown + ACTION_COUNT
 	place := -1
-	if line >= 0 && line < len(names) {
+	if line >= 0 && line < shown {
 		place = line
 	}
 	for ordered, index in start_actions_in_order {
 		if action != .None && ordered == action {
-			place = len(names) + index
+			place = shown + index
 		}
 	}
 	if place < 0 {
-		place = forward ? 0 : START_MENU_KEY_LINES - 1
+		place = forward ? 0 : lines - 1
 	} else {
-		place = (place + (forward ? 1 : START_MENU_KEY_LINES - 1)) % START_MENU_KEY_LINES
+		place = (place + (forward ? 1 : lines - 1)) % lines
 	}
-	if place < len(names) {
+	if place < shown {
 		return place, .None
 	}
-	return -1, start_actions_in_order[place - len(names)]
+	return -1, start_actions_in_order[place - shown]
 }
 
 // windows_menu_step gives the chosen line of the menu of count windows

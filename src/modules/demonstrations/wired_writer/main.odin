@@ -1,5 +1,6 @@
-// The writer of the demonstration pair of the start list
-// (src/md/features/module_outputs.md, "The wiring rows of a start list").
+// The writer of a pair of modules that the start list wires together. The
+// design: src/md/features/module_outputs.md, "The wiring rows of a start
+// list".
 // The default start list starts `wired_reader`, then this module, and its
 // wiring row joins `numbers` to `wired_reader.numbers` at this start: the
 // root service gives the ring before the first instruction, so the reader

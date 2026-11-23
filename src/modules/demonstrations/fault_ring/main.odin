@@ -1,4 +1,5 @@
-// The fault ring (docs/ARCHITECTURE.md, "The fault ring"), case by case.
+// The faults of a process as records of a ring, case by case. The design:
+// docs/ARCHITECTURE.md, "The fault ring".
 //
 // **What it is for.** A fault does not have to end a process. With a
 // [fault handler](term:fault-handler) and a [fault ring](term:fault-ring),

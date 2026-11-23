@@ -1,5 +1,5 @@
-// Tables and bytes as parameters (docs/MODULE_CONTRACT.md, "Tables and
-// bytes as parameters"): one description, three ways to call.
+// Tables and bytes as parameters: one description, three ways to call. The
+// design: docs/MODULE_CONTRACT.md, "Tables and bytes as parameters".
 //
 // This process calls the exports of the module sample with tables in its
 // own memory, in three ways, with the same arguments: a direct call of the

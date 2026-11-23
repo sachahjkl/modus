@@ -1,5 +1,6 @@
-// A QUIC echo server (docs/QUIC.md, section 6): QUIC in the process
-// (src/library/modus/quic), over a datagram endpoint with a listen grant of UDP. A
+// A QUIC echo server: QUIC in the process, over a datagram endpoint with a
+// listen grant of UDP. The design: docs/QUIC.md, section 6, and
+// src/library/modus/quic. A
 // client opens up to STREAMS_PER_CONNECTION streams at one time; on each
 // one the server writes back each byte that it reads, then ends the stream
 // after the client ended it, or resets it after the client reset it.

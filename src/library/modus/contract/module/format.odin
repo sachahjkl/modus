@@ -71,9 +71,55 @@ Header :: struct {
 	table_count:     u32, // The number of entries of the table directory.
 	memory_size:     u64, // The size of the address range of the loaded module.
 	entry_export:    u32, // An index in the export table. 0: the module has no entry.
-	reserved:        u32, // 0.
+	category:        Module_Category, // What the module is to a reader: the manual groups its list by it; the start menu has it from the table of the modules of the tool.
+	reserved:        u8, // 0.
+	tags:            Module_Tags, // What the module is about: the manual filters on these words.
 }
 #assert(size_of(Header) == 48)
+
+// The module category: what a module is to a reader, one word for each
+// module (docs/glossary/communication.md, "Module category"). The tool
+// writes it from the table of the modules, and refuses a category that
+// disagrees with the module group, the folder of the source. The manual
+// groups the modules of the boot image by it; the start menu reads no
+// module file, and its lists come from the same table. No loader and no
+// root service decides anything by it. The values cross the border of the file:
+// they are fixed.
+Module_Category :: enum u8 {
+	None           = 0, // The file states no category: a kernel, or a file that a host test writes.
+	Application    = 1, // A program of the principal with a window, for the work of the principal: the group applications.
+	System_Tool    = 2, // A window that shows or sets the system for the principal: the console, the monitor, the log, the settings, the manual.
+	Developer_Tool = 3, // A window that shows how the system runs, for a developer: inspect, the debugger, the pages.
+	Service        = 4, // A process with no window of its own, that serves other processes: the root service, the devices, the storage, the compositor.
+	Library        = 5, // A module that other modules import or wire: the group libraries.
+	Demonstration  = 6, // A module that shows one property of the system to a principal: the group demonstrations.
+	Test           = 7, // A module that only a machine test starts or imports: the group tests.
+}
+
+// A module tag: one word of what a module is about. The manual filters the
+// list of the modules on the words of the tags as on the names. A closed
+// set, so that two modules about one thing carry one word.
+Module_Tag :: enum u8 {
+	Graphics  = 0, // Draws pictures, shapes or text.
+	Text      = 1, // Reads, writes or shows text.
+	Network   = 2, // Talks to another machine.
+	Storage   = 3, // Keeps data on a disk.
+	Security  = 4, // Rights, keys, grants, isolation.
+	Processes = 5, // Starts, stops, schedules or counts processes.
+	Memory    = 6, // Pages, memory objects, address spaces.
+	Time      = 7, // Clocks, dates, timers.
+	Sound     = 8, // Plays or records sound.
+	Input     = 9, // Keys, pointer, devices of input.
+	Faults    = 10, // Shows or contains a fault.
+	Kernel    = 11, // Shows a mechanism of the kernel.
+}
+Module_Tags :: bit_set[Module_Tag; u16]
+#assert(size_of(Module_Tags) == 2)
+
+// The bits of Module_Tags that name a member, one for each member from bit
+// 0: a reader refuses each other.
+MODULE_TAG_BITS :: u16(1 << len(Module_Tag) - 1)
+#assert(int(max(Module_Tag)) == len(Module_Tag) - 1)
 
 // The number of a table is its index in the table directory.
 Table_Kind :: enum u32 {

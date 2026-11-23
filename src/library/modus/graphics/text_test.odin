@@ -82,8 +82,10 @@ text_without_cache_is_spleen :: proc(t: ^testing.T) {
 // text_sized refuses each size that text_rendering.size_check refuses: 0, 1,
 // one unit under the smallest size, one past the largest, a negative size
 // and the largest int. Such a text draws nothing and gives back its x. Then
-// a size of the caption: cells of 7 pixels, and Spleen at its scale 1 one
-// row above the top of the cell, the middle of a line of 14.
+// a size of the caption with Spleen: each character advances by the whole
+// glyph of Spleen at its scale 1, 8 pixels and not the cell of 7, so no
+// glyph covers the last column of the one before, and the glyph is one row
+// above the top of the cell, the middle of a line of 14.
 @(test)
 a_text_of_cells_at_its_sizes :: proc(t: ^testing.T) {
 	sync.mutex_lock(&fallback_test_lock)
@@ -99,9 +101,10 @@ a_text_of_cells_at_its_sizes :: proc(t: ^testing.T) {
 	}
 	CAPTION :: 14 * text_rendering.SUBPIXEL
 	end := text_sized(a, 0, 8, "gM", DARK_TEXT, CAPTION)
-	testing.expect_value(t, end, 14)
+	testing.expect_value(t, end, 2 * CELL_WIDTH)
+	testing.expect_value(t, cell_advance(CAPTION), CELL_WIDTH)
 	character_spleen(b, 0, 7, 'g', DARK_TEXT)
-	character_spleen(b, 7, 7, 'M', DARK_TEXT)
+	character_spleen(b, CELL_WIDTH, 7, 'M', DARK_TEXT)
 	testing.expect(t, first == second, "a caption in Spleen is not Spleen at its scale 1 in the middle of the line")
 }
 

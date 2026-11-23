@@ -164,21 +164,33 @@ the_keys_walk_the_items_of_the_bar :: proc(t: ^testing.T) {
 	}
 }
 
-// The keys walk the lines of the start menu, then its quick actions, and
-// go around; the menu of the windows goes around its count.
+// The keys walk the lines that the start menu shows, then its quick
+// actions, and go around: with the demonstrations closed, their lines are
+// no step, and a line of them counts as nothing chosen. The menu of the
+// windows goes around its count.
 @(test)
 the_keys_walk_the_lines_of_the_menus :: proc(t: ^testing.T) {
-	line, action := start_menu_step(-1, .None, true)
+	closed := Layout{}
+	open := with_demonstrations(closed, true)
+	line, action := start_menu_step(closed, -1, .None, true)
 	testing.expect(t, line == 0 && action == .None)
-	line, action = start_menu_step(-1, .None, false)
+	line, action = start_menu_step(closed, -1, .None, false)
 	testing.expect(t, line == -1 && action == .Magnifier)
-	line, action = start_menu_step(len(names) - 1, .None, true)
-	testing.expect(t, line == -1 && action == .Bar_Edge)
-	line, action = start_menu_step(-1, .Bar_Edge, false)
+	line, action = start_menu_step(closed, LEFT_COUNT - 1, .None, true)
+	testing.expect(t, line == -1 && action == .Demonstrations)
+	line, action = start_menu_step(closed, -1, .Demonstrations, false)
+	testing.expect(t, line == LEFT_COUNT - 1 && action == .None)
+	line, action = start_menu_step(closed, LEFT_COUNT, .None, true)
+	testing.expect(t, line == 0 && action == .None, "a closed demonstration is a step")
+	line, action = start_menu_step(open, LEFT_COUNT - 1, .None, true)
+	testing.expect(t, line == LEFT_COUNT && action == .None)
+	line, action = start_menu_step(open, len(names) - 1, .None, true)
+	testing.expect(t, line == -1 && action == .Demonstrations)
+	line, action = start_menu_step(open, -1, .Demonstrations, false)
 	testing.expect(t, line == len(names) - 1 && action == .None)
-	line, action = start_menu_step(-1, .Magnifier, true)
+	line, action = start_menu_step(closed, -1, .Magnifier, true)
 	testing.expect(t, line == 0 && action == .None)
-	line, action = start_menu_step(0, .None, false)
+	line, action = start_menu_step(closed, 0, .None, false)
 	testing.expect(t, line == -1 && action == .Magnifier)
 	// The order of the quick actions is the order of their lines.
 	for ordered, index in start_actions_in_order {
@@ -190,21 +202,27 @@ the_keys_walk_the_lines_of_the_menus :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, len(start_actions_in_order), len(Start_Action) - 1)
 	// A line past the names is no line: Down starts at the first one.
-	line, action = start_menu_step(len(names), .None, true)
+	line, action = start_menu_step(open, len(names), .None, true)
 	testing.expect(t, line == 0 && action == .None)
-	// Each place of the order is reached once in a whole round.
-	seen: [START_MENU_KEY_LINES]bool
-	line, action = -1, .None
-	for _ in 0 ..< START_MENU_KEY_LINES {
-		line, action = start_menu_step(line, action, true)
-		place := line
-		for ordered, index in start_actions_in_order {
-			if action != .None && ordered == action {
-				place = len(names) + index
+	line, action = start_menu_step(open, max(int), .None, true)
+	testing.expect(t, line == 0 && action == .None)
+	// Each place of the order is reached once in a whole round, open and
+	// closed.
+	for layout in ([2]Layout{open, closed}) {
+		lines := shown_count(layout) + ACTION_COUNT
+		seen: [START_MENU_KEY_LINES]bool
+		line, action = -1, .None
+		for _ in 0 ..< lines {
+			line, action = start_menu_step(layout, line, action, true)
+			place := line
+			for ordered, index in start_actions_in_order {
+				if action != .None && ordered == action {
+					place = shown_count(layout) + index
+				}
 			}
+			testing.expect(t, place >= 0 && place < lines && !seen[place])
+			seen[place] = true
 		}
-		testing.expect(t, place >= 0 && place < START_MENU_KEY_LINES && !seen[place])
-		seen[place] = true
 	}
 	// The menu of the windows: no window, one, the ends, a line past the count.
 	testing.expect_value(t, windows_menu_step(-1, 0, true), -1)

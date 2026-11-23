@@ -48,6 +48,7 @@ SOURCE_FOLDERS_GONE :: [?]string{"src/programs", "src/library/support", "src/lib
 // it says where a source lives, and whether a release ships it.
 Module_Group :: enum {
 	System, // The root service, the services, the desktop, the tools of a principal.
+	Applications, // The programs of a principal, each a window for the work of the principal.
 	Libraries, // The modules that export functions and have no entry, which other modules import.
 	Demonstrations, // The demonstration modules, which each show a property to a principal.
 	Tests, // The test modules, which only a machine test starts or imports.
@@ -56,6 +57,7 @@ Module_Group :: enum {
 // The start of the source of a row of the table of the modules, one for
 // each group: a row names its folder as SYSTEM_MODULE_SOURCES + "root".
 SYSTEM_MODULE_SOURCES :: SOURCE_FOLDER_MODULES + "/system/"
+APPLICATION_MODULE_SOURCES :: SOURCE_FOLDER_MODULES + "/applications/"
 LIBRARY_MODULE_SOURCES :: SOURCE_FOLDER_MODULES + "/libraries/"
 DEMONSTRATION_MODULE_SOURCES :: SOURCE_FOLDER_MODULES + "/demonstrations/"
 TEST_MODULE_SOURCES :: SOURCE_FOLDER_MODULES + "/tests/"
@@ -63,6 +65,7 @@ TEST_MODULE_SOURCES :: SOURCE_FOLDER_MODULES + "/tests/"
 // The start of the source of each group, as the procedure below reads it.
 MODULE_GROUP_SOURCES :: [Module_Group]string {
 	.System         = SYSTEM_MODULE_SOURCES,
+	.Applications   = APPLICATION_MODULE_SOURCES,
 	.Libraries      = LIBRARY_MODULE_SOURCES,
 	.Demonstrations = DEMONSTRATION_MODULE_SOURCES,
 	.Tests          = TEST_MODULE_SOURCES,

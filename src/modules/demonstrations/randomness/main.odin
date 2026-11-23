@@ -1,4 +1,5 @@
-// The randomness of the system, shown (docs/RANDOMNESS.md).
+// The random bytes of the system, where they come from, shown. The design:
+// docs/RANDOMNESS.md.
 //
 // The root service gathers the seed of the system at its start, from the
 // sources of the processor, mixes in the bytes of the entropy device when

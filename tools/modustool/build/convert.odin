@@ -62,6 +62,8 @@ Module_Description :: struct {
 	enums:          []Enum_Description, // The enums that the exports take and give. Enum n + 1 of the module is enums[n].
 	member_texts:   []Member_Text_Description, // The display texts of the members, in the order of the enum, the member and the language: the table Member_Texts.
 	budget:         Budget_Description, // The budget that the module asks for: the table Budget.
+	category:       module.Module_Category, // The category of the row of the module; None for a module from outside the repository.
+	tags:           module.Module_Tags, // The tags of the row of the module.
 	facts:          []Fact_Description, // The log facts that the module writes, sorted by key (facts_merge): the table Facts.
 	record_outputs: []Record_Stream_Description, // The record outputs that the module declares, sorted by name (record_streams_merge): the table Record_Outputs.
 	record_inputs:  []Record_Stream_Description, // The record inputs, sorted by name: the table Record_Inputs.
@@ -637,6 +639,11 @@ module_parts_finalize :: proc(
 		record_outputs     = output_parts,
 		record_inputs      = input_parts,
 	}
+
+	// The category and the tags of the row of the module (module_convert):
+	// the manual reads them from the header. The start menu does not: the
+	// build writes its lists from the table (start_menu_names.odin).
+	parts.category, parts.tags = description.category, description.tags
 
 	// A module whose source states no budget has no table Budget: it asks
 	// for the least budget.

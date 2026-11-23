@@ -95,7 +95,7 @@ menu_card_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, wid
 }
 
 // menu_line_records appends one line of a menu: the chosen blue under the
-// pointer, the icon, then the name, both in the middle of the line.
+// pointer, the icon, then the label, both in the middle of the line.
 menu_line_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width, height: int, icon: bar.Icon, name: string, chosen: bool) {
 	color, accent := graphics.colors.text, graphics.colors.title
 	if chosen {
@@ -110,30 +110,40 @@ menu_line_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, wid
 }
 
 // The labels of the quick actions of the start menu.
+START_ACTION_DEMONSTRATIONS :: "demonstrations"
 START_ACTION_BAR_TO_BOTTOM :: "bar to bottom"
 START_ACTION_BAR_TO_TOP :: "bar to top"
 START_ACTION_MAGNIFIER :: "magnifier"
 
-// start_menu_records appends the start menu: the pinned modules and the
-// quick actions in the left pane, all other modules under their heading
-// in the darker right pane.
+// start_menu_records appends the start menu: the applications and the
+// tools under their headings and the quick actions in the left pane, and,
+// when the principal opened them, the demonstrations under their heading
+// in the darker right pane. Each line shows the label of its name.
 start_menu_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	x, y, width, height := bar.menu(bar_layout)
 	interface.draw_element_push(table, {x, y, width, height}, u32(interface.identity("start menu")), .Menu, {name = "start menu"})
 	defer interface.draw_element_pop(table)
 	menu_card_records(table, x, y, width, height)
-	pane_x, pane_y, pane_width, pane_height := bar.right_pane(bar_layout)
-	interface.draw_rectangle(table, pane_x - 1, pane_y, 1, pane_height, graphics.colors.track)
-	interface.draw_vertical_gradient(table, pane_x, pane_y, pane_width, pane_height, graphics.mix(graphics.colors.card_bottom, graphics.colors.background, 128), graphics.colors.background)
-	heading_y := pane_y + bar.PANE_PADDING
-	interface.draw_text(table, pane_x + bar.PANE_PADDING + bar.PADDING, heading_y + 4, "all modules", graphics.colors.dim, interface.FONT_CAPTION)
-	interface.draw_rectangle(table, pane_x + bar.PANE_PADDING, heading_y + bar.HEADING_HEIGHT - 4, pane_width - 2 * bar.PANE_PADDING, 1, graphics.colors.track)
-	for name, index in bar.names {
+	if bar_layout.demonstrations_open {
+		pane_x, pane_y, pane_width, pane_height := bar.right_pane(bar_layout)
+		interface.draw_rectangle(table, pane_x - 1, pane_y, 1, pane_height, graphics.colors.track)
+		interface.draw_vertical_gradient(table, pane_x, pane_y, pane_width, pane_height, graphics.mix(graphics.colors.card_bottom, graphics.colors.background, 128), graphics.colors.background)
+	}
+	for section in bar.Menu_Section {
+		heading_x, heading_y, heading_width, has_heading := bar.heading_place(bar_layout, section)
+		if !has_heading {
+			continue
+		}
+		interface.draw_text(table, heading_x + bar.PADDING, heading_y + 4, bar.section_headings[section], graphics.colors.dim, interface.FONT_CAPTION)
+		interface.draw_rectangle(table, heading_x, heading_y + bar.HEADING_HEIGHT - 4, heading_width, 1, graphics.colors.track)
+	}
+	for index in 0 ..< bar.shown_count(bar_layout) {
 		line_x, line_y, line_width, line_height := bar.line(bar_layout, index)
-		menu_line_records(table, line_x, line_y, line_width, line_height, bar.name_icons[index], name, index == menu_line)
+		label: [bar.LABEL_BYTES]u8
+		menu_line_records(table, line_x, line_y, line_width, line_height, bar.name_icons[index], bar.label_of(bar.names[index], &label), index == menu_line)
 	}
 	// The quick actions, under a hairline at the foot of the left pane.
-	first_x, first_y, first_width, _ := bar.action_line(bar_layout, .Bar_Edge)
+	first_x, first_y, first_width, _ := bar.action_line(bar_layout, .Demonstrations)
 	interface.draw_rectangle(table, first_x, first_y - bar.ACTIONS_GAP / 2, first_width, 1, graphics.colors.track)
 	for action in bar.Start_Action {
 		label: string
@@ -141,6 +151,8 @@ start_menu_records :: proc "contextless" (table: ^interface.Draw_Table) {
 		switch action {
 		case .None:
 			continue
+		case .Demonstrations:
+			icon, label = .Window, START_ACTION_DEMONSTRATIONS
 		case .Bar_Edge:
 			icon = .Bar_Edge
 			switch bar_layout.edge {
@@ -166,6 +178,9 @@ menu_show :: proc "contextless" (menu: Menu) {
 	switch menu {
 	case .None:
 	case .Start:
+		// The demonstrations are closed at each open: the menu shows what
+		// a principal uses.
+		bar_layout = bar.with_demonstrations(bar_layout, false)
 		system.log_fact(.Info, Start_Menu_Open{})
 	case .Windows:
 		windows_log()
@@ -229,7 +244,13 @@ menu_choice_do :: proc "contextless" (from_keys: bool) -> bool {
 			return true
 		}
 	}
-	if menu_open == .Start && menu_line >= 0 && menu_line < len(bar.names) {
+	if menu_open == .Start && menu_line < 0 && menu_action == .Demonstrations {
+		// The one quick action that keeps the menu open: the principal
+		// chooses a demonstration next.
+		start_demonstrations_toggle()
+		return true
+	}
+	if menu_open == .Start && menu_line >= 0 && menu_line < bar.shown_count(bar_layout) {
 		packed := system.name_pack(bar.names[menu_line])
 		system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
 	}
@@ -257,10 +278,29 @@ menu_choice_do :: proc "contextless" (from_keys: bool) -> bool {
 	return false
 }
 
+// start_demonstrations_toggle opens or closes the demonstrations of the
+// start menu, and says which on the log. The chosen line stays only when
+// the menu still shows it.
+start_demonstrations_toggle :: proc "contextless" () {
+	open := !bar_layout.demonstrations_open
+	bar_layout = bar.with_demonstrations(bar_layout, open)
+	if menu_line >= bar.shown_count(bar_layout) {
+		menu_line = -1
+	}
+	damage_menu()
+	if open {
+		system.log_fact(.Info, Start_Menu_Demonstrations_Shown{})
+	} else {
+		system.log_fact(.Info, Start_Menu_Demonstrations_Hidden{})
+	}
+}
+
 // start_action_do does a quick action of the start menu.
 start_action_do :: proc "contextless" (action: bar.Start_Action) {
 	switch action {
 	case .None:
+	case .Demonstrations:
+		// menu_choice_do keeps the menu open for it and toggles there.
 	case .Bar_Edge:
 		switch bar_layout.edge {
 		case .Top:

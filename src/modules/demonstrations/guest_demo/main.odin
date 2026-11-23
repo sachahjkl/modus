@@ -1,6 +1,6 @@
 // The first guest: a process that runs a few instructions of another system
-// on the processor, in a guest, and receives what the guest does as records
-// (docs/ARCHITECTURE.md, "A guest").
+// on the processor, in a guest, and receives what the guest does as records.
+// The design: docs/ARCHITECTURE.md, "A guest".
 //
 // **What it is for.** It is the proof of the guest support of the kernel,
 // and the smallest process that uses it. The guest is a process that this

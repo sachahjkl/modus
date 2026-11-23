@@ -732,3 +732,234 @@ failure_lines :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(text, "error: detail 2 of 3: monitor.counts_named: "), text)
 	testing.expect(t, strings.contains(text, "error: 1 more error detail did not fit in the table of error details\n"), text)
 }
+// The break of a text in a column: the edges of the width first, then a
+// word longer than the column, then the break between words.
+@(test)
+a_text_breaks_between_words_and_cuts_only_a_word_longer_than_its_column :: proc(t: ^testing.T) {
+	line, rest := wrap_segment("", 8)
+	testing.expect(t, line == "" && rest == "", "an empty text gives a part")
+	line, rest = wrap_segment("abc def", 0)
+	testing.expect(t, line == "abc def" && rest == "", "a column of no width cuts a text")
+	line, rest = wrap_segment("abc def", -1)
+	testing.expect(t, line == "abc def" && rest == "", "a column of a negative width cuts a text")
+	// Exact fit, and one past it.
+	line, rest = wrap_segment("abcd efgh", 9)
+	testing.expect(t, line == "abcd efgh" && rest == "", "a text that fits is broken")
+	line, rest = wrap_segment("abcd efghi", 9)
+	testing.expect_value(t, line, "abcd")
+	testing.expect_value(t, rest, "efghi")
+	// The space just past the column is a break: the line fills the column.
+	line, rest = wrap_segment("abcd efgh ij", 9)
+	testing.expect_value(t, line, "abcd efgh")
+	testing.expect_value(t, rest, "ij")
+	// A word longer than the column alone is cut at the column.
+	line, rest = wrap_segment("abcdefghijkl mn", 5)
+	testing.expect_value(t, line, "abcde")
+	testing.expect_value(t, rest, "fghijkl mn")
+	// A width of one character.
+	line, rest = wrap_segment("ab", 1)
+	testing.expect(t, line == "a" && rest == "b")
+	// The spaces at a break go, at the end of the line and at the start of
+	// the rest.
+	line, rest = wrap_segment("ab   cd", 4)
+	testing.expect_value(t, line, "ab")
+	testing.expect_value(t, rest, "cd")
+	// A line feed ends the line, even when the text fits.
+	line, rest = wrap_segment("ab\ncd", 10)
+	testing.expect(t, line == "ab" && rest == "cd")
+	// The width is in columns, not bytes: "é" is two bytes and one column,
+	// so "aé" fits two columns whole, and "éa" in one column cuts after é.
+	line, rest = wrap_segment("aé", 2)
+	testing.expect(t, line == "aé" && rest == "")
+	line, rest = wrap_segment("éa", 1)
+	testing.expect_value(t, line, "é")
+	testing.expect_value(t, rest, "a")
+	// A wide character takes two columns: "日本" in three columns cuts after
+	// 日, and a wide character in a column of one goes whole.
+	line, rest = wrap_segment("日本", 3)
+	testing.expect(t, line == "日" && rest == "本")
+	line, rest = wrap_segment("日a", 1)
+	testing.expect(t, line == "日" && rest == "a")
+	// Spaces at the start: they stay before a word that fits after them,
+	// and go when they alone would fill the line.
+	line, rest = wrap_segment("  ab cd", 4)
+	testing.expect(t, line == "  ab" && rest == "cd")
+	line, rest = wrap_segment("     abcdef", 3)
+	testing.expect(t, line == "abc" && rest == "def")
+	// Spaces only, and a line feed only: one empty line, and no rest.
+	line, rest = wrap_segment("       ", 3)
+	testing.expect(t, line == "" && rest == "")
+	line, rest = wrap_segment("\n", 3)
+	testing.expect(t, line == "" && rest == "")
+}
+
+// The record of the tests of the break: a name, a long text, a count.
+Note_Table :: struct {
+	description: [1024]u8,
+	file:        []u8,
+	columns:     [3]Column,
+	size:        int,
+	rows:        [4 * 128]u8,
+	row_count:   int,
+}
+
+note_table_make :: proc(t: ^testing.T, table: ^Note_Table) {
+	table.columns = {text_column("name", 16), text_column("note", 80), integer_column("count")}
+	size: u32
+	ok: bool
+	table.file, size, ok = description_write(table.description[:], "Command", table.columns[:])
+	testing.expect(t, ok, "the description is written")
+	table.size = int(size)
+}
+
+note_table_add :: proc(table: ^Note_Table, name: string, note: string, count: i64) {
+	row := table.rows[table.row_count * table.size:][:table.size]
+	row_text_set(row, table.columns[0], name)
+	row_text_set(row, table.columns[1], note)
+	row_integer_set(row, table.columns[2], count)
+	table.row_count += 1
+}
+
+// A table wider than the window of its sink: the column of text narrows,
+// each of its texts goes on in its own column, between two words, and no
+// line is wider than the window. A window of no bound and a window that
+// no column of text can fit keep the old lines.
+@(test)
+a_table_wider_than_its_window_breaks_its_texts_in_their_own_column :: proc(t: ^testing.T) {
+	table := new(Note_Table, context.temp_allocator)
+	note_table_make(t, table)
+	note_table_add(table, "isolate_memory", "isolate the module file of a memory object", 3)
+	note_table_add(table, "help", "", 1)
+	note_table_add(table, "start", "start a process, by module name, with a wiring list or none", 17)
+	bytes := table.rows[:table.row_count * table.size]
+	drawn := new(Drawn, context.temp_allocator)
+	sink := drawn_sink(drawn)
+	sink.width = 40
+	draw_table(&sink, table.file, 1, bytes, 20)
+	expected :=
+		"name            note               count\n" +
+		"isolate_memory  isolate the            3\n" +
+		"                module file of a\n" +
+		"                memory object\n" +
+		"help                                   1\n" +
+		"start           start a process,      17\n" +
+		"                by module name,\n" +
+		"                with a wiring\n" +
+		"                list or none\n" +
+		"3 rows of Command\n"
+	testing.expect_value(t, drawn_text(drawn), expected)
+	for line in strings.split_lines(drawn_text(drawn), context.temp_allocator) {
+		testing.expectf(t, len(line) <= 40, "the line %q is wider than the window", line)
+		testing.expectf(t, !strings.has_suffix(line, " "), "the line %q ends with a space", line)
+	}
+
+	// Exact fit: a window as wide as the line breaks nothing; one column
+	// less breaks the note.
+	// The column of the names is as wide as "isolate_memory".
+	full := 14 + COLUMN_GAP + len("start a process, by module name, with a wiring list or none") + COLUMN_GAP + 5
+	drawn^ = {}
+	sink.width = full
+	draw_table(&sink, table.file, 1, bytes, 20)
+	testing.expect_value(t, drawn.lines, 1 + 3 + 1)
+	drawn^ = {}
+	sink.width = full - 1
+	draw_table(&sink, table.file, 1, bytes, 20)
+	testing.expect_value(t, drawn.lines, 1 + 4 + 1)
+
+	// No bound: one line for each row, as before.
+	drawn^ = {}
+	sink.width = 0
+	draw_table(&sink, table.file, 1, bytes, 20)
+	testing.expect_value(t, drawn.lines, 1 + 3 + 1)
+
+	// A window too narrow for the least columns: the lines stay whole, and
+	// the continuation of the caller takes their rest. The names are a
+	// column of text too, and narrow to the least width as the notes do.
+	drawn^ = {}
+	sink.width = WRAP_COLUMN_LEAST + COLUMN_GAP + WRAP_COLUMN_LEAST + COLUMN_GAP + 5 - 1
+	draw_table(&sink, table.file, 1, bytes, 20)
+	testing.expect_value(t, drawn.lines, 1 + 3 + 1)
+	// The least columns fit exactly.
+	drawn^ = {}
+	sink.width = WRAP_COLUMN_LEAST + COLUMN_GAP + WRAP_COLUMN_LEAST + COLUMN_GAP + 5
+	draw_table(&sink, table.file, 1, bytes, 20)
+	for line in strings.split_lines(drawn_text(drawn), context.temp_allocator) {
+		testing.expectf(t, len(line) <= sink.width, "the line %q is wider than the window", line)
+	}
+	testing.expect(t, drawn.lines > 1 + 3 + 1, "the least columns break no text")
+}
+
+// A stream narrows its columns of text at its head, and its rows go on in
+// them.
+@(test)
+a_stream_breaks_its_texts_in_the_columns_of_its_head :: proc(t: ^testing.T) {
+	table := new(Note_Table, context.temp_allocator)
+	note_table_make(t, table)
+	note_table_add(table, "isolate_memory", "isolate the module file of a memory object", 3)
+	columns, ok := stream_columns_of(table.file, 1)
+	testing.expect(t, ok)
+	drawn := new(Drawn, context.temp_allocator)
+	sink := drawn_sink(drawn)
+	sink.width = 60
+	draw_stream_head(&sink, &columns, table.file)
+	testing.expect(t, columns.wrapped, "the columns are not narrowed")
+	draw_stream_row(&sink, &columns, table.rows[:table.size])
+	for line in strings.split_lines(drawn_text(drawn), context.temp_allocator) {
+		testing.expectf(t, len(line) <= 60, "the line %q is wider than the window", line)
+	}
+	testing.expect(t, drawn.lines >= 3, "the note is not broken")
+}
+
+// A long text of a record goes on under the start of its value.
+@(test)
+a_record_breaks_a_long_text_under_its_value :: proc(t: ^testing.T) {
+	table := new(Note_Table, context.temp_allocator)
+	note_table_make(t, table)
+	note_table_add(table, "start", "start a process, by module name, with a wiring list or none", 17)
+	drawn := new(Drawn, context.temp_allocator)
+	sink := drawn_sink(drawn)
+	sink.width = 30
+	draw_record(&sink, table.file, 1, table.rows[:table.size])
+	expected :=
+		"Command\n" +
+		"  name   start\n" +
+		"  note   start a process, by\n" +
+		"         module name, with a\n" +
+		"         wiring list or none\n" +
+		"  count  17\n"
+	testing.expect_value(t, drawn_text(drawn), expected)
+}
+// A table whose texts hold a character of two bytes and wide characters:
+// the columns are counted in the columns of the terminal, so each row
+// ends at the column of the head, and each line of a broken text keeps the
+// part of its cell.
+@(test)
+a_table_counts_columns_not_bytes :: proc(t: ^testing.T) {
+	table := new(Note_Table, context.temp_allocator)
+	note_table_make(t, table)
+	note_table_add(table, "café", "é é é é é é é é é é é é", 1)
+	note_table_add(table, "日本", "日本語 日本語 日本語 日本語", 22)
+	bytes := table.rows[:table.row_count * table.size]
+	drawn := new(Drawn, context.temp_allocator)
+	sink := drawn_sink(drawn)
+	draw_table(&sink, table.file, 1, bytes, 20)
+	lines := strings.split_lines(drawn_text(drawn), context.temp_allocator)
+	head := text_columns(lines[0])
+	testing.expect_value(t, text_columns(lines[1]), head)
+	testing.expect_value(t, text_columns(lines[2]), head)
+	// Narrow: each line fits, and a line that goes on is in the part of its
+	// cell, Plain, as its first line.
+	drawn^ = {}
+	sink.width = 30
+	draw_table(&sink, table.file, 1, bytes, 20)
+	for line in strings.split_lines(drawn_text(drawn), context.temp_allocator) {
+		testing.expectf(t, text_columns(line) <= 30, "the line %q is wider than the window", line)
+	}
+	testing.expect(t, drawn.lines > 1 + 2 + 1, "no text is broken")
+	for run in drawn.runs[:drawn.run_count] {
+		text := string(drawn.text[run.start:][:run.length])
+		if strings.contains(text, "日本語") || strings.contains(text, "é é") {
+			testing.expectf(t, run.part == .Plain, "the part of %q is %v", text, run.part)
+		}
+	}
+}

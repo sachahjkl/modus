@@ -1,5 +1,5 @@
-// The debugger of a process, as the kernel gives it (docs/ARCHITECTURE.md,
-// "The debugger of a process").
+// The debugger of a process, as the kernel gives it. The design:
+// docs/ARCHITECTURE.md, "The debugger of a process".
 //
 // A process with a handle of another process that has the right Debug
 // becomes its debugger. This process is the debugger of children that it

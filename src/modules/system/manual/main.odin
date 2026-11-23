@@ -22,18 +22,24 @@
 //
 // **Keys**
 //
-// - up, down: the module before, the module after;
+// - a letter, a digit or a space: added to the filter of the list, which then shows the modules whose name, group
+//   or tag holds the filter;
+// - Escape: the filter is empty again;
+// - up, down: the module before, the module after, in the list;
 // - page up, page down: move the text;
 // - home: the start of the text;
 // - Tab, Shift+Tab: the focus on the next link, or the one before;
 // - Enter: open the link with the focus;
-// - Backspace: back to the page before;
-// - o: the table of all the modules, as `overview()` shows it.
+// - Backspace: the last character of the filter goes; with no filter, back to the page before;
+// - Control+O: the table of all the modules, as `overview()` shows it.
 //
 // The [action bar](term:action-bar) at the bottom names these keys: a press on an item does what its key does.
 //
-// A click on a name of the list shows that module. A click on a link with a line under it shows the page that it
-// names.
+// The list at the left has the modules of the boot image in groups by their category: the applications, the tools,
+// the system services, the libraries, the demonstrations, then the tests, closed until a click on their heading
+// opens them. Each group is in the order of the alphabet, and the column at the right counts the exports of each
+// module. A click on a name of the list shows that module. A click on a link with a line under it shows the page that
+// it names.
 //
 // The manual is a service: another process asks for a page with [show](manual.show), and reads a description as
 // a text with [about](manual.about) and [signature](manual.signature). The other exports give the facts of the
@@ -62,6 +68,7 @@ import "modus:display"
 import "modus:graphics"
 import "modus:interface"
 import "internal:manual/manual_navigation"
+import "internal:manual/module_list"
 import info "modus:contract/boot_info"
 import "modus:contract/manual_pages"
 import module "modus:contract/module"
@@ -464,14 +471,15 @@ draw :: proc "contextless" (window: ^display.Window) {
 // scroll bar moves it too.
 // A procedure, not a global array: an item is made by a call, and a
 // freestanding process runs no call before its entry.
-bar_items :: proc "contextless" () -> [10]interface.Action_Bar_Item {
+bar_items :: proc "contextless" () -> [11]interface.Action_Bar_Item {
 	return {
 		interface.action_bar_item("module before", 6, "Up"),
 		interface.action_bar_item("module after", 6, "Down"),
 		interface.action_bar_item("next link", 5, "Tab"),
 		interface.action_bar_item("open the link", 5, "Enter"),
 		interface.action_bar_item("back", 4, "Backspace"),
-		interface.action_bar_item("all the modules", 3, "o"),
+		interface.action_bar_item("all the modules", 3, "Ctrl", "O"),
+		interface.action_bar_item("empty the filter", 3, "Esc"),
 		interface.action_bar_item("link before", 2, "Shift", "Tab"),
 		interface.action_bar_item("rows before", 1, "Page Up"),
 		interface.action_bar_item("rows after", 1, "Page Down"),
@@ -496,14 +504,15 @@ bar_area :: proc "contextless" () -> interface.Area {
 // bar that a press ran.
 key_run :: proc "contextless" (press: interface.Key_Press) {
 	switch press.code {
-	case display.KEY_UP:
-		navigation_leave()
-		select(selected - 1)
-		page_log()
-	case display.KEY_DOWN:
-		navigation_leave()
-		select(selected + 1)
-		page_log()
+	case display.KEY_UP, display.KEY_DOWN:
+		row := module_list.step(list_items[:list_item_count], module_list.row_of_module(list_items[:list_item_count], selected), press.code == display.KEY_DOWN)
+		if row >= 0 && list_items[row].module != selected {
+			navigation_leave()
+			select(list_items[row].module)
+			page_log()
+		}
+	case display.KEY_ESCAPE:
+		filter_set(0)
 	case display.KEY_PAGE_UP:
 		scroll(-(view_rows() - 2))
 	case display.KEY_PAGE_DOWN:
@@ -515,11 +524,19 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 	case display.KEY_ENTER:
 		link_open(focused_link)
 	case display.KEY_BACKSPACE:
-		page_back()
+		if filter_count > 0 {
+			filter_set(filter_count - 1)
+		} else {
+			page_back()
+		}
 	case:
-		if press.character == 'o' {
+		control := press.modifiers & display.MODIFIER_CONTROL != 0
+		if control && (press.character == 'o' || press.character == 'O') {
 			navigation_leave()
 			overview_build()
+		} else if !control && filter_character_valid(press.character) && filter_count < len(filter) {
+			filter[filter_count] = u8(press.character)
+			filter_set(filter_count + 1)
 		}
 	}
 }
@@ -528,16 +545,50 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 	table := frame.table
 	interface.draw_rectangle(table, 0, 0, LIST_WIDTH, HEIGHT, graphics.colors.card_top)
 	entries := system.image_entries(image)
+	// The filter: a field at the top of the list, which each typed letter
+	// fills; its placeholder says what typing does.
+	field := filter_field_area()
+	interface.draw_element_push(table, {field.x, field.y, field.width, field.height}, u32(interface.identity("filter")), .Search_Box, {name = "filter"})
+	interface.draw_rectangle(table, field.x, field.y, field.width, field.height, graphics.colors.recess)
+	interface.draw_outline(table, field.x, field.y, field.width, field.height, 1, graphics.colors.track)
+	if filter_count > 0 {
+		shown := interface.text_fit(table, {}, string(filter[:filter_count]), field.width - 16 - CELL_WIDTH)
+		end := interface.draw_text(table, field.x + 8, field.y + 3, shown, graphics.colors.text)
+		interface.draw_rectangle(table, end, field.y + 3, 2, CELL_HEIGHT, graphics.colors.text)
+	} else {
+		interface.draw_text(table, field.x + 8, field.y + 3, interface.text_fit(table, {}, "type to filter", field.width - 16), graphics.colors.dim)
+	}
+	interface.draw_element_pop(table)
+	// The head of the column of the counts: the number at the right of a
+	// name is the count of its exports.
+	interface.draw_text_right(table, LIST_WIDTH - 8, LIST_HEAD_Y, "exports", graphics.colors.dim)
+	if list_item_count == 0 {
+		interface.draw_text(table, 8, LIST_TOP, "no module", graphics.colors.dim)
+	}
 	first_row := list_first_row()
-	for index in 0 ..< list_count {
-		start, end := list_row[index], list_row[index + 1]
+	for place in 0 ..< list_item_count {
+		start, end := list_row[place], list_row[place + 1]
 		if start < first_row {
 			continue // A name whose first line is over the window: its row is not drawn in part.
 		}
 		if end > first_row + LIST_ROWS {
 			break
 		}
-		y := 4 + (start - first_row) * CELL_HEIGHT
+		y := LIST_TOP + (start - first_row) * CELL_HEIGHT
+		item := list_items[place]
+		if item.module < 0 {
+			// The heading of a group, dim, with a mark of the closed
+			// tests and the count of their modules.
+			heading: [48]u8
+			title := module_list.GROUP_TITLES[item.group]
+			text := title
+			if item.group == .Tests {
+				text = item.closed_count > 0 ? system.format(heading[:], "+ ", title, " (", u64(item.closed_count), ")") : system.format(heading[:], "- ", title)
+			}
+			interface.draw_text(table, 8, y, text, graphics.colors.dim)
+			continue
+		}
+		index := item.module
 		exports := list_exports[index]
 		name_color, count_color := module_color(exports, list_has_entry[index]), graphics.colors.dim
 		// The chosen row of a list: the chosen blue, its texts in white
@@ -546,11 +597,11 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 			interface.draw_rectangle(table, 0, y, LIST_WIDTH, (end - start) * CELL_HEIGHT, graphics.colors.chosen)
 			name_color, count_color = graphics.COLOR_WHITE, graphics.COLOR_WHITE
 		}
-		interface.draw_text_wrapped(table, 8, y, list_name_room(exports), system.name_of(entries[index].name[:]), name_color)
+		interface.draw_text_wrapped(table, LIST_NAME_INDENT, y, list_name_room(exports), system.name_of(entries[index].name[:]), name_color)
 		if exports > 0 {
 			buffer: [8]u8
 			count := system.format(buffer[:], u64(exports))
-			interface.draw_text(table, LIST_WIDTH - 8 - len(count) * CELL_WIDTH, y, count, count_color)
+			interface.draw_text_right(table, LIST_WIDTH - 8, y, count, count_color)
 		}
 	}
 
@@ -615,19 +666,78 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 	interface.draw_text_right(table, WIDTH - MARGIN, keys.y + (keys.height - CELL_HEIGHT) / 2, interface.text_fit(table, {}, place, place_room), graphics.colors.dim)
 }
 
-// The list of the modules, at the left of the window. The name of a module
-// has a box: from the left of the list to the count of its exports. A name
-// wider than its box goes on more lines (interface.text_wrap_line), and its
-// row has the height of its lines: no name runs over the page. The boot
-// image does not change while the system runs, so the rows are made once.
-LIST_ROWS :: (HEIGHT - 8) / CELL_HEIGHT // The lines of the list in the window.
+// The list of the modules, at the left of the window, under the filter
+// field and the head of the column of the counts: the modules in groups by
+// their category (internal:manual/module_list). The name of a module has a
+// box: from its indent to the count of its exports. A name wider than its
+// box goes on more lines (interface.text_wrap_line), and its row has the
+// height of its lines: no name runs over the page. The boot image does not
+// change while the system runs, so the facts of each module are read once;
+// the rows are made again only when the filter or the open groups change.
+LIST_FIELD_Y :: 4 // The top of the filter field.
+LIST_HEAD_Y :: LIST_FIELD_Y + CELL_HEIGHT + 6 + 4 // The head of the column of the counts.
+LIST_TOP :: LIST_HEAD_Y + CELL_HEIGHT + 2 // The first row of the list.
+LIST_ROWS :: (HEIGHT - LIST_TOP - 4) / CELL_HEIGHT // The lines of the list in the window.
+LIST_NAME_INDENT :: 16 // A name is under the heading of its group, by this indent.
 LIST_ENTRY_CAPACITY :: 1024
-list_row: [LIST_ENTRY_CAPACITY + 1]int // The first line of each module, and at list_count the count of the lines.
+LIST_ITEM_CAPACITY :: LIST_ENTRY_CAPACITY + len(module_list.List_Group) // The modules and the heading of each group.
+list_modules: [LIST_ENTRY_CAPACITY]module_list.List_Module // The facts of each module of the boot image that the list reads.
+list_order: [LIST_ENTRY_CAPACITY]int // The modules by group, then by name.
+list_items: [LIST_ITEM_CAPACITY]module_list.Item // The rows of the list: a heading or a module.
+list_item_count: int
+list_row: [LIST_ITEM_CAPACITY + 1]int // The first line of each row, and at list_item_count the count of the lines.
 list_exports: [LIST_ENTRY_CAPACITY]int // The count of the described exports of each module.
 // Whether each module has an entry. The list keeps the facts and not their
 // colors: a color is of the appearance in force, which can change.
 list_has_entry: [LIST_ENTRY_CAPACITY]bool
 list_count: int
+filter: [module_list.FILTER_BYTES]u8 // The text that the principal typed.
+filter_count: int
+tests_open: bool // The principal opened the group of the tests.
+
+// filter_field_area gives the place of the filter field, at the top of the
+// list.
+filter_field_area :: proc "contextless" () -> interface.Area {
+	return {6, LIST_FIELD_Y, LIST_WIDTH - 12, CELL_HEIGHT + 6}
+}
+
+// filter_character_valid says if a typed character goes into the filter: a
+// printable character of ASCII. A name of a module is ASCII.
+filter_character_valid :: proc "contextless" (character: rune) -> bool {
+	return character >= ' ' && character <= '~'
+}
+
+// filter_set keeps the first count bytes of the filter, and makes the rows
+// of the list again.
+filter_set :: proc "contextless" (count: int) {
+	filter_count = clamp(count, 0, len(filter))
+	list_items_build()
+	system.log_fact(.Info, List_Filtered{shown = u64(list_shown_modules())}, string(filter[:filter_count]))
+}
+
+// list_shown_modules gives the count of the modules that the rows show.
+list_shown_modules :: proc "contextless" () -> (count: int) {
+	for item in list_items[:list_item_count] {
+		count += int(item.module >= 0)
+	}
+	return count
+}
+
+// list_items_build makes the rows of the list from the filter and the open
+// groups, and the first line of each row.
+list_items_build :: proc "contextless" () {
+	list_item_count = module_list.items_build(list_modules[:list_count], list_order[:list_count], string(filter[:filter_count]), tests_open, list_items[:])
+	line := 0
+	for item, place in list_items[:list_item_count] {
+		list_row[place] = line
+		if item.module < 0 {
+			line += 1
+			continue
+		}
+		line += max(interface.text_wrapped_line_count(nil, {}, list_modules[item.module].name, list_name_room(list_exports[item.module])), 1)
+	}
+	list_row[list_item_count] = line
+}
 
 // module_color gives the color of a module, in the list and in the title of
 // its page: a module with an entry that also serves calls, in the color of a
@@ -646,10 +756,10 @@ module_color :: proc "contextless" (exports: int, has_entry: bool) -> graphics.C
 }
 
 // list_name_room gives the width of the box of a name of the list, in
-// pixels: the list without its margins and without the count of the
-// exports, when the module has one, and a space before it.
+// pixels: the list without its indent and its margin and without the count
+// of the exports, when the module has one, and a space before it.
 list_name_room :: proc "contextless" (exports: int) -> int {
-	room := LIST_WIDTH - 16
+	room := LIST_WIDTH - LIST_NAME_INDENT - 8
 	if exports > 0 {
 		buffer: [8]u8
 		room -= (len(system.format(buffer[:], u64(exports))) + 1) * CELL_WIDTH
@@ -663,16 +773,18 @@ list_name_room :: proc "contextless" (exports: int) -> int {
 list_build :: proc "contextless" () {
 	entries := system.image_entries(image)
 	list_count = min(len(entries), LIST_ENTRY_CAPACITY)
-	line := 0
 	for index in 0 ..< list_count {
 		entry := &entries[index]
 		file := file_of(entry)
 		head, _ := module.header(file)
-		exports := described_exports(file)
-		list_row[index], list_exports[index], list_has_entry[index] = line, exports, head.entry_export != 0
-		line += max(interface.text_wrapped_line_count(nil, {}, system.name_of(entry.name[:]), list_name_room(exports)), 1)
+		// A file that the header refuses, or a category that names nothing,
+		// is in the group Other: the list never guesses a group.
+		category, tags, _ := module.module_category_of(file)
+		list_modules[index] = {name = system.name_of(entry.name[:]), group = module_list.group_of(category), tags = tags}
+		list_exports[index], list_has_entry[index] = described_exports(file), head.entry_export != 0
 	}
-	list_row[list_count] = line
+	_ = module_list.order_build(list_modules[:list_count], list_order[:list_count])
+	list_items_build()
 	if list_count < len(entries) {
 		system.log_fact(.Info, List_Cut{shown = u64(list_count), modules = u64(len(entries))})
 	}
@@ -680,23 +792,25 @@ list_build :: proc "contextless" () {
 
 // list_first_row gives the first line of the list that the window shows:
 // the row of the selected module is in the middle when the list is longer
-// than the window.
+// than the window. A selected module that the filter hides leaves the list
+// at its start.
 list_first_row :: proc "contextless" () -> int {
-	selected_row := selected < list_count ? list_row[selected] : 0
-	return clamp(selected_row - LIST_ROWS / 2, 0, max(list_row[list_count] - LIST_ROWS, 0))
+	place := module_list.row_of_module(list_items[:list_item_count], selected)
+	selected_row := place >= 0 ? list_row[place] : 0
+	return clamp(selected_row - LIST_ROWS / 2, 0, max(list_row[list_item_count] - LIST_ROWS, 0))
 }
 
-// list_index_at gives the module whose row is at a height of the window,
-// or -1: a row that the window does not show whole takes no press.
-list_index_at :: proc "contextless" (y: int) -> int {
-	if y < 4 {
+// list_place_at gives the row of the list at a height of the window, or
+// -1: a row that the window does not show whole takes no press.
+list_place_at :: proc "contextless" (y: int) -> int {
+	if y < LIST_TOP {
 		return -1
 	}
 	first_row := list_first_row()
-	row := first_row + (y - 4) / CELL_HEIGHT
-	for index in 0 ..< list_count {
-		if row >= list_row[index] && row < list_row[index + 1] {
-			return list_row[index] >= first_row && list_row[index + 1] <= first_row + LIST_ROWS ? index : -1
+	row := first_row + (y - LIST_TOP) / CELL_HEIGHT
+	for place in 0 ..< list_item_count {
+		if row >= list_row[place] && row < list_row[place + 1] {
+			return list_row[place] >= first_row && list_row[place + 1] <= first_row + LIST_ROWS ? place : -1
 		}
 	}
 	return -1
@@ -923,10 +1037,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					continue
 				}
 				if down && !pressed && event.x >= 0 && event.x < LIST_WIDTH {
-					if index := list_index_at(event.y); index >= 0 {
-						navigation_leave()
-						select(index)
-						page_log()
+					if place := list_place_at(event.y); place >= 0 {
+						item := list_items[place]
+						switch {
+						case item.module >= 0:
+							navigation_leave()
+							select(item.module)
+							page_log()
+						case item.group == .Tests:
+							// The heading of the tests opens or closes them.
+							tests_open = !tests_open
+							list_items_build()
+							system.log_fact(.Info, Tests_Group_Changed{shown = u64(list_shown_modules())})
+						}
 						changed = true
 					}
 				}

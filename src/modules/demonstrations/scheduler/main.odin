@@ -1,5 +1,5 @@
-// The scheduling strategies of the kernel, checked side by side, and
-// measured in a measure run (docs/SCHEDULING.md).
+// The scheduling strategies of the kernel, side by side. A measure run
+// measures them. The design: docs/SCHEDULING.md.
 //
 // The process runs its cases under each strategy: two threads that wake
 // each other while spinners keep each processor busy; a thread that sleeps

@@ -430,7 +430,10 @@ damage_menu :: proc "contextless" () {
 damage_menu_of :: proc "contextless" (layout: bar.Layout) {
 	x, y, width, height := bar.button(layout)
 	damage_add(x, y, width, height)
-	x, y, width, height = bar.menu(layout)
+	// The card with the demonstrations open holds the closed card: one
+	// rectangle covers the menu before and after the action that opens or
+	// closes them.
+	x, y, width, height = bar.menu(bar.with_demonstrations(layout, true))
 	damage_add(x, y, width, height)
 	x, y, width, height = bar.windows_button(layout)
 	damage_add(x, y, width, height)

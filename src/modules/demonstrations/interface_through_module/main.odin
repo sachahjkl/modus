@@ -1,5 +1,5 @@
-// The interface package as a module, for one process (docs/INTERFACE.md,
-// section 7). This process builds the same frame in two ways: through the
+// The interface package as a module, for one process: one frame built in
+// two ways, compared. The design: docs/INTERFACE.md, section 7. This process builds the same frame in two ways: through the
 // exports of the module interface_module, which it imports (each call
 // passes the draw table and the text table of this process as table
 // parameters, with no copy), and with the package src/library/modus/interface

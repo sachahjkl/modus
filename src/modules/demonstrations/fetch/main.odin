@@ -1,5 +1,5 @@
-// A web client of this system: TCP in the process (src/library/modus/tcp) over a
-// segment endpoint with a client grant. The root service granted it
+// A web client of this system: TCP in the process, over a segment endpoint
+// with a client grant (src/library/modus/tcp). The root service granted it
 // 10.0.2.100 port 80 and nothing else. In the test of TCP against a stack
 // that this project did not write, QEMU gives that address to a listener
 // of the modus tool on the host (`guestfwd`): the TCP at the other end is

@@ -375,6 +375,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_PUBLIC + "/kind_icons",
 	foundation.SOURCE_FOLDER_CONTRACT + "/manual_pages",
 	foundation.SOURCE_FOLDER_INTERNAL + "/manual/manual_navigation",
+	foundation.SOURCE_FOLDER_INTERNAL + "/manual/module_list",
 	foundation.SOURCE_FOLDER_INTERNAL + "/edit/text_model",
 	foundation.SOURCE_FOLDER_INTERNAL + "/monitor/sample_history",
 	foundation.SOURCE_FOLDER_CONTRACT + "/ring",

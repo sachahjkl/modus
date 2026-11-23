@@ -1,5 +1,5 @@
-// The hall of fame: the people whose work inspired modus, each on a card
-// (src/md/features/hall_of_fame.md).
+// The hall of fame: the people whose work inspired modus, each on a card.
+// The design: src/md/features/hall_of_fame.md.
 //
 // **What it is for.** It names the work that this system learned from:
 // the languages, the tools, the engines and the ways of programming that
