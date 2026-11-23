@@ -760,11 +760,17 @@ argument_unpack :: proc "contextless" (values: [7]u64) -> (parameter: int, argum
 	return 0, {}, false
 }
 
+// The largest count of the whole list of candidates that an answer may
+// name: a place in it fits an int of each side and a cursor word.
+CANDIDATE_TOTAL_LIMIT :: u64(max(i32))
+
 // candidate_page_valid checks the numbers of a page of candidates that a
-// provider answered: a page inside the whole list, with no more candidates
-// than the area holds, and a page that ends the list or is full.
+// provider answered: a whole list of at most CANDIDATE_TOTAL_LIMIT, a page
+// inside it, with no more candidates than the area holds, and a page that
+// ends the list or is full. The form checks too that the page starts at
+// the place that it asked.
 candidate_page_valid :: proc "contextless" (count, total, first: u64) -> bool {
-	if count > CANDIDATE_CAPACITY || first > total || count > total - first {
+	if total > CANDIDATE_TOTAL_LIMIT || count > CANDIDATE_CAPACITY || first > total || count > total - first {
 		return false
 	}
 	return first + count == total || count == CANDIDATE_CAPACITY

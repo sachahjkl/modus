@@ -620,6 +620,7 @@ mesh_sync_store :: proc "contextless" (
 		return result
 	}
 	request := store_offer_begin(store, request_buffer)
+	pages_taken := 0
 	for {
 		if request == nil {
 			result.store = .Refused_Full
@@ -632,7 +633,12 @@ mesh_sync_store :: proc "contextless" (
 			more: bool
 			result.store, _, _, more = store_offer_reply_accept(store, result.exchange.answer)
 			if result.store == .Ok && more {
+				pages_taken += 1
 				request = store_offer_next(store, request_buffer)
+				if request == nil {
+					result.store = .Stopped_Between_Pages
+					return result
+				}
 				continue
 			}
 		case .Refused:
@@ -643,6 +649,11 @@ mesh_sync_store :: proc "contextless" (
 				}
 			}
 		case .None, .Unknown_Outcome, .Unreachable:
+			// A page went and the next answer did not come: the exchange is
+			// not whole, whatever the page before said.
+			if pages_taken > 0 {
+				result.store = .Stopped_Between_Pages
+			}
 		}
 		return result
 	}

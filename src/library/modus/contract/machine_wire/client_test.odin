@@ -99,6 +99,7 @@ Client_Network :: struct {
 	now_ms:          u64,
 	down:            bool,
 	lose_answer:     bool,
+	lose_answer_at:  int, // Not 0: the answer of the served request of this count is lost.
 	time_out:        bool,
 	flip_last_bit:   bool,
 	other_call:      bool, // A role reply comes back with the identifier of another call.
@@ -144,7 +145,7 @@ network_round_trip :: proc "contextless" (pinned: [32]u8, request: []u8, answer_
 	}
 	answer := serve(&machine.peer, &serve_context, request, network.output[:])
 	network.served += 1
-	if network.lose_answer {
+	if network.lose_answer || (network.lose_answer_at != 0 && network.served == network.lose_answer_at) {
 		return 0, .Link_Broken
 	}
 	if network.time_out {
@@ -538,6 +539,27 @@ client_syncs_a_store_and_repeats_a_lost_offer :: proc(t: ^testing.T) {
 	other := Mesh_Link{state = .Up, purpose = .Paired, pinned_identity = client_identity(laptop)}
 	sync = mesh_sync_store(&laptop.peer, &other, &transport, store_identifier, 50_000, 1_000, buffers.request[:], buffers.answer[:])
 	testing.expect_value(t, sync.store, Store_Status.Refused_Not_Partner)
+
+	// 300 notes: a version of several pages. The link breaks after the
+	// first page was taken: the sync is not done, and the laptop takes no
+	// merge from a reply that is not whole; the next sync ends it, and both
+	// sides hold one common version.
+	for index in 0 ..< 300 {
+		name := [3]u8{'n', u8(index), u8(index >> 8)}
+		testing.expect_value(t, store_write(laptop_store, blake3.hash(name[:]), content), Store_Status.Ok)
+	}
+	common_before := store_version_hash(&laptop_store.common)
+	network.lose_answer_at = network.served + 2
+	sync = mesh_sync_store(&laptop.peer, &link, &transport, store_identifier, 50_000, 1_000, buffers.request[:], buffers.answer[:])
+	testing.expect_value(t, sync.store, Store_Status.Stopped_Between_Pages)
+	testing.expect(t, sync.exchange.outcome != .Answered)
+	testing.expect(t, store_version_hash(&laptop_store.common) == common_before)
+	network.lose_answer_at = 0
+	testing.expect_value(t, mesh_connect(&link, &laptop.peer, &transport, client_identity(home), .Paired, 50_000, 1_000), Mesh_Client_Status.Ok)
+	sync = mesh_sync_store(&laptop.peer, &link, &transport, store_identifier, 50_000, 1_000, buffers.request[:], buffers.answer[:])
+	testing.expect_value(t, sync.store, Store_Status.Ok)
+	testing.expect_value(t, home_store.current.count, laptop_store.current.count)
+	testing.expect(t, store_version_hash(&laptop_store.common) == store_version_hash(&home_store.common))
 }
 
 @(test)

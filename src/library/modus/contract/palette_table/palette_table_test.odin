@@ -634,4 +634,7 @@ candidate_pages_stay_inside_their_list :: proc(t: ^testing.T) {
 	testing.expect(t, !candidate_page_valid(CANDIDATE_CAPACITY, 300, 299))
 	testing.expect(t, !candidate_page_valid(1, max(u64), max(u64)))
 	testing.expect(t, !candidate_page_valid(max(u64), max(u64), 0))
+	// The bound of the whole list, and one past it.
+	testing.expect(t, candidate_page_valid(0, CANDIDATE_TOTAL_LIMIT, CANDIDATE_TOTAL_LIMIT))
+	testing.expect(t, !candidate_page_valid(0, CANDIDATE_TOTAL_LIMIT + 1, CANDIDATE_TOTAL_LIMIT + 1))
 }

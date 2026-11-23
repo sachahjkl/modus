@@ -131,7 +131,9 @@ Peer_Memory :: struct {
 	store_entries:     []Store_Entry,
 	store_conflicts:   []Store_Conflict,
 	version_grow:      Store_Version_Grow,
-	grow_user:         rawptr, // The user of each growth procedure.
+	version_trim:      Store_Version_Trim,
+	object_trim:       machine_sync.Object_Store_Trim,
+	grow_user:         rawptr, // The user of each growth and trim procedure.
 }
 
 // peer_init takes the public identity key of this machine, binds its
@@ -155,6 +157,7 @@ peer_init :: proc "contextless" (peer: ^Peer, identity_public_key: [machine_mesh
 		grow_user         = memory.grow_user,
 		version_grow      = memory.version_grow,
 		version_grow_user = memory.grow_user,
+		version_trim      = memory.version_trim,
 	}
 	if store_count := len(memory.stores); store_count > 0 {
 		entry_share := len(memory.store_entries) / store_count
@@ -164,7 +167,11 @@ peer_init :: proc "contextless" (peer: ^Peer, identity_public_key: [machine_mesh
 			store_exchange_memory_bind(&store, memory.store_entries[index * entry_share:][:entry_share], memory.store_conflicts[index * conflict_share:][:conflict_share])
 		}
 	}
-	return machine_sync.object_store_init(&peer.objects, memory.object_rows, memory.object_bytes, memory.object_grow, memory.grow_user)
+	if !machine_sync.object_store_init(&peer.objects, memory.object_rows, memory.object_bytes, memory.object_grow, memory.grow_user) {
+		return false
+	}
+	peer.objects.trim = memory.object_trim
+	return true
 }
 
 // channel_binding_of_identities binds a pairing to the two identity keys

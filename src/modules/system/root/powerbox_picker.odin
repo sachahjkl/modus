@@ -127,6 +127,15 @@ powerbox_ring_end :: proc "contextless" () {
 	powerbox_ring, powerbox_ring_memory, powerbox_region_memory, powerbox_holder = {}, 0, 0, nil
 }
 
+// powerbox_service_end forgets the powerbox when its process stops, in the
+// reap, before its place takes another process: the ring and the listing
+// of that powerbox end with it.
+powerbox_service_end :: proc "contextless" (item: ^Started) {
+	if powerbox_holder != nil && item == powerbox_holder {
+		powerbox_ring_end()
+	}
+}
+
 // powerbox_service_start starts the powerbox after the holder of Display,
 // so the picker of the display has its other end.
 powerbox_service_start :: proc "contextless" () {
@@ -147,6 +156,18 @@ picker_listing_end :: proc "contextless" () {
 	picker_listing = {}
 }
 
+// picker_listing_refuse tells the powerbox that no list of the principal
+// comes, so the Open that waits for it ends now and not at its bound.
+@(private = "file")
+picker_listing_refuse :: proc "contextless" (principal: u64) {
+	system.log_fact(.Warning, Picker_Listing_Refused{principal = principal})
+	if powerbox_ring.head == nil {
+		return
+	}
+	powerbox_next_tag = powerbox_next_tag == max(u32) ? 1 : powerbox_next_tag + 1
+	system.send(&powerbox_ring.commands, ring.Record{kind = u32(powerbox.Service_Ring_Command.Stores_Refused), tag = powerbox_next_tag, values = {0 = principal}})
+}
+
 // picker_listing_begin makes the connection that lists the stores of a
 // principal and gives it to the powerbox. A principal that is not
 // unlocked gets no list: its stores are no choice while its session is
@@ -157,7 +178,7 @@ picker_listing_begin :: proc "contextless" (principal: u64) {
 		return
 	}
 	if principal >= principals.PRINCIPAL_CAPACITY || (principal != principals.MACHINE && principal_records[principal].state != .Unlocked) {
-		system.log_fact(.Warning, Picker_Listing_Refused{principal = principal})
+		picker_listing_refuse(principal)
 		return
 	}
 	storage_place: u64
@@ -171,7 +192,7 @@ picker_listing_begin :: proc "contextless" (principal: u64) {
 	picker_store_lister.principal = principal
 	connection, service, ring_memory, region_memory, status := connection_open(&picker_store_lister, role_holder_name(.Storage))
 	if status != .Ok {
-		system.log_fact(.Warning, Picker_Listing_Refused{principal = principal})
+		picker_listing_refuse(principal)
 		return
 	}
 	// The powerbox receives the handles through its ring; this service
@@ -199,7 +220,7 @@ picker_listing_begin :: proc "contextless" (principal: u64) {
 			system.handle_revoke(source, powerbox_holder.process)
 		}
 		disconnect(connection)
-		system.log_fact(.Warning, Picker_Listing_Refused{principal = principal})
+		picker_listing_refuse(principal)
 		return
 	}
 	picker_listing = {connection = connection, tag = tag, deadline = system.time() + PICKER_LISTING_BOUND_MILLISECONDS}

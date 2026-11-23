@@ -829,6 +829,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 		}
 		powerbox_picker_step() // powerbox_picker.odin
+		plan_difference_memory_step() // powerbox_dialog.odin
 		powerbox_picker_wait(&wait)
 		window_events_wait(&wait) // window_events.odin
 		deadline := damage_count > 0 ? max(next_frame, 1) : next_second_of_bar(system.time())

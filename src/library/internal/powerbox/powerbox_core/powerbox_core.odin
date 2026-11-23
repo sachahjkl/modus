@@ -173,7 +173,20 @@ Powerbox_Counters :: struct {
 Powerbox_Tables :: struct {
 	stores:      []Session_Store,
 	held_grants: []Held_Grant,
+	// The index of the stores by principal and name, and by principal and
+	// store id: a length that is a power of two, at least four times the
+	// rows (two keys of each row, at most half full). Empty: the checks of a
+	// new store scan the table.
+	store_index: []u32,
+	// The growth of the stores: after it, state.stores holds at least
+	// rows_least rows with the rows of before in place, and
+	// state.store_index the index memory for them, of any content (the
+	// core writes it again). false: the budget pays no more.
+	stores_grow:      Stores_Grow,
+	stores_grow_user: rawptr,
 }
+
+Stores_Grow :: #type proc "contextless" (user: rawptr, state: ^Powerbox_State, rows_least: int) -> bool
 
 // The state of the powerbox policy engine.
 Powerbox_State :: struct {
@@ -182,6 +195,11 @@ Powerbox_State :: struct {
 	next_handle_id:       u64,
 	picker_change_count:  u64,
 	stores:               []Session_Store,
+	store_index:          []u32,
+	stores_grow:          Stores_Grow,
+	stores_grow_user:     rawptr,
+	store_count:          int, // The rows that are active.
+	store_free_from:      int, // No free row comes before this one.
 	pending:              [MAX_TOTAL_PENDING_DIALOGS]Pending_Dialog,
 	askers:               [MAX_ASKERS]Asker_Record,
 	held_grants:          []Held_Grant,
@@ -201,6 +219,12 @@ state_init :: proc "contextless" (state: ^Powerbox_State, trusted_display_slot: 
 		grant = {}
 	}
 	state.stores = tables.stores
+	state.store_index = tables.store_index
+	state.stores_grow = tables.stores_grow
+	state.stores_grow_user = tables.stores_grow_user
+	for &slot in state.store_index {
+		slot = 0
+	}
 	state.held_grants = tables.held_grants
 	state.trusted_display_slot = trusted_display_slot
 	state.next_dialog_serial = 1
@@ -208,28 +232,152 @@ state_init :: proc "contextless" (state: ^Powerbox_State, trusted_display_slot: 
 	state.picker_change_count = 1
 }
 
-// register_session_store adds a principal-owned store to the picker candidate
-// catalog. Candidates are strictly scoped to their principal.
+// The two keys of a row in the index of the stores.
+@(private = "file")
+Store_Key :: enum u8 {
+	Name,
+	Id,
+}
+
+@(private = "file")
+store_key_of :: proc "contextless" (key: Store_Key, principal: u64, name_hash: blake3.Hash, store_id: u64) -> u64 {
+	value: u64
+	switch key {
+	case .Name:
+		for index in 0 ..< 8 {
+			value |= u64(name_hash[index]) << (8 * u64(index))
+		}
+	case .Id:
+		value = store_id * 0x9E37_79B9_7F4A_7C15
+	}
+	// The principal and the kind of the key move the slot, so two
+	// principals or two keys of one value do not share a chain.
+	value ~= (principal + 1) * 0xC2B2_AE3D_27D4_EB4F
+	value ~= u64(key) * 0x1656_67B1_9E37_79F9
+	value ~= value >> 29
+	return value
+}
+
+@(private = "file")
+store_row_matches :: proc "contextless" (store: ^Session_Store, key: Store_Key, principal: u64, name_hash: blake3.Hash, store_id: u64) -> bool {
+	if !store.active || store.principal != principal {
+		return false
+	}
+	switch key {
+	case .Name:
+		return store.candidate.name_hash == name_hash
+	case .Id:
+		return store.candidate.store_id == store_id
+	}
+	return false
+}
+
+// store_index_find says if a row of the principal has the key.
+@(private = "file")
+store_index_find :: proc "contextless" (state: ^Powerbox_State, key: Store_Key, principal: u64, name_hash: blake3.Hash, store_id: u64) -> bool {
+	if len(state.store_index) == 0 {
+		for &store in state.stores {
+			if store_row_matches(&store, key, principal, name_hash, store_id) {
+				return true
+			}
+		}
+		return false
+	}
+	mask := u64(len(state.store_index) - 1)
+	slot := store_key_of(key, principal, name_hash, store_id) & mask
+	for _ in 0 ..< len(state.store_index) {
+		row := state.store_index[slot]
+		if row == 0 {
+			return false
+		}
+		if int(row - 1) < len(state.stores) && store_row_matches(&state.stores[row - 1], key, principal, name_hash, store_id) {
+			return true
+		}
+		slot = (slot + 1) & mask
+	}
+	return false
+}
+
+@(private = "file")
+store_index_put :: proc "contextless" (state: ^Powerbox_State, row: int) {
+	if len(state.store_index) == 0 {
+		return
+	}
+	store := &state.stores[row]
+	mask := u64(len(state.store_index) - 1)
+	for key in Store_Key {
+		slot := store_key_of(key, store.principal, store.candidate.name_hash, store.candidate.store_id) & mask
+		for state.store_index[slot] != 0 {
+			slot = (slot + 1) & mask
+		}
+		state.store_index[slot] = u32(row + 1)
+	}
+}
+
+// store_index_rebuild writes the index of each active row again.
+@(private = "file")
+store_index_rebuild :: proc "contextless" (state: ^Powerbox_State) {
+	for &slot in state.store_index {
+		slot = 0
+	}
+	for &store, row in state.stores {
+		if store.active {
+			store_index_put(state, row)
+		}
+	}
+}
+
+// store_index_has_room says if the index takes two more keys and stays at
+// most half full.
+@(private = "file")
+store_index_has_room :: proc "contextless" (state: ^Powerbox_State) -> bool {
+	return len(state.store_index) == 0 || 4 * (state.store_count + 1) <= len(state.store_index)
+}
+
+// register_session_store adds a principal-owned store to the picker
+// candidate catalog. Candidates are strictly scoped to their principal. A
+// name or a store id that the principal holds already is refused, by the
+// index; a table with no free row grows from the budget, and a budget
+// that pays no more refuses the store: the caller sees false, and the
+// list is not whole.
 register_session_store :: proc "contextless" (state: ^Powerbox_State, principal: u64, name: string, store_id: u64) -> bool {
 	candidate, ok := powerbox.picker_candidate_make(name, store_id)
 	if !ok {
 		return false
 	}
-	for &existing in state.stores {
-		if existing.active && existing.principal == principal {
-			if existing.candidate.store_id == store_id || existing.candidate.name_hash == candidate.name_hash {
-				return false
-			}
+	if store_index_find(state, .Name, principal, candidate.name_hash, store_id) || store_index_find(state, .Id, principal, candidate.name_hash, store_id) {
+		return false
+	}
+	free := -1
+	for row in state.store_free_from ..< len(state.stores) {
+		if !state.stores[row].active {
+			free = row
+			break
 		}
 	}
-	for &slot in state.stores {
-		if !slot.active {
-			slot = {active = true, principal = principal, candidate = candidate}
-			state.picker_change_count += 1
-			return true
+	if free < 0 || !store_index_has_room(state) {
+		rows := len(state.stores)
+		wanted := free < 0 ? max(2 * rows, 16) : rows
+		if state.stores_grow == nil || !state.stores_grow(state.stores_grow_user, state, wanted) || len(state.stores) < wanted {
+			return false
+		}
+		for &store in state.stores[rows:] {
+			store = {}
+		}
+		store_index_rebuild(state)
+		if !store_index_has_room(state) {
+			return false
+		}
+		if free < 0 {
+			free = rows
 		}
 	}
-	return false
+	state.stores[free] = {active = true, principal = principal, candidate = candidate}
+	state.store_count += 1
+	state.store_free_from = free + 1
+	store_index_put(state, free)
+	state.picker_change_count += 1
+	return true
 }
 
 // register_start_grant records an already-held capability from a process's
@@ -1294,8 +1442,11 @@ stores_replace_begin :: proc "contextless" (state: ^Powerbox_State, principal: u
 	for &store in state.stores {
 		if store.active && store.principal == principal {
 			store = {}
+			state.store_count -= 1
 		}
 	}
+	state.store_free_from = 0
+	store_index_rebuild(state)
 	state.picker_change_count += 1
 }
 

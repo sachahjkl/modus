@@ -1575,6 +1575,24 @@ object_of_two_megabytes_crosses_in_pieces :: proc(t: ^testing.T) {
 Test_Budget :: struct {
 	bytes_left: int,
 	growths:    int,
+	trims:      int,
+}
+
+// The trims give back to the budget the bytes past what the table keeps.
+@(private = "file")
+test_version_trim :: proc "contextless" (user: rawptr, version: ^Store_Version) {
+	budget := (^Test_Budget)(user)
+	budget.bytes_left += len(version.entries) * size_of(Store_Entry) + len(version.conflicts) * size_of(Store_Conflict)
+	budget.trims += 1
+	version.entries, version.conflicts = nil, nil
+}
+
+@(private = "file")
+test_object_trim :: proc "contextless" (user: rawptr, store: ^machine_sync.Object_Store) {
+	budget := (^Test_Budget)(user)
+	budget.bytes_left += len(store.bytes) - store.bytes_used
+	budget.trims += 1
+	store.bytes = store.bytes[:store.bytes_used]
 }
 
 @(private = "file")
@@ -1740,7 +1758,7 @@ peer_tables_refuse_past_the_budget :: proc(t: ^testing.T) {
 	large_budget := Test_Budget{bytes_left = 64 * 1024 * 1024}
 	home_rows := make([]Exchanged_Store, 1, context.temp_allocator)
 	laptop_rows := make([]Exchanged_Store, 1, context.temp_allocator)
-	home := machine_make(0x73, {object_grow = test_object_grow, store_table_grow = nil, version_grow = test_version_grow, grow_user = &small_budget, stores = home_rows})
+	home := machine_make(0x73, {object_grow = test_object_grow, store_table_grow = nil, version_grow = test_version_grow, version_trim = test_version_trim, object_trim = test_object_trim, grow_user = &small_budget, stores = home_rows})
 	laptop := machine_make(0x74, {object_grow = test_object_grow, version_grow = test_version_grow, grow_user = &large_budget, stores = laptop_rows})
 	defer machine_free(home, laptop)
 	testing.expect(t, pair(t, home, laptop, 1_000))
@@ -1758,6 +1776,10 @@ peer_tables_refuse_past_the_budget :: proc(t: ^testing.T) {
 	testing.expect(t, reason == .Store_Refused && detail == u32(Store_Status.Refused_Full))
 	testing.expect(t, test_store_state(home_store) == home_before)
 	testing.expect(t, small_budget.bytes_left >= 0)
+	// The offer that was refused gave its pages back: the incoming version
+	// holds no table, and the budget holds what it held before.
+	testing.expect(t, small_budget.trims == 1 && len(home_store.incoming.entries) == 0)
+	testing.expect_value(t, small_budget.bytes_left, 100 * (size_of(Store_Entry) + size_of(Store_Conflict)))
 
 	// An object of 1 MiB to a store of objects that the budget pays for
 	// less: the fetch ends at a piece, and the store keeps no byte of it.
@@ -1787,4 +1809,6 @@ peer_tables_refuse_past_the_budget :: proc(t: ^testing.T) {
 	testing.expect_value(t, home.peer.objects.count, 0)
 	testing.expect_value(t, home.peer.objects.bytes_used, 0)
 	testing.expect(t, object_lookup(&home.peer, hash) == nil)
+	// The pieces that came gave their bytes back.
+	testing.expect(t, small_budget.trims == 2 && len(home.peer.objects.bytes) == 0)
 }

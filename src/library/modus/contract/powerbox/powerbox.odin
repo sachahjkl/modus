@@ -80,7 +80,17 @@ Picker_Ring_Status :: enum u32 {
 	Refused     = 1, // values[0]: the Powerbox_Refusal.
 	Bad_Command = 2,
 	Busy        = 3, // An Open waits for its list already.
-	No_List     = 4, // The root service gave no list: values[0] is 0.
+	No_List     = 4, // The root service gave no list, or the list did not come within its bound.
+	// The list came, and is not whole: values[0] is the Picker_List_Cause.
+	// No page shows a list that misses stores.
+	List_Not_Whole = 5,
+}
+
+// Why a list of stores is not whole.
+Picker_List_Cause :: enum u64 {
+	None              = 0,
+	Text_Past_Region  = 1, // The text of `stores` passed the call region of the connection.
+	Table_Full        = 2, // The budget of the powerbox pays no more rows of stores.
 }
 
 #assert(size_of(Picker_Page_Request) <= PICKER_REGION_PAGE_OFFSET)
@@ -257,6 +267,10 @@ Service_Ring_Command :: enum u32 {
 	// in the boot image, from 1. The powerbox completes it when the call
 	// ended, and the root service then ends the connection.
 	Stores_Connection = 7,
+	// The root service gives no list of the principal values[0]: the
+	// principal is not unlocked, or the storage service gave no
+	// connection. The Open that waits for it ends with No_List.
+	Stores_Refused = 8,
 }
 
 // Completion statuses returned on the powerbox service ring.

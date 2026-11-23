@@ -213,7 +213,7 @@ border_enum_parsers_refuse_zero_out_of_range_and_max_words :: proc(t: ^testing.T
 		_, ok := network_endpoint_rights_from_word(bad)
 		testing.expect(t, !ok)
 	}
-	for bad in ([?]u32{0, u32(Service_Ring_Command.Stores_Connection) + 1, max(u32)}) {
+	for bad in ([?]u32{0, u32(Service_Ring_Command.Stores_Refused) + 1, max(u32)}) {
 		_, ok := service_ring_command_from_word(bad)
 		testing.expect(t, !ok)
 	}

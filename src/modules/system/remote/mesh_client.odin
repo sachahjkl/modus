@@ -409,6 +409,10 @@ mesh_request_result :: proc "contextless" (identity: [32]u8, identifier: u64, va
 				return errors.fail(error, -1, .Malformed, .Objects, 2, 0, 0, i64(ended.fetch))
 			}
 		case .Store_Offer:
+			if ended.store == .Stopped_Between_Pages {
+				// As an object that stops between two pieces: no whole answer.
+				return errors.fail(error, -1, .No_Answer, .Stores, 2, 0, 0, i64(ended.store))
+			}
 			if ended.store != .Ok {
 				return errors.fail(error, -1, .Refused, .Stores, 2, 0, 0, i64(ended.store))
 			}
@@ -581,8 +585,9 @@ mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Cli
 			item.store, _, _, more = machine_wire.store_offer_reply_accept(store, answer)
 			// A version of several pages: the same request sends the next
 			// page, or asks for the next page of the reply.
-			if item.store == .Ok && more {
-				mesh_client_continue(link, item, machine_wire.store_offer_next(store, mesh_frame_buffer[:]))
+			if item.store == .Ok && more && !mesh_client_continue(link, item, machine_wire.store_offer_next(store, mesh_frame_buffer[:])) {
+				// The next page could not leave: the exchange is not whole.
+				item.store = .Stopped_Between_Pages
 			}
 		} else {
 			item.store = .Refused_Unknown_Store

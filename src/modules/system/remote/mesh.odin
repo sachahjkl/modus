@@ -30,45 +30,48 @@ import "modus:system"
 // The state of the mesh: in the data of the process, never on a stack.
 mesh: machine_wire.Peer
 // The tables of the mesh that grow with the principal: the bytes and the
-// rows of the objects by hash, the rows of the exchanged stores, and the
-// versions of each store. Each is an arena of the budget of remote that
-// reserves as many pages as the budget held at the start, and commits a
-// page only when a table needs it: the tables have the size that the
-// budget pays, and no count of this file refuses a sync. The bytes, the
-// object rows and the store rows grow in place, since a pointer to a row
-// stays in use; a version grows by a copy to the double of its size, so
-// the copies it leaves behind are at most the size of the versions.
+// rows of the objects by hash and the rows of the exchanged stores, each
+// in an arena of the budget of remote that reserves as many pages as the
+// budget held at the start and commits the exact pages of each growth;
+// and the versions of each store, each in a memory object of its own. No
+// count of this file refuses a sync: the budget does, with its kept
+// pages and its shares (machine_wire.memory_growth_allowed). The bytes,
+// the object rows and the store rows grow in place, since a pointer to a
+// row stays in use. A version moves to a larger object and closes the old
+// one, so its pages go back to the budget at once, and a refused version
+// gives back its object (mesh_version_trim).
 mesh_object_bytes_arena: system.Arena
 mesh_object_rows_arena: system.Arena
 mesh_store_rows_arena: system.Arena
-mesh_versions_arena: system.Arena
 
 // The pages of the budget that a growth of a table always leaves free, so
 // that the streams, the call regions and the window of remote still get
 // their pages when the principal syncs more than the budget holds.
 MESH_BUDGET_KEPT_PAGES :: 512
 
-// mesh_pages_free is true when the budget of remote can pay bytes more
-// and still keep MESH_BUDGET_KEPT_PAGES.
+// The shares of the mesh, from the budget at the start of the mesh.
+mesh_shares: machine_wire.Memory_Shares
+
+// mesh_growth_allowed says if a growth that commits push_pages may run:
+// the budget keeps its kept pages after it, and the store and the partner
+// that grow stay in their shares.
 @(private = "file")
-mesh_pages_free :: proc "contextless" (bytes: int) -> bool {
+mesh_growth_allowed :: proc "contextless" (push_pages, store_pages, peer_pages: u64) -> bool {
 	amounts, status := system.budget_read()
-	if status != .Ok || bytes < 0 {
-		return false
-	}
-	pages := (u64(bytes) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-	return amounts.pages >= MESH_BUDGET_KEPT_PAGES && pages <= amounts.pages - MESH_BUDGET_KEPT_PAGES
+	return status == .Ok && machine_wire.memory_growth_allowed(mesh_shares, amounts.pages, push_pages, store_pages, peer_pages)
 }
 
 // mesh_extend pushes bytes more onto an arena that holds one table, and
 // is true when they follow the end of the table: the table then grows in
-// place.
+// place. The pages that the push commits, which the arena counts before
+// it, are the pages that the shares see.
 @(private = "file")
-mesh_extend :: proc "contextless" (arena: ^system.Arena, table_end: rawptr, bytes: int, alignment: int) -> bool {
+mesh_extend :: proc "contextless" (arena: ^system.Arena, table_end: rawptr, bytes: int, alignment: int, held_pages: u64) -> bool {
 	if bytes <= 0 {
 		return true
 	}
-	if !mesh_pages_free(bytes) {
+	pages, fits := system.arena_push_commit_pages(arena, u64(bytes), u64(alignment))
+	if !fits || !mesh_growth_allowed(pages, held_pages, held_pages) {
 		return false
 	}
 	address, status := system.arena_push(arena, u64(bytes), u64(alignment))
@@ -78,14 +81,14 @@ mesh_extend :: proc "contextless" (arena: ^system.Arena, table_end: rawptr, byte
 // The growth of a table in place: the double of its length when the
 // budget pays it, else the least that is asked.
 @(private = "file")
-mesh_grow_in_place :: proc "contextless" (arena: ^system.Arena, $T: typeid, table: ^[]T, least: int) -> bool {
+mesh_grow_in_place :: proc "contextless" (arena: ^system.Arena, $T: typeid, table: ^[]T, least: int, held_pages: u64) -> bool {
 	if least <= len(table^) {
 		return true
 	}
 	base := ([^]T)(arena.base)
 	end: rawptr = len(table^) == 0 ? nil : rawptr(&base[len(table^)])
 	for wanted in ([2]int{max(least, 2 * len(table^)), least}) {
-		if mesh_extend(arena, end, (wanted - len(table^)) * size_of(T), align_of(T)) {
+		if mesh_extend(arena, end, (wanted - len(table^)) * size_of(T), align_of(T), held_pages) {
 			table^ = base[:wanted]
 			return true
 		}
@@ -93,50 +96,143 @@ mesh_grow_in_place :: proc "contextless" (arena: ^system.Arena, $T: typeid, tabl
 	return false
 }
 
+// The bytes of an object in assembly hold at most the share of a store:
+// the partner that sends it cannot take the mesh with an object that
+// will not prove its hash.
 @(private = "file")
 mesh_object_grow :: proc "contextless" (_: rawptr, store: ^machine_sync.Object_Store, bytes_least, rows_least: int) -> bool {
-	return mesh_grow_in_place(&mesh_object_bytes_arena, u8, &store.bytes, bytes_least) && mesh_grow_in_place(&mesh_object_rows_arena, machine_sync.Stored_Object, &store.objects, rows_least)
+	assembly_pages := u64(max(len(store.bytes) - store.bytes_used, 0)) / system.PAGE_SIZE
+	return mesh_grow_in_place(&mesh_object_bytes_arena, u8, &store.bytes, bytes_least, assembly_pages) && mesh_grow_in_place(&mesh_object_rows_arena, machine_sync.Stored_Object, &store.objects, rows_least, 0)
+}
+
+// After an object that did not prove its hash, or that stopped between
+// two pieces, the bytes past those in use go back to the budget.
+@(private = "file")
+mesh_object_trim :: proc "contextless" (_: rawptr, store: ^machine_sync.Object_Store) {
+	if system.arena_trim(&mesh_object_bytes_arena, u64(store.bytes_used)) == .Ok {
+		store.bytes = ([^]u8)(mesh_object_bytes_arena.base)[:store.bytes_used]
+	}
 }
 
 @(private = "file")
 mesh_store_table_grow :: proc "contextless" (_: rawptr, table: ^machine_wire.Store_Table, rows_least: int) -> bool {
-	return mesh_grow_in_place(&mesh_store_rows_arena, machine_wire.Exchanged_Store, &table.rows, rows_least)
+	return mesh_grow_in_place(&mesh_store_rows_arena, machine_wire.Exchanged_Store, &table.rows, rows_least, 0)
 }
 
-// A version moves to new memory of the double of its size, with its
-// content: no pointer names an entry of a version across a call.
+// The head of the memory object of a version, before its entries: the
+// object and its pages, so a growth or a trim closes the old one.
+Mesh_Version_Head :: struct {
+	memory: system.Handle,
+	pages:  u64,
+}
+MESH_VERSION_HEAD_BYTES :: 64
+#assert(size_of(Mesh_Version_Head) <= MESH_VERSION_HEAD_BYTES)
+
+@(private = "file")
+mesh_version_head :: proc "contextless" (version: ^machine_wire.Store_Version) -> ^Mesh_Version_Head {
+	data := rawptr(raw_data(version.entries))
+	if data == nil {
+		return nil
+	}
+	return (^Mesh_Version_Head)(uintptr(data) - MESH_VERSION_HEAD_BYTES)
+}
+
+// mesh_store_of_version gives the row of the store that holds a version,
+// and the pages that the stores of its partner hold.
+@(private = "file")
+mesh_store_of_version :: proc "contextless" (version: ^machine_wire.Store_Version) -> (store: ^machine_wire.Exchanged_Store, peer_pages: u64) {
+	rows := mesh.stores.rows
+	if len(rows) == 0 {
+		return nil, 0
+	}
+	first := uintptr(raw_data(rows))
+	place := uintptr(version)
+	if place < first || place >= first + uintptr(len(rows) * size_of(machine_wire.Exchanged_Store)) {
+		return nil, 0
+	}
+	store = &rows[(place - first) / size_of(machine_wire.Exchanged_Store)]
+	for &other in rows {
+		if other.in_use && other.partner_identity == store.partner_identity {
+			peer_pages += other.memory_pages
+		}
+	}
+	return store, peer_pages
+}
+
+// mesh_version_free closes the object of a version and counts its pages
+// back.
+@(private = "file")
+mesh_version_free :: proc "contextless" (version: ^machine_wire.Store_Version, store: ^machine_wire.Exchanged_Store) {
+	head := mesh_version_head(version)
+	if head == nil {
+		return
+	}
+	memory, pages := head.memory, head.pages
+	system.memory_unmap(rawptr(head))
+	system.close(memory)
+	if store != nil {
+		store.memory_pages -= min(store.memory_pages, pages)
+	}
+	version.entries, version.conflicts = nil, nil
+}
+
+// A version moves to a new object of the double of its size, with its
+// content: no pointer names an entry of a version across a call. The
+// object is paid whole at its creation, so its pages are the pages that
+// the shares see; the old object closes after the copy.
 @(private = "file")
 mesh_version_grow :: proc "contextless" (_: rawptr, version: ^machine_wire.Store_Version, entries_least, conflicts_least: int) -> bool {
-	move :: proc "contextless" ($T: typeid, table: ^[]T, used, least: int) -> bool {
-		if least <= len(table^) {
-			return true
-		}
-		for wanted in ([2]int{max(least, 2 * len(table^), 64), least}) {
-			if !mesh_pages_free(wanted * size_of(T)) {
-				continue
-			}
-			address, status := system.arena_push(&mesh_versions_arena, u64(wanted * size_of(T)), u64(align_of(T)))
-			if status != .Ok {
-				continue
-			}
-			grown := ([^]T)(address)[:wanted]
-			copy(grown, table^[:used])
-			table^ = grown
-			return true
-		}
-		return false
+	if entries_least <= len(version.entries) && conflicts_least <= len(version.conflicts) {
+		return true
 	}
-	// The entries first: a refusal of the conflicts then leaves a version
-	// with more room and the same content, which is no change.
-	return move(machine_wire.Store_Entry, &version.entries, version.count, entries_least) && move(machine_wire.Store_Conflict, &version.conflicts, version.conflict_count, conflicts_least)
+	store, peer_pages := mesh_store_of_version(version)
+	store_pages := store != nil ? store.memory_pages : 0
+	doubled := [2]int{max(entries_least, len(version.entries) >= entries_least ? len(version.entries) : 2 * len(version.entries), 64), max(conflicts_least, len(version.conflicts) >= conflicts_least ? len(version.conflicts) : 2 * len(version.conflicts), 8)}
+	least := [2]int{max(entries_least, len(version.entries)), max(conflicts_least, len(version.conflicts))}
+	for wanted in ([2][2]int{doubled, least}) {
+		bytes := u64(MESH_VERSION_HEAD_BYTES + wanted[0] * size_of(machine_wire.Store_Entry) + wanted[1] * size_of(machine_wire.Store_Conflict))
+		pages := (bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+		if !mesh_growth_allowed(pages, store_pages, peer_pages) {
+			continue
+		}
+		memory, status := system.memory_create(pages)
+		if status != .Ok {
+			continue
+		}
+		address, map_status := system.memory_map(memory, {.Write})
+		if map_status != .Ok {
+			system.close(memory)
+			continue
+		}
+		(^Mesh_Version_Head)(address)^ = {memory = memory, pages = pages}
+		entries := ([^]machine_wire.Store_Entry)(uintptr(address) + MESH_VERSION_HEAD_BYTES)[:wanted[0]]
+		conflicts := ([^]machine_wire.Store_Conflict)(uintptr(address) + MESH_VERSION_HEAD_BYTES + uintptr(wanted[0] * size_of(machine_wire.Store_Entry)))[:wanted[1]]
+		copy(entries, version.entries[:version.count])
+		copy(conflicts, version.conflicts[:version.conflict_count])
+		mesh_version_free(version, store)
+		version.entries, version.conflicts = entries, conflicts
+		if store != nil {
+			store.memory_pages += pages
+		}
+		return true
+	}
+	return false
+}
+
+// A version that a refusal emptied gives its object back.
+@(private = "file")
+mesh_version_trim :: proc "contextless" (_: rawptr, version: ^machine_wire.Store_Version) {
+	store, _ := mesh_store_of_version(version)
+	mesh_version_free(version, store)
 }
 
 // mesh_memory_make reserves the arenas of the tables, each as large as the
-// budget of remote holds now; their pages come at the first sync. The
-// tables start empty.
+// budget of remote holds now, with exact commits; their pages come at the
+// first sync. The tables start empty, and the shares come from the same
+// budget.
 @(private = "file")
 mesh_memory_make :: proc "contextless" (error: ^errors.Error_Record) -> (memory: machine_wire.Peer_Memory, status: system.Status) {
-	arenas := [4]^system.Arena{&mesh_object_bytes_arena, &mesh_object_rows_arena, &mesh_store_rows_arena, &mesh_versions_arena}
+	arenas := [3]^system.Arena{&mesh_object_bytes_arena, &mesh_object_rows_arena, &mesh_store_rows_arena}
 	for arena in arenas {
 		system.arena_end(arena)
 	}
@@ -145,6 +241,7 @@ mesh_memory_make :: proc "contextless" (error: ^errors.Error_Record) -> (memory:
 	if status != .Ok {
 		return {}, status
 	}
+	mesh_shares = machine_wire.memory_shares_of(amounts.pages, MESH_BUDGET_KEPT_PAGES)
 	reserve := system.arena_reservation_pages(amounts.pages)
 	for arena in arenas {
 		arena^, status = system.arena_create(reserve, error = error)
@@ -154,10 +251,13 @@ mesh_memory_make :: proc "contextless" (error: ^errors.Error_Record) -> (memory:
 			}
 			return {}, status
 		}
+		arena.exact_commits = true
 	}
 	memory.object_grow = mesh_object_grow
+	memory.object_trim = mesh_object_trim
 	memory.store_table_grow = mesh_store_table_grow
 	memory.version_grow = mesh_version_grow
+	memory.version_trim = mesh_version_trim
 	return memory, .Ok
 }
 

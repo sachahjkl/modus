@@ -28,6 +28,9 @@ Form :: struct {
 	candidate_count:  int, // The candidates of the page in use.
 	candidate_total:  int, // The candidates of the whole list that the provider matched.
 	candidate_page_first: int, // The place of the page in that list.
+	// The place of the page that the last request asked: an answer that
+	// starts at another place is no answer to it.
+	candidate_first_asked: int,
 	// The page that the owner asked for comes after a move up past the
 	// first candidate of the page before: its last candidate is chosen.
 	candidate_choose_last: bool,
@@ -406,7 +409,7 @@ form_candidates_set :: proc "contextless" (form: ^Form, memory: []u8, count: u64
 	choose_last := form.candidate_choose_last
 	form_candidates_clear(form)
 	candidate_kind, kind_ok := enum_word.member_of_word(palette_table.Candidate_Kind, kind)
-	if !kind_ok || candidate_kind == .None || facts &~ palette_table.CANDIDATES_CLOSED != 0 || !palette_table.candidate_page_valid(count, total, first) {
+	if !kind_ok || candidate_kind == .None || facts &~ palette_table.CANDIDATES_CLOSED != 0 || !palette_table.candidate_page_valid(count, total, first) || first != u64(max(form.candidate_first_asked, 0)) {
 		return
 	}
 	copied, ok := palette_table.candidates_copy(memory, count, &form.candidates)

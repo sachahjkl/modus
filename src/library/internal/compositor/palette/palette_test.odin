@@ -2887,6 +2887,10 @@ the_candidates_of_a_field_come_by_pages :: proc(t: ^testing.T) {
 	// The last page: 300 - 288 = 12 candidates, which end the list.
 	last_first := TOTAL - TOTAL % PAGE
 	count = write_page(table, last_first)
+	// A page that starts at another place than the one asked is no answer.
+	form_candidates_set(form, table, u64(count), module_kind, 0, TOTAL, u64(last_first))
+	testing.expect_value(t, form.candidate_count, 0)
+	form.candidate_first_asked = last_first
 	form_candidates_set(form, table, u64(count), module_kind, 0, TOTAL, u64(last_first))
 	testing.expect_value(t, form.candidate_count, TOTAL % PAGE)
 	testing.expect_value(t, candidate_name(form, form.candidate_count - 1), "m299")
@@ -2903,6 +2907,7 @@ the_candidates_of_a_field_come_by_pages :: proc(t: ^testing.T) {
 	testing.expect(t, before_wanted)
 	testing.expect_value(t, before_first, last_first - PAGE)
 	form.candidate_choose_last = true
+	form.candidate_first_asked = before_first
 	count = write_page(table, before_first)
 	form_candidates_set(form, table, u64(count), module_kind, 0, TOTAL, u64(before_first))
 	testing.expect_value(t, form.candidate_choice, PAGE - 1)

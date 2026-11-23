@@ -91,6 +91,12 @@ Store_Conflict :: struct {
 // pays no more, and the version keeps its tables.
 Store_Version_Grow :: #type proc "contextless" (user: rawptr, version: ^Store_Version, entries_least, conflicts_least: int) -> bool
 
+// The procedure that gives back the memory of an empty version, after a
+// refusal emptied it: the pages that a partner made it take go back to
+// the budget of the owner. The version then holds no table, and grows
+// again at its next page.
+Store_Version_Trim :: #type proc "contextless" (user: rawptr, version: ^Store_Version)
+
 // A version: its tables are memory of the caller, and their lengths are
 // its capacities now. With grow, the tables grow when a write, a merge or
 // a page needs room, so a version has the size that the budget of its
@@ -102,6 +108,16 @@ Store_Version :: struct {
 	conflict_count: int,
 	grow:           Store_Version_Grow,
 	grow_user:      rawptr,
+	trim:           Store_Version_Trim,
+}
+
+// version_trim empties a version and gives its memory back.
+@(private)
+version_trim :: proc "contextless" (version: ^Store_Version) {
+	version_clear(version)
+	if version.trim != nil {
+		version.trim(version.grow_user, version)
+	}
 }
 
 // version_room makes room in a version for entries and conflicts: true
@@ -129,6 +145,7 @@ Store_Table :: struct {
 	// it when the row is taken.
 	version_grow:      Store_Version_Grow,
 	version_grow_user: rawptr,
+	version_trim:      Store_Version_Trim,
 }
 
 // The place of a page in a version: its first entry and its first conflict.
@@ -172,6 +189,10 @@ Exchanged_Store :: struct {
 	// Two versions for the merges of an exchange, before it applies them.
 	merged:            Store_Version,
 	merged_later:      Store_Version,
+	// The pages that the owner of the memory counts for the versions of this
+	// store: its share of the memory of the mesh (memory_shares.odin). The
+	// contract keeps it; only the owner writes it.
+	memory_pages:      u64,
 }
 
 Store_Status :: enum u8 {
@@ -196,6 +217,10 @@ Store_Status :: enum u8 {
 	Refused_Out_Of_Order         = 19, // A page that does not start where the pages before ended, or of another version.
 	Refused_Version_Hash         = 20, // The pages of a version, whole, do not have the hash that its first page named.
 	Refused_Bad_Phase            = 21, // A phase that names no member, or that this side does not take.
+	// The exchange stopped between two pages: the next page did not leave,
+	// or its answer did not come. The store of this side kept what it held;
+	// the next sync starts the version again at its first page.
+	Stopped_Between_Pages        = 22,
 }
 
 @(private)
@@ -235,9 +260,12 @@ store_exchange_reset :: proc "contextless" (store: ^Exchanged_Store) {
 	versions := [STORE_VERSIONS_OF_A_STORE]^Store_Version{&store.current, &store.common, &store.offered, &store.reply, &store.incoming, &store.previous_common, &store.last_reply, &store.merged, &store.merged_later}
 	kept: [STORE_VERSIONS_OF_A_STORE]Store_Version
 	for version, index in versions {
-		kept[index] = {entries = version.entries, conflicts = version.conflicts, grow = version.grow, grow_user = version.grow_user}
+		kept[index] = {entries = version.entries, conflicts = version.conflicts, grow = version.grow, grow_user = version.grow_user, trim = version.trim}
 	}
+	// The pages that the owner counts follow the memory of the versions.
+	memory_pages := store.memory_pages
 	store^ = {}
+	store.memory_pages = memory_pages
 	for version, index in versions {
 		version^ = kept[index]
 	}
@@ -368,6 +396,7 @@ store_exchange_add :: proc "contextless" (stores: ^Store_Table, store_identifier
 		for version in versions {
 			version.grow = stores.version_grow
 			version.grow_user = stores.version_grow_user
+			version.trim = stores.version_trim
 		}
 	}
 	free.in_use = true
@@ -904,6 +933,8 @@ store_offer_answer :: proc "contextless" (store: ^Exchanged_Store, body: []u8, o
 	}
 	whole, take_status := assembly_take_page(&store.incoming_assembly, &store.incoming, &page)
 	if take_status != .Ok {
+		// A refused version is no version: its pages go back.
+		version_trim(&store.incoming)
 		return nil, take_status
 	}
 	if !whole {
@@ -987,6 +1018,7 @@ store_offer_reply_accept :: proc "contextless" (store: ^Exchanged_Store, answer:
 	}
 	whole, take_status := assembly_take_page(&store.reply_assembly, &store.reply, &page)
 	if take_status != .Ok {
+		version_trim(&store.reply)
 		return take_status, .None, 0, false
 	}
 	if !whole {

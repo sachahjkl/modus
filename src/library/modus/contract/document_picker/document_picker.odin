@@ -171,7 +171,8 @@ name_matches :: proc "contextless" (name: []u8, query: []u8) -> bool {
 // identifier is past cursor and whose name holds query, in the order of
 // their identifiers, as many as out holds. A cursor of 0 starts at the first
 // document; the cursor of the next page is next_cursor. The work is one pass
-// over the table for each page.
+// over the table for each document of the page, and one more for `more`:
+// a page of k documents in a table of n rows reads k + 1 times n rows.
 document_page :: proc "contextless" (s: ^Document_Service, principal_id: u64, cursor: u64, query: string, out: []Document_Record) -> (page: Document_Page, refusal: Picker_Refusal) {
 	if s == nil {
 		return {}, .Nil_State

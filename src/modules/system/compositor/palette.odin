@@ -1297,6 +1297,7 @@ palette_candidates_ask :: proc "contextless" (first: int = 0, choose_last: bool 
 	}
 	palette_candidates_awaited = palette_tags
 	form.candidate_choose_last = choose_last
+	form.candidate_first_asked = max(first, 0)
 	text := palette.field_text(form, form.current)
 	if len(text) > 0 && len(text) <= palette_table.ARGUMENT_TEXT_CAPACITY {
 		if !system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Argument), tag = palette_tags, values = palette_table.argument_pack(form.current, .Text, 0, text)}) {

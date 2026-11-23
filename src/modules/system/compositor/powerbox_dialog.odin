@@ -186,6 +186,33 @@ window_grants_window_closed :: proc "contextless" (process_name: string) {
 // difference starts it again.
 plan_difference_arena: system.Arena
 
+// The pages of the budget of the compositor that a difference never takes:
+// the windows, the palette and the frames keep their room whatever the
+// size of a difference.
+PLAN_DIFFERENCE_KEPT_PAGES :: 2048
+
+// plan_difference_push takes bytes of the arena when the budget keeps its
+// margin after the exact pages of the push.
+@(private = "file")
+plan_difference_push :: proc "contextless" (bytes, alignment: u64) -> (address: rawptr, ok: bool) {
+	pages, fits := system.arena_push_commit_pages(&plan_difference_arena, bytes, alignment)
+	amounts, status := system.budget_read()
+	if !fits || status != .Ok || amounts.pages < PLAN_DIFFERENCE_KEPT_PAGES || pages > amounts.pages - PLAN_DIFFERENCE_KEPT_PAGES {
+		return nil, false
+	}
+	pushed, push_status := system.arena_push(&plan_difference_arena, bytes, alignment)
+	return pushed, push_status == .Ok
+}
+
+// plan_difference_memory_step gives the pages of a difference back to the
+// budget once its dialog closed: a large difference holds its pages only
+// while the principal reads it.
+plan_difference_memory_step :: proc "contextless" () {
+	if !plan_difference_dialog.open && plan_difference_arena.used_bytes > 0 {
+		system.arena_trim(&plan_difference_arena, 0)
+	}
+}
+
 // plan_difference_show shows the difference of a plan on the trusted
 // display, and gives its serial, or 0 with the refusal and the argument
 // that it names, from 1. added and removed are memory of the asker: the
@@ -205,6 +232,7 @@ plan_difference_show :: proc "contextless" (plan_name: string, added, removed: [
 		if arena_status != .Ok {
 			return 0, .Too_Many_Items, 2
 		}
+		arena.exact_commits = true
 		plan_difference_arena = arena
 	}
 	// No dialog shows, so no item of the arena is in use.
@@ -215,13 +243,15 @@ plan_difference_show :: proc "contextless" (plan_name: string, added, removed: [
 	}
 	removed_copy, removed_ok := plan_difference_copy(removed)
 	if !removed_ok {
+		system.arena_trim(&plan_difference_arena, 0)
 		return 0, .Too_Many_Items, 3
 	}
 	needed := bar.plan_difference_items_needed(added_copy, removed_copy)
 	items: []bar.Plan_Difference_Item
 	if needed > 0 {
-		address, push_status := system.arena_push(&plan_difference_arena, u64(needed) * size_of(bar.Plan_Difference_Item), align_of(bar.Plan_Difference_Item))
-		if push_status != .Ok {
+		address, pushed := plan_difference_push(u64(needed) * size_of(bar.Plan_Difference_Item), align_of(bar.Plan_Difference_Item))
+		if !pushed {
+			system.arena_trim(&plan_difference_arena, 0)
 			return 0, .Too_Many_Items, 2
 		}
 		items = ([^]bar.Plan_Difference_Item)(address)[:needed]
@@ -243,8 +273,8 @@ plan_difference_copy :: proc "contextless" (bytes: []u8) -> (text: string, ok: b
 	if len(bytes) == 0 {
 		return "", true
 	}
-	address, status := system.arena_push(&plan_difference_arena, u64(len(bytes)), 1)
-	if status != .Ok {
+	address, pushed := plan_difference_push(u64(len(bytes)), 1)
+	if !pushed {
 		return "", false
 	}
 	copied := ([^]u8)(address)[:len(bytes)]

@@ -35,6 +35,11 @@ Picker_Client :: struct {
 
 picker: Picker_Client
 
+// The tag of an Open that the principal left before its answer: its
+// answer, when it comes, names a dialog of the powerbox that this process
+// closes at once, so no dialog of the powerbox outlives its picker.
+picker_abandoned_tag: u32
+
 // powerbox_picker_open_ring opens the end of the picker ring of this
 // process. With none, a store picker shows no list.
 powerbox_picker_open_ring :: proc "contextless" (ctx: ^system.Context) {
@@ -134,7 +139,9 @@ powerbox_picker_pick :: proc "contextless" (list_index: int) -> bool {
 
 // powerbox_picker_close ends the dialog of the powerbox with no pick.
 powerbox_picker_close :: proc "contextless" () {
-	if picker.serial != 0 {
+	if picker.stage == .Opening {
+		picker_abandoned_tag = picker.tag
+	} else if picker.serial != 0 {
 		picker_send(.Close, {0 = picker.serial})
 	}
 	picker = {}
@@ -149,6 +156,19 @@ powerbox_picker_step :: proc "contextless" () {
 	}
 	for {
 		record := system.receive(&picker_ring.completions) or_break
+		if picker_abandoned_tag != 0 && record.tag == picker_abandoned_tag {
+			picker_abandoned_tag = 0
+			// values[1] is the serial of the dialog of an Open that was
+			// answered; an Open with no list made no dialog.
+			if record.kind == u32(powerbox.Picker_Ring_Status.Ok) && record.values[1] != 0 {
+				// The answer of that Close names no command that waits:
+				// the picker of now keeps its own tag.
+				saved := picker
+				picker_send(.Close, {0 = record.values[1]})
+				picker = saved
+			}
+			continue
+		}
 		if record.tag != picker.tag || picker.stage == .None || picker.stage == .Ready || picker.stage == .No_List {
 			continue
 		}

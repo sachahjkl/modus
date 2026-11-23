@@ -36,6 +36,10 @@ Arena :: struct {
 	growth_step_pages: u64, // The least pages of the next commit.
 	commit_count:      u64, // The commits that the budget accepted: a measure of the step of the growth.
 	page_change:       Arena_Page_Change,
+	// A commit takes only the pages that a push needs, never a step: an
+	// owner that keeps a part of its budget for other work then knows, from
+	// arena_push_commit_pages, each page that a push takes.
+	exact_commits:     bool,
 }
 
 // The procedure that commits or decommits one range of the pages of an
@@ -181,6 +185,55 @@ arena_push :: proc "contextless" (arena: ^Arena, size: u64, alignment: u64, erro
 	return &arena.base[start], .Ok
 }
 
+// arena_push_commit_pages gives the pages that a push of `size` bytes at
+// `alignment` commits now: 0 when the committed pages hold it, the missing
+// pages with `exact_commits`, else the step of the growth when it is
+// larger. fits is false for a push that arena_push refuses for its size,
+// its alignment or the rest of the reservation. It changes nothing.
+arena_push_commit_pages :: proc "contextless" (arena: ^Arena, size: u64, alignment: u64) -> (pages: u64, fits: bool) {
+	reserved_bytes := arena.reserved_pages * PAGE_SIZE
+	if size == 0 || alignment == 0 || alignment & (alignment - 1) != 0 || alignment > ARENA_ALIGNMENT_LIMIT || size > reserved_bytes {
+		return 0, false
+	}
+	start := (arena.used_bytes + alignment - 1) & ~(alignment - 1)
+	if start > reserved_bytes || size > reserved_bytes - start {
+		return 0, false
+	}
+	end := start + size
+	needed := end / PAGE_SIZE + (end % PAGE_SIZE != 0 ? 1 : 0)
+	if needed <= arena.committed_pages {
+		return 0, true
+	}
+	missing := needed - arena.committed_pages
+	if arena.exact_commits {
+		return missing, true
+	}
+	return min(max(missing, arena.growth_step_pages), arena.reserved_pages - arena.committed_pages), true
+}
+
+// arena_trim sets the end of the arena back to `keep_bytes` and gives the
+// committed pages past it back to the budget, the last part first. A push
+// after it commits them again. A decommit that the kernel refuses keeps
+// the pages from that part on, and gives `Bad_State`; `keep_bytes` past
+// the end of the arena is `Bad_Operation`, and changes nothing.
+arena_trim :: proc "contextless" (arena: ^Arena, keep_bytes: u64, error: ^errors.Error_Record = nil) -> Status {
+	if keep_bytes > arena.used_bytes {
+		arena_refusal_write(error, arena_record(.Out_Of_Range, 2, keep_bytes, arena.used_bytes, 0))
+		return .Bad_Operation
+	}
+	keep_pages := keep_bytes / PAGE_SIZE + (keep_bytes % PAGE_SIZE != 0 ? 1 : 0)
+	for arena.committed_pages > keep_pages {
+		part := min(arena.committed_pages - keep_pages, op.RANGE_TABLE_PAGE_LIMIT)
+		if status := arena.page_change(arena, {first = arena.committed_pages - part, page_count = part}, {.Decommit}, error); status != .Ok {
+			arena.used_bytes = min(arena.used_bytes, arena.committed_pages * PAGE_SIZE)
+			return .Bad_State
+		}
+		arena.committed_pages -= part
+	}
+	arena.used_bytes = keep_bytes
+	return .Ok
+}
+
 // arena_reset sets the end of the arena back to its start and keeps its
 // committed pages: the next pushes take the same addresses and commit
 // nothing until they pass the largest end so far. The bytes are not
@@ -214,7 +267,7 @@ arena_end :: proc "contextless" (arena: ^Arena, error: ^errors.Error_Record = ni
 // retry was refused again at each push, and each push then paid two calls.
 @(private = "file")
 arena_grow :: proc "contextless" (arena: ^Arena, missing_pages: u64, error: ^errors.Error_Record) -> Status {
-	step := min(max(missing_pages, arena.growth_step_pages), arena.reserved_pages - arena.committed_pages)
+	step := arena.exact_commits ? missing_pages : min(max(missing_pages, arena.growth_step_pages), arena.reserved_pages - arena.committed_pages)
 	// The record of the last refusal only: a step that the budget refused
 	// and a smaller commit that it paid is no failure.
 	refusal: errors.Error_Record

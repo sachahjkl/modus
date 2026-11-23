@@ -162,6 +162,31 @@ stores_connection_answer :: proc "contextless" (tag: u32, status: powerbox.Servi
 	ring.push(&service_ring.completions, ring.Record{kind = u32(status), tag = tag})
 }
 
+// stores_refused_take ends the Open that waits for the list of a principal
+// that the root service refused.
+stores_refused_take :: proc "contextless" (command: ring.Record) -> (answered: bool) {
+	if picker_open_wait.active && !stores_call.active && picker_open_wait.principal == command.values[0] {
+		picker_answer(picker_open_wait.tag, .No_List, {})
+		picker_open_wait = {}
+		answered = true
+	}
+	stores_connection_answer(command.tag, .Ok)
+	return answered
+}
+
+// picker_wait_deadline gives the time at which an Open that waits ends,
+// or no time.
+picker_wait_deadline :: proc "contextless" () -> u64 {
+	deadline := system.WAIT_FOREVER
+	if picker_open_wait.active {
+		deadline = picker_open_wait.deadline
+	}
+	if stores_call.active {
+		deadline = min(deadline, stores_call.deadline)
+	}
+	return deadline
+}
+
 // stores_connection_take starts the call of `stores` on the connection that
 // the root service gave for the Open that waits. A connection for no Open
 // that waits, or with a handle that did not come through the ring, is
@@ -234,7 +259,7 @@ stores_call_step :: proc "contextless" (now_ms: u64) -> (answered: bool) {
 		return false
 	}
 	error: errors.Error_Record
-	_, text, status, done := storage.call_answer(&stores_call.client, &stores_call.sent, nil, &error)
+	full_count, text, status, done := storage.call_answer(&stores_call.client, &stores_call.sent, nil, &error)
 	if !done {
 		if !storage.connected(&stores_call.client) || now_ms >= stores_call.deadline {
 			stores_call_end(.Refused)
@@ -250,26 +275,40 @@ stores_call_step :: proc "contextless" (now_ms: u64) -> (answered: bool) {
 		picker_open_wait = {}
 		return true
 	}
-	count := copy(stores_text[:], text)
 	principal := picker_open_wait.principal
+	tag := picker_open_wait.tag
+	// The text of the whole list did not fit the call region: a list that
+	// misses stores is refused with its cause, never shown cut.
+	if full_count < 0 || int(full_count) > len(text) || len(text) > len(stores_text) {
+		stores_call_end(.Refused)
+		picker_answer(tag, .List_Not_Whole, {0 = u64(powerbox.Picker_List_Cause.Text_Past_Region)})
+		picker_open_wait = {}
+		return true
+	}
+	count := copy(stores_text[:], text)
 	powerbox_core.stores_replace_begin(&service_state, principal)
 	place := 0
 	store_id: u64 = 0
+	whole := true
 	for {
 		name, more := powerbox.stores_text_next_name(stores_text[:count], &place)
 		if !more {
 			break
 		}
-		// A line that names no store, or a name that no candidate holds,
-		// is no candidate: the principal cannot pick it.
+		// A line that names no store is no candidate. A store that the
+		// table does not take makes the list not whole.
 		store_id += 1
-		if len(name) > 0 {
-			powerbox_core.register_session_store(&service_state, principal, string(name), store_id)
+		if len(name) > 0 && !powerbox_core.register_session_store(&service_state, principal, string(name), store_id) {
+			whole = false
 		}
 	}
 	stores_call_end(.Ok)
-	tag := picker_open_wait.tag
 	picker_open_wait = {}
+	if !whole {
+		powerbox_core.stores_replace_begin(&service_state, principal)
+		picker_answer(tag, .List_Not_Whole, {0 = u64(powerbox.Picker_List_Cause.Table_Full)})
+		return true
+	}
 	serial, refusal := powerbox_core.picker_dialog_open(&service_state, principal, now_ms)
 	if refusal != .None {
 		picker_answer(tag, .Refused, {0 = u64(refusal)})

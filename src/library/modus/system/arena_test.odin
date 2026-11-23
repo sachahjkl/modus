@@ -498,3 +498,68 @@ arena_push_with_a_refused_undo_keeps_the_committed_pages :: proc(t: ^testing.T) 
 	testing.expect_value(t, offset_of_address(result), 0)
 	testing.expect_value(t, three.commit_calls, calls)
 }
+
+// An arena of exact commits: arena_push_commit_pages gives each page that
+// the push then takes from the budget, at the edges of a page and of the
+// budget; a push that the budget cannot pay changes nothing. With the step
+// of the growth, the count is the step.
+@(test)
+arena_push_commit_pages_names_each_page_that_the_push_takes :: proc(t: ^testing.T) {
+	fake := fake_reservation(1024, 3)
+	fake.arena.exact_commits = true
+	pages, fits := arena_push_commit_pages(&fake.arena, PAGE_SIZE, 8)
+	testing.expect(t, fits && pages == 1)
+	_, status := arena_push(&fake.arena, PAGE_SIZE, 8)
+	testing.expect_value(t, status, Status.Ok)
+	testing.expect_value(t, fake.budget_pages, u64(2))
+	// One byte more needs one page; the two pages left pay two pages, not three.
+	pages, fits = arena_push_commit_pages(&fake.arena, 1, 1)
+	testing.expect(t, fits && pages == 1)
+	pages, fits = arena_push_commit_pages(&fake.arena, 2 * PAGE_SIZE, 1)
+	testing.expect(t, fits && pages == 2)
+	pages, fits = arena_push_commit_pages(&fake.arena, 2 * PAGE_SIZE + 1, 1)
+	testing.expect(t, fits && pages == 3)
+	_, status = arena_push(&fake.arena, 2 * PAGE_SIZE + 1, 1)
+	testing.expect_value(t, status, Status.No_Budget)
+	testing.expect(t, fake.budget_pages == 2 && fake.arena.committed_pages == 1)
+	_, status = arena_push(&fake.arena, 2 * PAGE_SIZE, 1)
+	testing.expect(t, status == .Ok && fake.budget_pages == 0)
+	// Inside the committed pages: no page.
+	fake.arena.used_bytes = PAGE_SIZE
+	pages, fits = arena_push_commit_pages(&fake.arena, PAGE_SIZE, 1)
+	testing.expect(t, fits && pages == 0)
+	// Past the reservation, a size of 0, a bad alignment: no push.
+	_, fits = arena_push_commit_pages(&fake.arena, 1024 * PAGE_SIZE, 1)
+	testing.expect(t, !fits)
+	_, fits = arena_push_commit_pages(&fake.arena, 0, 1)
+	testing.expect(t, !fits)
+	_, fits = arena_push_commit_pages(&fake.arena, 1, 3)
+	testing.expect(t, !fits)
+
+	stepped := fake_reservation(1024, 1000)
+	pages, fits = arena_push_commit_pages(&stepped.arena, 1, 1)
+	testing.expect(t, fits && pages == ARENA_GROWTH_STEP_FIRST_PAGES)
+	_, status = arena_push(&stepped.arena, 1, 1)
+	testing.expect(t, status == .Ok && stepped.budget_pages == 1000 - ARENA_GROWTH_STEP_FIRST_PAGES)
+}
+
+// arena_trim gives the pages past what it keeps back to the budget, and
+// a push after it commits them again; a keep past the end is refused.
+@(test)
+arena_trim_gives_pages_back :: proc(t: ^testing.T) {
+	fake := fake_reservation(1024, 100)
+	fake.arena.exact_commits = true
+	_, status := arena_push(&fake.arena, 10 * PAGE_SIZE, 8)
+	testing.expect(t, status == .Ok && fake.budget_pages == 90)
+	testing.expect_value(t, arena_trim(&fake.arena, 10 * PAGE_SIZE + 1), Status.Bad_Operation)
+	testing.expect_value(t, arena_trim(&fake.arena, 3 * PAGE_SIZE + 1), Status.Ok)
+	testing.expect(t, fake.budget_pages == 96 && fake.arena.committed_pages == 4 && fake.arena.used_bytes == 3 * PAGE_SIZE + 1)
+	testing.expect_value(t, arena_trim(&fake.arena, 0), Status.Ok)
+	testing.expect(t, fake.budget_pages == 100 && fake.arena.committed_pages == 0)
+	_, status = arena_push(&fake.arena, PAGE_SIZE, 8)
+	testing.expect(t, status == .Ok && fake.budget_pages == 99)
+	// A decommit that the kernel refuses keeps the pages.
+	fake.decommits_accepted = fake.decommit_calls
+	testing.expect_value(t, arena_trim(&fake.arena, 0), Status.Bad_State)
+	testing.expect_value(t, fake.arena.committed_pages, u64(1))
+}

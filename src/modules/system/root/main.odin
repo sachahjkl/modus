@@ -2296,6 +2296,7 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	disk_processes_service_end(item)
 	devices_service_end(item)
 	principals_service_end(item)
+	powerbox_service_end(item) // powerbox_picker.odin
 	wiring_emit_stop_notice(item, stop)
 	for &other in started {
 		if other.process != 0 && (other.debugger == item || other.debug_for == item) {

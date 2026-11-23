@@ -101,16 +101,29 @@ write :: proc "contextless" (user: rawptr, name: string, data: []u8) -> pr.Priva
 	// Pending changes of the connection, then one commit: a reader finds the
 	// object of before or the whole new one.
 	if storage.set_size(client, storage.ROOT, name, u64(len(data)), &error) != .Ok {
+		write_drop(client, name)
 		return .Failed
 	}
 	for offset := 0; offset < len(data); offset += PIECE_BYTES {
 		piece := data[offset:min(len(data), offset + PIECE_BYTES)]
 		if _, status := storage.write_range(client, storage.ROOT, name, u64(offset), piece, &error); status != .Ok {
+			write_drop(client, name)
 			return .Failed
 		}
 	}
 	if _, status := storage.commit(client, storage.ROOT, name, &error); status != .Ok {
+		write_drop(client, name)
 		return .Failed
 	}
 	return .Ok
+}
+
+// write_drop ends the pending changes of a write that failed between two
+// ranges: a later write of the same name starts from the last commit, and
+// no part of the failed one comes back in it. A drop that fails changes
+// nothing more: the end of the connection drops the changes too.
+@(private = "file")
+write_drop :: proc "contextless" (client: ^storage.Client, name: string) {
+	error: errors.Error_Record
+	storage.drop_pending(client, storage.ROOT, name, &error)
 }

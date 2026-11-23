@@ -1,6 +1,7 @@
 #+build !freestanding
 package powerbox_core
 
+import "base:runtime"
 import "core:fmt"
 import "core:testing"
 import "modus:contract/blake3"
@@ -75,4 +76,68 @@ picker_dialog_pages_and_picks_against_its_copy :: proc(t: ^testing.T) {
 	testing.expect_value(t, refusal, powerbox.Powerbox_Refusal.Picker_Selection_Invalid)
 	// The store of principal 4 stays.
 	testing.expect(t, principal_store_at(state, 4, 0) != nil && principal_store_at(state, 3, 0) == nil)
+}
+
+// A budget of the tests for the store table: rows in place in a large
+// reservation, a new index each growth, until the rows that it pays end.
+@(private = "file")
+Test_Store_Budget :: struct {
+	rows_left: int,
+	reserved:  []Session_Store,
+	growths:   int,
+}
+
+@(private = "file")
+test_stores_grow :: proc "contextless" (user: rawptr, state: ^Powerbox_State, rows_least: int) -> bool {
+	context = runtime.default_context()
+	budget := (^Test_Store_Budget)(user)
+	more := rows_least - len(state.stores)
+	if more > budget.rows_left || rows_least > len(budget.reserved) {
+		return false
+	}
+	budget.rows_left -= max(more, 0)
+	budget.growths += 1
+	state.stores = budget.reserved[:max(rows_least, len(state.stores))]
+	index := 1
+	for index < 4 * len(state.stores) {
+		index *= 2
+	}
+	state.store_index = make([]u32, index, context.temp_allocator)
+	return true
+}
+
+// The table of the stores starts empty and grows: 1000 stores of one
+// principal, past any table of a fixed size; a name or an id that the
+// principal holds is refused, the same name for another principal is
+// not; a budget that pays no more refuses the next store visibly; a
+// replace frees the rows of its principal only.
+@(test)
+store_table_grows_and_refuses_repeats_by_its_index :: proc(t: ^testing.T) {
+	budget := Test_Store_Budget{rows_left = 1100, reserved = make([]Session_Store, 4096, context.temp_allocator)}
+	state := new(Powerbox_State, context.temp_allocator)
+	state_init(state, TRUSTED_DISPLAY_SLOT, {stores_grow = test_stores_grow, stores_grow_user = &budget, held_grants = make([]Held_Grant, 4, context.temp_allocator)})
+	for index in 0 ..< 1000 {
+		testing.expectf(t, register_session_store(state, 1, fmt.tprintf("store_%04d", index), u64(index + 1)), "store %d", index)
+	}
+	testing.expect_value(t, state.store_count, 1000)
+	testing.expect(t, !register_session_store(state, 1, "store_0500", 5000))
+	testing.expect(t, !register_session_store(state, 1, "other", 501))
+	testing.expect(t, register_session_store(state, 2, "store_0500", 501))
+	store := principal_store_at(state, 1, 999)
+	testing.expect(t, store != nil && string(store.candidate.name_bytes[:store.candidate.name_length]) == "store_0999")
+	// The budget ends: each new store past the rows is refused.
+	budget.rows_left = 0
+	added := 0
+	for index in 0 ..< 2000 {
+		if !register_session_store(state, 3, fmt.tprintf("more_%04d", index), u64(index + 1)) {
+			break
+		}
+		added += 1
+	}
+	testing.expect(t, added < 2000 && state.store_count == 1001 + added)
+	// A replace of principal 1 frees its rows, and its names are new again.
+	stores_replace_begin(state, 1)
+	testing.expect_value(t, state.store_count, 1 + added)
+	testing.expect(t, register_session_store(state, 1, "store_0500", 1))
+	testing.expect(t, principal_store_at(state, 2, 0) != nil)
 }

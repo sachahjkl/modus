@@ -210,6 +210,24 @@ Object_Store :: struct {
 	assembly:   Object_Assembly,
 	grow:       Object_Store_Grow,
 	grow_user:  rawptr,
+	trim:       Object_Store_Trim,
+}
+
+// The procedure that gives back the memory past the bytes in use, after
+// an assembly ended with nothing kept: the pages that a partner made the
+// store take for an object that did not prove its hash go back to the
+// budget of the owner.
+Object_Store_Trim :: #type proc "contextless" (user: rawptr, store: ^Object_Store)
+
+// object_store_assembly_drop ends the assembly that runs, with nothing
+// kept, and gives back its memory.
+@(private)
+object_store_assembly_drop :: proc "contextless" (store: ^Object_Store) {
+	active := store.assembly.active
+	store.assembly = {}
+	if active && store.trim != nil {
+		store.trim(store.grow_user, store)
+	}
 }
 
 // The procedure that grows the tables of an object store in place: after
@@ -285,7 +303,7 @@ object_store_accept :: proc "contextless" (
 	}
 	// A whole object takes the free bytes that an assembly writes into: the
 	// assembly ends.
-	store.assembly = {}
+	object_store_assembly_drop(store)
 	switch object_cache.verify_object_content(kind, requested_hash, payload) {
 	case .Trust_By_Hash:
 	case .Refuse_Hash_Mismatch:
@@ -319,7 +337,7 @@ object_store_begin :: proc "contextless" (store: ^Object_Store, kind: object_cac
 	if store == nil || store.count < 0 || store.count > len(store.objects) || store.bytes_used < 0 || store.bytes_used > len(store.bytes) || total < 0 {
 		return .Refused_Nil_Input
 	}
-	store.assembly = {}
+	object_store_assembly_drop(store)
 	if _, held_kind, found := object_store_lookup(store, hash); found {
 		if held_kind != kind {
 			return .Refused_Malformed
@@ -346,11 +364,11 @@ object_store_write :: proc "contextless" (store: ^Object_Store, hash: [HASH_BYTE
 	}
 	assembly := &store.assembly
 	if offset != assembly.received || len(bytes) > assembly.total - assembly.received {
-		store.assembly = {}
+		object_store_assembly_drop(store)
 		return .Refused_Malformed
 	}
 	if !object_store_room(store, assembly.received + len(bytes)) {
-		store.assembly = {}
+		object_store_assembly_drop(store)
 		return .Refused_Too_Large
 	}
 	copy(store.bytes[store.bytes_used + assembly.received:][:len(bytes)], bytes)
@@ -372,15 +390,17 @@ object_store_finish :: proc "contextless" (store: ^Object_Store) -> Object_Store
 		return .Refused_Nil_Input
 	}
 	assembly := store.assembly
-	store.assembly = {}
 	bytes := store.bytes[store.bytes_used:][:assembly.total]
 	switch object_cache.verify_object_content(assembly.kind, assembly.hash, bytes) {
 	case .Trust_By_Hash:
 	case .Refuse_Hash_Mismatch:
+		object_store_assembly_drop(store)
 		return .Refused_Hash_Mismatch
 	case .Trust_By_Signer, .Refuse_Untrusted_Signer, .Refuse_Bad_Signature, .Refuse_Malformed:
+		object_store_assembly_drop(store)
 		return .Refused_Malformed
 	}
+	store.assembly = {}
 	store.objects[store.count] = Stored_Object{hash = assembly.hash, kind = assembly.kind, offset = store.bytes_used, length = assembly.total}
 	store.count += 1
 	store.bytes_used += assembly.total
