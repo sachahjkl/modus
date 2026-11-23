@@ -196,6 +196,10 @@ Guest_Processor :: struct {
 	// The event that the process injected and that the guest did not
 	// receive yet: it lives across runs, as the word of EVENTINJ does.
 	pending_injection: guest_rules.Pending_Injection,
+	// The switches of pages of this guest processor, to find an instruction
+	// that writes the page that holds it. It lives across runs: the loop
+	// can span the bound of one run.
+	switch_watch:      guest_rules.Switch_Watch,
 }
 
 // The guest processors of a process, by the index of the process. One for
@@ -205,6 +209,8 @@ Guest_Processor :: struct {
 Guest :: struct {
 	process_serial: u32, // The serial of the process that is this guest. 0: no guest in the slot.
 	processors:     [op.GUEST_PROCESSOR_CAPACITY]Guest_Processor,
+	page_switches:  u64, // The pages that switched between Write and Execute: a measure. Process lock of the guest.
+	own_page_writes: u64, // The runs that ended with Writes_Own_Page: a measure. Process lock of the guest.
 }
 guests: [PROCESS_CAPACITY]Guest
 
@@ -225,6 +231,10 @@ Guest_Exit :: struct {
 	information_1: u64,
 	information_2: u64,
 	next:          u64, // The address after the instruction of the exit, from the processor; 0 without next_instruction.
+	// A nested page fault of an instruction that writes the page that
+	// holds it: the run ends with the exit Writes_Own_Page.
+	writes_own_page: bool,
+	code_64:         bool, // The code segment of the guest is 64-bit (L, in long mode): b of Writes_Own_Page.
 }
 
 // guest_support_read says what the processor that runs it can do for a
@@ -458,6 +468,9 @@ guest_end :: proc "contextless" (index: u32) {
 		return
 	}
 	guest := &guests[index]
+	if guest.page_switches != 0 {
+		log("kernel: the guest of process ", Module_Name{process_name(&processes[index])}, " switched ", guest.page_switches, " pages between Write and Execute, and ", guest.own_page_writes, " instructions wrote the page that held them")
+	}
 	for processor in guest.processors {
 		if processor.control_block != 0 {
 			guest_frame_return(&processes[index], processor.control_block)
@@ -585,6 +598,93 @@ guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, proces
 	return exit
 }
 
+// The bits of an entry that guest_rules writes at a switch are the bits of
+// this kernel.
+#assert(guest_rules.ENTRY_WRITE == PAGE_WRITE)
+#assert(guest_rules.ENTRY_NO_EXECUTE == PAGE_NO_EXECUTE)
+
+// mapping_is_switching says if a mapping is guest memory whose pages switch
+// between Write and Execute: made with Write, Execute and No_Access, which
+// map_region gives only to guest memory.
+mapping_is_switching :: proc "contextless" (mapping: ^Mapping) -> bool {
+	return mapping.limit_bits & PAGE_WRITE != 0 && mapping.limit_bits & PAGE_NO_EXECUTE == 0
+}
+
+// What the kernel did at a nested page fault of a guest.
+Guest_Page_Answer :: enum u8 {
+	Refused  = 0, // The mapping refuses the access: the run ends with the exit Memory.
+	Given    = 1, // A page on first use got its frame, or the entry already allows the access.
+	Switched = 2, // A present page of a switching mapping got the other access.
+}
+
+// guest_page_answer answers a nested page fault of a guest at a guest
+// physical address (src/md/features/guest.md, "The switch of a page"). A
+// page of a switching mapping (made with Write, Execute and No_Access) gets
+// the access of the fault, Write and no execute, or execute and no Write,
+// never both; a page on first use gets its frame with that access. Each
+// other mapping follows page_give. The caller holds the lock of the guest
+// process.
+guest_page_answer :: proc "contextless" (process: ^Process, address: u64, write: bool, execute: bool) -> Guest_Page_Answer {
+	facts := guest_rules.Fault_Facts{write = write, execute = execute}
+	mapping := mapping_at(process, address)
+	facts.mapped = mapping != nil
+	page: u64
+	region: ^Region
+	entry: ^u64
+	if mapping != nil {
+		facts.switching = mapping_is_switching(mapping)
+		facts.large = mapping.large
+		facts.has_access = mapping.bits != 0
+		inside: bool
+		page, inside = guest_rules.switching_page_of(mapping.address, mapping.page_count, address)
+		facts.mapped = inside
+		if inside && !mapping.large {
+			region = &regions[mapping.region]
+			state := region_page_state(region, mapping.first + page)
+			facts.slot_no_access = state & SLOT_NO_ACCESS != 0
+			facts.committed = page_committed(region, state)
+			entry = page_entry(process.table, mapping.address + page * PAGE_SIZE)
+			facts.has_entry = entry != nil
+			if entry != nil {
+				facts.present = entry^ & PAGE_PRESENT != 0
+				facts.allows = (!write || entry^ & PAGE_WRITE != 0) && (!execute || entry^ & PAGE_NO_EXECUTE == 0)
+			}
+		}
+	}
+	access_bits, _ := guest_rules.switched_entry_bits(write, execute)
+	switch guest_rules.fault_answer(facts) {
+	case .Refused:
+		return .Refused
+	case .Page_Give:
+		return page_give(process, address, write, execute) ? .Given : .Refused
+	case .Allowed:
+		// A translation that an earlier switch removed: the entry allows
+		// the access now, and the instruction runs again.
+		return .Given
+	case .Give_Switched:
+		frame := region_frame(region, mapping.first + page, true)
+		if frame == 0 {
+			return .Refused
+		}
+		entry^ = frame | PAGE_PRESENT | PAGE_USER | mapping.limit_bits & PAGE_CACHE_TYPE_BITS | access_bits
+		mapping.present_page_count += 1 // Under the process lock: the caller holds it.
+		return .Given
+	case .Switch:
+		entry^ = entry^ & PAGE_ADDRESS | PAGE_PRESENT | PAGE_USER | mapping.limit_bits & PAGE_CACHE_TYPE_BITS | access_bits
+		// The switch took an access away: each other processor that runs a
+		// guest processor of this guest leaves its run, and its next entry
+		// flushes the translations of the guest. This processor flushes them
+		// at its next entry too. The entry is written before the read of the
+		// processors that run the guest: a processor that enters after the
+		// read sees the new entry (guest_enter_once writes its word, then
+		// reads), as for an unmap.
+		intrinsics.atomic_thread_fence(.Seq_Cst)
+		processor_sync(processors_with_table(process.table))
+		return .Switched
+	}
+	return .Refused
+}
+
 // guest_next_instruction gives the address after the instruction of an
 // exit: the address that the processor gave, or, without it, the address of
 // the instruction plus its length with no prefix.
@@ -596,6 +696,14 @@ guest_next_instruction :: proc "contextless" (given: u64, instruction: u64, leng
 // ends the operation (op.Guest_Exit_Kind).
 guest_exit_results :: proc "contextless" (exit: Guest_Exit, registers: ^op.Guest_Registers, results: ^[7]u64) {
 	kind := op.Guest_Exit_Kind.Other
+	if exit.writes_own_page {
+		results[0] = u64(op.Guest_Exit_Kind.Writes_Own_Page)
+		results[1] = exit.information_2 // The address that the instruction writes.
+		results[2] = exit.code_64 ? 1 : 0
+		results[5] = exit.code
+		results[6] = exit.information_1
+		return
+	}
 	switch exit.code {
 	case GUEST_EXIT_PORT:
 		information := exit.information_1
@@ -774,16 +882,37 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 		if exit.code != GUEST_EXIT_NESTED_PAGE_FAULT || intrinsics.atomic_load(&thread.stop_requested) {
 			break
 		}
-		// A page on first use of a mapping of the guest, as for a process.
+		// A page on first use of a mapping of the guest, as for a process,
+		// or the switch of a page of a switching mapping
+		// (src/md/features/guest.md, "The switch of a page").
+		write := exit.information_1 & FAULT_WRITE != 0
+		execute := exit.information_1 & FAULT_EXECUTE != 0
 		page_taken := process_lock(guest_index)
 		running := guest_process.state == .Created
-		given := running && page_give(guest_process, exit.information_2, exit.information_1 & FAULT_WRITE != 0, exit.information_1 & FAULT_EXECUTE != 0)
+		answer := Guest_Page_Answer.Refused
+		if running {
+			answer = guest_page_answer(guest_process, exit.information_2, write, execute)
+		}
+		if answer == .Switched {
+			guest.page_switches += 1
+		}
 		process_unlock(guest_index, page_taken)
 		if !running {
 			exit = {code = GUEST_EXIT_INTERRUPT} // The process stopped: the run ends with nothing to answer.
 			break
 		}
-		if !given {
+		if answer == .Refused {
+			break
+		}
+		// The page switched back at the same instruction twice in a row: the
+		// instruction writes the page that holds it, and never completes.
+		counts := guest_rules.switch_counts(exit.information_1, direct(processor.control_block + CONTROL_EXIT_EVENT, u64)^)
+		if answer == .Switched && !counts {
+			guest_rules.switch_watch_forget(&processor.switch_watch)
+		}
+		if answer == .Switched && counts && guest_rules.switch_watch_note(&processor.switch_watch, exit.information_2 &~ u64(PAGE_SIZE - 1), registers.rip, registers.cr3, write) {
+			exit.writes_own_page = true
+			exit.code_64 = registers.efer & op.GUEST_EFER_LONG_MODE_ACTIVE != 0 && direct(processor.control_block + STATE_SEGMENT_CS + 2, u16)^ & guest_rules.SEGMENT_LONG != 0
 			break
 		}
 		pages_given += 1
@@ -813,6 +942,9 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 	}
 
 	release_taken := process_lock(guest_index)
+	if exit.writes_own_page {
+		guest.own_page_writes += 1
+	}
 	processor.running = false
 	process_unlock(guest_index, release_taken)
 	// A stop of the guest process during the run waited for this hold.

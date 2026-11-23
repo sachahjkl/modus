@@ -89,6 +89,22 @@ Port_Written_Then_Halted :: struct {}
 @(log_fact = "guest_demo: the int1 of the guest arrived as an exit Other with the exit code 0x88: as it must")
 Debug_Exit_Arrived :: struct {}
 
+// The instruction that writes its own page gave another exit, address or
+// code size.
+@(log_fact = "guest_demo: failed: the write of its own page gave an exit of kind {exit_kind}, address {address}, b {code_64}, at {instruction_address}, not Writes_Own_Page with 0x2010 and b 0 at 0x2000")
+Own_Page_Exit_Wrong :: struct {
+	exit_kind:           u64,
+	address:             value_kinds.Hexadecimal_Sixteen_Digits,
+	code_64:             u64,
+	instruction_address: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+@(log_fact = "guest_demo: Memory_Protect refused a read-only protection and a part of a switching mapping: as it must")
+Switching_Protect_Refused :: struct {}
+
+@(log_fact = "guest_demo: the instruction that writes its own page at 0x2010 ended the run with the exit Writes_Own_Page: as it must")
+Own_Page_Write_Arrived :: struct {}
+
 @(log_fact = "guest_demo: Process_Start of the guest gave Bad_State: as it must")
 Guest_Start_Refused :: struct {}
 

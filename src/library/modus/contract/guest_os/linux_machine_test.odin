@@ -55,6 +55,8 @@ device_access_decode_forms :: proc(t: ^testing.T) {
 	}
 	for entry in cases {
 		access, refusal := device_access_decode(entry.bytes, true)
+		// The operand has its own test (memory_operand_of_each_form).
+		access.operand = {}
 		testing.expectf(t, refusal == .None && access == entry.want, "% x gives %v %v", entry.bytes, access, refusal)
 		// Each cut of the instruction is refused.
 		for length in 0 ..< len(entry.bytes) {
@@ -524,12 +526,13 @@ machine_device_access :: proc(t: ^testing.T) {
 	testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Memory, a = LINUX_VIRTIO_BASE, b = 0}), Machine_Step.Failed)
 	testing.expect_value(t, machine.devices[.Input_Disk].status, VIRTIO_STATUS_ACKNOWLEDGE)
 	registers.rip = at
-	// Inside the memory: a switch of the region, or a fault that cannot be.
-	testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Memory, a = 0x30_0000, b = FAULT_ACCESS_WRITE | 1}), Machine_Step.Switch_Write)
-	testing.expect_value(t, machine.switch_address, u64(0x30_0000))
-	testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Memory, a = 0x40_0000, b = FAULT_ACCESS_EXECUTE | 1}), Machine_Step.Switch_Execute)
-	testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Memory, a = 0x40_0000, b = 1}), Machine_Step.Failed)
-	testing.expect_value(t, machine.failure, Machine_Failure.Memory_Read_Fault)
+	// Inside the memory: the kernel switches each page itself, so a fault
+	// that reaches the machine is one that the kernel refused.
+	for access in ([?]u64{FAULT_ACCESS_WRITE | 1, FAULT_ACCESS_EXECUTE | 1, 1}) {
+		machine.failure = .None
+		testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Memory, a = 0x30_0000, b = access}), Machine_Step.Failed)
+		testing.expect_value(t, machine.failure, Machine_Failure.Memory_Refused)
+	}
 }
 
 // rdtsc and rdtscp: the count comes from the virtual clock, never goes
@@ -759,4 +762,224 @@ machine_interrupt_window_and_unprogrammed_controller :: proc(t: ^testing.T) {
 	testing.expect_value(t, machine.interrupts.primary.service, u8(1))
 	_, refusal := op.guest_registers_check(registers)
 	testing.expect_value(t, refusal, op.Guest_Registers_Refusal.None)
+}
+
+// The exit Writes_Own_Page: the machine does the one store of a mov to
+// memory of 64-bit code for the guest, through the memory of the process,
+// only at the address of the exit, and moves rip past it. The refusals
+// first; each leaves the memory and rip as they were.
+@(test)
+machine_own_page_write_edges :: proc(t: ^testing.T) {
+	MEMORY :: 3 * 4096
+	CODE :: 0x1010
+	ram := make([]u8, MEMORY)
+	defer delete(ram)
+	machine := new(Linux_Machine)
+	defer free(machine)
+	// Protected mode with no paging: a linear address is the physical one.
+	start :: proc(machine: ^Linux_Machine, ram: []u8, code: []u8, target: u64) -> op.Guest_Registers {
+		for &value in ram {
+			value = 0
+		}
+		copy(ram[CODE:], code)
+		linux_machine_start(machine, {ram}, nil, nil)
+		return op.Guest_Registers{rip = CODE, cr0 = 1, rax = 0x1122_3344_5566_7788, rdi = target}
+	}
+	unchanged :: proc(t: ^testing.T, ram: []u8) -> bool {
+		for value, place in ram {
+			if (place < CODE || place >= CODE + 16) && value != 0 {
+				return false
+			}
+		}
+		return true
+	}
+	refused := [?]struct {
+		code:    []u8,
+		target:  u64, // rdi: the address of the operand.
+		address: u64, // a of the exit.
+		bits:    u64, // b of the exit: 1 for 64-bit code.
+		about:   string,
+	}{
+		{{0x89, 0x07}, 0x1100, 0x1100, 0, "code that is not 64-bit"},
+		{{0x0F, 0x0B}, 0x1100, 0x1100, 1, "ud2"},
+		{{0x8B, 0x07}, 0x1100, 0x1100, 1, "a read"},
+		{{0xF3, 0xA4}, 0x1100, 0x1100, 1, "rep movsb"},
+		{{0xF0, 0x89, 0x07}, 0x1100, 0x1100, 1, "a lock"},
+		{{0x67, 0x89, 0x07}, 0x1100, 0x1100, 1, "an address of 32 bits"},
+		{{0x89, 0x07}, 0x1104, 0x1100, 1, "an operand that is not the address of the exit"},
+		{{0x89, 0x07}, 0x1FFD, 0x1FFD, 1, "4 bytes across a page"},
+		{{0x48, 0x89, 0x07}, 0x1FF9, 0x1FF9, 1, "8 bytes across a page"},
+		{{0x89, 0x07}, MEMORY - 2, MEMORY - 2, 1, "past the memory"},
+		{{0x89, 0x07}, max(u64), max(u64), 1, "the largest address"},
+	}
+	for case_of in refused {
+		registers := start(machine, ram, case_of.code, case_of.target)
+		step := linux_machine_handle_exit(machine, &registers, {kind = .Writes_Own_Page, a = case_of.address, b = case_of.bits})
+		testing.expectf(t, step == .Failed && machine.failure == .Writes_Own_Page, "%s is refused", case_of.about)
+		testing.expectf(t, registers.rip == CODE && machine.own_page_writes == 0 && unchanged(t, ram), "%s changes nothing", case_of.about)
+	}
+	// The successful cases last.
+	accepted := [?]struct {
+		code:   []u8,
+		target: u64,
+		wanted: []u8,
+		about:  string,
+	}{
+		{{0x89, 0x07}, 0x1FFC, {0x88, 0x77, 0x66, 0x55}, "4 bytes at the end of a page"},
+		{{0x48, 0x89, 0x07}, 0x1100, {0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11}, "8 bytes with REX.W"},
+		{{0x66, 0x89, 0x07}, 0x1100, {0x88, 0x77}, "2 bytes with 66"},
+		{{0xC7, 0x07, 0x01, 0x02, 0x03, 0x04}, 0x1100, {0x01, 0x02, 0x03, 0x04}, "an immediate"},
+		{{0x88, 0x27}, 0x2000, {0x77}, "ah at the first byte of a page"},
+		{{0x89, 0x47, 0x08}, 0x10F8, {0x88, 0x77, 0x66, 0x55}, "rdi plus 8"},
+	}
+	for case_of in accepted {
+		registers := start(machine, ram, case_of.code, case_of.target)
+		address := case_of.target
+		if case_of.about == "rdi plus 8" {
+			address += 8
+		}
+		step := linux_machine_handle_exit(machine, &registers, {kind = .Writes_Own_Page, a = address, b = 1})
+		testing.expectf(t, step == .Continue, "%s is done", case_of.about)
+		testing.expectf(t, registers.rip == CODE + u64(len(case_of.code)), "%s moves rip past it", case_of.about)
+		testing.expectf(t, string(ram[address:][:len(case_of.wanted)]) == string(case_of.wanted), "%s writes its bytes", case_of.about)
+		testing.expectf(t, ram[address + u64(len(case_of.wanted))] == 0 || address + u64(len(case_of.wanted)) == MEMORY, "%s writes no byte more", case_of.about)
+		testing.expect_value(t, machine.own_page_writes, u64(1))
+	}
+}
+
+// The memory operand of each form of address, and its linear address with
+// the registers before the instruction: a base, a SIB with an index and a
+// scale, a SIB with no base, REX.B and REX.X, rip-relative, fs and gs. The
+// refusal first: an address of 32 bits is not computed.
+@(test)
+memory_operand_of_each_form :: proc(t: ^testing.T) {
+	registers := op.Guest_Registers{rax = 0x10, rbx = 0x1000, rsp = 0x7000, r9 = 0x3, r13 = 0x5000, r15 = 0x20, rip = 0x40_0000, fs_base = 0x9_0000, gs_base = 0xA_0000}
+	address_32, _ := device_access_decode({0x67, 0x89, 0x03}, true)
+	_, computed := memory_operand_linear(registers, address_32)
+	testing.expect(t, !computed)
+	cases := [?]struct {
+		bytes:  []u8,
+		linear: u64,
+		about:  string,
+	}{
+		{{0x89, 0x03}, 0x1000, "[rbx]"},
+		{{0x89, 0x43, 0x70}, 0x1070, "[rbx + 0x70]"},
+		{{0x89, 0x43, 0xF8}, 0x0FF8, "[rbx - 8]"},
+		{{0x89, 0x04, 0x24}, 0x7000, "[rsp] with a SIB"},
+		{{0x42, 0x89, 0x04, 0x8B}, 0x1000 + 3 * 4, "[rbx + r9 * 4]"},
+		{{0x47, 0x89, 0x54, 0x3D, 0x08}, 0x5000 + 0x20 + 8, "[r13 + r15 + 8]"},
+		{{0x89, 0x04, 0x25, 0x00, 0x10, 0x00, 0x00}, 0x1000, "[0x1000] with no base"},
+		{{0x89, 0x04, 0xC5, 0x00, 0x10, 0x00, 0x00}, 0x1000 + 0x10 * 8, "[rax * 8 + 0x1000]"},
+		{{0x89, 0x05, 0x10, 0x00, 0x00, 0x00}, 0x40_0000 + 6 + 0x10, "[rip + 0x10]"},
+		{{0x64, 0x89, 0x03}, 0x9_1000, "fs:[rbx]"},
+		{{0x65, 0x48, 0x89, 0x43, 0x08}, 0xA_1008, "gs:[rbx + 8]"},
+		{{0x2E, 0x89, 0x03}, 0x1000, "cs:[rbx], a base of 0"},
+		{{0x64, 0x2E, 0x89, 0x03}, 0x9_1000, "fs then cs: cs does nothing in 64-bit code, fs stays"},
+		{{0x2E, 0x65, 0x89, 0x03}, 0xA_1000, "cs then gs"},
+		{{0x64, 0x3E, 0x26, 0x36, 0x89, 0x03}, 0x9_1000, "fs then ds, es and ss"},
+		{{0x64, 0x65, 0x89, 0x03}, 0xA_1000, "fs then gs: the last one"},
+	}
+	for case_of in cases {
+		access, refusal := device_access_decode(case_of.bytes, true)
+		linear, ok := memory_operand_linear(registers, access)
+		testing.expectf(t, refusal == .None && ok && linear == case_of.linear, "%s gives %x, not %x", case_of.about, linear, case_of.linear)
+	}
+}
+
+// The store of Writes_Own_Page through the page table of the guest in long
+// mode: four levels, five levels and a page of 1 GiB give the address of
+// the exit; an entry not present, a table past the memory, and a
+// translation to another page than the exit are refused, with nothing
+// changed.
+@(test)
+machine_own_page_write_through_the_page_table :: proc(t: ^testing.T) {
+	MEMORY :: 16 * 4096
+	PML5 :: 0x8000
+	PML4 :: 0x1000
+	PDPT :: 0x2000
+	PD :: 0x3000
+	PT :: 0x4000
+	CODE :: 0x5000
+	DATA :: 0x6000
+	CODE_LINEAR :: u64(0x40_0000) // PML4 0, PDPT 0, PD 2, PT 0.
+	DATA_LINEAR :: u64(0x40_1000) // PT 1.
+	ABSENT_LINEAR :: u64(0x40_2000) // PT 2: not present.
+	FAR_LINEAR :: u64(0x60_0000) // PD 3: a table past the memory.
+	GIANT_LINEAR :: u64(0x4000_0000) // PDPT 1: a page of 1 GiB at the physical 0.
+	ENTRY :: u64(0x3) // Present and writable.
+	ram := make([]u8, MEMORY)
+	defer delete(ram)
+	machine := new(Linux_Machine)
+	defer free(machine)
+	put :: proc(ram: []u8, address: u64, value: u64) {
+		for index in 0 ..< u64(8) {
+			ram[address + index] = u8(value >> (index * 8))
+		}
+	}
+	start :: proc(machine: ^Linux_Machine, ram: []u8, target: u64, five_level: bool) -> op.Guest_Registers {
+		for &value in ram {
+			value = 0
+		}
+		put(ram, PML5, PML4 | ENTRY)
+		put(ram, PML4, PDPT | ENTRY)
+		put(ram, PDPT, PD | ENTRY)
+		put(ram, PDPT + 8, 0 | ENTRY | 0x80) // 1 GiB at the physical 0.
+		put(ram, PD + 2 * 8, PT | ENTRY)
+		put(ram, PD + 3 * 8, 0x10_0000 | ENTRY) // A table past the memory.
+		put(ram, PT, CODE | ENTRY)
+		put(ram, PT + 8, DATA | ENTRY)
+		copy(ram[CODE:], []u8{0x89, 0x07}) // mov [rdi], eax
+		linux_machine_start(machine, {ram}, nil, nil)
+		registers := op.Guest_Registers{rip = CODE_LINEAR, rax = 0x5566_7788, rdi = target}
+		registers.cr0 = op.GUEST_CONTROL_0_PROTECTION | op.GUEST_CONTROL_0_PAGING
+		registers.cr4 = op.GUEST_CONTROL_4_PHYSICAL_ADDRESS_EXTENSION
+		registers.efer = op.GUEST_EFER_LONG_MODE_ENABLE | op.GUEST_EFER_LONG_MODE_ACTIVE
+		registers.cr3 = PML4
+		if five_level {
+			registers.cr4 |= op.GUEST_CONTROL_4_FIVE_LEVEL_PAGING
+			registers.cr3 = PML5
+		}
+		return registers
+	}
+	data_unchanged :: proc(ram: []u8) -> bool {
+		for value in ram[DATA:][:4096] {
+			if value != 0 {
+				return false
+			}
+		}
+		return true
+	}
+	refused := [?]struct {
+		target:  u64,
+		address: u64,
+		about:   string,
+	}{
+		{ABSENT_LINEAR + 0x10, DATA + 0x10, "an entry not present"},
+		{FAR_LINEAR + 0x10, DATA + 0x10, "a table past the memory"},
+		{DATA_LINEAR + 0x10, DATA + 0x20, "another address than the exit"},
+		{DATA_LINEAR + 0x10, CODE + 0x10, "another page than the exit"},
+	}
+	for case_of in refused {
+		registers := start(machine, ram, case_of.target, false)
+		step := linux_machine_handle_exit(machine, &registers, {kind = .Writes_Own_Page, a = case_of.address, b = 1})
+		testing.expectf(t, step == .Failed && machine.failure == .Writes_Own_Page, "%s is refused", case_of.about)
+		testing.expectf(t, registers.rip == CODE_LINEAR && data_unchanged(ram), "%s changes nothing", case_of.about)
+	}
+	// The successful cases last: four levels, five levels, a page of 1 GiB.
+	accepted := [?]struct {
+		target:     u64,
+		five_level: bool,
+		about:      string,
+	}{
+		{DATA_LINEAR + 0x10, false, "four levels"},
+		{DATA_LINEAR + 0x10, true, "five levels"},
+		{GIANT_LINEAR + DATA + 0x10, false, "a page of 1 GiB"},
+	}
+	for case_of in accepted {
+		registers := start(machine, ram, case_of.target, case_of.five_level)
+		step := linux_machine_handle_exit(machine, &registers, {kind = .Writes_Own_Page, a = DATA + 0x10, b = 1})
+		testing.expectf(t, step == .Continue, "%s is done", case_of.about)
+		testing.expectf(t, registers.rip == CODE_LINEAR + 2, "%s moves rip past it", case_of.about)
+		testing.expectf(t, ram[DATA + 0x10] == 0x88 && ram[DATA + 0x11] == 0x77 && ram[DATA + 0x12] == 0x66 && ram[DATA + 0x13] == 0x55 && ram[DATA + 0x14] == 0, "%s writes its 4 bytes", case_of.about)
+	}
 }

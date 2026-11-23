@@ -96,6 +96,12 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// The test of the records of a terminal ring whose kind names no
 	// record: it writes them to its terminal, as flood writes lines.
 	{name = "hostile_terminal", grants = {.Terminal}},
+	// A shell of Linux in a guest (src/md/features/linux_shell.md):
+	// - **Terminal**: the serial console of the guest, both ways.
+	// - **Store**: its private store holds the guest image: a kernel of
+	//   13 MB and an initial archive. The blocks hold both, with room for a
+	//   newer kernel beside them.
+	{name = "linux", grants = {.Terminal, .Store}, terms = {store_blocks = 8192}},
 	// A developer tool: it reads the reports of the machine and the names
 	// of the modules, and serves the same facts (docs/TOOLS.md).
 	{name = "inspect", grants = {.Inspect, .Image, .Serve, .Debug_Image}},

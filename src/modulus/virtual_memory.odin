@@ -307,6 +307,13 @@ protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Ran
 			return mappings, .Bad_Operation
 		}
 		whole := address == mapping.address && count == mapping.page_count
+		// A switching mapping takes Write, Execute or No_Access whole: the
+		// switch of a page gives it Write or Execute at each fault of the
+		// guest, so a read-only protection or a part would not hold
+		// (src/md/features/guest.md, "The switch of a page").
+		if mapping_is_switching(mapping) && (!whole || flags == {}) {
+			return mappings, .Bad_Operation
+		}
 		// A part takes away from the protection of its mapping now: it
 		// cannot get more than it (a part that asked for more
 		// changed nothing and succeeded).

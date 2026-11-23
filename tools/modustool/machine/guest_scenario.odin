@@ -11,7 +11,10 @@ import "modustool:build"
 // 16-bit code in it, and runs its guest processor: the `out` of the guest
 // arrives as an exit record with the port 0x80 and the value 42, and its
 // `hlt` ends it. An `int1` of the guest arrives as an exit Other with the
-// exit code 0x88 (icebp). Then a thread of the guest is refused.
+// exit code 0x88 (icebp). A switching mapping refuses a read-only and a part
+// protection, and an instruction that writes the page that holds it ends
+// its run with the exit Writes_Own_Page. Then a thread of the guest is
+// refused.
 //
 // The kernel uses the AMD form of the support (SVM with nested paging). The
 // test machine gets it from the host: from KVM on an AMD host whose module
@@ -32,8 +35,10 @@ scenario_guest := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"guest_demo\")"},
+	{kind = .Wait, text = "guest_demo: Memory_Protect refused a read-only protection and a part of a switching mapping: as it must", fails_on = "guest_demo: failed: "},
 	{kind = .Wait, text = "guest_demo: the guest wrote 42 to the port 0x80, then halted after it: as it must", fails_on = "guest_demo: failed: "},
 	{kind = .Wait, text = "guest_demo: the int1 of the guest arrived as an exit Other with the exit code 0x88: as it must", fails_on = "guest_demo: failed: "},
+	{kind = .Wait, text = "guest_demo: the instruction that writes its own page at 0x2010 ended the run with the exit Writes_Own_Page: as it must", fails_on = "guest_demo: failed: "},
 	{kind = .Wait, text = "guest_demo: Process_Start of the guest gave Bad_State: as it must", fails_on = "guest_demo: failed: "},
 	{kind = .Wait, text = "guest_demo: ok"},
 	{kind = .Front, text = "console"},

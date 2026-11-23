@@ -136,8 +136,14 @@ test_parts := [?]Test_Part {
 	{name = "crypto", does = "The machine of the module `cryptography`", procedures = {"cryptography_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{
 		name = "guest",
-		does = "The machine of a guest: `guest_demo` runs seven bytes of 16-bit code in a guest, receives its port write of 42 to the port 0x80 as an exit record, sees its `hlt`, and gets its `int1` as an exit `Other` with the exit code 0x88 (icebp). The tool reads the host first: on a host that gives the test machine no SVM, the machine checks only that `Guest_Run` gives `Unsupported`, and the tool writes that no guest ran, and why (`ARCHITECTURE.md`, \"A guest\")",
+		does = "The machine of a guest: `guest_demo` runs seven bytes of 16-bit code in a guest, receives its port write of 42 to the port 0x80 as an exit record, sees its `hlt`, and gets its `int1` as an exit `Other` with the exit code 0x88 (icebp); `Memory_Protect` refuses a read-only protection and a part of a switching mapping, and an instruction that writes the page that holds it ends the run with the exit `Writes_Own_Page` and the address that it writes. The tool reads the host first: on a host that gives the test machine no SVM, the machine checks only that `Guest_Run` gives `Unsupported`, and the tool writes that no guest ran, and why (`ARCHITECTURE.md`, \"A guest\")",
 		procedures = {"guest_tests_run"},
+		volumes = {build.BOOT_VOLUME},
+	},
+	{
+		name = "linux",
+		does = "The machine of a shell of Linux: its data disk holds the private store `linux` with the bzImage of Nixpkgs and an initial archive with a static busybox. The start menu starts `linux`, Linux boots in a guest on the serial console, the tool types `echo modus-guest-ok` in the terminal window and waits for the output, then types `poweroff`, and `linux` ends with the halt of the guest. On a host that gives the test machine no SVM, the machine checks only that `linux` says that no guest runs",
+		procedures = {"linux_tests_run"},
 		volumes = {build.BOOT_VOLUME},
 	},
 	{name = "no_pit", does = "The machine with no time base: no 8254 (`-machine q35,pit=off`) and a processor whose CPUID states no frequency of its cycle counter; the kernel writes its line and stops with the code 1", procedures = {"no_pit_tests_run"}, volumes = {build.BOOT_VOLUME}},

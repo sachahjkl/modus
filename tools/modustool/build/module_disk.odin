@@ -207,7 +207,7 @@ module_files_check :: proc(store_name: string, files: []Module_File) -> (sorted:
 // module_files_store_put writes the objects of one store, its leaf and its
 // store block, and gives the cell of the store in the root. sorted are the
 // files that module_files_check gave.
-module_files_store_put :: proc(disk: ^Module_Disk, store_name: string, sorted: []Module_File, disk_size: int) -> (cell: format.Store_Entry, ok: bool) {
+module_files_store_put :: proc(disk: ^Module_Disk, store_name: string, sorted: []Module_File, disk_size: int, limit: u64 = disk_process.STORE_BLOCKS_LIMIT) -> (cell: format.Store_Entry, ok: bool) {
 	leaf: [format.BLOCK_SIZE]u8
 	header := (^format.Tree_Header)(&leaf)
 	header.magic = format.NODE_MAGIC
@@ -236,7 +236,7 @@ module_files_store_put :: proc(disk: ^Module_Disk, store_name: string, sorted: [
 		return {}, false
 	}
 	copy(cell.name[:format.NAME_CAPACITY - 1], store_name)
-	cell.limit = disk_process.STORE_BLOCKS_LIMIT
+	cell.limit = limit
 	// Its store block, its leaf, and the blocks of its objects.
 	cell.used = 2 + store_block.current_blocks
 	cell.store = {block = store_number, check = format.check(store_bytes)}
@@ -271,6 +271,51 @@ module_disk_encode :: proc(files: []Module_File, disk_size: int, principal_files
 	if len(principal_sorted) > 0 {
 		root.stores[1] = module_files_store_put(&disk, PRINCIPAL_MODULE_FILES_STORE, principal_sorted, disk_size) or_return
 	}
+	root.check = format.root_check(root)
+	copy(disk.image[:format.BLOCK_SIZE], ([^]u8)(root)[:format.BLOCK_SIZE])
+	return disk.image, true
+}
+
+// One private store of a data disk that is not module_files: its name, its
+// limit of blocks, and its objects, each with any name that a leaf takes.
+Data_Disk_Store :: struct {
+	name:    string,
+	limit:   u64,
+	objects: []Module_File,
+}
+
+// data_disk_encode gives the bytes of a data disk of disk_size bytes that
+// holds one store with these objects, as one commit: the private store of
+// a process of the boot image, which the storage service gives it by its
+// name. It refuses an empty store, two objects of one name, an object with
+// no byte, and a store that does not fit.
+data_disk_encode :: proc(store: Data_Disk_Store, disk_size: int, allocator := context.allocator) -> (image: []u8, ok: bool) {
+	if len(store.objects) == 0 || len(store.objects) > format.LEAF_CAPACITY {
+		fmt.eprintfln("modustool: the store %s of the tool holds 1 to %d objects, and %d are given", store.name, format.LEAF_CAPACITY, len(store.objects))
+		return nil, false
+	}
+	sorted := slice.clone(store.objects, context.temp_allocator)
+	slice.sort_by(sorted, proc(a, b: Module_File) -> bool {
+		return a.name < b.name
+	})
+	for object, index in sorted {
+		if len(object.name) == 0 || len(object.name) >= size_of(format.Entry_Name) || len(object.bytes) == 0 || index > 0 && sorted[index - 1].name == object.name {
+			fmt.eprintfln("modustool: the object %q of the store %s has no name that a leaf takes, no byte, or the name of another object", object.name, store.name)
+			return nil, false
+		}
+	}
+	disk := Module_Disk {
+		image = make([]u8, disk_size, allocator),
+		next  = 2,
+	}
+	defer if !ok {
+		delete(disk.image, allocator)
+	}
+	root := new(format.Root, context.temp_allocator)
+	root.magic = format.ROOT_MAGIC
+	root.generation = MODULE_DISK_GENERATION
+	root.disk_blocks = u64(disk_size) / format.BLOCK_SIZE
+	root.stores[0] = module_files_store_put(&disk, store.name, sorted, disk_size, store.limit) or_return
 	root.check = format.root_check(root)
 	copy(disk.image[:format.BLOCK_SIZE], ([^]u8)(root)[:format.BLOCK_SIZE])
 	return disk.image, true

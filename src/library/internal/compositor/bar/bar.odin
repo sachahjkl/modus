@@ -15,7 +15,7 @@ import "modus:text_rendering"
 // PINNED_COUNT are the pinned modules of the left pane, the others are the
 // list of all modules of the right pane. A module is in one pane only.
 @(rodata)
-names := [?]string{"console", "monitor", "log", "clock", "settings", "manual", "notes", "paint", "life", "plasma", "boot", "pages", "fault", "hall_of_fame", "heron", "rings", "threads", "workers", "rights", "origin", "budget", "limits", "processors", "flow", "crowd", "randomness", "flood", "tally", "frames", "disk", "imports", "net", "remote", "server", "inspect", "debugger_window", "locks", "errors", "scheduler", "interface_elements", "vector_glyphs", "interface_font", "pointers", "tables", "interface_through_module", "address_space", "cryptography_vectors", "quic_echo", "extended_state", "return_fault", "fault_ring", "kernel_events"}
+names := [?]string{"console", "monitor", "log", "clock", "settings", "manual", "notes", "paint", "life", "plasma", "boot", "pages", "fault", "hall_of_fame", "heron", "rings", "threads", "workers", "rights", "origin", "budget", "limits", "processors", "flow", "crowd", "randomness", "flood", "tally", "frames", "disk", "imports", "net", "remote", "server", "inspect", "debugger_window", "locks", "errors", "scheduler", "interface_elements", "vector_glyphs", "interface_font", "pointers", "tables", "interface_through_module", "address_space", "cryptography_vectors", "quic_echo", "extended_state", "return_fault", "fault_ring", "kernel_events", "linux"}
 
 // The icon of each module of names, at the same index.
 @(rodata)
@@ -25,7 +25,7 @@ name_icons := [?]Icon {
 	.Monitor, .Monitor, .Monitor, .Network, .Monitor, .Window, .Monitor, .Monitor, .Picture, .Disk, // budget to disk.
 	.Disk, .Network, .Network, .Network, .Debugger, .Debugger, .Debugger, .Debugger, .Monitor, .Window, // imports to interface_elements.
 	.Picture, .Document, .Window, .Document, .Window, .Disk, .Grant, .Network, .Debugger, .Debugger, // vector_glyphs to return_fault.
-	.Debugger, .Console, // fault_ring, kernel_events.
+	.Debugger, .Console, .Console, // fault_ring, kernel_events, linux.
 }
 #assert(len(name_icons) == len(names))
 

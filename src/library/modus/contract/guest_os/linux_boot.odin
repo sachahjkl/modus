@@ -344,7 +344,7 @@ linux_page_tables_write :: proc "contextless" (memory: Guest_Memory, base: u64) 
 // devices with their windows and their lines
 // (CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES). After `--`, the words go to init
 // as its arguments.
-LINUX_COMMAND_LINE_START :: "console=ttyS0 earlyprintk=serial,ttyS0,115200 acpi=off pci=off noapic nolapic nokaslr panic=-1 tsc=reliable no_timer_check"
+LINUX_COMMAND_LINE_START :: "console=ttyS0 earlyprintk=serial,ttyS0,115200 acpi=off pci=off noapic nolapic nokaslr panic=-1 tsc=reliable no_timer_check printk.time=0 initcall_blacklist=jent_mod_init"
 
 // linux_command_line_write writes the command line: the fixed start, one
 // virtio_mmio.device for each device, then `--` and the command of the

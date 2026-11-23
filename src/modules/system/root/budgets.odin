@@ -71,6 +71,17 @@ budget_exceptions := [?]Budget_Exception {
 	// process asks for that much. And its window draws its text, whose
 	// glyph memory is 354 pages more.
 	{name = "address_space", largest = {pages = 42338}},
+	// The memory of its Linux guest is 128 MiB: a kernel of a distribution
+	// unpacks into about 56 MiB above its place at 16 MiB, and its initial
+	// archive and the copy of its image wait above it
+	// (src/md/features/linux_shell.md, "The machine"). The pages are the
+	// request of its table Budget: the 34 816 pages that its source states
+	// (32 768 of guest memory, 2 048 for the nested page table of the guest
+	// and its buffers), the 72 pages of its first thread (its stack, its
+	// context, its thread area, its own log ring), and the 44 pages of its
+	// module. The build writes that request on its line of budgets; a module
+	// that grows asks for more, and this row follows it.
+	{name = "linux", largest = {pages = 34932}},
 	// Its cases reach the limit of processor time: a small limit makes
 	// them short.
 	{name = "limits", processor = 1_500_000},

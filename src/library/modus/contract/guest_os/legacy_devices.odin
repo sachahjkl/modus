@@ -12,11 +12,16 @@ package guest_os
 SERIAL_PORT_BASE :: u16(0x3F8)
 SERIAL_INTERRUPT_LINE :: u8(4)
 SERIAL_CAPTURE_BYTES :: 4096
+// The bytes that wait for the guest to read them: the keys of a principal
+// that the guest did not take yet.
+SERIAL_RECEIVE_BYTES :: 256
 
 SERIAL_LINE_STATUS_DATA_READY :: u8(0x01)
 SERIAL_LINE_STATUS_TRANSMIT_EMPTY :: u8(0x60) // The holding register and the shift register are empty.
 SERIAL_INTERRUPT_NONE :: u8(0x01) // The identification register: no interrupt waits.
 SERIAL_INTERRUPT_TRANSMIT :: u8(0x02) // The holding register is empty.
+SERIAL_INTERRUPT_RECEIVED :: u8(0x04) // Received data waits: it comes before the holding register.
+SERIAL_ENABLE_RECEIVED :: u8(0x01)
 SERIAL_ENABLE_TRANSMIT :: u8(0x02)
 SERIAL_LINE_DIVISOR_LATCH :: u8(0x80)
 SERIAL_MODEM_LOOP :: u8(0x10)
@@ -31,6 +36,37 @@ Serial_Port :: struct {
 	capture:           [SERIAL_CAPTURE_BYTES]u8,
 	captured:          u32,
 	dropped:           u64,
+	receive:           [SERIAL_RECEIVE_BYTES]u8, // A queue: receive_count bytes from receive_first, around the end.
+	receive_first:     u32,
+	receive_count:     u32,
+	receive_dropped:   u64, // The bytes that found the queue full.
+}
+
+// serial_receive_put puts bytes in the receive queue of the port, as the
+// line of a terminal brings them, and gives how many it took: a byte that
+// finds the queue full is dropped and counted.
+serial_receive_put :: proc "contextless" (port: ^Serial_Port, bytes: []u8) -> (taken: int) {
+	for value in bytes {
+		if port.receive_count == SERIAL_RECEIVE_BYTES {
+			port.receive_dropped += u64(len(bytes) - taken)
+			return taken
+		}
+		port.receive[(port.receive_first + port.receive_count) % SERIAL_RECEIVE_BYTES] = value
+		port.receive_count += 1
+		taken += 1
+	}
+	return taken
+}
+
+// serial_output_take gives the bytes that the guest wrote since the last
+// call, at most len(out), and takes them out of the capture. The bytes
+// that came while the capture was full are counted in dropped.
+serial_output_take :: proc "contextless" (port: ^Serial_Port, out: []u8) -> (count: int) {
+	count = min(int(port.captured), len(out))
+	copy(out[:count], port.capture[:count])
+	copy(port.capture[:], port.capture[count:port.captured])
+	port.captured -= u32(count)
+	return count
 }
 
 // serial_read gives the value of a read of the register at offset (0 to 7).
@@ -41,14 +77,27 @@ serial_read :: proc "contextless" (port: ^Serial_Port, offset: u16) -> u8 {
 		if latch {
 			return u8(port.divisor)
 		}
-		return 0 // No input: the receive register is empty.
+		// The receive register: the first byte of the queue, or 0 when the
+		// queue is empty.
+		if port.receive_count == 0 {
+			return 0
+		}
+		value := port.receive[port.receive_first]
+		port.receive_first = (port.receive_first + 1) % SERIAL_RECEIVE_BYTES
+		port.receive_count -= 1
+		return value
 	case 1:
 		if latch {
 			return u8(port.divisor >> 8)
 		}
 		return port.interrupt_enable
 	case 2:
-		// A read of the identification clears the interrupt that it names.
+		// Received data comes first, and stays until the queue is empty.
+		// A read of the identification clears the interrupt of the holding
+		// register that it names.
+		if port.receive_count != 0 && port.interrupt_enable & SERIAL_ENABLE_RECEIVED != 0 {
+			return SERIAL_INTERRUPT_RECEIVED
+		}
 		if port.transmit_pending && port.interrupt_enable & SERIAL_ENABLE_TRANSMIT != 0 {
 			port.transmit_pending = false
 			return SERIAL_INTERRUPT_TRANSMIT
@@ -59,7 +108,7 @@ serial_read :: proc "contextless" (port: ^Serial_Port, offset: u16) -> u8 {
 	case 4:
 		return port.modem_control
 	case 5:
-		return SERIAL_LINE_STATUS_TRANSMIT_EMPTY
+		return SERIAL_LINE_STATUS_TRANSMIT_EMPTY | (port.receive_count != 0 ? SERIAL_LINE_STATUS_DATA_READY : 0)
 	case 6:
 		// In loop mode, the modem status echoes the modem control: the probe
 		// of Linux checks it. Else carrier, data set ready and clear to send.
@@ -116,7 +165,8 @@ serial_write :: proc "contextless" (port: ^Serial_Port, offset: u16, value: u8) 
 
 // serial_interrupt says if the port asserts its line.
 serial_interrupt :: proc "contextless" (port: ^Serial_Port) -> bool {
-	return port.transmit_pending && port.interrupt_enable & SERIAL_ENABLE_TRANSMIT != 0
+	received := port.receive_count != 0 && port.interrupt_enable & SERIAL_ENABLE_RECEIVED != 0
+	return received || port.transmit_pending && port.interrupt_enable & SERIAL_ENABLE_TRANSMIT != 0
 }
 
 // --- The interrupt controllers 8259 at 0x20 and 0xA0 ---
@@ -422,7 +472,11 @@ timer_deadline :: proc "contextless" (timer: ^Interval_Timer) -> (tick: u64, ok:
 	if channel.mode == 2 || channel.mode == 3 {
 		return channel.start + (channel.fired + 1) * period, true
 	}
-	if channel.mode == 0 && channel.fired == 0 {
+	// Mode 0 raises the line at the end of its count; mode 4, the strobe
+	// that Linux uses for a one-shot tick, raises it there too: its output
+	// falls for one tick and rises again, and the line takes the rise. Each
+	// fires once for each load of the count.
+	if (channel.mode == 0 || channel.mode == 4) && channel.fired == 0 {
 		return channel.start + period, true
 	}
 	return 0, false
