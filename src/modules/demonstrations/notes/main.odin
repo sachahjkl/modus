@@ -117,6 +117,7 @@ Window_Problem :: enum u8 {
 	Selection = 6, // The selection is longer than the limit of the clipboard.
 	Busy      = 7, // The queue of the store thread is full: the act did not start.
 	Unreadable = 8, // The note shown could not be read whole: it is shown empty, and never written.
+	Version_Unreadable = 9, // The version chosen could not be read: it is not restored.
 }
 
 @(rodata)
@@ -130,6 +131,7 @@ window_problem_texts := [Window_Problem]string {
 	.Selection = "the selection is longer than the clipboard limit of 4096 bytes",
 	.Busy      = "the store is busy: the act did not start, try it again",
 	.Unreadable = "the note could not be read: it is not shown and not written over",
+	.Version_Unreadable = "this version could not be read: it cannot be restored",
 }
 
 // The keys of each mode, in its action bar (docs/INTERFACE.md, "4.4 The
@@ -592,9 +594,13 @@ result_apply :: proc "contextless" (result: ^store_work.Result) {
 		}
 		layout_refresh()
 	case .Write:
+		note_session.write_done(&session, result.status)
 		if result.status != .Done {
 			problem_shown = .Not_Kept
 			return
+		}
+		if problem_shown == .Not_Kept {
+			problem_shown = .None
 		}
 		if index := note_of_name(name); index >= 0 {
 			notes.notes[index].generation = result.generation
@@ -611,8 +617,14 @@ result_apply :: proc "contextless" (result: ^store_work.Result) {
 	case .Version:
 		note_session.version_done(&session, result.status)
 		if result.status != .Done {
+			// The version cannot be read: Enter does not restore it, and
+			// the status band says why.
+			problem_shown = .Version_Unreadable
 			layout_refresh()
 			return
+		}
+		if problem_shown == .Version_Unreadable {
+			problem_shown = .None
 		}
 		text_take(&preview, result.bytes[:result.byte_count])
 		layout_refresh()
@@ -814,6 +826,12 @@ copy_event :: proc "contextless" (window: ^display.Window, action: display.Copy_
 		problem_shown = .Selection
 		return
 	case .None:
+	}
+	// A cut changes the text: it waits as a typed key does
+	// (note_session.cut_allowed). A copy changes nothing.
+	if action == .Cut && !note_session.cut_allowed(&session) {
+		display.copy_decline(window)
+		return
 	}
 	if send_problem, _ := display.copy_send(window, clipboard_buffer[:count]); send_problem != .None {
 		return
@@ -1024,7 +1042,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		switch {
 		case session.loading:
 			state = "loading"
-		case !session.keeping:
+		case !session.keeping, session.write_refused:
 			state = "not kept"
 		case waiting:
 			state = "a change waits"

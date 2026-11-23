@@ -1,6 +1,7 @@
 package compositor
 
 import "internal:compositor/bar"
+import "modus:display"
 import "modus:graphics"
 import "modus:interface"
 import "modus:system"
@@ -20,6 +21,13 @@ window_switcher: bar.Window_Switcher
 // first; it does not open over the palette, a mode of the keys of the
 // desktop, a dialog of the trusted display or a menu.
 window_switcher_key :: proc "contextless" (code: u32, pressed: bool, modifiers: u32) -> bool {
+	// Control+Shift+Escape revokes a wide grant: the card never holds it. It
+	// closes, and the key goes on to the revocation.
+	control_shift := u32(display.MODIFIER_CONTROL | display.MODIFIER_SHIFT)
+	if pressed && code == display.KEY_ESCAPE && modifiers & control_shift == control_shift {
+		window_switcher_cancel()
+		return false
+	}
 	if !window_switcher.open && (palette_is_open() || keyboard_window_mode != .None || bar_focus.kind != .None || trusted_dialog_open() || desktop_context_menu.open) {
 		return false
 	}

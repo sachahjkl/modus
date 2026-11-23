@@ -23,6 +23,7 @@ Session :: struct {
 	versions_asked:  bool, // A request Versions waits: the keys wait for its result.
 	restore_asked:   bool, // A request Restore waits: the keys wait for its result.
 	version_ready:   bool, // The preview holds the bytes of the version chosen: its Version result was Done.
+	write_refused:   bool, // The last write that came back was refused: the store does not hold the text that the window shows.
 	load_serial:     u64,
 	versions_serial: u64,
 	version_serial:  u64,
@@ -32,6 +33,18 @@ Session :: struct {
 // text_keys_act says if a key can change the text of the note shown.
 text_keys_act :: proc "contextless" (session: ^Session) -> bool {
 	return session.listed && session.mode == .Notes && !session.loading && !session.locked && !session.versions_asked && !session.restore_asked
+}
+
+// cut_allowed says if a cut can remove the selection: a cut changes the
+// text, as a typed key does. A copy changes nothing, and needs no gate.
+cut_allowed :: proc "contextless" (session: ^Session) -> bool {
+	return text_keys_act(session)
+}
+
+// write_done records the result of a write: a refused one leaves the
+// window with a text that the store does not hold, until a write is done.
+write_done :: proc "contextless" (session: ^Session, status: store_work.Result_Status) {
+	session.write_refused = status != .Done
 }
 
 // list_keys_act says if a key can change the list or show another note:

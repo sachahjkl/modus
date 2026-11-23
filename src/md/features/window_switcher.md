@@ -18,7 +18,7 @@ A principal who works in two windows goes from one to the other many times. The 
 - **The keys.** Alt+Tab opens the card and chooses the window behind the one in front; each Tab while Alt is down chooses the next one, from the last back to the first; Alt+Shift+Tab chooses from the last. The release of Alt brings the chosen window to the front, and restores it if it was minimized. Escape closes the card with no change, as does a press of the pointer. Control+Alt+Tab is not the switcher's.
 - **The card** is in the middle of the screen, one line for each window from the front: the module icon and the title, the chosen line on the title blue, a minimized window in the dim color. It shows twelve lines at most, and moves with the choice.
 - **The card keeps its windows.** At its open it copies the client index of each window from the front: a line names a window, never a place in the order. A window that opens or closes closes the card with no change, as a dialog of the trusted display or a menu that opens.
-- **The card holds the keys while it is open**: it has each key before the dialogs and the menus, and it does not open over them.
+- **The card holds the keys while it is open**: it has each key before the dialogs and the menus, and it does not open over them. Control+Shift+Escape, the revocation of a wide grant, is the one key that it never holds: the card closes, and the key goes on to the revocation.
 - **The rules are pure** (`bar.switcher_key` in `src/library/internal/compositor/bar`, with host tests); the compositor keeps the state, draws the card and raises the window (`window_switcher.odin`).
 
 ## The refused forms

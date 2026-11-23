@@ -90,6 +90,45 @@ a_restore_needs_the_bytes_of_its_version_and_holds_the_keys_until_its_result :: 
 	testing.expect(t, text_keys_act(&session))
 }
 
+// A cut is a change of the text: it waits with the typed keys while the
+// versions are asked for, and while a restore waits.
+@(test)
+a_cut_waits_for_the_versions_and_for_a_restore :: proc(t: ^testing.T) {
+	session := listed_session()
+	testing.expect(t, cut_allowed(&session))
+	versions_asked_now(&session, 1)
+	testing.expect(t, !cut_allowed(&session))
+	testing.expect(t, versions_done(&session, .Done, 2))
+	testing.expect(t, !cut_allowed(&session))
+	version_asked(&session, 2)
+	version_done(&session, .Done)
+	restore_asked_now(&session, 3)
+	testing.expect(t, !cut_allowed(&session))
+	testing.expect(t, restore_done(&session, .Done))
+	load_asked(&session, 4)
+	testing.expect(t, !cut_allowed(&session))
+	load_done(&session, .Done)
+	testing.expect(t, cut_allowed(&session))
+	// A note that could not be read is never cut either.
+	load_asked(&session, 5)
+	load_done(&session, .Refused)
+	testing.expect(t, !cut_allowed(&session))
+}
+
+@(test)
+a_refused_write_is_not_kept_until_a_write_is_done :: proc(t: ^testing.T) {
+	session := listed_session()
+	testing.expect(t, !session.write_refused)
+	for status in ([?]store_work_status{.Refused, .Damaged, .Too_Long, .Absent, .No_Store}) {
+		write_done(&session, status)
+		testing.expect(t, session.write_refused)
+		// The keeping goes on: the next change writes again.
+		testing.expect(t, session.keeping && commit_allowed(&session))
+	}
+	write_done(&session, .Done)
+	testing.expect(t, !session.write_refused)
+}
+
 @(test)
 a_refused_restore_stays_in_the_versions :: proc(t: ^testing.T) {
 	session := listed_session()
