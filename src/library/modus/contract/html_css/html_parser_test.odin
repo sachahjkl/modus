@@ -29,10 +29,10 @@ parse_text :: proc(tree: ^Dom_Tree, text: string) {
 // browser rely on: preorder, links in both directions, depths, bounds.
 expect_tree_well_formed :: proc(t: ^testing.T, tree: ^Dom_Tree, location := #caller_location) {
 	count := int(tree.node_count)
-	testing.expect(t, count >= 1 && count <= MAX_DOM_NODES, "node count out of bounds", loc = location)
+	testing.expect(t, count >= 1 && count <= len(tree.nodes), "node count out of bounds", loc = location)
 	testing.expect(t, tree.nodes[0].kind == .Document, "the first node is the document", loc = location)
 	children_seen := 0
-	deepest: u16 = 0
+	deepest: u32 = 0
 	for index in 0 ..< count {
 		node := &tree.nodes[index]
 		deepest = max(deepest, node.depth)
@@ -49,7 +49,7 @@ expect_tree_well_formed :: proc(t: ^testing.T, tree: ^Dom_Tree, location := #cal
 			if int(child) >= count {
 				break
 			}
-			testing.expectf(t, tree.nodes[child].parent == u16(index), "child %d of %d names another parent", child, index, loc = location)
+			testing.expectf(t, tree.nodes[child].parent == u32(index), "child %d of %d names another parent", child, index, loc = location)
 			children_seen += 1
 			previous = child
 			child = tree.nodes[child].next_sibling
@@ -66,10 +66,10 @@ expect_tree_well_formed :: proc(t: ^testing.T, tree: ^Dom_Tree, location := #cal
 
 // first_element gives the first element of a tag, in preorder.
 @(private = "file")
-first_element :: proc(tree: ^Dom_Tree, tag: Html_Tag, after: int = 0) -> u16 {
+first_element :: proc(tree: ^Dom_Tree, tag: Html_Tag, after: int = 0) -> u32 {
 	for index in after ..< int(tree.node_count) {
 		if tree.nodes[index].kind == .Element && tree.nodes[index].tag == tag {
-			return u16(index)
+			return u32(index)
 		}
 	}
 	return NO_NODE
@@ -88,7 +88,7 @@ count_elements :: proc(tree: ^Dom_Tree, tag: Html_Tag) -> int {
 
 // child_tags writes the tags of the children of a node, "#" for a text.
 @(private = "file")
-child_tags :: proc(tree: ^Dom_Tree, node: u16) -> string {
+child_tags :: proc(tree: ^Dom_Tree, node: u32) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	child := tree.nodes[node].first_child
 	for child != NO_NODE {
@@ -114,7 +114,7 @@ child_tags :: proc(tree: ^Dom_Tree, node: u16) -> string {
 }
 
 @(private = "file")
-first_text :: proc(tree: ^Dom_Tree, node: u16) -> string {
+first_text :: proc(tree: ^Dom_Tree, node: u32) -> string {
 	if node == NO_NODE {
 		return ""
 	}
@@ -132,7 +132,7 @@ first_text :: proc(tree: ^Dom_Tree, node: u16) -> string {
 // none of them, and an element of the head goes into the head.
 @(test)
 the_implied_html_head_and_body :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
+	tree := test_tree_make()
 	defer free(tree)
 	parse_text(tree, "")
 	testing.expect_value(t, child_tags(tree, 0), "html")
@@ -164,7 +164,7 @@ the_implied_html_head_and_body :: proc(t: ^testing.T) {
 // i for the text after </b>.
 @(test)
 misnested_formatting_elements_are_reopened :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
+	tree := test_tree_make()
 	defer free(tree)
 	parse_text(tree, "<b><i>text</b>more</i>")
 	body := first_element(tree, .Body)
@@ -183,7 +183,7 @@ misnested_formatting_elements_are_reopened :: proc(t: ^testing.T) {
 // end of b into a copy of b inside p.
 @(test)
 adoption_agency_moves_the_furthest_block :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
+	tree := test_tree_make()
 	defer free(tree)
 	parse_text(tree, "<b>1<p>2</b>3</p>")
 	body := first_element(tree, .Body)
@@ -216,7 +216,7 @@ adoption_agency_moves_the_furthest_block :: proc(t: ^testing.T) {
 // and well formed, and the work stays linear.
 @(test)
 hostile_formatting_stays_bounded :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
+	tree := test_tree_make()
 	defer free(tree)
 	patterns := [?]string {
 		"<b><i><u><s><em><strong><code><small>x</b>",
@@ -228,7 +228,7 @@ hostile_formatting_stays_bounded :: proc(t: ^testing.T) {
 	for pattern in patterns {
 		page := strings.repeat(pattern, 16 * 1024 / len(pattern), context.temp_allocator)
 		parse_text(tree, page)
-		testing.expectf(t, int(tree.node_count) <= MAX_DOM_NODES, "%q: %d nodes", pattern, tree.node_count)
+		testing.expectf(t, int(tree.node_count) <= len(tree.nodes), "%q: %d nodes", pattern, tree.node_count)
 		expect_tree_well_formed(t, tree)
 	}
 	// Noah's Ark: the list keeps at most 3 alike copies, so 10 nested <b>
@@ -242,9 +242,9 @@ hostile_formatting_stays_bounded :: proc(t: ^testing.T) {
 // the tree says that it is cut, and the layout and the paint stay valid.
 @(test)
 deep_nesting_2000_divs_is_bounded :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
-	sheet := new(Css_Stylesheet)
-	layout := new(Layout_Tree)
+	tree := test_tree_make()
+	sheet := test_sheet_make()
+	layout := test_layout_make()
 	defer free(tree)
 	defer free(sheet)
 	defer free(layout)
@@ -252,19 +252,19 @@ deep_nesting_2000_divs_is_bounded :: proc(t: ^testing.T) {
 	parse_text(tree, page)
 	testing.expect(t, tree.truncated, "a page past the depth says that it is cut")
 	testing.expect(t, tree.max_depth_reached <= MAX_DOM_DEPTH, "depth bounded")
-	testing.expect(t, int(tree.node_count) <= MAX_DOM_NODES, "nodes bounded")
+	testing.expect(t, int(tree.node_count) <= len(tree.nodes), "nodes bounded")
 	expect_tree_well_formed(t, tree)
 	// The leaf text is still in the tree, under the deepest open div.
 	leaf_found := false
 	for index in 0 ..< int(tree.node_count) {
-		if tree.nodes[index].kind == .Text && string(dom_node_text(tree, u16(index))) == "leaf" {
+		if tree.nodes[index].kind == .Text && string(dom_node_text(tree, u32(index))) == "leaf" {
 			leaf_found = true
 		}
 	}
 	testing.expect(t, leaf_found, "the text of the deepest element is kept")
 	compute_layout(tree, sheet, 800, 600, layout)
 	records := make([]draw_record.Draw_Record, 2048, context.temp_allocator)
-	text := make([]u8, MAX_TEXT_POOL, context.temp_allocator)
+	text := make([]u8, 1 << 20, context.temp_allocator)
 	record_count, _ := emit_draw_records(tree, layout, records, text)
 	for record in records[:record_count] {
 		_, problem := draw_record.read(record)
@@ -277,7 +277,7 @@ deep_nesting_2000_divs_is_bounded :: proc(t: ^testing.T) {
 // table (foster parenting).
 @(test)
 broken_tables_are_repaired :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
+	tree := test_tree_make()
 	defer free(tree)
 	parse_text(tree, "<table><tr><td>a<td>b</tr>stray<tr><td>c</table>after")
 	body := first_element(tree, .Body)
@@ -321,7 +321,7 @@ broken_tables_are_repaired :: proc(t: ^testing.T) {
 // Lists and definition lists close their items; a block closes an open p.
 @(test)
 implied_ends_of_lists_and_paragraphs :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
+	tree := test_tree_make()
 	defer free(tree)
 	parse_text(tree, "<ul><li>a<li>b<ol><li>c<li>d</ol></ul>")
 	testing.expect_value(t, child_tags(tree, first_element(tree, .Ul)), "li li")
@@ -345,7 +345,7 @@ implied_ends_of_lists_and_paragraphs :: proc(t: ^testing.T) {
 // The void elements never hold a child, with or without a slash.
 @(test)
 void_elements_hold_nothing :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
+	tree := test_tree_make()
 	defer free(tree)
 	parse_text(tree, "<p>a<br>b<hr>c<img src=x>d<input value=v>e<meta charset=utf-8><link rel=x><br/></br>")
 	for tag in ([?]Html_Tag{.Br, .Hr, .Img, .Input, .Meta, .Link}) {
@@ -366,7 +366,7 @@ void_elements_hold_nothing :: proc(t: ^testing.T) {
 // as written in an attribute when a letter or '=' follows.
 @(test)
 character_references_after_the_whatwg :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
+	tree := test_tree_make()
 	defer free(tree)
 	Case :: struct {
 		source, decoded: string,
@@ -411,7 +411,7 @@ character_references_after_the_whatwg :: proc(t: ^testing.T) {
 // broken, become comments or a doctype; none becomes markup.
 @(test)
 comments_and_doctypes_malformed :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
+	tree := test_tree_make()
 	defer free(tree)
 	Case :: struct {
 		source, comment: string,
@@ -434,7 +434,7 @@ comments_and_doctypes_malformed :: proc(t: ^testing.T) {
 		for index in 0 ..< int(tree.node_count) {
 			if tree.nodes[index].kind == .Comment {
 				found = true
-				testing.expectf(t, string(dom_node_text(tree, u16(index))) == item.comment, "%q gives the comment %q", item.source, string(dom_node_text(tree, u16(index))))
+				testing.expectf(t, string(dom_node_text(tree, u32(index))) == item.comment, "%q gives the comment %q", item.source, string(dom_node_text(tree, u32(index))))
 			}
 		}
 		testing.expectf(t, found, "%q gives a comment", item.source)
@@ -459,7 +459,7 @@ comments_and_doctypes_malformed :: proc(t: ^testing.T) {
 // of title and textarea is text with references; neither holds a tag.
 @(test)
 text_only_elements :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
+	tree := test_tree_make()
 	defer free(tree)
 	parse_text(tree, "<script>a</scriptx>b<div>&amp;</script><style>p{}</STYLE ><textarea>\n<b>&lt;</textarea><title>x</title y>")
 	testing.expect_value(t, first_text(tree, first_element(tree, .Script)), "a</scriptx>b<div>&amp;")
@@ -482,13 +482,13 @@ text_only_elements :: proc(t: ^testing.T) {
 // kept, values in quotes, with no quotes, and with none.
 @(test)
 attributes_after_the_whatwg :: proc(t: ^testing.T) {
-	tree := new(Dom_Tree)
+	tree := test_tree_make()
 	defer free(tree)
 	parse_text(tree, "<div ID=a id=b Class='x y' data-flag title=\"q'\" lang=en/>")
 	div := first_element(tree, .Div)
 	id, _ := dom_node_attr(tree, div, "id")
 	testing.expect_value(t, string(id), "a")
-	testing.expect_value(t, tree.nodes[div].attr_count, u16(5))
+	testing.expect_value(t, tree.nodes[div].attr_count, u32(5))
 	flag, has_flag := dom_node_attr(tree, div, "data-flag")
 	testing.expect(t, has_flag && len(flag) == 0, "an attribute with no value")
 	lang, _ := dom_node_attr(tree, div, "lang")
@@ -503,25 +503,60 @@ attributes_after_the_whatwg :: proc(t: ^testing.T) {
 	}
 	strings.write_string(&many, ">x")
 	parse_text(tree, strings.to_string(many))
-	testing.expect_value(t, tree.nodes[first_element(tree, .P)].attr_count, u16(TOKEN_ATTRIBUTE_CAPACITY))
+	testing.expect_value(t, tree.nodes[first_element(tree, .P)].attr_count, u32(TOKEN_ATTRIBUTE_CAPACITY))
 	testing.expect(t, tree.truncated, "dropped attributes mark the tree as cut")
 }
 
-// The node pool and the text pool at their bounds: one more node or byte
-// is dropped, the tree says so, and nothing past the pools is written.
+// The memory of a tree that cannot grow, at its bounds: one more node or
+// byte is dropped, the tree says so, and nothing past its memory is
+// written. A memory with no room for the order keeps the document node.
 @(test)
 pools_at_their_bounds :: proc(t: ^testing.T) {
+	NODES :: 64
+	TEXT :: 1024
+	nodes := make([]Dom_Node, NODES)
+	defer delete(nodes)
+	attrs := make([]Dom_Attr, 16)
+	defer delete(attrs)
+	text_pool := make([]u8, TEXT)
+	defer delete(text_pool)
+	order := make([]u32, 2 * NODES + 2)
+	defer delete(order)
 	tree := new(Dom_Tree)
 	defer free(tree)
-	page := strings.repeat("<b>x</b>", MAX_DOM_NODES, context.temp_allocator)
+	tree^ = {nodes = nodes, attrs = attrs, text_pool = text_pool, order = order}
+	page := strings.repeat("<b>x</b>", NODES, context.temp_allocator)
 	parse_text(tree, page)
-	testing.expect_value(t, int(tree.node_count), MAX_DOM_NODES)
+	testing.expect_value(t, int(tree.node_count), NODES)
 	testing.expect(t, tree.truncated, "the node pool is full")
 	expect_tree_well_formed(t, tree)
-	long_text := strings.repeat("&#x1F600;", MAX_TEXT_POOL / 4 + 8, context.temp_allocator)
+	long_text := strings.repeat("&#x1F600;", TEXT / 4 + 8, context.temp_allocator)
 	parse_text(tree, long_text)
 	testing.expect(t, tree.truncated, "the text pool is full")
-	testing.expect(t, tree.text_len <= MAX_TEXT_POOL, "text bounded")
+	testing.expect(t, tree.text_len <= TEXT, "text bounded")
 	// No character is cut in two at the end of the pool.
 	testing.expect_value(t, tree.text_len % 4, u32(0))
+	tree.order = order[:2 * NODES - 1]
+	parse_text(tree, page)
+	testing.expect(t, tree.truncated && tree.node_count == 1, "no room for the order: the document node alone")
+	expect_tree_well_formed(t, tree)
+}
+
+// A memory that grows takes a page past each fixed count of before: 40 000
+// elements and their texts, 80 003 nodes, past the 16 bits of the indexes of before,
+// and 2 MB of text, past 1 MiB.
+@(test)
+a_tree_grows_with_its_page :: proc(t: ^testing.T) {
+	tree := test_tree_make()
+	defer free(tree)
+	ELEMENTS :: 40_000
+	page := strings.repeat("<b>xy</b>", ELEMENTS, context.temp_allocator)
+	parse_text(tree, page)
+	testing.expect(t, !tree.truncated, "nothing is cut")
+	testing.expect(t, int(tree.node_count) > int(max(u16)), "past the indexes of 16 bits")
+	testing.expect_value(t, count_elements(tree, .B), ELEMENTS)
+	expect_tree_well_formed(t, tree)
+	long_text := strings.repeat("a", 2 << 20, context.temp_allocator)
+	parse_text(tree, long_text)
+	testing.expect(t, !tree.truncated && tree.text_len >= 2 << 20, "2 MB of text")
 }

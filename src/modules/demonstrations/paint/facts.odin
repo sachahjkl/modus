@@ -52,6 +52,14 @@ Picture_Refused :: struct {
 	name:    [40]u8,
 }
 
+// The budget did not pay the memory of a picture of a size: the picture of
+// the window stays as it was. A budget that the plan gives pays more.
+@(log_fact = "paint: the budget does not pay a picture of {width} x {height} pixels")
+Picture_Memory_Refused :: struct {
+	width:  u64,
+	height: u64,
+}
+
 // A call of the store failed.
 @(log_fact = "paint: the store refused the call {act} with the status {status}")
 Store_Call_Failed :: struct {

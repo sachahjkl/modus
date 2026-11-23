@@ -1,0 +1,3 @@
+type: Changed
+
+**Paint opens a photo of a phone.** The picture of `paint`, its copy before a stroke and the bitmap of a fill are arenas of its budget, sized to the picture, in place of a fixed picture of 1536 × 864 in the pages of the module: a picture of 4096 × 4096 or a photo of 6000 × 4000 holds when the budget pays it, and the export `extend` grows the picture past the window. A picture that the budget does not pay is refused with a line of the log, and the picture stays. The file of a picture names the place of its rows, so a picture of any width keeps one whole picture at each commit; a file of before is refused as damaged.

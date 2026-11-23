@@ -16,6 +16,7 @@ browser_globals_lock: sync.Mutex
 @(deferred_none = globals_release)
 globals_hold :: proc() {
 	sync.mutex_lock(&browser_globals_lock)
+	browser_test_memory_make()
 }
 
 globals_release :: proc() {

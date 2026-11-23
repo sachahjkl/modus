@@ -4,19 +4,33 @@ import "modus:contract/draw_record"
 import "modus:contract/html_css"
 import "modus:graphics"
 import "modus:interface"
+import "modus:system"
+import "modus:web"
 
 // The workspace of the document of the page that the window shows: the
 // origin worker parses it with html_css, resolves its styles, lays out its
 // boxes and paints them as draw records (src/md/features/
 // desktop_to_browser.md, "E. A light browser"). The records are in the
 // places of the document; each frame copies the ones that the view shows
-// into the draw table of the window, moved by the scroll. Each table is a
-// global: the tree, the style sheet and the boxes are far larger than a
-// stack frame should hold.
+// into the draw table of the window, moved by the scroll. The tree, the
+// style sheet, the boxes, the records and the tables of the window are in
+// arenas of the budget, which grow with the page
+// (src/md/features/desktop_to_browser.md, "The memory of a document"): a
+// page has no fixed count of nodes, and the budget bounds it.
 
 document_tree: html_css.Dom_Tree
 sheet: html_css.Css_Stylesheet
 document_layout: html_css.Layout_Tree
+document_arenas: web.Document_Arenas
+
+// The arenas of the tables of the window, one for each table.
+Table_Arena :: enum u8 {
+	Records     = 0,
+	Record_Text = 1,
+	Targets     = 2,
+	Forms       = 3,
+}
+table_arenas: [Table_Arena]system.Arena
 
 // The key of the style sheet in the workspace: the origin that parsed it,
 // and the hash of its style text. The origin worker reuses the sheet only
@@ -27,10 +41,10 @@ sheet_source_hash: u64
 
 // A box paints at most a rectangle, the four sides of its border, and a
 // text.
-DOCUMENT_RECORD_CAPACITY :: 4 * html_css.MAX_DOM_NODES
-document_records: [DOCUMENT_RECORD_CAPACITY]draw_record.Draw_Record
+DOCUMENT_RECORDS_OF_A_BOX :: 6
+document_records: []draw_record.Draw_Record
 document_record_count: int
-document_text: [html_css.MAX_TEXT_POOL]u8
+document_text: []u8
 document_text_count: int
 
 // The width at which the boxes were laid out last, and the height of the
@@ -50,12 +64,12 @@ Target_Kind :: enum u8 {
 
 Node_Target :: struct {
 	kind: Target_Kind,
-	node: u16,
+	node: u32,
 }
 
-node_targets: [html_css.MAX_DOM_NODES]Node_Target
-// The form that holds each node, or html_css.NO_NODE.
-node_forms: [html_css.MAX_DOM_NODES]u16
+// The target and the form (or html_css.NO_NODE) of each node.
+node_targets: []Node_Target
+node_forms: []u32
 
 // A text field of a form: an element input with a name. The window draws
 // an editable field of the interface package over its document box.
@@ -64,9 +78,9 @@ FIELD_TEXT_CAPACITY :: 60
 FIELD_NAME_CAPACITY :: 32
 
 Form_Field :: struct {
-	node:       u16,
-	form:       u16,
-	box:        u16, // Its document box, html_css.NO_NODE when the layout gave it none.
+	node:       u32,
+	form:       u32,
+	box:        u32, // Its document box, html_css.NO_NODE when the layout gave it none.
 	name:       [FIELD_NAME_CAPACITY]u8,
 	name_count: int,
 	text:       [FIELD_TEXT_CAPACITY]u8,
@@ -80,14 +94,14 @@ form_field_count: int
 // records, their text, the targets and the fields of the page before.
 // The style sheet keeps its key, which names its origin.
 document_workspace_clear :: proc "contextless" () {
-	document_tree = {}
-	document_layout = {}
-	document_records = {}
+	html_css.dom_tree_clear(&document_tree)
+	html_css.layout_tree_clear(&document_layout)
+	// The records and their text outlive the document too: the next
+	// document, of any origin, reads no byte of them.
+	html_css.zero_entries(document_records, document_record_count)
+	html_css.zero_entries(document_text, document_text_count)
 	document_record_count = 0
-	document_text = {}
 	document_text_count = 0
-	node_targets = {}
-	node_forms = {}
 	form_fields = {}
 	form_field_count = 0
 	document_height = 0
@@ -95,12 +109,43 @@ document_workspace_clear :: proc "contextless" () {
 	laid_out_width = -1
 }
 
+// document_memory_create reserves the arenas of the document and of the
+// tables of the window, each of the pages that the budget holds, and binds
+// them to the tree, the sheet and the layout tree.
+document_memory_create :: proc "contextless" (reserve_pages: u64) -> system.Status {
+	if status := web.document_arenas_create(&document_arenas, reserve_pages); status != .Ok {
+		return status
+	}
+	for &arena in table_arenas {
+		status: system.Status
+		if arena, status = system.arena_create(reserve_pages); status != .Ok {
+			return status
+		}
+	}
+	web.document_memory_bind(&document_arenas, &document_tree, &sheet, &document_layout)
+	return .Ok
+}
+
+// document_tables_hold grows the tables of the window to the nodes of the
+// tree: the targets and the forms of the nodes. A page past the budget has
+// tables of the nodes that the budget pays.
+@(private = "file")
+document_tables_hold :: proc "contextless" () -> (nodes: int) {
+	count := int(document_tree.node_count)
+	targets, _ := web.arena_entries(&table_arenas[.Targets], size_of(Node_Target), count)
+	forms, _ := web.arena_entries(&table_arenas[.Forms], size_of(u32), count)
+	node_targets = web.arena_slice(&table_arenas[.Targets], Node_Target, targets)
+	node_forms = web.arena_slice(&table_arenas[.Forms], u32, forms)
+	return min(count, len(node_targets), len(node_forms))
+}
+
 // document_targets_read reads the targets and the form fields of the
 // parsed document.
 document_targets_read :: proc "contextless" () {
 	// The nodes are in pre-order: a parent comes before each child, so one
 	// pass gives each node the target and the form of its parent.
-	for index in 0 ..< int(document_tree.node_count) {
+	held := document_tables_hold()
+	for index in 0 ..< held {
 		node := &document_tree.nodes[index]
 		parent := node.parent
 		target := Node_Target{}
@@ -111,10 +156,10 @@ document_targets_read :: proc "contextless" () {
 		}
 		if node.kind == .Element {
 			if node.tag == .Form {
-				form = u16(index)
+				form = u32(index)
 			} else if node.tag == .A {
-				if _, has_href := html_css.dom_node_attr(&document_tree, u16(index), "href"); has_href {
-					target = {kind = .Link, node = u16(index)}
+				if _, has_href := html_css.dom_node_attr(&document_tree, u32(index), "href"); has_href {
+					target = {kind = .Link, node = u32(index)}
 				}
 			} else if node.tag == .Button && form != html_css.NO_NODE {
 				target = {kind = .Submit, node = form}
@@ -124,19 +169,19 @@ document_targets_read :: proc "contextless" () {
 		node_forms[index] = form
 	}
 	form_field_count = 0
-	for index in 0 ..< int(document_tree.node_count) {
+	for index in 0 ..< held {
 		node := &document_tree.nodes[index]
 		if node.kind != .Element || node.tag != .Input || form_field_count >= FORM_FIELD_CAPACITY {
 			continue
 		}
-		name, named := html_css.dom_node_attr(&document_tree, u16(index), "name")
+		name, named := html_css.dom_node_attr(&document_tree, u32(index), "name")
 		if !named || len(name) == 0 || len(name) > FIELD_NAME_CAPACITY {
 			continue
 		}
 		field := &form_fields[form_field_count]
-		field^ = {node = u16(index), form = node_forms[index], box = html_css.NO_NODE}
+		field^ = {node = u32(index), form = node_forms[index], box = html_css.NO_NODE}
 		field.name_count = copy(field.name[:], name)
-		if value, has_value := html_css.dom_node_attr(&document_tree, u16(index), "value"); has_value {
+		if value, has_value := html_css.dom_node_attr(&document_tree, u32(index), "value"); has_value {
 			field.count = copy(field.text[:], value)
 		}
 		form_field_count += 1
@@ -152,7 +197,13 @@ document_lay_out :: proc "contextless" (width, height: i32) {
 	}
 	laid_out_width = width
 	html_css.compute_layout(&document_tree, &sheet, width, height, &document_layout)
-	document_record_count, document_text_count = html_css.emit_draw_records(&document_tree, &document_layout, document_records[:], document_text[:])
+	// The records of the boxes and their text, in arenas that grow to the
+	// page; a page past the budget paints the records that it pays.
+	records, _ := web.arena_entries(&table_arenas[.Records], size_of(draw_record.Draw_Record), DOCUMENT_RECORDS_OF_A_BOX * int(document_layout.box_count))
+	text, _ := web.arena_entries(&table_arenas[.Record_Text], 1, int(document_tree.text_len))
+	document_records = web.arena_slice(&table_arenas[.Records], draw_record.Draw_Record, records)
+	document_text = web.arena_slice(&table_arenas[.Record_Text], u8, text)
+	document_record_count, document_text_count = html_css.emit_draw_records(&document_tree, &document_layout, document_records, document_text)
 	document_height = 0
 	document_background = 0
 	for index in 0 ..< int(document_layout.box_count) {
@@ -169,7 +220,7 @@ document_lay_out :: proc "contextless" (width, height: i32) {
 		field.box = html_css.NO_NODE
 		for index in 0 ..< int(document_layout.box_count) {
 			if document_layout.boxes[index].used && document_layout.boxes[index].node_index == field.node {
-				field.box = u16(index)
+				field.box = u32(index)
 				break
 			}
 		}
@@ -193,7 +244,7 @@ document_title :: proc "contextless" () -> string {
 target_at :: proc "contextless" (x, y: int) -> (target: Node_Target) {
 	for index in 0 ..< int(document_layout.box_count) {
 		box := &document_layout.boxes[index]
-		if !box.used || int(box.node_index) >= int(document_tree.node_count) {
+		if !box.used || int(box.node_index) >= int(document_tree.node_count) || int(box.node_index) >= len(node_targets) {
 			continue
 		}
 		candidate := node_targets[box.node_index]
@@ -242,8 +293,8 @@ document_paint :: proc "contextless" (table: ^interface.Draw_Table, view: interf
 				continue
 			}
 			text := string(document_text[fields.first:fields.first + fields.count])
-			node := u16(record.element - 1)
-			underline := int(node) < int(document_tree.node_count) && node_targets[node].kind == .Link
+			node := u32(record.element - 1)
+			underline := int(node) < int(document_tree.node_count) && int(node) < len(node_targets) && node_targets[node].kind == .Link
 			text_paint(table, x, y, width, height, text, fields, underline)
 		case draw_record.Draw_Nothing, draw_record.Draw_Gradient, draw_record.Draw_Clip_Push, draw_record.Draw_Clip_Pop, draw_record.Draw_Element_Push, draw_record.Draw_Element_Pop, draw_record.Draw_Picture, draw_record.Draw_Text_Grid, draw_record.Draw_Path:
 			// html_css paints rectangles and texts only.

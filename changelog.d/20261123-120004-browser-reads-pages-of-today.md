@@ -1,3 +1,3 @@
 type: Changed
 
-**The browser reads pages of the web of today**: a page of up to 1 MiB of HTML (16 KiB before), 8192 nodes, 1 MiB of text and 1024 CSS rules, and an address of up to 2048 bytes with a host of 253, a path and a query of 1024 each. The window keeps 256 pages of history and the state of 32 origins, each with 16 stored keys and 16 cookies.
+**The document of the browser in arenas.** The tree, the style sheet, the boxes and the records of a page grow with the page in arenas of the budget, so a page has no fixed count of nodes, rules or bytes of text, and a node index has 32 bits; the budget of the browser states a page of 1 MiB of HTML with 20 000 nodes. The fetch takes a body of the size of the memory that its caller gives it, in place of 16 KiB, and an address has up to 2048 bytes with a host of 253, a path and a query of 1024 each. The window keeps 256 pages of history and the state of 32 origins, each with 16 stored keys and 16 cookies.

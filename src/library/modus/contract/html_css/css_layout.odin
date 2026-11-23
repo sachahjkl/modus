@@ -6,19 +6,12 @@ package html_css
 
 import "modus:contract/draw_record"
 
-// The rules of the style sheets of one document: a site of today has some
-// hundred rules for a page.
-MAX_CSS_RULES :: 1024
 MAX_SELECTORS_PER_RULE :: 8
 MAX_SELECTOR_NAME_LEN :: 64
 // A selector is at most 4 compound selectors joined by combinators, and a
 // compound selector names at most 4 classes.
 MAX_COMPOUNDS_PER_SELECTOR :: 4
 MAX_CLASSES_PER_COMPOUND :: 4
-// The bytes of the class and id names of one style sheet.
-// The bytes of the names of the selectors: a Css_Name holds an offset of
-// 16 bits.
-CSS_NAME_POOL_CAPACITY :: 65535
 // The ancestors that a selector with combinators reads: past them, a node
 // matches as if it had no other ancestor.
 SELECTOR_ANCESTOR_LIMIT :: 2 * MAX_DOM_DEPTH
@@ -77,7 +70,7 @@ Box_Side :: enum u8 {
 
 // A name of a selector: bytes of Css_Stylesheet.names.
 Css_Name :: struct {
-	offset: u16,
+	offset: u32,
 	count:  u8,
 }
 
@@ -153,15 +146,54 @@ Css_Rule :: struct {
 	selectors:      [MAX_SELECTORS_PER_RULE]Css_Selector,
 	selector_count: u8,
 	decls:          Css_Declarations,
-	order:          u16,
+	order:          u32,
 }
 
-// Fixed-capacity stylesheet parsed from CSS text.
+// The parts of the memory of a style sheet, which grow apart.
+Css_Part :: enum u8 {
+	Rules = 0,
+	Names = 1, // The bytes of the class and id names of the selectors.
+}
+
+// Css_Grow makes a part of the memory of a style sheet hold at least
+// wanted entries, as Dom_Grow does for a tree. false: the part cannot grow,
+// and the sheet keeps the rules before, and says that it is cut.
+Css_Grow :: #type proc "contextless" (sheet: ^Css_Stylesheet, part: Css_Part, wanted: int) -> bool
+
+// A style sheet parsed from CSS text, in memory of the caller: a document
+// has no fixed count of rules, and the budget of the caller bounds it. The
+// slices are the room of each part, the counts the entries in use.
 Css_Stylesheet :: struct {
-	rules:      [MAX_CSS_RULES]Css_Rule,
-	rule_count: u16,
-	names:      [CSS_NAME_POOL_CAPACITY]u8,
-	name_count: u16,
+	rules:      []Css_Rule,
+	rule_count: u32,
+	names:      []u8,
+	name_count: u32,
+	truncated:  bool, // A rule or a name found no room.
+	grow:       Css_Grow,
+	grow_data:  rawptr,
+}
+
+// stylesheet_clear empties a style sheet and keeps its memory and its
+// grow procedure. It wipes the rules and the names of the last sheet, as
+// dom_tree_clear wipes a tree.
+stylesheet_clear :: proc "contextless" (sheet: ^Css_Stylesheet) {
+	zero_entries(sheet.rules, int(sheet.rule_count))
+	zero_entries(sheet.names, int(sheet.name_count))
+	sheet^ = {rules = sheet.rules, names = sheet.names, grow = sheet.grow, grow_data = sheet.grow_data}
+}
+
+@(private = "file")
+css_room :: proc "contextless" (sheet: ^Css_Stylesheet, part: Css_Part, wanted: int) -> bool {
+	room := part == .Rules ? len(sheet.rules) : len(sheet.names)
+	if wanted <= room {
+		return true
+	}
+	if wanted > int(max(u32)) || sheet.grow == nil || !sheet.grow(sheet, part, wanted) {
+		sheet.truncated = true
+		return false
+	}
+	room = part == .Rules ? len(sheet.rules) : len(sheet.names)
+	return wanted <= room
 }
 
 // Final cascaded and inherited style for one DOM node. The width and the
@@ -197,11 +229,11 @@ Computed_Style :: struct {
 // Computed pixel geometry for one visible DOM node.
 Layout_Box :: struct {
 	used:           bool,
-	node_index:     u16,
-	parent_box:     u16,
-	first_child:    u16,
-	last_child:     u16,
-	next_sibling:   u16,
+	node_index:     u32,
+	parent_box:     u32,
+	first_child:    u32,
+	last_child:     u32,
+	next_sibling:   u32,
 	x:              i32,
 	y:              i32,
 	width:          i32,
@@ -215,15 +247,64 @@ Layout_Box :: struct {
 	is_text:        bool,
 }
 
-// Fixed-capacity layout tree produced by compute_layout.
+// A rule that matches a node, with its specificity: the cascade sorts
+// them.
+Matched_Rule :: struct {
+	rule_idx:    u32,
+	specificity: u32,
+	order:       u32,
+}
+
+// The parts of the memory of a layout tree, which grow apart.
+Layout_Part :: enum u8 {
+	Styles  = 0, // The cascaded style of each node: one for each node of the tree.
+	Boxes   = 1, // The boxes: at most one for each node.
+	Matched = 2, // The rules that match one node: one for each rule of the sheet.
+}
+
+// Layout_Grow makes a part of the memory of a layout tree hold at least
+// wanted entries, as Dom_Grow does for a tree.
+Layout_Grow :: #type proc "contextless" (layout: ^Layout_Tree, part: Layout_Part, wanted: int) -> bool
+
+// A layout tree produced by compute_layout, in memory of the caller, never
+// on the stack: the styles of the nodes of a large page are larger than the
+// stack of a thread.
 Layout_Tree :: struct {
-	// The cascaded style of each node, which the layout reads. It is here,
-	// in the memory of the caller, and not on the stack: the styles of
-	// MAX_DOM_NODES nodes are larger than the stack of a thread.
-	node_styles: [MAX_DOM_NODES]Computed_Style,
-	boxes:     [MAX_DOM_NODES]Layout_Box,
-	box_count: u16,
-	root_box:  u16,
+	node_styles: []Computed_Style,
+	boxes:       []Layout_Box,
+	matched:     []Matched_Rule,
+	box_count:   u32,
+	root_box:    u32,
+	truncated:   bool, // A part found no room: the layout stops there.
+	// The styles and the matched rules that the last layout wrote, which
+	// layout_tree_clear wipes.
+	styled_count:  u32,
+	matched_count: u32,
+	grow:        Layout_Grow,
+	grow_data:   rawptr,
+}
+
+@(private = "file")
+layout_room :: proc "contextless" (layout: ^Layout_Tree, part: Layout_Part, wanted: int) -> bool {
+	room :: proc "contextless" (layout: ^Layout_Tree, part: Layout_Part) -> int {
+		switch part {
+		case .Styles:
+			return len(layout.node_styles)
+		case .Boxes:
+			return len(layout.boxes)
+		case .Matched:
+			return len(layout.matched)
+		}
+		return 0
+	}
+	if wanted <= room(layout, part) {
+		return true
+	}
+	if wanted > NODE_INDEX_LIMIT || layout.grow == nil || !layout.grow(layout, part, wanted) {
+		layout.truncated = true
+		return false
+	}
+	return wanted <= room(layout, part)
 }
 
 // CSS parsing helpers.
@@ -670,12 +751,12 @@ css_name_bytes :: proc "contextless" (sheet: ^Css_Stylesheet, name: Css_Name) ->
 
 @(private = "file")
 css_name_store :: proc "contextless" (sheet: ^Css_Stylesheet, bytes: []u8) -> (name: Css_Name, ok: bool) {
-	if len(bytes) == 0 || len(bytes) > MAX_SELECTOR_NAME_LEN || int(sheet.name_count) + len(bytes) > CSS_NAME_POOL_CAPACITY {
+	if len(bytes) == 0 || len(bytes) > MAX_SELECTOR_NAME_LEN || !css_room(sheet, .Names, int(sheet.name_count) + len(bytes)) {
 		return {}, false
 	}
 	name = {offset = sheet.name_count, count = u8(len(bytes))}
 	copy(sheet.names[sheet.name_count:], bytes)
-	sheet.name_count += u16(len(bytes))
+	sheet.name_count += u32(len(bytes))
 	return name, true
 }
 
@@ -781,12 +862,12 @@ parse_selector :: proc "contextless" (sheet: ^Css_Stylesheet, raw: []u8) -> Css_
 	return selector
 }
 
-// parse_stylesheet parses CSS rules into sheet (appending to existing rules up to MAX_CSS_RULES).
+// parse_stylesheet parses CSS rules into sheet, after its rules, in its memory, which it grows.
 // A rule whose list holds a selector that is not valid is dropped whole,
 // as CSS says.
 parse_stylesheet :: proc "contextless" (sheet: ^Css_Stylesheet, css: []u8) {
 	pos := 0
-	for pos < len(css) && int(sheet.rule_count) < MAX_CSS_RULES {
+	for pos < len(css) {
 		css_skip_ws_and_comments(css, &pos)
 		if pos >= len(css) {
 			break
@@ -830,6 +911,10 @@ parse_stylesheet :: proc "contextless" (sheet: ^Css_Stylesheet, css: []u8) {
 		if !valid || rule.selector_count == 0 {
 			sheet.name_count = names_before
 			continue
+		}
+		if !css_room(sheet, .Rules, int(sheet.rule_count) + 1) {
+			sheet.name_count = names_before
+			break
 		}
 		sheet.rules[sheet.rule_count] = rule
 		sheet.rule_count += 1
@@ -930,7 +1015,7 @@ apply_declarations :: proc "contextless" (style: ^Computed_Style, d: ^Css_Declar
 }
 
 @(private = "file")
-compound_matches :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet, node_idx: u16, compound: ^Css_Compound) -> bool {
+compound_matches :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet, node_idx: u32, compound: ^Css_Compound) -> bool {
 	node := &tree.nodes[node_idx]
 	if node.kind != .Element {
 		return false
@@ -958,7 +1043,7 @@ compound_matches :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet,
 // each compound along the ancestors of the node, with no backtracking:
 // the work is the compounds times the ancestors, whatever the page.
 @(private = "file")
-selector_matches :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet, node_idx: u16, selector: ^Css_Selector) -> bool {
+selector_matches :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet, node_idx: u32, selector: ^Css_Selector) -> bool {
 	if !selector.valid || selector.compound_count == 0 {
 		return false
 	}
@@ -970,7 +1055,7 @@ selector_matches :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet,
 		return true
 	}
 	// path[0] is the node, path[i] its ancestor i levels up.
-	path: [SELECTOR_ANCESTOR_LIMIT + 1]u16
+	path: [SELECTOR_ANCESTOR_LIMIT + 1]u32
 	path[0] = node_idx
 	path_count := 1
 	ancestor := tree.nodes[node_idx].parent
@@ -1011,15 +1096,11 @@ selector_matches :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet,
 	return false
 }
 
+// resolve_styles computes cascaded and inherited styles for every node in
+// tree. styles_out holds a style for each node, and matches a rule for each
+// rule of the sheet: the memory of the layout tree (compute_layout).
 @(private = "file")
-Matched_Rule :: struct {
-	rule_idx:    u16,
-	specificity: u32,
-	order:       u16,
-}
-
-// resolve_styles computes cascaded and inherited styles for every node in tree.
-resolve_styles :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet, styles_out: ^[MAX_DOM_NODES]Computed_Style) {
+resolve_styles :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet, styles_out: []Computed_Style, matches: []Matched_Rule) {
 	// Node indices are in preorder, so parent always precedes child.
 	for i := 0; i < int(tree.node_count); i += 1 {
 		n := &tree.nodes[i]
@@ -1055,7 +1136,6 @@ resolve_styles :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet, s
 		}
 
 		st := ua_default_style(n.tag, parent_style)
-		matches: [MAX_CSS_RULES]Matched_Rule
 		mcount := 0
 		if sheet != nil {
 			for r := 0; r < int(sheet.rule_count); r += 1 {
@@ -1063,7 +1143,7 @@ resolve_styles :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet, s
 				best_spec: u32 = 0
 				matched := false
 				for s := 0; s < int(rule.selector_count); s += 1 {
-					if selector_matches(tree, sheet, u16(i), &rule.selectors[s]) {
+					if selector_matches(tree, sheet, u32(i), &rule.selectors[s]) {
 						if !matched || rule.selectors[s].specificity > best_spec {
 							best_spec = rule.selectors[s].specificity
 						}
@@ -1071,7 +1151,7 @@ resolve_styles :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet, s
 					}
 				}
 				if matched {
-					matches[mcount] = Matched_Rule{rule_idx = u16(r), specificity = best_spec, order = rule.order}
+					matches[mcount] = Matched_Rule{rule_idx = u32(r), specificity = best_spec, order = rule.order}
 					mcount += 1
 				}
 			}
@@ -1092,7 +1172,7 @@ resolve_styles :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet, s
 		}
 
 		// Inline style attribute has highest cascade priority.
-		if inline_val, has_inline := dom_node_attr(tree, u16(i), "style"); has_inline {
+		if inline_val, has_inline := dom_node_attr(tree, u32(i), "style"); has_inline {
 			inline_decls := parse_declarations(inline_val)
 			apply_declarations(&st, &inline_decls)
 		}
@@ -1107,8 +1187,8 @@ resolve_styles :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet, s
 // Block, inline, flex and table layout engine.
 
 @(private = "file")
-layout_alloc_box :: proc "contextless" (layout: ^Layout_Tree, parent_box: u16, node_idx: u16, style: Computed_Style, is_text: bool) -> u16 {
-	if int(layout.box_count) >= MAX_DOM_NODES {
+layout_alloc_box :: proc "contextless" (layout: ^Layout_Tree, parent_box: u32, node_idx: u32, style: Computed_Style, is_text: bool) -> u32 {
+	if !layout_room(layout, .Boxes, int(layout.box_count) + 1) {
 		return NO_NODE
 	}
 	idx := layout.box_count
@@ -1154,7 +1234,7 @@ is_whitespace_only :: proc "contextless" (text: []u8) -> bool {
 }
 
 @(private = "file")
-shift_subtree :: proc "contextless" (layout: ^Layout_Tree, box_idx: u16, dx, dy: i32, depth: int) {
+shift_subtree :: proc "contextless" (layout: ^Layout_Tree, box_idx: u32, dx, dy: i32, depth: int) {
 	if box_idx == NO_NODE || depth > MAX_DOM_DEPTH {
 		return
 	}
@@ -1173,7 +1253,7 @@ shift_subtree :: proc "contextless" (layout: ^Layout_Tree, box_idx: u16, dx, dy:
 // line_align moves the boxes of a finished line, from first up to stop,
 // to the center or the right of the width of the content.
 @(private = "file")
-line_align :: proc "contextless" (layout: ^Layout_Tree, align: Text_Align, first, stop: u16, line_width, inner_width: i32) {
+line_align :: proc "contextless" (layout: ^Layout_Tree, align: Text_Align, first, stop: u32, line_width, inner_width: i32) {
 	if first == NO_NODE {
 		return
 	}
@@ -1198,7 +1278,7 @@ line_align :: proc "contextless" (layout: ^Layout_Tree, align: Text_Align, first
 }
 
 @(private = "file")
-node_visible_in_flow :: proc "contextless" (tree: ^Dom_Tree, styles: ^[MAX_DOM_NODES]Computed_Style, node: u16) -> bool {
+node_visible_in_flow :: proc "contextless" (tree: ^Dom_Tree, styles: []Computed_Style, node: u32) -> bool {
 	if styles[node].display == .None {
 		return false
 	}
@@ -1209,7 +1289,7 @@ node_visible_in_flow :: proc "contextless" (tree: ^Dom_Tree, styles: ^[MAX_DOM_N
 // wraps: the widest line of its content, with its padding, its border and
 // its margins. A table sizes its columns with it.
 @(private = "file")
-preferred_width :: proc "contextless" (tree: ^Dom_Tree, styles: ^[MAX_DOM_NODES]Computed_Style, node_idx: u16, depth: int) -> i32 {
+preferred_width :: proc "contextless" (tree: ^Dom_Tree, styles: []Computed_Style, node_idx: u32, depth: int) -> i32 {
 	if depth > MAX_DOM_DEPTH {
 		return 0
 	}
@@ -1265,7 +1345,7 @@ preferred_width :: proc "contextless" (tree: ^Dom_Tree, styles: ^[MAX_DOM_NODES]
 // table_row_measure widens each column to the preferred width of its cell
 // in one row.
 @(private = "file")
-table_row_measure :: proc "contextless" (tree: ^Dom_Tree, styles: ^[MAX_DOM_NODES]Computed_Style, row: u16, preferred: ^[TABLE_COLUMN_CAPACITY]i32, column_count: ^int, depth: int) {
+table_row_measure :: proc "contextless" (tree: ^Dom_Tree, styles: []Computed_Style, row: u32, preferred: ^[TABLE_COLUMN_CAPACITY]i32, column_count: ^int, depth: int) {
 	column := 0
 	cell := tree.nodes[row].first_child
 	for cell != NO_NODE && column < TABLE_COLUMN_CAPACITY {
@@ -1282,7 +1362,7 @@ table_row_measure :: proc "contextless" (tree: ^Dom_Tree, styles: ^[MAX_DOM_NODE
 // column, then each cell box as high as the highest one. The result is
 // the top of the next row.
 @(private = "file")
-table_row_lay_out :: proc "contextless" (tree: ^Dom_Tree, styles: ^[MAX_DOM_NODES]Computed_Style, layout: ^Layout_Tree, row: u16, parent_box: u16, left, top: i32, widths: ^[TABLE_COLUMN_CAPACITY]i32, column_count: int, depth: int) -> i32 {
+table_row_lay_out :: proc "contextless" (tree: ^Dom_Tree, styles: []Computed_Style, layout: ^Layout_Tree, row: u32, parent_box: u32, left, top: i32, widths: ^[TABLE_COLUMN_CAPACITY]i32, column_count: int, depth: int) -> i32 {
 	if depth > MAX_DOM_DEPTH {
 		return top
 	}
@@ -1330,7 +1410,7 @@ table_row_lay_out :: proc "contextless" (tree: ^Dom_Tree, styles: ^[MAX_DOM_NODE
 // of a table that names its width; then the rows from the top, each in
 // its row group when it has one.
 @(private = "file")
-layout_table :: proc "contextless" (tree: ^Dom_Tree, styles: ^[MAX_DOM_NODES]Computed_Style, layout: ^Layout_Tree, node_idx: u16, table_box: u16, left, top, inner_width: i32, fixed_width: bool, depth: int) -> (used_width, used_height: i32) {
+layout_table :: proc "contextless" (tree: ^Dom_Tree, styles: []Computed_Style, layout: ^Layout_Tree, node_idx: u32, table_box: u32, left, top, inner_width: i32, fixed_width: bool, depth: int) -> (used_width, used_height: i32) {
 	preferred: [TABLE_COLUMN_CAPACITY]i32
 	column_count := 0
 	child := tree.nodes[node_idx].first_child
@@ -1423,7 +1503,7 @@ layout_table :: proc "contextless" (tree: ^Dom_Tree, styles: ^[MAX_DOM_NODES]Com
 }
 
 @(private = "file")
-layout_node :: proc "contextless" (tree: ^Dom_Tree, styles: ^[MAX_DOM_NODES]Computed_Style, layout: ^Layout_Tree, node_idx: u16, parent_box: u16, origin_x, origin_y, avail_width: i32, shrink_to_fit: bool, depth: int) -> u16 {
+layout_node :: proc "contextless" (tree: ^Dom_Tree, styles: []Computed_Style, layout: ^Layout_Tree, node_idx: u32, parent_box: u32, origin_x, origin_y, avail_width: i32, shrink_to_fit: bool, depth: int) -> u32 {
 	if node_idx == NO_NODE || int(node_idx) >= int(tree.node_count) || depth > MAX_DOM_DEPTH {
 		return NO_NODE
 	}
@@ -1662,21 +1742,38 @@ layout_node :: proc "contextless" (tree: ^Dom_Tree, styles: ^[MAX_DOM_NODES]Comp
 	return bidx
 }
 
+// layout_tree_clear empties a layout tree and keeps its memory and its
+// grow procedure. It wipes the styles, the boxes and the matched rules of
+// the last layout, as dom_tree_clear wipes a tree.
+layout_tree_clear :: proc "contextless" (layout: ^Layout_Tree) {
+	zero_entries(layout.node_styles, int(layout.styled_count))
+	zero_entries(layout.boxes, int(layout.box_count))
+	zero_entries(layout.matched, int(layout.matched_count))
+	layout^ = {node_styles = layout.node_styles, boxes = layout.boxes, matched = layout.matched, grow = layout.grow, grow_data = layout.grow_data}
+	layout.root_box = NO_NODE
+}
+
 // compute_layout resolves CSS cascade and computes pixel Layout_Box rects for the DOM tree.
 compute_layout :: proc "contextless" (tree: ^Dom_Tree, sheet: ^Css_Stylesheet, viewport_width, viewport_height: i32, layout_out: ^Layout_Tree) {
-	layout_out^ = {}
-	layout_out.root_box = NO_NODE
+	layout_tree_clear(layout_out)
 	if tree.node_count == 0 {
 		return
 	}
-	resolve_styles(tree, sheet, &layout_out.node_styles)
+	// The styles of each node and the work of the cascade: with no room
+	// for them, there is no layout, and the tree says that it is cut.
+	rules := sheet != nil ? int(sheet.rule_count) : 0
+	if !layout_room(layout_out, .Styles, int(tree.node_count)) || !layout_room(layout_out, .Matched, max(rules, 1)) {
+		return
+	}
+	layout_out.styled_count, layout_out.matched_count = tree.node_count, u32(max(rules, 1))
+	resolve_styles(tree, sheet, layout_out.node_styles, layout_out.matched)
 	vw := max(i32(0), min(viewport_width, MAX_LAYOUT_COORD))
 	_ = viewport_height
-	layout_out.root_box = layout_node(tree, &layout_out.node_styles, layout_out, 0, NO_NODE, 0, 0, vw, false, 0)
+	layout_out.root_box = layout_node(tree, layout_out.node_styles, layout_out, 0, NO_NODE, 0, 0, vw, false, 0)
 }
 
 // layout_find_box_by_id returns the Layout_Box index for the first element with matching HTML id attribute.
-layout_find_box_by_id :: proc "contextless" (tree: ^Dom_Tree, layout: ^Layout_Tree, id: string) -> (box_idx: u16, found: bool) {
+layout_find_box_by_id :: proc "contextless" (tree: ^Dom_Tree, layout: ^Layout_Tree, id: string) -> (box_idx: u32, found: bool) {
 	for i := 0; i < int(layout.box_count); i += 1 {
 		b := &layout.boxes[i]
 		if !b.used || b.is_text {
@@ -1684,7 +1781,7 @@ layout_find_box_by_id :: proc "contextless" (tree: ^Dom_Tree, layout: ^Layout_Tr
 		}
 		val, ok := dom_node_attr(tree, b.node_index, "id")
 		if ok && string(val) == id {
-			return u16(i), true
+			return u32(i), true
 		}
 	}
 	return NO_NODE, false
@@ -1720,7 +1817,7 @@ emit_rectangle :: proc "contextless" (records_out: []draw_record.Draw_Record, re
 }
 
 @(private = "file")
-emit_box_paint :: proc "contextless" (tree: ^Dom_Tree, layout: ^Layout_Tree, box_idx: u16, records_out: []draw_record.Draw_Record, text_out: []u8, rec_count: ^int, text_pos: ^int, depth: int) {
+emit_box_paint :: proc "contextless" (tree: ^Dom_Tree, layout: ^Layout_Tree, box_idx: u32, records_out: []draw_record.Draw_Record, text_out: []u8, rec_count: ^int, text_pos: ^int, depth: int) {
 	if box_idx == NO_NODE || int(box_idx) >= int(layout.box_count) || depth > MAX_DOM_DEPTH {
 		return
 	}

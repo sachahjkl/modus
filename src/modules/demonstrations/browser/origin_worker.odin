@@ -45,7 +45,7 @@ TITLE_CAPACITY :: 64
 ORIGIN_WIRE_BYTES :: 8 + 1 + 2 + 2 + html_css.MAX_ORIGIN_HOST_LEN
 ORIGIN_REQUEST_BYTES :: 1 + 2 * ORIGIN_WIRE_BYTES + 4 + 2 + ORIGIN_KEY_CAPACITY + 1 + ORIGIN_VALUE_CAPACITY
 ORIGIN_REPLY_BYTES :: 1 + 1 + ORIGIN_VALUE_CAPACITY
-ORIGIN_RENDER_TREE_BYTES :: 1 + ORIGIN_WIRE_BYTES + 3 * 2 + 2 * 4 + 4 + 1 + 1 + 1 + TITLE_CAPACITY
+ORIGIN_RENDER_TREE_BYTES :: 1 + ORIGIN_WIRE_BYTES + 3 * 4 + 2 * 4 + 4 + 1 + 1 + 1 + TITLE_CAPACITY
 #assert(ORIGIN_KEY_CAPACITY <= int(max(u16)) && ORIGIN_VALUE_CAPACITY <= int(max(u8)) && TITLE_CAPACITY <= int(max(u8)))
 #assert(PATH_CAPACITY <= ORIGIN_KEY_CAPACITY)
 
@@ -80,7 +80,7 @@ Form_Memory :: struct {
 Style_Cache :: struct {
 	valid:       bool,
 	source_hash: u64,
-	rule_count:  u16,
+	rule_count:  u32,
 	reuses:      u64,
 }
 
@@ -137,9 +137,9 @@ Origin_Reply :: struct {
 Origin_Render_Tree :: struct {
 	status:          Origin_Reply_Status,
 	origin:          html_css.Document_Origin,
-	node_count:      u16,
-	rule_count:      u16,
-	box_count:       u16,
+	node_count:      u32,
+	rule_count:      u32,
+	box_count:       u32,
 	record_count:    u32,
 	text_count:      u32,
 	document_height: i32,
@@ -381,9 +381,9 @@ origin_render_tree_encode :: proc "contextless" (tree: ^Origin_Render_Tree, byte
 	writer := Message_Writer{bytes = bytes[:ORIGIN_RENDER_TREE_BYTES]}
 	put_u8(&writer, u8(tree.status))
 	put_origin(&writer, &tree.origin)
-	put_u16(&writer, tree.node_count)
-	put_u16(&writer, tree.rule_count)
-	put_u16(&writer, tree.box_count)
+	put_u32(&writer, tree.node_count)
+	put_u32(&writer, tree.rule_count)
+	put_u32(&writer, tree.box_count)
 	put_u32(&writer, tree.record_count)
 	put_u32(&writer, tree.text_count)
 	put_u32(&writer, u32(tree.document_height))
@@ -407,13 +407,15 @@ origin_render_tree_decode :: proc "contextless" (bytes: []u8) -> (tree: Origin_R
 	}
 	tree.status = status
 	tree.origin = take_origin(&reader, &problem)
-	tree.node_count = take_u16(&reader)
-	tree.rule_count = take_u16(&reader)
-	tree.box_count = take_u16(&reader)
+	tree.node_count = take_u32(&reader)
+	tree.rule_count = take_u32(&reader)
+	tree.box_count = take_u32(&reader)
 	tree.record_count = take_u32(&reader)
 	tree.text_count = take_u32(&reader)
 	tree.document_height = i32(take_u32(&reader))
-	if (int(tree.node_count) > html_css.MAX_DOM_NODES || int(tree.rule_count) > html_css.MAX_CSS_RULES || int(tree.box_count) > html_css.MAX_DOM_NODES || int(tree.record_count) > DOCUMENT_RECORD_CAPACITY || int(tree.text_count) > html_css.MAX_TEXT_POOL || tree.document_height < 0) && problem == .None {
+	// The counts name entries of the memory of the document, which grows:
+	// past an index of a node, a count names no entry.
+	if (int(tree.node_count) > html_css.NODE_INDEX_LIMIT || int(tree.box_count) > int(tree.node_count) || int(tree.record_count) > DOCUMENT_RECORDS_OF_A_BOX * int(tree.box_count) || tree.document_height < 0) && problem == .None {
 		problem = .Count_Too_Large
 	}
 	tree.truncated = take_flag(&reader, &problem)
@@ -520,7 +522,7 @@ origin_render :: proc "contextless" (state: ^Origin_State, request: ^Origin_Requ
 	if reused {
 		state.style.reuses += 1
 	} else {
-		sheet = {}
+		html_css.stylesheet_clear(&sheet)
 		html_css.parse_document_styles(&document_tree, &sheet)
 		sheet_valid = true
 		sheet_origin = request.owner

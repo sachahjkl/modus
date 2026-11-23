@@ -2,6 +2,7 @@
 package http_client
 
 import "core:fmt"
+import "core:strings"
 import "core:testing"
 
 @(test)
@@ -185,7 +186,7 @@ test_http3_framing_bridge_and_h2_refusals :: proc(t: ^testing.T) {
 
 @(test)
 test_cookie_attributes_and_secure_enforcement :: proc(t: ^testing.T) {
-	jar := new(Cookie_Jar)
+	jar := store_test_jar_make()
 	defer free(jar)
 	out := make([]u8, 512)
 	defer delete(out)
@@ -250,8 +251,8 @@ test_cookie_attributes_and_secure_enforcement :: proc(t: ^testing.T) {
 
 @(test)
 test_strict_per_principal_isolation_cookies_and_cache :: proc(t: ^testing.T) {
-	jar := new(Cookie_Jar)
-	cache := new(Response_Cache)
+	jar := store_test_jar_make()
+	cache := store_test_cache_make()
 	defer free(jar)
 	defer free(cache)
 
@@ -281,11 +282,12 @@ test_strict_per_principal_isolation_cookies_and_cache :: proc(t: ^testing.T) {
 	testing.expect_value(t, response_cache_store(cache, &p1, "/account", 200, "max-age=600", transmute([]u8)string("BALANCE_P1=$10"), now), Store_Refusal.None)
 
 	// Eviction isolation attack: Principal 1 floods 2x cookie quota and 4x cache quota!
-	for i := 0; i < COOKIES_PER_PRINCIPAL * 2; i += 1 {
+	jar.cookies_of_a_principal, cache.entries_of_a_principal = 32, 8
+	for i := 0; i < jar.cookies_of_a_principal * 2; i += 1 {
 		hdr := fmt.tprintf("flood%d=v%d; Secure; Path=/; Max-Age=600", i, i)
 		testing.expect_value(t, cookie_jar_set_from_header(jar, &p1, "/", hdr, now), Store_Refusal.None)
 	}
-	for i := 0; i < CACHE_ENTRIES_PER_PRINCIPAL * 4; i += 1 {
+	for i := 0; i < cache.entries_of_a_principal * 4; i += 1 {
 		path := fmt.tprintf("/flood/%d", i)
 		testing.expect_value(t, response_cache_store(cache, &p1, path, 200, "max-age=600", transmute([]u8)string("flood"), now), Store_Refusal.None)
 	}
@@ -309,4 +311,69 @@ test_strict_per_principal_isolation_cookies_and_cache :: proc(t: ^testing.T) {
 	testing.expect_value(t, response_cache_store(cache, &p1, "/account", 200, "no-store", transmute([]u8)string("x"), now), Store_Refusal.Not_Cacheable)
 	_, blen, hit0 = response_cache_lookup(cache, &p0, "/account", now + 6, body_out)
 	testing.expect(t, hit0 && string(body_out[:blen]) == "BALANCE_P0=$9999", "Principal 1 no-store must not purge Principal 0 cache")
+}
+
+// The jar and the cache hold what their memory holds, past each fixed
+// count of before: 100 principals with 40 cookies each, a cookie value of
+// 4000 bytes, and a cached body of 64 KiB (16 times the 4 KiB of before).
+// A memory that cannot grow keeps its own: a principal with no entry is
+// refused, never given the place of another, and a body that the bodies do
+// not hold is refused with no entry; the places of replaced bodies come
+// back by a compaction, and the bodies read back whole.
+@(test)
+test_jar_and_cache_grow_with_their_memory :: proc(t: ^testing.T) {
+	jar := store_test_jar_make()
+	cache := store_test_cache_make()
+	defer free(jar)
+	defer free(cache)
+	now: i64 = 1_700_000_000
+	out := make([]u8, 8192)
+	defer delete(out)
+	for principal in 0 ..< 100 {
+		origin, _ := origin_key_make(u64(principal), .Https, "site.example", 443)
+		for cookie in 0 ..< 40 {
+			testing.expect_value(t, cookie_jar_set_from_header(jar, &origin, "/", fmt.tprintf("c%d=v; Secure; Path=/", cookie), now), Store_Refusal.None)
+		}
+	}
+	last, _ := origin_key_make(99, .Https, "site.example", 443)
+	n, _ := cookie_jar_format_header(jar, &last, "/", true, true, false, now, out)
+	testing.expect(t, n > 0 && strings.count(string(out[:n]), "=") == 40, "each cookie of the last principal is kept")
+	long_value := strings.repeat("v", 4000, context.temp_allocator)
+	testing.expect_value(t, cookie_jar_set_from_header(jar, &last, "/", fmt.tprintf("long=%s; Secure; Path=/", long_value), now), Store_Refusal.None)
+
+	big := make([]u8, 64 << 10)
+	defer delete(big)
+	for &b, i in big {
+		b = u8(i)
+	}
+	body_out := make([]u8, 64 << 10)
+	defer delete(body_out)
+	testing.expect_value(t, response_cache_store(cache, &last, "/big", 200, "max-age=600", big, now), Store_Refusal.None)
+	_, blen, hit := response_cache_lookup(cache, &last, "/big", now + 1, body_out)
+	testing.expect(t, hit && blen == len(big) && string(body_out[:blen]) == string(big), "a body of 64 KiB reads back whole")
+
+	// A fixed memory: four entries and 32 bytes of bodies.
+	entries := make([]Cache_Entry, 4)
+	defer delete(entries)
+	bodies := make([]u8, 32)
+	defer delete(bodies)
+	fixed := Response_Cache{entries = entries, bodies = bodies}
+	other, _ := origin_key_make(5, .Https, "site.example", 443)
+	for i in 0 ..< 4 {
+		testing.expect_value(t, response_cache_store(&fixed, &last, fmt.tprintf("/p%d", i), 200, "max-age=600", transmute([]u8)string("12345678"), now), Store_Refusal.None)
+	}
+	testing.expect_value(t, response_cache_store(&fixed, &other, "/x", 200, "max-age=600", transmute([]u8)string("1"), now), Store_Refusal.Principal_Quota_Exceeded)
+	testing.expect_value(t, response_cache_store(&fixed, &last, "/p0", 200, "max-age=600", make([]u8, 33, context.temp_allocator), now), Store_Refusal.Body_Too_Large)
+	_, _, hit = response_cache_lookup(&fixed, &last, "/p0", now + 1, body_out)
+	testing.expect(t, !hit, "a refused body leaves no entry")
+	// Each replacement frees the place of the body before it: the bodies stay
+	// within their 32 bytes by compaction.
+	for round in 0 ..< 8 {
+		text := fmt.tprintf("r%d-abcd", round)
+		testing.expect_value(t, response_cache_store(&fixed, &last, "/p1", 200, "max-age=600", transmute([]u8)text, now), Store_Refusal.None)
+		_, blen, hit = response_cache_lookup(&fixed, &last, "/p1", now + 1, body_out)
+		testing.expect(t, hit && string(body_out[:blen]) == text)
+	}
+	_, blen, hit = response_cache_lookup(&fixed, &last, "/p2", now + 1, body_out)
+	testing.expect(t, hit && string(body_out[:blen]) == "12345678", "a moved body reads back whole")
 }

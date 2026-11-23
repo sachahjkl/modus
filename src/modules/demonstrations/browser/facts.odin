@@ -63,3 +63,10 @@ Window_Stays_Fixed :: struct {
 
 #assert(size_of(Window_Stays_Fixed) == STAYS_FIXED_CAUSE_FIELD_BYTES)
 #assert(size_of(Page_Loaded) == 5 * 8 + PAGE_KIND_FIELD_BYTES + value_kinds.TEXT_VIEW_BYTES)
+
+// The budget did not pay the reservations of the memory of a document: the
+// window cannot show a page.
+@(log_fact = "browser: the memory of a document is refused with the status {status}")
+Document_Memory_Refused :: struct {
+	status: u64,
+}

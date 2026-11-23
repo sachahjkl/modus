@@ -8,18 +8,19 @@
 // Pure freestanding contract package: no allocation, no recursion.
 package html_css
 
+import "base:intrinsics"
 import "modus:contract/enum_word"
 
-// The nodes, the attributes and the text of one document: a page of the
-// web of today has some thousands of nodes and some hundred KiB of text. A
-// node index is a u16, and NO_NODE is its largest value.
-MAX_DOM_NODES :: 8192
+// The nodes, the attributes and the text of one document are in memory of
+// the caller, which grows as the parse needs it (Dom_Grow): a document has
+// no fixed count of nodes, and the budget of the caller bounds it. A node
+// index is a u32; NO_NODE and the marker of the list of active formatting
+// elements are its two largest values, so a tree has at most
+// NODE_INDEX_LIMIT nodes, which no memory object holds anyway.
 MAX_DOM_DEPTH :: 64
-MAX_ATTRS :: 16384
-MAX_TEXT_POOL :: 1 << 20
-#assert(MAX_DOM_NODES < int(max(u16)) && MAX_ATTRS <= int(max(u16)))
+NO_NODE :: u32(max(u32))
+NODE_INDEX_LIMIT :: int(max(u32)) - 2
 MAX_ORIGIN_HOST_LEN :: 253 // The longest name of a host that DNS gives (RFC 1035).
-NO_NODE :: u16(0xFFFF)
 // The entries of the list of active formatting elements, markers included.
 ACTIVE_FORMATTING_CAPACITY :: 16
 // The attributes that one start tag keeps: the parser drops the others.
@@ -226,38 +227,90 @@ TAG_DESCRIPTIONS := [Html_Tag]Tag_Description {
 // Single attribute referencing slices in Dom_Tree.text_pool.
 Dom_Attr :: struct {
 	name_off:  u32,
-	name_len:  u16,
+	name_len:  u32,
 	value_off: u32,
-	value_len: u16,
+	value_len: u32,
 }
 
 // Single DOM node stored in Dom_Tree.nodes.
 Dom_Node :: struct {
 	kind:         Node_Kind,
 	tag:          Html_Tag,
-	depth:        u16,
-	parent:       u16,
-	first_child:  u16,
-	last_child:   u16,
-	next_sibling: u16,
+	depth:        u32,
+	parent:       u32,
+	first_child:  u32,
+	last_child:   u32,
+	next_sibling: u32,
 	text_off:     u32,
 	text_len:     u32,
-	attr_start:   u16,
-	attr_count:   u16,
+	attr_start:   u32,
+	attr_count:   u32,
 }
 
-// Fixed-capacity origin-isolated DOM tree. The nodes are in preorder: a
-// parent comes before each of its children.
+// The parts of the memory of a tree, which grow apart.
+Dom_Part :: enum u8 {
+	Nodes      = 0,
+	Attributes = 1,
+	Text       = 2,
+	Order      = 3, // The work of the last step of the parse: two words and one bit for each node.
+}
+
+// Dom_Grow makes a part of the memory of a tree hold at least wanted
+// entries: it sets the slice of the part to a longer one with the same
+// first entry, so each entry keeps its place (an arena that grows at its
+// end): the parser holds places in the tree across a growth. false: the
+// part cannot grow, and the tree stops there and says that it is cut.
+Dom_Grow :: #type proc "contextless" (tree: ^Dom_Tree, part: Dom_Part, wanted: int) -> bool
+
+// An origin-isolated DOM tree in memory of the caller. The nodes are in
+// preorder: a parent comes before each of its children. The slices are the
+// room of each part, and the counts the entries in use; grow, when it is
+// not nil, gives a part more room (Dom_Grow), else the room is all the
+// memory of the tree. parse_html keeps the memory and the grow procedure of
+// the tree, and clears the rest.
 Dom_Tree :: struct {
 	origin:            Document_Origin,
-	nodes:             [MAX_DOM_NODES]Dom_Node,
-	node_count:        u16,
-	attrs:             [MAX_ATTRS]Dom_Attr,
-	attr_count:        u16,
-	text_pool:         [MAX_TEXT_POOL]u8,
+	nodes:             []Dom_Node,
+	node_count:        u32,
+	attrs:             []Dom_Attr,
+	attr_count:        u32,
+	text_pool:         []u8,
 	text_len:          u32,
-	max_depth_reached: u16,
+	order:             []u32,
+	max_depth_reached: u32,
 	truncated:         bool,
+	grow:              Dom_Grow,
+	grow_data:         rawptr, // The memory that grow reads, for the caller.
+}
+
+// dom_part_room gives the entries that a part holds now.
+dom_part_room :: proc "contextless" (tree: ^Dom_Tree, part: Dom_Part) -> int {
+	switch part {
+	case .Nodes:
+		return len(tree.nodes)
+	case .Attributes:
+		return len(tree.attrs)
+	case .Text:
+		return len(tree.text_pool)
+	case .Order:
+		return len(tree.order)
+	}
+	return 0
+}
+
+// dom_room makes a part hold wanted entries, with the grow procedure of
+// the tree when it holds fewer. A count past what an index of the part
+// names is refused before any growth.
+@(private)
+dom_room :: proc "contextless" (tree: ^Dom_Tree, part: Dom_Part, wanted: int) -> bool {
+	if wanted <= dom_part_room(tree, part) {
+		return true
+	}
+	limit := part == .Nodes ? NODE_INDEX_LIMIT : int(max(u32))
+	if wanted > limit || tree.grow == nil || !tree.grow(tree, part, wanted) {
+		return false
+	}
+	return wanted <= dom_part_room(tree, part)
 }
 
 // Tag classification helpers.
@@ -339,7 +392,10 @@ tag_from_name :: proc "contextless" (name: []u8) -> Html_Tag {
 @(private = "file")
 pool_append_raw :: proc "contextless" (tree: ^Dom_Tree, bytes: []u8, lowercase: bool) -> (off: u32, length: u32) {
 	off = tree.text_len
-	avail := int(MAX_TEXT_POOL) - int(tree.text_len)
+	if len(bytes) > 0 {
+		dom_room(tree, .Text, int(tree.text_len) + len(bytes))
+	}
+	avail := len(tree.text_pool) - int(tree.text_len)
 	if avail <= 0 || len(bytes) == 0 {
 		if len(bytes) > 0 {
 			tree.truncated = true
@@ -361,7 +417,7 @@ pool_append_raw :: proc "contextless" (tree: ^Dom_Tree, bytes: []u8, lowercase: 
 
 @(private = "file")
 pool_push_byte :: proc "contextless" (tree: ^Dom_Tree, b: u8) {
-	if int(tree.text_len) < MAX_TEXT_POOL {
+	if dom_room(tree, .Text, int(tree.text_len) + 1) {
 		tree.text_pool[tree.text_len] = b
 		tree.text_len += 1
 	} else {
@@ -387,7 +443,7 @@ pool_push_utf8 :: proc "contextless" (tree: ^Dom_Tree, code_point: u32) {
 	case code <= 0xFFFF:
 		size = 3
 	}
-	if int(tree.text_len) + size > MAX_TEXT_POOL {
+	if !dom_room(tree, .Text, int(tree.text_len) + size) {
 		tree.truncated = true
 		return
 	}
@@ -566,8 +622,8 @@ references_decode :: proc "contextless" (tree: ^Dom_Tree, source: []u8, in_attri
 // The nodes of the tree.
 
 @(private = "file")
-node_allocate :: proc "contextless" (tree: ^Dom_Tree, kind: Node_Kind, tag: Html_Tag) -> u16 {
-	if int(tree.node_count) >= MAX_DOM_NODES {
+node_allocate :: proc "contextless" (tree: ^Dom_Tree, kind: Node_Kind, tag: Html_Tag) -> u32 {
+	if !dom_room(tree, .Nodes, int(tree.node_count) + 1) {
 		tree.truncated = true
 		return NO_NODE
 	}
@@ -588,7 +644,7 @@ node_allocate :: proc "contextless" (tree: ^Dom_Tree, kind: Node_Kind, tag: Html
 // node_insert_before links a node into the children of a parent, before a
 // child of it, or last when before is NO_NODE.
 @(private = "file")
-node_insert_before :: proc "contextless" (tree: ^Dom_Tree, parent, child, before: u16) {
+node_insert_before :: proc "contextless" (tree: ^Dom_Tree, parent, child, before: u32) {
 	parent_node := &tree.nodes[parent]
 	node := &tree.nodes[child]
 	node.parent = parent
@@ -617,7 +673,7 @@ node_insert_before :: proc "contextless" (tree: ^Dom_Tree, parent, child, before
 }
 
 @(private = "file")
-node_detach :: proc "contextless" (tree: ^Dom_Tree, child: u16) {
+node_detach :: proc "contextless" (tree: ^Dom_Tree, child: u32) {
 	node := &tree.nodes[child]
 	parent := node.parent
 	if parent == NO_NODE {
@@ -646,7 +702,7 @@ node_detach :: proc "contextless" (tree: ^Dom_Tree, child: u16) {
 
 // node_previous_sibling gives the child of a parent before another, or NO_NODE.
 @(private = "file")
-node_previous_sibling :: proc "contextless" (tree: ^Dom_Tree, parent, child: u16) -> u16 {
+node_previous_sibling :: proc "contextless" (tree: ^Dom_Tree, parent, child: u32) -> u32 {
 	previous := NO_NODE
 	walker := tree.nodes[parent].first_child
 	for walker != NO_NODE && walker != child {
@@ -985,7 +1041,7 @@ Scope :: enum u8 {
 
 // An entry of the list of active formatting elements that is a marker.
 @(private = "file")
-FORMATTING_MARKER :: u16(0xFFFE)
+FORMATTING_MARKER :: u32(max(u32) - 1)
 
 @(private = "file")
 Parser :: struct {
@@ -993,23 +1049,23 @@ Parser :: struct {
 	input:            []u8,
 	position:         int,
 	mode:             Insertion_Mode,
-	open:             [MAX_DOM_DEPTH]u16,
+	open:             [MAX_DOM_DEPTH]u32,
 	open_count:       int,
-	formatting:       [ACTIVE_FORMATTING_CAPACITY]u16,
+	formatting:       [ACTIVE_FORMATTING_CAPACITY]u32,
 	formatting_count: int,
-	head:             u16,
-	form:             u16,
+	head:             u32,
+	form:             u32,
 	foster_parenting: bool,
 	skip_newline:     bool,
 }
 
 @(private = "file")
-tag_of :: proc "contextless" (parser: ^Parser, node: u16) -> Html_Tag {
+tag_of :: proc "contextless" (parser: ^Parser, node: u32) -> Html_Tag {
 	return parser.tree.nodes[node].tag
 }
 
 @(private = "file")
-current_node :: proc "contextless" (parser: ^Parser) -> u16 {
+current_node :: proc "contextless" (parser: ^Parser) -> u32 {
 	if parser.open_count == 0 {
 		return 0
 	}
@@ -1037,7 +1093,7 @@ is_heading_tag :: proc "contextless" (tag: Html_Tag) -> bool {
 // element_matches_end: an element closes for an end tag of its tag, and an
 // unknown element for an end tag of its name.
 @(private = "file")
-element_matches_end :: proc "contextless" (parser: ^Parser, node: u16, token: ^Token) -> bool {
+element_matches_end :: proc "contextless" (parser: ^Parser, node: u32, token: ^Token) -> bool {
 	tree := parser.tree
 	element := &tree.nodes[node]
 	if element.kind != .Element || element.tag != token.tag {
@@ -1052,7 +1108,7 @@ element_matches_end :: proc "contextless" (parser: ^Parser, node: u16, token: ^T
 // The stack of open elements.
 
 @(private = "file")
-stack_index :: proc "contextless" (parser: ^Parser, node: u16) -> int {
+stack_index :: proc "contextless" (parser: ^Parser, node: u32) -> int {
 	for index := parser.open_count - 1; index >= 0; index -= 1 {
 		if parser.open[index] == node {
 			return index
@@ -1070,14 +1126,14 @@ stack_remove_at :: proc "contextless" (parser: ^Parser, index: int) {
 }
 
 @(private = "file")
-stack_remove :: proc "contextless" (parser: ^Parser, node: u16) {
+stack_remove :: proc "contextless" (parser: ^Parser, node: u32) {
 	if index := stack_index(parser, node); index >= 0 {
 		stack_remove_at(parser, index)
 	}
 }
 
 @(private = "file")
-stack_insert_at :: proc "contextless" (parser: ^Parser, index: int, node: u16) {
+stack_insert_at :: proc "contextless" (parser: ^Parser, index: int, node: u32) {
 	if parser.open_count >= MAX_DOM_DEPTH || index < 0 {
 		parser.tree.truncated = true
 		return
@@ -1139,7 +1195,7 @@ in_scope :: proc "contextless" (parser: ^Parser, tag: Html_Tag, scope: Scope) ->
 }
 
 @(private = "file")
-node_in_scope :: proc "contextless" (parser: ^Parser, node: u16) -> bool {
+node_in_scope :: proc "contextless" (parser: ^Parser, node: u32) -> bool {
 	for index := parser.open_count - 1; index >= 0; index -= 1 {
 		if parser.open[index] == node {
 			return true
@@ -1240,7 +1296,7 @@ reset_insertion_mode :: proc "contextless" (parser: ^Parser) {
 // is on and the target is a part of a table, the parent of the last open
 // table, before that table.
 @(private = "file")
-insertion_place :: proc "contextless" (parser: ^Parser, override: u16) -> (parent, before: u16) {
+insertion_place :: proc "contextless" (parser: ^Parser, override: u32) -> (parent, before: u32) {
 	target := override if override != NO_NODE else current_node(parser)
 	if parser.foster_parenting && is_table_context_tag(tag_of(parser, target)) {
 		for index := parser.open_count - 1; index >= 0; index -= 1 {
@@ -1262,7 +1318,7 @@ insertion_place :: proc "contextless" (parser: ^Parser, override: u16) -> (paren
 // element_create makes an element of a token, with its attributes, not
 // linked to the tree yet.
 @(private = "file")
-element_create :: proc "contextless" (parser: ^Parser, token: ^Token) -> u16 {
+element_create :: proc "contextless" (parser: ^Parser, token: ^Token) -> u32 {
 	tree := parser.tree
 	node := node_allocate(tree, .Element, token.tag)
 	if node == NO_NODE {
@@ -1273,7 +1329,7 @@ element_create :: proc "contextless" (parser: ^Parser, token: ^Token) -> u16 {
 	}
 	tree.nodes[node].attr_start = tree.attr_count
 	for attribute in token.attributes[:token.attribute_count] {
-		if int(tree.attr_count) >= MAX_ATTRS {
+		if !dom_room(tree, .Attributes, int(tree.attr_count) + 1) {
 			tree.truncated = true
 			break
 		}
@@ -1281,9 +1337,9 @@ element_create :: proc "contextless" (parser: ^Parser, token: ^Token) -> u16 {
 		value_off, value_len := references_decode(tree, attribute.value, true)
 		tree.attrs[tree.attr_count] = Dom_Attr {
 			name_off  = name_off,
-			name_len  = u16(min(name_len, u32(max(u16)))),
+			name_len  = name_len,
 			value_off = value_off,
-			value_len = u16(min(value_len, u32(max(u16)))),
+			value_len = value_len,
 		}
 		tree.attr_count += 1
 		tree.nodes[node].attr_count += 1
@@ -1294,7 +1350,7 @@ element_create :: proc "contextless" (parser: ^Parser, token: ^Token) -> u16 {
 // element_clone makes a new element with the tag, the name and the
 // attributes of another, for the list of active formatting elements.
 @(private = "file")
-element_clone :: proc "contextless" (parser: ^Parser, source: u16) -> u16 {
+element_clone :: proc "contextless" (parser: ^Parser, source: u32) -> u32 {
 	tree := parser.tree
 	node := node_allocate(tree, .Element, tree.nodes[source].tag)
 	if node == NO_NODE {
@@ -1305,7 +1361,7 @@ element_clone :: proc "contextless" (parser: ^Parser, source: u16) -> u16 {
 	tree.nodes[node].text_len = original.text_len
 	tree.nodes[node].attr_start = tree.attr_count
 	for index in 0 ..< int(original.attr_count) {
-		if int(tree.attr_count) >= MAX_ATTRS {
+		if !dom_room(tree, .Attributes, int(tree.attr_count) + 1) {
 			tree.truncated = true
 			break
 		}
@@ -1320,7 +1376,7 @@ element_clone :: proc "contextless" (parser: ^Parser, source: u16) -> u16 {
 // pushes it on the stack of open elements. When the stack is full, the
 // element is not made: its content goes to the current node.
 @(private = "file")
-element_insert :: proc "contextless" (parser: ^Parser, token: ^Token) -> u16 {
+element_insert :: proc "contextless" (parser: ^Parser, token: ^Token) -> u32 {
 	if parser.open_count >= MAX_DOM_DEPTH {
 		parser.tree.truncated = true
 		return NO_NODE
@@ -1339,7 +1395,7 @@ element_insert :: proc "contextless" (parser: ^Parser, token: ^Token) -> u16 {
 // element_insert_implied inserts an element that no tag of the page
 // names: html, head, body, tbody, tr, or the p of a lone </p>.
 @(private = "file")
-element_insert_implied :: proc "contextless" (parser: ^Parser, tag: Html_Tag) -> u16 {
+element_insert_implied :: proc "contextless" (parser: ^Parser, tag: Html_Tag) -> u32 {
 	if parser.open_count >= MAX_DOM_DEPTH {
 		parser.tree.truncated = true
 		return NO_NODE
@@ -1357,7 +1413,7 @@ element_insert_implied :: proc "contextless" (parser: ^Parser, tag: Html_Tag) ->
 
 // void_insert inserts an element that has no content: it is never pushed.
 @(private = "file")
-void_insert :: proc "contextless" (parser: ^Parser, token: ^Token) -> u16 {
+void_insert :: proc "contextless" (parser: ^Parser, token: ^Token) -> u32 {
 	node := element_create(parser, token)
 	if node == NO_NODE {
 		return NO_NODE
@@ -1433,7 +1489,7 @@ characters_insert :: proc "contextless" (parser: ^Parser, raw: []u8) {
 // comment_insert inserts a comment under a parent, or at the place of an
 // insertion when the parent is NO_NODE.
 @(private = "file")
-comment_insert :: proc "contextless" (parser: ^Parser, data: []u8, parent: u16) {
+comment_insert :: proc "contextless" (parser: ^Parser, data: []u8, parent: u32) {
 	tree := parser.tree
 	text_off, text_len := pool_append_raw(tree, data, false)
 	node := node_allocate(tree, .Comment, .Unknown)
@@ -1452,7 +1508,7 @@ comment_insert :: proc "contextless" (parser: ^Parser, data: []u8, parent: u16) 
 // The list of active formatting elements.
 
 @(private = "file")
-formatting_index :: proc "contextless" (parser: ^Parser, node: u16) -> int {
+formatting_index :: proc "contextless" (parser: ^Parser, node: u32) -> int {
 	for index := parser.formatting_count - 1; index >= 0; index -= 1 {
 		if parser.formatting[index] == node {
 			return index
@@ -1473,7 +1529,7 @@ formatting_remove_at :: proc "contextless" (parser: ^Parser, index: int) {
 }
 
 @(private = "file")
-formatting_insert_at :: proc "contextless" (parser: ^Parser, index: int, node: u16) {
+formatting_insert_at :: proc "contextless" (parser: ^Parser, index: int, node: u32) {
 	if parser.formatting_count >= ACTIVE_FORMATTING_CAPACITY {
 		return
 	}
@@ -1522,7 +1578,7 @@ formatting_clear_to_marker :: proc "contextless" (parser: ^Parser) {
 // elements_alike: the same tag, the same name and the same attributes, in
 // any order.
 @(private = "file")
-elements_alike :: proc "contextless" (tree: ^Dom_Tree, first, second: u16) -> bool {
+elements_alike :: proc "contextless" (tree: ^Dom_Tree, first, second: u32) -> bool {
 	a := &tree.nodes[first]
 	b := &tree.nodes[second]
 	if a.tag != b.tag || a.attr_count != b.attr_count {
@@ -1544,7 +1600,7 @@ elements_alike :: proc "contextless" (tree: ^Dom_Tree, first, second: u16) -> bo
 }
 
 @(private = "file")
-formatting_push :: proc "contextless" (parser: ^Parser, node: u16) {
+formatting_push :: proc "contextless" (parser: ^Parser, node: u32) {
 	alike := 0
 	earliest := -1
 	for index := parser.formatting_count - 1; index >= 0; index -= 1 {
@@ -2531,18 +2587,35 @@ token_process :: proc "contextless" (parser: ^Parser, token: ^Token) {
 @(private = "file")
 tree_order :: proc "contextless" (tree: ^Dom_Tree) {
 	count := int(tree.node_count)
-	order: [MAX_DOM_NODES]u16
-	new_index: [MAX_DOM_NODES]u16
+	// The work of the order is the part Order of the memory of the tree:
+	// the order, the new index of each node, and a bit for each node. Never
+	// the stack: its size would bound the nodes. With no room for it, the
+	// tree keeps its document node alone, and says that it is cut.
+	visited_words := (count + 31) / 32
+	if !dom_room(tree, .Order, 2 * count + visited_words) {
+		tree.node_count = min(tree.node_count, 1)
+		tree.truncated = true
+		if tree.node_count == 1 {
+			tree.nodes[0].first_child, tree.nodes[0].last_child, tree.nodes[0].next_sibling = NO_NODE, NO_NODE, NO_NODE
+		}
+		return
+	}
+	order := tree.order[:count]
+	new_index := tree.order[count:][:count]
+	visited := tree.order[2 * count:][:visited_words]
+	for &word in visited {
+		word = 0
+	}
 	for index in 0 ..< count {
 		new_index[index] = NO_NODE
 	}
 	placed := 0
-	node := u16(0)
+	node := u32(0)
 	// Each step of the walk is bounded by the count: a broken link ends
 	// the walk, never the bounds of the table.
 	walk: for placed < count {
 		order[placed] = node
-		new_index[node] = u16(placed)
+		new_index[node] = u32(placed)
 		placed += 1
 		first_child := tree.nodes[node].first_child
 		if first_child != NO_NODE && int(first_child) < count && new_index[first_child] == NO_NODE {
@@ -2571,26 +2644,25 @@ tree_order :: proc "contextless" (tree: ^Dom_Tree) {
 	if placed != count {
 		tree.truncated = true
 	}
-	remap :: proc "contextless" (new_index: ^[MAX_DOM_NODES]u16, value: u16) -> u16 {
+	remap :: proc "contextless" (new_index: []u32, value: u32) -> u32 {
 		return NO_NODE if value == NO_NODE else new_index[value]
 	}
 	for index in 0 ..< count {
 		element := &tree.nodes[index]
-		element.parent = remap(&new_index, element.parent)
-		element.first_child = remap(&new_index, element.first_child)
-		element.last_child = remap(&new_index, element.last_child)
-		element.next_sibling = remap(&new_index, element.next_sibling)
+		element.parent = remap(new_index, element.parent)
+		element.first_child = remap(new_index, element.first_child)
+		element.last_child = remap(new_index, element.last_child)
+		element.next_sibling = remap(new_index, element.next_sibling)
 	}
 	// Each node moves to its new place along the cycles of the order.
-	visited: [MAX_DOM_NODES / 64]u64
 	for start in 0 ..< placed {
-		if visited[start / 64] & (1 << uint(start % 64)) != 0 {
+		if visited[start / 32] & (1 << uint(start % 32)) != 0 {
 			continue
 		}
 		saved := tree.nodes[start]
 		place := start
 		for {
-			visited[place / 64] |= 1 << uint(place % 64)
+			visited[place / 32] |= 1 << uint(place % 32)
 			source := int(order[place])
 			if source == start {
 				tree.nodes[place] = saved
@@ -2600,7 +2672,7 @@ tree_order :: proc "contextless" (tree: ^Dom_Tree) {
 			place = source
 		}
 	}
-	tree.node_count = u16(placed)
+	tree.node_count = u32(placed)
 	tree.max_depth_reached = 0
 	for index in 1 ..< placed {
 		element := &tree.nodes[index]
@@ -2609,11 +2681,12 @@ tree_order :: proc "contextless" (tree: ^Dom_Tree) {
 	}
 }
 
-// parse_html tokenizes and builds a bounded, origin-isolated DOM tree from arbitrary bytes.
-// Never panics, never allocates, never recurses, and never exceeds MAX_DOM_DEPTH open
-// elements or MAX_DOM_NODES nodes.
+// parse_html tokenizes and builds an origin-isolated DOM tree from arbitrary bytes, in
+// the memory of the tree, which it grows with the grow procedure of the tree. Never
+// panics, never allocates, never recurses, and never exceeds MAX_DOM_DEPTH open elements;
+// a part that cannot grow cuts the tree there (truncated).
 parse_html :: proc "contextless" (tree: ^Dom_Tree, origin: Document_Origin, input: []u8) {
-	tree^ = {}
+	dom_tree_clear(tree)
 	tree.origin = origin
 	node_allocate(tree, .Document, .Unknown)
 	parser := Parser {
@@ -2632,9 +2705,31 @@ parse_html :: proc "contextless" (tree: ^Dom_Tree, origin: Document_Origin, inpu
 	tree_order(tree)
 }
 
+// dom_tree_clear empties a tree and keeps its memory and its grow
+// procedure. It wipes the entries that the last document wrote: the memory
+// outlives a document, and a document of another origin must read no byte
+// of it.
+dom_tree_clear :: proc "contextless" (tree: ^Dom_Tree) {
+	count := int(tree.node_count)
+	zero_entries(tree.nodes, count)
+	zero_entries(tree.attrs, int(tree.attr_count))
+	zero_entries(tree.text_pool, int(tree.text_len))
+	zero_entries(tree.order, 2 * count + (count + 31) / 32)
+	tree^ = {nodes = tree.nodes, attrs = tree.attrs, text_pool = tree.text_pool, order = tree.order, grow = tree.grow, grow_data = tree.grow_data}
+}
+
+// zero_entries wipes the first count entries of a slice, or all of them
+// when it holds fewer.
+zero_entries :: proc "contextless" (entries: []$T, count: int) {
+	wiped := min(count, len(entries))
+	if wiped > 0 {
+		intrinsics.mem_zero(raw_data(entries), wiped * size_of(T))
+	}
+}
+
 // DOM query helpers.
 
-dom_node_text :: proc "contextless" (tree: ^Dom_Tree, node_idx: u16) -> []u8 {
+dom_node_text :: proc "contextless" (tree: ^Dom_Tree, node_idx: u32) -> []u8 {
 	if node_idx == NO_NODE || int(node_idx) >= int(tree.node_count) {
 		return nil
 	}
@@ -2646,7 +2741,7 @@ dom_node_text :: proc "contextless" (tree: ^Dom_Tree, node_idx: u16) -> []u8 {
 	return tree.text_pool[n.text_off:end]
 }
 
-dom_node_attr :: proc "contextless" (tree: ^Dom_Tree, node_idx: u16, name: string) -> (value: []u8, found: bool) {
+dom_node_attr :: proc "contextless" (tree: ^Dom_Tree, node_idx: u32, name: string) -> (value: []u8, found: bool) {
 	if node_idx == NO_NODE || int(node_idx) >= int(tree.node_count) {
 		return nil, false
 	}
@@ -2663,7 +2758,7 @@ dom_node_attr :: proc "contextless" (tree: ^Dom_Tree, node_idx: u16, name: strin
 	return nil, false
 }
 
-dom_node_has_class :: proc "contextless" (tree: ^Dom_Tree, node_idx: u16, class_name: []u8) -> bool {
+dom_node_has_class :: proc "contextless" (tree: ^Dom_Tree, node_idx: u32, class_name: []u8) -> bool {
 	if len(class_name) == 0 {
 		return false
 	}

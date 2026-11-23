@@ -1,42 +1,83 @@
 #+build !freestanding
 package paint_model
 
+import "core:fmt"
 import "core:testing"
 import "modus:graphics"
 
+// picture_make gives a picture of a size in memory of room pixels, at
+// least its own.
 @(private = "file")
-picture_make :: proc(width, height: int) -> Picture {
-	picture := Picture{pixels = make([]graphics.Color, PICTURE_PIXELS)}
-	picture_clear(&picture)
+picture_make :: proc(width, height: int, room := 0) -> Picture {
+	picture := Picture{pixels = make([]graphics.Color, max(width * height, room))}
 	picture_extend(&picture, width, height)
 	return picture
 }
 
 @(private = "file")
 pixel_at :: proc(picture: ^Picture, x, y: int) -> graphics.Color {
-	return picture.pixels[y * PICTURE_WIDTH_LIMIT + x]
+	return picture.pixels[y * picture.width + x]
 }
 
-// The extent grows to the largest picture and never shrinks; the pixels
-// that join it are paper, the pixels in it stay.
+// The bounds of a picture are of one memory object, not of a screen: each
+// side below 1 and past PICTURE_SIDE_LIMIT is refused, and a product past
+// PICTURE_PIXELS_LIMIT; a photo of 24 MP, a picture of 4096 x 4096 and a
+// panorama of the largest side are taken.
+@(test)
+the_bounds_of_a_picture :: proc(t: ^testing.T) {
+	for size in ([][2]int{{0, 1}, {1, 0}, {-1, 1}, {min(int), min(int)}, {PICTURE_SIDE_LIMIT + 1, 1}, {1, PICTURE_SIDE_LIMIT + 1}, {PICTURE_SIDE_LIMIT, PICTURE_SIDE_LIMIT}, {PICTURE_SIDE_LIMIT, PICTURE_PIXELS_LIMIT / PICTURE_SIDE_LIMIT + 1}, {max(int), max(int)}}) {
+		_, ok := picture_pixels_for(size[0], size[1])
+		testing.expectf(t, !ok, "the size %v is refused", size)
+	}
+	for size in ([][2]int{{1, 1}, {6000, 4000}, {4096, 4096}, {PICTURE_SIDE_LIMIT, 64}, {PICTURE_SIDE_LIMIT, PICTURE_PIXELS_LIMIT / PICTURE_SIDE_LIMIT}}) {
+		pixels, ok := picture_pixels_for(size[0], size[1])
+		testing.expectf(t, ok && pixels == size[0] * size[1], "the size %v is taken", size)
+	}
+}
+
+// The extent grows in the memory that the caller gives and never shrinks.
+// A size that does not shrink it changes nothing; a size past the bounds,
+// or past the memory, is refused and changes nothing. A wider extent moves
+// the rows to the new width: the pixels in the extent stay at their row
+// and column, and the pixels that join it are paper.
 @(test)
 the_extent_grows_and_never_shrinks :: proc(t: ^testing.T) {
-	picture := picture_make(10, 10)
+	picture := picture_make(10, 10, room = 30 * 12)
 	defer delete(picture.pixels)
-	picture.pixels[5 * PICTURE_WIDTH_LIMIT + 5] = 0x123456
-	picture.pixels[20] = 0x654321 // Outside the extent: paper when the extent grows over it.
-	for size in ([][2]int{{0, 0}, {-1, -1}, {5, 5}, {min(int), min(int)}}) {
-		testing.expectf(t, !picture_extend(&picture, size[0], size[1]), "the size %v does not shrink the extent", size)
+	picture.pixels[5 * 10 + 5] = 0x123456
+	picture.pixels[9 * 10 + 9] = 0x654321
+	for size in ([][2]int{{0, 0}, {-1, -1}, {5, 5}, {min(int), min(int)}, {10, 10}}) {
+		testing.expectf(t, picture_extend(&picture, size[0], size[1]) == .Unchanged, "the size %v does not shrink the extent", size)
 		testing.expect(t, picture.width == 10 && picture.height == 10)
 	}
 	generation := picture.generation
-	testing.expect(t, picture_extend(&picture, 30, 12))
-	testing.expect(t, picture.generation != generation)
+	testing.expect_value(t, picture_extend(&picture, 31, 12), Extend_Outcome.No_Room)
+	testing.expect_value(t, picture_extend(&picture, PICTURE_SIDE_LIMIT + 1, 1), Extend_Outcome.Too_Large)
+	testing.expect_value(t, picture_extend(&picture, max(int), max(int)), Extend_Outcome.Too_Large)
+	testing.expect(t, picture.generation == generation && picture.width == 10 && pixel_at(&picture, 5, 5) == 0x123456)
+	testing.expect_value(t, picture_extend(&picture, 30, 12), Extend_Outcome.Grown)
+	testing.expect(t, picture.generation != generation && picture.width == 30 && picture.height == 12)
 	testing.expect_value(t, pixel_at(&picture, 5, 5), graphics.Color(0x123456))
-	testing.expect_value(t, pixel_at(&picture, 20, 0), COLOR_PAPER)
-	testing.expect(t, picture_extend(&picture, max(int), max(int)))
-	testing.expect(t, picture.width == PICTURE_WIDTH_LIMIT && picture.height == PICTURE_HEIGHT_LIMIT)
-	testing.expect(t, !picture_extend(&picture, PICTURE_WIDTH_LIMIT + 1, PICTURE_HEIGHT_LIMIT + 1))
+	testing.expect_value(t, pixel_at(&picture, 9, 9), graphics.Color(0x654321))
+	for place in ([][2]int{{10, 0}, {29, 5}, {0, 10}, {29, 11}}) {
+		testing.expectf(t, pixel_at(&picture, place[0], place[1]) == COLOR_PAPER, "the pixel %v that joined the extent is paper", place)
+	}
+}
+
+// The one large case: a photo of 6000 x 4000 grows from its first rows in
+// memory of its size, 96 MB, which a fixed picture of the module could not
+// hold.
+@(test)
+a_picture_holds_a_photo_of_24_megapixels :: proc(t: ^testing.T) {
+	picture := picture_make(6000, 2, room = 6000 * 4000)
+	defer delete(picture.pixels)
+	segment_draw(&picture, 0, 0, 5999, 0, 1, 0x112233)
+	testing.expect_value(t, picture_extend(&picture, 6000, 4000), Extend_Outcome.Grown)
+	testing.expect_value(t, pixel_at(&picture, 5999, 0), graphics.Color(0x112233))
+	testing.expect_value(t, pixel_at(&picture, 5999, 3999), COLOR_PAPER)
+	box := segment_draw(&picture, 5990, 3990, 5999, 3999, 1, 0x445566)
+	testing.expect_value(t, box, Box{5990, 3990, 6000, 4000})
+	testing.expect_value(t, pixel_at(&picture, 5999, 3999), graphics.Color(0x445566))
 }
 
 // A segment, a rectangle and an ellipse outside the extent change nothing:
@@ -113,6 +154,13 @@ a_fill_stays_in_its_region :: proc(t: ^testing.T) {
 	memory := new(Fill_Memory)
 	defer free(memory)
 	generation := picture.generation
+	// A bitmap one word short of the picture fills nothing.
+	memory.visited = make([]u64, fill_visited_words(64 * 64) - 1)
+	testing.expect(t, box_empty(fill_region(&picture, 3, 3, 0xFF0000, memory)))
+	testing.expect_value(t, picture.generation, generation)
+	delete(memory.visited)
+	memory.visited = make([]u64, fill_visited_words(64 * 64))
+	defer delete(memory.visited)
 	for point in ([][2]int{{-1, 0}, {0, -1}, {64, 0}, {0, 64}, {max(int), 0}, {min(int), min(int)}}) {
 		testing.expectf(t, box_empty(fill_region(&picture, point[0], point[1], 0, memory)), "the point %v is refused", point)
 	}
@@ -131,24 +179,29 @@ a_fill_stays_in_its_region :: proc(t: ^testing.T) {
 // scan of the reached pixels finds the seeds that found no room.
 @(test)
 a_fill_past_the_capacity_of_its_stack_fills_the_whole_region :: proc(t: ^testing.T) {
-	picture := picture_make(PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT)
+	// The seeds that wait pass FILL_STACK_CAPACITY: 256 rows of 256 seeds.
+	WIDTH :: 512
+	HEIGHT :: 512
+	picture := picture_make(WIDTH, HEIGHT)
 	defer delete(picture.pixels)
 	memory := new(Fill_Memory)
 	defer free(memory)
+	memory.visited = make([]u64, fill_visited_words(WIDTH * HEIGHT))
+	defer delete(memory.visited)
 	WALL :: graphics.Color(0x000000)
 	// Each odd row has a wall at each odd column: each even row pushes a
 	// seed for each pixel of the rows around it.
-	for row := 1; row < PICTURE_HEIGHT_LIMIT; row += 2 {
-		for column := 1; column < PICTURE_WIDTH_LIMIT; column += 2 {
-			picture.pixels[row * PICTURE_WIDTH_LIMIT + column] = WALL
+	for row := 1; row < HEIGHT; row += 2 {
+		for column := 1; column < WIDTH; column += 2 {
+			picture.pixels[row * WIDTH + column] = WALL
 		}
 	}
 	box := fill_region(&picture, 0, 0, 0xFF0000, memory)
-	testing.expect_value(t, box, Box{0, 0, PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT})
+	testing.expect_value(t, box, Box{0, 0, WIDTH, HEIGHT})
 	testing.expect(t, memory.scans >= 1, "the stack overflowed and a scan ran")
 	left := 0
-	for row in 0 ..< PICTURE_HEIGHT_LIMIT {
-		for column in 0 ..< PICTURE_WIDTH_LIMIT {
+	for row in 0 ..< HEIGHT {
+		for column in 0 ..< WIDTH {
 			wall := row % 2 == 1 && column % 2 == 1
 			left += !wall && pixel_at(&picture, column, row) != 0xFF0000 ? 1 : 0
 		}
@@ -166,7 +219,7 @@ History_Test :: struct {
 
 @(private = "file")
 history_test_make :: proc(arena_bytes: int) -> History_Test {
-	test := History_Test{picture = picture_make(200, 100), before = make([]graphics.Color, PICTURE_PIXELS), scratch = new(History_Scratch)}
+	test := History_Test{picture = picture_make(200, 100, room = 300 * 120), before = make([]graphics.Color, 300 * 120), scratch = new(History_Scratch)}
 	test.history.arena = make([]u8, arena_bytes)
 	copy(test.before, test.picture.pixels)
 	return test
@@ -186,7 +239,7 @@ history_test_free :: proc(test: ^History_Test) {
 history_test_change :: proc(test: ^History_Test, x: int, color: graphics.Color) -> Record_Outcome {
 	copy(test.before, test.picture.pixels)
 	box := segment_draw(&test.picture, x, 0, x, 99, 1, color)
-	return history_record(&test.history, test.before, test.picture.pixels, box, test.scratch)
+	return history_record(&test.history, test.before, test.picture.pixels, test.picture.width, box, test.scratch)
 }
 
 // With no change, undo and redo are refused; an empty box is not kept.
@@ -198,7 +251,7 @@ undo_and_redo_put_back_the_pixels :: proc(t: ^testing.T) {
 	defer history_test_free(&test)
 	testing.expect(t, !history_undo(&test.history, &test.picture, test.scratch))
 	testing.expect(t, !history_redo(&test.history, &test.picture, test.scratch))
-	testing.expect_value(t, history_record(&test.history, test.before, test.picture.pixels, {}, test.scratch), Record_Outcome.Empty)
+	testing.expect_value(t, history_record(&test.history, test.before, test.picture.pixels, test.picture.width, {}, test.scratch), Record_Outcome.Empty)
 	testing.expect_value(t, history_test_change(&test, 10, 0xFF0000), Record_Outcome.Kept)
 	testing.expect_value(t, history_test_change(&test, 20, 0x00FF00), Record_Outcome.Kept)
 	testing.expect(t, history_undo(&test.history, &test.picture, test.scratch))
@@ -255,10 +308,10 @@ a_change_larger_than_the_arena_clears_the_history :: proc(t: ^testing.T) {
 	for row in 0 ..< 100 {
 		for column in 0 ..< 200 {
 			state = state * 1_664_525 + 1_013_904_223
-			test.picture.pixels[row * PICTURE_WIDTH_LIMIT + column] = state >> 8
+			test.picture.pixels[row * test.picture.width + column] = state >> 8
 		}
 	}
-	testing.expect_value(t, history_record(&test.history, test.before, test.picture.pixels, {0, 0, 200, 100}, test.scratch), Record_Outcome.Too_Large)
+	testing.expect_value(t, history_record(&test.history, test.before, test.picture.pixels, test.picture.width, {0, 0, 200, 100}, test.scratch), Record_Outcome.Too_Large)
 	testing.expect(t, !history_can_undo(&test.history) && !history_can_redo(&test.history))
 }
 
@@ -275,9 +328,9 @@ a_damaged_step_changes_nothing :: proc(t: ^testing.T) {
 	testing.expect(t, !history_undo(&test.history, &test.picture, test.scratch))
 	testing.expect_value(t, test.picture.generation, generation)
 	testing.expect_value(t, test.history.done, 1)
-	// A box outside the largest picture.
+	// A box outside the extent.
 	test.history.steps[0] = step
-	test.history.steps[0].box.right = PICTURE_WIDTH_LIMIT + 1
+	test.history.steps[0].box.right = test.picture.width + 1
 	testing.expect(t, !history_undo(&test.history, &test.picture, test.scratch))
 	// Bytes that are no LZ4 block: a literal length past the block.
 	test.history.steps[0] = step
@@ -293,9 +346,10 @@ a_damaged_step_changes_nothing :: proc(t: ^testing.T) {
 the_picture_file_refuses_each_damaged_field :: proc(t: ^testing.T) {
 	picture := picture_make(40, 30)
 	defer delete(picture.pixels)
-	file := make([]u8, FILE_BYTES_LIMIT + FILE_ROW_BYTES)
+	ROW :: 40 * 4
+	file := make([]u8, FILE_HEADER_BYTES + 31 * ROW)
 	defer delete(file)
-	_, refused := picture_encode(&picture, file[:file_size_of_slot(0, 30) - 1])
+	_, refused := picture_encode(&picture, file[:FILE_HEADER_BYTES + 30 * ROW - 1])
 	testing.expect(t, !refused, "a buffer too small is refused")
 	empty := Picture{pixels = picture.pixels}
 	_, refused = picture_encode(&empty, file)
@@ -303,12 +357,12 @@ the_picture_file_refuses_each_damaged_field :: proc(t: ^testing.T) {
 	segment_draw(&picture, 0, 0, 39, 29, 2, 0x336699)
 	encoded, ok := picture_encode(&picture, file)
 	testing.expect(t, ok)
-	testing.expect_value(t, len(encoded), FILE_HEADER_BYTES + 30 * FILE_ROW_BYTES)
+	testing.expect_value(t, len(encoded), FILE_HEADER_BYTES + 30 * ROW)
 	// The good file, apart from the buffer that each case damages.
 	bytes := make([]u8, len(encoded))
 	defer delete(bytes)
 	copy(bytes, encoded)
-	other := picture_make(10, 10)
+	other := picture_make(10, 10, room = 40 * 30)
 	defer delete(other.pixels)
 	other.pixels[0] = 0xABCDEF
 	cases := []struct {
@@ -321,25 +375,23 @@ the_picture_file_refuses_each_damaged_field :: proc(t: ^testing.T) {
 		{-1, 0, FILE_HEADER_BYTES - 1, .Too_Short},
 		{0, 'X', -1, .Bad_Magic},
 		{4, 0, -1, .Bad_Version},
-		{4, 1, -1, .Bad_Version}, // The compressed form of before.
-		{4, 2, -1, .Bad_Version}, // The rows of one slot of before.
-		{4, 4, -1, .Bad_Version},
+		{4, 3, -1, .Bad_Version}, // The two slots of rows of one width of before.
+		{4, 5, -1, .Bad_Version},
 		{7, 0xFF, -1, .Bad_Version},
 		{8, 0, -1, .Bad_Size}, // The width 0: the low byte of 40 is 40, and the others are 0.
-		{11, 0xFF, -1, .Bad_Size}, // A width past the largest.
-		{13, 0x05, -1, .Bad_Size}, // A height of 30 + 1280 past 1080.
+		{10, 0x01, -1, .Bad_Size}, // A width of 40 + 65536, past the largest side.
+		{11, 0xFF, -1, .Bad_Size},
 		{12, 0, -1, .Bad_Size}, // The height 0.
-		{16, 1, -1, .Bad_Row}, // 1793 pixels: the low byte of 1920 (0x780) is 0x80.
-		{17, 0x06, -1, .Bad_Row}, // 1664 pixels.
+		{16, 0, -1, .Bad_Offset}, // The rows in the header.
+		{16, 25, -1, .Bad_Offset}, // A place that is not a multiple of 4.
+		{19, 0xFF, -1, .Bad_Offset}, // A place past FILE_ROWS_OFFSET_LIMIT.
+		{20, 1, -1, .Bad_Offset}, // A place past 32 bits.
+		{23, 0x80, -1, .Bad_Offset},
+		{16, 28, -1, .Bad_Length}, // Rows 4 bytes later end past the file.
 		{12, 31, -1, .Bad_Length}, // The height 31 with the rows of 30.
-		{20, 2, -1, .Bad_Slot},
-		{23, 0x80, -1, .Bad_Slot}, // The largest slot words name no slot.
-		{20, 1, -1, .Bad_Length}, // The slot 1, which this file does not hold.
 		{-1, 0, len(bytes) - 1, .Bad_Length},
 		{FILE_HEADER_BYTES + 3, 0x01, -1, .Bad_Pixel}, // The top byte of the first pixel.
 		{len(bytes) - 1, 0xFF, -1, .Bad_Pixel}, // The top byte of the last pixel.
-		{FILE_HEADER_BYTES + 40 * 4, 0, -1, .Bad_Margin}, // The first pixel past the width is not paper.
-		{len(bytes) - 4, 0, -1, .Bad_Margin}, // The last pixel of the last row is not paper.
 	}
 	for test_case in cases {
 		copy(file, bytes)
@@ -354,6 +406,11 @@ the_picture_file_refuses_each_damaged_field :: proc(t: ^testing.T) {
 		testing.expectf(t, picture_decode(damaged, &other) == test_case.problem, "the case %v", test_case)
 		testing.expect(t, other.generation == generation && other.width == 10 && other.pixels[0] == 0xABCDEF)
 	}
+	// A memory of the picture one pixel short of the file.
+	small := picture_make(10, 10, room = 40 * 30 - 1)
+	defer delete(small.pixels)
+	testing.expect_value(t, picture_decode(bytes, &small), File_Problem.Too_Large)
+	testing.expect(t, small.width == 10 && small.height == 10)
 	testing.expect_value(t, picture_decode(bytes, &other), File_Problem.None)
 	testing.expect(t, other.width == 40 && other.height == 30)
 	for row in 0 ..< 30 {
@@ -361,23 +418,32 @@ the_picture_file_refuses_each_damaged_field :: proc(t: ^testing.T) {
 			testing.expect_value(t, pixel_at(&other, column, row), pixel_at(&picture, column, row))
 		}
 	}
-	testing.expect_value(t, pixel_at(&other, 40, 0), COLOR_PAPER)
-	testing.expect_value(t, pixel_at(&other, 0, 30), COLOR_PAPER)
-	// A file longer than its slot holds a slot after it: the picture is the
-	// rows of its height, and a height 29 reads 29 rows.
+	// The rows at another place of the file: the header names it.
+	moved := make([]u8, FILE_HEADER_BYTES + 32 + 30 * ROW)
+	defer delete(moved)
+	header, header_ok := file_header_write(40, 30, FILE_HEADER_BYTES + 32, moved)
+	testing.expect(t, header_ok && len(header) == FILE_HEADER_BYTES)
+	copy(moved[FILE_HEADER_BYTES + 32:], bytes[FILE_HEADER_BYTES:])
+	testing.expect_value(t, picture_decode(moved, &other), File_Problem.None)
+	testing.expect_value(t, pixel_at(&other, 39, 29), pixel_at(&picture, 39, 29))
+	// A file longer than its rows: a height 29 reads 29 rows.
 	copy(file, bytes)
 	file[12] = 29
 	testing.expect_value(t, picture_decode(file[:len(bytes) + 1], &other), File_Problem.None)
 	testing.expect(t, other.width == 40 && other.height == 29)
-	// The largest picture, at the exact limits, is read whole.
-	largest := picture_make(PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT)
-	defer delete(largest.pixels)
-	segment_draw(&largest, PICTURE_WIDTH_LIMIT - 1, PICTURE_HEIGHT_LIMIT - 1, PICTURE_WIDTH_LIMIT - 1, PICTURE_HEIGHT_LIMIT - 1, 1, 0x010203)
-	whole, whole_ok := picture_encode(&largest, file)
-	testing.expect(t, whole_ok && len(whole) == file_size_of_slot(0, PICTURE_HEIGHT_LIMIT))
-	testing.expect_value(t, picture_decode(whole, &other), File_Problem.None)
-	testing.expect(t, other.width == PICTURE_WIDTH_LIMIT && other.height == PICTURE_HEIGHT_LIMIT)
-	testing.expect_value(t, pixel_at(&other, PICTURE_WIDTH_LIMIT - 1, PICTURE_HEIGHT_LIMIT - 1), graphics.Color(0x010203))
+	// A picture wider than 4096, past each side of a screen, reads back.
+	wide := picture_make(6000, 2)
+	defer delete(wide.pixels)
+	segment_draw(&wide, 5999, 1, 5999, 1, 1, 0x010203)
+	wide_file := make([]u8, FILE_HEADER_BYTES + 6000 * 2 * 4)
+	defer delete(wide_file)
+	whole, whole_ok := picture_encode(&wide, wide_file)
+	testing.expect(t, whole_ok)
+	back := picture_make(1, 1, room = 6000 * 2)
+	defer delete(back.pixels)
+	testing.expect_value(t, picture_decode(whole, &back), File_Problem.None)
+	testing.expect(t, back.width == 6000 && back.height == 2)
+	testing.expect_value(t, pixel_at(&back, 5999, 1), graphics.Color(0x010203))
 }
 
 // The rows of a keep are at one place of the file: the band that a keep
@@ -386,31 +452,29 @@ the_picture_file_refuses_each_damaged_field :: proc(t: ^testing.T) {
 the_rows_of_a_keep_are_the_rows_of_the_file :: proc(t: ^testing.T) {
 	picture := picture_make(100, 50)
 	defer delete(picture.pixels)
-	file := make([]u8, FILE_BYTES_LIMIT)
+	ROW :: 100 * 4
+	file := make([]u8, FILE_HEADER_BYTES + 50 * ROW)
 	defer delete(file)
-	band := make([]u8, FILE_BYTES_LIMIT)
+	band := make([]u8, 50 * ROW)
 	defer delete(band)
 	for refused in ([][2]int{{-1, 3}, {0, 0}, {5, 4}, {0, 51}, {50, 51}}) {
 		_, ok := file_rows_copy(&picture, refused[0], refused[1], band)
 		testing.expectf(t, !ok, "the rows %v are refused", refused)
 	}
-	_, small := file_rows_copy(&picture, 0, 2, band[:2 * FILE_ROW_BYTES - 1])
+	_, small := file_rows_copy(&picture, 0, 2, band[:2 * ROW - 1])
 	testing.expect(t, !small, "a buffer too small is refused")
 	box := segment_draw(&picture, 10, 20, 90, 24, 3, 0x112233)
 	rows, ok := file_rows_copy(&picture, box.top, box.bottom, band)
 	testing.expect(t, ok)
 	whole, _ := picture_encode(&picture, file)
-	testing.expect(t, string(whole[file_rows_offset(0, box.top):][:len(rows)]) == string(rows))
-	testing.expect_value(t, file_rows_offset(0, 0), FILE_HEADER_BYTES)
-	testing.expect_value(t, file_rows_offset(1, 0), FILE_HEADER_BYTES + FILE_SLOT_BYTES)
-	testing.expect_value(t, file_rows_offset(max(int), 0), FILE_HEADER_BYTES + FILE_SLOT_BYTES)
-	testing.expect_value(t, file_size_of_slot(0, PICTURE_HEIGHT_LIMIT + 1), FILE_HEADER_BYTES + FILE_SLOT_BYTES)
-	testing.expect_value(t, file_size_of_slot(1, PICTURE_HEIGHT_LIMIT), FILE_BYTES_LIMIT)
-	testing.expect_value(t, file_size_of_slot(0, -1), FILE_HEADER_BYTES)
-	for refused in ([][3]int{{0, 0, 0}, {41, 10, 0}, {10, 0, 0}, {10, 10, 2}, {10, 10, -1}, {PICTURE_WIDTH_LIMIT + 1, 10, 0}}) {
+	testing.expect(t, string(whole[FILE_HEADER_BYTES + box.top * ROW:][:len(rows)]) == string(rows))
+	testing.expect_value(t, file_row_bytes(100), ROW)
+	for refused in ([][3]int{{0, 0, FILE_HEADER_BYTES}, {10, 0, FILE_HEADER_BYTES}, {10, 10, 0}, {10, 10, FILE_HEADER_BYTES - 4}, {10, 10, FILE_HEADER_BYTES + 1}, {10, 10, FILE_ROWS_OFFSET_LIMIT + 4}, {PICTURE_SIDE_LIMIT + 1, 10, FILE_HEADER_BYTES}}) {
 		_, header_ok := file_header_write(refused[0], refused[1], refused[2], file)
-		testing.expectf(t, !header_ok || refused[0] == 41, "the header %v is refused", refused)
+		testing.expectf(t, !header_ok, "the header %v is refused", refused)
 	}
+	_, edge_ok := file_header_write(PICTURE_SIDE_LIMIT, 1, FILE_ROWS_OFFSET_LIMIT, file)
+	testing.expect(t, edge_ok, "the largest side and the farthest place are taken")
 }
 
 // The band of changed rows: an empty box adds nothing, a keep is due only
@@ -469,19 +533,27 @@ a_step_that_fills_the_arena_exactly :: proc(t: ^testing.T) {
 	testing.expect_value(t, pixel_at(&test.picture, 10, 50), graphics.Color(0xFF0000))
 }
 
-// An undo whose box is past the extent grows the extent first: the paper
-// of the growth does not cover the pixels of the step.
+// An undo after the extent grew wider writes the pixels of its box at their
+// row and column, in the rows of the new width; a step whose box is past
+// the extent is damaged, and is refused.
 @(test)
-an_undo_past_the_extent_keeps_its_pixels :: proc(t: ^testing.T) {
+an_undo_after_a_wider_extent_keeps_its_pixels :: proc(t: ^testing.T) {
 	test := history_test_make(HISTORY_BYTES)
 	defer history_test_free(&test)
 	testing.expect_value(t, history_test_change(&test, 150, 0xFF0000), Record_Outcome.Kept)
 	testing.expect_value(t, history_test_change(&test, 150, 0x00FF00), Record_Outcome.Kept)
-	// A smaller extent than the box of the steps.
-	test.picture.width = 100
+	testing.expect_value(t, picture_extend(&test.picture, 300, 120), Extend_Outcome.Grown)
 	testing.expect(t, history_undo(&test.history, &test.picture, test.scratch))
-	testing.expect(t, test.picture.width >= 151)
 	testing.expect_value(t, pixel_at(&test.picture, 150, 50), graphics.Color(0xFF0000))
+	testing.expect_value(t, pixel_at(&test.picture, 151, 50), COLOR_PAPER)
+	testing.expect(t, history_undo(&test.history, &test.picture, test.scratch))
+	testing.expect_value(t, pixel_at(&test.picture, 150, 50), COLOR_PAPER)
+	testing.expect(t, history_redo(&test.history, &test.picture, test.scratch))
+	// A box past the extent: the step is refused, and nothing changes.
+	test.picture.height = 50
+	generation := test.picture.generation
+	testing.expect(t, !history_redo(&test.history, &test.picture, test.scratch))
+	testing.expect_value(t, test.picture.generation, generation)
 }
 
 // The first free name skips the names that the store holds.
@@ -492,14 +564,19 @@ the_first_free_name_of_a_picture :: proc(t: ^testing.T) {
 	testing.expect(t, ok && name == "picture-1")
 	name, ok = first_free_name([]string{"picture-1", "picture-3", "sky"}, &room)
 	testing.expect(t, ok && name == "picture-2")
+	// Each name tried is taken but the last, then each one. The names are
+	// written here: calls of first_free_name to make them would cost the
+	// square of the names for each name.
 	taken := make([]string, PICTURE_NAMES_TRIED)
 	defer delete(taken)
-	rooms := make([][NAME_LIMIT]u8, PICTURE_NAMES_TRIED)
-	defer delete(rooms)
 	for index in 0 ..< PICTURE_NAMES_TRIED {
-		taken[index], _ = first_free_name(taken[:index], &rooms[index])
+		taken[index] = fmt.aprintf("picture-%d", index + 1)
 	}
-	testing.expect_value(t, taken[PICTURE_NAMES_TRIED - 1], "picture-1000")
+	defer for name in taken {
+		delete(name)
+	}
+	name, ok = first_free_name(taken[:PICTURE_NAMES_TRIED - 1], &room)
+	testing.expect(t, ok && name == "picture-1000")
 	_, ok = first_free_name(taken, &room)
 	testing.expect(t, !ok, "each name tried is taken")
 	testing.expect_value(t, name_check("picture-1000"), Name_Problem.None)
@@ -798,13 +875,8 @@ memory_read :: proc(store: ^Memory_Store, old, new: ^Picture, scratch: ^Picture)
 		if first.width != second.width || first.height != second.height {
 			return false
 		}
-		for row in 0 ..< first.height {
-			start := row * PICTURE_WIDTH_LIMIT
-			if string(([^]u8)(&first.pixels[start])[:first.width * 4]) != string(([^]u8)(&second.pixels[start])[:first.width * 4]) {
-				return false
-			}
-		}
-		return true
+		count := first.width * first.height * 4
+		return string(([^]u8)(raw_data(first.pixels))[:count]) == string(([^]u8)(raw_data(second.pixels))[:count])
 	}
 	if same(scratch, new) {
 		return .New
@@ -824,7 +896,7 @@ memory_read :: proc(store: ^Memory_Store, old, new: ^Picture, scratch: ^Picture)
 @(private = "file")
 memory_keep :: proc(t: ^testing.T, store: ^Memory_Store, state: ^Keep_State, picture, old: ^Picture, scratch: ^Picture, stroke_after_piece := -1, stop_after_commit := -1) -> (outcomes: [dynamic]Read_Outcome) {
 	buffer := make([]u8, FILE_HEADER_BYTES + KEEP_PIECE_BYTES, context.temp_allocator)
-	pixels := ([^]u8)(raw_data(picture.pixels))[:PICTURE_BYTES]
+	pixels := ([^]u8)(raw_data(picture.pixels))[:picture.width * picture.height * 4]
 	keep_begin(state, picture.width, picture.height)
 	for piece_index := 0; state.keeping; piece_index += 1 {
 		piece := keep_piece(state)
@@ -834,7 +906,7 @@ memory_keep :: proc(t: ^testing.T, store: ^Memory_Store, state: ^Keep_State, pic
 			memory_write(store, name, piece.offset, buffer[FILE_HEADER_BYTES:][:piece.bytes])
 		}
 		if piece.header {
-			header, ok := file_header_write(state.keep_width, state.keep_height, state.target_slot, buffer)
+			header, ok := file_header_write(state.keep_width, state.keep_height, state.target_offset, buffer)
 			testing.expect(t, ok)
 			memory_write(store, name, 0, header)
 			memory_set_size(store, name, piece.size)
@@ -861,6 +933,14 @@ memory_keep :: proc(t: ^testing.T, store: ^Memory_Store, state: ^Keep_State, pic
 	return outcomes
 }
 
+// The pictures of the keep tests: a picture of 640 x 480 is 1.2 MB, past
+// one commit, so a whole keep of it takes several commits.
+@(private = "file")
+KEEP_TEST_WIDTH :: 640
+@(private = "file")
+KEEP_TEST_HEIGHT :: 480
+#assert(KEEP_TEST_WIDTH * KEEP_TEST_HEIGHT * 4 > KEEP_COMMIT_BYTES)
+
 // Each commit of a keep holds one whole picture: a stop after any commit
 // leaves the old picture or the new one, never a mix. The orders: the first
 // keep of a large new picture (a temporary object and its rename), a large
@@ -871,16 +951,17 @@ memory_keep :: proc(t: ^testing.T, store: ^Memory_Store, state: ^Keep_State, pic
 each_commit_of_a_keep_holds_one_whole_picture :: proc(t: ^testing.T) {
 	store: Memory_Store
 	defer memory_store_free(&store)
-	first := picture_make(PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT)
+	first := picture_make(KEEP_TEST_WIDTH, KEEP_TEST_HEIGHT)
 	defer delete(first.pixels)
-	second := picture_make(PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT)
+	second := picture_make(KEEP_TEST_WIDTH, KEEP_TEST_HEIGHT)
 	defer delete(second.pixels)
-	scratch := picture_make(1, 1)
+	scratch := picture_make(1, 1, room = 2 * KEEP_TEST_WIDTH * KEEP_TEST_HEIGHT)
 	defer delete(scratch.pixels)
-	for row in 0 ..< PICTURE_HEIGHT_LIMIT {
-		segment_draw(&first, 0, row, PICTURE_WIDTH_LIMIT - 1, row, 1, graphics.Color(row))
+	for row in 0 ..< KEEP_TEST_HEIGHT {
+		segment_draw(&first, 0, row, KEEP_TEST_WIDTH - 1, row, 1, graphics.Color(row))
 	}
 	state := Keep_State{store_open = true, started = true, named = true}
+	ROWS :: KEEP_TEST_WIDTH * KEEP_TEST_HEIGHT * 4
 
 	// A new picture too large for one commit: no picture until the rename.
 	outcomes := memory_keep(t, &store, &state, &first, nil, &scratch)
@@ -890,46 +971,67 @@ each_commit_of_a_keep_holds_one_whole_picture :: proc(t: ^testing.T) {
 		wanted := index == len(outcomes) - 1 ? Read_Outcome.New : Read_Outcome.Absent
 		testing.expectf(t, outcome == wanted, "the new picture, after the commit %d: %v", index, outcome)
 	}
-	testing.expect(t, state.written && state.slot == 0)
+	testing.expect(t, state.written && state.rows_offset == FILE_HEADER_BYTES)
 
-	// A change of each row: the whole picture into the other slot.
+	// A change of each row: the whole picture after the rows of the header.
 	copy(second.pixels, first.pixels)
-	for row in 0 ..< PICTURE_HEIGHT_LIMIT {
-		segment_draw(&second, 0, row, PICTURE_WIDTH_LIMIT - 1, row, 1, graphics.Color(0x010000 + row))
+	for row in 0 ..< KEEP_TEST_HEIGHT {
+		segment_draw(&second, 0, row, KEEP_TEST_WIDTH - 1, row, 1, graphics.Color(0x010000 + row))
 	}
-	changed_rows_add(&state.rows, {0, 0, PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT}, 100)
+	changed_rows_add(&state.rows, {0, 0, KEEP_TEST_WIDTH, KEEP_TEST_HEIGHT}, 100)
+	delete(outcomes)
 	outcomes = memory_keep(t, &store, &state, &second, &first, &scratch)
-	testing.expect_value(t, state.form, Keep_Form.Other_Slot)
+	testing.expect_value(t, state.form, Keep_Form.Other_Place)
 	for outcome, index in outcomes {
 		wanted := index == len(outcomes) - 1 ? Read_Outcome.New : Read_Outcome.Old
-		testing.expectf(t, outcome == wanted, "the other slot, after the commit %d: %v", index, outcome)
+		testing.expectf(t, outcome == wanted, "the other place, after the commit %d: %v", index, outcome)
 	}
-	testing.expect(t, state.slot == 1)
+	testing.expect_value(t, state.rows_offset, FILE_HEADER_BYTES + ROWS)
 
-	// A few rows: one commit, in the current slot.
+	// A few rows: one commit, in place.
 	copy(first.pixels, second.pixels)
 	segment_draw(&second, 10, 40, 300, 44, 3, 0xABCDEF)
-	changed_rows_add(&state.rows, {0, 38, PICTURE_WIDTH_LIMIT, 46}, 200)
+	changed_rows_add(&state.rows, {0, 38, KEEP_TEST_WIDTH, 46}, 200)
+	delete(outcomes)
 	outcomes = memory_keep(t, &store, &state, &second, &first, &scratch)
 	testing.expect_value(t, state.form, Keep_Form.One_Commit)
 	testing.expect_value(t, len(outcomes), 1)
 	testing.expect_value(t, outcomes[0], Read_Outcome.New)
-	testing.expect(t, state.slot == 1)
+	testing.expect_value(t, state.rows_offset, FILE_HEADER_BYTES + ROWS)
 
-	// A large keep again: back to the slot 0, the old picture until the
-	// header names it.
+	// A large keep again: back before them, the old picture until the
+	// header names it; the size at the header drops the old rows.
 	copy(first.pixels, second.pixels)
-	for row in 0 ..< PICTURE_HEIGHT_LIMIT {
+	for row in 0 ..< KEEP_TEST_HEIGHT {
 		segment_draw(&second, 0, row, 99, row, 1, 0x00FF00)
 	}
-	changed_rows_add(&state.rows, {0, 0, 100, PICTURE_HEIGHT_LIMIT}, 300)
+	changed_rows_add(&state.rows, {0, 0, 100, KEEP_TEST_HEIGHT}, 300)
+	delete(outcomes)
 	outcomes = memory_keep(t, &store, &state, &second, &first, &scratch)
-	testing.expect_value(t, state.form, Keep_Form.Other_Slot)
+	testing.expect_value(t, state.form, Keep_Form.Other_Place)
 	for outcome, index in outcomes {
 		wanted := index == len(outcomes) - 1 ? Read_Outcome.New : Read_Outcome.Old
-		testing.expectf(t, outcome == wanted, "back to the slot 0, after the commit %d: %v", index, outcome)
+		testing.expectf(t, outcome == wanted, "back before the rows, after the commit %d: %v", index, outcome)
 	}
-	testing.expect(t, state.slot == 0)
+	testing.expect_value(t, state.rows_offset, FILE_HEADER_BYTES)
+	testing.expect_value(t, len(store.objects["sky.picture"].committed), FILE_HEADER_BYTES + ROWS)
+	delete(outcomes)
+
+	// A wider picture: each row moves, so even a band of one row is a whole
+	// keep at another place.
+	copy(first.pixels, second.pixels)
+	wider := picture_make(KEEP_TEST_WIDTH, KEEP_TEST_HEIGHT, room = (KEEP_TEST_WIDTH + 8) * KEEP_TEST_HEIGHT)
+	defer delete(wider.pixels)
+	copy(wider.pixels, second.pixels[:KEEP_TEST_WIDTH * KEEP_TEST_HEIGHT])
+	testing.expect_value(t, picture_extend(&wider, KEEP_TEST_WIDTH + 8, KEEP_TEST_HEIGHT), Extend_Outcome.Grown)
+	changed_rows_add(&state.rows, {0, 0, KEEP_TEST_WIDTH + 8, 1}, 400)
+	outcomes = memory_keep(t, &store, &state, &wider, &first, &scratch)
+	testing.expect_value(t, state.form, Keep_Form.Other_Place)
+	for outcome, index in outcomes {
+		wanted := index == len(outcomes) - 1 ? Read_Outcome.New : Read_Outcome.Old
+		testing.expectf(t, outcome == wanted, "the wider picture, after the commit %d: %v", index, outcome)
+	}
+	testing.expect(t, state.kept_width == KEEP_TEST_WIDTH + 8 && state.rows_offset == FILE_HEADER_BYTES + ROWS)
 	delete(outcomes)
 }
 
@@ -940,24 +1042,24 @@ each_commit_of_a_keep_holds_one_whole_picture :: proc(t: ^testing.T) {
 a_stroke_during_a_large_keep_is_completed_by_the_next_keep :: proc(t: ^testing.T) {
 	store: Memory_Store
 	defer memory_store_free(&store)
-	first := picture_make(PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT)
+	first := picture_make(KEEP_TEST_WIDTH, KEEP_TEST_HEIGHT)
 	defer delete(first.pixels)
-	second := picture_make(PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT)
+	second := picture_make(KEEP_TEST_WIDTH, KEEP_TEST_HEIGHT)
 	defer delete(second.pixels)
-	scratch := picture_make(1, 1)
+	scratch := picture_make(1, 1, room = 2 * KEEP_TEST_WIDTH * KEEP_TEST_HEIGHT)
 	defer delete(scratch.pixels)
 	state := Keep_State{store_open = true, started = true, named = true}
 	outcomes := memory_keep(t, &store, &state, &first, nil, &scratch)
 	delete(outcomes)
 	copy(second.pixels, first.pixels)
-	for row in 0 ..< PICTURE_HEIGHT_LIMIT {
-		segment_draw(&second, 0, row, PICTURE_WIDTH_LIMIT - 1, row, 1, graphics.Color(0x020000 + row))
+	for row in 0 ..< KEEP_TEST_HEIGHT {
+		segment_draw(&second, 0, row, KEEP_TEST_WIDTH - 1, row, 1, graphics.Color(0x020000 + row))
 	}
-	changed_rows_add(&state.rows, {0, 0, PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT}, 100)
+	changed_rows_add(&state.rows, {0, 0, KEEP_TEST_WIDTH, KEEP_TEST_HEIGHT}, 100)
 	// Past the first commit: the stroke reaches the later pieces only.
 	pieces_of_a_commit := KEEP_COMMIT_BYTES / KEEP_PIECE_BYTES
 	outcomes = memory_keep(t, &store, &state, &second, &first, &scratch, stroke_after_piece = pieces_of_a_commit + 2)
-	testing.expect_value(t, state.form, Keep_Form.Other_Slot)
+	testing.expect_value(t, state.form, Keep_Form.Other_Place)
 	for outcome, index in outcomes[:len(outcomes) - 1] {
 		testing.expectf(t, outcome == .Old, "before the header, after the commit %d: %v", index, outcome)
 	}
@@ -996,12 +1098,12 @@ the_open_removes_the_temporary_object_of_a_stopped_keep :: proc(t: ^testing.T) {
 
 	store: Memory_Store
 	defer memory_store_free(&store)
-	picture := picture_make(PICTURE_WIDTH_LIMIT, PICTURE_HEIGHT_LIMIT)
+	picture := picture_make(KEEP_TEST_WIDTH, KEEP_TEST_HEIGHT)
 	defer delete(picture.pixels)
-	scratch := picture_make(1, 1)
+	scratch := picture_make(1, 1, room = 2 * KEEP_TEST_WIDTH * KEEP_TEST_HEIGHT)
 	defer delete(scratch.pixels)
-	for row in 0 ..< PICTURE_HEIGHT_LIMIT {
-		segment_draw(&picture, 0, row, PICTURE_WIDTH_LIMIT - 1, row, 1, graphics.Color(row))
+	for row in 0 ..< KEEP_TEST_HEIGHT {
+		segment_draw(&picture, 0, row, KEEP_TEST_WIDTH - 1, row, 1, graphics.Color(row))
 	}
 	memory_write(&store, "other.picture", 0, {1})
 	memory_commit(&store, "other.picture")
@@ -1030,43 +1132,47 @@ the_open_removes_the_temporary_object_of_a_stopped_keep :: proc(t: ^testing.T) {
 }
 
 // A keep runs in pieces that fit a call; the pieces cover the band once;
-// the header and the size come with the last piece; a keep of the header
-// alone is one piece; a refused piece ends the keep.
+// the header and the size come with the last piece; a wider picture is a
+// whole keep at another place; a refused piece ends the keep.
 @(test)
 a_keep_runs_in_pieces_that_fit_a_call :: proc(t: ^testing.T) {
-	state := Keep_State{store_open = true, named = true, written = true, slot = 1}
+	PLACE :: FILE_HEADER_BYTES + 4096
+	ROW :: 100 * 4
+	state := Keep_State{store_open = true, named = true, written = true, rows_offset = PLACE, kept_width = 100, kept_height = 60}
 	changed_rows_add(&state.rows, {0, 10, 10, 50}, 0)
 	keep_begin(&state, 100, 60)
 	testing.expect(t, state.keeping && !state.rows.changed, "the band moved to the keep")
-	testing.expect(t, state.form == .One_Commit && state.target_slot == 1)
-	band := 40 * FILE_ROW_BYTES
+	testing.expect(t, state.form == .One_Commit && state.target_offset == PLACE)
+	band := 40 * ROW
 	covered, commits := 0, 0
 	for state.keeping {
 		piece := keep_piece(&state)
 		testing.expect(t, piece.bytes > 0 && piece.bytes <= KEEP_PIECE_BYTES)
-		testing.expect_value(t, piece.offset, file_rows_offset(1, 10) + covered)
-		testing.expect_value(t, piece.row, 10 * FILE_ROW_BYTES + covered)
+		testing.expect_value(t, piece.offset, PLACE + 10 * ROW + covered)
+		testing.expect_value(t, piece.row, 10 * ROW + covered)
 		testing.expect_value(t, piece.header, piece.last)
 		testing.expect_value(t, piece.commit, piece.last)
+		testing.expect_value(t, piece.size, PLACE + 60 * ROW)
 		testing.expect(t, !piece.rename && piece.object == .Picture)
 		commits += piece.commit ? 1 : 0
 		covered += piece.bytes
 		testing.expect_value(t, keep_piece_written(&state, piece), piece.last)
 	}
 	testing.expect(t, covered == band && commits == 1)
-	// A keep of the header alone: a wider extent.
+	testing.expect(t, state.rows_offset == PLACE && state.kept_width == 100 && state.kept_height == 60)
+	// A wider extent with no changed row: all the rows move, so the keep
+	// writes them all, before the rows of the header since they fit there.
 	changed_rows_mark(&state.rows, 10)
-	keep_begin(&state, 40, 60)
-	piece := keep_piece(&state)
-	testing.expect(t, piece.bytes == 0 && piece.header && piece.commit && piece.last)
-	testing.expect_value(t, piece.size, file_size_of_slot(1, 60))
-	testing.expect(t, keep_piece_written(&state, piece))
+	keep_begin(&state, 101, 10)
+	testing.expect(t, state.form == .Other_Place && state.target_offset == FILE_HEADER_BYTES)
+	testing.expect(t, state.keep_top == 0 && state.keep_bottom == 10)
 	// A refused piece ends the keep, and its rows wait for the next one.
-	changed_rows_add(&state.rows, {0, 2, 10, 8}, 20)
-	keep_begin(&state, 40, 40)
-	keep_refused(&state, 30, 40)
+	keep_refused(&state, 30, 10)
 	testing.expect(t, !state.keeping && state.rows.whole && state.rows.changed)
 	testing.expect_value(t, keep_step(&state, 30 + KEEP_RETRY_MILLISECONDS, false, false), Keep_Step.Keep)
+	// Rows that do not fit before the rows of the header go after them.
+	keep_begin(&state, 101, 60)
+	testing.expect(t, state.form == .Other_Place && state.target_offset == PLACE + 60 * ROW)
 }
 
 // A keep is due at a pause of a second, or 5 seconds after the first change

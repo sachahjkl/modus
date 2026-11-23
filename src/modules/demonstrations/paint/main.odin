@@ -38,7 +38,6 @@ import "internal:paint/paint_model"
 import "modus:contract/accessibility"
 import "modus:contract/draw_record"
 import "modus:contract/errors"
-import "modus:contract/module"
 import "modus:contract/reference_screen"
 import "modus:contract/scale_factor"
 import "modus:contract/value_kinds"
@@ -57,22 +56,9 @@ LEAST_WIDTH :: 600
 LEAST_HEIGHT :: 360
 LARGEST_WIDTH :: 1920
 LARGEST_HEIGHT :: 1080
-#assert(LARGEST_WIDTH == paint_model.PICTURE_WIDTH_LIMIT)
-#assert(LARGEST_HEIGHT == paint_model.PICTURE_HEIGHT_LIMIT)
-
-// The budget of paint, under the largest budget that the root service
-// gives a process (module.LARGEST_BUDGET_PAGES of the module contract, which
-// the root service reads too: 16384 pages), with a margin. The tool counts the module pages (the code,
-// the data and each array below), the stacks of the two threads and the
-// two pictures of the window at its largest size; the source states the
-// working memory. The arrays, in pages of 4 KiB:
-//
-//   picture_pixels    2025  the picture at its largest, 1920 x 1080 x 4 bytes
-//   backup_pixels     2025  the picture before a stroke; the rows of a read
-//   history_arena      256  the steps of undo, 1 MiB
-//   history_scratch    123  one strip of 32 rows and its compressed form
-//   fill_memory         96  the bitmap and the stack of a fill
-//   piece_bytes          9  one piece of a keep, and the header of a read
+// The budget of paint. The tool counts the module pages (the code, the data
+// and the tables below), the stacks of the two threads and the two pictures
+// of the window at its largest size; the source states the working memory.
 //
 // The window: 1920 x 1080 logical pixels at the largest scale, cut on each
 // axis to the reference screen as the tool counts it
@@ -84,15 +70,20 @@ LARGEST_HEIGHT :: 1080
 // 1748 pages for the stack, the tables and the glyph memory; the glyph
 // memory of the copy of the text rendering of the drawing module, 354
 // pages (display.TEXT_MEMORY_PAGES); and 48 pages, the stack of the worker
-// thread past the 16 pages that the tool counts for a thread.
-// 4050 + 1748 + 354 + 48 = 6200. The tool reads the literal; a check below
-// ties it to these parts.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6200, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
+// thread past the 16 pages that the tool counts for a thread: 6200 pages.
+//
+// The picture: its pixels, its copy before a stroke and the bitmap of a
+// fill are arenas that the budget pays, sized to the picture
+// (src/md/features/paint_application.md, "The memory of a picture"). The
+// budget states the picture of a photo of a phone of 24 MP, 6000 x 4000:
+// two arenas of 23438 pages, the bitmap of 733 pages, and the frame lists of
+// the three reservations, at most 224 pages. A budget that pays less holds
+// a smaller picture: a picture past it is refused, and paint says so.
+// 6200 + 2 * 23438 + 733 + 224 = 54033. The tool reads the literal; a check
+// below ties it to these parts.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 54033, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
 
-// The check of the sum against the cap, at compile time: an array that
-// grows past the cap stops the build here.
 PAGE_BYTES :: 4096
-PAGES_MARGIN :: 512
 // The rule of the tool (scale_factor.window_surface_largest), from the same
 // constants: a constant cannot call the procedure. The cut holds because
 // the window is resizable with a least size within the logical screen at
@@ -102,12 +93,16 @@ PAGES_MARGIN :: 512
 WINDOW_SCREEN_WIDTH :: min((u64(LARGEST_WIDTH) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.WIDTH))
 WINDOW_SCREEN_HEIGHT :: min((u64(LARGEST_HEIGHT) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.HEIGHT))
 WINDOW_PAGES :: (2 * WINDOW_SCREEN_WIDTH * WINDOW_SCREEN_HEIGHT * 4 + PAGE_BYTES - 1) / PAGE_BYTES
-#assert(MODULE_BUDGET.working_memory_pages == WINDOW_PAGES + 1748 + display.TEXT_MEMORY_PAGES + 48)
-// The code, the data past the arrays, and the stacks of the two threads
-// that the tool counts (72 and 19 pages): a bound over the measured module.
-MODULE_PAGES_BOUND :: 512
-ARRAY_PAGES :: (2 * size_of([paint_model.PICTURE_PIXELS]graphics.Color) + paint_model.HISTORY_BYTES + size_of(paint_model.History_Scratch) + size_of(paint_model.Fill_Memory) + paint_model.FILE_HEADER_BYTES + paint_model.KEEP_PIECE_BYTES + paint_model.FILE_HEADER_BYTES + PAGE_BYTES - 1) / PAGE_BYTES
-#assert(ARRAY_PAGES + WINDOW_PAGES + MODULE_BUDGET.working_memory_pages + MODULE_PAGES_BOUND + PAGES_MARGIN <= module.LARGEST_BUDGET_PAGES)
+// The picture that the budget states, and its arenas.
+STATED_PICTURE_WIDTH :: 6000
+STATED_PICTURE_HEIGHT :: 4000
+STATED_PICTURE_PAGES :: (STATED_PICTURE_WIDTH * STATED_PICTURE_HEIGHT * 4 + PAGE_BYTES - 1) / PAGE_BYTES
+STATED_VISITED_PAGES :: ((STATED_PICTURE_WIDTH * STATED_PICTURE_HEIGHT + 63) / 64 * 8 + PAGE_BYTES - 1) / PAGE_BYTES
+// The frame list of a reservation costs 8 bytes for each page of it: two
+// reservations of the whole budget, rounded up, and a smaller one.
+FRAME_LIST_PAGES :: 224
+#assert(FRAME_LIST_PAGES >= 2 * ((MODULE_BUDGET.working_memory_pages + 512) * 8 / PAGE_BYTES + 1) + 8)
+#assert(MODULE_BUDGET.working_memory_pages == WINDOW_PAGES + 1748 + display.TEXT_MEMORY_PAGES + 48 + 2 * STATED_PICTURE_PAGES + STATED_VISITED_PAGES + FRAME_LIST_PAGES)
 
 GAP :: 4
 ROW_HEIGHT :: 28 // The row of the tools.
@@ -126,17 +121,22 @@ Panel :: enum u8 {
 	Color    = 2,
 }
 
-// The picture and its memory. The arrays are in the module pages: the tool
-// counts them.
-picture_pixels: [paint_model.PICTURE_PIXELS]graphics.Color
-backup_pixels: [paint_model.PICTURE_PIXELS]graphics.Color // The picture before the change in progress.
+// The picture and its memory. The pixels of the picture, its copy before a
+// stroke and the bitmap of a fill are arenas of the budget that grow with
+// the picture (picture_memory_hold); the other arrays are in the module
+// pages, which the tool counts.
+picture_arena: system.Arena
+backup_arena: system.Arena
+visited_arena: system.Arena
+backup_pixels: []graphics.Color // The picture before the change in progress: the memory of backup_arena.
 history_arena: [paint_model.HISTORY_BYTES]u8
 history_scratch: paint_model.History_Scratch
 fill_memory: paint_model.Fill_Memory
 // The bytes of one piece of a keep, and the header of a read: the job of
 // the store owns them from the ask to the take
 // (src/md/features/background_work.md). A read puts the rows of a picture
-// in backup_pixels: no stroke runs while a read waits or runs.
+// in backup_arena, which the job grows: no stroke runs, and the window
+// grows no arena, while a read waits or runs.
 piece_bytes: [paint_model.FILE_HEADER_BYTES + paint_model.KEEP_PIECE_BYTES]u8
 read_header: [paint_model.FILE_HEADER_BYTES]u8
 picture: paint_model.Picture
@@ -223,6 +223,7 @@ Store_Request :: struct {
 	piece:        paint_model.Keep_Piece,
 	size:         int, // The size of the object after the keep.
 	band_rows:    int, // The rows of the whole keep, for its line of the log.
+	band_bytes:   int, // The bytes of those rows.
 	// The results.
 	opened:       bool, // Open: the store is open.
 	act_failed:   bool, // The act failed: the log has the status of its call.
@@ -232,6 +233,7 @@ Store_Request :: struct {
 	newest:       int, // The picture of the list with the newest change, or -1.
 	found:        bool, // Read: the object exists.
 	file_count:   int, // Read: the bytes read.
+	too_large:    bool, // Read: the budget does not pay the memory of the rows of the picture.
 }
 store_request: Store_Request
 
@@ -267,8 +269,8 @@ bar: interface.Action_Bar_State
 // line draws a line on the picture, with a color of the palette (0 to 15). A point off the picture is fine: the
 // picture shows the part of the line on it.
 //
-// The line is 3 pixels wide. A coordinate beyond 4096 in either direction is taken as 4096: the picture is far
-// smaller, so the visible part does not change. The line is not a step of undo.
+// The line is 3 pixels wide. A coordinate beyond 131072 in either direction is taken as 131072: twice the
+// largest side of a picture, so the visible part does not change. The line is not a step of undo.
 //
 // - **from_x**, **from_y**: the first point, in pixels of the picture (0, 0 is its top left corner).
 // - **to_x**, **to_y**: the last point.
@@ -329,6 +331,44 @@ clear :: proc "c" () {
 	drawn = 0
 }
 
+// extend grows the picture to at least a width and a height, with paper in the new pixels.
+//
+// The picture never gets smaller: a size below it changes nothing. The memory of the picture comes from the
+// budget of paint, so a picture of 6000 x 4000 (a photo of 24 MP) needs the budget that paint states. The window
+// shows the top left part of the picture.
+//
+// - **width**: 1 to 65536 pixels.
+// - **height**: 1 to 65536 pixels; width x height is at most 268 435 456 pixels.
+//
+// The result is the pixels of the picture after the call. It fails with -1 and an error record: Bad_Value when a
+// side is outside its range, or the pixels past their bound (the record names the argument); Busy when a stroke,
+// a keep or a read of a picture runs, as the picture must not move then; Budget, in pages, when the budget does
+// not pay the memory of the picture, which stays as it was.
+//
+// Example: paint.extend(6000, 4000).
+@(export, link_name = "extend")
+extend :: proc "c" (width, height: i64, error: ^errors.Error_Record) -> i64 {
+	switch {
+	case width < 1 || width > paint_model.PICTURE_SIDE_LIMIT:
+		return errors.fail(error, -1, .Bad_Value, .None, 1, width, paint_model.PICTURE_SIDE_LIMIT)
+	case height < 1 || height > paint_model.PICTURE_SIDE_LIMIT:
+		return errors.fail(error, -1, .Bad_Value, .None, 2, height, paint_model.PICTURE_SIDE_LIMIT)
+	case drag.active || keep.keeping || keep.reading || !paint_model.change_allowed(&keep):
+		return errors.fail(error, -1, .Busy, .None)
+	}
+	switch picture_grow(int(width), int(height)) {
+	case .Unchanged, .Grown:
+	case .Too_Large:
+		return errors.fail(error, -1, .Bad_Value, .None, 2, width * height, paint_model.PICTURE_PIXELS_LIMIT)
+	case .No_Room:
+		// The record of the budget: the pages that the pictures ask, and the
+		// pages that their arenas hold.
+		wanted := 2 * width * height * size_of(graphics.Color) / system.PAGE_SIZE
+		return errors.fail(error, -1, .Budget, .Pages, 0, wanted, i64((picture_arena.used_bytes + backup_arena.used_bytes) / system.PAGE_SIZE))
+	}
+	return i64(picture.width * picture.height)
+}
+
 // lines gives the count of lines that calls drew since the last clear.
 //
 // Only the calls of [line](paint.line) count: the lines that the pointer draws do not. A test draws through
@@ -340,13 +380,14 @@ lines :: proc "c" () -> i64 {
 // change_begin keeps a copy of the picture before a change, for its step
 // of undo.
 change_begin :: proc "contextless" () {
-	copy(backup_pixels[:], picture_pixels[:])
+	count := picture.width * picture.height
+	copy(backup_pixels[:count], picture.pixels[:count])
 }
 
 // change_end keeps the step of undo of the pixels that a change touched.
 change_end :: proc "contextless" (changed: paint_model.Box) {
 	picture_changed_rows(changed)
-	switch paint_model.history_record(&history, backup_pixels[:], picture_pixels[:], changed, &history_scratch) {
+	switch paint_model.history_record(&history, backup_pixels, picture.pixels, picture.width, changed, &history_scratch) {
 	case .Kept, .Empty:
 	case .Too_Large:
 		message = "this change is too large to undo"
@@ -466,7 +507,7 @@ store_job :: proc "contextless" (parameter: rawptr) {
 			}
 		}
 		if piece.last {
-			system.log_fact(.Info, Picture_Kept{rows = u64(request.band_rows), bytes = u64(request.band_rows * paint_model.FILE_ROW_BYTES + paint_model.FILE_HEADER_BYTES), name = value_kinds.text_field(string(request.name[:request.name_count]), 40)})
+			system.log_fact(.Info, Picture_Kept{rows = u64(request.band_rows), bytes = u64(request.band_bytes + paint_model.FILE_HEADER_BYTES), name = value_kinds.text_field(string(request.name[:request.name_count]), 40)})
 		}
 	case .Read:
 		if !valid {
@@ -483,10 +524,12 @@ store_job :: proc "contextless" (parameter: rawptr) {
 			store_failed(request, u64(status))
 			return
 		}
-		// The header into its buffer, then the rows of its slot into the
-		// memory of a picture. A header that the reader refuses, or an
-		// object too short for its rows, gives no rows: the decode refuses
-		// them, and the picture stays.
+		// The header into its buffer, then the rows into the arena of the
+		// copy of the picture, which this job grows to them: the window
+		// grows no arena while a read runs. A header that the reader
+		// refuses, or an object too short for its rows, gives no rows: the
+		// decode refuses them, and the picture stays. Rows that the budget
+		// does not pay are not read.
 		request.found = true
 		request.file_count = 0
 		header, header_status := storage.read_range(&client, storage.ROOT, object, 0, read_header[:])
@@ -502,7 +545,12 @@ store_job :: proc "contextless" (parameter: rawptr) {
 			request.file_count = paint_model.FILE_HEADER_BYTES
 			return
 		}
-		rows := ([^]u8)(raw_data(backup_pixels[:]))[:place.bytes]
+		if arena_hold(&backup_arena, place.bytes) != .Ok {
+			request.file_count = paint_model.FILE_HEADER_BYTES
+			request.too_large = true
+			return
+		}
+		rows := backup_arena.base[:place.bytes]
 		read := 0
 		for read < len(rows) {
 			piece, piece_status := storage.read_range(&client, storage.ROOT, object, u64(place.offset + read), rows[read:min(read + paint_model.KEEP_PIECE_BYTES, len(rows))])
@@ -622,6 +670,65 @@ picture_changed_rows :: proc "contextless" (box: paint_model.Box) {
 	paint_model.changed_rows_add(&keep.rows, box, system.time())
 }
 
+// arena_hold grows an arena to hold bytes from its base: a push of the
+// missing bytes at its end, so its memory stays one run from the base,
+// which never moves.
+arena_hold :: proc "contextless" (arena: ^system.Arena, bytes: int) -> system.Status {
+	if bytes <= 0 || u64(bytes) <= arena.used_bytes {
+		return .Ok
+	}
+	_, status := system.arena_push(arena, u64(bytes) - arena.used_bytes, 1)
+	return status
+}
+
+// picture_memory_take gives the picture, its copy before a stroke, the
+// bitmap of a fill and the picture memory of the draw tables the memory
+// that their arenas hold now.
+picture_memory_take :: proc "contextless" () {
+	picture.pixels = ([^]graphics.Color)(picture_arena.base)[:picture_arena.used_bytes / size_of(graphics.Color)]
+	backup_pixels = ([^]graphics.Color)(backup_arena.base)[:backup_arena.used_bytes / size_of(graphics.Color)]
+	fill_memory.visited = ([^]u64)(visited_arena.base)[:visited_arena.used_bytes / size_of(u64)]
+	picture_memories[0] = picture.pixels
+}
+
+// picture_memory_hold grows the three arenas to hold a picture of a count
+// of pixels. false: the budget does not pay them; the picture keeps its
+// extent and its pixels, in what the arenas hold.
+picture_memory_hold :: proc "contextless" (pixels: int) -> bool {
+	held := arena_hold(&picture_arena, pixels * size_of(graphics.Color)) == .Ok && arena_hold(&backup_arena, pixels * size_of(graphics.Color)) == .Ok && arena_hold(&visited_arena, paint_model.fill_visited_words(pixels) * size_of(u64)) == .Ok
+	picture_memory_take()
+	return held
+}
+
+// picture_grow grows the extent to hold a size, its memory first. The new
+// rows are a change that the next keep writes; a wider extent moves each
+// row, and the keep then writes them all. The caller checks that no
+// stroke, keep or read runs: each holds places in the picture.
+picture_grow :: proc "contextless" (width, height: int) -> paint_model.Extend_Outcome {
+	new_width, new_height := paint_model.picture_extent_for(&picture, width, height)
+	if new_width == picture.width && new_height == picture.height {
+		return .Unchanged
+	}
+	pixels, ok := paint_model.picture_pixels_for(new_width, new_height)
+	if !ok {
+		return .Too_Large
+	}
+	if !picture_memory_hold(pixels) {
+		system.log_fact(.Warning, Picture_Memory_Refused{width = u64(new_width), height = u64(new_height)})
+		message = "the budget of paint does not pay a larger picture"
+		return .No_Room
+	}
+	width_before, height_before := picture.width, picture.height
+	outcome := paint_model.picture_extend(&picture, new_width, new_height)
+	if outcome == .Grown {
+		picture_changed_rows({0, height_before, picture.width, picture.height})
+		if picture.width != width_before {
+			paint_model.changed_rows_mark(&keep.rows, system.time())
+		}
+	}
+	return outcome
+}
+
 // change_refused says if the picture must not change now, and says why:
 // the first open is not taken yet, or a read of another picture runs; each
 // would replace the change.
@@ -640,15 +747,16 @@ keep_ask :: proc "contextless" () {
 	if !keep.keeping {
 		paint_model.keep_begin(&keep, picture.width, picture.height)
 		store_request.band_rows = keep.keep_bottom - keep.keep_top
+		store_request.band_bytes = store_request.band_rows * paint_model.file_row_bytes(keep.keep_width)
 	}
 	piece := paint_model.keep_piece(&keep)
 	if piece.header {
-		if _, ok := paint_model.file_header_write(keep.keep_width, keep.keep_height, keep.target_slot, piece_bytes[:]); !ok {
+		if _, ok := paint_model.file_header_write(keep.keep_width, keep.keep_height, keep.target_offset, piece_bytes[:]); !ok {
 			keep.keeping = false
 			return
 		}
 	}
-	pixels := ([^]u8)(raw_data(picture_pixels[:]))[:paint_model.PICTURE_BYTES]
+	pixels := ([^]u8)(raw_data(picture.pixels))[:picture.width * picture.height * size_of(graphics.Color)]
 	copy(piece_bytes[paint_model.FILE_HEADER_BYTES:], pixels[piece.row:][:piece.bytes])
 	store_request.piece = piece
 	store_ask(.Keep, current_picture_name())
@@ -693,12 +801,12 @@ store_drive :: proc "contextless" (now: u64) {
 // picture_start_new makes the picture of the window a new picture with a
 // name: paper, the extent of the canvas, no history.
 picture_start_new :: proc "contextless" (name: string) {
-	paint_model.picture_clear(&picture)
 	picture.width, picture.height = 0, 0
-	paint_model.picture_extend(&picture, canvas_area.width, canvas_area.height)
+	picture_grow(canvas_area.width, canvas_area.height)
+	paint_model.picture_clear(&picture)
 	paint_model.history_clear(&history)
 	current_name_count = copy(current_name[:], name)
-	keep.written, keep.slot = false, 0
+	keep.written = false
 	keep.named = current_name_count > 0
 	keep.rows = {}
 	drawn = 0
@@ -866,11 +974,22 @@ picture_decode_taken :: proc "contextless" (request: ^Store_Request) {
 		}
 		return
 	}
-	rows := ([^]u8)(raw_data(backup_pixels[:]))[:max(request.file_count - paint_model.FILE_HEADER_BYTES, 0)]
+	rows := backup_arena.base[:max(request.file_count - paint_model.FILE_HEADER_BYTES, 0)]
 	header := read_header[:request.file_count >= paint_model.FILE_HEADER_BYTES ? paint_model.FILE_HEADER_BYTES : 0]
-	if problem := paint_model.picture_decode_parts(header, rows, &picture); problem != .None {
+	// The memory of the picture grows to the picture of the file first: the
+	// budget pays it, or the picture is refused as too large.
+	place, header_problem := paint_model.file_rows_of_header(header)
+	problem := header_problem
+	if problem == .None && (request.too_large || !picture_memory_hold(place.width * place.height)) {
+		system.log_fact(.Warning, Picture_Memory_Refused{width = u64(place.width), height = u64(place.height)})
+		problem = .Too_Large
+	}
+	if problem == .None {
+		problem = paint_model.picture_decode_parts(header, rows, &picture)
+	}
+	if problem != .None {
 		system.log_fact(.Warning, Picture_Refused{problem = u64(problem), name = value_kinds.text_field(name, 40)})
-		message = "the file of this picture is damaged"
+		message = problem == .Too_Large ? "the budget of paint does not pay this picture" : "the file of this picture is damaged"
 		if current_name_count == 0 {
 			name_take_first_free()
 		}
@@ -878,22 +997,17 @@ picture_decode_taken :: proc "contextless" (request: ^Store_Request) {
 	}
 	paint_model.history_clear(&history)
 	current_name_count = copy(current_name[:], name)
-	keep.written, keep.slot = true, paint_model.file_slot_of_header(read_header[:])
+	paint_model.keep_object_read(&keep, place.offset, place.width, place.height)
 	keep.named = true
 	keep.rows = {}
 	// The picture holds at least the canvas: the rest is paper, which the
 	// next keep writes.
-	height_before := picture.height
-	if paint_model.picture_extend(&picture, canvas_area.width, canvas_area.height) {
-		paint_model.changed_rows_add(&keep.rows, {0, height_before, picture.width, picture.height}, system.time())
-	}
+	picture_grow(canvas_area.width, canvas_area.height)
 	// The count of the pixels that are not paper: a machine test checks
 	// that the drawing came back, after a stop of the process.
 	drawn_pixels: u64
-	for row in 0 ..< picture.height {
-		for pixel in picture.pixels[row * paint_model.PICTURE_WIDTH_LIMIT:][:picture.width] {
-			drawn_pixels += pixel != paint_model.COLOR_PAPER ? 1 : 0
-		}
+	for pixel in picture.pixels[:picture.width * picture.height] {
+		drawn_pixels += pixel != paint_model.COLOR_PAPER ? 1 : 0
 	}
 	if drawn_pixels > 0 {
 		system.log_fact(.Info, Picture_Opened{width = u64(picture.width), height = u64(picture.height), drawn_pixels = drawn_pixels, name = value_kinds.text_field(name, 40)})
@@ -1216,17 +1330,15 @@ frame_build :: proc "contextless" (window: ^display.Window) -> (bar_result: inte
 	panel_room := panel != .None ? PANEL_WIDTH + 2 * GAP : 0
 	canvas_area = {0, CANVAS_TOP, max(width - panel_room, 1), max(height - CANVAS_TOP - STATUS_HEIGHT, 1)}
 	// A larger window grows the picture; a smaller one keeps it. A growth
-	// is a change that the next keep writes: the new rows, and the header.
-	width_before, height_before := picture.width, picture.height
-	if paint_model.picture_extend(&picture, canvas_area.width, canvas_area.height) {
-		picture_changed_rows({0, height_before, picture.width, picture.height})
-		if picture.height == height_before && picture.width != width_before {
-			paint_model.changed_rows_mark(&keep.rows, system.time())
-		}
+	// is a change that the next keep writes. It waits while a stroke, a keep
+	// or a read runs: each holds places in the picture, and a read grows
+	// the arena of the copy on the worker thread.
+	if !drag.active && !keep.keeping && !keep.reading {
+		picture_grow(canvas_area.width, canvas_area.height)
 	}
 	tools_row(&frame)
 	palette_row(&frame)
-	shown := graphics.Canvas{pixels = raw_data(picture_pixels[:]), width = min(picture.width, canvas_area.width), height = min(picture.height, canvas_area.height), stride = paint_model.PICTURE_WIDTH_LIMIT}
+	shown := graphics.Canvas{pixels = raw_data(picture.pixels), width = min(picture.width, canvas_area.width), height = min(picture.height, canvas_area.height), stride = picture.width}
 	interface.draw_picture(frame.table, canvas_area.x, canvas_area.y, shown, picture.generation)
 	interface.element_name(&frame, canvas_area, "canvas")
 	preview_draw(&frame)
@@ -1382,11 +1494,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	} else if !sent {
 		system.log_fact(.Info, Window_Stays_Fixed{cause = value_kinds.text_field("the command ring of the window is full", 64)})
 	}
-	picture = {pixels = picture_pixels[:]}
+	// The arenas of the picture reserve the pages that the budget holds:
+	// a picture is as large as the budget pays, and no larger
+	// (src/md/features/memory_without_a_bound.md, "The decision points").
+	own, _ := system.budget_read()
+	reservation := system.arena_reservation_pages(own.pages)
+	arena_status: system.Status
+	if picture_arena, arena_status = system.arena_create(reservation); arena_status == .Ok {
+		if backup_arena, arena_status = system.arena_create(reservation); arena_status == .Ok {
+			visited_arena, arena_status = system.arena_create(system.arena_reservation_pages(own.pages / 32 + 1))
+		}
+	}
 	history.arena = history_arena[:]
-	paint_model.picture_clear(&picture)
-	paint_model.picture_extend(&picture, WIDTH, HEIGHT - CANVAS_TOP - STATUS_HEIGHT)
-	picture_memories[0] = picture_pixels[:]
+	if arena_status != .Ok || picture_grow(WIDTH, HEIGHT - CANVAS_TOP - STATUS_HEIGHT) != .Grown {
+		system.log_fact(.Warning, Picture_Memory_Refused{width = WIDTH, height = HEIGHT - CANVAS_TOP - STATUS_HEIGHT})
+		system.stop(.Failed)
+	}
 	window_memory.drawing.now.picture_memories = picture_memories[:]
 	window_memory.drawing.before.picture_memories = picture_memories[:]
 	// The store opens on the worker thread: the window draws at once.
