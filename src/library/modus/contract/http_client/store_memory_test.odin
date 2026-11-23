@@ -25,10 +25,15 @@ store_test_grown :: proc(old: []$T, wanted: int) -> (grown: []T, ok: bool) {
 	return ([^]T)(base)[:min(max(wanted, 16) * 2, reserve)], true
 }
 
-store_test_jar_grow :: proc "contextless" (jar: ^Cookie_Jar, wanted: int) -> bool {
+store_test_jar_grow :: proc "contextless" (jar: ^Cookie_Jar, part: Jar_Part, wanted: int) -> bool {
 	context = runtime.default_context()
 	ok: bool
-	jar.entries, ok = store_test_grown(jar.entries, wanted)
+	switch part {
+	case .Entries:
+		jar.entries, ok = store_test_grown(jar.entries, wanted)
+	case .Principals:
+		jar.shares, ok = store_test_grown(jar.shares, wanted)
+	}
 	return ok
 }
 
@@ -40,6 +45,8 @@ store_test_cache_grow :: proc "contextless" (cache: ^Response_Cache, part: Cache
 		cache.entries, ok = store_test_grown(cache.entries, wanted)
 	case .Bodies:
 		cache.bodies, ok = store_test_grown(cache.bodies, wanted)
+	case .Principals:
+		cache.shares, ok = store_test_grown(cache.shares, wanted)
 	}
 	return ok
 }

@@ -139,6 +139,19 @@ document_tables_hold :: proc "contextless" () -> (nodes: int) {
 	return min(count, len(node_targets), len(node_forms))
 }
 
+// document_memory_trim gives back the pages of the arenas of the document
+// and of the tables of the window past twice what the page shown holds:
+// a large page leaves only what a page of its size needs, so a later page
+// of another shape finds the budget (web.document_memory_trim).
+document_memory_trim :: proc "contextless" () {
+	web.document_memory_trim(&document_arenas, &document_tree, &sheet, &document_layout)
+	document_records = web.arena_slice(&table_arenas[.Records], draw_record.Draw_Record, web.arena_trim_to(&table_arenas[.Records], size_of(draw_record.Draw_Record), document_record_count))
+	document_text = web.arena_slice(&table_arenas[.Record_Text], u8, web.arena_trim_to(&table_arenas[.Record_Text], 1, document_text_count))
+	nodes := int(document_tree.node_count)
+	node_targets = web.arena_slice(&table_arenas[.Targets], Node_Target, web.arena_trim_to(&table_arenas[.Targets], size_of(Node_Target), nodes))
+	node_forms = web.arena_slice(&table_arenas[.Forms], u32, web.arena_trim_to(&table_arenas[.Forms], size_of(u32), nodes))
+}
+
 // document_targets_read reads the targets and the form fields of the
 // parsed document.
 document_targets_read :: proc "contextless" () {

@@ -5,12 +5,14 @@
 //
 // This process is also a service: it serves its exports while it runs.
 // Another process draws on the picture with isolated calls. The calls run
-// in the one thread of this process, between two input events.
+// on the thread of the window, between two input events, never while a
+// long change runs on its worker.
 //
 // **What it is for.** It is the paint program of the desktop, and the
 // smallest process that is both an application and a service: the same
-// window takes the pointer and the calls of the console, with one thread
-// and no lock, because a call runs between two events.
+// window takes the pointer and the calls of the console, which run between
+// two events. Two workers take the store and the long changes (a fill, a
+// large undo); the picture has one owner at a time, so no lock.
 //
 // **Start**: start("paint") in the console, or the bar of the desktop.
 // Then, from the console: connect("paint"), paint.line(0, 0, 479, 295, 4),
@@ -27,8 +29,9 @@
 // - **Serve**: its exports, for the console.
 // - **Store**: its private store, for the pictures.
 //
-// **The picture**: the largest is the logical screen of the reference
-// screen. The window shows its top left part; a resize never cuts it. The
+// **The picture**: as large as its budget pays, up to 2^28 pixels with a
+// side of at most 65536 (a photo of 6000 x 4000 fits the stated budget).
+// The window shows its top left part; a resize never cuts it. The
 // colors of the exports are the 16 colors of the palette, numbered 0 to
 // 15: dark, white, gray, light gray, red, orange, yellow, green, teal,
 // blue, violet, pink, brown, sand, navy, paper.
@@ -343,10 +346,8 @@ write :: proc "c" (x, y: i64, text: ^string, color: i64, error: ^errors.Error_Re
 	case color < 0 || color >= paint_model.PALETTE_COUNT:
 		return errors.fail(error, -1, .Bad_Value, .None, 4, color, paint_model.PALETTE_COUNT - 1)
 	}
-	graphics.text(paint_model.picture_canvas(&picture), int(x), int(y), text^, paint_model.PALETTE[color])
-	paint_model.picture_changed(&picture)
-	// The rows of one line of the font of the system.
-	picture_changed_rows(paint_model.box_cut(&picture, {0, int(y), picture.width, int(y) + graphics.LINE_HEIGHT}))
+	// Through the copy before a stroke that runs, as each tool.
+	picture_changed_rows(paint_model.text_draw(&picture, int(x), int(y), text^, paint_model.PALETTE[color]))
 	return i64(len(text))
 }
 
@@ -480,6 +481,7 @@ Change_Job :: struct {
 	fill_outcome:   paint_model.Fill_Outcome,
 	record_outcome: paint_model.Record_Outcome,
 	applied:        bool, // Undo, Redo: the step was applied.
+	cleared_rows:   int, // Clear: the rows painted so far (atomic): the progress line reads it.
 	recording:      bool, // Set by the worker when the record starts (atomic): the progress line reads it.
 }
 
@@ -518,7 +520,16 @@ change_job_run :: proc "contextless" (parameter: rawptr) {
 			return
 		}
 	case .Clear:
-		paint_model.picture_clear(&job.picture)
+		// Band by band: each band copies its tiles, then paints them, and a
+		// cancel stops the clear between two bands.
+		for top := 0; top < job.picture.height; top += paint_model.COPY_TILE_SIDE {
+			if intrinsics.atomic_load(&history_scratch.cancel) {
+				job.record_outcome = .Cancelled
+				return
+			}
+			paint_model.picture_clear_band(&job.picture, top, top + paint_model.COPY_TILE_SIDE)
+			intrinsics.atomic_store(&job.cleared_rows, min(top + paint_model.COPY_TILE_SIDE, job.picture.height))
+		}
 	case .Record:
 	}
 	// The tiles of the box that the change did not write are still the
@@ -1687,7 +1698,9 @@ status_text :: proc "contextless" (builder: ^interface.Text_Builder) -> string {
 			interface.text_put_number(builder, u64(min(done * 100 / max(paint_model.history_record_strips(change_job.box), 1), 100)))
 			interface.text_put(builder, " %")
 		} else if change_job.kind == .Clear {
-			interface.text_put(builder, "clearing")
+			interface.text_put(builder, "clearing: ")
+			interface.text_put_number(builder, u64(intrinsics.atomic_load(&change_job.cleared_rows) * 100 / max(change_job.picture.height, 1)))
+			interface.text_put(builder, " %")
 		} else {
 			interface.text_put(builder, "filling: ")
 			interface.text_put_number(builder, u64(intrinsics.atomic_load(&fill_memory.painted)))

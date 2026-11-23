@@ -279,6 +279,11 @@ Dom_Tree :: struct {
 	order:             []u32,
 	max_depth_reached: u32,
 	truncated:         bool,
+	// How far the last document wrote the nodes and the order: the order can
+	// cut the nodes after they are written, and dom_tree_clear wipes to
+	// these marks, not to the counts that stay.
+	nodes_written:     u32,
+	order_written:     u32,
 	grow:              Dom_Grow,
 	grow_data:         rawptr, // The memory that grow reads, for the caller.
 }
@@ -2592,6 +2597,7 @@ tree_order :: proc "contextless" (tree: ^Dom_Tree) {
 	// the stack: its size would bound the nodes. With no room for it, the
 	// tree keeps its document node alone, and says that it is cut.
 	visited_words := (count + 31) / 32
+	tree.nodes_written = max(tree.nodes_written, tree.node_count)
 	if !dom_room(tree, .Order, 2 * count + visited_words) {
 		tree.node_count = min(tree.node_count, 1)
 		tree.truncated = true
@@ -2600,6 +2606,7 @@ tree_order :: proc "contextless" (tree: ^Dom_Tree) {
 		}
 		return
 	}
+	tree.order_written = max(tree.order_written, u32(2 * count + visited_words))
 	order := tree.order[:count]
 	new_index := tree.order[count:][:count]
 	visited := tree.order[2 * count:][:visited_words]
@@ -2710,11 +2717,11 @@ parse_html :: proc "contextless" (tree: ^Dom_Tree, origin: Document_Origin, inpu
 // outlives a document, and a document of another origin must read no byte
 // of it.
 dom_tree_clear :: proc "contextless" (tree: ^Dom_Tree) {
-	count := int(tree.node_count)
+	count := int(max(tree.node_count, tree.nodes_written))
 	zero_entries(tree.nodes, count)
 	zero_entries(tree.attrs, int(tree.attr_count))
 	zero_entries(tree.text_pool, int(tree.text_len))
-	zero_entries(tree.order, 2 * count + (count + 31) / 32)
+	zero_entries(tree.order, max(2 * count + (count + 31) / 32, int(tree.order_written)))
 	tree^ = {nodes = tree.nodes, attrs = tree.attrs, text_pool = tree.text_pool, order = tree.order, grow = tree.grow, grow_data = tree.grow_data}
 }
 

@@ -144,3 +144,30 @@ document_layout_grow :: proc "contextless" (layout: ^html_css.Layout_Tree, part:
 	}
 	return false
 }
+
+// document_memory_trim gives back the pages of each arena past twice what
+// the document holds now, and cuts each slice to what its arena holds
+// after: a page that needed much memory leaves only what a page of its
+// size needs, so another part can grow for a later page of another shape.
+// Twice is the margin of a growth (arena_entries): a next page of the same
+// size commits nothing. A part keeps the bytes of the document in place.
+document_memory_trim :: proc "contextless" (arenas: ^Document_Arenas, tree: ^html_css.Dom_Tree, sheet: ^html_css.Css_Stylesheet, layout: ^html_css.Layout_Tree) {
+	nodes := int(max(tree.node_count, tree.nodes_written))
+	tree.nodes = arena_slice(&arenas[.Nodes], html_css.Dom_Node, arena_trim_to(&arenas[.Nodes], size_of(html_css.Dom_Node), nodes))
+	tree.attrs = arena_slice(&arenas[.Attributes], html_css.Dom_Attr, arena_trim_to(&arenas[.Attributes], size_of(html_css.Dom_Attr), int(tree.attr_count)))
+	tree.text_pool = arena_slice(&arenas[.Text], u8, arena_trim_to(&arenas[.Text], 1, int(tree.text_len)))
+	tree.order = arena_slice(&arenas[.Order], u32, arena_trim_to(&arenas[.Order], size_of(u32), int(tree.order_written)))
+	sheet.rules = arena_slice(&arenas[.Rules], html_css.Css_Rule, arena_trim_to(&arenas[.Rules], size_of(html_css.Css_Rule), int(sheet.rule_count)))
+	sheet.names = arena_slice(&arenas[.Names], u8, arena_trim_to(&arenas[.Names], 1, int(sheet.name_count)))
+	layout.node_styles = arena_slice(&arenas[.Styles], html_css.Computed_Style, arena_trim_to(&arenas[.Styles], size_of(html_css.Computed_Style), int(layout.styled_count)))
+	layout.boxes = arena_slice(&arenas[.Boxes], html_css.Layout_Box, arena_trim_to(&arenas[.Boxes], size_of(html_css.Layout_Box), int(layout.box_count)))
+	layout.matched = arena_slice(&arenas[.Matched], html_css.Matched_Rule, arena_trim_to(&arenas[.Matched], size_of(html_css.Matched_Rule), int(layout.matched_count)))
+}
+
+// arena_trim_to gives back the pages of an arena past twice the entries in
+// use, and gives the entries that it holds after.
+arena_trim_to :: proc "contextless" (arena: ^system.Arena, entry_size, used: int) -> (entries: int) {
+	system.arena_trim(arena, u64(2 * used * entry_size))
+	return int(arena.used_bytes) / entry_size
+}
+

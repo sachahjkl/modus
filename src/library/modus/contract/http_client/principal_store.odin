@@ -109,19 +109,41 @@ Cookie_Entry :: struct {
 	last_used_seq:   u64,
 }
 
-// Cookie_Jar_Grow makes the jar hold at least wanted entries: it sets
-// entries to a longer slice that keeps the entries before it. false: the
-// memory cannot grow.
-Cookie_Jar_Grow :: #type proc "contextless" (jar: ^Cookie_Jar, wanted: int) -> bool
+// The entries and the bytes of the bodies that one principal holds: the
+// table that the shares read, so a share costs no scan of the entries. A
+// row goes when its principal holds nothing.
+Principal_Share :: struct {
+	principal_id: u64,
+	entries:      int,
+	body_bytes:   int,
+}
+
+// The parts of the memory of a cookie jar.
+Jar_Part :: enum u8 {
+	Entries    = 0,
+	Principals = 1, // The table of the shares.
+}
+
+// Cookie_Jar_Grow makes a part of the jar hold at least wanted entries: it
+// sets the part to a longer slice that keeps the entries before it. false:
+// the memory cannot grow.
+Cookie_Jar_Grow :: #type proc "contextless" (jar: ^Cookie_Jar, part: Jar_Part, wanted: int) -> bool
 
 // The cookie jar of the principals: one list of entries, each with its
-// principal, in memory of the caller. A principal reads, replaces and
-// evicts only its own entries: past cookies_of_a_principal (0: the memory
-// alone bounds it), or when the memory cannot grow, a new cookie takes the
-// place of the cookie of the same principal used least. A principal with
-// no cookie never takes the place of the cookie of another.
+// principal, in memory of the caller. A principal reads and replaces only
+// its own entries. While the memory grows, each cookie is kept. When it
+// cannot grow, the jar is shared (src/md/features/desktop_to_browser.md,
+// "The share of a principal"): a principal under its share (the entries
+// over the principals, itself counted) takes the place of the least used
+// cookie of the principal that holds the most, which is over its share; a
+// principal at its share takes the place of its own least used cookie. So
+// no principal holds more than its share while another asks for room, and
+// a principal under its share loses no cookie to another.
+// cookies_of_a_principal, above 0, is a quota of each principal besides.
 Cookie_Jar :: struct {
 	entries:                []Cookie_Entry,
+	shares:                 []Principal_Share,
+	share_count:            int,
 	cookies_of_a_principal: int,
 	access_seq:             u64,
 	grow:                   Cookie_Jar_Grow,
@@ -149,8 +171,9 @@ Cache_Entry :: struct {
 
 // The parts of the memory of a response cache.
 Cache_Part :: enum u8 {
-	Entries = 0,
-	Bodies  = 1, // The bytes of the bodies, one after the other.
+	Entries    = 0,
+	Bodies     = 1, // The bytes of the bodies, one after the other.
+	Principals = 2, // The table of the shares.
 }
 
 // Response_Cache_Grow makes a part of the cache hold at least wanted
@@ -161,34 +184,91 @@ Response_Cache_Grow :: #type proc "contextless" (cache: ^Response_Cache, part: C
 // its principal, and the bytes of their bodies, in memory of the caller.
 // A body has the size of its response: the memory bounds it. The places
 // of the bodies that the cache no longer holds come back when the bodies
-// are full (cache_bodies_compact). Eviction is per principal, as in the jar.
+// are full (cache_bodies_compact). The entries are shared as in the jar,
+// and the bytes of the bodies the same way: when the bodies cannot grow, a
+// principal whose bytes with the new body stay in its share (the bytes
+// over the principals, itself counted) takes the room of the least used
+// bodies of the principal that holds the most bytes; else it takes the
+// room of its own. entries_of_a_principal and body_bytes_of_a_principal,
+// above 0, are quotas of each principal besides.
 Response_Cache :: struct {
-	entries:                  []Cache_Entry,
-	bodies:                   []u8,
-	bodies_used:              int,
-	entries_of_a_principal:   int,
-	access_seq:               u64,
-	grow:                     Response_Cache_Grow,
-	grow_data:                rawptr,
+	entries:                   []Cache_Entry,
+	bodies:                    []u8,
+	bodies_used:               int,
+	shares:                    []Principal_Share,
+	share_count:               int,
+	entries_of_a_principal:    int,
+	body_bytes_of_a_principal: int,
+	access_seq:                u64,
+	grow:                      Response_Cache_Grow,
+	grow_data:                 rawptr,
 }
 
-// The slot that a new entry of a principal takes, or -1: the match, else
-// the least used entry of the principal past its quota, else a free
-// entry, else a new entry that the memory grows to, else the least used
-// entry of the principal.
 @(private = "file")
-slot_choose :: proc "contextless" (match_idx, free_idx, oldest_idx, owned, quota, held: int, grown: bool) -> int {
-	switch {
-	case match_idx >= 0:
-		return match_idx
-	case quota > 0 && owned >= quota && oldest_idx >= 0:
-		return oldest_idx
-	case free_idx >= 0:
-		return free_idx
-	case grown:
-		return held
+share_find :: proc "contextless" (shares: []Principal_Share, principal: u64) -> int {
+	for &row, index in shares {
+		if row.principal_id == principal {
+			return index
+		}
 	}
-	return oldest_idx
+	return -1
+}
+
+// share_change adds to the entries and the bytes of a principal, and
+// removes its row when it holds nothing.
+@(private = "file")
+share_change :: proc "contextless" (shares: []Principal_Share, count: ^int, principal: u64, entries, bytes: int) {
+	index := share_find(shares[:count^], principal)
+	if index < 0 {
+		return
+	}
+	row := &shares[index]
+	row.entries += entries
+	row.body_bytes += bytes
+	if row.entries <= 0 && row.body_bytes <= 0 {
+		shares[index] = shares[count^ - 1]
+		count^ -= 1
+	}
+}
+
+// share_add adds to a principal, with a new row when it has none; the
+// caller made the room of the row (share_room).
+@(private = "file")
+share_add :: proc "contextless" (shares: []Principal_Share, count: ^int, principal: u64, entries, bytes: int) {
+	if share_find(shares[:count^], principal) < 0 {
+		if count^ >= len(shares) {
+			return
+		}
+		shares[count^] = {principal_id = principal}
+		count^ += 1
+	}
+	share_change(shares, count, principal, entries, bytes)
+}
+
+// share_most gives the principal, other than one, that holds the most
+// entries, or the most bytes of bodies.
+@(private = "file")
+share_most :: proc "contextless" (shares: []Principal_Share, except: u64, bytes: bool) -> (principal: u64, found: bool) {
+	most := 0
+	for &row in shares {
+		held := bytes ? row.body_bytes : row.entries
+		if row.principal_id != except && held > most {
+			most, principal, found = held, row.principal_id, true
+		}
+	}
+	return
+}
+
+// share_of gives the share of a principal of a room, and what it holds:
+// the room over the principals that hold something, itself counted.
+@(private = "file")
+share_of :: proc "contextless" (shares: []Principal_Share, principal: u64, room: int, bytes: bool) -> (share, held: int) {
+	index := share_find(shares, principal)
+	principals := len(shares) + (index < 0 ? 1 : 0)
+	if index >= 0 {
+		held = bytes ? shares[index].body_bytes : shares[index].entries
+	}
+	return room / max(principals, 1), held
 }
 
 @(private = "file")
@@ -557,7 +637,7 @@ cookie_jar_set_from_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Ori
 	for i := 0; i < len(jar.entries); i += 1 {
 		cur := &jar.entries[i]
 		if cur.used && cur.has_expiry && now_unix >= cur.expires_at_unix {
-			cur.used = false
+			jar_entry_end(jar, i)
 		}
 		if !cur.used {
 			if free_idx < 0 {
@@ -587,24 +667,77 @@ cookie_jar_set_from_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Ori
 	}
 	if delete_now {
 		if match_idx >= 0 {
-			jar.entries[match_idx] = {}
+			jar_entry_end(jar, match_idx)
 		}
 		return .None
 	}
-
-	held := len(jar.entries)
-	grown := false
-	if match_idx < 0 && free_idx < 0 && !(jar.cookies_of_a_principal > 0 && owned >= jar.cookies_of_a_principal) && jar.grow != nil {
-		grown = jar.grow(jar, held + 1) && len(jar.entries) > held
+	// The row of the principal first: with no room for it, nothing moves.
+	if !jar_share_room(jar, origin.principal_id) {
+		return .Principal_Quota_Exceeded
 	}
-	target_idx := slot_choose(match_idx, free_idx, oldest_idx, owned, jar.cookies_of_a_principal, held, grown)
+	held := len(jar.entries)
+	target_idx := -1
+	switch {
+	case match_idx >= 0:
+		target_idx = match_idx
+	case jar.cookies_of_a_principal > 0 && owned >= jar.cookies_of_a_principal:
+		target_idx = oldest_idx
+	case free_idx >= 0:
+		target_idx = free_idx
+	case jar.grow != nil && jar.grow(jar, .Entries, held + 1) && len(jar.entries) > held:
+		target_idx = held
+	case:
+		// The memory is full: the share decides whose cookie goes.
+		share, _ := share_of(jar.shares[:jar.share_count], origin.principal_id, held, false)
+		target_idx = oldest_idx
+		if owned < share {
+			if victim, found := share_most(jar.shares[:jar.share_count], origin.principal_id, false); found {
+				target_idx = jar_least_used(jar, victim)
+			}
+		}
+	}
 	if target_idx < 0 {
 		return .Principal_Quota_Exceeded
 	}
+	jar_entry_end(jar, target_idx)
 	jar.access_seq += 1
 	entry.last_used_seq = jar.access_seq
 	jar.entries[target_idx] = entry
+	share_add(jar.shares, &jar.share_count, origin.principal_id, 1, 0)
 	return .None
+}
+
+// jar_entry_end ends an entry of the jar, and takes it from the share of
+// its principal.
+@(private = "file")
+jar_entry_end :: proc "contextless" (jar: ^Cookie_Jar, index: int) {
+	entry := &jar.entries[index]
+	if entry.used {
+		share_change(jar.shares, &jar.share_count, entry.principal_id, -1, 0)
+	}
+	entry^ = {}
+}
+
+// jar_share_room makes room for the row of a principal in the table of
+// the shares. false: the memory of the table cannot grow.
+@(private = "file")
+jar_share_room :: proc "contextless" (jar: ^Cookie_Jar, principal: u64) -> bool {
+	if share_find(jar.shares[:jar.share_count], principal) >= 0 || jar.share_count < len(jar.shares) {
+		return true
+	}
+	return jar.grow != nil && jar.grow(jar, .Principals, jar.share_count + 1) && jar.share_count < len(jar.shares)
+}
+
+// jar_least_used gives the entry of a principal used least, or -1.
+@(private = "file")
+jar_least_used :: proc "contextless" (jar: ^Cookie_Jar, principal: u64) -> int {
+	least, least_seq := -1, max(u64)
+	for &entry, index in jar.entries {
+		if entry.used && entry.principal_id == principal && entry.last_used_seq < least_seq {
+			least, least_seq = index, entry.last_used_seq
+		}
+	}
+	return least
 }
 
 // cookie_jar_format_header builds the Cookie request header strictly from the entries of origin.principal_id.
@@ -628,7 +761,7 @@ cookie_jar_format_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Origi
 			continue
 		}
 		if c.has_expiry && now_unix >= c.expires_at_unix {
-			c.used = false
+			jar_entry_end(jar, i)
 			continue
 		}
 		if c.secure && origin.scheme != .Https {
@@ -814,9 +947,9 @@ response_cache_store :: proc "contextless" (cache: ^Response_Cache, origin: ^Ori
 
 	cc := parse_cache_control(cache_control)
 	if cc.no_store {
-		for &e in cache.entries {
+		for &e, index in cache.entries {
 			if cache_entry_names(&e, origin, tbytes) {
-				e = {}
+				cache_entry_end(cache, index)
 			}
 		}
 		return .Not_Cacheable
@@ -826,6 +959,21 @@ response_cache_store :: proc "contextless" (cache: ^Response_Cache, origin: ^Ori
 	}
 	if !cc.has_max_age || cc.max_age_seconds <= 0 {
 		return .Not_Cacheable
+	}
+	// A body past the quota of a principal, or past all the memory of the
+	// bodies, can never be held: it is refused before any entry goes.
+	size := len(body)
+	if cache.body_bytes_of_a_principal > 0 && size > cache.body_bytes_of_a_principal {
+		return .Body_Too_Large
+	}
+	if size > len(cache.bodies) && cache.grow != nil {
+		cache.grow(cache, .Bodies, size)
+	}
+	if size > len(cache.bodies) {
+		return .Body_Too_Large
+	}
+	if !cache_share_room(cache, origin.principal_id) {
+		return .Principal_Quota_Exceeded
 	}
 
 	match_idx := -1
@@ -855,26 +1003,62 @@ response_cache_store :: proc "contextless" (cache: ^Response_Cache, origin: ^Ori
 		}
 	}
 	held := len(cache.entries)
-	grown := false
-	if match_idx < 0 && free_idx < 0 && !(cache.entries_of_a_principal > 0 && owned >= cache.entries_of_a_principal) && cache.grow != nil {
-		grown = cache.grow(cache, .Entries, held + 1) && len(cache.entries) > held
+	slot_idx := -1
+	switch {
+	case match_idx >= 0:
+		slot_idx = match_idx
+	case cache.entries_of_a_principal > 0 && owned >= cache.entries_of_a_principal:
+		slot_idx = oldest_idx
+	case free_idx >= 0:
+		slot_idx = free_idx
+	case cache.grow != nil && cache.grow(cache, .Entries, held + 1) && len(cache.entries) > held:
+		slot_idx = held
+	case:
+		share, _ := share_of(cache.shares[:cache.share_count], origin.principal_id, held, false)
+		slot_idx = oldest_idx
+		if owned < share {
+			if victim, found := share_most(cache.shares[:cache.share_count], origin.principal_id, false); found {
+				slot_idx = cache_least_used(cache, victim, false)
+			}
+		}
 	}
-	slot_idx := slot_choose(match_idx, free_idx, oldest_idx, owned, cache.entries_of_a_principal, held, grown)
 	if slot_idx < 0 {
 		return .Principal_Quota_Exceeded
 	}
-
 	// The entry of the slot ends first: its body is free for the place of
 	// the new one.
-	e := &cache.entries[slot_idx]
-	e^ = {}
-	place, placed := cache_body_place(cache, len(body))
-	if !placed {
-		return .Body_Too_Large
+	cache_entry_end(cache, slot_idx)
+	// The quota of bytes of the principal: its own least used bodies go.
+	for cache.body_bytes_of_a_principal > 0 {
+		_, own_bytes := share_of(cache.shares[:cache.share_count], origin.principal_id, 0, true)
+		if own_bytes + size <= cache.body_bytes_of_a_principal {
+			break
+		}
+		cache_entry_end(cache, cache_least_used(cache, origin.principal_id, true))
 	}
-	copy(cache.bodies[place:][:len(body)], body)
+	place := 0
+	for {
+		placed: bool
+		if place, placed = cache_body_place(cache, size); placed {
+			break
+		}
+		// The bodies are full: the share of bytes decides whose body goes.
+		share, own_bytes := share_of(cache.shares[:cache.share_count], origin.principal_id, len(cache.bodies), true)
+		victim := origin.principal_id
+		if own_bytes + size <= share {
+			if most, found := share_most(cache.shares[:cache.share_count], origin.principal_id, true); found {
+				victim = most
+			}
+		}
+		index := cache_least_used(cache, victim, true)
+		if index < 0 {
+			return .Body_Too_Large
+		}
+		cache_entry_end(cache, index)
+	}
+	copy(cache.bodies[place:][:size], body)
 	cache.access_seq += 1
-	e = &cache.entries[slot_idx]
+	e := &cache.entries[slot_idx]
 	e.used = true
 	e.principal_id = origin.principal_id
 	e.scheme = origin.scheme
@@ -888,9 +1072,48 @@ response_cache_store :: proc "contextless" (cache: ^Response_Cache, origin: ^Ori
 	e.max_age_seconds = cc.max_age_seconds
 	e.must_revalidate = cc.no_cache
 	e.body_offset = place
-	e.body_len = len(body)
+	e.body_len = size
 	e.last_used_seq = cache.access_seq
+	share_add(cache.shares, &cache.share_count, origin.principal_id, 1, size)
 	return .None
+}
+
+// cache_entry_end ends an entry of the cache, and takes it and its body
+// from the share of its principal; the room of the body comes back at the
+// next compaction.
+@(private = "file")
+cache_entry_end :: proc "contextless" (cache: ^Response_Cache, index: int) {
+	if index < 0 {
+		return
+	}
+	entry := &cache.entries[index]
+	if entry.used {
+		share_change(cache.shares, &cache.share_count, entry.principal_id, -1, -entry.body_len)
+	}
+	entry^ = {}
+}
+
+// cache_share_room makes room for the row of a principal in the table of
+// the shares. false: the memory of the table cannot grow.
+@(private = "file")
+cache_share_room :: proc "contextless" (cache: ^Response_Cache, principal: u64) -> bool {
+	if share_find(cache.shares[:cache.share_count], principal) >= 0 || cache.share_count < len(cache.shares) {
+		return true
+	}
+	return cache.grow != nil && cache.grow(cache, .Principals, cache.share_count + 1) && cache.share_count < len(cache.shares)
+}
+
+// cache_least_used gives the entry of a principal used least, with a body
+// when with_body, or -1.
+@(private = "file")
+cache_least_used :: proc "contextless" (cache: ^Response_Cache, principal: u64, with_body: bool) -> int {
+	least, least_seq := -1, max(u64)
+	for &entry, index in cache.entries {
+		if entry.used && entry.principal_id == principal && (!with_body || entry.body_len > 0) && entry.last_used_seq < least_seq {
+			least, least_seq = index, entry.last_used_seq
+		}
+	}
+	return least
 }
 
 // response_cache_lookup retrieves a fresh cached response strictly from the entries of origin.principal_id.

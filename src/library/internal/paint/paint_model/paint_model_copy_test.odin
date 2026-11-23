@@ -3,6 +3,7 @@ package paint_model
 
 import "base:intrinsics"
 import "base:runtime"
+import "core:slice"
 import "core:testing"
 import "core:thread"
 import "modus:graphics"
@@ -13,7 +14,7 @@ import "modus:system"
 
 @(private = "file")
 same_pixels :: proc(first, second: []graphics.Color) -> bool {
-	return string(transmute([]u8)first) == string(transmute([]u8)second)
+	return slice.equal(first, second)
 }
 
 // A stroke on the largest picture (16384 x 16384, 2^28 pixels) copies the
@@ -228,3 +229,131 @@ an_undo_cancelled_while_it_writes_puts_back_its_strips :: proc(t: ^testing.T) {
 		testing.expect_value(t, history.done, 1)
 	}
 }
+
+@(private = "file")
+Copy_Test :: struct {
+	picture:     Picture,
+	original:    []graphics.Color,
+	copy_before: ^Copy_Before,
+}
+
+// copy_test_make gives a picture of noise, its original, and a copy before
+// a change that the picture points to.
+@(private = "file")
+copy_test_make :: proc(width, height: int) -> Copy_Test {
+	test := Copy_Test{picture = Picture{pixels = make([]graphics.Color, width * height)}, original = make([]graphics.Color, width * height), copy_before = new(Copy_Before)}
+	picture_extend(&test.picture, width, height)
+	state := u32(width * 31 + height)
+	for &pixel in test.picture.pixels {
+		state = state * 1_664_525 + 1_013_904_223
+		pixel = state >> 8
+	}
+	copy(test.original, test.picture.pixels)
+	test.copy_before.pixels = make([]graphics.Color, width * height)
+	test.picture.before = test.copy_before
+	return test
+}
+
+@(private = "file")
+copy_test_free :: proc(test: ^Copy_Test) {
+	delete(test.picture.pixels)
+	delete(test.original)
+	delete(test.copy_before.pixels)
+	free(test.copy_before)
+}
+
+// A shallow segment that crosses a row of tiles, and a steep one that
+// crosses a column: each tile that the line writes is in the copy, so the
+// cancel puts the picture back exactly, and so does the undo of its step.
+@(test)
+a_segment_across_a_tile_edge_writes_through_the_copy :: proc(t: ^testing.T) {
+	Case :: struct {
+		width, height:  int,
+		x0, y0, x1, y1: int,
+	}
+	cases := [?]Case{{700, 200, 0, 63, 630, 64}, {200, 700, 63, 0, 64, 630}, {700, 200, 630, 64, 0, 63}, {700, 700, 5, 600, 690, 7}}
+	for item in cases {
+		for thickness in ([?]int{1, 2, 34}) {
+			test := copy_test_make(item.width, item.height)
+			defer copy_test_free(&test)
+			box := segment_draw(&test.picture, item.x0, item.y0, item.x1, item.y1, thickness, 0)
+			// The cancel: the copied tiles of the box.
+			after := make([]graphics.Color, item.width * item.height, context.temp_allocator)
+			copy(after, test.picture.pixels)
+			copy_before_restore(test.copy_before, &test.picture, box)
+			testing.expectf(t, same_pixels(test.picture.pixels, test.original), "%v, %d: the cancel gives the picture back", item, thickness)
+			// The undo: the record reads the copy, the tiles not written taken
+			// from the picture.
+			copy(test.picture.pixels, after)
+			copy_before_touch(test.copy_before, &test.picture, box)
+			bound := 4 * item.width * item.height * size_of(graphics.Color)
+			history := History{ring = make([]u8, bound, context.temp_allocator)}
+			scratch := new(History_Scratch, context.temp_allocator)
+			testing.expect_value(t, history_record(&history, test.copy_before.pixels, test.picture.pixels, item.width, box, bound, scratch), Record_Outcome.Kept)
+			test.picture.before = nil
+			_, undone := history_undo(&history, &test.picture, scratch)
+			testing.expectf(t, undone && same_pixels(test.picture.pixels, test.original), "%v, %d: the undo gives the picture back", item, thickness)
+		}
+	}
+}
+
+// Segments of each size in each direction, from edge to edge and past it:
+// the cancel of each gives the picture back exactly.
+@(test)
+each_segment_writes_through_the_copy :: proc(t: ^testing.T) {
+	test := copy_test_make(300, 250)
+	defer copy_test_free(&test)
+	state := u32(77)
+	next :: proc(state: ^u32, below: int) -> int {
+		state^ = state^ * 1_664_525 + 1_013_904_223
+		return int(state^ >> 8) % below
+	}
+	for round in 0 ..< 300 {
+		x0, y0 := next(&state, 340) - 20, next(&state, 290) - 20
+		x1, y1 := next(&state, 340) - 20, next(&state, 290) - 20
+		thickness := BRUSH_SIZES[round % len(BRUSH_SIZES)]
+		box := segment_draw(&test.picture, x0, y0, x1, y1, thickness, graphics.Color(round))
+		copy_before_restore(test.copy_before, &test.picture, box)
+		copy_before_reset(test.copy_before)
+		if !same_pixels(test.picture.pixels, test.original) {
+			testing.expectf(t, false, "round %d: (%d, %d) to (%d, %d), size %d wrote past the copy", round, x0, y0, x1, y1, thickness)
+			break
+		}
+	}
+}
+
+// A text that a call writes during a stroke goes through the copy: its
+// cancel gives the picture back exactly.
+@(test)
+a_text_writes_through_the_copy :: proc(t: ^testing.T) {
+	// The table of the blend of the text, which a process fills at its start.
+	graphics.text_state_start()
+	test := copy_test_make(400, 200)
+	defer copy_test_free(&test)
+	box := text_draw(&test.picture, 70, 60, "hello, wide W and g", 0)
+	testing.expect(t, !box_empty(box))
+	testing.expect(t, !same_pixels(test.picture.pixels, test.original), "the text is drawn")
+	copy_before_restore(test.copy_before, &test.picture, box)
+	testing.expect(t, same_pixels(test.picture.pixels, test.original), "the cancel gives the picture back")
+	// At the edges, and past them.
+	for place in ([?][2]int{{0, 0}, {390, 190}, {-30, -10}, {399, 199}}) {
+		edge := text_draw(&test.picture, place[0], place[1], "edge", 0)
+		copy_before_restore(test.copy_before, &test.picture, edge)
+		testing.expectf(t, same_pixels(test.picture.pixels, test.original), "%v: the cancel gives the picture back", place)
+	}
+}
+
+// A clear stopped after two bands is put back exactly by the copy.
+@(test)
+a_clear_stopped_between_bands_is_put_back :: proc(t: ^testing.T) {
+	test := copy_test_make(300, 300)
+	defer copy_test_free(&test)
+	for top := 0; top < 2 * COPY_TILE_SIDE; top += COPY_TILE_SIDE {
+		picture_clear_band(&test.picture, top, top + COPY_TILE_SIDE)
+	}
+	testing.expect_value(t, test.picture.pixels[0], COLOR_PAPER)
+	testing.expect_value(t, test.picture.pixels[2 * COPY_TILE_SIDE * 300], test.original[2 * COPY_TILE_SIDE * 300])
+	copy_before_restore(test.copy_before, &test.picture, {0, 0, 300, 300})
+	testing.expect(t, same_pixels(test.picture.pixels, test.original))
+}
+

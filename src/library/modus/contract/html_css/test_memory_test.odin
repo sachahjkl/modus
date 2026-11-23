@@ -2,7 +2,9 @@
 package html_css
 
 import "base:runtime"
+import "core:fmt"
 import "core:slice"
+import "core:strings"
 import "core:testing"
 
 // The memory of the host tests: a tree, a style sheet and a layout tree
@@ -128,3 +130,82 @@ a_clear_wipes_the_last_document :: proc(t: ^testing.T) {
 	testing.expect(t, zero(slice.to_bytes(layout.boxes)) && zero(slice.to_bytes(layout.node_styles)), "the boxes and the styles are wiped")
 	testing.expect(t, tree.grow != nil && sheet.grow != nil && layout.grow != nil, "a clear keeps the grow procedures")
 }
+
+// order_cut_grow refuses the work of the order past a few entries: the
+// order of a large page cuts its nodes after they are written.
+@(private = "file")
+order_cut_grow :: proc "contextless" (tree: ^Dom_Tree, part: Dom_Part, wanted: int) -> bool {
+	if part == .Order && wanted > 64 {
+		return false
+	}
+	return test_dom_grow(tree, part, wanted)
+}
+
+// A large page whose order is cut, then a small page: no byte of the large
+// page stays in the memory of the tree, past what the small page wrote and
+// in it.
+@(test)
+a_small_page_after_a_cut_large_page_holds_no_byte_of_it :: proc(t: ^testing.T) {
+	tree := new(Dom_Tree)
+	tree.grow = order_cut_grow
+	SECRET :: "zq-secret-of-the-large-page"
+	large: strings.Builder
+	strings.builder_init(&large, context.temp_allocator)
+	for i in 0 ..< 400 {
+		fmt.sbprintf(&large, "<p class=%s id=n%d>%s %d</p>", SECRET, i, SECRET, i)
+	}
+	origin := Document_Origin{principal_id = 1, scheme = .Https, port = 443}
+	parse_html(tree, origin, transmute([]u8)strings.to_string(large))
+	testing.expect(t, tree.truncated && tree.node_count == 1, "the order was cut")
+	testing.expect(t, tree.nodes_written > 400, "the nodes were written before the cut")
+	parse_html(tree, origin, transmute([]u8)string("<p>x</p>"))
+	testing.expect(t, !tree.truncated && tree.node_count > 1)
+	none_past :: proc(bytes: []u8, from: int) -> bool {
+		for b in bytes[min(from, len(bytes)):] {
+			if b != 0 {
+				return false
+			}
+		}
+		return true
+	}
+	count := int(tree.node_count)
+	testing.expect(t, none_past(slice.to_bytes(tree.nodes), count * size_of(Dom_Node)), "no node of the large page")
+	testing.expect(t, none_past(slice.to_bytes(tree.attrs), int(tree.attr_count) * size_of(Dom_Attr)), "no attribute of the large page")
+	testing.expect(t, none_past(tree.text_pool, int(tree.text_len)), "no text of the large page")
+	testing.expect(t, none_past(slice.to_bytes(tree.order), (2 * count + (count + 31) / 32) * size_of(u32)), "no order of the large page")
+	testing.expect(t, !strings.contains(string(tree.text_pool), SECRET))
+}
+
+
+// A page that makes the most boxes: tables with head, body and foot groups,
+// rows and cells, cells outside a row, nested tables, inline elements, and
+// text that wraps in a narrow view. A node gives one box at most, so the
+// boxes never pass the nodes: the bound that the origin worker checks.
+@(test)
+a_node_gives_one_box_at_most :: proc(t: ^testing.T) {
+	tree := test_tree_make()
+	sheet := test_sheet_make()
+	layout := test_layout_make()
+	page: strings.Builder
+	strings.builder_init(&page, context.temp_allocator)
+	strings.write_string(&page, "<style>td { padding: 1px } span { color: red } .f { display: flex }</style>")
+	for i in 0 ..< 20 {
+		fmt.sbprintf(&page, "<table><thead><tr><th>h%d</th><th>h</th></tr></thead><tbody>", i)
+		fmt.sbprintf(&page, "<tr><td>a long text that wraps in a narrow view %d</td><td><table><tr><td>inner</td></tr></table></td></tr>", i)
+		strings.write_string(&page, "<td>a cell outside a row</td><caption>c</caption></tbody><tfoot><tr><td><span>s</span><b>b</b> t</td></tr></tfoot></table>")
+		strings.write_string(&page, "<div class=f><span>one</span><span>two</span> text <em>em</em></div><ul><li>a<li>b</ul>")
+	}
+	parse_html(tree, {principal_id = 1, scheme = .Https, port = 443}, transmute([]u8)strings.to_string(page))
+	parse_document_styles(tree, sheet)
+	for width in ([?]i32{40, 320, 1920}) {
+		compute_layout(tree, sheet, width, 600, layout)
+		testing.expect(t, !layout.truncated && layout.box_count > 0)
+		testing.expectf(t, layout.box_count <= tree.node_count, "%d boxes for %d nodes", layout.box_count, tree.node_count)
+		seen := make([]bool, tree.node_count, context.temp_allocator)
+		for box in layout.boxes[:layout.box_count] {
+			testing.expectf(t, !seen[box.node_index], "the node %d has two boxes", box.node_index)
+			seen[box.node_index] = true
+		}
+	}
+}
+

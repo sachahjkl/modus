@@ -71,7 +71,10 @@ html_layout_count :: proc "c" (html: ^string, viewport_width: i64, viewport_heig
 	html_css.stylesheet_clear(&engine_sheet)
 	html_css.parse_document_styles(&engine_dom, &engine_sheet)
 	html_css.compute_layout(&engine_dom, &engine_sheet, i32(viewport_width), i32(viewport_height), &engine_layout)
-	return i64(engine_layout.box_count)
+	box_count := i64(engine_layout.box_count)
+	// The pages past the need of this page go back to the budget.
+	web.document_memory_trim(&engine_arenas, &engine_dom, &engine_sheet, &engine_layout)
+	return box_count
 }
 
 // image_probe_pixels inspects PNG or JPEG bytes and returns width * height on

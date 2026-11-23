@@ -21,7 +21,7 @@ An arena is a memory object of the process that grows by an explicit commit and 
 
 A procedure of the arena is a plain procedure of a support package, not an Odin allocator: the code calls `arena_push` with the arena, the size and the alignment, and reads a result and a status. So the check of the tool still finds no allocator in the system, and each push that can fail shows its failure in the code that called it.
 
-The procedures are `arena_create` (the reservation and its mapping), `arena_push`, `arena_reset` (the end back to 0, the pages kept) and `arena_end` (the unmap and the close). They are in the support package `system`, which each module imports: a package `arena` of its own would have one owner today, and the tool refuses a support package with fewer than two. A push refuses with a status of the kernel and an error record:
+The procedures are `arena_create` (the reservation and its mapping), `arena_push`, `arena_reset` (the end back to 0, the pages kept), `arena_trim` (the pages past a size given back to the budget, from the end; a page committed again is zero) and `arena_end` (the unmap and the close). They are in the support package `system`, which each module imports: a package `arena` of its own would have one owner today, and the tool refuses a support package with fewer than two. A push refuses with a status of the kernel and an error record:
 
 - `Bad_Operation`: a size of 0 (`Too_Small`), an alignment that is not a power of two or is above the page (`Bad_Value`), a size above the whole reservation (`Too_Long`). The last check comes before any sum, so a size near the top of the type never wraps the end to a small one.
 - `No_Slot`: the bytes do not fit in the rest of the reservation (`Full`, unit `Bytes`).

@@ -357,15 +357,26 @@ test_jar_and_cache_grow_with_their_memory :: proc(t: ^testing.T) {
 	defer delete(entries)
 	bodies := make([]u8, 32)
 	defer delete(bodies)
-	fixed := Response_Cache{entries = entries, bodies = bodies}
+	shares := make([]Principal_Share, 4)
+	defer delete(shares)
+	fixed := Response_Cache{entries = entries, bodies = bodies, shares = shares}
 	other, _ := origin_key_make(5, .Https, "site.example", 443)
 	for i in 0 ..< 4 {
 		testing.expect_value(t, response_cache_store(&fixed, &last, fmt.tprintf("/p%d", i), 200, "max-age=600", transmute([]u8)string("12345678"), now), Store_Refusal.None)
 	}
-	testing.expect_value(t, response_cache_store(&fixed, &other, "/x", 200, "max-age=600", transmute([]u8)string("1"), now), Store_Refusal.Principal_Quota_Exceeded)
+	// A body past all the memory of the bodies is refused before any entry
+	// goes: the entry that it would replace stays.
 	testing.expect_value(t, response_cache_store(&fixed, &last, "/p0", 200, "max-age=600", make([]u8, 33, context.temp_allocator), now), Store_Refusal.Body_Too_Large)
 	_, _, hit = response_cache_lookup(&fixed, &last, "/p0", now + 1, body_out)
-	testing.expect(t, !hit, "a refused body leaves no entry")
+	testing.expect(t, hit, "a body that can never fit takes no entry")
+	// The memory is full: a principal under its share takes the place of
+	// the least used entry of the one that holds all four, past its share.
+	testing.expect_value(t, response_cache_store(&fixed, &other, "/x", 200, "max-age=600", transmute([]u8)string("1"), now), Store_Refusal.None)
+	// The lookup of /p0 used it last: /p1 is the least used entry.
+	_, _, hit = response_cache_lookup(&fixed, &last, "/p1", now + 1, body_out)
+	testing.expect(t, !hit, "the least used entry of the principal over its share went")
+	// last holds 3 of 4, past its share of 2: a new entry of it replaces its
+	// own least used, /p2.
 	// Each replacement frees the place of the body before it: the bodies stay
 	// within their 32 bytes by compaction.
 	for round in 0 ..< 8 {
@@ -374,6 +385,113 @@ test_jar_and_cache_grow_with_their_memory :: proc(t: ^testing.T) {
 		_, blen, hit = response_cache_lookup(&fixed, &last, "/p1", now + 1, body_out)
 		testing.expect(t, hit && string(body_out[:blen]) == text)
 	}
-	_, blen, hit = response_cache_lookup(&fixed, &last, "/p2", now + 1, body_out)
+	_, _, hit = response_cache_lookup(&fixed, &last, "/p2", now + 1, body_out)
+	testing.expect(t, !hit, "past its share, last replaced its own least used entry")
+	_, blen, hit = response_cache_lookup(&fixed, &last, "/p3", now + 1, body_out)
 	testing.expect(t, hit && string(body_out[:blen]) == "12345678", "a moved body reads back whole")
 }
+
+// A jar of fixed memory is shared: a principal that took it all keeps
+// only its share when another asks for room; a principal under its share
+// loses no cookie to another; a principal at its share replaces its own.
+@(test)
+test_jar_shares_its_memory :: proc(t: ^testing.T) {
+	entries := make([]Cookie_Entry, 8)
+	defer delete(entries)
+	shares := make([]Principal_Share, 4)
+	defer delete(shares)
+	jar := Cookie_Jar{entries = entries, shares = shares}
+	now: i64 = 1_700_000_000
+	a, _ := origin_key_make(1, .Https, "a.example", 443)
+	b, _ := origin_key_make(2, .Https, "b.example", 443)
+	held :: proc(jar: ^Cookie_Jar, principal: u64) -> (count: int) {
+		for &entry in jar.entries {
+			count += entry.used && entry.principal_id == principal ? 1 : 0
+		}
+		return
+	}
+	for i in 0 ..< 8 {
+		testing.expect_value(t, cookie_jar_set_from_header(&jar, &a, "/", fmt.tprintf("a%d=v; Secure", i), now), Store_Refusal.None)
+	}
+	testing.expect_value(t, held(&jar, 1), 8)
+	// Alone, a principal holds the whole jar; then each cookie of b takes the
+	// place of one of a, until each holds its share of 4.
+	for i in 0 ..< 6 {
+		testing.expect_value(t, cookie_jar_set_from_header(&jar, &b, "/", fmt.tprintf("b%d=v; Secure", i), now), Store_Refusal.None)
+	}
+	testing.expect_value(t, held(&jar, 1), 4)
+	testing.expect_value(t, held(&jar, 2), 4)
+	// The cookies of a that stay are its newest: its least used went.
+	out := make([]u8, 512)
+	defer delete(out)
+	n, _ := cookie_jar_format_header(&jar, &a, "/", true, true, false, now, out)
+	testing.expect(t, strings.contains(string(out[:n]), "a7=v") && !strings.contains(string(out[:n]), "a0=v"))
+	// b at its share replaced its own: its newest four stay.
+	n, _ = cookie_jar_format_header(&jar, &b, "/", true, true, false, now, out)
+	testing.expect(t, strings.contains(string(out[:n]), "b5=v") && !strings.contains(string(out[:n]), "b0=v"))
+	// a at its share replaces its own, never one of b.
+	testing.expect_value(t, cookie_jar_set_from_header(&jar, &a, "/", "a9=v; Secure", now), Store_Refusal.None)
+	testing.expect_value(t, held(&jar, 2), 4)
+	// The table of shares counts each principal once, and drops a principal
+	// that holds nothing.
+	testing.expect_value(t, jar.share_count, 2)
+	for i in 2 ..< 6 {
+		testing.expect_value(t, cookie_jar_set_from_header(&jar, &b, "/", fmt.tprintf("b%d=; Max-Age=0; Secure", i), now), Store_Refusal.None)
+	}
+	testing.expect_value(t, held(&jar, 2), 0)
+	testing.expect_value(t, jar.share_count, 1)
+	// No room for the row of a principal: refused, and nothing moves.
+	full := Cookie_Jar{entries = entries}
+	testing.expect_value(t, cookie_jar_set_from_header(&full, &b, "/", "x=v; Secure", now), Store_Refusal.Principal_Quota_Exceeded)
+}
+
+// The bytes of the bodies are shared the same way, and a quota of bytes
+// of a principal makes it replace its own bodies.
+@(test)
+test_cache_shares_the_bytes_of_its_bodies :: proc(t: ^testing.T) {
+	entries := make([]Cache_Entry, 8)
+	defer delete(entries)
+	bodies := make([]u8, 64)
+	defer delete(bodies)
+	shares := make([]Principal_Share, 4)
+	defer delete(shares)
+	cache := Response_Cache{entries = entries, bodies = bodies, shares = shares}
+	now: i64 = 1_700_000_000
+	a, _ := origin_key_make(1, .Https, "a.example", 443)
+	b, _ := origin_key_make(2, .Https, "b.example", 443)
+	sixteen := transmute([]u8)string("0123456789abcdef")
+	out := make([]u8, 64)
+	defer delete(out)
+	bytes_of :: proc(cache: ^Response_Cache, principal: u64) -> (bytes: int) {
+		for &entry in cache.entries {
+			bytes += entry.used && entry.principal_id == principal ? entry.body_len : 0
+		}
+		return
+	}
+	for i in 0 ..< 4 {
+		testing.expect_value(t, response_cache_store(&cache, &a, fmt.tprintf("/a%d", i), 200, "max-age=600", sixteen, now), Store_Refusal.None)
+	}
+	testing.expect_value(t, bytes_of(&cache, 1), 64)
+	// b under its share of 32 bytes takes the room of the least used bodies
+	// of a; past its share, the room of its own.
+	for i in 0 ..< 3 {
+		testing.expect_value(t, response_cache_store(&cache, &b, fmt.tprintf("/b%d", i), 200, "max-age=600", sixteen, now), Store_Refusal.None)
+	}
+	testing.expect_value(t, bytes_of(&cache, 1), 32)
+	testing.expect_value(t, bytes_of(&cache, 2), 32)
+	_, _, hit := response_cache_lookup(&cache, &a, "/a3", now + 1, out)
+	testing.expect(t, hit, "the newest body of a stays")
+	_, _, hit = response_cache_lookup(&cache, &a, "/a0", now + 1, out)
+	testing.expect(t, !hit, "the least used body of a went")
+	_, _, hit = response_cache_lookup(&cache, &b, "/b0", now + 1, out)
+	testing.expect(t, !hit, "past its share, b replaced its own body")
+	// A quota of bytes: a principal replaces its own bodies to stay in it,
+	// and a body past it is refused.
+	cache.body_bytes_of_a_principal = 20
+	testing.expect_value(t, response_cache_store(&cache, &b, "/q", 200, "max-age=600", sixteen, now), Store_Refusal.None)
+	testing.expect_value(t, bytes_of(&cache, 2), 16)
+	testing.expect_value(t, response_cache_store(&cache, &b, "/r", 200, "max-age=600", make([]u8, 21, context.temp_allocator), now), Store_Refusal.Body_Too_Large)
+	testing.expect_value(t, bytes_of(&cache, 2), 16)
+	testing.expect_value(t, bytes_of(&cache, 1), 32)
+}
+

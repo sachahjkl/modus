@@ -10,6 +10,7 @@ import "base:intrinsics"
 import "modus:contract/lz4"
 import "modus:contract/store"
 import "modus:graphics"
+import "modus:text_rendering"
 
 // The bounds of a picture. They are bounds of cost of one memory object,
 // not a size: the memory of a picture is the caller's, which its budget
@@ -186,9 +187,19 @@ picture_changed :: proc "contextless" (picture: ^Picture) {
 
 // picture_clear paints the extent with the paper.
 picture_clear :: proc "contextless" (picture: ^Picture) {
-	picture_touch(picture, {0, 0, picture.width, picture.height})
-	for &pixel in picture.pixels[:picture.width * picture.height] {
-		pixel = COLOR_PAPER
+	picture_clear_band(picture, 0, picture.height)
+}
+
+// picture_clear_band paints the rows top to bottom with the paper, through
+// the copy before the change that runs: a long clear goes band by band, so
+// a cancel stops it between two bands.
+picture_clear_band :: proc "contextless" (picture: ^Picture, top, bottom: int) {
+	box := box_cut(picture, {0, top, picture.width, bottom})
+	if !box_empty(box) {
+		picture_touch(picture, box)
+		for &pixel in picture.pixels[box.top * picture.width:box.bottom * picture.width] {
+			pixel = COLOR_PAPER
+		}
 	}
 	picture_changed(picture)
 }
@@ -312,18 +323,69 @@ segment_draw :: proc "contextless" (picture: ^Picture, from_x, from_y, to_x, to_
 	if box_empty(box) {
 		return {}
 	}
-	// The copy takes the tiles along the segment, a piece of one tile side at
-	// a time: the box of a long diagonal holds many tiles that it never
-	// writes.
-	pieces := max(abs(x1 - x0), abs(y1 - y0)) / COPY_TILE_SIDE + 1
 	if picture.before != nil {
-		for piece in 0 ..< pieces {
-			start_x, start_y := x0 + (x1 - x0) * piece / pieces, y0 + (y1 - y0) * piece / pieces
-			end_x, end_y := x0 + (x1 - x0) * (piece + 1) / pieces, y0 + (y1 - y0) * (piece + 1) / pieces
-			picture_touch(picture, stroke_box(start_x, start_y, end_x, end_y, thickness))
-		}
+		segment_touch(picture, x0, y0, x1, y1, thickness)
 	}
 	graphics.line(picture_canvas(picture), x0, y0, x1, y1, thickness, color)
+	picture_changed(picture)
+	return box
+}
+
+// segment_touch gives the copy before the change the tiles that a segment
+// writes: it walks the path of graphics.line, step for step, and gathers
+// the box of the square of each step; when the box reaches a tile side, it
+// gives it, and starts again. So each pixel that the line writes is in a
+// box given, and a long diagonal gives the tiles along it, not its box. A
+// path computed apart (pieces cut at a division) can round to another row
+// than the line, and leave a written tile uncopied.
+@(private)
+segment_touch :: proc "contextless" (picture: ^Picture, x0, y0, x1, y1, thickness: int) {
+	x, y := x0, y0
+	distance_x, distance_y := abs(x1 - x0), -abs(y1 - y0)
+	step_x := x0 < x1 ? 1 : -1
+	step_y := y0 < y1 ? 1 : -1
+	error := distance_x + distance_y
+	half := thickness / 2
+	gathered: Box
+	for {
+		gathered = box_union(gathered, {x - half, y - half, x - half + thickness, y - half + thickness})
+		if gathered.right - gathered.left >= COPY_TILE_SIDE || gathered.bottom - gathered.top >= COPY_TILE_SIDE {
+			picture_touch(picture, gathered)
+			gathered = {}
+		}
+		if x == x1 && y == y1 {
+			break
+		}
+		twice := 2 * error
+		if twice >= distance_y {
+			error += distance_y
+			x += step_x
+		}
+		if twice <= distance_x {
+			error += distance_x
+			y += step_y
+		}
+	}
+	picture_touch(picture, gathered)
+}
+
+// text_draw draws a text of the font of the system, its top left corner at
+// a place, and gives the box that it changed, cut to the picture: the
+// advance of its characters on its line, with a margin of one line on each
+// side, as a glyph can pass its cell. The copy before the change that runs
+// takes that box first, as for each tool: a call of the console during a
+// stroke writes through the copy.
+text_draw :: proc "contextless" (picture: ^Picture, x, y: int, text: string, color: graphics.Color) -> Box {
+	canvas := picture_canvas(picture)
+	// An alpha of 0 draws nothing and gives the end of the text.
+	end := graphics.text_sized(canvas, x, y, text, color, text_rendering.TEXT_SIZE_OF_SCALE_ONE, alpha = 0)
+	margin := graphics.LINE_HEIGHT
+	box := box_cut(picture, {x - margin, y - margin, end + margin, y + 2 * margin})
+	if box_empty(box) {
+		return {}
+	}
+	picture_touch(picture, box)
+	graphics.text(canvas, x, y, text, color)
 	picture_changed(picture)
 	return box
 }

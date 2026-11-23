@@ -414,7 +414,10 @@ origin_render_tree_decode :: proc "contextless" (bytes: []u8) -> (tree: Origin_R
 	tree.text_count = take_u32(&reader)
 	tree.document_height = i32(take_u32(&reader))
 	// The counts name entries of the memory of the document, which grows:
-	// past an index of a node, a count names no entry.
+	// past an index of a node, a count names no entry. A node gives one box
+	// at most (html_css: a box for each node that layout_node or a table
+	// lays out once; a measure makes no box, and wrapped text is one box),
+	// so more boxes than nodes is a damaged tree.
 	if (int(tree.node_count) > html_css.NODE_INDEX_LIMIT || int(tree.box_count) > int(tree.node_count) || int(tree.record_count) > DOCUMENT_RECORDS_OF_A_BOX * int(tree.box_count) || tree.document_height < 0) && problem == .None {
 		problem = .Count_Too_Large
 	}
@@ -531,6 +534,7 @@ origin_render :: proc "contextless" (state: ^Origin_State, request: ^Origin_Requ
 	}
 	document_targets_read()
 	document_lay_out(request.view_width, 0)
+	document_memory_trim()
 	tree = {
 		status          = .Done,
 		origin          = request.owner,

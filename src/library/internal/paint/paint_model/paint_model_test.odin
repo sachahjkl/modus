@@ -4,6 +4,7 @@ package paint_model
 import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "modus:contract/store"
@@ -258,7 +259,7 @@ a_fill_paints_the_region_of_a_flood :: proc(t: ^testing.T) {
 		flood_reference(&expected, x, y, 0xABCDEF)
 		_, outcome := fill_region(&picture, x, y, 0xABCDEF, memory)
 		testing.expect_value(t, outcome, Fill_Outcome.Done)
-		same := string(transmute([]u8)picture.pixels) == string(transmute([]u8)expected.pixels)
+		same := slice.equal(picture.pixels, expected.pixels)
 		testing.expectf(t, same, "round %d from (%d, %d): the fill differs from the flood", round, x, y)
 		if !same {
 			break
@@ -317,7 +318,7 @@ a_fill_whose_stack_cannot_grow_stops :: proc(t: ^testing.T) {
 	testing.expect_value(t, outcome, Fill_Outcome.No_Memory)
 	testing.expect(t, !box_empty(box), "a part was painted")
 	picture_copy_box(picture.pixels, before, WIDTH, box)
-	testing.expect(t, string(transmute([]u8)picture.pixels) == string(transmute([]u8)before), "the box from the copy gives the picture back")
+	testing.expect(t, slice.equal(picture.pixels, before), "the box from the copy gives the picture back")
 	// No room for the two first spans: nothing is painted.
 	none := Fill_Memory{}
 	box, outcome = fill_region(&picture, 0, 0, 0xFF0000, &none)
@@ -358,7 +359,7 @@ a_cancel_stops_a_fill_and_a_record :: proc(t: ^testing.T) {
 	testing.expect_value(t, outcome, Fill_Outcome.Cancelled)
 	testing.expect(t, !box_empty(box) && memory.painted < WIDTH * WIDTH, "a part was painted")
 	picture_copy_box(picture.pixels, before, WIDTH, box)
-	testing.expect(t, string(transmute([]u8)picture.pixels) == string(transmute([]u8)before))
+	testing.expect(t, slice.equal(picture.pixels, before))
 	// A cancel asked before the fill paints nothing.
 	box, outcome = fill_region(&picture, 30, 30, 0xFF0000, memory)
 	testing.expect(t, box_empty(box) && outcome == .Cancelled)
@@ -558,12 +559,12 @@ the_oldest_steps_drop_at_the_bound :: proc(t: ^testing.T) {
 	testing.expect(t, wraps > 3, "the steps went across the end of the ring several times")
 	for undone in 1 ..= kept {
 		testing.expect(t, undo(&test))
-		testing.expectf(t, string(transmute([]u8)test.picture.pixels[:200 * 100]) == string(transmute([]u8)snapshots[STEPS - undone]), "after %d undos", undone)
+		testing.expectf(t, slice.equal(test.picture.pixels[:200 * 100], snapshots[STEPS - undone]), "after %d undos", undone)
 	}
 	testing.expect(t, !undo(&test), "the steps that went do not undo")
 	for redone in 1 ..= kept {
 		testing.expect(t, redo(&test))
-		testing.expectf(t, string(transmute([]u8)test.picture.pixels[:200 * 100]) == string(transmute([]u8)snapshots[STEPS - kept + redone]), "after %d redos", redone)
+		testing.expectf(t, slice.equal(test.picture.pixels[:200 * 100], snapshots[STEPS - kept + redone]), "after %d redos", redone)
 	}
 	testing.expect(t, !redo(&test))
 }
@@ -590,7 +591,7 @@ a_change_larger_than_the_bound_is_kept_in_the_copy :: proc(t: ^testing.T) {
 	testing.expect_value(t, pixel_at(&test.picture, 11, 50), COLOR_PAPER)
 	testing.expect(t, !undo(&test), "the step before it went")
 	testing.expect(t, redo(&test))
-	testing.expect(t, string(transmute([]u8)test.picture.pixels[:200 * 100]) == string(transmute([]u8)after), "redo gives the change whole")
+	testing.expect(t, slice.equal(test.picture.pixels[:200 * 100], after), "redo gives the change whole")
 	testing.expect(t, undo(&test) && redo(&test), "it undoes again")
 	// A picture of another width refuses the exchange.
 	test.picture.width = 199
@@ -1603,7 +1604,7 @@ a_fill_on_a_photo_undoes :: proc(t: ^testing.T) {
 	testing.expect(t, !history.in_copy && len(history.ring) <= bound, "the fill is a step of the ring, under its bound")
 	_, undone := history_undo(&history, &photo, scratch)
 	testing.expect(t, undone)
-	testing.expect(t, string(transmute([]u8)photo.pixels) == string(transmute([]u8)before), "undo gives the photo back")
+	testing.expect(t, slice.equal(photo.pixels, before), "undo gives the photo back")
 	_, redone := history_redo(&history, &photo, scratch)
 	testing.expect(t, redone)
 	testing.expect_value(t, photo.pixels[HEIGHT * WIDTH - 1], graphics.Color(0x228B22))
