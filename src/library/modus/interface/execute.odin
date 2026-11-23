@@ -546,9 +546,10 @@ interface_text_draw :: proc "contextless" (table: ^Draw_Table, fields: draw_reco
 // text_draw draws characters of the font of the cells at a text size in
 // 1/64 pixel, one cell of cell_width_of the size for each character, in a
 // weight. alpha is the alpha of the color: below 255 each pixel of ink
-// blends (graphics.text_sized).
-text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, size: int, weight: Font_Weight = .Regular, alpha: u32 = graphics.OPAQUE) {
-	graphics.text_sized(canvas, x, y, text, color, size, weight == .Bold, alpha)
+// blends (graphics.text_sized). spleen_advance, above 0, is the advance of
+// a Spleen character on the screen at a scale (spleen_advance_on_screen).
+text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, size: int, weight: Font_Weight = .Regular, alpha: u32 = graphics.OPAQUE, spleen_advance := 0) {
+	graphics.text_sized(canvas, x, y, text, color, size, weight == .Bold, alpha, spleen_advance)
 }
 
 // intersection gives the part that two rectangles share. It is empty

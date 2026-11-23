@@ -338,20 +338,31 @@ cell_advance :: proc "contextless" (size: int) -> int {
 // alpha scales the cover of each pixel of ink, in each font: the coverage
 // of a glyph, and each pixel of Spleen and of the replacement box. Alpha 0
 // draws nothing.
-text_sized :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color, size: int, bold := false, alpha: u32 = OPAQUE) -> int {
+//
+// spleen_advance, above 0, is the advance of a Spleen character instead of
+// cell_advance of the size: the execution of a table at a scale gives the
+// logical advance of the measure on the screen, which the Spleen advance of
+// the screen size is not (8 at 1.25, for a box of 10 a character). The
+// glyph then takes the largest whole scale that fits the advance, so it
+// never passes into the next character. The vector font ignores it.
+text_sized :: proc "contextless" (canvas: Canvas, x, y: int, characters: string, color: Color, size: int, bold := false, alpha: u32 = OPAQUE, spleen_advance := 0) -> int {
 	if text_rendering.size_check(size) != .None {
 		return x
 	}
+	vector := text_vector_drawn()
 	advance := cell_advance(size)
+	spleen_scale := spleen_scale_of(size)
+	if !vector && spleen_advance > 0 {
+		advance = spleen_advance
+		spleen_scale = min(spleen_scale, max(1, spleen_advance / CELL_WIDTH))
+	}
 	if alpha == 0 {
 		return x + text_encoding.character_count(transmute([]u8)characters) * advance
 	}
-	vector := text_vector_drawn()
 	face := text_state.cell_face
 	if bold && text_state.bold_face != .None {
 		face = text_state.bold_face
 	}
-	spleen_scale := spleen_scale_of(size)
 	spleen_x := (advance - CELL_WIDTH * spleen_scale) / 2
 	// The line is two cells of the size, not two advances: a wider advance
 	// of Spleen under the body keeps the line of the size.
