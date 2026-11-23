@@ -91,7 +91,7 @@ tree_hash_command :: proc "contextless" (arguments: []Value) -> Value {
 		return fail("tree_hash: invalid entry name")
 	}
 	entries := [1]tree_hash.Tree_Entry{entry}
-	encoded: [256]u8
+	encoded: [tree_hash.HEADER_SIZE + tree_hash.ENTRY_SIZE_MOST]u8
 	written, r2 := tree_hash.tree_encode(entries[:], encoded[:])
 	if r2 != .None {
 		return fail("tree_hash: cannot encode canonical tree")

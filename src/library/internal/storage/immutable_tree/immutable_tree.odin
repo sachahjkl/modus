@@ -7,7 +7,8 @@
 //   max_depth), persists leaf objects by their hash, encodes every tree node
 //   canonically via modus:contract/tree_hash, computes its domain-separated
 //   tree hash, and writes each new tree object under its 64-byte lowercase hex
-//   hash (skipping already-present identical subtrees).
+//   hash (skipping already-present identical subtrees). A tree of more than
+//   tree_hash.MAX_TREE_ENTRIES entries is refused with Too_Many_Entries.
 // - `tree_read`, `tree_entry`, `tree_walk_path`: read and traverse immutable
 //   trees strictly through the tree_hash contract border, verifying canonical
 //   validity and exact domain-separated hash match on every node.
@@ -20,11 +21,12 @@ import "internal:storage/storage_tree"
 
 // Length in bytes of a canonical lowercase hexadecimal BLAKE3 hash name.
 HASH_HEX_LENGTH :: 2 * blake3.HASH_SIZE
-#assert(HASH_HEX_LENGTH == format.ENTRY_NAME_CAPACITY)
+#assert(HASH_HEX_LENGTH <= format.ENTRY_NAME_CAPACITY)
 
 // Maximum total pending Tree_Entry slots held simultaneously across all active
-// frames during a bottom-up freeze_tree walk.
-FREEZE_ENTRY_POOL_CAPACITY :: 4096
+// frames during a bottom-up freeze_tree walk: a whole tree of the largest
+// size, and as many more for the trees above it on the path.
+FREEZE_ENTRY_POOL_CAPACITY :: 2 * tree_hash.MAX_TREE_ENTRIES
 
 // Closed set of outcomes returned by a Store_Backend callback.
 Backend_Status :: enum u8 {

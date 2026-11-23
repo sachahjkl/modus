@@ -381,7 +381,7 @@ test_recipe_hash_stability_and_tampered_cache_refusal :: proc(t: ^testing.T) {
 	tree_entry, te_ref := tree_hash.tree_entry_make(.Object, "kernel.module", make_hash(50))
 	testing.expect_value(t, te_ref, tree_hash.Tree_Refusal.None)
 	tree_entries := [1]tree_hash.Tree_Entry{tree_entry}
-	tree_buf: [tree_hash.HEADER_SIZE + tree_hash.ENTRY_SIZE]u8
+	tree_buf: [tree_hash.HEADER_SIZE + tree_hash.ENTRY_SIZE_MOST]u8
 	tree_written, enc_ref := tree_hash.tree_encode(tree_entries[:], tree_buf[:])
 	testing.expect_value(t, enc_ref, tree_hash.Tree_Refusal.None)
 	out_hash, out_ref := recipe_hash_output(.Tree, tree_buf[:tree_written])

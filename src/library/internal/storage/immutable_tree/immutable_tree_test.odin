@@ -10,12 +10,15 @@ import "internal:storage/storage_tree"
 // Fixed-capacity in-memory B+ tree disk + content-addressed immutable object
 // store for host tests (contextless-safe for callbacks).
 IMMUTABLE_TEST_CAPACITY :: 512
+// The bytes of one stored tree of these tests: their trees are small, and
+// 512 slots of the largest tree would take 600 MB.
+TEST_TREE_BYTES :: 16 * 1024
 
 Test_Slot :: struct {
 	used: bool,
 	name: [HASH_HEX_LENGTH]u8,
 	len:  int,
-	data: [tree_hash.MAX_ENCODED_TREE_BYTES]u8,
+	data: [TEST_TREE_BYTES]u8,
 }
 
 Blob_Slot :: struct {
@@ -111,7 +114,7 @@ pure_read_object :: proc "contextless" (backend: ^Store_Backend, name: [HASH_HEX
 
 pure_write_object :: proc "contextless" (backend: ^Store_Backend, name: [HASH_HEX_LENGTH]u8, data: []u8) -> Backend_Status {
 	env := (^Pure_Env)(backend.data)
-	if len(data) > tree_hash.MAX_ENCODED_TREE_BYTES {
+	if len(data) > TEST_TREE_BYTES {
 		return .Full
 	}
 	slot_idx := pure_find_slot(env, name)
@@ -356,7 +359,7 @@ corrupt_and_missing_tree_hash_refused :: proc(t: ^testing.T) {
 	// Corrupt stored bytes (flip 1 bit in stored tree payload) -> Corrupt_Tree.
 	slot_idx := pure_find_slot(env, hash_to_hex(root_hash))
 	testing.expect(t, slot_idx >= 0)
-	env.immutable[slot_idx].data[tree_hash.HEADER_SIZE + 70] ~= 0x01
+	env.immutable[slot_idx].data[tree_hash.HEADER_SIZE + 2] ~= 0x01 // A byte of the first name.
 	_, corrupt_status := tree_read(&env.backend, root_hash, scratch)
 	testing.expect_value(t, corrupt_status, Tree_Store_Status.Corrupt_Tree)
 	_, entry_corrupt := tree_entry(&env.backend, root_hash, "data", scratch)

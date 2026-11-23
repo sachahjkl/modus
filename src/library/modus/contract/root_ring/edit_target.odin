@@ -34,7 +34,7 @@ Edit_Path_Refusal :: enum u8 {
 	Empty       = 1,
 	Too_Long    = 2, // Past EDIT_TARGET_PATH_LIMIT bytes.
 	Too_Deep    = 3, // More than store.NESTING_LIMIT + 1 components.
-	Bad_Segment = 4, // An empty component (leading/trailing/'//'), ".", "..", > 64 bytes, control or invalid UTF-8.
+	Bad_Segment = 4, // An empty component (leading/trailing/'//'), ".", "..", > store.ENTRY_NAME_CAPACITY bytes, control or invalid UTF-8.
 }
 
 // edit_store_validate checks the store name of edit(store, name).

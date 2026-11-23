@@ -450,25 +450,31 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 	}
 	if store_index >= 0 {
 		plan_reset(store_index)
-		plan.next.stores[store_index].limit = store.limit
+		plan_cell().limit = store.limit
 		removal_stalled[store_index] = false // A change of the store tries a stopped removal again.
 		return store_index, 0
 	}
 	if !create {
 		return -1, errors.fail(error, failure(.Absent), .Absent, .Objects, 2)
 	}
-	for &entry, index in root.stores {
-		if entry.name[0] == 0 {
+	// The first free cell of a page with no damage, or the first cell of a
+	// new page.
+	for index in 0 ..< store_numbers() {
+		page, _ := format.store_place(index)
+		if !opened.store_page_damaged[page] && store_cell(index).name[0] == 0 {
 			store_index = index
 			break
 		}
 	}
+	if store_index < 0 && root.store_page_count < format.STORE_PAGE_CAPACITY {
+		store_index = store_numbers()
+	}
 	if store_index < 0 {
-		return -1, errors.fail(error, failure(.Full), .Full) // The disk: a fact of all the stores, so no number.
+		return -1, errors.fail(error, failure(.Full), .Full, .Stores, 0, 0, format.STORE_CAPACITY)
 	}
 	plan_reset(store_index)
-	plan.next.stores[store_index] = {limit = store.limit}
-	copy(plan.next.stores[store_index].name[:NAME_CAPACITY - 1], store.name)
+	plan_cell()^ = {limit = store.limit}
+	copy(plan_cell().name[:NAME_CAPACITY - 1], store.name)
 	return store_index, 0
 }
 
@@ -523,7 +529,7 @@ commit_at_limit :: proc "contextless" (store: Store_Of, error: ^errors.Error_Rec
 	}
 	at_limit := plan.thinned - thinned_before
 	plan_finish()
-	entry := &plan.next.stores[plan.store_index]
+	entry := plan_cell()
 	if !plan_refused() && i64(entry.used) + plan.used_change > i64(store.limit) {
 		plan_drop()
 		return errors.fail(error, failure(.No_Budget), .Over_Limit, .Blocks, limit_argument, i64(entry.used) + plan.used_change, i64(store.limit))
@@ -896,7 +902,7 @@ versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name:
 	// A parameter has no address: the text of the name comes from a copy.
 	kept_name := name
 	object_name := kept_text(&kept_name)
-	store_name := system.name_of(root.stores[store_index].name[:])
+	store_name := store_name_of(store_index)
 	// The second root replaces the root before the commit, the one root
 	// that the open can fall back to if the disk did not keep a write of the
 	// commit. The commit read its blocks back before it returned: a commit
@@ -907,33 +913,33 @@ versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name:
 	case .Wrong:
 		// The root before the commit is still on the disk and names the
 		// freed blocks: no zeros. The next commit writes its root over it.
-		system.log_fact(.Error, Versions_Ended_Second_Root_Dropped{generation = u64(generation), store = store_field(store_name), object = object_field(object_name)})
+		system.log_fact(.Error, Versions_Ended_Second_Root_Dropped{generation = u64(generation), store = store_field(store_name)}, object_name)
 		// No unit Dropped_Writes: its sentence says that the store keeps its
 		// state before, and the commit of the end is already on the disk.
 		return {}, errors.fail(error, failure(.Disk), .Device)
 	case .Device:
-		system.log_fact(.Error, Versions_Ended_Second_Root_Failed{generation = u64(generation), store = store_field(store_name), object = object_field(object_name)})
+		system.log_fact(.Error, Versions_Ended_Second_Root_Failed{generation = u64(generation), store = store_field(store_name)}, object_name)
 		return {}, errors.fail(error, failure(.Disk), .Device)
 	}
 	zeroed, not_zeroed, zeros_written := freed_blocks_zero()
 	if !zeros_written {
-		system.log_fact(.Error, Versions_Ended_Zeros_Failed{generation = root.generation, zeroed = zeroed, not_zeroed = not_zeroed, store = store_field(store_name), object = object_field(object_name)})
+		system.log_fact(.Error, Versions_Ended_Zeros_Failed{generation = root.generation, zeroed = zeroed, not_zeroed = not_zeroed, store = store_field(store_name)}, object_name)
 		return {}, errors.fail(error, failure(.Disk), .Device)
 	}
 	if not_zeroed != 0 {
 		// The versions are ended; the bytes of these free blocks stay on the
 		// disk. The row counts only the blocks that read back as zeros.
-		system.log_fact(.Error, Versions_Ended_Zeros_Dropped{generation = root.generation, not_zeroed = not_zeroed, store = store_field(store_name), object = object_field(object_name)})
+		system.log_fact(.Error, Versions_Ended_Zeros_Dropped{generation = root.generation, not_zeroed = not_zeroed, store = store_field(store_name)}, object_name)
 	}
 	// The count of the zeros is the count of the blocks that read back as
 	// zeros: a block that the disk did not write is in the line above.
 	if u64(ended) == 1 {
-		system.log_fact(.Info, Versions_Erased_One_Version{zeroed = zeroed, kept = kept, generation = root.generation, store = store_field(store_name), object = object_field(object_name)})
+		system.log_fact(.Info, Versions_Erased_One_Version{zeroed = zeroed, kept = kept, generation = root.generation, store = store_field(store_name)}, object_name)
 	} else {
-		system.log_fact(.Info, Versions_Erased{ended = u64(ended), zeroed = zeroed, kept = kept, generation = root.generation, store = store_field(store_name), object = object_field(object_name)})
+		system.log_fact(.Info, Versions_Erased{ended = u64(ended), zeroed = zeroed, kept = kept, generation = root.generation, store = store_field(store_name)}, object_name)
 	}
 	if damaged != 0 {
-		system.log_fact(.Warning, Erase_Damaged_Left{damaged = damaged, store = store_field(store_name), object = object_field(object_name)})
+		system.log_fact(.Warning, Erase_Damaged_Left{damaged = damaged, store = store_field(store_name)}, object_name)
 	}
 	return {generation = i64(root.generation), versions = ended, zeroed = i64(zeroed), kept = i64(kept), damaged = i64(damaged)}, 0
 }
@@ -1053,7 +1059,7 @@ entries_add :: proc "contextless" (store: Store_Of, path: []Entry_Name, rows: []
 	opened_tree.count_change += i64(count)
 	opened_tree.changed = true
 	plan_finish()
-	entry := &plan.next.stores[plan.store_index]
+	entry := plan_cell()
 	if !plan_refused() && i64(entry.used) + plan.used_change > i64(store.limit) {
 		plan_drop()
 		return errors.fail(error, failure(.No_Budget), .Over_Limit, .Blocks, 2, i64(entry.used) + plan.used_change, i64(store.limit))
@@ -1122,7 +1128,7 @@ entry_rename :: proc "contextless" (store: Store_Of, from_path: []Entry_Name, fr
 	plan.trees[to_tree].count_change += 1
 	plan.trees[to_tree].changed = true
 	plan_finish()
-	entry := &plan.next.stores[plan.store_index]
+	entry := plan_cell()
 	if !plan_refused() && i64(entry.used) + plan.used_change > i64(store.limit) {
 		plan_drop()
 		return errors.fail(error, failure(.No_Budget), .Over_Limit, .Blocks, 0, i64(entry.used) + plan.used_change, i64(store.limit))
@@ -1139,8 +1145,8 @@ removal_values: [REMOVAL_STEP_LIMIT]Entry
 
 // removal_waits says if a store has a removal to continue.
 removal_waits :: proc "contextless" () -> bool {
-	for &entry, index in root.stores {
-		if entry.name[0] != 0 && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] {
+	for index in 0 ..< store_numbers() {
+		if store_listed(index) && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] {
 			return true
 		}
 	}
@@ -1156,8 +1162,8 @@ removal_step :: proc "contextless" () -> bool {
 		return false
 	}
 	store_index := -1
-	for &entry, index in root.stores {
-		if entry.name[0] != 0 && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] {
+	for index in 0 ..< store_numbers() {
+		if store_listed(index) && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] {
 			store_index = index
 			break
 		}
@@ -1241,7 +1247,7 @@ Removal_Stop :: enum {
 
 removal_failed :: proc "contextless" (store_index: int, why: Removal_Stop) {
 	removal_stalled[store_index] = true
-	store := store_field(system.name_of(root.stores[store_index].name[:]))
+	store := store_field(store_name_of(store_index))
 	switch why {
 	case .No_First_Tree:
 		system.log_fact(.Warning, Tree_Removal_No_First_Tree{store = store})
@@ -1691,7 +1697,7 @@ state_at :: proc "contextless" (object: ^Entry, generation: i64, argument: i64, 
 // own_blocks gives the blocks that only one state holds: its root, when no
 // other state names it, and under it each block that no other node names.
 own_blocks :: proc "contextless" (root: Pointer, size: u64) -> u64 {
-	if root.block == 0 || root.block >= DISK_BLOCKS_LIMIT || opened.references[root.block] != 1 || size > format.OBJECT_SIZE_LIMIT || state_damaged(root) {
+	if root.block == 0 || root.block >= opened.capacity || opened.references[root.block] != 1 || size > format.OBJECT_SIZE_LIMIT || state_damaged(root) {
 		return 0
 	}
 	return own_under({block = root.block, check = root.check}, format.object_levels(size))
@@ -1708,7 +1714,7 @@ own_under :: proc "contextless" (child: Object_Child, level: int) -> u64 {
 	count: u64 = 1
 	for item in node.children {
 		// The level below reads into its own node: this one stays.
-		if item.block != 0 && item.block < DISK_BLOCKS_LIMIT && opened.references[item.block] == 1 {
+		if item.block != 0 && item.block < opened.capacity && opened.references[item.block] == 1 {
 			count += own_under(item, level - 1)
 		}
 	}

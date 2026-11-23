@@ -106,7 +106,7 @@ The model of section 1 is the direction; the service of today builds a part of i
 | What the system had first | In the model | State |
 |---|---|---|
 | A private store as one table of 39 named objects (the first format; not read any more) | A store of one process: it names one tree, with trees inside it | Built: section 3 |
-| The name of an object (1 to 39 bytes, the first format) | A name of an entry of a tree (1 to 64 bytes) | Built |
+| The name of an object (1 to 39 bytes, the first format) | A name of an entry of a tree (1 to 255 bytes) | Built |
 | An object of a store, as a list of blocks | An entry of a tree that names an object: its hash and the root of its block tree | Built: the hash is kept, and a commit finds the current object of the store with the same hash (section 4.7) |
 | The versions of an object, their thinning | The history of a store | Kept for each object; the history of a store is not built |
 | The system description (a signed list of hashes) | The tree of the system, signed by the principal that signs the system | Not built |
@@ -119,13 +119,14 @@ The model of section 1 is the direction; the service of today builds a part of i
 
 Built. The disk is blocks of 4096 bytes. A root block names each store; a store names one tree; a tree is a B+ tree of entries; an entry names an object, whose bytes are a tree of blocks. Nothing on the disk is written in place: a commit writes new blocks, then switches the root block, so a loss of power leaves the state before or after the commit, never a mix.
 
-The format is the contract `src/library/modus/contract/store`, `STORAGE4`. A disk of `STORAGE3` is not read: an object there is a list of blocks.
+The format is the contract `src/library/modus/contract/store`, `STORAGE5`. A disk of an earlier format is not read: `STORAGE4` had the stores in 60 cells of the root block and names of 64 bytes.
 
 ### 3.1 The blocks
 
-- **Root block** (`Root` of `src/library/modus/contract/store`): the mark `STORAGE4`, the generation, the count of blocks of the disk, the time since the format, the date, and one store entry for each of up to 60 stores (`STORE_CAPACITY`): its name, its limit of blocks, the blocks that it uses, and the pointer of its store block. Blocks 0 and 1 are its two places. The root block has its own check, over the bytes before it.
+- **Root block** (`Root` of `src/library/modus/contract/store`): the mark `STORAGE5`, the generation, the count of blocks of the disk, the time since the format, the date, and the pointers of the pages of the store table. Blocks 0 and 1 are its two places. The root block has its own check, over the bytes before it.
+- **Store table page** (`Store_Table_Page`): 63 cells, each one store: its name, its limit of blocks, the blocks that it uses, and the pointer of its store block. The root names up to 251 pages, so a disk holds up to 15 813 stores (`STORE_CAPACITY`). A store keeps its cell, and so its number, for the life of the disk; a commit of a store writes its page again, with copy on write. A page with a wrong check damages its stores only: the service serves none of them and makes no new store in that page.
 - **Store block**: one for each store: the root node of its tree, the root node of its removal queue, and its counts (objects, trees, the blocks of the current objects, the nodes of its trees, the trees that the removal queue holds).
-- **Node**: a node of the B+ tree of one tree. A leaf holds up to 24 records of a name (64 bytes) and its entry (104 bytes); a branch up to 50 records of a name and the pointer of a child. Each node starts with a header with its level, its count and the mark "TREE", so a block of another kind is damage. Each tree of a store is its own B+ tree: a tree inside a tree is an entry whose pointer names the root node of the inner tree.
+- **Node**: a node of the B+ tree of one tree. A leaf holds up to 11 records of a name (256 bytes) and its entry (104 bytes); a branch up to 14 records of a name and the pointer of a child. Each node starts with a header with its level, its count and the mark "TREE", so a block of another kind is damage. Each tree of a store is its own B+ tree: a tree inside a tree is an entry whose pointer names the root node of the inner tree.
 - **Object node**: a node of the block tree of one state of an object: 64 children, each an object node of the level below, a block of data, or a hole (section 4.6). It starts with the mark "BLOB".
 - **Data**: 4096 bytes of an object, at one place of it. The block service reads and writes blocks of data through a data region that its client shares with it: the storage service makes a region of 64 blocks (`REGION_BLOCKS`), the process `disk` one of 1 MiB.
 - **Version index, version leaf**: the versions of an object, as before; a version names the root of the block tree of its state.
@@ -134,20 +135,29 @@ A pointer is a block number and a check. The check of a block of data is the fir
 
 The bytes of each block, and of the records inside a block, in the order of a walk from the root block:
 
-```byte-layout store.Root store.Store_Entry store.Pointer store.Store_Block store.Tree_Header store.Object_Node store.Object_Child store.Version_Index store.Version_Leaf store.Version_Entry
+```byte-layout store.Root store.Store_Table_Page store.Store_Entry store.Pointer store.Store_Block store.Tree_Header store.Object_Node store.Object_Child store.Version_Index store.Version_Leaf store.Version_Entry
 store.Root, 4096 bytes: the root block, at block 0 or block 1
-offset  size  field        type
-     0     8  magic        u64
-     8     8  generation   u64
-    16     8  disk_blocks  u64
-    24     8  time         u64
-    32     8  date         u64
-    40    24  reserved     [3]u64
-    64  3840  stores       [STORE_CAPACITY]Store_Entry
-  3904   184  padding      [BLOCK_SIZE - 64 - STORE_CAPACITY * size_of(Store_Entry) - 8]u8
-  4088     8  check        u64
+offset  size  field             type
+     0     8  magic             u64
+     8     8  generation        u64
+    16     8  disk_blocks       u64
+    24     8  time              u64
+    32     8  date              u64
+    40     8  store_page_count  u64
+    48    16  reserved          [2]u64
+    64  4016  store_pages       [STORE_PAGE_CAPACITY]Pointer
+  4080     8  padding           [BLOCK_SIZE - 64 - STORE_PAGE_CAPACITY * size_of(Pointer) - 8]u8
+  4088     8  check             u64
 
-store.Store_Entry, 64 bytes: the cell of one store in the root block
+store.Store_Table_Page, 4096 bytes: one page of the store table
+offset  size  field     type
+     0     4  magic     u32
+     4     4  reserved  u32
+     8     8  unused    u64
+    16  4032  cells     [STORES_OF_A_PAGE]Store_Entry
+  4048    48  padding   [BLOCK_SIZE - 16 - STORES_OF_A_PAGE * size_of(Store_Entry)]u8
+
+store.Store_Entry, 64 bytes: the cell of one store in a page of the store table
 offset  size  field  type
      0    32  name   [NAME_CAPACITY]u8
     32     8  limit  u64
@@ -222,7 +232,7 @@ An entry is 104 bytes (`Entry` of `src/library/modus/contract/store`):
 
 | Field | An object | A tree |
 |---|---|---|
-| Name | 1 to 64 bytes of UTF-8 with no control character (`docs/glossary/text.md`, "Text encoding"), then zero bytes. No byte `/`, not `.` or `..` | the same |
+| Name | 1 to 255 bytes of UTF-8 with no control character (`docs/glossary/text.md`, "Text encoding"), then zero bytes. No byte `/`, not `.` or `..` | the same |
 | Kind | object | tree |
 | Size | its bytes | its entries |
 | Generation, time, date | of its last change | of its last change |
@@ -231,7 +241,7 @@ An entry is 104 bytes (`Entry` of `src/library/modus/contract/store`):
 | Versions | its version index | none |
 
 ```byte-layout store.Entry
-store.Entry, 104 bytes: the record of a leaf after its name of 64 bytes
+store.Entry, 104 bytes: the record of a leaf after its name of 256 bytes
 offset  size  field       type
      0     8  kind        u64
      8     8  size        u64
@@ -284,15 +294,16 @@ The limit: a device that answers the read from the cache that lost the write pas
 
 | Limit | Value | Reason |
 |---|---|---|
-| A name | 1 to 64 bytes | A key of 64 bytes gives 24 entries in a leaf with their hash: a store of a million objects has its entries in about 60000 blocks, inside the 262144 blocks of a disk |
-| The levels of one B+ tree | 8 | With nodes a third full, 8 levels hold more entries than a disk can name. The open takes a deeper tree for damage |
+| A name | 1 to 255 bytes | The limit of the names of the other file systems. A key of 256 bytes gives 11 entries in a leaf: a store of a million objects has its entries in about 180 000 blocks |
+| The levels of one B+ tree | 10 | With each node at its least (3 entries in a leaf, 4 children in a branch), 10 levels hold about 800 000 entries; with full nodes, more than a disk names. The open takes a deeper tree for damage |
 | The trees on a path | 32 | A place holds the names of its path; a commit rewrites one tree on each level. 32 bounds both |
 | The entries that one call adds | 256 | One commit writes at most 4096 blocks |
 | An object | 4 TiB: five levels of object nodes of 64 children, 64^5 blocks | A commit copies one node of each level for each changed block, and the open takes a deeper tree for damage. 4 TiB is more than the disk, and a sixth level costs one more node on each path |
 | A write of a whole object | The call region: 64 KiB | The data comes in the call region. A larger object is written by ranges |
 | The pending changes | 1024 blocks (4 MiB) and 16 objects, for all the connections | The blocks of data that one commit writes. A range write past it is refused (Full, unit Pending): the caller commits first |
-| The blocks that one commit releases | 262144: each block of the disk | The remove of an object as large as the disk is one commit |
-| The disk | 262144 blocks (1 GiB) | Unchanged |
+| The blocks that one commit releases | 262144 | The remove of an object of up to 1 GiB is one commit; a larger one is refused with `Full`, unit `Commit_Blocks` |
+| The stores of a disk | 15 813: 251 pages of 63 cells | A page is one block, and the root names each page |
+| The disk | Each block of the device, up to the tables that the budget of the service pays | The service holds 6 bytes and 3 bits for each block in memory of its budget: a disk of 64 GiB costs 114 MiB. A budget that pays less gives the tables of the first blocks only, and the log says so |
 | The entries of a tree | No limit but the disk | |
 
 ## 4. The interface of the service
@@ -310,7 +321,7 @@ kept on the disk
 > storage.write(0, "second", "one block more")
 error: storage.write: the call needs 4 blocks in all, with no earlier version kept; the limit is 3 blocks
 > storage.write(0, "", "x")
-error: storage.write: the argument name is empty; it must have 1 to 64 bytes
+error: storage.write: the argument name is empty; it must have 1 to 255 bytes
 > storage.stores()
 console: 1 objects, 0 trees, 0 versions, 3 of 3 blocks, 0 shared, 1 connection
 ```
@@ -438,7 +449,7 @@ Built. Two entries of one store with the same bytes name one block tree: the byt
 - **A share of a tree.** A count of the whole store would tell the holder of a share whether the rest of the store holds bytes: a write that takes no block, or a removal that frees none. So `usage()` through a share of a tree gives the counts of its own tree only (section 4.3), a commit looks up a hash only when the connection of the caller reaches the whole store (the process of the store, or a share of its root), and while the store has a writable share of a tree open, no commit of the store looks up a hash and each root that a commit adds is hidden: never a candidate, after `unshare` too. What is left, for a writable share only: the limit of the store counts the blocks of the whole store, so a holder that writes until its write is refused with `Over_Limit` measures the room left in the store, and can learn from it whether its removal freed blocks or whether a write of the maker took any. Each measure costs it writes up to the limit. A read-only share has no channel.
 - **The versions are not in the index.** A version keeps no hash; it shares its blocks with the state that follows it already. A restore of a version whose bytes another entry holds names the root of that entry.
 
-The cost of a commit: a few slots of the index in memory, and for each candidate the read of the path of its last block, through the cache. A found root saves each write of the block tree. The index takes 10 MiB of the memory of the service.
+The cost of a commit: a few slots of the index in memory, and for each candidate the read of the path of its last block, through the cache. A found root saves each write of the block tree. The index holds up to 131 072 roots in 6 MiB of the memory of the service; a root past them is not found by its hash, and its commit writes its blocks.
 
 The count of the current objects of a store (`current_blocks`) counts a block that two names share two times, as for a clone; the blocks in use of the store (`usage().blocks`) count it one time. Example: the process `ranges` writes an object of 1 MiB under two names, and the store holds 261 blocks for both: 256 blocks of data, 4 object nodes of level 1 and the root.
 
@@ -463,45 +474,3 @@ storage: the versions of principal in the store unlock are erased: 1 version end
 
 - **Who may call it.** A process with the grant to erase versions (the start grant `Versions_Erase`; today `unlock` only), through its own connection, on its own store. Another process gets `No_Grant`, unit `Versions_Erase`. A share, a place of another store (`open_store`) and a connection that reads only are refused with `No_Grant`. Versions protect the principal against a fault of the process that writes an object, so a process does not end them by itself (`PROPERTIES.md`, "Persistence: no save action, and versions for all processes").
 - **A loss of power.** Before the root of step 1, the open finds the versions, and no block holds zeros. After it, the open finds no version. No root that the open can take names a block of zeros. A loss during step 4 leaves old bytes in free blocks.
-- **A shared block keeps its bytes.** A block that the current version, another entry or a clone still names is not written: its bytes are the bytes of a state that stays, and the row counts it. The hash index shares a block only between objects of one store with the same bytes (section 4.7). A process that acts for the principal of a store can clone or restore a version before the erase; the erase then keeps that block.
-- **Damaged versions.** A version index or a leaf with a wrong check, and a state with a wrong block, are ended with no zeros: their blocks keep their bytes. The row counts them, and the service writes a warning.
-- **A failed or dropped write.** When the second root or a write of zeros fails, or the disk does not keep it, the versions are already ended: the old bytes stay in free blocks, the log says it, and a later erase finds no version to end.
-- **An object with no version.** No commit: the row gives 0 versions, and the disk does not change.
-- **The device.** A write of zeros reaches the logical block. A flash disk can keep the old sector, and a host can keep a snapshot of the image. The erase does not reach those copies. The read backs of steps 2, 3 and 4 prove only what the device gives: a cache that lost the write can answer the read.
-
-### 4.9 A disk that stops to answer
-
-Built. A disk that stops to answer makes no client of the store wait for ever. The design is in `src/md/features/missing_hardware.md`.
-
-- **The block service** gives each request a deadline when the device gets it: the hang bound of a process, 60 s, never a measure of the disk. Past it, each request in flight completes with `Device_Error` and the record `No_Answer` of the device, the log has "block: the device did not answer a request in 60000 ms: N requests in flight fail, and the service stops", and the service stops. A device that sets its needs-reset bit stops the service too, with its line and the same record. The service never gives the place of a late request to a new one: the device can still write it.
-- **The storage service** holds the block service with the right Read, so the stop of that service ends its wait. Each wait for a completion also ends after 60 s with no completion. A record `No_Answer`, that stop or that bound make the disk silent: the log has "storage: the disk does not answer: CAUSE; the service reads and changes nothing on the disk until its next start, and refuses each call that needs the disk".
-- **The log facts.** The two lines are the log facts `block_service.Device_Silent`, with the bound and the requests in flight as fields, and `storage_service.Disk_Silent`, with the cause as a Text field; the stop of the block service for a reset is `block_service.Device_Needs_Reset`.
-- **What a client gets.** A call that needs a block, a read too, gets `Device` at once. A disk that goes silent before the open is done leaves the storage service running with no store known: each call that names a store gets `Device`, and `usage` gives no count. The service does not stop: the root service would start it again for the next process with a store, with a new block service, a reset of a device that still holds a request, a new wait of 60 s and new lines, and the device could still write a data region that a stop frees. No client waits for a disk that does not answer.
-- **The handle of the block service** is closed at the silence: nothing waits for it after, and the stopped process frees its slot.
-
-## 5. Not built: the next steps
-
-Each step is one tested capability on a system that works.
-
-1. **Large objects and ranges.** Built (section 4.6), but the disk past 1 GiB: an object can hold 4 TiB, and the disk has 262144 blocks.
-2. **The history of a store.** A version is a tree that a store named; the versions of an object are found in it. The thinning applies to the history of the store. The versions of each object go.
-3. **Objects by their hash.** Built in part: the hash index of section 4.7 finds the current object of a store by its hash, so an object that two entries name is kept one time. Not built: the hash of a tree on its entries (section 1.3).
-4. **The first objects from storage.** Built for one case: a principal starts a process whose module file is in the store `module_files`, by its name and its hash, and the module file service puts such a file there from the network (`MODULE_CONTRACT.md`, "A module from a disk"). An import of such a process comes from the same store too: the root service reads each object of the store and keeps the bytes whose BLAKE3 hash the import names (`glossary/code.md`, "Import scan"); the index of step 3 is not needed for it, as the root service checks the bytes anyway. Not built: the boot image carries only what the storage service needs; the root service loads the other modules, the fonts and the pointer themes from the tree of the system, by hash.
-5. **Packages.** A signed tree with its six facts; the store of the data of an application, attached to the identity of the package.
-6. **Encryption for a principal.**
-7. **The network as a channel.** An object comes from a peer; its hash proves it.
-
-## 6. The tests
-
-- Host tests of the B+ tree (`src/library/internal/storage/storage_tree`): inserts in a random order that split leaves and branches, a branch whose record 0 keeps a stale name, removes that merge and rebalance, the order of the keys, the pages of a listing, copy on write (the tree before a commit is still whole), the sizes of the format, the names that are refused.
-- Host tests of the block tree (`src/library/internal/storage/storage_object`): the official vectors of BLAKE3 through the block tree, past one and two levels of nodes; a sparse object of 8 GiB with its hash computed again from its definition, its holes and a read across a block edge; a change across a block edge and across a level edge, with the state before whole; a cut to 10 bytes that lowers the levels to 0, an extension, a block of zero bytes that becomes a hole; a whole write that keeps the blocks whose bytes did not change.
-- Host tests of the open (`src/library/internal/storage/storage_mount`): damage of a node, of an object node and of a block of data, a block tree that two states share, the recount of a store; the hash index: two names of one object give one root with two entries, a removal of one name keeps the root, two roots with one hash are counted and the second has no slot, a removal in a run of slots that goes around the end of the table keeps each other root found, a run longer than the bound of a search, a hidden root and a rekey, and a seeded run of 400 writes, removals and renames whose index is the index of a new open of the same entries.
-- Host test of the erase of versions (`src/library/internal/storage/storage_mount`): it checks a model of the writes of the erase, built by hand in the order of the service, with the code of the open; it does not run the service. An object with two versions, one of them shares its block with another entry; the images of the disk after each write of the erase, and with the second root cut, each open with the versions or with none, and with no block of zeros named. At the end the freed blocks are zero bytes, and the shared block keeps its bytes.
-- The machine test of `principals`: before a change of the passphrase and of the recovery key, the tool reads the file of the principal from the disk on the host. The tool serves the disk of the change, and the disk answers Ok to the first write of zeros over the block that holds the salt of that file and keeps the old bytes. The log has the line of the read back of the zeros that found 1 block with other bytes. The count of the blocks written with zeros, in the line of the service and in the row that `unlock` writes, is the count of the blocks of zeros that the disk kept. After the change, the image of the disk holds no part of the old file (its salt, its keys under the seal key, its keys under the recovery key) outside the dropped block, and that block still holds the salt while it is free. The open of the image on the host finds no wrong block, no damaged object or version, no fault of the hash index, and no version of the file.
-- Host tests of the work on a block tree (`src/library/internal/storage/storage_object`): the hash of the same bytes before any write, a drop that gives back each name, a change of one of two names that copies the path of its block, a removal of one name that keeps the other.
-- The machine test of `hierarchy`: 100000 entries in trees inside trees, the listing in pages, a rename, the removal of a tree, 6000 names added to one tree in a fixed scrambled order (leaves and branches split in their middle) and half of them removed in another order (merges), then a second machine that opens the same disk and checks the counts and the contents. Each refusal of the confinement (`..`, `/`, a place of another connection, a change through a read-only share, a call after `unshare`, `open_store` on its own store through a share of a tree). While a writable share of a tree is open, its write adds the blocks of its object to the count of its tree, the same bytes written by the maker outside the tree take their own blocks of the store and add nothing to that count, and the removal through the share takes its blocks back; after `unshare`, its guess stays hidden, and the same bytes written by the maker take their blocks. The time of the commits is printed as a measure.
-- The machine test of `ranges` (`modustool test ranges`): an object of 8 GiB from three range writes holds 13 blocks and reads them back, with its holes and a read across a block edge; 1000 writes at scrambled places and one commit, bounded by the blocks changed; the version before them and the blocks of its own; a version of a small object reads its old bytes after a range write, and `compare` gives the one range written; a cut of 70 blocks to 6000 bytes, then an extension to 1 GiB; a read at the end and past it; a place of another store, a place of no connection, a commit with no pending change, and a commit after another change are refused; the same object of 1 MiB under two names holds 261 blocks of the store, a change of one name writes 3 blocks of its block tree, and the removal of one name keeps the other; a loop of 200 commits of range writes. A second machine reads each of them back after the open of the disk, and writes the object of 1 MiB under a third name, which takes no block.
-- The losses of power (`modustool test power`): each image that a loss can leave opens, and gives the commit before or the commit in flight, each entry and each version byte for byte, or block for block for a large one; the hash index that the open makes reaches each of its roots, and no store keeps one object two times. The third loss comes in the loop of range commits of `ranges`: the commit in flight is a commit of range writes, and each image holds the object of 1 MiB under two names with one root. The disk that the tool serves places each cut itself: it counts the writes of a root from before the work, or from the block that starts the loop of `ranges` with a marker, and loses its power at a commit that the case names (after the count 300 or 1200 of `persistence_check`, in the first 41 records of `settings.repeat(1000)`, in the commits 2 to 41 of the loop), so the speed of the machine and the lag of its serial port do not move it.
-- Host test of the dropped write (`src/library/internal/storage/storage_mount`): a model of a commit whose block of data the disk dropped, refused before its root, then the next commit from the state of the root before, on the blocks of the refused commit. Each image after each write of the next commit, each write of a block alone, and its root cut, opens at the root before or at the next commit, with no wrong block and no fallback. A second run writes the bytes of the refused commit again to the dropped block: no image shows the refused commit. A third case drops the second root of an erase of versions: the next commit takes the blocks that only the root before the commit of the end names, and each image opens at the commit of the end or at the next commit.
-- The dropped write (`modustool test power`, the case `dropped_write_run`): the console writes an object two times, and the disk answers Ok to the write of the block of data of the second version and keeps nothing of it. The log has the line of the refusal of the read back before the root, the console gets `Device` with the unit `Dropped_Writes`, and `storage.read` gives the first version on the same machine. Then the disk keeps the blocks of a third version and drops its root: the log has the line of the refusal of the root, the console gets the same answer, and `storage.read` gives the first version again. Then the console writes a fourth version, and the disk hides the loss of its block of data: a read gives its bytes, and they never become durable, as a cache that a loss of power empties. The read back passes. The disk keeps a copy of its durable image when the root of that commit became durable: on the host, the open of that image refuses the newest root, uses the generation before it with 0 wrong blocks, and gives the first version. A second machine starts on that image: the log has the line of the fallback and "storage: ok, generation G" with that generation, and `storage.read` gives the first version. The durable image at the end of the first machine shows the limit of the read back: the open takes the newest root, with the object damaged. `storage.stores()` gives the blocks read back and their time, as a measure.
-- The silent disk (`modustool test power`, the case `silent_disk_run`): the disk that the tool serves reads each request from the first write of a block that starts with a marker, and answers none, with its connection open. The console writes that block. The log has the line of the block service and the line of the storage service, the console gets the error of `storage.write`, then the error of `storage.read` at once, and `1 + 2 * 3` still gives 7. The image of the disk holds no byte of the marker. The data disk of that machine has no ioevent file, so the stop of the block service drains no request in QEMU.

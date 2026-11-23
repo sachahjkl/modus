@@ -140,8 +140,11 @@ relative_path_validation_refuses_traversal_and_malformed_paths :: proc(t: ^testi
 		"a",
 		"bin/tool",
 		"d1/d2/d3/d4/d5/d6/d7/d8", // Exact depth bound 8.
-		strings.repeat("x", tree_hash.ENTRY_NAME_CAPACITY, context.temp_allocator),
+		// A whole path of the disk image of a guest holds MAX_MOUNT_PATH_BYTES,
+		// fewer than the bytes of a name of a tree: one segment of that length.
+		strings.repeat("x", MAX_MOUNT_PATH_BYTES, context.temp_allocator),
 	}
+	#assert(MAX_MOUNT_PATH_BYTES <= tree_hash.ENTRY_NAME_CAPACITY)
 	for candidate in good_paths {
 		testing.expectf(t, validate_relative_path(transmute([]u8)candidate), "must accept valid path %q", candidate)
 	}

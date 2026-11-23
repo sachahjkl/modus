@@ -199,11 +199,12 @@ byte_layout_storage_sources :: proc() -> []Byte_Layout_Source {
 	file :: BYTE_LAYOUT_STORE_FILE
 	sources := [?]Byte_Layout_Source {
 		{key = "store.Root", file = file, declaration = "Root", info = type_info_of(store.Root), what = "the root block, at block 0 or block 1"},
-		{key = "store.Store_Entry", file = file, declaration = "Store_Entry", info = type_info_of(store.Store_Entry), what = "the cell of one store in the root block"},
+		{key = "store.Store_Table_Page", file = file, declaration = "Store_Table_Page", info = type_info_of(store.Store_Table_Page), what = "one page of the store table"},
+		{key = "store.Store_Entry", file = file, declaration = "Store_Entry", info = type_info_of(store.Store_Entry), what = "the cell of one store in a page of the store table"},
 		{key = "store.Pointer", file = file, declaration = "Pointer", info = type_info_of(store.Pointer), what = "how a block names another block"},
 		{key = "store.Store_Block", file = file, declaration = "Store_Block", info = type_info_of(store.Store_Block), what = "the block of one store"},
 		{key = "store.Tree_Header", file = file, declaration = "Tree_Header", info = type_info_of(store.Tree_Header), what = "the start of a node and of an object node"},
-		{key = "store.Entry", file = file, declaration = "Entry", info = type_info_of(store.Entry), what = "the record of a leaf after its name of 64 bytes"},
+		{key = "store.Entry", file = file, declaration = "Entry", info = type_info_of(store.Entry), what = "the record of a leaf after its name of 256 bytes"},
 		{key = "store.Object_Node", file = file, declaration = "Object_Node", info = type_info_of(store.Object_Node), what = "one node of the block tree of an object"},
 		{key = "store.Object_Child", file = file, declaration = "Object_Child", info = type_info_of(store.Object_Child), what = "one child of an object node"},
 		{key = "store.Version_Index", file = file, declaration = "Version_Index", info = type_info_of(store.Version_Index), what = "the block that names the version leaves of one object"},

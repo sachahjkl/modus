@@ -6,19 +6,22 @@
 // canonical byte representation:
 //
 //   Header (16 bytes):
-//     [0..8]   magic       "MODTREE1"
+//     [0..8]   magic       "MODTREE2"
 //     [8..12]  entry_count little-endian u32 (0 ..= MAX_TREE_ENTRIES)
 //     [12..16] reserved    little-endian u32 (must be 0)
 //
-//   Entry (98 bytes each, repeated entry_count times, strictly sorted by UTF-8
-//   byte order of entry names):
-//     [0]      kind        Tree_Entry_Kind (1 = Object, 2 = Tree)
-//     [1]      name_length length in bytes (1 ..= 64)
-//     [2..66]  name        UTF-8 name bytes, padded with zero bytes to 64 bytes
-//     [66..98] hash        32-byte BLAKE3 hash (object hash or child tree hash)
+//   Entry (34 + name_length bytes each, repeated entry_count times, strictly
+//   sorted by the UTF-8 byte order of the names):
+//     [0]                   kind        Tree_Entry_Kind (1 = Object, 2 = Tree)
+//     [1]                   name_length length in bytes (1 ..= 255)
+//     [2..2+n]              name        UTF-8 name bytes
+//     [2+n..2+n+32]         hash        32-byte BLAKE3 hash (object hash or child tree hash)
 //
-// Because entries have a fixed stride and are strictly sorted, lookup runs in
-// O(log N) binary search without a separate offset table or dynamic allocation.
+// An entry has the length of its name, not of the longest name: a folder of
+// short names costs about 50 bytes for each entry, where a fixed stride of
+// 255 bytes would cost 289. So an entry has no fixed place: a reader walks
+// the entries in their order (tree_entry_next). The walk is the check of
+// the whole tree too, so a lookup costs what its check costs already.
 //
 // The tree hash uses BLAKE3 derive-key mode under TREE_HASH_DOMAIN so a tree
 // hash can never collide with a plain object hash (blake3.hash).
@@ -30,32 +33,37 @@ import "modus:contract/enum_word"
 import "modus:contract/store"
 import "modus:contract/text_encoding"
 
-// Header magic identifying version 1 of the canonical modus tree format.
-HEADER_MAGIC :: [8]u8{'M', 'O', 'D', 'T', 'R', 'E', 'E', '1'}
+// Header magic identifying version 2 of the canonical modus tree format.
+HEADER_MAGIC :: [8]u8{'M', 'O', 'D', 'T', 'R', 'E', 'E', '2'}
 
 // Size in bytes of the canonical tree header.
 HEADER_SIZE :: 16
 
 // Maximum length in bytes of one entry name (matches store.ENTRY_NAME_CAPACITY).
 ENTRY_NAME_CAPACITY :: store.ENTRY_NAME_CAPACITY
+#assert(ENTRY_NAME_CAPACITY <= 255) // The length of a name is one byte.
 
-// Size in bytes of one encoded tree entry: kind + name_length + name + hash.
-ENTRY_SIZE :: 1 + 1 + ENTRY_NAME_CAPACITY + blake3.HASH_SIZE
+// The bytes of an entry besides its name: kind, name_length and hash.
+ENTRY_FIXED_SIZE :: 1 + 1 + blake3.HASH_SIZE
 
-// Maximum number of entries in one immutable tree node.
-// With 512 entries, the largest encoded tree is 50,192 bytes, fitting inside a
-// single 64 KiB call region of the storage service.
-MAX_TREE_ENTRIES :: 512
+// The bytes of the largest encoded entry: a name of ENTRY_NAME_CAPACITY bytes.
+ENTRY_SIZE_MOST :: ENTRY_FIXED_SIZE + ENTRY_NAME_CAPACITY
+
+// Maximum number of entries in one immutable tree node: a folder of 4096
+// files. The bound keeps the largest node, and each buffer that holds one,
+// near 1 MiB; a typical node of short names is a sixth of that.
+MAX_TREE_ENTRIES :: 4096
 
 // Maximum size in bytes of a valid canonical tree node.
-MAX_ENCODED_TREE_BYTES :: HEADER_SIZE + MAX_TREE_ENTRIES * ENTRY_SIZE
+MAX_ENCODED_TREE_BYTES :: HEADER_SIZE + MAX_TREE_ENTRIES * ENTRY_SIZE_MOST
 
 // Domain separation context string passed to blake3.derive_key so tree hashes
 // are cryptographically separated from object blob hashes.
-TREE_HASH_DOMAIN :: "modus tree v1"
+TREE_HASH_DOMAIN :: "modus tree v2"
 
-#assert(ENTRY_SIZE == 98)
-#assert(MAX_ENCODED_TREE_BYTES == 50192)
+#assert(ENTRY_FIXED_SIZE == 34)
+#assert(ENTRY_SIZE_MOST == 289)
+#assert(MAX_ENCODED_TREE_BYTES == 1183760)
 
 // Closed set of entry kinds in an immutable tree node. Values match
 // store.Entry_Kind (Object = 1, Tree = 2) explicitly across the binary border.
@@ -83,7 +91,7 @@ Tree_Refusal :: enum u8 {
 Tree_Entry :: struct {
 	kind:        Tree_Entry_Kind,
 	name_length: u8,
-	name:        [ENTRY_NAME_CAPACITY]u8,
+	name:        [ENTRY_NAME_CAPACITY]u8, // name_length bytes, then zero bytes.
 	hash:        blake3.Hash,
 }
 
@@ -100,7 +108,7 @@ tree_entry_name :: proc "contextless" (entry: ^Tree_Entry) -> string {
 }
 
 // tree_name_validate checks that name is a valid single-step UTF-8 entry name:
-// 1 to 64 bytes, valid non-control UTF-8 (via text_encoding.text_valid), no
+// 1 to 255 bytes, valid non-control UTF-8 (via text_encoding.text_valid), no
 // '/' byte, no zero byte, and neither "." nor "..".
 tree_name_validate :: proc "contextless" (name: []u8) -> Tree_Refusal {
 	if len(name) == 0 {
@@ -140,14 +148,17 @@ tree_entry_make :: proc "contextless" (kind: Tree_Entry_Kind, name: string, hash
 	return entry, .None
 }
 
-// tree_encoded_size gives the exact byte count of an encoded tree with
-// entry_count entries. Returns 0 when entry_count is negative or above
-// MAX_TREE_ENTRIES.
-tree_encoded_size :: proc "contextless" (entry_count: int) -> int {
-	if entry_count < 0 || entry_count > MAX_TREE_ENTRIES {
+// tree_encoded_size gives the exact byte count of the encoded tree of
+// entries. Returns 0 when there are more than MAX_TREE_ENTRIES entries.
+tree_encoded_size :: proc "contextless" (entries: []Tree_Entry) -> int {
+	if len(entries) > MAX_TREE_ENTRIES {
 		return 0
 	}
-	return HEADER_SIZE + entry_count * ENTRY_SIZE
+	size := HEADER_SIZE
+	for &entry in entries {
+		size += ENTRY_FIXED_SIZE + min(int(entry.name_length), ENTRY_NAME_CAPACITY)
+	}
+	return size
 }
 
 // compare_name_bytes compares two entry names in raw UTF-8 byte order:
@@ -175,10 +186,6 @@ tree_encode :: proc "contextless" (entries: []Tree_Entry, output: []u8) -> (writ
 	if len(entries) > MAX_TREE_ENTRIES {
 		return 0, .Too_Many_Entries
 	}
-	required := HEADER_SIZE + len(entries) * ENTRY_SIZE
-	if len(output) < required {
-		return 0, .Truncated
-	}
 	// Pass 1: validate every entry and strict UTF-8 byte ordering before writing.
 	previous_name: []u8
 	for &entry, index in entries {
@@ -189,14 +196,11 @@ tree_encode :: proc "contextless" (entries: []Tree_Entry, output: []u8) -> (writ
 		if name_length == 0 {
 			return 0, .Empty_Name
 		}
-		if name_length > ENTRY_NAME_CAPACITY {
-			return 0, .Name_Too_Long
-		}
 		name_slice := entry.name[:name_length]
 		if name_refusal := tree_name_validate(name_slice); name_refusal != .None {
 			return 0, name_refusal
 		}
-		for pad in entry.name[name_length:ENTRY_NAME_CAPACITY] {
+		for pad in entry.name[name_length:] {
 			if pad != 0 {
 				return 0, .Invalid_Name
 			}
@@ -212,26 +216,63 @@ tree_encode :: proc "contextless" (entries: []Tree_Entry, output: []u8) -> (writ
 		}
 		previous_name = name_slice
 	}
-	// Pass 2: write canonical header and fixed-stride entries.
+	required := tree_encoded_size(entries)
+	if len(output) < required {
+		return 0, .Truncated
+	}
+	// Pass 2: write the canonical header and the entries.
 	magic := HEADER_MAGIC
 	copy(output[0:8], magic[:])
 	byte_order.write_u32_little_endian(output, 8, u32(len(entries)))
 	byte_order.write_u32_little_endian(output, 12, 0)
-	for &entry, index in entries {
-		offset := HEADER_SIZE + index * ENTRY_SIZE
+	offset := HEADER_SIZE
+	for &entry in entries {
+		name_length := int(entry.name_length)
 		output[offset] = u8(entry.kind)
 		output[offset + 1] = entry.name_length
-		copy(output[offset + 2:][:ENTRY_NAME_CAPACITY], entry.name[:])
-		copy(output[offset + 2 + ENTRY_NAME_CAPACITY:][:blake3.HASH_SIZE], entry.hash[:])
+		copy(output[offset + 2:][:name_length], entry.name[:name_length])
+		copy(output[offset + 2 + name_length:][:blake3.HASH_SIZE], entry.hash[:])
+		offset += ENTRY_FIXED_SIZE + name_length
 	}
 	return required, .None
+}
+
+// tree_entry_read reads the entry at offset of canonical bytes, with the
+// checks of one entry: its kind, its length inside the bytes, and its name.
+// It does not check the order against the entry before.
+@(private = "file")
+tree_entry_read :: proc "contextless" (canonical_bytes: []u8, offset: int) -> (entry: Tree_Entry, next_offset: int, refusal: Tree_Refusal) {
+	if offset + 2 > len(canonical_bytes) {
+		return {}, offset, .Truncated
+	}
+	kind, kind_ok := tree_entry_kind_of_word(u64(canonical_bytes[offset]))
+	if !kind_ok {
+		return {}, offset, .Bad_Entry_Kind
+	}
+	name_length := int(canonical_bytes[offset + 1])
+	if name_length == 0 {
+		return {}, offset, .Empty_Name
+	}
+	next_offset = offset + ENTRY_FIXED_SIZE + name_length
+	if next_offset > len(canonical_bytes) {
+		return {}, offset, .Truncated
+	}
+	name_slice := canonical_bytes[offset + 2:][:name_length]
+	if name_refusal := tree_name_validate(name_slice); name_refusal != .None {
+		return {}, offset, name_refusal
+	}
+	entry.kind = kind
+	entry.name_length = u8(name_length)
+	copy(entry.name[:], name_slice)
+	copy(entry.hash[:], canonical_bytes[offset + 2 + name_length:][:blake3.HASH_SIZE])
+	return entry, next_offset, .None
 }
 
 // tree_validate strictly verifies canonical_bytes against every rule of the
 // immutable tree format: header magic, zero reserved word, entry count bound,
 // exact byte length (no truncation or trailing garbage), valid entry kinds,
-// valid UTF-8 non-control names, zero name padding, and strict UTF-8 byte
-// order with no duplicate names.
+// valid UTF-8 non-control names, and strict UTF-8 byte order with no
+// duplicate names.
 tree_validate :: proc "contextless" (canonical_bytes: []u8) -> (entry_count: int, refusal: Tree_Refusal) {
 	if len(canonical_bytes) < HEADER_SIZE {
 		return 0, .Truncated
@@ -250,37 +291,18 @@ tree_validate :: proc "contextless" (canonical_bytes: []u8) -> (entry_count: int
 		return 0, .Too_Many_Entries
 	}
 	count := int(raw_count)
-	expected_size := HEADER_SIZE + count * ENTRY_SIZE
-	if len(canonical_bytes) < expected_size {
-		return 0, .Truncated
-	}
-	if len(canonical_bytes) > expected_size {
-		return 0, .Trailing_Bytes
-	}
-	previous_name: []u8
+	offset := HEADER_SIZE
+	previous_offset, previous_length := 0, 0
 	for index in 0 ..< count {
-		offset := HEADER_SIZE + index * ENTRY_SIZE
-		if _, kind_ok := tree_entry_kind_of_word(u64(canonical_bytes[offset])); !kind_ok {
-			return 0, .Bad_Entry_Kind
+		entry_refusal: Tree_Refusal
+		next: int
+		_, next, entry_refusal = tree_entry_read(canonical_bytes, offset)
+		if entry_refusal != .None {
+			return 0, entry_refusal
 		}
 		name_length := int(canonical_bytes[offset + 1])
-		if name_length == 0 {
-			return 0, .Empty_Name
-		}
-		if name_length > ENTRY_NAME_CAPACITY {
-			return 0, .Name_Too_Long
-		}
-		name_slice := canonical_bytes[offset + 2:][:name_length]
-		if name_refusal := tree_name_validate(name_slice); name_refusal != .None {
-			return 0, name_refusal
-		}
-		for pad in canonical_bytes[offset + 2 + name_length:offset + 2 + ENTRY_NAME_CAPACITY] {
-			if pad != 0 {
-				return 0, .Invalid_Name
-			}
-		}
 		if index > 0 {
-			order := compare_name_bytes(previous_name, name_slice)
+			order := compare_name_bytes(canonical_bytes[previous_offset + 2:][:previous_length], canonical_bytes[offset + 2:][:name_length])
 			if order == 0 {
 				return 0, .Duplicate_Name
 			}
@@ -288,7 +310,11 @@ tree_validate :: proc "contextless" (canonical_bytes: []u8) -> (entry_count: int
 				return 0, .Not_Sorted
 			}
 		}
-		previous_name = name_slice
+		previous_offset, previous_length = offset, name_length
+		offset = next
+	}
+	if len(canonical_bytes) > offset {
+		return 0, .Trailing_Bytes
 	}
 	return count, .None
 }
@@ -302,28 +328,33 @@ tree_hash :: proc "contextless" (canonical_bytes: []u8) -> (hash: blake3.Hash, r
 	return blake3.derive_key(TREE_HASH_DOMAIN, canonical_bytes), .None
 }
 
+// tree_entry_next decodes the entry at offset of already-validated canonical
+// tree bytes, and gives the offset of the next one. The first entry is at
+// HEADER_SIZE. ok is false past the last entry or on bytes that break a rule.
+tree_entry_next :: proc "contextless" (canonical_bytes: []u8, offset: int) -> (entry: Tree_Entry, next_offset: int, ok: bool) {
+	if offset < HEADER_SIZE {
+		return {}, offset, false
+	}
+	refusal: Tree_Refusal
+	entry, next_offset, refusal = tree_entry_read(canonical_bytes, offset)
+	return entry, next_offset, refusal == .None
+}
+
 // tree_entry_at decodes entry number index from already-validated canonical
-// tree bytes. Returns false if index is out of bounds or the entry kind is invalid.
+// tree bytes, walking the entries before it. Returns false if index is out
+// of bounds or an entry before it breaks a rule. A reader of each entry
+// uses tree_entry_next.
 tree_entry_at :: proc "contextless" (canonical_bytes: []u8, index: int) -> (entry: Tree_Entry, ok: bool) {
-	if index < 0 || len(canonical_bytes) < HEADER_SIZE {
+	if index < 0 || len(canonical_bytes) < HEADER_SIZE || index >= int(byte_order.read_u32_little_endian(canonical_bytes, 8)) {
 		return {}, false
 	}
-	offset := HEADER_SIZE + index * ENTRY_SIZE
-	if offset + ENTRY_SIZE > len(canonical_bytes) {
-		return {}, false
+	offset := HEADER_SIZE
+	for _ in 0 ..= index {
+		entry, offset, ok = tree_entry_next(canonical_bytes, offset)
+		if !ok {
+			return {}, false
+		}
 	}
-	kind, kind_ok := tree_entry_kind_of_word(u64(canonical_bytes[offset]))
-	if !kind_ok {
-		return {}, false
-	}
-	name_length := canonical_bytes[offset + 1]
-	if name_length == 0 || int(name_length) > ENTRY_NAME_CAPACITY {
-		return {}, false
-	}
-	entry.kind = kind
-	entry.name_length = name_length
-	copy(entry.name[:], canonical_bytes[offset + 2:][:ENTRY_NAME_CAPACITY])
-	copy(entry.hash[:], canonical_bytes[offset + 2 + ENTRY_NAME_CAPACITY:][:blake3.HASH_SIZE])
 	return entry, true
 }
 
@@ -341,20 +372,23 @@ tree_iterate :: proc "contextless" (
 	if visit == nil {
 		return .None
 	}
+	offset := HEADER_SIZE
 	for index in 0 ..< count {
-		entry, ok := tree_entry_at(canonical_bytes, index)
+		entry, next, ok := tree_entry_next(canonical_bytes, offset)
 		if !ok {
 			return .Bad_Entry_Kind
 		}
 		if !visit(index, entry, user_data) {
 			break
 		}
+		offset = next
 	}
 	return .None
 }
 
-// tree_lookup validates canonical_bytes and looks up name using O(log N) binary
-// search on the sorted fixed-stride entries.
+// tree_lookup validates canonical_bytes and looks up name. The entries have
+// no fixed place, so the lookup walks them in their order and stops at the
+// first name past it: no more work than the check of the tree.
 tree_lookup :: proc "contextless" (canonical_bytes: []u8, name: string) -> (entry: Tree_Entry, found: bool, refusal: Tree_Refusal) {
 	count, validation_refusal := tree_validate(canonical_bytes)
 	if validation_refusal != .None {
@@ -364,26 +398,21 @@ tree_lookup :: proc "contextless" (canonical_bytes: []u8, name: string) -> (entr
 	if name_refusal := tree_name_validate(target); name_refusal != .None {
 		return {}, false, name_refusal
 	}
-	low := 0
-	high := count
-	for low < high {
-		middle := low + (high - low) / 2
-		offset := HEADER_SIZE + middle * ENTRY_SIZE
+	offset := HEADER_SIZE
+	for _ in 0 ..< count {
 		name_length := int(canonical_bytes[offset + 1])
-		candidate := canonical_bytes[offset + 2:][:name_length]
-		order := compare_name_bytes(candidate, target)
+		order := compare_name_bytes(canonical_bytes[offset + 2:][:name_length], target)
 		if order == 0 {
-			decoded, ok := tree_entry_at(canonical_bytes, middle)
+			decoded, _, ok := tree_entry_next(canonical_bytes, offset)
 			if !ok {
 				return {}, false, .Bad_Entry_Kind
 			}
 			return decoded, true, .None
 		}
-		if order < 0 {
-			low = middle + 1
-		} else {
-			high = middle
+		if order > 0 {
+			break
 		}
+		offset += ENTRY_FIXED_SIZE + name_length
 	}
 	return {}, false, .None
 }

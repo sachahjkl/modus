@@ -24,7 +24,7 @@ Do not use: directory, folder, list (for this), manifest, catalog (for this).
 
 An entry is one name of a tree and what it names: an object or a tree.
 
-An entry is the only link between a name and data. It holds the kind, the size, the generation, the time and the date of its last change, the hash of an object, the pointer of its root, and the version index of an object. A name has 1 to 64 bytes, no byte `/`, and is not `.` or `..`, so a name always goes one step down. A rename moves an entry with its versions. An entry is not a path and not a hard link.
+An entry is the only link between a name and data. It holds the kind, the size, the generation, the time and the date of its last change, the hash of an object, the pointer of its root, and the version index of an object. A name has 1 to 255 bytes, no byte `/`, and is not `.` or `..`, so a name always goes one step down. A rename moves an entry with its versions. An entry is not a path and not a hard link.
 
 The design: `docs/STORAGE.md`, "3.2 An entry".
 
@@ -278,13 +278,23 @@ Do not use: file system.
 
 ### Root block
 
-The root block is the block of the data disk that names each store, with the generation of the last commit; the disk has two places for it.
+The root block is the block of the data disk that names each page of the store table, with the generation of the last commit; the disk has two places for it.
 
 The root block makes a commit atomic. A commit writes its new blocks to free blocks, asks the disk to keep them (`Flush`), then writes the root block in the place of the older of the two roots. The root has its own check. At the start, the storage service takes the valid root with the highest generation. The root block is not a superblock that a process can read: only the storage service and the modus tool read it.
 
 The design: `docs/STORAGE.md`, "3.3 The commit and the open".
 
 Do not use: superblock, uberblock, meta page.
+
+### Store table
+
+The store table is the list of the stores of a data disk: pages of 63 cells that the root block names, each cell the name, the limit, the blocks used and the store block of one store.
+
+A store keeps its cell for the life of the disk, so its number in the table is stable, and the storage service indexes its tables of the stores by it. A commit of a store writes the page of its cell again, with copy on write, and the root names the new page. The root names up to 251 pages: 15 813 stores on one disk. A page with a wrong check damages the stores of its cells only. The store table is not a directory that a process reads: a process reaches its own store only, and `stores()` lists the stores that it may name.
+
+The design: `src/md/data/storage_capacity.md`.
+
+Do not use: store directory, superblock table, store list.
 
 ### Commit
 

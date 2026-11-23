@@ -130,29 +130,73 @@ store_counts_of :: proc "contextless" (block: ^format.Store_Block) -> Store_Coun
 	return {objects = block.objects, trees = block.trees, current_blocks = block.current_blocks, node_blocks = block.node_blocks, removing = block.removing}
 }
 
+// The head of a store block: its fields with no padding. The open and the
+// service keep one for each store; a whole block of 4096 bytes for each of
+// the thousands of stores of the table would cost 64 MiB.
+Store_Head :: struct {
+	tree:           format.Pointer,
+	removals:       format.Pointer,
+	next_removal:   u64,
+	objects:        u64,
+	trees:          u64,
+	current_blocks: u64,
+	node_blocks:    u64,
+	removing:       u64,
+}
+
+// store_head_of gives the head of a store block.
+store_head_of :: proc "contextless" (block: ^format.Store_Block) -> Store_Head {
+	return {tree = block.tree, removals = block.removals, next_removal = block.next_removal, objects = block.objects, trees = block.trees, current_blocks = block.current_blocks, node_blocks = block.node_blocks, removing = block.removing}
+}
+
+// store_block_of gives the store block of a head, with zero bytes in its
+// reserved fields and its padding.
+store_block_of :: proc "contextless" (head: Store_Head) -> (block: format.Store_Block) {
+	block.tree, block.removals, block.next_removal = head.tree, head.removals, head.next_removal
+	block.objects, block.trees, block.current_blocks = head.objects, head.trees, head.current_blocks
+	block.node_blocks, block.removing = head.node_blocks, head.removing
+	return block
+}
+
+// The owner of a page of the store table: no store, and no free block.
+STORE_TABLE_OWNER :: max(u16)
+#assert(format.STORE_CAPACITY < int(STORE_TABLE_OWNER))
+
 // What the open knows of a disk. The storage service keeps it while it
 // runs; the tool makes one for each image.
+//
+// The tables of the blocks have the size of the disk, so they are memory
+// that the caller gives (state_bind): the storage service takes it from its
+// budget, a test from its allocator. Each block costs BLOCK_STATE_BYTES and
+// three bits; the hash index costs per root that it can hold, not per block.
 State :: struct {
 	root:          format.Root, // The root that the open uses.
 	root_place:    u64, // 0 or 1: the place of the root on the disk.
-	disk_size:     u64, // The blocks of the disk that the service uses.
-	// The store block of each store, with the counts that the walk found in
-	// place of the counts on the disk: the service starts from them.
-	store_blocks:  [format.STORE_CAPACITY]format.Store_Block,
-	in_use:        [format.DISK_BLOCKS_LIMIT / 64]u64, // Bit n: block n is named by the root.
+	disk_size:     u64, // The blocks of the disk that the service uses: at most capacity.
+	capacity:      u64, // The blocks that the tables of the blocks hold (state_bind).
+	// The pages of the store table, as the open read them; the service
+	// keeps them up to date, and changes the counts of the cells.
+	store_pages:   [format.STORE_PAGE_CAPACITY]format.Store_Table_Page,
+	// A page with a wrong check: the open and the service serve no store of
+	// it, and make no new store in it.
+	store_page_damaged: [format.STORE_PAGE_CAPACITY]bool,
+	// The head of each store, with the counts that the walk found in place
+	// of the counts on the disk: the service starts from them.
+	store_heads:   [format.STORE_CAPACITY]Store_Head,
+	in_use:        []u64, // Bit n: block n is named by the root.
 	in_use_count:  u64, // The blocks in use.
 	// The reference count of each block that the root names: for an object
 	// node or a block of data, the object nodes, the entries and the
-	// versions that name it; 1 for a store block, a node, an index and a
-	// leaf.
-	references:    [format.DISK_BLOCKS_LIMIT]u32,
-	owner:         [format.DISK_BLOCKS_LIMIT]u8, // The store that names the block, plus 1.
-	wrong_blocks:  [format.DISK_BLOCKS_LIMIT / 64]u64, // Bit n: block n was read and has a wrong check, or breaks a rule of the format.
+	// versions that name it; 1 for a store block, a node, an index, a leaf
+	// and a page of the store table.
+	references:    []u32,
+	owner:         []u16, // The store that names the block, plus 1; STORE_TABLE_OWNER for a page of the store table.
+	wrong_blocks:  []u64, // Bit n: block n was read and has a wrong check, or breaks a rule of the format.
 	// Bit n: the block tree under the object node or the block n (n
 	// included) has a wrong block. A state whose root has this bit is
 	// damaged: a read of it gives Damaged, and its release does not walk
 	// under it (its blocks stay in use until the next open counts again).
-	damaged_under: [format.DISK_BLOCKS_LIMIT / 64]u64,
+	damaged_under: []u64,
 	store_versions: [format.STORE_CAPACITY]u64, // The versions of the objects of each store.
 	store_shared:  [format.STORE_CAPACITY]u64, // The blocks of each store with a reference count of 2 or more.
 	// The distinct blocks of each store that the walk counted: the count that
@@ -211,6 +255,8 @@ Mount :: struct {
 	stores_with_wrong_count: u64, // Stores walked whole whose count of blocks, or a count of the store block or of an entry, is wrong.
 	reference_overflow:   u64, // Blocks with more names than a count holds.
 	stores_recounted:     u64, // Stores whose count in the root differs from the recount: the open takes the recount.
+	damaged_store_pages:  u64, // Pages of the store table with a wrong check: their stores are not served.
+	larger_than_capacity: bool, // The root names more blocks than the tables hold: no root is usable with this memory.
 	// Roots of current objects whose store has another root with the same
 	// first 8 bytes of hash and the same size: two copies of one object,
 	// that the hash index did not find at their commit (docs/STORAGE.md,
@@ -222,22 +268,129 @@ Mount :: struct {
 // open and a commit refuse a count past it.
 REFERENCE_LIMIT :: u64(max(u32))
 
+// The bytes of the tables of one block, besides its three bits: its count
+// of names and its owner.
+BLOCK_STATE_BYTES :: size_of(u32) + size_of(u16)
+
+// The places of the tables of a State in the memory that state_bind takes.
+State_Layout :: struct {
+	bitmap_words:   u64, // The words of each of the three bitmaps.
+	references:     u64, // The byte of the counts of names.
+	owner:          u64, // The byte of the owners.
+	hash_records:   u64, // The byte of the records of the hash index.
+	hash_slots:     u64, // The byte of the slots of the hash index.
+	hash_capacity:  u64, // The records, and the slots, of the hash index: a power of two.
+	bytes:          u64, // The bytes of the whole memory.
+}
+
+// state_layout gives the memory of the tables for a disk of `blocks`
+// blocks and a hash index of `hash_roots` roots. ok is false for a count
+// of blocks that no disk has, for no root, or for a size that a u64 does
+// not hold.
+state_layout :: proc "contextless" (blocks: u64, hash_roots: u64) -> (layout: State_Layout, ok: bool) {
+	words := format.bitmap_words_for_blocks(blocks) or_return
+	// With at most 2^52 blocks and 2^40 roots, no size below wraps a u64.
+	if hash_roots == 0 || hash_roots > u64(1) << 40 {
+		return {}, false
+	}
+	#assert(format.DISK_BLOCKS_MAX < u64(1) << 52)
+	// The hash index fills at most half of its slots.
+	layout.hash_capacity = 2
+	for layout.hash_capacity < 2 * hash_roots {
+		layout.hash_capacity *= 2
+	}
+	layout.bitmap_words = words
+	cursor := 3 * words * 8
+	layout.references = cursor
+	cursor += blocks * size_of(u32)
+	layout.owner = cursor
+	cursor += blocks * size_of(u16)
+	cursor = (cursor + 7) &~ u64(7)
+	layout.hash_records = cursor
+	cursor += layout.hash_capacity * size_of(Root_Record)
+	layout.hash_slots = cursor
+	cursor += layout.hash_capacity * size_of(u64)
+	layout.bytes = cursor
+	return layout, true
+}
+
+// state_bind gives a State the memory of its tables, for a disk of up to
+// `blocks` blocks. The memory is aligned on 8 bytes and has at least the
+// bytes of state_layout; its contents do not matter: the open clears what
+// it uses. ok is false when the memory is too small or not aligned.
+state_bind :: proc "contextless" (state: ^State, memory: []u8, blocks: u64, hash_roots: u64) -> bool {
+	layout, ok := state_layout(blocks, hash_roots)
+	if !ok || u64(len(memory)) < layout.bytes || uintptr(raw_data(memory)) & 7 != 0 {
+		return false
+	}
+	base := raw_data(memory)
+	words := int(layout.bitmap_words)
+	state.in_use = ([^]u64)(base)[:words]
+	state.wrong_blocks = ([^]u64)(base)[words:2 * words]
+	state.damaged_under = ([^]u64)(base)[2 * words:3 * words]
+	state.references = ([^]u32)(&base[layout.references])[:blocks]
+	state.owner = ([^]u16)(&base[layout.owner])[:blocks]
+	state.hash_index.records = ([^]Root_Record)(&base[layout.hash_records])[:layout.hash_capacity]
+	state.hash_index.slots = ([^]u64)(&base[layout.hash_slots])[:layout.hash_capacity]
+	state.hash_index.slot_bits = 0
+	for u64(1) << state.hash_index.slot_bits < layout.hash_capacity {
+		state.hash_index.slot_bits += 1
+	}
+	state.capacity = blocks
+	state_tables_clear(state)
+	return true
+}
+
+// state_tables_clear sets each table of the blocks and the hash index to
+// zero.
+state_tables_clear :: proc "contextless" (state: ^State) {
+	zero_words :: proc "contextless" (words: []u64) {
+		if len(words) > 0 {
+			intrinsics.mem_zero(raw_data(words), len(words) * size_of(u64))
+		}
+	}
+	zero_words(state.in_use)
+	zero_words(state.wrong_blocks)
+	zero_words(state.damaged_under)
+	if len(state.references) > 0 {
+		intrinsics.mem_zero(raw_data(state.references), len(state.references) * size_of(u32))
+	}
+	if len(state.owner) > 0 {
+		intrinsics.mem_zero(raw_data(state.owner), len(state.owner) * size_of(u16))
+	}
+	state.in_use_count = 0
+	hash_index_reset(state)
+}
+
+// store_cell gives the cell of the store of a number in the pages of the
+// open.
+store_cell :: #force_inline proc "contextless" (state: ^State, number: int) -> ^format.Store_Entry {
+	page, cell := format.store_place(number)
+	return &state.store_pages[page].cells[cell]
+}
+
+// store_numbers gives the count of the numbers of stores that the pages of
+// the root hold: each cell of each page, free or not.
+store_numbers :: #force_inline proc "contextless" (state: ^State) -> int {
+	return int(min(state.root.store_page_count, format.STORE_PAGE_CAPACITY)) * format.STORES_OF_A_PAGE
+}
+
 // reference counts one more name of a block, from a store. It gives true
 // for the first name: the caller reads and checks the block one time.
 reference :: proc "contextless" (state: ^State, number: u64, store_index: int, result: ^Mount) -> (first: bool) {
-	if number >= format.DISK_BLOCKS_LIMIT {
+	if number >= state.capacity {
 		return false
 	}
 	if state.references[number] == 0 {
 		state.references[number] = 1
-		state.owner[number] = u8(store_index + 1)
+		state.owner[number] = u16(store_index + 1)
 		mark(state, number, true)
 		return true
 	}
 	if int(state.owner[number]) != store_index + 1 {
 		result.named_by_two_stores += 1
 		state.store_faulty[store_index] = true
-		if state.owner[number] != 0 {
+		if state.owner[number] != 0 && state.owner[number] != STORE_TABLE_OWNER {
 			state.store_faulty[int(state.owner[number]) - 1] = true
 		}
 	}
@@ -256,25 +409,25 @@ reference :: proc "contextless" (state: ^State, number: u64, store_index: int, r
 
 // wrong_block says if a block was read and found wrong.
 wrong_block :: proc "contextless" (state: ^State, number: u64) -> bool {
-	return number < format.DISK_BLOCKS_LIMIT && state.wrong_blocks[number / 64] >> (number % 64) & 1 != 0
+	return number < state.capacity && state.wrong_blocks[number / 64] >> (number % 64) & 1 != 0
 }
 
 // wrong_block_set records that a block is wrong.
 wrong_block_set :: proc "contextless" (state: ^State, number: u64) {
-	if number < format.DISK_BLOCKS_LIMIT {
+	if number < state.capacity {
 		state.wrong_blocks[number / 64] |= 1 << (number % 64)
 	}
 }
 
 // damaged_under says if the block tree under a block has a wrong block.
 damaged_under :: proc "contextless" (state: ^State, number: u64) -> bool {
-	return number < format.DISK_BLOCKS_LIMIT && state.damaged_under[number / 64] >> (number % 64) & 1 != 0
+	return number < state.capacity && state.damaged_under[number / 64] >> (number % 64) & 1 != 0
 }
 
 // damaged_under_set records that the block tree under a block has a wrong
 // block.
 damaged_under_set :: proc "contextless" (state: ^State, number: u64) {
-	if number < format.DISK_BLOCKS_LIMIT {
+	if number < state.capacity {
 		state.damaged_under[number / 64] |= 1 << (number % 64)
 	}
 }
@@ -437,13 +590,13 @@ reference_object_child :: proc "contextless" (state: ^State, reader: ^Block_Read
 }
 
 used :: proc "contextless" (state: ^State, number: u64) -> bool {
-	return state.in_use[number / 64] >> (number % 64) & 1 != 0
+	return number < state.capacity && state.in_use[number / 64] >> (number % 64) & 1 != 0
 }
 
 // mark sets or clears the bit of a block. It gives false when the bit had
 // the value already.
 mark :: proc "contextless" (state: ^State, number: u64, value: bool) -> bool {
-	if number >= format.DISK_BLOCKS_LIMIT || used(state, number) == value {
+	if number >= state.capacity || used(state, number) == value {
 		return false
 	}
 	if value {
@@ -538,20 +691,16 @@ Store_Walk :: struct {
 // blocks under a wrong block are not known, so they are free. It gives
 // false when the device reported an error.
 walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^format.Root, result: ^Mount) -> bool {
-	state.in_use = {}
-	state.in_use_count = 0
-	state.references = {}
-	state.owner = {}
-	state.wrong_blocks = {}
-	state.damaged_under = {}
+	state_tables_clear(state)
+	state.store_pages = {}
+	state.store_page_damaged = {}
 	state.store_versions = {}
 	state.store_shared = {}
 	state.store_recount = {}
 	state.store_faulty = {}
 	state.store_damaged = {}
 	state.store_damaged_objects = {}
-	state.store_blocks = {}
-	hash_index_reset(state)
+	state.store_heads = {}
 	mark(state, 0, true)
 	mark(state, 1, true)
 	result.stores, result.objects, result.trees, result.removing = 0, 0, 0, 0
@@ -559,19 +708,90 @@ walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^fo
 	result.damaged_objects, result.damaged_stores, result.named_twice, result.stores_with_wrong_count = 0, 0, 0, 0
 	result.versions, result.damaged_versions, result.shared, result.named_by_two_stores = 0, 0, 0, 0
 	result.reference_overflow, result.stores_recounted, result.repeated_hashes = 0, 0, 0
-	for &store, index in candidate.stores {
-		if store.name[0] == 0 {
-			continue
-		}
-		result.stores += 1
-		ok := walk_store(state, reader, &store, index, result)
-		// The walk of a store names the reader and the result of this call
-		// only while it runs.
-		state.store_walk = {}
-		if !ok {
+	result.damaged_store_pages = 0
+	pages := int(min(candidate.store_page_count, format.STORE_PAGE_CAPACITY))
+	for page in 0 ..< pages {
+		if !store_page_read(state, reader, candidate.store_pages[page], page, result) {
 			return false
 		}
 	}
+	for page in 0 ..< pages {
+		if state.store_page_damaged[page] {
+			continue
+		}
+		for &store, cell in state.store_pages[page].cells {
+			if store.name[0] == 0 {
+				continue
+			}
+			result.stores += 1
+			ok := walk_store(state, reader, &store, page * format.STORES_OF_A_PAGE + cell, result)
+			// The walk of a store names the reader and the result of this call
+			// only while it runs.
+			state.store_walk = {}
+			if !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// store_page_read counts the one name of a page of the store table, reads
+// it and checks it: its check, its magic, and a name of each cell that is
+// zero bytes after its first zero byte. A wrong page damages its stores,
+// and the walk goes on. It gives false when the device reported an error.
+store_page_read :: proc "contextless" (state: ^State, reader: ^Block_Reader, pointer: format.Pointer, page: int, result: ^Mount) -> bool {
+	if pointer.block < 2 || pointer.block >= state.disk_size {
+		result.wrong += 1
+		result.damaged_store_pages += 1
+		state.store_page_damaged[page] = true
+		return true
+	}
+	if state.references[pointer.block] != 0 {
+		// A block of one name named two times: a fault of the engine.
+		result.named_twice += 1
+		result.damaged_store_pages += 1
+		state.store_page_damaged[page] = true
+		return true
+	}
+	state.references[pointer.block] = 1
+	state.owner[pointer.block] = STORE_TABLE_OWNER
+	mark(state, pointer.block, true)
+	wrong, outcome := read_checked(state, reader, {pointer}, 0)
+	result.checked += 1
+	switch outcome {
+	case .Device:
+		return false
+	case .Wrong:
+		result.wrong += wrong
+		wrong_block_set(state, pointer.block)
+		result.damaged_store_pages += 1
+		state.store_page_damaged[page] = true
+		return true
+	case .Good:
+	}
+	read := (^format.Store_Table_Page)(raw_data(scratch_block(state, 0)))
+	valid := read.magic == format.STORE_TABLE_MAGIC && read.reserved == 0 && read.unused == 0
+	for &cell in read.cells {
+		ended := false
+		for byte in cell.name {
+			if ended && byte != 0 {
+				valid = false
+			}
+			ended ||= byte == 0
+		}
+		// A store name has at most NAME_CAPACITY - 1 bytes: the last byte is
+		// zero.
+		valid &&= cell.name[format.NAME_CAPACITY - 1] == 0
+	}
+	if !valid {
+		result.wrong += 1
+		wrong_block_set(state, pointer.block)
+		result.damaged_store_pages += 1
+		state.store_page_damaged[page] = true
+		return true
+	}
+	state.store_pages[page] = read^
 	return true
 }
 
@@ -591,9 +811,11 @@ walk_store :: proc "contextless" (state: ^State, reader: ^Block_Reader, store: ^
 		return true
 	case .Good:
 	}
-	block := &state.store_blocks[index]
-	intrinsics.mem_copy_non_overlapping(block, raw_data(scratch_block(state, 0)), BLOCK_SIZE)
-	on_disk := store_counts_of(block)
+	block_bytes := (^format.Store_Block)(raw_data(scratch_block(state, 0)))
+	head := &state.store_heads[index]
+	head^ = store_head_of(block_bytes)
+	on_disk := store_counts_of(block_bytes)
+	block := head
 	walking := &state.store_walk
 	walking^ = {
 		state       = state,
@@ -846,7 +1068,13 @@ walk_versions :: proc "contextless" (walking: ^Store_Walk, versions: format.Poin
 // A disk with no commit (block 0 is zero bytes) needs a format: the caller
 // writes the first root (the open writes nothing).
 mount :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk_blocks: u64) -> (result: Mount) {
-	state.disk_size = min(disk_blocks, format.DISK_BLOCKS_LIMIT)
+	state.disk_size = min(disk_blocks, state.capacity)
+	if state.disk_size < format.DISK_BLOCKS_MIN {
+		// No memory was bound (state_bind), or the disk has no room for its
+		// two roots.
+		result.failed = true
+		return result
+	}
 	numbers := [2]u64{0, 1}
 	if !reader.read(reader, numbers[:], state.scratch[:2 * BLOCK_SIZE]) {
 		result.failed = true
@@ -880,7 +1108,11 @@ mount :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk_blocks: 
 	first, walked := -1, -1
 	for index in order {
 		if !format.root_valid(&candidates[index], state.disk_size) {
-			if candidates[index].magic == format.ROOT_MAGIC {
+			if format.root_valid(&candidates[index], disk_blocks) {
+				// A whole root of a disk that the tables cannot hold: the open
+				// refuses it rather than lose the blocks past them.
+				result.larger_than_capacity = true
+			} else if candidates[index].magic == format.ROOT_MAGIC {
 				result.cut = candidates[index].generation
 			}
 			continue

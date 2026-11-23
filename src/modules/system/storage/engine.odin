@@ -21,7 +21,6 @@ BLOCK_SIZE :: format.BLOCK_SIZE
 ROOT_MAGIC :: format.ROOT_MAGIC
 STORE_CAPACITY :: format.STORE_CAPACITY
 NAME_CAPACITY :: format.NAME_CAPACITY
-DISK_BLOCKS_LIMIT :: format.DISK_BLOCKS_LIMIT
 OBJECT_LEVEL_LIMIT :: format.OBJECT_LEVEL_LIMIT
 REGION_BLOCKS :: 64 // The data region that the block service reads and writes.
 RETENTION_INTERVAL :: 60 * 1000 // The retention rule runs on an object at most one time in this many milliseconds.
@@ -30,6 +29,8 @@ Pointer :: format.Pointer
 Store_Entry :: format.Store_Entry
 Root :: format.Root
 Store_Block :: format.Store_Block
+Store_Head :: storage_mount.Store_Head
+Store_Table_Page :: format.Store_Table_Page
 Entry :: format.Entry
 Entry_Name :: format.Entry_Name
 Object_Node :: format.Object_Node
@@ -41,13 +42,16 @@ Block :: [BLOCK_SIZE]u8
 
 #assert(BLOCK_SIZE == block.BLOCK_SIZE)
 
-// What the service knows of the disk. The store block of each store stays
-// in memory; nodes, object nodes, versions and data are read when a caller asks. The blocks
-// in use and the reference count of each one are in `opened`, the state of
-// the open (src/library/internal/storage/storage_mount), which the service keeps up to date.
+// What the service knows of the disk. The head of the store block of each
+// store stays in memory, and the pages of the store table in `opened`;
+// nodes, object nodes, versions and data are read when a caller asks. The
+// blocks in use and the reference count of each one are in `opened`, the
+// state of the open (src/library/internal/storage/storage_mount), which the
+// service keeps up to date. A store is named by its number in the store
+// table: its page and its cell (format.store_place).
 root: Root
 root_place: u64 // 0 or 1: the place of the root on the disk.
-store_blocks: [STORE_CAPACITY]Store_Block
+store_blocks: [STORE_CAPACITY]Store_Head
 next_free: u64
 time_at_start: u64 // The time since the format at the start of the service (the time of its root).
 service_started: u64 // system.time() at the start of the service.
@@ -209,12 +213,21 @@ mark :: proc "contextless" (number: u64, value: bool) {
 
 // allocate gives a free block and marks it, or 0 when the disk is full.
 allocate :: proc "contextless" () -> u64 {
-	for _ in 0 ..< root.disk_blocks {
+	searched: u64
+	for searched < root.disk_blocks {
 		if next_free < 2 || next_free >= root.disk_blocks {
 			next_free = 2
 		}
 		number := next_free
+		// A word of the bitmap with each block in use is passed whole: the
+		// search of a disk of millions of blocks reads one word for 64.
+		if number % 64 == 0 && number + 64 <= root.disk_blocks && opened.in_use[number / 64] == max(u64) {
+			next_free += 64
+			searched += 64
+			continue
+		}
 		next_free += 1
+		searched += 1
 		if !used(number) {
 			mark(number, true)
 			return number
@@ -509,10 +522,59 @@ read_through_block_service :: proc "contextless" (reader: ^storage_mount.Block_R
 // walks, so it is not on the stack.
 mount_reader: storage_mount.Block_Reader
 
+// The roots that the hash index holds at most: 2^17 objects of a disk find
+// the same bytes one time. Its records and slots take 6 MiB; a root past
+// them only loses the lookup (docs/STORAGE.md, "4.7 The same object one
+// time").
+HASH_ROOTS_MOST :: u64(1) << 17
+
+// The least blocks of the tables: a budget that cannot pay them for so
+// small a disk leaves the service with no disk.
+TABLE_BLOCKS_LEAST :: u64(1) << 12
+
+// tables_bind gives the tables of the blocks of the open the memory of a
+// disk of disk_blocks blocks, from the budget of this process. A budget
+// that cannot pay them gets the tables of half as many blocks, then half
+// again: the service then uses the first blocks of the disk only, and says
+// so. It gives the blocks that the tables hold, 0 when none.
+tables_bind :: proc "contextless" (disk_blocks: u64) -> (blocks: u64) {
+	blocks = min(disk_blocks, format.DISK_BLOCKS_MAX)
+	for blocks >= format.DISK_BLOCKS_MIN {
+		layout, ok := storage_mount.state_layout(blocks, min(blocks, HASH_ROOTS_MOST))
+		pages := (layout.bytes + BLOCK_SIZE - 1) / BLOCK_SIZE
+		if ok && pages <= op.MEMORY_PAGE_LIMIT {
+			memory, status := system.memory_create(pages)
+			if status == .Ok {
+				address, map_status := system.memory_map(memory, {.Write})
+				if map_status == .Ok && storage_mount.state_bind(&opened, ([^]u8)(address)[:layout.bytes], blocks, min(blocks, HASH_ROOTS_MOST)) {
+					return blocks
+				}
+				system.close(memory)
+			}
+		}
+		if blocks <= TABLE_BLOCKS_LEAST {
+			break
+		}
+		blocks /= 2
+	}
+	return 0
+}
+
 // mount opens the disk (storage_mount.mount), and formats a disk that has
 // never had a commit: the first root goes to block 1.
 mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 	mount_reader = {read = read_through_block_service}
+	slot_key := opened.hash_index.slot_key
+	tables := tables_bind(disk_blocks)
+	opened.hash_index.slot_key = slot_key
+	if tables == 0 {
+		system.log_fact(.Error, No_Table_Memory{disk_blocks = blocks_field(disk_blocks)})
+		result.failed = true
+		return result
+	}
+	if tables < disk_blocks {
+		system.log_fact(.Warning, Disk_Larger_Than_Tables{disk_blocks = blocks_field(disk_blocks), used_blocks = blocks_field(tables)})
+	}
 	result = storage_mount.mount(&opened, &mount_reader, disk_blocks)
 	disk_size = opened.disk_size
 	service_started = system.time()
@@ -528,12 +590,10 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 			result.failed = true
 			return result
 		}
-		opened.in_use = {}
-		opened.in_use_count = 0
-		opened.references = {}
-		opened.owner = {}
+		storage_mount.state_tables_clear(&opened)
 		opened.store_versions = {}
-		storage_mount.hash_index_reset(&opened)
+		opened.store_pages = {}
+		opened.store_page_damaged = {}
 		mark(0, true)
 		mark(1, true)
 		result.generation = 1
@@ -541,13 +601,14 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 	}
 	root = opened.root
 	root_place = opened.root_place
-	store_blocks = opened.store_blocks
+	store_blocks = opened.store_heads
 	store_damaged = opened.store_damaged
 	store_faulty = opened.store_faulty
 	time_at_start = root.time
 	// The count of each store is the recount of the open: the next commit
-	// writes it in the root.
-	for &entry, index in root.stores {
+	// of the store writes it in its page.
+	for index in 0 ..< store_numbers() {
+		entry := store_cell(index)
 		if entry.name[0] != 0 && !store_damaged[index] {
 			entry.used = opened.store_recount[index]
 		}
@@ -555,9 +616,33 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 	return result
 }
 
+// store_numbers gives the count of the numbers of stores that the pages of
+// the root hold.
+store_numbers :: proc "contextless" () -> int {
+	return int(min(root.store_page_count, format.STORE_PAGE_CAPACITY)) * format.STORES_OF_A_PAGE
+}
+
+// store_cell gives the cell of the store of a number, as the last commit
+// left it.
+store_cell :: proc "contextless" (index: int) -> ^Store_Entry {
+	return storage_mount.store_cell(&opened, index)
+}
+
+// store_name_of gives the name of the store of a number.
+store_name_of :: proc "contextless" (index: int) -> string {
+	return system.name_of(store_cell(index).name[:])
+}
+
+// store_listed says if a number names a store that the service serves: a
+// named cell of a page with no damage.
+store_listed :: proc "contextless" (index: int) -> bool {
+	page, _ := format.store_place(index)
+	return !opened.store_page_damaged[page] && store_cell(index).name[0] != 0
+}
+
 store_find :: proc "contextless" (name: string) -> int {
-	for &store, index in root.stores {
-		if store.name[0] != 0 && system.name_of(store.name[:]) == name {
+	for index in 0 ..< store_numbers() {
+		if store_listed(index) && store_name_of(index) == name {
 			return index
 		}
 	}
@@ -610,6 +695,11 @@ Leaf_Work :: struct {
 Plan :: struct {
 	store_index: int,
 	next:        Root,
+	// The page of the store table of the store, as the commit changes it,
+	// and the block that the commit writes it to (plan_page_write).
+	page:         Store_Table_Page,
+	page_index:   int,
+	page_written: Pointer,
 	store_block: Store_Block,
 	writes:      [WRITE_CAPACITY]Write,
 	write_count: int,
@@ -677,7 +767,13 @@ plan_reset :: proc "contextless" (store_index: int) {
 	plan.store_index = store_index
 	later_count = 0
 	plan.next = root
-	plan.store_block = store_index >= 0 ? store_blocks[store_index] : {}
+	plan.store_block = store_index >= 0 ? storage_mount.store_block_of(store_blocks[store_index]) : {}
+	plan.page_written = {}
+	if store_index >= 0 {
+		page, _ := format.store_place(store_index)
+		plan.page_index = page
+		plan.page = page < int(root.store_page_count) ? opened.store_pages[page] : Store_Table_Page{magic = format.STORE_TABLE_MAGIC}
+	}
 	plan.entry_count = 0
 	plan_trees_reset()
 }
@@ -718,7 +814,7 @@ count_after :: proc "contextless" (number: u64) -> i64 {
 // delta_add changes the reference count of a block in the plan, and the
 // count of the distinct blocks of the store.
 delta_add :: proc "contextless" (number: u64, change: i64) {
-	if number < 2 || number >= DISK_BLOCKS_LIMIT {
+	if number < 2 || number >= opened.capacity {
 		return
 	}
 	place, found := delta_place(number)
@@ -1177,7 +1273,41 @@ projected :: proc "contextless" () -> i64 {
 	// tree inside a tree also changes the path of its entry in the tree
 	// above it, which is not dirty yet: one node for each level of it.
 	change += plan_trees_node_change()
-	return i64(plan.next.stores[plan.store_index].used) + change
+	return i64(plan_cell().used) + change
+}
+
+// plan_cell gives the cell of the store of the plan, in the page that the
+// commit writes.
+plan_cell :: proc "contextless" () -> ^Store_Entry {
+	_, cell := format.store_place(plan.store_index)
+	return &plan.page.cells[cell]
+}
+
+// plan_page_write writes the page of the store table of the plan to a free
+// block, after the last change of its cell. The page is named by the root
+// only, not by the store: it takes no part in the count of the store, so
+// the plan takes its block outside the change of the reference counts, and
+// plan_commit counts it after the root. false: no free block, or no room
+// for one more write.
+plan_page_write :: proc "contextless" () -> bool {
+	if plan.write_count >= WRITE_CAPACITY || plan.taken_count >= WRITE_CAPACITY {
+		capacity_reached(WRITE_CAPACITY)
+		return false
+	}
+	number := allocate()
+	if number == 0 {
+		plan.full = true
+		return false
+	}
+	plan.taken[plan.taken_count] = number
+	plan.taken_count += 1
+	bytes := (^Block)(&plan.page)
+	plan.writes[plan.write_count] = {number = number, bytes = bytes}
+	plan.write_count += 1
+	plan.page_written = {block = number, check = check_of(bytes[:])}
+	plan.next.store_pages[plan.page_index] = plan.page_written
+	plan.next.store_page_count = max(plan.next.store_page_count, u64(plan.page_index + 1))
+	return true
 }
 
 // plan_finish writes the leaves and the indexes that changed, and puts
@@ -1235,7 +1365,7 @@ plan_finish :: proc "contextless" () {
 	}
 	plan_entries_put()
 	plan_trees_finish()
-	entry := &plan.next.stores[plan.store_index]
+	entry := plan_cell()
 	if entry.store.block != 0 {
 		delta_add(entry.store.block, -1)
 	}
@@ -1265,7 +1395,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	if plan.tree_damaged {
 		plan_drop()
 		store_damaged[plan.store_index] = true
-		system.log_fact(.Warning, Tree_Node_Damaged{store = store_field(system.name_of(plan.next.stores[plan.store_index].name[:]))})
+		system.log_fact(.Warning, Tree_Node_Damaged{store = store_field(system.name_of(plan_cell().name[:]))})
 		return errors.fail(error, failure(.Damaged), .Damaged, .Stores)
 	}
 	if plan.device {
@@ -1275,7 +1405,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	if plan.count_fault {
 		plan_drop()
 		store_faulty[plan.store_index] = true
-		system.log_fact(.Error, Commit_Count_Below_Zero{store = store_field(system.name_of(plan.next.stores[plan.store_index].name[:]))})
+		system.log_fact(.Error, Commit_Count_Below_Zero{store = store_field(system.name_of(plan_cell().name[:]))})
 		return errors.fail(error, failure(.Damaged), .Damaged, .Counts)
 	}
 	if plan.capacity_reached {
@@ -1290,8 +1420,16 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		plan_drop()
 		return errors.fail(error, failure(.Full), .Full) // The disk: no number, because the free blocks are a fact of all the stores.
 	}
-	entry := &plan.next.stores[plan.store_index]
+	entry := plan_cell()
 	entry.used = u64(i64(entry.used) + plan.used_change)
+	// The page of the store table, with the count of its cell final.
+	if !plan_page_write() {
+		plan_drop()
+		if plan.full {
+			return errors.fail(error, failure(.Full), .Full)
+		}
+		return errors.fail(error, failure(.Full), .Full, .Commit_Blocks, 0, 0, i64(plan.capacity_limit))
+	}
 	// The blocks, REGION_BLOCKS at a time, then the root. Each one is on the
 	// disk before the next step.
 	for first := 0; first < plan.write_count; first += REGION_BLOCKS {
@@ -1374,15 +1512,26 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	}
 	roots_refused_in_a_row = 0
 	// The commit is on the disk: the service takes its state.
+	page_before := root.store_pages[plan.page_index]
 	root = plan.next
 	root_place = place
-	store_blocks[plan.store_index] = plan.store_block
+	store_blocks[plan.store_index] = storage_mount.store_head_of(&plan.store_block)
+	// The page of the store table: the root names the new block, and the
+	// block of the page before is free.
+	opened.store_pages[plan.page_index] = plan.page
+	opened.references[plan.page_written.block] = 1
+	opened.owner[plan.page_written.block] = storage_mount.STORE_TABLE_OWNER
+	if page_before.block != 0 && page_before.block < opened.capacity {
+		opened.references[page_before.block] = 0
+		opened.owner[page_before.block] = 0
+		mark(page_before.block, false)
+	}
 	commits += 1
 	opened.store_versions[plan.store_index] = u64(i64(opened.store_versions[plan.store_index]) + plan.versions_change)
 	if plan.dropped_versions != 0 {
-		system.log_fact(.Warning, Versions_Dropped_At_Commit{generation = root.generation, dropped = plan.dropped_versions, store = store_field(system.name_of(root.stores[plan.store_index].name[:]))})
+		system.log_fact(.Warning, Versions_Dropped_At_Commit{generation = root.generation, dropped = plan.dropped_versions, store = store_field(store_name_of(plan.store_index))})
 	}
-	owner := u8(plan.store_index + 1)
+	owner := u16(plan.store_index + 1)
 	for place in plan.delta_places[:plan.delta_count] {
 		number := plan.delta_blocks[place]
 		before := i64(opened.references[number])
@@ -1405,7 +1554,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	// has a writable share of a tree open, a new root is hidden: never a
 	// candidate, so the holder cannot plant bytes that a later write of the
 	// maker would find (docs/STORAGE.md, "4.7 The same object one time").
-	hidden := writable_tree_share_open(system.name_of(root.stores[plan.store_index].name[:]))
+	hidden := writable_tree_share_open(store_name_of(plan.store_index))
 	for &item in plan.entries[:plan.entry_count] {
 		storage_mount.hash_index_entry_change(&opened, item.before, item.entry, item.gone, hidden)
 	}
@@ -1561,7 +1710,7 @@ zeros_read_back :: proc "contextless" (requests: []Request, zeroed: ^u64, not_ze
 released_blocks_kept :: proc "contextless" () -> (kept: u64) {
 	for place in plan.delta_places[:plan.delta_count] {
 		number := plan.delta_blocks[place]
-		if plan.delta_values[place] < 0 && number < DISK_BLOCKS_LIMIT && opened.references[number] != 0 {
+		if plan.delta_values[place] < 0 && number < opened.capacity && opened.references[number] != 0 {
 			kept += 1
 		}
 	}

@@ -2,6 +2,7 @@
 package tree_hash
 
 import "core:fmt"
+import "core:strings"
 import "core:testing"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
@@ -63,10 +64,11 @@ single_entry_and_multi_entry_roundtrip :: proc(t: ^testing.T) {
 
 	// Single entry tree.
 	single_entries := [1]Tree_Entry{e1}
-	single_buf: [HEADER_SIZE + ENTRY_SIZE]u8
+	single_buf: [HEADER_SIZE + ENTRY_SIZE_MOST]u8
 	single_len, single_ref := tree_encode(single_entries[:], single_buf[:])
 	testing.expect_value(t, single_ref, Tree_Refusal.None)
-	testing.expect_value(t, single_len, tree_encoded_size(1))
+	testing.expect_value(t, single_len, tree_encoded_size(single_entries[:]))
+	testing.expect_value(t, single_len, HEADER_SIZE + ENTRY_FIXED_SIZE + len("alpha"))
 	got1, found1, lref1 := tree_lookup(single_buf[:single_len], "alpha")
 	testing.expect_value(t, lref1, Tree_Refusal.None)
 	testing.expect(t, found1)
@@ -78,10 +80,10 @@ single_entry_and_multi_entry_roundtrip :: proc(t: ^testing.T) {
 	e4, r4 := tree_entry_make(.Object, "résumé", make_sample_hash(4))
 	testing.expect_value(t, r4, Tree_Refusal.None)
 	entries := [4]Tree_Entry{e1, e2, e3, e4}
-	buf: [HEADER_SIZE + 4 * ENTRY_SIZE]u8
+	buf: [HEADER_SIZE + 4 * ENTRY_SIZE_MOST]u8
 	written, refusal := tree_encode(entries[:], buf[:])
 	testing.expect_value(t, refusal, Tree_Refusal.None)
-	testing.expect_value(t, written, tree_encoded_size(4))
+	testing.expect_value(t, written, tree_encoded_size(entries[:]))
 
 	for &want in entries {
 		got, found, lref := tree_lookup(buf[:written], tree_entry_name(&want))
@@ -115,14 +117,20 @@ single_entry_and_multi_entry_roundtrip :: proc(t: ^testing.T) {
 max_entries_and_one_past_max :: proc(t: ^testing.T) {
 	entries := make([]Tree_Entry, MAX_TREE_ENTRIES + 1)
 	defer delete(entries)
+	// Names of 255 bytes, the longest: the largest tree that the format holds.
+	long_name :: proc(index: int) -> string {
+		head := fmt.tprintf("entry_%04d_", index)
+		return fmt.tprintf("%s%s", head, strings.repeat("x", ENTRY_NAME_CAPACITY - len(head), context.temp_allocator))
+	}
 	for index in 0 ..< MAX_TREE_ENTRIES + 1 {
-		name := fmt.tprintf("entry_%04d", index)
+		name := long_name(index)
 		entry, refusal := tree_entry_make(index % 2 == 0 ? .Object : .Tree, name, make_sample_hash(u8(index & 0xFF)))
 		testing.expect_value(t, refusal, Tree_Refusal.None)
 		entries[index] = entry
 	}
 
-	buffer := make([]u8, MAX_ENCODED_TREE_BYTES + ENTRY_SIZE)
+	buffer := make([]u8, MAX_ENCODED_TREE_BYTES + ENTRY_SIZE_MOST)
+	testing.expect_value(t, MAX_TREE_ENTRIES, 4096)
 	defer delete(buffer)
 
 	// Exact bound: MAX_TREE_ENTRIES succeeds.
@@ -133,9 +141,9 @@ max_entries_and_one_past_max :: proc(t: ^testing.T) {
 	testing.expect_value(t, val_ref, Tree_Refusal.None)
 	testing.expect_value(t, count, MAX_TREE_ENTRIES)
 
-	// Binary search hits first, middle, and last entry at max bound.
+	// The lookup finds the first, middle, and last entry at max bound.
 	for target_index in ([3]int{0, MAX_TREE_ENTRIES / 2, MAX_TREE_ENTRIES - 1}) {
-		target_name := fmt.tprintf("entry_%04d", target_index)
+		target_name := long_name(target_index)
 		got, found, lref := tree_lookup(buffer[:written], target_name)
 		testing.expect_value(t, lref, Tree_Refusal.None)
 		testing.expect(t, found)
@@ -175,7 +183,7 @@ max_entries_and_one_past_max :: proc(t: ^testing.T) {
 unsorted_and_duplicate_names_refused :: proc(t: ^testing.T) {
 	a, _ := tree_entry_make(.Object, "a", make_sample_hash(1))
 	b, _ := tree_entry_make(.Object, "b", make_sample_hash(2))
-	buf: [HEADER_SIZE + 2 * ENTRY_SIZE]u8
+	buf: [HEADER_SIZE + 2 * ENTRY_SIZE_MOST]u8
 
 	// Unsorted at encode.
 	unsorted := [2]Tree_Entry{b, a}
@@ -195,15 +203,16 @@ unsorted_and_duplicate_names_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, valid_ref, Tree_Refusal.None)
 
 	// Make entry 1 equal to entry 0 -> Duplicate_Name.
+	// Each entry of a name of one byte has ENTRY_FIXED_SIZE + 1 bytes.
 	dup_wire := buf
-	dup_wire[HEADER_SIZE + ENTRY_SIZE + 2] = 'a'
+	dup_wire[HEADER_SIZE + ENTRY_FIXED_SIZE + 1 + 2] = 'a'
 	_, val_dup := tree_validate(dup_wire[:valid_len])
 	testing.expect_value(t, val_dup, Tree_Refusal.Duplicate_Name)
 
 	// Swap entry 0 and entry 1 -> Not_Sorted.
 	swap_wire := buf
 	swap_wire[HEADER_SIZE + 2] = 'b'
-	swap_wire[HEADER_SIZE + ENTRY_SIZE + 2] = 'a'
+	swap_wire[HEADER_SIZE + ENTRY_FIXED_SIZE + 1 + 2] = 'a'
 	_, val_unsorted := tree_validate(swap_wire[:valid_len])
 	testing.expect_value(t, val_unsorted, Tree_Refusal.Not_Sorted)
 }
@@ -213,7 +222,8 @@ invalid_names_refused :: proc(t: ^testing.T) {
 	// Empty name.
 	testing.expect_value(t, tree_name_validate(nil), Tree_Refusal.Empty_Name)
 
-	// Exact bound 64 bytes succeeds, 65 bytes fails with Name_Too_Long.
+	// Exact bound 255 bytes succeeds, 256 bytes fails with Name_Too_Long.
+	testing.expect_value(t, ENTRY_NAME_CAPACITY, 255)
 	max_name: [ENTRY_NAME_CAPACITY]u8
 	for &b in max_name {
 		b = 'x'
@@ -250,13 +260,13 @@ invalid_names_refused :: proc(t: ^testing.T) {
 		testing.expect_value(t, tree_name_validate(bad), Tree_Refusal.Invalid_Name)
 	}
 
-	// Non-zero trailing padding byte in canonical wire entry must be refused as Invalid_Name.
+	// A byte '/' in a name of the wire bytes is refused as Invalid_Name.
 	entry, _ := tree_entry_make(.Object, "ok", make_sample_hash(9))
 	entries := [1]Tree_Entry{entry}
-	buf: [HEADER_SIZE + ENTRY_SIZE]u8
+	buf: [HEADER_SIZE + ENTRY_SIZE_MOST]u8
 	written, ref := tree_encode(entries[:], buf[:])
 	testing.expect_value(t, ref, Tree_Refusal.None)
-	buf[HEADER_SIZE + 2 + 2] = 0x01 // Byte right after "ok"
+	buf[HEADER_SIZE + 2 + 1] = '/' // The 'k' of "ok".
 	_, pad_ref := tree_validate(buf[:written])
 	testing.expect_value(t, pad_ref, Tree_Refusal.Invalid_Name)
 	_, hash_pad_ref := tree_hash(buf[:written])
@@ -269,8 +279,9 @@ invalid_names_refused :: proc(t: ^testing.T) {
 	_, dirty_ref := tree_encode(dirty_list[:], buf[:])
 	testing.expect_value(t, dirty_ref, Tree_Refusal.Invalid_Name)
 
-	// Wire name_length == 0 and name_length == 65 refused.
-	clean_buf: [HEADER_SIZE + ENTRY_SIZE]u8
+	// Wire name_length == 0 refused; a name_length past the bytes that
+	// follow is Truncated.
+	clean_buf: [HEADER_SIZE + ENTRY_SIZE_MOST]u8
 	_, _ = tree_encode(entries[:], clean_buf[:])
 	zero_len_buf := clean_buf
 	zero_len_buf[HEADER_SIZE + 1] = 0
@@ -278,9 +289,9 @@ invalid_names_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, zero_len_ref, Tree_Refusal.Empty_Name)
 
 	too_long_buf := clean_buf
-	too_long_buf[HEADER_SIZE + 1] = ENTRY_NAME_CAPACITY + 1
-	_, too_long_ref := tree_validate(too_long_buf[:])
-	testing.expect_value(t, too_long_ref, Tree_Refusal.Name_Too_Long)
+	too_long_buf[HEADER_SIZE + 1] = ENTRY_NAME_CAPACITY
+	_, too_long_ref := tree_validate(too_long_buf[:written])
+	testing.expect_value(t, too_long_ref, Tree_Refusal.Truncated)
 }
 
 @(test)
@@ -297,7 +308,7 @@ unknown_entry_kind_and_bad_headers_refused :: proc(t: ^testing.T) {
 
 	entry, _ := tree_entry_make(.Object, "item", make_sample_hash(7))
 	entries := [1]Tree_Entry{entry}
-	buf: [HEADER_SIZE + ENTRY_SIZE]u8
+	buf: [HEADER_SIZE + ENTRY_SIZE_MOST]u8
 	written, ref := tree_encode(entries[:], buf[:])
 	testing.expect_value(t, ref, Tree_Refusal.None)
 
@@ -311,7 +322,7 @@ unknown_entry_kind_and_bad_headers_refused :: proc(t: ^testing.T) {
 
 	// Bad header magic.
 	bad_magic := buf
-	bad_magic[7] = '2'
+	bad_magic[7] = '1' // "MODTREE1": the format of fixed entries before.
 	_, magic_ref := tree_validate(bad_magic[:written])
 	testing.expect_value(t, magic_ref, Tree_Refusal.Bad_Header)
 
@@ -326,7 +337,7 @@ unknown_entry_kind_and_bad_headers_refused :: proc(t: ^testing.T) {
 truncated_and_trailing_bytes_refused :: proc(t: ^testing.T) {
 	entry, _ := tree_entry_make(.Tree, "sub", make_sample_hash(11))
 	entries := [1]Tree_Entry{entry}
-	buf: [HEADER_SIZE + ENTRY_SIZE + 4]u8
+	buf: [HEADER_SIZE + ENTRY_SIZE_MOST + 4]u8
 	written, ref := tree_encode(entries[:], buf[:])
 	testing.expect_value(t, ref, Tree_Refusal.None)
 
@@ -344,7 +355,7 @@ truncated_and_trailing_bytes_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, trail_four, Tree_Refusal.Trailing_Bytes)
 
 	// Encode into too-small buffer fails with Truncated and writes nothing.
-	small_buf: [HEADER_SIZE + ENTRY_SIZE - 1]u8
+	small_buf: [HEADER_SIZE + ENTRY_FIXED_SIZE + len("sub") - 1]u8
 	for &b in small_buf {
 		b = 0xAA
 	}
@@ -361,7 +372,7 @@ deterministic_hash_stability_and_sensitivity :: proc(t: ^testing.T) {
 	e_other_hash, _ := tree_entry_make(.Object, "file", make_sample_hash(43))
 	e_other_name, _ := tree_entry_make(.Object, "filf", make_sample_hash(42))
 
-	buf_obj, buf_tree, buf_other_hash, buf_other_name: [HEADER_SIZE + ENTRY_SIZE]u8
+	buf_obj, buf_tree, buf_other_hash, buf_other_name: [HEADER_SIZE + ENTRY_SIZE_MOST]u8
 	w1, _ := tree_encode([]Tree_Entry{e_obj}, buf_obj[:])
 	w2, _ := tree_encode([]Tree_Entry{e_tree}, buf_tree[:])
 	w3, _ := tree_encode([]Tree_Entry{e_other_hash}, buf_other_hash[:])
@@ -389,4 +400,42 @@ deterministic_hash_stability_and_sensitivity :: proc(t: ^testing.T) {
 	// Domain separation against plain object hash.
 	testing.expect(t, h_obj != blake3.hash(buf_obj[:w1]))
 	testing.expect(t, h_tree != blake3.hash(buf_tree[:w2]))
+}
+
+// Names of 1, 64 and 255 bytes in one tree: each entry has the length of
+// its name, and the walk with tree_entry_next gives each one back.
+@(test)
+entries_of_variable_length :: proc(t: ^testing.T) {
+	names := [3]string{"a", strings.repeat("m", 64, context.temp_allocator), strings.repeat("z", ENTRY_NAME_CAPACITY, context.temp_allocator)}
+	entries: [3]Tree_Entry
+	for name, index in names {
+		entry, refusal := tree_entry_make(.Object, name, make_sample_hash(u8(index)))
+		testing.expect_value(t, refusal, Tree_Refusal.None)
+		entries[index] = entry
+	}
+	_, over := tree_entry_make(.Object, strings.repeat("z", ENTRY_NAME_CAPACITY + 1, context.temp_allocator), {})
+	testing.expect_value(t, over, Tree_Refusal.Name_Too_Long)
+	buf: [HEADER_SIZE + 3 * ENTRY_SIZE_MOST]u8
+	written, refusal := tree_encode(entries[:], buf[:])
+	testing.expect_value(t, refusal, Tree_Refusal.None)
+	testing.expect_value(t, written, HEADER_SIZE + 3 * ENTRY_FIXED_SIZE + 1 + 64 + ENTRY_NAME_CAPACITY)
+	offset := HEADER_SIZE
+	for index in 0 ..< 3 {
+		entry, next, ok := tree_entry_next(buf[:written], offset)
+		testing.expect(t, ok)
+		testing.expect_value(t, tree_entry_name(&entry), names[index])
+		at, at_ok := tree_entry_at(buf[:written], index)
+		testing.expect(t, at_ok && at == entry)
+		offset = next
+	}
+	testing.expect_value(t, offset, written)
+	_, _, past := tree_entry_next(buf[:written], offset)
+	testing.expect(t, !past)
+	_, at_past := tree_entry_at(buf[:written], 3)
+	testing.expect(t, !at_past)
+	_, at_negative := tree_entry_at(buf[:written], -1)
+	testing.expect(t, !at_negative)
+	// A name before the first entry in the order stops the lookup there.
+	_, found, lookup := tree_lookup(buf[:written], "0")
+	testing.expect(t, !found && lookup == .None)
 }

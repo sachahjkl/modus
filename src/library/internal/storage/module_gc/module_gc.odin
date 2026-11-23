@@ -461,8 +461,10 @@ traverse_tree_iterative :: proc "contextless" (
 		state.work_top += 1
 
 		// Inspect every entry of the validated canonical tree.
-		for index in 0 ..< entry_count {
-			entry, ok := tree_hash.tree_entry_at(canonical, index)
+		entry_offset := tree_hash.HEADER_SIZE
+		for _ in 0 ..< entry_count {
+			entry, next_offset, ok := tree_hash.tree_entry_next(canonical, entry_offset)
+			entry_offset = next_offset
 			if !ok {
 				failing^ = item.hash
 				return .Corrupt_Tree

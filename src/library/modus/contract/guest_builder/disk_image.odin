@@ -57,7 +57,7 @@ DISK_ENTRY_SIZE :: 2 + 2 + MAX_MOUNT_PATH_BYTES + 8 + 8 + blake3.HASH_SIZE
 DISK_FLAG_READ_ONLY :: u32(1)
 
 // Maximum encoded byte length of one intermediate directory node during unpack.
-UNPACK_NODE_BUFFER_BYTES :: tree_hash.HEADER_SIZE + MAX_DISK_ENTRIES * tree_hash.ENTRY_SIZE
+UNPACK_NODE_BUFFER_BYTES :: tree_hash.HEADER_SIZE + MAX_DISK_ENTRIES * tree_hash.ENTRY_SIZE_MOST
 
 #assert(DISK_ENTRY_SIZE == 176)
 #assert(DISK_HEADER_SIZE == 64)

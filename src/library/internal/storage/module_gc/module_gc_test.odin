@@ -8,13 +8,16 @@ import "modus:contract/tree_hash"
 // In-memory store for adversarial host tests of module_gc.
 STORE_CAPACITY :: 256
 EXTRA_REF_CAPACITY :: 64
+// The bytes of one object of the mock: the trees of these tests are small,
+// and 256 objects of the largest tree would take 300 MB.
+MOCK_OBJECT_BYTES :: 16 * 1024
 
 Mock_Object :: struct {
 	used:      bool,
 	too_large: bool,
 	hash:      blake3.Hash,
 	len:       int,
-	data:      [tree_hash.MAX_ENCODED_TREE_BYTES]u8,
+	data:      [MOCK_OBJECT_BYTES]u8,
 }
 
 Mock_Extra_Ref :: struct {
@@ -292,7 +295,7 @@ corrupt_cyclic_and_missing_trees_refused_with_zero_deletions :: proc(t: ^testing
 	// 2. Self-referential (cyclic) tree payload stored under its own key -> refused, 0 deletions.
 	cycle_hash := blake3.hash(transmute([]u8)string("cycle-node"))
 	cycle_entry, _ := tree_hash.tree_entry_make(.Tree, "self", cycle_hash)
-	cycle_buf: [tree_hash.HEADER_SIZE + tree_hash.ENTRY_SIZE]u8
+	cycle_buf: [tree_hash.HEADER_SIZE + tree_hash.ENTRY_SIZE_MOST]u8
 	cycle_len, _ := tree_hash.tree_encode([]tree_hash.Tree_Entry{cycle_entry}, cycle_buf[:])
 	mock_put_raw(store, cycle_hash, cycle_buf[:cycle_len])
 	roots_cycle := [1]Root{{kind = .Pinned_Tree, hash = cycle_hash}}

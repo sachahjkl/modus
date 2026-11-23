@@ -95,7 +95,7 @@ folder_tree_hash :: proc(files: []Project_File) -> (hash: blake3.Hash, refusal: 
 			return {}, refusal
 		}
 	}
-	encoded := make([]u8, tree_hash.tree_encoded_size(len(entries)), context.temp_allocator)
+	encoded := make([]u8, tree_hash.tree_encoded_size(entries), context.temp_allocator)
 	written: int
 	written, refusal = tree_hash.tree_encode(entries, encoded)
 	if refusal != .None {

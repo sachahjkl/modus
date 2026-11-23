@@ -37,16 +37,21 @@ import "modus:principals"
 import "modus:random"
 import "modus:system"
 
-// Its tables, about 44 MB, are data of its module, so the tool counts them
-// with the module: the count of names of each block of the disk, the hash
-// index of the roots of the current objects (10 MB), the
-// changes of one commit (8 MB: each block of the disk), the leaves of one
-// version index, the versions of one object for versions(), the nodes of
-// the trees of one commit and of one read, the walks of the trees, the
-// pending blocks of the ranges (4 MB), and the object nodes that one commit
-// copies (7 MB). The working memory: the regions of its connections, and
-// the rest of the 10240 pages that it had before the tool counted.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1829, processes = 1, threads = 1}
+// Its fixed tables are data of its module, so the tool counts them with the
+// module: the changes of one commit (8 MB), the leaves of one version
+// index, the versions of one object for versions(), the nodes of the trees
+// of one commit and of one read, the walks of the trees, the pending blocks
+// of the ranges (4 MB), the object nodes that one commit copies (7 MB), the
+// pages and the heads of the stores of the store table (4 MB), and the
+// buffers of the content trees (7 MB). The tables of the blocks have the
+// size of the disk, so they are working memory (tables_bind): 6 bytes and
+// 3 bits for each block, and 6 MiB for the hash index. The working memory
+// holds them for a disk of 64 GiB (2^24 blocks: 29 184 pages), with the
+// regions of the connections and the rest of the pages that the service
+// had before the tool counted (1 829 pages). A budget that pays less gives
+// the tables of the first blocks of the disk only.
+TABLE_PAGES_OF_64_GIB :: 29184
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1829 + TABLE_PAGES_OF_64_GIB, processes = 1, threads = 1}
 
 // failure gives the result of an export that fails with an answer: the
 // word of the member (answers.Export_Error), which the client reads back.
@@ -228,7 +233,7 @@ place_path :: proc "contextless" (caller: ^Caller, place: i64, error: ^errors.Er
 			errors.fail(error, failure(.Place), .Absent, .Places, argument, place)
 			return {}, false
 		}
-		path.store = {system.name_of(root.stores[store_index].name[:]), root.stores[store_index].limit}
+		path.store = {store_name_of(store_index), store_cell(store_index).limit}
 	}
 	path.depth = item.depth
 	copy(path.names[:], item.path[:path.depth])
@@ -350,7 +355,7 @@ named_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_R
 // - `No_Grant` (-1, the caller has no store; -12, unit Changes, the connection reads only);
 // - `Absent` (-12, unit Places: the place is not a place of this connection; -7, unit Places: its tree was removed or renamed; -7, unit Objects: the name is a tree);
 // - `Over_Limit` (-2, the current objects with the change need more blocks than the limit, with no earlier version kept);
-// - `Empty`, `Too_Long` or `Bad_Byte` (-3, the name has 1 to 64 bytes, no zero byte, no byte '/', and is not "." or "..");
+// - `Empty`, `Too_Long` or `Bad_Byte` (-3, the name has 1 to 255 bytes, no zero byte, no byte '/', and is not "." or "..");
 // - `Too_Long` (-4, the data has more bytes than the call region holds: write a larger object by ranges);
 // - `Full` (-5, no place for one more store, or no free block; with the unit Commit_Blocks, the commit changes more blocks than one commit can);
 // - `Device` (-6; unit Dropped_Writes: the read back after the commit found blocks with other bytes, found their count: the disk did not keep the commit, and the object keeps its state before);
@@ -773,7 +778,7 @@ usage :: proc "c" (result: ^[]Usage) -> i64 {
 			row.objects = i64(store_blocks[index].objects)
 			row.trees = i64(store_blocks[index].trees)
 			row.versions = i64(opened.store_versions[index])
-			row.blocks = i64(root.stores[index].used)
+			row.blocks = i64(store_cell(index).used)
 			row.removing = i64(store_blocks[index].removing)
 		}
 	}
@@ -803,12 +808,13 @@ stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	for part in parts {
 		system.write_part(&writer, part)
 	}
-	for &store, index in root.stores {
+	for index in 0 ..< store_numbers() {
 		// The one rule of the stores that a caller may name: here, the
 		// stores that it sees.
-		if store.name[0] == 0 || !may_name_store(&caller, system.name_of(store.name[:])) {
+		if !store_listed(index) || !may_name_store(&caller, store_name_of(index)) {
 			continue
 		}
+		store := store_cell(index)
 		holders: u64
 		for &connection in service.connections {
 			if connection.calls.head != nil && system.name_of(connection.caller[:]) == system.name_of(store.name[:]) && connection.grant & isolated.CALLER_AMOUNT_MASK != 0 {
@@ -868,7 +874,7 @@ open_store :: proc "c" (store: ^string, error: ^errors.Error_Record) -> i64 {
 	if index < 0 || len(store^) >= len(copied) {
 		return errors.fail(error, failure(.Absent), .Absent, .Stores, 1)
 	}
-	path := Path{store = {system.name_of(root.stores[index].name[:]), root.stores[index].limit}}
+	path := Path{store = {store_name_of(index), store_cell(index).limit}}
 	opened_place, ok := place_new(&caller, &path)
 	if !ok {
 		return errors.fail(error, failure(.Full), .Full, .Places, 0, 0, PLACE_CAPACITY)
@@ -1332,6 +1338,9 @@ disk_open :: proc "contextless" () {
 		return
 	}
 	switch {
+	case mounted.failed && mounted.larger_than_capacity:
+		system.log_fact(.Error, Root_Larger_Than_Tables{used_blocks = blocks_field(opened.capacity)})
+		system.stop(.Failed)
 	case mounted.failed:
 		system.log_fact(.Error, No_Valid_Root{})
 		system.stop(.Failed)
@@ -1352,6 +1361,9 @@ disk_open :: proc "contextless" () {
 		}
 		if mounted.damaged_versions != 0 {
 			system.log_fact(.Warning, Versions_Damaged{versions = mounted.damaged_versions})
+		}
+		if mounted.damaged_store_pages != 0 {
+			system.log_fact(.Warning, Store_Pages_Damaged{pages = mounted.damaged_store_pages})
 		}
 		if mounted.named_twice != 0 || mounted.named_by_two_stores != 0 || mounted.reference_overflow != 0 {
 			faulty: u64
