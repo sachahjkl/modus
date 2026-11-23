@@ -1454,6 +1454,8 @@ The end of the line is a verdict, given only when the counters that it rests on 
 
 A counter that the tool cannot read, or that went backwards over the wait (a thread of QEMU ended), is "unknown", with its reason. These numbers are facts of one failure, never a condition of a test.
 
+On each machine with a TPM device, the log of a step that ends at its bound can hold wait reports: the TPM service and `unlock` write one each 30 s of a long wait of the TPM, "tpm: a wait passed 30 s: ..." or "unlock: the wait for the TPM service passed 30 s, for ...", and a last fact when the wait reaches its own bound. Each names the step of the interface, the TPM command, the locality and the request that waited (`src/md/features/tpm_sealed_machine_key.md`, "A wait that is long"). Read them to see which step of the TPM the machine waited for. They are facts of one failure, never a condition of a test: a wait report fails no step.
+
 Then, while QEMU runs, the first act of the tool, before the picture of the firmware and before it stops QEMU, is to read the state of each processor:
 
 1. Through the machine protocol, it reads the run state of QEMU (`query-status`), stops the machine if it runs, sends `info registers -a` and `info cpus` to the monitor of QEMU (`human-monitor-command`), then lets the machine run again. The stop gives the registers of each processor at one moment.

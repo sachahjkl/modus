@@ -66,6 +66,18 @@ unlock_text_bytes_most :: proc() -> map[string]u32 {
 	most["request"] = u32(max(len(UNLOCK_REQUESTS[0]), len(UNLOCK_REQUESTS[1])))
 	most["how"] = u32(max(len(UNLOCK_HOW_SENTENCES[0]), len(UNLOCK_HOW_SENTENCES[1])))
 	most["pin_refusal"] = u32(pin_refusal_words_most())
+	most["tpm_request"] = u32(tpm_request_words_most())
+	return most
+}
+
+// tpm_request_words_most gives the bytes of the longest words of a request
+// to the TPM service, which the wait facts of unlock and of the TPM service
+// write.
+tpm_request_words_most :: proc() -> int {
+	most := 0
+	for command in tpm_service.Command {
+		most = max(most, len(tpm_service.command_words[command]))
+	}
 	return most
 }
 
@@ -520,6 +532,28 @@ the_facts_of_unlock_write_an_error_record_a_code_and_a_change_refused :: proc(t:
 			for principal_name in names {
 				facts_expect_line(t, name_and_number(t, file, change_types[problem], number, principal_name), line_of_before("unlock: principal ", number, " \"", principal_name, "\" is not changed: ", principals.change_problem_sentences[problem]))
 			}
+		}
+	}
+}
+
+// The wait report and the bound fact of the wait of unlock for the TPM
+// service write their sentence: each request by its words, the seconds of
+// the first two reports, and the milliseconds at 0 and max(u64).
+@(test)
+the_wait_facts_of_unlock_write_their_sentences :: proc(t: ^testing.T) {
+	file, ok := facts_file_of_folder(t, foundation.SYSTEM_MODULE_SOURCES + "unlock")
+	if !ok {
+		return
+	}
+	edges := [2]u64{0, max(u64)}
+	passed_seconds := [2]u64{30, 60}
+	for command in tpm_service.Command {
+		request_words := tpm_service.command_words[command]
+		for edge in edges {
+			for passed in passed_seconds {
+				facts_expect_line(t, fact_test_render(t, file, "unlock", "Tpm_Wait_Passed", {{"passed_seconds", passed}, {"waited_milliseconds", edge}, {"tpm_request", request_words}}), line_of_before("unlock: the wait for the TPM service passed ", passed, " s, for ", request_words, "; waited ", edge, " ms"))
+			}
+			facts_expect_line(t, fact_test_render(t, file, "unlock", "Tpm_Wait_Bound_Reached", {{"waited_milliseconds", edge}, {"tpm_request", request_words}}), line_of_before("unlock: the wait for the TPM service reached its bound after ", edge, " ms, for ", request_words))
 		}
 	}
 }

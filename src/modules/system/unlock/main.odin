@@ -826,7 +826,9 @@ tpm_request :: proc "contextless" (command: tpm_service.Command, values: [7]u64)
 	if !system.send(&tpm_requests.commands, ring.Record{kind = u32(command), tag = tpm_tag, values = values}) {
 		return {}, {}, false
 	}
-	limit := system.time() + TPM_ANSWER_LIMIT
+	reports := tpm_service.wait_reports_start(system.time())
+	limit := reports.started + TPM_ANSWER_LIMIT
+	request_words := tpm_request_field(command)
 	for {
 		wait := system.wait_begin()
 		for record in system.receive(&tpm_requests.completions) {
@@ -849,8 +851,17 @@ tpm_request :: proc "contextless" (command: tpm_service.Command, values: [7]u64)
 			return {}, {}, false
 		}
 		system.wait_records(&wait, &tpm_requests.completions)
-		if system.wait_end(&wait, limit) >= limit {
+		// The wait wakes at its bound or at its next wait report,
+		// whichever comes first: a long wait says what it waits for while
+		// it waits (src/md/features/tpm_sealed_machine_key.md, "A wait that
+		// is long").
+		now := system.wait_end(&wait, min(limit, tpm_service.wait_report_next(reports)))
+		if now >= limit {
+			system.log_fact(.Warning, Tpm_Wait_Bound_Reached{waited_milliseconds = now - reports.started, tpm_request = request_words})
 			return {}, {}, false
+		}
+		if due, passed_seconds := tpm_service.wait_report_due(&reports, now); due {
+			system.log_fact(.Warning, Tpm_Wait_Passed{passed_seconds = passed_seconds, waited_milliseconds = now - reports.started, tpm_request = request_words})
 		}
 	}
 }

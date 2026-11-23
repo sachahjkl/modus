@@ -999,16 +999,15 @@ common_failure_line :: proc(log: string, from: int) -> string {
 	return ""
 }
 
-// common_failure_check says if the machine printed a line of
-// common_failure_texts since the last check, and prints the failure.
-common_failure_check :: proc(machine: ^Machine, log: string) -> bool {
+// common_failure_check gives the line of common_failure_texts that the
+// machine printed since the last check, and prints the failure, or "".
+common_failure_check :: proc(machine: ^Machine, log: string) -> string {
 	line := common_failure_line(log, machine.failure_scanned)
 	machine.failure_scanned = len(log)
-	if line == "" {
-		return false
+	if line != "" {
+		fmt.eprintfln("modustool: test failed: the machine printed \"%s\", which fails every scenario", line)
 	}
-	fmt.eprintfln("modustool: test failed: the machine printed \"%s\", which fails every scenario", line)
-	return true
+	return line
 }
 
 log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := foundation.HANG_BOUND) -> bool {
@@ -1017,7 +1016,7 @@ log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := f
 	start := time.now()
 	for time.since(start) < limit {
 		log := log_read(machine)
-		if common_failure_check(machine, log) {
+		if common_failure_check(machine, log) != "" {
 			return false
 		}
 		if len(log) > machine.seen {
@@ -1044,8 +1043,7 @@ log_wait_or_failure :: proc(machine: ^Machine, text, failure: string, limit: tim
 	start := time.now()
 	for time.since(start) < limit {
 		log := log_read(machine)
-		if common_failure_check(machine, log) {
-			line := common_failure_line(log, 0)
+		if line := common_failure_check(machine, log); line != "" {
 			return line, false
 		}
 		if len(log) > machine.seen {

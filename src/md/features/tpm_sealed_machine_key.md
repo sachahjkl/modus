@@ -36,6 +36,21 @@ The service builds each TPM command itself. No client sends a raw command: a cli
 
 At its start, before it serves the ring, the service reads the count limits of the TPM and writes them on the log. Before the first request with an authorization value, it sets a random lockout authorization value, which nobody keeps, when the TPM has an empty one. No client asks for it, and a boot that seals only the machine key leaves the lockout hierarchy as it found it. The design is in [tpm_sealed_principal_keys.md](tpm_sealed_principal_keys.md), "The lockout authorization value": the count of the wrong passphrases of a named principal needs it.
 
+### A wait that is long
+
+Three waits of the path of a key are long by design: a step of the interface (120 s, `STEP_BOUND_MILLISECONDS`), a whole request of the service (300 s, `REQUEST_BOUND_MILLISECONDS`), and the wait of `unlock` for the answer of the service (600 s, `TPM_ANSWER_LIMIT`). A hardware TPM takes seconds to make a key, and a software TPM on a loaded host takes as long, so the bounds stay. Only a TPM that does not answer reaches them.
+
+A wait that is long must say what it waits for, while it waits. Each of the three waits writes a wait report (`docs/glossary/trusted_boot.md`) each 30 s of waiting (`tpm_service.WAIT_REPORT_INTERVAL_MILLISECONDS`), and a fact at its bound:
+
+- **A wait of the service** names the step of the interface (the locality, the ready state, the end of the command), the code of the TPM command in the buffer, the locality (0, the one that the service uses), the request of the client that runs ("a seal", "a pin read", ..., and "the work of the service itself" for the reads at the start, the lockout check and the orderly shutdown), and the milliseconds waited. Its bound fact names the same parts, and which bound ended it: the bound of the step, or the deadline of the work that runs (a request, a flush, a check).
+- **The wait of `unlock`** names its request to the service and the milliseconds waited. Its bound fact names the request.
+
+The decisions are pure, in the contract package `tpm_service`, with host tests: when a wait report is due (`wait_report_due`, `wait_report_next`), and which bound ended a wait (`wait_bound_reached`). The bound that ended a wait is the earlier of the two; a deadline of the work that passed before the wait started is the earlier one, and a tie names the step. A wait report names a fixed time, its count times 30 s: the second report of a wait reads "60 s" whatever the moment of the check that wrote it. Each check writes one report at most, so a check that comes late writes the reports one after another, and the report of 60 s always comes, after the report of 30 s. The largest value of the clock means "never": a report whose time would reach it is not written.
+
+The wait reports are facts of a failure, never a condition of a test. A step of a machine test that ends at its bound shows them in the log, so the reader sees which step of the interface, which TPM command and which request waited. The tool does not fail a machine on a wait report: a bound of 60 s is a guess at the speed of a software TPM on one host, and the rule of the tests forbids a bound tuned to the speed of the work (`docs/TOOLS.md`, "The bounds of the tests").
+
+Refused: a shorter bound. It would refuse a slow TPM that works. Refused: a failure of the test at the report of 60 s, for the same reason. Refused: a report with the time that the clock gives at the check. Its number changes with the load of the host, and no test can name it.
+
 ### The seal
 
 `Seal` runs these commands of TPM 2.0:

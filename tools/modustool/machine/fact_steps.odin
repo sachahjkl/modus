@@ -77,7 +77,7 @@ fact_step_run :: proc(machine: ^Machine, index: int, step: Step) -> bool {
 	is_checked := false
 	for start := time.now(); time.since(start) < foundation.HANG_BOUND; {
 		log := log_read(machine)
-		if common_failure_check(machine, log) {
+		if common_failure_check(machine, log) != "" {
 			return false
 		}
 		if machine.fact_catalog != nil {
