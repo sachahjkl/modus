@@ -1,6 +1,6 @@
 # The public object cache
 
-A host on the internet runs `modustool cache-serve` over a folder of objects and realisations, so that a machine of `modus` takes the output of a build that another machine made. The same program answers a page and a status record over HTTP, on its own address, for a reader who finds the host and does not know `modus`. The terms Object cache, Realisation and Substitution policy are in [`docs/glossary/code.md`](../../../docs/glossary/code.md); the protocol is [../features/recipes.md](../features/recipes.md), "The object cache and its protocol".
+A host on the internet runs `modustool cache-serve` over a folder of objects and realisations, so that a machine of `modus` takes the output of a build that another machine made. Each release fills it with the files of its boot image and one signed realisation ([cache_publication.md](cache_publication.md)). The same program answers a page and a status record over HTTP, on its own address, for a reader who finds the host and does not know `modus`. The terms Object cache, Realisation and Substitution policy are in [`docs/glossary/code.md`](../../../docs/glossary/code.md); the protocol is [../features/recipes.md](../features/recipes.md), "The object cache and its protocol".
 
 ## Purpose
 

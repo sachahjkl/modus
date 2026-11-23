@@ -70,7 +70,7 @@ firmware_signing_key_find :: proc() -> (key: Firmware_Signing_Key, ok: bool) {
 		fmt.eprintfln("modustool: %s is inside the repository: the private key of the publisher of the system stays outside it", key.key_path)
 		return {}, false
 	}
-	if !private_key_file_check(key.key_path) {
+	if !foundation.private_key_file_check(key.key_path) {
 		return {}, false
 	}
 	return key, true
@@ -97,7 +97,7 @@ firmware_signing_key_new :: proc(folder: string, test: bool) -> bool {
 			fmt.eprintfln("modustool: cannot make %s private: %v", key_path, err)
 			return false
 		}
-		private_key_file_check(key_path) or_return
+		foundation.private_key_file_check(key_path) or_return
 	}
 	fmt.printfln("modustool: wrote %s and %s: the firmware signing key, for Secure Boot", key_path, certificate_path)
 	return true

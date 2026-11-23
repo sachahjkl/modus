@@ -212,6 +212,16 @@ The design: `src/md/infrastructure/release_image.md`.
 
 Do not use: release key, download key, GPG key.
 
+### Cache signing key
+
+The cache signing key is the Ed25519 key pair of the publisher of the system whose private key signs its uploads and its realisations on an object cache.
+
+It answers one question: did the publisher of the system put this realisation on the object cache? It signs no system and no release, so its leak lets a thief put objects and realisations, which a principal trusts only when its substitution policy names the key. Its seed is `cache_signing_key` in the key folder, 64 hexadecimal digits; its public key is `resources/keys/cache_signing_key.public`, which the public object cache authorises. It is a secret of the GitHub environment `cache` alone, and only the job `cache` of the release workflow holds it.
+
+The design: `src/md/infrastructure/cache_publication.md`.
+
+Do not use: cache key, upload key, the release signing key for an object cache.
+
 ### Checksum list
 
 The checksum list is the file `SHA256SUMS.txt` of a release: one line for each published file, its SHA-256 in 64 lowercase hexadecimal digits, two spaces and its name.

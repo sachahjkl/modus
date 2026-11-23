@@ -9,7 +9,6 @@ import "core:fmt"
 import "core:mem"
 import "core:os"
 import "core:strings"
-import "core:sys/linux"
 import crypto "modus:cryptography/compatibility_crypto"
 import "modus:cryptography/ed25519"
 import "modus:cryptography/sha2"
@@ -122,7 +121,7 @@ signing_key_read :: proc() -> (key: Signing_Key, ok: bool) {
 	} else if path_inside_repository(path) {
 		fmt.eprintfln("modustool: %s names %s, inside the repository: the private key of the publisher of the system stays outside it", SIGNING_KEY_VARIABLE, path)
 		return
-	} else if !private_key_file_check(path) {
+	} else if !foundation.private_key_file_check(path) {
 		return
 	}
 	key.path = path
@@ -245,29 +244,6 @@ path_inside_repository :: proc(path: string) -> bool {
 		return true // Not known: refused.
 	}
 	return absolute == repository || strings.has_prefix(absolute, strings.concatenate({repository, "/"}, context.temp_allocator))
-}
-
-// private_key_file_check refuses a private key file that another user owns,
-// or that the group or the others can read, write or run: such a key can be
-// copied by someone who is not the publisher of the system.
-private_key_file_check :: proc(path: string) -> bool {
-	information, stat_error := os.stat(path, context.temp_allocator)
-	if stat_error != nil {
-		fmt.eprintfln("modustool: cannot read the mode of %s: %v", path, stat_error)
-		return false
-	}
-	shared := os.Permissions{.Read_Group, .Write_Group, .Execute_Group, .Read_Other, .Write_Other, .Execute_Other}
-	if information.mode & shared != {} {
-		fmt.eprintfln("modustool: the private key %s can be read by other users of this computer: run `chmod 600 %s`, then make a new key if another user can have copied it", path, path)
-		return false
-	}
-	record: linux.Stat
-	path_text := strings.clone_to_cstring(path, context.temp_allocator)
-	if linux.stat(path_text, &record) != .NONE || record.uid != linux.getuid() {
-		fmt.eprintfln("modustool: the private key %s belongs to another user", path)
-		return false
-	}
-	return true
 }
 
 // file_create_new writes a new file with this mode. It refuses a path that
@@ -613,6 +589,26 @@ measure_expected :: proc(description: []u8) -> (value: [32]u8) {
 // uses. `key test-firmware-new` writes the test firmware signing key of the
 // repository.
 run_key :: proc(args: []string) -> int {
+	// The cache signing key alone: the job that uploads to an object cache
+	// holds no other key.
+	if len(args) >= 2 && args[1] == "cache" || len(args) == 2 && args[0] == "show" && args[1] == "cache" {
+		switch {
+		case len(args) == 2 && args[0] == "show":
+			return cache_signing_key_show() ? 0 : foundation.EXIT_FAILURE
+		case len(args) == 3 && args[0] == "new":
+			if path_inside_repository(args[2]) {
+				fmt.eprintfln("modustool: %s is inside the repository: a private key stays outside it", args[2])
+				return foundation.EXIT_USAGE
+			}
+			return cache_signing_key_new(args[2]) ? 0 : foundation.EXIT_FAILURE
+		case len(args) == 3 && args[0] == "write":
+			return cache_signing_key_write(args[2]) ? 0 : foundation.EXIT_FAILURE
+		}
+		// `key new cache` with no folder must not become `key new` of a
+		// folder named cache.
+		fmt.eprintln("modustool: key new cache <folder outside the repository> | key write cache <folder outside the repository> | key show cache")
+		return foundation.EXIT_USAGE
+	}
 	if len(args) == 1 && args[0] == "show" {
 		key, ok := signing_key_read()
 		if !ok {
@@ -636,7 +632,7 @@ run_key :: proc(args: []string) -> int {
 		return key_folder_write(args[1]) ? 0 : foundation.EXIT_FAILURE
 	}
 	if len(args) != 2 || args[0] != "new" {
-		fmt.eprintln("modustool: key new <folder outside the repository> | key write <folder outside the repository> | key show | key test-firmware-new")
+		fmt.eprintln("modustool: key new <folder outside the repository> | key write <folder outside the repository> | key show | key new cache <folder> | key write cache <folder> | key show cache | key test-firmware-new")
 		return foundation.EXIT_USAGE
 	}
 	folder := args[1]
@@ -650,7 +646,8 @@ run_key :: proc(args: []string) -> int {
 	firmware_certificate_path := strings.concatenate({folder, "/", FIRMWARE_CERTIFICATE_FILE_NAME}, context.temp_allocator)
 	release_key_path := strings.concatenate({folder, "/", RELEASE_SIGNING_KEY_FILE_NAME}, context.temp_allocator)
 	release_public_path := strings.concatenate({release_key_path, SIGNING_KEY_PUBLIC_SUFFIX}, context.temp_allocator)
-	if os.exists(private_path) || os.exists(public_path) || os.exists(firmware_key_path) || os.exists(firmware_certificate_path) || os.exists(release_key_path) || os.exists(release_public_path) {
+	cache_key_path := strings.concatenate({folder, "/", foundation.CACHE_SIGNING_KEY_FILE_NAME}, context.temp_allocator)
+	if os.exists(private_path) || os.exists(public_path) || os.exists(firmware_key_path) || os.exists(firmware_certificate_path) || os.exists(release_key_path) || os.exists(release_public_path) || os.exists(cache_key_path) {
 		fmt.eprintfln("modustool: %s already holds a signing key: a new key does not replace one", folder)
 		return foundation.EXIT_FAILURE
 	}
@@ -693,7 +690,7 @@ run_key :: proc(args: []string) -> int {
 	public_digits := system_description.hexadecimal(public)
 	private_text := strings.concatenate({string(seed_digits[:]), "\n"}, context.temp_allocator)
 	defer crypto.zero_explicit(raw_data(private_text), len(private_text))
-	if !file_create_new(private_path, transmute([]u8)private_text, 0o600) || !private_key_file_check(private_path) {
+	if !file_create_new(private_path, transmute([]u8)private_text, 0o600) || !foundation.private_key_file_check(private_path) {
 		return foundation.EXIT_FAILURE
 	}
 	if !file_create_new(public_path, transmute([]u8)strings.concatenate({string(public_digits[:]), "\n"}, context.temp_allocator), 0o644) {
@@ -708,6 +705,11 @@ run_key :: proc(args: []string) -> int {
 	// The release signing key, for the files of a release, in the same
 	// folder.
 	if !release_signing_key_new(folder) {
+		return foundation.EXIT_FAILURE
+	}
+	// The cache signing key, for the uploads to an object cache, in the same
+	// folder.
+	if !cache_signing_key_new(folder) {
 		return foundation.EXIT_FAILURE
 	}
 	fmt.printfln("modustool: keep a copy of %s on a second medium, offline; then set %s=%s for each build (docs/TRUSTED_BOOT.md, \"The signing key\")", private_path, SIGNING_KEY_VARIABLE, private_path)

@@ -869,7 +869,7 @@ release_signing_key_read :: proc() -> (seed: [RELEASE_KEY_SIZE]u8, ok: bool) {
 		fmt.eprintfln("modustool: release: the key folder has no release signing key %s: `modustool key new <folder>` writes one in a new key folder", path)
 		return
 	}
-	if !private_key_file_check(path) {
+	if !foundation.private_key_file_check(path) {
 		return
 	}
 	data := foundation.read_file(path) or_return
@@ -1081,7 +1081,7 @@ release_signing_key_new :: proc(folder: string) -> bool {
 	public_key := public_key_of_seed(seed[:]) or_return
 	seed_text := strings.concatenate({base64url_text(seed[:]), "\n"}, context.temp_allocator)
 	defer crypto.zero_explicit(raw_data(seed_text), len(seed_text))
-	if !file_create_new(private_path, transmute([]u8)seed_text, 0o600) || !private_key_file_check(private_path) {
+	if !file_create_new(private_path, transmute([]u8)seed_text, 0o600) || !foundation.private_key_file_check(private_path) {
 		return false
 	}
 	public_text := base64url_text(public_key[:])
@@ -1185,7 +1185,7 @@ key_folder_write :: proc(folder: string) -> bool {
 		if written {
 			append(&written_paths, path)
 		}
-		if !written || (key_file.mode == 0o600 && !private_key_file_check(path)) {
+		if !written || (key_file.mode == 0o600 && !foundation.private_key_file_check(path)) {
 			return false
 		}
 	}
