@@ -20,14 +20,18 @@ import "modustool:resources"
 //   2. The object has one changed byte: the root service refuses it by
 //      its hash, maps nothing, and interface_font says that no set is
 //      mapped: the box stays, and nothing faults.
+//   3. The object is one block past SCRIPT_FONTS_BYTES_LIMIT (64 MiB): the
+//      root service refuses it by its size, before a byte of it is lent,
+//      and maps nothing.
 //
 // The main machine holds no set: its interface_font says so
 // (main_scenario.odin).
 
 TEST_OUTPUT_SCRIPT_FONTS :: foundation.BUILD_FOLDER + "/test_output_script_fonts_%d.txt"
 TEST_DISK_SCRIPT_FONTS :: foundation.BUILD_FOLDER + "/test_disk_script_fonts.img"
-// The set of today is 35.8 MB: the disk holds it, the blocks of its tree
-// and room.
+// The set of today is about 40 MB, and the object of the third machine 64
+// MiB and one block: the disk holds either, the blocks of its tree and
+// room.
 SCRIPT_FONTS_DISK_SIZE :: 96 << 20
 
 @(private = "file")
@@ -62,7 +66,7 @@ script_fonts_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		{kind = .Wait, text = fmt.tprintf("root: the boot image names the script font set %s", digits), any_order = true},
 		{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 		{kind = .Wait, text = fmt.tprintf("root: reads the script font set %s from the store script_fonts of the machine", digits)},
-		{kind = .Wait, text = "7 fonts) is checked: each process that starts from now maps it, read-only", fails_on = "root: the script font set was not read"},
+		{kind = .Wait, text = "15 fonts) is checked: each process that starts from now maps it, read-only", fails_on = "root: the script font set was not read"},
 		{kind = .Launch, text = "interface_font"},
 		{kind = .Wait, text = "interface_font: 2 characters that no font of the chain has draw the replacement glyph: as it must", fails_on = "interface_font: the fallback chain of the interface is wrong: "},
 		{kind = .Wait, text = "interface_font: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs, an emoji and a geometric shape draws ", fails_on = "interface_font: the script font set is mapped, and the character "},
@@ -96,6 +100,23 @@ script_fonts_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	}
 	machine_test(part, refused[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_SCRIPT_FONTS, 2), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_DISK_SCRIPT_FONTS}) or_return
 	foundation.test_passed_print("a script font set with one changed byte was refused by its hash: no set was mapped, and interface_font drew the replacement glyph for those scripts")
+
+	// 3. An object one block past the bound of a set: refused by its size.
+	large := make([]u8, font_outlines.SCRIPT_FONTS_BYTES_LIMIT + 4096)
+	defer delete(large)
+	script_fonts_disk_write(large) or_return
+	too_large := [?]Step {
+		{kind = .Wait, text = "storage: ok, generation 2: 1 stores, 1 objects", any_order = true},
+		{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
+		{kind = .Wait, text = fmt.tprintf("root: reads the script font set %s from the store script_fonts of the machine", digits)},
+		{kind = .Wait, text = "root: refused the script font set: the object has ", fails_on = " fonts) is checked: each process that starts from now maps it"},
+		{kind = .Wait, text = "root: the script font set was not read: status "},
+		{kind = .Front, text = "console"},
+		{kind = .Type, text = "shutdown()"},
+		{kind = .Wait, text = "kernel: the machine stops with code 0"},
+	}
+	machine_test(part, too_large[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_SCRIPT_FONTS, 3), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_DISK_SCRIPT_FONTS}) or_return
+	foundation.test_passed_print("an object of %d bytes, one block past the bound of a script font set, was refused by its size: no set was mapped", len(large))
 	return true
 }
 

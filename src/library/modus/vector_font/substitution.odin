@@ -155,8 +155,87 @@ layout_has_script :: proc "contextless" (font: ^Font_File, place: Table, script:
 // layout_lookups finds the lookups of a feature in the default language
 // system of a script (else of a second script) of a table GSUB or GPOS: the
 // two tables share the lists of scripts, features and lookups.
-// .No_Feature when the font has no such table, script or feature.
+// .No_Feature when the font has no such table, script or feature. A font
+// with a cache (layout_cache_fill) answers from it, with no walk.
 layout_lookups :: proc "contextless" (font: ^Font_File, place: Table, script, other_script, tag: Feature_Tag, out: ^Layout_Lookups) -> (problem: Font_Problem) {
+	if cached, found := layout_cache_lookups(font, place, script, other_script, tag, out); found {
+		return cached
+	}
+	return layout_lookups_walk(font, place, script, other_script, tag, out)
+}
+
+// The records of the variations of the features that a walk reads: the
+// first record whose conditions hold is the one that applies.
+FEATURE_VARIATION_LIMIT :: 64
+
+// feature_variation_of gives the feature table that the variations of the
+// features of a table GSUB or GPOS 1.1 put in the place of a feature, at
+// the default coordinates of the font, which the system draws: the first
+// record whose conditions hold (a condition of format 1 holds when its
+// range holds 0; a condition of another format does not hold), and its
+// substitution of that feature, if it has one.
+@(private)
+feature_variation_of :: proc "contextless" (table: []u8, feature_index: int) -> (feature: []u8, substituted: bool) {
+	variations_offset := read_u32(table, 10) or_return
+	if variations_offset == 0 {
+		return nil, false
+	}
+	variations := table[variations_offset:] if variations_offset < len(table) else nil
+	record_count := read_u32(variations, 4) or_return
+	for record in 0 ..< min(record_count, FEATURE_VARIATION_LIMIT) {
+		condition_set_offset := read_u32(variations, 8 + 8 * record) or_return
+		substitution_offset := read_u32(variations, 12 + 8 * record) or_return
+		holds := true
+		if condition_set_offset != 0 {
+			if condition_set_offset >= len(variations) {
+				return nil, false
+			}
+			condition_set := variations[condition_set_offset:]
+			condition_count := read_u16(condition_set, 0) or_return
+			for condition_number in 0 ..< min(condition_count, FEATURE_VARIATION_LIMIT) {
+				condition_offset := read_u32(condition_set, 2 + 4 * condition_number) or_return
+				if condition_offset >= len(condition_set) {
+					return nil, false
+				}
+				condition := condition_set[condition_offset:]
+				format := read_u16(condition, 0) or_return
+				low := read_i16(condition, 4) or_return
+				high := read_i16(condition, 6) or_return
+				if format != 1 || low > 0 || high < 0 {
+					holds = false
+					break
+				}
+			}
+		}
+		if !holds {
+			continue
+		}
+		// The first record that holds applies, whether or not it names this
+		// feature.
+		if substitution_offset == 0 || substitution_offset >= len(variations) {
+			return nil, false
+		}
+		substitution := variations[substitution_offset:]
+		count := read_u16(substitution, 4) or_return
+		for number in 0 ..< count {
+			index := read_u16(substitution, 6 + 6 * number) or_return
+			if index != feature_index {
+				continue
+			}
+			alternate_offset := read_u32(substitution, 8 + 6 * number) or_return
+			if alternate_offset == 0 || alternate_offset >= len(substitution) {
+				return nil, false
+			}
+			return substitution[alternate_offset:], true
+		}
+		return nil, false
+	}
+	return nil, false
+}
+
+// layout_lookups_walk is layout_lookups by a walk of the table.
+@(private)
+layout_lookups_walk :: proc "contextless" (font: ^Font_File, place: Table, script, other_script, tag: Feature_Tag, out: ^Layout_Lookups) -> (problem: Font_Problem) {
 	out.count = 0
 	if place.length == 0 {
 		return .No_Feature
@@ -247,6 +326,11 @@ layout_lookups :: proc "contextless" (font: ^Font_File, place: Table, script, ot
 			break
 		}
 		feature, feature_ok := part_at(feature_list, feature_offset)
+		if minor == 1 {
+			if alternate, substituted := feature_variation_of(table, feature_index); substituted {
+				feature, feature_ok = alternate, true
+			}
+		}
 		lookups_of_feature, lookups_read := read_u16(feature, 2)
 		if !feature_ok || !lookups_read {
 			return .Too_Short

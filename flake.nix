@@ -196,6 +196,14 @@
         "noto_sans_cjk=${pkgs.noto-fonts-cjk-sans}/share/fonts/opentype/noto-cjk/NotoSansCJK-VF.otf.ttc"
         "noto_sans_thai=${pkgs.noto-fonts}/share/fonts/noto/NotoSansThai.ttf"
         "noto_sans_devanagari=${pkgs.noto-fonts}/share/fonts/noto/NotoSansDevanagari.ttf"
+        "noto_sans_bengali=${pkgs.noto-fonts}/share/fonts/noto/NotoSansBengali.ttf"
+        "noto_sans_gurmukhi=${pkgs.noto-fonts}/share/fonts/noto/NotoSansGurmukhi.ttf"
+        "noto_sans_gujarati=${pkgs.noto-fonts}/share/fonts/noto/NotoSansGujarati.ttf"
+        "noto_sans_oriya=${pkgs.noto-fonts}/share/fonts/noto/NotoSansOriya.ttf"
+        "noto_sans_tamil=${pkgs.noto-fonts}/share/fonts/noto/NotoSansTamil.ttf"
+        "noto_sans_telugu=${pkgs.noto-fonts}/share/fonts/noto/NotoSansTelugu.ttf"
+        "noto_sans_kannada=${pkgs.noto-fonts}/share/fonts/noto/NotoSansKannada.ttf"
+        "noto_sans_malayalam=${pkgs.noto-fonts}/share/fonts/noto/NotoSansMalayalam.ttf"
       ];
       # The Unicode Character Database, for the command "unicode_tables"
       # (src/md/features/written_shaping.md).

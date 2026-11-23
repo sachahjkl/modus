@@ -62,6 +62,12 @@ CALL_STACK_BOUND :: 16 << 10
 // order of a line and the open of a font take the rest
 // (one_call_stays_under_its_stack_bound measures the whole call).
 #assert(size_of(Call_Fonts) <= 10 << 10)
+// The records of the deepest path, with the fonts and the outlines of a
+// call, leave an eighth of the bound, 2 KiB, for the other locals and the
+// frames of the calls: the freestanding build runs on no host, so this is
+// its bound; the host measures the whole call at 14 439 bytes
+// (one_call_stays_under_its_stack_bound).
+#assert(size_of(Call_Fonts) + size_of(font_outlines.Outlines) + text_rendering.SHAPE_STACK_RECORDS_BYTES <= CALL_STACK_BOUND - CALL_STACK_BOUND / 8)
 
 // face_and_size_check refuses a face (argument 2) and a text size
 // (argument 3) with an error record.

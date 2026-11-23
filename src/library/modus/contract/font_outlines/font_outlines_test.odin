@@ -32,7 +32,7 @@ the_writer_refuses_a_wrong_list :: proc(t: ^testing.T) {
 	bytes := ([^]u8)(raw_data(out[:]))[:size_of(out)]
 	file := first_file[:]
 	too_many: [FONT_LIMIT + 1]Font_Input
-	names := [FONT_LIMIT + 1]string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}
+	names := [FONT_LIMIT + 1]string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q"}
 	for &font, index in too_many {
 		font = {names[index], file}
 	}

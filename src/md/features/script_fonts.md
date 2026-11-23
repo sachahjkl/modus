@@ -27,10 +27,18 @@ This design gives the system fonts past the boot image, a fallback chain for eac
 | Noto Sans CJK | `noto_sans_cjk` | Han, kana, Hangul, the fullwidth forms | `CFF2`, a collection, face 0 | 32 682 580 |
 | Noto Sans Thai | `noto_sans_thai` | Thai | `glyf` | 94 872 |
 | Noto Sans Devanagari | `noto_sans_devanagari` | Devanagari | `glyf` | 565 836 |
+| Noto Sans Bengali | `noto_sans_bengali` | Bengali | `glyf` | 372 212 |
+| Noto Sans Gurmukhi | `noto_sans_gurmukhi` | Gurmukhi | `glyf` | 154 552 |
+| Noto Sans Gujarati | `noto_sans_gujarati` | Gujarati | `glyf` | 574 628 |
+| Noto Sans Oriya | `noto_sans_oriya` | Oriya | `glyf` | 533 592 |
+| Noto Sans Tamil | `noto_sans_tamil` | Tamil | `glyf` | 224 256 |
+| Noto Sans Telugu | `noto_sans_telugu` | Telugu | `glyf` | 787 664 |
+| Noto Sans Kannada | `noto_sans_kannada` | Kannada | `glyf` | 557 872 |
+| Noto Sans Malayalam | `noto_sans_malayalam` | Malayalam | `glyf` | 392 048 |
 
-The set is 36 433 492 bytes.
+The set is 40 030 968 bytes, 15 fonts (`font_outlines.FONT_LIMIT` is 16).
 
-**The plan names it; the boot image names the default.** The plan of principal 0 names the set by its hash, in one entry of the kind `Script_Fonts` (`plans_recipes.plan_entry_make_script_fonts`), as the settings study plans a typed row of a policy of the machine (`src/md/features/module_settings.md` of the branch of that study, "Machine policy: the plan holds it"): a row that names a data object by its hash, which the evaluation of a declaration fills when that study is built. The entry travels to the core with the roles of the plan (`Plan_Roles_Set.script_fonts`), so the core takes the set and the roles whole, or refuses both. With no entry, the resource `script_fonts_name` of the boot image names the set: the 32 bytes of its hash, which the build writes from the set that it made (`modustool script_fonts`), and which the signed system description lists as each resource. A plan of another principal that names a set is refused (`Machine_Only`): one set serves the machine.
+**The plan names it; the boot image names the default.** The plan of principal 0 names the set by its hash, in one entry of the kind `Script_Fonts` (`plans_recipes.plan_entry_make_script_fonts`), as the settings study plans a typed row of a policy of the machine (`src/md/features/module_settings.md` of the branch of that study, "Machine policy: the plan holds it"): a row that names a data object by its hash, which the evaluation of a declaration fills when that study is built. The entry travels to the core with the roles of the plan (`Plan_Roles_Set.script_fonts`), so the core takes the set and the roles whole, or refuses both. With no entry, the resource `script_fonts_name` of the boot image names the set, and a plan with no entry after a plan that named one gives the set back to the boot image: before the read, at once; after it, at the next start (`role_policy.script_fonts_plan_choice`, whose host test makes that rollback). The resource is the 32 bytes of its hash, which the build writes from the set that it made (`modustool script_fonts`), and which the signed system description lists as each resource. A plan of another principal that names a set is refused (`Machine_Only`): one set serves the machine.
 
 **The root service reads it once, when the machine is usable.** The object is `script_fonts` of the private store `script_fonts` of the machine. When the start policy says that the machine is usable, the root service reads it through the delegated service `disk_processes`, with a load of the kind `Script_Fonts` (`root_delegation.Load_Kind`): one object of at most `SCRIPT_FONTS_BYTES_LIMIT` (64 MiB) bytes, no import scan, and no start. The root service takes the memory back from the service, checks the BLAKE3 hash of the bytes against the named hash on its own mapping, then validates their form (`font_outlines.validate`), and keeps them. It maps them read-only at the fixed range `Script_Fonts`, beside the font outlines, in each process that gets the font outlines and starts after that. A process opens the set once (`display.fallback_load`, `text_rendering.script_fonts_open`).
 
@@ -72,7 +80,7 @@ A glyph of a script font is drawn in the frame of the first font of its face, as
 
 ## Subtle points
 
-- **The key of the private glyph cache holds the font in 4 bits.** The five fonts of the boot image and the seven script fonts are twelve members of `Outline_Font`, of the sixteen that the key holds.
+- **The key of the private glyph cache holds the font in 5 bits**, and so does the direct glyph of a placed glyph (bits 16 to 20). The five fonts of the boot image and the fifteen script fonts are twenty members of `Outline_Font`, of the thirty-two that 5 bits hold. 4 bits held sixteen, which the scripts of India passed; the key is 64 bits and uses 43, and the direct glyph stays far below `DIRECT_GLYPH_FIRST` plus 2^21.
 - **The glyph index is 16 bits in the key.** Noto Sans CJK has 65 535 glyphs, the most that a font holds.
 - **A collection.** The set holds the whole file of Noto Sans CJK, and the open takes its face 0, the Japanese face, which holds the ideographs of the four languages in their Japanese forms. A face for each language waits for a principal who needs it.
 - **The library module `text_rendering`** opens the font outlines of its caller only: a call places a character of a script font as the replacement glyph. A font of the boot image is TrueType: a font with CFF outlines in the place of one is refused, so a call never runs the reader of CFF, whose machine of 4 KiB does not fit beside the font set in the 16 KiB of a call. The set of a call has room for the five fonts of the boot image only (`Font_Set.room`): a script font added to the set costs a call no stack.

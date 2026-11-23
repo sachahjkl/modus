@@ -21,7 +21,7 @@ SCRIPT_FONTS_NAME_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/script_fonts_name.bin"
 
 // The fonts of the set, by the names that text_rendering.outline_font_name
 // gives.
-SCRIPT_FONT_NAMES :: [?]string{"noto_sans_hebrew", "noto_sans_arabic", "noto_sans_symbols_2", "noto_emoji", "noto_sans_cjk", "noto_sans_thai", "noto_sans_devanagari"}
+SCRIPT_FONT_NAMES :: [?]string{"noto_sans_hebrew", "noto_sans_arabic", "noto_sans_symbols_2", "noto_emoji", "noto_sans_cjk", "noto_sans_thai", "noto_sans_devanagari", "noto_sans_bengali", "noto_sans_gurmukhi", "noto_sans_gujarati", "noto_sans_oriya", "noto_sans_tamil", "noto_sans_telugu", "noto_sans_kannada", "noto_sans_malayalam"}
 
 // script_fonts_write reads the fonts of SCRIPT_FONT_SOURCES, writes the set
 // to SCRIPT_FONTS_OUTPUT and gives its bytes, in temporary memory, and its

@@ -34,7 +34,10 @@ RECORDS_OFFSET :: HEADER_SIZE // The records follow the header.
 // of the boot image, so each subset of resources/fonts has room
 // (paper_mono_semibold has 19 bytes).
 NAME_SIZE :: 32
-FONT_LIMIT :: 8 // The most fonts of one resource.
+// The most fonts of one resource: the script font set holds fifteen. A
+// valid resource keeps its records in Outlines, on the stack of a call of
+// the library module text_rendering: 16 records are 1 280 bytes.
+FONT_LIMIT :: 16
 RESOURCE_NAME :: "font_outlines" // The name of the resource in the boot image.
 ADDRESS :: fixed_addresses.FONT_OUTLINES_ADDRESS // Where a process maps it, read-only.
 

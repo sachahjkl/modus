@@ -167,6 +167,64 @@ Indic_Position_Range :: struct {
 	position:    Indic_Position,
 }
 
+// A paired bracket (BidiBrackets.txt): the bracket, the bracket that pairs
+// with it, and if it opens.
+Bracket_Pair :: struct {
+	character, pair: rune,
+	opening:         bool,
+}
+
+// bracket_of gives the bracket that pairs with a character, and if the
+// character opens; found is false for a character that is no paired
+// bracket. U+2329 and U+232A are canonically U+3008 and U+3009: each takes
+// the pair of the other form, so that either form closes the other
+// (UAX #9, BD16).
+bracket_of :: proc "contextless" (character: rune) -> (pair: rune, opening, found: bool) {
+	wanted := character
+	switch character {
+	case 0x2329:
+		wanted = 0x3008
+	case 0x232A:
+		wanted = 0x3009
+	}
+	low, high := 0, len(bracket_pairs)
+	for low < high {
+		middle := low + (high - low) / 2
+		switch {
+		case wanted < bracket_pairs[middle].character:
+			high = middle
+		case wanted > bracket_pairs[middle].character:
+			low = middle + 1
+		case:
+			return bracket_pairs[middle].pair, bracket_pairs[middle].opening, true
+		}
+	}
+	return 0, false, false
+}
+
+// A canonical decomposition of two characters of the scripts of India.
+Indic_Decomposition :: struct {
+	character, first, second: rune,
+}
+
+// indic_decomposition_of gives the canonical decomposition of a character
+// of the scripts of India into two characters, when it has one.
+indic_decomposition_of :: proc "contextless" (character: rune) -> (first, second: rune, found: bool) {
+	low, high := 0, len(indic_decompositions)
+	for low < high {
+		middle := low + (high - low) / 2
+		switch {
+		case character < indic_decompositions[middle].character:
+			high = middle
+		case character > indic_decompositions[middle].character:
+			low = middle + 1
+		case:
+			return indic_decompositions[middle].first, indic_decompositions[middle].second, true
+		}
+	}
+	return 0, 0, false
+}
+
 indic_category_of :: proc "contextless" (character: rune) -> Indic_Category {
 	if index := range_index(character, indic_syllabic_ranges[:]); index >= 0 {
 		return indic_syllabic_ranges[index].category

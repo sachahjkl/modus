@@ -111,6 +111,15 @@ Outline_Font :: enum u8 {
 	Noto_Sans_CJK, // The ideographs, the kana and Hangul: CFF2 outlines, a collection.
 	Noto_Sans_Thai, // Thai, whose marks its GPOS places.
 	Noto_Sans_Devanagari, // Devanagari, which the engine of the lookups shapes (indic.odin).
+	// The other scripts of India, which the same shaper shapes.
+	Noto_Sans_Bengali,
+	Noto_Sans_Gurmukhi,
+	Noto_Sans_Gujarati,
+	Noto_Sans_Oriya,
+	Noto_Sans_Tamil,
+	Noto_Sans_Telugu,
+	Noto_Sans_Kannada,
+	Noto_Sans_Malayalam,
 }
 // The fonts of the font outlines of the boot image, and the fonts of the
 // script font set.
@@ -118,10 +127,12 @@ BOOT_FONTS :: Outline_Fonts{.B612, .B612_Bold, .Paper_Mono, .Paper_Mono_Semibold
 // The fonts of the boot image: the room of a set that opens them only
 // (font_set_test checks it against BOOT_FONTS).
 BOOT_FONT_COUNT :: 5
-SCRIPT_FONTS :: Outline_Fonts{.Noto_Sans_Hebrew, .Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Emoji, .Noto_Sans_CJK, .Noto_Sans_Thai, .Noto_Sans_Devanagari}
+SCRIPT_FONTS :: Outline_Fonts{.Noto_Sans_Hebrew, .Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Emoji, .Noto_Sans_CJK, .Noto_Sans_Thai, .Noto_Sans_Devanagari, .Noto_Sans_Bengali, .Noto_Sans_Gurmukhi, .Noto_Sans_Gujarati, .Noto_Sans_Oriya, .Noto_Sans_Tamil, .Noto_Sans_Telugu, .Noto_Sans_Kannada, .Noto_Sans_Malayalam}
 Outline_Fonts :: bit_set[Outline_Font]
-// The font is 4 bits in the key of the private glyph cache.
-#assert(int(max(Outline_Font)) < 1 << 4)
+// The font is 5 bits in the key of the private glyph cache and in a
+// direct glyph (src/md/features/script_fonts.md, "Subtle points").
+FONT_FIELD_BITS :: 5
+#assert(int(max(Outline_Font)) < 1 << FONT_FIELD_BITS)
 
 // outline_font_name gives the name of the record of a font in the resource
 // of the outlines: the name of its file in resources/fonts.
@@ -153,6 +164,22 @@ outline_font_name :: proc "contextless" (font: Outline_Font) -> string {
 		return "noto_sans_thai"
 	case .Noto_Sans_Devanagari:
 		return "noto_sans_devanagari"
+	case .Noto_Sans_Bengali:
+		return "noto_sans_bengali"
+	case .Noto_Sans_Gurmukhi:
+		return "noto_sans_gurmukhi"
+	case .Noto_Sans_Gujarati:
+		return "noto_sans_gujarati"
+	case .Noto_Sans_Oriya:
+		return "noto_sans_oriya"
+	case .Noto_Sans_Tamil:
+		return "noto_sans_tamil"
+	case .Noto_Sans_Telugu:
+		return "noto_sans_telugu"
+	case .Noto_Sans_Kannada:
+		return "noto_sans_kannada"
+	case .Noto_Sans_Malayalam:
+		return "noto_sans_malayalam"
 	}
 	return ""
 }
@@ -249,6 +276,14 @@ Script :: enum u8 {
 	Emoji, // U+1F000 to U+1FAFF.
 	Thai, // U+0E00 to U+0E7F.
 	Devanagari, // U+0900 to U+097F.
+	Bengali, // U+0980 to U+09FF.
+	Gurmukhi, // U+0A00 to U+0A7F.
+	Gujarati, // U+0A80 to U+0AFF.
+	Oriya, // U+0B00 to U+0B7F.
+	Tamil, // U+0B80 to U+0BFF.
+	Telugu, // U+0C00 to U+0C7F.
+	Kannada, // U+0C80 to U+0CFF.
+	Malayalam, // U+0D00 to U+0D7F.
 }
 
 // script_name gives the name of a script for the log.
@@ -274,6 +309,22 @@ script_name :: proc "contextless" (script: Script) -> string {
 		return "thai"
 	case .Devanagari:
 		return "devanagari"
+	case .Bengali:
+		return "bengali"
+	case .Gurmukhi:
+		return "gurmukhi"
+	case .Gujarati:
+		return "gujarati"
+	case .Oriya:
+		return "oriya"
+	case .Tamil:
+		return "tamil"
+	case .Telugu:
+		return "telugu"
+	case .Kannada:
+		return "kannada"
+	case .Malayalam:
+		return "malayalam"
 	}
 	return ""
 }
@@ -322,6 +373,14 @@ scripts := [Script]Script_Row {
 	// font that shapes it (indic.odin), so a danda or a digit beside it
 	// comes from the same font.
 	.Devanagari = {ranges = {0 = {0x0900, 0x097F}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Devanagari, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Devanagari, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Devanagari, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Devanagari, .None}}},
+	.Bengali = {ranges = {0 = {0x0980, 0x09FF}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Bengali, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Bengali, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Bengali, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Bengali, .None}}},
+	.Gurmukhi = {ranges = {0 = {0x0A00, 0x0A7F}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Gurmukhi, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Gurmukhi, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Gurmukhi, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Gurmukhi, .None}}},
+	.Gujarati = {ranges = {0 = {0x0A80, 0x0AFF}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Gujarati, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Gujarati, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Gujarati, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Gujarati, .None}}},
+	.Oriya = {ranges = {0 = {0x0B00, 0x0B7F}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Oriya, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Oriya, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Oriya, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Oriya, .None}}},
+	.Tamil = {ranges = {0 = {0x0B80, 0x0BFF}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Tamil, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Tamil, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Tamil, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Tamil, .None}}},
+	.Telugu = {ranges = {0 = {0x0C00, 0x0C7F}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Telugu, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Telugu, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Telugu, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Telugu, .None}}},
+	.Kannada = {ranges = {0 = {0x0C80, 0x0CFF}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Kannada, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Kannada, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Kannada, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Kannada, .None}}},
+	.Malayalam = {ranges = {0 = {0x0D00, 0x0D7F}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Malayalam, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Malayalam, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Malayalam, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Malayalam, .None}}},
 }
 
 // The chain of each face for a character of no script. A proportional
@@ -412,8 +471,12 @@ font_slot :: proc "contextless" (set: ^Font_Set, font: Outline_Font) -> (slot: ^
 // State: the state of this copy of the package. All zero: nothing is
 // opened, and no face draws: each caller draws in Spleen.
 State :: struct {
-	using font_set: Font_Set,
-	frame:          u64, // The number of the frame: frame_begin adds one.
+	using font_set:    Font_Set,
+	frame:             u64, // The number of the frame: frame_begin adds one.
+	// The parts of the pool of the caches that the fonts of this state took
+	// (layout_cache_pool): a state of all zero takes it from its start.
+	layout_entries_used, layout_indices_used: int,
+	cff_caches_used:                          int,
 }
 
 state: State
@@ -421,6 +484,46 @@ state: State
 // The room of the fonts of the state.
 @(private)
 state_room: Font_Room
+
+// The memory of the caches of the walk of GSUB and GPOS of the script
+// fonts of the state (vector_font.layout_cache_fill): one pool, which each
+// font that opens takes its part of. A font past the pool walks its tables
+// at each call.
+LAYOUT_CACHE_ENTRY_LIMIT :: 2048
+LAYOUT_CACHE_INDEX_LIMIT :: 16384
+
+// The script fonts of CFF outlines whose Private dictionaries the state
+// keeps (vector_font.cff_private_cache_fill): Noto Sans Symbols 2 and Noto
+// Sans CJK today.
+CFF_CACHE_FONT_LIMIT :: 4
+
+@(private)
+Layout_Cache_Pool :: struct {
+	caches:     [Outline_Font]vector_font.Layout_Cache,
+	entries:    [LAYOUT_CACHE_ENTRY_LIMIT]vector_font.Layout_Cache_Entry,
+	indices:    [LAYOUT_CACHE_INDEX_LIMIT]u16,
+	cff_caches: [CFF_CACHE_FONT_LIMIT]vector_font.Cff_Private_Cache,
+}
+
+@(private)
+layout_cache_pool: Layout_Cache_Pool
+
+// layout_cache_of fills the cache of the walk of a script font of the
+// state from the rest of the pool, and the cache of its Private
+// dictionaries when its outlines are CFF.
+@(private)
+layout_cache_of :: proc "contextless" (font: Outline_Font, file: ^vector_font.Font_File) {
+	pool := &layout_cache_pool
+	cache := &pool.caches[font]
+	cache^ = {entries = pool.entries[state.layout_entries_used:], indices = pool.indices[state.layout_indices_used:]}
+	vector_font.layout_cache_fill(file, cache)
+	state.layout_entries_used += cache.entry_count
+	state.layout_indices_used += cache.index_count
+	if file.cff.version != 0 && state.cff_caches_used < CFF_CACHE_FONT_LIMIT {
+		vector_font.cff_private_cache_fill(file, &pool.cff_caches[state.cff_caches_used])
+		state.cff_caches_used += 1
+	}
+}
 
 // state_set gives the set of the state, with its room.
 @(private)
@@ -495,6 +598,10 @@ fonts_of_outlines_open :: proc "contextless" (set: ^Font_Set, outlines: ^font_ou
 			if font_file_open(set, font, font_outlines.font_bytes(outlines, index), outline) == .None {
 				font_at(set, font).hash = record.hash
 				missing -= {font}
+				// A script font of the state keeps the walk of its tables.
+				if font in SCRIPT_FONTS && set == &state.font_set {
+					layout_cache_of(font, &font_at(set, font).file)
+				}
 			}
 		}
 	}

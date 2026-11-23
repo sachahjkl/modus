@@ -316,6 +316,40 @@ run_unicode_tables :: proc(args: []string) -> int {
 		}
 		ranges_write(&out, table.comment, table.name, table.type, ranges_merge(ranges), ".")
 	}
+	// The paired brackets (BidiBrackets.txt), for the rule N0 of UAX #9.
+	bracket_lines, _, brackets_read := unicode_lines_read(folder, "BidiBrackets.txt")
+	if !brackets_read {
+		return foundation.EXIT_FAILURE
+	}
+	fmt.sbprintln(&out, "\n// The paired brackets (BidiBrackets.txt): each bracket, its pair, and if it opens; by the bracket.")
+	fmt.sbprintln(&out, "@(rodata)\nbracket_pairs := [?]Bracket_Pair {")
+	for line in bracket_lines {
+		if len(line.fields) < 2 {
+			continue
+		}
+		pair, _ := strconv.parse_int(line.fields[0], 16)
+		fmt.sbprintfln(&out, "\t{{0x%04X, 0x%04X, %v}},", int(line.first), pair, line.fields[1] == "o")
+	}
+	fmt.sbprintln(&out, "}")
+	// The canonical decompositions of two characters in the blocks of the
+	// scripts of India: the vowel signs of two parts (ো is ে and া) and the
+	// letters with a nukta. The shaper decides which to apply
+	// (text_rendering.indic_decomposition_of).
+	fmt.sbprintln(&out, "\n// The canonical decompositions of two characters of the scripts of India (UnicodeData.txt), by the character.")
+	fmt.sbprintln(&out, "@(rodata)\nindic_decompositions := [?]Indic_Decomposition {")
+	for line in data_lines {
+		if line.first < 0x0900 || line.first > 0x0DFF || len(line.fields) < 5 || line.fields[4] == "" || strings.has_prefix(line.fields[4], "<") {
+			continue
+		}
+		parts := strings.fields(line.fields[4], context.temp_allocator)
+		if len(parts) != 2 {
+			continue
+		}
+		first, _ := strconv.parse_int(parts[0], 16)
+		second, _ := strconv.parse_int(parts[1], 16)
+		fmt.sbprintfln(&out, "\t{{0x%04X, 0x%04X, 0x%04X}},", int(line.first), first, second)
+	}
+	fmt.sbprintln(&out, "}")
 	if err := os.write_entire_file(UNICODE_TABLES_OUTPUT, transmute([]u8)strings.to_string(out)); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", UNICODE_TABLES_OUTPUT, err)
 		return foundation.EXIT_FAILURE

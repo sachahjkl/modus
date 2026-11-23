@@ -15,7 +15,7 @@ import "modus:vector_font"
 // the flake set it.
 
 @(private = "file")
-script_font_names := [?]string{"noto_sans_hebrew", "noto_sans_arabic", "noto_sans_symbols_2", "noto_emoji", "noto_sans_cjk", "noto_sans_thai", "noto_sans_devanagari"}
+script_font_names := [?]string{"noto_sans_hebrew", "noto_sans_arabic", "noto_sans_symbols_2", "noto_emoji", "noto_sans_cjk", "noto_sans_thai", "noto_sans_devanagari", "noto_sans_bengali", "noto_sans_gurmukhi", "noto_sans_gujarati", "noto_sans_oriya", "noto_sans_tamil", "noto_sans_telugu", "noto_sans_kannada", "noto_sans_malayalam"}
 
 // script_fonts_read reads the script fonts that names lists.
 @(private)
@@ -359,7 +359,7 @@ the_scripts_of_the_script_fonts :: proc(t: ^testing.T) {
 		set, set_words := resource_of(t, scripts[:])
 		defer delete(set_words)
 		missing := script_fonts_open(&set)
-		testing.expect_value(t, missing, Outline_Fonts{.Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Sans_CJK, .Noto_Sans_Thai, .Noto_Sans_Devanagari})
+		testing.expect_value(t, missing, Outline_Fonts{.Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Sans_CJK, .Noto_Sans_Thai, .Noto_Sans_Devanagari, .Noto_Sans_Bengali, .Noto_Sans_Gurmukhi, .Noto_Sans_Gujarati, .Noto_Sans_Oriya, .Noto_Sans_Tamil, .Noto_Sans_Telugu, .Noto_Sans_Kannada, .Noto_Sans_Malayalam})
 		testing.expect_value(t, font_of(.Interface, 0x05D0), Outline_Font.Noto_Sans_Hebrew)
 		testing.expect_value(t, font_of(.Interface, 0x4E00), Outline_Font.None)
 	}

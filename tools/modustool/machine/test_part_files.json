@@ -30,6 +30,7 @@
   "crypto": ["cryptography_scenario.odin"],
   "guest": ["guest_scenario.odin"],
   "linux": ["linux_scenario.odin"],
+  "script_fonts": ["script_fonts_scenario.odin"],
   "no_pit": ["no_pit_scenario.odin"],
   "fails": ["fails_scenario.odin"],
   "start_policy": ["start_policy_scenario.odin", "start_policy_from_disk_scenario.odin"],

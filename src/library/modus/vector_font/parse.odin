@@ -66,6 +66,7 @@ Font_File :: struct {
 	gsub:                Table, // The substitutions of glyphs: the forms of a script and its ligatures (substitution.odin).
 	gpos:                Table, // The positions of glyphs: the anchors of the marks (positioning.odin).
 	gdef:                Table, // The classes of the glyphs and the mark sets that the lookup flags read (gdef.odin).
+	layout_cache:        ^Layout_Cache, // The walk of GSUB and GPOS, kept (layout_cache.odin); nil: each call walks.
 }
 
 // One table of the file: its bytes, checked to be inside the file.

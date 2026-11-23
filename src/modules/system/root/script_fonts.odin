@@ -14,24 +14,21 @@ package root
 // glyph for those scripts until its next start: no process asks for a font,
 // and no frame waits for one.
 
+import "internal:root/role_policy"
 import "modus:contract/blake3"
 import "modus:contract/font_outlines"
 import "modus:contract/value_kinds"
 import "modus:system"
 
-// Where the set of this start stands.
-Script_Fonts_Stage :: enum u8 {
-	Unnamed, // Neither the plan nor the boot image names a set.
-	Named, // A set is named; its read waits until the machine is usable.
-	Reading, // The delegated service reads it.
-	Mapped, // Checked: each process that starts maps it.
-	Absent, // The machine does not hold it, or it was refused: the box stays until the next start.
-}
+// Where the set of this start stands (role_policy.Script_Fonts_Stage).
+Script_Fonts_Stage :: role_policy.Script_Fonts_Stage
 
 script_fonts_stage: Script_Fonts_Stage
 // The hash of the set of this start: the plan of principal 0, else the
 // boot image.
 script_fonts_named: blake3.Hash
+// The set that the boot image names: a plan with no entry gives it back.
+script_fonts_image_named: blake3.Hash
 // The memory of the set, which this service made, checked and keeps, and
 // the mapping that each process receives.
 script_fonts_memory: system.Handle
@@ -58,25 +55,32 @@ script_fonts_name_read :: proc "contextless" () {
 		return
 	}
 	script_fonts_named = named
+	script_fonts_image_named = named
 	script_fonts_stage = .Named
 	system.log_fact(.Info, Script_Fonts_Named_By_Image{hash = value_kinds.Hash_Field(named)})
 }
 
 // script_fonts_planned takes the set that the plan of principal 0 names,
-// with its roles: all zero for none, which keeps the set of the boot image.
-// Before the read of this start, the plan names the set of this start;
-// after it, the next start.
-script_fonts_planned :: proc "contextless" (named: blake3.Hash) {
-	if named == {} || named == script_fonts_named {
-		return
-	}
-	switch script_fonts_stage {
-	case .Unnamed, .Named:
-		script_fonts_named = named
-		script_fonts_stage = .Named
+// with its roles: all zero for none, which gives the set back to the boot
+// image. Before the read of this start, the plan names the set of this
+// start; after it, the next start (role_policy.script_fonts_plan_choice).
+script_fonts_planned :: proc "contextless" (planned: blake3.Hash) {
+	stage, named, outcome := role_policy.script_fonts_plan_choice(script_fonts_stage, script_fonts_named, script_fonts_image_named, planned)
+	script_fonts_stage, script_fonts_named = stage, named
+	switch outcome {
+	case .Unchanged:
+	case .Named_By_Plan:
 		system.log_fact(.Info, Script_Fonts_Named_By_Plan{hash = value_kinds.Hash_Field(named)})
-	case .Reading, .Mapped, .Absent:
-		system.log_fact(.Info, Script_Fonts_Next_Start{hash = value_kinds.Hash_Field(named)})
+	case .Back_To_Image:
+		system.log_fact(.Info, Script_Fonts_Back_To_Image{hash = value_kinds.Hash_Field(named)})
+	case .Unnamed_Again:
+		system.log_fact(.Info, Script_Fonts_Unnamed{})
+	case .Next_Start:
+		if planned == {} {
+			system.log_fact(.Info, Script_Fonts_Back_To_Image_Next_Start{hash = value_kinds.Hash_Field(script_fonts_image_named)})
+		} else {
+			system.log_fact(.Info, Script_Fonts_Next_Start{hash = value_kinds.Hash_Field(planned)})
+		}
 	}
 }
 

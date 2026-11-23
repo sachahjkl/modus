@@ -310,7 +310,7 @@ The console stays fast: the producer writes into the terminal ring, and the term
 - No grid fit of each stem; no stem darkening (`gui_toolkit` thickens the stripes by 0.2 pixel; not tried here).
 - The first frames use the default settings until the boot pass of `settings` (section 7).
 - The scheduling strategy is not a setting and does not survive a stop (section 7).
-- The fonts of the boot image have no Armenian, Hebrew, Arabic, Thai, Devanagari, CJK ideograph or emoji, and no geometric square (U+25A0). Hebrew, Arabic, Thai, Devanagari, the ideographs, the emoji and the geometric shapes are in the script font set (section 13.9); a process with no set draws the replacement glyph for each of them. Armenian and the other scripts of India have no font (section 13.8). Spleen 8x16 draws the 192 characters only. A monospace font has no subpixel position; the proportional font and its pairs are in section 12.
+- The fonts of the boot image have no Armenian, Hebrew, Arabic, Thai, script of India, CJK ideograph or emoji, and no geometric square (U+25A0). Hebrew, Arabic, Thai, nine scripts of India, the ideographs, the emoji and the geometric shapes are in the script font set (section 13.9); a process with no set draws the replacement glyph for each of them. Armenian has no font (section 13.8). Spleen 8x16 draws the 192 characters only. A monospace font has no subpixel position; the proportional font and its pairs are in section 12.
 - The order of the stripes of the screen is not detected: under QEMU it is the panel of the host, which the system cannot read.
 - The measures of section 9 were taken on a host with a load above 8.
 
@@ -526,7 +526,7 @@ The compositor writes one line for each counted script at its start, with what t
 - `compositor: the script cyrillic: the chain of the interface draws 96 of its 96 characters, the chain of the cells 96`;
 - `compositor: the script box drawing: the chain of the interface draws 160 of its 160 characters, the chain of the cells 160`.
 
-The process `interface_font` shows the Greek letters of B612, box-drawing characters from Paper Mono in the interface font, and writes `interface_font: each Greek letter of B612 is drawn by this process: 47 letters: as it must`, `interface_font: the box-drawing characters come from paper_mono, the second font of the chain of the interface: 7 characters: as it must` and `interface_font: 2 characters that no font of the chain has draw the replacement glyph: as it must` (Armenian and Bengali). It draws a line of Hebrew, Arabic, ideographs, an emoji and ■: with the script font set mapped, it writes `interface_font: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs, an emoji and a geometric shape draws <n> glyphs, with no replacement glyph: as it must`; with none, `interface_font: no script font set is mapped: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs and an emoji draws the replacement glyph`.
+The process `interface_font` shows the Greek letters of B612, box-drawing characters from Paper Mono in the interface font, and writes `interface_font: each Greek letter of B612 is drawn by this process: 47 letters: as it must`, `interface_font: the box-drawing characters come from paper_mono, the second font of the chain of the interface: 7 characters: as it must` and `interface_font: 2 characters that no font of the chain has draw the replacement glyph: as it must` (Armenian and Sinhala). It draws a line of Hebrew, Arabic, ideographs, an emoji and ■: with the script font set mapped, it writes `interface_font: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs, an emoji and a geometric shape draws <n> glyphs, with no replacement glyph: as it must`; with none, `interface_font: no script font set is mapped: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs and an emoji draws the replacement glyph`.
 
 ### 13.3 What stays built at build time
 
@@ -583,23 +583,23 @@ Host: AMD Ryzen 7 5800X, one core (`taskset`), `-o:speed`, each time the least o
 | The private glyph cache, in each copy of `text_rendering` that draws a glyph | 1 MiB of words, 4 096 entries of 48 bytes, a Swiss table index of 340 groups (5 440 slots, 16 344 bytes) and the blocks, and about 150 KiB of render memory: about 1.4 MiB (354 pages), one memory object that the process takes from its budget at the frame after its first such glyph (section 14.4) |
 | The globals of each copy of `text_rendering` | about 25 KiB: the memory of one outline (13 KiB), which the measure needs too, a band of one row (11 KiB), and the state; a copy that only measures carries the outline and the state |
 | The font outlines | the five subsets: 1 016 288 bytes in the boot image, 586 360 of them Noto Sans |
-| The script font set | seven whole fonts, 36 433 492 bytes, outside the boot image (section 13.9) |
+| The script font set | fifteen whole fonts, 40 030 968 bytes, outside the boot image (section 13.9) |
 
 These measures are of the rasterizer that drew the glyph cache files that left the system (`vector_font.glyph_render_placed`, which the host test `private_glyph_measure` still measures): there a placed glyph costs about four times a glyph of cells, because `glyph_render_placed` clears and filters a work row of 64 pixels whatever the width of the glyph. The rasterizer of each process has a work row as wide as the glyph (section 14.3); its measures are in section 14.6.
 
 ### 13.8 What is left
 
-A font for Armenian; the other scripts of India, Khmer and Myanmar, with their fonts and their shapers: `ROADMAP.md`.
+A font for Armenian; Khmer, Myanmar and the scripts of the Universal Shaping Engine, with their fonts and their shapers: `ROADMAP.md`.
 
 ### 13.9 The script font set and the written shaping
 
-The script font set is one data object in the format of the font outlines, outside the boot image: Noto Sans Hebrew (35 508 bytes), Noto Sans Arabic (682 836), Noto Sans Symbols 2 (404 576, CFF), Noto Emoji (1 966 648, monochrome), Noto Sans CJK (32 682 580, a collection of CFF2, face 0), Noto Sans Thai (94 872) and Noto Sans Devanagari (565 836): 36 433 492 bytes. `modustool script_fonts` writes it to `build/fonts/script_fonts.bin` from `SCRIPT_FONT_SOURCES` and prints its hash; `font_outlines.script_fonts_check` refuses the whole set when its bytes do not give the named hash or a font does not give the hash of its record. The build writes the hash beside it as the resource `script_fonts_name` of each boot image: the set of a machine whose plan names none. The plan of principal 0 names another set with an entry `Script_Fonts`.
+The script font set is one data object in the format of the font outlines, outside the boot image: Noto Sans Hebrew (35 508 bytes), Noto Sans Arabic (682 836), Noto Sans Symbols 2 (404 576, CFF), Noto Emoji (1 966 648, monochrome), Noto Sans CJK (32 682 580, a collection of CFF2, face 0), Noto Sans Thai (94 872), Noto Sans Devanagari (565 836), and Noto Sans Bengali (372 212), Gurmukhi (154 552), Gujarati (574 628), Oriya (533 592), Tamil (224 256), Telugu (787 664), Kannada (557 872) and Malayalam (392 048): 40 030 968 bytes. `modustool script_fonts` writes it to `build/fonts/script_fonts.bin` from `SCRIPT_FONT_SOURCES` and prints its hash; `font_outlines.script_fonts_check` refuses the whole set when its bytes do not give the named hash or a font does not give the hash of its record. The build writes the hash beside it as the resource `script_fonts_name` of each boot image: the set of a machine whose plan names none. The plan of principal 0 names another set with an entry `Script_Fonts`.
 
 On a machine, the set is the object `script_fonts` of the store `script_fonts` of the machine, on the data disk. When the machine is usable, the root service reads it once through the delegated service `disk_processes`, checks its hash and its form, and maps it read-only at the fixed range `Script_Fonts` in each process that gets the font outlines and starts after that. Its lines:
 
 - `root: the boot image names the script font set <hash>`;
 - `root: reads the script font set <hash> from the store script_fonts of the machine`;
-- `root: the script font set <hash> (<size>, 7 fonts) is checked: each process that starts from now maps it, read-only`;
+- `root: the script font set <hash> (<size>, 15 fonts) is checked: each process that starts from now maps it, read-only`;
 - with no set on the disk: `root: the data disk holds no script font set <hash>: ...`; with a set of other bytes, the refusal of the load, then `root: the script font set was not read: status ...`.
 
 A process that started before the set, and a machine with no set, draw each character of these scripts as the replacement glyph; nothing waits. The part `script_fonts` of the machine test checks both. The intent is `src/md/features/script_fonts.md`.
@@ -613,8 +613,11 @@ The shaper (`text_rendering.shape`) reads a text by clusters: a base and its mar
 - **Wide characters**: an ideograph takes two cells in a face of cells.
 - **Mark anchors**: a mark that stays apart is placed by the anchors of `GPOS` of its font (`mkmk` on the mark before it, else `mark` on its base); with none, the draw centres it. Arabic takes the forms of its font (`ccmp` makes beh a dotless body and its dot), and the presentation forms of Unicode when the font makes none.
 - **Thai**: SARA AM is NIKHAHIT, on the consonant before it, before its tone marks, and SARA AA.
-- **Devanagari**: a syllable (consonants joined by viramas, then their vowel signs and modifiers) is shaped at once by the engine of the lookups of its font: the half forms, the conjuncts, the reph after its base, the vowel sign ि before it, and the marks placed by `GPOS`. A syllable draws as one cluster: a fit never cuts it. In a face of cells, Devanagari is not shaped: each character takes its cell.
+- **The scripts of India**: Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada and Malayalam. A syllable (consonants joined by viramas, then their vowel signs and modifiers) is shaped at once by the engine of the lookups of its font: the half forms, the conjuncts, the below and post forms, the reph at the place of its script, the vowel signs of two parts split, the vowel sign before its consonant, and the marks placed by `GPOS`. A syllable draws as one cluster: a fit never cuts it. In a face of cells, these scripts are not shaped: each character takes its cell.
+- **Brackets in a line of mixed direction**: a pair of brackets takes the direction of the text inside it (UAX #9, N0), and a paragraph separator (U+2029) with the white space before it takes the direction of the paragraph (L1).
 - **Isolates**: LRI, RLI, FSI and PDI of UAX #9 make a unit of the line, with its own direction; they and the other format characters of no width draw nothing.
+
+The measures of the shaping (`-define:MEASURE=true`, the least of 200 runs on the host, the debug build then `-o:speed`), before and after the cache of the walk of `GSUB` and `GPOS`: a line of Arabic of 68 bytes, 113 and 29 microseconds, then 91 and 20; of Devanagari, 113 bytes, 1 704 and 291, then 1 569 and 256; of Bengali, 121 bytes, 3 156 and 540, then 2 697 and 430. The outline of a glyph of Noto Sans CJK, over its first 16 384 glyphs: 4 684 and 1 413 ns, then 4 460 and 1 316 ns with the cache of its Private dictionaries. The cost that is left is the lookups that a syllable runs, not the walk.
 
 The intent is `src/md/features/written_shaping.md`. The tables come from the Unicode Character Database by `modustool unicode_tables`.
 

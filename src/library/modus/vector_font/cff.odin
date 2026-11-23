@@ -41,8 +41,9 @@ Cff_Font :: struct {
 	// The font dictionaries (FDArray) of a CID font; count 0 for a font
 	// that is not CID, whose Private dictionary is private_size bytes at
 	// private_offset. A glyph reads its Private dictionary when it is drawn
-	// (cff_private_of): the font keeps no table of them, so a font set of
-	// ten fonts stays small on the stack of a call.
+	// (cff_private_of), or from the cache that the owner of the font gives
+	// (private_cache): the font itself keeps no table of them, so a font
+	// set stays small on the stack of a call.
 	font_dicts:        Cff_Index,
 	private_size:      i32,
 	private_offset:    i32, // -1: no Private dictionary.
@@ -50,6 +51,41 @@ Cff_Font :: struct {
 	fd_select:         i32, // The place of FDSelect; -1: each glyph takes the dictionary 0.
 	variation_store:   i32, // The place of the item variation store (CFF2); -1: none.
 	region_data_count: int,
+	private_cache:     ^Cff_Private_Cache, // The Private dictionary of each font dictionary, read once (cff_private_cache_fill); nil: each glyph reads its own.
+}
+
+// The Private dictionary of each font dictionary of a font, read once: a
+// glyph then reads only FDSelect. Its owner gives its memory; it is written
+// by its fill only, before the font draws, so the threads of a process read
+// it with no lock.
+Cff_Private_Cache :: struct {
+	locals:   [CFF_FONT_DICT_LIMIT]Cff_Index,
+	vsindices: [CFF_FONT_DICT_LIMIT]u8,
+	count:    int,
+}
+
+// cff_private_cache_fill reads the Private dictionary of each font
+// dictionary of a font of CFF or CFF2 into a cache, and gives the cache to
+// the font. A font with no CFF, or one whose dictionary the reader
+// refuses, keeps no cache.
+cff_private_cache_fill :: proc "contextless" (font: ^Font_File, cache: ^Cff_Private_Cache) {
+	if font.cff.version == 0 {
+		return
+	}
+	table := cff_table(font)
+	count := max(font.cff.font_dict_count, 1)
+	if count > CFF_FONT_DICT_LIMIT {
+		return
+	}
+	for number in 0 ..< count {
+		local, vsindex, problem := cff_private_of(font, table, number)
+		if problem != .None {
+			return
+		}
+		cache.locals[number], cache.vsindices[number] = local, u8(vsindex)
+	}
+	cache.count = count
+	font.cff.private_cache = cache
 }
 
 @(private)
@@ -502,7 +538,13 @@ cff_glyph_outline :: #force_no_inline proc "contextless" (font: ^Font_File, glyp
 		return .Too_Short
 	}
 	number := cff_font_dict_of(font, table, glyph) or_return
-	local, vsindex := cff_private_of(font, table, number) or_return
+	local: Cff_Index
+	vsindex: int
+	if cache := font.cff.private_cache; cache != nil && number < cache.count {
+		local, vsindex = cache.locals[number], int(cache.vsindices[number])
+	} else {
+		local, vsindex = cff_private_of(font, table, number) or_return
+	}
 	// Field by field: a literal of the machine is a second copy of its
 	// operand stack, 4 KiB, on the stack of a drawing thread.
 	machine: Cff_Machine

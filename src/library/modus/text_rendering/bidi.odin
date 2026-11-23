@@ -195,7 +195,7 @@ bidi_levels :: proc "contextless" (text: []u8, placed: []Placed_Glyph, levels: [
 				break
 			}
 		}
-		sequence_resolve(line, levels[:count], links[:count], scratch[:length], paragraph)
+		sequence_resolve(line, levels[:count], links[:count], scratch[:length], paragraph, text, placed[:count])
 	}
 	// I1 and I2.
 	for index in 0 ..< count {
@@ -211,18 +211,26 @@ bidi_levels :: proc "contextless" (text: []u8, placed: []Placed_Glyph, levels: [
 		}
 		levels[index] = level
 	}
-	// L1: the white space and the isolate characters at the end of the
-	// line take the level of the paragraph.
+	// L1: a segment separator and a paragraph separator take the level of
+	// the paragraph, and so does the white space, with the isolate
+	// characters, before each of them and at the end of the line. A text
+	// holds no control character, so the one separator is U+2029
+	// (src/md/data/text_encoding.md).
+	trailing := true
 	for index := count - 1; index >= 0; index -= 1 {
-		character, valid, _ := placed_character(text, placed[index])
-		class := valid ? bidi_class_of(character) : Bidi_Class.ON
+		character, valid, mark := placed_character(text, placed[index])
+		class := valid && !mark ? bidi_class_of(character) : Bidi_Class.ON
 		switch class {
-		case .WS, .S, .BN, .LRI, .RLI, .FSI, .PDI:
+		case .S, .B:
 			levels[index] = paragraph
-			continue
-		case .L, .R, .AL, .EN, .ES, .ET, .AN, .CS, .NSM, .B, .ON, .LRE, .LRO, .RLE, .RLO, .PDF:
+			trailing = true
+		case .WS, .BN, .LRI, .RLI, .FSI, .PDI, .LRE, .LRO, .RLE, .RLO, .PDF:
+			if trailing {
+				levels[index] = paragraph
+			}
+		case .L, .R, .AL, .EN, .ES, .ET, .AN, .CS, .NSM, .ON:
+			trailing = false
 		}
-		break
 	}
 	return paragraph, true
 }
@@ -232,7 +240,7 @@ bidi_levels :: proc "contextless" (text: []u8, placed: []Placed_Glyph, levels: [
 // the glyphs inside an isolate are not in it, and its initiator and its
 // matched PDI are neutrals next to each other.
 @(private)
-sequence_resolve :: proc "contextless" (classes: []Bidi_Class, levels: []u8, links: []u8, sequence: []u16, paragraph: u8) {
+sequence_resolve :: proc "contextless" (classes: []Bidi_Class, levels: []u8, links: []u8, sequence: []u16, paragraph: u8, text: []u8, placed: []Placed_Glyph) {
 	if len(sequence) == 0 {
 		return
 	}
@@ -321,10 +329,11 @@ sequence_resolve :: proc "contextless" (classes: []Bidi_Class, levels: []u8, lin
 		case .AL, .AN, .NSM, .BN, .B, .S, .WS, .ON, .LRE, .LRO, .RLE, .RLO, .PDF, .LRI, .RLI, .FSI, .PDI:
 		}
 	}
+	embedding := level % 2 == 1 ? Bidi_Class.R : Bidi_Class.L
+	brackets_resolve(classes, sequence, sos, embedding, text, placed)
 	// N1 and N2: a run of neutrals, the isolate characters too, takes the
 	// direction around it when both sides agree, else the direction of the
 	// embedding level.
-	embedding := level % 2 == 1 ? Bidi_Class.R : Bidi_Class.L
 	for position := 0; position < len(sequence); {
 		if direction_of(classes[sequence[position]]) != .ON {
 			position += 1
@@ -341,6 +350,110 @@ sequence_resolve :: proc "contextless" (classes: []Bidi_Class, levels: []u8, lin
 			classes[sequence[each]] = resolved
 		}
 		position = end
+	}
+}
+
+// The openings that the search of the bracket pairs holds (UAX #9, BD16):
+// past them, the search stops, and the pairs found so far stay.
+BIDI_BRACKET_STACK_LIMIT :: 63
+
+// The records that the deepest path of shape holds on its stack: the
+// cluster that shape holds and the one after it, the cluster that
+// shaper_next reads, the levels and the order of bidi_line_reorder, the
+// classes and the links of bidi_levels, and the openings and the pairs of
+// brackets_resolve. A call of the library module text_rendering adds its
+// fonts, and asserts the sum against its stack bound: the freestanding
+// build runs on no host, so its frames are bounded by these sizes, and the
+// host test measures the whole call.
+SHAPE_STACK_RECORDS_BYTES :: 2 * size_of(Shaped) + size_of(Cluster) + BIDI_GLYPH_LIMIT * (size_of(u8) + size_of(u16)) + BIDI_GLYPH_LIMIT * (size_of(Bidi_Class) + size_of(u8)) + BIDI_BRACKET_STACK_LIMIT * (size_of(rune) + size_of(u16) + 2 * size_of(u16))
+
+// brackets_resolve applies N0 to one isolating run sequence: each pair of
+// brackets (BD16) takes the embedding direction when a strong type inside
+// it has that direction; else the other direction, when a strong type
+// inside it and the strong type before it both have it; else it stays
+// neutral. The numbers count as R. A mark after a bracket that changed
+// takes its direction. Each bracket is a neutral whose character
+// BidiBrackets.txt pairs; a mark is never a bracket.
+@(private)
+brackets_resolve :: proc "contextless" (classes: []Bidi_Class, sequence: []u16, sos, embedding: Bidi_Class, text: []u8, placed: []Placed_Glyph) {
+	Opening :: struct {
+		pair:     rune, // The closing bracket that pairs with it.
+		position: u16, // In the sequence.
+	}
+	openings: [BIDI_BRACKET_STACK_LIMIT]Opening
+	pairs: [BIDI_BRACKET_STACK_LIMIT][2]u16
+	depth, pair_count := 0, 0
+	search: for position in 0 ..< len(sequence) {
+		index := int(sequence[position])
+		if classes[index] != .ON {
+			continue
+		}
+		character, valid, mark := placed_character(text, placed[index])
+		if !valid || mark {
+			continue
+		}
+		pair, opening, found := bracket_of(character)
+		if !found {
+			continue
+		}
+		if opening {
+			if depth == BIDI_BRACKET_STACK_LIMIT {
+				break search
+			}
+			openings[depth] = {pair == 0x232A ? 0x3009 : pair, u16(position)}
+			depth += 1
+			continue
+		}
+		closing := character == 0x232A ? 0x3009 : character
+		for back := depth - 1; back >= 0; back -= 1 {
+			if openings[back].pair == closing {
+				if pair_count < len(pairs) {
+					pairs[pair_count] = {openings[back].position, u16(position)}
+					pair_count += 1
+				}
+				depth = back
+				break
+			}
+		}
+	}
+	// In the order of their openings.
+	for index in 1 ..< pair_count {
+		for back := index; back > 0 && pairs[back][0] < pairs[back - 1][0]; back -= 1 {
+			pairs[back], pairs[back - 1] = pairs[back - 1], pairs[back]
+		}
+	}
+	for pair in pairs[:pair_count] {
+		has_embedding, has_opposite := false, false
+		for position in int(pair[0]) + 1 ..< int(pair[1]) {
+			direction := direction_of(classes[sequence[position]])
+			if direction == embedding {
+				has_embedding = true
+				break
+			}
+			has_opposite ||= direction != .ON
+		}
+		resolved := Bidi_Class.ON
+		if has_embedding {
+			resolved = embedding
+		} else if has_opposite {
+			before := sos
+			for position := int(pair[0]) - 1; position >= 0; position -= 1 {
+				if direction := direction_of(classes[sequence[position]]); direction != .ON {
+					before = direction
+					break
+				}
+			}
+			resolved = before != embedding ? before : embedding
+		}
+		if resolved == .ON {
+			continue
+		}
+		for side in pair {
+			classes[sequence[side]] = resolved
+			for position := int(side) + 1; position < len(sequence) && placed[sequence[position]].placement != .Base; position += 1 {
+				classes[sequence[position]] = resolved
+			}
+		}
 	}
 }
 

@@ -23,6 +23,16 @@ Script_Fonts_Named_By_Plan :: struct {
 	hash: value_kinds.Hash_Field,
 }
 
+@(log_fact = "root: the plan of principal 0 names no script font set: the set {hash} of the boot image is the set of this start again")
+Script_Fonts_Back_To_Image :: struct {
+	hash: value_kinds.Hash_Field,
+}
+
+@(log_fact = "root: the plan of principal 0 names no script font set: the set {hash} of the boot image holds at the next start of the machine")
+Script_Fonts_Back_To_Image_Next_Start :: struct {
+	hash: value_kinds.Hash_Field,
+}
+
 @(log_fact = "root: the plan of principal 0 names the script font set {hash}: it holds at the next start of the machine")
 Script_Fonts_Next_Start :: struct {
 	hash: value_kinds.Hash_Field,

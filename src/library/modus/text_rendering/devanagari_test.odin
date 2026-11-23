@@ -83,7 +83,11 @@ devanagari_words_shape_as_harfbuzz :: proc(t: ^testing.T) {
 				break
 			}
 			buffer: vector_font.Engine_Buffer
-			indic_shape(file, &syllable, &buffer)
+			sources: [INDIC_SYLLABLE_LIMIT]u8
+			indic_shape(file, &syllable, &buffer, place == 0, &sources)
+			if len(got) > 0 && buffer.count > 0 {
+				got[len(got) - 1].advance += indic_pair_units(file, {'d', 'e', 'v', '2'}, int(got[len(got) - 1].glyph), int(buffer.glyphs[0].glyph))
+			}
 			for glyph in buffer.glyphs[:buffer.count] {
 				append(&got, Expected_Glyph{i32(glyph.glyph), glyph.x_advance, glyph.x_offset, glyph.y_offset})
 			}

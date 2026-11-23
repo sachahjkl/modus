@@ -59,11 +59,11 @@ is_invisible_format :: proc "contextless" (character: rune) -> bool {
 FALLBACK_GLYPH_FIRST :: u32(1) << 24
 #assert(FALLBACK_GLYPH_FIRST > CHARACTER_COUNT && u64(FALLBACK_GLYPH_FIRST) + text_encoding.CODE_POINT_LAST < u64(REPLACEMENT_GLYPH))
 // The glyph of a form or a ligature that a substitution gave, with no
-// character: DIRECT_GLYPH_FIRST, the font in bits 16 to 19, the glyph
+// character: DIRECT_GLYPH_FIRST, the font in bits 16 to 20, the glyph
 // index in bits 0 to 15 (direct_glyph).
 DIRECT_GLYPH_FIRST :: u32(1) << 30
-#assert(u64(FALLBACK_GLYPH_FIRST) + text_encoding.CODE_POINT_LAST < u64(DIRECT_GLYPH_FIRST) && u64(DIRECT_GLYPH_FIRST) + 1 << 20 < u64(REPLACEMENT_GLYPH) - 1)
-#assert(int(max(Outline_Font)) < 1 << 4)
+DIRECT_GLYPH_SPAN :: u32(1) << (16 + FONT_FIELD_BITS)
+#assert(u64(FALLBACK_GLYPH_FIRST) + text_encoding.CODE_POINT_LAST < u64(DIRECT_GLYPH_FIRST) && u64(DIRECT_GLYPH_FIRST) + u64(DIRECT_GLYPH_SPAN) < u64(REPLACEMENT_GLYPH) - 1)
 
 // direct_glyph gives the placed glyph of a glyph of a font by its index.
 direct_glyph :: #force_inline proc "contextless" (font: Outline_Font, index: int) -> u32 {
@@ -74,10 +74,10 @@ direct_glyph :: #force_inline proc "contextless" (font: Outline_Font, index: int
 // of DIRECT_GLYPH_FIRST; ok is false for each other glyph, and for a font
 // that names no member: a placed glyph from another party is checked.
 direct_glyph_parts :: proc "contextless" (glyph: u32) -> (font: Outline_Font, index: int, ok: bool) {
-	if glyph < DIRECT_GLYPH_FIRST || glyph >= DIRECT_GLYPH_FIRST + 1 << 20 {
+	if glyph < DIRECT_GLYPH_FIRST || glyph >= DIRECT_GLYPH_FIRST + DIRECT_GLYPH_SPAN {
 		return .None, 0, false
 	}
-	number := (glyph >> 16) & 0xF
+	number := (glyph >> 16) & (1 << FONT_FIELD_BITS - 1)
 	if number == 0 || number > u32(max(Outline_Font)) {
 		return .None, 0, false
 	}
@@ -444,6 +444,9 @@ Shaper :: struct {
 	// The byte of the SARA AM whose NIKHAHIT the last cluster took; -1:
 	// none (Cluster.sara_am_taken).
 	sara_am_taken: int,
+	// The cluster before ended with a letter or a mark: the next syllable
+	// of a script of India does not start a word (the feature init).
+	after_letter:  bool,
 }
 
 @(private)
@@ -671,6 +674,12 @@ shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 	if type != .Transparent {
 		shaper.previous = type
 	}
+	#partial switch bidi_class_of(cluster.base) {
+	case .L, .R, .AL:
+		shaper.after_letter = cluster.base_valid && !is_cluster_break(cluster.base)
+	case:
+		shaper.after_letter = cluster.mark_count > 0
+	}
 	shaper.place = cluster.end
 	marks_add(spacing, shaper.set, shaped, &cluster)
 	if ligature_made {
@@ -728,6 +737,17 @@ shape :: proc "contextless" (spacing: ^Spacing, text: []u8, placed: []Placed_Gly
 		glyph_advance := current.base.advance
 		if has_next && !current.syllable && !next.syllable {
 			glyph_advance += pair_of(spacing, current.base, next.base)
+		}
+		// Two syllables of a script of India: the pair of GPOS of the last
+		// glyph of the first and the first glyph of the next.
+		if has_next {
+			if pair := syllable_pair_of(spacing, shaper.set, &current, &next); pair != 0 {
+				if current.mark_count > 0 {
+					current.marks[current.mark_count - 1].advance += pair
+				} else {
+					glyph_advance += pair
+				}
+			}
 		}
 		if count < len(placed) {
 			placed[count] = {glyph = current.base.glyph, x = i32(x), advance = glyph_advance, cluster = current.base.cluster}
@@ -823,6 +843,9 @@ text_fit :: proc "contextless" (spacing: ^Spacing, text: []u8, room: i64) -> (co
 		x += cluster_width
 		if has_next && !current.syllable && !next.syllable {
 			x += i64(pair_of(spacing, current.base, next.base))
+		}
+		if has_next {
+			x += i64(syllable_pair_of(spacing, shaper.set, &current, &next))
 		}
 		current = next
 		has_current = has_next

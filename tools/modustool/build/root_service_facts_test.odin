@@ -1074,6 +1074,8 @@ the_script_font_facts_of_the_root_service_write_their_lines :: proc(t: ^testing.
 	expect(t, render(t, file, "Script_Fonts_Named_By_Image", {{"hash", hash}}), line_of_before("root: the boot image names the script font set ", sentence.Hash{hash[:]}))
 	expect(t, render(t, file, "Script_Fonts_Named_By_Plan", {{"hash", hash}}), line_of_before("root: the plan of principal 0 names the script font set ", sentence.Hash{hash[:]}))
 	expect(t, render(t, file, "Script_Fonts_Next_Start", {{"hash", hash}}), line_of_before("root: the plan of principal 0 names the script font set ", sentence.Hash{hash[:]}, ": it holds at the next start of the machine"))
+	expect(t, render(t, file, "Script_Fonts_Back_To_Image", {{"hash", hash}}), line_of_before("root: the plan of principal 0 names no script font set: the set ", sentence.Hash{hash[:]}, " of the boot image is the set of this start again"))
+	expect(t, render(t, file, "Script_Fonts_Back_To_Image_Next_Start", {{"hash", hash}}), line_of_before("root: the plan of principal 0 names no script font set: the set ", sentence.Hash{hash[:]}, " of the boot image holds at the next start of the machine"))
 	expect(t, render(t, file, "Script_Fonts_Reading", {{"hash", hash}}), line_of_before("root: reads the script font set ", sentence.Hash{hash[:]}, " from the store script_fonts of the machine"))
 	expect(t, render(t, file, "Script_Fonts_Not_On_Disk", {{"hash", hash}}), line_of_before("root: the data disk holds no script font set ", sentence.Hash{hash[:]}, ": ", none))
 	for size in ([?]u64{0, 1, 35_772_620, u64(max(i64))}) {

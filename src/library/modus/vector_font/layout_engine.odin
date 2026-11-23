@@ -17,9 +17,9 @@ ENGINE_GLYPH_LIMIT :: 32
 ENGINE_NESTING_LIMIT :: 4
 ENGINE_STEP_LIMIT :: 4096
 ENGINE_WORK_LIMIT :: 1 << 16
-// The lookups of one stage: the features of the presentation stage of
-// Devanagari name about 40.
-ENGINE_STAGE_LOOKUP_LIMIT :: 96
+// The features of one stage: the presentation stage of the scripts of
+// India names eleven.
+ENGINE_STAGE_FEATURE_LIMIT :: 16
 
 // One glyph of the buffer.
 Engine_Glyph :: struct {
@@ -101,14 +101,14 @@ engine_buffer_prepare :: proc "contextless" (font: ^Font_File, buffer: ^Engine_B
 // holds the bit of a feature that names it. A feature that the font lacks
 // applies nothing.
 engine_stage :: proc "contextless" (font: ^Font_File, kind: Layout_Kind, script: Feature_Tag, features: []Engine_Feature, buffer: ^Engine_Buffer) -> Font_Problem {
-	Stage_Lookup :: struct {
-		index: u16,
-		mask:  u32,
-	}
-	stage: [ENGINE_STAGE_LOOKUP_LIMIT]Stage_Lookup
-	count := 0
+	// The lookups of each feature, in the order of the lookup list; the
+	// stage merges them, so it has no bound of its own past the lookups of
+	// each feature.
+	indices: [ENGINE_STAGE_FEATURE_LIMIT][SUBSTITUTION_LOOKUP_LIMIT]u16
+	counts, cursors: [ENGINE_STAGE_FEATURE_LIMIT]int
 	place := kind == .Substitution ? font.gsub : font.gpos
-	for feature in features {
+	feature_count := min(len(features), ENGINE_STAGE_FEATURE_LIMIT)
+	for feature, number in features[:feature_count] {
 		lookups: Layout_Lookups
 		problem := layout_lookups(font, place, script, {'D', 'F', 'L', 'T'}, feature.tag, &lookups)
 		if problem == .No_Feature {
@@ -117,32 +117,32 @@ engine_stage :: proc "contextless" (font: ^Font_File, kind: Layout_Kind, script:
 		if problem != .None {
 			return problem
 		}
-		for index in lookups.indices[:lookups.count] {
-			position := 0
-			for position < count && stage[position].index < index {
-				position += 1
-			}
-			if position < count && stage[position].index == index {
-				stage[position].mask |= feature.mask
-				continue
-			}
-			if count == ENGINE_STAGE_LOOKUP_LIMIT {
-				continue
-			}
-			for move := count; move > position; move -= 1 {
-				stage[move] = stage[move - 1]
-			}
-			stage[position] = {index, feature.mask}
-			count += 1
-		}
+		copy(indices[number][:], lookups.indices[:lookups.count])
+		counts[number] = lookups.count
 	}
 	engine := Engine{font = font, place = place, kind = kind, gdef = gdef_of(font), buffer = buffer}
-	for entry in stage[:count] {
-		lookup, found := layout_lookup_of(font, place, int(entry.index))
+	for {
+		next := max(int)
+		for number in 0 ..< feature_count {
+			if cursors[number] < counts[number] {
+				next = min(next, int(indices[number][cursors[number]]))
+			}
+		}
+		if next == max(int) {
+			break
+		}
+		mask: u32
+		for number in 0 ..< feature_count {
+			if cursors[number] < counts[number] && int(indices[number][cursors[number]]) == next {
+				mask |= features[number].mask
+				cursors[number] += 1
+			}
+		}
+		lookup, found := layout_lookup_of(font, place, next)
 		if !found {
 			return .Too_Short
 		}
-		engine_lookup_apply(&engine, lookup, entry.mask)
+		engine_lookup_apply(&engine, lookup, mask)
 	}
 	return .None
 }
@@ -965,4 +965,164 @@ engine_mark_to_mark :: proc "contextless" (engine: ^Engine, head: ^Lookup_Head, 
 	}
 	engine_attach(engine, index, before, dx, dy)
 	return true
+}
+// layout_would_substitute says if a lookup of a feature applies to exactly
+// these glyphs, with no context before or after them (HarfBuzz,
+// would_substitute with a zero context): a single, multiple or alternate
+// substitution to one glyph, a ligature of exactly these components, a
+// contextual rule whose input is exactly these glyphs and that has no
+// backtrack and no lookahead. The shaper of the scripts of India asks it
+// which consonants take a below form or a post form, and if ra and the
+// virama make a reph.
+layout_would_substitute :: proc "contextless" (font: ^Font_File, script, tag: Feature_Tag, glyphs: []int) -> bool {
+	if len(glyphs) == 0 || len(glyphs) > ENGINE_GLYPH_LIMIT {
+		return false
+	}
+	lookups: Layout_Lookups
+	if layout_lookups(font, font.gsub, script, {'D', 'F', 'L', 'T'}, tag, &lookups) != .None {
+		return false
+	}
+	engine := Engine{font = font, place = font.gsub, kind = .Substitution, gdef = gdef_of(font)}
+	for lookup in lookups.parts[:lookups.count] {
+		head := lookup_head(lookup, 7) or_continue
+		for number in 0 ..< head.subtables {
+			engine.work += 1
+			if engine.work > ENGINE_WORK_LIMIT {
+				return false
+			}
+			subtable := engine_subtable(&engine, lookup, number) or_continue
+			if subtable_would_apply(head.type, subtable, glyphs, &engine.work) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// rule_input_matches says if the input of a rule, after its first glyph,
+// is exactly the glyphs after the first.
+@(private)
+rule_input_matches :: proc "contextless" (input: ^Sequence, glyphs: []int) -> bool {
+	if input.count != len(glyphs) - 1 {
+		return false
+	}
+	for item in 0 ..< input.count {
+		if !sequence_item_matches(input, item, glyphs[item + 1]) {
+			return false
+		}
+	}
+	return true
+}
+
+@(private)
+subtable_would_apply :: proc "contextless" (type: int, subtable: []u8, glyphs: []int, work: ^int) -> bool {
+	first := glyphs[0]
+	format := read_u16(subtable, 0) or_else 0
+	switch type {
+	case 1, 2, 3:
+		return len(glyphs) == 1 && covered(subtable, 2, first) >= 0
+	case 4:
+		coverage_index := covered(subtable, 2, first)
+		if coverage_index < 0 || coverage_index >= (read_u16(subtable, 4) or_else 0) {
+			return false
+		}
+		set := part_at(subtable, read_u16(subtable, 6 + 2 * coverage_index) or_else -1) or_else nil
+		for number in 0 ..< (read_u16(set, 0) or_else 0) {
+			work^ += 1
+			if work^ > ENGINE_WORK_LIMIT {
+				return false
+			}
+			entry := part_at(set, read_u16(set, 2 + 2 * number) or_else -1) or_else nil
+			if (read_u16(entry, 2) or_else 0) != len(glyphs) {
+				continue
+			}
+			input := Sequence{form = .Glyphs, data = entry, at = 4, count = len(glyphs) - 1}
+			if rule_input_matches(&input, glyphs) {
+				return true
+			}
+		}
+	case 5, 6:
+		chain := type == 6
+		switch format {
+		case 1, 2:
+			coverage_index := covered(subtable, 2, first)
+			if coverage_index < 0 {
+				return false
+			}
+			classes: []u8
+			set_number := coverage_index
+			count_at := 4
+			if format == 2 {
+				classes = part_at(subtable, read_u16(subtable, chain ? 6 : 4) or_else -1) or_else nil
+				set_number = class_value(classes, first)
+				count_at = chain ? 10 : 6
+			}
+			if set_number >= (read_u16(subtable, count_at) or_else 0) {
+				return false
+			}
+			set_offset := read_u16(subtable, count_at + 2 + 2 * set_number) or_else 0
+			if set_offset == 0 {
+				return false
+			}
+			set := part_at(subtable, set_offset) or_else nil
+			form := format == 1 ? Sequence_Form.Glyphs : Sequence_Form.Classes
+			for number in 0 ..< (read_u16(set, 0) or_else 0) {
+				work^ += 1
+				if work^ > ENGINE_WORK_LIMIT {
+					return false
+				}
+				rule := part_at(set, read_u16(set, 2 + 2 * number) or_else -1) or_else nil
+				input_at := 0
+				if chain {
+					if (read_u16(rule, 0) or_else 1) != 0 {
+						continue // A backtrack: a context.
+					}
+					input_at = 2
+				}
+				glyph_count := read_u16(rule, input_at) or_else 0
+				if glyph_count != len(glyphs) {
+					continue
+				}
+				items_at := chain ? input_at + 2 : 4
+				if chain && (read_u16(rule, items_at + 2 * (glyph_count - 1)) or_else 1) != 0 {
+					continue // A lookahead: a context.
+				}
+				input := Sequence{form = form, data = rule, at = items_at, count = glyph_count - 1, classes = classes}
+				if rule_input_matches(&input, glyphs) {
+					return true
+				}
+			}
+		case 3:
+			if !chain {
+				glyph_count := read_u16(subtable, 2) or_else 0
+				if glyph_count != len(glyphs) {
+					return false
+				}
+				input := Sequence{form = .Coverages, data = subtable, at = 6, count = glyph_count, base = subtable}
+				for item in 0 ..< glyph_count {
+					if !sequence_item_matches(&input, item, glyphs[item]) {
+						return false
+					}
+				}
+				return true
+			}
+			if (read_u16(subtable, 2) or_else 1) != 0 {
+				return false
+			}
+			glyph_count := read_u16(subtable, 4) or_else 0
+			if glyph_count != len(glyphs) || (read_u16(subtable, 6 + 2 * glyph_count) or_else 1) != 0 {
+				return false
+			}
+			input := Sequence{form = .Coverages, data = subtable, at = 6, count = glyph_count, base = subtable}
+			for item in 0 ..< glyph_count {
+				if !sequence_item_matches(&input, item, glyphs[item]) {
+					return false
+				}
+			}
+			return true
+		}
+	case 8:
+		return len(glyphs) == 1 && (read_u16(subtable, 4) or_else 1) == 0 && covered(subtable, 2, first) >= 0 && (read_u16(subtable, 6) or_else 1) == 0
+	}
+	return false
 }

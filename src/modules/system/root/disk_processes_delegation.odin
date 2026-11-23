@@ -653,8 +653,11 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 		return
 	}
 	if system.time() >= load.deadline {
-		system.log_fact(.Warning, Disk_Load_Refused_No_Answer{bound = disk_process.LOAD_DEADLINE_MILLISECONDS, refused_process = disk_load_name_field()})
-		disk_load_end(.Bad_State, errors.ring_fail(u32(root_ring.Root_Command.Start_From_Disk), .No_Answer, .Milliseconds, 0, 0, disk_process.LOAD_DEADLINE_MILLISECONDS))
+		// The bound of this load: the deadline of the set is 16 times that
+		// of a module file.
+		bound := u64(load.kind == .Script_Fonts ? SCRIPT_FONTS_LOAD_DEADLINE_MILLISECONDS : disk_process.LOAD_DEADLINE_MILLISECONDS)
+		system.log_fact(.Warning, Disk_Load_Refused_No_Answer{bound = value_kinds.Time_In_Milliseconds(bound), refused_process = disk_load_name_field()})
+		disk_load_end(.Bad_State, errors.ring_fail(u32(root_ring.Root_Command.Start_From_Disk), .No_Answer, .Milliseconds, 0, 0, i64(bound)))
 		return
 	}
 	system.wait_records(wait, &disk_processes_ring.completions)

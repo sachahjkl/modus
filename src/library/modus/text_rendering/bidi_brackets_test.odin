@@ -1,0 +1,75 @@
+#+build !freestanding
+package text_rendering
+
+import "core:testing"
+
+// The levels of the glyphs of a line, by the byte of each.
+@(private = "file")
+levels_of :: proc(t: ^testing.T, text: string) -> (levels: map[u32]u8) {
+	placed: [64]Placed_Glyph
+	count, _ := shape_text(t, .Interface, text, placed[:])
+	line_levels: [BIDI_GLYPH_LIMIT]u8
+	scratch: [BIDI_GLYPH_LIMIT]u16
+	bidi_levels(transmute([]u8)text, placed[:count], line_levels[:count], scratch[:count])
+	levels = make(map[u32]u8, context.temp_allocator)
+	for glyph, index in placed[:count] {
+		levels[glyph.cluster] = line_levels[index]
+	}
+	return levels
+}
+
+// N0 (UAX #9): a pair of brackets with only right-to-left text inside, in
+// a line of left to right, after a right-to-left letter, is right to left:
+// the closing bracket too, where N1 alone makes it left to right. A
+// bracket that pairs with nothing, or with a bracket of another kind,
+// stays to N1. U+2329 pairs with U+3009, its canonical other form.
+@(test)
+a_pair_of_brackets_takes_the_direction_inside_it :: proc(t: ^testing.T) {
+	test_state_take()
+	fonts := repository_fonts()
+	_, words := outlines_open(t, fonts[:])
+	defer delete(words)
+	// x space alef ( bet ) a: the bytes 0, 1, 2, 4, 5, 7, 8.
+	levels := levels_of(t, "x א(ב)a")
+	testing.expectf(t, levels[4] == 1 && levels[7] == 1, "the pair takes R: ( at %d, ) at %d", levels[4], levels[7])
+	testing.expect_value(t, levels[8], u8(0))
+	// A closing bracket of another kind: no pair, N1 decides.
+	levels = levels_of(t, "x א(ב]a")
+	testing.expectf(t, levels[4] == 1 && levels[7] == 0, "no pair: ( at %d, ] at %d", levels[4], levels[7])
+	// A pair with left-to-right text inside, in the same line: L.
+	levels = levels_of(t, "x א(b)a")
+	testing.expectf(t, levels[4] == 0 && levels[6] == 0, "L inside: ( at %d, ) at %d", levels[4], levels[6])
+	// U+2329 and U+3009 pair: 〈 is 3 bytes, ב 2.
+	levels = levels_of(t, "x א\u2329ב\u3009a")
+	testing.expectf(t, levels[4] == 1 && levels[9] == 1, "the canonical pair takes R: %d, %d", levels[4], levels[9])
+	// A pair nested in a pair: the outer one first.
+	levels = levels_of(t, "x א(ב[ג])a")
+	testing.expectf(t, levels[4] == 1 && levels[7] == 1 && levels[10] == 1 && levels[11] == 1, "nested pairs: %v", levels)
+}
+
+// L1: a paragraph separator (U+2029) takes the level of the paragraph,
+// and so does the white space before it, as at the end of the line; the
+// white space between two letters of right to left before none keeps the
+// level of N1. A text of the system holds no tab and no other control
+// (src/md/data/text_encoding.md): a tab is an invalid sequence, so U+2029
+// is the one separator of L1 that a text holds.
+@(test)
+a_separator_and_the_space_before_it_take_the_paragraph_level :: proc(t: ^testing.T) {
+	test_state_take()
+	fonts := repository_fonts()
+	_, words := outlines_open(t, fonts[:])
+	defer delete(words)
+	// a space alef space U+2029 bet space c: bytes 0, 1, 2, 4, 5, 8, 10, 11.
+	levels := levels_of(t, "a א \u2029ב c")
+	testing.expectf(t, levels[4] == 0 && levels[5] == 0, "the space and the separator: %d, %d", levels[4], levels[5])
+	testing.expect_value(t, levels[2], u8(1))
+	testing.expect_value(t, levels[8], u8(1))
+	// A tab is an invalid sequence: a neutral, which N1 resolves.
+	levels = levels_of(t, "a א \tב c")
+	testing.expect_value(t, levels[5], u8(1))
+	levels = levels_of(t, "a א ב c")
+	testing.expect_value(t, levels[4], u8(1))
+	// White space at the end of the line.
+	levels = levels_of(t, "א  ")
+	testing.expectf(t, levels[2] == 1 && levels[3] == 1, "the end of a line of right to left: %v", levels)
+}

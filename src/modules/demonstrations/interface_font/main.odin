@@ -102,10 +102,10 @@ GREEK: [3]string
 // The box-drawing characters of GREEK_SENTENCE: each one from Paper Mono.
 BOX_CHARACTERS := [?]rune{0x250C, 0x2500, 0x252C, 0x2510, 0x2592, 0x2593, 0x2588}
 // Characters that no font of the system has, the script font set
-// included: the first letter of Armenian and of Bengali. Noto Sans, the
+// included: the first letter of Armenian and of Sinhala. Noto Sans, the
 // last font of the boot image, has the capital pi and the small rho that
 // B612 lacks, Latin Extended-B and the whole Cyrillic block.
-MISSING_CHARACTERS := [?]rune{0x0531, 0x0995}
+MISSING_CHARACTERS := [?]rune{0x0531, 0x0D9A}
 
 // A line of the scripts of the script font set (src/md/features/script_fonts.md):
 // Hebrew, Arabic, which joins, Thai with SARA AM, Devanagari with a

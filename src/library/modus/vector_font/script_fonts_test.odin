@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "core:time"
 
 // The script fonts of the system (src/md/features/script_fonts.md), read
 // from SCRIPT_FONT_SOURCES: the development shell and the check of the
@@ -160,4 +161,80 @@ the_character_map_of_format_12 :: proc(t: ^testing.T) {
 	short := [?]u8{0, 12, 0, 0, 0, 0, 0, 28, 0, 0, 0, 0, 0, 0, 0, 9}
 	_, problem = long_map_groups_check(short[:])
 	testing.expect_value(t, problem, Font_Problem.Too_Short)
+}
+@(private = "file")
+MEASURE :: #config(MEASURE, false)
+
+// The time to read the outlines of the glyphs of Noto Sans CJK (a CFF2
+// font of 65 535 glyphs and font dictionaries), with each glyph reading
+// its Private dictionary, then with the cache of the Private dictionaries.
+// Printed as a measure, never asserted; opt-in: -define:MEASURE=true.
+@(test)
+the_time_of_the_outlines_of_cff2 :: proc(t: ^testing.T) {
+	when !MEASURE {
+		return
+	}
+	memory := new(Render_Memory)
+	defer free(memory)
+	outline := Outline{points = memory.points[:], contour_ends = memory.contours[:]}
+	bytes := script_font_bytes(t, "noto_sans_cjk")
+	defer delete(bytes)
+	font, ok := script_font_open(t, bytes)
+	if !ok {
+		return
+	}
+	GLYPHS :: 16384
+	cache: Cff_Private_Cache
+	for pass in 0 ..< 2 {
+		if pass == 1 {
+			cff_private_cache_fill(&font, &cache)
+			testing.expect(t, font.cff.private_cache == &cache)
+		}
+		start := time.tick_now()
+		for index in 0 ..< min(font.glyph_count, GLYPHS) {
+			_ = glyph_outline(&font, index, &outline)
+		}
+		elapsed := time.tick_since(start)
+		fmt.printfln("vector_font: the outlines of %d glyphs of Noto Sans CJK, %d font dictionaries, %s: %d ns, %d ns a glyph", GLYPHS, font.cff.font_dict_count, pass == 0 ? "each glyph reading its Private dictionary" : "the Private dictionaries cached", i64(elapsed), i64(elapsed) / GLYPHS)
+	}
+}
+// The cache of the Private dictionaries gives each glyph of Noto Sans CJK
+// and Noto Sans Symbols 2 the outline that the read of its own dictionary
+// gives.
+@(test)
+the_private_cache_gives_the_same_outlines :: proc(t: ^testing.T) {
+	memory := new(Render_Memory)
+	defer free(memory)
+	other := new(Render_Memory)
+	defer free(other)
+	for name in ([2]string{"noto_sans_symbols_2", "noto_sans_cjk"}) {
+		bytes := script_font_bytes(t, name)
+		defer delete(bytes)
+		plain, ok := script_font_open(t, bytes)
+		if !ok {
+			continue
+		}
+		cached := plain
+		cache: Cff_Private_Cache
+		cff_private_cache_fill(&cached, &cache)
+		testing.expectf(t, cached.cff.private_cache != nil && cache.count == max(plain.cff.font_dict_count, 1), "%s: the cache holds %d dictionaries", name, cache.count)
+		differences := 0
+		for index := 0; index < plain.glyph_count; index += 7 {
+			a := Outline{points = memory.points[:], contour_ends = memory.contours[:]}
+			b := Outline{points = other.points[:], contour_ends = other.contours[:]}
+			problem_a := glyph_outline(&plain, index, &a)
+			problem_b := glyph_outline(&cached, index, &b)
+			if problem_a != problem_b || a.point_count != b.point_count || a.contour_count != b.contour_count || a.advance != b.advance {
+				differences += 1
+				continue
+			}
+			for point in 0 ..< a.point_count {
+				if a.points[point] != b.points[point] {
+					differences += 1
+					break
+				}
+			}
+		}
+		testing.expectf(t, differences == 0, "%s: %d glyphs differ with the cache", name, differences)
+	}
 }

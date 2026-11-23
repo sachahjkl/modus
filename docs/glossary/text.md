@@ -394,13 +394,23 @@ Do not use: layout engine, shaping engine, OpenType engine.
 
 ### Indic syllable
 
-An Indic syllable is the unit that the shaper of Devanagari shapes at once: consonants joined by viramas, then their vowel signs and their modifiers.
+An Indic syllable is the unit that the shaper of the scripts of India shapes at once: consonants joined by viramas, then their vowel signs and their modifiers.
 
 An independent vowel starts a syllable of its own, and a sign with no consonant before it stands on a dotted circle. The shaper reorders the glyphs of a syllable (the reph after its base, the vowel sign ि before it), so a placed glyph of a syllable can stand before the glyph of a character that comes before it in the text. A syllable holds at most 16 characters. Example: नमस्ते is three syllables, न, म and स्ते.
 
 The design: `src/md/features/written_shaping.md`, "Devanagari".
 
 Do not use: akshara (for this), cluster (for this), grapheme.
+
+### Feature variation
+
+A feature variation is a record of a table `GSUB` or `GPOS` 1.1 that puts another feature table in the place of a feature, at the coordinates of a variable font that its conditions name.
+
+The system draws the default instance of a variable font, so the walk of the features takes the first record whose conditions hold at the default coordinates. Example: Noto Sans Oriya gives its feature `rclt` an empty table and its lookups through a feature variation, so ka takes its other form only through it.
+
+The design: `src/md/features/written_shaping.md`, "The scripts of India".
+
+Do not use: feature substitution (alone), variable feature.
 
 ### Slashed zero
 
@@ -746,7 +756,7 @@ Do not use: attachment point (for this), mark offset, diacritic position.
 
 The script font set is the fonts of the scripts that the boot image lacks, one data object that a plan names by its hash and that a process opens at a fixed range.
 
-It holds seven whole Noto fonts, among them Arabic, Thai, Devanagari and CJK, 36.4 MB, so the boot image stays small. `modustool script_fonts` writes it; the boot image names it by the resource `script_fonts_name`, and the plan of principal 0 can name another. On a machine it is an object of the store `script_fonts`; the root service reads it when the machine is usable, checks its hash, and maps it into each process that starts after that. A process with no set draws the replacement glyph for those scripts, and nothing waits for the set.
+It holds fifteen whole Noto fonts, Arabic, Thai, nine scripts of India and CJK among them, 40.0 MB. `modustool script_fonts` writes it; the boot image names it by the resource `script_fonts_name`, and the plan of principal 0 can name another. On a machine it is an object of the store `script_fonts`; the root service reads it when the machine is usable, checks its hash, and maps it into each process that starts after that. A process with no set draws the replacement glyph for those scripts, and nothing waits for the set.
 
 The design: `src/md/features/script_fonts.md`.
 

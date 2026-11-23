@@ -99,9 +99,9 @@ fuzz_shaping_plain :: proc(text: []u8) -> bool {
 		if text_rendering.is_mark(character) || text_rendering.joining_type_of(character) != .None || text_rendering.is_invisible_format(character) {
 			return false
 		}
-		// Devanagari: the engine of the lookups shapes a syllable into
-		// other glyphs than its characters.
-		if character >= 0x0900 && character <= 0x097F {
+		// The scripts of India: the engine of the lookups shapes a
+		// syllable into other glyphs than its characters.
+		if character >= 0x0900 && character <= 0x0D7F {
 			return false
 		}
 		#partial switch text_rendering.bidi_class_of(character) {
@@ -203,11 +203,12 @@ fuzz_text_shaping_start :: proc() -> bool {
 	defer free(outline_memory)
 	outline := text_rendering.outline_of(outline_memory)
 	missing := text_rendering.fonts_open(fuzz_shaping_fonts, &outlines, &outline)
-	// The script fonts of Arabic and Devanagari, when the shell names them:
+	// The script fonts of Arabic, Devanagari, Telugu and Malayalam (an
+	// explicit reph, a dot reph, pre-base forms), when the shell names them:
 	// the forms of Arabic, lam-alef and the engine of the lookups are then
 	// inside the target.
 	script_inputs := make([dynamic]font_outlines.Font_Input)
-	for name in ([2]string{"noto_sans_arabic", "noto_sans_devanagari"}) {
+	for name in ([4]string{"noto_sans_arabic", "noto_sans_devanagari", "noto_sans_telugu", "noto_sans_malayalam"}) {
 		if script_bytes, found := fuzz_script_font_file(name); found {
 			append(&script_inputs, font_outlines.Font_Input{name, script_bytes})
 		}

@@ -72,6 +72,11 @@ fuzz_vector_font_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	}
 	memory := fuzz_font_memory
 	outline := vector_font.Outline{points = memory.points[:], contour_ends = memory.contours[:]}
+	private_cache: vector_font.Cff_Private_Cache
+	with_cache := font
+	vector_font.cff_private_cache_fill(&with_cache, &private_cache)
+	cached_memory := new(vector_font.Render_Memory, context.temp_allocator)
+	cached_outline := vector_font.Outline{points = cached_memory.points[:], contour_ends = cached_memory.contours[:]}
 	glyphs := make([dynamic]int, context.temp_allocator)
 	append(&glyphs, 0, 1, font.glyph_count - 1, font.glyph_count, int(max(u16)))
 	for character in fuzz_font_characters {
@@ -91,9 +96,18 @@ fuzz_vector_font_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		}
 		_ = vector_font.glyph_advance(&font, glyph)
 		_, _ = vector_font.glyph_data(&font, glyph)
-		if vector_font.glyph_outline(&font, glyph, &outline) == .None {
+		outline_problem := vector_font.glyph_outline(&font, glyph, &outline)
+		if outline_problem == .None {
 			if outline.point_count < 0 || outline.point_count > len(outline.points) || outline.contour_count < 0 || outline.contour_count > len(outline.contour_ends) {
 				return fuzz_broken(.Contract, "the outline of the glyph %d has %d points and %d contours", glyph, outline.point_count, outline.contour_count)
+			}
+		}
+		// The cache of the Private dictionaries gives the outline that the
+		// read of its own dictionary gives.
+		if with_cache.cff.private_cache != nil {
+			cached_problem := vector_font.glyph_outline(&with_cache, glyph, &cached_outline)
+			if cached_problem != outline_problem || cached_problem == .None && (cached_outline.point_count != outline.point_count || cached_outline.contour_count != outline.contour_count) {
+				return fuzz_broken(.Two_Readers, "the glyph %d with the cache of the Private dictionaries: %v, %d points; without: %v, %d points", glyph, cached_problem, cached_outline.point_count, outline_problem, outline.point_count)
 			}
 		}
 		for tag in ([?]vector_font.Feature_Tag{{'s', 's', '0', '1'}, {'z', 'e', 'r', 'o'}}) {
@@ -147,7 +161,7 @@ fuzz_script_font_file :: proc(name: string) -> (bytes: []u8, found: bool) {
 
 // The scripts and the features that the layout check asks of each font.
 @(rodata, private = "file")
-fuzz_layout_scripts := [?]vector_font.Feature_Tag{{'a', 'r', 'a', 'b'}, {'h', 'e', 'b', 'r'}, {'d', 'e', 'v', '2'}, {'D', 'F', 'L', 'T'}}
+fuzz_layout_scripts := [?]vector_font.Feature_Tag{{'a', 'r', 'a', 'b'}, {'h', 'e', 'b', 'r'}, {'d', 'e', 'v', '2'}, {'m', 'l', 'm', '2'}, {'D', 'F', 'L', 'T'}}
 @(rodata, private = "file")
 fuzz_layout_features := [?]vector_font.Feature_Tag{{'c', 'c', 'm', 'p'}, {'i', 'n', 'i', 't'}, {'f', 'i', 'n', 'a'}, {'r', 'l', 'i', 'g'}, {'p', 'r', 'e', 's'}, {'h', 'a', 'l', 'f'}}
 
@@ -167,6 +181,26 @@ fuzz_layout_check :: proc(font: ^vector_font.Font_File, glyphs: []int) -> Fuzz_V
 	}
 	if len(usable) == 0 {
 		return FUZZ_PASSED
+	}
+	// The cache of the walk answers as the walk, and the test of a feature
+	// on exact glyphs refuses or answers with no fault.
+	cache_entries: [256]vector_font.Layout_Cache_Entry
+	cache_indices: [2048]u16
+	cache := vector_font.Layout_Cache{entries = cache_entries[:], indices = cache_indices[:]}
+	cached := font^
+	vector_font.layout_cache_fill(&cached, &cache)
+	for script in fuzz_layout_scripts {
+		for tag in fuzz_layout_features {
+			for place in ([2]vector_font.Table{font.gsub, font.gpos}) {
+				walked, from_cache: vector_font.Layout_Lookups
+				walk_problem := vector_font.layout_lookups(font, place, script, {'D', 'F', 'L', 'T'}, tag, &walked)
+				cache_problem := vector_font.layout_lookups(&cached, place == font.gsub ? cached.gsub : cached.gpos, script, {'D', 'F', 'L', 'T'}, tag, &from_cache)
+				if walk_problem == .None && (cache_problem != .None || walked.count != from_cache.count || walked.indices != from_cache.indices) {
+					return fuzz_broken(.Two_Readers, "the cache of the walk gives %v and %d lookups; the walk gives %d", cache_problem, from_cache.count, walked.count)
+				}
+			}
+			_ = vector_font.layout_would_substitute(font, script, tag, usable[:min(len(usable), 3)])
+		}
 	}
 	for script in fuzz_layout_scripts {
 		for tag in fuzz_layout_features {
