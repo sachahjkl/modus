@@ -257,31 +257,46 @@ SECRET_KEYS_SIZE :: 64
 // `unlock`. The offsets, in bytes; each number is little-endian.
 FILE_OBJECT :: "principal"
 FILE_MAGIC :: "PRINCIPL" // The first 8 bytes of the file.
-FILE_FORMAT :: u32(1) // The format number of the file. A file of another number is refused.
+// The format number of the file. Format 2 added the principal identifier;
+// a file of format 1 is refused with Older_Format, and a file of another
+// number with Wrong_Format.
+FILE_FORMAT :: u32(2)
+OLDER_FILE_FORMAT :: u32(1)
 OFFSET_MAGIC :: 0 // 8 bytes.
 OFFSET_FORMAT :: 8 // u32.
 OFFSET_MEMORY :: 12 // u32: the KiB of Argon2id.
 OFFSET_PASSES :: 16 // u32.
 OFFSET_NAME_LENGTH :: 20 // u8.
 OFFSET_NAME :: 21 // NAME_LIMIT bytes, zero bytes after the name.
-OFFSET_SIGNING_PUBLIC_KEY :: OFFSET_NAME + NAME_LIMIT // 44: Ed25519.
-OFFSET_UNLOCK_PUBLIC_KEY :: OFFSET_SIGNING_PUBLIC_KEY + PUBLIC_KEY_SIZE // 76: X25519.
-OFFSET_SALT :: OFFSET_UNLOCK_PUBLIC_KEY + PUBLIC_KEY_SIZE // 108.
-OFFSET_NONCE :: OFFSET_SALT + SALT_SIZE // 124.
+OFFSET_IDENTIFIER :: OFFSET_NAME + NAME_LIMIT // 44: the principal identifier, PRINCIPAL_IDENTIFIER_SIZE bytes.
+OFFSET_SIGNING_PUBLIC_KEY :: OFFSET_IDENTIFIER + PRINCIPAL_IDENTIFIER_SIZE // 76: Ed25519.
+OFFSET_UNLOCK_PUBLIC_KEY :: OFFSET_SIGNING_PUBLIC_KEY + PUBLIC_KEY_SIZE // 108: X25519.
+OFFSET_SALT :: OFFSET_UNLOCK_PUBLIC_KEY + PUBLIC_KEY_SIZE // 140.
+OFFSET_NONCE :: OFFSET_SALT + SALT_SIZE // 156.
 // The sealed secret keys and their tag. The bytes before them are the
-// additional data of the seal: a change of the name, of a public key, of the
-// salt or of a parameter makes the open fail.
-OFFSET_SEALED :: OFFSET_NONCE + NONCE_SIZE // 136.
+// additional data of the seal: a change of the name, of the identifier, of
+// a public key, of the salt or of a parameter makes the open fail.
+OFFSET_SEALED :: OFFSET_NONCE + NONCE_SIZE // 168.
 SEALED_SIZE :: SECRET_KEYS_SIZE + TAG_SIZE // The sealed keys and their tag: 80 bytes.
-FILE_SIZE :: OFFSET_SEALED + SEALED_SIZE // 216.
-#assert(FILE_SIZE == 216)
+FILE_SIZE :: OFFSET_SEALED + SEALED_SIZE // 248.
+#assert(FILE_SIZE == 248)
+
+// The principal identifier: 256 random bits that `unlock` draws at the
+// creation of a named principal (src/md/features/several_principals.md,
+// "The identity: three names"). It never changes, it comes from no key,
+// and it names the principal on the disk. The slot, the number of a
+// principal in the root service, is a number of one run of the machine.
+// Format property: 32 bytes, so no search finds a chosen identifier.
+PRINCIPAL_IDENTIFIER_SIZE :: 32
+Principal_Identifier :: [PRINCIPAL_IDENTIFIER_SIZE]u8
 
 // The file of a named principal, decoded: what `unlock` keeps in its store.
-// `file_encode` writes it in 216 bytes; `file_decode` reads them as hostile
+// `file_encode` writes it in 248 bytes; `file_decode` reads them as hostile
 // input and refuses each other form.
 Principal_File :: struct {
 	name:               [NAME_LIMIT]u8, // The name of the principal.
 	name_length:        int, // The bytes of the name.
+	identifier:         Principal_Identifier, // Never all zero.
 	signing_public_key: [PUBLIC_KEY_SIZE]u8, // The Ed25519 public key that verifies its grants.
 	unlock_public_key:  [PUBLIC_KEY_SIZE]u8, // The X25519 public key that seals its documents.
 	salt:               [SALT_SIZE]u8, // The salt of Argon2id.
@@ -293,23 +308,32 @@ Principal_File :: struct {
 // `file_problem_sentences`.
 File_Problem :: enum u8 {
 	None, // The file is valid.
-	Wrong_Size, // Not 216 bytes.
+	Wrong_Size, // Not the size of its form.
 	Wrong_Magic, // It does not start with FILE_MAGIC.
-	Wrong_Format, // Another format number.
+	Wrong_Format, // A format number that no release wrote.
+	Older_Format, // The format of an older release, which this release does not read.
 	Other_Parameters, // Other parameters of Argon2id than DERIVATION_MEMORY_KIBIBYTES and DERIVATION_PASSES.
 	Bad_Name, // The name breaks `name_problem`.
 	Bytes_After_Name, // A byte after the name is not zero.
 	Bad_Area, // A record sealed by the TPM: an area is not a whole sized buffer within its limit, or a byte after it is not zero.
+	Zero_Identifier, // The principal identifier is all zero: no creation draws it.
 }
+
+// The sentence of a file of an older format: what happened, why, and what
+// the person can do. Before 1.0 a format changes with no migration.
+OLDER_FORMAT_SENTENCE :: "the file has the format of an older release of modus, which this release does not read: create the principal again"
+ZERO_IDENTIFIER_SENTENCE :: "the file names no principal identifier"
 
 // The sentence of each problem of a file, for the window of `unlock` and the
 // log.
 @(rodata)
 file_problem_sentences := [File_Problem]string {
 	.None             = "",
-	.Wrong_Size       = "the file does not have 216 bytes",
+	.Wrong_Size       = "the file does not have 248 bytes",
 	.Wrong_Magic      = "the file does not start with PRINCIPL",
-	.Wrong_Format     = "the file has another format number",
+	.Wrong_Format     = "the file has a format number that no release of modus wrote",
+	.Older_Format     = OLDER_FORMAT_SENTENCE,
+	.Zero_Identifier  = ZERO_IDENTIFIER_SENTENCE,
 	.Other_Parameters = "the file names other parameters of Argon2id than 19456 KiB and 2 passes",
 	.Bad_Name         = "the name in the file is not a name of a principal",
 	.Bytes_After_Name = "the file has bytes that are not zero after the name",
@@ -485,6 +509,7 @@ file_encode :: proc "contextless" (file: ^Principal_File, out: ^[FILE_SIZE]u8) {
 	length := clamp(file.name_length, 0, NAME_LIMIT)
 	out^[OFFSET_NAME_LENGTH] = u8(length)
 	copy(out^[OFFSET_NAME:][:length], file.name[:length])
+	copy(out^[OFFSET_IDENTIFIER:][:PRINCIPAL_IDENTIFIER_SIZE], file.identifier[:])
 	copy(out^[OFFSET_SIGNING_PUBLIC_KEY:][:PUBLIC_KEY_SIZE], file.signing_public_key[:])
 	copy(out^[OFFSET_UNLOCK_PUBLIC_KEY:][:PUBLIC_KEY_SIZE], file.unlock_public_key[:])
 	copy(out^[OFFSET_SALT:][:SALT_SIZE], file.salt[:])
@@ -504,8 +529,8 @@ file_decode :: proc "contextless" (bytes: []u8) -> (file: Principal_File, kept: 
 	if string(kept[OFFSET_MAGIC:][:8]) != FILE_MAGIC {
 		return {}, {}, .Wrong_Magic
 	}
-	if byte_order.read_u32_little_endian(kept[OFFSET_FORMAT:], 0) != FILE_FORMAT {
-		return {}, {}, .Wrong_Format
+	if format := byte_order.read_u32_little_endian(kept[OFFSET_FORMAT:], 0); format != FILE_FORMAT {
+		return {}, {}, format == OLDER_FILE_FORMAT ? .Older_Format : .Wrong_Format
 	}
 	if byte_order.read_u32_little_endian(kept[OFFSET_MEMORY:], 0) != DERIVATION_MEMORY_KIBIBYTES || byte_order.read_u32_little_endian(kept[OFFSET_PASSES:], 0) != DERIVATION_PASSES {
 		return {}, {}, .Other_Parameters
@@ -514,19 +539,34 @@ file_decode :: proc "contextless" (bytes: []u8) -> (file: Principal_File, kept: 
 	if length > NAME_LIMIT || name_problem(string(kept[OFFSET_NAME:][:length])) != .None {
 		return {}, {}, .Bad_Name
 	}
-	for after in kept[OFFSET_NAME + length:OFFSET_SIGNING_PUBLIC_KEY] {
+	for after in kept[OFFSET_NAME + length:OFFSET_IDENTIFIER] {
 		if after != 0 {
 			return {}, {}, .Bytes_After_Name
 		}
 	}
+	if identifier_is_zero(kept[OFFSET_IDENTIFIER:][:PRINCIPAL_IDENTIFIER_SIZE]) {
+		return {}, {}, .Zero_Identifier
+	}
 	file.name_length = length
 	copy(file.name[:], kept[OFFSET_NAME:][:length])
+	copy(file.identifier[:], kept[OFFSET_IDENTIFIER:][:PRINCIPAL_IDENTIFIER_SIZE])
 	copy(file.signing_public_key[:], kept[OFFSET_SIGNING_PUBLIC_KEY:][:PUBLIC_KEY_SIZE])
 	copy(file.unlock_public_key[:], kept[OFFSET_UNLOCK_PUBLIC_KEY:][:PUBLIC_KEY_SIZE])
 	copy(file.salt[:], kept[OFFSET_SALT:][:SALT_SIZE])
 	copy(file.nonce[:], kept[OFFSET_NONCE:][:NONCE_SIZE])
 	copy(file.sealed[:], kept[OFFSET_SEALED:][:SEALED_SIZE])
 	return file, kept, .None
+}
+
+// identifier_is_zero says if the bytes of an identifier are all zero: the
+// value that no creation draws, as the bytes of a file that never had one.
+identifier_is_zero :: proc "contextless" (bytes: []u8) -> bool {
+	for byte in bytes {
+		if byte != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // file_additional_data gives the bytes of a file that the seal covers and
@@ -622,6 +662,8 @@ machine_file_problem_sentences := [File_Problem]string {
 	.Bad_Name         = "",
 	.Bytes_After_Name = "",
 	.Bad_Area         = "",
+	.Older_Format     = "",
+	.Zero_Identifier  = "",
 }
 
 // The record of a machine key sealed by the TPM: the object MACHINE_OBJECT
@@ -838,6 +880,8 @@ machine_tpm_file_problem_sentences := [File_Problem]string {
 	.Bad_Name         = "",
 	.Bytes_After_Name = "",
 	.Bad_Area         = "a part of the sealed object is not whole, or the creation data does not name PCR 7 and PCR 11, or a part has bytes that are not zero after it",
+	.Older_Format     = "",
+	.Zero_Identifier  = "",
 }
 
 // The record of a machine key sealed by the TPM with the machine passphrase:
@@ -971,6 +1015,8 @@ machine_tpm_passphrase_file_problem_sentences := [File_Problem]string {
 	.Bad_Name         = "",
 	.Bytes_After_Name = "",
 	.Bad_Area         = "a part of the sealed object is not whole, or the creation data does not name PCR 7 and PCR 11, or a part has bytes that are not zero after it",
+	.Older_Format     = "",
+	.Zero_Identifier  = "",
 }
 
 // The texts of the keyed hashes of the machine passphrase with the TPM:
@@ -1129,6 +1175,19 @@ keyed_hash :: proc "contextless" (key: []u8, text: string) -> (result: [KEY_SIZE
 	return result
 }
 
+// The text over which the secret unlock key gives the storage key of the
+// principal (src/md/features/store_encryption.md, "The keys"). It differs
+// from each other text of a use of the unlock key.
+STORAGE_KEY_TEXT :: "modus storage key of a principal"
+
+// principal_storage_key gives the storage key of a named principal: keyed
+// BLAKE2b of its secret unlock key (X25519) over STORAGE_KEY_TEXT. The
+// process `unlock` computes it at the unlock; the storage service derives
+// the key of each store from it.
+principal_storage_key :: proc "contextless" (unlock_secret: ^[KEY_SIZE]u8) -> [KEY_SIZE]u8 {
+	return keyed_hash(unlock_secret^[:], STORAGE_KEY_TEXT)
+}
+
 // recovery_seal_key gives the key of the recovery seal: keyed BLAKE2b of
 // the recovery key over RECOVERY_SEAL_TEXT.
 recovery_seal_key :: proc "contextless" (recovery_key: ^[RECOVERY_KEY_SIZE]u8) -> [KEY_SIZE]u8 {
@@ -1167,17 +1226,20 @@ machine_key_check :: proc "contextless" (machine_key: ^[MACHINE_KEY_SIZE]u8) -> 
 //
 // The offsets, in bytes; each number is little-endian.
 PRINCIPAL_TPM_MAGIC :: "PRINCIPT" // The first 8 bytes of the file.
-PRINCIPAL_TPM_FORMAT :: u32(1) // A file of another format number is refused.
+// Format 2 added the principal identifier; a file of format 1 is refused
+// with Older_Format.
+PRINCIPAL_TPM_FORMAT :: u32(2)
+OLDER_PRINCIPAL_TPM_FORMAT :: u32(1)
 TPM_SECRET_SIZE :: 32 // The bytes of the TPM secret: the secret that the TPM service seals with an authorization value, here and in the form MACHINE_TPM_PASSPHRASE_MAGIC.
 PRINCIPAL_TPM_PCRS :: tpm2.PCR_SET // The PCRs of the policy: PCR 7 and PCR 11, bit n for PCR n.
-PRINCIPAL_TPM_OFFSET_PCRS :: OFFSET_NONCE // 124: u32, the PCRs of the policy, bit n for PCR n.
-PRINCIPAL_TPM_OFFSET_SEALED_OBJECT :: PRINCIPAL_TPM_OFFSET_PCRS + 4 // 128: SEALED_OBJECT_SIZE bytes.
-PRINCIPAL_TPM_OFFSET_NONCE :: PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_SIZE // 848: the nonce of the seal under the seal key.
-PRINCIPAL_TPM_OFFSET_SEALED :: PRINCIPAL_TPM_OFFSET_NONCE + NONCE_SIZE // 860: the two secret keys and the tag.
-PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE :: PRINCIPAL_TPM_OFFSET_SEALED + SEALED_SIZE // 940.
-PRINCIPAL_TPM_OFFSET_RECOVERY_SEALED :: PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE + NONCE_SIZE // 952: the two secret keys under the recovery key, and the tag.
-PRINCIPAL_TPM_FILE_SIZE :: PRINCIPAL_TPM_OFFSET_RECOVERY_SEALED + SEALED_SIZE // 1032.
-#assert(PRINCIPAL_TPM_FILE_SIZE == 1032)
+PRINCIPAL_TPM_OFFSET_PCRS :: OFFSET_NONCE // 156: u32, the PCRs of the policy, bit n for PCR n.
+PRINCIPAL_TPM_OFFSET_SEALED_OBJECT :: PRINCIPAL_TPM_OFFSET_PCRS + 4 // 160: SEALED_OBJECT_SIZE bytes.
+PRINCIPAL_TPM_OFFSET_NONCE :: PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_SIZE // 880: the nonce of the seal under the seal key.
+PRINCIPAL_TPM_OFFSET_SEALED :: PRINCIPAL_TPM_OFFSET_NONCE + NONCE_SIZE // 892: the two secret keys and the tag.
+PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE :: PRINCIPAL_TPM_OFFSET_SEALED + SEALED_SIZE // 972.
+PRINCIPAL_TPM_OFFSET_RECOVERY_SEALED :: PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE + NONCE_SIZE // 984: the two secret keys under the recovery key, and the tag.
+PRINCIPAL_TPM_FILE_SIZE :: PRINCIPAL_TPM_OFFSET_RECOVERY_SEALED + SEALED_SIZE // 1064.
+#assert(PRINCIPAL_TPM_FILE_SIZE == 1064)
 // The bytes that each seal covers and does not seal.
 PRINCIPAL_TPM_ADDITIONAL_SIZE :: PRINCIPAL_TPM_OFFSET_PCRS // The seal under the seal key: to the salt.
 PRINCIPAL_TPM_RECOVERY_ADDITIONAL_SIZE :: OFFSET_SALT // The recovery seal: to the public keys.
@@ -1189,6 +1251,7 @@ PRINCIPAL_FILE_LIMIT :: max(FILE_SIZE, PRINCIPAL_TPM_FILE_SIZE)
 Principal_Tpm_File :: struct {
 	name:               [NAME_LIMIT]u8,
 	name_length:        int,
+	identifier:         Principal_Identifier, // Never all zero.
 	signing_public_key: [PUBLIC_KEY_SIZE]u8,
 	unlock_public_key:  [PUBLIC_KEY_SIZE]u8,
 	salt:               [SALT_SIZE]u8, // The salt of Argon2id: the key of the passphrase.
@@ -1211,6 +1274,7 @@ principal_tpm_file_encode :: proc "contextless" (file: ^Principal_Tpm_File, out:
 	length := clamp(file.name_length, 0, NAME_LIMIT)
 	out^[OFFSET_NAME_LENGTH] = u8(length)
 	copy(out^[OFFSET_NAME:][:length], file.name[:length])
+	copy(out^[OFFSET_IDENTIFIER:][:PRINCIPAL_IDENTIFIER_SIZE], file.identifier[:])
 	copy(out^[OFFSET_SIGNING_PUBLIC_KEY:][:PUBLIC_KEY_SIZE], file.signing_public_key[:])
 	copy(out^[OFFSET_UNLOCK_PUBLIC_KEY:][:PUBLIC_KEY_SIZE], file.unlock_public_key[:])
 	copy(out^[OFFSET_SALT:][:SALT_SIZE], file.salt[:])
@@ -1235,8 +1299,8 @@ principal_tpm_file_decode :: proc "contextless" (bytes: []u8) -> (file: Principa
 	if string(kept[OFFSET_MAGIC:][:8]) != PRINCIPAL_TPM_MAGIC {
 		return {}, {}, .Wrong_Magic
 	}
-	if byte_order.read_u32_little_endian(kept[OFFSET_FORMAT:], 0) != PRINCIPAL_TPM_FORMAT {
-		return {}, {}, .Wrong_Format
+	if format := byte_order.read_u32_little_endian(kept[OFFSET_FORMAT:], 0); format != PRINCIPAL_TPM_FORMAT {
+		return {}, {}, format == OLDER_PRINCIPAL_TPM_FORMAT ? .Older_Format : .Wrong_Format
 	}
 	if byte_order.read_u32_little_endian(kept[OFFSET_MEMORY:], 0) != DERIVATION_MEMORY_KIBIBYTES || byte_order.read_u32_little_endian(kept[OFFSET_PASSES:], 0) != DERIVATION_PASSES || byte_order.read_u32_little_endian(kept[PRINCIPAL_TPM_OFFSET_PCRS:], 0) != tpm2.PCR_SET {
 		return {}, {}, .Other_Parameters
@@ -1245,8 +1309,11 @@ principal_tpm_file_decode :: proc "contextless" (bytes: []u8) -> (file: Principa
 	if length > NAME_LIMIT || name_problem(string(kept[OFFSET_NAME:][:length])) != .None {
 		return {}, {}, .Bad_Name
 	}
-	if !zero_after(kept[OFFSET_NAME:OFFSET_SIGNING_PUBLIC_KEY], length) {
+	if !zero_after(kept[OFFSET_NAME:OFFSET_IDENTIFIER], length) {
 		return {}, {}, .Bytes_After_Name
+	}
+	if identifier_is_zero(kept[OFFSET_IDENTIFIER:][:PRINCIPAL_IDENTIFIER_SIZE]) {
+		return {}, {}, .Zero_Identifier
 	}
 	object, object_ok := sealed_object_decode(kept[PRINCIPAL_TPM_OFFSET_SEALED_OBJECT:][:SEALED_OBJECT_SIZE])
 	if !object_ok {
@@ -1254,6 +1321,7 @@ principal_tpm_file_decode :: proc "contextless" (bytes: []u8) -> (file: Principa
 	}
 	file.name_length = length
 	copy(file.name[:], kept[OFFSET_NAME:][:length])
+	copy(file.identifier[:], kept[OFFSET_IDENTIFIER:][:PRINCIPAL_IDENTIFIER_SIZE])
 	copy(file.signing_public_key[:], kept[OFFSET_SIGNING_PUBLIC_KEY:][:PUBLIC_KEY_SIZE])
 	copy(file.unlock_public_key[:], kept[OFFSET_UNLOCK_PUBLIC_KEY:][:PUBLIC_KEY_SIZE])
 	copy(file.salt[:], kept[OFFSET_SALT:][:SALT_SIZE])
@@ -1284,9 +1352,11 @@ principal_tpm_file_recovery_additional_data :: proc "contextless" (bytes: ^[PRIN
 @(rodata)
 principal_tpm_file_problem_sentences := [File_Problem]string {
 	.None             = "",
-	.Wrong_Size       = "the file does not have 1032 bytes",
+	.Wrong_Size       = "the file does not have 1064 bytes",
 	.Wrong_Magic      = "the file does not start with PRINCIPT",
-	.Wrong_Format     = "the file has another format number",
+	.Wrong_Format     = "the file has a format number that no release of modus wrote",
+	.Older_Format     = OLDER_FORMAT_SENTENCE,
+	.Zero_Identifier  = ZERO_IDENTIFIER_SENTENCE,
 	.Other_Parameters = "the file names other parameters of Argon2id than 19456 KiB and 2 passes, or other PCRs than PCR 7 and PCR 11",
 	.Bad_Name         = "the name in the file is not a name of a principal",
 	.Bytes_After_Name = "the file has bytes that are not zero after the name",

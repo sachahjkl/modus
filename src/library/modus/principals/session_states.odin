@@ -14,10 +14,9 @@
 //
 // No allocator and no kernel operation: the root service and the host
 // tests call the same procedures.
-package session_states
+package principals
 
 import "modus:contract/root_ring"
-import "modus:principals"
 
 // The state of the session of one principal.
 Session_State :: enum u8 {
@@ -99,15 +98,15 @@ Seat_Event :: enum u8 {
 //
 // Example: a seat in Session with principal 1 in front refuses
 // Session_Unlocked of principal 2: one session is in front at a time.
-seat_next :: proc "contextless" (seat: Seat, event: Seat_Event, principal: u64 = principals.MACHINE) -> (next: Seat, ok: bool) {
-	machine_in_front := seat.state == .Session && seat.in_front == principals.MACHINE
+seat_next :: proc "contextless" (seat: Seat, event: Seat_Event, principal: u64 = MACHINE) -> (next: Seat, ok: bool) {
+	machine_in_front := seat.state == .Session && seat.in_front == MACHINE
 	switch event {
 	case .Machine_Alone:
-		if principal == principals.MACHINE {
-			return {state = .Session, in_front = principals.MACHINE}, true
+		if principal == MACHINE {
+			return {state = .Session, in_front = MACHINE}, true
 		}
 	case .Named_Principal_Recorded:
-		if principal != principals.MACHINE {
+		if principal != MACHINE {
 			break
 		}
 		if machine_in_front {
@@ -117,22 +116,22 @@ seat_next :: proc "contextless" (seat: Seat, event: Seat_Event, principal: u64 =
 		// the seat changes nothing: the seat is already not principal 0.
 		return seat, true
 	case .Unlock_Window_Opened:
-		if principal == principals.MACHINE && seat.state == .Chooser {
+		if principal == MACHINE && seat.state == .Chooser {
 			return {state = .Unlock_Window}, true
 		}
 	case .Unlock_Window_Closed:
-		if principal == principals.MACHINE && seat.state == .Unlock_Window {
+		if principal == MACHINE && seat.state == .Unlock_Window {
 			return {state = .Chooser}, true
 		}
 	case .Session_Unlocked:
-		if principal == principals.MACHINE || principal >= principals.PRINCIPAL_CAPACITY {
+		if principal == MACHINE || principal >= PRINCIPAL_CAPACITY {
 			break
 		}
 		if seat.state == .Chooser || seat.state == .Unlock_Window || machine_in_front {
 			return {state = .Session, in_front = principal}, true
 		}
 	case .Session_Locked:
-		if principal != principals.MACHINE && seat.state == .Session && seat.in_front == principal {
+		if principal != MACHINE && seat.state == .Session && seat.in_front == principal {
 			return {state = .Chooser}, true
 		}
 	}
@@ -146,14 +145,14 @@ principal_in_front :: proc "contextless" (seat: Seat) -> u64 {
 	if seat.state == .Session {
 		return seat.in_front
 	}
-	return principals.MACHINE
+	return MACHINE
 }
 
 // principal_state_word gives the state that the root ring says for a slot
 // (root_ring.Principal_State): the one place where the session state
 // becomes the word of the contract. Principal 0 is always Machine.
 principal_state_word :: proc "contextless" (slot: u64, state: Session_State) -> root_ring.Principal_State {
-	if slot == principals.MACHINE {
+	if slot == MACHINE {
 		return .Machine
 	}
 	switch state {

@@ -83,20 +83,23 @@ The process `unlock` keeps the record in its private store (a store of principal
 | Offset | Bytes | Field |
 |---|---|---|
 | 0 | 8 | `PRINCIPL` |
-| 8 | 4 | The format: 1 |
+| 8 | 4 | The format: 2 |
 | 12 | 4 | The KiB of Argon2id: 19456 |
 | 16 | 4 | The passes of Argon2id: 2 |
 | 20 | 1 | The bytes of the name: 1 to 23 |
 | 21 | 23 | The name: letters, digits, `-`, `_`, `.`; zero bytes after it |
-| 44 | 32 | The public signing key |
-| 76 | 32 | The public unlock key |
-| 108 | 16 | The salt of Argon2id |
-| 124 | 12 | The nonce of the seal |
-| 136 | 80 | The two secret keys (64 bytes) sealed with ChaCha20-Poly1305, and the tag |
+| 44 | 32 | The principal identifier: 32 random bytes, never all zero |
+| 76 | 32 | The public signing key |
+| 108 | 32 | The public unlock key |
+| 140 | 16 | The salt of Argon2id |
+| 156 | 12 | The nonce of the seal |
+| 168 | 80 | The two secret keys (64 bytes) sealed with ChaCha20-Poly1305, and the tag |
 
-The additional data of the seal is each byte before the sealed keys. So a change of the name, of a public key, of the salt or of a parameter makes the open fail.
+The additional data of the seal is each byte before the sealed keys. So a change of the name, of the identifier, of a public key, of the salt or of a parameter makes the open fail.
 
-The file is data from the disk. `file_decode` copies it once and checks the copy: the size, the magic, the format, the name, and the zero bytes after it. A file with other parameters of Argon2id is refused: a file cannot ask for a cheaper derivation, or for more memory than the process has.
+**The principal identifier** names the principal on the disk: `unlock` draws it at the creation from its random generator, with the strength of a key, and it never changes. The number of a principal in the root service is a slot of one run of the machine: `unlock` gives the root service the identifier of the file after its record (`Principal_Identifier`), and the root service starts no session of a record with no identifier. The design is `src/md/features/several_principals.md`, "The identity: three names".
+
+The file is data from the disk. `file_decode` copies it once and checks the copy: the size, the magic, the format, the name, the zero bytes after it, and an identifier that is not all zero. A file of the format 1 of an older release is refused with the sentence "the file has the format of an older release of modus, which this release does not read: create the principal again": before 1.0 a format changes with no migration. A file with other parameters of Argon2id is refused: a file cannot ask for a cheaper derivation, or for more memory than the process has.
 
 ### The key derivation
 
@@ -180,19 +183,19 @@ unlock: the keys of principal 1 "alice" are sealed again to PCR 7 and PCR 11 of 
 
 | Offset | Bytes | Field |
 |---|---|---|
-| 0 | 124 | As the form `PRINCIPL`, to the salt, with `PRINCIPT` and the format 1 |
-| 124 | 4 | The PCRs of the policy: `0x880`, PCR 7 and PCR 11 |
-| 128 | 8 | The bytes of the public area, of the private area, of the creation data and of the creation ticket, 2 bytes each |
-| 136 | 128 | The public area of the sealed object |
-| 264 | 256 | The private area |
-| 520 | 256 | The creation data |
-| 776 | 72 | The creation ticket |
-| 848 | 12 | The nonce of the seal under the seal key |
-| 860 | 80 | The two secret keys sealed under the seal key, and the tag |
-| 940 | 12 | The nonce of the recovery seal |
-| 952 | 80 | The two secret keys sealed under keyed BLAKE2b of the recovery key, and the tag |
+| 0 | 156 | As the form `PRINCIPL`, to the salt, with `PRINCIPT` and the format 2, the principal identifier too |
+| 156 | 4 | The PCRs of the policy: `0x880`, PCR 7 and PCR 11 |
+| 160 | 8 | The bytes of the public area, of the private area, of the creation data and of the creation ticket, 2 bytes each |
+| 168 | 128 | The public area of the sealed object |
+| 296 | 256 | The private area |
+| 552 | 256 | The creation data |
+| 808 | 72 | The creation ticket |
+| 880 | 12 | The nonce of the seal under the seal key |
+| 892 | 80 | The two secret keys sealed under the seal key, and the tag |
+| 972 | 12 | The nonce of the recovery seal |
+| 984 | 80 | The two secret keys sealed under keyed BLAKE2b of the recovery key, and the tag |
 
-Each part of the sealed object has zero bytes after it. The additional data of the seal under the seal key is the first 124 bytes. The additional data of the recovery seal is the first 108 bytes, before the salt, so a new passphrase keeps the copy valid. `principal_tpm_file_decode` refuses other parameters of Argon2id, other PCRs, a name that is not a name, and a part of the sealed object that is not whole.
+Each part of the sealed object has zero bytes after it. The additional data of the seal under the seal key is the first 156 bytes. The additional data of the recovery seal is the first 140 bytes, before the salt, so a new passphrase keeps the copy valid; both cover the identifier. `principal_tpm_file_decode` refuses other parameters of Argon2id, other PCRs, a name that is not a name, an identifier that is all zero, a part of the sealed object that is not whole, and the format 1 of an older release, with the sentence of the form `PRINCIPL`.
 
 **What it protects, and what it does not.**
 

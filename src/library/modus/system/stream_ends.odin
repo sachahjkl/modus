@@ -81,23 +81,39 @@ Stream_End :: struct {
 	// the source of its pair, a reader end of this process. 0 for each
 	// other end.
 	pair:               u32,
+	// A writer end of a record output By_Principal: the principal of its
+	// reader, plus 1, which the wiring service wrote. 0 for each other end.
+	reader_principal:   u64,
 }
 
 // writer_end_in says if an end is a writer end of the record output index
 // and of the pair: 0 for a record output that is not Paired, whose ends
 // name no pair, so a write of one never reaches a ring of a pair.
 @(private = "file")
-writer_end_in :: proc "contextless" (end: ^Stream_End, index: u32, pair: u32) -> bool {
-	return end.command == .Writer_End && end.index == index && end.pair == pair
+writer_end_in :: proc "contextless" (end: ^Stream_End, index: u32, selector: End_Selector) -> bool {
+	if end.command != .Writer_End || end.index != index || end.pair != selector.pair {
+		return false
+	}
+	return selector.any_principal || end.reader_principal == selector.reader_principal
+}
+
+// Which writer ends of a record output a write or a count takes: the ends
+// of one pair (0: no pair), and of one reader principal (plus 1; 0: the
+// ends that name none). any_principal takes the ends of each principal: a
+// count of the live rings, never a write.
+End_Selector :: struct {
+	pair:             u32,
+	reader_principal: u64,
+	any_principal:    bool,
 }
 
 // refused_full_mark records the end of one write on each ring of a record
 // output: Full marks the rings that held the writer at its last look, and
 // a write that went through clears each mark.
 @(private = "file")
-refused_full_mark :: proc "contextless" (index: u32, full: bool, pair: u32 = 0) {
+refused_full_mark :: proc "contextless" (index: u32, full: bool, selector: End_Selector = {}) {
 	for &end in stream_ends {
-		if writer_end_in(&end, index, pair) && end.opened {
+		if writer_end_in(&end, index, selector) && end.opened {
 			end.refused_full = full && end.holds_at_look
 		}
 	}
@@ -563,6 +579,11 @@ closed_words_send :: proc "contextless" () {
 given_handles_close :: proc "contextless" (record: ring.Record) {
 	places := [4]int{output.WIRING_VALUE_RING, output.WIRING_VALUE_TERMS, output.WIRING_VALUE_DESCRIPTION, output.WIRING_VALUE_END_WORDS}
 	for place in places {
+		// The word of the description of a writer end is the principal of
+		// its reader: a number, never a handle.
+		if place == output.WIRING_VALUE_READER_PRINCIPAL && record.kind == u32(output.Wiring_Command.Writer_End) {
+			continue
+		}
 		word := record.values[place]
 		if word != 0 && word <= u64(max(u32)) && handle_through(op.Handle(word), {}) {
 			close(Handle(word))
@@ -623,6 +644,7 @@ stream_end_take :: proc "contextless" (given: output.Given_End, record: ring.Rec
 		description_memory = Handle(given.description),
 		terms_memory       = Handle(given.terms),
 		pair               = given.pair,
+		reader_principal   = given.reader_principal,
 	}
 	// A ring with a condition: the writer leaves out records, so its
 	// serials move forward by any count.
@@ -793,11 +815,11 @@ ring_room :: proc "contextless" (end: ^Stream_End) -> output.Ring_Room {
 // end, and a completion that the border refuses comes from no reader: the
 // writer closes that end too, so it never feeds a ring that no one reads.
 @(private = "file")
-output_ends_of :: proc "contextless" (state: ^Output_State, record_size: u32, pair: u32 = 0) -> (live: int) {
+output_ends_of :: proc "contextless" (state: ^Output_State, record_size: u32, selector: End_Selector = {}) -> (live: int) {
 	stream_ends_take()
 	index := stream_index_read(&state.index)
 	for &end in stream_ends {
-		if !writer_end_in(&end, index, pair) || index == 0 {
+		if !writer_end_in(&end, index, selector) || index == 0 {
 			continue
 		}
 		if !stream_end_open(&end, record_size) {
@@ -930,14 +952,14 @@ output_ends_live :: proc "contextless" (stream: ^Record_Output($Record_Type, $pa
 		if stream.state.record_size == 0 {
 			return 0
 		}
-		return output_ends_of(&stream.state, stream.state.record_size)
+		return output_ends_of(&stream.state, stream.state.record_size, {any_principal = true})
 	} else {
-		return output_ends_of(&stream.state, u32(size_of(Record_Type)))
+		return output_ends_of(&stream.state, u32(size_of(Record_Type)), {any_principal = true})
 	}
 }
 
 @(private = "file")
-output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wait: bool, deadline: u64, pair: u32 = 0) -> output.Stream_Status {
+output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wait: bool, deadline: u64, selector: End_Selector = {}) -> output.Stream_Status {
 	if output.compartment_size(u32(len(bytes))) == 0 {
 		return .Bad_Record
 	}
@@ -946,7 +968,7 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 	// no second hold.
 	waited := false
 	room_loop: for {
-		if output_ends_of(state, u32(len(bytes)), pair) == 0 {
+		if output_ends_of(state, u32(len(bytes)), selector) == 0 {
 			state.discarded += 1
 			state.next_serial += 1
 			return .No_Reader
@@ -954,7 +976,7 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 		// A ring whose condition the record fails takes nothing of this
 		// write, and holds the writer for nothing.
 		for &end in stream_ends {
-			if writer_end_in(&end, index, pair) && end.opened {
+			if writer_end_in(&end, index, selector) && end.opened {
 				end.skips = end.condition_given && !output.writer_condition_holds(end.condition, bytes)
 			}
 		}
@@ -972,7 +994,7 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 		}
 		held_by_choice, held_always, broken := false, false, false
 		for &end in stream_ends {
-			if !writer_end_in(&end, index, pair) || !end.opened {
+			if !writer_end_in(&end, index, selector) || !end.opened {
 				continue
 			}
 			// A ring that skips the record is not read: it holds nothing.
@@ -1012,17 +1034,17 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 		state.refused, state.held = looked.refused, looked.held
 		switch step {
 		case .Write:
-			refused_full_mark(index, false, pair)
+			refused_full_mark(index, false, selector)
 			break room_loop
 		case .Full:
-			refused_full_mark(index, true, pair)
+			refused_full_mark(index, true, selector)
 			return .Full
 		case .Wait:
 			waited = true
 			if wait_end(&waiting, deadline) >= deadline {
 				timed_out := output.write_counts_after({refused = state.refused, held = state.held}, .Wait, true, true)
 				state.refused, state.held = timed_out.refused, timed_out.held
-				refused_full_mark(index, true, pair)
+				refused_full_mark(index, true, selector)
 				return .Full
 			}
 		}
@@ -1035,7 +1057,7 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 	counts := output.Writer_Counts{written = state.written, discarded = state.discarded, refused = state.refused, held = state.held, rings_past_gap = state.rings_past_gap}
 	taken := false
 	for &end in stream_ends {
-		if !writer_end_in(&end, index, pair) || !end.opened {
+		if !writer_end_in(&end, index, selector) || !end.opened {
 			continue
 		}
 		output.writer_counts_write(end.ring_address, counts)
@@ -1200,7 +1222,7 @@ output_write_pair :: proc "contextless" (stream: ^Record_Output(Any_Record, modu
 	if pair == 0 || output.compartment_size(u32(len(bytes))) == 0 {
 		return .Bad_Record
 	}
-	return output_write_bytes(state, bytes, wait, deadline, pair)
+	return output_write_bytes(state, bytes, wait, deadline, {pair = pair})
 }
 
 // output_pair_rings gives the live rings of one pair of a record output
@@ -1210,7 +1232,7 @@ output_pair_rings :: proc "contextless" (stream: ^Record_Output(Any_Record, modu
 	if pair == 0 || output.compartment_size(record_size) == 0 {
 		return 0
 	}
-	return output_ends_of(&stream.state, record_size, pair)
+	return output_ends_of(&stream.state, record_size, {pair = pair})
 }
 
 // output_pairs writes the pairs of the writer ends that a record output
@@ -1251,7 +1273,7 @@ output_pair_close :: proc "contextless" (stream: ^Record_Output(Any_Record, modu
 		return 0
 	}
 	for &end in stream_ends {
-		if writer_end_in(&end, index, pair) {
+		if writer_end_in(&end, index, {pair = pair}) {
 			stream_end_finish(&end)
 			closed += 1
 		}
@@ -1274,7 +1296,7 @@ output_end_pair :: proc "contextless" (stream: ^Record_Output(Any_Record, module
 	status := output.Stream_Status.Ok
 	index := stream_index_read(&state.index)
 	for &end in stream_ends {
-		if !writer_end_in(&end, index, pair) || !end.opened {
+		if !writer_end_in(&end, index, {pair = pair}) || !end.opened {
 			continue
 		}
 		if writer_end_close_with_record(state, &end, error, deadline) == .Full {
@@ -1282,6 +1304,36 @@ output_end_pair :: proc "contextless" (stream: ^Record_Output(Any_Record, module
 		}
 	}
 	return status
+}
+
+// output_write_principal writes one record of a record output
+// By_Principal into the rings whose reader is of one principal, which the
+// wiring service named on each writer end: the other rings see nothing of
+// it, and the serial of the record output moves for each, so a reader reads
+// serials that move forward by any count (output.Reader_Filter.By_Writer).
+// A ring whose reader principal is not known takes no record of this call.
+// No_Reader: no ring of that principal now. Bad_Record: a principal past
+// the field of a grant.
+output_write_principal :: proc "contextless" (stream: ^Record_Output($Record_Type, module.Record_Output_Pairing.By_Principal), principal: u64, record: Record_Type, wait := true, deadline: u64 = WAIT_FOREVER) -> output.Stream_Status where Record_Type != Any_Record {
+	state := &stream.state
+	if state.ended {
+		return .Ended
+	}
+	if principal >= output.READER_PRINCIPAL_LIMIT {
+		return .Bad_Record
+	}
+	local := record
+	bytes := ([^]u8)(&local)[:size_of(Record_Type)]
+	return output_write_bytes(state, bytes, wait, deadline, {reader_principal = principal + 1})
+}
+
+// output_principal_rings gives the live rings of the readers of one
+// principal of a record output By_Principal.
+output_principal_rings :: proc "contextless" (stream: ^Record_Output($Record_Type, module.Record_Output_Pairing.By_Principal), principal: u64) -> int {
+	if principal >= output.READER_PRINCIPAL_LIMIT {
+		return 0
+	}
+	return output_ends_of(&stream.state, u32(size_of(Record_Type)), {reader_principal = principal + 1})
 }
 
 // output_gap says to each reader of a record output that the writer lost

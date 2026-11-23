@@ -1,9 +1,8 @@
 #+build !freestanding
-package session_states
+package principals
 
 import "core:testing"
 import "modus:contract/root_ring"
-import "modus:principals"
 
 // Each event that has no meaning in a state is refused, and the state
 // stays: the refusals first, the paths that pass last.
@@ -64,12 +63,12 @@ the_seat_refuses_a_second_session_in_front :: proc(t: ^testing.T) {
 	next, ok := seat_next(seat, .Session_Unlocked, 1)
 	testing.expect(t, !ok && next == seat, "the session in front is not put in front again")
 	// A slot past the capacity names no principal.
-	next, ok = seat_next({state = .Chooser}, .Session_Unlocked, principals.PRINCIPAL_CAPACITY)
+	next, ok = seat_next({state = .Chooser}, .Session_Unlocked, PRINCIPAL_CAPACITY)
 	testing.expect(t, !ok && next.state == .Chooser, "a slot past the capacity is refused")
 	next, ok = seat_next({state = .Chooser}, .Session_Unlocked, max(u64))
 	testing.expect(t, !ok, "the largest slot is refused")
 	// Principal 0 never comes in front by an unlock: its session has none.
-	next, ok = seat_next({state = .Chooser}, .Session_Unlocked, principals.MACHINE)
+	next, ok = seat_next({state = .Chooser}, .Session_Unlocked, MACHINE)
 	testing.expect(t, !ok, "principal 0 is not unlocked")
 }
 
@@ -77,9 +76,9 @@ the_seat_refuses_a_second_session_in_front :: proc(t: ^testing.T) {
 the_seat_locks_only_the_session_in_front :: proc(t: ^testing.T) {
 	_, ok := seat_next({state = .Chooser}, .Session_Locked, 1)
 	testing.expect(t, !ok, "no session in front: nothing to lock")
-	_, ok = seat_next({state = .Session, in_front = principals.MACHINE}, .Session_Locked, principals.MACHINE)
+	_, ok = seat_next({state = .Session, in_front = MACHINE}, .Session_Locked, MACHINE)
 	testing.expect(t, !ok, "principal 0 never locks")
-	_, ok = seat_next({state = .Session, in_front = principals.MACHINE}, .Session_Locked, 1)
+	_, ok = seat_next({state = .Session, in_front = MACHINE}, .Session_Locked, 1)
 	testing.expect(t, !ok, "a lock names the session in front")
 	_, ok = seat_next({state = .Unlock_Window}, .Session_Locked, 1)
 	testing.expect(t, !ok, "a window of unlock is not a session")
@@ -99,9 +98,9 @@ the_window_of_unlock_opens_only_on_the_chooser :: proc(t: ^testing.T) {
 
 @(test)
 a_record_takes_the_seat_from_principal_zero_only :: proc(t: ^testing.T) {
-	next, ok := seat_next({state = .Session, in_front = principals.MACHINE}, .Named_Principal_Recorded)
+	next, ok := seat_next({state = .Session, in_front = MACHINE}, .Named_Principal_Recorded)
 	testing.expect(t, ok && next.state == .Chooser, "the machine leaves the front")
-	testing.expect_value(t, principal_in_front(next), u64(principals.MACHINE))
+	testing.expect_value(t, principal_in_front(next), u64(MACHINE))
 	held := Seat{state = .Session, in_front = 1}
 	next, ok = seat_next(held, .Named_Principal_Recorded)
 	testing.expect(t, ok && next == held, "a named session keeps the seat")
@@ -113,7 +112,7 @@ a_record_takes_the_seat_from_principal_zero_only :: proc(t: ^testing.T) {
 one_session_from_the_start_to_the_lock :: proc(t: ^testing.T) {
 	seat, ok := seat_next({}, .Machine_Alone)
 	testing.expect(t, ok)
-	testing.expect_value(t, principal_in_front(seat), u64(principals.MACHINE))
+	testing.expect_value(t, principal_in_front(seat), u64(MACHINE))
 	seat, ok = seat_next(seat, .Named_Principal_Recorded)
 	testing.expect(t, ok && seat.state == .Chooser)
 	seat, ok = seat_next(seat, .Unlock_Window_Opened)
@@ -123,13 +122,13 @@ one_session_from_the_start_to_the_lock :: proc(t: ^testing.T) {
 	testing.expect_value(t, principal_in_front(seat), u64(1))
 	seat, ok = seat_next(seat, .Session_Locked, 1)
 	testing.expect(t, ok && seat.state == .Chooser)
-	testing.expect_value(t, principal_in_front(seat), u64(principals.MACHINE))
+	testing.expect_value(t, principal_in_front(seat), u64(MACHINE))
 }
 
 @(test)
 the_word_of_the_ring_comes_from_the_session_state :: proc(t: ^testing.T) {
 	for state in Session_State {
-		testing.expect_value(t, principal_state_word(principals.MACHINE, state), root_ring.Principal_State.Machine)
+		testing.expect_value(t, principal_state_word(MACHINE, state), root_ring.Principal_State.Machine)
 	}
 	testing.expect_value(t, principal_state_word(1, .Absent), root_ring.Principal_State.Absent)
 	testing.expect_value(t, principal_state_word(1, .In_Front), root_ring.Principal_State.Unlocked)

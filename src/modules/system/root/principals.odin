@@ -1,6 +1,5 @@
 package root
 
-import "internal:root/session_states"
 import info "modus:contract/boot_info"
 import "modus:contract/call_outcome"
 import "modus:contract/ring"
@@ -39,10 +38,14 @@ import "modus:system"
 Principal_Record :: struct {
 	// The state of its session: session_change writes it. Principal 0 has
 	// no session state, and keeps Absent: principal_read says Machine.
-	state:       session_states.Session_State,
+	state:       principals.Session_State,
 	name:        [principals.NAME_LIMIT]u8,
 	name_length: int,
 	public_key:  [32]u8, // Ed25519: the key that signs the grants of the principal. Principal 0: none in this system yet.
+	// The principal identifier from its file (Principal_Identifier): the name
+	// of the principal on the disk. All zero until `unlock` gives it; a
+	// session never starts without it.
+	identifier:  principals.Principal_Identifier,
 	measured:    bool, // Principal 0: the boot program measured the system into PCR 11.
 	measure:     [32]u8, // Principal 0: the value of PCR 11.
 }
@@ -53,19 +56,19 @@ principal_records: [principals.PRINCIPAL_CAPACITY]Principal_Record
 // of its own, not the set of the unlocked records
 // (src/md/features/several_principals.md, "The states"). seat_change
 // writes it.
-seat: session_states.Seat
+seat: principals.Seat
 
 // session_change changes the state of the session of a named principal:
 // the one place that writes it. A refused event changes nothing, and says
 // so: each caller checked the state before, so a refusal is a fault of
 // this service.
-session_change :: proc "contextless" (number: u64, event: session_states.Session_Event) -> bool {
+session_change :: proc "contextless" (number: u64, event: principals.Session_Event) -> bool {
 	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY {
 		system.log_fact(.Warning, Session_Event_Refused{principal = number, event_code = u64(event), state_code = 0})
 		return false
 	}
 	record := &principal_records[number]
-	next, ok := session_states.session_next(record.state, event)
+	next, ok := principals.session_next(record.state, event)
 	if !ok {
 		system.log_fact(.Warning, Session_Event_Refused{principal = number, event_code = u64(event), state_code = u64(record.state)})
 		return false
@@ -75,8 +78,8 @@ session_change :: proc "contextless" (number: u64, event: session_states.Session
 }
 
 // seat_change changes the seat: the one place that writes it.
-seat_change :: proc "contextless" (event: session_states.Seat_Event, principal: u64 = principals.MACHINE) -> bool {
-	next, ok := session_states.seat_next(seat, event, principal)
+seat_change :: proc "contextless" (event: principals.Seat_Event, principal: u64 = principals.MACHINE) -> bool {
+	next, ok := principals.seat_next(seat, event, principal)
 	if !ok {
 		system.log_fact(.Warning, Seat_Event_Refused{principal = principal, event_code = u64(event), state_code = u64(seat.state)})
 		return false
@@ -159,7 +162,7 @@ principal_name :: proc "contextless" (number: u64) -> string {
 // starts (the menu, the palette): the principal of the session in front,
 // else the machine.
 desktop_principal :: proc "contextless" () -> u64 {
-	return session_states.principal_in_front(seat)
+	return principals.principal_in_front(seat)
 }
 
 // principals_start makes the record of principal 0 from the trust record
@@ -319,6 +322,37 @@ principal_record :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> 
 	return .Succeeded
 }
 
+// principal_identifier takes the principal identifier of a record from
+// `unlock`: values[0..3] the identifier, values[4] the number. The values
+// are a copy in this service. A record keeps its first identifier: a second
+// one is refused, as a file of another principal would be.
+principal_identifier :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> call_outcome.Call_Outcome {
+	kind := u32(root_ring.Root_Command.Principal_Identifier)
+	number := values[4]
+	for index in 5 ..< len(values) {
+		if values[index] != 0 {
+			completion^ = root_ring.word_refusal(.Principal_Identifier, i64(index) + 1, values[index], 0)
+			return .Argument_Refused
+		}
+	}
+	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state == .Absent || principal_records[number].state == .Creating {
+		return root_ring.refuse(completion, .Nothing_Has_That_Name, kind, .Absent, .Principals, 5, i64(min(number, 1 << 62)))
+	}
+	identifier := transmute(principals.Principal_Identifier)([4]u64{values[0], values[1], values[2], values[3]})
+	if principals.identifier_is_zero(identifier[:]) {
+		return root_ring.refuse(completion, .Argument_Refused, kind, .Bad_Value, .None, 1)
+	}
+	record := &principal_records[number]
+	if !principals.identifier_is_zero(record.identifier[:]) {
+		if record.identifier != identifier {
+			return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals, 5, i64(number))
+		}
+		return .Succeeded
+	}
+	record.identifier = identifier
+	return .Succeeded
+}
+
 // principal_unlock starts the session of a named principal: from now on the
 // desktop starts each process in it. values[4] is its number; values[0..3]
 // and values[5] are the key of the tag of its disk grant table and its
@@ -334,6 +368,11 @@ principal_unlock :: proc "contextless" (values: ^[7]u64, completion: ^[7]u64) ->
 	}
 	// The session of the principal runs: it is not unlocked twice.
 	if principal_records[number].state != .Locked {
+		return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals, 2, i64(number))
+	}
+	// A record with no identifier names no principal on the disk: its
+	// session does not start.
+	if principals.identifier_is_zero(principal_records[number].identifier[:]) {
 		return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals, 2, i64(number))
 	}
 	if outcome := principal_key_take(number, values, completion); outcome != .Succeeded {
@@ -583,7 +622,7 @@ principal_read :: proc "contextless" (number: u64, completion: ^[7]u64) -> call_
 		return root_ring.refuse(completion, .Nothing_Has_That_Name, kind, .Absent, .Principals, 2, i64(min(number, 1 << 62)))
 	}
 	record := &principal_records[number]
-	state := session_states.principal_state_word(number, record.state)
+	state := principals.principal_state_word(number, record.state)
 	if state == .Absent {
 		return root_ring.refuse(completion, .Nothing_Has_That_Name, kind, .Absent, .Principals, 2, i64(number))
 	}

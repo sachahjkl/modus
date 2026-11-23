@@ -19,7 +19,7 @@ Machine_Principal_Measured :: struct {
 
 // An event that has no meaning in the state of a session: the root
 // service checked the state before, so this is its own fault. The codes
-// are the members of session_states.Session_Event and Session_State.
+// are the members of principals.Session_Event and Session_State.
 @(log_fact = "root: the session of principal {principal} refused the event {event_code} in the state {state_code}")
 Session_Event_Refused :: struct {
 	principal:  u64,
@@ -28,7 +28,7 @@ Session_Event_Refused :: struct {
 }
 
 // An event that has no meaning in the state of the seat. The codes are
-// the members of session_states.Seat_Event and Seat_State.
+// the members of principals.Seat_Event and Seat_State.
 @(log_fact = "root: the seat refused the event {event_code} for principal {principal} in the state {state_code}")
 Seat_Event_Refused :: struct {
 	principal:  u64,

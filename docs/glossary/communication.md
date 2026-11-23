@@ -870,7 +870,7 @@ Do not use: audit log, log stream, log pipe, lossless log.
 
 ### Log follow
 
-Log follow is the record output `follow` of the log service: one row for each record of the whole log, from the moment a reader wires it, written as the records come. It does not follow the scope of a principal yet: a follower of any principal receives each record.
+Log follow is the record output `follow` of the log service: one row for each record of the principal of the reader, from the moment a reader wires it, written as the records come, numbered among the records of that principal.
 
 Only a reader that acts for the principal wires it, with the end `Connected`. The service never waits for a follower: a full ring holds the rows of its follower only, and where the kernel wrote over records before the service wrote them, the follower reads one gap record of their count. Example: `log.follow |> where(level = Warning)`. The design: `src/md/features/log_facts.md`, "The frequent tasks".
 

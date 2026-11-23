@@ -218,6 +218,45 @@ record_principal :: proc "contextless" (table: ^SESSION_TABLE, process: u64, pro
 	return 0, false
 }
 
+// How long a record of a process with no row waits for its row before it
+// settles to no principal (plan value: the root service writes the row in
+// the pass of its loop that starts the process, far below one second; a
+// child that a process made never gets a row, and its records then wait
+// this long before the records after them reach their readers).
+ROW_WAIT_MICROSECONDS :: u64(1_000_000)
+
+// What the reader of the whole ring does with a record now.
+Settle_Decision :: enum u8 {
+	Known, // A row names its process: its principal is known.
+	No_Principal, // No row names it, and none will: it reaches no reader of a principal.
+	Wait, // Its row can still come: the record and the records after it wait.
+}
+
+// settle_decision decides the principal of a record of the whole ring. A
+// process whose slot has no row yet, or a row of an older serial, can be a
+// process that the root service started a moment ago: it waits, up to
+// ROW_WAIT_MICROSECONDS after the record. A row of a newer serial means
+// the process will never have one.
+//
+// Example: a record of slot 9 and serial 5, 10 ms old, whose slot names
+// serial 4, waits; the same record 2 s old has no principal.
+settle_decision :: proc "contextless" (table: ^SESSION_TABLE, process: u64, process_serial: u64, age_microseconds: u64) -> (principal: u64, decision: Settle_Decision) {
+	known: bool
+	principal, known = record_principal(table, process, process_serial)
+	if known {
+		return principal, .Known
+	}
+	if process >= SESSION_TABLE_ENTRIES {
+		return 0, .No_Principal
+	}
+	current := intrinsics.atomic_load(&table[process].current)
+	newer := current & SESSION_WORD_PRESENT != 0 && current & OWN_SERIAL_MASK > process_serial
+	if newer || age_microseconds >= ROW_WAIT_MICROSECONDS {
+		return 0, .No_Principal
+	}
+	return 0, .Wait
+}
+
 // record_in_scope says if a reader of the whole ring receives a record of
 // a principal: the log service receives each record, a reader of a
 // principal the records of that principal only. A record of no known

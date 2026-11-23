@@ -195,7 +195,15 @@ Command :: struct {
 	wiring_number:      u32, // Unwire: target wiring number.
 	end_word:           output.End_Word, // Unwire: end word to write (non-None).
 	query_kind:         Query_Kind, // Query: which counters to return.
+	principal:          u64, // Register_Process: the principal of the session of the process.
 }
+
+// Register_Process carries the principal of the process in bits 32 to 46
+// of values[6], above the flags: the wiring service gives it to the writer
+// of a record output By_Principal, which writes each record to the rings of
+// the readers of its principal only.
+REGISTER_PRINCIPAL_SHIFT :: 32
+REGISTER_PRINCIPAL_LIMIT :: u64(1) << 15 // The numbers of principals of a grant (isolated.CALLER_PRINCIPAL_LIMIT).
 
 // command_to_record encodes a typed Command into a 64-byte ring.Record.
 command_to_record :: proc "contextless" (cmd: Command) -> ring.Record {
@@ -209,7 +217,7 @@ command_to_record :: proc "contextless" (cmd: Command) -> ring.Record {
 		record.values[3] = cmd.module_size
 		record.values[4] = u64(cmd.process_handle)
 		record.values[5] = u64(cmd.wiring_ring_handle)
-		record.values[6] = u64(transmute(u32)cmd.flags)
+		record.values[6] = u64(transmute(u32)cmd.flags) | (cmd.principal & (REGISTER_PRINCIPAL_LIMIT - 1)) << REGISTER_PRINCIPAL_SHIFT
 	case .Grant_Asker_Budget:
 		record.values[0] = cmd.process.slot
 		record.values[1] = cmd.process.serial
@@ -288,10 +296,15 @@ command_from_record :: proc "contextless" (record: ring.Record) -> (cmd: Command
 		if v[5] > u64(max(u32)) {
 			return {}, false
 		}
-		flags, flags_ok := process_flags_from_word(v[6])
+		principal := v[6] >> REGISTER_PRINCIPAL_SHIFT
+		if principal >= REGISTER_PRINCIPAL_LIMIT {
+			return {}, false
+		}
+		flags, flags_ok := process_flags_from_word(v[6] & (u64(1) << REGISTER_PRINCIPAL_SHIFT - 1))
 		if !flags_ok {
 			return {}, false
 		}
+		cmd.principal = principal
 		if (.Has_Wiring_Ring in flags) != (v[5] != 0) {
 			return {}, false
 		}

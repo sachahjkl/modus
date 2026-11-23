@@ -896,6 +896,16 @@ The design: `docs/PRINCIPALS.md`, "3. A named principal".
 
 Do not use: user account, login.
 
+### Principal identifier
+
+The principal identifier is the 32 random bytes that name a named principal on the disk, drawn at its creation and never changed.
+
+The process `unlock` draws it from its random generator with the strength of a key, and keeps it in the file of the principal, under the seal. The number of a principal in the root service is a slot of one run of the machine, and names nothing on the disk; `unlock` gives the root service the identifier of the file beside the slot. The identifier comes from no key, so it needs no key at the creation, and no search of keys finds a chosen one. It is not the principal root key and not a public key.
+
+The design: `src/md/features/several_principals.md`, "The identity: three names".
+
+Do not use: user id, uid, account number, principal id.
+
 ### Session
 
 A session is the tree of processes that started from the root handles of one principal.

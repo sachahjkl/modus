@@ -40,7 +40,7 @@ These eight choices close the open questions of the two studies. Each other part
 
 ### The states
 
-A session is `Absent`, `Creating`, `Locked`, `In_Front`, `Behind` or `Removing`. A seat is `Chooser`, `Unlock_Window`, `Admission` or `Session`. Each is a closed enum, and one procedure changes it: it takes the state and an event, and gives the next state or a refusal (`internal:root/session_states`). A member exists in the code only from the layer that builds it: today `Behind`, `Removing` and `Admission` have no member.
+A session is `Absent`, `Creating`, `Locked`, `In_Front`, `Behind` or `Removing`. A seat is `Chooser`, `Unlock_Window`, `Admission` or `Session`. Each is a closed enum, and one procedure changes it: it takes the state and an event, and gives the next state or a refusal (`modus:principals`, `session_states.odin`). The root service and the delegated service `principals` use the same procedures: one state machine for one concept. A member exists in the code only from the layer that builds it: today `Behind`, `Removing` and `Admission` have no member.
 
 **The session in front** is a fact of the seat of its own: the session whose surface the screen shows and to which the input goes. It is not "the principal that is unlocked". With one open session, the two agree; with sessions behind, they do not. The root service keeps the seat beside the records of the principals, and `desktop_principal` reads the seat, never the set of unlocked records.
 
@@ -62,6 +62,8 @@ The state that the root ring gives (`root_ring.Principal_State`) is a word of th
 - A slot that a removal frees is not used again before the next start. An old connection then never names a new principal.
 - The pin of a slot names the identifier. A file with another identifier is refused.
 - A name is a label of the chooser, never a key of a table.
+- **The file.** The identifier is in the file of the principal, in both forms, under the additional data of each seal: a file whose identifier changed does not open (`OFFSET_IDENTIFIER`). `unlock` gives it to the root service after the record (`Principal_Identifier`), and the root service starts no session of a record with no identifier, and refuses a second identifier for a record.
+- **An older format.** The file of a release before the identifier has the format 1. It is refused with a sentence that says what to do: "create the principal again". Before 1.0 a format changes with no migration.
 
 Why random and not the hash of a key: a hash of the identity key needs that key at the creation, which [several_machines.md](several_machines.md) keeps on no machine, and an identifier of 64 bits from a hash can be forged by a search of keys. 256 random bits need no key, and no search finds them.
 
@@ -102,7 +104,7 @@ The machine has one **seat**: the holder of the screen, of the input devices, of
 - **The creation is an admission.** A holder of `Principals` asks. The seat goes to `Admission`, and the session of the holder leaves the seat. The new person types the passphrase two times.
 - **The unlock hints.** The file of a principal has a public part under the additional data of the seal: the layout in which its passphrase was typed, its language, its assistive needs.
 - **The removal is a state machine.** The state `Removing` is written in the record of the principal before the first destructive step. A start that finds it goes on. The pin gains the payload "free, generation g", which only the removal writes.
-- **The stores of a principal are encrypted** under keys that come from its unlock key. The lock erases them in the storage service.
+- **The stores of a principal are encrypted** under keys that come from its unlock key. The lock erases them in the storage service. The design is [store_encryption.md](store_encryption.md).
 - **The budgets are reserved:** pages, process slots, thread slots, log records and blocks, for each session.
 - **The client table is keyed by the pair of the principal and the key.**
 - **A share is the signed grant, and nothing else**, as the last layer.
@@ -160,4 +162,4 @@ Why this order: each layer of 1 to 9 improves the system of one named principal,
 
 ## State
 
-Decided. Built: the session states and the seat in the root service (layer 1); the log scope by principal for `records`, `value_runs` and `fact_records` (layer 2); the authority key of the wide grants for each principal (layer 4). Left of layer 2: `log.follow`, the window of the log service, and the lines of the root service about a session. Not built: the layers 3 and 5 to 15. One named principal: `principals.PRINCIPAL_CAPACITY` is 2.
+Decided. Built: the session states and the seat in the root service (layer 1); the log scope by principal (layer 2: `records`, `value_runs`, `fact_records`, `log.follow`, the window, the lines of the root service about a session and a number of each record in the scope of its principal); the authority key of the wide grants for each principal (layer 4); the principal identifier in the file, drawn by `unlock` and given to the root service (the first part of layer 5). Left of layer 5: the owner field of a store, the payload of the pin and the collector index by the identifier. Layer 6 is designed ([store_encryption.md](store_encryption.md)), with its keys, nonces and tags built. Not built: the layers 3 and 7 to 15, and the rest of 5 and 6. One named principal: `principals.PRINCIPAL_CAPACITY` is 2.

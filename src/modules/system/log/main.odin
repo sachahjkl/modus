@@ -76,6 +76,7 @@ import "base:intrinsics"
 import "modus:contract/enum_word"
 import module "modus:contract/module"
 import "modus:contract/isolated"
+import "modus:contract/log_scope"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:display"
@@ -789,9 +790,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	reader_head, reader_records = reader.head, reader.records
 	// The first follower joins from the head of the log, not from its
 	// first record, also when it joins before the first pass of the pump.
-	follow_next = intrinsics.atomic_load(&reader_head.written)
 	log_memory = ctx.handles[system.GRANT_LOG_RECORDS]
 	session_table_open(ctx) // principal_scope.odin
+	follow_next = intrinsics.atomic_load(&reader_head.written)
+	window_scope := log_scope.Scope{kind = .Principal_Records, principal = window_principal}
 	// The catalog of the facts: with no image, each fact shows raw.
 	if address, mapped := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); mapped == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -801,7 +803,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	logged := false
 	picture_owed := true // The window does not show each record that was taken.
 	for {
-		for {
+		// The pass first: the window takes the settled records of its
+		// principal only (principal_scope.odin).
+		settle_deadline := principals_settle()
+		for reader.next < settled_next {
 			record, late, has := system.log_next(&reader)
 			// Before the first kept record, a gap only says how long the
 			// machine ran before this process; after it, a gap is a
@@ -813,6 +818,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			if !has {
 				break
+			}
+			place, settled := record_settled(record.sequence)
+			if !settled || !log_scope.record_in_scope(window_scope, place.principal, place.known) {
+				continue
 			}
 			if !take(&record) {
 				// A level byte that names no member: no reader can read
@@ -830,7 +839,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The followers of log.follow: the records since the last pass, or
 		// the record that a full ring refused at it, and a gap where the
 		// kernel wrote over records first (follow.odin).
-		principals_read() // principal_scope.odin
 		follow_pump()
 		for event in interface.window_next_event(&hand_picture.drawing, &window) {
 			// A new appearance or a new font: each pixel of the window
@@ -869,7 +877,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		log_wait_follow_the_ends() // follow.odin
 		wait := system.wait_of_set(&log_wait.set)
 		display.wait_events(&wait, &window)
-		system.wait_log(&wait, &reader)
+		// A new record of the log ends the wait; a record that waits for
+		// its row ends it at the deadline of the pass.
+		system.wait_word(&wait, (^u32)(&reader.head.written), u32(intrinsics.atomic_load(&reader.head.written)))
 		// A new end of log.follow: the pump takes it at the next pass, so
 		// the follower joins without a wait for the next log record.
 		system.wait_wiring(&wait)
@@ -880,7 +890,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		follow_rings := max(system.wait_room_left(&wait) - 2 * (1 + isolated.SERVICE_CONNECTION_CAPACITY), 0) / system.OUTPUT_ROOM_WAIT_WORDS
 		_ = system.wait_output_room(&wait, &follow, follow_rings)
 		system.service_wait(&wait, &service)
-		system.wait_end(&wait)
+		system.wait_end(&wait, settle_deadline)
 		system.service_run(&service)
 	}
 }

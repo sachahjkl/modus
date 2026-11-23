@@ -188,6 +188,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		answer.outcome = principal_read(record.values[4], &answer.values)
 	case .Principal_Record:
 		answer.outcome = principal_record(record.values, &answer.values)
+	case .Principal_Identifier:
+		answer.outcome = principal_identifier(record.values, &answer.values)
 	case .Principal_Unlock:
 		answer.outcome = principal_unlock(&record_place.values, &answer.values)
 		key_ring_erase(&item.requests.commands)

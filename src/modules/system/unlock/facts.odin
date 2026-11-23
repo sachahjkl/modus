@@ -646,6 +646,8 @@ Principal_File_Not_Read :: struct {
 Principal_File_Refused :: struct {
 	problem: [144]u8,
 }
+// The sentence of an older format says what to do: it is never cut.
+#assert(len(principals.OLDER_FORMAT_SENTENCE) <= 144)
 
 // The file of the principal sealed by the TPM is refused.
 @(log_fact = "unlock: the file of the principal sealed by the TPM is refused: {problem}")

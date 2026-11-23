@@ -68,6 +68,25 @@ expect_end_refused :: proc(t: ^testing.T, record: ring.Record, argument: i64, va
 	testing.expectf(t, refusal == expected, "the refusal is %v, not %v", refusal, expected, loc = loc)
 }
 
+// The reader principal of a writer end: a word past the principals plus 1
+// is refused; 0 and the edge round-trip.
+@(test)
+a_reader_principal_past_the_field_is_refused :: proc(t: ^testing.T) {
+	for word in ([?]u64{READER_PRINCIPAL_LIMIT + 1, max(u64)}) {
+		record := writer_command()
+		record.values[WIRING_VALUE_READER_PRINCIPAL] = word
+		expect_end_refused(t, record, WIRING_VALUE_READER_PRINCIPAL + 1, i64(min(word, 1 << 62)), i64(READER_PRINCIPAL_LIMIT))
+	}
+	for word in ([?]u64{0, 1, READER_PRINCIPAL_LIMIT}) {
+		record := writer_command()
+		record.values[WIRING_VALUE_READER_PRINCIPAL] = word
+		end, _, ok := given_end_of_record(record)
+		testing.expect(t, ok)
+		testing.expect_value(t, end.reader_principal, word)
+		testing.expect_value(t, given_end_record(end), record)
+	}
+}
+
 // The kind of a command: 0 names no command, one past the last member and
 // the largest word name none.
 @(test)
@@ -164,19 +183,14 @@ a_reader_end_with_a_pace_or_terms_past_32_bits_is_refused :: proc(t: ^testing.T)
 }
 
 // The description file: a reader end with none, or with a word past 32
-// bits, is refused, as it cannot check a record; a writer end with one is
-// refused, as it reads no record.
+// bits, is refused, as it cannot check a record. A writer end reads no
+// record: its word there is its reader principal (see below).
 @(test)
 a_description_file_belongs_to_a_reader_end_only :: proc(t: ^testing.T) {
 	for word in ([?]u64{0, u64(max(u32)) + 1, max(u64)}) {
 		record := reader_command()
 		record.values[WIRING_VALUE_DESCRIPTION] = word
 		expect_end_refused(t, record, WIRING_VALUE_DESCRIPTION + 1, i64(min(word, 1 << 62)), i64(max(u32)))
-	}
-	for word in ([?]u64{1, max(u64)}) {
-		record := writer_command()
-		record.values[WIRING_VALUE_DESCRIPTION] = word
-		expect_end_refused(t, record, WIRING_VALUE_DESCRIPTION + 1, i64(min(word, 1 << 62)), 0)
 	}
 }
 

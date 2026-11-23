@@ -281,7 +281,7 @@ process_records :: proc "c" (process: system.Lent({.Read}), after: i64, result: 
 // log ring of that process: the records of other processes never push them
 // out (src/md/features/own_log_ring.md).
 records_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, result: ^[]Record) -> i64 {
-	principals_read()
+	principals_settle()
 	if !log_scope.reads_whole_ring(scope) {
 		// The numbers and `lost` count the records of that process only,
 		// so the reader learns no count of the records of others.
@@ -307,25 +307,17 @@ records_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, resu
 		}
 		return i64(own_total)
 	}
-	written := intrinsics.atomic_load(&reader_head.written)
-	next, lost := op.log_first_kept(u64(max(after, 0)), written)
+	// A reader of a principal walks the records of that principal, by
+	// their scope numbers: a record of another principal is no row, no
+	// loss and no number (principal_scope.odin).
+	walk := scope_walk_begin(scope, after)
 	count := 0
 	total: u64
-	for ; next < written; next += 1 {
-		if count == len(result^) {
-			// The rest of the whole log does not fit: each record is a row.
-			total += written - next
+	lost: u64
+	for {
+		record, row_number, more := scope_walk_next(&walk)
+		if !more {
 			break
-		}
-		record, whole := record_copy(next)
-		if !whole {
-			lost += 1
-			continue
-		}
-		// A record of another principal is no row and no loss: the
-		// reader learns nothing of it.
-		if !record_reaches(scope, next) {
-			continue
 		}
 		form, level, known := record_borders(&record)
 		if !known {
@@ -334,13 +326,16 @@ records_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, resu
 			continue
 		}
 		total += 1
+		if count == len(result^) {
+			continue
+		}
 		// Each place of the result has a row (a Table result: the caller
 		// reads min(count, capacity) rows).
-		row_fill(&result[count], i64(record.sequence), &record, form, level)
+		row_fill(&result[count], i64(row_number), &record, form, level)
 		count += 1
 	}
 	if count > 0 {
-		result[0].lost = i64(lost)
+		result[0].lost = i64(lost + walk.lost)
 	}
 	return i64(total)
 }
@@ -402,7 +397,7 @@ process_value_runs :: proc "c" (process: system.Lent({.Read}), after: i64, resul
 value_runs_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, result: ^[]Value_Run) -> i64 {
 	total := 0
 	count := 0
-	principals_read()
+	principals_settle()
 	if !log_scope.reads_whole_ring(scope) {
 		own, _, _ := own_records_read(scope, after)
 		for &record in own {
@@ -410,14 +405,13 @@ value_runs_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, r
 		}
 		return i64(total)
 	}
-	written := intrinsics.atomic_load(&reader_head.written)
-	next, _ := op.log_first_kept(u64(max(after, 0)), written)
-	for ; next < written; next += 1 {
-		record, whole := record_copy(next)
-		if !whole || !record_reaches(scope, next) {
-			continue
+	walk := scope_walk_begin(scope, after)
+	for {
+		record, row_number, more := scope_walk_next(&walk)
+		if !more {
+			break
 		}
-		runs_add(i64(record.sequence), &record, result, &total, &count)
+		runs_add(i64(row_number), &record, result, &total, &count)
 	}
 	return i64(total)
 }
@@ -500,7 +494,7 @@ fact_records :: proc "c" (after: i64, result: ^[]Fact_Row) -> i64 {
 	scope := caller_scope()
 	total := 0
 	count := 0
-	principals_read()
+	principals_settle()
 	if !log_scope.reads_whole_ring(scope) {
 		own, _, _ := own_records_read(scope, after)
 		for &record in own {
@@ -508,14 +502,13 @@ fact_records :: proc "c" (after: i64, result: ^[]Fact_Row) -> i64 {
 		}
 		return i64(total)
 	}
-	written := intrinsics.atomic_load(&reader_head.written)
-	next, _ := op.log_first_kept(u64(max(after, 0)), written)
-	for ; next < written; next += 1 {
-		record, whole := record_copy(next)
-		if !whole || !record_reaches(scope, next) {
-			continue
+	walk := scope_walk_begin(scope, after)
+	for {
+		record, row_number, more := scope_walk_next(&walk)
+		if !more {
+			break
 		}
-		fact_row_add(i64(record.sequence), &record, result, &total, &count)
+		fact_row_add(i64(row_number), &record, result, &total, &count)
 	}
 	return i64(total)
 }

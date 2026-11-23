@@ -84,6 +84,7 @@ Process_Entry :: struct {
 	generic_types:      [GENERIC_TYPES_OF_A_PROCESS_MOST]Generic_Type_Kept,
 	generic_type_count: int,
 	visit_mark:         u32, // The search of a cycle that reached the process last (graph_reaches).
+	principal:          u64, // The principal of its session, which the root service gave with Register_Process.
 }
 
 // Tracked state of one active wiring.
@@ -144,6 +145,7 @@ Row_Plan :: struct {
 	fixes:                 bool,
 	keeps_type:            bool,
 	paired:                bool, // The writer is a record output Paired: its ring pairs with the source of row.paired_row.
+	by_principal:          bool, // The writer is a record output By_Principal: its ring takes the records of the principal of its reader.
 	allocated_slot:        int, // Wiring slot index allocated in State.wirings, or -1.
 	allocated_number:      u32,
 }
@@ -334,6 +336,24 @@ process_register :: proc "contextless" (s: ^State, id: ws.Process_Identity, modu
 		module_size   = module_size,
 	}
 	return free_index, .Succeeded, {}
+}
+
+// process_principal_set keeps the principal of a registered process.
+process_principal_set :: proc "contextless" (s: ^State, index: int, principal: u64) {
+	if process_index_valid(s, index) {
+		s.processes[index].principal = principal
+	}
+}
+
+// reader_principal_word gives the word of the reader principal of the
+// writer end of a row: the principal of its reader plus 1 for a record
+// output By_Principal, else 0. A reader that is no registered process
+// gives 0: its ring takes no record of a principal.
+reader_principal_word :: proc "contextless" (s: ^State, plan: ^Row_Plan) -> u64 {
+	if !plan.by_principal || !process_index_valid(s, plan.reader_index) {
+		return 0
+	}
+	return s.processes[plan.reader_index].principal + 1
 }
 
 // list_page_reserve checks whether asker may hold a list page and reserves
@@ -741,8 +761,9 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 		if pairing == .Paired && output_row.record != 0 {
 			return .Operation_Unsupported, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), i64(row.writer_index), 0, found)
 		}
+		plan.by_principal = pairing == .By_Principal
 		// A pair names its source only beside a record output Paired.
-		if pairing == .Unpaired && row.paired_row != 0 {
+		if pairing != .Paired && row.paired_row != 0 {
 			return .Argument_Refused, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Paired_Row), i64(row.paired_row), 0, found)
 		}
 		if output_row.record == 0 && first_pass {

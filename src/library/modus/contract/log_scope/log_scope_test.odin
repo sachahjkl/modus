@@ -188,3 +188,41 @@ no_reader_receives_the_records_of_another_principal :: proc(t: ^testing.T) {
 	// The log service itself reads each record, known or not.
 	testing.expect(t, record_in_scope(Scope{kind = .Whole_Log}, 0, false))
 }
+
+// A record of no row waits for its row only while the row can come: a
+// newer process in the slot, or the bound of the wait, settles it to no
+// principal; a row that comes during the wait gives its principal.
+@(test)
+a_record_waits_for_its_row_only_while_it_can_come :: proc(t: ^testing.T) {
+	table := new(SESSION_TABLE)
+	defer free(table)
+	_, decision := settle_decision(table, SESSION_TABLE_ENTRIES, 1, 0)
+	testing.expect_value(t, decision, Settle_Decision.No_Principal)
+	_, decision = settle_decision(table, max(u64), 1, 0)
+	testing.expect_value(t, decision, Settle_Decision.No_Principal)
+	// An empty slot: the row can come, until the bound.
+	_, decision = settle_decision(table, 9, 5, 0)
+	testing.expect_value(t, decision, Settle_Decision.Wait)
+	_, decision = settle_decision(table, 9, 5, ROW_WAIT_MICROSECONDS - 1)
+	testing.expect_value(t, decision, Settle_Decision.Wait)
+	_, decision = settle_decision(table, 9, 5, ROW_WAIT_MICROSECONDS)
+	testing.expect_value(t, decision, Settle_Decision.No_Principal)
+	_, decision = settle_decision(table, 9, 5, max(u64))
+	testing.expect_value(t, decision, Settle_Decision.No_Principal)
+	// A row of an older serial: the row can come.
+	testing.expect(t, session_entry_put(table, 9, 4, 0))
+	_, decision = settle_decision(table, 9, 5, 0)
+	testing.expect_value(t, decision, Settle_Decision.Wait)
+	// A row of a newer serial: never.
+	testing.expect(t, session_entry_put(table, 9, 6, 0))
+	_, decision = settle_decision(table, 9, 5, 0)
+	testing.expect_value(t, decision, Settle_Decision.No_Principal)
+	// The row of the process: known, at any age.
+	testing.expect(t, session_entry_put(table, 9, 7, 1))
+	principal, known_decision := settle_decision(table, 9, 7, max(u64))
+	testing.expect_value(t, known_decision, Settle_Decision.Known)
+	testing.expect_value(t, principal, 1)
+	// The kernel is known.
+	_, decision = settle_decision(table, 0, 0, 0)
+	testing.expect_value(t, decision, Settle_Decision.Known)
+}

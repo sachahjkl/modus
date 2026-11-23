@@ -257,7 +257,10 @@ client: storage.Client
 
 name: [principals.NAME_LIMIT]u8
 name_length: int
-number: u64 // The number of the principal in the root service.
+number: u64 // The number of the principal in the root service: a slot of this run.
+// The principal identifier: drawn at the creation, read from the file at
+// each other run, and given to the root service after the record.
+identifier: principals.Principal_Identifier
 // The file of the named principal, in its form: under the passphrase alone
 // (file), or sealed by the TPM with the passphrase (principal_tpm_file).
 principal_form: principals.Principal_Record_Form
@@ -363,6 +366,24 @@ record_give :: proc "contextless" () -> bool {
 		return false
 	}
 	number = completion.values[0]
+	words := transmute([4]u64)identifier
+	identified, identifier_answered := root_command(.Principal_Identifier, {words[0], words[1], words[2], words[3], number, 0, 0})
+	if !identifier_answered || identified.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+		system.log_fact(.Info, Record_Not_Taken{outcome = outcome_field(identified.kind), principal_name = principal_name_field()})
+		return false
+	}
+	return true
+}
+
+// identifier_draw draws the identifier of a new principal: 256 bits of the
+// generator of this process, refused from a weak seed, as a key is.
+identifier_draw :: proc "contextless" () -> bool {
+	error: errors.Error_Record
+	if !random.fill_for_a_key(&generator, identifier[:], .Processor, &error) || principals.identifier_is_zero(identifier[:]) {
+		system.log_fact(.Info, Principal_Not_Created_Seed_Too_Weak{})
+		message, message_failed = "The seed of the machine is too weak for a key.", true
+		return false
+	}
 	return true
 }
 
@@ -435,7 +456,11 @@ create :: proc "contextless" () {
 		message, message_failed = "The module cryptography refused the keys.", true
 		return
 	}
+	if !identifier_draw() {
+		return
+	}
 	file.name, file.name_length = name, name_length
+	file.identifier = identifier
 	signing_public_key, unlock_public_key = file.signing_public_key, file.unlock_public_key
 	principal_form = .Passphrase
 	derived, sealed := passphrase_file_seal(&secrets, &file, &file_bytes)
@@ -1614,7 +1639,11 @@ create_sealed_by_the_tpm :: proc "contextless" () {
 		message, message_failed = "The module cryptography refused the keys.", true
 		return
 	}
+	if !identifier_draw() {
+		return
+	}
 	principal_tpm_file.name, principal_tpm_file.name_length = name, name_length
+	principal_tpm_file.identifier = identifier
 	signing_public_key, unlock_public_key = principal_tpm_file.signing_public_key, principal_tpm_file.unlock_public_key
 	principal_form = .Sealed_By_The_Tpm
 	// The copy under the recovery key: its additional data stops before the
@@ -2774,6 +2803,7 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 			system.stop(.Refused)
 		}
 		name, name_length = file.name, file.name_length
+		identifier = file.identifier
 		signing_public_key, unlock_public_key = file.signing_public_key, file.unlock_public_key
 	case .Sealed_By_The_Tpm:
 		principal_tpm_file, principal_tpm_file_bytes, problem = principals.principal_tpm_file_decode(bytes)
@@ -2782,6 +2812,7 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 			system.stop(.Refused)
 		}
 		name, name_length = principal_tpm_file.name, principal_tpm_file.name_length
+		identifier = principal_tpm_file.identifier
 		signing_public_key, unlock_public_key = principal_tpm_file.signing_public_key, principal_tpm_file.unlock_public_key
 	case .Unknown:
 		system.log_fact(.Info, Principal_File_Form_Unknown{})

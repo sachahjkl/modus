@@ -536,6 +536,15 @@ Root_Command :: enum u32 {
 	// the other values 0. The root service ends the grant with the reason
 	// Duplicate_Connection. Only the holder of Remote_Clients sends it.
 	Wide_Grant_Second_Connection = 38,
+	// Principal_Identifier gives the principal identifier of the record of a
+	// named principal, from its file (src/md/features/several_principals.md,
+	// "The identity: three names"): values[0..3] the 32 bytes of the
+	// identifier, values[4] the number of the principal that
+	// Principal_Record gave, values[5..6] 0. Only the holder of Principals
+	// sends it, after Principal_Record and before Principal_Unlock. Refused:
+	// a number with no record, an identifier of zero bytes, and another
+	// identifier for a record that has one.
+	Principal_Identifier = 39,
 }
 
 // The step of a Screen_Budget, in values[0].
@@ -827,6 +836,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Principals             = .Root_Ring,
 	.Principal_Record       = .Principals,
 	.Principal_Unlock       = .Principals,
+	.Principal_Identifier   = .Principals,
 	.Debug                  = .Debugger,
 	.Palette_Provide        = .Root_Ring,
 	.Start_From_Disk        = .Root_Ring,
@@ -1228,6 +1238,7 @@ root_command_names := [Root_Command]string {
 	.Principals             = "Principals",
 	.Principal_Record       = "Principal_Record",
 	.Principal_Unlock       = "Principal_Unlock",
+	.Principal_Identifier   = "Principal_Identifier",
 	.Debug                  = "Debug",
 	.Palette_Provide        = "Palette_Provide",
 	.Start_From_Disk        = "Start_From_Disk",
@@ -1273,6 +1284,7 @@ root_first_argument_names := [Root_Command]string {
 	.Principals             = "name",
 	.Principal_Record       = "name",
 	.Principal_Unlock       = "name",
+	.Principal_Identifier   = "identifier",
 	.Debug                  = "name",
 	.Palette_Provide        = "name",
 	.Start_From_Disk        = "name",
@@ -1319,6 +1331,7 @@ root_second_argument_names := [Root_Command]string {
 	.Principals             = "number",
 	.Principal_Record       = "",
 	.Principal_Unlock       = "number",
+	.Principal_Identifier   = "",
 	.Debug                  = "",
 	.Palette_Provide        = "",
 	.Start_From_Disk        = "hash",

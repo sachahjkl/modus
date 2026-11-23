@@ -374,7 +374,7 @@ The rows come from the next request on: the console draws "joined after N record
 | `start` with a list | a list that is no `Table` of `Wiring`; a row that names no end of the module, or names it at both ends; an end that does not run; a row that repeats an earlier row with the same condition, whose reader then takes each record twice; more than 32 rows or 16 lent handles; each check comes before the console lends a handle |
 | the root service | each refusal of the list, with the row in its error record: a record input of the count `One` wired twice among them, and a second source of a generic record input of another record than the first |
 
-**The log of a module, and the whole log as it comes.** Each process has the record output `log`, which only the list of its own start wires: its first record is then in the ring. `log.follow` is a record output of the log service: the records of the whole log, from the next one on.
+**The log of a module, and the whole log as it comes.** Each process has the record output `log`, which only the list of its own start wires: its first record is then in the ring. `log.follow` is a record output of the log service: the records of the principal of the console, from the next one on.
 
 ```
 > start("server", wire(server.log, collector.sources))

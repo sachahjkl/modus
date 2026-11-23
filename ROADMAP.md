@@ -7,9 +7,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **The log by principal, whole.** `log.follow` and the window of the log service give each reader the records of its principal only, and a line of the root service about a session is a record of that session, so no reader sees the records of another principal. [Design](src/md/features/log_reader_scope.md)
-- **The principal identifier on the disk.** Each named principal gets 256 random bits at its creation that name it in its file, its stores, its pin and its audit, so a number of a slot never names a principal on the disk. [Design](src/md/features/several_principals.md)
-- **The stores of a principal encrypted.** The blocks of the stores of a named principal are encrypted under keys that come from its unlock key, and the lock erases them, so a reader of the disk reads nothing of a locked principal. [Design](src/md/features/several_principals.md)
+- **The principal identifier in the stores, the pin and the audit.** The identifier that the file of a principal holds names the owner of each of its stores, the payload of its pin and its collector index, so a number of a slot never names a principal on the disk. [Design](src/md/features/several_principals.md)
+- **The stores of a principal encrypted.** The blocks of the stores of a named principal are encrypted under keys that come from its unlock key, and the lock erases them, so a reader of the disk reads nothing of a locked principal. [Design](src/md/features/store_encryption.md)
 - **A surface of unlock in no capture, and the unlock hints.** No capture of the screen holds the window of `unlock`, and the file of a principal keeps the layout in which its passphrase was typed. [Design](src/md/features/several_principals.md)
 
 - **The largest budget set by the plan of the principal.** The plan of principal 0 gives the share of the machine that one process gets through the border that the root service has for it (`budget_share_take`), in place of the default quarter, and a row of the plan gives a module a limit of processor time in place of a row in the code of the root service. [Design](src/md/features/module_budget_request.md)

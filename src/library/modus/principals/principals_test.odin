@@ -110,6 +110,9 @@ names_and_passphrases :: proc(t: ^testing.T) {
 
 test_file :: proc() -> Principal_File {
 	file := Principal_File{name_length = 5}
+	for index in 0 ..< PRINCIPAL_IDENTIFIER_SIZE {
+		file.identifier[index] = u8(200 + index)
+	}
 	copy(file.name[:], "alice")
 	for index in 0 ..< PUBLIC_KEY_SIZE {
 		file.signing_public_key[index] = u8(index)
@@ -158,6 +161,26 @@ hostile_files_are_refused :: proc(t: ^testing.T) {
 	changed = good
 	changed[OFFSET_FORMAT] = u8(FILE_FORMAT + 1) // A format that this system does not know.
 	expect(t, changed[:], .Wrong_Format)
+	// The format of the release before: refused with the sentence that
+	// says what to do; the formats 0 and the largest name no release.
+	changed = good
+	changed[OFFSET_FORMAT] = u8(OLDER_FILE_FORMAT)
+	expect(t, changed[:], .Older_Format)
+	changed = good
+	changed[OFFSET_FORMAT] = 0
+	expect(t, changed[:], .Wrong_Format)
+	changed = good
+	changed[OFFSET_FORMAT], changed[OFFSET_FORMAT + 1], changed[OFFSET_FORMAT + 2], changed[OFFSET_FORMAT + 3] = 0xff, 0xff, 0xff, 0xff
+	expect(t, changed[:], .Wrong_Format)
+	// A file of no identifier; one byte of the identifier suffices.
+	changed = good
+	for index in 0 ..< PRINCIPAL_IDENTIFIER_SIZE {
+		changed[OFFSET_IDENTIFIER + index] = 0
+	}
+	expect(t, changed[:], .Zero_Identifier)
+	changed[OFFSET_IDENTIFIER + PRINCIPAL_IDENTIFIER_SIZE - 1] = 1
+	expect(t, changed[:], .None)
+	testing.expect(t, len(file_problem_sentences[.Older_Format]) > 0 && len(principal_tpm_file_problem_sentences[.Older_Format]) > 0)
 	// A file cannot ask for a cheaper derivation, or for more memory.
 	changed = good
 	changed[OFFSET_MEMORY] = 8
@@ -511,6 +534,7 @@ the_recovery_seal_key_and_the_key_check_differ :: proc(t: ^testing.T) {
 test_principal_tpm_file :: proc() -> (file: Principal_Tpm_File) {
 	principal := test_file()
 	file.name, file.name_length = principal.name, principal.name_length
+	file.identifier = principal.identifier
 	file.signing_public_key, file.unlock_public_key = principal.signing_public_key, principal.unlock_public_key
 	file.salt = principal.salt
 	file.pcrs = tpm2.PCR_SET
@@ -539,16 +563,17 @@ a_principal_file_sealed_by_the_tpm_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, string(bytes[:8]), PRINCIPAL_TPM_MAGIC)
 	// The offsets of the table of the guide (docs/PRINCIPALS.md).
 	guide_offsets := [?][2]int {
-		{PRINCIPAL_TPM_OFFSET_PCRS, 124},
-		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PUBLIC, 136},
-		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PRIVATE, 264},
-		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_CREATION, 520},
-		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_TICKET, 776},
-		{PRINCIPAL_TPM_OFFSET_NONCE, 848},
-		{PRINCIPAL_TPM_OFFSET_SEALED, 860},
-		{PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE, 940},
-		{PRINCIPAL_TPM_OFFSET_RECOVERY_SEALED, 952},
-		{PRINCIPAL_TPM_FILE_SIZE, 1032},
+		{OFFSET_IDENTIFIER, 44},
+		{PRINCIPAL_TPM_OFFSET_PCRS, 156},
+		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PUBLIC, 168},
+		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PRIVATE, 296},
+		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_CREATION, 552},
+		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_TICKET, 808},
+		{PRINCIPAL_TPM_OFFSET_NONCE, 880},
+		{PRINCIPAL_TPM_OFFSET_SEALED, 892},
+		{PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE, 972},
+		{PRINCIPAL_TPM_OFFSET_RECOVERY_SEALED, 984},
+		{PRINCIPAL_TPM_FILE_SIZE, 1064},
 	}
 	for pair in guide_offsets {
 		testing.expect_value(t, pair[0], pair[1])
@@ -594,6 +619,14 @@ hostile_principal_files_sealed_by_the_tpm_are_refused :: proc(t: ^testing.T) {
 	changed = good
 	changed[OFFSET_FORMAT] = u8(PRINCIPAL_TPM_FORMAT + 1) // A format that this system does not know.
 	expect(t, changed[:], .Wrong_Format)
+	changed = good
+	changed[OFFSET_FORMAT] = u8(OLDER_PRINCIPAL_TPM_FORMAT)
+	expect(t, changed[:], .Older_Format)
+	changed = good
+	for index in 0 ..< PRINCIPAL_IDENTIFIER_SIZE {
+		changed[OFFSET_IDENTIFIER + index] = 0
+	}
+	expect(t, changed[:], .Zero_Identifier)
 	changed = good
 	changed[OFFSET_PASSES] = u8(DERIVATION_PASSES - 1) // A cheaper derivation.
 	expect(t, changed[:], .Other_Parameters)
@@ -768,6 +801,7 @@ test_sealed_principl_record :: proc(
 ) -> (bytes: [FILE_SIZE]u8) {
 	file: Principal_File
 	file.name_length = copy(file.name[:], name)
+	file.identifier = test_file().identifier
 	signing, unlocking, ok := secret_keys_public_keys(secrets)
 	assert(ok)
 	file.signing_public_key = signing
@@ -1249,4 +1283,23 @@ a_new_machine_passphrase_keeps_the_copy_under_the_recovery_key :: proc(t: ^testi
 	testing.expect(t, string(before[MACHINE_TPM_PASSPHRASE_OFFSET_RECOVERY_NONCE:]) == string(after[MACHINE_TPM_PASSPHRASE_OFFSET_RECOVERY_NONCE:]))
 	_, _, problem := machine_tpm_passphrase_file_decode(after[:])
 	testing.expect_value(t, problem, File_Problem.None)
+}
+
+// The storage key of a principal is a key of its own: not the unlock key,
+// not the key of another text over the same secret, and another secret
+// gives another key.
+@(test)
+the_storage_key_is_a_use_of_its_own_of_the_unlock_key :: proc(t: ^testing.T) {
+	secret: [KEY_SIZE]u8
+	for index in 0 ..< KEY_SIZE {
+		secret[index] = u8(index + 1)
+	}
+	storage := principal_storage_key(&secret)
+	testing.expect(t, storage != secret)
+	testing.expect(t, storage != keyed_hash(secret[:], RECOVERY_SEAL_TEXT))
+	testing.expect(t, storage != keyed_hash(secret[:], PRINCIPAL_AUTHORIZATION_TEXT))
+	other := secret
+	other[0] ~= 1
+	testing.expect(t, principal_storage_key(&other) != storage)
+	testing.expect(t, principal_storage_key(&secret) == storage)
 }

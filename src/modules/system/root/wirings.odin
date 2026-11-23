@@ -283,6 +283,7 @@ wiring_register_process :: proc "contextless" (item: ^Started) {
 		process_handle     = op.Handle(token),
 		wiring_ring_handle = op.Handle(ring_given),
 		flags              = flags,
+		principal          = item.principal,
 	}
 	if system.send(&wiring_ring.commands, ws.command_to_record(cmd)) {
 		item.wiring_registered = true

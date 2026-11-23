@@ -81,7 +81,12 @@ sources: system.Record_Input_With_Terms(system.Any_Record, Space_Terms, .Many_Ty
 
 // The kept records, one ring for each source that asks to forward.
 forward: system.Record_Output(system.Any_Record, .Paired)
+
+// The records of the log, each to the rings of the readers of its principal.
+follow: system.Record_Output(Follow_Row, .By_Principal)
 ```
+
+**The pairing By_Principal.** A record output `By_Principal` gives each record to the rings whose reader is of one principal (`system.output_write_principal`). The root service gives the wiring service the principal of each process at `Register_Process`; the wiring service writes the principal of the reader, plus 1, on the writer end of each ring of such an output (`output.WIRING_VALUE_READER_PRINCIPAL`), and the reader end reads with the filter `By_Writer`. A ring whose reader principal is not known takes no record. The writer is trusted to choose the principal of each record: the one writer is the log service, a joint process ([log_reader_scope.md](log_reader_scope.md), "The scope of a principal").
 
 `system.Record_Output($Record_Type, $pairing = .Unpaired)`, `system.Record_Input($Record_Type, $wirings = .One)` and `system.Record_Input_With_Terms($Record_Type, $Terms_Type, $wirings = .One)` hold the state of the variable: first the index of its row, which the loader writes, then the counts of the writer (`system.Output_State`: the next serial, the records written, discarded and refused, the end word of the last ring that ended) or of the reader (`system.Input_State`). The ends themselves are in one table of the library, with the ends that a process holds at most. The arguments go by place or by name. A parameter of a procedure that takes a record stream by its address declares none; the tool reads no other form of the three types.
 

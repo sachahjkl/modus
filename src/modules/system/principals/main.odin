@@ -14,6 +14,7 @@ import "modus:contract/errors"
 import "modus:contract/ring"
 import rd "modus:contract/root_delegation"
 import "modus:contract/value_kinds"
+import "modus:principals"
 import "modus:system"
 
 // Working memory budget for the freestanding principals service process and
@@ -175,7 +176,7 @@ handle_command :: proc "contextless" (command: ^ring.Record) {
 			ring.Record{
 				kind   = u32(rd.Principals_Ring_Status.Ok),
 				tag    = command.tag,
-				values = {service_state.front_principal, service_state.counters.active_sessions, 0, 0, 0, 0, 0},
+				values = {principals.principal_in_front(service_state.seat), service_state.counters.active_sessions, 0, 0, 0, 0, 0},
 			},
 		)
 

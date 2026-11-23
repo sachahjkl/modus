@@ -6,6 +6,7 @@ import "modus:contract/blake3"
 import "modus:contract/remote"
 import "modus:contract/role_contract"
 import rd "modus:contract/root_delegation"
+import "modus:principals"
 
 @(private = "file")
 make_hash :: proc(seed: u8) -> (h: blake3.Hash) {
@@ -44,7 +45,7 @@ fill_nickname :: proc(text: string) -> (buf: [rd.NICKNAME_CAPACITY]u8, length: u
 @(private = "file")
 snapshot_domain_equal :: proc(a, b: ^Principals_State) -> bool {
 	if a.initialized != b.initialized ||
-		a.front_principal != b.front_principal ||
+		a.seat != b.seat ||
 		a.start_policy != b.start_policy ||
 		a.machine_passphrase_required != b.machine_passphrase_required ||
 		a.client_table != b.client_table ||
@@ -206,21 +207,16 @@ principal_registration_refusals_and_capacity_overflow_keep_state_intact :: proc(
 	testing.expect_value(t, register_principal(&state, &dup_key), Principals_Refusal.Duplicate_Public_Key)
 	testing.expect(t, snapshot_domain_equal(&state, &before))
 
-	// Fill remaining slots up to MAX_PRINCIPALS, then verify overflow refuses with zero mutation.
-	for i in u64(2) ..< u64(MAX_PRINCIPALS) {
-		inp := rd.Register_Principal_Input{principal_id = i, public_key = make_key(u8(20 + i))}
-		inp.name[0] = 'p'
-		inp.name[1] = u8('0' + i)
-		inp.name_length = 2
-		testing.expect_value(t, register_principal(&state, &inp), Principals_Refusal.None)
-	}
+	// The capacity of the machine is full: a slot past it names no
+	// principal, at its edge and at the largest number.
 	testing.expect_value(t, state.counters.principal_count, u64(MAX_PRINCIPALS))
-
-	before = state
-	overflow := rd.Register_Principal_Input{principal_id = 99, public_key = make_key(99)}
-	overflow.name, overflow.name_length = fill_name("overflow")
-	testing.expect_value(t, register_principal(&state, &overflow), Principals_Refusal.Principals_Full)
-	testing.expect(t, snapshot_domain_equal(&state, &before))
+	for past in ([?]u64{MAX_PRINCIPALS, 99, max(u64)}) {
+		before = state
+		overflow := rd.Register_Principal_Input{principal_id = past, public_key = make_key(99)}
+		overflow.name, overflow.name_length = fill_name("overflow")
+		testing.expect_value(t, register_principal(&state, &overflow), Principals_Refusal.Invalid_Principal_Id)
+		testing.expect(t, snapshot_domain_equal(&state, &before))
+	}
 }
 
 @(test)
@@ -259,27 +255,52 @@ session_lifecycle_protects_machine_and_updates_client_keys :: proc(t: ^testing.T
 	testing.expect_value(t, ref0, Principals_Refusal.None)
 	testing.expect(t, s0 > 0)
 
-	// Unlock alice, allow a client key for alice (not in front yet).
+	// The record of alice takes the seat from principal 0: no session is
+	// in front, and principal 0 cannot take it back while alice can unlock.
+	testing.expect_value(t, state.seat.state, principals.Seat_State.Chooser)
+	testing.expect_value(t, principals.principal_in_front(state.seat), u64(role_contract.MACHINE_PRINCIPAL))
+
+	// Unlock alice: one open session, so her session comes in front, and k0
+	// pauses.
 	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 1, action_word = u32(rd.Session_Action.Unlock)}), Principals_Refusal.None)
 	testing.expect_value(t, state.counters.active_sessions, u64(2))
-	// Unlocking an already-active principal is refused.
+	testing.expect_value(t, principals.principal_in_front(state.seat), u64(1))
+	// Unlocking a principal in front is refused.
 	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 1, action_word = u32(rd.Session_Action.Unlock)}), Principals_Refusal.Session_State_Conflict)
+	// Principal 0 does not take the front from the session of alice.
+	before = state
+	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 0, action_word = u32(rd.Session_Action.Bring_To_Front)}), Principals_Refusal.Session_State_Conflict)
+	testing.expect(t, snapshot_domain_equal(&state, &before))
+	// A second named principal has no slot: the capacity of the machine
+	// is one named principal.
+	bob := rd.Register_Principal_Input{principal_id = 2, public_key = make_key(2)}
+	bob.name, bob.name_length = fill_name("bob")
+	before = state
+	testing.expect_value(t, register_principal(&state, &bob), Principals_Refusal.Invalid_Principal_Id)
+	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 2, action_word = u32(rd.Session_Action.Unlock)}), Principals_Refusal.Unknown_Principal)
+	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 2, action_word = u32(rd.Session_Action.Bring_To_Front)}), Principals_Refusal.Unknown_Principal)
+	after_refusals := state
+	after_refusals.counters.total_refusals = before.counters.total_refusals
+	testing.expect(t, snapshot_domain_equal(&after_refusals, &before))
 
 	k1 := make_key(41)
 	s1, ref1 := client_key_command(&state, &rd.Client_Key_Input{principal_id = 1, action_word = u32(rd.Client_Key_Action.Allow), client_key = k1, client_uses_word = remote.client_uses_word({.Calls, .View, .Input})})
 	testing.expect_value(t, ref1, Principals_Refusal.None)
 	row1, found1 := client_key_lookup(&state, k1)
-	testing.expect(t, found1 && row1.not_in_front == 1 && row1.session_locked == 0)
+	testing.expect(t, found1 && row1.not_in_front == 0 && row1.session_locked == 0)
 
-	// Bring alice to front -> k1 unpaused, k0 paused.
+	// Bring alice to front: she is in front already, so nothing changes.
 	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 1, action_word = u32(rd.Session_Action.Bring_To_Front)}), Principals_Refusal.None)
 	row0_after, _ := client_key_lookup(&state, k0)
 	row1_after, _ := client_key_lookup(&state, k1)
 	testing.expect(t, row0_after.not_in_front == 1 && row1_after.not_in_front == 0)
 
-	// Lock alice -> k1 gets session_locked = 1 and a fresh serial; front returns to principal 0 so k0 unpauses.
+	// Lock alice -> k1 gets session_locked = 1 and a fresh serial; no
+	// session is in front, so the principal in front is principal 0 and k0
+	// unpauses.
 	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 1, action_word = u32(rd.Session_Action.Lock)}), Principals_Refusal.None)
-	testing.expect_value(t, state.front_principal, role_contract.MACHINE_PRINCIPAL)
+	testing.expect_value(t, principals.principal_in_front(state.seat), u64(role_contract.MACHINE_PRINCIPAL))
+	testing.expect_value(t, state.seat.state, principals.Seat_State.Chooser)
 	row0_locked, _ := client_key_lookup(&state, k0)
 	row1_locked, _ := client_key_lookup(&state, k1)
 	testing.expect(t, row0_locked.not_in_front == 0)
@@ -373,16 +394,12 @@ client_keys_and_start_policy_refuse_every_invalid_edge :: proc(t: ^testing.T) {
 	state: Principals_State
 	state_init(&state)
 
-	// Register and unlock two named principals so we can test global CLIENT_CAPACITY
-	// as well as per-principal CLIENT_ROWS_OF_ONE_PRINCIPAL (half of it).
-	for id in u64(1) ..= u64(2) {
-		inp := rd.Register_Principal_Input{principal_id = id, public_key = make_key(u8(id))}
-		inp.name[0] = 'u'
-		inp.name[1] = u8('0' + id)
-		inp.name_length = 2
-		testing.expect_value(t, register_principal(&state, &inp), Principals_Refusal.None)
-		testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = id, action_word = u32(rd.Session_Action.Unlock)}), Principals_Refusal.None)
-	}
+	// Register the named principal of the machine, so we can test the
+	// per-principal CLIENT_ROWS_OF_ONE_PRINCIPAL and the global capacity.
+	inp := rd.Register_Principal_Input{principal_id = 1, public_key = make_key(1)}
+	inp.name, inp.name_length = fill_name("u1")
+	testing.expect_value(t, register_principal(&state, &inp), Principals_Refusal.None)
+	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 1, action_word = u32(rd.Session_Action.Unlock)}), Principals_Refusal.None)
 
 	// Refused: zero key, bad uses (0, Input without View, unknown bit).
 	before := state
@@ -421,28 +438,32 @@ client_keys_and_start_policy_refuse_every_invalid_edge :: proc(t: ^testing.T) {
 		_, r := client_key_command(&state, &rd.Client_Key_Input{principal_id = 1, action_word = u32(rd.Client_Key_Action.Allow), client_key = make_key(150 + i), client_uses_word = remote.client_uses_word({.Calls})})
 		testing.expect_value(t, r, Principals_Refusal.None)
 	}
+	// The table is full: each principal of the machine holds its share, so
+	// the refusal is the share of the principal (the full table itself
+	// needs a principal past the capacity of the machine).
 	before = state
-	_, r_full := client_key_command(&state, &rd.Client_Key_Input{principal_id = 2, action_word = u32(rd.Client_Key_Action.Allow), client_key = make_key(200), client_uses_word = remote.client_uses_word({.Calls})})
-	testing.expect_value(t, r_full, Principals_Refusal.Client_Table_Full)
+	_, r_full := client_key_command(&state, &rd.Client_Key_Input{principal_id = 1, action_word = u32(rd.Client_Key_Action.Allow), client_key = make_key(200), client_uses_word = remote.client_uses_word({.Calls})})
+	testing.expect_value(t, r_full, Principals_Refusal.Principal_Client_Limit)
+	testing.expect(t, snapshot_domain_equal(&state, &before))
+	// A principal past the capacity has no record, through either path.
+	_, r_past := client_key_command(&state, &rd.Client_Key_Input{principal_id = MAX_PRINCIPALS, action_word = u32(rd.Client_Key_Action.Allow), client_key = make_key(201), client_uses_word = remote.client_uses_word({.Calls})})
+	testing.expect_value(t, r_past, Principals_Refusal.Unknown_Principal)
+	req_past := rd.Disk_Rows_Set_Request{principal = MAX_PRINCIPALS, generation = 1, row_count = 1}
+	req_past.rows[0].class_word = u32(rd.Disk_Row_Class.Client_Key)
+	req_past.rows[0].client_key = make_key(201)
+	req_past.rows[0].client_uses_word = remote.client_uses_word({.Calls})
+	before = state
+	r_req_past, _ := apply_disk_rows_set(&state, &req_past)
+	testing.expect_value(t, r_req_past, Principals_Refusal.Unknown_Principal)
 	testing.expect(t, snapshot_domain_equal(&state, &before))
 
-	// Principal 2 trying to add a key via Disk_Rows_Set also refuses with Client_Table_Full and zero mutation.
-	req_full := rd.Disk_Rows_Set_Request{principal = 2, generation = 1, row_count = 1}
-	req_full.rows[0].class_word = u32(rd.Disk_Row_Class.Client_Key)
-	req_full.rows[0].client_key = make_key(201)
-	req_full.rows[0].client_uses_word = remote.client_uses_word({.Calls})
-	before = state
-	r_req_full, _ := apply_disk_rows_set(&state, &req_full)
-	testing.expect_value(t, r_req_full, Principals_Refusal.Client_Table_Full)
-	testing.expect(t, snapshot_domain_equal(&state, &before))
-
-	// Revoke one key of principal 0, verify absent revoke refuses, and principal 2 can now allow one key.
+	// Revoke one key of principal 0, verify absent revoke refuses, and principal 0 can allow one key again.
 	_, r_rev := client_key_command(&state, &rd.Client_Key_Input{principal_id = 0, action_word = u32(rd.Client_Key_Action.Revoke), client_key = make_key(100)})
 	testing.expect_value(t, r_rev, Principals_Refusal.None)
 	_, r_rev_again := client_key_command(&state, &rd.Client_Key_Input{principal_id = 0, action_word = u32(rd.Client_Key_Action.Revoke), client_key = make_key(100)})
 	testing.expect_value(t, r_rev_again, Principals_Refusal.Client_Key_Not_Found)
-	_, r_p2_ok := client_key_command(&state, &rd.Client_Key_Input{principal_id = 2, action_word = u32(rd.Client_Key_Action.Allow), client_key = make_key(200), client_uses_word = remote.client_uses_word({.Calls})})
-	testing.expect_value(t, r_p2_ok, Principals_Refusal.None)
+	_, r_p0_ok := client_key_command(&state, &rd.Client_Key_Input{principal_id = 0, action_word = u32(rd.Client_Key_Action.Allow), client_key = make_key(200), client_uses_word = remote.client_uses_word({.Calls})})
+	testing.expect_value(t, r_p0_ok, Principals_Refusal.None)
 
 	// Start policy commands: non-principal-0 refused, bad nickname/hash refused, machine passphrase blocks choice.
 	sp_bad_p := rd.Start_Policy_Input{principal_id = 1, action_word = u32(rd.Start_Policy_Action.Set_Choice), module_hash = make_hash(5)}
