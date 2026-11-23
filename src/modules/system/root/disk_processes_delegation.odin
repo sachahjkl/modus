@@ -395,9 +395,9 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 		}
 		disconnect(connection)
 		if status == .No_Slot && sent_refused {
-			return .Not_Given, root_ring.refuse(refusal, .Callee_Busy, kind, .Busy, .Requests)
+			return .Not_Given, root_ring.refuse(refusal, .Callee_Busy, command, .Busy, .Requests)
 		}
-		return .Not_Given, kernel_refused(refusal, kind, status)
+		return .Not_Given, kernel_refused(refusal, command, status)
 	}
 	name_bytes: [disk_process.NAME_LIMIT]u8
 	name_length := copy(name_bytes[:], name)
