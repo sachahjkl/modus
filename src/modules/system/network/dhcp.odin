@@ -115,12 +115,14 @@ dhcp_output :: proc "contextless" (output: dhcp_client.Output) {
 	}
 	frame_bytes := place_bytes(place)
 	copy(frame_bytes[network.IPV4_DATA + network.UDP_HEADER:], dhcp_message[:output.length])
-	source := output.broadcast ? 0 : local_address
+	source := output.from_address ? local_address : 0
 	destination := output.broadcast ? 0xFFFF_FFFF : output.destination
 	length := network.udp_header_write(frame_bytes[network.IPV4_DATA:], source, destination, dhcp_client.CLIENT_PORT, dhcp_client.SERVER_PORT, output.length)
+	// A server off the link is reached through the router, as each other
+	// unicast frame is.
 	hardware_to := network.BROADCAST
 	if !output.broadcast {
-		if found, known := neighbor_of(destination); known {
+		if found, known := neighbor_of(next_hop(destination)); known {
 			hardware_to = found
 		}
 	}

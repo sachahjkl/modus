@@ -63,7 +63,7 @@ Export_Part :: struct {
 	code_offset:          u64, // The memory offset of its first instruction, in a segment with Execute.
 	about:                string, // One line of help.
 	text:                 string, // The documentation text, in its Markdown.
-	parameters:           []module.Type, // At most module.PARAMETER_CAPACITY words in the call form (module.call_argument_count): two for an optional parameter.
+	parameters:           []module.Type, // One type for each parameter, at most module.PARAMETER_CAPACITY; the call form takes two words for an optional parameter, at most module.CALL_WORD_CAPACITY in all (module.parameter_word_count).
 	parameter_names:      []string, // The name of each parameter: one for each.
 	// What the type of each parameter needs (module.Function.parameter_details):
 	// a Record or a Table: the number of its record, from 1, in
@@ -73,7 +73,7 @@ Export_Part :: struct {
 	// from 1, in Module_Parts.enums, and of the number of its getter, from
 	// 1, in Module_Parts.exports, or 0.
 	parameter_directions: []module.Direction, // At most one for each parameter; a missing one is Read.
-	parameter_needs:      []module.Parameter_Need, // At most one for each parameter; a missing one is Required. Optional on an Integer, a Handle or an Enum only.
+	parameter_needs:      []module.Parameter_Need, // At most one for each parameter; a missing one is Required. Optional on an Integer, a Handle, an Enum or a Text only (module.optional_type_allowed).
 	result:               module.Type,
 	result_detail:        u32, // A Record or Table result: the number of its record, from 1. An Enum result: the number of its enum, from 1.
 	error_record:         u32, // Not 0: the number of the record of its error record, from 1.
@@ -215,8 +215,8 @@ Refusal :: enum u32 {
 	// generic record input or with two. index: the row from 1, 0 for the tables; value: the
 	// module.Record_Stream_Fault.
 	Record_Streams_Not_Valid      = 24,
-	// An Enum parameter or result names no enum of the parts or a getter past the exports, an optional bit is on
-	// a parameter that is no Enum, or module.enum_type and module.function_enums_check refuse the written file.
+	// An Enum parameter or result names no enum of the parts or a getter past the exports, or module.enum_type
+	// and module.function_enums_check refuse the written file.
 	// value: the module.Enum_Problem: No_Enum for a number of an enum that names nothing, No_Getter for a getter
 	// past the exports.
 	Enum_Not_Valid                = 25,

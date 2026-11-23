@@ -251,8 +251,11 @@ plan_display_decision_of_word :: proc "contextless" (word: i64) -> (decision: Pl
 	return .Unknown, false
 }
 
-// The magic of a generation object and of a current object.
-PLAN_GENERATION_MAGIC :: [8]u8{'M', 'O', 'D', 'P', 'G', 'E', 'N', '1'}
+// The magic of a generation object and of a current object. The 2 of a
+// generation object names its entry row with the kind of a value and its
+// text (PLAN_ENTRY_ROW_WIRE_SIZE): a reader refuses an object of the row
+// before with Bad_Header, never reads it at the wrong size.
+PLAN_GENERATION_MAGIC :: [8]u8{'M', 'O', 'D', 'P', 'G', 'E', 'N', '2'}
 PLAN_CURRENT_MAGIC :: [8]u8{'M', 'O', 'D', 'P', 'C', 'U', 'R', '1'}
 
 // The bytes of one entry row in a generation object: the words, three

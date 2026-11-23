@@ -561,3 +561,39 @@ never_ask_again_and_process_stop_withdrawal :: proc(t: ^testing.T) {
 	testing.expect_value(t, res_late.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
 	testing.expect_value(t, active_grant_count(state), u32(0))
 }
+
+// The arm time that the display reports for the principal holds at the
+// border of the core too: a press after the contract time and before the
+// time of the principal is refused, a time past the most is no time that a
+// display applies, and a press at the time of the principal is taken.
+@(test)
+the_arm_time_of_the_principal_holds_at_the_core :: proc(t: ^testing.T) {
+	PRINCIPAL :: u64(2_000)
+	state := make_test_state()
+	batch := make_batch(1, 10, 1, .Disk_Module, 0x11, "reader", make_network_item(0x0A00_0264, 443))
+	sub, dialog, has_dialog := submit_batch(state, &batch, 1000)
+	testing.expect(t, sub.refusal == .None && has_dialog)
+	testing.expect_value(t, mark_dialog_shown(state, dialog.dialog_serial, TRUSTED_DISPLAY_SLOT, 1100), powerbox.Powerbox_Refusal.None)
+	early := make_grant_answer(&dialog, 1100, 1100 + PRINCIPAL - 1, 1100 + PRINCIPAL - 1)
+	early.arm_milliseconds = PRINCIPAL
+	res := resolve_answer(state, &early, 1100 + PRINCIPAL - 1)
+	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
+	after_contract := make_grant_answer(&dialog, 1100, 1100 + powerbox.CONSENT_ARM_MILLISECONDS, 1100 + powerbox.CONSENT_ARM_MILLISECONDS)
+	after_contract.arm_milliseconds = PRINCIPAL
+	res = resolve_answer(state, &after_contract, 1100 + powerbox.CONSENT_ARM_MILLISECONDS)
+	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
+	past_most := make_grant_answer(&dialog, 1100, 1100 + 20_000, 1100 + 20_000)
+	past_most.arm_milliseconds = powerbox.CONSENT_ARM_MILLISECONDS_MOST + 1
+	res = resolve_answer(state, &past_most, 1100 + 20_000)
+	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
+	largest := past_most
+	largest.arm_milliseconds = max(u64)
+	res = resolve_answer(state, &largest, 1100 + 20_000)
+	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
+	testing.expect_value(t, active_grant_count(state), u32(0))
+	at_time := make_grant_answer(&dialog, 1100, 1100 + PRINCIPAL, 1100 + PRINCIPAL)
+	at_time.arm_milliseconds = PRINCIPAL
+	res = resolve_answer(state, &at_time, 1100 + PRINCIPAL)
+	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.None)
+	testing.expect_value(t, res.items[0].decision, powerbox.Item_Decision.Granted)
+}

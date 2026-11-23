@@ -48,10 +48,16 @@ kept_load :: proc "contextless" (kept: ^Kept) {
 }
 
 // kept_wait adds the end of a job to the wait of the loop. true: a job
-// ended already, and the loop must not sleep.
+// ended already, or a job that the worker refused can be asked now, and
+// the loop must not sleep. A refused job waits for the worker to free.
 kept_wait :: proc "contextless" (kept: ^Kept, wait: ^system.Wait) -> bool {
 	if kept.keeper.job == .None {
-		return false
+		if !keeper_job_wanted(&kept.keeper) {
+			return false
+		}
+		if !interface.background_work_busy(&kept.work) {
+			return true
+		}
 	}
 	return interface.background_work_wait(wait, &kept.work)
 }
@@ -59,7 +65,12 @@ kept_wait :: proc "contextless" (kept: ^Kept, wait: ^system.Wait) -> bool {
 // kept_step takes the end of a job, then asks for the next one. The loop
 // calls it at each turn.
 kept_step :: proc "contextless" (kept: ^Kept) -> (step: Step) {
-	if kept.keeper.job == .None || !interface.background_work_take(&kept.work) {
+	if kept.keeper.job == .None {
+		// A job that the worker refused is asked again here.
+		kept_ask(kept)
+		return {}
+	}
+	if !interface.background_work_take(&kept.work) {
 		return {}
 	}
 	stored := kept.status == .Ok

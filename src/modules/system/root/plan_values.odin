@@ -9,10 +9,20 @@ package root
 // Plans. The holder writes there the whole set of the generation that the
 // principal accepted. The core copies the set once, checks it whole
 // (plan_values.set_check), and replaces its values in one step: the core
-// never runs with a part of a plan. At the start of an owner of settings,
-// the core writes the values of that owner on the page of its place and
-// maps it read-only: an owner that started before the change keeps the
-// values that it started with.
+// never runs with a part of a plan. At the start of each process, the core
+// writes the values of its owner on the page of its place and maps it
+// read-only; at each change of the set, it writes the page of each process
+// that runs again and wakes its sequence word. An owner that reads its
+// values only at its start keeps its copy; storage reads them again at the
+// wake (src/md/features/module_settings.md, "How the values reach their
+// owner").
+//
+// The core keeps no value on a disk: the store of the holder of Plans
+// keeps the generation in force, and at each start of the machine that
+// holder gives its values with the step Rollback before it says Loaded
+// (plan_at_start.odin). Storage starts before that holder, which needs it,
+// so the values reach storage, and the quota of each store open by then,
+// at that change and not at their start.
 
 import "base:intrinsics"
 import "internal:root/role_policy"
@@ -34,6 +44,16 @@ plan_values_in_force: [plan_values.SET_SIZE]u8
 plan_values_generation: u64
 plan_values_given: bool
 
+// The set in force before a change: a change that the service rings have
+// no room for is undone whole.
+plan_values_saved: [plan_values.SET_SIZE]u8
+plan_values_saved_generation: u64
+plan_values_saved_given: bool
+
+// The places whose process has its values page: the core writes it again
+// at each change of the set.
+plan_values_page_mapped: [STARTED_CAPACITY]bool
+
 // The page of the plan values of each place of `started`: one object, as
 // the fresh bytes, mapped with Write in this service.
 plan_values_owner_memory: system.Handle
@@ -44,7 +64,9 @@ plan_values_owner_address: uintptr
 plan_values_command :: proc "contextless" (item: ^Started, values: [7]u64, answer: ^[7]u64) -> system.Status {
 	kind := u32(root_ring.Root_Command.Plan_Values)
 	step, step_known := rd.plan_roles_step_of_word(values[0])
-	if !step_known || step == .Loaded {
+	// plan_roles_step_of_word refuses None; Loaded is a step of Plan_Roles
+	// only. Each gets its error record here, as a word that names no step.
+	if !step_known || step == .None || step == .Loaded {
 		answer^ = errors.ring_fail(kind, .Bad_Value, .None, 1, i64(min(values[0], u64(max(i64)))), i64(rd.Plan_Roles_Step.Rollback))
 		return .Bad_Operation
 	}
@@ -56,6 +78,8 @@ plan_values_command :: proc "contextless" (item: ^Started, values: [7]u64, answe
 	}
 	switch step {
 	case .None, .Loaded:
+		// Refused above; the answer still carries its error record.
+		answer^ = errors.ring_fail(kind, .Bad_Value, .None, 1, i64(values[0]), i64(rd.Plan_Roles_Step.Rollback))
 		return .Bad_Operation
 	case .Page:
 		status := plan_values_pages_give(item, answer)
@@ -76,12 +100,60 @@ plan_values_command :: proc "contextless" (item: ^Started, values: [7]u64, answe
 		answer^ = errors.ring_fail(kind, .Refused, .Records, 0, 0, 0, i64(problem))
 		return .Bad_State
 	}
+	// The quota of a store is a plan value: a change of it writes the grant
+	// of each open connection to the holder of Storage again, as a change
+	// of the roles does, and only when each service ring has room for its
+	// grants; else the change is undone whole.
+	grants_change_begin()
+	plan_values_saved = plan_values_in_force
+	plan_values_saved_generation = plan_values_generation
+	plan_values_saved_given = plan_values_given
 	plan_values_in_force = plan_values_copy
 	plan_values_generation = head.generation
 	plan_values_given = true
-	system.log_fact(.Info, Plan_Values_Replaced{generation = head.generation, owners = u64(head.owner_count)})
+	if !grants_change_room() {
+		plan_values_in_force = plan_values_saved
+		plan_values_generation = plan_values_saved_generation
+		plan_values_given = plan_values_saved_given
+		system.log_fact(.Warning, Plan_Values_Grants_Busy{generation = head.generation})
+		answer^ = errors.ring_fail(kind, .Busy, .Requests)
+		return .Bad_State
+	}
+	grants_change_send()
+	pages := plan_values_pages_publish()
+	root_plan_read()
+	system.log_fact(.Info, Plan_Values_Replaced{generation = head.generation, owners = u64(head.owner_count), pages = u64(pages)})
 	answer^ = {0 = head.generation}
 	return .Ok
+}
+
+// plan_values_pages_publish writes the values page of each process that
+// runs again, with the values of its owner in the set in force, and wakes
+// its sequence word. It gives the count of the pages.
+@(private = "file")
+plan_values_pages_publish :: proc "contextless" () -> (pages: int) {
+	if plan_values_owner_memory == 0 {
+		return 0
+	}
+	for &item, index in started {
+		if item.process == 0 || !plan_values_page_mapped[index] {
+			continue
+		}
+		page := plan_values_owner_page(index)
+		owner_values, _ := plan_values_of(role_policy.store_name_of_module(&role_holder_names, system.name_of(item.name[:])))
+		if !plan_values.owner_page_publish(page, owner_values) {
+			system.log_fact(.Warning, Plan_Values_Page_Too_Small{})
+		}
+		system.word_wake(plan_values.owner_page_sequence(page), system.WAKE_ALL)
+		pages += 1
+	}
+	return pages
+}
+
+// plan_values_owner_page gives the values page of a place of started.
+@(private = "file")
+plan_values_owner_page :: proc "contextless" (index: int) -> []u8 {
+	return ([^]u8)(plan_values_owner_address + uintptr(index) * uintptr(system.PAGE_SIZE))[:plan_values.OWNER_PAGE_SIZE]
 }
 
 // plan_values_pages_give makes the values pages at their first use, and
@@ -187,28 +259,31 @@ plan_values_owner_pages_create :: proc "contextless" () {
 
 // plan_values_page_give writes the plan values of the owner of a module on
 // the page of its place and adds the page, read-only, to its mappings,
-// with the bit of its range. A module that the plan gives no value gets no
-// page: it holds the defaults of its contract.
+// with the bit of its range. A module that the plan gives no value gets the
+// page too, with no value: a later change of the plan reaches it there.
+// When its mappings are full, it gets no page and holds the defaults of its
+// contract; the log says it only for a module that the plan gives values.
 plan_values_page_give :: proc "contextless" (item: ^Started, module_name: string, mappings: []system.Mapping, count: ^int, values: ^system.Context_Values) {
 	if plan_values_owner_memory == 0 {
-		return
-	}
-	owner_values, found := plan_values_of(role_policy.store_name_of_module(&role_holder_names, module_name))
-	if !found {
 		return
 	}
 	index := disk_process_page_index(item)
 	if index < 0 || index >= STARTED_CAPACITY {
 		return
 	}
+	plan_values_page_mapped[index] = false
+	owner_values, found := plan_values_of(role_policy.store_name_of_module(&role_holder_names, module_name))
 	if count^ >= len(mappings) {
-		mapping_dropped_log("the plan values page", len(mappings))
+		if found {
+			mapping_dropped_log("the plan values page", len(mappings))
+		}
 		return
 	}
-	page := ([^]u8)(plan_values_owner_address + uintptr(index) * uintptr(system.PAGE_SIZE))[:plan_values.OWNER_PAGE_SIZE]
-	if !plan_values.owner_page_write(page, owner_values) {
-		return
+	page := plan_values_owner_page(index)
+	if !plan_values.owner_page_publish(page, owner_values) {
+		system.log_fact(.Warning, Plan_Values_Page_Too_Small{})
 	}
+	plan_values_page_mapped[index] = true
 	mappings[count^] = {memory = plan_values_owner_memory, address = plan_values.OWNER_PAGE_ADDRESS, first = u64(index), page_count = 1}
 	count^ += 1
 	system.range_mapped_put(values, .Plan_Values_Page)

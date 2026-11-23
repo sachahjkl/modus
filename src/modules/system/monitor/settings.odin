@@ -48,6 +48,29 @@ sample_interval_of_record :: proc "contextless" (record: chosen_values.Record, p
 	return word, word_layer
 }
 
+// Why a call of set is refused before it reads the plan and the store.
+Set_Refusal :: enum u8 {
+	None                = 0,
+	Presence_Not_Member = 1, // The Presence word is neither Absent nor Given.
+	Absent              = 2, // The call gives no setting.
+	Out_Of_Range        = 3, // The period is out of SAMPLE_INTERVAL_LEAST to SAMPLE_INTERVAL_MOST.
+}
+
+// sample_interval_of_arguments is the border of the arguments of set: the
+// Presence word, then the period.
+sample_interval_of_arguments :: proc "contextless" (presence: module.Presence, value: i64) -> (interval: u64, refusal: Set_Refusal) {
+	integer, given, presence_ok := module.optional_integer_of_arguments(presence, value)
+	switch {
+	case !presence_ok:
+		return 0, .Presence_Not_Member
+	case !given:
+		return 0, .Absent
+	case integer < 0 || !sample_interval_border(u64(integer)):
+		return 0, .Out_Of_Range
+	}
+	return u64(integer), .None
+}
+
 // settings_open reads the plan values and opens the store, with no call to
 // the storage service.
 settings_open :: proc "contextless" (ctx: ^system.Context) {
@@ -81,7 +104,8 @@ settings_step :: proc "contextless" () {
 // 5000. The monitor keeps it in its private store, so its next start uses
 // it. The result is 1, or -1 with an error record: No_Grant for a caller
 // that does not act for the principal, Absent for a call that gives no
-// setting, Bad_Value for a number out of its range (argument 1), Refused
+// setting, Bad_Value for a Presence word that is neither Absent nor Given
+// or a number out of its range (argument 1), Refused
 // when the monitor has no store, No_Grant with the unit Plan_Lock when a
 // lock of the plan holds the period. A refused call changes nothing.
 //
@@ -96,16 +120,20 @@ set_export :: proc "c" (sample_interval_presence: module.Presence, sample_interv
 	if !acts_for_principal() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
-	if sample_interval_presence == .Absent {
+	interval, refusal := sample_interval_of_arguments(sample_interval_presence, sample_interval)
+	switch refusal {
+	case .None:
+	case .Presence_Not_Member:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 1, i64(min(u64(sample_interval_presence), u64(max(i64)))), i64(module.Presence.Given))
+	case .Absent:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Absent, .None, 0)
-	}
-	if sample_interval < 0 || !sample_interval_border(u64(sample_interval)) {
+	case .Out_Of_Range:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 1, sample_interval, SAMPLE_INTERVAL_MOST)
 	}
-	if plan_values.locked(monitor_plan, SAMPLE_INTERVAL_NAME) {
+	if plan_values.locked(monitor_plan, SAMPLE_INTERVAL_NAME, sample_interval_border) {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 1)
 	}
-	changes := [1]chosen_values.Change{{name = SAMPLE_INTERVAL_NAME, kind = .Choose, value = u64(sample_interval)}}
+	changes := [1]chosen_values.Change{{name = SAMPLE_INTERVAL_NAME, kind = .Choose, value = interval}}
 	return settings_change(changes[:], error, 1, sample_interval)
 }
 
@@ -126,7 +154,7 @@ reset_export :: proc "c" (error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
-	if plan_values.locked(monitor_plan, SAMPLE_INTERVAL_NAME) {
+	if plan_values.locked(monitor_plan, SAMPLE_INTERVAL_NAME, sample_interval_border) {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 0)
 	}
 	changes := [1]chosen_values.Change{{name = SAMPLE_INTERVAL_NAME, kind = .Reset}}

@@ -62,6 +62,7 @@ Four layers, the first that has a value wins:
 Three rules make it hold:
 
 - **The kept record holds only chosen values.** A field that the principal did not set is absent. A full record would keep each default as if the principal chose it, and a later default of the plan would then change nothing (the owner would tattoo its own defaults).
+- **An act of the principal is a choice, even of the value in force.** A setter call, a press in the window of settings and the next appearance keep each value that they name as chosen, also when it equals the default in force (`settings.Given`, `settings.kept_changes_of`). Refused: to keep only the values that changed. The principal who chose `.vector`, the default, would see a later default of the plan move the font anyway.
 - **A lock writes nothing.** Under a lock the setter refuses with `No_Grant`, the chosen value stays kept, and holds again when the lock ends.
 - **An apply never resets a chosen value.** The state export of the owner gives the layer of each value, so a reader sees that a choice hides a default.
 
@@ -96,6 +97,7 @@ The store of a role belongs to the role in its scope, not to the module that hol
 - A value that only one holder has (an export past the contract) is an object of the same store with its own description. Another holder leaves it in place.
 - The conformance suite of a role has one case for each setting: set, stop the holder, start it, read.
 - The grants of a role follow its holder: a holder that the plan names gets the start grant set of the role, its store too.
+- The store of a role goes to its holder only. A module that has the name of a role and does not hold it, as `settings` once a plan gave Settings to another module, gets no store: its connection to the holder of Storage is refused (`Role_Store_Refused`). Refused: a store of the module under its own name, which is the name of the store of the role.
 
 ## The presentation record
 
@@ -115,28 +117,37 @@ What each window still reads, and why: **the scale and the time zone are an acce
 
 ## Plan records
 
-The plan carries one typed record for each owner, keyed by the names of its fields. Its type is a record type of the contract of the owner, so the evaluation types each value by the description of the owner, at the border of the plan. A record that names a field that its owner lacks is refused whole: a tolerant reader would leave a value that the principal thinks holds. The difference of an upgrade lists each plan record that the new image refuses, before the principal accepts the upgrade.
+The plan carries one typed record for each owner, keyed by the names of its fields. Its type is a record type of the contract of the owner, so the evaluation types each value by the description of the owner, at the border of the plan. A record that names a field that its owner lacks is refused whole: a tolerant reader would leave a value that the principal thinks holds. Two borders type a plan by one description (`modus:contract/plan_value_description`): the console, which reads a plan that a principal writes, and `plans`, which takes a plan as rows from any program. `plans` refuses a table whose value its owner does not describe, or whose word or text is outside its description, with `Value_Not_Described` and the entry: a program that writes rows gets no more than the console. Why both: the rows are the contract of `plans.apply`, and a border that only the console keeps is no border. The difference of an upgrade lists each plan record that the new image refuses, before the principal accepts the upgrade.
 
-The owner reads its plan record at its start from a page that nobody writes after the start: the page is recorded once, as the context is (property 24). A rule across the fields of one record (the three times of the retention rule have an order) is one pure procedure of the contract of the owner: the check at the apply and the border at the start call that one body.
+The owner reads its plan record from a page that only the core writes, read-only in the owner, as the settings page is: a channel that can be recorded (property 24). The owner copies the page whole into its own memory and reads the copy, so no value changes under a record that it holds. A rule across the fields of one record (the three times of the retention rule have an order) is one pure procedure of the contract of the owner: the check at the apply and the border at the start call that one body.
 
-**How the values reach their owner.** The holder of Plans gives the core the plan values of principal 0 with the command `Plan_Values`, as it gives the roles with `Plan_Roles`: on a page that the core lends, the whole set of the generation that the principal accepted. The core copies the set once, checks it whole (`modus:contract/plan_values`) and replaces its values in one step: the core never runs with a part of a plan. At the start of an owner, the core maps the values of that owner, read-only, at the fixed range `Plan_Values_Page`; an owner that started before the change keeps the values that it started with, and takes the new ones at its next start.
+**How the values reach their owner.** The holder of Plans gives the core the plan values of principal 0 with the command `Plan_Values`, as it gives the roles with `Plan_Roles`: on a page that the core lends, the whole set of the generation that the principal accepted. The core copies the set once, checks it whole (`modus:contract/plan_values`) and replaces its values in one step: the core never runs with a part of a plan. At the start of each process, the core maps the values of its owner, read-only, at the fixed range `Plan_Values_Page`, with no value when the plan gives it none. At each change of the set, the core writes the page of each process that runs again, under a sequence word, and wakes that word (`plan_values.owner_page_publish`). The word is odd while the core writes; an owner keeps a copy only when the word was even and the same before and after the copy (`plan_values.owner_page_copy`, `system.plan_values_of_process`).
 
-- The set names each owner by the name of its store: the role for a role holder, the module name for another module, `root` for the core itself.
-- Each value is a name and a word or a text, with its layer: `Plan_Default` or `Locked`. The owner checks each value at the border of its field, as it checks a chosen value: a word that its border refuses holds as no value of the plan.
+- Most owners read the copy at their start, and take a new value at their next start.
+- Storage reads it at its start and again at each wake of the word (`system.plan_values_wait`, `system.plan_values_changed`): the next pass of the retention runs with the new rule.
+- The core reads the values of the owner `root` again at each change.
+- The quota of a store (`store_blocks`) is part of the grant of each connection to the holder of Storage. At each change, the core writes that grant again for each open connection whose quota changed, as a change of the roles does. If a service ring has no room for those grants, the core refuses the whole set (`Plan_Values_Grants_Busy`), and the values from before stay in force.
+
+Why the core writes the page again. Storage runs before the holder of Plans, which needs it. At the start of storage, the core holds no value: it keeps none on a disk, and the store of the holder of Plans is not read yet. The holder of Plans gives the values of the generation in force at each start of the machine, with the step `Rollback`, before it says `Loaded` (`declarations.md`, "The plan of principal 0 at the start"). That change is the first moment when the values of storage, and the quota of each store open by then (the store of `plans` among them), exist. A page fixed at the start would leave them out at each start of the machine.
+
+Refused: a copy of the plan values that the core keeps on a disk. The core is the client of no storage service, and the generation in force is already kept by the store of the holder of Plans, which gives it at each start. Refused: a restart of each owner whose values change. Storage cannot stop while `plans` and every store depend on it.
+
+- The set names each owner by the name of its store: the role for a role holder, the module name for another module, `root` for the core itself. A plan that names the module of a role holder, `compositor` for the values of `display`, is refused (`Owner_Is_A_Holder`): the core gives the values of the role to the holder of the role, so values named by the module would reach nobody.
+- Each value is a name and a word or a text, with its layer: `Plan_Default` or `Locked`. The owner checks each value at the border of its field, as it checks a chosen value: a word that its border refuses holds as no value of the plan, and a lock of such a word locks nothing (`plan_values.locked` and `plan_values.text_locked` take the border that `value_in_force` takes).
 - The record of chosen values and the plan values share one form of entry (`modus:contract/chosen_values`): a name of 32 bytes and a word. One reader, one border.
-- The forms refused: a value that the owner reads with a call to the holder of Plans at each use (a plan holder that is slow or replaced would stall each owner); a page that the core writes during the life of the owner (a value that changes under a running owner is a live edit, refused).
+- The forms refused: a value that the owner reads with a call to the holder of Plans at each use (a plan holder that is slow or replaced would stall each owner); records that point into the page (a write of the core would change a value under a record that the owner holds: each owner reads a copy).
 
 **The description of a plan-only value.** A value with no setter still has one description: an export `plan_only` of its owner, whose optional parameters are the plan-only values of the owner, with their ranges. The console types a plan by it (`src/md/features/declarations.md`, "A plan written in the console"), and the window of settings can show it. Each call of it is refused with `No_Grant`, unit `Plan_Lock`: the plan of principal 0 is the one door of these values. The owner `root` has no exports; its fields are typed by the constants of `root_plan_values`.
 
 The owners and their fields, as built:
 
-- `settings`: each setting by its name in `settings.descriptions`, and `time_zone`, a default or a lock (`settings.choice_of_kept`).
+- `settings`: each setting by its name in `settings.descriptions`, and `time_zone`, minutes from UTC, a default or a lock (`settings.choice_of_kept`), described by `settings.plan_only`.
 - `display` (the holder of the display): `bar_edge`, `do_not_disturb`, `notification_show_milliseconds`, `magnifier_eighths`, `consent_arm_milliseconds` (`display_choices.choices_of_record`).
 - `storage`: `keep_all_minutes` and `hours_end_hours`, the retention rule, with their order (`storage_retention.rule_of`), described by `storage.plan_only`.
 - `network`: `static_address`, a text "10.0.2.15/24", and `static_gateway`, a text "10.0.2.2" (`dhcp_client.static_of`), described by `network.plan_only`.
 - `browser`: `home`, a text; `monitor`: `sample_interval`.
 - `root`: `budget_share`, and the start size and the largest size of the screen of memory (`root_plan_values.root_plan_of`); the core reads them at the start of the holder of the display.
-- any owner of a store: `store_blocks`, the quota of its store, which the core reads when it opens the store (`root_plan_values.store_blocks_of`).
+- any owner that exists, a module of the image or a role with a holder: `store_blocks`, the quota of its store (the core has no store, and no `store_blocks`), which the core reads when it opens the store and again at each change of the plan values for each store that is open (`root_plan_values.store_blocks_of`).
 
 First plan-only values:
 
@@ -146,7 +157,7 @@ First plan-only values:
 
 ## The lock
 
-A value of the layer `Locked` of the plan of principal 0 holds over the choice of the principal. Its owner reads the lock on its plan values page at its start (`plan_values.locked`), and each door of a change of a locked value refuses it:
+A value of the layer `Locked` of the plan of principal 0 holds over the choice of the principal. Its owner reads the lock on its copy of the plan values page (`plan_values.locked`), and each door of a change of a locked value refuses it:
 
 - A setter and a `reset` refuse a call that names a locked setting with `No_Grant`, unit `Plan_Lock`, and the argument of that setting, from 1. A call that gives a locked setting and other settings changes none of them: a call holds whole or not at all.
 - A press of the principal on the desktop that would change a locked value of the role Display changes nothing.
@@ -245,7 +256,7 @@ Built: layers 1 to 8, and the DHCP client.
 - Module files are version 8: any word parameter can be optional, as a Presence word then its value, and the table `Parameter_Settings` holds the range, the choices export and the instances export of a parameter. The console refuses a value out of a range before the call; one `compositor.set` takes the five settings of the role. The palette and the window of settings do not read the ranges and the choices yet.
 - Each window gets its presentation record in the event `Presentation` and keeps it on its own presentation page; only `settings`, the date service, the input service and the compositor map the settings page of the machine.
 
-- A plan of principal 0 holds values of the kind `Value` (`owner.field`, a word or a text, `Plan_Default` or `Locked`); the holder of Plans sends them with `Plan_Values` before the roles, and each owner of "The owners and their fields, as built" reads its page at its start. The console reads `plan { values = …, locks = … }` into rows, each value typed by the description of its owner (`modus:plan_reader`).
+- A plan of principal 0 holds values of the kind `Value` (`owner.field`, a word or a text, `Plan_Default` or `Locked`); the holder of Plans sends them with `Plan_Values` before the roles, and each owner of "The owners and their fields, as built" reads a copy of its page at its start. Storage reads it again at each change, the core reads the values of `root` again, and the quota of each open store is written again, so a value of storage holds from the apply and after each start of the machine (the machine test `persist`). The console reads `plan { values = …, locks = … }` into rows, each value typed by the description of its owner (`modus:plan_reader`).
 - The network service takes its address from DHCP, or the static address of the plan ([dhcp_client.md](dhcp_client.md)).
 - The browser (`home`) and the monitor (`sample_interval`) have module settings, kept in their private stores through `modus:kept_choices`, which the compositor uses too.
 - A lock of the plan makes each setter and each `reset` refuse a locked setting with `No_Grant`, unit `Plan_Lock`; a press on the desktop changes nothing under it.

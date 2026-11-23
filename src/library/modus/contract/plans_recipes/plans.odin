@@ -114,6 +114,7 @@ Plan_Refusal :: enum u8 {
 	Bad_Value              = 33, // A Value entry whose name is not `owner.field`, whose layer is not Plan_Default or Locked, or that carries a field of another kind.
 	Values_Refused         = 34, // The root service refused the values of the plan of principal 0: nothing was committed.
 	Values_Too_Large       = 35, // The values of one owner do not fit the page that the core gives it (plan_values.OWNER_BYTES_MOST): bad_index names the entry that passes it.
+	Value_Not_Described    = 36, // A Value entry that the description of its owner refuses (plan_value_description.entries_check): an owner or a field that it does not describe, a word out of its range or of no member, a text past its bound. bad_index names the entry.
 }
 
 // Closed set of completion statuses returned on the recipes and projects

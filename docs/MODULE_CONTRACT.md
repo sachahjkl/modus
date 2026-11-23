@@ -242,13 +242,15 @@ module.Parameter_Setting, 32 bytes: one record of the table Parameter_Settings
 offset  size  field             type
      0     4  export_index      u32
      4     1  parameter         u8
-     5     1  has_range         bool
+     5     1  has_range         u8
      6     2  reserved          u16
      8     8  least             i64
     16     8  most              i64
     24     4  choices_export    u32
     28     4  instances_export  u32
 ```
+
+The byte `has_range` of a parameter setting is 0, no range, or 1, `least` and `most` hold the range; `module.parameter_settings_check` refuses each other byte, and a reader asks `module.parameter_setting_ranged`.
 
 A type is one byte, the value of a member of `module.Type`: Integer, Text, Record, Handle, Table, and Bytes (a parameter only). The fields `result`, `parameters` and `type` hold the byte, not the enum: a reader takes each byte through `module.type_of_word` (or `function_result_type`, `function_parameter_type`, `field_type`), which refuses a byte that names no type, and never casts it. The detail of a parameter says what its type needs: the index of a record description, the rights of a handle, or the unit of an Integer (section 5, "The unit of an Integer parameter"). Section 5 gives the types.
 

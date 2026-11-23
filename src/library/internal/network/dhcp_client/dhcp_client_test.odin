@@ -202,7 +202,7 @@ the_exchange_and_the_times_of_a_lease :: proc(t: ^testing.T) {
 	client_start(&client, HARDWARE, 1000)
 	testing.expect(t, !client_tick(&client, out[:], 999, TRANSACTION).send)
 	discover := client_tick(&client, out[:], 1000, TRANSACTION)
-	testing.expect(t, discover.send && discover.broadcast && discover.length >= MESSAGE_LEAST)
+	testing.expect(t, discover.send && discover.broadcast && !discover.from_address && discover.length >= MESSAGE_LEAST)
 	testing.expect(t, out[0] == 1 && be32(out[:], 4) == TRANSACTION && out[MESSAGE_LEAST] == OPTION_MESSAGE_TYPE && out[MESSAGE_LEAST + 2] == u8(Message_Type.Discover))
 	// The waits double: 4 s, 8 s, ... up to 64 s.
 	now := u64(1000)
@@ -212,7 +212,7 @@ the_exchange_and_the_times_of_a_lease :: proc(t: ^testing.T) {
 		testing.expectf(t, again.send && client.wait == expected && client.transaction == TRANSACTION, "the wait is %d, not %d", client.wait, expected)
 	}
 	offer, _ := client_receive(&client, reply_of(ADDRESS, good_options(.Offer)[:]), out[:], now)
-	testing.expect(t, offer.send && offer.broadcast && client.phase == .Requesting)
+	testing.expect(t, offer.send && offer.broadcast && !offer.from_address && client.phase == .Requesting)
 	testing.expect(t, out[MESSAGE_LEAST + 2] == u8(Message_Type.Request) && be32(out[:], MESSAGE_LEAST + 5) == ADDRESS)
 	// An ACK of another server, or of another address, is no answer.
 	other_server := good_options(.Ack)
@@ -231,16 +231,17 @@ the_exchange_and_the_times_of_a_lease :: proc(t: ^testing.T) {
 	testing.expect(t, stray.event == .None && client.bound_at == start)
 	// T1: a REQUEST by unicast to the server, with the address in ciaddr.
 	renew := client_tick(&client, out[:], start + 43200 * 1000, TRANSACTION + 1)
-	testing.expect(t, renew.send && !renew.broadcast && renew.destination == SERVER && client.phase == .Renewing && be32(out[:], 12) == ADDRESS)
-	// T2: a REQUEST by broadcast.
+	testing.expect(t, renew.send && !renew.broadcast && renew.from_address && renew.destination == SERVER && client.phase == .Renewing && be32(out[:], 12) == ADDRESS)
+	// T2: a REQUEST by broadcast, from the address held, which ciaddr names
+	// (RFC 2131, section 4.4.5).
 	rebind := client_tick(&client, out[:], start + 75600 * 1000, TRANSACTION + 2)
-	testing.expect(t, rebind.send && rebind.broadcast && client.phase == .Rebinding)
+	testing.expect(t, rebind.send && rebind.broadcast && rebind.from_address && client.phase == .Rebinding && be32(out[:], 12) == ADDRESS)
 	// The end of the lease: the address is lost, and the next tick sends a
 	// DISCOVER of a new transaction.
 	lost := client_tick(&client, out[:], start + 86400 * 1000, TRANSACTION + 3)
 	testing.expect(t, lost.event == .Lost && client.phase == .Init)
 	again := client_tick(&client, out[:], start + 86400 * 1000, TRANSACTION + 4)
-	testing.expect(t, again.send && client.phase == .Selecting && client.transaction == TRANSACTION + 4)
+	testing.expect(t, again.send && !again.from_address && client.phase == .Selecting && client.transaction == TRANSACTION + 4)
 }
 
 // A NAK to a REQUEST starts again from DISCOVER; a NAK to a renewal drops

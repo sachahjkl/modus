@@ -164,6 +164,11 @@ Plans_State :: struct {
 	values:               Values_Port,
 	// The refusal of the core for the last set of values that it refused.
 	values_problem:       plan_values.Set_Problem,
+	// A send again of the values of the generation in force failed since the
+	// service last read this: the core may hold the values of another
+	// generation. The log names it, with that generation.
+	values_resend_failed:     bool,
+	values_resend_generation: u64,
 	// The set that the values port sends: too large for the stack.
 	values_set:           [plan_values.SET_SIZE]u8,
 	// The refusal of the core for the last set that it refused: the log
@@ -294,7 +299,7 @@ roles_start :: proc "contextless" (state: ^Plans_State) -> rd.Plan_Roles_Load_Ou
 		// The core gets the values of the generation in force at each start
 		// of this service: it keeps none across a start of the machine.
 		if current, record, found := current_plan(state, MACHINE_PRINCIPAL); found {
-			_ = values_give(state, MACHINE_PRINCIPAL, current, record.generation, .Rollback)
+			values_resend(state, MACHINE_PRINCIPAL, current, record.generation)
 		}
 		if state.roles_stored_refusal != .None {
 			return .Plan_Refused
@@ -359,7 +364,7 @@ roles_compensate :: proc "contextless" (state: ^Plans_State, principal: u64, ent
 		return
 	}
 	previous_plan, previous_record, _ := entry_current_plan(entry)
-	_ = values_give(state, principal, previous_plan, previous_record.generation, .Rollback)
+	values_resend(state, principal, previous_plan, previous_record.generation)
 	if roles_give(state, principal, previous_plan, previous_record.generation, .Rollback) != .None {
 		state.roles.synchronized = false
 		state.roles_compensation_failed = true

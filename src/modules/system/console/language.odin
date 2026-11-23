@@ -1159,7 +1159,7 @@ call_run :: proc "contextless" (name: string, arguments: []Value) -> Value {
 		// The range of an Integer: the console refuses a value out of it
 		// before the call; the export checks it again at its border.
 		if kind == .Integer && found.run == nil && found.record == 0 {
-			if setting, has_setting := module.parameter_setting(found.file, found.export, index); has_setting && setting.has_range && (argument.integer < setting.least || argument.integer > setting.most) {
+			if setting, has_setting := module.parameter_setting(found.file, found.export, index); has_setting && module.parameter_setting_ranged(setting) && (argument.integer < setting.least || argument.integer > setting.most) {
 				return fail(name, ": the argument ", found.parameter_names[index], " is ", argument.integer, ", outside its range ", setting.least, " to ", setting.most)
 			}
 		}

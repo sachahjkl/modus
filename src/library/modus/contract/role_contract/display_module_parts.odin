@@ -67,9 +67,9 @@ display_module_parts_write :: proc "contextless" (parts: ^Display_Module_Parts) 
 	// The ranges of the three numbers of set, the export 4, from the
 	// constants of the contract.
 	parts.set_ranges = {
-		{export_index = 4, parameter = 2, has_range = true, least = i64(notifications.SHOW_MILLISECONDS_LEAST), most = i64(notifications.SHOW_MILLISECONDS_MOST)},
-		{export_index = 4, parameter = 3, has_range = true, least = i64(display_choices.MAGNIFIER_EIGHTHS_LEAST), most = i64(display_choices.MAGNIFIER_EIGHTHS_MOST)},
-		{export_index = 4, parameter = 4, has_range = true, least = i64(display_choices.CONSENT_ARM_MILLISECONDS_LEAST), most = i64(display_choices.CONSENT_ARM_MILLISECONDS_MOST)},
+		{export_index = 4, parameter = 2, has_range = 1, least = i64(notifications.SHOW_MILLISECONDS_LEAST), most = i64(notifications.SHOW_MILLISECONDS_MOST)},
+		{export_index = 4, parameter = 3, has_range = 1, least = i64(display_choices.MAGNIFIER_EIGHTHS_LEAST), most = i64(display_choices.MAGNIFIER_EIGHTHS_MOST)},
+		{export_index = 4, parameter = 4, has_range = 1, least = i64(display_choices.CONSENT_ARM_MILLISECONDS_LEAST), most = i64(display_choices.CONSENT_ARM_MILLISECONDS_MOST)},
 	}
 	parts.exports = {
 		{name = DISPLAY_EXPORT_POINTER, result = .Table, result_detail = 1, error_record = 4},

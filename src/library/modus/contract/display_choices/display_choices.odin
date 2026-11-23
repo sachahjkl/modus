@@ -62,7 +62,7 @@ MAGNIFIER_EIGHTHS_DEFAULT :: u64(16)
 // contract, which protects each dialog from a key meant for a window; and
 // at most ten seconds, past which a dialog seems to take no key at all.
 CONSENT_ARM_MILLISECONDS_LEAST :: powerbox.CONSENT_ARM_MILLISECONDS
-CONSENT_ARM_MILLISECONDS_MOST :: u64(10_000)
+CONSENT_ARM_MILLISECONDS_MOST :: powerbox.CONSENT_ARM_MILLISECONDS_MOST
 #assert(CONSENT_ARM_MILLISECONDS_LEAST < CONSENT_ARM_MILLISECONDS_MOST)
 
 // The choices in force of the role, each with the layer that gives it.
@@ -121,7 +121,7 @@ setting_borders := [Setting]proc "contextless" (word: u64) -> bool {
 // refuses a change of it with No_Grant, and keeps the choice of the
 // principal under the lock.
 setting_locked :: proc "contextless" (plan: plan_values.Owner_Values, setting: Setting) -> bool {
-	return plan_values.locked(plan, SETTING_NAMES[setting])
+	return plan_values.locked(plan, SETTING_NAMES[setting], setting_borders[setting])
 }
 
 // first_locked gives the first setting that a call of set gives and that a

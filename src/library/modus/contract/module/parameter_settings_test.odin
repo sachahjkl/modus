@@ -79,7 +79,7 @@ an_optional_pair_is_read_at_its_border :: proc(t: ^testing.T) {
 	empty := ""
 	empty_text, empty_given, empty_ok := optional_text_of_arguments(.Given, &empty)
 	testing.expect(t, empty_given && empty_ok && empty_text == "")
-	bound := Parameter_Setting{has_range = true, least = 1, most = 4}
+	bound := Parameter_Setting{has_range = 1, least = 1, most = 4}
 	testing.expect(t, !text_in_bound(bound, "") && text_in_bound(bound, "a") && text_in_bound(bound, "abcd") && !text_in_bound(bound, "abcde"))
 	testing.expect(t, text_in_bound({}, "any length"))
 	Font :: enum u32 {
@@ -187,21 +187,26 @@ a_parameter_setting_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 		problem: Parameter_Setting_Problem,
 		row:     u32,
 	}
-	ranged := Parameter_Setting{export_index = 1, parameter = 0, has_range = true, least = 1000, most = 60000}
+	ranged := Parameter_Setting{export_index = 1, parameter = 0, has_range = 1, least = 1000, most = 60000}
 	cases := [?]Case {
-		{{{export_index = 0, parameter = 0, has_range = true}}, .No_Export, 1},
-		{{{export_index = 6, parameter = 0, has_range = true}}, .No_Export, 1},
+		{{{export_index = 0, parameter = 0, has_range = 1}}, .No_Export, 1},
+		{{{export_index = 6, parameter = 0, has_range = 1}}, .No_Export, 1},
 		// The bound of a Text: below 0, or least above most.
-		{{{export_index = 5, parameter = 1, has_range = true, least = -1, most = 160}}, .Bad_Range, 1},
-		{{{export_index = 5, parameter = 1, has_range = true, least = min(i64), most = 0}}, .Bad_Range, 1},
-		{{{export_index = 5, parameter = 1, has_range = true, least = 161, most = 160}}, .Bad_Range, 1},
+		{{{export_index = 5, parameter = 1, has_range = 1, least = -1, most = 160}}, .Bad_Range, 1},
+		{{{export_index = 5, parameter = 1, has_range = 1, least = min(i64), most = 0}}, .Bad_Range, 1},
+		{{{export_index = 5, parameter = 1, has_range = 1, least = 161, most = 160}}, .Bad_Range, 1},
 		{{{export_index = 5, parameter = 1, choices_export = 2}}, .Bad_Choices, 1},
-		{{{export_index = max(u32), parameter = 0, has_range = true}}, .No_Export, 1},
-		{{{export_index = 1, parameter = 2, has_range = true}}, .No_Parameter, 1},
-		{{{export_index = 1, parameter = max(u8), has_range = true}}, .No_Parameter, 1},
-		{{{export_index = 1, parameter = 1, has_range = true}}, .Bad_Range, 1},
-		{{{export_index = 1, parameter = 0, has_range = true, least = 2, most = 1}}, .Bad_Range, 1},
-		{{{export_index = 1, parameter = 0, has_range = true, least = max(i64), most = min(i64)}}, .Bad_Range, 1},
+		{{{export_index = max(u32), parameter = 0, has_range = 1}}, .No_Export, 1},
+		{{{export_index = 1, parameter = 2, has_range = 1}}, .No_Parameter, 1},
+		{{{export_index = 1, parameter = max(u8), has_range = 1}}, .No_Parameter, 1},
+		{{{export_index = 1, parameter = 1, has_range = 1}}, .Bad_Range, 1},
+		{{{export_index = 1, parameter = 0, has_range = 1, least = 2, most = 1}}, .Bad_Range, 1},
+		{{{export_index = 1, parameter = 0, has_range = 1, least = max(i64), most = min(i64)}}, .Bad_Range, 1},
+		// A byte has_range that is neither 0 nor 1, with a range that would
+		// hold and with none.
+		{{{export_index = 1, parameter = 0, has_range = 2, least = 1000, most = 60000}}, .Bad_Range, 1},
+		{{{export_index = 1, parameter = 0, has_range = max(u8), least = 1000, most = 60000}}, .Bad_Range, 1},
+		{{{export_index = 1, parameter = 0, has_range = 2}}, .Bad_Range, 1},
 		{{{export_index = 1, parameter = 0, choices_export = 2, most = 1}}, .Bad_Range, 1},
 		{{{export_index = 1, parameter = 0, choices_export = 3}}, .Bad_Choices, 1},
 		{{{export_index = 1, parameter = 0, choices_export = 4}}, .Bad_Choices, 1},
@@ -211,9 +216,9 @@ a_parameter_setting_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 		{{{export_index = 1, parameter = 0, instances_export = max(u32)}}, .Bad_Instances, 1},
 		{{{export_index = 1, parameter = 1, instances_export = 2}}, .Bad_Instances, 1},
 		{{{export_index = 1, parameter = 0}}, .Nothing, 1},
-		{{{export_index = 1, parameter = 0, has_range = true, reserved = 1}}, .Nothing, 1},
+		{{{export_index = 1, parameter = 0, has_range = 1, reserved = 1}}, .Nothing, 1},
 		{{ranged, ranged}, .Out_Of_Order, 2},
-		{{{export_index = 2, parameter = 0, has_range = true}, ranged}, .No_Parameter, 1},
+		{{{export_index = 2, parameter = 0, has_range = 1}, ranged}, .No_Parameter, 1},
 	}
 	for item in cases {
 		file := settings_file_of(functions, item.rows)
@@ -222,14 +227,14 @@ a_parameter_setting_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 	}
 	// Two valid rows out of order.
 	second := Parameter_Setting{export_index = 1, parameter = 0, choices_export = 2, instances_export = 2}
-	other := settings_file_of({setter_with(), choices, setter_with()}, {{export_index = 3, parameter = 0, has_range = true}, second})
+	other := settings_file_of({setter_with(), choices, setter_with()}, {{export_index = 3, parameter = 0, has_range = 1}, second})
 	row, problem := parameter_settings_check(other)
 	testing.expect(t, problem == .Out_Of_Order && row == 2)
 	// The rows that are taken, and the lookup of each.
-	file := settings_file_of({setter_with(), choices, setter_with()}, {{export_index = 1, parameter = 0, has_range = true, least = min(i64), most = max(i64)}, {export_index = 3, parameter = 0, has_range = true, least = 5, most = 5, choices_export = 2, instances_export = 2}})
+	file := settings_file_of({setter_with(), choices, setter_with()}, {{export_index = 1, parameter = 0, has_range = 1, least = min(i64), most = max(i64)}, {export_index = 3, parameter = 0, has_range = 1, least = 5, most = 5, choices_export = 2, instances_export = 2}})
 	row, problem = parameter_settings_check(file)
 	testing.expect(t, problem == .None && row == 0)
-	text_file := settings_file_of({setter_with(), text_setter}, {{export_index = 2, parameter = 1, has_range = true, least = 0, most = 160}})
+	text_file := settings_file_of({setter_with(), text_setter}, {{export_index = 2, parameter = 1, has_range = 1, least = 0, most = 160}})
 	text_row, text_problem := parameter_settings_check(text_file)
 	testing.expect(t, text_problem == .None && text_row == 0)
 	found_row, found := parameter_setting(file, 3, 0)

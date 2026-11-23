@@ -939,18 +939,26 @@ resolve_answer :: proc "contextless" (
 	}
 
 	// Anti-clickjacking monotonic delay check: dialog must have been visible on
-	// screen for at least powerbox.CONSENT_ARM_MILLISECONDS before both the
-	// press start and the answer commit. Subtraction is guarded against u64
-	// underflow and addition overflow.
+	// screen for the arm time before both the press start and the answer
+	// commit. The arm time is the one that the principal chose, as the display
+	// reports it, never under powerbox.CONSENT_ARM_MILLISECONDS: one rule for
+	// each door (powerbox.consent_arm_milliseconds). A reported arm time past
+	// its most is no time that a display applies. Subtraction is guarded
+	// against u64 underflow and addition overflow.
+	if answer.arm_milliseconds > powerbox.CONSENT_ARM_MILLISECONDS_MOST {
+		resolution.refusal = .Untrusted_Answer
+		return resolution
+	}
+	arm := powerbox.consent_arm_milliseconds(answer.arm_milliseconds)
 	if answer.shown_timestamp_ms != entry.shown_ms {
 		resolution.refusal = .Untrusted_Answer
 		return resolution
 	}
-	if now_ms < entry.shown_ms || (now_ms - entry.shown_ms) < powerbox.CONSENT_ARM_MILLISECONDS {
+	if now_ms < entry.shown_ms || (now_ms - entry.shown_ms) < arm {
 		resolution.refusal = .Untrusted_Answer
 		return resolution
 	}
-	if answer.input_press_timestamp_ms < entry.shown_ms || (answer.input_press_timestamp_ms - entry.shown_ms) < powerbox.CONSENT_ARM_MILLISECONDS {
+	if answer.input_press_timestamp_ms < entry.shown_ms || (answer.input_press_timestamp_ms - entry.shown_ms) < arm {
 		resolution.refusal = .Untrusted_Answer
 		return resolution
 	}
@@ -958,7 +966,7 @@ resolve_answer :: proc "contextless" (
 		resolution.refusal = .Untrusted_Answer
 		return resolution
 	}
-	if (answer.answer_timestamp_ms - entry.shown_ms) < powerbox.CONSENT_ARM_MILLISECONDS {
+	if (answer.answer_timestamp_ms - entry.shown_ms) < arm {
 		resolution.refusal = .Untrusted_Answer
 		return resolution
 	}

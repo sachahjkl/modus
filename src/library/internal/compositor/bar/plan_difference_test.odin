@@ -403,7 +403,9 @@ plan_difference_act_cancel_closes_the_dialog_of_its_asker_only :: proc(t: ^testi
 
 // A longer arm time of the principal delays the act; a shorter one, 0 and
 // the largest value of the type change nothing below the one of the
-// contract, and the largest one never wraps the time.
+// contract, and a time past the most of a principal holds as the most: one
+// rule for each door (powerbox.consent_arm_milliseconds), with no sum that
+// wraps.
 @(test)
 plan_difference_arm_time_of_the_principal_is_never_shorter :: proc(t: ^testing.T) {
 	ARM :: powerbox.CONSENT_ARM_MILLISECONDS
@@ -424,13 +426,18 @@ plan_difference_arm_time_of_the_principal_is_never_shorter :: proc(t: ^testing.T
 	testing.expect(t, !plan_difference_armed(&dialog, 2999))
 	testing.expect(t, plan_difference_armed(&dialog, 3000))
 	testing.expect_value(t, plan_difference_key(&dialog, .Act, 2999), Plan_Difference_Decision.Pending)
-	// The largest arm time: no act at any time, never one that a sum wraps.
+	// The largest word: the most of a principal, ten seconds, and no act
+	// one millisecond before it.
+	MOST :: powerbox.CONSENT_ARM_MILLISECONDS_MOST
 	largest: Plan_Difference_Dialog
 	largest.arm_milliseconds_of_the_principal = max(u64)
 	_, refusal, _ = plan_difference_act_open(&largest, "assistant", "notes.open", 1000)
 	testing.expect_value(t, refusal, Plan_Difference_Refusal.None)
+	testing.expect_value(t, plan_difference_arm_milliseconds(&largest), MOST)
 	testing.expect(t, !plan_difference_armed(&largest, 1000 + ARM))
-	testing.expect(t, !plan_difference_armed(&largest, max(u64)))
+	testing.expect(t, !plan_difference_armed(&largest, 1000 + MOST - 1))
+	testing.expect(t, plan_difference_armed(&largest, 1000 + MOST))
+	testing.expect(t, plan_difference_armed(&largest, max(u64)))
 	// A clock before the show is no act.
 	testing.expect(t, !plan_difference_armed(&dialog, 999))
 }

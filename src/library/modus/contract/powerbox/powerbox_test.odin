@@ -593,3 +593,24 @@ plan_difference_dialog_enforces_whole_accept_or_refuse :: proc(t: ^testing.T) {
 	refusal, _ = answer_record_validate(&dialog, &with_dur, TRUSTED_DISPLAY_SLOT)
 	testing.expect_value(t, refusal, Powerbox_Refusal.Invalid_Duration)
 }
+
+// The arm time of a door: the contract time under it and at 0, the time of
+// the principal between, the most past it and at the largest word; an act
+// at the show, one millisecond early, at the arm time, before the show,
+// and with a show near the largest time.
+@(test)
+the_arm_time_of_a_door_is_the_principal_s_never_under_the_contract :: proc(t: ^testing.T) {
+	testing.expect_value(t, consent_arm_milliseconds(0), CONSENT_ARM_MILLISECONDS)
+	testing.expect_value(t, consent_arm_milliseconds(CONSENT_ARM_MILLISECONDS - 1), CONSENT_ARM_MILLISECONDS)
+	testing.expect_value(t, consent_arm_milliseconds(2000), u64(2000))
+	testing.expect_value(t, consent_arm_milliseconds(CONSENT_ARM_MILLISECONDS_MOST), CONSENT_ARM_MILLISECONDS_MOST)
+	testing.expect_value(t, consent_arm_milliseconds(CONSENT_ARM_MILLISECONDS_MOST + 1), CONSENT_ARM_MILLISECONDS_MOST)
+	testing.expect_value(t, consent_arm_milliseconds(max(u64)), CONSENT_ARM_MILLISECONDS_MOST)
+	testing.expect(t, !consent_armed(1000, 1000, 2000))
+	testing.expect(t, !consent_armed(1000, 2999, 2000))
+	testing.expect(t, consent_armed(1000, 3000, 2000))
+	testing.expect(t, !consent_armed(1000, 999, 0))
+	testing.expect(t, consent_armed(1000, 1000 + CONSENT_ARM_MILLISECONDS, 0))
+	testing.expect(t, !consent_armed(max(u64) - 10, max(u64), 0))
+	testing.expect(t, consent_armed(0, max(u64), 0))
+}

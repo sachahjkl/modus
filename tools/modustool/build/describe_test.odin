@@ -628,7 +628,7 @@ describe_refuses_an_enum_parameter_that_breaks_a_rule :: proc(t: ^testing.T) {
 	setter := list[1]
 	enum_index, getter := module.enum_detail_of(setter.details[1])
 	testing.expect(t, setter.parameters[1] == .Enum && enum_index == 1 && getter == 1 && len(setter.needs) == 2 && setter.needs[0] == .Required && setter.needs[1] == .Optional)
-	testing.expect(t, len(setter.setting_rows) == 1 && setter.setting_rows[0] == {export_index = 2, parameter = 0, has_range = true, least = -5, most = max(i64)})
+	testing.expect(t, len(setter.setting_rows) == 1 && setter.setting_rows[0] == {export_index = 2, parameter = 0, has_range = 1, least = -5, most = max(i64)})
 	// An optional Text with the bound of its bytes: two words of the call
 	// form, and a row of its bound.
 	text_source := "package p\nimport \"modus:contract/module\"\n// f sets x.\n@(export, parameter_ranges = \"home = 0..160\")\nf :: proc \"c\" (home_presence: module.Presence, home: ^string) -> i64 {return 0}\n"
@@ -638,5 +638,5 @@ describe_refuses_an_enum_parameter_that_breaks_a_rule :: proc(t: ^testing.T) {
 	}
 	text_setter := texts[0]
 	testing.expect(t, text_setter.parameters[0] == .Text && len(text_setter.needs) == 1 && text_setter.needs[0] == .Optional)
-	testing.expect(t, len(text_setter.setting_rows) == 1 && text_setter.setting_rows[0] == {export_index = 1, parameter = 0, has_range = true, least = 0, most = 160})
+	testing.expect(t, len(text_setter.setting_rows) == 1 && text_setter.setting_rows[0] == {export_index = 1, parameter = 0, has_range = 1, least = 0, most = 160})
 }

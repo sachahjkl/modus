@@ -558,7 +558,7 @@ check_export_signature :: proc "contextless" (module_bytes: []u8, required: Requ
 			return .Wrong_Signature, .Parameter_Detail, u32(index + 1)
 		}
 		setting, has_setting := module.parameter_setting(module_bytes, export_index, index)
-		found_range := has_setting && setting.has_range
+		found_range := has_setting && module.parameter_setting_ranged(setting)
 		if found_range != expected.has_range || found_range && (setting.least != expected.least || setting.most != expected.most) {
 			return .Wrong_Signature, .Parameter_Range, u32(index + 1)
 		}

@@ -159,7 +159,8 @@ functions_compare :: proc "contextless" (file: []u8, index: u32, other_file: []u
 			return .Parameter_Type, number + 1, expected, found
 		}
 		// A parameter that one side may leave out and the other needs is
-		// another call form: a caller of the first gives the absent word.
+		// another call form: the optional one takes two words, a Presence
+		// word and its value.
 		if !details_equal(file, other_file, expected, found) || parameter_optional(a, int(number)) != parameter_optional(b, int(number)) {
 			return .Parameter_Detail, number + 1, expected, found
 		}

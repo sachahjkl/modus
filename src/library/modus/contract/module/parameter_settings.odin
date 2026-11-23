@@ -119,7 +119,14 @@ optional_text_of_arguments :: proc "contextless" (presence: Presence, text: ^str
 // text_in_bound says if a text keeps the bound of the bytes of its
 // parameter: the range of a Text is the count of its bytes.
 text_in_bound :: proc "contextless" (setting: Parameter_Setting, text: string) -> bool {
-	return !setting.has_range || i64(len(text)) >= setting.least && i64(len(text)) <= setting.most
+	return !parameter_setting_ranged(setting) || i64(len(text)) >= setting.least && i64(len(text)) <= setting.most
+}
+
+// parameter_setting_ranged says if a row holds a range: its byte has_range
+// is 1. A row that parameter_settings_check took has no other byte than 0
+// and 1.
+parameter_setting_ranged :: proc "contextless" (setting: Parameter_Setting) -> bool {
+	return setting.has_range == PARAMETER_RANGE_GIVEN
 }
 
 // function_needs_check checks the need of each parameter of an export:
@@ -181,7 +188,7 @@ parameter_word_index :: proc "contextless" (function: Function, index: int) -> i
 Parameter_Setting :: struct {
 	export_index:     u32, // The export whose parameter this is: an index in the table Exports, from 1.
 	parameter:        u8, // The parameter, from 0.
-	has_range:        bool, // least and most hold the range of an Integer, or the bound of the bytes of a Text, from 0.
+	has_range:        u8, // PARAMETER_RANGE_GIVEN: least and most hold the range of an Integer, or the bound of the bytes of a Text, from 0. PARAMETER_RANGE_NONE: no range. The check refuses each other byte.
 	reserved:         u16, // 0.
 	least:            i64, // The least value that the export takes.
 	most:             i64, // The largest value that the export takes.
@@ -190,12 +197,17 @@ Parameter_Setting :: struct {
 }
 #assert(size_of(Parameter_Setting) == 32)
 
+// The two bytes of Parameter_Setting.has_range. A byte of a file, not a
+// bool: a bool read from bytes that hold 2 is neither true nor false.
+PARAMETER_RANGE_NONE :: u8(0)
+PARAMETER_RANGE_GIVEN :: u8(1)
+
 // What parameter_settings_check refuses in a row.
 Parameter_Setting_Problem :: enum u8 {
 	None          = 0, // The row keeps each rule.
 	No_Export     = 1, // The export index names no export, or names the entry.
 	No_Parameter  = 2, // The parameter is past the parameters of its export.
-	Bad_Range     = 3, // A range on a parameter that is no Integer and no Text, least above most, or a bound of a Text below 0.
+	Bad_Range     = 3, // A byte has_range other than 0 and 1, a range on a parameter that is no Integer and no Text, least above most, or a bound of a Text below 0.
 	Bad_Choices   = 4, // A choices export on a parameter that is no Integer, or an export that does not exist, takes a parameter or gives no Table.
 	Bad_Instances = 5, // An instances export on a parameter other than the first, of no Integer, or an export that does not exist, takes a parameter or gives no Table.
 	Nothing       = 6, // A row with no range, no choices and no instances, or a reserved field that is not 0.
@@ -212,13 +224,17 @@ parameter_setting_row :: proc "contextless" (file: []u8, row: Parameter_Setting)
 	if int(row.parameter) >= min(int(function.parameter_count), PARAMETER_CAPACITY) {
 		return .No_Parameter
 	}
-	if row.reserved != 0 || !row.has_range && row.choices_export == 0 && row.instances_export == 0 {
+	if row.has_range != PARAMETER_RANGE_NONE && row.has_range != PARAMETER_RANGE_GIVEN {
+		return .Bad_Range
+	}
+	ranged := row.has_range == PARAMETER_RANGE_GIVEN
+	if row.reserved != 0 || !ranged && row.choices_export == 0 && row.instances_export == 0 {
 		return .Nothing
 	}
 	type, type_ok := function_parameter_type(function, int(row.parameter))
 	integer := type_ok && type == .Integer
 	text := type_ok && type == .Text
-	if row.has_range && (!(integer || text) || row.least > row.most || text && row.least < 0) || !row.has_range && (row.least != 0 || row.most != 0) {
+	if ranged && (!(integer || text) || row.least > row.most || text && row.least < 0) || !ranged && (row.least != 0 || row.most != 0) {
 		return .Bad_Range
 	}
 	if row.choices_export != 0 && (!integer || !table_export(file, row.choices_export)) {

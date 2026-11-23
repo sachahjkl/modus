@@ -202,7 +202,7 @@ set_export :: proc "c" (home_presence: module.Presence, home: ^string, error: ^e
 	case .Address_Refused:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 1, i64(len(text)), 0, i64(address_problem))
 	}
-	if plan_values.locked(browser_plan, HOME_NAME) {
+	if plan_values.text_locked(browser_plan, HOME_NAME, home_border) {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 1)
 	}
 	changes := [1]chosen_values.Change{{name = HOME_NAME, kind = .Choose_Text, text = canonical}}
@@ -229,7 +229,7 @@ reset_export :: proc "c" (error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
-	if plan_values.locked(browser_plan, HOME_NAME) {
+	if plan_values.text_locked(browser_plan, HOME_NAME, home_border) {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 0)
 	}
 	changes := [1]chosen_values.Change{{name = HOME_NAME, kind = .Reset}}

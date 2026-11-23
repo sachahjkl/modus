@@ -208,9 +208,13 @@ with_value :: proc "contextless" (choice: settings.Choice, setting: settings.Set
 // language list when the principal chose one, and the settings that they
 // give with the defaults. A record that this release cannot read is never
 // written over, but by a change of the principal, which starts a new one.
+// A record that the store did not give (a refused read) is another case:
+// its choices are not known, so no change is written over it until a read
+// gives it (kept_record_unread), as modus:kept_choices does.
 kept_record_bytes: [system.PAGE_SIZE]u8
 kept_record_length: int
 kept_record_readable: bool = true
+kept_record_unread: bool
 kept_languages_bytes: [size_of(settings.Language_List)]u8
 kept_languages_found: bool
 kept_choice: settings.Choice
@@ -242,9 +246,11 @@ kept_load :: proc "contextless" () -> Kept_Load {
 	error: errors.Error_Record
 	bytes, found, status := storage.read(&store, storage.ROOT, settings.KEPT_OBJECT_NAME, kept_record_bytes[:], &error)
 	if status != .Ok {
-		kept_record_readable = false
+		kept_record_unread = true
 		return .Read_Refused
 	}
+	kept_record_unread = false
+	kept_record_readable = true
 	load := Kept_Load.Nothing_Kept
 	record: chosen_values.Record
 	if found {
@@ -269,15 +275,23 @@ kept_load :: proc "contextless" () -> Kept_Load {
 
 // keep writes what changed from the kept settings to the private store: the
 // record of the chosen values (one object, one commit) and the language
-// list (its own object). Only a value that changed becomes a choice. It
+// list (its own object). A value that changed, or that the act names,
+// becomes a choice. It
 // gives false, with a log line, when the store refuses; with no store
 // (No_Store at the start), it gives false at once, and the kept settings
 // stay as they were.
-keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -> bool {
+keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32, given: settings.Given) -> bool {
 	if !has_store {
 		return false
 	}
-	changes := settings.kept_changes_of(kept_choice, kept_zone_offset_minutes, choice, zone_offset_minutes)
+	// The store did not give the record at the last read: it is read again,
+	// and while the store does not give it, a write would replace choices
+	// that this process does not know.
+	if kept_record_unread && kept_load() == .Read_Refused {
+		system.log_fact(.Warning, Kept_Record_Unread{})
+		return false
+	}
+	changes := settings.kept_changes_of(kept_choice, kept_zone_offset_minutes, choice, zone_offset_minutes, given)
 	return kept_write(changes.changes[:changes.count], changes.languages_changed, choice.languages)
 }
 
@@ -416,16 +430,17 @@ change_decision :: proc "contextless" (changes_nothing, kept: bool) -> Change_De
 // store, then writes them on the page and wakes the compositor and the
 // process `date`. A change that the store refuses changes nothing on the
 // page: it writes its fact, and gives false (change_decision).
-change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -> bool {
+change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32, given: settings.Given = {}) -> bool {
 	current, current_ok := page_choice()
 	zone := settings.zone_offset_minutes_valid(zone_offset_minutes)
 	values_same := current_ok && settings.values_of(current) == settings.values_of(choice)
 	languages_same := current_ok && current.languages == choice.languages
-	changes_nothing := values_same && languages_same && current.zone_offset_minutes == zone
+	// An act that names a default keeps a choice, with no change of a value.
+	changes_nothing := values_same && languages_same && current.zone_offset_minutes == zone && !settings.given_not_chosen(given, kept_layers)
 	if changes_nothing {
 		return change_decision(true, true).kept
 	}
-	kept := keep(choice, zone)
+	kept := keep(choice, zone, given)
 	decision := change_decision(false, kept)
 	if !decision.write_page {
 		system.log_fact(.Warning, Change_Not_Kept{})
@@ -570,7 +585,11 @@ set :: proc "c" (
 	if locked, found := settings.first_locked(kept_plan, presences); found {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, i64(locked) + 1)
 	}
-	if !change(changed, current.zone_offset_minutes) {
+	given: settings.Given
+	for setting in settings.Setting {
+		given.values[setting] = presences[setting] == .Given
+	}
+	if !change(changed, current.zone_offset_minutes, given) {
 		return errors.fail(error, ERROR_STORE, .Refused, .None, 0)
 	}
 	return 1
@@ -628,6 +647,23 @@ scale_get :: proc "c" () -> scale_factor.Scale {
 	return current.scale
 }
 
+// plan_only describes the value of the plan that the time zone takes: a number of minutes from UTC, which the plan of principal 0 gives as a default or a lock (src/md/features/module_settings.md, "Plan records"). The console and the plans service type a plan by this description. Each call is refused.
+//
+// - **time_zone**: the offset in minutes, -720 to 840; the zone takes a whole quarter of an hour, and the border of the zone refuses another number at the start of this service.
+//
+// The result is -1 with an error record: No_Grant, unit Plan_Lock: a principal changes the zone with set_time_zone.
+//
+// ```
+// plans.apply("zone", plan { values = { settings = { time_zone = 480 } } }, {})
+// ```
+@(export, link_name = "plan_only", parameter_ranges = "time_zone = -720..840")
+plan_only_export :: proc "c" (time_zone_presence: module.Presence, time_zone: i64, error: ^errors.Error_Record) -> i64 {
+	return errors.fail(error, -1, .No_Grant, .Plan_Lock, 0)
+}
+
+// The range of the description is the range of the border of the zone.
+#assert(settings.ZONE_OFFSET_MINUTES_LEAST == -720 && settings.ZONE_OFFSET_MINUTES_MOST == 840)
+
 // set_time_zone changes the time zone of the system, and keeps it in the store: set_time_zone("+08:00").
 //
 // The time zone is a fixed offset from UTC, with no summer time: a sign, the hours and the minutes, from "-12:00"
@@ -661,11 +697,11 @@ set_time_zone :: proc "c" (zone: ^string, error: ^errors.Error_Record) -> i64 {
 	if !parsed {
 		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 1)
 	}
-	if plan_values.locked(kept_plan, settings.TIME_ZONE_NAME) {
+	if settings.time_zone_locked(kept_plan) {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 1)
 	}
 	current, _ := settings.read(page)
-	if !change(current, minutes) {
+	if !change(current, minutes, {time_zone = true}) {
 		return errors.fail(error, ERROR_STORE, .Refused, .None, 1)
 	}
 	return 1
@@ -838,7 +874,7 @@ reset_time_zone :: proc "c" (error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
-	if plan_values.locked(kept_plan, settings.TIME_ZONE_NAME) {
+	if settings.time_zone_locked(kept_plan) {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 0)
 	}
 	changes := [1]chosen_values.Change{{name = settings.TIME_ZONE_NAME, kind = .Reset}}
@@ -920,7 +956,7 @@ repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
 	for number in 0 ..< count {
 		choice.font = fonts[number % 2]
 		choice.subpixel_order = orders[number % 3]
-		if !keep(choice, choice.zone_offset_minutes) {
+		if !keep(choice, choice.zone_offset_minutes, {}) {
 			return errors.fail(error, ERROR_STORE, .Refused, .None, 1, number)
 		}
 	}
@@ -944,7 +980,9 @@ appearance_next_pass :: proc "contextless" () -> ! {
 	}
 	before := choice.appearance
 	choice.appearance = settings.appearance_next(before)
-	kept := change(choice, choice.zone_offset_minutes)
+	given: settings.Given
+	given.values[.Appearance] = true
+	kept := change(choice, choice.zone_offset_minutes, given)
 	system.log_fact(.Info, Appearance_Next_Kept{before = value_kinds.text_field(settings.value_name_of(.Appearance, u32(before)), VALUE_NAME_FIELD_BYTES), after = value_field(choice, .Appearance), store = store_field(kept)})
 	system.stop(kept ? .Done : .Failed)
 }
@@ -1646,7 +1684,9 @@ scale_track_draw :: proc "contextless" (frame: ^interface.Frame, area: interface
 		}
 		if result.activated && !in_use {
 			if changed, changed_ok, _ := with_value(choice, .Scale, place); changed_ok {
-				change(changed, choice.zone_offset_minutes)
+				given: settings.Given
+				given.values[.Scale] = true
+				change(changed, choice.zone_offset_minutes, given)
 			}
 		}
 	}
@@ -1679,7 +1719,7 @@ region_draw :: proc "contextless" (frame: ^interface.Frame, boxes: ^Settings_Box
 	if zone_result.changed && chosen != texts.zone_chosen {
 		place := chosen - (texts.zone_first_extra ? 1 : 0)
 		if place >= 0 && place < len(zone_places) {
-			change(choice, zone_places[place].minutes)
+			change(choice, zone_places[place].minutes, {time_zone = true})
 		}
 	}
 
@@ -1796,7 +1836,9 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 					}
 					if result.activated && !in_use {
 						if changed, changed_ok, _ := with_value(choice, setting, place); changed_ok {
-							change(changed, choice.zone_offset_minutes)
+							given: settings.Given
+							given.values[setting] = true
+							change(changed, choice.zone_offset_minutes, given)
 						}
 					}
 				}

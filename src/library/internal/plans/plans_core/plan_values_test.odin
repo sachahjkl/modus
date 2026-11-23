@@ -30,9 +30,9 @@ the_values_of_a_plan_become_one_set :: proc(t: ^testing.T) {
 	head, problem := plan_values.set_check(out[:])
 	testing.expect(t, problem == .None && head.owner_count == 2 && head.generation == 4)
 	display, found := plan_values.owner_values_of(out[:], "display")
-	testing.expect(t, found && display.defaults.count == 1 && display.locks.count == 1 && plan_values.locked(display, "consent_arm_milliseconds"))
+	testing.expect(t, found && display.defaults.count == 1 && display.locks.count == 1 && plan_values.locked(display, "consent_arm_milliseconds", any_word))
 	storage, storage_found := plan_values.owner_values_of(out[:], "storage")
-	testing.expect(t, storage_found && plan_values.locked(storage, "keep_all_minutes"))
+	testing.expect(t, storage_found && plan_values.locked(storage, "keep_all_minutes", any_word))
 	_, notes := plan_values.owner_values_of(out[:], "notes")
 	testing.expect(t, !notes)
 	none: [plan_values.SET_SIZE]u8
@@ -68,6 +68,39 @@ values_with_no_port_or_a_refusal_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, state.values_problem, plan_values.Set_Problem.Bad_Record)
 	state.values = {replace = silent}
 	testing.expect_value(t, values_give(&state, MACHINE_PRINCIPAL, &plan, 1, .Apply), pr.Plan_Refusal.Values_Refused)
+}
+
+// A send again of the values that the core refuses, or does not answer,
+// marks the state with its generation; one that the core takes, and one of
+// another principal, mark nothing.
+@(test)
+a_refused_send_again_of_the_values_marks_the_state :: proc(t: ^testing.T) {
+	state: Plans_State
+	plan: pr.Plan_Spec
+	entry, _ := pr.plan_entry_make_value("display", "bar_edge", 2, .Plan_Default)
+	plan.entries[0], plan.entry_count = entry, 1
+	take :: proc "contextless" (user: rawptr, set: []u8, step: rd.Plan_Roles_Step) -> (problem: plan_values.Set_Problem, answered: bool) {
+		return .None, true
+	}
+	refuse_rollback :: proc "contextless" (user: rawptr, set: []u8, step: rd.Plan_Roles_Step) -> (problem: plan_values.Set_Problem, answered: bool) {
+		return step == .Rollback ? .Bad_Record : .None, true
+	}
+	silent :: proc "contextless" (user: rawptr, set: []u8, step: rd.Plan_Roles_Step) -> (problem: plan_values.Set_Problem, answered: bool) {
+		return .None, false
+	}
+	state.values = {replace = take}
+	values_resend(&state, MACHINE_PRINCIPAL, &plan, 3)
+	testing.expect(t, !state.values_resend_failed)
+	state.values = {replace = refuse_rollback}
+	values_resend(&state, 7, &plan, 3)
+	testing.expect(t, !state.values_resend_failed)
+	values_resend(&state, MACHINE_PRINCIPAL, &plan, max(u64))
+	testing.expect(t, state.values_resend_failed && state.values_resend_generation == max(u64))
+	testing.expect_value(t, state.values_problem, plan_values.Set_Problem.Bad_Record)
+	state.values_resend_failed = false
+	state.values = {replace = silent}
+	values_resend(&state, MACHINE_PRINCIPAL, &plan, 0)
+	testing.expect(t, state.values_resend_failed && state.values_resend_generation == 0)
 }
 
 // A text of the plan reaches its owner: the set keeps it as a text entry,
@@ -124,3 +157,6 @@ a_text_of_the_plan_reaches_its_owner :: proc(t: ^testing.T) {
 	fitting_values, _ := plan_values.owner_values_of(out[:], "browser")
 	testing.expect(t, plan_values.owner_fits_page(fitting_values))
 }
+
+@(private = "file")
+any_word :: proc "contextless" (word: u64) -> bool {return true}

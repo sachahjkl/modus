@@ -1465,7 +1465,7 @@ parameter_settings_resolve :: proc(exports: []Export_Description) -> bool {
 	for &item, export_index in exports {
 		rows := make([]module.Parameter_Setting, len(item.setting_sources), context.temp_allocator)
 		for source, row_index in item.setting_sources {
-			row := module.Parameter_Setting{export_index = u32(export_index + 1), parameter = u8(source.parameter), has_range = source.has_range, least = source.least, most = source.most}
+			row := module.Parameter_Setting{export_index = u32(export_index + 1), parameter = u8(source.parameter), has_range = source.has_range ? module.PARAMETER_RANGE_GIVEN : module.PARAMETER_RANGE_NONE, least = source.least, most = source.most}
 			Named :: struct {
 				name:  string,
 				index: ^u32,

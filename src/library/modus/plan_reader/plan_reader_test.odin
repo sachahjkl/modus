@@ -7,6 +7,7 @@ import "modus:contract/blake3"
 import "modus:contract/chosen_values"
 import module "modus:contract/module"
 import "modus:contract/module_file_writer"
+import description "modus:contract/plan_value_description"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/role_contract"
 import "modus:contract/value_kinds"
@@ -76,13 +77,13 @@ fake_image_make :: proc(t: ^testing.T) -> ^Fake_Image {
 	browser_needs := [1]module.Parameter_Need{.Optional}
 	browser_exports := [1]module_file_writer.Export_Part{{name = "set", parameters = browser_types[:], parameter_names = browser_names[:], parameter_needs = browser_needs[:], result = .Integer}}
 	// A bound of 40 bytes: both of its ends fit a line of the console.
-	browser_bound := [1]module.Parameter_Setting{{export_index = 1, parameter = 0, has_range = true, least = 1, most = 40}}
+	browser_bound := [1]module.Parameter_Setting{{export_index = 1, parameter = 0, has_range = 1, least = 1, most = 40}}
 	image.browser = file_of_parts(t, browser_exports[:], nil, nil, browser_bound[:])
 	storage_types := [2]module.Type{.Integer, .Integer}
 	storage_names := [2]string{"keep_all_minutes", "hours_end_hours"}
 	storage_needs := [2]module.Parameter_Need{.Optional, .Optional}
 	storage_exports := [1]module_file_writer.Export_Part{{name = "plan_only", parameters = storage_types[:], parameter_names = storage_names[:], parameter_needs = storage_needs[:], result = .Integer}}
-	storage_ranges := [2]module.Parameter_Setting{{export_index = 1, parameter = 0, has_range = true, least = 1, most = 1440}, {export_index = 1, parameter = 1, has_range = true, least = 1, most = 720}}
+	storage_ranges := [2]module.Parameter_Setting{{export_index = 1, parameter = 0, has_range = 1, least = 1, most = 1440}, {export_index = 1, parameter = 1, has_range = 1, least = 1, most = 720}}
 	image.storage = file_of_parts(t, storage_exports[:], nil, nil, storage_ranges[:])
 	return image
 }
@@ -203,7 +204,13 @@ a_plan_is_refused_at_its_border :: proc(t: ^testing.T) {
 		{"plan { values = { display = { bar_edge = .top } }, locks = { display = { bar_edge = .bottom } } }", .Default_And_Lock, "display.bar_edge is in the plan twice: a value is a default in values, or a lock in locks, once"},
 		{"plan { values = { root = { budget_share = 0 } } }", .Out_Of_Range, "root.budget_share is 0, outside its range 1 to 64"},
 		{"plan { values = { root = { budget_share = 65 } } }", .Out_Of_Range, ""},
-		{"plan { values = { root = { quota = 2 } } }", .Field_Unknown, "the owner root has no value quota: its values are budget_share, memory_screen_start_width, memory_screen_start_height, memory_screen_most_width, memory_screen_most_height, store_blocks"},
+		{"plan { values = { root = { quota = 2 } } }", .Field_Unknown, "the owner root has no value quota: its values are budget_share, memory_screen_start_width, memory_screen_start_height, memory_screen_most_width, memory_screen_most_height"},
+		// The core has no store, and an owner that does not exist has none.
+		{"plan { values = { root = { store_blocks = 4 } } }", .Field_Unknown, ""},
+		{"plan { values = { nowhere = { store_blocks = 4 } } }", .Owner_Unknown, ""},
+		// The module that holds Display is no owner: its values are those of
+		// the role, which the core gives it.
+		{"plan { values = { compositor = { bar_edge = .top } } }", .Owner_Is_A_Holder, "the module compositor holds the role display: name its values by the role, display = { … }"},
 		{"plan { values = { storage = { keep_all_minutes = 0 } } }", .Out_Of_Range, "storage.keep_all_minutes is 0, outside its range 1 to 1440"},
 		{"plan { values = { browser = { store_blocks = 0 } } }", .Out_Of_Range, ""},
 		{"plan { values = { display = { Bar = .top } } }", .Name_Not_Valid, ""},
@@ -334,4 +341,69 @@ the_layout_of_the_rows_is_checked :: proc(t: ^testing.T) {
 	short[len(short) - 1].detail = 32
 	testing.expect(t, !rows_layout_matches(write(t, short, size_of(pr.Plan_Entry_Row) - 8), 1))
 	testing.expect(t, !rows_layout_matches(write(t, fields[:], size_of(pr.Plan_Entry_Row)), 2))
+}
+
+// The border of the plans service: each value of the rows of a plan is
+// typed by the description of its owner, as the console types it. A word
+// one past each end of its range, a word of no member, a word of the
+// largest value, a text for a number, a word for a text, a kind word of no
+// kind, a text one byte past its bound, an owner of no module, the module
+// that holds a role, and store_blocks of the core are refused, each with
+// its entry; the rows of the console pass.
+@(test)
+the_rows_of_a_plan_are_typed_at_the_border_of_plans :: proc(t: ^testing.T) {
+	image := fake_image_make(t)
+	described_image := description.Image{user = image, module_of_name = fake_of_name, module_of_hash = fake_of_hash}
+	good := read_text(image, "plan { values = { display = { bar_edge = .bottom, notification_show_milliseconds = 1000 }, browser = { home = \"modus://welcome\" } } }")
+	testing.expect(t, good.evaluated && good.refusal.problem == .None && good.count == 3)
+	plan := new(pr.Plan_Spec, context.temp_allocator)
+	refusal, _ := pr.plan_of_rows(0, good.rows[:good.count], plan)
+	testing.expect_value(t, refusal, pr.Plan_Refusal.None)
+	passed, _ := description.entries_check(described_image, plan)
+	testing.expect_value(t, passed.problem, description.Problem.None)
+	Case :: struct {
+		owner, field: string,
+		word:         u64,
+		text:         string,
+		kind:         u64,
+		problem:      description.Problem,
+	}
+	WORD :: u64(chosen_values.Entry_Kind.Word)
+	TEXT :: u64(chosen_values.Entry_Kind.Text)
+	cases := [?]Case {
+		{"display", "notification_show_milliseconds", 999, "", WORD, .Out_Of_Range},
+		{"display", "notification_show_milliseconds", 60001, "", WORD, .Out_Of_Range},
+		{"display", "notification_show_milliseconds", max(u64), "", WORD, .Out_Of_Range},
+		{"display", "bar_edge", 7, "", WORD, .Member_Unknown},
+		{"display", "bar_edge", max(u64), "", WORD, .Member_Unknown},
+		{"display", "bar_edge", 0, "top", TEXT, .Value_Kind},
+		{"browser", "home", 1, "", WORD, .Value_Kind},
+		{"browser", "home", 0, strings.repeat("a", 41, context.temp_allocator), TEXT, .Text_Past_Bound},
+		{"browser", "home", 0, "", TEXT, .Text_Past_Bound},
+		{"display", "bar_edge", 0, "", 3, .Value_Kind},
+		{"display", "bar_edge", 0, "", 0, .Value_Kind},
+		{"nowhere", "x", 1, "", WORD, .Owner_Unknown},
+		{"compositor", "bar_edge", 0, "", WORD, .Owner_Is_A_Holder},
+		{"root", "store_blocks", 4, "", WORD, .Field_Unknown},
+		{"display", "nothing", 1, "", WORD, .Field_Unknown},
+	}
+	for item in cases {
+		bad := plan^
+		entry := &bad.entries[1]
+		made: bool
+		if item.kind == TEXT {
+			entry^, made = pr.plan_entry_make_text_value(item.owner, item.field, "x", .Plan_Default)
+			copy(entry.value_text[:], item.text)
+			entry.value_text_length = u16(len(item.text))
+			for index in len(item.text) ..< len(entry.value_text) {
+				entry.value_text[index] = 0
+			}
+		} else {
+			entry^, made = pr.plan_entry_make_value(item.owner, item.field, item.word, .Plan_Default)
+			entry.value_kind_word = item.kind
+		}
+		testing.expect(t, made)
+		found, index := description.entries_check(described_image, &bad)
+		testing.expectf(t, found.problem == item.problem && index == 1, "%s.%s gives %v at %d, not %v", item.owner, item.field, found.problem, index, item.problem)
+	}
 }

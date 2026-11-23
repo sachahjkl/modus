@@ -947,7 +947,13 @@ word_of_setting_valid :: proc "contextless" (setting: Setting, word: u64) -> boo
 // change with No_Grant, and keeps the choice of the principal under the
 // lock (src/md/features/module_settings.md, "The precedence").
 setting_locked :: proc "contextless" (plan: plan_values.Owner_Values, setting: Setting) -> bool {
-	return plan_values.locked(plan, descriptions[setting].name)
+	return plan_values.locked(plan, descriptions[setting].name, setting_borders[setting])
+}
+
+// time_zone_locked says if the plan locks the time zone, with the border of
+// the zone that its value in force reads with.
+time_zone_locked :: proc "contextless" (plan: plan_values.Owner_Values) -> bool {
+	return plan_values.locked(plan, TIME_ZONE_NAME, zone_offset_minutes_allowed)
 }
 
 // first_locked gives the first setting that a call of set gives and that a
@@ -972,18 +978,41 @@ Kept_Changes :: struct {
 	languages_changed: bool,
 }
 
+// Given: the settings that an act of the principal names, a call of set or
+// of set_time_zone, or a press in the window of settings. Each one becomes
+// a chosen value, the value in force too.
+Given :: struct {
+	values:    [Setting]bool,
+	time_zone: bool,
+}
+
+// given_not_chosen says if an act names a setting that holds no choice now:
+// its value is a default, so the act keeps a choice even when it changes no
+// value.
+given_not_chosen :: proc "contextless" (given: Given, layers: Kept_Layers) -> bool {
+	for setting in Setting {
+		if given.values[setting] && layers.values[setting] != .Chosen {
+			return true
+		}
+	}
+	return given.time_zone && layers.time_zone != .Chosen
+}
+
 // kept_changes_of gives the changes from the settings in force before to
-// the settings after: only what changed becomes a chosen value, so a choice
-// of the value in force records nothing and leaves a default a default.
-kept_changes_of :: proc "contextless" (before: Choice, before_zone: i32, after: Choice, after_zone: i32) -> (kept: Kept_Changes) {
+// the settings after: a value that changed, and a value that the act
+// names, become chosen values. An explicit choice of the value in force is
+// a choice: a later default of the plan does not move it. A value that the
+// act does not name and that did not change records nothing, and a default
+// stays a default.
+kept_changes_of :: proc "contextless" (before: Choice, before_zone: i32, after: Choice, after_zone: i32, given: Given = {}) -> (kept: Kept_Changes) {
 	before_values, after_values := values_of(before), values_of(after)
 	for setting in Setting {
-		if before_values[setting] != after_values[setting] {
+		if before_values[setting] != after_values[setting] || given.values[setting] {
 			kept.changes[kept.count] = {name = descriptions[setting].name, kind = .Choose, value = u64(after_values[setting])}
 			kept.count += 1
 		}
 	}
-	if before_zone != after_zone {
+	if before_zone != after_zone || given.time_zone {
 		kept.changes[kept.count] = {name = TIME_ZONE_NAME, kind = .Choose, value = cast(u64)i64(after_zone)}
 		kept.count += 1
 	}

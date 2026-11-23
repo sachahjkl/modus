@@ -27,7 +27,9 @@ a_replaced_holder_gets_the_store_and_the_grants_of_its_role :: proc(t: ^testing.
 	// The module that the plan replaced is no holder: its own store, its own row.
 	testing.expect_value(t, store_name_of_module(&names, "compositor"), "compositor")
 	testing.expect_value(t, grant_row_name_of_module(&names, "settings"), "settings")
-	testing.expect_value(t, store_name_of_module(&names, "settings"), "settings")
+	// The module named as the role it no longer holds gets no store: the
+	// store of the role goes to its holder only.
+	testing.expect_value(t, store_name_of_module(&names, "settings"), "")
 	// A role with no default holder gives the row of the module itself.
 	names.overrides[.Speech] = "speaker"
 	testing.expect_value(t, grant_row_name_of_module(&names, "speaker"), "speaker")

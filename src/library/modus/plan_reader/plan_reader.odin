@@ -11,9 +11,9 @@
 // caller gives the evaluation, the boot image and the rows.
 package plan_reader
 
-import "modus:contract/blake3"
 import "modus:contract/chosen_values"
 import module "modus:contract/module"
+import description "modus:contract/plan_value_description"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/role_contract"
 import "modus:contract/root_plan_values"
@@ -23,11 +23,7 @@ import "modus:sentence"
 
 // The boot image as the reader reads it: the module file of a name, or of
 // a hash; an empty file for none.
-Image :: struct {
-	user:           rawptr,
-	module_of_name: proc "contextless" (user: rawptr, name: string) -> []u8,
-	module_of_hash: proc "contextless" (user: rawptr, hash: blake3.Hash) -> []u8,
-}
+Image :: description.Image
 
 // The fields of a plan.
 ROLES_FIELD :: "roles"
@@ -36,11 +32,6 @@ VALUES_FIELD :: "values"
 LOCKS_FIELD :: "locks"
 @(rodata)
 PLAN_FIELDS := [4]string{ROLES_FIELD, STORES_FIELD, VALUES_FIELD, LOCKS_FIELD}
-
-// The exports whose parameters describe the values of an owner: its setter,
-// then the description of its plan-only values.
-@(rodata)
-DESCRIBING_EXPORTS := [2]string{"set", "plan_only"}
 
 // The members of the rights of a store.
 READ_RIGHT :: "read"
@@ -67,9 +58,10 @@ Problem :: enum u8 {
 	Text_Past_Bound     = 16, // A text outside the bound of its parameter, or past PLAN_VALUE_TEXT_BYTES (name, field, integer: its bytes, least, most).
 	Text_Not_Plain      = 17, // A text that is not UTF-8, or holds a control byte (name, field).
 	Default_And_Lock    = 18, // A field in values and in locks, or twice (name, field).
-	Too_Many_Rows       = 19, // More rows than the rows given, or than MAX_PLAN_ENTRIES (integer: the bound).
+	Too_Many_Rows       = 19, // More entries than MAX_PLAN_ENTRIES, or more rows than the rows given (integer: the bound of the entries, or the rows given).
 	Name_Not_Valid      = 20, // A name of an owner, a field or a store that a plan cannot hold (name, field).
 	Field_Type          = 21, // A parameter that is no Integer, Enum or Text: a plan gives it no value (name, field).
+	Owner_Is_A_Holder   = 22, // A module that holds a role: its values are named by the role (name, role).
 }
 
 // A refusal: its problem and what it names.
@@ -87,17 +79,11 @@ Refusal :: struct {
 	file:      []u8,
 	enum_type: module.Enum_Type,
 	root:      bool, // With Field_Unknown: the owner is the core.
+	role:      role_contract.Role, // With Owner_Is_A_Holder: the role that the module holds.
 }
 
 // The description of one value of an owner.
-Described :: struct {
-	file:      []u8, // The module whose description it is; empty for a field of the core.
-	type:      module.Type,
-	enum_type: module.Enum_Type,
-	has_range: bool,
-	least:     i64,
-	most:      i64,
-}
+Described :: description.Described
 
 // The state of one read.
 @(private = "file")
@@ -105,11 +91,11 @@ Reader :: struct {
 	evaluation:  ^lex_evaluator.Evaluation,
 	image:       Image,
 	rows:        []pr.Plan_Entry_Row,
-	count:       int,
+	count:       int, // The rows written.
+	entries:     int, // The entries written: the rows of a text are one entry.
 	// The module of each role that the plan names: the owner of the role is
 	// that module, else its default holder.
-	role_hashes: [role_contract.Role]blake3.Hash,
-	role_given:  [role_contract.Role]bool,
+	holders:     description.Role_Holders,
 }
 
 // read gives the rows of a plan value. count is the rows written; on a
@@ -182,15 +168,19 @@ record_names :: proc "contextless" (reader: ^Reader, record: lex_evaluator.Value
 }
 
 // row_add writes the rows of an entry: one, or one for each part of a
-// text (pr.plan_rows_of_entry).
+// text (pr.plan_rows_of_entry). The bound of a plan is its entries.
 @(private = "file")
 row_add :: proc "contextless" (reader: ^Reader, entry: ^pr.Plan_Entry) -> (refusal: Refusal) {
-	room := min(len(reader.rows), pr.MAX_PLAN_ENTRIES) - reader.count
+	if reader.entries >= pr.MAX_PLAN_ENTRIES {
+		return {problem = .Too_Many_Rows, integer = pr.MAX_PLAN_ENTRIES}
+	}
+	room := len(reader.rows) - reader.count
 	written := room > 0 ? pr.plan_rows_of_entry(entry, reader.rows[reader.count:][:room]) : 0
 	if written == 0 {
-		return {problem = .Too_Many_Rows, integer = i64(min(len(reader.rows), pr.MAX_PLAN_ENTRIES))}
+		return {problem = .Too_Many_Rows, integer = i64(len(reader.rows))}
 	}
 	reader.count += written
+	reader.entries += 1
 	return {}
 }
 
@@ -225,7 +215,7 @@ roles_read :: proc "contextless" (reader: ^Reader, plan: lex_evaluator.Value) ->
 		if !made {
 			return {problem = .Name_Not_Valid, name = name}
 		}
-		reader.role_hashes[role], reader.role_given[role] = hash, true
+		reader.holders.hashes[role], reader.holders.given[role] = hash, true
 		if refusal = row_add(reader, &entry); refusal.problem != .None {
 			return refusal
 		}
@@ -319,15 +309,16 @@ values_read :: proc "contextless" (reader: ^Reader, plan: lex_evaluator.Value, f
 }
 
 // value_entry types one value by the description of its owner and gives
-// its entry.
+// its entry (modus:contract/plan_value_description: the plans service
+// checks the rows with the same description).
 @(private = "file")
 value_entry :: proc "contextless" (reader: ^Reader, owner, field: string, value: lex_evaluator.Value, layer: chosen_values.Layer) -> (entry: pr.Plan_Entry, refusal: Refusal) {
 	if !chosen_values.name_valid(owner) || !chosen_values.name_valid(field) {
 		return {}, {problem = .Name_Not_Valid, name = owner, field = field}
 	}
-	described: Described
-	if described, refusal = describe(reader, owner, field); refusal.problem != .None {
-		return {}, refusal
+	described, described_refusal := description.describe(reader.image, &reader.holders, owner, field)
+	if described_refusal.problem != .None {
+		return {}, refusal_of_description(described_refusal, owner, field)
 	}
 	at := Refusal{name = owner, field = field}
 	made: bool
@@ -337,9 +328,8 @@ value_entry :: proc "contextless" (reader: ^Reader, owner, field: string, value:
 			at.problem, at.expected = .Value_Kind, .Integer
 			return {}, at
 		}
-		if described.has_range && (value.integer < described.least || value.integer > described.most) {
-			at.problem, at.integer, at.least, at.most = .Out_Of_Range, value.integer, described.least, described.most
-			return {}, at
+		if checked := description.word_check(described, u64(value.integer)); checked.problem != .None {
+			return {}, refusal_of_description(checked, owner, field)
 		}
 		entry, made = pr.plan_entry_make_value(owner, field, u64(value.integer), layer)
 	case .Enum:
@@ -348,7 +338,7 @@ value_entry :: proc "contextless" (reader: ^Reader, owner, field: string, value:
 			return {}, at
 		}
 		name := lex_evaluator.member_name_of(reader.evaluation, value)
-		word, found := member_word(described, name)
+		word, found := description.member_word_of_name(described, name)
 		if !found {
 			at.problem, at.member, at.enum_type, at.file = .Member_Unknown, name, described.enum_type, described.file
 			return {}, at
@@ -359,15 +349,8 @@ value_entry :: proc "contextless" (reader: ^Reader, owner, field: string, value:
 			at.problem, at.expected = .Value_Kind, .Text
 			return {}, at
 		}
-		least := described.has_range ? described.least : 0
-		most := described.has_range ? min(described.most, pr.PLAN_VALUE_TEXT_BYTES) : pr.PLAN_VALUE_TEXT_BYTES
-		if i64(len(value.text)) < least || i64(len(value.text)) > most {
-			at.problem, at.integer, at.least, at.most = .Text_Past_Bound, i64(len(value.text)), least, most
-			return {}, at
-		}
-		if !pr.plan_value_text_valid(value.text) {
-			at.problem = .Text_Not_Plain
-			return {}, at
+		if checked := description.text_check(described, value.text); checked.problem != .None {
+			return {}, refusal_of_description(checked, owner, field)
 		}
 		entry, made = pr.plan_entry_make_text_value(owner, field, value.text, layer)
 	case:
@@ -380,88 +363,33 @@ value_entry :: proc "contextless" (reader: ^Reader, owner, field: string, value:
 	return entry, {}
 }
 
-// owner_file gives the module file that describes an owner: the module that
-// the plan gives its role, the default holder of its role, or the module
-// of its name. Empty: no module.
-owner_file :: proc "contextless" (image: Image, role_hashes: ^[role_contract.Role]blake3.Hash, role_given: ^[role_contract.Role]bool, owner: string) -> []u8 {
-	if role, is_role := role_contract.role_of_name(owner); is_role {
-		if role_given[role] {
-			return image.module_of_hash(image.user, role_hashes[role])
-		}
-		holder := role_contract.DEFAULT_HOLDER_NAMES[role]
-		if holder == "" {
-			return nil
-		}
-		return image.module_of_name(image.user, holder)
+// refusal_of_description gives the refusal of the reader of a refusal of
+// the description of a value.
+refusal_of_description :: proc "contextless" (from: description.Refusal, owner, field: string) -> (refusal: Refusal) {
+	refusal = {name = owner, field = field, integer = from.integer, least = from.least, most = from.most, expected = from.expected, file = from.file, enum_type = from.enum_type, root = from.root, role = from.role}
+	switch from.problem {
+	case .None:
+		refusal.problem = .None
+	case .Owner_Unknown:
+		refusal.problem = .Owner_Unknown
+	case .Owner_Is_A_Holder:
+		refusal.problem = .Owner_Is_A_Holder
+	case .Field_Unknown:
+		refusal.problem = .Field_Unknown
+	case .Field_Type:
+		refusal.problem = .Field_Type
+	case .Value_Kind:
+		refusal.problem = .Value_Kind
+	case .Member_Unknown:
+		refusal.problem = .Member_Unknown
+	case .Out_Of_Range:
+		refusal.problem = .Out_Of_Range
+	case .Text_Past_Bound:
+		refusal.problem = .Text_Past_Bound
+	case .Text_Not_Plain:
+		refusal.problem = .Text_Not_Plain
 	}
-	return image.module_of_name(image.user, owner)
-}
-
-// describe gives the description of a value of an owner: a field of the
-// core from its contract, else the parameter of that name of the setter of
-// the owner, else of its export plan_only.
-@(private = "file")
-describe :: proc "contextless" (reader: ^Reader, owner, field: string) -> (described: Described, refusal: Refusal) {
-	if range, found := root_plan_values.field_range_of(owner, field); found {
-		return {type = .Integer, has_range = true, least = i64(range.least), most = i64(range.most)}, {}
-	}
-	if owner == root_plan_values.OWNER {
-		return {}, {problem = .Field_Unknown, name = owner, field = field, root = true}
-	}
-	file := owner_file(reader.image, &reader.role_hashes, &reader.role_given, owner)
-	if len(file) == 0 {
-		return {}, {problem = .Owner_Unknown, name = owner}
-	}
-	for export_name in DESCRIBING_EXPORTS {
-		export_index, function, found := export_of_name(file, export_name)
-		if !found {
-			continue
-		}
-		for index in 0 ..< min(int(function.parameter_count), module.PARAMETER_CAPACITY) {
-			if module.string_at(file, function.parameter_names[index], u32(function.parameter_name_counts[index])) != field {
-				continue
-			}
-			type, _ := module.function_parameter_type(function, index)
-			described.type, described.file = type, file
-			if type == .Enum {
-				enum_index, _ := module.enum_detail_of(function.parameter_details[index])
-				enum_type, problem := module.enum_type(file, enum_index)
-				if problem != .None {
-					return {}, {problem = .Field_Type, name = owner, field = field}
-				}
-				described.enum_type = enum_type
-			}
-			if setting, has_setting := module.parameter_setting(file, export_index, index); has_setting && setting.has_range {
-				described.has_range, described.least, described.most = true, setting.least, setting.most
-			}
-			return described, {}
-		}
-	}
-	return {}, {problem = .Field_Unknown, name = owner, field = field, file = file}
-}
-
-// export_of_name gives the export of a name of a module file.
-export_of_name :: proc "contextless" (file: []u8, name: string) -> (export_index: u32, function: module.Function, found: bool) {
-	for index in u32(1) ..< module.count(file, .Exports) {
-		item, ok := module.function(file, index)
-		if ok && module.string_at(file, item.name_offset, item.name_count) == name {
-			return index, item, true
-		}
-	}
-	return 0, {}, false
-}
-
-// member_word gives the word of a member of the enum of a value, by its
-// name as the line writes it.
-@(private = "file")
-member_word :: proc "contextless" (described: Described, name: string) -> (word: u64, found: bool) {
-	for number in 0 ..< described.enum_type.member_count {
-		member, ok := module.enum_member(described.file, described.enum_type, number)
-		if ok && module.string_at(described.file, member.name_offset, member.name_count) == name {
-			return u64(member.value), true
-		}
-	}
-	return 0, false
+	return refusal
 }
 
 // refusal_write writes the sentence of a refusal: what is wrong, and what
@@ -520,6 +448,14 @@ refusal_write :: proc "contextless" (writer: ^sentence.Writer, refusal: Refusal)
 		part(writer, "the plan names the owner ")
 		part(writer, refusal.name)
 		part(writer, ", which is no module of the image and no role with a holder")
+	case .Owner_Is_A_Holder:
+		part(writer, "the module ")
+		part(writer, refusal.name)
+		part(writer, " holds the role ")
+		part(writer, role_contract.role_properties(refusal.role).name)
+		part(writer, ": name its values by the role, ")
+		part(writer, role_contract.role_properties(refusal.role).name)
+		part(writer, " = { … }")
 	case .Field_Unknown:
 		part(writer, "the owner ")
 		part(writer, refusal.name)
@@ -605,11 +541,10 @@ names_write :: proc "contextless" (writer: ^sentence.Writer, refusal: Refusal) {
 		for item in root_plan_values.ROOT_FIELDS {
 			put(writer, &first, item.name)
 		}
-		put(writer, &first, root_plan_values.STORE_BLOCKS_FIELD)
 		return
 	}
-	for export_name in DESCRIBING_EXPORTS {
-		_, function, found := export_of_name(refusal.file, export_name)
+	for export_name in description.DESCRIBING_EXPORTS {
+		_, function, found := description.export_of_name(refusal.file, export_name)
 		if !found {
 			continue
 		}

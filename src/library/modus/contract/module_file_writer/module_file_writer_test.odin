@@ -425,15 +425,15 @@ parameter_settings_that_a_reader_refuses_are_refused :: proc(t: ^testing.T) {
 	storage: Test_Storage
 	parts := test_parts(&storage)
 	storage.parameters = {.Integer, .Integer}
-	ranged := module.Parameter_Setting{export_index = 2, parameter = 0, has_range = true, least = 1000, most = 60000}
+	ranged := module.Parameter_Setting{export_index = 2, parameter = 0, has_range = 1, least = 1000, most = 60000}
 	Case :: struct {
 		rows:    []module.Parameter_Setting,
 		problem: module.Parameter_Setting_Problem,
 		row:     u64,
 	}
 	cases := [?]Case {
-		{{{export_index = 3, parameter = 0, has_range = true}}, .No_Export, 0},
-		{{{export_index = 2, parameter = 0, has_range = true, least = 2, most = 1}}, .Bad_Range, 0},
+		{{{export_index = 3, parameter = 0, has_range = 1}}, .No_Export, 0},
+		{{{export_index = 2, parameter = 0, has_range = 1, least = 2, most = 1}}, .Bad_Range, 0},
 		{{ranged, ranged}, .Out_Of_Order, 1},
 	}
 	for item in cases {
@@ -448,7 +448,7 @@ parameter_settings_that_a_reader_refuses_are_refused :: proc(t: ^testing.T) {
 	file := write_to_memory(t, parts)
 	defer delete(file)
 	row, found := module.parameter_setting(file, 2, 0)
-	testing.expect(t, found && row.has_range && row.least == 1000 && row.most == 60000)
+	testing.expect(t, found && module.parameter_setting_ranged(row) && row.least == 1000 && row.most == 60000)
 	function, _ := module.function(file, 2)
 	testing.expect_value(t, module.parameter_word_count(function), 4)
 }

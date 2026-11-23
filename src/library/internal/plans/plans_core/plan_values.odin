@@ -143,6 +143,17 @@ values_give :: proc "contextless" (state: ^Plans_State, principal: u64, plan: ^p
 	return .None
 }
 
+// values_resend gives the core the values of the generation in force again:
+// after a refusal of the roles, at a compensation, and at the start of the
+// service. A refusal leaves the core with other values than the store: the
+// state records it, and the service logs it once (values_resend_failed).
+values_resend :: proc "contextless" (state: ^Plans_State, principal: u64, plan: ^pr.Plan_Spec, generation: u64) {
+	if values_give(state, principal, plan, generation, .Rollback) != .None {
+		state.values_resend_failed = true
+		state.values_resend_generation = generation
+	}
+}
+
 // plan_give sends the core the values, then the roles, of a generation. A
 // refusal of the roles gives the core the values of the generation in
 // force again (previous), so the two always name one generation.
@@ -151,7 +162,7 @@ plan_give :: proc "contextless" (state: ^Plans_State, principal: u64, plan: ^pr.
 		return refusal
 	}
 	if refusal := roles_give(state, principal, plan, generation, step); refusal != .None {
-		_ = values_give(state, principal, previous, previous_generation, .Rollback)
+		values_resend(state, principal, previous, previous_generation)
 		return refusal
 	}
 	return .None

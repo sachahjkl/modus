@@ -138,6 +138,16 @@ keeper_next_job :: proc "contextless" (keeper: ^Keeper) -> Job {
 	return .Write
 }
 
+// keeper_job_wanted says if a job waits to be asked: the read that the
+// owner wants, or a write of a record that the store does not hold, while
+// no job runs. A job that the worker refused is one.
+keeper_job_wanted :: proc "contextless" (keeper: ^Keeper) -> bool {
+	if !keeper.store_open || keeper.job != .None {
+		return false
+	}
+	return !keeper.read ? keeper.read_wanted : keeper.dirty
+}
+
 // keeper_job_refused takes back a job that the worker did not take: it is
 // asked again at the next step.
 keeper_job_refused :: proc "contextless" (keeper: ^Keeper) {

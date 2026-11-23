@@ -212,4 +212,13 @@ a_text_plan_value_is_read_at_its_border :: proc(t: ^testing.T) {
 	decoded: Plan_Spec
 	_, decode_refusal := decode_plan_generation(object[:written], 0, 1, &decoded)
 	testing.expect(t, decode_refusal == .None && plan_value_text(&decoded.entries[0]) == "http://example.org/a,b")
+	// An object of the row before, magic MODPGEN1, and a magic one byte
+	// past: each refused at its head, with no plan.
+	for last in ([2]u8{'1', '3'}) {
+		older := object
+		older[7] = last
+		_, older_refusal := decode_plan_generation(older[:written], 0, 1, &decoded)
+		testing.expect_value(t, older_refusal, Plan_Refusal.Bad_Header)
+		testing.expect(t, decoded.entry_count == 0 && decoded.principal == 0)
+	}
 }

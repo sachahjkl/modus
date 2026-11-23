@@ -43,6 +43,7 @@ Powerbox_Prompt_State :: struct {
 	picker_stores:   [POWERBOX_PICKER_SLOTS]string,
 	chosen_store:    string,
 	last_decision:   powerbox.Item_Decision,
+	shown_milliseconds: u64, // When the dialog showed: a grant counts only after the arm time of the principal.
 }
 
 Wide_Grant_Display_State :: struct {
@@ -82,6 +83,7 @@ powerbox_prompt_open :: proc "contextless" (kind: powerbox.Request_Item_Kind, pr
 		process_len   = min(len(process_name), POWERBOX_TEXT_LIMIT),
 		resource_len  = min(len(resource_text), POWERBOX_TEXT_LIMIT),
 		last_decision = .None,
+		shown_milliseconds = system.time(),
 	}
 	if kind == .Store_Share {
 		// Candidate stores presented ONLY to the principal on the trusted display;
@@ -99,6 +101,12 @@ powerbox_prompt_open :: proc "contextless" (kind: powerbox.Request_Item_Kind, pr
 powerbox_prompt_decide :: proc "contextless" (allow: bool) -> bool {
 	if !powerbox_prompt.open {
 		return false
+	}
+	// The arm time of the principal holds for this door as for the
+	// difference of a plan: a grant before it is no act, and the dialog takes
+	// the key. A refusal counts at once: it gives nothing.
+	if allow && !powerbox.consent_armed(powerbox_prompt.shown_milliseconds, system.time(), display_choices_in_force.consent_arm_milliseconds) {
+		return true
 	}
 	powerbox_prompt.open = false
 	if allow && powerbox_prompt.kind == .Store_Share && powerbox_prompt.picker_count > 0 {

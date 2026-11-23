@@ -81,7 +81,7 @@ plan_name_run :: proc "contextless" (name: string, arguments: []Value) -> Value 
 }
 
 // The rows of the plans of one line: one table of rows of the largest plan.
-plan_rows_bytes: [pr.MAX_PLAN_ENTRIES * size_of(pr.Plan_Entry_Row)]u8
+plan_rows_bytes: [pr.PLAN_ROWS_MOST * size_of(pr.Plan_Entry_Row)]u8
 
 // plan_rows_of_argument turns a plan given to a table parameter of an
 // export into the rows of that table, when its record is the record of the
@@ -96,7 +96,7 @@ plan_rows_of_argument :: proc "contextless" (found: ^Command, index: int, argume
 		fail(found.name, ": the argument ", found.parameter_names[index], " is no table of the rows of a plan, so it takes no plan")
 		return false
 	}
-	rows := ([^]pr.Plan_Entry_Row)(raw_data(plan_rows_bytes[:]))[:pr.MAX_PLAN_ENTRIES]
+	rows := ([^]pr.Plan_Entry_Row)(raw_data(plan_rows_bytes[:]))[:pr.PLAN_ROWS_MOST]
 	count, refusal := plan_reader.read(&line_evaluation, argument^, console_image_of_plans(), rows)
 	if refusal.problem != .None {
 		writer := sentence.Writer{buffer = scratch[scratch_count:]}

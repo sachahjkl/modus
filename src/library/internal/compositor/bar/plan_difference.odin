@@ -332,15 +332,14 @@ plan_difference_item_text :: proc "contextless" (item: ^Plan_Difference_Item) ->
 // time after the show, and on the act face after the last move of the
 // focus too.
 plan_difference_armed :: proc "contextless" (dialog: ^Plan_Difference_Dialog, now_milliseconds: u64) -> bool {
-	// A difference, not a sum: a large arm time never wraps to an early act.
-	return dialog.open && now_milliseconds >= dialog.armed_from_milliseconds && now_milliseconds - dialog.armed_from_milliseconds >= plan_difference_arm_milliseconds(dialog)
+	return dialog.open && powerbox.consent_armed(dialog.armed_from_milliseconds, now_milliseconds, dialog.arm_milliseconds_of_the_principal)
 }
 
 // plan_difference_arm_milliseconds gives the arm time of the dialog: the
 // longer one that the principal chose, never one shorter than the one of the
 // contract, whatever the field holds.
 plan_difference_arm_milliseconds :: proc "contextless" (dialog: ^Plan_Difference_Dialog) -> u64 {
-	return max(dialog.arm_milliseconds_of_the_principal, powerbox.CONSENT_ARM_MILLISECONDS)
+	return powerbox.consent_arm_milliseconds(dialog.arm_milliseconds_of_the_principal)
 }
 
 // plan_difference_focus_move gives the focus to a button. On the act face

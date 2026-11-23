@@ -183,3 +183,33 @@ a_text_before_the_read_is_copied_and_the_last_change_of_a_name_holds :: proc(t: 
 
 @(private = "file")
 Change_Kind_None :: chosen_values.Change_Kind(0)
+
+// A job that the worker refused waits to be asked again: a refused read
+// and a refused write are each wanted, and asked again whole; with no
+// store, with a job that runs, or with nothing to do, no job is wanted.
+@(test)
+a_refused_job_is_asked_again :: proc(t: ^testing.T) {
+	keeper: Keeper
+	keeper_start(&keeper, false)
+	keeper.read_wanted = true
+	testing.expect(t, !keeper_job_wanted(&keeper))
+	keeper_start(&keeper, true)
+	testing.expect(t, !keeper_job_wanted(&keeper))
+	keeper.read_wanted = true
+	testing.expect(t, keeper_job_wanted(&keeper))
+	testing.expect_value(t, keeper_next_job(&keeper), Job.Read)
+	testing.expect(t, !keeper_job_wanted(&keeper))
+	keeper_job_refused(&keeper)
+	testing.expect(t, keeper_job_wanted(&keeper))
+	testing.expect_value(t, keeper_next_job(&keeper), Job.Read)
+	testing.expect_value(t, keeper_read_ended(&keeper, 0, false, true), Fault.None)
+	testing.expect(t, !keeper_job_wanted(&keeper))
+	testing.expect_value(t, keeper_change(&keeper, {{name = "font", kind = .Choose, value = 1}}), Change_Result.Taken)
+	testing.expect(t, keeper_job_wanted(&keeper))
+	testing.expect_value(t, keeper_next_job(&keeper), Job.Write)
+	length := keeper.job_length
+	keeper_job_refused(&keeper)
+	testing.expect(t, keeper_job_wanted(&keeper) && keeper.dirty)
+	testing.expect_value(t, keeper_next_job(&keeper), Job.Write)
+	testing.expect_value(t, keeper.job_length, length)
+}

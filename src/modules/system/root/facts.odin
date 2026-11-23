@@ -537,11 +537,34 @@ Plan_Roles_Refused :: struct {
 }
 
 // The core replaced the plan values with the set of a generation of the
-// plan of principal 0: each owner gets them at its next start.
-@(log_fact = "root: the plan values of generation {generation} are in force for {owners} owners, from the next start of each")
+// plan of principal 0, wrote again the page of each owner that runs, and
+// wrote again the grant of each store whose quota changed.
+@(log_fact = "root: the plan values of generation {generation} are in force for {owners} owners; {pages} pages of running owners written again")
 Plan_Values_Replaced :: struct {
 	generation: u64,
 	owners:     u64,
+	pages:      u64,
+}
+
+// A module with the name of a role that it does not hold asked for its
+// store: the store of a role goes to the holder of the role only.
+@(log_fact = "root: {caller} holds no role of its name: the store of the role is its holder's, and the connection is refused")
+Role_Store_Refused :: struct {
+	caller: value_kinds.Module_Name_Field,
+}
+
+// The values of one owner did not fit its page: the owner holds no value
+// of the plan, the defaults of its contract. The border of the set keeps
+// each owner within a page, so this line names a fault of the core.
+@(log_fact = "root: the plan values of an owner do not fit its page: it holds the defaults of its contract")
+Plan_Values_Page_Too_Small :: struct {}
+
+// The core refused a set of plan values because a service ring has no room
+// for the grants of the quotas that the set changes: no value changed, and
+// the holder of Plans sends the set again.
+@(log_fact = "root: refused the plan values of generation {generation}: a service ring has no room for the changed quotas of the stores; the values before stay in force")
+Plan_Values_Grants_Busy :: struct {
+	generation: u64,
 }
 
 // The values of the owner `root` that the core holds from the start of the

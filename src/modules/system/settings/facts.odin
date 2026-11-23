@@ -260,6 +260,12 @@ No_Store :: struct {}
 @(log_fact = "settings: a change that the store did not keep: the page keeps the values before")
 Change_Not_Kept :: struct {}
 
+// The store did not give the kept record at the last read: a change is not
+// written over choices that this process does not know, until a read gives
+// the record.
+@(log_fact = "settings: the store did not give the kept record: no change is written over it until the next read gives it")
+Kept_Record_Unread :: struct {}
+
 // The context names no settings page that this process can map: the
 // status of the map, which a reader writes by the name of its member.
 @(log_fact = "settings: no settings page: status {status}")

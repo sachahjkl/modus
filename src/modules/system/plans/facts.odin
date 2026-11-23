@@ -25,6 +25,15 @@ Plan_Roles_Unreconciled :: struct {
 	refusal_code: u64,
 }
 
+// The root service refused the values of the generation in force when the
+// plans service sent them again: it may hold the values of another
+// generation until the next set of values that it takes.
+@(log_fact = "plans: the root service refused the values of generation {generation} sent again (problem {set_problem}): it may hold the values of another generation until the next apply")
+Plan_Values_Unreconciled :: struct {
+	generation:  u64,
+	set_problem: u64,
+}
+
 // The root service refused the roles of a plan of principal 0: nothing was
 // committed.
 @(log_fact = "plans: the root service refused the roles of generation {generation} with refusal {refusal_code}")
@@ -80,6 +89,15 @@ Plan_Rollback_Asked :: struct {
 Plan_Rolled_Back :: struct {
 	generation: u64,
 	principal:  u64,
+}
+
+// A value of a plan that the description of its owner refuses: the entry,
+// from 0, and the problem (plan_value_description.Problem).
+@(log_fact = "plans: refused a plan of principal {principal}: its entry {entry} is a value that its owner does not describe (problem {problem})")
+Plan_Value_Not_Described :: struct {
+	principal: u64,
+	entry:     u64,
+	problem:   u64,
 }
 
 @(log_fact = "plans: refused command for principal {principal} with refusal {refusal_code}")

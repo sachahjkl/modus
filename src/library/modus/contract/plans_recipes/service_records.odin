@@ -56,6 +56,10 @@ PLAN_ROW_TEXT_BYTES :: 40
 #assert(len(Plan_Entry_Row{}.value_text) == PLAN_ROW_TEXT_BYTES)
 // The rows of the longest text.
 PLAN_TEXT_ROWS_MOST :: (PLAN_VALUE_TEXT_BYTES + PLAN_ROW_TEXT_BYTES - 1) / PLAN_ROW_TEXT_BYTES
+// The rows of the largest plan: MAX_PLAN_ENTRIES entries, each a text of
+// PLAN_TEXT_ROWS_MOST rows. The bound of a plan is its entries: the rows
+// of a text count as one entry.
+PLAN_ROWS_MOST :: MAX_PLAN_ENTRIES * PLAN_TEXT_ROWS_MOST
 #assert(len(Plan_Entry_Row{}.name) == MAX_ENTRY_NAME_BYTES)
 
 // Whether an apply of a difference needs the consent of the principal on the
@@ -247,7 +251,7 @@ plan_of_rows :: proc "contextless" (principal: u64, rows: []Plan_Entry_Row, out:
 	if len(rows) == 0 {
 		return .Empty_Plan, 0
 	}
-	if len(rows) > MAX_PLAN_ENTRIES {
+	if len(rows) > PLAN_ROWS_MOST {
 		return .Too_Many_Entries, 0
 	}
 	out.principal = principal
@@ -278,6 +282,10 @@ plan_of_rows :: proc "contextless" (principal: u64, rows: []Plan_Entry_Row, out:
 			copy(before.value_text[before.value_text_length:], row.value_text[:part_length])
 			before.value_text_length += u16(part_length)
 			continue
+		}
+		if count >= MAX_PLAN_ENTRIES {
+			out^ = {}
+			return .Too_Many_Entries, u32(index)
 		}
 		entry := &out.entries[count]
 		count += 1

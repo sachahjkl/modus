@@ -2170,6 +2170,10 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 			// the holder of a role is the store of the role, which a new holder
 			// gets back (role_policy.store_name_of_module).
 			process_of_the_store := role_policy.store_name_of_module(&role_holder_names, system.name_of(caller.name[:]))
+			if process_of_the_store == "" {
+				system.log_fact(.Warning, Role_Store_Refused{caller = module_name_field(system.name_of(caller.name[:]))})
+				return nil, nil, 0, 0, .Bad_Operation
+			}
 			disk_store_name: [32]u8
 			if caller.from_disk {
 				process_of_the_store = disk_process.store_process_name(&disk_store_name, process_of_the_store)

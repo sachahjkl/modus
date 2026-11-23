@@ -428,7 +428,7 @@ call_prepare_values :: proc(client: ^Call_Client, service, export: string, argum
 	}
 	// Each argument at its parameter: by its place first, then by its name.
 	// A parameter that the call does not give is refused, but an optional
-	// one, which gets the absent word.
+	// one, which gets the Presence word Absent and the value 0.
 	by_parameter := make([]Call_Argument, written_parameters, context.temp_allocator)
 	given := make([]bool, written_parameters, context.temp_allocator)
 	for argument, number in arguments {

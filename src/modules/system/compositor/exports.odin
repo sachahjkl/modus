@@ -550,15 +550,18 @@ powerbox_pick_store_export :: proc "c" (process_name: ^string, mode: ^string, er
 // milliseconds, 1000 to 60000), the factor of the magnifier when the
 // principal turns it on (in eighths, 12 to 64), and the arm time of a dialog
 // of the trusted display (in milliseconds, 500 to 10000: nothing makes it
-// shorter than 500). The compositor keeps them in the store of the role
-// first, then they hold, so a restart of the compositor keeps them
-// (src/md/features/module_settings.md). The result is 1, or -1 with an
-// error record: No_Grant for a caller that does not act for the principal,
-// Absent for a call that gives no setting, Bad_Value for a word that names
-// no member or a number out of its range (argument: its place, from 1),
-// Refused when the store did not keep the change, No_Grant with the unit
-// Plan_Lock for a setting that a lock of the plan holds (argument: its
-// place). A refused call changes nothing. The edges left and right are kept and draw the bar at the top:
+// shorter than 500). The change holds at once; the keeper writes it to the
+// store of the role after, on its worker, so a restart of the compositor
+// keeps it (src/md/features/module_settings.md, modus:kept_choices). A
+// write that the store refuses leaves the change for this run only, with
+// one line of the log. The result is 1, or -1 with an error record:
+// No_Grant for a caller that does not act for the principal, Absent for a
+// call that gives no setting, Bad_Value for a word that names no member or
+// a number out of its range (argument: its place, from 1), or for changes
+// that the kept record has no room for, Refused with the unit Store when
+// the compositor has no role store, No_Grant with the unit Plan_Lock for a
+// setting that a lock of the plan holds (argument: its place). A refused
+// call changes nothing. The edges left and right are kept and draw the bar at the top:
 // the compositor draws no vertical bar yet (src/md/features/bar_edge.md).
 //
 // **Grant**: the caller must **act for the principal**.

@@ -23,6 +23,23 @@ import "modus:contract/text_encoding"
 // answers it. A principal may ask for a longer arm time; nothing makes it
 // shorter.
 CONSENT_ARM_MILLISECONDS :: u64(500)
+// The longest arm time that a principal may choose: past ten seconds, a
+// dialog seems to take no key at all.
+CONSENT_ARM_MILLISECONDS_MOST :: u64(10_000)
+
+// consent_arm_milliseconds gives the arm time of a door: the one that the
+// principal chose, never shorter than the one of the contract, whatever
+// the word holds. One rule for each door of the trusted display.
+consent_arm_milliseconds :: proc "contextless" (of_the_principal: u64) -> u64 {
+	return max(min(of_the_principal, CONSENT_ARM_MILLISECONDS_MOST), CONSENT_ARM_MILLISECONDS)
+}
+
+// consent_armed says if an act at now counts on a door shown at
+// shown: the arm time passed. A difference, not a sum: a large arm time
+// never wraps to an early act, and a time before the show never counts.
+consent_armed :: proc "contextless" (shown_milliseconds, now_milliseconds, of_the_principal: u64) -> bool {
+	return now_milliseconds >= shown_milliseconds && now_milliseconds - shown_milliseconds >= consent_arm_milliseconds(of_the_principal)
+}
 
 // Maximum items in a single grouped consent request batch or dialog. Sixteen
 // rows fit the reference screen without scrolling so the principal sees every
@@ -293,6 +310,7 @@ Grant_Answer :: struct {
 	shown_timestamp_ms:       u64,
 	input_press_timestamp_ms: u64,
 	answer_timestamp_ms:      u64,
+	arm_milliseconds:         u64, // The arm time that the display applied: the one of the principal. The core checks the times against consent_arm_milliseconds of it.
 	never_ask_again:          bool,
 	whole_plan_accepted:      bool,
 	item_count:               u32,

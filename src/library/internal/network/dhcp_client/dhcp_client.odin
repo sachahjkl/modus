@@ -281,9 +281,10 @@ reply_read :: proc "contextless" (message: []u8, transaction: u32, hardware: [6]
 
 // What the client asks the caller to do.
 Output :: struct {
-	send:        bool, // Send the message of `length` bytes that the client wrote in the buffer of the caller.
-	broadcast:   bool, // To 255.255.255.255 from 0.0.0.0; else to `destination` from the address bound.
-	destination: u32,
+	send:         bool, // Send the message of `length` bytes that the client wrote in the buffer of the caller.
+	broadcast:    bool, // To 255.255.255.255; else to `destination`, through its next hop.
+	from_address: bool, // From the address that the client holds (Renewing, Rebinding: RFC 2131, section 4.4.5); else from 0.0.0.0.
+	destination:  u32,
 	length:      int,
 	event:       Event,
 }
@@ -373,7 +374,10 @@ send_in_flight :: proc "contextless" (client: ^Client, out: []u8, now: u64, kind
 	client.deadline = now + wait
 	length := message_write(out, client, kind)
 	unicast := client.phase == .Renewing
-	return {send = length > 0, broadcast = !unicast, destination = unicast ? client.lease.server : 0xFFFF_FFFF, length = length}
+	// A client that holds a lease sends from its address, by unicast in
+	// RENEWING and by broadcast in REBINDING; before a lease it has none.
+	holding := client.phase == .Renewing || client.phase == .Rebinding
+	return {send = length > 0, broadcast = !unicast, from_address = holding, destination = unicast ? client.lease.server : 0xFFFF_FFFF, length = length}
 }
 
 // lease_deadline gives the next time of a lease held: T1, T2 or its end.

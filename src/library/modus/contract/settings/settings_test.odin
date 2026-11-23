@@ -612,14 +612,37 @@ a_kept_word_that_its_border_refuses_holds_as_no_choice :: proc(t: ^testing.T) {
 	testing.expect_value(t, absent_layers.languages, chosen_values.Layer.Contract_Default)
 }
 
-// A change records only what changed: the value in force chosen again
-// records nothing, and the record of a change reads back as the change.
+// A change records what changed and what the act names: a value that the
+// act does not name and that did not change records nothing, the value in
+// force that the act names is a choice, and the record of a change reads
+// back as the change.
 @(test)
-a_change_records_only_what_changed :: proc(t: ^testing.T) {
+a_change_records_what_changed_and_what_the_act_names :: proc(t: ^testing.T) {
 	before := choice_default()
 	same := kept_changes_of(before, 0, before, 0)
 	testing.expect_value(t, same.count, 0)
 	testing.expect(t, !same.languages_changed)
+	// The default font, named: one choice, of the default, which reads back
+	// as Chosen.
+	named: Given
+	named.values[.Font] = true
+	explicit := kept_changes_of(before, 0, before, 0, named)
+	testing.expect_value(t, explicit.count, 1)
+	testing.expect(t, explicit.changes[0].name == descriptions[.Font].name && explicit.changes[0].value == u64(values_of(before)[.Font]))
+	explicit_buffer: [chosen_values.HEADER_SIZE + 8 * chosen_values.ENTRY_SIZE]u8
+	explicit_written, _ := chosen_values.write_record({}, explicit.changes[:explicit.count], explicit_buffer[:])
+	explicit_record, _ := chosen_values.read_record(explicit_buffer[:explicit_written])
+	_, _, explicit_layers := choice_of_kept(explicit_record, nil, false)
+	testing.expect_value(t, explicit_layers.values[.Font], chosen_values.Layer.Chosen)
+	testing.expect_value(t, explicit_layers.values[.Scale], chosen_values.Layer.Contract_Default)
+	// A named setting that holds no choice is not chosen; once chosen, the
+	// same act changes nothing more.
+	testing.expect(t, given_not_chosen(named, {}))
+	testing.expect(t, !given_not_chosen(named, explicit_layers))
+	testing.expect(t, !given_not_chosen({}, {}))
+	testing.expect(t, given_not_chosen({time_zone = true}, explicit_layers))
+	zone_named := kept_changes_of(before, 0, before, 0, {time_zone = true})
+	testing.expect(t, zone_named.count == 1 && zone_named.changes[0].name == TIME_ZONE_NAME && zone_named.changes[0].value == 0)
 	after := before
 	after.font = .Spleen
 	after.scale = .Eleven_Eighths

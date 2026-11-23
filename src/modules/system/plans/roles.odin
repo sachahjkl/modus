@@ -115,6 +115,7 @@ roles_port_bind :: proc "contextless" (state: ^plans_core.Plans_State) -> bool {
 	plans_core.roles_port_bind(state, {replace = roles_replace, read = roles_read, pause = roles_pause, serial = serial, generation = generation})
 	outcome := plans_core.roles_start(state)
 	roles_busy_tell(state)
+	values_resend_tell(state)
 	switch outcome {
 	case .None, .No_Plan, .Applied:
 	case .Plan_Refused:
@@ -166,6 +167,16 @@ roles_compensation_tell :: proc "contextless" (state: ^plans_core.Plans_State) {
 	}
 	state.roles_compensation_failed = false
 	system.log_fact(.Warning, Plan_Roles_Unreconciled{generation = state.roles.generation, refusal_code = u64(state.roles_refusal)})
+}
+
+// values_resend_tell writes the line of a send again of the values that the
+// core refused, once.
+values_resend_tell :: proc "contextless" (state: ^plans_core.Plans_State) {
+	if !state.values_resend_failed {
+		return
+	}
+	state.values_resend_failed = false
+	system.log_fact(.Warning, Plan_Values_Unreconciled{generation = state.values_resend_generation, set_problem = u64(state.values_problem)})
 }
 
 // roles_replace writes a set in the roles page and asks the core to take it.

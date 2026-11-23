@@ -76,7 +76,8 @@ target_resolve :: proc "contextless" (names: ^Holder_Names, name: string) -> (mo
 }
 
 // store_name_of_module gives the name of the private store of a module: the
-// name of the role that it holds now, else its own name. The store of a role
+// name of the role that it holds now, else its own name, and none ("") for a
+// module that has the name of a role that it does not hold. The store of a role
 // belongs to the role (src/md/features/module_settings.md, "The role
 // store"): a holder that the plan put in place of another, and the same
 // module after a restart, get the store of the one before, so the choices of
@@ -84,6 +85,12 @@ target_resolve :: proc "contextless" (names: ^Holder_Names, name: string) -> (mo
 store_name_of_module :: proc "contextless" (names: ^Holder_Names, module_name: string) -> string {
 	if role := role_of_module(names, module_name); role != .None {
 		return role_contract.role_properties(role).name
+	}
+	// A module that holds no role and has the name of a role, as the
+	// default holder that a plan replaced, would reach the store of the
+	// role, which only its holder keeps: it gets no store.
+	if role_of_name(module_name) != .None {
+		return ""
 	}
 	return module_name
 }
