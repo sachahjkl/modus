@@ -2,15 +2,17 @@
 // builder"). It registers recipes of the test builder builder_probe with
 // the service recipes, and builds them:
 //
-// 1. the act "make": the builder writes its output, which becomes a
-//    realisation; a second build takes the realisation, with no start;
-// 2. the act "copy", whose input is the output of 1: the input reaches the
-//    builder through its input store;
-// 3. the refusals: a write in the input store ("write_input"), a look for a
-//    handle past the context ("network"), an error record ("fail"), a stop
+// 1. the refusals, each with no realisation kept after it: a write in the
+//    input store and a way out of the store "out" ("write_input"), one share
+//    more than the storage service holds ("share_out"), a look for a handle
+//    past the context ("network"), an error record ("fail"), a stop
 //    ("stop"), a builder that no module is, an input that no build gave, and
 //    last a builder that never answers ("hang"), which the service ends at
-//    the bound of a build.
+//    the bound of a build;
+// 2. the act "make": the builder writes its output, which becomes a
+//    realisation; a second build takes the realisation, with no start;
+// 3. the act "copy", whose input is the output of 2: the input reaches the
+//    builder through its input store.
 //
 // **Start**: start("build_check") in the console of principal 0. **What a
 // reader sees**: no window; one line of the log for each check, then
@@ -35,6 +37,7 @@ connection: system.Call_Connection
 recipes_file: []u8
 register_export: u32
 build_export: u32
+realisations_export: u32
 probe_hash: blake3.Hash
 
 @(private = "file")
@@ -112,7 +115,7 @@ build :: proc "contextless" (recipe: blake3.Hash, mode: pr.Build_Mode) -> (row: 
 			wrong("recipes.build refused with a word that names no refusal", u64(error.found))
 		}
 		return {}, found
-	case .Lend_Failed, .No_Room, .Ring_Full, .Stopped, .Refused, .Wrong_Answer, .Not_Done, .Failed_With_Wrong_Details, .Timed_Out:
+	case .Lend_Failed, .No_Room, .Ring_Full, .Stopped, .Refused, .Wrong_Answer, .Not_Done, .Failed_With_Wrong_Details, .Deadline_Passed:
 	}
 	wrong("the call of recipes.build did not come back; the call status", u64(status))
 }
@@ -123,7 +126,22 @@ refused_as_asked :: proc "contextless" (act: string, recipe: blake3.Hash, expect
 	if refusal != expected {
 		wrong("a build was not refused as the test asks; the refusal", u64(refusal))
 	}
+	if count := realisation_count(); count != 0 {
+		wrong("a refused build left a realisation; the count", u64(count))
+	}
 	system.log_fact(.Info, Refused_As_Asked{refusal = u64(refusal)}, act)
+}
+
+// realisation_count gives the count of the realisations of recipes.
+@(private = "file")
+realisation_count :: proc "contextless" () -> i64 {
+	rows: [4]pr.Realisation_Row
+	error: errors.Error_Record
+	count, status := system.call_isolated(&connection, recipes_file, realisations_export, nil, &error, false, ([^]u8)(&rows[0])[:size_of(rows)])
+	if status != .Ok {
+		wrong("recipes.realisations did not answer; the call status", u64(status))
+	}
+	return count
 }
 
 @(private = "file")
@@ -163,12 +181,28 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	recipes_file = image[entry.offset:][:entry.size]
 	register_export = module.export_find(recipes_file, "register")
 	build_export = module.export_find(recipes_file, "build")
-	if register_export == 0 || build_export == 0 {
-		wrong("recipes has no export register or build", 0)
+	realisations_export = module.export_find(recipes_file, "realisations")
+	if register_export == 0 || build_export == 0 || realisations_export == 0 {
+		wrong("recipes has no export register, build or realisations", 0)
 	}
 
-	// 1. The output of a builder becomes a realisation, and a second build
-	//    takes it with no start.
+	// 1. The refusals first, while no build has given a realisation: after
+	//    each, recipes keeps none. The hang last of them, as it takes the
+	//    bound of a build.
+	refused_as_asked("write_input", register(probe_hash, "write_input", {}), .Builder_Failed)
+	refused_as_asked("share_out", register(probe_hash, "share_out", {}), .Builder_Failed)
+	refused_as_asked("network", register(probe_hash, "network", {}), .Builder_Failed)
+	refused_as_asked("fail", register(probe_hash, "fail", {}), .Builder_Failed)
+	refused_as_asked("stop", register(probe_hash, "stop", {}), .Builder_Failed)
+	no_module := "a builder that no module is"
+	refused_as_asked("a builder that no module is", register(blake3.hash(transmute([]u8)no_module), "make", {}), .Builder_Absent)
+	never := "an output that no build gave"
+	refused_as_asked("an input that no build gave", register(probe_hash, "copy", blake3.hash(transmute([]u8)never)), .Input_Absent)
+	refused_as_asked("hang", register(probe_hash, "hang", {}), .Builder_Timed_Out)
+
+	// 2. The output of a builder becomes a realisation, after the builder
+	//    that asked for each share of the storage service: its shares came
+	//    back. A second build takes the realisation with no start.
 	made := register(probe_hash, "make", {})
 	row, refusal := build(made, .Build_Only)
 	if refusal != .None || row.outcome_word != i64(pr.Recipe_Build_Outcome.Built_Locally) {
@@ -181,24 +215,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	system.log_fact(.Info, Built{outcome = u64(again.outcome_word), output_head = head_of(again.output_hash)}, "the second build took the realisation")
 
-	// 2. The output of 1 is the input of a build.
+	// 3. The output of 2 is the input of a build.
 	copied := register(probe_hash, "copy", blake3.Hash(row.output_hash))
 	copy_row, copy_refusal := build(copied, .Build_Only)
 	if copy_refusal != .None || copy_row.outcome_word != i64(pr.Recipe_Build_Outcome.Built_Locally) || copy_row.output_hash == row.output_hash {
 		wrong("the act copy was not built from its input; the refusal", u64(copy_refusal))
 	}
 	system.log_fact(.Info, Built{outcome = u64(copy_row.outcome_word), output_head = head_of(copy_row.output_hash)}, "the output of a build was the input of the next")
-
-	// 3. The refusals; the hang last, as it takes the bound of a build.
-	refused_as_asked("write_input", register(probe_hash, "write_input", {}), .Builder_Failed)
-	refused_as_asked("network", register(probe_hash, "network", {}), .Builder_Failed)
-	refused_as_asked("fail", register(probe_hash, "fail", {}), .Builder_Failed)
-	refused_as_asked("stop", register(probe_hash, "stop", {}), .Builder_Failed)
-	no_module := "a builder that no module is"
-	refused_as_asked("a builder that no module is", register(blake3.hash(transmute([]u8)no_module), "make", {}), .Builder_Absent)
-	never := "an output that no build gave"
-	refused_as_asked("an input that no build gave", register(probe_hash, "copy", blake3.hash(transmute([]u8)never)), .Input_Absent)
-	refused_as_asked("hang", register(probe_hash, "hang", {}), .Builder_Timed_Out)
+	if count := realisation_count(); count != 2 {
+		wrong("recipes does not keep the two realisations; the count", u64(count))
+	}
 
 	system.call_connection_end(&connection)
 	system.log_fact(.Info, Done{})

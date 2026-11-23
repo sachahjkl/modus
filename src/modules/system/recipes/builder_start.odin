@@ -188,6 +188,13 @@ build_places_end :: proc "contextless" (places: ^Build_Places) {
 		}
 	}
 	_, _ = storage.remove(places.client, storage.ROOT, builder.BUILD_PLACE, &error)
+	// The check that the build left nothing: an open of the place of the
+	// build gives Absent, and the log says the kind, for the machine test.
+	left_error: errors.Error_Record
+	if left, status := storage.open_tree(places.client, storage.ROOT, builder.BUILD_PLACE, &left_error); status == .Ok {
+		_ = storage.close_tree(places.client, left, &error)
+	}
+	system.log_fact(.Info, Build_Place_Ended{kind = left_error.kind})
 }
 
 @(private = "file")
@@ -252,9 +259,10 @@ objects_take :: proc "contextless" (hash: blake3.Hash, data: rawptr) -> pr.Recip
 	return .None
 }
 
-// builder_call makes the two shares, starts the call host with the
-// context of a builder, calls build with the bound, and ends the call host
-// and the shares, whatever the outcome.
+// builder_call makes the two shares, runs the builder with them, and ends
+// the shares, whatever the outcome. A share that does not end leaves the
+// builder a way to change the store "out", so the build is refused and
+// nothing is frozen.
 @(private = "file")
 builder_call :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, file: []u8, export: u32, places: ^Build_Places) -> (result: i64, refusal: pr.Recipe_Refusal) {
 	error: errors.Error_Record
@@ -262,12 +270,25 @@ builder_call :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, file: []u
 	if input_status != .Ok {
 		return 0, .Store_Failed
 	}
-	defer share_end(places.client, &input_share, input_number)
 	output_share, output_number, output_status := storage.share(places.client, places.output, false, &error)
 	if output_status != .Ok {
+		_ = share_end(places.client, &input_share, input_number)
 		return 0, .Store_Failed
 	}
-	defer share_end(places.client, &output_share, output_number)
+	result, refusal = builder_run(sandbox, file, export, places, &input_share, &output_share)
+	input_ended := share_end(places.client, &input_share, input_number)
+	output_ended := share_end(places.client, &output_share, output_number)
+	if !input_ended || !output_ended {
+		return 0, .Store_Failed
+	}
+	return result, refusal
+}
+
+// builder_run starts the call host with the context of a builder, calls
+// build with the bound, and ends the call host, whatever the outcome.
+@(private = "file")
+builder_run :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, file: []u8, export: u32, places: ^Build_Places, input_share, output_share: ^storage.Client) -> (result: i64, refusal: pr.Recipe_Refusal) {
+	error: errors.Error_Record
 
 	added := system.Call_Host_Context{}
 	added.grants[builder.GRANT_INPUT_RING] = {input_share.ring_memory, {.Read, .Write}}
@@ -315,15 +336,15 @@ builder_call :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, file: []u
 		{table = {records = ([^]u8)(&builder_rows[0])[:int(sandbox.input_count) * size_of(pr.Recipe_Input_Row)], count = u64(sandbox.input_count)}},
 		{table = {records = sandbox.arguments[:sandbox.arguments_length], count = u64(sandbox.arguments_length)}},
 	}
-	limit := system.time() + builder.BUILD_TIME_BOUND_MILLISECONDS
-	call_result, call_status := system.call_isolated(&connection, file, export, arguments[:], &error, limit = limit)
+	deadline := system.time() + builder.BUILD_TIME_BOUND_MILLISECONDS
+	call_result, call_status := system.call_isolated(&connection, file, export, arguments[:], &error, deadline = deadline)
 	if call_status != .Ok || call_result != 1 {
 		system.log_fact(.Info, Builder_Call_Ended{call_status = u64(call_status), result = call_result, kind = error.kind})
 	}
 	switch call_status {
 	case .Ok:
 		return call_result, .None
-	case .Timed_Out:
+	case .Deadline_Passed:
 		return 0, .Builder_Timed_Out
 	case .Failed, .Failed_With_Wrong_Details, .Stopped, .Refused, .Wrong_Answer, .Lend_Failed, .No_Room, .Ring_Full, .Not_Done:
 		// The builder failed, stopped, or its call did not reach it: no
@@ -334,11 +355,11 @@ builder_call :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, file: []u
 
 // share_end ends a share: this service closes its own handles of it, and
 // the storage service ends the connection, so the call host can change
-// nothing after it.
+// nothing after it. ended is false when the storage service did not end it.
 @(private = "file")
-share_end :: proc "contextless" (client: ^storage.Client, shared: ^storage.Client, number: i64) {
+share_end :: proc "contextless" (client: ^storage.Client, shared: ^storage.Client, number: i64) -> (ended: bool) {
 	error: errors.Error_Record
-	_ = storage.unshare(client, number, &error)
+	ended = storage.unshare(client, number, &error) == .Ok
 	if shared.calls.head != nil {
 		system.ring_close(&shared.calls)
 	}
@@ -348,6 +369,7 @@ share_end :: proc "contextless" (client: ^storage.Client, shared: ^storage.Clien
 	system.close(shared.ring_memory)
 	system.close(shared.region_memory)
 	shared^ = {}
+	return ended
 }
 
 // output_freeze freezes the store "out" into the place of the objects, and
@@ -358,7 +380,10 @@ output_freeze :: proc "contextless" (places: ^Build_Places, out_payload: []u8) -
 	error: errors.Error_Record
 	arguments := [2]isolated.Argument{{integer = u64(places.output)}, {integer = u64(places.objects)}}
 	value, hash_bytes, status := storage.call(places.client, "freeze_tree", arguments[:], &error)
-	if status != .Ok || value < 0 || len(hash_bytes) != blake3.HASH_SIZE {
+	if status == .Failed || value < 0 {
+		return 0, recipes_core.freeze_refusal(error.kind)
+	}
+	if status != .Ok || len(hash_bytes) != blake3.HASH_SIZE {
 		return 0, .Store_Failed
 	}
 	hash: blake3.Hash

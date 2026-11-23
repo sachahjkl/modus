@@ -41,6 +41,13 @@ Builder_Call_Ended :: struct {
 	kind:        i64,
 }
 
+// After a build, an open of the place of the build gave this kind of error
+// record: Absent (17) when the build left nothing, 0 when the place stayed.
+@(log_fact = "recipes: after a build, an open of the place build gives the error kind {kind}")
+Build_Place_Ended :: struct {
+	kind: i64,
+}
+
 @(log_fact = "recipes: realisation disagreement detected for recipe ({disagreements} total)")
 Realisation_Disagreement :: struct {
 	disagreements: u64,

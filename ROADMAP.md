@@ -49,6 +49,9 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **An allowed act of the assistant runs.** An act that the principal allowed once in the act dialog runs in an agent console of a wide grant, with an act record bound to that act, so the assistant does what the principal allowed and nothing else. [Design](src/md/features/assistant.md)
 - **More acts for the assistant.** The model of the assistant reads the log facts, sees the screen and types into a window that a wide grant names, through the same capabilities of the bridge. [Design](src/md/features/assistant.md)
 - **The conversation of the assistant kept.** The conversation stays in a store of the principal across a stop of the window, so a principal reads what the agent proposed and did yesterday. [Design](src/md/features/assistant.md)
+- **No clock in a builder.** The time page is not mapped in the call host of a builder, and a read of the cycle counter traps, so a builder cannot write the time of its build in its output (property 20). [Design](src/md/features/recipes.md)
+- **A limit of blocks for each share.** A share that can change gets a limit of its own, so a builder fills its store "out" and not the store of `recipes`, whose oldest versions a full store frees. [Design](src/md/features/recipes.md)
+- **The collection of the objects of `recipes`.** An output that no realisation names leaves the place `objects`, so the store of `recipes` does not grow with each build forever. [Design](src/md/features/recipes.md)
 
 - **Builds across paired machines, on the machine.** The root service connects `recipes` to the outbound links of `remote` and gives `remote` the listen grant of each address, so `recipes.build` gives the recipes of a graph to the builders and the caches that a principal paired, and a machine test runs it on two machines. [Design](src/md/features/recipes.md)
 

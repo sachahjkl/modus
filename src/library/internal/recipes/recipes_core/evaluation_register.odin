@@ -67,7 +67,7 @@ recipe_refusal_record :: proc "contextless" (refusal: pr.Recipe_Refusal, argumen
 		// value found of each record of this mapping is the refusal.
 		return errors.error_make(.Refused, .None, argument, 0, builder.BUILD_TIME_BOUND_MILLISECONDS, found)
 	case .Input_Too_Large:
-		return errors.error_make(.Over_Limit, .Objects, argument, 0, 0, found)
+		return errors.error_make(.Over_Limit, .Objects, argument, 0, builder.MAX_INPUT_OBJECTS, found)
 	case .Store_Full, .Recipe_Limit_Reached, .Buffer_Too_Small:
 		return errors.error_make(.Full, .Objects, argument, 0, 0, found)
 	case .Untrusted_Realisation, .Hash_Mismatch, .Bad_Signature, .Malformed_Output, .Verify_Disagreement:

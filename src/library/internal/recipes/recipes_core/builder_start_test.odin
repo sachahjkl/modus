@@ -4,6 +4,7 @@ package recipes_core
 import "core:testing"
 import "modus:contract/blake3"
 import "modus:contract/builder"
+import "modus:contract/errors"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/tree_hash"
 
@@ -168,6 +169,28 @@ the_walk_over_the_inputs_refuses_what_is_absent_damaged_or_too_large :: proc(t: 
 	testing.expect_value(t, input_closure_take(walk, too_deep[:], memory_read_tree, memory_take, objects), pr.Recipe_Refusal.Input_Too_Large)
 }
 
+// A tree whose 257 entries name one subtree holds three objects: the tree,
+// the subtree and its object. The subtree waits once, so the walk does not
+// count it 257 times against MAX_INPUT_OBJECTS.
+@(test)
+a_subtree_that_many_entries_name_is_taken_once :: proc(t: ^testing.T) {
+	walk := new(Input_Closure, context.temp_allocator)
+	objects := memory_objects_make()
+	append(&objects.objects, object_hash(1))
+	leaf := [1]tree_hash.Tree_Entry{entry_of(.Object, "leaf", object_hash(1))}
+	subtree := tree_add(objects, leaf[:])
+	COUNT :: builder.MAX_INPUT_OBJECTS + 1
+	entries := make([]tree_hash.Tree_Entry, COUNT, context.temp_allocator)
+	for index in 0 ..< COUNT {
+		name := [3]u8{'a' + u8(index / 676), 'a' + u8(index / 26 % 26), 'a' + u8(index % 26)}
+		entries[index] = entry_of(.Tree, string(name[:]), subtree)
+	}
+	inputs := [1]pr.Recipe_Input{input_of("source", .Tree, tree_add(objects, entries))}
+	testing.expect_value(t, input_closure_take(walk, inputs[:], memory_read_tree, memory_take, objects), pr.Recipe_Refusal.None)
+	testing.expect_value(t, walk.taken_count, 3)
+	testing.expect_value(t, objects.taken_count, 3)
+}
+
 // The success case of the walk: two inputs that share an object and a
 // tree give each object once, and a blob input is taken.
 @(test)
@@ -188,6 +211,19 @@ the_walk_gives_each_object_of_the_inputs_once :: proc(t: ^testing.T) {
 	// The blob, three trees, and the objects 1 and 2: six, each once.
 	testing.expect_value(t, walk.taken_count, 6)
 	testing.expect_value(t, objects.taken_count, 6)
+}
+
+// A refused freeze names the cause that the builder gave: a tree past the
+// bounds is a malformed output, a full store is Store_Full. Each other kind,
+// a negative word and a word past the last kind are a fault of the stores.
+@(test)
+a_refused_freeze_names_its_cause :: proc(t: ^testing.T) {
+	testing.expect_value(t, freeze_refusal(i64(errors.Kind.Too_Long)), pr.Recipe_Refusal.Malformed_Output)
+	testing.expect_value(t, freeze_refusal(i64(errors.Kind.Over_Limit)), pr.Recipe_Refusal.Store_Full)
+	testing.expect_value(t, freeze_refusal(i64(errors.Kind.Full)), pr.Recipe_Refusal.Store_Full)
+	for word in ([?]i64{i64(errors.Kind.None), i64(errors.Kind.No_Grant), i64(errors.Kind.Device), i64(errors.Kind.Bad_Value), -1, i64(max(errors.Kind)) + 1, max(i64)}) {
+		testing.expectf(t, freeze_refusal(word) == .Store_Failed, "the kind word %d", word)
+	}
 }
 
 // A start in memory: the cause that the start writes, and the output that

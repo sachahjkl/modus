@@ -136,10 +136,14 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 // result is then the count of the records that were copied there: the
 // records that the export gave, at most those that `rows` holds.
 //
-// `limit`: a time of the system (`time()`) after which the caller stops
-// waiting, with Timed_Out; 0 waits until the answer or the stop of the
-// other process. A caller that calls code it does not trust gives one.
-call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil, keep_memory_objects := false, rows: []u8 = nil, limit: u64 = 0) -> (result: i64, status: call_status.Call_Status) {
+// `deadline`: a time of the system (`time()`) after which the caller stops
+// waiting, with Deadline_Passed; 0 waits until the answer or the stop of
+// the other process. A caller that calls code it does not trust gives one.
+call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil, keep_memory_objects := false, rows: []u8 = nil, deadline: u64 = 0) -> (result: i64, status: call_status.Call_Status) {
+	// A deadline that passed before the call sends nothing: no work starts.
+	if deadline != 0 && deadline_passed(time(), deadline) {
+		return 0, .Deadline_Passed
+	}
 	function, described := module.function(file, export)
 	if !described {
 		return 0, .Refused
@@ -237,19 +241,25 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 		if state, _, _ := process_state(connection.process); state == .Stopped || state == .None {
 			return 0, .Stopped
 		}
-		if limit != 0 && time() >= limit {
-			return 0, .Timed_Out
+		if deadline != 0 && deadline_passed(time(), deadline) {
+			return 0, .Deadline_Passed
 		}
 		wait_records(&wait, &connection.calls.completions)
 		if wait_spin(&wait) {
 			continue
 		}
-		if limit != 0 {
-			wait_end(&wait, limit)
+		if deadline != 0 {
+			wait_end(&wait, deadline)
 		} else {
 			wait_end(&wait)
 		}
 	}
+}
+
+// deadline_passed says if a caller stops waiting at the time now: 0 is no
+// deadline, and the time of the deadline itself has passed it.
+deadline_passed :: proc "contextless" (now: u64, deadline: u64) -> bool {
+	return deadline != 0 && now >= deadline
 }
 
 // The log records of each second that a call host gets by default.

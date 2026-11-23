@@ -2,6 +2,7 @@ package recipes_core
 
 import "modus:contract/blake3"
 import "modus:contract/builder"
+import "modus:contract/errors"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/tree_hash"
 
@@ -11,6 +12,26 @@ import "modus:contract/tree_hash"
 // the objects, checks it, and gives each object once to the place of the
 // build. It reads no store itself: the module gives the two procedures, and
 // a host test gives a store in memory.
+
+// freeze_refusal names the cause of a refused freeze of the store "out",
+// from the word of the kind of its error record: what the builder left
+// there breaks a bound of an immutable tree (Too_Long: more than 512
+// entries in a tree, a tree nested past 32), or fills the store (Over_Limit,
+// Full). Each other kind, and a word that names no kind, is a fault of the
+// stores of the service.
+freeze_refusal :: proc "contextless" (kind_word: i64) -> pr.Recipe_Refusal {
+	kind, known := errors.kind_of_word(kind_word)
+	if !known {
+		return .Store_Failed
+	}
+	if kind == .Too_Long {
+		return .Malformed_Output
+	}
+	if kind == .Over_Limit || kind == .Full {
+		return .Store_Full
+	}
+	return .Store_Failed
+}
 
 // The deepest tree of an input, from the root of the input: the nesting of
 // the trees of the storage service.
@@ -129,7 +150,20 @@ closure_take_once :: proc "contextless" (walk: ^Input_Closure, hash: blake3.Hash
 
 @(private = "file")
 closure_tree_add :: proc "contextless" (walk: ^Input_Closure, hash: blake3.Hash, depth: int) -> pr.Recipe_Refusal {
-	if depth >= MAX_INPUT_TREE_DEPTH || walk.pending_count == builder.MAX_INPUT_OBJECTS {
+	if depth >= MAX_INPUT_TREE_DEPTH {
+		return .Input_Too_Large
+	}
+	// A tree that many entries name is one object: it waits once, and is
+	// read once.
+	if closure_taken(walk, hash) {
+		return .None
+	}
+	for item in walk.pending[:walk.pending_count] {
+		if item.hash == hash {
+			return .None
+		}
+	}
+	if walk.pending_count == builder.MAX_INPUT_OBJECTS {
 		return .Input_Too_Large
 	}
 	walk.pending[walk.pending_count] = {hash = hash, depth = depth}

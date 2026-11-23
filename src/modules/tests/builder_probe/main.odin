@@ -5,7 +5,8 @@
 //
 // - "make": writes the object "made", with the argument text, in its store "out";
 // - "copy": reads the object "made" of each input tree, and writes its bytes as "copied";
-// - "write_input": writes in its input store, which refuses it, and tries a name above its store "out";
+// - "write_input": writes in its input store, which refuses it, and tries the names ".." and "a/b" and an open of ".." in its store "out";
+// - "share_out": asks one share more than the storage service holds, through its store "out";
 // - "network": checks that no slot past its context holds a handle;
 // - "hang": never returns;
 // - "fail": returns an error record;
@@ -31,6 +32,7 @@ Probe_Act :: enum u8 {
 	Make,
 	Copy,
 	Write_Input,
+	Share_Out,
 	Network,
 	Hang,
 	Fail,
@@ -43,6 +45,7 @@ PROBE_ACT_NAMES := [Probe_Act]string {
 	.Make        = "make",
 	.Copy        = "copy",
 	.Write_Input = "write_input",
+	.Share_Out   = "share_out",
 	.Network     = "network",
 	.Hang        = "hang",
 	.Fail        = "fail",
@@ -129,10 +132,38 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 		} else {
 			system.log_fact(.Info, Input_Write_Refused{kind = write_error.kind})
 		}
-		above_error: errors.Error_Record
-		_, _ = storage.write(&output, storage.ROOT, "..", transmute([]u8)written, &above_error)
-		system.log_fact(.Info, Above_Out_Refused{kind = above_error.kind})
+		// Each way out of the root of the store "out": the names ".." and
+		// "a/b", which name no entry under it, and the place of "..".
+		for name in ([?]string{"..", "a/b"}) {
+			above_error: errors.Error_Record
+			if _, status := storage.write(&output, storage.ROOT, name, transmute([]u8)written, &above_error); status == .Ok {
+				system.log_fact(.Error, Above_Out_Taken{}, name)
+			} else {
+				system.log_fact(.Info, Above_Out_Refused{kind = above_error.kind}, name)
+			}
+		}
+		open_error: errors.Error_Record
+		if place, status := storage.open_tree(&output, storage.ROOT, "..", &open_error); status == .Ok {
+			_ = storage.close_tree(&output, place, &open_error)
+			system.log_fact(.Error, Above_Out_Taken{}, "an open of ..")
+		} else {
+			system.log_fact(.Info, Above_Out_Refused{kind = open_error.kind}, "an open of ..")
+		}
 		return errors.fail(error, -4, .Refused, .None, 0)
+	case .Share_Out:
+		// One share more than the service holds: each is refused, so no
+		// builder holds a share of the service after its end.
+		refused: u64
+		share_error: errors.Error_Record
+		for _ in 0 ..= SHARES_OF_THE_SERVICE {
+			if _, _, status := storage.share(&output, storage.ROOT, false, &share_error); status == .Ok {
+				system.log_fact(.Error, Share_Made{})
+				return errors.fail(error, -13, .Refused, .None, 0)
+			}
+			refused += 1
+		}
+		system.log_fact(.Info, Shares_Refused{count = refused, kind = share_error.kind})
+		return errors.fail(error, -13, .Refused, .None, 0)
 	case .Network:
 		// The slots that a builder has are 0 to 6 and the log; each other
 		// slot below the log is empty: a datagram ring, the control ring of
@@ -156,6 +187,9 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 	}
 	return -7
 }
+
+// The shares that the storage service holds (SHARE_CAPACITY of its module).
+SHARES_OF_THE_SERVICE :: 16
 
 HEX_DIGITS :: "0123456789abcdef"
 
