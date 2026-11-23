@@ -109,19 +109,23 @@ file_bytes :: proc(files: []Project_File, name: string) -> []u8 {
 	return nil
 }
 
-// generated_test_catalogs builds a boot image with c_compiler, assemble,
-// shipped modules, and a test module, then runs the real catalog declaration
-// generator to produce both catalog.lex and catalog_release.lex.
+// generated_test_catalogs builds a boot image with c_builder, c_compiler,
+// assemble, host, shipped modules, and a test module, then runs the real
+// catalog declaration generator to produce both catalog.lex and catalog_release.lex.
 @(private = "file")
-generated_test_catalogs :: proc(t: ^testing.T, c_compiler_text, assemble_text: string) -> (dev_catalog, release_catalog: string, c_compiler_hash, assemble_hash: blake3.Hash, ok: bool) {
+generated_test_catalogs :: proc(t: ^testing.T, c_builder_text, c_compiler_text, assemble_text, host_text: string) -> (dev_catalog, release_catalog: string, c_builder_hash, c_compiler_hash, assemble_hash, host_hash: blake3.Hash, ok: bool) {
 	root_text, console_text, flood_text: string = "root-module", "console-module", "flood-test-module"
+	cb_bytes := transmute([]u8)c_builder_text
 	cc_bytes := transmute([]u8)c_compiler_text
 	asm_bytes := transmute([]u8)assemble_text
+	host_bytes := transmute([]u8)host_text
 	image_files := []Image_File {
 		{name = ROOT_SERVICE_MODULE, file = transmute([]u8)root_text},
 		{name = "console", file = transmute([]u8)console_text},
+		{name = CATALOG_C_BUILDER_MODULE, file = cb_bytes},
 		{name = CATALOG_C_COMPILER_MODULE, file = cc_bytes},
 		{name = CATALOG_ASSEMBLER_MODULE, file = asm_bytes},
+		{name = CATALOG_HOST_MODULE, file = host_bytes},
 		{name = "flood", file = transmute([]u8)flood_text},
 	}
 	boot_image := boot_image_encode(image_files, len(image_files))
@@ -131,9 +135,9 @@ generated_test_catalogs :: proc(t: ^testing.T, c_compiler_text, assemble_text: s
 	release_catalog, release_problem = system_catalog_release_of_boot_image(boot_image, release.RELEASE_NUMBER)
 	testing.expect_value(t, release_problem, "")
 	if dev_problem != "" || release_problem != "" {
-		return "", "", {}, {}, false
+		return "", "", {}, {}, {}, {}, false
 	}
-	return dev_catalog, release_catalog, blake3.hash(cc_bytes), blake3.hash(asm_bytes), true
+	return dev_catalog, release_catalog, blake3.hash(cb_bytes), blake3.hash(cc_bytes), blake3.hash(asm_bytes), blake3.hash(host_bytes), true
 }
 
 @(private = "file")
@@ -194,7 +198,7 @@ the_collatz_project_refuses_what_layer_one_must_refuse :: proc(t: ^testing.T) {
 	}
 	here, tree_refusal := folder_tree_hash(files)
 	testing.expect_value(t, tree_refusal, tree_hash.Tree_Refusal.None)
-	catalog_lex, _, c_compiler_hash, _, catalog_ok := generated_test_catalogs(t, "c_compiler-module", "assemble-module")
+	catalog_lex, _, c_builder_hash, _, _, _, catalog_ok := generated_test_catalogs(t, "c_builder-module", "c_compiler-module", "assemble-module", "host-module")
 	if !catalog_ok {
 		return
 	}
@@ -233,12 +237,12 @@ the_collatz_project_refuses_what_layer_one_must_refuse :: proc(t: ^testing.T) {
 
 	// A recipe whose arguments name the source by a bare hash: the
 	// evaluation refuses it, as the conversion does.
-	untyped := concat({"project {\n  source = here(),\n  outputs = { default = recipe(module(", hash_literal(c_compiler_hash), "), { source = ", hash_literal(here), " }) },\n}\n"})
+	untyped := concat({"project {\n  source = here(),\n  outputs = { default = recipe(module(", hash_literal(c_builder_hash), "), { source = ", hash_literal(here), " }) },\n}\n"})
 	untyped_result := lex_evaluator.declaration_evaluate(workspace, untyped, "outputs.default", config)
 	testing.expect_value(t, untyped_result.failure_kind, declaration_eval.Failure_Kind.Recipe_Refused)
 	testing.expect_value(t, untyped_result.detail, pr.recipe_refusal_words[.Untyped_Hash])
 	// A builder given by a bare hash names no kind either.
-	bare_builder := concat({"project {\n  source = here(),\n  outputs = { default = recipe(", hash_literal(c_compiler_hash), ", { source = here() }) },\n}\n"})
+	bare_builder := concat({"project {\n  source = here(),\n  outputs = { default = recipe(", hash_literal(c_builder_hash), ", { source = here() }) },\n}\n"})
 	bare_builder_result := lex_evaluator.declaration_evaluate(workspace, bare_builder, "outputs.default", config)
 	testing.expect_value(t, bare_builder_result.failure_kind, declaration_eval.Failure_Kind.Type_Error)
 	testing.expect_value(t, bare_builder_result.detail, "recipe")
@@ -265,7 +269,7 @@ the_collatz_project_refuses_what_layer_one_must_refuse :: proc(t: ^testing.T) {
 	recipes_core.state_init(recipes, pr.memory_private_store_port(recipes_store))
 	recipe, register_refusal := recipes_core.register_evaluation(registry, evaluation[:output_length], spec)
 	testing.expect_value(t, register_refusal, pr.Recipe_Refusal.None)
-	built := recipes_core.build_registered(recipes, registry, recipe, .Cache_First)
+	built := recipes_core.build_registered(recipes, registry, recipe, .Prefer_Cache)
 	testing.expect_value(t, built.refusal, pr.Recipe_Refusal.Builder_Needs_Sandbox)
 	testing.expect_value(t, recipes_core.realisation_rows(recipes, nil), 0)
 
@@ -302,7 +306,7 @@ the_collatz_project_evaluates_loads_and_names_its_output :: proc(t: ^testing.T) 
 	}
 	here, tree_refusal := folder_tree_hash(files)
 	testing.expect_value(t, tree_refusal, tree_hash.Tree_Refusal.None)
-	catalog_lex, release_catalog_lex, c_compiler_hash, assemble_hash, catalog_ok := generated_test_catalogs(t, "c_compiler-module", "assemble-module")
+	catalog_lex, release_catalog_lex, c_builder_hash, c_compiler_hash, assemble_hash, host_hash, catalog_ok := generated_test_catalogs(t, "c_builder-module", "c_compiler-module", "assemble-module", "host-module")
 	if !catalog_ok {
 		return
 	}
@@ -343,8 +347,8 @@ the_collatz_project_evaluates_loads_and_names_its_output :: proc(t: ^testing.T) 
 
 	// One identity: the hash that the evaluator gives is the hash under
 	// which the service registers the recipe of the output, through the
-	// real conversion, and the record names c_compiler as builder and
-	// assembler and source as typed inputs.
+	// real conversion, and the record names c_builder as builder and
+	// assembler, compiler, host, and source as typed inputs.
 	output_length, output_ok := lex_evaluator.declaration_evaluate_to_buffer(workspace, project_lex, "outputs.default", config, evaluation[:])
 	testing.expect(t, output_ok, "outputs.default evaluates")
 	spec := new(pr.Recipe_Spec, context.temp_allocator)
@@ -352,14 +356,20 @@ the_collatz_project_evaluates_loads_and_names_its_output :: proc(t: ^testing.T) 
 	registered, register_refusal := recipes_core.register_evaluation(registry, evaluation[:output_length], spec)
 	testing.expect_value(t, register_refusal, pr.Recipe_Refusal.None)
 	testing.expect(t, registered == first, "the service registers the recipe under the hash of the evaluator")
-	testing.expect(t, spec.builder_hash == c_compiler_hash, "the builder of catalog.c.module is c_compiler")
-	testing.expect_value(t, spec.input_count, u32(2))
+	testing.expect(t, spec.builder_hash == c_builder_hash, "the builder of catalog.c.module is c_builder")
+	testing.expect_value(t, spec.input_count, u32(4))
 	testing.expect_value(t, string(spec.inputs[0].name_bytes[:spec.inputs[0].name_length]), "assembler")
 	testing.expect_value(t, spec.inputs[0].kind, object_cache.Cache_Object_Kind.Blob)
 	testing.expect(t, spec.inputs[0].hash == assemble_hash, "the first input is the assemble module file")
-	testing.expect_value(t, string(spec.inputs[1].name_bytes[:spec.inputs[1].name_length]), "source")
-	testing.expect_value(t, spec.inputs[1].kind, object_cache.Cache_Object_Kind.Tree)
-	testing.expect(t, spec.inputs[1].hash == here, "the second input is the tree of the folder")
+	testing.expect_value(t, string(spec.inputs[1].name_bytes[:spec.inputs[1].name_length]), "compiler")
+	testing.expect_value(t, spec.inputs[1].kind, object_cache.Cache_Object_Kind.Blob)
+	testing.expect(t, spec.inputs[1].hash == c_compiler_hash, "the second input is the c_compiler module file")
+	testing.expect_value(t, string(spec.inputs[2].name_bytes[:spec.inputs[2].name_length]), "host")
+	testing.expect_value(t, spec.inputs[2].kind, object_cache.Cache_Object_Kind.Blob)
+	testing.expect(t, spec.inputs[2].hash == host_hash, "the third input is the host module file")
+	testing.expect_value(t, string(spec.inputs[3].name_bytes[:spec.inputs[3].name_length]), "source")
+	testing.expect_value(t, spec.inputs[3].kind, object_cache.Cache_Object_Kind.Tree)
+	testing.expect(t, spec.inputs[3].hash == here, "the fourth input is the tree of the folder")
 
 	// One changed byte of collatz.c gives another tree and another recipe.
 	changed := slice.clone(files, context.temp_allocator)
@@ -375,19 +385,31 @@ the_collatz_project_evaluates_loads_and_names_its_output :: proc(t: ^testing.T) 
 	other, other_ok := output_recipe_hash(t, project_lex, evaluation_config(other_here, catalog_lex, &other_bindings))
 	testing.expect(t, other_ok && other != first, "another source gives another recipe")
 
-	// One changed byte of c_compiler or assemble changes the generated
-	// catalog and gives another recipe.
-	other_cc_catalog, _, _, _, other_cc_ok := generated_test_catalogs(t, "c_compiler-module-v2", "assemble-module")
+	// One changed byte of c_builder, c_compiler, assemble, or host changes the
+	// generated catalog and gives another recipe.
+	other_cb_catalog, _, _, _, _, _, other_cb_ok := generated_test_catalogs(t, "c_builder-module-v2", "c_compiler-module", "assemble-module", "host-module")
+	testing.expect(t, other_cb_ok && other_cb_catalog != catalog_lex)
+	other_cb_bindings: [1]lex_evaluator.Declaration_Binding
+	other_cb, other_cb_eval_ok := output_recipe_hash(t, project_lex, evaluation_config(here, other_cb_catalog, &other_cb_bindings))
+	testing.expect(t, other_cb_eval_ok && other_cb != first, "another c_builder gives another recipe")
+
+	other_cc_catalog, _, _, _, _, _, other_cc_ok := generated_test_catalogs(t, "c_builder-module", "c_compiler-module-v2", "assemble-module", "host-module")
 	testing.expect(t, other_cc_ok && other_cc_catalog != catalog_lex)
 	other_cc_bindings: [1]lex_evaluator.Declaration_Binding
 	other_cc, other_cc_eval_ok := output_recipe_hash(t, project_lex, evaluation_config(here, other_cc_catalog, &other_cc_bindings))
 	testing.expect(t, other_cc_eval_ok && other_cc != first, "another c_compiler gives another recipe")
 
-	other_asm_catalog, _, _, _, other_asm_ok := generated_test_catalogs(t, "c_compiler-module", "assemble-module-v2")
+	other_asm_catalog, _, _, _, _, _, other_asm_ok := generated_test_catalogs(t, "c_builder-module", "c_compiler-module", "assemble-module-v2", "host-module")
 	testing.expect(t, other_asm_ok && other_asm_catalog != catalog_lex)
 	other_asm_bindings: [1]lex_evaluator.Declaration_Binding
 	other_asm, other_asm_eval_ok := output_recipe_hash(t, project_lex, evaluation_config(here, other_asm_catalog, &other_asm_bindings))
 	testing.expect(t, other_asm_eval_ok && other_asm != first, "another assemble gives another recipe")
+
+	other_host_catalog, _, _, _, _, _, other_host_ok := generated_test_catalogs(t, "c_builder-module", "c_compiler-module", "assemble-module", "host-module-v2")
+	testing.expect(t, other_host_ok && other_host_catalog != catalog_lex)
+	other_host_bindings: [1]lex_evaluator.Declaration_Binding
+	other_host, other_host_eval_ok := output_recipe_hash(t, project_lex, evaluation_config(here, other_host_catalog, &other_host_bindings))
+	testing.expect(t, other_host_eval_ok && other_host != first, "another host gives another recipe")
 }
 
 // application_test_workspace gives an evaluation workspace with the pools

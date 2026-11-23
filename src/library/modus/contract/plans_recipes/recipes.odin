@@ -32,11 +32,11 @@ RECIPES_SERVICE_REGION_SLOT :: 11
 // Closed set of recipe build modes (maps directly to object_cache.Substitution_Mode).
 // Zero means unset and is refused at the border.
 Build_Mode :: enum u8 {
-	None        = 0,
-	Cache_First = 1,
-	Build_Only  = 2,
-	Cache_Only  = 3,
-	Verify      = 4,
+	None         = 0,
+	Prefer_Cache = 1,
+	Build_Only   = 2,
+	Cache_Only   = 3,
+	Verify       = 4,
 }
 
 // Closed set of build result classifications returned by recipes.build.
@@ -243,7 +243,7 @@ build_mode_to_substitution_mode :: proc "contextless" (mode: Build_Mode) -> (sub
 	switch checked {
 	case .None:
 		return {}, false
-	case .Cache_First:
+	case .Prefer_Cache:
 		return .Prefer_Cache, true
 	case .Build_Only:
 		return .Build_Only, true

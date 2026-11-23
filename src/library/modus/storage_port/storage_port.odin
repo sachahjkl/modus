@@ -22,5 +22,5 @@ bind :: proc "contextless" (ctx: ^system.Context) -> (port: pr.Private_Store_Por
 	if !ok {
 		return {}, false
 	}
-	return {user = &store_client, read = port_read, write = port_write, size = port_size, read_range = port_read_range, remove = port_remove, list = port_list, usage = port_usage}, true
+	return {user = &store_client, read = port_read, write = port_write, write_range = port_write_range, size = port_size, read_range = port_read_range, remove = port_remove, list = port_list, usage = port_usage}, true
 }

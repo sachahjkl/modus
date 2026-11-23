@@ -24,8 +24,10 @@ CATALOG_FILE :: foundation.BUILD_FOLDER + "/catalog.lex"
 CATALOG_RELEASE_FILE :: foundation.BUILD_FOLDER + "/catalog_release.lex"
 
 // The modules that catalog.c.module uses to build a C module.
+CATALOG_C_BUILDER_MODULE :: "c_builder"
 CATALOG_C_COMPILER_MODULE :: "c_compiler"
 CATALOG_ASSEMBLER_MODULE :: "assemble"
+CATALOG_HOST_MODULE :: "host"
 
 // Which modules a generated catalog declaration can hold.
 Catalog_Scope :: enum u8 {
@@ -88,10 +90,14 @@ system_catalog_of_modules :: proc(modules: []Module_Hash, release_number: string
 		return a.name < b.name
 	})
 
+	c_builder_hash: blake3.Hash
+	has_c_builder := false
 	c_compiler_hash: blake3.Hash
 	has_c_compiler := false
 	assemble_hash: blake3.Hash
 	has_assemble := false
+	host_hash: blake3.Hash
+	has_host := false
 
 	for item, index in sorted {
 		if !lex_parser.name_valid(item.name) {
@@ -111,20 +117,33 @@ system_catalog_of_modules :: proc(modules: []Module_Hash, release_number: string
 				return "", fmt.tprintf("the release boot image holds the test module %s: a release catalog declaration names no test module", item.name)
 			}
 		}
-		if item.name == CATALOG_C_COMPILER_MODULE {
+		switch item.name {
+		case CATALOG_C_BUILDER_MODULE:
+			c_builder_hash = item.hash
+			has_c_builder = true
+		case CATALOG_C_COMPILER_MODULE:
 			c_compiler_hash = item.hash
 			has_c_compiler = true
-		} else if item.name == CATALOG_ASSEMBLER_MODULE {
+		case CATALOG_ASSEMBLER_MODULE:
 			assemble_hash = item.hash
 			has_assemble = true
+		case CATALOG_HOST_MODULE:
+			host_hash = item.hash
+			has_host = true
 		}
 	}
 
+	if !has_c_builder {
+		return "", fmt.tprintf("the boot image does not hold the module %s, which catalog.c.module needs", CATALOG_C_BUILDER_MODULE)
+	}
 	if !has_c_compiler {
 		return "", fmt.tprintf("the boot image does not hold the module %s, which catalog.c.module needs", CATALOG_C_COMPILER_MODULE)
 	}
 	if !has_assemble {
 		return "", fmt.tprintf("the boot image does not hold the module %s, which catalog.c.module needs", CATALOG_ASSEMBLER_MODULE)
+	}
+	if !has_host {
+		return "", fmt.tprintf("the boot image does not hold the module %s, which catalog.c.module needs", CATALOG_HOST_MODULE)
 	}
 
 	out := strings.builder_make(context.temp_allocator)
@@ -136,13 +155,18 @@ system_catalog_of_modules :: proc(modules: []Module_Hash, release_number: string
 		fmt.sbprintf(&out, "    %s = module(blake3:%s),\n", item.name, hash_as_hexadecimal(item.hash))
 	}
 	strings.write_string(&out, "  },\n")
+	c_builder_hex := hash_as_hexadecimal(c_builder_hash)
 	c_compiler_hex := hash_as_hexadecimal(c_compiler_hash)
 	assemble_hex := hash_as_hexadecimal(assemble_hash)
+	host_hex := hash_as_hexadecimal(host_hash)
 	strings.write_string(&out, "  c = {\n")
+	fmt.sbprintf(&out, "    builder = module(blake3:%s),\n", c_builder_hex)
 	fmt.sbprintf(&out, "    compiler = module(blake3:%s),\n", c_compiler_hex)
 	fmt.sbprintf(&out, "    assembler = module(blake3:%s),\n", assemble_hex)
-	fmt.sbprintf(&out, "    module = (path) => recipe(module(blake3:%s), {{\n", c_compiler_hex)
+	fmt.sbprintf(&out, "    module = (path) => recipe(module(blake3:%s), {{\n", c_builder_hex)
 	fmt.sbprintf(&out, "      assembler = module(blake3:%s),\n", assemble_hex)
+	fmt.sbprintf(&out, "      compiler = module(blake3:%s),\n", c_compiler_hex)
+	fmt.sbprintf(&out, "      host = module(blake3:%s),\n", host_hex)
 	strings.write_string(&out, "      path = path,\n")
 	strings.write_string(&out, "      source = here(),\n")
 	strings.write_string(&out, "    }),\n")

@@ -118,4 +118,65 @@ put_object_quota_and_windows :: proc(t: ^testing.T) {
 	testing.expect_value(t, tree_refusal, pr.Recipe_Refusal.None)
 	name := pr.blob_object_name(tree)
 	testing.expect(t, pr.memory_private_store_find(store, pr.private_object_name_text(&name)) != nil)
+	// Unified layout: content-addressed objects live under their exact 64-hex hash.
+	testing.expect_value(t, len(pr.private_object_name_text(&name)), 2 * blake3.HASH_SIZE)
+	parsed, parsed_ok := pr.hash_of_blob_object_name(pr.private_object_name_text(&name))
+	testing.expect(t, parsed_ok && parsed == tree, "64-hex name round-trips to exact tree hash")
+}
+
+// put_memory_preflight and put_memory_commit enforce per-principal byte quota
+// (PUT_BYTES_PER_PRINCIPAL_MOST), object count quota, kind/size edges, and the
+// 75 % RETENTION_PERCENT store guard. Refused calls change nothing.
+@(test)
+put_memory_byte_quota_and_retention_guard :: proc(t: ^testing.T) {
+	state := new(Recipes_State)
+	defer free(state)
+	store := recipes_test_state_init(state)
+	defer free(store)
+	ledger := new(Put_Ledger)
+	defer free(ledger)
+
+	// Refusal edges: bad kind, 0 size, > PUT_MEMORY_BYTES_MOST, Tree > MAX_ENCODED_TREE_BYTES, bad principal.
+	_, ref_kind := put_memory_preflight(state, ledger, 1, NOW, 0, 16)
+	testing.expect_value(t, ref_kind, pr.Recipe_Refusal.Bad_Input_Kind)
+	_, ref_zero := put_memory_preflight(state, ledger, 1, NOW, 1, 0)
+	testing.expect_value(t, ref_zero, pr.Recipe_Refusal.Malformed_Output)
+	_, ref_huge := put_memory_preflight(state, ledger, 1, NOW, 1, PUT_MEMORY_BYTES_MOST + 1)
+	testing.expect_value(t, ref_huge, pr.Recipe_Refusal.Arguments_Too_Large)
+	_, ref_tree := put_memory_preflight(state, ledger, 1, NOW, 2, u64(tree_hash.MAX_ENCODED_TREE_BYTES) + 1)
+	testing.expect_value(t, ref_tree, pr.Recipe_Refusal.Arguments_Too_Large)
+	_, ref_principal := put_memory_preflight(state, ledger, max(u64), NOW, 1, 16)
+	testing.expect_value(t, ref_principal, pr.Recipe_Refusal.Bad_Head_Value)
+
+	// Per-principal byte quota: 32 MiB + 32 MiB succeeds; 1 byte more is refused with Put_Quota_Reached.
+	half := PUT_BYTES_PER_PRINCIPAL_MOST / 2
+	kind1, r1 := put_memory_preflight(state, ledger, 3, NOW, 1, half)
+	testing.expect_value(t, r1, pr.Recipe_Refusal.None)
+	testing.expect_value(t, int(kind1), 1)
+	testing.expect_value(t, put_memory_commit(ledger, 3, NOW, blake3.hash([]u8{1}), half), pr.Recipe_Refusal.None)
+
+	_, r2 := put_memory_preflight(state, ledger, 3, NOW, 1, half)
+	testing.expect_value(t, r2, pr.Recipe_Refusal.None)
+	testing.expect_value(t, put_memory_commit(ledger, 3, NOW, blake3.hash([]u8{2}), half), pr.Recipe_Refusal.None)
+
+	_, r_over := put_memory_preflight(state, ledger, 3, NOW, 1, 1)
+	testing.expect_value(t, r_over, pr.Recipe_Refusal.Put_Quota_Reached)
+	// Another principal still has its own byte quota.
+	_, r_other := put_memory_preflight(state, ledger, 4, NOW, 1, 1024)
+	testing.expect_value(t, r_other, pr.Recipe_Refusal.None)
+
+	// 75 % RETENTION_PERCENT store guard: a store of 100 blocks allows at most 75 blocks.
+	// Write a 280 KiB input blob (70 + 1 = 71 blocks, no removable realisations).
+	// A 12 KiB put (3 + 2 = 5 blocks: 71 + 5 = 76 > 75) is refused with Store_Full;
+	// an 8 KiB put (2 + 2 = 4 blocks: 71 + 4 = 75 <= 75) fits!
+	large := Large_Store{block_limit = 100}
+	state_init(state, large_store_port(&large))
+	filler := make([]u8, 70 * 4096, context.temp_allocator)
+	testing.expect_value(t, pr.private_store_write(&state.store, "filler", filler), pr.Private_Store_Status.Ok)
+	_, r_full := put_memory_preflight(state, ledger, 4, NOW, 1, 12 * 1024)
+	testing.expect_value(t, r_full, pr.Recipe_Refusal.Store_Full)
+	_, r_inline_full := put_object(state, ledger, 4, NOW, 1, make([]u8, 12 * 1024, context.temp_allocator))
+	testing.expect_value(t, r_inline_full, pr.Recipe_Refusal.Store_Full)
+	_, r_fits := put_memory_preflight(state, ledger, 4, NOW, 1, 8 * 1024)
+	testing.expect_value(t, r_fits, pr.Recipe_Refusal.None)
 }

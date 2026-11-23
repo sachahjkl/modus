@@ -177,3 +177,10 @@ C_Build_Failed :: struct {
 	error_kind:  u64,
 	error_value: i64,
 }
+
+// The QUIC remote object cache was configured with a pinned server public key.
+@(log_fact = "recipes: remote QUIC object cache configured on UDP port {port}, server key {server_key}")
+Remote_Cache_Configured :: struct {
+	port:       u64,
+	server_key: value_kinds.Hash_Field,
+}

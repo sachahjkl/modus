@@ -23,9 +23,10 @@ RETENTION_DEPTH_MOST :: 16
 // The names of one page of a list of the store.
 RETENTION_PAGE_NAMES :: 64
 
-// The bytes of a hash that a name of the store holds (its first 52
-// hexadecimal digits): two objects whose hashes share them share a name.
-RETENTION_NAME_HASH_BYTES :: pr.REALISATION_NAME_HASH_DIGITS / 2
+// The bytes of a hash that a name of the store holds: all 32 bytes (64
+// lowercase hexadecimal digits), matching storage.freeze_tree and
+// plans_recipes.blob_object_name.
+RETENTION_NAME_HASH_BYTES :: blake3.HASH_SIZE
 
 // Why a pass removed nothing.
 Retention_Refusal :: enum u8 {
@@ -224,28 +225,16 @@ retention_mark_recipe :: proc "contextless" (workspace: ^Retention_Workspace, po
 	return .None
 }
 
-// retention_name_key gives the hash bytes that a name blob_<digits> holds.
+// retention_name_key gives the full 32-byte hash that a 64-hex content-addressed
+// object name holds. Prefixed entries (realisation_*, recipe_*) and temporary
+// directories (build) do not match.
 @(private = "file")
 retention_name_key :: proc "contextless" (text: string) -> (key: [RETENTION_NAME_HASH_BYTES]u8, ok: bool) {
-	PREFIX :: "blob_"
-	if len(text) != len(PREFIX) + 2 * RETENTION_NAME_HASH_BYTES || text[:len(PREFIX)] != PREFIX {
+	hash, parsed := pr.hash_of_blob_object_name(text)
+	if !parsed {
 		return {}, false
 	}
-	digit :: proc "contextless" (value: u8) -> (number: u8, ok: bool) {
-		switch value {
-		case '0' ..= '9':
-			return value - '0', true
-		case 'a' ..= 'f':
-			return value - 'a' + 10, true
-		}
-		return 0, false
-	}
-	for index in 0 ..< RETENTION_NAME_HASH_BYTES {
-		high := digit(text[len(PREFIX) + 2 * index]) or_return
-		low := digit(text[len(PREFIX) + 2 * index + 1]) or_return
-		key[index] = high << 4 | low
-	}
-	return key, true
+	return hash, true
 }
 
 // retention_collect runs one pass over the private store of state: it

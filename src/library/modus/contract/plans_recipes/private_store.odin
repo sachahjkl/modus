@@ -52,14 +52,15 @@ Private_Store_Status :: enum u8 {
 // process passes an object larger than one call in ranges
 // (storage_port/large_objects.odin), so a caller never cuts an object.
 Private_Store_Port :: struct {
-	user:       rawptr,
-	read:       proc "contextless" (user: rawptr, name: string, into: []u8) -> (count: int, status: Private_Store_Status),
-	write:      proc "contextless" (user: rawptr, name: string, data: []u8) -> Private_Store_Status,
-	size:       proc "contextless" (user: rawptr, name: string) -> (bytes: u64, status: Private_Store_Status),
-	read_range: proc "contextless" (user: rawptr, name: string, offset: u64, into: []u8) -> (count: int, status: Private_Store_Status),
-	remove:     proc "contextless" (user: rawptr, name: string) -> Private_Store_Status,
-	list:       proc "contextless" (user: rawptr, after: string, rows: []Private_Store_Entry, names: []u8) -> (count: int, status: Private_Store_Status),
-	usage:      proc "contextless" (user: rawptr) -> (blocks: i64, limit: i64, status: Private_Store_Status),
+	user:        rawptr,
+	read:        proc "contextless" (user: rawptr, name: string, into: []u8) -> (count: int, status: Private_Store_Status),
+	write:       proc "contextless" (user: rawptr, name: string, data: []u8) -> Private_Store_Status,
+	write_range: proc "contextless" (user: rawptr, name: string, offset: u64, data: []u8, total_size: u64, final: bool) -> Private_Store_Status,
+	size:        proc "contextless" (user: rawptr, name: string) -> (bytes: u64, status: Private_Store_Status),
+	read_range:  proc "contextless" (user: rawptr, name: string, offset: u64, into: []u8) -> (count: int, status: Private_Store_Status),
+	remove:      proc "contextless" (user: rawptr, name: string) -> Private_Store_Status,
+	list:        proc "contextless" (user: rawptr, after: string, rows: []Private_Store_Entry, names: []u8) -> (count: int, status: Private_Store_Status),
+	usage:       proc "contextless" (user: rawptr) -> (blocks: i64, limit: i64, status: Private_Store_Status),
 }
 
 // One entry of a page of the listing of a private store: its name is
@@ -165,6 +166,28 @@ private_store_write :: proc "contextless" (port: ^Private_Store_Port, name: stri
 	return port.write(port.user, name, data)
 }
 
+// private_store_write_range writes a frame of a streamed object at offset.
+// When final is true, the object size is set to total_size and committed.
+private_store_write_range :: proc "contextless" (
+	port: ^Private_Store_Port,
+	name: string,
+	offset: u64,
+	data: []u8,
+	total_size: u64,
+	final: bool,
+) -> Private_Store_Status {
+	if port == nil {
+		return .Failed
+	}
+	if port.write_range != nil {
+		return port.write_range(port.user, name, offset, data, total_size, final)
+	}
+	if offset == 0 && final && u64(len(data)) == total_size && port.write != nil {
+		return port.write(port.user, name, data)
+	}
+	return .Failed
+}
+
 // The objects and the bytes of each object of a memory store: enough
 // objects for a whole audit space of the collector in its slots, its index
 // and its maps (a test reads its first record after thousands of others).
@@ -222,6 +245,7 @@ memory_private_store_port :: proc "contextless" (store: ^Memory_Private_Store) -
 		user = store,
 		read = memory_private_store_read,
 		write = memory_private_store_write,
+		write_range = memory_private_store_write_range,
 		size = memory_private_store_size,
 		read_range = memory_private_store_read_range,
 		remove = memory_private_store_remove,
@@ -294,6 +318,68 @@ memory_private_store_write :: proc "contextless" (user: rawptr, name: string, da
 	}
 	object.length = len(data)
 	object.generation = i64(store.writes)
+	return .Ok
+}
+
+@(private = "file")
+memory_private_store_write_range :: proc "contextless" (
+	user: rawptr,
+	name: string,
+	offset: u64,
+	data: []u8,
+	total_size: u64,
+	final: bool,
+) -> Private_Store_Status {
+	store := (^Memory_Private_Store)(user)
+	if store.writes_allowed >= 0 && store.writes >= store.writes_allowed {
+		return .Failed
+	}
+	if len(name) == 0 || len(name) > MEMORY_PRIVATE_STORE_NAME_BYTES {
+		return .Failed
+	}
+	if offset > total_size || u64(len(data)) > total_size - offset {
+		return .Failed
+	}
+	object := memory_private_store_find(store, name)
+	if offset == 0 {
+		in_large := total_size > MEMORY_PRIVATE_STORE_OBJECT_BYTES
+		if in_large && total_size > u64(len(store.large_bytes) - store.large_used) {
+			return .Failed
+		}
+		if object == nil {
+			for &candidate in store.objects {
+				if !candidate.used {
+					object = &candidate
+					break
+				}
+			}
+		}
+		if object == nil {
+			return .Failed
+		}
+		object.used = true
+		copy(object.name[:], name)
+		object.name_length = len(name)
+		object.in_large = in_large
+		if in_large {
+			object.large_start = store.large_used
+			store.large_used += int(total_size)
+		} else {
+			object.large_start = 0
+		}
+		object.length = int(total_size)
+	}
+	if object == nil || u64(object.length) != total_size {
+		return .Failed
+	}
+	if len(data) > 0 {
+		dst := memory_private_object_bytes(store, object)
+		copy(dst[offset:][:len(data)], data)
+	}
+	if final {
+		store.writes += 1
+		object.generation = i64(store.writes)
+	}
 	return .Ok
 }
 

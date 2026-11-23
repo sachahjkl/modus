@@ -1100,6 +1100,21 @@ commands_start :: proc "contextless" () {
 	// 42
 	// ```
 	command("run", {.Text, .Text}, .Integer, "run the module of a project: its export main", run_program, optional_last = true)
+	// Freezes a principal store into canonical content-addressed objects inside
+	// recipes via recipes.put_memory (enforcing principal quotas and the 75%
+	// retention guard) and returns the 64-hex BLAKE3 tree hash for here().
+	command("recipes.ingest_tree", {.Text}, .Text, "ingest a store tree into recipes objects and return its here() hash", recipes_ingest_tree_command)
+	// Ingests a project store, evaluates project.lex outputs.default in a
+	// zero-grant declaration_eval call host, registers the recipe, and builds
+	// or substitutes it through recipes.build_stored.
+	command("recipes.build_project", {.Text, .Text}, .Text, "evaluate project.lex and build or substitute its default output", recipes_build_project_command, optional_last = true)
+	// Queries recipes.realisations() for a 64-hex recipe hash and returns its
+	// output hash, origin, and signer public key.
+	command("recipes.provenance", {.Text}, .Text, "show the realisation provenance of a 64-hex recipe hash", recipes_provenance_command)
+	// Reads a verified built or cached module from recipes (direct blob when
+	// entry is empty, or named entry of a Tree output such as "module"),
+	// validates its module format, and stores it in module_files under nickname.
+	command("recipes.deliver_module", {.Text, .Text, .Text}, .Text, "deliver a verified built or cached module into module_files", recipes_deliver_module_command)
 	debugger_commands_start()
 	tables_start()
 	facts_start() // facts.odin

@@ -10,7 +10,7 @@
 // producer, after it computed that hash again over the kept bytes, and
 // realises the recipe by the mode:
 //
-// - Cache_First: the local store, then each cache, then a builder, then a
+// - Prefer_Cache: the local store, then each cache, then a builder, then a
 //   build on this machine.
 // - Cache_Only: the local store, then each cache; a miss is refused.
 // - Build_Only: a build on this machine only: no realisation of another
@@ -183,7 +183,7 @@ Distributed_Counters :: struct {
 	rounds:                 u64,
 	local_store_hits:       u64,
 	cache_hits:             u64,
-	cache_untrusted_skips:  u64, // Cache_First: a realisation of a signer that the policy does not trust, passed over.
+	cache_untrusted_skips:  u64, // Prefer_Cache: a realisation of a signer that the policy does not trust, passed over.
 	cache_faults:           u64, // A cache gave a bad realisation or withheld its output: it left the run.
 	remote_builds:          u64,
 	local_builds:           u64,
@@ -667,7 +667,7 @@ recipe_realise :: proc "contextless" (builder: ^Distributed_Builder, peer: ^mach
 		return local_realise(builder, policy, index, spec)
 	case .Verify:
 		return verify_realise(builder, peer, policy, index, spec, recipe_hash, now_ms)
-	case .Cache_First, .Cache_Only:
+	case .Prefer_Cache, .Cache_Only:
 	}
 
 	if policy.local_lookup != nil {
@@ -918,7 +918,7 @@ cache_fetch :: proc "contextless" (
 		return false, .None
 	}
 	record, record_refusal := realisation_check(policy, call.reply.result, recipe_hash, kind)
-	if record_refusal == .Untrusted_Realisation && mode == .Cache_First {
+	if record_refusal == .Untrusted_Realisation && mode == .Prefer_Cache {
 		builder.counters.cache_untrusted_skips += 1
 		return false, .None
 	}

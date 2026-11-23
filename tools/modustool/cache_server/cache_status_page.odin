@@ -257,7 +257,7 @@ cache_page_html :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapsh
 	write(&b, "\">object cache</a>)</dd>\n</dl>\n")
 	write(&b, "<p>A plan names this host in its substitution policy:</p>\n<pre><code>substitution = {\n  sources = [\"")
 	escape(&b, page.endpoint)
-	write(&b, "\"],\n  signers = [keys.publisher], // a key from its publisher\n  mode = .Cache_First,\n}</code></pre>\n")
+	write(&b, "\"],\n  signers = [keys.publisher], // a key from its publisher\n  mode = .Prefer_Cache,\n}</code></pre>\n")
 	write(&b, "<p>No machine of modus reads an object cache over the network yet: the cache protocol over QUIC is on the <a href=\"")
 	escape(&b, cache_page_site_link(site_address, site.site_section_page(.Roadmap)))
 	write(&b, "\">roadmap</a>. An object cache of your own runs with the tool of modus:</p>\n")

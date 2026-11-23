@@ -317,6 +317,10 @@ module_builds := [?]Module_Build {
 	// The C compiler: chibicc, ported. The console calls it in a call
 	// host, and gives its text to assemble (src/md/features/c_compiler.md).
 	{name = "c_compiler", source = SYSTEM_MODULE_SOURCES + "c_compiler", category = .Service, image = true, c_source = CHIBICC},
+	// The C builder module implementing modus:contract/builder: compiles a C
+	// source from a recipe's source tree into a validated module using
+	// c_compiler and assemble in zero-grant child call hosts.
+	{name = "c_builder", source = SYSTEM_MODULE_SOURCES + "c_builder", category = .Service, image = true},
 	// The sandboxed declaration evaluator: evaluates .lex files lazily with
 	// zero grants in a call host (src/md/features/declarations.md).
 	{name = "declaration_eval", source = SYSTEM_MODULE_SOURCES + "declaration_eval", category = .Service, image = true},
@@ -397,7 +401,7 @@ module_builds := [?]Module_Build {
 	// Role.Plans, Role.Recipes, and Role.Projects
 	// (src/md/features/declarations.md; src/md/features/recipes.md).
 	{name = "plans", source = SYSTEM_MODULE_SOURCES + "plans", category = .Service, entry = true, image = true},
-	{name = "recipes", source = SYSTEM_MODULE_SOURCES + "recipes", category = .Service, entry = true, image = true},
+	{name = "recipes", source = SYSTEM_MODULE_SOURCES + "recipes", category = .Service, entry = true, imports = {"cryptography"}, image = true},
 	{name = "projects", source = SYSTEM_MODULE_SOURCES + "projects", category = .Service, entry = true, image = true},
 	// The probe module for client-funded work budgets and per-connection work
 	// threads (src/md/features/work_accounting.md).

@@ -425,7 +425,7 @@ distributed_dag_runs_across_builders_and_cache :: proc(t: ^testing.T) {
 	testing.expect_value(t, add_refusal, Distributed_Refusal.None)
 	testing.expect_value(t, index_top, 5)
 
-	policy := world_policy(world, .Cache_First)
+	policy := world_policy(world, .Prefer_Cache)
 	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.None)
 	results := &world.scheduler.results
 
@@ -484,10 +484,10 @@ distributed_cache_refuses_a_tampered_byte_and_an_untrusted_signer :: proc(t: ^te
 	distributed_builder_init(world.scheduler, &world.laptop.peer, pool[:])
 	dag_recipe_add(world.scheduler, &gamma, nil)
 	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.Untrusted_Realisation)
-	// Cache_First passes over it and builds the recipe instead.
+	// Prefer_Cache passes over it and builds the recipe instead.
 	distributed_builder_init(world.scheduler, &world.laptop.peer, pool[:])
 	dag_recipe_add(world.scheduler, &gamma, nil)
-	policy = world_policy(world, .Cache_First)
+	policy = world_policy(world, .Prefer_Cache)
 	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.None)
 	testing.expect_value(t, world.scheduler.results[0].source, Distributed_Source.Remote_Builder)
 	testing.expect_value(t, world.scheduler.counters.cache_untrusted_skips, 1)
@@ -522,7 +522,7 @@ distributed_build_fails_over_when_a_builder_link_breaks :: proc(t: ^testing.T) {
 
 	// B runs the build of alpha, and its link breaks before the answer.
 	world.network.lose_build_of = identity(world.b)
-	policy := world_policy(world, .Cache_First, local = false)
+	policy := world_policy(world, .Prefer_Cache, local = false)
 	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.None)
 	results := &world.scheduler.results
 	testing.expect_value(t, world.b.builds, 1)
@@ -543,7 +543,7 @@ distributed_build_fails_over_when_a_builder_link_breaks :: proc(t: ^testing.T) {
 	distributed_builder_init(world.scheduler, &world.laptop.peer, pool[:])
 	dag_recipe_add(world.scheduler, &alpha, nil)
 	world.network.lose_build_of = identity(world.c)
-	policy = world_policy(world, .Cache_First)
+	policy = world_policy(world, .Prefer_Cache)
 	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.None)
 	testing.expect_value(t, results[0].source, Distributed_Source.Local_Build)
 	testing.expect_value(t, results[0].machine, identity(world.laptop))
@@ -555,7 +555,7 @@ distributed_build_fails_over_when_a_builder_link_breaks :: proc(t: ^testing.T) {
 	distributed_builder_init(world.scheduler, &world.laptop.peer, pool[:])
 	dag_recipe_add(world.scheduler, &alpha, nil)
 	dag_recipe_add(world.scheduler, &join, {{producer = 0, input_index = 0}})
-	policy = world_policy(world, .Cache_First, local = false)
+	policy = world_policy(world, .Prefer_Cache, local = false)
 	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.No_Builder)
 	testing.expect_value(t, results[1].refusal, Distributed_Refusal.Dependency_Failed)
 	testing.expect(t, dag_output(world.scheduler, 1) == nil)
@@ -703,7 +703,7 @@ distributed_pool_refuses_unpaired_and_ungranted_machines :: proc(t: ^testing.T) 
 	testing.expect_value(t, refusal, Distributed_Refusal.None)
 	alpha := spec_make("alpha", .Blob, {"source"}, 1)
 	dag_recipe_add(scheduler, &alpha, nil)
-	policy := world_policy(world, .Cache_First, local = false)
+	policy := world_policy(world, .Prefer_Cache, local = false)
 	testing.expect_value(t, distributed_build(scheduler, peer, &policy, 100_000), Distributed_Refusal.None)
 	testing.expect_value(t, world.b.builds, 0)
 	testing.expect_value(t, scheduler.results[0].machine, identity(world.c))
@@ -746,7 +746,7 @@ distributed_graph_refuses_each_bad_edge :: proc(t: ^testing.T) {
 	tree_index, _ := dag_recipe_add(scheduler, &tree, nil)
 	wrong_kind := spec_make("wrong", .Blob, {"tree"}, 8)
 	dag_recipe_add(scheduler, &wrong_kind, {{producer = u32(tree_index), input_index = 0}})
-	policy := world_policy(world, .Cache_First)
+	policy := world_policy(world, .Prefer_Cache)
 	testing.expect_value(t, distributed_build(scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.Bad_Dependency_Input)
 	testing.expect_value(t, scheduler.results[3].refusal, Distributed_Refusal.Bad_Dependency_Input)
 	testing.expect_value(t, scheduler.results[1].phase, Dag_Phase.Done)
@@ -818,7 +818,7 @@ distributed_graph_refuses_bad_counts_and_checks_the_local_store :: proc(t: ^test
 	output_hash, _ := pr.recipe_hash_output(.Blob, local_store_fixture.payload[:local_store_fixture.length])
 	local_store_fixture.record = object_cache.Realisation_Record{recipe_hash = sandbox.recipe_hash, output_hash = output_hash, output_kind = .Blob}
 	dag_recipe_add(world.scheduler, &alpha, nil)
-	policy := world_policy(world, .Cache_First, local = false)
+	policy := world_policy(world, .Prefer_Cache, local = false)
 	policy.local_lookup = fixture_lookup
 	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.None)
 	testing.expect_value(t, world.scheduler.results[0].source, Distributed_Source.Local_Store)
@@ -889,7 +889,7 @@ remote_build_arguments_cross_whole_and_refuse_damage :: proc(t: ^testing.T) {
 	large_leaf := spec_make("large", .Blob, {"source"}, 1)
 	large_leaf.arguments_length = machine_wire.ROLE_ARGUMENT_LIMIT
 	dag_recipe_add(world.scheduler, &large_leaf, nil)
-	policy := world_policy(world, .Cache_First)
+	policy := world_policy(world, .Prefer_Cache)
 	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.None)
 	testing.expect_value(t, world.scheduler.results[0].source, Distributed_Source.Local_Build)
 
@@ -929,7 +929,7 @@ distributed_cache_first_skips_a_faulty_cache_peer :: proc(t: ^testing.T) {
 	world.d.host.publish = nil
 	distributed_builder_init(world.scheduler, &world.laptop.peer, pool[:])
 	dag_recipe_add(world.scheduler, &gamma, nil)
-	policy := world_policy(world, .Cache_First, local = false)
+	policy := world_policy(world, .Prefer_Cache, local = false)
 	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.None)
 	testing.expect_value(t, world.scheduler.results[0].source, Distributed_Source.Remote_Builder)
 	testing.expect_value(t, world.scheduler.counters.cache_faults, 1)
@@ -953,7 +953,7 @@ distributed_cache_first_skips_a_faulty_cache_peer :: proc(t: ^testing.T) {
 		local_builds := world.local_builds
 		distributed_builder_init(world.scheduler, &world.laptop.peer, only_cache[:])
 		dag_recipe_add(world.scheduler, &gamma, nil)
-		policy = world_policy(world, .Cache_First)
+		policy = world_policy(world, .Prefer_Cache)
 		testing.expectf(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000) == .None, "fault %d stopped the build", fault)
 		testing.expect_value(t, world.scheduler.results[0].source, Distributed_Source.Local_Build)
 		testing.expect_value(t, world.local_builds, local_builds + 1)

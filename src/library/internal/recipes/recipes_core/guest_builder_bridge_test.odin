@@ -414,7 +414,7 @@ guest_builder_bridge_builds_and_keeps_the_realisation :: proc(t: ^testing.T) {
 	testing.expect_value(t, test.fake.last_tree, test.expected)
 	slot, found := query_provenance(test.state, result.recipe_hash)
 	testing.expect(t, found && slot.origin == .Local_Build && slot.record.output_hash == test.expected)
-	again := build_with_builders(test.state, &test.spec, .Cache_First, test.workspace)
+	again := build_with_builders(test.state, &test.spec, .Prefer_Cache, test.workspace)
 	testing.expect_value(t, again.outcome, pr.Recipe_Build_Outcome.From_Cache)
 	testing.expect_value(t, again.output_hash, test.expected)
 	testing.expect_value(t, test.fake.runs, 1)

@@ -609,7 +609,7 @@ declaration_failure_result :: proc "contextless" (ws: ^Declaration_Workspace) ->
 @(private)
 is_known_effect_command :: proc "contextless" (name: string) -> bool {
 	switch name {
-	case "start", "stop", "shutdown", "connect", "load", "isolate", "isolate_memory", "allow", "revoke", "replace", "exit", "clear", "edit", "plans.apply", "plans.rollback", "plans.difference", "projects.update", "projects.enter", "projects.inputs", "recipes.build", "recipes.provenance", "settings.set", "collector.verify", "collector.records", "collector.spaces", "collector.end_space":
+	case "start", "stop", "shutdown", "connect", "load", "isolate", "isolate_memory", "allow", "revoke", "replace", "exit", "clear", "edit", "plans.apply", "plans.rollback", "plans.difference", "projects.update", "projects.enter", "projects.inputs", "recipes.build", "recipes.build_project", "recipes.ingest_tree", "recipes.deliver_module", "recipes.provenance", "settings.set", "collector.verify", "collector.records", "collector.spaces", "collector.end_space":
 		return true
 	}
 	return false

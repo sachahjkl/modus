@@ -228,7 +228,7 @@ cache_client_answer_outcome :: proc(request_kind: object_cache.Cache_Request_Kin
 		// Only a get can find nothing: a Has or a put answered Not_Found is
 		// an answer that the protocol does not give.
 		switch request_kind {
-		case .Get_Object, .Get_Realisation, .Get_Release_Pointer:
+		case .Get_Object, .Get_Realisation, .Get_Release_Pointer, .Get_References:
 			return .Not_Found
 		case .Has, .Put_Object, .Put_Object_Frame, .Put_Realisation, .Put_Release_Pointer:
 			return .Damaged_Answer
@@ -238,7 +238,7 @@ cache_client_answer_outcome :: proc(request_kind: object_cache.Cache_Request_Kin
 		switch request_kind {
 		case .Get_Object:
 			return .Busy
-		case .Has, .Get_Realisation, .Get_Release_Pointer, .Put_Object, .Put_Object_Frame, .Put_Realisation, .Put_Release_Pointer:
+		case .Has, .Get_Realisation, .Get_Release_Pointer, .Get_References, .Put_Object, .Put_Object_Frame, .Put_Realisation, .Put_Release_Pointer:
 			return .Damaged_Answer
 		}
 		return .Damaged_Answer
@@ -246,7 +246,7 @@ cache_client_answer_outcome :: proc(request_kind: object_cache.Cache_Request_Kin
 		switch request_kind {
 		case .Get_Object:
 			return .Out_Of_Range
-		case .Has, .Get_Realisation, .Get_Release_Pointer, .Put_Object, .Put_Object_Frame, .Put_Realisation, .Put_Release_Pointer:
+		case .Has, .Get_Realisation, .Get_Release_Pointer, .Get_References, .Put_Object, .Put_Object_Frame, .Put_Realisation, .Put_Release_Pointer:
 			return .Damaged_Answer
 		}
 		return .Damaged_Answer

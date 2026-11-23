@@ -258,7 +258,7 @@ Three separated services hold least authority (`src/library/modus/contract/plans
   - `plans.rollback()` shows the difference back to the previous applied plan generation on the trusted display and gives a ticket; `plans.rollback_poll(ticket)` selects that generation, without writing a new record, once the principal accepts. `plans.rollback(n)` selects generation `n`.
 - **Recipes (`recipes` service):**
   - `recipes.build(target)` realises `outputs.default` (or a named output such as `recipes.build(kernel.tools)`).
-  - Substitution mode is passed as a named argument: `recipes.build(kernel, substitution = { mode = .Verify })`. Modes are `.Cache_First`, `.Build_Only`, `.Cache_Only`, and `.Verify` (builds locally and verifies byte-for-byte equality with a signed cache realisation).
+  - Substitution mode is passed as a named argument: `recipes.build(kernel, substitution = { mode = .Verify })`. Modes are `.Prefer_Cache`, `.Build_Only`, `.Cache_Only`, and `.Verify` (builds locally and verifies byte-for-byte equality with a signed cache realisation).
   - Sandboxed builders receive read-only inputs, an empty output store, a frozen date, a deterministic seed equal to `recipe_hash`, zero network access, and no root ring.
   - `recipes.provenance(target)` reports whether an output came from a local build or a signed cache realisation and names its signer.
 - **Projects (`projects` service):**

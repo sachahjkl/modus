@@ -43,7 +43,7 @@ a_realisation_in_the_store_answers_a_build_after_a_start_with_no_rebuild :: proc
 	store_test_spec(spec)
 	recipe, _ := register_recipe(registry, spec)
 
-	first := build_registered(state, registry, recipe, .Cache_First)
+	first := build_registered(state, registry, recipe, .Prefer_Cache)
 	testing.expect_value(t, first.outcome, pr.Recipe_Build_Outcome.Built_Locally)
 	name := pr.realisation_object_name(recipe)
 	testing.expect(t, pr.memory_private_store_find(store, pr.private_object_name_text(&name)) != nil, "the build wrote its realisation")
@@ -52,7 +52,7 @@ a_realisation_in_the_store_answers_a_build_after_a_start_with_no_rebuild :: proc
 	// A service that starts again has an empty memory and the same store: the
 	// build takes the realisation from the store and runs no builder.
 	state_init(state, pr.memory_private_store_port(store))
-	for mode in ([?]pr.Build_Mode{.Cache_First, .Cache_Only}) {
+	for mode in ([?]pr.Build_Mode{.Prefer_Cache, .Cache_Only}) {
 		again := build_registered(state, registry, recipe, mode)
 		testing.expect_value(t, again.outcome, pr.Recipe_Build_Outcome.From_Cache)
 		testing.expect(t, again.output_hash == first.output_hash, "the store gives the output of the build")
@@ -110,7 +110,7 @@ a_damaged_realisation_in_the_store_is_refused_and_builds_nothing :: proc(t: ^tes
 	spec := new(pr.Recipe_Spec, context.temp_allocator)
 	store_test_spec(spec)
 	recipe, _ := register_recipe(registry, spec)
-	_ = build_registered(state, registry, recipe, .Cache_First)
+	_ = build_registered(state, registry, recipe, .Prefer_Cache)
 	name := pr.realisation_object_name(recipe)
 	object := pr.memory_private_store_find(store, pr.private_object_name_text(&name))
 	saved := object^
@@ -135,7 +135,7 @@ a_damaged_realisation_in_the_store_is_refused_and_builds_nothing :: proc(t: ^tes
 			object.length = damage.length
 		}
 		state_init(state, pr.memory_private_store_port(store))
-		result := build_registered(state, registry, recipe, .Cache_First)
+		result := build_registered(state, registry, recipe, .Prefer_Cache)
 		testing.expectf(t, result.outcome == .Refused && result.refusal == .Store_Damaged, "damage %d: %v %v", index, result.outcome, result.refusal)
 		testing.expect_value(t, state.counters.local_builds, u64(0))
 		_, found := query_provenance(state, recipe)
@@ -144,7 +144,7 @@ a_damaged_realisation_in_the_store_is_refused_and_builds_nothing :: proc(t: ^tes
 	// The store whole again: the realisation reads.
 	object^ = saved
 	state_init(state, pr.memory_private_store_port(store))
-	whole := build_registered(state, registry, recipe, .Cache_First)
+	whole := build_registered(state, registry, recipe, .Prefer_Cache)
 	testing.expect_value(t, whole.outcome, pr.Recipe_Build_Outcome.From_Cache)
 }
 
@@ -162,7 +162,7 @@ an_absent_or_damaged_output_builds_again :: proc(t: ^testing.T) {
 	spec := new(pr.Recipe_Spec, context.temp_allocator)
 	store_test_spec(spec)
 	recipe, _ := register_recipe(registry, spec)
-	first := build_registered(state, registry, recipe, .Cache_First)
+	first := build_registered(state, registry, recipe, .Prefer_Cache)
 	output_name := pr.blob_object_name(first.output_hash)
 	head_name := pr.realisation_object_name(recipe)
 	head := pr.memory_private_store_find(store, pr.private_object_name_text(&head_name))
@@ -196,11 +196,11 @@ an_absent_or_damaged_output_builds_again :: proc(t: ^testing.T) {
 		state_init(state, pr.memory_private_store_port(store))
 		only := build_registered(state, registry, recipe, .Cache_Only)
 		testing.expectf(t, only.refusal == .Cache_Miss, "%v: Cache_Only gives %v", damage, only.refusal)
-		again := build_registered(state, registry, recipe, .Cache_First)
+		again := build_registered(state, registry, recipe, .Prefer_Cache)
 		testing.expectf(t, again.outcome == .Built_Locally && again.output_hash == first.output_hash, "%v: %v %v", damage, again.outcome, again.refusal)
 		testing.expect_value(t, state.counters.local_builds, u64(1))
 		state_init(state, pr.memory_private_store_port(store))
-		read := build_registered(state, registry, recipe, .Cache_First)
+		read := build_registered(state, registry, recipe, .Prefer_Cache)
 		testing.expectf(t, read.outcome == .From_Cache, "%v: the build wrote the store whole again: %v", damage, read.outcome)
 	}
 }
@@ -217,7 +217,7 @@ a_store_that_refuses_the_realisation_records_nothing :: proc(t: ^testing.T) {
 	store_test_spec(spec)
 	recipe, _ := register_recipe(registry, spec)
 	store.writes_allowed = 0
-	refused := build_registered(state, registry, recipe, .Cache_First)
+	refused := build_registered(state, registry, recipe, .Prefer_Cache)
 	testing.expect_value(t, refused.outcome, pr.Recipe_Build_Outcome.Refused)
 	testing.expect_value(t, refused.refusal, pr.Recipe_Refusal.Store_Failed)
 	_, found := query_provenance(state, recipe)
@@ -228,7 +228,7 @@ a_store_that_refuses_the_realisation_records_nothing :: proc(t: ^testing.T) {
 	testing.expect_value(t, only.refusal, pr.Recipe_Refusal.Cache_Miss)
 	// The store takes writes again: the next build records the realisation.
 	store.writes_allowed = -1
-	built := build_registered(state, registry, recipe, .Cache_First)
+	built := build_registered(state, registry, recipe, .Prefer_Cache)
 	testing.expect_value(t, built.outcome, pr.Recipe_Build_Outcome.Built_Locally)
 	testing.expect_value(t, realisation_rows(state, nil), 1)
 }

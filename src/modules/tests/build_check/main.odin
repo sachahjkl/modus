@@ -210,7 +210,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wrong("the act make was not built; the refusal", u64(refusal))
 	}
 	system.log_fact(.Info, Built{outcome = u64(row.outcome_word), output_head = head_of(row.output_hash)}, "a builder made an output")
-	again, again_refusal := build(made, .Cache_First)
+	again, again_refusal := build(made, .Prefer_Cache)
 	if again_refusal != .None || again.outcome_word != i64(pr.Recipe_Build_Outcome.From_Cache) || again.output_hash != row.output_hash {
 		wrong("the second build of make did not take its realisation; the outcome", u64(again.outcome_word))
 	}

@@ -37,10 +37,10 @@ a_registered_recipe_builds_once_then_comes_from_the_cache :: proc(t: ^testing.T)
 	again, _ := register_recipe(registry, spec)
 	testing.expect(t, again == recipe, "a recipe registered twice keeps one hash")
 
-	first := build_registered(state, registry, recipe, .Cache_First)
+	first := build_registered(state, registry, recipe, .Prefer_Cache)
 	testing.expect_value(t, first.refusal, pr.Recipe_Refusal.None)
 	testing.expect_value(t, first.outcome, pr.Recipe_Build_Outcome.Built_Locally)
-	second := build_registered(state, registry, recipe, .Cache_First)
+	second := build_registered(state, registry, recipe, .Prefer_Cache)
 	testing.expect_value(t, second.outcome, pr.Recipe_Build_Outcome.From_Cache)
 	testing.expect(t, second.output_hash == first.output_hash, "the cache gives the realisation of the build")
 	only := build_registered(state, registry, recipe, .Cache_Only)
@@ -67,7 +67,7 @@ a_build_refuses_unknown_recipes_misses_and_foreign_builders :: proc(t: ^testing.
 	store := recipes_test_state_init(state)
 	defer free(store)
 
-	unknown := build_registered(state, registry, registry_hash(9), .Cache_First)
+	unknown := build_registered(state, registry, registry_hash(9), .Prefer_Cache)
 	testing.expect_value(t, unknown.refusal, pr.Recipe_Refusal.Unknown_Recipe)
 
 	sandboxed_spec := new(pr.Recipe_Spec, context.temp_allocator)
@@ -75,7 +75,7 @@ a_build_refuses_unknown_recipes_misses_and_foreign_builders :: proc(t: ^testing.
 	recipe, _ := register_recipe(registry, sandboxed_spec)
 	miss := build_registered(state, registry, recipe, .Cache_Only)
 	testing.expect_value(t, miss.refusal, pr.Recipe_Refusal.Cache_Miss)
-	sandboxed := build_registered(state, registry, recipe, .Cache_First)
+	sandboxed := build_registered(state, registry, recipe, .Prefer_Cache)
 	testing.expect_value(t, sandboxed.refusal, pr.Recipe_Refusal.Builder_Needs_Sandbox)
 	testing.expect_value(t, state.counters.local_builds, u64(0))
 	testing.expect_value(t, realisation_rows(state, nil), 0)
@@ -116,7 +116,7 @@ the_history_keeps_the_newest_builds :: proc(t: ^testing.T) {
 	store := recipes_test_state_init(state)
 	defer free(store)
 	for _ in 0 ..< MAX_BUILD_HISTORY + 3 {
-		build_registered(state, registry, registry_hash(1), .Cache_First)
+		build_registered(state, registry, registry_hash(1), .Prefer_Cache)
 	}
 	rows: [MAX_BUILD_HISTORY]pr.Recipe_Build_Row
 	testing.expect_value(t, history_rows(registry, rows[:]), MAX_BUILD_HISTORY)

@@ -124,6 +124,7 @@ evaluate :: proc "c" (
 	}
 	bundle_view = nil
 	config := lex_evaluator.Declaration_Config{}
+	catalog_bindings: [1]lex_evaluator.Declaration_Binding
 	if bundle_count > 0 {
 		intrinsics.mem_copy_non_overlapping(&bundle_copy[0], bundle.bytes, int(bundle_count))
 		bundle_view = bundle_copy[:bundle_count]
@@ -132,6 +133,10 @@ evaluate :: proc "c" (
 		}
 		config.loader = lex_evaluator.bundle_loader(&bundle_view)
 		config.here_hash, config.has_here = contract.bundle_here_hash(bundle_view)
+		if catalog_source, has_catalog := contract.bundle_lookup_path(bundle_view, "catalog.lex"); has_catalog {
+			catalog_bindings[0] = {name = "catalog", kind = .Lex_Source, source = catalog_source}
+			config.bindings = catalog_bindings[:]
+		}
 	}
 
 	// The first scale is the one whose share of text holds the source and
