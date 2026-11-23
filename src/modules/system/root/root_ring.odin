@@ -26,7 +26,6 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
-import "modus:contract/start_list"
 import "internal:root/start_policy_rules"
 import "modus:principals"
 import "modus:system"
@@ -240,15 +239,14 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 	// The size of a screen of memory: only from a start policy, only for
 	// the holder of Display, and only on a machine with no screen
 	// (src/md/features/screen_of_memory.md).
-	memory_width, memory_height, memory_ok := root_ring.screen_of_memory_of_word(record.values[6])
-	memory_allowed := .Start_Policy in item.start_grant_set.grants && start_list.root_procedure_of(name) == .Display && no_screen_at_the_start
+	memory_width, memory_height, memory_ok := start_policy_rules.screen_of_memory_of_start(record.values[6], .Start_Policy in item.start_grant_set.grants, name, !no_screen_at_the_start)
 	refusal: [7]u64
 	switch {
 	case !list_ok:
 		refusal = root_ring.word_refusal(command, 2, record.values[4], u64(max(root_ring.Start_Wiring_List)))
 	case !answer_ok:
 		refusal = root_ring.word_refusal(command, 3, record.values[5], u64(max(root_ring.Start_Answer)))
-	case !memory_ok || record.values[6] != 0 && !memory_allowed:
+	case !memory_ok:
 		refusal = root_ring.word_refusal(command, 4, record.values[6], 0)
 	}
 	if refusal != ([7]u64{}) {

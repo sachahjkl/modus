@@ -267,7 +267,7 @@ memory_screen_takes_screens_up_to_8k_within_its_byte_budget :: proc(t: ^testing.
 // takes each member.
 @(test)
 resize_refusal_words_at_their_edges :: proc(t: ^testing.T) {
-	for word in ([?]u64{0, 5, 6, u64(max(u32)), max(u64)}) {
+	for word in ([?]u64{0, u64(max(Resize_Refusal)) + 1, u64(max(Resize_Refusal)) + 2, u64(max(u32)), max(u64)}) {
 		_, ok := resize_refusal_of_word(word)
 		testing.expectf(t, !ok, "the word %d was taken as a cause", word)
 	}
@@ -317,4 +317,37 @@ service_resize_decide_refuses_at_each_edge :: proc(t: ^testing.T) {
 	testing.expect_value(t, service_resize_decide(2560, 1440, 1000, 400, 600), Resize_Refusal.None)
 	testing.expect_value(t, picture_pages(MAX_WIDTH + 1, 1080), 0)
 	testing.expect_value(t, picture_pages(1920, 1080), 2025)
+}
+
+// The least time between two changes: an ask of a viewer and a change of
+// the screen each hold their second, at its edge; 0 is no time yet, and a
+// clock that went back counts as age 0.
+@(test)
+resize_interval_at_its_edges :: proc(t: ^testing.T) {
+	testing.expect_value(t, resize_interval_decide(5000, 0, 0), Resize_Refusal.None)
+	testing.expect_value(t, resize_interval_decide(5000, 4001, 0), Resize_Refusal.Too_Soon)
+	testing.expect_value(t, resize_interval_decide(5000, 4000, 0), Resize_Refusal.None)
+	testing.expect_value(t, resize_interval_decide(5000, 0, 4001), Resize_Refusal.Too_Soon)
+	testing.expect_value(t, resize_interval_decide(5000, 0, 4000), Resize_Refusal.None)
+	testing.expect_value(t, resize_interval_decide(5000, 9000, 0), Resize_Refusal.Too_Soon)
+	testing.expect_value(t, resize_interval_decide(max(u64), max(u64) - RESIZE_INTERVAL_MILLISECONDS, max(u64) - RESIZE_INTERVAL_MILLISECONDS), Resize_Refusal.None)
+}
+
+// The paid size: the largest step that fits and holds the start size; a
+// start size larger than each step that fits keeps the start size.
+@(test)
+paid_size_takes_the_largest_step_that_fits :: proc(t: ^testing.T) {
+	up_to_4k :: proc "contextless" (width, height: u64, data: rawptr) -> bool {return width * height <= 3840 * 2160}
+	none :: proc "contextless" (width, height: u64, data: rawptr) -> bool {return false}
+	all :: proc "contextless" (width, height: u64, data: rawptr) -> bool {return true}
+	width, height := paid_size_of(1920, 1080, up_to_4k, nil)
+	testing.expect(t, width == 3840 && height == 2160)
+	width, height = paid_size_of(1920, 1080, none, nil)
+	testing.expect(t, width == 1920 && height == 1080)
+	width, height = paid_size_of(1920, 1080, all, nil)
+	testing.expect(t, width == 7680 && height == 4320)
+	width, height = paid_size_of(4000, 1080, up_to_4k, nil)
+	testing.expect(t, width == 4000 && height == 1080, "a start size wider than each step that fits got a step")
+	width, height = paid_size_of(320, 240, up_to_4k, nil)
+	testing.expect(t, width == 3840 && height == 2160)
 }

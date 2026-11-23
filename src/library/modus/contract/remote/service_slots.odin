@@ -22,10 +22,25 @@ Service_Connection_End :: enum u8 {
 // the root service.
 SERVICE_CONNECTION_IDLE_MILLISECONDS :: 60_000
 
-// The places of the connection table of the root service that the
-// connections for the rows of the client table take at most: half of it
-// (connection_place_open), so a local caller always finds a place.
-ROOT_PLACES_FOR_CLIENT_ROWS :: 128
+// The services that remote calls: the callable list of its start grant
+// set in the root service (assistant, compositor, date, debugger, inspect,
+// log, manual, monitor, settings, storage).
+CALLABLE_SERVICES :: 10
+
+// The connections to services that remote holds at most: one for each of
+// its clients and each service that it calls.
+SERVICE_CONNECTIONS :: CONNECTION_CAPACITY * CALLABLE_SERVICES
+
+// root_places_for_client_rows gives the places of a connection table of
+// the root service of table_capacity places that the connections for the
+// rows of the client table take at most: half of it
+// (isolated.connection_place_open), so a local caller always finds a place.
+// The root service sizes its table; with 256 places, the clients of remote
+// take 128 connections at most, fewer than SERVICE_CONNECTIONS, and a
+// Connect past them is refused with Full.
+root_places_for_client_rows :: proc "contextless" (table_capacity: int) -> int {
+	return table_capacity / 2
+}
 
 // service_connection_end_of decides for one Ready connection: its grant
 // first, then a call that waits for it, then a client of its row, then its
@@ -67,4 +82,24 @@ refused_slot_reclaimable :: proc "contextless" (slot: Service_Slot_Key, grant_ho
 		}
 	}
 	return true
+}
+
+// disconnects_owed_send sends the Disconnect of each of count places that
+// owes one, in the order of the places, until the root ring takes no more:
+// the places after it wait for the next pass. A pass can end more
+// connections than the ring holds, so a Disconnect is never sent and
+// forgotten: owes says if a place still owes one, and send gives true when
+// the ring took it (the place then owes nothing). sent: the Disconnect
+// records that went in this pass.
+disconnects_owed_send :: proc "contextless" (count: int, owes: proc "contextless" (place: int) -> bool, send: proc "contextless" (place: int) -> bool) -> (sent: int) {
+	for place in 0 ..< count {
+		if !owes(place) {
+			continue
+		}
+		if !send(place) {
+			return
+		}
+		sent += 1
+	}
+	return
 }

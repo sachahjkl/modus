@@ -540,3 +540,39 @@ a_screen_size_refused_at_its_edges :: proc(t: ^testing.T) {
 		testing.expect(t, problem == .None && record.refusal == cause && record.screen_size_refused.width == 2560)
 	}
 }
+
+// Two changes in a row before the viewer took a frame of the size in
+// force: 2560 x 1440, then 1280 x 720, then 1920 x 1080. The border keeps
+// the largest side of each screen; a frame taken before the change keeps
+// the lag; the frame of the size in force ends it.
+@(test)
+a_viewer_that_lags_two_changes_keeps_the_largest_screen :: proc(t: ^testing.T) {
+	lag: Screen_Lag
+	testing.expect_value(t, screen_lag_border(&lag, {1920, 1080}), Screen{1920, 1080})
+	screen_lag_change(&lag, {2560, 1440}, 5)
+	screen_lag_change(&lag, {1280, 720}, 5)
+	testing.expect_value(t, screen_lag_border(&lag, {1920, 1080}), Screen{2560, 1440})
+	screen_lag_taken(&lag, 4)
+	testing.expect(t, lag.lagging, "a viewer frame before the change ended the lag")
+	testing.expect_value(t, screen_lag_border(&lag, {1920, 1080}), Screen{2560, 1440})
+	screen_lag_change(&lag, {1920, 1080}, 6)
+	testing.expect_value(t, screen_lag_border(&lag, {800, 4000}), Screen{2560, 4000})
+	screen_lag_taken(&lag, 5)
+	testing.expect(t, lag.lagging, "a viewer frame of a screen before the last change ended the lag")
+	screen_lag_taken(&lag, 6)
+	testing.expect(t, !lag.lagging)
+	testing.expect_value(t, screen_lag_border(&lag, {800, 600}), Screen{800, 600})
+}
+
+// A change whose copies are refused goes back to the size before before
+// any viewer ends; a refusal of the size before, or of the first face,
+// ends the viewers; copies that hold open the face.
+@(test)
+a_refused_change_goes_back_before_the_viewers_end :: proc(t: ^testing.T) {
+	testing.expect_value(t, screen_change_step(false, false, true), Screen_Change_Step.Go_Back)
+	testing.expect_value(t, screen_change_step(false, true, true), Screen_Change_Step.End_Viewers)
+	testing.expect_value(t, screen_change_step(false, false, false), Screen_Change_Step.End_Viewers)
+	for going_back in ([?]bool{false, true}) {
+		testing.expect_value(t, screen_change_step(true, going_back, true), Screen_Change_Step.Open)
+	}
+}

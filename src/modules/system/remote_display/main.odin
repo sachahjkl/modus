@@ -278,10 +278,10 @@ Viewer :: struct {
 	size_refusal:           protocol.Screen_Size_Refused_Body,
 	size_refusal_waits:     bool,
 	// The screen changed size, and the viewer did not take a viewer frame
-	// of the new size yet: its records are read against the larger of the
-	// two screens (viewer_border_screen).
-	screen_lagging:         bool,
-	screen_lag_serial:      u64, // The first viewer frame of the new size.
+	// of the size in force yet: its records are read against the largest
+	// side of the screens before (viewer_border_screen).
+	screen_lag:             protocol.Screen_Lag,
+	size_asked_at:          u64, // Milliseconds of the machine: its last ask that went on. 0: none.
 }
 viewers: [CAPACITY]Viewer
 
@@ -295,8 +295,18 @@ size_ask_generation: u64
 // is in the middle of a viewer frame (screen_change_apply).
 screen_change_waits: bool
 screen_change: protocol.Screen
-// The screen before the last change, for the records that cross it.
+// The screen before the last change: the size to go back to when the
+// copies of the new size are refused.
 screen_before: protocol.Screen
+// Milliseconds of the machine: the last change of the size. 0: none.
+screen_changed_at: u64
+// The viewer whose ask the compositor took, until the change applies: a
+// change that goes back gives it the refusal.
+screen_change_asker_place := -1
+screen_change_asker_generation: u64
+// The change was refused by the copies of this process: the compositor
+// was asked for screen_before, and its answer opens the face again.
+screen_reverting: bool
 
 // The measure of the viewer frames of a small damage, in the machine.
 small_viewer_frame_bytes: [SMALL_VIEWER_FRAME_SAMPLES]u64
@@ -617,9 +627,7 @@ viewer_damage_add :: proc "contextless" (viewer: ^Viewer, rectangle: interface.R
 // measures.
 viewer_frame_taken :: proc "contextless" (viewer: ^Viewer) {
 	viewer.viewer_frame_step = .None
-	if viewer.screen_lagging && viewer.viewer_frame_serial >= viewer.screen_lag_serial {
-		viewer.screen_lagging = false
-	}
+	protocol.screen_lag_taken(&viewer.screen_lag, viewer.viewer_frame_serial)
 	viewer.frames += 1
 	taken_at := system.nanoseconds()
 	spent := taken_at - min(viewer.viewer_frame_started_at, taken_at)
@@ -1001,6 +1009,23 @@ capture_events :: proc "contextless" () {
 // in force, or with a cause the refusal of the size that it named), or a
 // change of the size of the screen of memory.
 capture_size_event :: proc "contextless" (width, height, refusal_word: u64) {
+	if screen_reverting && capture_state == .Asking {
+		screen_reverting = false
+		back := width == u64(screen_before.width) && height == u64(screen_before.height)
+		if protocol.screen_change_step(refusal_word == 0 && back && capture_size_take(width, height, false), true, true) == .End_Viewers {
+			// No size that this process pays: the viewers end, and the face
+			// of the compositor and its mark end too.
+			if capture_state != .Refused {
+				capture_refuse()
+			}
+			compositor_send({kind = u32(display.Command.Capture_Close)})
+			return
+		}
+		// Back at the size before: each viewer gets its size and the whole
+		// screen again, as at a change.
+		viewers_screen_again()
+		return
+	}
 	if refusal_word != 0 {
 		refusal, known := memory_screen.resize_refusal_of_word(refusal_word)
 		asked := size_ask_in_flight && u64(size_ask_sent.width) == width && u64(size_ask_sent.height) == height
@@ -1019,6 +1044,9 @@ capture_size_event :: proc "contextless" (width, height, refusal_word: u64) {
 	case .Asking:
 		capture_size_take(width, height)
 	case .Open:
+		if size_ask_in_flight && u64(size_ask_sent.width) == width && u64(size_ask_sent.height) == height {
+			screen_change_asker_place, screen_change_asker_generation = size_ask_place, size_ask_generation
+		}
 		size_ask_in_flight = false
 		if width != u64(screen.width) || height != u64(screen.height) {
 			// The compositor gives sizes of its screen, which the border of
@@ -1064,6 +1092,11 @@ screen_asks_work :: proc "contextless" () {
 		if ask.width == screen.width && ask.height == screen.height {
 			continue
 		}
+		now := system.time()
+		if refusal := memory_screen.resize_interval_decide(now, viewer.size_asked_at, screen_changed_at); refusal != .None {
+			viewer_size_refuse(&viewer, ask, refusal)
+			continue
+		}
 		budget, budget_status := system.budget_read()
 		pages_left := budget_status == .Ok ? u64(budget.pages) : 0
 		refusal := memory_screen.service_resize_decide(u64(ask.width), u64(ask.height), copies_pages_of(u64(ask.width), u64(ask.height)), copies_pages_of(u64(screen.width), u64(screen.height)), pages_left)
@@ -1073,6 +1106,7 @@ screen_asks_work :: proc "contextless" () {
 		}
 		compositor_send({kind = u32(display.Command.Screen_Size_Set), values = {0 = u64(ask.width), 1 = u64(ask.height)}})
 		size_ask_in_flight, size_ask_sent, size_ask_place, size_ask_generation = true, ask, place, viewer.generation
+		viewer.size_asked_at = now
 		return
 	}
 }
@@ -1096,15 +1130,30 @@ screen_change_apply :: proc "contextless" () {
 	held_picture = -1
 	capture_memory_release()
 	screen_before = screen
+	screen_changed_at = system.time()
+	asker := screen_change_asker_place
+	screen_change_asker_place = -1
 	capture_state = .Asking
-	capture_size_take(u64(screen_change.width), u64(screen_change.height))
-	if capture_state != .Open {
-		// The new copies were refused: the viewers ended, and the face of
-		// the compositor and its mark end too.
-		compositor_send({kind = u32(display.Command.Capture_Close)})
+	if protocol.screen_change_step(capture_size_take(u64(screen_change.width), u64(screen_change.height), false), false, true) == .Go_Back {
+		// The copies of the new size were refused: the compositor goes back
+		// to the size before, before any viewer ends, and the viewer that
+		// asked gets the cause (capture_size_event takes the answer).
+		screen_reverting = true
+		compositor_send({kind = u32(display.Command.Screen_Size_Set), values = {0 = u64(screen_before.width), 1 = u64(screen_before.height)}})
+		system.log_fact(.Info, Screen_Change_Reverted{width = u64(screen_change.width), height = u64(screen_change.height), back_width = u64(screen_before.width), back_height = u64(screen_before.height)})
+		if asker >= 0 && viewers[asker].bound && viewers[asker].generation == screen_change_asker_generation {
+			viewer_size_refuse(&viewers[asker], {screen_change.width, screen_change.height}, .Service_Budget)
+		}
 		return
 	}
-	changed := u64(0)
+	changed := viewers_screen_again()
+	system.log_fact(.Info, Screen_Changed{width = u64(screen.width), height = u64(screen.height), viewers = changed})
+}
+
+// viewers_screen_again gives each viewer the size of the screen and the
+// whole screen again, after a change, and reads its records against the
+// screens before until it takes a viewer frame of the size in force.
+viewers_screen_again :: proc "contextless" () -> (changed: u64) {
 	for &viewer in viewers {
 		if !viewer.bound {
 			continue
@@ -1112,21 +1161,17 @@ screen_change_apply :: proc "contextless" () {
 		viewer.size_sent = false
 		viewer.damage = {}
 		interface.damage_add(&viewer.damage, {0, 0, int(protocol.SCREEN_WIDTH_LIMIT), int(protocol.SCREEN_HEIGHT_LIMIT)})
-		viewer.screen_lagging = true
-		viewer.screen_lag_serial = viewer.viewer_frame_serial + 1
+		protocol.screen_lag_change(&viewer.screen_lag, screen_before, viewer.viewer_frame_serial + 1)
 		changed += 1
 	}
-	system.log_fact(.Info, Screen_Changed{width = u64(screen.width), height = u64(screen.height), viewers = changed})
+	return
 }
 
 // viewer_border_screen gives the screen that the border reads the records
 // of a viewer against: the screen, or after a change that the viewer did
 // not see yet, the larger of the two screens on each side.
 viewer_border_screen :: proc "contextless" (viewer: ^Viewer) -> protocol.Screen {
-	if !viewer.screen_lagging {
-		return screen
-	}
-	return {max(screen.width, screen_before.width), max(screen.height, screen_before.height)}
+	return protocol.screen_lag_border(&viewer.screen_lag, screen)
 }
 
 // capture_memory_release unmaps and closes the memory of the capture face.
@@ -1178,14 +1223,18 @@ capture_refuse :: proc "contextless" () {
 
 // capture_size_take makes the memory of the capture face for the size of
 // the screen, gives it to the compositor, and makes the copy of the screen.
-capture_size_take :: proc "contextless" (width, height: u64) {
+// refuse: a failure ends the viewers (capture_refuse); else the caller
+// decides, and the state stays Asking. ok: the face is open.
+capture_size_take :: proc "contextless" (width, height: u64, refuse := true) -> (ok: bool) {
 	if capture_state != .Asking {
-		return
+		return false
 	}
 	if width == 0 || height == 0 || width > protocol.SCREEN_WIDTH_LIMIT || height > protocol.SCREEN_HEIGHT_LIMIT {
 		system.log_fact(.Info, Screen_Past_Largest{width = width, height = height})
-		capture_refuse()
-		return
+		if refuse {
+			capture_refuse()
+		}
+		return false
 	}
 	// The copy of the screen and the two pictures have the size of the
 	// screen in force: a screen of 1080p pays for 1080p, and a larger one
@@ -1211,8 +1260,10 @@ capture_size_take :: proc "contextless" (width, height: u64) {
 	if status != .Ok {
 		mirror_release()
 		system.log_fact(.Info, Capture_Memory_Refused{width = width, height = height, pages = value_kinds.Size_In_Pages(pages + copy_pages)})
-		capture_refuse()
-		return
+		if refuse {
+			capture_refuse()
+		}
+		return false
 	}
 	address, map_status := system.memory_map(capture_memory, {})
 	given, give_status := system.give(window_memory, capture_memory, {.Read, .Write})
@@ -1224,8 +1275,10 @@ capture_size_take :: proc "contextless" (width, height: u64) {
 		system.close(capture_memory)
 		capture_memory = 0
 		mirror_release()
-		capture_refuse()
-		return
+		if refuse {
+			capture_refuse()
+		}
+		return false
 	}
 	screen = {u32(width), u32(height)}
 	capture_mapped = address
@@ -1240,6 +1293,7 @@ capture_size_take :: proc "contextless" (width, height: u64) {
 	capture_state = .Open
 	system.log_fact(.Info, Capture_Face_Opened{width = width, height = height})
 	viewers_tell()
+	return true
 }
 
 // capture_apply copies the picture that the compositor wrote into the copy
@@ -1336,7 +1390,7 @@ capture_follow :: proc "contextless" () {
 		if bound == 0 {
 			compositor_send({kind = u32(display.Command.Capture_Close)})
 			capture_memory_release()
-			screen_change_waits, size_ask_in_flight = false, false
+			screen_change_waits, size_ask_in_flight, screen_reverting = false, false, false
 			held_picture = -1
 			mirror_release()
 			capture_state = .Closed

@@ -225,6 +225,16 @@ Capture_Size_Refusal_Refused :: struct {
 	refusal_word: u64,
 }
 
+// The copies of a new size of the screen were refused: the compositor is
+// asked for the size before, and no viewer ends.
+@(log_fact = "remote_display: no copies of the screen of {width} x {height}: the screen goes back to {back_width} x {back_height}")
+Screen_Change_Reverted :: struct {
+	width:       u64,
+	height:      u64,
+	back_width:  u64,
+	back_height: u64,
+}
+
 // The screen of memory changed size: each viewer receives the new size
 // and the whole screen.
 @(log_fact = "remote_display: the screen is now {width} x {height}: {viewers} viewers receive its size and the whole screen")

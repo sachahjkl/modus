@@ -34,7 +34,7 @@ The capture face copies from the frame, as with a screen of a device ([remote_di
 
 A viewer with the input sends `Screen_Size_Ask` with a width and a height (protocol version 3). The border of the record refuses a size outside the bounds of the contract and ends the connection with `Bad_Record`, as for each field out of its range. A viewer with the view alone that asks ends with `Input_Not_Allowed`: a size changes the desktop of the principal, as a key does.
 
-`remote_display` holds one ask in flight. A new ask replaces an ask that waits; the last one holds. It first checks its own budget: the pages left, and the pages of its copies of today, must pay its copies at the new size. Else it answers that viewer with `Screen_Size_Refused` and the cause `Service_Budget`. Then it sends the size to the compositor (`Screen_Size_Set`, on the ring of its window, a command of the capture face).
+`remote_display` holds one ask in flight. A new ask replaces an ask that waits; the last one holds. It first checks its own budget: the pages left, and the pages of its copies of today, must pay its copies at the new size. Else it answers that viewer with `Screen_Size_Refused` and the cause `Service_Budget`. An ask less than one second after the last change of the size, or after the last ask of the same viewer that went on, gets the cause `Too_Soon` (`memory_screen.RESIZE_INTERVAL_MILLISECONDS`): each change sends each viewer the whole screen, and a viewer that asks in a loop would hold the service and the compositor in whole frames. Then it sends the size to the compositor (`Screen_Size_Set`, on the ring of its window, a command of the capture face).
 
 The compositor refuses the size with one cause, and answers with the event `Screen_Size_Refused`:
 
@@ -42,7 +42,13 @@ The compositor refuses the size with one cause, and answers with the event `Scre
 - `Outside_Bounds`: the size is outside the bounds of the contract;
 - `Compositor_Budget`: the pages left in its budget do not pay a new frame and a new background.
 
+The service gives two causes of its own: `Service_Budget` and `Too_Soon`.
+
 Else it makes the new frame and the new background first, then frees the old ones, so a refusal changes nothing. It takes the new size as the logical size of the desktop at the scale in force, builds the background and the bar again, sends each window its new work area, fits each window into it (a maximized window takes the new zone, a window larger than the area takes the area), and damages the whole screen. It answers with the event `Capture_Size` and the new size. A size equal to the size in force changes nothing and gets the same answer.
+
+### The budget of a screen of memory
+
+The root service decides a budget at the start of a process and does not raise it. On a machine with a screen of memory, it pays the screen pictures of a module (the compositor, `remote_display`) at the largest of 7680 × 4320, 5120 × 2880, 3840 × 2160, 2560 × 1440 and 1920 × 1080 that holds the size of the start row and that the share of a process pays (`memory_screen.paid_size_of`), so a viewer can grow the screen up to it. A larger size gets `Compositor_Budget` or `Service_Budget`. From the stated budgets, on the test machine of 1 GiB, where the share of a process is about 50 000 pages, the compositor pays 3840 × 2160; this is an estimate from the stated parts, not a measure.
 
 ### The capture face across a change of size
 
@@ -50,12 +56,14 @@ At a change, the compositor unmaps the pictures of the capture face and stops to
 
 `remote_display` takes the new `Capture_Size` when no viewer is in the middle of a viewer frame, as it takes a picture. It drops the picture that it holds, frees its old copies, makes its copies at the new size and gives them with `Capture_Open`. Each viewer then receives `Screen_Size` again, between two viewer frames, and the next viewer frame is the whole screen.
 
+When its copies of the new size are refused, `remote_display` asks the compositor for the size before, before any viewer ends, and the viewer that asked gets `Service_Budget`. Only when the size before is refused too do the viewers end with `Screen_Not_Held`, and the face and the mark of the bar end (`remote_display.screen_change_step`).
+
 ## The refused forms
 
 - **A screen of memory as a part of the machine parts page.** The page names what the root service checked. The size is a decision of a start list, and two start lists of one image can disagree.
 - **A third picture in the compositor, the screen beside the frame.** It costs one picture and one copy of the damage in each frame for pixels that no device reads.
 - **A size from a setting, or from the plan.** A start row already gives a size for each start of the holder; a setting would need a writer before the compositor starts.
-- **A budget raised at a change of size.** The budget of a process is decided at its start. A larger size is paid from the pages that the budget has left; a size past them is refused with its cause.
+- **A budget raised at a change of size.** The budget of a process is decided at its start, at the largest paid size that its share holds; a size past it is refused with its cause.
 - **The old frame freed before the new one is made.** A refused memory would leave the compositor with no frame.
 - **The capture face ended at a change and opened again.** The mark would leave the bar while a viewer looks.
 - **A refusal of a size that ends the connection.** A size that the budget does not pay is a state of the machine, not a fault of the viewer: the viewer gets a record with the cause and keeps its session. A size outside the bounds is a fault, and ends it.
@@ -63,8 +71,8 @@ At a change, the compositor unmaps the pictures of the capture face and stops to
 
 ## The subtle points
 
-- **The records of a viewer that cross a change.** A viewer sends a pointer or a request of screen pieces at the size that it knows. Until it takes a viewer frame at the new size, its border reads its records against the larger of the old and the new screen, and `remote_display` cuts each place and each rectangle to the new screen. The compositor cuts a pointer of a viewer to a screen of memory too: its change can come before the change of `remote_display`.
-- **The budget of `remote_display` follows the start row.** The root service pays its three screen pictures at the screen in force, which is the size of the start row of the compositor. A viewer that asks a larger size uses the pages that the budget has left.
+- **The records of a viewer that cross a change.** A viewer sends a pointer or a request of screen pieces at the size that it knows. Until it takes a viewer frame at the size in force, its border reads its records against the largest side of the screen in force and of each screen before it since that viewer last saw the size in force (`remote_display.Screen_Lag`): two changes in a row keep the largest, and `remote_display` cuts each place and each rectangle to the new screen. The compositor cuts a pointer of a viewer to a screen of memory too: its change can come before the change of `remote_display`.
+- **The budget of `remote_display` is decided at its start.** It starts after the compositor, so the root service knows the screen of memory, and pays its three screen pictures at the paid size above.
 - **Two viewers that ask.** The last ask holds; each refusal goes to the viewer that asked.
 - **The pointer after a change.** The compositor keeps the pointer inside the new desktop, and the viewers that did not move it receive a warp.
 

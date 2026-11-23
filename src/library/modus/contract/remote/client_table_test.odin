@@ -186,3 +186,51 @@ a_service_connection_ends_with_its_last_client_or_its_idle_bound :: proc(t: ^tes
 	testing.expect_value(t, service_connection_end_of(true, false, true, SERVICE_CONNECTION_IDLE_MILLISECONDS - 1), Service_Connection_End.Keep)
 	testing.expect_value(t, service_connection_end_of(true, false, true, 0), Service_Connection_End.Keep)
 }
+
+// A pass that ends SERVICE_CONNECTIONS connections, with a root
+// ring of 32 records that the root service empties between two passes:
+// the first pass sends 32 Disconnect records and the rest wait; the
+// passes after it send the rest; each place sends exactly one, and none is
+// lost. A ring with no room sends nothing.
+@(private = "file")
+test_owed: [SERVICE_CONNECTIONS]bool
+@(private = "file")
+test_sends: [SERVICE_CONNECTIONS]int
+@(private = "file")
+test_ring_room: int
+
+@(test)
+disconnects_past_the_room_of_the_ring_wait_for_the_next_pass :: proc(t: ^testing.T) {
+	RING :: 32
+	owes :: proc "contextless" (place: int) -> bool {return test_owed[place]}
+	send :: proc "contextless" (place: int) -> bool {
+		if test_ring_room == 0 {
+			return false
+		}
+		test_ring_room -= 1
+		test_owed[place] = false
+		test_sends[place] += 1
+		return true
+	}
+	for &owed in test_owed {
+		owed = true
+	}
+	test_sends = {}
+	test_ring_room = 0
+	testing.expect_value(t, disconnects_owed_send(len(test_owed), owes, send), 0)
+	passes := 0
+	total := 0
+	for total < len(test_owed) && passes < 10 {
+		test_ring_room = RING // The root service read the ring.
+		sent := disconnects_owed_send(len(test_owed), owes, send)
+		testing.expect(t, sent <= RING)
+		total += sent
+		passes += 1
+	}
+	testing.expect_value(t, passes, (SERVICE_CONNECTIONS + RING - 1) / RING)
+	for count, place in test_sends {
+		testing.expectf(t, count == 1 && !test_owed[place], "the place %d sent %d Disconnect records", place, count)
+	}
+	test_ring_room = RING
+	testing.expect_value(t, disconnects_owed_send(len(test_owed), owes, send), 0)
+}

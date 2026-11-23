@@ -277,3 +277,19 @@ stop_action :: proc "contextless" (stage: Stage, rescue_runs: bool) -> Stop_Acti
 	}
 	return .Nothing
 }
+
+// screen_of_memory_of_start decides values[6] of a Start: the size of a
+// screen of memory (src/md/features/screen_of_memory.md). 0 is no screen
+// of memory. Any other word passes only from a start policy, for the row
+// display, on a machine with no screen, and inside the bounds of the
+// contract memory_screen: else ok is false, and the Start is refused.
+screen_of_memory_of_start :: proc "contextless" (word: u64, from_start_policy: bool, name: string, machine_has_screen: bool) -> (width, height: u32, ok: bool) {
+	width, height, ok = root_ring.screen_of_memory_of_word(word)
+	if !ok || word == 0 {
+		return
+	}
+	if !from_start_policy || start_list.root_procedure_of(name) != .Display || machine_has_screen {
+		return 0, 0, false
+	}
+	return
+}

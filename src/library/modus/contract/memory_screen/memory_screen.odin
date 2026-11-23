@@ -430,6 +430,7 @@ Resize_Refusal :: enum u32 {
 	Outside_Bounds    = 2, // The size is outside MIN_WIDTH x MIN_HEIGHT to MAX_WIDTH x MAX_HEIGHT.
 	Compositor_Budget = 3, // The pages left in the budget of the compositor do not pay a new frame and a new background.
 	Service_Budget    = 4, // The pages left in the budget of the service of the remote display do not pay its copies.
+	Too_Soon          = 5, // The screen changed size, or the viewer asked one, less than the least time ago.
 }
 
 // The words of each cause in a line of the log.
@@ -440,6 +441,7 @@ RESIZE_REFUSAL_SENTENCES := [Resize_Refusal]string {
 	.Outside_Bounds    = "the size is outside 320 x 240 to 7680 x 4320",
 	.Compositor_Budget = "the budget of the compositor does not pay a frame and a background of that size",
 	.Service_Budget    = "the budget of remote_display does not pay its copies of that size",
+	.Too_Soon          = "the screen changed size, or the viewer asked one, less than a second ago",
 }
 
 // resize_refusal_of_word is the border of a word of Resize_Refusal: a word
@@ -506,4 +508,46 @@ service_resize_decide :: proc "contextless" (width, height: u64, pages_needed, p
 		return .Service_Budget
 	}
 	return .None
+}
+
+// The least time between two changes of the size of the screen of memory,
+// and between two asks of one viewer that the service sends on: a whole
+// screen goes to each viewer at each change, so a viewer that asks in a
+// loop would hold the service and the compositor in whole frames.
+RESIZE_INTERVAL_MILLISECONDS :: 1000
+
+// resize_interval_decide decides an ask by its time, in milliseconds of
+// the clock of the system: Too_Soon when the last change of the screen, or
+// the last ask of this viewer that went on, is less than
+// RESIZE_INTERVAL_MILLISECONDS ago. 0 is no change and no ask yet. A time
+// before a kept time (a clock that went back) counts as age 0.
+resize_interval_decide :: proc "contextless" (now, viewer_asked_at, screen_changed_at: u64) -> Resize_Refusal {
+	for last in ([2]u64{viewer_asked_at, screen_changed_at}) {
+		if last != 0 && now - min(last, now) < RESIZE_INTERVAL_MILLISECONDS {
+			return .Too_Soon
+		}
+	}
+	return .None
+}
+
+// The sizes that a budget pays for a screen of memory, from the largest: a
+// viewer asks any size, and these steps bound what the root service pays
+// at the start of a module (paid_size_of).
+@(rodata)
+PAID_SIZES := [?][2]u64{{7680, 4320}, {5120, 2880}, {3840, 2160}, {2560, 1440}, {1920, 1080}}
+
+// paid_size_of gives the size of a screen of memory that the budget of a
+// module pays: the largest of PAID_SIZES that holds the start size on each
+// side and whose pages fits, else the start size. fits says if a size
+// fits the share of a process (the starter computes the request).
+//
+// Example: a start size of 1920 x 1080 and a share that pays 4K and not
+// 5K give 3840 x 2160.
+paid_size_of :: proc "contextless" (start_width, start_height: u64, fits: proc "contextless" (width, height: u64, data: rawptr) -> bool, data: rawptr) -> (width, height: u64) {
+	for size in PAID_SIZES {
+		if size[0] >= start_width && size[1] >= start_height && fits(size[0], size[1], data) {
+			return size[0], size[1]
+		}
+	}
+	return start_width, start_height
 }

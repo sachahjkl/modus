@@ -241,26 +241,62 @@ the_largest_scaled_window_does_not_wrap :: proc(t: ^testing.T) {
 }
 
 // The right edge that the remote reads, acknowledgment + field << scale,
-// never moves back while bytes arrive one at a time and none is read.
+// while bytes arrive one at a time and none is read: it is never before
+// receive_edge, which never moves back, and never past it by a whole unit,
+// so it never drifts past the buffer. Then the buffer fills: the field
+// reaches 0.
 @(test)
-the_advertised_right_edge_never_moves_back :: proc(t: ^testing.T) {
+the_advertised_right_edge_stays_within_one_unit_of_the_edge :: proc(t: ^testing.T) {
 	listener := listener_make(1 << 20)
 	defer listener_free(listener)
 	connection := listener_established(t, listener)
 	testing.expect(t, connection.receive_scale > 0)
-	first := listener_ack(listener)
-	most := first.acknowledgment + u32(first.window) << connection.receive_scale
+	unit := u32(1) << connection.receive_scale
+	listener_ack(listener)
+	unrounded_most := connection.receive_edge
 	for count in 1 ..= 40 {
 		// count bytes arrive and stay in the buffer.
 		connection.receive_next += u32(count)
 		connection.receive_ready += u32(count)
 		ack := listener_ack(listener)
 		edge := ack.acknowledgment + u32(ack.window) << connection.receive_scale
-		testing.expectf(t, !before(edge, most), "after %d bytes the edge moved back by %d", count, most - edge)
-		testing.expectf(t, !before(edge, connection.receive_edge), "the edge that the remote reads is before receive_edge")
-		testing.expectf(t, edge == connection.receive_edge, "the edge that the remote reads is not receive_edge")
-		most = edge
+		testing.expectf(t, !before(connection.receive_edge, unrounded_most), "after %d bytes receive_edge moved back", count)
+		testing.expectf(t, !before(edge, connection.receive_edge), "after %d bytes the edge is before receive_edge", count)
+		testing.expectf(t, edge - connection.receive_edge < unit, "after %d bytes the edge passed receive_edge by %d, a whole unit of %d", count, edge - connection.receive_edge, unit)
+		buffer_end := connection.receive_next + (listener.table.receive_size - connection.receive_ready)
+		testing.expectf(t, edge - buffer_end < unit || !after(edge, buffer_end), "the edge passed the buffer by a whole unit")
+		unrounded_most = connection.receive_edge
 	}
+	// The buffer full: the window is 0.
+	left := listener.table.receive_size - connection.receive_ready
+	connection.receive_next += left
+	connection.receive_ready += left
+	testing.expect_value(t, listener_ack(listener).window, 0)
+}
+
+// A slow reader on a scaled connection: B reads nothing, its buffer of
+// 1 MiB fills, the field of its window reaches 0, A probes the zero window
+// and B answers each probe; then B reads, and the transfer ends whole.
+@(test)
+a_slow_reader_on_a_scaled_connection :: proc(t: ^testing.T) {
+	link := link_make(21, 64 * 1024, 1 << 20)
+	defer link_free(link)
+	link.transfer = {total = 3_000_000, reading = false}
+	connect(&link.sides[0].table, ADDRESS_B, PORT_B, link.now)
+	link_run(link, 10_000_000, proc(link: ^Link) -> bool {return false}, transfer_work)
+	a := &link.sides[0].connections[0]
+	b := &link.sides[1].connections[0]
+	testing.expect(t, a.window_scale_agreed && b.receive_scale > 0)
+	testing.expect_value(t, b.receive_ready, link.sides[1].table.receive_size)
+	testing.expect_value(t, a.send_window, 0)
+	testing.expect(t, a.zero_windows >= 1)
+	testing.expect(t, a.probes >= 1)
+	testing.expectf(t, a.probes_unanswered <= 1, "%d probes had no answer", a.probes_unanswered)
+	link.transfer.reading = true
+	ok := link_run(link, 120_000_000, transfer_done, transfer_work)
+	testing.expect(t, ok)
+	testing.expect_value(t, link.transfer.wrong, 0)
+	testing.expect_value(t, link.transfer.read, 3_000_000)
 }
 
 // When the edge rounded up to a unit passes the free room of the buffer, a

@@ -784,23 +784,22 @@ segment_send :: proc "contextless" (table: ^Table, output: ^Output, index: int, 
 		header.acknowledgment = connection.receive_next
 	}
 	// The window of a SYN is never scaled (RFC 7323, section 2.2). Past the
-	// SYN the field rounds up to a whole unit of the scale, and the edge that
-	// it gives becomes receive_edge: receive_next moves by any count of
-	// bytes, and a field rounded down would put the right edge that the
-	// remote reads before the edge of the last segment (RFC 7323, section
-	// 2.4 and appendix F). The edge can then pass the free room of the buffer
-	// by part of a unit; receive trims at that room too, and the remote sends
-	// those bytes again.
+	// SYN the field rounds up to a whole unit of the scale, from receive_edge,
+	// which window_offer keeps inside the free room of the buffer and which
+	// never moves back: receive_next moves by any count of bytes, and a field
+	// rounded down would put the edge that the remote reads before
+	// receive_edge. The edge that the remote reads is then receive_edge, or
+	// past it by less than one unit, which receive trims at the free room. It
+	// is not stored: an edge rounded from an edge rounded before would climb
+	// past the buffer at each segment. A full buffer gives a window of 0. The
+	// edge of two segments can differ by less than one unit, as the grid of
+	// the units moves with receive_next (RFC 7323, section 2.4 and appendix
+	// F).
 	window := window_offer(table, connection)
 	if .Syn in flags {
 		header.window = u16(min(window, WINDOW_LIMIT))
 	} else {
-		unit := u32(1) << connection.receive_scale
-		field := min((window + unit - 1) >> connection.receive_scale, WINDOW_LIMIT)
-		if field << connection.receive_scale > window {
-			connection.receive_edge = connection.receive_next + field << connection.receive_scale
-		}
-		header.window = u16(field)
+		header.window = u16(window_field_of(window, connection.receive_scale))
 	}
 	first, second: []u8
 	if count > 0 {
@@ -1123,6 +1122,13 @@ window_scale_agree :: proc "contextless" (table: ^Table, connection: ^Connection
 	connection.receive_scale = header.has_window_scale ? window_scale_of_buffer(table.receive_size) : 0
 }
 
+// window_field_of gives the window field of a window of bytes at a scale:
+// rounded up to a whole unit, at most WINDOW_LIMIT.
+window_field_of :: proc "contextless" (window: u32, scale: u8) -> u32 {
+	unit := u32(1) << scale
+	return min(u32((u64(window) + u64(unit) - 1) >> scale), WINDOW_LIMIT)
+}
+
 // window_of gives the window that a segment of the remote gives: its field,
 // shifted by the scale of the remote, but in a SYN, whose window is never
 // scaled.
@@ -1260,9 +1266,13 @@ synchronized :: proc "contextless" (table: ^Table, index: int, header: Header, n
 			header.flags -= {.Fin} // A FIN that arrived before.
 		}
 	}
-	// The edge rounded up to a unit of the scale can pass the free room of
-	// the buffer (segment_send): a byte past that room is not taken.
-	limit := connection.receive_edge
+	// The edge that the remote read is receive_edge rounded up to a unit of
+	// the scale (segment_send), and it can pass the free room of the buffer:
+	// a byte past that room is not taken.
+	// The bytes taken past receive_edge, under its rounding, can put
+	// receive_next past it: the window is then 0.
+	edge_window := before(connection.receive_edge, connection.receive_next) ? 0 : connection.receive_edge - connection.receive_next
+	limit := connection.receive_next + window_field_of(edge_window, connection.receive_scale) << connection.receive_scale
 	buffer_end := connection.receive_next + (table.receive_size - connection.receive_ready)
 	if before(buffer_end, limit) {
 		limit = buffer_end

@@ -335,7 +335,7 @@ root: principal 0 gave the client key 6a1f0c2d9e8b7a65 more uses: view and input
 ```
 root: principal 0 revoked the client key 6a1f0c2d9e8b7a65 (calls): connections to services ended: 4
 remote: the grant of the client key 6a1f0c2d9e8b7a65 of principal 0 ended (a revocation, or a lock of its session): the connection from 10.0.2.2 port 43000 ends with the code Revoked
-remote: the grants of 4 connections to services ended (a revocation, or a lock or an unlock of a session): their slots are free; 0 of 128 slots in use
+remote: the grants of 4 connections to services ended (a revocation, or a lock or an unlock of a session): their slots are free; 0 of 320 slots in use
 ```
 
 `remote` frees the slots of the connections of an ended grant at each pass, also when no client of the key is connected.

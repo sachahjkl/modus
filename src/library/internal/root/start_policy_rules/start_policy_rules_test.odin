@@ -310,3 +310,30 @@ a_refused_stop_of_a_start_policy_is_absent :: proc(t: ^testing.T) {
 	testing.expect_value(t, record.operation, i64(root_ring.Root_Command.Stop))
 	testing.expect_value(t, record.argument, 1)
 }
+
+// The size of a screen of memory in a Start: refused from a sender that is
+// not a start policy, for a name that is not display, on a machine with a
+// screen, and outside the bounds; 0 passes from any sender; a size passes
+// last, from a start policy, for display, on a machine with no screen.
+@(test)
+a_screen_of_memory_in_a_start_is_refused_outside_its_case :: proc(t: ^testing.T) {
+	size := root_ring.screen_of_memory_word(1920, 1080)
+	_, _, ok := screen_of_memory_of_start(size, false, "display", false)
+	testing.expect(t, !ok, "a sender that is not a start policy gave a size")
+	for name in ([?]string{"console", "compositor", "input", ""}) {
+		_, _, ok = screen_of_memory_of_start(size, true, name, false)
+		testing.expectf(t, !ok, "the name %q took a size", name)
+	}
+	_, _, ok = screen_of_memory_of_start(size, true, "display", true)
+	testing.expect(t, !ok, "a machine with a screen took a size")
+	for word in ([?]u64{root_ring.screen_of_memory_word(319, 240), root_ring.screen_of_memory_word(7681, 4320), root_ring.screen_of_memory_word(1920, 0), max(u64)}) {
+		_, _, ok = screen_of_memory_of_start(word, true, "display", false)
+		testing.expectf(t, !ok, "the word %x was taken", word)
+	}
+	for sender in ([?]bool{false, true}) {
+		width, height, none_ok := screen_of_memory_of_start(0, sender, "console", true)
+		testing.expect(t, none_ok && width == 0 && height == 0)
+	}
+	width, height, taken := screen_of_memory_of_start(size, true, "display", false)
+	testing.expect(t, taken && width == 1920 && height == 1080)
+}

@@ -765,3 +765,64 @@ screen_piece_at :: proc "contextless" (x, y, width, height: u32, index: u32) -> 
 	piece_height = min(SCREEN_PIECE_HEIGHT, y + height - piece_y)
 	return
 }
+
+// The screens that a viewer may still name after changes of the size of a
+// screen of memory that it did not see: until it takes a viewer frame of
+// the size in force, its records name a place of any screen before it
+// (src/md/features/screen_of_memory.md, "The subtle points").
+Screen_Lag :: struct {
+	lagging:      bool,
+	largest:      Screen, // The largest width and the largest height of the screens before, since the viewer last saw the size in force.
+	until_serial: u64, // The first viewer frame of the size in force: its Viewer_Frame_Taken ends the lag.
+}
+
+// screen_lag_change takes a change of the size: before is the screen that
+// changed, and next_serial the serial of the next viewer frame of the
+// viewer. Two changes in a row keep the largest screen of both.
+screen_lag_change :: proc "contextless" (lag: ^Screen_Lag, before: Screen, next_serial: u64) {
+	if !lag.lagging {
+		lag.largest = before
+	}
+	lag.largest = {max(lag.largest.width, before.width), max(lag.largest.height, before.height)}
+	lag.lagging = true
+	lag.until_serial = next_serial
+}
+
+// screen_lag_taken ends the lag when the viewer took a viewer frame of the
+// size in force.
+screen_lag_taken :: proc "contextless" (lag: ^Screen_Lag, serial: u64) {
+	if lag.lagging && serial >= lag.until_serial {
+		lag^ = {}
+	}
+}
+
+// screen_lag_border gives the screen that the border reads the records of
+// a viewer against: the screen in force, or while it lags, the larger
+// side of it and of each screen before.
+screen_lag_border :: proc "contextless" (lag: ^Screen_Lag, screen: Screen) -> Screen {
+	if !lag.lagging {
+		return screen
+	}
+	return {max(screen.width, lag.largest.width), max(screen.height, lag.largest.height)}
+}
+
+// What the service does after it tried to make its copies of a size of
+// the screen (src/md/features/screen_of_memory.md).
+Screen_Change_Step :: enum u8 {
+	Open        = 0, // The copies hold: the face opens at the size.
+	Go_Back     = 1, // The copies of a new size were refused: the compositor goes back to the size before, and no viewer ends.
+	End_Viewers = 2, // The size before was refused too, or there is none: the viewers end with Screen_Not_Held.
+}
+
+// screen_change_step decides after the copies of a size: made says if they
+// hold, going_back if the size was the size before a refused change, and
+// has_before if a size before exists (a change, not the first face).
+screen_change_step :: proc "contextless" (made, going_back, has_before: bool) -> Screen_Change_Step {
+	switch {
+	case made:
+		return .Open
+	case !going_back && has_before:
+		return .Go_Back
+	}
+	return .End_Viewers
+}
