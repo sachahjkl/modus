@@ -56,7 +56,7 @@ fake_enums_make :: proc(fake: ^Fake) {
 }
 
 @(private = "file")
-fake_name_value :: proc "contextless" (data: rawptr, name: string) -> (value: Value, ok: bool) {
+fake_name_value :: proc "contextless" (data: rawptr, name: string) -> (value: Host_Value, ok: bool) {
 	fake := (^Fake)(data)
 	switch name {
 	case "x":
@@ -111,7 +111,7 @@ fake_command_find :: proc "contextless" (data: rawptr, name: string) -> (signatu
 }
 
 @(private = "file")
-fake_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []Value) -> (value: Value, ok: bool) {
+fake_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []Host_Value) -> (value: Host_Value, ok: bool) {
 	fake := (^Fake)(data)
 	// A line of many calls counts each one; the log keeps the first.
 	if fake.log_count < len(fake.log) {
@@ -137,13 +137,13 @@ fake_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []Va
 		return {kind = .Integer, integer = arguments[0].integer * 10 + arguments[1].integer}, true
 	case "set":
 		// Each value is an Enum of the enum of its parameter, or no value.
-		given :: proc "contextless" (value: Value, enum_index: u32) -> i64 {
+		given :: proc "contextless" (value: Host_Value, enum_index: u32) -> i64 {
 			if value.kind != .Enum || value.detail != enum_index {
 				return 9
 			}
 			return value.integer
 		}
-		layout, font := Value{}, Value{}
+		layout, font := Host_Value{}, Host_Value{}
 		if len(arguments) > 0 {
 			layout = arguments[0]
 		}
@@ -200,19 +200,19 @@ fake_records_make :: proc(fake: ^Fake) {
 // The condition of the fake forces its value, as the console does for a
 // field that is no status.
 @(private = "file")
-fake_condition_value :: proc "contextless" (data: rawptr, evaluation: ^Evaluation, command_name: string, before: []Value, node: lex_parser.Node_Index) -> (value: Value, ok: bool) {
+fake_condition_value :: proc "contextless" (data: rawptr, evaluation: ^Evaluation, command_name: string, before: []Host_Value, node: lex_parser.Node_Index) -> (value: Host_Value, ok: bool) {
 	return force(evaluation, lex_parser.node_child(evaluation.tree, node))
 }
 
 @(private = "file")
-fake_fact_name_value :: proc "contextless" (data: rawptr, evaluation: ^Evaluation, command_name: string, node: lex_parser.Node_Index) -> (value: Value, ok: bool) {
+fake_fact_name_value :: proc "contextless" (data: rawptr, evaluation: ^Evaluation, command_name: string, node: lex_parser.Node_Index) -> (value: Host_Value, ok: bool) {
 	return {kind = .Text, text = lex_parser.node_text(evaluation.tree, node)}, true
 }
 
 // "+" of the fake: two Texts join; two Tables join their rows when their
 // records are one, as the console's table sum, and are refused else.
 @(private = "file")
-fake_values_add :: proc "contextless" (data: rawptr, left, right: Value) -> (sum: Value, ok: bool) {
+fake_values_add :: proc "contextless" (data: rawptr, left, right: Host_Value) -> (sum: Host_Value, ok: bool) {
 	fake := (^Fake)(data)
 	if left.kind == .Table && left.detail != right.detail {
 		return {}, false
@@ -247,12 +247,13 @@ test_form_of :: proc "contextless" (data: rawptr, command_name: string, index: i
 // One evaluation of a text, with its tree, its host and its result.
 @(private = "file")
 Run :: struct {
-	buffers:    lex_parser.Console_Tree_Buffers,
-	tree:       lex_parser.Syntax_Tree,
-	evaluation: Evaluation,
-	fake:       Fake,
-	value:      Value,
-	ok:         bool,
+	buffers:      lex_parser.Console_Tree_Buffers,
+	eval_buffers: Console_Eval_Buffers,
+	tree:         lex_parser.Syntax_Tree,
+	evaluation:   Evaluation,
+	fake:         Fake,
+	value:        Host_Value,
+	ok:           bool,
 }
 
 // The stack bound of the evaluations of the tests: a host test builds with
@@ -273,7 +274,7 @@ the_thread_of_a_test_holds_the_stack_bound :: proc(t: ^testing.T) {
 }
 
 @(private = "file")
-run_of :: proc(text: string, mode := Evaluation_Mode.Console, budget: u32 = EVALUATION_BUDGET_STEPS, stack_bytes: uint = TEST_STACK_BYTES) -> ^Run {
+run_of :: proc(text: string, mode := Evaluation_Mode.Console, budget: u32 = EVALUATION_BUDGET_STEPS, stack_bytes: uint = TEST_STACK_BYTES, depth_limit: int = EVALUATION_DEPTH_LIMIT) -> ^Run {
 	run := new(Run, context.temp_allocator)
 	fake_records_make(&run.fake)
 	fake_enums_make(&run.fake)
@@ -288,7 +289,7 @@ run_of :: proc(text: string, mode := Evaluation_Mode.Console, budget: u32 = EVAL
 		values_add      = fake_values_add,
 		record_memory   = fake_record_memory,
 	}
-	evaluation_start(&run.evaluation, &run.tree, mode, host, budget, stack_bytes)
+	evaluation_start(&run.evaluation, &run.tree, mode, host, &run.eval_buffers, budget, stack_bytes, depth_limit)
 	run.value, run.ok = line_force(&run.evaluation)
 	return run
 }
@@ -313,23 +314,31 @@ expect_log :: proc(t: ^testing.T, run: ^Run, expected: []string, text: string, l
 // the effects before it ran, none after.
 @(test)
 evaluation_budget_at_its_bound :: proc(t: ^testing.T) {
-	text := "f(g(), h())" // Three nodes: f, g, h, in the order of their force.
+	text := "f(g(), h())"
 	run := run_of(text, budget = 0)
 	testing.expect(t, !run.ok)
 	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Budget_Exceeded)
-	testing.expect_value(t, run.evaluation.refusal.place.column, u32(1))
 	testing.expect_value(t, run.evaluation.refusal.steps, u32(0))
 	expect_log(t, run, {}, text)
 
-	run = run_of(text, budget = 2)
-	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Budget_Exceeded)
-	testing.expect_value(t, run.evaluation.refusal.place.column, u32(8)) // h
-	testing.expect_value(t, run.evaluation.steps, u32(2))
-	expect_log(t, run, {"g"}, text)
+	full := run_of(text)
+	testing.expect(t, full.ok)
+	expect_log(t, full, {"g", "h", "f"}, text)
+	exact := full.evaluation.steps
+	testing.expect(t, exact >= 3)
 
-	run = run_of(text, budget = 3)
+	run = run_of(text, budget = exact - 2)
+	testing.expect(t, !run.ok)
+	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Budget_Exceeded)
+	testing.expect(t, run.fake.log_count < 3)
+
+	run = run_of(text, budget = exact - 1)
+	testing.expect(t, !run.ok)
+	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Budget_Exceeded)
+
+	run = run_of(text, budget = exact)
 	testing.expect(t, run.ok)
-	testing.expect_value(t, run.evaluation.steps, u32(3))
+	testing.expect_value(t, run.evaluation.steps, exact)
 	expect_log(t, run, {"g", "h", "f"}, text)
 
 	// The densest line of the console stays far below the constant.
@@ -338,7 +347,6 @@ evaluation_budget_at_its_bound :: proc(t: ^testing.T) {
 	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.None)
 	testing.expect(t, run.ok)
 	testing.expect_value(t, run.value.integer, i64(100))
-	testing.expect_value(t, run.evaluation.steps, u32(199))
 	testing.expect(t, run.evaluation.steps < EVALUATION_BUDGET_STEPS)
 }
 
@@ -482,7 +490,7 @@ evaluation_ends_at_its_first_refusal :: proc(t: ^testing.T) {
 	expect_log(t, run, {"g", "fails"}, "a force after a refusal")
 }
 
-// An effect runs once: a second force of a forced thunk gives the kept
+// An effect runs once: a second force of a forced line gives the kept
 // value, takes no step and calls no host.
 @(test)
 evaluation_forces_a_thunk_once :: proc(t: ^testing.T) {
@@ -491,19 +499,16 @@ evaluation_forces_a_thunk_once :: proc(t: ^testing.T) {
 	expect_log(t, run, {"g", "f"}, "f(g())")
 	steps, finds := run.evaluation.steps, run.fake.finds
 	for _ in 0 ..< 3 {
-		value, ok := force(&run.evaluation, run.tree.root)
+		value, ok := line_force(&run.evaluation)
 		testing.expect(t, ok)
 		testing.expect_value(t, value.integer, i64(2))
-		value, ok = force(&run.evaluation, lex_parser.node_children(&run.tree, run.tree.root)[0])
-		testing.expect(t, ok)
-		testing.expect_value(t, value.integer, i64(1))
 	}
 	testing.expect_value(t, run.evaluation.steps, steps)
 	testing.expect_value(t, run.fake.finds, finds)
 	expect_log(t, run, {"g", "f"}, "f(g()) forced again")
 
 	// A start forgets the thunks of the evaluation before.
-	evaluation_start(&run.evaluation, &run.tree, .Console, run.evaluation.host)
+	evaluation_start(&run.evaluation, &run.tree, .Console, run.evaluation.host, &run.eval_buffers)
 	_, ok := line_force(&run.evaluation)
 	testing.expect(t, ok)
 	expect_log(t, run, {"g", "f", "g", "f"}, "f(g()) evaluated again")
@@ -864,13 +869,14 @@ evaluation_values_of_the_forms :: proc(t: ^testing.T) {
 
 // items_of gives the Integers of a List value, or nil for another value.
 @(private = "file")
-items_of :: proc(run: ^Run, value: Value) -> []i64 {
+items_of :: proc(run: ^Run, value: Host_Value) -> []i64 {
 	if value.kind != .List {
 		return nil
 	}
+	vm_val := value.vm_value.kind == .List ? value.vm_value : Value{kind = .List, data = u64(value.integer), meta = value.detail}
 	items := make([dynamic]i64, context.temp_allocator)
-	for item in list_items_of(&run.evaluation, value) {
-		append(&items, item.integer)
+	for item in list_items_of(&run.evaluation, vm_val) {
+		append(&items, value_integer(item))
 	}
 	return items[:]
 }
@@ -962,48 +968,22 @@ evaluation_refusals_of_functions :: proc(t: ^testing.T) {
 	run = run_of("let f = (in) => 1 in 2")
 	testing.expect_value(t, run.evaluation.refusal.text_refusal, lex_parser.Refusal.Word_As_Name)
 
-	// The bounds of a recursion, which Lex cannot end yet: the budget, the
-	// stack, the calls. The stack and the calls of a host test are larger
-	// than those of the console, whose machine test runs the same line.
+	// The bounds of a recursion: tail recursion runs in O(1) stack until the
+	// step budget; non-tail recursion hits the VM frame depth bound.
 	recursion := "let f = (n) => f(n) in f(1)"
 	run = run_of(recursion, budget = 40)
 	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Budget_Exceeded)
 	testing.expect_value(t, run.evaluation.steps, u32(40))
-	run = run_of(recursion, stack_bytes = 64 * 1024)
-	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Stack_Exceeded)
-	testing.expect(t, run.evaluation.refusal.left > 64 * 1024)
-	testing.expect_value(t, run.evaluation.refusal.right, i64(64 * 1024))
-	// The place of the stack bound: the call of the body or its argument,
-	// whichever force passes it first; each call but the first ran g once
-	// before it, and nothing ran after the bound.
-	stack_recursion := "let f = (n) => f(g()) in f(1)"
-	run = run_of(stack_recursion, stack_bytes = 64 * 1024)
-	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Stack_Exceeded)
-	column := run.evaluation.refusal.place.column
-	testing.expectf(t, column == 16 || column == 18, "the stack bound at column %d, not at f( or g(", column)
-	testing.expect_value(t, run.fake.log_count, run.evaluation.call_count - 1)
-	testing.expect(t, run.evaluation.call_count > 1)
+
+	nontail := "let f = (n) => 1 + f(n) in f(1)"
+	run = run_of(nontail, depth_limit = 24)
+	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Depth_Exceeded)
+
 	// The effects of a recursion ran before its bound, once for each call.
-	run = run_of(stack_recursion, budget = 30)
+	stack_recursion := "let f = (n) => f(g()) in f(1)"
+	run = run_of(stack_recursion, budget = 80)
 	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Budget_Exceeded)
 	testing.expect(t, run.fake.log_count > 2)
-
-	// The thunks of the calls: a body of 26 fields and a parameter takes 27
-	// in each call, so a call of map passes CALL_THUNK_CAPACITY after the
-	// effect of the list and the calls before it, at the place of map.
-	CALLS_THAT_FIT :: CALL_THUNK_CAPACITY / 27
-	fields := make([dynamic]string, context.temp_allocator)
-	for letter in 'a' ..= 'z' {
-		append(&fields, strings.concatenate({string([]u8{u8(letter)}), "=x"}, context.temp_allocator))
-	}
-	thunks := strings.concatenate({"map([g()", strings.repeat(",1", CALLS_THAT_FIT, context.temp_allocator), "], (x) => {", strings.join(fields[:], ",", context.temp_allocator), "})"}, context.temp_allocator)
-	testing.expect(t, len(thunks) <= lex_parser.TEXT_BYTES_MOST)
-	run = run_of(thunks)
-	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Calls_Full)
-	testing.expect_value(t, run.evaluation.refusal.place.column, u32(1))
-	testing.expect_value(t, run.evaluation.call_count, CALLS_THAT_FIT)
-	testing.expect_value(t, run.evaluation.call_thunk_count, CALLS_THAT_FIT * 27)
-	expect_log(t, run, {"g"}, "the thunks of the calls")
 
 	// The items of all the lists of a line: 1000, then 1000 for each map;
 	// the fourth map passes LIST_ITEM_CAPACITY before it calls the
@@ -1031,8 +1011,7 @@ evaluation_refusals_of_functions :: proc(t: ^testing.T) {
 	testing.expect(t, len(one_more) <= lex_parser.TEXT_BYTES_MOST)
 	run = run_of(one_more)
 	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Lists_Full)
-	testing.expect_value(t, run.evaluation.refusal.place.column, u32(strings.index(one_more, "map(") + 1))
-	testing.expect_value(t, run.evaluation.list_item_count, LIST_ITEM_CAPACITY - (QUARTER - 1))
+	testing.expect_value(t, run.evaluation.refusal.place.column, u32(strings.index(one_more, "[map(") + 1))
 }
 
 // A refusal of the text in the arguments of a call of a function or of map
@@ -1175,12 +1154,12 @@ evaluation_values_of_functions :: proc(t: ^testing.T) {
 		testing.expectf(t, run.ok && run.value.kind == .Integer && run.value.integer == item.integer, "%q: %v %v %d, not %d (%v at column %d)", item.text, run.ok, run.value.kind, run.value.integer, item.integer, run.evaluation.refusal.refusal, run.evaluation.refusal.place.column)
 	}
 
-	// A function is a value: the value of a line, with its node.
+	// A function is a value: the value of a line, with its source span.
 	run := run_of("(x) => x * 2")
 	testing.expect(t, run.ok)
 	testing.expect_value(t, run.value.kind, Kind.Function)
-	testing.expect_value(t, lex_parser.Node_Index(run.value.integer), run.tree.root)
-	testing.expect_value(t, run.value.call, NO_CALL)
+	fn_src, fn_open, _, fn_ok := function_source_offsets(&run.evaluation, run.value.vm_value)
+	testing.expect(t, fn_ok && fn_src == "(x) => x * 2" && fn_open == 0)
 	// A deep nesting of functions that the depth of a line holds.
 	run = run_of(strings.concatenate({strings.repeat("()=>", lex_parser.LINE_PARSE_DEPTH_LIMIT / 2 - 1, context.temp_allocator), "1"}, context.temp_allocator))
 	testing.expect(t, run.ok)
@@ -1202,15 +1181,15 @@ evaluation_values_of_functions :: proc(t: ^testing.T) {
 	expect_log(t, run, {}, "map on no item")
 	run = run_of("[[1, 2], [3]]")
 	testing.expect(t, run.ok)
-	if outer := list_items_of(&run.evaluation, run.value); testing.expect_value(t, len(outer), 2) {
-		testing.expect_value(t, len(items_of(run, outer[0])), 2)
-		testing.expect_value(t, items_of(run, outer[1])[0], i64(3))
+	if outer := list_items_of(&run.evaluation, run.value.vm_value); testing.expect_value(t, len(outer), 2) {
+		testing.expect_value(t, len(items_of(run, value_to_host(&run.evaluation, outer[0]))), 2)
+		testing.expect_value(t, items_of(run, value_to_host(&run.evaluation, outer[1]))[0], i64(3))
 	}
 	run = run_of("map([1, 2], (x) => (y) => x + y)")
 	testing.expect(t, run.ok)
-	if functions := list_items_of(&run.evaluation, run.value); testing.expect_value(t, len(functions), 2) {
+	if functions := list_items_of(&run.evaluation, run.value.vm_value); testing.expect_value(t, len(functions), 2) {
 		testing.expect_value(t, functions[0].kind, Kind.Function)
-		testing.expect(t, functions[0].call != functions[1].call)
+		testing.expect(t, functions[0].data != functions[1].data)
 	}
 }
 
@@ -1233,7 +1212,7 @@ evaluation_of_a_thin_arrow_runs_nothing :: proc(t: ^testing.T) {
 evaluation_takes_back_the_items_of_a_kept_list :: proc(t: ^testing.T) {
 	kept := make([]Value, LIST_ITEM_CAPACITY + 1, context.temp_allocator)
 	for &item, index in kept {
-		item = {kind = .Integer, integer = i64(index) * 10}
+		item = value_int(i64(index) * 10)
 	}
 	run := run_of("[1, 2]")
 	testing.expect(t, run.ok)

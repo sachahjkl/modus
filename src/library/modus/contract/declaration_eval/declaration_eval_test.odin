@@ -1,6 +1,7 @@
 #+build !freestanding
 package declaration_eval
 
+import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "modus:contract/blake3"
@@ -46,7 +47,9 @@ declaration_paths_at_the_border :: proc(t: ^testing.T) {
 	}
 }
 
-// bundle_validate refuses every damaged or hostile bundle before any lookup.
+// bundle_validate refuses every damaged or hostile bundle before any lookup:
+// overflow entry_count, unsorted entries, duplicates, unknown kind, bad flags,
+// bad paths, and out-of-bounds offsets.
 @(test)
 bundle_refusals_at_the_border :: proc(t: ^testing.T) {
 	// Empty and one byte below header size.
@@ -54,17 +57,20 @@ bundle_refusals_at_the_border :: proc(t: ^testing.T) {
 	small: [BUNDLE_HEADER_BYTES - 1]u8
 	testing.expect_value(t, bundle_validate(small[:]), Bundle_Refusal.Too_Small)
 
-	// Build a valid bundle, then mutate each field one by one.
+	// Build a valid bundle (intentionally given unsorted input to verify bundle_write sorts).
 	here := blake3.hash(transmute([]u8)string("tree"))
 	decl_hash := blake3.hash(transmute([]u8)string("decl"))
-	entries := [2]Bundle_Input_Entry {
-		{kind = .File_Path, path = "pins.lex", content = "{ a = 1 }"},
+	seed := u64(0xdeadbeefcafebabe)
+	entries := [3]Bundle_Input_Entry {
 		{kind = .Declaration_Hash, hash = decl_hash, content = "{ b = 2 }"},
+		{kind = .File_Path, path = "z.lex", content = "{ z = 9 }"},
+		{kind = .File_Path, path = "pins.lex", content = "{ a = 1 }"},
 	}
-	buf: [512]u8
-	written, write_err := bundle_write(buf[:], entries[:], true, here)
+	buf: [1024]u8
+	written, write_err := bundle_write(buf[:], entries[:], true, here, seed)
 	testing.expect_value(t, write_err, Bundle_Refusal.None)
 	testing.expect_value(t, bundle_validate(buf[:written]), Bundle_Refusal.None)
+	testing.expect_value(t, bundle_hash_seed(buf[:written]), seed)
 
 	// Bad magic.
 	bad := make([]u8, written, context.temp_allocator)
@@ -72,7 +78,10 @@ bundle_refusals_at_the_border :: proc(t: ^testing.T) {
 	bad[0] ~= 0xff
 	testing.expect_value(t, bundle_validate(bad), Bundle_Refusal.Bad_Magic)
 
-	// Bad version.
+	// Bad version (v1 and v3 both refused).
+	copy(bad, buf[:written])
+	byte_order.write_u32_little_endian(bad, 4, BUNDLE_VERSION - 1)
+	testing.expect_value(t, bundle_validate(bad), Bundle_Refusal.Bad_Version)
 	copy(bad, buf[:written])
 	byte_order.write_u32_little_endian(bad, 4, BUNDLE_VERSION + 1)
 	testing.expect_value(t, bundle_validate(bad), Bundle_Refusal.Bad_Version)
@@ -82,10 +91,13 @@ bundle_refusals_at_the_border :: proc(t: ^testing.T) {
 	byte_order.write_u32_little_endian(bad, 12, 2)
 	testing.expect_value(t, bundle_validate(bad), Bundle_Refusal.Bad_Flags)
 
-	// Too many entries (one past BUNDLE_ENTRY_LIMIT).
+	// Overflowing entry_count (max u32 and table larger than buffer).
 	copy(bad, buf[:written])
-	byte_order.write_u32_little_endian(bad, 8, BUNDLE_ENTRY_LIMIT + 1)
-	testing.expect_value(t, bundle_validate(bad), Bundle_Refusal.Too_Many_Entries)
+	byte_order.write_u32_little_endian(bad, 8, max(u32))
+	testing.expect_value(t, bundle_validate(bad), Bundle_Refusal.Entry_Out_Of_Bounds)
+	copy(bad, buf[:written])
+	byte_order.write_u32_little_endian(bad, 8, 100)
+	testing.expect_value(t, bundle_validate(bad), Bundle_Refusal.Entry_Out_Of_Bounds)
 
 	// Unknown entry kind enum word (0 and 99).
 	for bad_kind in ([2]u8{0, 99}) {
@@ -108,22 +120,85 @@ bundle_refusals_at_the_border :: proc(t: ^testing.T) {
 	byte_order.write_u32_little_endian(bad, BUNDLE_HEADER_BYTES + 16, max(u32))
 	testing.expect_value(t, bundle_validate(bad), Bundle_Refusal.Entry_Out_Of_Bounds)
 
-	// Buffer too small and invalid path refused by bundle_write.
-	_, short_err := bundle_write(buf[:written - 1], entries[:], true, here)
+	// Unsorted entries on wire refused cleanly (swap slot 0 and slot 1).
+	copy(bad, buf[:written])
+	tmp: [BUNDLE_ENTRY_BYTES]u8
+	copy(tmp[:], bad[BUNDLE_HEADER_BYTES:BUNDLE_HEADER_BYTES + BUNDLE_ENTRY_BYTES])
+	copy(bad[BUNDLE_HEADER_BYTES:BUNDLE_HEADER_BYTES + BUNDLE_ENTRY_BYTES], bad[BUNDLE_HEADER_BYTES + BUNDLE_ENTRY_BYTES:BUNDLE_HEADER_BYTES + 2 * BUNDLE_ENTRY_BYTES])
+	copy(bad[BUNDLE_HEADER_BYTES + BUNDLE_ENTRY_BYTES:BUNDLE_HEADER_BYTES + 2 * BUNDLE_ENTRY_BYTES], tmp[:])
+	testing.expect_value(t, bundle_validate(bad), Bundle_Refusal.Unsorted_Entries)
+
+	// Duplicate entries on wire refused cleanly (overwrite slot 1 with slot 0).
+	copy(bad, buf[:written])
+	copy(bad[BUNDLE_HEADER_BYTES + BUNDLE_ENTRY_BYTES:BUNDLE_HEADER_BYTES + 2 * BUNDLE_ENTRY_BYTES], bad[BUNDLE_HEADER_BYTES:BUNDLE_HEADER_BYTES + BUNDLE_ENTRY_BYTES])
+	testing.expect_value(t, bundle_validate(bad), Bundle_Refusal.Duplicate_Entry)
+
+	// Duplicate entries passed to bundle_write refused cleanly.
+	dup_buf: [512]u8
+	dup_entries := [2]Bundle_Input_Entry {
+		{kind = .File_Path, path = "a.lex", content = "1"},
+		{kind = .File_Path, path = "a.lex", content = "2"},
+	}
+	_, dup_err := bundle_write(dup_buf[:], dup_entries[:])
+	testing.expect_value(t, dup_err, Bundle_Refusal.Duplicate_Entry)
+
+	// Buffer too small and bad path refused by bundle_write.
+	_, short_err := bundle_write(dup_buf[:written - 1], entries[:], true, here, seed)
 	testing.expect_value(t, short_err, Bundle_Refusal.Buffer_Too_Small)
 	bad_path_entries := [1]Bundle_Input_Entry{{kind = .File_Path, path = "../escape.lex", content = "1"}}
-	_, path_err := bundle_write(buf[:], bad_path_entries[:])
-	testing.expect_value(t, path_err, Bundle_Refusal.Invalid_Path)
+	_, path_err := bundle_write(dup_buf[:], bad_path_entries[:])
+	testing.expect_value(t, path_err, Bundle_Refusal.Bad_Path)
 
-	// Valid lookup round-trip.
+	// Valid O(log N) lookup round-trip.
 	got_here, has_here := bundle_here_hash(buf[:written])
 	testing.expect(t, has_here && got_here == here)
 	pins_src, pins_ok := bundle_lookup_path(buf[:written], "pins.lex")
 	testing.expect(t, pins_ok && pins_src == "{ a = 1 }")
+	z_src, z_ok := bundle_lookup_path(buf[:written], "z.lex")
+	testing.expect(t, z_ok && z_src == "{ z = 9 }")
 	decl_src, decl_ok := bundle_lookup_hash(buf[:written], decl_hash)
 	testing.expect(t, decl_ok && decl_src == "{ b = 2 }")
 	_, missing_ok := bundle_lookup_path(buf[:written], "nope.lex")
 	testing.expect(t, !missing_ok)
+}
+
+// Bundles beyond the former 64-entry cap (e.g. 512 entries: 256 paths + 256
+// hashes) write, validate, and look up cleanly in O(log N).
+@(test)
+bundle_scales_past_former_64_entry_cap :: proc(t: ^testing.T) {
+	N :: 256
+	entries := make([]Bundle_Input_Entry, 2 * N, context.temp_allocator)
+	for i in 0 ..< N {
+		// Reverse order so heapsort exercises every comparison path.
+		idx := N - 1 - i
+		entries[i] = {
+			kind    = .File_Path,
+			path    = fmt.aprintf("pkg/mod_%04d.lex", idx, allocator = context.temp_allocator),
+			content = fmt.aprintf("{{ id = %d }}", idx, allocator = context.temp_allocator),
+		}
+		tag := fmt.aprintf("hash_%04d", idx, allocator = context.temp_allocator)
+		entries[N + i] = {
+			kind    = .Declaration_Hash,
+			hash    = blake3.hash(transmute([]u8)tag),
+			content = fmt.aprintf("{{ h = %d }}", idx, allocator = context.temp_allocator),
+		}
+	}
+	buf := make([]u8, 256 * 1024, context.temp_allocator)
+	written, err := bundle_write(buf, entries, hash_seed = 42)
+	testing.expect_value(t, err, Bundle_Refusal.None)
+	testing.expect_value(t, bundle_validate(buf[:written]), Bundle_Refusal.None)
+	for i in 0 ..< N {
+		path := fmt.aprintf("pkg/mod_%04d.lex", i, allocator = context.temp_allocator)
+		want := fmt.aprintf("{{ id = %d }}", i, allocator = context.temp_allocator)
+		got, ok := bundle_lookup_path(buf[:written], path)
+		testing.expectf(t, ok && got == want, "path %s: got %q (%v), want %q", path, got, ok, want)
+
+		tag := fmt.aprintf("hash_%04d", i, allocator = context.temp_allocator)
+		h := blake3.hash(transmute([]u8)tag)
+		want_h := fmt.aprintf("{{ h = %d }}", i, allocator = context.temp_allocator)
+		got_h, ok_h := bundle_lookup_hash(buf[:written], h)
+		testing.expectf(t, ok_h && got_h == want_h, "hash %d: got %q (%v), want %q", i, got_h, ok_h, want_h)
+	}
 }
 
 // output_validate refuses every damaged output buffer and accepts valid

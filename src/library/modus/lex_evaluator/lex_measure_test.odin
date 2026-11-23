@@ -240,7 +240,7 @@ Bench_Console_Host :: struct {
 bench_console_host :: proc(h: ^Bench_Console_Host) -> Evaluation_Host {
 	return {
 		data = h,
-		name_value = proc "contextless" (data: rawptr, name: string) -> (Value, bool) {
+		name_value = proc "contextless" (data: rawptr, name: string) -> (Host_Value, bool) {
 			return {}, false
 		},
 		command_find = proc "contextless" (data: rawptr, name: string) -> (Command_Signature, bool) {
@@ -249,16 +249,16 @@ bench_console_host :: proc(h: ^Bench_Console_Host) -> Evaluation_Host {
 		record_memory = proc "contextless" (data: rawptr, size: int) -> ([]u8, bool) {
 			return nil, false
 		},
-		call_run = proc "contextless" (data: rawptr, name: string, args: []Value) -> (Value, bool) {
+		call_run = proc "contextless" (data: rawptr, name: string, args: []Host_Value) -> (Host_Value, bool) {
 			return {}, false
 		},
-		condition_value = proc "contextless" (data: rawptr, eval: ^Evaluation, cmd: string, before: []Value, node: lex_parser.Node_Index) -> (Value, bool) {
+		condition_value = proc "contextless" (data: rawptr, eval: ^Evaluation, cmd: string, before: []Host_Value, node: lex_parser.Node_Index) -> (Host_Value, bool) {
 			return {}, false
 		},
-		fact_name_value = proc "contextless" (data: rawptr, eval: ^Evaluation, cmd: string, node: lex_parser.Node_Index) -> (Value, bool) {
+		fact_name_value = proc "contextless" (data: rawptr, eval: ^Evaluation, cmd: string, node: lex_parser.Node_Index) -> (Host_Value, bool) {
 			return {}, false
 		},
-		values_add = proc "contextless" (data: rawptr, left, right: Value) -> (Value, bool) {
+		values_add = proc "contextless" (data: rawptr, left, right: Host_Value) -> (Host_Value, bool) {
 			h := (^Bench_Console_Host)(data)
 			if left.kind != .Text || right.kind != .Text {
 				return {}, false
@@ -369,7 +369,7 @@ lex_measure_suite :: proc(t: ^testing.T) {
 		}
 		st := compute_stats(samples[:])
 		fmt.printfln("M2_deep_with_overlays (1024f+64ov+1024q): ok=%v fail=%v val=%d steps=%d min=%.3f ms median=%.3f ms",
-			last_res.ok, last_res.failure_kind, last_res.value.integer, last_res.steps_taken,
+			last_res.ok, last_res.failure_kind, value_integer(last_res.value), last_res.steps_taken,
 			f64(st.min_ns) / 1e6, f64(st.median_ns) / 1e6)
 	}
 
@@ -385,7 +385,7 @@ lex_measure_suite :: proc(t: ^testing.T) {
 		}
 		st := compute_stats(samples[:])
 		fmt.printfln("M3_list_pipeline (N=%d): ok=%v fail=%v out_len=%d steps=%d min=%.3f ms median=%.3f ms",
-			count, last_res.ok, last_res.failure_kind, last_res.value.detail, last_res.steps_taken,
+			count, last_res.ok, last_res.failure_kind, last_res.value.meta, last_res.steps_taken,
 			f64(st.min_ns) / 1e6, f64(st.median_ns) / 1e6)
 	}
 
@@ -393,14 +393,30 @@ lex_measure_suite :: proc(t: ^testing.T) {
 	{
 		ws, _ := measure_workspace_make(context.temp_allocator, 2)
 		src_a := generate_m4a_source(50_000, context.temp_allocator)
-		res_a := declaration_evaluate(ws, src_a, "")
-		fmt.printfln("M4a_tail_recursion (50000): ok=%v fail=%v val=%d steps=%d",
-			res_a.ok, res_a.failure_kind, res_a.value.integer, res_a.steps_taken)
+		res_a: Declaration_Result
+		prof_a: Evaluation_Profile
+		for r in 0 ..< MEASURE_ROUNDS {
+			prof_a = {}
+			start := time.tick_now()
+			res_a = declaration_evaluate(ws, src_a, "", {profile = &prof_a})
+			samples[r] = time.duration_nanoseconds(time.tick_since(start))
+		}
+		st_a := compute_stats(samples[:])
+		fmt.printfln("M4a_tail_recursion (50000): ok=%v fail=%v val=%d steps=%d tco=%d max_depth=%d min=%.3f ms median=%.3f ms",
+			res_a.ok, res_a.failure_kind, value_integer(res_a.value), res_a.steps_taken,
+			prof_a.tail_calls_total, prof_a.max_frame_depth, f64(st_a.min_ns) / 1e6, f64(st_a.median_ns) / 1e6)
 
 		src_b := generate_m4b_source(1_000, context.temp_allocator)
-		res_b := declaration_evaluate(ws, src_b, "")
-		fmt.printfln("M4b_nontail_recursion (1000): ok=%v fail=%v val=%d steps=%d",
-			res_b.ok, res_b.failure_kind, res_b.value.integer, res_b.steps_taken)
+		res_b: Declaration_Result
+		for r in 0 ..< MEASURE_ROUNDS {
+			start := time.tick_now()
+			res_b = declaration_evaluate(ws, src_b, "")
+			samples[r] = time.duration_nanoseconds(time.tick_since(start))
+		}
+		st_b := compute_stats(samples[:])
+		fmt.printfln("M4b_nontail_recursion (1000): ok=%v fail=%v val=%d steps=%d min=%.3f ms median=%.3f ms",
+			res_b.ok, res_b.failure_kind, value_integer(res_b.value), res_b.steps_taken,
+			f64(st_b.min_ns) / 1e6, f64(st_b.median_ns) / 1e6)
 	}
 
 	// ---- M5: strings + equality (512 for v1 cap + 4096 target)
@@ -415,7 +431,7 @@ lex_measure_suite :: proc(t: ^testing.T) {
 		}
 		st := compute_stats(samples[:])
 		fmt.printfln("M5_strings (N=%d): ok=%v fail=%v out_len=%d steps=%d min=%.3f ms median=%.3f ms",
-			count, last_res.ok, last_res.failure_kind, last_res.value.detail, last_res.steps_taken,
+			count, last_res.ok, last_res.failure_kind, last_res.value.meta, last_res.steps_taken,
 			f64(st.min_ns) / 1e6, f64(st.median_ns) / 1e6)
 	}
 
@@ -436,7 +452,7 @@ lex_measure_suite :: proc(t: ^testing.T) {
 		}
 		st_lazy := compute_stats(samples[:])
 		fmt.printfln("W1a_500_file_lazy (outputs.app_42): ok=%v fail=%v val=%d imports=%d steps=%d min=%.3f ms median=%.3f ms",
-			last_lazy.ok, last_lazy.failure_kind, last_lazy.value.integer, ws.import_count, last_lazy.steps_taken,
+			last_lazy.ok, last_lazy.failure_kind, value_integer(last_lazy.value), ws.import_count, last_lazy.steps_taken,
 			f64(st_lazy.min_ns) / 1e6, f64(st_lazy.median_ns) / 1e6)
 
 		// (b) Full outputs force + canonical serialize
@@ -455,6 +471,7 @@ lex_measure_suite :: proc(t: ^testing.T) {
 	{
 		lines := generate_w3_lines(context.temp_allocator)
 		tree_bufs := new(lex_parser.Console_Tree_Buffers, context.temp_allocator)
+		eval_bufs := new(Console_Eval_Buffers, context.temp_allocator)
 		tree := new(lex_parser.Syntax_Tree, context.temp_allocator)
 		eval := new(Evaluation, context.temp_allocator)
 		host_state := new(Bench_Console_Host, context.temp_allocator)
@@ -465,7 +482,7 @@ lex_measure_suite :: proc(t: ^testing.T) {
 			for line in lines {
 				host_state.used = 0
 				lex_parser.parse_console(line, {}, tree_bufs, tree)
-				evaluation_start(eval, tree, .Console, bench_console_host(host_state))
+				evaluation_start(eval, tree, .Console, bench_console_host(host_state), eval_bufs)
 				if _, ok := line_force(eval); ok {
 					ok_count += 1
 				}

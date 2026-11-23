@@ -102,14 +102,14 @@ host_command_find :: proc "contextless" (data: rawptr, name: string) -> (signatu
 }
 
 @(private = "file")
-host_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []lex_evaluator.Value) -> (value: lex_evaluator.Value, ok: bool) {
+host_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []lex_evaluator.Host_Value) -> (value: lex_evaluator.Host_Value, ok: bool) {
 	evaluation := (^lex_evaluator.Evaluation)(data)
 	switch name {
 	case "plan":
 		made, problem := lex_evaluator.plan_value_make(evaluation, arguments[0])
 		return made, problem == .None
 	case "module":
-		return {kind = .Module_Ref, detail = arguments[0].detail}, len(arguments) == 1 && arguments[0].kind == .Hash
+		return {kind = .Module_Ref, detail = arguments[0].detail, vm_value = {kind = .Module_Ref, meta = arguments[0].vm_value.meta}}, len(arguments) == 1 && arguments[0].kind == .Hash
 	case "store":
 		made, problem := lex_evaluator.store_ref_make(evaluation, arguments)
 		return made, problem == .None
@@ -118,7 +118,7 @@ host_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []le
 }
 
 @(private = "file")
-host_none :: proc "contextless" (data: rawptr, name: string) -> (value: lex_evaluator.Value, ok: bool) {
+host_none :: proc "contextless" (data: rawptr, name: string) -> (value: lex_evaluator.Host_Value, ok: bool) {
 	return {}, false
 }
 
@@ -129,13 +129,14 @@ host_memory :: proc "contextless" (data: rawptr, size: int) -> (bytes: []u8, ok:
 
 @(private = "file")
 Run :: struct {
-	buffers:    lex_parser.Console_Tree_Buffers,
-	tree:       lex_parser.Syntax_Tree,
-	evaluation: lex_evaluator.Evaluation,
-	rows:       [TEST_ROWS]pr.Plan_Entry_Row,
-	count:      int,
-	refusal:    Refusal,
-	evaluated:  bool,
+	buffers:      lex_parser.Console_Tree_Buffers,
+	eval_buffers: lex_evaluator.Console_Eval_Buffers,
+	tree:         lex_parser.Syntax_Tree,
+	evaluation:   lex_evaluator.Evaluation,
+	rows:         [TEST_ROWS]pr.Plan_Entry_Row,
+	count:        int,
+	refusal:      Refusal,
+	evaluated:    bool,
 }
 
 // The rows that a test gives a read when it names no count.
@@ -154,7 +155,7 @@ read_text :: proc(image: ^Fake_Image, text: string, rows_given := TEST_ROWS) -> 
 	run := new(Run, context.temp_allocator)
 	lex_parser.parse_console(text, {}, &run.buffers, &run.tree)
 	host := lex_evaluator.Evaluation_Host{data = &run.evaluation, name_value = host_none, command_find = host_command_find, call_run = host_call_run, record_memory = host_memory}
-	lex_evaluator.evaluation_start(&run.evaluation, &run.tree, .Console, host, lex_evaluator.EVALUATION_BUDGET_STEPS, 2 * 1024 * 1024)
+	lex_evaluator.evaluation_start(&run.evaluation, &run.tree, .Console, host, &run.eval_buffers, lex_evaluator.EVALUATION_BUDGET_STEPS, 2 * 1024 * 1024)
 	value, ok := lex_evaluator.line_force(&run.evaluation)
 	run.evaluated = ok
 	if !ok {

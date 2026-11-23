@@ -8,7 +8,6 @@ import "modus:contract/value_kinds"
 import "modus:console_language"
 import "modus:console_results"
 import "modus:lex_evaluator"
-import "modus:lex_parser"
 import "modus:contract/root_ring"
 import "modus:system"
 import terminal "modus:terminal"
@@ -239,8 +238,8 @@ value_parts_draw :: proc "contextless" (sink: ^console_results.Sink, value: Valu
 			list_inline_write(sink, value, 0)
 			sink.end_line(sink)
 		} else if depth <= lex_evaluator.LIST_ITEM_CAPACITY {
-			for item in lex_evaluator.list_items_of(&line_evaluation, value) {
-				value_parts_draw(sink, item, depth + 1)
+			for item in lex_evaluator.list_items_of(&line_evaluation, value.vm_value) {
+				value_parts_draw(sink, lex_evaluator.value_to_host(&line_evaluation, item), depth + 1)
 			}
 		}
 	case .Integer:
@@ -263,7 +262,7 @@ value_parts_draw :: proc "contextless" (sink: ^console_results.Sink, value: Valu
 		sink.write(sink, value.integer != 0 ? "true" : "false", .Number)
 		sink.end_line(sink)
 	case .Hash:
-		if hash, ok := lex_evaluator.hash_of(&line_evaluation, value); ok {
+		if hash, ok := lex_evaluator.hash_of(&line_evaluation, value.vm_value); ok {
 			buf: [console_language.HASH_LITERAL_BYTES]u8
 			sink.continuation = 0
 			sink.write(sink, console_language.hash_format(hash, &buf), .Version)
@@ -278,13 +277,10 @@ value_parts_draw :: proc "contextless" (sink: ^console_results.Sink, value: Valu
 // function_text gives the text of a function of the line: its parameters,
 // "=>" and its body, as the nested form of the line has them.
 function_text :: proc "contextless" (value: Value) -> string {
-	node_idx := lex_parser.Node_Index(value.integer)
-	node := lex_parser.node_at(&line_tree, node_idx)
-	if node == nil || node.kind != .Function {
+	text, open_off, arrow_off, ok := lex_evaluator.function_source_offsets(&line_evaluation, value.vm_value)
+	if !ok {
 		return "a function"
 	}
-	text := line_tree.text
-	open_off, arrow_off := lex_parser.node_function_offsets(&line_tree, node_idx)
 	open := clamp(open_off, 0, len(text))
 	arrow_end := clamp(arrow_off, open, len(text))
 	// The end of the last token of the body: no space and no comment after it.
@@ -302,11 +298,11 @@ list_inline :: proc "contextless" (value: Value, depth: int) -> bool {
 	if depth > lex_evaluator.LIST_ITEM_CAPACITY {
 		return false
 	}
-	for item in lex_evaluator.list_items_of(&line_evaluation, value) {
+	for item in lex_evaluator.list_items_of(&line_evaluation, value.vm_value) {
 		switch item.kind {
 		case .Integer, .Text, .Enum, .Function, .Boolean, .Hash:
 		case .List:
-			if !list_inline(item, depth + 1) {
+			if !list_inline(lex_evaluator.value_to_host(&line_evaluation, item), depth + 1) {
 				return false
 			}
 		case .None, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
@@ -319,7 +315,8 @@ list_inline :: proc "contextless" (value: Value, depth: int) -> bool {
 // list_inline_write writes a list that list_inline accepts: "[2, 4, 6]".
 list_inline_write :: proc "contextless" (sink: ^console_results.Sink, value: Value, depth: int) {
 	sink.write(sink, "[", .Plain)
-	for item, number in lex_evaluator.list_items_of(&line_evaluation, value) {
+	for raw_item, number in lex_evaluator.list_items_of(&line_evaluation, value.vm_value) {
+		item := lex_evaluator.value_to_host(&line_evaluation, raw_item)
 		if number > 0 {
 			sink.write(sink, ", ", .Plain)
 		}
@@ -345,7 +342,7 @@ list_inline_write :: proc "contextless" (sink: ^console_results.Sink, value: Val
 		case .Boolean:
 			sink.write(sink, item.integer != 0 ? "true" : "false", .Number)
 		case .Hash:
-			if hash, ok := lex_evaluator.hash_of(&line_evaluation, item); ok {
+			if hash, ok := lex_evaluator.hash_of(&line_evaluation, item.vm_value); ok {
 				hbuf: [console_language.HASH_LITERAL_BYTES]u8
 				sink.write(sink, console_language.hash_format(hash, &hbuf), .Version)
 			}

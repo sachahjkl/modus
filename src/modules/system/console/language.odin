@@ -52,7 +52,7 @@ import "modus:system"
 // condition points into line_conditions, and a Stream names its place in
 // line_streams.
 Kind :: lex_evaluator.Kind
-Value :: lex_evaluator.Value
+Value :: lex_evaluator.Host_Value
 
 // The conditions of the line that runs. A value names one by its address,
 // so that a value stays small: a call keeps 12 of them on the stack.
@@ -273,9 +273,10 @@ line_source: [LINE_CAPACITY]u8
 line_tree: lex_parser.Syntax_Tree
 line_tree_buffers: lex_parser.Console_Tree_Buffers
 
-// The evaluation of the tree of the line that runs: its thunks keep values
-// whose texts are parts of line_source and of scratch, for one line.
+// The evaluation of the tree of the line that runs and its caller-owned VM
+// buffers.
 line_evaluation: lex_evaluator.Evaluation
+line_eval_buffers: lex_evaluator.Console_Eval_Buffers
 
 // console_host gives the console as the evaluation host. Each procedure
 // that fails the line gives ok false, and the evaluator stops.
@@ -540,7 +541,7 @@ deepest_line_stack: uint
 // writes the sentence of the refusal of the evaluator, if any. A refusal of
 // the host has written its own.
 line_evaluate :: proc "contextless" () -> Value {
-	lex_evaluator.evaluation_start(&line_evaluation, &line_tree, .Console, console_host())
+	lex_evaluator.evaluation_start(&line_evaluation, &line_tree, .Console, console_host(), &line_eval_buffers)
 	value, ok := lex_evaluator.line_force(&line_evaluation)
 	// A line that the bound stopped measures the bound, not the line.
 	if line_evaluation.refusal.refusal != .Stack_Exceeded && line_evaluation.stack_deepest > deepest_line_stack {
@@ -659,7 +660,7 @@ evaluation_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Rec
 			failure_record_set(errors.error_make(.Over_Limit, .None, 0, record.left, record.right), "the stack of the evaluation", nil)
 		}
 	case .Calls_Full:
-		fail("the line makes more calls of functions than the evaluator holds: ", i64(lex_evaluator.CALL_CAPACITY), " calls and ", i64(lex_evaluator.CALL_THUNK_CAPACITY), " values of their bodies")
+		fail("the line makes more calls of functions than the evaluator holds")
 	case .Lists_Full:
 		already := failed
 		fail("the lists of the line hold more than ", i64(lex_evaluator.LIST_ITEM_CAPACITY), " items in all")
@@ -674,6 +675,8 @@ evaluation_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Rec
 		fail("the line nests deeper than the evaluator allows: ", record.right, " levels")
 	case .With_Pairs_Full, .Imports_Full:
 		fail("the evaluation ran out of room for declarations")
+	case .Assertion_Failed:
+		fail("assertion failed: ", record.command)
 	}
 }
 

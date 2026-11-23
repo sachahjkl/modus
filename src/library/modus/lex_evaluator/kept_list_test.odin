@@ -12,8 +12,9 @@ fresh_evaluation :: proc() -> ^Evaluation {
 	bufs := new(lex_parser.Console_Tree_Buffers, context.temp_allocator)
 	tree := new(lex_parser.Syntax_Tree, context.temp_allocator)
 	lex_parser.parse_console("0", {}, bufs, tree)
+	eval_bufs := new(Console_Eval_Buffers, context.temp_allocator)
 	evaluation := new(Evaluation, context.temp_allocator)
-	evaluation_start(evaluation, tree, .Console, {})
+	evaluation_start(evaluation, tree, .Console, {}, eval_bufs)
 	return evaluation
 }
 
@@ -24,25 +25,26 @@ large_evaluation :: proc(items: int) -> ^Evaluation {
 	bufs := new(lex_parser.Console_Tree_Buffers, context.temp_allocator)
 	tree := new(lex_parser.Syntax_Tree, context.temp_allocator)
 	lex_parser.parse_console("0", {}, bufs, tree)
+	eval_bufs := new(Console_Eval_Buffers, context.temp_allocator)
 	evaluation := new(Evaluation, context.temp_allocator)
-	trees := make([]Tree_Slot, 1, context.temp_allocator)
-	trees[0] = {tree = tree, thunks = evaluation.thunks[:], slots = evaluation.slots[:], slot_counts = evaluation.slot_counts[:]}
-	pools := Evaluation_Pools{trees = trees, calls = evaluation.calls[:], call_thunks = evaluation.call_thunks[:], list_items = make([]Value, items, context.temp_allocator), hashes = evaluation.hashes[:]}
+	pools := console_eval_pools(eval_bufs)
+	pools.list_items = make([]Value, items, context.temp_allocator)
 	evaluation_start_with_pools(evaluation, tree, .Console, {}, pools)
 	return evaluation
 }
 
 // list_of makes a List of the evaluation with the values.
 @(private = "file")
-list_of :: proc(t: ^testing.T, evaluation: ^Evaluation, values: []Value) -> Value {
-	first, ok := list_items_add(evaluation, values)
+list_of :: proc(t: ^testing.T, evaluation: ^Evaluation, values: []Host_Value) -> Host_Value {
+	first, ok := list_items_add_host(evaluation, values)
 	testing.expect(t, ok, "the items fit in the evaluation")
-	return {kind = .List, integer = i64(first), detail = u32(len(values))}
+	vm_list := Value{kind = .List, data = u64(first), meta = u32(len(values))}
+	return {kind = .List, integer = i64(first), detail = u32(len(values)), vm_value = vm_list}
 }
 
 @(private = "file")
-integers :: proc(count: int, start := 0) -> []Value {
-	values := make([]Value, count, context.temp_allocator)
+integers :: proc(count: int, start := 0) -> []Host_Value {
+	values := make([]Host_Value, count, context.temp_allocator)
 	for &value, index in values {
 		value = {kind = .Integer, integer = i64(start + index)}
 	}
@@ -52,14 +54,14 @@ integers :: proc(count: int, start := 0) -> []Value {
 // The memory of a variable: its items and its bytes.
 @(private = "file")
 Kept :: struct {
-	items:  [KEPT_LIST_ITEM_CAPACITY]Value,
-	count:  int,
-	bytes:  [KEPT_LIST_BYTE_CAPACITY]u8,
-	top:    u32,
+	items: [KEPT_LIST_ITEM_CAPACITY]Host_Value,
+	count: int,
+	bytes: [KEPT_LIST_BYTE_CAPACITY]u8,
+	top:   u32,
 }
 
 @(private = "file")
-keep_into :: proc(t: ^testing.T, kept: ^Kept, evaluation: ^Evaluation, value: Value) {
+keep_into :: proc(t: ^testing.T, kept: ^Kept, evaluation: ^Evaluation, value: Host_Value) {
 	keeping := new(List_Keeping, context.temp_allocator)
 	result := list_keep(keeping, evaluation, value)
 	testing.expect_value(t, result.refusal, List_Keep_Refusal.None)
@@ -68,13 +70,14 @@ keep_into :: proc(t: ^testing.T, kept: ^Kept, evaluation: ^Evaluation, value: Va
 }
 
 @(private = "file")
-texts_of :: proc(evaluation: ^Evaluation, value: Value) -> []string {
+texts_of :: proc(evaluation: ^Evaluation, value: Host_Value) -> []string {
 	texts := make([dynamic]string, context.temp_allocator)
-	for item in list_items_of(evaluation, value) {
+	vm_val := value.vm_value.kind == .List ? value.vm_value : Value{kind = .List, data = u64(value.integer), meta = value.detail}
+	for item in list_items_of(evaluation, vm_val) {
 		if item.kind == .List {
-			append(&texts, ..texts_of(evaluation, item))
+			append(&texts, ..texts_of(evaluation, value_to_host(evaluation, item)))
 		} else {
-			append(&texts, item.text)
+			append(&texts, value_text(evaluation, item))
 		}
 	}
 	return texts[:]
@@ -140,7 +143,7 @@ a_kept_list_refuses_the_items_of_its_line :: proc(t: ^testing.T) {
 	module_file := []u8{1, 2, 3, 4}
 	record := []u8{9, 8, 7, 6}
 	Case :: struct {
-		item:    Value,
+		item:    Host_Value,
 		refusal: List_Keep_Refusal,
 	}
 	cases := []Case {
@@ -217,8 +220,8 @@ a_kept_list_is_a_copy_that_its_own_change_reads :: proc(t: ^testing.T) {
 	for text, index in texts {
 		testing.expect_value(t, text, index % 2 == 0 ? "ab" : "cd")
 	}
-	for item in list_items_of(fifth, y_read) {
+	for item in list_items_of(fifth, y_read.vm_value) {
 		testing.expect_value(t, item.kind, Kind.List)
-		testing.expect_value(t, item.detail, u32(2))
+		testing.expect_value(t, item.meta, u32(2))
 	}
 }

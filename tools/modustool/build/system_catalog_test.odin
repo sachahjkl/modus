@@ -175,6 +175,13 @@ system_catalog_is_deterministic_and_evaluates_with_lex_evaluator :: proc(t: ^tes
 
 	// Evaluate the generated catalog.lex with the real lex_evaluator.
 	workspace := new(lex_evaluator.Declaration_Workspace, context.temp_allocator)
+	{
+		pools := lex_evaluator.declaration_pools_of_scale(1)
+		ws_mem := make([]u8, lex_evaluator.declaration_workspace_bytes(pools) + 64, context.temp_allocator)
+		addr := uintptr(raw_data(ws_mem))
+		off := int((64 - (addr & 63)) & 63)
+		assert(lex_evaluator.declaration_workspace_carve(workspace, ws_mem[off:off + lex_evaluator.declaration_workspace_bytes(pools)], pools))
+	}
 	cfg := lex_evaluator.Declaration_Config{stack_bytes = CATALOG_TEST_STACK}
 	root := lex_evaluator.declaration_evaluate(workspace, catalog_first, "", cfg)
 	testing.expectf(t, root.ok && root.value.kind == .Record_Literal, "catalog.lex must evaluate to a record: %v", root)
@@ -184,7 +191,7 @@ system_catalog_is_deterministic_and_evaluates_with_lex_evaluator :: proc(t: ^tes
 
 	// catalog.release matches release.RELEASE_NUMBER.
 	rel_val, rel_ok := lex_evaluator.declaration_force_path(workspace, root.value, "release")
-	testing.expect(t, rel_ok && rel_val.kind == .Text && rel_val.text == release.RELEASE_NUMBER, "catalog.release must match release.RELEASE_NUMBER")
+	testing.expect(t, rel_ok && rel_val.kind == .Text && lex_evaluator.value_text(&workspace.evaluation, rel_val) == release.RELEASE_NUMBER, "catalog.release must match release.RELEASE_NUMBER")
 
 	// catalog.c.compiler, catalog.c.assembler, and catalog.c.module.
 	cc_val, cc_ok := lex_evaluator.declaration_force_path(workspace, root.value, "c.compiler")
@@ -251,6 +258,13 @@ release_catalog_holds_shipped_modules_and_no_test_module :: proc(t: ^testing.T) 
 	testing.expect(t, from_release_image == from_boot_image, "release catalog from boot_release.image and from boot.image must be identical")
 
 	workspace := new(lex_evaluator.Declaration_Workspace, context.temp_allocator)
+	{
+		pools := lex_evaluator.declaration_pools_of_scale(1)
+		ws_mem := make([]u8, lex_evaluator.declaration_workspace_bytes(pools) + 64, context.temp_allocator)
+		addr := uintptr(raw_data(ws_mem))
+		off := int((64 - (addr & 63)) & 63)
+		assert(lex_evaluator.declaration_workspace_carve(workspace, ws_mem[off:off + lex_evaluator.declaration_workspace_bytes(pools)], pools))
+	}
 	cfg := lex_evaluator.Declaration_Config{stack_bytes = CATALOG_TEST_STACK}
 	root := lex_evaluator.declaration_evaluate(workspace, from_release_image, "", cfg)
 	testing.expectf(t, root.ok && root.value.kind == .Record_Literal, "catalog_release.lex must evaluate to a record: %v", root)

@@ -49,7 +49,7 @@ declaration_laziness_is_strict :: proc(t: ^testing.T) {
 	res := declaration_evaluate(ws, "{ good = 42, bad = 1 / 0 }", "good", cfg)
 	testing.expect(t, res.ok)
 	testing.expect_value(t, res.value.kind, Kind.Integer)
-	testing.expect_value(t, res.value.integer, i64(42))
+	testing.expect_value(t, value_integer(res.value), i64(42))
 
 	// Forcing .bad DOES fail with Division_By_Zero.
 	res = declaration_evaluate(ws, "{ good = 42, bad = 1 / 0 }", "bad", cfg)
@@ -58,36 +58,41 @@ declaration_laziness_is_strict :: proc(t: ^testing.T) {
 
 	// Sibling field calls an effectful command: selecting .good never triggers it.
 	res = declaration_evaluate(ws, "{ good = 7, bad = shutdown() }", "good", cfg)
-	testing.expect(t, res.ok && res.value.integer == 7)
+	testing.expect(t, res.ok && value_integer(res.value) == 7)
 
 	// Nested project outputs: selecting outputs.tools does not force outputs.image.
 	res = declaration_evaluate(ws, "project {\n  outputs = {\n    tools = 100 + 23,\n    image = 1 / 0,\n  },\n}", "outputs.tools", cfg)
-	testing.expect(t, res.ok && res.value.integer == 123)
+	testing.expect(t, res.ok && value_integer(res.value) == 123)
 
 	// Lazy `with`: overriding a broken field never forces the overridden value.
 	res = declaration_evaluate(ws, "({ a = 1, b = 1 / 0 } with { b = 99 }).b", "", cfg)
-	testing.expect(t, res.ok && res.value.integer == 99)
+	testing.expect(t, res.ok && value_integer(res.value) == 99)
 	res = declaration_evaluate(ws, "({ a = 1, b = 1 / 0 } with { b = 99 }).a", "", cfg)
-	testing.expect(t, res.ok && res.value.integer == 1)
+	testing.expect(t, res.ok && value_integer(res.value) == 1)
+
+	// Strictly override-only `with`: an unknown patch field is refused eagerly
+	// without forcing any broken field in either record.
+	res = declaration_evaluate(ws, "{ a = 1 / 0 } with { b = 2 }", "", cfg)
+	testing.expect(t, !res.ok && res.failure_kind == .Field_Unknown && res.detail == "b")
 
 	// Lazy `if`: untaken branch is never forced.
 	res = declaration_evaluate(ws, "if true then 11 else 1 / 0", "", cfg)
-	testing.expect(t, res.ok && res.value.integer == 11)
+	testing.expect(t, res.ok && value_integer(res.value) == 11)
 	res = declaration_evaluate(ws, "if false then 1 / 0 else 22", "", cfg)
-	testing.expect(t, res.ok && res.value.integer == 22)
+	testing.expect(t, res.ok && value_integer(res.value) == 22)
 
 	// Lazy `let`: unused broken binding is never forced.
 	res = declaration_evaluate(ws, "let boom = 1 / 0, ok = 55 in ok", "", cfg)
-	testing.expect(t, res.ok && res.value.integer == 55)
+	testing.expect(t, res.ok && value_integer(res.value) == 55)
 
 	// Memoization: forcing the same field a second time costs 0 additional steps.
 	res = declaration_evaluate(ws, "{ x = 2 * 3 + 4, unused = 1 / 0 }", "", cfg)
 	testing.expect(t, res.ok)
 	v1, ok1 := declaration_force_path(ws, res.value, "x")
-	testing.expect(t, ok1 && v1.integer == 10)
+	testing.expect(t, ok1 && value_integer(v1) == 10)
 	steps_after_first := ws.evaluation.steps
 	v2, ok2 := declaration_force_path(ws, res.value, "x")
-	testing.expect(t, ok2 && v2.integer == 10)
+	testing.expect(t, ok2 && value_integer(v2) == 10)
 	testing.expect_value(t, ws.evaluation.steps, steps_after_first)
 }
 
@@ -148,21 +153,42 @@ declaration_cycle_detection :: proc(t: ^testing.T) {
 declaration_bounds_and_recursion :: proc(t: ^testing.T) {
 	ws := new_workspace()
 
-	// Step/fuel bound stops infinite recursion cleanly.
-	res := declaration_evaluate(ws, "let loop = (n) => loop(n + 1) in loop(0)", "", {budget = 120, depth_limit = 500, stack_bytes = DECL_TEST_STACK})
+	// Step/fuel bound stops infinite tail recursion cleanly in O(1) frame depth.
+	prof: Evaluation_Profile
+	res := declaration_evaluate(ws, "let loop = (n) => loop(n + 1) in loop(0)", "", {budget = 120, depth_limit = 500, stack_bytes = DECL_TEST_STACK, profile = &prof})
 	testing.expect(t, !res.ok)
 	testing.expect_value(t, res.failure_kind, declaration_eval.Failure_Kind.Step_Bound_Reached)
-	testing.expect_value(t, res.steps_taken, u32(120))
+	testing.expect(t, res.steps_taken <= 120)
+	testing.expect(t, prof.max_frame_depth <= 4)
 
-	// Depth bound stops deep recursion before stack overflow.
+	// Depth bound stops deep non-tail recursion cleanly.
 	res = declaration_evaluate(ws, "let down = (n) => 1 + down(n + 1) in down(0)", "", {budget = 100_000, depth_limit = 24, stack_bytes = DECL_TEST_STACK})
 	testing.expect(t, !res.ok)
 	testing.expect_value(t, res.failure_kind, declaration_eval.Failure_Kind.Depth_Bound_Reached)
 
-	// Stack byte bound stops deep recursion when tight.
-	res = declaration_evaluate(ws, "let down = (n) => 1 + down(n + 1) in down(0)", "", {budget = 100_000, depth_limit = 500, stack_bytes = 32 * 1024})
-	testing.expect(t, !res.ok)
-	testing.expect_value(t, res.failure_kind, declaration_eval.Failure_Kind.Stack_Bound_Reached)
+	// Deep tail recursion (50,000 calls) succeeds in O(1) VM frames.
+	prof = {}
+	res = declaration_evaluate(ws, "let sum = (n, acc) => if n = 0 then acc else sum(n - 1, acc + n) in sum(50000, 0)", "", {stack_bytes = DECL_TEST_STACK, profile = &prof})
+	testing.expectf(t, res.ok && res.value.kind == .Integer && value_integer(res.value) == 1250025000, "tail recursion failed: ok=%v fail=%v val=%d", res.ok, res.failure_kind, value_integer(res.value))
+	testing.expect(t, prof.tail_calls_total >= 49999)
+	testing.expect(t, prof.max_frame_depth <= 4)
+
+	// Deep non-tail recursion (1,000 calls) succeeds on arena-backed VM frames.
+	res = declaration_evaluate(ws, "let walk = (d) => if d = 0 then 1 else 1 + walk(d - 1) in walk(1000)", "", {stack_bytes = DECL_TEST_STACK})
+	testing.expectf(t, res.ok && res.value.kind == .Integer && value_integer(res.value) == 1001, "non-tail recursion failed: ok=%v fail=%v val=%d", res.ok, res.failure_kind, value_integer(res.value))
+
+	// Exponential DAG DoS in canonical serialization hits Step_Bound_Reached.
+	dag_src := `let
+  a = [1, 1], b = [a, a], c = [b, b], d = [c, c], e = [d, d],
+  f = [e, e], g = [f, f], h = [g, g], i = [h, h], j = [i, i],
+  k = [j, j], l = [k, k], m = [l, l], n = [m, m], o = [n, n],
+  p = [o, o], q = [p, p], r = [q, q], s = [r, r], t = [s, s]
+in t`
+	dag_out := make([]u8, 64 * 1024, context.temp_allocator)
+	dag_len, dag_ok := declaration_evaluate_to_buffer(ws, dag_src, "", {budget = 10_000, stack_bytes = DECL_TEST_STACK}, dag_out)
+	testing.expect(t, dag_ok && dag_len >= declaration_eval.OUTPUT_HEADER_BYTES)
+	dag_hdr, _, dag_hdr_err := declaration_eval.output_read_header(dag_out[:dag_len])
+	testing.expect(t, dag_hdr_err == .None && dag_hdr.status == .Refused && dag_hdr.failure_kind == .Step_Bound_Reached)
 
 	// Node pool bound refuses cleanly.
 	res = declaration_evaluate(ws, "{ a = 1, b = 2, c = 3, d = 4 }", "", {node_limit = 4, stack_bytes = DECL_TEST_STACK})
@@ -177,7 +203,7 @@ declaration_bounds_and_recursion :: proc(t: ^testing.T) {
 
 	// Terminating recursion with conditional succeeds.
 	res = declaration_evaluate(ws, "let fact = (n) => if n <= 1 then 1 else n * fact(n - 1) in fact(6)", "", {stack_bytes = DECL_TEST_STACK})
-	testing.expect(t, res.ok && res.value.kind == .Integer && res.value.integer == 720)
+	testing.expect(t, res.ok && res.value.kind == .Integer && value_integer(res.value) == 720)
 }
 
 // Refused side effects, unknown commands, hostile import paths, and bad types.
@@ -250,18 +276,18 @@ in {
 	items := list_items_of(&ws.evaluation, res.value)
 	testing.expect_value(t, len(items), 4)
 	if len(items) == 4 {
-		testing.expect_value(t, items[0].integer, i64(30))
-		testing.expect_value(t, items[1].integer, i64(40))
-		testing.expect_value(t, items[2].integer, i64(50))
-		testing.expect_value(t, items[3].integer, i64(60))
+		testing.expect_value(t, value_integer(items[0]), i64(30))
+		testing.expect_value(t, value_integer(items[1]), i64(40))
+		testing.expect_value(t, value_integer(items[2]), i64(50))
+		testing.expect_value(t, value_integer(items[3]), i64(60))
 	}
 
 	res = declaration_evaluate(ws, source, "greeting", cfg)
-	testing.expect(t, res.ok && res.value.kind == .Text && res.value.text == "hello modus")
+	testing.expect(t, res.ok && res.value.kind == .Text && value_text(&ws.evaluation, res.value) == "hello modus")
 	res = declaration_evaluate(ws, source, "equal_check", cfg)
-	testing.expect(t, res.ok && res.value.kind == .Boolean && res.value.integer == 1)
+	testing.expect(t, res.ok && res.value.kind == .Boolean && value_boolean(res.value))
 	res = declaration_evaluate(ws, source, "diff_check", cfg)
-	testing.expect(t, res.ok && res.value.kind == .Boolean && res.value.integer == 1)
+	testing.expect(t, res.ok && res.value.kind == .Boolean && value_boolean(res.value))
 }
 
 // End-to-end real pins.lex, project.lex, and plan.lex evaluation +
@@ -400,7 +426,7 @@ declaration_end_to_end_pins_project_and_plan :: proc(t: ^testing.T) {
 	testing.expect_value(t, wren_mod_hash, nasm_hash)
 
 	gt_follow := declaration_evaluate(ws, project_source, "inputs.gt", cfg)
-	testing.expect(t, gt_follow.ok && gt_follow.value.kind == .Follow_Ref && gt_follow.value.text == "gui_toolkit")
+	testing.expect(t, gt_follow.ok && gt_follow.value.kind == .Follow_Ref && value_follow_name(&ws.evaluation, gt_follow.value) == "gui_toolkit")
 	follow_pub, _ := hash_of(&ws.evaluation, gt_follow.value)
 	testing.expect_value(t, follow_pub, gt_key_hash)
 
@@ -469,7 +495,7 @@ a_declaration_is_read_from_a_tree :: proc(t: ^testing.T) {
 	testing.expect(t, !res.ok && res.failure_kind == .Type_Error && res.detail == "declaration", "a text is no declaration")
 
 	res = declaration_evaluate(ws, "declaration(here()).name", "", cfg)
-	testing.expect(t, res.ok && res.value.kind == .Text && res.value.text == "kernel", "declaration(here()) reads the source tree")
+	testing.expect(t, res.ok && res.value.kind == .Text && value_text(&ws.evaluation, res.value) == "kernel", "declaration(here()) reads the source tree")
 }
 
 // A refusal of the conversion of a recipe is the failure Recipe_Refused,
@@ -547,13 +573,12 @@ the_largest_recipe_fits_its_written_arguments :: proc(t: ^testing.T) {
 	testing.expect_value(t, res.detail, plans_recipes.recipe_refusal_words[.Arguments_Too_Large])
 }
 
-// The fields of one record at the bound and one past it, then the pool of
-// the names of the records that one write holds at once: a record of the
-// bound inside a record of the bound fills it, and one record more inside
-// them is refused, never a write past the pool.
+// Records larger than 1,024 fields and deeply nested large records serialize
+// cleanly in canonical UTF-8 key order without hitting static field or name
+// pool caps.
 @(test)
 a_record_has_the_most_fields_and_the_pool_the_most_names :: proc(t: ^testing.T) {
-	ws := new_workspace()
+	ws := new_workspace(2)
 	cfg := Declaration_Config{stack_bytes = DECL_TEST_STACK, text_bytes_most = 256 * 1024}
 	fields :: proc(builder: ^strings.Builder, prefix: string, count: int) {
 		for index in 0 ..< count {
@@ -569,28 +594,24 @@ a_record_has_the_most_fields_and_the_pool_the_most_names :: proc(t: ^testing.T) 
 		_, failure := declaration_serialize_value(ws, res.value, output)
 		return failure
 	}
-	for count in ([?]int{DECLARATION_RECORD_FIELDS_LIMIT, DECLARATION_RECORD_FIELDS_LIMIT + 1}) {
+	for count in ([?]int{DECLARATION_RECORD_FIELDS_LIMIT, DECLARATION_RECORD_FIELDS_LIMIT + 500}) {
 		builder := strings.builder_make(context.temp_allocator)
 		strings.write_string(&builder, "{\n")
 		fields(&builder, "f", count)
 		strings.write_string(&builder, "}\n")
 		failure := serialize(ws, strings.to_string(builder), cfg)
-		expected := count <= DECLARATION_RECORD_FIELDS_LIMIT ? declaration_eval.Failure_Kind.None : declaration_eval.Failure_Kind.Pool_Exhausted
-		testing.expectf(t, failure == expected, "a record of %d fields: %v", count, failure)
+		testing.expectf(t, failure == .None, "a record of %d fields: %v", count, failure)
 	}
-	#assert(DECLARATION_RECORD_NAME_POOL == 2 * DECLARATION_RECORD_FIELDS_LIMIT)
-	for third in ([?]bool{false, true}) {
-		builder := strings.builder_make(context.temp_allocator)
-		strings.write_string(&builder, "{\n")
-		fields(&builder, "outer", DECLARATION_RECORD_FIELDS_LIMIT - 1)
-		strings.write_string(&builder, "inner = {\n")
-		fields(&builder, "f", DECLARATION_RECORD_FIELDS_LIMIT - 1)
-		strings.write_string(&builder, third ? "last = { x = 1 },\n" : "last = 1,\n")
-		strings.write_string(&builder, "},\n}\n")
-		failure := serialize(ws, strings.to_string(builder), cfg)
-		expected := third ? declaration_eval.Failure_Kind.Pool_Exhausted : declaration_eval.Failure_Kind.None
-		testing.expectf(t, failure == expected, "two records of the bound, a third inside them %v: %v", third, failure)
-	}
+	// Three nested large records succeed with zero static 2048-name cap.
+	builder := strings.builder_make(context.temp_allocator)
+	strings.write_string(&builder, "{\n")
+	fields(&builder, "outer", DECLARATION_RECORD_FIELDS_LIMIT - 1)
+	strings.write_string(&builder, "inner = {\n")
+	fields(&builder, "f", DECLARATION_RECORD_FIELDS_LIMIT - 1)
+	strings.write_string(&builder, "last = { x = 1 },\n")
+	strings.write_string(&builder, "},\n}\n")
+	failure := serialize(ws, strings.to_string(builder), cfg)
+	testing.expectf(t, failure == .None, "three nested large records: %v", failure)
 }
 
 // A file past the share of text of the scale 0: refused there for its node
@@ -636,7 +657,7 @@ a_declaration_file_past_64_kib_takes_a_larger_scale :: proc(t: ^testing.T) {
 			return
 		}
 	}
-	testing.expect(t, res.value.kind == .Integer && res.value.integer == 7)
+	testing.expect(t, res.value.kind == .Integer && value_integer(res.value) == 7)
 	_, larger = declaration_scale_after(small, DECLARATION_SCALE_MOST)
 	testing.expect(t, !larger)
 
@@ -653,6 +674,6 @@ a_declaration_file_past_64_kib_takes_a_larger_scale :: proc(t: ^testing.T) {
 	other := new(Declaration_Workspace, context.temp_allocator)
 	testing.expect(t, !declaration_workspace_carve(other, memory[:declaration_workspace_bytes(pools) - 1], pools))
 	testing.expect(t, !declaration_workspace_carve(other, memory[1:], pools))
-	testing.expect(t, other.nodes == nil && other.text_arena == nil)
+	testing.expect(t, other.nodes == nil && other.vm_pools.text_arena == nil)
 	testing.expect(t, declaration_workspace_carve(other, memory, pools))
 }

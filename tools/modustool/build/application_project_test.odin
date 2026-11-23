@@ -151,7 +151,7 @@ output_recipe_hash :: proc(t: ^testing.T, project_lex: string, config: lex_evalu
 	if !result.ok || result.value.kind != .Recipe_Ref {
 		return {}, false
 	}
-	return workspace.evaluation.recipes[result.value.integer].recipe_hash, true
+	return workspace.evaluation.recipes[int(result.value.data)].recipe_hash, true
 }
 
 @(private = "file")
