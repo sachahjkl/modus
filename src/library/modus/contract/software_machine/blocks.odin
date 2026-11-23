@@ -1,7 +1,7 @@
 package software_machine
 
-// The decoded blocks of the software processor (src/md/features/browser_machine.md,
-// "The decoded blocks" and "Coherence").
+// The decoded blocks of the software processor and their coherence
+// (src/md/features/browser_machine.md, "How the software processor works").
 //
 // A decoded block is a run of instructions inside one page that the
 // processor fetched and decoded once. processor_run enters a block at each

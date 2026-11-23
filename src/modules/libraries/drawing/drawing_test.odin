@@ -124,8 +124,9 @@ canvas_shape_that_wraps_is_refused :: proc(t: ^testing.T) {
 
 // The scale word of a canvas: each word that names no count of eighths of
 // the range is refused with Bad_Value of the argument canvas and the word,
-// and draws nothing: a negative word, 1, the scale 1 (8 eighths), 9, one
-// past the largest scale, and the largest word. The scale 0 draws the
+// and draws nothing: a negative word, 1, one under the smallest scale, one
+// past the largest scale, a scale with a high byte set, and the largest
+// word. The scale 0 draws the
 // records in pixels of the canvas; the scale 2 draws a rectangle of 1 by 2
 // logical pixels on 2 by 4 pixels.
 @(test)
@@ -141,7 +142,7 @@ canvas_scale_words :: proc(t: ^testing.T) {
 	whole := [1]Damage_Rectangle{{0, 0, 4, 4}}
 	places := rectangles_to_read(whole[:])
 	refused: errors.Error_Record
-	refused_words := [?]i64{-1, min(i64), 1, scale_factor.EIGHTHS_OF_ONE, i64(scale_factor.Scale.Ten_Eighths) - 1, i64(scale_factor.Scale.Sixteen_Eighths) + 1, 256 + i64(scale_factor.Scale.Ten_Eighths), max(i64)}
+	refused_words := [?]i64{-1, min(i64), 1, i64(scale_factor.Scale.Eight_Eighths) - 1, i64(scale_factor.Scale.Sixteen_Eighths) + 1, 256 + i64(scale_factor.Scale.Eight_Eighths), max(i64)}
 	for word in refused_words {
 		shape := Canvas_Shape{width = 4, height = 4, stride = 4, scale = word}
 		refused = {}

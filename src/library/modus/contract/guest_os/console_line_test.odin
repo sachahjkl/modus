@@ -60,7 +60,7 @@ console_line_refuses_hostile_bytes :: proc(t: ^testing.T) {
 	testing.expect_value(t, text_of(&line), "abcd")
 	// A line of CONSOLE_LINE_BYTES ends at its last byte.
 	console_line_next(&line)
-	for index in 0 ..< CONSOLE_LINE_BYTES - 1 {
+	for _ in 0 ..< CONSOLE_LINE_BYTES - 1 {
 		testing.expect_value(t, console_line_put(&line, 'x'), Console_Change.Changed)
 	}
 	testing.expect_value(t, console_line_put(&line, 'y'), Console_Change.Ended)

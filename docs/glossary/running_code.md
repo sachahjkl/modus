@@ -126,7 +126,7 @@ A decoded block is a run of instructions inside one page that the software proce
 
 Each processor of a browser machine keeps a cache of decoded blocks of a fixed size, keyed by the physical address of the first byte. At each entry, the software processor translates the place for an execute and compares the bytes of the block with the memory, so a block never runs code that a write changed. A decoded block is not a block of a disk, and not a compiled module: the compiled tier compiles the decoded blocks that run often.
 
-The design: `src/md/features/browser_machine.md`, "The decoded blocks".
+The design: `src/md/features/browser_machine.md`, "How the software processor works".
 
 Do not use: translation block, trace, basic block (for this).
 

@@ -1426,7 +1426,7 @@ Do not use: lambda, closure, callback.
 
 A list is a value of Lex that holds values in order, written `[a, b, …]`.
 
-`map(list, function)` gives the list of the results of a function on each item. An item keeps its kind, and a record literal or a member in it waits for the parameter that types it. The console draws a list of integers, texts, members and functions on one line, `[2, 4, 6]`. No export takes one. A variable of the console keeps a copy of a list of 64 items at most, and a later line reads it as a list of its own: `x = [1, 2, 3]`, then `map(x, (n) => n * n)`. It is not a table, whose rows have one record description.
+`map(list, function)` gives the list of the results of a function on each item. An item keeps its kind; a record literal in it waits for the parameter that types it. The console draws a list on one line, `[2, 4, 6]`. No export takes one. A variable of the console keeps a copy of a list of at most 64 items: `x = [1, 2, 3]`, then `map(x, (n) => n * n)`. It is not a table, whose rows have one record description.
 
 The design: `src/md/features/declarations.md`, "The functions of layer 4 as built".
 

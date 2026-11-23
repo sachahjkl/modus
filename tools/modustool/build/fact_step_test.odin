@@ -57,7 +57,7 @@ a_step_of_a_fact_is_refused_before_the_run :: proc(t: ^testing.T) {
 		{&catalog, "probe.Probe", "probe", "value == 3", .Condition_Refused, .Double_Equal, ""},
 		{&catalog, "probe.Probe", "probe", "value ! 3", .Condition_Refused, .Lone_Bang, ""},
 		{&catalog, "probe.Probe", "probe", "value =", .Condition_Refused, .No_Value, ""},
-		{&catalog, "probe.Probe", "probe", "values = 3", .Condition_Refused, .Unknown_Field, "where: the records Probe have no field values; their fields are value, mark, number"},
+		{&catalog, "probe.Probe", "probe", "values = 3", .Condition_Refused, .Unknown_Field, "where: the records Probe have no field values; did you mean value? Their fields are value, mark, number"},
 		{&text_catalog, "probe.Probe", "probe", "note < \"a\"", .Condition_Refused, .No_Order, ""},
 		// The value: its kind, its sign, its range, its form.
 		{&catalog, "probe.Probe", "probe", "value = \"42\"", .Condition_Refused, .Wrong_Kind, "where: the field value is Integer, the value is Text"},
