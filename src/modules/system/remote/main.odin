@@ -78,6 +78,7 @@
 package remote_service
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/machine_wire"
@@ -102,20 +103,31 @@ import "modus:system"
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3421, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
-	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	open_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	seal_with_aes_128_gcm :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	open_with_aes_128_gcm :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
+	@(require_results)
+	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	open_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	seal_with_aes_128_gcm :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	open_with_aes_128_gcm :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 	sha256 :: proc "c" (text: ^string, result: ^[]u8) -> i64 ---
 	hmac_sha256 :: proc "c" (key, text: ^string, result: ^[]u8) -> i64 ---
 	hkdf_sha256_extract :: proc "c" (salt, input: ^string, result: ^[]u8) -> i64 ---
-	hkdf_sha256_expand :: proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	x25519 :: proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	ed25519_public_key :: proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	ed25519_sign :: proc "c" (secret, message: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	ed25519_verify :: proc "c" (public, message, signature: ^string, error: ^errors.Error_Record) -> i64 ---
-	header_protection_mask_with_aes_128 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	header_protection_mask_with_chacha20 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
+	@(require_results)
+	hkdf_sha256_expand :: proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	x25519 :: proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	ed25519_public_key :: proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	ed25519_sign :: proc "c" (secret, message: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	ed25519_verify :: proc "c" (public, message, signature: ^string, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	header_protection_mask_with_aes_128 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	header_protection_mask_with_chacha20 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 }
 
 // The QUIC connections and their calls: remote.CONNECTION_CAPACITY records,
@@ -272,6 +284,7 @@ Service_Connection :: struct {
 	connect_tag:   u32, // Connecting and Giving_Up: the tag of the Connect.
 	deadline:      u64, // Connecting, Readying and Giving_Up: the hang bound of the state.
 	refusal:       errors.Error_Record, // Refused and Giving_Up: why.
+	refused:       call_outcome.Call_Outcome, // Refused and Giving_Up: the outcome that the place of the refusal named.
 	name:          [32]u8,
 	row:           int, // The row of the client table that the connection is for.
 	serial:        u64, // The serial of that row: the grant that the connection carries.
@@ -314,8 +327,8 @@ counts: Counts
 Recent :: struct {
 	service:      [32]u8,
 	export:       u32,
-	status:       remote.Status,
-	call_status:  u32,
+	relay_outcome: call_outcome.Call_Outcome, // Not Succeeded: this process refused the request, and no call ran.
+	outcome:      call_outcome.Call_Outcome,
 	text:         [96]u8, // A refusal: the sentence of its error record.
 	text_count:   int,
 	value:        i64,
@@ -809,9 +822,10 @@ answer_put :: proc "contextless" (buffer: []u8, header: remote.Answer, result: [
 	return len(bytes)
 }
 
-// refuse answers a request that this process refused, and writes the
-// sentence of its error record on the log while the log has room for it.
-refuse :: proc "contextless" (buffer: []u8, error: errors.Error_Record, service: string = "", hash: [32]u8 = {}) -> int {
+// refuse answers a request that this process refused with its relay
+// outcome, and writes the sentence of its error record on the log while the
+// log has room for it. No call ran.
+refuse :: proc "contextless" (buffer: []u8, outcome: call_outcome.Call_Outcome, error: errors.Error_Record, service: string = "", hash: [32]u8 = {}) -> int {
 	counts.refused += 1
 	error := error
 	// One sentence, for the log and for the window.
@@ -829,7 +843,7 @@ refuse :: proc "contextless" (buffer: []u8, error: errors.Error_Record, service:
 			system.log_fact(.Info, Request_Refused(errors.error_record_fact_fields(error)))
 		}
 	}
-	answer := remote.Answer{status = .Refused, error = error, hash = hash}
+	answer := remote.Answer{relay_outcome = u32(outcome), error = error, hash = hash}
 	item := recent_add(service, 0, answer, 0, 0)
 	item.text_count = copy(item.text[:], system.written(&writer))
 	return answer_put(buffer, answer, nil)
@@ -837,7 +851,10 @@ refuse :: proc "contextless" (buffer: []u8, error: errors.Error_Record, service:
 
 recent_add :: proc "contextless" (service: string, export: u32, answer: remote.Answer, bytes: u64, microseconds: u64) -> ^Recent {
 	item := &recent[recent_count % RECENT_CAPACITY]
-	item^ = {export = export, status = answer.status, call_status = answer.call_status, value = answer.value, error = answer.error.kind, bytes = bytes, microseconds = microseconds}
+	// This process wrote both words: they name members.
+	relay, _ := call_outcome.outcome_of_word(u64(answer.relay_outcome))
+	outcome, _ := call_outcome.outcome_of_word(u64(answer.outcome))
+	item^ = {export = export, relay_outcome = relay, outcome = outcome, value = answer.value, error = answer.error.kind, bytes = bytes, microseconds = microseconds}
 	copy(item.service[:len(item.service) - 1], service)
 	recent_count += 1
 	return item
@@ -849,7 +866,7 @@ recent_add :: proc "contextless" (service: string, export: u32, answer: remote.A
 // connection on (connections_progress), and the call waits. A connection
 // that did not become ready gives its refusal to the first call that finds
 // it.
-connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> (connection: ^Service_Connection, error: errors.Error_Record, pending: bool) {
+connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> (connection: ^Service_Connection, refused: call_outcome.Call_Outcome, error: errors.Error_Record, pending: bool) {
 	free: ^Service_Connection
 	for &item in service_connections {
 		if item.state == .Free {
@@ -861,26 +878,27 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 		}
 		switch item.state {
 		case .Ready:
-			return &item, {}, false
+			return &item, .Succeeded, {}, false
 		case .Connecting, .Readying:
-			return nil, {}, true
+			return nil, .Succeeded, {}, true
 		case .Refused:
-			refusal := item.refusal
+			kept := item
 			item = {}
-			return nil, refusal, false
+			return nil, kept.refused, kept.refusal, false
 		case .Giving_Up:
-			return nil, item.refusal, false
+			return nil, item.refused, item.refusal, false
 		case .Free:
 		}
 	}
+	// The table of the connections frees a place when a connection ends.
 	if free == nil {
-		return nil, errors.error_make(.Full, .None, remote.FIELD_SERVICE, 0, SERVICE_CONNECTION_CAPACITY), false
+		return nil, .Callee_Busy, errors.error_make(.Full, .None, remote.FIELD_SERVICE, 0, SERVICE_CONNECTION_CAPACITY), false
 	}
 	packed := system.name_pack(name)
 	request_tag += 1
 	// values[4] names the row from 1, as the root service takes it.
 	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(client.row + 1), 5 = client.serial}}) {
-		return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(system.Status.No_Slot)), false
+		return nil, .Callee_Busy, errors.error_make(.Busy, .Requests, remote.FIELD_SERVICE), false
 	}
 	free^ = {
 		state       = .Connecting,
@@ -891,7 +909,7 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 		principal   = client.principal,
 	}
 	copy(free.name[:len(free.name) - 1], name)
-	return nil, {}, true
+	return nil, .Succeeded, {}, true
 }
 
 // connection_answer reads the answer of the root service to the Connect of
@@ -899,33 +917,13 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 // then waits for the ready completion of the service.
 @(private = "file")
 connection_answer :: proc "contextless" (connection: ^Service_Connection, record: ring.Record, now: u64) {
-	// The root service writes the word: a word that names no status is the
-	// refusal of status_of_word, and its record.
-	status, status_refusal := system.status_of_word(record.kind)
-	refusal: errors.Error_Record
-	if status_refusal.kind != 0 {
-		refusal = status_refusal
+	// The root service named the outcome and the record of a refusal where
+	// it refused; the border names an answer that this process cannot
+	// read. The field at fault is the service that the call names.
+	outcome, refusal := call_outcome.completion_outcome(record.kind, record.values)
+	if outcome != .Succeeded {
 		refusal.argument = remote.FIELD_SERVICE
-	} else {
-		switch status {
-		case .Ok:
-		case .Bad_Handle:
-			// No service runs with this name.
-			refusal = errors.error_make(.Absent, .None, remote.FIELD_SERVICE)
-		case .No_Right:
-			refusal = errors.error_make(.No_Grant, .Connection, remote.FIELD_SERVICE)
-		case .Bad_State:
-			// The root service wrote why: the grant of the row ended, or the
-			// session of its principal is locked. The field at fault is the
-			// service that the call names.
-			refusal = errors.completion_record(record.values)
-			refusal.argument = remote.FIELD_SERVICE
-		case .Bad_Operation, .Bad_Address, .No_Memory, .No_Slot, .No_Budget:
-			refusal = errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(status))
-		}
-	}
-	if refusal.kind != 0 {
-		connection.state, connection.refusal = .Refused, refusal
+		connection.state, connection.refused, connection.refusal = .Refused, outcome, refusal
 		return
 	}
 	connection.process = system.Handle(record.values[0])
@@ -942,7 +940,7 @@ connection_answer :: proc "contextless" (connection: ^Service_Connection, record
 		}
 		refused := ring_status != .Ok ? ring_status : map_status != .Ok ? map_status : size_status
 		// Root returned Ok for Connect, so root holds the connection until told.
-		connection_refuse(connection, true, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(refused)))
+		connection_refuse(connection, true, system.outcome_of_own_status(refused), errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(refused)))
 		return
 	}
 	connection.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]
@@ -954,10 +952,10 @@ connection_answer :: proc "contextless" (connection: ^Service_Connection, record
 // not become ready, and keeps its place with the refusal for the first call
 // that waits for it.
 @(private = "file")
-connection_refuse :: proc "contextless" (connection: ^Service_Connection, tell: bool, refusal: errors.Error_Record) {
+connection_refuse :: proc "contextless" (connection: ^Service_Connection, tell: bool, refused: call_outcome.Call_Outcome, refusal: errors.Error_Record) {
 	kept := connection^
 	connection_end(connection, tell)
-	connection^ = {state = .Refused, refusal = refusal, name = kept.name, row = kept.row, serial = kept.serial, principal = kept.principal}
+	connection^ = {state = .Refused, refused = refused, refusal = refusal, name = kept.name, row = kept.row, serial = kept.serial, principal = kept.principal}
 }
 
 // connections_progress moves each connection that waits: the answers of
@@ -994,7 +992,7 @@ connections_progress :: proc "contextless" (now: u64) -> (changed: bool) {
 				request_tag += 1
 				system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Disconnect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(connection.row + 1)}})
 				connection.state = .Giving_Up
-				connection.refusal = errors.error_make(.No_Answer, .Milliseconds, remote.FIELD_SERVICE, 0, system.ANSWER_BOUND_MILLISECONDS)
+				connection.refused, connection.refusal = .Callee_Unavailable, errors.error_make(.No_Answer, .Milliseconds, remote.FIELD_SERVICE, 0, system.ANSWER_BOUND_MILLISECONDS)
 				connection.deadline = system.answer_deadline(now)
 				changed = true
 			}
@@ -1008,7 +1006,7 @@ connections_progress :: proc "contextless" (now: u64) -> (changed: bool) {
 				connection.state = .Ready
 				system.log_fact(.Info, Service_Connected{principal = connection.principal, service = value_kinds.module_name_field(remote.name_text(&connection.name))})
 			} else {
-				connection_refuse(&connection, true, errors.error_make(.No_Answer, .Milliseconds, remote.FIELD_SERVICE, 0, system.ANSWER_BOUND_MILLISECONDS))
+				connection_refuse(&connection, true, .Callee_Unavailable, errors.error_make(.No_Answer, .Milliseconds, remote.FIELD_SERVICE, 0, system.ANSWER_BOUND_MILLISECONDS))
 			}
 			changed = true
 		case .Giving_Up:
@@ -1136,7 +1134,7 @@ connection_end :: proc "contextless" (connection: ^Service_Connection, tell: boo
 // While it waits, this process runs no QUIC: an isolated call is bounded by
 // CALL_LIMIT, and a peer of QUIC sends again what it does not see
 // acknowledged.
-isolated_call_make :: proc "contextless" (connection: ^Service_Connection, request: remote.Request, arguments: []u8) -> (completion: ring.Record, error: errors.Error_Record, ok: bool) {
+isolated_call_make :: proc "contextless" (connection: ^Service_Connection, request: remote.Request, arguments: []u8) -> (completion: ring.Record, outcome: call_outcome.Call_Outcome, error: errors.Error_Record, ok: bool) {
 	// The bytes after the arguments are zero: a request that names a place
 	// of the result reads no byte of a call before it.
 	copied := copy(connection.region, arguments)
@@ -1145,7 +1143,7 @@ isolated_call_make :: proc "contextless" (connection: ^Service_Connection, reque
 	}
 	connection.tag += 1
 	if !system.send(&connection.calls.commands, ring.Record{kind = request.export, tag = connection.tag, values = {0 = 0, 1 = u64(request.record_size)}}) {
-		return {}, errors.error_make(.Full, .Records, 0, 0, i64(ring.capacity(&connection.calls.commands))), false
+		return {}, .Callee_Busy, errors.error_make(.Full, .Records, 0, 0, i64(ring.capacity(&connection.calls.commands))), false
 	}
 	start := system.time()
 	limit := start + CALL_LIMIT
@@ -1158,13 +1156,14 @@ isolated_call_make :: proc "contextless" (connection: ^Service_Connection, reque
 				break
 			}
 			if record.tag == connection.tag {
-				return record, {}, true
+				return record, .Succeeded, {}, true
 			}
 		}
-		if state, _, _ := system.process_state(connection.process); state == .Stopped || state == .None {
+		if state, stop_cause, stop_outcome := system.process_state(connection.process); state == .Stopped || state == .None {
 			system.log_fact(.Info, Service_Stopped_During_Call{service = value_kinds.module_name_field(remote.name_text(&connection.name))})
 			connection_end(connection, false)
-			return {}, errors.error_make(.State, .None, remote.FIELD_SERVICE, 0, 0, i64(state)), false
+			// The command left: the service can have run it.
+			return {}, .Callee_Stopped_During_The_Call, errors.error_make(.Callee_Stopped, .None, 0, i64(stop_cause), 0, i64(stop_outcome)), false
 		}
 		system.wait_records(&wait, &connection.calls.completions)
 		if system.wait_spin(&wait) {
@@ -1173,7 +1172,8 @@ isolated_call_make :: proc "contextless" (connection: ^Service_Connection, reque
 		if now := system.wait_end(&wait, limit); now >= limit {
 			system.log_fact(.Info, Service_Silent{bound = milliseconds_field(CALL_LIMIT), service = value_kinds.module_name_field(remote.name_text(&connection.name))})
 			connection_end(connection, true)
-			return {}, errors.error_make(.Over_Limit, .Milliseconds, remote.FIELD_EXPORT, i64(now - start), CALL_LIMIT), false
+			// The command left, and the service can still run it.
+			return {}, .Deadline_Passed_During_The_Call, errors.error_make(.No_Answer, .Milliseconds, 0, i64(now - start), CALL_LIMIT), false
 		}
 	}
 }
@@ -1194,51 +1194,56 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 	}
 	if client.mesh_only {
 		// A paired machine with no row of the client table acts for no principal.
-		return refuse(buffer, errors.error_make(.No_Grant, .None, remote.FIELD_KIND, i64(remote.Request_Kind.Call), i64(remote.Request_Kind.Mesh)))
+		return refuse(buffer, .Grant_Or_Right_Missing, errors.error_make(.No_Grant, .None, remote.FIELD_KIND, i64(remote.Request_Kind.Call), i64(remote.Request_Kind.Mesh)))
 	}
 	start := system.nanoseconds()
 	request, arguments, error, ok := remote.request_check(buffer[:received], remote.REGION_SIZE)
 	if !ok {
-		return refuse(buffer, error)
+		return refuse(buffer, .Argument_Refused, error)
 	}
 	service := remote.name_text(&request.service)
-	connection, connection_error, pending := connection_find(service, client)
+	connection, refused_outcome, connection_error, pending := connection_find(service, client)
 	if pending {
 		return SERVE_PENDING
 	}
 	if connection == nil {
-		return refuse(buffer, connection_error, service)
+		return refuse(buffer, refused_outcome, connection_error, service)
 	}
 	if connection.hash != request.hash {
-		return refuse(buffer, errors.error_make(.Bad_Value, .None, remote.FIELD_HASH), service, connection.hash)
+		return refuse(buffer, .Argument_Refused, errors.error_make(.Bad_Value, .None, remote.FIELD_HASH), service, connection.hash)
 	}
 	if u64(len(connection.region)) < remote.REGION_SIZE {
-		return refuse(buffer, errors.error_make(.Too_Small, .Bytes, remote.FIELD_SERVICE, i64(len(connection.region)), remote.REGION_SIZE), service, connection.hash)
+		// The region of the connection of this relay holds less than a call
+		// region: a capacity of the relay, not a fault of the request.
+		return refuse(buffer, .Budget_Or_Capacity_Exhausted, errors.error_make(.Over_Limit, .Bytes, remote.FIELD_SERVICE, remote.REGION_SIZE, i64(len(connection.region))), service, connection.hash)
 	}
-	completion, call_error, called := isolated_call_make(connection, request, arguments)
-	if !called {
-		return refuse(buffer, call_error, service, connection.hash)
-	}
+	completion, path_outcome, call_error, called := isolated_call_make(connection, request, arguments)
 	connection.count += 1
 	counts.calls += 1
+	// The request ran: the relay outcome is Succeeded, and the outcome is
+	// the one of the call, from the service through its border, or from the
+	// path to the service.
 	answer := remote.Answer {
-		status      = .Ok,
-		call_status = completion.kind,
-		value       = i64(completion.values[0]),
-		hash        = connection.hash,
+		hash = connection.hash,
 	}
 	result: []u8
-	if isolated.Status(completion.kind) == .Ok {
-		if request.error_start != 0 && answer.value < 0 {
-			// The service wrote it: values only, copied as values.
-			answer.error = (^errors.Error_Record)(raw_data(connection.region[request.error_start:]))^
-			counts.failed += 1
-			// The bytes of a failed call are its error details.
+	value, outcome, record := i64(0), path_outcome, call_error
+	if called {
+		value, outcome, record = isolated.answer_of_completion(completion)
+	}
+	answer.outcome = u32(outcome)
+	if outcome == .Succeeded {
+		answer.value = value
+		result = connection.region[request.result_start:][:remote.result_bytes(request, value)]
+	} else {
+		answer.error = record
+		counts.failed += 1
+		// The bytes of a call that the export failed are its error details;
+		// an answer that the relay could not read carries none.
+		if called && request.details_end != 0 && outcome != .Answer_Unreadable {
 			details, details_count := remote.details_bytes(request, connection.region[:remote.REGION_SIZE])
 			answer.details = u32(min(details_count, u64(max(u32))))
 			result = details
-		} else {
-			result = connection.region[request.result_start:][:remote.result_bytes(request, answer.value)]
 		}
 	}
 	length := answer_put(buffer, answer, result)
@@ -1256,7 +1261,7 @@ key_make :: proc "contextless" (configuration: ^quic.Connection_Configuration) -
 	}
 	secret := string(configuration.tls.server_private_key[:])
 	result := public_key[:]
-	if ed25519_public_key(&secret, &result, &error) != 32 {
+	if crypto_outcome, crypto_count := ed25519_public_key(&secret, &result, &error); crypto_outcome != .Succeeded || crypto_count != 32 {
 		fail("the module cryptography refused to make the public key")
 	}
 	return true

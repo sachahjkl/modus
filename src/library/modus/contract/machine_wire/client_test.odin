@@ -6,6 +6,7 @@ import "core:crypto/ed25519"
 import "core:testing"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
+import "modus:contract/call_outcome"
 import "modus:contract/machine_mesh"
 import "modus:contract/machine_sync"
 import "modus:contract/role_contract"
@@ -57,19 +58,19 @@ client_random :: proc "contextless" (bytes: []u8, user_data: rawptr) -> bool {
 }
 
 // Export 1 answers the reversed arguments, export 2 refuses, export 3
-// breaks the contract with an outcome of a link.
+// breaks the contract with a count past its result.
 @(private = "file")
-client_role_holder :: proc "contextless" (role: role_contract.Role, export: u32, arguments: []u8, result: []u8, _: rawptr) -> (value: i64, result_count: int, outcome: Role_Outcome) {
+client_role_holder :: proc "contextless" (role: role_contract.Role, export: u32, arguments: []u8, result: []u8, _: rawptr) -> (value: i64, result_count: int, outcome: call_outcome.Call_Outcome) {
 	switch export {
 	case 1:
 		for index in 0 ..< len(arguments) {
 			result[index] = arguments[len(arguments) - 1 - index]
 		}
-		return i64(len(arguments)), len(arguments), .Answered
+		return i64(len(arguments)), len(arguments), .Succeeded
 	case 2:
-		return -1, 0, .Refused
+		return -1, 0, .Argument_Refused
 	}
-	return 0, 0, .Unknown_Outcome
+	return 0, len(result) + 1, .Succeeded
 }
 
 @(private = "file")
@@ -238,7 +239,7 @@ client_link_refuses_each_wrong_key_and_phase :: proc(t: ^testing.T) {
 	testing.expect_value(t, mesh_connect(&link, &laptop.peer, &transport, client_identity(home), .Paired, 10_000, 1_000), Mesh_Client_Status.Refused_Identity_Mismatch)
 	testing.expect_value(t, link.state, Mesh_Link_State.Broken)
 	fetch := mesh_fetch_object(&laptop.peer, &link, &transport, .Blob, blake3.hash([]u8{7}), 10_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, fetch.exchange.outcome, Mesh_Outcome.Unreachable)
+	testing.expect_value(t, fetch.exchange.outcome, call_outcome.Call_Outcome.Callee_Unavailable)
 	testing.expect_value(t, network.served, served)
 
 	// A zero proved key is refused too.
@@ -299,7 +300,7 @@ client_fetches_objects_and_keeps_only_bytes_of_the_hash :: proc(t: ^testing.T) {
 
 	// No use granted: refused before any table is read.
 	fetch := mesh_fetch_object(&laptop.peer, &link, &transport, .Blob, blake3.hash(first), 20_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, fetch.exchange.outcome, Mesh_Outcome.Refused)
+	testing.expect_value(t, fetch.exchange.outcome, call_outcome.Call_Outcome.Grant_Or_Right_Missing)
 	testing.expect_value(t, fetch.exchange.reason, Refusal_Reason.Use_Not_Granted)
 	testing.expect_value(t, fetch.fetch, Object_Fetch_Status.Refused)
 
@@ -307,7 +308,7 @@ client_fetches_objects_and_keeps_only_bytes_of_the_hash :: proc(t: ^testing.T) {
 	// One changed bit of the bytes in transit: nothing is kept.
 	network.flip_last_bit = true
 	fetch = mesh_fetch_object(&laptop.peer, &link, &transport, .Blob, blake3.hash(first), 20_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, fetch.exchange.outcome, Mesh_Outcome.Answered)
+	testing.expect_value(t, fetch.exchange.outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, fetch.fetch, Object_Fetch_Status.Hash_Mismatch)
 	testing.expect(t, object_lookup(&laptop.peer, blake3.hash(first)) == nil)
 	network.flip_last_bit = false
@@ -320,19 +321,19 @@ client_fetches_objects_and_keeps_only_bytes_of_the_hash :: proc(t: ^testing.T) {
 	fetch = mesh_fetch_object(&laptop.peer, &link, &transport, .Tree, blake3.hash(second), 20_000, 1_000, buffers.request[:], buffers.answer[:])
 	testing.expect_value(t, fetch.exchange.reason, Refusal_Reason.Object_Absent)
 	fetch = mesh_fetch_object(&laptop.peer, &link, &transport, .Blob, blake3.hash([]u8{9}), 20_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, fetch.exchange.outcome, Mesh_Outcome.Refused)
+	testing.expect_value(t, fetch.exchange.outcome, call_outcome.Call_Outcome.Nothing_Has_That_Name)
 
-	// The answer is lost after the request ran: the outcome is unknown,
+	// The answer is lost after the request ran: the outcome is in doubt,
 	// nothing is kept, and the link breaks.
 	network.lose_answer = true
 	fetch = mesh_fetch_object(&laptop.peer, &link, &transport, .Blob, blake3.hash(second), 20_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, fetch.exchange.outcome, Mesh_Outcome.Unknown_Outcome)
+	testing.expect_value(t, fetch.exchange.outcome, call_outcome.Call_Outcome.Connection_Ended_During_The_Call)
 	testing.expect(t, object_lookup(&laptop.peer, blake3.hash(second)) == nil)
 	testing.expect_value(t, link.state, Mesh_Link_State.Broken)
 	network.lose_answer = false
 	served := network.served
 	fetch = mesh_fetch_object(&laptop.peer, &link, &transport, .Blob, blake3.hash(second), 20_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, fetch.exchange.outcome, Mesh_Outcome.Unreachable)
+	testing.expect_value(t, fetch.exchange.outcome, call_outcome.Call_Outcome.Callee_Unavailable)
 	testing.expect_value(t, network.served, served)
 
 	// The link opens again; a machine that is down gives Unreachable.
@@ -364,49 +365,52 @@ client_role_calls_end_answered_refused_or_unknown :: proc(t: ^testing.T) {
 	testing.expect_value(t, mesh_connect(&link, &laptop.peer, &transport, client_identity(home), .Paired, 30_000, 1_000), Mesh_Client_Status.Ok)
 
 	call := mesh_call_role(&link, &transport, .Storage, 1, {}, transmute([]u8)string("abc"), 30_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, call.exchange.outcome, Mesh_Outcome.Answered)
+	testing.expect_value(t, call.exchange.outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect(t, string(call.reply.result) == "cba" && call.reply.value == 3)
 
-	// The holder refused: the call did not run.
+	// The holder refused: the call did not run, and its outcome crosses.
 	call = mesh_call_role(&link, &transport, .Storage, 2, {}, nil, 30_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, call.exchange.outcome, Mesh_Outcome.Refused)
+	testing.expect_value(t, call.exchange.outcome, call_outcome.Call_Outcome.Argument_Refused)
+	testing.expect(t, mesh_refused_by_peer(call.exchange))
 	// A role that the grant does not name: refused before it runs.
 	call = mesh_call_role(&link, &transport, .Sound_Device, 1, {}, nil, 30_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, call.exchange.outcome, Mesh_Outcome.Refused)
+	testing.expect_value(t, call.exchange.outcome, call_outcome.Call_Outcome.Callee_Unavailable)
 	testing.expect_value(t, call.exchange.reason, Refusal_Reason.Role_Refused)
-	// The holder ran and broke its contract: the outcome is unknown.
+	// The holder ran and broke its contract: it stopped during the call.
 	call = mesh_call_role(&link, &transport, .Storage, 3, {}, nil, 30_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, call.exchange.outcome, Mesh_Outcome.Unknown_Outcome)
+	testing.expect_value(t, call.exchange.outcome, call_outcome.Call_Outcome.Callee_Stopped_During_The_Call)
 	testing.expect_value(t, call.exchange.reason, Refusal_Reason.Role_Holder_Fault)
-	// A reply that names another call than the call in flight: unknown,
+	// A reply that names another call than the call in flight: unreadable,
 	// never taken as the answer of this call. The holder ran it.
 	network.other_call = true
 	call = mesh_call_role(&link, &transport, .Storage, 1, {}, transmute([]u8)string("abc"), 30_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, call.exchange.outcome, Mesh_Outcome.Unknown_Outcome)
+	testing.expect_value(t, call.exchange.outcome, call_outcome.Call_Outcome.Answer_Unreadable)
 	testing.expect_value(t, call.exchange.reason, Refusal_Reason.Malformed)
 	testing.expect(t, call.reply.result == nil)
 	testing.expect_value(t, mesh_link_in_flight(&link), 0)
 	network.other_call = false
 	call = mesh_call_role(&link, &transport, .Storage, 1, {}, transmute([]u8)string("de"), 30_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect(t, call.exchange.outcome == .Answered && string(call.reply.result) == "ed")
-	// The bound passes: unknown, and the link stays up.
+	testing.expect(t, call.exchange.outcome == .Succeeded && string(call.reply.result) == "ed")
+	// The bound passes: in doubt, and the link stays up.
 	network.time_out = true
 	call = mesh_call_role(&link, &transport, .Storage, 1, {}, nil, 30_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, call.exchange.outcome, Mesh_Outcome.Unknown_Outcome)
+	testing.expect_value(t, call.exchange.outcome, call_outcome.Call_Outcome.Deadline_Passed_During_The_Call)
 	testing.expect_value(t, link.state, Mesh_Link_State.Up)
 	network.time_out = false
 	// The role None and too many argument bytes never leave.
 	call = mesh_call_role(&link, &transport, .None, 1, {}, nil, 30_000, 1_000, buffers.request[:], buffers.answer[:])
 	testing.expect_value(t, call.exchange.status, Mesh_Client_Status.Refused_Bad_Request)
+	testing.expect_value(t, call.exchange.outcome, call_outcome.Call_Outcome.Argument_Refused)
 	big: [ROLE_ARGUMENT_LIMIT + 1]u8
 	call = mesh_call_role(&link, &transport, .Storage, 1, {}, big[:], 30_000, 1_000, buffers.request[:], buffers.answer[:])
 	testing.expect_value(t, call.exchange.status, Mesh_Client_Status.Refused_Bad_Request)
+	testing.expect_value(t, call.exchange.outcome, call_outcome.Call_Outcome.Argument_Refused)
 	// The link breaks during the call.
 	network.lose_answer = true
 	call = mesh_call_role(&link, &transport, .Storage, 1, {}, nil, 30_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, call.exchange.outcome, Mesh_Outcome.Unknown_Outcome)
+	testing.expect_value(t, call.exchange.outcome, call_outcome.Call_Outcome.Connection_Ended_During_The_Call)
 	call = mesh_call_role(&link, &transport, .Storage, 1, {}, nil, 30_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, call.exchange.outcome, Mesh_Outcome.Unreachable)
+	testing.expect_value(t, call.exchange.outcome, call_outcome.Call_Outcome.Callee_Unavailable)
 }
 
 @(test)
@@ -452,20 +456,20 @@ client_session_ends_requests_on_break_bound_and_bad_answer :: proc(t: ^testing.T
 	testing.expect_value(t, ended_count, 0)
 	ended, ended_count = mesh_link_expire(&link, 40_100)
 	testing.expect_value(t, ended_count, 1)
-	testing.expect(t, ended[0].identifier == identifiers[0] && ended[0].outcome == .Unknown_Outcome)
+	testing.expect(t, ended[0].identifier == identifiers[0] && ended[0].outcome == .Deadline_Passed_During_The_Call)
 
 	// A malformed answer, an answer of another message, a malformed refusal.
 	_, outcome, _, _, found := mesh_answer_accept(&link, identifiers[1], []u8{1, 2, 3})
-	testing.expect(t, found && outcome == .Unknown_Outcome)
+	testing.expect(t, found && outcome == .Answer_Unreadable)
 	wrong: [FRAME_HEADER_SIZE]u8
 	wrong_body, _ := frame_begin(wrong[:], .Role_Reply, 0)
 	_, outcome, _, _, found = mesh_answer_accept(&link, identifiers[2], frame_bytes(wrong[:], wrong_body))
-	testing.expect(t, found && outcome == .Unknown_Outcome)
+	testing.expect(t, found && outcome == .Answer_Unreadable)
 	refusal: [FRAME_HEADER_SIZE + REFUSAL_BODY_SIZE]u8
 	refusal_frame := refusal_write(refusal[:], .Not_Paired, 0)
 	byte_order.write_u32_little_endian(refusal_frame, FRAME_HEADER_SIZE, 999)
 	_, outcome, _, _, found = mesh_answer_accept(&link, identifiers[3], refusal_frame)
-	testing.expect(t, found && outcome == .Unknown_Outcome)
+	testing.expect(t, found && outcome == .Answer_Unreadable)
 	// An answer of a request that is not in flight changes nothing.
 	_, _, _, _, found = mesh_answer_accept(&link, identifiers[3], refusal_frame)
 	testing.expect(t, !found)
@@ -476,15 +480,15 @@ client_session_ends_requests_on_break_bound_and_bad_answer :: proc(t: ^testing.T
 	identifier, _ := mesh_request_begin(&link, request, 40_000, 100)
 	reason: Refusal_Reason
 	_, outcome, reason, _, found = mesh_answer_accept(&link, identifier, refusal_write(refusal[:], .Not_Paired, 0))
-	testing.expect(t, found && outcome == .Refused && reason == .Not_Paired)
+	testing.expect(t, found && outcome == .Grant_Or_Right_Missing && reason == .Not_Paired)
 
-	// The break ends each request in flight with Unknown_Outcome.
+	// The break ends each request in flight with Connection_Ended_During_The_Call.
 	first, _ := mesh_request_begin(&link, request, 40_000, 100)
 	second, _ := mesh_request_begin(&link, request, 40_000, 100)
 	ended, ended_count = mesh_link_broken(&link)
 	testing.expect_value(t, ended_count, 2)
 	testing.expect(t, ended[0].identifier == first && ended[1].identifier == second)
-	testing.expect(t, ended[0].outcome == .Unknown_Outcome && ended[1].outcome == .Unknown_Outcome)
+	testing.expect(t, ended[0].outcome == .Connection_Ended_During_The_Call && ended[1].outcome == .Connection_Ended_During_The_Call)
 	_, unreachable := mesh_request_begin(&link, request, 40_000, 100)
 	testing.expect_value(t, unreachable, Mesh_Client_Status.Unreachable)
 }
@@ -523,12 +527,12 @@ client_syncs_a_store_and_repeats_a_lost_offer :: proc(t: ^testing.T) {
 	// snapshot, and home answers it again with no change.
 	network.lose_answer = true
 	sync = mesh_sync_store(&laptop.peer, &link, &transport, store_identifier, 50_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, sync.exchange.outcome, Mesh_Outcome.Unknown_Outcome)
+	testing.expect_value(t, sync.exchange.outcome, call_outcome.Call_Outcome.Connection_Ended_During_The_Call)
 	testing.expect(t, store_version_lookup(&home_store.current, object) == content)
 	network.lose_answer = false
 	testing.expect_value(t, mesh_connect(&link, &laptop.peer, &transport, client_identity(home), .Paired, 50_000, 1_000), Mesh_Client_Status.Ok)
 	sync = mesh_sync_store(&laptop.peer, &link, &transport, store_identifier, 50_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, sync.exchange.outcome, Mesh_Outcome.Answered)
+	testing.expect_value(t, sync.exchange.outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, sync.store, Store_Status.Ok)
 	testing.expect(t, store_version_hash(&laptop_store.common) == store_version_hash(&home_store.common))
 
@@ -585,7 +589,7 @@ client_pairing_link_breaks_and_spends_the_code :: proc(t: ^testing.T) {
 	network.lose_answer = true
 	joined := mesh_pair_join(&laptop.peer, &link, &transport, 60_000, 1_000, buffers.request[:], buffers.answer[:])
 	testing.expect(t, joined.pairing != .Ok)
-	testing.expect_value(t, joined.exchange.outcome, Mesh_Outcome.Unknown_Outcome)
+	testing.expect_value(t, joined.exchange.outcome, call_outcome.Call_Outcome.Connection_Ended_During_The_Call)
 	_, paired := machine_mesh.paired_machine_find(&laptop.peer.paired, client_identity(home))
 	testing.expect(t, !paired)
 	testing.expect_value(t, laptop.peer.pairing.phase, machine_mesh.Pairing_Phase.Failed)
@@ -598,4 +602,31 @@ client_pairing_link_breaks_and_spends_the_code :: proc(t: ^testing.T) {
 	joined = mesh_pair_join(&laptop.peer, &link, &transport, 60_000, 1_000, buffers.request[:], buffers.answer[:])
 	testing.expect_value(t, joined.pairing, machine_mesh.Pairing_Status.Refused_Code_Spent)
 	testing.expect_value(t, network.served, served)
+}
+
+// Each refusal of the other machine gives an outcome of Nothing_Changed,
+// since the request did not run, and a fault of a holder that ran is in
+// doubt. Each refusal of the session before the request left changes
+// nothing too. None of them is Succeeded.
+@(test)
+the_ends_of_a_request_name_their_outcome :: proc(t: ^testing.T) {
+	for reason in Refusal_Reason {
+		outcome := mesh_refusal_outcome(reason)
+		group := call_outcome.effect_group_of(outcome)
+		if reason == .Role_Holder_Fault {
+			testing.expect_value(t, outcome, call_outcome.Call_Outcome.Callee_Stopped_During_The_Call)
+		} else {
+			testing.expectf(t, group == .Nothing_Changed, "the reason %v gives %v", reason, outcome)
+		}
+	}
+	for status in Mesh_Client_Status {
+		outcome := mesh_status_outcome(status)
+		if status == .Ok {
+			testing.expect_value(t, outcome, call_outcome.Call_Outcome.Succeeded)
+			continue
+		}
+		testing.expectf(t, call_outcome.effect_group_of(outcome) == .Nothing_Changed, "the status %v gives %v", status, outcome)
+		exchange := mesh_exchange_refused(status)
+		testing.expect(t, exchange.outcome != .Succeeded && !mesh_refused_by_peer(exchange))
+	}
 }

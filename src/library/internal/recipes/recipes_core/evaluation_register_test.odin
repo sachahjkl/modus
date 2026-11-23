@@ -4,6 +4,7 @@ package recipes_core
 import "core:testing"
 import "modus:contract/blake3"
 import "modus:contract/builder"
+import "modus:contract/call_outcome"
 import "modus:contract/declaration_eval"
 import "modus:contract/errors"
 import pr "modus:contract/plans_recipes"
@@ -95,7 +96,7 @@ a_refused_evaluation_registers_nothing_and_says_why :: proc(t: ^testing.T) {
 
 	length, ok := recipe_output(output[:], evaluation_hash("collatz"), collatz_source())
 	testing.expect(t, ok, "the recipe evaluates")
-	expect(t, registry, spec, output[:length - 1], .Damaged_Recipe, .Damaged)
+	expect(t, registry, spec, output[:length - 1], .Damaged_Recipe, .Malformed)
 	expect(t, registry, spec, output[:MAX_RECIPE_OUTPUT_BYTES + 1], .Arguments_Too_Large, .Too_Long)
 
 	// A bare hash cannot come from the evaluator, which refuses it; an
@@ -168,3 +169,15 @@ each_refusal_record_carries_its_refusal :: proc(t: ^testing.T) {
 	testing.expect_value(t, recipe_refusal_record(.Builder_Timed_Out, 1).limit, i64(builder.BUILD_TIME_BOUND_MILLISECONDS))
 }
 
+// Each refusal of a recipe gives an outcome whose kinds hold the kind of
+// its record: a caller that reads the outcome finds a record that the
+// outcome explains.
+@(test)
+each_refusal_record_has_a_kind_of_its_outcome :: proc(t: ^testing.T) {
+	for member in pr.Recipe_Refusal {
+		outcome := recipe_refusal_outcome(member)
+		record := recipe_refusal_record(member, 1)
+		kind, known := errors.kind_of_word(record.kind)
+		testing.expectf(t, known && kind in call_outcome.KINDS_OF[outcome], "%v: the outcome %v with the kind %v", member, outcome, kind)
+	}
+}

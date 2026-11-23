@@ -3,6 +3,7 @@ package build
 import debug_object "modus:contract/debug_object"
 import "modus:contract/cut_mark"
 import "modus:contract/errors"
+import "modus:contract/call_outcome"
 import module "modus:contract/module"
 import "modus:contract/storage_status"
 import op "modus:contract/operation"
@@ -249,7 +250,7 @@ the_facts_of_the_start_policy_write_the_lines_of_before :: proc(t: ^testing.T) {
 		}
 		facts_expect_line(t, render(t, file, "Start_List_Read", {{"rows", count}}), line_of_before("start_policy: the start list has ", count, " rows: each starts in its order"))
 		facts_expect_line(t, render(t, file, "Completion_Tag_Refused", {{"tag", count}}), line_of_before("start_policy: refused a completion of the tag ", count, ", which names no command in flight"))
-		facts_expect_line(t, render(t, file, "Completion_Status_Refused", {{"status_word", count}}), line_of_before("start_policy: refused a completion whose status word ", count, " names no status"))
+		facts_expect_line(t, render(t, file, "Completion_Status_Refused", {{"outcome_word", count}}), line_of_before("start_policy: refused a completion of the root service that it cannot read: the outcome word ", count))
 	}
 }
 
@@ -550,6 +551,17 @@ the_facts_of_a_status_write_the_name_of_its_member :: proc(t: ^testing.T) {
 	}
 	debugger, start_policy, sound, entropy := files[0], files[1], files[2], files[3]
 	name := strings.repeat("p", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
+	// The refusals of the root service that the start policy writes: the
+	// outcome by its name, or the number of a word that names none.
+	for outcome_word in ([3]u64{u64(min(call_outcome.Call_Outcome)), u64(max(call_outcome.Call_Outcome)), u64(max(call_outcome.Call_Outcome)) + 1}) {
+		outcome_text := line_of_before(outcome_word)
+		if outcome_name, named := module.contract_enum_member_name(.Call_Outcome, outcome_word); named {
+			outcome_text = outcome_name
+		}
+		facts_expect_line(t, fact_test_render(t, start_policy, "start_policy", "Machine_Usable_Refused", {{"outcome", outcome_word}}), line_of_before("start_policy: the root service refused Machine_Usable: outcome ", outcome_text))
+		facts_expect_line(t, fact_test_render(t, start_policy, "start_policy", "Row_Start_Refused", {{"outcome", outcome_word}, {"row_process", name}}), line_of_before("start_policy: cannot start ", sentence.Module_Name{name}, ": outcome ", outcome_text))
+		facts_expect_line(t, fact_test_render(t, start_policy, "start_policy", "Row_List_Page_Refused", {{"outcome", outcome_word}, {"row_process", name}}), line_of_before("start_policy: ", sentence.Module_Name{name}, " does not start: the root service refused its list page with the outcome ", outcome_text))
+	}
 	edges := edges_make().sizes
 	words := status_words()
 	for word in words {
@@ -560,8 +572,6 @@ the_facts_of_a_status_write_the_name_of_its_member :: proc(t: ^testing.T) {
 		}
 		facts_expect_line(t, fact_test_render(t, debugger, "debugger", "Debug_Object_Map_Refused", {{"status", word}, {"debugged_process", name}}), line_of_before("debugger: no debug object for ", sentence.Module_Name{name}, ": its memory does not map: status ", status))
 		facts_expect_line(t, fact_test_render(t, start_policy, "start_policy", "Root_Ring_Refused", {{"status", word}}), line_of_before("start_policy: the root ring does not open: status ", status))
-		facts_expect_line(t, fact_test_render(t, start_policy, "start_policy", "Machine_Usable_Refused", {{"status", word}}), line_of_before("start_policy: the root service refused Machine_Usable: status ", status))
-		facts_expect_line(t, fact_test_render(t, start_policy, "start_policy", "Row_Start_Refused", {{"status", word}, {"row_process", name}}), line_of_before("start_policy: cannot start ", sentence.Module_Name{name}, ": status ", status))
 		facts_expect_line(t, fact_test_render(t, sound, "sound_device_service", "Queues_Not_Mapped", {{"map_status", word}, {"address_status", other}}), line_of_before("sound: the map of the queues gave the status ", status, ", their device address the status ", other_status))
 		facts_expect_line(t, fact_test_render(t, sound, "sound_device_service", "Periods_Memory_Refused", {{"status", word}}), line_of_before("sound: the memory of the periods gave the status ", status))
 		facts_expect_line(t, fact_test_render(t, sound, "sound_device_service", "Periods_Not_Mapped", {{"map_status", word}, {"address_status", other}}), line_of_before("sound: the map of the periods gave the status ", status, ", their device address the status ", other_status))

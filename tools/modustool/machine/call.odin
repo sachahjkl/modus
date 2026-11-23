@@ -25,14 +25,13 @@ ends_with_a_bare_number :: proc(text: string) -> bool {
 }
 
 import "modus:contract/blake3"
-import "modus:contract/enum_word"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import "modus:contract/remote"
 import "core:encoding/hex"
 import "core:fmt"
-import "core:mem"
 import "core:os"
 import "core:slice"
 import "core:strconv"
@@ -68,7 +67,7 @@ CALL_TIME_LIMIT :: PEER_REMOTE_CALL_LIMIT + 10 * time.Second
 CALL_ERROR_DETAILS :: 16 // The places of the table of error details that the tool gives to an export.
 
 // What a call gave, for the machine test.
-Call_Outcome :: enum {
+Call_Result_Kind :: enum {
 	Result, // The export ran and gave its result.
 	Failed, // The export ran and gave an error record.
 	Refused, // The remote service or the service refused the call.
@@ -78,7 +77,7 @@ Call_Outcome :: enum {
 }
 
 Call_Result :: struct {
-	outcome:  Call_Outcome,
+	outcome:  Call_Result_Kind,
 	lines:    [dynamic]string, // What the tool prints, one line each.
 	rows:     int, // A Table: its count of rows.
 	value:    i64,
@@ -530,7 +529,7 @@ call_prepare_values :: proc(client: ^Call_Client, service, export: string, argum
 		}
 	}
 	slice.zero(client.region)
-	_, size, result, error, ok := isolated.encode(file, function, encoded, client.region)
+	_, size, result, ok := isolated.encode(file, function, encoded, client.region)
 	if !ok {
 		return {}, fmt.tprintf("the arguments of %s.%s do not fit in a call region", service, export)
 	}
@@ -567,9 +566,6 @@ call_prepare_values :: proc(client: ^Call_Client, service, export: string, argum
 		}
 		field += isolated.field_size(word)
 	}
-	if error.count != 0 {
-		end = max(end, error.start + error.count)
-	}
 	unit: u32
 	result_type, result_type_ok := module.function_result_type(function)
 	if !result_type_ok {
@@ -600,7 +596,6 @@ call_prepare_values :: proc(client: ^Call_Client, service, export: string, argum
 		result_start = u32(result.start),
 		result_count = u32(result.count),
 		result_unit  = unit,
-		error_start  = u32(error.start),
 		details_end  = u32(details_end),
 	}
 	if result_type == .Integer || result_type == .None || result_type == .Enum {
@@ -634,11 +629,11 @@ call_send :: proc(client: ^Call_Client, call: ^Prepared_Call) -> (answer: remote
 	client.last_hash = header.hash
 	bytes, written := remote.request_write(client.request, header, call.bytes)
 	if !written {
-		return {}, nil, {outcome = .Lost, reason = "the request does not fit in a call region"}, false
+		return {}, nil, {outcome = .Request_Too_Large, reason = "the request does not fit in a call region"}, false
 	}
 	received, sent := socket_call(client, bytes)
 	if !sent {
-		return {}, nil, {outcome = .Lost, reason = fmt.tprintf("the peer of the tool does not answer at %s: does `modustool run` run?", client.socket)}, false
+		return {}, nil, {outcome = .Peer_Absent, reason = fmt.tprintf("the peer of the tool does not answer at %s: does `modustool run` run?", client.socket)}, false
 	}
 	if len(received) < size_of(Call_Socket_Result) {
 		return {}, nil, {outcome = .Lost, reason = "the peer ended the call with no outcome"}, false
@@ -683,19 +678,10 @@ socket_call :: proc(client: ^Call_Client, request: []u8) -> (received: []u8, ok:
 	return client.received[:count], true
 }
 
-// answer_refusal_cause names why answer_check refused an answer. The
-// reader gives no cause, so the tool reads the two words again: a whole
-// answer whose status names no status has a cause of its own, and every
-// other refusal is an answer that is not its header and its total.
+// answer_refusal_cause names why answer_check refused an answer: an answer
+// that is not its header and the bytes that it names. The outcome words
+// cross their own border, remote.answer_outcome.
 answer_refusal_cause :: proc(bytes: []u8) -> (outcome: Remote_Call_Outcome, reason: string) {
-	if len(bytes) >= remote.ANSWER_SIZE {
-		header: remote.Answer
-		mem.copy(&header, raw_data(bytes), size_of(header))
-		_, known := enum_word.member_of_word(remote.Status, u64(header.status))
-		if !known && u64(header.total) == u64(len(bytes) - remote.ANSWER_SIZE) && header.total <= remote.REGION_SIZE {
-			return .Answer_Unknown_Status, fmt.tprintf("the answer has the status %d, which names no status of the remote protocol", u32(header.status))
-		}
-	}
 	return .Answer_Too_Large, "the answer is not a header and the bytes that it names"
 }
 
@@ -744,7 +730,6 @@ call_run_prepared :: proc(client: ^Call_Client, prepared: ^Prepared_Call, proble
 		}
 		return outcome
 	}
-	outcome.value = answer.value
 	write_sentence :: proc(prefix: string, record: ^errors.Error_Record, operation, argument: string) -> string {
 		buffer := make([]u8, 512, context.temp_allocator)
 		writer := sentence.Writer{buffer = buffer}
@@ -752,65 +737,38 @@ call_run_prepared :: proc(client: ^Call_Client, prepared: ^Prepared_Call, proble
 		sentence.error_text(&writer, record, operation, argument)
 		return sentence.written(&writer)
 	}
-	switch answer.status {
-	case .Refused:
+	// The answer comes from the network: its two outcome words go through
+	// their border. The record of a word that names no outcome says so.
+	call_ended, record, request_refused := remote.answer_outcome(answer)
+	if request_refused {
 		outcome.outcome = .Refused
 		field := ""
-		if answer.error.argument >= 1 && answer.error.argument <= len(remote.REQUEST_FIELD_NAMES) {
-			field = remote.REQUEST_FIELD_NAMES[answer.error.argument - 1]
+		if record.argument >= 1 && record.argument <= len(remote.REQUEST_FIELD_NAMES) {
+			field = remote.REQUEST_FIELD_NAMES[record.argument - 1]
 		}
-		append(&outcome.lines, write_sentence("error: ", &answer.error, "remote", field))
-		if answer.error.argument == remote.FIELD_HASH {
+		append(&outcome.lines, write_sentence("error: ", &record, "remote", field))
+		append(&outcome.lines, fmt.tprintf("  outcome    %s", call_outcome.CALL_OUTCOME_NAMES[call_ended]))
+		if record.argument == remote.FIELD_HASH {
 			append(&outcome.lines, fmt.tprintf("error: the machine runs %s %s; the request named %s (%s is %s): start the machine of this build", call.service, hex_of(answer.hash[:8]), hex_of(client.last_hash[:8]), foundation.module_path(call.service), hex_of(call.request.hash[:8])))
 		}
 		return outcome
-	case .Ok:
-	case:
-		outcome.outcome = .Refused
-		append(&outcome.lines, fmt.tprintf("error: the answer has the unknown status %d", u32(answer.status)))
-		return outcome
 	}
-	// The answer comes from the network: a word that names no status is
-	// refused, never read as a status.
-	call_status, call_status_known := enum_word.member_of_word(isolated.Status, u64(answer.call_status))
-	if !call_status_known {
-		outcome.outcome = .Refused
-		append(&outcome.lines, fmt.tprintf("error: the service %s gave the unknown status %d", call.service, answer.call_status))
-		return outcome
-	}
-	switch call_status {
-	case .Ok:
-	case .Bad_Export:
-		outcome.outcome = .Refused
-		append(&outcome.lines, fmt.tprintf("error: the service %s has no export %d", call.service, call.index))
-		return outcome
-	case .Bad_Arguments:
-		outcome.outcome = .Refused
-		append(&outcome.lines, fmt.tprintf("error: the service %s refused the arguments of %s", call.service, call.export))
-		return outcome
-	case .Bad_Handle, .Load_Failed:
-		outcome.outcome = .Refused
-		append(&outcome.lines, fmt.tprintf("error: the service %s refused the call of %s: status %d", call.service, call.export, answer.call_status))
-		return outcome
-	case:
-		// Each other status of a call: the service refused it, with that
-		// status.
-		outcome.outcome = .Refused
-		append(&outcome.lines, fmt.tprintf("error: the service %s refused the call of %s: the status %v", call.service, call.export, call_status))
-		return outcome
-	}
-	if call.function.error_record != 0 && answer.value < 0 {
+	answer.error = record
+	if call_ended != .Succeeded {
 		outcome.outcome = .Failed
 		buffer := make([]u8, 512, context.temp_allocator)
 		writer := sentence.Writer{buffer = buffer}
 		sentence.write_part(&writer, "error: ")
-		sentence.export_error_text(&writer, call.file, call.index, call.service, &answer.error)
+		sentence.export_error_text(&writer, call.file, call.index, call.service, &answer.error, call_ended)
 		append(&outcome.lines, sentence.written(&writer))
+		append(&outcome.lines, fmt.tprintf("  outcome    %s", call_outcome.CALL_OUTCOME_NAMES[call_ended]))
+		append(&outcome.lines, fmt.tprintf("  effect     %s", call_outcome.EFFECT_GROUP_NAMES[call_outcome.effect_group_of(call_ended)]))
 		if _, has_details := module.error_details_parameter(call.file, call.function); has_details {
 			error_details_lines(&outcome.lines, &call, answer, result)
 		}
 		return outcome
 	}
+	outcome.value = answer.value
 	outcome.outcome = .Result
 	result_type, result_type_ok := module.function_result_type(call.function)
 	if !result_type_ok {
@@ -892,6 +850,13 @@ Call_Table :: struct {
 	total:     i64, // The count of the full table, as the export gave it.
 }
 
+// answer_succeeded says if the call of an answer of `remote` succeeded: its
+// two outcome words, read through their border, give Succeeded.
+answer_succeeded :: proc(answer: remote.Answer) -> bool {
+	outcome, _, _ := remote.answer_outcome(answer)
+	return outcome == .Succeeded
+}
+
 // table_call makes a call with a Table result, and gives its rows.
 table_call :: proc(client: ^Call_Client, text: string) -> (table: Call_Table, ok: bool) {
 	call, problem := call_prepare(client, text)
@@ -899,7 +864,7 @@ table_call :: proc(client: ^Call_Client, text: string) -> (table: Call_Table, ok
 		return {}, false
 	}
 	answer, result, _, answered := call_send(client, &call)
-	if !answered || answer.status != .Ok || isolated.Status(answer.call_status) != .Ok || answer.value < 0 {
+	if !answered || !answer_succeeded(answer) {
 		return {}, false
 	}
 	table.described = module.record_type(call.file, call.function.result_detail) or_return
@@ -966,7 +931,7 @@ record_fields :: proc(client: ^Call_Client, text: string, names: []string) -> (v
 		return nil, false
 	}
 	answer, result, _, answered := call_send(client, &call)
-	if !answered || answer.status != .Ok || isolated.Status(answer.call_status) != .Ok || (call.function.result == u8(module.Type.Table) && answer.value < 1) {
+	if !answered || !answer_succeeded(answer) || (call.function.result == u8(module.Type.Table) && answer.value < 1) {
 		return nil, false
 	}
 	described := module.record_type(call.file, call.function.result_detail) or_return
@@ -993,7 +958,7 @@ record_text_field :: proc(client: ^Call_Client, text: string, name: string) -> (
 		return "", false
 	}
 	answer, result, _, answered := call_send(client, &call)
-	if !answered || answer.status != .Ok || isolated.Status(answer.call_status) != .Ok || (call.function.result == u8(module.Type.Table) && answer.value < 1) {
+	if !answered || !answer_succeeded(answer) || (call.function.result == u8(module.Type.Table) && answer.value < 1) {
 		return "", false
 	}
 	described := module.record_type(call.file, call.function.result_detail) or_return

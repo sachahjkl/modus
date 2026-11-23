@@ -7,6 +7,7 @@ package plans_service
 
 import "base:intrinsics"
 import "internal:plans/plans_core"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import rd "modus:contract/root_delegation"
 import "modus:contract/ring"
@@ -60,7 +61,7 @@ roles_late_completion_close :: proc "contextless" (record: ring.Record) {
 	if !plans_core.late_page_take(&service_state.roles_late_pages, record.tag) {
 		return
 	}
-	if record.kind == u32(system.Status.Ok) && record.values[0] != 0 {
+	if record.kind == u32(call_outcome.Call_Outcome.Succeeded) && record.values[0] != 0 {
 		system.close(system.Handle(record.values[0]))
 	}
 }
@@ -71,7 +72,7 @@ roles_late_completion_close :: proc "contextless" (record: ring.Record) {
 @(private = "file")
 roles_page_read :: proc "contextless" () -> (serial, generation: u64, ok: bool) {
 	completion, answered := roles_command(.Page)
-	if !answered || completion.kind != u32(system.Status.Ok) {
+	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return 0, 0, false
 	}
 	memory := system.Handle(completion.values[0])
@@ -180,7 +181,7 @@ roles_replace :: proc "contextless" (user: rawptr, set: ^rd.Plan_Roles_Set, step
 		system.log_fact(.Warning, Plan_Roles_Refused{generation = set.generation, refusal_code = u64(rd.Plan_Roles_Refusal.Stale_Serial)})
 		return .Stale_Serial
 	}
-	if completion.kind == u32(system.Status.Ok) {
+	if completion.kind == u32(call_outcome.Call_Outcome.Succeeded) {
 		return .None
 	}
 	// The error record names the refusal as the value found, values[6]. A

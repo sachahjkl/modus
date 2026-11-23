@@ -141,14 +141,15 @@ error_details_are_the_same_in_each_way :: proc(t: ^testing.T) {
 	isolated_details[2] = {kind = 99}
 	arguments := [2]Argument{{table = {records = bytes_of_memory(&isolated_rows, size_of(isolated_rows)), count = 4}}, {table = {records = bytes_of_memory(&isolated_details, 2 * size_of(errors.Error_Record)), count = 0}}}
 	region: [1024]u8
-	offset, size, _, error_place, encoded := encode(file, function, arguments[:], region[:])
+	offset, size, _, encoded := encode(file, function, arguments[:], region[:])
 	testing.expect(t, encoded, "encode")
-	testing.expect(t, error_place.count == ERROR_RECORD_SIZE, "the place of the error record")
 	call: Call
 	testing.expect(t, decode(file, function, offset, size, region[:], &call), "decode")
-	isolated_result := double_and_refuse_odd(&call.places[0], &call.places[1], (^errors.Error_Record)(&region[error_place.start]))
+	isolated_result := double_and_refuse_odd(&call.places[0], &call.places[1], &call.error_record)
 	counts_store(function, &call, region[:])
-	isolated_error := (^errors.Error_Record)(&region[error_place.start])^
+	// The record is private to the receiver, which copies it into the
+	// completion: the caller reads none from the call region.
+	isolated_error := call.error_record
 	problem, _ := error_details_return(file, function, arguments[:], region[:], offset)
 	testing.expect_value(t, problem, Return_Problem.None)
 
@@ -177,12 +178,12 @@ error_details_with_no_place :: proc(t: ^testing.T) {
 	guard: [1]errors.Error_Record = {{kind = 99}}
 	arguments := [2]Argument{{table = {records = bytes_of_memory(&rows, size_of(rows)), count = 2}}, {table = {records = bytes_of_memory(&guard, 0), count = 0}}}
 	region: [1024]u8
-	offset, size, _, error_place, encoded := encode(file, function, arguments[:], region[:])
+	offset, size, _, encoded := encode(file, function, arguments[:], region[:])
 	testing.expect(t, encoded, "encode")
 	call: Call
 	testing.expect(t, decode(file, function, offset, size, region[:], &call), "decode")
 	testing.expect_value(t, call.places[1].capacity, 0)
-	double_and_refuse_odd(&call.places[0], &call.places[1], (^errors.Error_Record)(&region[error_place.start]))
+	double_and_refuse_odd(&call.places[0], &call.places[1], &call.error_record)
 	counts_store(function, &call, region[:])
 	problem, _ := error_details_return(file, function, arguments[:], region[:], offset)
 	testing.expect_value(t, problem, Return_Problem.None)

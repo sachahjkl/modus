@@ -15,10 +15,13 @@
 //   values[0]   the offset of the argument record in the call region
 //   values[1]   the size of the argument record, in bytes
 //
-// The completion record:
-//   kind        a Status
-//   values[0], values[1]   the integer results
-//   values[2], values[3]   the float results
+// The completion record (src/md/api/call_outcome.md, "The borders of the
+// isolated call"):
+//   kind        the word of the call outcome (call_outcome.Call_Outcome):
+//               of the export, or of the receiver that refused the call
+//   values      with Succeeded, values[0] is the value of the export; with
+//               any other outcome, the seven values are the error record
+//               (errors.completion_values)
 //
 // The argument record is derived from the description of the export
 // (module.Function). It has one field per parameter, in order:
@@ -61,11 +64,12 @@
 // is the rest of the call region, from a multiple of 8 bytes. The callee
 // gives the count of records of the full table as its integer result.
 //
-// An export with an error record (module.Function.error_record) has one
-// more field, after all the others: the offset of the place of the record in
-// the call region (src/library/modus/contract/errors, 56 bytes). In the direct call it is one
-// more argument, after the buffer of a result. The receiver gives the export
-// the address of that place: the export only writes it, when it fails.
+// An export with an error record (module.Function.error_record) has no
+// field for it: the record is private to the receiver. In the direct call it
+// is one more argument, after the buffer of a result; the receiver gives the
+// export the address of its own record (Call.error_record), and copies the
+// record into the completion when the export fails. A caller reads no record
+// from the call region.
 //
 // The receiver trusts nothing in the call region. It copies the argument
 // record to private memory, and it checks each offset and each count
@@ -82,7 +86,8 @@
 // - `Argument`, `Slice`, `Call`, `Lent`: what the two sides hold.
 // - `Table_Field`, `Table_Argument`, `table_encode`, `tables_return`: the
 //   tables and the bytes (`tables.odin`).
-// - `Status`: the status of a completion of a call.
+// - `answer_completion` and `answer_of_completion`: the completion of a
+//   call, on each side.
 // - `Service_Command` and the `CALLER_` constants: how the root service
 //   connects a caller to a service.
 // - `GRANT_RING`, `GRANT_REGION`, the `VALUE_` constants: the context of a
@@ -91,9 +96,11 @@
 // See [isolated call](term:isolated-call) and [call host](term:call-host).
 package isolated
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/fixed_addresses"
 import module "modus:contract/module"
+import "modus:contract/ring"
 import "base:intrinsics"
 
 // The roles of the context of a call host.
@@ -193,21 +200,6 @@ Service_Command :: enum u32 {
 	Grant      = 3, // The grant of the connection of the call ring changes to values[6]: a revocation, for example.
 }
 
-// The status of a completion of the call ring: the kind of the completion
-// record. With `Ok` the values are the results of the export; the integer
-// result can still be negative, and then the error record of the export says
-// why.
-Status :: enum u32 {
-	Ok            = 0, // The export ran. values[0] and values[1]: its integer results; values[2] and values[3]: its float results.
-	Bad_Export    = 1, // The module has no export with this index, or the export has no description.
-	Bad_Arguments = 2, // The argument record, or one of its slices, is not in the call region.
-	Bad_Handle    = 3, // A handle of the argument record did not come through the call ring, or it lacks a right of the description.
-	// The first completion of a call host has the tag 0: Ok when it loaded
-	// its module, or Load_Failed. With Load_Failed, the call region starts
-	// with a module.Load_Error record, and the call host stops.
-	Load_Failed   = 4,
-}
-
 // In the call region, `start` is an offset. In a process, it is an address.
 //
 // It is the form of a Text argument in the argument record, and of the
@@ -245,7 +237,7 @@ Call :: struct {
 	lent:       [module.HANDLE_CAPACITY]Lent, // The handles to prove before the call, and to close after it.
 	lent_count: int, // The entries of `lent` in use.
 	result:     Slice, // A Record result: its place in the call region, as offsets.
-	error:      Slice, // The place of the error record in the call region, as offsets. count 0: the export has none.
+	error_record: errors.Error_Record, // The record that the export writes when it fails: private to the receiver, which copies it into the completion.
 	places:        [module.PARAMETER_CAPACITY]module.Table_Place, // places[n]: the table place of a Table or Bytes, in memory of the receiver.
 	count_offsets: [module.PARAMETER_CAPACITY]u64, // An Append place: the offset of its count in the call region.
 	mappings:      [module.PARAMETER_CAPACITY]Table_Mapping, // The memory objects to map before the call.
@@ -253,11 +245,11 @@ Call :: struct {
 }
 
 // The largest argument record: a table field for each argument of the call
-// form, a buffer and an error record. The buffer and the error record take
-// arguments of the call form, so this bounds each valid description.
-ARGUMENT_RECORD_LIMIT :: module.PARAMETER_CAPACITY * size_of(Table_Field) + size_of(Slice) + 8
+// form, and a buffer. The buffer takes an argument of the call form, so this
+// bounds each valid description.
+ARGUMENT_RECORD_LIMIT :: module.PARAMETER_CAPACITY * size_of(Table_Field) + size_of(Slice)
 
-ERROR_RECORD_SIZE :: 56 // src/library/modus/contract/errors: Error_Record.
+ERROR_RECORD_SIZE :: 56 // src/library/modus/contract/errors: Error_Record, a record of a table of error details.
 
 // field_size gives the bytes of the field of one parameter type in the
 // argument record: 8 for an Integer, a Record and a Handle, 16 for a Text
@@ -317,13 +309,6 @@ record_size :: proc "contextless" (function: module.Function) -> (size: u64, ok:
 	}
 	result_field := result_field_size(function.result) or_return
 	size += result_field
-	if function.error_record != 0 {
-		// A Record result gives no integer result, so a failure has no sign.
-		if function.result == u8(module.Type.Record) {
-			return 0, false
-		}
-		size += 8
-	}
 	return size, true
 }
 
@@ -352,16 +337,13 @@ load :: proc "contextless" (region: []u8, offset: u64, $T: typeid) -> (value: T)
 // file is the module of the export: it has the descriptions of the records.
 // ok is false when the arguments do not agree with the description, or when
 // the call region is too small.
-// For an export with an error record, `error` names its place, after the
-// result: encode writes zero bytes there. The caller reads it when the
-// integer result is negative.
 // A Table or Bytes argument: see table_encode. encode writes region_start
 // in the argument: keep the arguments for tables_return.
-encode :: proc "contextless" (file: []u8, function: module.Function, arguments: []Argument, region: []u8) -> (offset, size: u64, result: Slice, error: Slice, ok: bool) {
+encode :: proc "contextless" (file: []u8, function: module.Function, arguments: []Argument, region: []u8) -> (offset, size: u64, result: Slice, ok: bool) {
 	function := function
 	size = record_size(function) or_return
 	if len(arguments) != int(function.parameter_count) || size > u64(len(region)) {
-		return 0, 0, {}, {}, false
+		return 0, 0, {}, false
 	}
 	field := u64(0)
 	next := size // Where the bytes of the next Text go.
@@ -370,7 +352,7 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 		// reads the byte again.
 		type, type_ok := module.type_of_word(word)
 		if !type_ok {
-			return 0, 0, {}, {}, false
+			return 0, 0, {}, false
 		}
 		switch type {
 		case .None:
@@ -382,7 +364,7 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 		case .Text:
 			text := arguments[index].text
 			if u64(len(text)) > u64(len(region)) - next {
-				return 0, 0, {}, {}, false
+				return 0, 0, {}, false
 			}
 			intrinsics.mem_copy_non_overlapping(raw_data(region[next:]), raw_data(text), len(text))
 			store(region, field, Slice{start = next, count = u64(len(text))})
@@ -392,39 +374,28 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 			bytes := arguments[index].record
 			next = (next + 7) &~ 7
 			if len(bytes) != int(described.size) || next > u64(len(region)) || u64(len(bytes)) > u64(len(region)) - next {
-				return 0, 0, {}, {}, false
+				return 0, 0, {}, false
 			}
 			intrinsics.mem_copy_non_overlapping(raw_data(region[next:]), raw_data(bytes), len(bytes))
 			store(region, field, next)
 			next += u64(len(bytes))
 		case .Handle:
 			if arguments[index].integer >> 32 != 0 {
-				return 0, 0, {}, {}, false
+				return 0, 0, {}, false
 			}
 			store(region, field, arguments[index].integer)
 		case .Table, .Bytes:
 			direction, direction_ok := module.direction_of_word(function.parameter_directions[index])
 			if !direction_ok {
-				return 0, 0, {}, {}, false
+				return 0, 0, {}, false
 			}
 			next = table_encode(file, word, function.parameter_details[index], direction, &arguments[index].table, region, field, next) or_return
 		}
 		field += field_size(word)
 	}
-	// The place of the error record: after the bytes of the arguments, and
-	// before the buffer of a result, which is the rest of the region.
-	if function.error_record != 0 {
-		next = (next + 7) &~ 7
-		if next > u64(len(region)) || ERROR_RECORD_SIZE > u64(len(region)) - next {
-			return 0, 0, {}, {}, false
-		}
-		error = {start = next, count = ERROR_RECORD_SIZE}
-		intrinsics.mem_zero(raw_data(region[next:]), ERROR_RECORD_SIZE)
-		next += ERROR_RECORD_SIZE
-	}
 	result_type, result_type_ok := module.function_result_type(function)
 	if !result_type_ok {
-		return 0, 0, {}, {}, false
+		return 0, 0, {}, false
 	}
 	switch result_type {
 	case .None, .Integer, .Enum:
@@ -439,7 +410,7 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 		described := module.record_type(file, function.result_detail) or_return
 		next = (next + 7) &~ 7
 		if next > u64(len(region)) || described.size == 0 {
-			return 0, 0, {}, {}, false
+			return 0, 0, {}, false
 		}
 		result = {start = next, count = (u64(len(region)) - next) / u64(described.size)}
 		store(region, field, result)
@@ -448,17 +419,13 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 		described := module.record_type(file, function.result_detail) or_return
 		next = (next + 7) &~ 7
 		if next > u64(len(region)) || u64(described.size) > u64(len(region)) - next {
-			return 0, 0, {}, {}, false
+			return 0, 0, {}, false
 		}
 		result = {start = next, count = u64(described.size)}
 		intrinsics.mem_zero(raw_data(region[next:]), int(described.size))
 		store(region, field, next)
-		field += 8
 	}
-	if function.error_record != 0 {
-		store(region, field, error.start)
-	}
-	return 0, size, result, error, true
+	return 0, size, result, true
 }
 
 // result_record gives the Record result of a call: the bytes at the place
@@ -518,14 +485,14 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	function := function
 	expected, described := record_size(function)
 	if !described {
-		return refuse(refusal, .Bad_Value, .None, 0, 0, 0)
+		return refuse(refusal, .Bad_Value, .Region, 0, 0, 0)
 	}
 	limit := u64(len(region))
 	if size != expected {
-		return refuse(refusal, .Bad_Value, .Bytes, 0, size, expected)
+		return refuse(refusal, .Bad_Value, .Region, 0, size, expected)
 	}
 	if offset > limit || size > limit - offset {
-		return refuse(refusal, .Out_Of_Range, .Bytes, 0, offset + min(size, limit), limit)
+		return refuse(refusal, .Out_Of_Range, .Region, 0, offset + min(size, limit), limit)
 	}
 	call.lent_count = 0
 	call.mapping_count = 0
@@ -544,7 +511,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		// reads the byte again.
 		type, type_ok := module.type_of_word(word)
 		if !type_ok {
-			return refuse(refusal, .Bad_Value, .None, argument, u64(word), 0)
+			return refuse(refusal, .Bad_Value, .Region, argument, u64(word), 0)
 		}
 		switch type {
 		case .None:
@@ -554,7 +521,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		case .Text:
 			slice := load(record[:], field, Slice)
 			if slice.start > limit || slice.count > limit - slice.start {
-				return refuse(refusal, .Out_Of_Range, .Bytes, argument, slice.start + min(slice.count, limit), limit)
+				return refuse(refusal, .Out_Of_Range, .Region, argument, slice.start + min(slice.count, limit), limit)
 			}
 			region_range_add(&ranges, {slice.start, slice.start + slice.count, false, argument}, refusal) or_return
 			call.slices[index] = {
@@ -565,11 +532,11 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		case .Record:
 			described_record, valid := module.record_type(file, function.parameter_details[index])
 			if !valid {
-				return refuse(refusal, .Bad_Value, .None, argument, u64(function.parameter_details[index]), 0)
+				return refuse(refusal, .Bad_Value, .Region, argument, u64(function.parameter_details[index]), 0)
 			}
 			start := load(record[:], field, u64)
 			if start > limit || u64(described_record.size) > limit - start {
-				return refuse(refusal, .Out_Of_Range, .Bytes, argument, start + min(u64(described_record.size), limit), limit)
+				return refuse(refusal, .Out_Of_Range, .Region, argument, start + min(u64(described_record.size), limit), limit)
 			}
 			call.records[index] = {}
 			intrinsics.mem_copy_non_overlapping(&call.records[index], raw_data(region[start:]), int(described_record.size))
@@ -578,7 +545,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 				if has_field && item.type == u8(module.Type.Handle) {
 					handle := (^u32)(uintptr(&call.records[index]) + uintptr(item.offset))^
 					if !lent_handle_add(call, u64(handle), item.detail) {
-						return refuse(refusal, .Full, .Handles, argument, 0, len(call.lent))
+						return refuse(refusal, .Too_Long, .Lent_Handles, argument, 0, len(call.lent))
 					}
 				}
 			}
@@ -586,12 +553,12 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		case .Handle:
 			call.arguments[index] = load(record[:], field, u64)
 			if !lent_handle_add(call, call.arguments[index], function.parameter_details[index]) {
-				return refuse(refusal, call.arguments[index] >> 32 != 0 ? .Handle_Absent : .Full, .Handles, argument, call.arguments[index], len(call.lent))
+				return refuse(refusal, call.arguments[index] >> 32 != 0 ? .Handle_Absent : .Too_Long, .Lent_Handles, argument, call.arguments[index], len(call.lent))
 			}
 		case .Table, .Bytes:
 			direction, direction_ok := module.direction_of_word(function.parameter_directions[index])
 			if !direction_ok {
-				return refuse(refusal, .Bad_Value, .None, argument, u64(function.parameter_directions[index]), u64(max(module.Direction)))
+				return refuse(refusal, .Bad_Value, .Region, argument, u64(function.parameter_directions[index]), u64(max(module.Direction)))
 			}
 			table_decode(file, word, function.parameter_details[index], direction, index, load(record[:], field, Table_Field), offset + field, region, call, &ranges, refusal) or_return
 		}
@@ -600,7 +567,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	index := function.parameter_count
 	result_type, result_type_ok := module.function_result_type(function)
 	if !result_type_ok {
-		return refuse(refusal, .Bad_Value, .None, 0, u64(function.result), 0)
+		return refuse(refusal, .Bad_Value, .Region, 0, u64(function.result), 0)
 	}
 	switch result_type {
 	case .None, .Integer, .Enum:
@@ -610,7 +577,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	case .Text:
 		slice := load(record[:], field, Slice)
 		if slice.start > limit || slice.count > limit - slice.start {
-			return refuse(refusal, .Out_Of_Range, .Bytes, 0, slice.start + min(slice.count, limit), limit)
+			return refuse(refusal, .Out_Of_Range, .Region, 0, slice.start + min(slice.count, limit), limit)
 		}
 		region_range_add(&ranges, {slice.start, slice.start + slice.count, true, 0}, refusal) or_return
 		call.slices[index] = {
@@ -622,10 +589,10 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		described_record, valid := module.record_type(file, function.result_detail)
 		slice := load(record[:], field, Slice)
 		if !valid || described_record.size == 0 {
-			return refuse(refusal, .Bad_Value, .None, 0, u64(function.result_detail), 0)
+			return refuse(refusal, .Bad_Value, .Region, 0, u64(function.result_detail), 0)
 		}
 		if slice.start > limit || slice.count > (limit - slice.start) / u64(described_record.size) {
-			return refuse(refusal, .Out_Of_Range, .Records, 0, slice.count, (limit - min(slice.start, limit)) / u64(described_record.size))
+			return refuse(refusal, .Out_Of_Range, .Region, 0, bytes_reached(slice.start, slice.count, u64(described_record.size)), limit)
 		}
 		region_range_add(&ranges, {slice.start, slice.start + slice.count * u64(described_record.size), true, 0}, refusal) or_return
 		call.slices[index] = {
@@ -636,31 +603,24 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	case .Record:
 		described_record, valid := module.record_type(file, function.result_detail)
 		if !valid {
-			return refuse(refusal, .Bad_Value, .None, 0, u64(function.result_detail), 0)
+			return refuse(refusal, .Bad_Value, .Region, 0, u64(function.result_detail), 0)
 		}
 		start := load(record[:], field, u64)
 		if start > limit || u64(described_record.size) > limit - start {
-			return refuse(refusal, .Out_Of_Range, .Bytes, 0, start + min(u64(described_record.size), limit), limit)
+			return refuse(refusal, .Out_Of_Range, .Region, 0, start + min(u64(described_record.size), limit), limit)
 		}
 		region_range_add(&ranges, {start, start + u64(described_record.size), true, 0}, refusal) or_return
 		call.records[index] = {}
 		call.result = {start = start, count = u64(described_record.size)}
 		call.arguments[index] = u64(uintptr(&call.records[index]))
 	}
-	// The error record: the export writes it in the call region, at a place
-	// that the caller chose and the receiver checked. The receiver does not
-	// read it.
-	call.error = {}
+	// The error record: private to the receiver, so the caller chooses no
+	// place of it and reads no record from the call region. The export
+	// writes it only when it fails.
+	call.error_record = {}
 	if function.error_record != 0 {
-		field += result_type == .Text || result_type == .Table ? size_of(Slice) : 0
-		start := load(record[:], field, u64)
-		if start > limit || ERROR_RECORD_SIZE > limit - start || start % 8 != 0 {
-			return refuse(refusal, .Out_Of_Range, .Bytes, 0, start + min(u64(ERROR_RECORD_SIZE), limit), limit)
-		}
-		region_range_add(&ranges, {start, start + ERROR_RECORD_SIZE, true, 0}, refusal) or_return
-		call.error = {start = start, count = ERROR_RECORD_SIZE}
-		error_argument := u64(function.parameter_count) + u64(result_type == .Text || result_type == .Table)
-		call.arguments[error_argument] = u64(uintptr(raw_data(region))) + start
+		error_argument := u64(function.parameter_count) + u64(result_type == .Text || result_type == .Table || result_type == .Record)
+		call.arguments[error_argument] = u64(uintptr(&call.error_record))
 	}
 	return true
 }
@@ -686,6 +646,65 @@ lent_handle_add :: proc "contextless" (call: ^Call, handle: u64, rights: u32) ->
 // Text and a Table give their count, whose bytes are in the call region.
 // No result, and a Record result, whose bytes are in the call region, give
 // 0; so does a byte that names no type, which record_size refused before.
+// export_answer reads the two integer result registers of an export
+// (src/md/api/call_outcome.md, "Where the outcome is"): an export that can
+// fail (function.error_record != 0) gives the outcome word first and its
+// value second; another gives its value alone. The value of an outcome
+// that is not Succeeded is 0: the bytes of the completion are then the
+// same at each run, and no word of the export passes by accident.
+export_answer :: proc "contextless" (function: module.Function, registers: [2]u64) -> (value: u64, outcome_word: u64) {
+	if function.error_record == 0 {
+		return completion_value(function, registers[0]), 0
+	}
+	if registers[0] != 0 {
+		return 0, registers[0]
+	}
+	return completion_value(function, registers[1]), 0
+}
+
+// answer_completion gives the completion of a call that the export
+// answered: the outcome word in `kind`; with Succeeded, the value in
+// values[0]; with another outcome, the error record of the export in the
+// seven values, its `operation` the export, and no value. outcome_word is
+// the word that the export gave: the receiver passes it on unread, and the
+// reader takes it through its border.
+answer_completion :: proc "contextless" (tag: u32, export: u32, value: u64, outcome_word: u64, record: errors.Error_Record) -> ring.Record {
+	if outcome_word == 0 {
+		return {kind = 0, tag = tag, values = {0 = value}}
+	}
+	named := record
+	// A failure with no record still says that it failed: Refused explains
+	// each outcome (call_outcome.KINDS_OF).
+	if named.kind == 0 {
+		named = errors.error_make(.Refused)
+	}
+	named.operation = i64(export)
+	// A word past 32 bits names no outcome: the kind keeps it unreadable.
+	kind := outcome_word > u64(max(u32)) ? max(u32) : u32(outcome_word)
+	return {kind = kind, tag = tag, values = errors.completion_values(named)}
+}
+
+// refusal_completion gives the completion of a call that the receiver
+// refused before the export ran: Argument_Refused for a call record that it
+// refuses, Operation_Unsupported for an export that it does not have.
+refusal_completion :: proc "contextless" (tag: u32, outcome: call_outcome.Call_Outcome, record: errors.Error_Record) -> ring.Record {
+	return {kind = u32(outcome), tag = tag, values = errors.completion_values(record)}
+}
+
+// answer_of_completion is the one border of the completion of an isolated
+// call, which the other process writes: the value and the outcome, and the
+// error record of a failure. A kind that names no outcome, and a failure
+// whose record names no kind or no unit, give Answer_Unreadable with a
+// record that says what was unreadable, and the value 0: the reader trusts
+// nothing of such an answer.
+answer_of_completion :: proc "contextless" (completion: ring.Record) -> (value: i64, outcome: call_outcome.Call_Outcome, record: errors.Error_Record) {
+	outcome, record = call_outcome.completion_outcome(completion.kind, completion.values)
+	if outcome == .Succeeded {
+		return i64(completion.values[0]), .Succeeded, {}
+	}
+	return 0, outcome, record
+}
+
 completion_value :: proc "contextless" (function: module.Function, register: u64) -> u64 {
 	type, type_ok := module.type_of_word(function.result)
 	if !type_ok {

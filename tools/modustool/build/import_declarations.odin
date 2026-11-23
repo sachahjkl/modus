@@ -273,17 +273,59 @@ call_form_of_declaration :: proc(state: ^Describe_State, source: string, type: ^
 			append(&parameters, parameter)
 		}
 	}
-	if type.results != nil && len(type.results.list) == 1 && type.results.list[0].type != nil {
-		result_type := type.results.list[0].type
-		result_text := source[result_type.pos.offset:result_type.end.offset]
-		if result_text != "i64" {
-			return {}, fmt.tprintf("the result type %s has no description", result_text), false
+	// The results: the value of an export that cannot fail (i64), or the
+	// call outcome first and the value of one that can (src/md/api/call_outcome.md).
+	result_types: [3]^ast.Expr
+	result_texts: [3]string
+	result_count := 0
+	if type.results != nil {
+		for field in type.results.list {
+			if field.type == nil {
+				return {}, "the declaration has a result with no type", false
+			}
+			for _ in 0 ..< max(len(field.names), 1) {
+				if result_count == len(result_texts) {
+					return {}, "the declaration has more than two results", false
+				}
+				result_types[result_count] = field.type
+				result_texts[result_count] = source[field.type.pos.offset:field.type.end.offset]
+				result_count += 1
+			}
 		}
-		if form.result == .None {
-			form.result = .Integer
+	}
+	gives_outcome, gives_value := false, false
+	switch result_count {
+	case 0:
+	case 1:
+		if result_texts[0] == "i64" {
+			gives_value = true
+		} else if is_contract_type(state, result_types[0], "call_outcome", "Call_Outcome") {
+			gives_outcome = true
+		} else {
+			return {}, fmt.tprintf("the result type %s has no description", result_texts[0]), false
 		}
-	} else if type.results != nil {
-		return {}, "the declaration has more than one result", false
+	case 2:
+		if !is_contract_type(state, result_types[0], "call_outcome", "Call_Outcome") || result_texts[1] != "i64" {
+			return {}, fmt.tprintf("the results (%s, %s) have no description: an export that can fail gives (call_outcome.Call_Outcome, i64)", result_texts[0], result_texts[1]), false
+		}
+		gives_outcome, gives_value = true, true
+	case:
+		return {}, "the declaration has more than two results", false
+	}
+	if gives_outcome != form.has_error {
+		if form.has_error {
+			return {}, "the declaration takes an error record, so its export can fail: it gives call_outcome.Call_Outcome first", false
+		}
+		return {}, "the declaration gives a call outcome, so its last parameter is the error record", false
+	}
+	if (form.result == .Text || form.result == .Table) && !gives_value {
+		return {}, "the declaration has a Text or Table result, so it returns its count as i64", false
+	}
+	if form.result == .Record && gives_value {
+		return {}, "the declaration has a Record result, so it gives no i64 value", false
+	}
+	if gives_value && form.result == .None {
+		form.result = .Integer
 	}
 	form.parameters = parameters[:]
 	return form, "", true

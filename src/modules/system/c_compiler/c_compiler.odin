@@ -35,6 +35,7 @@
 package c_compiler
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/value_kinds"
 import "internal:c_compiler/program_files"
@@ -54,9 +55,6 @@ EXPORT_LIST_BYTES_MOST :: program_files.EXPORTS_MOST * (program_files.NAME_BYTES
 // log. It is memory of the module, not of the arena: a diagnostic still
 // has room after the budget refused the arena.
 DIAGNOSTIC_BYTES :: 4096
-
-// The result of an export that fails: the error record says why.
-ERROR :: -1
 
 // The argument numbers of `compile`, which an error record names.
 ARGUMENT_SOURCE :: 1
@@ -207,7 +205,7 @@ diagnostic_log :: proc "contextless" (size: u64) {
 // ok is false when the kernel refuses; then the error record holds the
 // refusal, in the words of the export.
 @(private)
-output_map :: proc "contextless" (memory: system.Handle, argument: i64, error: ^errors.Error_Record) -> (bytes: []u8, ok: bool) {
+output_map :: proc "contextless" (memory: system.Handle, argument: i64, error: ^errors.Error_Record) -> (bytes: []u8, outcome: call_outcome.Call_Outcome) {
 	refusal: errors.Error_Record
 	address, status := system.memory_map(memory, {.Write}, error = &refusal)
 	if status != .Ok {
@@ -222,53 +220,57 @@ output_map :: proc "contextless" (memory: system.Handle, argument: i64, error: ^
 				error^ = errors.error_make(.Refused, argument = argument, found = i64(status))
 			}
 		}
-		return nil, false
+		return nil, system.outcome_of_status(status)
 	}
 	// The map took the handle, so the kernel gives its size.
 	pages, _ := system.memory_size(memory)
-	return ([^]u8)(address)[:pages * system.PAGE_SIZE], true
+	return ([^]u8)(address)[:pages * system.PAGE_SIZE], .Succeeded
 }
 
 // arena_refusal_give writes a refusal of the arena in the words of the
 // export, and ends the arena: the call of the caller asked for no
-// operation.
+// operation. The arena pays its pages from the budget of the module.
 @(private)
-arena_refusal_give :: proc "contextless" (error: ^errors.Error_Record, refusal: errors.Error_Record) -> i64 {
+arena_refusal_give :: proc "contextless" (error: ^errors.Error_Record, refusal: errors.Error_Record) -> call_outcome.Call_Outcome {
 	system.arena_end(&arena)
 	if error != nil {
 		error^ = refusal
 		error.operation = 0
 		error.argument = 0
 	}
-	return ERROR
+	return .Budget_Or_Capacity_Exhausted
 }
 
 // program_refusal_give writes a refusal of a file list, an export list or
-// a source name in the words of the export, and ends the arena.
+// a source name in the words of the export, and ends the arena. Each is a
+// rule of the argument.
 @(private)
-program_refusal_give :: proc "contextless" (error: ^errors.Error_Record, refusal: program_files.Refusal_Record, argument: i64, argument_bytes: u64) -> i64 {
+program_refusal_give :: proc "contextless" (error: ^errors.Error_Record, refusal: program_files.Refusal_Record, argument: i64, argument_bytes: u64) -> call_outcome.Call_Outcome {
 	system.arena_end(&arena)
+	record := errors.error_make(.Refused, .None, argument)
 	switch refusal.refusal {
 	case .None:
-		return errors.fail(error, ERROR, .Refused, .None, argument, 0, 0, 0)
 	case .List_Too_Long:
-		return errors.fail(error, ERROR, .Too_Long, .Bytes, argument, i64(refusal.value), program_files.LIST_BYTES_MOST)
+		record = errors.error_make(.Too_Long, .Bytes, argument, i64(refusal.value), program_files.LIST_BYTES_MOST)
 	case .Head_Cut, .Content_Cut:
-		return errors.fail(error, ERROR, .Out_Of_Range, .Bytes, argument, i64(refusal.value), i64(argument_bytes))
+		record = errors.error_make(.Out_Of_Range, .Bytes, argument, i64(refusal.value), i64(argument_bytes))
 	case .Name_Empty:
-		return errors.fail(error, ERROR, .Empty, .Bytes, argument, i64(refusal.offset), program_files.NAME_BYTES_MOST)
+		record = errors.error_make(.Empty, .Bytes, argument, i64(refusal.offset), program_files.NAME_BYTES_MOST)
 	case .Name_Too_Long:
-		return errors.fail(error, ERROR, .Too_Long, .Bytes, argument, i64(refusal.value), program_files.NAME_BYTES_MOST)
+		record = errors.error_make(.Too_Long, .Bytes, argument, i64(refusal.value), program_files.NAME_BYTES_MOST)
 	case .Byte_Zero:
-		return errors.fail(error, ERROR, .Bad_Byte, .None, argument, i64(refusal.offset), 0, 0)
+		record = errors.error_make(.Bad_Byte, .None, argument, i64(refusal.offset), 0, 0)
 	case .Name_Twice:
-		return errors.fail(error, ERROR, .Exists, .None, argument, i64(refusal.offset))
+		record = errors.error_make(.Exists, .None, argument, i64(refusal.offset))
 	case .Too_Many_Files:
-		return errors.fail(error, ERROR, .Over_Limit, .Records, argument, i64(refusal.value), program_files.FILES_MOST)
+		record = errors.error_make(.Over_Limit, .Records, argument, i64(refusal.value), program_files.FILES_MOST)
 	case .Too_Many_Names:
-		return errors.fail(error, ERROR, .Over_Limit, .Records, argument, i64(refusal.value), program_files.EXPORTS_MOST)
+		record = errors.error_make(.Over_Limit, .Records, argument, i64(refusal.value), program_files.EXPORTS_MOST)
 	}
-	return errors.fail(error, ERROR, .Refused, .None, argument, 0, 0, 0)
+	if error != nil {
+		error^ = record
+	}
+	return .Argument_Refused
 }
 
 // bytes_copy copies bytes of the caller into the arena, with `zero_after`
@@ -298,51 +300,45 @@ bytes_copy :: proc "contextless" (from: [^]u8, count: u64, zero_after: u64, refu
 
 // unit_program_fill copies the name, the files and the exports of a unit
 // into the arena, reads them at the border, and fills the fields of the
-// call that name the program.
+// call that name the program. An outcome that is not Succeeded has its
+// error record, and the arena ended.
 @(private)
-unit_program_fill :: proc "contextless" (unit: ^Unit_Arguments, call: ^Compile_Call, error: ^errors.Error_Record) -> (ok: bool) {
+unit_program_fill :: proc "contextless" (unit: ^Unit_Arguments, call: ^Compile_Call, error: ^errors.Error_Record) -> call_outcome.Call_Outcome {
 	refusal: errors.Error_Record
 	name_copy, name_status := bytes_copy(unit.name.bytes, unit.name_count, 1, &refusal)
 	if name_status != .Ok {
-		arena_refusal_give(error, refusal)
-		return false
+		return arena_refusal_give(error, refusal)
 	}
 	name := string(name_copy[:unit.name_count])
 	if checked := program_files.name_check(name, 0); checked.refusal != .None {
-		program_refusal_give(error, checked, UNIT_ARGUMENT_NAME, unit.name_count)
-		return false
+		return program_refusal_give(error, checked, UNIT_ARGUMENT_NAME, unit.name_count)
 	}
 	call.source_name = cstring(name_copy)
 
 	list_copy, list_status := bytes_copy(unit.files.bytes, unit.files_count, 0, &refusal)
 	if list_status != .Ok {
-		arena_refusal_give(error, refusal)
-		return false
+		return arena_refusal_give(error, refusal)
 	}
 	files_address, files_status := system.arena_push(&arena, program_files.FILES_MOST * size_of(program_files.File), align_of(program_files.File), &refusal)
 	if files_status != .Ok {
-		arena_refusal_give(error, refusal)
-		return false
+		return arena_refusal_give(error, refusal)
 	}
 	files := ([^]program_files.File)(files_address)[:program_files.FILES_MOST]
 	file_count, list_refusal := program_files.file_list_read(list_copy[:unit.files_count], name, files)
 	if list_refusal.refusal != .None {
-		program_refusal_give(error, list_refusal, UNIT_ARGUMENT_FILES, unit.files_count)
-		return false
+		return program_refusal_give(error, list_refusal, UNIT_ARGUMENT_FILES, unit.files_count)
 	}
 	if file_count > 0 {
 		table_address, table_status := system.arena_push(&arena, u64(file_count) * size_of(Readable_File), align_of(Readable_File), &refusal)
 		if table_status != .Ok {
-			arena_refusal_give(error, refusal)
-			return false
+			return arena_refusal_give(error, refusal)
 		}
 		table := ([^]Readable_File)(table_address)
 		for file, index in files[:file_count] {
 			// The thin libc compares a name up to its byte 0.
 			file_name, file_name_status := bytes_copy(raw_data(file.name), u64(len(file.name)), 1, &refusal)
 			if file_name_status != .Ok {
-				arena_refusal_give(error, refusal)
-				return false
+				return arena_refusal_give(error, refusal)
 			}
 			table[index] = {name = cstring(file_name), bytes = raw_data(file.content), size = u64(len(file.content))}
 		}
@@ -352,52 +348,49 @@ unit_program_fill :: proc "contextless" (unit: ^Unit_Arguments, call: ^Compile_C
 
 	exports_copy, exports_status := bytes_copy(unit.exports.bytes, unit.exports_count, 0, &refusal)
 	if exports_status != .Ok {
-		arena_refusal_give(error, refusal)
-		return false
+		return arena_refusal_give(error, refusal)
 	}
 	names: [program_files.EXPORTS_MOST]string
 	export_count, export_refusal := program_files.export_list_read(string(exports_copy[:unit.exports_count]), names[:])
 	if export_refusal.refusal != .None {
-		program_refusal_give(error, export_refusal, UNIT_ARGUMENT_EXPORTS, unit.exports_count)
-		return false
+		return program_refusal_give(error, export_refusal, UNIT_ARGUMENT_EXPORTS, unit.exports_count)
 	}
 	if export_count > 0 {
 		pointers_address, pointers_status := system.arena_push(&arena, u64(export_count) * size_of(cstring), align_of(cstring), &refusal)
 		if pointers_status != .Ok {
-			arena_refusal_give(error, refusal)
-			return false
+			return arena_refusal_give(error, refusal)
 		}
 		pointers := ([^]cstring)(pointers_address)
 		for export_name, index in names[:export_count] {
 			copied, copied_status := bytes_copy(raw_data(export_name), u64(len(export_name)), 1, &refusal)
 			if copied_status != .Ok {
-				arena_refusal_give(error, refusal)
-				return false
+				return arena_refusal_give(error, refusal)
 			}
 			pointers[index] = cstring(copied)
 		}
 		call.export_names = pointers
 		call.export_name_count = u64(export_count)
 	}
-	return true
+	return .Succeeded
 }
 
-// compile_to_output is the work of both exports. unit is nil for `compile`.
+// compile_to_output is the work of both exports, and gives their pair.
+// unit is nil for `compile`.
 @(private)
-compile_to_output :: proc "contextless" (source: ^system.Bytes_To_Read, unit: ^Unit_Arguments, output: system.Handle, numbers: Argument_Numbers, error: ^errors.Error_Record) -> i64 {
+compile_to_output :: proc "contextless" (source: ^system.Bytes_To_Read, unit: ^Unit_Arguments, output: system.Handle, numbers: Argument_Numbers, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	// The count is read once: the caller can change the record during an
 	// isolated call.
 	count := intrinsics.volatile_load(&source.count)
 	if count == 0 {
-		return errors.fail(error, ERROR, .Empty, .Bytes, numbers.source, 0, SOURCE_BYTES_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, numbers.source, 0, SOURCE_BYTES_MOST)
 	}
 	if count > SOURCE_BYTES_MOST {
-		return errors.fail(error, ERROR, .Too_Long, .Bytes, numbers.source, i64(count), SOURCE_BYTES_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, numbers.source, i64(count), SOURCE_BYTES_MOST)
 	}
 
 	amounts, budget_status := system.budget_read()
 	if budget_status != .Ok {
-		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, i64(budget_status))
+		return call_outcome.fail(error, system.outcome_of_own_status(budget_status), .Refused, .None, 0, 0, 0, i64(budget_status))
 	}
 	arena_refusal: errors.Error_Record
 	arena_status: system.Status
@@ -408,18 +401,18 @@ compile_to_output :: proc "contextless" (source: ^system.Bytes_To_Read, unit: ^U
 			error.operation = 0
 			error.argument = 0
 		}
-		return ERROR
+		return system.outcome_of_own_status(arena_status), 0
 	}
 	source_copy, copy_status := bytes_copy(source.bytes, count, 0, &arena_refusal)
 	if copy_status != .Ok {
-		return arena_refusal_give(error, arena_refusal)
+		return arena_refusal_give(error, arena_refusal), 0
 	}
 	// chibicc reads a file up to its first byte 0: a source with one would
 	// be compiled in part, with no word of it.
 	for index in 0 ..< int(count) {
 		if source_copy[index] == 0 {
 			system.arena_end(&arena)
-			return errors.fail(error, ERROR, .Bad_Byte, .None, numbers.source, i64(index), 0, 0)
+			return call_outcome.fail(error, .Argument_Refused, .Bad_Byte, .None, numbers.source, i64(index), 0, 0)
 		}
 	}
 	call := Compile_Call {
@@ -431,15 +424,27 @@ compile_to_output :: proc "contextless" (source: ^system.Bytes_To_Read, unit: ^U
 		diagnostic_capacity     = DIAGNOSTIC_BYTES,
 		error_offset            = -1,
 	}
-	if unit != nil && !unit_program_fill(unit, &call, error) {
-		// unit_program_fill ended the arena and wrote the record.
-		return ERROR
+	if unit != nil {
+		// unit_program_fill ends the arena and writes the record of a refusal.
+		if filled := unit_program_fill(unit, &call, error); filled != .Succeeded {
+			return filled, 0
+		}
 	}
 	if compiler_used {
 		system.arena_end(&arena)
 		system.log_fact(.Info, Second_Source_Refused{})
-		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, 0)
+		// The state of chibicc is the one of its first call: a load of the
+		// module in a new call host starts it again.
+		return call_outcome.fail(error, .Wrong_State, .Refused, .None, 0, 0, 0, 0)
 	}
+	// Map the output before running chibicc so a refused output handle leaves
+	// compiler_used false and changes no state.
+	memory, mapped := output_map(output, numbers.output, error)
+	if mapped != .Succeeded {
+		system.arena_end(&arena)
+		return mapped, 0
+	}
+	defer system.memory_unmap(raw_data(memory))
 	compiler_used = true
 	memory_refused = false
 
@@ -448,7 +453,7 @@ compile_to_output :: proc "contextless" (source: ^system.Bytes_To_Read, unit: ^U
 	if !known {
 		system.log_fact(.Error, Entry_Word_Refused{word = i64(word)})
 		system.arena_end(&arena)
-		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, i64(word))
+		return call_outcome.fail(error, .Answer_Unreadable, .Refused, .None, 0, 0, 0, i64(word))
 	}
 	diagnostic_log(call.diagnostic_size)
 
@@ -462,6 +467,8 @@ compile_to_output :: proc "contextless" (source: ^system.Bytes_To_Read, unit: ^U
 			named_byte = i64(source_copy[call.error_offset])
 		}
 		system.arena_end(&arena)
+		// The compiler ran, so the call host is spent: a refusal past this
+		// point changed state, and a retry in this call host gets Wrong_State.
 		if memory_refused {
 			// The record of the refused commit, in the words of the export:
 			// the call of the caller asked for no operation.
@@ -470,31 +477,24 @@ compile_to_output :: proc "contextless" (source: ^system.Bytes_To_Read, unit: ^U
 				error.operation = 0
 				error.argument = 0
 			}
-			return ERROR
+			return call_outcome.outcome_passed_on(.Budget_Or_Capacity_Exhausted, true), 0
 		}
 		if named {
-			return errors.fail(error, ERROR, .Bad_Byte, .None, numbers.source, call.error_offset, 0, named_byte)
+			return call_outcome.fail(error, call_outcome.outcome_passed_on(.Argument_Refused, true), .Bad_Byte, .None, numbers.source, call.error_offset, 0, named_byte)
 		}
-		return errors.fail(error, ERROR, .Refused, .None, numbers.source, 0, 0, 0)
+		return call_outcome.fail(error, call_outcome.outcome_passed_on(.Argument_Refused, true), .Refused, .None, numbers.source, 0, 0, 0)
 	case .Done:
 	}
 
-	memory, mapped := output_map(output, numbers.output, error)
-	if !mapped {
-		system.arena_end(&arena)
-		return ERROR
-	}
 	if call.text_size > u64(len(memory)) {
-		system.memory_unmap(raw_data(memory))
 		system.arena_end(&arena)
-		return errors.fail(error, ERROR, .Too_Small, .Bytes, numbers.output, i64(len(memory)), i64(call.text_size))
+		return call_outcome.fail(error, call_outcome.outcome_passed_on(.Argument_Refused, true), .Too_Small, .Bytes, numbers.output, i64(len(memory)), i64(call.text_size))
 	}
 	size := call.text_size
 	intrinsics.mem_copy_non_overlapping(raw_data(memory), call.text, int(size))
-	system.memory_unmap(raw_data(memory))
 	system.arena_end(&arena)
 	system.log_fact(.Info, Text_Written{size = value_kinds.Size_In_Bytes(size)})
-	return i64(size)
+	return .Succeeded, i64(size)
 }
 
 // compile writes the text of assembly of a C source into a memory object, and gives the bytes of the text.
@@ -502,12 +502,16 @@ compile_to_output :: proc "contextless" (source: ^system.Bytes_To_Read, unit: ^U
 // `source` is the C source, 1 byte to 256 KiB, with no byte 0. `output` is a memory object that the caller lends to
 // write; the text starts at its first byte, and the module `assemble` takes it. Each function that is not `static`
 // becomes an `export` of the text: its `int` and `long` parameters and result are Integers. A call host compiles one
-// source: a second call that reaches the compiler fails with `Refused`, and `unload` then `isolate` give a new one. A
-// source that chibicc refuses fails with -1 and the error record `Bad_Byte`, whose value is the offset of the byte
-// that its diagnostic names, or `Refused` when the diagnostic names no byte of the source; the log has the
-// diagnostic. A memory object smaller than the text fails with `Too_Small`, and the limit is the bytes of the text.
+// source: a second call that reaches the compiler fails with `Wrong_State` and `Refused`, and `unload` then `isolate`
+// give a new one. A refusal before the compiler runs (an argument, or an output that the kernel does not map) changes
+// nothing, and gives its outcome: `Argument_Refused` for an argument. Once the compiler ran, each failure gives
+// `Stopped_After_A_Partial_Change`: the call host is spent, and a new call host compiles the next source. A source
+// that chibicc refuses gives the error record `Bad_Byte`, whose value is the offset of the byte that its diagnostic
+// names, or `Refused` when the diagnostic names no byte of the source; the log has the diagnostic. A memory object
+// smaller than the text gives `Too_Small`, and the limit is the bytes of the text. A refused commit of the memory of
+// the compiler gives the record of the kernel.
 @(export, link_name = "compile")
-compile :: proc "c" (source: ^system.Bytes_To_Read, output: system.Lent({.Read, .Write}), error: ^errors.Error_Record) -> i64 {
+compile :: proc "c" (source: ^system.Bytes_To_Read, output: system.Lent({.Read, .Write}), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return compile_to_output(source, nil, output.handle, {source = ARGUMENT_SOURCE, output = ARGUMENT_OUTPUT}, error)
 }
 
@@ -525,7 +529,7 @@ compile :: proc "c" (source: ^system.Bytes_To_Read, output: system.Lent({.Read, 
 // or exports. The memory of the C part is an arena of the budget of the call host: the largest source of chibicc,
 // parse.c, takes 13 MiB.
 @(export, link_name = "compile_unit")
-compile_unit :: proc "c" (name: ^string, source: ^system.Bytes_To_Read, files: ^system.Bytes_To_Read, exports: ^string, output: system.Lent({.Read, .Write}), error: ^errors.Error_Record) -> i64 {
+compile_unit :: proc "c" (name: ^string, source: ^system.Bytes_To_Read, files: ^system.Bytes_To_Read, exports: ^string, output: system.Lent({.Read, .Write}), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	// The counts are read once: the caller can change the records during
 	// an isolated call.
 	unit := Unit_Arguments {
@@ -537,16 +541,16 @@ compile_unit :: proc "c" (name: ^string, source: ^system.Bytes_To_Read, files: ^
 	unit.files_count = intrinsics.volatile_load(&files.count)
 	unit.exports_count = intrinsics.volatile_load(&unit.exports.count)
 	if unit.name_count == 0 {
-		return errors.fail(error, ERROR, .Empty, .Bytes, UNIT_ARGUMENT_NAME, 0, program_files.NAME_BYTES_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, UNIT_ARGUMENT_NAME, 0, program_files.NAME_BYTES_MOST)
 	}
 	if unit.name_count > program_files.NAME_BYTES_MOST {
-		return errors.fail(error, ERROR, .Too_Long, .Bytes, UNIT_ARGUMENT_NAME, i64(unit.name_count), program_files.NAME_BYTES_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, UNIT_ARGUMENT_NAME, i64(unit.name_count), program_files.NAME_BYTES_MOST)
 	}
 	if unit.files_count > program_files.LIST_BYTES_MOST {
-		return errors.fail(error, ERROR, .Too_Long, .Bytes, UNIT_ARGUMENT_FILES, i64(unit.files_count), program_files.LIST_BYTES_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, UNIT_ARGUMENT_FILES, i64(unit.files_count), program_files.LIST_BYTES_MOST)
 	}
 	if unit.exports_count > EXPORT_LIST_BYTES_MOST {
-		return errors.fail(error, ERROR, .Too_Long, .Bytes, UNIT_ARGUMENT_EXPORTS, i64(unit.exports_count), EXPORT_LIST_BYTES_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, UNIT_ARGUMENT_EXPORTS, i64(unit.exports_count), EXPORT_LIST_BYTES_MOST)
 	}
 	return compile_to_output(source, &unit, output.handle, {source = UNIT_ARGUMENT_SOURCE, output = UNIT_ARGUMENT_OUTPUT}, error)
 }

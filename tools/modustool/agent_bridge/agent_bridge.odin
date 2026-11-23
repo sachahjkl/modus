@@ -18,6 +18,7 @@ import "core:strings"
 import "core:time"
 import contract "modus:contract/agent_bridge"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/remote"
 import "modus:contract/remote_display"
 import "modus:contract/wide_grants"
@@ -112,7 +113,9 @@ Structured_Log_Fact :: struct {
 // host tests.
 Machine_Transport :: struct {
 	user_data:      rawptr,
-	eval_lex:       proc(user_data: rawptr, line: string, allocator: mem.Allocator) -> (result: Lex_Eval_Result, err: string, ok: bool),
+	// The outcome of the call, through the border of its transport; err says
+	// why in words when it is not Succeeded.
+	eval_lex:       proc(user_data: rawptr, line: string, allocator: mem.Allocator) -> (result: Lex_Eval_Result, outcome: call_outcome.Call_Outcome, err: string),
 	read_screen:    proc(user_data: rawptr, request: Screen_Snapshot_Request, allocator: mem.Allocator) -> (snapshot: Screen_Snapshot_Result, err: string, ok: bool),
 	send_key:       proc(user_data: rawptr, window_id: u64, key: remote_display.Key_Body) -> (err: string, ok: bool),
 	send_pointer:   proc(user_data: rawptr, window_id: u64, pointer: remote_display.Pointer_Body) -> (err: string, ok: bool),
@@ -417,7 +420,8 @@ json_error_response :: proc(
 	id_value: json.Value,
 	has_id: bool,
 	code: Json_Rpc_Error_Code,
-	status: contract.Bridge_Status,
+	state: contract.Bridge_Request_State,
+	outcome: call_outcome.Call_Outcome,
 	refusal: contract.Bridge_Refusal,
 	message: string,
 	allocator := context.temp_allocator,
@@ -427,8 +431,13 @@ json_error_response :: proc(
 	json_write_id(&builder, id_value, has_id)
 	strings.write_string(&builder, `,"error":{"code":`)
 	fmt.sbprintf(&builder, "%d", i64(code))
-	strings.write_string(&builder, `,"status":`)
-	json_write_escaped_string(&builder, contract.bridge_status_name(status))
+	strings.write_string(&builder, `,"state":`)
+	json_write_escaped_string(&builder, contract.bridge_request_state_name(state))
+	// Only an ended request has an outcome.
+	if state == .Ended {
+		strings.write_string(&builder, `,"outcome":`)
+		json_write_escaped_string(&builder, call_outcome.CALL_OUTCOME_NAMES[outcome])
+	}
 	strings.write_string(&builder, `,"refusal":`)
 	json_write_escaped_string(&builder, contract.bridge_refusal_name(refusal))
 	strings.write_string(&builder, `,"message":`)
@@ -444,12 +453,13 @@ json_decision_error :: proc(
 	decision: contract.Bridge_Authorization_Decision,
 	allocator := context.temp_allocator,
 ) -> string {
-	if decision.status == .Awaiting_Principal_Approval {
+	if decision.state == .Awaiting_Principal_Approval {
 		return json_error_response(
 			id_value,
 			has_id,
 			.Awaiting_Principal_Approval,
 			.Awaiting_Principal_Approval,
+			.Succeeded,
 			decision.refusal,
 			"operation requires explicit principal approval and cannot self-approve through the agent bridge",
 			allocator,
@@ -459,7 +469,8 @@ json_decision_error :: proc(
 		id_value,
 		has_id,
 		.Refused,
-		decision.status,
+		decision.state,
+		decision.outcome,
 		decision.refusal,
 		fmt.tprintf("agent bridge refused command: %s", contract.bridge_refusal_name(decision.refusal)),
 		allocator,
@@ -538,18 +549,20 @@ bridge_handle_wire_frame :: proc(
 	bridge: ^Agent_Bridge,
 	raw_frame: []u8,
 	response_buffer: []u8,
-) -> (written: int, status: contract.Bridge_Status, refusal: contract.Bridge_Refusal) {
+) -> (written: int, state: contract.Bridge_Request_State, outcome: call_outcome.Call_Outcome, refusal: contract.Bridge_Refusal) {
 	encode_result :: proc(
 		request_id: u64,
-		res_status: contract.Bridge_Status,
+		res_state: contract.Bridge_Request_State,
+		res_outcome: call_outcome.Call_Outcome,
 		res_refusal: contract.Bridge_Refusal,
 		act_seq: u64,
 		act_hash: blake3.Hash,
 		payload: []u8,
 		out_buf: []u8,
-	) -> (int, contract.Bridge_Status, contract.Bridge_Refusal) {
+	) -> (int, contract.Bridge_Request_State, call_outcome.Call_Outcome, contract.Bridge_Refusal) {
 		resp := contract.Bridge_Response_Frame {
-			status              = res_status,
+			state               = res_state,
+			outcome             = res_outcome,
 			refusal             = res_refusal,
 			request_id          = request_id == 0 ? 1 : request_id,
 			act_sequence_number = act_seq,
@@ -558,24 +571,24 @@ bridge_handle_wire_frame :: proc(
 		}
 		n, enc_refusal := contract.encode_response_frame(&resp, out_buf)
 		if enc_refusal != .None {
-			return 0, .Refused, enc_refusal
+			return 0, .Ended, contract.bridge_refusal_outcome(enc_refusal), enc_refusal
 		}
-		return n, res_status, res_refusal
+		return n, res_state, res_outcome, res_refusal
 	}
 
 	if bridge == nil {
-		return encode_result(1, .Refused, .Invalid_Field, 0, {}, nil, response_buffer)
+		return encode_result(1, .Ended, contract.bridge_refusal_outcome(.Invalid_Field), .Invalid_Field, 0, {}, nil, response_buffer)
 	}
 	cmd_frame, decode_refusal := contract.decode_command_frame(raw_frame)
 	if decode_refusal != .None {
-		return encode_result(1, .Refused, decode_refusal, 0, {}, nil, response_buffer)
+		return encode_result(1, .Ended, contract.bridge_refusal_outcome(decode_refusal), decode_refusal, 0, {}, nil, response_buffer)
 	}
 
 	// Verify the frame's client key hash matches the bridge's policy key.
 	policy_key := bridge.policy.client_key_public
 	expected_key_hash := blake3.hash(policy_key[:])
 	if cmd_frame.client_key_hash != expected_key_hash || cmd_frame.principal_id != bridge.policy.principal_id {
-		return encode_result(cmd_frame.request_id, .Refused, .Permission_Denied, 0, {}, nil, response_buffer)
+		return encode_result(cmd_frame.request_id, .Ended, contract.bridge_refusal_outcome(.Permission_Denied), .Permission_Denied, 0, {}, nil, response_buffer)
 	}
 
 	now_ms := bridge_now_ms(bridge)
@@ -583,7 +596,7 @@ bridge_handle_wire_frame :: proc(
 
 	switch cmd_frame.command {
 	case .None:
-		return encode_result(cmd_frame.request_id, .Refused, .Unknown_Command, 0, {}, nil, response_buffer)
+		return encode_result(cmd_frame.request_id, .Ended, contract.bridge_refusal_outcome(.Unknown_Command), .Unknown_Command, 0, {}, nil, response_buffer)
 
 	case .Eval_Lex:
 		auth_req := contract.Bridge_Authorization_Request {
@@ -592,34 +605,34 @@ bridge_handle_wire_frame :: proc(
 			lex_line = cmd_frame.payload,
 		}
 		decision := contract.bridge_authorize_command(&bridge.policy, &auth_req)
-		if decision.status != .Ok {
-			return encode_result(cmd_frame.request_id, decision.status, decision.refusal, 0, {}, nil, response_buffer)
+		if decision.state != .Ended || decision.outcome != .Succeeded {
+			return encode_result(cmd_frame.request_id, decision.state, decision.outcome, decision.refusal, 0, {}, nil, response_buffer)
 		}
 		if bridge.transport.eval_lex == nil {
-			return encode_result(cmd_frame.request_id, .Transport_Error, .None, 0, {}, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, .Callee_Unavailable, .None, 0, {}, nil, response_buffer)
 		}
-		res, _, ok := bridge.transport.eval_lex(bridge.transport.user_data, string(cmd_frame.payload), context.temp_allocator)
-		if !ok {
-			return encode_result(cmd_frame.request_id, .Transport_Error, .None, 0, {}, nil, response_buffer)
+		res, eval_outcome, _ := bridge.transport.eval_lex(bridge.transport.user_data, string(cmd_frame.payload), context.temp_allocator)
+		if eval_outcome != .Succeeded {
+			return encode_result(cmd_frame.request_id, .Ended, eval_outcome, .None, 0, {}, nil, response_buffer)
 		}
 		summary := fmt.tprintf("%s:%s", contract.lex_value_kind_name(res.value_kind), res.text_value)
-		return encode_result(cmd_frame.request_id, .Ok, .None, 0, {}, transmute([]u8)summary, response_buffer)
+		return encode_result(cmd_frame.request_id, .Ended, .Succeeded, .None, 0, {}, transmute([]u8)summary, response_buffer)
 
 	case .Read_Screen:
 		screen_req, screen_refusal := contract.decode_read_screen_payload(cmd_frame.payload)
 		if screen_refusal != .None {
-			return encode_result(cmd_frame.request_id, .Refused, screen_refusal, 0, {}, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, contract.bridge_refusal_outcome(screen_refusal), screen_refusal, 0, {}, nil, response_buffer)
 		}
 		auth_req := contract.Bridge_Authorization_Request {
 			command = .Read_Screen,
 			now_ms  = now_ms,
 		}
 		decision := contract.bridge_authorize_command(&bridge.policy, &auth_req)
-		if decision.status != .Ok {
-			return encode_result(cmd_frame.request_id, decision.status, decision.refusal, 0, {}, nil, response_buffer)
+		if decision.state != .Ended || decision.outcome != .Succeeded {
+			return encode_result(cmd_frame.request_id, decision.state, decision.outcome, decision.refusal, 0, {}, nil, response_buffer)
 		}
 		if bridge.transport.read_screen == nil {
-			return encode_result(cmd_frame.request_id, .Transport_Error, .None, 0, {}, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, .Callee_Unavailable, .None, 0, {}, nil, response_buffer)
 		}
 		snap, _, ok := bridge.transport.read_screen(
 			bridge.transport.user_data,
@@ -632,17 +645,17 @@ bridge_handle_wire_frame :: proc(
 			context.temp_allocator,
 		)
 		if !ok {
-			return encode_result(cmd_frame.request_id, .Transport_Error, .None, 0, {}, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, .Callee_Unavailable, .None, 0, {}, nil, response_buffer)
 		}
-		return encode_result(cmd_frame.request_id, .Ok, .None, 0, {}, snap.bytes, response_buffer)
+		return encode_result(cmd_frame.request_id, .Ended, .Succeeded, .None, 0, {}, snap.bytes, response_buffer)
 
 	case .Send_Key:
 		key_payload, key_refusal := contract.decode_send_key_payload(cmd_frame.payload)
 		if key_refusal != .None {
-			return encode_result(cmd_frame.request_id, .Refused, key_refusal, 0, {}, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, contract.bridge_refusal_outcome(key_refusal), key_refusal, 0, {}, nil, response_buffer)
 		}
 		if cmd_frame.grant_serial != bridge.policy.wide_grant_serial {
-			return encode_result(cmd_frame.request_id, .Refused, .Wide_Grant_Not_Active, 0, {}, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, contract.bridge_refusal_outcome(.Wide_Grant_Not_Active), .Wide_Grant_Not_Active, 0, {}, nil, response_buffer)
 		}
 		auth_req := contract.Bridge_Authorization_Request {
 			command          = .Send_Key,
@@ -650,8 +663,12 @@ bridge_handle_wire_frame :: proc(
 			target_window_id = cmd_frame.target_window_id,
 		}
 		decision := contract.bridge_authorize_command(&bridge.policy, &auth_req)
-		if decision.status != .Ok {
-			return encode_result(cmd_frame.request_id, decision.status, decision.refusal, 0, {}, nil, response_buffer)
+		if decision.state != .Ended || decision.outcome != .Succeeded {
+			return encode_result(cmd_frame.request_id, decision.state, decision.outcome, decision.refusal, 0, {}, nil, response_buffer)
+		}
+		// No transport: nothing is recorded and nothing goes.
+		if bridge.transport.send_key == nil {
+			return encode_result(cmd_frame.request_id, .Ended, .Callee_Unavailable, .None, 0, {}, nil, response_buffer)
 		}
 		act_rec, act_refusal := bridge_act_log_append(
 			&bridge.act_log,
@@ -663,23 +680,22 @@ bridge_handle_wire_frame :: proc(
 			u64(key_payload.key.character),
 		)
 		if act_refusal != .None {
-			return encode_result(cmd_frame.request_id, .Refused, .Act_Log_Required, 0, {}, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, contract.bridge_refusal_outcome(.Act_Log_Required), .Act_Log_Required, 0, {}, nil, response_buffer)
 		}
-		if bridge.transport.send_key == nil {
-			return encode_result(cmd_frame.request_id, .Transport_Error, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
-		}
+		// The act log holds the record of the act: a failure of the
+		// transport after it is a partial change.
 		if _, ok := bridge.transport.send_key(bridge.transport.user_data, cmd_frame.target_window_id, key_payload.key); !ok {
-			return encode_result(cmd_frame.request_id, .Transport_Error, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, .Stopped_After_A_Partial_Change, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
 		}
-		return encode_result(cmd_frame.request_id, .Ok, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
+		return encode_result(cmd_frame.request_id, .Ended, .Succeeded, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
 
 	case .Send_Pointer:
 		ptr_payload, ptr_refusal := contract.decode_send_pointer_payload(cmd_frame.payload)
 		if ptr_refusal != .None {
-			return encode_result(cmd_frame.request_id, .Refused, ptr_refusal, 0, {}, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, contract.bridge_refusal_outcome(ptr_refusal), ptr_refusal, 0, {}, nil, response_buffer)
 		}
 		if cmd_frame.grant_serial != bridge.policy.wide_grant_serial {
-			return encode_result(cmd_frame.request_id, .Refused, .Wide_Grant_Not_Active, 0, {}, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, contract.bridge_refusal_outcome(.Wide_Grant_Not_Active), .Wide_Grant_Not_Active, 0, {}, nil, response_buffer)
 		}
 		auth_req := contract.Bridge_Authorization_Request {
 			command           = .Send_Pointer,
@@ -688,8 +704,12 @@ bridge_handle_wire_frame :: proc(
 			pointer_has_click = ptr_payload.pointer.buttons != 0,
 		}
 		decision := contract.bridge_authorize_command(&bridge.policy, &auth_req)
-		if decision.status != .Ok {
-			return encode_result(cmd_frame.request_id, decision.status, decision.refusal, 0, {}, nil, response_buffer)
+		if decision.state != .Ended || decision.outcome != .Succeeded {
+			return encode_result(cmd_frame.request_id, decision.state, decision.outcome, decision.refusal, 0, {}, nil, response_buffer)
+		}
+		// No transport: nothing is recorded and nothing goes.
+		if bridge.transport.send_pointer == nil {
+			return encode_result(cmd_frame.request_id, .Ended, .Callee_Unavailable, .None, 0, {}, nil, response_buffer)
 		}
 		act_rec, act_refusal := bridge_act_log_append(
 			&bridge.act_log,
@@ -701,31 +721,30 @@ bridge_handle_wire_frame :: proc(
 			u64(ptr_payload.pointer.buttons),
 		)
 		if act_refusal != .None {
-			return encode_result(cmd_frame.request_id, .Refused, .Act_Log_Required, 0, {}, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, contract.bridge_refusal_outcome(.Act_Log_Required), .Act_Log_Required, 0, {}, nil, response_buffer)
 		}
-		if bridge.transport.send_pointer == nil {
-			return encode_result(cmd_frame.request_id, .Transport_Error, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
-		}
+		// The act log holds the record of the act: a failure of the
+		// transport after it is a partial change.
 		if _, ok := bridge.transport.send_pointer(bridge.transport.user_data, cmd_frame.target_window_id, ptr_payload.pointer); !ok {
-			return encode_result(cmd_frame.request_id, .Transport_Error, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, .Stopped_After_A_Partial_Change, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
 		}
-		return encode_result(cmd_frame.request_id, .Ok, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
+		return encode_result(cmd_frame.request_id, .Ended, .Succeeded, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
 
 	case .Read_Log_Facts:
 		facts_payload, facts_refusal := contract.decode_read_log_facts_payload(cmd_frame.payload)
 		if facts_refusal != .None {
-			return encode_result(cmd_frame.request_id, .Refused, facts_refusal, 0, {}, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, contract.bridge_refusal_outcome(facts_refusal), facts_refusal, 0, {}, nil, response_buffer)
 		}
 		auth_req := contract.Bridge_Authorization_Request {
 			command = .Read_Log_Facts,
 			now_ms  = now_ms,
 		}
 		decision := contract.bridge_authorize_command(&bridge.policy, &auth_req)
-		if decision.status != .Ok {
-			return encode_result(cmd_frame.request_id, decision.status, decision.refusal, 0, {}, nil, response_buffer)
+		if decision.state != .Ended || decision.outcome != .Succeeded {
+			return encode_result(cmd_frame.request_id, decision.state, decision.outcome, decision.refusal, 0, {}, nil, response_buffer)
 		}
 		if bridge.transport.read_log_facts == nil {
-			return encode_result(cmd_frame.request_id, .Transport_Error, .None, 0, {}, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, .Callee_Unavailable, .None, 0, {}, nil, response_buffer)
 		}
 		query := Log_Facts_Query {
 			module_filter    = string(facts_payload.module_filter_bytes[:facts_payload.module_filter_length]),
@@ -736,13 +755,13 @@ bridge_handle_wire_frame :: proc(
 		}
 		facts, _, ok := bridge.transport.read_log_facts(bridge.transport.user_data, query, context.temp_allocator)
 		if !ok {
-			return encode_result(cmd_frame.request_id, .Transport_Error, .None, 0, {}, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, .Callee_Unavailable, .None, 0, {}, nil, response_buffer)
 		}
 		count_text := fmt.tprintf("%d", len(facts))
-		return encode_result(cmd_frame.request_id, .Ok, .None, 0, {}, transmute([]u8)count_text, response_buffer)
+		return encode_result(cmd_frame.request_id, .Ended, .Succeeded, .None, 0, {}, transmute([]u8)count_text, response_buffer)
 	}
 
-	return encode_result(cmd_frame.request_id, .Refused, .Unknown_Command, 0, {}, nil, response_buffer)
+	return encode_result(cmd_frame.request_id, .Ended, contract.bridge_refusal_outcome(.Unknown_Command), .Unknown_Command, 0, {}, nil, response_buffer)
 }
 
 // bridge_handle_json_line parses one JSON-RPC 2.0 request line, enforces all
@@ -755,15 +774,15 @@ bridge_handle_json_line :: proc(
 ) -> string {
 	trimmed := strings.trim_space(line)
 	if len(trimmed) == 0 {
-		return json_error_response(nil, false, .Parse_Error, .Refused, .Bad_Header, "empty request line", allocator)
+		return json_error_response(nil, false, .Parse_Error, .Ended, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Bad_Header), .Bad_Header, "empty request line", allocator)
 	}
 	parsed, parse_err := json.parse_string(trimmed, .JSON, true, context.temp_allocator)
 	if parse_err != .None {
-		return json_error_response(nil, false, .Parse_Error, .Refused, .Bad_Header, "malformed JSON request", allocator)
+		return json_error_response(nil, false, .Parse_Error, .Ended, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Bad_Header), .Bad_Header, "malformed JSON request", allocator)
 	}
 	root, is_object := parsed.(json.Object)
 	if !is_object {
-		return json_error_response(nil, false, .Invalid_Request, .Refused, .Bad_Header, "JSON-RPC request must be an object", allocator)
+		return json_error_response(nil, false, .Invalid_Request, .Ended, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Bad_Header), .Bad_Header, "JSON-RPC request must be an object", allocator)
 	}
 
 	id_value, has_id := root["id"]
@@ -772,36 +791,36 @@ bridge_handle_json_line :: proc(
 		_, is_str := id_value.(json.String)
 		_, is_null := id_value.(json.Null)
 		if !is_int && !is_str && !is_null {
-			return json_error_response(nil, false, .Invalid_Request, .Refused, .Invalid_Field, "id must be an integer, string, or null", allocator)
+			return json_error_response(nil, false, .Invalid_Request, .Ended, contract.bridge_refusal_outcome(contract.Bridge_Refusal.Invalid_Field), .Invalid_Field, "id must be an integer, string, or null", allocator)
 		}
 	}
 
 	version_text, has_version, version_ok := json_get_string(root, "jsonrpc")
 	if !version_ok || !has_version || version_text != "2.0" {
-		return json_error_response(id_value, has_id, .Invalid_Request, .Refused, .Bad_Header, `jsonrpc must be "2.0"`, allocator)
+		return json_error_response(id_value, has_id, .Invalid_Request, .Ended, contract.bridge_refusal_outcome(.Bad_Header), .Bad_Header, `jsonrpc must be "2.0"`, allocator)
 	}
 
 	method_name, has_method, method_ok := json_get_string(root, "method")
 	if !method_ok || !has_method {
-		return json_error_response(id_value, has_id, .Invalid_Request, .Refused, .Unknown_Command, "method must be a string", allocator)
+		return json_error_response(id_value, has_id, .Invalid_Request, .Ended, contract.bridge_refusal_outcome(.Unknown_Command), .Unknown_Command, "method must be a string", allocator)
 	}
 
 	method := bridge_method_from_string(method_name)
 	if method == .None {
-		return json_error_response(id_value, has_id, .Method_Not_Found, .Refused, .Unknown_Command, fmt.tprintf("unknown bridge method: %s", method_name), allocator)
+		return json_error_response(id_value, has_id, .Method_Not_Found, .Ended, contract.bridge_refusal_outcome(.Unknown_Command), .Unknown_Command, fmt.tprintf("unknown bridge method: %s", method_name), allocator)
 	}
 
 	params: json.Object
 	if raw_params, has_params := root["params"]; has_params {
 		obj, is_obj := raw_params.(json.Object)
 		if !is_obj {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, "params must be a JSON object", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(.Invalid_Field), .Invalid_Field, "params must be a JSON object", allocator)
 		}
 		params = obj
 	}
 
 	if bridge == nil {
-		return json_error_response(id_value, has_id, .Refused, .Refused, .Invalid_Field, "bridge is not initialized", allocator)
+		return json_error_response(id_value, has_id, .Refused, .Ended, contract.bridge_refusal_outcome(.Invalid_Field), .Invalid_Field, "bridge is not initialized", allocator)
 	}
 
 	now_ms := bridge_now_ms(bridge)
@@ -809,12 +828,12 @@ bridge_handle_json_line :: proc(
 
 	switch method {
 	case .None:
-		return json_error_response(id_value, has_id, .Method_Not_Found, .Refused, .Unknown_Command, "unknown method", allocator)
+		return json_error_response(id_value, has_id, .Method_Not_Found, .Ended, contract.bridge_refusal_outcome(.Unknown_Command), .Unknown_Command, "unknown method", allocator)
 
 	case .Eval_Lex:
 		lex_line, has_line, line_ok := json_get_string(params, "line")
 		if !line_ok || !has_line {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, "eval_lex requires string parameter line", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(.Invalid_Field), .Invalid_Field, "eval_lex requires string parameter line", allocator)
 		}
 		// The bridge classifies the line itself: no field of the request
 		// that says the call is safe is read.
@@ -824,22 +843,22 @@ bridge_handle_json_line :: proc(
 			lex_line = transmute([]u8)lex_line,
 		}
 		decision := contract.bridge_authorize_command(&bridge.policy, &auth_req)
-		if decision.status != .Ok {
+		if decision.state != .Ended || decision.outcome != .Succeeded {
 			return json_decision_error(id_value, has_id, decision, allocator)
 		}
 		if bridge.transport.eval_lex == nil {
-			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, "eval_lex transport is not configured", allocator)
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, "eval_lex transport is not configured", allocator)
 		}
-		res, err_text, ok := bridge.transport.eval_lex(bridge.transport.user_data, lex_line, context.temp_allocator)
-		if !ok {
-			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, err_text != "" ? err_text : "remote eval_lex failed", allocator)
+		res, eval_outcome, err_text := bridge.transport.eval_lex(bridge.transport.user_data, lex_line, context.temp_allocator)
+		if eval_outcome != .Succeeded {
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, eval_outcome, .None, err_text != "" ? err_text : "remote eval_lex failed", allocator)
 		}
 		return format_eval_lex_json(id_value, has_id, res, allocator)
 
 	case .Read_Screen:
 		format_name, has_format, format_ok := json_get_string(params, "format")
 		if !format_ok {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, "format must be a string", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(.Invalid_Field), .Invalid_Field, "format must be a string", allocator)
 		}
 		picture_format := contract.Screen_Picture_Format.Png
 		if has_format {
@@ -849,14 +868,14 @@ bridge_handle_json_line :: proc(
 			case "raw_bgrx":
 				picture_format = .Raw_Bgrx
 			case:
-				return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, "format must be png or raw_bgrx", allocator)
+				return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(.Invalid_Field), .Invalid_Field, "format must be png or raw_bgrx", allocator)
 			}
 		}
 		max_width, _, mw_ok := json_get_u32(params, "max_width")
 		max_height, _, mh_ok := json_get_u32(params, "max_height")
 		wait_settled_ms, _, ws_ok := json_get_u32(params, "wait_settled_ms")
 		if !mw_ok || !mh_ok || !ws_ok {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, "invalid read_screen parameter type", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(.Invalid_Field), .Invalid_Field, "invalid read_screen parameter type", allocator)
 		}
 		payload := contract.Read_Screen_Payload {
 			format          = picture_format,
@@ -865,18 +884,18 @@ bridge_handle_json_line :: proc(
 			wait_settled_ms = wait_settled_ms,
 		}
 		if check := contract.validate_read_screen_payload(&payload); check != .None {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, check, "read_screen parameters out of bounds", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(check), check, "read_screen parameters out of bounds", allocator)
 		}
 		auth_req := contract.Bridge_Authorization_Request {
 			command = .Read_Screen,
 			now_ms  = now_ms,
 		}
 		decision := contract.bridge_authorize_command(&bridge.policy, &auth_req)
-		if decision.status != .Ok {
+		if decision.state != .Ended || decision.outcome != .Succeeded {
 			return json_decision_error(id_value, has_id, decision, allocator)
 		}
 		if bridge.transport.read_screen == nil {
-			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, "read_screen transport is not configured", allocator)
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, "read_screen transport is not configured", allocator)
 		}
 		snap, err_text, ok := bridge.transport.read_screen(
 			bridge.transport.user_data,
@@ -889,7 +908,7 @@ bridge_handle_json_line :: proc(
 			context.temp_allocator,
 		)
 		if !ok {
-			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, err_text != "" ? err_text : "remote read_screen failed", allocator)
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, err_text != "" ? err_text : "remote read_screen failed", allocator)
 		}
 		// The snapshot goes to a file only in the folder of the operator, under
 		// a name of the bridge: a request names no path.
@@ -897,7 +916,7 @@ bridge_handle_json_line :: proc(
 		if bridge.snapshot_directory != "" {
 			path, problem := bridge_write_snapshot(bridge, snap)
 			if problem != "" {
-				return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, problem, allocator)
+				return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, problem, allocator)
 			}
 			saved_path = path
 		}
@@ -910,7 +929,7 @@ bridge_handle_json_line :: proc(
 		pressed, has_pressed, pressed_ok := json_get_bool(params, "pressed")
 		modifiers, _, mod_ok := json_get_u32(params, "modifiers")
 		if !win_ok || !has_window || !code_ok || !has_code || !char_ok || !pressed_ok || !has_pressed || !mod_ok {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, "send_key requires integer window_id, integer code, and boolean pressed", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(.Invalid_Field), .Invalid_Field, "send_key requires integer window_id, integer code, and boolean pressed", allocator)
 		}
 		key_payload := contract.Send_Key_Payload {
 			key = remote_display.Key_Body {
@@ -921,7 +940,7 @@ bridge_handle_json_line :: proc(
 			},
 		}
 		if check := contract.validate_send_key_payload(&key_payload); check != .None {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, check, "send_key fields out of bounds", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(check), check, "send_key fields out of bounds", allocator)
 		}
 		auth_req := contract.Bridge_Authorization_Request {
 			command          = .Send_Key,
@@ -929,8 +948,12 @@ bridge_handle_json_line :: proc(
 			target_window_id = window_id,
 		}
 		decision := contract.bridge_authorize_command(&bridge.policy, &auth_req)
-		if decision.status != .Ok {
+		if decision.state != .Ended || decision.outcome != .Succeeded {
 			return json_decision_error(id_value, has_id, decision, allocator)
+		}
+		// No transport: nothing is recorded and nothing goes.
+		if bridge.transport.send_key == nil {
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, "send_key transport is not configured", allocator)
 		}
 		act_rec, act_refusal := bridge_act_log_append(
 			&bridge.act_log,
@@ -942,13 +965,12 @@ bridge_handle_json_line :: proc(
 			u64(key_payload.key.character),
 		)
 		if act_refusal != .None {
-			return json_error_response(id_value, has_id, .Refused, .Refused, .Act_Log_Required, "collector act log refused input record", allocator)
+			return json_error_response(id_value, has_id, .Refused, .Ended, contract.bridge_refusal_outcome(.Act_Log_Required), .Act_Log_Required, "collector act log refused input record", allocator)
 		}
-		if bridge.transport.send_key == nil {
-			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, "send_key transport is not configured", allocator)
-		}
+		// The act log holds the record of the act: a failure of the
+		// transport after it is a partial change.
 		if err_text, ok := bridge.transport.send_key(bridge.transport.user_data, window_id, key_payload.key); !ok {
-			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, err_text != "" ? err_text : "remote send_key failed", allocator)
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Stopped_After_A_Partial_Change, .None, err_text != "" ? err_text : "remote send_key failed", allocator)
 		}
 		return format_input_delivered_json(id_value, has_id, window_id, act_rec, allocator)
 
@@ -959,7 +981,7 @@ bridge_handle_json_line :: proc(
 		buttons, _, btn_ok := json_get_u32(params, "buttons")
 		wheel_i64, _, wheel_ok := json_get_i64(params, "wheel")
 		if !win_ok || !has_window || !x_ok || !has_x || !y_ok || !has_y || !btn_ok || !wheel_ok || wheel_i64 < i64(min(i32)) || wheel_i64 > i64(max(i32)) {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, "send_pointer requires integer window_id, x, and y", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(.Invalid_Field), .Invalid_Field, "send_pointer requires integer window_id, x, and y", allocator)
 		}
 		ptr_payload := contract.Send_Pointer_Payload {
 			pointer = remote_display.Pointer_Body {
@@ -970,7 +992,7 @@ bridge_handle_json_line :: proc(
 			},
 		}
 		if check := contract.validate_send_pointer_payload(&ptr_payload); check != .None {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, check, "send_pointer fields out of bounds", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(check), check, "send_pointer fields out of bounds", allocator)
 		}
 		auth_req := contract.Bridge_Authorization_Request {
 			command           = .Send_Pointer,
@@ -979,8 +1001,12 @@ bridge_handle_json_line :: proc(
 			pointer_has_click = buttons != 0,
 		}
 		decision := contract.bridge_authorize_command(&bridge.policy, &auth_req)
-		if decision.status != .Ok {
+		if decision.state != .Ended || decision.outcome != .Succeeded {
 			return json_decision_error(id_value, has_id, decision, allocator)
+		}
+		// No transport: nothing is recorded and nothing goes.
+		if bridge.transport.send_pointer == nil {
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, "send_pointer transport is not configured", allocator)
 		}
 		act_rec, act_refusal := bridge_act_log_append(
 			&bridge.act_log,
@@ -992,13 +1018,12 @@ bridge_handle_json_line :: proc(
 			u64(buttons),
 		)
 		if act_refusal != .None {
-			return json_error_response(id_value, has_id, .Refused, .Refused, .Act_Log_Required, "collector act log refused input record", allocator)
+			return json_error_response(id_value, has_id, .Refused, .Ended, contract.bridge_refusal_outcome(.Act_Log_Required), .Act_Log_Required, "collector act log refused input record", allocator)
 		}
-		if bridge.transport.send_pointer == nil {
-			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, "send_pointer transport is not configured", allocator)
-		}
+		// The act log holds the record of the act: a failure of the
+		// transport after it is a partial change.
 		if err_text, ok := bridge.transport.send_pointer(bridge.transport.user_data, window_id, ptr_payload.pointer); !ok {
-			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, err_text != "" ? err_text : "remote send_pointer failed", allocator)
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Stopped_After_A_Partial_Change, .None, err_text != "" ? err_text : "remote send_pointer failed", allocator)
 		}
 		return format_input_delivered_json(id_value, has_id, window_id, act_rec, allocator)
 
@@ -1009,13 +1034,13 @@ bridge_handle_json_line :: proc(
 		sequence_end, _, end_ok := json_get_u64(params, "sequence_end")
 		max_records, has_max, max_ok := json_get_u32(params, "max_records")
 		if !mod_ok || !fact_ok || !start_ok || !end_ok || !max_ok {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, "invalid read_log_facts parameter type", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(.Invalid_Field), .Invalid_Field, "invalid read_log_facts parameter type", allocator)
 		}
 		if !has_max {
 			max_records = 64
 		}
 		if len(module_filter) > contract.MAX_FILTER_NAME_BYTES || len(fact_name_filter) > contract.MAX_FILTER_NAME_BYTES {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Text, "filter name exceeds bound", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(.Invalid_Text), .Invalid_Text, "filter name exceeds bound", allocator)
 		}
 		payload := contract.Read_Log_Facts_Payload {
 			module_filter_length    = u8(len(module_filter)),
@@ -1027,18 +1052,18 @@ bridge_handle_json_line :: proc(
 		copy(payload.module_filter_bytes[:len(module_filter)], module_filter)
 		copy(payload.fact_name_filter_bytes[:len(fact_name_filter)], fact_name_filter)
 		if check := contract.validate_read_log_facts_payload(&payload); check != .None {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, check, "read_log_facts parameters invalid", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(check), check, "read_log_facts parameters invalid", allocator)
 		}
 		auth_req := contract.Bridge_Authorization_Request {
 			command = .Read_Log_Facts,
 			now_ms  = now_ms,
 		}
 		decision := contract.bridge_authorize_command(&bridge.policy, &auth_req)
-		if decision.status != .Ok {
+		if decision.state != .Ended || decision.outcome != .Succeeded {
 			return json_decision_error(id_value, has_id, decision, allocator)
 		}
 		if bridge.transport.read_log_facts == nil {
-			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, "read_log_facts transport is not configured", allocator)
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, "read_log_facts transport is not configured", allocator)
 		}
 		query := Log_Facts_Query {
 			module_filter    = module_filter,
@@ -1049,38 +1074,40 @@ bridge_handle_json_line :: proc(
 		}
 		facts, err_text, ok := bridge.transport.read_log_facts(bridge.transport.user_data, query, context.temp_allocator)
 		if !ok {
-			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, err_text != "" ? err_text : "remote read_log_facts failed", allocator)
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, err_text != "" ? err_text : "remote read_log_facts failed", allocator)
 		}
 		return format_log_facts_json(id_value, has_id, facts, allocator)
 
 	case .Wire_Command:
 		frame_hex, has_hex, hex_ok := json_get_string(params, "frame_hex")
 		if !hex_ok || !has_hex {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Bad_Header, "wire_command requires string parameter frame_hex", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(.Bad_Header), .Bad_Header, "wire_command requires string parameter frame_hex", allocator)
 		}
 		raw_bytes, decoded_ok := hex.decode(transmute([]u8)frame_hex, context.temp_allocator)
 		if !decoded_ok {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Bad_Header, "frame_hex is not valid hexadecimal", allocator)
+			return json_error_response(id_value, has_id, .Invalid_Params, .Ended, contract.bridge_refusal_outcome(.Bad_Header), .Bad_Header, "frame_hex is not valid hexadecimal", allocator)
 		}
 		resp_buf := make([]u8, contract.RESPONSE_HEADER_SIZE + contract.MAX_BRIDGE_PAYLOAD_BYTES, context.temp_allocator)
-		written, status, refusal := bridge_handle_wire_frame(bridge, raw_bytes, resp_buf)
-		if status == .Awaiting_Principal_Approval {
-			return json_error_response(id_value, has_id, .Awaiting_Principal_Approval, status, refusal, "wire command requires explicit principal approval", allocator)
+		written, state, outcome, refusal := bridge_handle_wire_frame(bridge, raw_bytes, resp_buf)
+		if state == .Awaiting_Principal_Approval {
+			return json_error_response(id_value, has_id, .Awaiting_Principal_Approval, state, .Succeeded, refusal, "wire command requires explicit principal approval", allocator)
 		}
-		if status != .Ok {
-			code := status == .Transport_Error ? Json_Rpc_Error_Code.Transport_Error : Json_Rpc_Error_Code.Refused
-			return json_error_response(id_value, has_id, code, status, refusal, fmt.tprintf("wire command failed: %s", contract.bridge_refusal_name(refusal)), allocator)
+		if outcome != .Succeeded {
+			// A refusal of the bridge names itself; a failure of the
+			// transport or of the call names none.
+			code := refusal == .None ? Json_Rpc_Error_Code.Transport_Error : Json_Rpc_Error_Code.Refused
+			return json_error_response(id_value, has_id, code, state, outcome, refusal, fmt.tprintf("wire command failed: %s", contract.bridge_refusal_name(refusal)), allocator)
 		}
 		builder := strings.builder_make(allocator)
 		strings.write_string(&builder, `{"jsonrpc":"2.0","id":`)
 		json_write_id(&builder, id_value, has_id)
-		strings.write_string(&builder, `,"result":{"status":"Ok","response_frame_hex":`)
+		strings.write_string(&builder, `,"result":{"state":"Ended","outcome":"Succeeded","response_frame_hex":`)
 		json_write_escaped_string(&builder, hex_encode_bytes(resp_buf[:written], context.temp_allocator))
 		strings.write_string(&builder, `}}`)
 		return strings.to_string(builder)
 	}
 
-	return json_error_response(id_value, has_id, .Method_Not_Found, .Refused, .Unknown_Command, "unknown bridge method", allocator)
+	return json_error_response(id_value, has_id, .Method_Not_Found, .Ended, contract.bridge_refusal_outcome(.Unknown_Command), .Unknown_Command, "unknown bridge method", allocator)
 }
 
 @(private = "file")
@@ -1093,7 +1120,7 @@ format_eval_lex_json :: proc(
 	builder := strings.builder_make(allocator)
 	strings.write_string(&builder, `{"jsonrpc":"2.0","id":`)
 	json_write_id(&builder, id_value, has_id)
-	strings.write_string(&builder, `,"result":{"status":"Ok","value_kind":`)
+	strings.write_string(&builder, `,"result":{"state":"Ended","outcome":"Succeeded","value_kind":`)
 	json_write_escaped_string(&builder, contract.lex_value_kind_name(res.value_kind))
 	switch res.value_kind {
 	case .None:
@@ -1187,7 +1214,7 @@ format_read_screen_json :: proc(
 	builder := strings.builder_make(allocator)
 	strings.write_string(&builder, `{"jsonrpc":"2.0","id":`)
 	json_write_id(&builder, id_value, has_id)
-	strings.write_string(&builder, `,"result":{"status":"Ok","format":`)
+	strings.write_string(&builder, `,"result":{"state":"Ended","outcome":"Succeeded","format":`)
 	json_write_escaped_string(&builder, contract.screen_picture_format_name(snap.format))
 	fmt.sbprintf(&builder, `,"width":%d,"height":%d,"frame_serial":%d,"byte_count":%d,"blake3":`, snap.width, snap.height, snap.frame_serial, len(snap.bytes))
 	json_write_escaped_string(&builder, hex_encode_bytes(digest[:], context.temp_allocator))
@@ -1213,7 +1240,7 @@ format_input_delivered_json :: proc(
 	builder := strings.builder_make(allocator)
 	strings.write_string(&builder, `{"jsonrpc":"2.0","id":`)
 	json_write_id(&builder, id_value, has_id)
-	strings.write_string(&builder, `,"result":{"status":"Ok","delivered":true,"window_id":`)
+	strings.write_string(&builder, `,"result":{"state":"Ended","outcome":"Succeeded","delivered":true,"window_id":`)
 	fmt.sbprintf(&builder, `%d,"act_sequence":%d,"act_record_hash":`, window_id, act_record.sequence_number)
 	json_write_escaped_string(&builder, hex_encode_bytes(record_hash[:], context.temp_allocator))
 	strings.write_string(&builder, `}}`)
@@ -1230,7 +1257,7 @@ format_log_facts_json :: proc(
 	builder := strings.builder_make(allocator)
 	strings.write_string(&builder, `{"jsonrpc":"2.0","id":`)
 	json_write_id(&builder, id_value, has_id)
-	strings.write_string(&builder, `,"result":{"status":"Ok","count":`)
+	strings.write_string(&builder, `,"result":{"state":"Ended","outcome":"Succeeded","count":`)
 	fmt.sbprintf(&builder, `%d,"facts":[`, len(facts))
 	for fact, f_idx in facts {
 		if f_idx > 0 {

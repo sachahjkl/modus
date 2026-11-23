@@ -1,6 +1,7 @@
 package log
 
 import "modus:contract/enum_word"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/log_scope"
 import "modus:contract/value_kinds"
@@ -162,9 +163,6 @@ caller_scope :: proc "contextless" () -> log_scope.Scope {
 	return log_scope.scope_of(caller.grant)
 }
 
-// The result of an export that fails: the error record says why.
-ERROR :: -1
-
 // The parameter of process_records and process_value_runs that holds the
 // lent process handle, from 1: the argument of their error records.
 LENT_PROCESS_ARGUMENT :: 1
@@ -172,22 +170,22 @@ LENT_PROCESS_ARGUMENT :: 1
 // scope_of_lent_process gives the scope of a call that names a process by
 // the handle that its caller lent: the records of that process. The service
 // proved that the handle came through the call ring with the right Read,
-// but not its kind: a caller can lend any handle. ok is false, with the
-// error record, for a handle that names no process.
-scope_of_lent_process :: proc "contextless" (process: system.Handle, error: ^errors.Error_Record) -> (scope: log_scope.Scope, ok: bool) {
+// but not its kind: a caller can lend any handle. The outcome is not
+// Succeeded, with the error record, for a handle that names no process.
+scope_of_lent_process :: proc "contextless" (process: system.Handle, error: ^errors.Error_Record) -> (scope: log_scope.Scope, outcome: call_outcome.Call_Outcome) {
 	kind, _, _ := system.handle_state(process)
 	if kind != .Process {
-		errors.fail(error, ERROR, .Handle_Kind, .None, LENT_PROCESS_ARGUMENT, i64(process), i64(op.Object_Kind.Process), i64(kind))
-		return {}, false
+		outcome, _ = call_outcome.fail(error, .Argument_Refused, .Handle_Kind, .None, LENT_PROCESS_ARGUMENT, i64(process), i64(op.Object_Kind.Process), i64(kind))
+		return {}, outcome
 	}
 	// The lent handle keeps the slot of the process for the whole call, so
 	// the slot and the serial name that process, also after it stopped.
 	slot, serial, status := system.process_place(process)
 	if status != .Ok {
-		errors.fail(error, ERROR, .Refused, .Kernel_Status, LENT_PROCESS_ARGUMENT, 0, 0, i64(status))
-		return {}, false
+		outcome, _ = call_outcome.fail(error, system.outcome_of_status(status), .Refused, .Kernel_Status, LENT_PROCESS_ARGUMENT, 0, 0, i64(status))
+		return {}, outcome
 	}
-	return log_scope.lent_process_scope(slot, serial), true
+	return log_scope.lent_process_scope(slot, serial), .Succeeded
 }
 
 // records gives the log records of the log scope of the caller from the number `after` on, one row each: the number, the time in microseconds, the process and its slot, the level, the count of its value runs, and the text. A row says when its text or its fact goes on in the next record. The first row also gives the records that the kernel wrote over before this call read them. The result is the count of the rows of the scope from `after` to the last record.
@@ -268,12 +266,12 @@ records :: proc "c" (after: i64, result: ^[]Record) -> i64 {
 //
 // **Errors**: `Handle_Kind` for a handle that names no process.
 @(export, link_name = "process_records")
-process_records :: proc "c" (process: system.Lent({.Read}), after: i64, result: ^[]Record, error: ^errors.Error_Record) -> i64 {
-	scope, ok := scope_of_lent_process(process.handle, error)
-	if !ok {
-		return ERROR
+process_records :: proc "c" (process: system.Lent({.Read}), after: i64, result: ^[]Record, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	scope, found := scope_of_lent_process(process.handle, error)
+	if found != .Succeeded {
+		return found, 0
 	}
-	return records_in_scope(scope, after, result)
+	return .Succeeded, records_in_scope(scope, after, result)
 }
 
 // records_in_scope gives the rows of records() for one scope: see records.
@@ -381,12 +379,12 @@ value_runs :: proc "c" (after: i64, result: ^[]Value_Run) -> i64 {
 //
 // **Errors**: `Handle_Kind` for a handle that names no process.
 @(export, link_name = "process_value_runs")
-process_value_runs :: proc "c" (process: system.Lent({.Read}), after: i64, result: ^[]Value_Run, error: ^errors.Error_Record) -> i64 {
-	scope, ok := scope_of_lent_process(process.handle, error)
-	if !ok {
-		return ERROR
+process_value_runs :: proc "c" (process: system.Lent({.Read}), after: i64, result: ^[]Value_Run, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	scope, found := scope_of_lent_process(process.handle, error)
+	if found != .Succeeded {
+		return found, 0
 	}
-	return value_runs_in_scope(scope, after, result)
+	return .Succeeded, value_runs_in_scope(scope, after, result)
 }
 
 // value_runs_in_scope gives the rows of value_runs() for one scope: see

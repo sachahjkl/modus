@@ -27,8 +27,8 @@
 // It stops itself with Done, or Failed after a WRONG line.
 package generic_wiring
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
@@ -72,7 +72,7 @@ wrong :: proc "contextless" (text: string, value: u64) -> ! {
 }
 
 @(private = "file")
-wrong_refused :: proc "contextless" (text: string, status: system.Status, answer: [7]u64) -> ! {
+wrong_refused :: proc "contextless" (text: string, status: call_outcome.Call_Outcome, answer: [7]u64) -> ! {
 	system.log_fact(.Error, Wrong_Refused{status = u64(status), error_kind = answer[0], error_unit = answer[1], error_operation = answer[2], error_argument = answer[3], error_value = answer[4], error_limit = answer[5], error_found = answer[6]}, text)
 	system.stop(.Failed)
 }
@@ -80,7 +80,7 @@ wrong_refused :: proc "contextless" (text: string, status: system.Status, answer
 // root_call sends one command on the root ring and waits for its
 // completion, within the hang bound.
 @(private = "file")
-root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64) -> (status: system.Status, answer: [7]u64) {
+root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64) -> (outcome: call_outcome.Call_Outcome, answer: [7]u64) {
 	tag := next_tag
 	next_tag += 1
 	if !system.send(&requests.commands, ring.Record{kind = u32(command), tag = tag, values = values}) {
@@ -93,9 +93,9 @@ root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64
 			if record.tag != tag {
 				continue
 			}
-			read, refusal := system.status_of_word(record.kind)
-			if refusal.kind != 0 {
-				wrong("the root service answered a status word that names no status", u64(record.kind))
+			read, _ := call_outcome.completion_outcome(record.kind, record.values)
+			if read == .Answer_Unreadable {
+				wrong("the root service answered a completion that this process cannot read; the outcome word", u64(record.kind))
 			}
 			return read, record.values
 		}
@@ -112,7 +112,7 @@ root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64
 @(private = "file")
 list_page_take :: proc "contextless" () {
 	status, answer := root_call(.Wire, {0 = u64(root_ring.Wire_Step.List_Page)})
-	if status != .Ok || answer[0] == 0 {
+	if status != .Succeeded || answer[0] == 0 {
 		wrong_refused("the list page was refused with the status", status, answer)
 	}
 	page := system.Handle(answer[0])
@@ -154,7 +154,7 @@ list_write :: proc "contextless" (rows: []output.Wiring, handles: []u32, after_h
 }
 
 @(private = "file")
-start_listed :: proc "contextless" (name: string, listed: bool) -> (system.Status, [7]u64) {
+start_listed :: proc "contextless" (name: string, listed: bool) -> (call_outcome.Call_Outcome, [7]u64) {
 	packed := system.name_pack(name)
 	list := listed ? root_ring.Start_Wiring_List.In_The_List_Page : root_ring.Start_Wiring_List.None
 	return root_call(.Start, {packed[0], packed[1], packed[2], packed[3], u64(list), u64(root_ring.Start_Answer.Process_Handle), 0})
@@ -163,7 +163,7 @@ start_listed :: proc "contextless" (name: string, listed: bool) -> (system.Statu
 @(private = "file")
 start_child :: proc "contextless" (name: string) -> system.Handle {
 	status, answer := start_listed(name, false)
-	if status != .Ok || answer[0] == 0 {
+	if status != .Succeeded || answer[0] == 0 {
 		wrong_refused("the start of a child gave the status", status, answer)
 	}
 	return system.Handle(answer[0])
@@ -189,12 +189,12 @@ fail :: proc "contextless" (command: root_ring.Root_Command, kind: errors.Kind, 
 // refused checks one refusal whole: its status, each field of its error
 // record, and the pages of the budget of this process.
 @(private = "file")
-refused :: proc "contextless" (what: string, before: u64, status: system.Status, answer: [7]u64, wanted: system.Status, expected: [7]u64) {
+refused :: proc "contextless" (what: string, before: u64, status: call_outcome.Call_Outcome, answer: [7]u64, wanted: call_outcome.Call_Outcome, expected: [7]u64) {
 	record := errors.completion_record(answer)
 	want := errors.completion_record(expected)
 	if status != wanted || record != want {
-		system.log_fact(.Error, Wrong_Refusal{status = op.Status_Word(status), kind = record.kind, unit = record.unit, operation = record.operation, argument = record.argument, value = record.value, limit = record.limit, found = record.found}, what)
-		system.log_fact(.Error, Wrong_Refusal_Wanted{status = op.Status_Word(wanted), kind = want.kind, unit = want.unit, operation = want.operation, argument = want.argument, value = want.value, limit = want.limit, found = want.found}, what)
+		system.log_fact(.Error, Wrong_Refusal{outcome = call_outcome.Call_Outcome_Word(status), kind = record.kind, unit = record.unit, operation = record.operation, argument = record.argument, value = record.value, limit = record.limit, found = record.found}, what)
+		system.log_fact(.Error, Wrong_Refusal_Wanted{outcome = call_outcome.Call_Outcome_Word(wanted), kind = want.kind, unit = want.unit, operation = want.operation, argument = want.argument, value = want.value, limit = want.limit, found = want.found}, what)
 		system.stop(.Failed)
 	}
 	if after := budget_pages(); after != before {
@@ -267,7 +267,7 @@ refusals_case :: proc "contextless" (source, filter: system.Handle) {
 		rows := [2]output.Wiring{row(.Started, 1, SOURCE_LEFT, .Child, 0, MERGE_SOURCES), row(.Started, 1, SOURCE_OTHER, .Child, 0, MERGE_SOURCES)}
 		list_write(rows[:], handles[:])
 		status, answer := start_listed("merge", true)
-		refused("a second source of merge.sources of another record", before, status, answer, .Bad_Operation, fail(.Start, .Bad_Value, .Record_Types, 0, i64(output.Description_Difference.Name), 0, 2))
+		refused("a second source of merge.sources of another record", before, status, answer, .Argument_Refused, fail(.Start, .Bad_Value, .Record_Types, 0, i64(output.Description_Difference.Name), 0, 2))
 	}
 	// 2. filter.kept before any wiring of filter.source fixed its type.
 	{
@@ -275,7 +275,7 @@ refusals_case :: proc "contextless" (source, filter: system.Handle) {
 		rows := [1]output.Wiring{row(.Started, 1, FILTER_KEPT, .Asker, 0, 0)}
 		list_write(rows[:], handles[:])
 		status, answer := root_call(.Wire, {0 = u64(root_ring.Wire_Step.Apply)})
-		refused("a Wire of filter.kept with no fixed type", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Record_Types, 0, i64(output.Description_Difference.Not_Fixed), 0, 1))
+		refused("a Wire of filter.kept with no fixed type", before, status, answer, .Argument_Refused, fail(.Wire, .Bad_Value, .Record_Types, 0, i64(output.Description_Difference.Not_Fixed), 0, 1))
 	}
 	// 2b. A refused list into the running generic record input
 	// filter.source keeps no type: a Wire of other, of the record Other,
@@ -287,7 +287,7 @@ refusals_case :: proc "contextless" (source, filter: system.Handle) {
 		rows := [1]output.Wiring{row(.Started, 1, SOURCE_OTHER, .Started, 2, FILTER_SOURCE)}
 		list_write(rows[:], handles[:])
 		status, answer := root_call(.Wire, {0 = u64(root_ring.Wire_Step.Apply)})
-		refused("a Wire of Other into filter.source with no terms", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Wiring_Terms, i64(output.Wiring_Field.Terms_Count), 0, size_of(output.Condition_Terms), 1))
+		refused("a Wire of Other into filter.source with no terms", before, status, answer, .Argument_Refused, fail(.Wire, .Bad_Value, .Wiring_Terms, i64(output.Wiring_Field.Terms_Count), 0, size_of(output.Condition_Terms), 1))
 	}
 	// 3. A condition on merge.merged that names no field of Probe: the
 	// row 3 is resolved after the rows that fix the type of
@@ -300,7 +300,7 @@ refusals_case :: proc "contextless" (source, filter: system.Handle) {
 		no_field := mark_terms(PROBE_FIELDS + 1, 1)
 		list_write(rows[:], handles[:], no_field[:])
 		status, answer := start_listed("merge", true)
-		refused("a condition on merge.merged that names no field", before, status, answer, .Bad_Operation, fail(.Start, .Bad_Value, .Wiring_Terms, i64(output.Condition_Terms_Field.Field), PROBE_FIELDS + 1, PROBE_FIELDS, 3))
+		refused("a condition on merge.merged that names no field", before, status, answer, .Argument_Refused, fail(.Start, .Bad_Value, .Wiring_Terms, i64(output.Condition_Terms_Field.Field), PROBE_FIELDS + 1, PROBE_FIELDS, 3))
 	}
 	// 4. One wiring past those that an asker holds: nine sources.
 	{
@@ -311,7 +311,7 @@ refusals_case :: proc "contextless" (source, filter: system.Handle) {
 		}
 		list_write(rows[:], handles[:])
 		status, answer := start_listed("merge", true)
-		refused("one source past the wirings of an asker", before, status, answer, .No_Slot, fail(.Start, .Full, .Wirings, 0, output.WIRINGS_OF_AN_ASKER_MOST + 1, output.WIRINGS_OF_AN_ASKER_MOST))
+		refused("one source past the wirings of an asker", before, status, answer, .Budget_Or_Capacity_Exhausted, fail(.Start, .Full, .Wirings, 0, output.WIRINGS_OF_AN_ASKER_MOST + 1, output.WIRINGS_OF_AN_ASKER_MOST))
 	}
 	system.log_fact(.Info, Refusals_Checked{})
 }
@@ -334,7 +334,7 @@ chain_case :: proc "contextless" (source, filter: system.Handle) {
 	terms := mark_terms(PROBE_FIELD_MARK, 1)
 	list_write(rows[:], handles[:], terms[:])
 	status, answer := start_listed("merge", true)
-	if status != .Ok || answer[0] == 0 || answer[1] == 0 {
+	if status != .Succeeded || answer[0] == 0 || answer[1] == 0 {
 		wrong_refused("the start of merge with the chain gave the status", status, answer)
 	}
 	merge := system.Handle(answer[0])
@@ -385,7 +385,7 @@ no_field_case :: proc "contextless" () {
 	terms := mark_terms(0, 1)
 	list_write(rows[:], handles[:], terms[:])
 	status, answer := start_listed("filter", true)
-	if status != .Ok || answer[0] == 0 || answer[1] == 0 {
+	if status != .Succeeded || answer[0] == 0 || answer[1] == 0 {
 		wrong_refused("the start of filter with the field 0 gave the status", status, answer)
 	}
 	filter := system.Handle(answer[0])
@@ -401,7 +401,7 @@ no_field_case :: proc "contextless" () {
 	// generic_source waits for a reader of right, which this case never
 	// gives: the stop of the principal ends it.
 	packed := system.name_pack("generic_source")
-	if stop_status, stop_answer := root_call(.Stop, {packed[0], packed[1], packed[2], packed[3], 0, 0, 0}); stop_status != .Ok {
+	if stop_status, stop_answer := root_call(.Stop, {packed[0], packed[1], packed[2], packed[3], 0, 0, 0}); stop_status != .Succeeded {
 		wrong_refused("the stop of generic_source gave the status", stop_status, stop_answer)
 	}
 	stopped_wait(source)

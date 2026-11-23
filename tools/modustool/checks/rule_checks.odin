@@ -8,9 +8,9 @@ import "modustool:foundation"
 
 // Two rules of the system that a reader had to trust, as checks
 // (docs/TOOLS.md, "The rules that a check holds"). The third rule of that
-// section, an error record from each export that fails, is in
-// export_error_record_check.odin; the fourth, a closed set of choices as
-// an enum, is in choice_constant_check.odin.
+// section, the call outcome of each export that can fail, read as the
+// compiler forces it, is in outcome_binding_check.odin; the fourth, a
+// closed set of choices as an enum, is in choice_constant_check.odin.
 //
 // 1. The count of the kernel operations. docs/PROPERTIES.md states it, and
 //    the contract of the operations declares them: a new operation with no
@@ -20,6 +20,12 @@ import "modustool:foundation"
 //    module. The compiler gets `-default-to-nil-allocator`, which turns a
 //    call of an allocator into a failure when the process runs; this check
 //    refuses the call when the tool builds.
+
+// One source file of one package, as a check reads it.
+Export_Source :: struct {
+	path: string,
+	text: string,
+}
 
 // The document that states the count of the kernel operations that
 // foundation.OPERATION_SOURCE declares.
@@ -242,11 +248,11 @@ allocator_check :: proc() -> bool {
 }
 
 // The command rule-checks: the eight checks alone. The third is in
-// export_error_record_check.odin, the fourth in choice_constant_check.odin,
+// outcome_binding_check.odin, the fourth in choice_constant_check.odin,
 // the fifth in processor_random_check.odin, the sixth in
 // image_checks_field_check.odin, the seventh in
 // global_initializer_check.odin, and the eighth in
 // display_text_check.odin.
 run_rule_checks :: proc(args: []string) -> int {
-	return operation_count_check() && allocator_check() && export_error_record_check() && choice_constant_check() && processor_random_check() && image_checks_field_check() && global_initializer_check() && display_text_check() ? 0 : foundation.EXIT_FAILURE
+	return operation_count_check() && allocator_check() && outcome_binding_check() && choice_constant_check() && processor_random_check() && image_checks_field_check() && global_initializer_check() && display_text_check() ? 0 : foundation.EXIT_FAILURE
 }

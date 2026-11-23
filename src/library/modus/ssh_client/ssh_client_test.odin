@@ -3,9 +3,30 @@ package ssh_client
 
 import "core:testing"
 import "modus:contract/byte_order"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/text_encoding"
 import "modus:cryptography_primitives"
+
+// The pair of a procedure of the call form, as one value that a check
+// compares.
+@(private = "file")
+Answer :: struct {
+	outcome: call_outcome.Call_Outcome,
+	value:   i64,
+}
+
+@(private = "file")
+answer_of :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> Answer {
+	return {outcome, value}
+}
+
+// refused says if a call refused an argument: the outcome Argument_Refused
+// and the value 0.
+@(private = "file")
+refused :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> bool {
+	return outcome == .Argument_Refused && value == 0
+}
 
 // Helper: build an in-memory mock SSH-2 server for full end-to-end protocol testing.
 @(private = "file")
@@ -45,7 +66,7 @@ mock_server_init :: proc(t: ^testing.T, srv: ^Mock_Ssh_Server, host_seed, kex_se
 	sec_str := string(srv.host_ed_secret[:])
 	pub_slice := srv.host_ed_public[:]
 	err: errors.Error_Record
-	n := cryptography_primitives.ed25519_public_key(&sec_str, &pub_slice, &err)
+	_, n := cryptography_primitives.ed25519_public_key(&sec_str, &pub_slice, &err)
 	testing.expect_value(t, n, i64(ED25519_PUBLIC_KEY_SIZE))
 
 	pub, st := x25519_public_from_secret(srv.kex_secret)
@@ -126,7 +147,7 @@ mock_server_build_kex_reply :: proc(
 	msg_str := string(srv.exchange_hash[:])
 	sig_slice := raw_sig[:]
 	err: errors.Error_Record
-	testing.expect_value(t, cryptography_primitives.ed25519_sign(&sec_str, &msg_str, &sig_slice, &err), i64(ED25519_SIGNATURE_SIZE))
+	testing.expect_value(t, answer_of(cryptography_primitives.ed25519_sign(&sec_str, &msg_str, &sig_slice, &err)), Answer{.Succeeded, i64(ED25519_SIGNATURE_SIZE)})
 	if corrupt_sig {
 		raw_sig[0] ~= 0x01
 	}
@@ -541,7 +562,7 @@ full_ssh2_handshake_publickey_auth_and_interactive_channel :: proc(t: ^testing.T
 	sec_s := string(client_ed_secret[:])
 	pub_sl := client_ed_pub[:]
 	err: errors.Error_Record
-	testing.expect_value(t, cryptography_primitives.ed25519_public_key(&sec_s, &pub_sl, &err), i64(ED25519_PUBLIC_KEY_SIZE))
+	testing.expect_value(t, answer_of(cryptography_primitives.ed25519_public_key(&sec_s, &pub_sl, &err)), Answer{.Succeeded, i64(ED25519_PUBLIC_KEY_SIZE)})
 
 	n, st = client_write_userauth_publickey(&cli, "sacha", client_ed_secret, pad[:], wire[:])
 	testing.expect_value(t, st, Status.Ok)
@@ -577,7 +598,7 @@ full_ssh2_handshake_publickey_auth_and_interactive_channel :: proc(t: ^testing.T
 	pk_str := string(parsed_client_pk[:])
 	sd_str := string(sign_data[:sign_n])
 	sg_str := string(parsed_client_sig[:])
-	testing.expect_value(t, cryptography_primitives.ed25519_verify(&pk_str, &sd_str, &sg_str, &err), i64(0))
+	testing.expect_value(t, answer_of(cryptography_primitives.ed25519_verify(&pk_str, &sd_str, &sg_str, &err)), Answer{.Succeeded, i64(0)})
 
 	// Server sends USERAUTH_SUCCESS
 	auth_ok := [1]u8{u8(Message_Type.Userauth_Success)}

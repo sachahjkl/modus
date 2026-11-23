@@ -1,6 +1,7 @@
 package console
 
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import info "modus:contract/boot_info"
 import "modus:contract/isolated"
@@ -1784,13 +1785,13 @@ connect_service :: proc "contextless" (arguments: []Value) -> Value {
 	if fresh || sandbox.process == 0 {
 		refused: ring.Record
 		not_ready: bool
-		if status := service_connect(sandbox, &refused, &not_ready); status != .Ok {
+		if outcome := service_connect(sandbox, &refused, &not_ready); outcome != .Succeeded {
 			sandbox^ = {}
 			if not_ready {
 				return fail("cannot connect to ", name, ": the service stopped, or did not open the connection before the hang bound of ", i64(system.ANSWER_BOUND_MILLISECONDS / 1000), " s")
 			}
 			if refused.kind == 0 {
-				return fail("cannot connect to ", name, ": ", status == .Bad_State ? "the root service did not answer" : "the call ring or the call region does not map")
+				return fail("cannot connect to ", name, ": ", outcome == .Deadline_Passed_During_The_Call ? "the root service did not answer" : "the call ring or the call region does not map")
 			}
 			return fail_root(scratch_text("cannot connect to ", name, ": "), refused)
 		}
@@ -1833,7 +1834,9 @@ root_refusal_text :: proc "contextless" (buffer: []u8, completion: ring.Record) 
 // waits for the ready completion of the service. refused: the completion of
 // a refusal of the root service, if the caller asks for it. not_ready: set
 // when the service stopped or sent no ready completion within the bound.
-service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record = nil, not_ready: ^bool = nil) -> system.Status {
+// The outcome is that of the answer of the root service, or of the step
+// of this process that failed after it.
+service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record = nil, not_ready: ^bool = nil) -> call_outcome.Call_Outcome {
 	// The root service can start the service first: only the hang bound
 	// of an answer ends this wait, never a time of a start.
 	completion, answered := request_record(.Connect, sandbox.name, 0, system.ANSWER_BOUND_MILLISECONDS, stoppable = true)
@@ -1847,18 +1850,15 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 			request_count += 1
 			system.connect_abandon(&requests, &abandoned_connects, connect_tag, request_count, system.name_pack(sandbox.name))
 		}
-		return .Bad_State
+		return .Deadline_Passed_During_The_Call
 	}
-	if status, refusal := system.status_of_word(completion.kind); status != .Ok {
+	if outcome, refusal := call_outcome.completion_outcome(completion.kind, completion.values); outcome != .Succeeded {
 		if refused != nil {
-			refused^ = completion
-			// A word that names no status: the record says so.
-			if refusal.kind != 0 {
-				refused.kind = u32(status)
-				refused.values = transmute([7]u64)refusal
-			}
+			// The record of the root service, or for an answer that this
+			// process cannot read, the record of the border.
+			refused^ = {kind = u32(outcome), tag = completion.tag, values = errors.completion_values(refusal)}
 		}
-		return status
+		return outcome
 	}
 	sandbox.process = system.Handle(completion.values[0])
 	sandbox.ring_memory = system.Handle(completion.values[1])
@@ -1871,9 +1871,14 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 	region_pages, _ := system.memory_size(sandbox.region_memory)
 	sandbox.region = ([^]u8)(bytes)[:region_status == .Ok ? region_pages * system.PAGE_SIZE : 0]
 	// After the first connection, the commands are those of one file.
-	if ring_status != .Ok || region_status != .Ok || sandbox.hash != {} && sandbox.hash != hash {
+	if ring_status != .Ok || region_status != .Ok {
 		service_disconnect(sandbox)
-		return .Bad_Operation
+		return system.outcome_of_own_status(ring_status != .Ok ? ring_status : region_status)
+	}
+	// After the first connection, the module is the module of the commands.
+	if sandbox.hash != {} && sandbox.hash != hash {
+		service_disconnect(sandbox)
+		return .Wrong_State
 	}
 	// The service maps the call ring when it reads the Connect of the root
 	// service, which can be after its start on demand: a lend before the
@@ -1886,10 +1891,10 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 		if not_ready != nil {
 			not_ready^ = true
 		}
-		return .Bad_State
+		return .Callee_Unavailable
 	}
 	sandbox.hash = hash
-	return .Ok
+	return .Succeeded
 }
 
 // service_disconnect ends the connection of a sandbox. The service
@@ -2099,16 +2104,26 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 	// export writes it when it fails.
 	error: errors.Error_Record
 	if item.function.error_record != 0 {
-		integers[parameter_total + int(item.result == .Text || item.result == .Table)] = u64(uintptr(&error))
+		integers[parameter_total + int(item.result == .Text || item.result == .Table || item.result == .Record)] = u64(uintptr(&error))
 	}
 	floats: [system.CALL_FLOATS]u64
 	results: [system.CALL_RESULTS]u64
 	system.export_call(item.address, &integers, &floats, &results)
-	if item.function.error_record != 0 && i64(results[0]) < 0 {
-		error.operation = i64(item.export)
-		result := export_failure(item, &error)
-		failure_details_set(details[:], details_place.count)
-		return result
+	// An export that can fail gives its call outcome first, then its value.
+	// The module is one that the line loaded, not one that the console was
+	// built with: the word goes through the border.
+	if item.function.error_record != 0 {
+		outcome, unreadable := call_outcome.outcome_of_word(results[0])
+		if outcome != .Succeeded {
+			if unreadable.kind != 0 {
+				error = unreadable
+			}
+			error.operation = i64(item.export)
+			result := export_failure(item, &error, outcome)
+			failure_details_set(details[:], details_place.count)
+			return result
+		}
+		results[0] = results[1]
 	}
 	switch item.result {
 	case .Integer:
@@ -2239,7 +2254,12 @@ sandbox_files :: proc "contextless" (sandbox: ^Sandbox, file: []u8) -> bool {
 // boot image.
 sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	if sandbox.service {
-		return service_connect(sandbox)
+		// The connection says its own outcome; this procedure gives the
+		// status of the start of a call host.
+		if service_connect(sandbox) != .Succeeded {
+			return .Bad_State
+		}
+		return .Ok
 	}
 	sandbox.ring.head^ = {}
 	grants: [op.CONTEXT_HANDLES]system.Grant
@@ -2379,10 +2399,8 @@ sandbox_end :: proc "contextless" (sandbox: ^Sandbox) {
 
 // export_failure makes the line fail with the error record of an export
 // that failed: the sentence of the record, and the record itself with the
-// names of the export and of its parameters, from the description. The
-// result of the export is not shown: the record holds the facts, and a
-// bare number tells a reader nothing (docs/WRITING.md).
-export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Record) -> Value {
+// names of the export and of its parameters, from the description.
+export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Record, outcome: call_outcome.Call_Outcome) -> Value {
 	already := failed
 	argument := ""
 	if error.argument >= 1 && error.argument <= i64(item.parameter_count) {
@@ -2390,10 +2408,10 @@ export_failure :: proc "contextless" (item: ^Command, error: ^errors.Error_Recor
 	}
 	buffer: [240]u8
 	writer := system.Writer{buffer = buffer[:]}
-	system.error_text(&writer, error, item.name, argument)
+	system.call_failure_text(&writer, outcome, error, item.name, argument)
 	result := fail(system.written(&writer))
 	if !already {
-		failure_record_set(error^, item.name, item.parameter_names[:item.parameter_count])
+		failure_record_set(error^, item.name, item.parameter_names[:item.parameter_count], outcome)
 	}
 	return result
 }
@@ -2512,7 +2530,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	case .Bad_Operation, .Bad_Address, .No_Memory, .Bad_State, .No_Budget:
 		return fail(item.name, ": the console cannot lend its handles to the process ", sandbox.name, ": ", system.kernel_status_text(lend_status))
 	}
-	offset, size, buffer, error_place, ok := isolated.encode(item.file, item.function, encoded[:parameter_total], sandbox.region)
+	offset, size, buffer, ok := isolated.encode(item.file, item.function, encoded[:parameter_total], sandbox.region)
 	if !ok {
 		if missing := isolated.room_missing(item.file, item.function, encoded[:parameter_total], u64(len(sandbox.region))); missing.parameter != 0 {
 			return fail("the table ", item.parameter_names[missing.parameter - 1], " of ", item.name, " has ", missing.needed, " bytes; the call region has ", missing.free, " bytes free for it")
@@ -2545,95 +2563,89 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			if completion.tag != sandbox.calls {
 				continue
 			}
-			// The call host writes the word: a word that names no status is
-			// refused, never read as a status.
-			call_status, call_status_ok := enum_word.member_of_word(isolated.Status, u64(completion.kind))
-			if !call_status_ok {
-				return fail("the process ", sandbox.name, " gave a status word that names no status")
+			// The completion crosses its one border: the value of a success,
+			// or the outcome and the record of the export or of the receiver
+			// that refused the call. A word that names no outcome is
+			// Answer_Unreadable, never read as a member.
+			value, outcome, error := isolated.answer_of_completion(completion)
+			if outcome != .Succeeded {
+				// A refusal of the receiver names no operation: the call is
+				// the one of this export.
+				if error.operation == 0 {
+					error.operation = i64(item.export)
+				}
+				// Only the table of error details comes back: the rows that
+				// a failed export wrote in a Change table stay out of the
+				// values of the console (docs/MODULE_CONTRACT.md, section 8,
+				// "The table of error details").
+				// A wrong table of error details is an answer that the console
+				// cannot read whole: the outcome and the record say so.
+				details_wrong := false
+				if item.details_parameter != 0 {
+					problem, parameter := isolated.error_details_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset)
+					details_wrong = problem != .None
+					if details_wrong {
+						// The record says what was unreadable, as
+						// system.call_isolated says it.
+						error = errors.error_make(.Bad_Value, .Records, i64(parameter), i64(problem))
+						error.operation = i64(item.export)
+					}
+				}
+				result := export_failure(item, &error, details_wrong ? .Answer_Unreadable : outcome)
+				if details_wrong {
+					fail_note("the process ", sandbox.name, " gave a wrong count for the table of error details: the details are missing")
+				} else if item.details_parameter != 0 {
+					failure_details_set(details[:], encoded[item.details_parameter - 1].table.count)
+				}
+				return result
 			}
-			switch call_status {
-			case .Ok:
-				// A failure first: the other process wrote the error record,
-				// values only, in the place that encode chose, and the error
-				// details. Only the table of error details comes back: the
-				// rows that a failed export wrote in a Change table stay out
-				// of the values of the console (docs/MODULE_CONTRACT.md,
-				// section 8, "The table of error details").
-				if error_place.count != 0 && i64(completion.values[0]) < 0 {
-					error := (^errors.Error_Record)(raw_data(sandbox.region[error_place.start:]))^
-					result := export_failure(item, &error)
-					if item.details_parameter != 0 {
-						if problem, _ := isolated.error_details_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset); problem != .None {
-							fail_note("the process ", sandbox.name, " gave a wrong count for the table of error details: the details are missing")
-						} else {
-							failure_details_set(details[:], encoded[item.details_parameter - 1].table.count)
-						}
-					}
-					return result
-				}
-				// The rows of a Change table come back into the memory of the value.
-				if problem, parameter := isolated.tables_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset); problem != .None {
-					name := parameter >= 1 && parameter <= item.parameter_count ? item.parameter_names[parameter - 1] : "of error details"
-					return fail("the process ", sandbox.name, " gave a wrong count for the table ", name)
-				}
-				switch item.result {
-				case .Integer:
-					return {kind = .Integer, integer = i64(completion.values[0])}
-				case .Text:
-					// The count comes from the other process: read no more
-					// than the buffer, and copy the text out of the call region.
-					text, complete := isolated.result_text(sandbox.region, buffer, completion.values[0])
-					if !complete || len(text) > len(scratch) - scratch_count {
-						return fail("the result of ", item.name, " has ", completion.values[0], " bytes: it does not fit")
-					}
-					return {kind = .Text, text = scratch_text(string(text))}
-				case .Record:
-					// The other process wrote these bytes: they are values, and
-					// the console reads them with the description.
-					record := scratch_bytes(int(buffer.count))
-					if record == nil || !isolated.result_record(sandbox.region, buffer, record) {
-						return fail("the result of ", item.name, " does not fit")
-					}
-					return {kind = .Record, record = record, file = item.file, detail = item.function.result_detail}
-				case .Table:
-					// The other process wrote the records and the count:
-					// read no more than the buffer, and copy the records
-					// out of the call region.
-					if i64(completion.values[0]) < 0 {
-						return table_error(item)
-					}
-					described, _ := module.record_type(item.file, item.function.result_detail)
-					rows, complete := isolated.result_table(sandbox.region, buffer, completion.values[0], u64(described.size))
-					if !complete {
-						return fail("the result of ", item.name, " has ", completion.values[0], " records; ", i64(len(rows) / int(max(described.size, 1))), " fit in the call region")
-					}
-					bytes := table_bytes(len(rows))
-					if bytes == nil && len(rows) > 0 {
-						return fail("the line has no room for the ", completion.values[0], " records of ", item.name)
-					}
-					copy(bytes, rows)
-					return {kind = .Table, record = bytes, file = item.file, detail = item.function.result_detail}
-				case .Enum:
-					return enum_result(item, i64(completion.values[0]))
-				case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
-					// None gives no value; callable_by_console refuses an
-					// export with a Handle or a Bytes result, and no export
-					// gives a Stream.
-				}
-				return {}
-			case .Bad_Export:
-				return fail("the process ", sandbox.name, " has no export ", item.name)
-			case .Bad_Arguments, .Bad_Handle:
-				// The values of a refusal hold its error record: the argument and why.
-				refusal := transmute(errors.Error_Record)completion.values
-				if refusal.kind != 0 {
-					refusal.operation = i64(item.export)
-					return export_failure(item, &refusal)
-				}
-				return fail("the process ", sandbox.name, " refused the arguments of ", item.name)
-			case .Load_Failed:
-				return fail("the process ", sandbox.name, " gave the status of a load for a call")
+			// The rows of a Change table come back into the memory of the value.
+			if problem, parameter := isolated.tables_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset); problem != .None {
+				name := parameter >= 1 && parameter <= item.parameter_count ? item.parameter_names[parameter - 1] : "of error details"
+				return fail("the process ", sandbox.name, " gave a wrong count for the table ", name)
 			}
+			switch item.result {
+			case .Integer:
+				return {kind = .Integer, integer = value}
+			case .Text:
+				// The count comes from the other process: read no more
+				// than the buffer, and copy the text out of the call region.
+				text, complete := isolated.result_text(sandbox.region, buffer, u64(value))
+				if !complete || len(text) > len(scratch) - scratch_count {
+					return fail("the result of ", item.name, " has ", u64(value), " bytes: it does not fit")
+				}
+				return {kind = .Text, text = scratch_text(string(text))}
+			case .Record:
+				// The other process wrote these bytes: they are values, and
+				// the console reads them with the description.
+				record := scratch_bytes(int(buffer.count))
+				if record == nil || !isolated.result_record(sandbox.region, buffer, record) {
+					return fail("the result of ", item.name, " does not fit")
+				}
+				return {kind = .Record, record = record, file = item.file, detail = item.function.result_detail}
+			case .Table:
+				// The other process wrote the records and the count:
+				// read no more than the buffer, and copy the records
+				// out of the call region.
+				described, _ := module.record_type(item.file, item.function.result_detail)
+				rows, complete := isolated.result_table(sandbox.region, buffer, u64(value), u64(described.size))
+				if !complete {
+					return fail("the result of ", item.name, " has ", u64(value), " records; ", i64(len(rows) / int(max(described.size, 1))), " fit in the call region")
+				}
+				bytes := table_bytes(len(rows))
+				if bytes == nil && len(rows) > 0 {
+					return fail("the line has no room for the ", u64(value), " records of ", item.name)
+				}
+				copy(bytes, rows)
+				return {kind = .Table, record = bytes, file = item.file, detail = item.function.result_detail}
+			case .Enum:
+				return enum_result(item, value)
+			case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+				// None gives no value; callable_by_console refuses an
+				// export with a Handle or a Bytes result, and no export
+				// gives a Stream.
+			}
+			return {}
 		}
 		if state, cause, outcome := system.process_state(sandbox.process); state == .Stopped {
 			report := system.process_stop_report(sandbox.process)
@@ -2683,7 +2695,7 @@ request_record :: proc "contextless" (kind: root_ring.Root_Command, name: string
 	// The ring holds a name of 31 bytes: a longer name is refused here,
 	// because a cut name can be the name of another process.
 	if len(name) >= len(system.Name) {
-		return {kind = u32(system.Status.Bad_Operation), values = errors.ring_fail(u32(kind), .Too_Long, .Bytes, 1, i64(len(name)), len(system.Name) - 1)}, true
+		return {kind = u32(call_outcome.Call_Outcome.Argument_Refused), values = errors.ring_fail(u32(kind), .Too_Long, .Bytes, 1, i64(len(name)), len(system.Name) - 1)}, true
 	}
 	packed := system.name_pack(name)
 	request_count += 1
@@ -2724,7 +2736,7 @@ request :: proc "contextless" (kind: root_ring.Root_Command, name: string) -> Va
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("", completion)
 	}
 	return {}
@@ -2739,7 +2751,7 @@ grants :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("", completion)
 	}
 	columns := [5]Column{text_column("process", 32), text_column("grant", 24), text_column("state", 8), integer_column("principal"), text_column("principal_name", 32)}
@@ -2773,7 +2785,7 @@ principal_create :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("", completion)
 	}
 	return {}
@@ -2786,7 +2798,7 @@ lock_session :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("", completion)
 	}
 	return {kind = .Integer, integer = i64(completion.values[0])}
@@ -2826,7 +2838,7 @@ list_principals :: proc "contextless" (arguments: []Value) -> Value {
 		if !answered {
 			return fail_no_answer()
 		}
-		if system.Status(completion.kind) != .Ok {
+		if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 			continue // No record with this number.
 		}
 		// A state that names no member is refused: it is not taken for a
@@ -2868,7 +2880,7 @@ revoke :: proc "contextless" (arguments: []Value) -> Value {
 		if !answered {
 			return fail_no_answer()
 		}
-		if system.Status(completion.kind) == .Ok {
+		if completion.kind == u32(call_outcome.Call_Outcome.Succeeded) {
 			return {kind = .Integer, integer = i64(completion.values[0])}
 		}
 		return fail_root("", completion)
@@ -2895,45 +2907,40 @@ replace :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	// The status and the kind of the record come from the root service: each
-	// is read at its border, and a word that names no member is said.
-	status, status_ok := enum_word.member_of_word(system.Status, u64(completion.kind))
-	if !status_ok {
-		return fail("the root service gave the replacement a status word that names no status")
-	}
-	switch status {
-	case .Ok:
+	// The outcome and its record come from the root service: the border of
+	// a completion reads them, and the reason of a refusal is read by the
+	// named fields of the contract (root_ring.Replace_Refusal).
+	outcome, refusal := call_outcome.completion_outcome(completion.kind, completion.values)
+	if outcome == .Succeeded {
 		return {}
-	case .No_Right:
-		// The root service writes a replacement only for a row that the
-		// signing key of the system signed (docs/MODULE_CONTRACT.md, "Who may
-		// replace a module"); its log line gives the whole reason.
-		kind_word := errors.completion_record(completion.values).kind
-		kind, kind_ok := enum_word.member_of_word(errors.Kind, u64(kind_word))
-		if !kind_ok {
-			return fail("the root service refused the replacement of ", name, " by ", by, " with an error kind that names no kind")
-		}
-		switch kind {
-		case .Absent:
-			return fail("the root service refused the replacement of ", name, " by ", by, ": no signed row names it")
-		case .Not_Authentic:
-			return fail("the root service refused the replacement of ", name, " by ", by, ": its signature does not verify")
-		case .Refused:
-			return fail("the root service refused the replacement of ", name, " by ", by, ": the replacement list breaks its format")
-		case .None, .Empty, .Too_Long, .Too_Small, .Bad_Value, .Bad_Flags, .Bad_Byte, .Bad_Address, .Handle_Absent, .Handle_Ended, .Handle_Kind, .Handle_Rights, .Budget, .Budget_Hidden, .Over_Limit, .Full, .State, .Damaged, .Device, .No_Grant, .Malformed, .No_Target, .Overlap, .Unknown_Operation, .No_Answer, .Unsupported, .Link_Down, .Busy, .Out_Of_Range, .Reserved, .Not_Payer, .Object_Shared, .Object_Marked, .Whole_Only, .Not_Multiple, .Seed_Too_Weak, .Exists, .Starter_Module:
-			// No record of a signed row: the grant of the console is missing.
-		}
-		return fail("the console has no grant to change the replacement table")
-	case .Bad_State:
-		return fail("a chain of replacements is refused: ", name, ", ", by)
-	case .No_Slot:
-		return fail("the replacement table is full")
-	case .Bad_Operation:
-		return fail("a module does not replace itself")
-	case .Bad_Handle, .Bad_Address, .No_Memory, .No_Budget:
-		return fail(by == "" ? "no replacement of the module " : "no module has the name ", name)
 	}
-	return fail(by == "" ? "no replacement of the module " : "no module has the name ", name)
+	reason, _, known := root_ring.replace_refusal_of_record(outcome, refusal)
+	if !known {
+		return fail_root("", completion)
+	}
+	switch reason {
+	case .No_Grant:
+		return fail("the console has no grant to change the replacement table")
+	case .Entry_Past_The_Image:
+		return fail("no module has the name ", by)
+	case .Replaces_Itself:
+		return fail("a module does not replace itself")
+	case .No_Module:
+		return fail(by == "" ? "no replacement of the module " : "no module has the name ", name)
+	case .No_Signed_Row:
+		// Its log line gives the whole reason (docs/MODULE_CONTRACT.md, "Who
+		// may replace a module").
+		return fail("the root service refused the replacement of ", name, " by ", by, ": no signed row names it")
+	case .Chain:
+		return fail("a chain of replacements is refused: ", name, ", ", by)
+	case .Row_Not_Authentic:
+		return fail("the root service refused the replacement of ", name, " by ", by, ": its signature does not verify")
+	case .List_Not_Valid:
+		return fail("the root service refused the replacement of ", name, " by ", by, ": the replacement list breaks its format")
+	case .Table_Full:
+		return fail("the replacement table is full")
+	}
+	return fail_root("", completion)
 }
 
 // list_replacements gives the replacement table of the machine.
@@ -2978,7 +2985,7 @@ start_process :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if status, _ := system.status_of_word(completion.kind); status != .Ok {
+	if outcome, _ := call_outcome.completion_outcome(completion.kind, completion.values); outcome != .Succeeded {
 		return fail_root("", completion)
 	}
 	if !stream_owner_keep(name, system.Handle(completion.values[0])) {
@@ -3038,7 +3045,7 @@ edit_object :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if status, _ := system.status_of_word(completion.kind); status != .Ok {
+	if outcome, _ := call_outcome.completion_outcome(completion.kind, completion.values); outcome != .Succeeded {
 		return fail_root("edit", completion)
 	}
 	return {}
@@ -3086,7 +3093,7 @@ start_from_disk :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(record.kind) == .Ok {
+	if record.kind == u32(call_outcome.Call_Outcome.Succeeded) {
 		return {}
 	}
 	return start_from_disk_refusal(name, record)
@@ -3177,7 +3184,7 @@ disk_grant_command :: proc "contextless" (command_name: string, action: root_rin
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root(command_name == "allow" ? "allow: " : "disallow: ", completion)
 	}
 	return {}
@@ -3207,7 +3214,7 @@ remote_client_request :: proc "contextless" (command_name: string, text: string,
 	if !answered {
 		return {}, fail_no_answer(), true
 	}
-	if system.Status(completion.kind) != .Ok {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		prefix := "remote_disallow: "
 		switch command_name {
 		case "remote_allow":
@@ -3280,7 +3287,7 @@ remote_clients :: proc "contextless" (arguments: []Value) -> Value {
 		if !answered {
 			return fail_no_answer()
 		}
-		if system.Status(completion.kind) != .Ok {
+		if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 			return fail_root("remote_clients: ", completion)
 		}
 		if completion.values[5] == 0 {
@@ -3351,7 +3358,7 @@ nickname_move :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("nickname_move: ", completion)
 	}
 	return {}
@@ -3386,7 +3393,7 @@ disk_persistence :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("disk_persistence: ", completion)
 	}
 	return {}
@@ -3400,7 +3407,7 @@ machine_passphrase :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("", completion)
 	}
 	return {}
@@ -3414,7 +3421,7 @@ machine_seal :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("", completion)
 	}
 	return {}
@@ -3444,7 +3451,7 @@ start_policy_choose :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("start_policy_choose: ", completion)
 	}
 	return {}
@@ -3457,7 +3464,7 @@ start_policy_default :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("start_policy_default: ", completion)
 	}
 	return {}
@@ -3496,7 +3503,7 @@ change_request :: proc "contextless" (change: root_ring.Principal_Change) -> Val
 		// process waits for no more; an abandoned Connect closes its
 		// handles here.
 		if record, came, _ := system.root_answer_step(&requests, request_count, 0, system.WAIT_FOREVER, &abandoned_connects); came {
-			if system.Status(record.kind) != .Ok {
+			if record.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 				return fail_root("", record)
 			}
 			return change_result(record.values[0], record.values[1])

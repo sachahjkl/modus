@@ -1,5 +1,6 @@
 package plan_applier
 
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
 // The log facts of the test module plan_applier
@@ -16,9 +17,9 @@ Wrong :: struct {
 
 // A call to the holder of Plans failed: the call status word, and the
 // fields of its error record.
-@(log_fact = "plan_applier: WRONG: {what}: the call status {status}, the kind {error_kind}, the unit {error_unit}, the argument {error_argument}, the value {error_value}, the found {error_found}")
+@(log_fact = "plan_applier: WRONG: {what}: the call outcome {outcome}, the kind {error_kind}, the unit {error_unit}, the argument {error_argument}, the value {error_value}, the found {error_found}")
 Wrong_Call :: struct {
-	status:         u64,
+	outcome:        call_outcome.Call_Outcome_Word,
 	error_kind:     u64,
 	error_unit:     u64,
 	error_argument: i64,
@@ -29,10 +30,10 @@ Wrong_Call :: struct {
 
 // A refusal came with another result or error record than the case waits
 // for.
-@(log_fact = "plan_applier: WRONG: {what}: the result {result}, the call status {status}, the kind {error_kind}, the unit {error_unit}, the argument {error_argument}, the found {error_found}; wanted the kind {wanted_kind}, the unit {wanted_unit}, the argument {wanted_argument}, the found {wanted_found}")
+@(log_fact = "plan_applier: WRONG: {what}: the result {result}, the call outcome {outcome}, the kind {error_kind}, the unit {error_unit}, the argument {error_argument}, the found {error_found}; wanted the kind {wanted_kind}, the unit {wanted_unit}, the argument {wanted_argument}, the found {wanted_found}")
 Wrong_Refusal :: struct {
 	result:          i64,
-	status:          u64,
+	outcome:         call_outcome.Call_Outcome_Word,
 	error_kind:      i64,
 	error_unit:      i64,
 	error_argument:  i64,
@@ -45,10 +46,10 @@ Wrong_Refusal :: struct {
 }
 
 // After a refusal, a generation is current, or current_generation failed.
-@(log_fact = "plan_applier: WRONG: after {what}, the current generation is {generation}, the call status {status}")
+@(log_fact = "plan_applier: WRONG: after {what}, the current generation is {generation}, the call outcome {outcome}")
 Wrong_Generation :: struct {
 	generation: i64,
-	status:     u64,
+	outcome:    call_outcome.Call_Outcome_Word,
 	what:       value_kinds.Text_View,
 }
 

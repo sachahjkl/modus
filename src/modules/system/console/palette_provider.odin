@@ -1,5 +1,6 @@
 package console
 
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/isolated"
 import module "modus:contract/module"
@@ -140,7 +141,7 @@ palette_provider_start :: proc "contextless" () {
 	// The root service answers when it reaches its loop, after its boot
 	// passes: the bound only ends a hang.
 	completion, answered := request_record(.Palette_Provide, "console", 0, 60_000)
-	if !answered || system.Status(completion.kind) != .Ok {
+	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Provider_Refused{})
 		return
 	}
@@ -384,7 +385,7 @@ palette_getter_value :: proc "contextless" (refresh: ^Palette_Getters, item: ^Co
 	defer if missed {
 		refresh.missed += {place}
 	}
-	offset, size, _, _, encoded := isolated.encode(found.file, found.function, nil, sandbox.region)
+	offset, size, _, encoded := isolated.encode(found.file, found.function, nil, sandbox.region)
 	if !encoded {
 		return 0, false
 	}
@@ -403,14 +404,14 @@ palette_getter_value :: proc "contextless" (refresh: ^Palette_Getters, item: ^Co
 			if completion.tag != sandbox.calls {
 				continue
 			}
-			// The process writes the word: a word that names no status is
-			// refused, never read as a status.
-			call_status, call_status_ok := enum_word.member_of_word(isolated.Status, u64(completion.kind))
-			if !call_status_ok || call_status != .Ok {
+			// The process writes the word: it crosses its one border, and a
+			// word that names no outcome is never read as a member.
+			register, outcome, _ := isolated.answer_of_completion(completion)
+			if outcome != .Succeeded {
 				return 0, false
 			}
 			missed = false
-			return module.enum_value_of_register(enum_type, i64(completion.values[0])), true
+			return module.enum_value_of_register(enum_type, register), true
 		}
 		if state, _, _ := system.process_state(sandbox.process); state == .Stopped {
 			return 0, false

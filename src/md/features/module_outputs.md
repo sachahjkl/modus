@@ -214,7 +214,7 @@ A generic record input receives the record description of the type that its wiri
 
 **Why a handle of the context, and a larger context.** The handles 0 to 13 have the roles that the root service and its process agree on, and each is taken by some role; 14 is the log and 15 the budget. Any process can declare a record stream, so the wiring ring needs a slot that no role takes. The context grows from 16 to 18 handles: 16 is the wiring ring, and 17 is left for the end of `log`, which the step of the record output `log` takes. Refused: a value of the context that holds the number of the handle, because each handle that a start gives takes its own handle slot, which the checked writes of the starter keep apart ([../api/root_ring.md](../api/root_ring.md)); and a slot that a role already takes, because the role and the record stream would then refuse each other.
 
-**A record output of a process to a record input of the same process** is refused at the wiring with `Bad_State`. A thread that waits for room in a queue that it alone reads never wakes, and a queue inside one process crosses no border: it needs no check and no ring of the root service.
+**A record output of a process to a record input of the same process** is refused at the wiring with `Argument_Refused`. A thread that waits for room in a queue that it alone reads never wakes, and a queue inside one process crosses no border: it needs no check and no ring of the root service.
 
 **Who can end a wiring.** The wiring belongs to its asker: it is in the wiring page of the asker ("The budget"), and only the asker, or the principal with `revoke` from a console that acts for it, ends it. The process at an end of a wiring has no command that ends it. It can stop writing, or close its own end: that is silence in the stream, never a removal of a record that it wrote. Its word `Closed` frees only its own count, and the other side reads the end word `Side_Closed` after the records that came before it; the wiring ends when both sides closed. At its stop, the root service writes `Writer_Stopped` with its stop cause and its stop outcome in each of its rings ([../api/process_stop.md](../api/process_stop.md)). A process that ends with no stop that the kernel recorded, an abandoned start, gets `Revoked` with one line: a reader never reads a stop that did not happen.
 
@@ -443,30 +443,30 @@ Each failure of a record output or a record input gives a status and an error re
 
 **The library calls** give an `output.Stream_Status`, an enum with explicit values, which names what the caller learns: `Ok = 0`; `No_Reader = 1`, the record output has no ring, and nothing was written; `No_Writer = 2`, the record input has no ring; `Full = 3`, a ring that holds the writer has no room before the deadline, and nothing was written; `Ended = 4`, the other side ended or stopped, with its end word, and with the stop cause and the stop outcome of a writer that stopped; `Bad_Record = 5`, the reader refused a compartment, with the field; `No_Record = 6`, the deadline of a read passed and no compartment came. These are not kernel statuses: the library gives them, and no kernel operation does.
 
-**The refusals of a wiring** are the completion of a command of the root ring, so their kind is an `op.Status`, as for each command. `op.Status` does not grow: each refusal is a status that the caller already knows, and an error record whose unit names the part of the wiring. Four units are added to `errors.Unit`:
+**The refusals of a wiring** are the completion of a command of the root ring, so their kind is the word of a call outcome, as for each command ([../api/call_outcome.md](../api/call_outcome.md)): the root service or its wiring service names the outcome with the error record where it refuses, and the unit of the record names the part of the wiring. Four units are added to `errors.Unit`:
 
-| Refusal | Status | Error record |
+| Refusal | Outcome | Error record |
 |---|---|---|
-| A damaged row of a wiring list | `Bad_Operation` | `Bad_Value`, unit `Wiring_Rows`: `found` the row from 1, `argument` the field from 1 in the order of `output.Wiring`, `value` the word, `limit` the largest word |
-| A damaged list: its size, its counts | `Bad_Operation` | `Out_Of_Range` or `Bad_Value`, unit `Wiring_Rows`, `found` 0 |
-| Two record descriptions that differ, or a generic record output whose type no wiring fixed (`Not_Fixed`) | `Bad_Operation` | `Bad_Value`, unit `Record_Types`: `found` the row, `value` the `output.Description_Difference`, `limit` the number of the first field that differs, 0 for the record |
-| A wiring that fixes the type of a fifth generic record input of one process | `No_Slot` | `Full`, unit `Wirings`, `limit` `GENERIC_TYPES_OF_A_PROCESS_MOST`, `found` the row |
-| A record output `Paired` with no source row, or a source row that breaks the rule of the pairs; a `paired_row` beside a record output that is not `Paired` | `Bad_Operation` | `Bad_Value`, unit `Wiring_Rows`, `argument` the field `paired_row`, `value` the word, `found` the row |
-| A second pair of one source | `Bad_State` | `Exists`, unit `Wirings`, `argument` the field `paired_row`, `found` the row |
-| A record output `Paired` of the child of the start | `Bad_Operation` | `Unsupported`, unit `Wiring_Rows`, `argument` the field `writer_end`, `found` the row |
-| Wiring terms of another size, outside the memory, or for no terms | `Bad_Operation` | `Bad_Value` or `Out_Of_Range`, unit `Wiring_Terms`, `found` the row |
-| A process that the asker did not start, a connection for which it does not act for the principal | `No_Right` | `No_Grant`, unit `Wirings`, `found` the row |
-| A lent handle that did not come through the ring, or that names no process of the table | `Bad_Handle` | `Handle_Absent`, unit `Lent_Handles`, `value` the place |
-| A lent handle of another kind than a process | `Bad_Handle` | `Handle_Kind`, unit `Lent_Handles`, `value` the place, `limit` the kind `Process`, `found` the kind of its object |
-| One process at both ends | `Bad_State` | `Bad_Value`, unit `Wirings`, `found` the row |
-| A record input of the count `One` that has a wiring, in the list or running | `Bad_State` | `Exists`, unit `Wirings`, `argument` the field `reader_index`, `found` the row |
-| A running process with no wiring ring, or a process with no module file of the boot image (a disk process, a part that the root service starts by itself) | `Bad_State` | `Absent`, unit `Wirings` or `Modules`, `found` the row |
-| A row of the record output `log` with a condition or with the pace `Never_Holds_Writer` | `Bad_Operation` | `Unsupported`, unit `Wiring_Rows`, `argument` the field, `found` the row |
-| A wiring ring with no room | `No_Slot` | `Busy`, unit `Wirings`, `limit` the capacity of that ring |
-| A wiring ring of an asker, or the rings of a started process, past the queues that the wait of the root service holds | `No_Slot` | `Full`, unit `Words`, `value` the words with the new queues, `limit` `op.WORD_WAIT_CAPACITY` |
-| Past the wirings of the asker, of the machine, the ends of a process, the share of the asker in the ends of a connected service, or the askers that hold a list page | `No_Slot` | `Full`, unit `Wirings`, `value` the count with the list, `limit` the limit, `found` the row for the ends of a process and for the share |
-| An asker with no list page | `Bad_State` | `Absent`, unit `Wirings` |
-| The budget of the asker refuses a ring, an end page, a terms page, a condition page, a description file or a wiring page | `No_Budget` | the record of the kernel |
+| A damaged row of a wiring list | `Argument_Refused` | `Bad_Value`, unit `Wiring_Rows`: `found` the row from 1, `argument` the field from 1 in the order of `output.Wiring`, `value` the word, `limit` the largest word |
+| A damaged list: its size, its counts | `Argument_Refused` | `Out_Of_Range` or `Bad_Value`, unit `Wiring_Rows`, `found` 0 |
+| Two record descriptions that differ, or a generic record output whose type no wiring fixed (`Not_Fixed`) | `Argument_Refused` | `Bad_Value`, unit `Record_Types`: `found` the row, `value` the `output.Description_Difference`, `limit` the number of the first field that differs, 0 for the record |
+| A wiring that fixes the type of a fifth generic record input of one process | `Budget_Or_Capacity_Exhausted` | `Full`, unit `Wirings`, `limit` `GENERIC_TYPES_OF_A_PROCESS_MOST`, `found` the row |
+| A record output `Paired` with no source row, or a source row that breaks the rule of the pairs; a `paired_row` beside a record output that is not `Paired` | `Argument_Refused` | `Bad_Value`, unit `Wiring_Rows`, `argument` the field `paired_row`, `value` the word, `found` the row |
+| A second pair of one source | `Name_Already_Taken` | `Exists`, unit `Wirings`, `argument` the field `paired_row`, `found` the row |
+| A record output `Paired` of the child of the start | `Operation_Unsupported` | `Unsupported`, unit `Wiring_Rows`, `argument` the field `writer_end`, `found` the row |
+| Wiring terms of another size, outside the memory, or for no terms | `Argument_Refused` | `Bad_Value` or `Out_Of_Range`, unit `Wiring_Terms`, `found` the row |
+| A process that the asker did not start, a connection for which it does not act for the principal | `Grant_Or_Right_Missing` | `No_Grant`, unit `Wirings`, `found` the row |
+| A lent handle that did not come through the ring, or that names no process of the table | `Argument_Refused` | `Handle_Absent`, unit `Lent_Handles`, `value` the place |
+| A lent handle of another kind than a process | `Argument_Refused` | `Handle_Kind`, unit `Lent_Handles`, `value` the place, `limit` the kind `Process`, `found` the kind of its object |
+| One process at both ends | `Argument_Refused` | `Bad_Value`, unit `Wirings`, `found` the row |
+| A record input of the count `One` that has a wiring, in the list or running | `Name_Already_Taken` | `Exists`, unit `Wirings`, `argument` the field `reader_index`, `found` the row |
+| A running process with no wiring ring, or a process with no module file of the boot image (a disk process, a part that the root service starts by itself) | `Nothing_Has_That_Name` | `Absent`, unit `Wirings` or `Modules`, `found` the row |
+| A row of the record output `log` with a condition or with the pace `Never_Holds_Writer` | `Operation_Unsupported` | `Unsupported`, unit `Wiring_Rows`, `argument` the field, `found` the row |
+| A wiring ring with no room | `Callee_Busy` | `Busy`, unit `Wirings`, `limit` the capacity of that ring |
+| A wiring ring of an asker, or the rings of a started process, past the queues that the wait of the root service holds | `Budget_Or_Capacity_Exhausted` | `Full`, unit `Words`, `value` the words with the new queues, `limit` `op.WORD_WAIT_CAPACITY` |
+| Past the wirings of the asker, of the machine, the ends of a process, the share of the asker in the ends of a connected service, or the askers that hold a list page | `Budget_Or_Capacity_Exhausted`, or `Callee_Busy` for the wirings of the machine and the askers that hold a list page, which each asker shares | `Full`, unit `Wirings`, `value` the count with the list, `limit` the limit, `found` the row for the ends of a process and for the share |
+| An asker with no list page | `Nothing_Has_That_Name` | `Absent`, unit `Wirings` |
+| The budget of the asker refuses a ring, an end page, a terms page, a condition page, a description file or a wiring page | `Budget_Or_Capacity_Exhausted` | the record of the kernel |
 
 ### Generic record inputs and the utility modules
 

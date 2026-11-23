@@ -9,6 +9,7 @@ package recipes_service
 import "base:intrinsics"
 import "internal:recipes/recipes_core"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/ring"
@@ -64,12 +65,12 @@ region_range_valid :: proc "contextless" (offset: u64, length: u64) -> bool {
 
 // status writes aggregate recipes service counters into out.
 @(export)
-status :: proc "c" (out: ^Recipes_Status, error: ^errors.Error_Record) -> i64 {
+status :: proc "c" (out: ^Recipes_Status, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if out == nil {
-		return errors.fail(error, -1, .Bad_Address, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
 	}
 	if !service_state.initialized {
-		return errors.fail(error, -2, .State, .Requests)
+		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
 	}
 	out^ = {
 		total_builds         = i64(service_state.counters.total_builds),
@@ -80,28 +81,28 @@ status :: proc "c" (out: ^Recipes_Status, error: ^errors.Error_Record) -> i64 {
 		verify_disagreements = i64(service_state.counters.verify_disagreements),
 		total_refusals       = i64(service_state.counters.total_refusals),
 	}
-	return 0
+	return .Succeeded, 0
 }
 
 // build_count returns the build requests whose mode and recipe the service
 // accepted, whatever their outcome. A request refused for its mode or for its
 // recipe does not count: status() counts it as a refusal.
 @(export)
-build_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
+build_count :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !service_state.initialized {
-		return errors.fail(error, -1, .State, .Requests)
+		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
 	}
-	return i64(min(service_state.counters.total_builds, u64(max(i64))))
+	return .Succeeded, i64(min(service_state.counters.total_builds, u64(max(i64))))
 }
 
 // cache_hits returns the builds that a cached realisation answered, from the
 // local store or from a remote cache, with no build in the sandbox.
 @(export)
-cache_hits :: proc "c" (error: ^errors.Error_Record) -> i64 {
+cache_hits :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !service_state.initialized {
-		return errors.fail(error, -1, .State, .Requests)
+		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
 	}
-	return i64(min(recipes_core.cache_hit_count(&service_state), u64(max(i64))))
+	return .Succeeded, i64(min(recipes_core.cache_hit_count(&service_state), u64(max(i64))))
 }
 
 @(private = "file")

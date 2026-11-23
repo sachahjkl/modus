@@ -1,5 +1,6 @@
 package build
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/value_kinds"
@@ -94,26 +95,26 @@ the_wrong_facts_of_the_output_test_modules_write_the_lines_of_before :: proc(t: 
 			continue
 		}
 		for text in texts {
-			for status in op.Status {
-				name := op.STATUS_NAMES[status]
+			for outcome in call_outcome.Call_Outcome {
+				name := call_outcome.CALL_OUTCOME_NAMES[outcome]
 				for value in OUTPUT_FACT_SIGNED {
 					bits := signed_bits(value)
-					rendered, written := views_render(t, file, folder, "Wrong_Refusal", {{"status", u64(status)}, {"kind", bits}, {"unit", bits}, {"operation", bits}, {"argument", bits}, {"value", bits}, {"limit", bits}, {"found", bits}}, {text})
+					rendered, written := views_render(t, file, folder, "Wrong_Refusal", {{"outcome", u64(outcome)}, {"kind", bits}, {"unit", bits}, {"operation", bits}, {"argument", bits}, {"value", bits}, {"limit", bits}, {"found", bits}}, {text})
 					if len(written) == 1 {
-						facts_expect_line(t, rendered, line_of_before(folder, ": WRONG: ", written[0], ": the status ", name, ", the kind ", value, ", the unit ", value, ", the operation ", value, ", the argument ", value, ", the value ", value, ", the limit ", value, ", the found ", value))
+						facts_expect_line(t, rendered, line_of_before(folder, ": WRONG: ", written[0], ": the outcome ", name, ", the kind ", value, ", the unit ", value, ", the operation ", value, ", the argument ", value, ", the value ", value, ", the limit ", value, ", the found ", value))
 					}
-					rendered, written = views_render(t, file, folder, "Wrong_Refusal_Wanted", {{"status", u64(status)}, {"kind", bits}, {"unit", bits}, {"operation", bits}, {"argument", bits}, {"value", bits}, {"limit", bits}, {"found", bits}}, {text})
+					rendered, written = views_render(t, file, folder, "Wrong_Refusal_Wanted", {{"outcome", u64(outcome)}, {"kind", bits}, {"unit", bits}, {"operation", bits}, {"argument", bits}, {"value", bits}, {"limit", bits}, {"found", bits}}, {text})
 					if len(written) == 1 {
-						facts_expect_line(t, rendered, line_of_before(folder, ": WRONG: ", written[0], ": wanted the status ", name, ", the kind ", value, ", the unit ", value, ", the operation ", value, ", the argument ", value, ", the value ", value, ", the limit ", value, ", the found ", value))
+						facts_expect_line(t, rendered, line_of_before(folder, ": WRONG: ", written[0], ": wanted the outcome ", name, ", the kind ", value, ", the unit ", value, ", the operation ", value, ", the argument ", value, ", the value ", value, ", the limit ", value, ", the found ", value))
 					}
 				}
 			}
-			// A status word that names no member keeps its number.
-			past := u64(max(op.Status)) + 1
-			rendered, written := views_render(t, file, folder, "Wrong_Refusal", {{"status", past}}, {text})
+			// An outcome word that names no member keeps its number.
+			past := u64(max(call_outcome.Call_Outcome)) + 1
+			rendered, written := views_render(t, file, folder, "Wrong_Refusal", {{"outcome", past}}, {text})
 			if len(written) == 1 {
 				zero := i64(0)
-				facts_expect_line(t, rendered, line_of_before(folder, ": WRONG: ", written[0], ": the status ", past, ", the kind ", zero, ", the unit ", zero, ", the operation ", zero, ", the argument ", zero, ", the value ", zero, ", the limit ", zero, ", the found ", zero))
+				facts_expect_line(t, rendered, line_of_before(folder, ": WRONG: ", written[0], ": the outcome ", past, ", the kind ", zero, ", the unit ", zero, ", the operation ", zero, ", the argument ", zero, ", the value ", zero, ", the limit ", zero, ", the found ", zero))
 			}
 			for count in OUTPUT_FACT_COUNTS {
 				other := max(u64) - count

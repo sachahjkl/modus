@@ -33,6 +33,7 @@
 package interface_through_module
 
 import "modus:contract/draw_record"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/value_kinds"
 import "modus:display"
@@ -69,15 +70,23 @@ Canvas_Shape :: struct {
 Drawn :: system.Table_To_Append(draw_record.Draw_Record)
 
 foreign _ {
-	draw_background :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), area: ^Area, error: ^errors.Error_Record) -> i64 ---
-	draw_card :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), text: ^system.Bytes_To_Append, area: ^system.Table_To_Change(Area), title: ^string, caption: ^string, accent: i64, error: ^errors.Error_Record) -> i64 ---
-	draw_cell_text :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), text: ^system.Bytes_To_Append, cell: ^Area, words: ^string, color: i64, right: i64, error: ^errors.Error_Record) -> i64 ---
-	draw_label_value_line :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), text: ^system.Bytes_To_Append, line: ^Label_Value, label: ^string, value: ^string, error: ^errors.Error_Record) -> i64 ---
-	draw_table_band :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), area: ^Area, index: i64, error: ^errors.Error_Record) -> i64 ---
-	draw_bar :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), bar: ^Bar_Value, error: ^errors.Error_Record) -> i64 ---
+	@(require_results)
+	draw_background :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), area: ^Area, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	draw_card :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), text: ^system.Bytes_To_Append, area: ^system.Table_To_Change(Area), title: ^string, caption: ^string, accent: i64, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	draw_cell_text :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), text: ^system.Bytes_To_Append, cell: ^Area, words: ^string, color: i64, right: i64, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	draw_label_value_line :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), text: ^system.Bytes_To_Append, line: ^Label_Value, label: ^string, value: ^string, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	draw_table_band :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), area: ^Area, index: i64, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	draw_bar :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), bar: ^Bar_Value, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 	// The two exports of the drawing module.
-	damage_of_draw_table_20 :: proc "c" (before: ^system.Table_To_Read(draw_record.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> i64 ---
-	execute_draw_table_in_rectangles_20 :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Canvas_Shape, rectangles: ^system.Table_To_Read(Damage_Rectangle), error: ^errors.Error_Record) -> i64 ---
+	@(require_results)
+	damage_of_draw_table_20 :: proc "c" (before: ^system.Table_To_Read(draw_record.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	execute_draw_table_in_rectangles_20 :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Canvas_Shape, rectangles: ^system.Table_To_Read(Damage_Rectangle), error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 }
 
 WIDTH :: 816
@@ -163,20 +172,20 @@ build_through_module :: proc "contextless" (texts: ^Texts) {
 	text = {bytes = &text_now[0], count = 0, capacity = TEXT_CAPACITY}
 	calls = 0
 	whole := Area{0, 0, WIDTH, HEIGHT}
-	draw_background(&drawn, &whole, nil)
+	_, _ = draw_background(&drawn, &whole, nil)
 	card_area := [1]Area{{8, 8, WIDTH - 16, HEIGHT - 16}}
 	place := system.Table_To_Change(Area){records = &card_area[0], count = 1, capacity = 1}
 	title, caption := TITLE, CAPTION
-	draw_card(&drawn, &text, &place, &title, &caption, i64(graphics.colors.kernel), nil)
+	_, _ = draw_card(&drawn, &text, &place, &title, &caption, i64(graphics.colors.kernel), nil)
 	calls += 2
 	sentence := "each element is one call through an import slot; the module keeps no state of this process."
 	first := to_area(line_area(0))
-	draw_cell_text(&drawn, &text, &first, &sentence, i64(graphics.colors.dim), 0, nil)
+	_, _ = draw_cell_text(&drawn, &text, &first, &sentence, i64(graphics.colors.dim), 0, nil)
 	headers := [4]string{"way", "one frame, ns", "", "ns per call"}
 	header_line := line_area(2)
 	for column in 0 ..< 4 {
 		cell := to_area(cell_area(header_line, column))
-		draw_cell_text(&drawn, &text, &cell, &headers[column], i64(graphics.colors.dim), column >= 2 ? 1 : 0, nil)
+		_, _ = draw_cell_text(&drawn, &text, &cell, &headers[column], i64(graphics.colors.dim), column >= 2 ? 1 : 0, nil)
 	}
 	calls += 5
 	names := [2]string{"through the module", "compiled in"}
@@ -187,16 +196,16 @@ build_through_module :: proc "contextless" (texts: ^Texts) {
 	for row in 0 ..< 2 {
 		line := line_area(3 + row)
 		band := Area{i64(line.x - 8), i64(line.y), i64(line.width + 16), i64(line.height)}
-		draw_table_band(&drawn, &band, i64(row), nil)
+		_, _ = draw_table_band(&drawn, &band, i64(row), nil)
 		cell := to_area(cell_area(line, 0))
-		draw_cell_text(&drawn, &text, &cell, &names[row], colors[row], 0, nil)
+		_, _ = draw_cell_text(&drawn, &text, &cell, &names[row], colors[row], 0, nil)
 		bar_cell := cell_area(line, 1)
 		bar := Bar_Value{i64(bar_cell.x), i64(bar_cell.y + 8), i64(bar_cell.width), 8, i64(values[row]), i64(max(values[0], values[1])), colors[row]}
-		draw_bar(&drawn, &bar, nil)
+		_, _ = draw_bar(&drawn, &bar, nil)
 		cell = to_area(cell_area(line, 2))
-		draw_cell_text(&drawn, &text, &cell, &times[row], i64(graphics.colors.text), 1, nil)
+		_, _ = draw_cell_text(&drawn, &text, &cell, &times[row], i64(graphics.colors.text), 1, nil)
 		cell = to_area(cell_area(line, 3))
-		draw_cell_text(&drawn, &text, &cell, &per[row], i64(graphics.colors.text), 1, nil)
+		_, _ = draw_cell_text(&drawn, &text, &cell, &per[row], i64(graphics.colors.text), 1, nil)
 		calls += 5
 	}
 	labels := [4]string{"element calls in one frame", "the two draw tables", "code of interface_module", "damage and drawing, ns"}
@@ -205,9 +214,9 @@ build_through_module :: proc "contextless" (texts: ^Texts) {
 	for index in 0 ..< 4 {
 		line := line_area(6 + index)
 		label_line := Label_Value{i64(line.x), i64(line.y), i64(line.width), i64(line.height), 320, i64(graphics.colors.text)}
-		draw_label_value_line(&drawn, &text, &label_line, &labels[index], &answers[index], nil)
+		_, _ = draw_label_value_line(&drawn, &text, &label_line, &labels[index], &answers[index], nil)
 		cell := Area{i64(line.x + 440), i64(line.y), i64(line.width - 440), i64(line.height)}
-		draw_cell_text(&drawn, &text, &cell, &details[index], i64(graphics.colors.dim), 0, nil)
+		_, _ = draw_cell_text(&drawn, &text, &cell, &details[index], i64(graphics.colors.dim), 0, nil)
 		calls += 2
 	}
 }
@@ -313,10 +322,11 @@ present :: proc "contextless" (window: ^display.Window) {
 		before_bytes := system.Bytes_To_Read{bytes = &text_before[0], count = before_text_count, capacity = before_text_count}
 		found: [interface.DAMAGE_CAPACITY]Damage_Rectangle
 		buffer := found[:]
-		count := min(damage_of_draw_table_20(&before_table, &before_bytes, &now_table, &now_text, &buffer, nil), interface.DAMAGE_CAPACITY)
+		outcome, found_count := damage_of_draw_table_20(&before_table, &before_bytes, &now_table, &now_text, &buffer, nil)
+		count := min(found_count, interface.DAMAGE_CAPACITY)
 		// The module refused the tables: no picture is known.
-		changed_known = count >= 0
-		for index in 0 ..< max(count, 0) {
+		changed_known = outcome == .Succeeded
+		for index in 0 ..< (changed_known ? count : 0) {
 			interface.damage_add(&changed, {int(found[index].left), int(found[index].top), int(found[index].right), int(found[index].bottom)})
 		}
 	}
@@ -341,7 +351,7 @@ present :: proc "contextless" (window: ^display.Window) {
 	}
 	places := system.Table_To_Read(Damage_Rectangle){records = &rectangles[0], count = u64(screen_damage.count), capacity = interface.DAMAGE_CAPACITY}
 	shape := Canvas_Shape{width = i64(canvas.width), height = i64(canvas.height), stride = i64(canvas.stride), fill_background = 1, background = i64(graphics.colors.background), scale = i64(window.rescale.scale)}
-	execute_draw_table_in_rectangles_20(&now_table, &now_text, &no_pictures, &pixels, &shape, &places, nil)
+	_, _ = execute_draw_table_in_rectangles_20(&now_table, &now_text, &no_pictures, &pixels, &shape, &places, nil)
 	shown.draw_time = system.nanoseconds() - start
 	// The canvas is the frame now. With nothing to present, the screen
 	// shows the frame already, and the canvas stays the one to draw.
@@ -391,7 +401,7 @@ canvases_compare :: proc "contextless" (table: ^interface.Draw_Table, refused: ^
 	shape := Canvas_Shape{width = PROOF_WIDTH, height = PROOF_HEIGHT, stride = PROOF_WIDTH, fill_background = 1, background = i64(graphics.colors.background)}
 	whole := [1]Damage_Rectangle{{0, 0, PROOF_WIDTH, PROOF_HEIGHT}}
 	places := system.Table_To_Read(Damage_Rectangle){records = &whole[0], count = 1, capacity = 1}
-	if execute_draw_table_in_rectangles_20(&records, &bytes, &no_pictures, &pixels, &shape, &places, refused) < 0 {
+	if drawn_outcome, _ := execute_draw_table_in_rectangles_20(&records, &bytes, &no_pictures, &pixels, &shape, &places, refused); drawn_outcome != .Succeeded {
 		return 0, false
 	}
 	for index in 0 ..< len(package_pixels) {

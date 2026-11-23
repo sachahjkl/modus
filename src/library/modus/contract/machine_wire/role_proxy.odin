@@ -3,15 +3,18 @@
 // calls in flight (src/md/features/several_machines.md, "A role held on
 // another machine").
 //
-// A call has an outcome, a refusal, or no known outcome. A call whose reply
+// A call ends with a call outcome (src/md/api/call_outcome.md, "The ends of
+// a request between machines"): the outcome that the holder gave, a refusal
+// of the machine of the holder, or an outcome in doubt. A call whose reply
 // did not come before the link broke can have run: the proxy ends it with
-// Unknown_Outcome, never with a refusal. It keeps a call that the contract
-// marks idempotent, and sends it again when the link holds again. A call
-// that starts while the link is broken ends with Unreachable at once. No
-// call waits past its bound.
+// Connection_Ended_During_The_Call, never with a refusal. It keeps a call
+// that the contract marks idempotent, and sends it again when the link holds
+// again. A call that starts while the link is broken does not start
+// (Role_Proxy_Status.Unreachable). No call waits past its bound.
 package machine_wire
 
 import "modus:contract/byte_order"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/role_contract"
 
@@ -35,29 +38,6 @@ role_call_flags_of_word :: proc "contextless" (word: u32) -> (flags: Role_Call_F
 	return transmute(Role_Call_Flags)word, true
 }
 
-// The outcome of one call. Answered and Refused cross the link; the proxy
-// gives Unknown_Outcome and Unreachable itself, and refuses them on the wire.
-Role_Outcome :: enum u32 {
-	None            = 0,
-	Answered        = 1, // The holder ran the call: value and result.
-	Refused         = 2, // The holder, or the machine of the holder, refused the call: it did not run.
-	Unknown_Outcome = 3, // The link broke, the reply was malformed, or the bound passed: the call can have run.
-	Unreachable     = 4, // The link was broken when the call started: it did not run.
-}
-
-role_outcome_of_wire_word :: proc "contextless" (word: u32) -> (outcome: Role_Outcome, ok: bool) {
-	outcome, ok = enum_word.member_of_word(Role_Outcome, u64(word))
-	if !ok {
-		return .None, false
-	}
-	switch outcome {
-	case .Answered, .Refused:
-		return outcome, true
-	case .None, .Unknown_Outcome, .Unreachable:
-	}
-	return .None, false
-}
-
 // role_of_word is the border of the role word of a call.
 role_of_word :: proc "contextless" (word: u32) -> (role: role_contract.Role, ok: bool) {
 	role, ok = enum_word.member_of_word(role_contract.Role, u64(word))
@@ -77,7 +57,7 @@ Role_Call :: struct {
 
 Role_Reply :: struct {
 	identifier: u64,
-	outcome:    Role_Outcome,
+	outcome:    call_outcome.Call_Outcome, // The outcome that the holder gave; the value and the result count only with Succeeded.
 	value:      i64,
 	result:     []u8,
 }
@@ -118,7 +98,7 @@ role_call_read :: proc "contextless" (body: []u8) -> (call: Role_Call, ok: bool)
 }
 
 role_reply_write :: proc "contextless" (output: []u8, reply: Role_Reply) -> []u8 {
-	if len(reply.result) > ROLE_RESULT_LIMIT || (reply.outcome != .Answered && reply.outcome != .Refused) {
+	if len(reply.result) > ROLE_RESULT_LIMIT || (reply.outcome != .Succeeded && (reply.value != 0 || len(reply.result) != 0)) {
 		return nil
 	}
 	body, ok := frame_begin(output, .Role_Reply, ROLE_REPLY_HEADER_SIZE + len(reply.result))
@@ -137,9 +117,14 @@ role_reply_read :: proc "contextless" (body: []u8) -> (reply: Role_Reply, ok: bo
 	if len(body) < ROLE_REPLY_HEADER_SIZE {
 		return {}, false
 	}
-	outcome, outcome_ok := role_outcome_of_wire_word(byte_order.read_u32_little_endian(body, 8))
+	// The outcome word crosses its border: a word that names no outcome is
+	// no reply, and a failure carries no value and no result.
+	outcome, unreadable := call_outcome.outcome_of_word(u64(byte_order.read_u32_little_endian(body, 8)))
 	count := u64(byte_order.read_u32_little_endian(body, 12))
-	if !outcome_ok || count > ROLE_RESULT_LIMIT || count != u64(len(body) - ROLE_REPLY_HEADER_SIZE) {
+	if unreadable.kind != 0 || count > ROLE_RESULT_LIMIT || count != u64(len(body) - ROLE_REPLY_HEADER_SIZE) {
+		return {}, false
+	}
+	if outcome != .Succeeded && (count != 0 || byte_order.read_u64_little_endian(body, 16) != 0) {
 		return {}, false
 	}
 	reply.identifier = byte_order.read_u64_little_endian(body, 0)
@@ -182,7 +167,7 @@ Role_Proxy :: struct {
 // The end of a call that the proxy decided without a reply.
 Role_Call_End :: struct {
 	identifier: u64,
-	outcome:    Role_Outcome,
+	outcome:    call_outcome.Call_Outcome,
 }
 
 Role_Proxy_Status :: enum u8 {
@@ -252,10 +237,11 @@ role_slot_find :: proc "contextless" (proxy: ^Role_Proxy, identifier: u64) -> ^R
 }
 
 // role_reply_accept takes the answer of the stream of call identifier. A
-// refusal that says the call did not run is a Refused outcome. Each other
-// answer that is not a well formed reply of this call (a fault of the
-// holder after it ran, a malformed answer, a reply that names another call)
-// is Unknown_Outcome, never a refusal: the call can have run. A call that is
+// Refusal of the machine of the holder gives the outcome of its reason
+// (mesh_refusal_outcome): a fault of the holder after it ran is
+// Callee_Stopped_During_The_Call. An answer that is not a well formed reply
+// of this call (a malformed answer, a reply that names another call) is
+// Answer_Unreadable, never a refusal: the call can have run. A call that is
 // not in flight gives found false.
 role_reply_accept :: proc "contextless" (proxy: ^Role_Proxy, identifier: u64, answer: []u8) -> (reply: Role_Reply, found: bool) {
 	slot := role_slot_find(proxy, identifier)
@@ -263,24 +249,32 @@ role_reply_accept :: proc "contextless" (proxy: ^Role_Proxy, identifier: u64, an
 		return {}, false
 	}
 	slot^ = {}
-	body, reason, _, ok := answer_expect(answer, .Role_Reply)
-	if !ok {
-		switch reason {
-		case .Role_Refused, .Not_Paired, .Use_Not_Granted, .No_Identity:
-			return Role_Reply{identifier = identifier, outcome = .Refused}, true
-		case .None, .Malformed, .Unexpected_Message, .Pairing_Refused, .Object_Absent, .Grant_Refused, .Store_Refused, .Relay_Refused, .No_Principal, .Role_Holder_Fault:
-		}
-		return Role_Reply{identifier = identifier, outcome = .Unknown_Outcome}, true
+	// Only a well formed Refusal is a refusal: a frame that does not decode
+	// is an answer that the proxy cannot read.
+	frame, frame_status := frame_decode(answer)
+	if frame_status != .Ok {
+		return Role_Reply{identifier = identifier, outcome = .Answer_Unreadable}, true
 	}
-	read, read_ok := role_reply_read(body)
+	if frame.message == .Refusal {
+		reason, _, read_ok := refusal_read(frame.body)
+		if !read_ok || reason == .None {
+			return Role_Reply{identifier = identifier, outcome = .Answer_Unreadable}, true
+		}
+		return Role_Reply{identifier = identifier, outcome = mesh_refusal_outcome(reason)}, true
+	}
+	if frame.message != .Role_Reply {
+		return Role_Reply{identifier = identifier, outcome = .Answer_Unreadable}, true
+	}
+	read, read_ok := role_reply_read(frame.body)
 	if !read_ok || read.identifier != identifier {
-		return Role_Reply{identifier = identifier, outcome = .Unknown_Outcome}, true
+		return Role_Reply{identifier = identifier, outcome = .Answer_Unreadable}, true
 	}
 	return read, true
 }
 
 // role_link_broken is the end of the QUIC connection to the holder. Each
-// call in flight ends with Unknown_Outcome, except an idempotent call, which
+// call in flight ends with Connection_Ended_During_The_Call, except an
+// idempotent call, which
 // waits for the link. Each later call is Unreachable until role_link_restored.
 role_link_broken :: proc "contextless" (proxy: ^Role_Proxy) -> (ended: [ROLE_CALLS_AT_ONCE]Role_Call_End, count: int) {
 	proxy.link = .Broken
@@ -292,7 +286,7 @@ role_link_broken :: proc "contextless" (proxy: ^Role_Proxy) -> (ended: [ROLE_CAL
 			slot.phase = .Waiting_For_Link
 			continue
 		}
-		ended[count] = Role_Call_End{identifier = slot.identifier, outcome = .Unknown_Outcome}
+		ended[count] = Role_Call_End{identifier = slot.identifier, outcome = .Connection_Ended_During_The_Call}
 		count += 1
 		slot = {}
 	}
@@ -326,13 +320,14 @@ role_resend_next :: proc "contextless" (proxy: ^Role_Proxy, output: []u8) -> (id
 	return 0, nil, false
 }
 
-// role_calls_expire ends each call past its bound with Unknown_Outcome.
+// role_calls_expire ends each call past its bound with
+// Deadline_Passed_During_The_Call.
 role_calls_expire :: proc "contextless" (proxy: ^Role_Proxy, now_ms: u64) -> (ended: [ROLE_CALLS_AT_ONCE]Role_Call_End, count: int) {
 	for &slot in proxy.slots {
 		if slot.phase == .Free || now_ms < slot.deadline_ms {
 			continue
 		}
-		ended[count] = Role_Call_End{identifier = slot.identifier, outcome = .Unknown_Outcome}
+		ended[count] = Role_Call_End{identifier = slot.identifier, outcome = .Deadline_Passed_During_The_Call}
 		count += 1
 		slot = {}
 	}

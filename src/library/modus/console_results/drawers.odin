@@ -1,5 +1,6 @@
 package console_results
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -903,6 +904,8 @@ draw_bytes :: proc "contextless" (sink: ^Sink, bytes: []u8, byte_limit: int, fir
 // record when a call gave one.
 Failure :: struct {
 	sentence:       string, // One sentence: what failed, and why.
+	has_outcome:    bool, // true: a call gave a call outcome; outcome and effect are drawn first under the sentence.
+	outcome:        call_outcome.Call_Outcome,
 	record:         ^errors.Error_Record, // nil: the console itself refused the line, and no call gave a record.
 	operation:      string, // The name of the operation or of the export of the record.
 	argument_names: []string, // The names of its parameters, from 1: the record names an argument by its number.
@@ -940,12 +943,24 @@ draw_failure :: proc "contextless" (sink: ^Sink, failure: Failure) {
 	sink.write(sink, failure.sentence, .Failure)
 	sink.end_line(sink)
 	record := failure.record
-	if record == nil || record.kind == 0 {
+	if !failure.has_outcome && (record == nil || record.kind == 0) {
 		sink.continuation = 0
 		return
 	}
 	number: [24]u8
 	sink.continuation = COLUMN_GAP + FAILURE_LABEL_WIDTH + COLUMN_GAP
+	if failure.has_outcome {
+		failure_label(sink, "outcome")
+		sink.write(sink, call_outcome.CALL_OUTCOME_NAMES[failure.outcome], .Status)
+		sink.end_line(sink)
+		failure_label(sink, "effect")
+		sink.write(sink, call_outcome.EFFECT_GROUP_NAMES[call_outcome.effect_group_of(failure.outcome)], .Status)
+		sink.end_line(sink)
+	}
+	if record == nil || record.kind == 0 {
+		sink.continuation = 0
+		return
+	}
 	failure_label(sink, "kind")
 	if kind, kind_ok := errors.kind_of_word(record.kind); kind_ok {
 		sink.write(sink, errors.KIND_NAMES[kind], .Status)

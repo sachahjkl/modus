@@ -1,5 +1,6 @@
 package build
 
+import "modus:contract/call_outcome"
 import "modus:contract/tpm_service"
 import "modus:contract/value_kinds"
 import "modus:sentence"
@@ -219,7 +220,14 @@ the_facts_of_the_network_service_write_the_lines_of_before :: proc(t: ^testing.T
 	counts := [3]u64{0, 1, max(u64)}
 	for count in counts {
 		facts_expect_line(t, render(t, file, "Endpoint_Ended", {{"datagrams_sent", count}, {"datagrams_received", max(u64) - count}, {"owner", owner}}), line_of_before("network: the endpoint of ", owner, " ended: ", count, " datagrams sent, ", max(u64) - count, " received"))
-		facts_expect_line(t, render(t, file, "Read_Region_Refused", {{"status_word", count}, {"owner", owner}}), line_of_before("network: the frame service refused the datagram region of ", owner, " as a read region: status ", count))
+	}
+	// The outcome of a refused read region by its name, and a word that
+	// names no member by its number.
+	for outcome in call_outcome.Call_Outcome {
+		facts_expect_line(t, render(t, file, "Read_Region_Refused", {{"outcome", u64(outcome)}, {"owner", owner}}), line_of_before("network: the frame service refused the datagram region of ", owner, " as a read region: outcome ", call_outcome.CALL_OUTCOME_NAMES[outcome]))
+	}
+	for word in ([2]u64{u64(max(call_outcome.Call_Outcome)) + 1, max(u64)}) {
+		facts_expect_line(t, render(t, file, "Read_Region_Refused", {{"outcome", word}, {"owner", owner}}), line_of_before("network: the frame service refused the datagram region of ", owner, " as a read region: outcome ", word))
 	}
 	// The longest name of a command, and the words of a command that names
 	// no member (frame.command_name).

@@ -5,13 +5,16 @@
 // A link pins one identity key before it connects. The transport proves a
 // key in its handshake, and the link refuses each other key: the frames of a
 // link reach only the machine whose key the principal paired. Each request
-// is one frame on a new stream, with a bound. Its end is one of four:
+// is one frame on a new stream, with a bound. Its end is a call outcome
+// (src/md/api/call_outcome.md, "The ends of a request between machines"):
 //
-// - Answered: the answer message of the request came.
-// - Refused: the other machine said that the request did not run.
-// - Unknown_Outcome: the request left, and no valid answer came before the
-//   link broke or the bound passed. The request can have run.
-// - Unreachable: the link was not up, so the request never left.
+// - Succeeded: the answer message of the request came.
+// - An outcome of the group Nothing_Changed: the other machine refused the
+//   request before it ran (mesh_refusal_outcome), or the session refused it
+//   before it left (mesh_status_outcome), or the link was not up, so it
+//   never left (Callee_Unavailable).
+// - An outcome of the group Change_In_Doubt: the request left, and no
+//   readable answer came. The request can have run.
 //
 // The session holds no transport. remote drives it from its QUIC loop
 // (mesh_link_open, mesh_link_established, mesh_request_begin,
@@ -21,6 +24,7 @@
 package machine_wire
 
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/machine_mesh"
 import "modus:contract/object_cache"
@@ -56,12 +60,43 @@ Mesh_Request_Kind :: enum u8 {
 }
 
 // The end of one request.
-Mesh_Outcome :: enum u8 {
-	None            = 0,
-	Answered        = 1, // The answer message came.
-	Refused         = 2, // The other machine refused it before it ran.
-	Unknown_Outcome = 3, // It left, and no valid answer came: it can have run.
-	Unreachable     = 4, // The link was not up: it never left.
+// mesh_refusal_outcome gives the call outcome of a Refusal of the other
+// machine, which says that the request did not run: the one place of this
+// map. Role_Holder_Fault is no refusal: the holder ran the call.
+mesh_refusal_outcome :: proc "contextless" (reason: Refusal_Reason) -> call_outcome.Call_Outcome {
+	switch reason {
+	case .Not_Paired, .Pairing_Refused, .Use_Not_Granted, .Grant_Refused, .No_Identity, .No_Principal:
+		return .Grant_Or_Right_Missing
+	case .Object_Absent:
+		return .Nothing_Has_That_Name
+	case .Malformed, .Unexpected_Message, .None:
+		return .Argument_Refused
+	case .Store_Refused, .Role_Refused, .Relay_Refused:
+		return .Callee_Unavailable
+	case .Role_Holder_Fault:
+		return .Callee_Stopped_During_The_Call
+	}
+	return .Argument_Refused
+}
+
+// mesh_status_outcome gives the call outcome of a refusal of the session
+// before the request left: nothing left, so nothing changed.
+mesh_status_outcome :: proc "contextless" (status: Mesh_Client_Status) -> call_outcome.Call_Outcome {
+	switch status {
+	case .Ok:
+		return .Succeeded
+	case .Refused_Zero_Key, .Refused_Same_Machine, .Refused_Bad_Bound, .Refused_Bad_Request, .Refused_Bad_Purpose:
+		return .Argument_Refused
+	case .Refused_Not_Paired, .Refused_No_Pairing:
+		return .Grant_Or_Right_Missing
+	case .Refused_Bad_Phase, .Refused_Code_Expired:
+		return .Wrong_State
+	case .Refused_Full:
+		return .Callee_Busy
+	case .Refused_Identity_Mismatch, .Unreachable:
+		return .Callee_Unavailable
+	}
+	return .Argument_Refused
 }
 
 // The refusals of the session. A refusal changes nothing, except
@@ -92,7 +127,7 @@ Mesh_Pending :: struct {
 // The end of a request that the session decided with no answer.
 Mesh_Request_End :: struct {
 	identifier: u64,
-	outcome:    Mesh_Outcome,
+	outcome:    call_outcome.Call_Outcome,
 }
 
 // The session of one link.
@@ -290,53 +325,49 @@ mesh_request_begin :: proc "contextless" (link: ^Mesh_Link, request: []u8, now_m
 }
 
 // mesh_answer_accept takes the bytes of the stream of a request. A Refusal
-// whose reason says that the request did not run is Refused. Each other
-// answer that is not the answer message (a malformed frame, a malformed
-// refusal, another message, a fault of a holder that ran) is
-// Unknown_Outcome: the request can have run. found is false for a request
-// that is not in flight; it then changes nothing.
-mesh_answer_accept :: proc "contextless" (link: ^Mesh_Link, identifier: u64, answer: []u8) -> (body: []u8, outcome: Mesh_Outcome, reason: Refusal_Reason, detail: u32, found: bool) {
+// whose reason says that the request did not run gives the outcome of its
+// reason (mesh_refusal_outcome). A fault of a holder that ran is
+// Callee_Stopped_During_The_Call, and each other answer that is not the
+// answer message (a malformed frame, a malformed refusal, another message)
+// is Answer_Unreadable: the request can have run. found is false for a
+// request that is not in flight; it then changes nothing, and the outcome
+// means nothing.
+mesh_answer_accept :: proc "contextless" (link: ^Mesh_Link, identifier: u64, answer: []u8) -> (body: []u8, outcome: call_outcome.Call_Outcome, reason: Refusal_Reason, detail: u32, found: bool) {
 	if link == nil {
-		return nil, .None, .None, 0, false
+		return nil, .Argument_Refused, .None, 0, false
 	}
 	pending := mesh_pending_find(link, identifier)
 	if pending == nil {
-		return nil, .None, .None, 0, false
+		return nil, .Argument_Refused, .None, 0, false
 	}
 	expected := mesh_answer_message_of(pending.kind)
 	pending^ = {}
 	frame, frame_status := frame_decode(answer)
 	if frame_status != .Ok {
-		return nil, .Unknown_Outcome, .Malformed, u32(frame_status), true
+		return nil, .Answer_Unreadable, .Malformed, u32(frame_status), true
 	}
 	if frame.message == expected {
-		return frame.body, .Answered, .None, 0, true
+		return frame.body, .Succeeded, .None, 0, true
 	}
 	if frame.message != .Refusal {
-		return nil, .Unknown_Outcome, .Unexpected_Message, u32(frame.message), true
+		return nil, .Answer_Unreadable, .Unexpected_Message, u32(frame.message), true
 	}
 	refusal_reason, refusal_detail, read_ok := refusal_read(frame.body)
-	if !read_ok {
-		return nil, .Unknown_Outcome, .Malformed, 0, true
+	if !read_ok || refusal_reason == .None {
+		return nil, .Answer_Unreadable, .Malformed, 0, true
 	}
-	switch refusal_reason {
-	case .Role_Holder_Fault:
-		return nil, .Unknown_Outcome, refusal_reason, refusal_detail, true
-	case .Malformed, .Unexpected_Message, .Not_Paired, .Pairing_Refused, .Object_Absent, .Grant_Refused, .Store_Refused, .Role_Refused, .Relay_Refused, .No_Identity, .Use_Not_Granted, .No_Principal:
-		return nil, .Refused, refusal_reason, refusal_detail, true
-	case .None:
-	}
-	return nil, .Unknown_Outcome, .Malformed, 0, true
+	return nil, mesh_refusal_outcome(refusal_reason), refusal_reason, refusal_detail, true
 }
 
 // mesh_link_broken is the end of the connection. Each request in flight
-// ends: Unknown_Outcome when the link was up, since it can have run;
-// Unreachable when the handshake never proved the key, since nothing left.
+// ends: Connection_Ended_During_The_Call when the link was up, since it can
+// have run; Callee_Unavailable when the handshake never proved the key,
+// since nothing left.
 mesh_link_broken :: proc "contextless" (link: ^Mesh_Link) -> (ended: [MESH_REQUESTS_AT_ONCE]Mesh_Request_End, count: int) {
 	if link == nil {
 		return
 	}
-	outcome := link.state == .Up ? Mesh_Outcome.Unknown_Outcome : Mesh_Outcome.Unreachable
+	outcome := link.state == .Up ? call_outcome.Call_Outcome.Connection_Ended_During_The_Call : call_outcome.Call_Outcome.Callee_Unavailable
 	for &item in link.pending {
 		if item.identifier == 0 {
 			continue
@@ -349,8 +380,9 @@ mesh_link_broken :: proc "contextless" (link: ^Mesh_Link) -> (ended: [MESH_REQUE
 	return ended, count
 }
 
-// mesh_link_expire ends each request past its bound with Unknown_Outcome,
-// and breaks a link whose handshake passed its bound.
+// mesh_link_expire ends each request past its bound with
+// Deadline_Passed_During_The_Call, and breaks a link whose handshake passed
+// its bound.
 mesh_link_expire :: proc "contextless" (link: ^Mesh_Link, now_ms: u64) -> (ended: [MESH_REQUESTS_AT_ONCE]Mesh_Request_End, count: int) {
 	if link == nil {
 		return
@@ -362,7 +394,7 @@ mesh_link_expire :: proc "contextless" (link: ^Mesh_Link, now_ms: u64) -> (ended
 		if item.identifier == 0 || now_ms < item.deadline_ms {
 			continue
 		}
-		ended[count] = Mesh_Request_End{identifier = item.identifier, outcome = .Unknown_Outcome}
+		ended[count] = Mesh_Request_End{identifier = item.identifier, outcome = .Deadline_Passed_During_The_Call}
 		count += 1
 		item = {}
 	}
@@ -405,11 +437,12 @@ Mesh_Transport :: struct {
 	user_data:  rawptr,
 }
 
-// The end of one exchange on a transport that answers at once.
+// The end of one exchange on a transport that answers at once. A zero
+// exchange is no end: each way out names its outcome.
 Mesh_Exchange :: struct {
-	outcome: Mesh_Outcome,
+	outcome: call_outcome.Call_Outcome,
 	status:  Mesh_Client_Status, // Ok, or the refusal of the session before the request left.
-	reason:  Refusal_Reason, // The reason of a Refusal, or of an Unknown_Outcome.
+	reason:  Refusal_Reason, // The reason of a Refusal, or of an answer that is not one.
 	detail:  u32,
 	body:    []u8, // The body of the answer message: a view of the answer buffer.
 	answer:  []u8, // The whole answer frame.
@@ -441,44 +474,54 @@ mesh_connect :: proc "contextless" (
 	return mesh_link_established(link, proved)
 }
 
+// mesh_exchange_refused gives the end of an exchange that the session
+// refused before the request left.
+mesh_exchange_refused :: proc "contextless" (status: Mesh_Client_Status) -> Mesh_Exchange {
+	return Mesh_Exchange{outcome = mesh_status_outcome(status), status = status}
+}
+
+// mesh_refused_by_peer says if the other machine refused the request before
+// it ran: the request left, and the answer is a Refusal.
+mesh_refused_by_peer :: proc "contextless" (exchange: Mesh_Exchange) -> bool {
+	return exchange.status == .Ok && exchange.reason != .None && call_outcome.effect_group_of(exchange.outcome) == .Nothing_Changed
+}
+
 // mesh_exchange sends one request frame and takes its answer. A request
-// that never left is Unreachable; a request that left and lost its answer
-// is Unknown_Outcome, and a broken connection ends the other requests of
-// the link as mesh_link_broken does.
+// that never left is Callee_Unavailable; a request that left and lost its
+// answer is in doubt (Deadline_Passed_During_The_Call,
+// Connection_Ended_During_The_Call, Answer_Unreadable), and a broken
+// connection ends the other requests of the link as mesh_link_broken does.
 mesh_exchange :: proc "contextless" (link: ^Mesh_Link, transport: ^Mesh_Transport, request: []u8, now_ms: u64, bound_ms: u64, answer_buffer: []u8) -> (result: Mesh_Exchange) {
 	if transport == nil || transport.round_trip == nil {
-		return Mesh_Exchange{outcome = .None, status = .Refused_Bad_Phase}
+		return mesh_exchange_refused(.Refused_Bad_Phase)
 	}
 	identifier, status := mesh_request_begin(link, request, now_ms, bound_ms)
-	if status == .Unreachable {
-		return Mesh_Exchange{outcome = .Unreachable, status = .Unreachable}
-	}
 	if status != .Ok {
-		return Mesh_Exchange{outcome = .None, status = status}
+		return mesh_exchange_refused(status)
 	}
 	count, delivery := transport.round_trip(link.pinned_identity, request, answer_buffer, bound_ms, transport.user_data)
 	switch delivery {
 	case .Answered:
 		if count < 0 || count > len(answer_buffer) {
 			mesh_pending_drop(link, identifier)
-			return Mesh_Exchange{outcome = .Unknown_Outcome, status = .Ok, reason = .Malformed}
+			return Mesh_Exchange{outcome = .Answer_Unreadable, status = .Ok, reason = .Malformed}
 		}
 		answer := answer_buffer[:count]
 		body, outcome, reason, detail, _ := mesh_answer_accept(link, identifier, answer)
 		return Mesh_Exchange{outcome = outcome, status = .Ok, reason = reason, detail = detail, body = body, answer = answer}
 	case .Timed_Out:
 		mesh_pending_drop(link, identifier)
-		return Mesh_Exchange{outcome = .Unknown_Outcome, status = .Ok}
+		return Mesh_Exchange{outcome = .Deadline_Passed_During_The_Call, status = .Ok}
 	case .Not_Connected:
-		// Nothing left: this request is Unreachable, and the others of the
+		// Nothing left: this request never left, and the others of the
 		// link, which left while it was up, end as the break says.
 		mesh_pending_drop(link, identifier)
 		mesh_link_broken(link)
-		return Mesh_Exchange{outcome = .Unreachable, status = .Unreachable}
+		return mesh_exchange_refused(.Unreachable)
 	case .Link_Broken, .None:
 	}
 	mesh_link_broken(link)
-	return Mesh_Exchange{outcome = .Unknown_Outcome, status = .Ok}
+	return Mesh_Exchange{outcome = .Connection_Ended_During_The_Call, status = .Ok}
 }
 
 // ---- The requests ----
@@ -505,16 +548,15 @@ mesh_fetch_object :: proc "contextless" (
 ) -> (result: Mesh_Object_Fetch) {
 	request := object_request_write(request_buffer, kind, hash)
 	if request == nil {
-		result.exchange.status = .Refused_Bad_Request
+		result.exchange = mesh_exchange_refused(.Refused_Bad_Request)
 		return result
 	}
 	result.exchange = mesh_exchange(link, transport, request, now_ms, bound_ms, answer_buffer)
-	switch result.exchange.outcome {
-	case .Answered:
+	switch {
+	case result.exchange.outcome == .Succeeded:
 		result.fetch, _ = object_response_accept(peer, kind, hash, result.exchange.answer)
-	case .Refused:
+	case mesh_refused_by_peer(result.exchange):
 		result.fetch = .Refused
-	case .None, .Unknown_Outcome, .Unreachable:
 	}
 	return result
 }
@@ -522,14 +564,14 @@ mesh_fetch_object :: proc "contextless" (
 // The end of one role call on a link.
 Mesh_Role_Call :: struct {
 	exchange: Mesh_Exchange,
-	reply:    Role_Reply, // When the outcome is Answered: the value and the result bytes of the holder.
+	reply:    Role_Reply, // When the outcome is Succeeded: the value and the result bytes of the holder.
 }
 
 // mesh_call_role sends one call of a role contract held on the other
 // machine. The call identifier is the identifier of the request in flight,
 // and the reply must name it: a reply of another call (a reply that came
-// late or out of order), or a malformed reply, is Unknown_Outcome. A holder
-// that refused gives the outcome Refused.
+// late or out of order), or a malformed reply, is Answer_Unreadable. A
+// holder that refused gives Callee_Unavailable with the reason Role_Refused.
 mesh_call_role :: proc "contextless" (
 	link: ^Mesh_Link,
 	transport: ^Mesh_Transport,
@@ -543,7 +585,7 @@ mesh_call_role :: proc "contextless" (
 	answer_buffer: []u8,
 ) -> (result: Mesh_Role_Call) {
 	if link == nil {
-		result.exchange.status = .Refused_Bad_Phase
+		result.exchange = mesh_exchange_refused(.Refused_Bad_Phase)
 		return result
 	}
 	// The call identifier is the identifier that the session gives this
@@ -554,22 +596,26 @@ mesh_call_role :: proc "contextless" (
 	}
 	request := role_call_write(request_buffer, Role_Call{identifier = identifier, role = role, export = export, flags = flags, arguments = arguments})
 	if request == nil {
-		result.exchange.status = .Refused_Bad_Request
+		result.exchange = mesh_exchange_refused(.Refused_Bad_Request)
 		return result
 	}
 	result.exchange = mesh_exchange(link, transport, request, now_ms, bound_ms, answer_buffer)
-	if result.exchange.outcome != .Answered {
+	if result.exchange.outcome != .Succeeded {
 		return result
 	}
 	reply, read_ok := role_reply_read(result.exchange.body)
 	if !read_ok || reply.identifier != identifier {
-		result.exchange.outcome = .Unknown_Outcome
+		result.exchange.outcome = .Answer_Unreadable
 		result.exchange.reason = .Malformed
 		return result
 	}
-	if reply.outcome == .Refused {
-		result.exchange.outcome = .Refused
-		result.exchange.reason = .Role_Refused
+	// The outcome of the holder: a refusal before it ran reads as a
+	// refusal of the peer, an outcome that changed state is passed on.
+	if reply.outcome != .Succeeded {
+		result.exchange.outcome = reply.outcome
+		if call_outcome.effect_group_of(reply.outcome) == .Nothing_Changed {
+			result.exchange.reason = .Role_Refused
+		}
 	}
 	result.reply = reply
 	return result
@@ -578,7 +624,7 @@ mesh_call_role :: proc "contextless" (
 // The end of one store exchange on a link.
 Mesh_Store_Sync :: struct {
 	exchange: Mesh_Exchange,
-	// When the outcome is Answered or Refused: Ok when both machines merged
+	// When the outcome is Succeeded or a refusal of the peer: Ok when both machines merged
 	// to one common version, else the refusal. With no answer the offer stays
 	// in flight, and the next exchange sends the same snapshot.
 	store:    Store_Status,
@@ -600,32 +646,31 @@ mesh_sync_store :: proc "contextless" (
 	store := store_exchange_find(&peer.stores, store_identifier)
 	if store == nil {
 		result.store = .Refused_Unknown_Store
-		result.exchange.status = .Refused_Bad_Request
+		result.exchange = mesh_exchange_refused(.Refused_Bad_Request)
 		return result
 	}
 	if link == nil || !machine_mesh.keys_equal_constant_time(store.partner_identity, link.pinned_identity) {
 		result.store = .Refused_Not_Partner
-		result.exchange.status = .Refused_Bad_Request
+		result.exchange = mesh_exchange_refused(.Refused_Bad_Request)
 		return result
 	}
 	request := store_offer_begin(store, request_buffer)
 	if request == nil {
 		result.store = .Refused_Full
-		result.exchange.status = .Refused_Bad_Request
+		result.exchange = mesh_exchange_refused(.Refused_Bad_Request)
 		return result
 	}
 	result.exchange = mesh_exchange(link, transport, request, now_ms, bound_ms, answer_buffer)
-	switch result.exchange.outcome {
-	case .Answered:
+	switch {
+	case result.exchange.outcome == .Succeeded:
 		result.store, _, _ = store_offer_reply_accept(store, result.exchange.answer)
-	case .Refused:
+	case mesh_refused_by_peer(result.exchange):
 		result.store = .Refused_Nil_Input
 		if result.exchange.reason == .Store_Refused {
 			if status, known := enum_word.member_of_word(Store_Status, u64(result.exchange.detail)); known {
 				result.store = status
 			}
 		}
-	case .None, .Unknown_Outcome, .Unreachable:
 	}
 	return result
 }
@@ -641,17 +686,19 @@ Mesh_Pairing_Join :: struct {
 // secrets: the code is spent on this machine.
 mesh_pair_join :: proc "contextless" (peer: ^Peer, link: ^Mesh_Link, transport: ^Mesh_Transport, now_ms: u64, bound_ms: u64, request_buffer: []u8, answer_buffer: []u8) -> (result: Mesh_Pairing_Join) {
 	if peer == nil || link == nil || link.purpose != .Pairing || link.state != .Up {
-		result.exchange.status = .Refused_Bad_Phase
+		result.exchange = mesh_exchange_refused(.Refused_Bad_Phase)
 		result.pairing = .Refused_Bad_Phase
 		return result
 	}
 	element, element_status := pairing_element_write(peer, link.pinned_identity, mesh_link_channel_binding(link), now_ms, request_buffer)
 	if element_status != .Ok {
+		// Nothing left: the pairing contract refused the element.
+		result.exchange = mesh_exchange_refused(.Refused_Bad_Request)
 		result.pairing = element_status
 		return result
 	}
 	result.exchange = mesh_exchange(link, transport, element, now_ms, bound_ms, answer_buffer)
-	if result.exchange.outcome != .Answered {
+	if result.exchange.outcome != .Succeeded {
 		result.pairing = machine_mesh.pairing_fail(&peer.pairing, .Refused_Exchange)
 		return result
 	}
@@ -667,7 +714,7 @@ mesh_pair_join :: proc "contextless" (peer: ^Peer, link: ^Mesh_Link, transport: 
 		result.pairing = confirm_status
 		return result
 	}
-	if result.exchange.outcome != .Answered {
+	if result.exchange.outcome != .Succeeded {
 		// The offerer can have written its row; this side did not see it
 		// confirmed, so it keeps no row.
 		pairing_confirmed_accept(peer, link.pinned_identity, nil)

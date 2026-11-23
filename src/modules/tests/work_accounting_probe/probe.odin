@@ -9,6 +9,7 @@
 package work_accounting_probe
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/work_budget"
@@ -590,45 +591,44 @@ probe_service: Accounted_Service
 // only, spawns one work thread per client on its own child budget, exhausts
 // client 1's scratch pages while proving client 2 keeps running and the
 // service's own remaining pages never drop for client work, then revokes and
-// closes both cleanly. Returns 0 on success, or -1 with an error record.
+// closes both cleanly. Gives Succeeded, or a failure with an error record.
 @(export, link_name = "run_two_client_isolation_probe")
-run_two_client_isolation_probe :: proc "c" (error: ^errors.Error_Record) -> i64 {
+run_two_client_isolation_probe :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	own_budget := system.own_budget()
 	if init_refusal := service_init(&probe_service, PROBE_REQUIREMENTS, own_budget, modus_runtime_ops()); init_refusal != .None {
 		if error != nil {
 			error^ = work_budget.work_budget_refusal_to_error_record(init_refusal)
 		}
-		return -1
+		return .Wrong_State, 0
 	}
 
 	amounts_a, ok_a := work_budget.work_budget_child_amounts(PROBE_REQUIREMENTS, 0)
 	amounts_b, ok_b := work_budget.work_budget_child_amounts(PROBE_REQUIREMENTS, 32)
 	if !ok_a || !ok_b {
-		errors.fail(error, 0, .Bad_Value, .Pages)
-		return -1
+		return call_outcome.fail(error, .Wrong_State, .State, .Pages)
 	}
 
 	parent_a, status_a := system.budget_create(amounts_a, own_budget, error)
 	if status_a != .Ok {
-		return -1
+		return system.outcome_of_own_status(status_a), 0
 	}
 	defer system.close(parent_a)
 
 	parent_b, status_b := system.budget_create(amounts_b, own_budget, error)
 	if status_b != .Ok {
-		return -1
+		return system.outcome_of_own_status(status_b), 0
 	}
 	defer system.close(parent_b)
 
 	// Attenuate both handles to Spend only before passing them to the service.
 	spend_a, give_a := system.give(0, parent_a, {.Spend}, error)
 	if give_a != .Ok {
-		return -1
+		return system.outcome_of_own_status(give_a), 0
 	}
 	spend_b, give_b := system.give(0, parent_b, {.Spend}, error)
 	if give_b != .Ok {
 		system.close(spend_a)
-		return -1
+		return system.outcome_of_own_status(give_b), 0
 	}
 
 	// Snapshot the service's own budget after both child budgets have been split
@@ -637,18 +637,18 @@ run_two_client_isolation_probe :: proc "c" (error: ^errors.Error_Record) -> i64 
 	if read_status != .Ok {
 		system.close(spend_a)
 		system.close(spend_b)
-		return -1
+		return system.outcome_of_own_status(read_status), 0
 	}
 
 	if connect_a := service_connect_client(&probe_service, 1, spend_a, amounts_a.pages, amounts_a.processor, amounts_a.threads, error); connect_a != .None {
 		system.close(spend_a)
 		system.close(spend_b)
-		return -1
+		return .Wrong_State, 0
 	}
 	if connect_b := service_connect_client(&probe_service, 2, spend_b, amounts_b.pages, amounts_b.processor, amounts_b.threads, error); connect_b != .None {
 		_, _ = service_disconnect_client(&probe_service, 1)
 		system.close(spend_b)
-		return -1
+		return .Wrong_State, 0
 	}
 
 	// Ask client 1 for more scratch pages than its tight child budget holds ->
@@ -657,8 +657,7 @@ run_two_client_isolation_probe :: proc "c" (error: ^errors.Error_Record) -> i64 
 	if exhaust_refusal != .Budget_Exhausted {
 		_, _ = service_disconnect_client(&probe_service, 1)
 		_, _ = service_disconnect_client(&probe_service, 2)
-		errors.fail(error, 0, .State, .Budgets, 1, i64(exhaust_refusal), i64(work_budget.Work_Budget_Refusal.Budget_Exhausted))
-		return -1
+		return call_outcome.fail(error, .Wrong_State, .State, .Budgets, 1, i64(exhaust_refusal), i64(work_budget.Work_Budget_Refusal.Budget_Exhausted))
 	}
 
 	// Client 2 must keep serving work cleanly on its own work thread.
@@ -666,7 +665,7 @@ run_two_client_isolation_probe :: proc "c" (error: ^errors.Error_Record) -> i64 
 	if b_refusal != .None {
 		_, _ = service_disconnect_client(&probe_service, 1)
 		_, _ = service_disconnect_client(&probe_service, 2)
-		return -1
+		return .Wrong_State, 0
 	}
 
 	own_after_work, _ := system.budget_read(own_budget)
@@ -676,8 +675,7 @@ run_two_client_isolation_probe :: proc "c" (error: ^errors.Error_Record) -> i64 
 
 	// Confirm the service's own budget did not lose pages to client work.
 	if own_after_work.pages < own_before.pages {
-		errors.fail(error, 0, .Budget, .Pages, 0, i64(own_after_work.pages), i64(own_before.pages))
-		return -1
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Budget, .Pages, 0, i64(own_after_work.pages), i64(own_before.pages))
 	}
-	return 0
+	return .Succeeded, 0
 }

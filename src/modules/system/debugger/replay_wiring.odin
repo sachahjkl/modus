@@ -9,6 +9,7 @@
 // each kernel entry of the recorded thread.
 package debugger
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/input_history"
 import "modus:contract/isolated"
@@ -102,14 +103,24 @@ history_end_names := [input_history.History_End_Reason]string {
 	.Divergence          = "divergence",
 }
 
-// kernel_refused gives the result of an export whose kernel operation
-// failed: the record of the kernel when it gave one, else Refused with the
-// status.
-kernel_refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status) -> i64 {
+// kernel_refused gives the result of an export whose kernel operation on
+// the debugged process failed: the record of the kernel when it gave one,
+// else Refused with the status. The outcome is the one of session_refused.
+kernel_refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status) -> call_outcome.Call_Outcome {
 	if error != nil && error.kind != i64(errors.Kind.None) {
-		return ERROR_REFUSED
+		return status == .Bad_State ? .Wrong_State : system.outcome_of_own_status(status)
 	}
-	return refused(error, status)
+	return session_refused(error, status)
+}
+
+// own_kernel_refused gives the outcome of a kernel refusal on an object
+// that the service owns (its history memory), never blaming the caller.
+own_kernel_refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status) -> call_outcome.Call_Outcome {
+	outcome := system.outcome_of_own_status(status)
+	if error != nil && error.kind != i64(errors.Kind.None) {
+		return outcome
+	}
+	return refuse(error, outcome, .Refused, .Kernel_Status, 0, 0, 0, i64(status))
 }
 
 // history_header_read copies the header of the history once, through the
@@ -188,10 +199,10 @@ record_session_name :: proc "contextless" () -> string {
 // runs: a history is as secret as the process, and the end of the
 // connection of its caller forgets it. A failure gives the result of the
 // export.
-record_of_caller :: proc "contextless" (error: ^errors.Error_Record) -> (failure: i64) {
+record_of_caller :: proc "contextless" (error: ^errors.Error_Record) -> (failure: call_outcome.Call_Outcome) {
 	caller := system.service_caller()
 	if caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return refuse(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if record_session.state != .None {
 		if kind, _, _ := system.handle_state(record_session.caller_ring); kind != .Memory {
@@ -199,26 +210,26 @@ record_of_caller :: proc "contextless" (error: ^errors.Error_Record) -> (failure
 		}
 	}
 	if record_session.state == .None || record_session.caller_ring != caller.ring_memory {
-		return errors.fail(error, ERROR_RECORD, .Absent, .Input_Histories)
+		return refuse(error, .Nothing_Has_That_Name, .Absent, .Input_Histories)
 	}
 	record_state_refresh()
-	return 0
+	return .Succeeded
 }
 
 // record_begin makes the history, maps it without Write, and asks the
 // kernel to record the process of the session into it. A failure gives the
 // result of the export, and leaves no history.
-record_begin :: proc "contextless" (error: ^errors.Error_Record) -> (failure: i64) {
+record_begin :: proc "contextless" (error: ^errors.Error_Record) -> (failure: call_outcome.Call_Outcome) {
 	record_session_release()
 	history, made := system.memory_create(HISTORY_PAGES, flags = {.Contiguous}, error = error)
 	if made != .Ok {
-		return kernel_refused(error, made)
+		return own_kernel_refused(error, made)
 	}
 	record_session.history = history
 	address, mapped := system.memory_map(history, {}, error = error)
 	if mapped != .Ok {
 		record_session_release()
-		return kernel_refused(error, mapped)
+		return own_kernel_refused(error, mapped)
 	}
 	record_session.bytes = ([^]u8)(address)[:HISTORY_PAGES * system.PAGE_SIZE]
 	if started := system.process_record_start(session.process, history, error); started != .Ok {
@@ -229,7 +240,7 @@ record_begin :: proc "contextless" (error: ^errors.Error_Record) -> (failure: i6
 	record_session.caller_ring = session.caller_ring
 	record_session.name_count = copy(record_session.name[:], session_name())
 	record_session.state = .Recording
-	return 0
+	return .Succeeded
 }
 
 // record_row_fill writes the row of the record from the header of the
@@ -270,28 +281,28 @@ record_row_fill :: proc "contextless" (row: ^Record_Row) -> bool {
 
 // record_rows gives the one row of the record, or the failure of the
 // export when the header of the history is damaged.
-record_rows :: proc "contextless" (result: ^[]Record_Row, error: ^errors.Error_Record) -> i64 {
+record_rows :: proc "contextless" (result: ^[]Record_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	row: Record_Row
 	if !record_row_fill(&row) {
-		return errors.fail(error, ERROR_RECORD, .Damaged, .Input_Histories)
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Input_Histories)
 	}
 	if len(result^) > 0 {
 		result[0] = row
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // held_session_begin makes the service the debugger of a process that the
 // root service holds before its first instruction (Debug_Start), as attach
 // does for a process that runs. A failure stops the held process: it was
 // started for this debugging only. It gives the result of the export.
-held_session_begin :: proc "contextless" (name: string, caller: ^system.Connection, completion: [7]u64, error: ^errors.Error_Record) -> (failure: i64) {
+held_session_begin :: proc "contextless" (name: string, caller: ^system.Connection, completion: [7]u64, error: ^errors.Error_Record) -> (failure: call_outcome.Call_Outcome) {
 	// The handle is a number from another process: it must be a process
 	// handle with Debug that came through the ring to the root service.
 	handle := system.Handle(completion[0])
 	if kind, rights, through := system.handle_state(handle, requests_memory); kind != .Process || .Debug not_in rights || !through {
 		root_debug_start(name, caller.ring_memory, .Abandon)
-		return refused(error, .Bad_Handle)
+		return party_answer_refused(error)
 	}
 	hash := transmute([32]u8)[4]u64{completion[1], completion[2], completion[3], completion[4]}
 	slot, process_serial, matches := slot_find(name, hash, held_only = true)
@@ -299,10 +310,10 @@ held_session_begin :: proc "contextless" (name: string, caller: ^system.Connecti
 		system.close(handle)
 		root_debug_start(name, caller.ring_memory, .Abandon)
 		if matches == 0 {
-			return errors.fail(error, ERROR_ENDED, .Absent, .Processes, 1)
+			return refuse(error, .Nothing_Has_That_Name, .Absent, .Processes, 1)
 		}
 		system.log_fact(.Info, Attach_Ambiguous{matches = u64(matches), debugged_process = value_kinds.module_name_field(name)})
-		return errors.fail(error, ERROR_AMBIGUOUS, .Bad_Value, .Processes, 1, i64(matches), 1)
+		return refuse(error, .Argument_Refused, .Bad_Value, .Processes, 1, i64(matches), 1)
 	}
 	// The records of an earlier debugging are of no thread of this process.
 	for {
@@ -313,7 +324,7 @@ held_session_begin :: proc "contextless" (name: string, caller: ^system.Connecti
 	if status := system.debug_attach(handle); status != .Ok {
 		system.close(handle)
 		root_debug_start(name, caller.ring_memory, .Abandon)
-		return refused(error, status)
+		return session_refused(error, status)
 	}
 	session = {
 		attached       = true,
@@ -325,7 +336,7 @@ held_session_begin :: proc "contextless" (name: string, caller: ^system.Connecti
 	session.name_count = copy(session.name[:], name)
 	reports_read()
 	system.log_fact(.Info, Attach_Done{threads = 0, modules = u64(min(report_modules.count, op.PROCESS_MODULE_CAPACITY)), described = 0, debugged_process = value_kinds.module_name_field(name), caller = value_kinds.module_name_field(system.name_of(caller.caller[:]))})
-	return 0
+	return .Succeeded
 }
 
 // replay_begin starts the module of the history again, held before its
@@ -334,26 +345,23 @@ held_session_begin :: proc "contextless" (name: string, caller: ^system.Connecti
 // record into it, answers each kernel entry from the history, and stops it
 // at the first difference. A failure stops the held process and gives the
 // result of the export.
-replay_begin :: proc "contextless" (caller: ^system.Connection, error: ^errors.Error_Record) -> (failure: i64) {
+replay_begin :: proc "contextless" (caller: ^system.Connection, error: ^errors.Error_Record) -> (failure: call_outcome.Call_Outcome) {
 	name := record_session_name()
 	header, _, ok := history_header_read()
 	if !ok {
-		return errors.fail(error, ERROR_RECORD, .Damaged, .Input_Histories)
+		return refuse(error, .Data_Damaged, .Damaged, .Input_Histories)
 	}
 	completion, answered := root_debug_start(name, caller.ring_memory, .Start_Replay)
 	if !answered {
-		return errors.fail(error, ERROR_REFUSED, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
+		return refuse(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
-	if system.Status(completion.kind) != .Ok {
-		if error != nil {
-			error^ = errors.completion_record(completion.values)
-		}
-		return ERROR_REFUSED
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+		return root_refusal_taken(error, completion)
 	}
 	handle := system.Handle(completion.values[0])
 	if kind, rights, through := system.handle_state(handle, requests_memory); kind != .Process || .Debug not_in rights || !through {
 		root_debug_start(name, caller.ring_memory, .Abandon)
-		return refused(error, .Bad_Handle)
+		return party_answer_refused(error)
 	}
 	// The boot image can hold another module of this name than the one
 	// that was recorded: its replay would prove another run.
@@ -361,16 +369,16 @@ replay_begin :: proc "contextless" (caller: ^system.Connection, error: ^errors.E
 	if hash != header.module_hash {
 		system.close(handle)
 		root_debug_start(name, caller.ring_memory, .Abandon)
-		return errors.fail(error, ERROR_RECORD, .Bad_Value, .Input_Histories, 1)
+		return refuse(error, .Argument_Refused, .Bad_Value, .Input_Histories, 1)
 	}
 	slot, process_serial, matches := slot_find(name, hash, held_only = true)
 	if matches != 1 {
 		system.close(handle)
 		root_debug_start(name, caller.ring_memory, .Abandon)
 		if matches == 0 {
-			return errors.fail(error, ERROR_ENDED, .Absent, .Processes, 1)
+			return refuse(error, .Nothing_Has_That_Name, .Absent, .Processes, 1)
 		}
-		return errors.fail(error, ERROR_AMBIGUOUS, .Bad_Value, .Processes, 1, i64(matches), 1)
+		return refuse(error, .Argument_Refused, .Bad_Value, .Processes, 1, i64(matches), 1)
 	}
 	if status := system.process_replay_start(handle, record_session.history, error); status != .Ok {
 		system.close(handle)
@@ -380,14 +388,11 @@ replay_begin :: proc "contextless" (caller: ^system.Connection, error: ^errors.E
 	released, released_answered := root_debug_start(name, caller.ring_memory, .Release)
 	if !released_answered {
 		system.close(handle)
-		return errors.fail(error, ERROR_REFUSED, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
+		return refuse(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
-	if system.Status(released.kind) != .Ok {
+	if released.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.close(handle)
-		if error != nil {
-			error^ = errors.completion_record(released.values)
-		}
-		return ERROR_REFUSED
+		return root_refusal_taken(error, released)
 	}
 	record_session.replay_process = handle
 	record_session.replay_slot = slot
@@ -396,7 +401,7 @@ replay_begin :: proc "contextless" (caller: ^system.Connection, error: ^errors.E
 	record_session.divergence_read = .Not_Read
 	record_session.divergence_report = {}
 	record_session.state = .Replaying
-	return 0
+	return .Succeeded
 }
 
 // checkpoint_rows gives one row for each checkpoint that the service keeps,

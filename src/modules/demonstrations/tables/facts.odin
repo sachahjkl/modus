@@ -1,6 +1,6 @@
 package tables
 
-import "modus:contract/call_status"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -98,14 +98,14 @@ Refusal_Case :: enum u8 {
 No_Random_Seed :: struct {}
 
 // A call of a measure was refused: its way, its rows, the call and the
-// status of the call, which the contract enum Call_Status writes by its
+// outcome of the call, which the contract enum Call_Outcome writes by its
 // name.
-@(log_fact = "tables: {way}, {rows} rows: call {call} gave the status {status}")
+@(log_fact = "tables: {way}, {rows} rows: call {call} gave the outcome {outcome}")
 Measure_Call_Refused :: struct {
-	rows:   u64,
-	call:   u64,
-	status: call_status.Call_Status_Word,
-	way:    [32]u8,
+	rows:    u64,
+	call:    u64,
+	outcome: call_outcome.Call_Outcome_Word,
+	way:     [32]u8,
 }
 
 // A case gave another answer in one way than the one it must give.

@@ -1,7 +1,9 @@
 package storage_service
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
+import "modus:contract/storage_status"
 import format "modus:contract/store"
 import "modus:contract/value_kinds"
 import block_tree "internal:storage/storage_object"
@@ -181,38 +183,38 @@ Ranged :: struct {
 // ranged_of finds the object of a call on ranges. A name with no entry is
 // an object of no byte, when the caller has pending changes for it or makes
 // a change.
-ranged_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_Record, change: bool) -> (ranged: Ranged, result: i64) {
+ranged_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_Record, change: bool) -> (ranged: Ranged, result: call_outcome.Call_Outcome) {
 	ranged.named, result = named_of(place, name, error, 1, change)
-	if result < 0 {
+	if result != .Succeeded {
 		return ranged, result
 	}
 	if ranged.named.caller.connection != nil {
 		ranged.pending = pending_find(ranged.named.caller.connection.ring_memory, &ranged.named.path, ranged.named.name.key)
 	}
 	_, value, located := object_locate(ranged.named.path.store.name, path_names(&ranged.named.path), ranged.named.name, error, 2)
-	if located >= 0 {
+	if located == .Succeeded {
 		ranged.state = current_state(&value)
 		ranged.exists = true
-		return ranged, 0
+		return ranged, .Succeeded
 	}
-	if located == failure(.Absent) && (change || ranged.pending != nil) {
+	if located == .Nothing_Has_That_Name && (change || ranged.pending != nil) {
 		// A name that is a tree is refused: the lookup of the name as an
 		// object gives Absent for it too, so look at its entry.
 		if store_index := store_find(ranged.named.path.store.name); store_index >= 0 {
 			if entry, outcome := entry_of(store_index, path_names(&ranged.named.path), ranged.named.name.key); outcome == .Found && entry.kind != u64(format.Entry_Kind.Object) {
-				return ranged, errors.fail(error, failure(.Absent), .Absent, .Objects, 2)
+				return ranged, refuse(error, .Nothing_Has_That_Name, .Absent, .Objects, 2)
 			} else if outcome == .Wrong || outcome == .Device {
 				return ranged, lookup_refusal(outcome, error, 2)
 			} else if outcome == .Absent && len(path_names(&ranged.named.path)) != 0 {
 				// The tree of the place: it must exist for a new object.
 				if _, tree_outcome := tree_of(store_index, path_names(&ranged.named.path)); tree_outcome == .Absent {
-					return ranged, errors.fail(error, failure(.Absent), .Absent, .Places, 1)
+					return ranged, refuse(error, .Nothing_Has_That_Name, .Absent, .Places, 1)
 				} else if tree_outcome != .Found {
 					return ranged, lookup_refusal(tree_outcome, error, 1)
 				}
 			}
 		}
-		return ranged, 0
+		return ranged, .Succeeded
 	}
 	return ranged, located
 }
@@ -224,11 +226,11 @@ ranged_size :: proc "contextless" (ranged: ^Ranged) -> u64 {
 
 // ranged_read reads bytes from `offset` as the caller sees them: its
 // pending blocks, the bytes of the last commit before the cut, and zero
-// bytes. It gives the count of bytes, or a negative number.
-ranged_read :: proc "contextless" (ranged: ^Ranged, offset: u64, result: []u8, error: ^errors.Error_Record) -> i64 {
+// bytes. It gives the count of bytes, or the outcome of a refused read.
+ranged_read :: proc "contextless" (ranged: ^Ranged, offset: u64, result: []u8, error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	size := ranged_size(ranged)
 	if offset >= size {
-		return 0
+		return 0, .Succeeded
 	}
 	count := min(u64(len(result)), size - offset)
 	pending := ranged.pending
@@ -243,22 +245,22 @@ ranged_read :: proc "contextless" (ranged: ^Ranged, offset: u64, result: []u8, e
 		if place := pending_block_find(pending, index); place >= 0 {
 			copy(into, pending_blocks[place].bytes[inside:][:part])
 		} else {
-			if read := base_read(ranged, at, into, error); read < 0 {
-				return read
+			if _, read := base_read(ranged, at, into, error); read != .Succeeded {
+				return 0, read
 			}
 		}
 		at += part
 	}
-	return i64(count)
+	return i64(count), .Succeeded
 }
 
 // base_read reads bytes of the last commit as the pending changes leave
 // them: zero bytes at and past the cut.
-base_read :: proc "contextless" (ranged: ^Ranged, at: u64, into: []u8, error: ^errors.Error_Record) -> i64 {
+base_read :: proc "contextless" (ranged: ^Ranged, at: u64, into: []u8, error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	cut := ranged.pending != nil ? ranged.pending.cut : ranged.state.size
 	intrinsics.mem_zero(raw_data(into), len(into))
 	if at >= cut || !ranged.exists {
-		return 0
+		return 0, .Succeeded
 	}
 	kept := min(u64(len(into)), cut - at)
 	return state_read(ranged.state, at, into[:kept], error, 2)
@@ -266,39 +268,39 @@ base_read :: proc "contextless" (ranged: ^Ranged, at: u64, into: []u8, error: ^e
 
 // pending_block_take gives the pending block `index` of a pending object:
 // at its first change, a copy of the block as the caller sees it.
-pending_block_take :: proc "contextless" (ranged: ^Ranged, index: u64, error: ^errors.Error_Record) -> (place: int, result: i64) {
+pending_block_take :: proc "contextless" (ranged: ^Ranged, index: u64, error: ^errors.Error_Record) -> (place: int, result: call_outcome.Call_Outcome) {
 	pending := ranged.pending
 	if place = pending_block_find(pending, index); place >= 0 {
-		return place, 0
+		return place, .Succeeded
 	}
 	if pending_blocks_used >= PENDING_BLOCK_CAPACITY {
 		// The pending blocks of connections that ended go first.
 		pending_sweep()
 	}
 	if pending_blocks_used >= PENDING_BLOCK_CAPACITY {
-		return -1, errors.fail(error, failure(.Full), .Full, .Pending, 0, 0, PENDING_BLOCK_CAPACITY)
+		return -1, refuse(error, .Budget_Or_Capacity_Exhausted, .Full, .Pending, 0, 0, PENDING_BLOCK_CAPACITY)
 	}
 	for &block, free_place in pending_blocks {
 		if block.owner != 0 {
 			continue
 		}
-		if read := base_read(ranged, index * BLOCK_SIZE, block.bytes[:], error); read < 0 {
+		if _, read := base_read(ranged, index * BLOCK_SIZE, block.bytes[:], error); read != .Succeeded {
 			return -1, read
 		}
 		block.owner = pending_index(pending) + 1
 		block.index = index
 		pending.blocks += 1
 		pending_blocks_used += 1
-		return free_place, 0
+		return free_place, .Succeeded
 	}
-	return -1, errors.fail(error, failure(.Full), .Full, .Pending, 0, 0, PENDING_BLOCK_CAPACITY)
+	return -1, refuse(error, .Budget_Or_Capacity_Exhausted, .Full, .Pending, 0, 0, PENDING_BLOCK_CAPACITY)
 }
 
 // ranged_pending gives the pending object of the caller, and makes it at
 // the first change.
-ranged_pending :: proc "contextless" (ranged: ^Ranged, error: ^errors.Error_Record) -> i64 {
+ranged_pending :: proc "contextless" (ranged: ^Ranged, error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	if ranged.pending != nil {
-		return 0
+		return 0, .Succeeded
 	}
 	base: u64
 	if ranged.exists {
@@ -306,45 +308,46 @@ ranged_pending :: proc "contextless" (ranged: ^Ranged, error: ^errors.Error_Reco
 	}
 	ranged.pending = pending_take(ranged.named.caller.connection.ring_memory, &ranged.named.path, ranged.named.name.key, base, ranged.state.size)
 	if ranged.pending == nil {
-		return errors.fail(error, failure(.Full), .Full, .Pending, 0, 0, PENDING_OBJECT_CAPACITY)
+		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Full, .Pending, 0, 0, PENDING_OBJECT_CAPACITY)
 	}
-	return 0
+	return 0, .Succeeded
 }
 
-// read_range copies the bytes of the object `name` under a place from `offset` into result, up to its end: as this connection sees it, with its pending changes. A hole reads as zero bytes. The result is the count of bytes (0 at the end), or a negative number with an error record.
+// read_range copies the bytes of the object `name` under a place from `offset` into result, up to its end: as this connection sees it, with its pending changes. A hole reads as zero bytes. The result is the count of bytes (0 at the end), or a failure with its call outcome and an error record.
 //
-// The error kinds: those of read; Out_Of_Range (-3, offset is past the end: limit the size).
+// The error kinds: those of read; Out_Of_Range (offset is past the end: limit the size).
 @(export, link_name = "read_range")
-read_range :: proc "c" (place: i64, name: ^string, offset: i64, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+read_range :: proc "c" (place: i64, name: ^string, offset: i64, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	ranged, refused := ranged_of(place, name^, error, false)
-	if refused < 0 {
-		return refused
+	if refused != .Succeeded {
+		return refused, 0
 	}
 	size := ranged_size(&ranged)
 	if offset < 0 || u64(offset) > size {
-		return errors.fail(error, failure(.Name), .Out_Of_Range, .Bytes, 3, offset, i64(size))
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Bytes, 3, offset, i64(size))
 	}
-	return ranged_read(&ranged, u64(offset), result^, error)
+	value, outcome = ranged_read(&ranged, u64(offset), result^, error)
+	return
 }
 
-// write_range writes the bytes of data at `offset` of the object `name` under a place, as a pending change of this connection: no commit, and no hash. A read of this connection sees it at once; another connection sees the object as its last commit gives it. The object grows when the range passes its end; a new name is a new object at the commit. A loss of power before commit loses the pending changes. The result is the size of the object with the pending changes, or a negative number with an error record.
+// write_range writes the bytes of data at `offset` of the object `name` under a place, as a pending change of this connection: no commit, and no hash. A read of this connection sees it at once; another connection sees the object as its last commit gives it. The object grows when the range passes its end; a new name is a new object at the commit. A loss of power before commit loses the pending changes. The result is the size of the object with the pending changes, or a failure with its call outcome and an error record.
 //
-// The error kinds: No_Grant (-1; -12, unit Changes: the connection reads only); Absent (-12, -7: the place; -7, unit Objects: the name is a tree); the errors of a name (-3); Bad_Value (-3: offset is negative); Too_Long (-4: the object would pass 4 TiB); Full (-5, unit Pending: the service holds no more pending blocks or objects: commit first); Damaged (-8: a block that the range changes in part has a wrong check); Device (-6).
+// The error kinds: No_Grant (Grant_Or_Right_Missing; Grant_Or_Right_Missing, unit Changes: the connection reads only); Absent (Nothing_Has_That_Name: the place; Nothing_Has_That_Name, unit Objects: the name is a tree); the errors of a name (Argument_Refused); Bad_Value (Argument_Refused: offset is negative); Too_Long (Argument_Refused: the object would pass 4 TiB); Full (unit Pending: the service holds no more pending blocks or objects: commit first); Damaged (Data_Damaged: a block that the range changes in part has a wrong check); Device (Callee_Unavailable).
 @(export, link_name = "write_range")
-write_range :: proc "c" (place: i64, name: ^string, offset: i64, data: ^string, error: ^errors.Error_Record) -> i64 {
+write_range :: proc "c" (place: i64, name: ^string, offset: i64, data: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	ranged, refused := ranged_of(place, name^, error, true)
-	if refused < 0 {
-		return refused
+	if refused != .Succeeded {
+		return refused, 0
 	}
 	count := u64(len(data^))
 	if offset < 0 {
-		return errors.fail(error, failure(.Name), .Bad_Value, .Bytes, 3, offset)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 3, offset)
 	}
 	if u64(offset) > format.OBJECT_SIZE_LIMIT || count > format.OBJECT_SIZE_LIMIT - u64(offset) {
-		return errors.fail(error, failure(.Too_Large), .Too_Long, .Bytes, 3, offset + i64(count), i64(format.OBJECT_SIZE_LIMIT))
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 3, offset + i64(count), i64(format.OBJECT_SIZE_LIMIT))
 	}
-	if pending_refused := ranged_pending(&ranged, error); pending_refused < 0 {
-		return pending_refused
+	if _, pending_outcome := ranged_pending(&ranged, error); pending_outcome != .Succeeded {
+		return pending_outcome, 0
 	}
 	pending := ranged.pending
 	bytes := transmute([]u8)data^
@@ -354,33 +357,35 @@ write_range :: proc "c" (place: i64, name: ^string, offset: i64, data: ^string, 
 		inside := at % BLOCK_SIZE
 		part := min(BLOCK_SIZE - inside, end - at)
 		block_place, taken := pending_block_take(&ranged, index, error)
-		if taken < 0 {
-			return taken // The blocks of the range before it stay pending.
+		if taken != .Succeeded {
+			// The blocks of the range before it stay pending: a change
+			// that this connection sees at its next read.
+			return call_outcome.outcome_passed_on(taken, at > u64(offset)), 0
 		}
 		copy(pending_blocks[block_place].bytes[inside:][:part], bytes[at - u64(offset):][:part])
 		at += part
 		pending.size = max(pending.size, at)
 	}
-	return i64(pending.size)
+	return .Succeeded, i64(pending.size)
 }
 
-// set_size makes the size of the object `name` under a place `size` bytes, as a pending change of this connection: a cut drops the bytes past it, an extension adds zero bytes, which hold no block. The result is the size, or a negative number with an error record.
+// set_size makes the size of the object `name` under a place `size` bytes, as a pending change of this connection: a cut drops the bytes past it, an extension adds zero bytes, which hold no block. The result is the size, or a failure with its call outcome and an error record.
 //
 // The error kinds: those of write_range.
 @(export, link_name = "set_size")
-set_size :: proc "c" (place: i64, name: ^string, size: value_kinds.Size_In_Bytes, error: ^errors.Error_Record) -> i64 {
+set_size :: proc "c" (place: i64, name: ^string, size: value_kinds.Size_In_Bytes, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	ranged, refused := ranged_of(place, name^, error, true)
-	if refused < 0 {
-		return refused
+	if refused != .Succeeded {
+		return refused, 0
 	}
 	if size < 0 {
-		return errors.fail(error, failure(.Name), .Bad_Value, .Bytes, 3, i64(size))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 3, i64(size))
 	}
 	if u64(size) > format.OBJECT_SIZE_LIMIT {
-		return errors.fail(error, failure(.Too_Large), .Too_Long, .Bytes, 3, i64(size), i64(format.OBJECT_SIZE_LIMIT))
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 3, i64(size), i64(format.OBJECT_SIZE_LIMIT))
 	}
-	if pending_refused := ranged_pending(&ranged, error); pending_refused < 0 {
-		return pending_refused
+	if _, pending_outcome := ranged_pending(&ranged, error); pending_outcome != .Succeeded {
+		return pending_outcome, 0
 	}
 	pending := ranged.pending
 	new_size := u64(size)
@@ -389,48 +394,51 @@ set_size :: proc "c" (place: i64, name: ^string, size: value_kinds.Size_In_Bytes
 		// zero bytes after it; the blocks after it are dropped.
 		keep := blocks_of(new_size)
 		owner := pending_index(pending) + 1
+		dropped_blocks := false
 		for &block in pending_blocks {
 			if block.owner == owner && block.index >= keep {
 				block.owner = 0
 				pending.blocks -= 1
 				pending_blocks_used -= 1
+				dropped_blocks = true
 			}
 		}
 		if inside := new_size % BLOCK_SIZE; inside != 0 {
 			block_place, taken := pending_block_take(&ranged, new_size / BLOCK_SIZE, error)
-			if taken < 0 {
-				return taken
+			if taken != .Succeeded {
+				// Only a partial change when the loop above dropped pending blocks.
+				return call_outcome.outcome_passed_on(taken, dropped_blocks), 0
 			}
 			intrinsics.mem_zero(&pending_blocks[block_place].bytes[inside], BLOCK_SIZE - int(inside))
 		}
 		pending.cut = min(pending.cut, new_size)
 	}
 	pending.size = new_size
-	return i64(size)
+	return .Succeeded, i64(size)
 }
 
-// commit puts the pending changes of this connection on the object `name` under a place in one commit, on the disk when the call returns. The state before becomes a version. The commit hashes the blocks that changed and the object nodes above them, and the path of the last block: never the whole object. The result is one row: the generation, and the measure of the commit (the blocks of the object, the blocks changed, hashed and written); or a negative number with an error record.
+// commit puts the pending changes of this connection on the object `name` under a place in one commit, on the disk when the call returns. The state before becomes a version. The commit hashes the blocks that changed and the object nodes above them, and the path of the last block: never the whole object. The result is one row: the generation, and the measure of the commit (the blocks of the object, the blocks changed, hashed and written); or a failure with its call outcome and an error record.
 //
-// The error kinds: those of write; Absent (-13, unit Pending: the object has no pending change on this connection; found 1: another change of the object came first since the first pending change, and the pending changes are dropped); Damaged (-8: the state before is damaged; the pending changes are dropped).
+// The error kinds: those of write; Absent (unit Pending: the object has no pending change on this connection; found 1: another change of the object came first since the first pending change, and the pending changes are dropped); Damaged (Data_Damaged: the state before is damaged; the pending changes stay on the connection).
 @(export, link_name = "commit")
-commit :: proc "c" (place: i64, name: ^string, result: ^[]Commit_Measure, error: ^errors.Error_Record) -> i64 {
+commit :: proc "c" (place: i64, name: ^string, result: ^[]Commit_Measure, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	ranged, refused := ranged_of(place, name^, error, true)
-	if refused < 0 && refused != failure(.Absent) {
-		return refused
+	if refused != .Succeeded && refused != .Nothing_Has_That_Name {
+		return refused, 0
 	}
 	pending := ranged.pending
 	if pending == nil {
-		return errors.fail(error, failure(.Pending), .Absent, .Pending, 2)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Pending, 2)
 	}
 	start := system.time()
 	written_before := blocks_written
 	measure: Commit_Measure
-	generation := object_change(ranged.named.caller.store, path_names(&ranged.named.path), ranged.named.name, .Ranges, nil, {}, reaches_whole_store(&ranged.named.caller), error, 2, pending, &measure)
-	if generation < 0 {
-		if generation == failure(.Pending) || generation == failure(.Damaged) {
+	generation, changed := object_change(ranged.named.caller.store, path_names(&ranged.named.path), ranged.named.name, .Ranges, nil, {}, reaches_whole_store(&ranged.named.caller), error, 2, pending, &measure)
+	if changed != .Succeeded {
+		if storage_status.commit_refusal_drops_pending(changed) {
 			pending_drop(pending)
 		}
-		return generation
+		return changed, 0
 	}
 	pending_drop(pending)
 	measure.generation = generation
@@ -440,5 +448,5 @@ commit :: proc "c" (place: i64, name: ^string, result: ^[]Commit_Measure, error:
 	if len(result) > 0 {
 		result[0] = measure
 	}
-	return 1
+	return .Succeeded, 1
 }

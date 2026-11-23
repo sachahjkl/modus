@@ -1,5 +1,6 @@
 package root
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
@@ -83,9 +84,9 @@ Compositor_Start_Failed :: struct {
 	status: op.Status,
 }
 
-@(log_fact = "root: unlock did not start (status {status}): no named principal can be created or unlocked")
+@(log_fact = "root: unlock did not start (outcome {outcome}): no named principal can be created or unlocked")
 Unlock_Start_Failed :: struct {
-	status: op.Status,
+	outcome: call_outcome.Call_Outcome,
 }
 
 // A start refused by the kernel with a status, and no error of the loader.
@@ -95,20 +96,20 @@ Start_Failed :: struct {
 	refused_process: value_kinds.Module_Name_Field,
 }
 
-@(log_fact = "root: no choice of a start policy is read: unlock did not start, with the status {status}")
+@(log_fact = "root: no choice of a start policy is read: unlock did not start, with the outcome {outcome}")
 Start_Policy_Choice_Unread_Unlock_Failed :: struct {
-	status: op.Status,
+	outcome: call_outcome.Call_Outcome,
 }
 
-@(log_fact = "root: the chosen start policy \"{nickname}\" is not read: no connection to the storage service, status {status}: the rescue start policy starts")
+@(log_fact = "root: the chosen start policy \"{nickname}\" is not read: no connection to the storage service, outcome {outcome}: the rescue start policy starts")
 Chosen_Start_Policy_No_Connection :: struct {
-	status:   op.Status,
+	outcome:  call_outcome.Call_Outcome,
 	nickname: value_kinds.Module_Name_Field,
 }
 
-@(log_fact = "root: the chosen start policy \"{nickname}\" is not started, with the status {status}: the rescue start policy starts")
+@(log_fact = "root: the chosen start policy \"{nickname}\" is not started, with the outcome {outcome}: the rescue start policy starts")
 Chosen_Start_Policy_Not_Started :: struct {
-	status:   op.Status,
+	outcome:  call_outcome.Call_Outcome,
 	nickname: value_kinds.Module_Name_Field,
 }
 
@@ -117,23 +118,23 @@ Machine_Parts_Page_Failed :: struct {
 	status: op.Status,
 }
 
-@(log_fact = "root: the boot pass of settings did not start (status {status}): the settings are the defaults")
+@(log_fact = "root: the boot pass of settings did not start (outcome {outcome}): the settings are the defaults")
 Settings_Boot_Pass_Failed :: struct {
-	status: op.Status,
+	outcome: call_outcome.Call_Outcome,
 }
 
 // The start of the window of settings that waited for a pass, after the
 // pass stopped.
-@(log_fact = "root: the start of settings that waited for its pass did not start (status {status})")
+@(log_fact = "root: the start of settings that waited for its pass did not start (outcome {outcome})")
 Settings_Due_Start_Failed :: struct {
-	status: op.Status,
+	outcome: call_outcome.Call_Outcome,
 }
 
 // The tile of the Control Center asked for the next appearance, and the
 // pass of settings did not start.
-@(log_fact = "root: the next appearance of the Control Center did not start settings (status {status})")
+@(log_fact = "root: the next appearance of the Control Center did not start settings (outcome {outcome})")
 Appearance_Next_Not_Started :: struct {
-	status: op.Status,
+	outcome: call_outcome.Call_Outcome,
 }
 
 @(log_fact = "root: cannot start the TPM service: status {status}")

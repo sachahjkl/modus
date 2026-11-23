@@ -5,6 +5,7 @@ import "base:runtime"
 import "core:crypto/ed25519"
 import "core:testing"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/byte_order"
 import "modus:contract/machine_mesh"
 import "modus:contract/machine_wire"
@@ -142,10 +143,10 @@ sim_lookup :: proc "contextless" (recipe_hash: blake3.Hash, record: ^object_cach
 }
 
 @(private = "file")
-sim_role_holder :: proc "contextless" (role: role_contract.Role, export: u32, arguments: []u8, result: []u8, user_data: rawptr) -> (i64, int, machine_wire.Role_Outcome) {
+sim_role_holder :: proc "contextless" (role: role_contract.Role, export: u32, arguments: []u8, result: []u8, user_data: rawptr) -> (i64, int, call_outcome.Call_Outcome) {
 	machine := (^Sim_Machine)(user_data)
 	if role != REMOTE_RECIPES_ROLE {
-		return 0, 0, .Refused
+		return 0, 0, .Operation_Unsupported
 	}
 	return remote_recipes_serve(&machine.host, export, arguments, result)
 }
@@ -892,13 +893,16 @@ remote_build_arguments_cross_whole_and_refuse_damage :: proc(t: ^testing.T) {
 	// another size than a hash.
 	result: [object_cache.REALISATION_WIRE_SIZE]u8
 	_, _, outcome := remote_recipes_serve(&world.b.host, 0, nil, result[:])
-	testing.expect_value(t, outcome, machine_wire.Role_Outcome.Refused)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Operation_Unsupported)
 	_, _, outcome = remote_recipes_serve(&world.b.host, 3, nil, result[:])
-	testing.expect_value(t, outcome, machine_wire.Role_Outcome.Refused)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Operation_Unsupported)
 	_, _, outcome = remote_recipes_serve(&world.b.host, u32(Remote_Recipes_Export.Realisation_Lookup), []u8{1, 2}, result[:])
-	testing.expect_value(t, outcome, machine_wire.Role_Outcome.Refused)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Argument_Refused)
 	_, _, outcome = remote_recipes_serve(&world.d.host, u32(Remote_Recipes_Export.Build), bytes, result[:])
-	testing.expect_value(t, outcome, machine_wire.Role_Outcome.Refused)
+	testing.expectf(t, call_outcome.effect_group_of(outcome) == .Nothing_Changed, "the build of d gives %v", outcome)
+	// A result with no room for a record.
+	_, _, outcome = remote_recipes_serve(&world.b.host, u32(Remote_Recipes_Export.Realisation_Lookup), nil, result[:1])
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Argument_Refused)
 }
 
 // One faulty cache never stops a build. Refused first: a cache that

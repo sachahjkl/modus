@@ -204,7 +204,7 @@ Do not use: receive window (for this).
 
 The anti-amplification limit is the rule that a server sends at most 3 times the bytes that it received from a client whose address it did not validate.
 
-An attacker can forge the source address of a datagram, and without the limit one small forged datagram can make a server send a large answer to a victim. The limit is held twice: by `src/library/modus/quic` in the process, until the address validation of the connection, and by the network service, which knows no QUIC and refuses a Send past 3 times (the status `Amplification`) until the process sends the command `Validate`. A Retry packet answers a datagram of 1200 bytes with at most 113 bytes.
+An attacker can forge the source address of a datagram, and without the limit one small forged datagram can make a server send a large answer to a victim. The limit is held twice: by `src/library/modus/quic` in the process, until the address validation of the connection, and by the network service, which knows no QUIC and refuses a Send past 3 times (the outcome `Budget_Or_Capacity_Exhausted`) until the process sends the command `Validate`. A Retry packet answers a datagram of 1200 bytes with at most 113 bytes.
 
 The design: `docs/QUIC.md`, "The listen grant of UDP".
 

@@ -34,7 +34,7 @@ Do not use: slow path, packet path.
 
 An endpoint is what a process holds to send and receive datagrams or segments: a datagram ring and a datagram region, with a grant that names what it can reach.
 
-An endpoint replaces the socket of other systems, but the process does not choose its remote. The root service names the grant, and the network service enforces it: a request to another remote fails with `Not_Granted`, and what another remote sends never reaches the process. An endpoint is a datagram endpoint (UDP) or a segment endpoint (TCP), each with a client grant or a listen grant. A process has one. The console shows its grant with `grants` and ends it with `revoke`. An endpoint is not a connection.
+An endpoint replaces the socket of other systems, but the process does not choose its remote. The root service names the grant, and the network service enforces it: a request to another remote fails with `Grant_Or_Right_Missing`, and what another remote sends never reaches the process. An endpoint is a datagram endpoint (UDP) or a segment endpoint (TCP), each with a client grant or a listen grant. A process has one. The console shows its grant with `grants` and ends it with `revoke`. An endpoint is not a connection.
 
 The design: `src/library/modus/contract/datagram`.
 
@@ -54,7 +54,7 @@ Do not use: packet, message.
 
 A remote is the IPv4 address and the UDP port or TCP port at the other end of a datagram or of a connection.
 
-A grant names remotes: a client grant names one, and a listen grant admits the remotes that came to it. A command of the datagram ring names a remote by its address and its port. An error record of `Not_Granted` holds the remote of the request and the remote of the grant. Example: the remote of the client grant of `fetch` is 10.0.2.100 port 80. A remote is not the host, which is the computer that runs QEMU, and not the peer, which is one part of the modus tool.
+A grant names remotes: a client grant names one, and a listen grant admits the remotes that came to it. A command of the datagram ring names a remote by its address and its port. An error record of `Grant_Or_Right_Missing` holds the remote of the request and the remote of the grant. Example: the remote of the client grant of `fetch` is 10.0.2.100 port 80. A remote is not the host, which is the computer that runs QEMU, and not the peer, which is one part of the modus tool.
 
 The design: `src/library/modus/contract/datagram`.
 
@@ -104,7 +104,7 @@ Do not use: TCP socket, listening socket.
 
 A client grant is the grant of an endpoint that reaches one remote: one remote address and one remote port.
 
-A client grant lets a process reach exactly one server. The network service refuses a request to another remote with `Not_Granted`, and drops what another remote sends. With a datagram endpoint, the process gets one local UDP port. With a segment endpoint, it gets a block of 64 local TCP ports, because a closed connection stays in TIME-WAIT. Example: `fetch` has a TCP client grant of 10.0.2.100 port 80. A client grant is not a rule of a firewall: it is the only remote that the endpoint can name.
+A client grant lets a process reach exactly one server. The network service refuses a request to another remote with `Grant_Or_Right_Missing`, and drops what another remote sends. With a datagram endpoint, the process gets one local UDP port. With a segment endpoint, it gets a block of 64 local TCP ports, because a closed connection stays in TIME-WAIT. Example: `fetch` has a TCP client grant of 10.0.2.100 port 80. A client grant is not a rule of a firewall: it is the only remote that the endpoint can name.
 
 The design: `docs/NETWORK.md`, "The grant of a segment endpoint".
 
@@ -114,7 +114,7 @@ Do not use: outbound rule, connect permission.
 
 A listen grant is the grant of an endpoint that receives on one local TCP or UDP port that the root service names, from any remote, and answers only the admitted remotes.
 
-A server must receive from remotes that it does not know in advance, but must not reach a machine that did not come to it. With a listen grant, the process answers, but it does not reach: a send to a remote that is not admitted fails with `Not_Granted`. A UDP listen grant can also name one remote address. Examples: `server` on the TCP port 80; `remote` on the UDP port 7100, for the address 10.0.2.2 only. A listen grant is not a listening socket: it accepts nothing.
+A server must receive from remotes that it does not know in advance, but must not reach a machine that did not come to it. With a listen grant, the process answers, but it does not reach: a send to a remote that is not admitted fails with `Grant_Or_Right_Missing`. A UDP listen grant can also name one remote address. Examples: `server` on the TCP port 80; `remote` on the UDP port 7100, for the address 10.0.2.2 only. A listen grant is not a listening socket: it accepts nothing.
 
 The design: `docs/NETWORK.md`, "The listen grant of UDP".
 
@@ -283,7 +283,7 @@ Do not use: RPC channel, request stream (for this).
 
 A stream error code is the application error code of a RESET_STREAM, a STOP_SENDING or a CONNECTION_CLOSE of the remote service: a value of `remote.Stream_Error`, which the tool prints by its name.
 
-The values are `Too_Large` (1), a request of more than `REQUEST_LIMIT` bytes; `Timeout` (2), a bound of time that passed; and `Cancelled` (3), a stream that the host ended before the call. A request that does not pass its check gets no stream error code: it gets a call answer with the status Refused and its error record. A stream error code is not a status of a call and not an error number: it says why the transport of one call ended.
+The values are `Too_Large` (1), a request of more than `REQUEST_LIMIT` bytes; `Timeout` (2), a bound of time that passed; and `Cancelled` (3), a stream that the host ended before the call. A request that does not pass its check gets no stream error code: it gets a call answer with the relay outcome of its refusal and its error record. A stream error code is not a status of a call and not an error number: it says why the transport of one call ended.
 
 The design: `docs/QUIC.md`, "Errors and ends of a call".
 
@@ -293,7 +293,7 @@ Do not use: status (for this), error number.
 
 A call request is the bytes of a call stream from the host to the remote service: a fixed header, `remote.Request`, then the bytes of the call region from offset 0.
 
-The header names the service, the BLAKE3 hash of its module and the index of the export. The host encodes the arguments with the description of the export. The remote service trusts nothing in a request: `remote.request_check` checks each count and each place against the bytes of the stream and the size of the call region. A refusal is a call answer with the status Refused. A call request is not a message with names in text: it names the export by its index and the module by its hash.
+The header names the service, the BLAKE3 hash of its module and the index of the export. The host encodes the arguments with the description of the export. The remote service trusts nothing in a request: `remote.request_check` checks each count and each place against the bytes of the stream and the size of the call region. A refusal is a call answer whose relay outcome is not `Succeeded`. A call request is not a message with names in text: it names the export by its index and the module by its hash.
 
 The design: `docs/MODULE_CONTRACT.md`, "A call from the host".
 
@@ -303,11 +303,21 @@ Do not use: RPC request, message, packet.
 
 A call answer is the bytes of a call stream from the remote service to the host: a fixed header, `remote.Answer`, then the bytes of the result.
 
-The header has 112 bytes: the status, the integer result, the error record, and the count of the bytes of the result that follow (`total`). The host trusts nothing in it: `remote.answer_check` checks that the bytes are exactly a header and its total, and that the status names a member. The host decodes the result with the description of the export and prints it. The answers come back in any order; the host matches each one to its call by its stream. A call answer is not a response of HTTP: it has no headers of text.
+The header has 112 bytes: the relay outcome, the outcome of the export, the integer result, the error record, and the count of the bytes of the result that follow (`total`). The host trusts nothing in it: `remote.answer_check` checks that the bytes are exactly a header and its total, and `remote.answer_outcome` is the border of the two outcome words. The answers come back in any order; the host matches each one to its call by its stream. A call answer is not a response of HTTP: it has no headers of text.
 
 The design: `src/library/modus/contract/remote`.
 
 Do not use: response, reply.
+
+### Relay outcome
+
+A relay outcome is the call outcome of a request to the remote service, beside the outcome of the export in a call answer (`remote.Answer.relay_outcome`).
+
+It is not `Succeeded` when the remote service refused the request, and then no call ran: `Argument_Refused` for a field of the request or a hash of another build, the outcome of a connection that did not come for a service. The error record names the field of the request. When it is `Succeeded`, the outcome of the export says how the call ended. A reader gives its caller the first of the two that is not `Succeeded`.
+
+The design: `src/md/api/call_outcome.md`, "The borders of the isolated call, of `remote`".
+
+Do not use: status (for this), relay status.
 
 ### Developer tool
 

@@ -36,7 +36,7 @@ Each process that the root service starts after that line has a seed from the st
 - all its bytes have one value: zeros, all ones, or any one byte again;
 - it has the bytes of the read before it (the mixer keeps the BLAKE3 hash of that read, not its bytes).
 
-A refused read counts in the entropy report (`device_reads_refused`) and in the line of the root service. Its bytes count for nothing. A completion with an error (`Bad_Command`, `Device_Error`) counts there too: it is a read that added nothing, and one count keeps the line short. The line of the warning of that completion names its cause.
+A refused read counts in the entropy report (`device_reads_refused`) and in the line of the root service. Its bytes count for nothing. A completion with another outcome than `Succeeded` counts there too: it is a read that added nothing, and one count keeps the line short. The line of the warning of that completion names its cause.
 
 These checks find a broken device: a model that gives zeros, or a buffer that it never wrote. They are not a protection. A hostile device passes them with ease (two values, or a read that comes back after another one). The protection is the mix: the old key is always an input of the new one.
 

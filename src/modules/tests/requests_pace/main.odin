@@ -26,6 +26,7 @@
 // with the outcome Done, or Failed after a WRONG line.
 package requests_pace
 
+import "modus:contract/call_outcome"
 import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
@@ -77,7 +78,7 @@ wrong :: proc "contextless" (text: string, value: u64) -> ! {
 // wrong_refused stops as wrong does, and writes the seven words of the
 // error record of the completion too.
 @(private = "file")
-wrong_refused :: proc "contextless" (text: string, status: system.Status, answer: [7]u64) -> ! {
+wrong_refused :: proc "contextless" (text: string, status: call_outcome.Call_Outcome, answer: [7]u64) -> ! {
 	system.log_fact(.Error, Wrong_Refused{status = u64(status), error_kind = answer[0], error_unit = answer[1], error_operation = answer[2], error_argument = answer[3], error_value = answer[4], error_limit = answer[5], error_found = answer[6]}, text)
 	system.stop(.Failed)
 }
@@ -85,7 +86,7 @@ wrong_refused :: proc "contextless" (text: string, status: system.Status, answer
 // root_call sends one command on the root ring and waits for its
 // completion, within the hang bound.
 @(private = "file")
-root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64) -> (status: system.Status, answer: [7]u64) {
+root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64) -> (outcome: call_outcome.Call_Outcome, answer: [7]u64) {
 	tag := next_tag
 	next_tag += 1
 	if !system.send(&requests.commands, ring.Record{kind = u32(command), tag = tag, values = values}) {
@@ -98,9 +99,9 @@ root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64
 			if record.tag != tag {
 				continue
 			}
-			read, refusal := system.status_of_word(record.kind)
-			if refusal.kind != 0 {
-				wrong("the root service answered a status word that names no status", u64(record.kind))
+			read, _ := call_outcome.completion_outcome(record.kind, record.values)
+			if read == .Answer_Unreadable {
+				wrong("the root service answered a completion that this process cannot read; the outcome word", u64(record.kind))
 			}
 			return read, record.values
 		}
@@ -115,7 +116,7 @@ root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64
 // start_listed starts a module, with the list in the list page or with
 // none, and asks for its process handle.
 @(private = "file")
-start_listed :: proc "contextless" (name: string, listed: bool) -> (system.Status, [7]u64) {
+start_listed :: proc "contextless" (name: string, listed: bool) -> (call_outcome.Call_Outcome, [7]u64) {
 	packed := system.name_pack(name)
 	list := listed ? root_ring.Start_Wiring_List.In_The_List_Page : root_ring.Start_Wiring_List.None
 	return root_call(.Start, {packed[0], packed[1], packed[2], packed[3], u64(list), u64(root_ring.Start_Answer.Process_Handle), 0})
@@ -126,7 +127,7 @@ start_listed :: proc "contextless" (name: string, listed: bool) -> (system.Statu
 @(private = "file")
 list_page_take :: proc "contextless" () {
 	status, answer := root_call(.Wire, {0 = u64(root_ring.Wire_Step.List_Page)})
-	if status != .Ok || answer[0] == 0 {
+	if status != .Succeeded || answer[0] == 0 {
 		wrong_refused("the list page was refused with the status", status, answer)
 	}
 	page := system.Handle(answer[0])
@@ -183,7 +184,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	list_page_take()
 
 	status, answer := start_listed("requests_reader", false)
-	if status != .Ok || answer[0] == 0 {
+	if status != .Succeeded || answer[0] == 0 {
 		wrong_refused("the start of requests_reader gave the status", status, answer)
 	}
 	reader := system.Handle(answer[0])
@@ -204,7 +205,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wrong("the list does not fit the list page; rows:", u64(len(rows)))
 	}
 	status, answer = start_listed("server", true)
-	if status != .Ok || answer[0] == 0 || answer[1] == 0 {
+	if status != .Succeeded || answer[0] == 0 || answer[1] == 0 {
 		wrong_refused("the start of server with its list gave the status", status, answer)
 	}
 	server := system.Handle(answer[0])

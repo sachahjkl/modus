@@ -157,7 +157,8 @@ retry_token_make :: proc "contextless" (cryptography: ^Cryptography, key: ^[RETR
 	additional := retry_token_additional(remote)
 	key_text, nonce_text, additional_text, plain_text := string(key[:]), string(nonce[:]), string(additional[:]), string(plain[:])
 	result := token[9:]
-	return cryptography.seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional_text, &plain_text, &result, error) == RETRY_TOKEN_FACTS_SIZE + TAG_SIZE
+	crypto_outcome, crypto_count := cryptography.seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional_text, &plain_text, &result, error)
+	return crypto_outcome == .Succeeded && crypto_count == RETRY_TOKEN_FACTS_SIZE + TAG_SIZE
 }
 
 // retry_token_open opens the retry token of an Initial packet from one remote, and gives its facts.
@@ -201,7 +202,7 @@ retry_token_open :: proc "contextless" (cryptography: ^Cryptography, key: ^[RETR
 	plain: [RETRY_TOKEN_FACTS_SIZE]u8
 	key_text, nonce_text, additional_text, sealed := string(key[:]), string(nonce[:]), string(additional[:]), string(token[9:])
 	result := plain[:]
-	if cryptography.open_with_chacha20_poly1305(&key_text, &nonce_text, &additional_text, &sealed, &result, error) != RETRY_TOKEN_FACTS_SIZE {
+	if crypto_outcome, crypto_count := cryptography.open_with_chacha20_poly1305(&key_text, &nonce_text, &additional_text, &sealed, &result, error); crypto_outcome != .Succeeded || crypto_count != RETRY_TOKEN_FACTS_SIZE {
 		return false
 	}
 	length := int(plain[0])

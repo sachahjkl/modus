@@ -69,8 +69,8 @@ display_connect :: proc "contextless" () -> (cause: string) {
 		display_port.root, display_port.root_opened = requests, true
 	}
 	display_port.next_tag = display_port.next_tag == max(u32) ? 1 : display_port.next_tag + 1
-	connection, status := system.service_connection(&display_port.root, display_port.next_tag, role_contract.role_properties(.Display).name)
-	if status != .Ok {
+	connection, outcome := system.service_connection(&display_port.root, display_port.next_tag, role_contract.role_properties(.Display).name)
+	if outcome != .Succeeded {
 		return "the root service gives no connection to the trusted display"
 	}
 	entry := system.image_entry_of(display_port.image, connection.module_hash)
@@ -115,18 +115,18 @@ display_act_ask :: proc "contextless" (service, export: string) -> (serial: u64,
 	count += copy(name_buffer[count:], export)
 	arguments := [1]isolated.Argument{{text = name_buffer[:count]}}
 	error: errors.Error_Record
-	result, status := system.call_isolated(&display_port.connection, display_port.file, display_port.ask_export, arguments[:], &error)
-	if status != .Ok && status != .Failed {
+	result, ended := system.call_isolated(&display_port.connection, display_port.file, display_port.ask_export, arguments[:], &error)
+	if system.connection_to_renew(ended) {
 		display_disconnect()
 		return 0, .Refused, "the call of act_ask did not end"
 	}
-	if result > 0 {
+	if ended == .Succeeded && result > 0 {
 		return u64(result), .Shown, ""
 	}
-	kind, _ := errors.kind_of_word(error.kind)
-	if kind == .Busy {
+	if ended == .Callee_Busy {
 		return 0, .Busy, ""
 	}
+	kind, _ := errors.kind_of_word(error.kind)
 	return 0, .Refused, errors.KIND_NAMES[kind]
 }
 
@@ -140,7 +140,7 @@ display_act_cancel :: proc "contextless" (serial: u64) {
 	}
 	arguments := [1]isolated.Argument{{integer = serial}}
 	error: errors.Error_Record
-	if _, status := system.call_isolated(&display_port.connection, display_port.file, display_port.cancel_export, arguments[:], &error); status != .Ok && status != .Failed {
+	if _, ended := system.call_isolated(&display_port.connection, display_port.file, display_port.cancel_export, arguments[:], &error); system.connection_to_renew(ended) {
 		display_disconnect()
 	}
 }
@@ -154,9 +154,9 @@ display_act_poll :: proc "contextless" (serial: u64) -> (decision: conversation.
 	}
 	arguments := [1]isolated.Argument{{integer = serial}}
 	error: errors.Error_Record
-	result, status := system.call_isolated(&display_port.connection, display_port.file, display_port.poll_export, arguments[:], &error)
-	if status != .Ok {
-		if status != .Failed {
+	result, ended := system.call_isolated(&display_port.connection, display_port.file, display_port.poll_export, arguments[:], &error)
+	if ended != .Succeeded {
+		if system.connection_to_renew(ended) {
 			display_disconnect()
 		}
 		return .Pending, false

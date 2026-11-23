@@ -1,6 +1,6 @@
 package audit_asker
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
 // The log facts of the test module audit_asker
@@ -30,11 +30,11 @@ Wrong_Refused :: struct {
 	what:            value_kinds.Text_View,
 }
 
-// A refusal of the test came with another status or error record than
-// the one that it waits for: the status and the record that came.
-@(log_fact = "audit_asker: WRONG: {what}: the status {status}, the kind {kind}, the unit {unit}, the operation {operation}, the argument {argument}, the value {value}, the limit {limit}, the found {found}")
+// A refusal of the test came with another outcome or error record than
+// the one that it waits for: the outcome and the record that came.
+@(log_fact = "audit_asker: WRONG: {what}: the outcome {outcome}, the kind {kind}, the unit {unit}, the operation {operation}, the argument {argument}, the value {value}, the limit {limit}, the found {found}")
 Wrong_Refusal :: struct {
-	status:    op.Status_Word,
+	outcome:   call_outcome.Call_Outcome_Word,
 	kind:      i64,
 	unit:      i64,
 	operation: i64,
@@ -45,11 +45,11 @@ Wrong_Refusal :: struct {
 	what:      value_kinds.Text_View,
 }
 
-// The status and the error record that the refusal of Wrong_Refusal waited
+// The outcome and the error record that the refusal of Wrong_Refusal waited
 // for.
-@(log_fact = "audit_asker: WRONG: {what}: wanted the status {status}, the kind {kind}, the unit {unit}, the operation {operation}, the argument {argument}, the value {value}, the limit {limit}, the found {found}")
+@(log_fact = "audit_asker: WRONG: {what}: wanted the outcome {outcome}, the kind {kind}, the unit {unit}, the operation {operation}, the argument {argument}, the value {value}, the limit {limit}, the found {found}")
 Wrong_Refusal_Wanted :: struct {
-	status:    op.Status_Word,
+	outcome:   call_outcome.Call_Outcome_Word,
 	kind:      i64,
 	unit:      i64,
 	operation: i64,
@@ -67,9 +67,9 @@ Pair_Refusals_Checked :: struct {}
 
 // The display answered plan_diff_ask of a caller that holds no role Plans
 // with another answer than No_Grant.
-@(log_fact = "audit_asker: WRONG: the display answered plan_diff_ask of a caller that does not hold Plans with the call status {status}, the result {result}, the kind {error_kind} and the unit {error_unit}, in place of No_Grant")
+@(log_fact = "audit_asker: WRONG: the display answered plan_diff_ask of a caller that does not hold Plans with the call outcome {outcome}, the result {result}, the kind {error_kind} and the unit {error_unit}, in place of No_Grant")
 Wrong_Display_Answer :: struct {
-	status:     u64,
+	outcome:    call_outcome.Call_Outcome_Word,
 	result:     i64,
 	error_kind: i64,
 	error_unit: i64,

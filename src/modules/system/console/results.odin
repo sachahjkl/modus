@@ -1,5 +1,6 @@
 package console
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:contract/ring"
@@ -43,6 +44,8 @@ FAILURE_OPERATION_SIZE :: 96
 Line_Failure :: struct {
 	sentence:        [FAILURE_SENTENCE_SIZE]u8,
 	sentence_count:  int,
+	has_outcome:     bool,
+	outcome:         call_outcome.Call_Outcome,
 	has_record:      bool,
 	record:          errors.Error_Record,
 	operation:       [FAILURE_OPERATION_SIZE]u8,
@@ -59,7 +62,7 @@ Line_Failure :: struct {
 failure: Line_Failure
 
 failure_reset :: proc "contextless" () {
-	failure.sentence_count, failure.has_record, failure.operation_count, failure.argument_count = 0, false, 0, 0
+	failure.sentence_count, failure.has_outcome, failure.outcome, failure.has_record, failure.operation_count, failure.argument_count = 0, false, .Succeeded, false, 0, 0
 	failure.details_kept, failure.detail_count = 0, 0
 	failure.notes_writer = {buffer = failure.notes[:]}
 }
@@ -86,8 +89,9 @@ fail_note :: proc "contextless" (parts: ..system.Part) {
 // failure_record_set gives the failure of the line its error record: what
 // the call that failed wrote, and the names of the operation and of its
 // arguments. The caller made the failure with fail just before.
-failure_record_set :: proc "contextless" (record: errors.Error_Record, operation: string, argument_names: []string) {
+failure_record_set :: proc "contextless" (record: errors.Error_Record, operation: string, argument_names: []string, outcome := call_outcome.Call_Outcome.Succeeded) {
 	failure.record, failure.has_record = record, true
+	failure.has_outcome, failure.outcome = outcome != .Succeeded, outcome
 	failure.operation_count = copy(failure.operation[:], operation)
 	failure.argument_count = copy(failure.argument_names[:], argument_names)
 }
@@ -143,6 +147,8 @@ failure_draw :: proc "contextless" () {
 	sink := result_sink()
 	drawn := console_results.Failure {
 		sentence       = string(failure.sentence[:failure.sentence_count]),
+		has_outcome    = failure.has_outcome,
+		outcome        = failure.outcome,
 		operation      = string(failure.operation[:failure.operation_count]),
 		argument_names = failure.argument_names[:failure.argument_count],
 		details        = failure.details[:failure.details_kept],

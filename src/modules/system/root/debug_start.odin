@@ -8,7 +8,7 @@ package root
 // the handle with Debug under the rule of Debug, and lets the process run
 // when the debugger asks, or when the debug access ends.
 
-import "modus:contract/errors"
+import "modus:contract/call_outcome"
 import "modus:contract/root_ring"
 import "modus:contract/start_grant"
 import "modus:system"
@@ -17,69 +17,58 @@ import "modus:system"
 // of the caller of its connection with the call ring of record_values[4].
 // values is the completion: for a start the completion of Debug, for a
 // release 0; a refusal writes its error record there.
-debug_start :: proc "contextless" (holder: ^Started, name: string, record_values: [7]u64, values: ^[7]u64) -> system.Status {
+debug_start :: proc "contextless" (holder: ^Started, name: string, record_values: [7]u64, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Debug_Start)
-	step, border_status, border_refusal := root_ring.debug_start_border(record_values)
-	if border_status != .Ok {
+	step, border_outcome, border_refusal := root_ring.debug_start_border(record_values)
+	if border_outcome != .Succeeded {
 		values^ = border_refusal
-		return border_status
+		return border_outcome
 	}
 	connection_ring := record_values[4]
 	caller, caller_principal, caller_row := debug_caller_of(holder, connection_ring)
 	if caller == nil {
-		values^ = errors.ring_fail(kind, .Absent, .Connections, 2)
-		return .Bad_Handle
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Connections, 2)
 	}
 	held := held_process_of(holder, caller, caller_row)
 	hold: Start_Hold
 	switch step {
 	case .None:
 		// The border refuses it; the case keeps the switch whole.
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, 3)
 	case .Release:
 		if held == nil || system.name_of(held.name[:]) != name {
-			values^ = errors.ring_fail(kind, .Absent, .Processes, 1)
-			return .Bad_Handle
+			return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Processes, 1)
 		}
 		if status := held_process_release(held); status != .Ok {
-			// A process that cannot start holds its place for nothing.
+			// A process that cannot start holds its place for nothing: it
+			// stops, and the caller sees that change.
 			started_process_stop(held)
-			values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
-			return status
+			return changed_then_refused(values, kernel_refused(values, kind, status))
 		}
 		values^ = {}
-		return .Ok
+		return .Succeeded
 	case .Abandon:
 		if held == nil || system.name_of(held.name[:]) != name {
-			values^ = errors.ring_fail(kind, .Absent, .Processes, 1)
-			return .Bad_Handle
+			return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Processes, 1)
 		}
 		held.held_entry = 0
 		started_process_stop(held)
 		values^ = {}
-		return .Ok
+		return .Succeeded
 	case .Start_Held:
 		hold = .At_First_Instruction
 	case .Start_Replay:
 		hold = .For_Replay
 	}
-	// One held process for each caller: a release names it by its caller.
-	if held != nil {
-		values^ = errors.ring_fail(kind, .Full, .Debugged_Processes, 1, 0, 1)
-		return .Bad_State
-	}
 	if .Debug in caller.revoked {
-		values^ = errors.ring_fail(kind, .No_Grant, .Debug_Access, 1)
-		return .No_Right
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Debug_Access, 1)
 	}
 	if .Acts_For_Principal not_in grants_held(caller) {
-		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
-		return .Bad_Operation
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Acts_For_Principal, 1)
 	}
 	// The caller starts the process: it needs what Start needs.
 	if !root_ring.sender_allowed(.Start, caller.start_grant_set.grants) {
-		values^ = errors.ring_fail(kind, .No_Grant, .Root_Commands, 1)
-		return .No_Right
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Root_Commands, 1)
 	}
 	// The rule of the debug access, on the start grants that the process
 	// gets, before any service starts for it. A replay gets none.
@@ -88,25 +77,28 @@ debug_start :: proc "contextless" (holder: ^Started, name: string, record_values
 			start_grant_set = start_grant_set_of(name),
 		}
 		if grant, refuses := debug_refusing_grant(caller, &probe); refuses {
-			values^ = errors.ring_fail(kind, .No_Grant, .Debug_Access, 1, 0, 0, 1 + i64(grant))
 			system.log_fact(.Info, Debug_Access_Refused{caller = module_name_field(system.name_of(caller.name[:])), target = module_name_field(name), grant = text_field(start_grant.GRANT_NAMES[grant], 24)})
-			return .Bad_State
+			return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Debug_Access, 1, 0, 0, 1 + i64(grant))
 		}
 	}
-	place: ^Started
-	refusal: [7]u64
-	if status := start(name, caller_principal, asker = caller, place = &place, refusal = &refusal, hold = hold); status != .Ok {
-		values^ = refusal != {} ? refusal : errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
-		return status
+	// One held process for each caller: a release names it by its caller.
+	// After the grants, so that a caller with no grant learns nothing of
+	// the place.
+	if held != nil {
+		return root_ring.refuse(values, .Callee_Busy, kind, .Full, .Debugged_Processes, 1, 0, 1)
 	}
-	if status := debug_give(holder, caller, caller_principal, caller_row, place, name, kind, values); status != .Ok {
+	place: ^Started
+	if outcome := start(name, caller_principal, asker = caller, place = &place, refusal = values, hold = hold); outcome != .Succeeded {
+		return outcome
+	}
+	if outcome := debug_give(holder, caller, caller_principal, caller_row, place, name, kind, values); outcome != .Succeeded {
 		// No debugger holds the process: it does not run, unseen, from a
 		// start that the debugger asked for.
 		started_process_stop(place)
-		return status
+		return outcome
 	}
 	system.log_fact(.Info, Process_Held_For_Debugger{held_process = module_name_field(name), caller = module_name_field(system.name_of(caller.name[:]))})
-	return .Ok
+	return .Succeeded
 }
 
 // held_process_of gives the process that Debug_Start holds for a caller of

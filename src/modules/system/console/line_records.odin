@@ -130,7 +130,7 @@ line_records_connect :: proc "contextless" () -> bool {
 		if line_records.refused {
 			return false
 		}
-		if service_connect(sandbox) != .Ok {
+		if service_connect(sandbox) != .Succeeded {
 			// A connection of the console itself that the root service
 			// refuses leaves no place taken.
 			if sandbox.quiet {
@@ -183,7 +183,7 @@ line_records_ask :: proc "contextless" (function: module.Function, export: u32, 
 		return {}, 0, false
 	}
 	arguments := [1]isolated.Argument{{integer = after}}
-	offset, size, buffer, _, encoded := isolated.encode(line_records.file, function, arguments[:], sandbox.region)
+	offset, size, buffer, encoded := isolated.encode(line_records.file, function, arguments[:], sandbox.region)
 	if !encoded {
 		return {}, 0, false
 	}
@@ -202,15 +202,18 @@ line_records_ask :: proc "contextless" (function: module.Function, export: u32, 
 			if completion.tag != sandbox.calls {
 				continue
 			}
-			if isolated.Status(completion.kind) != .Ok || i64(completion.values[0]) < 0 {
+			// A refusal, a failure and an unreadable outcome word end the
+			// read alike.
+			value, outcome, _ := isolated.answer_of_completion(completion)
+			if outcome != .Succeeded {
 				return {}, 0, false
 			}
 			described, has_record := module.record_type(line_records.file, function.result_detail)
 			if !has_record {
 				return {}, 0, false
 			}
-			rows, _ := isolated.result_table(sandbox.region, buffer, completion.values[0], u64(described.size))
-			return {kind = .Table, record = rows, file = line_records.file, detail = function.result_detail}, completion.values[0], true
+			rows, _ := isolated.result_table(sandbox.region, buffer, u64(value), u64(described.size))
+			return {kind = .Table, record = rows, file = line_records.file, detail = function.result_detail}, u64(value), true
 		}
 		if state, _, _ := system.process_state(sandbox.process); state == .Stopped {
 			return {}, 0, false

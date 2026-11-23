@@ -7,9 +7,30 @@
 // for: allowed, refused, not proven, absent, and requests that are refused.
 package quic
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "core:testing"
 import "modus:random"
+
+// The pair of a procedure of the call form, as one value that a check
+// compares.
+@(private = "file")
+Answer :: struct {
+	outcome: call_outcome.Call_Outcome,
+	value:   i64,
+}
+
+@(private = "file")
+answer_of :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> Answer {
+	return {outcome, value}
+}
+
+// refused says if a call refused an argument: the outcome Argument_Refused
+// and the value 0.
+@(private = "file")
+refused :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> bool {
+	return outcome == .Argument_Refused && value == 0
+}
 
 // The values of RFC 8448, section 3, of RFC 8446, section 4.1.3, and of RFC
 // 8410, section 4. A script that is not in the repository copied each value
@@ -85,15 +106,15 @@ key_schedule_of_rfc_8448_section_3 :: proc(t: ^testing.T) {
 	shared: [32]u8
 	scalar, point := string(bytes_of(CLIENT_X25519_PRIVATE_KEY)), string(bytes_of(SERVER_X25519_PUBLIC_KEY))
 	result := shared[:]
-	testing.expect_value(t, cryptography.x25519(&scalar, &point, &result, &error), 32)
+	testing.expect_value(t, answer_of(cryptography.x25519(&scalar, &point, &result, &error)), Answer{.Succeeded, 32})
 	testing.expect_value(t, hex_of(shared[:]), SHARED_SECRET)
 	scalar, point = string(bytes_of(SERVER_X25519_PRIVATE_KEY)), string(bytes_of(CLIENT_X25519_PUBLIC_KEY))
-	testing.expect_value(t, cryptography.x25519(&scalar, &point, &result, &error), 32)
+	testing.expect_value(t, answer_of(cryptography.x25519(&scalar, &point, &result, &error)), Answer{.Succeeded, 32})
 	testing.expect_value(t, hex_of(shared[:]), SHARED_SECRET)
 	base_point: [32]u8
 	base_point[0] = 9
 	scalar, point = string(bytes_of(CLIENT_X25519_PRIVATE_KEY)), string(base_point[:])
-	testing.expect_value(t, cryptography.x25519(&scalar, &point, &result, &error), 32)
+	testing.expect_value(t, answer_of(cryptography.x25519(&scalar, &point, &result, &error)), Answer{.Succeeded, 32})
 	testing.expect_value(t, hex_of(shared[:]), CLIENT_X25519_PUBLIC_KEY)
 
 	testing.expect_value(t, hash_of_hex(&cryptography), HASH_OF_NOTHING)

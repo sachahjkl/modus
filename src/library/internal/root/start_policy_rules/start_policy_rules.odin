@@ -3,8 +3,8 @@
 // A pure part, which the host tests (src/md/features/start_policy.md).
 package start_policy_rules
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
 
@@ -27,43 +27,28 @@ Start_Facts :: struct {
 	name_in_image:             bool, // The boot image holds a module of the name.
 }
 
-// start_refusal gives the status of a Start of a start policy that the
-// facts refuse, in the order of the checks, or Ok: a start policy is never
-// started by a start policy, a start policy that no longer runs starts
-// nothing, a name that runs does not start twice, and a process of a test
-// machine starts only from the image that holds it, as its procedure
-// takes the budget of the machine and can stop it.
-start_refusal :: proc "contextless" (facts: Start_Facts) -> op.Status {
-	if facts.name_is_a_start_policy {
-		return .Bad_Operation
-	}
-	if !facts.sender_runs || facts.name_runs {
-		return .Bad_State
-	}
-	if facts.name_is_of_a_test_machine && !facts.name_in_image {
-		return .Bad_Operation
-	}
-	return .Ok
-}
-
-// start_record gives the error record of a Start of a start policy that
-// failed with a status: Reserved for a start policy, Absent (unit Modules)
-// for a name that the image does not hold, Exists (unit Processes) for a
-// name that runs, Absent (unit Processes) for a sender that no longer
-// runs, and else Refused with the status.
-start_record :: proc "contextless" (status: op.Status, facts: Start_Facts) -> [7]u64 {
+// start_refusal decides a Start of a start policy by its facts, in the
+// order of the checks, and gives the outcome and the error record of a
+// refusal, or Succeeded: a start policy is never started by a start policy
+// (Grant_Or_Right_Missing, Reserved), a start policy that no longer runs
+// starts nothing (Nothing_Has_That_Name, Absent of the processes), a name
+// that runs does not start twice (Name_Already_Taken, Exists of the
+// processes), and a process of a test machine starts only from the image
+// that holds it (Nothing_Has_That_Name, Absent of the modules), as its
+// procedure takes the budget of the machine and can stop it.
+start_refusal :: proc "contextless" (facts: Start_Facts) -> (outcome: call_outcome.Call_Outcome, refusal: [7]u64) {
 	kind := u32(root_ring.Root_Command.Start)
 	switch {
-	case status == .Bad_Operation && facts.name_is_a_start_policy:
-		return errors.ring_fail(kind, .Reserved, .None, 1)
-	case status == .Bad_Operation && !facts.name_in_image:
-		return errors.ring_fail(kind, .Absent, .Modules, 1)
-	case status == .Bad_State && !facts.sender_runs:
-		return errors.ring_fail(kind, .Absent, .Processes)
-	case status == .Bad_State && facts.name_runs:
-		return errors.ring_fail(kind, .Exists, .Processes, 1)
+	case facts.name_is_a_start_policy:
+		return .Grant_Or_Right_Missing, errors.ring_fail(kind, .Reserved, .None, 1)
+	case !facts.sender_runs:
+		return .Nothing_Has_That_Name, errors.ring_fail(kind, .Absent, .Processes)
+	case facts.name_runs:
+		return .Name_Already_Taken, errors.ring_fail(kind, .Exists, .Processes, 1)
+	case facts.name_is_of_a_test_machine && !facts.name_in_image:
+		return .Nothing_Has_That_Name, errors.ring_fail(kind, .Absent, .Modules, 1)
 	}
-	return errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
+	return .Succeeded, {}
 }
 
 // stop_record is the error record of each Stop of a start policy that is
@@ -84,14 +69,14 @@ RESTARTED_NAME_CAPACITY :: start_list.ROW_CAPACITY
 // no clock decides it; a name past the table of the counts is refused too.
 // The start policies of the boot image are never refused here: their rows
 // carry their own bound.
-restart_refusal :: proc "contextless" (from_disk: bool, earlier_starts: u64, table_full: bool) -> op.Status {
+restart_refusal :: proc "contextless" (from_disk: bool, earlier_starts: u64, table_full: bool) -> call_outcome.Call_Outcome {
 	if !from_disk {
-		return .Ok
+		return .Succeeded
 	}
 	if table_full || earlier_starts > start_list.RESTART_LIMIT {
-		return .No_Budget
+		return .Budget_Or_Capacity_Exhausted
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // The starts of one name that a start policy from the disk asked for. A
@@ -109,9 +94,9 @@ Name_Counts :: [RESTARTED_NAME_CAPACITY]Name_Count
 // new name; nil when each place holds another name), then restart_refusal
 // and its record. The caller adds one start to the place after a start that
 // ran, and only then. A refusal changes no count.
-restart_check :: proc "contextless" (counts: ^Name_Counts, from_disk: bool, name: string) -> (status: op.Status, refusal: [7]u64, place: ^Name_Count) {
+restart_check :: proc "contextless" (counts: ^Name_Counts, from_disk: bool, name: string) -> (outcome: call_outcome.Call_Outcome, refusal: [7]u64, place: ^Name_Count) {
 	if !from_disk {
-		return .Ok, {}, nil
+		return .Succeeded, {}, nil
 	}
 	for &item in counts {
 		if item.starts > 0 && string(item.name[:item.name_length]) == name {
@@ -128,24 +113,24 @@ restart_check :: proc "contextless" (counts: ^Name_Counts, from_disk: bool, name
 		}
 	}
 	earlier: u64 = place != nil ? place.starts : 0
-	status = restart_refusal(true, earlier, place == nil)
-	if status != .Ok {
-		return status, restart_record(earlier, place == nil), nil
+	outcome = restart_refusal(true, earlier, place == nil)
+	if outcome != .Succeeded {
+		return outcome, restart_record(earlier, place == nil), nil
 	}
 	if place.starts == 0 {
 		place^ = {}
 		place.name_length = copy(place.name[:len(place.name) - 1], name)
 	}
-	return .Ok, {}, place
+	return .Succeeded, {}, place
 }
 
 // What the root service does with a Start of a start policy before any
 // start: its refusal, and whether it closes the numbers that its list lent.
 Start_Step :: struct {
-	status:     op.Status, // Ok: the start goes on.
+	outcome:    call_outcome.Call_Outcome, // Succeeded: the start goes on.
 	refusal:    [7]u64, // The error record of a refusal.
 	lent_close: bool, // A refused Start with a list: each number that the list lent is closed, as on each refusal of a list.
-	counted:    ^Name_Count, // Ok: the count of the name, which the caller adds one start to after a start that ran; nil for a start policy of the image.
+	counted:    ^Name_Count, // Succeeded: the count of the name, which the caller adds one start to after a start that ran; nil for a start policy of the image.
 }
 
 // start_step decides a Start of a start policy before any start, in this
@@ -155,16 +140,16 @@ Start_Step :: struct {
 start_step :: proc "contextless" (listed: bool, facts: Start_Facts, counts: ^Name_Counts, from_disk: bool, name: string) -> Start_Step {
 	kind := u32(root_ring.Root_Command.Start)
 	if listed && start_list.root_procedure_of(name) != .None {
-		return {status = .Bad_Operation, refusal = errors.ring_fail(kind, .Unsupported, .Wiring_Rows, 2), lent_close = true}
+		return {outcome = .Operation_Unsupported, refusal = errors.ring_fail(kind, .Unsupported, .Wiring_Rows, 2), lent_close = true}
 	}
-	if status := start_refusal(facts); status != .Ok {
-		return {status = status, refusal = start_record(status, facts), lent_close = listed}
+	if outcome, refusal := start_refusal(facts); outcome != .Succeeded {
+		return {outcome = outcome, refusal = refusal, lent_close = listed}
 	}
-	status, refusal, place := restart_check(counts, from_disk, name)
-	if status != .Ok {
-		return {status = status, refusal = refusal, lent_close = listed}
+	outcome, refusal, place := restart_check(counts, from_disk, name)
+	if outcome != .Succeeded {
+		return {outcome = outcome, refusal = refusal, lent_close = listed}
 	}
-	return {status = .Ok, counted = place}
+	return {outcome = .Succeeded, counted = place}
 }
 
 // restart_record is the error record of a Start that restart_refusal
@@ -219,40 +204,43 @@ choice_refusal :: proc "contextless" (facts: Choice_Facts) -> Choice_Refusal {
 // of no byte ends the choice and names no file, so a hash with it is
 // refused with Bad_Value of the argument 2 (the hash), and the end of the
 // choice does not run. hash_is_zero: values[0..3] are all zero.
-choice_form_refusal :: proc "contextless" (nickname_is_empty: bool, hash_is_zero: bool) -> (status: op.Status, refusal: [7]u64) {
+choice_form_refusal :: proc "contextless" (nickname_is_empty: bool, hash_is_zero: bool) -> (outcome: call_outcome.Call_Outcome, refusal: [7]u64) {
 	if nickname_is_empty && !hash_is_zero {
-		return .Bad_Operation, errors.ring_fail(u32(root_ring.Root_Command.Start_Policy_Choice), .Bad_Value, .None, 2)
+		return .Argument_Refused, errors.ring_fail(u32(root_ring.Root_Command.Start_Policy_Choice), .Bad_Value, .None, 2)
 	}
-	return .Ok, {}
+	return .Succeeded, {}
 }
 
-// choice_record is the error record of a refused choice: Absent of the
-// principals for a named principal, Refused of the principals for a machine
-// key that does not open with no passphrase.
-choice_record :: proc "contextless" (refusal: Choice_Refusal) -> [7]u64 {
+// choice_record is the outcome and the error record of a refused choice:
+// Grant_Or_Right_Missing with No_Grant of the principals for a named
+// principal, which cannot choose for the machine; Wrong_State with Refused
+// of the principals for a machine key that does not open with no
+// passphrase, or that has no record.
+choice_record :: proc "contextless" (refusal: Choice_Refusal) -> (outcome: call_outcome.Call_Outcome, record: [7]u64) {
 	kind := u32(root_ring.Root_Command.Start_Policy_Choice)
 	switch refusal {
 	case .None:
-		return {}
+		return .Succeeded, {}
 	case .Named_Principal:
-		return errors.ring_fail(kind, .Absent, .Principals)
+		return .Grant_Or_Right_Missing, errors.ring_fail(kind, .No_Grant, .Principals)
 	case .No_Machine_Key, .Passphrase:
-		return errors.ring_fail(kind, .Refused, .Principals)
+		return .Wrong_State, errors.ring_fail(kind, .Refused, .Principals)
 	}
-	return {}
+	return .Succeeded, {}
 }
 
 // usable_decision decides a Machine_Usable: only from the start policy that
 // runs, and only while that start policy has not said it yet. Each other
-// one is refused with Exists (unit Processes) and changes nothing. A
+// one is refused with Wrong_State and State (unit Processes), and changes
+// nothing. A
 // rescue that starts after the machine was usable runs in the stage
 // Running again, so its own Machine_Usable is taken: the machine was
 // usable by the policy that stopped, not by the rescue.
-usable_decision :: proc "contextless" (sender_runs: bool, stage: Stage) -> (status: op.Status, refusal: [7]u64) {
+usable_decision :: proc "contextless" (sender_runs: bool, stage: Stage) -> (outcome: call_outcome.Call_Outcome, refusal: [7]u64) {
 	if !sender_runs || stage != .Running {
-		return .Bad_State, errors.ring_fail(u32(root_ring.Root_Command.Machine_Usable), .Exists, .Processes)
+		return .Wrong_State, errors.ring_fail(u32(root_ring.Root_Command.Machine_Usable), .State, .Processes)
 	}
-	return .Ok, {}
+	return .Succeeded, {}
 }
 
 // What the root service does at the stop of the start policy that it

@@ -1,6 +1,6 @@
 package build
 
-import "modus:contract/call_status"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -1092,16 +1092,16 @@ the_facts_of_net_pointers_and_tables_write_their_texts :: proc(t: ^testing.T) {
 			facts_expect_line(t, fact_test_render(t, imports, "imports", "Answer_Wrong", {{"case_text", name}, {"answer", answer}}), line_of_before("imports: wrong answer: ", name, ": ", answer))
 		}
 	}
-	// The status of a call is written by its name, and a word that names
-	// no status by its number.
+	// The outcome of a call is written by its name, and a word that names
+	// no outcome by its number.
 	measure_ways := [2]string{strings.repeat("w", 24, context.temp_allocator), "direct call"}
 	for way in measure_ways {
 		for count in DEMONSTRATION_EDGE_COUNTS {
 			other := max(u64) - count
-			for status in call_status.Call_Status {
-				facts_expect_line(t, fact_test_render(t, tables, "tables", "Measure_Call_Refused", {{"rows", count}, {"call", other}, {"status", u64(status)}, {"way", way}}), line_of_before("tables: ", way, ", ", count, " rows: call ", other, " gave the status ", call_status.CALL_STATUS_NAMES[status]))
+			for outcome in call_outcome.Call_Outcome {
+				facts_expect_line(t, fact_test_render(t, tables, "tables", "Measure_Call_Refused", {{"rows", count}, {"call", other}, {"outcome", u64(outcome)}, {"way", way}}), line_of_before("tables: ", way, ", ", count, " rows: call ", other, " gave the outcome ", call_outcome.CALL_OUTCOME_NAMES[outcome]))
 			}
-			facts_expect_line(t, fact_test_render(t, tables, "tables", "Measure_Call_Refused", {{"rows", count}, {"call", other}, {"status", max(u64)}, {"way", way}}), line_of_before("tables: ", way, ", ", count, " rows: call ", other, " gave the status ", max(u64)))
+			facts_expect_line(t, fact_test_render(t, tables, "tables", "Measure_Call_Refused", {{"rows", count}, {"call", other}, {"outcome", max(u64)}, {"way", way}}), line_of_before("tables: ", way, ", ", count, " rows: call ", other, " gave the outcome ", max(u64)))
 		}
 	}
 }

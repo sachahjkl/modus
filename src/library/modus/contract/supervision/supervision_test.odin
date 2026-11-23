@@ -2,6 +2,7 @@
 package supervision
 
 import "core:testing"
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:contract/role_contract"
 
@@ -462,6 +463,7 @@ client_retry_enforces_idempotent_recovery_and_single_retry_bound :: proc(t: ^tes
 	snap_stop2, _ := connection_page_read(&page)
 	testing.expect_value(t, client_call_on_connection_change(&tracker, snap_stop2), Client_Retry_Decision.Return_Holder_Stopped_In_Flight)
 	testing.expect_value(t, tracker.state, Client_Call_State.Failed)
+	testing.expect_value(t, tracker.ended_outcome, call_outcome.Call_Outcome.Callee_Stopped_During_The_Call)
 	testing.expect_value(t, tracker.retries_used, MAX_AUTOMATIC_RETRIES)
 
 	// Even if gen 3 comes up, this failed call never loops.
@@ -476,6 +478,7 @@ client_retry_enforces_idempotent_recovery_and_single_retry_bound :: proc(t: ^tes
 	snap_closed, _ := connection_page_read(&page)
 	testing.expect_value(t, client_call_on_connection_change(&tracker_closed, snap_closed), Client_Retry_Decision.Return_Connection_Closed)
 	testing.expect_value(t, tracker_closed.state, Client_Call_State.Failed)
+	testing.expect_value(t, tracker_closed.ended_outcome, call_outcome.Call_Outcome.Connection_Ended_During_The_Call)
 }
 
 @(test)
@@ -567,4 +570,24 @@ serial_tracked_end_to_end_guarantees_at_most_once_across_restart :: proc(t: ^tes
 	testing.expect_value(t, client_call_complete(&call_c, 30), Client_Retry_Decision.Complete_With_Answer)
 	testing.expect_value(t, call_c.state, Client_Call_State.Completed)
 	testing.expect_value(t, client_call_on_connection_change(&call_c, snap_stop), Client_Retry_Decision.Refuse_Invalid_Input)
+}
+
+// A decision that ends a call in flight with no answer gives an outcome in
+// doubt, since the call left; each other decision ends no call that way.
+@(test)
+a_call_ended_in_flight_is_in_doubt :: proc(t: ^testing.T) {
+	for decision in Client_Retry_Decision {
+		outcome, ended := client_call_ended_outcome(decision)
+		switch decision {
+		case .Return_Holder_Stopped_In_Flight:
+			testing.expect(t, ended && outcome == .Callee_Stopped_During_The_Call)
+		case .Return_Connection_Closed:
+			testing.expect(t, ended && outcome == .Connection_Ended_During_The_Call)
+		case .None, .Continue_Waiting, .Complete_With_Answer, .Resend_To_New_Holder, .Refuse_Invalid_Input:
+			testing.expectf(t, !ended, "the decision %v ends the call", decision)
+		}
+		if ended {
+			testing.expect_value(t, call_outcome.effect_group_of(outcome), call_outcome.Effect_Group.Change_In_Doubt)
+		}
+	}
 }

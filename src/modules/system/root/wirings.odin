@@ -20,6 +20,7 @@ package root
 //   `root_loop_pass` so the core never blocks on the delegated service.
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/output"
@@ -189,7 +190,8 @@ wiring_service_end :: proc "contextless" (item: ^Started) {
 		return
 	}
 	if wiring_request.stage != .Idle {
-		wiring_request_fail(.Bad_State, errors.ring_fail(u32(wiring_request.root_command), .Refused, .Wirings))
+		// The wiring service stopped during the request.
+		wiring_request_fail(.Callee_Stopped_During_The_Call, errors.ring_fail(u32(wiring_request.root_command), .Callee_Stopped, .Services))
 	}
 	if raw_data(wiring_region) != nil {
 		system.memory_unmap(raw_data(wiring_region))
@@ -276,37 +278,36 @@ wiring_register_process :: proc "contextless" (item: ^Started) {
 // wiring_asker_budget_ensure carves a pages-only child wiring budget from
 // asker.budget and gives `wiring` a Spend-only handle to it.
 @(private = "file")
-wiring_asker_budget_ensure :: proc "contextless" (asker: ^Started, command: root_ring.Root_Command, values: ^[7]u64) -> system.Status {
+wiring_asker_budget_ensure :: proc "contextless" (asker: ^Started, command: root_ring.Root_Command, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	if asker.wiring_budget != 0 {
-		return .Ok
+		return .Succeeded
 	}
 	if asker.budget == 0 {
-		values^ = errors.ring_fail(u32(command), .Budget_Hidden, .Pages)
-		return .No_Budget
+		return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, u32(command), .Budget_Hidden, .Pages)
 	}
 	avail, read_status := system.budget_read(asker.budget)
 	if read_status != .Ok {
-		values^ = errors.ring_fail(u32(command), .Budget_Hidden, .Pages)
-		return .No_Budget
+		return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, u32(command), .Budget_Hidden, .Pages)
 	}
 	list_cost := op.memory_cost(output.WIRING_LIST_PAGES_MOST)
 	if avail.pages < list_cost {
-		values^ = errors.ring_fail(u32(command), .Budget, .Pages, 1, 0, i64(list_cost), i64(avail.pages))
-		return .No_Budget
+		return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, u32(command), .Budget, .Pages, 1, 0, i64(list_cost), i64(avail.pages))
 	}
 	pages := min(avail.pages, u64(WIRING_ASKER_BUDGET_PAGES_MOST))
 	err: errors.Error_Record
 	child, status := system.budget_create({pages = pages}, asker.budget, error = &err)
 	if status != .Ok {
+		// The budget of the asker cannot give the budget of its wirings:
+		// the record of the kernel, under the outcome of its status.
 		err.operation = i64(command)
-		values^ = errors.completion_values(err)
-		return status
+		outcome := system.outcome_of_own_status(status)
+		values^ = errors.completion_values(call_outcome.record_explained(outcome, err))
+		return outcome
 	}
 	given, give_status := give_through_service_ring(wiring_process.process, wiring_ring_memory, child, {.Spend}, &wiring_process.service_ring_ready)
 	if give_status != .Ok {
 		system.close(child)
-		values^ = errors.ring_fail(u32(command), .Refused, .Wirings, 0, 0, 0, i64(give_status))
-		return give_status
+		return root_ring.refuse(values, system.outcome_of_own_status(give_status), u32(command), .Refused, .Wirings, 0, 0, 0, i64(give_status))
 	}
 	cmd := ws.Command{
 		kind          = .Grant_Asker_Budget,
@@ -316,11 +317,10 @@ wiring_asker_budget_ensure :: proc "contextless" (asker: ^Started, command: root
 	}
 	if !system.send(&wiring_ring.commands, ws.command_to_record(cmd)) {
 		system.close(child)
-		values^ = errors.ring_fail(u32(command), .Busy, .Requests, 0, 1, 1)
-		return .No_Slot
+		return root_ring.refuse(values, .Callee_Busy, u32(command), .Busy, .Requests, 0, 1, 1)
 	}
 	asker.wiring_budget = child
-	return .Ok
+	return .Succeeded
 }
 
 // wiring_emit_stop_notice emits one Process_Stop_Notice onto the core's
@@ -457,18 +457,19 @@ lent_handles_close :: proc "contextless" (asker: ^Started, copied := false) {
 // lent handles on asker.requests_memory, resolves Connected numbers against
 // `connections`, and writes both into wiring_region.
 @(private = "file")
-list_stage_for_wiring :: proc "contextless" (asker: ^Started, form: output.Wiring_List_Form, command: root_ring.Root_Command, child_offset, child_size: u64, values: ^[7]u64) -> system.Status {
+list_stage_for_wiring :: proc "contextless" (asker: ^Started, form: output.Wiring_List_Form, command: root_ring.Root_Command, child_offset, child_size: u64, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	if !list_page_copy(asker) {
-		values^ = errors.ring_fail(u32(command), .Absent, .Wirings)
-		return .Bad_State
+		return root_ring.refuse(values, .Nothing_Has_That_Name, u32(command), .Absent, .Wirings)
 	}
 	checked: output.Checked_Wiring_List
 	refusal, ok := output.wiring_list_check(core_list_copy[:], form, &checked)
 	if !ok {
+		// The check of the form of the list: each of its refusals breaks a
+		// rule of the argument.
 		lent_handles_close(asker, copied = true)
 		refusal.operation = i64(command)
 		values^ = errors.completion_values(refusal)
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	core_resolved_req = {
 		form                  = u32(form),
@@ -478,7 +479,7 @@ list_stage_for_wiring :: proc "contextless" (asker: ^Started, form: output.Wirin
 		child_module_offset   = child_offset,
 		child_module_size     = child_size,
 	}
-	status := system.Status.Ok
+	outcome := call_outcome.Call_Outcome.Succeeded
 	for place in 0 ..< checked.handle_count {
 		number := checked.handles[place]
 		handle := system.Handle(number)
@@ -490,19 +491,16 @@ list_stage_for_wiring :: proc "contextless" (asker: ^Started, form: output.Wirin
 			}
 			system.close(handle)
 		}
-		if status != .Ok {
+		if outcome != .Succeeded {
 			continue
 		}
 		switch {
 		case !through:
-			values^ = errors.ring_fail(u32(command), .Handle_Absent, .Lent_Handles, 0, i64(place) + 1)
-			status = .Bad_Handle
+			outcome = root_ring.refuse(values, .Argument_Refused, u32(command), .Handle_Absent, .Lent_Handles, 0, i64(place) + 1)
 		case kind != .Process:
-			values^ = errors.ring_fail(u32(command), .Handle_Kind, .Lent_Handles, 0, i64(place) + 1, i64(op.Object_Kind.Process), i64(kind))
-			status = .Bad_Handle
+			outcome = root_ring.refuse(values, .Argument_Refused, u32(command), .Handle_Kind, .Lent_Handles, 0, i64(place) + 1, i64(op.Object_Kind.Process), i64(kind))
 		case target == nil:
-			values^ = errors.ring_fail(u32(command), .Handle_Absent, .Lent_Handles, 0, i64(place) + 1)
-			status = .Bad_Handle
+			outcome = root_ring.refuse(values, .Argument_Refused, u32(command), .Handle_Absent, .Lent_Handles, 0, i64(place) + 1)
 		case:
 			if !target.wiring_registered {
 				wiring_register_process(target)
@@ -516,8 +514,8 @@ list_stage_for_wiring :: proc "contextless" (asker: ^Started, form: output.Wirin
 			}
 		}
 	}
-	if status != .Ok {
-		return status
+	if outcome != .Succeeded {
+		return outcome
 	}
 	acts := .Acts_For_Principal in grants_held(asker)
 	for row_idx in 0 ..< checked.row_count {
@@ -556,7 +554,7 @@ list_stage_for_wiring :: proc "contextless" (asker: ^Started, form: output.Wirin
 	}
 	intrinsics.mem_copy_non_overlapping(&wiring_region[ws.REGION_LIST_OFFSET], &core_list_copy[0], output.WIRING_LIST_BYTES_MOST)
 	intrinsics.mem_copy_non_overlapping(&wiring_region[ws.REGION_REQUEST_OFFSET], &core_resolved_req, size_of(ws.Resolved_Wiring_Request))
-	return .Ok
+	return .Succeeded
 }
 
 @(private = "file")
@@ -567,50 +565,48 @@ next_service_tag :: proc "contextless" () -> u32 {
 }
 
 // wire_begin starts an asynchronous Wire (List_Page or Apply) delegated to `wiring`.
-wire_begin :: proc "contextless" (asker: ^Started, record: ring.Record, values: ^[7]u64) -> (status: system.Status, held: bool) {
+wire_begin :: proc "contextless" (asker: ^Started, record: ring.Record, values: ^[7]u64) -> (outcome: call_outcome.Call_Outcome, held: bool) {
 	command := root_ring.Root_Command.Wire
 	step, step_ok := root_ring.wire_step_of_word(record.values[0])
 	if !step_ok {
 		lent_handles_close(asker)
 		values^ = root_ring.word_refusal(command, 1, record.values[0], u64(max(root_ring.Wire_Step)))
-		return .Bad_Operation, false
+		return .Argument_Refused, false
 	}
 	for index in 1 ..< len(record.values) {
 		if record.values[index] != 0 {
 			lent_handles_close(asker)
 			values^ = root_ring.word_refusal(command, i64(index) + 1, record.values[index], 0)
-			return .Bad_Operation, false
+			return .Argument_Refused, false
 		}
 	}
 	if wiring_request.stage != .Idle {
 		if step == .Apply {
 			lent_handles_close(asker)
 		}
-		values^ = errors.ring_fail(u32(command), .Busy, .Requests, 0, 1, 1)
-		return .No_Slot, false
+		return root_ring.refuse(values, .Callee_Busy, u32(command), .Busy, .Requests, 0, 1, 1), false
 	}
 	if !wiring_service_start() {
 		if step == .Apply {
 			lent_handles_close(asker)
 		}
-		values^ = errors.ring_fail(u32(command), .Absent, .Services)
-		return .Bad_State, false
+		return root_ring.refuse(values, .Callee_Unavailable, u32(command), .Refused, .Services), false
 	}
 	if !asker.wiring_registered {
 		wiring_register_process(asker)
 	}
 	switch step {
 	case .None:
-		return .Bad_Operation, false
+		// The border refused None above; the case keeps the switch whole.
+		return root_ring.refuse(values, .Argument_Refused, u32(command), .Bad_Value, .None, 1), false
 	case .List_Page:
-		if budget_st := wiring_asker_budget_ensure(asker, command, values); budget_st != .Ok {
+		if budget_st := wiring_asker_budget_ensure(asker, command, values); budget_st != .Succeeded {
 			return budget_st, false
 		}
 		stag := next_service_tag()
 		cmd := ws.Command{kind = .List_Page, tag = stag, process = {asker.process_slot, asker.process_serial}}
 		if !system.send(&wiring_ring.commands, ws.command_to_record(cmd)) {
-			values^ = errors.ring_fail(u32(command), .Busy, .Requests, 0, 1, 1)
-			return .No_Slot, false
+			return root_ring.refuse(values, .Callee_Busy, u32(command), .Busy, .Requests, 0, 1, 1), false
 		}
 		wiring_request = {
 			stage        = .List_Page,
@@ -621,19 +617,18 @@ wire_begin :: proc "contextless" (asker: ^Started, record: ring.Record, values: 
 			asker        = asker,
 			deadline     = system.time() + WIRING_REQUEST_BOUND_MILLISECONDS,
 		}
-		return .Ok, true
+		return .Succeeded, true
 	case .Apply:
-		if stage_st := list_stage_for_wiring(asker, .Wire, command, 0, 0, values); stage_st != .Ok {
+		if stage_st := list_stage_for_wiring(asker, .Wire, command, 0, 0, values); stage_st != .Succeeded {
 			return stage_st, false
 		}
-		if budget_st := wiring_asker_budget_ensure(asker, command, values); budget_st != .Ok {
+		if budget_st := wiring_asker_budget_ensure(asker, command, values); budget_st != .Succeeded {
 			return budget_st, false
 		}
 		stag := next_service_tag()
 		cmd := ws.Command{kind = .Wire, tag = stag, process = {asker.process_slot, asker.process_serial}, flags = process_flags_of(asker)}
 		if !system.send(&wiring_ring.commands, ws.command_to_record(cmd)) {
-			values^ = errors.ring_fail(u32(command), .Busy, .Requests, 0, 1, 1)
-			return .No_Slot, false
+			return root_ring.refuse(values, .Callee_Busy, u32(command), .Busy, .Requests, 0, 1, 1), false
 		}
 		wiring_request = {
 			stage        = .Wire,
@@ -644,24 +639,22 @@ wire_begin :: proc "contextless" (asker: ^Started, record: ring.Record, values: 
 			asker        = asker,
 			deadline     = system.time() + WIRING_REQUEST_BOUND_MILLISECONDS,
 		}
-		return .Ok, true
+		return .Succeeded, true
 	}
-	return .Bad_Operation, false
+	return root_ring.refuse(values, .Argument_Refused, u32(command), .Bad_Value, .None, 1), false
 }
 
 // start_with_wiring_begin starts an asynchronous Prepare_Start_Wiring for
 // a Start with Start_Wiring_List.In_The_List_Page.
-start_with_wiring_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, principal: u64, start_answer: root_ring.Start_Answer, for_start_policy: bool, counted: ^start_policy_rules.Name_Count, values: ^[7]u64, written: ^bool) -> (status: system.Status, held: bool) {
+start_with_wiring_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, principal: u64, start_answer: root_ring.Start_Answer, for_start_policy: bool, counted: ^start_policy_rules.Name_Count, values: ^[7]u64) -> (outcome: call_outcome.Call_Outcome, held: bool) {
 	command := root_ring.Root_Command.Start
 	if wiring_request.stage != .Idle {
 		lent_handles_close(asker)
-		values^ = errors.ring_fail(u32(command), .Busy, .Requests, 0, 1, 1)
-		written^ = true
-		return .No_Slot, false
+		return root_ring.refuse(values, .Callee_Busy, u32(command), .Busy, .Requests, 0, 1, 1), false
 	}
 	if name_is_a_system_part(name) {
 		lent_handles_close(asker)
-		return .Bad_Operation, false
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, u32(command), .Reserved, .None, 1), false
 	}
 	child_offset, child_size: u64
 	for &entry in system.image_entries(image) {
@@ -676,23 +669,19 @@ start_with_wiring_begin :: proc "contextless" (asker: ^Started, tag: u32, name: 
 	}
 	if child_size == 0 {
 		lent_handles_close(asker)
-		return .Bad_Operation, false
+		return root_ring.refuse(values, .Nothing_Has_That_Name, u32(command), .Absent, .Modules, 1), false
 	}
 	if !wiring_service_start() {
 		lent_handles_close(asker)
-		values^ = errors.ring_fail(u32(command), .Absent, .Services)
-		written^ = true
-		return .Bad_State, false
+		return root_ring.refuse(values, .Callee_Unavailable, u32(command), .Refused, .Services), false
 	}
 	if !asker.wiring_registered {
 		wiring_register_process(asker)
 	}
-	if stage_st := list_stage_for_wiring(asker, .Start, command, child_offset, child_size, values); stage_st != .Ok {
-		written^ = true
+	if stage_st := list_stage_for_wiring(asker, .Start, command, child_offset, child_size, values); stage_st != .Succeeded {
 		return stage_st, false
 	}
-	if budget_st := wiring_asker_budget_ensure(asker, command, values); budget_st != .Ok {
-		written^ = true
+	if budget_st := wiring_asker_budget_ensure(asker, command, values); budget_st != .Succeeded {
 		return budget_st, false
 	}
 	stag := next_service_tag()
@@ -705,9 +694,7 @@ start_with_wiring_begin :: proc "contextless" (asker: ^Started, tag: u32, name: 
 		module_size   = child_size,
 	}
 	if !system.send(&wiring_ring.commands, ws.command_to_record(cmd)) {
-		values^ = errors.ring_fail(u32(command), .Busy, .Requests, 0, 1, 1)
-		written^ = true
-		return .No_Slot, false
+		return root_ring.refuse(values, .Callee_Busy, u32(command), .Busy, .Requests, 0, 1, 1), false
 	}
 	packed_name: system.Name
 	copy(packed_name[:len(packed_name) - 1], name)
@@ -725,26 +712,24 @@ start_with_wiring_begin :: proc "contextless" (asker: ^Started, tag: u32, name: 
 		counted_restart  = counted,
 		deadline         = system.time() + WIRING_REQUEST_BOUND_MILLISECONDS,
 	}
-	return .Ok, true
+	return .Succeeded, true
 }
 
 // wirings_revoke_begin delegates revocation of the recorded grant `.Wirings`
 // of `target` to `wiring`.
-wirings_revoke_begin :: proc "contextless" (caller: ^Started, target: ^Started, tag: u32, values: ^[7]u64) -> (status: system.Status, held: bool) {
+wirings_revoke_begin :: proc "contextless" (caller: ^Started, target: ^Started, tag: u32, values: ^[7]u64) -> (outcome: call_outcome.Call_Outcome, held: bool) {
 	if wiring_process == nil {
 		target.granted -= {.Wirings}
 		values[0] = 0
-		return .Ok, false
+		return .Succeeded, false
 	}
 	if wiring_request.stage != .Idle {
-		values^ = errors.ring_fail(u32(root_ring.Root_Command.Revoke), .Busy, .Requests, 0, 1, 1)
-		return .No_Slot, false
+		return root_ring.refuse(values, .Callee_Busy, u32(root_ring.Root_Command.Revoke), .Busy, .Requests, 0, 1, 1), false
 	}
 	stag := next_service_tag()
 	cmd := ws.Command{kind = .Revoke_Asker, tag = stag, process = {target.process_slot, target.process_serial}}
 	if !system.send(&wiring_ring.commands, ws.command_to_record(cmd)) {
-		values^ = errors.ring_fail(u32(root_ring.Root_Command.Revoke), .Busy, .Requests, 0, 1, 1)
-		return .No_Slot, false
+		return root_ring.refuse(values, .Callee_Busy, u32(root_ring.Root_Command.Revoke), .Busy, .Requests, 0, 1, 1), false
 	}
 	wiring_request = {
 		stage        = .Revoke_Asker,
@@ -756,7 +741,7 @@ wirings_revoke_begin :: proc "contextless" (caller: ^Started, target: ^Started, 
 		target       = target,
 		deadline     = system.time() + WIRING_REQUEST_BOUND_MILLISECONDS,
 	}
-	return .Ok, true
+	return .Succeeded, true
 }
 
 // wiring_request_deadline returns the deadline of any in-flight request to
@@ -766,18 +751,35 @@ wiring_request_deadline :: proc "contextless" () -> u64 {
 }
 
 @(private = "file")
-wiring_request_reply :: proc "contextless" (status: system.Status, values: [7]u64) {
+wiring_request_reply :: proc "contextless" (outcome: call_outcome.Call_Outcome, values: [7]u64) {
 	asker := wiring_request.asker
 	tag := wiring_request.tag
 	wiring_request = {}
 	if asker != nil && asker.process != 0 && asker.requests.head != nil {
-		_ = system.send(&asker.requests.completions, ring.Record{kind = u32(status), tag = tag, values = values})
+		_ = system.send(&asker.requests.completions, ring.Record{kind = u32(outcome), tag = tag, values = values})
 	}
 }
 
+// wiring_request_fail answers the asker with a refusal. Once the process of
+// a start runs, in the commit of its wiring, the asker can see it and holds
+// its handle: a refusal then is a partial change, and a call in doubt stays
+// in doubt.
 @(private = "file")
-wiring_request_fail :: proc "contextless" (status: system.Status, values: [7]u64) {
-	wiring_request_reply(status, values)
+wiring_request_fail :: proc "contextless" (outcome: call_outcome.Call_Outcome, values: [7]u64) {
+	if wiring_request.stage == .Start_Commit {
+		wiring_request_fail_after_start(outcome, values)
+		return
+	}
+	wiring_request_reply(outcome, values)
+}
+
+// wiring_request_fail_after_start answers a refusal that came after the
+// process of the start began to run.
+@(private = "file")
+wiring_request_fail_after_start :: proc "contextless" (outcome: call_outcome.Call_Outcome, values: [7]u64) {
+	refusal := values
+	passed := changed_then_refused(&refusal, outcome)
+	wiring_request_reply(passed, refusal)
 }
 
 @(private = "file")
@@ -830,11 +832,14 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 		}
 		resp, resp_ok := ws.response_from_record(record, wiring_request.command)
 		if !resp_ok {
-			wiring_request_fail(.Bad_State, errors.ring_fail(u32(wiring_request.root_command), .Refused, .Wirings))
+			// The wiring service answered what its contract does not hold.
+			wiring_request_fail(.Answer_Unreadable, errors.ring_fail(u32(wiring_request.root_command), .Malformed, .Wirings))
 			continue
 		}
-		if resp.status != .Ok {
-			wiring_request_fail(ws.response_status_to_op_status(resp.status), errors.completion_values(resp.error_record))
+		// The wiring service named the outcome and the record of its
+		// refusal: they reach the asker as they are.
+		if resp.outcome != .Succeeded {
+			wiring_request_fail(resp.outcome, errors.completion_values(resp.error_record))
 			continue
 		}
 		switch wiring_request.stage {
@@ -842,7 +847,7 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 		case .List_Page:
 			asker := wiring_request.asker
 			if !prove_wiring_memory_handle(resp.list_page, {.Read, .Write, .Give}) || (resp.wiring_ring != 0 && !prove_wiring_memory_handle(resp.wiring_ring, {.Read, .Write, .Give})) {
-				wiring_request_fail(.Bad_Handle, errors.ring_fail(u32(root_ring.Root_Command.Wire), .Handle_Absent, .Wirings))
+				wiring_request_fail(.Answer_Unreadable, errors.ring_fail(u32(root_ring.Root_Command.Wire), .Malformed, .Wirings))
 				continue
 			}
 			if asker.list_memory != 0 {
@@ -863,15 +868,15 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 				page_for_asker, status = system.give(asker.requests_memory, asker.list_memory, {.Read, .Write})
 			}
 			if status != .Ok {
-				wiring_request_fail(status, errors.ring_fail(u32(root_ring.Root_Command.Wire), .Refused, .Wirings, 0, 0, 0, i64(status)))
+				wiring_request_fail(system.outcome_of_own_status(status), errors.ring_fail(u32(root_ring.Root_Command.Wire), .Refused, .Wirings, 0, 0, 0, i64(status)))
 				continue
 			}
-			wiring_request_reply(.Ok, {u64(page_for_asker), u64(ring_for_asker), 0, 0, 0, 0, 0})
+			wiring_request_reply(.Succeeded, {u64(page_for_asker), u64(ring_for_asker), 0, 0, 0, 0, 0})
 		case .Wire:
 			if resp.asker_active > 0 {
 				wiring_request.asker.granted += {.Wirings}
 			}
-			wiring_request_reply(.Ok, {u64(resp.wiring_number), 0, 0, 0, 0, 0, 0})
+			wiring_request_reply(.Succeeded, {u64(resp.wiring_number), 0, 0, 0, 0, 0, 0})
 		case .Start_Prepare:
 			intrinsics.mem_copy_non_overlapping(&core_prepared_resp, &wiring_region[ws.REGION_RESPONSE_OFFSET], size_of(ws.Prepared_Start_Ends))
 			end_count, payload_ok := ws.prepared_start_ends_check(&core_prepared_resp, resp.batch_id, core_child_ends[:])
@@ -895,7 +900,7 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 			if !handles_ok {
 				abort_cmd := ws.Command{kind = .Abort_Start_Wiring, batch_id = resp.batch_id}
 				_ = system.send(&wiring_ring.commands, ws.command_to_record(abort_cmd))
-				wiring_request_fail(.Bad_State, errors.ring_fail(u32(root_ring.Root_Command.Start), .Refused, .Wirings))
+				wiring_request_fail(.Answer_Unreadable, errors.ring_fail(u32(root_ring.Root_Command.Start), .Malformed, .Wirings))
 				continue
 			}
 			premade := Premade_Start_Wiring{
@@ -906,15 +911,16 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 			started_place: ^Started
 			start_refusal: [7]u64
 			name := system.name_of(wiring_request.start_name[:])
-			start_st := start(name, wiring_request.start_principal, wiring_request.asker, &premade, &started_place, &start_refusal)
+			started := start(name, wiring_request.start_principal, wiring_request.asker, &premade, &started_place, &start_refusal)
 			close_prepared_child_handles(core_child_ends[:end_count], premade.log_ring, premade.log_end_words)
-			if start_st != .Ok || started_place == nil {
+			if started != .Succeeded || started_place == nil {
 				abort_cmd := ws.Command{kind = .Abort_Start_Wiring, batch_id = resp.batch_id}
 				_ = system.send(&wiring_ring.commands, ws.command_to_record(abort_cmd))
-				if start_refusal == ([7]u64{}) {
-					start_refusal = root_command_refusal(.Start, name, 0, start_st)
+				if started == .Succeeded {
+					// The process stopped before this answer.
+					started = root_ring.refuse(&start_refusal, .Callee_Stopped_During_The_Call, u32(root_ring.Root_Command.Start), .Callee_Stopped, .Processes, 1)
 				}
-				wiring_request_fail(start_st, start_refusal)
+				wiring_request_fail(started, start_refusal)
 				continue
 			}
 			if !started_place.wiring_registered {
@@ -940,7 +946,8 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 				process  = {started_place.process_slot, started_place.process_serial},
 			}
 			if !system.send(&wiring_ring.commands, ws.command_to_record(commit_cmd)) {
-				wiring_request_fail(.No_Slot, errors.ring_fail(u32(root_ring.Root_Command.Start), .Busy, .Requests, 0, 1, 1))
+				// The process runs and the asker can hold its handle.
+				wiring_request_fail_after_start(.Callee_Busy, errors.ring_fail(u32(root_ring.Root_Command.Start), .Busy, .Requests, 0, 1, 1))
 				continue
 			}
 			wiring_request.stage = .Start_Commit
@@ -963,18 +970,18 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 					reply_values[1 + idx] = u64(core_prepared_resp.asker_numbers[idx])
 				}
 			}
-			wiring_request_reply(.Ok, reply_values)
+			wiring_request_reply(.Succeeded, reply_values)
 		case .Revoke_Asker:
 			target := wiring_request.target
 			if target != nil && target.process != 0 {
 				target.granted -= {.Wirings}
 				system.log_fact(.Info, Wirings_Revoked{ended = resp.ended_count, target = module_name_field(system.name_of(target.name[:]))})
 			}
-			wiring_request_reply(.Ok, {resp.ended_count, 0, 0, 0, 0, 0, 0})
+			wiring_request_reply(.Succeeded, {resp.ended_count, 0, 0, 0, 0, 0, 0})
 		}
 	}
 	if wiring_request.stage != .Idle && system.time() >= wiring_request.deadline {
-		wiring_request_fail(.Bad_State, errors.ring_fail(u32(wiring_request.root_command), .No_Answer, .Milliseconds, 0, 0, WIRING_REQUEST_BOUND_MILLISECONDS))
+		wiring_request_fail(.Deadline_Passed_During_The_Call, errors.ring_fail(u32(wiring_request.root_command), .No_Answer, .Milliseconds, 0, 0, WIRING_REQUEST_BOUND_MILLISECONDS))
 	}
 	system.wait_records(wait, &wiring_ring.completions)
 }

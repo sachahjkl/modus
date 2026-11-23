@@ -1,6 +1,7 @@
 package root
 
 import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
 // The log facts of the start policy and of its choice by principal 0
@@ -35,9 +36,9 @@ Plan_At_Start_Late :: struct {
 }
 
 // The holder of Plans did not start before the start policy.
-@(log_fact = "root: the plans service did not start to read the plan of principal 0: status {status}; the roles of the boot image hold")
+@(log_fact = "root: the plans service did not start to read the plan of principal 0: outcome {outcome}; the roles of the boot image hold")
 Plan_At_Start_Start_Failed :: struct {
-	status: op.Status,
+	outcome: call_outcome.Call_Outcome,
 }
 
 // The roles of the current plan of principal 0 hold from the start.
@@ -206,16 +207,16 @@ Rescue_By_Refused_Record :: struct {
 Rescue_By_Refused_Record_Of_No_Module :: struct {}
 
 // The start policy of the boot image did not start: the rescue starts.
-@(log_fact = "root: the start policy {start_policy_hash} did not start, with the status {status}: the rescue start policy starts")
+@(log_fact = "root: the start policy {start_policy_hash} did not start, with the outcome {outcome}: the rescue start policy starts")
 Start_Policy_Not_Started :: struct {
 	start_policy_hash: value_kinds.Hash_Head_Field,
-	status:            op.Status,
+	outcome:           call_outcome.Call_Outcome_Word,
 }
 
 // The start policy did not start, and the boot image has no module of it.
-@(log_fact = "root: the start policy of no module did not start, with the status {status}: the rescue start policy starts")
+@(log_fact = "root: the start policy of no module did not start, with the outcome {outcome}: the rescue start policy starts")
 Start_Policy_Not_Started_Of_No_Module :: struct {
-	status: op.Status,
+	outcome: call_outcome.Call_Outcome,
 }
 
 // The rescue stopped itself before the machine was usable: no start policy
@@ -337,15 +338,16 @@ Start_Policy_Unmeasured_Measure_Ring_Full :: struct {
 
 // The TPM service answered with a word that names no status of its
 // contract: the word of another party keeps its number.
-@(log_fact = "root: the start policy {start_policy_hash} {start_policy_words} is not measured: the TPM service gave the status {status_word}, which names no status")
+@(log_fact = "root: the start policy {start_policy_hash} {start_policy_words} is not measured: the TPM service gave a completion that the root service cannot read, the outcome word {outcome_word}")
 Start_Policy_Unmeasured_Unknown_Status :: struct {
-	status_word:        u64,
+	outcome_word:       u64,
 	start_policy_hash:  value_kinds.Hash_Head_Field,
 	start_policy_words: [40]u8,
 }
 
-// The extend of PCR 12 failed: the words of the status of the TPM service,
-// a closed set (tpm_measure_status_words), and the value of its answer.
+// The extend of PCR 12 failed: the name of the call outcome of the TPM
+// service, and the value found of its record: the response code, the step
+// of the interface, or the count of the extends.
 @(log_fact = "root: the measure of the start policy {start_policy_hash} {start_policy_words} into PCR 12 failed: the TPM service answered {tpm_status}, value {answer_value}")
 Start_Policy_Measure_Failed :: struct {
 	answer_value:       u64,

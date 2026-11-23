@@ -17,7 +17,7 @@ package root
 // connection to a caller that acts for the principal of the process, with
 // no debug access (src/md/features/debug_object_of_a_disk_process.md).
 
-import "modus:contract/errors"
+import "modus:contract/call_outcome"
 import "modus:disk_process"
 import "modus:contract/root_ring"
 import "modus:system"
@@ -93,7 +93,7 @@ stop_report_keep :: proc "contextless" (item: ^Started) {
 // service did not give the service the debug access to a process with
 // that name for that caller, or the process is not a disk process: the
 // debug image holds the debug object of a module of the boot image.
-debug_store_open :: proc "contextless" (holder: ^Started, name: string, connection_ring: u64, end: bool, kept: bool, values: ^[7]u64) -> system.Status {
+debug_store_open :: proc "contextless" (holder: ^Started, name: string, connection_ring: u64, end: bool, kept: bool, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Debug_Store)
 	caller: ^Started
 	principal: u64
@@ -106,8 +106,7 @@ debug_store_open :: proc "contextless" (holder: ^Started, name: string, connecti
 		}
 	}
 	if caller == nil {
-		values^ = errors.ring_fail(kind, .Absent, .Connections, 2)
-		return .Bad_Handle
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Connections, 2)
 	}
 	if kept {
 		return debug_store_open_for_report(holder, caller, principal, row, name, end, values)
@@ -123,27 +122,23 @@ debug_store_open :: proc "contextless" (holder: ^Started, name: string, connecti
 		}
 	}
 	if target == nil {
-		values^ = errors.ring_fail(kind, .Absent, .Debugged_Processes, 1)
-		return .Bad_State
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Debugged_Processes, 1)
 	}
 	if end {
 		debug_store_end(target)
-		return .Ok
+		return .Succeeded
 	}
 	if !target.from_disk {
-		values^ = errors.ring_fail(kind, .Absent, .Debug_Objects, 1)
-		return .Bad_State
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Debug_Objects, 1)
 	}
 	given: [3]system.Handle
-	status := debug_store_connection_give(holder, target.principal, &given)
-	if status != .Ok {
-		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
-		return status
+	if outcome := debug_store_connection_give(holder, target.principal, &given, values, kind); outcome != .Succeeded {
+		return outcome
 	}
 	debug_store.target = target
 	values^ = {u64(given[0]), u64(given[1]), u64(given[2]), 0, 0, 0, 0}
 	system.log_fact(.Info, Debug_Store_Given{principal = target.principal, debugger = module_name_field(system.name_of(holder.name[:])), target = module_name_field(name)})
-	return .Ok
+	return .Succeeded
 }
 
 // debug_store_open_for_report gives the debugger service the kept stop
@@ -158,70 +153,63 @@ debug_store_open :: proc "contextless" (holder: ^Started, name: string, connecti
 // grant `debug` of the caller was revoked. Bad_State: no kept report has
 // that nickname for that principal.
 @(private = "file")
-debug_store_open_for_report :: proc "contextless" (holder: ^Started, caller: ^Started, principal: u64, row: int, name: string, end: bool, values: ^[7]u64) -> system.Status {
+debug_store_open_for_report :: proc "contextless" (holder: ^Started, caller: ^Started, principal: u64, row: int, name: string, end: bool, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Debug_Store)
 	if end {
 		if debug_store.report_for == caller && debug_store.report_for_row == row && debug_store.holder == holder {
 			debug_store_report_end()
 		}
-		return .Ok
+		return .Succeeded
 	}
 	if .Debug in caller.revoked {
-		values^ = errors.ring_fail(kind, .No_Grant, .Debug_Access, 1)
-		return .No_Right
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Debug_Access, 1)
 	}
 	if .Acts_For_Principal not_in grants_held(caller) {
-		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
-		return .Bad_Operation
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Acts_For_Principal, 1)
 	}
 	report := disk_process.kept_stop_report_find(&kept_stop_reports, principal, name)
 	if report == nil {
-		values^ = errors.ring_fail(kind, .Absent, .Stop_Reports, 1)
-		return .Bad_State
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Stop_Reports, 1)
 	}
 	// The page of the report: memory of this service, given with the
 	// right Read only, and closed here once given.
 	page, created := system.memory_create(1)
 	if created != .Ok {
-		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(created))
-		return created
+		return kernel_refused(values, kind, created)
 	}
 	defer system.close(page)
 	address, mapped := system.memory_map(page)
 	if mapped != .Ok {
-		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(mapped))
-		return mapped
+		return kernel_refused(values, kind, mapped)
 	}
 	(^disk_process.Kept_Stop_Report)(address)^ = report^
 	system.memory_unmap(address)
 	given_page, page_status := system.give(holder.requests_memory, page, {.Read})
 	if page_status != .Ok {
-		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(page_status))
-		return page_status
+		return kernel_refused(values, kind, page_status)
 	}
 	given: [3]system.Handle
-	status := debug_store_connection_give(holder, principal, &given)
-	if status != .Ok {
+	if outcome := debug_store_connection_give(holder, principal, &given, values, kind); outcome != .Succeeded {
 		// The page is in the ring memory of the service already: the
 		// service closes a handle that a refusal names in no value.
 		system.handle_revoke(page, holder.process)
-		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
-		return status
+		return outcome
 	}
 	debug_store.report_for = caller
 	debug_store.report_for_row = row
 	debug_store.holder = holder
 	values^ = {u64(given[0]), u64(given[1]), u64(given[2]), u64(given_page), principal, 0, 0}
 	system.log_fact(.Info, Debug_Stop_Report_Given{principal = principal, debugger = module_name_field(system.name_of(holder.name[:])), target = module_name_field(name), caller = module_name_field(system.name_of(caller.name[:]))})
-	return .Ok
+	return .Succeeded
 }
 
 // debug_store_connection_give opens the connection that reads only to the
 // store `module_files` of a principal, and gives its three handles to the
 // debugger service `holder`. It ends a connection that the service had
-// before: one at a time.
+// before: one at a time. A refusal writes its record in values, with the
+// command kind as its operation.
 @(private = "file")
-debug_store_connection_give :: proc "contextless" (holder: ^Started, principal: u64, given: ^[3]system.Handle) -> system.Status {
+debug_store_connection_give :: proc "contextless" (holder: ^Started, principal: u64, given: ^[3]system.Handle, values: ^[7]u64, kind: u32) -> call_outcome.Call_Outcome {
 	if debug_store.connection != nil {
 		disconnect(debug_store.connection)
 	}
@@ -229,10 +217,11 @@ debug_store_connection_give :: proc "contextless" (holder: ^Started, principal: 
 	debug_store_reader = {}
 	copy(debug_store_reader.name[:len(debug_store_reader.name) - 1], disk_process.STORE_NAME)
 	debug_store_reader.principal = principal
-	connection, service, ring_memory, region_memory, status := connection_open(&debug_store_reader, role_holder_name(.Storage))
-	if status != .Ok {
-		return status
+	connection, service, ring_memory, region_memory, opened := connection_open(&debug_store_reader, role_holder_name(.Storage), values, kind)
+	if opened != .Succeeded {
+		return opened
 	}
+	status: system.Status
 	// The debugger service receives the handles through its ring to this
 	// service; this service keeps none of the memory.
 	defer system.close(ring_memory)
@@ -255,10 +244,10 @@ debug_store_connection_give :: proc "contextless" (holder: ^Started, principal: 
 			system.handle_revoke(source, holder.process)
 		}
 		disconnect(connection)
-		return status
+		return kernel_refused(values, kind, status)
 	}
 	debug_store.connection = connection
-	return .Ok
+	return .Succeeded
 }
 
 // debug_store_end ends the connection of the debug object of a process:

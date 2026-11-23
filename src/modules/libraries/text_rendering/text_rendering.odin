@@ -29,6 +29,7 @@
 // right, no shaping of a complex script.
 package text_rendering_module
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/font_outlines"
 import "modus:system"
@@ -54,16 +55,16 @@ Call_Fonts :: struct {
 face_and_size_check :: proc "contextless" (face_word, size: i64, error: ^errors.Error_Record) -> (face: text_rendering.Face, ok: bool) {
 	face, ok = text_rendering.face_of_word(face_word)
 	if !ok {
-		errors.fail(error, -1, .Bad_Value, .None, 2, face_word, i64(max(text_rendering.Face)))
+		errors.fail(error, 0, .Bad_Value, .None, 2, face_word, i64(max(text_rendering.Face)))
 		return .None, false
 	}
 	switch text_rendering.size_check(int(size)) {
 	case .None:
 	case .Zero, .Too_Small:
-		errors.fail(error, -1, .Too_Small, .None, 3, size, text_rendering.TEXT_SIZE_MINIMUM)
+		errors.fail(error, 0, .Too_Small, .None, 3, size, text_rendering.TEXT_SIZE_MINIMUM)
 		return .None, false
 	case .Too_Large:
-		errors.fail(error, -1, .Bad_Value, .None, 3, size, text_rendering.TEXT_SIZE_LIMIT)
+		errors.fail(error, 0, .Bad_Value, .None, 3, size, text_rendering.TEXT_SIZE_LIMIT)
 		return .None, false
 	}
 	return face, true
@@ -79,12 +80,12 @@ face_and_size_check :: proc "contextless" (face_word, size: i64, error: ^errors.
 call_spacing :: proc "contextless" (fonts: ^Call_Fonts, outlines: ^system.Bytes_To_Read, face: text_rendering.Face, size: i64, error: ^errors.Error_Record) -> (spacing: text_rendering.Spacing, ok: bool) {
 	count := outlines.count
 	if count > TABLE_LIMIT {
-		errors.fail(error, -1, .Too_Long, .Bytes, 1, i64(min(count, TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
+		errors.fail(error, 0, .Too_Long, .Bytes, 1, i64(min(count, TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
 		return {}, false
 	}
 	resource, problem := font_outlines.validate(outlines.bytes[:count])
 	if problem.kind != .None {
-		errors.fail(error, -1, .Bad_Value, .Bytes, 1, i64(problem.kind), 0, i64(problem.index) + 1)
+		errors.fail(error, 0, .Bad_Value, .Bytes, 1, i64(problem.kind), 0, i64(problem.index) + 1)
 		return {}, false
 	}
 	outline := text_rendering.outline_of(&fonts.outline)
@@ -93,31 +94,31 @@ call_spacing :: proc "contextless" (fonts: ^Call_Fonts, outlines: ^system.Bytes_
 	_ = text_rendering.fonts_open(&fonts.set, &resource, &outline, text_rendering.fonts_of_face(face))
 	spacing, ok = text_rendering.spacing_in(&fonts.set, face, int(size))
 	if !ok {
-		errors.fail(error, -1, .Absent, .None, 1, i64(text_rendering.face_forms[face].primary))
+		errors.fail(error, 0, .Absent, .None, 1, i64(text_rendering.face_forms[face].primary))
 		return {}, false
 	}
 	return spacing, true
 }
 
-// shape_text appends the placed glyphs of a UTF-8 text in a face at a text size, measured from the font files of the outlines: one for each character, x from the origin of the text and the advance with the pair adjustment of the font, in 1/64 of a pixel, and the first byte of the character as its cluster. The glyph is the character index for 32 to 126 (0 to 94), U+00A0 to U+00FF (95 to 190) and the euro sign (191); 16777216 plus the code point for another character that a font of the chain of the face has; 4294967295, the replacement glyph, with the advance of "0", for a character that no font of the chain has and each invalid sequence. The outlines are the resource font_outlines, on 8 bytes. The result is the count of placed glyphs of the full answer (larger than the capacity: it did not fit), or -1 with an error record: a face that is not 1 to 5 (argument 2), a size under 256 or over 16384 (argument 3), a text of more than 65536 bytes (argument 4), a table of placed glyphs over 2^40 records (argument 5), outlines that are refused or lack the first font of the face (argument 1). Nothing is written on a refusal.
+// shape_text appends the placed glyphs of a UTF-8 text in a face at a text size, measured from the font files of the outlines: one for each character, x from the origin of the text and the advance with the pair adjustment of the font, in 1/64 of a pixel, and the first byte of the character as its cluster. The glyph is the character index for 32 to 126 (0 to 94), U+00A0 to U+00FF (95 to 190) and the euro sign (191); 16777216 plus the code point for another character that a font of the chain of the face has; 4294967295, the replacement glyph, with the advance of "0", for a character that no font of the chain has and each invalid sequence. The outlines are the resource font_outlines, on 8 bytes. The result is the count of placed glyphs of the full answer (larger than the capacity: it did not fit), or the outcome Argument_Refused with an error record: a face that is not 1 to 5 (argument 2), a size under 256 or over 16384 (argument 3), a text of more than 65536 bytes (argument 4), a table of placed glyphs over 2^40 records (argument 5), outlines that are refused or lack the first font of the face (argument 1). Nothing is written on a refusal.
 @(export, link_name = "shape_text")
-shape_text :: proc "c" (outlines: ^system.Bytes_To_Read, face: i64, size: i64, text: ^system.Bytes_To_Read, placed: ^system.Table_To_Append(text_rendering.Placed_Glyph), error: ^errors.Error_Record) -> i64 {
+shape_text :: proc "c" (outlines: ^system.Bytes_To_Read, face: i64, size: i64, text: ^system.Bytes_To_Read, placed: ^system.Table_To_Append(text_rendering.Placed_Glyph), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	face_checked, face_ok := face_and_size_check(face, size, error)
 	if !face_ok {
-		return -1
+		return .Argument_Refused, 0
 	}
 	text_count := text.count
 	if text_count > text_rendering.TEXT_LIMIT {
-		return errors.fail(error, -1, .Too_Long, .Bytes, 4, i64(min(text_count, TABLE_LIMIT)), text_rendering.TEXT_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 4, i64(min(text_count, TABLE_LIMIT)), text_rendering.TEXT_LIMIT)
 	}
 	capacity, placed_count := placed.capacity, placed.count
 	if capacity > TABLE_LIMIT || placed_count > TABLE_LIMIT {
-		return errors.fail(error, -1, .Too_Long, .Records, 5, i64(min(max(capacity, placed_count), TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 5, i64(min(max(capacity, placed_count), TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
 	}
 	fonts: Call_Fonts
 	spacing, ok := call_spacing(&fonts, outlines, face_checked, size, error)
 	if !ok {
-		return -1
+		return .Argument_Refused, 0
 	}
 	// The Append rule: write only at or after the count and before the
 	// capacity; the count grows by the full answer.
@@ -127,58 +128,61 @@ shape_text :: proc "c" (outlines: ^system.Bytes_To_Read, face: i64, size: i64, t
 	}
 	count, _, _ := text_rendering.shape(&spacing, text.bytes[:text_count], room)
 	placed.count = placed_count + u64(count)
-	return i64(placed.count)
+	return .Succeeded, i64(placed.count)
 }
 
-// measure_texts writes the width of each text of a table of ranges into one table of bytes, in a face at a text size, in 1/64 of a pixel: a window measures all its labels in one call. The width of a text is the sum of the advances of its placed glyphs (shape_text). The result is the count of ranges, or -1 with an error record: a face (argument 2) or a size (argument 3) as for shape_text, a table of bytes (argument 4) or of ranges (argument 5) over 2^40, outlines as for shape_text (argument 1), a range past the end of the bytes (Out_Of_Range: its end, the count of bytes, the number of the range from 1), or a range of more than 65536 bytes (Too_Long: its count, the limit, the number of the range from 1). The ranges before the one that fails have their width; it and the ranges after it are not written.
+// measure_texts writes the width of each text of a table of ranges into one table of bytes, in a face at a text size, in 1/64 of a pixel: a window measures all its labels in one call. The width of a text is the sum of the advances of its placed glyphs (shape_text). The result is the count of ranges, or the outcome Argument_Refused with an error record: a face (argument 2) or a size (argument 3) as for shape_text, a table of bytes (argument 4) or of ranges (argument 5) over 2^40, outlines as for shape_text (argument 1), a range past the end of the bytes (Out_Of_Range: its end, the count of bytes, the number of the range from 1), or a range of more than 65536 bytes (Too_Long: its count, the limit, the number of the range from 1). The ranges before the one that fails have their width, and the outcome is then Stopped_After_A_Partial_Change; it and the ranges after it are not written.
 @(export, link_name = "measure_texts")
-measure_texts :: proc "c" (outlines: ^system.Bytes_To_Read, face: i64, size: i64, text: ^system.Bytes_To_Read, ranges: ^system.Table_To_Change(text_rendering.Text_Range), error: ^errors.Error_Record) -> i64 {
+measure_texts :: proc "c" (outlines: ^system.Bytes_To_Read, face: i64, size: i64, text: ^system.Bytes_To_Read, ranges: ^system.Table_To_Change(text_rendering.Text_Range), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	face_checked, face_ok := face_and_size_check(face, size, error)
 	if !face_ok {
-		return -1
+		return .Argument_Refused, 0
 	}
 	text_count, range_count := text.count, ranges.count
 	if text_count > TABLE_LIMIT {
-		return errors.fail(error, -1, .Too_Long, .Bytes, 4, i64(min(text_count, TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 4, i64(min(text_count, TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
 	}
 	if range_count > TABLE_LIMIT {
-		return errors.fail(error, -1, .Too_Long, .Records, 5, i64(min(range_count, TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 5, i64(min(range_count, TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
 	}
 	fonts: Call_Fonts
 	spacing, ok := call_spacing(&fonts, outlines, face_checked, size, error)
 	if !ok {
-		return -1
+		return .Argument_Refused, 0
 	}
 	problem, index, end := text_rendering.measure_ranges(&spacing, text.bytes[:text_count], ranges.records[:range_count])
+	// The ranges before the refused one have their width in the table of
+	// the caller: a change that happened is never hidden behind a refusal.
+	refused := index > 0 ? call_outcome.Call_Outcome.Stopped_After_A_Partial_Change : .Argument_Refused
 	switch problem {
 	case .Past_The_Text:
-		return errors.fail(error, -1, .Out_Of_Range, .Bytes, 5, i64(end), i64(text_count), i64(index + 1))
+		return call_outcome.fail(error, refused, .Out_Of_Range, .Bytes, 5, i64(end), i64(text_count), i64(index + 1))
 	case .Too_Long:
-		return errors.fail(error, -1, .Too_Long, .Bytes, 5, i64(end), text_rendering.TEXT_LIMIT, i64(index + 1))
+		return call_outcome.fail(error, refused, .Too_Long, .Bytes, 5, i64(end), text_rendering.TEXT_LIMIT, i64(index + 1))
 	case .None:
 	}
-	return i64(range_count)
+	return .Succeeded, i64(range_count)
 }
 
-// break_text appends the lines of a UTF-8 text in a box of room, in a face at a text size: each line as a range of the text (its first byte, its bytes with no space at its end, and its width in 1/64 of a pixel). A line ends at the last space that fits; a word wider than the box ends a line after its last "/", ":" or "_" that fits, else after its last character that fits; a line has at least one whole character, also in a room of 0 or below. The lines, joined, are the text with no space at a break. An empty text has no line. The result is the count of lines of the full answer (larger than the capacity: it did not fit), or -1 with an error record: a face (argument 2) or a size (argument 3) as for shape_text, a text of more than 65536 bytes (argument 4), a table of lines over 2^40 records (argument 6), outlines as for shape_text (argument 1). Nothing is written on a refusal.
+// break_text appends the lines of a UTF-8 text in a box of room, in a face at a text size: each line as a range of the text (its first byte, its bytes with no space at its end, and its width in 1/64 of a pixel). A line ends at the last space that fits; a word wider than the box ends a line after its last "/", ":" or "_" that fits, else after its last character that fits; a line has at least one whole character, also in a room of 0 or below. The lines, joined, are the text with no space at a break. An empty text has no line. The result is the count of lines of the full answer (larger than the capacity: it did not fit), or the outcome Argument_Refused with an error record: a face (argument 2) or a size (argument 3) as for shape_text, a text of more than 65536 bytes (argument 4), a table of lines over 2^40 records (argument 6), outlines as for shape_text (argument 1). Nothing is written on a refusal.
 @(export, link_name = "break_text")
-break_text :: proc "c" (outlines: ^system.Bytes_To_Read, face: i64, size: i64, text: ^system.Bytes_To_Read, room: i64, lines: ^system.Table_To_Append(text_rendering.Text_Range), error: ^errors.Error_Record) -> i64 {
+break_text :: proc "c" (outlines: ^system.Bytes_To_Read, face: i64, size: i64, text: ^system.Bytes_To_Read, room: i64, lines: ^system.Table_To_Append(text_rendering.Text_Range), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	face_checked, face_ok := face_and_size_check(face, size, error)
 	if !face_ok {
-		return -1
+		return .Argument_Refused, 0
 	}
 	text_count := text.count
 	if text_count > text_rendering.TEXT_LIMIT {
-		return errors.fail(error, -1, .Too_Long, .Bytes, 4, i64(min(text_count, TABLE_LIMIT)), text_rendering.TEXT_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 4, i64(min(text_count, TABLE_LIMIT)), text_rendering.TEXT_LIMIT)
 	}
 	capacity, line_count := lines.capacity, lines.count
 	if capacity > TABLE_LIMIT || line_count > TABLE_LIMIT {
-		return errors.fail(error, -1, .Too_Long, .Records, 6, i64(min(max(capacity, line_count), TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 6, i64(min(max(capacity, line_count), TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
 	}
 	fonts: Call_Fonts
 	spacing, ok := call_spacing(&fonts, outlines, face_checked, size, error)
 	if !ok {
-		return -1
+		return .Argument_Refused, 0
 	}
 	bytes := text.bytes[:text_count]
 	start := 0
@@ -200,5 +204,5 @@ break_text :: proc "c" (outlines: ^system.Bytes_To_Read, face: i64, size: i64, t
 		start += next
 	}
 	lines.count = line_count + found
-	return i64(lines.count)
+	return .Succeeded, i64(lines.count)
 }

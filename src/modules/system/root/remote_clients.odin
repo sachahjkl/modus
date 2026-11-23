@@ -29,7 +29,7 @@ package root
 // new serial. A key that another principal allowed too is contested: it
 // acts for neither until one of them revokes it.
 
-import "modus:contract/errors"
+import "modus:contract/call_outcome"
 import "modus:contract/isolated"
 import "modus:contract/remote"
 import "modus:contract/ring"
@@ -96,30 +96,27 @@ key_head_text :: proc "contextless" (buffer: ^[16]u8, key: [32]u8) -> string {
 // revocation and the read of a row of the client table, for the principal
 // of the caller. A refusal writes its own error record in values: the
 // values of the command hold a key where a name would be.
-remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
+remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Remote_Client)
 	// The principal gives a grant: only a process that acts for it may ask,
 	// and the grant is of that principal only.
 	if .Acts_For_Principal not_in grants_held(caller) {
-		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
-		return .No_Right
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Acts_For_Principal, 1)
 	}
 	principal := caller.principal
 	table := disk_grant_table_of(principal)
 	if table == nil {
-		values^ = errors.ring_fail(kind, .Absent, .Principals, 0)
-		return .Bad_State
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Principals, 0)
 	}
-	action, action_status, action_refusal := root_ring.member_of_word(root_ring.Remote_Client_Action, record.values[4], .Remote_Client, REMOTE_CLIENT_ACTION_ARGUMENT)
-	if action_status != .Ok {
+	action, action_outcome, action_refusal := root_ring.member_of_word(root_ring.Remote_Client_Action, record.values[4], .Remote_Client, REMOTE_CLIENT_ACTION_ARGUMENT)
+	if action_outcome != .Succeeded {
 		values^ = action_refusal
-		return action_status
+		return action_outcome
 	}
 	if action == .Read {
 		place := record.values[5]
 		if place >= remote.CLIENT_READ_PLACES {
-			values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(place, 1 << 62)), remote.CLIENT_READ_PLACES - 1)
-			return .Bad_Operation
+			return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, 2, i64(min(place, 1 << 62)), remote.CLIENT_READ_PLACES - 1)
 		}
 		// A caller reads the keys of its own principal: the keys that
 		// another principal allowed are facts of that principal.
@@ -136,7 +133,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 				}
 				values^ = {key[0], key[1], key[2], key[3], row.principal, row.uses, u64(state)}
 			}
-			return .Ok
+			return .Succeeded
 		}
 		// A key of the disk grant table of the principal whose row is a
 		// row of another principal: the key is contested.
@@ -149,12 +146,11 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 				values^ = {key[0], key[1], key[2], key[3], principal, remote.client_uses_word(contested.uses), u64(root_ring.Remote_Client_State.Contested)}
 			}
 		}
-		return .Ok
+		return .Succeeded
 	}
 	key := transmute([32]u8)[4]u64{record.values[0], record.values[1], record.values[2], record.values[3]}
 	if key == ([32]u8{}) {
-		values^ = errors.ring_fail(kind, .Bad_Value, .None, 1)
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, 1)
 	}
 	place := remote.client_find(&client_table.clients, key)
 	head: [16]u8
@@ -163,32 +159,28 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		// Served above, before the check of the key: this arm is reached
 		// only if that block moves, and then it refuses, never answers Ok
 		// with values that it did not write.
-		values^ = errors.ring_fail(kind, .Bad_Value, .None, REMOTE_CLIENT_ACTION_ARGUMENT, i64(min(record.values[4], 1 << 62)), i64(max(root_ring.Remote_Client_Action)))
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, REMOTE_CLIENT_ACTION_ARGUMENT, i64(min(record.values[4], 1 << 62)), i64(max(root_ring.Remote_Client_Action)))
 	case .Allow:
 		// The uses are a word of the caller: the border refuses a bit that
 		// names no use, no use, and Input without View.
 		asked, asked_known := remote.client_uses_of_word(record.values[5])
 		if !asked_known {
-			values^ = errors.ring_fail(kind, .Bad_Value, .None, REMOTE_CLIENT_USES_ARGUMENT, i64(min(record.values[5], 1 << 62)), i64(remote.client_uses_word({.Calls, .View, .Input})))
-			return .Bad_Operation
+			return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, REMOTE_CLIENT_USES_ARGUMENT, i64(min(record.values[5], 1 << 62)), i64(remote.client_uses_word({.Calls, .View, .Input})))
 		}
 		if place >= 0 {
 			if client_table.clients[place].principal != principal {
 				// One key acts for one principal: else a call of the client
 				// would not say for whom it acts.
-				values^ = errors.ring_fail(kind, .Exists, .Grants, 1)
-				return .Bad_State
+				return root_ring.refuse(values, .Name_Already_Taken, kind, .Exists, .Grants, 1)
 			}
 			// The row of the principal: the uses grow, and the serial
 			// stays, so no connection of the key ends.
 			held, _ := remote.client_uses_of_word(client_table.clients[place].uses)
 			if asked <= held {
-				return .Ok
+				return .Succeeded
 			}
 			if persisted_table_refusal(principal) {
-				values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
-				return .Bad_State
+				return root_ring.refuse(values, .Wrong_State, kind, .State)
 			}
 			combined := held + asked
 			_ = disk_process.table_client_key_add(table, key, combined)
@@ -197,14 +189,13 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			changed.uses = remote.client_uses_word(combined)
 			client_row_write(place, changed)
 			system.log_fact(.Info, Client_Key_Uses_Added{principal = principal, client_key = text_field(key_head_text(&head, key), 24), uses = text_field(client_uses_text(combined), 24)})
-			return .Ok
+			return .Succeeded
 		}
 		// Every allowed client key and its uses (Calls, View, Input) go into
 		// the disk grant table of the principal: a change that the table
 		// refuses now would be lost at its read, or would not reach the disk.
 		if persisted_table_refusal(principal) {
-			values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
-			return .Bad_State
+			return root_ring.refuse(values, .Wrong_State, kind, .State)
 		}
 		// One principal holds part of the table only: else it would leave
 		// no row to the other principals of the machine. A contested key of
@@ -218,8 +209,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		}
 		rows_of_the_principal = max(rows_of_the_principal, table.client_key_count)
 		if rows_of_the_principal >= remote.CLIENT_ROWS_OF_ONE_PRINCIPAL {
-			values^ = errors.ring_fail(kind, .Full, .Grants, 0, i64(rows_of_the_principal), remote.CLIENT_ROWS_OF_ONE_PRINCIPAL)
-			return .No_Slot
+			return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, kind, .Full, .Grants, 0, i64(rows_of_the_principal), remote.CLIENT_ROWS_OF_ONE_PRINCIPAL)
 		}
 		// A new row takes the state of the session of its principal: no
 		// key opens a connection for a principal whose session is locked,
@@ -242,10 +232,9 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			}
 			persisted_table_changed(principal)
 			principals_client_key_tell(principal, .Allow, key, asked)
-			return .Ok
+			return .Succeeded
 		}
-		values^ = errors.ring_fail(kind, .Full, .Grants, 0, 0, remote.CLIENT_CAPACITY)
-		return .No_Slot
+		return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, kind, .Full, .Grants, 0, 0, remote.CLIENT_CAPACITY)
 	case .Revoke:
 		if place < 0 || client_table.clients[place].principal != principal {
 			// A contested key of the disk grant table of the caller, whose
@@ -256,10 +245,9 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 				system.log_fact(.Info, Client_Key_Revoked_Contested{principal = principal, client_key = text_field(key_head_text(&head, key), 24)})
 				values[1] = persisted_table_revocation(principal, key) ? root_ring.REMOTE_CLIENT_KEY_CAN_COME_BACK : 0
 				client_contest_end(principal, key)
-				return .Ok
+				return .Succeeded
 			}
-			values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
-			return .Bad_Handle
+			return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Grants, 1)
 		}
 		revoked_uses, _ := remote.client_uses_of_word(client_table.clients[place].uses)
 		client_row_write(place, {})
@@ -276,11 +264,10 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		// The key has no row now: a principal whose disk grant table holds
 		// it too, for which it was contested, takes it.
 		client_keys_restore()
-		return .Ok
+		return .Succeeded
 	}
 	// Each arm returns: only an action that skipped the border reaches here.
-	values^ = errors.ring_fail(kind, .Bad_Value, .None, REMOTE_CLIENT_ACTION_ARGUMENT, i64(min(record.values[4], 1 << 62)), i64(max(root_ring.Remote_Client_Action)))
-	return .Bad_Operation
+	return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, REMOTE_CLIENT_ACTION_ARGUMENT, i64(min(record.values[4], 1 << 62)), i64(max(root_ring.Remote_Client_Action)))
 }
 
 // The argument of the error record of a refused action: the place of the
@@ -510,35 +497,32 @@ remote_clients_front_follow :: proc "contextless" () {
 // client_grant_of checks the row that a Connect of `remote` names: the row
 // values[4] - 1 with the serial values[5], whose grant holds. A refusal
 // writes its own error record in values.
-client_grant_of :: proc "contextless" (caller: ^Started, row_number: u64, serial: u64, values: ^[7]u64) -> (client: Client_Grant, status: system.Status) {
+client_grant_of :: proc "contextless" (caller: ^Started, row_number: u64, serial: u64, values: ^[7]u64) -> (client: Client_Grant, outcome: call_outcome.Call_Outcome) {
 	kind := u32(root_ring.Root_Command.Connect)
 	if .Remote_Clients not_in caller.start_grant_set.grants || row_number == 0 {
 		// Only the process of the client table connects for a row, and it
 		// connects for a row only: a call from another machine acts for a
 		// principal that allowed its client, and never for the session of
 		// that process.
-		values^ = errors.ring_fail(kind, .No_Grant, .Connection, 2)
-		return {}, .No_Right
+		return {}, root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Connection, 2)
 	}
 	if row_number > remote.CLIENT_CAPACITY {
-		values^ = errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(row_number, 1 << 62)), remote.CLIENT_CAPACITY)
-		return {}, .Bad_Operation
+		return {}, root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, 2, i64(min(row_number, 1 << 62)), remote.CLIENT_CAPACITY)
 	}
 	place := int(row_number - 1)
 	row := client_table.clients[place]
 	if row.serial == 0 || row.serial != serial {
-		values^ = errors.ring_fail(kind, .Absent, .Grants, 2)
-		return {}, .Bad_State
+		return {}, root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Grants, 2)
 	}
+	// The session of the principal of the row is locked: the row exists,
+	// and the call applies once the session is unlocked.
 	if row.session_locked != 0 {
-		values^ = errors.ring_fail(kind, .Absent, .Principals, 2, i64(row.principal))
-		return {}, .Bad_State
+		return {}, root_ring.refuse(values, .Wrong_State, kind, .State, .Principals, 2, i64(row.principal))
 	}
 	// A key of the view alone makes no call: remote refuses it in its
 	// handshake, and this service does not trust remote with that rule.
 	if uses, known := remote.client_uses_of_word(row.uses); !known || .Calls not_in uses {
-		values^ = errors.ring_fail(kind, .No_Grant, .Grants, 2)
-		return {}, .No_Right
+		return {}, root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Grants, 2)
 	}
 	if row.contested != 0 {
 		// A contest gives the row a new serial, and remote binds no client
@@ -546,10 +530,9 @@ client_grant_of :: proc "contextless" (caller: ^Started, row_number: u64, serial
 		// service does not trust remote with it.
 		head: [16]u8
 		system.log_fact(.Warning, Remote_Connection_Refused_Contested{principal = row.principal, other_principal = row.contested - 1, client_key = text_field(key_head_text(&head, row.key), 24)})
-		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
-		return {}, .Bad_State
+		return {}, root_ring.refuse(values, .Wrong_State, kind, .State, .Grants, 2)
 	}
-	return {place = place + 1, serial = row.serial, principal = row.principal, key = row.key}, .Ok
+	return {place = place + 1, serial = row.serial, principal = row.principal, key = row.key}, .Succeeded
 }
 
 // connection_principal gives the principal that the caller of a connection

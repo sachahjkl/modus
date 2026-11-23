@@ -216,7 +216,7 @@ copy_inputs :: proc "contextless" (input, output: ^storage.Client, rows: []pr.Re
 	for &row in rows {
 		name := hash_hex(blake3.Hash(row.hash))
 		arguments := [2]isolated.Argument{{integer = u64(storage.ROOT)}, {text = name[:]}}
-		value, text, status := storage.call(input, "tree_read", arguments[:], error)
+		value, text, status, _ := storage.call(input, "tree_read", arguments[:], error)
 		if status != .Ok || value < 0 || len(text) > len(tree_bytes) {
 			return -9
 		}

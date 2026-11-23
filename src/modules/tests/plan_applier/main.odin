@@ -3,7 +3,7 @@
 // the start"). It applies plans of principal 0 through `plans.apply` and
 // reads the decision of the principal with `plans.apply_poll`; the tool
 // answers each dialog of the trusted display with the keys of a principal.
-// The refusals come first, each with its call status and its error record,
+// The refusals come first, each with its call outcome and its error record,
 // and each leaves generation 0 current:
 //
 // 1. a Plan_Expected that names a current plan that does not exist:
@@ -35,7 +35,7 @@
 package plan_applier
 
 import "modus:contract/blake3"
-import "modus:contract/call_status"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
@@ -62,10 +62,6 @@ PLAN_COMMITTED :: "settings stand-in"
 // again, is the one way to read it.
 POLL_MILLISECONDS :: 100
 
-// The export that returns this negative number failed with a refusal of
-// the plan (src/modules/system/plans/exports.odin, ERROR_PLAN).
-ERROR_PLAN :: -4
-
 Plans_Connection :: struct {
 	connection:         system.Call_Connection,
 	file:               []u8,
@@ -83,8 +79,8 @@ wrong :: proc "contextless" (text: string, value: u64) -> ! {
 }
 
 @(private = "file")
-wrong_call :: proc "contextless" (text: string, status: call_status.Call_Status, error: errors.Error_Record) -> ! {
-	system.log_fact(.Error, Wrong_Call{status = u64(status), error_kind = u64(error.kind), error_unit = u64(error.unit), error_argument = error.argument, error_value = error.value, error_found = error.found}, text)
+wrong_call :: proc "contextless" (text: string, outcome: call_outcome.Call_Outcome, error: errors.Error_Record) -> ! {
+	system.log_fact(.Error, Wrong_Call{outcome = call_outcome.Call_Outcome_Word(outcome), error_kind = u64(error.kind), error_unit = u64(error.unit), error_argument = error.argument, error_value = error.value, error_found = error.found}, text)
 	system.stop(.Failed)
 }
 
@@ -105,7 +101,7 @@ holder_row :: proc "contextless" (hash: blake3.Hash, name: string) -> (row: pr.P
 
 // apply calls plans.apply with one row.
 @(private = "file")
-apply :: proc "contextless" (plan_name: string, row: ^pr.Plan_Entry_Row, expected: ^pr.Plan_Expected, error: ^errors.Error_Record) -> (ticket: i64, status: call_status.Call_Status) {
+apply :: proc "contextless" (plan_name: string, row: ^pr.Plan_Entry_Row, expected: ^pr.Plan_Expected, error: ^errors.Error_Record) -> (ticket: i64, outcome: call_outcome.Call_Outcome) {
 	name := plan_name
 	arguments := [3]isolated.Argument{{text = transmute([]u8)name}, {table = {records = bytes_of(row), count = 1}}, {record = bytes_of(expected)}}
 	error^ = {}
@@ -115,17 +111,17 @@ apply :: proc "contextless" (plan_name: string, row: ^pr.Plan_Entry_Row, expecte
 // decision_wait reads the decision on ticket until the principal took one,
 // and writes the line of the arm time once.
 @(private = "file")
-decision_wait :: proc "contextless" (plan_name: string, ticket: i64, asked_at: u64, generation_row: ^pr.Plan_Generation_Row, error: ^errors.Error_Record) -> (generation: i64, status: call_status.Call_Status) {
+decision_wait :: proc "contextless" (plan_name: string, ticket: i64, asked_at: u64, generation_row: ^pr.Plan_Generation_Row, error: ^errors.Error_Record) -> (generation: i64, outcome: call_outcome.Call_Outcome) {
 	armed := false
 	deadline := asked_at + pr.PLAN_DISPLAY_ARM_MILLISECONDS + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
 		rows: [1]pr.Plan_Generation_Row
 		arguments := [1]isolated.Argument{{integer = u64(ticket)}}
 		error^ = {}
-		generation, status = system.call_isolated(&plans.connection, plans.file, plans.poll_export, arguments[:], error, false, bytes_of(&rows))
-		if status != .Ok || generation != 0 {
+		generation, outcome = system.call_isolated(&plans.connection, plans.file, plans.poll_export, arguments[:], error, false, bytes_of(&rows))
+		if outcome != .Succeeded || generation != 0 {
 			generation_row^ = rows[0]
-			return generation, status
+			return generation, outcome
 		}
 		now := system.time()
 		if !armed && now >= asked_at + pr.PLAN_DISPLAY_ARM_MILLISECONDS {
@@ -140,13 +136,13 @@ decision_wait :: proc "contextless" (plan_name: string, ticket: i64, asked_at: u
 	}
 }
 
-// refusal_check checks a refusal whole: the call failed, its error record
-// has the kind, the unit, the argument and the refusal that the case
+// refusal_check checks a refusal whole: the call failed with the outcome
+// that the case waits for, its error record has the kind, the unit, the argument and the refusal that the case
 // waits for, and generation 0 is still current.
 @(private = "file")
-refusal_check :: proc "contextless" (what: string, result: i64, status: call_status.Call_Status, error: errors.Error_Record, kind: errors.Kind, unit: errors.Unit, argument: i64, refusal: pr.Plan_Refusal) {
-	if status != .Failed || result != ERROR_PLAN || error.kind != i64(kind) || error.unit != i64(unit) || error.argument != argument || error.found != i64(refusal) {
-		system.log_fact(.Error, Wrong_Refusal{result = result, status = u64(status), error_kind = error.kind, error_unit = error.unit, error_argument = error.argument, error_found = error.found, wanted_kind = i64(kind), wanted_unit = i64(unit), wanted_argument = argument, wanted_found = i64(refusal)}, what)
+refusal_check :: proc "contextless" (what: string, result: i64, outcome: call_outcome.Call_Outcome, error: errors.Error_Record, wanted_outcome: call_outcome.Call_Outcome, kind: errors.Kind, unit: errors.Unit, argument: i64, refusal: pr.Plan_Refusal) {
+	if outcome != wanted_outcome || result != 0 || error.kind != i64(kind) || error.unit != i64(unit) || error.argument != argument || error.found != i64(refusal) {
+		system.log_fact(.Error, Wrong_Refusal{result = result, outcome = call_outcome.Call_Outcome_Word(outcome), error_kind = error.kind, error_unit = error.unit, error_argument = error.argument, error_found = error.found, wanted_kind = i64(kind), wanted_unit = i64(unit), wanted_argument = argument, wanted_found = i64(refusal)}, what)
 		system.stop(.Failed)
 	}
 	current_check(what)
@@ -157,9 +153,9 @@ refusal_check :: proc "contextless" (what: string, result: i64, status: call_sta
 @(private = "file")
 current_check :: proc "contextless" (what: string) {
 	error: errors.Error_Record
-	generation, status := system.call_isolated(&plans.connection, plans.file, plans.generation_export, nil, &error)
-	if status != .Ok || generation != 0 {
-		system.log_fact(.Error, Wrong_Generation{generation = generation, status = u64(status)}, what)
+	generation, outcome := system.call_isolated(&plans.connection, plans.file, plans.generation_export, nil, &error)
+	if outcome != .Succeeded || generation != 0 {
+		system.log_fact(.Error, Wrong_Generation{generation = generation, outcome = call_outcome.Call_Outcome_Word(outcome)}, what)
 		system.stop(.Failed)
 	}
 }
@@ -167,17 +163,17 @@ current_check :: proc "contextless" (what: string) {
 // refused_after_dialog applies a plan of one row, lets the tool answer its
 // dialog, and checks the refusal of apply_poll.
 @(private = "file")
-refused_after_dialog :: proc "contextless" (plan_name: string, row: ^pr.Plan_Entry_Row, refusal: pr.Plan_Refusal, kind: errors.Kind, unit: errors.Unit, argument: i64) {
+refused_after_dialog :: proc "contextless" (plan_name: string, row: ^pr.Plan_Entry_Row, refusal: pr.Plan_Refusal, wanted_outcome: call_outcome.Call_Outcome, kind: errors.Kind, unit: errors.Unit, argument: i64) {
 	expected: pr.Plan_Expected
 	error: errors.Error_Record
-	ticket, status := apply(plan_name, row, &expected, &error)
-	if status != .Ok || ticket <= 0 {
-		wrong_call("plans.apply refused a plan before its dialog", status, error)
+	ticket, applied := apply(plan_name, row, &expected, &error)
+	if applied != .Succeeded || ticket <= 0 {
+		wrong_call("plans.apply refused a plan before its dialog", applied, error)
 	}
 	system.log_fact(.Info, Difference_Shown{ticket = u64(ticket)}, plan_name)
 	generation_row: pr.Plan_Generation_Row
-	result, poll_status := decision_wait(plan_name, ticket, system.time(), &generation_row, &error)
-	refusal_check(plan_name, result, poll_status, error, kind, unit, argument, refusal)
+	result, outcome := decision_wait(plan_name, ticket, system.time(), &generation_row, &error)
+	refusal_check(plan_name, result, outcome, error, wanted_outcome, kind, unit, argument, refusal)
 }
 
 @(export, link_name = "entry")
@@ -205,10 +201,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wrong("no root ring; the status word", u64(ring_status))
 	}
 	// The role name reaches the holder of Plans in force.
-	connected: system.Status
+	connected: call_outcome.Call_Outcome
 	plans.connection, connected = system.service_connection(&requests, 1, role_contract.role_properties(.Plans).name)
-	if connected != .Ok {
-		wrong("the root service gave no connection to the holder of Plans; the status word", u64(connected))
+	if connected != .Succeeded {
+		wrong("the root service gave no connection to the holder of Plans; the outcome word", u64(connected))
 	}
 	if blake3.Hash(plans.connection.module_hash) != blake3.hash(plans.file) {
 		wrong("the holder of Plans is not the module plans of the boot image; the size of its file", u64(len(plans.file)))
@@ -222,34 +218,34 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	{
 		expected := pr.Plan_Expected{current_plan_hash = value_kinds.Hash_Field(blake3.hash(transmute([]u8)string("no plan was applied")))}
 		error: errors.Error_Record
-		result, status := apply(PLAN_COMMITTED, &holder, &expected, &error)
-		refusal_check("a Plan_Expected of a plan that is not current", result, status, error, .State, .Versions, 2, .Stale_Current_Plan)
+		result, outcome := apply(PLAN_COMMITTED, &holder, &expected, &error)
+		refusal_check("a Plan_Expected of a plan that is not current", result, outcome, error, .Another_Change_Came_First, .State, .Versions, 2, .Stale_Current_Plan)
 	}
 	// 2. The principal refuses the difference.
-	refused_after_dialog(PLAN_REFUSED_BY_PRINCIPAL, &holder, .Refused_By_Principal, .Refused, .Display, 0)
+	refused_after_dialog(PLAN_REFUSED_BY_PRINCIPAL, &holder, .Refused_By_Principal, .Grant_Or_Right_Missing, .Refused, .Display, 0)
 	// 3. A hash of no module of the image.
 	{
 		absent := holder_row(blake3.hash(transmute([]u8)string("no module has these bytes")), HOLDER_MODULE)
-		refused_after_dialog(PLAN_NOT_IN_IMAGE, &absent, .Roles_Refused, .Refused, .Grants, 1)
+		refused_after_dialog(PLAN_NOT_IN_IMAGE, &absent, .Roles_Refused, .Argument_Refused, .Refused, .Grants, 1)
 	}
 	// 4. A module of the image that does not fill the contract of Settings.
 	{
 		not_filling := holder_row(blake3.hash(not_filling_file), NOT_FILLING_MODULE)
-		refused_after_dialog(PLAN_CONTRACT_NOT_FILLED, &not_filling, .Roles_Refused, .Refused, .Grants, 1)
+		refused_after_dialog(PLAN_CONTRACT_NOT_FILLED, &not_filling, .Roles_Refused, .Argument_Refused, .Refused, .Grants, 1)
 	}
 
 	// The plan that commits, last.
 	expected: pr.Plan_Expected
 	error: errors.Error_Record
-	ticket, status := apply(PLAN_COMMITTED, &holder, &expected, &error)
-	if status != .Ok || ticket <= 0 {
-		wrong_call("plans.apply refused the plan", status, error)
+	ticket, applied := apply(PLAN_COMMITTED, &holder, &expected, &error)
+	if applied != .Succeeded || ticket <= 0 {
+		wrong_call("plans.apply refused the plan", applied, error)
 	}
 	system.log_fact(.Info, Difference_Shown{ticket = u64(ticket)}, PLAN_COMMITTED)
 	generation_row: pr.Plan_Generation_Row
-	generation, poll_status := decision_wait(PLAN_COMMITTED, ticket, system.time(), &generation_row, &error)
-	if poll_status != .Ok || generation <= 0 {
-		wrong_call("plans.apply_poll did not commit the accepted plan", poll_status, error)
+	generation, polled := decision_wait(PLAN_COMMITTED, ticket, system.time(), &generation_row, &error)
+	if polled != .Succeeded || generation <= 0 {
+		wrong_call("plans.apply_poll did not commit the accepted plan", polled, error)
 	}
 	if generation_row.generation != generation || generation_row.standing_word != i64(pr.Generation_Standing.Current) {
 		wrong("the row of the applied generation does not name it as the current one; its generation", u64(generation_row.generation))

@@ -290,8 +290,11 @@ manifest_parse :: proc(text: string) -> (manifest: Module_Manifest, problem: str
 		} else if !builder.has_about {
 			return {}, fmt.tprintf("line %d: export %s has no `about:` line", builder.line, builder.name)
 		}
-		if builder.error_record != 0 && builder.result != .Integer && builder.result != .Text && builder.result != .Table {
-			return {}, fmt.tprintf("line %d: export %s has an error_record, so its result must be integer, text, or table", builder.line, builder.name)
+		// An export with an error record can fail: it gives the call outcome
+		// in rax and its value in rdx, so its value is an integer, a count of
+		// text or of rows, or nothing (src/md/api/call_outcome.md).
+		if builder.error_record != 0 && builder.result == .Enum {
+			return {}, fmt.tprintf("line %d: export %s has an error_record, so it can fail: the value of its pair is an integer, and its result cannot be an enum", builder.line, builder.name)
 		}
 		arguments := module.call_argument_count(len(builder.parameters), u8(builder.result), builder.error_record != 0)
 		if arguments > module.PARAMETER_CAPACITY {

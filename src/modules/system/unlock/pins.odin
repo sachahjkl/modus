@@ -59,9 +59,9 @@ pin_read :: proc "contextless" (kind: tpm_service.Pin_Kind, principal: u64) -> (
 	if !has_tpm {
 		return {}, 0, false
 	}
-	completion, status, answered := tpm_request(.Pin_Read, {0 = u64(kind), 1 = principal})
-	if !answered || status != .Ok {
-		tpm_refusal_log("pin", completion, status, answered)
+	completion, outcome, record, answered := tpm_request(.Pin_Read, {0 = u64(kind), 1 = principal})
+	if !answered || outcome != .Succeeded {
+		tpm_refusal_log("pin", outcome, record, answered)
 		return {}, 0, false
 	}
 	state_ok: bool
@@ -89,20 +89,21 @@ pin_write :: proc "contextless" (kind: tpm_service.Pin_Kind, principal: u64, pay
 		return false
 	}
 	copy(tpm_region[tpm_service.REGION_PIN:][:len(payload)], payload)
-	completion, status, answered := tpm_request(.Pin_Write, {0 = u64(kind), 1 = principal, 2 = u64(len(payload))})
-	// A refusal of the payload or of its change is Bad_Command with the word
-	// of its refusal; a refusal at the border has the word 0.
-	if answered && status == .Bad_Command && completion.values[0] != 0 {
-		refusal, refusal_ok := tpm_attestation.pin_refusal_of_word(completion.values[0])
+	_, outcome, record, answered := tpm_request(.Pin_Write, {0 = u64(kind), 1 = principal, 2 = u64(len(payload))})
+	// A refusal of the payload or of its change is Argument_Refused with the
+	// word of its refusal as the value found; a refusal at the border has
+	// the word 0.
+	if answered && outcome == .Argument_Refused && record.found != 0 {
+		refusal, refusal_ok := tpm_attestation.pin_refusal_of_word(cast(u64)record.found)
 		if refusal_ok {
 			system.log_fact(.Info, Pin_Refused_By_Tpm_Service{pin_refusal = pin_refusal_field(refusal)})
 		} else {
-			system.log_fact(.Info, Pin_Refusal_Unknown{refusal_word = completion.values[0]})
+			system.log_fact(.Info, Pin_Refusal_Unknown{refusal_word = cast(u64)record.found})
 		}
 		return false
 	}
-	if !answered || status != .Ok {
-		tpm_refusal_log("pin", completion, status, answered)
+	if !answered || outcome != .Succeeded {
+		tpm_refusal_log("pin", outcome, record, answered)
 		return false
 	}
 	return true

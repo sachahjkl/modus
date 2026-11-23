@@ -2,6 +2,7 @@ package build
 
 import "modus:contract/errors"
 import "modus:contract/font_outlines"
+import "modus:contract/call_outcome"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/replacement_list"
@@ -163,7 +164,7 @@ PERSISTENCES := [?]string{"the global setting", "persist across a restart", "las
 @(private = "file")
 START_POLICY_WORDS := [?]string{"of the list start_list", "of the list rescue_list", "chosen by principal 0, from the disk", "(nickname \"nnnnnnnnnnnnnnnnnnnnnnn\")"}
 @(private = "file")
-TPM_STATUS_WORDS := [?]string{"Ok", "Bad_Command", "Refused, a response code of the TPM", "Policy_Fails", "Device_Error, a step of the interface", "Not_Authentic", "Authorization_Fails", "Locked_Out", "Measure_Limit: PCR 12 took its two extends of this start"}
+TPM_STATUS_WORDS := [?]string{"Argument_Refused", "Wrong_State", "Data_Damaged", "Callee_Busy", "Budget_Or_Capacity_Exhausted", "Callee_Unavailable"}
 @(private = "file")
 MACHINE_PARTS := [?]string{"screen", "data disk", "disk of the measures", "network device", "sound device", "entropy device", "TPM"}
 @(private = "file")
@@ -568,16 +569,11 @@ the_statuses_of_the_root_service_are_the_names_of_their_members :: proc(t: ^test
 		{"Compositor_Control_Ring_Failed", "root: cannot start the compositor: no control ring: status ", ""},
 		{"Compositor_Service_Ring_Failed", "root: cannot start the compositor: no service ring: status ", ""},
 		{"Compositor_Start_Failed", "root: cannot start the compositor: status ", ""},
-		{"Unlock_Start_Failed", "root: unlock did not start (status ", "): no named principal can be created or unlocked"},
-		{"Start_Policy_Choice_Unread_Unlock_Failed", "root: no choice of a start policy is read: unlock did not start, with the status ", ""},
 		{"Machine_Parts_Page_Failed", "root: cannot create the machine parts page: status ", ""},
-		{"Settings_Boot_Pass_Failed", "root: the boot pass of settings did not start (status ", "): the settings are the defaults"},
 		{"Tpm_Service_Start_Failed", "root: cannot start the TPM service: status ", ""},
-		{"Start_Policy_Not_Started_Of_No_Module", "root: the start policy of no module did not start, with the status ", ": the rescue start policy starts"},
 		{"Devices_Service_Start_Failed", "root: cannot start the devices service: status ", ""},
 		{"Bus_Configuration_Unread", "root: cannot read the configuration of the bus: status ", ": no device service starts"},
 		{"Principals_Service_Start_Failed", "root: cannot start the principals service: status ", ""},
-		{"Plan_At_Start_Start_Failed", "root: the plans service did not start to read the plan of principal 0: status ", "; the roles of the boot image hold"},
 	}
 	process := strings.repeat("p", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
 	failure := strings.repeat("f", ROOT_FAILURE_MOST, context.temp_allocator)
@@ -598,15 +594,37 @@ the_statuses_of_the_root_service_are_the_names_of_their_members :: proc(t: ^test
 		}
 		expect(t, render(t, file, "Root_Failed", {{"status", word}, {"failure", failure}}), line_of_before("root: ", failure, ": status ", status_text))
 		expect(t, render(t, file, "Start_Failed", {{"status", word}, {"refused_process", process}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": status ", status_text))
-		expect(t, render(t, file, "Chosen_Start_Policy_No_Connection", {{"status", word}, {"nickname", process}}), line_of_before("root: the chosen start policy \"", process, "\" is not read: no connection to the storage service, status ", status_text, ": the rescue start policy starts"))
-		expect(t, render(t, file, "Chosen_Start_Policy_Not_Started", {{"status", word}, {"nickname", process}}), line_of_before("root: the chosen start policy \"", process, "\" is not started, with the status ", status_text, ": the rescue start policy starts"))
 		expect(t, render(t, file, "Tpm_Registers_Refused", {{"registers", u64(0xFED4_0000)}, {"status", word}}), line_of_before("root: no TPM service: the registers of the TPM at ", sentence.Hex(0xFED4_0000), " are refused: status ", status_text))
-		expect(t, render(t, file, "Start_Policy_Not_Started", {{"start_policy_hash", hash}, {"status", word}}), line_of_before("root: the start policy ", sentence.Hash{hash[:4]}, "…", " did not start, with the status ", status_text, ": the rescue start policy starts"))
-		expect(t, render(t, file, "Disk_Load_Refused_No_Connection", {{"status", word}, {"refused_process", process}}), line_of_before("root: refused ", sentence.Module_Name{process}, " from the disk: no connection to the storage service: status ", status_text))
 		expect(t, render(t, file, "Disk_Processes_Service_Start_Failed", {{"status", word}}), line_of_before("root: cannot start the disk processes service: status ", status_text))
-		expect(t, render(t, file, "Disk_Load_Refused_Not_Started", {{"status", word}, {"refused_process", process}}), line_of_before("root: refused ", sentence.Module_Name{process}, " from the disk: it does not start: status ", status_text))
 		expect(t, render(t, file, "Disk_Load_Refused_No_Memory", {{"object_bytes", max(u64)}, {"status", word}, {"refused_process", process}}), line_of_before("root: refused ", sentence.Module_Name{process}, " from the disk: no memory for its ", max(u64), " bytes: status ", status_text))
 		expect(t, render(t, file, "Disk_Load_Refused_Import_No_Memory", {{"object_bytes", u64(0)}, {"status", word}, {"refused_process", process}, {"file", "fffffffffffffffffffffff"}}), line_of_before("root: refused ", sentence.Module_Name{process}, " from the disk: no memory in the budget of the disk processes for the ", u64(0), " bytes of the file ", sentence.Module_Name{"fffffffffffffffffffffff"}, " of the store ", STORE_NAME, ": status ", status_text))
+	}
+	// The facts of a start that the root service refused: the outcome that
+	// the refusal named, by its name, or the number of a word that names
+	// none.
+	outcome_lines := [?]Status_Line {
+		{"Unlock_Start_Failed", "root: unlock did not start (outcome ", "): no named principal can be created or unlocked"},
+		{"Start_Policy_Choice_Unread_Unlock_Failed", "root: no choice of a start policy is read: unlock did not start, with the outcome ", ""},
+		{"Settings_Boot_Pass_Failed", "root: the boot pass of settings did not start (outcome ", "): the settings are the defaults"},
+		{"Settings_Due_Start_Failed", "root: the start of settings that waited for its pass did not start (outcome ", ")"},
+		{"Appearance_Next_Not_Started", "root: the next appearance of the Control Center did not start settings (outcome ", ")"},
+		{"Start_Policy_Not_Started_Of_No_Module", "root: the start policy of no module did not start, with the outcome ", ": the rescue start policy starts"},
+		{"Plan_At_Start_Start_Failed", "root: the plans service did not start to read the plan of principal 0: outcome ", "; the roles of the boot image hold"},
+	}
+	outcome_words := [3]u64{u64(min(call_outcome.Call_Outcome)), u64(max(call_outcome.Call_Outcome)), u64(max(call_outcome.Call_Outcome)) + 1}
+	for word in outcome_words {
+		outcome_text := line_of_before(word)
+		if name, named := module.contract_enum_member_name(.Call_Outcome, word); named {
+			outcome_text = name
+		}
+		for item in outcome_lines {
+			expect(t, render(t, file, item.type_name, {{"outcome", word}}), line_of_before(item.before, outcome_text, item.after))
+		}
+		expect(t, render(t, file, "Chosen_Start_Policy_No_Connection", {{"outcome", word}, {"nickname", process}}), line_of_before("root: the chosen start policy \"", process, "\" is not read: no connection to the storage service, outcome ", outcome_text, ": the rescue start policy starts"))
+		expect(t, render(t, file, "Chosen_Start_Policy_Not_Started", {{"outcome", word}, {"nickname", process}}), line_of_before("root: the chosen start policy \"", process, "\" is not started, with the outcome ", outcome_text, ": the rescue start policy starts"))
+		expect(t, render(t, file, "Start_Policy_Not_Started", {{"start_policy_hash", hash}, {"outcome", word}}), line_of_before("root: the start policy ", sentence.Hash{hash[:4]}, "…", " did not start, with the outcome ", outcome_text, ": the rescue start policy starts"))
+		expect(t, render(t, file, "Disk_Load_Refused_No_Connection", {{"outcome", word}, {"refused_process", process}}), line_of_before("root: refused ", sentence.Module_Name{process}, " from the disk: no connection to the storage service: outcome ", outcome_text))
+		expect(t, render(t, file, "Disk_Load_Refused_Not_Started", {{"outcome", word}, {"refused_process", process}}), line_of_before("root: refused ", sentence.Module_Name{process}, " from the disk: it does not start: outcome ", outcome_text))
 	}
 }
 
@@ -700,7 +718,7 @@ the_start_policy_and_trust_facts_of_the_root_service_write_the_lines_of_before :
 		expect(t, render(t, file, "Start_Policy_Unmeasured_No_Measure_Ring", measure), line_of_before("root: the start policy ", head, " ", words, " is not measured: the TPM service has no measure ring"))
 		expect(t, render(t, file, "Start_Policy_Unmeasured_Measure_Ring_Full", measure), line_of_before("root: the start policy ", head, " ", words, " is not measured: the measure ring of the TPM service is full"))
 		expect(t, render(t, file, "Start_Policy_Unmeasured_Tpm_Stopped_During", measure), line_of_before("root: the start policy ", head, " ", words, " is not measured: the TPM service stopped during the measure"))
-		expect(t, render(t, file, "Start_Policy_Unmeasured_Unknown_Status", {{"status_word", max(u64)}, {"start_policy_hash", hash}, {"start_policy_words", words}}), line_of_before("root: the start policy ", head, " ", words, " is not measured: the TPM service gave the status ", max(u64), ", which names no status"))
+		expect(t, render(t, file, "Start_Policy_Unmeasured_Unknown_Status", {{"outcome_word", max(u64)}, {"start_policy_hash", hash}, {"start_policy_words", words}}), line_of_before("root: the start policy ", head, " ", words, " is not measured: the TPM service gave a completion that the root service cannot read, the outcome word ", max(u64)))
 		expect(t, render(t, file, "Start_Policy_Unmeasured_No_Answer", {{"bound", u64(30_000)}, {"start_policy_hash", hash}, {"start_policy_words", words}}), line_of_before("root: the start policy ", head, " ", words, " is not measured: the TPM service gave no answer within ", u64(30_000), " ms"))
 		expect(t, render(t, file, "Start_Policy_Measured", {{"start_policy_hash", hash}, {"measure_value", other_hash}, {"start_policy_words", words}}), line_of_before("root: the start policy ", head, " ", words, " is measured into PCR 12: PCR 12 = ", sentence.Hash{other_hash[:]}))
 		for status_words in TPM_STATUS_WORDS {

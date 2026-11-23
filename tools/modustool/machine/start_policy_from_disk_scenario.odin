@@ -202,8 +202,8 @@ start_policy_from_disk_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	machine_wait(&machine, fmt.aprintf("%s%s", chosen_words, MEASURED_WORDS))
 	machine_wait(&machine, fmt.aprintf("root: started the chosen start policy \"%s\" from the disk, hash %s, with the grant Start_Policy only", CHOSEN_NICKNAME, string(chosen_digits[:])), any_order = true)
 	machine_wait(&machine, fmt.aprintf("disk_start_policy: the context holds the log, the budget and the root ring, no other handle and no start list: as it must"), any_order = true)
-	machine_wait(&machine, fmt.aprintf("disk_start_policy: a start of the start policy of the boot image is refused with the status "), any_order = true)
-	machine_wait(&machine, fmt.aprintf("disk_start_policy: Start_Policy_Choice, Start_From_Disk, Disk_Grant and Connect are refused with No_Right: as it must"), any_order = true, fails_on = "disk_start_policy: the command ")
+	machine_wait(&machine, fmt.aprintf("disk_start_policy: a start of the start policy of the boot image is refused with the outcome "), any_order = true)
+	machine_wait(&machine, fmt.aprintf("disk_start_policy: Start_Policy_Choice, Start_From_Disk, Disk_Grant and Connect are refused with Grant_Or_Right_Missing: as it must"), any_order = true, fails_on = "disk_start_policy: the command ")
 	// The root service holds the wiring of a start policy from the disk,
 	// which writes its own lists (src/md/features/module_outputs.md, "The
 	// decisions of the wiring rows").

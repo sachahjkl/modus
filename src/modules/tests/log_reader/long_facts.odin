@@ -76,8 +76,8 @@ long_facts_check :: proc "contextless" (connection: ^system.Call_Connection, fil
 		expected_rows += op.log_fact_part_count(total)
 	}
 	arguments := [1]isolated.Argument{{integer = u64(first)}}
-	count, status := system.call_isolated(connection, file, fact_records_export, arguments[:], nil, false, bytes_of(fact_rows[:]))
-	if status != .Ok {
+	count, outcome := system.call_isolated(connection, file, fact_records_export, arguments[:], nil, false, bytes_of(fact_rows[:]))
+	if outcome != .Succeeded {
 		return "the call of log.fact_records did not come back"
 	}
 	if count != i64(expected_rows) {
@@ -166,9 +166,9 @@ fact_budget_check :: proc "contextless" (ctx: ^system.Context, image: []u8, conn
 		return "the child of the log limit saw a fact that was not refused whole"
 	}
 	arguments := [2]isolated.Argument{{integer = u64(child)}, {integer = 0}}
-	count, records_status := system.call_isolated(connection, file, process_records_export, arguments[:], nil, false, bytes_of(record_rows[:]))
-	if records_status != .Ok {
-		system.log_fact(.Info, Wrong_Child_Records_Call{status = call_status_word(records_status), child = value_kinds.module_name_field(FACT_BUDGET_NAME)})
+	count, records_outcome := system.call_isolated(connection, file, process_records_export, arguments[:], nil, false, bytes_of(record_rows[:]))
+	if records_outcome != .Succeeded {
+		system.log_fact(.Info, Wrong_Child_Records_Call{outcome = call_outcome_word(records_outcome), child = value_kinds.module_name_field(FACT_BUDGET_NAME)})
 		return "the call of log.process_records for the child of the log limit did not come back"
 	}
 	given := min(max(int(count), 0), ROWS)

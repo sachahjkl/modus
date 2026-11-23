@@ -258,7 +258,7 @@ Step :: struct {
 	fails_on:   string, // For Wait: a text that ends the wait as a failure when the machine prints it first, or on the line of the text: the step names its two outcomes. For Key_Again_Until: the other decision of the dialog, which fails the step and stops the presses.
 	names:      string, // For Trace: the names of the functions of the first frames, separated by spaces.
 	expected:   string, // For Call: a part of what the tool prints.
-	outcome:    Call_Outcome, // For Call: Result, Failed or Refused.
+	outcome:    Call_Result_Kind, // For Call: Result, Failed or Refused.
 	rows_call:  string, // For Call: a call whose Integer result is the count of rows of the Table.
 	lose:       int, // For Call: the peer drops this many datagrams of `remote` to the host; QUIC sends them again, and monitor.served() shows that the call ran one time.
 	wrong_hash: bool, // For Call: the request names another hash of the module.

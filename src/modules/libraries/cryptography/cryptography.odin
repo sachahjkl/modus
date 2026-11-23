@@ -26,14 +26,13 @@
 // their standards write them.
 package cryptography
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/value_kinds"
 import "modus:cryptography_primitives"
 import "modus:cryptography/argon2id"
 import crypto "modus:cryptography/compatibility_crypto"
 import "modus:system"
-
-ERROR :: -1
 
 // seal_with_chacha20_poly1305 encrypts a text and appends its tag of 16 bytes (RFC 8439).
 //
@@ -43,13 +42,12 @@ ERROR :: -1
 // - `text`: the text to encrypt.
 // - `result`: room for the bytes of the text and 16 more, in *private memory of the caller*.
 //
-// **Result**: the count of bytes (the size that the result needs, when it is too small), or a negative number
-// with an error record:
+// **Result**: the count of bytes (the size that the result needs, when it is too small), or a failure with its call outcome and an error record:
 //
 // - `Empty`, `Too_Small` or `Too_Long`: a key, a nonce or a text of another size;
 // - `Bad_Value`: a result that overlaps an argument.
 @(export, link_name = "seal_with_chacha20_poly1305")
-seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return cryptography_primitives.seal_with_chacha20_poly1305(key, nonce, additional, text, result, error)
 }
 
@@ -58,13 +56,13 @@ seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, 
 // The key, the nonce and the additional data are those of the seal ([seal](cryptography.seal_with_chacha20_poly1305)).
 // The result must be *private memory of the caller*, with room for the text: the sealed text minus 16 bytes.
 //
-// **Result**: the count of bytes, or a negative number with an error record:
+// **Result**: the count of bytes, or a failure with its call outcome and an error record:
 //
 // - `Not_Authentic`: the tag does not verify; the result keeps no byte of the text;
 // - `Too_Small`: a sealed text under 16 bytes, or a result with no room;
 // - `Bad_Value`: a result that overlaps an argument.
 @(export, link_name = "open_with_chacha20_poly1305")
-open_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+open_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return cryptography_primitives.open_with_chacha20_poly1305(key, nonce, additional, sealed, result, error)
 }
 
@@ -74,7 +72,7 @@ open_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, sealed: ^string
 // repeated nonce gives away the key of the tag, and with it forgeries. The other rules of the arguments and of
 // the result are those of [the seal with ChaCha20-Poly1305](cryptography.seal_with_chacha20_poly1305).
 @(export, link_name = "seal_with_aes_128_gcm")
-seal_with_aes_128_gcm :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+seal_with_aes_128_gcm :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return cryptography_primitives.seal_with_aes_128_gcm(key, nonce, additional, text, result, error)
 }
 
@@ -83,7 +81,7 @@ seal_with_aes_128_gcm :: proc "c" (key, nonce, additional, text: ^string, result
 // The rules of the arguments, of the result and of the errors are those of
 // [the open with ChaCha20-Poly1305](cryptography.open_with_chacha20_poly1305).
 @(export, link_name = "open_with_aes_128_gcm")
-open_with_aes_128_gcm :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+open_with_aes_128_gcm :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return cryptography_primitives.open_with_aes_128_gcm(key, nonce, additional, sealed, result, error)
 }
 
@@ -127,13 +125,13 @@ hkdf_sha256_extract :: proc "c" (salt, input: ^string, result: ^[]u8) -> i64 {
 // - The info: 1024 bytes at most.
 // - The length: 1 to 8160 bytes, 255 times the size of a hash.
 //
-// **Result**: the count of bytes, or a negative number with an error record.
+// **Result**: the count of bytes, or a failure with its call outcome and an error record.
 @(export, link_name = "hkdf_sha256_expand")
-hkdf_sha256_expand :: proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+hkdf_sha256_expand :: proc "c" (key, info: ^string, length: value_kinds.Size_In_Bytes, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return cryptography_primitives.hkdf_sha256_expand(key, info, length, result, error)
 }
 
-// header_protection_mask_with_aes_128 gives the 5 bytes of the QUIC header protection mask of a sample of 16 bytes with a key of 16 bytes: AES-128 of the sample (RFC 9001, section 5.4.3). The result is 5, or a negative number with an error record for a key or a sample of another size.
+// header_protection_mask_with_aes_128 gives the 5 bytes of the QUIC header protection mask of a sample of 16 bytes with a key of 16 bytes: AES-128 of the sample (RFC 9001, section 5.4.3). The result is 5, or a failure with its call outcome and an error record for a key or a sample of another size.
 //
 // - **key**: the header protection key of 16 bytes (argument 1).
 // - **sample**: the 16 bytes of the protected packet that the standard names (argument 2).
@@ -143,11 +141,11 @@ hkdf_sha256_expand :: proc "c" (key, info: ^string, length: value_kinds.Size_In_
 // argument. The copy of the key is erased. The QUIC library of the system calls it for each packet of a suite with
 // AES.
 @(export, link_name = "header_protection_mask_with_aes_128")
-header_protection_mask_with_aes_128 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+header_protection_mask_with_aes_128 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return cryptography_primitives.header_protection_mask_with_aes_128(key, sample, result, error)
 }
 
-// header_protection_mask_with_chacha20 gives the 5 bytes of the QUIC header protection mask of a sample of 16 bytes with a key of 32 bytes: the ChaCha20 keystream at the counter and the nonce that the sample gives (RFC 9001, section 5.4.4). The result is 5, or a negative number with an error record for a key or a sample of another size.
+// header_protection_mask_with_chacha20 gives the 5 bytes of the QUIC header protection mask of a sample of 16 bytes with a key of 32 bytes: the ChaCha20 keystream at the counter and the nonce that the sample gives (RFC 9001, section 5.4.4). The result is 5, or a failure with its call outcome and an error record for a key or a sample of another size.
 //
 // - **key**: the header protection key of 32 bytes (argument 1).
 // - **sample**: 16 bytes of the protected packet: the first 4 are the counter, the other 12 the nonce (argument 2).
@@ -155,7 +153,7 @@ header_protection_mask_with_aes_128 :: proc "c" (key, sample: ^string, result: ^
 //
 // The errors are those of [the mask with AES-128](cryptography.header_protection_mask_with_aes_128).
 @(export, link_name = "header_protection_mask_with_chacha20")
-header_protection_mask_with_chacha20 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+header_protection_mask_with_chacha20 :: proc "c" (key, sample: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return cryptography_primitives.header_protection_mask_with_chacha20(key, sample, result, error)
 }
 
@@ -164,19 +162,19 @@ header_protection_mask_with_chacha20 :: proc "c" (key, sample: ^string, result: 
 // A point of small order, whose shared secret is 32 zero bytes, is refused with `Bad_Value` (RFC 7748, section
 // 6.1): such a secret is known to anyone.
 @(export, link_name = "x25519")
-x25519_export :: proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+x25519_export :: proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return cryptography_primitives.x25519(scalar, point, result, error)
 }
 
 // ed25519_public_key gives the public key of a private key of 32 bytes (RFC 8032, section 5.1.5).
 @(export, link_name = "ed25519_public_key")
-ed25519_public_key :: proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+ed25519_public_key :: proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return cryptography_primitives.ed25519_public_key(secret, result, error)
 }
 
 // ed25519_sign gives the signature of a message of 4096 bytes at most, 64 bytes, with a private key of 32 bytes (RFC 8032, section 5.1.6).
 @(export, link_name = "ed25519_sign")
-ed25519_sign :: proc "c" (secret, message: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+ed25519_sign :: proc "c" (secret, message: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return cryptography_primitives.ed25519_sign(secret, message, result, error)
 }
 
@@ -184,12 +182,12 @@ ed25519_sign :: proc "c" (secret, message: ^string, result: ^[]u8, error: ^error
 //
 // The check is *strict*: a signature with a non-canonical S or R, or a public key of small order, is refused.
 //
-// **Result**: 0, or a negative number with an error record:
+// **Result**: 0, or a failure with its call outcome and an error record:
 //
 // - `Not_Authentic`: the signature does not verify;
 // - `Bad_Value`: a public key that is not a point.
 @(export, link_name = "ed25519_verify")
-ed25519_verify :: proc "c" (public, message, signature: ^string, error: ^errors.Error_Record) -> i64 {
+ed25519_verify :: proc "c" (public, message, signature: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return cryptography_primitives.ed25519_verify(public, message, signature, error)
 }
 
@@ -222,7 +220,7 @@ Argon2id_Cost :: struct {
 // Argon2id stays in the module: no host program calls it, and its cost
 // record is a record of the description of the exports.
 @(private)
-argon2id_run :: #force_no_inline proc "contextless" (password_text, salt_text: string, cost: Argon2id_Cost, work: system.Bytes_To_Change, output: []u8, error: ^errors.Error_Record) -> i64 {
+argon2id_run :: #force_no_inline proc "contextless" (password_text, salt_text: string, cost: Argon2id_Cost, work: system.Bytes_To_Change, output: []u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	// The context of the code of the origin is all zero: it uses no
 	// allocator here, and a module has no thread-local state for the
 	// default random generator.
@@ -230,29 +228,29 @@ argon2id_run :: #force_no_inline proc "contextless" (password_text, salt_text: s
 	password := transmute([]u8)password_text
 	salt := transmute([]u8)salt_text
 	if len(password) > PASSWORD_LIMIT {
-		return errors.fail(error, ERROR, .Too_Long, .Bytes, 1, i64(len(password)), PASSWORD_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(password)), PASSWORD_LIMIT)
 	}
 	if len(salt) < SALT_LEAST {
-		return errors.fail(error, ERROR, len(salt) == 0 ? .Empty : .Too_Small, .Bytes, 2, i64(len(salt)), SALT_LEAST)
+		return call_outcome.fail(error, .Argument_Refused, len(salt) == 0 ? .Empty : .Too_Small, .Bytes, 2, i64(len(salt)), SALT_LEAST)
 	}
 	if len(salt) > SALT_LIMIT {
-		return errors.fail(error, ERROR, .Too_Long, .Bytes, 2, i64(len(salt)), SALT_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 2, i64(len(salt)), SALT_LIMIT)
 	}
 	// The record is a copy: the caller cannot change it after these checks.
 	if cost.lanes < 1 || cost.lanes > ARGON2ID_LANES_LIMIT || cost.passes < 1 || cost.passes > ARGON2ID_PASSES_LIMIT || cost.tag_bytes < ARGON2ID_TAG_LEAST || cost.tag_bytes > ARGON2ID_TAG_LIMIT {
-		return errors.fail(error, ERROR, .Bad_Value, .None, 3)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 3)
 	}
 	if cost.memory_kibibytes < 8 * cost.lanes || cost.memory_kibibytes > ARGON2ID_MEMORY_LIMIT {
-		return errors.fail(error, ERROR, .Bad_Value, .None, 3, cost.memory_kibibytes, ARGON2ID_MEMORY_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 3, cost.memory_kibibytes, ARGON2ID_MEMORY_LIMIT)
 	}
 	// The header of the work memory is read once (the argument is a copy).
 	needed := u64(cost.memory_kibibytes) * 1024
 	if work.bytes == nil || work.capacity < needed || uintptr(work.bytes) % 8 != 0 {
-		return errors.fail(error, ERROR, .Too_Small, .Bytes, 4, i64(min(work.capacity, 1 << 62)), i64(needed))
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, 4, i64(min(work.capacity, 1 << 62)), i64(needed))
 	}
 	tag_size := int(cost.tag_bytes)
 	if len(output) < tag_size {
-		return i64(tag_size)
+		return .Succeeded, i64(tag_size)
 	}
 	password_copy: [PASSWORD_LIMIT]u8
 	salt_copy: [SALT_LIMIT]u8
@@ -268,10 +266,10 @@ argon2id_run :: #force_no_inline proc "contextless" (password_text, salt_text: s
 	}
 	// The origin erases the blocks at its end (sanitize).
 	if argon2id.derive(&parameters, password_copy[:len(password)], salt_copy[:len(salt)], tag[:tag_size], work_memory = work.bytes[:needed]) != .None {
-		return errors.fail(error, ERROR, .Too_Small, .Bytes, 4, i64(min(work.capacity, 1 << 62)), i64(needed))
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, 4, i64(min(work.capacity, 1 << 62)), i64(needed))
 	}
 	copy(output, tag[:tag_size])
-	return i64(tag_size)
+	return .Succeeded, i64(tag_size)
 }
 
 // argon2id derives a key from a password and a salt with Argon2id (RFC 9106), at the cost of the record: the KiB of the blocks, the passes, the lanes and the bytes of the key.
@@ -282,15 +280,15 @@ argon2id_run :: #force_no_inline proc "contextless" (password_text, salt_text: s
 // 4. The work: the blocks, which the caller supplies: `memory_kibibytes * 1024` bytes of its own memory,
 //    aligned on 8 bytes, which the module erases at the end.
 //
-// **Result**: the count of the bytes of the key, or a negative number with an error record:
+// **Result**: the count of the bytes of the key, or a failure with its call outcome and an error record:
 //
 // - `Too_Long`: the password (argument 1);
 // - `Too_Small` or `Too_Long`: the salt (argument 2);
 // - `Bad_Value`: the cost (argument 3);
 // - `Too_Small`: the work memory (argument 4).
 @(export, link_name = "argon2id")
-argon2id_export :: proc "c" (password, salt: ^string, cost: ^Argon2id_Cost, work: ^system.Bytes_To_Change, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
-	count := argon2id_run(password^, salt^, cost^, work^, result^, error)
+argon2id_export :: proc "c" (password, salt: ^string, cost: ^Argon2id_Cost, work: ^system.Bytes_To_Change, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	outcome, value = argon2id_run(password^, salt^, cost^, work^, result^, error)
 	crypto.erase_stack_below_the_caller()
-	return count
+	return
 }

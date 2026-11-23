@@ -9,6 +9,7 @@ package recipes_service
 import "internal:recipes/recipes_core"
 import "modus:contract/blake3"
 import "modus:contract/builder"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
@@ -225,8 +226,8 @@ objects_tree_read :: proc "contextless" (hash: blake3.Hash, into: []u8, data: ra
 	name := hash_hex(hash)
 	arguments := [2]isolated.Argument{{integer = u64(places.objects)}, {text = name[:]}}
 	error: errors.Error_Record
-	value, text, status := storage.call(places.client, "tree_read", arguments[:], &error)
-	if storage.export_failed_with(status, value, .Absent) {
+	value, text, status, outcome := storage.call(places.client, "tree_read", arguments[:], &error)
+	if outcome == .Nothing_Has_That_Name {
 		return nil, .Input_Absent
 	}
 	if status != .Ok || value < 0 || int(value) != len(text) || len(text) > len(into) {
@@ -246,8 +247,8 @@ objects_take :: proc "contextless" (hash: blake3.Hash, data: rawptr) -> pr.Recip
 	TAKING :: "taking"
 	error: errors.Error_Record
 	arguments := [3]isolated.Argument{{integer = u64(places.objects)}, {text = name[:]}, {text = transmute([]u8)string(TAKING)}}
-	value, _, status := storage.call(places.client, "clone", arguments[:], &error)
-	if storage.export_failed_with(status, value, .Absent) {
+	value, _, status, outcome := storage.call(places.client, "clone", arguments[:], &error)
+	if outcome == .Nothing_Has_That_Name {
 		return .Input_Absent
 	}
 	if status != .Ok || value < 0 {
@@ -337,19 +338,18 @@ builder_run :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, file: []u8
 		{table = {records = sandbox.arguments[:sandbox.arguments_length], count = u64(sandbox.arguments_length)}},
 	}
 	deadline := system.time() + builder.BUILD_TIME_BOUND_MILLISECONDS
-	call_result, call_status := system.call_isolated(&connection, file, export, arguments[:], &error, deadline = deadline)
-	if call_status != .Ok || call_result != 1 {
-		system.log_fact(.Info, Builder_Call_Ended{call_status = u64(call_status), result = call_result, kind = error.kind})
+	call_result, outcome := system.call_isolated(&connection, file, export, arguments[:], &error, deadline = deadline)
+	if outcome != .Succeeded || call_result != 1 {
+		system.log_fact(.Info, Builder_Call_Ended{outcome = call_outcome.Call_Outcome_Word(outcome), result = call_result, kind = error.kind})
 	}
-	switch call_status {
-	case .Ok:
+	switch {
+	case outcome == .Succeeded:
 		return call_result, .None
-	case .Deadline_Passed:
+	case outcome == .Deadline_Passed_During_The_Call:
 		return 0, .Builder_Timed_Out
-	case .Failed, .Failed_With_Wrong_Details, .Stopped, .Refused, .Wrong_Answer, .Lend_Failed, .No_Room, .Ring_Full, .Not_Done:
-		// The builder failed, stopped, or its call did not reach it: no
-		// output is kept.
 	}
+	// The builder failed, stopped, or its call did not reach it: no output
+	// is kept.
 	return 0, .Builder_Failed
 }
 
@@ -379,7 +379,7 @@ share_end :: proc "contextless" (client: ^storage.Client, shared: ^storage.Clien
 output_freeze :: proc "contextless" (places: ^Build_Places, out_payload: []u8) -> (length: int, refusal: pr.Recipe_Refusal) {
 	error: errors.Error_Record
 	arguments := [2]isolated.Argument{{integer = u64(places.output)}, {integer = u64(places.objects)}}
-	value, hash_bytes, status := storage.call(places.client, "freeze_tree", arguments[:], &error)
+	value, hash_bytes, status, _ := storage.call(places.client, "freeze_tree", arguments[:], &error)
 	if status == .Failed || value < 0 {
 		return 0, recipes_core.freeze_refusal(error.kind)
 	}

@@ -73,6 +73,7 @@ import "base:intrinsics"
 import "internal:settings/appearance_rule"
 import "modus:contract/accessibility"
 import "modus:contract/date"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/language_tag"
@@ -173,11 +174,6 @@ has_store: bool
 window_memory: interface.Window_Memory(1024, 16384)
 table_full_logged: bool
 drawn_change: u32 = 1 // The change count of the last frame; odd: none yet.
-
-ERROR_ACTS_FOR_PRINCIPAL :: -1
-ERROR_NAME :: -2
-ERROR_VALUE :: -3
-ERROR_STORE :: -4
 
 // with_value gives a choice with one setting at the value of a button or of
 // a name: its place in the names of the values of the setting, whose word
@@ -414,20 +410,20 @@ copied :: proc "contextless" (text: string, buffer: []u8) -> (string, bool) {
 // - **scale**: a count of eighths, `.eight_eighths` to `.sixteen_eighths`.
 //
 // The caller must act for the principal (**Acts_For_Principal**): the console and the host have it. The result is
-// 1, or a negative number with an error record:
+// 1, or a failure with its call outcome and an error record:
 //
-// - `No_Grant` (-1): the caller does not act for the principal.
-// - `Absent` (-2): the call gives no setting.
-// - `Bad_Value` (-3): a value that names no member of the enum of its setting; the record names the argument and
+// - `No_Grant`: the caller does not act for the principal.
+// - `Absent`: the call gives no setting.
+// - `Bad_Value`: a value that names no member of the enum of its setting; the record names the argument and
 //   holds the value. No setting changes.
-// - `Refused` (-4): the store did not keep the values. The page keeps the values before: a change is kept in the
+// - `Refused`: the store did not keep the values. The page keeps the values before: a change is kept in the
 //   store first, so no window shows a value that the next start of the machine loses.
 //
 // Example: `settings.set(font = .spleen)`, then `settings.font()` gives `.spleen`.
 @(export, link_name = "set", enum_getters = "font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance, scale = scale", optional_parameters = "font, subpixel_order, pointer_theme, grid_fit, keyboard_layout, appearance, scale")
-set :: proc "c" (font: settings.Font, subpixel_order: settings.Subpixel_Order, pointer_theme: settings.Pointer_Theme, grid_fit: settings.Grid_Fit, keyboard_layout: settings.Keyboard_Layout, appearance: settings.Appearance, scale: scale_factor.Scale, error: ^errors.Error_Record) -> i64 {
+set :: proc "c" (font: settings.Font, subpixel_order: settings.Subpixel_Order, pointer_theme: settings.Pointer_Theme, grid_fit: settings.Grid_Fit, keyboard_layout: settings.Keyboard_Layout, appearance: settings.Appearance, scale: scale_factor.Scale, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	current, _ := settings.read(page)
 	arguments := settings.Set_Arguments{font, subpixel_order, pointer_theme, grid_fit, keyboard_layout, appearance, scale}
@@ -439,14 +435,14 @@ set :: proc "c" (font: settings.Font, subpixel_order: settings.Subpixel_Order, p
 	switch problem {
 	case .None:
 	case .Nothing_Given:
-		return errors.fail(error, ERROR_NAME, .Absent, .None, 0)
+		return call_outcome.fail(error, .Argument_Refused, .Absent, .None, 0)
 	case .Bad_Value:
-		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, argument, i64(words[refused]))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, argument, i64(words[refused]))
 	}
 	if !change(changed, current.zone_offset_minutes) {
-		return errors.fail(error, ERROR_STORE, .Refused, .None, 0)
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 0)
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // font gives the font of the text of the system: `.vector` or `.spleen`.
@@ -510,52 +506,51 @@ scale_get :: proc "c" () -> scale_factor.Scale {
 //
 // - **zone**: the zone, 32 bytes at most.
 //
-// The caller must act for the principal (**Acts_For_Principal**). The result is 1, or a negative number with an
-// error record:
+// The caller must act for the principal (**Acts_For_Principal**). The result is 1, or a failure with its call outcome and an error record:
 //
-// - `No_Grant` (-1): the caller does not act for the principal.
-// - `Empty` (-3): the zone is empty.
-// - `Too_Small` (-3): the zone has fewer than 6 bytes ("+8:00", "UTC").
-// - `Too_Long` (-3): the zone has more than 6 bytes.
-// - `Bad_Byte` (-3): a byte of the zone is not '+', '-', ':', or a digit.
-// - `Bad_Value` (-3): the minutes part is 60 or more, or the offset is outside -12:00 to +14:00 ("+15:00").
-// - `Not_Multiple` (-3): the offset is not a multiple of 15 minutes ("+08:10").
-// - `Refused` (-4): the store did not keep the zone. The page keeps the zone before.
+// - `No_Grant`: the caller does not act for the principal.
+// - `Empty`: the zone is empty.
+// - `Too_Small`: the zone has fewer than 6 bytes ("+8:00", "UTC").
+// - `Too_Long`: the zone has more than 6 bytes.
+// - `Bad_Byte`: a byte of the zone is not '+', '-', ':', or a digit.
+// - `Bad_Value`: the minutes part is 60 or more, or the offset is outside -12:00 to +14:00 ("+15:00").
+// - `Not_Multiple`: the offset is not a multiple of 15 minutes ("+08:10").
+// - `Refused`: the store did not keep the zone. The page keeps the zone before.
 //
 // Example: `settings.set_time_zone("+08:00")`, then `settings.time_zone()` gives "+08:00".
 @(export, link_name = "set_time_zone")
-set_time_zone :: proc "c" (zone: ^string, error: ^errors.Error_Record) -> i64 {
+set_time_zone :: proc "c" (zone: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	zone_buffer: [32]u8
 	given, zone_ok := copied(zone^, zone_buffer[:])
 	if !zone_ok {
-		return errors.fail(error, ERROR_VALUE, .Too_Long, .Bytes, 1, i64(len(zone^)), settings.ZONE_TEXT_SIZE)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(zone^)), settings.ZONE_TEXT_SIZE)
 	}
 	minutes, problem, detail_value, detail_found := settings.zone_parse_checked(given)
 	switch problem {
 	case .None:
 	case .Empty:
-		return errors.fail(error, ERROR_VALUE, .Empty, .Bytes, 1, 0, settings.ZONE_TEXT_SIZE)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, 1, 0, settings.ZONE_TEXT_SIZE)
 	case .Too_Short:
-		return errors.fail(error, ERROR_VALUE, .Too_Small, .Bytes, 1, detail_value, settings.ZONE_TEXT_SIZE)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, 1, detail_value, settings.ZONE_TEXT_SIZE)
 	case .Too_Long:
-		return errors.fail(error, ERROR_VALUE, .Too_Long, .Bytes, 1, detail_value, settings.ZONE_TEXT_SIZE)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, detail_value, settings.ZONE_TEXT_SIZE)
 	case .Bad_Byte:
-		return errors.fail(error, ERROR_VALUE, .Bad_Byte, .Bytes, 1, detail_value, 0, detail_found)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Byte, .Bytes, 1, detail_value, 0, detail_found)
 	case .Minutes_Over:
-		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 1, detail_value, 59, detail_found)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, detail_value, 59, detail_found)
 	case .Out_Of_Range:
-		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 1, detail_value, i64(settings.ZONE_OFFSET_MINUTES_MOST))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, detail_value, i64(settings.ZONE_OFFSET_MINUTES_MOST))
 	case .Not_Quarter:
-		return errors.fail(error, ERROR_VALUE, .Not_Multiple, .None, 1, detail_value, i64(settings.ZONE_OFFSET_MINUTES_STEP), detail_found)
+		return call_outcome.fail(error, .Argument_Refused, .Not_Multiple, .None, 1, detail_value, i64(settings.ZONE_OFFSET_MINUTES_STEP), detail_found)
 	}
 	current, _ := settings.read(page)
 	if !change(current, minutes) {
-		return errors.fail(error, ERROR_STORE, .Refused, .None, 1)
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 1)
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // time_zone gives the time zone of the system as a text: "+08:00".
@@ -593,28 +588,27 @@ Language_Row :: struct {
 // - **languages**: a table of 0 to 8 records of `language_tag.Locale`, each a language in its canonical form;
 //   `language("fr-CA")` in the console reads a tag into its record.
 //
-// The caller must act for the principal (**Acts_For_Principal**). The result is 1, or a negative number with an
-// error record; on each refusal no language changes:
+// The caller must act for the principal (**Acts_For_Principal**). The result is 1, or a failure with its call outcome and an error record; on each refusal no language changes:
 //
-// - `No_Grant` (-1): the caller does not act for the principal.
-// - `Too_Long` (-3): more than 8 records; value: their count; limit: 8.
-// - `Out_Of_Range` (-3): the count of the table is past its capacity; value: the count; limit: the capacity.
-// - `Bad_Value` (-3): a record that names no locale in its canonical form, or the root locale `und`; value: the
+// - `No_Grant`: the caller does not act for the principal.
+// - `Too_Long`: more than 8 records; value: their count; limit: 8.
+// - `Out_Of_Range`: the count of the table is past its capacity; value: the count; limit: the capacity.
+// - `Bad_Value`: a record that names no locale in its canonical form, or the root locale `und`; value: the
 //   word of its `language_tag.Locale_Problem`, 0 for the root locale; found: the record, from 1.
-// - `Exists` (-3): a language that the table holds in an earlier record; found: the record, from 1.
-// - `Refused` (-4): the store did not keep the list. The page keeps the list before.
+// - `Bad_Value`: also a duplicate language that the table holds in an earlier record; found: the record, from 1.
+// - `Refused`: the store did not keep the list. The page keeps the list before.
 //
 // Example: `settings.set_languages([language("fr"), language("en")])`, then `settings.languages()` gives fr, then en.
 @(export, link_name = "set_languages")
-set_languages :: proc "c" (languages: ^system.Table_To_Read(language_tag.Locale), error: ^errors.Error_Record) -> i64 {
+set_languages :: proc "c" (languages: ^system.Table_To_Read(language_tag.Locale), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if languages.count > settings.LANGUAGE_LIST_CAPACITY {
-		return errors.fail(error, ERROR_VALUE, .Too_Long, .Records, 1, i64(min(languages.count, u64(max(i64)))), settings.LANGUAGE_LIST_CAPACITY)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 1, i64(min(languages.count, u64(max(i64)))), settings.LANGUAGE_LIST_CAPACITY)
 	}
 	if languages.count > languages.capacity {
-		return errors.fail(error, ERROR_VALUE, .Out_Of_Range, .Records, 1, i64(languages.count), i64(min(languages.capacity, u64(max(i64)))))
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Records, 1, i64(languages.count), i64(min(languages.capacity, u64(max(i64)))))
 	}
 	// A copy: the caller can change its records during the call.
 	given: [settings.LANGUAGE_LIST_CAPACITY]language_tag.Locale
@@ -624,20 +618,20 @@ set_languages :: proc "c" (languages: ^system.Table_To_Read(language_tag.Locale)
 	switch problem {
 	case .None:
 	case .Too_Many:
-		return errors.fail(error, ERROR_VALUE, .Too_Long, .Records, 1, i64(count), settings.LANGUAGE_LIST_CAPACITY)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 1, i64(count), settings.LANGUAGE_LIST_CAPACITY)
 	case .Bad_Locale:
-		return errors.fail(error, ERROR_VALUE, .Bad_Value, .Records, 1, i64(locale_problem), 0, record)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, i64(locale_problem), 0, record)
 	case .No_Language, .Record_Past_Count:
-		return errors.fail(error, ERROR_VALUE, .Bad_Value, .Records, 1, 0, 0, record)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, 0, 0, record)
 	case .Duplicate:
-		return errors.fail(error, ERROR_VALUE, .Exists, .Records, 1, 0, 0, record)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, 0, 0, record)
 	}
 	current, _ := settings.read(page)
 	current.languages = list
 	if !change(current, current.zone_offset_minutes) {
-		return errors.fail(error, ERROR_STORE, .Refused, .None, 1)
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 1)
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // languages gives the languages that the principal reads, the first first: the canonical tag of each, its language, its script and its region.
@@ -671,18 +665,20 @@ languages_get :: proc "c" (result: ^[]Language_Row) -> i64 {
 //
 // - **count**: the number of records, from 1 to 1000.
 //
-// The result is the count of records kept, or a negative number with an error record:
+// The result is the count of records kept, or an outcome with an error record:
 //
-// - `No_Grant` (-1): the caller does not act for the principal.
-// - `Bad_Value` (-3): a count outside 1 to 1000.
-// - `Refused` (-4): the store refused a record; the record of the error holds its number.
+// - `Grant_Or_Right_Missing`, `No_Grant`: the caller does not act for the principal.
+// - `Argument_Refused`, `Bad_Value`: a count outside 1 to 1000.
+// - `Callee_Unavailable`, `Refused`: the store refused the first record.
+// - `Stopped_After_A_Partial_Change`, `Refused`: the store refused a later record; the records before it are kept,
+//   the page did not change, and the record of the error holds the number of the refused one.
 @(export, link_name = "repeat")
-repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
+repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if count < 1 || count > 1000 {
-		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 1, count, 1000)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, count, 1000)
 	}
 	choice, _ := settings.read(page)
 	// The font of the record n is the value n mod 2, its order of the
@@ -693,12 +689,17 @@ repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
 		choice.font = fonts[number % 2]
 		choice.subpixel_order = orders[number % 3]
 		if !keep(choice, choice.zone_offset_minutes) {
-			return errors.fail(error, ERROR_STORE, .Refused, .None, 1, number)
+			// The store kept the records before this one; the page did
+			// not change.
+			if number > 0 {
+				return call_outcome.fail(error, .Stopped_After_A_Partial_Change, .Refused, .None, 1, number)
+			}
+			return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 1, number)
 		}
 	}
 	page_write(choice, choice.zone_offset_minutes)
 	system.log_fact(.Info, Records_Repeated{records = u64(count)})
-	return count
+	return .Succeeded, count
 }
 
 // appearance_next_pass is the pass of the tile of the Control Center: the

@@ -1,12 +1,13 @@
 // C11 header generator for modus SDK releases (src/md/infrastructure/sdk.md).
 //
-// Generates five self-contained C11 headers directly from the Odin contract
+// Generates six self-contained C11 headers directly from the Odin contract
 // packages, deriving every enum value, constant, struct size, and field offset
 // from the Odin compiler itself via size_of and offset_of:
 //
 //   modus_types.h      fundamental fixed-width types, release metadata, value kinds
 //   modus_operation.h  kernel operations, statuses, handles, rights, and ABI records
 //   modus_errors.h     structured error records, kinds, units, and handle ends
+//   modus_call_outcome.h  the call outcome, its effect group, and the answer pair
 //   modus_ring.h       shared-memory ring queues, headers, and record layout
 //   modus_module.h     module binary format version 7 tables and descriptions
 package build
@@ -14,6 +15,7 @@ package build
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -29,6 +31,7 @@ C_HEADER_FILE_NAMES :: [?]string {
 	"modus_types.h",
 	"modus_operation.h",
 	"modus_errors.h",
+	"modus_call_outcome.h",
 	"modus_ring.h",
 	"modus_module.h",
 }
@@ -177,6 +180,57 @@ c_render_modus_types_h :: proc(allocator := context.temp_allocator) -> string {
 	fmt.sbprintln(&out)
 
 	c_header_end(&out, "MODUS_TYPES_H")
+	return strings.to_string(out)
+}
+
+// The call outcome of an export that can fail, in the words of C. The export
+// gives the pair Modus_Answer: the outcome in rax, the value in rdx, as the
+// System V ABI returns a structure of two 8-byte integers
+// (src/md/api/call_outcome.md).
+@(private = "file")
+c_render_modus_call_outcome_h :: proc(allocator := context.temp_allocator) -> string {
+	out := strings.builder_make(allocator)
+	c_header_begin(&out, "MODUS_CALL_OUTCOME_H", "modus_call_outcome.h - The call outcome of an export that can fail", {"\"modus_types.h\""})
+
+	c_emit_enum_u64(&out, "Modus_Call_Outcome", "MODUS_CALL_OUTCOME", call_outcome.Call_Outcome)
+	c_emit_enum_u8(&out, "Modus_Effect_Group", "MODUS_EFFECT_GROUP", call_outcome.Effect_Group)
+
+	fmt.sbprintln(&out, "static inline Modus_Effect_Group modus_effect_group_of(Modus_Call_Outcome outcome) {")
+	fmt.sbprintln(&out, "\tswitch (outcome) {")
+	for outcome in call_outcome.Call_Outcome {
+		outcome_name := strings.to_upper(fmt.tprintf("%v", outcome), context.temp_allocator)
+		group_name := strings.to_upper(fmt.tprintf("%v", call_outcome.EFFECT_GROUP_OF[outcome]), context.temp_allocator)
+		fmt.sbprintfln(&out, "\tcase MODUS_CALL_OUTCOME_%s: return MODUS_EFFECT_GROUP_%s;", outcome_name, group_name)
+	}
+	// A word that names no outcome: nobody can tell what the call did.
+	fmt.sbprintln(&out, "\tdefault: return MODUS_EFFECT_GROUP_CHANGE_IN_DOUBT;")
+	fmt.sbprintln(&out, "\t}")
+	fmt.sbprintln(&out, "}")
+	fmt.sbprintln(&out)
+
+	// The caller of a binding reads the outcome before the value: the
+	// compilers that know the attribute refuse a call that drops the pair.
+	fmt.sbprintln(&out, "#if defined(__GNUC__) || defined(__clang__)")
+	fmt.sbprintln(&out, "#define MODUS_MUST_READ __attribute__((warn_unused_result))")
+	fmt.sbprintln(&out, "#else")
+	fmt.sbprintln(&out, "#define MODUS_MUST_READ")
+	fmt.sbprintln(&out, "#endif")
+	fmt.sbprintln(&out)
+
+	Answer :: struct {
+		outcome: call_outcome.Call_Outcome,
+		value:   i64,
+	}
+	fmt.sbprintln(&out, "typedef struct Modus_Answer {")
+	fmt.sbprintln(&out, "\tModus_Call_Outcome outcome;")
+	fmt.sbprintln(&out, "\tint64_t value;")
+	fmt.sbprintln(&out, "} Modus_Answer;")
+	c_emit_size_assert(&out, "Modus_Answer", size_of(Answer))
+	c_emit_offset_assert(&out, "Modus_Answer", "outcome", offset_of(Answer, outcome))
+	c_emit_offset_assert(&out, "Modus_Answer", "value", offset_of(Answer, value))
+	fmt.sbprintln(&out)
+
+	c_header_end(&out, "MODUS_CALL_OUTCOME_H")
 	return strings.to_string(out)
 }
 
@@ -956,6 +1010,7 @@ c_headers_generate :: proc(output_dir: string) -> (problem: string) {
 		{"modus_types.h", c_render_modus_types_h(context.temp_allocator)},
 		{"modus_operation.h", c_render_modus_operation_h(context.temp_allocator)},
 		{"modus_errors.h", c_render_modus_errors_h(context.temp_allocator)},
+		{"modus_call_outcome.h", c_render_modus_call_outcome_h(context.temp_allocator)},
 		{"modus_ring.h", c_render_modus_ring_h(context.temp_allocator)},
 		{"modus_module.h", c_render_modus_module_h(context.temp_allocator)},
 	}

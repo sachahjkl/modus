@@ -96,9 +96,9 @@ a_call_from_the_host_takes_nine_arguments :: proc(t: ^testing.T) {
 	testing.expect_value(t, (^string)(uintptr(decoded.arguments[1]))^, "two")
 	testing.expect_value(t, (^string)(uintptr(decoded.arguments[8]))^, "nine")
 	testing.expect(t, decoded.arguments[9] == u64(uintptr(&decoded.slices[9])), "argument 10 is the buffer of the Text result")
-	if testing.expect_value(t, decoded.error.count, isolated.ERROR_RECORD_SIZE) {
-		testing.expect_value(t, decoded.arguments[10], u64(uintptr(&client.region[decoded.error.start])))
-	}
+	// The error record is private to the receiver: the argument after the
+	// buffer is its address, never a place of the call region.
+	testing.expect_value(t, decoded.arguments[10], u64(uintptr(&decoded.error_record)))
 	// One value too few: refused before a call.
 	_, problem = call_prepare(&client, `nine.combine(1, "two", 3, 4, 5, 6, 7, 8)`)
 	testing.expect_value(t, problem, "nine.combine has 9 parameters; the call gives 8, with no value_9")

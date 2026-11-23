@@ -413,8 +413,8 @@ x25519_public_from_secret :: proc "contextless" (secret: [X25519_KEY_SIZE]u8) ->
 	point_str := string(base_point[:])
 	out_slice := public_key[:]
 	err: errors.Error_Record
-	n := cryptography_primitives.x25519(&scalar_str, &point_str, &out_slice, &err)
-	if n != X25519_KEY_SIZE {
+	outcome, n := cryptography_primitives.x25519(&scalar_str, &point_str, &out_slice, &err)
+	if outcome != .Succeeded || n != X25519_KEY_SIZE {
 		return {}, .Bad_Kex_Point
 	}
 	return public_key, .Ok
@@ -429,8 +429,8 @@ x25519_shared_secret :: proc "contextless" (secret: [X25519_KEY_SIZE]u8, peer_pu
 	point_str := string(p[:])
 	out_slice := shared[:]
 	err: errors.Error_Record
-	n := cryptography_primitives.x25519(&scalar_str, &point_str, &out_slice, &err)
-	if n != X25519_KEY_SIZE {
+	outcome, n := cryptography_primitives.x25519(&scalar_str, &point_str, &out_slice, &err)
+	if outcome != .Succeeded || n != X25519_KEY_SIZE {
 		crypto.zero_explicit(&shared, size_of(shared))
 		return {}, .Bad_Kex_Point
 	}

@@ -3,7 +3,7 @@ package fuzz
 import "core:fmt"
 import "core:mem"
 import "core:slice"
-import "modus:contract/enum_word"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
@@ -58,8 +58,6 @@ fuzz_remote_request_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		return fuzz_broken(.Contract, "the argument record passes the arguments")
 	case u64(request.result_start) + u64(request.result_count) > region_size:
 		return fuzz_broken(.Contract, "the place of the result passes the call region")
-	case request.error_start != 0 && (request.error_start % 8 != 0 || u64(request.error_start) + isolated.ERROR_RECORD_SIZE > region_size):
-		return fuzz_broken(.Contract, "the place of the error record is %d", request.error_start)
 	case request.details_end != 0 && request.details_end > request.record_size:
 		return fuzz_broken(.Contract, "the table of the error details ends past the argument record")
 	}
@@ -100,12 +98,11 @@ fuzz_remote_request_seeds :: proc(seeds: ^[dynamic][]u8) {
 		request:   remote.Request,
 		arguments: int,
 	}
-	error_last := u32(remote.REGION_SIZE - isolated.ERROR_RECORD_SIZE)
 	list := [?]Seed {
 		{request = {kind = u32(remote.Request_Kind.Call)}, arguments = 0},
 		{request = {kind = u32(remote.Request_Kind.Call), export = 3, record_size = 16, result_start = 16, result_count = 64, result_unit = 1}, arguments = 16},
-		{request = {kind = u32(remote.Request_Kind.Call), export = 1, record_size = 40, result_start = 64, result_count = 96, result_unit = 24, error_start = 160, details_end = 40}, arguments = 64},
-		{request = {kind = u32(remote.Request_Kind.Call), record_size = 8, result_start = remote.REGION_SIZE, error_start = error_last}, arguments = 8},
+		{request = {kind = u32(remote.Request_Kind.Call), export = 1, record_size = 40, result_start = 64, result_count = 96, result_unit = 24, details_end = 40}, arguments = 64},
+		{request = {kind = u32(remote.Request_Kind.Call), record_size = 8, result_start = remote.REGION_SIZE}, arguments = 8},
 		{request = {kind = u32(remote.Request_Kind.None)}, arguments = 0},
 	}
 	for item in list {
@@ -138,8 +135,14 @@ fuzz_remote_answer_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	if !ok {
 		return FUZZ_PASSED
 	}
-	if _, known := enum_word.member_of_word(remote.Status, u64(header.status)); !known {
-		return fuzz_broken(.Contract, "answer_check accepts the status %d, which names no status", u32(header.status))
+	// The two outcome words cross their own border: a word that names no
+	// outcome is Answer_Unreadable, never a member.
+	outcome, record, request_refused := remote.answer_outcome(header)
+	if outcome == .Answer_Unreadable && record.kind == 0 {
+		return fuzz_broken(.Contract, "answer_outcome gives Answer_Unreadable with no record")
+	}
+	if request_refused && outcome == .Succeeded {
+		return fuzz_broken(.Contract, "answer_outcome gives a refused request that succeeded")
 	}
 	if u64(len(result)) != u64(header.total) || len(input) != remote.ANSWER_SIZE + len(result) {
 		return fuzz_broken(.Contract, "the result is %d bytes, the answer names %d", len(result), header.total)
@@ -163,7 +166,7 @@ fuzz_remote_answer_seeds :: proc(seeds: ^[dynamic][]u8) {
 	results := [?]int{0, 5, isolated.ERROR_RECORD_SIZE, 2 * isolated.ERROR_RECORD_SIZE}
 	for count, index in results {
 		header := remote.Answer {
-			status  = index == 0 ? remote.Status.Refused : remote.Status.Ok,
+			relay_outcome = index == 0 ? u32(call_outcome.Call_Outcome.Argument_Refused) : 0,
 			value   = index == 3 ? -1 : i64(count),
 			details = index == 3 ? 2 : 0,
 		}
@@ -175,12 +178,14 @@ fuzz_remote_answer_seeds :: proc(seeds: ^[dynamic][]u8) {
 		written, _ := remote.answer_write(out, header, result)
 		append(seeds, written)
 	}
-	// A status that names no member.
-	header := remote.Answer{}
-	out := make([]u8, remote.ANSWER_SIZE)
-	written, _ := remote.answer_write(out, header, nil)
-	fuzz_word_write(written, int(offset_of(remote.Answer, status)), 4, u64(max(remote.Status)) + 1, false)
-	append(seeds, written)
+	// An outcome word that names no member, in each of the two places.
+	for place in ([2]uintptr{offset_of(remote.Answer, relay_outcome), offset_of(remote.Answer, outcome)}) {
+		header := remote.Answer{}
+		out := make([]u8, remote.ANSWER_SIZE)
+		written, _ := remote.answer_write(out, header, nil)
+		fuzz_word_write(written, int(place), 4, u64(max(call_outcome.Call_Outcome)) + 1, false)
+		append(seeds, written)
+	}
 }
 
 // ---------------------------------------------------------------------
@@ -447,9 +452,6 @@ fuzz_isolated_call_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	if function.result == u8(module.Type.Record) && (call.result.start > u64(len(region)) || call.result.count > u64(len(region)) - call.result.start) {
 		return fuzz_broken(.Contract, "the place of the Record result is outside the call region")
 	}
-	if call.error.count > 0 && (call.error.start > u64(len(region)) || call.error.count > u64(len(region)) - call.error.start) {
-		return fuzz_broken(.Contract, "the place of the error record is outside the call region")
-	}
 	isolated.result_store(function, call, region)
 	return FUZZ_PASSED
 }
@@ -505,7 +507,7 @@ fuzz_isolated_call_seeds :: proc(seeds: ^[dynamic][]u8) {
 			}
 		}
 		region := make([]u8, 256)
-		offset, _, _, _, encoded := isolated.encode(fuzz_call_module[:fuzz_call_module_size], function, arguments, region)
+		offset, _, _, encoded := isolated.encode(fuzz_call_module[:fuzz_call_module_size], function, arguments, region)
 		if !encoded {
 			// A seed that the writer of the caller refuses is a fault of
 			// the target, never a seed to leave out.

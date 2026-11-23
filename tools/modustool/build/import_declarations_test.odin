@@ -15,6 +15,7 @@ import "modustool:foundation"
 EXPORT_SOURCE :: `// A module of the tests.
 package exports_of_the_test
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:system"
 
@@ -26,8 +27,8 @@ Reading :: struct {
 
 // sum_values gives the sum of the values.
 @(export, link_name = "sum_values")
-sum_values :: proc "c" (readings: ^system.Table_To_Read(Reading), factor: i64, name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
-	return 0
+sum_values :: proc "c" (readings: ^system.Table_To_Read(Reading), factor: i64, name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	return .Succeeded, 0
 }
 `
 
@@ -38,6 +39,7 @@ sum_values :: proc "c" (readings: ^system.Table_To_Read(Reading), factor: i64, n
 @(private = "file")
 IMPORTER_HEAD :: `package importer_of_the_test
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:system"
 
@@ -100,7 +102,7 @@ declared_difference :: proc(t: ^testing.T, field_type, signature: string) -> (di
 }
 
 @(private = "file")
-GOOD_SIGNATURE :: `(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64`
+GOOD_SIGNATURE :: `(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)`
 
 // A declaration with other names and the same call form agrees.
 @(test)
@@ -108,6 +110,33 @@ a_declaration_with_the_call_form_of_its_export_agrees :: proc(t: ^testing.T) {
 	difference, readable := declared_difference(t, "i32", GOOD_SIGNATURE)
 	testing.expect(t, readable)
 	testing.expect_value(t, difference, "")
+	// A fallible Record result gives Call_Outcome alone, with no i64.
+	record_diff, record_readable := declared_difference(t, "i32", `(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^Measure, error: ^errors.Error_Record) -> call_outcome.Call_Outcome`)
+	testing.expect(t, record_readable)
+	testing.expect(t, strings.contains(record_diff, "its result is Record, the export has Text"), record_diff)
+	// An aliased import of modus:contract/call_outcome resolves through the import table.
+	aliased_source := `package aliased_importer
+
+import co "modus:contract/call_outcome"
+import "modus:contract/errors"
+
+foreign _ {
+	f :: proc "c" (x: i64, error: ^errors.Error_Record) -> (co.Call_Outcome, i64) ---
+}
+`
+	state: Describe_State
+	state.records = make([dynamic]Record_Description, context.temp_allocator)
+	state.structs = make(map[string]Struct_Source, context.temp_allocator)
+	file, parsed := parse_source("aliased_importer.odin", aliased_source, &state)
+	testing.expect(t, parsed)
+	decls := make([dynamic]Foreign_Declaration, context.temp_allocator)
+	foreign_declarations_collect(file.decls[:], &decls)
+	testing.expect_value(t, len(decls), 1)
+	if len(decls) == 1 {
+		form, problem, ok := call_form_of_declaration(&state, aliased_source, decls[0].type)
+		testing.expectf(t, ok, "aliased import of call_outcome refused: %s", problem)
+		testing.expect(t, form.has_error && form.result == .Integer)
+	}
 }
 
 // Each way in which a declaration can pass other registers than the
@@ -120,12 +149,12 @@ a_declaration_with_another_call_form_is_refused :: proc(t: ^testing.T) {
 		sentence:   string, // A part of the difference.
 	}
 	cases := [?]Case {
-		{"i32", `(rows: ^system.Table_To_Read(Measure), label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64`, "it has 2 parameters, the export has 3"},
-		{"i32", `(rows: ^system.Table_To_Read(Measure), by: ^string, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64`, "its parameter 2 is Text, the export has Integer"},
-		{"i32", `(rows: ^system.Table_To_Change(Measure), by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64`, "its parameter 1 has the direction Change, the export has Read"},
-		{"i32", `(rows: ^system.Bytes_To_Read, by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64`, "its parameter 1 is Bytes, the export has Table"},
+		{"i32", `(rows: ^system.Table_To_Read(Measure), label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)`, "it has 2 parameters, the export has 3"},
+		{"i32", `(rows: ^system.Table_To_Read(Measure), by: ^string, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)`, "its parameter 2 is Text, the export has Integer"},
+		{"i32", `(rows: ^system.Table_To_Change(Measure), by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)`, "its parameter 1 has the direction Change, the export has Read"},
+		{"i32", `(rows: ^system.Bytes_To_Read, by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)`, "its parameter 1 is Bytes, the export has Table"},
 		{"i32", `(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^[]u8) -> i64`, "it has no error record, the export has one"},
-		{"i32", `(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, error: ^errors.Error_Record) -> i64`, "its result is Integer, the export has Text"},
+		{"i32", `(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)`, "its result is Integer, the export has Text"},
 		{"i64", GOOD_SIGNATURE, "its parameter 1: the record Measure has 24 bytes, the export has Reading of 16 bytes"},
 		{"u32", GOOD_SIGNATURE, "its parameter 1: the field amount of the record Measure is not the field value of Reading"},
 	}
@@ -134,13 +163,37 @@ a_declaration_with_another_call_form_is_refused :: proc(t: ^testing.T) {
 		testing.expectf(t, readable, "the declaration %s was not read: %s", item.signature, difference)
 		testing.expectf(t, strings.contains(difference, item.sentence), "the declaration %s: the difference is \"%s\", not \"%s\"", item.signature, difference, item.sentence)
 	}
+	// The results of a declaration go with its error record: a declaration
+	// that drops the outcome, one that gives an outcome with no record, one
+	// that puts the value first, one with an alias of the outcome, and one
+	// with three results are not read.
+	Refused_Results :: struct {
+		signature: string,
+		problem:   string, // The start of the sentence.
+	}
+	refused_results := [?]Refused_Results {
+		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64`, "the declaration takes an error record, so its export can fail"},
+		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^[]u8) -> (call_outcome.Call_Outcome, i64)`, "the declaration gives a call outcome, so its last parameter is the error record"},
+		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (i64, call_outcome.Call_Outcome)`, "the results (i64, call_outcome.Call_Outcome) have no description"},
+		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (Drawing_Call_Outcome, i64)`, "the results (Drawing_Call_Outcome, i64) have no description"},
+		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64, i64)`, "the declaration has more than two results"},
+		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> call_outcome.Call_Outcome`, "the declaration has a Text or Table result, so it returns its count as i64"},
+		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^[]Measure, error: ^errors.Error_Record) -> call_outcome.Call_Outcome`, "the declaration has a Text or Table result, so it returns its count as i64"},
+		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^Measure, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)`, "the declaration has a Record result, so it gives no i64 value"},
+		{`(rows: ^system.Table_To_Read(Measure), by: i64, label: ^string, result: ^Measure) -> i64`, "the declaration has a Record result, so it gives no i64 value"},
+	}
+	for item in refused_results {
+		problem, readable := declared_difference(t, "i32", item.signature)
+		testing.expectf(t, !readable, "the declaration %s was read", item.signature)
+		testing.expectf(t, strings.has_prefix(problem, item.problem), "the declaration %s: the problem is \"%s\", not \"%s\"", item.signature, problem, item.problem)
+	}
 	// A type that the description of an export cannot hold.
-	problem, readable := declared_difference(t, "i32", `(rows: rawptr, by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64`)
+	problem, readable := declared_difference(t, "i32", `(rows: rawptr, by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)`)
 	testing.expect(t, !readable)
 	testing.expect(t, strings.has_prefix(problem, "the type rawptr has no description"), problem)
 	// A name for a type of the contract: the tool follows no alias, and
 	// the sentence says what to write.
-	problem, readable = declared_difference(t, "i32", `(rows: ^Rows_Of_The_Test, by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64`)
+	problem, readable = declared_difference(t, "i32", `(rows: ^Rows_Of_The_Test, by: i64, label: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)`)
 	testing.expect(t, !readable)
 	testing.expect(t, strings.has_prefix(problem, "the type ^Rows_Of_The_Test has no description"), problem)
 	testing.expect(t, strings.contains(problem, "The tool does not read a type alias: write the type itself in the declaration"), problem)
@@ -247,6 +300,7 @@ the_unit_of_an_integer_parameter_is_described_and_checked :: proc(t: ^testing.T)
 NINE_PARAMETER_SOURCE :: `// A module of the tests.
 package nine_of_the_test
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:system"
 
@@ -257,8 +311,8 @@ Reading :: struct {
 
 // combine gives a text from nine values.
 @(export, link_name = "combine")
-combine :: proc "c" (first: i64, name: ^string, second, third, fourth, fifth: i64, readings: ^system.Table_To_Read(Reading), label: ^string, rows: ^system.Table_To_Change(Reading), result: ^[]u8, error: ^errors.Error_Record) -> i64 {
-	return 0
+combine :: proc "c" (first: i64, name: ^string, second, third, fourth, fifth: i64, readings: ^system.Table_To_Read(Reading), label: ^string, rows: ^system.Table_To_Change(Reading), result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	return .Succeeded, 0
 }
 `
 
@@ -275,6 +329,7 @@ declared_nine_difference :: proc(t: ^testing.T, signature: string) -> (differenc
 	described := call_form_of_description(exports[0], records)
 	source := strings.concatenate({`package importer_of_nine
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:system"
 
@@ -328,7 +383,7 @@ an_export_with_nine_parameters_is_described_and_checked :: proc(t: ^testing.T) {
 			testing.expect_value(t, export.names[8], "rows")
 		}
 	}
-	GOOD_NINE_SIGNATURE :: `(a: i64, b: ^string, c, d, e, f: i64, rows: ^system.Table_To_Read(Measure), text: ^string, changed: ^system.Table_To_Change(Measure), result: ^[]u8, error: ^errors.Error_Record) -> i64`
+	GOOD_NINE_SIGNATURE :: `(a: i64, b: ^string, c, d, e, f: i64, rows: ^system.Table_To_Read(Measure), text: ^string, changed: ^system.Table_To_Change(Measure), result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)`
 	difference, readable := declared_nine_difference(t, GOOD_NINE_SIGNATURE)
 	testing.expect(t, readable, difference)
 	testing.expect_value(t, difference, "")
@@ -337,9 +392,9 @@ an_export_with_nine_parameters_is_described_and_checked :: proc(t: ^testing.T) {
 		sentence:  string,
 	}
 	cases := [?]Case {
-		{`(a: i64, b: ^string, c, d, e, f: i64, rows: ^system.Table_To_Read(Measure), changed: ^system.Table_To_Change(Measure), result: ^[]u8, error: ^errors.Error_Record) -> i64`, "it has 8 parameters, the export has 9"},
-		{`(a: i64, b: ^string, c, d, e, f: i64, rows: ^system.Table_To_Read(Measure), text: i64, changed: ^system.Table_To_Change(Measure), result: ^[]u8, error: ^errors.Error_Record) -> i64`, "its parameter 8 is Integer, the export has Text"},
-		{`(a: i64, b: ^string, c, d, e, f: i64, rows: ^system.Table_To_Read(Measure), text: ^string, changed: ^system.Table_To_Read(Measure), result: ^[]u8, error: ^errors.Error_Record) -> i64`, "its parameter 9 has the direction Read, the export has Change"},
+		{`(a: i64, b: ^string, c, d, e, f: i64, rows: ^system.Table_To_Read(Measure), changed: ^system.Table_To_Change(Measure), result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)`, "it has 8 parameters, the export has 9"},
+		{`(a: i64, b: ^string, c, d, e, f: i64, rows: ^system.Table_To_Read(Measure), text: i64, changed: ^system.Table_To_Change(Measure), result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)`, "its parameter 8 is Integer, the export has Text"},
+		{`(a: i64, b: ^string, c, d, e, f: i64, rows: ^system.Table_To_Read(Measure), text: ^string, changed: ^system.Table_To_Read(Measure), result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)`, "its parameter 9 has the direction Read, the export has Change"},
 		{`(a: i64, b: ^string, c, d, e, f: i64, rows: ^system.Table_To_Read(Measure), text: ^string, changed: ^system.Table_To_Change(Measure), result: ^[]u8) -> i64`, "it has no error record, the export has one"},
 	}
 	for item in cases {

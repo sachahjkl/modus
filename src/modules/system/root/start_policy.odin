@@ -10,7 +10,7 @@ package root
 // usable (Machine_Usable); this service does not judge what it started.
 
 import info "modus:contract/boot_info"
-import "modus:contract/errors"
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import rd "modus:contract/root_delegation"
 import "modus:contract/root_ring"
@@ -281,17 +281,17 @@ start_policy_launch :: proc "contextless" (list: Start_Policy_List) {
 	_ = start_policy_measure(module_hash, list_hash, START_POLICY_LIST_WORDS[list])
 	start_policy_from_disk = false
 	start_policy_starting = true
-	status := start(role_holder_name(.Start_Policy), principals.MACHINE)
+	outcome := start(role_holder_name(.Start_Policy), principals.MACHINE)
 	start_policy_starting = false
-	if status == .Ok {
+	if outcome == .Succeeded {
 		start_policy_process = start_policy_running()
 	}
 	if start_policy_process == nil {
 		if list == .Default {
 			if image_hash, image_found := start_policy_image_hash(); image_found {
-				system.log_fact(.Warning, Start_Policy_Not_Started{start_policy_hash = value_kinds.Hash_Head_Field(image_hash), status = status})
+				system.log_fact(.Warning, Start_Policy_Not_Started{start_policy_hash = value_kinds.Hash_Head_Field(image_hash), outcome = call_outcome.Call_Outcome_Word(outcome)})
 			} else {
-				system.log_fact(.Warning, Start_Policy_Not_Started_Of_No_Module{status = status})
+				system.log_fact(.Warning, Start_Policy_Not_Started_Of_No_Module{outcome = outcome})
 			}
 			start_policy_launch(.Rescue)
 		} else {
@@ -462,10 +462,10 @@ start_policy_wake :: proc "contextless" () -> u64 {
 
 // start_policy_usable runs Machine_Usable: only from the start policy that
 // runs, and once.
-start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) -> system.Status {
-	if status, refusal := start_policy_rules.usable_decision(sender == start_policy_process, start_policy_stage); status != .Ok {
+start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) -> call_outcome.Call_Outcome {
+	if outcome, refusal := start_policy_rules.usable_decision(sender == start_policy_process, start_policy_stage); outcome != .Succeeded {
 		values^ = refusal
-		return status
+		return outcome
 	}
 	start_policy_stage = .Usable
 	start_policy_deadline = system.WAIT_FOREVER
@@ -473,7 +473,7 @@ start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) ->
 	// now and at the lowest count that it read since its start.
 	budget_pages_note()
 	system.log_fact(.Info, Machine_Usable{free_pages = budget_pages_now, lowest_free_pages = budget_pages_lowest, start_policy_hash = value_kinds.Hash_Head_Field(start_policy_hash), start_policy_words = text_field(START_POLICY_LIST_WORDS[start_policy_list], 40)})
-	return .Ok
+	return .Succeeded
 }
 
 // start_policy_start runs a Start from the start policy that runs. A part
@@ -483,10 +483,10 @@ start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) ->
 // (src/md/features/module_outputs.md, "The wiring rows of a start list").
 // The completion has a handle of the process with the rights Read and
 // Give: its stop ends a wait of the start policy, and the start policy
-// lends it as the reader of a later wiring row.
-// written: the procedure wrote the error record of its refusal, and the
-// dispatch must not write over it.
-start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: string, list: root_ring.Start_Wiring_List, values: ^[7]u64, written: ^bool, held: ^bool) -> system.Status {
+// lends it as the reader of a later wiring row. Each refusal writes its
+// outcome and its error record in values.
+start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: string, list: root_ring.Start_Wiring_List, values: ^[7]u64, held: ^bool) -> call_outcome.Call_Outcome {
+	kind := u32(root_ring.Root_Command.Start)
 	// The checks before any start (start_policy_rules.start_step, with its
 	// host tests): a list for a part of the system, whose procedure takes
 	// none; a start policy, a name that runs, and a process of a test
@@ -501,26 +501,24 @@ start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: stri
 		if listed {
 			lent_handles_close(sender)
 		}
-		values^ = errors.ring_fail(u32(root_ring.Root_Command.Start), .Absent, .None, 1)
-		written^ = true
-		return .Bad_Handle
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .None, 1)
 	}
 	facts := start_policy_facts(sender, module_name)
 	step := start_policy_rules.start_step(listed, facts, &start_policy_name_counts, start_policy_from_disk, name)
-	if step.status != .Ok {
+	if step.outcome != .Succeeded {
 		if step.lent_close {
 			lent_handles_close(sender)
 		}
 		values^ = step.refusal
-		written^ = true
-		if step.status == .No_Budget {
+		if step.outcome == .Budget_Or_Capacity_Exhausted {
 			system.log_fact(.Warning, Start_Policy_Restart_Refused{restart_limit = u64(start_list.RESTART_LIMIT), counted_names = u64(start_policy_rules.RESTARTED_NAME_CAPACITY), refused_process = module_name_field(name)})
 		}
-		return step.status
+		return step.outcome
 	}
+	// The procedures of the parts of the system start each one through the
+	// kernel: their status is the status of a kernel operation.
 	status: system.Status
 	started_place: ^Started
-	refusal: [7]u64
 	switch start_list.root_procedure_of(name) {
 	case .Input:
 		status = input_start()
@@ -531,25 +529,26 @@ start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: stri
 	case .Operation_Fuzzing:
 		status = operation_fuzzing_start()
 	case .Settings:
-		status = settings_boot_pass_start()
+		if outcome := settings_boot_pass_start(values); outcome != .Succeeded {
+			return outcome
+		}
 	case .Unlock:
-		status = unlock_start(.Unlock, "")
+		if outcome := unlock_start(.Unlock, "", refusal = values); outcome != .Succeeded {
+			return outcome
+		}
 	case .None:
 		if listed {
-			is_held: bool
-			status, is_held = start_with_wiring_begin(sender, tag, module_name, principals.MACHINE, .Process_Handle, true, step.counted, values, written)
+			outcome, is_held := start_with_wiring_begin(sender, tag, module_name, principals.MACHINE, .Process_Handle, true, step.counted, values)
 			held^ = is_held
-			return status
+			return outcome
 		}
-		// start refuses a part of the system with Bad_Operation.
-		status = start(module_name, principals.MACHINE, sender, nil, &started_place, &refusal)
-		if status != .Ok && refusal != ([7]u64{}) {
-			values^ = refusal
-			written^ = true
+		// start refuses a part of the system with Reserved.
+		if outcome := start(module_name, principals.MACHINE, sender, nil, &started_place, values); outcome != .Succeeded {
+			return outcome
 		}
 	}
 	if status != .Ok {
-		return status
+		return kernel_refused(values, kind, status)
 	}
 	if step.counted != nil {
 		step.counted.starts += 1
@@ -563,14 +562,14 @@ start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: stri
 	}
 	if slot == nil {
 		// The process ended before this answer, and its place is gone.
-		return .Ok
+		return .Succeeded
 	}
 	slot.asked_by_start_policy = true
 	given, give_status := start_process_handle_give(sender, slot)
 	if give_status == .Ok {
 		values[0] = given
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // start_policy_facts reads the facts of a Start of a start policy from the

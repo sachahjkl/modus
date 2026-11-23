@@ -1,6 +1,9 @@
 package interface
 
 import "modus:contract/draw_record"
+// The bindings of the drawing module, which only some builds compile in,
+// name the call outcome.
+@(require) import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/scale_factor"
 import "modus:display"
@@ -221,9 +224,11 @@ when DRAWING_THROUGH_MODULE {
 	// declarations of an import reads the layout of a struct by its name.
 	foreign _ {
 		@(link_name = "damage_of_draw_table_20")
-		module_damage_of_draw_table :: proc "c" (before: ^system.Table_To_Read(draw_record.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Module_Rectangle, error: ^errors.Error_Record) -> i64 ---
+		@(require_results)
+		module_damage_of_draw_table :: proc "c" (before: ^system.Table_To_Read(draw_record.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Module_Rectangle, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 		@(link_name = "execute_draw_table_in_rectangles_20")
-		module_execute_draw_table_in_rectangles :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Module_Canvas_Shape, rectangles: ^system.Table_To_Read(Module_Rectangle), error: ^errors.Error_Record) -> i64 ---
+		@(require_results)
+		module_execute_draw_table_in_rectangles :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Module_Canvas_Shape, rectangles: ^system.Table_To_Read(Module_Rectangle), error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 	}
 
 	// records_to_read gives the table place of the records first ..< first
@@ -253,8 +258,8 @@ when DRAWING_THROUGH_MODULE {
 		before_records, before_text := records_to_read(before, 0, before.record_count), text_to_read(before)
 		now_records, now_text := records_to_read(now, 0, now.record_count), text_to_read(now)
 		result := ([^]Module_Rectangle)(&damage.rectangles[0])[:DAMAGE_CAPACITY]
-		count := module_damage_of_draw_table(&before_records, &before_text, &now_records, &now_text, &result, error)
-		if count < 0 {
+		outcome, count := module_damage_of_draw_table(&before_records, &before_text, &now_records, &now_text, &result, error)
+		if outcome != .Succeeded {
 			damage.count = 0
 			return false
 		}
@@ -289,7 +294,8 @@ when DRAWING_THROUGH_MODULE {
 		// A Rectangle and a Module_Rectangle have one layout: the module
 		// reads the rectangles of the caller where they are.
 		places := system.Table_To_Read(Module_Rectangle){records = ([^]Module_Rectangle)(raw_data(rectangles)), count = u64(len(rectangles)), capacity = u64(len(rectangles))}
-		return module_execute_draw_table_in_rectangles(&records, &text_bytes, &memory, &pixels, &shape, &places, error) >= 0
+		outcome, _ := module_execute_draw_table_in_rectangles(&records, &text_bytes, &memory, &pixels, &shape, &places, error)
+		return outcome == .Succeeded
 	}
 
 	// frame_difference finds the damage from the table before to the table
@@ -354,7 +360,7 @@ when DRAWING_THROUGH_MODULE {
 		// Each kind is named, so that a new kind of the drawing module gets
 		// its words here or joins this list by a choice.
 		switch kind {
-		case .None, .Empty, .Bad_Flags, .Bad_Byte, .Handle_Absent, .Handle_Ended, .Handle_Kind, .Handle_Rights, .Budget, .Budget_Hidden, .Over_Limit, .Full, .State, .Absent, .Damaged, .Device, .No_Grant, .Malformed, .No_Target, .Overlap, .Unknown_Operation, .Refused, .No_Answer, .Link_Down, .Busy, .Out_Of_Range, .Reserved, .Not_Payer, .Object_Shared, .Object_Marked, .Whole_Only, .Not_Multiple, .Not_Authentic, .Seed_Too_Weak, .Exists, .Starter_Module:
+		case .None, .Empty, .Bad_Flags, .Bad_Byte, .Handle_Absent, .Handle_Ended, .Handle_Kind, .Handle_Rights, .Budget, .Budget_Hidden, .Over_Limit, .Full, .State, .Absent, .Damaged, .Device, .No_Grant, .Malformed, .No_Target, .Overlap, .Unknown_Operation, .Refused, .No_Answer, .Link_Down, .Busy, .Out_Of_Range, .Reserved, .Not_Payer, .Object_Shared, .Object_Marked, .Whole_Only, .Not_Multiple, .Not_Authentic, .Seed_Too_Weak, .Exists, .Starter_Module, .Callee_Stopped, .Connection_Ended:
 		case .Too_Long:
 			cause = "a table has more records or bytes than the module takes"
 		case .Bad_Value:

@@ -23,6 +23,7 @@
 // This package calls no kernel operation and imports no support package.
 package wiring_service
 
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/module"
@@ -168,69 +169,15 @@ Query_Kind :: enum u32 {
 	Process_Ends   = 3, // values[0]: ends_given, values[1]: log_ends_given for (target_slot, target_serial).
 }
 
-// Response status in completion record kind on SERVICE_RING.
-Response_Status :: enum u32 {
-	Ok          = 0, // Command succeeded.
-	Bad_Command = 1, // Invalid command word, value, or malformed region payload.
-	Bad_Handle  = 2, // Missing or unproved handle, or unknown process identity.
-	No_Right    = 3, // Caller/asker lacks permission for the requested end or action.
-	Bad_State   = 4, // Invalid state (self-wire, input already taken, no list page, unknown batch).
-	No_Slot     = 5, // Capacity limit reached (asker, machine, process ends, list askers, full ring).
-	No_Budget   = 6, // Child wiring budget exhausted or absent.
-	No_Memory           = 7, // Kernel refused memory allocation.
-	Refused             = 8, // Delivery or other operation failed.
-	Asker_Wirings_Empty = 9, // Unsolicited tag-0 notice: an asker's active wirings dropped to 0.
-}
-
-// response_status_to_op_status maps a service Response_Status to the
-// corresponding kernel/root-ring op.Status.
-response_status_to_op_status :: proc "contextless" (status: Response_Status) -> op.Status {
-	switch status {
-	case .Ok:
-		return .Ok
-	case .Bad_Command:
-		return .Bad_Operation
-	case .Bad_Handle:
-		return .Bad_Handle
-	case .No_Right:
-		return .No_Right
-	case .Bad_State:
-		return .Bad_State
-	case .No_Slot:
-		return .No_Slot
-	case .No_Budget:
-		return .No_Budget
-	case .No_Memory:
-		return .No_Memory
-	case .Refused, .Asker_Wirings_Empty:
-		return .Bad_State
-	}
-	return .Bad_State
-}
-
-// response_status_from_op_status maps a kernel op.Status into Response_Status.
-response_status_from_op_status :: proc "contextless" (status: op.Status) -> Response_Status {
-	switch status {
-	case .Ok:
-		return .Ok
-	case .Bad_Operation:
-		return .Bad_Command
-	case .Bad_Handle:
-		return .Bad_Handle
-	case .No_Right:
-		return .No_Right
-	case .Bad_State:
-		return .Bad_State
-	case .No_Slot:
-		return .No_Slot
-	case .No_Budget:
-		return .No_Budget
-	case .No_Memory:
-		return .No_Memory
-	case .Bad_Address:
-		return .Refused
-	}
-	return .Refused
+// The kind of a completion record on SERVICE_RING that answers a command
+// is the word of its call outcome (call_outcome.completion_outcome is its
+// border): with any other outcome than Succeeded, the values are the error
+// record, which the core of the service writes with the outcome at the
+// place where it refuses. A record with the tag 0 answers no command: its
+// kind is a Notice.
+Notice :: enum u32 {
+	None                = 0, // Refused.
+	Asker_Wirings_Empty = 1, // An asker's active wirings dropped to 0.
 }
 
 // Decoded command record from SERVICE_RING.
@@ -438,10 +385,10 @@ command_from_record :: proc "contextless" (record: ring.Record) -> (cmd: Command
 
 // Decoded response record from SERVICE_RING.
 Response :: struct {
-	status:        Response_Status,
+	outcome:       call_outcome.Call_Outcome,
 	tag:           u32,
-	error_record:  errors.Error_Record, // Valid when status != .Ok.
-	// Valid when status == .Ok, depending on the answered command:
+	error_record:  errors.Error_Record, // Valid when outcome != .Succeeded.
+	// Valid when outcome == .Succeeded, depending on the answered command:
 	list_page:     op.Handle, // List_Page: handle of list page given through SERVICE_RING.
 	wiring_ring:   op.Handle, // List_Page: handle of new wiring ring (0 if asker already had one).
 	wiring_number: u32, // Wire: wiring number allocated.
@@ -453,14 +400,14 @@ Response :: struct {
 
 // response_to_record encodes a typed Response into a 64-byte ring.Record.
 response_to_record :: proc "contextless" (resp: Response, command: Command_Kind) -> ring.Record {
-	if resp.status != .Ok {
+	if resp.outcome != .Succeeded {
 		return ring.Record{
-			kind   = u32(resp.status),
+			kind   = u32(resp.outcome),
 			tag    = resp.tag,
 			values = errors.completion_values(resp.error_record),
 		}
 	}
-	record := ring.Record{kind = u32(Response_Status.Ok), tag = resp.tag}
+	record := ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = resp.tag}
 	switch command {
 	case .None, .Register_Process, .Grant_Asker_Budget, .Abort_Start_Wiring:
 	case .List_Page:
@@ -484,24 +431,22 @@ response_to_record :: proc "contextless" (resp: Response, command: Command_Kind)
 }
 
 // response_from_record is the one strict border for responses arriving on
-// SERVICE_RING. It refuses unknown status words, Command_Kind.None, handles
-// past u32, zero identifiers where non-zero is required, and non-zero unused
-// fields.
+// SERVICE_RING. It refuses what call_outcome.completion_outcome cannot
+// read (an outcome word that names none, a failure with no record),
+// Command_Kind.None, handles past u32, zero identifiers where non-zero is
+// required, and non-zero unused fields.
 response_from_record :: proc "contextless" (record: ring.Record, command: Command_Kind) -> (resp: Response, ok: bool) {
 	if command == .None {
 		return {}, false
 	}
-	status, status_known := enum_word.member_of_word(Response_Status, u64(record.kind))
-	if !status_known {
+	outcome, refusal := call_outcome.completion_outcome(record.kind, record.values)
+	if outcome == .Answer_Unreadable {
 		return {}, false
 	}
-	if status == .Asker_Wirings_Empty {
-		return {}, false
-	}
-	resp.status = status
+	resp.outcome = outcome
 	resp.tag = record.tag
-	if status != .Ok {
-		resp.error_record = errors.completion_record(record.values)
+	if outcome != .Succeeded {
+		resp.error_record = refusal
 		return resp, true
 	}
 	v := record.values
@@ -553,7 +498,7 @@ response_from_record :: proc "contextless" (record: ring.Record, command: Comman
 // wirings and should have the recorded grant `.Wirings` cleared.
 asker_wirings_empty_to_record :: proc "contextless" (id: Process_Identity) -> ring.Record {
 	return {
-		kind   = u32(Response_Status.Asker_Wirings_Empty),
+		kind   = u32(Notice.Asker_Wirings_Empty),
 		tag    = 0,
 		values = {id.slot, id.serial, 0, 0, 0, 0, 0},
 	}
@@ -562,7 +507,7 @@ asker_wirings_empty_to_record :: proc "contextless" (id: Process_Identity) -> ri
 // asker_wirings_empty_from_record is the strict border for tag-0
 // Asker_Wirings_Empty notices on SERVICE_RING.
 asker_wirings_empty_from_record :: proc "contextless" (record: ring.Record) -> (id: Process_Identity, ok: bool) {
-	if record.tag != 0 || record.kind != u32(Response_Status.Asker_Wirings_Empty) {
+	if record.tag != 0 || record.kind != u32(Notice.Asker_Wirings_Empty) {
 		return {}, false
 	}
 	if !trailing_zeros(record.values, 2) {

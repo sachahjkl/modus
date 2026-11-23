@@ -92,11 +92,11 @@ Mesh_Link_Up :: struct {
 	peer:            [32]u8,
 }
 
-// An outbound link ended: each request in flight ended with no known
-// outcome when the link was up, or as unreachable when it never came up.
-@(log_fact = "remote: the outbound link to the machine identity key {client_key_head} at {peer} ended: {unknown_outcome} requests with no known outcome, {unreachable} requests that never left")
+// An outbound link ended: each request in flight ended in doubt when the
+// link was up, or as unreachable when it never came up.
+@(log_fact = "remote: the outbound link to the machine identity key {client_key_head} at {peer} ended: {in_doubt} requests in doubt, {unreachable} requests that never left")
 Mesh_Link_Ended :: struct {
-	unknown_outcome: u64,
+	in_doubt:        u64,
 	unreachable:     u64,
 	client_key_head: [24]u8,
 	peer:            [32]u8,

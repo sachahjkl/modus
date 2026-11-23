@@ -2,22 +2,25 @@ package fuzz
 
 import "core:mem"
 import "core:slice"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
-import op "modus:contract/operation"
+import "modus:contract/replacement_list"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/start_grant"
-import "modus:system"
+import "internal:root/replacement_rules"
+import "internal:root/replacement_signature"
 
 // The fuzz target of the root ring (src/md/infrastructure/fuzzing.md, "The
 // targets, in order of value"): the decision of the dispatch of the root
 // service, which a hostile process feeds with each record of its root
 // ring, and the pure borders and refusal records behind it. Each case of
 // an input is one record with the start grant set of its sender: the target gives it
-// to root_ring.dispatch_decide, to the border of each word of the commands
-// and to the refusal of a Replace, and checks each refusal, a model of the
-// table of the senders, and that nothing changed.
+// to root_ring.dispatch_decide, to the border of each word of the
+// commands and to the decision of a Replace, and checks each refusal with
+// its call outcome, a model of the table of the senders and of the order of
+// the refusals of a Replace, and that nothing changed.
 
 // One case of an input: a record and its sender, as the fuzz input gives
 // them.
@@ -25,14 +28,19 @@ Fuzz_Root_Ring_Case :: struct {
 	record: ring.Record,
 	start_grant_set:   u64, // Bit n: the start grant n. A bit past the grants names none.
 	added:  u64, // Grants added to the start grant set: a command that runs still runs.
-	flags:  u64, // FUZZ_ROOT_RING_SERVICE_LISTED, FUZZ_ROOT_RING_NAME_IN_IMAGE.
-	status: u64, // The word of the status of a refused Replace; a word of no status gives no Replace.
-	entries: u64, // The entries of the boot image, for a refused Replace.
+	flags:  u64, // FUZZ_ROOT_RING_SERVICE_LISTED and the facts of a Replace.
+	entries: u64, // The entries of the boot image, for a Replace by values[4].
 }
 
-// The bits of Fuzz_Root_Ring_Case.flags: flags, not choices.
+// The bits of Fuzz_Root_Ring_Case.flags: flags, not choices. The decision
+// on the signature of a Replace is values[5], and the problem of its list
+// values[6], each taken modulo its count of members: a choice of the
+// harness, not a border of the system.
 FUZZ_ROOT_RING_SERVICE_LISTED :: 1 // The list of the start grant set names the service of the record.
-FUZZ_ROOT_RING_NAME_IN_IMAGE :: 2 // A module of the boot image has the name of the record.
+FUZZ_ROOT_RING_NAME_IN_IMAGE :: 2 // A Replace names a module of the image.
+FUZZ_ROOT_RING_REPLACES_ITSELF :: 4 // The entry of a Replace is the module of its name.
+FUZZ_ROOT_RING_CHAINED :: 8 // The table holds a record that a Replace would chain to.
+FUZZ_ROOT_RING_TABLE_FULL :: 16 // The replacement table has no room; values[3] / 2 is its capacity.
 
 FUZZ_ROOT_RING_CASE_LIMIT :: 16
 FUZZ_ROOT_RING_INPUT_LIMIT :: FUZZ_ROOT_RING_CASE_LIMIT * size_of(Fuzz_Root_Ring_Case)
@@ -41,12 +49,9 @@ FUZZ_ROOT_RING_INPUT_LIMIT :: FUZZ_ROOT_RING_CASE_LIMIT * size_of(Fuzz_Root_Ring
 // execution must leave them as they are.
 @(private = "file")
 fuzz_root_ring_senders_before: [root_ring.Root_Command]root_ring.Root_Command_Sender
-@(private = "file")
-fuzz_root_ring_writers_before: [root_ring.Root_Command]root_ring.Refusal_Writer
 
 fuzz_root_ring_start :: proc() -> bool {
 	fuzz_root_ring_senders_before = root_ring.ROOT_COMMAND_SENDERS
-	fuzz_root_ring_writers_before = root_ring.ROOT_COMMAND_REFUSAL_WRITERS
 	return true
 }
 
@@ -65,7 +70,7 @@ fuzz_root_ring_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	if !slice.equal(before, input) {
 		return fuzz_broken(.Contract, "the decision of the root ring changed the bytes of its input")
 	}
-	if root_ring.ROOT_COMMAND_SENDERS != fuzz_root_ring_senders_before || root_ring.ROOT_COMMAND_REFUSAL_WRITERS != fuzz_root_ring_writers_before {
+	if root_ring.ROOT_COMMAND_SENDERS != fuzz_root_ring_senders_before {
 		return fuzz_broken(.Contract, "the decision of the root ring changed a table of the contract")
 	}
 	return FUZZ_PASSED
@@ -145,7 +150,7 @@ fuzz_root_ring_case_check :: proc(case_of: Fuzz_Root_Ring_Case) -> Fuzz_Verdict 
 	// The border.
 	command, known := root_ring.command_of_word(record.kind)
 	if !known {
-		if decision.step != .Border || decision.command != .None || decision.status != .Bad_Operation || decision.refusal != root_ring.command_refusal(record.kind) {
+		if decision.step != .Border || decision.command != .None || decision.outcome != .Operation_Unsupported || decision.refusal != root_ring.command_refusal(record.kind) {
 			return fuzz_broken(.Contract, "the word %d names no command, and the decision is %v", record.kind, decision)
 		}
 		refusal := errors.completion_record(decision.refusal)
@@ -167,8 +172,8 @@ fuzz_root_ring_case_check :: proc(case_of: Fuzz_Root_Ring_Case) -> Fuzz_Verdict 
 		}
 		refusal := errors.completion_record(decision.refusal)
 		unit := command == .Connect ? errors.Unit.Connection : errors.Unit.Root_Commands
-		if decision.status != .No_Right || refusal.kind != i64(errors.Kind.No_Grant) || refusal.unit != i64(unit) || refusal.operation != i64(command) || !fuzz_error_record_named(refusal) {
-			return fuzz_broken(.Contract, "the refusal of the sender of %v is %v with %v", command, refusal, decision.status)
+		if decision.outcome != .Grant_Or_Right_Missing || refusal.kind != i64(errors.Kind.No_Grant) || refusal.unit != i64(unit) || refusal.operation != i64(command) || !fuzz_error_record_named(refusal) {
+			return fuzz_broken(.Contract, "the refusal of the sender of %v is %v with %v", command, refusal, decision.outcome)
 		}
 		if verdict := fuzz_root_ring_round_trip(decision.refusal); verdict.oracle != .None {
 			return verdict
@@ -180,8 +185,8 @@ fuzz_root_ring_case_check :: proc(case_of: Fuzz_Root_Ring_Case) -> Fuzz_Verdict 
 		if start_grant_set & root_ring.ROOT_RING_GRANTS == {} {
 			return fuzz_broken(.Contract, "a start grant set with no root ring runs %v", command)
 		}
-		if decision.status != .Ok || decision.refusal != ([7]u64{}) {
-			return fuzz_broken(.Contract, "the command %v runs with %v and a record", command, decision.status)
+		if decision.outcome != .Succeeded || decision.refusal != ([7]u64{}) {
+			return fuzz_broken(.Contract, "the command %v runs with %v and a record", command, decision.outcome)
 		}
 		// More grants never refuse a command that runs.
 		wider := root_ring.dispatch_decide(record.kind, start_grant_set + fuzz_root_ring_start_grant_set_of(case_of.added), listed)
@@ -189,16 +194,108 @@ fuzz_root_ring_case_check :: proc(case_of: Fuzz_Root_Ring_Case) -> Fuzz_Verdict 
 			return fuzz_broken(.Contract, "%v runs from %v and not from more grants", command, start_grant_set)
 		}
 	}
-	// A command whose values hold a hash or a key where a name would be
-	// writes the record of its refusal itself: the dispatch would name a
-	// name that is not there.
-	if (root_ring.root_second_argument_names[command] == "hash" || root_ring.root_first_argument_names[command] == "key") && root_ring.ROOT_COMMAND_REFUSAL_WRITERS[command] != .Command {
-		return fuzz_broken(.Two_Readers, "the dispatch writes the record of %v, whose values hold no name", command)
-	}
-	if verdict := fuzz_root_ring_words_check(record); verdict.oracle != .None {
+	if verdict := fuzz_root_ring_replace_check(case_of, start_grant_set); verdict.oracle != .None {
 		return verdict
 	}
-	return fuzz_root_ring_replace_check(case_of)
+	return fuzz_root_ring_words_check(record)
+}
+
+// The record that the model waits for of a Replace, field by field.
+@(private = "file")
+Fuzz_Replace_Expected :: struct {
+	outcome:  call_outcome.Call_Outcome,
+	kind:     errors.Kind,
+	unit:     errors.Unit,
+	argument: i64,
+	value:    i64,
+	limit:    i64,
+	found:    i64,
+}
+
+// fuzz_root_ring_replace_model gives the outcome and the record of a
+// Replace, written by hand from docs/MODULE_CONTRACT.md, "Who may replace
+// a module", from the fields that root_ring.Replace_Refusal names, and from
+// the order of the tests of a callee (src/md/api/call_outcome.md): the
+// grant; the arguments; the names; the state; the data of the system. A
+// removal (by 0) reads no row and no chain. A Replace that the facts allow
+// into a full table gives the record of the table.
+@(private = "file")
+fuzz_root_ring_replace_model :: proc(facts: replacement_rules.Replace_Facts, table_full: bool, capacity: i64) -> Fuzz_Replace_Expected {
+	replacing := facts.by != 0
+	no_row := facts.decision == .No_Row || facts.decision == .No_List
+	by := i64(min(facts.by, 1 << 62))
+	switch {
+	case !facts.granted:
+		return {.Grant_Or_Right_Missing, .No_Grant, .Root_Commands, 0, 0, 0, 0}
+	case facts.by > facts.entry_count:
+		return {.Argument_Refused, .Bad_Value, .None, 2, by, i64(min(facts.entry_count, 1 << 62)), 0}
+	case replacing && facts.replaces_itself:
+		return {.Argument_Refused, .Bad_Value, .Modules, 2, by, 0, 0}
+	case !facts.name_in_image:
+		return {.Nothing_Has_That_Name, .Absent, .Modules, 1, 0, 0, 0}
+	case replacing && no_row:
+		return {.Nothing_Has_That_Name, .Absent, .Records, 2, by, 0, 0}
+	case replacing && facts.chained:
+		return {.Wrong_State, .State, .Records, 2, by, 0, 0}
+	case replacing && facts.decision == .Not_Authentic:
+		return {.Data_Damaged, .Damaged, .Records, 2, by, 0, 0}
+	case replacing && facts.decision == .List_Not_Valid:
+		return {.Data_Damaged, .Damaged, .Records, 2, by, 0, i64(facts.problem)}
+	case table_full:
+		return {.Budget_Or_Capacity_Exhausted, .Full, .Records, 0, 0, capacity, 0}
+	}
+	return {outcome = .Succeeded}
+}
+
+// fuzz_root_ring_replace_check: the decision of a Replace from the facts of
+// the case, and the refusal of a full table when the case names one, is
+// the record of the model field by field, which names the command, whose
+// kind explains the outcome, whose reason the reader of the contract reads
+// back, and which is the same twice.
+@(private = "file")
+fuzz_root_ring_replace_check :: proc(case_of: Fuzz_Root_Ring_Case, start_grant_set: bit_set[start_grant.Grant]) -> Fuzz_Verdict {
+	values := case_of.record.values
+	facts := replacement_rules.Replace_Facts {
+		granted         = .Replace in start_grant_set,
+		by              = values[4],
+		entry_count     = case_of.entries,
+		name_in_image   = case_of.flags & FUZZ_ROOT_RING_NAME_IN_IMAGE != 0,
+		replaces_itself = case_of.flags & FUZZ_ROOT_RING_REPLACES_ITSELF != 0,
+		chained         = case_of.flags & FUZZ_ROOT_RING_CHAINED != 0,
+		decision        = replacement_signature.Decision(values[5] % (u64(max(replacement_signature.Decision)) + 1)),
+		problem         = replacement_list.List_Problem(values[6] % (u64(max(replacement_list.List_Problem)) + 1)),
+	}
+	table_full := case_of.flags & FUZZ_ROOT_RING_TABLE_FULL != 0
+	capacity := i64(values[3] >> 1)
+	outcome, refusal, _ := replacement_rules.replace_refusal(facts)
+	again, refusal_again, _ := replacement_rules.replace_refusal(facts)
+	if again != outcome || refusal_again != refusal {
+		return fuzz_broken(.Contract, "two decisions of one Replace differ")
+	}
+	if outcome == .Succeeded && table_full {
+		outcome, refusal = replacement_rules.table_full_refusal(capacity)
+	}
+	wanted := fuzz_root_ring_replace_model(facts, table_full, capacity)
+	read := errors.completion_record(refusal)
+	if outcome != wanted.outcome {
+		return fuzz_broken(.Model, "the Replace of %v gives %v with %v, and the model %v", facts, outcome, read, wanted)
+	}
+	if outcome == .Succeeded {
+		if refusal != ([7]u64{}) {
+			return fuzz_broken(.Contract, "a Replace that runs writes the record %v", read)
+		}
+		return FUZZ_PASSED
+	}
+	if read.kind != i64(wanted.kind) || read.unit != i64(wanted.unit) || read.argument != wanted.argument || read.value != wanted.value || read.limit != wanted.limit || read.found != wanted.found {
+		return fuzz_broken(.Model, "the record of the Replace of %v is %v, and the model %v", facts, read, wanted)
+	}
+	if read.operation != i64(root_ring.Root_Command.Replace) || !fuzz_error_record_named(read) || errors.Kind(read.kind) not_in call_outcome.KINDS_OF[outcome] {
+		return fuzz_broken(.Contract, "the record of a refused Replace is %v with %v", read, outcome)
+	}
+	if _, _, known := root_ring.replace_refusal_of_record(outcome, read); !known {
+		return fuzz_broken(.Contract, "the reader of the contract reads no reason in the record %v of a Replace", read)
+	}
+	return fuzz_root_ring_round_trip(refusal)
 }
 
 // fuzz_root_ring_round_trip: an error record reads back to its words.
@@ -218,14 +315,14 @@ fuzz_root_ring_word_check :: proc($Enum: typeid, word: u64, command: root_ring.R
 	member, status, refusal := root_ring.member_of_word(Enum, word, command, argument)
 	expected, named := enum_word.member_of_word(Enum, word)
 	if named {
-		if status != .Ok || member != expected || u64(member) != word || refusal != ([7]u64{}) {
+		if status != .Succeeded || member != expected || u64(member) != word || refusal != ([7]u64{}) {
 			return fuzz_broken(.Contract, "member_of_word gives %v and %v for the word %d", member, status, word)
 		}
 		return FUZZ_PASSED
 	}
 	zero: Enum
 	read := errors.completion_record(refusal)
-	if status != .Bad_Operation || member != zero || read.kind != i64(errors.Kind.Bad_Value) || read.operation != i64(command) || read.argument != argument || read.value != i64(min(word, 1 << 62)) || read.limit != i64(max(Enum)) || !fuzz_error_record_named(read) {
+	if status != .Argument_Refused || member != zero || read.kind != i64(errors.Kind.Bad_Value) || read.operation != i64(command) || read.argument != argument || read.value != i64(min(word, 1 << 62)) || read.limit != i64(max(Enum)) || !fuzz_error_record_named(read) {
 		return fuzz_broken(.Contract, "the refusal of the word %d of %v is %v with %v", word, command, read, status)
 	}
 	return fuzz_root_ring_round_trip(refusal)
@@ -250,65 +347,20 @@ fuzz_root_ring_words_check :: proc(record: ring.Record) -> Fuzz_Verdict {
 		}
 	}
 	report, report_status := root_ring.machine_key_report_of_values(record.values)
-	if report_status == .Ok {
+	if report_status == .Succeeded {
 		if u64(report.state) != record.values[4] || report.state == .Awaited && u64(report.form) != record.values[5] {
 			return fuzz_broken(.Contract, "machine_key_report_of_values gives a report that the words do not name")
 		}
-	} else if report_status != .Bad_Operation || report != (root_ring.Machine_Key_Report{}) {
+	} else if report_status != .Argument_Refused || report != (root_ring.Machine_Key_Report{}) {
 		return fuzz_broken(.Contract, "machine_key_report_of_values refuses with %v and a report", report_status)
 	}
 	return FUZZ_PASSED
 }
 
-// fuzz_root_ring_replace_check: the record of a refused Replace names a
-// cause only when the state shows one, and then the right one.
-@(private = "file")
-fuzz_root_ring_replace_check :: proc(case_of: Fuzz_Root_Ring_Case) -> Fuzz_Verdict {
-	status, status_named := enum_word.member_of_word(op.Status, case_of.status)
-	if !status_named {
-		return FUZZ_PASSED
-	}
-	by := case_of.record.values[4]
-	in_image := case_of.flags & FUZZ_ROOT_RING_NAME_IN_IMAGE != 0
-	record, named := root_ring.replace_refusal(status, by, case_of.entries, in_image, system.REPLACEMENT_CAPACITY)
-	read := errors.completion_record(record)
-	switch {
-	case status == .No_Right:
-		if !named || record != root_ring.sender_refusal(.Replace) {
-			return fuzz_broken(.Contract, "a Replace with no grant gives %v", read)
-		}
-	case status == .Bad_Handle && by > case_of.entries:
-		if !named || read.kind != i64(errors.Kind.Bad_Value) || read.argument != 2 || read.value != i64(min(by, 1 << 62)) || read.limit != i64(min(case_of.entries, 1 << 62)) {
-			return fuzz_broken(.Contract, "a Replace by %d past %d entries gives %v", by, case_of.entries, read)
-		}
-	case status == .Bad_Handle && !in_image:
-		if !named || read.kind != i64(errors.Kind.Absent) || read.unit != i64(errors.Unit.Modules) || read.argument != 1 {
-			return fuzz_broken(.Contract, "a Replace of no module gives %v", read)
-		}
-	case status == .Bad_Operation:
-		if !named || read.kind != i64(errors.Kind.Bad_Value) || read.argument != 2 || read.value != i64(min(by, 1 << 62)) {
-			return fuzz_broken(.Contract, "a Replace of a module by itself gives %v", read)
-		}
-	case status == .No_Slot:
-		if !named || read.kind != i64(errors.Kind.Full) || read.unit != i64(errors.Unit.Records) || read.limit != system.REPLACEMENT_CAPACITY {
-			return fuzz_broken(.Contract, "a Replace into a full table gives %v", read)
-		}
-	case:
-		if named || record != ([7]u64{}) {
-			return fuzz_broken(.Contract, "the status %v of a Replace names the cause %v", status, read)
-		}
-		return FUZZ_PASSED
-	}
-	if read.operation != i64(root_ring.Root_Command.Replace) || !fuzz_error_record_named(read) {
-		return fuzz_broken(.Contract, "the record of a refused Replace names %v", read)
-	}
-	return fuzz_root_ring_round_trip(record)
-}
-
 // fuzz_root_ring_seeds: each command from each single grant of a ring and
 // from none, with the edges of each word: 0, 1, the largest member and one
 // past it, 2^62 and one past it, the largest word; then the kinds that
-// name no command, and each status of a Replace.
+// name no command.
 fuzz_root_ring_seeds :: proc(seeds: ^[dynamic][]u8) {
 	edges := [?]u64{0, 1, u64(max(root_ring.Remote_Client_Action)), u64(max(root_ring.Remote_Client_Action)) + 1, 1 << 62, 1 << 62 + 1, max(u64)}
 	cases := make([dynamic]Fuzz_Root_Ring_Case, context.temp_allocator)
@@ -320,14 +372,27 @@ fuzz_root_ring_seeds :: proc(seeds: ^[dynamic][]u8) {
 	for command in root_ring.Root_Command {
 		for start_grant_set, index in start_grant_sets {
 			edge := edges[index % len(edges)]
-			append(&cases, Fuzz_Root_Ring_Case{record = {kind = u32(command), values = {0, 0, 0, 0, edge, edge, edge}}, start_grant_set = start_grant_set, added = max(u64), flags = u64(index) & 3, status = u64(index), entries = edge})
+			append(&cases, Fuzz_Root_Ring_Case{record = {kind = u32(command), values = {0, 0, 0, 0, edge, edge, edge}}, start_grant_set = start_grant_set, added = max(u64), flags = u64(index) & 1})
 		}
 	}
+	// Each fact of a Replace alone, with each decision on its signature,
+	// at the edges of its entry: 0, 1, the last, one past it.
+	replace_grants := u64(1) << u64(start_grant.Grant.Root_Ring) | u64(1) << u64(start_grant.Grant.Replace)
+	for flags in ([?]u64{FUZZ_ROOT_RING_NAME_IN_IMAGE, 0, FUZZ_ROOT_RING_NAME_IN_IMAGE | FUZZ_ROOT_RING_REPLACES_ITSELF, FUZZ_ROOT_RING_NAME_IN_IMAGE | FUZZ_ROOT_RING_CHAINED, FUZZ_ROOT_RING_NAME_IN_IMAGE | FUZZ_ROOT_RING_TABLE_FULL}) {
+		for decision in replacement_signature.Decision {
+			for by in ([?]u64{0, 1, 12, 13, max(u64)}) {
+				append(&cases, Fuzz_Root_Ring_Case{record = {kind = u32(root_ring.Root_Command.Replace), values = {3 = 128, 4 = by, 5 = u64(decision), 6 = 2}}, start_grant_set = replace_grants, flags = flags, entries = 12})
+			}
+		}
+	}
+	// A full table of capacity 0 and of the largest capacity, and an image
+	// of no entry.
+	for capacity_word in ([?]u64{0, max(u64)}) {
+		append(&cases, Fuzz_Root_Ring_Case{record = {kind = u32(root_ring.Root_Command.Replace), values = {3 = capacity_word, 4 = 1}}, start_grant_set = replace_grants, flags = FUZZ_ROOT_RING_NAME_IN_IMAGE | FUZZ_ROOT_RING_TABLE_FULL, entries = 12})
+	}
+	append(&cases, Fuzz_Root_Ring_Case{record = {kind = u32(root_ring.Root_Command.Replace), values = {4 = 1}}, start_grant_set = replace_grants, flags = FUZZ_ROOT_RING_NAME_IN_IMAGE, entries = 0})
 	for kind in ([?]u32{u32(max(root_ring.Root_Command)) + 1, 1 << 16, max(u32)}) {
 		append(&cases, Fuzz_Root_Ring_Case{record = {kind = kind, values = {max(u64), max(u64), max(u64), max(u64), max(u64), max(u64), max(u64)}}, start_grant_set = max(u64)})
-	}
-	for status in op.Status {
-		append(&cases, Fuzz_Root_Ring_Case{record = {kind = u32(root_ring.Root_Command.Replace), values = {4 = 13}}, start_grant_set = u64(1) << u64(start_grant.Grant.Root_Ring), status = u64(status), entries = 12})
 	}
 	for &item in cases {
 		append(seeds, slice.clone(mem.ptr_to_bytes(&item)))

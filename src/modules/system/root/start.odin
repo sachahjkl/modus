@@ -6,6 +6,8 @@ package root
 
 import "internal:root/role_policy"
 import info "modus:contract/boot_info"
+import "modus:contract/call_outcome"
+import "modus:contract/errors"
 import "modus:contract/fixed_addresses"
 import "modus:contract/isolated"
 import module "modus:contract/module"
@@ -72,9 +74,9 @@ Start_Work :: struct {
 	store_override:       string,
 	store_limit_override: u64,
 	edit_target_page:     system.Handle,
-	// Where a refusal that names its cause writes its error record, or nil:
-	// the completion of the command that asked for the start. A start that
-	// this one starts first writes there too.
+	// Where a refusal writes its error record: the completion of the
+	// command that asked for the start, or a record of the start alone. A
+	// start that this one starts first writes there too.
 	refusal:        ^[7]u64,
 	hold:           Start_Hold,
 }
@@ -84,10 +86,11 @@ Start_Work :: struct {
 // process that asked for the start with Start, or nil; premade_wiring
 // holds child ends prepared by the delegated wiring service; place, when
 // not nil, receives the place of the process; refusal, when not nil,
-// receives the error record of a refusal that names its cause, which the
-// state after the start no longer shows; hold keeps the process before its
-// first instruction for a debugger.
-start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, asker: ^Started = nil, premade_wiring: ^Premade_Start_Wiring = nil, place: ^^Started = nil, refusal: ^[7]u64 = nil, store_override: string = "", store_limit_override: u64 = 0, edit_target_page: system.Handle = 0, hold: Start_Hold = .None) -> system.Status {
+// receives the error record of a refusal, which the step that refuses
+// writes with the outcome; hold keeps the process before its first
+// instruction for a debugger.
+start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, asker: ^Started = nil, premade_wiring: ^Premade_Start_Wiring = nil, place: ^^Started = nil, refusal: ^[7]u64 = nil, store_override: string = "", store_limit_override: u64 = 0, edit_target_page: system.Handle = 0, hold: Start_Hold = .None) -> call_outcome.Call_Outcome {
+	own_refusal: [7]u64
 	work := Start_Work {
 		name                 = name,
 		principal            = principal,
@@ -96,42 +99,42 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 		store_override       = store_override,
 		store_limit_override = store_limit_override,
 		edit_target_page     = edit_target_page,
-		refusal              = refusal,
+		refusal              = refusal != nil ? refusal : &own_refusal,
 		hold                 = hold,
 	}
 	defer start_handles_close(&work)
 	// The holder of Settings is the one writer of the settings page: each
 	// start of it, by any caller, is decided here (text_settings.odin).
 	if is_role_holder(name, .Settings) && settings_start_decide(principal, .Other) != .Start {
-		return .Bad_State
+		return start_refuse(&work, .Wrong_State, .State, .Processes, 1)
 	}
 	// The handles of the start are free before any is made: the table of
 	// prepared modules gives back its parts used least recently
 	// (own_tables.odin).
 	handles_room_make(start_handles_needed())
-	if status := start_prepare(&work); status != .Ok {
+	if outcome := start_prepare(&work); outcome != .Succeeded {
 		// A device service that start_prepare started before its refusal
 		// stops: else its device stays held until the machine restarts.
 		start_abandon(&work)
-		return status
+		return outcome
 	}
-	if status := start_place_take(&work); status != .Ok {
+	if outcome := start_place_take(&work); outcome != .Succeeded {
 		start_abandon(&work)
-		return status
+		return outcome
 	}
 	work.slot.asker = asker
-	status := start_context_build(&work)
-	if status == .Ok && premade_wiring != nil {
+	outcome := start_context_build(&work)
+	if outcome == .Succeeded && premade_wiring != nil {
 		work.wiring.ends = premade_wiring.ends
 		work.wiring.log_ring = premade_wiring.log_ring
 		work.wiring.log_end_words = premade_wiring.log_end_words
 	}
-	if status == .Ok {
-		status = start_process_load(&work)
+	if outcome == .Succeeded {
+		outcome = start_process_load(&work)
 	}
-	if status != .Ok {
+	if outcome != .Succeeded {
 		start_abandon(&work)
-		return status
+		return outcome
 	}
 	start_wiring_keep(&work)
 	if place != nil {
@@ -160,28 +163,36 @@ start_wiring_keep :: proc "contextless" (work: ^Start_Work) {
 // does not start, reads the start grant set, and starts the services that the start grant set
 // needs first: the network service, the storage service, and the device
 // service of a client of a disk or of the network device.
-start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
+start_prepare :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outcome {
 	name := work.name
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == name && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
 			// The bytes have the hash of their entry before any read of
 			// them (trust.odin, image_checks).
 			if !image_entry_give(&item) {
-				return .Bad_Operation
+				return start_refuse(work, .Data_Damaged, .Damaged, .Modules, 1)
 			}
 			work.file = image[item.offset:][:item.size]
 			work.entry = &item
 			break
 		}
 	}
-	if len(work.file) == 0 || (name_is_a_system_part(name) && !(work.asker == nil && on_demand(name))) {
-		return .Bad_Operation
+	if len(work.file) == 0 {
+		return start_refuse(work, .Nothing_Has_That_Name, .Absent, .Modules, 1)
+	}
+	// A part of the system starts by this service alone, as a service on
+	// demand or at the boot.
+	if name_is_a_system_part(name) && !(work.asker == nil && on_demand(name)) {
+		return start_refuse(work, .Grant_Or_Right_Missing, .Reserved, .None, 1)
 	}
 	// One `unlock` at a time, and only from unlock_start: two runs would
 	// share the ring of the principals and the ring and the region of the
 	// TPM service, and one would read the answers of the other.
-	if name == "unlock" && (unlock_run.stage != .Starting || find("unlock") != nil) {
-		return .Bad_State
+	if name == "unlock" && unlock_run.stage != .Starting {
+		return start_refuse(work, .Grant_Or_Right_Missing, .Reserved, .None, 1)
+	}
+	if name == "unlock" && find("unlock") != nil {
+		return start_refuse(work, .Callee_Busy, .Busy, .Processes, 1, 1, 1)
 	}
 	work.start_grant_set = start_grant_set_of(name)
 	// A replay holds no connection, no ring to another process and no
@@ -197,24 +208,31 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	// holder of its root ring would start and stop the processes of the
 	// machine.
 	if .Start_Policy in grants && !start_policy_starting {
-		return .Bad_Operation
+		return start_refuse(work, .Grant_Or_Right_Missing, .Reserved, .None, 1)
 	}
 	// A start grant set whose handles meet in one context slot does not start, before
-	// any service starts for it.
+	// any service starts for it: the table of the boot image is damaged.
 	if slot, twice := system.start_grant_set_slot_taken_twice(grants); twice {
 		grant_slot_refused(name, slot)
-		return .Bad_State
+		return start_refuse(work, .Data_Damaged, .Damaged, .Records, 0, i64(slot))
 	}
 	// The rings of the process are queues of the wait of the loop of this
 	// service: past the bound, the start is refused before any service
 	// starts for it and before any ring is made (wait_words.odin).
 	if record, refused := waited_queues_refusal(.Start, start_waited_queues(grants, work.file)); refused {
+		// The record Full of the words of the wait: the queues of the loop
+		// of this service are shared by each process, and free when one
+		// ends.
 		start_refusal_keep(work, record)
-		return .No_Slot
+		return .Callee_Busy
 	}
-	// A process with an endpoint: the network service starts first.
+	// A process with an endpoint: the network service starts first. A
+	// service that starts here and a refusal of this start after it change
+	// no state of the sender (needed_service_failed).
 	if .Network in grants {
-		network_service() or_return
+		if _, outcome := network_service(work.refusal); outcome != .Succeeded {
+			return needed_service_failed(work.refusal)
+		}
 	}
 	// A process with a store: the storage service starts first.
 	if .Store in grants && .Acts_For_Principal not_in grants {
@@ -225,9 +243,10 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 			}
 		}
 		if !running {
-			// A refusal of that start that names its cause is the cause of
-			// this one.
-			start(role_holder_name(.Storage), refusal = work.refusal) or_return
+			// The record of that start is the record of this one.
+			if outcome := start(role_holder_name(.Storage), refusal = work.refusal); outcome != .Succeeded {
+				return needed_service_failed(work.refusal)
+			}
 		}
 	}
 	// A client of a block service: the service of its disk starts first.
@@ -245,12 +264,35 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		for &item in started {
 			if item.process != 0 && item.is_driver && item.device == place {
 				system.log_fact(.Warning, Start_Refused_Sound_Device_Busy{refused_process = module_name_field(name)})
-				return .Bad_State
+				return start_refuse(work, .Callee_Busy, .Busy, .Processes, 1, 1, 1)
 			}
 		}
 		work.driver, work.device_ring, status = driver_start(place, DRIVER_SOUND)
 	}
-	return status
+	switch status {
+	case .Ok:
+		return .Succeeded
+	case .Bad_Handle:
+		// No device of the class at its place: the machine lacks it.
+		return start_refuse(work, .Callee_Unavailable, .Device)
+	case .Bad_Operation, .Bad_Address, .No_Memory, .No_Slot, .Bad_State, .No_Right, .No_Budget:
+	}
+	return start_kernel_refused(work, status)
+}
+
+// start_refuse writes the error record of a refused start where the asker
+// reads it, and gives the outcome that names the refusal.
+start_refuse :: proc "contextless" (work: ^Start_Work, outcome: call_outcome.Call_Outcome, kind: errors.Kind, unit: errors.Unit = .None, argument: i64 = 0, value: i64 = 0, limit: i64 = 0, found: i64 = 0) -> call_outcome.Call_Outcome {
+	start_refusal_keep(work, errors.ring_fail(u32(root_ring.Root_Command.Start), kind, unit, argument, value, limit, found))
+	return outcome
+}
+
+// start_kernel_refused writes the record Refused of a kernel operation of
+// the start that the kernel refused, with the status in found, and gives
+// the outcome of a refusal on the objects of this service: the border of
+// the kernel until the kernel gives the call outcome itself.
+start_kernel_refused :: proc "contextless" (work: ^Start_Work, status: system.Status) -> call_outcome.Call_Outcome {
+	return start_refuse(work, system.outcome_of_own_status(status), .Refused, .None, 0, 0, 0, i64(status))
 }
 
 // start_refusal_keep writes the error record of a refusal that names its
@@ -267,7 +309,7 @@ start_refusal_keep :: proc "contextless" (work: ^Start_Work, record: [7]u64) {
 // connection to the storage service names, the principal, which the name of
 // its store carries, and the start grant set, which the grant of each connection
 // reads.
-start_place_take :: proc "contextless" (work: ^Start_Work) -> system.Status {
+start_place_take :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outcome {
 	for &item in started {
 		if place_is_free(&item) {
 			work.slot = &item
@@ -275,7 +317,8 @@ start_place_take :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		}
 	}
 	if work.slot == nil {
-		return .No_Slot
+		// The table of the processes frees a place when a process stops.
+		return start_refuse(work, .Callee_Busy, .Full, .Processes, 0, 0, i64(len(started)))
 	}
 	slot := work.slot
 	slot^ = {}
@@ -286,7 +329,7 @@ start_place_take :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	copy(slot.name[:len(slot.name) - 1], work.name)
 	slot.principal = work.principal
 	slot.start_grant_set = work.start_grant_set
-	return .Ok
+	return .Succeeded
 }
 
 // start_abandon undoes a start that failed after start_prepare: the place
@@ -345,7 +388,7 @@ start_mapping_add :: proc "contextless" (work: ^Start_Work, what: string, mappin
 
 // start_context_build builds the context of the process from its start grant set:
 // each step writes the handles, the values and the mappings of one part.
-start_context_build :: proc "contextless" (work: ^Start_Work) -> system.Status {
+start_context_build :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outcome {
 	if work.device_ring != 0 {
 		start_grant_put(work, .Device_Ring, {work.device_ring, {.Read, .Write}})
 	}
@@ -361,13 +404,24 @@ start_context_build :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		system.value_put(&work.values, system.GRANT_VALUE_SEAL_ALLOWED, u64(tpm_seal_allowed()))
 	}
 	start_grant_put(work, .Log, log_grant(work.start_grant_set))
-	start_store_give(work) or_return
-	start_view_give(work) or_return
-	start_rings_give(work) or_return
+	if outcome := start_store_give(work); outcome != .Succeeded {
+		return outcome
+	}
+	if outcome := start_view_give(work); outcome != .Succeeded {
+		return outcome
+	}
+	if outcome := start_rings_give(work); outcome != .Succeeded {
+		return outcome
+	}
 	start_handles_of_the_start_grant_set_give(work)
 	start_pages_give(work)
-	start_service_give(work) or_return
-	return work.mappings_full ? .No_Slot : .Ok
+	if outcome := start_service_give(work); outcome != .Succeeded {
+		return outcome
+	}
+	if work.mappings_full {
+		return start_refuse(work, .Budget_Or_Capacity_Exhausted, .Full, .Records, 0, 0, START_MAPPING_LIMIT)
+	}
+	return .Succeeded
 }
 
 // start_values_of_the_name writes the values that a process receives by its
@@ -393,16 +447,16 @@ start_values_of_the_name :: proc "contextless" (work: ^Start_Work) {
 // context: the call ring, the call region, the storage service with the
 // right Read, and its file. A process that acts for its principal connects
 // to the storage service itself.
-start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
+start_store_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outcome {
 	grants := work.start_grant_set.grants
 	if .Store not_in grants || .Acts_For_Principal in grants {
-		return .Ok
+		return .Succeeded
 	}
 	storage_service: ^Started
-	status: system.Status
-	_, storage_service, work.store_ring, work.store_region, status = connection_open(work.slot, role_holder_name(.Storage), store_override = work.store_override, store_limit_override = work.store_limit_override)
-	if status != .Ok {
-		return status
+	outcome: call_outcome.Call_Outcome
+	_, storage_service, work.store_ring, work.store_region, outcome = connection_open(work.slot, role_holder_name(.Storage), work.refusal, u32(root_ring.Root_Command.Start), store_override = work.store_override, store_limit_override = work.store_limit_override)
+	if outcome != .Succeeded {
+		return outcome
 	}
 	start_grant_put(work, .Storage_Ring, {work.store_ring, {.Read, .Write}})
 	start_grant_put(work, .Storage_Region, {work.store_region, {.Read, .Write}})
@@ -415,13 +469,13 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		if is_role_holder(system.name_of(item.name[:]), .Storage) && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
 			mapping, given := image_entry_mapping(&item, storage.FILE_ADDRESS)
 			if !given {
-				return .Bad_Operation
+				return start_refuse(work, .Data_Damaged, .Damaged, .Modules)
 			}
 			system.value_put(&work.values, system.GRANT_VALUE_STORAGE_FILE_SIZE, item.size)
 			start_mapping_add(work, "the file of the storage service", mapping)
 		}
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // start_view_give gives a process with the grant Terminal the terminal ring
@@ -439,11 +493,15 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 // serial_terminal and dom_terminal need no screen: with them, a process
 // with the grant Terminal starts on a machine with no screen too. A console image has no
 // window server: there, a process with no terminal starts with no window.
-start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Status) {
+start_view_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outcome {
 	terminal_wanted := .Terminal in work.start_grant_set.grants
 	if screen_absent && !(terminal_wanted && !role_policy.console_renderer_needs_screen(console_renderer)) {
-		return terminal_wanted ? .Bad_State : .Ok
+		if terminal_wanted {
+			return start_refuse(work, .Operation_Unsupported, .Unsupported, .Terminal)
+		}
+		return .Succeeded
 	}
+	status: system.Status
 	if terminal_wanted {
 		for &item in started {
 			if place_is_free(&item) && &item != work.slot {
@@ -452,56 +510,72 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Sta
 			}
 		}
 		if work.view == nil {
-			return .No_Slot
+			return start_refuse(work, .Callee_Busy, .Full, .Processes, 0, 0, i64(len(started)))
 		}
 		work.view.reserved = true
-		work.shared[0] = system.memory_create(ring.pages(terminal.RING_CAPACITY)) or_return
-		work.shared[1] = system.memory_create(terminal.TEXT_PAGES) or_return
+		if work.shared[0], status = system.memory_create(ring.pages(terminal.RING_CAPACITY)); status != .Ok {
+			return start_kernel_refused(work, status)
+		}
+		if work.shared[1], status = system.memory_create(terminal.TEXT_PAGES); status != .Ok {
+			return start_kernel_refused(work, status)
+		}
 		start_grant_put(work, .Terminal_Ring, {work.shared[0], {.Read, .Write}})
 		start_grant_put(work, .Terminal_Text, {work.shared[1], {.Read, .Write}})
-		return .Ok
+		return .Succeeded
 	}
 	// The start policy has no window (root_ring.start_grant_set_handles), and neither
 	// have the run of `unlock` and the holder of Plans before it, as no
 	// compositor runs yet. A
 	// replay has none: the compositor would write into its ring.
 	if .Start_Policy in work.start_grant_set.grants || unlock_without_window(work.name) || plan_at_start_without_window() || work.hold == .For_Replay {
-		return .Ok
+		return .Succeeded
 	}
 	if console_renderer != .Desktop_Terminal {
-		return .Ok
+		return .Succeeded
 	}
-	work.shared[0] = system.memory_create(ring.PAGE_COUNT) or_return
-	work.slot.client = system.give(display_holder, work.shared[0], {.Read, .Write}) or_return
+	if work.shared[0], status = system.memory_create(ring.PAGE_COUNT); status != .Ok {
+		return start_kernel_refused(work, status)
+	}
+	if work.slot.client, status = system.give(display_holder, work.shared[0], {.Read, .Write}); status != .Ok {
+		return start_kernel_refused(work, status)
+	}
 	// The capture face and the input face ride this ring: the compositor
 	// takes them only from the client whose record says so.
 	capture: u64 = .Screen_Capture in work.start_grant_set.grants ? display.CLIENT_CAPTURE : 0
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(work.slot.client), display.CLIENT_ADD_CAPTURE = capture}})
 	start_grant_put(work, .Display, {work.shared[0], {.Read, .Write}})
-	return .Ok
+	return .Succeeded
 }
 
 // start_rings_give makes the rings of the start grant set: the root ring of a sender
 // of root commands, the control ring of the network service, and the
 // endpoint of a process with the grant Network.
-start_rings_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Status) {
+start_rings_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outcome {
 	slot := work.slot
 	grants := work.start_grant_set.grants
+	status: system.Status
 	if root_ring.root_ring_given(grants) {
 		accepts_handles := root_ring.sender_allowed(.Wire, grants) || root_ring.sender_allowed(.Start_Edit, grants)
-		slot.requests_memory, slot.requests = system.ring_create(receive_handles = accepts_handles) or_return
+		if slot.requests_memory, slot.requests, status = system.ring_create(receive_handles = accepts_handles); status != .Ok {
+			return start_kernel_refused(work, status)
+		}
 		start_grant_put(work, .Root_Ring, {slot.requests_memory, {.Read, .Write}})
 	}
 	if .Network_Device in grants {
-		slot.network_memory, slot.network = system.ring_create() or_return
+		if slot.network_memory, slot.network, status = system.ring_create(); status != .Ok {
+			return start_kernel_refused(work, status)
+		}
 		start_grant_put(work, .Network_Control, {slot.network_memory, {.Read, .Write}})
 	}
 	if .Network in grants {
-		work.endpoint_ring, work.endpoint_region = endpoint_open(slot, work.name) or_return
+		outcome: call_outcome.Call_Outcome
+		if work.endpoint_ring, work.endpoint_region, outcome = endpoint_open(slot, work.name, work.refusal); outcome != .Succeeded {
+			return outcome
+		}
 		start_grant_put(work, .Datagram_Ring, {work.endpoint_ring, {.Read, .Write}})
 		start_grant_put(work, .Datagram_Region, {work.endpoint_region, {.Read, .Write}})
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // start_handles_of_the_start_grant_set_give gives the handles that a start grant names:
@@ -597,37 +671,42 @@ start_pages_give :: proc "contextless" (work: ^Start_Work) {
 
 // start_service_give gives a service its service ring, and its own file,
 // to read the descriptions of its exports.
-start_service_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Status) {
+start_service_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outcome {
 	entry := work.entry
 	if .Serve not_in work.start_grant_set.grants || entry.offset % system.PAGE_SIZE != 0 || work.mappings_full {
-		return .Ok
+		return .Succeeded
 	}
 	if work.mapping_count >= len(work.mappings) {
 		mapping_needed_log("the file of the service", work.name, len(work.mappings))
 		work.mappings_full = true
-		return .Ok
+		return .Succeeded
 	}
 	file_mapping, given := image_entry_mapping(entry, isolated.FILE_ADDRESS)
 	if !given {
-		return .Bad_Operation
+		return start_refuse(work, .Data_Damaged, .Damaged, .Modules, 1)
 	}
 	slot := work.slot
-	slot.service_memory, slot.service = system.ring_create() or_return
+	status: system.Status
+	if slot.service_memory, slot.service, status = system.ring_create(); status != .Ok {
+		return start_kernel_refused(work, status)
+	}
 	start_grant_put(work, .Service_Ring, {slot.service_memory, {.Read, .Write}})
 	system.value_put(&work.values, system.GRANT_VALUE_FILE_ADDRESS, isolated.FILE_ADDRESS)
 	system.value_put(&work.values, system.GRANT_VALUE_FILE_SIZE, entry.size)
 	start_mapping_add(work, "the file of the service", file_mapping)
-	return .Ok
+	return .Succeeded
 }
 
 // start_process_load starts the process with its context, its budget and
 // its mappings. A slot that two grants took, or a value that two parts of
 // the start wrote, refuses the start first, with its line: no process
 // starts with a handle or a value lost.
-start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
+start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outcome {
 	name := work.name
+	// Two grants in one slot, or one value written twice: the table of the
+	// boot image is damaged.
 	if context_refused(name, &work.grants, &work.values) {
-		return .Bad_State
+		return start_refuse(work, .Data_Damaged, .Damaged, .Records)
 	}
 	load_error: module.Load_Error
 	process_budget := budget_of(work.file, name)
@@ -662,7 +741,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 				system.log_fact(.Warning, Window_Start_Not_Measured{window_process = module_name_field(name)})
 			}
 		}
-		return .Ok
+		return .Succeeded
 	}
 	// A budget of no page: the start failed before process_start.
 	if status == .No_Budget && process_budget.pages != 0 {
@@ -679,11 +758,11 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	if status == .No_Slot {
 		own_tables_log(name)
 	}
-	return status
+	return start_kernel_refused(work, status)
 }
 
 // start_finish records what the process received, and starts its terminal.
-start_finish :: proc "contextless" (work: ^Start_Work) -> system.Status {
+start_finish :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outcome {
 	slot := work.slot
 	grants := work.start_grant_set.grants
 	slot.driver = work.driver
@@ -707,11 +786,11 @@ start_finish :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	if work.view != nil {
 		if status := terminal_start(work.view, slot, work.shared[0], work.shared[1]); status != .Ok {
 			started_process_stop(slot)
-			return status
+			return start_kernel_refused(work, status)
 		}
 		started_log(work.name, work.principal, true)
-		return .Ok
+		return .Succeeded
 	}
 	started_log(work.name, work.principal, false)
-	return .Ok
+	return .Succeeded
 }

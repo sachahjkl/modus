@@ -75,6 +75,7 @@
 package heron
 
 import "modus:contract/enum_word"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:display"
 import "modus:graphics"
@@ -248,24 +249,24 @@ Animation_Row :: struct {
 //
 // - **name**: a name of the first column of [animations](heron.animations), 16 bytes at most. The match is exact.
 //
-// The result is the count of the frames of the animation. It fails with -1 and an error record: `Absent` when no
+// The result is the count of the frames of the animation. It fails with its call outcome and an error record: `Absent` when no
 // animation has this name; the record names the first argument.
 //
 // Example, in the console after `connect("heron")`: `heron.play("dash")`.
 @(export, link_name = "play")
-play :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
+play :: proc "c" (name: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	// One copy: the caller can change the call region during the call.
 	wanted: [16]u8
 	if len(name^) > len(wanted) {
-		return errors.fail(error, -1, .Absent, .None, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .None, 1)
 	}
 	copied := copy(wanted[:], name^)
 	asked_animation, found := mark.animation_of_name(string(wanted[:copied]))
 	if !found {
-		return errors.fail(error, -1, .Absent, .None, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .None, 1)
 	}
 	animation_start(asked_animation, true)
-	return i64(mark.animation_frame_count(asked_animation))
+	return .Succeeded, i64(mark.animation_frame_count(asked_animation))
 }
 
 // animations gives one row for each animation of the heron, in the order of the keys of the window: its name, the count of its frames, its time in milliseconds, and 1 when the whole heron moves during it.

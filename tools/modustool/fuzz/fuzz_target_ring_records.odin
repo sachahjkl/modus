@@ -111,22 +111,22 @@ fuzz_ring_record_check :: proc(record: ring.Record) -> Fuzz_Verdict {
 	}
 	// The report of a Machine_Key command.
 	report, report_status := root_ring.machine_key_report_of_values(record.values)
-	if report_status == .Ok {
+	if report_status == .Succeeded {
 		if u64(report.state) != record.values[4] || report.state == .Awaited && u64(report.form) != record.values[5] {
 			return fuzz_broken(.Contract, "machine_key_report_of_values gives a report that the words do not name")
 		}
-	} else if report_status != .Bad_Operation || report != (root_ring.Machine_Key_Report{}) {
+	} else if report_status != .Argument_Refused || report != (root_ring.Machine_Key_Report{}) {
 		return fuzz_broken(.Contract, "machine_key_report_of_values refuses with %v and a report", report_status)
 	}
 	// A word of a root command that names a member, or its refusal.
 	origin, origin_status, origin_refusal := root_ring.member_of_word(root_ring.Principal_Key_Origin, record.values[5], .Principal_Unlock, 5)
-	if origin_status == .Ok {
+	if origin_status == .Succeeded {
 		if u64(origin) != record.values[5] || origin_refusal != ([7]u64{}) {
 			return fuzz_broken(.Contract, "member_of_word gives %v for the word %d", origin, record.values[5])
 		}
 	} else {
 		refusal := errors.completion_record(origin_refusal)
-		if origin_status != .Bad_Operation || u64(origin) != 0 || refusal.kind != i64(errors.Kind.Bad_Value) || refusal.argument != 5 || refusal.value != i64(min(record.values[5], 1 << 62)) || refusal.limit != i64(max(root_ring.Principal_Key_Origin)) {
+		if origin_status != .Argument_Refused || u64(origin) != 0 || refusal.kind != i64(errors.Kind.Bad_Value) || refusal.argument != 5 || refusal.value != i64(min(record.values[5], 1 << 62)) || refusal.limit != i64(max(root_ring.Principal_Key_Origin)) {
 			return fuzz_broken(.Contract, "the refusal of the word %d is %v", record.values[5], refusal)
 		}
 	}

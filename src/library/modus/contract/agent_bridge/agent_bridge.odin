@@ -10,8 +10,8 @@
 //   non-zero target window, plus an available collector hash chain.
 // - An Eval_Lex line runs at once only when it is one call of an export on
 //   the read-only list (READ_ONLY_EXPORTS). Each other call, plans.apply and
-//   plans.rollback among them, stops with
-//   Bridge_Status.Awaiting_Principal_Approval. A line that is not one call
+//   plans.rollback among them, stops in the state
+//   Bridge_Request_State.Awaiting_Principal_Approval. A line that is not one call
 //   (a comment, a second line, a pipe, a nested call) is refused. The bridge
 //   reads no flag of the caller to decide this.
 //
@@ -21,6 +21,7 @@ package agent_bridge
 
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/remote"
 import "modus:contract/remote_display"
@@ -28,17 +29,17 @@ import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:contract/wide_grants"
 
-// Wire magic and version identifying version 1 of the Agent Bridge binary
-// frame format.
+// Wire magic and version of the Agent Bridge binary frame format. Version 2
+// gives the state of a request and the outcome of an ended request.
 BRIDGE_WIRE_MAGIC :: [6]u8{'M', 'O', 'D', 'A', 'B', '1'}
-BRIDGE_WIRE_VERSION :: u16(1)
+BRIDGE_WIRE_VERSION :: u16(2)
 
 // Exact binary header sizes for command and response frames.
 // Command:  magic(6) + version(2) + command(4) + request_id(8) +
 //           principal_id(8) + grant_serial(8) + target_window_id(8) +
 //           client_key_hash(32) + payload_length(4) + reserved(4) = 84 bytes.
-// Response: magic(6) + version(2) + status(4) + refusal(4) + request_id(8) +
-//           act_sequence(8) + act_hash(32) + payload_length(4) + reserved(4)
+// Response: magic(6) + version(2) + state(4) + refusal(4) + request_id(8) +
+//           act_sequence(8) + act_hash(32) + payload_length(4) + outcome(4)
 //           = 72 bytes.
 COMMAND_HEADER_SIZE :: 84
 RESPONSE_HEADER_SIZE :: 72
@@ -67,14 +68,15 @@ Bridge_Command_Kind :: enum u32 {
 	Read_Log_Facts = 5,
 }
 
-// Closed set of outcome statuses returned by the Agent Bridge.
-// Zero means unset and is refused at the border.
-Bridge_Status :: enum u32 {
+// The state of a request of the Agent Bridge (src/md/api/call_outcome.md,
+// "The agent bridge"): it ended, with the outcome of the call, or it waits
+// for the approval of the principal, which an agent cannot give. Waiting is
+// no outcome: only an ended request has one. Zero means unset and is
+// refused at the border.
+Bridge_Request_State :: enum u32 {
 	None                        = 0,
-	Ok                          = 1,
+	Ended                       = 1,
 	Awaiting_Principal_Approval = 2,
-	Refused                     = 3,
-	Transport_Error             = 4,
 }
 
 // Closed set of explicit capability bits granted to an agent client key.
@@ -104,7 +106,7 @@ Bridge_Refusal :: enum u32 {
 	Trailing_Bytes              = 3,
 	Buffer_Too_Small            = 4,
 	Unknown_Command             = 5,
-	Unknown_Status              = 6,
+	Unknown_State               = 6,
 	Invalid_Permissions         = 7,
 	Permission_Denied           = 8,
 	Client_Key_Missing          = 9,
@@ -221,9 +223,11 @@ Bridge_Command_Frame :: struct {
 	payload:          []u8,
 }
 
-// Canonical decoded response frame.
+// Canonical decoded response frame. The outcome is Succeeded for a request
+// that waits.
 Bridge_Response_Frame :: struct {
-	status:              Bridge_Status,
+	state:               Bridge_Request_State,
+	outcome:             call_outcome.Call_Outcome,
 	refusal:             Bridge_Refusal,
 	request_id:          u64,
 	act_sequence_number: u64,
@@ -338,9 +342,12 @@ READ_ONLY_EXPORTS := [?]Read_Only_Export {
 	{"compositor", "gpu_info"},
 }
 
-// Pure decision returned by bridge_authorize_command.
+// Pure decision returned by bridge_authorize_command: the request may run
+// (Ended with Succeeded), it waits for the principal, or the bridge refused
+// it (Ended with the outcome of its refusal).
 Bridge_Authorization_Decision :: struct {
-	status:            Bridge_Status,
+	state:             Bridge_Request_State,
+	outcome:           call_outcome.Call_Outcome,
 	refusal:           Bridge_Refusal,
 	required_act_kind: wide_grants.Act_Kind,
 }
@@ -357,12 +364,10 @@ BRIDGE_COMMAND_KIND_NAMES := [Bridge_Command_Kind]string {
 }
 
 @(rodata)
-BRIDGE_STATUS_NAMES := [Bridge_Status]string {
+BRIDGE_REQUEST_STATE_NAMES := [Bridge_Request_State]string {
 	.None                        = "None",
-	.Ok                          = "Ok",
+	.Ended                       = "Ended",
 	.Awaiting_Principal_Approval = "Awaiting_Principal_Approval",
-	.Refused                     = "Refused",
-	.Transport_Error             = "Transport_Error",
 }
 
 @(rodata)
@@ -373,7 +378,7 @@ BRIDGE_REFUSAL_NAMES := [Bridge_Refusal]string {
 	.Trailing_Bytes              = "Trailing_Bytes",
 	.Buffer_Too_Small            = "Buffer_Too_Small",
 	.Unknown_Command             = "Unknown_Command",
-	.Unknown_Status              = "Unknown_Status",
+	.Unknown_State               = "Unknown_State",
 	.Invalid_Permissions         = "Invalid_Permissions",
 	.Permission_Denied           = "Permission_Denied",
 	.Client_Key_Missing          = "Client_Key_Missing",
@@ -416,8 +421,8 @@ bridge_command_kind_from_word :: proc "contextless" (word: u32) -> (kind: Bridge
 	return member, true
 }
 
-bridge_status_from_word :: proc "contextless" (word: u32) -> (status: Bridge_Status, ok: bool) {
-	member := enum_word.member_of_word(Bridge_Status, u64(word)) or_return
+bridge_request_state_from_word :: proc "contextless" (word: u32) -> (state: Bridge_Request_State, ok: bool) {
+	member := enum_word.member_of_word(Bridge_Request_State, u64(word)) or_return
 	if member == .None {
 		return .None, false
 	}
@@ -489,8 +494,33 @@ bridge_command_kind_name :: proc "contextless" (kind: Bridge_Command_Kind) -> st
 	return BRIDGE_COMMAND_KIND_NAMES[kind]
 }
 
-bridge_status_name :: proc "contextless" (status: Bridge_Status) -> string {
-	return BRIDGE_STATUS_NAMES[status]
+bridge_request_state_name :: proc "contextless" (state: Bridge_Request_State) -> string {
+	return BRIDGE_REQUEST_STATE_NAMES[state]
+}
+
+// bridge_refusal_outcome gives the call outcome of a refusal of the bridge:
+// the one place of this map. A permission, a grant or a scope that the
+// client lacks, and permissions that the policy of the client does not
+// allow, are Grant_Or_Right_Missing; a request that breaks a rule is
+// Argument_Refused; an act log that the bridge needs and cannot write is
+// Callee_Unavailable.
+bridge_refusal_outcome :: proc "contextless" (refusal: Bridge_Refusal) -> call_outcome.Call_Outcome {
+	switch refusal {
+	case .None:
+		return .Succeeded
+	case .Permission_Denied, .Client_Key_Missing, .Wide_Grant_Required, .Wide_Grant_Not_Active, .Wide_Grant_Expired, .Window_Not_In_Scope, .Principal_Approval_Required, .Invalid_Permissions:
+		return .Grant_Or_Right_Missing
+	case .Act_Log_Required:
+		return .Callee_Unavailable
+	case .Bad_Header, .Truncated, .Trailing_Bytes, .Buffer_Too_Small, .Unknown_Command, .Unknown_State, .Invalid_Field, .Payload_Too_Large, .Invalid_Text:
+		return .Argument_Refused
+	}
+	return .Argument_Refused
+}
+
+// bridge_refused gives the decision of a request that the bridge refused.
+bridge_refused :: proc "contextless" (refusal: Bridge_Refusal) -> Bridge_Authorization_Decision {
+	return {state = .Ended, outcome = bridge_refusal_outcome(refusal), refusal = refusal}
 }
 
 bridge_refusal_name :: proc "contextless" (refusal: Bridge_Refusal) -> string {
@@ -622,8 +652,16 @@ decode_command_frame :: proc "contextless" (input: []u8) -> (frame: Bridge_Comma
 // canonical little-endian "MODAB1" format. Refused calls leave output
 // untouched.
 encode_response_frame :: proc "contextless" (frame: ^Bridge_Response_Frame, output: []u8) -> (written: int, refusal: Bridge_Refusal) {
-	if frame == nil || frame.status == .None {
-		return 0, .Unknown_Status
+	if frame == nil || frame.state == .None {
+		return 0, .Unknown_State
+	}
+	// Only an ended request has an outcome, and a request that the bridge
+	// refused did not succeed.
+	if frame.state == .Awaiting_Principal_Approval && frame.outcome != .Succeeded {
+		return 0, .Invalid_Field
+	}
+	if frame.state == .Ended && frame.outcome == .Succeeded && frame.refusal != .None {
+		return 0, .Invalid_Field
 	}
 	if frame.request_id == 0 {
 		return 0, .Invalid_Field
@@ -640,7 +678,7 @@ encode_response_frame :: proc "contextless" (frame: ^Bridge_Response_Frame, outp
 		output[index] = magic[index]
 	}
 	byte_order.write_u16_little_endian(output, 6, BRIDGE_WIRE_VERSION)
-	byte_order.write_u32_little_endian(output, 8, u32(frame.status))
+	byte_order.write_u32_little_endian(output, 8, u32(frame.state))
 	byte_order.write_u32_little_endian(output, 12, u32(frame.refusal))
 	byte_order.write_u64_little_endian(output, 16, frame.request_id)
 	byte_order.write_u64_little_endian(output, 24, frame.act_sequence_number)
@@ -648,7 +686,7 @@ encode_response_frame :: proc "contextless" (frame: ^Bridge_Response_Frame, outp
 		output[32 + index] = frame.act_record_hash[index]
 	}
 	byte_order.write_u32_little_endian(output, 64, u32(len(frame.payload)))
-	byte_order.write_u32_little_endian(output, 68, 0)
+	byte_order.write_u32_little_endian(output, 68, u32(frame.outcome))
 	for index in 0 ..< len(frame.payload) {
 		output[RESPONSE_HEADER_SIZE + index] = frame.payload[index]
 	}
@@ -670,10 +708,10 @@ decode_response_frame :: proc "contextless" (input: []u8) -> (frame: Bridge_Resp
 	if byte_order.read_u16_little_endian(input, 6) != BRIDGE_WIRE_VERSION {
 		return {}, .Bad_Header
 	}
-	status_word := byte_order.read_u32_little_endian(input, 8)
-	status, status_ok := bridge_status_from_word(status_word)
-	if !status_ok {
-		return {}, .Unknown_Status
+	state_word := byte_order.read_u32_little_endian(input, 8)
+	state, state_ok := bridge_request_state_from_word(state_word)
+	if !state_ok {
+		return {}, .Unknown_State
 	}
 	refusal_word := byte_order.read_u32_little_endian(input, 12)
 	decoded_refusal, refusal_ok := bridge_refusal_from_word(refusal_word)
@@ -690,8 +728,13 @@ decode_response_frame :: proc "contextless" (input: []u8) -> (frame: Bridge_Resp
 		act_hash[index] = input[32 + index]
 	}
 	payload_length := byte_order.read_u32_little_endian(input, 64)
-	reserved := byte_order.read_u32_little_endian(input, 68)
-	if reserved != 0 {
+	// The outcome word crosses its border: a word that names no outcome, and
+	// an outcome of a request that waits, are refused.
+	outcome, unreadable := call_outcome.outcome_of_word(u64(byte_order.read_u32_little_endian(input, 68)))
+	if unreadable.kind != 0 || state == .Awaiting_Principal_Approval && outcome != .Succeeded {
+		return {}, .Bad_Header
+	}
+	if state == .Ended && outcome == .Succeeded && decoded_refusal != .None {
 		return {}, .Bad_Header
 	}
 	if u64(payload_length) > MAX_BRIDGE_PAYLOAD_BYTES {
@@ -705,7 +748,8 @@ decode_response_frame :: proc "contextless" (input: []u8) -> (frame: Bridge_Resp
 		return {}, .Trailing_Bytes
 	}
 	return Bridge_Response_Frame {
-		status              = status,
+		state               = state,
+		outcome             = outcome,
 		refusal             = decoded_refusal,
 		request_id          = request_id,
 		act_sequence_number = act_sequence,
@@ -1264,122 +1308,122 @@ bridge_authorize_command :: proc "contextless" (
 	request: ^Bridge_Authorization_Request,
 ) -> Bridge_Authorization_Decision {
 	if policy == nil || request == nil {
-		return {status = .Refused, refusal = .Invalid_Field}
+		return bridge_refused(.Invalid_Field)
 	}
 	if request.command == .None {
-		return {status = .Refused, refusal = .Unknown_Command}
+		return bridge_refused(.Unknown_Command)
 	}
 	client_key := policy.client_key_public
 	if bytes_all_zero(client_key[:]) {
-		return {status = .Refused, refusal = .Client_Key_Missing}
+		return bridge_refused(.Client_Key_Missing)
 	}
 	permissions, perm_ok := bridge_permissions_from_word(policy.permissions_word)
 	if !perm_ok {
-		return {status = .Refused, refusal = .Invalid_Permissions}
+		return bridge_refused(.Invalid_Permissions)
 	}
 	remote_uses, uses_ok := remote.client_uses_of_word(policy.remote_uses_word)
 	if !uses_ok {
-		return {status = .Refused, refusal = .Invalid_Permissions}
+		return bridge_refused(.Invalid_Permissions)
 	}
 
 	// Gate 1: Explicit client permissions and remote client key uses.
 	switch request.command {
 	case .None:
-		return {status = .Refused, refusal = .Unknown_Command}
+		return bridge_refused(.Unknown_Command)
 	case .Eval_Lex:
 		if .Eval_Lex not_in permissions || .Calls not_in remote_uses {
-			return {status = .Refused, refusal = .Permission_Denied}
+			return bridge_refused(.Permission_Denied)
 		}
 	case .Read_Screen:
 		if .Read_Screen not_in permissions || .View not_in remote_uses {
-			return {status = .Refused, refusal = .Permission_Denied}
+			return bridge_refused(.Permission_Denied)
 		}
 	case .Send_Key, .Send_Pointer:
 		if .Send_Input not_in permissions || .View not_in remote_uses || .Input not_in remote_uses {
-			return {status = .Refused, refusal = .Permission_Denied}
+			return bridge_refused(.Permission_Denied)
 		}
 	case .Read_Log_Facts:
 		if .Read_Log_Facts not_in permissions || .Calls not_in remote_uses {
-			return {status = .Refused, refusal = .Permission_Denied}
+			return bridge_refused(.Permission_Denied)
 		}
 	}
 
 	// Gate 2: Command-specific structural and wide grant checks.
 	switch request.command {
 	case .None:
-		return {status = .Refused, refusal = .Unknown_Command}
+		return bridge_refused(.Unknown_Command)
 	case .Eval_Lex:
 		if text_refusal := validate_lex_line(request.lex_line); text_refusal != .None {
-			return {status = .Refused, refusal = text_refusal}
+			return bridge_refused(text_refusal)
 		}
 		switch lex_line_classify(request.lex_line) {
 		case .None, .Malformed:
-			return {status = .Refused, refusal = .Invalid_Text}
+			return bridge_refused(.Invalid_Text)
 		case .Requires_Principal_Approval:
 			// plans.apply and plans.rollback are here: the bridge never
 			// approves a change of the plan, whatever the caller says of it.
-			return {status = .Awaiting_Principal_Approval, refusal = .Principal_Approval_Required}
+			return {state = .Awaiting_Principal_Approval, refusal = .Principal_Approval_Required}
 		case .Read_Only:
 		}
-		return {status = .Ok, refusal = .None, required_act_kind = .Action_Invoked}
+		return {state = .Ended, outcome = .Succeeded, refusal = .None, required_act_kind = .Action_Invoked}
 
 	case .Read_Screen:
-		return {status = .Ok, refusal = .None, required_act_kind = .Frame_Read}
+		return {state = .Ended, outcome = .Succeeded, refusal = .None, required_act_kind = .Frame_Read}
 
 	case .Send_Key, .Send_Pointer:
 		if !policy.has_wide_grant || policy.wide_grant_serial == 0 {
-			return {status = .Refused, refusal = .Wide_Grant_Required}
+			return bridge_refused(.Wide_Grant_Required)
 		}
 		grant_state, state_ok := wide_grants.wide_grant_state_from_word(policy.wide_grant_state_word)
 		if !state_ok {
-			return {status = .Refused, refusal = .Wide_Grant_Not_Active}
+			return bridge_refused(.Wide_Grant_Not_Active)
 		}
 		switch grant_state {
 		case .None, .Pending, .Revoked:
-			return {status = .Refused, refusal = .Wide_Grant_Not_Active}
+			return bridge_refused(.Wide_Grant_Not_Active)
 		case .Expired:
-			return {status = .Refused, refusal = .Wide_Grant_Expired}
+			return bridge_refused(.Wide_Grant_Expired)
 		case .Active:
 		}
 		terms := policy.wide_grant_terms
 		if wide_grants.wide_grant_terms_validate(&terms) != .None {
-			return {status = .Refused, refusal = .Wide_Grant_Not_Active}
+			return bridge_refused(.Wide_Grant_Not_Active)
 		}
 		if terms.principal_id != policy.principal_id {
-			return {status = .Refused, refusal = .Wide_Grant_Not_Active}
+			return bridge_refused(.Wide_Grant_Not_Active)
 		}
 		expected_grantee := blake3.hash(client_key[:])
 		if terms.grantee_identity_hash != expected_grantee {
-			return {status = .Refused, refusal = .Wide_Grant_Not_Active}
+			return bridge_refused(.Wide_Grant_Not_Active)
 		}
 		authorities, auth_ok := wide_grants.wide_authorities_from_word(terms.authorities_word)
 		if !auth_ok || .View_Screen not_in authorities || .Send_Input not_in authorities {
-			return {status = .Refused, refusal = .Permission_Denied}
+			return bridge_refused(.Permission_Denied)
 		}
 		if policy.wide_grant_expires_ms <= policy.wide_grant_created_ms {
-			return {status = .Refused, refusal = .Wide_Grant_Expired}
+			return bridge_refused(.Wide_Grant_Expired)
 		}
 		if policy.wide_grant_expires_ms - policy.wide_grant_created_ms > terms.duration_ms {
-			return {status = .Refused, refusal = .Wide_Grant_Not_Active}
+			return bridge_refused(.Wide_Grant_Not_Active)
 		}
 		if request.now_ms < policy.wide_grant_created_ms || request.now_ms >= policy.wide_grant_expires_ms {
-			return {status = .Refused, refusal = .Wide_Grant_Expired}
+			return bridge_refused(.Wide_Grant_Expired)
 		}
 		if request.target_window_id == 0 || !wide_grants.wide_grant_terms_contains_window(&terms, request.target_window_id) {
-			return {status = .Refused, refusal = .Window_Not_In_Scope}
+			return bridge_refused(.Window_Not_In_Scope)
 		}
 		if !policy.collector_available {
-			return {status = .Refused, refusal = .Act_Log_Required}
+			return bridge_refused(.Act_Log_Required)
 		}
 		act_kind := wide_grants.Act_Kind.Key_Injected
 		if request.command == .Send_Pointer {
 			act_kind = request.pointer_has_click ? .Pointer_Clicked : .Pointer_Moved
 		}
-		return {status = .Ok, refusal = .None, required_act_kind = act_kind}
+		return {state = .Ended, outcome = .Succeeded, refusal = .None, required_act_kind = act_kind}
 
 	case .Read_Log_Facts:
-		return {status = .Ok, refusal = .None, required_act_kind = .None}
+		return {state = .Ended, outcome = .Succeeded, refusal = .None, required_act_kind = .None}
 	}
 
-	return {status = .Refused, refusal = .Unknown_Command}
+	return bridge_refused(.Unknown_Command)
 }

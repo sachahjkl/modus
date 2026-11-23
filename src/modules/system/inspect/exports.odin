@@ -1,5 +1,6 @@
 package inspect
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
@@ -50,10 +51,6 @@ Module :: struct {
 }
 #assert(size_of(Module) - offset_of(Module, writer) == op.MODULE_WRITER_NAME_CAPACITY)
 
-ERROR_ACTS_FOR_PRINCIPAL :: -1
-ERROR_ABSENT :: -2
-ERROR_CHANGED :: -3 // The process of the slot changed during the call, three times.
-
 service: system.Service
 // The reports of a call: memory of this process, not of the window.
 call_mappings: op.Process_Mapping_Report
@@ -61,24 +58,27 @@ call_modules: op.Module_Report
 call_threads: op.Thread_Table_Report
 
 @(private = "file")
-process_find :: proc "contextless" (name: ^string, error: ^errors.Error_Record) -> (slot: u64, failure: i64) {
+process_find :: proc "contextless" (name: ^string, error: ^errors.Error_Record) -> (slot: u64, outcome: call_outcome.Call_Outcome) {
 	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
-		return 0, errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		outcome, _ = call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
+		return 0, outcome
 	}
 	// One copy: the caller can change the call region during the call.
 	copied: [32]u8
 	if len(name^) >= len(copied) {
-		return 0, errors.fail(error, ERROR_ABSENT, .Absent, .Processes, 1)
+		outcome, _ = call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Processes, 1)
+		return 0, outcome
 	}
 	count := copy(copied[:], name^)
 	slot = slot_of(string(copied[:count]))
 	if slot == 0 {
-		return 0, errors.fail(error, ERROR_ABSENT, .Absent, .Processes, 1)
+		outcome, _ = call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Processes, 1)
+		return 0, outcome
 	}
-	return slot, 0
+	return slot, .Succeeded
 }
 
-// mappings gives one row for each mapping of the process with this name, in the order of the addresses: the address, the module and the offset when a module holds it, the pages, the pages with a page frame, the kind, the rights, the memory object and how many handles and mappings name it. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-2, no process has this name); Absent (-3, a new process took the slot during the call, three times).
+// mappings gives one row for each mapping of the process with this name, in the order of the addresses: the address, the module and the offset when a module holds it, the pages, the pages with a page frame, the kind, the rights, the memory object and how many handles and mappings name it. The result is the count of rows, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Absent (no process has this name); Absent (a new process took the slot during the call, three times).
 //
 // **What it is for.** It shows where the memory of a process is and what
 // holds it: the code and the data of each module, the thread areas, the
@@ -100,10 +100,10 @@ process_find :: proc "contextless" (name: ^string, error: ^errors.Error_Record) 
 //
 // **Errors**:
 //
-// - `No_Grant` (-1): the caller does not act for the principal.
-// - `Absent` (-2): no process has this name, or the name has 32 bytes or
+// - `No_Grant`: the caller does not act for the principal.
+// - `Absent`: no process has this name, or the name has 32 bytes or
 //   more.
-// - `Absent` (-3): a new process took the slot between the two reports of
+// - `Absent`: a new process took the slot between the two reports of
 //   the call, three times in a row.
 //
 // ```
@@ -111,10 +111,10 @@ process_find :: proc "contextless" (name: ^string, error: ^errors.Error_Record) 
 // where(inspect.mappings("console"), kind = "shared")
 // ```
 @(export, link_name = "mappings")
-mappings :: proc "c" (process: ^string, result: ^[]Mapping, error: ^errors.Error_Record) -> i64 {
-	slot, failure := process_find(process, error)
-	if slot == 0 {
-		return failure
+mappings :: proc "c" (process: ^string, result: ^[]Mapping, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	slot, found := process_find(process, error)
+	if found != .Succeeded {
+		return found, 0
 	}
 	// Two reports: read them again when a new process took the slot between
 	// them (their serials differ).
@@ -126,7 +126,7 @@ mappings :: proc "c" (process: ^string, result: ^[]Mapping, error: ^errors.Error
 		}
 	}
 	if call_mappings.process_serial != call_modules.process_serial {
-		return errors.fail(error, ERROR_CHANGED, .Absent, .Processes, 1) // The process of that name is not there at one instant.
+		return call_outcome.fail(error, .Another_Change_Came_First, .Absent, .Processes, 1) // The process of that name is not there at one instant.
 	}
 	modules := call_modules.modules[:min(call_modules.count, op.PROCESS_MODULE_CAPACITY)]
 	count := int(min(call_mappings.count, op.MAPPING_REPORT_CAPACITY))
@@ -145,7 +145,7 @@ mappings :: proc "c" (process: ^string, result: ^[]Mapping, error: ^errors.Error
 		copy(row.kind[:], addresses.KIND_NAMES[addresses.kind_of(item, modules)])
 		row.rights = {'r', .Write in item.flags ? 'w' : '-', .Execute in item.flags ? 'x' : '-', 0}
 	}
-	return i64(count)
+	return .Succeeded, i64(count)
 }
 
 @(rodata)
@@ -157,7 +157,7 @@ thread_states := [op.Process_State]string {
 	.Stopped = "stopped",
 }
 
-// threads gives one row for each thread of the process with this name: its thread area, its state, the processor that runs it and its home queue, its weight and its request, its virtual time and its lag, its processor time, the words of its word wait and the end of its wait. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-2, no process has this name).
+// threads gives one row for each thread of the process with this name: its thread area, its state, the processor that runs it and its home queue, its weight and its request, its virtual time and its lag, its processor time, the words of its word wait and the end of its wait. The result is the count of rows, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Absent (no process has this name).
 //
 // **Parameter**: `process`, the name of a process that runs, as
 // `processes()` lists it (at most 31 bytes). If two processes have that name,
@@ -175,18 +175,18 @@ thread_states := [op.Process_State]string {
 // milliseconds since the start, or -1. The kernel reads these fields with no
 // lock: each field is whole, two fields can come from two instants.
 //
-// **Errors**: `No_Grant` (-1), the caller does not act for the principal;
-// `Absent` (-2), no process has this name.
+// **Errors**: `No_Grant`, the caller does not act for the principal;
+// `Absent`, no process has this name.
 //
 // ```
 // connect("inspect")
 // inspect.threads("console")
 // ```
 @(export, link_name = "threads")
-threads :: proc "c" (process: ^string, result: ^[]Thread, error: ^errors.Error_Record) -> i64 {
-	slot, failure := process_find(process, error)
-	if slot == 0 {
-		return failure
+threads :: proc "c" (process: ^string, result: ^[]Thread, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	slot, found := process_find(process, error)
+	if found != .Succeeded {
+		return found, 0
 	}
 	inspect_call(.Threads, slot, &call_threads, size_of(call_threads))
 	count := int(min(call_threads.count, op.THREAD_REPORT_CAPACITY))
@@ -210,10 +210,10 @@ threads :: proc "c" (process: ^string, result: ^[]Thread, error: ^errors.Error_R
 			copy(result[number].state[:], thread_states[item.state])
 		}
 	}
-	return i64(count)
+	return .Succeeded, i64(count)
 }
 
-// modules gives one row for each module record of the process with this name: the name in the boot image, the hash, the base, the size and the writer. The result is the count of rows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-2, no process has this name).
+// modules gives one row for each module record of the process with this name: the name in the boot image, the hash, the base, the size and the writer. The result is the count of rows, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Absent (no process has this name).
 //
 // A process holds one module, its own, until a loader puts more in it: the
 // console after `load`, a process with imports. Each row is one
@@ -234,18 +234,18 @@ threads :: proc "c" (process: ^string, result: ^[]Thread, error: ^errors.Error_R
 // `base` and `size`, its place in the address space; `writer`, `starter`
 // or `process`.
 //
-// **Errors**: `No_Grant` (-1), the caller does not act for the principal;
-// `Absent` (-2), no process has this name.
+// **Errors**: `No_Grant`, the caller does not act for the principal;
+// `Absent`, no process has this name.
 //
 // ```
 // connect("inspect")
 // inspect.modules("console")
 // ```
 @(export, link_name = "modules")
-modules :: proc "c" (process: ^string, result: ^[]Module, error: ^errors.Error_Record) -> i64 {
-	slot, failure := process_find(process, error)
-	if slot == 0 {
-		return failure
+modules :: proc "c" (process: ^string, result: ^[]Module, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	slot, found := process_find(process, error)
+	if found != .Succeeded {
+		return found, 0
 	}
 	inspect_call(.Modules, slot, &call_modules, size_of(call_modules))
 	count := int(min(call_modules.count, op.PROCESS_MODULE_CAPACITY))
@@ -271,5 +271,5 @@ modules :: proc "c" (process: ^string, result: ^[]Module, error: ^errors.Error_R
 			system.log_fact(.Info, Module_Writer_Refused{base = item.base, writer_word = item.writer})
 		}
 	}
-	return i64(count)
+	return .Succeeded, i64(count)
 }

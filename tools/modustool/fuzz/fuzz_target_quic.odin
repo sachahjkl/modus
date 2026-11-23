@@ -63,7 +63,8 @@ fuzz_quic_start :: proc() -> bool {
 	error: errors.Error_Record
 	secret := string(server.tls.server_private_key[:])
 	public := client.tls.server_public_key[:]
-	return state.cryptography.ed25519_public_key(&secret, &public, &error) >= 0
+	outcome, _ := state.cryptography.ed25519_public_key(&secret, &public, &error)
+	return outcome == .Succeeded
 }
 
 // fuzz_quic_generators_seed seeds the two generators the same way at the

@@ -16,6 +16,7 @@ package root
 
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/errors"
@@ -69,8 +70,8 @@ start_policy_choice_read_begin :: proc "contextless" () {
 		return
 	}
 	show("the root service reads the choice of principal 0", .Running, .Root)
-	if status := unlock_start(.Machine_Key_Without_Window, ""); status != .Ok {
-		system.log_fact(.Warning, Start_Policy_Choice_Unread_Unlock_Failed{status = status})
+	if outcome := unlock_start(.Machine_Key_Without_Window, ""); outcome != .Succeeded {
+		system.log_fact(.Warning, Start_Policy_Choice_Unread_Unlock_Failed{outcome = outcome})
 		start_policy_choice_end()
 		return
 	}
@@ -198,7 +199,8 @@ start_policy_chosen_load_begin :: proc "contextless" (row: ^disk_process.Grant_R
 		start_policy_launch(.Rescue)
 		return
 	}
-	failure, status := disk_load_begin(nil, 0, nickname, row.hash, principals.MACHINE, true)
+	load_refusal: [7]u64
+	failure, begun := disk_load_begin(nil, 0, nickname, row.hash, principals.MACHINE, true, &load_refusal)
 	switch failure {
 	case .None:
 	case .No_Service:
@@ -206,7 +208,7 @@ start_policy_chosen_load_begin :: proc "contextless" (row: ^disk_process.Grant_R
 		start_policy_launch(.Rescue)
 		return
 	case .No_Connection:
-		system.log_fact(.Warning, Chosen_Start_Policy_No_Connection{status = status, nickname = module_name_field(nickname)})
+		system.log_fact(.Warning, Chosen_Start_Policy_No_Connection{outcome = begun, nickname = module_name_field(nickname)})
 		start_policy_launch(.Rescue)
 		return
 	case .Not_Given:
@@ -221,12 +223,12 @@ start_policy_chosen_load_begin :: proc "contextless" (row: ^disk_process.Grant_R
 // start_policy_chosen_load_ended is told of the end of the load of the
 // chosen start policy: a load that failed, with the line of its cause
 // before, starts the rescue.
-start_policy_chosen_load_ended :: proc "contextless" (status: system.Status) {
+start_policy_chosen_load_ended :: proc "contextless" (outcome: call_outcome.Call_Outcome) {
 	start_policy_choice_stage = .Done
-	if status == .Ok {
+	if outcome == .Succeeded {
 		return
 	}
-	system.log_fact(.Warning, Chosen_Start_Policy_Not_Started{status = status, nickname = module_name_field(start_policy_chosen_nickname_text())})
+	system.log_fact(.Warning, Chosen_Start_Policy_Not_Started{outcome = outcome, nickname = module_name_field(start_policy_chosen_nickname_text())})
 	start_policy_launch(.Rescue)
 }
 
@@ -333,19 +335,18 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 // console of principal 0: the start policy of the next start, or with no
 // nickname the end of the choice. values is the completion: an error
 // record for a refusal. A refusal changes nothing.
-start_policy_choice_command :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
+start_policy_choice_command :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Start_Policy_Choice)
 	hash := transmute([disk_process.HASH_SIZE]u8)[4]u64{record.values[0], record.values[1], record.values[2], record.values[3]}
 	nickname_bytes, nickname_length := disk_process.name_unpack({record.values[4], record.values[5], record.values[6]})
 	nickname := string(nickname_bytes[:nickname_length])
 	if .Acts_For_Principal not_in grants_held(caller) {
-		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
-		return .No_Right
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Acts_For_Principal, 1)
 	}
-	if form_status, form_refusal := start_policy_rules.choice_form_refusal(nickname == "", hash == {}); form_status != .Ok {
+	if form_outcome, form_refusal := start_policy_rules.choice_form_refusal(nickname == "", hash == {}); form_outcome != .Succeeded {
 		values^ = form_refusal
 		system.log_fact(.Warning, Start_Policy_Choice_Refused_Empty_Nickname{})
-		return form_status
+		return form_outcome
 	}
 	facts := start_policy_rules.Choice_Facts {
 		caller_is_principal_0          = caller.principal == principals.MACHINE,
@@ -363,78 +364,67 @@ start_policy_choice_command :: proc "contextless" (caller: ^Started, record: rin
 		system.log_fact(.Warning, Start_Policy_Choice_Refused_Passphrase{})
 	}
 	if refusal != .None {
-		values^ = start_policy_rules.choice_record(refusal)
-		return .Bad_State
+		outcome: call_outcome.Call_Outcome
+		outcome, values^ = start_policy_rules.choice_record(refusal)
+		return outcome
 	}
 	if persisted_table_refusal(principals.MACHINE) {
-		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
-		return .Bad_State
+		return root_ring.refuse(values, .Wrong_State, kind, .State)
 	}
 	table := &disk_grant_tables[principals.MACHINE]
 	if nickname == "" {
 		if disk_process.table_start_policy_end(table) != .None {
 			system.log_fact(.Info, Start_Policy_Choice_Absent{})
-			return .Ok
+			return .Succeeded
 		}
 		system.log_fact(.Info, Start_Policy_Choice_Ended{})
 		persisted_table_changed(principals.MACHINE)
 		principals_start_policy_tell("", {})
-		return .Ok
+		return .Succeeded
 	}
 	problem_of_the_name, offset := disk_process.nickname_grant_problem(nickname)
 	switch problem_of_the_name {
 	case .None:
 	case .Empty:
-		values^ = errors.ring_fail(kind, .Empty, .Bytes, 1, 0, disk_process.NAME_LIMIT)
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, kind, .Empty, .Bytes, 1, 0, disk_process.NAME_LIMIT)
 	case .Too_Long:
-		values^ = errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(nickname_length), disk_process.NAME_LIMIT)
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, kind, .Too_Long, .Bytes, 1, i64(nickname_length), disk_process.NAME_LIMIT)
 	case .Bad_Byte:
-		values^ = errors.ring_fail(kind, .Bad_Byte, .None, 1, i64(offset), 0, i64(offset < len(nickname) ? nickname[offset] : 0))
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Byte, .None, 1, i64(offset), 0, i64(offset < len(nickname) ? nickname[offset] : 0))
 	case .Store_Name, .Table_Name:
-		values^ = errors.ring_fail(kind, .Reserved, .None, 1)
-		return .Bad_Operation
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .Reserved, .None, 1)
 	}
 	// The start policy runs under its nickname, in the table of the
 	// processes: a name that a table of this service gives a grant, or
 	// that a module of the boot image has, would take them.
 	if nickname_reserved_for_a_start_policy(nickname) {
-		values^ = errors.ring_fail(kind, .Reserved, .None, 1)
 		system.log_fact(.Warning, Start_Policy_Refused_Reserved_Name{nickname = module_name_field(nickname)})
-		return .Bad_Operation
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .Reserved, .None, 1)
 	}
 	switch disk_process.table_start_policy_choose(table, nickname, hash) {
 	case .None:
 	case .No_File:
-		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
 		system.log_fact(.Warning, Start_Policy_Refused_No_Row{nickname = module_name_field(nickname)})
-		return .Bad_Handle
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Grants, 1)
 	case .Other_File:
 		named := disk_process.table_find(table, nickname)
 		head := transmute([4]u64)named.hash
-		values^ = errors.ring_fail(kind, .Exists, .Grants, 2, i64(head[0]))
 		system.log_fact(.Warning, Start_Policy_Refused_Other_File{named_hash = value_kinds.Hash_Field(named.hash), hash = value_kinds.Hash_Field(hash), nickname = module_name_field(nickname)})
-		return .Bad_Operation
+		return root_ring.refuse(values, .Name_Already_Taken, kind, .Exists, .Grants, 2, i64(head[0]))
 	case .Holds_Store:
-		values^ = errors.ring_fail(kind, .Reserved, .Grants, 1)
 		system.log_fact(.Warning, Start_Policy_Refused_Holds_Store{nickname = module_name_field(nickname)})
-		return .Bad_Operation
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .Reserved, .Grants, 1)
 	case .Full:
-		values^ = errors.ring_fail(kind, .Full, .Grants, 0, 0, disk_process.ROW_CAPACITY)
-		return .No_Slot
+		return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, kind, .Full, .Grants, 0, 0, disk_process.ROW_CAPACITY)
 	case .Absent, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Bad_Uses, .Start_Policy_Row:
-		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
-		return .Bad_State
+		return root_ring.refuse(values, .Wrong_State, kind, .State)
 	}
 	row := disk_process.table_start_policy_row(table)
 	if row == nil {
-		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
-		return .Bad_State
+		return root_ring.refuse(values, .Wrong_State, kind, .State)
 	}
 	system.log_fact(.Info, Start_Policy_Chosen{hash = value_kinds.Hash_Field(row.hash), nickname = module_name_field(nickname)})
 	persisted_table_changed(principals.MACHINE)
 	principals_start_policy_tell(nickname, row.hash)
-	return .Ok
+	return .Succeeded
 }

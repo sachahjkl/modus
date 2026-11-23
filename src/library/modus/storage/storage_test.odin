@@ -23,27 +23,3 @@ a_kind_that_names_no_entry_is_refused :: proc(t: ^testing.T) {
 		testing.expect_value(t, read, kind)
 	}
 }
-
-// The result of a failed export comes from the storage service. Each
-// result that names no answer is refused first: 0, a positive result, one
-// past each end of the answers, the largest and the smallest word. Then
-// each answer comes back from its own result.
-@(test)
-a_result_that_names_no_answer_is_refused :: proc(t: ^testing.T) {
-	last := min(Export_Error)
-	refused := [?]i64{0, 1, i64(max(Export_Error)) + 1, i64(last) - 1, max(i64), min(i64)}
-	for result in refused {
-		_, ok := export_error_of_result(result)
-		testing.expectf(t, !ok, "the result %d names no answer, and it is taken", result)
-		testing.expect(t, !export_failed_with(.Failed, result, .No_Store))
-		testing.expect(t, !export_failed_with(.Failed, result, last))
-	}
-	for answer in Export_Error {
-		read, ok := export_error_of_result(i64(answer))
-		testing.expect(t, ok)
-		testing.expect_value(t, read, answer)
-		// The answer counts only with the status Failed.
-		testing.expect(t, !export_failed_with(.Ok, i64(answer), answer))
-		testing.expect(t, export_failed_with(.Failed, i64(answer), answer))
-	}
-}

@@ -3,9 +3,30 @@ package principals
 
 import "core:testing"
 import "modus:contract/byte_order"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:cryptography_primitives"
 import "modus:tpm2"
+
+// The pair of a procedure of the call form, as one value that a check
+// compares.
+@(private = "file")
+Answer :: struct {
+	outcome: call_outcome.Call_Outcome,
+	value:   i64,
+}
+
+@(private = "file")
+answer_of :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> Answer {
+	return {outcome, value}
+}
+
+// refused says if a call refused an argument: the outcome Argument_Refused
+// and the value 0.
+@(private = "file")
+refused :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> bool {
+	return outcome == .Argument_Refused && value == 0
+}
 
 // The store of a module has the name of the module for the machine, so
 // the stores of the system keep their names; a named principal has a store
@@ -764,7 +785,7 @@ test_sealed_principl_record :: proc(
 	plain_text := string(secrets^[:])
 	sealed_slice := file.sealed[:]
 	error: errors.Error_Record
-	count := cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &plain_text, &sealed_slice, &error)
+	_, count := cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &plain_text, &sealed_slice, &error)
 	assert(count == SEALED_SIZE)
 	file_encode(&file, &bytes)
 	return bytes
@@ -830,7 +851,7 @@ record_open_verify_refuses_corrupted_and_mismatched_records :: proc(t: ^testing.
 	plain_text := string(secrets[:])
 	sealed_slice := wrong_pub_file.sealed[:]
 	error: errors.Error_Record
-	count := cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &plain_text, &sealed_slice, &error)
+	_, count := cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &plain_text, &sealed_slice, &error)
 	testing.expect_value(t, count, i64(SEALED_SIZE))
 	file_encode(&wrong_pub_file, &wrong_pub_bytes)
 	testing.expect_value(t, record_open_verify(wrong_pub_bytes[:], &passphrase_key, &secrets), Record_Verify_Problem.Public_Key_Wrong)
@@ -955,7 +976,7 @@ non_tpm_recovery_seal_and_open_enforces_strict_borders :: proc(t: ^testing.T) {
 	plain_text := string(secrets[:])
 	sealed_slice := forged[NON_TPM_RECOVERY_OFFSET_SEALED:][:SEALED_SIZE]
 	error: errors.Error_Record
-	count := cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &plain_text, &sealed_slice, &error)
+	_, count := cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &plain_text, &sealed_slice, &error)
 	testing.expect_value(t, count, i64(SEALED_SIZE))
 	opened_secrets[0] = 0xFF
 	_, prob = non_tpm_recovery_open(forged[:], &recovery_key, 1, &opened_secrets)

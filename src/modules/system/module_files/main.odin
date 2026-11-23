@@ -44,6 +44,7 @@ package module_files
 import "modus:contract/blake3"
 import "modus:contract/storage_status"
 import "modus:contract/datagram"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
@@ -89,13 +90,6 @@ WRITE_PIECE :: 32 * 1024
 // The pages of the listing of the store that one list reads at most. A
 // storage service that never gives an empty page ends there.
 LIST_PAGE_LIMIT :: 1024
-
-ERROR_ACTS_FOR_PRINCIPAL :: -1
-ERROR_NAME :: -2
-ERROR_PATH :: -3
-ERROR_NETWORK :: -4
-ERROR_ANSWER :: -5
-ERROR_STORE :: -6
 
 // One row of module_files.list().
 Module_File_Row :: struct {
@@ -174,7 +168,7 @@ network_step :: proc "contextless" () -> (deadline: u64, worked: bool) {
 	for record in system.receive(&endpoint.completions) {
 		switch {
 		case record.tag < RECEIVE_PLACES:
-			if datagram.Status(record.kind) == .Ok && count < len(incoming) {
+			if record.kind == u32(call_outcome.Call_Outcome.Succeeded) && count < len(incoming) {
 				incoming[count] = {remote_address = u32(record.values[2]), segment = place_bytes(record.tag)[:min(record.values[1], PLACE_SIZE)]}
 				used[count] = record.tag
 				count += 1
@@ -253,28 +247,31 @@ remote_ended :: proc "contextless" (index: int) -> bool {
 }
 
 // network_failure writes the line of a failure of the fetch, and gives the
-// result of the export.
-network_failure :: proc "contextless" (error: ^errors.Error_Record, result: i64, kind: errors.Kind, unit: errors.Unit, path: string, why: string, found: i64 = 0) -> i64 {
+// outcome of the export. The web server is a party that the call needs: a
+// server that did not answer, or that gave an answer that this service
+// does not take, leaves the store as it was.
+network_failure :: proc "contextless" (error: ^errors.Error_Record, outcome: call_outcome.Call_Outcome, kind: errors.Kind, unit: errors.Unit, path: string, why: string, found: i64 = 0) -> call_outcome.Call_Outcome {
 	system.log_fact(.Info, Get_Failed{problem = value_kinds.text_field(why, GET_PROBLEM_FIELD_BYTES)}, path)
-	return errors.fail(error, result, kind, unit, 2, 0, 0, found)
+	failed, _ := call_outcome.fail(error, outcome, kind, unit, 2, 0, 0, found)
+	return failed
 }
 
 // fetch sends GET path to the web server of the grant, and copies the
 // body of the answer into `file`. The answer is input from the network:
 // its head has a status 200 and a Content-Length of 1 to 4 MiB, and the
 // body comes whole before the deadline, or nothing is kept. size is the
-// bytes of the body; result is 0, or the result of a failed export.
-fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_Record) -> (size: int, result: i64) {
+// bytes of the body; outcome is Succeeded, or the outcome of the failed export.
+fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_Record) -> (size: int, outcome: call_outcome.Call_Outcome) {
 	index, connect_error := tcp.connect(&table, remote_address, remote_port, system.nanoseconds() / 1000)
 	if connect_error.kind != 0 {
-		return 0, network_failure(error, ERROR_NETWORK, .Full, .Connections, path, "the table of connections has no free record")
+		return 0, network_failure(error, .Callee_Busy, .Full, .Connections, path, "the table of connections has no free record")
 	}
 	defer connection_end(index)
 	for connections[index].state == .Syn_Sent && system.time() < deadline {
 		pump()
 	}
 	if connections[index].state != .Established {
-		return 0, network_failure(error, ERROR_NETWORK, .No_Answer, .Milliseconds, path, "the web server did not take the connection")
+		return 0, network_failure(error, .Callee_Unavailable, .No_Answer, .Milliseconds, path, "the web server did not take the connection")
 	}
 	address_buffer: [16]u8
 	address_writer := system.Writer{buffer = address_buffer[:]}
@@ -285,11 +282,11 @@ fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_R
 	for written < len(request) {
 		count, write_error := tcp.write(&table, index, transmute([]u8)request[written:])
 		if write_error.kind != 0 {
-			return 0, network_failure(error, ERROR_NETWORK, .Refused, .Connection, path, "the connection ended before the request went")
+			return 0, network_failure(error, .Callee_Unavailable, .Refused, .Connection, path, "the connection ended before the request went")
 		}
 		written += count
 		if system.time() >= deadline {
-			return 0, network_failure(error, ERROR_NETWORK, .No_Answer, .Milliseconds, path, "the request did not go before the deadline")
+			return 0, network_failure(error, .Callee_Unavailable, .No_Answer, .Milliseconds, path, "the request did not go before the deadline")
 		}
 		pump()
 	}
@@ -303,31 +300,31 @@ fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_R
 			break
 		}
 		if head_length == len(head_bytes) {
-			return 0, network_failure(error, ERROR_ANSWER, .Too_Long, .Bytes, path, "the head of the answer passes 2048 bytes")
+			return 0, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the head of the answer passes 2048 bytes")
 		}
 		if remote_ended(index) {
-			return 0, network_failure(error, ERROR_ANSWER, .Malformed, .None, path, "the connection ended before the head of the answer")
+			return 0, network_failure(error, .Callee_Unavailable, .Refused, .None, path, "the connection ended before the head of the answer")
 		}
 		if system.time() >= deadline {
-			return 0, network_failure(error, ERROR_NETWORK, .No_Answer, .Milliseconds, path, "no answer before the deadline")
+			return 0, network_failure(error, .Callee_Unavailable, .No_Answer, .Milliseconds, path, "no answer before the deadline")
 		}
 		pump()
 	}
 	head, head_ok := web.head_read(head_bytes[:head_length])
 	if !head_ok {
-		return 0, network_failure(error, ERROR_ANSWER, .Malformed, .None, path, "the head of the answer is not HTTP/1.1")
+		return 0, network_failure(error, .Callee_Unavailable, .Refused, .None, path, "the head of the answer is not HTTP/1.1")
 	}
 	if head.status != 200 {
-		return 0, network_failure(error, ERROR_ANSWER, .Refused, .None, path, "the status of the answer is not 200", i64(head.status))
+		return 0, network_failure(error, .Callee_Unavailable, .Refused, .None, path, "the status of the answer is not 200", i64(head.status))
 	}
 	if head.content_length < 1 || head.content_length > disk_process.FILE_BYTES_LIMIT {
-		return 0, network_failure(error, ERROR_ANSWER, .Too_Long, .Bytes, path, "the answer has no Content-Length of 1 to 4194304 bytes", i64(head.content_length))
+		return 0, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the answer has no Content-Length of 1 to 4194304 bytes", i64(head.content_length))
 	}
 	// The length is read one time, here: no later byte changes it.
 	size = head.content_length
 	rest := head_bytes[head.size:head_length]
 	if len(rest) > size {
-		return 0, network_failure(error, ERROR_ANSWER, .Too_Long, .Bytes, path, "the answer has more bytes than its Content-Length")
+		return 0, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the answer has more bytes than its Content-Length")
 	}
 	received := copy(file[:size], rest)
 	for received < size {
@@ -337,16 +334,16 @@ fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_R
 			break
 		}
 		if count == 0 && remote_ended(index) {
-			return 0, network_failure(error, ERROR_ANSWER, .Too_Small, .Bytes, path, "the connection ended before the end of the body", i64(received))
+			return 0, network_failure(error, .Callee_Unavailable, .Refused, .Bytes, path, "the connection ended before the end of the body", i64(received))
 		}
 		if system.time() >= deadline {
-			return 0, network_failure(error, ERROR_NETWORK, .No_Answer, .Milliseconds, path, "the body did not come whole before the deadline", i64(received))
+			return 0, network_failure(error, .Callee_Unavailable, .No_Answer, .Milliseconds, path, "the body did not come whole before the deadline", i64(received))
 		}
 		if count == 0 {
 			pump()
 		}
 	}
-	return size, 0
+	return size, .Succeeded
 }
 
 // store_failure writes the fact of a refusal of the storage service, and
@@ -355,7 +352,7 @@ fetch :: proc "contextless" (path: string, deadline: u64, error: ^errors.Error_R
 // error record of the export; each other status is an answer that the
 // export does not allow. The subjects of an entry of a listing are checks
 // of this service, whose status is always Refused.
-store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^errors.Error_Record, status: storage_status.Status, subject: Store_Subject, nickname := "") -> i64 {
+store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^errors.Error_Record, status: storage_status.Status, subject: Store_Subject, nickname := "") -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	switch subject {
 	case .File:
 		if status == .Failed {
@@ -375,7 +372,7 @@ store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^
 	case .Listing_Entry_Kind:
 		system.log_fact(.Info, Listing_Entry_Kind_Refused{})
 	}
-	return errors.fail(error, ERROR_STORE, .Refused, .Store, 0, 0, 0, i64(status))
+	return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store, 0, 0, 0, i64(status))
 }
 
 // receive fetches a module file from the web server of the grant, and stores it in the store module_files under a nickname.
@@ -392,52 +389,54 @@ store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^
 // - **result**: the 64 hexadecimal digits of the hash.
 //
 // The caller must act for the principal of the store (**Acts_For_Principal**). The call ends 30 seconds after it
-// starts, the deadline of a load. The result is 64, or a negative number with an error record:
+// starts, the deadline of a load. The result is 64, or a failure with its call outcome and an error record:
 //
-// - `No_Grant` (-1): the caller does not act for the principal of the store.
-// - `Empty`, `Too_Long` or `Bad_Byte` (-2): the nickname; `Exists` (-2): `module_files` or `grant_table`, which the
-//   store keeps.
-// - `Empty`, `Too_Long` or `Bad_Byte` (-3): the path; for `Bad_Byte`, the record holds the place of the byte.
-// - `No_Answer`, `Full` or `Refused` (-4): the connection to the web server, or the deadline.
-// - `Refused`, `Malformed`, `Too_Long` or `Too_Small` (-5): the answer: a status that is not 200 (the record holds
-//   it), no Content-Length of 1 to 4 MiB, or a body that ends early.
-// - `Refused` (-6): the service has no store, or the storage service refused the file.
+// - `No_Grant` (Grant_Or_Right_Missing): the caller does not act for the principal of the store.
+// - `Empty`, `Too_Long` or `Bad_Byte` (Argument_Refused, argument 1): the nickname; `Exists` (Name_Already_Taken):
+//   `module_files` or `grant_table`, which the store keeps.
+// - `Empty`, `Too_Long` or `Bad_Byte` (Argument_Refused, argument 2): the path; for `Bad_Byte`, the record holds the
+//   place of the byte.
+// - `Full` (Callee_Busy): the table of connections has no free record.
+// - `No_Answer` or `Refused` (Callee_Unavailable, argument 2): the web server did not answer before the deadline, or
+//   its answer is not a module file: a status that is not 200 (the record holds it), no Content-Length of 1 to 4 MiB,
+//   or a body that ends early. The log says which.
+// - `Refused` (Callee_Unavailable): the service has no store, or the storage service refused the file.
 //
 // Example: `module_files.receive("visitor", "/visitor")`.
 @(export, link_name = "receive")
-receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !caller_allowed() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	name_copy: [disk_process.NAME_LIMIT]u8
 	name, name_failure := nickname_check(nickname, &name_copy, .Make, error)
-	if name_failure != 0 {
-		return name_failure
+	if name_failure != .Succeeded {
+		return name_failure, 0
 	}
 	path_text := path^
 	path_copy: [PATH_LIMIT]u8
 	path_length := copy(path_copy[:], path_text)
 	if len(path_text) == 0 {
-		return errors.fail(error, ERROR_PATH, .Empty, .Bytes, 2, 0, PATH_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, 2, 0, PATH_LIMIT)
 	}
 	if len(path_text) > PATH_LIMIT {
-		return errors.fail(error, ERROR_PATH, .Too_Long, .Bytes, 2, i64(len(path_text)), PATH_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 2, i64(len(path_text)), PATH_LIMIT)
 	}
 	// One line of visible bytes: the request carries no second line that
 	// the caller wrote.
 	for byte, place in path_copy[:path_length] {
 		if (place == 0 && byte != '/') || byte <= ' ' || byte > '~' {
-			return errors.fail(error, ERROR_PATH, .Bad_Byte, .Bytes, 2, i64(place), 0, i64(byte))
+			return call_outcome.fail(error, .Argument_Refused, .Bad_Byte, .Bytes, 2, i64(place), 0, i64(byte))
 		}
 	}
 	request_path := string(path_copy[:path_length])
 	if store_client.ring_memory == 0 || !storage.connected(&store_client) {
-		return errors.fail(error, ERROR_STORE, .Refused, .Store)
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store)
 	}
 	deadline := system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS
-	size, failed := fetch(request_path, deadline, error)
-	if failed != 0 {
-		return failed
+	size, fetched := fetch(request_path, deadline, error)
+	if fetched != .Succeeded {
+		return fetched, 0
 	}
 	hash := blake3.hash(file[:size])
 	// The store first, then the answer: the hash goes back only when the
@@ -460,7 +459,7 @@ receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^er
 	disk_process.hash_write(&digits, hash)
 	system.log_fact(.Info, File_Stored{size = value_kinds.Size_In_Bytes(size), file_hash = value_kinds.Hash_Field(hash), nickname = value_kinds.module_name_field(name)}, request_path)
 	copy(result^, digits[:])
-	return disk_process.HASH_DIGITS
+	return .Succeeded, disk_process.HASH_DIGITS
 }
 
 // bytes_hash reads the bytes of an object of the store into `file`, and
@@ -492,20 +491,19 @@ bytes_hash :: proc "contextless" (name: string, size: int) -> (hash: [disk_proce
 //
 // - **result**: a table of `Module_File_Row` rows; the call fills at most its length.
 //
-// The caller must act for the principal of the store (**Acts_For_Principal**). The result is the count of the rows, or
-// a negative number with an error record:
+// The caller must act for the principal of the store (**Acts_For_Principal**). The result is the count of the rows, or a failure with its call outcome and an error record:
 //
-// - `No_Grant` (-1): the caller does not act for the principal of the store.
-// - `Refused` (-6): the service has no store, or the storage service refused the listing.
+// - `No_Grant`: the caller does not act for the principal of the store.
+// - `Refused`: the service has no store, or the storage service refused the listing.
 //
 // Example: `module_files.list()`.
 @(export, link_name = "list")
-list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i64 {
+list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !caller_allowed() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if store_client.ring_memory == 0 || !storage.connected(&store_client) {
-		return errors.fail(error, ERROR_STORE, .Refused, .Store)
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store)
 	}
 	rows: [16]storage.Listed
 	names: [16 * 64]u8
@@ -520,7 +518,7 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 		}
 		if len(page) == 0 {
 			system.log_fact(.Info, Files_Listed{files = u64(total)})
-			return i64(total)
+			return .Succeeded, i64(total)
 		}
 		for item in page {
 			// The offsets come from the storage service: each one is
@@ -559,7 +557,7 @@ list :: proc "c" (result: ^[]Module_File_Row, error: ^errors.Error_Record) -> i6
 		}
 	}
 	system.log_fact(.Info, Listing_Not_Ended{listing_pages = u64(LIST_PAGE_LIMIT)})
-	return errors.fail(error, ERROR_STORE, .Refused, .Store)
+	return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store)
 }
 
 // The entry of module_files: it opens its service, its store and its endpoint,

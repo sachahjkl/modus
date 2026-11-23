@@ -64,7 +64,7 @@ GRANT_SERVICE :: 10
 
 // A command of a client, as the kind of a command record of the frame ring.
 Command :: enum u32 {
-	None       = 0, // Not a command: Bad_Command.
+	None       = 0, // Not a command: Operation_Unsupported.
 	// values[0]: the handle of the frame region, as the frame service names
 	// it. A new Attach replaces the region of the one before: send it when no
 	// request is in flight.
@@ -95,7 +95,7 @@ Command :: enum u32 {
 	// a contiguous memory object with Read and without Write, given through
 	// the frame ring. values[1]: its place, under READ_REGION_CAPACITY. A
 	// place whose Read_Region_Remove still waits for its sends makes the
-	// command wait for them; a place that holds a region gives Bad_Command.
+	// command wait for them; a place that holds a region gives Argument_Refused.
 	Read_Region_Add    = 6,
 	// values[0]: the place of a read region. The completion comes when no
 	// Send that reads the region is in flight: the frame service has then
@@ -103,18 +103,12 @@ Command :: enum u32 {
 	Read_Region_Remove = 7,
 }
 
-// The status of a request: the kind of its completion record. When it is
-// not Ok, the values of the completion are an error record
-// (errors.completion_record).
-Status :: enum u32 {
-	Ok           = 0, // The request is done: the values are its results.
-	Bad_Command  = 1, // The command is not known, or a value is wrong.
-	Out_Of_Range = 2, // A byte is not in the frame region or in the read region.
-	No_Region    = 3, // No frame region or no read region at the place, or the handle did not come through the frame ring, or a read region with Write or that is not contiguous.
-	Device_Error = 4, // The device reported an error.
-	Too_Large    = 5, // A Send of more than FRAME_LIMIT bytes or of less than a header.
-	Too_Many     = 6, // More Receive in flight than the device has places.
-}
+// The kind of a completion record is the word of its call outcome
+// (call_outcome.completion_outcome is its border). With Succeeded the
+// values are the results of the request; with any other outcome they are
+// an error record (errors.completion_record), whose kind keeps the detail:
+// Out_Of_Range for a byte outside the frame region or the read region,
+// Absent for a place with no region, Device for an error of the device.
 
 // hardware gives the 6 bytes of a hardware address in values[0] of Info.
 hardware :: proc "contextless" (value: u64) -> (address: [6]u8) {
@@ -154,8 +148,8 @@ ARGUMENT_NAMES := [Command][]string {
 
 // command_of_ring_word is the border of the kind of a command record of the
 // frame ring: the command, or false for a word that names no command, None
-// included. The service answers a refusal with Bad_Command and the record
-// Unsupported. It reads and changes no state.
+// included. The service answers a refusal with Operation_Unsupported and
+// the record Unsupported. It reads and changes no state.
 command_of_ring_word :: proc "contextless" (word: u32) -> (command: Command, ok: bool) {
 	for member in Command {
 		if u32(member) == word && member != .None {

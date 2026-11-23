@@ -23,6 +23,7 @@ package assemble
 
 import "base:intrinsics"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import writer "modus:contract/module_file_writer"
 import "modus:contract/value_kinds"
@@ -36,9 +37,6 @@ import "modus:system"
 // for the bound.
 SOURCE_BYTES_MOST :: assembler.PROGRAM_TEXT_BYTES_MOST
 
-// The result of an export that fails: the error record says why.
-ERROR :: -1
-
 // The argument numbers of `assemble` and `assemble_program`, which an error
 // record names.
 ARGUMENT_SOURCE :: 1
@@ -50,10 +48,10 @@ ARGUMENT_HASH :: 3
 MEMORY_MAP_ARGUMENT_MEMORY :: 1
 
 // file_map maps the memory object of the file to write, for the time of one
-// call. ok is false when the kernel refuses; then the error record holds the
-// refusal, in the words of the export.
+// call. The outcome is not Succeeded when the kernel refuses; then the
+// error record holds the refusal, in the words of the export.
 @(private)
-file_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Record) -> (bytes: []u8, ok: bool) {
+file_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Record) -> (bytes: []u8, outcome: call_outcome.Call_Outcome) {
 	refusal: errors.Error_Record
 	address, status := system.memory_map(memory, {.Write}, error = &refusal)
 	if status != .Ok {
@@ -68,23 +66,23 @@ file_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Reco
 				error^ = errors.error_make(.Refused, argument = ARGUMENT_FILE, found = i64(status))
 			}
 		}
-		return nil, false
+		return nil, system.outcome_of_status(status)
 	}
 	// The map took the handle, so the kernel gives its size.
 	pages, _ := system.memory_size(memory)
-	return ([^]u8)(address)[:pages * system.PAGE_SIZE], true
+	return ([^]u8)(address)[:pages * system.PAGE_SIZE], .Succeeded
 }
 
 // refusal_give writes a refusal of the arena or of the budget in the words
 // of the export: the call of the caller asked for no operation.
 @(private)
-refusal_give :: proc "contextless" (error: ^errors.Error_Record, refusal: errors.Error_Record) -> i64 {
+refusal_give :: proc "contextless" (error: ^errors.Error_Record, refusal: errors.Error_Record, status: system.Status) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if error != nil {
 		error^ = refusal
 		error.operation = 0
 		error.argument = 0
 	}
-	return ERROR
+	return system.outcome_of_own_status(status), 0
 }
 
 // text_and_workspace_push copies the text into the arena and carves a
@@ -108,17 +106,18 @@ text_and_workspace_push :: proc "contextless" (arena: ^system.Arena, source: ^sy
 	return string(([^]u8)(copy_address)[:count]), workspace, .Ok
 }
 
-// assemble_to_file is the work of both exports. hash is nil for `assemble`.
+// assemble_to_file is the work of both exports, and gives their pair. hash
+// is nil for `assemble`.
 @(private)
-assemble_to_file :: proc "contextless" (source: ^system.Bytes_To_Read, file: system.Handle, hash: ^system.Bytes_To_Append, error: ^errors.Error_Record) -> i64 {
+assemble_to_file :: proc "contextless" (source: ^system.Bytes_To_Read, file: system.Handle, hash: ^system.Bytes_To_Append, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	// The counts are read once: the caller can change the records during an
 	// isolated call.
 	count := intrinsics.volatile_load(&source.count)
 	if count == 0 {
-		return errors.fail(error, ERROR, .Empty, .Bytes, ARGUMENT_SOURCE, 0, SOURCE_BYTES_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, ARGUMENT_SOURCE, 0, SOURCE_BYTES_MOST)
 	}
 	if count > SOURCE_BYTES_MOST {
-		return errors.fail(error, ERROR, .Too_Long, .Bytes, ARGUMENT_SOURCE, i64(count), SOURCE_BYTES_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, ARGUMENT_SOURCE, i64(count), SOURCE_BYTES_MOST)
 	}
 	hash_count, hash_capacity: u64
 	if hash != nil {
@@ -126,18 +125,18 @@ assemble_to_file :: proc "contextless" (source: ^system.Bytes_To_Read, file: sys
 		hash_capacity = intrinsics.volatile_load(&hash.capacity)
 		if hash_count > hash_capacity || hash_capacity - hash_count < blake3.HASH_SIZE {
 			room := hash_count > hash_capacity ? 0 : hash_capacity - hash_count
-			return errors.fail(error, ERROR, .Too_Small, .Bytes, ARGUMENT_HASH, i64(room), blake3.HASH_SIZE)
+			return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, ARGUMENT_HASH, i64(room), blake3.HASH_SIZE)
 		}
 	}
 
 	amounts, budget_status := system.budget_read()
 	if budget_status != .Ok {
-		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, i64(budget_status))
+		return call_outcome.fail(error, system.outcome_of_own_status(budget_status), .Refused, .None, 0, 0, 0, i64(budget_status))
 	}
 	arena_refusal: errors.Error_Record
 	arena, arena_status := system.arena_create(system.arena_reservation_pages(amounts.pages), 0, &arena_refusal)
 	if arena_status != .Ok {
-		return refusal_give(error, arena_refusal)
+		return refusal_give(error, arena_refusal, arena_status)
 	}
 	defer system.arena_end(&arena)
 
@@ -153,7 +152,7 @@ assemble_to_file :: proc "contextless" (source: ^system.Bytes_To_Read, file: sys
 		push_status: system.Status
 		text, workspace, push_status = text_and_workspace_push(&arena, source, count, tier, &arena_refusal)
 		if push_status != .Ok {
-			return refusal_give(error, arena_refusal)
+			return refusal_give(error, arena_refusal, push_status)
 		}
 		parts, refusal = assembler.assemble(text, &workspace)
 		if tier == .Unit && assembler.refusal_is_capacity(refusal.refusal) {
@@ -169,29 +168,30 @@ assemble_to_file :: proc "contextless" (source: ^system.Bytes_To_Read, file: sys
 		if int(refusal.place.offset) < len(text) {
 			found = i64(text[refusal.place.offset])
 		}
-		return errors.fail(error, ERROR, .Bad_Byte, .None, ARGUMENT_SOURCE, i64(refusal.place.offset), 0, found)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Byte, .None, ARGUMENT_SOURCE, i64(refusal.place.offset), 0, found)
 	}
 	size, needed := writer.file_size_needed(parts)
 	if needed.refusal != .None {
 		// The assembler gives parts that the writer takes: a refusal here is
 		// a fault of the assembler.
 		system.log_fact(.Error, Parts_Refused{index = needed.index, writer_refusal = writer_refusal_field(needed.refusal)})
-		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, i64(needed.refusal))
+		return call_outcome.fail(error, .Argument_Refused, .Refused, .None, 0, 0, 0, i64(needed.refusal))
 	}
 
 	memory, mapped := file_map(file, error)
-	if !mapped {
-		return ERROR
+	if mapped != .Succeeded {
+		return mapped, 0
 	}
 	if size > u64(len(memory)) {
 		system.memory_unmap(raw_data(memory))
-		return errors.fail(error, ERROR, .Too_Small, .Bytes, ARGUMENT_FILE, i64(len(memory)), i64(size))
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, ARGUMENT_FILE, i64(len(memory)), i64(size))
 	}
 	written, written_refusal := writer.write(parts, memory)
 	if written_refusal.refusal != .None {
 		system.memory_unmap(raw_data(memory))
 		system.log_fact(.Error, File_Refused{index = written_refusal.index, writer_refusal = writer_refusal_field(written_refusal.refusal)})
-		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, i64(written_refusal.refusal))
+		// The writer wrote a part of the file into the memory of the caller.
+		return call_outcome.fail(error, .Stopped_After_A_Partial_Change, .Refused, .None, 0, 0, 0, i64(written_refusal.refusal))
 	}
 	if hash != nil {
 		digest := blake3.hash(memory[:written])
@@ -200,7 +200,7 @@ assemble_to_file :: proc "contextless" (source: ^system.Bytes_To_Read, file: sys
 	}
 	system.memory_unmap(raw_data(memory))
 	system.log_fact(.Info, Module_File_Written{size = value_kinds.Size_In_Bytes(written), exports = u64(len(parts.exports))})
-	return i64(written)
+	return .Succeeded, i64(written)
 }
 
 // assemble writes the module file of an assembly text into a memory object, and gives the bytes of the file.
@@ -213,11 +213,13 @@ assemble_to_file :: proc "contextless" (source: ^system.Bytes_To_Read, file: sys
 // assembler are memory of the budget of the call host, for the time of the call: a text past the bounds of one source
 // (128 KiB of code, 2048 labels) takes the tables of a program (512 KiB of code, 128 KiB of data, 16384 labels, 16384
 // operands that name a label, 2048 rebases), and a budget that cannot pay them fails with its error record. A text
-// that the assembler does not take whole fails with -1 and the error record `Bad_Byte`: the value is the offset of the
-// first byte of the statement or the operand that it refuses, and found is that byte; the log has the line, the column
-// and the reason. A memory object smaller than the file fails with `Too_Small`, and the limit is the bytes of the file.
+// that the assembler does not take whole fails with the outcome `Argument_Refused` and the error record `Bad_Byte`:
+// the value is the offset of the first byte of the statement or the operand that it refuses, and found is that byte;
+// the log has the line, the column and the reason. A memory object smaller than the file fails with `Argument_Refused`
+// and `Too_Small`, and the limit is the bytes of the file. A write of the file that stops after its first bytes gives
+// `Stopped_After_A_Partial_Change`: the memory object then holds bytes that are no module file.
 @(export, link_name = "assemble")
-assemble :: proc "c" (source: ^system.Bytes_To_Read, file: system.Lent({.Read, .Write}), error: ^errors.Error_Record) -> i64 {
+assemble :: proc "c" (source: ^system.Bytes_To_Read, file: system.Lent({.Read, .Write}), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return assemble_to_file(source, file.handle, nil, error)
 }
 
@@ -228,6 +230,6 @@ assemble :: proc "c" (source: ^system.Bytes_To_Read, file: system.Lent({.Read, .
 // of the files. A `hash` with less than 32 bytes of room fails with `Too_Small` before the text is read, and the
 // limit is 32.
 @(export, link_name = "assemble_program")
-assemble_program :: proc "c" (source: ^system.Bytes_To_Read, file: system.Lent({.Read, .Write}), hash: ^system.Bytes_To_Append, error: ^errors.Error_Record) -> i64 {
+assemble_program :: proc "c" (source: ^system.Bytes_To_Read, file: system.Lent({.Read, .Write}), hash: ^system.Bytes_To_Append, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	return assemble_to_file(source, file.handle, hash, error)
 }

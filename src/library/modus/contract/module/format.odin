@@ -236,7 +236,8 @@ Type :: enum u8 {
 	// description of the record, in the record table.
 	// A Record result: the caller gives one more argument after the
 	// parameters, the address of the memory of the record. The callee
-	// writes the record there. The export has no integer result.
+	// writes the record there. The export has no integer value: an export
+	// that can fail gives its call outcome alone.
 	Handle  = 4, // A handle that the caller lends for the time of the call, in a register.
 	// The detail of the parameter is the rights that the callee needs: a
 	// bit set of rights (the kernel operations name the bits). The caller

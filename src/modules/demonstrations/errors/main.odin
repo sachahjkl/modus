@@ -79,6 +79,7 @@
 // its child.
 package errors_process
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/fixed_addresses"
 import "modus:contract/isolated"
@@ -648,8 +649,8 @@ root_connect :: proc "contextless" (name: string) -> (completion: ring.Record, o
 		return {}, false
 	}
 	request_tag += 1
-	connection, status := system.service_connection(&requests, request_tag, name, &completion)
-	if status == .Ok {
+	connection, outcome := system.service_connection(&requests, request_tag, name, &completion)
+	if outcome == .Succeeded {
 		system.call_connection_end(&connection)
 		return {}, true
 	}
@@ -689,7 +690,7 @@ case_root_connect :: proc "contextless" (writer: ^system.Writer) -> bool {
 	}
 	error := errors.completion_record(completion.values)
 	system.ring_error_text(writer, &error, "root", root_ring.root_command_name(error.operation), root_ring.root_argument_name(error.operation, error.argument))
-	return system.Status(completion.kind) == .No_Right && errors.Kind(error.kind) == .No_Grant && errors.Unit(error.unit) == .Connection
+	return completion.kind == u32(call_outcome.Call_Outcome.Grant_Or_Right_Missing) && errors.Kind(error.kind) == .No_Grant && errors.Unit(error.unit) == .Connection
 }
 
 // case_tally_add calls the export add of tally, loaded as a library, with a
@@ -770,9 +771,9 @@ storage_case :: proc "contextless" (writer: ^system.Writer, export: string, expe
 	}
 	arguments := [3]isolated.Argument{{integer = u64(storage.ROOT)}, {text = transmute([]u8)name}, {text = transmute([]u8)data}}
 	error: errors.Error_Record
-	result, _, status := storage.call(&client, export, arguments[:export == "write" ? 3 : 2], &error)
+	_, _, status, outcome := storage.call(&client, export, arguments[:export == "write" ? 3 : 2], &error)
 	storage.error_text(writer, &client, &error)
-	return status == .Failed && result < 0 && error.kind == i64(expected)
+	return status == .Failed && outcome != .Succeeded && error.kind == i64(expected)
 }
 
 case_empty :: proc "contextless" (writer: ^system.Writer) -> bool {

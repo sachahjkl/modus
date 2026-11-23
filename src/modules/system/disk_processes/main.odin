@@ -18,6 +18,7 @@ package disk_processes_service
 import "base:intrinsics"
 import dpc "internal:disk_processes/disk_processes_core"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
@@ -74,9 +75,9 @@ fail :: proc "contextless" (text: string) -> ! {
 
 // status writes the counts of the loads into out.
 @(export)
-status :: proc "c" (out: ^Disk_Processes_Status, error: ^errors.Error_Record) -> i64 {
+status :: proc "c" (out: ^Disk_Processes_Status, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if out == nil {
-		return errors.fail(error, -1, .Bad_Address, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
 	}
 	out^ = {
 		loads            = i64(machine.counters.loads),
@@ -84,7 +85,7 @@ status :: proc "c" (out: ^Disk_Processes_Status, error: ^errors.Error_Record) ->
 		refusals         = i64(machine.counters.refusals),
 		commands_refused = i64(machine.counters.commands_refused),
 	}
-	return 0
+	return .Succeeded, 0
 }
 
 @(private = "file")
@@ -214,17 +215,17 @@ answer_poll :: proc "contextless" () {
 		return
 	}
 	error: errors.Error_Record
-	value, text, status, answered := storage.call_answer(&client, &sent, arguments[:argument_count], &error)
+	value, text, status, outcome, answered := storage.call_answer(&client, &sent, arguments[:argument_count], &error)
 	answer: dpc.Storage_Answer
 	switch {
 	case !answered && storage.connected(&client):
 		return
 	case !answered:
 		answer.kind = .Gone
-	case storage.export_failed_with(status, value, .Absent):
+	case status == .Failed && outcome == .Nothing_Has_That_Name:
 		answer.kind = .Absent
 	case status == .Failed:
-		answer = {kind = .Failed, value = value, error = error, damaged = storage.export_failed_with(status, value, .Damaged)}
+		answer = {kind = .Failed, value = value, error = error, damaged = outcome == .Data_Damaged}
 	case status != .Ok || value < 0:
 		answer.kind = .Not_Allowed
 	case:

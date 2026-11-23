@@ -5,8 +5,29 @@
 // the closing state.
 package quic
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "core:testing"
+
+// The pair of a procedure of the call form, as one value that a check
+// compares.
+@(private = "file")
+Answer :: struct {
+	outcome: call_outcome.Call_Outcome,
+	value:   i64,
+}
+
+@(private = "file")
+answer_of :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> Answer {
+	return {outcome, value}
+}
+
+// refused says if a call refused an argument: the outcome Argument_Refused
+// and the value 0.
+@(private = "file")
+refused :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> bool {
+	return outcome == .Argument_Refused && value == 0
+}
 
 // RFC 9001, appendix A.4: retry_packet_write gives the Retry packet of the
 // RFC, byte for byte: to an empty Destination Connection ID, from the
@@ -299,7 +320,7 @@ a_retry_for_a_client_with_an_empty_identifier :: proc(t: ^testing.T) {
 		key, nonce, additional, empty := string(bytes_of("be0c690b9f66575a1d766b54e368c84e")), string(bytes_of("461599d35d632bf2239825bb")), string(pseudo_packet[:]), ""
 		tag: [TAG_SIZE]u8
 		result := tag[:]
-		testing.expect_value(t, harness.cryptography.seal_with_aes_128_gcm(&key, &nonce, &additional, &empty, &result, &error), TAG_SIZE)
+		testing.expect_value(t, answer_of(harness.cryptography.seal_with_aes_128_gcm(&key, &nonce, &additional, &empty, &result, &error)), Answer{.Succeeded, TAG_SIZE})
 		testing.expect_value(t, hex_of(retry[len(retry) - TAG_SIZE:]), hex_of(tag[:]))
 		// The reader of a client takes it: the header, then the tag.
 		header: Packet_Header

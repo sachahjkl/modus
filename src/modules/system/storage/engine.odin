@@ -3,6 +3,7 @@ package storage_service
 import "base:intrinsics"
 import "modus:contract/block"
 import "modus:contract/date"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
@@ -100,11 +101,11 @@ disk_opened: bool
 // the open was done: the service knows no store, so it can answer no
 // call with a fact of the disk. It gives Device, as a read of a silent disk
 // does after the open.
-disk_unopened_refusal :: proc "contextless" (error: ^errors.Error_Record) -> (refused: bool, result: i64) {
+disk_unopened_refusal :: proc "contextless" (error: ^errors.Error_Record) -> (refused: bool, result: call_outcome.Call_Outcome) {
 	if disk_opened {
-		return false, 0
+		return false, .Succeeded
 	}
-	return true, errors.fail(error, failure(.Disk), .Device, .None, 0, 0, 0, 1)
+	return true, refuse(error, .Callee_Unavailable, .Device, .None, 0, 0, 0, 1)
 }
 
 // disk_silence_note makes the disk silent, with its line, once. It closes
@@ -268,7 +269,7 @@ transfer :: proc "contextless" (command: block.Command, requests: []Request) -> 
 				disk_silence_note(.No_Answer)
 				return false
 			}
-			if block.Status(completion.kind) != .Ok {
+			if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 				if good {
 					// The first refusal of this batch goes on the log, with the
 					// values of its error record.
@@ -301,10 +302,11 @@ transfer :: proc "contextless" (command: block.Command, requests: []Request) -> 
 
 // command sends one command with no data and waits for its completion. On
 // a silent disk, and when the wait for the block service ends with no
-// completion (disk_wait_goes_on), it gives a completion Device_Error with
-// the record No_Answer of the device, as the block service gives one.
+// completion (disk_wait_goes_on), it gives the completion of a failed
+// device with the record No_Answer of the device, as the block service
+// gives one.
 command :: proc "contextless" (kind: block.Command, values: [7]u64 = {}) -> ring.Record {
-	silent := ring.Record{kind = u32(block.Status.Device_Error), values = block.no_answer_values(kind)}
+	silent := ring.Record{kind = u32(block.device_failure_outcome(kind)), values = block.no_answer_values(kind)}
 	if disk_silent {
 		return silent
 	}
@@ -347,7 +349,7 @@ command :: proc "contextless" (kind: block.Command, values: [7]u64 = {}) -> ring
 }
 
 flush :: proc "contextless" () -> bool {
-	return block.Status(command(.Flush).kind) == .Ok
+	return command(.Flush).kind == u32(call_outcome.Call_Outcome.Succeeded)
 }
 
 Read :: enum {
@@ -1258,37 +1260,37 @@ cache_later :: proc "contextless" (pointer: Pointer, bytes: ^Block) {
 }
 
 // plan_commit writes the blocks of the plan, then the root, and gives the
-// new state to the service. It gives the generation, or the word of an Export_Error
-// with the record.
-plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
+// new state to the service. It gives the generation and Succeeded, or 0 and
+// the call outcome with the error record.
+plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
 	plan_trees_failure_take()
 	if plan.tree_damaged {
 		plan_drop()
 		store_damaged[plan.store_index] = true
 		system.log_fact(.Warning, Tree_Node_Damaged{store = store_field(system.name_of(plan.next.stores[plan.store_index].name[:]))})
-		return errors.fail(error, failure(.Damaged), .Damaged, .Stores)
+		return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Stores)
 	}
 	if plan.device {
 		plan_drop()
-		return errors.fail(error, failure(.Disk), .Device)
+		return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
 	}
 	if plan.count_fault {
 		plan_drop()
 		store_faulty[plan.store_index] = true
 		system.log_fact(.Error, Commit_Count_Below_Zero{store = store_field(system.name_of(plan.next.stores[plan.store_index].name[:]))})
-		return errors.fail(error, failure(.Damaged), .Damaged, .Counts)
+		return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Counts)
 	}
 	if plan.capacity_reached {
 		plan_drop()
-		return errors.fail(error, failure(.Full), .Full, .Commit_Blocks, 0, 0, i64(plan.capacity_limit))
+		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Full, .Commit_Blocks, 0, 0, i64(plan.capacity_limit))
 	}
 	if plan.count_overflow {
 		plan_drop()
-		return errors.fail(error, failure(.Full), .Over_Limit, .References, 0, i64(REFERENCE_LIMIT) + 1, i64(REFERENCE_LIMIT))
+		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .References, 0, i64(REFERENCE_LIMIT) + 1, i64(REFERENCE_LIMIT))
 	}
 	if plan.full {
 		plan_drop()
-		return errors.fail(error, failure(.Full), .Full) // The disk: no number, because the free blocks are a fact of all the stores.
+		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Full) // The disk: no number, because the free blocks are a fact of all the stores.
 	}
 	entry := &plan.next.stores[plan.store_index]
 	entry.used = u64(i64(entry.used) + plan.used_change)
@@ -1303,13 +1305,13 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		}
 		if !transfer(.Write, requests[:len(part)]) {
 			plan_drop()
-			return errors.fail(error, failure(.Disk), .Device)
+			return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
 		}
 		blocks_written += u64(len(part))
 	}
 	if !flush() {
 		plan_drop()
-		return errors.fail(error, failure(.Disk), .Device)
+		return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
 	}
 	plan.next.generation = root.generation + 1
 	// The device answered Ok to each write; a disk that did not keep one
@@ -1331,13 +1333,13 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		} else {
 			system.log_fact(.Error, Commit_Blocks_Dropped{generation = plan.next.generation, blocks = differ, generation_before = root.generation})
 		}
-		return errors.fail(error, failure(.Disk), .Device, .Dropped_Writes, 0, 0, 0, i64(differ))
+		return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device, .Dropped_Writes, 0, 0, 0, i64(differ))
 	case .Device:
 		// No root names the blocks: the disk holds the state before.
 		plan_drop()
 		commits_refused += 1
 		system.log_fact(.Error, Commit_Read_Back_Failed{generation = plan.next.generation})
-		return errors.fail(error, failure(.Disk), .Device)
+		return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
 	}
 	plan.next.time = time_now()
 	plan.next.date = date_now()
@@ -1349,7 +1351,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		// cannot know. It stops serving changes.
 		plan_drop()
 		root_undecided(plan.next.generation, .Write)
-		return errors.fail(error, failure(.Disk), .Device)
+		return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
 	}
 	blocks_written += 1
 	// The root too: if the disk did not keep it, the root before is still
@@ -1365,12 +1367,12 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		commits_refused += 1
 		system.log_fact(.Error, Commit_Root_Dropped{generation = plan.next.generation, generation_before = root.generation})
 		root_refused_in_a_row()
-		return errors.fail(error, failure(.Disk), .Device, .Dropped_Writes, 0, 0, 0, 1)
+		return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device, .Dropped_Writes, 0, 0, 0, 1)
 	case .Device:
 		// The root can be on the disk: as for a failed write of a root.
 		plan_drop()
 		root_undecided(plan.next.generation, .Read_Back)
-		return errors.fail(error, failure(.Disk), .Device)
+		return call_outcome.fail_with_value_first(error, .Callee_Unavailable, .Device)
 	}
 	roots_refused_in_a_row = 0
 	// The commit is on the disk: the service takes its state.
@@ -1414,7 +1416,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	}
 	later_count = 0
 	plan.taken_count = 0
-	return i64(root.generation)
+	return i64(root.generation), .Succeeded
 }
 
 // root_again writes the root of the last commit again, with the next

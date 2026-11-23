@@ -9,6 +9,7 @@
 package plans_service
 
 import "internal:plans/plans_core"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/value_kinds"
 import "modus:storage_port"
@@ -38,12 +39,12 @@ fail :: proc "contextless" (text: string) -> ! {
 
 // status writes aggregate plans service counters into out.
 @(export)
-status :: proc "c" (out: ^Plans_Status, error: ^errors.Error_Record) -> i64 {
+status :: proc "c" (out: ^Plans_Status, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if out == nil {
-		return errors.fail(error, -1, .Bad_Address, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
 	}
 	if !service_state.initialized {
-		return errors.fail(error, -2, .State, .Requests)
+		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
 	}
 	out^ = {
 		total_diffs     = i64(service_state.counters.total_diffs),
@@ -51,44 +52,44 @@ status :: proc "c" (out: ^Plans_Status, error: ^errors.Error_Record) -> i64 {
 		total_rollbacks = i64(service_state.counters.total_rollbacks),
 		total_refusals  = i64(service_state.counters.total_refusals),
 	}
-	return 0
+	return .Succeeded, 0
 }
 
 // current_generation returns the active applied plan generation of the
 // principal of the caller, or 0 when none. A caller names no principal:
 // it reads only its own plans (exports.odin, caller_principal).
 @(export)
-current_generation :: proc "c" (error: ^errors.Error_Record) -> i64 {
+current_generation :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	principal, failure, allowed := caller_principal(error)
 	if !allowed {
-		return failure
+		return failure, 0
 	}
 	_, rec, found := plans_core.current_plan(&service_state, principal)
 	if !found {
-		return 0
+		return .Succeeded, 0
 	}
-	return i64(min(rec.generation, u64(max(i64))))
+	return .Succeeded, i64(min(rec.generation, u64(max(i64))))
 }
 
 // diff_count returns the plan differences that the service computed.
 @(export)
-diff_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
+diff_count :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !service_state.initialized {
-		return errors.fail(error, -1, .State, .Requests)
+		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
 	}
-	return i64(service_state.counters.total_diffs)
+	return .Succeeded, i64(service_state.counters.total_diffs)
 }
 
 // apply_generation returns the newest generation that an apply committed for
 // the principal of the caller, or 0 when none: the next apply commits the
 // generation after it, even after a rollback.
 @(export)
-apply_generation :: proc "c" (error: ^errors.Error_Record) -> i64 {
+apply_generation :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	principal, failure, allowed := caller_principal(error)
 	if !allowed {
-		return failure
+		return failure, 0
 	}
-	return i64(min(plans_core.highest_generation(&service_state, principal), u64(max(i64))))
+	return .Succeeded, i64(min(plans_core.highest_generation(&service_state, principal), u64(max(i64))))
 }
 
 // rollback_generation returns the generation that a rollback of the
@@ -96,16 +97,16 @@ apply_generation :: proc "c" (error: ^errors.Error_Record) -> i64 {
 // generation, it fails with the kind Absent and the unit Versions; found is
 // the refusal.
 @(export)
-rollback_generation :: proc "c" (error: ^errors.Error_Record) -> i64 {
+rollback_generation :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	principal, failure, allowed := caller_principal(error)
 	if !allowed {
-		return failure
+		return failure, 0
 	}
 	selected, refusal := plans_core.rollback_target(&service_state, principal)
 	if refusal != .None {
-		return errors.fail(error, ERROR_HISTORY, .Absent, .Versions, 0, 0, 0, i64(refusal))
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Versions, 0, 0, 0, i64(refusal))
 	}
-	return i64(min(selected.generation, u64(max(i64))))
+	return .Succeeded, i64(min(selected.generation, u64(max(i64))))
 }
 
 // entry binds the private store, the way to the trusted display and the

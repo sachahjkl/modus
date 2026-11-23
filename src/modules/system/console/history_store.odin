@@ -27,6 +27,7 @@ package console
 // file runs. A file that a
 // check refuses gives an empty history and one log line.
 
+import "modus:contract/call_outcome"
 import "modus:contract/blake3"
 import "modus:contract/errors"
 import module "modus:contract/module"
@@ -64,7 +65,7 @@ history_store_open :: proc "contextless" () -> (opened: bool) {
 		system.log_fact(.Info, History_Root_Silent{})
 		return false
 	}
-	if system.Status(completion.kind) != .Ok {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, History_Root_Refused(errors.error_record_fact_fields(errors.completion_record(completion.values))))
 		return false
 	}
@@ -253,8 +254,8 @@ history_clear :: proc "contextless" (arguments: []Value) -> Value {
 		return {kind = .Integer, integer = i64(count)} // It had no store.
 	}
 	error: errors.Error_Record
-	result, status := storage.remove(&history_client, storage.ROOT, HISTORY_OBJECT_NAME, &error)
-	if status == .Ok || storage.export_failed_with(status, result, .Absent) {
+	_, status := storage.remove(&history_client, storage.ROOT, HISTORY_OBJECT_NAME, &error)
+	if status == .Ok || status == .Absent {
 		return {kind = .Integer, integer = i64(count)}
 	}
 	text: [240]u8

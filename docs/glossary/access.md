@@ -1068,7 +1068,7 @@ Do not use: token, capability token, invitation, certificate.
 
 A remote role is a role whose holder runs on a paired machine, and which `remote` fills on this machine as an interposed holder.
 
-`remote` carries each call and record of the contract over QUIC to `remote` on the paired machine, which connects to the real holder for this machine's row. Only calls and records cross: a face that lends memory or carries a handle does not. A call with no answer gets `Unknown_Outcome`; a call while the link is down gets `Unreachable`. The call frames and proxy are built (`modus:contract/machine_wire`); connecting to the real holder is not.
+`remote` carries each call and record of the contract over QUIC to `remote` on the paired machine, which connects to the real holder for this machine's row. Only calls and records cross: a face that lends memory or carries a handle does not. A call with no answer gets `Connection_Ended_During_The_Call`; a call while the link is down gets `Callee_Unavailable`. The call frames and proxy are built (`modus:contract/machine_wire`); connecting to the real holder is not.
 
 The design: `src/md/features/several_machines.md`, "A role held on another machine".
 
@@ -1088,7 +1088,7 @@ Do not use: packet, message (alone), mesh request.
 
 An outbound link is a QUIC connection that `remote` opens to a paired machine, whose handshake pins the identity key of that machine.
 
-It is the other direction of the mesh frames: this machine sends the requests (an object by hash, a role call, a store offer, the two pairing steps of the joiner) and the other machine answers. The link refuses a handshake that proves any other key. Each request ends Answered, Refused, Unknown_Outcome when it left and lost its answer, or Unreachable when the link was not up. It is not a grant: the other machine still checks the uses that its plan gives this machine.
+It is the other direction of the mesh frames: this machine sends the requests (an object by hash, a role call, a store offer, the two pairing steps of the joiner) and the other machine answers. The link refuses a handshake that proves any other key. Each request ends with a call outcome: in doubt when it left and lost its answer, `Callee_Unavailable` when the link was not up. It is not a grant: the other machine still checks the uses that its plan gives this machine.
 
 The design: `src/md/features/several_machines.md`, "The outbound link".
 

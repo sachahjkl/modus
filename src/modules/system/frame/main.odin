@@ -54,6 +54,7 @@
 // no offload. The design of the network is in docs/NETWORK.md.
 package frame_service
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/frame"
 import op "modus:contract/operation"
@@ -211,8 +212,8 @@ link_up :: proc "contextless" () -> bool {
 	return !has_status || virtio.load_16(device.device_config + 6) & 1 != 0
 }
 
-complete :: proc "contextless" (tag: u32, status: frame.Status, values: [7]u64 = {}) {
-	ring.push(&clients.completions, ring.Record{kind = u32(status), tag = tag, values = values})
+complete :: proc "contextless" (tag: u32, outcome: call_outcome.Call_Outcome, values: [7]u64 = {}) {
+	ring.push(&clients.completions, ring.Record{kind = u32(outcome), tag = tag, values = values})
 }
 
 // room says if the completion queue keeps a place for one more completion,
@@ -224,21 +225,21 @@ room :: proc "contextless" () -> bool {
 // attach takes the frame region of the client. The handle must have come
 // through the frame ring.
 // A refusal gives the values of its error record.
-attach :: proc "contextless" (handle: system.Handle) -> (frame.Status, [7]u64) {
+attach :: proc "contextless" (handle: system.Handle) -> (call_outcome.Call_Outcome, [7]u64) {
 	ATTACH :: u32(frame.Command.Attach)
 	if in_flight != 0 {
-		return .Bad_Command, errors.ring_fail(ATTACH, .Busy, .Requests, 0, i64(in_flight), 0)
+		return .Callee_Busy, errors.ring_fail(ATTACH, .Busy, .Requests, 0, i64(in_flight), 0)
 	}
-	if values, refused := system.region_refusal(handle, ring_memory, ATTACH); refused {
-		return .No_Region, values
+	if values, outcome, refused := system.region_refusal(handle, ring_memory, ATTACH); refused {
+		return outcome, values
 	}
 	physical, status := system.memory_physical(machine, handle)
 	if status != .Ok {
-		return .No_Region, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(status))
+		return .Argument_Refused, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(status))
 	}
 	pages, size_status := system.memory_size(handle)
 	if size_status != .Ok {
-		return .No_Region, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(size_status))
+		return .Argument_Refused, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(size_status))
 	}
 	if region_memory != 0 {
 		system.close(region_memory)
@@ -246,54 +247,64 @@ attach :: proc "contextless" (handle: system.Handle) -> (frame.Status, [7]u64) {
 	region_memory = handle
 	region_physical = physical
 	region_size = pages * system.PAGE_SIZE
-	return .Ok, {}
+	return .Succeeded, {}
 }
 
 // read_region_add takes a read region of the client at a place. The handle
 // must have come through the frame ring, with Read and without Write: the
 // device then only reads the region, and with the IOMMU the kernel maps
 // its pages with no write bit (src/md/infrastructure/iommu.md).
-read_region_add :: proc "contextless" (command: ring.Record) -> (status: frame.Status, outcome: Outcome, values: [7]u64) {
+read_region_add :: proc "contextless" (command: ring.Record) -> (ended: call_outcome.Call_Outcome, progress: Request_Progress, values: [7]u64) {
 	ADD :: u32(frame.Command.Read_Region_Add)
 	handle, place := system.Handle(command.values[0]), command.values[1]
 	kind, rights, through := system.handle_state(handle, ring_memory)
 	// Only a handle that came through the ring is closed on a refusal: a
-	// number of the client can name a handle of this service.
+	// number of the client can name a handle of this service. So it is
+	// tested first, and the client learns nothing of a handle of this
+	// service.
 	switch {
-	case kind != .Memory:
-		return .No_Region, .Done, errors.ring_fail(ADD, .Handle_Kind, .None, 1, i64(handle), i64(op.Object_Kind.Memory), i64(kind))
 	case !through:
-		return .No_Region, .Done, errors.ring_fail(ADD, .Absent, .Region, 1)
-	case .Read not_in rights || .Write in rights:
+		return .Argument_Refused, .Done, errors.ring_fail(ADD, .Handle_Absent, .Lent_Handles, 1, i64(handle))
+	case kind != .Memory:
 		system.close(handle)
-		return .No_Region, .Done, errors.ring_fail(ADD, .Handle_Rights, .None, 1, i64(handle), i64(transmute(u32)system.Rights{.Read}), i64(transmute(u32)rights))
+		return .Argument_Refused, .Done, errors.ring_fail(ADD, .Handle_Kind, .None, 1, i64(handle), i64(op.Object_Kind.Memory), i64(kind))
+	case .Write in rights:
+		// A rule of the argument, not a right that it lacks: the device
+		// only reads a read region.
+		system.close(handle)
+		return .Argument_Refused, .Done, errors.ring_fail(ADD, .Bad_Flags, .None, 1, i64(handle), i64(transmute(u32)system.Rights{.Read}), i64(transmute(u32)rights))
+	case .Read not_in rights:
+		system.close(handle)
+		return .Grant_Or_Right_Missing, .Done, errors.ring_fail(ADD, .Handle_Rights, .None, 1, i64(handle), i64(transmute(u32)system.Rights{.Read}), i64(transmute(u32)rights))
 	case place >= frame.READ_REGION_CAPACITY:
 		system.close(handle)
-		return .Bad_Command, .Done, errors.ring_fail(ADD, .Out_Of_Range, .None, 2, i64(min(place, 1 << 62)), frame.READ_REGION_CAPACITY)
+		return .Argument_Refused, .Done, errors.ring_fail(ADD, .Out_Of_Range, .None, 2, i64(min(place, 1 << 62)), frame.READ_REGION_CAPACITY)
 	}
 	region := &read_regions[place]
 	if region.memory != 0 {
 		if region.removing {
 			// The sends of the region before are still in flight: the
 			// command waits for them, as a Send waits for a free slot.
-			return .Ok, .Full, {}
+			return .Succeeded, .Full, {}
 		}
+		// The place is an argument, and the contract refuses a place that
+		// holds a region (frame.Command.Read_Region_Add).
 		system.close(handle)
-		return .Bad_Command, .Done, errors.ring_fail(ADD, .Busy, .None, 2, i64(place))
+		return .Argument_Refused, .Done, errors.ring_fail(ADD, .Bad_Value, .None, 2, i64(place))
 	}
 	physical, physical_status := system.memory_physical(machine, handle)
 	if physical_status != .Ok {
 		system.close(handle)
-		return .No_Region, .Done, errors.ring_fail(ADD, .Refused, .None, 1, i64(handle), 0, i64(physical_status))
+		return .Argument_Refused, .Done, errors.ring_fail(ADD, .Refused, .None, 1, i64(handle), 0, i64(physical_status))
 	}
 	pages, size_status := system.memory_size(handle)
 	if size_status != .Ok {
 		system.close(handle)
-		return .No_Region, .Done, errors.ring_fail(ADD, .Refused, .None, 1, i64(handle), 0, i64(size_status))
+		return .Argument_Refused, .Done, errors.ring_fail(ADD, .Refused, .None, 1, i64(handle), 0, i64(size_status))
 	}
 	region^ = {memory = handle, physical = physical, size = pages * system.PAGE_SIZE}
 	system.log_fact(.Info, Read_Region_Added{region_size = value_kinds.Size_In_Pages(pages), place = place})
-	return .Ok, .Done, {}
+	return .Succeeded, .Done, {}
 }
 
 // read_region_close ends a read region with no Send in flight: the close
@@ -306,24 +317,24 @@ read_region_close :: proc "contextless" (region: ^Read_Region) {
 // read_region_remove ends a read region now, or when its last Send is
 // complete: the device must not read memory that the client no longer
 // lends, and the object must stay while the device reads it.
-read_region_remove :: proc "contextless" (command: ring.Record) -> (status: frame.Status, outcome: Outcome, values: [7]u64) {
+read_region_remove :: proc "contextless" (command: ring.Record) -> (ended: call_outcome.Call_Outcome, progress: Request_Progress, values: [7]u64) {
 	REMOVE :: u32(frame.Command.Read_Region_Remove)
 	place := command.values[0]
 	if place >= frame.READ_REGION_CAPACITY || read_regions[place].memory == 0 || read_regions[place].removing {
-		return .No_Region, .Done, errors.ring_fail(REMOVE, .Absent, .Region, 1, i64(min(place, 1 << 62)))
+		return .Argument_Refused, .Done, errors.ring_fail(REMOVE, .Absent, .Region, 1, i64(min(place, 1 << 62)))
 	}
 	region := &read_regions[place]
 	if region.sends == 0 {
 		read_region_close(region)
-		return .Ok, .Done, {}
+		return .Succeeded, .Done, {}
 	}
 	region.removing, region.remove_tag = true, command.tag
 	in_flight += 1 // Its completion comes with the last Send: keep its room.
-	return .Ok, .Sent, {}
+	return .Succeeded, .Sent, {}
 }
 
-Outcome :: enum {
-	Done, // The command has its status: no request goes to the device.
+Request_Progress :: enum {
+	Done, // The command has its call outcome: no request goes to the device.
 	Sent, // The device has the request.
 	Full, // No place is free: the command waits for a completion.
 }
@@ -331,35 +342,35 @@ Outcome :: enum {
 // submit gives one request to the device. A refusal gives the values of
 // its error record. kind is the command of the record, Send or Receive,
 // which the loop read through its border.
-submit :: proc "contextless" (command: ring.Record, kind: frame.Command) -> (status: frame.Status, outcome: Outcome, values: [7]u64) {
+submit :: proc "contextless" (command: ring.Record, kind: frame.Command) -> (ended: call_outcome.Call_Outcome, progress: Request_Progress, values: [7]u64) {
 	place, count := command.values[0], command.values[1]
 	if region_memory == 0 {
-		return .No_Region, .Done, errors.ring_fail(command.kind, .Absent, .Region)
+		return .Argument_Refused, .Done, errors.ring_fail(command.kind, .Absent, .Region)
 	}
 	if place > region_size || count > region_size - place {
-		return .Out_Of_Range, .Done, errors.ring_fail(command.kind, .Out_Of_Range, .Bytes, 1, i64(min(place, 1 << 62) + min(count, 1 << 62)), i64(region_size))
+		return .Argument_Refused, .Done, errors.ring_fail(command.kind, .Out_Of_Range, .Bytes, 1, i64(min(place, 1 << 62) + min(count, 1 << 62)), i64(region_size))
 	}
 	if kind == .Send {
 		if count < 14 {
-			return .Too_Large, .Done, errors.ring_fail(command.kind, .Too_Small, .Bytes, 2, i64(count), 14)
+			return .Argument_Refused, .Done, errors.ring_fail(command.kind, .Too_Small, .Bytes, 2, i64(count), 14)
 		}
 		if count > frame.FRAME_LIMIT {
-			return .Too_Large, .Done, errors.ring_fail(command.kind, .Too_Long, .Bytes, 2, i64(count), frame.FRAME_LIMIT)
+			return .Argument_Refused, .Done, errors.ring_fail(command.kind, .Too_Long, .Bytes, 2, i64(count), frame.FRAME_LIMIT)
 		}
 		// The second part, in a read region: the data that the client did
 		// not copy. Each value is a copy in this record, checked once.
 		data_offset, data_count, region_place := command.values[2], command.values[3], command.values[4]
 		if data_count > frame.FRAME_LIMIT - count {
-			return .Too_Large, .Done, errors.ring_fail(command.kind, .Too_Long, .Bytes, 4, i64(min(data_count, 1 << 62) + count), frame.FRAME_LIMIT)
+			return .Argument_Refused, .Done, errors.ring_fail(command.kind, .Too_Long, .Bytes, 4, i64(min(data_count, 1 << 62) + count), frame.FRAME_LIMIT)
 		}
 		read_region: ^Read_Region
 		if data_count != 0 {
 			if region_place >= frame.READ_REGION_CAPACITY || read_regions[region_place].memory == 0 || read_regions[region_place].removing {
-				return .No_Region, .Done, errors.ring_fail(command.kind, .Absent, .Region, 5, i64(min(region_place, 1 << 62)))
+				return .Argument_Refused, .Done, errors.ring_fail(command.kind, .Absent, .Region, 5, i64(min(region_place, 1 << 62)))
 			}
 			read_region = &read_regions[region_place]
 			if data_offset > read_region.size || data_count > read_region.size - data_offset {
-				return .Out_Of_Range, .Done, errors.ring_fail(command.kind, .Out_Of_Range, .Bytes, 3, i64(min(data_offset, 1 << 62) + data_count), i64(read_region.size))
+				return .Argument_Refused, .Done, errors.ring_fail(command.kind, .Out_Of_Range, .Bytes, 3, i64(min(data_offset, 1 << 62) + data_count), i64(read_region.size))
 			}
 		}
 		slot: u32 = SLOT_CAPACITY
@@ -370,7 +381,7 @@ submit :: proc "contextless" (command: ring.Record, kind: frame.Command) -> (sta
 			}
 		}
 		if slot == SLOT_CAPACITY {
-			return .Ok, .Full, {}
+			return .Succeeded, .Full, {}
 		}
 		head := slot * SEND_DESCRIPTORS
 		// The parts of the frame, linked in order: the part in the frame
@@ -395,14 +406,14 @@ submit :: proc "contextless" (command: ring.Record, kind: frame.Command) -> (sta
 		in_flight += 1
 		bytes_sent += count + data_count
 		virtio.give(&send_queue, u16(head))
-		return .Ok, .Sent, {}
+		return .Succeeded, .Sent, {}
 	}
 	// A Receive: room for a header of Ethernet at least.
 	if count < 14 {
-		return .Bad_Command, .Done, errors.ring_fail(command.kind, .Too_Small, .Bytes, 2, i64(count), 14)
+		return .Argument_Refused, .Done, errors.ring_fail(command.kind, .Too_Small, .Bytes, 2, i64(count), 14)
 	}
 	if count > 1 << 16 {
-		return .Bad_Command, .Done, errors.ring_fail(command.kind, .Too_Long, .Bytes, 2, i64(count), 1 << 16)
+		return .Argument_Refused, .Done, errors.ring_fail(command.kind, .Too_Long, .Bytes, 2, i64(count), 1 << 16)
 	}
 	slot: u32 = SLOT_CAPACITY
 	for candidate in 0 ..< receive_slot_count {
@@ -412,14 +423,14 @@ submit :: proc "contextless" (command: ring.Record, kind: frame.Command) -> (sta
 		}
 	}
 	if slot == SLOT_CAPACITY {
-		return .Too_Many, .Done, errors.ring_fail(command.kind, .Busy, .Requests, 0, i64(receive_slot_count), i64(receive_slot_count))
+		return .Callee_Busy, .Done, errors.ring_fail(command.kind, .Busy, .Requests, 0, i64(receive_slot_count), i64(receive_slot_count))
 	}
 	head := slot * 2
 	receive_queue.descriptors[head + 1] = {address = region_physical + place, length = u32(count), flags = virtio.DESCRIPTOR_DEVICE_WRITES}
 	receive_slots[slot] = {tag = command.tag, busy = true}
 	in_flight += 1
 	virtio.give(&receive_queue, u16(head))
-	return .Ok, .Sent, {}
+	return .Succeeded, .Sent, {}
 }
 
 // harvest gives a completion to the client for each request that the device used.
@@ -429,7 +440,7 @@ harvest :: proc "contextless" () -> (count: int) {
 		if slot >= send_slot_count || !send_slots[slot].busy {
 			continue
 		}
-		complete(send_slots[slot].tag, .Ok)
+		complete(send_slots[slot].tag, .Succeeded)
 		frames_sent += 1
 		if send_slots[slot].reads_region {
 			region := &read_regions[send_slots[slot].read_region_place]
@@ -439,7 +450,7 @@ harvest :: proc "contextless" () -> (count: int) {
 			if region.removing && region.sends == 0 {
 				tag := region.remove_tag
 				read_region_close(region)
-				complete(tag, .Ok)
+				complete(tag, .Succeeded)
 				in_flight -= 1
 				count += 1
 			}
@@ -454,10 +465,10 @@ harvest :: proc "contextless" () -> (count: int) {
 			continue
 		}
 		if used.length < HEADER_SIZE {
-			complete(receive_slots[slot].tag, .Device_Error, errors.ring_fail(u32(frame.Command.Receive), .Device, .Bytes, 0, i64(used.length), HEADER_SIZE))
+			complete(receive_slots[slot].tag, .Callee_Unavailable, errors.ring_fail(u32(frame.Command.Receive), .Device, .Bytes, 0, i64(used.length), HEADER_SIZE))
 		} else {
 			length := u64(used.length) - HEADER_SIZE
-			complete(receive_slots[slot].tag, .Ok, {0 = length})
+			complete(receive_slots[slot].tag, .Succeeded, {0 = length})
 			frames_received += 1
 			bytes_received += length
 		}
@@ -516,11 +527,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					break
 				}
 			}
-			result := frame.Status.Ok
+			result := call_outcome.Call_Outcome.Succeeded
 			values: [7]u64
 			kind, kind_ok := frame.command_of_ring_word(command.kind)
 			if !kind_ok {
-				complete(command.tag, .Bad_Command, errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind)))
+				complete(command.tag, .Operation_Unsupported, errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind)))
 				changed += 1
 				continue
 			}
@@ -536,19 +547,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				interrupts += results[0]
 				values = {0 = frames_sent, 1 = frames_received, 2 = system.kernel_entries(), 3 = interrupts, 4 = bytes_sent, 5 = bytes_received}
 			case .Send, .Receive, .Read_Region_Add, .Read_Region_Remove:
-				outcome: Outcome
+				progress: Request_Progress
 				switch {
 				case kind == .Read_Region_Add:
-					result, outcome, values = read_region_add(command)
+					result, progress, values = read_region_add(command)
 				case kind == .Read_Region_Remove:
-					result, outcome, values = read_region_remove(command)
+					result, progress, values = read_region_remove(command)
 				case:
-					result, outcome, values = submit(command, kind)
+					result, progress, values = submit(command, kind)
 				}
-				if outcome == .Sent {
+				if progress == .Sent {
 					continue
 				}
-				if outcome == .Full {
+				if progress == .Full {
 					waiting, has_waiting = command, true
 				}
 			}

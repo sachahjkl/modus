@@ -13,8 +13,8 @@ import "core:mem"
 import "core:strconv"
 import "core:strings"
 import contract "modus:contract/agent_bridge"
-import "modus:contract/enum_word"
-import "modus:contract/isolated"
+import "modus:contract/call_outcome"
+import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:contract/remote"
 import "modus:contract/remote_display"
@@ -94,6 +94,32 @@ remote_transport_from_user_data :: proc(user_data: rawptr) -> (transport: ^Remot
 	return candidate, true
 }
 
+// remote_transport_failure_outcome gives the call outcome of a call that
+// got no whole answer, from the end that the transport saw: the one place
+// of this map. A call that left and lost its answer is in doubt; a call that
+// never left changed nothing.
+@(private = "file")
+remote_transport_failure_outcome :: proc(call_transport: machine.Call_Transport) -> call_outcome.Call_Outcome {
+	switch call_transport.outcome {
+	case .Reset, .Lost:
+		return .Connection_Ended_During_The_Call
+	case .Request_Too_Large:
+		return .Argument_Refused
+	case .Peer_Absent:
+		return .Callee_Unavailable
+	case .Peer_Full:
+		// The peer serves other callers too: its room frees by itself.
+		return .Callee_Busy
+	case .Answer, .Answer_Too_Large:
+		return .Answer_Unreadable
+	case .Client_Refused:
+		return .Grant_Or_Right_Missing
+	case .No_Key, .Key_Refused, .Bad_Socket_Call:
+		return .Callee_Unavailable
+	}
+	return .Answer_Unreadable
+}
+
 @(private = "file")
 format_remote_transport_failure :: proc(call_transport: machine.Call_Transport, allocator: mem.Allocator) -> string {
 	switch call_transport.outcome {
@@ -105,7 +131,7 @@ format_remote_transport_failure :: proc(call_transport: machine.Call_Transport, 
 			return fmt.aprintf("remote reset the stream with code %d", call_transport.code, allocator = allocator)
 		}
 		return fmt.aprintf("remote reset the stream with code %s", name, allocator = allocator)
-	case .Lost, .No_Key, .Answer_Too_Large, .Key_Refused, .Bad_Socket_Call, .Client_Refused, .Answer_Unknown_Status:
+	case .Lost, .No_Key, .Answer_Too_Large, .Key_Refused, .Bad_Socket_Call, .Client_Refused, .Request_Too_Large, .Peer_Absent, .Peer_Full:
 		if call_transport.reason != "" {
 			return strings.clone(call_transport.reason, allocator)
 		}
@@ -252,54 +278,54 @@ remote_transport_eval_lex :: proc(
 	user_data: rawptr,
 	line: string,
 	allocator: mem.Allocator,
-) -> (result: Lex_Eval_Result, err: string, ok: bool) {
+) -> (result: Lex_Eval_Result, outcome: call_outcome.Call_Outcome, err: string) {
 	transport, opened := remote_transport_from_user_data(user_data)
 	if !opened {
-		return {}, strings.clone("remote transport is not open", allocator), false
+		return {}, .Callee_Unavailable, strings.clone("remote transport is not open", allocator)
 	}
 	call, problem := machine.call_prepare(&transport.client, line)
 	if problem != "" {
-		return {}, strings.clone(problem, allocator), false
+		return {}, .Argument_Refused, strings.clone(problem, allocator)
 	}
 	answer, result_bytes, call_transport, answered := machine.call_send(&transport.client, &call)
 	if !answered {
-		return {}, format_remote_transport_failure(call_transport, allocator), false
+		return {}, remote_transport_failure_outcome(call_transport), format_remote_transport_failure(call_transport, allocator)
 	}
-	switch answer.status {
-	case .Ok:
-	case .Refused:
+	// The answer comes from the network: its two outcome words go through
+	// their border, and the agent reads the outcome and its effect group by
+	// the names of their members.
+	record: errors.Error_Record
+	request_refused: bool
+	outcome, record, request_refused = remote.answer_outcome(answer)
+	if request_refused {
 		field := ""
-		if answer.error.argument >= 1 && answer.error.argument <= len(remote.REQUEST_FIELD_NAMES) {
-			field = remote.REQUEST_FIELD_NAMES[answer.error.argument - 1]
+		if record.argument >= 1 && record.argument <= len(remote.REQUEST_FIELD_NAMES) {
+			field = remote.REQUEST_FIELD_NAMES[record.argument - 1]
 		}
 		buffer := make([]u8, 512, context.temp_allocator)
 		writer := sentence.Writer{buffer = buffer}
-		sentence.error_text(&writer, &answer.error, "remote", field)
-		return {}, strings.clone(sentence.written(&writer), allocator), false
+		sentence.error_text(&writer, &record, "remote", field)
+		return {}, outcome, fmt.aprintf("%s (outcome %s, effect %s)", sentence.written(&writer), call_outcome.CALL_OUTCOME_NAMES[outcome], call_outcome.EFFECT_GROUP_NAMES[call_outcome.effect_group_of(outcome)], allocator = allocator)
 	}
-
-	call_status, call_status_known := enum_word.member_of_word(isolated.Status, u64(answer.call_status))
-	if !call_status_known {
-		return {}, fmt.aprintf("remote service %s returned unknown call status %d", call.service, answer.call_status, allocator = allocator), false
-	}
-	switch call_status {
-	case .Ok:
-	case .Bad_Export:
-		return {}, fmt.aprintf("service %s has no export %d", call.service, call.index, allocator = allocator), false
-	case .Bad_Arguments:
-		return {}, fmt.aprintf("service %s refused the arguments of %s", call.service, call.export, allocator = allocator), false
-	case .Bad_Handle, .Load_Failed:
-		return {}, fmt.aprintf("service %s refused %s with status %v", call.service, call.export, call_status, allocator = allocator), false
-	}
-
-	if call.function.error_record != 0 && answer.value < 0 {
+	answer.error = record
+	if outcome != .Succeeded {
 		buffer := make([]u8, 512, context.temp_allocator)
 		writer := sentence.Writer{buffer = buffer}
-		sentence.export_error_text(&writer, call.file, call.index, call.service, &answer.error)
-		return {}, strings.clone(sentence.written(&writer), allocator), false
+		argument := ""
+		if answer.error.argument >= 1 && answer.error.argument <= i64(call.function.parameter_count) {
+			number := answer.error.argument - 1
+			argument = module.string_at(call.file, call.function.parameter_names[number], u32(call.function.parameter_name_counts[number]))
+		}
+		sentence.call_failure_text(&writer, outcome, &answer.error, fmt.tprintf("%s.%s", call.service, call.export), argument)
+		return {}, outcome, fmt.aprintf("%s (outcome %s, effect %s)", sentence.written(&writer), call_outcome.CALL_OUTCOME_NAMES[outcome], call_outcome.EFFECT_GROUP_NAMES[call_outcome.effect_group_of(outcome)], allocator = allocator)
 	}
-
-	return decode_remote_call_result(&call, answer, result_bytes, allocator)
+	// The call succeeded; a result that this reader cannot decode is an
+	// answer that it cannot read.
+	decoded, decode_problem, decoded_ok := decode_remote_call_result(&call, answer, result_bytes, allocator)
+	if !decoded_ok {
+		return {}, .Answer_Unreadable, decode_problem
+	}
+	return decoded, .Succeeded, ""
 }
 
 @(private = "file")

@@ -1,5 +1,6 @@
 package root
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
@@ -70,9 +71,9 @@ Disk_Load_Refused_Load_Busy :: struct {
 	refused_process: value_kinds.Module_Name_Field,
 }
 
-@(log_fact = "root: refused {refused_process} from the disk: no connection to the storage service: status {status}")
+@(log_fact = "root: refused {refused_process} from the disk: no connection to the storage service: outcome {outcome}")
 Disk_Load_Refused_No_Connection :: struct {
-	status:          op.Status,
+	outcome:         call_outcome.Call_Outcome,
 	refused_process: value_kinds.Module_Name_Field,
 }
 
@@ -181,9 +182,9 @@ Disk_Load_Refused_Hash_Differs :: struct {
 	refused_process: value_kinds.Module_Name_Field,
 }
 
-@(log_fact = "root: refused {refused_process} from the disk: it does not start: status {status}")
+@(log_fact = "root: refused {refused_process} from the disk: it does not start: outcome {outcome}")
 Disk_Load_Refused_Not_Started :: struct {
-	status:          op.Status,
+	outcome:         call_outcome.Call_Outcome,
 	refused_process: value_kinds.Module_Name_Field,
 }
 

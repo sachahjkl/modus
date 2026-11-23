@@ -23,6 +23,7 @@
 package hostile_exports
 
 import "modus:contract/enum_word"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:system"
@@ -30,9 +31,6 @@ import "modus:system"
 // The value of the Memory_Map command that holds the memory handle, from 1:
 // the argument that an error record of the kernel names for it.
 MEMORY_MAP_ARGUMENT_MEMORY :: 1
-
-// The result of an export that fails: the error record says why.
-ERROR :: -1
 
 // bytes_of maps a memory object for the time of one export. count is 0 when
 // the kernel refuses; then status says why, and the error record holds the
@@ -64,17 +62,17 @@ bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags, argu
 
 // total adds the bytes of a memory object.
 @(private)
-total :: proc "contextless" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> i64 {
+total :: proc "contextless" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	bytes, status := bytes_of(memory.handle, {}, 1, error)
 	if status != .Ok {
-		return ERROR
+		return system.outcome_of_status(status), 0
 	}
 	sum: i64
 	for b in bytes {
 		sum += i64(b)
 	}
 	system.memory_unmap(raw_data(bytes))
-	return sum
+	return .Succeeded, sum
 }
 
 held: system.Handle
@@ -82,9 +80,9 @@ held: system.Handle
 // keep remembers the handle that the caller lent, for a later call of kept.
 //
 // The result is the sum of the bytes of the object, read during the call. When the kernel refuses the map, the
-// result is -1 with the error record of the kernel for the argument memory.
+// result is the outcome of the refusal with the error record of the kernel for the argument memory.
 @(export, link_name = "keep")
-keep :: proc "c" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> i64 {
+keep :: proc "c" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	held = memory.handle
 	return total(memory, error)
 }
@@ -105,15 +103,16 @@ view: []u8
 // hold maps a memory object that the caller lent, keeps the mapping for a
 // later call of look, and gives the first byte.
 //
-// When the kernel refuses the map, the result is -1 with the error record of the kernel for the argument memory.
+// When the kernel refuses the map, the result is the outcome of the refusal with the error record of the kernel
+// for the argument memory.
 @(export, link_name = "hold")
-hold :: proc "c" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> i64 {
+hold :: proc "c" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	bytes, status := bytes_of(memory.handle, {}, 1, error)
 	if status != .Ok {
-		return ERROR
+		return system.outcome_of_status(status), 0
 	}
 	view = bytes
-	return i64(bytes[0])
+	return .Succeeded, i64(bytes[0])
 }
 
 // look reads the first byte through the mapping that hold kept. After an
@@ -121,13 +120,14 @@ hold :: proc "c" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> 
 // mapping, and the process of this module stops on a page fault.
 //
 // In a direct call nothing was revoked: the mapping is still there, and the result is the first byte. With no
-// earlier hold, the result is -1 with an error record: `Absent` of the mappings, for the call as a whole.
+// earlier hold, the result is the outcome Nothing_Has_That_Name with an error record: `Absent` of the mappings, for
+// the call as a whole.
 @(export, link_name = "look")
-look :: proc "c" (error: ^errors.Error_Record) -> i64 {
+look :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if len(view) == 0 {
-		return errors.fail(error, ERROR, .Absent, .Mappings)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Mappings)
 	}
-	return i64(view[0])
+	return .Succeeded, i64(view[0])
 }
 
 // A reading of a sensor: the record of sample, 40 bytes.
@@ -168,18 +168,18 @@ Getter_Ran :: struct {}
 //
 // - **mode**: `.slow` or `.fast`.
 //
-// The result is the value of the mode: 0 or 1, or -1 with an error record:
+// The result is the value of the mode: 0 or 1, or the outcome Argument_Refused with an error record:
 //
 // - `Bad_Value`: the word names no mode; the record holds it.
 @(export, link_name = "mode_set", enum_getters = "mode = mode")
-mode_set :: proc "c" (mode: Mode, error: ^errors.Error_Record) -> i64 {
+mode_set :: proc "c" (mode: Mode, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	// The caller wrote the register: a word that names no member is
 	// refused, never read as a mode.
 	member, given, ok := enum_word.member_of_argument(mode)
 	if !ok || !given {
-		return errors.fail(error, ERROR, .Bad_Value, .None, 1, i64(transmute(u32)mode))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, i64(transmute(u32)mode))
 	}
-	return i64(member)
+	return .Succeeded, i64(member)
 }
 
 // mode gives the mode `.slow`, and logs that it ran.

@@ -9,8 +9,8 @@
 // every service at once.
 package quic_server
 
+import "modus:contract/call_outcome"
 import "modus:contract/datagram"
-import "modus:contract/enum_word"
 import "modus:contract/ring"
 import "modus:network"
 import "modus:quic"
@@ -137,7 +137,7 @@ endpoint_init :: proc "contextless" (
 }
 
 // info_completion_check validates an Info completion record from the network
-// service: checks CALL_TAG, Ok status through the enum border, valid IPv4
+// service: checks CALL_TAG, Succeeded through the border of a completion, valid IPv4
 // local address, and a UDP listen grant (optionally restricted to
 // required_address).
 info_completion_check :: proc "contextless" (
@@ -148,8 +148,7 @@ info_completion_check :: proc "contextless" (
 	if info.tag != CALL_TAG {
 		return 0, 0, .Bad_Grant
 	}
-	status, status_ok := enum_word.member_of_word(datagram.Status, u64(info.kind))
-	if !status_ok || status != .Ok {
+	if outcome, _ := call_outcome.completion_outcome(info.kind, info.values); outcome != .Succeeded {
 		return 0, 0, .Bad_Grant
 	}
 	if info.values[0] > u64(max(u32)) {
@@ -462,8 +461,8 @@ validation_completed :: proc "contextless" (server: ^quic.Server, records: []qui
 	if !tag_ok || place < 0 || place >= len(records) {
 		return false
 	}
-	status, status_ok := enum_word.member_of_word(datagram.Status, u64(completion.kind))
-	if !status_ok {
+	status, _ := call_outcome.completion_outcome(completion.kind, completion.values)
+	if status == .Answer_Unreadable {
 		return false
 	}
 	record := records[place]
@@ -471,7 +470,7 @@ validation_completed :: proc "contextless" (server: ^quic.Server, records: []qui
 		return false
 	}
 	if server != nil {
-		quic.server_validation_confirmed(server, place, record.generation, status == .Ok && completion.values[0] == 1)
+		quic.server_validation_confirmed(server, place, record.generation, status == .Succeeded && completion.values[0] == 1)
 	}
 	return true
 }
@@ -507,7 +506,8 @@ completions_drain_bounded :: proc "contextless" (
 			break
 		}
 		popped += 1
-		status, status_ok := enum_word.member_of_word(datagram.Status, u64(record.kind))
+		status, _ := call_outcome.completion_outcome(record.kind, record.values)
+		status_ok := status != .Answer_Unreadable
 		switch {
 		case record.tag < u32(endpoint.receive_places):
 			if !endpoint.place_in_flight[record.tag] {
@@ -515,7 +515,7 @@ completions_drain_bounded :: proc "contextless" (
 				continue
 			}
 			endpoint.place_in_flight[record.tag] = false
-			if status_ok && status == .Ok {
+			if status == .Succeeded {
 				if count < len(arrived) {
 					arrived[count] = record
 					count += 1
@@ -541,7 +541,7 @@ completions_drain_bounded :: proc "contextless" (
 				endpoint.bad_completions += 1
 				continue
 			}
-			if !status_ok || status != .Ok {
+			if status != .Succeeded {
 				endpoint.sends_refused += 1
 				endpoint.send_refusal_last = record.kind
 			}

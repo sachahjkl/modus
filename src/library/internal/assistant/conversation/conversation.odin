@@ -11,6 +11,7 @@ import bridge_contract "modus:contract/agent_bridge"
 import "modus:contract/enum_word"
 import "modus:contract/value_kinds"
 import assistant_contract "modus:contract/assistant"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 
 Entry_Kind :: enum u8 {
@@ -168,8 +169,13 @@ Conversation :: struct {
 	staging:          Act_Table,
 }
 
-// The result of a refused call.
-ERROR_RESULT :: -1
+// refused fails a call that keeps no entry: its outcome, the value 0, and
+// its error record.
+@(private = "file")
+refused :: proc "contextless" (error: ^errors.Error_Record, outcome: call_outcome.Call_Outcome, kind: errors.Kind, unit: errors.Unit = .None, argument: i64 = 0, value: i64 = 0, limit: i64 = 0, found: i64 = 0) -> (call_outcome.Call_Outcome, i64, ^Entry) {
+	failed, _ := call_outcome.fail(error, outcome, kind, unit, argument, value, limit, found)
+	return failed, 0, nil
+}
 
 entry_at :: proc "contextless" (conversation: ^Conversation, index: int) -> ^Entry {
 	return &conversation.entries[(conversation.entry_first + index) % len(conversation.entries)]
@@ -237,23 +243,31 @@ request_keep :: proc "contextless" (conversation: ^Conversation, text: string) -
 
 // text_refusal fails a call for a text that the contract refuses.
 @(private = "file")
-text_refusal :: proc "contextless" (error: ^errors.Error_Record, argument: i64, text: string, bound: int) -> (refused: bool, result: i64) {
+text_refusal :: proc "contextless" (error: ^errors.Error_Record, argument: i64, text: string, bound: int) -> (refused: bool, outcome: call_outcome.Call_Outcome) {
 	switch assistant_contract.text_check(text, bound) {
 	case .None:
-		return false, 0
+		return false, .Succeeded
 	case .Empty:
-		return true, errors.fail(error, ERROR_RESULT, .Empty, .Bytes, argument, 0, i64(bound))
+		return true, text_failure(error, .Argument_Refused, .Empty, .Bytes, argument, 0, i64(bound))
 	case .Too_Long:
-		return true, errors.fail(error, ERROR_RESULT, .Too_Long, .Bytes, argument, i64(len(text)), i64(bound))
+		return true, text_failure(error, .Argument_Refused, .Too_Long, .Bytes, argument, i64(len(text)), i64(bound))
 	case .Not_Text:
-		return true, errors.fail(error, ERROR_RESULT, .Bad_Value, .Bytes, argument, i64(len(text)))
+		return true, text_failure(error, .Argument_Refused, .Bad_Value, .Bytes, argument, i64(len(text)))
 	}
-	return true, errors.fail(error, ERROR_RESULT, .Refused)
+	return true, text_failure(error, .Argument_Refused, .Refused)
+}
+
+// text_failure writes the record of a refused text, and gives its outcome.
+@(private = "file")
+text_failure :: proc "contextless" (error: ^errors.Error_Record, outcome: call_outcome.Call_Outcome, kind: errors.Kind, unit: errors.Unit = .None, argument: i64 = 0, value: i64 = 0, limit: i64 = 0) -> call_outcome.Call_Outcome {
+	failed, _ := call_outcome.fail(error, outcome, kind, unit, argument, value, limit)
+	return failed
 }
 
 @(private = "file")
-no_grant :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
-	return errors.fail(error, ERROR_RESULT, .No_Grant, .Acts_For_Principal)
+no_grant :: proc "contextless" (error: ^errors.Error_Record) -> call_outcome.Call_Outcome {
+	failed, _ := call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
+	return failed
 }
 
 // taken_request_of gives the request of a serial that a runner took, or
@@ -269,128 +283,128 @@ taken_request_of :: proc "contextless" (conversation: ^Conversation, serial: i64
 
 // request_serial gives the serial of the oldest request that no runner
 // took, or 0.
-request_serial :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, error: ^errors.Error_Record) -> i64 {
+request_serial :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, serial: i64) {
 	if !acts_for_principal {
-		return no_grant(error)
+		return no_grant(error), 0
 	}
 	for index in 0 ..< conversation.entry_count {
 		entry := entry_at(conversation, index)
 		if entry.kind == .Request && !entry.taken {
-			return i64(entry.serial)
+			return .Succeeded, i64(entry.serial)
 		}
 	}
-	return 0
+	return .Succeeded, 0
 }
 
 // request_text copies the text of a request into result and marks it
 // taken; taken is the request when this call took it. A result with less
 // room than the text is refused, and the request stays for a call with
 // room: a cut request would read as whole.
-request_text :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, serial: i64, result: []u8, error: ^errors.Error_Record) -> (count: i64, taken: ^Entry) {
+request_text :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, serial: i64, result: []u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, count: i64, taken: ^Entry) {
 	if !acts_for_principal {
-		return no_grant(error), nil
+		return no_grant(error), 0, nil
 	}
 	entry := request_of(conversation, serial)
 	if entry == nil {
-		return errors.fail(error, ERROR_RESULT, .Absent, .Requests, 1, serial), nil
+		return refused(error, .Nothing_Has_That_Name, .Absent, .Requests, 1, serial)
 	}
 	text := string(entry.text[:entry.text_count])
 	if len(result) < len(text) {
-		return errors.fail(error, ERROR_RESULT, .Too_Long, .Bytes, 0, i64(len(text)), i64(len(result))), nil
+		return refused(error, .Argument_Refused, .Too_Long, .Bytes, 0, i64(len(text)), i64(len(result)))
 	}
 	if !entry.taken {
 		entry.taken = true
 		taken = entry
 	}
 	copy(result, text)
-	return i64(len(text)), taken
+	return .Succeeded, i64(len(text)), taken
 }
 
 // reply keeps the reply to a taken request and the count of its acts, and
 // gives its entry.
-reply :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, serial: i64, text: string, acts: i64, error: ^errors.Error_Record) -> (result: i64, kept: ^Entry) {
+reply :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, serial: i64, text: string, acts: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, result: i64, kept: ^Entry) {
 	if !acts_for_principal {
-		return no_grant(error), nil
+		return no_grant(error), 0, nil
 	}
 	request := taken_request_of(conversation, serial)
 	if request == nil {
-		return errors.fail(error, ERROR_RESULT, .Absent, .Requests, 1, serial), nil
+		return refused(error, .Nothing_Has_That_Name, .Absent, .Requests, 1, serial)
 	}
 	if request.turn != .Waiting {
-		return errors.fail(error, ERROR_RESULT, .State, .Requests, 1, serial), nil
+		return refused(error, .Wrong_State, .State, .Requests, 1, serial)
 	}
 	if refused, refusal := text_refusal(error, 2, text, assistant_contract.REPLY_TEXT_BYTES); refused {
-		return refusal, nil
+		return refusal, 0, nil
 	}
 	if acts < 0 {
-		return errors.fail(error, ERROR_RESULT, .Bad_Value, .Records, 3, acts, assistant_contract.MODEL_ACT_CAPACITY), nil
+		return refused(error, .Argument_Refused, .Bad_Value, .Records, 3, acts, assistant_contract.MODEL_ACT_CAPACITY)
 	}
 	if acts > assistant_contract.MODEL_ACT_CAPACITY {
-		return errors.fail(error, ERROR_RESULT, .Too_Long, .Records, 3, acts, assistant_contract.MODEL_ACT_CAPACITY), nil
+		return refused(error, .Argument_Refused, .Too_Long, .Records, 3, acts, assistant_contract.MODEL_ACT_CAPACITY)
 	}
 	request.acts_counted = int(acts)
 	request.turn = acts == 0 ? .Ended : .Acts_Coming
 	kept = entry_add(conversation, .Reply, u64(serial))
 	kept.text_count = copy(kept.text[:], text)
-	return i64(kept.text_count), kept
+	return .Succeeded, i64(kept.text_count), kept
 }
 
 // reply_refused keeps the record of a reply that the runner refused at
 // its border; the turn of the request ends.
-reply_refused :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, serial, kind, unit, argument, value, limit: i64, error: ^errors.Error_Record) -> (result: i64, kept: ^Entry) {
+reply_refused :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, serial, kind, unit, argument, value, limit: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, result: i64, kept: ^Entry) {
 	if !acts_for_principal {
-		return no_grant(error), nil
+		return no_grant(error), 0, nil
 	}
 	request := taken_request_of(conversation, serial)
 	if request == nil {
-		return errors.fail(error, ERROR_RESULT, .Absent, .Requests, 1, serial), nil
+		return refused(error, .Nothing_Has_That_Name, .Absent, .Requests, 1, serial)
 	}
 	if request.turn != .Waiting {
-		return errors.fail(error, ERROR_RESULT, .State, .Requests, 1, serial), nil
+		return refused(error, .Wrong_State, .State, .Requests, 1, serial)
 	}
 	kind_member, kind_ok := errors.kind_of_word(kind)
 	if !kind_ok || kind_member == .None {
-		return errors.fail(error, ERROR_RESULT, .Bad_Value, .None, 2, kind), nil
+		return refused(error, .Argument_Refused, .Bad_Value, .None, 2, kind)
 	}
 	unit_member, unit_ok := errors.unit_of_word(unit)
 	if !unit_ok {
-		return errors.fail(error, ERROR_RESULT, .Bad_Value, .None, 3, unit), nil
+		return refused(error, .Argument_Refused, .Bad_Value, .None, 3, unit)
 	}
 	request.turn = .Ended
 	kept = entry_add(conversation, .Reply_Refused, u64(serial))
 	kept.error = errors.error_make(kind_member, unit_member, argument, value, limit)
-	return 1, kept
+	return .Succeeded, 1, kept
 }
 
 // act keeps an act that the reply to a request counted, with the names of
 // its one call as the runner parsed them, and gives its entry. The names
 // are both identifiers, or both empty for a line that is no single call.
-act :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, serial, kind: i64, line, service, export: string, error: ^errors.Error_Record) -> (result: i64, kept: ^Entry) {
+act :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, serial, kind: i64, line, service, export: string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, result: i64, kept: ^Entry) {
 	if !acts_for_principal {
-		return no_grant(error), nil
+		return no_grant(error), 0, nil
 	}
 	request := taken_request_of(conversation, serial)
 	if request == nil {
-		return errors.fail(error, ERROR_RESULT, .Absent, .Requests, 1, serial), nil
+		return refused(error, .Nothing_Has_That_Name, .Absent, .Requests, 1, serial)
 	}
 	// An act comes after the reply that counted it, and the turn ends with
 	// the last one: no act of a refused reply, and no act past the count.
 	if request.turn != .Acts_Coming || request.acts_given >= request.acts_counted {
-		return errors.fail(error, ERROR_RESULT, .State, .Records, 1, serial, i64(request.acts_counted)), nil
+		return refused(error, .Wrong_State, .State, .Records, 1, serial, i64(request.acts_counted))
 	}
 	act_kind, kind_ok := assistant_contract.act_kind_of_word(kind)
 	if !kind_ok {
-		return errors.fail(error, ERROR_RESULT, .Bad_Value, .None, 2, kind, i64(max(assistant_contract.Act_Kind))), nil
+		return refused(error, .Argument_Refused, .Bad_Value, .None, 2, kind, i64(max(assistant_contract.Act_Kind)))
 	}
 	if refused, refusal := text_refusal(error, 3, line, assistant_contract.ACT_LINE_BYTES); refused {
-		return refusal, nil
+		return refusal, 0, nil
 	}
 	named := len(service) > 0 || len(export) > 0
 	if named && !assistant_contract.act_name_valid(service) {
-		return errors.fail(error, ERROR_RESULT, .Bad_Value, .Bytes, 4, i64(len(service)), assistant_contract.ACT_NAME_BYTES), nil
+		return refused(error, .Argument_Refused, .Bad_Value, .Bytes, 4, i64(len(service)), assistant_contract.ACT_NAME_BYTES)
 	}
 	if named && !assistant_contract.act_name_valid(export) {
-		return errors.fail(error, ERROR_RESULT, .Bad_Value, .Bytes, 5, i64(len(export)), assistant_contract.ACT_NAME_BYTES), nil
+		return refused(error, .Argument_Refused, .Bad_Value, .Bytes, 5, i64(len(export)), assistant_contract.ACT_NAME_BYTES)
 	}
 	request.acts_given += 1
 	if request.acts_given == request.acts_counted {
@@ -404,49 +418,49 @@ act :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool
 	kept.line_count = copy(kept.line[:], line)
 	kept.service_count = copy(kept.service[:], service)
 	kept.export_count = copy(kept.export[:], export)
-	return i64(kept.act), kept
+	return .Succeeded, i64(kept.act), kept
 }
 
 // act_result keeps the outcome of the bridge for an act.
-act_result :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, act, state: i64, text: string, error: ^errors.Error_Record) -> (result: i64, kept: ^Entry) {
+act_result :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, act, state: i64, text: string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, result: i64, kept: ^Entry) {
 	if !acts_for_principal {
-		return no_grant(error), nil
+		return no_grant(error), 0, nil
 	}
 	entry := act_of(conversation, act)
 	if entry == nil {
-		return errors.fail(error, ERROR_RESULT, .Absent, .Records, 1, act), nil
+		return refused(error, .Nothing_Has_That_Name, .Absent, .Records, 1, act)
 	}
 	new_state, state_ok := assistant_contract.act_state_of_word(state)
 	if !state_ok || !assistant_contract.act_state_from_runner(new_state) {
-		return errors.fail(error, ERROR_RESULT, .Bad_Value, .None, 2, state), nil
+		return refused(error, .Argument_Refused, .Bad_Value, .None, 2, state)
 	}
 	// An act with no names has no act dialog: the bridge refuses a line
 	// that is no single call, so it never waits for the principal.
 	if new_state == .Awaiting_Principal && entry.service_count == 0 {
-		return errors.fail(error, ERROR_RESULT, .Bad_Value, .None, 2, state), nil
+		return refused(error, .Argument_Refused, .Bad_Value, .None, 2, state)
 	}
 	if !assistant_contract.act_state_changes(entry.state, new_state) {
-		return errors.fail(error, ERROR_RESULT, .State, .None, 1, act, i64(entry.state)), nil
+		return refused(error, .Wrong_State, .State, .None, 1, act, i64(entry.state))
 	}
 	if refused, refusal := text_refusal(error, 3, text, assistant_contract.REPLY_TEXT_BYTES); refused {
-		return refusal, nil
+		return refusal, 0, nil
 	}
 	entry.state = new_state
 	entry.text_count = copy(entry.text[:], text)
 	conversation.changed = true
-	return 1, entry
+	return .Succeeded, 1, entry
 }
 
 // act_state gives the state of an act.
-act_state :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, act: i64, error: ^errors.Error_Record) -> i64 {
+act_state :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, act: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, state: i64) {
 	if !acts_for_principal {
-		return no_grant(error)
+		return no_grant(error), 0
 	}
 	entry := act_of(conversation, act)
 	if entry == nil {
-		return errors.fail(error, ERROR_RESULT, .Absent, .Records, 1, act)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Records, 1, act)
 	}
-	return i64(entry.state)
+	return .Succeeded, i64(entry.state)
 }
 
 // The decision of the principal on an act, from the word of act_poll.
@@ -543,56 +557,56 @@ acts_waiting_step :: proc "contextless" (conversation: ^Conversation, port: Act_
 // result of an act"). The argument of a refusal: 1 the act, 2 the shape, 3
 // the name, 4 the total of rows, 5 the columns, 6 the cells; found is the
 // row of a column or a cell, from 1.
-act_table :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, act, shape_word: i64, name: string, total_rows: i64, columns: []assistant_contract.Act_Table_Column, cells: []assistant_contract.Act_Table_Cell, error: ^errors.Error_Record) -> (result: i64, kept: ^Entry) {
+act_table :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, act, shape_word: i64, name: string, total_rows: i64, columns: []assistant_contract.Act_Table_Column, cells: []assistant_contract.Act_Table_Cell, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, result: i64, kept: ^Entry) {
 	if !acts_for_principal {
-		return no_grant(error), nil
+		return no_grant(error), 0, nil
 	}
 	entry := act_of(conversation, act)
 	if entry == nil {
-		return errors.fail(error, ERROR_RESULT, .Absent, .Records, 1, act), nil
+		return refused(error, .Nothing_Has_That_Name, .Absent, .Records, 1, act)
 	}
 	if entry.state != .Done || entry.table.present {
-		return errors.fail(error, ERROR_RESULT, .State, .None, 1, act, i64(entry.state)), nil
+		return refused(error, .Wrong_State, .State, .None, 1, act, i64(entry.state))
 	}
 	shape, shape_ok := assistant_contract.act_table_shape_of_word(shape_word)
 	if !shape_ok {
-		return errors.fail(error, ERROR_RESULT, .Bad_Value, .None, 2, shape_word), nil
+		return refused(error, .Argument_Refused, .Bad_Value, .None, 2, shape_word)
 	}
 	// The name is in the call region, which the caller can change during
 	// the call: it is copied once into the staging copy, and the copy is
 	// checked.
 	if len(name) > assistant_contract.ACT_TABLE_NAME_BYTES {
-		return errors.fail(error, ERROR_RESULT, .Too_Long, .Bytes, 3, i64(len(name)), assistant_contract.ACT_TABLE_NAME_BYTES), nil
+		return refused(error, .Argument_Refused, .Too_Long, .Bytes, 3, i64(len(name)), assistant_contract.ACT_TABLE_NAME_BYTES)
 	}
 	staging := &conversation.staging
 	intrinsics.mem_zero(staging, size_of(Act_Table))
 	name_count := copy(staging.name[:], name)
 	if refused, refusal := text_refusal(error, 3, string(staging.name[:name_count]), assistant_contract.ACT_TABLE_NAME_BYTES); refused {
-		return refusal, nil
+		return refusal, 0, nil
 	}
 	column_count := len(columns)
 	if column_count == 0 {
-		return errors.fail(error, ERROR_RESULT, .Empty, .Records, 5, 0, assistant_contract.ACT_TABLE_COLUMN_CAPACITY), nil
+		return refused(error, .Argument_Refused, .Empty, .Records, 5, 0, assistant_contract.ACT_TABLE_COLUMN_CAPACITY)
 	}
 	if column_count > assistant_contract.ACT_TABLE_COLUMN_CAPACITY {
-		return errors.fail(error, ERROR_RESULT, .Too_Long, .Records, 5, i64(column_count), assistant_contract.ACT_TABLE_COLUMN_CAPACITY), nil
+		return refused(error, .Argument_Refused, .Too_Long, .Records, 5, i64(column_count), assistant_contract.ACT_TABLE_COLUMN_CAPACITY)
 	}
 	if len(cells) % column_count != 0 {
-		return errors.fail(error, ERROR_RESULT, .Bad_Value, .Records, 6, i64(len(cells)), i64(column_count)), nil
+		return refused(error, .Argument_Refused, .Bad_Value, .Records, 6, i64(len(cells)), i64(column_count))
 	}
 	row_count := len(cells) / column_count
 	if row_count > assistant_contract.ACT_TABLE_ROW_CAPACITY {
-		return errors.fail(error, ERROR_RESULT, .Too_Long, .Records, 6, i64(row_count), assistant_contract.ACT_TABLE_ROW_CAPACITY), nil
+		return refused(error, .Argument_Refused, .Too_Long, .Records, 6, i64(row_count), assistant_contract.ACT_TABLE_ROW_CAPACITY)
 	}
 	switch shape {
 	case .Record:
 		if row_count != 1 || total_rows != 1 {
-			return errors.fail(error, ERROR_RESULT, .Bad_Value, .Records, 6, i64(row_count), 1), nil
+			return refused(error, .Argument_Refused, .Bad_Value, .Records, 6, i64(row_count), 1)
 		}
 	case .Table:
 	}
 	if total_rows < i64(row_count) {
-		return errors.fail(error, ERROR_RESULT, .Bad_Value, .Records, 4, total_rows, i64(row_count)), nil
+		return refused(error, .Argument_Refused, .Bad_Value, .Records, 4, total_rows, i64(row_count))
 	}
 	for index in 0 ..< column_count {
 		// The copy of the record is read once; its words become the form
@@ -600,11 +614,11 @@ act_table :: proc "contextless" (conversation: ^Conversation, acts_for_principal
 		raw := intrinsics.volatile_load(&columns[index])
 		column_name, column_ok := assistant_contract.fixed_text(raw.name[:])
 		if !column_ok || column_name == "" {
-			return errors.fail(error, ERROR_RESULT, .Bad_Value, .Bytes, 5, 0, assistant_contract.ACT_TABLE_NAME_BYTES, i64(index + 1)), nil
+			return refused(error, .Argument_Refused, .Bad_Value, .Bytes, 5, 0, assistant_contract.ACT_TABLE_NAME_BYTES, i64(index + 1))
 		}
 		form, form_ok := column_form_of_words(raw.kind, raw.unit)
 		if !form_ok {
-			return errors.fail(error, ERROR_RESULT, .Bad_Value, .None, 5, raw.kind, raw.unit, i64(index + 1)), nil
+			return refused(error, .Argument_Refused, .Bad_Value, .None, 5, raw.kind, raw.unit, i64(index + 1))
 		}
 		staging.columns[index] = {name = raw.name, form = form}
 	}
@@ -618,7 +632,7 @@ act_table :: proc "contextless" (conversation: ^Conversation, acts_for_principal
 		// value and no text: each fact of a cell is in one place.
 		number := !form_is_text(staging.columns[index % column_count].form)
 		if !cell_ok || (number && text != "") || (!number && cell.integer != 0) {
-			return errors.fail(error, ERROR_RESULT, .Bad_Value, .Bytes, 6, 0, assistant_contract.ACT_TABLE_CELL_BYTES, i64(index / column_count + 1)), nil
+			return refused(error, .Argument_Refused, .Bad_Value, .Bytes, 6, 0, assistant_contract.ACT_TABLE_CELL_BYTES, i64(index / column_count + 1))
 		}
 	}
 	staging.present = true
@@ -628,5 +642,5 @@ act_table :: proc "contextless" (conversation: ^Conversation, acts_for_principal
 	staging.row_count = row_count
 	intrinsics.mem_copy_non_overlapping(&entry.table, staging, size_of(Act_Table))
 	conversation.changed = true
-	return 1, entry
+	return .Succeeded, 1, entry
 }

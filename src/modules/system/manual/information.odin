@@ -1,5 +1,6 @@
 package manual
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/value_kinds"
@@ -35,25 +36,29 @@ catalog :: proc "contextless" () -> information.Catalog {
 	return {image = image, replacements = system.replacements_read(replacement_table, &replacement_records)}
 }
 
-// table_count gives the count of a Table result: the count of rows, or a
-// negative error.
-// A failure writes the error record (src/library/modus/contract/errors): Absent (-1), the
-// module of the argument 1 breaks a rule of the format: Malformed (-2), with
-// the kind of the problem and the byte of the file, or the kernel refused a
-// report: Refused (-3), with the status.
+// table_count gives the pair of an export with a Table result: the count of
+// rows, or an outcome with its error record (src/library/modus/contract/errors):
+// Nothing_Has_That_Name with Absent, no module has the name of argument 1;
+// Data_Damaged with Damaged, the module of the boot image breaks a rule of
+// the format, with the kind of the problem and the byte of the file; or the
+// outcome of the kernel refusal of a report, with Refused and the status.
 @(private = "file")
-table_count :: proc "contextless" (count: int, problem: information.Problem, error: ^errors.Error_Record) -> i64 {
+table_count :: proc "contextless" (count: int, problem: information.Problem, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	switch problem.kind {
 	case .None:
-		return i64(count)
+		return .Succeeded, i64(count)
 	case .No_Module:
-		return errors.fail(error, -1, .Absent, .Modules, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Modules, 1)
 	case .Refused:
-		return errors.fail(error, -3, .Refused, .None, 0, 0, 0, i64(problem.value))
+		status, refusal := system.status_of_word(u32(problem.value))
+		if refusal.kind != 0 {
+			return call_outcome.fail(error, .Answer_Unreadable, .Refused, .None, 0, 0, 0, i64(problem.value))
+		}
+		return call_outcome.fail(error, system.outcome_of_own_status(status), .Refused, .None, 0, 0, 0, i64(problem.value))
 	case .Header, .Table, .Segment, .Entry, .Export, .Text, .Function, .Record, .Import_Slot, .Direction, .Enum, .Member_Text:
-		// Each of these is a fault of the module file.
+		// Each of these is a fault of the module file that the boot image holds.
 	}
-	return errors.fail(error, -2, .Malformed, .None, 1, i64(problem.kind), 0, i64(problem.offset))
+	return call_outcome.fail(error, .Data_Damaged, .Damaged, .None, 1, i64(problem.kind), 0, i64(problem.offset))
 }
 
 // modules gives one row for each module of the boot image: its name, its hash, its sizes (code, constants, data, zero), whether it has an entry, its counts of exports, imports and records.
@@ -71,12 +76,12 @@ modules :: proc "c" (result: ^[]information.Module) -> i64 {
 //
 // The module "" gives the exports of each module. The rows are records [`Export`](information.Export).
 //
-// **Result**: the count of rows, or a negative number with an error record:
+// **Result**: the count of rows, or a failure with its call outcome and an error record:
 //
-// - `Absent` (-1): no module has this name;
-// - `Malformed` (-2): the module breaks a rule of the format: `problem(name)` says where.
+// - `Absent`: no module has this name;
+// - `Damaged`: the module breaks a rule of the format: `problem(name)` says where.
 @(export, link_name = "exports")
-exports :: proc "c" (name: ^string, result: ^[]information.Export, error: ^errors.Error_Record) -> i64 {
+exports :: proc "c" (name: ^string, result: ^[]information.Export, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	count, problem := information.exports(catalog(), name^, result^)
 	return table_count(count, problem, error)
 }
@@ -86,12 +91,12 @@ exports :: proc "c" (name: ^string, result: ^[]information.Export, error: ^error
 // The module "" gives the imports of each module. The rows are records [`Import`](information.Import); a
 // replacement is explained in [the replacement of an import](docs/MODULE_CONTRACT.md#replacement-of-an-import).
 //
-// **Result**: the count of rows, or a negative number with an error record:
+// **Result**: the count of rows, or a failure with its call outcome and an error record:
 //
-// - `Absent` (-1): no module has this name;
-// - `Malformed` (-2): the module breaks a rule of the format.
+// - `Absent`: no module has this name;
+// - `Damaged`: the module breaks a rule of the format.
 @(export, link_name = "imports")
-imports :: proc "c" (name: ^string, result: ^[]information.Import, error: ^errors.Error_Record) -> i64 {
+imports :: proc "c" (name: ^string, result: ^[]information.Import, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	count, problem := information.imports(catalog(), name^, result^)
 	return table_count(count, problem, error)
 }
@@ -101,16 +106,16 @@ imports :: proc "c" (name: ^string, result: ^[]information.Import, error: ^error
 // An import that a replacement of the machine changes to this module is a row too. The rows are records
 // [`Import`](information.Import).
 //
-// **Result**: the count of rows, or a negative number with an error record:
+// **Result**: the count of rows, or a failure with its call outcome and an error record:
 //
-// - `Absent` (-1): no module has this name.
+// - `Absent`: no module has this name.
 @(export, link_name = "importers")
-importers :: proc "c" (name: ^string, result: ^[]information.Import, error: ^errors.Error_Record) -> i64 {
+importers :: proc "c" (name: ^string, result: ^[]information.Import, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	found, problem := information.find(catalog(), name^)
 	if problem.kind == .No_Module {
-		return errors.fail(error, -1, .Absent, .Modules, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Modules, 1)
 	}
-	return i64(information.importers(catalog(), found.hash, result^))
+	return .Succeeded, i64(information.importers(catalog(), found.hash, result^))
 }
 
 // exporters gives the exports with a name, in each module of the boot image: which modules export a function with this name.
@@ -140,29 +145,29 @@ described :: proc "c" (words: ^string, result: ^[]information.Export) -> i64 {
 // The name of the right is one of `Right`, as the console writes it. The rows are records
 // [`Export`](information.Export).
 //
-// **Result**: the count of rows, or a negative number with an error record:
+// **Result**: the count of rows, or a failure with its call outcome and an error record:
 //
-// - `Absent` (-1): no right has this name.
+// - `Absent`: no right has this name.
 @(export, link_name = "handles")
-handles :: proc "c" (right: ^string, result: ^[]information.Export, error: ^errors.Error_Record) -> i64 {
+handles :: proc "c" (right: ^string, result: ^[]information.Export, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	for name, which in sentence.right_names {
 		if name == right^ {
-			return i64(information.handles(catalog(), which, result^))
+			return .Succeeded, i64(information.handles(catalog(), which, result^))
 		}
 	}
-	return errors.fail(error, -1, .Absent, .None, 1)
+	return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .None, 1)
 }
 
 // import_slots gives one row for each import slot of a module, by name or by hash: the import and the export that the loader writes in it.
 //
 // The rows are records [`Import_Slot`](information.Import_Slot).
 //
-// **Result**: the count of rows, or a negative number with an error record:
+// **Result**: the count of rows, or a failure with its call outcome and an error record:
 //
-// - `Absent` (-1): no module has this name;
-// - `Malformed` (-2): the module breaks a rule of the format.
+// - `Absent`: no module has this name;
+// - `Damaged`: the module breaks a rule of the format.
 @(export, link_name = "import_slots")
-import_slots :: proc "c" (name: ^string, result: ^[]information.Import_Slot, error: ^errors.Error_Record) -> i64 {
+import_slots :: proc "c" (name: ^string, result: ^[]information.Import_Slot, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	count, problem := information.import_slots(catalog(), name^, result^)
 	return table_count(count, problem, error)
 }
@@ -171,12 +176,12 @@ import_slots :: proc "c" (name: ^string, result: ^[]information.Import_Slot, err
 //
 // The rows are records [`Segment`](information.Segment).
 //
-// **Result**: the count of rows, or a negative number with an error record:
+// **Result**: the count of rows, or a failure with its call outcome and an error record:
 //
-// - `Absent` (-1): no module has this name;
-// - `Malformed` (-2): the module breaks a rule of the format.
+// - `Absent`: no module has this name;
+// - `Damaged`: the module breaks a rule of the format.
 @(export, link_name = "segments")
-segments :: proc "c" (name: ^string, result: ^[]information.Segment, error: ^errors.Error_Record) -> i64 {
+segments :: proc "c" (name: ^string, result: ^[]information.Segment, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	count, problem := information.segments(catalog(), name^, result^)
 	return table_count(count, problem, error)
 }
@@ -188,14 +193,14 @@ segments :: proc "c" (name: ^string, result: ^[]information.Segment, error: ^err
 // [`Running`](information.Running). The field `writer` is `starter` for a record that the starter wrote, which
 // the process cannot change, and `process` for a record that the process wrote for itself.
 //
-// **Result**: the count of rows, or a negative number with an error record:
+// **Result**: the count of rows, or a failure with its call outcome and an error record:
 //
-// - `No_Grant` (-3): the caller does not act for the principal: a process sees no other process;
-// - `Refused` (-3): the kernel refused the report to this process, with its status.
+// - `No_Grant`: the caller does not act for the principal: a process sees no other process;
+// - `Refused`: the kernel refused the report to this process, with its status.
 @(export, link_name = "running")
-running :: proc "c" (result: ^[]information.Running, error: ^errors.Error_Record) -> i64 {
+running :: proc "c" (result: ^[]information.Running, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
-		return errors.fail(error, -3, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	count, problem := information.running(machine, catalog(), result^)
 	return table_count(count, problem, error)
@@ -208,14 +213,14 @@ running :: proc "c" (result: ^[]information.Running, error: ^errors.Error_Record
 // the module graph of the build, for what runs now. The rows are records
 // [`Edge`](information.Edge).
 //
-// **Result**: the count of rows, or a negative number with an error record:
+// **Result**: the count of rows, or a failure with its call outcome and an error record:
 //
-// - `No_Grant` (-3): the caller does not act for the principal;
-// - `Refused` (-3): the kernel refused the report to this process, with its status.
+// - `No_Grant`: the caller does not act for the principal;
+// - `Refused`: the kernel refused the report to this process, with its status.
 @(export, link_name = "edges")
-edges :: proc "c" (result: ^[]information.Edge, error: ^errors.Error_Record) -> i64 {
+edges :: proc "c" (result: ^[]information.Edge, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
-		return errors.fail(error, -3, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	count, problem := information.edges(machine, catalog(), result^)
 	return table_count(count, problem, error)
@@ -233,18 +238,17 @@ replacements :: proc "c" (result: ^[]information.Replacement) -> i64 {
 
 // problem gives the first rule of the format that a module breaks, by name or by hash, as a sentence: the table, the record and the byte of the file. The text is empty when the module keeps each rule.
 //
-// **Result**: the count of bytes of the sentence, 0 for a module that keeps each rule, or a negative number with an
-// error record:
+// **Result**: the count of bytes of the sentence, 0 for a module that keeps each rule, or a failure with its call outcome and an error record:
 //
-// - `Absent` (-1): no module of the boot image has this name or this hash.
+// - `Absent`: no module of the boot image has this name or this hash.
 @(export, link_name = "problem")
-problem :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+problem :: proc "c" (name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	found, problem := information.find(catalog(), name^)
 	if problem.kind == .No_Module {
-		return errors.fail(error, -1, .Absent, .Modules, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Modules, 1)
 	}
 	if problem.kind == .None {
-		return 0
+		return .Succeeded, 0
 	}
 	buffer: [256]u8
 	writer := system.Writer {

@@ -32,6 +32,13 @@ import "modustool:fuzz"
 // limit of the read back. The commits after the hidden one name its block
 // too, so the open takes the newest root with its damage: the object,
 // whose current version is the hidden write, is damaged.
+// A third machine starts from that image: a commit of pending changes on
+// the damaged object gives Data_Damaged and keeps them, as the contract of
+// the storage service says (storage_status.commit_refusal_drops_pending):
+// a read of the range gives them, and a second commit is refused as
+// damaged again, not for no pending change. A whole write then replaces
+// the damage, and the commit after it is the race of the pending changes:
+// they are dropped (docs/STORAGE.md, 4.6, "Ranges").
 
 DROPPED_WRITE_MARKER :: "the version that the disk drops"
 DROPPED_WRITE_HIDDEN_MARKER :: "the version that the cache of the disk hides"
@@ -40,11 +47,51 @@ DROPPED_WRITE_FIRST_VERSION :: "the version that the disk keeps"
 DROPPED_WRITE_OBJECT :: "kept"
 DROPPED_WRITE_STORE :: "console" // The private store of the console.
 TEST_DROPPED_WRITE_DISK :: foundation.BUILD_FOLDER + "/test_dropped_write_disk.img"
+TEST_DROPPED_WRITE_DAMAGED_DISK :: foundation.BUILD_FOLDER + "/test_dropped_write_damaged_disk.img"
+// The pending change on the damaged object: past its one block, so the
+// range write reads no block of the damaged state.
+DROPPED_WRITE_PENDING_OFFSET :: "4096"
+DROPPED_WRITE_PENDING :: "the pending change of the damaged object"
+DROPPED_WRITE_PENDING_SIZE :: "4136" // 4096 and the 40 bytes of DROPPED_WRITE_PENDING.
+DROPPED_WRITE_REPLACEMENT :: "the version that replaces the damage"
+DROPPED_WRITE_COMMIT_DAMAGED :: "[console] error: storage.commit: the object of the argument name is damaged: a block of it has a wrong check"
+DROPPED_WRITE_COMMIT_RACE :: "[console] error: storage.commit: the argument name: another change of the object came first since its first pending change, so its pending changes are dropped"
+DROPPED_WRITE_COMMIT_NOTHING :: "[console] error: storage.commit: the argument name: the object has no pending change on this connection"
 TEST_OUTPUT_DROPPED_WRITE :: foundation.BUILD_FOLDER + "/test_output_dropped_write_%d.txt"
 
 // The line of the open when the newest root names a wrong block and the
 // root before it names none (src/modules/system/storage/main.odin).
 DROPPED_WRITE_FALLBACK_LINE :: "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used"
+
+// The third machine, on the durable image at the end of the first one.
+scenario_dropped_write_damaged := [?]Step {
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "storage: ok, generation ", any_order = true},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "connect(\"storage\")"},
+	{kind = .Wait, text = "[console]   module     storage"},
+	{kind = .Type, text = "storage.write_range(0, \"" + DROPPED_WRITE_OBJECT + "\", " + DROPPED_WRITE_PENDING_OFFSET + ", \"" + DROPPED_WRITE_PENDING + "\")"},
+	{kind = .Wait, text = "[console] " + DROPPED_WRITE_PENDING_SIZE},
+	{kind = .Type, text = "storage.commit(0, \"" + DROPPED_WRITE_OBJECT + "\")"},
+	{kind = .Wait, text = DROPPED_WRITE_COMMIT_DAMAGED, fails_on = DROPPED_WRITE_COMMIT_NOTHING},
+	// The pending changes stay: the connection reads them, and the commit
+	// is refused for the damage again.
+	{kind = .Type, text = "storage.read_range(0, \"" + DROPPED_WRITE_OBJECT + "\", " + DROPPED_WRITE_PENDING_OFFSET + ")"},
+	{kind = .Wait, text = "[console] " + DROPPED_WRITE_PENDING},
+	{kind = .Type, text = "storage.commit(0, \"" + DROPPED_WRITE_OBJECT + "\")"},
+	{kind = .Wait, text = DROPPED_WRITE_COMMIT_DAMAGED, fails_on = DROPPED_WRITE_COMMIT_NOTHING},
+	// A whole write replaces the damaged state: it is another change of
+	// the object, so the commit of the pending changes is the race.
+	{kind = .Type, text = "storage.write(0, \"" + DROPPED_WRITE_OBJECT + "\", \"" + DROPPED_WRITE_REPLACEMENT + "\")"},
+	{kind = .Wait, text = "> storage.write(0, \"" + DROPPED_WRITE_OBJECT + "\", \"" + DROPPED_WRITE_REPLACEMENT + "\")"},
+	{kind = .Type, text = "storage.commit(0, \"" + DROPPED_WRITE_OBJECT + "\")"},
+	{kind = .Wait, text = DROPPED_WRITE_COMMIT_RACE, fails_on = DROPPED_WRITE_COMMIT_DAMAGED},
+	{kind = .Type, text = "storage.read(0, \"" + DROPPED_WRITE_OBJECT + "\")"},
+	{kind = .Wait, text = "[console] " + DROPPED_WRITE_REPLACEMENT, fails_on = "[console] " + DROPPED_WRITE_PENDING},
+	{kind = .Type, text = "storage.commit(0, \"" + DROPPED_WRITE_OBJECT + "\")"},
+	{kind = .Wait, text = DROPPED_WRITE_COMMIT_NOTHING},
+	{kind = .Quit},
+}
 
 // The first machine. Each line of the console commits the line history
 // after it, and a refused commit takes no generation: the dropped write is
@@ -186,6 +233,10 @@ dropped_write_run :: proc(part: ^Test_Part_Run) -> bool {
 	}
 	foundation.test_passed_print("the dropped write: the disk answered Ok to the write of block %d and did not keep it; the read back refused that commit before its root; the disk dropped the root of a later commit, and the read back of the root refused it; the object %s read its first version after each, with no restart", server.dropped_block, DROPPED_WRITE_OBJECT)
 	foundation.test_passed_print("the dropped write: the disk hid the loss of block %d from the read back; the open on the host of the image at the root of generation %d refuses that root and uses the generation %d, with 0 wrong blocks; the image at the end opens its generation %d with the object %s damaged, the limit of the read back", server.hidden_block, hidden_commit, before, end_generation, DROPPED_WRITE_OBJECT)
+	if err := os.write_entire_file(TEST_DROPPED_WRITE_DAMAGED_DISK, server.durable); err != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", TEST_DROPPED_WRITE_DAMAGED_DISK, err)
+		return false
+	}
 	if err := os.write_entire_file(TEST_DROPPED_WRITE_DISK, server.durable_at_hidden_root); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", TEST_DROPPED_WRITE_DISK, err)
 		return false
@@ -205,5 +256,13 @@ dropped_write_run :: proc(part: ^Test_Part_Run) -> bool {
 	append(&second, Step{kind = .Type, text = "storage.read(0, \"" + DROPPED_WRITE_OBJECT + "\")"})
 	append(&second, Step{kind = .Wait, text = "[console] " + DROPPED_WRITE_FIRST_VERSION, fails_on = "[console] " + DROPPED_WRITE_MARKER})
 	append(&second, Step{kind = .Quit})
-	return machine_test(part, second[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DROPPED_WRITE, 2), exit_status = 0, data_disk = TEST_DROPPED_WRITE_DISK})
+	if !machine_test(part, second[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DROPPED_WRITE, 2), exit_status = 0, data_disk = TEST_DROPPED_WRITE_DISK}) {
+		return false
+	}
+	// The third machine: a commit on the damaged object.
+	if !machine_test(part, scenario_dropped_write_damaged[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DROPPED_WRITE, 3), exit_status = 0, data_disk = TEST_DROPPED_WRITE_DAMAGED_DISK}) {
+		return false
+	}
+	foundation.test_passed_print("the dropped write: on the image at the end, a commit of a pending change on the damaged object %s is refused as damaged and keeps it: the connection reads it, and a second commit is refused as damaged again; after a whole write of the object, the commit drops it as another change that came first", DROPPED_WRITE_OBJECT)
+	return true
 }

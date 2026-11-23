@@ -266,7 +266,7 @@ the_enums_of_a_fact_name_their_members :: proc(t: ^testing.T) {
 	put_word(values[:], 40, u64(max(op.Status)) + 1)
 	count, _, refusal := fact_sentence_write(file, KINDS_KEY, values[:], sentence[:], runs[:])
 	testing.expect_value(t, refusal, Fact_Render_Refusal.None)
-	expected_unknown := "a 0000000000000000 p 0.00 s 0.0 us k 41 u 18446744073709551615 t "
+	expected_unknown := "a 0000000000000000 p 0.00 s 0.0 us k 43 u 18446744073709551615 t "
 	testing.expectf(t, len(sentence[:count]) > len(expected_unknown) && string(sentence[:len(expected_unknown)]) == expected_unknown, "the sentence is %q", string(sentence[:count]))
 	put_word(values[:], 24, u64(errors.Kind.Too_Long))
 	put_word(values[:], 32, u64(errors.Unit.Bytes))

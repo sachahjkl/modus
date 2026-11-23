@@ -14,6 +14,7 @@ package scheduler
 
 import "base:intrinsics"
 import "internal:scheduler/share_order"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
@@ -490,7 +491,7 @@ acts_for_principal :: proc "contextless" () -> bool {
 //   a process with no setting. A process has at most 32 threads, so 32 is
 //   the least weight that gives each thread a weight of 1 or more.
 //
-// The result is the process weight that the name had. It fails with -1 and
+// The result is the process weight that the name had. It fails with its call outcome and
 // an error record, and no setting changes:
 //
 // - `No_Grant`: the caller does not act for the principal;
@@ -503,21 +504,21 @@ acts_for_principal :: proc "contextless" () -> bool {
 // Example: `scheduler.share("paint", 256)` gives the process `paint` a
 // quarter of the weight of another process.
 @(export, link_name = "share")
-share :: proc "c" (name: ^string, weight: i64, error: ^errors.Error_Record) -> i64 {
+share :: proc "c" (name: ^string, weight: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, -1, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if len(name) == 0 {
-		return errors.fail(error, -1, .Empty, .Bytes, 1, 0, PROCESS_NAME_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, 1, 0, PROCESS_NAME_LIMIT)
 	}
 	if len(name) > PROCESS_NAME_LIMIT {
-		return errors.fail(error, -1, .Too_Long, .Bytes, 1, i64(len(name)), PROCESS_NAME_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(name)), PROCESS_NAME_LIMIT)
 	}
 	if weight < PROCESS_WEIGHT_LEAST {
-		return errors.fail(error, -1, .Too_Small, .None, 2, weight, PROCESS_WEIGHT_LEAST)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .None, 2, weight, PROCESS_WEIGHT_LEAST)
 	}
 	if weight > op.WEIGHT_FULL {
-		return errors.fail(error, -1, .Bad_Value, .None, 2, weight, op.WEIGHT_FULL)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, weight, op.WEIGHT_FULL)
 	}
 	system.lock(&policy_lock)
 	defer system.unlock(&policy_lock)
@@ -551,9 +552,9 @@ share :: proc "c" (name: ^string, weight: i64, error: ^errors.Error_Record) -> i
 		}
 		free.weight = u32(weight)
 	case:
-		return errors.fail(error, -1, .Full, .None, 1, 0, SETTING_CAPACITY)
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .None, 1, 0, SETTING_CAPACITY)
 	}
-	return before
+	return .Succeeded, before
 }
 
 // policy turns the share policy on or off.
@@ -569,21 +570,21 @@ share :: proc "c" (name: ^string, weight: i64, error: ^errors.Error_Record) -> i
 // - **on**: 1 turns the policy on, 0 turns it off.
 //
 // The result is 1 when the policy was on before the call, else 0. It fails
-// with -1 and an error record:
+// with its call outcome and an error record:
 //
 // - `No_Grant`: the caller does not act for the principal;
 // - `Bad_Value`: on is not 0 or 1.
 //
 // Example: `scheduler.policy(1)`.
 @(export, link_name = "policy")
-policy :: proc "c" (on: i64, error: ^errors.Error_Record) -> i64 {
+policy :: proc "c" (on: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, -1, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if on != 0 && on != 1 {
-		return errors.fail(error, -1, .Bad_Value, .None, 1, on, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, on, 1)
 	}
-	return i64(policy_set(on == 1))
+	return .Succeeded, i64(policy_set(on == 1))
 }
 
 // The processes of the case: four processes of the file of this process,

@@ -84,11 +84,12 @@ store_failed :: proc "contextless" (kind: store_work.Request_Kind, status: stora
 		system.log_fact(.Info, Call_Refused{})
 		return .Refused
 	case .Ok:
-		// An answer Ok with a negative number: no export gives it, and the
-		// window takes it as a refusal.
+		// No failed call gives Ok: the window takes it as a refusal.
 		system.log_fact(.Info, Call_Refused{})
 		return .Refused
-	case .Failed:
+	case .Failed, .Absent:
+		// A name that names nothing is the answer of one call, with its
+		// record, as each other failure of the export.
 	}
 	fields := errors.error_record_fact_fields(error^)
 	switch kind {

@@ -1,5 +1,6 @@
 package console
 
+import "modus:contract/call_outcome"
 import "modus:contract/blake3"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
@@ -628,7 +629,7 @@ list_page_ready :: proc "contextless" () -> bool {
 		fail_no_answer()
 		return false
 	}
-	if status, _ := system.status_of_word(completion.kind); status != .Ok {
+	if outcome, _ := call_outcome.completion_outcome(completion.kind, completion.values); outcome != .Succeeded {
 		fail_root("the list page of the root service: ", completion)
 		return false
 	}
@@ -768,7 +769,7 @@ stream_wire :: proc "contextless" (stream: ^Line_Stream) -> bool {
 		fail_no_answer()
 		return false
 	}
-	if status, _ := system.status_of_word(completion.kind); status != .Ok {
+	if outcome, _ := call_outcome.completion_outcome(completion.kind, completion.values); outcome != .Succeeded {
 		fail_root(scratch_text("cannot read ", stream.owner, ".", stream.stream_name, ": "), completion)
 		return false
 	}
@@ -1594,7 +1595,7 @@ start_with_list :: proc "contextless" (name: string, list: Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if status, _ := system.status_of_word(completion.kind); status != .Ok {
+	if outcome, _ := call_outcome.completion_outcome(completion.kind, completion.values); outcome != .Succeeded {
 		return fail_root(scratch_text("start: ", name, ": "), completion)
 	}
 	process := system.Handle(completion.values[0])

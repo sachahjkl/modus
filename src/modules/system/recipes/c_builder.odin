@@ -15,6 +15,7 @@ package recipes_service
 
 import "internal:recipes/recipes_core"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
@@ -56,7 +57,8 @@ C_Build_Work :: struct {
 	source_memory: system.Handle,
 	source:        []u8,
 	step:          C_Build_Step,
-	error:         errors.Error_Record,
+	outcome:       call_outcome.Call_Outcome, // The outcome that build_c gives for the failed step.
+	error:         errors.Error_Record, // The record of the step, with the kind that the step gave: the log keeps it.
 }
 
 c_builder: C_Builder
@@ -106,10 +108,15 @@ c_builder_values :: proc "contextless" (seed: blake3.Hash) -> (values: [op.CONTE
 	return values
 }
 
-// c_build_fail writes the step and the error record of a failed step.
+// c_build_fail writes the step, the outcome and the error record of a
+// failed step. The build keeps nothing of a failed step, so no outcome is
+// in doubt: a compiler or an assembler that fails, or that gives a result
+// that this service does not take, is a party that the build needs, and
+// gives Callee_Unavailable.
 @(private = "file")
-c_build_fail :: proc "contextless" (work: ^C_Build_Work, step: C_Build_Step, record: errors.Error_Record) {
+c_build_fail :: proc "contextless" (work: ^C_Build_Work, step: C_Build_Step, record: errors.Error_Record, outcome: call_outcome.Call_Outcome = .Callee_Unavailable) {
 	work.step = step
+	work.outcome = outcome
 	work.error = record
 }
 
@@ -124,34 +131,30 @@ c_builder_call :: proc "contextless" (work: ^C_Build_Work, file: []u8, name: str
 	load_error: module.Load_Error
 	connection, status := system.call_host_start(c_builder.image, c_builder.image_memory, file, name, c_builder_values(seed), &load_error)
 	if status != .Ok {
-		c_build_fail(work, start_step, errors.error_make(.Refused, .None, 0, 0, 0, i64(status)))
+		c_build_fail(work, start_step, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(status)))
 		return 0, false
 	}
 	defer system.call_connection_end(&connection)
 	export := module.export_find(file, export_name)
 	if export == 0 {
-		c_build_fail(work, call_step, errors.error_make(.Absent, .None))
+		c_build_fail(work, call_step, errors.error_make(.Unsupported, .Modules), .Operation_Unsupported)
 		return 0, false
 	}
 	call_error: errors.Error_Record
-	called, call_result := system.call_isolated(&connection, file, export, arguments, &call_error, keep_memory_objects = true, deadline = system.answer_deadline(system.time()))
-	switch call_result {
-	case .Ok:
-	case .Deadline_Passed:
+	called, outcome := system.call_isolated(&connection, file, export, arguments, &call_error, keep_memory_objects = true, deadline = system.answer_deadline(system.time()))
+	switch {
+	case outcome == .Succeeded:
+		return called, true
+	case outcome == .Deadline_Passed_During_The_Call:
+		// The end of the call host stops it: nothing of the step stays.
 		c_build_fail(work, call_step, errors.error_make(.No_Answer, .Milliseconds, 0, 0, system.ANSWER_BOUND_MILLISECONDS))
-		return 0, false
-	case .Failed, .Failed_With_Wrong_Details, .Refused, .Wrong_Answer:
-		c_build_fail(work, call_step, call_error.kind != 0 ? call_error : errors.error_make(.Refused, .None, 0, 0, 0, i64(call_result)))
-		return 0, false
-	case .Lend_Failed, .No_Room, .Ring_Full, .Stopped, .Not_Done:
-		c_build_fail(work, call_step, errors.error_make(.Refused, .None, 0, 0, 0, i64(call_result)))
-		return 0, false
-	}
-	if called < 0 {
+	case system.connection_to_renew(outcome):
 		c_build_fail(work, call_step, call_error)
-		return 0, false
+	case:
+		// The step refused its input, and the build keeps nothing.
+		c_build_fail(work, call_step, call_error, call_outcome.outcome_passed_on(outcome, false))
 	}
-	return called, true
+	return 0, false
 }
 
 // c_builder_invoke is the builder of build_recipe: the source to the text
@@ -163,7 +166,7 @@ c_builder_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, out_p
 	work := (^C_Build_Work)(user_data)
 	text_memory, text_status := system.memory_create(C_TEXT_PAGES)
 	if text_status != .Ok {
-		c_build_fail(work, .Compile, errors.error_make(.Refused, .None, 0, 0, 0, i64(text_status)))
+		c_build_fail(work, .Compile, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(text_status)), system.outcome_of_own_status(text_status))
 		return 0, false
 	}
 	defer system.close(text_memory)
@@ -177,14 +180,14 @@ c_builder_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, out_p
 	}
 	text_address, text_map_status := system.memory_map(text_memory, {})
 	if text_map_status != .Ok {
-		c_build_fail(work, .Compile, errors.error_make(.Refused, .None, 0, 0, 0, i64(text_map_status)))
+		c_build_fail(work, .Compile, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(text_map_status)), system.outcome_of_own_status(text_map_status))
 		return 0, false
 	}
 	defer system.memory_unmap(text_address)
 	text := ([^]u8)(text_address)[:text_size]
 	module_memory, module_status := system.memory_create(C_MODULE_PAGES)
 	if module_status != .Ok {
-		c_build_fail(work, .Assemble, errors.error_make(.Refused, .None, 0, 0, 0, i64(module_status)))
+		c_build_fail(work, .Assemble, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(module_status)), system.outcome_of_own_status(module_status))
 		return 0, false
 	}
 	defer system.close(module_memory)
@@ -196,7 +199,7 @@ c_builder_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, out_p
 	}
 	module_address, module_map_status := system.memory_map(module_memory, {})
 	if module_map_status != .Ok {
-		c_build_fail(work, .Assemble, errors.error_make(.Refused, .None, 0, 0, 0, i64(module_map_status)))
+		c_build_fail(work, .Assemble, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(module_map_status)), system.outcome_of_own_status(module_map_status))
 		return 0, false
 	}
 	copy(out_payload, ([^]u8)(module_address)[:module_size])

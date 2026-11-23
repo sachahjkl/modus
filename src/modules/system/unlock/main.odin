@@ -118,6 +118,7 @@
 package unlock
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/text_encoding"
@@ -150,11 +151,16 @@ Argon2id_Cost :: struct {
 }
 
 foreign _ {
-	argon2id :: proc "c" (password, salt: ^string, cost: ^Argon2id_Cost, work: ^system.Bytes_To_Change, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	open_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	x25519 :: proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
-	ed25519_public_key :: proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
+	@(require_results)
+	argon2id :: proc "c" (password, salt: ^string, cost: ^Argon2id_Cost, work: ^system.Bytes_To_Change, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	open_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, sealed: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	x25519 :: proc "c" (scalar, point: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	@(require_results)
+	ed25519_public_key :: proc "c" (secret: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 }
 
 WIDTH :: 520
@@ -352,8 +358,8 @@ record_give :: proc "contextless" () -> bool {
 	key := transmute([4]u64)signing_public_key
 	packed := principals.name_pack(the_name())
 	completion, answered := root_command(.Principal_Record, {key[0], key[1], key[2], key[3], packed[0], packed[1], packed[2]})
-	if !answered || system.Status(completion.kind) != .Ok {
-		system.log_fact(.Info, Record_Not_Taken{status = status_field(completion.kind), principal_name = principal_name_field()})
+	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+		system.log_fact(.Info, Record_Not_Taken{outcome = outcome_field(completion.kind), principal_name = principal_name_field()})
 		return false
 	}
 	number = completion.values[0]
@@ -373,8 +379,8 @@ derive :: proc "contextless" (passphrase: []u8, salt_bytes: []u8, key: ^[princip
 		lanes            = 1,
 		tag_bytes        = principals.KEY_SIZE,
 	}
-	count := argon2id(&password, &salt, &cost, &work, &result, &error)
-	if count != principals.KEY_SIZE {
+	outcome, count := argon2id(&password, &salt, &cost, &work, &result, &error)
+	if outcome != .Succeeded || count != principals.KEY_SIZE {
 		system.log_fact(.Info, Derivation_Refused{error_kind = error.kind, error_argument = error.argument})
 		return false
 	}
@@ -386,7 +392,7 @@ public_keys_of :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8)
 	error: errors.Error_Record
 	seed := string(secrets^[:32])
 	signing_result := signing[:]
-	if ed25519_public_key(&seed, &signing_result, &error) != 32 {
+	if crypto_outcome, crypto_count := ed25519_public_key(&seed, &signing_result, &error); crypto_outcome != .Succeeded || crypto_count != 32 {
 		return {}, {}, false
 	}
 	base_point: [32]u8
@@ -394,7 +400,7 @@ public_keys_of :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8)
 	scalar := string(secrets^[32:])
 	point := string(base_point[:])
 	unlocking_result := unlocking[:]
-	if x25519(&scalar, &point, &unlocking_result, &error) != 32 {
+	if crypto_outcome, crypto_count := x25519(&scalar, &point, &unlocking_result, &error); crypto_outcome != .Succeeded || crypto_count != 32 {
 		return {}, {}, false
 	}
 	return signing, unlocking, true
@@ -479,7 +485,7 @@ passphrase_file_seal :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SI
 	additional := string(principals.file_additional_data(sealed_bytes))
 	text := string(secrets^[:])
 	sealed := sealed_file.sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.SEALED_SIZE {
 		message, message_failed = "The keys were not sealed: cryptography refused the seal.", true
 		return 0, false
 	}
@@ -523,7 +529,7 @@ principal_keys_open :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZ
 	additional := string(principals.file_additional_data(&file_bytes))
 	sealed := string(file.sealed[:])
 	result := secrets^[:]
-	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.SECRET_KEYS_SIZE {
+	if crypto_outcome, crypto_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error); crypto_outcome != .Succeeded || crypto_count != principals.SECRET_KEYS_SIZE {
 		return .Wrong
 	}
 	// The secret keys must be the keys of the record: a file whose public
@@ -593,8 +599,8 @@ machine_key_give :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SI
 	defer erase(table_key[:])
 	defer erase(([^]u8)(rawptr(&values))[:size_of(values)])
 	completion, answered := root_command(.Machine_Key, {values[0], values[1], values[2], values[3], u64(origin), 0, 0})
-	if !answered || system.Status(completion.kind) != .Ok {
-		system.log_fact(.Info, Machine_Table_Key_Not_Taken{status = status_field(completion.kind)})
+	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+		system.log_fact(.Info, Machine_Table_Key_Not_Taken{outcome = outcome_field(completion.kind)})
 		return false
 	}
 	return true
@@ -675,7 +681,7 @@ machine_passphrase_alone_try :: proc "contextless" () {
 	additional := string(principals.machine_file_additional_data(&machine_file_bytes))
 	sealed := string(machine_file.sealed[:])
 	result := machine_key[:]
-	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.MACHINE_KEY_SIZE {
+	if crypto_outcome, crypto_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error); crypto_outcome != .Succeeded || crypto_count != principals.MACHINE_KEY_SIZE {
 		machine_refusals += 1
 		system.log_fact(.Info, Machine_Passphrase_Wrong{refusals = machine_refusals})
 		message, message_failed = "Wrong passphrase: nothing is opened.", true
@@ -735,7 +741,7 @@ machine_passphrase_alone_create :: proc "contextless" () {
 	additional := string(principals.machine_file_additional_data(&machine_file_bytes))
 	text := string(machine_key[:])
 	sealed := machine_file.sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.MACHINE_SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.MACHINE_SEALED_SIZE {
 		message, message_failed = "The key was not sealed: cryptography refused the seal.", true
 		return
 	}
@@ -819,12 +825,12 @@ tpm_service_runs :: proc "contextless" () -> bool {
 // tpm_request sends one command to the TPM service and waits for its
 // completion. The stop of the service is an event of this thread, as it
 // holds the handle of the service: the wait ends at once, and no TPM is
-// asked again in this run. status is the member of the status of the
-// completion, read only when answered.
-tpm_request :: proc "contextless" (command: tpm_service.Command, values: [7]u64) -> (completion: ring.Record, status: tpm_service.Status, answered: bool) {
+// asked again in this run. outcome is the call outcome of the completion
+// and record the error record of a failure, read only when answered.
+tpm_request :: proc "contextless" (command: tpm_service.Command, values: [7]u64) -> (completion: ring.Record, outcome: call_outcome.Call_Outcome, record: errors.Error_Record, answered: bool) {
 	tpm_tag += 1
 	if !system.send(&tpm_requests.commands, ring.Record{kind = u32(command), tag = tpm_tag, values = values}) {
-		return {}, {}, false
+		return {}, .Callee_Unavailable, {}, false
 	}
 	reports := tpm_service.wait_reports_start(system.time())
 	limit := reports.started + TPM_ANSWER_LIMIT
@@ -835,20 +841,19 @@ tpm_request :: proc "contextless" (command: tpm_service.Command, values: [7]u64)
 			if record.tag != tpm_tag {
 				continue
 			}
-			// The one border of the status: a word that names no status is
-			// no answer that this process can read. It is said here, and the
-			// caller takes it as no answer.
-			read, read_ok := tpm_service.status_of_word(record.kind)
-			if !read_ok {
-				system.log_fact(.Info, Tpm_Status_Unknown{status_word = u64(record.kind), command = u64(command)})
-				return record, {}, false
+			// The one border of the completion: an answer that this process
+			// cannot read is said here, and the caller takes it as no answer.
+			read, failure := call_outcome.completion_outcome(record.kind, record.values)
+			if read == .Answer_Unreadable {
+				system.log_fact(.Info, Tpm_Status_Unknown{outcome_word = u64(record.kind), command = u64(command)})
+				return record, read, failure, false
 			}
-			return record, read, true
+			return record, read, failure, true
 		}
 		if !tpm_service_runs() {
 			system.log_fact(.Info, Tpm_Service_Stopped_During_Request{})
 			has_tpm = false
-			return {}, {}, false
+			return {}, .Callee_Unavailable, {}, false
 		}
 		system.wait_records(&wait, &tpm_requests.completions)
 		// The wait wakes at its bound or at its next wait report,
@@ -858,7 +863,7 @@ tpm_request :: proc "contextless" (command: tpm_service.Command, values: [7]u64)
 		now := system.wait_end(&wait, min(limit, tpm_service.wait_report_next(reports)))
 		if now >= limit {
 			system.log_fact(.Warning, Tpm_Wait_Bound_Reached{waited_milliseconds = now - reports.started, tpm_request = request_words})
-			return {}, {}, false
+			return {}, .Deadline_Passed_During_The_Call, {}, false
 		}
 		if due, passed_seconds := tpm_service.wait_report_due(&reports, now); due {
 			system.log_fact(.Warning, Tpm_Wait_Passed{passed_seconds = passed_seconds, waited_milliseconds = now - reports.started, tpm_request = request_words})
@@ -866,37 +871,43 @@ tpm_request :: proc "contextless" (command: tpm_service.Command, values: [7]u64)
 	}
 }
 
-// tpm_refusal_log writes why the TPM service did not do a request. status
-// is read only when answered.
-tpm_refusal_log :: proc "contextless" (what: string, completion: ring.Record, status: tpm_service.Status, answered: bool) {
+// tpm_refusal_log writes why the TPM service did not do a request, from its
+// outcome and its record (tpm_service, "The kind of a completion record").
+// outcome is read only when answered.
+tpm_refusal_log :: proc "contextless" (what: string, outcome: call_outcome.Call_Outcome, record: errors.Error_Record, answered: bool) {
 	if !answered {
 		system.log_fact(.Info, Tpm_No_Answer{request = request_field(what)})
 		return
 	}
-	switch status {
-	case .Ok:
+	switch outcome {
+	case .Succeeded:
 		// No refusal: nothing to write.
-	case .Policy_Fails:
+	case .Wrong_State:
 		system.log_fact(.Info, Tpm_Policy_Fails{request = request_field(what)})
-	case .Refused:
-		system.log_fact(.Info, Tpm_Refused_With_Response_Code{response_code = sixteen_digits_field(completion.values[0]), command_code = sixteen_digits_field(completion.values[1]), request = request_field(what)})
-	case .Device_Error:
-		// .None is no failed step: a Device_Error with it names no step.
-		if step, step_ok := tpm_service.device_step_of_word(completion.values[0]); step_ok && step != .None {
+	case .Callee_Unavailable:
+		if record.kind != i64(errors.Kind.Device) {
+			system.log_fact(.Info, Tpm_Refused_With_Response_Code{response_code = sixteen_digits_field(cast(u64)record.found), command_code = sixteen_digits_field(cast(u64)record.value), request = request_field(what)})
+		} else if step, step_ok := tpm_service.device_step_of_word(cast(u64)record.found); step_ok && step != .None {
+			// .None is no failed step: a failure of the device with it
+			// names no step.
 			system.log_fact(.Info, Tpm_Interface_Failed{request = request_field(what), step = step_field(step)})
 		} else {
-			system.log_fact(.Info, Tpm_Interface_Step_Unknown{step_word = completion.values[0], request = request_field(what)})
+			system.log_fact(.Info, Tpm_Interface_Step_Unknown{step_word = cast(u64)record.found, request = request_field(what)})
 		}
-	case .Not_Authentic:
-		system.log_fact(.Info, Tpm_Not_Authentic{request = request_field(what)})
-	case .Authorization_Fails, .Locked_Out:
+	case .Argument_Refused:
+		// A wrong authorization value: the caller says it, with the name
+		// of the principal.
+		if record.kind == i64(errors.Kind.Not_Authentic) && !tpm_service.unseal_authorization_wrong(outcome, record) {
+			system.log_fact(.Info, Tpm_Not_Authentic{request = request_field(what)})
+		}
+	case .Callee_Busy:
 		// The caller says it, with the name of the principal.
-	case .Bad_Command:
-		system.log_fact(.Info, Tpm_Bad_Command{request = request_field(what)})
-	case .Measure_Limit:
+	case .Budget_Or_Capacity_Exhausted:
 		// Only a command of the measure ring of the root service gets it:
 		// from the TPM ring it is no answer to this request.
 		system.log_fact(.Info, Tpm_Measure_Limit_Status{request = request_field(what)})
+	case .Data_Damaged, .Grant_Or_Right_Missing, .Operation_Unsupported, .Nothing_Has_That_Name, .Name_Already_Taken, .Another_Change_Came_First, .Stopped_After_A_Partial_Change, .Callee_Stopped_During_The_Call, .Connection_Ended_During_The_Call, .Deadline_Passed_During_The_Call, .Answer_Unreadable:
+		system.log_fact(.Info, Tpm_Bad_Command{request = request_field(what)})
 	}
 }
 
@@ -917,13 +928,13 @@ authorization_put :: proc "contextless" (authorization: []u8) -> tpm_service.Aut
 // keeps its parts.
 tpm_seal :: proc "contextless" (secret: ^[tpm_service.SECRET_SIZE]u8, authorization: []u8, object: ^principals.Sealed_Object) -> bool {
 	copy(tpm_region[tpm_service.REGION_SECRET:][:tpm_service.SECRET_SIZE], secret^[:])
-	completion, status, answered := tpm_request(.Seal, {0 = u64(authorization_put(authorization))})
+	completion, outcome, record, answered := tpm_request(.Seal, {0 = u64(authorization_put(authorization))})
 	// The service erases the secret and the value when it takes the
 	// request; a service that did not answer can leave them in the region.
 	erase(tpm_region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE])
-	if !answered || status != .Ok {
+	if !answered || outcome != .Succeeded {
 		erase(tpm_region[tpm_service.REGION_SECRET:][:tpm_service.SECRET_SIZE])
-		tpm_refusal_log("seal", completion, status, answered)
+		tpm_refusal_log("seal", outcome, record, answered)
 		return false
 	}
 	// The counts come from the service: they are checked before a copy.
@@ -946,8 +957,9 @@ tpm_seal :: proc "contextless" (secret: ^[tpm_service.SECRET_SIZE]u8, authorizat
 // tpm_unseal asks the TPM service for the secret of a sealed object, with
 // an authorization value when one is given. The TPM gives it only while
 // PCR 7 and PCR 11 hold the values of the seal, and only to the right
-// value. It gives the status of the service: Ok with the secret.
-tpm_unseal :: proc "contextless" (object: ^principals.Sealed_Object, authorization: []u8, secret: ^[tpm_service.SECRET_SIZE]u8) -> (status: tpm_service.Status, answered: bool) {
+// value. It gives the call outcome of the service: Succeeded with the
+// secret.
+tpm_unseal :: proc "contextless" (object: ^principals.Sealed_Object, authorization: []u8, secret: ^[tpm_service.SECRET_SIZE]u8) -> (outcome: call_outcome.Call_Outcome, record: errors.Error_Record, answered: bool) {
 	public_bytes, private_bytes := object.public_bytes, object.private_bytes
 	creation_bytes, ticket_bytes := object.creation_bytes, object.ticket_bytes
 	copy(tpm_region[tpm_service.REGION_PUBLIC_AREA:][:public_bytes], object.public_area[:public_bytes])
@@ -956,23 +968,23 @@ tpm_unseal :: proc "contextless" (object: ^principals.Sealed_Object, authorizati
 	copy(tpm_region[tpm_service.REGION_CREATION_TICKET:][:ticket_bytes], object.creation_ticket[:ticket_bytes])
 	kind := authorization_put(authorization)
 	completion: ring.Record
-	completion, status, answered = tpm_request(.Unseal, {0 = u64(public_bytes), 1 = u64(private_bytes), 2 = u64(creation_bytes), 3 = u64(ticket_bytes), 4 = u64(kind)})
+	completion, outcome, record, answered = tpm_request(.Unseal, {0 = u64(public_bytes), 1 = u64(private_bytes), 2 = u64(creation_bytes), 3 = u64(ticket_bytes), 4 = u64(kind)})
 	defer erase(tpm_region[tpm_service.REGION_SECRET:][:tpm_service.SECRET_SIZE])
 	erase(tpm_region[tpm_service.REGION_AUTHORIZATION:][:tpm_service.AUTHORIZATION_SIZE])
 	if !answered {
-		tpm_refusal_log("unseal", completion, status, answered)
-		return .Device_Error, false
+		tpm_refusal_log("unseal", outcome, record, answered)
+		return outcome, record, false
 	}
-	if status != .Ok {
-		tpm_refusal_log("unseal", completion, status, answered)
-		return status, true
+	if outcome != .Succeeded {
+		tpm_refusal_log("unseal", outcome, record, answered)
+		return outcome, record, true
 	}
 	if completion.values[0] != tpm_service.SECRET_SIZE {
 		system.log_fact(.Info, Tpm_Secret_Size_Wrong{secret_bytes = completion.values[0]})
-		return .Bad_Command, true
+		return .Answer_Unreadable, errors.error_make(.Bad_Value, .None, 1, i64(completion.values[0]), tpm_service.SECRET_SIZE), true
 	}
 	copy(secret^[:], tpm_region[tpm_service.REGION_SECRET:][:tpm_service.SECRET_SIZE])
-	return .Ok, true
+	return .Succeeded, {}, true
 }
 
 // machine_key_passes says if a machine key has the key check of the record:
@@ -1015,7 +1027,7 @@ machine_seal_create :: proc "contextless" () -> bool {
 	additional := string(principals.machine_tpm_file_additional_data(&machine_tpm_file_bytes))
 	text := string(machine_key[:])
 	sealed := machine_tpm_file.recovery_sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.MACHINE_SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.MACHINE_SEALED_SIZE {
 		system.log_fact(.Info, Machine_Key_Recovery_Copy_Failed{})
 		return false
 	}
@@ -1102,7 +1114,7 @@ machine_tpm_unseal :: proc "contextless" () -> Unseal_Outcome {
 	}
 	machine_key: [principals.MACHINE_KEY_SIZE]u8
 	defer erase(machine_key[:])
-	if status, answered := tpm_unseal(&machine_tpm_file.object, nil, &machine_key); !answered || status != .Ok {
+	if outcome, _, answered := tpm_unseal(&machine_tpm_file.object, nil, &machine_key); !answered || outcome != .Succeeded {
 		return .Refused
 	}
 	if !machine_key_passes(&machine_key) {
@@ -1184,7 +1196,8 @@ recovery_try :: proc "contextless" () {
 		sealed = string(machine_tpm_passphrase_file.recovery_sealed[:])
 	}
 	result := machine_key[:]
-	opened := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) == principals.MACHINE_KEY_SIZE
+	opened_outcome, opened_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error)
+	opened := opened_outcome == .Succeeded && opened_count == principals.MACHINE_KEY_SIZE
 	if opened && !with_passphrase {
 		opened = machine_key_passes(&machine_key)
 	}
@@ -1303,7 +1316,7 @@ machine_tpm_passphrase_seal :: proc "contextless" (machine_key: ^[principals.MAC
 	additional := string(principals.machine_tpm_passphrase_file_additional_data(sealed_bytes))
 	text := string(machine_key^[:])
 	sealed := sealed_file.sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.MACHINE_SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.MACHINE_SEALED_SIZE {
 		message, message_failed = "The key was not sealed: cryptography refused the seal.", true
 		return false
 	}
@@ -1346,7 +1359,7 @@ machine_tpm_passphrase_create :: proc "contextless" () {
 	additional := string(principals.machine_tpm_passphrase_file_recovery_additional_data(&machine_tpm_passphrase_file_bytes))
 	text := string(machine_key[:])
 	recovery_sealed := machine_tpm_passphrase_file.recovery_sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &recovery_sealed, &error) != principals.MACHINE_SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &recovery_sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.MACHINE_SEALED_SIZE {
 		message, message_failed = "Recovery copy not sealed: cryptography refused the seal.", true
 		return
 	}
@@ -1411,15 +1424,15 @@ machine_tpm_passphrase_try :: proc "contextless" () {
 	}
 	authorization := principals.machine_authorization_value(&passphrase_key)
 	defer erase(authorization[:])
-	status, answered := tpm_unseal(&machine_tpm_passphrase_file.object, authorization[:], &tpm_secret)
+	unsealed, refusal, answered := tpm_unseal(&machine_tpm_passphrase_file.object, authorization[:], &tpm_secret)
 	switch {
-	case answered && status == .Ok:
-	case answered && status == .Authorization_Fails:
+	case answered && unsealed == .Succeeded:
+	case answered && tpm_service.unseal_authorization_wrong(unsealed, refusal):
 		machine_refusals += 1
 		system.log_fact(.Info, Machine_Passphrase_Wrong_Counted_By_Tpm{refusals = machine_refusals})
 		message, message_failed = "Wrong passphrase: the TPM counts each wrong try.", true
 		return
-	case answered && status == .Locked_Out:
+	case answered && unsealed == .Callee_Busy:
 		system.log_fact(.Info, Machine_Passphrase_Locked_Out{})
 		machine_recovery_ask("The TPM refuses tries for now: type the recovery key.")
 		return
@@ -1435,7 +1448,7 @@ machine_tpm_passphrase_try :: proc "contextless" () {
 	additional := string(principals.machine_tpm_passphrase_file_additional_data(&machine_tpm_passphrase_file_bytes))
 	sealed := string(machine_tpm_passphrase_file.sealed[:])
 	result := machine_key[:]
-	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.MACHINE_KEY_SIZE {
+	if crypto_outcome, crypto_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error); crypto_outcome != .Succeeded || crypto_count != principals.MACHINE_KEY_SIZE {
 		system.log_fact(.Info, Machine_Key_Not_Consistent_With_Tpm_Secret{})
 		machine_recovery_ask("The record is not consistent: type the recovery key.")
 		return
@@ -1530,7 +1543,7 @@ principal_tpm_seal :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE
 	additional := string(principals.principal_tpm_file_additional_data(sealed_bytes))
 	text := string(secrets^[:])
 	sealed := sealed_file.sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error) != principals.SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.SEALED_SIZE {
 		message, message_failed = "The keys were not sealed: cryptography refused the seal.", true
 		return false
 	}
@@ -1583,7 +1596,7 @@ create_sealed_by_the_tpm :: proc "contextless" () {
 	additional := string(principals.principal_tpm_file_recovery_additional_data(&principal_tpm_file_bytes))
 	text := string(secrets[:])
 	recovery_sealed := principal_tpm_file.recovery_sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &recovery_sealed, &error) != principals.SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &recovery_sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.SEALED_SIZE {
 		message, message_failed = "Recovery copy not sealed: cryptography refused the seal.", true
 		return
 	}
@@ -1652,12 +1665,12 @@ principal_tpm_open :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE
 	}
 	authorization := principals.principal_authorization_value(&passphrase_key)
 	defer erase(authorization[:])
-	status, answered := tpm_unseal(&principal_tpm_file.object, authorization[:], &tpm_secret)
+	unsealed, refusal, answered := tpm_unseal(&principal_tpm_file.object, authorization[:], &tpm_secret)
 	switch {
-	case answered && status == .Ok:
-	case answered && status == .Authorization_Fails:
+	case answered && unsealed == .Succeeded:
+	case answered && tpm_service.unseal_authorization_wrong(unsealed, refusal):
 		return .Wrong
-	case answered && status == .Locked_Out:
+	case answered && unsealed == .Callee_Busy:
 		return .Locked_Out
 	case:
 		return .Tpm_Refused
@@ -1670,7 +1683,7 @@ principal_tpm_open :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE
 	additional := string(principals.principal_tpm_file_additional_data(&principal_tpm_file_bytes))
 	sealed := string(principal_tpm_file.sealed[:])
 	result := secrets^[:]
-	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.SECRET_KEYS_SIZE || !public_keys_match(secrets) {
+	if crypto_outcome, crypto_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error); crypto_outcome != .Succeeded || crypto_count != principals.SECRET_KEYS_SIZE || !public_keys_match(secrets) {
 		return .Not_Consistent
 	}
 	return .Opened
@@ -1771,7 +1784,7 @@ recovery_key_prepare :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SI
 	additional := string(principals.principal_tpm_file_recovery_additional_data(&renewed_recovery_bytes))
 	text := string(secrets^[:])
 	recovery_sealed := renewed_recovery_file.recovery_sealed[:]
-	if seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &recovery_sealed, &error) != principals.SEALED_SIZE {
+	if crypto_outcome, crypto_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &text, &recovery_sealed, &error); crypto_outcome != .Succeeded || crypto_count != principals.SEALED_SIZE {
 		system.log_fact(.Info, Recovery_Key_Kept_Seal_Failed{principal = number})
 		change_end(.Seal_Failed)
 		return
@@ -1909,8 +1922,8 @@ passphrase_change_report :: proc "contextless" (outcome: Write_Outcome, how: str
 // change never ends with a silent close.
 change_end :: proc "contextless" (end: principals.Change_End, problem: principals.Change_Problem = .None) {
 	completion, answered := root_command(.Principal_Change_End, {4 = u64(end), 5 = u64(problem)})
-	if !answered || system.Status(completion.kind) != .Ok {
-		system.log_fact(.Info, Change_End_Not_Taken{status = status_field(completion.kind)})
+	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+		system.log_fact(.Info, Change_End_Not_Taken{outcome = outcome_field(completion.kind)})
 	}
 	mode = .Change_Result
 	message = principals.change_end_sentences[end]
@@ -2000,7 +2013,7 @@ principal_recovery_try :: proc "contextless" () {
 	additional := string(principals.principal_tpm_file_recovery_additional_data(&principal_tpm_file_bytes))
 	sealed := string(principal_tpm_file.recovery_sealed[:])
 	result := secrets[:]
-	if open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error) != principals.SECRET_KEYS_SIZE || !public_keys_match(&secrets) {
+	if crypto_outcome, crypto_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed, &result, &error); crypto_outcome != .Succeeded || crypto_count != principals.SECRET_KEYS_SIZE || !public_keys_match(&secrets) {
 		refusals += 1
 		system.log_fact(.Info, Principal_Recovery_Key_Wrong{principal = number, refusals = refusals, principal_name = principal_name_field()})
 		message, message_failed = "Wrong recovery key: nothing is unlocked.", true
@@ -2169,8 +2182,8 @@ session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, 
 	defer erase(table_key[:])
 	defer erase(([^]u8)(rawptr(&values))[:size_of(values)])
 	completion, answered := root_command(.Principal_Unlock, {values[0], values[1], values[2], values[3], number, u64(origin), 0})
-	if !answered || system.Status(completion.kind) != .Ok {
-		system.log_fact(.Info, Session_Not_Started{principal = number, status = status_field(completion.kind)})
+	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+		system.log_fact(.Info, Session_Not_Started{principal = number, outcome = outcome_field(completion.kind)})
 		message, message_failed = "The root service did not start the session.", true
 		return
 	}
@@ -2694,9 +2707,9 @@ machine_key_without_window :: proc "contextless" () -> ! {
 		system.stop(.Done)
 	case .Unreadable:
 		completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Unreadable)})
-		taken := answered && system.Status(completion.kind) == .Ok
+		taken := answered && completion.kind == u32(call_outcome.Call_Outcome.Succeeded)
 		if !taken {
-			system.log_fact(.Info, Machine_State_Not_Taken{status = status_field(completion.kind)})
+			system.log_fact(.Info, Machine_State_Not_Taken{outcome = outcome_field(completion.kind)})
 		}
 		system.log_fact(.Info, Machine_Record_Unreadable_Before_Start_Policy{})
 		// The work of this mode is the report to the root service: a report
@@ -2710,8 +2723,8 @@ machine_key_without_window :: proc "contextless" () -> ! {
 	sealed_by_the_tpm := machine_form == .Sealed_By_The_Tpm
 	key_form := sealed_by_the_tpm ? root_ring.Machine_Key_Form.Sealed_By_The_Tpm : root_ring.Machine_Key_Form.Passphrase
 	completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Awaited), 5 = u64(key_form)})
-	if !answered || system.Status(completion.kind) != .Ok {
-		system.log_fact(.Info, Machine_State_Not_Taken{status = status_field(completion.kind)})
+	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+		system.log_fact(.Info, Machine_State_Not_Taken{outcome = outcome_field(completion.kind)})
 		system.stop(.Failed)
 	}
 	if !sealed_by_the_tpm {
@@ -2914,8 +2927,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			key_form := sealed_by_the_tpm ? root_ring.Machine_Key_Form.Sealed_By_The_Tpm : root_ring.Machine_Key_Form.Passphrase
 			completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Awaited), 5 = u64(key_form)})
 			switch {
-			case !answered || system.Status(completion.kind) != .Ok:
-				system.log_fact(.Info, Machine_State_Not_Taken{status = status_field(completion.kind)})
+			case !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded):
+				system.log_fact(.Info, Machine_State_Not_Taken{outcome = outcome_field(completion.kind)})
 			case machine_form == .Sealed_By_The_Tpm_With_Passphrase && !has_tpm:
 				// The passphrase opens nothing without the TPM.
 				system.log_fact(.Info, Machine_Key_With_Passphrase_Needs_Tpm{})
@@ -2933,8 +2946,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// a new machine passphrase, so nothing is written over a table
 			// or a record that can be good.
 			completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Unreadable)})
-			if !answered || system.Status(completion.kind) != .Ok {
-				system.log_fact(.Info, Machine_State_Not_Taken{status = status_field(completion.kind)})
+			if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+				system.log_fact(.Info, Machine_State_Not_Taken{outcome = outcome_field(completion.kind)})
 			}
 			system.log_fact(.Info, Machine_Record_Unreadable{})
 		}

@@ -1,6 +1,7 @@
 package root
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/entropy_service"
 import "modus:contract/errors"
 import "modus:contract/fresh_bytes"
@@ -121,7 +122,7 @@ entropy_answers :: proc "contextless" (wait: ^system.Wait) {
 			// order: its bytes add nothing.
 			counts.device_reads_refused += 1
 			system.log_fact(.Warning, Entropy_Answer_Out_Of_Order{answered_read = u64(number), tagged_read = u64(record.tag)})
-		} else if entropy_service.Status(record.kind) == .Ok {
+		} else if outcome, _ := call_outcome.completion_outcome(record.kind, record.values); outcome == .Succeeded {
 			bytes: [entropy_service.READ_BYTES_LIMIT]u8
 			count := entropy_service.bytes_unpack(record.values, &bytes)
 			if at_start {
@@ -131,7 +132,9 @@ entropy_answers :: proc "contextless" (wait: ^system.Wait) {
 			intrinsics.mem_zero_volatile(&bytes, size_of(bytes))
 		} else {
 			counts.device_reads_refused += 1
-			error := errors.completion_record(record.values)
+			// The border gives the record of the service, or the record of
+			// a completion that it could not read.
+			_, error := call_outcome.completion_outcome(record.kind, record.values)
 			system.log_fact(.Warning, Entropy_Read_Refused(errors.error_record_fact_fields(error)))
 		}
 		intrinsics.mem_zero_volatile(&record, size_of(record))

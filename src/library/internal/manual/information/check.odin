@@ -304,8 +304,10 @@ function_check :: proc "contextless" (file: []u8, index: u32, function: module.F
 			return {kind = .Function, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, result_detail)), value = u64(function.result_detail), limit = u64(max(module.count(file, .Records), 1))}
 		}
 	}
+	// An export with an error record gives its call outcome, then an
+	// integer value: an Enum result has no place in the pair.
 	if function.error_record != 0 {
-		if _, valid := module.record_type(file, function.error_record); !valid || function.result == u8(module.Type.Record) {
+		if _, valid := module.record_type(file, function.error_record); !valid || function.result == u8(module.Type.Enum) {
 			return {kind = .Function, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, error_record)), value = u64(function.error_record), limit = u64(max(module.count(file, .Records), 1))}
 		}
 	}

@@ -1072,12 +1072,32 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		if type.params != nil {
 			fields = type.params.list
 		}
+		// An export that can fail gives the call outcome first, then its
+		// value: (outcome: call_outcome.Call_Outcome, value: i64), or the
+		// outcome alone when it has no value (src/md/api/call_outcome.md).
 		result_text := ""
+		returns_outcome := false
 		if type.results != nil {
-			if len(type.results.list) != 1 || len(type.results.list[0].names) > 1 || type.results.list[0].type == nil {
-				return describe_fail(path, declaration, "%s has more than one result", name)
+			results := type.results.list
+			for item in results {
+				if item.type == nil || len(item.names) > 1 {
+					return describe_fail(path, declaration, "%s: each result has one name and a type", name)
+				}
 			}
-			result_text = type_text(source, type.results.list[0].type)
+			switch len(results) {
+			case 1:
+				result_text = type_text(source, results[0].type)
+				if is_contract_type(state, results[0].type, "call_outcome", "Call_Outcome") {
+					result_text, returns_outcome = "", true
+				}
+			case 2:
+				if !is_contract_type(state, results[0].type, "call_outcome", "Call_Outcome") || type_text(source, results[1].type) != "i64" {
+					return describe_fail(path, declaration, "%s has two results: an export that can fail gives (outcome: call_outcome.Call_Outcome, value: i64), the outcome first", name)
+				}
+				result_text, returns_outcome = "i64", true
+			case:
+				return describe_fail(path, declaration, "%s has more than two results: an export gives one value, or the outcome and one value", name)
+			}
 		}
 
 		if name == ENTRY_NAME {
@@ -1086,7 +1106,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 				text := type_text(source, fields[0].type)
 				address = text == "rawptr" || strings.has_prefix(text, "^")
 			}
-			if !address || result_text != "" && result_text != "i64" {
+			if !address || returns_outcome || result_text != "" && result_text != "i64" {
 				return describe_fail(path, declaration, "the entry has one parameter, an address, and no result or an i64 result")
 			}
 			// The entry has a comment as each export has: what this module
@@ -1240,8 +1260,17 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		case description.result == .Table:
 			return describe_fail(path, declaration, "%s: a Table result gives its count of records: the result type is i64", name)
 		}
-		if description.error_record != 0 && (description.result == .Record || description.result == .None || description.result == .Enum) {
-			return describe_fail(path, declaration, "%s: an export with an error record gives an i64 result: it fails when the result is negative", name)
+		// The signature is the promise, and the compiler checks it: an
+		// export with an error record can fail, so it gives the outcome; an
+		// export with one result cannot fail.
+		if description.error_record != 0 && !returns_outcome {
+			return describe_fail(path, declaration, "%s takes an error record, so it can fail: it gives the call outcome first, (outcome: call_outcome.Call_Outcome, value: i64), or call_outcome.Call_Outcome alone when it has no value", name)
+		}
+		if returns_outcome && description.error_record == 0 {
+			return describe_fail(path, declaration, "%s gives a call outcome, so it can fail: its last parameter is the error record, error: ^errors.Error_Record", name)
+		}
+		if returns_outcome && description.result == .Enum {
+			return describe_fail(path, declaration, "%s can fail: the value of the pair is an i64", name)
 		}
 		if arguments := module.call_argument_count(len(parameters), u8(description.result), description.error_record != 0); arguments > module.PARAMETER_CAPACITY {
 			return describe_fail(path, declaration, "%s takes %d arguments in the call form, the buffer of a result and the error record included; an export takes at most %d", name, arguments, module.PARAMETER_CAPACITY)

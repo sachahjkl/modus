@@ -20,6 +20,7 @@
 // "build_check: WRONG: ...". It stops itself with Done, or Failed.
 package build_check
 
+import "modus:contract/call_outcome"
 import "modus:contract/blake3"
 import "modus:contract/declaration_eval"
 import "modus:contract/errors"
@@ -87,8 +88,8 @@ register :: proc "contextless" (builder: blake3.Hash, act: string, input: blake3
 	}
 	references: [1]pr.Recipe_Reference
 	error: errors.Error_Record
-	count, status := system.call_isolated(&connection, recipes_file, register_export, arguments[:], &error, false, ([^]u8)(&references[0])[:size_of(references)])
-	if status != .Ok || count != 1 {
+	count, outcome := system.call_isolated(&connection, recipes_file, register_export, arguments[:], &error, false, ([^]u8)(&references[0])[:size_of(references)])
+	if outcome != .Succeeded || count != 1 {
 		wrong("recipes.register refused a recipe of the test; the error kind", u64(error.kind))
 	}
 	return blake3.Hash(references[0].recipe_hash)
@@ -102,22 +103,22 @@ build :: proc "contextless" (recipe: blake3.Hash, mode: pr.Build_Mode) -> (row: 
 	arguments := [2]isolated.Argument{{record = ([^]u8)(&reference)[:size_of(reference)]}, {integer = u64(mode)}}
 	rows: [1]pr.Recipe_Build_Row
 	error: errors.Error_Record
-	count, status := system.call_isolated(&connection, recipes_file, build_export, arguments[:], &error, false, ([^]u8)(&rows[0])[:size_of(rows)])
-	switch status {
-	case .Ok:
+	count, outcome := system.call_isolated(&connection, recipes_file, build_export, arguments[:], &error, false, ([^]u8)(&rows[0])[:size_of(rows)])
+	if outcome == .Succeeded {
 		if count != 1 {
 			wrong("recipes.build gave no row; the count", u64(count))
 		}
 		return rows[0], .None
-	case .Failed:
-		found, known := pr.recipe_refusal_of_word(u64(error.found))
-		if !known {
-			wrong("recipes.build refused with a word that names no refusal", u64(error.found))
-		}
-		return {}, found
-	case .Lend_Failed, .No_Room, .Ring_Full, .Stopped, .Refused, .Wrong_Answer, .Not_Done, .Failed_With_Wrong_Details, .Deadline_Passed:
 	}
-	wrong("the call of recipes.build did not come back; the call status", u64(status))
+	if system.connection_to_renew(outcome) {
+		wrong("the call of recipes.build did not come back; the call outcome", u64(outcome))
+	}
+	// The service refused the build: the record names the refusal.
+	found, known := pr.recipe_refusal_of_word(u64(error.found))
+	if !known {
+		wrong("recipes.build refused with a word that names no refusal", u64(error.found))
+	}
+	return {}, found
 }
 
 @(private = "file")
@@ -137,9 +138,9 @@ refused_as_asked :: proc "contextless" (act: string, recipe: blake3.Hash, expect
 realisation_count :: proc "contextless" () -> i64 {
 	rows: [4]pr.Realisation_Row
 	error: errors.Error_Record
-	count, status := system.call_isolated(&connection, recipes_file, realisations_export, nil, &error, false, ([^]u8)(&rows[0])[:size_of(rows)])
-	if status != .Ok {
-		wrong("recipes.realisations did not answer; the call status", u64(status))
+	count, outcome := system.call_isolated(&connection, recipes_file, realisations_export, nil, &error, false, ([^]u8)(&rows[0])[:size_of(rows)])
+	if outcome != .Succeeded {
+		wrong("recipes.realisations did not answer; the call outcome", u64(outcome))
 	}
 	return count
 }
@@ -168,11 +169,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	probe_hash = blake3.hash(probe_file)
 
-	connected: system.Status
+	connected: call_outcome.Call_Outcome
 	connection, connected = system.service_connection(&requests, next_tag, "recipes")
 	next_tag += 1
-	if connected != .Ok {
-		wrong("the root service gave no connection to recipes; the status", u64(connected))
+	if connected != .Succeeded {
+		wrong("the root service gave no connection to recipes; the outcome word", u64(connected))
 	}
 	entry := system.image_entry_of(image, connection.module_hash)
 	if entry == nil {

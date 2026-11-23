@@ -43,6 +43,7 @@
 // outcome Done, or Failed after a WRONG line.
 package output_wiring
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/output"
@@ -132,7 +133,7 @@ wrong :: proc "contextless" (text: string, value: u64) -> ! {
 // wrong_refused stops as wrong does, and writes the seven words of the
 // error record of the completion too: several limits of the root service
 // give one status, and the record names the one that refused.
-wrong_refused :: proc "contextless" (text: string, status: system.Status, answer: [7]u64) -> ! {
+wrong_refused :: proc "contextless" (text: string, status: call_outcome.Call_Outcome, answer: [7]u64) -> ! {
 	system.log_fact(.Error, Wrong_Refused{status = u64(status), error_kind = answer[0], error_unit = answer[1], error_operation = answer[2], error_argument = answer[3], error_value = answer[4], error_limit = answer[5], error_found = answer[6]}, text)
 	system.stop(.Failed)
 }
@@ -140,7 +141,7 @@ wrong_refused :: proc "contextless" (text: string, status: system.Status, answer
 // root_call sends one command on the root ring and waits for its
 // completion.
 @(private = "file")
-root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64) -> (status: system.Status, answer: [7]u64) {
+root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64) -> (outcome: call_outcome.Call_Outcome, answer: [7]u64) {
 	tag := next_tag
 	next_tag += 1
 	if !system.send(&requests.commands, ring.Record{kind = u32(command), tag = tag, values = values}) {
@@ -153,9 +154,9 @@ root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64
 			if record.tag != tag {
 				continue
 			}
-			read, refusal := system.status_of_word(record.kind)
-			if refusal.kind != 0 {
-				wrong("the root service answered a status word that names no status", u64(record.kind))
+			read, _ := call_outcome.completion_outcome(record.kind, record.values)
+			if read == .Answer_Unreadable {
+				wrong("the root service answered a completion that this process cannot read; the outcome word", u64(record.kind))
 			}
 			return read, record.values
 		}
@@ -193,7 +194,7 @@ list_write :: proc "contextless" (rows: []output.Wiring, handles: []u32, terms: 
 
 // wire applies a list of one row.
 @(private = "file")
-wire :: proc "contextless" (row: output.Wiring, handles: []u32, terms: []u8 = nil) -> (system.Status, [7]u64) {
+wire :: proc "contextless" (row: output.Wiring, handles: []u32, terms: []u8 = nil) -> (call_outcome.Call_Outcome, [7]u64) {
 	rows := [1]output.Wiring{row}
 	list_write(rows[:], handles, terms)
 	return root_call(.Wire, {0 = u64(root_ring.Wire_Step.Apply)})
@@ -202,7 +203,7 @@ wire :: proc "contextless" (row: output.Wiring, handles: []u32, terms: []u8 = ni
 // start_listed starts a module with the list in the list page, or with
 // none, and asks for its process handle.
 @(private = "file")
-start_listed :: proc "contextless" (name: string, listed: bool) -> (system.Status, [7]u64) {
+start_listed :: proc "contextless" (name: string, listed: bool) -> (call_outcome.Call_Outcome, [7]u64) {
 	packed := system.name_pack(name)
 	list := listed ? root_ring.Start_Wiring_List.In_The_List_Page : root_ring.Start_Wiring_List.None
 	return root_call(.Start, {packed[0], packed[1], packed[2], packed[3], u64(list), u64(root_ring.Start_Answer.Process_Handle), 0})
@@ -212,7 +213,7 @@ start_listed :: proc "contextless" (name: string, listed: bool) -> (system.Statu
 @(private = "file")
 start_child :: proc "contextless" (name: string) -> system.Handle {
 	status, answer := start_listed(name, false)
-	if status != .Ok || answer[0] == 0 {
+	if status != .Succeeded || answer[0] == 0 {
 		wrong_refused("the start of a child gave the status", status, answer)
 	}
 	return system.Handle(answer[0])
@@ -254,7 +255,7 @@ fail :: proc "contextless" (command: root_ring.Root_Command, kind: errors.Kind, 
 // record but those that unknown names, and that the budget of this
 // process holds the pages that it held before the command.
 @(private = "file")
-refused :: proc "contextless" (what: string, before: u64, status: system.Status, answer: [7]u64, wanted: system.Status, expected: [7]u64, unknown: Unknown_Fields = {}) {
+refused :: proc "contextless" (what: string, before: u64, status: call_outcome.Call_Outcome, answer: [7]u64, wanted: call_outcome.Call_Outcome, expected: [7]u64, unknown: Unknown_Fields = {}) {
 	record := errors.completion_record(answer)
 	want := errors.completion_record(expected)
 	if .Value in unknown {
@@ -267,8 +268,8 @@ refused :: proc "contextless" (what: string, before: u64, status: system.Status,
 		want.found = record.found
 	}
 	if status != wanted || record != want {
-		system.log_fact(.Error, Wrong_Refusal{status = op.Status_Word(status), kind = record.kind, unit = record.unit, operation = record.operation, argument = record.argument, value = record.value, limit = record.limit, found = record.found}, what)
-		system.log_fact(.Error, Wrong_Refusal_Wanted{status = op.Status_Word(wanted), kind = want.kind, unit = want.unit, operation = want.operation, argument = want.argument, value = want.value, limit = want.limit, found = want.found}, what)
+		system.log_fact(.Error, Wrong_Refusal{outcome = call_outcome.Call_Outcome_Word(status), kind = record.kind, unit = record.unit, operation = record.operation, argument = record.argument, value = record.value, limit = record.limit, found = record.found}, what)
+		system.log_fact(.Error, Wrong_Refusal_Wanted{outcome = call_outcome.Call_Outcome_Word(wanted), kind = want.kind, unit = want.unit, operation = want.operation, argument = want.argument, value = want.value, limit = want.limit, found = want.found}, what)
 		system.stop(.Failed)
 	}
 	if after := budget_pages(); after != before {
@@ -348,7 +349,7 @@ grant_wirings_revoke :: proc "contextless" (wanted: int) {
 	before := budget_pages()
 	status, revoked := root_call(.Revoke, {packed[0], packed[1], packed[2], packed[3], u64(system.Root_Grant.Wirings), 0, 0})
 	if wanted == 0 {
-		refused("the revocation of the grant wirings with no wiring held", before, status, revoked, .Bad_State, fail(.Revoke, .Absent, .Grants, 2))
+		refused("the revocation of the grant wirings with no wiring held", before, status, revoked, .Nothing_Has_That_Name, fail(.Revoke, .Absent, .Grants, 2))
 		// The refusal changed no grant: wirings is neither granted nor
 		// marked revoked, so this process can still ask for wirings.
 		granted, revoked_grants := grants_read()
@@ -357,7 +358,7 @@ grant_wirings_revoke :: proc "contextless" (wanted: int) {
 		}
 		return
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		wrong_refused("the revocation of the grant wirings gave the status", status, revoked)
 	}
 	if revoked[0] != u64(wanted) {
@@ -376,7 +377,7 @@ grant_wirings_revoke :: proc "contextless" (wanted: int) {
 grants_read :: proc "contextless" () -> (granted, revoked: system.Root_Grants) {
 	packed := system.name_pack("output_wiring")
 	status, answer := root_call(.Grants, {packed[0], packed[1], packed[2], packed[3], 0, 0, 0})
-	if status != .Ok {
+	if status != .Succeeded {
 		wrong_refused("the Grants of this process gave the status", status, answer)
 	}
 	return transmute(system.Root_Grants)answer[0], transmute(system.Root_Grants)answer[1]
@@ -440,7 +441,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 @(private = "file")
 list_page_take :: proc "contextless" () -> (page: system.Handle, address: rawptr) {
 	status, answer := root_call(.Wire, {0 = u64(root_ring.Wire_Step.List_Page)})
-	if status != .Ok || answer[0] == 0 {
+	if status != .Succeeded || answer[0] == 0 {
 		wrong("the list page was refused with the status", u64(status))
 	}
 	page = system.Handle(answer[0])
@@ -467,12 +468,12 @@ list_page_take :: proc "contextless" () -> (page: system.Handle, address: rawptr
 words_case :: proc "contextless" () {
 	before := budget_pages()
 	status, answer := root_call(.Wire, {0 = u64(root_ring.Wire_Step.Apply)})
-	refused("Apply before the list page", before, status, answer, .Bad_State, fail(.Wire, .Absent, .Wirings))
+	refused("Apply before the list page", before, status, answer, .Nothing_Has_That_Name, fail(.Wire, .Absent, .Wirings))
 	step_word := u64(max(root_ring.Wire_Step)) + 1
 	status, answer = root_call(.Wire, {0 = step_word})
-	refused("a step that names nothing", before, status, answer, .Bad_Operation, root_ring.word_refusal(.Wire, 1, step_word, u64(max(root_ring.Wire_Step))))
+	refused("a step that names nothing", before, status, answer, .Argument_Refused, root_ring.word_refusal(.Wire, 1, step_word, u64(max(root_ring.Wire_Step))))
 	status, answer = root_call(.Wire, {0 = u64(root_ring.Wire_Step.Apply), 6 = 1})
-	refused("a reserved word", before, status, answer, .Bad_Operation, root_ring.word_refusal(.Wire, 7, 1, 0))
+	refused("a reserved word", before, status, answer, .Argument_Refused, root_ring.word_refusal(.Wire, 7, 1, 0))
 
 	// The budget of this process keeps fewer pages than the list page
 	// costs: the root service makes it from that budget, so it refuses.
@@ -495,7 +496,7 @@ words_case :: proc "contextless" () {
 		wrong("the budget still pays the list page; its pages:", short)
 	}
 	status, answer = root_call(.Wire, {0 = u64(root_ring.Wire_Step.List_Page)})
-	refused("the list page past the budget", short, status, answer, .No_Budget, fail(.Wire, .Budget, .Pages, 1, 0, i64(cost), i64(short)), {.Value})
+	refused("the list page past the budget", short, status, answer, .Budget_Or_Capacity_Exhausted, fail(.Wire, .Budget, .Pages, 1, 0, i64(cost), i64(short)), {.Value})
 	system.close(filler)
 
 	first, first_address := list_page_take()
@@ -527,7 +528,7 @@ lent_return_case :: proc "contextless" () {
 		lent := [2]u32{lend(memory), lend(memory)}
 		list_write(nil, lent[:])
 		status, answer := root_call(.Wire, {0 = u64(root_ring.Wire_Step.Apply)})
-		refused("a list of no row that gives back its lent handles", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Wiring_Rows, 0, 0, 1))
+		refused("a list of no row that gives back its lent handles", before, status, answer, .Argument_Refused, fail(.Wire, .Bad_Value, .Wiring_Rows, 0, 0, 1))
 	}
 	system.close(memory)
 	system.log_fact(.Info, Lent_Handles_Given_Back{lent_handles = 2 * LENT_MEMORY_ROUNDS})
@@ -544,7 +545,7 @@ probes_case :: proc "contextless" () {
 	handles := [1]u32{lend(first_reader)}
 	list_write(rows[:], handles[:])
 	status, answer := start_listed("output_writer", true)
-	if status != .Ok || answer[0] == 0 {
+	if status != .Succeeded || answer[0] == 0 {
 		wrong_refused("the start of the writer with its list gave the status", status, answer)
 	}
 	writer := system.Handle(answer[0])
@@ -554,12 +555,12 @@ probes_case :: proc "contextless" () {
 	// second place.
 	not_lent := [2]u32{lend(writer), NUMBER_NOT_LENT}
 	status, answer = wire(row(.Started, 1, WRITER_PROBES, .Started, 2, READER_PROBES), not_lent[:])
-	refused("a number that did not come through the ring", before, status, answer, .Bad_Handle, fail(.Wire, .Handle_Absent, .Lent_Handles, 0, 2))
+	refused("a number that did not come through the ring", before, status, answer, .Argument_Refused, fail(.Wire, .Handle_Absent, .Lent_Handles, 0, 2))
 	// One number in two places: the second place, and the first.
 	repeated := lend(writer)
 	twice := [2]u32{repeated, repeated}
 	status, answer = wire(row(.Started, 1, WRITER_PROBES, .Started, 2, READER_PROBES), twice[:])
-	refused("one number in two places", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Lent_Handles, 0, 2, 1))
+	refused("one number in two places", before, status, answer, .Argument_Refused, fail(.Wire, .Bad_Value, .Lent_Handles, 0, 2, 1))
 	// Memory handles in place of process handles, in more rounds than the
 	// handle table of the root service holds: each one is closed with its
 	// refusal, so each round finds the same room. The memory that this
@@ -575,7 +576,7 @@ probes_case :: proc "contextless" () {
 	for _ in 0 ..< LENT_MEMORY_ROUNDS {
 		memories := [2]u32{lend(memory), lend(memory)}
 		status, answer = wire(row(.Started, 1, WRITER_PROBES, .Started, 2, READER_PROBES), memories[:])
-		refused("a lent memory handle", with_memory, status, answer, .Bad_Handle, fail(.Wire, .Handle_Kind, .Lent_Handles, 0, 1, i64(op.Object_Kind.Process), i64(op.Object_Kind.Memory)))
+		refused("a lent memory handle", with_memory, status, answer, .Argument_Refused, fail(.Wire, .Handle_Kind, .Lent_Handles, 0, 1, i64(op.Object_Kind.Process), i64(op.Object_Kind.Memory)))
 	}
 	system.close(memory)
 	// A Started end of a process that this process did not start has its
@@ -590,31 +591,31 @@ probes_case :: proc "contextless" () {
 	// the service.
 	connection, connect_status := system.service_connection(&requests, next_tag, "log")
 	next_tag += 1
-	if connect_status != .Ok {
-		wrong("the connection to the log service gave the status", u64(connect_status))
+	if connect_status != .Succeeded {
+		wrong("the connection to the log service gave the outcome word", u64(connect_status))
 	}
 	defer system.call_connection_end(&connection)
 	service_number := u32(connection.process)
 	not_acting := [1]u32{lend(second_reader)}
 	status, answer = wire(row(.Connected, service_number, 1, .Started, 1, READER_PROBES), not_acting[:])
-	refused("a service for which this process does not act for the principal", before, status, answer, .No_Right, fail(.Wire, .No_Grant, .Wirings, 0, 0, 0, 1))
+	refused("a service for which this process does not act for the principal", before, status, answer, .Grant_Or_Right_Missing, fail(.Wire, .No_Grant, .Wirings, 0, 0, 0, 1))
 	// The handle of the writer is a handle of this process, but no Connect
 	// gave it.
 	no_connection := [1]u32{lend(second_reader)}
 	status, answer = wire(row(.Connected, u32(writer), 1, .Started, 1, READER_PROBES), no_connection[:])
-	refused("a number that no Connect gave", before, status, answer, .Bad_Handle, fail(.Wire, .Absent, .Connections, i64(output.Wiring_Field.Writer_Handle), i64(u32(writer)), 0, 1))
+	refused("a number that no Connect gave", before, status, answer, .Nothing_Has_That_Name, fail(.Wire, .Absent, .Connections, i64(output.Wiring_Field.Writer_Handle), i64(u32(writer)), 0, 1))
 	// One process at both ends, named by two handles.
 	same := [2]u32{lend(second_reader), lend(second_reader)}
 	status, answer = wire(row(.Started, 1, READER_ECHO, .Started, 2, READER_PROBES), same[:])
-	refused("one process at both ends", before, status, answer, .Bad_State, fail(.Wire, .Bad_Value, .Wirings, i64(output.Wiring_Field.Reader_End), 0, 0, 1))
+	refused("one process at both ends", before, status, answer, .Argument_Refused, fail(.Wire, .Bad_Value, .Wirings, i64(output.Wiring_Field.Reader_End), 0, 0, 1))
 	// An index past the record outputs of the writer.
 	past := [2]u32{lend(writer), lend(second_reader)}
 	status, answer = wire(row(.Started, 1, WRITER_OUTPUTS + 1, .Started, 2, READER_PROBES), past[:])
-	refused("an index past the record outputs", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), WRITER_OUTPUTS + 1, WRITER_OUTPUTS, 1))
+	refused("an index past the record outputs", before, status, answer, .Argument_Refused, fail(.Wire, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), WRITER_OUTPUTS + 1, WRITER_OUTPUTS, 1))
 	// A record of another type: its name differs first.
 	other_type := [2]u32{lend(writer), lend(second_reader)}
 	status, answer = wire(row(.Started, 1, WRITER_OTHERS, .Started, 2, READER_PROBES), other_type[:])
-	refused("a record of another type", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Record_Types, 0, i64(output.Description_Difference.Name), 0, 1))
+	refused("a record of another type", before, status, answer, .Argument_Refused, fail(.Wire, .Bad_Value, .Record_Types, 0, i64(output.Description_Difference.Name), 0, 1))
 	// Wiring terms for a record input that takes none.
 	with_terms := [2]u32{lend(writer), lend(second_reader)}
 	terms_row := row(.Started, 1, WRITER_PROBES, .Started, 2, READER_PROBES)
@@ -622,7 +623,7 @@ probes_case :: proc "contextless" () {
 	terms_row.terms_count = 8
 	terms := [8]u8{1, 2, 3, 4, 5, 6, 7, 8}
 	status, answer = wire(terms_row, with_terms[:], terms[:])
-	refused("terms for a record input that takes none", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Wiring_Terms, i64(output.Wiring_Field.Terms_Count), 8, 0, 1))
+	refused("terms for a record input that takes none", before, status, answer, .Argument_Refused, fail(.Wire, .Bad_Value, .Wiring_Terms, i64(output.Wiring_Field.Terms_Count), 8, 0, 1))
 	// Conditions that the root service refuses at its border, in more
 	// rounds than its handle table holds: a condition on no field, and a
 	// Text for an Integer field. Each refusal closes its lent handles and
@@ -641,9 +642,9 @@ probes_case :: proc "contextless" () {
 			bytes := transmute([size_of(output.Condition_Terms)]u8)condition
 			status, answer = wire(condition_row, ends[:], bytes[:])
 			if index == 0 {
-				refused("a condition on no field", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Wiring_Terms, i64(output.Condition_Terms_Field.Field), 0, PROBE_FIELDS, 1))
+				refused("a condition on no field", before, status, answer, .Argument_Refused, fail(.Wire, .Bad_Value, .Wiring_Terms, i64(output.Condition_Terms_Field.Field), 0, PROBE_FIELDS, 1))
 			} else {
-				refused("a Text for an Integer field", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Wiring_Terms, i64(output.Condition_Terms_Field.Value_Kind), i64(output.Condition_Value_Kind.Text), i64(output.Condition_Value_Kind.Integer), 1))
+				refused("a Text for an Integer field", before, status, answer, .Argument_Refused, fail(.Wire, .Bad_Value, .Wiring_Terms, i64(output.Condition_Terms_Field.Value_Kind), i64(output.Condition_Value_Kind.Text), i64(output.Condition_Value_Kind.Integer), 1))
 			}
 		}
 	}
@@ -653,13 +654,13 @@ probes_case :: proc "contextless" () {
 	// with this refusal.
 	again := [2]u32{lend(writer), lend(first_reader)}
 	status, answer = wire(row(.Started, 1, WRITER_PROBES, .Started, 2, READER_PROBES), again[:])
-	refused("a record input of the count One that has its wiring", before, status, answer, .Bad_State, fail(.Wire, .Exists, .Wirings, i64(output.Wiring_Field.Reader_Index), READER_PROBES, 0, 1))
+	refused("a record input of the count One that has its wiring", before, status, answer, .Name_Already_Taken, fail(.Wire, .Exists, .Wirings, i64(output.Wiring_Field.Reader_Index), READER_PROBES, 0, 1))
 
 	// The second reader joins after the five probes of the writer, which
 	// waits for it.
 	second := [2]u32{lend(writer), lend(second_reader)}
 	status, answer = wire(row(.Started, 1, WRITER_PROBES, .Started, 2, READER_PROBES), second[:])
-	if status != .Ok || answer[0] == 0 {
+	if status != .Succeeded || answer[0] == 0 {
 		wrong("the Wire of the second reader gave the status", u64(status))
 	}
 	system.log_fact(.Info, Wiring_Refusals_Checked{lent_handles = 2 * LENT_MEMORY_ROUNDS, conditions = LENT_MEMORY_ROUNDS})
@@ -678,12 +679,12 @@ start_case :: proc "contextless" () {
 	packed := system.name_pack("output_writer")
 	list_word := u64(max(root_ring.Start_Wiring_List)) + 1
 	status, answer := root_call(.Start, {packed[0], packed[1], packed[2], packed[3], list_word, 0, 0})
-	refused("a list word that names nothing", before, status, answer, .Bad_Operation, root_ring.word_refusal(.Start, 2, list_word, u64(max(root_ring.Start_Wiring_List))))
+	refused("a list word that names nothing", before, status, answer, .Argument_Refused, root_ring.word_refusal(.Start, 2, list_word, u64(max(root_ring.Start_Wiring_List))))
 	answer_word := u64(max(root_ring.Start_Answer)) + 1
 	status, answer = root_call(.Start, {packed[0], packed[1], packed[2], packed[3], 0, answer_word, 0})
-	refused("an answer word that names nothing", before, status, answer, .Bad_Operation, root_ring.word_refusal(.Start, 3, answer_word, u64(max(root_ring.Start_Answer))))
+	refused("an answer word that names nothing", before, status, answer, .Argument_Refused, root_ring.word_refusal(.Start, 3, answer_word, u64(max(root_ring.Start_Answer))))
 	status, answer = root_call(.Start, {packed[0], packed[1], packed[2], packed[3], 0, 0, 1})
-	refused("a reserved word", before, status, answer, .Bad_Operation, root_ring.word_refusal(.Start, 4, 1, 0))
+	refused("a reserved word", before, status, answer, .Argument_Refused, root_ring.word_refusal(.Start, 4, 1, 0))
 
 	// The record output log: only the starter of a process wires it, in
 	// the list of its Start, once, to a reader that holds the writer. A
@@ -695,30 +696,30 @@ start_case :: proc "contextless" () {
 	not_owned := log_row
 	not_owned.writer_end, not_owned.writer_handle = u32(output.Wiring_End.Connected), 1
 	status, answer = wire(not_owned, nil)
-	refused("a Wire of the log of a service", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Stream), i64(output.Writer_Stream.Log), i64(max(output.Writer_Stream)), 1))
+	refused("a Wire of the log of a service", before, status, answer, .Argument_Refused, fail(.Wire, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Stream), i64(output.Writer_Stream.Log), i64(max(output.Writer_Stream)), 1))
 	log_rows := [1]output.Wiring{not_owned}
 	list_write(log_rows[:], nil)
 	status, answer = start_listed("output_writer", true)
-	refused("a Start that names the log of a service", before, status, answer, .Bad_Operation, fail(.Start, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Stream), i64(output.Writer_Stream.Log), i64(max(output.Writer_Stream)), 1))
+	refused("a Start that names the log of a service", before, status, answer, .Argument_Refused, fail(.Start, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Stream), i64(output.Writer_Stream.Log), i64(max(output.Writer_Stream)), 1))
 	// The log has no index: the smallest index that is not 0.
 	indexed := log_row
 	indexed.writer_index = 1
 	log_rows[0] = indexed
 	list_write(log_rows[:], nil)
 	status, answer = start_listed("output_writer", true)
-	refused("an index of the log", before, status, answer, .Bad_Operation, fail(.Start, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), 1, 0, 1))
+	refused("an index of the log", before, status, answer, .Argument_Refused, fail(.Start, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), 1, 0, 1))
 	// A second row of the log of the same child.
 	two_logs := [2]output.Wiring{log_row, log_row}
 	list_write(two_logs[:], nil)
 	status, answer = start_listed("output_writer", true)
-	refused("a second row of the log", before, status, answer, .Bad_Operation, fail(.Start, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Stream), i64(output.Writer_Stream.Log), 0, 2))
+	refused("a second row of the log", before, status, answer, .Argument_Refused, fail(.Start, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Stream), i64(output.Writer_Stream.Log), 0, 2))
 	// A pace that says the writer never waits: the writer of log waits.
 	never := log_row
 	never.pace = u32(output.Wiring_Pace.Never_Holds_Writer)
 	log_rows[0] = never
 	list_write(log_rows[:], nil)
 	status, answer = start_listed("output_writer", true)
-	refused("the log with the pace Never_Holds_Writer", before, status, answer, .Bad_Operation, fail(.Start, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Pace), i64(output.Wiring_Pace.Never_Holds_Writer), 0, 1))
+	refused("the log with the pace Never_Holds_Writer", before, status, answer, .Operation_Unsupported, fail(.Start, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Pace), i64(output.Wiring_Pace.Never_Holds_Writer), 0, 1))
 	// A condition: an audit keeps each record, and the writer of log takes
 	// no condition. The terms are zero: the root service refuses the row
 	// before it reads them.
@@ -729,7 +730,7 @@ start_case :: proc "contextless" () {
 	no_terms: [size_of(output.Condition_Terms)]u8
 	list_write(log_rows[:], nil, no_terms[:])
 	status, answer = start_listed("output_writer", true)
-	refused("a condition on the log", before, status, answer, .Bad_Operation, fail(.Start, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Condition_Offset), i64(conditioned.condition_offset), 0, 1))
+	refused("a condition on the log", before, status, answer, .Operation_Unsupported, fail(.Start, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Condition_Offset), i64(conditioned.condition_offset), 0, 1))
 	// One row of the asker past six.
 	asker_rows: [output.WIRING_ASKER_ROWS_OF_A_START + 1]output.Wiring
 	for &each in asker_rows {
@@ -737,7 +738,7 @@ start_case :: proc "contextless" () {
 	}
 	list_write(asker_rows[:], nil)
 	status, answer = start_listed("output_writer", true)
-	refused("a seventh row of the asker", before, status, answer, .Bad_Operation, fail(.Start, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Reader_End), output.WIRING_ASKER_ROWS_OF_A_START + 1, output.WIRING_ASKER_ROWS_OF_A_START))
+	refused("a seventh row of the asker", before, status, answer, .Argument_Refused, fail(.Start, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Reader_End), output.WIRING_ASKER_ROWS_OF_A_START + 1, output.WIRING_ASKER_ROWS_OF_A_START))
 	// Six rings of the largest record and the largest capacity: the budget
 	// refuses one of them, and each one made before it goes back. The
 	// delegated wiring service holds the child budget with Spend only (no
@@ -750,7 +751,7 @@ start_case :: proc "contextless" () {
 	}
 	list_write(large_rows[:], nil)
 	status, answer = start_listed("output_writer", true)
-	refused("rings past the budget, after some of them were made", before, status, answer, .No_Budget, fail(.Start, .Budget_Hidden, .Pages, 1), {.Value, .Limit, .Found})
+	refused("rings past the budget, after some of them were made", before, status, answer, .Budget_Or_Capacity_Exhausted, fail(.Start, .Budget_Hidden, .Pages, 1), {.Value, .Limit, .Found})
 	if found := errors.completion_record(answer).found; found < 1 || found > output.WIRING_ASKER_ROWS_OF_A_START {
 		wrong("the rings past the budget name the row", u64(found))
 	}
@@ -768,7 +769,7 @@ end_words_case :: proc "contextless" () {
 		handles := [1]u32{lend(reader)}
 		list_write(rows[:], handles[:])
 		status, answer := start_listed("output_writer", true)
-		if status != .Ok || answer[0] == 0 {
+		if status != .Succeeded || answer[0] == 0 {
 			wrong_refused("the start of a writer of an end word gave the status", status, answer)
 		}
 		writer := system.Handle(answer[0])
@@ -833,7 +834,7 @@ log_case :: proc "contextless" () {
 	rows := [1]output.Wiring{log_row}
 	list_write(rows[:], nil)
 	status, answer := start_listed("log_flood", true)
-	if status != .Ok || answer[0] == 0 || answer[1] == 0 {
+	if status != .Succeeded || answer[0] == 0 || answer[1] == 0 {
 		wrong_refused("the start of log_flood with its log wired gave the status", status, answer)
 	}
 	flood := system.Handle(answer[0])
@@ -927,7 +928,7 @@ limit_case :: proc "contextless" () {
 	for &number in numbers {
 		handles := [1]u32{lend(writer)}
 		status, answer := wire(row(.Started, 1, WRITER_LARGE, .Asker, 0, 0), handles[:])
-		if status != .Ok || answer[0] == 0 {
+		if status != .Succeeded || answer[0] == 0 {
 			wrong_refused("a wiring up to the limit gave the status", status, answer)
 		}
 		number = u32(answer[0])
@@ -939,13 +940,13 @@ limit_case :: proc "contextless" () {
 	before := budget_pages()
 	handles := [1]u32{lend(writer)}
 	status, answer := wire(row(.Started, 1, WRITER_LARGE, .Asker, 0, 0), handles[:])
-	refused("one wiring past the limit of an asker", before, status, answer, .No_Slot, fail(.Wire, .Full, .Wirings, 0, output.WIRINGS_OF_AN_ASKER_MOST + 1, output.WIRINGS_OF_AN_ASKER_MOST))
+	refused("one wiring past the limit of an asker", before, status, answer, .Budget_Or_Capacity_Exhausted, fail(.Wire, .Full, .Wirings, 0, output.WIRINGS_OF_AN_ASKER_MOST + 1, output.WIRINGS_OF_AN_ASKER_MOST))
 	// The row of a Start counts as a Wire does: the start is refused
 	// whole, before the child runs.
 	rows := [1]output.Wiring{row(.Child, 0, WRITER_ASKED, .Asker, 0, 0)}
 	list_write(rows[:], nil)
 	status, answer = start_listed("output_writer", true)
-	refused("one row of a Start past the limit of an asker", before, status, answer, .No_Slot, fail(.Start, .Full, .Wirings, 0, output.WIRINGS_OF_AN_ASKER_MOST + 1, output.WIRINGS_OF_AN_ASKER_MOST))
+	refused("one row of a Start past the limit of an asker", before, status, answer, .Budget_Or_Capacity_Exhausted, fail(.Start, .Full, .Wirings, 0, output.WIRINGS_OF_AN_ASKER_MOST + 1, output.WIRINGS_OF_AN_ASKER_MOST))
 	grant_wirings_revoke(output.WIRINGS_OF_AN_ASKER_MOST)
 	asker_ends_close(numbers[:], Large)
 	processes := [1]system.Handle{writer}
@@ -967,7 +968,7 @@ side_case :: proc "contextless" () {
 	rows := [1]output.Wiring{row(.Child, 0, SIDE_ECHO, .Asker, 0, 0)}
 	list_write(rows[:], nil)
 	status, answer := start_listed("output_side", true)
-	if status != .Ok || answer[0] == 0 || answer[1] == 0 {
+	if status != .Succeeded || answer[0] == 0 || answer[1] == 0 {
 		wrong("the start of output_side with its list gave the status", u64(status))
 	}
 	side := system.Handle(answer[0])
@@ -988,14 +989,14 @@ side_case :: proc "contextless" () {
 
 	numbers: [output.WIRINGS_OF_AN_ASKER_MOST]u32
 	held := 0
-	wire_side :: proc "contextless" (process: system.Handle) -> (system.Status, [7]u64) {
+	wire_side :: proc "contextless" (process: system.Handle) -> (call_outcome.Call_Outcome, [7]u64) {
 		handles := [1]u32{lend(process)}
 		return wire(row(.Started, 1, SIDE_ECHO, .Asker, 0, 0), handles[:])
 	}
 	// The end of this Wire is the one that output_side answers with Taken,
 	// Taken again, one probe and Closed; it takes no other command.
 	status, answer = wire_side(side)
-	if status != .Ok || answer[0] == 0 {
+	if status != .Succeeded || answer[0] == 0 {
 		wrong_refused("the Wire of output_side gave the status", status, answer)
 	}
 	closed_number := u32(answer[0])
@@ -1022,7 +1023,7 @@ side_case :: proc "contextless" () {
 			held = 0
 		}
 		status, answer = wire_side(side)
-		if status != .Ok || answer[0] == 0 {
+		if status != .Succeeded || answer[0] == 0 {
 			wrong_refused("a Wire of output_side before its wiring ring is full gave the status", status, answer)
 		}
 		numbers[held] = u32(answer[0])
@@ -1035,7 +1036,7 @@ side_case :: proc "contextless" () {
 	}
 	before := budget_pages()
 	status, answer = wire_side(side)
-	refused("an end for a wiring ring that is full", before, status, answer, .No_Slot, fail(.Wire, .Busy, .Wirings, 0, 1, SIDE_RING_CAPACITY, 1))
+	refused("an end for a wiring ring that is full", before, status, answer, .Callee_Busy, fail(.Wire, .Busy, .Wirings, 0, 1, SIDE_RING_CAPACITY, 1))
 	// The ring holds a multiple of the limit of an asker, so the loop
 	// revoked each wiring and held is 0 here: the refused Wire gave no
 	// grant, and the revocation is refused whole.
@@ -1043,7 +1044,7 @@ side_case :: proc "contextless" () {
 	asker_ends_close(numbers[:held], Probe)
 	packed := system.name_pack("output_side")
 	stop_status, _ := root_call(.Stop, {packed[0], packed[1], packed[2], packed[3], 0, 0, 0})
-	if stop_status != .Ok {
+	if stop_status != .Succeeded {
 		wrong("the stop of output_side gave the status", u64(stop_status))
 	}
 	processes := [1]system.Handle{side}
@@ -1061,7 +1062,7 @@ asker_case :: proc "contextless" () -> ! {
 	rows := [1]output.Wiring{row(.Child, 0, WRITER_ASKED, .Asker, 0, 0)}
 	list_write(rows[:], nil)
 	status, answer := start_listed("output_writer", true)
-	if status != .Ok || answer[1] == 0 {
+	if status != .Succeeded || answer[1] == 0 {
 		wrong_refused("the start of the writer with a row of the asker gave the status", status, answer)
 	}
 	number := u32(answer[1])

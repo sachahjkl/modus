@@ -2,6 +2,7 @@
 package tpm_service
 
 import "core:testing"
+import "modus:contract/call_outcome"
 import "modus:contract/tpm_attestation"
 
 // The pins on the ring and in unlock: a writer of the disk swaps, removes
@@ -49,8 +50,8 @@ the_border_of_the_pins_refuses_each_wrong_word :: proc(t: ^testing.T) {
 	for values in refused {
 		_, ok := pin_request_of_values(.Pin_Read, values)
 		testing.expectf(t, !ok, "the request %v was taken", values)
-		_, status := request_of_record(u32(Command.Pin_Read), values, .Client_Ring)
-		testing.expect_value(t, status, Status.Bad_Command)
+		_, status, _ := request_of_record(u32(Command.Pin_Read), values, .Client_Ring)
+		testing.expect_value(t, status, call_outcome.Call_Outcome.Argument_Refused)
 	}
 	// A write of a payload of another size than its kind: 0, one short,
 	// one long, the size of the other kind, the largest word.
@@ -65,10 +66,10 @@ the_border_of_the_pins_refuses_each_wrong_word :: proc(t: ^testing.T) {
 		_, ok = pin_request_of_values(command, {0 = u64(Pin_Kind.Machine_Key)})
 		testing.expect(t, !ok)
 	}
-	_, status := request_of_record(u32(Command.Pin_Read), {0 = u64(Pin_Kind.Machine_Key)}, .Measure_Ring)
-	testing.expect_value(t, status, Status.Bad_Command)
-	_, status = request_of_record(u32(Command.Pin_Write), {0 = u64(Pin_Kind.Machine_Key), 2 = machine_size}, .Measure_Ring)
-	testing.expect_value(t, status, Status.Bad_Command)
+	_, status, _ := request_of_record(u32(Command.Pin_Read), {0 = u64(Pin_Kind.Machine_Key)}, .Measure_Ring)
+	testing.expect_value(t, status, call_outcome.Call_Outcome.Grant_Or_Right_Missing)
+	_, status, _ = request_of_record(u32(Command.Pin_Write), {0 = u64(Pin_Kind.Machine_Key), 2 = machine_size}, .Measure_Ring)
+	testing.expect_value(t, status, call_outcome.Call_Outcome.Grant_Or_Right_Missing)
 	for state_word in ([?]u64{5, 255, max(u64)}) {
 		_, state_ok := pin_state_of_word(state_word)
 		testing.expect(t, !state_ok)
@@ -81,8 +82,8 @@ the_border_of_the_pins_refuses_each_wrong_word :: proc(t: ^testing.T) {
 	request, ok = pin_request_of_values(.Pin_Write, {0 = u64(Pin_Kind.Principal_File), 1 = PIN_PRINCIPAL_LIMIT, 2 = principal_size})
 	testing.expect(t, ok && request.principal == PIN_PRINCIPAL_LIMIT && request.bytes == int(principal_size))
 	parsed: Request
-	parsed, status = request_of_record(u32(Command.Pin_Write), {0 = u64(Pin_Kind.Machine_Key), 2 = machine_size}, .Client_Ring)
-	testing.expect(t, status == .Ok && parsed.command == .Pin_Write && parsed.authorization == .None)
+	parsed, status, _ = request_of_record(u32(Command.Pin_Write), {0 = u64(Pin_Kind.Machine_Key), 2 = machine_size}, .Client_Ring)
+	testing.expect(t, status == .Succeeded && parsed.command == .Pin_Write && parsed.authorization == .None)
 }
 
 // A disk swap, a downgrade, a removal and a rollback of the record of the

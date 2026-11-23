@@ -7,6 +7,7 @@ import "core:crypto/ed25519"
 import "core:testing"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
+import "modus:contract/call_outcome"
 import "modus:contract/machine_mesh"
 import "modus:contract/object_cache"
 import "modus:contract/remote"
@@ -63,21 +64,23 @@ fill_test_random :: proc "contextless" (bytes: []u8, user_data: rawptr) -> bool 
 }
 
 // The role holder of the tests: export 1 answers with the reversed
-// arguments, export 2 refuses, export 3 lies with a link outcome.
+// arguments, export 2 refuses with a value that the reply drops, export 3
+// gives an outcome in doubt of its own, and each other export writes a count
+// past its result.
 @(private = "file")
-test_role_holder :: proc "contextless" (role: role_contract.Role, export: u32, arguments: []u8, result: []u8, _: rawptr) -> (value: i64, result_count: int, outcome: Role_Outcome) {
+test_role_holder :: proc "contextless" (role: role_contract.Role, export: u32, arguments: []u8, result: []u8, _: rawptr) -> (value: i64, result_count: int, outcome: call_outcome.Call_Outcome) {
 	switch export {
 	case 1:
 		for index in 0 ..< len(arguments) {
 			result[index] = arguments[len(arguments) - 1 - index]
 		}
-		return i64(len(arguments)), len(arguments), .Answered
+		return i64(len(arguments)), len(arguments), .Succeeded
 	case 2:
-		return -1, 0, .Refused
+		return -1, 0, .Argument_Refused
 	case 3:
-		return 0, 0, .Unknown_Outcome
+		return 0, 0, .Deadline_Passed_During_The_Call
 	}
-	return 0, len(result) + 1, .Answered
+	return 0, len(result) + 1, .Succeeded
 }
 
 @(private = "file")
@@ -723,38 +726,42 @@ role_call_answers_and_a_broken_link_gives_no_false_refusal :: proc(t: ^testing.T
 	identifier, frame, status := role_call_begin(proxy, .Storage, 1, {}, transmute([]u8)string("abcde"), now, 500, request[:])
 	testing.expect_value(t, status, Role_Proxy_Status.Sent)
 	reply, found := role_reply_accept(proxy, identifier, exchange(home, identity_of(laptop), frame))
-	testing.expect(t, found && reply.outcome == .Answered && reply.value == 5 && string(reply.result) == "edcba")
+	testing.expect(t, found && reply.outcome == .Succeeded && reply.value == 5 && string(reply.result) == "edcba")
 	// Its reply is taken once.
 	_, found = role_reply_accept(proxy, identifier, exchange(home, identity_of(laptop), frame))
 	testing.expect(t, !found)
 
-	// The holder refuses; a role that the plan did not give; a holder that lies.
+	// The holder refuses: its outcome crosses, and its value does not; a
+	// role that the plan did not give.
 	identifier, frame, _ = role_call_begin(proxy, .Storage, 2, {}, nil, now, 500, request[:])
 	reply, _ = role_reply_accept(proxy, identifier, exchange(home, identity_of(laptop), frame))
-	testing.expect(t, reply.outcome == .Refused && reply.value == -1)
+	testing.expect(t, reply.outcome == .Argument_Refused && reply.value == 0)
 	identifier, frame, _ = role_call_begin(proxy, .Sound_Device, 1, {}, nil, now, 500, request[:])
 	reply, _ = role_reply_accept(proxy, identifier, exchange(home, identity_of(laptop), frame))
-	testing.expect_value(t, reply.outcome, Role_Outcome.Refused)
-	// The holder ran, then gave an outcome of a link or a count past its
-	// result: the call can have run, so it is no refusal.
-	for export in ([?]u32{3, 4}) {
-		identifier, frame, _ = role_call_begin(proxy, .Storage, export, {}, nil, now, 500, request[:])
-		answer := exchange(home, identity_of(laptop), frame)
-		_, fault, _, _ := answer_expect(answer, .Role_Reply)
-		testing.expect_value(t, fault, Refusal_Reason.Role_Holder_Fault)
-		reply, _ = role_reply_accept(proxy, identifier, answer)
-		testing.expect_value(t, reply.outcome, Role_Outcome.Unknown_Outcome)
-	}
+	testing.expect_value(t, reply.outcome, mesh_refusal_outcome(.Role_Refused))
+	// The holder ran and gave an outcome in doubt: it crosses as it is.
+	identifier, frame, _ = role_call_begin(proxy, .Storage, 3, {}, nil, now, 500, request[:])
+	reply, _ = role_reply_accept(proxy, identifier, exchange(home, identity_of(laptop), frame))
+	testing.expect_value(t, reply.outcome, call_outcome.Call_Outcome.Deadline_Passed_During_The_Call)
+	// The holder ran, then wrote a count past its result: the call can have
+	// run, so it is no refusal.
+	identifier, frame, _ = role_call_begin(proxy, .Storage, 4, {}, nil, now, 500, request[:])
+	fault_answer := exchange(home, identity_of(laptop), frame)
+	_, fault, _, _ := answer_expect(fault_answer, .Role_Reply)
+	testing.expect_value(t, fault, Refusal_Reason.Role_Holder_Fault)
+	reply, _ = role_reply_accept(proxy, identifier, fault_answer)
+	testing.expect_value(t, reply.outcome, call_outcome.Call_Outcome.Callee_Stopped_During_The_Call)
 
 	// The link breaks with two calls in flight: the call that is not
-	// idempotent ends with Unknown_Outcome, never Refused; the idempotent
+	// idempotent ends with Connection_Ended_During_The_Call, never a
+	// refusal; the idempotent
 	// one waits for the link.
 	once, once_frame, _ := role_call_begin(proxy, .Storage, 1, {}, transmute([]u8)string("once"), now, 500, request[:])
 	_ = once_frame
 	again_frame_bytes: [FRAME_LIMIT]u8
 	again, _, _ := role_call_begin(proxy, .Storage, 1, {.Idempotent}, transmute([]u8)string("again"), now, 500, again_frame_bytes[:])
 	ended, count := role_link_broken(proxy)
-	testing.expect(t, count == 1 && ended[0].identifier == once && ended[0].outcome == .Unknown_Outcome)
+	testing.expect(t, count == 1 && ended[0].identifier == once && ended[0].outcome == .Connection_Ended_During_The_Call)
 	testing.expect_value(t, proxy.link, Role_Link_State.Broken)
 	// A new call while the link is broken: Unreachable at once.
 	_, unreachable_frame, unreachable := role_call_begin(proxy, .Storage, 1, {}, nil, now, 500, request[:])
@@ -770,18 +777,19 @@ role_call_answers_and_a_broken_link_gives_no_false_refusal :: proc(t: ^testing.T
 	resend_identifier, resend_frame, resend_found := role_resend_next(proxy, request[:])
 	testing.expect(t, resend_found && resend_identifier == again)
 	reply, found = role_reply_accept(proxy, again, exchange(home, identity_of(laptop), resend_frame))
-	testing.expect(t, found && reply.outcome == .Answered && string(reply.result) == "niaga")
+	testing.expect(t, found && reply.outcome == .Succeeded && string(reply.result) == "niaga")
 
-	// No call waits past its bound: it ends with Unknown_Outcome.
+	// No call waits past its bound: it ends with Deadline_Passed_During_The_Call.
 	late, _, _ := role_call_begin(proxy, .Storage, 1, {}, nil, now, 500, request[:])
 	ended, count = role_calls_expire(proxy, now + 499)
 	testing.expect_value(t, count, 0)
 	ended, count = role_calls_expire(proxy, now + 500)
-	testing.expect(t, count == 1 && ended[0].identifier == late && ended[0].outcome == .Unknown_Outcome)
+	testing.expect(t, count == 1 && ended[0].identifier == late && ended[0].outcome == .Deadline_Passed_During_The_Call)
 
-	// A malformed reply, a reply for another call, and a link outcome on the
-	// wire: each is Unknown_Outcome, never trusted as a refusal or an answer.
-	for change in 0 ..< 3 {
+	// A malformed reply, a reply for another call, an outcome word that
+	// names no member, the largest word, and a failure that carries a value:
+	// each is Answer_Unreadable, never trusted as a refusal or an answer.
+	for change in 0 ..< 5 {
 		call, call_frame, _ := role_call_begin(proxy, .Storage, 1, {}, transmute([]u8)string("xy"), now, 500, request[:])
 		answer_bytes: [FRAME_LIMIT]u8
 		answer := answer_bytes[:copy(answer_bytes[:], exchange(home, identity_of(laptop), call_frame))]
@@ -791,10 +799,14 @@ role_call_answers_and_a_broken_link_gives_no_false_refusal :: proc(t: ^testing.T
 		case 1:
 			byte_order.write_u64_little_endian(answer, FRAME_HEADER_SIZE, call + 100)
 		case 2:
-			byte_order.write_u32_little_endian(answer, FRAME_HEADER_SIZE + 8, u32(Role_Outcome.Unknown_Outcome))
+			byte_order.write_u32_little_endian(answer, FRAME_HEADER_SIZE + 8, u32(max(call_outcome.Call_Outcome)) + 1)
+		case 3:
+			byte_order.write_u32_little_endian(answer, FRAME_HEADER_SIZE + 8, max(u32))
+		case 4:
+			byte_order.write_u32_little_endian(answer, FRAME_HEADER_SIZE + 8, u32(call_outcome.Call_Outcome.Argument_Refused))
 		}
 		reply, found = role_reply_accept(proxy, call, answer)
-		testing.expectf(t, found && reply.outcome == .Unknown_Outcome, "change %d: %v", change, reply.outcome)
+		testing.expectf(t, found && reply.outcome == .Answer_Unreadable, "change %d: %v", change, reply.outcome)
 	}
 
 	// The borders of a call: no role, too many arguments, no bound, a full table.

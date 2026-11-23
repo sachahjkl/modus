@@ -1,6 +1,6 @@
 package remote_service
 
-import "modus:contract/isolated"
+import "modus:contract/call_outcome"
 import "modus:contract/remote"
 import "modus:display"
 import "modus:graphics"
@@ -120,21 +120,19 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 
 	// The last calls, the last one first.
-	inside = interface.card(&frame, {8, 360, WIDTH - 16, 184}, "LAST CALLS", "remote.Answer: status, value, bytes, time in this process", graphics.colors.process)
+	inside = interface.card(&frame, {8, 360, WIDTH - 16, 184}, "LAST CALLS", "remote.Answer: outcome, value, bytes, time in this process", graphics.colors.process)
 	for row in 0 ..< min(recent_count, RECENT_CAPACITY) {
 		item := &recent[(recent_count - 1 - row) % RECENT_CAPACITY]
 		y := inside.y + int(row) * LINE
 		interface.draw_text(table, inside.x, y, item.service[0] != 0 ? remote.name_text(&item.service) : "-", graphics.colors.text)
 		state, color := "ok", graphics.Color(graphics.colors.process)
 		switch {
-		case item.status == .Refused:
+		case item.relay_outcome != .Succeeded:
 			state, color = "refused by remote", graphics.colors.failed
-		case isolated.Status(item.call_status) != .Ok:
-			state, color = "refused by the service", graphics.colors.failed
-		case item.error != 0:
-			state, color = "error record", graphics.colors.boot_program
+		case item.outcome != .Succeeded:
+			state, color = call_outcome.CALL_OUTCOME_NAMES[item.outcome], graphics.colors.failed
 		}
-		if item.status != .Refused {
+		if item.relay_outcome == .Succeeded {
 			interface.draw_text(table, inside.x + 96, y, system.format(buffer[:], "export ", u64(item.export)), graphics.colors.dim)
 		}
 		interface.mark(&frame, inside.x + 200, y + 4, 8, color)

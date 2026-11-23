@@ -51,6 +51,7 @@ package server
 
 import "modus:contract/byte_order"
 import "modus:contract/date"
+import "modus:contract/call_outcome"
 import "modus:contract/datagram"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
@@ -551,7 +552,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for record in system.receive(&endpoint.completions) {
 			switch {
 			case record.tag < RECEIVE_PLACES:
-				if datagram.Status(record.kind) == .Ok {
+				if record.kind == u32(call_outcome.Call_Outcome.Succeeded) {
 					incoming[count] = {remote_address = u32(record.values[2]), segment = place_bytes(record.tag)[:min(record.values[1], PLACE_SIZE)]}
 					used[count] = record.tag
 					count += 1

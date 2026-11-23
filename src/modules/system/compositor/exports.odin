@@ -2,6 +2,7 @@ package compositor
 
 import "internal:compositor/bar"
 import "modus:contract/desktop_shell"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/notifications"
@@ -102,8 +103,6 @@ Assistive_Holder_Row :: struct {
 }
 #assert(bar.ASSISTIVE_NICKNAME_BYTES < 32 && ASSISTIVE_KIND_FIELD_BYTES <= 16)
 
-ERROR_ACTS_FOR_PRINCIPAL :: -1
-
 service: system.Service
 pointer_moves: u64
 key_records: u64
@@ -134,7 +133,7 @@ plan_display_caller :: proc "contextless" () -> bool {
 	return caller == nil || pr.plan_display_caller_allowed(caller.grant)
 }
 
-// pointer gives the place of the pointer on the screen, its buttons, the menu of the bar that is open, the state of the palette, and the name of the pointer shape, as one row. The result is 1, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+// pointer gives the place of the pointer on the screen, its buttons, the menu of the bar that is open, the state of the palette, and the name of the pointer shape, as one row. The result is 1, or a failure with its call outcome and an error record. The error kind: No_Grant (the caller does not act for the principal).
 //
 // **What it is for.** A caller that drives the desktop from outside, as
 // the machine test does through the remote service, reads where the
@@ -170,7 +169,7 @@ plan_display_caller :: proc "contextless" () -> bool {
 //   the appearance in force.
 //
 // **Grant**: the caller must **act for the principal**. A caller without
-// it gets the error kind `No_Grant`, with the result -1: the place of the
+// it gets the error kind `No_Grant`, with the call outcome Grant_Or_Right_Missing: the place of the
 // pointer tells where the input goes.
 //
 // ```
@@ -178,9 +177,9 @@ plan_display_caller :: proc "contextless" () -> bool {
 // compositor.pointer()
 // ```
 @(export, link_name = "pointer")
-pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
+pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if len(result^) > 0 {
 		result[0] = {x = i64(pointer_x), y = i64(pointer_y), buttons = i64(buttons), moves = i64(pointer_moves), keys = i64(key_records), keys_waiting = i64(keys_waiting_of_all_windows()), keys_refused = i64(key_records_refused), palette = i64(palette_panel.state)}
@@ -196,10 +195,10 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 			copy(result[0].menu[:], "windows")
 		}
 	}
-	return 1
+	return .Succeeded, 1
 }
 
-// windows gives one row for each window, the front one first: its title, its place and its size with the frame, its order from the front, whether it has the focus, and whether the keys go to it. The result is the count of rows, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+// windows gives one row for each window, the front one first: its title, its place and its size with the frame, its order from the front, whether it has the focus, and whether the keys go to it. The result is the count of rows, or a failure with its call outcome and an error record. The error kind: No_Grant (the caller does not act for the principal).
 //
 // **What it is for.** A caller finds a window by its title, then presses
 // its title bar or its close button at a place that it computes from the
@@ -245,16 +244,16 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 // back are missing, and the result still gives the count of all windows.
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
 // where(compositor.windows(), focus = 1)
 // ```
 @(export, link_name = "windows")
-windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
+windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	for position in 0 ..< order_count {
 		row := order_count - 1 - position
@@ -284,10 +283,10 @@ windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
 		}
 		copy(result[row].title[:len(result[row].title) - 1], system.name_of(client.title[:]))
 	}
-	return i64(order_count)
+	return .Succeeded, i64(order_count)
 }
 
-// screen gives the frames that the compositor drew, the Present records that it received, the damage rectangles that wait for the next frame, whether a change of the desktop itself waits, and how its frames reached the screen, as one row. The result is 1, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+// screen gives the frames that the compositor drew, the Present records that it received, the damage rectangles that wait for the next frame, whether a change of the desktop itself waits, and how its frames reached the screen, as one row. The result is 1, or a failure with its call outcome and an error record. The error kind: No_Grant (the caller does not act for the principal).
 //
 // **What it is for.** A caller that takes a picture of the screen from
 // outside, as the machine test does through the remote service, reads if
@@ -320,26 +319,25 @@ windows :: proc "c" (result: ^[]Window, error: ^errors.Error_Record) -> i64 {
 // (`monitor.processes()`).
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
 // compositor.screen()
 // ```
 @(export, link_name = "screen")
-screen_state :: proc "c" (result: ^[]Screen, error: ^errors.Error_Record) -> i64 {
+screen_state :: proc "c" (result: ^[]Screen, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if len(result^) > 0 {
 		result[0] = {frames = i64(frames), presents = i64(presents), damage = i64(damage_count), desktop = desktop_change_waits ? 1 : 0, page_flips = i64(page_flips), frames_on_the_shown_page = i64(frames_on_the_shown_page)}
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // notify posts a non-focus-stealing desktop notification card in the top-right
-// corner below the bar and returns its assigned notification identifier, or a
-// negative number with an error record.
+// corner below the bar and returns its assigned notification identifier, or a failure with its call outcome and an error record.
 //
 // A caller that acts for the principal posts as the principal. Any other
 // caller posts under its own process name, which the card shows before the
@@ -362,9 +360,9 @@ screen_state :: proc "c" (result: ^[]Screen, error: ^errors.Error_Record) -> i64
 //
 // **Grant**: a connection to the compositor.
 @(export, link_name = "notify")
-notify_export :: proc "c" (title: ^string, body: ^string, error: ^errors.Error_Record) -> i64 {
+notify_export :: proc "c" (title: ^string, body: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if len(title^) == 0 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, 1)
 	}
 	source := notifications.PRINCIPAL_SOURCE
 	label: []u8
@@ -375,7 +373,7 @@ notify_export :: proc "c" (title: ^string, body: ^string, error: ^errors.Error_R
 		caller := system.service_caller()
 		name := system.name_of(caller.caller[:])
 		if len(name) == 0 {
-			return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 0, 0, notifications.MAX_LABEL_BYTES)
+			return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, 0, 0, notifications.MAX_LABEL_BYTES)
 		}
 		source = notifications.source_of_caller_name(name)
 		label = transmute([]u8)name
@@ -384,66 +382,65 @@ notify_export :: proc "c" (title: ^string, body: ^string, error: ^errors.Error_R
 	id, refusal := desktop_notification_post(source, .Normal, system.time(), transmute([]u8)(title^), transmute([]u8)(body^), label, cards_limit)
 	switch refusal {
 	case .None:
-		return i64(id)
+		return .Succeeded, i64(id)
 	case .Source_Full:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Full, .Requests, 0, 0, notifications.CARDS_PER_SOURCE_LIMIT, i64(notifications.source_card_count(&desktop_notifications, source)))
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Requests, 0, 0, notifications.CARDS_PER_SOURCE_LIMIT, i64(notifications.source_card_count(&desktop_notifications, source)))
 	case .Empty_Title:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, 1)
 	case .Title_Too_Long:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, 1, i64(len(title^)), notifications.MAX_TITLE_BYTES)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(title^)), notifications.MAX_TITLE_BYTES)
 	case .Body_Too_Long:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, 2, i64(len(body^)), notifications.MAX_BODY_BYTES)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 2, i64(len(body^)), notifications.MAX_BODY_BYTES)
 	case .Label_Too_Long:
 		// The root service names a process in 32 bytes at most: no name
 		// of a connection is longer.
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, 0, i64(len(label)), notifications.MAX_LABEL_BYTES)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 0, i64(len(label)), notifications.MAX_LABEL_BYTES)
 	case .Queue_Full:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Full, .Records, 0, 0, notifications.MAX_NOTIFICATIONS, notifications.MAX_NOTIFICATIONS)
+		return call_outcome.fail(error, .Callee_Busy, .Full, .Records, 0, 0, notifications.MAX_NOTIFICATIONS, notifications.MAX_NOTIFICATIONS)
 	case .Rate_Limited:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Milliseconds, 0, 0, i64(desktop_notifications.min_interval_ms))
+		return call_outcome.fail(error, .Callee_Busy, .Busy, .Milliseconds, 0, 0, i64(desktop_notifications.min_interval_ms))
 	case .Suppressed, .Nil_Queue, .Not_Found:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused, .None)
+		return call_outcome.fail(error, .Wrong_State, .Refused, .None)
 	}
-	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused, .None)
+	return call_outcome.fail(error, .Argument_Refused, .Refused, .None)
 }
 
 // magnifier sets the desktop viewport magnifier zoom factor in eighths
 // (0 disables; 12 to 64 enables 1.5x to 8x zoom centered on the pointer) and
-// returns 1 on success, or a negative number with an error record.
+// returns 1 on success, or a failure with its call outcome and an error record.
 //
 // **Grant**: the caller must **act for the principal**.
 @(export, link_name = "magnifier")
-magnifier_export :: proc "c" (zoom_eighths: i64, error: ^errors.Error_Record) -> i64 {
+magnifier_export :: proc "c" (zoom_eighths: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if zoom_eighths < 0 || zoom_eighths > 64 || (zoom_eighths != 0 && zoom_eighths < 12) {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Out_Of_Range, .Counts, 1, zoom_eighths, 64)
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Counts, 1, zoom_eighths, 64)
 	}
 	if !desktop_magnifier_set(u16(zoom_eighths), i32(pointer_x), i32(pointer_y)) {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Counts, 1, zoom_eighths)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Counts, 1, zoom_eighths)
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // powerbox_ask opens an unforgeable trusted-display grant request dialog for a
-// process requesting a network endpoint or store and returns the request ID, or
-// a negative number with an error record.
+// process requesting a network endpoint or store and returns the request ID, or a failure with its call outcome and an error record.
 //
 // **Grant**: the caller must **act for the principal**.
 @(export, link_name = "powerbox_ask")
-powerbox_ask_export :: proc "c" (process_name: ^string, resource: ^string, error: ^errors.Error_Record) -> i64 {
+powerbox_ask_export :: proc "c" (process_name: ^string, resource: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if plan_difference_dialog.open {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Requests, 0, 1, 1)
+		return call_outcome.fail(error, .Callee_Busy, .Busy, .Requests, 0, 1, 1)
 	}
 	id := powerbox_prompt_open(.Network_Endpoint, process_name^, resource^)
 	if id == 0 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, 1)
 	}
-	return i64(id)
+	return .Succeeded, i64(id)
 }
 
 // The one process that may clear the wide-grant indicator through this
@@ -451,8 +448,7 @@ powerbox_ask_export :: proc "c" (process_name: ^string, resource: ^string, error
 WIDE_GRANT_INDICATOR_CLEARER :: "collector"
 
 // wide_grant_indicator shows (active == 1) or clears (active == 0) the
-// unforgeable wide-grant indicator badge in the top bar and returns 1, or a
-// negative number with an error record.
+// unforgeable wide-grant indicator badge in the top bar and returns 1, or a failure with its call outcome and an error record.
 //
 // A wide grant lets an agent see and drive the screen: the indicator is how
 // the principal knows. So a caller that can show the indicator cannot clear
@@ -463,129 +459,128 @@ WIDE_GRANT_INDICATOR_CLEARER :: "collector"
 // **Grant**: the caller must **act for the principal** to show the
 // indicator, and must be the collector to clear it.
 @(export, link_name = "wide_grant_indicator")
-wide_grant_indicator_export :: proc "c" (active: i64, grant_id: i64, error: ^errors.Error_Record) -> i64 {
+wide_grant_indicator_export :: proc "c" (active: i64, grant_id: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if active != 0 && active != 1 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Counts, 1, active, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Counts, 1, active, 1)
 	}
 	if grant_id < 0 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Out_Of_Range, .Counts, 2, grant_id)
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Counts, 2, grant_id)
 	}
 	if active == 0 && wide_grant_display.active {
 		caller := system.service_caller()
 		if caller != nil && system.name_of(caller.caller[:]) != WIDE_GRANT_INDICATOR_CLEARER {
-			return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Grants)
+			return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Grants)
 		}
 	}
 	wide_grant_mark_set(active == 1, u64(grant_id))
-	return 1
+	return .Succeeded, 1
 }
 
 // set_decoration switches a window between default server decorations (0) and
-// borderless client-side decorations (1), returning 1 on success or a negative
-// number with an error record.
+// borderless client-side decorations (1), returning 1 on success or a failure with its call outcome and an error record.
 //
 // **Grant**: the caller must **act for the principal**.
 @(export, link_name = "set_decoration")
-set_decoration_export :: proc "c" (window_order: i64, mode: i64, error: ^errors.Error_Record) -> i64 {
+set_decoration_export :: proc "c" (window_order: i64, mode: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	dec, ok := desktop_shell.window_decoration_of_word(u64(mode))
 	if mode < 0 || !ok {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Counts, 2, mode)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Counts, 2, mode)
 	}
 	if window_order < 0 || int(window_order) >= order_count {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Out_Of_Range, .Counts, 1, window_order, i64(order_count))
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Counts, 1, window_order, i64(order_count))
 	}
 	idx := order[order_count - 1 - int(window_order)]
 	clients[idx].decoration = dec
 	damage_whole_screen()
-	return 1
+	return .Succeeded, 1
 }
 
 // open_context_menu opens the filterable fuzzy desktop context menu at (x, y)
-// and returns 1, or a negative number with an error record.
+// and returns 1, or a failure with its call outcome and an error record.
 //
 // **Grant**: the caller must **act for the principal**.
 @(export, link_name = "open_context_menu")
-open_context_menu_export :: proc "c" (x: i64, y: i64, error: ^errors.Error_Record) -> i64 {
+open_context_menu_export :: proc "c" (x: i64, y: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	desktop_context_menu_open(int(x), int(y))
-	return 1
+	return .Succeeded, 1
 }
 
 // powerbox_pick_store opens the unforgeable trusted-display Store Picker dialog
 // for a requesting process (which never sees the store list) and returns the
-// request ID, or a negative number with an error record.
+// request ID, or a failure with its call outcome and an error record.
 //
 // **Grant**: the caller must **act for the principal**.
 @(export, link_name = "powerbox_pick_store")
-powerbox_pick_store_export :: proc "c" (process_name: ^string, mode: ^string, error: ^errors.Error_Record) -> i64 {
+powerbox_pick_store_export :: proc "c" (process_name: ^string, mode: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if plan_difference_dialog.open {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Requests, 0, 1, 1)
+		return call_outcome.fail(error, .Callee_Busy, .Busy, .Requests, 0, 1, 1)
 	}
 	id := powerbox_prompt_open(.Store_Share, process_name^, mode^)
 	if id == 0 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, 1)
 	}
-	return i64(id)
+	return .Succeeded, i64(id)
 }
 
 // bar_position moves the bar of the desktop to Top (1) or Bottom (2), and
-// returns 1, or a negative number with an error record. Left (3) and Right
+// returns 1, or a failure with its call outcome and an error record. Left (3) and Right
 // (4) are taken and keep the bar at the top: the compositor draws no
 // vertical bar yet (src/md/features/bar_edge.md).
 //
 // **Grant**: the caller must **act for the principal**.
 @(export, link_name = "bar_position")
-bar_position_export :: proc "c" (pos_word: i64, error: ^errors.Error_Record) -> i64 {
+bar_position_export :: proc "c" (pos_word: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	pos, ok := desktop_shell.bar_position_of_word(u64(pos_word))
 	if pos_word <= 0 || !ok {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Counts, 1, pos_word)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Counts, 1, pos_word)
 	}
 	desktop_bar_position_set(pos)
-	return 1
+	return .Succeeded, 1
 }
 
-// tray_widget_open opens the card of a tray widget, as a press on its part of the bar does, or closes the card that is open: 0 closes, 1 the control center, 2 the notification center, 3 the calendar. Opening a card closes the start menu, the menu of the windows, the list of the viewers and the context menu of the desktop. The result is 1, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Bad_Value (-1, a word that names no tray widget).
+// tray_widget_open opens the card of a tray widget, as a press on its part of the bar does, or closes the card that is open: 0 closes, 1 the control center, 2 the notification center, 3 the calendar. Opening a card closes the start menu, the menu of the windows, the list of the viewers and the context menu of the desktop. The result is 1, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Bad_Value (a word that names no tray widget).
 //
 // The field `menu` of `pointer()` names the open card: `control_center`,
 // `notifications` or `calendar` (src/md/features/tray_widgets.md).
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
 // compositor.tray_widget_open(3)
 // ```
 @(export, link_name = "tray_widget_open")
-tray_widget_open_export :: proc "c" (widget_word: i64, error: ^errors.Error_Record) -> i64 {
+tray_widget_open_export :: proc "c" (widget_word: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	widget, known := bar.tray_widget_of_word(u64(widget_word))
 	if widget_word < 0 || !known {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 1, widget_word, i64(max(bar.Tray_Widget)))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, widget_word, i64(max(bar.Tray_Widget)))
 	}
 	tray_widget_show(widget) // tray_widgets.odin
-	return 1
+	return .Succeeded, 1
 }
 
 // gpu_info returns one row describing the VirtIO-GPU 1.2 scanout and Venus
-// capability state discovered by the compositor, or a negative number with an
-// error record. With the scanout, `presents` counts the frames that the
+// capability state discovered by the compositor, or a failure with its call outcome
+// and an error record. With the scanout, `presents` counts the frames that the
 // scanout showed, and `frames_merged` the frames whose damage waited for
 // the answer of a present and went with the next one: a host that is slow
 // to answer merges frames, and never holds the compositor
@@ -594,9 +589,9 @@ tray_widget_open_export :: proc "c" (widget_word: i64, error: ^errors.Error_Reco
 //
 // **Grant**: the caller must **act for the principal**.
 @(export, link_name = "gpu_info")
-gpu_info_export :: proc "c" (result: ^[]Gpu_Info, error: ^errors.Error_Record) -> i64 {
+gpu_info_export :: proc "c" (result: ^[]Gpu_Info, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if len(result^) > 0 {
 		result[0] = {
@@ -610,10 +605,10 @@ gpu_info_export :: proc "c" (result: ^[]Gpu_Info, error: ^errors.Error_Record) -
 			frames_merged     = i64(gpu_frames_merged),
 		}
 	}
-	return 1
+	return .Succeeded, 1
 }
 
-// window_grants gives one row for each requested grant that holds, in the order of their record: its number, the process that holds it, and its object. The result is the count of the grants, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+// window_grants gives one row for each requested grant that holds, in the order of their record: its number, the process that holds it, and its object. The result is the count of the grants, or a failure with its call outcome and an error record. The error kind: No_Grant (the caller does not act for the principal).
 //
 // **What it is for.** The menu of the windows lists the same grants under
 // the window of their process, each with a button that revokes it. A
@@ -630,16 +625,16 @@ gpu_info_export :: proc "c" (result: ^[]Gpu_Info, error: ^errors.Error_Record) -
 // grants are missing, and the result still gives the count of all.
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
 // compositor.window_grants()
 // ```
 @(export, link_name = "window_grants")
-window_grants_export :: proc "c" (result: ^[]Window_Grant_Row, error: ^errors.Error_Record) -> i64 {
+window_grants_export :: proc "c" (result: ^[]Window_Grant_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	for slot in 0 ..< min(window_grants.count, len(result^)) {
 		grant := &window_grants.grants[slot]
@@ -647,33 +642,33 @@ window_grants_export :: proc "c" (result: ^[]Window_Grant_Row, error: ^errors.Er
 		copy(result[slot].window[:len(result[slot].window) - 1], bar.window_grant_process(grant))
 		copy(result[slot].resource[:len(result[slot].resource) - 1], bar.window_grant_resource(grant))
 	}
-	return i64(window_grants.count)
+	return .Succeeded, i64(window_grants.count)
 }
 
-// revoke_grant ends a requested grant by its number, as its button in the menu of the windows does. The result is 1, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Bad_Value (-1, a number under 1); Absent (-1, no grant of that number holds).
+// revoke_grant ends a requested grant by its number, as its button in the menu of the windows does. The result is 1, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Bad_Value (a number under 1); Absent (no grant of that number holds).
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
 // compositor.revoke_grant(1)
 // ```
 @(export, link_name = "revoke_grant")
-revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> i64 {
+revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if grant_id < 1 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Grants, 1, grant_id)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Grants, 1, grant_id)
 	}
 	if !window_grant_revoke(u64(grant_id)) {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Absent, .Grants, 1, grant_id)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Grants, 1, grant_id)
 	}
-	return 1
+	return .Succeeded, 1
 }
 
-// plan_diff_ask shows the difference of a plan on the trusted display: its name, the grants and roles that it adds, and the ones that it removes, each a list of names that commas separate. The principal accepts or refuses it whole; the log says the decision. The result is the serial of the dialog, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Busy (-1, a dialog of the trusted display shows); Empty (-1, no name, or nothing added and nothing removed); Too_Long (-1, a name past 48 bytes, or more than 8 items on one side); Bad_Value (-1, an empty item in a list).
+// plan_diff_ask shows the difference of a plan on the trusted display: its name, the grants and roles that it adds, and the ones that it removes, each a list of names that commas separate. The principal accepts or refuses it whole; the log says the decision. The result is the serial of the dialog, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Busy (a dialog of the trusted display shows); Empty (no name, or nothing added and nothing removed); Too_Long (a name past 48 bytes, or more than 8 items on one side); Bad_Value (an empty item in a list).
 //
 // **The act.** The focus starts on Refuse. An act counts 500 ms after the
 // dialog showed: Enter acts on the button that has the focus, Tab and the
@@ -682,43 +677,43 @@ revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> 
 //
 // **Grant**: the caller must be the holder of the role Plans, which the
 // root service names in the amount of its grant, or **act for the
-// principal**; else the error kind `No_Grant`, with the result -1.
+// principal**; else the error kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
 // compositor.plan_diff_ask("home", "notes: store documents", "paint: network")
 // ```
 @(export, link_name = "plan_diff_ask")
-plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^string, error: ^errors.Error_Record) -> i64 {
+plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !plan_display_caller() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	serial, refusal, argument := plan_difference_show(plan_name^, added^, removed^)
 	switch refusal {
 	case .None:
-		return i64(serial)
+		return .Succeeded, i64(serial)
 	case .Busy:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Requests, 0, 1, 1)
+		return call_outcome.fail(error, .Callee_Busy, .Busy, .Requests, 0, 1, 1)
 	case .Empty_Name:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1, 0, bar.PLAN_DIFFERENCE_NAME_BYTES)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, 1, 0, bar.PLAN_DIFFERENCE_NAME_BYTES)
 	case .Name_Too_Long:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, 1, i64(len(plan_name^)), bar.PLAN_DIFFERENCE_NAME_BYTES)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(plan_name^)), bar.PLAN_DIFFERENCE_NAME_BYTES)
 	case .No_Change:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
 	case .Empty_Item:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, i64(argument))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, i64(argument))
 	case .Item_Too_Long:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_BYTES)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_BYTES)
 	case .Too_Many_Items:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
 	case .Not_A_Name, .Not_An_Act, .No_Grant, .Bad_Serial:
 		// The plan face checks no identifier, and its caller is checked
 		// above: only the act face and a poll give these.
 	}
-	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
+	return call_outcome.fail(error, .Argument_Refused, .Refused)
 }
 
-// plan_diff_poll gives the decision of the principal on the difference that plan_diff_ask showed with a serial: 0 while the dialog shows, 1 accepted, 2 refused, 3 unknown (a later dialog replaced it, or no dialog had the serial). The values are the members of plans_recipes.Plan_Display_Decision. The result is the decision, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Bad_Value (-1, a serial under 1).
+// plan_diff_poll gives the decision of the principal on the difference that plan_diff_ask showed with a serial: 0 while the dialog shows, 1 accepted, 2 refused, 3 unknown (a later dialog replaced it, or no dialog had the serial). The values are the members of plans_recipes.Plan_Display_Decision. The result is the decision, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Bad_Value (a serial under 1).
 //
 #assert(bar.PLAN_DIFFERENCE_NAME_BYTES == pr.PLAN_DISPLAY_NAME_BYTES)
 #assert(bar.PLAN_DIFFERENCE_ITEM_BYTES == pr.PLAN_DISPLAY_ITEM_BYTES)
@@ -733,14 +728,14 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^
 //
 // **Grant**: the caller must be the holder of the role Plans, which the
 // root service names in the amount of its grant, or **act for the
-// principal**; else the error kind `No_Grant`, with the result -1.
+// principal**; else the error kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
 // compositor.plan_diff_poll(1)
 // ```
 @(export, link_name = "plan_diff_poll")
-plan_diff_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> i64 {
+plan_diff_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	// The decision on an act is no decision on a plan.
 	caller := bar.Plan_Difference_Caller{allowed = plan_display_caller(), is_asker = true}
 	decision, known, refusal := bar.plan_difference_poll(&plan_difference_dialog, .Plan, caller, serial)
@@ -750,29 +745,29 @@ plan_diff_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> 
 // dialog_poll_result gives the result of plan_diff_poll and act_poll: the
 // word of the decision, or the record of a refusal.
 @(private = "file")
-dialog_poll_result :: proc "contextless" (decision: bar.Plan_Difference_Decision, known: bool, refusal: bar.Plan_Difference_Refusal, serial: i64, error: ^errors.Error_Record) -> i64 {
+dialog_poll_result :: proc "contextless" (decision: bar.Plan_Difference_Decision, known: bool, refusal: bar.Plan_Difference_Refusal, serial: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	switch refusal {
 	case .None:
 	case .No_Grant:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	case .Bad_Serial:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Records, 1, serial, max(i64))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, serial, max(i64))
 	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Not_A_Name, .Not_An_Act:
 		// A poll shows nothing: it gives none of the refusals of a show.
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
+		return call_outcome.fail(error, .Argument_Refused, .Refused)
 	}
 	if !known {
-		return i64(pr.Plan_Display_Decision.Unknown)
+		return .Succeeded, i64(pr.Plan_Display_Decision.Unknown)
 	}
 	switch decision {
 	case .Pending:
-		return i64(pr.Plan_Display_Decision.Pending)
+		return .Succeeded, i64(pr.Plan_Display_Decision.Pending)
 	case .Accepted:
-		return i64(pr.Plan_Display_Decision.Accepted)
+		return .Succeeded, i64(pr.Plan_Display_Decision.Accepted)
 	case .Refused:
-		return i64(pr.Plan_Display_Decision.Refused)
+		return .Succeeded, i64(pr.Plan_Display_Decision.Refused)
 	}
-	return i64(pr.Plan_Display_Decision.Unknown)
+	return .Succeeded, i64(pr.Plan_Display_Decision.Unknown)
 }
 
 // act_display_caller gives the facts of the caller of the act export that
@@ -788,7 +783,7 @@ act_display_caller :: proc "contextless" () -> bar.Plan_Difference_Caller {
 	return {allowed = pr.act_display_caller_allowed(caller.grant), is_asker = dialog_asker_is(caller)}
 }
 
-// act_ask shows one act of an agent on the trusted display, for the principal to allow once or refuse: the asker, which is the name of the calling process, and the act, `service.export`. The result is the serial of the dialog, or a negative number with an error record. The error kinds: No_Grant (-1, the caller may not ask an act, or the call comes from no connection); Busy (-1, a dialog of the trusted display shows); Bad_Value (-1, the act is not two identifiers with a period between them, or the name of the caller is no identifier).
+// act_ask shows one act of an agent on the trusted display, for the principal to allow once or refuse: the asker, which is the name of the calling process, and the act, `service.export`. The result is the serial of the dialog, or a failure with its call outcome and an error record. The error kinds: No_Grant (Grant_Or_Right_Missing: the caller may not ask an act, or the call comes from no connection); Busy (Callee_Busy: a dialog of the trusted display shows); Bad_Value (Argument_Refused: the act is not two identifiers with a period between them, or, with the argument 0, the name of the caller is no identifier).
 //
 // **What it is for.** An agent proposes acts to the principal through a
 // window such as the assistant (src/md/features/assistant.md, "The act
@@ -805,46 +800,46 @@ act_display_caller :: proc "contextless" () -> bar.Plan_Difference_Caller {
 //
 // **Grant**: the caller must have the right to **ask an act**, which the
 // root service names in the amount of its grant, or **act for the
-// principal**; else the error kind `No_Grant`, with the result -1.
+// principal**; else the error kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // compositor.act_ask("plans.apply")
 // ```
 @(export, link_name = "act_ask")
-act_ask_export :: proc "c" (act: ^string, error: ^errors.Error_Record) -> i64 {
+act_ask_export :: proc "c" (act: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	serial, refusal, argument := act_dialog_show(system.service_caller(), act_display_caller(), act^)
 	switch refusal {
 	case .None:
-		return i64(serial)
+		return .Succeeded, i64(serial)
 	case .No_Grant:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	case .Busy:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Requests, 0, 1, 1)
+		return call_outcome.fail(error, .Callee_Busy, .Busy, .Requests, 0, 1, 1)
 	case .Not_A_Name, .Not_An_Act:
 		// The argument of the export is the act; the asker is no argument.
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, i64(argument == 2 ? 1 : 0), i64(len(act^)), bar.PLAN_DIFFERENCE_ITEM_BYTES)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, i64(argument == 2 ? 1 : 0), i64(len(act^)), bar.PLAN_DIFFERENCE_ITEM_BYTES)
 	case .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Bad_Serial:
 		// The act face gives none of the refusals of a plan or of a poll.
 	}
-	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
+	return call_outcome.fail(error, .Argument_Refused, .Refused)
 }
 
-// act_poll gives the decision of the principal on the act that act_ask showed with a serial, to the connection that asked: 0 while the dialog shows, 1 allowed, 2 refused, 3 unknown (a later dialog replaced it, no dialog had the serial, it was the dialog of a plan, or another connection asked for it). The result is the decision, or a negative number with an error record. The error kinds: No_Grant (-1, the caller may not ask an act, or the call comes from no connection); Bad_Value (-1, a serial under 1).
+// act_poll gives the decision of the principal on the act that act_ask showed with a serial, to the connection that asked: 0 while the dialog shows, 1 allowed, 2 refused, 3 unknown (a later dialog replaced it, no dialog had the serial, it was the dialog of a plan, or another connection asked for it). The result is the decision, or a failure with its call outcome and an error record. The error kinds: No_Grant (Grant_Or_Right_Missing: the caller may not ask an act, or the call comes from no connection); Bad_Value (Argument_Refused: a serial under 1).
 //
 // **Grant**: the caller must have the right to **ask an act**, or **act
-// for the principal**; else the error kind `No_Grant`, with the result
-// -1.
+// for the principal**; else the error kind `No_Grant`, with the call
+// outcome Grant_Or_Right_Missing.
 //
 // ```
 // compositor.act_poll(1)
 // ```
 @(export, link_name = "act_poll")
-act_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> i64 {
+act_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	decision, known, refusal := bar.plan_difference_poll(&plan_difference_dialog, .Act, act_display_caller(), serial)
 	return dialog_poll_result(decision, known, refusal, serial, error)
 }
 
-// act_cancel closes the act dialog that act_ask showed with a serial with a refusal, for the connection that asked: the agent withdrew the act. The result is 1 when the dialog closed, 0 when no act dialog of the caller with that serial shows, or a negative number with an error record. The error kinds: No_Grant (-1, the caller may not ask an act, or the call comes from no connection); Bad_Value (-1, a serial under 1).
+// act_cancel closes the act dialog that act_ask showed with a serial with a refusal, for the connection that asked: the agent withdrew the act. The result is 1 when the dialog closed, 0 when no act dialog of the caller with that serial shows, or a failure with its call outcome and an error record. The error kinds: No_Grant (Grant_Or_Right_Missing: the caller may not ask an act, or the call comes from no connection); Bad_Value (Argument_Refused: a serial under 1).
 //
 // **What it is for.** A window that asked for an act dialog and no longer
 // shows the act, as when the entry of the act leaves its conversation,
@@ -852,110 +847,110 @@ act_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> i64 {
 // does not show.
 //
 // **Grant**: the caller must have the right to **ask an act**, or **act
-// for the principal**; else the error kind `No_Grant`, with the result
-// -1.
+// for the principal**; else the error kind `No_Grant`, with the call
+// outcome Grant_Or_Right_Missing.
 //
 // ```
 // compositor.act_cancel(1)
 // ```
 @(export, link_name = "act_cancel")
-act_cancel_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> i64 {
+act_cancel_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	closed, refusal := bar.plan_difference_act_cancel(&plan_difference_dialog, act_display_caller(), serial)
 	switch refusal {
 	case .None:
 	case .No_Grant:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	case .Bad_Serial:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Records, 1, serial, max(i64))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, serial, max(i64))
 	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Not_A_Name, .Not_An_Act:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
+		return call_outcome.fail(error, .Argument_Refused, .Refused)
 	}
 	if !closed {
-		return 0
+		return .Succeeded, 0
 	}
 	act_dialog_cancelled()
-	return 1
+	return .Succeeded, 1
 }
 
-// assistive_attach records a holder of the assistive role, which reads the semantic trees of the windows from here on, and gives its number. The bar shows a mark in the warning color with the word assistive and the nickname while it reads. The result is the number of the holder, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Empty (-1, no nickname); Too_Long (-1, a nickname past 31 bytes); Bad_Value (-1, a nickname with a control byte or a damaged character, or a kind that names no holder: 1 screen reader, 2 magnifier, 3 switch input); Full (-1, 4 holders read already).
+// assistive_attach records a holder of the assistive role, which reads the semantic trees of the windows from here on, and gives its number. The bar shows a mark in the warning color with the word assistive and the nickname while it reads. The result is the number of the holder, or a failure with its call outcome and an error record. The error kinds: No_Grant (Grant_Or_Right_Missing: the caller does not act for the principal); Empty (Argument_Refused: no nickname); Too_Long (Argument_Refused: a nickname past 31 bytes); Bad_Value (Argument_Refused: a nickname with a control byte or a damaged character, or a kind that names no holder: 1 screen reader, 2 magnifier, 3 switch input); Full (Callee_Busy: 4 holders read already).
 //
 // **Several holders at once.** A principal with low vision uses a
 // magnifier and a screen reader together, so each holder has its own
 // number and its own mark.
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
 // compositor.assistive_attach("screen_reader", 1)
 // ```
 @(export, link_name = "assistive_attach")
-assistive_attach_export :: proc "c" (nickname: ^string, kind_word: i64, error: ^errors.Error_Record) -> i64 {
+assistive_attach_export :: proc "c" (nickname: ^string, kind_word: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	kind, known := bar.assistive_holder_kind_of_word(u64(kind_word))
 	if kind_word < 0 || !known || kind == .None {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 2, kind_word, i64(max(bar.Assistive_Holder_Kind)))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, kind_word, i64(max(bar.Assistive_Holder_Kind)))
 	}
 	id, refusal := assistive_holder_attach(nickname^, kind)
 	switch refusal {
 	case .None:
-		return i64(id)
+		return .Succeeded, i64(id)
 	case .Kind_None:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 2, kind_word, i64(max(bar.Assistive_Holder_Kind)))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, kind_word, i64(max(bar.Assistive_Holder_Kind)))
 	case .Empty_Nickname:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1, 0, bar.ASSISTIVE_NICKNAME_BYTES)
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, 1, 0, bar.ASSISTIVE_NICKNAME_BYTES)
 	case .Nickname_Too_Long:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, 1, i64(len(nickname^)), bar.ASSISTIVE_NICKNAME_BYTES)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(nickname^)), bar.ASSISTIVE_NICKNAME_BYTES)
 	case .Nickname_Invalid:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 1)
 	case .Full:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Full, .Records, 0, 0, bar.ASSISTIVE_HOLDER_LIMIT)
+		return call_outcome.fail(error, .Callee_Busy, .Full, .Records, 0, 0, bar.ASSISTIVE_HOLDER_LIMIT)
 	}
-	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
+	return call_outcome.fail(error, .Argument_Refused, .Refused)
 }
 
-// assistive_detach ends a holder of the assistive role by its number. Its mark leaves the bar; with the last holder, a magnification that a holder asked for ends too. The result is 1, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Bad_Value (-1, a number under 1); Absent (-1, no holder of that number reads).
+// assistive_detach ends a holder of the assistive role by its number. Its mark leaves the bar; with the last holder, a magnification that a holder asked for ends too. The result is 1, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Bad_Value (a number under 1); Absent (no holder of that number reads).
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
 // compositor.assistive_detach(1)
 // ```
 @(export, link_name = "assistive_detach")
-assistive_detach_export :: proc "c" (holder_id: i64, error: ^errors.Error_Record) -> i64 {
+assistive_detach_export :: proc "c" (holder_id: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if holder_id < 1 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Records, 1, holder_id)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, holder_id)
 	}
 	if !assistive_holder_detach(u64(holder_id)) {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Absent, .Records, 1, holder_id)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Records, 1, holder_id)
 	}
-	return 1
+	return .Succeeded, 1
 }
 
-// assistive_holders gives one row for each holder of the assistive role that reads the trees, in the order of their marks from the right: its number, its kind and its nickname. The result is the count of the holders, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+// assistive_holders gives one row for each holder of the assistive role that reads the trees, in the order of their marks from the right: its number, its kind and its nickname. The result is the count of the holders, or a failure with its call outcome and an error record. The error kind: No_Grant (the caller does not act for the principal).
 //
 // If the table of the caller has fewer places than holders, the last
 // holders are missing, and the result still gives the count of all.
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
 // compositor.assistive_holders()
 // ```
 @(export, link_name = "assistive_holders")
-assistive_holders_export :: proc "c" (result: ^[]Assistive_Holder_Row, error: ^errors.Error_Record) -> i64 {
+assistive_holders_export :: proc "c" (result: ^[]Assistive_Holder_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	row := 0
 	for &holder in assistive_registry.holders {
@@ -969,66 +964,66 @@ assistive_holders_export :: proc "c" (result: ^[]Assistive_Holder_Row, error: ^e
 		}
 		row += 1
 	}
-	return i64(row)
+	return .Succeeded, i64(row)
 }
 
-// assistive_magnify draws a rectangle of the screen larger, over the whole screen, for a holder of the assistive role: the view centers on the rectangle when it fits, else it starts at its left and top edges. The rectangle is in logical pixels; the factor is in eighths, from 12 (1.5 times) to 64 (8 times). No pixel leaves the compositor. The result is 1, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-1, no assistive holder reads, so no mark would explain the magnification); Bad_Value (-1, a factor past its bounds, or a width or a height under 1); Out_Of_Range (-1, a part of the rectangle is off the screen: argument 1 for the left and the width, 2 for the top and the height).
+// assistive_magnify draws a rectangle of the screen larger, over the whole screen, for a holder of the assistive role: the view centers on the rectangle when it fits, else it starts at its left and top edges. The rectangle is in logical pixels; the factor is in eighths, from 12 (1.5 times) to 64 (8 times). No pixel leaves the compositor. The result is 1, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Absent (no assistive holder reads, so no mark would explain the magnification); Bad_Value (a factor past its bounds, or a width or a height under 1); Out_Of_Range (a part of the rectangle is off the screen: argument 1 for the left and the width, 2 for the top and the height).
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
 // compositor.assistive_magnify(100, 80, 200, 24, 16)
 // ```
 @(export, link_name = "assistive_magnify")
-assistive_magnify_export :: proc "c" (left, top, width, height, factor_eighths: i64, error: ^errors.Error_Record) -> i64 {
+assistive_magnify_export :: proc "c" (left, top, width, height, factor_eighths: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	screen_width, screen_height := i64(desktop_width), i64(desktop_height)
 	switch bar.assistive_magnify_check(&assistive_registry, left, top, width, height, factor_eighths, screen_width, screen_height) {
 	case .None:
 		assistive_magnify_start(left, top, width, height, factor_eighths)
-		return 1
+		return .Succeeded, 1
 	case .No_Holder:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Absent, .Records)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Records)
 	case .Factor_Out_Of_Range:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 5, factor_eighths, bar.ASSISTIVE_MAGNIFY_FACTOR_MOST)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 5, factor_eighths, bar.ASSISTIVE_MAGNIFY_FACTOR_MOST)
 	case .Empty_Rectangle:
 		if width < 1 {
-			return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 3, width)
+			return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 3, width)
 		}
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 4, height)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 4, height)
 	case .Outside_Screen:
 		if left < 0 || width > screen_width || left > screen_width - width {
-			return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Out_Of_Range, .None, 1, left, screen_width)
+			return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .None, 1, left, screen_width)
 		}
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Out_Of_Range, .None, 2, top, screen_height)
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .None, 2, top, screen_height)
 	}
-	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
+	return call_outcome.fail(error, .Argument_Refused, .Refused)
 }
 
-// assistive_magnify_end ends the magnification that a holder of the assistive role asked for. The result is 1 when a magnification ended, 0 when none was on, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-1, no assistive holder reads).
+// assistive_magnify_end ends the magnification that a holder of the assistive role asked for. The result is 1 when a magnification ended, 0 when none was on, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Absent (no assistive holder reads).
 //
 // **Grant**: the caller must **act for the principal**; else the error
-// kind `No_Grant`, with the result -1.
+// kind `No_Grant`, with the call outcome Grant_Or_Right_Missing.
 //
 // ```
 // connect("compositor")
 // compositor.assistive_magnify_end()
 // ```
 @(export, link_name = "assistive_magnify_end")
-assistive_magnify_end_export :: proc "c" (error: ^errors.Error_Record) -> i64 {
+assistive_magnify_end_export :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	if !bar.assistive_mark_shown(&assistive_registry) {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Absent, .Records)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Records)
 	}
 	if !assistive_magnifying {
-		return 0
+		return .Succeeded, 0
 	}
 	assistive_magnify_stop()
-	return 1
+	return .Succeeded, 1
 }

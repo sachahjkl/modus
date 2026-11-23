@@ -42,6 +42,7 @@ package root
 
 import "base:intrinsics"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/ring"
@@ -214,22 +215,23 @@ machine_key_held :: proc "contextless" () -> bool {
 // `unlock` to set the machine passphrase. A machine with a passphrase
 // refuses a second one: a change is not built. A record that cannot be
 // read refuses one too: it can hold a good key.
-machine_passphrase_ask :: proc "contextless" () -> system.Status {
+machine_passphrase_ask :: proc "contextless" (values: ^[7]u64) -> call_outcome.Call_Outcome {
+	kind := u32(root_ring.Root_Command.Machine_Passphrase)
 	state := persisted_tables[principals.MACHINE].state
 	if state == .Record_Unreadable {
 		system.log_fact(.Warning, Machine_Passphrase_Refused_Unreadable{})
-		return .Bad_State
+		return root_ring.refuse(values, .Name_Already_Taken, kind, .Exists, .Principals)
 	}
 	if state != .No_Passphrase {
 		system.log_fact(.Warning, Machine_Passphrase_Refused_Exists{})
-		return .Bad_State
+		return root_ring.refuse(values, .Name_Already_Taken, kind, .Exists, .Principals)
 	}
 	if find("unlock") != nil {
 		system.log_fact(.Warning, Machine_Passphrase_Refused_Unlock_Runs{})
-		return .No_Slot
+		return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1)
 	}
 	system.log_fact(.Info, Machine_Passphrase_Setting_Started{})
-	return unlock_start(.Set_Machine_Passphrase, "")
+	return unlock_start(.Set_Machine_Passphrase, "", refusal = values)
 }
 
 // machine_seal_ask runs the command Machine_Seal: it starts `unlock` to
@@ -238,26 +240,30 @@ machine_passphrase_ask :: proc "contextless" () -> system.Status {
 // machine with no TPM service, and on a machine with a record of its
 // machine key, readable or not: a new key would replace a key that can be
 // good, and the table that it signed.
-machine_seal_ask :: proc "contextless" () -> system.Status {
+machine_seal_ask :: proc "contextless" (values: ^[7]u64) -> call_outcome.Call_Outcome {
+	kind := u32(root_ring.Root_Command.Machine_Seal)
+	// No TPM service: the system is not measured into a TPM.
 	if tpm_ring == 0 {
 		system.log_fact(.Warning, Machine_Key_Seal_Refused_No_Tpm{})
-		return .Bad_Handle
+		return root_ring.refuse(values, .Operation_Unsupported, kind, .Unsupported, .Principals)
 	}
+	// Secure Boot is off: no seal trusts a boot program that nothing
+	// verified.
 	if !tpm_seal_allowed() {
 		system.log_fact(.Warning, Machine_Key_Seal_Refused_Not_Verified{})
-		return .No_Right
+		return root_ring.refuse(values, .Wrong_State, kind, .Refused, .Principals)
 	}
 	state := persisted_tables[principals.MACHINE].state
 	if state != .No_Passphrase {
 		system.log_fact(.Warning, Machine_Key_Seal_Refused_Exists{})
-		return .Bad_State
+		return root_ring.refuse(values, .Name_Already_Taken, kind, .Exists, .Principals)
 	}
 	if find("unlock") != nil {
 		system.log_fact(.Warning, Machine_Key_Seal_Refused_Unlock_Runs{})
-		return .No_Slot
+		return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1)
 	}
 	system.log_fact(.Info, Machine_Key_Seal_Started{})
-	return unlock_start(.Seal_Machine_Key, "")
+	return unlock_start(.Seal_Machine_Key, "", refusal = values)
 }
 
 // machine_key_take runs the command Machine_Key, which only `unlock`
@@ -266,21 +272,22 @@ machine_seal_ask :: proc "contextless" () -> system.Status {
 // principals service, and this service keeps its hash only; the local copy
 // is erased here, and the main loop erases the slot of the ring
 // (key_ring_erase).
-machine_key_take :: proc "contextless" (values: ^[7]u64) -> system.Status {
+machine_key_take :: proc "contextless" (values: ^[7]u64, completion: ^[7]u64) -> call_outcome.Call_Outcome {
+	kind := u32(root_ring.Root_Command.Machine_Key)
 	table := &persisted_tables[principals.MACHINE]
 	state := table.state
 	waiting := state == .No_Passphrase || state == .Awaited || state == .Record_Unreadable
 	// A word that names no state or no form is refused, and changes nothing.
 	// The report reads values[4] and values[5]: the key does not go with them.
-	report, report_status := root_ring.machine_key_report_of_values({4 = values[4], 5 = values[5]})
-	if report_status != .Ok {
-		return report_status
+	report, report_outcome := root_ring.machine_key_report_of_values({4 = values[4], 5 = values[5]})
+	if report_outcome != .Succeeded {
+		return root_ring.refuse(completion, report_outcome, kind, .Bad_Value, .None, 1)
 	}
 	reported := report.state
 	switch reported {
 	case .Awaited:
 		if !waiting {
-			return .Bad_State
+			return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals)
 		}
 		table.state = .Awaited
 		switch report.form {
@@ -291,31 +298,31 @@ machine_key_take :: proc "contextless" (values: ^[7]u64) -> system.Status {
 			machine_key_without_passphrase = false
 			system.log_fact(.Info, Machine_Passphrase_Grants_Wait{})
 		}
-		return .Ok
+		return .Succeeded
 	case .Unreadable:
 		if !waiting {
-			return .Bad_State
+			return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals)
 		}
 		table.state = .Record_Unreadable
 		system.log_fact(.Warning, Machine_Passphrase_Record_Unreadable{})
-		return .Ok
+		return .Succeeded
 	case .Opened, .New:
 		key_new := reported == .New
 		key := transmute([disk_process.KEY_SIZE]u8)[4]u64{values[0], values[1], values[2], values[3]}
 		defer key_erase(key[:])
 		if key == {} {
-			return .Bad_Operation
+			return root_ring.refuse(completion, .Argument_Refused, kind, .Empty, .Bytes)
 		}
 		// The principals service started again since the key came, and
 		// unlock asked for the passphrase again: the same key goes to the
 		// new service, and the writes start again.
 		if !key_new && !waiting && !table.key_held {
-			return persisted_table_key_again(principals.MACHINE, &key)
+			return persisted_table_key_again(principals.MACHINE, &key, completion, kind)
 		}
 		// A new passphrase is set only on a machine with no record; an
 		// opened key comes after the report that a record exists.
 		if key_new && state != .No_Passphrase || !key_new && state != .Awaited {
-			return .Bad_State
+			return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals)
 		}
 		table.key_hash = blake3.hash(key[:])
 		table.key_new = key_new
@@ -327,9 +334,9 @@ machine_key_take :: proc "contextless" (values: ^[7]u64) -> system.Status {
 		table.key_held = principals_table_key_send(principals.MACHINE, &key)
 		table.state = .Reading
 		persisted_table_read_begin(principals.MACHINE)
-		return .Ok
+		return .Succeeded
 	}
-	return .Bad_Operation
+	return root_ring.refuse(completion, .Argument_Refused, kind, .Bad_Value, .None, 1)
 }
 
 // principal_key_take takes the key of the tag of the table of a named
@@ -345,28 +352,36 @@ machine_key_take :: proc "contextless" (values: ^[7]u64) -> system.Status {
 // in this service, not in the code of `unlock` alone. The local copy is
 // erased here, and the main loop erases the slot of the ring
 // (key_ring_erase).
-principal_key_take :: proc "contextless" (number: u64, values: ^[7]u64) -> system.Status {
+principal_key_take :: proc "contextless" (number: u64, values: ^[7]u64, completion: ^[7]u64) -> call_outcome.Call_Outcome {
+	kind := u32(root_ring.Root_Command.Principal_Unlock)
 	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY {
-		return .Bad_Handle
+		return root_ring.refuse(completion, .Nothing_Has_That_Name, kind, .Absent, .Principals, 2, i64(min(number, 1 << 62)))
 	}
 	table := &persisted_tables[number]
 	key := transmute([disk_process.KEY_SIZE]u8)[4]u64{values[0], values[1], values[2], values[3]}
 	defer key_erase(key[:])
-	origin, origin_status, _ := root_ring.member_of_word(root_ring.Principal_Key_Origin, values[5], .Principal_Unlock, 0)
-	if key == {} || origin_status != .Ok {
-		return .Bad_Operation
+	if key == {} {
+		return root_ring.refuse(completion, .Argument_Refused, kind, .Empty, .Bytes)
 	}
+	origin, origin_outcome, origin_refusal := root_ring.member_of_word(root_ring.Principal_Key_Origin, values[5], .Principal_Unlock, 0)
+	if origin_outcome != .Succeeded {
+		completion^ = origin_refusal
+		return origin_outcome
+	}
+	// The origin New is taken only for a principal that this service saw
+	// created in this run.
 	if origin == .New && !principal_created_in_this_run[number] {
 		system.log_fact(.Warning, Unlock_Refused_New_Key{principal = number})
-		return .Bad_State
+		return root_ring.refuse(completion, .Argument_Refused, kind, .Bad_Value, .None, 0, i64(origin))
 	}
 	if table.state != .Awaited {
+		// Each table has one key.
 		if !hashes_equal(table.key_hash, blake3.hash(key[:])) {
 			system.log_fact(.Warning, Unlock_Refused_Other_Key{principal = number})
-			return .Bad_State
+			return root_ring.refuse(completion, .Argument_Refused, kind, .Not_Authentic, .Bytes)
 		}
 		if !table.key_held {
-			return persisted_table_key_again(number, &key)
+			return persisted_table_key_again(number, &key, completion, kind)
 		}
 		// The read at an earlier unlock failed: this unlock tries it again.
 		// No write ran since, so the origin of the first key still holds.
@@ -374,14 +389,14 @@ principal_key_take :: proc "contextless" (number: u64, values: ^[7]u64) -> syste
 			table.state = .Reading
 			persisted_table_read_begin(number)
 		}
-		return .Ok
+		return .Succeeded
 	}
 	table.key_hash = blake3.hash(key[:])
 	table.key_new = origin == .New
 	table.key_held = principals_table_key_send(number, &key)
 	table.state = .Reading
 	persisted_table_read_begin(number)
-	return .Ok
+	return .Succeeded
 }
 
 // persisted_table_key_again gives a principals service that started again
@@ -389,15 +404,16 @@ principal_key_take :: proc "contextless" (number: u64, values: ^[7]u64) -> syste
 // stopped for want of the key writes again; a table whose read failed is
 // read again.
 @(private = "file")
-persisted_table_key_again :: proc "contextless" (principal: u64, key: ^[disk_process.KEY_SIZE]u8) -> system.Status {
+persisted_table_key_again :: proc "contextless" (principal: u64, key: ^[disk_process.KEY_SIZE]u8, completion: ^[7]u64, kind: u32) -> call_outcome.Call_Outcome {
 	table := &persisted_tables[principal]
+	// Each table has one key.
 	if !hashes_equal(table.key_hash, blake3.hash(key[:])) {
 		system.log_fact(.Warning, Unlock_Refused_Other_Key{principal = principal})
-		return .Bad_State
+		return root_ring.refuse(completion, .Argument_Refused, kind, .Not_Authentic, .Bytes)
 	}
 	table.key_held = principals_table_key_send(principal, key)
 	if !table.key_held {
-		return .Ok
+		return .Succeeded
 	}
 	switch table.state {
 	case .Unread:
@@ -412,7 +428,7 @@ persisted_table_key_again :: proc "contextless" (principal: u64, key: ^[disk_pro
 		// A read that runs, a kept table and a refused table go on with the
 		// key: the next change writes it.
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // hashes_equal compares two hashes in a time that does not depend on the
@@ -580,10 +596,12 @@ persisted_table_open :: proc "contextless" (principal: u64) -> (cause: string, g
 	copy(table.keeper.name[:len(table.keeper.name) - 1], disk_process.STORE_NAME)
 	table.keeper.principal = principal
 	storage_name := role_holder_name(.Storage)
-	connection, service, ring_memory, region_memory, status := connection_open(&table.keeper, storage_name)
-	if status != .Ok {
+	open_refusal: [7]u64
+	connection, service, ring_memory, region_memory, opened_outcome := connection_open(&table.keeper, storage_name, &open_refusal, u32(root_ring.Root_Command.Connect))
+	if opened_outcome != .Succeeded {
 		return TABLE_CAUSE_NO_CONNECTION, {}, false
 	}
+	status: system.Status
 	// The handle of the storage service is a copy of its own, so its
 	// revocation does not reach the handle of its row. The copy has Give so
 	// that this service can give it through the ring; the service receives

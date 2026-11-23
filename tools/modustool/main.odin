@@ -185,13 +185,14 @@ COMMANDS :: [?]foundation.Command {
 	// - `--import-dir <dir>` (optional, repeatable): extra directory searched for
 	//   imported `.module` or `.modus` files.
 	{name = "sdk-convert", about = "sdk-convert <object.o> <module.manifest> <output.modus> [--sdk <sdk-dir>] [--import-dir <dir>]: convert a freestanding ET_REL object and language-neutral module.manifest into a validated modus module file", run = build.run_sdk_convert},
-	// Generates five self-contained C11 contract headers (`modus_types.h`,
-	// `modus_operation.h`, `modus_errors.h`, `modus_ring.h`, `modus_module.h`)
+	// Generates six self-contained C11 contract headers (`modus_types.h`,
+	// `modus_operation.h`, `modus_errors.h`, `modus_call_outcome.h`,
+	// `modus_ring.h`, `modus_module.h`)
 	// with fixed-width types, explicit enum values, struct layouts, and
 	// `_Static_assert` size and offset checks derived from Odin's `size_of` and `offset_of`.
 	//
 	// - `output-dir`: target directory where the C11 header files are written.
-	{name = "c-headers", about = "c-headers <output-dir>: generate self-contained C11 contract headers (modus_types.h, modus_operation.h, modus_errors.h, modus_ring.h, modus_module.h) with _Static_assert sizeof and offsetof checks", run = build.run_c_headers},
+	{name = "c-headers", about = "c-headers <output-dir>: generate self-contained C11 contract headers (modus_types.h, modus_operation.h, modus_errors.h, modus_call_outcome.h, modus_ring.h, modus_module.h) with _Static_assert sizeof and offsetof checks", run = build.run_c_headers},
 	{name = "module-disk", about = "module-disk <disk file to write> <module file> [<module file> ...]: write a data disk whose store `module_files` holds each module file under the name of its file, with the debug object `<name>.debug` beside it under the hash of the module, and print the line of the console that starts each one", run = build.run_module_disk},
 	{name = "module-build", about = "module-build <folder of the module> [--system <folder of the system>] [--out <folder of the outputs>]: build one module from a folder outside the repository, with its module build file `" + build.MODULE_BUILD_FILE_NAME + "`: write <name>.module and <name>.debug, and print the hash of the module and the names of its exports", run = build.run_module_build},
 	// Builds one boot volume in this process: its boot image with the system
@@ -1200,11 +1201,12 @@ run_check :: proc(args: []string) -> int {
 		return foundation.EXIT_FAILURE
 	}
 	// The count of the kernel operations is the count that the properties
-	// state, no source of the system calls an allocator, each export that
-	// fails gives an error record, and no family of integer constants is a
+	// state, no source of the system calls an allocator, each binding of an
+	// export that can fail gives the call outcome and forces its read, and
+	// no family of integer constants is a
 	// closed set of choices; only the loader and the root service name the
 	// field image_checks of a load source.
-	if !checks.operation_count_check() || !checks.allocator_check() || !checks.export_error_record_check() || !checks.choice_constant_check() || !checks.processor_random_check() || !checks.image_checks_field_check() || !checks.display_text_check() {
+	if !checks.operation_count_check() || !checks.allocator_check() || !checks.outcome_binding_check() || !checks.choice_constant_check() || !checks.processor_random_check() || !checks.image_checks_field_check() || !checks.display_text_check() {
 		return foundation.EXIT_FAILURE
 	}
 	// The stage tracker of the host of the browser machine, in Node: the

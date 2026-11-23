@@ -27,6 +27,7 @@
 package clock
 
 import "internal:clock/clock_model"
+import "modus:contract/call_outcome"
 import "modus:calendar"
 import "modus:contract/accessibility"
 import "modus:contract/date"
@@ -165,9 +166,9 @@ notifier_open :: proc "contextless" () -> (cause: string) {
 	if opened != .Ok {
 		return "the ring to the root service does not open"
 	}
-	connected: system.Status
+	connected: call_outcome.Call_Outcome
 	notifier.connection, connected = system.service_connection(&notifier.requests, 1, "compositor")
-	if connected != .Ok {
+	if connected != .Succeeded {
 		return "the root service gave no connection to the compositor"
 	}
 	notifier.connected = true
@@ -194,8 +195,8 @@ notification_job :: proc "contextless" (parameter: rawptr) {
 	arguments[0].text = transmute([]u8)title
 	arguments[1].text = transmute([]u8)body
 	error: errors.Error_Record
-	result, status := system.call_isolated(&notifier.connection, notifier.file, notifier.export, arguments[:], &error)
-	if status == .Ok {
+	result, outcome := system.call_isolated(&notifier.connection, notifier.file, notifier.export, arguments[:], &error)
+	if outcome == .Succeeded {
 		system.log_fact(.Info, Notification_Posted{identifier = u64(result)})
 	} else {
 		system.log_fact(.Warning, Notification_Refused(errors.error_record_fact_fields(error)))

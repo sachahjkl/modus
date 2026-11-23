@@ -10,20 +10,21 @@ package root
 // of the tool call:
 //
 // 1. The border: command_of_word reads the kind. A word that names no
-//    command, and None, get `Unsupported`, and nothing runs.
+//    command, and None, get Operation_Unsupported with the record
+//    `Unsupported`, and nothing runs.
 // 2. The sender: the table root_ring.ROOT_COMMAND_SENDERS, with the start
 //    grants that the process received at its start (Started.start_grant_set), and for
-//    a Connect the services of its start grant set. A refusal gets `No_Grant`, before
-//    any other check, so a process learns nothing of a command that it
-//    cannot send.
-// 3. The command: one case of a whole switch. The table
-//    root_ring.ROOT_COMMAND_REFUSAL_WRITERS says who writes the error
-//    record of its refusal: this dispatch, from the name and the word of
-//    the record, or the procedure of the command.
+//    a Connect the services of its start grant set. A refusal gets
+//    Grant_Or_Right_Missing with `No_Grant`, before any other check, so a
+//    process learns nothing of a command that it cannot send.
+// 3. The command: one case of a whole switch. The procedure that refuses
+//    names the outcome and writes the error record at the place where it
+//    refuses (root_ring.refuse): the completion holds them as they are, and
+//    no status is mapped to an outcome.
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import "modus:contract/isolated"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "internal:root/start_policy_rules"
@@ -33,16 +34,12 @@ import "modus:system"
 // The answer of a command of the root ring: the completion that the sender
 // receives, or none yet.
 Command_Answer :: struct {
-	status: system.Status,
-	values: [7]u64, // The values of the completion; for a refusal, its error record.
+	outcome: call_outcome.Call_Outcome,
+	values:  [7]u64, // The values of the completion; for a refusal, its error record.
 	// The completion comes when the work ends (a load from the disk, a
 	// change of a passphrase): the loop goes on meanwhile, and the work
 	// sends it.
-	held:   bool,
-	// The procedure of the command wrote the error record of its refusal,
-	// for a command whose table says that the dispatch writes it: the
-	// refusals of a start policy (start_policy_rules).
-	written: bool,
+	held:    bool,
 }
 
 // root_ring_serve answers each command that a process wrote on its root
@@ -58,8 +55,39 @@ root_ring_serve :: proc "contextless" (item: ^Started) {
 		if answer.held {
 			continue
 		}
-		system.send(&item.requests.completions, ring.Record{kind = u32(answer.status), tag = tag, values = answer.values})
+		system.send(&item.requests.completions, ring.Record{kind = u32(answer.outcome), tag = tag, values = answer.values})
 	}
+}
+
+// kernel_refused writes the record Refused of a kernel operation that this
+// service ran for a command and that the kernel refused, with the status
+// in found, and gives the outcome of a refusal on the objects of this
+// service (system.outcome_of_own_status): the border of the kernel until
+// the kernel gives the call outcome itself.
+kernel_refused :: proc "contextless" (values: ^[7]u64, command: u32, status: system.Status) -> call_outcome.Call_Outcome {
+	return root_ring.refuse(values, system.outcome_of_own_status(status), command, .Refused, .None, 0, 0, 0, i64(status))
+}
+
+// needed_service_failed gives the end of a command whose service, which the
+// command starts on demand, did not start: the party that the command needs
+// failed, and the record of that start stays in values, explained under
+// Callee_Unavailable. A shared service that starts for the command, and a
+// refusal after it, change no state of the sender (src/md/api/call_outcome.md,
+// "A service on demand").
+needed_service_failed :: proc "contextless" (values: ^[7]u64) -> call_outcome.Call_Outcome {
+	values^ = errors.completion_values(call_outcome.record_explained(.Callee_Unavailable, errors.completion_record(values^)))
+	return .Callee_Unavailable
+}
+
+// changed_then_refused gives the end of a command that changed what its
+// sender can see, then refused with the record in values: the rule of
+// weakening (call_outcome.outcome_passed_on), with the record explained
+// under the outcome. A refusal becomes Stopped_After_A_Partial_Change, and
+// a call in doubt stays in doubt.
+changed_then_refused :: proc "contextless" (values: ^[7]u64, refused: call_outcome.Call_Outcome) -> call_outcome.Call_Outcome {
+	outcome := call_outcome.outcome_passed_on(refused, changed_before = true)
+	values^ = errors.completion_values(call_outcome.record_explained(outcome, errors.completion_record(values^)))
+	return outcome
 }
 
 // root_command_answer runs the three steps of one record: the border and
@@ -75,25 +103,26 @@ root_command_answer :: proc "contextless" (item: ^Started, record: ^ring.Record)
 	}
 	raw_name := system.name_of(name_bytes[:])
 	name := raw_name
+	resolved_ok := true
 	if record.kind == u32(root_ring.Root_Command.Connect) || record.kind == u32(root_ring.Root_Command.Disconnect) {
-		resolved, resolved_ok := role_target_resolve_strict(raw_name)
-		if !resolved_ok {
-			return {status = .Bad_Handle, values = root_command_refusal(.Connect, raw_name, record.values[4], .Bad_Handle)}
-		}
-		name = resolved
+		name, resolved_ok = role_target_resolve_strict(raw_name)
 	}
-	decision := root_ring.dispatch_decide(record.kind, item.start_grant_set.grants, start_grant_set_may_connect(&item.start_grant_set, name))
+	// The sender first: a name that names no service is said only to a
+	// sender that may send the command, so a process learns nothing of a
+	// command that it cannot send. A name that resolves to nothing is on no
+	// list of a start grant set.
+	listed := resolved_ok && start_grant_set_may_connect(&item.start_grant_set, name)
+	decision := root_ring.dispatch_decide(record.kind, item.start_grant_set.grants, listed)
 	switch decision.step {
 	case .Border, .Sender:
-		return {status = decision.status, values = decision.refusal}
+		return {outcome = decision.outcome, values = decision.refusal}
 	case .Command:
 	}
-	command := decision.command
-	answer = root_command_run(item, command, record, name)
-	if answer.status != .Ok && !answer.held && !answer.written && root_ring.ROOT_COMMAND_REFUSAL_WRITERS[command] == .Dispatch {
-		answer.values = root_command_refusal(command, name, record.values[4], answer.status)
+	if !resolved_ok {
+		answer.outcome = root_ring.refuse(&answer.values, .Nothing_Has_That_Name, record.kind, .Absent, .Services, 1)
+		return answer
 	}
-	return answer
+	return root_command_run(item, decision.command, record, name)
 }
 
 // root_command_run runs one command that its sender can send. name is the
@@ -106,7 +135,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		record = record_place^
 	}
 	defer intrinsics.mem_zero_volatile(&record, size_of(record))
-	answer.status = .Bad_Operation
+	kind := u32(command)
+	answer.outcome = .Operation_Unsupported
 	switch command {
 	case .None:
 		// The border refuses it; the case keeps the switch whole.
@@ -114,115 +144,96 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		// The start policy starts the parts of the system too, and gets a
 		// handle of each process (start_policy.odin). A process that a
 		// process starts belongs to the session of the process that asks.
-		answer.status = start_command(item, record, name, &answer.values, &answer.written, &answer.held)
+		answer.outcome = start_command(item, record, name, &answer.values, &answer.held)
 	case .Stop:
-		answer.status = .Bad_Handle
-		for &other in started {
-			// The compositor is not a process that the console stops, and
-			// the start policy stops only a process that it asked for.
-			if .Start_Policy in item.start_grant_set.grants && !other.asked_by_start_policy {
-				continue
-			}
-			if other.process != 0 && other.process != display_holder && !other.is_terminal && system.name_of(other.name[:]) == name {
-				started_process_stop(&other)
-				answer.status = .Ok
-				break
-			}
-		}
-		// A start policy learns nothing of a process that it did not ask
-		// for: each refusal is the one record Absent.
-		if answer.status != .Ok && .Start_Policy in item.start_grant_set.grants {
-			answer.values = start_policy_rules.stop_record()
-			answer.written = true
-		}
+		answer.outcome = stop_command(item, name, &answer.values)
 	case .Connect:
-		answer.status = root_connect(item, record, name, &answer.values)
+		answer.outcome = root_connect(item, record, name, &answer.values)
 	case .Disconnect:
 		// The connection of the history is not ended by the name of its
 		// service: the process keeps its history when it ends its calls to
 		// the storage service.
-		answer.status = .Bad_Handle
+		answer.outcome = root_ring.refuse(&answer.values, .Nothing_Has_That_Name, kind, .Absent, .Connections, 1)
 		for &connection in connections {
 			// values[4]: the row of the client table that the connection is
 			// for, as Connect named it; 0 for none.
 			if connection.caller == item && !connection.history && connection.client.place == int(min(record.values[4], u64(max(int)))) && system.name_of(connection.service.name[:]) == name {
 				disconnect(&connection)
-				answer.status = .Ok
+				answer.outcome, answer.values = .Succeeded, {}
 			}
 		}
 	case .Grants:
-		answer.status = .Bad_Handle
+		answer.outcome = root_ring.refuse(&answer.values, .Nothing_Has_That_Name, kind, .Absent, .Processes, 1)
 		if other := find(name); other != nil {
 			packed := system.name_pack(principal_name(other.principal))
 			answer.values = {transmute(u64)other.granted, transmute(u64)other.revoked, other.principal, packed[0], packed[1], packed[2], packed[3]}
-			answer.status = .Ok
+			answer.outcome = .Succeeded
 		}
 	case .Revoke:
-		answer.status, answer.held = revoke(item, record.tag, name, record.values[4], &answer.values)
+		answer.outcome, answer.held = revoke(item, record.tag, name, record.values[4], &answer.values)
 	case .Replace:
-		answer.status = replace(item, name, record.values[4], &answer.values)
+		answer.outcome = replace(item, name, record.values[4], &answer.values)
 	case .Connect_History:
-		answer.status = .No_Right
+		answer.outcome = .Grant_Or_Right_Missing
+		answer.values = root_ring.sender_refusal(.Connect_History)
 		if .History_Store in item.start_grant_set.grants && .History not_in item.revoked && is_role_holder(name, .Storage) {
-			answer.status = connect(item, role_holder_name(.Storage), &answer.values, history = true)
+			answer.values = {}
+			answer.outcome = connect(item, role_holder_name(.Storage), &answer.values, history = true)
 		}
 	case .Principal_Create:
-		answer.status = principal_create(name)
+		answer.outcome = principal_create(name, &answer.values)
 	case .Principal_Lock:
-		answer.status = principal_lock(&answer.values)
+		answer.outcome = principal_lock(&answer.values)
 	case .Principals:
-		answer.status = principal_read(record.values[4], &answer.values)
+		answer.outcome = principal_read(record.values[4], &answer.values)
 	case .Principal_Record:
-		answer.status = principal_record(record.values, &answer.values)
+		answer.outcome = principal_record(record.values, &answer.values)
 	case .Principal_Unlock:
-		answer.status = principal_unlock(&record_place.values, &answer.values)
+		answer.outcome = principal_unlock(&record_place.values, &answer.values)
 		key_ring_erase(&item.requests.commands)
 	case .Debug:
-		answer.status = debug(item, name, record.values[4], record.values[5] != 0, &answer.values)
+		answer.outcome = debug(item, name, record.values[4], record.values[5] != 0, &answer.values)
 	case .Palette_Provide:
-		answer.status = palette_provide(item, &answer.values)
+		answer.outcome = palette_provide(item, &answer.values)
 	case .Start_From_Disk:
 		// The completion of a load from the disk comes when the load ends.
-		answer.status, answer.held = disk_start_begin(item, record, &answer.values)
+		answer.outcome, answer.held = disk_start_begin(item, record, &answer.values)
 	case .Disk_Grant:
-		answer.status = disk_grant_change(item, record, &answer.values)
+		answer.outcome = disk_grant_change(item, record, &answer.values)
 	case .Nickname_Move:
-		answer.status = nickname_move(item, record, &answer.values)
+		answer.outcome = nickname_move(item, record, &answer.values)
 	case .Machine_Passphrase:
-		answer.status = machine_passphrase_ask()
+		answer.outcome = machine_passphrase_ask(&answer.values)
 	case .Machine_Key:
 		// Its values hold a key where a name would be: the record of a
-		// refusal names the status only.
-		answer.status = machine_key_take(&record_place.values)
+		// refusal names its cause only.
+		answer.outcome = machine_key_take(&record_place.values, &answer.values)
 		key_ring_erase(&item.requests.commands)
-		if answer.status != .Ok {
-			answer.values = errors.ring_fail(u32(command), .Refused, .None, 0, 0, 0, i64(answer.status))
-		}
 	case .Disk_Grant_Persistence:
-		answer.status = disk_grant_persistence(item, record, &answer.values)
+		answer.outcome = disk_grant_persistence(item, record, &answer.values)
 	case .Debug_Store:
-		answer.status = debug_store_open(item, name, record.values[4], record.values[5] != 0, record.values[6] != 0, &answer.values)
+		answer.outcome = debug_store_open(item, name, record.values[4], record.values[5] != 0, record.values[6] != 0, &answer.values)
 	case .Machine_Seal:
-		answer.status = machine_seal_ask()
+		answer.outcome = machine_seal_ask(&answer.values)
 	case .Principal_Change:
 		// The completion comes when the change ends.
-		answer.status, answer.held = principal_change(item, record.tag, record.values[4], &answer.values)
+		answer.outcome, answer.held = principal_change(item, record.tag, record.values[4], &answer.values)
 	case .Principal_Change_End:
-		answer.status = principal_change_end(record.values, &answer.values)
+		answer.outcome = principal_change_end(record.values, &answer.values)
 	case .Remote_Client:
-		answer.status = remote_client_command(item, record, &answer.values)
+		answer.outcome = remote_client_command(item, record, &answer.values)
 	case .Machine_Usable:
-		answer.status = start_policy_usable(item, &answer.values)
+		answer.outcome = start_policy_usable(item, &answer.values)
 	case .Start_Policy_Choice:
-		answer.status = start_policy_choice_command(item, record, &answer.values)
+		answer.outcome = start_policy_choice_command(item, record, &answer.values)
 	case .Wire:
-		answer.status, answer.held = wire_begin(item, record, &answer.values)
+		answer.outcome, answer.held = wire_begin(item, record, &answer.values)
 	case .Start_Edit:
-		answer.status = start_edit_command(item, record, name, &answer.values)
+		answer.outcome = start_edit_command(item, record, name, &answer.values)
 	case .Debug_Start:
-		answer.status = debug_start(item, name, record.values, &answer.values)
+		answer.outcome = debug_start(item, name, record.values, &answer.values)
 	case .Plan_Roles:
-		answer.status = plan_roles_command(item, record.values, &answer.values)
+		answer.outcome = plan_roles_command(item, record.values, &answer.values)
 	}
 	return answer
 }
@@ -232,7 +243,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 // starts the parts of the system too, and gets a handle of each process
 // (start_policy.odin), with the wiring list of the wiring rows of its
 // start list.
-start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: string, values: ^[7]u64, written: ^bool, held: ^bool) -> system.Status {
+start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: string, values: ^[7]u64, held: ^bool) -> call_outcome.Call_Outcome {
 	command := root_ring.Root_Command.Start
 	list, list_ok := root_ring.start_wiring_list_of_word(record.values[4])
 	answer, answer_ok := root_ring.start_answer_of_word(record.values[5])
@@ -249,34 +260,54 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 		// A refused Start keeps none of the handles that its list lent.
 		lent_handles_close(item)
 		values^ = refusal
-		written^ = true
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	if .Start_Policy in item.start_grant_set.grants {
-		return start_policy_start(item, record.tag, name, list, values, written, held)
+		return start_policy_start(item, record.tag, name, list, values, held)
 	}
 	// A process that a process starts belongs to the session of the
 	// process that asks, and the asker of its start is that process.
 	started_place: ^Started
 	switch list {
 	case .None:
-		// A refusal that names its cause, of this start or of a start that
-		// it made first, has its record; another one has the record of the
-		// dispatch. The record of the words is still zero here.
-		status := start(name, item.principal, item, nil, &started_place, &refusal)
-		if status != .Ok && refusal != ([7]u64{}) {
-			values^ = refusal
-			written^ = true
-		}
-		if status == .Ok && answer == .Process_Handle && started_place != nil {
+		// The refusal of this start, or of a start that it made first,
+		// writes its outcome and its record.
+		outcome := start(name, item.principal, item, nil, &started_place, values)
+		if outcome == .Succeeded && answer == .Process_Handle && started_place != nil {
 			values[0], _ = start_process_handle_give(item, started_place)
 		}
-		return status
+		return outcome
 	case .In_The_List_Page:
 	}
-	status, is_held := start_with_wiring_begin(item, record.tag, name, item.principal, answer, false, nil, values, written)
+	outcome, is_held := start_with_wiring_begin(item, record.tag, name, item.principal, answer, false, nil, values)
 	held^ = is_held
-	return status
+	return outcome
+}
+
+// stop_command runs Stop. The compositor and a terminal are not processes
+// that the console stops, and the start policy stops only a process that it
+// asked for: a start policy learns nothing of a process that it did not
+// ask for, so each of its refusals is the one record Absent.
+stop_command :: proc "contextless" (item: ^Started, name: string, values: ^[7]u64) -> call_outcome.Call_Outcome {
+	kind := u32(root_ring.Root_Command.Stop)
+	for &other in started {
+		if .Start_Policy in item.start_grant_set.grants && !other.asked_by_start_policy {
+			continue
+		}
+		if other.process != 0 && other.process != display_holder && !other.is_terminal && system.name_of(other.name[:]) == name {
+			started_process_stop(&other)
+			return .Succeeded
+		}
+	}
+	if .Start_Policy in item.start_grant_set.grants {
+		values^ = start_policy_rules.stop_record()
+		return .Nothing_Has_That_Name
+	}
+	if find(name) == nil {
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Processes, 1)
+	}
+	// The holder of Display, or a terminal, has the name.
+	return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .Reserved, .None, 1)
 }
 
 // start_process_handle_give gives the asker of a start the handle of the
@@ -297,23 +328,16 @@ start_process_handle_give :: proc "contextless" (asker: ^Started, process: ^Star
 
 // root_connect runs Connect. The process of the client table connects for
 // one of its rows, and for no other principal; its check writes the record
-// of its refusal, and a connection that fails after it gets the record of
-// root_command_refusal.
-root_connect :: proc "contextless" (item: ^Started, record: ring.Record, name: string, values: ^[7]u64) -> (status: system.Status) {
+// of its refusal, and connect writes the record of each refusal after it.
+root_connect :: proc "contextless" (item: ^Started, record: ring.Record, name: string, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	if .Remote_Clients in item.start_grant_set.grants || record.values[4] != 0 {
-		client: Client_Grant
-		client, status = client_grant_of(item, record.values[4], record.values[5], values)
-		if status != .Ok {
-			return status
+		client, outcome := client_grant_of(item, record.values[4], record.values[5], values)
+		if outcome != .Succeeded {
+			return outcome
 		}
-		status = connect(item, name, values, client = client)
-	} else {
-		status = connect(item, name, values)
+		return connect(item, name, values, client = client)
 	}
-	if status != .Ok {
-		values^ = root_command_refusal(.Connect, name, record.values[4], status)
-	}
-	return status
+	return connect(item, name, values)
 }
 
 // edit_store_limit gives the block limit to use when opening a store for
@@ -344,7 +368,7 @@ edit_store_limit :: proc "contextless" (store_name: string) -> u64 {
 
 // start_edit_command runs Start_Edit: starts `edit` connected to a store
 // of the principal of the caller, editing the named object path.
-start_edit_command :: proc "contextless" (item: ^Started, record: ring.Record, store_name: string, values: ^[7]u64) -> system.Status {
+start_edit_command :: proc "contextless" (item: ^Started, record: ring.Record, store_name: string, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	command := u32(root_ring.Root_Command.Start_Edit)
 	path_handle := system.Handle(record.values[4])
 	path_count := record.values[5]
@@ -354,52 +378,42 @@ start_edit_command :: proc "contextless" (item: ^Started, record: ring.Record, s
 	}
 	// The caller must act for its principal to reach another store.
 	if .Acts_For_Principal not_in item.start_grant_set.grants || .Acts_For_Principal in item.revoked {
-		values^ = errors.ring_fail(command, .No_Grant, .Acts_For_Principal, 1)
-		return .No_Right
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, command, .No_Grant, .Acts_For_Principal, 1)
 	}
 	if record.values[6] != 0 {
 		values^ = root_ring.word_refusal(.Start_Edit, 3, record.values[6], 0)
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	store_refusal, store_offset := root_ring.edit_store_validate(store_name)
 	switch store_refusal {
 	case .None:
 	case .Empty:
-		values^ = errors.ring_fail(command, .Empty, .Bytes, 1, 0, root_ring.EDIT_TARGET_STORE_LIMIT)
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, command, .Empty, .Bytes, 1, 0, root_ring.EDIT_TARGET_STORE_LIMIT)
 	case .Too_Long:
-		values^ = errors.ring_fail(command, .Too_Long, .Bytes, 1, i64(len(store_name)), root_ring.EDIT_TARGET_STORE_LIMIT)
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, command, .Too_Long, .Bytes, 1, i64(len(store_name)), root_ring.EDIT_TARGET_STORE_LIMIT)
 	case .Bad_Byte:
-		values^ = errors.ring_fail(command, .Bad_Byte, .Bytes, 1, i64(store_offset), 0, i64(store_name[store_offset]))
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, command, .Bad_Byte, .Bytes, 1, i64(store_offset), 0, i64(store_name[store_offset]))
 	}
 	// Principal isolation: a caller for principal N opens stores of principal N only.
 	if principals.store_name_principal(store_name) != item.principal {
-		values^ = errors.ring_fail(command, .No_Grant, .Acts_For_Principal, 1)
-		return .No_Right
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, command, .No_Grant, .Acts_For_Principal, 1)
 	}
 	if !through || kind != .Memory || .Read not_in rights {
-		values^ = errors.ring_fail(command, .Bad_Value, .Objects, 2)
-		return .Bad_Handle
+		return root_ring.refuse(values, .Argument_Refused, command, .Bad_Value, .Objects, 2)
 	}
 	if path_count == 0 {
-		values^ = errors.ring_fail(command, .Empty, .Bytes, 2, 0, root_ring.EDIT_TARGET_PATH_LIMIT)
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, command, .Empty, .Bytes, 2, 0, root_ring.EDIT_TARGET_PATH_LIMIT)
 	}
 	if path_count > root_ring.EDIT_TARGET_PATH_LIMIT {
-		values^ = errors.ring_fail(command, .Too_Long, .Bytes, 2, i64(min(path_count, u64(max(i64)))), root_ring.EDIT_TARGET_PATH_LIMIT)
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, command, .Too_Long, .Bytes, 2, i64(min(path_count, u64(max(i64)))), root_ring.EDIT_TARGET_PATH_LIMIT)
 	}
 	pages, size_status := system.memory_size(path_handle)
 	if size_status != .Ok || pages * system.PAGE_SIZE < path_count {
-		values^ = errors.ring_fail(command, .Too_Long, .Bytes, 2, i64(path_count))
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, command, .Too_Long, .Bytes, 2, i64(path_count))
 	}
 	mapped, map_status := system.memory_map(path_handle, {})
 	if map_status != .Ok {
-		values^ = errors.ring_fail(command, .Refused, .None, 0, 0, 0, i64(map_status))
-		return map_status
+		return kernel_refused(values, command, map_status)
 	}
 	path_bytes: [root_ring.EDIT_TARGET_PATH_LIMIT]u8
 	intrinsics.mem_copy_non_overlapping(&path_bytes[0], mapped, int(path_count))
@@ -409,29 +423,23 @@ start_edit_command :: proc "contextless" (item: ^Started, record: ring.Record, s
 	switch path_refusal {
 	case .None:
 	case .Empty:
-		values^ = errors.ring_fail(command, .Empty, .Bytes, 2, 0, root_ring.EDIT_TARGET_PATH_LIMIT)
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, command, .Empty, .Bytes, 2, 0, root_ring.EDIT_TARGET_PATH_LIMIT)
 	case .Too_Long:
-		values^ = errors.ring_fail(command, .Too_Long, .Bytes, 2, i64(len(path)), root_ring.EDIT_TARGET_PATH_LIMIT)
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, command, .Too_Long, .Bytes, 2, i64(len(path)), root_ring.EDIT_TARGET_PATH_LIMIT)
 	case .Too_Deep:
-		values^ = errors.ring_fail(command, .Too_Long, .Objects, 2, i64(path_offset))
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, command, .Too_Long, .Objects, 2, i64(path_offset))
 	case .Bad_Segment:
 		found := path_offset < len(path) ? i64(path[path_offset]) : 0
-		values^ = errors.ring_fail(command, .Bad_Byte, .Bytes, 2, i64(path_offset), 0, found)
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, command, .Bad_Byte, .Bytes, 2, i64(path_offset), 0, found)
 	}
 	target_page, page_status := system.memory_create(1)
 	if page_status != .Ok {
-		values^ = errors.ring_fail(command, .Refused, .None, 0, 0, 0, i64(page_status))
-		return page_status
+		return kernel_refused(values, command, page_status)
 	}
 	defer system.close(target_page)
 	target_address, target_map_status := system.memory_map(target_page)
 	if target_map_status != .Ok {
-		values^ = errors.ring_fail(command, .Refused, .None, 0, 0, 0, i64(target_map_status))
-		return target_map_status
+		return kernel_refused(values, command, target_map_status)
 	}
 	target := (^root_ring.Edit_Target)(target_address)
 	target^ = {}
@@ -440,127 +448,6 @@ start_edit_command :: proc "contextless" (item: ^Started, record: ring.Record, s
 	copy(target.store[:], store_name)
 	copy(target.path[:], path)
 	system.memory_unmap(target_address)
-	refusal: [7]u64
-	start_status := start("edit", item.principal, item, nil, nil, &refusal, store_override = store_name, store_limit_override = edit_store_limit(store_name), edit_target_page = target_page)
-	if start_status != .Ok {
-		if refusal != ([7]u64{}) {
-			values^ = refusal
-		} else {
-			values^ = errors.ring_fail(command, .Refused, .None, 0, 0, 0, i64(start_status))
-		}
-	}
-	return start_status
+	return start("edit", item.principal, item, nil, nil, values, store_override = store_name, store_limit_override = edit_store_limit(store_name), edit_target_page = target_page)
 }
 
-// root_command_refusal gives the error record of a command of the root
-// ring that this service refused, in the values of its completion. As the
-// kernel does (src/modulus/diagnose.odin), it reads the state again after
-// the refusal, and names a cause only when the state shows it now: else the
-// record is Refused, with the status. The record names the argument of the
-// caller, and no fact of another process that the status does not give.
-root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, name: string, value: u64, status: system.Status) -> [7]u64 {
-	kind := u32(command)
-	// The start policy is no part of the system, and only this service
-	// starts it: a Start of its name is refused as one.
-	of_the_system := name_is_a_system_part(name) || .Start_Policy in start_grant_set_of(name).grants
-	switch command {
-	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client, .Machine_Usable, .Start_Policy_Choice, .Wire, .Start_Edit, .Debug_Start, .Plan_Roles:
-		// No cause that the state shows: the record Refused, with the status.
-	case .Connect_History, .Palette_Provide:
-		// A grant of the start grant set that the command needs, and that the process
-		// lacks or lost by a revocation.
-		if status == .No_Right {
-			return root_ring.sender_refusal(command)
-		}
-	case .Replace:
-		// replace calls this for each refusal that is not a refusal of a
-		// signed row.
-		if record, named := root_ring.replace_refusal(status, value, u64(len(system.image_entries(image))), len(system.image_find(image, name)) != 0, system.REPLACEMENT_CAPACITY); named {
-			return record
-		}
-	case .Start:
-		if status == .Bad_Operation && of_the_system {
-			return errors.ring_fail(kind, .Reserved, .None, 1)
-		}
-		if status == .Bad_Operation && len(system.image_find(image, name)) == 0 {
-			return errors.ring_fail(kind, .Absent, .Modules, 1)
-		}
-		// A start of the start policy for a name that runs.
-		if status == .Bad_State && find_running(name) != nil {
-			return errors.ring_fail(kind, .Exists, .Processes, 1)
-		}
-	case .Stop:
-		if status == .Bad_Handle && (is_role_holder(name, .Display) || is_role_holder(name, .Terminal)) {
-			return errors.ring_fail(kind, .Reserved, .None, 1)
-		}
-		if status == .Bad_Handle && find(name) == nil {
-			return errors.ring_fail(kind, .Absent, .Processes, 1)
-		}
-	case .Connect:
-		if status == .Bad_Handle {
-			return errors.ring_fail(kind, .Absent, .Services, 1)
-		}
-		if status == .No_Slot {
-			return errors.ring_fail(kind, .Full, .Connections, 0, 0, isolated.SERVICE_CONNECTION_CAPACITY)
-		}
-	case .Disconnect:
-		if status == .Bad_Handle {
-			return errors.ring_fail(kind, .Absent, .Connections, 1)
-		}
-	case .Grants:
-		if status == .Bad_Handle && find(name) == nil {
-			return errors.ring_fail(kind, .Absent, .Processes, 1)
-		}
-	case .Revoke:
-		switch {
-		case status == .Bad_Handle && find(name) == nil:
-			return errors.ring_fail(kind, .Absent, .Processes, 1)
-		case status == .Bad_Operation:
-			return errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(value, 1 << 62)), i64(max(system.Root_Grant)))
-		case status == .Bad_State:
-			return errors.ring_fail(kind, .Absent, .Grants, 2)
-		}
-	case .Principal_Create:
-		switch status {
-		case .Bad_Operation:
-			return errors.ring_fail(kind, .Bad_Value, .None, 1)
-		case .Bad_State:
-			// One named principal: several are not built.
-			return errors.ring_fail(kind, .Full, .Principals, 0, 0, principals.PRINCIPAL_CAPACITY - 1)
-		case .Ok, .Bad_Handle, .Bad_Address, .No_Memory, .No_Slot, .No_Right, .No_Budget:
-			// The general record of the status follows.
-		}
-	case .Principal_Lock:
-		if status == .Bad_State {
-			return errors.ring_fail(kind, .Absent, .Principals)
-		}
-	case .Principals:
-		if status == .Bad_Handle {
-			return errors.ring_fail(kind, .Absent, .Principals, 2, i64(min(value, 1 << 62)))
-		}
-	case .Principal_Record:
-		if status == .No_Slot {
-			return errors.ring_fail(kind, .Full, .Principals, 0, 0, principals.PRINCIPAL_CAPACITY - 1)
-		}
-	case .Machine_Passphrase, .Machine_Seal:
-		switch status {
-		case .Ok, .Bad_Operation, .Bad_Address, .No_Memory, .No_Budget:
-			// The general record of the status follows.
-		case .Bad_State:
-			// The machine has a record of its machine key: a change is not
-			// built.
-			return errors.ring_fail(kind, .Exists, .Principals)
-		case .Bad_Handle:
-			// No TPM service: the system is not measured into a TPM.
-			return errors.ring_fail(kind, .Unsupported, .Principals)
-		case .No_Right:
-			// Secure Boot is off: no seal trusts a boot program that
-			// nothing verified.
-			return errors.ring_fail(kind, .Refused, .Principals)
-		case .No_Slot:
-			// unlock runs: one window of unlock at a time.
-			return errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
-		}
-	}
-	return errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
-}

@@ -3,6 +3,7 @@ package tls_tcp_module
 
 import "core:slice"
 import "core:testing"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:quic"
 import "modus:system"
@@ -43,21 +44,34 @@ all_untouched :: proc(bytes: []u8) -> bool {
 	return true
 }
 
-// expect_refusal checks the result -1 and each field of the error record.
+// The pair of an export, as one value that a test compares.
 @(private = "file")
-expect_refusal :: proc(t: ^testing.T, result: i64, error: errors.Error_Record, expected: errors.Error_Record, loc := #caller_location) {
-	testing.expect_value(t, result, -1, loc = loc)
+Answer :: struct {
+	outcome: call_outcome.Call_Outcome,
+	value:   i64,
+}
+
+@(private = "file")
+answer_of :: proc(outcome: call_outcome.Call_Outcome, value: i64) -> Answer {
+	return {outcome, value}
+}
+
+// expect_refusal checks the outcome Argument_Refused with the value 0, and
+// each field of the error record.
+@(private = "file")
+expect_refusal :: proc(t: ^testing.T, result: Answer, error: errors.Error_Record, expected: errors.Error_Record, loc := #caller_location) {
+	testing.expect_value(t, result, Answer{.Argument_Refused, 0}, loc = loc)
 	testing.expect_value(t, error, expected, loc = loc)
 }
 
 // parse_into gives the result of tls_record_header_parse over bytes, its
 // error record, and the header record that started as UNTOUCHED_HEADER.
 @(private = "file")
-parse_into :: proc(bytes: []u8) -> (result: i64, error: errors.Error_Record, header: tls_tcp.Record_Header) {
+parse_into :: proc(bytes: []u8) -> (result: Answer, error: errors.Error_Record, header: tls_tcp.Record_Header) {
 	input := bytes_to_read(bytes)
 	header = UNTOUCHED_HEADER
 	table := system.Table_To_Change(tls_tcp.Record_Header){records = &header, count = 1, capacity = 1}
-	result = tls_record_header_parse(&input, &table, &error)
+	result = answer_of(tls_record_header_parse(&input, &table, &error))
 	return
 }
 
@@ -69,19 +83,19 @@ record_header_parse_refuses_each_bad_place :: proc(t: ^testing.T) {
 	valid := [5]u8{22, 0x03, 0x03, 0x00, 0x10}
 	input := bytes_to_read(valid[:])
 
-	expect_refusal(t, tls_record_header_parse(nil, &table, &error), error, errors.error_make(.Bad_Address, .Bytes, 1))
-	expect_refusal(t, tls_record_header_parse(&input, nil, &error), error, errors.error_make(.Bad_Address, .Records, 2, 0, 0, 1))
+	expect_refusal(t, answer_of(tls_record_header_parse(nil, &table, &error)), error, errors.error_make(.Bad_Address, .Bytes, 1))
+	expect_refusal(t, answer_of(tls_record_header_parse(&input, nil, &error)), error, errors.error_make(.Bad_Address, .Records, 2, 0, 0, 1))
 	empty := system.Bytes_To_Read{}
-	expect_refusal(t, tls_record_header_parse(&empty, &table, &error), error, errors.error_make(.Too_Small, .Bytes, 1, 0, 5))
+	expect_refusal(t, answer_of(tls_record_header_parse(&empty, &table, &error)), error, errors.error_make(.Too_Small, .Bytes, 1, 0, 5))
 	nil_bytes := system.Bytes_To_Read{bytes = nil, count = 5, capacity = 5}
-	expect_refusal(t, tls_record_header_parse(&nil_bytes, &table, &error), error, errors.error_make(.Bad_Address, .Bytes, 1, 0, 5))
+	expect_refusal(t, answer_of(tls_record_header_parse(&nil_bytes, &table, &error)), error, errors.error_make(.Bad_Address, .Bytes, 1, 0, 5))
 	no_record := system.Table_To_Change(tls_tcp.Record_Header){records = &header, count = 0, capacity = 1}
-	expect_refusal(t, tls_record_header_parse(&input, &no_record, &error), error, errors.error_make(.Too_Small, .Records, 2, 0, 1))
+	expect_refusal(t, answer_of(tls_record_header_parse(&input, &no_record, &error)), error, errors.error_make(.Too_Small, .Records, 2, 0, 1))
 	nil_records := system.Table_To_Change(tls_tcp.Record_Header){records = nil, count = 1, capacity = 1}
-	expect_refusal(t, tls_record_header_parse(&input, &nil_records, &error), error, errors.error_make(.Bad_Address, .Records, 2, 0, 1, 1))
+	expect_refusal(t, answer_of(tls_record_header_parse(&input, &nil_records, &error)), error, errors.error_make(.Bad_Address, .Records, 2, 0, 1, 1))
 	testing.expect_value(t, header, UNTOUCHED_HEADER)
 	// A nil error record is allowed: the caller asked for no record.
-	testing.expect_value(t, tls_record_header_parse(&empty, &table, nil), -1)
+	testing.expect_value(t, answer_of(tls_record_header_parse(&empty, &table, nil)), Answer{.Argument_Refused, 0})
 }
 
 @(test)
@@ -133,7 +147,7 @@ record_header_parse_refuses_lengths_past_the_limit :: proc(t: ^testing.T) {
 		// The limit itself is a valid length.
 		bytes := [5]u8{u8(each.content_type), 0x03, 0x03, u8(each.limit >> 8), u8(each.limit)}
 		result, error, header := parse_into(bytes[:])
-		testing.expect_value(t, result, 5)
+		testing.expect_value(t, result, Answer{.Succeeded, 5})
 		testing.expect_value(t, error, errors.Error_Record{})
 		testing.expect_value(t, header, tls_tcp.Record_Header{content_type = each.content_type, legacy_version = 0x0303, length = u16(each.limit)})
 	}
@@ -149,7 +163,7 @@ record_header_parse_is_the_parse_of_the_package :: proc(t: ^testing.T) {
 			expected, refusal := tls_tcp.record_parse_header(bytes[:], false)
 			testing.expect_value(t, refusal, tls_tcp.Tls_Refusal.None)
 			result, error, header := parse_into(bytes[:])
-			testing.expect_value(t, result, 5)
+			testing.expect_value(t, result, Answer{.Succeeded, 5})
 			testing.expect_value(t, error, errors.Error_Record{})
 			testing.expect_value(t, header, expected)
 		}
@@ -165,24 +179,24 @@ record_header_write_refuses_each_bad_argument_and_writes_nothing :: proc(t: ^tes
 	}
 	output := bytes_to_change(buffer[:])
 	for word in ([]i64{min(i64), -1, 0, 19, 24, 255, 256, max(i64)}) {
-		expect_refusal(t, tls_record_header_write(word, 1, &output, &error), error, errors.error_make(.Bad_Value, .None, 1, word, 23))
+		expect_refusal(t, answer_of(tls_record_header_write(word, 1, &output, &error)), error, errors.error_make(.Bad_Value, .None, 1, word, 23))
 	}
 	for length in ([]i64{min(i64), -1}) {
-		expect_refusal(t, tls_record_header_write(22, length, &output, &error), error, errors.error_make(.Bad_Value, .Bytes, 2, length, tls_tcp.MAX_PLAINTEXT_SIZE))
+		expect_refusal(t, answer_of(tls_record_header_write(22, length, &output, &error)), error, errors.error_make(.Bad_Value, .Bytes, 2, length, tls_tcp.MAX_PLAINTEXT_SIZE))
 	}
 	for length in ([]i64{tls_tcp.MAX_PLAINTEXT_SIZE + 1, tls_tcp.MAX_CIPHERTEXT_SIZE, max(i64)}) {
-		expect_refusal(t, tls_record_header_write(22, length, &output, &error), error, errors.error_make(.Too_Long, .Bytes, 2, length, tls_tcp.MAX_PLAINTEXT_SIZE))
+		expect_refusal(t, answer_of(tls_record_header_write(22, length, &output, &error)), error, errors.error_make(.Too_Long, .Bytes, 2, length, tls_tcp.MAX_PLAINTEXT_SIZE))
 	}
 	for length in ([]i64{tls_tcp.MAX_CIPHERTEXT_SIZE + 1, i64(max(u16)) + 1, max(i64)}) {
-		expect_refusal(t, tls_record_header_write(23, length, &output, &error), error, errors.error_make(.Too_Long, .Bytes, 2, length, tls_tcp.MAX_CIPHERTEXT_SIZE))
+		expect_refusal(t, answer_of(tls_record_header_write(23, length, &output, &error)), error, errors.error_make(.Too_Long, .Bytes, 2, length, tls_tcp.MAX_CIPHERTEXT_SIZE))
 	}
-	expect_refusal(t, tls_record_header_write(22, 1, nil, &error), error, errors.error_make(.Bad_Address, .Bytes, 3, 0, 0, 1))
+	expect_refusal(t, answer_of(tls_record_header_write(22, 1, nil, &error)), error, errors.error_make(.Bad_Address, .Bytes, 3, 0, 0, 1))
 	for count in 0 ..< 5 {
 		short := bytes_to_change(buffer[:count])
-		expect_refusal(t, tls_record_header_write(22, 1, &short, &error), error, errors.error_make(.Too_Small, .Bytes, 3, i64(count), 5))
+		expect_refusal(t, answer_of(tls_record_header_write(22, 1, &short, &error)), error, errors.error_make(.Too_Small, .Bytes, 3, i64(count), 5))
 	}
 	nil_bytes := system.Bytes_To_Change{bytes = nil, count = 5, capacity = 5}
-	expect_refusal(t, tls_record_header_write(22, 1, &nil_bytes, &error), error, errors.error_make(.Bad_Address, .Bytes, 3, 0, 5, 1))
+	expect_refusal(t, answer_of(tls_record_header_write(22, 1, &nil_bytes, &error)), error, errors.error_make(.Bad_Address, .Bytes, 3, 0, 5, 1))
 	testing.expect(t, all_untouched(buffer[:]), "a refused write writes no byte")
 }
 
@@ -201,12 +215,12 @@ record_header_write_is_the_write_of_the_package_and_parses_back :: proc(t: ^test
 			buffer := [6]u8{UNTOUCHED, UNTOUCHED, UNTOUCHED, UNTOUCHED, UNTOUCHED, UNTOUCHED}
 			output := bytes_to_change(buffer[:])
 			error: errors.Error_Record
-			testing.expect_value(t, tls_record_header_write(i64(content_type), i64(length), &output, &error), 5)
+			testing.expect_value(t, answer_of(tls_record_header_write(i64(content_type), i64(length), &output, &error)), Answer{.Succeeded, 5})
 			testing.expect_value(t, error, errors.Error_Record{})
 			testing.expect(t, slice.equal(buffer[:5], package_record[:5]), "the header of the package")
 			testing.expect_value(t, buffer[5], UNTOUCHED)
 			result, parse_error, header := parse_into(buffer[:5])
-			testing.expect_value(t, result, 5)
+			testing.expect_value(t, result, Answer{.Succeeded, 5})
 			testing.expect_value(t, parse_error, errors.Error_Record{})
 			testing.expect_value(t, header, tls_tcp.Record_Header{content_type = content_type, legacy_version = 0x0303, length = u16(length)})
 		}
@@ -215,7 +229,7 @@ record_header_write_is_the_write_of_the_package_and_parses_back :: proc(t: ^test
 	buffer: [5]u8
 	output := bytes_to_change(buffer[:])
 	error: errors.Error_Record
-	testing.expect_value(t, tls_record_header_write(23, tls_tcp.MAX_CIPHERTEXT_SIZE, &output, &error), 5)
+	testing.expect_value(t, answer_of(tls_record_header_write(23, tls_tcp.MAX_CIPHERTEXT_SIZE, &output, &error)), Answer{.Succeeded, 5})
 	testing.expect_value(t, buffer, [5]u8{23, 0x03, 0x03, 0x41, 0x00})
 	expected, refusal := tls_tcp.record_parse_header(buffer[:], false)
 	testing.expect_value(t, refusal, tls_tcp.Tls_Refusal.None)
@@ -226,13 +240,13 @@ record_header_write_is_the_write_of_the_package_and_parses_back :: proc(t: ^test
 cipher_suite_supported_refuses_words_out_of_sixteen_bits :: proc(t: ^testing.T) {
 	error: errors.Error_Record
 	for word in ([]i64{min(i64), -1, i64(max(u16)) + 1, max(i64)}) {
-		expect_refusal(t, cipher_suite_supported(word, &error), error, errors.error_make(.Bad_Value, .None, 1, 0, i64(max(u16)), word))
+		expect_refusal(t, answer_of(cipher_suite_supported(word, &error)), error, errors.error_make(.Bad_Value, .None, 1, 0, i64(max(u16)), word))
 	}
 	error = {}
-	testing.expect_value(t, cipher_suite_supported(0x1302, &error), 0)
-	testing.expect_value(t, cipher_suite_supported(0, &error), 0)
-	testing.expect_value(t, cipher_suite_supported(0x1301, &error), 1)
-	testing.expect_value(t, cipher_suite_supported(0x1303, &error), 1)
+	testing.expect_value(t, answer_of(cipher_suite_supported(0x1302, &error)), Answer{.Succeeded, 0})
+	testing.expect_value(t, answer_of(cipher_suite_supported(0, &error)), Answer{.Succeeded, 0})
+	testing.expect_value(t, answer_of(cipher_suite_supported(0x1301, &error)), Answer{.Succeeded, 1})
+	testing.expect_value(t, answer_of(cipher_suite_supported(0x1303, &error)), Answer{.Succeeded, 1})
 	testing.expect_value(t, error, errors.Error_Record{})
 	testing.expect_value(t, record_max_plaintext_bytes(), 16384)
 	testing.expect_value(t, record_max_ciphertext_bytes(), 16640)
@@ -241,11 +255,11 @@ cipher_suite_supported_refuses_words_out_of_sixteen_bits :: proc(t: ^testing.T) 
 // integer_read_into gives the result of quic_variable_length_integer_read
 // over bytes, its error record, and the record that started untouched.
 @(private = "file")
-integer_read_into :: proc(bytes: []u8) -> (result: i64, error: errors.Error_Record, integer: Variable_Length_Integer) {
+integer_read_into :: proc(bytes: []u8) -> (result: Answer, error: errors.Error_Record, integer: Variable_Length_Integer) {
 	input := bytes_to_read(bytes)
 	integer = UNTOUCHED_INTEGER
 	table := system.Table_To_Change(Variable_Length_Integer){records = &integer, count = 1, capacity = 1}
-	result = quic_variable_length_integer_read(&input, &table, &error)
+	result = answer_of(quic_variable_length_integer_read(&input, &table, &error))
 	return
 }
 
@@ -256,16 +270,16 @@ variable_length_integer_read_refuses_each_bad_place :: proc(t: ^testing.T) {
 	table := system.Table_To_Change(Variable_Length_Integer){records = &integer, count = 1, capacity = 1}
 	one := [1]u8{0x25}
 	input := bytes_to_read(one[:])
-	expect_refusal(t, quic_variable_length_integer_read(nil, &table, &error), error, errors.error_make(.Bad_Address, .Bytes, 1))
-	expect_refusal(t, quic_variable_length_integer_read(&input, nil, &error), error, errors.error_make(.Bad_Address, .Records, 2, 0, 0, 1))
+	expect_refusal(t, answer_of(quic_variable_length_integer_read(nil, &table, &error)), error, errors.error_make(.Bad_Address, .Bytes, 1))
+	expect_refusal(t, answer_of(quic_variable_length_integer_read(&input, nil, &error)), error, errors.error_make(.Bad_Address, .Records, 2, 0, 0, 1))
 	empty := system.Bytes_To_Read{}
-	expect_refusal(t, quic_variable_length_integer_read(&empty, &table, &error), error, errors.error_make(.Too_Small, .Bytes, 1, 0, 1))
+	expect_refusal(t, answer_of(quic_variable_length_integer_read(&empty, &table, &error)), error, errors.error_make(.Too_Small, .Bytes, 1, 0, 1))
 	nil_bytes := system.Bytes_To_Read{bytes = nil, count = 1, capacity = 1}
-	expect_refusal(t, quic_variable_length_integer_read(&nil_bytes, &table, &error), error, errors.error_make(.Bad_Address, .Bytes, 1, 0, 1))
+	expect_refusal(t, answer_of(quic_variable_length_integer_read(&nil_bytes, &table, &error)), error, errors.error_make(.Bad_Address, .Bytes, 1, 0, 1))
 	no_record := system.Table_To_Change(Variable_Length_Integer){records = &integer, count = 0, capacity = 1}
-	expect_refusal(t, quic_variable_length_integer_read(&input, &no_record, &error), error, errors.error_make(.Too_Small, .Records, 2, 0, 1))
+	expect_refusal(t, answer_of(quic_variable_length_integer_read(&input, &no_record, &error)), error, errors.error_make(.Too_Small, .Records, 2, 0, 1))
 	nil_records := system.Table_To_Change(Variable_Length_Integer){records = nil, count = 1, capacity = 1}
-	expect_refusal(t, quic_variable_length_integer_read(&input, &nil_records, &error), error, errors.error_make(.Bad_Address, .Records, 2, 0, 1, 1))
+	expect_refusal(t, answer_of(quic_variable_length_integer_read(&input, &nil_records, &error)), error, errors.error_make(.Bad_Address, .Records, 2, 0, 1, 1))
 	testing.expect_value(t, integer, UNTOUCHED_INTEGER)
 }
 
@@ -303,18 +317,18 @@ variable_length_integer_write_refuses_each_bad_argument_and_writes_nothing :: pr
 	}
 	output := bytes_to_change(buffer[:])
 	for value in ([]i64{min(i64), -(i64(1) << 62), -1, i64(1) << 62, (i64(1) << 62) + 1, max(i64)}) {
-		expect_refusal(t, quic_variable_length_integer_write(value, &output, &error), error, errors.error_make(.Bad_Value, .None, 1, value, QUIC_VARIABLE_LENGTH_INTEGER_LARGEST))
+		expect_refusal(t, answer_of(quic_variable_length_integer_write(value, &output, &error)), error, errors.error_make(.Bad_Value, .None, 1, value, QUIC_VARIABLE_LENGTH_INTEGER_LARGEST))
 	}
-	expect_refusal(t, quic_variable_length_integer_write(0, nil, &error), error, errors.error_make(.Bad_Address, .Bytes, 2, 0, 0, 1))
+	expect_refusal(t, answer_of(quic_variable_length_integer_write(0, nil, &error)), error, errors.error_make(.Bad_Address, .Bytes, 2, 0, 0, 1))
 	for value, index in BOUNDARY_VALUES {
 		size := BOUNDARY_SIZES[index]
 		for count in 0 ..< size {
 			short := bytes_to_change(buffer[:count])
-			expect_refusal(t, quic_variable_length_integer_write(value, &short, &error), error, errors.error_make(.Too_Small, .Bytes, 2, count, size))
+			expect_refusal(t, answer_of(quic_variable_length_integer_write(value, &short, &error)), error, errors.error_make(.Too_Small, .Bytes, 2, count, size))
 		}
 	}
 	nil_bytes := system.Bytes_To_Change{bytes = nil, count = 8, capacity = 8}
-	expect_refusal(t, quic_variable_length_integer_write(1, &nil_bytes, &error), error, errors.error_make(.Bad_Address, .Bytes, 2, 0, 8, 1))
+	expect_refusal(t, answer_of(quic_variable_length_integer_write(1, &nil_bytes, &error)), error, errors.error_make(.Bad_Address, .Bytes, 2, 0, 8, 1))
 	testing.expect(t, all_untouched(buffer[:]), "a refused write writes no byte")
 }
 
@@ -331,12 +345,12 @@ variable_length_integer_round_trip_is_the_package_at_each_edge :: proc(t: ^testi
 		buffer := [9]u8{UNTOUCHED, UNTOUCHED, UNTOUCHED, UNTOUCHED, UNTOUCHED, UNTOUCHED, UNTOUCHED, UNTOUCHED, UNTOUCHED}
 		output := bytes_to_change(buffer[:])
 		error: errors.Error_Record
-		testing.expect_value(t, quic_variable_length_integer_write(value, &output, &error), size)
+		testing.expect_value(t, answer_of(quic_variable_length_integer_write(value, &output, &error)), Answer{.Succeeded, size})
 		testing.expect_value(t, error, errors.Error_Record{})
 		testing.expect(t, slice.equal(buffer[:size], package_bytes[:size]), "the bytes of the package")
 		testing.expect(t, all_untouched(buffer[size:]), "no byte after the encoding")
 		result, read_error, integer := integer_read_into(buffer[:])
-		testing.expect_value(t, result, size)
+		testing.expect_value(t, result, Answer{.Succeeded, size})
 		testing.expect_value(t, read_error, errors.Error_Record{})
 		testing.expect_value(t, integer, Variable_Length_Integer{value = value, size = size})
 		package_value, package_size, ok := quic.variable_length_integer_read(buffer[:], 0)
@@ -365,7 +379,7 @@ variable_length_integer_read_gives_the_examples_of_the_rfc :: proc(t: ^testing.T
 	}
 	for each in cases {
 		result, error, integer := integer_read_into(each.bytes)
-		testing.expect_value(t, result, i64(len(each.bytes)))
+		testing.expect_value(t, result, Answer{.Succeeded, i64(len(each.bytes))})
 		testing.expect_value(t, error, errors.Error_Record{})
 		testing.expect_value(t, integer, Variable_Length_Integer{value = each.value, size = i64(len(each.bytes))})
 	}
@@ -374,11 +388,11 @@ variable_length_integer_read_gives_the_examples_of_the_rfc :: proc(t: ^testing.T
 // probe_into gives the result of quic_header_probe over bytes, its error
 // record, and the record that started untouched.
 @(private = "file")
-probe_into :: proc(bytes: []u8) -> (result: i64, error: errors.Error_Record, probe: Quic_Header_Probe) {
+probe_into :: proc(bytes: []u8) -> (result: Answer, error: errors.Error_Record, probe: Quic_Header_Probe) {
 	input := bytes_to_read(bytes)
 	probe = UNTOUCHED_PROBE
 	table := system.Table_To_Change(Quic_Header_Probe){records = &probe, count = 1, capacity = 1}
-	result = quic_header_probe(&input, &table, &error)
+	result = answer_of(quic_header_probe(&input, &table, &error))
 	return
 }
 
@@ -389,16 +403,16 @@ header_probe_refuses_each_bad_place :: proc(t: ^testing.T) {
 	table := system.Table_To_Change(Quic_Header_Probe){records = &probe, count = 1, capacity = 1}
 	short_header := [1]u8{0x40}
 	input := bytes_to_read(short_header[:])
-	expect_refusal(t, quic_header_probe(nil, &table, &error), error, errors.error_make(.Bad_Address, .Bytes, 1))
-	expect_refusal(t, quic_header_probe(&input, nil, &error), error, errors.error_make(.Bad_Address, .Records, 2, 0, 0, 1))
+	expect_refusal(t, answer_of(quic_header_probe(nil, &table, &error)), error, errors.error_make(.Bad_Address, .Bytes, 1))
+	expect_refusal(t, answer_of(quic_header_probe(&input, nil, &error)), error, errors.error_make(.Bad_Address, .Records, 2, 0, 0, 1))
 	empty := system.Bytes_To_Read{}
-	expect_refusal(t, quic_header_probe(&empty, &table, &error), error, errors.error_make(.Too_Small, .Bytes, 1, 0, 1))
+	expect_refusal(t, answer_of(quic_header_probe(&empty, &table, &error)), error, errors.error_make(.Too_Small, .Bytes, 1, 0, 1))
 	nil_bytes := system.Bytes_To_Read{bytes = nil, count = 1, capacity = 1}
-	expect_refusal(t, quic_header_probe(&nil_bytes, &table, &error), error, errors.error_make(.Bad_Address, .Bytes, 1, 0, 1))
+	expect_refusal(t, answer_of(quic_header_probe(&nil_bytes, &table, &error)), error, errors.error_make(.Bad_Address, .Bytes, 1, 0, 1))
 	no_record := system.Table_To_Change(Quic_Header_Probe){records = &probe, count = 0, capacity = 1}
-	expect_refusal(t, quic_header_probe(&input, &no_record, &error), error, errors.error_make(.Too_Small, .Records, 2, 0, 1))
+	expect_refusal(t, answer_of(quic_header_probe(&input, &no_record, &error)), error, errors.error_make(.Too_Small, .Records, 2, 0, 1))
 	nil_records := system.Table_To_Change(Quic_Header_Probe){records = nil, count = 1, capacity = 1}
-	expect_refusal(t, quic_header_probe(&input, &nil_records, &error), error, errors.error_make(.Bad_Address, .Records, 2, 0, 1, 1))
+	expect_refusal(t, answer_of(quic_header_probe(&input, &nil_records, &error)), error, errors.error_make(.Bad_Address, .Records, 2, 0, 1, 1))
 	testing.expect_value(t, probe, UNTOUCHED_PROBE)
 }
 
@@ -467,13 +481,13 @@ header_probe_agrees_with_the_reader_of_the_package :: proc(t: ^testing.T) {
 		testing.expect_value(t, header.type, each.type)
 		testing.expect_value(t, header.version, each.probe.version)
 		result, error, probe := probe_into(each.packet)
-		testing.expect_value(t, result, each.read)
+		testing.expect_value(t, result, Answer{.Succeeded, each.read})
 		testing.expect_value(t, error, errors.Error_Record{})
 		testing.expect_value(t, probe, each.probe)
 		// The probe reads no byte past what it gives: the first bytes alone
 		// give the same answer.
 		head_result, head_error, head_probe := probe_into(each.packet[:each.read])
-		testing.expect_value(t, head_result, each.read)
+		testing.expect_value(t, head_result, Answer{.Succeeded, each.read})
 		testing.expect_value(t, head_error, errors.Error_Record{})
 		testing.expect_value(t, head_probe, each.probe)
 	}

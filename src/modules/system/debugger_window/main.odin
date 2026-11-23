@@ -47,6 +47,7 @@
 // breakpoint, a breakpoint is removed.
 package debugger_window
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
@@ -448,12 +449,12 @@ call :: proc "contextless" (export: Export, arguments: []isolated.Argument, rows
 		return 0, false
 	}
 	error: errors.Error_Record
-	result, status := system.call_isolated(&connection, service_file, export_indexes[export], arguments, &error, false, rows)
-	if status != .Ok {
-		if status == .Failed || status == .Failed_With_Wrong_Details {
-			status_set(true, "debugger.", export_names[export], " failed with the code ", result, ": the console gives its sentence")
-		} else {
+	result, outcome := system.call_isolated(&connection, service_file, export_indexes[export], arguments, &error, false, rows)
+	if outcome != .Succeeded {
+		if system.connection_to_renew(outcome) {
 			status_set(true, "the call of debugger.", export_names[export], " did not come back from the service")
+		} else {
+			status_set(true, "debugger.", export_names[export], " ended with ", call_outcome.CALL_OUTCOME_NAMES[outcome], ": the console gives its sentence")
 		}
 		return 0, false
 	}
@@ -1425,8 +1426,9 @@ service_reach :: proc "contextless" (ctx: ^system.Context) -> (problem: string) 
 		return "the ring to the root service does not open"
 	}
 	has_requests = true
-	connection, status = system.service_connection(&requests, 1, "debugger")
-	if status != .Ok {
+	outcome: call_outcome.Call_Outcome
+	connection, outcome = system.service_connection(&requests, 1, "debugger")
+	if outcome != .Succeeded {
 		return "the root service gave no connection to the service debugger"
 	}
 	connected = true

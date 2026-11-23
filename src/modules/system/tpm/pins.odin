@@ -28,7 +28,7 @@ pin_policy_now :: proc "contextless" () -> (policy: [tpm2.DIGEST_SIZE]u8, failed
 	count := tpm2.policy_get_digest_command(command_bytes[:], session)
 	answer, step := transact(count)
 	if step != .None {
-		return {}, {status = .Device_Error, values = {0 = u64(step)}}, false
+		return {}, request_failed(.Callee_Unavailable, .Device, 0, i64(step)), false
 	}
 	code: u32
 	problem: tpm2.Answer_Problem
@@ -45,7 +45,7 @@ pin_index_read :: proc "contextless" (index: u32, size: int, policy: ^[tpm2.DIGE
 	command_count := tpm2.nv_read_public_command(command_bytes[:], index)
 	answer, step := transact(command_count)
 	if step != .None {
-		return {}, 0, {status = .Device_Error, values = {0 = u64(step)}}, false
+		return {}, 0, request_failed(.Callee_Unavailable, .Device, 0, i64(step)), false
 	}
 	public, code, problem := tpm2.nv_public_answer(answer)
 	read: bool
@@ -59,7 +59,7 @@ pin_index_read :: proc "contextless" (index: u32, size: int, policy: ^[tpm2.DIGE
 	command_count = tpm2.pin_read_command(command_bytes[:], index, size)
 	answer, step = transact(command_count)
 	if step != .None {
-		return {}, 0, {status = .Device_Error, values = {0 = u64(step)}}, false
+		return {}, 0, request_failed(.Callee_Unavailable, .Device, 0, i64(step)), false
 	}
 	count, code, problem = tpm2.pin_read_answer(answer, size, payload)
 	if problem != .None {
@@ -74,7 +74,7 @@ pin_read :: proc "contextless" (values: [7]u64) -> Outcome {
 	request, request_ok := tpm_service.pin_request_of_values(.Pin_Read, values)
 	index, index_ok := tpm2.pin_index_of(request.kind, u64(request.principal))
 	if !request_ok || !index_ok {
-		return {status = .Bad_Command}
+		return request_failed(.Argument_Refused, .Bad_Value)
 	}
 	size := tpm_service.pin_payload_size(request.kind)
 	policy, policy_failed, policy_ok := pin_policy_now()
@@ -88,7 +88,7 @@ pin_read :: proc "contextless" (values: [7]u64) -> Outcome {
 	}
 	copy(region[tpm_service.REGION_PIN:][:count], payload[:count])
 	system.log_fact(.Info, Pin_Read{index = value_kinds.Hexadecimal_Sixteen_Digits(index), state = u64(state), payload_bytes = u64(count)})
-	return {status = .Ok, values = {0 = u64(count), 1 = u64(state)}}
+	return {outcome = .Succeeded, values = {0 = u64(count), 1 = u64(state)}}
 }
 
 // pin_write answers Pin_Write: it checks the new payload against the
@@ -97,7 +97,7 @@ pin_write :: proc "contextless" (values: [7]u64) -> Outcome {
 	request, request_ok := tpm_service.pin_request_of_values(.Pin_Write, values)
 	index, index_ok := tpm2.pin_index_of(request.kind, u64(request.principal))
 	if !request_ok || !index_ok {
-		return {status = .Bad_Command}
+		return request_failed(.Argument_Refused, .Bad_Value)
 	}
 	size := tpm_service.pin_payload_size(request.kind)
 	// One copy of the payload: the client can change the region while this
@@ -119,24 +119,27 @@ pin_write :: proc "contextless" (values: [7]u64) -> Outcome {
 	step, refusal := tpm2.pin_write_plan(request, state, stored[:stored_count], proposed[:size])
 	if refusal != .None {
 		system.log_fact(.Warning, Pin_Write_Refused{index = value_kinds.Hexadecimal_Sixteen_Digits(index), pin_refusal = pin_refusal_field(refusal)})
-		return {status = .Bad_Command, values = {0 = u64(refusal)}}
+		return request_failed(.Argument_Refused, .Bad_Value, 0, i64(refusal))
 	}
-	removed := false
+	// removed and defined: the index changed, so a failure after it is a
+	// partial change.
+	removed, defined := false, false
 	switch step {
 	case .Remove_Then_Define_Then_Write:
-		if failed, ok := pin_index_command(tpm2.nv_undefine_command(command_bytes[:], index), tpm2.COMMAND_NV_UNDEFINE_SPACE); !ok {
+		if failed, ok := pin_index_command(tpm2.nv_undefine_command(command_bytes[:], index), tpm2.COMMAND_NV_UNDEFINE_SPACE, changed_before = false); !ok {
 			return failed
 		}
 		removed = true
 		system.log_fact(.Info, Pin_Index_Removed{index = value_kinds.Hexadecimal_Sixteen_Digits(index), state = u64(state)})
 		fallthrough
 	case .Define_Then_Write:
-		if failed, ok := pin_index_command(tpm2.pin_define_command(command_bytes[:], index, &policy, size), tpm2.COMMAND_NV_DEFINE_SPACE); !ok {
+		if failed, ok := pin_index_command(tpm2.pin_define_command(command_bytes[:], index, &policy, size), tpm2.COMMAND_NV_DEFINE_SPACE, changed_before = removed); !ok {
 			if removed {
 				system.log_fact(.Warning, Pin_Lost_After_Removal{index = value_kinds.Hexadecimal_Sixteen_Digits(index)})
 			}
 			return failed
 		}
+		defined = true
 	case .Write:
 	}
 	session, session_failed, session_ok := policy_session(.Policy, false)
@@ -145,28 +148,33 @@ pin_write :: proc "contextless" (values: [7]u64) -> Outcome {
 		if removed {
 			system.log_fact(.Warning, Pin_Lost_After_Removal{index = value_kinds.Hexadecimal_Sixteen_Digits(index)})
 		}
+		if removed || defined {
+			return changed_then_failed(session_failed)
+		}
 		return session_failed
 	}
-	if failed, ok := pin_index_command(tpm2.pin_write_command(command_bytes[:], index, session, proposed[:size]), tpm2.COMMAND_NV_WRITE); !ok {
+	if failed, ok := pin_index_command(tpm2.pin_write_command(command_bytes[:], index, session, proposed[:size]), tpm2.COMMAND_NV_WRITE, changed_before = removed || defined); !ok {
 		if removed {
 			system.log_fact(.Warning, Pin_Lost_After_Removal{index = value_kinds.Hexadecimal_Sixteen_Digits(index)})
 		}
 		return failed
 	}
 	system.log_fact(.Info, Pin_Written{index = value_kinds.Hexadecimal_Sixteen_Digits(index), payload_bytes = u64(size)})
-	return {status = .Ok}
+	return {outcome = .Succeeded}
 }
 
-// pin_index_command sends one command of an index whose answer has no
-// parameter that this service reads.
-pin_index_command :: proc "contextless" (count: int, command: u32) -> (failed: Outcome, ok: bool) {
+// pin_index_command sends one command that changes an index, whose answer
+// has no parameter that this service reads. A failure says what changed:
+// changing_interface_failed and changing_answer_failed, with changed_before
+// when an earlier command of the request changed the index.
+pin_index_command :: proc "contextless" (count: int, command: u32, changed_before: bool) -> (failed: Outcome, ok: bool) {
 	answer, step := transact(count)
 	if step != .None {
-		return {status = .Device_Error, values = {0 = u64(step)}}, false
+		return changing_interface_failed(step, changed_before), false
 	}
 	code, problem := tpm2.status_answer(answer)
 	if problem != .None {
-		return outcome_of_problem(problem, code, command), false
+		return changing_answer_failed(problem, code, command, changed_before), false
 	}
 	return {}, true
 }

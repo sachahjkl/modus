@@ -11,6 +11,7 @@ package machine_wire
 
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
+import "modus:contract/call_outcome"
 import "modus:contract/machine_mesh"
 import "modus:contract/machine_sync"
 import "modus:contract/object_cache"
@@ -33,9 +34,9 @@ GRANT_ACCEPTED_SIZE :: 16
 Fill_Random_Proc :: #type proc "contextless" (bytes: []u8, user_data: rawptr) -> bool
 
 // The holder of a role on this machine, for a call of a paired machine. It
-// writes at most len(result) bytes and gives their count. Only Answered and
-// Refused are outcomes of a holder.
-Role_Holder_Proc :: #type proc "contextless" (role: role_contract.Role, export: u32, arguments: []u8, result: []u8, user_data: rawptr) -> (value: i64, result_count: int, outcome: Role_Outcome)
+// writes at most len(result) bytes and gives their count, with the call
+// outcome of the call; a failure gives no value and no result.
+Role_Holder_Proc :: #type proc "contextless" (role: role_contract.Role, export: u32, arguments: []u8, result: []u8, user_data: rawptr) -> (value: i64, result_count: int, outcome: call_outcome.Call_Outcome)
 
 Role_Set :: bit_set[role_contract.Role;u64]
 
@@ -636,11 +637,9 @@ serve_role_call :: proc "contextless" (peer: ^Peer, grant: ^Machine_Grant, body:
 	if result_count < 0 || result_count > len(result) {
 		return refusal_write(output, .Role_Holder_Fault, u32(call.role))
 	}
-	switch outcome {
-	case .Answered, .Refused:
-	case .None, .Unknown_Outcome, .Unreachable:
-		// A holder gives no outcome of a link.
-		return refusal_write(output, .Role_Holder_Fault, u32(call.role))
+	// A failure carries no value and no result: the reply drops them.
+	if outcome != .Succeeded {
+		value, result_count = 0, 0
 	}
 	reply := role_reply_write(output, Role_Reply{identifier = call.identifier, outcome = outcome, value = value, result = result[:result_count]})
 	if reply == nil {

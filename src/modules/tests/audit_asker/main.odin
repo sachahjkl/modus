@@ -31,11 +31,10 @@
 package audit_asker
 
 import "modus:contract/blake3"
-import "modus:contract/call_status"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
-import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
@@ -77,7 +76,7 @@ wrong :: proc "contextless" (text: string, value: u64) -> ! {
 }
 
 @(private = "file")
-wrong_refused :: proc "contextless" (text: string, status: system.Status, answer: [7]u64) -> ! {
+wrong_refused :: proc "contextless" (text: string, status: call_outcome.Call_Outcome, answer: [7]u64) -> ! {
 	system.log_fact(.Error, Wrong_Refused{status = u64(status), error_kind = answer[0], error_unit = answer[1], error_operation = answer[2], error_argument = answer[3], error_value = answer[4], error_limit = answer[5], error_found = answer[6]}, text)
 	system.stop(.Failed)
 }
@@ -85,7 +84,7 @@ wrong_refused :: proc "contextless" (text: string, status: system.Status, answer
 // root_call sends one command on the root ring and waits for its
 // completion, within the hang bound.
 @(private = "file")
-root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64) -> (status: system.Status, answer: [7]u64) {
+root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64) -> (outcome: call_outcome.Call_Outcome, answer: [7]u64) {
 	tag := next_tag
 	next_tag += 1
 	if !system.send(&requests.commands, ring.Record{kind = u32(command), tag = tag, values = values}) {
@@ -98,9 +97,9 @@ root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64
 			if record.tag != tag {
 				continue
 			}
-			read, refusal := system.status_of_word(record.kind)
-			if refusal.kind != 0 {
-				wrong("the root service answered a status word that names no status", u64(record.kind))
+			read, _ := call_outcome.completion_outcome(record.kind, record.values)
+			if read == .Answer_Unreadable {
+				wrong("the root service answered a completion that this process cannot read; the outcome word", u64(record.kind))
 			}
 			return read, record.values
 		}
@@ -117,7 +116,7 @@ root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64
 @(private = "file")
 list_page_take :: proc "contextless" () {
 	status, answer := root_call(.Wire, {0 = u64(root_ring.Wire_Step.List_Page)})
-	if status != .Ok || answer[0] == 0 {
+	if status != .Succeeded || answer[0] == 0 {
 		wrong_refused("the list page was refused with the status", status, answer)
 	}
 	page := system.Handle(answer[0])
@@ -146,7 +145,7 @@ lend :: proc "contextless" (handle: system.Handle) -> u32 {
 }
 
 @(private = "file")
-start_listed :: proc "contextless" (name: string, listed: bool) -> (system.Status, [7]u64) {
+start_listed :: proc "contextless" (name: string, listed: bool) -> (call_outcome.Call_Outcome, [7]u64) {
 	packed := system.name_pack(name)
 	list := listed ? root_ring.Start_Wiring_List.In_The_List_Page : root_ring.Start_Wiring_List.None
 	return root_call(.Start, {packed[0], packed[1], packed[2], packed[3], u64(list), u64(root_ring.Start_Answer.Process_Handle), 0})
@@ -167,12 +166,12 @@ budget_pages :: proc "contextless" () -> u64 {
 // refused checks one refusal whole: its status, each field of its error
 // record, and the pages of the budget of this process.
 @(private = "file")
-refused :: proc "contextless" (what: string, before: u64, status: system.Status, answer: [7]u64, wanted: system.Status, expected: [7]u64) {
+refused :: proc "contextless" (what: string, before: u64, status: call_outcome.Call_Outcome, answer: [7]u64, wanted: call_outcome.Call_Outcome, expected: [7]u64) {
 	record := errors.completion_record(answer)
 	want := errors.completion_record(expected)
 	if status != wanted || record != want {
-		system.log_fact(.Error, Wrong_Refusal{status = op.Status_Word(status), kind = record.kind, unit = record.unit, operation = record.operation, argument = record.argument, value = record.value, limit = record.limit, found = record.found}, what)
-		system.log_fact(.Error, Wrong_Refusal_Wanted{status = op.Status_Word(wanted), kind = want.kind, unit = want.unit, operation = want.operation, argument = want.argument, value = want.value, limit = want.limit, found = want.found}, what)
+		system.log_fact(.Error, Wrong_Refusal{outcome = call_outcome.Call_Outcome_Word(status), kind = record.kind, unit = record.unit, operation = record.operation, argument = record.argument, value = record.value, limit = record.limit, found = record.found}, what)
+		system.log_fact(.Error, Wrong_Refusal_Wanted{outcome = call_outcome.Call_Outcome_Word(wanted), kind = want.kind, unit = want.unit, operation = want.operation, argument = want.argument, value = want.value, limit = want.limit, found = want.found}, what)
 		system.stop(.Failed)
 	}
 	if after := budget_pages(); after != before {
@@ -204,7 +203,7 @@ refusals_case :: proc "contextless" (collector: system.Handle) {
 		rows := [1]output.Wiring{row(.Started, 1, COLLECTOR_FORWARD, .Asker, 0, 0)}
 		list_write(rows[:], handles[:], nil)
 		status, answer := root_call(.Wire, {0 = u64(root_ring.Wire_Step.Apply)})
-		refused("a pair of collector.forward with no source row", before, status, answer, .Bad_Operation, errors.ring_fail(u32(root_ring.Root_Command.Wire), .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Paired_Row), 0, 0, 1))
+		refused("a pair of collector.forward with no source row", before, status, answer, .Argument_Refused, errors.ring_fail(u32(root_ring.Root_Command.Wire), .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Paired_Row), 0, 0, 1))
 	}
 	// Two pairs of one source: the second is refused, and nothing starts.
 	{
@@ -221,7 +220,7 @@ refusals_case :: proc "contextless" (collector: system.Handle) {
 		terms := [1]wide_grants.Space_Terms{audit_terms(.Forward)}
 		list_write(rows[:], handles[:], terms[:])
 		status, answer := start_listed("generic_source", true)
-		refused("a second pair of one source", before, status, answer, .Bad_State, errors.ring_fail(u32(root_ring.Root_Command.Start), .Exists, .Wirings, i64(output.Wiring_Field.Paired_Row), 1, 0, 3))
+		refused("a second pair of one source", before, status, answer, .Name_Already_Taken, errors.ring_fail(u32(root_ring.Root_Command.Start), .Exists, .Wirings, i64(output.Wiring_Field.Paired_Row), 1, 0, 3))
 	}
 	system.log_fact(.Info, Pair_Refusals_Checked{})
 }
@@ -240,8 +239,8 @@ display_refusal_case :: proc "contextless" (ctx: ^system.Context) {
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	connection, connected := system.service_connection(&requests, next_tag, "display")
 	next_tag += 1
-	if connected != .Ok {
-		wrong("the root service gave no connection to the holder of Display; the status word", u64(connected))
+	if connected != .Succeeded {
+		wrong("the root service gave no connection to the holder of Display; the outcome word", u64(connected))
 	}
 	entry := system.image_entry_of(image, connection.module_hash)
 	if entry == nil {
@@ -260,9 +259,9 @@ display_refusal_case :: proc "contextless" (ctx: ^system.Context) {
 	removed := ""
 	arguments := [3]isolated.Argument{{text = transmute([]u8)name}, {text = transmute([]u8)added}, {text = transmute([]u8)removed}}
 	error: errors.Error_Record
-	result, status := system.call_isolated(&connection, file, ask, arguments[:], &error)
-	if status != call_status.Call_Status.Failed || result >= 0 || error.kind != i64(errors.Kind.No_Grant) || error.unit != i64(errors.Unit.Acts_For_Principal) {
-		system.log_fact(.Error, Wrong_Display_Answer{status = u64(status), result = result, error_kind = error.kind, error_unit = error.unit})
+	result, outcome := system.call_isolated(&connection, file, ask, arguments[:], &error)
+	if outcome != .Grant_Or_Right_Missing || result != 0 || error.kind != i64(errors.Kind.No_Grant) || error.unit != i64(errors.Unit.Acts_For_Principal) {
+		system.log_fact(.Error, Wrong_Display_Answer{outcome = call_outcome.Call_Outcome_Word(outcome), result = result, error_kind = error.kind, error_unit = error.unit})
 		system.stop(.Failed)
 	}
 	system.call_connection_end(&connection)
@@ -285,7 +284,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	requests = opened
 	list_page_take()
 	collector_status, collector_answer := start_listed("collector", false)
-	if collector_status != .Ok || collector_answer[0] == 0 {
+	if collector_status != .Succeeded || collector_answer[0] == 0 {
 		wrong_refused("the start of the collector gave the status", collector_status, collector_answer)
 	}
 	collector := system.Handle(collector_answer[0])
@@ -308,7 +307,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	rows[2].terms_count = size_of(wide_grants.Space_Terms)
 	list_write(rows[:], handles[:], terms[:])
 	status, answer := start_listed("generic_source", true)
-	if status != .Ok || answer[0] == 0 || answer[1] == 0 {
+	if status != .Succeeded || answer[0] == 0 || answer[1] == 0 {
 		wrong_refused("the start of generic_source with the audited list gave the status", status, answer)
 	}
 	source := system.Handle(answer[0])

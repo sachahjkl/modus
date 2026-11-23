@@ -1,10 +1,12 @@
 package sentence
 
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/start_grant"
+import "modus:contract/supervision"
 
 // The sentence of an error record (docs/MODULE_CONTRACT.md, section 8). The
 // record holds values only: the names come from the operation table of the
@@ -41,6 +43,11 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 	unit := "units"
 	if unit_member, unit_ok := errors.unit_of_word(record.unit); unit_ok {
 		unit = errors.UNIT_NAMES[unit_member]
+	}
+	// An amount with the unit Region is a refusal of the receiver of an
+	// isolated call: bytes of its call region (isolated.decode).
+	if record.unit == i64(errors.Unit.Region) {
+		unit = "bytes of the call region"
 	}
 	subject :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record, argument: string) {
 		if record.argument == 0 {
@@ -239,6 +246,16 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 	case .Absent:
 		if record.unit == i64(errors.Unit.Region) {
 			write_part(writer, "the ring has no data region: send Attach first, with a memory handle that came through the ring")
+			return
+		}
+		if record.unit == i64(errors.Unit.Pending) {
+			// found 1 is the race of a commit, not a row (errors.Unit.Pending).
+			subject(writer, record, argument)
+			if record.found == 1 {
+				write_part(writer, ": another change of the object came first since its first pending change, so its pending changes are dropped")
+			} else {
+				write_part(writer, ": the object has no pending change on this connection")
+			}
 			return
 		}
 		if record.found > 0 {
@@ -471,6 +488,56 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 		write_part(writer, " with ")
 		amount(writer, record.found, "bytes")
 		write_part(writer, ", which the starter of the process recorded: only a holder of the process handle changes it")
+	case .Callee_Stopped:
+		write_part(writer, "the process that ran the call stopped")
+		if record.value > 0 {
+			if cause, cause_ok := op.stop_cause_of_word(u64(record.value)); cause_ok && cause != .None {
+				if cause == .Itself {
+					if record.found > 0 {
+						if stop_outcome, outcome_ok := op.stop_outcome_of_word(u64(record.found)); outcome_ok && stop_outcome != .None {
+							write_part(writer, ": ")
+							write_part(writer, op.STOP_OUTCOME_TEXTS[stop_outcome])
+						} else {
+							write_part(writer, " itself, with an unknown stop outcome")
+						}
+					} else if record.found < 0 {
+						write_part(writer, " itself, with an unknown stop outcome")
+					} else {
+						write_part(writer, " itself")
+					}
+				} else {
+					write_part(writer, ": ")
+					write_part(writer, op.STOP_CAUSE_TEXTS[cause])
+				}
+			} else {
+				write_part(writer, ", with an unknown stop cause")
+			}
+		} else if record.value < 0 {
+			write_part(writer, ", with an unknown stop cause")
+		}
+	case .Connection_Ended:
+		if record.found == 0 {
+			write_part(writer, "the connection of the call ended")
+		} else if record.found > 0 {
+			if state, state_ok := supervision.connection_state_from_word(u64(record.found)); state_ok {
+				switch state {
+				case .None:
+					write_part(writer, "the connection of the call ended")
+				case .Connected:
+					write_part(writer, "the connection of the call ended while connected")
+				case .Holder_Stopped:
+					write_part(writer, "the connection of the call ended because its holder stopped")
+				case .Reconnecting:
+					write_part(writer, "the connection of the call ended while reconnecting")
+				case .Closed:
+					write_part(writer, "the connection of the call was closed")
+				}
+			} else {
+				write_part(writer, "the connection of the call ended in an unknown state")
+			}
+		} else {
+			write_part(writer, "the connection of the call ended in an unknown state")
+		}
 	case .Refused:
 		// A status is named in words only when the record says whose status
 		// it is; any other status is a code, which stays on the detail lines
@@ -615,10 +682,32 @@ error_details_rest_text :: proc "contextless" (writer: ^Writer, shown: u64, coun
 	write_part(writer, count - shown == 1 ? " more error detail did not fit in the table of error details" : " more error details did not fit in the table of error details")
 }
 
-// export_error_text writes the sentence of the error record of an export:
-// the names come from its description. prefix: the name of the service, or
-// "" for a module in this process.
-export_error_text :: proc "contextless" (writer: ^Writer, file: []u8, export: u32, prefix: string, record: ^errors.Error_Record) {
+// call_failure_text writes the headline sentence of a call that did not
+// succeed: the name of the export and the sentence of its error record,
+// with no outcome identifier on the headline (docs/WRITING.md;
+// src/md/api/call_outcome.md, "The sentence and the agent"). When outcome
+// is Answer_Unreadable and record is the record from call_outcome.outcome_of_word,
+// the sentence states that the answer named an unknown call outcome.
+//
+// Example: "storage.read: the argument name: the store has no object with
+// this name".
+call_failure_text :: proc "contextless" (writer: ^Writer, outcome: call_outcome.Call_Outcome, record: ^errors.Error_Record, operation: string, argument: string) {
+	if outcome == .Answer_Unreadable && record.kind == i64(errors.Kind.Bad_Value) && record.unit == i64(errors.Unit.None) && record.argument == 0 && record.limit == i64(max(call_outcome.Call_Outcome)) {
+		if operation != "" {
+			write_part(writer, operation)
+			write_part(writer, ": ")
+		}
+		write_part(writer, "the answer named an unknown call outcome")
+		return
+	}
+	error_text(writer, record, operation, argument)
+}
+
+// export_error_text writes the headline sentence of the error record of an
+// export: the names come from its description. prefix: the name of the
+// service, or "" for a module in this process. With an outcome that is not
+// Succeeded, call_failure_text formats the headline.
+export_error_text :: proc "contextless" (writer: ^Writer, file: []u8, export: u32, prefix: string, record: ^errors.Error_Record, outcome := call_outcome.Call_Outcome.Succeeded) {
 	function, described := module.function(file, export)
 	buffer: [96]u8
 	name := "an export"
@@ -630,6 +719,10 @@ export_error_text :: proc "contextless" (writer: ^Writer, file: []u8, export: u3
 			number := record.argument - 1
 			argument = module.string_at(file, function.parameter_names[number], u32(function.parameter_name_counts[number]))
 		}
+	}
+	if outcome != .Succeeded {
+		call_failure_text(writer, outcome, record, name, argument)
+		return
 	}
 	error_text(writer, record, name, argument)
 }

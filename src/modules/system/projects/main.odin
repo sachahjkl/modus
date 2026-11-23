@@ -9,6 +9,7 @@ package projects_service
 
 import "base:intrinsics"
 import "internal:projects/projects_core"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/ring"
@@ -58,12 +59,12 @@ region_range_valid :: proc "contextless" (offset: u64, length: u64) -> bool {
 
 // status writes aggregate projects service counters into out.
 @(export)
-status :: proc "c" (out: ^Projects_Status, error: ^errors.Error_Record) -> i64 {
+status :: proc "c" (out: ^Projects_Status, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if out == nil {
-		return errors.fail(error, -1, .Bad_Address, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
 	}
 	if !service_state.initialized {
-		return errors.fail(error, -2, .State, .Requests)
+		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
 	}
 	out^ = {
 		total_inputs_queries = i64(service_state.counters.total_inputs_queries),
@@ -73,27 +74,27 @@ status :: proc "c" (out: ^Projects_Status, error: ^errors.Error_Record) -> i64 {
 		active_consoles      = i64(service_state.counters.active_consoles),
 		total_refusals       = i64(service_state.counters.total_refusals),
 	}
-	return 0
+	return .Succeeded, 0
 }
 
 // active_console_count returns the number of currently open child consoles.
 @(export)
-active_console_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
+active_console_count :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !service_state.initialized {
-		return errors.fail(error, -1, .State, .Requests)
+		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
 	}
-	return i64(service_state.counters.active_consoles)
+	return .Succeeded, i64(service_state.counters.active_consoles)
 }
 
 // pin_count returns the pins of the last pins.lex that a command List_Inputs
 // read whole, or 0 before the first one. A pins.lex that the service refuses
 // does not change it.
 @(export)
-pin_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
+pin_count :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !service_state.initialized {
-		return errors.fail(error, -1, .State, .Requests)
+		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
 	}
-	return i64(service_state.counters.last_pin_count)
+	return .Succeeded, i64(service_state.counters.last_pin_count)
 }
 
 @(private = "file")

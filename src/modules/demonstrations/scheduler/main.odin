@@ -110,6 +110,7 @@
 package scheduler
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:display"
@@ -1858,7 +1859,7 @@ strategy_name_is :: proc "contextless" (text: string, name: string) -> bool {
 // it serves only a caller whose requests are those of the principal; the
 // root service gives that grant, shows it and revokes it.
 //
-// It fails with -1 and an error record, and the strategy does not change:
+// It fails with its call outcome and an error record, and the strategy does not change:
 //
 // - `No_Grant`: the caller does not act for the principal;
 // - `Too_Long`: the name has more than 16 bytes;
@@ -1869,15 +1870,15 @@ strategy_name_is :: proc "contextless" (text: string, name: string) -> bool {
 //
 // Example: `scheduler.strategy_set("fair")`.
 @(export, link_name = "strategy_set")
-strategy_set :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
+strategy_set :: proc "c" (name: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if caller := system.service_caller(); caller != nil && caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
-		return errors.fail(error, -1, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	// A copy of the name: the caller can change the call region during
 	// the call.
 	name_buffer: [STRATEGY_NAME_LIMIT]u8
 	if len(name^) > len(name_buffer) {
-		return errors.fail(error, -1, .Too_Long, .Bytes, 1, i64(len(name^)), STRATEGY_NAME_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(name^)), STRATEGY_NAME_LIMIT)
 	}
 	given := string(name_buffer[:copy(name_buffer[:], name^)])
 	wanted := op.Strategy.None
@@ -1887,16 +1888,16 @@ strategy_set :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 		}
 	}
 	if wanted == .None {
-		return errors.fail(error, -1, .Bad_Value, .None, 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1)
 	}
 	before, status := system.strategy_set(machine, wanted)
 	if status != .Ok {
-		return errors.fail(error, -1, .Refused, .Kernel_Status, 0, 0, 0, i64(status))
+		return call_outcome.fail(error, system.outcome_of_own_status(status), .Refused, .Kernel_Status, 0, 0, 0, i64(status))
 	}
 	if before != wanted {
 		system.log_fact(.Info, Strategy_Changed{strategy = strategy_field(wanted), previous_strategy = strategy_field(before)})
 	}
-	return i64(before)
+	return .Succeeded, i64(before)
 }
 
 choose :: proc "contextless" (index: int) {

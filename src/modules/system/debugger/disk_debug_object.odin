@@ -18,6 +18,7 @@ package debugger
 // name. The object is used only when `debug_object.check` takes it and
 // when the hash that it names is the hash of the module record.
 
+import "modus:contract/call_outcome"
 import debug_object "modus:contract/debug_object"
 import "modus:contract/storage_status"
 import "modus:contract/isolated"
@@ -132,7 +133,7 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 		system.log_fact(.Info, Debug_Object_Connection_Silent{bound = value_kinds.Time_In_Milliseconds(DISK_DEBUG_OBJECT_MILLISECONDS), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
-	if system.Status(completion.kind) != .Ok {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Debug_Object_Connection_Refused{status_word = u64(completion.kind), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
@@ -210,12 +211,12 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 	arguments: [3]isolated.Argument
 	arguments[0].integer = u64(storage.ROOT)
 	arguments[1].text = digits[:]
-	answer_value, text, status, done := store_call(&client, "size", arguments[:2], limit)
+	answer_value, text, status, outcome, done := store_call(&client, "size", arguments[:2], limit)
 	if !done {
 		system.log_fact(.Info, Debug_Object_Size_Silent{bound = value_kinds.Time_In_Milliseconds(DISK_DEBUG_OBJECT_MILLISECONDS), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
-	if storage.export_failed_with(status, answer_value, .Absent) {
+	if status == .Failed && outcome == .Nothing_Has_That_Name {
 		system.log_fact(.Info, Debug_Object_Absent{principal = store_principal, module_hash = value_kinds.Hash_Field(module_hash), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
@@ -246,7 +247,7 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 	bytes := ([^]u8)(address)[:object_read.size]
 	for {
 		arguments[2].integer = object_read.received
-		answer_value, text, status, done = store_call(&client, "read_range", arguments[:3], limit)
+		answer_value, text, status, _, done = store_call(&client, "read_range", arguments[:3], limit)
 		problem := ""
 		switch {
 		case !done:
@@ -300,23 +301,23 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 // store_call sends one call to the storage service and waits for its
 // answer until the time `limit`. done is false when no answer came in that
 // time; a call that the client cannot send is done, with its status.
-store_call :: proc "contextless" (client: ^storage.Client, export: string, arguments: []isolated.Argument, limit: u64) -> (result_value: i64, text: []u8, status: storage_status.Status, done: bool) {
+store_call :: proc "contextless" (client: ^storage.Client, export: string, arguments: []isolated.Argument, limit: u64) -> (result_value: i64, text: []u8, status: storage_status.Status, outcome: call_outcome.Call_Outcome, done: bool) {
 	sent: storage.Sent_Call
 	if sent, status = storage.call_send(client, export, arguments); status != .Ok {
-		return 0, nil, status, true
+		return 0, nil, status, .Succeeded, true
 	}
 	for {
 		answered: bool
-		if result_value, text, status, answered = storage.call_answer(client, &sent, arguments); answered {
-			return result_value, text, status, true
+		if result_value, text, status, outcome, answered = storage.call_answer(client, &sent, arguments); answered {
+			return result_value, text, status, outcome, true
 		}
 		if !storage.connected(client) {
-			return 0, nil, .Gone, true
+			return 0, nil, .Gone, .Succeeded, true
 		}
 		wait: system.Wait
 		system.wait_records(&wait, &client.calls.completions)
 		if system.wait_end(&wait, limit) >= limit {
-			return 0, nil, .Ok, false
+			return 0, nil, .Ok, .Succeeded, false
 		}
 	}
 }

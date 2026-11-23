@@ -1,6 +1,7 @@
 package debugger
 
 import debug_object "modus:contract/debug_object"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/input_history"
@@ -253,34 +254,34 @@ thread_rows :: proc "contextless" (result: ^[]Thread_Row, only: i64 = -1, pendin
 //
 // **Errors**:
 //
-// - `No_Grant`, `Acts_For_Principal` (-1): the caller does not act for the
+// - `No_Grant`, `Acts_For_Principal`: the caller does not act for the
 //   principal.
-// - `Full`, `Debugged_Processes` (-3): the service debugs a process
+// - `Full`, `Debugged_Processes`: the service debugs a process
 //   already; `detach()` first.
-// - (-4) the record of the root service: `No_Grant`, `Debug_Access` when a
+// - the record of the root service: `No_Grant`, `Debug_Access` when a
 //   start grant of the process refuses, with 1 + its number in `found`
 //   (the sentence names it: "the grant Store of the process refuses it"); `Absent`,
 //   `Processes` when no process has the name; `No_Answer` when the root
 //   service did not answer; `Refused` with the status of the kernel.
-// - `Absent`, `Processes` (-13): the process stopped during the attach.
-// - `Bad_Value`, `Processes` (-14): two processes that run have this name
+// - `Absent`, `Processes`: the process stopped during the attach.
+// - `Bad_Value`, `Processes`: two processes that run have this name
 //   and this module.
-// - `Too_Long`, `Bytes` (-15): the name has no byte or more than 31.
+// - `Too_Long`, `Bytes`: the name has no byte or more than 31.
 //
 // ```
 // connect("debugger")
 // debugger.attach("clock")
 // ```
 @(export, link_name = "attach")
-attach :: proc "c" (process: ^string, result: ^[]Attached, error: ^errors.Error_Record) -> i64 {
+attach :: proc "c" (process: ^string, result: ^[]Attached, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	caller := system.service_caller()
 	if caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	buffer: [PROCESS_NAME_LIMIT]u8
 	name, fits := text_copy(buffer[:], process)
 	if !fits || name == "" {
-		return errors.fail(error, ERROR_TEXT, .Too_Long, .Bytes, 1, i64(len(process^)), PROCESS_NAME_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(process^)), PROCESS_NAME_LIMIT)
 	}
 	// A session whose debug access ended holds nothing.
 	if session.attached {
@@ -289,26 +290,23 @@ attach :: proc "c" (process: ^string, result: ^[]Attached, error: ^errors.Error_
 		}
 	}
 	if session.attached {
-		return errors.fail(error, ERROR_BUSY, .Full, .Debugged_Processes, 0, 0, 1)
+		return call_outcome.fail(error, .Callee_Busy, .Full, .Debugged_Processes, 0, 0, 1)
 	}
 	completion, answered := root_debug(name, caller.ring_memory)
 	if !answered {
 		// The request stays: when its completion comes, the handle is
 		// closed and the root service is told (root_completion_take).
-		return errors.fail(error, ERROR_REFUSED, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
+		return call_outcome.fail(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
-	if system.Status(completion.kind) != .Ok {
-		if error != nil {
-			error^ = errors.completion_record(completion.values)
-		}
-		return ERROR_REFUSED
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+		return root_refusal_taken(error, completion), 0
 	}
 	// The handle is a number from another process: it must be a process
 	// handle with Debug that came through the ring to the root service.
 	handle := system.Handle(completion.values[0])
 	if kind, rights, through := system.handle_state(handle, requests_memory); kind != .Process || .Debug not_in rights || !through {
 		root_debug_end(name, caller.ring_memory)
-		return refused(error, .Bad_Handle)
+		return party_answer_refused(error), 0
 	}
 	hash := transmute([32]u8)[4]u64{completion.values[1], completion.values[2], completion.values[3], completion.values[4]}
 	slot, process_serial, matches := slot_find(name, hash)
@@ -316,10 +314,10 @@ attach :: proc "c" (process: ^string, result: ^[]Attached, error: ^errors.Error_
 		system.close(handle)
 		root_debug_end(name, caller.ring_memory)
 		if matches == 0 {
-			return errors.fail(error, ERROR_ENDED, .Absent, .Processes, 1)
+			return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Processes, 1)
 		}
 		system.log_fact(.Info, Attach_Ambiguous{matches = u64(matches), debugged_process = value_kinds.module_name_field(name)})
-		return errors.fail(error, ERROR_AMBIGUOUS, .Bad_Value, .Processes, 1, i64(matches), 1)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Processes, 1, i64(matches), 1)
 	}
 	// The records of an earlier debugging are of no thread of this process.
 	for {
@@ -330,7 +328,7 @@ attach :: proc "c" (process: ^string, result: ^[]Attached, error: ^errors.Error_
 	if status := system.debug_attach(handle); status != .Ok {
 		system.close(handle)
 		root_debug_end(name, caller.ring_memory)
-		return refused(error, status)
+		return session_refused(error, status), 0
 	}
 	session = {
 		attached       = true,
@@ -360,7 +358,7 @@ attach :: proc "c" (process: ^string, result: ^[]Attached, error: ^errors.Error_
 		row^ = {slot = i64(slot), threads = i64(thread_count), modules = i64(module_count), described = i64(described)}
 		system.format(row.process[:], name)
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // detach ends the debugging of the process, and gives one row: the process, the breakpoints that the debugger had and the threads that it held.
@@ -370,17 +368,17 @@ attach :: proc "c" (process: ^string, result: ^[]Attached, error: ^errors.Error_
 // resumes each thread that waited for its answer: the process runs again.
 // The root service forgets the debug access.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2), the caller attached to no process; `Absent`,
-// `Processes` (-13), the process stopped: the debugging ended with it.
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`, the caller attached to no process; `Absent`,
+// `Processes`, the process stopped: the debugging ended with it.
 //
 // ```
 // debugger.detach()
 // ```
 @(export, link_name = "detach")
-detach :: proc "c" (result: ^[]Detached, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error, false); failure != 0 {
-		return failure
+detach :: proc "c" (result: ^[]Detached, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error, false); failure != .Succeeded {
+		return failure, 0
 	}
 	breakpoints, held := 0, 0
 	for item in session.breaks {
@@ -401,9 +399,11 @@ detach :: proc "c" (result: ^[]Detached, error: ^errors.Error_Record) -> i64 {
 	}
 	session_end("the caller detached")
 	if status != .Ok {
-		return refused(error, status)
+		// The session ended whatever the kernel said: the threads run, the
+		// breakpoints are gone, and the row says what the session held.
+		return call_outcome.outcome_passed_on(session_refused(error, status), true), 0
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // threads gives one row for each thread of the process: its number, its state, and for a thread that the debugger holds or that stopped, its instruction with its module, its procedure, its file and its line.
@@ -413,48 +413,48 @@ detach :: proc "c" (result: ^[]Detached, error: ^errors.Error_Record) -> i64 {
 // breakpoint, a watch or a step stopped. The registers of a thread that
 // runs cannot be read: its row has no instruction.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Absent`, `Processes` (-13).
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Absent`, `Processes`.
 //
 // ```
 // debugger.threads()
 // ```
 @(export, link_name = "threads")
-threads :: proc "c" (result: ^[]Thread_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+threads :: proc "c" (result: ^[]Thread_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
-	return thread_rows(result)
+	return .Succeeded, thread_rows(result)
 }
 
 // hold stops one thread of the process, and gives its row: the thread runs no instruction until `release` or `continue_all`.
 //
 // - **thread**: the number of a thread, as `threads()` gives it.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Refused` (-4), with the status of the
-// kernel; `Absent`, `Threads` (-5), the process has no thread with this
-// number; `Absent`, `Processes` (-13).
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Refused`, with the status of the
+// kernel; `Absent`, `Threads`, the process has no thread with this
+// number; `Absent`, `Processes`.
 //
 // ```
 // debugger.hold(0)
 // ```
 @(export, link_name = "hold")
-hold :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+hold :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	number, failure := thread_of_argument(thread, false, error)
-	if failure != 0 {
-		return failure
+	if failure != .Succeeded {
+		return failure, 0
 	}
 	if !session.threads[number].held {
 		if _, status := system.thread_control_stop(session.process, number); status != .Ok {
-			return refused(error, status)
+			return session_refused(error, status), 0
 		}
 		session.threads[number].held = true
 	}
-	return thread_rows(result, thread)
+	return .Succeeded, thread_rows(result, thread)
 }
 
 // release lets one thread run again, and gives its row: a thread that `hold` stopped, or that a breakpoint, a watch or a step stopped.
@@ -464,27 +464,27 @@ hold :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Recor
 //
 // - **thread**: the number of a thread that is held or stopped.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Threads` (-5), no
-// thread has this number; `Absent`, `Held_Threads` (-5), the thread runs;
-// `Absent`, `Processes` (-13).
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Refused`; `Absent`, `Threads`, no
+// thread has this number; `Absent`, `Held_Threads`, the thread runs;
+// `Absent`, `Processes`.
 //
 // ```
 // debugger.release(0)
 // ```
 @(export, link_name = "release")
-release :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+release :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	number, failure := thread_of_argument(thread, true, error)
-	if failure != 0 {
-		return failure
+	if failure != .Succeeded {
+		return failure, 0
 	}
 	if status := thread_release(number); status != .Ok {
-		return refused(error, status)
+		return session_refused(error, status), 0
 	}
-	return thread_rows(result, thread)
+	return .Succeeded, thread_rows(result, thread)
 }
 
 // continue_all lets each thread of the process run again, and gives one row for each thread.
@@ -493,16 +493,16 @@ release :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Re
 // thread that the process made after the last breakpoint was set has none
 // until then.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Processes` (-13).
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Refused`; `Absent`, `Processes`.
 //
 // ```
 // debugger.continue_all()
 // ```
 @(export, link_name = "continue_all")
-continue_all :: proc "c" (result: ^[]Thread_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+continue_all :: proc "c" (result: ^[]Thread_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	breaks_apply()
 	first_failure := system.Status.Ok
@@ -515,34 +515,36 @@ continue_all :: proc "c" (result: ^[]Thread_Row, error: ^errors.Error_Record) ->
 		}
 	}
 	if first_failure != .Ok {
-		return refused(error, first_failure)
+		// The threads before the first refusal run again, and the others
+		// stay held: the rows say which.
+		return call_outcome.outcome_passed_on(session_refused(error, first_failure), true), 0
 	}
-	return thread_rows(result)
+	return .Succeeded, thread_rows(result)
 }
 
 // registers gives one row for each register of a held thread: the 16 general registers, `rip` with its procedure and its line, and `rflags` with the flags that are set.
 //
 // - **thread**: the number of a thread that is held or stopped.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Threads` or
-// `Held_Threads` (-5); `Absent`, `Processes` (-13).
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Refused`; `Absent`, `Threads` or
+// `Held_Threads`; `Absent`, `Processes`.
 //
 // ```
 // debugger.registers(0)
 // ```
 @(export, link_name = "registers")
-registers :: proc "c" (thread: i64, result: ^[]Register_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+registers :: proc "c" (thread: i64, result: ^[]Register_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	number, failure := thread_of_argument(thread, true, error)
-	if failure != 0 {
-		return failure
+	if failure != .Succeeded {
+		return failure, 0
 	}
 	image_of_thread, status := system.thread_registers_read(session.process, number)
 	if status != .Ok {
-		return refused(error, status)
+		return session_refused(error, status), 0
 	}
 	words := (^[18]u64)(&image_of_thread)^
 	for name, index in register_names {
@@ -575,7 +577,7 @@ registers :: proc "c" (thread: i64, result: ^[]Register_Row, error: ^errors.Erro
 		}
 		system.written(&writer)
 	}
-	return i64(len(register_names))
+	return .Succeeded, i64(len(register_names))
 }
 
 // stack gives one row for each frame of the stack of a held thread: the frame number, the module, the procedure and its offset, the file and the line, the frame pointer and the return address.
@@ -591,25 +593,25 @@ registers :: proc "c" (thread: i64, result: ^[]Register_Row, error: ^errors.Erro
 //
 // - **thread**: the number of a thread that is held or stopped.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Threads` or
-// `Held_Threads` (-5); `Absent`, `Processes` (-13).
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Refused`; `Absent`, `Threads` or
+// `Held_Threads`; `Absent`, `Processes`.
 //
 // ```
 // debugger.stack(0)
 // ```
 @(export, link_name = "stack")
-stack :: proc "c" (thread: i64, result: ^[]Frame_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+stack :: proc "c" (thread: i64, result: ^[]Frame_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	number, failure := thread_of_argument(thread, true, error)
-	if failure != 0 {
-		return failure
+	if failure != .Succeeded {
+		return failure, 0
 	}
 	walked, status := stack_read(number)
 	if status != .Ok {
-		return refused(error, status)
+		return session_refused(error, status), 0
 	}
 	for index in 0 ..< walked.count {
 		if index >= len(result^) {
@@ -625,7 +627,7 @@ stack :: proc "c" (thread: i64, result: ^[]Frame_Row, error: ^errors.Error_Recor
 		hex_column(row.frame_pointer[:], frame.frame_pointer)
 		hex_column(row.return_address[:], frame.return_address)
 	}
-	return i64(walked.count)
+	return .Succeeded, i64(walked.count)
 }
 
 // The frame of a held thread that a caller named, with its place.
@@ -638,25 +640,25 @@ Frame_Place :: struct {
 // frame_of_arguments checks the thread and the frame that a caller gave,
 // walks the stack, and names the instruction of the frame. With
 // `needs_object`, a frame in a module with no debug object is a failure.
-frame_of_arguments :: proc "contextless" (thread: i64, frame: i64, needs_object: bool, error: ^errors.Error_Record) -> (place: Frame_Place, failure: i64) {
+frame_of_arguments :: proc "contextless" (thread: i64, frame: i64, needs_object: bool, error: ^errors.Error_Record) -> (place: Frame_Place, failure: call_outcome.Call_Outcome) {
 	number: u64
 	number, failure = thread_of_argument(thread, true, error)
-	if failure != 0 {
+	if failure != .Succeeded {
 		return {}, failure
 	}
 	walked, status := stack_read(number)
 	if status != .Ok {
-		return {}, refused(error, status)
+		return {}, session_refused(error, status)
 	}
 	if frame < 0 || frame >= i64(walked.count) {
-		return {}, errors.fail(error, ERROR_FRAME, .Absent, .Stack_Frames, 2)
+		return {}, refuse(error, .Nothing_Has_That_Name, .Absent, .Stack_Frames, 2)
 	}
 	place = {walked = walked, frame = int(frame)}
 	place.found = place_of_address(debugging.frame_lookup_address(walked.frames[frame], int(frame)))
 	if needs_object && place.found.object == nil {
-		return {}, errors.fail(error, ERROR_NO_DEBUG_OBJECT, .Absent, .Debug_Objects, 2)
+		return {}, refuse(error, .Nothing_Has_That_Name, .Absent, .Debug_Objects, 2)
 	}
-	return place, 0
+	return place, .Succeeded
 }
 
 @(rodata)
@@ -717,23 +719,23 @@ variable_locate_in_frame :: proc "contextless" (place: Frame_Place, variable: de
 // - **thread**: the number of a thread that is held or stopped.
 // - **frame**: the number of a frame, as `stack` gives it.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Threads` or
-// `Held_Threads` (-5); `Absent`, `Debug_Objects` (-6), the module of the
-// frame has no debug object; `Absent`, `Stack_Frames` (-7); `Absent`,
-// `Processes` (-13).
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Refused`; `Absent`, `Threads` or
+// `Held_Threads`; `Absent`, `Debug_Objects`, the module of the
+// frame has no debug object; `Absent`, `Stack_Frames`; `Absent`,
+// `Processes`.
 //
 // ```
 // debugger.locals(0, 0)
 // ```
 @(export, link_name = "locals")
-locals :: proc "c" (thread: i64, frame: i64, result: ^[]Variable_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+locals :: proc "c" (thread: i64, frame: i64, result: ^[]Variable_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	place, failure := frame_of_arguments(thread, frame, true, error)
-	if failure != 0 {
-		return failure
+	if failure != .Succeeded {
+		return failure, 0
 	}
 	object := place.found.object
 	values := value_context(object)
@@ -766,7 +768,7 @@ locals :: proc "c" (thread: i64, frame: i64, result: ^[]Variable_Row, error: ^er
 		}
 		total += 1
 	}
-	return i64(total)
+	return .Succeeded, i64(total)
 }
 
 // name_has_package says if a name has "::": the name of a global with its
@@ -805,24 +807,24 @@ global_find :: proc "contextless" (name: string) -> (value: Named_Value, found: 
 // then a global; a name with a package is a global, and needs no thread.
 // `argument` is the number of the path among the parameters of the export.
 // A failure gives the result of the export.
-path_value :: proc "contextless" (thread: i64, frame: i64, text: string, argument: i64, error: ^errors.Error_Record) -> (value: Named_Value, failure: i64) {
+path_value :: proc "contextless" (thread: i64, frame: i64, text: string, argument: i64, error: ^errors.Error_Record) -> (value: Named_Value, failure: call_outcome.Call_Outcome) {
 	path, problem, at := debugging.path_parse(text)
 	if problem != .None {
-		return {}, errors.fail(error, ERROR_PATH, .Bad_Byte, .None, argument, i64(at), 0, at < len(text) ? i64(text[at]) : 0)
+		return {}, refuse(error, .Argument_Refused, .Bad_Byte, .None, argument, i64(at), 0, at < len(text) ? i64(text[at]) : 0)
 	}
 	start: Named_Value
 	found := false
 	if !name_has_package(path.name) {
 		place: Frame_Place
 		place, failure = frame_of_arguments(thread, frame, false, error)
-		if failure != 0 {
+		if failure != .Succeeded {
 			return {}, failure
 		}
 		if place.found.object != nil {
 			if variable, has := debug_object.variable_by_name_at(place.found.object, place.found.offset, path.name); has {
 				located, why := variable_locate_in_frame(place, variable)
 				if why != "" {
-					return {}, errors.fail(error, ERROR_VARIABLE, .Absent, .Readable_Variables, argument)
+					return {}, refuse(error, .Nothing_Has_That_Name, .Absent, .Readable_Variables, argument)
 				}
 				start = Named_Value{located = located, object = place.found.object}
 				found = true
@@ -833,15 +835,15 @@ path_value :: proc "contextless" (thread: i64, frame: i64, text: string, argumen
 		start, found = global_find(path.name)
 	}
 	if !found {
-		return {}, errors.fail(error, ERROR_VARIABLE, .Absent, .Readable_Variables, argument)
+		return {}, refuse(error, .Nothing_Has_That_Name, .Absent, .Readable_Variables, argument)
 	}
 	values := value_context(start.object)
 	located, resolve_problem, step := debugging.path_resolve(&values, start.located, &path)
 	if resolve_problem != .None {
 		// value: the step of the path, from 1; found: why (debugging.Resolve_Problem).
-		return {}, errors.fail(error, ERROR_PATH, .Bad_Value, .None, argument, i64(step) + 1, i64(path.step_count), i64(resolve_problem))
+		return {}, refuse(error, .Argument_Refused, .Bad_Value, .None, argument, i64(step) + 1, i64(path.step_count), i64(resolve_problem))
 	}
-	return {located = located, object = start.object}, 0
+	return {located = located, object = start.object}, .Succeeded
 }
 
 // value gives one variable or one global by a path, as one row for each of its parts: the fields of a record, the elements of an array or of a slice, or one row for a value with no part; each row has the name, the type, the value by its type and the address.
@@ -864,33 +866,33 @@ path_value :: proc "contextless" (thread: i64, frame: i64, text: string, argumen
 // - **thread**, **frame**: as for `locals`.
 // - **path**: at most 160 bytes, and 8 steps.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Threads` or
-// `Held_Threads` (-5); `Absent`, `Stack_Frames` (-7); `Absent`,
-// `Readable_Variables` (-8), no variable and no global has the name, or
-// the variable is not readable at this instruction; `Bad_Byte` (-9), the
-// text is not a path, with the offset of the byte; `Bad_Value` (-9), a
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Refused`; `Absent`, `Threads` or
+// `Held_Threads`; `Absent`, `Stack_Frames`; `Absent`,
+// `Readable_Variables`, no variable and no global has the name, or
+// the variable is not readable at this instruction; `Bad_Byte`, the
+// text is not a path, with the offset of the byte; `Bad_Value`, a
 // step names nothing: `value` is the step from 1 and `found` says why (1
 // no such field, 2 not a record, 3 not an array, 4 an index past the end,
 // 5 not a pointer, 6 a pointer of 0, 7 memory that the process does not
-// map); `Absent`, `Processes` (-13); `Too_Long`, `Bytes` (-15).
+// map); `Absent`, `Processes`; `Too_Long`, `Bytes`.
 //
 // ```
 // debugger.value(0, 0, "pair.next^.first")
 // ```
 @(export, link_name = "value")
-value :: proc "c" (thread: i64, frame: i64, path: ^string, result: ^[]Value_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+value :: proc "c" (thread: i64, frame: i64, path: ^string, result: ^[]Value_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	buffer: [TEXT_ARGUMENT_LIMIT]u8
 	text, fits := text_copy(buffer[:], path)
 	if !fits {
-		return errors.fail(error, ERROR_TEXT, .Too_Long, .Bytes, 3, i64(len(path^)), TEXT_ARGUMENT_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 3, i64(len(path^)), TEXT_ARGUMENT_LIMIT)
 	}
 	named, failure := path_value(thread, frame, text, 3, error)
-	if failure != 0 {
-		return failure
+	if failure != .Succeeded {
+		return failure, 0
 	}
 	values := value_context(named.object)
 	total := 0
@@ -916,7 +918,7 @@ value :: proc "c" (thread: i64, frame: i64, path: ^string, result: ^[]Value_Row,
 		}
 		total += 1
 	}
-	return i64(total)
+	return .Succeeded, i64(total)
 }
 
 // source gives the source line of the instruction of a frame, as one row: the line number, the mark `=>`, the path of the file and the hash of its content at the build.
@@ -928,27 +930,27 @@ value :: proc "c" (thread: i64, frame: i64, path: ^string, result: ^[]Value_Row,
 //
 // - **thread**, **frame**: as for `locals`.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Threads` or
-// `Held_Threads` (-5); `Absent`, `Debug_Objects` (-6); `Absent`,
-// `Stack_Frames` (-7); `Absent`, `Source_Places` (-10), the instruction has
-// no source line; `Absent`, `Processes` (-13).
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Refused`; `Absent`, `Threads` or
+// `Held_Threads`; `Absent`, `Debug_Objects`; `Absent`,
+// `Stack_Frames`; `Absent`, `Source_Places`, the instruction has
+// no source line; `Absent`, `Processes`.
 //
 // ```
 // debugger.source(0, 0)
 // ```
 @(export, link_name = "source")
-source :: proc "c" (thread: i64, frame: i64, result: ^[]Source_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+source :: proc "c" (thread: i64, frame: i64, result: ^[]Source_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	place, failure := frame_of_arguments(thread, frame, true, error)
-	if failure != 0 {
-		return failure
+	if failure != .Succeeded {
+		return failure, 0
 	}
 	line, has := debug_object.source_line_of(place.found.object, place.found.offset)
 	if !has {
-		return errors.fail(error, ERROR_PLACE, .Absent, .Source_Places, 2)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Source_Places, 2)
 	}
 	if len(result^) > 0 {
 		row := &result[0]
@@ -961,7 +963,7 @@ source :: proc "c" (thread: i64, frame: i64, result: ^[]Source_Row, error: ^erro
 			system.format(row.hash[:], system.Hash{content_hash[:]})
 		}
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // break_rows writes one row for each breakpoint of the debugger.
@@ -987,7 +989,7 @@ break_rows :: proc "contextless" (result: ^[]Break_Row) -> i64 {
 // break_set takes a free breakpoint, writes the breakpoints in each thread
 // of the process, and gives the rows. A failure gives the result of the
 // export.
-break_set :: proc "contextless" (kind: op.Thread_Breakpoint_Kind, address: u64, length: u32, place: string, result: ^[]Break_Row, error: ^errors.Error_Record) -> i64 {
+break_set :: proc "contextless" (kind: op.Thread_Breakpoint_Kind, address: u64, length: u32, place: string, result: ^[]Break_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	free := -1
 	for item, number in session.breaks {
 		if item.kind == .None {
@@ -996,17 +998,19 @@ break_set :: proc "contextless" (kind: op.Thread_Breakpoint_Kind, address: u64, 
 		}
 	}
 	if free < 0 {
-		return errors.fail(error, ERROR_BREAKPOINTS, .Full, .Breakpoints, 0, 0, BREAK_CAPACITY)
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Breakpoints, 0, 0, BREAK_CAPACITY)
 	}
 	item := &session.breaks[free]
 	item^ = {kind = kind, address = address, length = length}
 	item.place_count = len(system.format(item.place[:], place))
 	if status := breaks_apply(); status != .Ok {
+		// The rollback writes the breakpoints of before: when it holds,
+		// nothing changed; when it fails too, some threads can keep the
+		// new breakpoint, and the rows of break_list say which are set.
 		item^ = {}
-		breaks_apply()
-		return refused(error, status)
+		return call_outcome.outcome_passed_on(session_refused(error, status), breaks_apply() != .Ok), 0
 	}
-	return break_rows(result)
+	return .Succeeded, break_rows(result)
 }
 
 // break_at sets an execute breakpoint at a procedure or at a source line, and gives one row for each breakpoint of the debugger.
@@ -1022,30 +1026,30 @@ break_set :: proc "contextless" (kind: op.Thread_Breakpoint_Kind, address: u64, 
 //
 // - **place**: at most 160 bytes.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Refused` (-4), the kernel refused the
-// breakpoints; `Absent`, `Debug_Objects` (-6), no module of the process
-// has a debug object; `Absent`, `Source_Places` (-10), no procedure and no
-// line has this place; `Full`, `Breakpoints` (-11), the four breakpoints
-// are in use; `Absent`, `Processes` (-13); `Too_Long`, `Bytes` (-15).
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Refused`, the kernel refused the
+// breakpoints; `Absent`, `Debug_Objects`, no module of the process
+// has a debug object; `Absent`, `Source_Places`, no procedure and no
+// line has this place; `Full`, `Breakpoints`, the four breakpoints
+// are in use; `Absent`, `Processes`; `Too_Long`, `Bytes`.
 //
 // ```
 // debugger.break_at("fault::three")
 // debugger.break_at("src/modules/demonstrations/fault/main.odin:15")
 // ```
 @(export, link_name = "break_at")
-break_at :: proc "c" (place: ^string, result: ^[]Break_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+break_at :: proc "c" (place: ^string, result: ^[]Break_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	buffer: [TEXT_ARGUMENT_LIMIT]u8
 	text, fits := text_copy(buffer[:], place)
 	if !fits {
-		return errors.fail(error, ERROR_TEXT, .Too_Long, .Bytes, 1, i64(len(place^)), TEXT_ARGUMENT_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(place^)), TEXT_ARGUMENT_LIMIT)
 	}
 	kind, name, line, parsed := debugging.place_parse(text)
 	if !parsed {
-		return errors.fail(error, ERROR_PLACE, .Absent, .Source_Places, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Source_Places, 1)
 	}
 	described := 0
 	for &record in report_modules.modules[:min(report_modules.count, op.PROCESS_MODULE_CAPACITY)] {
@@ -1066,28 +1070,28 @@ break_at :: proc "c" (place: ^string, result: ^[]Break_Row, error: ^errors.Error
 		}
 	}
 	if described == 0 {
-		return errors.fail(error, ERROR_NO_DEBUG_OBJECT, .Absent, .Debug_Objects, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Debug_Objects, 1)
 	}
-	return errors.fail(error, ERROR_PLACE, .Absent, .Source_Places, 1)
+	return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Source_Places, 1)
 }
 
 // address_of_text gives the address that a text names: an address in
 // hexadecimal ("0x403010") or in decimal, or the path of a global with
 // its package. A failure gives the result of the export.
-address_of_text :: proc "contextless" (text: string, argument: i64, error: ^errors.Error_Record) -> (address: u64, failure: i64) {
+address_of_text :: proc "contextless" (text: string, argument: i64, error: ^errors.Error_Record) -> (address: u64, failure: call_outcome.Call_Outcome) {
 	if parsed, is_address := debugging.address_parse(text); is_address {
-		return parsed, 0
+		return parsed, .Succeeded
 	}
 	named: Named_Value
 	// A variable of a frame has no thread here: -1 names none.
 	named, failure = path_value(-1, 0, text, argument, error)
-	if failure != 0 {
+	if failure != .Succeeded {
 		return 0, failure
 	}
 	if !named.located.in_memory {
-		return 0, errors.fail(error, ERROR_ADDRESS, .Bad_Value, .None, argument)
+		return 0, refuse(error, .Argument_Refused, .Bad_Value, .None, argument)
 	}
-	return named.located.address, 0
+	return named.located.address, .Succeeded
 }
 
 // watch sets a data breakpoint on the bytes that the process writes, and gives one row for each breakpoint of the debugger.
@@ -1099,83 +1103,88 @@ address_of_text :: proc "contextless" (text: string, argument: i64, error: ^erro
 //   the path of a global with its package (`debug_target::rounds`).
 // - **length**: 1, 2, 4 or 8 bytes; the address is a multiple of it.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Readable_Variables`
-// (-8), no global has the name; `Bad_Byte` or `Bad_Value` (-9), the path;
-// `Full`, `Breakpoints` (-11); `Bad_Value` (-12), a length that is not 1,
-// 2, 4 or 8; `Not_Multiple` (-12), the address is not a multiple of the
-// length; `Absent`, `Processes` (-13); `Too_Long`, `Bytes` (-15).
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Refused`; `Absent`, `Readable_Variables`,
+// no global has the name; `Bad_Byte` or `Bad_Value`, the path;
+// `Full`, `Breakpoints`; `Bad_Value`, a length that is not 1,
+// 2, 4 or 8; `Not_Multiple`, the address is not a multiple of the
+// length; `Absent`, `Processes`; `Too_Long`, `Bytes`.
 //
 // ```
 // debugger.watch("debug_target::rounds", 8)
 // ```
 @(export, link_name = "watch")
-watch :: proc "c" (place: ^string, length: value_kinds.Size_In_Bytes, result: ^[]Break_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+watch :: proc "c" (place: ^string, length: value_kinds.Size_In_Bytes, result: ^[]Break_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	buffer: [TEXT_ARGUMENT_LIMIT]u8
 	text, fits := text_copy(buffer[:], place)
 	if !fits {
-		return errors.fail(error, ERROR_TEXT, .Too_Long, .Bytes, 1, i64(len(place^)), TEXT_ARGUMENT_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(place^)), TEXT_ARGUMENT_LIMIT)
 	}
 	if length != 1 && length != 2 && length != 4 && length != 8 {
-		return errors.fail(error, ERROR_ADDRESS, .Bad_Value, .None, 2, i64(length), 8)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, i64(length), 8)
 	}
 	address, failure := address_of_text(text, 1, error)
-	if failure != 0 {
-		return failure
+	if failure != .Succeeded {
+		return failure, 0
 	}
 	if address % u64(length) != 0 {
-		return errors.fail(error, ERROR_ADDRESS, .Not_Multiple, .None, 1, i64(address), i64(length), i64(address % u64(length)))
+		return call_outcome.fail(error, .Argument_Refused, .Not_Multiple, .None, 1, i64(address), i64(length), i64(address % u64(length)))
 	}
 	return break_set(.Write, address, u32(length), text, result, error)
 }
 
 // breaks gives one row for each breakpoint of the debugger: its number, its kind (`execute` or `write`), its address, the bytes of a watch, and the text that named it.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Absent`, `Processes` (-13).
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Absent`, `Processes`.
 //
 // ```
 // debugger.breaks()
 // ```
 @(export, link_name = "breaks")
-breaks :: proc "c" (result: ^[]Break_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+breaks :: proc "c" (result: ^[]Break_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
-	return break_rows(result)
+	return .Succeeded, break_rows(result)
 }
 
 // break_remove removes one breakpoint of the debugger from each thread of the process, and gives one row for each breakpoint that stays.
 //
 // - **number**: the number of a breakpoint, as `breaks()` gives it.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Breakpoints` (-11),
-// the number names no breakpoint; `Absent`, `Processes` (-13).
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Refused`; `Absent`, `Breakpoints`,
+// the number names no breakpoint; `Absent`, `Processes`.
 //
 // ```
 // debugger.break_remove(0)
 // ```
 @(export, link_name = "break_remove")
-break_remove :: proc "c" (number: i64, result: ^[]Break_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+break_remove :: proc "c" (number: i64, result: ^[]Break_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	if number < 0 || number >= BREAK_CAPACITY || session.breaks[number].kind == .None {
-		return errors.fail(error, ERROR_BREAKPOINTS, .Absent, .Breakpoints, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Breakpoints, 1)
 	}
+	removed, step_over := session.breaks[number], session.step_over
 	// The breakpoint of a step over a call: that step ends with it.
 	if session.step_over.active && session.step_over.place == int(number) {
 		session.step_over = {}
 	}
 	session.breaks[number] = {}
 	if status := breaks_apply(); status != .Ok {
-		return refused(error, status)
+		// The breakpoint comes back: when its rollback holds, nothing
+		// changed; when it fails too, some threads can lack the breakpoint,
+		// which the rows of break_list still show.
+		session.breaks[number], session.step_over = removed, step_over
+		return call_outcome.outcome_passed_on(session_refused(error, status), breaks_apply() != .Ok), 0
 	}
-	return break_rows(result)
+	return .Succeeded, break_rows(result)
 }
 
 // step_one runs one instruction of a thread that is held or stopped: it
@@ -1222,27 +1231,27 @@ step_one :: proc "contextless" (number: u64, deadline: u64) -> (stepped: bool, a
 //
 // - **thread**: the number of a thread that is held or stopped.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Refused` (-4); `Absent`, `Threads` or
-// `Held_Threads` (-5); `Absent`, `Processes` (-13).
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Refused`; `Absent`, `Threads` or
+// `Held_Threads`; `Absent`, `Processes`.
 //
 // ```
 // debugger.step(0)
 // ```
 @(export, link_name = "step")
-step :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+step :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	number, failure := thread_of_argument(thread, true, error)
-	if failure != 0 {
-		return failure
+	if failure != .Succeeded {
+		return failure, 0
 	}
 	stepped, _, status := step_one(number, system.time() + STEP_WAIT_MILLISECONDS)
 	if status != .Ok {
-		return refused(error, status)
+		return session_refused(error, status), 0
 	}
-	return thread_rows(result, thread, i64(stepped ? 0 : 1))
+	return .Succeeded, thread_rows(result, thread, i64(stepped ? 0 : 1))
 }
 
 // step_line runs a thread that is held or stopped until the source line of its instruction changes, and gives its row there.
@@ -1268,21 +1277,22 @@ step :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Recor
 // debugger.step_line(0)
 // ```
 @(export, link_name = "step_line")
-step_line :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+step_line :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	number, failure := thread_of_argument(thread, true, error)
-	if failure != 0 {
-		return failure
+	if failure != .Succeeded {
+		return failure, 0
 	}
 	image_of_thread, status := system.thread_registers_read(session.process, number)
 	if status != .Ok {
-		return refused(error, status)
+		return session_refused(error, status), 0
 	}
 	start := place_of_address(image_of_thread.rip).place
 	deadline := system.time() + STEP_LINE_WAIT_MILLISECONDS
 	pending: i64 = 1
+	stepped_once := false
 	for _ in 0 ..< STEP_LINE_INSTRUCTION_LIMIT {
 		if system.time() >= deadline {
 			break
@@ -1290,11 +1300,12 @@ step_line :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 		stepped, at_breakpoint: bool
 		stepped, at_breakpoint, status = step_one(number, deadline)
 		if status != .Ok {
-			return refused(error, status)
+			return step_refused(error, status, stepped_once), 0
 		}
 		if !stepped {
 			break
 		}
+		stepped_once = true
 		// A breakpoint or a watch that the thread reached: it stops
 		// there, as it does with no step, and the stop is an event.
 		if at_breakpoint {
@@ -1303,7 +1314,7 @@ step_line :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 		}
 		image_of_thread, status = system.thread_registers_read(session.process, number)
 		if status != .Ok {
-			return refused(error, status)
+			return step_refused(error, status, stepped_once), 0
 		}
 		now := place_of_address(image_of_thread.rip).place
 		if now.line != 0 && (now.line != start.line || now.file != start.file) {
@@ -1311,7 +1322,15 @@ step_line :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 			break
 		}
 	}
-	return thread_rows(result, thread, pending)
+	return .Succeeded, thread_rows(result, thread, pending)
+}
+
+// step_refused gives the result of step_line or step_over when a kernel
+// operation refused in the middle of the steps. After one step the thread
+// is where the last step left it, which its row does not show: the caller
+// reads the thread again (thread_rows).
+step_refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status, stepped_once: bool) -> call_outcome.Call_Outcome {
+	return call_outcome.outcome_passed_on(session_refused(error, status), stepped_once)
 }
 
 // The bytes of the longest call instruction: a call was made when the stack
@@ -1449,29 +1468,30 @@ call_run_to_return :: proc "contextless" (number: u64, return_address: u64, stac
 // debugger.step_over(0)
 // ```
 @(export, link_name = "step_over")
-step_over :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+step_over :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	number, failure := thread_of_argument(thread, true, error)
-	if failure != 0 {
-		return failure
+	if failure != .Succeeded {
+		return failure, 0
 	}
 	// The call of an earlier step over, of this thread: it is back at the
 	// instruction after the call, and its breakpoint goes. Of another
 	// thread, or at another instruction: that step ends here.
 	if session.step_over.active {
 		if status := step_over_end(); status != .Ok {
-			return refused(error, status)
+			return session_refused(error, status), 0
 		}
 	}
 	registers, status := system.thread_registers_read(session.process, number)
 	if status != .Ok {
-		return refused(error, status)
+		return session_refused(error, status), 0
 	}
 	start := place_of_address(registers.rip).place
 	deadline := system.time() + STEP_LINE_WAIT_MILLISECONDS
 	pending: i64 = 1
+	stepped_once := false
 	for _ in 0 ..< STEP_LINE_INSTRUCTION_LIMIT {
 		if system.time() >= deadline {
 			break
@@ -1480,24 +1500,25 @@ step_over :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 		stepped, at_breakpoint: bool
 		stepped, at_breakpoint, status = step_one(number, deadline)
 		if status != .Ok {
-			return refused(error, status)
+			return step_refused(error, status, stepped_once), 0
 		}
 		if !stepped {
 			break
 		}
+		stepped_once = true
 		if at_breakpoint {
 			pending = 0
 			break
 		}
 		registers, status = system.thread_registers_read(session.process, number)
 		if status != .Ok {
-			return refused(error, status)
+			return step_refused(error, status, stepped_once), 0
 		}
 		if return_address, called := call_return_of(before, registers); called {
 			returned, stopped_inside: bool
 			returned, stopped_inside, status = call_run_to_return(number, return_address, before.rsp, deadline)
 			if status != .Ok {
-				return refused(error, status)
+				return step_refused(error, status, stepped_once), 0
 			}
 			if stopped_inside {
 				pending = 0
@@ -1509,7 +1530,7 @@ step_over :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 			}
 			registers, status = system.thread_registers_read(session.process, number)
 			if status != .Ok {
-				return refused(error, status)
+				return step_refused(error, status, stepped_once), 0
 			}
 		}
 		now := place_of_address(registers.rip).place
@@ -1518,7 +1539,7 @@ step_over :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 			break
 		}
 	}
-	return thread_rows(result, thread, pending)
+	return .Succeeded, thread_rows(result, thread, pending)
 }
 
 // memory gives the bytes of the process from an address, sixteen in each row: the address, the bytes in hexadecimal, and their printable characters.
@@ -1531,31 +1552,31 @@ step_over :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_
 //   the path of a global with its package.
 // - **count**: 1 to 4096 bytes.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Absent`, `Readable_Variables` (-8); `Bad_Byte`
-// or `Bad_Value` (-9), the path; `Bad_Value` (-12), a count that is not 1
-// to 4096; `Bad_Address` (-12), the process does not map the first byte;
-// `Absent`, `Processes` (-13); `Too_Long`, `Bytes` (-15).
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Absent`, `Readable_Variables`; `Bad_Byte`
+// or `Bad_Value`, the path; `Bad_Value`, a count that is not 1
+// to 4096; `Bad_Address`, the process does not map the first byte;
+// `Absent`, `Processes`; `Too_Long`, `Bytes`.
 //
 // ```
 // debugger.memory("debug_target::table", 64)
 // ```
 @(export, link_name = "memory")
-memory :: proc "c" (place: ^string, count: value_kinds.Size_In_Bytes, result: ^[]Memory_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+memory :: proc "c" (place: ^string, count: value_kinds.Size_In_Bytes, result: ^[]Memory_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	buffer: [TEXT_ARGUMENT_LIMIT]u8
 	text, fits := text_copy(buffer[:], place)
 	if !fits {
-		return errors.fail(error, ERROR_TEXT, .Too_Long, .Bytes, 1, i64(len(place^)), TEXT_ARGUMENT_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(place^)), TEXT_ARGUMENT_LIMIT)
 	}
 	if count < 1 || count > MEMORY_COUNT_LIMIT {
-		return errors.fail(error, ERROR_ADDRESS, .Bad_Value, .None, 2, i64(count), MEMORY_COUNT_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, i64(count), MEMORY_COUNT_LIMIT)
 	}
 	address, failure := address_of_text(text, 1, error)
-	if failure != 0 {
-		return failure
+	if failure != .Succeeded {
+		return failure, 0
 	}
 	thread, has_thread := any_thread()
 	copied: u64
@@ -1564,7 +1585,7 @@ memory :: proc "c" (place: ^string, count: value_kinds.Size_In_Bytes, result: ^[
 		copied, status = system.thread_memory_read(session.process, thread, address, memory_bytes[:int(count)])
 	}
 	if status != .Ok || copied == 0 {
-		return errors.fail(error, ERROR_ADDRESS, .Bad_Address, .None, 1, i64(address), i64(count))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1, i64(address), i64(count))
 	}
 	digits := system.HEX_DIGITS
 	total := 0
@@ -1585,7 +1606,7 @@ memory :: proc "c" (place: ^string, count: value_kinds.Size_In_Bytes, result: ^[
 		}
 		total += 1
 	}
-	return i64(total)
+	return .Succeeded, i64(total)
 }
 
 // event_rows writes one row for each stop that the service kept, and
@@ -1624,18 +1645,18 @@ event_rows :: proc "contextless" (result: ^[]Event_Row) -> i64 {
 // is the one of the breakpoint, which did not run; after a watch and after
 // a step it is the next one. The service keeps 32 stops.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Absent`, `Processes` (-13).
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Absent`, `Processes`.
 //
 // ```
 // debugger.events()
 // ```
 @(export, link_name = "events")
-events :: proc "c" (result: ^[]Event_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+events :: proc "c" (result: ^[]Event_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
-	return event_rows(result)
+	return .Succeeded, event_rows(result)
 }
 
 // wait_stop waits until a thread of the process stops, at most the given milliseconds and 3000, and gives the rows of `events`.
@@ -1657,9 +1678,9 @@ events :: proc "c" (result: ^[]Event_Row, error: ^errors.Error_Record) -> i64 {
 // debugger.wait_stop(3000)
 // ```
 @(export, link_name = "wait_stop")
-wait_stop :: proc "c" (milliseconds: value_kinds.Time_In_Milliseconds, result: ^[]Event_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+wait_stop :: proc "c" (milliseconds: value_kinds.Time_In_Milliseconds, result: ^[]Event_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	if session.event_count == 0 && milliseconds > 0 {
 		deadline := system.time() + u64(min(milliseconds, WAIT_STOP_LIMIT_MILLISECONDS))
@@ -1668,7 +1689,7 @@ wait_stop :: proc "c" (milliseconds: value_kinds.Time_In_Milliseconds, result: ^
 			records_take()
 		}
 	}
-	return event_rows(result)
+	return .Succeeded, event_rows(result)
 }
 
 // record_start asks the kernel to record the process into an input history, and gives the row of the record.
@@ -1684,27 +1705,27 @@ wait_stop :: proc "c" (milliseconds: value_kinds.Time_In_Milliseconds, result: ^
 // instruction. The kernel refuses a process that holds a device. An
 // earlier history goes, with its checkpoints.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); (-4) the record of the kernel: `State`,
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; the record of the kernel: `State`,
 // `Processes` for a process that ran already, that the kernel cannot
 // record, or that another recorder records; `Refused` with the status of
-// the kernel for the history; `Absent`, `Processes` (-13); `Full`,
-// `Input_Histories` (-16), a record of the process runs already.
+// the kernel for the history; `Absent`, `Processes`; `Full`,
+// `Input_Histories`, a record of the process runs already.
 //
 // ```
 // debugger.record_start()
 // ```
 @(export, link_name = "record_start")
-record_start :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+record_start :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	record_state_refresh()
 	if record_session.state == .Recording {
-		return errors.fail(error, ERROR_RECORD, .Full, .Input_Histories, 0, 0, 1)
+		return call_outcome.fail(error, .Wrong_State, .State, .Input_Histories, 0, 0, 1)
 	}
-	if failure := record_begin(error); failure != 0 {
-		return failure
+	if failure := record_begin(error); failure != .Succeeded {
+		return failure, 0
 	}
 	return record_rows(result, error)
 }
@@ -1716,25 +1737,25 @@ record_start :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) ->
 // after the end of the debugging too, so `replay_status`,
 // `replay_step_back` and `replay_start` still read it.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); (-4) the record of the kernel; `Absent`,
-// `Processes` (-13); `Absent`, `Input_Histories` (-16), no record runs:
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; the record of the kernel; `Absent`,
+// `Processes`; `Absent`, `Input_Histories`, no record runs:
 // none started, or the kernel ended it already.
 //
 // ```
 // debugger.record_end()
 // ```
 @(export, link_name = "record_end")
-record_end :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+record_end :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	record_state_refresh()
 	if record_session.state != .Recording {
-		return errors.fail(error, ERROR_RECORD, .Absent, .Input_Histories)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Input_Histories)
 	}
 	if status := system.process_record_end(session.process, error); status != .Ok {
-		return kernel_refused(error, status)
+		return kernel_refused(error, status), 0
 	}
 	record_session.state = .Ended
 	return record_rows(result, error)
@@ -1755,33 +1776,33 @@ record_end :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> i
 //
 // **Errors**:
 //
-// - `No_Grant`, `Acts_For_Principal` (-1).
-// - `Full`, `Debugged_Processes` (-3): the service debugs a process
+// - `No_Grant`, `Acts_For_Principal`.
+// - `Full`, `Debugged_Processes`: the service debugs a process
 //   already; `detach()` first.
-// - (-4) the record of the root service: those of `attach` and of
+// - the record of the root service: those of `attach` and of
 //   `start`; `Full`, `Debugged_Processes` when the caller has a held
 //   process already. Or the record of the kernel: `State`, `Processes`
 //   for a process that the kernel cannot record; `Refused` with the
 //   status of the kernel.
-// - `Absent`, `Processes` (-13): the process stopped before it ran.
-// - `Bad_Value`, `Processes` (-14): two held processes have this name
+// - `Absent`, `Processes`: the process stopped before it ran.
+// - `Bad_Value`, `Processes`: two held processes have this name
 //   and this module.
-// - `Too_Long`, `Bytes` (-15).
+// - `Too_Long`, `Bytes`.
 //
 // ```
 // connect("debugger")
 // debugger.record("clock")
 // ```
 @(export, link_name = "record")
-record :: proc "c" (process: ^string, result: ^[]Record_Row, error: ^errors.Error_Record) -> i64 {
+record :: proc "c" (process: ^string, result: ^[]Record_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	caller := system.service_caller()
 	if caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	buffer: [PROCESS_NAME_LIMIT]u8
 	name, fits := text_copy(buffer[:], process)
 	if !fits || name == "" {
-		return errors.fail(error, ERROR_TEXT, .Too_Long, .Bytes, 1, i64(len(process^)), PROCESS_NAME_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(len(process^)), PROCESS_NAME_LIMIT)
 	}
 	// A session whose debug access ended holds nothing.
 	if session.attached {
@@ -1790,38 +1811,32 @@ record :: proc "c" (process: ^string, result: ^[]Record_Row, error: ^errors.Erro
 		}
 	}
 	if session.attached {
-		return errors.fail(error, ERROR_BUSY, .Full, .Debugged_Processes, 0, 0, 1)
+		return call_outcome.fail(error, .Callee_Busy, .Full, .Debugged_Processes, 0, 0, 1)
 	}
 	completion, answered := root_debug_start(name, caller.ring_memory, .Start_Held)
 	if !answered {
 		// The request stays: when its completion comes, the held process
 		// stops (root_completion_take).
-		return errors.fail(error, ERROR_REFUSED, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
+		return call_outcome.fail(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
-	if system.Status(completion.kind) != .Ok {
-		if error != nil {
-			error^ = errors.completion_record(completion.values)
-		}
-		return ERROR_REFUSED
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+		return root_refusal_taken(error, completion), 0
 	}
-	if failure := held_session_begin(name, caller, completion.values, error); failure != 0 {
-		return failure
+	if failure := held_session_begin(name, caller, completion.values, error); failure != .Succeeded {
+		return failure, 0
 	}
-	if failure := record_begin(error); failure != 0 {
+	if failure := record_begin(error); failure != .Succeeded {
 		// A start that asked for a record does not run unrecorded.
 		root_debug_start(name, caller.ring_memory, .Abandon)
 		session_end("the record did not start")
-		return failure
+		return failure, 0
 	}
 	released, released_answered := root_debug_start(name, caller.ring_memory, .Release)
 	if !released_answered {
-		return errors.fail(error, ERROR_REFUSED, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
+		return call_outcome.fail(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
-	if system.Status(released.kind) != .Ok {
-		if error != nil {
-			error^ = errors.completion_record(released.values)
-		}
-		return ERROR_REFUSED
+	if released.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+		return root_refusal_taken(error, released), 0
 	}
 	return record_rows(result, error)
 }
@@ -1838,31 +1853,31 @@ record :: proc "c" (process: ^string, result: ^[]Record_Row, error: ^errors.Erro
 // process: a process that maps memory that it received from another
 // process diverges at that map.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); (-4) the record of
-// the root service or of the kernel; `Absent`, `Processes` (-13), the
-// replay stopped before it ran; `Absent`, `Input_Histories` (-16), the
-// caller has no history; `Full`, `Input_Histories` (-16), the record or
-// a replay runs; `Bad_Value`, `Input_Histories` (-16), the module of
+// **Errors**: `No_Grant`, `Acts_For_Principal`; the record of
+// the root service or of the kernel; `Absent`, `Processes`, the
+// replay stopped before it ran; `Absent`, `Input_Histories`, the
+// caller has no history; `Full`, `Input_Histories`, the record or
+// a replay runs; `Bad_Value`, `Input_Histories`, the module of
 // the boot image is not the module of the history; `Damaged`,
-// `Input_Histories` (-16).
+// `Input_Histories`.
 //
 // ```
 // debugger.replay_start()
 // ```
 @(export, link_name = "replay_start")
-replay_start :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := record_of_caller(error); failure != 0 {
-		return failure
+replay_start :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := record_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	switch record_session.state {
 	case .None:
-		return errors.fail(error, ERROR_RECORD, .Absent, .Input_Histories)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Input_Histories)
 	case .Recording, .Replaying:
-		return errors.fail(error, ERROR_RECORD, .Full, .Input_Histories, 0, 0, 1)
+		return call_outcome.fail(error, .Wrong_State, .State, .Input_Histories, 0, 0, 1)
 	case .Ended, .Replayed:
 	}
-	if failure := replay_begin(system.service_caller(), error); failure != 0 {
-		return failure
+	if failure := replay_begin(system.service_caller(), error); failure != .Succeeded {
+		return failure, 0
 	}
 	return record_rows(result, error)
 }
@@ -1877,17 +1892,17 @@ replay_start :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) ->
 // the process and the debugging end, until the next record: no attach is
 // needed to read it.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Input_Histories` (-16), the caller has no history; `Damaged`,
-// `Input_Histories` (-16), the header of the history is not valid.
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Input_Histories`, the caller has no history; `Damaged`,
+// `Input_Histories`, the header of the history is not valid.
 //
 // ```
 // debugger.replay_status()
 // ```
 @(export, link_name = "replay_status")
-replay_status :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := record_of_caller(error); failure != 0 {
-		return failure
+replay_status :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := record_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	return record_rows(result, error)
 }
@@ -1902,37 +1917,37 @@ replay_status :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -
 //
 // - **thread**: the number of a thread that is held or stopped.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Refused` (-4), with the status of the
-// kernel; `Absent`, `Threads` or `Held_Threads` (-5); `Absent`,
-// `Processes` (-13); `Absent`, `Input_Histories` (-16), no record
-// runs; `Damaged`, `Input_Histories` (-16); `Exists`, `Checkpoints`
-// (-17), a checkpoint is at this input point already: the thread ran no
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Debugged_Processes`; `Refused`, with the status of the
+// kernel; `Absent`, `Threads` or `Held_Threads`; `Absent`,
+// `Processes`; `Absent`, `Input_Histories`, no record
+// runs; `Damaged`, `Input_Histories`; `Exists`, `Checkpoints`,
+// a checkpoint is at this input point already: the thread ran no
 // kernel entry since.
 //
 // ```
 // debugger.replay_checkpoint(0)
 // ```
 @(export, link_name = "replay_checkpoint")
-replay_checkpoint :: proc "c" (thread: i64, result: ^[]Checkpoint_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
-		return failure
+replay_checkpoint :: proc "c" (thread: i64, result: ^[]Checkpoint_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := session_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	record_state_refresh()
 	if record_session.state != .Recording || record_session.caller_ring != session.caller_ring {
-		return errors.fail(error, ERROR_RECORD, .Absent, .Input_Histories)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Input_Histories)
 	}
 	number, failure := thread_of_argument(thread, true, error)
-	if failure != 0 {
-		return failure
+	if failure != .Succeeded {
+		return failure, 0
 	}
 	registers, status := system.thread_registers_read(session.process, number)
 	if status != .Ok {
-		return refused(error, status)
+		return session_refused(error, status), 0
 	}
 	header, _, ok := history_header_read()
 	if !ok {
-		return errors.fail(error, ERROR_RECORD, .Damaged, .Input_Histories)
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Input_Histories)
 	}
 	checkpoint := input_history.Replay_Checkpoint {
 		id                  = record_session.checkpoints.last_id + 1,
@@ -1942,9 +1957,9 @@ replay_checkpoint :: proc "c" (thread: i64, result: ^[]Checkpoint_Row, error: ^e
 		stack_pointer       = registers.rsp,
 	}
 	if !input_history.checkpoint_ring_push(&record_session.checkpoints, checkpoint) {
-		return errors.fail(error, ERROR_CHECKPOINT, .Exists, .Checkpoints, 0, i64(header.point_count))
+		return call_outcome.fail(error, .Name_Already_Taken, .Exists, .Checkpoints, 0, i64(header.point_count))
 	}
-	return checkpoint_rows(result)
+	return .Succeeded, checkpoint_rows(result)
 }
 
 // replay_step_back gives the way back by some input points: the nearest checkpoint at or before the target point, and the input points that a replay runs from it.
@@ -1957,35 +1972,35 @@ replay_checkpoint :: proc "c" (thread: i64, result: ^[]Checkpoint_Row, error: ^e
 // - **points**: the input points to go back, from 1 to the points of the
 //   history.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Input_Histories` (-16), the caller has no history; `Damaged`,
-// `Input_Histories` (-16); `Out_Of_Range`, `Input_Histories` (-16), 0
-// points, or more than the history holds; `Absent`, `Checkpoints` (-17),
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Absent`,
+// `Input_Histories`, the caller has no history; `Damaged`,
+// `Input_Histories`; `Out_Of_Range`, `Input_Histories`, 0
+// points, or more than the history holds; `Absent`, `Checkpoints`,
 // no checkpoint is at or before the target point.
 //
 // ```
 // debugger.replay_step_back(1)
 // ```
 @(export, link_name = "replay_step_back")
-replay_step_back :: proc "c" (points: i64, result: ^[]Step_Back_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := record_of_caller(error); failure != 0 {
-		return failure
+replay_step_back :: proc "c" (points: i64, result: ^[]Step_Back_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := record_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	header, _, ok := history_header_read()
 	if !ok {
-		return errors.fail(error, ERROR_RECORD, .Damaged, .Input_Histories)
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Input_Histories)
 	}
 	if points <= 0 || u64(points) > header.point_count {
-		return errors.fail(error, ERROR_RECORD, .Out_Of_Range, .Input_Histories, 1, points, i64(header.point_count))
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Input_Histories, 1, points, i64(header.point_count))
 	}
 	target := input_history.Replay_Position{point_number = header.point_count - u64(points)}
 	plan := input_history.step_back_to_position_plan(&record_session.checkpoints, target)
 	switch plan.status {
 	case .Ok:
 	case .No_Prior_Checkpoint, .Invalid_Request:
-		return errors.fail(error, ERROR_CHECKPOINT, .Absent, .Checkpoints, 1, i64(target.point_number))
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Checkpoints, 1, i64(target.point_number))
 	case .At_Start:
-		return errors.fail(error, ERROR_RECORD, .Out_Of_Range, .Input_Histories, 1, points, i64(header.point_count))
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Input_Histories, 1, points, i64(header.point_count))
 	}
 	if len(result^) > 0 {
 		row := &result[0]
@@ -1999,7 +2014,7 @@ replay_step_back :: proc "c" (points: i64, result: ^[]Step_Back_Row, error: ^err
 		hex_column(row.instruction[:], plan.checkpoint.instruction_address)
 		hex_column(row.stack[:], plan.checkpoint.stack_pointer)
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // watch_back gives the last input of the history that wrote a byte of a range, and the checkpoint where a replay to that write starts.
@@ -2018,50 +2033,50 @@ replay_step_back :: proc "c" (points: i64, result: ^[]Step_Back_Row, error: ^err
 // - **before_point**: the input point before which the service looks; 0
 //   for the whole history.
 //
-// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Bad_Value`,
-// `Bytes` (-12), a size that is not 1 to 4096; `Bad_Address`, `Bytes`
-// (-12), an address of 0, or a range past user memory; `Absent`,
-// `Input_Histories` (-16), the caller has no history; `Damaged`,
-// `Input_Histories` (-16), the header or a record of the history is not
-// valid; `Out_Of_Range`, `Input_Histories` (-16), a point that is
-// negative or past the history; `Absent`, `Recorded_Writes` (-18), no
+// **Errors**: `No_Grant`, `Acts_For_Principal`; `Bad_Value`,
+// `Bytes`, a size that is not 1 to 4096; `Bad_Address`, `Bytes`,
+// an address of 0, or a range past user memory; `Absent`,
+// `Input_Histories`, the caller has no history; `Damaged`,
+// `Input_Histories`, the header or a record of the history is not
+// valid; `Out_Of_Range`, `Input_Histories`, a point that is
+// negative or past the history; `Absent`, `Recorded_Writes`, no
 // input before the point wrote a byte of the range.
 //
 // ```
 // debugger.watch_back(4206608, 8, 0)
 // ```
 @(export, link_name = "watch_back")
-watch_back :: proc "c" (address: i64, size: value_kinds.Size_In_Bytes, before_point: i64, result: ^[]Watch_Back_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := record_of_caller(error); failure != 0 {
-		return failure
+watch_back :: proc "c" (address: i64, size: value_kinds.Size_In_Bytes, before_point: i64, result: ^[]Watch_Back_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure := record_of_caller(error); failure != .Succeeded {
+		return failure, 0
 	}
 	if size < 1 || u64(size) > input_history.WATCH_BACK_SIZE_LIMIT {
-		return errors.fail(error, ERROR_ADDRESS, .Bad_Value, .Bytes, 2, i64(size), i64(input_history.WATCH_BACK_SIZE_LIMIT))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 2, i64(size), i64(input_history.WATCH_BACK_SIZE_LIMIT))
 	}
 	if address <= 0 || u64(address) >= op.USER_END || u64(size) > op.USER_END - u64(address) {
-		return errors.fail(error, ERROR_ADDRESS, .Bad_Address, .Bytes, 1, address, i64(size))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .Bytes, 1, address, i64(size))
 	}
 	header, _, ok := history_header_read()
 	if !ok {
-		return errors.fail(error, ERROR_RECORD, .Damaged, .Input_Histories)
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Input_Histories)
 	}
 	if before_point < 0 || u64(before_point) > header.point_count {
-		return errors.fail(error, ERROR_RECORD, .Out_Of_Range, .Input_Histories, 3, before_point, i64(min(header.point_count, u64(max(i64)))))
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Input_Histories, 3, before_point, i64(min(header.point_count, u64(max(i64)))))
 	}
 	match, refusal := input_history.history_find_last_write(record_session.bytes, u64(address), u64(size), u64(before_point))
 	switch refusal {
 	case .None:
 	case .Bad_Size:
-		return errors.fail(error, ERROR_ADDRESS, .Bad_Value, .Bytes, 2, i64(size), i64(input_history.WATCH_BACK_SIZE_LIMIT))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 2, i64(size), i64(input_history.WATCH_BACK_SIZE_LIMIT))
 	case .Bad_Address:
-		return errors.fail(error, ERROR_ADDRESS, .Bad_Address, .Bytes, 1, address, i64(size))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .Bytes, 1, address, i64(size))
 	case .Damaged_History:
-		return errors.fail(error, ERROR_RECORD, .Damaged, .Input_Histories)
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Input_Histories)
 	case .No_Write:
-		return errors.fail(error, ERROR_NO_WRITE, .Absent, .Recorded_Writes, 1, address, i64(size), before_point)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Recorded_Writes, 1, address, i64(size), before_point)
 	}
 	if len(result^) == 0 {
-		return 1
+		return .Succeeded, 1
 	}
 	row := &result[0]
 	row^ = {
@@ -2098,7 +2113,7 @@ watch_back :: proc "c" (address: i64, size: value_kinds.Size_In_Bytes, before_po
 		row.points = i64(plan.replay_points_to_advance)
 	case .No_Prior_Checkpoint, .Invalid_Request, .At_Start:
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // The step that describes the records reads a size as a number, not as a

@@ -36,6 +36,9 @@
 // See [TPM service](term:tpm-service).
 package tpm_service
 
+import "modus:contract/call_outcome"
+import "modus:contract/errors"
+
 // The handles of the context of the service: the ring, the region, the
 // page of the registers of the CRB interface of the TPM, and the measure
 // ring, which only the root service holds: it sends Measure_Start_Policy
@@ -97,10 +100,10 @@ Authorization :: enum u64 {
 
 // A command of the client, as the kind of a command record of the ring.
 Command :: enum u32 {
-	None   = 0, // Not a command: Bad_Command.
+	None   = 0, // Not a command: Operation_Unsupported.
 	// The region holds the secret at REGION_SECRET; values[0] is the
 	// word of an Authorization (with Authorization.Value, the value is at
-	// REGION_AUTHORIZATION); another word is refused with Bad_Command. The
+	// REGION_AUTHORIZATION); another word is refused with Argument_Refused. The
 	// completion:
 	// values[0] the bytes of the public area at REGION_PUBLIC_AREA,
 	// values[1] the bytes of the private area at REGION_PRIVATE_AREA,
@@ -118,7 +121,7 @@ Command :: enum u32 {
 	// it unseals. The completion: the secret at REGION_SECRET, and
 	// values[0] its bytes. After an unseal with Authorization.Value that the
 	// TPM answered with another answer than a counted failure
-	// (Authorization_Fails), the service sends TPM2_Shutdown(CLEAR): the system has
+	// (unseal_authorization_wrong), the service sends TPM2_Shutdown(CLEAR): the system has
 	// no orderly stop, and a TPM counts a failure at a start that follows a
 	// use of such an object with no TPM2_Shutdown.
 	Unseal = 2,
@@ -127,8 +130,8 @@ Command :: enum u32 {
 	// The service extends PCR 12 of the SHA-256 bank with it, then reads
 	// PCR 12. The completion: values[0..3] the value of PCR 12 after the
 	// extend, values[4] the count of the extends of this start. On the TPM
-	// ring of a client it is refused with Bad_Command; past MEASURE_LIMIT
-	// extends, with Measure_Limit.
+	// ring of a client it is refused with Grant_Or_Right_Missing; past
+	// MEASURE_LIMIT extends, with Budget_Or_Capacity_Exhausted.
 	Measure_Start_Policy = 3,
 	// values[0] the word of a Pin_Kind, values[1] the principal: 0 for the
 	// machine key, the number of a named principal for its file. The service
@@ -140,10 +143,10 @@ Command :: enum u32 {
 	// REGION_PIN: the size of the payload of its kind. The service checks
 	// the payload and its change against the index (pin_write_refusal),
 	// defines the index when it must, and writes it in a policy session of
-	// PCR 7 and PCR 11. The completion: Ok, or Bad_Command with values[0]
-	// the word of the Pin_Refusal (modus:contract/tpm_attestation) when the
-	// payload or its change is refused; a refusal at the border has the
-	// word 0, Pin_Refusal.None.
+	// PCR 7 and PCR 11. The completion: Succeeded, or Argument_Refused with
+	// the word of the Pin_Refusal (modus:contract/tpm_attestation) as the
+	// value found of its record when the payload or its change is refused; a
+	// refusal at the border has the word 0, Pin_Refusal.None.
 	Pin_Write = 5,
 }
 
@@ -154,38 +157,56 @@ Request_Source :: enum u8 {
 	Measure_Ring,
 }
 
-// The status of a request: the kind of its completion record.
-Status :: enum u32 {
-	Ok           = 0, // The request is done: the values are its results.
-	Bad_Command  = 1, // The command is not known, or a value is out of its range.
-	Refused      = 2, // The TPM answered with a response code that is not a success: values[0] has it, values[1] the code of the command of the TPM.
-	Policy_Fails = 3, // The PCRs do not hold the values of the seal: another system, or another state of Secure Boot. values[0] is the response code.
-	Device_Error = 4, // The interface gave no answer within its bound, or an answer that is not whole: values[0] says which step.
-	// Unseal: the object does not prove that this TPM made it under the PCR
-	// values of its policy: the TPM refuses its ticket with TPM_RC_TICKET
-	// (values[0] the response code; another refusal of the check of the
-	// ticket, as a lack of memory, is Refused), or its policy is not the
-	// policy of its creation data,
-	// or its attributes are not the attributes of a sealed object (values[0]
-	// 0). Nothing is unsealed: a record that another system wrote.
-	Not_Authentic = 5,
-	// Unseal with Authorization.Value: the value is wrong, and the TPM
-	// counted the failure (TPM_RC_AUTH_FAIL). values[0] is the response code.
-	Authorization_Fails = 6,
-	// Unseal with Authorization.Value: the TPM refuses each try for now, as
-	// it counted too many failures (TPM_RC_LOCKOUT). The PCRs and the value
-	// were not checked. values[0] is the response code.
-	Locked_Out = 7,
-	// Measure_Start_Policy: MEASURE_LIMIT extends ran in this start, and
-	// PCR 12 takes no more. values[0] is the count of the extends.
-	Measure_Limit = 8,
-}
+// The kind of a completion record is the word of its call outcome
+// (call_outcome.completion_outcome is its border). With Succeeded the values
+// are the results of the request. With any other outcome they are an error
+// record, whose value found holds the response code of the TPM or the
+// Device_Step, and whose value holds the code of the command of the TPM:
+//
+//   Argument_Refused        a value out of its range (Bad_Value), a count
+//                           of a part past its limit (Too_Long), a part
+//                           that is not whole (Malformed), or a refused pin
+//                           (value found: its Pin_Refusal). A sealed object
+//                           that this TPM did not make under the PCR values
+//                           of its policy, TPM_RC_TICKET, or whose policy or
+//                           attributes are not those of a sealed object
+//                           (Not_Authentic, argument: the part, 1 to 4):
+//                           nothing is unsealed. A wrong authorization value
+//                           that the TPM refused, TPM_RC_AUTH_FAIL
+//                           (Not_Authentic, argument 5:
+//                           unseal_authorization_wrong).
+//   Operation_Unsupported   a command that names none (Unsupported).
+//   Grant_Or_Right_Missing  a command of the other ring (No_Grant).
+//   Wrong_State             the PCRs do not hold the values of the seal:
+//                           another system, or another state of Secure Boot
+//                           (State).
+//   Callee_Busy             TPM_RC_LOCKOUT: the TPM refuses each try for
+//                           now; the PCRs and the value were not checked
+//                           (Busy).
+//   Budget_Or_Capacity_Exhausted  MEASURE_LIMIT extends ran in this start,
+//                           and PCR 12 takes no more (Over_Limit, value: the
+//                           count of the extends).
+//   Callee_Unavailable      another response code of the TPM (Refused), or
+//                           an interface that gave no whole answer within
+//                           its bound (Device, found: the Device_Step).
+//   Stopped_After_A_Partial_Change  a request that changed what a caller
+//                           can see (the count of the extends, PCR 12, an
+//                           index of a pin), then failed before its command
+//                           reached the TPM or with a refusal of the TPM:
+//                           the record of that failure.
+//   Deadline_Passed_During_The_Call, Answer_Unreadable  a command that
+//                           changes the TPM (an extend, a removal, a
+//                           definition or a write of an index) whose
+//                           interface failed from the start of the command
+//                           on (No_Answer at Start, Malformed at Answer), or
+//                           whose answer cannot be read (Malformed): the
+//                           TPM can have run it, so the request is in doubt.
 
-// The step of a request at which the interface failed, in values[0] of a
-// completion Device_Error. Its word crosses the ring, so each value is
-// explicit.
+// The step of a request at which the interface failed, the value found of
+// the record of a completion Callee_Unavailable with the kind Device. Its
+// word crosses the ring, so each value is explicit.
 Device_Step :: enum u64 {
-	None     = 0, // The interface did not fail: no completion Device_Error has it.
+	None     = 0, // The interface did not fail: no completion with the kind Device has it.
 	Locality = 1, // The TPM did not give locality 0.
 	Ready    = 2, // The TPM did not become ready for a command.
 	Start    = 3, // The TPM did not end the command.
@@ -204,8 +225,8 @@ device_step_words := [Device_Step]string {
 
 // The border of the ring: a word becomes its member here only, and a word
 // that names no member is refused. The service answers a refused command
-// or authorization with Bad_Command; a client logs a refused status or
-// step with its number.
+// or authorization with the outcome of request_of_record; a client logs a
+// step that names none with its number.
 
 command_of_word :: proc "contextless" (word: u32) -> (command: Command, ok: bool) {
 	for member in Command {
@@ -225,15 +246,6 @@ authorization_of_word :: proc "contextless" (word: u64) -> (authorization: Autho
 	return {}, false
 }
 
-status_of_word :: proc "contextless" (word: u32) -> (status: Status, ok: bool) {
-	for member in Status {
-		if u32(member) == word {
-			return member, true
-		}
-	}
-	return {}, false
-}
-
 // A request of the ring, past its border.
 Request :: struct {
 	command:       Command,
@@ -242,57 +254,79 @@ Request :: struct {
 
 // request_of_record is the border of the service: the command of a record,
 // the ring it came on, and its authorization (values[0] of Seal, values[4]
-// of Unseal). A kind that names no command, the kind of None, a command of
-// the other ring, or an authorization that names none gives Bad_Command;
-// the service then does no work. It reads and changes no state.
-request_of_record :: proc "contextless" (kind: u32, values: [7]u64, source: Request_Source) -> (request: Request, status: Status) {
+// of Unseal). A kind that names no command, and the kind of None, give
+// Operation_Unsupported; a command of the other ring gives
+// Grant_Or_Right_Missing; values that the command refuses (an authorization
+// that names none, a pin request) give Argument_Refused. The service then
+// does no work, and answers the outcome with its record. It reads and
+// changes no state.
+request_of_record :: proc "contextless" (kind: u32, values: [7]u64, source: Request_Source) -> (request: Request, outcome: call_outcome.Call_Outcome, record: errors.Error_Record) {
 	command, command_ok := command_of_word(kind)
-	if !command_ok {
-		return {}, .Bad_Command
+	if !command_ok || command == .None {
+		return {}, .Operation_Unsupported, errors.error_make(.Unsupported, .None, 0, i64(kind))
+	}
+	other_ring :: proc "contextless" (command: Command) -> (Request, call_outcome.Call_Outcome, errors.Error_Record) {
+		return {}, .Grant_Or_Right_Missing, errors.error_make(.No_Grant, .None, 0, i64(command))
 	}
 	authorization_word: u64
 	switch command {
 	case .None:
-		return {}, .Bad_Command
 	case .Pin_Read, .Pin_Write:
 		// The pins are the work of unlock: the root service never asks.
 		if source != .Client_Ring {
-			return {}, .Bad_Command
+			return other_ring(command)
 		}
 		if _, pin_ok := pin_request_of_values(command, values); !pin_ok {
-			return {}, .Bad_Command
+			return {}, .Argument_Refused, errors.error_make(.Bad_Value, .None, 1, i64(values[0]))
 		}
-		return {command = command, authorization = .None}, .Ok
+		return {command = command, authorization = .None}, .Succeeded, {}
 	case .Seal, .Unseal:
 		if source != .Client_Ring {
-			return {}, .Bad_Command
+			return other_ring(command)
 		}
 		authorization_word = command == .Seal ? values[0] : values[4]
 	case .Measure_Start_Policy:
 		// A client of the TPM ring never extends a PCR: only the root
 		// service holds the measure ring.
 		if source != .Measure_Ring {
-			return {}, .Bad_Command
+			return other_ring(command)
 		}
-		return {command = .Measure_Start_Policy, authorization = .None}, .Ok
+		return {command = .Measure_Start_Policy, authorization = .None}, .Succeeded, {}
 	}
 	authorization, authorization_ok := authorization_of_word(authorization_word)
 	if !authorization_ok {
-		return {}, .Bad_Command
+		return {}, .Argument_Refused, errors.error_make(.Bad_Value, .None, command == .Seal ? 1 : UNSEAL_AUTHORIZATION_ARGUMENT, cast(i64)authorization_word, i64(max(Authorization)))
 	}
-	return {command = command, authorization = authorization}, .Ok
+	return {command = command, authorization = authorization}, .Succeeded, {}
+}
+
+// The arguments of an Unseal, as the argument of its error record names
+// them: values[n] is the argument n + 1, since 0 names no argument.
+UNSEAL_PUBLIC_AREA_ARGUMENT :: 1
+UNSEAL_CREATION_DATA_ARGUMENT :: 3
+UNSEAL_CREATION_TICKET_ARGUMENT :: 4
+UNSEAL_AUTHORIZATION_ARGUMENT :: 5
+
+// unseal_authorization_wrong says if the refusal of an Unseal is a wrong
+// authorization value that the TPM refused: Not_Authentic on the argument
+// of the authorization. A sealed object that this TPM did not make has the
+// same outcome and kind on an argument of its parts, and the caller acts
+// otherwise: no passphrase opens it.
+unseal_authorization_wrong :: proc "contextless" (outcome: call_outcome.Call_Outcome, record: errors.Error_Record) -> bool {
+	return outcome == .Argument_Refused && record.kind == i64(errors.Kind.Not_Authentic) && record.argument == UNSEAL_AUTHORIZATION_ARGUMENT
 }
 
 // measure_refusal decides one Measure_Start_Policy from the count of the
-// extends that ran in this start: Measure_Limit from MEASURE_LIMIT on, and
-// for a count that no start can reach (a negative one); else Ok. The service
+// extends that ran in this start: Budget_Or_Capacity_Exhausted from
+// MEASURE_LIMIT on, and for a count that no start can reach (a negative
+// one); else Succeeded. The service
 // counts each extend that it sends, before its answer: the TPM can take an
 // extend whose answer the interface lost.
-measure_refusal :: proc "contextless" (extends_done: int) -> Status {
+measure_refusal :: proc "contextless" (extends_done: int) -> call_outcome.Call_Outcome {
 	if extends_done < 0 || extends_done >= MEASURE_LIMIT {
-		return .Measure_Limit
+		return .Budget_Or_Capacity_Exhausted
 	}
-	return .Ok
+	return .Succeeded
 }
 
 device_step_of_word :: proc "contextless" (word: u64) -> (step: Device_Step, ok: bool) {

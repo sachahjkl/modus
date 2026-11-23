@@ -4,6 +4,7 @@
 package guest_builder_module
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import contract "modus:contract/guest_builder"
 import "modus:contract/value_kinds"
@@ -53,11 +54,11 @@ builds_count :: proc "contextless" (state: contract.Guest_Build_State, refusal: 
 //
 // The result is 1.
 @(export, link_name = "status")
-status :: proc "c" (result: ^[]Guest_Builder_Status, error: ^errors.Error_Record) -> i64 {
+status :: proc "c" (result: ^[]Guest_Builder_Status, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if len(result^) > 0 {
 		result[0] = build_counts
 	}
-	return 1
+	return .Succeeded, 1
 }
 
 // disks_check checks a build before it runs, with no guest: the spec, the
@@ -69,34 +70,34 @@ status :: proc "c" (result: ^[]Guest_Builder_Status, error: ^errors.Error_Record
 // - **input_disk**: the MODGBD1 image of the inputs; empty for no input.
 //
 // The result is the bytes of the blank output disk that the build gives the
-// guest, or ERROR with an error record whose value found is the
+// guest, or the outcome Argument_Refused with an error record whose value found is the
 // Guest_Builder_Refusal.
 @(export, link_name = "disks_check")
-disks_check :: proc "c" (spec_bytes: ^system.Bytes_To_Read, input_disk: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 {
+disks_check :: proc "c" (spec_bytes: ^system.Bytes_To_Read, input_disk: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if spec_bytes == nil {
-		return errors.fail(error, ERROR, .Bad_Address, .None, ARGUMENT_SPEC)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, ARGUMENT_SPEC)
 	}
 	spec_count := intrinsics.volatile_load(&spec_bytes.count)
 	if spec_count != contract.SPEC_WIRE_SIZE {
-		return errors.fail(error, ERROR, .Bad_Value, .Bytes, ARGUMENT_SPEC, i64(spec_count), contract.SPEC_WIRE_SIZE)
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, ARGUMENT_SPEC, i64(spec_count), contract.SPEC_WIRE_SIZE)
 	}
 	intrinsics.mem_copy_non_overlapping(&spec_wire_copy[0], spec_bytes.bytes, contract.SPEC_WIRE_SIZE)
 	spec, spec_refusal := contract.decode_build_spec(spec_wire_copy[:])
 	if spec_refusal != .None {
-		return errors.fail(error, ERROR, .Bad_Value, .None, ARGUMENT_SPEC, 0, 0, i64(spec_refusal))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, ARGUMENT_SPEC, 0, 0, i64(spec_refusal))
 	}
 	if spec.memory_pages > GUEST_MEMORY_PAGES_MOST {
-		return errors.fail(error, ERROR, .Over_Limit, .Pages, ARGUMENT_SPEC, i64(spec.memory_pages), i64(GUEST_MEMORY_PAGES_MOST), i64(contract.Guest_Builder_Refusal.Memory_Past_Bound))
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Pages, ARGUMENT_SPEC, i64(spec.memory_pages), i64(GUEST_MEMORY_PAGES_MOST), i64(contract.Guest_Builder_Refusal.Memory_Past_Bound))
 	}
 	memory, disk, copied := input_disk_copy(input_disk, error)
-	if !copied {
-		return ERROR
+	if copied != .Succeeded {
+		return copied, 0
 	}
 	defer guest_regions.owned_memory_end(&memory)
 	if len(disk) > 0 {
 		if _, disk_refusal := contract.validate_disk_image(disk, .Inputs_Read_Only, 0); disk_refusal != .None {
-			return errors.fail(error, ERROR, .Bad_Value, .None, ARGUMENT_INPUT_DISK, 0, 0, i64(disk_refusal))
+			return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, ARGUMENT_INPUT_DISK, 0, 0, i64(disk_refusal))
 		}
 	}
-	return i64(spec.output_size_bound)
+	return .Succeeded, i64(spec.output_size_bound)
 }
