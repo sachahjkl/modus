@@ -65,7 +65,7 @@ history_store_open :: proc "contextless" () -> (opened: bool) {
 		system.log_fact(.Info, History_Root_Silent{})
 		return false
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, History_Root_Refused(errors.error_record_fact_fields(errors.completion_record(completion.values))))
 		return false
 	}

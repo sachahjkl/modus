@@ -171,15 +171,30 @@ region_range_add :: proc "contextless" (ranges: ^Region_Ranges, item: Region_Ran
 		}
 	}
 	if ranges.count == len(ranges.ranges) {
-		return refuse(refusal, .Full, .None, item.argument, 0, REGION_RANGE_CAPACITY)
+		// No call reaches it: each parameter adds at most one range.
+		return refuse(refusal, .Too_Long, .Region, item.argument, 0, REGION_RANGE_CAPACITY)
 	}
 	ranges.ranges[ranges.count] = item
 	ranges.count += 1
 	return true
 }
 
+// bytes_reached gives the end in bytes of count records of size bytes from
+// start, or the largest word when it passes it: a hostile count near 2^64
+// does not wrap to a small end.
+@(private)
+bytes_reached :: proc "contextless" (start, count, size: u64) -> u64 {
+	if size != 0 && count > (max(u64) - start) / size {
+		return max(u64)
+	}
+	return start + count * size
+}
+
 // refuse writes the error record of a refusal of decode, and gives false.
-// refusal can be nil.
+// refusal can be nil. The unit is Region, or Lent_Handles for a handle: an
+// export never writes these units, so the caller tells a refusal of the
+// receiver from one of the export (src/md/api/call_outcome.md, "Who
+// refused, in an isolated call").
 @(private)
 refuse :: proc "contextless" (refusal: ^errors.Error_Record, kind: errors.Kind, unit: errors.Unit, argument: i64, value: u64, limit: u64) -> bool {
 	if refusal != nil {
@@ -197,7 +212,7 @@ table_decode :: proc "contextless" (file: []u8, word: u8, detail: u32, direction
 	argument := i64(index + 1)
 	size, alignment, described := table_record(file, word, detail)
 	if !described {
-		return refuse(refusal, .Bad_Value, .None, argument, u64(detail), 0)
+		return refuse(refusal, .Bad_Value, .Region, argument, u64(detail), 0)
 	}
 	limit := u64(len(region))
 	// A Read or Change table: the records 0 ..< count, so count <= capacity
@@ -207,40 +222,41 @@ table_decode :: proc "contextless" (file: []u8, word: u8, detail: u32, direction
 	// form: no product and no sum below wraps, also for a count near 2^64
 	// that a hostile caller gives.
 	if field.count > TABLE_SPAN / size || field.capacity > TABLE_SPAN / size {
-		return refuse(refusal, .Too_Long, .Records, argument, max(field.count, field.capacity), TABLE_SPAN / size)
+		return refuse(refusal, .Too_Long, .Region, argument, bytes_reached(0, max(field.count, field.capacity), size), TABLE_SPAN / size * size)
 	}
 	reachable_records := direction == .Append ? field.capacity : field.count
 	place := &call.places[index]
 	place^ = {count = field.count, capacity = direction == .Append ? field.capacity : field.count}
 	if field.memory_handle != 0 {
 		if field.memory_handle >> 32 != 0 {
-			return refuse(refusal, .Handle_Absent, .None, argument, field.memory_handle, 0)
+			return refuse(refusal, .Handle_Absent, .Lent_Handles, argument, field.memory_handle, 0)
 		}
 		if field.start % alignment != 0 {
-			return refuse(refusal, .Bad_Value, .Bytes, argument, field.start, 0)
+			return refuse(refusal, .Bad_Value, .Region, argument, field.start, 0)
 		}
 		// The pages of the records stay in the span of this parameter, so
 		// that their mapping never enters the span of the next parameter.
 		if reachable_records * size > TABLE_SPAN - module.PAGE_SIZE {
-			return refuse(refusal, .Too_Long, .Bytes, argument, reachable_records * size, TABLE_SPAN - module.PAGE_SIZE)
+			return refuse(refusal, .Too_Long, .Region, argument, reachable_records * size, TABLE_SPAN - module.PAGE_SIZE)
 		}
 		if call.mapping_count == len(call.mappings) {
-			return refuse(refusal, .Full, .None, argument, 0, len(call.mappings))
+			// No call reaches it: each parameter adds at most one mapping.
+			return refuse(refusal, .Too_Long, .Region, argument, 0, len(call.mappings))
 		}
 		call.mappings[call.mapping_count] = {parameter = index, handle = u32(field.memory_handle), start = field.start, size = reachable_records * size, writable = direction != .Read}
 		call.mapping_count += 1
 		if !lent_handle_add(call, field.memory_handle, transmute(u32)direction_rights(direction)) {
-			return refuse(refusal, .Full, .Handles, argument, 0, len(call.lent))
+			return refuse(refusal, .Too_Long, .Lent_Handles, argument, 0, len(call.lent))
 		}
 	} else {
 		// The region holds the records 0 ..< count of a Read or Change
 		// table, and the records count ..< capacity of an Append table.
 		records_in_region := direction == .Append ? field.capacity - min(field.count, field.capacity) : field.count
 		if field.start % 8 != 0 {
-			return refuse(refusal, .Bad_Value, .Bytes, argument, field.start, 0)
+			return refuse(refusal, .Bad_Value, .Region, argument, field.start, 0)
 		}
 		if field.start > limit || records_in_region > (limit - field.start) / size {
-			return refuse(refusal, .Out_Of_Range, .Bytes, argument, field.start + records_in_region * size, limit)
+			return refuse(refusal, .Out_Of_Range, .Region, argument, field.start + records_in_region * size, limit)
 		}
 		region_range_add(ranges, {field.start, field.start + records_in_region * size, direction != .Read, argument}, refusal) or_return
 		address := u64(uintptr(raw_data(region))) + field.start

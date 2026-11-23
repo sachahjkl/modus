@@ -244,6 +244,13 @@ request_failed :: proc "contextless" (outcome: call_outcome.Call_Outcome, kind: 
 	return {outcome = outcome, values = errors.completion_values(errors.error_make(kind, .None, 0, value, 0, found))}
 }
 
+// object_not_authentic gives the refusal of a sealed object that this TPM
+// did not make under the PCR values of its policy: the client gave it, so
+// it is an argument, named by the part that failed its check.
+object_not_authentic :: proc "contextless" (argument: i64, code: u32) -> Outcome {
+	return {outcome = .Argument_Refused, values = errors.completion_values(errors.error_make(.Not_Authentic, .None, argument, 0, 0, i64(code)))}
+}
+
 // outcome_of_problem gives the outcome of an answer that is not taken.
 outcome_of_problem :: proc "contextless" (problem: tpm2.Answer_Problem, code: u32, command: u32) -> Outcome {
 	if problem == .Refused {
@@ -251,7 +258,9 @@ outcome_of_problem :: proc "contextless" (problem: tpm2.Answer_Problem, code: u3
 			return request_failed(.Wrong_State, .State, 0, i64(code))
 		}
 		if tpm2.authorization_fails(code) {
-			return request_failed(.Grant_Or_Right_Missing, .No_Grant, 0, i64(code))
+			// The value that the TPM refused came from the client: an
+			// argument that proves nothing.
+			return {outcome = .Argument_Refused, values = errors.completion_values(errors.error_make(.Not_Authentic, .None, 0, i64(command), 0, i64(code)))}
 		}
 		if tpm2.locked_out(code) {
 			return request_failed(.Callee_Busy, .Busy, 0, i64(code))
@@ -446,7 +455,7 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 	authorized := authorization_take(authorization_kind, &authorization)
 	// The counts come from the client: they are checked before any copy.
 	if public_count > tpm2.PUBLIC_AREA_LIMIT || private_count > tpm2.PRIVATE_AREA_LIMIT || creation_count > tpm2.CREATION_DATA_LIMIT || ticket_count > tpm2.CREATION_TICKET_LIMIT {
-		return request_failed(.Argument_Refused, .Bad_Value)
+		return request_failed(.Argument_Refused, .Too_Long)
 	}
 	authorization_bytes: []u8
 	if authorized {
@@ -464,7 +473,7 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 	copy(creation_data[:creation_bytes], region[tpm_service.REGION_CREATION_DATA:][:creation_bytes])
 	copy(creation_ticket[:ticket_bytes], region[tpm_service.REGION_CREATION_TICKET:][:ticket_bytes])
 	if !tpm2.area_fits(public_area[:public_bytes], tpm2.PUBLIC_AREA_LIMIT) || !tpm2.area_fits(private_area[:private_bytes], tpm2.PRIVATE_AREA_LIMIT) || !tpm2.ticket_fits(creation_ticket[:ticket_bytes]) {
-		return request_failed(.Argument_Refused, .Bad_Value)
+		return request_failed(.Argument_Refused, .Malformed)
 	}
 	// The policy of the object must be the policy of the PCR values that
 	// its creation data names, with the attributes of a sealed object of
@@ -478,12 +487,12 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 	pcr_digest, creation_read := tpm2.creation_data_pcr_digest(creation_data[:creation_bytes])
 	if !creation_read {
 		system.log_fact(.Info, Unseal_Creation_Data_Refused{})
-		return request_failed(.Data_Damaged, .Damaged)
+		return object_not_authentic(tpm_service.UNSEAL_CREATION_DATA_ARGUMENT, 0)
 	}
 	policy := tpm2.sealed_object_policy(&pcr_digest, authorized)
 	if !tpm2.sealed_public_check(public_area[:public_bytes], &policy, tpm2.sealed_object_attributes(authorized)) {
 		system.log_fact(.Info, Unseal_Policy_Refused{})
-		return request_failed(.Data_Damaged, .Damaged)
+		return object_not_authentic(tpm_service.UNSEAL_PUBLIC_AREA_ARGUMENT, 0)
 	}
 	defer erase(answer_bytes[:])
 	primary, primary_failed, primary_ok := storage_key()
@@ -512,7 +521,7 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 	code, problem = tpm2.status_answer(answer)
 	if problem == .Refused && tpm2.ticket_fails(code) {
 		system.log_fact(.Info, Unseal_Ticket_Refused{response_code = value_kinds.Hexadecimal_Sixteen_Digits(code)})
-		return request_failed(.Data_Damaged, .Damaged, 0, i64(code))
+		return object_not_authentic(tpm_service.UNSEAL_CREATION_TICKET_ARGUMENT, code)
 	}
 	if problem != .None {
 		return outcome_of_problem(problem, code, tpm2.COMMAND_CERTIFY_CREATION)
@@ -554,6 +563,9 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 		if problem == .Refused && tpm2.locked_out(code) {
 			system.log_fact(.Info, Unseal_Locked_Out{response_code = value_kinds.Hexadecimal_Sixteen_Digits(code)})
 		}
+		if problem == .Refused && tpm2.authorization_fails(code) {
+			return {outcome = .Argument_Refused, values = errors.completion_values(errors.error_make(.Not_Authentic, .None, tpm_service.UNSEAL_AUTHORIZATION_ARGUMENT, i64(tpm2.COMMAND_UNSEAL), 0, i64(code)))}
+		}
 		return outcome_of_problem(problem, code, tpm2.COMMAND_UNSEAL)
 	}
 	copy(region[tpm_service.REGION_SECRET:][:tpm2.SECRET_SIZE], secret)
@@ -585,30 +597,61 @@ measure_start_policy :: proc "contextless" (values: [7]u64) -> Outcome {
 	// Counted before the command: an interface that fails after the TPM
 	// took the extend must not give one more extend to a later request.
 	measure_count += 1
+	// From here the count of the extends changed: each failure is a
+	// partial change, and an extend that the TPM can have taken with its
+	// answer lost is in doubt.
 	answer, step := transact(count)
 	if step != .None {
-		return request_failed(.Callee_Unavailable, .Device, 0, i64(step))
+		return extend_interface_failed(step)
 	}
 	code, problem := tpm2.status_answer(answer)
 	if problem != .None {
 		system.log_fact(.Warning, Extend_Refused{response_code = value_kinds.Hexadecimal_Sixteen_Digits(code)})
-		return outcome_of_problem(problem, code, tpm2.COMMAND_PCR_EXTEND)
+		return changed_then_failed(outcome_of_problem(problem, code, tpm2.COMMAND_PCR_EXTEND))
 	}
+	// PCR 12 changed: a failure of the read back is a partial change.
 	count = tpm2.pcr_read_command(command_bytes[:])
 	answer, step = transact(count)
 	if step != .None {
 		system.log_fact(.Warning, Extend_Read_Back_Interface_Failed{step = step_field(step)})
-		return request_failed(.Callee_Unavailable, .Device, 0, i64(step))
+		return changed_then_failed(request_failed(.Callee_Unavailable, .Device, 0, i64(step)))
 	}
 	value: [tpm2.DIGEST_SIZE]u8
 	value, code, problem = tpm2.pcr_read_answer(answer)
 	if problem != .None {
 		system.log_fact(.Warning, Extend_Read_Back_Refused{response_code = value_kinds.Hexadecimal_Sixteen_Digits(code)})
-		return outcome_of_problem(problem, code, tpm2.COMMAND_PCR_READ)
+		return changed_then_failed(outcome_of_problem(problem, code, tpm2.COMMAND_PCR_READ))
 	}
 	system.log_fact(.Info, Start_Policy_Measured{extend = u64(measure_count), extend_limit = tpm_service.MEASURE_LIMIT})
 	words := transmute([4]u64)value
 	return {outcome = .Succeeded, values = {0 = words[0], 1 = words[1], 2 = words[2], 3 = words[3], 4 = u64(measure_count)}}
+}
+
+// changed_then_failed gives the end of a request that changed what a
+// caller can see (PCR 12, the count of the extends, an index of a pin),
+// then failed: Stopped_After_A_Partial_Change, with the record of the
+// failure, explained under it.
+changed_then_failed :: proc "contextless" (failed: Outcome) -> Outcome {
+	outcome := call_outcome.outcome_passed_on(failed.outcome, changed_before = true)
+	record := call_outcome.record_explained(outcome, errors.completion_record(failed.values))
+	return {outcome = outcome, values = errors.completion_values(record)}
+}
+
+// extend_interface_failed gives the end of an extend whose interface failed
+// after the count of the extends changed. Before the command reached the
+// TPM (the locality, the ready state), the extend did not run: a partial
+// change, the count. After it (the end of the command, the answer), the TPM
+// can have extended PCR 12: the extend is in doubt.
+extend_interface_failed :: proc "contextless" (step: tpm_service.Device_Step) -> Outcome {
+	switch step {
+	case .None, .Locality, .Ready:
+		return changed_then_failed(request_failed(.Callee_Unavailable, .Device, 0, i64(step)))
+	case .Start:
+		return request_failed(.Deadline_Passed_During_The_Call, .No_Answer, 0, i64(step))
+	case .Answer:
+		return request_failed(.Answer_Unreadable, .Malformed, 0, i64(step))
+	}
+	return request_failed(.Answer_Unreadable, .Malformed, 0, i64(step))
 }
 
 // The generator of this process: it gives the lockout authorization value.
@@ -787,7 +830,8 @@ requests_serve :: proc "contextless" (requests: ^ring.Ring, source: tpm_service.
 		outcome: Outcome
 		// The border of the ring: the kind and the authorization become
 		// their members here, and a word that names no member, or a command
-		// of the other ring, is answered with Bad_Command before any work.
+		// of the other ring, is answered with the outcome and the record of
+		// the border before any work.
 		request, request_outcome, request_record := tpm_service.request_of_record(command.kind, command.values, source)
 		if request_outcome != .Succeeded {
 			// The secret and the value of a refused request of a client are

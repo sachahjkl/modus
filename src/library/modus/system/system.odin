@@ -864,15 +864,18 @@ handle_revoke :: proc "contextless" (handle: Handle, process: Handle = 0, error:
 // with the command Attach of a device ring (src/library/modus/contract/block, src/library/modus/contract/frame):
 // memory, with Read and Write, that came through the ring. When it refuses,
 // it gives the values of the error record of the completion and its call
-// outcome, in the order of the tests of a callee (lent_handle_outcome).
+// outcome, in the order of the tests of a callee (lent_handle_outcome). A
+// handle that did not come through the ring is tested first, as for the
+// lent handles of an export (export_serve): its kind and its rights are of
+// a handle of this service, and the client learns nothing of them.
 region_refusal :: proc "contextless" (handle: Handle, ring_memory: Handle, command: u32) -> (values: [7]u64, outcome: call_outcome.Call_Outcome, refused: bool) {
 	kind, rights, through := handle_state(handle, ring_memory)
 	needed := Rights{.Read, .Write}
 	switch {
+	case !through:
+		return errors.ring_fail(command, .Handle_Absent, .Lent_Handles, 1, i64(handle)), lent_handle_outcome(true, false, false), true
 	case kind != .Memory:
 		return errors.ring_fail(command, .Handle_Kind, .None, 1, i64(handle), i64(op.Object_Kind.Memory), i64(kind)), lent_handle_outcome(false, true, false), true
-	case !through:
-		return errors.ring_fail(command, .Absent, .Region, 1), lent_handle_outcome(true, false, false), true
 	case !(needed <= rights):
 		return errors.ring_fail(command, .Handle_Rights, .None, 1, i64(handle), i64(transmute(u32)needed), i64(transmute(u32)rights)), lent_handle_outcome(false, false, true), true
 	}

@@ -2736,7 +2736,7 @@ request :: proc "contextless" (kind: root_ring.Root_Command, name: string) -> Va
 	if !answered {
 		return fail_no_answer()
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("", completion)
 	}
 	return {}
@@ -2751,7 +2751,7 @@ grants :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("", completion)
 	}
 	columns := [5]Column{text_column("process", 32), text_column("grant", 24), text_column("state", 8), integer_column("principal"), text_column("principal_name", 32)}
@@ -2785,7 +2785,7 @@ principal_create :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("", completion)
 	}
 	return {}
@@ -2798,7 +2798,7 @@ lock_session :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("", completion)
 	}
 	return {kind = .Integer, integer = i64(completion.values[0])}
@@ -2838,7 +2838,7 @@ list_principals :: proc "contextless" (arguments: []Value) -> Value {
 		if !answered {
 			return fail_no_answer()
 		}
-		if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+		if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 			continue // No record with this number.
 		}
 		// A state that names no member is refused: it is not taken for a
@@ -2880,7 +2880,7 @@ revoke :: proc "contextless" (arguments: []Value) -> Value {
 		if !answered {
 			return fail_no_answer()
 		}
-		if call_outcome.Call_Outcome(completion.kind) == .Succeeded {
+		if completion.kind == u32(call_outcome.Call_Outcome.Succeeded) {
 			return {kind = .Integer, integer = i64(completion.values[0])}
 		}
 		return fail_root("", completion)
@@ -2907,45 +2907,39 @@ replace :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	// The status and the kind of the record come from the root service: each
-	// is read at its border, and a word that names no member is said.
-	status, status_ok := enum_word.member_of_word(system.Status, u64(completion.kind))
-	if !status_ok {
-		return fail("the root service gave the replacement a status word that names no status")
-	}
-	switch status {
-	case .Ok:
+	// The outcome and its record come from the root service: the border of
+	// a completion reads them, and each refusal is said from the outcome and
+	// the record that the root service named (replacement_rules).
+	outcome, refusal := call_outcome.completion_outcome(completion.kind, completion.values)
+	switch outcome {
+	case .Succeeded:
 		return {}
-	case .No_Right:
-		// The root service writes a replacement only for a row that the
-		// signing key of the system signed (docs/MODULE_CONTRACT.md, "Who may
-		// replace a module"); its log line gives the whole reason.
-		kind_word := errors.completion_record(completion.values).kind
-		kind, kind_ok := enum_word.member_of_word(errors.Kind, u64(kind_word))
-		if !kind_ok {
-			return fail("the root service refused the replacement of ", name, " by ", by, " with an error kind that names no kind")
+	case .Argument_Refused:
+		if refusal.limit != 0 {
+			return fail("no module has the name ", by)
 		}
-		switch kind {
-		case .Absent:
-			return fail("the root service refused the replacement of ", name, " by ", by, ": no signed row names it")
-		case .Not_Authentic:
-			return fail("the root service refused the replacement of ", name, " by ", by, ": its signature does not verify")
-		case .Refused:
-			return fail("the root service refused the replacement of ", name, " by ", by, ": the replacement list breaks its format")
-		case .None, .Empty, .Too_Long, .Too_Small, .Bad_Value, .Bad_Flags, .Bad_Byte, .Bad_Address, .Handle_Absent, .Handle_Ended, .Handle_Kind, .Handle_Rights, .Budget, .Budget_Hidden, .Over_Limit, .Full, .State, .Damaged, .Device, .No_Grant, .Malformed, .No_Target, .Overlap, .Unknown_Operation, .No_Answer, .Unsupported, .Link_Down, .Busy, .Out_Of_Range, .Reserved, .Not_Payer, .Object_Shared, .Object_Marked, .Whole_Only, .Not_Multiple, .Seed_Too_Weak, .Exists, .Starter_Module, .Callee_Stopped, .Connection_Ended:
-			// No record of a signed row: the grant of the console is missing.
-		}
-		return fail("the console has no grant to change the replacement table")
-	case .Bad_State:
-		return fail("a chain of replacements is refused: ", name, ", ", by)
-	case .No_Slot:
-		return fail("the replacement table is full")
-	case .Bad_Operation:
 		return fail("a module does not replace itself")
-	case .Bad_Handle, .Bad_Address, .No_Memory, .No_Budget:
+	case .Nothing_Has_That_Name:
+		if refusal.unit == i64(errors.Unit.Records) {
+			// Its log line gives the whole reason (docs/MODULE_CONTRACT.md,
+			// "Who may replace a module").
+			return fail("the root service refused the replacement of ", name, " by ", by, ": no signed row names it")
+		}
 		return fail(by == "" ? "no replacement of the module " : "no module has the name ", name)
+	case .Wrong_State:
+		return fail("a chain of replacements is refused: ", name, ", ", by)
+	case .Data_Damaged:
+		if refusal.found == 0 {
+			return fail("the root service refused the replacement of ", name, " by ", by, ": its signature does not verify")
+		}
+		return fail("the root service refused the replacement of ", name, " by ", by, ": the replacement list breaks its format")
+	case .Budget_Or_Capacity_Exhausted:
+		return fail("the replacement table is full")
+	case .Grant_Or_Right_Missing:
+		return fail("the console has no grant to change the replacement table")
+	case .Operation_Unsupported, .Name_Already_Taken, .Callee_Busy, .Another_Change_Came_First, .Callee_Unavailable, .Stopped_After_A_Partial_Change, .Callee_Stopped_During_The_Call, .Connection_Ended_During_The_Call, .Deadline_Passed_During_The_Call, .Answer_Unreadable:
 	}
-	return fail(by == "" ? "no replacement of the module " : "no module has the name ", name)
+	return fail_root("", completion)
 }
 
 // list_replacements gives the replacement table of the machine.
@@ -3098,7 +3092,7 @@ start_from_disk :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if call_outcome.Call_Outcome(record.kind) == .Succeeded {
+	if record.kind == u32(call_outcome.Call_Outcome.Succeeded) {
 		return {}
 	}
 	return start_from_disk_refusal(name, record)
@@ -3189,7 +3183,7 @@ disk_grant_command :: proc "contextless" (command_name: string, action: root_rin
 	if !answered {
 		return fail_no_answer()
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root(command_name == "allow" ? "allow: " : "disallow: ", completion)
 	}
 	return {}
@@ -3219,7 +3213,7 @@ remote_client_request :: proc "contextless" (command_name: string, text: string,
 	if !answered {
 		return {}, fail_no_answer(), true
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		prefix := "remote_disallow: "
 		switch command_name {
 		case "remote_allow":
@@ -3292,7 +3286,7 @@ remote_clients :: proc "contextless" (arguments: []Value) -> Value {
 		if !answered {
 			return fail_no_answer()
 		}
-		if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+		if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 			return fail_root("remote_clients: ", completion)
 		}
 		if completion.values[5] == 0 {
@@ -3363,7 +3357,7 @@ nickname_move :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("nickname_move: ", completion)
 	}
 	return {}
@@ -3398,7 +3392,7 @@ disk_persistence :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("disk_persistence: ", completion)
 	}
 	return {}
@@ -3412,7 +3406,7 @@ machine_passphrase :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("", completion)
 	}
 	return {}
@@ -3426,7 +3420,7 @@ machine_seal :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("", completion)
 	}
 	return {}
@@ -3456,7 +3450,7 @@ start_policy_choose :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("start_policy_choose: ", completion)
 	}
 	return {}
@@ -3469,7 +3463,7 @@ start_policy_default :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return fail_root("start_policy_default: ", completion)
 	}
 	return {}
@@ -3508,7 +3502,7 @@ change_request :: proc "contextless" (change: root_ring.Principal_Change) -> Val
 		// process waits for no more; an abandoned Connect closes its
 		// handles here.
 		if record, came, _ := system.root_answer_step(&requests, request_count, 0, system.WAIT_FOREVER, &abandoned_connects); came {
-			if call_outcome.Call_Outcome(record.kind) != .Succeeded {
+			if record.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 				return fail_root("", record)
 			}
 			return change_result(record.values[0], record.values[1])

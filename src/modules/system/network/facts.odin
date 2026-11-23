@@ -1,5 +1,6 @@
 package network_service
 
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 import "modus:network"
 import "modus:system"
@@ -96,11 +97,11 @@ Frame_Service_Silent :: struct {
 }
 
 // The frame service refused the datagram region of an endpoint as a read
-// region. The outcome word is the word that the frame service wrote, any
-// u32, so the field is an Integer, as the line wrote it.
-@(log_fact = "network: the frame service refused the datagram region of {owner} as a read region: outcome word {outcome_word}")
+// region: the outcome word that the frame service wrote, by the name of its
+// member, or its number when it names none.
+@(log_fact = "network: the frame service refused the datagram region of {owner} as a read region: outcome {outcome}")
 Read_Region_Refused :: struct {
-	outcome_word: u64,
+	outcome: call_outcome.Call_Outcome_Word,
 	owner:        value_kinds.Module_Name_Field,
 }
 

@@ -517,6 +517,9 @@ service_connection :: proc "contextless" (requests: ^ring.Ring, tag: u32, name: 
 		}
 	}
 	if status != .Ok {
+		// The root service holds its side of the connection: it ends it,
+		// else it refuses the next Connect of this caller to the service.
+		service_disconnection(requests, tag, packed)
 		call_connection_end(&connection)
 		return {}, outcome_of_own_status(status)
 	}

@@ -199,7 +199,7 @@ run :: proc "contextless" (measure: ^Measure) {
 	done: u64
 	for {
 		record := answer()
-		if call_outcome.Call_Outcome(record.kind) != .Succeeded {
+		if record.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 			measure.errors += 1
 		}
 		done += 1
@@ -209,7 +209,7 @@ run :: proc "contextless" (measure: ^Measure) {
 		issue(command, measure, &next)
 	}
 	for done < next {
-		if call_outcome.Call_Outcome(answer().kind) != .Succeeded {
+		if answer().kind != u32(call_outcome.Call_Outcome.Succeeded) {
 			measure.errors += 1
 		}
 		done += 1
@@ -244,11 +244,11 @@ check :: proc "contextless" () {
 		request(.Write, u32(request_index), {0 = MEASURE_BLOCKS + request_index * 16, 1 = 16, 2 = request_index * 16 * block.BLOCK_SIZE})
 	}
 	for _ in 0 ..< COUNT / 16 {
-		if call_outcome.Call_Outcome(answer().kind) != .Succeeded {
+		if answer().kind != u32(call_outcome.Call_Outcome.Succeeded) {
 			wrong += 1
 		}
 	}
-	if call_outcome.Call_Outcome(call(.Flush).kind) != .Succeeded {
+	if call(.Flush).kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		wrong += 1
 	}
 	base := u64(COUNT * block.BLOCK_SIZE)
@@ -256,7 +256,7 @@ check :: proc "contextless" () {
 		request(.Read, u32(request_index), {0 = MEASURE_BLOCKS + request_index * 16, 1 = 16, 2 = base + request_index * 16 * block.BLOCK_SIZE})
 	}
 	for _ in 0 ..< COUNT / 16 {
-		if call_outcome.Call_Outcome(answer().kind) != .Succeeded {
+		if answer().kind != u32(call_outcome.Call_Outcome.Succeeded) {
 			wrong += 1
 		}
 	}
@@ -456,7 +456,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Info, Block_Ring_Not_Mapped{})
 		system.stop(.Failed)
 	}
-	if attached := call(.Attach, {0 = u64(given)}); call_outcome.Call_Outcome(attached.kind) != .Succeeded {
+	if attached := call(.Attach, {0 = u64(given)}); attached.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Warning, Data_Region_Refused(errors.error_record_fact_fields(errors.completion_record(attached.values))))
 		system.stop(.Failed)
 	}
@@ -476,7 +476,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// record.
 	past := call(.Read, {0 = disk_blocks - 1, 1 = 2, 2 = 0})
 	past_error := errors.completion_record(past.values)
-	past_right := call_outcome.Call_Outcome(past.kind) == .Argument_Refused && errors.Kind(past_error.kind) == .Out_Of_Range && past_error.argument == 1 && u64(past_error.value) == disk_blocks + 1 && u64(past_error.limit) == disk_blocks
+	past_right := past.kind == u32(call_outcome.Call_Outcome.Argument_Refused) && errors.Kind(past_error.kind) == .Out_Of_Range && past_error.argument == 1 && u64(past_error.value) == disk_blocks + 1 && u64(past_error.limit) == disk_blocks
 	if past_right {
 		system.log_fact(.Info, Read_Past_End_Refused(errors.error_record_fact_fields(past_error)))
 	} else {

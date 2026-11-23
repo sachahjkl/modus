@@ -1,6 +1,7 @@
 #+build !freestanding
 package isolated
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -353,6 +354,17 @@ decode_refuses_tables :: proc(t: ^testing.T) {
 	testing.expect(t, !valid, "an Integer with the direction Change")
 }
 
+// receiver_refusal_named checks a refusal of decode: the unit Region or
+// Lent_Handles, which an export never writes, so the caller tells the
+// receiver from the export (src/md/api/call_outcome.md, "Who refused, in an
+// isolated call"), and a kind that Argument_Refused holds.
+receiver_refusal_named :: proc(t: ^testing.T, refusal: errors.Error_Record) -> bool {
+	unit_named := refusal.unit == i64(errors.Unit.Region) || refusal.unit == i64(errors.Unit.Lent_Handles)
+	kind, kind_ok := errors.kind_of_word(refusal.kind)
+	kind_held := kind_ok && kind in call_outcome.KINDS_OF[.Argument_Refused]
+	return testing.expectf(t, unit_named && kind_held, "a refusal of decode names the unit %d and the kind %d", refusal.unit, refusal.kind)
+}
+
 // With random fields, decode gives only places inside the call region.
 @(test)
 decode_random_tables :: proc(t: ^testing.T) {
@@ -377,7 +389,11 @@ decode_random_tables :: proc(t: ^testing.T) {
 		}
 		size, _ := record_size(function)
 		call: Call
-		if !decode(file, function, 0, size, region[:], &call) {
+		refusal: errors.Error_Record
+		if !decode(file, function, 0, size, region[:], &call, &refusal) {
+			if !receiver_refusal_named(t, refusal) {
+				return
+			}
 			continue
 		}
 		accepted += 1

@@ -298,7 +298,7 @@ attach :: proc "c" (process: ^string, result: ^[]Attached, error: ^errors.Error_
 		// closed and the root service is told (root_completion_take).
 		return call_outcome.fail(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return root_refusal_taken(error, completion), 0
 	}
 	// The handle is a number from another process: it must be a process
@@ -1819,7 +1819,7 @@ record :: proc "c" (process: ^string, result: ^[]Record_Row, error: ^errors.Erro
 		// stops (root_completion_take).
 		return call_outcome.fail(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return root_refusal_taken(error, completion), 0
 	}
 	if failure := held_session_begin(name, caller, completion.values, error); failure != .Succeeded {
@@ -1835,7 +1835,7 @@ record :: proc "c" (process: ^string, result: ^[]Record_Row, error: ^errors.Erro
 	if !released_answered {
 		return call_outcome.fail(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
-	if call_outcome.Call_Outcome(released.kind) != .Succeeded {
+	if released.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return root_refusal_taken(error, released), 0
 	}
 	return record_rows(result, error)

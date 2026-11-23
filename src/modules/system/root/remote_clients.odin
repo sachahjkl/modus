@@ -514,9 +514,10 @@ client_grant_of :: proc "contextless" (caller: ^Started, row_number: u64, serial
 	if row.serial == 0 || row.serial != serial {
 		return {}, root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Grants, 2)
 	}
-	// The session of the principal of the row is locked.
+	// The session of the principal of the row is locked: the row exists,
+	// and the call applies once the session is unlocked.
 	if row.session_locked != 0 {
-		return {}, root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Principals, 2, i64(row.principal))
+		return {}, root_ring.refuse(values, .Wrong_State, kind, .State, .Principals, 2, i64(row.principal))
 	}
 	// A key of the view alone makes no call: remote refuses it in its
 	// handshake, and this service does not trust remote with that rule.

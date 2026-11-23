@@ -44,6 +44,11 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 	if unit_member, unit_ok := errors.unit_of_word(record.unit); unit_ok {
 		unit = errors.UNIT_NAMES[unit_member]
 	}
+	// An amount with the unit Region is a refusal of the receiver of an
+	// isolated call: bytes of its call region (isolated.decode).
+	if record.unit == i64(errors.Unit.Region) {
+		unit = "bytes of the call region"
+	}
 	subject :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record, argument: string) {
 		if record.argument == 0 {
 			write_part(writer, "the call")

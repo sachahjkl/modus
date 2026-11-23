@@ -1298,7 +1298,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if give_status != .Ok {
 		fail("the frame service does not map the frame ring")
 	}
-	if attached := call(.Attach, TAG_ATTACH, {0 = u64(given)}); call_outcome.Call_Outcome(attached.kind) != .Succeeded {
+	if attached := call(.Attach, TAG_ATTACH, {0 = u64(given)}); attached.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		fail("the frame service refused the frame region")
 	}
 	info := call(.Info, TAG_INFO)
@@ -1375,7 +1375,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// No_Region.
 				if record.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 					endpoint := &endpoints[tag - TAG_READ_REGION_ADD]
-					system.log_fact(.Error, Read_Region_Refused{outcome_word = u64(record.kind), owner = owner_field(endpoint.name)})
+					system.log_fact(.Error, Read_Region_Refused{outcome = call_outcome.Call_Outcome_Word(record.kind), owner = owner_field(endpoint.name)})
 				}
 			case tag >= TAG_READ_REGION_REMOVE && tag < TAG_READ_REGION_REMOVE + ENDPOINT_CAPACITY:
 			case tag == TAG_STATISTICS:

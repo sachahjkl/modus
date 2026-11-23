@@ -355,7 +355,7 @@ replay_begin :: proc "contextless" (caller: ^system.Connection, error: ^errors.E
 	if !answered {
 		return refuse(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return root_refusal_taken(error, completion)
 	}
 	handle := system.Handle(completion.values[0])
@@ -390,7 +390,7 @@ replay_begin :: proc "contextless" (caller: ^system.Connection, error: ^errors.E
 		system.close(handle)
 		return refuse(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
-	if call_outcome.Call_Outcome(released.kind) != .Succeeded {
+	if released.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.close(handle)
 		return root_refusal_taken(error, released)
 	}

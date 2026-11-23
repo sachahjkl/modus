@@ -29,7 +29,6 @@ package generic_wiring
 
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
@@ -194,8 +193,8 @@ refused :: proc "contextless" (what: string, before: u64, status: call_outcome.C
 	record := errors.completion_record(answer)
 	want := errors.completion_record(expected)
 	if status != wanted || record != want {
-		system.log_fact(.Error, Wrong_Refusal{status = op.Status_Word(status), kind = record.kind, unit = record.unit, operation = record.operation, argument = record.argument, value = record.value, limit = record.limit, found = record.found}, what)
-		system.log_fact(.Error, Wrong_Refusal_Wanted{status = op.Status_Word(wanted), kind = want.kind, unit = want.unit, operation = want.operation, argument = want.argument, value = want.value, limit = want.limit, found = want.found}, what)
+		system.log_fact(.Error, Wrong_Refusal{outcome = call_outcome.Call_Outcome_Word(status), kind = record.kind, unit = record.unit, operation = record.operation, argument = record.argument, value = record.value, limit = record.limit, found = record.found}, what)
+		system.log_fact(.Error, Wrong_Refusal_Wanted{outcome = call_outcome.Call_Outcome_Word(wanted), kind = want.kind, unit = want.unit, operation = want.operation, argument = want.argument, value = want.value, limit = want.limit, found = want.found}, what)
 		system.stop(.Failed)
 	}
 	if after := budget_pages(); after != before {

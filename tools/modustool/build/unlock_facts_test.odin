@@ -1,5 +1,6 @@
 package build
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -447,15 +448,26 @@ the_facts_of_unlock_write_a_status_by_its_name :: proc(t: ^testing.T) {
 	append(&cases, Unlock_Status_Case{word = max(u64), written = max(u64)})
 	names := [2]string{"a", strings.repeat("n", principals.NAME_LIMIT, context.temp_allocator)}
 	for item in cases {
-		facts_expect_line(t, render(t, file, "Machine_Table_Key_Not_Taken", {{"status", item.word}}), line_of_before("unlock: the root service did not take the key of the disk grant table of principal 0: status ", item.written))
 		facts_expect_line(t, render(t, file, "Tpm_Ring_Not_Opened", {{"status", item.word}}), line_of_before("unlock: the ring of the TPM service does not open: status ", item.written))
 		facts_expect_line(t, render(t, file, "Tpm_Region_Not_Mapped", {{"status", item.word}}), line_of_before("unlock: the region of the TPM service does not map: status ", item.written))
-		facts_expect_line(t, render(t, file, "Change_End_Not_Taken", {{"status", item.word}}), line_of_before("unlock: the root service did not take the end of the change: status ", item.written))
-		facts_expect_line(t, render(t, file, "Session_Not_Started", {{"principal", max(u64)}, {"status", item.word}}), line_of_before("unlock: the root service did not start the session of principal ", max(u64), ": status ", item.written))
-		facts_expect_line(t, render(t, file, "Machine_State_Not_Taken", {{"status", item.word}}), line_of_before("unlock: the root service did not take the state of the machine passphrase: status ", item.written))
 		facts_expect_line(t, render(t, file, "Derivation_Memory_Refused", {{"status", item.word}}), line_of_before("unlock: no memory for the derivation of the key: status ", item.written))
+	}
+	// The completions of the root service: the outcome by its name, and a
+	// word that names none by its number.
+	outcome_cases := make([dynamic]Unlock_Status_Case, context.temp_allocator)
+	for member in call_outcome.Call_Outcome {
+		append(&outcome_cases, Unlock_Status_Case{word = u64(member), written = call_outcome.CALL_OUTCOME_NAMES[member]})
+	}
+	past_the_last_outcome := u64(max(call_outcome.Call_Outcome)) + 1
+	append(&outcome_cases, Unlock_Status_Case{word = past_the_last_outcome, written = past_the_last_outcome})
+	append(&outcome_cases, Unlock_Status_Case{word = max(u64), written = max(u64)})
+	for item in outcome_cases {
+		facts_expect_line(t, render(t, file, "Machine_Table_Key_Not_Taken", {{"outcome", item.word}}), line_of_before("unlock: the root service did not take the key of the disk grant table of principal 0: outcome ", item.written))
+		facts_expect_line(t, render(t, file, "Change_End_Not_Taken", {{"outcome", item.word}}), line_of_before("unlock: the root service did not take the end of the change: outcome ", item.written))
+		facts_expect_line(t, render(t, file, "Session_Not_Started", {{"principal", max(u64)}, {"outcome", item.word}}), line_of_before("unlock: the root service did not start the session of principal ", max(u64), ": outcome ", item.written))
+		facts_expect_line(t, render(t, file, "Machine_State_Not_Taken", {{"outcome", item.word}}), line_of_before("unlock: the root service did not take the state of the machine passphrase: outcome ", item.written))
 		for principal_name in names {
-			facts_expect_line(t, render(t, file, "Record_Not_Taken", {{"status", item.word}, {"principal_name", principal_name}}), line_of_before("unlock: the root service did not take the record of the principal \"", principal_name, "\": status ", item.written))
+			facts_expect_line(t, render(t, file, "Record_Not_Taken", {{"outcome", item.word}, {"principal_name", principal_name}}), line_of_before("unlock: the root service did not take the record of the principal \"", principal_name, "\": outcome ", item.written))
 		}
 	}
 }

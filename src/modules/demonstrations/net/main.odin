@@ -290,7 +290,7 @@ hundredths :: proc "contextless" (buffer: []u8, value: u64) -> string {
 datagram_wait :: proc "contextless" (deadline: u64) -> (place: int, data: []u8, remote: u64, port: u64, ok: bool) {
 	for {
 		record := answer(deadline) or_return
-		if record.tag >= SEND_TAG || call_outcome.Call_Outcome(record.kind) != .Succeeded {
+		if record.tag >= SEND_TAG || record.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 			continue
 		}
 		place = int(record.tag)
@@ -314,7 +314,7 @@ cases_run :: proc "contextless" () {
 
 	// 1. The link and the address.
 	info, has_info := call(.Info)
-	link := has_info && call_outcome.Call_Outcome(info.kind) == .Succeeded
+	link := has_info && info.kind == u32(call_outcome.Call_Outcome.Succeeded)
 	grant, grant_known := datagram.grant_unpack(info.values[6])
 	inspect = grant.inspect
 	local_address, local_port = u32(info.values[0]), u16(info.values[1])
@@ -326,7 +326,7 @@ cases_run :: proc "contextless" () {
 	start := system.cycles()
 	resolved, has_resolved := call(.Resolve, {0 = GATEWAY})
 	took := microseconds(system.cycles() - start)
-	resolved_right := has_resolved && call_outcome.Call_Outcome(resolved.kind) == .Succeeded && resolved.values[0] != 0 && resolved.values[1] == GATEWAY
+	resolved_right := has_resolved && resolved.kind == u32(call_outcome.Call_Outcome.Succeeded) && resolved.values[0] != 0 && resolved.values[1] == GATEWAY
 	note("ARP: who has 10.0.2.2", resolved_right, "the gateway answered ", hardware_text(text[:], resolved.values[0]), " in ", took, " us")
 	system.log_fact(.Info, Gateway_Resolved{took = value_kinds.Time_In_Microseconds(took), hardware = value_kinds.text_field(hardware_text(text[:], resolved.values[0]), HARDWARE_FIELD_BYTES), wrong_mark = wrong_mark_field(resolved_right)})
 
@@ -334,7 +334,7 @@ cases_run :: proc "contextless" () {
 	start = system.cycles()
 	echo, has_echo := call(.Echo, {0 = GATEWAY, 1 = 1, 2 = 56})
 	took = microseconds(system.cycles() - start)
-	echo_right := has_echo && call_outcome.Call_Outcome(echo.kind) == .Succeeded && echo.values[0] == 1 && echo.values[1] == 56
+	echo_right := has_echo && echo.kind == u32(call_outcome.Call_Outcome.Succeeded) && echo.values[0] == 1 && echo.values[1] == 56
 	note("ICMP echo to 10.0.2.2, 56 bytes", echo_right, "the echo reply came in ", took, " us, time to live ", echo.values[2])
 	system.log_fact(.Info, Gateway_Echoed{took = value_kinds.Time_In_Microseconds(took), time_to_live = echo.values[2], wrong_mark = wrong_mark_field(echo_right)})
 
@@ -364,7 +364,7 @@ cases_run :: proc "contextless" () {
 	refused, has_refused := call(.Send, {0 = (SEND_FIRST + 1) * PLACE_SIZE, 1 = u64(datagram_write(SEND_FIRST + 1, 11, OTHER_PORT)), 2 = GATEWAY})
 	refusal_writer := system.Writer{buffer = sentence[:]}
 	error := network.completion_error_text(&refusal_writer, refused)
-	port_right := has_refused && call_outcome.Call_Outcome(refused.kind) == .Grant_Or_Right_Missing && errors.Kind(error.kind) == .No_Grant && error.argument == 3 && error.value == errors.endpoint_pack(GATEWAY, OTHER_PORT) && error.limit == errors.endpoint_pack(GATEWAY, ECHO_PORT)
+	port_right := has_refused && refused.kind == u32(call_outcome.Call_Outcome.Grant_Or_Right_Missing) && errors.Kind(error.kind) == .No_Grant && error.argument == 3 && error.value == errors.endpoint_pack(GATEWAY, OTHER_PORT) && error.limit == errors.endpoint_pack(GATEWAY, ECHO_PORT)
 	note("UDP to 10.0.2.2 port 9", port_right, "refused: ", system.written(&refusal_writer))
 	if port_right {
 		system.log_fact(.Info, Other_Port_Refused(errors.error_record_fact_fields(error)))
@@ -376,7 +376,7 @@ cases_run :: proc "contextless" () {
 	refused, has_refused = call(.Echo, {0 = 0x0A000203, 1 = 2, 2 = 8})
 	refusal_writer = {buffer = sentence[:]}
 	error = network.completion_error_text(&refusal_writer, refused)
-	address_right := has_refused && call_outcome.Call_Outcome(refused.kind) == .Grant_Or_Right_Missing && errors.Kind(error.kind) == .No_Grant && error.value == errors.endpoint_pack(0x0A000203, 0)
+	address_right := has_refused && refused.kind == u32(call_outcome.Call_Outcome.Grant_Or_Right_Missing) && errors.Kind(error.kind) == .No_Grant && error.value == errors.endpoint_pack(0x0A000203, 0)
 	note("ICMP echo to 10.0.2.3", address_right, "refused: ", system.written(&refusal_writer))
 	if address_right {
 		system.log_fact(.Info, Other_Address_Echo_Refused(errors.error_record_fact_fields(error)))
@@ -388,7 +388,7 @@ cases_run :: proc "contextless" () {
 	refused, has_refused = call(.Send, {0 = 0, 1 = 2000, 2 = GATEWAY})
 	refusal_writer = {buffer = sentence[:]}
 	error = network.completion_error_text(&refusal_writer, refused)
-	large_right := has_refused && call_outcome.Call_Outcome(refused.kind) == .Argument_Refused && errors.Kind(error.kind) == .Too_Long && error.value == 2000 && error.limit == datagram.DATAGRAM_LIMIT
+	large_right := has_refused && refused.kind == u32(call_outcome.Call_Outcome.Argument_Refused) && errors.Kind(error.kind) == .Too_Long && error.value == 2000 && error.limit == datagram.DATAGRAM_LIMIT
 	note("UDP of 2000 bytes", large_right, "refused, no fragment: ", system.written(&refusal_writer))
 	if large_right {
 		system.log_fact(.Info, Large_Datagram_Refused(errors.error_record_fact_fields(error)))
@@ -403,7 +403,7 @@ cases_run :: proc "contextless" () {
 	copy(data_of(SEND_FIRST + 2), "a forged source port")
 	refused, has_refused = call(.Send, {0 = (SEND_FIRST + 2) * PLACE_SIZE, 1 = u64(datagram_write(SEND_FIRST + 2, 20, ECHO_PORT, FORGED_SOURCE_PORT)), 2 = GATEWAY})
 	error = errors.completion_record(refused.values)
-	source_right := has_refused && call_outcome.Call_Outcome(refused.kind) == .Grant_Or_Right_Missing && errors.Kind(error.kind) == .No_Grant && error.found == FORGED_SOURCE_PORT && error.limit == errors.endpoint_pack(GATEWAY, ECHO_PORT)
+	source_right := has_refused && refused.kind == u32(call_outcome.Call_Outcome.Grant_Or_Right_Missing) && errors.Kind(error.kind) == .No_Grant && error.found == FORGED_SOURCE_PORT && error.limit == errors.endpoint_pack(GATEWAY, ECHO_PORT)
 	note("UDP from the source port 1234", source_right, "refused: the source port ", u64(error.found), " of the header is not the local port of this endpoint, ", u64(local_port))
 	system.log_fact(.Info, Source_Port_Refused{found_port = u64(error.found), local_port = u64(local_port), wrong_mark = wrong_mark_field(source_right)})
 
@@ -416,14 +416,14 @@ cases_run :: proc "contextless" () {
 	byte_order.write_u16_big_endian(place_of(SEND_FIRST + 3), 4, u16(whole_count + 1))
 	refused, has_refused = call(.Send, {0 = (SEND_FIRST + 3) * PLACE_SIZE, 1 = u64(whole_count), 2 = GATEWAY})
 	error = errors.completion_record(refused.values)
-	length_right := has_refused && call_outcome.Call_Outcome(refused.kind) == .Argument_Refused && errors.Kind(error.kind) == .Bad_Value && error.argument == 2 && error.value == i64(whole_count + 1) && error.limit == i64(whole_count) && whole_count == network.UDP_HEADER + 20
+	length_right := has_refused && refused.kind == u32(call_outcome.Call_Outcome.Argument_Refused) && errors.Kind(error.kind) == .Bad_Value && error.argument == 2 && error.value == i64(whole_count + 1) && error.limit == i64(whole_count) && whole_count == network.UDP_HEADER + 20
 	note("UDP with a wrong length field", length_right, "refused: the length field of the header says ", u64(error.value), " bytes, the Send has ", u64(error.limit))
 	system.log_fact(.Info, Length_Field_Refused{field_bytes = u64(error.value), send_bytes = u64(error.limit), wrong_mark = wrong_mark_field(length_right)})
 
 	// A datagram shorter than the UDP header: it has no ports to check.
 	refused, has_refused = call(.Send, {0 = (SEND_FIRST + 3) * PLACE_SIZE, 1 = network.UDP_HEADER - 1, 2 = GATEWAY})
 	error = errors.completion_record(refused.values)
-	short_right := has_refused && call_outcome.Call_Outcome(refused.kind) == .Argument_Refused && errors.Kind(error.kind) == .Too_Small && error.argument == 2 && error.value == network.UDP_HEADER - 1 && error.limit == datagram.DATAGRAM_LEAST
+	short_right := has_refused && refused.kind == u32(call_outcome.Call_Outcome.Argument_Refused) && errors.Kind(error.kind) == .Too_Small && error.argument == 2 && error.value == network.UDP_HEADER - 1 && error.limit == datagram.DATAGRAM_LEAST
 	note("UDP of 7 bytes", short_right, "refused: the Send has ", u64(error.value), " bytes, a datagram has ", u64(error.limit), " bytes at least, its header")
 	system.log_fact(.Info, Short_Datagram_Refused{send_bytes = u64(error.value), least_bytes = u64(error.limit), wrong_mark = wrong_mark_field(short_right)})
 
@@ -572,7 +572,7 @@ measure_refusals :: proc "contextless" () {
 	refused := 0
 	for _ in 0 ..< REFUSALS {
 		record, ok := call(.Send, {0 = 0, 1 = 2000, 2 = GATEWAY})
-		if ok && call_outcome.Call_Outcome(record.kind) == .Argument_Refused {
+		if ok && record.kind == u32(call_outcome.Call_Outcome.Argument_Refused) {
 			refused += 1
 		}
 	}
@@ -763,14 +763,14 @@ after_key :: proc "contextless" () {
 		item.count = len(system.format(item.answer[:], "no answer of the network service"))
 		item.right = false
 		system.log_fact(.Info, Key_Datagram_Unanswered{})
-	case call_outcome.Call_Outcome(sent.kind) == .Grant_Or_Right_Missing && errors.completion_record(sent.values).limit == 0:
+	case sent.kind == u32(call_outcome.Call_Outcome.Grant_Or_Right_Missing) && errors.completion_record(sent.values).limit == 0:
 		writer := system.Writer{buffer = item.answer[:]}
 		system.write_part(&writer, "refused, the endpoint has no grant now: ")
 		error := network.completion_error_text(&writer, sent)
 		item.count = len(system.written(&writer))
 		item.right = true
 		system.log_fact(.Info, Key_Datagram_Refused(errors.error_record_fact_fields(error)))
-	case call_outcome.Call_Outcome(sent.kind) == .Succeeded:
+	case sent.kind == u32(call_outcome.Call_Outcome.Succeeded):
 		place, data, _, _, ok := datagram_wait(system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
 		if ok {
 			post(place)

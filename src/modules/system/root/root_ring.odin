@@ -24,6 +24,7 @@ package root
 
 import "base:intrinsics"
 import "modus:contract/call_outcome"
+import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "internal:root/start_policy_rules"
@@ -67,6 +68,28 @@ kernel_refused :: proc "contextless" (values: ^[7]u64, command: u32, status: sys
 	return root_ring.refuse(values, system.outcome_of_own_status(status), command, .Refused, .None, 0, 0, 0, i64(status))
 }
 
+// needed_service_failed gives the end of a command whose service, which the
+// command starts on demand, did not start: the party that the command needs
+// failed, and the record of that start stays in values, explained under
+// Callee_Unavailable. A shared service that starts for the command, and a
+// refusal after it, change no state of the sender (src/md/api/call_outcome.md,
+// "A service on demand").
+needed_service_failed :: proc "contextless" (values: ^[7]u64) -> call_outcome.Call_Outcome {
+	values^ = errors.completion_values(call_outcome.record_explained(.Callee_Unavailable, errors.completion_record(values^)))
+	return .Callee_Unavailable
+}
+
+// changed_then_refused gives the end of a command that changed what its
+// sender can see, then refused with the record in values: the rule of
+// weakening (call_outcome.outcome_passed_on), with the record explained
+// under the outcome. A refusal becomes Stopped_After_A_Partial_Change, and
+// a call in doubt stays in doubt.
+changed_then_refused :: proc "contextless" (values: ^[7]u64, refused: call_outcome.Call_Outcome) -> call_outcome.Call_Outcome {
+	outcome := call_outcome.outcome_passed_on(refused, changed_before = true)
+	values^ = errors.completion_values(call_outcome.record_explained(outcome, errors.completion_record(values^)))
+	return outcome
+}
+
 // root_command_answer runs the three steps of one record: the border and
 // the sender, which root_ring.dispatch_decide decides from the start grant set that
 // the process received at its start and never from its name (a disk
@@ -80,19 +103,24 @@ root_command_answer :: proc "contextless" (item: ^Started, record: ^ring.Record)
 	}
 	raw_name := system.name_of(name_bytes[:])
 	name := raw_name
+	resolved_ok := true
 	if record.kind == u32(root_ring.Root_Command.Connect) || record.kind == u32(root_ring.Root_Command.Disconnect) {
-		resolved, resolved_ok := role_target_resolve_strict(raw_name)
-		if !resolved_ok {
-			answer.outcome = root_ring.refuse(&answer.values, .Nothing_Has_That_Name, record.kind, .Absent, .Services, 1)
-			return answer
-		}
-		name = resolved
+		name, resolved_ok = role_target_resolve_strict(raw_name)
 	}
-	decision := root_ring.dispatch_decide(record.kind, item.start_grant_set.grants, start_grant_set_may_connect(&item.start_grant_set, name))
+	// The sender first: a name that names no service is said only to a
+	// sender that may send the command, so a process learns nothing of a
+	// command that it cannot send. A name that resolves to nothing is on no
+	// list of a start grant set.
+	listed := resolved_ok && start_grant_set_may_connect(&item.start_grant_set, name)
+	decision := root_ring.dispatch_decide(record.kind, item.start_grant_set.grants, listed)
 	switch decision.step {
 	case .Border, .Sender:
 		return {outcome = decision.outcome, values = decision.refusal}
 	case .Command:
+	}
+	if !resolved_ok {
+		answer.outcome = root_ring.refuse(&answer.values, .Nothing_Has_That_Name, record.kind, .Absent, .Services, 1)
+		return answer
 	}
 	return root_command_run(item, decision.command, record, name)
 }

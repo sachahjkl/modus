@@ -261,7 +261,9 @@ process_register :: proc "contextless" (s: ^State, id: ws.Process_Identity, modu
 		}
 	}
 	if free_index < 0 {
-		return -1, .Budget_Or_Capacity_Exhausted, make_error(command_op, .Full, .Processes, 0, 0, i64(len(s.processes)))
+		// The table holds the processes of the whole machine, and frees a
+		// place when one ends.
+		return -1, .Callee_Busy, make_error(command_op, .Full, .Processes, 0, 0, i64(len(s.processes)))
 	}
 	s.processes[free_index] = {
 		active        = true,

@@ -139,7 +139,11 @@ decode_random :: proc(t: ^testing.T) {
 			size, offset = rand.uint64(), rand.uint64()
 		}
 		call: Call
-		if !decode(nil, function, offset, size, region[:], &call) {
+		refusal: errors.Error_Record
+		if !decode(nil, function, offset, size, region[:], &call, &refusal) {
+			if !receiver_refusal_named(t, refusal) {
+				return
+			}
 			continue
 		}
 		accepted += 1

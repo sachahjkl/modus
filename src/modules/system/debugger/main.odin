@@ -344,7 +344,7 @@ root_completion_take :: proc "contextless" (record: ring.Record) {
 		// debug access; the connection of a kept stop report is a part of
 		// no access, so this service sends its end.
 		if request.store {
-			if call_outcome.Call_Outcome(record.kind) == .Succeeded && !request.end {
+			if record.kind == u32(call_outcome.Call_Outcome.Succeeded) && !request.end {
 				answered := record.values
 				count := request.kept ? 4 : 3
 				for word in answered[:count] {
@@ -374,7 +374,7 @@ root_completion_take :: proc "contextless" (record: ring.Record) {
 		switch request.start {
 		case .None:
 		case .Start_Held, .Start_Replay:
-			if call_outcome.Call_Outcome(record.kind) == .Succeeded {
+			if record.kind == u32(call_outcome.Call_Outcome.Succeeded) {
 				handle := system.Handle(record.values[0])
 				if kind, _, through := system.handle_state(handle, requests_memory); kind == .Process && through {
 					system.close(handle)
@@ -385,7 +385,7 @@ root_completion_take :: proc "contextless" (record: ring.Record) {
 		case .Release, .Abandon:
 			return
 		}
-		if request.end || call_outcome.Call_Outcome(record.kind) != .Succeeded {
+		if request.end || record.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 			return
 		}
 		handle := system.Handle(record.values[0])

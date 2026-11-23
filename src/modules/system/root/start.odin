@@ -220,14 +220,18 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Out
 	// service: past the bound, the start is refused before any service
 	// starts for it and before any ring is made (wait_words.odin).
 	if record, refused := waited_queues_refusal(.Start, start_waited_queues(grants, work.file)); refused {
-		// The record Full of the words of the wait.
+		// The record Full of the words of the wait: the queues of the loop
+		// of this service are shared by each process, and free when one
+		// ends.
 		start_refusal_keep(work, record)
-		return .Budget_Or_Capacity_Exhausted
+		return .Callee_Busy
 	}
-	// A process with an endpoint: the network service starts first.
+	// A process with an endpoint: the network service starts first. A
+	// service that starts here and a refusal of this start after it change
+	// no state of the sender (needed_service_failed).
 	if .Network in grants {
 		if _, outcome := network_service(work.refusal); outcome != .Succeeded {
-			return outcome
+			return needed_service_failed(work.refusal)
 		}
 	}
 	// A process with a store: the storage service starts first.
@@ -239,9 +243,9 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Out
 			}
 		}
 		if !running {
-			// The refusal of that start is the refusal of this one.
+			// The record of that start is the record of this one.
 			if outcome := start(role_holder_name(.Storage), refusal = work.refusal); outcome != .Succeeded {
-				return outcome
+				return needed_service_failed(work.refusal)
 			}
 		}
 	}

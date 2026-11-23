@@ -320,7 +320,7 @@ the_facts_with_no_field_of_the_test_modules_write_the_lines_of_before :: proc(t:
 		{"disk_start_policy", "disk_start_policy", "Context_Checked", "disk_start_policy: the context holds the log, the budget and the root ring, no other handle and no start list: as it must"},
 		{"disk_start_policy", "disk_start_policy", "Parts_Page_Refused", "disk_start_policy: the machine parts page is refused: it starts the console only"},
 		{"disk_start_policy", "disk_start_policy", "Wrong_Start_Policy_Start_Taken", "disk_start_policy: a start of the start policy of the boot image is taken: WRONG"},
-		{"disk_start_policy", "disk_start_policy", "Commands_Refused", "disk_start_policy: Start_Policy_Choice, Start_From_Disk, Disk_Grant and Connect are refused with No_Right: as it must"},
+		{"disk_start_policy", "disk_start_policy", "Commands_Refused", "disk_start_policy: Start_Policy_Choice, Start_From_Disk, Disk_Grant and Connect are refused with Grant_Or_Right_Missing: as it must"},
 		{"disk_start_policy", "disk_start_policy", "Machine_Is_Usable", "disk_start_policy: the console runs: the machine is usable"},
 		{"flood", "flood", "No_Terminal", "flood: no terminal"},
 		{"flood", "flood", "Running", "flood: ok"},

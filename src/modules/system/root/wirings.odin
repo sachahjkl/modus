@@ -760,9 +760,26 @@ wiring_request_reply :: proc "contextless" (outcome: call_outcome.Call_Outcome, 
 	}
 }
 
+// wiring_request_fail answers the asker with a refusal. Once the process of
+// a start runs, in the commit of its wiring, the asker can see it and holds
+// its handle: a refusal then is a partial change, and a call in doubt stays
+// in doubt.
 @(private = "file")
 wiring_request_fail :: proc "contextless" (outcome: call_outcome.Call_Outcome, values: [7]u64) {
+	if wiring_request.stage == .Start_Commit {
+		wiring_request_fail_after_start(outcome, values)
+		return
+	}
 	wiring_request_reply(outcome, values)
+}
+
+// wiring_request_fail_after_start answers a refusal that came after the
+// process of the start began to run.
+@(private = "file")
+wiring_request_fail_after_start :: proc "contextless" (outcome: call_outcome.Call_Outcome, values: [7]u64) {
+	refusal := values
+	passed := changed_then_refused(&refusal, outcome)
+	wiring_request_reply(passed, refusal)
 }
 
 @(private = "file")
@@ -816,7 +833,7 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 		resp, resp_ok := ws.response_from_record(record, wiring_request.command)
 		if !resp_ok {
 			// The wiring service answered what its contract does not hold.
-			wiring_request_fail(.Callee_Unavailable, errors.ring_fail(u32(wiring_request.root_command), .Refused, .Wirings))
+			wiring_request_fail(.Answer_Unreadable, errors.ring_fail(u32(wiring_request.root_command), .Malformed, .Wirings))
 			continue
 		}
 		// The wiring service named the outcome and the record of its
@@ -830,7 +847,7 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 		case .List_Page:
 			asker := wiring_request.asker
 			if !prove_wiring_memory_handle(resp.list_page, {.Read, .Write, .Give}) || (resp.wiring_ring != 0 && !prove_wiring_memory_handle(resp.wiring_ring, {.Read, .Write, .Give})) {
-				wiring_request_fail(.Callee_Unavailable, errors.ring_fail(u32(root_ring.Root_Command.Wire), .Refused, .Wirings))
+				wiring_request_fail(.Answer_Unreadable, errors.ring_fail(u32(root_ring.Root_Command.Wire), .Malformed, .Wirings))
 				continue
 			}
 			if asker.list_memory != 0 {
@@ -883,7 +900,7 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 			if !handles_ok {
 				abort_cmd := ws.Command{kind = .Abort_Start_Wiring, batch_id = resp.batch_id}
 				_ = system.send(&wiring_ring.commands, ws.command_to_record(abort_cmd))
-				wiring_request_fail(.Callee_Unavailable, errors.ring_fail(u32(root_ring.Root_Command.Start), .Refused, .Wirings))
+				wiring_request_fail(.Answer_Unreadable, errors.ring_fail(u32(root_ring.Root_Command.Start), .Malformed, .Wirings))
 				continue
 			}
 			premade := Premade_Start_Wiring{
@@ -929,7 +946,8 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 				process  = {started_place.process_slot, started_place.process_serial},
 			}
 			if !system.send(&wiring_ring.commands, ws.command_to_record(commit_cmd)) {
-				wiring_request_fail(.Callee_Busy, errors.ring_fail(u32(root_ring.Root_Command.Start), .Busy, .Requests, 0, 1, 1))
+				// The process runs and the asker can hold its handle.
+				wiring_request_fail_after_start(.Callee_Busy, errors.ring_fail(u32(root_ring.Root_Command.Start), .Busy, .Requests, 0, 1, 1))
 				continue
 			}
 			wiring_request.stage = .Start_Commit
@@ -963,7 +981,7 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 		}
 	}
 	if wiring_request.stage != .Idle && system.time() >= wiring_request.deadline {
-		wiring_request_fail(.Callee_Unavailable, errors.ring_fail(u32(wiring_request.root_command), .No_Answer, .Milliseconds, 0, 0, WIRING_REQUEST_BOUND_MILLISECONDS))
+		wiring_request_fail(.Deadline_Passed_During_The_Call, errors.ring_fail(u32(wiring_request.root_command), .No_Answer, .Milliseconds, 0, 0, WIRING_REQUEST_BOUND_MILLISECONDS))
 	}
 	system.wait_records(wait, &wiring_ring.completions)
 }

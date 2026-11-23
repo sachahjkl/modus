@@ -485,14 +485,14 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	function := function
 	expected, described := record_size(function)
 	if !described {
-		return refuse(refusal, .Bad_Value, .None, 0, 0, 0)
+		return refuse(refusal, .Bad_Value, .Region, 0, 0, 0)
 	}
 	limit := u64(len(region))
 	if size != expected {
-		return refuse(refusal, .Bad_Value, .Bytes, 0, size, expected)
+		return refuse(refusal, .Bad_Value, .Region, 0, size, expected)
 	}
 	if offset > limit || size > limit - offset {
-		return refuse(refusal, .Out_Of_Range, .Bytes, 0, offset + min(size, limit), limit)
+		return refuse(refusal, .Out_Of_Range, .Region, 0, offset + min(size, limit), limit)
 	}
 	call.lent_count = 0
 	call.mapping_count = 0
@@ -511,7 +511,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		// reads the byte again.
 		type, type_ok := module.type_of_word(word)
 		if !type_ok {
-			return refuse(refusal, .Bad_Value, .None, argument, u64(word), 0)
+			return refuse(refusal, .Bad_Value, .Region, argument, u64(word), 0)
 		}
 		switch type {
 		case .None:
@@ -521,7 +521,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		case .Text:
 			slice := load(record[:], field, Slice)
 			if slice.start > limit || slice.count > limit - slice.start {
-				return refuse(refusal, .Out_Of_Range, .Bytes, argument, slice.start + min(slice.count, limit), limit)
+				return refuse(refusal, .Out_Of_Range, .Region, argument, slice.start + min(slice.count, limit), limit)
 			}
 			region_range_add(&ranges, {slice.start, slice.start + slice.count, false, argument}, refusal) or_return
 			call.slices[index] = {
@@ -532,11 +532,11 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		case .Record:
 			described_record, valid := module.record_type(file, function.parameter_details[index])
 			if !valid {
-				return refuse(refusal, .Bad_Value, .None, argument, u64(function.parameter_details[index]), 0)
+				return refuse(refusal, .Bad_Value, .Region, argument, u64(function.parameter_details[index]), 0)
 			}
 			start := load(record[:], field, u64)
 			if start > limit || u64(described_record.size) > limit - start {
-				return refuse(refusal, .Out_Of_Range, .Bytes, argument, start + min(u64(described_record.size), limit), limit)
+				return refuse(refusal, .Out_Of_Range, .Region, argument, start + min(u64(described_record.size), limit), limit)
 			}
 			call.records[index] = {}
 			intrinsics.mem_copy_non_overlapping(&call.records[index], raw_data(region[start:]), int(described_record.size))
@@ -558,7 +558,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		case .Table, .Bytes:
 			direction, direction_ok := module.direction_of_word(function.parameter_directions[index])
 			if !direction_ok {
-				return refuse(refusal, .Bad_Value, .None, argument, u64(function.parameter_directions[index]), u64(max(module.Direction)))
+				return refuse(refusal, .Bad_Value, .Region, argument, u64(function.parameter_directions[index]), u64(max(module.Direction)))
 			}
 			table_decode(file, word, function.parameter_details[index], direction, index, load(record[:], field, Table_Field), offset + field, region, call, &ranges, refusal) or_return
 		}
@@ -567,7 +567,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	index := function.parameter_count
 	result_type, result_type_ok := module.function_result_type(function)
 	if !result_type_ok {
-		return refuse(refusal, .Bad_Value, .None, 0, u64(function.result), 0)
+		return refuse(refusal, .Bad_Value, .Region, 0, u64(function.result), 0)
 	}
 	switch result_type {
 	case .None, .Integer, .Enum:
@@ -577,7 +577,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	case .Text:
 		slice := load(record[:], field, Slice)
 		if slice.start > limit || slice.count > limit - slice.start {
-			return refuse(refusal, .Out_Of_Range, .Bytes, 0, slice.start + min(slice.count, limit), limit)
+			return refuse(refusal, .Out_Of_Range, .Region, 0, slice.start + min(slice.count, limit), limit)
 		}
 		region_range_add(&ranges, {slice.start, slice.start + slice.count, true, 0}, refusal) or_return
 		call.slices[index] = {
@@ -589,10 +589,10 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		described_record, valid := module.record_type(file, function.result_detail)
 		slice := load(record[:], field, Slice)
 		if !valid || described_record.size == 0 {
-			return refuse(refusal, .Bad_Value, .None, 0, u64(function.result_detail), 0)
+			return refuse(refusal, .Bad_Value, .Region, 0, u64(function.result_detail), 0)
 		}
 		if slice.start > limit || slice.count > (limit - slice.start) / u64(described_record.size) {
-			return refuse(refusal, .Out_Of_Range, .Records, 0, slice.count, (limit - min(slice.start, limit)) / u64(described_record.size))
+			return refuse(refusal, .Out_Of_Range, .Region, 0, bytes_reached(slice.start, slice.count, u64(described_record.size)), limit)
 		}
 		region_range_add(&ranges, {slice.start, slice.start + slice.count * u64(described_record.size), true, 0}, refusal) or_return
 		call.slices[index] = {
@@ -603,11 +603,11 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 	case .Record:
 		described_record, valid := module.record_type(file, function.result_detail)
 		if !valid {
-			return refuse(refusal, .Bad_Value, .None, 0, u64(function.result_detail), 0)
+			return refuse(refusal, .Bad_Value, .Region, 0, u64(function.result_detail), 0)
 		}
 		start := load(record[:], field, u64)
 		if start > limit || u64(described_record.size) > limit - start {
-			return refuse(refusal, .Out_Of_Range, .Bytes, 0, start + min(u64(described_record.size), limit), limit)
+			return refuse(refusal, .Out_Of_Range, .Region, 0, start + min(u64(described_record.size), limit), limit)
 		}
 		region_range_add(&ranges, {start, start + u64(described_record.size), true, 0}, refusal) or_return
 		call.records[index] = {}

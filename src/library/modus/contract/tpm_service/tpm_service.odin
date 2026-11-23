@@ -121,7 +121,7 @@ Command :: enum u32 {
 	// it unseals. The completion: the secret at REGION_SECRET, and
 	// values[0] its bytes. After an unseal with Authorization.Value that the
 	// TPM answered with another answer than a counted failure
-	// (Grant_Or_Right_Missing), the service sends TPM2_Shutdown(CLEAR): the system has
+	// (unseal_authorization_wrong), the service sends TPM2_Shutdown(CLEAR): the system has
 	// no orderly stop, and a TPM counts a failure at a start that follows a
 	// use of such an object with no TPM2_Shutdown.
 	Unseal = 2,
@@ -163,19 +163,23 @@ Request_Source :: enum u8 {
 // record, whose value found holds the response code of the TPM or the
 // Device_Step, and whose value holds the code of the command of the TPM:
 //
-//   Argument_Refused        a value out of its range (Bad_Value), or a
-//                           refused pin (value found: its Pin_Refusal).
+//   Argument_Refused        a value out of its range (Bad_Value), a count
+//                           of a part past its limit (Too_Long), a part
+//                           that is not whole (Malformed), or a refused pin
+//                           (value found: its Pin_Refusal). A sealed object
+//                           that this TPM did not make under the PCR values
+//                           of its policy, TPM_RC_TICKET, or whose policy or
+//                           attributes are not those of a sealed object
+//                           (Not_Authentic, argument: the part, 1 to 4):
+//                           nothing is unsealed. A wrong authorization value
+//                           that the TPM refused, TPM_RC_AUTH_FAIL
+//                           (Not_Authentic, argument 5:
+//                           unseal_authorization_wrong).
 //   Operation_Unsupported   a command that names none (Unsupported).
-//   Grant_Or_Right_Missing  a command of the other ring (No_Grant), or a
-//                           wrong authorization value that the TPM counted,
-//                           TPM_RC_AUTH_FAIL (No_Grant).
+//   Grant_Or_Right_Missing  a command of the other ring (No_Grant).
 //   Wrong_State             the PCRs do not hold the values of the seal:
 //                           another system, or another state of Secure Boot
 //                           (State).
-//   Data_Damaged            a sealed object that this TPM did not make under
-//                           the PCR values of its policy, TPM_RC_TICKET, or
-//                           whose policy or attributes are not those of a
-//                           sealed object (Damaged): nothing is unsealed.
 //   Callee_Busy             TPM_RC_LOCKOUT: the TPM refuses each try for
 //                           now; the PCRs and the value were not checked
 //                           (Busy).
@@ -279,9 +283,25 @@ request_of_record :: proc "contextless" (kind: u32, values: [7]u64, source: Requ
 	}
 	authorization, authorization_ok := authorization_of_word(authorization_word)
 	if !authorization_ok {
-		return {}, .Argument_Refused, errors.error_make(.Bad_Value, .None, command == .Seal ? 1 : 5, cast(i64)authorization_word, i64(max(Authorization)))
+		return {}, .Argument_Refused, errors.error_make(.Bad_Value, .None, command == .Seal ? 1 : UNSEAL_AUTHORIZATION_ARGUMENT, cast(i64)authorization_word, i64(max(Authorization)))
 	}
 	return {command = command, authorization = authorization}, .Succeeded, {}
+}
+
+// The arguments of an Unseal, as the argument of its error record names
+// them: values[n] is the argument n + 1, since 0 names no argument.
+UNSEAL_PUBLIC_AREA_ARGUMENT :: 1
+UNSEAL_CREATION_DATA_ARGUMENT :: 3
+UNSEAL_CREATION_TICKET_ARGUMENT :: 4
+UNSEAL_AUTHORIZATION_ARGUMENT :: 5
+
+// unseal_authorization_wrong says if the refusal of an Unseal is a wrong
+// authorization value that the TPM refused: Not_Authentic on the argument
+// of the authorization. A sealed object that this TPM did not make has the
+// same outcome and kind on an argument of its parts, and the caller acts
+// otherwise: no passphrase opens it.
+unseal_authorization_wrong :: proc "contextless" (outcome: call_outcome.Call_Outcome, record: errors.Error_Record) -> bool {
+	return outcome == .Argument_Refused && record.kind == i64(errors.Kind.Not_Authentic) && record.argument == UNSEAL_AUTHORIZATION_ARGUMENT
 }
 
 // measure_refusal decides one Measure_Start_Policy from the count of the

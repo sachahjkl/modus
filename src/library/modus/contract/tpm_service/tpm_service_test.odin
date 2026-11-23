@@ -3,6 +3,7 @@ package tpm_service
 
 import "core:testing"
 import "modus:contract/call_outcome"
+import "modus:contract/errors"
 
 // The border of the service, as its main loop calls it. Each record that
 // names no request gives a refusal and an empty request, and its values
@@ -116,4 +117,27 @@ a_word_of_the_ring_that_names_no_member_is_refused :: proc(t: ^testing.T) {
 		testing.expect_value(t, read, member)
 		testing.expect(t, len(device_step_words[member]) > 0)
 	}
+}
+
+// A wrong authorization value is the one refusal that unlock counts as a
+// wrong passphrase. A sealed object that this TPM did not make has the same
+// outcome and kind on each part, the border refuses an authorization word
+// with Bad_Value on the same argument, and no other outcome is a wrong
+// value: none of them is taken for one. The wrong value comes last.
+@(test)
+only_a_refused_authorization_value_is_a_wrong_authorization :: proc(t: ^testing.T) {
+	for argument in ([?]i64{0, UNSEAL_PUBLIC_AREA_ARGUMENT, 2, UNSEAL_CREATION_DATA_ARGUMENT, UNSEAL_CREATION_TICKET_ARGUMENT, UNSEAL_AUTHORIZATION_ARGUMENT + 1, -1, max(i64)}) {
+		record := errors.error_make(.Not_Authentic, .None, argument)
+		testing.expectf(t, !unseal_authorization_wrong(.Argument_Refused, record), "the argument %d is taken for the authorization", argument)
+	}
+	_, outcome, record := request_of_record(u32(Command.Unseal), {4 = max(u64)}, .Client_Ring)
+	testing.expect_value(t, record.argument, i64(UNSEAL_AUTHORIZATION_ARGUMENT))
+	testing.expect(t, !unseal_authorization_wrong(outcome, record))
+	wrong := errors.error_make(.Not_Authentic, .None, UNSEAL_AUTHORIZATION_ARGUMENT)
+	for other in call_outcome.Call_Outcome {
+		if other != .Argument_Refused {
+			testing.expectf(t, !unseal_authorization_wrong(other, wrong), "the outcome %v is taken for a wrong authorization", other)
+		}
+	}
+	testing.expect(t, unseal_authorization_wrong(.Argument_Refused, wrong))
 }

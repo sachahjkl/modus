@@ -80,7 +80,7 @@ stop_report :: proc "c" (process: ^string, result: ^[]Stop_Frame_Row, error: ^er
 	if !answered {
 		return call_outcome.fail(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, DISK_DEBUG_OBJECT_MILLISECONDS)
 	}
-	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return root_refusal_taken(error, completion), 0
 	}
 	if !received {

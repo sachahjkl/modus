@@ -40,9 +40,10 @@ debug_start :: proc "contextless" (holder: ^Started, name: string, record_values
 			return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Processes, 1)
 		}
 		if status := held_process_release(held); status != .Ok {
-			// A process that cannot start holds its place for nothing.
+			// A process that cannot start holds its place for nothing: it
+			// stops, and the caller sees that change.
 			started_process_stop(held)
-			return kernel_refused(values, kind, status)
+			return changed_then_refused(values, kernel_refused(values, kind, status))
 		}
 		values^ = {}
 		return .Succeeded
@@ -58,10 +59,6 @@ debug_start :: proc "contextless" (holder: ^Started, name: string, record_values
 		hold = .At_First_Instruction
 	case .Start_Replay:
 		hold = .For_Replay
-	}
-	// One held process for each caller: a release names it by its caller.
-	if held != nil {
-		return root_ring.refuse(values, .Callee_Busy, kind, .Full, .Debugged_Processes, 1, 0, 1)
 	}
 	if .Debug in caller.revoked {
 		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Debug_Access, 1)
@@ -83,6 +80,12 @@ debug_start :: proc "contextless" (holder: ^Started, name: string, record_values
 			system.log_fact(.Info, Debug_Access_Refused{caller = module_name_field(system.name_of(caller.name[:])), target = module_name_field(name), grant = text_field(start_grant.GRANT_NAMES[grant], 24)})
 			return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Debug_Access, 1, 0, 0, 1 + i64(grant))
 		}
+	}
+	// One held process for each caller: a release names it by its caller.
+	// After the grants, so that a caller with no grant learns nothing of
+	// the place.
+	if held != nil {
+		return root_ring.refuse(values, .Callee_Busy, kind, .Full, .Debugged_Processes, 1, 0, 1)
 	}
 	place: ^Started
 	if outcome := start(name, caller_principal, asker = caller, place = &place, refusal = values, hold = hold); outcome != .Succeeded {

@@ -121,7 +121,9 @@ pin_write :: proc "contextless" (values: [7]u64) -> Outcome {
 		system.log_fact(.Warning, Pin_Write_Refused{index = value_kinds.Hexadecimal_Sixteen_Digits(index), pin_refusal = pin_refusal_field(refusal)})
 		return request_failed(.Argument_Refused, .Bad_Value, 0, i64(refusal))
 	}
-	removed := false
+	// removed and defined: the index changed, so a failure after it is a
+	// partial change.
+	removed, defined := false, false
 	switch step {
 	case .Remove_Then_Define_Then_Write:
 		if failed, ok := pin_index_command(tpm2.nv_undefine_command(command_bytes[:], index), tpm2.COMMAND_NV_UNDEFINE_SPACE); !ok {
@@ -134,9 +136,11 @@ pin_write :: proc "contextless" (values: [7]u64) -> Outcome {
 		if failed, ok := pin_index_command(tpm2.pin_define_command(command_bytes[:], index, &policy, size), tpm2.COMMAND_NV_DEFINE_SPACE); !ok {
 			if removed {
 				system.log_fact(.Warning, Pin_Lost_After_Removal{index = value_kinds.Hexadecimal_Sixteen_Digits(index)})
+				return changed_then_failed(failed)
 			}
 			return failed
 		}
+		defined = true
 	case .Write:
 	}
 	session, session_failed, session_ok := policy_session(.Policy, false)
@@ -145,11 +149,17 @@ pin_write :: proc "contextless" (values: [7]u64) -> Outcome {
 		if removed {
 			system.log_fact(.Warning, Pin_Lost_After_Removal{index = value_kinds.Hexadecimal_Sixteen_Digits(index)})
 		}
+		if removed || defined {
+			return changed_then_failed(session_failed)
+		}
 		return session_failed
 	}
 	if failed, ok := pin_index_command(tpm2.pin_write_command(command_bytes[:], index, session, proposed[:size]), tpm2.COMMAND_NV_WRITE); !ok {
 		if removed {
 			system.log_fact(.Warning, Pin_Lost_After_Removal{index = value_kinds.Hexadecimal_Sixteen_Digits(index)})
+		}
+		if removed || defined {
+			return changed_then_failed(failed)
 		}
 		return failed
 	}

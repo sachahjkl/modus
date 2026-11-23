@@ -259,13 +259,21 @@ read_region_add :: proc "contextless" (command: ring.Record) -> (ended: call_out
 	handle, place := system.Handle(command.values[0]), command.values[1]
 	kind, rights, through := system.handle_state(handle, ring_memory)
 	// Only a handle that came through the ring is closed on a refusal: a
-	// number of the client can name a handle of this service.
+	// number of the client can name a handle of this service. So it is
+	// tested first, and the client learns nothing of a handle of this
+	// service.
 	switch {
-	case kind != .Memory:
-		return .Argument_Refused, .Done, errors.ring_fail(ADD, .Handle_Kind, .None, 1, i64(handle), i64(op.Object_Kind.Memory), i64(kind))
 	case !through:
-		return .Argument_Refused, .Done, errors.ring_fail(ADD, .Absent, .Region, 1)
-	case .Read not_in rights || .Write in rights:
+		return .Argument_Refused, .Done, errors.ring_fail(ADD, .Handle_Absent, .Lent_Handles, 1, i64(handle))
+	case kind != .Memory:
+		system.close(handle)
+		return .Argument_Refused, .Done, errors.ring_fail(ADD, .Handle_Kind, .None, 1, i64(handle), i64(op.Object_Kind.Memory), i64(kind))
+	case .Write in rights:
+		// A rule of the argument, not a right that it lacks: the device
+		// only reads a read region.
+		system.close(handle)
+		return .Argument_Refused, .Done, errors.ring_fail(ADD, .Bad_Flags, .None, 1, i64(handle), i64(transmute(u32)system.Rights{.Read}), i64(transmute(u32)rights))
+	case .Read not_in rights:
 		system.close(handle)
 		return .Grant_Or_Right_Missing, .Done, errors.ring_fail(ADD, .Handle_Rights, .None, 1, i64(handle), i64(transmute(u32)system.Rights{.Read}), i64(transmute(u32)rights))
 	case place >= frame.READ_REGION_CAPACITY:
@@ -279,8 +287,10 @@ read_region_add :: proc "contextless" (command: ring.Record) -> (ended: call_out
 			// command waits for them, as a Send waits for a free slot.
 			return .Succeeded, .Full, {}
 		}
+		// The place is an argument, and the contract refuses a place that
+		// holds a region (frame.Command.Read_Region_Add).
 		system.close(handle)
-		return .Callee_Busy, .Done, errors.ring_fail(ADD, .Busy, .None, 2, i64(place))
+		return .Argument_Refused, .Done, errors.ring_fail(ADD, .Bad_Value, .None, 2, i64(place))
 	}
 	physical, physical_status := system.memory_physical(machine, handle)
 	if physical_status != .Ok {

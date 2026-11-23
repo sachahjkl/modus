@@ -1,5 +1,6 @@
 package unlock
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/tpm_service"
@@ -61,9 +62,9 @@ Versions_Erased :: struct {
 }
 
 // The root service did not take the record of the principal.
-@(log_fact = "unlock: the root service did not take the record of the principal \"{principal_name}\": status {status}")
+@(log_fact = "unlock: the root service did not take the record of the principal \"{principal_name}\": outcome {outcome}")
 Record_Not_Taken :: struct {
-	status:         op.Status_Word,
+	outcome:        call_outcome.Call_Outcome_Word,
 	principal_name: [24]u8,
 }
 
@@ -139,9 +140,9 @@ Passphrase_Opened_Seal :: struct {
 
 // The root service did not take the key of the disk grant table of
 // principal 0.
-@(log_fact = "unlock: the root service did not take the key of the disk grant table of principal 0: status {status}")
+@(log_fact = "unlock: the root service did not take the key of the disk grant table of principal 0: outcome {outcome}")
 Machine_Table_Key_Not_Taken :: struct {
-	status: op.Status_Word,
+	outcome: call_outcome.Call_Outcome_Word,
 }
 
 // The keys are sealed by the TPM, and no TPM service runs.
@@ -488,9 +489,9 @@ Passphrase_Change_Unknown :: struct {
 }
 
 // The root service did not take the end of a change.
-@(log_fact = "unlock: the root service did not take the end of the change: status {status}")
+@(log_fact = "unlock: the root service did not take the end of the change: outcome {outcome}")
 Change_End_Not_Taken :: struct {
-	status: op.Status_Word,
+	outcome: call_outcome.Call_Outcome_Word,
 }
 
 // The store did not answer a write: the object is read back.
@@ -587,10 +588,10 @@ Machine_Tpm_Passphrase_Record_Refused :: struct {
 }
 
 // The root service did not start the session of a principal.
-@(log_fact = "unlock: the root service did not start the session of principal {principal}: status {status}")
+@(log_fact = "unlock: the root service did not start the session of principal {principal}: outcome {outcome}")
 Session_Not_Started :: struct {
 	principal: u64,
-	status:    op.Status_Word,
+	outcome:   call_outcome.Call_Outcome_Word,
 }
 
 // The recovery key of a principal is not typed.
@@ -630,9 +631,9 @@ Principal_Tpm_File_Refused :: struct {
 }
 
 // The root service did not take the state of the machine passphrase.
-@(log_fact = "unlock: the root service did not take the state of the machine passphrase: status {status}")
+@(log_fact = "unlock: the root service did not take the state of the machine passphrase: outcome {outcome}")
 Machine_State_Not_Taken :: struct {
-	status: op.Status_Word,
+	outcome: call_outcome.Call_Outcome_Word,
 }
 
 // The root service gave a mode word that names no mode of unlock.
@@ -1128,6 +1129,12 @@ sixteen_digits_field :: proc "contextless" (code: u64) -> value_kinds.Hexadecima
 // the reader writes.
 status_field :: proc "contextless" (word: u32) -> op.Status_Word {
 	return op.Status_Word(word)
+}
+
+// outcome_field gives the outcome word of a completion of the root service
+// as it came: a word that names no member keeps its number in the line.
+outcome_field :: proc "contextless" (word: u32) -> call_outcome.Call_Outcome_Word {
+	return call_outcome.Call_Outcome_Word(word)
 }
 
 // change_refusal_log writes why a change of the principal of this run is

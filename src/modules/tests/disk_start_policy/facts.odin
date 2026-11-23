@@ -56,8 +56,8 @@ Wrong_Command_Not_Refused :: struct {
 	command: [24]u8,
 }
 
-// Each command of the console was refused with No_Right.
-@(log_fact = "disk_start_policy: Start_Policy_Choice, Start_From_Disk, Disk_Grant and Connect are refused with No_Right: as it must")
+// Each command of the console was refused with Grant_Or_Right_Missing.
+@(log_fact = "disk_start_policy: Start_Policy_Choice, Start_From_Disk, Disk_Grant and Connect are refused with Grant_Or_Right_Missing: as it must")
 Commands_Refused :: struct {}
 
 // A process of its order did not start.

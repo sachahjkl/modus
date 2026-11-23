@@ -273,7 +273,7 @@ Unit :: enum i64 {
 	Tcp_Ports   = 23, // The local TCP ports of a client grant.
 	Requests    = 24, // Requests in flight.
 	Endpoint    = 25, // A remote of the network: an IPv4 address and a port, in one value (endpoint_pack). No_Grant: value the remote that the call names, limit the remote of the grant (0: none), found the local port when it is not a port of the endpoint.
-	Region      = 26, // Absent: the data region of a ring. Overlap: bytes of the call region of an isolated call; value is their offset, limit their count.
+	Region      = 26, // Absent: the data region of a ring. Damaged, State: a body region of an output. Each other kind: a refusal of the receiver of an isolated call (isolated.decode), with its amounts in bytes of the call region; with Overlap, value is their offset and limit their count.
 	Root_Commands = 27, // No_Grant: the commands of the root ring that change other processes.
 	Services    = 28, // Services that run.
 	Grants      = 29, // The grants of a process (system.Root_Grant).

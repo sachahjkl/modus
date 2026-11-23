@@ -770,7 +770,13 @@ disk_load_event :: proc "contextless" (record: ring.Record) {
 }
 
 // disk_load_refused writes the line of the cause that the service gave,
-// and ends the load with its completion.
+// and ends the load with its completion. The file of a module and of each
+// import is data of the system that the storage service holds, not an
+// argument of the sender: a fault of its bytes (empty, past the limit of a
+// file, an import entry outside its file or of no kind) is Data_Damaged
+// with Damaged. A fault of the answer of the storage service, which gave
+// fewer or more bytes than the object has, for the module or an import
+// alike, is Callee_Unavailable: the party that the load needs failed.
 @(private = "file")
 disk_load_refused :: proc "contextless" (report: ^rd.Event_Report) {
 	kind := u32(root_ring.Root_Command.Start_From_Disk)
@@ -803,11 +809,11 @@ disk_load_refused :: proc "contextless" (report: ^rd.Event_Report) {
 		disk_load_end(.Callee_Unavailable, disk_load_refused_values())
 	case .Object_Empty:
 		system.log_fact(.Warning, Disk_Load_Refused_Object_Empty{refused_process = name})
-		disk_load_end(.Argument_Refused, errors.ring_fail(kind, .Malformed, .None, 1))
+		disk_load_end(.Data_Damaged, errors.ring_fail(kind, .Damaged, .Bytes, 1))
 	case .Object_Too_Large:
 		size := report.byte_count
 		system.log_fact(.Warning, Disk_Load_Refused_Object_Too_Large{object_bytes = size, file_bytes_limit = u64(disk_process.FILE_BYTES_LIMIT), refused_process = name})
-		disk_load_end(.Argument_Refused, errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(min(size, 1 << 62)), disk_process.FILE_BYTES_LIMIT))
+		disk_load_end(.Data_Damaged, errors.ring_fail(kind, .Damaged, .Bytes, 1, i64(min(size, 1 << 62)), disk_process.FILE_BYTES_LIMIT))
 	case .No_Byte_At:
 		system.log_fact(.Warning, Disk_Load_Refused_No_Byte_At{received_bytes = report.received_bytes, object_bytes = report.byte_count, refused_process = name})
 		disk_load_end(.Callee_Unavailable, disk_load_refused_values())
@@ -824,11 +830,11 @@ disk_load_refused :: proc "contextless" (report: ^rd.Event_Report) {
 		// The border bounded the length of the name for each refusal.
 		file_name := text_field(string(report.file_name[:report.file_name_length]), 24)
 		system.log_fact(.Warning, Disk_Load_Refused_Import_No_Byte_At{received_bytes = report.received_bytes, object_bytes = report.byte_count, refused_process = name, file = file_name})
-		disk_load_end(.Data_Damaged, disk_load_import_refused(.Damaged))
+		disk_load_end(.Callee_Unavailable, disk_load_import_refused(.Refused))
 	case .Import_Too_Many_Bytes:
 		file_name := text_field(string(report.file_name[:report.file_name_length]), 24)
 		system.log_fact(.Warning, Disk_Load_Refused_Import_Too_Many_Bytes{given_bytes = report.received_bytes, left_bytes = report.left_bytes, refused_process = name, file = file_name})
-		disk_load_end(.Data_Damaged, disk_load_import_refused(.Damaged))
+		disk_load_end(.Callee_Unavailable, disk_load_import_refused(.Refused))
 	case .Import_Missing:
 		importer := string(disk_load.name[:disk_load.name_length])
 		if report.importer_name_length > 0 {

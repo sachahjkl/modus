@@ -1449,6 +1449,14 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 		system.log_fact(.Info, Debugging_Ended{debugger = module_name_field(system.name_of(holder.name[:])), target = module_name_field(name), caller = module_name_field(system.name_of(caller.name[:]))})
 		return .Succeeded
 	}
+	// The grants of the caller first: a caller with no grant learns
+	// nothing of the name.
+	if .Debug in caller.revoked {
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Debug_Access, 1)
+	}
+	if .Acts_For_Principal not_in grants_held(caller) {
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Acts_For_Principal, 1)
+	}
 	target := find(name)
 	if target == nil {
 		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Processes, 1)
@@ -1456,10 +1464,7 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 	if target == caller || target == holder {
 		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Debug_Access, 1)
 	}
-	if .Debug in caller.revoked {
-		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Debug_Access, 1)
-	}
-	if .Acts_For_Principal not_in grants_held(caller) || target.principal != caller_principal {
+	if target.principal != caller_principal {
 		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Acts_For_Principal, 1)
 	}
 	if grant, refuses := debug_refusing_grant(caller, target); refuses {
@@ -1603,19 +1608,24 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 	case .Store:
 		// The store is data of the storage service: the root service tells it
 		// on its service ring that the grant of each connection changed.
+		// Each Grant record must fit before anything changes, as for
+		// Acts_For_Principal: else the revocation is refused and nothing
+		// changes.
+		if grant_room_short(item, .Store) != nil {
+			return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests), false
+		}
 		count: u64
 		for &connection in connections {
-			if connection.caller != item || connection.history || !is_role_holder(system.name_of(connection.service.name[:]), .Storage) {
+			if !revoked_connection(&connection, item, .Store) {
 				continue
 			}
 			// The amount ends, and the grant to erase versions with it, as it
 			// is a right over the store; the principal and the flag to act for
 			// it stay.
 			kept := grant_for(item, connection.service) &~ (isolated.CALLER_AMOUNT_MASK | isolated.CALLER_ERASES_VERSIONS)
-			if !system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = kept}}) {
-				return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests), false
+			if system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = kept}}) {
+				count += 1
 			}
-			count += 1
 		}
 		item.granted -= {which}
 		item.revoked += {which}
@@ -1634,7 +1644,7 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 		// changes; else the revocation is refused and nothing changes. This
 		// service is the one writer of a service ring, so the room cannot
 		// shrink between the check and the sends.
-		if service := grant_room_short(item); service != nil {
+		if service := grant_room_short(item, .All); service != nil {
 			system.log_fact(.Warning, Acts_For_Principal_Revocation_Refused{holder = module_name_field(name), service = module_name_field(system.name_of(service.name[:]))})
 			return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests), false
 		}
@@ -1656,17 +1666,20 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 		// The store of the history is data of the storage service, as the
 		// private store: the storage service ends the grant of the
 		// connection, and the process keeps its history in its memory only.
+		// Each Grant record must fit before anything changes.
+		if grant_room_short(item, .History) != nil {
+			return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests), false
+		}
 		item.granted -= {which}
 		item.revoked += {which}
 		count: u64
 		for &connection in connections {
-			if connection.caller != item || !connection.history {
+			if !revoked_connection(&connection, item, .History) {
 				continue
 			}
-			if !system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = isolated.caller_grant_make(0, item.principal, false)}}) {
-				return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests), false
+			if system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = isolated.caller_grant_make(0, item.principal, false)}}) {
+				count += 1
 			}
-			count += 1
 		}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Connections{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), connections = count})
@@ -2087,9 +2100,9 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 			break
 		}
 		// A service on demand that does not start: the party that the
-		// connection needs failed. The record of its start is in refusal.
+		// connection needs failed (needed_service_failed).
 		if started_outcome := start(name, refusal = refusal); started_outcome != .Succeeded {
-			return nil, nil, 0, 0, root_ring.refuse(refusal, .Callee_Unavailable, kind, .Refused, .Services, 1, 0, 0, i64(started_outcome))
+			return nil, nil, 0, 0, needed_service_failed(refusal)
 		}
 	}
 	if service == nil {
@@ -2207,14 +2220,41 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 	return free, service, ring_memory, region_memory, .Succeeded
 }
 
+// The connections of a process whose service a revocation tells that the
+// grant of the connection changed.
+Revoked_Connections :: enum u8 {
+	All,     // Acts_For_Principal: each connection.
+	Store,   // Store: the connections to the storage service, past the history.
+	History, // History: the connections to the store of the history.
+}
+
+// revoked_connection says if a revocation of the grants of item tells the
+// service of connection.
+revoked_connection :: proc "contextless" (connection: ^Connection, item: ^Started, which: Revoked_Connections) -> bool {
+	if connection.caller != item {
+		return false
+	}
+	switch which {
+	case .All:
+		return true
+	case .Store:
+		return !connection.history && is_role_holder(system.name_of(connection.service.name[:]), .Storage)
+	case .History:
+		return connection.history
+	}
+	return false
+}
+
 // grant_room_short gives the first service whose service ring cannot hold
-// one Grant record for each connection of a process to it, with the room
-// for one Disconnect of each connection of that service still kept
-// (connection_open keeps it, so that an end of a connection always reaches
-// the service). nil: each ring holds them.
-grant_room_short :: proc "contextless" (item: ^Started) -> ^Started {
+// one Grant record for each connection of a process to it that the
+// revocation tells, with the room for one Disconnect of each connection of
+// that service still kept (connection_open keeps it, so that an end of a
+// connection always reaches the service). nil: each ring holds them. This
+// service is the one writer of a service ring, so the room cannot shrink
+// between the check and the sends.
+grant_room_short :: proc "contextless" (item: ^Started, which: Revoked_Connections) -> ^Started {
 	for &asked in connections {
-		if asked.caller != item {
+		if !revoked_connection(&asked, item, which) {
 			continue
 		}
 		grants: u32
@@ -2224,7 +2264,7 @@ grant_room_short :: proc "contextless" (item: ^Started) -> ^Started {
 				continue
 			}
 			connected += 1
-			if other.caller == item {
+			if revoked_connection(&other, item, which) {
 				grants += 1
 			}
 		}

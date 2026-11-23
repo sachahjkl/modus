@@ -17,6 +17,7 @@ package root
 
 import "modus:contract/call_outcome"
 import "modus:contract/replacement_list"
+import "internal:root/replacement_rules"
 import "internal:root/replacement_signature"
 import "modus:contract/root_ring"
 import "modus:system"
@@ -24,16 +25,13 @@ import "modus:system"
 // replace changes the replacement table of the machine, for a process with
 // the grant Replace: where a module imports the module of the name, the
 // loaders give the module of entry by of the boot image (from 1). 0
-// removes the record. It refuses a chain: one replacement for one import,
-// so a loader never follows two records. Then it refuses a pair that no row
-// signed by the signing key of the system names. Each refusal writes its
-// outcome and its error record in values.
+// removes the record. The facts of the state decide each refusal
+// (replacement_rules.replace_refusal): a chain, one replacement for one
+// import, so that a loader never follows two records, and a pair that no
+// row signed by the signing key of the system names. Each refusal writes
+// its outcome and its error record in values.
 replace :: proc "contextless" (asker: ^Started, name: string, by: u64, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Replace)
-	if .Replace not_in asker.start_grant_set.grants {
-		values^ = root_ring.sender_refusal(.Replace)
-		return .Grant_Or_Right_Missing
-	}
 	entries := system.image_entries(image)
 	from, to: [32]u8
 	from_name := ""
@@ -43,47 +41,45 @@ replace :: proc "contextless" (asker: ^Started, name: string, by: u64, values: ^
 			from_name = system.name_of(entry.name[:])
 		}
 	}
-	if by > u64(len(entries)) {
-		return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, 2, i64(min(by, 1 << 62)), i64(min(u64(len(entries)), 1 << 62)))
+	facts := replacement_rules.Replace_Facts {
+		granted       = .Replace in asker.start_grant_set.grants,
+		by            = by,
+		entry_count   = u64(len(entries)),
+		name_in_image = from != {},
 	}
-	if from == {} {
-		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Modules, 1)
-	}
-	if by != 0 {
+	// The facts of a new replacement: the removal of a replacement needs no
+	// row, as it gives back the module that the importer names, which the
+	// system description lists. The signature is checked only for a sender
+	// that may ask.
+	if facts.granted && facts.name_in_image && by != 0 && by <= facts.entry_count {
 		to = entries[by - 1].hash
-		// A module does not replace itself.
-		if to == from {
-			return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, 2, i64(by))
-		}
+		facts.replaces_itself = to == from
 		for item in system.replacements_read(replacement_table, &replacement_records) {
 			if item.from == to || item.to == from {
-				return root_ring.refuse(values, .Wrong_State, kind, .State, .Records, 2, i64(by))
+				facts.chained = true
 			}
 		}
-		// The removal of a replacement needs no row: it gives back the
-		// module that the importer names, which the system description
-		// lists. A new replacement needs one.
-		decision, problem := replacement_signature.system_decision(replacement_list_bytes(), from, to, trust_boot_report.trust.public_key)
-		if decision != .Accepted {
-			reason := replacement_signature.decision_sentences[decision]
-			if decision == .List_Not_Valid {
-				reason = replacement_list.list_problem_sentences[problem]
-			}
-			system.log_fact(.Warning, Replacement_Refused{replaced = module_name_field(from_name), replacement = module_name_field(system.name_of(entries[by - 1].name[:])), reason = text_field(reason, 80)})
-			switch decision {
-			case .Accepted:
-			case .No_Row, .No_List:
-				return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Records, 2, i64(by))
-			case .Not_Authentic:
-				return root_ring.refuse(values, .Argument_Refused, kind, .Not_Authentic, .None, 2, i64(by))
-			case .List_Not_Valid:
-				return root_ring.refuse(values, .Data_Damaged, kind, .Damaged, .Records, 2, i64(by), 0, i64(problem))
-			}
+		if !facts.replaces_itself {
+			facts.decision, facts.problem = replacement_signature.system_decision(replacement_list_bytes(), from, to, trust_boot_report.trust.public_key)
 		}
+	}
+	outcome, refusal, by_signature := replacement_rules.replace_refusal(facts)
+	if by_signature {
+		reason := replacement_signature.decision_sentences[facts.decision]
+		if facts.decision == .List_Not_Valid {
+			reason = replacement_list.list_problem_sentences[facts.problem]
+		}
+		system.log_fact(.Warning, Replacement_Refused{replaced = module_name_field(from_name), replacement = module_name_field(system.name_of(entries[by - 1].name[:])), reason = text_field(reason, 80)})
+	}
+	if outcome != .Succeeded {
+		values^ = refusal
+		return outcome
 	}
 	if written := system.replacements_write(replacement_table, from, to); written != .Ok {
 		if written == .No_Slot {
-			return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, kind, .Full, .Records, 0, 0, system.REPLACEMENT_CAPACITY)
+			full_outcome, full_refusal := replacement_rules.table_full_refusal(system.REPLACEMENT_CAPACITY)
+			values^ = full_refusal
+			return full_outcome
 		}
 		return kernel_refused(values, kind, written)
 	}

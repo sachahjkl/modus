@@ -108,7 +108,8 @@ remote_transport_failure_outcome :: proc(call_transport: machine.Call_Transport)
 	case .Peer_Absent:
 		return .Callee_Unavailable
 	case .Peer_Full:
-		return .Budget_Or_Capacity_Exhausted
+		// The peer serves other callers too: its room frees by itself.
+		return .Callee_Busy
 	case .Answer, .Answer_Too_Large:
 		return .Answer_Unreadable
 	case .Client_Refused:
