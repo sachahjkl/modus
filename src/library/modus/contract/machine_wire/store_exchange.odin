@@ -84,13 +84,51 @@ Store_Conflict :: struct {
 	value:      machine_mesh.Conflict_Value,
 }
 
+// The procedure that grows the tables of a version in place: after it, the
+// entries hold at least entries_least and the conflicts at least
+// conflicts_least, with the content of before kept. The owner of the
+// memory commits the pages that its budget pays; false is a budget that
+// pays no more, and the version keeps its tables.
+Store_Version_Grow :: #type proc "contextless" (user: rawptr, version: ^Store_Version, entries_least, conflicts_least: int) -> bool
+
 // A version: its tables are memory of the caller, and their lengths are
-// its capacities.
+// its capacities now. With grow, the tables grow when a write, a merge or
+// a page needs room, so a version has the size that the budget of its
+// owner pays, and no count of the contract.
 Store_Version :: struct {
 	entries:        []Store_Entry,
 	count:          int,
 	conflicts:      []Store_Conflict, // Sorted by identifier, then by the hash of the conflict value.
 	conflict_count: int,
+	grow:           Store_Version_Grow,
+	grow_user:      rawptr,
+}
+
+// version_room makes room in a version for entries and conflicts: true
+// when its tables hold them, after a growth when they did not.
+@(private)
+version_room :: proc "contextless" (version: ^Store_Version, entries, conflicts: int) -> bool {
+	if entries <= len(version.entries) && conflicts <= len(version.conflicts) {
+		return true
+	}
+	if version.grow == nil || !version.grow(version.grow_user, version, entries, conflicts) {
+		return false
+	}
+	return entries <= len(version.entries) && conflicts <= len(version.conflicts)
+}
+
+// The table of the exchanged stores of a peer: its rows are memory of the
+// caller, and grow (when given) adds rows in place when each row is taken.
+Store_Table_Grow :: #type proc "contextless" (user: rawptr, table: ^Store_Table, rows_least: int) -> bool
+
+Store_Table :: struct {
+	rows:      []Exchanged_Store,
+	grow:      Store_Table_Grow,
+	grow_user: rawptr,
+	// The growth of the versions of each store: each version of a row takes
+	// it when the row is taken.
+	version_grow:      Store_Version_Grow,
+	version_grow_user: rawptr,
 }
 
 // The place of a page in a version: its first entry and its first conflict.
@@ -197,7 +235,7 @@ store_exchange_reset :: proc "contextless" (store: ^Exchanged_Store) {
 	versions := [STORE_VERSIONS_OF_A_STORE]^Store_Version{&store.current, &store.common, &store.offered, &store.reply, &store.incoming, &store.previous_common, &store.last_reply, &store.merged, &store.merged_later}
 	kept: [STORE_VERSIONS_OF_A_STORE]Store_Version
 	for version, index in versions {
-		kept[index] = {entries = version.entries, conflicts = version.conflicts}
+		kept[index] = {entries = version.entries, conflicts = version.conflicts, grow = version.grow, grow_user = version.grow_user}
 	}
 	store^ = {}
 	for version, index in versions {
@@ -218,7 +256,7 @@ version_copy :: proc "contextless" (destination, source: ^Store_Version) -> Stor
 	if destination == source {
 		return .Ok
 	}
-	if source.count > len(destination.entries) || source.conflict_count > len(destination.conflicts) {
+	if !version_room(destination, source.count, source.conflict_count) {
 		return .Refused_Full
 	}
 	copy(destination.entries, source.entries[:source.count])
@@ -298,12 +336,15 @@ conflict_names :: proc "contextless" (record: ^Store_Conflict, hash: blake3.Hash
 // store_exchange_add names a store that the plan exchanges with one paired
 // machine. The store takes a free row of the table, with the memory of its
 // versions that the row holds.
-store_exchange_add :: proc "contextless" (stores: []Exchanged_Store, store_identifier: blake3.Hash, partner_identity: [machine_mesh.PUBLIC_KEY_SIZE]u8) -> (store: ^Exchanged_Store, status: Store_Status) {
+store_exchange_add :: proc "contextless" (stores: ^Store_Table, store_identifier: blake3.Hash, partner_identity: [machine_mesh.PUBLIC_KEY_SIZE]u8) -> (store: ^Exchanged_Store, status: Store_Status) {
+	if stores == nil {
+		return nil, .Refused_Nil_Input
+	}
 	if hash_is_zero(store_identifier) || machine_mesh.key_is_zero(partner_identity) {
 		return nil, .Refused_Zero_Identifier
 	}
 	free: ^Exchanged_Store
-	for &item in stores {
+	for &item in stores.rows {
 		if item.in_use && item.store_identifier == store_identifier {
 			return nil, .Refused_Exists
 		}
@@ -312,9 +353,23 @@ store_exchange_add :: proc "contextless" (stores: []Exchanged_Store, store_ident
 		}
 	}
 	if free == nil {
-		return nil, .Refused_Full
+		// Each row is taken: the table grows by one row in place, when its
+		// owner pays it.
+		rows := len(stores.rows)
+		if stores.grow == nil || !stores.grow(stores.grow_user, stores, rows + 1) || len(stores.rows) <= rows {
+			return nil, .Refused_Full
+		}
+		free = &stores.rows[rows]
+		free^ = {}
 	}
 	store_exchange_reset(free)
+	if stores.version_grow != nil {
+		versions := [STORE_VERSIONS_OF_A_STORE]^Store_Version{&free.current, &free.common, &free.offered, &free.reply, &free.incoming, &free.previous_common, &free.last_reply, &free.merged, &free.merged_later}
+		for version in versions {
+			version.grow = stores.version_grow
+			version.grow_user = stores.version_grow_user
+		}
+	}
 	free.in_use = true
 	free.store_identifier = store_identifier
 	free.partner_identity = partner_identity
@@ -323,7 +378,7 @@ store_exchange_add :: proc "contextless" (stores: []Exchanged_Store, store_ident
 
 // store_exchange_remove ends the exchange of a store: the plan no longer
 // names it. The versions of this machine stay in the store itself.
-store_exchange_remove :: proc "contextless" (stores: []Exchanged_Store, store_identifier: blake3.Hash) -> Store_Status {
+store_exchange_remove :: proc "contextless" (stores: ^Store_Table, store_identifier: blake3.Hash) -> Store_Status {
 	store := store_exchange_find(stores, store_identifier)
 	if store == nil {
 		return .Refused_Unknown_Store
@@ -332,11 +387,11 @@ store_exchange_remove :: proc "contextless" (stores: []Exchanged_Store, store_id
 	return .Ok
 }
 
-store_exchange_find :: proc "contextless" (stores: []Exchanged_Store, store_identifier: blake3.Hash) -> ^Exchanged_Store {
-	if hash_is_zero(store_identifier) {
+store_exchange_find :: proc "contextless" (stores: ^Store_Table, store_identifier: blake3.Hash) -> ^Exchanged_Store {
+	if stores == nil || hash_is_zero(store_identifier) {
 		return nil
 	}
-	for &item in stores {
+	for &item in stores.rows {
 		if item.in_use && item.store_identifier == store_identifier {
 			return &item
 		}
@@ -370,7 +425,7 @@ version_set :: proc "contextless" (version: ^Store_Version, identifier: blake3.H
 	if hash_is_zero(hash) {
 		return .Ok
 	}
-	if version.count >= len(version.entries) {
+	if !version_room(version, version.count + 1, version.conflict_count) {
 		return .Refused_Full
 	}
 	copy(version.entries[place + 1:version.count + 1], version.entries[place:version.count])
@@ -453,7 +508,7 @@ merge_conflict_records :: proc "contextless" (merged: ^Store_Version, identifier
 	}
 	start := merged.conflict_count
 	if new_record != nil {
-		if merged.conflict_count >= len(merged.conflicts) {
+		if !version_room(merged, merged.count, merged.conflict_count + 1) {
 			return .Refused_Full
 		}
 		merged.conflicts[merged.conflict_count] = new_record^
@@ -481,7 +536,7 @@ merge_conflict_records :: proc "contextless" (merged: ^Store_Version, identifier
 				if known || !reached {
 					continue
 				}
-				if merged.conflict_count >= len(merged.conflicts) {
+				if !version_room(merged, merged.count, merged.conflict_count + 1) {
 					return .Refused_Full
 				}
 				merged.conflicts[merged.conflict_count] = record^
@@ -541,7 +596,7 @@ store_merge :: proc "contextless" (base, ours, theirs: ^Store_Version, merged: ^
 		if hash_is_zero(chosen) {
 			continue
 		}
-		if merged.count >= len(merged.entries) {
+		if !version_room(merged, merged.count + 1, merged.conflict_count) {
 			return .Refused_Full
 		}
 		merged.entries[merged.count] = Store_Entry{identifier = smallest, hash = chosen}
@@ -689,14 +744,17 @@ store_page_read :: proc "contextless" (body: []u8) -> (page: Store_Page, status:
 @(private)
 assembly_take_page :: proc "contextless" (assembly: ^Store_Assembly, version: ^Store_Version, page: ^Store_Page) -> (whole: bool, status: Store_Status) {
 	if page.first == {} {
-		if page.entry_total > len(version.entries) || page.conflict_total > len(version.conflicts) {
-			assembly.active = false
-			return false, .Refused_Full
-		}
 		version_clear(version)
 		assembly^ = {active = true, version_hash = page.version_hash, common_hash = page.common_hash, entry_total = page.entry_total, conflict_total = page.conflict_total}
 	} else if !assembly.active || assembly.version_hash != page.version_hash || assembly.common_hash != page.common_hash || assembly.entry_total != page.entry_total || assembly.conflict_total != page.conflict_total || page.first != {version.count, version.conflict_count} {
 		return false, .Refused_Out_Of_Order
+	}
+	// The room of the records that this page carries, not of the totals
+	// that the sender states: a total is a claim until its pages arrive, so
+	// a peer that names a huge total gets no memory for it.
+	if !version_room(version, version.count + page.entry_count, version.conflict_count + page.conflict_count) {
+		assembly.active = false
+		return false, .Refused_Full
 	}
 	place := 0
 	for _ in 0 ..< page.entry_count {
@@ -866,11 +924,12 @@ store_offer_answer :: proc "contextless" (store: ^Exchanged_Store, body: []u8, o
 		}
 		next_current = &store.merged_later
 	}
-	// Each version has the same capacity, and the merges fit it: the copies
-	// below cannot be refused, so the store changes whole or not at all.
-	if version_copy(&store.last_reply, reply_version) != .Ok {
+	// Each version makes its room before any copy, so the store changes
+	// whole or not at all.
+	if !version_room(&store.last_reply, reply_version.count, reply_version.conflict_count) || !version_room(&store.previous_common, store.common.count, store.common.conflict_count) || !version_room(&store.current, next_current.count, next_current.conflict_count) || !version_room(&store.common, store.merged.count, store.merged.conflict_count) {
 		return nil, .Refused_Full
 	}
+	version_copy(&store.last_reply, reply_version)
 	version_copy(&store.previous_common, &store.common)
 	store.last_offer_hash = page.version_hash
 	store.has_last_exchange = true
@@ -940,6 +999,9 @@ store_offer_reply_accept :: proc "contextless" (store: ^Exchanged_Store, answer:
 	}
 	if later_status := store_merge(&store.offered, &store.current, &store.merged, &store.merged_later); later_status != .Ok {
 		return later_status, .None, 0, false
+	}
+	if !version_room(&store.common, store.merged.count, store.merged.conflict_count) || !version_room(&store.current, store.merged_later.count, store.merged_later.conflict_count) {
+		return .Refused_Full, .None, 0, false
 	}
 	version_copy(&store.common, &store.merged)
 	version_copy(&store.current, &store.merged_later)

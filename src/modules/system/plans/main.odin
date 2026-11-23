@@ -14,9 +14,12 @@ import "modus:contract/value_kinds"
 import "modus:storage_port"
 import "modus:system"
 
-// Working memory budget for the freestanding plans service process and its
-// fixed-capacity per-principal applied_plans tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512, processes = 1, threads = 1}
+// Its loop and its rings: 512 pages. And the blocks of the plans
+// (plan_memory.odin): the plan of each generation of each principal, the
+// pending plan, a difference and its lists, each of the size of its plan:
+// 1024 pages, the plans of about 8 principals of 32 generations of 64
+// entries. A plan past them is refused with No_Memory.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512 + 1024, processes = 1, threads = 1}
 
 // Status record returned by the status() export.
 Plans_Status :: struct {
@@ -119,7 +122,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	store_port, store_open := storage_port.bind(ctx)
 	// The service checks no answer of the powerbox: the trusted display of
 	// the role Display shows each difference (ports.odin).
-	plans_core.state_init(&service_state, 0, store_port)
+	memory_port, memory_ok := plan_memory_port()
+	if !memory_ok {
+		fail("no memory for the plans")
+	}
+	plans_core.state_init(&service_state, 0, store_port, memory_port)
 	root_requests_bind(ctx)
 	service_display = display_port_bind(ctx)
 	roles_open := roles_port_bind(&service_state)

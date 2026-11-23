@@ -69,7 +69,7 @@ test_plans_apply_requires_trusted_consent_on_added_grants :: proc(t: ^testing.T)
 	net_bit := u64(1) << u64(start_grant.Grant.Network)
 
 	// Plan 1: zero-grant module applies with no added grant.
-	p1 := pr.Plan_Spec{principal = 0, entry_count = 1}
+	p1 := test_plan(0, 1)
 	p1.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "calc", make_hash(1), 0)
 
 	// Nil out_diff is refused cleanly with no state change.
@@ -88,7 +88,7 @@ test_plans_apply_requires_trusted_consent_on_added_grants :: proc(t: ^testing.T)
 	testing.expect_value(t, rec1.generation, u64(1))
 
 	// Plan 2: adds Store grant -> refused without consent, refused on forged/remote/declined consent.
-	p2 := pr.Plan_Spec{principal = 0, entry_count = 1}
+	p2 := test_plan(0, 1)
 	p2.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "calc", make_hash(1), store_bit)
 
 	diff2: pr.Plan_Difference
@@ -126,7 +126,7 @@ test_plans_apply_requires_trusted_consent_on_added_grants :: proc(t: ^testing.T)
 	testing.expect_value(t, rec2.previous_plan_hash, rec1.plan_hash)
 
 	// Consent for p2 cannot be replayed for p3 (different plan hash).
-	p3 := pr.Plan_Spec{principal = 0, entry_count = 1}
+	p3 := test_plan(0, 1)
 	p3.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "calc", make_hash(1), store_bit | net_bit)
 	_, ref_replay := apply_plan(state, &p3, rec2.plan_hash, &dlg_ok, &ans_ok, 3000, &scratch_diff)
 	testing.expect_value(t, ref_replay, pr.Plan_Refusal.Untrusted_Consent)
@@ -145,7 +145,7 @@ test_plans_rollback_and_monotonic_generation_history :: proc(t: ^testing.T) {
 
 	// Apply gen 1, gen 2, gen 3 (all zero-grant modules to test history & rollback directly).
 	scratch_diff: pr.Plan_Difference
-	p1 := pr.Plan_Spec{principal = 0, entry_count = 1}
+	p1 := test_plan(0, 1)
 	p1.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "a", make_hash(1), 0)
 	r1, err1 := apply_plan(state, &p1, {}, nil, nil, 100, &scratch_diff)
 	testing.expect_value(t, err1, pr.Plan_Refusal.None)
@@ -154,12 +154,12 @@ test_plans_rollback_and_monotonic_generation_history :: proc(t: ^testing.T) {
 	_, rb1_ref := rollback_commit(state, 0)
 	testing.expect_value(t, rb1_ref, pr.Plan_Refusal.Empty_History)
 
-	p2 := pr.Plan_Spec{principal = 0, entry_count = 1}
+	p2 := test_plan(0, 1)
 	p2.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "a", make_hash(2), 0)
 	r2, err2 := apply_plan(state, &p2, r1.plan_hash, nil, nil, 200, &scratch_diff)
 	testing.expect_value(t, err2, pr.Plan_Refusal.None)
 
-	p3 := pr.Plan_Spec{principal = 0, entry_count = 1}
+	p3 := test_plan(0, 1)
 	p3.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "a", make_hash(3), 0)
 	r3, err3 := apply_plan(state, &p3, r2.plan_hash, nil, nil, 300, &scratch_diff)
 	testing.expect_value(t, err3, pr.Plan_Refusal.None)
@@ -184,7 +184,7 @@ test_plans_rollback_and_monotonic_generation_history :: proc(t: ^testing.T) {
 	testing.expect_value(t, rb_same, pr.Plan_Refusal.Already_At_Generation)
 
 	// Next apply after rollback writes generation 4 (never overwrites 2 or 3).
-	p4 := pr.Plan_Spec{principal = 0, entry_count = 1}
+	p4 := test_plan(0, 1)
 	p4.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "a", make_hash(4), 0)
 	r4, err4 := apply_plan(state, &p4, r1.plan_hash, nil, nil, 400, &scratch_diff)
 	testing.expect_value(t, err4, pr.Plan_Refusal.None)

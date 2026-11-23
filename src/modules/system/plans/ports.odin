@@ -139,12 +139,65 @@ display_disconnect :: proc "contextless" () {
 	}
 }
 
-// display_ask calls plan_diff_ask of the trusted display.
+// One side of a difference for the trusted display: its bytes in a memory
+// object of the service, which the call lends to the display. A side has
+// any count of items, and passes no call region.
+@(private = "file")
+Display_Side :: struct {
+	memory:  system.Handle,
+	address: rawptr,
+	bytes:   []u8,
+}
+
+@(private = "file")
+display_side_make :: proc "contextless" (text: string) -> (side: Display_Side, ok: bool) {
+	if len(text) == 0 {
+		return {}, true
+	}
+	pages := (u64(len(text)) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	memory, status := system.memory_create(pages)
+	if status != .Ok {
+		return {}, false
+	}
+	address, map_status := system.memory_map(memory, {.Write})
+	if map_status != .Ok {
+		system.close(memory)
+		return {}, false
+	}
+	bytes := ([^]u8)(address)[:len(text)]
+	copy(bytes, text)
+	return {memory = memory, address = address, bytes = bytes}, true
+}
+
+@(private = "file")
+display_side_end :: proc "contextless" (side: ^Display_Side) {
+	if side.address != nil {
+		system.memory_unmap(side.address)
+	}
+	if side.memory != 0 {
+		system.close(side.memory)
+	}
+	side^ = {}
+}
+
+// display_ask calls plan_diff_ask of the trusted display, with each side
+// in a memory object that lives for the call.
 display_ask :: proc "contextless" (user: rawptr, plan_name: string, added: string, removed: string) -> (serial: u64, ok: bool) {
 	if !display_connect() {
 		return 0, false
 	}
-	arguments := [3]isolated.Argument{{text = transmute([]u8)plan_name}, {text = transmute([]u8)added}, {text = transmute([]u8)removed}}
+	added_side, added_ok := display_side_make(added)
+	defer display_side_end(&added_side)
+	removed_side, removed_ok := display_side_make(removed)
+	defer display_side_end(&removed_side)
+	if !added_ok || !removed_ok {
+		return 0, false
+	}
+	arguments := [3]isolated.Argument {
+		{text = transmute([]u8)plan_name},
+		{table = {records = added_side.bytes, count = u64(len(added_side.bytes)), memory_handle = u64(added_side.memory)}},
+		{table = {records = removed_side.bytes, count = u64(len(removed_side.bytes)), memory_handle = u64(removed_side.memory)}},
+	}
 	error: errors.Error_Record
 	result, status := system.call_isolated(&display_connection.connection, display_connection.file, display_connection.ask_export, arguments[:], &error)
 	if status != .Ok || result <= 0 {

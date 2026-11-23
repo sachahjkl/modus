@@ -258,7 +258,9 @@ display_refusal_case :: proc "contextless" (ctx: ^system.Context) {
 	name := "not the holder of plans"
 	added := "notes: store documents"
 	removed := ""
-	arguments := [3]isolated.Argument{{text = transmute([]u8)name}, {text = transmute([]u8)added}, {text = transmute([]u8)removed}}
+	// The two sides are bytes: they cross the call region here, as the
+	// plans service lends a memory object for a side of any size.
+	arguments := [3]isolated.Argument{{text = transmute([]u8)name}, {table = {records = transmute([]u8)added, count = u64(len(added))}}, {table = {records = transmute([]u8)removed, count = u64(len(removed))}}}
 	error: errors.Error_Record
 	result, status := system.call_isolated(&connection, file, ask, arguments[:], &error)
 	if status != call_status.Call_Status.Failed || result >= 0 || error.kind != i64(errors.Kind.No_Grant) || error.unit != i64(errors.Unit.Acts_For_Principal) {

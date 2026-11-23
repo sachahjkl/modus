@@ -325,7 +325,7 @@ mesh_call_role :: proc "contextless" (identity: [32]u8, role_word: u64, export: 
 // mesh_sync_store offers the version of an exchanged store to its partner.
 // A request with no answer keeps the offer: the next sync sends it again.
 mesh_sync_store :: proc "contextless" (identity: [32]u8, store_identifier: blake3.Hash, error: ^errors.Error_Record) -> i64 {
-	store := machine_wire.store_exchange_find(mesh.stores, store_identifier)
+	store := machine_wire.store_exchange_find(&mesh.stores, store_identifier)
 	if store == nil {
 		return errors.fail(error, -1, .Absent, .Stores, 2)
 	}
@@ -576,7 +576,7 @@ mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Cli
 			item.offset = next
 		}
 	case .Store_Offer:
-		if store := machine_wire.store_exchange_find(mesh.stores, item.hash); store != nil {
+		if store := machine_wire.store_exchange_find(&mesh.stores, item.hash); store != nil {
 			more: bool
 			item.store, _, _, more = machine_wire.store_offer_reply_accept(store, answer)
 			// A version of several pages: the same request sends the next

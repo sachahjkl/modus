@@ -608,7 +608,7 @@ mesh_sync_store :: proc "contextless" (
 	request_buffer: []u8,
 	answer_buffer: []u8,
 ) -> (result: Mesh_Store_Sync) {
-	store := store_exchange_find(peer.stores, store_identifier)
+	store := store_exchange_find(&peer.stores, store_identifier)
 	if store == nil {
 		result.store = .Refused_Unknown_Store
 		result.exchange.status = .Refused_Bad_Request

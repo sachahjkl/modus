@@ -373,6 +373,9 @@ start_context_build :: proc "contextless" (work: ^Start_Work) -> system.Status {
 // start_values_of_the_name writes the values that a process receives by its
 // name, as only that process reads them.
 start_values_of_the_name :: proc "contextless" (work: ^Start_Work) {
+	if is_role_holder(work.name, .Powerbox) {
+		powerbox_context_give(work) // powerbox_picker.odin
+	}
 	switch work.name {
 	case "unlock":
 		unlock_values_write(&work.values)

@@ -736,6 +736,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	input_status, control_status: system.Status
 	input, input_status = system.ring_open(ctx.handles[GRANT_INPUT])
 	control, control_status = system.ring_open(ctx.handles[GRANT_CONTROL])
+	powerbox_picker_open_ring(ctx) // powerbox_picker.odin
 	// The same test as the root service makes before it starts this
 	// process: the two never disagree on a screen.
 	if !screen_presence.screen_present(status, ctx.values[VALUE_WIDTH], ctx.values[VALUE_HEIGHT]) {
@@ -827,6 +828,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.wait_records(&wait, &client.ring.commands)
 			}
 		}
+		powerbox_picker_step() // powerbox_picker.odin
+		powerbox_picker_wait(&wait)
 		window_events_wait(&wait) // window_events.odin
 		deadline := damage_count > 0 ? max(next_frame, 1) : next_second_of_bar(system.time())
 		if wake := pointer_wake(); wake != 0 {

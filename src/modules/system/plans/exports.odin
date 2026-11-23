@@ -19,12 +19,13 @@ ERROR_NOT_READY :: i64(-3) // State, Requests: the service has not started its t
 ERROR_PLAN :: i64(-4) // The plan of the caller is refused: the value found is the Plan_Refusal.
 ERROR_HISTORY :: i64(-5) // The history refuses the step: the value found is the Plan_Refusal.
 
-// The rows of the plan of the call, copied once out of the call region.
-copied_rows: [pr.MAX_PLAN_ENTRIES]pr.Plan_Entry_Row
 copied_expected: pr.Plan_Expected
 copied_plan_name: [pr.PLAN_DISPLAY_NAME_BYTES]u8
 export_lists: plans_core.Plan_Display_Lists
+// The plan of the call, in a block of the memory of the plans that grows
+// with the largest plan of a call.
 export_plan: pr.Plan_Spec
+export_plan_memory: []u8
 export_difference: pr.Plan_Difference
 export_history: [plans_core.MAX_HISTORY_PER_PRINCIPAL]pr.Applied_Plan_Record
 
@@ -56,9 +57,11 @@ plan_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, result: i6
 	case .None:
 		return errors.fail(error, result, .Refused, .None, 0, 0, 0, found)
 	case .Empty_Plan:
-		return errors.fail(error, result, .Empty, .Records, 1, 0, pr.MAX_PLAN_ENTRIES, found)
+		return errors.fail(error, result, .Empty, .Records, 1, 0, 0, found)
 	case .Too_Many_Entries:
-		return errors.fail(error, result, .Over_Limit, .Records, 1, 0, pr.MAX_PLAN_ENTRIES, found)
+		return errors.fail(error, result, .Over_Limit, .Records, 1, 0, i64(pr.PLAN_ENTRY_COUNT_LIMIT), found)
+	case .No_Memory:
+		return errors.fail(error, result, .Budget, .Pages, 1, 0, 0, found)
 	case .Bad_Entry_Kind, .Bad_Role, .Zero_Module_Hash, .Bad_Start_Grant, .Bad_Store_Rights, .Invalid_Name, .Duplicate_Entry, .Cyclic_Role_Chain, .Trusted_Path_Forbidden, .Principal_Mismatch:
 		return errors.fail(error, result, .Bad_Value, .Records, 1, i64(bad_index), 0, found)
 	case .Buffer_Too_Small, .Truncated, .Trailing_Bytes, .Bad_Header, .Zero_Plan_Hash:
@@ -102,14 +105,36 @@ plan_of_table :: proc "contextless" (rows: ^system.Table_To_Read(pr.Plan_Entry_R
 	if count == 0 {
 		return plan_refusal_fail(error, ERROR_PLAN, .Empty_Plan), false
 	}
-	if count > pr.MAX_PLAN_ENTRIES {
-		return errors.fail(error, ERROR_PLAN, .Over_Limit, .Records, 1, i64(min(count, u64(max(i64)))), pr.MAX_PLAN_ENTRIES, i64(pr.Plan_Refusal.Too_Many_Entries)), false
+	if count > u64(pr.PLAN_ENTRY_COUNT_LIMIT) || count > intrinsics.volatile_load(&rows.capacity) {
+		return errors.fail(error, ERROR_PLAN, .Over_Limit, .Records, 1, i64(min(count, u64(max(i64)))), i64(pr.PLAN_ENTRY_COUNT_LIMIT), i64(pr.Plan_Refusal.Too_Many_Entries)), false
 	}
-	for index in 0 ..< count {
-		copied_rows[index] = intrinsics.volatile_load(&rows.records[index])
+	if int(count) > len(export_plan.entries) {
+		bytes, _ := pr.plan_bytes_for(int(count))
+		memory := service_state.memory.take(service_state.memory.user, bytes)
+		if memory == nil {
+			return plan_refusal_fail(error, ERROR_PLAN, .No_Memory), false
+		}
+		if export_plan_memory != nil {
+			service_state.memory.give(service_state.memory.user, export_plan_memory)
+		}
+		export_plan_memory = memory
+		export_plan = pr.plan_of_memory(principal, memory)
 	}
-	refusal, bad_index := pr.plan_of_rows(principal, copied_rows[:count], &export_plan)
+	// Each row is read once out of the call region, into the plan.
+	pr.plan_clear(&export_plan)
+	export_plan.principal = principal
+	for index in 0 ..< int(count) {
+		row := intrinsics.volatile_load(&rows.records[index])
+		if !pr.plan_entry_of_row(&row, &export_plan.entries[index]) {
+			pr.plan_clear(&export_plan)
+			system.log_fact(.Warning, Plan_Command_Refused{principal = principal, refusal_code = u64(pr.Plan_Refusal.Invalid_Name)})
+			return plan_refusal_fail(error, ERROR_PLAN, .Invalid_Name, u32(index)), false
+		}
+	}
+	export_plan.entry_count = u32(count)
+	refusal, bad_index := pr.plan_validate(&export_plan)
 	if refusal != .None {
+		pr.plan_clear(&export_plan)
 		system.log_fact(.Warning, Plan_Command_Refused{principal = principal, refusal_code = u64(refusal)})
 		return plan_refusal_fail(error, ERROR_PLAN, refusal, bad_index), false
 	}
@@ -119,7 +144,8 @@ plan_of_table :: proc "contextless" (rows: ^system.Table_To_Read(pr.Plan_Entry_R
 // difference computes the difference between the current plan of the
 // principal of the caller and the plan of rows, and applies nothing.
 //
-// - **rows**: the entries of the proposed plan, 1 to 32.
+// - **rows**: the entries of the proposed plan: at least 1, as many as the
+//   memory of the service holds.
 // - **summary**: one row: the counts, whether an apply needs the consent of
 //   the principal, and the hash of the current plan that apply expects.
 // - **result**: one row for each change, in the order of the difference.
@@ -158,7 +184,8 @@ difference :: proc "c" (rows: ^system.Table_To_Read(pr.Plan_Entry_Row), summary:
 // decision and commits an accepted plan.
 //
 // - **plan_name**: the name that the dialog shows, 1 to 48 bytes.
-// - **rows**: the entries of the plan, 1 to 32.
+// - **rows**: the entries of the plan: at least 1, as many as the memory of
+//   the service holds.
 // - **expected**: the hash of the current plan that a difference gave; zero
 //   when the principal has no applied plan. An apply whose current plan
 //   changed since is refused, so a principal never accepts a difference that
@@ -169,7 +196,8 @@ difference :: proc "c" (rows: ^system.Table_To_Read(pr.Plan_Entry_Row), summary:
 // ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, or ERROR_PLAN with the refusal
 // as the value found: No_Change, Apply_Pending (the dialog of an earlier
 // apply still shows), Display_Refused (the dialog cannot show the whole
-// difference), Consent_Required (the service has no trusted display).
+// difference), Consent_Required (the service has no trusted display),
+// No_Memory (the budget of the service pays no more for the plan).
 @(export, link_name = "apply")
 apply :: proc "c" (plan_name: ^string, rows: ^system.Table_To_Read(pr.Plan_Entry_Row), expected: ^pr.Plan_Expected, error: ^errors.Error_Record) -> i64 {
 	principal, failure, allowed := caller_principal(error)

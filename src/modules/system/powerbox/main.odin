@@ -42,6 +42,7 @@ service_ring: ring.Ring
 display_ring: ring.Ring
 service_region_base: [^]u8
 service_region_bytes: u64
+service_ring_memory: system.Handle
 
 // Buffers in BSS for copy-then-check reading of shared-memory records.
 copied_batch: powerbox.Request_Batch
@@ -187,17 +188,10 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) -> (dis
 			if region_range_valid(dialog_offset, size_of(powerbox.Dialog_Record)) {
 				intrinsics.mem_copy_non_overlapping(rawptr(&service_region_base[dialog_offset]), &outbound_dialog, size_of(powerbox.Dialog_Record))
 			}
-			if ring.count(&display_ring.commands) < ring.capacity(&display_ring.commands) {
-				ring.push(
-					&display_ring.commands,
-					ring.Record{
-						kind   = u32(outbound_dialog.action_word),
-						tag    = command.tag,
-						values = {outbound_dialog.dialog_serial, outbound_dialog.request_serial, dialog_offset, u64(outbound_dialog.item_count), u64(outbound_dialog.picker_candidate_count), u64(outbound_dialog.picker_candidate_total), 0},
-					},
-				)
-				display_notified = true
-			}
+			// The dialog of an asker waits in the region of the root service,
+			// which gives it to the trusted display: the picker ring is the
+			// ring of the commands of the display, which this service only
+			// answers.
 		}
 		ring.push(
 			&service_ring.completions,
@@ -299,6 +293,9 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) -> (dis
 			},
 		)
 		return false
+	case .Stores_Connection:
+		stores_connection_take(command)
+		return false
 	case .Query_Counts:
 		counters := service_state.counters
 		ring.push(
@@ -330,12 +327,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	has_delegated := false
 	if ctx.handles[powerbox.SERVICE_RING_SLOT] != 0 && ctx.handles[powerbox.TRUSTED_DISPLAY_RING_SLOT] != 0 {
 		status_open: system.Status
-		if service_ring, status_open = system.ring_open(ctx.handles[powerbox.SERVICE_RING_SLOT]); status_open == .Ok {
+		// The root service gives the handles of a connection to the
+		// storage service through this ring (Stores_Connection).
+		service_ring_memory = ctx.handles[powerbox.SERVICE_RING_SLOT]
+		if service_ring, status_open = system.ring_open(service_ring_memory, receive_handles = true); status_open == .Ok {
 			if display_ring, status_open = system.ring_open(ctx.handles[powerbox.TRUSTED_DISPLAY_RING_SLOT]); status_open == .Ok {
 				has_delegated = true
 			}
 		}
 	}
+	picker_region_open(ctx)
 	if !export_ok && !has_delegated {
 		fail("no powerbox service ring")
 	}
@@ -389,18 +390,30 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				drained += 1
 			}
 
-			if answered {
+			if picker_ring_serve(now_ms) {
+				system.wake_reader(&display_ring.completions)
+			}
+			if stores_call_step(now_ms) {
+				answered = true
+				system.wake_reader(&display_ring.completions)
+			}
+			if answered || stores_wanted_sent {
+				stores_wanted_sent = false
 				system.wake_reader(&service_ring.completions)
 			}
-			if display_notified {
-				system.wake_reader(&display_ring.commands)
-			}
+			_ = display_notified
 			if drained == powerbox.REQUESTS_PER_PASS && ring.count(&service_ring.commands) > 0 {
 				continue
 			}
 			system.wait_records(&wait, &service_ring.commands)
+			system.wait_records(&wait, &display_ring.commands)
+			if stores_call.active {
+				system.wait_records(&wait, &stores_call.client.calls.completions)
+			}
 		}
-		if service_state.counters.pending_dialogs > 0 {
+		if stores_call.active {
+			system.wait_end(&wait, stores_call.deadline)
+		} else if service_state.counters.pending_dialogs > 0 {
 			system.wait_end(&wait, now_ms + 1000)
 		} else {
 			system.wait_end(&wait)

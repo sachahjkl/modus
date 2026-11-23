@@ -213,7 +213,7 @@ border_enum_parsers_refuse_zero_out_of_range_and_max_words :: proc(t: ^testing.T
 		_, ok := network_endpoint_rights_from_word(bad)
 		testing.expect(t, !ok)
 	}
-	for bad in ([?]u32{0, u32(Service_Ring_Command.Picker_Page) + 1, max(u32)}) {
+	for bad in ([?]u32{0, u32(Service_Ring_Command.Stores_Connection) + 1, max(u32)}) {
 		_, ok := service_ring_command_from_word(bad)
 		testing.expect(t, !ok)
 	}
@@ -679,4 +679,44 @@ picker_pages_of_a_long_list_are_checked_at_their_border :: proc(t: ^testing.T) {
 	testing.expect(t, picker_name_matches(transmute([]u8)string("Documents"), transmute([]u8)string("CUM")))
 	testing.expect(t, picker_name_matches(transmute([]u8)string("a"), nil))
 	testing.expect(t, !picker_name_matches(transmute([]u8)string("ab"), transmute([]u8)string("abc")))
+}
+
+// The names of the text of `stores`: the first line is the disk and no
+// store; each other line gives its name before ": "; a line with no ": "
+// gives an empty name; an empty text and a text of one line give none.
+@(test)
+stores_text_gives_each_name_once :: proc(t: ^testing.T) {
+	names_of :: proc(text: string) -> [dynamic]string {
+		names := make([dynamic]string, context.temp_allocator)
+		place := 0
+		for {
+			name, more := stores_text_next_name(transmute([]u8)text, &place)
+			if !more {
+				break
+			}
+			append(&names, string(name))
+		}
+		return names
+	}
+	testing.expect_value(t, len(names_of("")), 0)
+	testing.expect_value(t, len(names_of("generation 4, 10 of 20 blocks in use")), 0)
+	names := names_of("generation 4: the disk\nnotes-1: 3 objects\nno colon here\nphotos-1: 0 objects, a node of its trees has a wrong check")
+	testing.expect_value(t, len(names), 3)
+	testing.expect_value(t, names[0], "notes-1")
+	testing.expect_value(t, names[1], "")
+	testing.expect_value(t, names[2], "photos-1")
+	// A last line end gives one empty line, which names no store.
+	names = names_of("disk\na: 1\n")
+	testing.expect(t, len(names) == 2 && names[0] == "a" && names[1] == "")
+}
+
+// A word of the picker ring that names no command is refused, 0 too.
+@(test)
+picker_ring_command_border_refuses_unknown_words :: proc(t: ^testing.T) {
+	for word in ([?]u32{0, 5, max(u32)}) {
+		_, ok := picker_ring_command_of_word(word)
+		testing.expectf(t, !ok, "the word %d names no command", word)
+	}
+	command, ok := picker_ring_command_of_word(u32(Picker_Ring_Command.Pick))
+	testing.expect(t, ok && command == .Pick)
 }

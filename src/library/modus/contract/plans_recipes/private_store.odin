@@ -40,11 +40,27 @@ Private_Store_Status :: enum u8 {
 	Failed    = 3, // The storage service refused the access, or the port has no store.
 }
 
-// The port of a private store: a read and a write of a whole object.
+// The port of a private store: the size of an object, and a read and a
+// write of a whole object. An object has any size: the reader learns it
+// first, and gives a place of that size.
 Private_Store_Port :: struct {
 	user:  rawptr,
+	size:  proc "contextless" (user: rawptr, name: string) -> (bytes: int, status: Private_Store_Status),
 	read:  proc "contextless" (user: rawptr, name: string, into: []u8) -> (count: int, status: Private_Store_Status),
 	write: proc "contextless" (user: rawptr, name: string, data: []u8) -> Private_Store_Status,
+}
+
+// private_store_size gives the bytes of the object name. A port with no
+// procedure fails.
+private_store_size :: proc "contextless" (port: ^Private_Store_Port, name: string) -> (bytes: int, status: Private_Store_Status) {
+	if port == nil || port.size == nil {
+		return 0, .Failed
+	}
+	bytes, status = port.size(port.user, name)
+	if status == .Ok && bytes < 0 {
+		return 0, .Failed
+	}
+	return bytes, status
 }
 
 // private_store_read reads the object name whole into into. A port with no
@@ -77,13 +93,16 @@ MEMORY_PRIVATE_STORE_OBJECTS :: 64
 MEMORY_PRIVATE_STORE_OBJECT_BYTES :: 8192
 MEMORY_PRIVATE_STORE_NAME_BYTES :: 64
 
-// One object of a memory store.
+// One object of a memory store. An object past its own bytes lies in the
+// large bytes of the store.
 Memory_Private_Object :: struct {
 	used:        bool,
 	name:        [MEMORY_PRIVATE_STORE_NAME_BYTES]u8,
 	name_length: int,
 	length:      int,
 	bytes:       [MEMORY_PRIVATE_STORE_OBJECT_BYTES]u8,
+	in_large:    bool, // The bytes of the object are in the large bytes of the store, from large_start.
+	large_start: int,
 }
 
 // A private store in memory, for a host test: it has the semantics of the
@@ -94,13 +113,25 @@ Memory_Private_Store :: struct {
 	writes:         int,
 	reads:          int,
 	writes_allowed: int, // The writes that succeed before each write fails; -1: no bound.
+	// Memory of the test for the objects past MEMORY_PRIVATE_STORE_OBJECT_BYTES:
+	// each such write takes the next bytes. nil: such a write fails.
+	large_bytes:    []u8,
+	large_used:     int,
+}
+
+// memory_private_object_bytes gives the bytes of an object of a memory store.
+memory_private_object_bytes :: proc "contextless" (store: ^Memory_Private_Store, object: ^Memory_Private_Object) -> []u8 {
+	if object.in_large {
+		return store.large_bytes[object.large_start:][:object.length]
+	}
+	return object.bytes[:object.length]
 }
 
 // memory_private_store_port gives the port of a memory store, with no bound
 // of the writes.
 memory_private_store_port :: proc "contextless" (store: ^Memory_Private_Store) -> Private_Store_Port {
 	store.writes_allowed = -1
-	return {user = store, read = memory_private_store_read, write = memory_private_store_write}
+	return {user = store, size = memory_private_store_size, read = memory_private_store_read, write = memory_private_store_write}
 }
 
 // memory_private_store_find gives the object name of a memory store, or nil.
@@ -124,7 +155,16 @@ memory_private_store_read :: proc "contextless" (user: rawptr, name: string, int
 	if object.length > len(into) {
 		return 0, .Too_Large
 	}
-	copy(into, object.bytes[:object.length])
+	copy(into, memory_private_object_bytes(store, object))
+	return object.length, .Ok
+}
+
+@(private = "file")
+memory_private_store_size :: proc "contextless" (user: rawptr, name: string) -> (bytes: int, status: Private_Store_Status) {
+	object := memory_private_store_find((^Memory_Private_Store)(user), name)
+	if object == nil {
+		return 0, .Absent
+	}
 	return object.length, .Ok
 }
 
@@ -134,7 +174,11 @@ memory_private_store_write :: proc "contextless" (user: rawptr, name: string, da
 	if store.writes_allowed >= 0 && store.writes >= store.writes_allowed {
 		return .Failed
 	}
-	if len(name) == 0 || len(name) > MEMORY_PRIVATE_STORE_NAME_BYTES || len(data) > MEMORY_PRIVATE_STORE_OBJECT_BYTES {
+	if len(name) == 0 || len(name) > MEMORY_PRIVATE_STORE_NAME_BYTES {
+		return .Failed
+	}
+	in_large := len(data) > MEMORY_PRIVATE_STORE_OBJECT_BYTES
+	if in_large && len(data) > len(store.large_bytes) - store.large_used {
 		return .Failed
 	}
 	object := memory_private_store_find(store, name)
@@ -152,21 +196,27 @@ memory_private_store_write :: proc "contextless" (user: rawptr, name: string, da
 	object.used = true
 	copy(object.name[:], name)
 	object.name_length = len(name)
-	copy(object.bytes[:], data)
+	object.in_large = in_large
+	if in_large {
+		object.large_start = store.large_used
+		copy(store.large_bytes[store.large_used:][:len(data)], data)
+		store.large_used += len(data)
+	} else {
+		object.large_start = 0
+		copy(object.bytes[:], data)
+	}
 	object.length = len(data)
 	store.writes += 1
 	return .Ok
 }
 
 // The bounds of the dialog of a difference on the trusted display: a plan
-// name, an item of a side, and the items of one side. A side holds each
-// change that a difference holds, so no difference is refused for its count
-// of items: the dialog scrolls, and its accept counts only after the
-// principal saw its last row. The compositor checks its own bounds against
-// these.
+// name, and an item of a side. A side has any count of items: the plans
+// service gives each side as bytes in a memory object (plan_diff_ask),
+// the dialog scrolls, and its accept counts only after the principal saw
+// its last row. The compositor checks its own bounds against these.
 PLAN_DISPLAY_NAME_BYTES :: 48
 PLAN_DISPLAY_ITEM_BYTES :: 48
-PLAN_DISPLAY_ITEM_CAPACITY :: MAX_PLAN_DIFF_CHANGES
 
 // The arm time of the dialog of a difference: the trusted display takes a
 // decision only this long after it showed the difference, so a key or a
@@ -249,15 +299,12 @@ PLAN_ENTRY_ROW_WIRE_SIZE :: 4 * 8 + 3 * blake3.HASH_SIZE + MAX_ENTRY_NAME_BYTES
 // the count of its rows (4 bytes, then 4 zero bytes).
 PLAN_GENERATION_HEAD_SIZE :: 8 + APPLIED_PLAN_WIRE_SIZE + 8
 
-// The most bytes of a generation object.
-PLAN_GENERATION_WIRE_MOST :: PLAN_GENERATION_HEAD_SIZE + MAX_PLAN_ENTRIES * PLAN_ENTRY_ROW_WIRE_SIZE
 
 // The bytes of a current object: its magic, the principal, the current and
 // the highest generation, and the hash of the current plan.
 PLAN_CURRENT_WIRE_SIZE :: 8 + 3 * 8 + blake3.HASH_SIZE
 
 #assert(PLAN_ENTRY_ROW_WIRE_SIZE == size_of(Plan_Entry_Row))
-#assert(PLAN_GENERATION_WIRE_MOST <= MEMORY_PRIVATE_STORE_OBJECT_BYTES)
 
 // The pointer of the generations of a principal that its current object holds.
 Plan_Current_Record :: struct {
@@ -344,8 +391,8 @@ encode_plan_generation :: proc "contextless" (record: ^Applied_Plan_Record, plan
 	if record == nil || plan == nil {
 		return 0, .Buffer_Too_Small
 	}
-	if plan.entry_count == 0 || plan.entry_count > MAX_PLAN_ENTRIES {
-		return 0, .Too_Many_Entries
+	if plan.entry_count == 0 {
+		return 0, .Empty_Plan
 	}
 	digest, hash_refusal := plan_hash(plan)
 	if hash_refusal != .None {
@@ -370,7 +417,7 @@ encode_plan_generation :: proc "contextless" (record: ^Applied_Plan_Record, plan
 	byte_order.write_u32_little_endian(output, head_rest, plan.entry_count)
 	byte_order.write_u32_little_endian(output, head_rest + 4, 0)
 	for index in 0 ..< int(plan.entry_count) {
-		row := plan_entry_row_of_entry(&plan.entries[index])
+		row := plan_entry_row_of_entry(&plan.entries[plan.order[index]])
 		place := PLAN_GENERATION_HEAD_SIZE + index * PLAN_ENTRY_ROW_WIRE_SIZE
 		byte_order.write_u64_little_endian(output, place, u64(row.kind_word))
 		byte_order.write_u64_little_endian(output, place + 8, u64(row.role_word))
@@ -384,15 +431,38 @@ encode_plan_generation :: proc "contextless" (record: ^Applied_Plan_Record, plan
 	return size, .None
 }
 
+// plan_generation_size gives the bytes of a generation object of a plan of
+// count entries: the size that a caller gives encode_plan_generation.
+plan_generation_size :: proc "contextless" (count: u32) -> int {
+	return PLAN_GENERATION_HEAD_SIZE + int(count) * PLAN_ENTRY_ROW_WIRE_SIZE
+}
+
+// plan_generation_entry_count gives the count of entries of a generation
+// object of input bytes, read from its size, so that a caller gives
+// decode_plan_generation a plan with that memory. ok is false for a size
+// that no generation object has.
+plan_generation_entry_count :: proc "contextless" (input: []u8) -> (count: u32, ok: bool) {
+	if len(input) <= PLAN_GENERATION_HEAD_SIZE || (len(input) - PLAN_GENERATION_HEAD_SIZE) % PLAN_ENTRY_ROW_WIRE_SIZE != 0 {
+		return 0, false
+	}
+	rows := (len(input) - PLAN_GENERATION_HEAD_SIZE) / PLAN_ENTRY_ROW_WIRE_SIZE
+	if rows > int(PLAN_ENTRY_COUNT_LIMIT) {
+		return 0, false
+	}
+	return u32(rows), true
+}
+
 // decode_plan_generation reads a generation object of principal and
 // generation, and checks it whole: its head, each row at the border of a
 // plan, the hash of the plan against its record, and the principal and the
-// generation that its name gives. On a refusal, out and record are zero.
+// generation that its name gives. out holds the plan in its own memory, as
+// many entries as plan_generation_entry_count gives. On a refusal, record
+// is zero and out is empty, and keeps its memory.
 decode_plan_generation :: proc "contextless" (input: []u8, principal: u64, generation: u64, out: ^Plan_Spec) -> (record: Applied_Plan_Record, refusal: Plan_Refusal) {
 	if out == nil {
 		return {}, .Buffer_Too_Small
 	}
-	out^ = {}
+	plan_clear(out)
 	if len(input) < PLAN_GENERATION_HEAD_SIZE {
 		return {}, .Truncated
 	}
@@ -411,10 +481,10 @@ decode_plan_generation :: proc "contextless" (input: []u8, principal: u64, gener
 	if byte_order.read_u32_little_endian(input, head_rest + 4) != 0 {
 		return {}, .Bad_Header
 	}
-	if count == 0 || count > MAX_PLAN_ENTRIES {
+	if count == 0 || count > PLAN_ENTRY_COUNT_LIMIT {
 		return {}, .Store_Damaged
 	}
-	size := PLAN_GENERATION_HEAD_SIZE + int(count) * PLAN_ENTRY_ROW_WIRE_SIZE
+	size := plan_generation_size(count)
 	if len(input) < size {
 		return {}, .Truncated
 	}
@@ -424,10 +494,15 @@ decode_plan_generation :: proc "contextless" (input: []u8, principal: u64, gener
 	if record.principal != principal || record.generation != generation {
 		return {}, .Store_Damaged
 	}
-	rows: [MAX_PLAN_ENTRIES]Plan_Entry_Row
+	if int(count) > len(out.entries) || int(count) > len(out.order) {
+		return {}, .Buffer_Too_Small
+	}
+	// Each row crosses one row of memory into the plan, so a generation of
+	// any count needs no table of rows.
 	for index in 0 ..< int(count) {
 		place := PLAN_GENERATION_HEAD_SIZE + index * PLAN_ENTRY_ROW_WIRE_SIZE
-		row := &rows[index]
+		row_value: Plan_Entry_Row
+		row := &row_value
 		row.kind_word = i64(byte_order.read_u64_little_endian(input, place))
 		row.role_word = i64(byte_order.read_u64_little_endian(input, place + 8))
 		row.start_grants_mask = i64(byte_order.read_u64_little_endian(input, place + 16))
@@ -436,13 +511,16 @@ decode_plan_generation :: proc "contextless" (input: []u8, principal: u64, gener
 		copy(row.interposed_over_hash[:], input[place + 64:place + 96])
 		copy(row.recipe_hash[:], input[place + 96:place + 128])
 		copy(row.name[:], input[place + 128:place + 192])
+		if !plan_entry_of_row(row, &out.entries[index]) {
+			plan_clear(out)
+			return {}, .Store_Damaged
+		}
 	}
-	if row_refusal, _ := plan_of_rows(principal, rows[:count], out); row_refusal != .None {
-		return {}, .Store_Damaged
-	}
+	out.principal = principal
+	out.entry_count = count
 	digest, hash_refusal := plan_hash(out)
 	if hash_refusal != .None || digest != record.plan_hash {
-		out^ = {}
+		plan_clear(out)
 		return {}, .Store_Damaged
 	}
 	return record, .None

@@ -64,17 +64,29 @@ test_plan_validation_refusals_and_cycles :: proc(t: ^testing.T) {
 	refusal, _ := plan_validate(nil)
 	testing.expect_value(t, refusal, Plan_Refusal.Empty_Plan)
 
-	empty: Plan_Spec
+	empty := test_plan(0, 0)
 	refusal, _ = plan_validate(&empty)
 	testing.expect_value(t, refusal, Plan_Refusal.Empty_Plan)
 
-	// Too many entries.
-	too_many := Plan_Spec{entry_count = MAX_PLAN_ENTRIES + 1}
+	// A count past the memory of the plan, by one and by the most of the
+	// field, and an order shorter than the count.
+	too_many := test_plan(0, 1, 1)
+	too_many.entries[0], _ = plan_entry_make_module(.Disk_Module, "app", make_hash(1))
+	for count in ([2]u32{2, max(u32)}) {
+		too_many.entry_count = count
+		refusal, _ = plan_validate(&too_many)
+		testing.expect_value(t, refusal, Plan_Refusal.Too_Many_Entries)
+	}
+	too_many.entry_count = 1
+	short_order := too_many
+	short_order.order = nil
+	refusal, _ = plan_validate(&short_order)
+	testing.expect_value(t, refusal, Plan_Refusal.Buffer_Too_Small)
 	refusal, _ = plan_validate(&too_many)
-	testing.expect_value(t, refusal, Plan_Refusal.Too_Many_Entries)
+	testing.expect_value(t, refusal, Plan_Refusal.None)
 
 	// Bad entry kind word (0 and unknown).
-	bad_kind := Plan_Spec{entry_count = 1}
+	bad_kind := test_plan(0, 1)
 	bad_kind.entries[0].kind_word = 0
 	refusal, _ = plan_validate(&bad_kind)
 	testing.expect_value(t, refusal, Plan_Refusal.Bad_Entry_Kind)
@@ -84,7 +96,7 @@ test_plan_validation_refusals_and_cycles :: proc(t: ^testing.T) {
 	testing.expect_value(t, refusal, Plan_Refusal.Bad_Entry_Kind)
 
 	// Invalid names (empty, path traversal, non-zero tail padding).
-	bad_name := Plan_Spec{entry_count = 1}
+	bad_name := test_plan(0, 1)
 	e, _ := plan_entry_make_module(.Disk_Module, "app", make_hash(1))
 	bad_name.entries[0] = e
 	bad_name.entries[0].name_length = 0
@@ -104,13 +116,13 @@ test_plan_validation_refusals_and_cycles :: proc(t: ^testing.T) {
 	testing.expect_value(t, refusal, Plan_Refusal.Invalid_Name)
 
 	// Zero module hash refused.
-	zero_mod := Plan_Spec{entry_count = 1}
+	zero_mod := test_plan(0, 1)
 	zero_mod.entries[0], _ = plan_entry_make_module(.Disk_Module, "app", {})
 	refusal, _ = plan_validate(&zero_mod)
 	testing.expect_value(t, refusal, Plan_Refusal.Zero_Module_Hash)
 
 	// System_Part grant bit and unknown grant bits are refused.
-	sys_grant := Plan_Spec{entry_count = 1}
+	sys_grant := test_plan(0, 1)
 	sys_grant.entries[0], _ = plan_entry_make_module(.Start_Module, "svc", make_hash(2), u64(1) << u64(start_grant.Grant.System_Part))
 	refusal, _ = plan_validate(&sys_grant)
 	testing.expect_value(t, refusal, Plan_Refusal.Bad_Start_Grant)
@@ -120,7 +132,7 @@ test_plan_validation_refusals_and_cycles :: proc(t: ^testing.T) {
 	testing.expect_value(t, refusal, Plan_Refusal.Bad_Start_Grant)
 
 	// Non-principal-0 cannot replace a trusted-path role (Display).
-	non_zero_tp := Plan_Spec{principal = 1, entry_count = 1}
+	non_zero_tp := test_plan(1, 1)
 	non_zero_tp.entries[0], _ = plan_entry_make_role("display", .Display, make_hash(3))
 	refusal, _ = plan_validate(&non_zero_tp)
 	testing.expect_value(t, refusal, Plan_Refusal.Trusted_Path_Forbidden)
@@ -131,27 +143,27 @@ test_plan_validation_refusals_and_cycles :: proc(t: ^testing.T) {
 	testing.expect_value(t, refusal, Plan_Refusal.None)
 
 	// Duplicate single-holder role refused.
-	dup_role := Plan_Spec{principal = 0, entry_count = 2}
+	dup_role := test_plan(0, 2)
 	dup_role.entries[0], _ = plan_entry_make_role("net_a", .Network, make_hash(4))
 	dup_role.entries[1], _ = plan_entry_make_role("net_b", .Network, make_hash(5))
 	refusal, _ = plan_validate(&dup_role)
 	testing.expect_value(t, refusal, Plan_Refusal.Duplicate_Entry)
 
 	// Self-cyclic role interposition refused.
-	self_cycle := Plan_Spec{principal = 0, entry_count = 1}
+	self_cycle := test_plan(0, 1)
 	self_cycle.entries[0], _ = plan_entry_make_role("net_a", .Network, make_hash(4), make_hash(4))
 	refusal, _ = plan_validate(&self_cycle)
 	testing.expect_value(t, refusal, Plan_Refusal.Cyclic_Role_Chain)
 
 	// 2-node cyclic Assistive interposition chain refused.
-	two_cycle := Plan_Spec{principal = 0, entry_count = 2}
+	two_cycle := test_plan(0, 2)
 	two_cycle.entries[0], _ = plan_entry_make_role("a1", .Assistive, make_hash(10), make_hash(11))
 	two_cycle.entries[1], _ = plan_entry_make_role("a2", .Assistive, make_hash(11), make_hash(10))
 	refusal, _ = plan_validate(&two_cycle)
 	testing.expect_value(t, refusal, Plan_Refusal.Cyclic_Role_Chain)
 
 	// Acyclic Assistive interposition chain is accepted.
-	acyclic := Plan_Spec{principal = 0, entry_count = 2}
+	acyclic := test_plan(0, 2)
 	acyclic.entries[0], _ = plan_entry_make_role("a1", .Assistive, make_hash(10), make_hash(11))
 	acyclic.entries[1], _ = plan_entry_make_role("a2", .Assistive, make_hash(11), {})
 	refusal, _ = plan_validate(&acyclic)
@@ -163,13 +175,13 @@ test_plan_hash_order_independent_and_diff_grants :: proc(t: ^testing.T) {
 	store_grant_bit := u64(1) << u64(start_grant.Grant.Store)
 	net_grant_bit := u64(1) << u64(start_grant.Grant.Network)
 
-	plan_a := Plan_Spec{principal = 0, entry_count = 3}
+	plan_a := test_plan(0, 3)
 	plan_a.entries[0], _ = plan_entry_make_module(.Disk_Module, "editor", make_hash(1), store_grant_bit)
 	plan_a.entries[1], _ = plan_entry_make_store("docs", .Read_Only)
 	plan_a.entries[2], _ = plan_entry_make_role("storage", .Storage, make_hash(2))
 
 	// Same entries in reversed order must produce the exact same plan_hash.
-	plan_a_rev := Plan_Spec{principal = 0, entry_count = 3}
+	plan_a_rev := test_plan(0, 3)
 	plan_a_rev.entries[0] = plan_a.entries[2]
 	plan_a_rev.entries[1] = plan_a.entries[1]
 	plan_a_rev.entries[2] = plan_a.entries[0]
@@ -184,16 +196,16 @@ test_plan_hash_order_independent_and_diff_grants :: proc(t: ^testing.T) {
 	testing.expect_value(t, plan_diff_compute(&plan_a, &plan_a_rev, nil), Plan_Refusal.Buffer_Too_Small)
 
 	// Diff against identical plan has no changes and no added grants.
-	diff_same: Plan_Difference
+	diff_same := test_difference()
 	ref_same := plan_diff_compute(&plan_a, &plan_a_rev, &diff_same)
 	testing.expect_value(t, ref_same, Plan_Refusal.None)
 	testing.expect(t, !diff_same.has_changes, "identical plans have no diff")
 	testing.expect(t, !diff_same.any_grant_added, "identical plans add no grant")
 
 	// Narrowing rights (removing Store grant from editor) adds no grant.
-	plan_narrow := plan_a
+	plan_narrow := test_plan_copy(&plan_a)
 	plan_narrow.entries[0].start_grants_mask = 0
-	diff_narrow: Plan_Difference
+	diff_narrow := test_difference()
 	ref_narrow := plan_diff_compute(&plan_a, &plan_narrow, &diff_narrow)
 	testing.expect_value(t, ref_narrow, Plan_Refusal.None)
 	testing.expect(t, diff_narrow.has_changes, "removing grant is a change")
@@ -201,25 +213,25 @@ test_plan_hash_order_independent_and_diff_grants :: proc(t: ^testing.T) {
 	testing.expect_value(t, diff_narrow.removed_grants_count, u32(1))
 
 	// Adding Network grant to editor sets any_grant_added.
-	plan_wide := plan_a
+	plan_wide := test_plan_copy(&plan_a)
 	plan_wide.entries[0].start_grants_mask = store_grant_bit | net_grant_bit
-	diff_wide: Plan_Difference
+	diff_wide := test_difference()
 	ref_wide := plan_diff_compute(&plan_a, &plan_wide, &diff_wide)
 	testing.expect_value(t, ref_wide, Plan_Refusal.None)
 	testing.expect(t, diff_wide.any_grant_added, "adding Network grant must set any_grant_added")
 	testing.expect_value(t, diff_wide.added_grants_count, u32(1))
 
 	// Widening store rights Read_Only -> Read_Write sets any_grant_added.
-	plan_rw := plan_a
+	plan_rw := test_plan_copy(&plan_a)
 	plan_rw.entries[1].store_rights_word = u64(Plan_Store_Rights.Read_Write)
-	diff_rw: Plan_Difference
+	diff_rw := test_difference()
 	ref_rw := plan_diff_compute(&plan_a, &plan_rw, &diff_rw)
 	testing.expect_value(t, ref_rw, Plan_Refusal.None)
 	testing.expect(t, diff_rw.any_grant_added, "widening store rights must set any_grant_added")
 	testing.expect_value(t, diff_rw.changed_stores, u32(1))
 
 	// Narrowing store rights Read_Write -> Read_Only does NOT set any_grant_added.
-	diff_ro: Plan_Difference
+	diff_ro := test_difference()
 	ref_ro := plan_diff_compute(&plan_rw, &plan_a, &diff_ro)
 	testing.expect_value(t, ref_ro, Plan_Refusal.None)
 	testing.expect(t, diff_ro.has_changes, "narrowing store rights is a change")
@@ -691,4 +703,90 @@ test_project_console_spec_edges_hash_and_grant_diff :: proc(t: ^testing.T) {
 	testing.expect_value(t, fb_spec.module_count, u32(1))
 	testing.expect_value(t, fb_spec.store_count, u32(1))
 	testing.expect_value(t, fb_spec.stores[0].rights_word, u64(Plan_Store_Rights.Read_Write))
+}
+
+// A plan of 1000 entries, past the 32 of a plan of a fixed size: 1000
+// holders of Assistive (a role of several holders) in one chain of
+// interposition of 999 links is no cycle; a link from the last back to the
+// first is a cycle, refused at the first holder whose chain comes back; a
+// name that repeats a name 400 entries before is refused at the later
+// entry; and the hash of the plan does not depend on the order of its
+// entries.
+@(test)
+plan_validate_of_a_plan_of_a_thousand_entries :: proc(t: ^testing.T) {
+	COUNT :: 1000
+	holder_hash :: proc(index: int) -> (hash: blake3.Hash) {
+		hash[0], hash[1], hash[2] = u8(index), u8(index >> 8), 0x5a
+		return
+	}
+	chain := test_plan(0, COUNT, COUNT)
+	for index in 0 ..< COUNT {
+		name := [3]u8{'h', 'a' + u8(index % 26), 'a' + u8(index / 26 % 26)}
+		full := [4]u8{name[0], name[1], name[2], 'a' + u8(index / 676)}
+		over: blake3.Hash
+		if index > 0 {
+			over = holder_hash(index - 1)
+		}
+		chain.entries[index], _ = plan_entry_make_role(string(full[:]), .Assistive, holder_hash(index), over)
+	}
+	refusal, bad_index := plan_validate(&chain)
+	testing.expect_value(t, refusal, Plan_Refusal.None)
+	forward, _ := plan_hash(&chain)
+
+	// The same entries in the reverse order give the same hash.
+	reversed := test_plan(0, COUNT, COUNT)
+	for index in 0 ..< COUNT {
+		reversed.entries[index] = chain.entries[COUNT - 1 - index]
+	}
+	backward, _ := plan_hash(&reversed)
+	testing.expect_value(t, backward, forward)
+
+	// The first holder interposes over the last: each holder is on a cycle,
+	// and the first by index is refused.
+	cycle := test_plan_copy(&chain)
+	cycle.entries[0].interposed_over_hash = holder_hash(COUNT - 1)
+	refusal, bad_index = plan_validate(&cycle)
+	testing.expect_value(t, refusal, Plan_Refusal.Cyclic_Role_Chain)
+	testing.expect_value(t, bad_index, u32(0))
+
+	// A chain that ends in a cycle of two holders that it does not hold:
+	// the first entry whose chain reaches it is refused.
+	tail := test_plan_copy(&chain)
+	tail.entries[500].interposed_over_hash = holder_hash(501)
+	refusal, bad_index = plan_validate(&tail)
+	testing.expect_value(t, refusal, Plan_Refusal.Cyclic_Role_Chain)
+	testing.expect_value(t, bad_index, u32(500))
+
+	// A name 400 entries after its first use, and a module that an earlier
+	// holder of the role has: each refused at its later entry.
+	repeat := test_plan_copy(&chain)
+	repeat.entries[900].name_bytes = repeat.entries[500].name_bytes
+	refusal, bad_index = plan_validate(&repeat)
+	testing.expect_value(t, refusal, Plan_Refusal.Duplicate_Entry)
+	testing.expect_value(t, bad_index, u32(900))
+	same_module := test_plan_copy(&chain)
+	same_module.entries[999].module_hash = holder_hash(3)
+	same_module.entries[999].interposed_over_hash = {}
+	refusal, bad_index = plan_validate(&same_module)
+	testing.expect_value(t, refusal, Plan_Refusal.Duplicate_Entry)
+	testing.expect_value(t, bad_index, u32(999))
+
+	// An entry that fails its own check before a repeat: the check wins at
+	// the lower index.
+	both := test_plan_copy(&repeat)
+	both.entries[700].kind_word = 0
+	refusal, bad_index = plan_validate(&both)
+	testing.expect_value(t, refusal, Plan_Refusal.Bad_Entry_Kind)
+	testing.expect_value(t, bad_index, u32(700))
+
+	// A difference of 1000 entries against a plan of one: 999 removed, in
+	// memory for both plans, and refused with one item of memory too few.
+	one := test_plan(0, 1, 1)
+	one.entries[0] = chain.entries[0]
+	difference := Plan_Difference{changes = make([]Plan_Diff_Item, COUNT + 1, context.temp_allocator)}
+	testing.expect_value(t, plan_diff_compute(&chain, &one, &difference), Plan_Refusal.None)
+	testing.expect_value(t, difference.removed_roles, u32(COUNT - 1))
+	short := Plan_Difference{changes = make([]Plan_Diff_Item, COUNT, context.temp_allocator)}
+	testing.expect_value(t, plan_diff_compute(&chain, &one, &short), Plan_Refusal.Buffer_Too_Small)
+	testing.expect_value(t, short.change_count, u32(0))
 }

@@ -41,10 +41,88 @@ MAX_HOST_LABEL_BYTES :: 63
 REQUESTS_PER_PASS :: 4
 
 // Context handle slots and value slots for the delegated powerbox service.
-SERVICE_RING_SLOT :: 10
-TRUSTED_DISPLAY_RING_SLOT :: 11
-SERVICE_REGION_SLOT :: 12
+SERVICE_RING_SLOT :: 10 // The ring from the root service, opened to receive handles.
+TRUSTED_DISPLAY_RING_SLOT :: 11 // The picker ring: the trusted display writes its commands, the powerbox answers.
+SERVICE_REGION_SLOT :: 12 // The region of the root service and the powerbox.
+PICKER_REGION_SLOT :: 13 // The picker region: the requests and the pages of the picker.
+IMAGE_SLOT :: 19 // The boot image, read-only: the file of the storage service.
 CONTEXT_VALUE_DISPLAY_SLOT :: 0
+CONTEXT_VALUE_IMAGE_SIZE :: 1
+
+// The context of the holder of Display: the picker ring and the picker
+// region, which the root service makes at its start and gives the
+// powerbox at the start of the powerbox (src/md/features/powerbox.md, "The
+// picker ring").
+DISPLAY_PICKER_RING_SLOT :: 6
+DISPLAY_PICKER_REGION_SLOT :: 7
+
+// The picker region: the request of a page from the trusted display at
+// one place, the page that the powerbox writes at the other.
+PICKER_REGION_PAGES :: 4
+PICKER_REGION_REQUEST_OFFSET :: 0
+PICKER_REGION_PAGE_OFFSET :: 4096
+
+// The commands of the picker ring. The trusted display writes them, and
+// the powerbox answers each with one completion of the same tag: its
+// Picker_Ring_Status, then values {Powerbox_Refusal, dialog serial, total,
+// first, next, more, candidate count}, with the page at
+// PICKER_REGION_PAGE_OFFSET for Open and Page.
+Picker_Ring_Command :: enum u32 {
+	None  = 0,
+	Open  = 1, // values[0]: the principal of the caller of the display. The powerbox asks the root service for the stores of that principal, then answers with the first page.
+	Page  = 2, // A Picker_Page_Request at PICKER_REGION_REQUEST_OFFSET.
+	Pick  = 3, // values[0]: the dialog serial, [1] the place in the whole list, [2] the change count, [3..6] the hash of the name.
+	Close = 4, // values[0]: the dialog serial. The principal picked nothing.
+}
+
+Picker_Ring_Status :: enum u32 {
+	Ok          = 0,
+	Refused     = 1, // values[0]: the Powerbox_Refusal.
+	Bad_Command = 2,
+	Busy        = 3, // An Open waits for its list already.
+	No_List     = 4, // The root service gave no list: values[0] is 0.
+}
+
+#assert(size_of(Picker_Page_Request) <= PICKER_REGION_PAGE_OFFSET)
+#assert(PICKER_REGION_PAGE_OFFSET + size_of(Picker_Page) <= PICKER_REGION_PAGES * 4096)
+
+// stores_text_next_name gives the next store name of the text that the
+// export `stores` of the storage service gives: a first line of the disk,
+// then one line for each store, its name before ": ". place is the byte
+// after the last line read; it starts at 0. ok is false at the end. A
+// line with no ": " gives an empty name, which the caller refuses.
+stores_text_next_name :: proc "contextless" (text: []u8, place: ^int) -> (name: []u8, ok: bool) {
+	// The first line is the disk: skip to the first line end.
+	if place^ == 0 {
+		for place^ < len(text) && text[place^] != '\n' {
+			place^ += 1
+		}
+	}
+	if place^ >= len(text) {
+		return nil, false
+	}
+	// place is at a line end: the line starts after it.
+	start := place^ + 1
+	end := start
+	for end < len(text) && text[end] != '\n' {
+		end += 1
+	}
+	place^ = end
+	line := text[start:end]
+	for index in 0 ..< len(line) {
+		if line[index] == ':' && index + 1 < len(line) && line[index + 1] == ' ' {
+			return line[:index], true
+		}
+	}
+	return nil, true
+}
+
+// picker_ring_command_of_word is the one border of a word of the picker
+// ring: a word that names no command is refused.
+picker_ring_command_of_word :: proc "contextless" (word: u32) -> (command: Picker_Ring_Command, ok: bool) {
+	command, ok = enum_word.member_of_word(Picker_Ring_Command, u64(word))
+	return command, ok && command != .None
+}
 
 // Domain separator prefix written into every canonical dialog digest so a
 // dialog hash cannot collide with module hashes or other signed records.
@@ -171,6 +249,14 @@ Service_Ring_Command :: enum u32 {
 	Withdraw_Dialog = 4,
 	Query_Counts    = 5,
 	Picker_Page     = 6, // The trusted display reads one page of the candidates of a pending dialog.
+	// The root service gives the powerbox, for one call of `stores`, a
+	// connection to the storage service that acts for a principal and
+	// reads only: values[0..2] the handles of the storage service, of the
+	// call ring and of the call region, as the powerbox names them;
+	// values[3] the principal; values[4] the place of the storage module
+	// in the boot image, from 1. The powerbox completes it when the call
+	// ended, and the root service then ends the connection.
+	Stores_Connection = 7,
 }
 
 // Completion statuses returned on the powerbox service ring.
@@ -179,6 +265,9 @@ Service_Ring_Status :: enum u32 {
 	Refused     = 1,
 	Bad_Command = 2,
 	Busy        = 3,
+	// A record that answers no command (tag 0): the powerbox asks the root
+	// service for the stores of the principal values[0].
+	Stores_Wanted = 4,
 }
 
 // Closed allowlist of services that a running process can request a caller-only

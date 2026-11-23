@@ -109,22 +109,29 @@ Peer :: struct {
 	revocations:       machine_mesh.Revocation_List,
 	has_revocations:   bool,
 	objects:           machine_sync.Object_Store,
-	stores:            []Exchanged_Store,
+	stores:            Store_Table,
 	machine_grants:    [machine_mesh.MAX_PAIRED_MACHINES]Machine_Grant,
 	relay:             Relay_Table,
 }
 
 // The memory of a peer that grows with the principal: the objects by hash
 // that it keeps, and the stores that the plan exchanges with the memory of
-// their versions. The process sizes each table from its budget, so no count
-// of objects, of stores or of entries is a constant of the contract. The
-// entries and the conflicts are divided among the stores.
+// their versions. No count of objects, of stores or of entries is a
+// constant of the contract: each table is memory of the process, and with
+// its growth procedure it grows in place when it needs room, as far as the
+// budget of the process pays. With no growth procedure, a table has the
+// size that it was given, and the entries and the conflicts are divided
+// among the stores.
 Peer_Memory :: struct {
-	object_rows:     []machine_sync.Stored_Object,
-	object_bytes:    []u8,
-	stores:          []Exchanged_Store,
-	store_entries:   []Store_Entry,
-	store_conflicts: []Store_Conflict,
+	object_rows:       []machine_sync.Stored_Object,
+	object_bytes:      []u8,
+	object_grow:       machine_sync.Object_Store_Grow,
+	stores:            []Exchanged_Store,
+	store_table_grow:  Store_Table_Grow,
+	store_entries:     []Store_Entry,
+	store_conflicts:   []Store_Conflict,
+	version_grow:      Store_Version_Grow,
+	grow_user:         rawptr, // The user of each growth procedure.
 }
 
 // peer_init takes the public identity key of this machine, binds its
@@ -142,7 +149,13 @@ peer_init :: proc "contextless" (peer: ^Peer, identity_public_key: [machine_mesh
 	peer.identity = identity
 	peer.has_identity = true
 	peer.services = services
-	peer.stores = memory.stores
+	peer.stores = Store_Table {
+		rows              = memory.stores,
+		grow              = memory.store_table_grow,
+		grow_user         = memory.grow_user,
+		version_grow      = memory.version_grow,
+		version_grow_user = memory.grow_user,
+	}
 	if store_count := len(memory.stores); store_count > 0 {
 		entry_share := len(memory.store_entries) / store_count
 		conflict_share := len(memory.store_conflicts) / store_count
@@ -151,7 +164,7 @@ peer_init :: proc "contextless" (peer: ^Peer, identity_public_key: [machine_mesh
 			store_exchange_memory_bind(&store, memory.store_entries[index * entry_share:][:entry_share], memory.store_conflicts[index * conflict_share:][:conflict_share])
 		}
 	}
-	return machine_sync.object_store_init(&peer.objects, memory.object_rows, memory.object_bytes)
+	return machine_sync.object_store_init(&peer.objects, memory.object_rows, memory.object_bytes, memory.object_grow, memory.grow_user)
 }
 
 // channel_binding_of_identities binds a pairing to the two identity keys
@@ -584,7 +597,12 @@ object_response_accept :: proc "contextless" (peer: ^Peer, kind: object_cache.Ca
 	} else if !peer.objects.assembly.active || peer.objects.assembly.hash != requested_hash || u64(peer.objects.assembly.total) != total {
 		return .Malformed, .None, 0
 	}
-	if machine_sync.object_store_write(&peer.objects, requested_hash, int(offset), body[OBJECT_RESPONSE_HEADER_SIZE:]) != .Stored {
+	switch machine_sync.object_store_write(&peer.objects, requested_hash, int(offset), body[OBJECT_RESPONSE_HEADER_SIZE:]) {
+	case .Stored:
+	case .Refused_Too_Large:
+		// The budget of the store pays no more bytes: the object ends here.
+		return .Too_Large, .None, 0
+	case .Already_Stored, .Refused_Full, .Refused_Hash_Mismatch, .Refused_Malformed, .Refused_Nil_Input:
 		return .Malformed, .None, 0
 	}
 	if !machine_sync.object_store_whole(&peer.objects) {
@@ -670,7 +688,7 @@ serve_store_offer :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_Cont
 	}
 	identifier: blake3.Hash
 	copy(identifier[:], body[:blake3.HASH_SIZE])
-	store := store_exchange_find(peer.stores, identifier)
+	store := store_exchange_find(&peer.stores, identifier)
 	if store == nil {
 		return refusal_write(output, .Store_Refused, u32(Store_Status.Refused_Unknown_Store))
 	}

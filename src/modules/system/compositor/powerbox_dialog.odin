@@ -8,6 +8,7 @@
 // revokes immediately on Ctrl+Shift+Escape.
 package compositor
 
+import "base:intrinsics"
 import "internal:compositor/bar"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/powerbox"
@@ -22,7 +23,6 @@ POWERBOX_DIALOG_WIDTH :: 440
 POWERBOX_DIALOG_HEIGHT :: 160
 POWERBOX_TEXT_LIMIT :: 96
 POWERBOX_PICKER_SLOTS :: 4 // The rows of the list that show at once: the list scrolls past them.
-POWERBOX_PICKER_STAND_IN_STORES :: 4 // The stores of the stand-in list, until the powerbox service gives its pages.
 POWERBOX_TITLE_HEIGHT :: 30 // The title plate, inside the two lines of the frame.
 POWERBOX_MARGIN :: 16 // From the frame to the texts, the list and the buttons.
 POWERBOX_PICKER_LINE :: 24
@@ -39,11 +39,11 @@ Powerbox_Prompt_State :: struct {
 	process_len:     int,
 	resource_text:   [POWERBOX_TEXT_LIMIT]u8,
 	resource_len:    int,
+	// The place of the chosen store in the whole list of the principal,
+	// and the first row that shows: the list follows the chosen row. The
+	// names come from the powerbox by pages (powerbox_picker.odin).
 	picker_selected: int,
-	picker_first:    int, // The first row of the list that shows: the list follows the chosen row.
-	picker_count:    int,
-	picker_stores:   [POWERBOX_PICKER_STAND_IN_STORES]string,
-	chosen_store:    string,
+	picker_first:    int,
 	last_decision:   powerbox.Item_Decision,
 }
 
@@ -69,7 +69,7 @@ trusted_dialog_open :: proc "contextless" () -> bool {
 	return powerbox_prompt.open || plan_difference_dialog.open
 }
 
-powerbox_prompt_open :: proc "contextless" (kind: powerbox.Request_Item_Kind, process_name, resource_text: string) -> u64 {
+powerbox_prompt_open :: proc "contextless" (kind: powerbox.Request_Item_Kind, process_name, resource_text: string, principal: u64 = 0) -> u64 {
 	if len(process_name) == 0 || len(resource_text) == 0 {
 		return 0
 	}
@@ -86,12 +86,10 @@ powerbox_prompt_open :: proc "contextless" (kind: powerbox.Request_Item_Kind, pr
 		last_decision = .None,
 	}
 	if kind == .Store_Share {
-		// Candidate stores presented ONLY to the principal on the trusted display;
-		// the requesting process never sees this list and receives a share of the chosen store only.
-		powerbox_prompt.picker_stores = {"documents", "notes", "projects", "downloads"}
-		powerbox_prompt.picker_count = POWERBOX_PICKER_STAND_IN_STORES
-		powerbox_prompt.picker_selected = 0
-		powerbox_prompt.picker_first = 0
+		// The stores of the principal, from the powerbox, shown only to the
+		// principal on the trusted display: the requesting process never
+		// sees the list.
+		powerbox_picker_open(principal)
 	}
 	copy(powerbox_prompt.process_name[:powerbox_prompt.process_len], process_name[:powerbox_prompt.process_len])
 	copy(powerbox_prompt.resource_text[:powerbox_prompt.resource_len], resource_text[:powerbox_prompt.resource_len])
@@ -103,18 +101,39 @@ powerbox_prompt_decide :: proc "contextless" (allow: bool) -> bool {
 	if !powerbox_prompt.open {
 		return false
 	}
-	powerbox_prompt.open = false
-	if allow && powerbox_prompt.kind == .Store_Share && powerbox_prompt.picker_count > 0 {
-		powerbox_prompt.chosen_store = powerbox_prompt.picker_stores[powerbox_prompt.picker_selected]
-	} else {
-		powerbox_prompt.chosen_store = ""
+	if powerbox_prompt.kind == .Store_Share {
+		// A share needs a store that the powerbox checks: the prompt waits
+		// for its answer (powerbox_prompt_picked). With no store to pick,
+		// Allow does nothing.
+		if allow {
+			powerbox_picker_pick(powerbox_prompt.picker_selected)
+			return true
+		}
+		powerbox_picker_close()
 	}
+	powerbox_prompt.open = false
 	powerbox_prompt.last_decision = allow ? .Granted : .Refused
 	if allow {
-		window_grant_add(string(powerbox_prompt.process_name[:powerbox_prompt.process_len]), string(powerbox_prompt.resource_text[:powerbox_prompt.resource_len]), powerbox_prompt.chosen_store)
+		window_grant_add(string(powerbox_prompt.process_name[:powerbox_prompt.process_len]), string(powerbox_prompt.resource_text[:powerbox_prompt.resource_len]), "")
 	}
 	damage_whole_screen()
 	return true
+}
+
+// powerbox_prompt_picked takes the answer of the powerbox to a pick: the
+// grant holds only when the powerbox found the store at its place in its
+// copy of the list. A refusal closes the prompt with nothing granted: the
+// list changed, and the principal asks again.
+powerbox_prompt_picked :: proc "contextless" (accepted: bool, store: string) {
+	if !powerbox_prompt.open || powerbox_prompt.kind != .Store_Share {
+		return
+	}
+	powerbox_prompt.open = false
+	powerbox_prompt.last_decision = accepted ? .Granted : .Refused
+	if accepted {
+		window_grant_add(string(powerbox_prompt.process_name[:powerbox_prompt.process_len]), string(powerbox_prompt.resource_text[:powerbox_prompt.resource_len]), store)
+	}
+	damage_whole_screen()
 }
 
 // window_grant_add records a grant that the principal kept, so the menu
@@ -160,14 +179,54 @@ window_grants_window_closed :: proc "contextless" (process_name: string) {
 	}
 }
 
+// The memory of the difference that shows: a copy of the two sides that
+// the asker gave, and the items of the dialog. A difference has any count
+// of items, so the arena reserves the pages of the budget of the
+// compositor and commits them as a difference needs them; the next
+// difference starts it again.
+plan_difference_arena: system.Arena
+
 // plan_difference_show shows the difference of a plan on the trusted
 // display, and gives its serial, or 0 with the refusal and the argument
-// that it names, from 1.
-plan_difference_show :: proc "contextless" (plan_name, added, removed: string) -> (serial: u64, refusal: bar.Plan_Difference_Refusal, argument: int) {
-	if powerbox_prompt.open {
+// that it names, from 1. added and removed are memory of the asker: the
+// dialog reads a copy, so a change of the asker after the copy changes
+// nothing that the principal sees. A budget that pays no more for the
+// items is Too_Many_Items.
+plan_difference_show :: proc "contextless" (plan_name: string, added, removed: []u8) -> (serial: u64, refusal: bar.Plan_Difference_Refusal, argument: int) {
+	if powerbox_prompt.open || plan_difference_dialog.open {
 		return 0, .Busy, 0
 	}
-	serial, refusal, argument = bar.plan_difference_open(&plan_difference_dialog, plan_name, added, removed, system.time())
+	if plan_difference_arena.base == nil {
+		amounts, budget_status := system.budget_read()
+		if budget_status != .Ok {
+			return 0, .Too_Many_Items, 2
+		}
+		arena, arena_status := system.arena_create(system.arena_reservation_pages(amounts.pages))
+		if arena_status != .Ok {
+			return 0, .Too_Many_Items, 2
+		}
+		plan_difference_arena = arena
+	}
+	// No dialog shows, so no item of the arena is in use.
+	system.arena_reset(&plan_difference_arena)
+	added_copy, added_ok := plan_difference_copy(added)
+	if !added_ok {
+		return 0, .Too_Many_Items, 2
+	}
+	removed_copy, removed_ok := plan_difference_copy(removed)
+	if !removed_ok {
+		return 0, .Too_Many_Items, 3
+	}
+	needed := bar.plan_difference_items_needed(added_copy, removed_copy)
+	items: []bar.Plan_Difference_Item
+	if needed > 0 {
+		address, push_status := system.arena_push(&plan_difference_arena, u64(needed) * size_of(bar.Plan_Difference_Item), align_of(bar.Plan_Difference_Item))
+		if push_status != .Ok {
+			return 0, .Too_Many_Items, 2
+		}
+		items = ([^]bar.Plan_Difference_Item)(address)[:needed]
+	}
+	serial, refusal, argument = bar.plan_difference_open(&plan_difference_dialog, plan_name, added_copy, removed_copy, system.time(), items)
 	if refusal != .None {
 		return
 	}
@@ -176,6 +235,21 @@ plan_difference_show :: proc "contextless" (plan_name, added, removed: string) -
 	dialog_asker_bind(system.service_caller())
 	damage_whole_screen()
 	return
+}
+
+// plan_difference_copy copies the bytes of a side into the arena, once.
+@(private = "file")
+plan_difference_copy :: proc "contextless" (bytes: []u8) -> (text: string, ok: bool) {
+	if len(bytes) == 0 {
+		return "", true
+	}
+	address, status := system.arena_push(&plan_difference_arena, u64(len(bytes)), 1)
+	if status != .Ok {
+		return "", false
+	}
+	copied := ([^]u8)(address)[:len(bytes)]
+	intrinsics.mem_copy_non_overlapping(raw_data(copied), raw_data(bytes), len(bytes))
+	return string(copied), true
 }
 
 // act_dialog_show shows one act of an agent on the trusted display: the
@@ -338,7 +412,8 @@ powerbox_picker_follow_choice :: proc "contextless" () {
 	if prompt.picker_selected >= prompt.picker_first + POWERBOX_PICKER_SLOTS {
 		prompt.picker_first = prompt.picker_selected - POWERBOX_PICKER_SLOTS + 1
 	}
-	prompt.picker_first = clamp(prompt.picker_first, 0, max(prompt.picker_count - POWERBOX_PICKER_SLOTS, 0))
+	prompt.picker_first = clamp(prompt.picker_first, 0, max(powerbox_picker_total() - POWERBOX_PICKER_SLOTS, 0))
+	powerbox_picker_show(prompt.picker_first, POWERBOX_PICKER_SLOTS)
 }
 
 powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, modifiers: u32) -> bool {
@@ -384,15 +459,15 @@ powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, mod
 	}
 	switch code {
 	case display.KEY_UP:
-		if powerbox_prompt.kind == .Store_Share && powerbox_prompt.picker_count > 0 {
-			powerbox_prompt.picker_selected = (powerbox_prompt.picker_selected + powerbox_prompt.picker_count - 1) % powerbox_prompt.picker_count
+		if total := powerbox_picker_total(); powerbox_prompt.kind == .Store_Share && total > 0 {
+			powerbox_prompt.picker_selected = (powerbox_prompt.picker_selected + total - 1) % total
 			powerbox_picker_follow_choice()
 			damage_whole_screen()
 		}
 		return true
 	case display.KEY_DOWN:
-		if powerbox_prompt.kind == .Store_Share && powerbox_prompt.picker_count > 0 {
-			powerbox_prompt.picker_selected = (powerbox_prompt.picker_selected + 1) % powerbox_prompt.picker_count
+		if total := powerbox_picker_total(); powerbox_prompt.kind == .Store_Share && total > 0 {
+			powerbox_prompt.picker_selected = (powerbox_prompt.picker_selected + 1) % total
 			powerbox_picker_follow_choice()
 			damage_whole_screen()
 		}
@@ -442,15 +517,27 @@ powerbox_dialog_records :: proc "contextless" (table: ^interface.Draw_Table) {
 		interface.draw_rectangle(table, list_x, list_y, list_width, list_height, graphics.colors.recess)
 		interface.draw_outline(table, list_x, list_y, list_width, list_height, 1, graphics.colors.track)
 		// Only the rows of the view: the list has any count of stores.
-		visible_end := min(powerbox_prompt.picker_first + POWERBOX_PICKER_SLOTS, powerbox_prompt.picker_count)
+		visible_end := min(powerbox_prompt.picker_first + POWERBOX_PICKER_SLOTS, powerbox_picker_total())
+		switch {
+		case picker.stage == .Opening:
+			interface.draw_text(table, list_x + 12, list_y + 5, "Reading the stores", graphics.colors.dim, interface.FONT_INTERFACE)
+		case picker.stage == .No_List:
+			interface.draw_text(table, list_x + 12, list_y + 5, interface.text_fit(table, interface.FONT_INTERFACE, "The stores did not come. Refuse, then ask again.", list_width - 24), graphics.colors.dim, interface.FONT_INTERFACE)
+		case powerbox_picker_total() == 0:
+			interface.draw_text(table, list_x + 12, list_y + 5, "No store", graphics.colors.dim, interface.FONT_INTERFACE)
+		}
 		for i in powerbox_prompt.picker_first ..< visible_end {
+			name, shown := powerbox_picker_name(i)
+			if !shown {
+				continue // Its page comes.
+			}
 			ry := list_y + 1 + (i - powerbox_prompt.picker_first) * POWERBOX_PICKER_LINE
 			sel := i == powerbox_prompt.picker_selected
 			if sel {
 				interface.draw_vertical_gradient(table, list_x + 1, ry, list_width - 2, POWERBOX_PICKER_LINE, graphics.colors.chosen, graphics.shade(graphics.colors.chosen, 86))
 				interface.draw_rectangle(table, list_x + 2, ry, list_width - 4, 1, graphics.shade(graphics.colors.chosen, 140))
 			}
-			interface.draw_text(table, list_x + 12, ry + 4, powerbox_prompt.picker_stores[i], sel ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
+			interface.draw_text(table, list_x + 12, ry + 4, interface.text_fit(table, interface.FONT_INTERFACE, name, list_width - 24), sel ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
 		}
 		interface.draw_text(table, x + POWERBOX_MARGIN, button_y + (POWERBOX_BUTTON_HEIGHT - graphics.CELL_HEIGHT) / 2, "Up/Down: choose", graphics.colors.dim, interface.FONT_INTERFACE)
 	}

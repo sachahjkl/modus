@@ -9,11 +9,11 @@ import pr "modus:contract/plans_recipes"
 
 PLAN_DIFFERENCE_NAME_BYTES :: 48
 PLAN_DIFFERENCE_ITEM_BYTES :: 48
-// The items of one side: each change that a difference holds. The body
-// scrolls past PLAN_DIFFERENCE_VISIBLE_LINES, and the accept counts only once
-// the view showed the last row, so the principal never accepts a line that
-// it did not see.
-PLAN_DIFFERENCE_ITEM_CAPACITY :: pr.PLAN_DISPLAY_ITEM_CAPACITY
+// A side has any count of items, in memory that the caller of
+// plan_difference_open gives. The body scrolls past
+// PLAN_DIFFERENCE_VISIBLE_LINES, and the accept counts only once the view
+// showed the last row, so the principal never accepts a line that it did
+// not see.
 // The lines of the body that show at once: the headings and the items. They
 // fit the reference screen with the title and the buttons.
 PLAN_DIFFERENCE_VISIBLE_LINES :: 12
@@ -71,7 +71,7 @@ Plan_Difference_Refusal :: enum u8 {
 	Name_Too_Long, // Past PLAN_DIFFERENCE_NAME_BYTES.
 	Empty_Item, // A list holds an item with no byte: two commas, or a comma at an end.
 	Item_Too_Long, // An item past PLAN_DIFFERENCE_ITEM_BYTES.
-	Too_Many_Items, // A side past PLAN_DIFFERENCE_ITEM_CAPACITY.
+	Too_Many_Items, // The two sides have more items than the memory that the caller gave.
 	No_Change, // Nothing added and nothing removed: nothing to accept.
 	Not_A_Name, // The asker of an act is not an identifier: a name of a process.
 	Not_An_Act, // The act is not two identifiers with a period between them.
@@ -97,10 +97,13 @@ Plan_Difference_Dialog :: struct {
 	serial:               u64, // The number of the last dialog shown; 0 before the first.
 	plan_name:            [PLAN_DIFFERENCE_NAME_BYTES]u8,
 	plan_name_length:     int,
-	added:                [PLAN_DIFFERENCE_ITEM_CAPACITY]Plan_Difference_Item,
+	// The items of each side: parts of the memory that the caller gave at
+	// the open, or act_item on the act face.
+	added:                []Plan_Difference_Item,
 	added_count:          int,
-	removed:              [PLAN_DIFFERENCE_ITEM_CAPACITY]Plan_Difference_Item,
+	removed:              []Plan_Difference_Item,
 	removed_count:        int,
+	act_item:             [1]Plan_Difference_Item,
 	shown_at_milliseconds: u64, // The clock of the system when the dialog showed.
 	armed_from_milliseconds: u64, // An act counts from this time on: the show, plus the arm time; on the act face, the last move of the focus too.
 	focus:                Plan_Difference_Button,
@@ -113,11 +116,13 @@ Plan_Difference_Dialog :: struct {
 
 // plan_difference_open shows the difference of a plan: its name, and the
 // grants and roles that it adds and removes, each a list of names that
-// commas separate, with the spaces around a name dropped. It gives the
+// commas separate, with the spaces around a name dropped. The items of the
+// two sides go to items, memory of the caller that stays while the dialog
+// shows: plan_difference_items_needed gives its length. It gives the
 // serial of the dialog, or 0 with the refusal and the argument that it
 // names, from 1: the name, the added list, the removed list; 0 for Busy. A
 // refusal changes nothing.
-plan_difference_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog, plan_name, added, removed: string, now_milliseconds: u64) -> (serial: u64, refusal: Plan_Difference_Refusal, argument: int) {
+plan_difference_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog, plan_name, added, removed: string, now_milliseconds: u64, items: []Plan_Difference_Item) -> (serial: u64, refusal: Plan_Difference_Refusal, argument: int) {
 	if dialog.open {
 		return 0, .Busy, 0
 	}
@@ -127,17 +132,26 @@ plan_difference_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog, pla
 	if len(plan_name) > PLAN_DIFFERENCE_NAME_BYTES {
 		return 0, .Name_Too_Long, 1
 	}
-	added_items, removed_items: [PLAN_DIFFERENCE_ITEM_CAPACITY]Plan_Difference_Item
 	added_count, removed_count: int
-	if added_count, refusal = plan_difference_items(added, &added_items); refusal != .None {
+	if added_count, refusal = plan_difference_items(added, nil); refusal != .None {
 		return 0, refusal, 2
 	}
-	if removed_count, refusal = plan_difference_items(removed, &removed_items); refusal != .None {
+	if removed_count, refusal = plan_difference_items(removed, nil); refusal != .None {
 		return 0, refusal, 3
 	}
 	if added_count == 0 && removed_count == 0 {
 		return 0, .No_Change, 2
 	}
+	if added_count > len(items) {
+		return 0, .Too_Many_Items, 2
+	}
+	if removed_count > len(items) - added_count {
+		return 0, .Too_Many_Items, 3
+	}
+	added_items := items[:added_count]
+	removed_items := items[added_count:][:removed_count]
+	plan_difference_items(added, added_items)
+	plan_difference_items(removed, removed_items)
 	dialog.serial += 1
 	dialog.open = true
 	dialog.face = .Plan
@@ -182,10 +196,12 @@ plan_difference_act_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog,
 	dialog.face = .Act
 	copy(dialog.plan_name[:], asker)
 	dialog.plan_name_length = len(asker)
-	dialog.added = {}
-	copy(dialog.added[0].text[:], act)
-	dialog.added[0].length = len(act)
+	dialog.act_item = {}
+	copy(dialog.act_item[0].text[:], act)
+	dialog.act_item[0].length = len(act)
+	dialog.added = dialog.act_item[:]
 	dialog.added_count = 1
+	dialog.removed = nil
 	dialog.removed_count = 0
 	dialog.shown_at_milliseconds = now_milliseconds
 	dialog.armed_from_milliseconds = now_milliseconds
@@ -213,9 +229,28 @@ identifier_valid :: proc "contextless" (text: string) -> bool {
 	return true
 }
 
-// plan_difference_items splits a list of names. An empty list has no item.
+// plan_difference_items_needed gives the items that plan_difference_open
+// needs for two lists: one for each comma of a list that is not blank, and
+// one more. It checks nothing: the open does.
+plan_difference_items_needed :: proc "contextless" (added, removed: string) -> (needed: int) {
+	for list in ([2]string{added, removed}) {
+		if len(plan_difference_trim(list)) == 0 {
+			continue
+		}
+		needed += 1
+		for character in transmute([]u8)list {
+			if character == ',' {
+				needed += 1
+			}
+		}
+	}
+	return needed
+}
+
+// plan_difference_items splits a list of names into items, or with no
+// items only counts and checks them. An empty list has no item.
 @(private = "file")
-plan_difference_items :: proc "contextless" (list: string, items: ^[PLAN_DIFFERENCE_ITEM_CAPACITY]Plan_Difference_Item) -> (count: int, refusal: Plan_Difference_Refusal) {
+plan_difference_items :: proc "contextless" (list: string, items: []Plan_Difference_Item) -> (count: int, refusal: Plan_Difference_Refusal) {
 	if len(plan_difference_trim(list)) == 0 {
 		return 0, .None
 	}
@@ -231,11 +266,12 @@ plan_difference_items :: proc "contextless" (list: string, items: ^[PLAN_DIFFERE
 			return 0, .Empty_Item
 		case len(item) > PLAN_DIFFERENCE_ITEM_BYTES:
 			return 0, .Item_Too_Long
-		case count >= PLAN_DIFFERENCE_ITEM_CAPACITY:
-			return 0, .Too_Many_Items
 		}
-		copy(items[count].text[:], item)
-		items[count].length = len(item)
+		if count < len(items) {
+			items[count] = {}
+			copy(items[count].text[:], item)
+			items[count].length = len(item)
+		}
 		count += 1
 	}
 	return count, .None

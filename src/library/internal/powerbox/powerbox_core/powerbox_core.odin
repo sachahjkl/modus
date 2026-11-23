@@ -1252,7 +1252,10 @@ picker_page_take :: proc "contextless" (state: ^Powerbox_State, display_holder_s
 			break
 		}
 	}
-	if entry == nil || entry.dialog.picker_candidate_total == 0 {
+	// A dialog of an asker with no picker has no page; the picker of the
+	// display has its page, empty for a principal with no store.
+	picker_of_the_display := entry != nil && entry.dialog.asker_process_slot == 0 && entry.dialog.items[0].kind_word == u64(powerbox.Request_Item_Kind.Store_Share)
+	if entry == nil || (entry.dialog.picker_candidate_total == 0 && !picker_of_the_display) {
 		return .Untrusted_Answer
 	}
 	if state.picker_change_count != entry.dialog.picker_change_count {
@@ -1282,5 +1285,106 @@ picker_page_take :: proc "contextless" (state: ^Powerbox_State, display_holder_s
 		page.candidates[page.candidate_count].list_index = place
 		page.candidate_count += 1
 	}
+	return .None
+}
+// stores_replace_begin ends each store of principal in the table: the list
+// that follows replaces it. The change count moves, so a dialog that showed
+// the old list refuses each page and each pick.
+stores_replace_begin :: proc "contextless" (state: ^Powerbox_State, principal: u64) {
+	for &store in state.stores {
+		if store.active && store.principal == principal {
+			store = {}
+		}
+	}
+	state.picker_change_count += 1
+}
+
+// The picker of the trusted display for a caller that acts for its
+// principal: a pending dialog with no asking process (its asker slot is
+// 0), whose candidates are the stores of the principal. It expires as each
+// dialog does, and its pages and its pick are checked against the copy of
+// the list, as the pages and the pick of the dialog of an asker are.
+picker_dialog_open :: proc "contextless" (state: ^Powerbox_State, principal: u64, now_ms: u64) -> (dialog_serial: u64, refusal: powerbox.Powerbox_Refusal) {
+	free: ^Pending_Dialog
+	for &entry in state.pending {
+		if entry.state != .Queued && entry.state != .Shown {
+			free = &entry
+			break
+		}
+	}
+	if free == nil {
+		return 0, .Dialog_Queue_Full
+	}
+	total: u32 = 0
+	for &store in state.stores {
+		if store.active && store.principal == principal {
+			total += 1
+		}
+	}
+	dialog_serial = state.next_dialog_serial
+	state.next_dialog_serial += 1
+	free^ = {state = .Shown, created_ms = now_ms, shown_ms = now_ms}
+	free.dialog.action_word = u64(powerbox.Dialog_Action.Show_Grant_Dialog)
+	free.dialog.dialog_serial = dialog_serial
+	free.dialog.session_principal = principal
+	free.dialog.item_count = 1
+	free.dialog.items[0].kind_word = u64(powerbox.Request_Item_Kind.Store_Share)
+	free.dialog.picker_change_count = state.picker_change_count
+	free.dialog.picker_candidate_total = total
+	state.counters.pending_dialogs += 1
+	return dialog_serial, .None
+}
+
+// picker_dialog_find gives the picker dialog of a serial that still shows.
+@(private = "file")
+picker_dialog_find :: proc "contextless" (state: ^Powerbox_State, dialog_serial: u64) -> ^Pending_Dialog {
+	for &entry in state.pending {
+		if (entry.state == .Queued || entry.state == .Shown) && entry.dialog.dialog_serial == dialog_serial && entry.dialog.asker_process_slot == 0 && entry.dialog.items[0].kind_word == u64(powerbox.Request_Item_Kind.Store_Share) {
+			return &entry
+		}
+	}
+	return nil
+}
+
+@(private = "file")
+picker_dialog_end :: proc "contextless" (state: ^Powerbox_State, entry: ^Pending_Dialog) {
+	entry.state = .Resolved
+	if state.counters.pending_dialogs > 0 {
+		state.counters.pending_dialogs -= 1
+	}
+}
+
+// picker_dialog_pick checks the pick of the trusted display against the
+// copy of the list: the dialog, the change count, the place in the whole
+// list and the hash of the name. It ends the dialog, picked or refused.
+picker_dialog_pick :: proc "contextless" (state: ^Powerbox_State, display_holder_slot: u32, dialog_serial: u64, list_index: u32, change_count: u64, name_hash: blake3.Hash) -> (picked: Session_Store, refusal: powerbox.Powerbox_Refusal) {
+	if state.trusted_display_slot == 0 || display_holder_slot != state.trusted_display_slot {
+		return {}, .Untrusted_Answer
+	}
+	entry := picker_dialog_find(state, dialog_serial)
+	if entry == nil {
+		return {}, .Untrusted_Answer
+	}
+	defer picker_dialog_end(state, entry)
+	if change_count != entry.dialog.picker_change_count || state.picker_change_count != change_count {
+		return {}, .Picker_Selection_Invalid
+	}
+	store := principal_store_at(state, entry.dialog.session_principal, list_index)
+	if store == nil || store.candidate.name_hash != name_hash {
+		return {}, .Picker_Selection_Invalid
+	}
+	return store^, .None
+}
+
+// picker_dialog_close ends a picker dialog with no pick.
+picker_dialog_close :: proc "contextless" (state: ^Powerbox_State, display_holder_slot: u32, dialog_serial: u64) -> powerbox.Powerbox_Refusal {
+	if state.trusted_display_slot == 0 || display_holder_slot != state.trusted_display_slot {
+		return .Untrusted_Answer
+	}
+	entry := picker_dialog_find(state, dialog_serial)
+	if entry == nil {
+		return .Untrusted_Answer
+	}
+	picker_dialog_end(state, entry)
 	return .None
 }

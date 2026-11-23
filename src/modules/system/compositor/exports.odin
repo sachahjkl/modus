@@ -531,7 +531,9 @@ powerbox_pick_store_export :: proc "c" (process_name: ^string, mode: ^string, er
 	if plan_difference_dialog.open {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Requests, 0, 1, 1)
 	}
-	id := powerbox_prompt_open(.Store_Share, process_name^, mode^)
+	caller := system.service_caller()
+	principal := caller == nil ? 0 : isolated.caller_principal(caller.grant)
+	id := powerbox_prompt_open(.Store_Share, process_name^, mode^, principal)
 	if id == 0 {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1)
 	}
@@ -666,7 +668,7 @@ revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> 
 	return 1
 }
 
-// plan_diff_ask shows the difference of a plan on the trusted display: its name, the grants and roles that it adds, and the ones that it removes, each a list of names that commas separate. The principal accepts or refuses it whole; the log says the decision. The result is the serial of the dialog, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Busy (-1, a dialog of the trusted display shows); Empty (-1, no name, or nothing added and nothing removed); Too_Long (-1, a name past 48 bytes, or more items on one side than a plan difference holds); Bad_Value (-1, an empty item in a list).
+// plan_diff_ask shows the difference of a plan on the trusted display: its name, the grants and roles that it adds, and the ones that it removes, each a list of names that commas separate, as bytes of any count. The principal accepts or refuses it whole; the log says the decision. The result is the serial of the dialog, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Busy (-1, a dialog of the trusted display shows); Empty (-1, no name, or nothing added and nothing removed); Too_Long (-1, a name or an item past 48 bytes); Bad_Value (-1, an empty item in a list); Budget (-1, the budget of the display pays no memory for the items).
 //
 // **The act.** The focus starts on Refuse. An act counts 500 ms after the
 // dialog showed: Enter acts on the button that has the focus, Tab, Left and
@@ -684,11 +686,17 @@ revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> 
 // compositor.plan_diff_ask("home", "notes: store documents", "paint: network")
 // ```
 @(export, link_name = "plan_diff_ask")
-plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^string, error: ^errors.Error_Record) -> i64 {
+plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^system.Bytes_To_Read, removed: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 {
 	if !plan_display_caller() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
-	serial, refusal, argument := plan_difference_show(plan_name^, added^, removed^)
+	if plan_name == nil || added == nil || removed == nil {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Address, .None, plan_name == nil ? 1 : added == nil ? 2 : 3)
+	}
+	// The call host checked each place against the memory that it mapped.
+	added_bytes := added.bytes[:min(added.count, added.capacity)]
+	removed_bytes := removed.bytes[:min(removed.count, removed.capacity)]
+	serial, refusal, argument := plan_difference_show(plan_name^, added_bytes, removed_bytes)
 	switch refusal {
 	case .None:
 		return i64(serial)
@@ -699,13 +707,13 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^
 	case .Name_Too_Long:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, 1, i64(len(plan_name^)), bar.PLAN_DIFFERENCE_NAME_BYTES)
 	case .No_Change:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Records, i64(argument))
 	case .Empty_Item:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, i64(argument))
 	case .Item_Too_Long:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_BYTES)
 	case .Too_Many_Items:
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Budget, .Records, i64(argument))
 	case .Not_A_Name, .Not_An_Act, .No_Grant, .Bad_Serial:
 		// The plan face checks no identifier, and its caller is checked
 		// above: only the act face and a poll give these.
@@ -717,7 +725,6 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^
 //
 #assert(bar.PLAN_DIFFERENCE_NAME_BYTES == pr.PLAN_DISPLAY_NAME_BYTES)
 #assert(bar.PLAN_DIFFERENCE_ITEM_BYTES == pr.PLAN_DISPLAY_ITEM_BYTES)
-#assert(bar.PLAN_DIFFERENCE_ITEM_CAPACITY == pr.PLAN_DISPLAY_ITEM_CAPACITY)
 
 // Return the principal's decision for a trusted plan difference dialog.
 //

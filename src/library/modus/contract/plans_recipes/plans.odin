@@ -29,11 +29,16 @@ APPLIED_PLAN_WIRE_VERSION :: u32(1)
 //   generation(8) + timestamp_ms(8) + principal(8) = 104 bytes.
 APPLIED_PLAN_WIRE_SIZE :: 8 + 4 + 4 + blake3.HASH_SIZE + blake3.HASH_SIZE + 8 + 8 + 8
 
-// Structural bounds on plans and plan differences.
-MAX_PLAN_ENTRIES :: 32
-MAX_PLAN_DIFF_CHANGES :: 64
+// The bytes of the name of an entry.
 MAX_ENTRY_NAME_BYTES :: 64
-MAX_PLAN_CANONICAL_BYTES :: 16384
+
+// The largest count of entries of a plan. A plan holds its entries in the
+// memory of its owner, so no count of the contract bounds it; this is the
+// bound of the representation: an index of the order of a plan keeps its
+// top bit for plan_validate.
+PLAN_ENTRY_COUNT_LIMIT :: u32(1) << 31 - 1
+@(private = "file")
+PLAN_ORDER_MARK :: u32(1) << 31
 
 #assert(APPLIED_PLAN_WIRE_SIZE == 104)
 
@@ -98,6 +103,7 @@ Plan_Refusal :: enum u8 {
 	Store_Failed           = 30, // The private store did not take a write: nothing was committed.
 	Store_Damaged          = 31, // A record of the private store does not decode or does not match its hash.
 	Roles_Refused          = 32, // The root service refused the roles of the plan of principal 0: nothing was committed.
+	No_Memory              = 33, // The budget of the service pays no more memory for the plan, its difference or its lists: nothing changed.
 }
 
 // Closed set of completion statuses returned on the recipes and projects
@@ -123,11 +129,57 @@ Plan_Entry :: struct {
 }
 
 // Complete typed plan value produced by declaration evaluation and checked by
-// the plans service and root service.
+// the plans service and root service. Its tables are memory of its owner,
+// and their lengths are its capacity: entries holds the entries, and order
+// one index for each entry, which plan_validate writes. After a
+// plan_validate with no refusal, order[:entry_count] names the entries in
+// their canonical order, which plan_hash and plan_diff_compute read.
 Plan_Spec :: struct {
 	principal:   u64,
 	entry_count: u32,
-	entries:     [MAX_PLAN_ENTRIES]Plan_Entry,
+	entries:     []Plan_Entry,
+	order:       []u32,
+}
+
+// plan_bytes_for gives the bytes of the memory of a plan of count entries:
+// the entries, then the order. ok is false past PLAN_ENTRY_COUNT_LIMIT.
+plan_bytes_for :: proc "contextless" (count: int) -> (bytes: int, ok: bool) {
+	if count < 0 || count > int(PLAN_ENTRY_COUNT_LIMIT) {
+		return 0, false
+	}
+	return count * (size_of(Plan_Entry) + size_of(u32)), true
+}
+
+// plan_of_memory gives an empty plan of principal whose tables are memory:
+// as many entries as it holds. memory starts at a multiple of 8.
+plan_of_memory :: proc "contextless" (principal: u64, memory: []u8) -> (plan: Plan_Spec) {
+	capacity := min(len(memory) / (size_of(Plan_Entry) + size_of(u32)), int(PLAN_ENTRY_COUNT_LIMIT))
+	plan.principal = principal
+	if capacity == 0 {
+		return
+	}
+	plan.entries = ([^]Plan_Entry)(raw_data(memory))[:capacity]
+	plan.order = ([^]u32)(raw_data(memory[capacity * size_of(Plan_Entry):]))[:capacity]
+	return
+}
+
+// plan_clear makes a plan empty and keeps its memory.
+plan_clear :: proc "contextless" (plan: ^Plan_Spec) {
+	plan^ = {entries = plan.entries, order = plan.order}
+}
+
+// plan_copy makes destination hold the plan source, in the memory of
+// destination: false when it has no room, and destination does not change.
+plan_copy :: proc "contextless" (destination, source: ^Plan_Spec) -> bool {
+	count := int(source.entry_count)
+	if count > len(source.entries) || count > len(source.order) || count > len(destination.entries) || count > len(destination.order) {
+		return false
+	}
+	copy(destination.entries[:count], source.entries[:count])
+	copy(destination.order[:count], source.order[:count])
+	destination.principal = source.principal
+	destination.entry_count = source.entry_count
+	return true
 }
 
 // One difference row between a current applied plan and a proposed plan.
@@ -164,7 +216,26 @@ Plan_Difference :: struct {
 	any_grant_added:      bool,
 	has_changes:          bool,
 	change_count:         u32,
-	changes:              [MAX_PLAN_DIFF_CHANGES]Plan_Diff_Item,
+	// Memory of the caller: plan_diff_compute needs one item for each entry
+	// of the two plans (plan_difference_changes_most).
+	changes:              []Plan_Diff_Item,
+	// The block that changes lies in when the plans core took it from its
+	// memory, which gives it back; nil when the caller gave the changes.
+	changes_memory:       []u8,
+}
+
+// plan_difference_changes_most gives the most items of a difference of
+// current (nil: no plan) and proposed: each entry of current removed and
+// each entry of proposed added.
+plan_difference_changes_most :: proc "contextless" (current, proposed: ^Plan_Spec) -> int {
+	most := 0
+	if current != nil {
+		most += int(current.entry_count)
+	}
+	if proposed != nil {
+		most += int(proposed.entry_count)
+	}
+	return most
 }
 
 // One persisted generation record stored in a principal's applied_plans store.
@@ -430,182 +501,380 @@ plan_entries_same_identity :: proc "contextless" (first, second: ^Plan_Entry) ->
 	return bytes_equal(first.name_bytes[:first.name_length], second.name_bytes[:second.name_length])
 }
 
-// plan_validate strictly checks every entry of plan at the border.
-// Refuses empty plans, oversized entry counts, unknown enum words, zero module
+// plan_validate strictly checks every entry of plan at the border, and
+// writes in its order the canonical order of its entries.
+// Refuses empty plans, a count past its memory, unknown enum words, zero module
 // hashes, invalid names or non-zero padding, unknown or System_Part start grant
 // bits, non-principal-0 trusted-path role holders, duplicate entries, and
-// cyclic role interposition chains.
+// cyclic role interposition chains. bad_index is the first entry that a
+// check refuses, in the order of the entries: an entry that repeats an
+// earlier one is refused at the later index. The checks sort the order
+// and search it, so a plan of any count costs n log n.
 plan_validate :: proc "contextless" (plan: ^Plan_Spec) -> (refusal: Plan_Refusal, bad_index: u32) {
 	if plan == nil || plan.entry_count == 0 {
 		return .Empty_Plan, 0
 	}
-	if plan.entry_count > MAX_PLAN_ENTRIES {
+	if plan.entry_count > PLAN_ENTRY_COUNT_LIMIT || int(plan.entry_count) > len(plan.entries) {
 		return .Too_Many_Entries, 0
 	}
-
-	for index in u32(0) ..< plan.entry_count {
-		entry := &plan.entries[index]
-		kind, kind_ok := plan_entry_kind_of_word(entry.kind_word)
-		if !kind_ok {
-			return .Bad_Entry_Kind, index
-		}
-		if !entry_name_valid(entry.name_bytes[:], entry.name_length) {
-			return .Invalid_Name, index
-		}
-		if !start_grants_mask_valid(entry.start_grants_mask) {
-			return .Bad_Start_Grant, index
-		}
-
-		switch kind {
-		case .None:
-			return .Bad_Entry_Kind, index
-		case .Role_Holder:
-			role, role_ok := role_contract.role_from_word(entry.role_word)
-			if !role_ok {
-				return .Bad_Role, index
-			}
-			if !role_contract.disk_holder_allowed_for_principal(role, plan.principal) {
-				return .Trusted_Path_Forbidden, index
-			}
-			if hash_is_zero(entry.module_hash) {
-				return .Zero_Module_Hash, index
-			}
-			if entry.store_rights_word != 0 {
-				return .Bad_Store_Rights, index
-			}
-			if !hash_is_zero(entry.interposed_over_hash) && entry.interposed_over_hash == entry.module_hash {
-				return .Cyclic_Role_Chain, index
-			}
-		case .Start_Module, .Disk_Module:
-			if entry.role_word != 0 {
-				return .Bad_Role, index
-			}
-			if hash_is_zero(entry.module_hash) {
-				return .Zero_Module_Hash, index
-			}
-			if !hash_is_zero(entry.interposed_over_hash) {
-				return .Bad_Role, index
-			}
-			if entry.store_rights_word != 0 {
-				return .Bad_Store_Rights, index
-			}
-		case .Store_Grant:
-			if entry.role_word != 0 {
-				return .Bad_Role, index
-			}
-			if !hash_is_zero(entry.module_hash) || !hash_is_zero(entry.interposed_over_hash) {
-				return .Bad_Entry_Kind, index
-			}
-			if entry.start_grants_mask != 0 {
-				return .Bad_Start_Grant, index
-			}
-			if _, rights_ok := plan_store_rights_of_word(entry.store_rights_word); !rights_ok {
-				return .Bad_Store_Rights, index
-			}
-		}
-
-		// Duplicate checks against all earlier entries.
-		for earlier in u32(0) ..< index {
-			prev := &plan.entries[earlier]
-			if plan_entries_same_identity(prev, entry) {
-				return .Duplicate_Entry, index
-			}
-			if kind == .Role_Holder && prev.kind_word == u64(Plan_Entry_Kind.Role_Holder) && prev.role_word == entry.role_word {
-				role, _ := role_contract.role_from_word(entry.role_word)
-				if !role_contract.role_allows_multiple_holders(role) {
-					return .Duplicate_Entry, index
-				}
-				if prev.module_hash == entry.module_hash {
-					return .Duplicate_Entry, index
-				}
-			}
+	if int(plan.entry_count) > len(plan.order) {
+		return .Buffer_Too_Small, 0
+	}
+	count := plan.entry_count
+	first_invalid := count
+	invalid_refusal := Plan_Refusal.None
+	for index in u32(0) ..< count {
+		if entry_refusal := plan_entry_check(plan, &plan.entries[index]); entry_refusal != .None {
+			first_invalid = index
+			invalid_refusal = entry_refusal
+			break
 		}
 	}
-
-	// Cycle detection across role interposition chains for each Role_Holder.
-	for index in u32(0) ..< plan.entry_count {
-		entry := &plan.entries[index]
-		if entry.kind_word != u64(Plan_Entry_Kind.Role_Holder) || hash_is_zero(entry.interposed_over_hash) {
-			continue
-		}
-		cursor := entry.interposed_over_hash
-		for hop in u32(0) ..< plan.entry_count {
-			_ = hop
-			if cursor == entry.module_hash {
-				return .Cyclic_Role_Chain, index
-			}
-			found_next := false
-			for candidate_index in u32(0) ..< plan.entry_count {
-				candidate := &plan.entries[candidate_index]
-				if candidate.kind_word != u64(Plan_Entry_Kind.Role_Holder) || candidate.role_word != entry.role_word {
-					continue
-				}
-				if candidate.module_hash == cursor {
-					if hash_is_zero(candidate.interposed_over_hash) {
-						found_next = false
-						break
-					}
-					cursor = candidate.interposed_over_hash
-					found_next = true
-					break
-				}
-			}
-			if !found_next {
-				break
-			}
-			if hop == plan.entry_count - 1 {
-				return .Cyclic_Role_Chain, index
-			}
-		}
+	// The repeats among the entries before the first invalid one: an entry
+	// is checked whole before it is compared with the entries before it.
+	first_repeat := plan_first_repeat(plan, first_invalid)
+	if first_invalid < count && first_invalid <= first_repeat {
+		return invalid_refusal, first_invalid
 	}
-
+	if first_repeat < count {
+		return .Duplicate_Entry, first_repeat
+	}
+	if chain_refusal, chain_index := plan_chains_check(plan); chain_refusal != .None {
+		return chain_refusal, chain_index
+	}
+	plan_order_fill(plan, count)
+	plan_order_sort(plan, plan.order[:count], .Identity)
 	return .None, 0
 }
 
+// The check of one entry alone.
 @(private = "file")
-compare_plan_entries :: proc "contextless" (first, second: ^Plan_Entry) -> int {
+plan_entry_check :: proc "contextless" (plan: ^Plan_Spec, entry: ^Plan_Entry) -> Plan_Refusal {
+	kind, kind_ok := plan_entry_kind_of_word(entry.kind_word)
+	if !kind_ok {
+		return .Bad_Entry_Kind
+	}
+	if !entry_name_valid(entry.name_bytes[:], entry.name_length) {
+		return .Invalid_Name
+	}
+	if !start_grants_mask_valid(entry.start_grants_mask) {
+		return .Bad_Start_Grant
+	}
+	switch kind {
+	case .None:
+		return .Bad_Entry_Kind
+	case .Role_Holder:
+		role, role_ok := role_contract.role_from_word(entry.role_word)
+		if !role_ok {
+			return .Bad_Role
+		}
+		if !role_contract.disk_holder_allowed_for_principal(role, plan.principal) {
+			return .Trusted_Path_Forbidden
+		}
+		if hash_is_zero(entry.module_hash) {
+			return .Zero_Module_Hash
+		}
+		if entry.store_rights_word != 0 {
+			return .Bad_Store_Rights
+		}
+		if !hash_is_zero(entry.interposed_over_hash) && entry.interposed_over_hash == entry.module_hash {
+			return .Cyclic_Role_Chain
+		}
+	case .Start_Module, .Disk_Module:
+		if entry.role_word != 0 {
+			return .Bad_Role
+		}
+		if hash_is_zero(entry.module_hash) {
+			return .Zero_Module_Hash
+		}
+		if !hash_is_zero(entry.interposed_over_hash) {
+			return .Bad_Role
+		}
+		if entry.store_rights_word != 0 {
+			return .Bad_Store_Rights
+		}
+	case .Store_Grant:
+		if entry.role_word != 0 {
+			return .Bad_Role
+		}
+		if !hash_is_zero(entry.module_hash) || !hash_is_zero(entry.interposed_over_hash) {
+			return .Bad_Entry_Kind
+		}
+		if entry.start_grants_mask != 0 {
+			return .Bad_Start_Grant
+		}
+		if _, rights_ok := plan_store_rights_of_word(entry.store_rights_word); !rights_ok {
+			return .Bad_Store_Rights
+		}
+	}
+	return .None
+}
+
+// The two orders of the entries that the checks sort: by identity (the
+// kind, the role, the name), which is the canonical order once no two
+// entries share an identity, and by module (the kind, the role, the module
+// hash), where the holders of one role are together and found by their
+// module. The index of the entry ends each tie, so a group of equal keys
+// is in the order of the entries.
+@(private = "file")
+Plan_Order_Key :: enum u8 {
+	Identity,
+	Module,
+}
+
+@(private = "file")
+plan_order_fill :: proc "contextless" (plan: ^Plan_Spec, count: u32) {
+	for index in u32(0) ..< count {
+		plan.order[index] = index
+	}
+}
+
+@(private = "file")
+plan_key_compare :: proc "contextless" (plan: ^Plan_Spec, key: Plan_Order_Key, left, right: u32) -> int {
+	first := &plan.entries[left & ~PLAN_ORDER_MARK]
+	second := &plan.entries[right & ~PLAN_ORDER_MARK]
 	if first.kind_word != second.kind_word {
 		return first.kind_word < second.kind_word ? -1 : 1
 	}
 	if first.role_word != second.role_word {
 		return first.role_word < second.role_word ? -1 : 1
 	}
-	name_order := compare_bytes(first.name_bytes[:first.name_length], second.name_bytes[:second.name_length])
-	if name_order != 0 {
-		return name_order
+	switch key {
+	case .Identity:
+		if order := compare_bytes(first.name_bytes[:first.name_length], second.name_bytes[:second.name_length]); order != 0 {
+			return order
+		}
+	case .Module:
+		if order := compare_bytes(first.module_hash[:], second.module_hash[:]); order != 0 {
+			return order
+		}
 	}
-	return compare_bytes(first.module_hash[:], second.module_hash[:])
+	left_index, right_index := left & ~PLAN_ORDER_MARK, right & ~PLAN_ORDER_MARK
+	if left_index != right_index {
+		return left_index < right_index ? -1 : 1
+	}
+	return 0
 }
 
+// plan_order_sort sorts order by key, in place, with a heap sort: no
+// memory but order, and n log n in the worst case.
+@(private = "file")
+plan_order_sort :: proc "contextless" (plan: ^Plan_Spec, order: []u32, key: Plan_Order_Key) {
+	sift_down :: proc "contextless" (plan: ^Plan_Spec, order: []u32, key: Plan_Order_Key, start, end: int) {
+		root := start
+		for {
+			child := 2 * root + 1
+			if child >= end {
+				return
+			}
+			if child + 1 < end && plan_key_compare(plan, key, order[child], order[child + 1]) < 0 {
+				child += 1
+			}
+			if plan_key_compare(plan, key, order[root], order[child]) >= 0 {
+				return
+			}
+			order[root], order[child] = order[child], order[root]
+			root = child
+		}
+	}
+	count := len(order)
+	for start := count / 2 - 1; start >= 0; start -= 1 {
+		sift_down(plan, order, key, start, count)
+	}
+	for end := count - 1; end > 0; end -= 1 {
+		order[0], order[end] = order[end], order[0]
+		sift_down(plan, order, key, 0, end)
+	}
+}
+
+// plan_first_repeat gives the first index, among the first count entries,
+// of an entry that repeats an earlier one, or plan.entry_count: an identity
+// that an earlier entry has, a second holder of a role that allows one
+// holder, or a second holder of a role with the module of an earlier
+// holder.
+@(private = "file")
+plan_first_repeat :: proc "contextless" (plan: ^Plan_Spec, count: u32) -> (first: u32) {
+	first = plan.entry_count
+	order := plan.order[:count]
+	plan_order_fill(plan, count)
+	plan_order_sort(plan, order, .Identity)
+	for position in 1 ..< max(len(order), 1) {
+		earlier, later := order[position - 1], order[position]
+		if plan_entries_same_identity(&plan.entries[earlier], &plan.entries[later]) {
+			first = min(first, later)
+		}
+	}
+	plan_order_fill(plan, count)
+	plan_order_sort(plan, order, .Module)
+	holder := u64(Plan_Entry_Kind.Role_Holder)
+	group_start := 0
+	for group_start < len(order) {
+		group_entry := &plan.entries[order[group_start]]
+		group_end := group_start + 1
+		for group_end < len(order) && plan.entries[order[group_end]].kind_word == group_entry.kind_word && plan.entries[order[group_end]].role_word == group_entry.role_word {
+			group_end += 1
+		}
+		if group_entry.kind_word == holder && group_end - group_start > 1 {
+			role, _ := role_contract.role_from_word(group_entry.role_word)
+			if !role_contract.role_allows_multiple_holders(role) {
+				// Each holder after the first by index repeats it.
+				lowest, second := plan.entry_count, plan.entry_count
+				for index in order[group_start:group_end] {
+					if index < lowest {
+						lowest, second = index, lowest
+					} else if index < second {
+						second = index
+					}
+				}
+				first = min(first, second)
+			} else {
+				for position in group_start + 1 ..< group_end {
+					if plan.entries[order[position - 1]].module_hash == plan.entries[order[position]].module_hash {
+						first = min(first, order[position])
+					}
+				}
+			}
+		}
+		group_start = group_end
+	}
+	return first
+}
+
+// plan_holder_find gives the place in order, sorted by module, of the
+// holder of role whose module is module_hash.
+@(private = "file")
+plan_holder_find :: proc "contextless" (plan: ^Plan_Spec, order: []u32, role_word: u64, module_hash: blake3.Hash) -> (position: int, found: bool) {
+	holder := u64(Plan_Entry_Kind.Role_Holder)
+	before :: proc "contextless" (entry: ^Plan_Entry, kind, role_word: u64, module_hash: blake3.Hash) -> bool {
+		if entry.kind_word != kind {
+			return entry.kind_word < kind
+		}
+		if entry.role_word != role_word {
+			return entry.role_word < role_word
+		}
+		module := module_hash
+		return compare_bytes(entry.module_hash[:], module[:]) < 0
+	}
+	low, high := 0, len(order)
+	for low < high {
+		middle := low + (high - low) / 2
+		if before(&plan.entries[order[middle] & ~PLAN_ORDER_MARK], holder, role_word, module_hash) {
+			low = middle + 1
+		} else {
+			high = middle
+		}
+	}
+	if low == len(order) {
+		return 0, false
+	}
+	entry := &plan.entries[order[low] & ~PLAN_ORDER_MARK]
+	return low, entry.kind_word == holder && entry.role_word == role_word && entry.module_hash == module_hash
+}
+
+// plan_chains_check refuses a holder whose chain of interposition comes
+// back to it, or runs longer than the plan: a cycle. Each chain is walked
+// once: a holder whose chain ends gets the mark in the order, and a walk
+// that reaches a marked holder ends there.
+@(private = "file")
+plan_chains_check :: proc "contextless" (plan: ^Plan_Spec) -> (refusal: Plan_Refusal, bad_index: u32) {
+	count := plan.entry_count
+	order := plan.order[:count]
+	plan_order_fill(plan, count)
+	plan_order_sort(plan, order, .Module)
+	holder := u64(Plan_Entry_Kind.Role_Holder)
+	for index in u32(0) ..< count {
+		entry := &plan.entries[index]
+		if entry.kind_word != holder || hash_is_zero(entry.interposed_over_hash) {
+			continue
+		}
+		cursor := entry.interposed_over_hash
+		for hop in u32(0) ..< count {
+			if cursor == entry.module_hash {
+				return .Cyclic_Role_Chain, index
+			}
+			position, found := plan_holder_find(plan, order, entry.role_word, cursor)
+			if !found || order[position] & PLAN_ORDER_MARK != 0 {
+				break
+			}
+			next := &plan.entries[order[position]]
+			if hash_is_zero(next.interposed_over_hash) {
+				break
+			}
+			cursor = next.interposed_over_hash
+			if hop == count - 1 {
+				return .Cyclic_Role_Chain, index
+			}
+		}
+		// The chain ends: each holder on it ends too.
+		mark := entry.module_hash
+		for {
+			position, found := plan_holder_find(plan, order, entry.role_word, mark)
+			if !found || order[position] & PLAN_ORDER_MARK != 0 {
+				break
+			}
+			order[position] |= PLAN_ORDER_MARK
+			next := &plan.entries[order[position] & ~PLAN_ORDER_MARK]
+			if hash_is_zero(next.interposed_over_hash) {
+				break
+			}
+			mark = next.interposed_over_hash
+		}
+	}
+	return .None, 0
+}
+
+// plan_identity_find gives the entry of plan with the identity of entry,
+// or nil: a search of its canonical order, which plan_validate wrote.
+@(private = "file")
+plan_identity_find :: proc "contextless" (plan: ^Plan_Spec, entry: ^Plan_Entry) -> ^Plan_Entry {
+	before :: proc "contextless" (candidate, entry: ^Plan_Entry) -> bool {
+		if candidate.kind_word != entry.kind_word {
+			return candidate.kind_word < entry.kind_word
+		}
+		if candidate.role_word != entry.role_word {
+			return candidate.role_word < entry.role_word
+		}
+		return compare_bytes(candidate.name_bytes[:candidate.name_length], entry.name_bytes[:entry.name_length]) < 0
+	}
+	order := plan.order[:plan.entry_count]
+	low, high := 0, len(order)
+	for low < high {
+		middle := low + (high - low) / 2
+		if before(&plan.entries[order[middle]], entry) {
+			low = middle + 1
+		} else {
+			high = middle
+		}
+	}
+	if low < len(order) && plan_entries_same_identity(&plan.entries[order[low]], entry) {
+		return &plan.entries[order[low]]
+	}
+	return nil
+}
+
+// The bytes of one entry in the canonical form that plan_hash hashes, with
+// room for its longest name.
+@(private = "file")
+PLAN_ENTRY_CANONICAL_MOST :: 8 + 4 + MAX_ENTRY_NAME_BYTES + 8 + 3 * blake3.HASH_SIZE + 8 + 8
+
 // plan_hash validates plan and computes its canonical order-independent
-// domain-separated BLAKE3 digest.
+// domain-separated BLAKE3 digest: a chain over the entries in their
+// canonical order, each link the hash of the link before and of one entry,
+// so a plan of any count hashes in memory of one entry.
 plan_hash :: proc "contextless" (plan: ^Plan_Spec) -> (digest: blake3.Hash, refusal: Plan_Refusal) {
 	validation_refusal, _ := plan_validate(plan)
 	if validation_refusal != .None {
 		return {}, validation_refusal
 	}
-
-	// Sort indices into canonical order without mutating the caller's plan.
-	order: [MAX_PLAN_ENTRIES]u32
-	for index in u32(0) ..< plan.entry_count {
-		order[index] = index
-	}
-	for i in u32(1) ..< plan.entry_count {
-		key_index := order[i]
-		j := int(i) - 1
-		for j >= 0 && compare_plan_entries(&plan.entries[order[j]], &plan.entries[key_index]) > 0 {
-			order[j + 1] = order[j]
-			j -= 1
-		}
-		order[j + 1] = key_index
-	}
-
-	canonical_buffer: [MAX_PLAN_CANONICAL_BYTES]u8
-	encoder := Canonical_Encoder{buffer = canonical_buffer[:]}
-	encoder_u64(&encoder, plan.principal)
-	encoder_u32(&encoder, plan.entry_count)
-	for pos in u32(0) ..< plan.entry_count {
-		entry := &plan.entries[order[pos]]
+	head: [12]u8
+	byte_order.write_u64_little_endian(head[:], 0, plan.principal)
+	byte_order.write_u32_little_endian(head[:], 8, plan.entry_count)
+	digest = blake3.derive_key(PLAN_HASH_DOMAIN, head[:])
+	link: [blake3.HASH_SIZE + PLAN_ENTRY_CANONICAL_MOST]u8
+	for position in u32(0) ..< plan.entry_count {
+		entry := &plan.entries[plan.order[position]]
+		copy(link[:blake3.HASH_SIZE], digest[:])
+		encoder := Canonical_Encoder{buffer = link[blake3.HASH_SIZE:]}
 		encoder_u64(&encoder, entry.kind_word)
 		encoder_bytes(&encoder, entry.name_bytes[:entry.name_length])
 		encoder_u64(&encoder, entry.role_word)
@@ -614,17 +883,18 @@ plan_hash :: proc "contextless" (plan: ^Plan_Spec) -> (digest: blake3.Hash, refu
 		encoder_raw_bytes(&encoder, entry.recipe_hash[:])
 		encoder_u64(&encoder, entry.start_grants_mask)
 		encoder_u64(&encoder, entry.store_rights_word)
+		if encoder.overflow {
+			return {}, .Buffer_Too_Small
+		}
+		digest = blake3.derive_key(PLAN_HASH_DOMAIN, link[:blake3.HASH_SIZE + encoder.position])
 	}
-	if encoder.overflow {
-		return {}, .Buffer_Too_Small
-	}
-	return blake3.derive_key(PLAN_HASH_DOMAIN, canonical_buffer[:encoder.position]), .None
+	return digest, .None
 }
 
 @(private = "file")
 reserve_diff_item :: proc "contextless" (diff: ^Plan_Difference) -> ^Plan_Diff_Item {
 	diff.has_changes = true
-	if diff.change_count >= MAX_PLAN_DIFF_CHANGES {
+	if int(diff.change_count) >= len(diff.changes) {
 		return nil
 	}
 	slot := &diff.changes[diff.change_count]
@@ -643,7 +913,8 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 	if out_diff == nil {
 		return .Buffer_Too_Small
 	}
-	out_diff^ = {}
+	changes, changes_memory := out_diff.changes, out_diff.changes_memory
+	out_diff^ = {changes = changes, changes_memory = changes_memory}
 	if current != nil {
 		current_hash, current_refusal := plan_hash(current)
 		if current_refusal != .None {
@@ -653,12 +924,18 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 	}
 	proposed_hash, proposed_refusal := plan_hash(proposed)
 	if proposed_refusal != .None {
-		out_diff^ = {}
+		out_diff^ = {changes = changes, changes_memory = changes_memory}
 		return proposed_refusal
 	}
 	if current != nil && current.principal != proposed.principal {
-		out_diff^ = {}
+		out_diff^ = {changes = changes, changes_memory = changes_memory}
 		return .Principal_Mismatch
+	}
+	// Room for each item that the two plans can give, before any item: a
+	// difference is whole or refused.
+	if len(changes) < plan_difference_changes_most(current, proposed) {
+		out_diff^ = {changes = changes, changes_memory = changes_memory}
+		return .Buffer_Too_Small
 	}
 	out_diff.proposed_plan_hash = proposed_hash
 
@@ -670,14 +947,7 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 			cur_role, _ := role_contract.role_from_word(cur_entry.role_word)
 			cur_rights, _ := plan_store_rights_of_word(cur_entry.store_rights_word)
 
-			matched: ^Plan_Entry = nil
-			for prop_index in u32(0) ..< proposed.entry_count {
-				candidate := &proposed.entries[prop_index]
-				if plan_entries_same_identity(cur_entry, candidate) {
-					matched = candidate
-					break
-				}
-			}
+			matched := plan_identity_find(proposed, cur_entry)
 
 			if matched == nil {
 				removed_bits := cur_entry.start_grants_mask
@@ -766,16 +1036,7 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 	// Pass 2: find newly added entries in proposed.
 	for prop_index in u32(0) ..< proposed.entry_count {
 		prop_entry := &proposed.entries[prop_index]
-		found_in_current := false
-		if current != nil {
-			for cur_index in u32(0) ..< current.entry_count {
-				if plan_entries_same_identity(&current.entries[cur_index], prop_entry) {
-					found_in_current = true
-					break
-				}
-			}
-		}
-		if found_in_current {
+		if current != nil && plan_identity_find(current, prop_entry) != nil {
 			continue
 		}
 
