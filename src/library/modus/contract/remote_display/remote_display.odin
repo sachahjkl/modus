@@ -71,6 +71,7 @@ Display_Error :: enum u64 {
 	Revoked           = 4, // The grant of the key ended: a revocation, or a lock of the session of its principal.
 	Out_Of_Order      = 5, // A Viewer_Frame_Taken that names no viewer frame in flight.
 	Timeout           = 6, // The viewer did not take a viewer frame in its bound.
+	Screen_Not_Held   = 7, // The service cannot hold the screen in force: its budget does not pay the screen, or the screen is past the largest screen of the protocol.
 }
 
 // The name of each code, for the log of the two sides.
@@ -83,6 +84,7 @@ DISPLAY_ERROR_NAMES := [Display_Error]string {
 	.Revoked           = "Revoked",
 	.Out_Of_Order      = "Out_Of_Order",
 	.Timeout           = "Timeout",
+	.Screen_Not_Held   = "Screen_Not_Held",
 }
 
 // display_error_name gives the name of an application error code, or "" for

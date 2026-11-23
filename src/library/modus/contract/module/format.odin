@@ -567,6 +567,16 @@ LARGEST_BUDGET_SHARE_OF_THE_MACHINE :: 4
 LARGEST_BUDGET_LEAST_PAGES :: 16384
 LARGEST_BUDGET_LEAST :: Budget_Request{pages = LARGEST_BUDGET_LEAST_PAGES, processes = 8, threads = 32}
 
+// The machine of the machine tests: 1 GiB (the tool checks it against its
+// machine), whose root service holds at least 200 000 pages at its start,
+// less the kernel. A system module whose request passes the largest budget
+// of that machine would write Budget_Part_Limited at each boot of a test:
+// a module that asks more than the least checks its sum against this one.
+TEST_MACHINE_MEMORY_MIB :: 1024
+TEST_MACHINE_ROOT_PAGES :: 200_000
+TEST_MACHINE_LARGEST_BUDGET_PAGES :: TEST_MACHINE_ROOT_PAGES / LARGEST_BUDGET_SHARE_OF_THE_MACHINE
+#assert(TEST_MACHINE_ROOT_PAGES <= TEST_MACHINE_MEMORY_MIB * 256)
+
 // largest_budget_of_machine gives the largest budget of a process of the
 // boot image on a machine whose root service holds machine_pages pages at
 // its start: one share of them, and never less than LARGEST_BUDGET_LEAST.

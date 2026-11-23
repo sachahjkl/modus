@@ -6,6 +6,7 @@ package machine
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import module "modus:contract/module"
 import "modus:contract/reference_screen"
 import "modus:contract/remote"
 import "modus:contract/timed_stream"
@@ -145,6 +146,9 @@ firmware_files :: proc(firmware: Machine_Firmware) -> (code_variable, variables_
 MACHINE_MEMORY_MIB :: 1024
 Q35_LOW_MEMORY_MIB :: 0xB000_0000 >> 20
 #assert(MACHINE_MEMORY_MIB <= Q35_LOW_MEMORY_MIB)
+// The system modules size their requests for this machine
+// (module.TEST_MACHINE_LARGEST_BUDGET_PAGES).
+#assert(MACHINE_MEMORY_MIB == module.TEST_MACHINE_MEMORY_MIB)
 
 // The video memory of the standard VGA of a test machine, in MiB: the
 // amount of QEMU with no option, stated so that the check below reads it.

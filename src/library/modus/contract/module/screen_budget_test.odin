@@ -13,6 +13,17 @@ screen_pictures_follow_the_screen_and_a_plan_lowers_them :: proc(t: ^testing.T) 
 	testing.expect(t, !past, "a request past the limit of screen pictures was taken")
 	_, huge := budget_request_of_screen({pages = 100, screen_pictures = 1}, (1 << 20) + 1, 1)
 	testing.expect(t, !huge, "a screen past the bound of a side was taken")
+	_, tall := budget_request_of_screen({pages = 100, screen_pictures = 1}, 1, (1 << 20) + 1)
+	testing.expect(t, !tall, "a screen past the bound of its height was taken")
+	_, largest_word := budget_request_of_screen({pages = 100, screen_pictures = 1}, max(u64), max(u64))
+	testing.expect(t, !largest_word, "a screen of the largest word was taken")
+	// Both sides at the bound: 2^40 pixels of 4 bytes, 2^30 pages a picture,
+	// which 64 bits hold for each count of pictures up to the limit.
+	at_bound, at_bound_ok := budget_request_of_screen({pages = 100, screen_pictures = SCREEN_PICTURES_LIMIT}, 1 << 20, 1 << 20)
+	testing.expect(t, at_bound_ok && at_bound.pages == 100 + SCREEN_PICTURES_LIMIT * (1 << 30), "a screen of 2^20 x 2^20 was not added whole")
+	// A screen of no pixel adds no page.
+	empty, empty_ok := budget_request_of_screen({pages = 100, screen_pictures = 2}, 0, 1080)
+	testing.expect(t, empty_ok && empty.pages == 100)
 	_, wraps := budget_request_of_screen({pages = max(u64) - 10, screen_pictures = 1}, 1920, 1080)
 	testing.expect(t, !wraps, "a sum past 64 bits was taken")
 	screens := [?]struct {

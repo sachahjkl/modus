@@ -783,9 +783,25 @@ segment_send :: proc "contextless" (table: ^Table, output: ^Output, index: int, 
 	if .Ack in flags {
 		header.acknowledgment = connection.receive_next
 	}
-	// The window of a SYN is never scaled (RFC 7323, section 2.2).
+	// The window of a SYN is never scaled (RFC 7323, section 2.2). Past the
+	// SYN the field rounds up to a whole unit of the scale, and the edge that
+	// it gives becomes receive_edge: receive_next moves by any count of
+	// bytes, and a field rounded down would put the right edge that the
+	// remote reads before the edge of the last segment (RFC 7323, section
+	// 2.4 and appendix F). The edge can then pass the free room of the buffer
+	// by part of a unit; receive trims at that room too, and the remote sends
+	// those bytes again.
 	window := window_offer(table, connection)
-	header.window = .Syn in flags ? u16(min(window, WINDOW_LIMIT)) : u16(min(window >> connection.receive_scale, WINDOW_LIMIT))
+	if .Syn in flags {
+		header.window = u16(min(window, WINDOW_LIMIT))
+	} else {
+		unit := u32(1) << connection.receive_scale
+		field := min((window + unit - 1) >> connection.receive_scale, WINDOW_LIMIT)
+		if field << connection.receive_scale > window {
+			connection.receive_edge = connection.receive_next + field << connection.receive_scale
+		}
+		header.window = u16(field)
+	}
 	first, second: []u8
 	if count > 0 {
 		buffer := send_buffer(table, index)
@@ -1244,7 +1260,14 @@ synchronized :: proc "contextless" (table: ^Table, index: int, header: Header, n
 			header.flags -= {.Fin} // A FIN that arrived before.
 		}
 	}
-	room := connection.receive_edge - header.sequence
+	// The edge rounded up to a unit of the scale can pass the free room of
+	// the buffer (segment_send): a byte past that room is not taken.
+	limit := connection.receive_edge
+	buffer_end := connection.receive_next + (table.receive_size - connection.receive_ready)
+	if before(buffer_end, limit) {
+		limit = buffer_end
+	}
+	room := after(header.sequence, limit) ? 0 : limit - header.sequence
 	if u32(len(header.data)) > room {
 		header.data = header.data[:room]
 		header.flags -= {.Fin}

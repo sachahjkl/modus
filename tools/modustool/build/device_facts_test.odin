@@ -130,6 +130,7 @@ the_facts_of_remote_write_the_lines_of_before :: proc(t: ^testing.T) {
 
 	counts := [3]u64{0, 1, max(u64)}
 	for count in counts {
+		facts_expect_line(t, render(t, file, "Unused_Service_Connections_Ended", {{"ended", count}, {"in_use", max(u64) - count}, {"capacity", u64(128)}}), line_of_before("remote: ended ", count, " connections to services that no client uses (the last client of their key left, or no call for 60 s): their slots are free; ", max(u64) - count, " of ", u64(128), " slots in use"))
 		facts_expect_line(t, render(t, file, "Service_Connections_Ended", {{"ended", count}, {"in_use", max(u64) - count}, {"capacity", u64(24)}}), line_of_before("remote: the grants of ", count, " connections to services ended (a revocation, or a lock or an unlock of a session): their slots are free; ", max(u64) - count, " of ", u64(24), " slots in use"))
 	}
 	facts_expect_line(t, render(t, file, "Service_Stopped_During_Call", {{"service", service}}), line_of_before("remote: the service ", service, " stopped during a call"))

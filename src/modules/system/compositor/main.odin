@@ -112,6 +112,8 @@ import "modus:contract/pointer_pictures"
 import "modus:contract/virtio_input"
 import process_page "modus:contract/disk_process_page"
 import "modus:contract/value_kinds"
+import module "modus:contract/module"
+import "modus:contract/reference_screen"
 import "base:intrinsics"
 
 // Its loop, and the thread that makes the lists of the palette. The
@@ -157,6 +159,16 @@ import "base:intrinsics"
 // (entry).
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 19770, processes = 1, threads = 2, screen_pictures = 2}
 #assert(MODULE_BUDGET.working_memory_pages == 130 + 128 + 3 + 2 + 1647 + 2 * CLIENT_CAPACITY * 67 + 708)
+// The request on the machine of the machine tests, whose screen is the
+// reference screen: 19770 working pages, 2 x 2025 pages of the frame and
+// the background, and the code, the data and the stacks that the tool
+// counts, under a bound of 8192 pages: 32012 pages, under the largest
+// budget of that machine (50 000 pages), so no boot of a test writes
+// Budget_Part_Limited for the compositor. It passes the least largest
+// budget (16384 pages): a machine whose root holds less than about 128 000
+// pages starts it with the least, and fewer windows at the largest surface.
+MODULE_PAGES_BOUND :: 8192
+#assert(MODULE_BUDGET.working_memory_pages + MODULE_BUDGET.screen_pictures * ((u64(reference_screen.WIDTH) * u64(reference_screen.HEIGHT) * 4 + 4095) / 4096) + MODULE_PAGES_BOUND <= module.TEST_MACHINE_LARGEST_BUDGET_PAGES)
 
 // The context of this service.
 GRANT_FRAMEBUFFER :: 0 // The framebuffer of the firmware, or the memory of two screen pages.

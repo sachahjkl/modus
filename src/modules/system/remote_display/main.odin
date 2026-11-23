@@ -971,6 +971,24 @@ mirror_release :: proc "contextless" () {
 	mirror, mirror_memory, mirror_pixels, mirror_valid = nil, 0, 0, false
 }
 
+// capture_refuse keeps the capture face closed, and ends each bound viewer
+// with the code Screen_Not_Held: a viewer must not wait with no screen, and
+// its place is free for a viewer that comes when the screen changes.
+capture_refuse :: proc "contextless" () {
+	capture_state = .Refused
+	ended := u64(0)
+	for &viewer, place in viewers {
+		if viewer.bound {
+			viewer_close(&quic_connections[place], &viewer, .Screen_Not_Held)
+			ended += 1
+		}
+	}
+	if ended > 0 {
+		system.log_fact(.Info, Viewers_Ended_With_No_Screen{viewers = ended})
+		viewers_tell()
+	}
+}
+
 // capture_size_take makes the memory of the capture face for the size of
 // the screen, gives it to the compositor, and makes the copy of the screen.
 capture_size_take :: proc "contextless" (width, height: u64) {
@@ -979,7 +997,7 @@ capture_size_take :: proc "contextless" (width, height: u64) {
 	}
 	if width == 0 || height == 0 || width > protocol.SCREEN_WIDTH_LIMIT || height > protocol.SCREEN_HEIGHT_LIMIT {
 		system.log_fact(.Info, Screen_Past_Largest{width = width, height = height})
-		capture_state = .Refused
+		capture_refuse()
 		return
 	}
 	// The copy of the screen and the two pictures have the size of the
@@ -1006,7 +1024,7 @@ capture_size_take :: proc "contextless" (width, height: u64) {
 	if status != .Ok {
 		mirror_release()
 		system.log_fact(.Info, Capture_Memory_Refused{width = width, height = height, pages = value_kinds.Size_In_Pages(pages + copy_pages)})
-		capture_state = .Refused
+		capture_refuse()
 		return
 	}
 	address, map_status := system.memory_map(capture_memory, {})
@@ -1019,7 +1037,7 @@ capture_size_take :: proc "contextless" (width, height: u64) {
 		system.close(capture_memory)
 		capture_memory = 0
 		mirror_release()
-		capture_state = .Refused
+		capture_refuse()
 		return
 	}
 	screen = {u32(width), u32(height)}
@@ -1212,10 +1230,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	quic_connections = ([^]quic.Connection)(table)[:CAPACITY]
 	streams = ([^]quic.Stream)(rawptr(uintptr(table) + CONNECTION_BYTES))[:CAPACITY * STREAMS_PER_CONNECTION]
-	limits := quic.SERVER_LIMITS_DEFAULT
-	limits.connections_per_remote_address = CAPACITY
-	limits.handshakes_per_remote_address = CAPACITY
-	limits.handshakes_at_once = CAPACITY
+	// Each viewer comes through the host: one address and one source range
+	// may hold each record, in the handshake too.
+	limits := quic.server_limits_of_one_address(CAPACITY)
 	if !quic.server_init(&server, quic_connections, records[:], streams, &configuration, &cryptography, &process_generator, limits, &error) {
 		fail("the server refused its configuration")
 	}

@@ -80,3 +80,28 @@ the_cost_of_the_work_of_new_connections :: proc(t: ^testing.T) {
 	}
 	fmt.printfln("quic: the work of new connections on the host: one Retry %.2f us, one token check %.2f us, one Initial check %.2f us; the least of %d batches of %d calls", microseconds(retry_least), microseconds(token_least), microseconds(initial_least), SPEED_BATCHES, SPEED_CALLS)
 }
+
+// The cost of one take of the table of source ranges when it is full and
+// the range is new: the worst case, one pass over each slot. It prints the
+// least time of one take over its batches, and checks no speed.
+@(test)
+the_cost_of_a_take_on_a_full_table_of_source_ranges :: proc(t: ^testing.T) {
+	table := new(Source_Budget_Table)
+	defer free(table)
+	now := u64(1_000_000)
+	limits := Source_Budget_Limits{attempts_per_second = 32, burst = 64, active_handshakes_limit = 4, prefix_length = SOURCE_RANGE_PREFIX_LENGTH}
+	for &entry, index in table.entries {
+		entry = {used = true, prefix = 0x0B00_0000 + u32(index) << 8, last_seen = now}
+		entry.bucket = {level = 0, updated_at = now, filled = true}
+	}
+	least := max(i64)
+	for _ in 0 ..< SPEED_BATCHES {
+		start := time.tick_now()
+		for call in 0 ..< SPEED_CALLS {
+			result := source_budget_take(table, 0xC000_0000 + u32(call) << 8, limits, now)
+			testing.expect(t, result == .Table_Full)
+		}
+		least = min(least, i64(time.tick_since(start)) / SPEED_CALLS)
+	}
+	fmt.printfln("measure: one take of a full table of %d source ranges, for a new range: %d ns", SOURCE_BUDGET_CAPACITY, least)
+}

@@ -96,24 +96,36 @@ source_budget_find :: proc "contextless" (table: ^Source_Budget_Table, prefix: u
 	return -1
 }
 
-// source_budget_evict_slot selects an empty slot or the oldest full idle slot
-// (active_handshakes == 0 and refilled to burst). Never evicts an active or
-// non-full throttled bucket, returning -1 so a spoofing attacker cannot reset
-// throttled ranges or corrupt active-handshake counts.
+// source_budget_scan reads the table once: the slot of prefix if it holds
+// one (found), else the slot that a new range takes (free): the first empty
+// slot, or the least recently seen slot whose bucket refilled and that holds
+// no handshake. It never gives an active or a throttled slot, so a source
+// that forges its address cannot reset a throttled range or the count of
+// handshakes of a range: free is -1 then. A slot is checked for a full
+// bucket only when it is older than the best slot found, so most slots cost
+// one comparison.
 @(private)
-source_budget_evict_slot :: proc "contextless" (table: ^Source_Budget_Table, limits: Source_Budget_Limits, now: u64) -> int {
-	full_idle_slot := -1
+source_budget_scan :: proc "contextless" (table: ^Source_Budget_Table, prefix: u32, limits: Source_Budget_Limits, now: u64) -> (found, free: int) {
+	found, free = -1, -1
+	empty := -1
 	for &entry, index in table.entries {
 		if !entry.used {
-			return index
-		}
-		if entry.active_handshakes == 0 && work_bucket_is_full(&entry.bucket, limits.attempts_per_second, limits.burst, now) {
-			if full_idle_slot < 0 || entry.last_seen < table.entries[full_idle_slot].last_seen {
-				full_idle_slot = index
+			if empty < 0 {
+				empty = index
 			}
+			continue
+		}
+		if entry.prefix == prefix {
+			return index, -1
+		}
+		if empty >= 0 || entry.active_handshakes != 0 || (free >= 0 && entry.last_seen >= table.entries[free].last_seen) {
+			continue
+		}
+		if work_bucket_is_full(&entry.bucket, limits.attempts_per_second, limits.burst, now) {
+			free = index
 		}
 	}
-	return full_idle_slot
+	return -1, empty >= 0 ? empty : free
 }
 
 // source_budget_take admits or refuses one new-connection Initial attempt from
@@ -136,7 +148,7 @@ source_budget_take :: proc "contextless" (
 		return .Backwards_Time
 	}
 	prefix := source_range_prefix(address, limits.prefix_length)
-	place := source_budget_find(table, prefix)
+	place, slot := source_budget_scan(table, prefix, limits, now)
 	if place >= 0 {
 		entry := &table.entries[place]
 		current_handshakes := active_handshakes >= 0 ? active_handshakes : entry.active_handshakes
@@ -156,7 +168,6 @@ source_budget_take :: proc "contextless" (
 		table.last_time = now
 		return .Over_Handshake_Limit
 	}
-	slot := source_budget_evict_slot(table, limits, now)
 	if slot < 0 {
 		table.has_time = true
 		table.last_time = now

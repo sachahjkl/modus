@@ -295,16 +295,19 @@ neighbor_learn :: proc "contextless" (table: ^Neighbors, address: u32, hardware:
 		table[free] = {address = address, hardware = hardware, known = true, time = now}
 		return .Added
 	}
+	// The list of the requests that wait is read only for an entry older
+	// than the oldest found: most entries cost one comparison.
 	oldest := -1
 	entries: for &item, index in table {
+		if oldest >= 0 && item.time >= table[oldest].time {
+			continue
+		}
 		for used in busy {
 			if used == item.address {
 				continue entries
 			}
 		}
-		if oldest < 0 || item.time < table[oldest].time {
-			oldest = index
-		}
+		oldest = index
 	}
 	if oldest < 0 {
 		return .Full

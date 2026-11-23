@@ -172,3 +172,17 @@ revoked_has_its_name :: proc(t: ^testing.T) {
 	testing.expect_value(t, stream_error_name(u64(Stream_Error.Revoked)), "Revoked")
 	testing.expect_value(t, stream_error_name(u64(Stream_Error.Revoked) + 1), "")
 }
+
+// A connection to a service ends when its grant ends, when no QUIC
+// connection of its row is open, and when it had no call for the idle
+// bound; a call that waits keeps it, and the grant comes first.
+@(test)
+a_service_connection_ends_with_its_last_client_or_its_idle_bound :: proc(t: ^testing.T) {
+	testing.expect_value(t, service_connection_end_of(false, true, true, 0), Service_Connection_End.Grant_Ended)
+	testing.expect_value(t, service_connection_end_of(true, false, false, 0), Service_Connection_End.No_Client)
+	testing.expect_value(t, service_connection_end_of(true, false, true, SERVICE_CONNECTION_IDLE_MILLISECONDS), Service_Connection_End.Idle)
+	testing.expect_value(t, service_connection_end_of(true, false, true, max(u64)), Service_Connection_End.Idle)
+	testing.expect_value(t, service_connection_end_of(true, true, false, max(u64)), Service_Connection_End.Keep)
+	testing.expect_value(t, service_connection_end_of(true, false, true, SERVICE_CONNECTION_IDLE_MILLISECONDS - 1), Service_Connection_End.Keep)
+	testing.expect_value(t, service_connection_end_of(true, false, true, 0), Service_Connection_End.Keep)
+}

@@ -128,6 +128,30 @@ SERVER_LIMITS_DEFAULT :: Server_Limits {
 	source_range_prefix_length            = SOURCE_RANGE_PREFIX_LENGTH,
 }
 
+// server_limits_of_one_address gives the limits of a server whose listen
+// grant takes the address of the host only (remote, remote_display): each
+// client comes through the host, so each one has the same address and the
+// same source range. A limit of one address or of one range is then a limit
+// of all the clients together, and the defaults (2 handshakes of one
+// address, 4 of one range, 4 Initial checks of one address, then 1 in each
+// second) would make the 32nd client of a burst wait for about 30 seconds.
+// Each of these limits takes the capacity of the table of records, so a
+// burst of capacity clients connects at once; the shared budgets of the
+// server stay, and only the host reaches such a server.
+server_limits_of_one_address :: proc "contextless" (capacity: int) -> Server_Limits {
+	limits := SERVER_LIMITS_DEFAULT
+	limits.connections_per_remote_address = capacity
+	limits.handshakes_per_remote_address = capacity
+	limits.handshakes_at_once = capacity
+	limits.handshakes_per_source_range = capacity
+	// Each client can lose an Initial and send it again.
+	limits.initial_checks_per_address_depth = 2 * capacity
+	limits.initial_checks_per_address_per_second = capacity
+	limits.source_range_burst = max(SERVER_LIMITS_DEFAULT.source_range_burst, 2 * capacity)
+	limits.source_range_attempts_per_second = max(SERVER_LIMITS_DEFAULT.source_range_attempts_per_second, capacity)
+	return limits
+}
+
 // The remote of a datagram: the address and the port that it came from, or
 // that it goes to.
 //
@@ -183,6 +207,7 @@ Server_Counters :: struct {
 	address_table_full:             u64, // Initials with a valid token of a new address, dropped because no place of the table of address budgets was free or full again.
 	over_source_budget:             u64, // Initials dropped because their source range spent its admission budget or carried a backwards timestamp.
 	refused_source_handshake_limit: u64, // Initials refused because their source range holds its most records in the handshake.
+	source_table_full:              u64, // Initials of a new source range that no slot of the table of source ranges could take: the shared budgets alone admitted them.
 	tokens_used_again:            u64, // A valid token whose record was taken before.
 	used_tokens_forgotten:        u64, // A used token that the full table forgot before it expired: it can take a record again.
 	other_remote:                 u64, // A known identifier from another remote.
@@ -646,6 +671,7 @@ server_new_connection :: proc "contextless" (server: ^Server, datagram: []u8, he
 	switch source_budget_take(&server.source_budgets, remote.address, source_limits, now, server_source_range_handshakes(server, remote.address)) {
 	case .Admitted:
 	case .Table_Full:
+		server.counters.source_table_full += 1
 		// Each slot of the table holds an active or a throttled range: keep them
 		// pinned (never evict) and let the global Work_Bucket and validated
 		// Retry/address_budgets layers police the distributed flood.

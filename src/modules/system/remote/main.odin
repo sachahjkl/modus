@@ -96,13 +96,13 @@ import "modus:system"
 // each, and a buffer of a request or an answer of about 64 KiB for each
 // stream: 6912 pages (TABLE_PAGES), in one mapping of the process
 // (docs/QUIC.md, section 7); the mappings of the call ring and the call
-// region of each of its 432 connections to services, which the root
-// service makes and pays: up to 4 page tables and directories each, 1728
-// pages; and the glyph memory of the copy of the text rendering of the
-// drawing module, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 6912 + 1728 + 354 = 8994, under the least
-// largest budget of a process.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8994, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// region of each of its 128 connections to services (half of the
+// connection table of the root service), which the root service makes and
+// pays: up to 4 page tables and directories each, 512 pages; and the glyph
+// memory of the copy of the text rendering of the drawing module, which
+// draws its text: 354 pages (display.TEXT_MEMORY_PAGES). 6912 + 512 + 354 =
+// 7778, under the least largest budget of a process.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7778, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
 	seal_with_chacha20_poly1305 :: proc "c" (key, nonce, additional, text: ^string, result: ^[]u8, error: ^errors.Error_Record) -> i64 ---
@@ -291,14 +291,19 @@ Service_Connection :: struct {
 	hash:          [32]u8, // The hash of the module file of the service.
 	tag:           u32,
 	count:         u64, // The calls through this connection.
+	last_used:     u64, // Milliseconds of the machine: when it became Ready, or its last call. Its idle bound starts here.
 }
 
-// The 9 services of the row of "remote" in start_grant_sets in the root
-// service, each with as many callers as a service takes
-// (isolated.SERVICE_CONNECTION_CAPACITY): a connection of each row to each
-// service up to the bound of the service. A row past that bound gets the
-// refusal of the root service, not of this table.
-SERVICE_CONNECTION_CAPACITY :: 9 * isolated.SERVICE_CONNECTION_CAPACITY
+// The connections to services that this process holds: as many as the
+// root service gives the rows of the client table, half of its connection
+// table (remote.ROOT_PLACES_FOR_CLIENT_ROWS), so a local caller always
+// finds a place there. Each service also keeps
+// isolated.SERVICE_CONNECTION_LOCAL_RESERVE of its callers for local
+// callers: a row past either bound gets the refusal of the root service
+// (Full), and its call ends with it. A connection holds its places only
+// while a client of its row is connected and calls it in the idle bound
+// (service_connections_of_ended_grants).
+SERVICE_CONNECTION_CAPACITY :: remote.ROOT_PLACES_FOR_CLIENT_ROWS
 
 service_connections: [SERVICE_CONNECTION_CAPACITY]Service_Connection
 
@@ -597,14 +602,18 @@ client_grant_check :: proc "contextless" (connection: ^quic.Connection, client: 
 }
 
 // service_connections_of_ended_grants ends each connection to a service
-// whose row no longer holds its serial: a revocation, a lock or an unlock
-// ended its grant. The root service ended its side already, so this
-// process tells it nothing. It runs whatever the state of the QUIC
-// connections: a grant can end while no client of its row is connected,
-// and its slot must not stay taken, or the table of connections fills.
+// that no client can use (remote.service_connection_end_of): its row no
+// longer holds its serial (a revocation, a lock or an unlock ended its
+// grant, and the root service ended its side already, so this process
+// tells it nothing); no QUIC connection of its row is open; or it had no
+// call for the idle bound. The last two tell the root service, which frees
+// its place and the place of the service: a client that left must not
+// keep them.
 service_connections_of_ended_grants :: proc "contextless" () {
 	ended := 0
+	unused := 0
 	in_use := 0
+	now := system.time()
 	for &item in service_connections {
 		if item.state == .Refused {
 			if !remote.client_grant_holds(&client_rows, item.row, item.serial, .Calls) {
@@ -617,16 +626,53 @@ service_connections_of_ended_grants :: proc "contextless" () {
 		if item.state != .Ready {
 			continue
 		}
-		if remote.client_grant_holds(&client_rows, item.row, item.serial, .Calls) {
+		grant_holds := remote.client_grant_holds(&client_rows, item.row, item.serial, .Calls)
+		idle := now - min(item.last_used, now)
+		switch remote.service_connection_end_of(grant_holds, row_call_waits(item.row, item.serial), row_has_client(item.row, item.serial), idle) {
+		case .Keep:
 			in_use += 1
-			continue
+		case .Grant_Ended:
+			connection_end(&item, false)
+			ended += 1
+		case .No_Client, .Idle:
+			connection_end(&item, true)
+			unused += 1
 		}
-		connection_end(&item, false)
-		ended += 1
 	}
 	if ended > 0 && log_allowed() {
 		system.log_fact(.Info, Service_Connections_Ended{ended = u64(ended), in_use = u64(in_use), capacity = SERVICE_CONNECTION_CAPACITY})
 	}
+	if unused > 0 && log_allowed() {
+		system.log_fact(.Info, Unused_Service_Connections_Ended{ended = u64(unused), in_use = u64(in_use), capacity = SERVICE_CONNECTION_CAPACITY})
+	}
+}
+
+// row_has_client says if a QUIC connection of this process is open for the
+// row and the serial of a connection to a service.
+row_has_client :: proc "contextless" (row: int, serial: u64) -> bool {
+	for record, place in records {
+		client := &record_clients[place]
+		if record.in_use && client.bound && client.generation == record.generation && client.row == row && client.serial == serial && quic_connections[place].state != .Closed {
+			return true
+		}
+	}
+	return false
+}
+
+// row_call_waits says if a call of a client of the row waits for its turn
+// or for a connection: its connection to a service must not end under it.
+row_call_waits :: proc "contextless" (row: int, serial: u64) -> bool {
+	for &call, index in calls {
+		if call.phase != .Waiting {
+			continue
+		}
+		place := index / STREAMS_PER_CONNECTION
+		client := &record_clients[place]
+		if records[place].in_use && client.bound && client.row == row && client.serial == serial {
+			return true
+		}
+	}
+	return false
 }
 
 // calls_work moves each call stream of each record, and logs each new
@@ -1016,6 +1062,7 @@ connections_progress :: proc "contextless" (now: u64) -> (changed: bool) {
 			}
 			if reading == .Ready {
 				connection.state = .Ready
+				connection.last_used = now
 				system.log_fact(.Info, Service_Connected{principal = connection.principal, service = value_kinds.module_name_field(remote.name_text(&connection.name))})
 			} else {
 				connection_refuse(&connection, true, errors.error_make(.No_Answer, .Milliseconds, remote.FIELD_SERVICE, 0, system.ANSWER_BOUND_MILLISECONDS))
@@ -1230,6 +1277,7 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 		return refuse(buffer, call_error, service, connection.hash)
 	}
 	connection.count += 1
+	connection.last_used = system.time()
 	counts.calls += 1
 	answer := remote.Answer {
 		status      = .Ok,
@@ -1369,12 +1417,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	quic_connections = ([^]quic.Connection)(table)[:CAPACITY]
 	streams = ([^]quic.Stream)(rawptr(uintptr(table) + CONNECTION_BYTES))[:CALL_COUNT]
 	call_buffers = ([^][CALL_BUFFER_SIZE]u8)(rawptr(uintptr(table) + CONNECTION_BYTES + STREAM_BYTES))[:CALL_COUNT]
-	// The limits of quic_echo, for a table of CAPACITY records: one address
-	// (the host) may hold each of them, in the handshake too.
-	limits := quic.SERVER_LIMITS_DEFAULT
-	limits.connections_per_remote_address = CAPACITY
-	limits.handshakes_per_remote_address = CAPACITY
-	limits.handshakes_at_once = CAPACITY
+	// Each client comes through the host: one address and one source range
+	// may hold each record, in the handshake too.
+	limits := quic.server_limits_of_one_address(CAPACITY)
 	error: errors.Error_Record
 	if !quic.server_init(&server, quic_connections, records[:], streams, &configuration, &cryptography, &process_generator, limits, &error) {
 		fail("the server refused its configuration")

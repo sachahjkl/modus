@@ -107,6 +107,7 @@ import "modus:display"
 import "modus:graphics"
 import info "modus:contract/boot_info"
 import "modus:contract/isolated"
+import "modus:contract/remote"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/ring"
@@ -419,6 +420,9 @@ connection_grant :: proc "contextless" (connection: ^Connection) -> u64 {
 // The connections that this service holds: each client of each service,
 // at one time.
 CONNECTION_CAPACITY :: 256
+// The connections for the rows of the client table take at most half of
+// the table: the other half stays for local callers.
+#assert(2 * remote.ROOT_PLACES_FOR_CLIENT_ROWS <= CONNECTION_CAPACITY)
 
 connections: [CONNECTION_CAPACITY]Connection
 
@@ -2097,17 +2101,28 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 		return nil, nil, 0, 0, .Bad_Handle
 	}
 	count := 0
+	used := 0
+	used_for_client_rows := 0
 	for &connection in connections {
 		if connection.caller == nil {
 			free = &connection
-		} else if connection.service == service {
+			continue
+		}
+		used += 1
+		if connection.client.place != 0 {
+			used_for_client_rows += 1
+		}
+		if connection.service == service {
 			count += 1
 			if connection.caller == caller && connection.history == history && connection.client.place == client.place {
 				return nil, nil, 0, 0, .Bad_State
 			}
 		}
 	}
-	if free == nil || count == isolated.SERVICE_CONNECTION_CAPACITY {
+	// A connection for a row of the client table (a client of another
+	// machine) never takes the last places of the table or of the service:
+	// the clients that a principal allowed cannot shut out a local caller.
+	if free == nil || !isolated.connection_place_open(client.place != 0, count, used, used_for_client_rows, CONNECTION_CAPACITY, remote.ROOT_PLACES_FOR_CLIENT_ROWS) {
 		return nil, nil, 0, 0, .No_Slot
 	}
 	// The service ring keeps room for one Disconnect for each connection:

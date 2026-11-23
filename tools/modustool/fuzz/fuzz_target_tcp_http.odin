@@ -224,6 +224,9 @@ fuzz_tcp_connection_execute :: proc(input: []u8) -> Fuzz_Verdict {
 				flags            = transmute(tcp.Flags)fuzz_choice_byte(&choices),
 				window           = u16(fuzz_choice_word(&choices, 2)),
 				mss              = fuzz_choice_rare(&choices, 4) ? u16(fuzz_choice_word(&choices, 2)) : 0,
+				// A window scale option, on a SYN or on any other segment.
+				has_window_scale = fuzz_choice_rare(&choices, 4),
+				window_scale     = fuzz_choice_byte(&choices),
 			}
 			data_length := fuzz_choice_below(&choices, 64)
 			offset := tcp.header_size(header)

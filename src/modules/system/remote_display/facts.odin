@@ -195,6 +195,13 @@ Capture_Memory_Refused :: struct {
 	pages:  value_kinds.Size_In_Pages,
 }
 
+// The capture face was refused: each viewer that waited for it ends with
+// the code Screen_Not_Held, so it does not wait with no screen.
+@(log_fact = "remote_display: ended {viewers} viewers with the code Screen_Not_Held: the capture face of the screen in force was refused")
+Viewers_Ended_With_No_Screen :: struct {
+	viewers: u64,
+}
+
 // The memory of the capture face does not map, or the compositor does not
 // take it.
 @(log_fact = "remote_display: the memory of the capture face does not map, or the compositor does not take it")

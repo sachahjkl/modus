@@ -156,3 +156,135 @@ a_transfer_through_scaled_windows :: proc(t: ^testing.T) {
 	testing.expect(t, a.send_window_most > WINDOW_LIMIT, "the window of the receiver never passed 65535")
 	testing.expect_value(t, b.bytes_received, 3_000_000)
 }
+
+// listener_ack makes the listener send an ACK on its first connection, and
+// gives it read back.
+@(private = "file")
+listener_ack :: proc(listener: ^Listener) -> Header {
+	for &place, index in listener.places {
+		place = u32(index)
+	}
+	output := Output{memory = listener.memory[:], place_size = PLACE_SIZE, places = listener.places[:], segments = listener.segments[:]}
+	connection := &listener.connections[0]
+	sent := segment_send(&listener.table, &output, 0, {.Ack}, connection.send_next, 0, 0)
+	assert(sent && output.count == 1)
+	item := output.segments[0]
+	header, ok := header_read(listener.memory[int(item.place) * PLACE_SIZE:][:item.length])
+	assert(ok)
+	return header
+}
+
+// listener_established takes a SYN with the shift 3 and the ACK of its
+// SYN, ACK: a connection whose scales are agreed.
+@(private = "file")
+listener_established :: proc(t: ^testing.T, listener: ^Listener) -> ^Connection {
+	syn := Header{source_port = 4000, destination_port = PORT_B, sequence = 1000, flags = {.Syn}, window = 65535, mss = 1460, window_scale = 3, has_window_scale = true}
+	answer, _ := listener_take(listener, syn, 1)
+	listener_take(listener, Header{source_port = 4000, destination_port = PORT_B, sequence = 1001, acknowledgment = answer.sequence + 1, flags = {.Ack}, window = 1000}, 2)
+	connection := &listener.connections[0]
+	testing.expect_value(t, connection.state, State.Established)
+	return connection
+}
+
+// A window scale option on a segment that is not a SYN changes no scale
+// and no window: RFC 7323 takes the option of the SYN only.
+@(test)
+a_window_scale_option_past_the_syn_changes_nothing :: proc(t: ^testing.T) {
+	listener := listener_make(1 << 20)
+	defer listener_free(listener)
+	connection := listener_established(t, listener)
+	send_scale, receive_scale := connection.send_scale, connection.receive_scale
+	for shift in ([?]u8{0, 7, WINDOW_SCALE_LIMIT}) {
+		ack := Header{source_port = 4000, destination_port = PORT_B, sequence = 1001, acknowledgment = connection.send_next, flags = {.Ack}, window = 1000, window_scale = shift, has_window_scale = true}
+		listener_take(listener, ack, 3)
+		testing.expect_value(t, connection.send_scale, send_scale)
+		testing.expect_value(t, connection.receive_scale, receive_scale)
+		testing.expect(t, connection.window_scale_agreed)
+		testing.expect_value(t, connection.send_window, u32(1000) << send_scale)
+	}
+}
+
+// An active open offers the option; a SYN, ACK with none means that the
+// remote does not scale: both scales are 0, and the windows of both ways
+// are the fields.
+@(test)
+an_active_open_answered_with_no_option_scales_nothing :: proc(t: ^testing.T) {
+	listener := listener_make(1 << 20)
+	defer listener_free(listener)
+	listener.table.port_first = 49152
+	listener.table.port_count = 16
+	index, error := connect(&listener.table, ADDRESS_A, 4000, 1)
+	testing.expect(t, error.kind == 0 && index == 0)
+	connection := &listener.connections[0]
+	// The step sends the SYN, with the option.
+	syn, sent := listener_take(listener, Header{source_port = 1, destination_port = 1, flags = {.Rst}}, 1)
+	testing.expect(t, sent && .Syn in syn.flags && syn.has_window_scale, "the SYN of an active open does not offer the window scale")
+	syn_ack := Header{source_port = 4000, destination_port = connection.local_port, sequence = 7000, acknowledgment = connection.initial_send + 1, flags = {.Syn, .Ack}, window = 60000, mss = 1460}
+	listener_take(listener, syn_ack, 2)
+	testing.expect_value(t, connection.state, State.Established)
+	testing.expect(t, !connection.window_scale_agreed)
+	testing.expect_value(t, connection.send_scale, 0)
+	testing.expect_value(t, connection.receive_scale, 0)
+	testing.expect_value(t, connection.send_window, 60000)
+	testing.expect(t, listener_ack(listener).window <= WINDOW_LIMIT)
+}
+
+// The largest shift of the largest field gives 65535 << 14, which a u32
+// holds: no wrap to a small window.
+@(test)
+the_largest_scaled_window_does_not_wrap :: proc(t: ^testing.T) {
+	connection := Connection{send_scale = WINDOW_SCALE_LIMIT}
+	testing.expect_value(t, window_of(&connection, Header{flags = {.Ack}, window = 65535}), u32(65535) << 14)
+	testing.expect_value(t, window_of(&connection, Header{flags = {.Ack}, window = 65535}), u32(1_073_725_440))
+	// The window of a SYN is never scaled.
+	testing.expect_value(t, window_of(&connection, Header{flags = {.Syn, .Ack}, window = 65535}), 65535)
+}
+
+// The right edge that the remote reads, acknowledgment + field << scale,
+// never moves back while bytes arrive one at a time and none is read.
+@(test)
+the_advertised_right_edge_never_moves_back :: proc(t: ^testing.T) {
+	listener := listener_make(1 << 20)
+	defer listener_free(listener)
+	connection := listener_established(t, listener)
+	testing.expect(t, connection.receive_scale > 0)
+	first := listener_ack(listener)
+	most := first.acknowledgment + u32(first.window) << connection.receive_scale
+	for count in 1 ..= 40 {
+		// count bytes arrive and stay in the buffer.
+		connection.receive_next += u32(count)
+		connection.receive_ready += u32(count)
+		ack := listener_ack(listener)
+		edge := ack.acknowledgment + u32(ack.window) << connection.receive_scale
+		testing.expectf(t, !before(edge, most), "after %d bytes the edge moved back by %d", count, most - edge)
+		testing.expectf(t, !before(edge, connection.receive_edge), "the edge that the remote reads is before receive_edge")
+		testing.expectf(t, edge == connection.receive_edge, "the edge that the remote reads is not receive_edge")
+		most = edge
+	}
+}
+
+// When the edge rounded up to a unit passes the free room of the buffer, a
+// segment up to the edge gives only the bytes that the room holds: no byte
+// that waits to be read is written over.
+@(test)
+bytes_past_the_free_room_are_not_taken :: proc(t: ^testing.T) {
+	listener := listener_make(1 << 20)
+	defer listener_free(listener)
+	connection := listener_established(t, listener)
+	// The buffer holds all but 10 bytes, and the edge is 20 bytes away.
+	connection.receive_ready = listener.table.receive_size - 10
+	connection.receive_edge = connection.receive_next + 20
+	before_bytes := connection.bytes_received
+	data: [20]u8
+	header := Header{source_port = 4000, destination_port = PORT_B, sequence = connection.receive_next, acknowledgment = connection.send_next, flags = {.Ack}, window = 1000}
+	bytes: [HEADER + 20]u8
+	copy(bytes[HEADER:], data[:])
+	header_write(bytes[:], ADDRESS_A, ADDRESS_B, header, len(bytes))
+	for &place, index in listener.places {
+		place = u32(index)
+	}
+	output := Output{memory = listener.memory[:], place_size = PLACE_SIZE, places = listener.places[:], segments = listener.segments[:]}
+	step(&listener.table, {{remote_address = ADDRESS_A, segment = bytes[:]}}, 3, &output, listener.events[:])
+	testing.expect_value(t, connection.bytes_received - before_bytes, 10)
+	testing.expect_value(t, connection.receive_ready, listener.table.receive_size)
+}
