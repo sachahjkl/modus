@@ -59,6 +59,10 @@ wrong :: proc "contextless" (text: string, value: u64) -> ! {
 // record output of this process.
 @(private = "file")
 command_wait :: proc "contextless" () -> ring.Record {
+	// The first wait for a command is the first state of work of the
+	// process (src/md/features/module_budget_request.md, "The first state
+	// of work"); a later call says nothing.
+	system.ready()
 	deadline := hang_deadline()
 	for {
 		wait := system.wait_begin()

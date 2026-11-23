@@ -432,3 +432,27 @@ the_floors_of_a_list_fit_in_the_least_machine :: proc(t: ^testing.T) {
 	testing.expect(t, start_list_floors_problem(wrapping, max(u64)) != "")
 	testing.expect_value(t, start_list_floors_problem(exact, 0) != "", true)
 }
+
+// The modules whose floors the proof of the least machine sums: the root
+// service and the start policy first, each part of the system that the
+// image holds but the renderers of the console, then the rows, each one
+// time; a part that the image lacks is left out, and the row of the role
+// Display is its holder.
+@(test)
+the_floors_of_the_least_machine_hold_each_start_of_the_root_service :: proc(t: ^testing.T) {
+	rows := []Start_List_Row{{name = "input"}, {name = "display"}, {name = "clock"}}
+	parts := []string{"root", "input", "compositor", "wiring", "devices", "serial_terminal", "grid_terminal", "tpm"}
+	image := []string{"root", "input", "compositor", "wiring", "devices", "serial_terminal", "grid_terminal", "clock", "start_policy"}
+	names := start_list_floor_names(rows, parts, image)
+	expected := []string{"root", foundation.START_POLICY_MODULE, "input", "compositor", "wiring", "devices", "clock"}
+	testing.expect_value(t, len(names), len(expected))
+	for name, index in expected {
+		if index < len(names) {
+			testing.expect_value(t, names[index], name)
+		}
+	}
+	// With no file, the first module is named, and the budget of the disk
+	// processes and no renderer are counted before it.
+	_, problem := start_list_floors(names, nil, 0, 0)
+	testing.expect(t, strings.contains(problem, "root has no table Floor"), problem)
+}

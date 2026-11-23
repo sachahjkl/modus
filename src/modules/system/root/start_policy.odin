@@ -355,6 +355,8 @@ start_policy_running :: proc "contextless" () -> ^Started {
 start_policy_none :: proc "contextless" (cause: string) {
 	start_policy_stage = .No_Policy
 	start_policy_process = nil
+	// No list starts: no row keeps pages from the other starts.
+	start_list_reserves_end()
 	start_policy_deadline = system.WAIT_FOREVER
 	system.log_fact(.Error, No_Start_Policy{failure_cause = text_field(cause, 72)})
 	failure_show(cause, .Bad_State)
@@ -500,6 +502,9 @@ start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) ->
 	}
 	start_policy_stage = .Usable
 	start_policy_deadline = system.WAIT_FOREVER
+	// The start policy walked its whole list: a row that was absent,
+	// skipped or refused keeps no page from the other starts.
+	start_list_reserves_end()
 	// A measure, not a check: the pages that this service can still give,
 	// now and at the lowest count that it read since its start.
 	budget_pages_note()

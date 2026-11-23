@@ -1187,7 +1187,6 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 		display_holder_place_free(served)
 		return .No_Budget
 	}
-	start_budget_note(served, display_budget)
 	display_wiring: system.Start_Wiring
 	display_holder, status = system.process_start(image_file_checked(display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), display_budget.amounts, mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error, wiring = &display_wiring, ready = &served.ready)
 	if status != .Ok {
@@ -1206,6 +1205,7 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 	}
 	served.process = display_holder
 	served.process_slot, served.process_serial, _ = system.process_place(display_holder)
+	start_budget_note(served, display_budget)
 	served.start_grant_set = start_grant_set
 	served.wiring_memory = display_wiring.wiring_memory
 	copy(served.name[:len(served.name) - 1], display_name)

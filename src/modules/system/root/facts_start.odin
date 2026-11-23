@@ -107,6 +107,20 @@ Budget_Floor_Passed :: struct {
 	ready_process: value_kinds.Module_Name_Field,
 }
 
+// The counters of the ready ring of a process say more records than it
+// holds: the ring ends, and the floor of the process is not checked.
+@(log_fact = "root: the ready ring of {ready_process} counts more records than it holds: it ends, and the floor is not checked")
+Ready_Ring_Counters_Refused :: struct {
+	ready_process: value_kinds.Module_Name_Field,
+}
+
+// The counters of the root ring of a process say more records than it
+// holds: the ring ends, and the process sends no more command.
+@(log_fact = "root: the root ring of {caller} counts more records than it holds: it ends, and no command of it is read")
+Root_Ring_Counters_Refused :: struct {
+	caller: value_kinds.Module_Name_Field,
+}
+
 // The ready ring of a process carried another record than Ready: the ring
 // ends, and the floor of the process is not checked.
 @(log_fact = "root: {ready_process} sent the record {kind} on its ready ring, which carries Ready alone: its floor is not checked")

@@ -108,6 +108,11 @@ Budget_Description :: struct {
 	start_objects: []u64,
 	// The floor of each child that the module table names.
 	children:      []module.Floor,
+	// The pages of each budget of a fixed amount of a child (start_budgets_of_sources).
+	start_budgets: []u64,
+	// The module wires from its root ring with no stated wiring pages
+	// (floor_wiring_derived).
+	wiring_derived: bool,
 }
 
 // description_has_entry says if a described module has the export entry: a
@@ -132,7 +137,7 @@ floor_inputs_of :: proc(budget: Budget_Description, memory_size: u64, segments: 
 	modules := make([dynamic]Module_Cost, context.temp_allocator)
 	append(&modules, Module_Cost{pages = module_pages_of_size(memory_size), segment_pages = segment_pages[:]})
 	append(&modules, ..budget.import_costs)
-	return {stated = budget.parts, modules = modules[:], start_objects = budget.start_objects, children = budget.children}
+	return {stated = budget.parts, modules = modules[:], start_objects = budget.start_objects, children = budget.children, start_budgets = budget.start_budgets, wiring_derived = budget.wiring_derived}
 }
 
 // convert_fail reports a conversion refusal with the module name and returns nil, false.

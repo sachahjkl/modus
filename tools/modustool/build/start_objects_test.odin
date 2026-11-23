@@ -61,3 +61,68 @@ the_start_objects_refuse_another_form :: proc(t: ^testing.T) {
 	_, two_ok := start_objects_of_sources("src/modules/m", {{path = "src/modules/m/a.odin", source = "package m\nRING_PAGES :: 2\n// Why.\nMODULE_START_OBJECTS :: [?]system.Start_Object{RING_PAGES}\n"}, {path = "src/modules/m/b.odin", source = "package m\n// Why.\nMODULE_START_OBJECTS :: [?]system.Start_Object{RING_PAGES}\n"}})
 	testing.expect(t, !two_ok, "two lists in one package are refused")
 }
+
+// The budgets of a fixed amount of the children of a module: read from its
+// own package, refused in another package, refused for a name that is no
+// constant of one literal, an amount of 0, another element type, and two
+// lists.
+@(test)
+the_start_budgets_are_read_from_the_module_alone :: proc(t: ^testing.T) {
+	module_source := "package m\nNODE_PAGES :: 900\n// Each node starts with its budget.\nMODULE_START_BUDGETS :: [?]system.Start_Budget{NODE_PAGES, NODE_PAGES}\n"
+	pages, ok := start_budgets_of_sources("src/modules/m", {{path = "src/modules/m/main.odin", source = module_source}})
+	testing.expect(t, ok && len(pages) == 2 && pages[0] == 900 && pages[1] == 900)
+	none, none_ok := start_budgets_of_sources("src/modules/m", {{path = "src/modules/m/main.odin", source = "package m\n"}})
+	testing.expect(t, none_ok && len(none) == 0)
+	refused := [?]struct {
+		path, source: string,
+	} {
+		{"src/library/modus/display/a.odin", module_source},
+		{"src/modules/m/main.odin", "package m\n// Why.\nMODULE_START_BUDGETS :: [?]system.Start_Budget{NODE_PAGES}\n"},
+		{"src/modules/m/main.odin", "package m\nNODE_PAGES :: 0\n// Why.\nMODULE_START_BUDGETS :: [?]system.Start_Budget{NODE_PAGES}\n"},
+		{"src/modules/m/main.odin", "package m\nNODE_PAGES :: 9\n// Why.\nMODULE_START_BUDGETS :: [?]system.Start_Object{NODE_PAGES}\n"},
+		{"src/modules/m/main.odin", "package m\nNODE_PAGES :: 9\nMODULE_START_BUDGETS :: [?]system.Start_Budget{NODE_PAGES}\n"},
+	}
+	for item in refused {
+		_, item_ok := start_budgets_of_sources("src/modules/m", {{path = item.path, source = item.source}})
+		testing.expectf(t, !item_ok, "%s is refused", item.source)
+	}
+	_, two_ok := start_budgets_of_sources("src/modules/m", {{path = "src/modules/m/a.odin", source = module_source}, {path = "src/modules/m/b.odin", source = "package m\n// Why.\nMODULE_START_BUDGETS :: [?]system.Start_Budget{NODE_PAGES}\n"}})
+	testing.expect(t, !two_ok, "two lists are refused")
+}
+
+// The start grants of the repository: the console sends Wire from its root
+// ring, so its floor holds its wiring budget; the start policy prices its
+// wirings with its list; a module with no root ring wires nothing; a name
+// with no row wires nothing.
+@(test)
+the_wiring_of_a_floor_follows_the_start_grants :: proc(t: ^testing.T) {
+	console, console_ok := floor_wiring_derived("console")
+	testing.expect(t, console_ok && console)
+	policy, policy_ok := floor_wiring_derived("start_policy")
+	testing.expect(t, policy_ok && !policy)
+	clock, clock_ok := floor_wiring_derived("clock")
+	testing.expect(t, clock_ok && !clock)
+	nobody, nobody_ok := floor_wiring_derived("no_such_module")
+	testing.expect(t, nobody_ok && !nobody)
+}
+
+// A derived wiring budget is as large as the rest of the floor, so the
+// carve of half of the floor is the wiring part; a stated one is taken as
+// it is; the start budgets count at their pages.
+@(test)
+the_floor_holds_the_wiring_carve_and_the_child_budgets :: proc(t: ^testing.T) {
+	plain, _ := floor_count({modules = {{pages = 1, segment_pages = {1}}}})
+	derived, derived_ok := floor_count({modules = {{pages = 1, segment_pages = {1}}}, wiring_derived = true})
+	testing.expect(t, derived_ok)
+	testing.expect_value(t, derived.floor.wiring_pages, plain.floor.pages)
+	testing.expect_value(t, derived.floor.pages, 2 * plain.floor.pages)
+	stated, _ := floor_count({stated = {wiring_pages = 28}, modules = {{pages = 1, segment_pages = {1}}}, wiring_derived = true})
+	testing.expect_value(t, stated.floor.wiring_pages, 28)
+	testing.expect_value(t, stated.floor.pages, plain.floor.pages + 28)
+	budgets, _ := floor_count({modules = {{pages = 1, segment_pages = {1}}}, start_budgets = {900, 900}})
+	testing.expect_value(t, budgets.floor.pages, plain.floor.pages + 1800)
+	_, huge_ok := floor_count({start_budgets = {max(u64)}})
+	testing.expect(t, !huge_ok)
+	_, huge_wiring_ok := floor_count({stated = {working_memory_pages = max(u64) / 2 + 1}, wiring_derived = true})
+	testing.expect(t, !huge_wiring_ok, "a derived wiring part past 64 bits is refused")
+}

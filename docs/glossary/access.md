@@ -360,7 +360,7 @@ Do not use: start budget, effective floor.
 
 A start object is a memory object of a fixed size that a module or a package makes before the first state of work of its process, named in the floor by the constant that its code passes to `memory_create`.
 
-The package of a module lists them in `MODULE_START_OBJECTS`, another package in `PACKAGE_START_OBJECTS`, each an array of `system.Start_Object` whose elements name constants of one integer literal. The tool prices each one as the kernel charges it: its pages, its frame list and the tables of its mapping. A table that every start uses is a variable of the package, not a start object.
+The package of a module lists them in `MODULE_START_OBJECTS`, another package in `PACKAGE_START_OBJECTS`, each an array of `system.Start_Object` whose elements name constants of one integer literal. The tool prices each one as the kernel charges it: its pages, its frame list and the tables of its mapping. A table that every start uses is a variable of the package, not a start object; a budget that the module makes for a child at a fixed amount is listed apart, in `MODULE_START_BUDGETS`.
 
 Example: `MODULE_START_OBJECTS :: [?]system.Start_Object{RING_PAGES, LENT_PAGES}`.
 

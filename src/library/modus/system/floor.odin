@@ -3,6 +3,7 @@ package system
 import "base:intrinsics"
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/start_list"
 
 // The floor of a module and the size of its budget
 // (src/md/features/module_budget_request.md). The floor is a fact of the
@@ -76,6 +77,21 @@ Stated_Budget :: struct {
 // (op.mapping_table_pages_most). A list has no bound: only the type of its
 // elements is fixed, so the compiler checks each name.
 Start_Object :: distinct u64
+
+// The pages of one budget of a fixed amount that the process of a module
+// makes for a child before its first state of work, as the code passes it
+// to budget_create. The package of the module lists them:
+//
+// ```odin
+// // Each node of the ring starts with this budget.
+// MODULE_START_BUDGETS :: [?]system.Start_Budget{NODE_PAGES, NODE_PAGES}
+// ```
+//
+// The tool takes each one at its pages, as the parent carves them. A child
+// that the parent starts with its floor is named in the module table
+// instead (src/md/features/module_budget_request.md, "The floor is counted
+// whole").
+Start_Budget :: distinct u64
 
 // One part of a budget that slots or pages bound.
 Budget_Part :: enum u8 {
@@ -209,4 +225,72 @@ start_list_sizes :: proc "contextless" (list: []Start_Size, pages: u64, kept: u6
 		item.size = max(size, item.floor)
 	}
 	return true
+}
+// The reserves of a starter for the rows of its start list that have not
+// started (src/md/features/module_budget_request.md, "The sum first"): the
+// name of the module of each row and the size that the division gave it.
+// The starter keeps these pages from every other start, so a start outside
+// the list between two rows draws from the share that the division kept,
+// never from a later row. A reserve ends when the start of its row
+// succeeds, and every reserve ends when the list is done; a start that
+// fails keeps it. At most the rows of one list, a fact of its format.
+Start_List_Reserve :: struct {
+	name: Name,
+	size: u64,
+}
+Start_List_Reserves :: struct {
+	rows:  [start_list.ROW_CAPACITY]Start_List_Reserve,
+	count: int,
+}
+
+// start_list_reserve_add keeps size pages for the row of name. ok is false
+// when the reserves hold a row of each place, or a name longer than a name
+// of a module: no page is kept.
+start_list_reserve_add :: proc "contextless" (reserves: ^Start_List_Reserves, name: string, size: u64) -> (ok: bool) {
+	if reserves.count >= len(reserves.rows) || len(name) >= len(Name) {
+		return false
+	}
+	reserve := &reserves.rows[reserves.count]
+	reserve^ = {size = size}
+	copy(reserve.name[:], name)
+	reserves.count += 1
+	return true
+}
+
+// start_list_reserve_size gives the size kept for the row of name, and
+// keeps it. found is false for a name with no reserve: a start outside the
+// list, a restart, or a list that is done.
+start_list_reserve_size :: proc "contextless" (reserves: ^Start_List_Reserves, name: string) -> (size: u64, found: bool) {
+	for &reserve in reserves.rows[:reserves.count] {
+		if name_of(reserve.name[:]) == name {
+			return reserve.size, true
+		}
+	}
+	return 0, false
+}
+
+// start_list_reserve_end ends the reserve of the row of name: its start
+// succeeded, and its budget holds its pages. A name with no reserve
+// changes nothing.
+start_list_reserve_end :: proc "contextless" (reserves: ^Start_List_Reserves, name: string) {
+	for index in 0 ..< reserves.count {
+		if name_of(reserves.rows[index].name[:]) != name {
+			continue
+		}
+		reserves.count -= 1
+		reserves.rows[index] = reserves.rows[reserves.count]
+		return
+	}
+}
+
+// start_list_reserved_pages gives the pages kept for every row but the row
+// of name, which a start of name cannot take. A sum past 64 bits stops at
+// the largest.
+start_list_reserved_pages :: proc "contextless" (reserves: ^Start_List_Reserves, name: string) -> (pages: u64) {
+	for &reserve in reserves.rows[:reserves.count] {
+		if name_of(reserve.name[:]) != name {
+			pages = pages > max(u64) - reserve.size ? max(u64) : pages + reserve.size
+		}
+	}
+	return pages
 }

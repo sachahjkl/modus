@@ -756,7 +756,6 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 		held_entry = &work.slot.held_entry
 		work.slot.held_for_replay = true
 	}
-	start_budget_note(work.slot, start_budget)
 	seeded_values := random.values_with_seed(&process_generator, work.values.values)
 	defer {
 		intrinsics.mem_zero_volatile(&seeded_values, size_of(seeded_values))
@@ -764,6 +763,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 	}
 	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, seeded_values, process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring, held_entry = held_entry, ready = &work.slot.ready)
 	if status == .Ok {
+		start_budget_note(work.slot, start_budget)
 		// A process with a window of its own: the compositor ties the time
 		// to the ring of the window that Client_Add gave.
 		if .Terminal not_in work.start_grant_set.grants && work.slot.client != 0 {

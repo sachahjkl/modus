@@ -1130,7 +1130,11 @@ module_convert_key_inputs :: proc(build: foundation.Module_Build) -> Build_Key_I
 		append(&settings, "children", name)
 		append(&built_files, foundation.module_import_path(name))
 	}
-	return {subject = foundation.join("the conversion of the module ", build.name), tool_identity = build_inputs.tool_identity, settings = settings[:], built_files = built_files[:]}
+	// The start grants of a module decide whether its floor holds a wiring
+	// budget (floor_wiring_derived).
+	fixed_files := make([dynamic]string, context.temp_allocator)
+	append(&fixed_files, foundation.ROOT_START_GRANT_SETS_FILE)
+	return {subject = foundation.join("the conversion of the module ", build.name), tool_identity = build_inputs.tool_identity, settings = settings[:], built_files = built_files[:], fixed_files = fixed_files[:]}
 }
 
 // module_steps_of gives the two steps of a module of the table, in the

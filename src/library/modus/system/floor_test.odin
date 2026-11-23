@@ -242,3 +242,47 @@ the_tables_of_a_mapping_are_its_worst_case :: proc(t: ^testing.T) {
 	testing.expect_value(t, op.mapping_table_pages_most(1026), u64(8))
 	testing.expect(t, op.mapping_table_pages_most(max(u64)) > op.mapping_table_pages_most(max(u64) / 2))
 }
+
+// The reserves of a start list: a start outside the list between two rows
+// sees each divided size kept; a row sees the others kept and its own size;
+// a start that fails keeps its reserve; a start that succeeds ends it; the
+// end of the list ends them all. The edges: a full table, a name longer
+// than a module name, a name with no reserve, a sum past 64 bits.
+@(test)
+the_reserves_of_a_start_list_keep_each_divided_size :: proc(t: ^testing.T) {
+	reserves: Start_List_Reserves
+	testing.expect(t, start_list_reserve_add(&reserves, "compositor", 50_000))
+	testing.expect(t, start_list_reserve_add(&reserves, "console", 20_000))
+	testing.expect_value(t, start_list_reserved_pages(&reserves, "clock"), u64(70_000))
+	testing.expect_value(t, start_list_reserved_pages(&reserves, "console"), u64(50_000))
+	size, found := start_list_reserve_size(&reserves, "console")
+	testing.expect(t, found && size == 20_000)
+	// The start of console failed: the reserve stays.
+	testing.expect_value(t, reserves.count, 2)
+	// It succeeds now.
+	start_list_reserve_end(&reserves, "console")
+	_, found = start_list_reserve_size(&reserves, "console")
+	testing.expect(t, !found, "a row that started keeps no reserve")
+	testing.expect_value(t, start_list_reserved_pages(&reserves, "clock"), u64(50_000))
+	start_list_reserve_end(&reserves, "clock")
+	testing.expect_value(t, reserves.count, 1)
+	// The list is done: no row keeps a page.
+	reserves = {}
+	testing.expect_value(t, start_list_reserved_pages(&reserves, "clock"), u64(0))
+	// The edges.
+	long_name: [len(Name)]u8
+	for &byte in long_name {
+		byte = 'a'
+	}
+	testing.expect(t, !start_list_reserve_add(&reserves, string(long_name[:]), 1))
+	testing.expect(t, start_list_reserve_add(&reserves, string(long_name[:len(Name) - 1]), 1))
+	reserves = {}
+	for index in 0 ..< len(reserves.rows) {
+		testing.expect(t, start_list_reserve_add(&reserves, "row", 1))
+		_ = index
+	}
+	testing.expect(t, !start_list_reserve_add(&reserves, "one more", 1), "a full table keeps nothing more")
+	reserves = {}
+	testing.expect(t, start_list_reserve_add(&reserves, "a", max(u64)) && start_list_reserve_add(&reserves, "b", 2))
+	testing.expect_value(t, start_list_reserved_pages(&reserves, "c"), max(u64))
+}

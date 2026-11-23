@@ -315,9 +315,13 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 	slot.process = process
 	slot.hash = hash
 	slot.granted += {.Log}
+	start_budget_note(slot, process_budget)
 	disk_process_page_add(slot)
 	start_policy_list = .Chosen
 	start_policy_from_disk = true
+	// A start policy from the disk holds its own order and no list of
+	// this service: no row keeps pages.
+	start_list_reserves_end()
 	start_policy_name_counts = {}
 	start_policy_process = slot
 	start_policy_hash = hash

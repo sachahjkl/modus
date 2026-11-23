@@ -51,6 +51,15 @@ Floor_Inputs :: struct {
 	modules:       []Module_Cost,
 	start_objects: []u64,
 	children:      []module.Floor,
+	// The pages of each budget that the process makes for a child before
+	// its first state of work, at a fixed amount (MODULE_START_BUDGETS):
+	// counted at their pages, as the parent carves them.
+	start_budgets: []u64,
+	// The module can send Wire from its root ring and states no wiring
+	// pages: the root service carves its wiring budget from its floor at its
+	// first wiring, half of its pages, so the floor counts that carve
+	// (floor_wiring_derived).
+	wiring_derived: bool,
 }
 
 // The floor of a module, and the parts that it is the sum of:
@@ -64,7 +73,8 @@ Floor_Count :: struct {
 	thread_pages:         u64,
 	window_pages:         u64,
 	start_object_pages:   u64, // Each start object with its frame list and the tables of its mapping.
-	children_pages:       u64, // The floor of each child that the module starts before its first state of work.
+	children_pages:       u64, // The floor of each child that the module table names, and each fixed budget of a child that the source lists.
+	wiring_pages:         u64, // The wiring budget that the root service carves: stated, or derived.
 }
 
 // floor_count gives the floor that the table Floor of a module holds. ok is
@@ -160,20 +170,32 @@ floor_count :: proc(inputs: Floor_Inputs) -> (counted: Floor_Count, ok: bool) {
 		add(&child_processes, child.processes) or_return
 		add(&child_threads, child.threads) or_return
 	}
+	for pages in inputs.start_budgets {
+		add(&counted.children_pages, pages) or_return
+	}
 
 	if stated.screen_pictures > module.SCREEN_PICTURES_LIMIT {
 		return {}, false
 	}
 	counted.working_memory_pages = stated.working_memory_pages
 	pages := counted.working_memory_pages
-	parts := [?]u64{counted.module_pages, counted.load_pages, counted.thread_pages, counted.window_pages, counted.start_object_pages, counted.children_pages, stated.wiring_pages}
+	parts := [?]u64{counted.module_pages, counted.load_pages, counted.thread_pages, counted.window_pages, counted.start_object_pages, counted.children_pages}
 	for part in parts {
 		add(&pages, part) or_return
 	}
+	// The wiring budget: the pages that the source states, or for a module
+	// that wires from its root ring and states none, the carve of the root
+	// service, half of the floor: as many pages as the rest of the floor.
+	// The table holds it, so the root service carves this amount.
+	counted.wiring_pages = stated.wiring_pages
+	if counted.wiring_pages == 0 && inputs.wiring_derived {
+		counted.wiring_pages = pages
+	}
+	add(&pages, counted.wiring_pages) or_return
 	// The screen pictures are a part of their own: the build cannot know the
 	// screen, so the starter adds their pages. The processes and the threads
 	// hold the children at least: the process itself, and each child.
-	counted.floor = {pages = pages, processes = max(processes, child_processes), threads = max(threads, child_threads), screen_pictures = stated.screen_pictures, wiring_pages = stated.wiring_pages}
+	counted.floor = {pages = pages, processes = max(processes, child_processes), threads = max(threads, child_threads), screen_pictures = stated.screen_pictures, wiring_pages = counted.wiring_pages}
 	return counted, true
 }
 
@@ -264,8 +286,42 @@ floor_children_of :: proc(build: foundation.Module_Build) -> (floors: []module.F
 	return list, true
 }
 
+// The start grant sets of the root service, read once for the floors.
+@(private = "file")
+floor_grant_rows: []foundation.Start_Grant_Set_Row
+@(private = "file")
+floor_grant_rows_read: bool
+
+// floor_wiring_derived says if the module of name sends Wire from its root
+// ring (the start grant Root_Ring) and is not a start policy, whose wiring
+// pages its list prices: the root service then carves its wiring budget
+// from its floor. ok is false when the table cannot be read.
+floor_wiring_derived :: proc(name: string) -> (derived: bool, ok: bool) {
+	if !floor_grant_rows_read {
+		text := foundation.read_text_file(foundation.ROOT_START_GRANT_SETS_FILE) or_return
+		rows, _, problem := start_grant_sets_read(text)
+		if problem != "" {
+			fmt.eprintfln("modustool: the start grant sets cannot be read for the floors: %s", problem)
+			return false, false
+		}
+		floor_grant_rows, floor_grant_rows_read = rows, true
+	}
+	for row in floor_grant_rows {
+		if row.name != name {
+			continue
+		}
+		root_ring, start_policy := false, false
+		for grant in row.grants {
+			root_ring ||= grant == "Root_Ring"
+			start_policy ||= grant == "Start_Policy"
+		}
+		return root_ring && !start_policy, true
+	}
+	return false, true
+}
+
 // floor_count_line gives the parts of a floor in words, for a line of the
 // tests and of the measure of a build.
 floor_count_line :: proc(counted: Floor_Count) -> string {
-	return fmt.tprintf("%d pages (%d of working memory, %d of the module and its imports, %d of their load, %d of its threads, %d of the pictures of its window, %d of its start objects, %d of its children), %d processes, %d threads, %d pictures of the screen", counted.floor.pages, counted.working_memory_pages, counted.module_pages, counted.load_pages, counted.thread_pages, counted.window_pages, counted.start_object_pages, counted.children_pages, counted.floor.processes, counted.floor.threads, counted.floor.screen_pictures)
+	return fmt.tprintf("%d pages (%d of working memory, %d of the module and its imports, %d of their load, %d of its threads, %d of the pictures of its window, %d of its start objects, %d of its children, %d of its wirings), %d processes, %d threads, %d pictures of the screen", counted.floor.pages, counted.working_memory_pages, counted.module_pages, counted.load_pages, counted.thread_pages, counted.window_pages, counted.start_object_pages, counted.children_pages, counted.wiring_pages, counted.floor.processes, counted.floor.threads, counted.floor.screen_pictures)
 }

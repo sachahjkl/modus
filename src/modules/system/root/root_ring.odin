@@ -57,6 +57,16 @@ root_ring_serve :: proc "contextless" (item: ^Started) {
 		}
 		system.send(&item.requests.completions, ring.Record{kind = u32(answer.outcome), tag = tag, values = answer.values})
 	}
+	// Counters that say more records than the ring holds: no command can be
+	// read, and a wait on the ring ends at once. The root ring of the
+	// process ends, or this service loops with no wait; each later answer
+	// to it finds no ring.
+	if ring.counters_refused(&item.requests.commands) {
+		system.log_fact(.Warning, Root_Ring_Counters_Refused{caller = module_name_field(system.name_of(item.name[:]))})
+		system.ring_close(&item.requests)
+		system.close(item.requests_memory)
+		item.requests_memory = 0
+	}
 }
 
 // kernel_refused writes the record Refused of a kernel operation that this

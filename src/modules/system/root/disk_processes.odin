@@ -500,6 +500,7 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	slot.process = process
 	slot.hash = hash
 	slot.granted += {.Log}
+	start_budget_note(slot, process_budget)
 	disk_process_page_add(slot)
 	return .Succeeded
 }

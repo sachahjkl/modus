@@ -5,6 +5,7 @@ import "modus:contract/input_history"
 import "modus:contract/ring"
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modulus:budget_peak"
 import "modulus:extended_switch"
 import "modulus:page_attributes"
 import "modulus:processor_counters"
@@ -654,8 +655,7 @@ time_record: ^op.Time_Record
 // free pages holds the peak of every spend, also of an object that ended
 // before a read. The caller holds the frame lock.
 budget_pages_spend :: proc "contextless" (budget: ^Budget, count: u64) {
-	budget.amounts.pages -= count
-	budget.least_pages = min(budget.least_pages, budget.amounts.pages)
+	_ = budget_peak.spend(&budget.amounts.pages, &budget.least_pages, count)
 }
 
 // budget_create moves amounts from a budget to a new budget.

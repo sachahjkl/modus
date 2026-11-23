@@ -241,23 +241,18 @@ start_floor_of :: proc "contextless" (file: []u8, name: string, principal: u64, 
 }
 
 // The budget of one start: its amounts and the floor of the start, which
-// the check of its first state of work reads (ready_command).
+// the check of its first state of work reads (ready_ring_serve), and the
+// row of the start list whose reserve it ends when the start succeeds.
 Start_Budget :: struct {
 	amounts:     system.Budget_Amounts,
 	floor_pages: u64,
+	list_row:    bool,
+	row_name:    system.Name,
 }
 
-// One row of the start list that has not started yet: the floor of its
-// start, which this service keeps for it, and the size that the division
-// gave it (system.start_list_sizes). A row leaves at its first start.
-Start_List_Reserve :: struct {
-	name:  system.Name,
-	floor: u64,
-	size:  u64,
-}
-// At most the rows of one list, a fact of its format.
-start_list_reserves: [start_list.ROW_CAPACITY]Start_List_Reserve
-start_list_reserve_count: int
+// The reserves of the rows of the start list that have not started
+// (system.Start_List_Reserves).
+start_list_reserves: system.Start_List_Reserves
 
 // The list of start_list_reserve, in the memory of this service: a list is
 // read whole.
@@ -265,26 +260,29 @@ start_list_reserve_count: int
 reserve_list: start_list.List
 
 // start_list_reserve reads the rows of a start list before the start
-// policy starts, reserves the floor of the start of each row whose module
-// the image holds and does not run, and divides the pages left by the rule of the starter
-// (system.start_list_sizes). One share of the machine stays with this
-// service, for itself and for the starts after the list: the most that one
-// later start gets. The sum of the floors of the default list fits in the
-// least machine (the tool proves it at the build); a list whose floors do
-// not fit here keeps the floors alone, and each row past what this service
-// holds is refused at its start, with its line. A list that is not valid
-// reserves nothing: the start policy refuses it.
+// policy starts, and reserves, for each row whose module the image holds
+// and does not run, the size that the rule of the starter gives it
+// (system.start_list_sizes): the floors first, then the pages left, of
+// which one share of the machine stays with this service, for itself and
+// for the starts outside the list: the most that one such start gets. The
+// sum of the floors of the default list fits in the least machine (the
+// tool proves it at the build); a list whose floors do not fit here keeps
+// the floors alone, and each row past what this service holds is refused
+// at its start, with its line. A list that is not valid reserves nothing:
+// the start policy refuses it.
 start_list_reserve :: proc "contextless" (bytes: []u8) {
-	start_list_reserve_count = 0
+	start_list_reserves = {}
 	if problem, _ := start_list.list_rows_read(bytes, &reserve_list); problem != .None {
 		return
 	}
+	names: [start_list.ROW_CAPACITY]string
 	sizes: [start_list.ROW_CAPACITY]system.Start_Size
+	count := 0
 	for &row in reserve_list.rows[:reserve_list.row_count] {
 		row_name := start_list.row_name(&row)
 		module_name := start_list.root_procedure_of(row_name) == .Display ? role_holder_name(.Display) : row_name
 		// A row whose module runs already, after a list that this one
-		// replaces, holds its budget: no floor is kept for it twice.
+		// replaces, holds its budget: no page is kept for it twice.
 		if find_running(module_name) != nil {
 			continue
 		}
@@ -292,54 +290,34 @@ start_list_reserve :: proc "contextless" (bytes: []u8) {
 		if !ok {
 			continue
 		}
-		reserve := &start_list_reserves[start_list_reserve_count]
-		reserve^ = {floor = floor.pages}
-		copy(reserve.name[:len(reserve.name) - 1], module_name)
-		sizes[start_list_reserve_count] = {floor = floor.pages, size = system.budget_size(floor.pages, largest_budget.pages, growth_factor)}
-		start_list_reserve_count += 1
+		names[count] = module_name
+		sizes[count] = {floor = floor.pages, size = system.budget_size(floor.pages, largest_budget.pages, growth_factor)}
+		count += 1
 	}
 	own, _ := system.budget_read()
-	if !system.start_list_sizes(sizes[:start_list_reserve_count], own.pages, largest_budget.pages) {
-		for &size in sizes[:start_list_reserve_count] {
+	if !system.start_list_sizes(sizes[:count], own.pages, largest_budget.pages) {
+		for &size in sizes[:count] {
 			size.size = size.floor
 		}
 	}
-	for &reserve, index in start_list_reserves[:start_list_reserve_count] {
-		reserve.size = sizes[index].size
+	for index in 0 ..< count {
+		_ = system.start_list_reserve_add(&start_list_reserves, names[index], sizes[index].size)
 	}
 }
 
-// start_list_reserved_pages gives the floors that this service keeps for
-// the rows of the start list that have not started, but the row of name.
-start_list_reserved_pages :: proc "contextless" (name: string) -> (pages: u64) {
-	for &reserve in start_list_reserves[:start_list_reserve_count] {
-		if system.name_of(reserve.name[:]) != name {
-			pages += reserve.floor
-		}
-	}
-	return pages
-}
-
-// start_list_reserve_take gives the size that the division gave the row of
-// name, and ends its reserve: its first start pays it. found is false for
-// a name with no reserve: a start after the list, or a restart.
-start_list_reserve_take :: proc "contextless" (name: string) -> (size: u64, found: bool) {
-	for index in 0 ..< start_list_reserve_count {
-		if system.name_of(start_list_reserves[index].name[:]) != name {
-			continue
-		}
-		size = start_list_reserves[index].size
-		start_list_reserve_count -= 1
-		start_list_reserves[index] = start_list_reserves[start_list_reserve_count]
-		return size, true
-	}
-	return 0, false
+// start_list_reserves_end ends every reserve: the start policy has walked
+// its whole list (Machine_Usable), or no list starts. A row that was
+// absent from the machine, skipped, or whose start failed, then keeps no
+// page from the other starts.
+start_list_reserves_end :: proc "contextless" () {
+	start_list_reserves = {}
 }
 
 // budget_of gives the budget of a process of the boot image: the floor of
 // its start, its size (system.budget_size, or the size of the division of
-// the start list), at most what this service holds past the floors that it
-// keeps for the rows of the start list that did not start. ok is false
+// the start list), at most what this service holds past the sizes that it
+// keeps for the rows of the start list that did not start. The reserve of
+// a row ends at start_budget_note, after its start succeeded. ok is false
 // when the start must not happen: the file gives no floor, or its floor is
 // more than this service can give; one line says why, and no page moves.
 budget_of :: proc "contextless" (file: []u8, name: string, principal: u64 = principals.MACHINE) -> (budget: Start_Budget, ok: bool) {
@@ -349,15 +327,17 @@ budget_of :: proc "contextless" (file: []u8, name: string, principal: u64 = prin
 		return {}, false
 	}
 	own, _ := system.budget_read()
-	reserved := start_list_reserved_pages(name)
+	reserved := system.start_list_reserved_pages(&start_list_reserves, name)
 	payable := own.pages - min(own.pages, reserved)
 	if floor.pages > payable {
 		system.log_fact(.Warning, Start_Refused_Floor{floor = value_kinds.Size_In_Pages(min(floor.pages, u64(max(i64)))), held = value_kinds.Size_In_Pages(min(payable, u64(max(i64)))), refused_process = module_name_field(name), paying_budget = text_field("this service", 24)})
 		return {}, false
 	}
 	size := system.budget_size(floor.pages, largest_budget.pages, growth_factor)
-	if divided, found := start_list_reserve_take(name); found {
+	if divided, found := system.start_list_reserve_size(&start_list_reserves, name); found {
 		size = max(divided, floor.pages)
+		budget.list_row = true
+		copy(budget.row_name[:len(budget.row_name) - 1], name)
 	}
 	exception_processor, has_exception := processor_of(name)
 	processor := has_exception ? exception_processor : floor.threads * PROCESSOR_OF_A_THREAD
@@ -457,12 +437,17 @@ budget_refusal_log :: proc "contextless" (name: string, amounts: system.Budget_A
 	system.log_fact(.Warning, Start_Refused_Budget_Too_Small{pages = value_kinds.Size_In_Pages(amounts.pages), processes = amounts.processes, threads = amounts.threads, refused_process = module_name_field(name)})
 }
 
-// start_budget_note keeps, in the place of a process that started, the
-// pages of its budget at its creation and the floor of its start: the check
-// of its first state of work reads both (ready_command).
+// start_budget_note keeps, in the place of a process whose start
+// succeeded, the pages of its budget at its creation and the floor of its
+// start, which the check of its first state of work reads
+// (ready_ring_serve), and ends the reserve of its row of the start list.
 start_budget_note :: proc "contextless" (slot: ^Started, budget: Start_Budget) {
 	slot.budget_pages = budget.amounts.pages
 	slot.floor_pages = budget.floor_pages
+	if budget.list_row {
+		row_name := budget.row_name
+		system.start_list_reserve_end(&start_list_reserves, system.name_of(row_name[:]))
+	}
 }
 
 // ready_ring_serve reads the ready ring of a process: its one record, the
@@ -476,11 +461,19 @@ start_budget_note :: proc "contextless" (slot: ^Started, budget: Start_Budget) {
 // Then it sends the one completion of the ring, which a process that stops
 // waits for (system.ready_at_end), and closes the ring: no handle or
 // mapping of this service stays for it. Another record ends the ring with
-// one line and no peak. A process whose start noted no floor, or that
+// one line and no peak, and so do counters that say more records than the
+// ring holds. A process whose start noted no floor, or that
 // stopped already, so that its budget ended, gives no line.
 ready_ring_serve :: proc "contextless" (item: ^Started) {
 	record, received := system.receive(&item.ready.mapped.commands)
 	if !received {
+		// Counters that say more records than the ring holds: no record can
+		// be read, and a wait on the ring ends at once. The ring ends here,
+		// or this service loops with no wait.
+		if ring.counters_refused(&item.ready.mapped.commands) {
+			system.log_fact(.Warning, Ready_Ring_Counters_Refused{ready_process = module_name_field(system.name_of(item.name[:]))})
+			system.ready_ring_close(&item.ready)
+		}
 		return
 	}
 	outcome := call_outcome.Call_Outcome.Succeeded

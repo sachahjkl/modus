@@ -203,6 +203,16 @@ empty :: proc "contextless" (queue: ^Queue) -> bool {
 	return intrinsics.atomic_load_explicit(&queue.counters.write, .Relaxed) == intrinsics.atomic_load_explicit(&queue.counters.read, .Relaxed)
 }
 
+// counters_refused says if the counters of a queue say more records than it
+// holds: pop refuses such a queue forever, while a wait on its records ends
+// at once, as its counts differ. Only a hostile or broken writer writes
+// that. A reader that serves such a queue in a loop ends it, or it loops
+// with no wait.
+counters_refused :: proc "contextless" (queue: ^Queue) -> bool {
+	write := intrinsics.atomic_load_explicit(&queue.counters.write, .Acquire)
+	return write - intrinsics.atomic_load_explicit(&queue.counters.read, .Relaxed) > queue.mask + 1
+}
+
 // full says if a push into a queue would be refused now: the queue holds
 // its capacity, or its counters say more records than it holds. The writer
 // calls it before work whose record must find room: the kernel checks the
