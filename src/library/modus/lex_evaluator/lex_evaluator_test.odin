@@ -1218,6 +1218,48 @@ evaluation_values_of_functions :: proc(t: ^testing.T) {
 	}
 }
 
+// A host gives back the items of a list that it kept: they go after the
+// items of the lists of the line, up to the capacity and never past it.
+// The edges first: past the capacity at once, one past what is left, no
+// item, then the last places.
+@(test)
+evaluation_takes_back_the_items_of_a_kept_list :: proc(t: ^testing.T) {
+	kept: [LIST_ITEM_CAPACITY + 1]Value
+	for &item, index in kept {
+		item = {kind = .Integer, integer = i64(index) * 10}
+	}
+	run := run_of("[1, 2]")
+	testing.expect(t, run.ok)
+	testing.expect_value(t, run.evaluation.list_item_count, 2)
+	first, ok := list_items_add(&run.evaluation, kept[:])
+	testing.expect(t, !ok)
+	testing.expect_value(t, run.evaluation.list_item_count, 2)
+	first, ok = list_items_add(&run.evaluation, kept[:LIST_ITEM_CAPACITY - 1])
+	testing.expect(t, !ok)
+	testing.expect_value(t, run.evaluation.list_item_count, 2)
+	first, ok = list_items_add(&run.evaluation, nil)
+	testing.expect(t, ok)
+	testing.expect_value(t, first, 2)
+	testing.expect_value(t, run.evaluation.list_item_count, 2)
+	// The items of the line stay; the added ones follow them.
+	first, ok = list_items_add(&run.evaluation, kept[:3])
+	testing.expect(t, ok)
+	testing.expect_value(t, first, 2)
+	if values := items_of(run, {kind = .List, integer = i64(first), detail = 3}); testing.expect_value(t, len(values), 3) {
+		testing.expect_value(t, values[0], i64(0))
+		testing.expect_value(t, values[2], i64(20))
+	}
+	testing.expect_value(t, items_of(run, run.value)[1], i64(2))
+	// The last places: exactly what is left, then one item more.
+	first, ok = list_items_add(&run.evaluation, kept[:LIST_ITEM_CAPACITY - 5])
+	testing.expect(t, ok)
+	testing.expect_value(t, first, 5)
+	testing.expect_value(t, run.evaluation.list_item_count, LIST_ITEM_CAPACITY)
+	_, ok = list_items_add(&run.evaluation, kept[:1])
+	testing.expect(t, !ok)
+	testing.expect_value(t, run.evaluation.list_item_count, LIST_ITEM_CAPACITY)
+}
+
 // The bytes of stack of the deepest lines of today, and of one level of a
 // recursion, in this build: a measure, which no test reads.
 @(test)

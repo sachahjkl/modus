@@ -345,7 +345,7 @@ log_row_fields :: proc "contextless" (command_name: string, table: Table, detail
 	for item in wanted {
 		found, has := table_field(table, item.name)
 		if !has {
-			fail(command_name, " takes rows of log.records: the records ", type_text(table.file, .Record, detail), " have no field ", item.name, "; their fields are ", field_names(table))
+			fail(command_name, " takes rows of log.records: the records ", type_text(table.file, .Record, detail), " have no field ", item.name, fields_text(table, item.name))
 			return {}, false
 		}
 		item.place^ = found

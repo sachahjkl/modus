@@ -210,6 +210,16 @@ pipe_places_of_a_line :: proc(t: ^testing.T) {
 	testing.expect_value(t, expression_start("x |> f"), 0)
 	testing.expect_value(t, expression_start("12 = 3"), 0)
 	testing.expect_value(t, expression_start(""), 0)
+	// "let name =" with no "in" keeps a value as "name =" does; with "in",
+	// or with no name, or with "==", the whole line is the expression.
+	testing.expect_value(t, expression_start("let"), 0)
+	testing.expect_value(t, expression_start("let ="), 0)
+	testing.expect_value(t, expression_start("let x"), 0)
+	testing.expect_value(t, expression_start("let x == 1"), 0)
+	testing.expect_value(t, expression_start("let x = 1 in x |> f"), 0)
+	testing.expect_value(t, expression_start("let x = f(\"in\") |> g"), 7)
+	testing.expect_value(t, expression_start("let x = [1, 2] |> map((n) => n)"), 7)
+	testing.expect_value(t, expression_start("letter = 1"), 8)
 	testing.expect(t, pipe_before("x |> wh", 5))
 	testing.expect(t, pipe_before("x |> ", 5))
 	testing.expect(t, pipe_before("x|>wh", 3))

@@ -103,6 +103,23 @@ field_names :: proc "contextless" (table: Table) -> string {
 	return string(scratch[start:scratch_count])
 }
 
+// fields_text gives the end of the sentence of a field that the records of a
+// table do not have: the fields near the name, then all the fields:
+// "; did you mean resident or mapped? Their fields are slot, name, …", or
+// "; their fields are …" with none near. owner is "their" for the rows of
+// a table and "its" for one record. The text lasts for one line.
+fields_text :: proc "contextless" (table: Table, wanted: string, owner := "their") -> string {
+	nearest := console_condition.nearest_fields(table.file, table.record, wanted)
+	near := nearest_names_text(&nearest)
+	if near == "" {
+		return scratch_text("; ", owner, " fields are ", field_names(table))
+	}
+	start := scratch_count - len(near)
+	scratch_text(owner == "its" ? " Its" : " Their", " fields are ")
+	field_names(table)
+	return string(scratch[start:scratch_count])
+}
+
 // row_field gives one field of a row as the value that where, sort and
 // join compare (console_condition.values_compare): an Integer with its
 // sign, a handle, or a Text. A field with no such value gives a zero
@@ -121,7 +138,7 @@ table_argument :: proc "contextless" (command: string, value: Value, name: strin
 		return
 	}
 	if item, ok = table_field(table, name); !ok {
-		fail(command, ": the records ", type_text(table.file, .Record, value.detail), " have no field ", name, "; their fields are ", field_names(table))
+		fail(command, ": the records ", type_text(table.file, .Record, value.detail), " have no field ", name, fields_text(table, name))
 		return
 	}
 	// A hash is neither an Integer nor a Text: the console has no value of
@@ -671,7 +688,7 @@ table_columns :: proc "contextless" (arguments: []Value) -> Value {
 		}
 		item, found := table_field(table, name)
 		if !found {
-			return fail("columns: the records ", type_text(table.file, .Record, arguments[0].detail), " have no field ", name, "; their fields are ", field_names(table))
+			return fail("columns: the records ", type_text(table.file, .Record, arguments[0].detail), " have no field ", name, fields_text(table, name))
 		}
 		if count == COLUMN_CAPACITY {
 			return fail("columns: more than ", i64(COLUMN_CAPACITY), " fields")

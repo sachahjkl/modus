@@ -254,13 +254,20 @@ commands_start :: proc "contextless" () {
 	// nothing. A help longer than its field ends with the cut mark:
 	// `describe(name)` gives it whole.
 	//
+	// `help(name)` gives a `Text` about one name: a command gives its
+	// signature and its whole help, and a word of Lex (`let`, `with`,
+	// `|>`, `=>`, `if`) or a name of the evaluation (`map`, `filter`)
+	// gives a short guide with an example; `where` and `connect` give
+	// both. A name that is neither fails with the names near it.
+	//
 	// ```
+	// > help("let")
 	// > where(help(), name = "repeat")
 	// name    signature                      about
 	// repeat  repeat(Text, Integer) -> Text  a text, several times
 	// 1 row of Command
 	// ```
-	command("help", {}, .Table, "the commands, one row each", help)
+	command("help", {.Text}, .Table, "the commands, one row each; help(name): one command or word of Lex", help, optional_last = true)
 	// Gives the signature and the whole help of one command, as a `Text`.
 	//
 	// - `name`: the name of a command, as `help()` gives it.
@@ -273,7 +280,8 @@ commands_start :: proc "contextless" () {
 	// The list of the processes is a fact of a service, not of the console:
 	// the command connects to `monitor` when the console has no connection
 	// to it yet, and calls `monitor.processes()`. The rows are those of that
-	// export: the slot, the name, the state, the pages, the handles, the
+	// export: the slot, the name, the state, the resident and the mapped
+	// pages, the handles, the
 	// threads, the processor time and the kernel entries of each process,
 	// and the hash of the file of a disk process, whose name is its
 	// nickname.
@@ -1031,6 +1039,9 @@ commands_start :: proc "contextless" () {
 }
 
 help :: proc "contextless" (arguments: []Value) -> Value {
+	if len(arguments) == 1 {
+		return help_topic(arguments[0].text)
+	}
 	columns := [3]Column{text_column("name", 48), text_column("signature", 104), text_column("about", 104)}
 	table, made := made_table("Command", columns[:])
 	if !made {
@@ -1060,7 +1071,7 @@ describe :: proc "contextless" (arguments: []Value) -> Value {
 		}
 	}
 	if found == nil {
-		return fail("no command has the name ", arguments[0].text, "; help() gives the commands")
+		return command_unknown_fail(arguments[0].text)
 	}
 	writer := system.Writer {
 		buffer = scratch[scratch_count:],
@@ -3679,13 +3690,21 @@ list_variables :: proc "contextless" (arguments: []Value) -> Value {
 		type_writer := system.Writer {
 			buffer = type_buffer[:],
 		}
-		system.write_type(&type_writer, value.file, type_of_kind(value.kind), value.detail)
+		// A list has no type of the module contract: its kind names it.
+		if value.kind == .List {
+			system.write_part(&type_writer, kind_names[.List])
+		} else {
+			system.write_type(&type_writer, value.file, type_of_kind(value.kind), value.detail)
+		}
 		value_buffer: [128]u8
 		value_writer := system.Writer {
 			buffer = value_buffer[:],
 		}
 		switch value.kind {
-		case .None, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+		case .List:
+			system.write_part(&value_writer, i64(value.detail))
+			system.write_part(&value_writer, value.detail == 1 ? " item" : " items")
+		case .None, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 			// No value, and bytes with no description: the cell stays empty.
 			// No variable keeps a Stream or a member not typed.
 		case .Integer:

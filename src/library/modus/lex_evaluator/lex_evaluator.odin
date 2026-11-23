@@ -127,7 +127,7 @@ Kind :: enum u8 {
 	Enum           = 10, // A member of an enum: integer is its value; file and detail name the enum (module.enum_type). A parameter: an Enum of an export.
 	Member         = 11, // A member not typed yet, `.french`: integer is its node. The Enum parameter that receives it types it; nothing else keeps one.
 	Function       = 12, // A function: integer is its node, call the call in which it was written, tree its tree index. No export takes one, and no variable keeps one.
-	List           = 13, // A list: its items are active_list_items[integer:][:detail] of the evaluation. No export takes one, and no variable keeps one.
+	List           = 13, // A list: its items are active_list_items[integer:][:detail] of the evaluation. No export takes one; a variable of the console keeps a copy, which list_items_add gives back to a line.
 	Hash           = 14, // A BLAKE3 hash literal or computed tree hash: `detail` indexes `active_hashes`.
 	Boolean        = 15, // A boolean: `integer != 0` is true, `0` is false.
 	Record_With    = 16, // Mode `declaration`: lazy `left with right` record composition (`integer` indexes `with_pairs`).
@@ -537,6 +537,22 @@ untyped_find :: proc "contextless" (evaluation: ^Evaluation, value: Value, depth
 		}
 	}
 	return {}
+}
+
+// list_items_add copies items that a host kept into the items of the
+// evaluation, after the items of its lists, and gives the place of the
+// first one: a variable of the console keeps a list across lines, and each
+// line reads it as a list of its own. The host moves a nested List of the
+// items to its new place. ok is false when the items do not fit, and the
+// evaluation then holds nothing more.
+list_items_add :: proc "contextless" (evaluation: ^Evaluation, items: []Value) -> (first: int, ok: bool) {
+	if len(items) > len(evaluation.active_list_items) - evaluation.list_item_count {
+		return 0, false
+	}
+	first = evaluation.list_item_count
+	copy(evaluation.active_list_items[first:], items)
+	evaluation.list_item_count += len(items)
+	return first, true
 }
 
 // list_items_of gives the items of a List or Store_Ref value.

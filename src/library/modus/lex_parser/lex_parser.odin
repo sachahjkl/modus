@@ -336,6 +336,9 @@ parse_with_limits :: proc "contextless" (text: string, lookup: Form_Lookup, tree
 	if allow_assignment {
 		name := read_name(&parser)
 		name_start := parser.position - len(name)
+		if name == "let" && let_assignment_read(&parser) {
+			return
+		}
 		if len(name) > 0 && equal_accept(&parser) {
 			if word_of_lex(name) {
 				tree.root = refuse(&parser, .Word_As_Name, name_start, name_start + len(name), NO_NODE)
@@ -356,6 +359,40 @@ parse_with_limits :: proc "contextless" (text: string, lookup: Form_Lookup, tree
 		return
 	}
 	tree.root = expression
+}
+
+// let_assignment_read reads `let x = value` with no `in`, the parser just
+// past the word `let`: a principal at the console writes it to keep a
+// value, so it is the assignment `x = value`. It is that assignment only
+// when the line ends after the value with no refusal. Otherwise it gives
+// false with the tree and the parser as they were at the start of the
+// line, and the line is read again as an expression, whose `let` gives
+// its own refusals in their places; the parser stays past `let`, where
+// the reading of an assignment expects it.
+@(private)
+let_assignment_read :: proc "contextless" (parser: ^Parser) -> bool {
+	tree := parser.tree
+	let_end := parser.position
+	name := read_name(parser)
+	if len(name) > 0 && !word_of_lex(name) && equal_accept(parser) {
+		value := expression_read(parser)
+		if !refused(parser) && peek(parser) == 0 {
+			tree.root, tree.assigned_name = value, name
+			return true
+		}
+	}
+	tree.node_count, tree.refusal, tree.assigned_name = 0, {}, ""
+	parser^ = {
+		tree            = tree,
+		lookup          = parser.lookup,
+		line            = 1,
+		function        = NO_NODE,
+		multiline       = parser.multiline,
+		trailing_commas = parser.trailing_commas,
+		depth_limit     = parser.depth_limit,
+		position        = let_end,
+	}
+	return false
 }
 
 // node_at gives a node of a tree, or nil for NO_NODE and for an index past

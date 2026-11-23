@@ -565,7 +565,7 @@ stream_columns :: proc "contextless" (value: Value, names: string) -> Value {
 			continue
 		}
 		if _, in_shown := table_field(shown_table, name); !in_shown {
-			return fail("columns: the records ", type_text(value.file, .Record, value.detail), " have no field ", name, "; their fields are ", field_names(shown_table))
+			return fail("columns: the records ", type_text(value.file, .Record, value.detail), " have no field ", name, fields_text(shown_table, name))
 		}
 		item, _ := console_condition.field_find(stream.file, whole, name)
 		if count == COLUMN_CAPACITY {
