@@ -286,7 +286,8 @@ Command :: enum u32 {
 	// change_count of the table that the panel showed. values[1]: the
 	// index of the entry in that table. values[2]: name_hash of its name.
 	// values[3]: a Choose_Mode. values[4]: with Run_With_Arguments, the
-	// count of the Argument commands of the same tag before it.
+	// count of parameters supplied by the Argument commands of the same tag
+	// before it (each Text parameter spans 1..ARGUMENT_MAX_CHUNKS records).
 	Choose = 1,
 	// Candidates asks for one page of the values that one parameter of an
 	// entry can take. values[0..2]: as Choose. values[3]: the number of the
@@ -297,11 +298,13 @@ Command :: enum u32 {
 	// matches (line_editor.fuzzy_match); with none, each candidate. The
 	// answer is Candidates_Ready.
 	Candidates = 2,
-	// Argument gives one typed value for the Choose of the same tag that
-	// follows. values[0]: the number of the parameter in its low byte, the
-	// Value_Kind in the next byte, the count of the bytes of a Text in the
-	// byte after it. values[1]: an Integer, as an i64. values[1..6]: the
-	// bytes of a Text, ARGUMENT_TEXT_CAPACITY at most.
+	// Argument gives one typed value (or one ordered chunk of a Text value)
+	// for the Choose or Candidates command of the same tag that follows.
+	// values[0]: parameter index in bits [0..7], Value_Kind in [8..15],
+	// chunk_index in [16..23], chunk_count in [24..31], total_length in
+	// [32..47]. values[1]: an Integer, as an i64. values[1..6]: up to
+	// ARGUMENT_INLINE_TEXT_CAPACITY (48) bytes per chunk, reassembled by
+	// Argument_Assembly up to ARGUMENT_TEXT_CAPACITY (1024) bytes.
 	Argument = 3,
 	// Manual asks for the page of the manual of a module. values[0..3]:
 	// its name, 31 bytes at most, zero bytes after it.

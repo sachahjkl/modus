@@ -527,32 +527,107 @@ discovered_modules_scan :: proc "contextless" (image: []u8, set: ^Discovered_Set
 
 // ---- Background worker thread for external module setters & state reads ----
 
+// Plan value: holds 16 queued UI setting clicks while cross-process connect
+// and call_isolated run on the background worker thread, so rapid clicks never
+// overwrite earlier clicks.
+DISCOVERED_REQUEST_QUEUE_CAPACITY :: 16
+
 Discovered_Request :: struct {
-	pending:     bool,
-	module_idx:  int,
-	param_idx:   int, // Index in mod.params (not mod.set_export).
-	value:       i64,
+	module_idx: int,
+	param_idx:  int, // Index in mod.params (not mod.set_export).
+	value:      i64,
 }
 
 discovered_set: Discovered_Set
+// Module-static UI snapshot refreshed only when discovered_dirty advances
+// (avoids allocating and copying a ~70 KiB Discovered_Set on the UI stack each frame).
+discovered_ui_snapshot: Discovered_Set
+discovered_ui_seen: u32 = max(u32)
+// Module-static worker scratch owned exclusively by the single worker thread
+// (avoids copying ~8.8 KiB Discovered_Module and 4 KiB table buffer onto the 64 KiB worker stack).
+discovered_worker_mod: Discovered_Module
+discovered_worker_table_buf: [DISCOVERED_TABLE_BUFFER_BYTES]u8
+
 discovered_lock: system.Lock
 discovered_dirty: u32
 discovered_worker_wake: u32
-discovered_request: Discovered_Request
+discovered_requests: [DISCOVERED_REQUEST_QUEUE_CAPACITY]Discovered_Request
+discovered_req_head: int
+discovered_req_count: int
+discovered_req_dropped: u64
 discovered_root_ring: ring.Ring
 discovered_has_root: bool
 discovered_connections: [DISCOVERED_MODULE_CAPACITY]system.Call_Connection
 discovered_connected: [DISCOVERED_MODULE_CAPACITY]bool
 discovered_connect_tags: u32 = 1
 
-// discovered_enqueue queues a setter call for the worker thread without ever
-// blocking the main interface thread.
-discovered_enqueue :: proc "contextless" (module_idx, param_idx: int, value: i64) {
+// discovered_ui_sync refreshes the module-static UI snapshot only when
+// discovered_dirty changed since the last frame.
+discovered_ui_sync :: proc "contextless" () -> ^Discovered_Set {
+	dirty := intrinsics.atomic_load_explicit(&discovered_dirty, .Acquire)
+	if dirty != discovered_ui_seen {
+		system.lock(&discovered_lock)
+		discovered_ui_snapshot = discovered_set
+		system.unlock(&discovered_lock)
+		discovered_ui_seen = dirty
+	}
+	return &discovered_ui_snapshot
+}
+
+// discovered_queue_push appends a request to the bounded FIFO ring without
+// waking the kernel (pure helper so host tests exercise the exact queue logic).
+discovered_queue_push :: proc "contextless" (module_idx, param_idx: int, value: i64) -> bool {
+	queued := false
 	system.lock(&discovered_lock)
-	discovered_request = {pending = true, module_idx = module_idx, param_idx = param_idx, value = value}
+	if discovered_req_count < DISCOVERED_REQUEST_QUEUE_CAPACITY {
+		tail := (discovered_req_head + discovered_req_count) % DISCOVERED_REQUEST_QUEUE_CAPACITY
+		discovered_requests[tail] = {module_idx = module_idx, param_idx = param_idx, value = value}
+		discovered_req_count += 1
+		queued = true
+	} else {
+		discovered_req_dropped += 1
+	}
 	system.unlock(&discovered_lock)
-	intrinsics.atomic_add(&discovered_worker_wake, 1)
-	system.word_wake(&discovered_worker_wake)
+	return queued
+}
+
+// discovered_enqueue pushes a setter call onto the bounded FIFO worker queue
+// without ever blocking the main interface thread or overwriting queued clicks.
+discovered_enqueue :: proc "contextless" (module_idx, param_idx: int, value: i64) -> bool {
+	queued := discovered_queue_push(module_idx, param_idx, value)
+	if queued {
+		intrinsics.atomic_add(&discovered_worker_wake, 1)
+		system.word_wake(&discovered_worker_wake)
+	}
+	return queued
+}
+
+// discovered_dequeue pops the oldest pending setter request in FIFO order.
+discovered_dequeue :: proc "contextless" () -> (req: Discovered_Request, ok: bool) {
+	system.lock(&discovered_lock)
+	if discovered_req_count > 0 {
+		req = discovered_requests[discovered_req_head]
+		discovered_req_head = (discovered_req_head + 1) % DISCOVERED_REQUEST_QUEUE_CAPACITY
+		discovered_req_count -= 1
+		ok = true
+	}
+	system.unlock(&discovered_lock)
+	return req, ok
+}
+
+// discovered_instance_index_clamp clamps mod.selected_instance_index to the
+// current count of decoded instances (0 when empty).
+discovered_instance_index_clamp :: proc "contextless" (mod: ^Discovered_Module) {
+	if !mod.has_instances || mod.instance_param_index < 0 || mod.instance_param_index >= mod.param_count {
+		mod.selected_instance_index = 0
+		return
+	}
+	count := mod.params[mod.instance_param_index].value_count
+	if count <= 0 {
+		mod.selected_instance_index = 0
+	} else {
+		mod.selected_instance_index = clamp(mod.selected_instance_index, 0, count - 1)
+	}
 }
 
 @(private = "file")
@@ -579,10 +654,10 @@ discovered_refresh_module :: proc "contextless" (idx: int) {
 		return
 	}
 	system.lock(&discovered_lock)
-	mod := discovered_set.modules[idx]
+	discovered_worker_mod = discovered_set.modules[idx]
 	system.unlock(&discovered_lock)
+	mod := &discovered_worker_mod
 
-	table_buf: [DISCOVERED_TABLE_BUFFER_BYTES]u8
 	// Fetch choices/instances tables first if declared.
 	for p in 0 ..< mod.param_count {
 		texp := mod.params[p].kind == .Instances ? mod.params[p].instances_export : mod.params[p].choices_export
@@ -590,19 +665,22 @@ discovered_refresh_module :: proc "contextless" (idx: int) {
 			continue
 		}
 		err: errors.Error_Record
-		rows_n, out := system.call_isolated(&discovered_connections[idx], mod.file, texp, nil, &err, rows = table_buf[:], deadline = system.time() + system.ANSWER_BOUND_MILLISECONDS)
+		rows_n, out := system.call_isolated(&discovered_connections[idx], mod.file, texp, nil, &err, rows = discovered_worker_table_buf[:], deadline = system.time() + system.ANSWER_BOUND_MILLISECONDS)
 		if out == .Succeeded && rows_n > 0 {
 			system.lock(&discovered_lock)
-			_ = discovered_table_choices_decode(mod.file, texp, table_buf[:], int(rows_n), &discovered_set.modules[idx].params[p])
+			_ = discovered_table_choices_decode(mod.file, texp, discovered_worker_table_buf[:], int(rows_n), &discovered_set.modules[idx].params[p])
+			if discovered_set.modules[idx].params[p].kind == .Instances {
+				discovered_instance_index_clamp(&discovered_set.modules[idx])
+			}
 			system.unlock(&discovered_lock)
 		}
 	}
 	if mod.settings_state_export != 0 {
 		err: errors.Error_Record
-		rows_n, out := system.call_isolated(&discovered_connections[idx], mod.file, mod.settings_state_export, nil, &err, rows = table_buf[:], deadline = system.time() + system.ANSWER_BOUND_MILLISECONDS)
+		rows_n, out := system.call_isolated(&discovered_connections[idx], mod.file, mod.settings_state_export, nil, &err, rows = discovered_worker_table_buf[:], deadline = system.time() + system.ANSWER_BOUND_MILLISECONDS)
 		if out == .Succeeded && rows_n > 0 {
 			system.lock(&discovered_lock)
-			_ = discovered_state_apply(&discovered_set.modules[idx], table_buf[:], int(rows_n))
+			_ = discovered_state_apply(&discovered_set.modules[idx], discovered_worker_table_buf[:], int(rows_n))
 			system.unlock(&discovered_lock)
 		}
 	}
@@ -624,22 +702,33 @@ discovered_worker_entry :: proc "c" (_: rawptr) -> ! {
 	}
 	seen := intrinsics.atomic_load_explicit(&discovered_worker_wake, .Acquire)
 	for {
-		system.lock(&discovered_lock)
-		req := discovered_request
-		discovered_request.pending = false
-		system.unlock(&discovered_lock)
-		if req.pending && req.module_idx >= 0 && req.module_idx < discovered_set.module_count {
-			system.lock(&discovered_lock)
-			mod := discovered_set.modules[req.module_idx]
-			system.unlock(&discovered_lock)
-			name := discovered_module_name(&mod)
-			if discovered_connect(req.module_idx, name) && req.param_idx >= 0 && req.param_idx < mod.param_count {
-				args: [module.PARAMETER_CAPACITY]isolated.Argument
-				if arg_count, ok := discovered_set_arguments_build(&mod, mod.params[req.param_idx].param_index, req.value, args[:]); ok {
-					err: errors.Error_Record
-					_, out := system.call_isolated(&discovered_connections[req.module_idx], mod.file, mod.set_export, args[:arg_count], &err, deadline = system.time() + system.ANSWER_BOUND_MILLISECONDS)
-					if out == .Succeeded {
+		if req, has_req := discovered_dequeue(); has_req {
+			if req.module_idx >= 0 && req.module_idx < discovered_set.module_count {
+				system.lock(&discovered_lock)
+				discovered_worker_mod = discovered_set.modules[req.module_idx]
+				system.unlock(&discovered_lock)
+				mod := &discovered_worker_mod
+				name := discovered_module_name(mod)
+				was_connected := discovered_connected[req.module_idx]
+				if discovered_connect(req.module_idx, name) {
+					// On first connect (or before state/instances are loaded),
+					// refresh the module first so instances/choices are populated
+					// before encoding setter arguments.
+					if !was_connected || !mod.state_loaded {
 						discovered_refresh_module(req.module_idx)
+						system.lock(&discovered_lock)
+						discovered_worker_mod = discovered_set.modules[req.module_idx]
+						system.unlock(&discovered_lock)
+					}
+					if req.param_idx >= 0 && req.param_idx < mod.param_count {
+						args: [module.PARAMETER_CAPACITY]isolated.Argument
+						if arg_count, ok := discovered_set_arguments_build(mod, mod.params[req.param_idx].param_index, req.value, args[:]); ok {
+							err: errors.Error_Record
+							_, out := system.call_isolated(&discovered_connections[req.module_idx], mod.file, mod.set_export, args[:arg_count], &err, deadline = system.time() + system.ANSWER_BOUND_MILLISECONDS)
+							if out == .Succeeded {
+								discovered_refresh_module(req.module_idx)
+							}
+						}
 					}
 				}
 			}
@@ -737,8 +826,9 @@ discovered_card_draw :: proc "contextless" (frame: ^interface.Frame, mod_idx: in
 					system.lock(&discovered_lock)
 					discovered_set.modules[mod_idx].selected_instance_index = v
 					system.unlock(&discovered_lock)
+					intrinsics.atomic_add(&discovered_dirty, 1)
 				} else {
-					discovered_enqueue(mod_idx, p, param.values[v])
+					_ = discovered_enqueue(mod_idx, p, param.values[v])
 				}
 			}
 		}

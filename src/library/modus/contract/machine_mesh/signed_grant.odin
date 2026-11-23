@@ -433,12 +433,15 @@ revocation_list_apply_update :: proc "contextless" (
 	if state == nil || candidate == nil {
 		return .Refused_Nil_Input
 	}
+	prior_uses := has_current ? state.slow_tier_uses : u64(0)
+	_, slow_tier, _ := revocation_list_serials(candidate)
 	current_ptr: ^Revocation_List = has_current ? state : nil
 	status := revocation_list_validate(grantor_machine_list, current_ptr, candidate, verify_signature, user_data, signing_scratch)
 	if status != .Accepted {
 		return status
 	}
 	state^ = candidate^
+	state.slow_tier_uses = prior_uses + (slow_tier ? 1 : 0)
 	return .Accepted
 }
 

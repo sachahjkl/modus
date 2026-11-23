@@ -1699,9 +1699,18 @@ revocation_list_crosses_inline_tier_and_fails_closed :: proc(t: ^testing.T) {
 	testing.expect_value(t, revocation_list_apply_update(&grantor_list, &state, true, &rev_256, ed25519_verify_callback, nil, scratch_256), Revocation_List_Status.Accepted)
 	testing.expect_value(t, state.epoch, u64(3))
 	testing.expect_value(t, state.revoked_count, u16(256))
-	testing.expect(t, state.slow_tier_uses == 1)
+	testing.expect_value(t, state.slow_tier_uses, u64(1))
 	testing.expect(t, revocation_list_contains_serial(&state, 2560))
 	testing.expect(t, !revocation_list_contains_serial(&state, 2555))
+
+	// A second slow-tier update preserves and increments cumulative slow_tier_uses on state.
+	rev_256_next := rev_256
+	rev_256_next.epoch = 4
+	rev_256_next.slow_tier_uses = 0
+	sign_revocation_list(&rev_256_next, &machine_signing_priv)
+	testing.expect_value(t, revocation_list_apply_update(&grantor_list, &state, true, &rev_256_next, ed25519_verify_callback, nil, scratch_256), Revocation_List_Status.Accepted)
+	testing.expect_value(t, state.epoch, u64(4))
+	testing.expect_value(t, state.slow_tier_uses, u64(2))
 
 	// Unsorted entry at index 200 refused, leaving state unchanged.
 	bad_serials := make([]u64, 256)
@@ -1709,20 +1718,21 @@ revocation_list_crosses_inline_tier_and_fails_closed :: proc(t: ^testing.T) {
 	copy(bad_serials, serials_256)
 	bad_serials[200] = bad_serials[199]
 	bad_rev := rev_256
-	bad_rev.epoch = 4
+	bad_rev.epoch = 5
 	bad_rev.external_serials = bad_serials
 	testing.expect_value(t, revocation_list_apply_update(&grantor_list, &state, true, &bad_rev, ed25519_verify_callback, nil, scratch_256), Revocation_List_Status.Refused_Not_Strictly_Sorted)
-	testing.expect_value(t, state.epoch, u64(3))
+	testing.expect_value(t, state.epoch, u64(4))
+	testing.expect_value(t, state.slow_tier_uses, u64(2))
 
 	// Zero serial at index 200 refused.
 	bad_serials[200] = 0
 	testing.expect_value(t, revocation_list_apply_update(&grantor_list, &state, true, &bad_rev, ed25519_verify_callback, nil, scratch_256), Revocation_List_Status.Refused_Zero_Serial)
-	testing.expect_value(t, state.epoch, u64(3))
+	testing.expect_value(t, state.epoch, u64(4))
 
 	// External slice shorter than revoked_count refused.
 	short_rev := rev_256
-	short_rev.epoch = 4
+	short_rev.epoch = 5
 	short_rev.external_serials = serials_256[:255]
 	testing.expect_value(t, revocation_list_apply_update(&grantor_list, &state, true, &short_rev, ed25519_verify_callback, nil, scratch_256), Revocation_List_Status.Refused_Too_Many_Entries)
-	testing.expect_value(t, state.epoch, u64(3))
+	testing.expect_value(t, state.epoch, u64(4))
 }

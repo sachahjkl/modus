@@ -680,18 +680,22 @@ palette_choices_call :: proc "contextless" (item: ^Command, choices_export: u32,
 				continue
 			}
 			register, outcome, _ := isolated.answer_of_completion(completion)
-			if outcome != .Succeeded || register == 0 {
+			if outcome != .Succeeded || register <= 0 {
 				return 0
 			}
 			call_missed = false
 			row_size := int(rec.size)
-			if buffer.start > u64(len(sandbox.region)) {
+			if row_size <= 0 || row_size > module.RECORD_SIZE_LIMIT || buffer.start > u64(len(sandbox.region)) {
 				return 0
 			}
 			avail := len(sandbox.region) - int(buffer.start)
-			total_rows := min(int(register), int(buffer.count), avail / row_size)
-			for i in 0 ..< min(total_rows, len(out)) {
-				row_bytes := sandbox.region[int(buffer.start) + i * row_size:][:row_size]
+			total_rows := int(min(u64(register), u64(buffer.count), u64(avail / row_size), u64(len(out))))
+			for i in 0 ..< total_rows {
+				// Copy row out of shared sandbox.region into private memory before
+				// decoding or validating fields (prevents shared-memory TOCTOU).
+				row_copy: [module.RECORD_SIZE_LIMIT]u8
+				copy(row_copy[:row_size], sandbox.region[int(buffer.start) + i * row_size:][:row_size])
+				row_bytes := row_copy[:row_size]
 				id := module.field_integer(row_bytes, id_field)
 				row := &out[count]
 				row.id = id
@@ -1546,11 +1550,18 @@ palette_candidates_give :: proc "contextless" (record: ring.Record) {
 	}
 	page: Palette_Candidate_Page
 	page.first = int(min(record.values[4], u64(max(i32))))
-	if palette_arguments_tag == record.tag && palette_arguments_bad != record.tag && record.values[3] < palette_table.PARAMETER_CAPACITY && int(record.values[3]) in palette_arguments.given {
-		argument := &palette_arguments.values[record.values[3]]
-		if argument.kind == .Text {
-			page.query = string(argument.text[:argument.length])
+	query_copy: [palette_table.ARGUMENT_TEXT_CAPACITY]u8
+	if palette_arguments_tag == record.tag {
+		if palette_arguments_bad != record.tag && palette_arguments.in_progress == {} && record.values[3] < palette_table.PARAMETER_CAPACITY && int(record.values[3]) in palette_arguments.given {
+			argument := &palette_arguments.values[record.values[3]]
+			if argument.kind == .Text {
+				n := copy(query_copy[:], argument.text[:argument.length])
+				page.query = string(query_copy[:n])
+			}
 		}
+		palette_table.argument_assembly_reset(&palette_arguments)
+		palette_arguments_tag = 0
+		palette_arguments_bad = 0
 	}
 	switch kind {
 	case .None:

@@ -1845,10 +1845,8 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 	interface.action_bar_input_take(&frame, &bar)
 	texts: Frame_Texts
 	frame_texts_of(&texts, choice, display.windows_that_declined_the_scale())
-	system.lock(&discovered_lock)
-	discovered_snapshot := discovered_set
-	system.unlock(&discovered_lock)
-	boxes, laid_out := settings_layout(frame.table, &texts, width, height, view_scroll, tokens, &discovered_snapshot)
+	discovered_snapshot := discovered_ui_sync()
+	boxes, laid_out := settings_layout(frame.table, &texts, width, height, view_scroll, tokens, discovered_snapshot)
 	tree := &layout_tree
 	bar_area := interface.Area{0, height - interface.ACTION_BAR_ROW_HEIGHT, width, interface.ACTION_BAR_ROW_HEIGHT}
 	outcome: Draw_Outcome

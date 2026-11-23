@@ -140,31 +140,36 @@ roles_loaded_tell :: proc "contextless" (outcome: rd.Plan_Roles_Load_Outcome, ge
 	system.log_fact(.Info, Plan_Roles_Loaded{outcome_code = u64(outcome), generation = generation, answered = answered ? 1 : 0})
 }
 
-// Computed: divides system.ANSWER_BOUND_MILLISECONDS across
-// ROLES_BUSY_RESEND_BOUND retries so the retry window spans the full hang
-// bound rather than giving up prematurely on a loaded host.
-ROLES_BUSY_PAUSE_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS / plans_core.ROLES_BUSY_RESEND_BOUND
+// Plan value: initial pause (50 ms) lets a busy service ring drain one pass
+// without a multi-second stall on a transient Grants_Busy, then doubles on
+// each consecutive retry across ROLES_BUSY_RESEND_BOUND (8 retries: 50, 100,
+// 200, 400, 800, 1600, 3200, 6400 ms = 12 750 ms total, well within
+// system.ANSWER_BOUND_MILLISECONDS).
+ROLES_BUSY_INITIAL_PAUSE_MILLISECONDS :: u64(50)
+roles_busy_pause_attempt: u32
 
-// roles_pause waits up to ROLES_BUSY_PAUSE_MILLISECONDS, waking early if a
-// completion arrives on the root ring.
+// roles_pause waits with exponential backoff before retrying a Grants_Busy
+// set, using a pure timer wait so unrelated queued completions on the root
+// ring never wake early and burn retries in microseconds.
 @(private = "file")
 roles_pause :: proc "contextless" (user: rawptr) {
+	shift := min(roles_busy_pause_attempt, u32(10))
+	pause_ms := min(ROLES_BUSY_INITIAL_PAUSE_MILLISECONDS << shift, system.ANSWER_BOUND_MILLISECONDS)
+	roles_busy_pause_attempt += 1
 	wait := system.wait_begin()
-	if root_requests.ring.head != nil {
-		system.wait_records(&wait, &root_requests.ring.completions)
-	}
-	system.wait_end(&wait, system.time() + ROLES_BUSY_PAUSE_MILLISECONDS)
+	system.wait_end(&wait, system.time() + pause_ms)
 }
 
 // roles_busy_tell writes the line of a set that the bound of the sends
 // again refused: the rings of the services stayed full at each pause, and
 // nothing changed.
 roles_busy_tell :: proc "contextless" (state: ^plans_core.Plans_State) {
+	roles_busy_pause_attempt = 0
 	if state.roles_refusal != .Grants_Busy || state.roles_busy_resends < plans_core.ROLES_BUSY_RESEND_BOUND {
 		return
 	}
 	state.roles_busy_resends = 0
-	system.log_fact(.Warning, Plan_Roles_Busy{resends = plans_core.ROLES_BUSY_RESEND_BOUND, pause = ROLES_BUSY_PAUSE_MILLISECONDS})
+	system.log_fact(.Warning, Plan_Roles_Busy{resends = plans_core.ROLES_BUSY_RESEND_BOUND, pause = ROLES_BUSY_INITIAL_PAUSE_MILLISECONDS})
 }
 
 // roles_compensation_tell writes the line of a compensation of the core that
@@ -204,6 +209,7 @@ roles_replace :: proc "contextless" (user: rawptr, set: ^rd.Plan_Roles_Set, step
 		return .Stale_Serial
 	}
 	if completion.kind == u32(call_outcome.Call_Outcome.Succeeded) {
+		roles_busy_pause_attempt = 0
 		return .None
 	}
 	// The error record names the refusal as the value found, values[6]. A
@@ -212,6 +218,9 @@ roles_replace :: proc "contextless" (user: rawptr, set: ^rd.Plan_Roles_Set, step
 	refusal = .Stale_Serial
 	if read, known := enum_word.member_of_word(rd.Plan_Roles_Refusal, completion.values[6]); known && read != .None {
 		refusal = read
+	}
+	if refusal != .Grants_Busy {
+		roles_busy_pause_attempt = 0
 	}
 	system.log_fact(.Warning, Plan_Roles_Refused{generation = set.generation, refusal_code = u64(refusal)})
 	return refusal

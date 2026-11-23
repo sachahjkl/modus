@@ -208,6 +208,58 @@ palette_adoptions, palette_adoptions_same: u64
 // input: the ranking thread copies it and checks the copy.
 palette_provider_ring: ring.Ring
 palette_provider_ring_handle, palette_provider_table_handle: system.Handle
+
+// Computed: holds the worst-case 12-parameter chunked palette form
+// (12 * 22 Argument records + Choose) plus Candidates/Refresh so a multi-chunk
+// submission never overflows the 32-slot commands ring synchronously.
+PALETTE_OUTBOX_CAPACITY :: palette_table.PARAMETER_CAPACITY * palette_table.ARGUMENT_MAX_CHUNKS + 4
+palette_outbox: [PALETTE_OUTBOX_CAPACITY]ring.Record
+palette_outbox_head: int
+palette_outbox_count: int
+
+@(private = "file")
+palette_outbox_clear :: proc "contextless" () {
+	palette_outbox_head = 0
+	palette_outbox_count = 0
+}
+
+@(private = "file")
+palette_outbox_flush :: proc "contextless" () {
+	if palette_provider_ring.head == nil {
+		return
+	}
+	for palette_outbox_count > 0 {
+		if !system.send(&palette_provider_ring.commands, palette_outbox[palette_outbox_head]) {
+			break
+		}
+		palette_outbox_head = (palette_outbox_head + 1) % PALETTE_OUTBOX_CAPACITY
+		palette_outbox_count -= 1
+	}
+}
+
+@(private = "file")
+palette_outbox_room :: proc "contextless" () -> int {
+	palette_outbox_flush()
+	return PALETTE_OUTBOX_CAPACITY - palette_outbox_count
+}
+
+@(private = "file")
+palette_outbox_push :: proc "contextless" (record: ring.Record) -> bool {
+	if palette_provider_ring.head == nil {
+		return false
+	}
+	palette_outbox_flush()
+	if palette_outbox_count == 0 && system.send(&palette_provider_ring.commands, record) {
+		return true
+	}
+	if palette_outbox_count >= PALETTE_OUTBOX_CAPACITY {
+		return false
+	}
+	tail := (palette_outbox_head + palette_outbox_count) % PALETTE_OUTBOX_CAPACITY
+	palette_outbox[tail] = record
+	palette_outbox_count += 1
+	return true
+}
 palette_provider_window_name: system.Name
 palette_generation_seen: u32 // The change count of the table that the loop saw last.
 palette_tags: u32 // The tag of the last choice sent.
@@ -481,6 +533,9 @@ palette_wait :: proc "contextless" (wait: ^system.Wait) {
 	system.wait_word(wait, &palette_ranking.published, palette_published_seen)
 	if palette_provider_ring.head != nil {
 		system.wait_records(wait, &palette_provider_ring.completions)
+		if palette_outbox_count > 0 {
+			system.wait_room(wait, &palette_provider_ring.commands)
+		}
 		if palette_main_table != nil {
 			header := (^palette_table.Header)(raw_data(palette_main_table))
 			system.wait_word(wait, &header.change_count, palette_generation_seen)
@@ -498,6 +553,7 @@ palette_turn :: proc "contextless" () {
 		palette_refresh()
 	}
 	if palette_provider_ring.head != nil {
+		palette_outbox_flush()
 		// The table is memory that the root service made: this thread reads
 		// its header, its result and its candidates, and never an object of
 		// the entries, which the ranking thread copies.
@@ -610,6 +666,7 @@ palette_provider_add :: proc "contextless" (ring_handle, table_handle: system.Ha
 	}
 	palette_provider_ring = opened
 	palette_provider_ring_handle, palette_provider_table_handle = ring_handle, table_handle
+	palette_outbox_clear()
 	palette_main_table = ([^]u8)(address)[:table_pages * system.PAGE_SIZE]
 	system.lock(&palette_ranking.lock)
 	palette_ranking.provider_ring_handle = ring_handle
@@ -681,6 +738,7 @@ palette_provider_remove :: proc "contextless" () {
 	palette_provider_table_handle = 0
 	system.ring_close(&palette_provider_ring)
 	palette_provider_ring = {}
+	palette_outbox_clear()
 	system.close(palette_provider_ring_handle)
 	palette_provider_ring_handle = 0
 	palette_answer_awaited = 0
@@ -707,7 +765,7 @@ palette_choose :: proc "contextless" (generation: u32, picked: ^palette.Entry, m
 		return false
 	}
 	number, name := palette.entry_sent(&palette_panel, picked)
-	return system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Choose), tag = tag, values = {0 = u64(generation), 1 = u64(number), 2 = palette_table.name_hash(name), 3 = u64(mode), 4 = u64(argument_count)}})
+	return palette_outbox_push(ring.Record{kind = u32(palette_table.Command.Choose), tag = tag, values = {0 = u64(generation), 1 = u64(number), 2 = palette_table.name_hash(name), 3 = u64(mode), 4 = u64(argument_count)}})
 }
 
 // palette_act_names_take takes the record Act_Names of a window: the set of
@@ -1032,7 +1090,7 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 		// with no line of its own, and writes a new table when one did. A
 		// full ring sends nothing: the table of the last line stays.
 		if palette_provider_ring.head != nil {
-			system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Refresh)})
+			_ = palette_outbox_push(ring.Record{kind = u32(palette_table.Command.Refresh)})
 		}
 		system.log_fact(.Info, Palette_Open{})
 		palette_refresh()
@@ -1282,16 +1340,23 @@ palette_form_send :: proc "contextless" () {
 	palette.sent_set(panel, &form.entry)
 	palette_sent_setting = false
 	panel.state = .Running
-	sent := palette_provider_ring.head != nil
-	tag := palette_tag_next()
+	needed := 1
 	for field in 0 ..< form.field_count {
-		chunks := palette.form_argument_chunks(form, field)
-		for chunk in 0 ..< chunks {
-			values, _ := palette.form_argument_chunk(form, field, chunk)
-			sent = sent && system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Argument), tag = tag, values = values})
-		}
+		needed += palette.form_argument_chunks(form, field)
 	}
-	sent = sent && palette_choose(form.generation, &form.entry, .Run_With_Arguments, form.field_count, tag)
+	sent := palette_provider_ring.head != nil && palette_outbox_room() >= needed
+	if sent {
+		tag := palette_tag_next()
+		for field in 0 ..< form.field_count {
+			chunks := palette.form_argument_chunks(form, field)
+			for chunk in 0 ..< chunks {
+				values, _ := palette.form_argument_chunk(form, field, chunk)
+				sent = sent && palette_outbox_push(ring.Record{kind = u32(palette_table.Command.Argument), tag = tag, values = values})
+			}
+		}
+		sent = sent && palette_choose(form.generation, &form.entry, .Run_With_Arguments, form.field_count, tag)
+		palette_outbox_flush()
+	}
 	if sent {
 		system.log_fact(.Info, Palette_Sends_With_Arguments{arguments = u64(form.field_count), sent_entry = entry_field(palette.sent_text(panel))})
 	} else {
@@ -1312,6 +1377,15 @@ palette_candidates_ask :: proc "contextless" (first: int = 0, choose_last: bool 
 	if palette_provider_ring.head == nil || !form.active {
 		return
 	}
+	text := palette.field_text(form, form.current)
+	chunks := 0
+	if len(text) > 0 && len(text) <= palette_table.ARGUMENT_TEXT_CAPACITY {
+		chunks = palette_table.argument_chunk_count(.Text, text)
+	}
+	if palette_outbox_room() < chunks + 1 {
+		form.candidates_pending = false
+		return
+	}
 	palette_tags += 1
 	if palette_tags == 0 {
 		palette_tags = 1
@@ -1319,20 +1393,17 @@ palette_candidates_ask :: proc "contextless" (first: int = 0, choose_last: bool 
 	palette_candidates_awaited = palette_tags
 	form.candidate_choose_last = choose_last
 	form.candidate_first_asked = max(first, 0)
-	text := palette.field_text(form, form.current)
-	if len(text) > 0 && len(text) <= palette_table.ARGUMENT_TEXT_CAPACITY {
-		chunks := palette_table.argument_chunk_count(.Text, text)
-		for chunk in 0 ..< chunks {
-			values, _ := palette_table.argument_pack_chunk(form.current, .Text, 0, text, chunk)
-			if !system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Argument), tag = palette_tags, values = values}) {
-				form.candidates_pending = false
-				return
-			}
+	for chunk in 0 ..< chunks {
+		values, _ := palette_table.argument_pack_chunk(form.current, .Text, 0, text, chunk)
+		if !palette_outbox_push(ring.Record{kind = u32(palette_table.Command.Argument), tag = palette_tags, values = values}) {
+			form.candidates_pending = false
+			return
 		}
 	}
 	// Until the answer, Tab waits (palette.form_tab). A ring that takes
 	// no record gives no answer: Tab then does not wait.
-	form.candidates_pending = system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Candidates), tag = palette_tags, values = {0 = u64(form.generation), 1 = u64(form.entry.number), 2 = palette_table.name_hash(palette.entry_name(&form.entry)), 3 = u64(form.current), 4 = u64(max(first, 0))}})
+	form.candidates_pending = palette_outbox_push(ring.Record{kind = u32(palette_table.Command.Candidates), tag = palette_tags, values = {0 = u64(form.generation), 1 = u64(form.entry.number), 2 = palette_table.name_hash(palette.entry_name(&form.entry)), 3 = u64(form.current), 4 = u64(max(first, 0))}})
+	palette_outbox_flush()
 }
 
 // palette_entry_send sends a chosen entry with no parameter to the
@@ -1350,7 +1421,7 @@ palette_entry_send :: proc "contextless" (picked: ^palette.Entry) {
 		// The prefix of the manual: the provider gets the name of the
 		// process, as a typed value, and shows its page.
 		packed := system.name_pack(palette.entry_name(picked))
-		sent = palette_provider_ring.head != nil && system.send(&palette_provider_ring.commands, ring.Record{kind = u32(palette_table.Command.Manual), tag = palette_tag_next(), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
+		sent = palette_provider_ring.head != nil && palette_outbox_push(ring.Record{kind = u32(palette_table.Command.Manual), tag = palette_tag_next(), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
 		if sent {
 			system.log_fact(.Info, Palette_Asks_For_Manual{sent_entry = entry_field(palette.sent_text(panel))})
 		}

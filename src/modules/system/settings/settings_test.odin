@@ -485,3 +485,57 @@ discovered_module_settings_and_layout :: proc(t: ^testing.T) {
 		}
 	}
 }
+
+@(test)
+discovered_queue_sync_and_instance_clamp :: proc(t: ^testing.T) {
+	// Reset queue state cleanly.
+	discovered_req_head = 0
+	discovered_req_count = 0
+	discovered_req_dropped = 0
+	discovered_set = {}
+	discovered_ui_snapshot = {}
+	discovered_dirty = 1
+	discovered_ui_seen = max(u32)
+
+	// Bounded FIFO queue preserves all DISCOVERED_REQUEST_QUEUE_CAPACITY rapid clicks
+	// in order and counts overflow without overwriting queued items.
+	for i in 0 ..< DISCOVERED_REQUEST_QUEUE_CAPACITY {
+		testing.expect(t, discovered_queue_push(0, i, i64(i * 100)))
+	}
+	testing.expect(t, !discovered_queue_push(0, 99, 999))
+	testing.expect_value(t, discovered_req_dropped, u64(1))
+	for i in 0 ..< DISCOVERED_REQUEST_QUEUE_CAPACITY {
+		req, ok := discovered_dequeue()
+		testing.expect(t, ok)
+		testing.expect_value(t, req.param_idx, i)
+		testing.expect_value(t, req.value, i64(i * 100))
+	}
+	_, empty_ok := discovered_dequeue()
+	testing.expect(t, !empty_ok)
+
+	// discovered_ui_sync copies only when discovered_dirty changes.
+	discovered_set.module_count = 1
+	snap1 := discovered_ui_sync()
+	testing.expect_value(t, snap1.module_count, 1)
+	discovered_set.module_count = 2
+	// Dirty unchanged -> UI snapshot stays at 1 without recopying.
+	snap2 := discovered_ui_sync()
+	testing.expect_value(t, snap2.module_count, 1)
+	discovered_dirty += 1
+	snap3 := discovered_ui_sync()
+	testing.expect_value(t, snap3.module_count, 2)
+
+	// Instance index clamping when instances shrink or empty.
+	mod: Discovered_Module
+	mod.has_instances = true
+	mod.instance_param_index = 0
+	mod.param_count = 1
+	mod.params[0].kind = .Instances
+	mod.params[0].value_count = 2
+	mod.selected_instance_index = 5
+	discovered_instance_index_clamp(&mod)
+	testing.expect_value(t, mod.selected_instance_index, 1)
+	mod.params[0].value_count = 0
+	discovered_instance_index_clamp(&mod)
+	testing.expect_value(t, mod.selected_instance_index, 0)
+}

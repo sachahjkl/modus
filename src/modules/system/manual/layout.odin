@@ -48,12 +48,13 @@ manual_layout :: proc "contextless" (
 		return {}, false
 	}
 	margin := i32(MARGIN)
+	list_gap := max(tokens.gap / 2, i32(4))
+	status_margin := max(tokens.margin, margin)
 	heading_pixels := i32(heading_rows_count * CELL_HEIGHT)
 	max_heading := i32(height - interface.ACTION_BAR_ROW_HEIGHT - MARGIN - CELL_HEIGHT)
 	if heading_pixels > max_heading {
 		heading_pixels = max(max_heading, 0)
 	}
-	_ = tokens
 
 	if box_layout.tree_begin(tree, i32(width), i32(height), {
 		child_axis = .X,
@@ -66,8 +67,8 @@ manual_layout :: proc "contextless" (
 		label      = "list_pane",
 		size       = {.X = box_layout.px(LIST_WIDTH), .Y = box_layout.fill()},
 		child_axis = .Y,
-		padding    = {.X = 6, .Y = 4},
-		gap        = 4,
+		padding    = {.X = 6, .Y = list_gap},
+		gap        = list_gap,
 	})
 	if list_status != .Done {
 		return {}, false
@@ -168,7 +169,7 @@ manual_layout :: proc "contextless" (
 	})
 	row_status, rs_status := box_layout.box_add(tree, {
 		label = "row_status",
-		size  = {.X = box_layout.px(PLACE_COLUMNS * CELL_WIDTH + margin), .Y = box_layout.fill()},
+		size  = {.X = box_layout.px(PLACE_COLUMNS * CELL_WIDTH + status_margin), .Y = box_layout.fill()},
 	})
 	if ab_status != .Done || rs_status != .Done || box_layout.box_close(tree) != .Done || box_layout.box_close(tree) != .Done {
 		return {}, false
