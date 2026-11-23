@@ -619,4 +619,13 @@ the_grant_of_a_connection_names_the_principal :: proc(t: ^testing.T) {
 	erasing := caller_grant_make(64, 0, false) | CALLER_ERASES_VERSIONS
 	testing.expect_value(t, erasing & CALLER_AMOUNT_MASK, 64)
 	testing.expect(t, erasing & CALLER_READS_ONLY == 0)
+	// The flag of a recount: the largest principal cannot set it, and it
+	// keeps the principal and the flag to act for it.
+	testing.expect(t, caller_grant_make(CALLER_AMOUNT_MASK, CALLER_PRINCIPAL_LIMIT - 1, false) & CALLER_RECOUNTS == 0)
+	testing.expect(t, caller_grant_make(0, CALLER_PRINCIPAL_LIMIT, false) & CALLER_RECOUNTS == 0)
+	recounting := caller_grant_make(64, CALLER_PRINCIPAL_LIMIT - 1, true) | CALLER_RECOUNTS
+	testing.expect_value(t, caller_principal(recounting), CALLER_PRINCIPAL_LIMIT - 1)
+	testing.expect_value(t, recounting & CALLER_AMOUNT_MASK, 64)
+	testing.expect(t, recounting & CALLER_ACTS_FOR_PRINCIPAL != 0)
+	testing.expect(t, CALLER_RECOUNTS & (CALLER_AMOUNT_MASK | CALLER_ERASES_VERSIONS | CALLER_READS_ONLY | CALLER_PRINCIPAL_MASK | CALLER_ACTS_FOR_PRINCIPAL) == 0, "the flag of a recount has its own bit")
 }

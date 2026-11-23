@@ -710,8 +710,8 @@ USAGE_NOT_COUNTED :: -1
 // recount asks the storage service for a recount of the names of the
 // blocks of its disk, which frees the blocks that only names of no state
 // hold. It gives the leaves of the count tree that wait for it: 0 when none
-// waits, and nothing starts. Only a caller that acts for a principal may
-// ask (Failed with No_Grant).
+// waits, and nothing starts. Only a process with the start grant Recount
+// may ask (Failed with No_Grant, unit Count_Recount).
 recount :: proc "contextless" (client: ^Client, error: ^errors.Error_Record = nil) -> (leaves: i64, status: storage_status.Status) {
 	leaves, _, status, _ = call(client, "recount", nil, error)
 	return leaves, status

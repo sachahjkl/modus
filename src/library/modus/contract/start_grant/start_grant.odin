@@ -66,6 +66,7 @@ Grant :: enum i64 {
 	Start_Policy       = 31, // A root ring for Start, Stop, Machine_Usable and Wire (the wiring rows of a start list only), and the machine parts page, read-only: the one process that starts the machine (src/md/features/start_policy.md). It has no window and nothing else.
 	Screen_Capture     = 32, // The capture face and the input face of the compositor on the ring of its window: a copy of the screen, and keys and a pointer that go to the desktop, while the bar shows the mark of a viewer (src/md/features/remote_display.md).
 	Plans              = 33, // A root ring for Plan_Roles only, and Connect to the services of its start grant set: the holder of the role Plans, which gives the core the roles of the plan of principal 0 that the principal accepted (src/md/features/declarations.md).
+	Recount            = 34, // Ask the storage service for a recount of the count tree of its disk (isolated.CALLER_RECOUNTS), which refuses each change while it walks each store: the console of the person (docs/STORAGE.md, "3.5 The count tree").
 }
 
 // The name of each start grant, as the log of the root service and the
@@ -106,6 +107,7 @@ GRANT_NAMES := [Grant]string {
 	.Start_Policy       = "Start_Policy",
 	.Screen_Capture     = "Screen_Capture",
 	.Plans              = "Plans",
+	.Recount            = "Recount",
 }
 
 // grant_name gives the name of the start grant with a number, and says if

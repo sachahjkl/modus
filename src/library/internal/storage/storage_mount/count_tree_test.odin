@@ -1014,6 +1014,7 @@ Repair_Commit_Model :: struct {
 	released: map[u64]bool,
 	deltas:   []Count_Delta, // The changes of the counts of the stores that the commit makes, besides its pages.
 	from:     u64, // The block where the search of a block for a page starts, as the moving cursor of the service.
+	no_block: bool, // The search finds no free block: a disk that filled.
 }
 
 // A change of the count of a block that a commit of the host model makes.
@@ -1065,6 +1066,9 @@ model_after :: proc "contextless" (commit: ^block_counts.Commit, number: u64) ->
 model_take :: proc "contextless" (commit: ^block_counts.Commit) -> u64 {
 	model := (^Repair_Commit_Model)(commit.data)
 	context = runtime.default_context()
+	if model.no_block {
+		return 0
+	}
 	number := block_counts.free_search(model.counts, max(model.from, 2), model_taken, model)
 	if number != 0 {
 		model.taken[number] = true
@@ -1090,8 +1094,8 @@ model_release :: proc "contextless" (commit: ^block_counts.Commit, number: u64) 
 // recount whose write runs. Its root names the new count tree. It gives
 // the blocks that the commit took.
 @(private = "file")
-repair_commit_model :: proc(t: ^testing.T, state: ^State, disk: ^Test_Disk, repair: ^Test_Repair = nil, deltas: []Count_Delta = nil, dead := false, from: u64 = 2) -> (taken: [dynamic]u64, made: bool) {
-	model := Repair_Commit_Model{state = state, counts = &state.counts, deltas = deltas, from = from}
+repair_commit_model :: proc(t: ^testing.T, state: ^State, disk: ^Test_Disk, repair: ^Test_Repair = nil, deltas: []Count_Delta = nil, dead := false, from: u64 = 2, no_block := false) -> (taken: [dynamic]u64, made: bool) {
+	model := Repair_Commit_Model{state = state, counts = &state.counts, deltas = deltas, from = from, no_block = no_block}
 	defer delete(model.taken)
 	defer delete(model.released)
 	// As plan_reset of the service: the read that found the wrong page
@@ -1974,4 +1978,279 @@ a_disk_of_an_older_format_is_refused :: proc(t: ^testing.T) {
 	testing.expect(t, !format.root_magic_older(0x38454741524F5453), "STORAGE8 is no older format")
 	testing.expect(t, !format.root_magic_older(0x36454741524F5452), "other bytes are no format")
 	testing.expect(t, !format.root_magic_older(0), "zero bytes are no format")
+}
+
+// A disk whose top directory says that it has 10 free blocks: the tally
+// and the scratch, which leave the memory, need more, so the recount does
+// not start, the changes go on, and a request does not start it while the free
+// count does not grow. A commit frees a block that only the wrong list
+// named: the free count grows, and a request then starts it.
+@(test)
+a_recount_that_has_no_room_does_not_start :: proc(t: ^testing.T) {
+	made := recount_disk_make(t, 1024)
+	disk := &made.disk
+	defer delete(disk.bytes)
+	own_data := node_data(disk, made.own)
+	disk.bytes[made.list.block * BLOCK_SIZE + 100] ~= 1
+	made.top = top_free_write(disk, made.top, {0, 10})
+	state, memory := recount_state_make(t, &made)
+	defer delete(memory)
+	defer free(state)
+	testing.expect(t, recount_waits(state), "with few free blocks the recount wants to start")
+	repair := test_repair_make(state, disk)
+	defer free(repair)
+	testing.expect_value(t, repair_step(state, disk, &repair.repair_disk), Repair_Outcome.No_Room)
+	testing.expect(t, !recount_running(state) && !repair_active(state), "the changes go on")
+	said, free_then, need := recount_blocked_take(state)
+	testing.expect(t, said && free_then == 10 && need > 10, "the refusal is said with what the tally needs")
+	said, _, _ = recount_blocked_take(state)
+	testing.expect(t, !said, "the refusal is said once")
+	testing.expect_value(t, recount_request(state), u64(2))
+	testing.expect(t, !recount_waits(state), "a request does not start it while the free count did not grow")
+
+	freed := [?]Count_Delta{{own_data[0], -1, 0}}
+	taken, committed := repair_commit_model(t, state, disk, nil, freed[:])
+	delete(taken)
+	testing.expect(t, committed)
+	free_now, _ := block_counts.free_blocks(&state.counts)
+	testing.expect(t, free_now > 10, "the commit wrote the true free count of its leaf")
+	_ = recount_request(state)
+	run := recount_until_done(t, state, disk, repair)
+	testing.expect_value(t, run.walks, 1)
+	recount_expect(t, state, disk, "after the room grew")
+}
+
+// A commit of the write of a recount that finds no block: the recount
+// stops, the record on the disk is the record before the write, the
+// changes come back, and no request starts it before the free count grows.
+@(test)
+a_recount_whose_commit_finds_no_block_stops :: proc(t: ^testing.T) {
+	made := recount_disk_make(t)
+	disk := &made.disk
+	defer delete(disk.bytes)
+	own_data := node_data(disk, made.own)
+	disk.bytes[made.list.block * BLOCK_SIZE + 100] ~= 1
+	state, memory := recount_state_make(t, &made)
+	defer delete(memory)
+	defer free(state)
+	_ = recount_request(state)
+	repair := test_repair_make(state, disk)
+	defer free(repair)
+	for !repair_commit_waits(state) {
+		outcome := repair_step(state, disk, &repair.repair_disk)
+		testing.expect(t, outcome == .Running || outcome == .Done)
+	}
+	taken, committed := repair_commit_model(t, state, disk, repair, no_block = true)
+	delete(taken)
+	testing.expect(t, !committed, "the commit finds no block")
+	recount_stop_for_room(state)
+	testing.expect(t, !recount_running(state) && !repair_active(state), "the changes come back")
+	testing.expect_value(t, state.counts.leaves_to_recount, u64(3))
+	said, _, need := recount_blocked_take(state)
+	testing.expect(t, said && need == 0, "the stop is said, with no need of a tally")
+	_ = recount_request(state)
+	testing.expect(t, !recount_waits(state), "no request starts it before the free count grows")
+
+	freed := [?]Count_Delta{{own_data[0], -1, 0}}
+	taken, committed = repair_commit_model(t, state, disk, nil, freed[:])
+	delete(taken)
+	testing.expect(t, committed)
+	_ = recount_request(state)
+	recount_until_done(t, state, disk, repair)
+	recount_expect(t, state, disk, "after a commit with no block")
+}
+
+// The walk of a recount meets a wrong node, which the open did not read,
+// when the set of damage holds no more: the walk stops, the set does not
+// fill, so the changes go on, and no recount starts again, not even on a
+// request.
+@(test)
+a_recount_that_would_fill_the_damage_set_stops :: proc(t: ^testing.T) {
+	made := recount_disk_make(t)
+	disk := &made.disk
+	defer delete(disk.bytes)
+	disk.bytes[made.own.block * BLOCK_SIZE + 100] ~= 1
+	state, memory := recount_state_make(t, &made)
+	defer delete(memory)
+	defer free(state)
+	for number := u64(1000); wrong_set_has_room(state); number += 1 {
+		wrong_block_set(state, number)
+	}
+	testing.expect(t, !state.damage_set_full, "the set is full to its room, not past it")
+	_ = recount_request(state)
+	repair := test_repair_make(state, disk)
+	defer free(repair)
+	outcome: Repair_Outcome
+	for steps := 0; steps < 10_000; steps += 1 {
+		outcome = repair_step(state, disk, &repair.repair_disk)
+		if outcome != .Running {
+			break
+		}
+	}
+	testing.expect_value(t, outcome, Repair_Outcome.Damage_Full)
+	testing.expect(t, !state.damage_set_full, "the changes go on")
+	testing.expect(t, !recount_running(state) && !repair_active(state), "the walk stopped")
+	_ = recount_request(state)
+	testing.expect(t, !recount_waits(state), "no recount starts until the next start")
+}
+
+// A walk that fails on the device: the request ends with it, so a call
+// that comes does not start the walk again.
+@(test)
+a_failing_recount_is_not_started_again_by_its_request :: proc(t: ^testing.T) {
+	made := recount_disk_make(t)
+	disk := &made.disk
+	defer delete(disk.bytes)
+	disk.bytes[made.list.block * BLOCK_SIZE + 100] ~= 1
+	state, memory := recount_state_make(t, &made)
+	defer delete(memory)
+	defer free(state)
+	_ = recount_request(state)
+	repair := test_repair_make(state, disk)
+	defer free(repair)
+	repair.drop_writes = true
+	outcome: Repair_Outcome
+	for steps := 0; steps < 10_000; steps += 1 {
+		outcome = repair_step(state, disk, &repair.repair_disk)
+		if outcome != .Running && outcome != .Done {
+			break
+		}
+	}
+	testing.expect_value(t, outcome, Repair_Outcome.Device)
+	repair_call_came(state)
+	testing.expect(t, !recount_waits(state), "the request does not start the failing walk again")
+	repair.drop_writes = false
+	_ = recount_request(state)
+	recount_until_done(t, state, disk, repair)
+	recount_expect(t, state, disk, "after a failed walk")
+}
+
+// The sort of the names of a step: with a buffer of one name each name
+// goes to the tally at once; with three, full buffers are sorted inside a
+// step; the counts are those of the walk in each case.
+@(test)
+the_tiers_of_the_sort_of_the_names :: proc(t: ^testing.T) {
+	for most in ([?]int{1, 3, TALLY_NAMES_MOST}) {
+		made := recount_disk_make(t)
+		disk := &made.disk
+		defer delete(disk.bytes)
+		disk.bytes[made.list.block * BLOCK_SIZE + 100] ~= 1
+		state, memory := recount_state_make(t, &made)
+		defer delete(memory)
+		defer free(state)
+		state.repair.tally_names_most = most
+		_ = recount_request(state)
+		repair := test_repair_make(state, disk)
+		defer free(repair)
+		recount_until_done(t, state, disk, repair)
+		if most < TALLY_NAMES_MOST {
+			testing.expectf(t, state.repair.recount_sorts_full > 0, "%d: full buffers were sorted", most)
+		} else {
+			testing.expect_value(t, state.repair.recount_sorts_full, u64(0))
+		}
+		testing.expectf(t, state.repair.recount_sort_most <= u64(most), "%d: a sort took %d names", most, state.repair.recount_sort_most)
+		recount_expect(t, state, disk, "a tier of the sort")
+	}
+	keys := [?]u64{5, 1, 9, 3, 7, 2}
+	keys_sort(keys[:])
+	testing.expect(t, keys == [6]u64{1, 2, 3, 5, 7, 9}, "the heap sort sorts")
+	empty: [0]u64
+	keys_sort(empty[:])
+	one := [1]u64{4}
+	keys_sort(one[:])
+	testing.expect_value(t, one[0], u64(4))
+}
+
+// The cost of the tally on an aged disk: eleven objects whose 5 731 blocks
+// lie at random over the 64 leaves of a disk of 32 768 blocks, with the 32
+// pages of the tally of the format in memory, and with 4, which stands for
+// a disk of 8 times more leaves. It prints the reads and the writes of the
+// tally for each name, with no sort (a buffer of one name) and with the
+// sort of the names of each step. A measure, not a bound: each run must
+// only find no leaf that differs.
+@(test)
+the_cost_of_the_tally_on_an_aged_disk :: proc(t: ^testing.T) {
+	BLOCKS :: 32768
+	NODES :: 8
+	disk := disk_make(BLOCKS)
+	defer delete(disk.bytes)
+	// The blocks in a random order, but the last 256, for the count tree.
+	order := make([]u64, BLOCKS - 2 - 256)
+	defer delete(order)
+	for &number, index in order {
+		number = u64(index) + 2
+	}
+	seed := u64(0x9E3779B97F4A7C15)
+	for index := len(order) - 1; index > 0; index -= 1 {
+		seed ~= seed << 13
+		seed ~= seed >> 7
+		seed ~= seed << 17
+		other := int(seed % u64(index + 1))
+		order[index], order[other] = order[other], order[index]
+	}
+	taken := 0
+	next_place :: proc(disk: ^Test_Disk, order: []u64, taken: ^int) {
+		disk.next = order[taken^]
+		taken^ += 1
+	}
+	entries: [11]Named_Entry
+	names: [11]string
+	for object in 0 ..< 11 {
+		root: format.Object_Node
+		root.header = {level = 2, count = NODES, magic = format.OBJECT_NODE_MAGIC}
+		for child in 0 ..< NODES {
+			node: format.Object_Node
+			node.header = {level = 1, count = format.OBJECT_FANOUT, magic = format.OBJECT_NODE_MAGIC}
+			for index in 0 ..< format.OBJECT_FANOUT {
+				data: block_tree.Block
+				for &byte, place in data {
+					byte = u8(object * 31 + child * 7 + index + place % 13)
+				}
+				next_place(&disk, order, &taken)
+				pointer, value := disk_data(&disk, &data, u64(child * format.OBJECT_FANOUT + index))
+				node.children[index] = {block = pointer.block, check = pointer.check, blocks = 1, value = value}
+			}
+			next_place(&disk, order, &taken)
+			pointer := disk_put(&disk, &node)
+			root.children[child] = {block = pointer.block, check = pointer.check, blocks = format.OBJECT_FANOUT + 1, value = block_tree.node_value(&node)}
+		}
+		next_place(&disk, order, &taken)
+		blocks := Object_Blocks{root = disk_put(&disk, &root), size = NODES * format.OBJECT_FANOUT * BLOCK_SIZE}
+		names[object] = fmt.tprintf("o%02d", object)
+		entries[object] = {names[object], object_entry(blocks, {})}
+	}
+	next_place(&disk, order, &taken)
+	block: format.Store_Block
+	block.tree = disk_leaf(&disk, entries[:])
+	block.objects = 11
+	next_place(&disk, order, &taken)
+	store := disk_put(&disk, &block)
+	next_place(&disk, order, &taken)
+	disk_root(&disk, store, 1)
+	tables := test_state_make(BLOCKS)
+	defer test_state_free(tables)
+	_ = mount(tables, &disk, BLOCKS)
+	disk.next = BLOCKS - 256
+	top := count_tree_write(t, tables, &disk)
+	root_counts_set(&disk, top, 1)
+	_ = recount_record_write(&disk, top, format.count_tree_leaves(BLOCKS))
+
+	for frames in ([?]int{SCRATCH_FRAMES, 4}) {
+		for most in ([?]int{1, TALLY_NAMES_MOST}) {
+			state, memory := tree_state_make(BLOCKS)
+			defer delete(memory)
+			defer free(state)
+			testing.expect(t, !mount(state, &disk, BLOCKS).failed)
+			state.repair.tally_shape = {frame_count = frames}
+			state.repair.tally_names_most = most
+			_ = recount_request(state)
+			repair := test_repair_make(state, &disk)
+			defer free(repair)
+			run := recount_until_done(t, state, &disk, repair)
+			testing.expectf(t, run.commits == 0, "%d frames, %d names: %d leaves differ", frames, most, run.commits)
+			names_count := state.repair.recount_names
+			transfers := state.repair.tallies.transfers
+			fmt.printfln("the tally of a recount on an aged disk, %d pages in memory, %s: %d names, %d reads and writes of the tally, %.3f for each name; the most names in one sort %d", frames, most == 1 ? "no sort" : "the names of each step sorted", names_count, transfers, f64(transfers) / f64(max(names_count, 1)), state.repair.recount_sort_most)
+		}
+	}
 }

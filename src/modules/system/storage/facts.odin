@@ -371,6 +371,35 @@ Count_Recount_Started :: struct {
 	free:   value_kinds.Size_In_Blocks,
 }
 
+// A recount did not start: the disk has fewer free blocks than its tally
+// and its scratch need. None starts again until the free blocks grow.
+@(log_fact = "storage: the recount of the count tree did not start: the disk has {free} free, and its tally needs {need}; it starts when the free blocks grow, and the service takes changes")
+Count_Recount_No_Room :: struct {
+	free: value_kinds.Size_In_Blocks,
+	need: value_kinds.Size_In_Blocks,
+}
+
+// A commit of the write of a recount, or its walk, found no free block:
+// the recount stops, its record on the disk stays right.
+@(log_fact = "storage: the recount of the count tree stopped: the disk has no free block for it ({free} free); the leaves that it did not write wait, and it starts again when the free blocks grow; the service takes changes")
+Count_Recount_Stopped_For_Room :: struct {
+	free: value_kinds.Size_In_Blocks,
+}
+
+// The walk of a recount found more wrong blocks than the set of damage
+// holds: the recount stops, and none starts until the next start.
+@(log_fact = "storage: the recount of the count tree stopped: its walk found more than {wrong_blocks} wrong blocks with no table of each block; no recount starts until the next start of the service, which takes changes")
+Count_Recount_Damage_Full :: struct {
+	wrong_blocks: u64,
+}
+
+// The names of the steps of a recount passed the buffer of their sort.
+@(log_fact = "storage: the recount of the count tree sorted its names {sorts} more times than once for each step, for {names} names: a step gave more names than its buffer holds")
+Count_Recount_Sorts_Full :: struct {
+	sorts: u64,
+	names: u64,
+}
+
 // The recount of the count tree ended.
 @(log_fact = "storage: the recount of the count tree ended: {freed} that only dead names held are free, and the service takes changes again")
 Count_Recount_Ended :: struct {

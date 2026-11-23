@@ -108,6 +108,7 @@ Caller :: struct {
 	principal:  u64, // The principal of the session of the caller (isolated.caller_principal).
 	read_only:  bool,
 	erases_versions: bool, // The root service gave it the grant Versions_Erase (isolated.CALLER_ERASES_VERSIONS).
+	recounts:   bool, // The root service gave it the grant Recount (isolated.CALLER_RECOUNTS).
 	depth:      int,
 	path:       [NESTING_LIMIT]Entry_Name, // The root of the connection.
 }
@@ -161,6 +162,7 @@ caller_of :: proc "contextless" () -> (caller: Caller) {
 		caller.read_only = connection.grant & isolated.CALLER_READS_ONLY != 0
 		// A share never has it: the field stays false below.
 		caller.erases_versions = connection.grant & isolated.CALLER_ERASES_VERSIONS != 0
+		caller.recounts = connection.grant & isolated.CALLER_RECOUNTS != 0
 		return caller
 	}
 	store, _, found := connection_store(item.maker, 0)
@@ -892,11 +894,11 @@ stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> (outcome: cal
 	return .Succeeded, i64(writer.count + writer.dropped)
 }
 
-// recount asks for a recount of the count tree of the disk: a release or a dropped version that met a wrong block left names that no state holds, and their blocks stay in use until the service counts each name of their leaves again. With no request, the recount starts when the free blocks of the disk fall under a sixteenth of it. It starts when no call and no removal waits, and walks each store: during the walk the service serves reads, and refuses each change with Busy, unit Count_Recount, with the stores walked and the stores in all. Only a caller that acts for a principal may ask. The result is the leaves of the count tree that wait for a recount: 0 when none waits, and nothing starts (a disk whose tables of each block fit in the memory of the service counts each name at its open).
+// recount asks for a recount of the count tree of the disk: a release or a dropped version that met a wrong block left names that no state holds, and their blocks stay in use until the service counts each name of their leaves again. With no request, the recount starts when the free blocks of the disk fall under a sixteenth of it. It starts when no call and no removal waits, and when the disk has a free block for each page of its tally (one for each leaf in use): after a recount that found no room, none starts until the free blocks grow. It walks each store: during the walk the service serves reads, and refuses each change with Busy, unit Count_Recount, with the stores walked and the stores in all. Only a process with the start grant Recount may ask, as a recount refuses the changes of every caller. A request that a failure of the recount ends is not made again. The result is the leaves of the count tree that wait for a recount: 0 when none waits, and nothing starts (a disk whose tables of each block fit in the memory of the service counts each name at its open).
 //
 // **Error kinds**
 //
-// - `No_Grant` (Grant_Or_Right_Missing, unit Acts_For_Principal: the caller does not act for a principal);
+// - `No_Grant` (Grant_Or_Right_Missing, unit Count_Recount: the caller has no start grant Recount);
 // - `Device` (Callee_Unavailable: the disk went silent before the open).
 @(export, link_name = "recount")
 recount :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
@@ -904,8 +906,8 @@ recount :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call
 		return refusal, 0
 	}
 	caller := caller_of()
-	if !caller.acts_for_principal {
-		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
+	if !caller.recounts {
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Count_Recount)
 	}
 	return .Succeeded, i64(recount_ask())
 }

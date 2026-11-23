@@ -93,7 +93,7 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// - **Palette**: its commands show in the palette of the desktop,
 	//   and the palette names the one that the input chose.
 	// It gives the log to the processes that it starts, which write on it.
-	{name = "console", grants = {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Acts_For_Principal, .Replacements, .Replace, .History_Store, .Debug_Image, .Palette}, terms = {store_blocks = 3, log_gives = true}},
+	{name = "console", grants = {.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Acts_For_Principal, .Replacements, .Replace, .History_Store, .Debug_Image, .Palette, .Recount}, terms = {store_blocks = 3, log_gives = true}},
 	// It writes its lines to a terminal and reads the key Space from it:
 	// it has no surface and needs nothing else. It shows the rates of the
 	// process in a terminal of a fixed size, so that its measures compare

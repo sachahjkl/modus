@@ -473,6 +473,7 @@ state_bind :: proc "contextless" (state: ^State, memory: []u8, blocks: u64, hash
 	state.count_staged_slots = slots[layout.cache_slots:]
 	state.leaves_to_write = ([^]u64)(&base[layout.leaves])[:layout.leaf_words]
 	state.repair.nodes_per_step = REPAIR_NODES_PER_STEP
+	state.repair.tally_names_most = TALLY_NAMES_MOST
 	state.hash_index.records = ([^]Root_Record)(&base[layout.hash_records])[:layout.hash_capacity]
 	state.hash_index.slots = ([^]u64)(&base[layout.hash_slots])[:layout.hash_capacity]
 	state.hash_index.slot_bits = 0
@@ -600,6 +601,18 @@ wrong_block_set :: proc "contextless" (state: ^State, number: u64) {
 	case .Count_Tree:
 		block_set_add(state, state.wrong_set, &state.wrong_set_count, number)
 	}
+}
+
+// wrong_set_has_room says if the set of the wrong blocks takes one more
+// with no stop of the changes: the form Tables has a bit for each block.
+wrong_set_has_room :: proc "contextless" (state: ^State) -> bool {
+	switch state.form {
+	case .Tables:
+		return true
+	case .Count_Tree:
+		return 2 * (state.wrong_set_count + 1) <= len(state.wrong_set)
+	}
+	return false
 }
 
 // damaged_under says if the block tree under a block has a wrong block.
@@ -1107,6 +1120,8 @@ walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^fo
 	state.repair.leaf_count = 0
 	state.repair.recount, state.repair.recount_writing, state.repair.recount_requested = false, false, false
 	state.repair.recount_settled, state.repair.recount_ended = false, false
+	state.repair.recount_blocked, state.repair.recount_room_said, state.repair.recount_damage_stopped = false, false, false
+	state.repair.tally_name_count = 0
 	state.repair.leaf_count = 0
 	state.recount_dead_since_open, state.recount_cleared_since_open = false, false
 	if !count_tree_bind(state, reader, candidate) {

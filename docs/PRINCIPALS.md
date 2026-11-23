@@ -294,7 +294,8 @@ So a process that the console starts belongs to principal 0, and a process that 
 | 0 to 45 (`CALLER_AMOUNT_MASK`) | An amount: the limit of blocks of a store |
 | 46 (`CALLER_ERASES_VERSIONS`) | The storage service lets the caller erase the versions of the objects of its private store: the start grant `Versions_Erase`, which only `unlock` has (`STORAGE.md`, "4.8 The erase of versions") |
 | 47 (`CALLER_READS_ONLY`) | The connection reads only: the storage service refuses each change on it (`MODULE_CONTRACT.md`, "The debug object of a disk process") |
-| 48 to 62 (`CALLER_PRINCIPAL_MASK`) | The number of the principal of the session of the caller |
+| 48 to 61 (`CALLER_PRINCIPAL_MASK`) | The number of the principal of the session of the caller |
+| 62 (`CALLER_RECOUNTS`) | The storage service lets the caller ask for a recount of the count tree of its disk: the start grant `Recount`, which the console has (`STORAGE.md`, "3.5 The count tree") |
 | 63 (`CALLER_ACTS_FOR_PRINCIPAL`) | The caller acts for that principal |
 
 A caller acts for the principal when its start grant set has the grant `acts_for_principal` (the console, `remote`) and the grant was not revoked. It acts for the principal of its own session only, but for `remote`, whose connections act for the principal of a client key ("The client keys of remote"). So the console, started at boot, acts for principal 0, never for principal 1: "root: connected console to the service storage, acting for principal 0". A console that the desktop starts during the session of alice belongs to that session: it acts for principal 1, never for principal 0.
@@ -587,7 +588,7 @@ The storage service names a store by the name that the root service gives to the
 
 So two principals that run one module have two stores, and the stores of the system keep their names. The inverse, `principals.store_name_principal`, gives the principal of a store from its name.
 
-**Which stores a caller names.** The storage service applies one rule, in one procedure (`may_name_store`; `STORAGE.md`, "4.2 No way up"), from bits 48 to 62 of the grant of each connection:
+**Which stores a caller names.** The storage service applies one rule, in one procedure (`may_name_store`; `STORAGE.md`, "4.2 No way up"), from bits 48 to 61 of the grant of each connection:
 
 - A caller that acts for principal N sees the stores of principal N only: `stores()` lists them, and `open_store` gives a place on one of them; another store is refused with `No_Grant`, unit `Acts_For_Principal`.
 - Principal 0 sees the stores of principal 0 only. It does not see the stores of a named principal: the machine is not an administrator.

@@ -2539,6 +2539,11 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: storage.read: the argument name: the store has no object with this name"},
 	{kind = .Type, text = "storage.size(0, \"greeting\")"},
 	{kind = .Wait, text = "[console] 20"},
+	// The console holds the start grant Recount. The disk of the test has
+	// its tables of each block in memory, so no leaf waits for a recount and
+	// nothing starts.
+	{kind = .Type, text = "storage.recount()"},
+	{kind = .Wait, text = "[console] 0"},
 	{kind = .Type, text = "storage.stores()"},
 	{kind = .Wait, text = "[console] console: 1 objects, 0 trees, 0 versions, 3 of 3 blocks, 0 shared, 1 connection"},
 	// The scenario lists the grant and revokes it: the store stays on the disk,

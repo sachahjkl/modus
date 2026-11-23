@@ -1948,6 +1948,10 @@ recount_ended_say :: proc "contextless" () {
 	if ended, freed := storage_mount.recount_ended_take(&opened); ended {
 		recount_start_said = false
 		system.log_fact(.Info, Count_Recount_Ended{freed = blocks_field(freed)})
+		// The slower tier of the sort of the names: visible when it ran.
+		if sorts := opened.repair.recount_sorts_full; sorts != 0 {
+			system.log_fact(.Info, Count_Recount_Sorts_Full{sorts = sorts, names = opened.repair.recount_names})
+		}
 	}
 }
 
@@ -2028,15 +2032,18 @@ repair_step :: proc "contextless" () {
 		if opened.counts.wrong_leaf_count > 0 && !repair_start_said {
 			repair_start_said = true
 			system.log_fact(.Warning, Count_Repair_Started{leaves = u64(opened.counts.wrong_leaf_count)})
-		} else if opened.counts.wrong_leaf_count == 0 && !storage_mount.repair_active(&opened) && !recount_start_said {
-			recount_start_said = true
-			free, _ := block_counts.free_blocks(&opened.counts)
-			system.log_fact(.Info, Count_Recount_Started{leaves = opened.counts.leaves_to_recount, free = blocks_field(free)})
 		}
+		leaves := opened.counts.leaves_to_recount
 		repair_disk.root = &root
 		repair_disk.heads = store_blocks[:]
 		outcome := storage_mount.repair_step(&opened, &mount_reader, &repair_disk)
+		if storage_mount.recount_running(&opened) && !recount_start_said {
+			recount_start_said = true
+			free, _ := block_counts.free_blocks(&opened.counts)
+			system.log_fact(.Info, Count_Recount_Started{leaves = leaves, free = blocks_field(free)})
+		}
 		recount_ended_say()
+		recount_room_say()
 		switch outcome {
 		case .Running:
 			return
@@ -2052,35 +2059,66 @@ repair_step :: proc "contextless" () {
 			}
 			return
 		case .No_Room:
-			if !repair_room_said {
+			// A recount says its own line (recount_room_say).
+			if !storage_mount.recount_running(&opened) && opened.repair.no_room && !repair_room_said {
 				repair_room_said = true
 				system.log_fact(.Warning, Count_Repair_No_Room{})
 			}
 			return
+		case .Damage_Full:
+			recount_start_said = false
+			system.log_fact(.Warning, Count_Recount_Damage_Full{wrong_blocks = u64(len(opened.wrong_set) / 2)})
+			return
 		}
 	}
-	if !repair_commit() {
-		repair_commit_waits_call = true
-		if !repair_commit_said {
-			repair_commit_said = true
-			system.log_fact(.Warning, Count_Repair_Commit_Failed{})
-		}
+	recounting := storage_mount.recount_running(&opened)
+	committed, full := repair_commit()
+	if committed {
+		return
+	}
+	// A commit of the write of a recount that finds no block: the recount
+	// stops, its record on the disk stays right, and the changes come back.
+	if recounting && full {
+		storage_mount.recount_stop_for_room(&opened)
+		recount_start_said = false
+		recount_room_say()
+		return
+	}
+	repair_commit_waits_call = true
+	if !repair_commit_said {
+		repair_commit_said = true
+		system.log_fact(.Warning, Count_Repair_Commit_Failed{})
+	}
+}
+
+// recount_room_say writes once that a recount found no room for its tally
+// or its commit no block, with the free blocks then.
+recount_room_say :: proc "contextless" () {
+	said, free, need := storage_mount.recount_blocked_take(&opened)
+	if !said {
+		return
+	}
+	recount_start_said = false
+	if need == 0 {
+		system.log_fact(.Warning, Count_Recount_Stopped_For_Room{free = blocks_field(free)})
+	} else {
+		system.log_fact(.Warning, Count_Recount_No_Room{free = blocks_field(free), need = blocks_field(need)})
 	}
 }
 
 // repair_commit writes the leaves that the repair counted in one commit
 // that changes no store; the service then leaves the repair state.
-repair_commit :: proc "contextless" () -> bool {
+repair_commit :: proc "contextless" () -> (committed: bool, full: bool) {
 	plan_reset(-1)
 	error: errors.Error_Record
-	if _, refused := count_pages_make(&error); refused {
+	if outcome, refused := count_pages_make(&error); refused {
 		block_counts.commit_drop(&opened.count_commit)
 		plan_drop()
-		return false
+		return false, outcome == .Budget_Or_Capacity_Exhausted
 	}
 	place, written := plan_write_with_root(&error)
 	if written != .Succeeded {
-		return false
+		return false, written == .Budget_Or_Capacity_Exhausted
 	}
 	root = plan.next
 	root_place = place
@@ -2099,7 +2137,7 @@ repair_commit :: proc "contextless" () -> bool {
 	plan.taken_count = 0
 	storage_mount.repair_commit_came(&opened)
 	repair_start_said, repair_device_said, repair_room_said, repair_commit_said = false, false, false, false
-	return true
+	return true, false
 }
 
 // count_after_commit gives the count and the owner of a block after the

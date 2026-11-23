@@ -313,7 +313,7 @@ Unit :: enum i64 {
 	Device_Windows = 63, // Full: the device windows of the IOMMU, which the objects that a service declares and that are not contiguous hold; limit their count.
 	Count_Repair = 64, // Busy: the storage service repairs the counts of the blocks of its disk and makes no change until the end (src/md/data/storage_capacity.md). value: the stores that the repair walked; limit: the stores in all.
 	Act_Records = 65, // Full: the act record of a call under a wide grant found no room, and the call did not run (src/md/features/wide_grants.md, "The size of the act records"): the audit space of the grant in the collector is full, or its ring did not take the record. found: the wide_grants.Act_Write_Status of the write.
-	Count_Recount = 66, // Busy: the storage service counts again each name of the blocks of the leaves of its count tree that can hold names that no state holds, and makes no change until the end (src/md/data/storage_capacity.md, "A recount is one walk"). value: the stores that the recount walked; limit: the stores in all.
+	Count_Recount = 66, // No_Grant: the caller of recount has no start grant Recount. Busy: the storage service counts again each name of the blocks of the leaves of its count tree that can hold names that no state holds, and makes no change until the end (src/md/data/storage_capacity.md, "A recount is one walk"). value: the stores that the recount walked; limit: the stores in all.
 }
 
 // The name of each error kind, as the contract names it: a column of a
