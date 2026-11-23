@@ -19,7 +19,7 @@ project_evaluation_bytes :: proc(buffer: []u8) -> int {
 	declaration_eval.output_write_u8(&writer, u8(declaration_eval.Value_Tag.Record))
 	declaration_eval.output_write_u32(&writer, 1)
 	declaration_eval.output_write_string(&writer, "source")
-	declaration_eval.output_write_hash(&writer, loaded_hash(7))
+	declaration_eval.output_write_tree(&writer, loaded_hash(7))
 	return writer.written
 }
 

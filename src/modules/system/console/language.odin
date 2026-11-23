@@ -110,7 +110,7 @@ type_of_kind :: proc "contextless" (kind: Kind) -> (type: module.Type) {
 		type = .Bytes
 	case .Enum:
 		type = .Enum
-	case .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+	case .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		// No type of the module contract: no export takes one, and
 		// type_text names it itself.
 		type = .None
@@ -151,6 +151,7 @@ kind_names := [Kind]string {
 	.Store_Ref      = "a store grant",
 	.Plan_Value     = "a plan",
 	.Project_Value  = "a project",
+	.Tree_Ref       = "a tree",
 }
 
 // type_text gives the name of a type: "Integer", the name of a record or of
@@ -405,7 +406,7 @@ assign :: proc "contextless" (name: string, value: Value) {
 	switch value.kind {
 	case .List:
 		list_keeping_commit(slot)
-	case .None, .Integer, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member, .Function, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+	case .None, .Integer, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member, .Function, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		// The value holds no memory of the line: the slot keeps it as it is.
 		// A Bytes value and a Stream were refused above; the evaluator
 		// refuses a literal and a member that nothing typed. An Enum names
@@ -1525,7 +1526,7 @@ result_knowledge :: proc "contextless" (found: ^Command) -> (value: Value, knowl
 	case .Handle, .Bytes:
 		// The rights of a Handle come with the value.
 		knowledge = .Kind
-	case .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+	case .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		// A command of the console makes a Stream, and the record of the
 		// record output comes with the value when the line runs.
 		knowledge = .Kind

@@ -72,6 +72,49 @@ Recipe_Refusal :: enum u8 {
 	Builder_Needs_Sandbox = 24,
 	Store_Failed          = 25, // The private store did not take the realisation: nothing was recorded.
 	Store_Damaged         = 26, // A realisation of the private store does not decode, or its output does not match its hash.
+	Untyped_Hash          = 27, // The arguments of a recipe hold a bare hash: it names no kind, so it names no input.
+	Nested_Input          = 28, // A tree or a module file below the first level of the arguments: its input would have no name.
+	Not_A_Recipe          = 29, // The value is not a recipe, or its arguments are not a record.
+	Damaged_Recipe        = 30, // The recipe does not decode, or its written hash is not the hash of its record.
+	Unsupported_Argument  = 31, // An argument of a kind that a recipe does not take: a recipe, a follow, a store, a plan, a project, or a negative source_date.
+}
+
+// The words of each refusal of a recipe, for the failure of an evaluation
+// that names one.
+@(rodata)
+recipe_refusal_words := [Recipe_Refusal]string {
+	.None                  = "no refusal",
+	.Zero_Builder_Hash     = "the builder has a zero hash",
+	.Bad_Output_Kind       = "the output kind is no kind",
+	.Bad_Build_Mode        = "the build mode is no mode",
+	.Too_Many_Inputs       = "more inputs than a recipe holds",
+	.Invalid_Input_Name    = "an input has a name that a tree refuses",
+	.Zero_Input_Hash       = "an input has a zero hash",
+	.Duplicate_Input       = "two inputs have one name",
+	.Bad_Input_Kind        = "an input kind is no kind",
+	.Arguments_Too_Large   = "the arguments pass the bytes of a recipe",
+	.Nonzero_Padding       = "the padding of the record is not zero",
+	.Buffer_Too_Small      = "the buffer is too small",
+	.Cache_Miss            = "no cache has the realisation",
+	.Untrusted_Realisation = "the realisation has no trusted signer",
+	.Hash_Mismatch         = "the output does not have its hash",
+	.Bad_Signature         = "the signature of the realisation is wrong",
+	.Malformed_Output      = "the output does not decode",
+	.Builder_Failed        = "the builder failed",
+	.Verify_Disagreement   = "two builds gave two outputs",
+	.Sandbox_Violation     = "the builder left its sandbox",
+	.Store_Full            = "the store is full",
+	.Bad_Head_Value        = "a value of the head is wrong",
+	.Unknown_Recipe        = "no recipe has this hash",
+	.Recipe_Limit_Reached  = "the registry holds no more recipes",
+	.Builder_Needs_Sandbox = "the builder needs the sandbox",
+	.Store_Failed          = "the store did not take the realisation",
+	.Store_Damaged         = "the realisation of the store is damaged",
+	.Untyped_Hash          = "a bare hash names no input: use here() or module(...)",
+	.Nested_Input          = "a tree or a module below the first level of the arguments",
+	.Not_A_Recipe          = "the value is not a recipe",
+	.Damaged_Recipe        = "the recipe does not decode",
+	.Unsupported_Argument  = "an argument of a kind that a recipe does not take",
 }
 
 // Closed set of commands accepted on the recipes service ring.

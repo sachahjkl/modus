@@ -423,6 +423,7 @@ Project_Evaluation_Shape :: enum {
 	Whole,
 	No_Source,
 	Zero_Source,
+	Bare_Source, // A source that is a bare hash, not a tree: it names no kind.
 	Write_Only_Store,
 	Unknown_Right,
 	Right_Twice,
@@ -478,7 +479,7 @@ project_evaluation :: proc(buffer: []u8, shape: Project_Evaluation_Shape) -> int
 		declaration_eval.output_write_u32(&writer, 2)
 		declaration_eval.output_write_string(&writer, "Read")
 		declaration_eval.output_write_string(&writer, "Read")
-	case .Whole, .No_Source, .Zero_Source, .Store_Twice, .Module_Twice, .Unknown_Console_Field, .Text_Module, .Not_A_Project, .Trailing_Byte:
+	case .Whole, .No_Source, .Zero_Source, .Bare_Source, .Store_Twice, .Module_Twice, .Unknown_Console_Field, .Text_Module, .Not_A_Project, .Trailing_Byte:
 		declaration_eval.output_write_u32(&writer, 2)
 		declaration_eval.output_write_string(&writer, "Read")
 		declaration_eval.output_write_string(&writer, "Write")
@@ -494,7 +495,11 @@ project_evaluation :: proc(buffer: []u8, shape: Project_Evaluation_Shape) -> int
 
 	if shape != .No_Source {
 		declaration_eval.output_write_string(&writer, "source")
-		declaration_eval.output_write_hash(&writer, shape == .Zero_Source ? blake3.Hash{} : blake3.Hash(row_hash(7)))
+		if shape == .Bare_Source {
+			declaration_eval.output_write_hash(&writer, blake3.Hash(row_hash(7)))
+		} else {
+			declaration_eval.output_write_tree(&writer, shape == .Zero_Source ? blake3.Hash{} : blake3.Hash(row_hash(7)))
+		}
 	}
 	if shape == .Trailing_Byte {
 		declaration_eval.output_write_u8(&writer, 0)
@@ -540,6 +545,7 @@ project_of_evaluation_refuses_each_damaged_evaluation :: proc(t: ^testing.T) {
 		{.Not_A_Project, .Not_A_Project},
 		{.No_Source, .Missing_Field},
 		{.Zero_Source, .Zero_Hash},
+		{.Bare_Source, .Missing_Field},
 		{.Write_Only_Store, .Bad_Store_Rights},
 		{.Unknown_Right, .Bad_Store_Rights},
 		{.Right_Twice, .Bad_Store_Rights},

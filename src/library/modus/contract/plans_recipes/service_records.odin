@@ -581,8 +581,10 @@ project_declaration_read :: proc "contextless" (evaluation: []u8, out: ^Project_
 		}
 		switch field_name {
 		case "source":
+			// The source is a tree, as here() gives it: a bare hash names
+			// no kind (src/md/features/application_projects.md).
 			tag, tag_refusal := declaration_eval.output_read_tag(&reader)
-			if tag_refusal != .None || tag != .Hash {
+			if tag_refusal != .None || tag != .Tree_Ref {
 				return .Missing_Field
 			}
 			source_hash, hash_refusal := declaration_eval.output_read_hash(&reader)

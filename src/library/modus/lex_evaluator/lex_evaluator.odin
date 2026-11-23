@@ -137,6 +137,7 @@ Kind :: enum u8 {
 	Store_Ref      = 20, // Mode `declaration`: `store(name, ...rights)`, name in `text`, rights in `active_list_items[integer:][:detail]`.
 	Plan_Value     = 21, // Mode `declaration`: `plan { ... }`, `integer` indexes `tagged_records`.
 	Project_Value  = 22, // Mode `declaration`: `project { ... }`, `integer` indexes `tagged_records`.
+	Tree_Ref       = 23, // Mode `declaration`: `here()`, a tree by its hash, `detail` indexes `active_hashes`: an input that names its kind.
 }
 
 // The fields of a record at most: those of a record that a call carries.
@@ -369,7 +370,7 @@ hash_intern :: proc "contextless" (evaluation: ^Evaluation, hash: blake3.Hash) -
 // or Recipe_Ref value.
 hash_of :: proc "contextless" (evaluation: ^Evaluation, value: Value) -> (hash: blake3.Hash, ok: bool) {
 	switch value.kind {
-	case .Hash, .Module_Ref, .Follow_Ref:
+	case .Hash, .Module_Ref, .Tree_Ref, .Follow_Ref:
 		if int(value.detail) < evaluation.hash_count {
 			return evaluation.active_hashes[int(value.detail)], true
 		}
@@ -967,7 +968,7 @@ lazy_record_has_field :: proc "contextless" (evaluation: ^Evaluation, base: Valu
 			return false
 		}
 		return lazy_record_has_field(evaluation, evaluation.tagged_records[idx], field, depth + 1)
-	case .None, .Integer, .Text, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref:
+	case .None, .Integer, .Text, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref:
 		return false
 	}
 	return false
@@ -1025,7 +1026,7 @@ field_force :: proc "contextless" (evaluation: ^Evaluation, base: Value, field: 
 		if idx >= 0 && idx < evaluation.tagged_record_count {
 			return field_force(evaluation, evaluation.tagged_records[idx], field, place, node_index)
 		}
-	case .None, .Integer, .Text, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref:
+	case .None, .Integer, .Text, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref:
 		// A value with no fields.
 	}
 	return refuse(evaluation, record)
@@ -1577,7 +1578,7 @@ list_item_takes :: proc "contextless" (kind: Kind) -> bool {
 	switch kind {
 	case .None, .Stream, .Record_Input:
 		return false
-	case .Integer, .Text, .Record, .Handle, .Table, .Bytes, .Record_Literal, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+	case .Integer, .Text, .Record, .Handle, .Table, .Bytes, .Record_Literal, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 	}
 	return true
 }
@@ -1687,7 +1688,7 @@ with_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.N
 				return refuse(evaluation, {refusal = .With_Records_Differ, place = node.place, node = index, file = left.file, detail = left.detail, other_file = right.file, other_detail = right.detail})
 			}
 			return right, true
-		case .None, .Integer, .Text, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+		case .None, .Integer, .Text, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		}
 	}
 	return refuse(evaluation, {refusal = .With_Kinds, place = node.place, node = index, operator = .With, left_kind = left.kind, right_kind = right.kind})
@@ -1751,7 +1752,7 @@ comparison_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_pa
 		}
 		same := left.text == right.text
 		result = node.operator == .Equal ? same : !same
-	case .Hash, .Module_Ref, .Recipe_Ref:
+	case .Hash, .Module_Ref, .Tree_Ref, .Recipe_Ref:
 		if !equality_only {
 			return refuse(evaluation, record)
 		}

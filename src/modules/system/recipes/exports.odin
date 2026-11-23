@@ -76,6 +76,10 @@ recipe_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, result: 
 		return errors.fail(error, result, .Device, .Store, argument, 0, 0, found)
 	case .Store_Damaged:
 		return errors.fail(error, result, .Damaged, .Store, argument, 0, 0, found)
+	case .Untyped_Hash, .Nested_Input, .Not_A_Recipe, .Unsupported_Argument:
+		return errors.fail(error, result, .Bad_Value, .None, argument, 0, 0, found)
+	case .Damaged_Recipe:
+		return errors.fail(error, result, .Damaged, .None, argument, 0, 0, found)
 	}
 	return errors.fail(error, result, .Refused, .None, argument, 0, 0, found)
 }

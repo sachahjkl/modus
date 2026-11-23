@@ -42,6 +42,25 @@ project {
 - `catalog.c.module(path)` is the recipe of the C module of a file of the source: its builder is the C builder of the catalog, its argument record names the file. The project names no hash of the system: the catalog gives them.
 - `pins.lex` is `{}`: the program has no declaration input.
 
+### One identity for a recipe
+
+The recipe that a project names and the recipe that the service `recipes` builds are one record with one hash: `plans_recipes.recipe_hash`, over the builder, the output kind, the source date, the input table and the argument bytes. The evaluator computes no hash of its own.
+
+**An input carries its kind.** `here()` gives a tree, and `module(hash)` gives a module file, an object: each is a typed value, written in the output with its own tag (`Tree_Ref`, `Module_Ref`). A bare hash literal names no kind, so it names no input: a recipe whose arguments hold one is refused, and so is a builder given by a bare hash, and the field `source` of a project, which is a tree.
+
+**The conversion has one place.** `plans_recipes.recipe_spec_read` reads a recipe as the evaluator writes it (its builder, then its argument record) and gives the record of the service:
+
+- each field of the argument record whose value is a tree or a module file is an input, under the name of the field, with its kind;
+- the other fields are the argument bytes: the record of those fields, in the canonical form of the output;
+- an integer field `source_date` is also the source date of the recipe;
+- the output kind is a tree, as each output of a recipe is ([recipes.md](recipes.md), "Trees").
+
+It refuses a bare hash, a tree or a module file below the first level of the record (its input would have no name), a tag that names no kind, a value that does not decode, and an input table past `MAX_RECIPE_INPUTS`. The evaluator calls the same procedure at each `recipe(...)` to compute the hash that it writes, and the service calls it on the output of an evaluation, so the two cannot differ.
+
+Refused: **the argument record of the builder declaring the kind of each input.** Each builder would repeat the kind of each of its inputs, and two builders could give one value two kinds; the value itself knows what it names.
+
+Refused: **a kind guessed from the hash** (a lookup in the store). The evaluation reads no store, and the identity of a recipe would depend on what one machine holds.
+
 ### The catalog of the system
 
 The catalog is the declaration that a project reads under the name `catalog`: a record of the modules and the recipes of the system on which a project is built. Its hashes are the hashes of the built modules, so the catalog is an output of the build of the system, never a file of the repository written by hand. Until the build writes it, the tests give the evaluator a catalog of the same form.
@@ -54,9 +73,7 @@ The catalog is the declaration that a project reads under the name `catalog`: a 
 
 ### Where the path stops today
 
-Layer 1 holds, with one gap at its end, and layer 2 stops at three more places. Each is an entry of `ROADMAP.md`:
-
-- **Two identities of one recipe.** The evaluator hashes `recipe(builder, arguments)` under its own domain, over the builder and the serialized arguments; the service `recipes` hashes a recipe record over the builder, the input table and the argument bytes (`plans_recipes.recipe_hash`). Nothing turns the recipe that a project names into the record that `recipes.register` takes, so the host test writes that record itself to reach the service.
+Layer 1 holds: the recipe that the project names reaches the service under one identity ("One identity for a recipe"). Layer 2 stops at three places, each an entry of `ROADMAP.md`:
 
 - **No C builder.** No module exports the `build` of the builder contract ([recipes.md](recipes.md), "The builder"): `c_compiler` and `assemble` export their own calls, which the console chains by hand.
 - **No sandboxed builder start.** `recipes.build` refuses each builder but the inputs tree builder with `Builder_Needs_Sandbox`: the root service does not start a builder in its sandbox yet.
@@ -71,7 +88,7 @@ A host test takes the real files of the project and passes layer 1:
 - the tree hash of the folder, from the bytes of its files;
 - the evaluation of `project.lex` with that `here()` and the catalog, whole and at `outputs.default`, which is a recipe;
 - the load of the evaluation and of `pins.lex` by `projects_core`;
-- the recipe of the output, as a record that the test writes, refused by `recipes_core` with `Builder_Needs_Sandbox`: the stop of layer 2, read as a refusal of the service, not as a fault;
+- the recipe of the output, read back by `recipe_spec_of_output` from what the evaluator wrote, registered by `recipes_core` under the hash that the evaluator gave, and refused at its build with `Builder_Needs_Sandbox`: the stop of layer 2, read as a refusal of the service, not as a fault;
 - a realisation of that recipe from a cache, trusted only when the key of the policy signed it intact.
 
 The refusals come first: a `pins.lex` with a damaged hash, a project whose `source` is not a hash, a recipe whose builder needs a sandbox, a realisation of the project signed by a key that the policy does not trust and one whose signature is wrong.
@@ -83,6 +100,6 @@ The refusals come first: a `pins.lex` with a damaged hash, a project whose `sour
 
 ## State
 
-Built: the project `src/outside/projects/collatz` (`project.lex`, `pins.lex`, `collatz.c`) and the host test of layer 1 with its refusals.
+Built: the project `src/outside/projects/collatz` (`project.lex`, `pins.lex`, `collatz.c`) and the host test of layer 1 with its refusals; one identity for a recipe: `here()` a tree and `module(...)` a module file as typed values (`Tree_Ref`, `Module_Ref`), the conversion `plans_recipes.recipe_spec_of_arguments` and `recipe_spec_of_output` with host tests of each refusal, and the evaluator that hashes each recipe through it.
 
-Left: one identity for the recipe of a project and the recipe of the service, a C builder, a builder started in its sandbox with a signed realisation, the catalog of the system as an output of its build, and layer 3: each an entry of `ROADMAP.md`.
+Left: a C builder, a builder started in its sandbox with a signed realisation, the catalog of the system as an output of its build, and layer 3: each an entry of `ROADMAP.md`.

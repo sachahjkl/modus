@@ -402,7 +402,8 @@ declaration_end_to_end_pins_project_and_plan :: proc(t: ^testing.T) {
 	testing.expect_value(t, console_hdr.status, declaration_eval.Output_Status.Ok)
 
 	src_res := declaration_evaluate(ws, project_source, "source", cfg)
-	testing.expect(t, src_res.ok && src_res.value.kind == .Hash)
+	// here() is a tree, an input that names its kind.
+	testing.expect(t, src_res.ok && src_res.value.kind == .Tree_Ref)
 	got_src, _ := hash_of(&ws.evaluation, src_res.value)
 	testing.expect_value(t, got_src, here_hash)
 
