@@ -31,15 +31,15 @@ scenario_assistant := [?]Step {
 	// A request and a read-only act.
 	{kind = .Type, text = "which processes run"},
 	{kind = .Wait, text = "assistant: request 1 is kept: which processes run"},
-	{kind = .Assistant_Turn, text = `{"text": "Here are the processes that run.", "acts": [{"kind": "eval_lex", "line": "monitor.processes()"}]}`, expected = "request 1 answered, 1 acts"},
+	{kind = .Assistant_Turn, text = `{"text": "Reading the processes.", "acts": [{"kind": "eval_lex", "line": "monitor.processes()"}]}` + "\n" + `{"text": "Here are the processes that run."}`, expected = "request 1 answered, 2 steps, 1 acts"},
 	{kind = .Wait, text = "assistant: request 1 is taken"},
-	{kind = .Wait, text = "assistant: the reply to request 1 shows, 32 bytes: Here are the processes that run."},
+	{kind = .Wait, text = "assistant: the reply to request 1 shows, 22 bytes: Reading the processes."},
 	{kind = .Wait, text = "assistant: act 1 of request 1 is proposed: monitor.processes()"},
 	{kind = .Wait, text = "assistant: act 1 is done: "},
 	{kind = .Wait, text = " rows of Process: "},
-	// The typed result: the first 8 rows of the table of the processes,
-	// which the window draws as the console does.
-	{kind = .Wait, text = "assistant: act 1 shows 8 of "},
+	// The typed result: the rows of the table of the processes, which the
+	// window draws as the console does.
+	{kind = .Wait, text = "assistant: act 1 shows "},
 	// A grant-adding act: the bridge stops it for the principal, and the
 	// principal refuses it on the trusted display with Enter, which acts on
 	// Refuse, the first focus of the dialog. The act of the last request
@@ -48,7 +48,7 @@ scenario_assistant := [?]Step {
 	{kind = .Shot, text = "assistant_reply"},
 	{kind = .Type, text = "apply my plan home"},
 	{kind = .Wait, text = "assistant: request 2 is kept: apply my plan home"},
-	{kind = .Assistant_Turn, text = `{"text": "Your plan home needs your decision.", "acts": [{"kind": "eval_lex", "line": "plans.apply(\"home\")"}]}`, expected = "act 2: Awaiting_Principal"},
+	{kind = .Assistant_Turn, text = `{"text": "Checking plan home.", "acts": [{"kind": "eval_lex", "line": "plans.apply(\"home\")"}]}` + "\n" + `{"text": "Your plan home needs your decision."}`, expected = "act 2: Awaiting_Principal"},
 	{kind = .Wait, text = "assistant: act 2 is waiting for the principal: the bridge stopped it for the principal: Principal_Approval_Required"},
 	{kind = .Wait, text = "compositor: the act plans.apply of assistant shows", any_order = true},
 	{kind = .Wait, text = "assistant: act 2 waits for the principal in the act dialog "},

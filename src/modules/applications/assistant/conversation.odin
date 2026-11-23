@@ -27,6 +27,17 @@ STATE_WORDS := [assistant_contract.Act_State]string {
 	.Not_Shown            = "not shown by the trusted display",
 }
 
+@(rodata)
+LOOP_END_WORDS := [assistant_contract.Agent_Loop_End]string {
+	.Final_Reply          = "final reply",
+	.Step_Limit           = "step limit",
+	.Repeated_Step        = "repeated step",
+	.Stopped_By_Principal = "stopped by the principal",
+	.Model_Failed         = "model did not answer",
+	.Window_Failed        = "window call stopped",
+	.Grant_Ended          = "grant ended",
+}
+
 // caller_acts_for_principal says if the caller of the export that runs
 // acts for the principal: the runner, through remote.
 @(private = "file")
@@ -44,6 +55,14 @@ request_keep :: proc "contextless" (text: string) -> bool {
 	}
 	system.log_fact(.Info, Request_Kept{serial = entry.serial, text = value_kinds.text_field(text, FACT_TEXT_BYTES)})
 	return true
+}
+
+// request_stop records that the principal pressed Stop or Escape on the
+// running loop.
+request_stop :: proc "contextless" () {
+	if entry := conversation.principal_stop(&talk); entry != nil {
+		system.log_fact(.Info, Loop_Stop_Requested{serial = entry.serial})
+	}
 }
 
 // request_serial gives the serial of the oldest request of the principal that no runner took, or 0 when none waits.
@@ -71,16 +90,16 @@ request_text_export :: proc "c" (serial: i64, result: ^[]u8, error: ^errors.Erro
 	return count
 }
 
-// reply shows the text of the reply of the model to a request that a runner took, with the count of its acts.
+// reply shows one step reply (or the final reply when acts is 0) of the model to a request that a runner took.
 //
 // - **serial**: the request.
-// - **text**: the reply, at most 1024 bytes.
-// - **acts**: the count of the acts of the reply, 0 to 4: the window takes that many acts of the request, and no more.
+// - **text**: the reply, at most 16 KiB.
+// - **acts**: the count of the acts of the step, 0 to 16: 0 ends the loop as a final reply; 1 to 16 expects that many acts before the next step.
 //
 // The result is the count of bytes kept, or a negative number with an error record: `No_Grant` (-1);
-// `Absent` (-1, no request has the serial, or it was not taken); `State` (-1, the request has its reply already);
-// `Empty`, `Too_Long` or `Bad_Value` (-1, the text has no byte, more than 1024 bytes, or a control byte or a damaged
-// character); `Bad_Value` or `Too_Long` (-1, a count of acts under 0 or over 4).
+// `Absent` (-1, no request has the serial, or it was not taken); `State` (-1, the loop ended or still waits for acts of the step before);
+// `Too_Long` (-1, the request reached 16 steps, or the text has more than 16 KiB, or acts is over 16);
+// `Empty` or `Bad_Value` (-1, the text or acts).
 @(export, link_name = "reply")
 reply_export :: proc "c" (serial: i64, text: ^string, acts: i64, error: ^errors.Error_Record) -> i64 {
 	result, kept := conversation.reply(&talk, caller_acts_for_principal(), serial, text^, acts, error)
@@ -169,13 +188,13 @@ Act_Table_Cell :: struct {
 // - **name**: the name of the record, at most 32 bytes.
 // - **total_rows**: the rows of the whole result; the cells hold the first ones.
 // - **columns**: a table of `Act_Table_Column` rows, 1 to 24: the name of a column, its kind (a word of agent_bridge.Lex_Column_Kind: 1 text, 2 integer, 3 size, 4 time, 5 hexadecimal) and its unit word.
-// - **cells**: a table of `Act_Table_Cell` rows, row after row, a cell for each column: the text of a text column, the value of a number column; at most 8 rows of the result.
+// - **cells**: a table of `Act_Table_Cell` rows, row after row, a cell for each column: the text of a text column, the value of a number column; up to 64 rows of the result (wider tables send further batches through [act_table_rows](assistant.act_table_rows)).
 //
 // The result is 1, or a negative number with an error record: `No_Grant` (-1); `Absent` (-1, no act has the
 // number); `State` (-1, the act is not done, or has its table); `Bad_Value` (-1, a shape or a column kind that names no member, a unit that does not fit its kind, a text in a number cell or a value in a text cell, a
 // record of another count of rows than 1, a total under the rows, a count of cells that is no whole count of rows, an
 // empty column name, or a name or a cell that is not UTF-8 with no control byte or that has a byte after its zero);
-// `Empty` or `Too_Long` (-1, the name, no column or more than 24, more than 8 rows).
+// `Empty` or `Too_Long` (-1, the name, no column or more than 24, more than 64 rows).
 @(export, link_name = "act_table")
 act_table_export :: proc "c" (act, shape: i64, name: ^string, total_rows: i64, columns: ^system.Table_To_Read(Act_Table_Column), cells: ^system.Table_To_Read(Act_Table_Cell), error: ^errors.Error_Record) -> i64 {
 	// A count past the bound is refused before the table is sliced: the
@@ -193,8 +212,31 @@ act_table_export :: proc "c" (act, shape: i64, name: ^string, total_rows: i64, c
 	cell_records := transmute([]assistant_contract.Act_Table_Cell)cells.records[:cells.count]
 	result, kept := conversation.act_table(&talk, caller_acts_for_principal(), act, shape, name^, total_rows, column_records, cell_records, error)
 	if kept != nil {
-		system.log_fact(.Info, Act_Table_Shown{act = kept.act, rows = u64(kept.table.row_count), total_rows = u64(kept.table.total_rows), columns = u64(kept.table.column_count), name = value_kinds.text_field(conversation.act_table_name(&kept.table), FACT_NAME_BYTES)})
+		if kept_table := conversation.act_table_of(&talk, kept); kept_table != nil {
+			system.log_fact(.Info, Act_Table_Shown{act = kept.act, rows = u64(kept_table.row_count), total_rows = u64(kept_table.total_rows), columns = u64(kept_table.column_count), name = value_kinds.text_field(conversation.act_table_name(kept_table), FACT_NAME_BYTES)})
+		}
 	}
+	return result
+}
+
+// act_table_rows appends more rows to a table started by [act_table](assistant.act_table), up to 64 rows and total_rows.
+//
+// - **act**: the number that [act](assistant.act) gave; the act is done and has a table.
+// - **cells**: a table of `Act_Table_Cell` rows, row after row, a whole count of rows.
+//
+// The result is the new count of carried rows, or a negative number with an error record: `No_Grant` (-1);
+// `Absent` (-1, no act has the number); `State` (-1, the act has no table or is a record);
+// `Empty`, `Too_Long` or `Bad_Value` (-1, the cells).
+@(export, link_name = "act_table_rows")
+act_table_rows_export :: proc "c" (act: i64, cells: ^system.Table_To_Read(Act_Table_Cell), error: ^errors.Error_Record) -> i64 {
+	if !caller_acts_for_principal() {
+		return errors.fail(error, conversation.ERROR_RESULT, .No_Grant, .Acts_For_Principal)
+	}
+	if cells.count > assistant_contract.ACT_TABLE_ROW_CAPACITY * assistant_contract.ACT_TABLE_COLUMN_CAPACITY {
+		return errors.fail(error, conversation.ERROR_RESULT, .Too_Long, .Records, 2, i64(min(cells.count, u64(max(i64)))), assistant_contract.ACT_TABLE_ROW_CAPACITY * assistant_contract.ACT_TABLE_COLUMN_CAPACITY)
+	}
+	cell_records := transmute([]assistant_contract.Act_Table_Cell)cells.records[:cells.count]
+	result, _ := conversation.act_table_rows(&talk, caller_acts_for_principal(), act, cell_records, error)
 	return result
 }
 
@@ -205,6 +247,31 @@ act_table_export :: proc "c" (act, shape: i64, name: ^string, total_rows: i64, c
 @(export, link_name = "act_state")
 act_state_export :: proc "c" (act: i64, error: ^errors.Error_Record) -> i64 {
 	return conversation.act_state(&talk, caller_acts_for_principal(), act, error)
+}
+
+// stop_requested gives 1 if you pressed Stop or Escape on the running loop of a taken request, and 0 otherwise.
+//
+// The runner polls this export before each step and stops the loop when it reads 1.
+// The result is 0 or 1, or a negative number with an error record: `No_Grant` (-1); `Absent` (-1, no taken request has the serial).
+@(export, link_name = "stop_requested")
+stop_requested_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> i64 {
+	return conversation.stop_requested(&talk, caller_acts_for_principal(), serial, error)
+}
+
+// loop_end ends the loop of a taken request and shows the cause once in the window.
+//
+// - **serial**: the request.
+// - **cause**: a word of assistant.Agent_Loop_End (1 to 7).
+//
+// The result is 1, or a negative number with an error record: `No_Grant` (-1); `Absent` (-1, no taken request has the serial);
+// `State` (-1, the loop already ended); `Bad_Value` (-1, a cause that names no member of Agent_Loop_End).
+@(export, link_name = "loop_end")
+loop_end_export :: proc "c" (serial, cause: i64, error: ^errors.Error_Record) -> i64 {
+	result, kept := conversation.loop_end(&talk, caller_acts_for_principal(), serial, cause, error)
+	if kept != nil {
+		system.log_fact(.Info, Loop_Ended{serial = kept.serial, steps = u64(kept.step), cause = value_kinds.text_field(LOOP_END_WORDS[kept.end_cause], FACT_NAME_BYTES)})
+	}
+	return result
 }
 
 // acts_waiting_step runs one step of the acts that wait for the principal

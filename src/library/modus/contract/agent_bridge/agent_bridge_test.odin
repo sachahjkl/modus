@@ -526,6 +526,10 @@ test_lex_line_classification_is_a_strict_read_only_allowlist :: proc(t: ^testing
 		"collector.act_records_read(0, 0, 10)",
 		"recipes.build(1)",
 		"projects.load(\"a\")",
+		"manual.show(\"monitor\")",
+		"manual.overview()",
+		"manual.running()",
+		"manual.edges()",
 		"unknown.export()",
 	}
 	for line in needs_approval {
@@ -551,6 +555,9 @@ test_lex_line_classification_is_a_strict_read_only_allowlist :: proc(t: ^testing
 		"plans.difference(blake3:" + "00000000000000000000000000000000000000000000000000000000000000ff" + ")",
 		"compositor.windows()",
 		"plans.status()",
+		"manual.modules()",
+		"manual.exports(\"monitor\")",
+		"manual.signature(\"monitor\", 1)",
 	}
 	for line in read_only {
 		testing.expectf(t, classify(line) == .Read_Only, "read-only line %q was not accepted", line)

@@ -21,6 +21,8 @@ RESULT_CACHE_SLOTS :: 3
 Result_Slot :: struct {
 	valid:       bool,
 	act:         u64,
+	row_count:   int,
+	row_offset:  int,
 	width_cells: int,
 	line_room:   int,
 	used:        u64, // The frame that used it last: the oldest slot takes a new result.
@@ -31,18 +33,18 @@ result_slots: [RESULT_CACHE_SLOTS]Result_Slot
 result_scratch: result_lines.Scratch
 result_frame: u64
 
-// result_lines_of gives the lines of the result of an act at a width and
-// a room: the kept ones, or new ones written into the oldest slot. nil
-// when the result cannot show in that room.
-result_lines_of :: proc "contextless" (entry: ^conversation.Entry, width_cells, line_room: int) -> ^result_lines.Lines {
+// result_lines_of gives the lines of the result of an act at a width, a
+// room and a starting row offset: the kept ones, or new ones written into
+// the oldest slot. nil when the result cannot show in that room.
+result_lines_of :: proc "contextless" (entry: ^conversation.Entry, table: ^conversation.Act_Table, width_cells, line_room, row_offset: int) -> ^result_lines.Lines {
 	// No room: no slot is chosen, so a kept result stays kept.
-	if line_room < 1 {
+	if table == nil || line_room < 1 {
 		return nil
 	}
 	result_frame += 1
 	oldest := &result_slots[0]
 	for &slot in result_slots {
-		if slot.valid && slot.act == entry.act && slot.width_cells == width_cells && slot.line_room == line_room {
+		if slot.valid && slot.act == entry.act && slot.row_count == table.row_count && slot.row_offset == row_offset && slot.width_cells == width_cells && slot.line_room == line_room {
 			slot.used = result_frame
 			return &slot.lines
 		}
@@ -50,12 +52,12 @@ result_lines_of :: proc "contextless" (entry: ^conversation.Entry, width_cells, 
 			oldest = &slot
 		}
 	}
-	// The fields are set in place: a slot holds about 33 KiB of lines, and
+	// The fields are set in place: a slot holds about 64 KiB of lines, and
 	// a record literal of it would be a temporary on the stack. fit resets
 	// the counts of the lines.
 	oldest.valid = false
-	oldest.act, oldest.width_cells, oldest.line_room, oldest.used = entry.act, width_cells, line_room, result_frame
-	if !result_lines.fit(&oldest.lines, &result_scratch, &entry.table, width_cells, line_room) {
+	oldest.act, oldest.row_count, oldest.row_offset, oldest.width_cells, oldest.line_room, oldest.used = entry.act, table.row_count, row_offset, width_cells, line_room, result_frame
+	if !result_lines.fit(&oldest.lines, &result_scratch, table, width_cells, line_room, row_offset) {
 		return nil
 	}
 	oldest.valid = true

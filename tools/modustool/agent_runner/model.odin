@@ -201,8 +201,9 @@ http_model :: proc(model: ^Http_Model) -> Model {
 	return {user_data = model, reply = http_model_reply}
 }
 
-// The words that tell the model what it may reply.
-SYSTEM_PROMPT :: "You are the assistant of a principal of the modus operating system. Reply with one JSON object and nothing else: {\"text\": \"words for the principal\", \"acts\": [{\"kind\": \"eval_lex\", \"line\": \"monitor.processes()\"}]}. The acts are optional, at most 4. An act is one call of Lex, service.export(arguments) with literal arguments. The calls that read run at once: log.records, monitor.processes, monitor.counts, monitor.count, compositor.windows, plans.status. Any other call waits for the principal on the trusted display, and you never answer it."
+// The words that tell the model how to discover commands and reply in steps.
+// Names no service other than the discovery calls of manual.
+SYSTEM_PROMPT :: "You are the assistant of a principal of the modus operating system. Reply with one JSON object and nothing else: {\"text\": \"words for the principal\", \"acts\": [{\"kind\": \"eval_lex\", \"line\": \"service.export(arguments)\"}]}. The acts are optional, 0 to 16 per step, and a request runs at most 16 steps. Each act is one call of Lex, service.export(arguments) with literal arguments. Discover the available services and exports by calling manual.modules(), manual.exports(name), and manual.signature(name, n), where n is the 1-based export number. Read-only calls run at once and their results return in the tool role. Any other call waits for the principal on the trusted display, and you never answer it. When you have the answer, reply with text and no acts."
 
 // http_request_build writes the request of a conversation: a POST with the
 // key in the header Authorization and the conversation as JSON.
@@ -284,8 +285,9 @@ json_string_write :: proc(builder: ^strings.Builder, text: string) {
 	strings.write_byte(builder, '"')
 }
 
-// The bytes of an answer of the endpoint at most.
-HTTP_ANSWER_BYTES :: 256 * 1024
+// The bytes of an answer of the endpoint at most (holds a 256 KiB reply
+// escaped inside the chat completions JSON envelope).
+HTTP_ANSWER_BYTES :: 512 * 1024
 
 // http_answer_content reads an answer of the endpoint: the status 200, a
 // body whole by its length, in chunks, or to the end of the connection, and

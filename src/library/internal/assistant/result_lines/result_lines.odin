@@ -22,11 +22,11 @@ import "modus:sentence"
 // for each field; the notes of this package take two more. Past a
 // capacity the lines stop, and the last line says that the result is cut:
 // no line is dropped in silence.
-LINE_CAPACITY :: assistant_contract.ACT_TABLE_COLUMN_CAPACITY + 8
+LINE_CAPACITY :: max(assistant_contract.ACT_TABLE_ROW_CAPACITY, assistant_contract.ACT_TABLE_COLUMN_CAPACITY) + 8
 #assert(LINE_CAPACITY >= 1 + assistant_contract.ACT_TABLE_ROW_CAPACITY + 2 + NOTE_LINES)
 #assert(LINE_CAPACITY >= 1 + assistant_contract.ACT_TABLE_COLUMN_CAPACITY + NOTE_LINES)
-TEXT_BYTES :: 16 * 1024
-PART_CAPACITY :: 2048
+TEXT_BYTES :: 32 * 1024
+PART_CAPACITY :: 4096
 #assert(TEXT_BYTES <= int(max(u16)))
 
 // The notes of this package: the columns that are not shown, and the cut.
@@ -53,6 +53,7 @@ Lines :: struct {
 	parts:      [PART_CAPACITY]Part,
 	part_count: int,
 	line_count: int,
+	shown_rows: int, // For a Table: the rows drawn on this page.
 	column:     int, // The column of the line that is written: 0 at its start.
 	full:       bool, // A capacity stopped the lines: the last line says so.
 	sink:       console_results.Sink,
@@ -206,7 +207,7 @@ column_widths :: proc "contextless" (table: ^conversation.Act_Table, widths: []u
 // description_and_rows writes the description of the first count columns
 // and the rows of the result in scratch.
 @(private = "file")
-description_and_rows :: proc "contextless" (scratch: ^Scratch, table: ^conversation.Act_Table, widths: []u32, count: int) -> (file: []u8, size: u32, rows: []u8, ok: bool) {
+description_and_rows :: proc "contextless" (scratch: ^Scratch, table: ^conversation.Act_Table, widths: []u32, count: int, row_offset := 0) -> (file: []u8, size: u32, rows: []u8, ok: bool) {
 	columns: Draw_Columns
 	for column in 0 ..< count {
 		columns.columns[column] = column_of(table, column, widths[column])
@@ -217,18 +218,21 @@ description_and_rows :: proc "contextless" (scratch: ^Scratch, table: ^conversat
 	if !written || size == 0 {
 		return nil, 0, nil, false
 	}
+	start := clamp(row_offset, 0, table.row_count)
+	available := table.row_count - start
 	// description_write wrote the offset of each column in columns.
-	rows = scratch.rows[:int(size) * table.row_count]
+	rows = scratch.rows[:int(size) * available]
 	for &value in rows {
 		value = 0
 	}
-	for row in 0 ..< table.row_count {
-		place := rows[row * int(size):][:size]
+	for index in 0 ..< available {
+		source_row := start + index
+		place := rows[index * int(size):][:size]
 		for column in 0 ..< count {
 			if conversation.form_is_text(conversation.act_table_column_form(table, column)) {
-				console_results.row_text_set(place, columns.columns[column], conversation.act_table_cell_text(table, row, column))
+				console_results.row_text_set(place, columns.columns[column], conversation.act_table_cell_text(table, source_row, column))
 			} else {
-				console_results.row_integer_set(place, columns.columns[column], conversation.act_table_cell_integer(table, row, column))
+				console_results.row_integer_set(place, columns.columns[column], conversation.act_table_cell_integer(table, source_row, column))
 			}
 		}
 	}
@@ -250,6 +254,7 @@ columns_in_width :: proc "contextless" (table: ^conversation.Act_Table, file: []
 		return kept
 	}
 	used := 0
+	row_count := size > 0 ? len(rows) / int(size) : 0
 	for column in 0 ..< kept {
 		item, found := module.field(file, described, u32(column))
 		if !found {
@@ -257,7 +262,7 @@ columns_in_width :: proc "contextless" (table: ^conversation.Act_Table, file: []
 		}
 		_, unit := console_results.integer_part(item)
 		width := console_results.head_length(int(item.name_count), unit)
-		for row in 0 ..< table.row_count {
+		for row in 0 ..< row_count {
 			buffer: [console_results.CELL_TEXT_CAPACITY]u8
 			cell := console_results.cell_of(rows[row * int(size):][:size], item, buffer[:])
 			width = max(width, console_results.text_columns(cell.text))
@@ -305,7 +310,7 @@ columns_note :: proc "contextless" (lines: ^Lines, table: ^conversation.Act_Tabl
 
 @(private)
 lines_reset :: proc "contextless" (lines: ^Lines) {
-	lines.text_count, lines.part_count, lines.line_count, lines.column = 0, 0, 0, 0
+	lines.text_count, lines.part_count, lines.line_count, lines.shown_rows, lines.column = 0, 0, 0, 0, 0
 	lines.full = false
 	// No width: the drawer never narrows a column and never breaks a row;
 	// the columns that the width cannot hold are not described at all.
@@ -335,22 +340,27 @@ record_value_room :: proc "contextless" (table: ^conversation.Act_Table, width_c
 // draw writes the lines of a result at a width in cells, with at most
 // row_limit rows; the drawer counts the rest against total_rows. ok is
 // false when the description cannot be written.
-draw :: proc "contextless" (lines: ^Lines, scratch: ^Scratch, table: ^conversation.Act_Table, width_cells: int, row_limit: int) -> (ok: bool) {
+draw :: proc "contextless" (lines: ^Lines, scratch: ^Scratch, table: ^conversation.Act_Table, width_cells: int, row_limit: int, row_offset := 0) -> (ok: bool) {
 	lines_reset(lines)
 	widths: [assistant_contract.ACT_TABLE_COLUMN_CAPACITY]u32
 	kept := column_widths(table, widths[:], record_value_room(table, width_cells))
 	if kept == 0 {
 		return false
 	}
-	file, size, rows := description_and_rows(scratch, table, widths[:], kept) or_return
+	start := clamp(row_offset, 0, table.row_count)
+	available := table.row_count - start
+	file, size, rows := description_and_rows(scratch, table, widths[:], kept, start) or_return
 	shown := columns_in_width(table, file, rows, size, kept, width_cells)
 	if shown < kept {
-		file, size, rows = description_and_rows(scratch, table, widths[:], shown) or_return
+		file, size, rows = description_and_rows(scratch, table, widths[:], shown, start) or_return
 	}
 	switch table.shape {
 	case .Table:
-		console_results.draw_table(&lines.sink, file, 1, rows, clamp(row_limit, 0, table.row_count), "", table.total_rows)
+		page_rows := clamp(row_limit, 0, available)
+		lines.shown_rows = page_rows
+		console_results.draw_table(&lines.sink, file, 1, rows, page_rows, "", table.total_rows)
 	case .Record:
+		lines.shown_rows = 1
 		console_results.draw_record(&lines.sink, file, 1, rows[:size])
 	}
 	columns_note(lines, table, shown, width_cells)
@@ -360,17 +370,20 @@ draw :: proc "contextless" (lines: ^Lines, scratch: ^Scratch, table: ^conversati
 	return true
 }
 
-// fit writes the lines of a result within line_room lines: the most rows
-// whose lines fit, so the note of the drawer counts the others; when no
-// row fits, the first lines and one line that counts the lines not shown.
-// ok is false when the description cannot be written, or line_room is
-// under 1.
-fit :: proc "contextless" (lines: ^Lines, scratch: ^Scratch, table: ^conversation.Act_Table, width_cells: int, line_room: int) -> (ok: bool) {
+// fit writes the lines of a result within line_room lines starting at
+// row_offset: the most rows whose lines fit, so the note of the drawer
+// counts the others; when no row fits, the first lines and one line that
+// counts the lines not shown. ok is false when the description cannot be
+// written, or line_room is under 1.
+fit :: proc "contextless" (lines: ^Lines, scratch: ^Scratch, table: ^conversation.Act_Table, width_cells: int, line_room: int, row_offset := 0) -> (ok: bool) {
 	if line_room < 1 {
 		return false
 	}
-	for row_limit := table.row_count; row_limit >= 0; row_limit -= 1 {
-		draw(lines, scratch, table, width_cells, row_limit) or_return
+	start := clamp(row_offset, 0, table.row_count)
+	available := table.row_count - start
+	initial_limit := table.shape == .Record ? available : min(available, max(line_room - 1, 0))
+	for row_limit := initial_limit; row_limit >= 0; row_limit -= 1 {
+		draw(lines, scratch, table, width_cells, row_limit, start) or_return
 		if lines.line_count <= line_room || table.shape == .Record {
 			break
 		}

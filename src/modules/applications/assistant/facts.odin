@@ -98,3 +98,17 @@ Act_Decided :: struct {
 	act:   u64,
 	state: [32]u8,
 }
+
+// The principal pressed Stop or Escape on a running loop.
+@(log_fact = "assistant: stop requested for request {serial}")
+Loop_Stop_Requested :: struct {
+	serial: u64,
+}
+
+// The runner ended the loop of a request with a cause of Agent_Loop_End.
+@(log_fact = "assistant: request {serial} ended after {steps} steps: {cause}")
+Loop_Ended :: struct {
+	serial: u64,
+	steps:  u64,
+	cause:  [32]u8,
+}

@@ -26,6 +26,14 @@ the_words_of_a_kind_and_a_state_name_a_member :: proc(t: ^testing.T) {
 		got, ok := act_state_of_word(i64(state))
 		testing.expect(t, ok && got == state)
 	}
+	for word in ([]i64{0, -1, 8, 255, max(i64), min(i64)}) {
+		_, ok := agent_loop_end_of_word(word)
+		testing.expectf(t, !ok, "the loop end word %d", word)
+	}
+	for cause in Agent_Loop_End {
+		got, ok := agent_loop_end_of_word(i64(cause))
+		testing.expect(t, ok && got == cause)
+	}
 	for name in ([]string{"", "Eval_Lex", "eval_lex ", "evallex", "read_screen"}) {
 		_, ok := act_kind_of_name(name)
 		testing.expectf(t, !ok, "the name %q", name)

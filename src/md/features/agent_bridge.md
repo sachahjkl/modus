@@ -59,6 +59,7 @@ Each decoder checks the magic, version, reserved word, exact byte length (refusi
 | `projects` | `status`, `active_console_count`, `pin_count`, `pins` |
 | `monitor` | `processes`, `counts`, `count`, `counts_named`, `served` |
 | `compositor` | `pointer`, `windows`, `screen`, `gpu_info` |
+| `manual` | `modules`, `exports`, `signature` |
 
 What is not on it, and why:
 
@@ -67,6 +68,7 @@ What is not on it, and why:
 - Each export of `debugger`, the reads too: `memory`, `registers` and `locals` give the state of another process.
 - `compositor.wide_grant_indicator`, `notify`, `powerbox_ask`, `revoke_grant`, `plan_diff_ask` and the other exports of the compositor that change the screen or answer a dialog.
 - Each export of `collector`: the act records of a wide grant are the audit of its holder, which the holder never reads.
+- `manual.show`, `manual.overview`, `manual.running` and `manual.edges`: the first two change the manual window, and the last two inspect running processes.
 
 A new entry must read only. The host test `test_lex_line_classification_is_a_strict_read_only_allowlist` refuses an entry whose name says that it writes.
 

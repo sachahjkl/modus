@@ -199,6 +199,30 @@ a_note_after_a_line_stopped_half_way_is_a_line_of_its_own :: proc(t: ^testing.T)
 	testing.expect_value(t, texts[1], "the result is cut: it passes the lines that the window keeps")
 }
 
+// A 64-row carried table pages cleanly through row_offset.
+@(test)
+table_of_64_rows_pages_through_row_offset :: proc(t: ^testing.T) {
+	columns := []Column{{"id", .Integer, 0}, {"name", .Text, 0}}
+	rows := make([][]Cell, assistant_contract.ACT_TABLE_ROW_CAPACITY, context.temp_allocator)
+	for index in 0 ..< assistant_contract.ACT_TABLE_ROW_CAPACITY {
+		row := make([]Cell, 2, context.temp_allocator)
+		row[0] = i64(index + 1)
+		row[1] = fmt.tprintf("mod_%d", index + 1)
+		rows[index] = row
+	}
+	table := table_make(.Table, "Module", columns, rows, 80)
+	lines := new(Lines, context.temp_allocator)
+	scratch := new(Scratch, context.temp_allocator)
+	testing.expect(t, fit(lines, scratch, table, 60, 10, 0))
+	testing.expect(t, lines.shown_rows > 0 && lines.line_count <= 10)
+	first_page := all_lines(lines)
+	testing.expect(t, strings.contains(first_page[1], "mod_1"))
+	second_offset := lines.shown_rows
+	testing.expect(t, fit(lines, scratch, table, 60, 10, second_offset))
+	second_page := all_lines(lines)
+	testing.expectf(t, strings.contains(second_page[1], fmt.tprintf("mod_%d", second_offset + 1)), "%q", second_page[1])
+}
+
 // A record: its name, then one line for each field with its value; a
 // number at the right of its value column.
 @(test)

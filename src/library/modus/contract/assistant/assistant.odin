@@ -6,12 +6,13 @@ package assistant
 
 import "modus:contract/text_encoding"
 
-// The bytes of the text of one request of the principal.
-REQUEST_TEXT_BYTES :: 240
+// The bytes of the text of one request of the principal (4 KiB so a user
+// can paste an error or a code snippet).
+REQUEST_TEXT_BYTES :: 4096
 
 // The bytes of the text of a reply of the model, and of the result of an
 // act, as the window shows them.
-REPLY_TEXT_BYTES :: 1024
+REPLY_TEXT_BYTES :: 16 * 1024
 
 // The bytes of the line of one act. A line of Lex that the bridge reads is
 // one call: a line of the console holds 256 bytes, and an act line is one
@@ -19,12 +20,24 @@ REPLY_TEXT_BYTES :: 1024
 ACT_LINE_BYTES :: 200
 
 // The entries of the conversation that one run of the window keeps: a
-// request, a reply, a refused reply and an act take one each.
-CONVERSATION_ENTRY_CAPACITY :: 64
+// request, a step reply, a refused reply, an act and a loop end take one
+// each. Holds a whole 16-step loop of 16 acts per step (274 entries) with
+// room for earlier entries.
+CONVERSATION_ENTRY_CAPACITY :: 288
 
-// The acts of one model reply at most. The window refuses an act past the
-// count that the reply gave.
-MODEL_ACT_CAPACITY :: 4
+// The steps of an agent loop for one request at most. Past this count the
+// loop stops with Agent_Loop_End.Step_Limit.
+AGENT_LOOP_STEP_CAPACITY :: 16
+
+// The acts of one model reply at most, matching AGENT_STEP_LINE_CAPACITY.
+// The window refuses an act past the count that the reply gave.
+MODEL_ACT_CAPACITY :: 16
+
+#assert(CONVERSATION_ENTRY_CAPACITY >= 1 + AGENT_LOOP_STEP_CAPACITY * (1 + MODEL_ACT_CAPACITY) + 1)
+
+// The typed table results kept in the conversation at once: older acts
+// keep their words.
+ACT_TABLE_POOL_CAPACITY :: 16
 
 // The bytes of the name of the service or of the export of an act: a name
 // of the system, as the root service names a process.
@@ -52,6 +65,40 @@ Act_State :: enum u8 {
 	Allowed_By_Principal = 5, // The principal allowed it on the trusted display. It does not run yet.
 	Refused_By_Principal = 6, // The principal refused it on the trusted display. Nothing runs.
 	Not_Shown            = 7, // The trusted display refused its act dialog for a cause other than Busy, or the window has no connection to it. Nothing runs.
+}
+
+// Why the agent loop of one request ended. The values cross the border of
+// the export loop_end: 0 names no member.
+Agent_Loop_End :: enum u8 {
+	Final_Reply          = 1, // The model gave its final answer with no act.
+	Step_Limit           = 2, // The loop reached AGENT_LOOP_STEP_CAPACITY steps.
+	Repeated_Step        = 3, // A step repeated the exact acts of the step before.
+	Stopped_By_Principal = 4, // The principal stopped the loop from the window.
+	Model_Failed         = 5, // The model gave no reply or a reply that failed the border.
+	Window_Failed        = 6, // A call to the window failed.
+	Grant_Ended          = 7, // The grant or client access ended.
+}
+
+// agent_loop_end_of_word is the border of the word of a loop end cause:
+// false for a word that names no member.
+agent_loop_end_of_word :: proc "contextless" (word: i64) -> (cause: Agent_Loop_End, ok: bool) {
+	switch word {
+	case i64(Agent_Loop_End.Final_Reply):
+		return .Final_Reply, true
+	case i64(Agent_Loop_End.Step_Limit):
+		return .Step_Limit, true
+	case i64(Agent_Loop_End.Repeated_Step):
+		return .Repeated_Step, true
+	case i64(Agent_Loop_End.Stopped_By_Principal):
+		return .Stopped_By_Principal, true
+	case i64(Agent_Loop_End.Model_Failed):
+		return .Model_Failed, true
+	case i64(Agent_Loop_End.Window_Failed):
+		return .Window_Failed, true
+	case i64(Agent_Loop_End.Grant_Ended):
+		return .Grant_Ended, true
+	}
+	return {}, false
 }
 
 // act_kind_of_word is the border of the word of a kind: false for a word
@@ -171,7 +218,8 @@ text_check :: proc "contextless" (text: string, bound: int) -> Text_Refusal {
 // result of an act"). The runner carries the first rows; total_rows of
 // act_table counts all of them.
 ACT_TABLE_COLUMN_CAPACITY :: 24 // The columns of one result: the table of the processes has 16.
-ACT_TABLE_ROW_CAPACITY :: 8 // The rows that the window draws: the window has room for a head, 8 rows and their notes.
+ACT_TABLE_ROW_CAPACITY :: 64 // The rows that the window carries and pages through, matching the step bound.
+ACT_TABLE_CELL_BATCH_CAPACITY :: 512 // Cells per remote call (512 * 72 B = 36 KiB, within the 64 KiB call region); wider tables stream extra rows through act_table_rows.
 ACT_TABLE_CELL_BYTES :: 64 // The text of one cell: a hash of 32 bytes in hexadecimal is the longest value.
 ACT_TABLE_NAME_BYTES :: 32 // The name of the record and of each column.
 

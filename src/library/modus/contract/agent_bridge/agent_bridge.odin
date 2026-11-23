@@ -336,6 +336,9 @@ READ_ONLY_EXPORTS := [?]Read_Only_Export {
 	{"compositor", "windows"},
 	{"compositor", "screen"},
 	{"compositor", "gpu_info"},
+	{"manual", "modules"},
+	{"manual", "exports"},
+	{"manual", "signature"},
 }
 
 // Pure decision returned by bridge_authorize_command.
