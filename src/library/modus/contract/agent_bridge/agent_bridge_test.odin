@@ -341,6 +341,18 @@ test_command_and_response_wire_framing_roundtrip_and_refusals :: proc(t: ^testin
 		testing.expect_value(t, ended_enc, Bridge_Refusal.None)
 		read, read_refusal := decode_response_frame(ended_buf[:ended_written])
 		testing.expect(t, read_refusal == .None && read.state == .Ended && read.outcome == .Grant_Or_Right_Missing)
+		// A request that the bridge refused did not succeed: refused at
+		// both borders.
+		contradiction := ended
+		contradiction.outcome, contradiction.refusal = .Succeeded, .Permission_Denied
+		_, contradiction_enc := encode_response_frame(&contradiction, ended_buf[:])
+		testing.expect_value(t, contradiction_enc, Bridge_Refusal.Invalid_Field)
+		written_ended, _ := encode_response_frame(&ended, ended_buf[:])
+		mut := ended_buf
+		byte_order.write_u32_little_endian(mut[:], 12, u32(Bridge_Refusal.Permission_Denied))
+		byte_order.write_u32_little_endian(mut[:], 68, u32(call_outcome.Call_Outcome.Succeeded))
+		_, contradiction_dec := decode_response_frame(mut[:written_ended])
+		testing.expect_value(t, contradiction_dec, Bridge_Refusal.Bad_Header)
 		// A request that waits carries no outcome.
 		waiting := resp
 		waiting.outcome = .Argument_Refused

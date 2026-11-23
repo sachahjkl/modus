@@ -1,7 +1,7 @@
 package root
 
 import info "modus:contract/boot_info"
-import "modus:contract/errors"
+import "modus:contract/call_outcome"
 import "modus:contract/ring"
 import "modus:contract/system_description"
 import "modus:principals"
@@ -133,25 +133,29 @@ principals_start :: proc "contextless" () {
 
 // unlock_start starts `unlock`: at boot to read its files (with none it
 // stops at once, and the machine runs as principal 0 only), after a lock,
-// to create a principal, or to set the machine passphrase.
-unlock_start :: proc "contextless" (mode: principals.Unlock_Mode, name: string, principal: u64 = principals.MACHINE) -> system.Status {
-	status := system.Status.Bad_State
+// to create a principal, or to set the machine passphrase. A refusal
+// writes its record in refusal, when the caller gives one.
+unlock_start :: proc "contextless" (mode: principals.Unlock_Mode, name: string, principal: u64 = principals.MACHINE, refusal: ^[7]u64 = nil) -> call_outcome.Call_Outcome {
+	own_refusal: [7]u64
+	record := refusal != nil ? refusal : &own_refusal
 	// An `unlock` that runs keeps its stage: it is reaped first.
+	outcome := root_ring.refuse(record, .Callee_Busy, u32(root_ring.Root_Command.Start), .Busy, .Processes, 1, 1, 1)
 	if unlock_run.stage == .Stopped {
+		record^ = {}
 		unlock_run.stage = .Starting
 		unlock_run.mode = mode
 		unlock_run.name_length = copy(unlock_run.name[:], name)
 		unlock_run.principal = principal
-		status = start("unlock")
+		outcome = start("unlock", refusal = record)
 		unlock_run.name = {}
 		unlock_run.name_length = 0
 		unlock_run.principal = principals.MACHINE
-		unlock_run.stage = status == .Ok ? .Running : .Stopped
+		unlock_run.stage = outcome == .Succeeded ? .Running : .Stopped
 	}
-	if status != .Ok {
-		system.log_fact(.Warning, Unlock_Start_Failed{status = status})
+	if outcome != .Succeeded {
+		system.log_fact(.Warning, Unlock_Start_Failed{outcome = outcome})
 	}
-	return status
+	return outcome
 }
 
 // unlock_values_write writes the values of the context of the `unlock`
@@ -208,35 +212,41 @@ unlock_creating :: proc "contextless" () -> bool {
 #assert(principals.PRINCIPAL_CAPACITY == 2)
 
 // principal_create starts `unlock` to create a named principal.
-principal_create :: proc "contextless" (name: string) -> system.Status {
+principal_create :: proc "contextless" (name: string, values: ^[7]u64) -> call_outcome.Call_Outcome {
+	kind := u32(root_ring.Root_Command.Principal_Create)
 	if principals.name_problem(name) != .None {
-		return .Bad_Operation
+		return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, 1)
 	}
-	if principal_records[1].state != .Absent || find("unlock") != nil {
-		return .Bad_State
+	// One named principal: several are not built.
+	if principal_records[1].state != .Absent {
+		return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, kind, .Full, .Principals, 0, 0, principals.PRINCIPAL_CAPACITY - 1)
+	}
+	if find("unlock") != nil {
+		return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1)
 	}
 	system.log_fact(.Info, Principal_Creation_Started{principal_name = text_field(name, 24)})
-	return unlock_start(.Create_Principal, name)
+	return unlock_start(.Create_Principal, name, refusal = values)
 }
 
 // principal_record takes the public part of the record of a named
 // principal from `unlock`: values[0..3] its public key, values[4..6] its
 // name. The values are a copy in this service: `unlock` cannot change them.
-principal_record :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> system.Status {
+principal_record :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> call_outcome.Call_Outcome {
+	kind := u32(root_ring.Root_Command.Principal_Record)
 	public_key := transmute([32]u8)([4]u64{values[0], values[1], values[2], values[3]})
 	name, name_length := principals.name_unpack({values[4], values[5], values[6]})
 	if principals.name_problem(string(name[:name_length])) != .None {
-		return .Bad_Operation
+		return root_ring.refuse(completion, .Argument_Refused, kind, .Bad_Value, .None, 5)
 	}
 	record := &principal_records[1]
 	if record.state != .Absent {
 		// The same record again (a second start of `unlock`) has the same
 		// number; another one has no place.
 		if record.public_key != public_key || string(record.name[:record.name_length]) != string(name[:name_length]) {
-			return .No_Slot
+			return root_ring.refuse(completion, .Budget_Or_Capacity_Exhausted, kind, .Full, .Principals, 0, 0, principals.PRINCIPAL_CAPACITY - 1)
 		}
 		completion^[0] = 1
-		return .Ok
+		return .Succeeded
 	}
 	record^ = {state = .Locked, name = name, name_length = name_length, public_key = public_key}
 	// Only a record that `unlock` made in this run lets its first key write
@@ -245,7 +255,7 @@ principal_record :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> 
 	completion^[0] = 1
 	digits := system_description.hexadecimal(public_key)
 	system.log_fact(.Info, Principal_Recorded{principal_name = text_field(principal_name(1), 24), public_key_head = text_field(string(digits[:16]), 24)})
-	return .Ok
+	return .Succeeded
 }
 
 // principal_unlock starts the session of a named principal: from now on the
@@ -255,37 +265,36 @@ principal_record :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> 
 // (principal_key_take). A refusal writes its own error record in
 // completion: the values of the command hold a key where a name would be,
 // so the record of `refusal` is never built from them.
-principal_unlock :: proc "contextless" (values: ^[7]u64, completion: ^[7]u64) -> system.Status {
+principal_unlock :: proc "contextless" (values: ^[7]u64, completion: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Principal_Unlock)
 	number := values[4]
 	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state == .Absent {
-		completion^ = errors.ring_fail(kind, .Absent, .Principals, 2, i64(min(number, 1 << 62)))
-		return .Bad_Handle
+		return root_ring.refuse(completion, .Nothing_Has_That_Name, kind, .Absent, .Principals, 2, i64(min(number, 1 << 62)))
 	}
+	// The session of the principal runs: it is not unlocked twice.
 	if principal_records[number].state != .Locked {
-		completion^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
-		return .Bad_State
+		return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals, 2, i64(number))
 	}
-	if status := principal_key_take(number, values); status != .Ok {
-		completion^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
-		return status
+	if outcome := principal_key_take(number, values, completion); outcome != .Succeeded {
+		return outcome
 	}
 	principal_records[number].state = .Unlocked
 	// The client keys that the principal allowed take calls again.
 	remote_clients_session_changed(number, false)
 	unlock_run.failed_stops = 0
 	system.log_fact(.Info, Session_Started{principal = number, principal_name = text_field(principal_name(number), 24)})
-	return .Ok
+	return .Succeeded
 }
 
 // principal_lock ends the session that runs: each process of the session
 // stops (a frozen process needs a kernel operation that does not exist),
 // and `unlock` starts again. completion[0] is the count of the processes
 // stopped.
-principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
+principal_lock :: proc "contextless" (completion: ^[7]u64) -> call_outcome.Call_Outcome {
 	number := desktop_principal()
+	// No session of a named principal runs: nothing to lock.
 	if number == principals.MACHINE {
-		return .Bad_State
+		return root_ring.refuse(completion, .Nothing_Has_That_Name, u32(root_ring.Root_Command.Principal_Lock), .Absent, .Principals)
 	}
 	count: u64
 	for &item in started {
@@ -316,10 +325,10 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 		unlock_stop_ask()
 		started_process_stop(running)
 		system.log_fact(.Info, Unlock_Stopped_By_Lock{unlock_mode = text_field(principals.mode_words(unlock_run.mode), 40)})
-		return .Ok
+		return .Succeeded
 	}
 	unlock_start(.Unlock, "")
-	return .Ok
+	return .Succeeded
 }
 
 // unlock_stopped counts a stop of `unlock` that reap found: each stop
@@ -367,7 +376,7 @@ unlock_for_a_locked_principal :: proc "contextless" () {
 	}
 	// A full table is not counted: a slot comes free only with a stop, and
 	// a stop is an event, so the next pass tries again with no hot loop.
-	if status := unlock_start(.Unlock, ""); status != .Ok && status != .No_Slot {
+	if outcome := unlock_start(.Unlock, ""); outcome != .Succeeded && outcome != .Callee_Busy {
 		unlock_run.failed_stops += 1
 	}
 }
@@ -375,24 +384,24 @@ unlock_for_a_locked_principal :: proc "contextless" () {
 // principal_change_end runs the command Principal_Change_End, which only
 // `unlock` sends: the change ended. The end goes to the caller of
 // Principal_Change.
-principal_change_end :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> system.Status {
+principal_change_end :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Principal_Change_End)
+	// No change waits for its end.
 	if !principal_change_waiting {
-		completion^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
-		return .Bad_State
+		return root_ring.refuse(completion, .Wrong_State, kind, .State, .Requests)
 	}
-	end, end_status, end_refusal := root_ring.member_of_word(principals.Change_End, values[4], .Principal_Change_End, 2)
-	if end_status != .Ok {
+	end, end_outcome, end_refusal := root_ring.member_of_word(principals.Change_End, values[4], .Principal_Change_End, 2)
+	if end_outcome != .Succeeded {
 		completion^ = end_refusal
-		return end_status
+		return end_outcome
 	}
-	problem, problem_status, problem_refusal := root_ring.member_of_word(principals.Change_Problem, values[5], .Principal_Change_End, 3)
-	if problem_status != .Ok {
+	problem, problem_outcome, problem_refusal := root_ring.member_of_word(principals.Change_Problem, values[5], .Principal_Change_End, 3)
+	if problem_outcome != .Succeeded {
 		completion^ = problem_refusal
-		return problem_status
+		return problem_outcome
 	}
 	principal_change_finish(end, problem)
-	return .Ok
+	return .Succeeded
 }
 
 // principal_change_finish gives the end of the change to its caller, when
@@ -403,7 +412,7 @@ principal_change_finish :: proc "contextless" (end: principals.Change_End, probl
 	asker := principal_change_asker
 	principal_change_asker = nil
 	if asker != nil && asker.process != 0 && asker.requests.head != nil {
-		if !system.send(&asker.requests.completions, ring.Record{kind = u32(system.Status.Ok), tag = principal_change_tag, values = {0 = u64(end), 1 = u64(problem)}}) {
+		if !system.send(&asker.requests.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = principal_change_tag, values = {0 = u64(end), 1 = u64(problem)}}) {
 			system.log_fact(.Warning, Change_End_Not_Delivered{caller = module_name_field(system.name_of(asker.name[:]))})
 		}
 	}
@@ -432,8 +441,8 @@ principal_change_forget :: proc "contextless" (item: ^Started) {
 // (src/md/features/tpm_sealed_principal_keys.md). values is the
 // completion: an error record for a refusal. A change that starts holds
 // the completion until it ends (principal_change_finish).
-principal_change :: proc "contextless" (caller: ^Started, tag: u32, change: u64, values: ^[7]u64) -> (status: system.Status, held: bool) {
-	status, held = principal_change_begin(caller, change, values)
+principal_change :: proc "contextless" (caller: ^Started, tag: u32, change: u64, values: ^[7]u64) -> (outcome: call_outcome.Call_Outcome, held: bool) {
+	outcome, held = principal_change_begin(caller, change, values)
 	if held {
 		principal_change_waiting = true
 		principal_change_asker = caller
@@ -442,16 +451,15 @@ principal_change :: proc "contextless" (caller: ^Started, tag: u32, change: u64,
 	return
 }
 
-principal_change_begin :: proc "contextless" (caller: ^Started, change: u64, values: ^[7]u64) -> (status: system.Status, held: bool) {
+principal_change_begin :: proc "contextless" (caller: ^Started, change: u64, values: ^[7]u64) -> (outcome: call_outcome.Call_Outcome, held: bool) {
 	kind := u32(root_ring.Root_Command.Principal_Change)
 	if .Acts_For_Principal not_in grants_held(caller) {
-		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
-		return .No_Right, false
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Acts_For_Principal, 1), false
 	}
-	asked, asked_status, asked_refusal := root_ring.member_of_word(root_ring.Principal_Change, change, .Principal_Change, 2)
-	if asked_status != .Ok {
+	asked, asked_outcome, asked_refusal := root_ring.member_of_word(root_ring.Principal_Change, change, .Principal_Change, 2)
+	if asked_outcome != .Succeeded {
 		values^ = asked_refusal
-		return asked_status, false
+		return asked_outcome, false
 	}
 	mode: principals.Unlock_Mode
 	switch asked {
@@ -463,36 +471,33 @@ principal_change_begin :: proc "contextless" (caller: ^Started, change: u64, val
 	number := caller.principal
 	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state != .Unlocked {
 		system.log_fact(.Warning, Passphrase_Change_Refused_No_Session{})
-		values^ = errors.ring_fail(kind, .Absent, .Principals)
-		return .Bad_State, false
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Principals), false
 	}
 	// A change that waits for its end is a change whose `unlock` runs, or
 	// is not reaped yet: one at a time.
 	if find("unlock") != nil || principal_change_waiting {
 		system.log_fact(.Warning, Passphrase_Change_Refused_Unlock_Runs{})
-		values^ = errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
-		return .No_Slot, false
+		return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1), false
 	}
 	if mode == .Change_Passphrase {
 		system.log_fact(.Info, Passphrase_Change_Started{principal = number, principal_name = text_field(principal_name(number), 24)})
 	} else {
 		system.log_fact(.Info, Recovery_Key_Change_Started{principal = number, principal_name = text_field(principal_name(number), 24)})
 	}
-	started_status := unlock_start(mode, "", number)
-	if started_status != .Ok {
-		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(started_status))
-		return started_status, false
+	if started := unlock_start(mode, "", number, values); started != .Succeeded {
+		return started, false
 	}
-	return .Ok, true
+	return .Succeeded, true
 }
 
 // principal_read gives a record: values[0] its state, values[1..4] its
 // name, values[5] the first 8 bytes of its public key, values[6] for
 // principal 0 the first 8 bytes of the measure of the system (0: not
 // measured).
-principal_read :: proc "contextless" (number: u64, completion: ^[7]u64) -> system.Status {
+principal_read :: proc "contextless" (number: u64, completion: ^[7]u64) -> call_outcome.Call_Outcome {
+	kind := u32(root_ring.Root_Command.Principals)
 	if number >= principals.PRINCIPAL_CAPACITY {
-		return .Bad_Handle
+		return root_ring.refuse(completion, .Nothing_Has_That_Name, kind, .Absent, .Principals, 2, i64(min(number, 1 << 62)))
 	}
 	record := &principal_records[number]
 	state := record.state
@@ -500,13 +505,13 @@ principal_read :: proc "contextless" (number: u64, completion: ^[7]u64) -> syste
 		state = .Creating
 	}
 	if state == .Absent {
-		return .Bad_Handle
+		return root_ring.refuse(completion, .Nothing_Has_That_Name, kind, .Absent, .Principals, 2, i64(number))
 	}
 	packed := system.name_pack(string(record.name[:record.name_length]))
 	key := transmute([4]u64)record.public_key
 	measure := transmute([4]u64)record.measure
 	completion^ = {u64(state), packed[0], packed[1], packed[2], packed[3], key[0], record.measured ? measure[0] : 0}
-	return .Ok
+	return .Succeeded
 }
 
 // For each principal: its record was made by a creation in this run of the

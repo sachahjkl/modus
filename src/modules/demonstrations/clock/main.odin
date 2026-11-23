@@ -27,6 +27,7 @@
 package clock
 
 import "internal:clock/clock_model"
+import "modus:contract/call_outcome"
 import "modus:calendar"
 import "modus:contract/accessibility"
 import "modus:contract/date"
@@ -165,9 +166,9 @@ notifier_open :: proc "contextless" () -> (cause: string) {
 	if opened != .Ok {
 		return "the ring to the root service does not open"
 	}
-	connected: system.Status
+	connected: call_outcome.Call_Outcome
 	notifier.connection, connected = system.service_connection(&notifier.requests, 1, "compositor")
-	if connected != .Ok {
+	if connected != .Succeeded {
 		return "the root service gave no connection to the compositor"
 	}
 	notifier.connected = true

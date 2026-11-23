@@ -666,6 +666,10 @@ bridge_handle_wire_frame :: proc(
 		if decision.state != .Ended || decision.outcome != .Succeeded {
 			return encode_result(cmd_frame.request_id, decision.state, decision.outcome, decision.refusal, 0, {}, nil, response_buffer)
 		}
+		// No transport: nothing is recorded and nothing goes.
+		if bridge.transport.send_key == nil {
+			return encode_result(cmd_frame.request_id, .Ended, .Callee_Unavailable, .None, 0, {}, nil, response_buffer)
+		}
 		act_rec, act_refusal := bridge_act_log_append(
 			&bridge.act_log,
 			bridge.policy.wide_grant_serial,
@@ -678,11 +682,10 @@ bridge_handle_wire_frame :: proc(
 		if act_refusal != .None {
 			return encode_result(cmd_frame.request_id, .Ended, contract.bridge_refusal_outcome(.Act_Log_Required), .Act_Log_Required, 0, {}, nil, response_buffer)
 		}
-		if bridge.transport.send_key == nil {
-			return encode_result(cmd_frame.request_id, .Ended, .Callee_Unavailable, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
-		}
+		// The act log holds the record of the act: a failure of the
+		// transport after it is a partial change.
 		if _, ok := bridge.transport.send_key(bridge.transport.user_data, cmd_frame.target_window_id, key_payload.key); !ok {
-			return encode_result(cmd_frame.request_id, .Ended, .Callee_Unavailable, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, .Stopped_After_A_Partial_Change, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
 		}
 		return encode_result(cmd_frame.request_id, .Ended, .Succeeded, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
 
@@ -704,6 +707,10 @@ bridge_handle_wire_frame :: proc(
 		if decision.state != .Ended || decision.outcome != .Succeeded {
 			return encode_result(cmd_frame.request_id, decision.state, decision.outcome, decision.refusal, 0, {}, nil, response_buffer)
 		}
+		// No transport: nothing is recorded and nothing goes.
+		if bridge.transport.send_pointer == nil {
+			return encode_result(cmd_frame.request_id, .Ended, .Callee_Unavailable, .None, 0, {}, nil, response_buffer)
+		}
 		act_rec, act_refusal := bridge_act_log_append(
 			&bridge.act_log,
 			bridge.policy.wide_grant_serial,
@@ -716,11 +723,10 @@ bridge_handle_wire_frame :: proc(
 		if act_refusal != .None {
 			return encode_result(cmd_frame.request_id, .Ended, contract.bridge_refusal_outcome(.Act_Log_Required), .Act_Log_Required, 0, {}, nil, response_buffer)
 		}
-		if bridge.transport.send_pointer == nil {
-			return encode_result(cmd_frame.request_id, .Ended, .Callee_Unavailable, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
-		}
+		// The act log holds the record of the act: a failure of the
+		// transport after it is a partial change.
 		if _, ok := bridge.transport.send_pointer(bridge.transport.user_data, cmd_frame.target_window_id, ptr_payload.pointer); !ok {
-			return encode_result(cmd_frame.request_id, .Ended, .Callee_Unavailable, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
+			return encode_result(cmd_frame.request_id, .Ended, .Stopped_After_A_Partial_Change, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
 		}
 		return encode_result(cmd_frame.request_id, .Ended, .Succeeded, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
 
@@ -945,6 +951,10 @@ bridge_handle_json_line :: proc(
 		if decision.state != .Ended || decision.outcome != .Succeeded {
 			return json_decision_error(id_value, has_id, decision, allocator)
 		}
+		// No transport: nothing is recorded and nothing goes.
+		if bridge.transport.send_key == nil {
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, "send_key transport is not configured", allocator)
+		}
 		act_rec, act_refusal := bridge_act_log_append(
 			&bridge.act_log,
 			bridge.policy.wide_grant_serial,
@@ -957,11 +967,10 @@ bridge_handle_json_line :: proc(
 		if act_refusal != .None {
 			return json_error_response(id_value, has_id, .Refused, .Ended, contract.bridge_refusal_outcome(.Act_Log_Required), .Act_Log_Required, "collector act log refused input record", allocator)
 		}
-		if bridge.transport.send_key == nil {
-			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, "send_key transport is not configured", allocator)
-		}
+		// The act log holds the record of the act: a failure of the
+		// transport after it is a partial change.
 		if err_text, ok := bridge.transport.send_key(bridge.transport.user_data, window_id, key_payload.key); !ok {
-			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, err_text != "" ? err_text : "remote send_key failed", allocator)
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Stopped_After_A_Partial_Change, .None, err_text != "" ? err_text : "remote send_key failed", allocator)
 		}
 		return format_input_delivered_json(id_value, has_id, window_id, act_rec, allocator)
 
@@ -995,6 +1004,10 @@ bridge_handle_json_line :: proc(
 		if decision.state != .Ended || decision.outcome != .Succeeded {
 			return json_decision_error(id_value, has_id, decision, allocator)
 		}
+		// No transport: nothing is recorded and nothing goes.
+		if bridge.transport.send_pointer == nil {
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, "send_pointer transport is not configured", allocator)
+		}
 		act_rec, act_refusal := bridge_act_log_append(
 			&bridge.act_log,
 			bridge.policy.wide_grant_serial,
@@ -1007,11 +1020,10 @@ bridge_handle_json_line :: proc(
 		if act_refusal != .None {
 			return json_error_response(id_value, has_id, .Refused, .Ended, contract.bridge_refusal_outcome(.Act_Log_Required), .Act_Log_Required, "collector act log refused input record", allocator)
 		}
-		if bridge.transport.send_pointer == nil {
-			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, "send_pointer transport is not configured", allocator)
-		}
+		// The act log holds the record of the act: a failure of the
+		// transport after it is a partial change.
 		if err_text, ok := bridge.transport.send_pointer(bridge.transport.user_data, window_id, ptr_payload.pointer); !ok {
-			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Callee_Unavailable, .None, err_text != "" ? err_text : "remote send_pointer failed", allocator)
+			return json_error_response(id_value, has_id, .Transport_Error, .Ended, .Stopped_After_A_Partial_Change, .None, err_text != "" ? err_text : "remote send_pointer failed", allocator)
 		}
 		return format_input_delivered_json(id_value, has_id, window_id, act_rec, allocator)
 

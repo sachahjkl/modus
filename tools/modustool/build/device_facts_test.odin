@@ -219,7 +219,7 @@ the_facts_of_the_network_service_write_the_lines_of_before :: proc(t: ^testing.T
 	counts := [3]u64{0, 1, max(u64)}
 	for count in counts {
 		facts_expect_line(t, render(t, file, "Endpoint_Ended", {{"datagrams_sent", count}, {"datagrams_received", max(u64) - count}, {"owner", owner}}), line_of_before("network: the endpoint of ", owner, " ended: ", count, " datagrams sent, ", max(u64) - count, " received"))
-		facts_expect_line(t, render(t, file, "Read_Region_Refused", {{"status_word", count}, {"owner", owner}}), line_of_before("network: the frame service refused the datagram region of ", owner, " as a read region: status ", count))
+		facts_expect_line(t, render(t, file, "Read_Region_Refused", {{"outcome_word", count}, {"owner", owner}}), line_of_before("network: the frame service refused the datagram region of ", owner, " as a read region: outcome word ", count))
 	}
 	// The longest name of a command, and the words of a command that names
 	// no member (frame.command_name).

@@ -494,12 +494,11 @@ Contract_Enum :: enum u8 {
 	Load_Stage      = 9, // module.Load_Stage: the stage of a load that failed.
 	Module_Error    = 10, // module.Error: what is not valid in a module file.
 	Load_Difference = 11, // module.Difference: what differs between an export and its replacement.
-	Block_Status    = 12, // block.Status: the answer of the block service to a request.
-	Storage_Status  = 13, // storage_status.Status: the result of a call of a client of the storage service.
-	Call_Outcome    = 14, // call_outcome.Call_Outcome: how a call ended (src/md/api/call_outcome.md).
-	Pointer_Part    = 15, // pointer_pictures.Part: the part of a pointer theme file where a check found a problem.
-	Pointer_Field   = 16, // pointer_pictures.Field: the field of a pointer theme file that holds the bad value.
-	Pointer_Problem = 17, // pointer_pictures.Problem_Kind: the rule that a pointer theme file breaks.
+	Storage_Status  = 12, // storage_status.Status: the result of a call of a client of the storage service.
+	Call_Outcome    = 13, // call_outcome.Call_Outcome: how a call ended (src/md/api/call_outcome.md).
+	Pointer_Part    = 14, // pointer_pictures.Part: the part of a pointer theme file where a check found a problem.
+	Pointer_Field   = 15, // pointer_pictures.Field: the field of a pointer theme file that holds the bad value.
+	Pointer_Problem = 16, // pointer_pictures.Problem_Kind: the rule that a pointer theme file breaks.
 }
 
 // contract_enum_of_word is the border of the byte of a contract enum in a
@@ -539,7 +538,6 @@ CONTRACT_ENUM_TYPES := [Contract_Enum]Contract_Enum_Type {
 	.Load_Stage      = {package_name = "module", name = "Load_Stage", word_name = "Load_Stage_Word"},
 	.Module_Error    = {package_name = "module", name = "Error", word_name = "Error_Word"},
 	.Load_Difference = {package_name = "module", name = "Difference", word_name = "Difference_Word"},
-	.Block_Status    = {package_name = "block", name = "Status", word_name = "Status_Word"},
 	.Storage_Status  = {package_name = "storage_status", name = "Status", word_name = "Status_Word"},
 	.Call_Outcome    = {package_name = "call_outcome", name = "Call_Outcome", word_name = "Call_Outcome_Word"},
 	.Pointer_Part    = {package_name = "pointer_pictures", name = "Part", word_name = "Part_Word"},

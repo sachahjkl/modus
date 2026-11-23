@@ -93,6 +93,9 @@ Remote_Call_Outcome :: enum u32 {
 	Key_Refused, // `remote` presented another key than the pinned one, or the call named another one: the reason gives both.
 	Bad_Socket_Call, // The bytes on the socket of the calls are not a header and the request that it counts.
 	Client_Refused, // `remote` refused the key of this client in the handshake (access_denied): no principal allowed it, or the session of its principal is locked. No call ran.
+	Request_Too_Large, // The request does not fit in a call region: it did not leave.
+	Peer_Absent, // The peer of the tool does not run, or its QUIC client did not start: the request did not leave.
+	Peer_Full, // The peer holds as many calls as it can: the request did not leave.
 }
 
 Remote_Call :: struct {
@@ -598,7 +601,7 @@ peer_remote_tick :: proc(peer: ^Peer) {
 			} else {
 				for &call in state.calls {
 					if call.state == .Submitted {
-						peer_remote_call_end(&call, .Lost, 0, "the QUIC client of the peer did not start")
+						peer_remote_call_end(&call, .Peer_Absent, 0, "the QUIC client of the peer did not start")
 					}
 				}
 			}
@@ -773,7 +776,7 @@ peer_remote_serve_one :: proc(state: ^Peer_Remote, connection: linux.Fd) {
 		if taken {
 			result = peer_remote_wait(state, place)
 		} else {
-			result = {outcome = .Lost, reason = "the peer holds as many calls as it can"}
+			result = {outcome = .Peer_Full, reason = "the peer holds as many calls as it can"}
 		}
 	}
 	answer.outcome = result.outcome
@@ -837,7 +840,7 @@ remote_case_request :: proc(machine: ^Machine, text: string) -> (bytes: []u8, pr
 remote_case_call :: proc(state: ^Peer_Remote, request: []u8, no_end := false) -> Remote_Call_Result {
 	place, taken := peer_remote_submit(state, request, no_end)
 	if !taken {
-		return {outcome = .Lost, reason = "the peer holds as many calls as it can"}
+		return {outcome = .Peer_Full, reason = "the peer holds as many calls as it can"}
 	}
 	return peer_remote_wait(state, place)
 }

@@ -293,16 +293,35 @@ answer_outcome :: proc "contextless" (answer: Answer) -> (outcome: call_outcome.
 		return .Answer_Unreadable, relay_unreadable, false
 	}
 	if relay != .Succeeded {
-		return relay, answer.error, true
+		// A relay refuses before any call runs: a relay outcome that says
+		// more than that is no answer of this contract.
+		if call_outcome.effect_group_of(relay) != .Nothing_Changed {
+			return .Answer_Unreadable, errors.error_make(.Bad_Value, .None, 0, i64(relay), 0, i64(answer.relay_outcome)), false
+		}
+		return answer_record(relay, answer.error, true)
 	}
 	called, called_unreadable := call_outcome.outcome_of_word(u64(answer.outcome))
 	if called_unreadable.kind != 0 {
 		return .Answer_Unreadable, called_unreadable, false
 	}
 	if called != .Succeeded {
-		return called, answer.error, false
+		return answer_record(called, answer.error, false)
 	}
 	return .Succeeded, {}, false
+}
+
+// answer_record checks the record of a failure of an answer: a kind and a
+// unit that name members, and a kind that the outcome explains
+// (call_outcome.KINDS_OF). A record that fails a check makes the answer
+// Answer_Unreadable.
+@(private = "file")
+answer_record :: proc "contextless" (outcome: call_outcome.Call_Outcome, record: errors.Error_Record, request_refused: bool) -> (call_outcome.Call_Outcome, errors.Error_Record, bool) {
+	checked, readable := errors.refusal_record_of_values(errors.completion_values(record))
+	kind, _ := errors.kind_of_word(checked.kind)
+	if !readable || kind not_in call_outcome.KINDS_OF[outcome] {
+		return .Answer_Unreadable, errors.error_make(.Malformed, .None, 0, record.kind, 0, i64(outcome)), false
+	}
+	return outcome, checked, request_refused
 }
 
 // result_bytes gives the bytes of the result that a call answer carries,

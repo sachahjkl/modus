@@ -58,19 +58,19 @@ client_random :: proc "contextless" (bytes: []u8, user_data: rawptr) -> bool {
 }
 
 // Export 1 answers the reversed arguments, export 2 refuses, export 3
-// breaks the contract with an outcome of a link.
+// breaks the contract with a count past its result.
 @(private = "file")
-client_role_holder :: proc "contextless" (role: role_contract.Role, export: u32, arguments: []u8, result: []u8, _: rawptr) -> (value: i64, result_count: int, outcome: Role_Outcome) {
+client_role_holder :: proc "contextless" (role: role_contract.Role, export: u32, arguments: []u8, result: []u8, _: rawptr) -> (value: i64, result_count: int, outcome: call_outcome.Call_Outcome) {
 	switch export {
 	case 1:
 		for index in 0 ..< len(arguments) {
 			result[index] = arguments[len(arguments) - 1 - index]
 		}
-		return i64(len(arguments)), len(arguments), .Answered
+		return i64(len(arguments)), len(arguments), .Succeeded
 	case 2:
-		return -1, 0, .Refused
+		return -1, 0, .Argument_Refused
 	}
-	return 0, 0, .Unknown_Outcome
+	return 0, len(result) + 1, .Succeeded
 }
 
 @(private = "file")
@@ -368,9 +368,10 @@ client_role_calls_end_answered_refused_or_unknown :: proc(t: ^testing.T) {
 	testing.expect_value(t, call.exchange.outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect(t, string(call.reply.result) == "cba" && call.reply.value == 3)
 
-	// The holder refused: the call did not run.
+	// The holder refused: the call did not run, and its outcome crosses.
 	call = mesh_call_role(&link, &transport, .Storage, 2, {}, nil, 30_000, 1_000, buffers.request[:], buffers.answer[:])
-	testing.expect_value(t, call.exchange.outcome, call_outcome.Call_Outcome.Callee_Unavailable)
+	testing.expect_value(t, call.exchange.outcome, call_outcome.Call_Outcome.Argument_Refused)
+	testing.expect(t, mesh_refused_by_peer(call.exchange))
 	// A role that the grant does not name: refused before it runs.
 	call = mesh_call_role(&link, &transport, .Sound_Device, 1, {}, nil, 30_000, 1_000, buffers.request[:], buffers.answer[:])
 	testing.expect_value(t, call.exchange.outcome, call_outcome.Call_Outcome.Callee_Unavailable)

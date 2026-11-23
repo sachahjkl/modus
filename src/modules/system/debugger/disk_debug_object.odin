@@ -133,7 +133,7 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 		system.log_fact(.Info, Debug_Object_Connection_Silent{bound = value_kinds.Time_In_Milliseconds(DISK_DEBUG_OBJECT_MILLISECONDS), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		system.log_fact(.Info, Debug_Object_Connection_Refused{status_word = u64(completion.kind), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}

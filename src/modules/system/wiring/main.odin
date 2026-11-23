@@ -22,6 +22,7 @@
 package wiring
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -500,19 +501,19 @@ region_write_response :: proc "contextless" () {
 @(private = "file")
 handle_register_process :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 	if !prove_core_handle(cmd.process_handle, .Process, .Stream_Process_Token) {
-		return {status = .Bad_Handle, tag = cmd.tag, error_record = errors.error_make(.Handle_Rights, .Lent_Handles)}
+		return {outcome = .Grant_Or_Right_Missing, tag = cmd.tag, error_record = errors.error_make(.Handle_Rights, .Lent_Handles)}
 	}
 	if cmd.wiring_ring_handle != 0 && !prove_core_handle(cmd.wiring_ring_handle, .Memory, .Process_Wiring_Ring) {
 		system.close(system.Handle(cmd.process_handle))
-		return {status = .Bad_Handle, tag = cmd.tag, error_record = errors.error_make(.Handle_Rights, .Lent_Handles)}
+		return {outcome = .Grant_Or_Right_Missing, tag = cmd.tag, error_record = errors.error_make(.Handle_Rights, .Lent_Handles)}
 	}
-	idx, st := wiring_core.process_register(&state, cmd.process, cmd.module_offset, cmd.module_size, cmd.flags)
-	if st != .Ok {
+	idx, st, register_refusal := wiring_core.process_register(&state, cmd.process, cmd.module_offset, cmd.module_size, cmd.flags)
+	if st != .Succeeded {
 		system.close(system.Handle(cmd.process_handle))
 		if cmd.wiring_ring_handle != 0 {
 			system.close(system.Handle(cmd.wiring_ring_handle))
 		}
-		return {status = st, tag = cmd.tag, error_record = errors.error_make(.Full, .Processes)}
+		return {outcome = st, tag = cmd.tag, error_record = register_refusal}
 	}
 	ph := &process_handles[idx]
 	if ph.process_token != 0 {
@@ -527,31 +528,31 @@ handle_register_process :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 		ph.wiring_memory = system.Handle(cmd.wiring_ring_handle)
 		ph.wiring_ring_ready = false
 	}
-	return {status = .Ok, tag = cmd.tag}
+	return {outcome = .Succeeded, tag = cmd.tag}
 }
 
 @(private = "file")
 handle_grant_asker_budget :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 	if !prove_core_handle(cmd.budget_handle, .Budget, .Asker_Wiring_Budget) {
-		return {status = .Bad_Handle, tag = cmd.tag, error_record = errors.error_make(.Handle_Rights, .Lent_Handles)}
+		return {outcome = .Grant_Or_Right_Missing, tag = cmd.tag, error_record = errors.error_make(.Handle_Rights, .Lent_Handles)}
 	}
 	idx, found := wiring_core.process_find(&state, cmd.process)
 	if !found {
 		system.close(system.Handle(cmd.budget_handle))
-		return {status = .Bad_Handle, tag = cmd.tag, error_record = errors.error_make(.Absent, .Processes)}
+		return {outcome = .Nothing_Has_That_Name, tag = cmd.tag, error_record = errors.error_make(.Absent, .Processes)}
 	}
 	ph := &process_handles[idx]
 	close_handle(&ph.asker_budget)
 	ph.asker_budget = system.Handle(cmd.budget_handle)
-	return {status = .Ok, tag = cmd.tag}
+	return {outcome = .Succeeded, tag = cmd.tag}
 }
 
 @(private = "file")
 handle_list_page :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 	op_code := u32(root_ring.Root_Command.Wire)
 	already, asker_idx, res_st, refusal := wiring_core.list_page_reserve(&state, cmd.process, op_code)
-	if res_st != .Ok {
-		return {status = res_st, tag = cmd.tag, error_record = refusal}
+	if res_st != .Succeeded {
+		return {outcome = res_st, tag = cmd.tag, error_record = refusal}
 	}
 	ph := &process_handles[asker_idx]
 	if ph.asker_budget == 0 {
@@ -560,7 +561,7 @@ handle_list_page :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 		}
 		err := errors.error_make(.Budget_Hidden, .Pages)
 		err.operation = i64(op_code)
-		return {status = .No_Budget, tag = cmd.tag, error_record = err}
+		return {outcome = .Budget_Or_Capacity_Exhausted, tag = cmd.tag, error_record = call_outcome.record_explained(.Budget_Or_Capacity_Exhausted, err)}
 	}
 	err: errors.Error_Record
 	made_page, made_ring: bool
@@ -571,7 +572,7 @@ handle_list_page :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 				wiring_core.list_page_unreserve(&state, asker_idx)
 			}
 			err.operation = i64(op_code)
-			return {status = ws.response_status_from_op_status(status), tag = cmd.tag, error_record = err}
+			return {outcome = system.outcome_of_own_status(status), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(status), err)}
 		}
 		ph.list_memory = mem
 		made_page = true
@@ -593,7 +594,7 @@ handle_list_page :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 				wiring_core.list_page_unreserve(&state, asker_idx)
 			}
 			err.operation = i64(op_code)
-			return {status = ws.response_status_from_op_status(status), tag = cmd.tag, error_record = err}
+			return {outcome = system.outcome_of_own_status(status), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(status), err)}
 		}
 	}
 	page_given, give_status := system.give(core_ring_memory, ph.list_memory, {.Read, .Write, .Give})
@@ -608,10 +609,10 @@ handle_list_page :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 		}
 		rec := errors.error_make(.Refused, .Wirings, 0, 0, 0, i64(give_status))
 		rec.operation = i64(op_code)
-		return {status = ws.response_status_from_op_status(give_status), tag = cmd.tag, error_record = rec}
+		return {outcome = system.outcome_of_own_status(give_status), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(give_status), rec)}
 	}
 	return {
-		status      = .Ok,
+		outcome      = .Succeeded,
 		tag         = cmd.tag,
 		list_page   = op.Handle(page_given),
 		wiring_ring = op.Handle(ring_given),
@@ -651,15 +652,15 @@ handle_wire :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 	op_code := u32(root_ring.Root_Command.Wire)
 	region_read_request()
 	st, refusal := wiring_core.plan_resolve(&state, image, list_copy[:], &request_copy, cmd.process, op_code, &wire_work, ring_room_callback, nil)
-	if st != .Ok {
-		return {status = st, tag = cmd.tag, error_record = refusal}
+	if st != .Succeeded {
+		return {outcome = st, tag = cmd.tag, error_record = refusal}
 	}
 	asker_idx := wire_work.asker_index
 	asker_budget := process_handles[asker_idx].asker_budget
 	if asker_budget == 0 {
 		err := errors.error_make(.Budget_Hidden, .Pages)
 		err.operation = i64(op_code)
-		return {status = .No_Budget, tag = cmd.tag, error_record = err}
+		return {outcome = .Budget_Or_Capacity_Exhausted, tag = cmd.tag, error_record = call_outcome.record_explained(.Budget_Or_Capacity_Exhausted, err)}
 	}
 	plan := &wire_work.plans[0]
 	obj: Row_Objects
@@ -669,14 +670,15 @@ handle_wire :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 		close_row_objects(&obj, keep_end = false)
 		err.operation = i64(op_code)
 		err.found = 1
-		return {status = ws.response_status_from_op_status(make_status), tag = cmd.tag, error_record = err}
+		return {outcome = system.outcome_of_own_status(make_status), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(make_status), err)}
 	}
 	slot, number, alloc_ok := wiring_core.wiring_slot_allocate(&state, asker_idx, plan)
 	if !alloc_ok {
 		close_row_objects(&obj, keep_end = false)
 		rec := errors.error_make(.Full, .Wirings, 0, i64(state.wirings_running + 1), wiring_core.WIRINGS_OF_THE_MACHINE_MOST)
 		rec.operation = i64(op_code)
-		return {status = .No_Slot, tag = cmd.tag, error_record = rec}
+		// The table of the machine frees a place when a wiring ends.
+		return {outcome = .Callee_Busy, tag = cmd.tag, error_record = rec}
 	}
 	wiring_end_memory[slot] = obj.end_memory
 	keep_ring := plan.row.pace == .Always_Holds_Writer
@@ -695,12 +697,14 @@ handle_wire :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 		wiring_slot_handles_close(slot)
 		rec := errors.error_make(.Refused, .Wirings, 0, 0, 0, i64(deliv_status))
 		rec.operation = i64(op_code)
-		return {status = .Refused, tag = cmd.tag, error_record = rec}
+		// An end of the wiring did not reach its process: a party that the
+		// wiring needs failed.
+		return {outcome = .Callee_Unavailable, tag = cmd.tag, error_record = rec}
 	}
 	wiring_core.wiring_mark_delivered(&state, slot, plan)
 	log_wiring_created(plan, number)
 	return {
-		status        = .Ok,
+		outcome        = .Succeeded,
 		tag           = cmd.tag,
 		wiring_number = number,
 		asker_active  = u64(state.processes[asker_idx].wirings_asked),
@@ -713,21 +717,21 @@ handle_prepare_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respon
 	if prepared_batch.active {
 		rec := errors.error_make(.Busy, .Wirings, 0, 1, 1)
 		rec.operation = i64(op_code)
-		return {status = .No_Slot, tag = cmd.tag, error_record = rec}
+		return {outcome = .Callee_Busy, tag = cmd.tag, error_record = rec}
 	}
 	region_read_request()
 	request_copy.child_module_offset = cmd.module_offset
 	request_copy.child_module_size = cmd.module_size
 	st, refusal := wiring_core.plan_resolve(&state, image, list_copy[:], &request_copy, cmd.process, op_code, &prepared_batch.work, ring_room_callback, nil)
-	if st != .Ok {
-		return {status = st, tag = cmd.tag, error_record = refusal}
+	if st != .Succeeded {
+		return {outcome = st, tag = cmd.tag, error_record = refusal}
 	}
 	asker_idx := prepared_batch.work.asker_index
 	asker_budget := process_handles[asker_idx].asker_budget
 	if asker_budget == 0 {
 		err := errors.error_make(.Budget_Hidden, .Pages)
 		err.operation = i64(op_code)
-		return {status = .No_Budget, tag = cmd.tag, error_record = err}
+		return {outcome = .Budget_Or_Capacity_Exhausted, tag = cmd.tag, error_record = call_outcome.record_explained(.Budget_Or_Capacity_Exhausted, err)}
 	}
 	batch_id := next_batch_id
 	next_batch_id = next_batch_id == max(u32) ? 1 : next_batch_id + 1
@@ -748,7 +752,7 @@ handle_prepare_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respon
 			abort_prepared_batch()
 			err.operation = i64(op_code)
 			err.found = i64(number)
-			return {status = ws.response_status_from_op_status(make_status), tag = cmd.tag, error_record = err}
+			return {outcome = system.outcome_of_own_status(make_status), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(make_status), err)}
 		}
 		slot, _, alloc_ok := wiring_core.wiring_slot_allocate(&state, asker_idx, plan)
 		if !alloc_ok {
@@ -756,7 +760,7 @@ handle_prepare_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respon
 			abort_prepared_batch()
 			rec := errors.error_make(.Full, .Wirings, 0, i64(state.wirings_running + 1), wiring_core.WIRINGS_OF_THE_MACHINE_MOST)
 			rec.operation = i64(op_code)
-			return {status = .No_Slot, tag = cmd.tag, error_record = rec}
+			return {outcome = .Callee_Busy, tag = cmd.tag, error_record = rec}
 		}
 		wiring_end_memory[slot] = obj.end_memory
 		if plan.row.reader_end == .Asker && response_staging.asker_wiring_count < output.WIRING_ASKER_ROWS_OF_A_START {
@@ -779,7 +783,7 @@ handle_prepare_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respon
 				abort_prepared_batch()
 				rec := errors.error_make(.Refused, .Wirings, 0, 0, 0, i64(g_st))
 				rec.operation = i64(op_code)
-				return {status = ws.response_status_from_op_status(g_st), tag = cmd.tag, error_record = rec}
+				return {outcome = system.outcome_of_own_status(g_st), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(g_st), rec)}
 			}
 			response_staging.log_ring = u32(g_ring)
 			response_staging.log_end_words = u32(g_end)
@@ -789,7 +793,7 @@ handle_prepare_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respon
 				abort_prepared_batch()
 				rec := errors.error_make(.Refused, .Wirings, 0, 0, 0, i64(g_st))
 				rec.operation = i64(op_code)
-				return {status = ws.response_status_from_op_status(g_st), tag = cmd.tag, error_record = rec}
+				return {outcome = system.outcome_of_own_status(g_st), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(g_st), rec)}
 			}
 			response_staging.child_ends[response_staging.child_end_count] = ws.given_end_to_prepared(given)
 			response_staging.child_end_count += 1
@@ -800,14 +804,14 @@ handle_prepare_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respon
 				abort_prepared_batch()
 				rec := errors.error_make(.Refused, .Wirings, 0, 0, 0, i64(g_st))
 				rec.operation = i64(op_code)
-				return {status = ws.response_status_from_op_status(g_st), tag = cmd.tag, error_record = rec}
+				return {outcome = system.outcome_of_own_status(g_st), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(g_st), rec)}
 			}
 			response_staging.child_ends[response_staging.child_end_count] = ws.given_end_to_prepared(given)
 			response_staging.child_end_count += 1
 		}
 	}
 	region_write_response()
-	return {status = .Ok, tag = cmd.tag, batch_id = batch_id}
+	return {outcome = .Succeeded, tag = cmd.tag, batch_id = batch_id}
 }
 
 @(private = "file")
@@ -844,12 +848,12 @@ give_child_end_to_core :: proc "contextless" (end: output.Given_End) -> (given: 
 @(private = "file")
 handle_commit_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 	if !prepared_batch.active || prepared_batch.id != cmd.batch_id {
-		return {status = .Bad_State, tag = cmd.tag, error_record = errors.error_make(.State, .Wirings)}
+		return {outcome = .Wrong_State, tag = cmd.tag, error_record = errors.error_make(.State, .Wirings)}
 	}
 	child_idx, child_found := wiring_core.process_find(&state, cmd.process)
 	if !child_found {
 		abort_prepared_batch()
-		return {status = .Bad_Handle, tag = cmd.tag, error_record = errors.error_make(.Absent, .Processes)}
+		return {outcome = .Nothing_Has_That_Name, tag = cmd.tag, error_record = errors.error_make(.Absent, .Processes)}
 	}
 	asker_idx := prepared_batch.work.asker_index
 	response_staging = {batch_id = prepared_batch.id}
@@ -913,27 +917,27 @@ handle_commit_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respons
 	region_write_response()
 	asker_active := u64(state.processes[asker_idx].wirings_asked)
 	prepared_batch = {}
-	return {status = .Ok, tag = cmd.tag, asker_active = asker_active}
+	return {outcome = .Succeeded, tag = cmd.tag, asker_active = asker_active}
 }
 
 @(private = "file")
 handle_abort_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 	if !prepared_batch.active || prepared_batch.id != cmd.batch_id {
-		return {status = .Bad_State, tag = cmd.tag, error_record = errors.error_make(.State, .Wirings)}
+		return {outcome = .Wrong_State, tag = cmd.tag, error_record = errors.error_make(.State, .Wirings)}
 	}
 	abort_prepared_batch()
-	return {status = .Ok, tag = cmd.tag}
+	return {outcome = .Succeeded, tag = cmd.tag}
 }
 
 @(private = "file")
 handle_unwire :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 	slot, end_word, _, st, ref := wiring_core.unwire_apply(&state, cmd.process, cmd.wiring_number, cmd.end_word, u32(cmd.kind))
-	if st != .Ok {
-		return {status = st, tag = cmd.tag, error_record = ref}
+	if st != .Succeeded {
+		return {outcome = st, tag = cmd.tag, error_record = ref}
 	}
 	end_words_write_and_wake(slot, end_word)
 	wiring_slot_handles_close(slot)
-	return {status = .Ok, tag = cmd.tag, ended_count = 1}
+	return {outcome = .Succeeded, tag = cmd.tag, ended_count = 1}
 }
 
 @(private = "file")
@@ -941,41 +945,41 @@ handle_revoke_asker :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 	actions: [wiring_core.WIRINGS_OF_THE_MACHINE_MOST]wiring_core.Stop_Action
 	count, found := wiring_core.revoke_asker_apply(&state, cmd.process, actions[:])
 	if !found {
-		return {status = .Ok, tag = cmd.tag, ended_count = 0}
+		return {outcome = .Succeeded, tag = cmd.tag, ended_count = 0}
 	}
 	for idx in 0 ..< count {
 		act := actions[idx]
 		end_words_write_and_wake(act.wiring_slot, act.end_word)
 		wiring_slot_handles_close(act.wiring_slot)
 	}
-	return {status = .Ok, tag = cmd.tag, ended_count = u64(count)}
+	return {outcome = .Succeeded, tag = cmd.tag, ended_count = u64(count)}
 }
 
 @(private = "file")
 handle_query :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 	switch cmd.query_kind {
 	case .None:
-		return {status = .Bad_Command, tag = cmd.tag}
+		return {outcome = .Operation_Unsupported, tag = cmd.tag, error_record = errors.error_make(.Unsupported)}
 	case .Machine_Totals:
 		return {
-			status       = .Ok,
+			outcome       = .Succeeded,
 			tag          = cmd.tag,
 			query_values = {u64(state.wirings_running), wiring_core.registered_process_count(&state), u64(state.list_page_holders)},
 		}
 	case .Asker_Count:
 		idx, found := wiring_core.process_find(&state, cmd.process)
 		if !found {
-			return {status = .Bad_Handle, tag = cmd.tag, error_record = errors.error_make(.Absent, .Processes)}
+			return {outcome = .Nothing_Has_That_Name, tag = cmd.tag, error_record = errors.error_make(.Absent, .Processes)}
 		}
-		return {status = .Ok, tag = cmd.tag, query_values = {u64(state.processes[idx].wirings_asked), 0, 0}}
+		return {outcome = .Succeeded, tag = cmd.tag, query_values = {u64(state.processes[idx].wirings_asked), 0, 0}}
 	case .Process_Ends:
 		idx, found := wiring_core.process_find(&state, cmd.process)
 		if !found {
-			return {status = .Bad_Handle, tag = cmd.tag, error_record = errors.error_make(.Absent, .Processes)}
+			return {outcome = .Nothing_Has_That_Name, tag = cmd.tag, error_record = errors.error_make(.Absent, .Processes)}
 		}
-		return {status = .Ok, tag = cmd.tag, query_values = {u64(state.processes[idx].ends_given), u64(state.processes[idx].log_ends_given), 0}}
+		return {outcome = .Succeeded, tag = cmd.tag, query_values = {u64(state.processes[idx].ends_given), u64(state.processes[idx].log_ends_given), 0}}
 	}
-	return {status = .Bad_Command, tag = cmd.tag}
+	return {outcome = .Operation_Unsupported, tag = cmd.tag, error_record = errors.error_make(.Unsupported)}
 }
 
 @(private = "file")
@@ -1069,7 +1073,7 @@ core_commands_serve :: proc "contextless" () {
 		cmd, ok := ws.command_from_record(record)
 		if !ok {
 			resp := ws.Response{
-				status       = .Bad_Command,
+				outcome      = .Operation_Unsupported,
 				tag          = record.tag,
 				error_record = errors.error_make(.Unsupported, .None, 0, i64(record.kind)),
 			}
@@ -1079,7 +1083,7 @@ core_commands_serve :: proc "contextless" () {
 		resp: ws.Response
 		switch cmd.kind {
 		case .None:
-			resp = {status = .Bad_Command, tag = cmd.tag}
+			resp = {outcome = .Operation_Unsupported, tag = cmd.tag, error_record = errors.error_make(.Unsupported)}
 		case .Register_Process:
 			resp = handle_register_process(cmd)
 		case .Grant_Asker_Budget:

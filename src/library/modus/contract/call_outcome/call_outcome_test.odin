@@ -253,3 +253,44 @@ fail_gives_the_outcome_and_the_value_0 :: proc(t: ^testing.T) {
 	testing.expect_value(t, passed, Call_Outcome.Succeeded)
 	testing.expect_value(t, tripled, 21)
 }
+
+// The border of a completion of a ring refuses each kind word that names no
+// outcome and each failure whose values are no record, as Answer_Unreadable
+// with its own record: the first word past the last member, the largest
+// word; the kind None, a kind past the last member, a unit past the last
+// member. A failure gives its record, and the success comes last, with no
+// record whatever its values hold.
+@(test)
+the_border_of_a_completion_reads_its_outcome :: proc(t: ^testing.T) {
+	for word in ([]u32{u32(max(Call_Outcome)) + 1, max(u32)}) {
+		outcome, record := completion_outcome(word, {0 = 5})
+		testing.expectf(t, outcome == .Answer_Unreadable && record.kind == i64(errors.Kind.Bad_Value), "the word %d gives %v", word, outcome)
+	}
+	bad_records := [?]errors.Error_Record{{}, {kind = i64(max(errors.Kind)) + 1}, {kind = -1}, {kind = i64(errors.Kind.Device), unit = i64(max(errors.Unit)) + 1}}
+	for bad in bad_records {
+		outcome, record := completion_outcome(u32(Call_Outcome.Callee_Unavailable), errors.completion_values(bad))
+		testing.expectf(t, outcome == .Answer_Unreadable && record.kind == i64(errors.Kind.Malformed), "the record %v gives %v", bad, outcome)
+	}
+	device := errors.error_make(.Device, .None, 0, 4)
+	outcome, record := completion_outcome(u32(Call_Outcome.Callee_Unavailable), errors.completion_values(device))
+	testing.expect_value(t, outcome, Call_Outcome.Callee_Unavailable)
+	testing.expect_value(t, record, device)
+	outcome, record = completion_outcome(0, {1, 2, 3, 4, 5, 6, 7})
+	testing.expect_value(t, outcome, Call_Outcome.Succeeded)
+	testing.expect_value(t, record, errors.Error_Record{})
+}
+
+// A record whose kind its outcome does not explain goes out with the kind
+// Refused and the rest of its fields; a kind that names no member too; a
+// record that the outcome explains goes out as it is.
+@(test)
+a_record_is_explained_by_its_outcome :: proc(t: ^testing.T) {
+	device := errors.error_make(.Device, .Bytes, 1, 2, 3, 4)
+	explained := record_explained(.Argument_Refused, device)
+	testing.expect_value(t, explained.kind, i64(errors.Kind.Refused))
+	testing.expect(t, explained.unit == device.unit && explained.argument == 1 && explained.value == 2 && explained.limit == 3 && explained.found == 4)
+	unknown := device
+	unknown.kind = i64(max(errors.Kind)) + 1
+	testing.expect_value(t, record_explained(.Callee_Unavailable, unknown).kind, i64(errors.Kind.Refused))
+	testing.expect_value(t, record_explained(.Callee_Unavailable, device), device)
+}

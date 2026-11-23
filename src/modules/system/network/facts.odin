@@ -96,12 +96,12 @@ Frame_Service_Silent :: struct {
 }
 
 // The frame service refused the datagram region of an endpoint as a read
-// region. The status is the word that the frame service wrote, any u32,
-// so the field is an Integer, as the line wrote it.
-@(log_fact = "network: the frame service refused the datagram region of {owner} as a read region: status {status_word}")
+// region. The outcome word is the word that the frame service wrote, any
+// u32, so the field is an Integer, as the line wrote it.
+@(log_fact = "network: the frame service refused the datagram region of {owner} as a read region: outcome word {outcome_word}")
 Read_Region_Refused :: struct {
-	status_word: u64,
-	owner:       value_kinds.Module_Name_Field,
+	outcome_word: u64,
+	owner:        value_kinds.Module_Name_Field,
 }
 
 // The tool reads the length of a Text field as a literal: the constants

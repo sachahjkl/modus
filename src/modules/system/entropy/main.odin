@@ -35,6 +35,7 @@
 package entropy_device_service
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/entropy_service"
 import "modus:contract/errors"
 import "modus:contract/ring"
@@ -124,7 +125,7 @@ answer :: proc "contextless" (tag: u32, asked: u32, used: virtio.Used) {
 	copy(bytes[:given], buffer[:given])
 	intrinsics.mem_zero_volatile(rawptr(buffer), int(asked))
 	values := entropy_service.bytes_pack(bytes[:given])
-	ring.push(&clients.completions, ring.Record{kind = u32(entropy_service.Status.Ok), tag = tag, values = values})
+	ring.push(&clients.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = tag, values = values})
 	intrinsics.mem_zero_volatile(&bytes, size_of(bytes))
 	intrinsics.mem_zero_volatile(&values, size_of(values))
 }
@@ -191,7 +192,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			answered = true
 		} else if in_flight {
 			if virtio.status_read(&device) & virtio.STATUS_NEEDS_RESET != 0 {
-				ring.push(&clients.completions, ring.Record{kind = u32(entropy_service.Status.Device_Error), tag = in_flight_tag, values = errors.ring_fail(u32(entropy_service.Command.Read), .Device, .None, 0, 0, 0, i64(virtio.status_read(&device)))})
+				ring.push(&clients.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Callee_Unavailable), tag = in_flight_tag, values = errors.ring_fail(u32(entropy_service.Command.Read), .Device, .None, 0, 0, 0, i64(virtio.status_read(&device)))})
 				system.wake_reader(&clients.completions)
 				fail("the device needs a reset")
 			}
@@ -203,13 +204,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			count := command.values[0]
 			switch {
 			case entropy_service.Command(command.kind) != .Read:
-				ring.push(&clients.completions, ring.Record{kind = u32(entropy_service.Status.Bad_Command), tag = command.tag, values = errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind))})
+				ring.push(&clients.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Operation_Unsupported), tag = command.tag, values = errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind))})
 				answered = true
 			case count == 0:
-				ring.push(&clients.completions, ring.Record{kind = u32(entropy_service.Status.Bad_Command), tag = command.tag, values = errors.ring_fail(command.kind, .Too_Small, .Bytes, 1, 0, 1)})
+				ring.push(&clients.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Argument_Refused), tag = command.tag, values = errors.ring_fail(command.kind, .Too_Small, .Bytes, 1, 0, 1)})
 				answered = true
 			case count > entropy_service.READ_BYTES_LIMIT:
-				ring.push(&clients.completions, ring.Record{kind = u32(entropy_service.Status.Bad_Command), tag = command.tag, values = errors.ring_fail(command.kind, .Too_Long, .Bytes, 1, i64(min(count, 1 << 62)), entropy_service.READ_BYTES_LIMIT)})
+				ring.push(&clients.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Argument_Refused), tag = command.tag, values = errors.ring_fail(command.kind, .Too_Long, .Bytes, 1, i64(min(count, 1 << 62)), entropy_service.READ_BYTES_LIMIT)})
 				answered = true
 			case:
 				in_flight, in_flight_tag, in_flight_count = true, command.tag, u32(count)

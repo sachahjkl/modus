@@ -47,7 +47,7 @@
 // - `Statistics`: the requests done, the blocks moved, the kernel entries
 //   and the interrupts of the service, for a measure.
 //
-// A refusal gives a status and the values of an
+// A refusal gives a call outcome and the values of an
 // [error record](term:error-record).
 //
 // **What a reader sees.** No window: the line `block: ok, <count> blocks of
@@ -65,6 +65,7 @@
 // docs/STORAGE.md.
 package block_service
 
+import "modus:contract/call_outcome"
 import "modus:contract/block"
 import "modus:contract/errors"
 import op "modus:contract/operation"
@@ -192,8 +193,8 @@ start :: proc "contextless" (queues: system.Handle) {
 	}
 }
 
-complete :: proc "contextless" (tag: u32, status: block.Status, values: [7]u64 = {}) {
-	ring.push(&clients.completions, ring.Record{kind = u32(status), tag = tag, values = values})
+complete :: proc "contextless" (tag: u32, outcome: call_outcome.Call_Outcome, values: [7]u64 = {}) {
+	ring.push(&clients.completions, ring.Record{kind = u32(outcome), tag = tag, values = values})
 }
 
 // room says if the completion queue keeps a place for one more completion,
@@ -204,21 +205,21 @@ room :: proc "contextless" () -> bool {
 
 // attach takes the data region of the client. The handle must have come
 // through the block ring. A refusal gives the values of its error record.
-attach :: proc "contextless" (handle: system.Handle) -> (block.Status, [7]u64) {
+attach :: proc "contextless" (handle: system.Handle) -> (call_outcome.Call_Outcome, [7]u64) {
 	ATTACH :: u32(block.Command.Attach)
 	if in_flight != 0 {
-		return .Bad_Command, errors.ring_fail(ATTACH, .Busy, .Requests, 0, i64(in_flight), 0)
+		return .Callee_Busy, errors.ring_fail(ATTACH, .Busy, .Requests, 0, i64(in_flight), 0)
 	}
-	if values, refused := system.region_refusal(handle, ring_memory, ATTACH); refused {
-		return .No_Region, values
+	if values, outcome, refused := system.region_refusal(handle, ring_memory, ATTACH); refused {
+		return outcome, values
 	}
 	physical, status := system.memory_physical(machine, handle)
 	if status != .Ok {
-		return .No_Region, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(status))
+		return .Argument_Refused, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(status))
 	}
 	pages, size_status := system.memory_size(handle)
 	if size_status != .Ok {
-		return .No_Region, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(size_status))
+		return .Argument_Refused, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(size_status))
 	}
 	if region_memory != 0 {
 		system.close(region_memory)
@@ -226,11 +227,11 @@ attach :: proc "contextless" (handle: system.Handle) -> (block.Status, [7]u64) {
 	region_memory = handle
 	region_physical = physical
 	region_size = pages * system.PAGE_SIZE
-	return .Ok, {}
+	return .Succeeded, {}
 }
 
-Outcome :: enum {
-	Done, // The command has its status: no request goes to the device.
+Request_Progress :: enum {
+	Done, // The command has its call outcome: no request goes to the device.
 	Sent, // The device has the request.
 	Full, // No place is free: the command waits for a completion.
 }
@@ -238,29 +239,29 @@ Outcome :: enum {
 // submit gives one request to the device. A refusal gives the values of
 // its error record. kind is the command of the record, which the loop read
 // through its border.
-submit :: proc "contextless" (command: ring.Record, kind: block.Command) -> (status: block.Status, outcome: Outcome, values: [7]u64) {
+submit :: proc "contextless" (command: ring.Record, kind: block.Command) -> (ended: call_outcome.Call_Outcome, progress: Request_Progress, values: [7]u64) {
 	first, count, offset := command.values[0], command.values[1], command.values[2]
 	if kind != .Flush {
 		if region_memory == 0 {
-			return .No_Region, .Done, errors.ring_fail(command.kind, .Absent, .Region)
+			return .Argument_Refused, .Done, errors.ring_fail(command.kind, .Absent, .Region)
 		}
 		if count == 0 {
-			return .Bad_Command, .Done, errors.ring_fail(command.kind, .Too_Small, .Blocks, 2, 0, 1)
+			return .Argument_Refused, .Done, errors.ring_fail(command.kind, .Too_Small, .Blocks, 2, 0, 1)
 		}
 		if count > REQUEST_BLOCKS_LIMIT {
-			return .Bad_Command, .Done, errors.ring_fail(command.kind, .Too_Long, .Blocks, 2, i64(count), REQUEST_BLOCKS_LIMIT)
+			return .Argument_Refused, .Done, errors.ring_fail(command.kind, .Too_Long, .Blocks, 2, i64(count), REQUEST_BLOCKS_LIMIT)
 		}
 		if offset % block.BLOCK_SIZE != 0 {
-			return .Bad_Command, .Done, errors.ring_fail(command.kind, .Bad_Value, .Bytes, 3, i64(offset))
+			return .Argument_Refused, .Done, errors.ring_fail(command.kind, .Bad_Value, .Bytes, 3, i64(offset))
 		}
 		if first >= disk_blocks || count > disk_blocks - first {
-			return .Out_Of_Range, .Done, errors.ring_fail(command.kind, .Out_Of_Range, .Blocks, 1, i64(min(first, 1 << 62) + count), i64(disk_blocks))
+			return .Argument_Refused, .Done, errors.ring_fail(command.kind, .Out_Of_Range, .Blocks, 1, i64(min(first, 1 << 62) + count), i64(disk_blocks))
 		}
 		if offset > region_size || count * block.BLOCK_SIZE > region_size - offset {
-			return .Out_Of_Range, .Done, errors.ring_fail(command.kind, .Out_Of_Range, .Bytes, 3, i64(min(offset, 1 << 62) + count * block.BLOCK_SIZE), i64(region_size))
+			return .Argument_Refused, .Done, errors.ring_fail(command.kind, .Out_Of_Range, .Bytes, 3, i64(min(offset, 1 << 62) + count * block.BLOCK_SIZE), i64(region_size))
 		}
 	} else if !has_flush {
-		return .Ok, .Done, {} // The device keeps no write in a cache.
+		return .Succeeded, .Done, {} // The device keeps no write in a cache.
 	}
 	slot: u32 = SLOT_CAPACITY
 	for candidate in 0 ..< slot_count {
@@ -270,7 +271,7 @@ submit :: proc "contextless" (command: ring.Record, kind: block.Command) -> (sta
 		}
 	}
 	if slot == SLOT_CAPACITY {
-		return .Ok, .Full, {}
+		return .Succeeded, .Full, {}
 	}
 	head := slot * 3
 	descriptors := queue.descriptors
@@ -284,14 +285,14 @@ submit :: proc "contextless" (command: ring.Record, kind: block.Command) -> (sta
 		descriptors[head].next = u16(head + 2)
 		count = 0
 	case .None, .Attach, .Info, .Statistics:
-		return .Bad_Command, .Done, errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind))
+		return .Operation_Unsupported, .Done, errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind))
 	}
 	statuses[slot] = 0xFF
 	slots[slot] = {tag = command.tag, blocks = count, busy = true, command = kind}
 	deadlines[slot] = system.answer_deadline(system.time())
 	in_flight += 1
 	virtio.give(&queue, u16(head))
-	return .Ok, .Sent, {}
+	return .Succeeded, .Sent, {}
 }
 
 // harvest gives a completion to the client for each request that the device used.
@@ -301,15 +302,15 @@ harvest :: proc "contextless" () -> (count: int) {
 		if slot >= slot_count || !slots[slot].busy {
 			continue
 		}
-		status := block.Status.Ok
+		status := call_outcome.Call_Outcome.Succeeded
 		values: [7]u64
 		switch statuses[slot] {
 		case 0:
 		case 2:
-			status = .Unsupported
+			status = .Operation_Unsupported
 			values = errors.ring_fail(u32(slots[slot].command), .Unsupported, .None, 0, i64(slots[slot].command))
 		case:
-			status = .Device_Error
+			status = block.device_failure_outcome(slots[slot].command)
 			values = errors.ring_fail(u32(slots[slot].command), .Device, .None, 0, 0, 0, i64(statuses[slot]))
 		}
 		complete(slots[slot].tag, status, values)
@@ -330,7 +331,7 @@ Device_Stop :: enum {
 }
 
 // stop_with_each_request_failed completes each request in flight with
-// Device_Error and the record No_Answer of the device, wakes the client,
+// the outcome of a failed device and the record No_Answer of the device, wakes the client,
 // writes the line of the cause and stops the service. Both causes give the
 // same record: a device that needs a reset will answer none of them, and
 // the client then makes the disk silent with one line. A request is never
@@ -344,7 +345,7 @@ stop_with_each_request_failed :: proc "contextless" (cause: Device_Stop) -> ! {
 		}
 		// The completion queue keeps a place for each request in flight
 		// (room), so no completion is lost.
-		complete(slots[slot].tag, .Device_Error, block.no_answer_values(slots[slot].command))
+		complete(slots[slot].tag, block.device_failure_outcome(slots[slot].command), block.no_answer_values(slots[slot].command))
 	}
 	system.wake_reader(&clients.completions)
 	switch cause {
@@ -440,11 +441,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					break
 				}
 			}
-			result := block.Status.Ok
+			result := call_outcome.Call_Outcome.Succeeded
 			values: [7]u64
 			kind, kind_ok := block.command_of_ring_word(command.kind)
 			if !kind_ok {
-				complete(command.tag, .Bad_Command, errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind)))
+				complete(command.tag, .Operation_Unsupported, errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind)))
 				changed += 1
 				continue
 			}
@@ -460,12 +461,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				interrupts += results[0]
 				values = {0 = requests_done, 1 = blocks_moved, 2 = system.kernel_entries(), 3 = interrupts}
 			case .Read, .Write, .Flush:
-				outcome: Outcome
-				result, outcome, values = submit(command, kind)
-				if outcome == .Sent {
+				progress: Request_Progress
+				result, progress, values = submit(command, kind)
+				if progress == .Sent {
 					continue
 				}
-				if outcome == .Full {
+				if progress == .Full {
 					waiting, has_waiting = command, true
 				}
 			}

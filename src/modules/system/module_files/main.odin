@@ -168,7 +168,7 @@ network_step :: proc "contextless" () -> (deadline: u64, worked: bool) {
 	for record in system.receive(&endpoint.completions) {
 		switch {
 		case record.tag < RECEIVE_PLACES:
-			if datagram.Status(record.kind) == .Ok && count < len(incoming) {
+			if record.kind == u32(call_outcome.Call_Outcome.Succeeded) && count < len(incoming) {
 				incoming[count] = {remote_address = u32(record.values[2]), segment = place_bytes(record.tag)[:min(record.values[1], PLACE_SIZE)]}
 				used[count] = record.tag
 				count += 1

@@ -105,7 +105,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	index, loaded := system.module_space_load(&space, file, error)
 	if !loaded {
 		load_failure_log(error)
-		stage, _ := module.load_stage_of_word(error.stage)
+		// The loader of this process wrote the stage; a word that names no
+		// stage gives the record of None, which the border of the caller
+		// refuses, so the caller ends the call host.
+		stage, known := module.load_stage_of_word(error.stage)
+		if !known {
+			stage = .None
+		}
 		system.send(&queue.completions, isolated.load_failed_record(stage))
 		system.stop(.Failed)
 	}

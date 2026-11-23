@@ -500,17 +500,19 @@ bridge_request_state_name :: proc "contextless" (state: Bridge_Request_State) ->
 
 // bridge_refusal_outcome gives the call outcome of a refusal of the bridge:
 // the one place of this map. A permission, a grant or a scope that the
-// client lacks is Grant_Or_Right_Missing; a request that breaks a rule is
-// Argument_Refused; a full act log is Budget_Or_Capacity_Exhausted.
+// client lacks, and permissions that the policy of the client does not
+// allow, are Grant_Or_Right_Missing; a request that breaks a rule is
+// Argument_Refused; an act log that the bridge needs and cannot write is
+// Callee_Unavailable.
 bridge_refusal_outcome :: proc "contextless" (refusal: Bridge_Refusal) -> call_outcome.Call_Outcome {
 	switch refusal {
 	case .None:
 		return .Succeeded
-	case .Permission_Denied, .Client_Key_Missing, .Wide_Grant_Required, .Wide_Grant_Not_Active, .Wide_Grant_Expired, .Window_Not_In_Scope, .Principal_Approval_Required:
+	case .Permission_Denied, .Client_Key_Missing, .Wide_Grant_Required, .Wide_Grant_Not_Active, .Wide_Grant_Expired, .Window_Not_In_Scope, .Principal_Approval_Required, .Invalid_Permissions:
 		return .Grant_Or_Right_Missing
 	case .Act_Log_Required:
-		return .Budget_Or_Capacity_Exhausted
-	case .Bad_Header, .Truncated, .Trailing_Bytes, .Buffer_Too_Small, .Unknown_Command, .Unknown_State, .Invalid_Permissions, .Invalid_Field, .Payload_Too_Large, .Invalid_Text:
+		return .Callee_Unavailable
+	case .Bad_Header, .Truncated, .Trailing_Bytes, .Buffer_Too_Small, .Unknown_Command, .Unknown_State, .Invalid_Field, .Payload_Too_Large, .Invalid_Text:
 		return .Argument_Refused
 	}
 	return .Argument_Refused
@@ -653,8 +655,12 @@ encode_response_frame :: proc "contextless" (frame: ^Bridge_Response_Frame, outp
 	if frame == nil || frame.state == .None {
 		return 0, .Unknown_State
 	}
-	// Only an ended request has an outcome.
+	// Only an ended request has an outcome, and a request that the bridge
+	// refused did not succeed.
 	if frame.state == .Awaiting_Principal_Approval && frame.outcome != .Succeeded {
+		return 0, .Invalid_Field
+	}
+	if frame.state == .Ended && frame.outcome == .Succeeded && frame.refusal != .None {
 		return 0, .Invalid_Field
 	}
 	if frame.request_id == 0 {
@@ -726,6 +732,9 @@ decode_response_frame :: proc "contextless" (input: []u8) -> (frame: Bridge_Resp
 	// an outcome of a request that waits, are refused.
 	outcome, unreadable := call_outcome.outcome_of_word(u64(byte_order.read_u32_little_endian(input, 68)))
 	if unreadable.kind != 0 || state == .Awaiting_Principal_Approval && outcome != .Succeeded {
+		return {}, .Bad_Header
+	}
+	if state == .Ended && outcome == .Succeeded && decoded_refusal != .None {
 		return {}, .Bad_Header
 	}
 	if u64(payload_length) > MAX_BRIDGE_PAYLOAD_BYTES {

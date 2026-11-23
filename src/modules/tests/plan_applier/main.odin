@@ -201,10 +201,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wrong("no root ring; the status word", u64(ring_status))
 	}
 	// The role name reaches the holder of Plans in force.
-	connected: system.Status
+	connected: call_outcome.Call_Outcome
 	plans.connection, connected = system.service_connection(&requests, 1, role_contract.role_properties(.Plans).name)
-	if connected != .Ok {
-		wrong("the root service gave no connection to the holder of Plans; the status word", u64(connected))
+	if connected != .Succeeded {
+		wrong("the root service gave no connection to the holder of Plans; the outcome word", u64(connected))
 	}
 	if blake3.Hash(plans.connection.module_hash) != blake3.hash(plans.file) {
 		wrong("the holder of Plans is not the module plans of the boot image; the size of its file", u64(len(plans.file)))

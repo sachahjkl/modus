@@ -298,11 +298,8 @@ attach :: proc "c" (process: ^string, result: ^[]Attached, error: ^errors.Error_
 		// closed and the root service is told (root_completion_take).
 		return call_outcome.fail(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
-	if system.Status(completion.kind) != .Ok {
-		if error != nil {
-			error^ = errors.completion_record(completion.values)
-		}
-		return outcome_of_status_word(completion.kind), 0
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+		return root_refusal_taken(error, completion), 0
 	}
 	// The handle is a number from another process: it must be a process
 	// handle with Debug that came through the ring to the root service.
@@ -1007,9 +1004,11 @@ break_set :: proc "contextless" (kind: op.Thread_Breakpoint_Kind, address: u64, 
 	item^ = {kind = kind, address = address, length = length}
 	item.place_count = len(system.format(item.place[:], place))
 	if status := breaks_apply(); status != .Ok {
+		// The rollback writes the breakpoints of before: when it holds,
+		// nothing changed; when it fails too, some threads can keep the
+		// new breakpoint, and the rows of break_list say which are set.
 		item^ = {}
-		breaks_apply()
-		return session_refused(error, status), 0
+		return call_outcome.outcome_passed_on(session_refused(error, status), breaks_apply() != .Ok), 0
 	}
 	return .Succeeded, break_rows(result)
 }
@@ -1172,13 +1171,18 @@ break_remove :: proc "c" (number: i64, result: ^[]Break_Row, error: ^errors.Erro
 	if number < 0 || number >= BREAK_CAPACITY || session.breaks[number].kind == .None {
 		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Breakpoints, 1)
 	}
+	removed, step_over := session.breaks[number], session.step_over
 	// The breakpoint of a step over a call: that step ends with it.
 	if session.step_over.active && session.step_over.place == int(number) {
 		session.step_over = {}
 	}
 	session.breaks[number] = {}
 	if status := breaks_apply(); status != .Ok {
-		return session_refused(error, status), 0
+		// The breakpoint comes back: when its rollback holds, nothing
+		// changed; when it fails too, some threads can lack the breakpoint,
+		// which the rows of break_list still show.
+		session.breaks[number], session.step_over = removed, step_over
+		return call_outcome.outcome_passed_on(session_refused(error, status), breaks_apply() != .Ok), 0
 	}
 	return .Succeeded, break_rows(result)
 }
@@ -1815,11 +1819,8 @@ record :: proc "c" (process: ^string, result: ^[]Record_Row, error: ^errors.Erro
 		// stops (root_completion_take).
 		return call_outcome.fail(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
-	if system.Status(completion.kind) != .Ok {
-		if error != nil {
-			error^ = errors.completion_record(completion.values)
-		}
-		return outcome_of_status_word(completion.kind), 0
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+		return root_refusal_taken(error, completion), 0
 	}
 	if failure := held_session_begin(name, caller, completion.values, error); failure != .Succeeded {
 		return failure, 0
@@ -1834,11 +1835,8 @@ record :: proc "c" (process: ^string, result: ^[]Record_Row, error: ^errors.Erro
 	if !released_answered {
 		return call_outcome.fail(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
-	if system.Status(released.kind) != .Ok {
-		if error != nil {
-			error^ = errors.completion_record(released.values)
-		}
-		return outcome_of_status_word(released.kind), 0
+	if call_outcome.Call_Outcome(released.kind) != .Succeeded {
+		return root_refusal_taken(error, released), 0
 	}
 	return record_rows(result, error)
 }

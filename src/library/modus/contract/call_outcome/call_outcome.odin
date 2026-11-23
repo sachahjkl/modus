@@ -292,6 +292,48 @@ outcome_of_word :: proc "contextless" (word: u64) -> (outcome: Call_Outcome, rec
 	return .Answer_Unreadable, errors.error_make(.Bad_Value, .None, 0, cast(i64)word, i64(max(Call_Outcome)))
 }
 
+// record_explained gives a record that the outcome explains: the record
+// itself when the outcome holds its kind (KINDS_OF), else the same record
+// with the kind Refused, which explains each outcome. A code that passes on
+// the record of another party under its own outcome calls it, so a reader
+// never meets a pair that the contract does not have.
+record_explained :: proc "contextless" (outcome: Call_Outcome, record: errors.Error_Record) -> errors.Error_Record {
+	kind, known := errors.kind_of_word(record.kind)
+	if known && kind in KINDS_OF[outcome] {
+		return record
+	}
+	explained := record
+	explained.kind = i64(errors.Kind.Refused)
+	return explained
+}
+
+// completion_outcome is the one border of the outcome of a completion of a
+// ring, which another process writes (src/md/api/call_outcome.md, "The
+// borders of the rings"): the outcome of its kind word, and with any other
+// outcome than Succeeded the error record of its seven values. A word that
+// names no outcome, and a failure whose values are no record (a kind that
+// names no member or None, a unit that names no member), give
+// Answer_Unreadable with a record that says what was unreadable. With
+// Succeeded the values are the results, which the reader reads with the
+// contract of its ring.
+//
+// Example: `outcome, record := call_outcome.completion_outcome(completion.kind, completion.values)`.
+completion_outcome :: proc "contextless" (kind: u32, values: [7]u64) -> (outcome: Call_Outcome, record: errors.Error_Record) {
+	unreadable: errors.Error_Record
+	outcome, unreadable = outcome_of_word(u64(kind))
+	if unreadable.kind != 0 {
+		return .Answer_Unreadable, unreadable
+	}
+	if outcome == .Succeeded {
+		return .Succeeded, {}
+	}
+	failure, readable := errors.refusal_record_of_values(values)
+	if !readable {
+		return .Answer_Unreadable, errors.error_make(.Malformed, .None, 0, i64(values[0]), 0, i64(kind))
+	}
+	return outcome, failure
+}
+
 // fail writes the error record of a call that failed, and gives the pair of
 // an export that can fail: the outcome, and the value 0. error can be nil:
 // the caller asked for no record. It is the last line of each failing path

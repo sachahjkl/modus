@@ -21,6 +21,7 @@
 // Failed after a WRONG line.
 package output_measure
 
+import "modus:contract/call_outcome"
 import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
@@ -52,7 +53,7 @@ wrong :: proc "contextless" (text: string, value: u64) -> ! {
 }
 
 @(private = "file")
-wrong_refused :: proc "contextless" (text: string, status: system.Status, answer: [7]u64) -> ! {
+wrong_refused :: proc "contextless" (text: string, status: call_outcome.Call_Outcome, answer: [7]u64) -> ! {
 	system.log_fact(.Error, Wrong_Refused{status = u64(status), error_kind = answer[0], error_unit = answer[1], error_operation = answer[2], error_argument = answer[3], error_value = answer[4], error_limit = answer[5], error_found = answer[6]}, text)
 	system.stop(.Failed)
 }
@@ -60,7 +61,7 @@ wrong_refused :: proc "contextless" (text: string, status: system.Status, answer
 // root_call sends one command on the root ring and waits for its
 // completion, within the hang bound.
 @(private = "file")
-root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64) -> (status: system.Status, answer: [7]u64) {
+root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64) -> (outcome: call_outcome.Call_Outcome, answer: [7]u64) {
 	tag := next_tag
 	next_tag += 1
 	if !system.send(&requests.commands, ring.Record{kind = u32(command), tag = tag, values = values}) {
@@ -73,9 +74,9 @@ root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64
 			if record.tag != tag {
 				continue
 			}
-			read, refusal := system.status_of_word(record.kind)
-			if refusal.kind != 0 {
-				wrong("the root service answered a status word that names no status", u64(record.kind))
+			read, _ := call_outcome.completion_outcome(record.kind, record.values)
+			if read == .Answer_Unreadable {
+				wrong("the root service answered a completion that this process cannot read; the outcome word", u64(record.kind))
 			}
 			return read, record.values
 		}
@@ -88,7 +89,7 @@ root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64
 }
 
 @(private = "file")
-start_listed :: proc "contextless" (name: string, listed: bool) -> (system.Status, [7]u64) {
+start_listed :: proc "contextless" (name: string, listed: bool) -> (call_outcome.Call_Outcome, [7]u64) {
 	packed := system.name_pack(name)
 	list := listed ? root_ring.Start_Wiring_List.In_The_List_Page : root_ring.Start_Wiring_List.None
 	return root_call(.Start, {packed[0], packed[1], packed[2], packed[3], u64(list), u64(root_ring.Start_Answer.Process_Handle), 0})
@@ -97,7 +98,7 @@ start_listed :: proc "contextless" (name: string, listed: bool) -> (system.Statu
 @(private = "file")
 list_page_take :: proc "contextless" () {
 	status, answer := root_call(.Wire, {0 = u64(root_ring.Wire_Step.List_Page)})
-	if status != .Ok || answer[0] == 0 {
+	if status != .Succeeded || answer[0] == 0 {
 		wrong_refused("the list page was refused with the status", status, answer)
 	}
 	page := system.Handle(answer[0])
@@ -150,7 +151,7 @@ measure_run :: proc "contextless" (count: int) {
 	handles: [output.WIRINGS_OF_AN_ASKER_MOST]u32
 	for index in 0 ..< count {
 		status, answer := start_listed("output_measure_reader", false)
-		if status != .Ok || answer[0] == 0 {
+		if status != .Succeeded || answer[0] == 0 {
 			wrong_refused("the start of a reader gave the status", status, answer)
 		}
 		processes[index] = system.Handle(answer[0])
@@ -168,7 +169,7 @@ measure_run :: proc "contextless" (count: int) {
 		wrong("the list does not fit the list page; rows:", u64(count))
 	}
 	status, answer := start_listed("output_measure_writer", true)
-	if status != .Ok || answer[0] == 0 {
+	if status != .Succeeded || answer[0] == 0 {
 		wrong_refused("the start of the writer with its list gave the status", status, answer)
 	}
 	processes[count] = system.Handle(answer[0])
@@ -193,7 +194,7 @@ LOG_RING_CAPACITY :: 1024
 @(private = "file")
 measure_log_run :: proc "contextless" () {
 	status, answer := start_listed("output_measure_reader", false)
-	if status != .Ok || answer[0] == 0 {
+	if status != .Succeeded || answer[0] == 0 {
 		wrong_refused("the start of a reader gave the status", status, answer)
 	}
 	processes: [2]system.Handle
@@ -214,7 +215,7 @@ measure_log_run :: proc "contextless" () {
 		wrong("the list does not fit the list page; rows:", u64(len(rows)))
 	}
 	status, answer = start_listed("output_measure_writer", true)
-	if status != .Ok || answer[0] == 0 || answer[1] == 0 {
+	if status != .Succeeded || answer[0] == 0 || answer[1] == 0 {
 		wrong_refused("the start of the writer with its log wired gave the status", status, answer)
 	}
 	processes[1] = system.Handle(answer[0])
@@ -258,7 +259,7 @@ wirings_ended_wait :: proc "contextless" () {
 	deadline := hang_deadline()
 	for {
 		status, answer := root_call(.Grants, {packed[0], packed[1], packed[2], packed[3], 0, 0, 0})
-		if status != .Ok {
+		if status != .Succeeded {
 			wrong_refused("the Grants of this process gave the status", status, answer)
 		}
 		if .Wirings not_in transmute(system.Root_Grants)answer[0] {

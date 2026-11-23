@@ -284,6 +284,7 @@ Service_Connection :: struct {
 	connect_tag:   u32, // Connecting and Giving_Up: the tag of the Connect.
 	deadline:      u64, // Connecting, Readying and Giving_Up: the hang bound of the state.
 	refusal:       errors.Error_Record, // Refused and Giving_Up: why.
+	refused:       call_outcome.Call_Outcome, // Refused and Giving_Up: the outcome that the place of the refusal named.
 	name:          [32]u8,
 	row:           int, // The row of the client table that the connection is for.
 	serial:        u64, // The serial of that row: the grant that the connection carries.
@@ -859,29 +860,13 @@ recent_add :: proc "contextless" (service: string, export: u32, answer: remote.A
 	return item
 }
 
-// connection_refusal_outcome gives the relay outcome of a connection to a
-// service that did not come, from the kind of its record: the one place of
-// this map.
-connection_refusal_outcome :: proc "contextless" (refusal: errors.Error_Record) -> call_outcome.Call_Outcome {
-	kind, _ := errors.kind_of_word(refusal.kind)
-	#partial switch kind {
-	case .Absent:
-		return .Nothing_Has_That_Name
-	case .No_Grant:
-		return .Grant_Or_Right_Missing
-	case .Full, .Busy:
-		return .Callee_Busy
-	}
-	return .Callee_Unavailable
-}
-
 // connection_find gives the connection to a service for the row of the
 // client of a call. With none, it asks the root service for one, which
 // gives it the principal of the row, and gives pending: the loop moves the
 // connection on (connections_progress), and the call waits. A connection
 // that did not become ready gives its refusal to the first call that finds
 // it.
-connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> (connection: ^Service_Connection, error: errors.Error_Record, pending: bool) {
+connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> (connection: ^Service_Connection, refused: call_outcome.Call_Outcome, error: errors.Error_Record, pending: bool) {
 	free: ^Service_Connection
 	for &item in service_connections {
 		if item.state == .Free {
@@ -893,26 +878,27 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 		}
 		switch item.state {
 		case .Ready:
-			return &item, {}, false
+			return &item, .Succeeded, {}, false
 		case .Connecting, .Readying:
-			return nil, {}, true
+			return nil, .Succeeded, {}, true
 		case .Refused:
-			refusal := item.refusal
+			kept := item
 			item = {}
-			return nil, refusal, false
+			return nil, kept.refused, kept.refusal, false
 		case .Giving_Up:
-			return nil, item.refusal, false
+			return nil, item.refused, item.refusal, false
 		case .Free:
 		}
 	}
+	// The table of the connections frees a place when a connection ends.
 	if free == nil {
-		return nil, errors.error_make(.Full, .None, remote.FIELD_SERVICE, 0, SERVICE_CONNECTION_CAPACITY), false
+		return nil, .Callee_Busy, errors.error_make(.Full, .None, remote.FIELD_SERVICE, 0, SERVICE_CONNECTION_CAPACITY), false
 	}
 	packed := system.name_pack(name)
 	request_tag += 1
 	// values[4] names the row from 1, as the root service takes it.
 	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(client.row + 1), 5 = client.serial}}) {
-		return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(system.Status.No_Slot)), false
+		return nil, .Callee_Busy, errors.error_make(.Busy, .Requests, remote.FIELD_SERVICE), false
 	}
 	free^ = {
 		state       = .Connecting,
@@ -923,7 +909,7 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 		principal   = client.principal,
 	}
 	copy(free.name[:len(free.name) - 1], name)
-	return nil, {}, true
+	return nil, .Succeeded, {}, true
 }
 
 // connection_answer reads the answer of the root service to the Connect of
@@ -931,33 +917,13 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 // then waits for the ready completion of the service.
 @(private = "file")
 connection_answer :: proc "contextless" (connection: ^Service_Connection, record: ring.Record, now: u64) {
-	// The root service writes the word: a word that names no status is the
-	// refusal of status_of_word, and its record.
-	status, status_refusal := system.status_of_word(record.kind)
-	refusal: errors.Error_Record
-	if status_refusal.kind != 0 {
-		refusal = status_refusal
+	// The root service named the outcome and the record of a refusal where
+	// it refused; the border names an answer that this process cannot
+	// read. The field at fault is the service that the call names.
+	outcome, refusal := call_outcome.completion_outcome(record.kind, record.values)
+	if outcome != .Succeeded {
 		refusal.argument = remote.FIELD_SERVICE
-	} else {
-		switch status {
-		case .Ok:
-		case .Bad_Handle:
-			// No service runs with this name.
-			refusal = errors.error_make(.Absent, .None, remote.FIELD_SERVICE)
-		case .No_Right:
-			refusal = errors.error_make(.No_Grant, .Connection, remote.FIELD_SERVICE)
-		case .Bad_State:
-			// The root service wrote why: the grant of the row ended, or the
-			// session of its principal is locked. The field at fault is the
-			// service that the call names.
-			refusal = errors.completion_record(record.values)
-			refusal.argument = remote.FIELD_SERVICE
-		case .Bad_Operation, .Bad_Address, .No_Memory, .No_Slot, .No_Budget:
-			refusal = errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(status))
-		}
-	}
-	if refusal.kind != 0 {
-		connection.state, connection.refusal = .Refused, refusal
+		connection.state, connection.refused, connection.refusal = .Refused, outcome, refusal
 		return
 	}
 	connection.process = system.Handle(record.values[0])
@@ -974,7 +940,7 @@ connection_answer :: proc "contextless" (connection: ^Service_Connection, record
 		}
 		refused := ring_status != .Ok ? ring_status : map_status != .Ok ? map_status : size_status
 		// Root returned Ok for Connect, so root holds the connection until told.
-		connection_refuse(connection, true, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(refused)))
+		connection_refuse(connection, true, system.outcome_of_own_status(refused), errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(refused)))
 		return
 	}
 	connection.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]
@@ -986,10 +952,10 @@ connection_answer :: proc "contextless" (connection: ^Service_Connection, record
 // not become ready, and keeps its place with the refusal for the first call
 // that waits for it.
 @(private = "file")
-connection_refuse :: proc "contextless" (connection: ^Service_Connection, tell: bool, refusal: errors.Error_Record) {
+connection_refuse :: proc "contextless" (connection: ^Service_Connection, tell: bool, refused: call_outcome.Call_Outcome, refusal: errors.Error_Record) {
 	kept := connection^
 	connection_end(connection, tell)
-	connection^ = {state = .Refused, refusal = refusal, name = kept.name, row = kept.row, serial = kept.serial, principal = kept.principal}
+	connection^ = {state = .Refused, refused = refused, refusal = refusal, name = kept.name, row = kept.row, serial = kept.serial, principal = kept.principal}
 }
 
 // connections_progress moves each connection that waits: the answers of
@@ -1026,7 +992,7 @@ connections_progress :: proc "contextless" (now: u64) -> (changed: bool) {
 				request_tag += 1
 				system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Disconnect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(connection.row + 1)}})
 				connection.state = .Giving_Up
-				connection.refusal = errors.error_make(.No_Answer, .Milliseconds, remote.FIELD_SERVICE, 0, system.ANSWER_BOUND_MILLISECONDS)
+				connection.refused, connection.refusal = .Callee_Unavailable, errors.error_make(.No_Answer, .Milliseconds, remote.FIELD_SERVICE, 0, system.ANSWER_BOUND_MILLISECONDS)
 				connection.deadline = system.answer_deadline(now)
 				changed = true
 			}
@@ -1040,7 +1006,7 @@ connections_progress :: proc "contextless" (now: u64) -> (changed: bool) {
 				connection.state = .Ready
 				system.log_fact(.Info, Service_Connected{principal = connection.principal, service = value_kinds.module_name_field(remote.name_text(&connection.name))})
 			} else {
-				connection_refuse(&connection, true, errors.error_make(.No_Answer, .Milliseconds, remote.FIELD_SERVICE, 0, system.ANSWER_BOUND_MILLISECONDS))
+				connection_refuse(&connection, true, .Callee_Unavailable, errors.error_make(.No_Answer, .Milliseconds, remote.FIELD_SERVICE, 0, system.ANSWER_BOUND_MILLISECONDS))
 			}
 			changed = true
 		case .Giving_Up:
@@ -1236,18 +1202,20 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 		return refuse(buffer, .Argument_Refused, error)
 	}
 	service := remote.name_text(&request.service)
-	connection, connection_error, pending := connection_find(service, client)
+	connection, refused_outcome, connection_error, pending := connection_find(service, client)
 	if pending {
 		return SERVE_PENDING
 	}
 	if connection == nil {
-		return refuse(buffer, connection_refusal_outcome(connection_error), connection_error, service)
+		return refuse(buffer, refused_outcome, connection_error, service)
 	}
 	if connection.hash != request.hash {
 		return refuse(buffer, .Argument_Refused, errors.error_make(.Bad_Value, .None, remote.FIELD_HASH), service, connection.hash)
 	}
 	if u64(len(connection.region)) < remote.REGION_SIZE {
-		return refuse(buffer, .Argument_Refused, errors.error_make(.Too_Small, .Bytes, remote.FIELD_SERVICE, i64(len(connection.region)), remote.REGION_SIZE), service, connection.hash)
+		// The region of the connection of this relay holds less than a call
+		// region: a capacity of the relay, not a fault of the request.
+		return refuse(buffer, .Budget_Or_Capacity_Exhausted, errors.error_make(.Over_Limit, .Bytes, remote.FIELD_SERVICE, remote.REGION_SIZE, i64(len(connection.region))), service, connection.hash)
 	}
 	completion, path_outcome, call_error, called := isolated_call_make(connection, request, arguments)
 	connection.count += 1
@@ -1270,8 +1238,9 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 	} else {
 		answer.error = record
 		counts.failed += 1
-		// The bytes of a call that the export failed are its error details.
-		if called && request.details_end != 0 {
+		// The bytes of a call that the export failed are its error details;
+		// an answer that the relay could not read carries none.
+		if called && request.details_end != 0 && outcome != .Answer_Unreadable {
 			details, details_count := remote.details_bytes(request, connection.region[:remote.REGION_SIZE])
 			answer.details = u32(min(details_count, u64(max(u32))))
 			result = details

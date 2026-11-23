@@ -103,8 +103,8 @@ display_connect :: proc "contextless" () -> bool {
 	if len(display_image) == 0 || !root_requests_open() {
 		return false
 	}
-	connection, status := system.service_connection(&root_requests.ring, root_requests_tag_next(), role_contract.role_properties(.Display).name)
-	if status != .Ok {
+	connection, outcome := system.service_connection(&root_requests.ring, root_requests_tag_next(), role_contract.role_properties(.Display).name)
+	if outcome != .Succeeded {
 		return false
 	}
 	entry := system.image_entry_of(display_image, connection.module_hash)

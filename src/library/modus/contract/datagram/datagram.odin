@@ -74,8 +74,8 @@
 // arrives: the process gives the places before (the caller supplies the
 // memory: the service allocates none for it), and the
 // network service drops a datagram when no place waits (Statistics counts
-// it). A completion record has the tag of its command, and a Status as its
-// kind. A refused request has the detail of the refusal in the values of its
+// it). A completion record has the tag of its command, and the word of its
+// call outcome as its kind (modus:contract/call_outcome). A refused request has the detail of the refusal in the values of its
 // completion: the request, and the limit or the grant that refused it. No
 // global error state exists.
 //
@@ -112,7 +112,7 @@ SERVICE_CONTROL :: 12
 // A command of a process to its endpoint, as the kind of a command record of
 // the datagram ring.
 Command :: enum u32 {
-	None       = 0, // Not a command: Bad_Command.
+	None       = 0, // Not a command: Operation_Unsupported.
 	// The completion: values[0] the local address, values[1] the local
 	// port (a client grant of TCP: the first of PORT_BLOCK ports), values[2]
 	// the address of the gateway, values[3] the length of
@@ -183,8 +183,8 @@ Command :: enum u32 {
 	// A UDP listen grant: values[0], values[1]: the address and the port of
 	// an admitted remote that proved its address to the process (a QUIC
 	// server: a token of its Retry). Until then, the network service sends
-	// to that remote at most 3 times the bytes that came from it (status
-	// Amplification). A process that validates each remote removes that
+	// to that remote at most 3 times the bytes that came from it
+	// (Budget_Or_Capacity_Exhausted, kind Over_Limit). A process that validates each remote removes that
 	// limit for the remotes that sent to it; it still reaches no address
 	// that did not send it a datagram, and a remote with no datagram for
 	// 120 s loses its place. The completion: values[0] 1 if the remote was
@@ -192,50 +192,67 @@ Command :: enum u32 {
 	Validate   = 9,
 }
 
-// The status of a request: the kind of its completion record. When it is
-// not Ok, the values of the completion are an error record
-// (errors.completion_record), with the kind and the values below.
-Status :: enum u32 {
-	Ok           = 0, // The request is done: the values are its results.
-	Bad_Command  = 1, // Unsupported: the command is not known, or not for this grant; Too_Small: a segment of fewer bytes than SEGMENT_LEAST, or a datagram of fewer bytes than DATAGRAM_LEAST; Bad_Value, unit Bytes: the length field of the UDP header of a Send is not its count of bytes (value: the field; limit: the count).
-	Out_Of_Range = 2, // Out_Of_Range, unit Bytes: a byte is not in the region. value: the end of the place and its count; limit: the size of the region.
-	No_Region    = 3, // Absent, unit Region: the endpoint has no datagram region. Refused, unit Region: the frame service refused the frame of a Send (found: its frame status), as when it does not hold the region of the endpoint.
-	// No_Grant, unit Endpoint: the remote is not the remote of the grant.
-	// value: the remote that the request named (errors.endpoint_pack);
-	// limit: the remote of the grant, 0 when it names none (revoked, or a
-	// listen grant with no admitted remote); found: the source port of a
-	// datagram or a segment, when it is not a local port of the endpoint.
-	Not_Granted  = 4,
-	Too_Large    = 5, // Too_Long, unit Bytes. value: the count of bytes; limit: the most.
-	No_Answer    = 6, // No_Answer: value the address, limit the milliseconds waited, found what did not answer.
-	Link_Down    = 7, // Link_Down.
-	Busy         = 8, // Busy, unit Requests: too many requests of this kind in flight. limit: the most.
-	// Over_Limit, unit Bytes: a Send of a UDP listen grant to a remote that
-	// is not validated would pass 3 times the bytes that came from it.
-	// value: the bytes that the remote would have received; limit: 3 times
-	// the bytes that came from it. Both count the data, with no UDP header.
-	Amplification = 9,
-}
+// The kind of a completion record is the word of its call outcome
+// (call_outcome.completion_outcome is its border). With Succeeded the
+// values are the results of the request; with any other outcome they are
+// an error record (errors.completion_record):
+//
+//   Operation_Unsupported  Unsupported: the command is not known, or not
+//                          for this grant.
+//   Argument_Refused       Too_Small: a segment of fewer bytes than
+//                          SEGMENT_LEAST, or a datagram of fewer bytes than
+//                          DATAGRAM_LEAST. Bad_Value, unit Bytes: the length
+//                          field of the UDP header of a Send is not its
+//                          count of bytes (value: the field; limit: the
+//                          count). Out_Of_Range, unit Bytes: a byte is not in
+//                          the region (value: the end of the place and its
+//                          count; limit: the size of the region). Too_Long,
+//                          unit Bytes (value: the count; limit: the most).
+//                          Absent, unit Region: the endpoint has no datagram
+//                          region.
+//   Grant_Or_Right_Missing No_Grant, unit Endpoint: the remote is not the
+//                          remote of the grant. value: the remote that the
+//                          request named (errors.endpoint_pack); limit: the
+//                          remote of the grant, 0 when it names none
+//                          (revoked, or a listen grant with no admitted
+//                          remote); found: the source port of a datagram or
+//                          a segment, when it is not a local port of the
+//                          endpoint.
+//   Callee_Busy            Busy, unit Requests: too many requests of this
+//                          kind in flight (limit: the most).
+//   Budget_Or_Capacity_Exhausted  Over_Limit, unit Bytes: a Send of a UDP
+//                          listen grant to a remote that is not validated
+//                          would pass 3 times the bytes that came from it.
+//                          value: the bytes that the remote would have
+//                          received; limit: 3 times the bytes that came from
+//                          it. Both count the data, with no UDP header.
+//   Callee_Unavailable     Link_Down. No_Answer: value the address, limit
+//                          the milliseconds waited, found what did not
+//                          answer. Refused, unit Region: the frame service
+//                          refused the frame of a Send (found: its outcome
+//                          word).
 
 // The command of the control ring, from the root service to the network
-// service. The completion has the tag of the command and a Status.
+// service. The completion has the tag of the command and the word of its
+// call outcome.
 Control :: enum u32 {
 	None            = 0, // Not a command.
 	// values[0], values[1]: the datagram ring and the datagram region, as
 	// the network service names them (the root service gives them through
 	// the memory of the control ring). values[2]: the grant (grant_pack),
 	// with or without the right Inspect. A grant word with a bit outside
-	// GRANT_KNOWN_BITS: Bad_Command, Bad_Value of the argument 3, value:
+	// GRANT_KNOWN_BITS: Argument_Refused, Bad_Value of the argument 3, value:
 	// the unknown bits shifted down by GRANT_KNOWN_BIT_COUNT, limit 0.
 	// values[3..6]: the name of the process, 32 bytes. The completion:
 	// values[0] the local port of the endpoint.
 	Endpoint_Add    = 1,
 	// values[0]: the datagram ring. values[1]: the new grant (grant_pack);
 	// 0 ends the grant (a revocation): each request that names a remote
-	// gives Not_Granted, and no datagram arrives. A new grant has the form
+	// gives Grant_Or_Right_Missing, and no datagram arrives. A new grant has the form
 	// of the old one (UDP or TCP, client or listen, the same listen port):
-	// else Bad_Command, because the local ports come from Endpoint_Add.
-	// A grant word with a bit outside GRANT_KNOWN_BITS: Bad_Command,
+	// else Argument_Refused, because the local ports come from
+	// Endpoint_Add. A ring that names no endpoint: Nothing_Has_That_Name.
+	// A grant word with a bit outside GRANT_KNOWN_BITS: Argument_Refused,
 	// Bad_Value of the argument 2, value: the unknown bits shifted down by
 	// GRANT_KNOWN_BIT_COUNT, limit 0. A grant of another form: Bad_Value
 	// of the argument 2, value: the word.
@@ -368,7 +385,7 @@ COMMAND_NAMES := [Command]string {
 // command_of_ring_word is the border of the kind of a command record of the
 // datagram ring of an endpoint: the command, or false for a word that names
 // no command, None included. The network service answers a refusal with
-// Bad_Command and the record Unsupported. It reads and changes no state.
+// Operation_Unsupported and the record Unsupported. It reads and changes no state.
 command_of_ring_word :: proc "contextless" (word: u32) -> (command: Command, ok: bool) {
 	for member in Command {
 		if u32(member) == word && member != .None {

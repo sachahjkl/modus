@@ -32,7 +32,7 @@
 // This package allocates no memory and calls no kernel operation.
 package block
 
-import "modus:contract/enum_word"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 
 BLOCK_SIZE :: 4096 // The bytes of one block: the unit of each request.
@@ -48,7 +48,7 @@ GRANT_SERVICE :: 10
 
 // A command of a client, as the kind of a command record of the block ring.
 Command :: enum u32 {
-	None       = 0, // Not a command: Bad_Command.
+	None       = 0, // Not a command: Operation_Unsupported.
 	// values[0]: the handle of the data region, as the block service names
 	// it. A new Attach replaces the region of the one before: send it when
 	// no request is in flight.
@@ -71,34 +71,25 @@ Command :: enum u32 {
 	Statistics = 6,
 }
 
-// The status of a request: the kind of its completion record. When it is
-// not Ok, the values of the completion are an error record
-// (errors.completion_record).
-Status :: enum u32 {
-	Ok           = 0, // The request is done: the values are its results.
-	Bad_Command  = 1, // The command is not known, or a value is wrong.
-	Out_Of_Range = 2, // A block is not on the disk, or a byte is not in the data region.
-	No_Region    = 3, // No data region, or the handle did not come through the block ring.
-	Device_Error = 4, // The device reported an error.
-	Unsupported  = 5, // The device cannot do this request.
-}
-
-// The name of each status, as Status names it: a reader of a log fact
-// writes it (value_kinds.Contract_Enum).
-@(rodata)
-STATUS_NAMES := [Status]string {
-	.Ok           = "Ok",
-	.Bad_Command  = "Bad_Command",
-	.Out_Of_Range = "Out_Of_Range",
-	.No_Region    = "No_Region",
-	.Device_Error = "Device_Error",
-	.Unsupported  = "Unsupported",
-}
-
-// The word of a Status in 8 bytes, for a record that holds it beside
-// fields of 8 bytes with no padding (value_kinds.Contract_Enum_Type).
-Status_Word :: distinct u64
-#assert(size_of(Status_Word) >= size_of(Status))
+// The kind of a completion record is the word of its call outcome
+// (call_outcome.completion_outcome is its border). With Succeeded the
+// values are the results of the request; with any other outcome they are
+// an error record (errors.completion_record), whose kind keeps the detail:
+//
+//   Operation_Unsupported  Unsupported: the command is not known, or the
+//                          device cannot do it.
+//   Argument_Refused       Too_Small, Too_Long, Bad_Value: a count or a
+//                          place that the command refuses. Out_Of_Range: a
+//                          block is not on the disk, or a byte is not in
+//                          the data region. Absent, unit Region: no data
+//                          region. Refused: the handle of Attach did not
+//                          come through the block ring.
+//   Callee_Busy            Busy: an Attach with requests in flight.
+//   Callee_Unavailable     Device or No_Answer: the device failed a request
+//                          that changes nothing on the disk.
+//   Stopped_After_A_Partial_Change  Device or No_Answer: the device failed
+//                          a Write or a Flush, and some blocks can be on
+//                          the disk (device_failure_outcome).
 
 // The bound of a wait for the device, in milliseconds: the hang bound of a
 // process (system.ANSWER_BOUND_MILLISECONDS, which the block service checks
@@ -106,7 +97,21 @@ Status_Word :: distinct u64
 // a request that the device did not answer.
 NO_ANSWER_BOUND_MILLISECONDS :: 60_000
 
-// no_answer_values gives the values of a completion Device_Error of a
+// device_failure_outcome gives the outcome of a request that the device
+// failed: a Write or a Flush can have put some blocks on the disk, so the
+// caller learns that the disk changed in part; another request changed
+// nothing.
+device_failure_outcome :: proc "contextless" (command: Command) -> call_outcome.Call_Outcome {
+	switch command {
+	case .Write, .Flush:
+		return .Stopped_After_A_Partial_Change
+	case .None, .Attach, .Info, .Read, .Statistics:
+		return .Callee_Unavailable
+	}
+	return .Callee_Unavailable
+}
+
+// no_answer_values gives the values of a completion of a
 // request that the device did not answer by its deadline, or that it will
 // never answer: the record No_Answer, with the device as what did not
 // answer. The block service gives it to each request in flight when it
@@ -116,16 +121,16 @@ no_answer_values :: proc "contextless" (command: Command) -> [7]u64 {
 }
 
 // device_did_not_answer is the border of a completion that says that the
-// device did not answer: the status Device_Error and the record No_Answer
-// with the device as what did not answer. The words come from the block
-// service: each one goes through its border, and a word that names no
-// member gives false. It reads and changes no state.
+// device did not answer: the outcome of a failed device
+// (device_failure_outcome) and the record No_Answer with the device as what
+// did not answer. The words come from the block service: each one goes
+// through its border, and a word that names no member gives false. It
+// reads and changes no state.
 device_did_not_answer :: proc "contextless" (completion_kind: u32, values: [7]u64) -> bool {
-	status, status_known := enum_word.member_of_word(Status, u64(completion_kind))
-	if !status_known || status != .Device_Error {
+	outcome, record := call_outcome.completion_outcome(completion_kind, values)
+	if outcome != .Callee_Unavailable && outcome != .Stopped_After_A_Partial_Change {
 		return false
 	}
-	record := errors.completion_record(values)
 	kind, kind_known := errors.kind_of_word(record.kind)
 	if !kind_known || kind != .No_Answer {
 		return false
@@ -162,8 +167,8 @@ ARGUMENT_NAMES := [Command][]string {
 
 // command_of_ring_word is the border of the kind of a command record of the
 // block ring: the command, or false for a word that names no command, None
-// included. The service answers a refusal with Bad_Command and the record
-// Unsupported. It reads and changes no state.
+// included. The service answers a refusal with Operation_Unsupported and
+// the record Unsupported. It reads and changes no state.
 command_of_ring_word :: proc "contextless" (word: u32) -> (command: Command, ok: bool) {
 	for member in Command {
 		if u32(member) == word && member != .None {

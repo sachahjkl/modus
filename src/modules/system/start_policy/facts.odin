@@ -1,6 +1,7 @@
 package start_policy
 
 import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
 // The log facts of the start policy (src/md/features/log_facts.md). A
@@ -106,11 +107,12 @@ Completion_Tag_Refused :: struct {
 	tag: u64,
 }
 
-// A completion of the root service whose status word names no status: the
+// A completion of the root service that this process cannot read: an
+// outcome word that names no outcome, or a failure with no record. The
 // word keeps its number, as the line wrote it.
-@(log_fact = "start_policy: refused a completion whose status word {status_word} names no status")
+@(log_fact = "start_policy: refused a completion of the root service that it cannot read: the outcome word {outcome_word}")
 Completion_Status_Refused :: struct {
-	status_word: u64,
+	outcome_word: u64,
 }
 
 // The ring of the root service does not open. The status is written by the
@@ -129,9 +131,9 @@ No_Start_List :: struct {}
 Machine_Parts_Page_Refused :: struct {}
 
 // The root service refused Machine_Usable.
-@(log_fact = "start_policy: the root service refused Machine_Usable: status {status}")
+@(log_fact = "start_policy: the root service refused Machine_Usable: outcome {outcome}")
 Machine_Usable_Refused :: struct {
-	status: op.Status,
+	outcome: call_outcome.Call_Outcome,
 }
 
 // Each needed row runs: the machine is usable.
@@ -139,9 +141,9 @@ Machine_Usable_Refused :: struct {
 Machine_Usable :: struct {}
 
 // The root service refused the start of a row.
-@(log_fact = "start_policy: cannot start {row_process}: status {status}")
+@(log_fact = "start_policy: cannot start {row_process}: outcome {outcome}")
 Row_Start_Refused :: struct {
-	status:      op.Status,
+	outcome:     call_outcome.Call_Outcome,
 	row_process: value_kinds.Module_Name_Field,
 }
 
@@ -158,6 +160,13 @@ Row_Reader_Not_Running :: struct {
 Row_Wiring_Refused :: struct {
 	reader_row:  u32,
 	status:      op.Status,
+	row_process: value_kinds.Module_Name_Field,
+}
+
+// A writer row does not start: the root service refused its list page.
+@(log_fact = "start_policy: {row_process} does not start: the root service refused its list page with the outcome {outcome}")
+Row_List_Page_Refused :: struct {
+	outcome:     call_outcome.Call_Outcome,
 	row_process: value_kinds.Module_Name_Field,
 }
 

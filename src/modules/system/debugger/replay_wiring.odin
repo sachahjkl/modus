@@ -355,11 +355,8 @@ replay_begin :: proc "contextless" (caller: ^system.Connection, error: ^errors.E
 	if !answered {
 		return refuse(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
-	if system.Status(completion.kind) != .Ok {
-		if error != nil {
-			error^ = errors.completion_record(completion.values)
-		}
-		return outcome_of_status_word(completion.kind)
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+		return root_refusal_taken(error, completion)
 	}
 	handle := system.Handle(completion.values[0])
 	if kind, rights, through := system.handle_state(handle, requests_memory); kind != .Process || .Debug not_in rights || !through {
@@ -393,12 +390,9 @@ replay_begin :: proc "contextless" (caller: ^system.Connection, error: ^errors.E
 		system.close(handle)
 		return refuse(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
 	}
-	if system.Status(released.kind) != .Ok {
+	if call_outcome.Call_Outcome(released.kind) != .Succeeded {
 		system.close(handle)
-		if error != nil {
-			error^ = errors.completion_record(released.values)
-		}
-		return outcome_of_status_word(released.kind)
+		return root_refusal_taken(error, released)
 	}
 	record_session.replay_process = handle
 	record_session.replay_slot = slot

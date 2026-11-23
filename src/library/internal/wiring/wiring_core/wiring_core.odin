@@ -12,6 +12,7 @@
 // host tests exercise every branch directly.
 package wiring_core
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/module"
 import op "modus:contract/operation"
@@ -229,13 +230,15 @@ process_find :: proc "contextless" (s: ^State, id: ws.Process_Identity) -> (inde
 
 // process_register registers a new process or refreshes an existing active
 // entry with the exact same (slot, serial). Refuses invalid identities,
-// conflicting serials on an already-active slot, or a full table.
-process_register :: proc "contextless" (s: ^State, id: ws.Process_Identity, module_offset, module_size: u64, flags: ws.Process_Flags) -> (index: int, status: ws.Response_Status) {
+// conflicting serials on an already-active slot, or a full table, each
+// with its outcome and its error record.
+process_register :: proc "contextless" (s: ^State, id: ws.Process_Identity, module_offset, module_size: u64, flags: ws.Process_Flags) -> (index: int, outcome: call_outcome.Call_Outcome, refusal: errors.Error_Record) {
+	command_op := u32(ws.Command_Kind.Register_Process)
 	if !ws.process_identity_valid(id) {
-		return -1, .Bad_Command
+		return -1, .Argument_Refused, make_error(command_op, .Bad_Value, .Processes)
 	}
 	if (module_offset == 0) != (module_size == 0) {
-		return -1, .Bad_Command
+		return -1, .Argument_Refused, make_error(command_op, .Bad_Value, .Modules, 0, i64(min(module_offset, 1 << 62)), i64(min(module_size, 1 << 62)))
 	}
 	free_index := -1
 	for &entry, idx in s.processes {
@@ -246,17 +249,19 @@ process_register :: proc "contextless" (s: ^State, id: ws.Process_Identity, modu
 			continue
 		}
 		if entry.id.slot == id.slot {
+			// Another process holds the slot: a process of one slot has
+			// one serial.
 			if entry.id.serial != id.serial {
-				return -1, .Bad_State
+				return -1, .Name_Already_Taken, make_error(command_op, .Exists, .Processes, 0, i64(id.slot), 0, i64(entry.id.serial))
 			}
 			entry.flags = flags
 			entry.module_offset = module_offset
 			entry.module_size = module_size
-			return idx, .Ok
+			return idx, .Succeeded, {}
 		}
 	}
 	if free_index < 0 {
-		return -1, .No_Slot
+		return -1, .Budget_Or_Capacity_Exhausted, make_error(command_op, .Full, .Processes, 0, 0, i64(len(s.processes)))
 	}
 	s.processes[free_index] = {
 		active        = true,
@@ -265,25 +270,26 @@ process_register :: proc "contextless" (s: ^State, id: ws.Process_Identity, modu
 		module_offset = module_offset,
 		module_size   = module_size,
 	}
-	return free_index, .Ok
+	return free_index, .Succeeded, {}
 }
 
 // list_page_reserve checks whether asker may hold a list page and reserves
 // a slot under LIST_PAGE_ASKERS_MOST.
-list_page_reserve :: proc "contextless" (s: ^State, asker_id: ws.Process_Identity, command_op: u32) -> (already_held: bool, asker_index: int, status: ws.Response_Status, refusal: errors.Error_Record) {
+list_page_reserve :: proc "contextless" (s: ^State, asker_id: ws.Process_Identity, command_op: u32) -> (already_held: bool, asker_index: int, status: call_outcome.Call_Outcome, refusal: errors.Error_Record) {
 	idx, found := process_find(s, asker_id)
 	if !found {
-		return false, -1, .Bad_Handle, make_error(command_op, .Absent, .Processes)
+		return false, -1, .Nothing_Has_That_Name, make_error(command_op, .Absent, .Processes)
 	}
 	if s.processes[idx].has_list_page {
-		return true, idx, .Ok, {}
+		return true, idx, .Succeeded, {}
 	}
 	if s.list_page_holders >= LIST_PAGE_ASKERS_MOST {
-		return false, -1, .No_Slot, make_error(command_op, .Full, .Wirings, 0, i64(s.list_page_holders + 1), LIST_PAGE_ASKERS_MOST)
+		// The askers of the machine share the list pages.
+		return false, -1, .Callee_Busy, make_error(command_op, .Full, .Wirings, 0, i64(s.list_page_holders + 1), LIST_PAGE_ASKERS_MOST)
 	}
 	s.processes[idx].has_list_page = true
 	s.list_page_holders += 1
-	return false, idx, .Ok, {}
+	return false, idx, .Succeeded, {}
 }
 
 // list_page_unreserve rolls back a fresh reservation after an allocation error.
@@ -551,39 +557,39 @@ resolve_end_from_request :: proc "contextless" (s: ^State, work: ^Plan_Work, req
 //
 // Each refusal names the field and the row, and changes no state.
 @(private = "file")
-paired_source_of :: proc "contextless" (work: ^Plan_Work, number: u32, writer_idx: int, input_index: u32, has_input: bool) -> (source: ^Row_Plan, status: ws.Response_Status, refusal: errors.Error_Record) {
+paired_source_of :: proc "contextless" (work: ^Plan_Work, number: u32, writer_idx: int, input_index: u32, has_input: bool) -> (source: ^Row_Plan, status: call_outcome.Call_Outcome, refusal: errors.Error_Record) {
 	plan := &work.plans[number - 1]
 	row := plan.row
 	found := i64(number)
 	op_code := work.command_op
 	if row.writer_end == .Child {
-		return nil, .Bad_Command, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Writer_End), i64(row.writer_end), 0, found)
+		return nil, .Operation_Unsupported, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Writer_End), i64(row.writer_end), 0, found)
 	}
 	// A pair has the pace of an audit: the stall bound of the wiring
 	// service ends a ring that holds its writer past the hang bound, so a
 	// consumer that never reads cannot hold the forward of the collector
 	// for ever.
 	if row.pace != .Always_Holds_Writer {
-		return nil, .Bad_Command, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Pace), i64(row.pace), i64(output.Wiring_Pace.Always_Holds_Writer), found)
+		return nil, .Operation_Unsupported, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Pace), i64(row.pace), i64(output.Wiring_Pace.Always_Holds_Writer), found)
 	}
 	pair := row.paired_row
 	if pair == 0 || pair >= number {
-		return nil, .Bad_Command, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Paired_Row), i64(pair), i64(number - 1), found)
+		return nil, .Argument_Refused, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Paired_Row), i64(pair), i64(number - 1), found)
 	}
 	source = &work.plans[pair - 1]
 	if !has_input || source.row.reader_end == .Asker || source.reader_index != writer_idx || source.row.reader_index != input_index || source.writer_index == writer_idx {
-		return nil, .Bad_Command, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Paired_Row), i64(pair), 0, found)
+		return nil, .Argument_Refused, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Paired_Row), i64(pair), 0, found)
 	}
 	for other in 1 ..= work.list.row_count {
 		if other != number && work.plans[other - 1].paired && work.plans[other - 1].row.paired_row == pair {
-			return nil, .Bad_State, make_error(op_code, .Exists, .Wirings, i64(output.Wiring_Field.Paired_Row), i64(pair), 0, found)
+			return nil, .Name_Already_Taken, make_error(op_code, .Exists, .Wirings, i64(output.Wiring_Field.Paired_Row), i64(pair), 0, found)
 		}
 	}
-	return source, .Ok, {}
+	return source, .Succeeded, {}
 }
 
 @(private = "file")
-resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req: ^ws.Resolved_Wiring_Request, work: ^Plan_Work, number: u32, first_pass: bool) -> (status: ws.Response_Status, refusal: errors.Error_Record) {
+resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req: ^ws.Resolved_Wiring_Request, work: ^Plan_Work, number: u32, first_pass: bool) -> (status: call_outcome.Call_Outcome, refusal: errors.Error_Record) {
 	plan := &work.plans[number - 1]
 	row := plan.row
 	found := i64(number)
@@ -591,7 +597,7 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 
 	if req.asker_is_start_policy != 0 {
 		if field, allowed := output.start_policy_row_allowed(work.form, row.writer_end, row.reader_end); !allowed {
-			return .No_Right, make_error(op_code, .No_Grant, .Wirings, i64(field), 0, 0, found)
+			return .Grant_Or_Right_Missing, make_error(op_code, .No_Grant, .Wirings, i64(field), 0, 0, found)
 		}
 	}
 
@@ -601,33 +607,33 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 	plan.reader_index = reader_idx
 
 	if !writer_found && row.writer_end == .Connected {
-		return .Bad_Handle, make_error(op_code, .Absent, .Connections, i64(output.Wiring_Field.Writer_Handle), i64(row.writer_handle), 0, found)
+		return .Nothing_Has_That_Name, make_error(op_code, .Absent, .Connections, i64(output.Wiring_Field.Writer_Handle), i64(row.writer_handle), 0, found)
 	}
 	if !reader_found && row.reader_end == .Connected {
-		return .Bad_Handle, make_error(op_code, .Absent, .Connections, i64(output.Wiring_Field.Reader_Handle), i64(row.reader_handle), 0, found)
+		return .Nothing_Has_That_Name, make_error(op_code, .Absent, .Connections, i64(output.Wiring_Field.Reader_Handle), i64(row.reader_handle), 0, found)
 	}
 	if !writer_found || !reader_found {
-		return .Bad_Handle, make_error(op_code, .Handle_Absent, .Lent_Handles, 0, 0, 0, found)
+		return .Argument_Refused, make_error(op_code, .Handle_Absent, .Lent_Handles, 0, 0, 0, found)
 	}
 	if !output.wiring_end_allowed(row.writer_end, writer_facts) || !output.wiring_end_allowed(row.reader_end, reader_facts) {
-		return .No_Right, make_error(op_code, .No_Grant, .Wirings, 0, 0, 0, found)
+		return .Grant_Or_Right_Missing, make_error(op_code, .No_Grant, .Wirings, 0, 0, 0, found)
 	}
 	// Self-wire or directed cycle refused.
 	if writer_idx == reader_idx || graph_reaches(s, work, number, reader_idx, writer_idx) {
-		return .Bad_State, make_error(op_code, .Bad_Value, .Wirings, i64(output.Wiring_Field.Reader_End), 0, 0, found)
+		return .Argument_Refused, make_error(op_code, .Bad_Value, .Wirings, i64(output.Wiring_Field.Reader_End), 0, 0, found)
 	}
 
 	writer_file: []u8
 	if row.writer_stream == .Log {
 		if row.condition_offset != 0 {
-			return .Bad_Command, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Condition_Offset), i64(row.condition_offset), 0, found)
+			return .Operation_Unsupported, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Condition_Offset), i64(row.condition_offset), 0, found)
 		}
 		if row.pace == .Never_Holds_Writer {
-			return .Bad_Command, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Pace), i64(row.pace), 0, found)
+			return .Operation_Unsupported, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Pace), i64(row.pace), 0, found)
 		}
 		writer_file = log_output_file(s)
 		if len(writer_file) == 0 {
-			return .Bad_State, make_error(op_code, .Absent, .Modules, 0, 0, 0, found)
+			return .Nothing_Has_That_Name, make_error(op_code, .Absent, .Modules, 0, 0, 0, found)
 		}
 		plan.writer_is_log_file = true
 		plan.writer_file_offset = 0
@@ -636,7 +642,7 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 	} else {
 		wf, woff, wsize := process_file_slice(s, work, image, writer_idx)
 		if len(wf) == 0 {
-			return .Bad_State, make_error(op_code, .Absent, .Modules, 0, 0, 0, found)
+			return .Nothing_Has_That_Name, make_error(op_code, .Absent, .Modules, 0, 0, 0, found)
 		}
 		writer_file = wf
 		plan.writer_is_log_file = false
@@ -645,22 +651,22 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 		output_row, pairing, _, output_ok := module.record_output(writer_file, row.writer_index)
 		if !output_ok {
 			outputs := max(module.count(writer_file, .Record_Outputs), 1) - 1
-			return .Bad_Command, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), i64(row.writer_index), i64(outputs), found)
+			return .Argument_Refused, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), i64(row.writer_index), i64(outputs), found)
 		}
 		plan.description = output_row.record
 		// A record output Paired takes the type of each source: a record of
 		// its own would bypass the rule of the pairs. The border of the
 		// module file refuses it too; this check does not lean on that.
 		if pairing == .Paired && output_row.record != 0 {
-			return .Bad_Command, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), i64(row.writer_index), 0, found)
+			return .Operation_Unsupported, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), i64(row.writer_index), 0, found)
 		}
 		// A pair names its source only beside a record output Paired.
 		if pairing == .Unpaired && row.paired_row != 0 {
-			return .Bad_Command, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Paired_Row), i64(row.paired_row), 0, found)
+			return .Argument_Refused, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Paired_Row), i64(row.paired_row), 0, found)
 		}
 		if output_row.record == 0 && first_pass {
 			plan.deferred = true
-			return .Ok, {}
+			return .Succeeded, {}
 		}
 		if output_row.record == 0 {
 			input_index, input_wirings, has_input := generic_input_of(writer_file)
@@ -674,10 +680,10 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 				plan.writer_file_size = fixed_size
 				plan.description = fixed_desc
 			case .Not_Fixed:
-				return .Bad_Command, make_error(op_code, .Bad_Value, .Record_Types, 0, i64(output.Description_Difference.Not_Fixed), 0, found)
+				return .Argument_Refused, make_error(op_code, .Bad_Value, .Record_Types, 0, i64(output.Description_Difference.Not_Fixed), 0, found)
 			case .Paired_Source:
 				source, pair_status, pair_refusal := paired_source_of(work, number, writer_idx, input_index, has_input)
-				if pair_status != .Ok {
+				if pair_status != .Succeeded {
 					return pair_status, pair_refusal
 				}
 				writer_file = plan_file_slice(s, image, source.writer_is_log_file, source.writer_file_offset, source.writer_file_size)
@@ -695,20 +701,20 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 	if row.reader_end != .Asker {
 		rf, _, _ := process_file_slice(s, work, image, reader_idx)
 		if len(rf) == 0 {
-			return .Bad_State, make_error(op_code, .Absent, .Modules, 0, 0, 0, found)
+			return .Nothing_Has_That_Name, make_error(op_code, .Absent, .Modules, 0, 0, 0, found)
 		}
 		reader_file = rf
 		input_row, wirings, _, terms, input_ok := module.record_input(reader_file, row.reader_index)
 		if !input_ok {
 			inputs := max(module.count(reader_file, .Record_Inputs), 1) - 1
-			return .Bad_Command, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Reader_Index), i64(row.reader_index), i64(inputs), found)
+			return .Argument_Refused, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Reader_Index), i64(row.reader_index), i64(inputs), found)
 		}
 		reader_description = input_row.record
 		if input_row.terms != 0 {
 			plan.terms_size = terms.size
 		}
 		if wirings == .One && record_input_taken(s, work, number, reader_idx, row.reader_index) {
-			return .Bad_State, make_error(op_code, .Exists, .Wirings, i64(output.Wiring_Field.Reader_Index), i64(row.reader_index), 0, found)
+			return .Name_Already_Taken, make_error(op_code, .Exists, .Wirings, i64(output.Wiring_Field.Reader_Index), i64(row.reader_index), 0, found)
 		}
 		fixed_file, _, _, _, fixed_desc, fixed := generic_type_fixed(s, work, image, number, reader_idx, row.reader_index)
 		step := output.generic_reader_step_of(input_row.record, wirings, fixed)
@@ -726,7 +732,7 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 			}
 			listed := generic_types_listed(work, number, reader_idx)
 			if !output.generic_type_room_of(kept_count, listed, GENERIC_TYPES_OF_A_PROCESS_MOST) {
-				return .No_Slot, make_error(op_code, .Full, .Wirings, 0, i64(kept_count + listed + 1), GENERIC_TYPES_OF_A_PROCESS_MOST, found)
+				return .Budget_Or_Capacity_Exhausted, make_error(op_code, .Full, .Wirings, 0, i64(kept_count + listed + 1), GENERIC_TYPES_OF_A_PROCESS_MOST, found)
 			}
 			reader_file, reader_description = writer_file, plan.description
 			plan.fixes = true
@@ -735,10 +741,10 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 
 	difference, part := output.record_descriptions_compare(writer_file, plan.description, reader_file, reader_description)
 	if difference != .Equal {
-		return .Bad_Command, make_error(op_code, .Bad_Value, .Record_Types, 0, i64(difference), i64(part), found)
+		return .Argument_Refused, make_error(op_code, .Bad_Value, .Record_Types, 0, i64(difference), i64(part), found)
 	}
 	if row.terms_count != plan.terms_size {
-		return .Bad_Command, make_error(op_code, .Bad_Value, .Wiring_Terms, i64(output.Wiring_Field.Terms_Count), i64(row.terms_count), i64(plan.terms_size), found)
+		return .Argument_Refused, make_error(op_code, .Bad_Value, .Wiring_Terms, i64(output.Wiring_Field.Terms_Count), i64(row.terms_count), i64(plan.terms_size), found)
 	}
 	plan.has_condition = false
 	if row.condition_offset != 0 {
@@ -748,12 +754,12 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 		if !condition_ok {
 			cond_refusal.operation = i64(op_code)
 			cond_refusal.found = found
-			return .Bad_Command, cond_refusal
+			return .Argument_Refused, cond_refusal
 		}
 		plan.condition = condition
 		plan.has_condition = true
 	}
-	return .Ok, {}
+	return .Succeeded, {}
 }
 
 @(private = "file")
@@ -801,15 +807,17 @@ asker_ends_in :: proc "contextless" (s: ^State, asker_idx: int, proc_idx: int) -
 }
 
 @(private = "file")
-check_limits :: proc "contextless" (s: ^State, work: ^Plan_Work, ring_room: Ring_Room_Proc, ring_room_data: rawptr) -> (status: ws.Response_Status, refusal: errors.Error_Record) {
+check_limits :: proc "contextless" (s: ^State, work: ^Plan_Work, ring_room: Ring_Room_Proc, ring_room_data: rawptr) -> (status: call_outcome.Call_Outcome, refusal: errors.Error_Record) {
 	op_code := work.command_op
 	rows := int(work.list.row_count)
 	asker := &s.processes[work.asker_index]
 	if asker.wirings_asked + rows > output.WIRINGS_OF_AN_ASKER_MOST {
-		return .No_Slot, make_error(op_code, .Full, .Wirings, 0, i64(asker.wirings_asked + rows), output.WIRINGS_OF_AN_ASKER_MOST)
+		return .Budget_Or_Capacity_Exhausted, make_error(op_code, .Full, .Wirings, 0, i64(asker.wirings_asked + rows), output.WIRINGS_OF_AN_ASKER_MOST)
 	}
 	if s.wirings_running + rows > WIRINGS_OF_THE_MACHINE_MOST {
-		return .No_Slot, make_error(op_code, .Full, .Wirings, 0, i64(s.wirings_running + rows), WIRINGS_OF_THE_MACHINE_MOST)
+		// The table of the machine, which every asker shares, frees a place
+		// when a wiring ends.
+		return .Callee_Busy, make_error(op_code, .Full, .Wirings, 0, i64(s.wirings_running + rows), WIRINGS_OF_THE_MACHINE_MOST)
 	}
 	for number in 1 ..= work.list.row_count {
 		plan := &work.plans[number - 1]
@@ -819,13 +827,13 @@ check_limits :: proc "contextless" (s: ^State, work: ^Plan_Work, ring_room: Ring
 			needed := ends_needed(work, proc_idx)
 			given := proc_idx >= 0 ? s.processes[proc_idx].ends_given : 0
 			if given + int(needed) > ENDS_OF_A_PROCESS_MOST {
-				return .No_Slot, make_error(op_code, .Full, .Wirings, 0, i64(given + int(needed)), ENDS_OF_A_PROCESS_MOST, i64(number))
+				return .Budget_Or_Capacity_Exhausted, make_error(op_code, .Full, .Wirings, 0, i64(given + int(needed)), ENDS_OF_A_PROCESS_MOST, i64(number))
 			}
 			if connected[side] && proc_idx >= 0 {
 				held := asker_ends_in(s, work.asker_index, proc_idx)
 				through_connection := connected_ends_needed(work, proc_idx)
 				if held + int(through_connection) > CONNECTED_ENDS_OF_AN_ASKER_MOST {
-					return .No_Slot, make_error(op_code, .Full, .Wirings, 0, i64(held + int(through_connection)), CONNECTED_ENDS_OF_AN_ASKER_MOST, i64(number))
+					return .Budget_Or_Capacity_Exhausted, make_error(op_code, .Full, .Wirings, 0, i64(held + int(through_connection)), CONNECTED_ENDS_OF_AN_ASKER_MOST, i64(number))
 				}
 			}
 			if proc_idx == CHILD_PROCESS_INDEX {
@@ -834,33 +842,33 @@ check_limits :: proc "contextless" (s: ^State, work: ^Plan_Work, ring_room: Ring
 			if ring_room != nil {
 				available, capacity, has_ring := ring_room(ring_room_data, proc_idx)
 				if !has_ring {
-					return .Bad_State, make_error(op_code, .Absent, .Wirings, 0, 0, 0, i64(number))
+					return .Nothing_Has_That_Name, make_error(op_code, .Absent, .Wirings, 0, 0, 0, i64(number))
 				}
 				if available < needed {
-					return .No_Slot, make_error(op_code, .Busy, .Wirings, 0, i64(needed), i64(capacity), i64(number))
+					return .Callee_Busy, make_error(op_code, .Busy, .Wirings, 0, i64(needed), i64(capacity), i64(number))
 				}
 			}
 		}
 	}
-	return .Ok, {}
+	return .Succeeded, {}
 }
 
 // plan_resolve validates a copied wiring list and resolved core request
 // completely without mutating State. On refusal, State is untouched.
-plan_resolve :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req: ^ws.Resolved_Wiring_Request, asker_id: ws.Process_Identity, command_op: u32, work: ^Plan_Work, ring_room: Ring_Room_Proc = nil, ring_room_data: rawptr = nil) -> (status: ws.Response_Status, refusal: errors.Error_Record) {
+plan_resolve :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req: ^ws.Resolved_Wiring_Request, asker_id: ws.Process_Identity, command_op: u32, work: ^Plan_Work, ring_room: Ring_Room_Proc = nil, ring_room_data: rawptr = nil) -> (status: call_outcome.Call_Outcome, refusal: errors.Error_Record) {
 	work^ = {}
 	asker_idx, asker_found := process_find(s, asker_id)
 	if !asker_found {
-		return .Bad_Handle, make_error(command_op, .Absent, .Processes)
+		return .Nothing_Has_That_Name, make_error(command_op, .Absent, .Processes)
 	}
 	form, req_ok := ws.resolved_request_check(req)
 	if !req_ok || int(req.list_bytes) > len(list_copy) {
-		return .Bad_Command, make_error(command_op, .Bad_Value, .Wiring_Rows)
+		return .Argument_Refused, make_error(command_op, .Bad_Value, .Wiring_Rows)
 	}
 	list_refusal, list_ok := output.wiring_list_check(list_copy[:req.list_bytes], form, &work.list)
 	if !list_ok {
 		list_refusal.operation = i64(command_op)
-		return .Bad_Command, list_refusal
+		return .Argument_Refused, list_refusal
 	}
 	work.asker_index = asker_idx
 	work.command_op = command_op
@@ -875,7 +883,7 @@ plan_resolve :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req
 			allocated_slot = -1,
 		}
 		row_status, row_refusal := resolve_row(s, image, list_copy, req, work, number, true)
-		if row_status != .Ok {
+		if row_status != .Succeeded {
 			return row_status, row_refusal
 		}
 		if work.plans[number - 1].row.reader_end == .Asker {
@@ -889,7 +897,7 @@ plan_resolve :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req
 			plan := &work.plans[number - 1]
 			if plan.deferred && !plan.resolved && deferred_type_fixed(s, work, image, number) {
 				row_status, row_refusal := resolve_row(s, image, list_copy, req, work, number, false)
-				if row_status != .Ok {
+				if row_status != .Succeeded {
 					return row_status, row_refusal
 				}
 				plan.resolved = true
@@ -904,14 +912,14 @@ plan_resolve :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req
 		plan := &work.plans[number - 1]
 		if plan.deferred && !plan.resolved {
 			row_status, row_refusal := resolve_row(s, image, list_copy, req, work, number, false)
-			if row_status != .Ok {
+			if row_status != .Succeeded {
 				return row_status, row_refusal
 			}
 			plan.resolved = true
 		}
 	}
 	if form == .Start && asker_rows > output.WIRING_ASKER_ROWS_OF_A_START {
-		return .Bad_Command, make_error(command_op, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Reader_End), i64(asker_rows), output.WIRING_ASKER_ROWS_OF_A_START)
+		return .Argument_Refused, make_error(command_op, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Reader_End), i64(asker_rows), output.WIRING_ASKER_ROWS_OF_A_START)
 	}
 	return check_limits(s, work, ring_room, ring_room_data)
 }
@@ -1127,24 +1135,24 @@ wiring_completion_apply :: proc "contextless" (s: ^State, proc_index: int, recor
 
 // unwire_apply ends a single wiring owned by asker_id with end_word.
 // Refuses unknown askers, unknown wiring numbers, or wirings owned by another asker.
-unwire_apply :: proc "contextless" (s: ^State, asker_id: ws.Process_Identity, wiring_number: u32, end_word: output.End_Word, command_op: u32) -> (wiring_slot: int, end_to_write: output.End_Word, asker_empty: bool, status: ws.Response_Status, refusal: errors.Error_Record) {
+unwire_apply :: proc "contextless" (s: ^State, asker_id: ws.Process_Identity, wiring_number: u32, end_word: output.End_Word, command_op: u32) -> (wiring_slot: int, end_to_write: output.End_Word, asker_empty: bool, status: call_outcome.Call_Outcome, refusal: errors.Error_Record) {
 	if end_word == .None || wiring_number == 0 {
-		return -1, .None, false, .Bad_Command, make_error(command_op, .Bad_Value, .Wirings)
+		return -1, .None, false, .Argument_Refused, make_error(command_op, .Bad_Value, .Wirings)
 	}
 	asker_idx, asker_found := process_find(s, asker_id)
 	if !asker_found {
-		return -1, .None, false, .Bad_Handle, make_error(command_op, .Absent, .Processes)
+		return -1, .None, false, .Nothing_Has_That_Name, make_error(command_op, .Absent, .Processes)
 	}
 	for &kept, idx in s.wirings {
 		if kept.active && kept.number == wiring_number {
 			if kept.asker_index != asker_idx {
-				return -1, .None, false, .No_Right, make_error(command_op, .No_Grant, .Wirings)
+				return -1, .None, false, .Grant_Or_Right_Missing, make_error(command_op, .No_Grant, .Wirings)
 			}
 			written, empty := wiring_end_slot(s, idx, end_word)
-			return idx, written, empty, .Ok, {}
+			return idx, written, empty, .Succeeded, {}
 		}
 	}
-	return -1, .None, false, .Bad_Handle, make_error(command_op, .Absent, .Wirings)
+	return -1, .None, false, .Nothing_Has_That_Name, make_error(command_op, .Absent, .Wirings)
 }
 
 // revoke_asker_apply ends every wiring asked by asker_id with End_Word.Revoked

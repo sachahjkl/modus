@@ -21,9 +21,10 @@ package remote_service
 // the bound of the handshake.
 //
 // The procedures mesh_connect, mesh_fetch_object, mesh_call_role,
-// mesh_sync_store and mesh_pairing_join_send start one step and give 0 or
-// an identifier, or -1 with an error record; mesh_request_result gives the
-// end of a request when it came.
+// mesh_sync_store and mesh_pairing_join_send start one step and give
+// Succeeded with 0 or an identifier, or a failure with its call outcome and
+// an error record; mesh_request_result gives the end of a request when it
+// came.
 
 import "base:intrinsics"
 import "modus:contract/blake3"
@@ -149,53 +150,59 @@ mesh_link_find :: proc "contextless" (identity: [32]u8) -> (link: ^Mesh_Client_L
 }
 
 @(private = "file")
-mesh_client_status_fail :: proc "contextless" (error: ^errors.Error_Record, status: machine_wire.Mesh_Client_Status, argument: i64) -> i64 {
+// mesh_client_status_fail writes the record of a refusal of the session,
+// with the outcome that machine_wire.mesh_status_outcome gives it: the
+// request did not leave, so nothing changed. found is the status.
+mesh_client_status_fail :: proc "contextless" (error: ^errors.Error_Record, status: machine_wire.Mesh_Client_Status, argument: i64) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	outcome = machine_wire.mesh_status_outcome(status)
 	found := i64(status)
 	switch status {
 	case .Ok:
-		return 0
+		return .Succeeded, 0
 	case .Refused_Zero_Key, .Refused_Same_Machine, .Refused_Bad_Request, .Refused_Bad_Purpose:
-		return errors.fail(error, -1, .Bad_Value, .None, argument, 0, 0, found)
+		return call_outcome.fail(error, outcome, .Bad_Value, .None, argument, 0, 0, found)
 	case .Refused_Not_Paired, .Refused_No_Pairing:
-		return errors.fail(error, -1, .Absent, .Records, argument, 0, 0, found)
+		return call_outcome.fail(error, outcome, .No_Grant, .Records, argument, 0, 0, found)
 	case .Refused_Identity_Mismatch:
-		return errors.fail(error, -1, .Not_Authentic, .None, argument, 0, 0, found)
+		// The handshake proved another key: the machine of the key did not answer.
+		return call_outcome.fail(error, outcome, .Refused, .None, argument, 0, 0, found)
 	case .Refused_Bad_Phase:
-		return errors.fail(error, -1, .State, .None, argument, 0, 0, found)
+		return call_outcome.fail(error, outcome, .State, .None, argument, 0, 0, found)
 	case .Refused_Bad_Bound:
-		return errors.fail(error, -1, .Out_Of_Range, .Milliseconds, argument, 0, 0, found)
+		return call_outcome.fail(error, outcome, .Out_Of_Range, .Milliseconds, argument, 0, 0, found)
 	case .Refused_Code_Expired:
-		return errors.fail(error, -1, .Over_Limit, .Milliseconds, argument, 0, i64(machine_mesh.PAIRING_CODE_LIFETIME_MS), found)
+		return call_outcome.fail(error, outcome, .State, .Milliseconds, argument, 0, i64(machine_mesh.PAIRING_CODE_LIFETIME_MS), found)
 	case .Refused_Full:
-		return errors.fail(error, -1, .Full, .Requests, argument, 0, machine_wire.MESH_REQUESTS_AT_ONCE, found)
+		return call_outcome.fail(error, outcome, .Full, .Requests, argument, 0, machine_wire.MESH_REQUESTS_AT_ONCE, found)
 	case .Unreachable:
-		return errors.fail(error, -1, .Link_Down, .Connection, argument, 0, 0, found)
+		return call_outcome.fail(error, outcome, .Link_Down, .Connection, argument, 0, 0, found)
 	}
-	return errors.fail(error, -1, .Bad_Value, .None, argument, 0, 0, found)
+	return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, argument, 0, 0, found)
 }
 
 // mesh_connect opens the outbound link to a machine, at an address and a
 // port. purpose_word is the word of machine_wire.Mesh_Link_Purpose: Paired
 // for a paired machine, Pairing to join the offer of that machine with the
 // code that mesh_pairing_join took. The handshake pins its identity key. It
-// gives the place of the link, or -1 with an error record.
-mesh_connect :: proc "contextless" (identity: [32]u8, address: u32, port: u16, purpose_word: u64, error: ^errors.Error_Record) -> i64 {
+// gives the place of the link, or a failure with its call outcome and an
+// error record.
+mesh_connect :: proc "contextless" (identity: [32]u8, address: u32, port: u16, purpose_word: u64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !mesh.has_identity || !mesh_client.configured {
-		return errors.fail(error, -1, .State, .None, 0)
+		return call_outcome.fail(error, .Wrong_State, .State, .None, 0)
 	}
 	purpose, purpose_known := enum_word.member_of_word(machine_wire.Mesh_Link_Purpose, purpose_word)
 	if !purpose_known || purpose == .None {
-		return errors.fail(error, -1, .Bad_Value, .None, 4, i64(purpose_word))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 4, i64(purpose_word))
 	}
 	if address == 0 || port == 0 {
-		return errors.fail(error, -1, .Bad_Value, .None, 2, i64(address))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, i64(address))
 	}
 	link, index := mesh_link_find(identity)
 	// One link for one address and port: two links there would share one
 	// path, and a reader of the datagrams would mistake one for the other.
 	for &item in mesh_client.links {
 		if item.in_use && &item != link && item.address.address == address && item.address.port == port {
-			return errors.fail(error, -1, .Exists, .Connections, 2, i64(address))
+			return call_outcome.fail(error, .Name_Already_Taken, .Exists, .Connections, 2, i64(address))
 		}
 	}
 	if link == nil {
@@ -207,7 +214,7 @@ mesh_connect :: proc "contextless" (identity: [32]u8, address: u32, port: u16, p
 		}
 	}
 	if link == nil {
-		return errors.fail(error, -1, .Full, .Connections, 1, 0, MESH_LINK_CAPACITY)
+		return call_outcome.fail(error, .Callee_Busy, .Full, .Connections, 1, 0, MESH_LINK_CAPACITY)
 	}
 	now := system.time()
 	status := machine_wire.mesh_link_open(&link.session, &mesh, identity, purpose, now, MESH_HANDSHAKE_BOUND_MILLISECONDS)
@@ -225,28 +232,37 @@ mesh_connect :: proc "contextless" (identity: [32]u8, address: u32, port: u16, p
 	if !quic.connection_start_client(&mesh_client.connections[index], mesh_client.streams[index][:], &configuration, &cryptography, &process_generator, now_microseconds(), error) {
 		machine_wire.mesh_link_broken(&link.session)
 		mesh_client_key_erase(&configuration.tls.client_private_key)
-		return -1
+		// The connection did not start: nothing left.
+		return .Callee_Unavailable, 0
 	}
 	// The connection keeps its own copy of the key: the copy on the stack
 	// is erased on each path.
 	mesh_client_key_erase(&configuration.tls.client_private_key)
-	return i64(index)
+	return .Succeeded, i64(index)
+}
+
+// mesh_failed gives the outcome of a failure, for a procedure that gives
+// a request too.
+@(private = "file")
+mesh_failed :: proc "contextless" (outcome: call_outcome.Call_Outcome, _: i64) -> (call_outcome.Call_Outcome, i64) {
+	return outcome, 0
 }
 
 // mesh_client_begin keeps one request frame of a link, which the loop
 // sends on a new stream when the link is up.
 @(private = "file")
-mesh_client_begin :: proc "contextless" (identity: [32]u8, frame: []u8, error: ^errors.Error_Record) -> (request: ^Mesh_Client_Request, identifier: i64) {
+mesh_client_begin :: proc "contextless" (identity: [32]u8, frame: []u8, error: ^errors.Error_Record) -> (request: ^Mesh_Client_Request, outcome: call_outcome.Call_Outcome, identifier: i64) {
 	link, _ := mesh_link_find(identity)
 	if link == nil {
-		return nil, errors.fail(error, -1, .Absent, .Connection, 1)
+		return nil, mesh_failed(call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Connection, 1))
 	}
 	if frame == nil {
-		return nil, errors.fail(error, -1, .Bad_Value, .None, 2)
+		return nil, mesh_failed(call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2))
 	}
 	session_identifier, status := machine_wire.mesh_request_begin(&link.session, frame, system.time(), MESH_REQUEST_BOUND_MILLISECONDS)
 	if status != .Ok {
-		return nil, mesh_client_status_fail(error, status, 2)
+		failure, _ := mesh_client_status_fail(error, status, 2)
+		return nil, failure, 0
 	}
 	for &item in link.requests {
 		if item.phase != .Free {
@@ -259,11 +275,11 @@ mesh_client_begin :: proc "contextless" (identity: [32]u8, frame: []u8, error: ^
 		item.kind = kind
 		item.identifier = session_identifier
 		item.request_length = copy(item.request[:], frame)
-		return &item, i64(session_identifier)
+		return &item, .Succeeded, i64(session_identifier)
 	}
 	// A place of an ended request that nobody read holds its end.
 	machine_wire.mesh_answer_accept(&link.session, session_identifier, nil)
-	return nil, errors.fail(error, -1, .Full, .Requests, 2, 0, MESH_STREAMS_PER_LINK)
+	return nil, mesh_failed(call_outcome.fail(error, .Callee_Busy, .Full, .Requests, 2, 0, MESH_STREAMS_PER_LINK))
 }
 
 // The frame of a request is written in the answer place, which is free until
@@ -273,41 +289,41 @@ mesh_frame_buffer: [machine_wire.FRAME_LIMIT]u8
 
 // mesh_fetch_object asks a paired machine for an object by its kind and
 // hash. The object is kept only when its bytes hash to the hash.
-mesh_fetch_object :: proc "contextless" (identity: [32]u8, kind_word: u64, hash: blake3.Hash, error: ^errors.Error_Record) -> i64 {
+mesh_fetch_object :: proc "contextless" (identity: [32]u8, kind_word: u64, hash: blake3.Hash, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	kind, kind_ok := object_cache.cache_object_kind_of_word(kind_word)
 	if !kind_ok {
-		return errors.fail(error, -1, .Bad_Value, .None, 2, i64(kind_word))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, i64(kind_word))
 	}
-	request, identifier := mesh_client_begin(identity, machine_wire.object_request_write(mesh_frame_buffer[:], kind, hash), error)
+	request, begun, identifier := mesh_client_begin(identity, machine_wire.object_request_write(mesh_frame_buffer[:], kind, hash), error)
 	if request == nil {
-		return identifier
+		return begun, 0
 	}
 	request.object_kind = kind
 	request.hash = hash
-	return identifier
+	return .Succeeded, identifier
 }
 
 // mesh_call_role sends one call of a role contract held on a paired
 // machine. role_word is a role_contract.Role, flags_word the word of
 // machine_wire.Role_Call_Flags.
-mesh_call_role :: proc "contextless" (identity: [32]u8, role_word: u64, export: u32, flags_word: u64, arguments: []u8, error: ^errors.Error_Record) -> i64 {
+mesh_call_role :: proc "contextless" (identity: [32]u8, role_word: u64, export: u32, flags_word: u64, arguments: []u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	role, role_ok := enum_word.member_of_word(role_contract.Role, role_word)
 	if !role_ok || role == .None {
-		return errors.fail(error, -1, .Bad_Value, .None, 2, i64(role_word))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, i64(role_word))
 	}
 	if flags_word > u64(max(u32)) {
-		return errors.fail(error, -1, .Bad_Flags, .None, 4, i64(flags_word))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Flags, .None, 4, i64(flags_word))
 	}
 	flags, flags_ok := machine_wire.role_call_flags_of_word(u32(flags_word))
 	if !flags_ok {
-		return errors.fail(error, -1, .Bad_Flags, .None, 4, i64(flags_word))
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Flags, .None, 4, i64(flags_word))
 	}
 	if len(arguments) > machine_wire.ROLE_ARGUMENT_LIMIT {
-		return errors.fail(error, -1, .Too_Long, .Bytes, 5, i64(len(arguments)), machine_wire.ROLE_ARGUMENT_LIMIT)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 5, i64(len(arguments)), machine_wire.ROLE_ARGUMENT_LIMIT)
 	}
 	link, _ := mesh_link_find(identity)
 	if link == nil {
-		return errors.fail(error, -1, .Absent, .Connection, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Connection, 1)
 	}
 	// The call identifier is the identifier that the session gives this
 	// request: a reply names this request and no other.
@@ -316,101 +332,98 @@ mesh_call_role :: proc "contextless" (identity: [32]u8, role_word: u64, export: 
 		call_identifier = 1
 	}
 	frame := machine_wire.role_call_write(mesh_frame_buffer[:], machine_wire.Role_Call{identifier = call_identifier, role = role, export = export, flags = flags, arguments = arguments})
-	_, identifier := mesh_client_begin(identity, frame, error)
-	return identifier
+	_, begun, identifier := mesh_client_begin(identity, frame, error)
+	return begun, identifier
 }
 
 // mesh_sync_store offers the version of an exchanged store to its partner.
 // A request with no answer keeps the offer: the next sync sends it again.
-mesh_sync_store :: proc "contextless" (identity: [32]u8, store_identifier: blake3.Hash, error: ^errors.Error_Record) -> i64 {
+mesh_sync_store :: proc "contextless" (identity: [32]u8, store_identifier: blake3.Hash, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	store := machine_wire.store_exchange_find(&mesh.stores, store_identifier)
 	if store == nil {
-		return errors.fail(error, -1, .Absent, .Stores, 2)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Stores, 2)
 	}
 	if store.partner_identity != identity {
-		return errors.fail(error, -1, .No_Grant, .Stores, 1)
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Stores, 1)
 	}
-	request, identifier := mesh_client_begin(identity, machine_wire.store_offer_begin(store, mesh_frame_buffer[:]), error)
+	request, begun, identifier := mesh_client_begin(identity, machine_wire.store_offer_begin(store, mesh_frame_buffer[:]), error)
 	if request != nil {
 		request.hash = store_identifier
 	}
-	return identifier
+	return begun, identifier
 }
 
 // mesh_pairing_join_send sends the first pairing frame of the joiner on a
 // link of purpose Pairing; the loop sends the confirmation when the reply
 // comes.
-mesh_pairing_join_send :: proc "contextless" (identity: [32]u8, error: ^errors.Error_Record) -> i64 {
+mesh_pairing_join_send :: proc "contextless" (identity: [32]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	link, _ := mesh_link_find(identity)
 	if link == nil || link.session.purpose != .Pairing {
-		return errors.fail(error, -1, .Absent, .Connection, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Connection, 1)
 	}
 	if link.session.state != .Up {
-		return errors.fail(error, -1, .Link_Down, .Connection, 1)
+		return call_outcome.fail(error, .Callee_Unavailable, .Link_Down, .Connection, 1)
 	}
 	frame, status := machine_wire.pairing_element_write(&mesh, identity, machine_wire.mesh_link_channel_binding(&link.session), system.time(), mesh_frame_buffer[:])
 	if status != .Ok {
-		return errors.fail(error, -1, .Refused, .None, 1, 0, 0, i64(status))
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 1, 0, 0, i64(status))
 	}
-	_, identifier := mesh_client_begin(identity, frame, error)
-	return identifier
+	_, begun, identifier := mesh_client_begin(identity, frame, error)
+	return begun, identifier
 }
 
-// mesh_request_result gives the end of a request: 0 while it is in
-// flight, 1 when it was answered and its effect holds (the object kept, the
-// store merged, the pairing confirmed, the role answered: value and the
-// result bytes), or -1 with an error record: Refused, No_Answer for a
-// request in doubt, Link_Down for a request that never left, Not_Authentic
-// for an object whose bytes do not hash to its hash, Too_Long for a role
-// result larger than result. For a role call, result_count is the exact
+// mesh_request_result gives the end of a request: Succeeded with 0 while it
+// is in flight, Succeeded with 1 when it was answered and its effect holds
+// (the object kept, the store merged, the pairing confirmed, the role
+// answered: value and the result bytes), or a failure with its outcome and
+// an error record: the outcome that the session decided for a request that
+// the other machine refused, that is in doubt or that never left;
+// Data_Damaged for an object whose bytes do not hash to its hash;
+// Answer_Unreadable for an object that is not one; Argument_Refused for a
+// role result larger than result. For a role call, result_count is the exact
 // count of the result bytes.
-mesh_request_result :: proc "contextless" (identity: [32]u8, identifier: u64, value: ^i64, result: []u8, result_count: ^int, error: ^errors.Error_Record) -> i64 {
+mesh_request_result :: proc "contextless" (identity: [32]u8, identifier: u64, value: ^i64, result: []u8, result_count: ^int, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) {
 	link, _ := mesh_link_find(identity)
 	if link == nil {
-		return errors.fail(error, -1, .Absent, .Connection, 1)
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Connection, 1)
 	}
 	for &item in link.requests {
 		if item.phase == .Free || item.identifier != identifier {
 			continue
 		}
 		if item.phase != .Ended {
-			return 0
+			return .Succeeded, 0
 		}
 		// The end is read once: the place is free after this call. The
 		// record holds two frames, so it is read in place, never copied to
 		// the stack.
 		ended := &item
 		defer ended^ = {}
-		switch {
-		case ended.outcome == .Succeeded:
-		case call_outcome.effect_group_of(ended.outcome) == .Change_In_Doubt:
-			return errors.fail(error, -1, .No_Answer, .Requests, 2, i64(ended.detail), 0, i64(ended.reason))
-		case ended.reason != .None:
-			// The other machine refused the request before it ran.
-			return errors.fail(error, -1, .Refused, .None, 2, i64(ended.detail), 0, i64(ended.reason))
-		case:
-			return errors.fail(error, -1, .Link_Down, .Connection, 2)
+		if ended.outcome != .Succeeded {
+			// The outcome that the session decided, with the reason of the
+			// other machine as the value found.
+			return call_outcome.fail(error, ended.outcome, .Refused, .None, 2, i64(ended.detail), 0, i64(ended.reason))
 		}
 		switch ended.kind {
 		case .Object_Request:
 			switch ended.fetch {
 			case .Stored, .Already_Stored:
 			case .Hash_Mismatch:
-				return errors.fail(error, -1, .Not_Authentic, .Objects, 2)
+				return call_outcome.fail(error, .Data_Damaged, .Damaged, .Objects, 2)
 			case .Full:
-				return errors.fail(error, -1, .Full, .Objects, 2, 0, machine_wire.OBJECT_CAPACITY)
+				return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Objects, 2, 0, machine_wire.OBJECT_CAPACITY)
 			case .Too_Large:
-				return errors.fail(error, -1, .Too_Long, .Bytes, 2, 0, machine_wire.OBJECT_BYTES_LIMIT)
+				return call_outcome.fail(error, .Answer_Unreadable, .Out_Of_Range, .Bytes, 2, 0, machine_wire.OBJECT_BYTES_LIMIT)
 			case .Refused, .Malformed, .Other_Object:
-				return errors.fail(error, -1, .Malformed, .Objects, 2, 0, 0, i64(ended.fetch))
+				return call_outcome.fail(error, .Answer_Unreadable, .Malformed, .Objects, 2, 0, 0, i64(ended.fetch))
 			}
 		case .Store_Offer:
 			if ended.store != .Ok {
-				return errors.fail(error, -1, .Refused, .Stores, 2, 0, 0, i64(ended.store))
+				return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Stores, 2, 0, 0, i64(ended.store))
 			}
 		case .Role_Call:
 			if len(result) < ended.role_result_size {
-				return errors.fail(error, -1, .Too_Long, .Bytes, 4, i64(ended.role_result_size), i64(len(result)))
+				return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 4, i64(ended.role_result_size), i64(len(result)))
 			}
 			if value != nil {
 				value^ = ended.role_value
@@ -427,9 +440,9 @@ mesh_request_result :: proc "contextless" (identity: [32]u8, identifier: u64, va
 			}
 		case .Pairing_Element, .Pairing_Confirm, .None:
 		}
-		return 1
+		return .Succeeded, 1
 	}
-	return errors.fail(error, -1, .Absent, .Requests, 2, i64(identifier))
+	return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Requests, 2, i64(identifier))
 }
 
 // mesh_client_receive gives each datagram whose first packet names the
@@ -555,9 +568,11 @@ mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Cli
 			item.outcome = .Answer_Unreadable
 			return
 		}
-		if reply.outcome == .Refused {
-			item.outcome = machine_wire.mesh_refusal_outcome(.Role_Refused)
-			item.reason = .Role_Refused
+		if reply.outcome != .Succeeded {
+			item.outcome = reply.outcome
+			if call_outcome.effect_group_of(reply.outcome) == .Nothing_Changed {
+				item.reason = .Role_Refused
+			}
 		}
 		item.role_value = reply.value
 		item.role_result_size = len(reply.result)
@@ -568,7 +583,7 @@ mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Cli
 			// The confirm goes also when the tag of the offerer failed, so
 			// the code ends on both machines.
 			error: errors.Error_Record
-			request, _ := mesh_client_begin(link.session.pinned_identity, confirm, &error)
+			request, _, _ := mesh_client_begin(link.session.pinned_identity, confirm, &error)
 			confirm_sent = request != nil
 		}
 		if status != .Ok || !confirm_sent {

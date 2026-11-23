@@ -15,40 +15,24 @@ package root
 // The check runs at each request, not at the start: a row that does not
 // verify costs nothing until it is asked for, and the refusal then names it.
 
-import "modus:contract/errors"
+import "modus:contract/call_outcome"
 import "modus:contract/replacement_list"
 import "internal:root/replacement_signature"
 import "modus:contract/root_ring"
 import "modus:system"
 
 // replace changes the replacement table of the machine, for a process with
-// the grant Replace: where a module imports the module `name`, the loaders
-// give the module of entry `by` of the boot image (from 1). 0 removes the
-// record. It writes the error record of a refusal in values.
-replace :: proc "contextless" (asker: ^Started, name: string, by: u64, values: ^[7]u64) -> system.Status {
-	status, decision := replacement_table_change(asker, name, by)
-	replace_command := u32(root_ring.Root_Command.Replace)
-	switch {
-	case status == .Ok:
-	case decision == .No_Row || decision == .No_List:
-		values^ = errors.ring_fail(replace_command, .Absent, .Records, 2, i64(by))
-	case decision == .Not_Authentic:
-		values^ = errors.ring_fail(replace_command, .Not_Authentic, .None, 2, i64(by))
-	case decision == .List_Not_Valid:
-		values^ = errors.ring_fail(replace_command, .Refused, .None, 2, i64(by), 0, i64(status))
-	case:
-		values^ = root_command_refusal(.Replace, name, by, status)
-	}
-	return status
-}
-
-// replacement_table_change does the work of replace. It refuses a chain:
-// one replacement for one import, so a loader never follows two records.
-// Then it refuses a pair that no row signed by the signing key of the
-// system names. decision is Accepted for every other result.
-replacement_table_change :: proc "contextless" (asker: ^Started, name: string, by: u64) -> (status: system.Status, decision: replacement_signature.Decision) {
+// the grant Replace: where a module imports the module of the name, the
+// loaders give the module of entry by of the boot image (from 1). 0
+// removes the record. It refuses a chain: one replacement for one import,
+// so a loader never follows two records. Then it refuses a pair that no row
+// signed by the signing key of the system names. Each refusal writes its
+// outcome and its error record in values.
+replace :: proc "contextless" (asker: ^Started, name: string, by: u64, values: ^[7]u64) -> call_outcome.Call_Outcome {
+	kind := u32(root_ring.Root_Command.Replace)
 	if .Replace not_in asker.start_grant_set.grants {
-		return .No_Right, .Accepted
+		values^ = root_ring.sender_refusal(.Replace)
+		return .Grant_Or_Right_Missing
 	}
 	entries := system.image_entries(image)
 	from, to: [32]u8
@@ -59,42 +43,56 @@ replacement_table_change :: proc "contextless" (asker: ^Started, name: string, b
 			from_name = system.name_of(entry.name[:])
 		}
 	}
-	if from == {} || by > u64(len(entries)) {
-		return .Bad_Handle, .Accepted
+	if by > u64(len(entries)) {
+		return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, 2, i64(min(by, 1 << 62)), i64(min(u64(len(entries)), 1 << 62)))
+	}
+	if from == {} {
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Modules, 1)
 	}
 	if by != 0 {
 		to = entries[by - 1].hash
+		// A module does not replace itself.
 		if to == from {
-			return .Bad_Operation, .Accepted
+			return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, 2, i64(by))
 		}
 		for item in system.replacements_read(replacement_table, &replacement_records) {
 			if item.from == to || item.to == from {
-				return .Bad_State, .Accepted
+				return root_ring.refuse(values, .Wrong_State, kind, .State, .Records, 2, i64(by))
 			}
 		}
 		// The removal of a replacement needs no row: it gives back the
 		// module that the importer names, which the system description
 		// lists. A new replacement needs one.
-		problem: replacement_list.List_Problem
-		decision, problem = replacement_signature.system_decision(replacement_list_bytes(), from, to, trust_boot_report.trust.public_key)
+		decision, problem := replacement_signature.system_decision(replacement_list_bytes(), from, to, trust_boot_report.trust.public_key)
 		if decision != .Accepted {
 			reason := replacement_signature.decision_sentences[decision]
 			if decision == .List_Not_Valid {
 				reason = replacement_list.list_problem_sentences[problem]
 			}
 			system.log_fact(.Warning, Replacement_Refused{replaced = module_name_field(from_name), replacement = module_name_field(system.name_of(entries[by - 1].name[:])), reason = text_field(reason, 80)})
-			return .No_Right, decision
+			switch decision {
+			case .Accepted:
+			case .No_Row, .No_List:
+				return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Records, 2, i64(by))
+			case .Not_Authentic:
+				return root_ring.refuse(values, .Argument_Refused, kind, .Not_Authentic, .None, 2, i64(by))
+			case .List_Not_Valid:
+				return root_ring.refuse(values, .Data_Damaged, kind, .Damaged, .Records, 2, i64(by), 0, i64(problem))
+			}
 		}
 	}
 	if written := system.replacements_write(replacement_table, from, to); written != .Ok {
-		return written, .Accepted
+		if written == .No_Slot {
+			return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, kind, .Full, .Records, 0, 0, system.REPLACEMENT_CAPACITY)
+		}
+		return kernel_refused(values, kind, written)
 	}
 	if by == 0 {
 		system.log_fact(.Info, Replacement_Ended{replaced = module_name_field(from_name)})
 	} else {
 		system.log_fact(.Info, Replacement_Made{replacement = module_name_field(system.name_of(entries[by - 1].name[:])), replaced = module_name_field(from_name)})
 	}
-	return .Ok, .Accepted
+	return .Succeeded
 }
 
 // replacement_list_bytes gives the resource replacement_list of the boot

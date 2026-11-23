@@ -269,7 +269,7 @@ transfer :: proc "contextless" (command: block.Command, requests: []Request) -> 
 				disk_silence_note(.No_Answer)
 				return false
 			}
-			if block.Status(completion.kind) != .Ok {
+			if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 				if good {
 					// The first refusal of this batch goes on the log, with the
 					// values of its error record.
@@ -302,10 +302,11 @@ transfer :: proc "contextless" (command: block.Command, requests: []Request) -> 
 
 // command sends one command with no data and waits for its completion. On
 // a silent disk, and when the wait for the block service ends with no
-// completion (disk_wait_goes_on), it gives a completion Device_Error with
-// the record No_Answer of the device, as the block service gives one.
+// completion (disk_wait_goes_on), it gives the completion of a failed
+// device with the record No_Answer of the device, as the block service
+// gives one.
 command :: proc "contextless" (kind: block.Command, values: [7]u64 = {}) -> ring.Record {
-	silent := ring.Record{kind = u32(block.Status.Device_Error), values = block.no_answer_values(kind)}
+	silent := ring.Record{kind = u32(block.device_failure_outcome(kind)), values = block.no_answer_values(kind)}
 	if disk_silent {
 		return silent
 	}
@@ -348,7 +349,7 @@ command :: proc "contextless" (kind: block.Command, values: [7]u64 = {}) -> ring
 }
 
 flush :: proc "contextless" () -> bool {
-	return block.Status(command(.Flush).kind) == .Ok
+	return command(.Flush).kind == u32(call_outcome.Call_Outcome.Succeeded)
 }
 
 Read :: enum {

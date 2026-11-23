@@ -23,7 +23,7 @@
 // and its Ed25519 signature; then the bytes of the output, whose BLAKE3 hash
 // or tree hash must be the output hash of the realisation.
 //
-// A link that breaks during a call gives Unknown_Outcome: the build can have
+// A link that breaks during a call gives an outcome in doubt: the build can have
 // run. A build is a function of its recipe, so the scheduler sends it to the
 // next builder, or builds it on this machine, and the builder of the lost
 // link takes no more work in this run. A builder that refuses the call (no
@@ -37,6 +37,7 @@
 package recipes_core
 
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/byte_order"
 import "modus:contract/enum_word"
 import "modus:contract/machine_mesh"
@@ -185,7 +186,7 @@ Distributed_Counters :: struct {
 	cache_faults:           u64, // A cache gave a bad realisation or withheld its output: it left the run.
 	remote_builds:          u64,
 	local_builds:           u64,
-	links_lost:             u64, // Calls that ended Unknown_Outcome or Unreachable.
+	links_lost:             u64, // Calls that ended in doubt, or that never left.
 	builders_refused:       u64, // Calls that the machine refused: no grant of the use, or no role.
 	failovers:              u64,
 	verify_agreements:      u64,
@@ -339,66 +340,80 @@ Remote_Recipes_Host :: struct {
 
 // remote_recipes_serve answers one call of the role Recipes from a paired
 // machine, as the role holder of machine_wire.Peer_Services calls it. The
-// result is the wire of a realisation record; Refused says that nothing
-// ran or that the store holds no such realisation.
-remote_recipes_serve :: proc "contextless" (host: ^Remote_Recipes_Host, export_word: u32, arguments: []u8, result: []u8) -> (value: i64, result_count: int, outcome: machine_wire.Role_Outcome) {
+// result is the wire of a realisation record, with Succeeded; each other
+// outcome says that nothing was given: an export or a part that this machine
+// does not have, arguments that break a rule, no such realisation, or a
+// builder, a signer or a cache that failed. No realisation is kept then.
+remote_recipes_serve :: proc "contextless" (host: ^Remote_Recipes_Host, export_word: u32, arguments: []u8, result: []u8) -> (value: i64, result_count: int, outcome: call_outcome.Call_Outcome) {
 	export, known := remote_recipes_export_of_word(export_word)
-	if host == nil || !known || len(result) < object_cache.REALISATION_WIRE_SIZE {
-		return 0, 0, .Refused
+	if host == nil || !known || export == .None {
+		return 0, 0, .Operation_Unsupported
+	}
+	if len(result) < object_cache.REALISATION_WIRE_SIZE {
+		return 0, 0, .Argument_Refused
 	}
 	record: object_cache.Realisation_Record
 	switch export {
 	case .None:
-		return 0, 0, .Refused
+		return 0, 0, .Operation_Unsupported
 	case .Realisation_Lookup:
-		if host.lookup == nil || len(arguments) != blake3.HASH_SIZE {
-			return 0, 0, .Refused
+		if host.lookup == nil {
+			return 0, 0, .Operation_Unsupported
+		}
+		if len(arguments) != blake3.HASH_SIZE {
+			return 0, 0, .Argument_Refused
 		}
 		recipe_hash: blake3.Hash
 		copy(recipe_hash[:], arguments)
 		count, found := host.lookup(recipe_hash, &record, host.staging[:], host.user_data)
-		if !found || count < 0 || count > len(host.staging) || record.recipe_hash != recipe_hash {
-			return 0, 0, .Refused
+		if !found {
+			return 0, 0, .Nothing_Has_That_Name
+		}
+		if count < 0 || count > len(host.staging) || record.recipe_hash != recipe_hash {
+			return 0, 0, .Data_Damaged
 		}
 		if host.publish != nil && !host.publish(record.output_kind, record.output_hash, host.staging[:count], host.user_data) {
-			return 0, 0, .Refused
+			return 0, 0, .Callee_Unavailable
 		}
 	case .Build:
-		if host.builder_invoke == nil || host.sign_realisation == nil || remote_build_arguments_read(arguments, &host.spec) != .None {
-			return 0, 0, .Refused
+		if host.builder_invoke == nil || host.sign_realisation == nil {
+			return 0, 0, .Operation_Unsupported
+		}
+		if remote_build_arguments_read(arguments, &host.spec) != .None {
+			return 0, 0, .Argument_Refused
 		}
 		sandbox, sandbox_refusal := pr.builder_sandbox_prepare(&host.spec)
 		if sandbox_refusal != .None || pr.builder_sandbox_validate(&sandbox) != .None {
-			return 0, 0, .Refused
+			return 0, 0, .Argument_Refused
 		}
 		count, built := host.builder_invoke(&sandbox, host.staging[:], host.user_data)
 		if !built || count < 0 || count > len(host.staging) {
-			return 0, 0, .Refused
+			return 0, 0, .Callee_Unavailable
 		}
 		output_hash, hash_refusal := pr.recipe_hash_output(sandbox.output_kind, host.staging[:count])
 		if hash_refusal != .None {
-			return 0, 0, .Refused
+			return 0, 0, .Callee_Unavailable
 		}
 		record = object_cache.Realisation_Record{recipe_hash = sandbox.recipe_hash, output_hash = output_hash, output_kind = sandbox.output_kind}
 		signing_bytes, signing_ok := object_cache.realisation_signing_bytes(&record)
 		if !signing_ok || !host.sign_realisation(signing_bytes[:], &record.signer_public_key, &record.signature, host.user_data) {
-			return 0, 0, .Refused
+			return 0, 0, .Callee_Unavailable
 		}
 		// The signing bytes name the signer: sign again over the key that
 		// the signer gave, so the record verifies.
 		signing_bytes, signing_ok = object_cache.realisation_signing_bytes(&record)
 		if !signing_ok || !host.sign_realisation(signing_bytes[:], &record.signer_public_key, &record.signature, host.user_data) {
-			return 0, 0, .Refused
+			return 0, 0, .Callee_Unavailable
 		}
 		if host.publish == nil || !host.publish(record.output_kind, output_hash, host.staging[:count], host.user_data) {
-			return 0, 0, .Refused
+			return 0, 0, .Callee_Unavailable
 		}
 	}
 	written, wire_refusal := object_cache.encode_realisation_record(&record, result)
 	if wire_refusal != .None {
-		return 0, 0, .Refused
+		return 0, 0, .Callee_Unavailable
 	}
-	return 1, written, .Answered
+	return 1, written, .Succeeded
 }
 
 // ---- The graph and the pool ----

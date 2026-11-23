@@ -10,6 +10,7 @@
 // does not start.
 package start_policy
 
+import "modus:contract/call_outcome"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
@@ -83,8 +84,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.stop(.Failed)
 		}
 	}
-	if status, _ := command_call(.Machine_Usable, {}); status != .Ok {
-		system.log_fact(.Error, Machine_Usable_Refused{status = status})
+	if outcome, _ := command_call(.Machine_Usable, {}); outcome != .Succeeded {
+		system.log_fact(.Error, Machine_Usable_Refused{outcome = outcome})
 		system.stop(.Failed)
 	}
 	system.log_fact(.Info, Machine_Usable{})
@@ -116,12 +117,14 @@ row_start :: proc "contextless" (index: int) -> bool {
 		}
 	}
 	if list_page == nil && wiring_rows.row_has_wirings(&list, index) {
-		// Only an answer Ok names the page: a refusal holds an error record.
-		status, values := command_call(.Wire, {0 = u64(root_ring.Wire_Step.List_Page)})
-		address: rawptr
-		if status == .Ok {
-			address, status = system.memory_map(system.Handle(values[0]))
+		// Only an answer Succeeded names the page: a refusal holds an error
+		// record.
+		outcome, values := command_call(.Wire, {0 = u64(root_ring.Wire_Step.List_Page)})
+		if outcome != .Succeeded {
+			system.log_fact(.Warning, Row_List_Page_Refused{outcome = outcome, row_process = row_process})
+			return false
 		}
+		address, status := system.memory_map(system.Handle(values[0]))
 		if status != .Ok {
 			system.log_fact(.Warning, Row_Wiring_Refused{status = status, row_process = row_process})
 			return false
@@ -144,9 +147,9 @@ row_start :: proc "contextless" (index: int) -> bool {
 	}
 	wiring := prepared.outcome == .Listed ? root_ring.Start_Wiring_List.In_The_List_Page : .None
 	packed := system.name_pack(start_list.row_name(&state.row))
-	status, values := command_call(.Start, {packed[0], packed[1], packed[2], packed[3], u64(wiring), 0, 0})
-	if status != .Ok {
-		system.log_fact(.Warning, Row_Start_Refused{status = status, row_process = row_process})
+	outcome, values := command_call(.Start, {packed[0], packed[1], packed[2], packed[3], u64(wiring), 0, 0})
+	if outcome != .Succeeded {
+		system.log_fact(.Warning, Row_Start_Refused{outcome = outcome, row_process = row_process})
 		return false
 	}
 	state.process = system.Handle(values[0])
@@ -206,12 +209,13 @@ row_watch :: proc "contextless" (index: int) -> (started: bool) {
 
 // command_call sends one command of the root ring and waits for its
 // completion: with one command in flight, the ring has room for it. A
-// completion of another tag is a fault of the root service: one line.
-command_call :: proc "contextless" (command: root_ring.Root_Command, arguments: [7]u64) -> (status: system.Status, values: [7]u64) {
+// completion of another tag is a fault of the root service: one line. The
+// outcome is the outcome that the root service named.
+command_call :: proc "contextless" (command: root_ring.Root_Command, arguments: [7]u64) -> (outcome: call_outcome.Call_Outcome, values: [7]u64) {
 	tag := next_tag
 	next_tag += 1
 	if !system.send(&requests.commands, ring.Record{kind = u32(command), tag = tag, values = arguments}) {
-		return .No_Slot, {}
+		return .Callee_Busy, {}
 	}
 	for {
 		wait := system.wait_begin()
@@ -220,10 +224,9 @@ command_call :: proc "contextless" (command: root_ring.Root_Command, arguments: 
 				system.log_fact(.Warning, Completion_Tag_Refused{tag = u64(answer.tag)})
 				continue
 			}
-			read, refusal := system.status_of_word(answer.kind)
-			if refusal.kind != 0 {
-				system.log_fact(.Warning, Completion_Status_Refused{status_word = u64(answer.kind)})
-				return .Bad_Operation, {}
+			read, _ := call_outcome.completion_outcome(answer.kind, answer.values)
+			if read == .Answer_Unreadable {
+				system.log_fact(.Warning, Completion_Status_Refused{outcome_word = u64(answer.kind)})
 			}
 			return read, answer.values
 		}

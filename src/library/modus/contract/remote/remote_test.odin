@@ -232,6 +232,15 @@ answer_outcome_reads_the_two_words :: proc(t: ^testing.T) {
 		outcome, record, refused = answer_outcome({outcome = word})
 		testing.expectf(t, outcome == .Answer_Unreadable && record.kind == i64(errors.Kind.Bad_Value) && !refused, "the export word %d gives %v", word, outcome)
 	}
+	// A relay outcome that is not a refusal before any call, and a record
+	// whose kind the outcome does not explain or that names no kind: each is
+	// no answer of this contract.
+	in_doubt, _, in_doubt_refused := answer_outcome({relay_outcome = u32(call_outcome.Call_Outcome.Connection_Ended_During_The_Call), error = errors.error_make(.Connection_Ended)})
+	testing.expect(t, in_doubt == .Answer_Unreadable && !in_doubt_refused)
+	unexplained, _, _ := answer_outcome({outcome = u32(call_outcome.Call_Outcome.Nothing_Has_That_Name), error = errors.error_make(.Device)})
+	testing.expect_value(t, unexplained, call_outcome.Call_Outcome.Answer_Unreadable)
+	no_kind, _, _ := answer_outcome({relay_outcome = u32(call_outcome.Call_Outcome.Argument_Refused)})
+	testing.expect_value(t, no_kind, call_outcome.Call_Outcome.Answer_Unreadable)
 	refusal := errors.error_make(.Bad_Value, .None, FIELD_HASH)
 	outcome, record, refused := answer_outcome({relay_outcome = u32(call_outcome.Call_Outcome.Argument_Refused), outcome = max(u32), error = refusal})
 	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Argument_Refused)

@@ -85,11 +85,11 @@ mesh_status_outcome :: proc "contextless" (status: Mesh_Client_Status) -> call_o
 	switch status {
 	case .Ok:
 		return .Succeeded
-	case .Refused_Zero_Key, .Refused_Same_Machine, .Refused_Bad_Phase, .Refused_Bad_Bound, .Refused_Bad_Request, .Refused_Bad_Purpose:
+	case .Refused_Zero_Key, .Refused_Same_Machine, .Refused_Bad_Bound, .Refused_Bad_Request, .Refused_Bad_Purpose:
 		return .Argument_Refused
 	case .Refused_Not_Paired, .Refused_No_Pairing:
 		return .Grant_Or_Right_Missing
-	case .Refused_Code_Expired:
+	case .Refused_Bad_Phase, .Refused_Code_Expired:
 		return .Wrong_State
 	case .Refused_Full:
 		return .Callee_Busy
@@ -609,9 +609,13 @@ mesh_call_role :: proc "contextless" (
 		result.exchange.reason = .Malformed
 		return result
 	}
-	if reply.outcome == .Refused {
-		result.exchange.outcome = mesh_refusal_outcome(.Role_Refused)
-		result.exchange.reason = .Role_Refused
+	// The outcome of the holder: a refusal before it ran reads as a
+	// refusal of the peer, an outcome that changed state is passed on.
+	if reply.outcome != .Succeeded {
+		result.exchange.outcome = reply.outcome
+		if call_outcome.effect_group_of(reply.outcome) == .Nothing_Changed {
+			result.exchange.reason = .Role_Refused
+		}
 	}
 	result.reply = reply
 	return result

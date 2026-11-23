@@ -13,6 +13,7 @@
 package iommu_client
 
 import "modus:contract/block"
+import "modus:contract/call_outcome"
 import "modus:contract/ring"
 import "modus:system"
 
@@ -30,10 +31,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
 		if record, ok := system.receive(&blocks.completions); ok {
-			if record.tag == 1 && block.Status(record.kind) == .Ok {
+			if record.tag == 1 && record.kind == u32(call_outcome.Call_Outcome.Succeeded) {
 				system.log_fact(.Info, Machine_Goes_On{})
 			} else {
-				system.log_fact(.Info, Info_Refused{status = block.Status_Word(record.kind)})
+				system.log_fact(.Info, Info_Refused{outcome = call_outcome.Call_Outcome_Word(record.kind)})
 				system.stop(.Failed)
 			}
 			system.stop(.Done)

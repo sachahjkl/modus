@@ -80,11 +80,8 @@ stop_report :: proc "c" (process: ^string, result: ^[]Stop_Frame_Row, error: ^er
 	if !answered {
 		return call_outcome.fail(error, .Callee_Unavailable, .No_Answer, .Milliseconds, 0, 0, DISK_DEBUG_OBJECT_MILLISECONDS)
 	}
-	if status, unreadable := system.status_of_word(completion.kind); unreadable.kind != 0 || status != .Ok {
-		if error != nil {
-			error^ = errors.completion_record(completion.values)
-		}
-		return outcome_of_status_word(completion.kind), 0
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
+		return root_refusal_taken(error, completion), 0
 	}
 	if !received {
 		return party_answer_refused(error), 0

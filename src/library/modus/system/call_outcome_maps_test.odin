@@ -51,16 +51,30 @@ a_failure_of_the_path_gives_zero_and_its_record :: proc(t: ^testing.T) {
 	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Deadline_Passed_During_The_Call)
 }
 
-// A connection is renewed after a call in doubt or a callee that did not
-// take the command, and after no answer of an export.
+// A connection is renewed after an outcome of the path only, never after an
+// answer of the callee.
 @(test)
 a_connection_is_renewed_only_when_it_cannot_be_trusted :: proc(t: ^testing.T) {
 	for outcome in call_outcome.Call_Outcome {
 		in_doubt := call_outcome.effect_group_of(outcome) == .Change_In_Doubt
-		testing.expectf(t, connection_to_renew(outcome) == (in_doubt || outcome == .Callee_Unavailable), "the outcome %v", outcome)
+		testing.expectf(t, connection_to_renew(outcome) == in_doubt, "the outcome %v", outcome)
 	}
 	testing.expect(t, connection_to_renew(.Answer_Unreadable))
 	testing.expect(t, connection_to_renew(.Deadline_Passed_During_The_Call))
 	testing.expect(t, !connection_to_renew(.Argument_Refused))
+	testing.expect(t, !connection_to_renew(.Callee_Unavailable))
 	testing.expect(t, !connection_to_renew(.Succeeded))
+}
+
+// The lent handles are tested in the order of the tests of a callee: an
+// absent handle or a table of another kind of object is an argument that
+// breaks a rule, before a right that a handle lacks; each case first, then
+// the one that holds alone.
+@(test)
+a_lent_handle_is_an_argument_before_a_right :: proc(t: ^testing.T) {
+	testing.expect_value(t, lent_handle_outcome(true, false, true), call_outcome.Call_Outcome.Argument_Refused)
+	testing.expect_value(t, lent_handle_outcome(false, true, true), call_outcome.Call_Outcome.Argument_Refused)
+	testing.expect_value(t, lent_handle_outcome(true, true, false), call_outcome.Call_Outcome.Argument_Refused)
+	testing.expect_value(t, lent_handle_outcome(false, false, true), call_outcome.Call_Outcome.Grant_Or_Right_Missing)
+	testing.expect_value(t, lent_handle_outcome(false, false, false), call_outcome.Call_Outcome.Succeeded)
 }

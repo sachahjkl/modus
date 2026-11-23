@@ -130,7 +130,7 @@ line_records_connect :: proc "contextless" () -> bool {
 		if line_records.refused {
 			return false
 		}
-		if service_connect(sandbox) != .Ok {
+		if service_connect(sandbox) != .Succeeded {
 			// A connection of the console itself that the root service
 			// refuses leaves no place taken.
 			if sandbox.quiet {

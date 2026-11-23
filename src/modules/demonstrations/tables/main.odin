@@ -716,9 +716,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The service: the root service starts sample as a process.
 	if ring_handle := ctx.handles[system.GRANT_ROOT]; ring_handle != 0 {
 		if requests, status = system.ring_open(ring_handle, receive_handles = true); status == .Ok {
-			if service, status = system.service_connection(&requests, 1, "sample"); status == .Ok {
-				ways_ready[.Service] = true
-			}
+			connected: call_outcome.Call_Outcome
+			service, connected = system.service_connection(&requests, 1, "sample")
+			ways_ready[.Service] = connected == .Succeeded
 		}
 	}
 	// The exports that are wrong on purpose: in this process, and in a call host.

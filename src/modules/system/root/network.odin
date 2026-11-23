@@ -1,5 +1,7 @@
 package root
 
+import "modus:contract/root_ring"
+import "modus:contract/call_outcome"
 import "modus:contract/datagram"
 import "modus:contract/errors"
 import op "modus:contract/operation"
@@ -116,31 +118,35 @@ network_refuse :: proc "contextless" (cause: string) {
 	system.log_fact(.Warning, Network_Refused{network_cause = text_field(cause, 40)})
 }
 
-// network_service gives the network service that runs, or starts it.
-network_service :: proc "contextless" () -> (service: ^Started, status: system.Status) {
+// network_service gives the network service that runs, or starts it. A
+// refusal writes its record in refusal, as a refusal of a Start.
+network_service :: proc "contextless" (refusal: ^[7]u64) -> (service: ^Started, outcome: call_outcome.Call_Outcome) {
+	kind := u32(root_ring.Root_Command.Start)
 	for &item in started {
 		if item.process != 0 && item.network.head != nil {
-			return &item, .Ok
+			return &item, .Succeeded
 		}
 	}
 	if network_refused {
-		return nil, .Bad_State
+		return nil, root_ring.refuse(refusal, .Callee_Unavailable, kind, .Device)
 	}
-	if status = start(role_holder_name(.Network)); status != .Ok {
-		// Only an absent device is for ever: driver_start gives Bad_Handle
-		// when no network device is at its place. A full table, a short
-		// budget or short memory can pass at a later start.
-		if status == .Bad_Handle {
+	if outcome = start(role_holder_name(.Network), refusal = refusal); outcome != .Succeeded {
+		// Only an absent device is for ever: the start names it with the
+		// kind Device when no network device is at its place. A full table,
+		// a short budget or short memory can pass at a later start.
+		if outcome == .Callee_Unavailable && errors.completion_record(refusal^).kind == i64(errors.Kind.Device) {
 			network_refuse("the network service did not start")
 		}
-		return nil, status
+		return nil, outcome
 	}
 	for &item in started {
 		if item.process != 0 && item.network.head != nil {
-			return &item, .Ok
+			return &item, .Succeeded
 		}
 	}
-	return nil, .Bad_State
+	// The process started and has no control ring: its start grant set
+	// lacks the ring, a fault of the boot image.
+	return nil, root_ring.refuse(refusal, .Data_Damaged, kind, .Damaged, .Records)
 }
 
 // endpoint_open makes the endpoint of a process that starts: the datagram
@@ -157,9 +163,16 @@ network_service :: proc "contextless" () -> (service: ^Started, status: system.S
 // starts the process. Else (no IOMMU, a device that no unit covers, a unit
 // of too few bits) it is contiguous, as the device needs one address. It
 // gives the two handles: give them to the process, then close them.
-endpoint_open :: proc "contextless" (slot: ^Started, name: string) -> (ring_memory, region_memory: system.Handle, status: system.Status) {
-	service := network_service() or_return
-	ring_memory = system.memory_create(ring.pages(datagram.RING_CAPACITY)) or_return
+endpoint_open :: proc "contextless" (slot: ^Started, name: string, refusal: ^[7]u64) -> (ring_memory, region_memory: system.Handle, outcome: call_outcome.Call_Outcome) {
+	kind := u32(root_ring.Root_Command.Start)
+	service: ^Started
+	if service, outcome = network_service(refusal); outcome != .Succeeded {
+		return 0, 0, outcome
+	}
+	status: system.Status
+	if ring_memory, status = system.memory_create(ring.pages(datagram.RING_CAPACITY)); status != .Ok {
+		return 0, 0, kernel_refused(refusal, kind, status)
+	}
 	region_flags := network_device_windows ? op.Memory_Flags{} : op.Memory_Flags{.Contiguous}
 	region_memory, status = system.memory_create(datagram.REGION_PAGES, 0, region_flags)
 	given: [2]system.Handle
@@ -172,20 +185,21 @@ endpoint_open :: proc "contextless" (slot: ^Started, name: string) -> (ring_memo
 	grant := endpoint_of(name)
 	grant.inspect = .Inspect in slot.start_grant_set.grants
 	packed := system.name_pack(name)
-	if status == .Ok && !system.send(&service.network.commands, ring.Record{kind = u32(datagram.Control.Endpoint_Add), values = {0 = u64(given[0]), 1 = u64(given[1]), 2 = datagram.grant_pack(grant), 3 = packed[0], 4 = packed[1], 5 = packed[2], 6 = packed[3]}}) {
-		status = .No_Slot
-	}
-	if status != .Ok {
+	sent := status == .Ok && system.send(&service.network.commands, ring.Record{kind = u32(datagram.Control.Endpoint_Add), values = {0 = u64(given[0]), 1 = u64(given[1]), 2 = datagram.grant_pack(grant), 3 = packed[0], 4 = packed[1], 5 = packed[2], 6 = packed[3]}})
+	if !sent {
 		// A handle that the network service received and never uses stays in
 		// its table until it stops; the case needs a full control ring.
 		system.close(ring_memory)
 		if region_memory != 0 {
 			system.close(region_memory)
 		}
-		return 0, 0, status
+		if status != .Ok {
+			return 0, 0, kernel_refused(refusal, kind, status)
+		}
+		return 0, 0, root_ring.refuse(refusal, .Callee_Busy, kind, .Busy, .Requests)
 	}
 	slot.endpoint, slot.network_service = given[0], service
-	return ring_memory, region_memory, .Ok
+	return ring_memory, region_memory, .Succeeded
 }
 
 // endpoint_close ends the endpoint of a process that stopped.
@@ -215,8 +229,7 @@ network_answers :: proc "contextless" (wait: ^system.Wait) {
 			continue
 		}
 		for record in system.receive(&item.network.completions) {
-			if datagram.Status(record.kind) != .Ok {
-				error := errors.completion_record(record.values)
+			if outcome, error := call_outcome.completion_outcome(record.kind, record.values); outcome != .Succeeded {
 				system.log_fact(.Warning, Network_Control_Command_Refused(errors.error_record_fact_fields(error)))
 			}
 		}

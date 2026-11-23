@@ -2,7 +2,6 @@
 package module
 
 import "core:testing"
-import "modus:contract/block"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
@@ -85,13 +84,12 @@ a_member_has_the_words_of_its_sentence :: proc(t: ^testing.T) {
 	}
 	// Some names, as a principal types them in a condition.
 	too_long, _ := contract_enum_member_name(.Error_Kind, u64(errors.Kind.Too_Long))
-	device_error, _ := contract_enum_member_name(.Block_Status, u64(block.Status.Device_Error))
 	gone, _ := contract_enum_member_name(.Storage_Status, u64(storage_status.Status.Gone))
 	in_doubt, _ := contract_enum_member_name(.Call_Outcome, u64(call_outcome.Call_Outcome.Callee_Stopped_During_The_Call))
 	find, _ := contract_enum_member_name(.Load_Stage, u64(Load_Stage.Find))
 	pixels, _ := contract_enum_member_name(.Pointer_Part, u64(pointer_pictures.Part.Pixels))
 	memory, _ := contract_enum_member_name(.Object_Kind, u64(op.Object_Kind.Memory))
-	testing.expect(t, too_long == "Too_Long" && device_error == "Device_Error" && gone == "Gone" && in_doubt == "Callee_Stopped_During_The_Call" && find == "Find" && pixels == "Pixels" && memory == "Memory")
+	testing.expect(t, too_long == "Too_Long" && gone == "Gone" && in_doubt == "Callee_Stopped_During_The_Call" && find == "Find" && pixels == "Pixels" && memory == "Memory")
 }
 
 // Each contract enum but None has the size of its type, and a word type

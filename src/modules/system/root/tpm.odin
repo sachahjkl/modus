@@ -2,6 +2,7 @@ package root
 
 import info "modus:contract/boot_info"
 import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/ring"
 import "modus:contract/tpm_service"
 import "modus:contract/value_kinds"
@@ -189,13 +190,14 @@ start_policy_measure :: proc "contextless" (module_hash: [32]u8, list_hash: [32]
 				// A completion of a measure whose wait ended at the bound.
 				continue
 			}
-			status, known := tpm_service.status_of_word(record.kind)
-			if !known {
-				system.log_fact(.Warning, Start_Policy_Unmeasured_Unknown_Status{status_word = u64(record.kind), start_policy_hash = head, start_policy_words = policy_words})
+			// The one border of the completion of the TPM service.
+			outcome, failure := call_outcome.completion_outcome(record.kind, record.values)
+			if outcome == .Answer_Unreadable {
+				system.log_fact(.Warning, Start_Policy_Unmeasured_Unknown_Status{outcome_word = u64(record.kind), start_policy_hash = head, start_policy_words = policy_words})
 				return false
 			}
-			if status != .Ok {
-				system.log_fact(.Warning, Start_Policy_Measure_Failed{answer_value = record.values[0], start_policy_hash = head, start_policy_words = policy_words, tpm_status = text_field(tpm_measure_status_words[status], 64)})
+			if outcome != .Succeeded {
+				system.log_fact(.Warning, Start_Policy_Measure_Failed{answer_value = cast(u64)failure.found, start_policy_hash = head, start_policy_words = policy_words, tpm_status = text_field(call_outcome.CALL_OUTCOME_NAMES[outcome], 64)})
 				return false
 			}
 			value := transmute([32]u8)[4]u64{record.values[0], record.values[1], record.values[2], record.values[3]}
@@ -212,21 +214,6 @@ start_policy_measure :: proc "contextless" (module_hash: [32]u8, list_hash: [32]
 			return false
 		}
 	}
-}
-
-// The words of each status of the TPM service, for the line of a measure
-// that failed.
-@(rodata)
-tpm_measure_status_words := [tpm_service.Status]string {
-	.Ok                  = "Ok",
-	.Bad_Command         = "Bad_Command",
-	.Refused             = "Refused, a response code of the TPM",
-	.Policy_Fails        = "Policy_Fails",
-	.Device_Error        = "Device_Error, a step of the interface",
-	.Not_Authentic       = "Not_Authentic",
-	.Authorization_Fails = "Authorization_Fails",
-	.Locked_Out          = "Locked_Out",
-	.Measure_Limit       = "Measure_Limit: PCR 12 took its two extends of this start",
 }
 
 // tpm_seal_allowed says if a key may be sealed by the TPM: only when the

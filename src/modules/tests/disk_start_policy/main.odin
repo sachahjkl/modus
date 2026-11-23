@@ -27,6 +27,7 @@
 package disk_start_policy
 
 import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
@@ -75,18 +76,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	// A start policy never starts a start policy: the root service starts
 	// it alone.
-	if status, _ := command_call(.Start, "start_policy"); status != .Ok {
-		system.log_fact(.Info, Start_Policy_Start_Refused{status = status})
+	if outcome, _ := command_call(.Start, "start_policy"); outcome != .Succeeded {
+		system.log_fact(.Info, Start_Policy_Start_Refused{outcome = outcome})
 	} else {
 		system.log_fact(.Info, Wrong_Start_Policy_Start_Taken{})
 	}
 	// Its root ring sends Start, Stop, Machine_Usable and Wire only: each command
-	// of the console is refused with No_Right, before it runs.
+	// of the console is refused with Grant_Or_Right_Missing, before it runs.
 	refused := [4]root_ring.Root_Command{.Start_Policy_Choice, .Start_From_Disk, .Disk_Grant, .Connect}
 	taken := 0
 	for command in refused {
-		if status, _ := command_call(command, "storage"); status != .No_Right {
-			system.log_fact(.Info, Wrong_Command_Not_Refused{status = status, command = command_field(root_ring.root_command_names[command])})
+		if outcome, _ := command_call(command, "storage"); outcome != .Grant_Or_Right_Missing {
+			system.log_fact(.Info, Wrong_Command_Not_Refused{outcome = outcome, command = command_field(root_ring.root_command_names[command])})
 			taken += 1
 		}
 	}
@@ -99,9 +100,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log_fact(.Info, Not_Started_Without_Screen{started_process = value_kinds.module_name_field(name)})
 			continue
 		}
-		status, _ := command_call(.Start, name)
-		if status != .Ok {
-			system.log_fact(.Info, Start_Refused{status = status, started_process = value_kinds.module_name_field(name)})
+		outcome, _ := command_call(.Start, name)
+		if outcome != .Succeeded {
+			system.log_fact(.Info, Start_Refused{outcome = outcome, started_process = value_kinds.module_name_field(name)})
 			if name == "console" {
 				system.stop(.Failed)
 			}
@@ -115,8 +116,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if wiring_refusals() == 0 {
 		system.log_fact(.Info, Wiring_Refused{})
 	}
-	if status, _ := command_call(.Machine_Usable, ""); status != .Ok {
-		system.log_fact(.Info, Machine_Usable_Refused{status = status})
+	if outcome, _ := command_call(.Machine_Usable, ""); outcome != .Succeeded {
+		system.log_fact(.Info, Machine_Usable_Refused{outcome = outcome})
 		system.stop(.Failed)
 	}
 	system.log_fact(.Info, Machine_Is_Usable{})
@@ -127,18 +128,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 // command_call sends one command of the root ring with a name, and waits
 // for its completion.
-command_call :: proc "contextless" (command: root_ring.Root_Command, name: string) -> (status: system.Status, values: [7]u64) {
+command_call :: proc "contextless" (command: root_ring.Root_Command, name: string) -> (outcome: call_outcome.Call_Outcome, values: [7]u64) {
 	packed := system.name_pack(name)
 	return call(command, {packed[0], packed[1], packed[2], packed[3], 0, 0, 0})
 }
 
 // call sends one command of the root ring with its values, and waits for
-// its completion. One command is in flight, so the ring has room.
-call :: proc "contextless" (command: root_ring.Root_Command, arguments: [7]u64) -> (status: system.Status, values: [7]u64) {
+// its completion. One command is in flight, so the ring has room. The
+// outcome is the outcome that the root service named.
+call :: proc "contextless" (command: root_ring.Root_Command, arguments: [7]u64) -> (outcome: call_outcome.Call_Outcome, values: [7]u64) {
 	tag := next_tag
 	next_tag += 1
 	if !system.send(&requests.commands, ring.Record{kind = u32(command), tag = tag, values = arguments}) {
-		return .No_Slot, {}
+		return .Callee_Busy, {}
 	}
 	for {
 		wait := system.wait_begin()
@@ -146,10 +148,7 @@ call :: proc "contextless" (command: root_ring.Root_Command, arguments: [7]u64) 
 			if answer.tag != tag {
 				continue
 			}
-			read, refusal := system.status_of_word(answer.kind)
-			if refusal.kind != 0 {
-				return .Bad_Operation, {}
-			}
+			read, _ := call_outcome.completion_outcome(answer.kind, answer.values)
 			return read, answer.values
 		}
 		system.wait_records(&wait, &requests.completions)

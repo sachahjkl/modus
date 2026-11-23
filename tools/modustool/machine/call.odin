@@ -629,11 +629,11 @@ call_send :: proc(client: ^Call_Client, call: ^Prepared_Call) -> (answer: remote
 	client.last_hash = header.hash
 	bytes, written := remote.request_write(client.request, header, call.bytes)
 	if !written {
-		return {}, nil, {outcome = .Lost, reason = "the request does not fit in a call region"}, false
+		return {}, nil, {outcome = .Request_Too_Large, reason = "the request does not fit in a call region"}, false
 	}
 	received, sent := socket_call(client, bytes)
 	if !sent {
-		return {}, nil, {outcome = .Lost, reason = fmt.tprintf("the peer of the tool does not answer at %s: does `modustool run` run?", client.socket)}, false
+		return {}, nil, {outcome = .Peer_Absent, reason = fmt.tprintf("the peer of the tool does not answer at %s: does `modustool run` run?", client.socket)}, false
 	}
 	if len(received) < size_of(Call_Socket_Result) {
 		return {}, nil, {outcome = .Lost, reason = "the peer ended the call with no outcome"}, false

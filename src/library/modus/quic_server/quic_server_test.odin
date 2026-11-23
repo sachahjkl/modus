@@ -2,6 +2,8 @@
 package quic_server
 
 import "core:testing"
+import "modus:contract/call_outcome"
+import "modus:contract/errors"
 import "modus:contract/datagram"
 import "modus:contract/ring"
 import "modus:network"
@@ -194,13 +196,13 @@ validate_tags_and_completions_reject_stale_and_hostile_values :: proc(t: ^testin
 	oob_tag, _ := validate_tag_pack(5, 1)
 
 	// Stale generation, unused slot, out-of-range place, and unknown Status word all refused.
-	testing.expect(t, !validation_completed(nil, records[:], ring.Record{kind = u32(datagram.Status.Ok), tag = stale_tag, values = {0 = 1}}))
-	testing.expect(t, !validation_completed(nil, records[:], ring.Record{kind = u32(datagram.Status.Ok), tag = unused_tag, values = {0 = 1}}))
-	testing.expect(t, !validation_completed(nil, records[:], ring.Record{kind = u32(datagram.Status.Ok), tag = oob_tag, values = {0 = 1}}))
-	testing.expect(t, !validation_completed(nil, records[:], ring.Record{kind = u32(max(datagram.Status)) + 1, tag = good_tag, values = {0 = 1}}))
+	testing.expect(t, !validation_completed(nil, records[:], ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = stale_tag, values = {0 = 1}}))
+	testing.expect(t, !validation_completed(nil, records[:], ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = unused_tag, values = {0 = 1}}))
+	testing.expect(t, !validation_completed(nil, records[:], ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = oob_tag, values = {0 = 1}}))
+	testing.expect(t, !validation_completed(nil, records[:], ring.Record{kind = u32(max(call_outcome.Call_Outcome)) + 1, tag = good_tag, values = {0 = 1}}))
 	testing.expect(t, !validation_completed(nil, records[:], ring.Record{kind = max(u32), tag = good_tag, values = {0 = 1}}))
 	// Matching live record with valid Status succeeds.
-	testing.expect(t, validation_completed(nil, records[:], ring.Record{kind = u32(datagram.Status.Ok), tag = good_tag, values = {0 = 1}}))
+	testing.expect(t, validation_completed(nil, records[:], ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = good_tag, values = {0 = 1}}))
 }
 
 @(test)
@@ -222,12 +224,12 @@ completions_drain_handles_arrived_refusals_and_hostile_tags :: proc(t: ^testing.
 	testing.expect(t, ok_a && ok_b)
 
 	// Push mixed completions: valid receive, failed receive, valid send, refused send, hostile send tag naming rx place 0, unknown tag.
-	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(datagram.Status.Ok), tag = 3, values = {1 = 64}}))
-	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(datagram.Status.Link_Down), tag = 4}))
-	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(datagram.Status.Ok), tag = SEND_TAG + send_a}))
-	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(datagram.Status.Amplification), tag = SEND_TAG + send_b}))
-	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(datagram.Status.Ok), tag = SEND_TAG + 0})) // Hostile: rx place as send!
-	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(datagram.Status.Ok), tag = 500_000})) // Unknown tag.
+	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = 3, values = {1 = 64}}))
+	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Callee_Unavailable), tag = 4, values = errors.ring_fail(u32(datagram.Command.Receive), .Link_Down)}))
+	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = SEND_TAG + send_a}))
+	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Budget_Or_Capacity_Exhausted), tag = SEND_TAG + send_b, values = errors.ring_fail(u32(datagram.Command.Send), .Over_Limit, .Bytes, 2, 300, 100)}))
+	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = SEND_TAG + 0})) // Hostile: rx place as send!
+	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = 500_000})) // Unknown tag.
 
 	records: [4]quic.Server_Record
 	arrived: [8]ring.Record
@@ -237,7 +239,7 @@ completions_drain_handles_arrived_refusals_and_hostile_tags :: proc(t: ^testing.
 	// Both valid send places returned; hostile rx place rejected.
 	testing.expect_value(t, ep.free_count, PLACE_COUNT - 64)
 	testing.expect_value(t, ep.sends_refused, u64(1))
-	testing.expect_value(t, ep.send_refusal_last, u32(datagram.Status.Amplification))
+	testing.expect_value(t, ep.send_refusal_last, u32(call_outcome.Call_Outcome.Budget_Or_Capacity_Exhausted))
 	testing.expect_value(t, ep.bad_completions, u64(2))
 
 	// The failed receive (tag 4) must have been reposted onto commands and marked in flight.
@@ -348,8 +350,8 @@ exchange_counts_malformed_datagrams_and_reposts_places :: proc(t: ^testing.T) {
 
 	// Put a truncated (3-byte) UDP datagram in receive place 5 and an out-of-range place tag.
 	arrived := [2]ring.Record{
-		{kind = u32(datagram.Status.Ok), tag = 5, values = {1 = 3, 2 = 0x0A00_0202, 3 = 12345}},
-		{kind = u32(datagram.Status.Ok), tag = PLACE_COUNT, values = {1 = 32, 2 = 0x0A00_0202, 3 = 12345}},
+		{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = 5, values = {1 = 3, 2 = 0x0A00_0202, 3 = 12345}},
+		{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = PLACE_COUNT, values = {1 = 32, 2 = 0x0A00_0202, 3 = 12345}},
 	}
 	@(static) work_calls: int
 	work_calls = 0
@@ -391,16 +393,16 @@ in_flight_tracking_refuses_duplicate_send_and_receive_completions :: proc(t: ^te
 
 	// A forged/duplicate Send completion for free slot send_a with error status
 	// must be refused WITHOUT incrementing sends_refused or send_refusal_last.
-	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(datagram.Status.Amplification), tag = SEND_TAG + send_a}))
+	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Budget_Or_Capacity_Exhausted), tag = SEND_TAG + send_a, values = errors.ring_fail(u32(datagram.Command.Send), .Over_Limit, .Bytes, 2, 300, 100)}))
 	// An unposted Receive completion (slot 7 never posted) must be refused.
-	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(datagram.Status.Ok), tag = 7, values = {1 = 32}}))
+	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = 7, values = {1 = 32}}))
 	// Post receive slot 8 once; posting a second time while in flight must fail.
 	testing.expect(t, post_receive(&ep, 8))
 	testing.expect(t, !post_receive(&ep, 8))
 	_, _ = ring.pop(&ep.datagrams.commands)
 	// Deliver two completions for slot 8: first succeeds, second is refused.
-	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(datagram.Status.Ok), tag = 8, values = {1 = 32}}))
-	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(datagram.Status.Ok), tag = 8, values = {1 = 32}}))
+	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = 8, values = {1 = 32}}))
+	testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = 8, values = {1 = 32}}))
 
 	records: [4]quic.Server_Record
 	arrived: [8]ring.Record
@@ -430,30 +432,30 @@ info_completion_check_refuses_bad_tag_status_and_grant :: proc(t: ^testing.T) {
 
 	// Wrong tag.
 	for bad_tag in ([?]u32{0, 1, SEND_TAG, CALL_TAG + 1, max(u32)}) {
-		_, _, err := info_completion_check(ring.Record{kind = u32(datagram.Status.Ok), tag = bad_tag, values = {0 = 0x0A00_020F, 6 = udp_listen}})
+		_, _, err := info_completion_check(ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = bad_tag, values = {0 = 0x0A00_020F, 6 = udp_listen}})
 		testing.expectf(t, err == .Bad_Grant, "tag %d must fail", bad_tag)
 	}
-	// Non-Ok status or unknown status word.
-	for bad_status in ([?]u32{u32(datagram.Status.Bad_Command), u32(datagram.Status.Not_Granted), u32(max(datagram.Status)) + 1, max(u32)}) {
+	// An outcome other than Succeeded, or a word that names no outcome.
+	for bad_status in ([?]u32{u32(call_outcome.Call_Outcome.Argument_Refused), u32(call_outcome.Call_Outcome.Grant_Or_Right_Missing), u32(max(call_outcome.Call_Outcome)) + 1, max(u32)}) {
 		_, _, err := info_completion_check(ring.Record{kind = bad_status, tag = CALL_TAG, values = {0 = 0x0A00_020F, 6 = udp_listen}})
 		testing.expectf(t, err == .Bad_Grant, "status %d must fail", bad_status)
 	}
 	// Local address past u32.
 	{
-		_, _, err := info_completion_check(ring.Record{kind = u32(datagram.Status.Ok), tag = CALL_TAG, values = {0 = u64(max(u32)) + 1, 6 = udp_listen}})
+		_, _, err := info_completion_check(ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = CALL_TAG, values = {0 = u64(max(u32)) + 1, 6 = udp_listen}})
 		testing.expect_value(t, err, Open_Error.Bad_Grant)
 	}
 	// TCP grant, non-listen UDP grant, unknown grant bits, wrong required address.
 	for bad_grant in ([?]u64{0, tcp_listen, udp_client, max(u64)}) {
-		_, _, err := info_completion_check(ring.Record{kind = u32(datagram.Status.Ok), tag = CALL_TAG, values = {0 = 0x0A00_020F, 6 = bad_grant}})
+		_, _, err := info_completion_check(ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = CALL_TAG, values = {0 = 0x0A00_020F, 6 = bad_grant}})
 		testing.expectf(t, err == .Bad_Grant, "grant %x must fail", bad_grant)
 	}
 	{
-		_, _, err := info_completion_check(ring.Record{kind = u32(datagram.Status.Ok), tag = CALL_TAG, values = {0 = 0x0A00_020F, 6 = udp_listen}}, 0x0A00_0203, true)
+		_, _, err := info_completion_check(ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = CALL_TAG, values = {0 = 0x0A00_020F, 6 = udp_listen}}, 0x0A00_0203, true)
 		testing.expect_value(t, err, Open_Error.Bad_Grant)
 	}
 	// Valid UDP listen grant succeeds with exact address and port.
-	addr, port, err := info_completion_check(ring.Record{kind = u32(datagram.Status.Ok), tag = CALL_TAG, values = {0 = 0x0A00_020F, 6 = udp_listen}}, 0x0A00_0202, true)
+	addr, port, err := info_completion_check(ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = CALL_TAG, values = {0 = 0x0A00_020F, 6 = udp_listen}}, 0x0A00_0202, true)
 	testing.expect_value(t, err, Open_Error.None)
 	testing.expect_value(t, addr, u32(0x0A00_020F))
 	testing.expect_value(t, port, u16(7101))
@@ -504,7 +506,7 @@ drain_counts_arrivals_dropped_and_skips_idle_wake :: proc(t: ^testing.T) {
 	for slot in u32(0) ..< 4 {
 		testing.expect(t, post_receive(&ep, slot))
 		_, _ = ring.pop(&ep.datagrams.commands)
-		testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(datagram.Status.Ok), tag = slot, values = {1 = 32}}))
+		testing.expect(t, ring.push(&ep.datagrams.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = slot, values = {1 = 32}}))
 	}
 	count := completions_drain_queue(&ep, nil, records[:], arrived_small[:])
 	testing.expect_value(t, count, 2)
@@ -535,15 +537,15 @@ exchange_refuses_oversized_and_out_of_range_receive_fields :: proc(t: ^testing.T
 	}
 	bad_arrived := [5]ring.Record{
 		// Oversized length (> PLACE_SIZE): must NOT be clamped to PLACE_SIZE.
-		{kind = u32(datagram.Status.Ok), tag = 0, values = {1 = PLACE_SIZE + 1, 2 = 0x0A00_0202, 3 = 50000}},
+		{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = 0, values = {1 = PLACE_SIZE + 1, 2 = 0x0A00_0202, 3 = 50000}},
 		// Undersized length (< UDP_HEADER).
-		{kind = u32(datagram.Status.Ok), tag = 1, values = {1 = network.UDP_HEADER - 1, 2 = 0x0A00_0202, 3 = 50000}},
+		{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = 1, values = {1 = network.UDP_HEADER - 1, 2 = 0x0A00_0202, 3 = 50000}},
 		// Remote IPv4 address past u32.
-		{kind = u32(datagram.Status.Ok), tag = 2, values = {1 = network.UDP_HEADER + 16, 2 = u64(max(u32)) + 1, 3 = 50000}},
+		{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = 2, values = {1 = network.UDP_HEADER + 16, 2 = u64(max(u32)) + 1, 3 = 50000}},
 		// Remote UDP port past u16.
-		{kind = u32(datagram.Status.Ok), tag = 3, values = {1 = network.UDP_HEADER + 16, 2 = 0x0A00_0202, 3 = u64(max(u16)) + 1}},
+		{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = 3, values = {1 = network.UDP_HEADER + 16, 2 = 0x0A00_0202, 3 = u64(max(u16)) + 1}},
 		// Tag names a send place (64 >= receive_places), not a receive place.
-		{kind = u32(datagram.Status.Ok), tag = 64, values = {1 = network.UDP_HEADER + 16, 2 = 0x0A00_0202, 3 = 50000}},
+		{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = 64, values = {1 = network.UDP_HEADER + 16, 2 = 0x0A00_0202, 3 = 50000}},
 	}
 	srv: quic.Server
 	records: [4]quic.Server_Record

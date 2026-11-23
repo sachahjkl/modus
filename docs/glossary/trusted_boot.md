@@ -84,7 +84,7 @@ Do not use: configuration register, measure register (for this one).
 
 The measure ring is the ring from the root service to the TPM service on which the root service alone sends `Measure_Start_Policy`.
 
-The root service makes it and holds its one writer side; the TPM service serves it beside the TPM ring of `unlock`, one request at a time. The TPM ring refuses that command with `Bad_Command`, and the measure ring refuses `Seal` and `Unseal`, so no process but the root service extends the start policy register. It has no region: the digest is in the record.
+The root service makes it and holds its one writer side; the TPM service serves it beside the TPM ring of `unlock`, one request at a time. The TPM ring refuses that command with `Grant_Or_Right_Missing`, and the measure ring refuses `Seal` and `Unseal`, so no process but the root service extends the start policy register. It has no region: the digest is in the record.
 
 Do not use: root TPM ring, extend ring.
 

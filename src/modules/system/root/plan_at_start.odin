@@ -75,8 +75,8 @@ plan_at_start_begin :: proc "contextless" (chosen: ^disk_process.Grant_Row) {
 	plan_at_start_holder_length = copy(plan_at_start_holder_bytes[:], plans_name)
 	show("the root service reads the plan of principal 0", .Running, .Root)
 	if find(plans_name) == nil {
-		if status := start(plans_name); status != .Ok {
-			system.log_fact(.Warning, Plan_At_Start_Start_Failed{status = status})
+		if outcome := start(plans_name); outcome != .Succeeded {
+			system.log_fact(.Warning, Plan_At_Start_Start_Failed{outcome = outcome})
 			role_policy.plan_at_start_abandon(&plan_at_start)
 			plan_at_start_end()
 			return

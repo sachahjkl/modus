@@ -1,5 +1,7 @@
 package root
 
+import "modus:contract/root_ring"
+import "modus:contract/call_outcome"
 import "modus:contract/font_outlines"
 import "modus:contract/ring"
 import "modus:contract/settings"
@@ -102,41 +104,42 @@ text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^in
 // writes the page, and stops. The storage service starts first, with the
 // block service of the data disk. A machine with no data disk keeps the
 // defaults. A start policy asks for it, as the row settings of its list,
-// and gets the status. The row names the role, so it reaches the holder
-// that the plan of principal 0 gave, as each other row of a role does.
-settings_boot_pass_start :: proc "contextless" () -> system.Status {
-	decision, status := settings_pass_start(.Boot, principals.MACHINE)
+// and gets the outcome, with the record of a refusal in values. The row
+// names the role, so it reaches the holder that the plan of principal 0
+// gave, as each other row of a role does.
+settings_boot_pass_start :: proc "contextless" (values: ^[7]u64) -> call_outcome.Call_Outcome {
+	decision, outcome := settings_pass_start(.Boot, principals.MACHINE, values)
 	switch decision {
 	case .Start:
-		if status != .Ok {
-			system.log_fact(.Warning, Settings_Boot_Pass_Failed{status = status})
+		if outcome != .Succeeded {
+			system.log_fact(.Warning, Settings_Boot_Pass_Failed{outcome = outcome})
 		}
-		return status
+		return outcome
 	case .Raised, .Waits, .Refused:
 		// Another process settings runs and writes the page: its fact said
 		// so, and the start policy gets a refusal of the moment.
-		return .Bad_State
 	}
-	return .Bad_State
+	return root_ring.refuse(values, .Callee_Busy, u32(root_ring.Root_Command.Start), .Busy, .Processes, 1, 1, 1)
 }
 
 // settings_pass_start decides a start of `settings` for a pass, then
 // starts it when the decision is Start, and keeps the serial of its
 // process, so that settings_running finds the pass that runs. status is
-// the status of the start, Ok with any other decision.
-settings_pass_start :: proc "contextless" (pass: settings.Pass, principal: u64) -> (decision: Settings_Start_Decision, status: system.Status) {
+// the outcome of the start, Succeeded with any other decision; a refusal
+// writes its record in refusal, when the caller gives one.
+settings_pass_start :: proc "contextless" (pass: settings.Pass, principal: u64, refusal: ^[7]u64 = nil) -> (decision: Settings_Start_Decision, outcome: call_outcome.Call_Outcome) {
 	settings_pass = pass
 	defer settings_pass = .Window
 	if decision = settings_start_decide(principal, .Other); decision != .Start {
-		return decision, .Ok
+		return decision, .Succeeded
 	}
 	place: ^Started
-	status = start(role_holder_name(.Settings), principal, place = &place)
-	if status == .Ok && place != nil {
+	outcome = start(role_holder_name(.Settings), principal, place = &place, refusal = refusal)
+	if outcome == .Succeeded && place != nil {
 		settings_pass_process_serial = place.process_serial
 		settings_pass_running_pass = pass
 	}
-	return .Start, status
+	return .Start, outcome
 }
 
 // settings_window_start takes Control.Start of `settings` from the desktop:
@@ -245,8 +248,8 @@ settings_start_due_step :: proc "contextless" () {
 		return
 	}
 	settings_start_due = false
-	if status := start(role_holder_name(.Settings), settings_start_due_principal); status != .Ok {
-		system.log_fact(.Warning, Settings_Due_Start_Failed{status = status})
+	if outcome := start(role_holder_name(.Settings), settings_start_due_principal); outcome != .Succeeded {
+		system.log_fact(.Warning, Settings_Due_Start_Failed{outcome = outcome})
 	}
 }
 
@@ -256,8 +259,8 @@ settings_start_due_step :: proc "contextless" () {
 // compositor to raise the window of `settings` that runs, the one writer of
 // the page, or refuses while a pass runs.
 settings_appearance_next_start :: proc "contextless" () {
-	decision, status := settings_pass_start(.Appearance_Next, desktop_principal())
-	if decision == .Start && status != .Ok {
-		system.log_fact(.Warning, Appearance_Next_Not_Started{status = status})
+	decision, outcome := settings_pass_start(.Appearance_Next, desktop_principal())
+	if decision == .Start && outcome != .Succeeded {
+		system.log_fact(.Warning, Appearance_Next_Not_Started{outcome = outcome})
 	}
 }

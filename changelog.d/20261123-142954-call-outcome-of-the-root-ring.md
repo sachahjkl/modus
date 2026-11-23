@@ -1,0 +1,3 @@
+type: Changed
+
+**The call outcome of the root ring.** Each command of the root ring, and each wiring that the wiring service decides, now ends with a call outcome and an error record that the refusal names together, in place of a status of the kernel: a second pair of one source is `Name_Already_Taken` with `Exists`, a full wiring ring `Callee_Busy` with `Busy`, a revocation of a grant that the process does not hold `Nothing_Has_That_Name` with `Absent`. The console, the debugger, `remote`, the start policies and `system.service_connection` read that outcome, and the log facts of a start that did not run name it.

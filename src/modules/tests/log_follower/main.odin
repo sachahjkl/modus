@@ -35,6 +35,7 @@
 package log_follower
 
 import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
@@ -87,7 +88,7 @@ wrong :: proc "contextless" (text: string, value: u64) -> ! {
 }
 
 @(private = "file")
-wrong_refused :: proc "contextless" (text: string, status: system.Status, answer: [7]u64) -> ! {
+wrong_refused :: proc "contextless" (text: string, status: call_outcome.Call_Outcome, answer: [7]u64) -> ! {
 	system.log_fact(.Error, Wrong_Refused{status = u64(status), error_kind = answer[0], error_unit = answer[1], error_operation = answer[2], error_argument = answer[3], error_value = answer[4], error_limit = answer[5], error_found = answer[6]}, text)
 	system.stop(.Failed)
 }
@@ -95,7 +96,7 @@ wrong_refused :: proc "contextless" (text: string, status: system.Status, answer
 // root_call sends one command on the root ring and waits for its
 // completion, within the hang bound.
 @(private = "file")
-root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64) -> (status: system.Status, answer: [7]u64) {
+root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64) -> (outcome: call_outcome.Call_Outcome, answer: [7]u64) {
 	tag := next_tag
 	next_tag += 1
 	if !system.send(&requests.commands, ring.Record{kind = u32(command), tag = tag, values = values}) {
@@ -108,9 +109,9 @@ root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64
 			if record.tag != tag {
 				continue
 			}
-			read, refusal := system.status_of_word(record.kind)
-			if refusal.kind != 0 {
-				wrong("the root service answered a status word that names no status", u64(record.kind))
+			read, _ := call_outcome.completion_outcome(record.kind, record.values)
+			if read == .Answer_Unreadable {
+				wrong("the root service answered a completion that this process cannot read; the outcome word", u64(record.kind))
 			}
 			return read, record.values
 		}
@@ -127,7 +128,7 @@ root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64
 @(private = "file")
 list_page_take :: proc "contextless" () {
 	status, answer := root_call(.Wire, {0 = u64(root_ring.Wire_Step.List_Page)})
-	if status != .Ok || answer[0] == 0 {
+	if status != .Succeeded || answer[0] == 0 {
 		wrong_refused("the list page was refused with the status", status, answer)
 	}
 	page := system.Handle(answer[0])
@@ -202,8 +203,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	requests = opened
 	list_page_take()
 	connection, connected := system.service_connection(&requests, CONNECT_TAG, "log")
-	if connected != .Ok {
-		wrong("the root service gave no connection to the log service; the status", u64(connected))
+	if connected != .Succeeded {
+		wrong("the root service gave no connection to the log service; the outcome word", u64(connected))
 	}
 
 	// log.follow to this process: the end Connected names the service of
@@ -217,7 +218,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wrong("the list does not fit the list page; rows:", 1)
 	}
 	status, answer := root_call(.Wire, {0 = u64(root_ring.Wire_Step.Apply)})
-	if status != .Ok || answer[0] == 0 {
+	if status != .Succeeded || answer[0] == 0 {
 		wrong_refused("the Wire of log.follow gave the status", status, answer)
 	}
 	number := u32(answer[0])

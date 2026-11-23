@@ -34,7 +34,7 @@ READ_BYTES_LIMIT :: 6 * 8
 
 // A command of the client, as the kind of a command record.
 Command :: enum u32 {
-	None = 0, // Not a command: Bad_Command.
+	None = 0, // Not a command: Operation_Unsupported.
 	// values[0]: the bytes asked, 1 to READ_BYTES_LIMIT. The completion:
 	// values[0] the bytes that the device gave, at most the bytes asked
 	// (0 when it gave none); values[1] to values[6] the bytes in order, 8
@@ -42,14 +42,12 @@ Command :: enum u32 {
 	Read = 1,
 }
 
-// The status of a command: the kind of its completion record. When it is
-// not Ok, the values of the completion are an error record
-// (errors.completion_record).
-Status :: enum u32 {
-	Ok           = 0, // The values are the bytes of the read.
-	Bad_Command  = 1, // The command is not known, or its count is 0 or above READ_BYTES_LIMIT.
-	Device_Error = 2, // The device needs a reset: it makes no more reads.
-}
+// The kind of a completion record is the word of its call outcome
+// (call_outcome.completion_outcome is its border). With Succeeded the values
+// are the bytes of the read; with any other outcome, an error record:
+// Operation_Unsupported for a command that is not known, Argument_Refused
+// for a count of 0 or above READ_BYTES_LIMIT, Callee_Unavailable with the
+// kind Device for a device that needs a reset and makes no more reads.
 
 // bytes_pack gives the values of a completion of Read: the count, then the
 // bytes. It takes READ_BYTES_LIMIT bytes at most.

@@ -60,6 +60,7 @@ package disk
 
 import "base:intrinsics"
 import "modus:contract/block"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
@@ -198,7 +199,7 @@ run :: proc "contextless" (measure: ^Measure) {
 	done: u64
 	for {
 		record := answer()
-		if block.Status(record.kind) != .Ok {
+		if call_outcome.Call_Outcome(record.kind) != .Succeeded {
 			measure.errors += 1
 		}
 		done += 1
@@ -208,7 +209,7 @@ run :: proc "contextless" (measure: ^Measure) {
 		issue(command, measure, &next)
 	}
 	for done < next {
-		if block.Status(answer().kind) != .Ok {
+		if call_outcome.Call_Outcome(answer().kind) != .Succeeded {
 			measure.errors += 1
 		}
 		done += 1
@@ -243,11 +244,11 @@ check :: proc "contextless" () {
 		request(.Write, u32(request_index), {0 = MEASURE_BLOCKS + request_index * 16, 1 = 16, 2 = request_index * 16 * block.BLOCK_SIZE})
 	}
 	for _ in 0 ..< COUNT / 16 {
-		if block.Status(answer().kind) != .Ok {
+		if call_outcome.Call_Outcome(answer().kind) != .Succeeded {
 			wrong += 1
 		}
 	}
-	if block.Status(call(.Flush).kind) != .Ok {
+	if call_outcome.Call_Outcome(call(.Flush).kind) != .Succeeded {
 		wrong += 1
 	}
 	base := u64(COUNT * block.BLOCK_SIZE)
@@ -255,7 +256,7 @@ check :: proc "contextless" () {
 		request(.Read, u32(request_index), {0 = MEASURE_BLOCKS + request_index * 16, 1 = 16, 2 = base + request_index * 16 * block.BLOCK_SIZE})
 	}
 	for _ in 0 ..< COUNT / 16 {
-		if block.Status(answer().kind) != .Ok {
+		if call_outcome.Call_Outcome(answer().kind) != .Succeeded {
 			wrong += 1
 		}
 	}
@@ -288,7 +289,7 @@ block_words_check :: proc "contextless" () {
 		refused := call_word(word)
 		error := errors.completion_record(refused.values)
 		after := call(.Info)
-		right := refused.kind == u32(block.Status.Bad_Command) && error.kind == i64(errors.Kind.Unsupported) && error.unit == i64(errors.Unit.None) && error.operation == i64(word) && error.argument == 0 && error.value == i64(word) && after.kind == u32(block.Status.Ok) && after.values[0] == disk_blocks
+		right := refused.kind == u32(call_outcome.Call_Outcome.Operation_Unsupported) && error.kind == i64(errors.Kind.Unsupported) && error.unit == i64(errors.Unit.None) && error.operation == i64(word) && error.argument == 0 && error.value == i64(word) && after.kind == u32(call_outcome.Call_Outcome.Succeeded) && after.values[0] == disk_blocks
 		if right {
 			system.log_fact(.Info, Command_Word_Refused{command_word = u64(word)})
 		} else {
@@ -455,7 +456,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Info, Block_Ring_Not_Mapped{})
 		system.stop(.Failed)
 	}
-	if attached := call(.Attach, {0 = u64(given)}); block.Status(attached.kind) != .Ok {
+	if attached := call(.Attach, {0 = u64(given)}); call_outcome.Call_Outcome(attached.kind) != .Succeeded {
 		system.log_fact(.Warning, Data_Region_Refused(errors.error_record_fact_fields(errors.completion_record(attached.values))))
 		system.stop(.Failed)
 	}
@@ -475,7 +476,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// record.
 	past := call(.Read, {0 = disk_blocks - 1, 1 = 2, 2 = 0})
 	past_error := errors.completion_record(past.values)
-	past_right := block.Status(past.kind) == .Out_Of_Range && errors.Kind(past_error.kind) == .Out_Of_Range && past_error.argument == 1 && u64(past_error.value) == disk_blocks + 1 && u64(past_error.limit) == disk_blocks
+	past_right := call_outcome.Call_Outcome(past.kind) == .Argument_Refused && errors.Kind(past_error.kind) == .Out_Of_Range && past_error.argument == 1 && u64(past_error.value) == disk_blocks + 1 && u64(past_error.limit) == disk_blocks
 	if past_right {
 		system.log_fact(.Info, Read_Past_End_Refused(errors.error_record_fact_fields(past_error)))
 	} else {

@@ -20,6 +20,7 @@
 // "build_check: WRONG: ...". It stops itself with Done, or Failed.
 package build_check
 
+import "modus:contract/call_outcome"
 import "modus:contract/blake3"
 import "modus:contract/declaration_eval"
 import "modus:contract/errors"
@@ -168,11 +169,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	probe_hash = blake3.hash(probe_file)
 
-	connected: system.Status
+	connected: call_outcome.Call_Outcome
 	connection, connected = system.service_connection(&requests, next_tag, "recipes")
 	next_tag += 1
-	if connected != .Ok {
-		wrong("the root service gave no connection to recipes; the status", u64(connected))
+	if connected != .Succeeded {
+		wrong("the root service gave no connection to recipes; the outcome word", u64(connected))
 	}
 	entry := system.image_entry_of(image, connection.module_hash)
 	if entry == nil {

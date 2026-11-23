@@ -103,6 +103,12 @@ remote_transport_failure_outcome :: proc(call_transport: machine.Call_Transport)
 	switch call_transport.outcome {
 	case .Reset, .Lost:
 		return .Connection_Ended_During_The_Call
+	case .Request_Too_Large:
+		return .Argument_Refused
+	case .Peer_Absent:
+		return .Callee_Unavailable
+	case .Peer_Full:
+		return .Budget_Or_Capacity_Exhausted
 	case .Answer, .Answer_Too_Large:
 		return .Answer_Unreadable
 	case .Client_Refused:
@@ -124,7 +130,7 @@ format_remote_transport_failure :: proc(call_transport: machine.Call_Transport, 
 			return fmt.aprintf("remote reset the stream with code %d", call_transport.code, allocator = allocator)
 		}
 		return fmt.aprintf("remote reset the stream with code %s", name, allocator = allocator)
-	case .Lost, .No_Key, .Answer_Too_Large, .Key_Refused, .Bad_Socket_Call, .Client_Refused:
+	case .Lost, .No_Key, .Answer_Too_Large, .Key_Refused, .Bad_Socket_Call, .Client_Refused, .Request_Too_Large, .Peer_Absent, .Peer_Full:
 		if call_transport.reason != "" {
 			return strings.clone(call_transport.reason, allocator)
 		}

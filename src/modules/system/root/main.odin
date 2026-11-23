@@ -106,6 +106,7 @@ import "modus:bootscreen/collect"
 import "modus:display"
 import "modus:graphics"
 import info "modus:contract/boot_info"
+import "modus:contract/call_outcome"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -1415,17 +1416,17 @@ GRANTS_OF_ONE_PROCESS :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Stor
 // With `end`, the service says that it ended the debugging of the process
 // for that caller: this service forgets the debug access (debug_end).
 //
-// Bad_Handle: the ring names no connection of the service, or no process
-// has the name. Bad_State: a grant of the process refuses, the process is
-// the caller or the service, or another caller debugs it. Bad_Operation:
-// the caller does not act for the principal of the process. No_Right: the
-// grant `debug` was revoked from the caller.
-debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u64, end: bool, values: ^[7]u64) -> system.Status {
+// Nothing_Has_That_Name: the ring names no connection of the service, no
+// process has the name, or the service debugs no process of the name for
+// the caller (end). Grant_Or_Right_Missing: a grant of the process refuses,
+// the process is the caller or the service, the caller does not act for the
+// principal of the process, or the grant debug was revoked from it.
+// Callee_Busy: another caller debugs the process.
+debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u64, end: bool, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Debug)
 	caller, caller_principal, caller_row := debug_caller_of(holder, connection_ring)
 	if caller == nil {
-		values^ = errors.ring_fail(kind, .Absent, .Connections, 2)
-		return .Bad_Handle
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Connections, 2)
 	}
 	// The service ended the debugging of the process for this caller: this
 	// service forgets the debug access, and another caller can ask for it.
@@ -1442,39 +1443,33 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 			}
 		}
 		if !found {
-			values^ = errors.ring_fail(kind, .Absent, .Debugged_Processes, 1)
-			return .Bad_State
+			return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Debugged_Processes, 1)
 		}
 		values[0] = ended
 		system.log_fact(.Info, Debugging_Ended{debugger = module_name_field(system.name_of(holder.name[:])), target = module_name_field(name), caller = module_name_field(system.name_of(caller.name[:]))})
-		return .Ok
+		return .Succeeded
 	}
 	target := find(name)
 	if target == nil {
-		values^ = errors.ring_fail(kind, .Absent, .Processes, 1)
-		return .Bad_Handle
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Processes, 1)
 	}
 	if target == caller || target == holder {
-		values^ = errors.ring_fail(kind, .No_Grant, .Debug_Access, 1)
-		return .Bad_State
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Debug_Access, 1)
 	}
 	if .Debug in caller.revoked {
-		values^ = errors.ring_fail(kind, .No_Grant, .Debug_Access, 1)
-		return .No_Right
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Debug_Access, 1)
 	}
 	if .Acts_For_Principal not_in grants_held(caller) || target.principal != caller_principal {
-		values^ = errors.ring_fail(kind, .No_Grant, .Acts_For_Principal, 1)
-		return .Bad_Operation
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Acts_For_Principal, 1)
 	}
 	if grant, refuses := debug_refusing_grant(caller, target); refuses {
-		values^ = errors.ring_fail(kind, .No_Grant, .Debug_Access, 1, 0, 0, 1 + i64(grant))
 		system.log_fact(.Info, Debug_Access_Refused{caller = module_name_field(system.name_of(caller.name[:])), target = module_name_field(name), grant = text_field(start_grant.GRANT_NAMES[grant], 24)})
-		return .Bad_State
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Debug_Access, 1, 0, 0, 1 + i64(grant))
 	}
-	// One debugger for one process: the kernel has the same rule.
+	// One debugger for one process: the kernel has the same rule. The place
+	// frees when the other caller ends its debugging.
 	if target.debugger != nil && (target.debugger != holder || target.debug_for != caller || target.debug_for_row != caller_row) {
-		values^ = errors.ring_fail(kind, .Full, .Debugged_Processes, 1, 0, 1)
-		return .Bad_State
+		return root_ring.refuse(values, .Callee_Busy, kind, .Full, .Debugged_Processes, 1, 0, 1)
 	}
 	return debug_give(holder, caller, caller_principal, caller_row, target, name, kind, values)
 }
@@ -1500,11 +1495,10 @@ debug_caller_of :: proc "contextless" (holder: ^Started, connection_ring: u64) -
 // right Debug and no other, for a caller, and records the debug access.
 // values is the completion: the handle, the hash of the file of the
 // process, its principal. kind names the command of a refusal.
-debug_give :: proc "contextless" (holder: ^Started, caller: ^Started, caller_principal: u64, caller_row: int, target: ^Started, name: string, kind: u32, values: ^[7]u64) -> system.Status {
+debug_give :: proc "contextless" (holder: ^Started, caller: ^Started, caller_principal: u64, caller_row: int, target: ^Started, name: string, kind: u32, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	given, status := system.give(holder.requests_memory, target.process, {.Debug})
 	if status != .Ok {
-		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
-		return status
+		return kernel_refused(values, kind, status)
 	}
 	target.debugger = holder
 	target.debug_for = caller
@@ -1513,7 +1507,7 @@ debug_give :: proc "contextless" (holder: ^Started, caller: ^Started, caller_pri
 	hash := transmute([4]u64)target.hash
 	values^ = {u64(given), hash[0], hash[1], hash[2], hash[3], target.principal, 0}
 	system.log_fact(.Info, Debug_Right_Given{debugger = module_name_field(system.name_of(holder.name[:])), target = module_name_field(name), caller = module_name_field(system.name_of(caller.name[:])), principal = caller_principal})
-	return .Ok
+	return .Succeeded
 }
 
 // debug_end ends the debug access to one process: the handle that the
@@ -1559,14 +1553,14 @@ debug_end :: proc "contextless" (target: ^Started) -> (count: u64) {
 // from it, and the kernel ends what came from it in that process
 // (Handle_Revoke). What the process gave to other processes ends too.
 // values is the completion of Root_Command.Revoke.
-revoke :: proc "contextless" (caller: ^Started, tag: u32, name: string, grant: u64, values: ^[7]u64) -> (status: system.Status, held: bool) {
-	status, held = revoke_grant(caller, tag, name, grant, values)
-	if status == .Ok && !held {
+revoke :: proc "contextless" (caller: ^Started, tag: u32, name: string, grant: u64, values: ^[7]u64) -> (outcome: call_outcome.Call_Outcome, held: bool) {
+	outcome, held = revoke_grant(caller, tag, name, grant, values)
+	if outcome == .Succeeded && !held {
 		if item := find(name); item != nil {
 			debug_check_again(item)
 		}
 	}
-	return status, held
+	return outcome, held
 }
 
 // debug_check_again ends each debugging that runs for a caller and that
@@ -1591,17 +1585,18 @@ debug_check_again :: proc "contextless" (caller: ^Started) {
 
 // revoke_grant is revoke, before the check of the debuggings of the
 // process.
-revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, grant: u64, values: ^[7]u64) -> (status: system.Status, held: bool) {
+revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, grant: u64, values: ^[7]u64) -> (outcome: call_outcome.Call_Outcome, held: bool) {
+	kind := u32(root_ring.Root_Command.Revoke)
 	item := find(name)
 	if item == nil {
-		return .Bad_Handle, false
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Processes, 1), false
 	}
 	which, known := enum_word.member_of_word(system.Root_Grant, grant)
 	if !known {
-		return .Bad_Operation, false
+		return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, 2, i64(min(grant, 1 << 62)), i64(max(system.Root_Grant))), false
 	}
 	if which not_in item.granted {
-		return .Bad_State, false
+		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Grants, 2), false
 	}
 	handle: system.Handle
 	switch which {
@@ -1618,7 +1613,7 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 			// it stay.
 			kept := grant_for(item, connection.service) &~ (isolated.CALLER_AMOUNT_MASK | isolated.CALLER_ERASES_VERSIONS)
 			if !system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = kept}}) {
-				return .No_Slot, false
+				return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests), false
 			}
 			count += 1
 		}
@@ -1626,7 +1621,7 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 		item.revoked += {which}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Connections{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), connections = count})
-		return .Ok, false
+		return .Succeeded, false
 	case .Acts_For_Principal:
 		// The grant is data of each service that the process is connected
 		// to: the root service tells each one that the grant of the
@@ -1641,7 +1636,7 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 		// shrink between the check and the sends.
 		if service := grant_room_short(item); service != nil {
 			system.log_fact(.Warning, Acts_For_Principal_Revocation_Refused{holder = module_name_field(name), service = module_name_field(system.name_of(service.name[:]))})
-			return .No_Slot, false
+			return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests), false
 		}
 		item.granted -= {which}
 		item.revoked += {which}
@@ -1656,7 +1651,7 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 		}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Connections{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), connections = count})
-		return .Ok, false
+		return .Succeeded, false
 	case .History:
 		// The store of the history is data of the storage service, as the
 		// private store: the storage service ends the grant of the
@@ -1669,13 +1664,13 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 				continue
 			}
 			if !system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = isolated.caller_grant_make(0, item.principal, false)}}) {
-				return .No_Slot, false
+				return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests), false
 			}
 			count += 1
 		}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Connections{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), connections = count})
-		return .Ok, false
+		return .Succeeded, false
 	case .Network:
 		// The endpoint is data of the network service, as a store is data of
 		// the storage service: the network service ends the grant.
@@ -1684,7 +1679,7 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 		item.revoked += {which}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Endpoints{holder = module_name_field(name), endpoints = count})
-		return .Ok, false
+		return .Succeeded, false
 	case .Debug:
 		// One handle for each process that the command Debug named for
 		// this caller: each one ends in the debugger service, and the
@@ -1700,7 +1695,7 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 		item.revoked += {which}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Holdings{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), holdings = count})
-		return .Ok, false
+		return .Succeeded, false
 	case .Palette:
 		// The table and the ring end in the process, and the compositor
 		// unmaps its side: the palette keeps the modules and the windows.
@@ -1709,7 +1704,7 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 		item.revoked += {which}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Holdings{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), holdings = count})
-		return .Ok, false
+		return .Succeeded, false
 	case .Wirings:
 		// Each wiring that the process asked for ends with the end word
 		// Revoked in the delegated wiring service; the process can ask for
@@ -1727,13 +1722,13 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 	}
 	count, revoke_status := system.handle_revoke(handle, item.process)
 	if revoke_status != .Ok {
-		return revoke_status, false
+		return kernel_refused(values, kind, revoke_status), false
 	}
 	item.granted -= {which}
 	item.revoked += {which}
 	values[0] = count
 	system.log_fact(.Info, Grant_Revoked_Holdings{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), holdings = count})
-	return .Ok, false
+	return .Succeeded, false
 }
 
 // Tight startup grace bound (milliseconds) for a freshly started service to
@@ -1787,21 +1782,25 @@ palette_table_in_display_holder, palette_ring_in_display_holder: system.Handle
 // compositor receive. The process gets the table with Write; the
 // compositor gets it with Read only, and learns of both on its control
 // ring. values is the completion of Root_Command.Palette_Provide.
-palette_provide :: proc "contextless" (caller: ^Started, values: ^[7]u64) -> system.Status {
+palette_provide :: proc "contextless" (caller: ^Started, values: ^[7]u64) -> call_outcome.Call_Outcome {
+	kind := u32(root_ring.Root_Command.Palette_Provide)
 	if .Palette not_in caller.start_grant_set.grants || .Palette in caller.revoked {
-		return .No_Right
+		values^ = root_ring.sender_refusal(.Palette_Provide)
+		return .Grant_Or_Right_Missing
 	}
 	if palette_provider != nil {
-		return .Bad_State
+		return root_ring.refuse(values, .Name_Already_Taken, kind, .Exists, .Processes)
 	}
 	status: system.Status
 	initial_pages, pages_ok := palette_table.table_pages_for(palette_table.INITIAL_ENTRY_CAPACITY)
 	if !pages_ok {
-		return .Bad_Operation
+		// The constants of the table give no count of pages: a fault of
+		// this service, which no caller can change.
+		return root_ring.refuse(values, .Callee_Unavailable, kind, .Refused)
 	}
 	palette_table_memory, status = system.memory_create(initial_pages)
 	if status != .Ok {
-		return status
+		return kernel_refused(values, kind, status)
 	}
 	palette_ring_memory, status = system.memory_create(ring.PAGE_COUNT)
 	given_table, given_ring: system.Handle
@@ -1823,14 +1822,14 @@ palette_provide :: proc "contextless" (caller: ^Started, values: ^[7]u64) -> sys
 			system.close(palette_ring_memory)
 		}
 		palette_table_memory, palette_ring_memory = 0, 0
-		return status
+		return kernel_refused(values, kind, status)
 	}
 	palette_provider = caller
 	caller.granted += {.Palette}
 	values^ = {0 = u64(given_table), 1 = u64(given_ring)}
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Palette_Provider_Add), values = {0 = u64(palette_ring_in_display_holder), 1 = u64(palette_table_in_display_holder)}})
 	system.log_fact(.Info, Palette_Provider_Set{provider = module_name_field(system.name_of(caller.name[:]))})
-	return .Ok
+	return .Succeeded
 }
 
 // palette_provider_end ends the palette provider: the compositor unmaps
@@ -2024,8 +2023,12 @@ window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, r
 // service pays for the two memory objects and does not keep them. values is
 // the completion of Root_Command.Connect. client: the row of the client
 // table that the connection is for, or none.
-connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, history := false, client: Client_Grant = {}) -> system.Status {
-	free, service, ring_memory, region_memory := connection_open(caller, name, history, client) or_return
+connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, history := false, client: Client_Grant = {}) -> call_outcome.Call_Outcome {
+	kind := u32(history ? root_ring.Root_Command.Connect_History : root_ring.Root_Command.Connect)
+	free, service, ring_memory, region_memory, opened := connection_open(caller, name, values, kind, history, client)
+	if opened != .Succeeded {
+		return opened
+	}
 	defer system.close(ring_memory)
 	defer system.close(region_memory)
 	// The caller receives its handles through its ring to this service.
@@ -2044,7 +2047,7 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 	}
 	if status != .Ok {
 		disconnect(free)
-		return status
+		return kernel_refused(values, kind, status)
 	}
 	free.caller_service_handle = given[0]
 	hash := transmute([4]u64)service.hash
@@ -2065,14 +2068,15 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 	case:
 		system.log_fact(.Info, Connected{caller = module_name_field(system.name_of(caller.name[:])), service = module_name_field(name), principal = caller.principal})
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // connection_open makes the service side of a connection from a caller to
 // the service with a name, and starts the service if it starts on demand.
 // It gives the call ring and the call region: give them to the caller,
-// then close them.
-connection_open :: proc "contextless" (caller: ^Started, name: string, history := false, client: Client_Grant = {}, store_override: string = "", store_limit_override: u64 = 0) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, status: system.Status) {
+// then close them. A refusal writes its record in refusal, with the
+// command kind as its operation.
+connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: ^[7]u64, kind: u32, history := false, client: Client_Grant = {}, store_override: string = "", store_limit_override: u64 = 0) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, outcome: call_outcome.Call_Outcome) {
 	for pass in 0 ..< 2 {
 		for &item in started {
 			if item.process != 0 && item.service.head != nil && system.name_of(item.name[:]) == name {
@@ -2082,12 +2086,17 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 		if service != nil || pass == 1 || !on_demand(name) {
 			break
 		}
-		if status = start(name); status != .Ok {
-			return nil, nil, 0, 0, status
+		// A service on demand that does not start: the party that the
+		// connection needs failed. The record of its start is in refusal.
+		if started_outcome := start(name, refusal = refusal); started_outcome != .Succeeded {
+			return nil, nil, 0, 0, root_ring.refuse(refusal, .Callee_Unavailable, kind, .Refused, .Services, 1, 0, 0, i64(started_outcome))
 		}
 	}
-	if service == nil || service == caller {
-		return nil, nil, 0, 0, .Bad_Handle
+	if service == nil {
+		return nil, nil, 0, 0, root_ring.refuse(refusal, .Nothing_Has_That_Name, kind, .Absent, .Services, 1)
+	}
+	if service == caller {
+		return nil, nil, 0, 0, root_ring.refuse(refusal, .Argument_Refused, kind, .Bad_Value, .Services, 1)
 	}
 	count := 0
 	for &connection in connections {
@@ -2096,18 +2105,22 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 		} else if connection.service == service {
 			count += 1
 			if connection.caller == caller && connection.history == history && connection.client.place == client.place {
-				return nil, nil, 0, 0, .Bad_State
+				return nil, nil, 0, 0, root_ring.refuse(refusal, .Name_Already_Taken, kind, .Exists, .Connections, 1)
 			}
 		}
 	}
-	if free == nil || count == isolated.SERVICE_CONNECTION_CAPACITY {
-		return nil, nil, 0, 0, .No_Slot
+	// The table of the connections frees a place when a connection ends.
+	if free == nil {
+		return nil, nil, 0, 0, root_ring.refuse(refusal, .Callee_Busy, kind, .Full, .Connections, 0, 0, i64(len(connections)))
+	}
+	if count == isolated.SERVICE_CONNECTION_CAPACITY {
+		return nil, nil, 0, 0, root_ring.refuse(refusal, .Callee_Busy, kind, .Full, .Connections, 0, 0, isolated.SERVICE_CONNECTION_CAPACITY)
 	}
 	// The service ring keeps room for one Disconnect for each connection:
 	// this service never waits for a service that does not read its ring.
 	names := &service.service.commands
 	if ring.capacity(names) - ring.count(names) < u32(count) + 2 {
-		return nil, nil, 0, 0, .No_Slot
+		return nil, nil, 0, 0, root_ring.refuse(refusal, .Callee_Busy, kind, .Busy, .Requests)
 	}
 	// The storage service names the store of a connection by the name that
 	// it receives: the store of the history has the name of the caller and
@@ -2120,7 +2133,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	if is_role_holder(system.name_of(service.name[:]), .Storage) {
 		if store_override != "" {
 			if len(store_override) >= len(store_name) {
-				return nil, nil, 0, 0, .Bad_Operation
+				return nil, nil, 0, 0, root_ring.refuse(refusal, .Argument_Refused, kind, .Too_Long, .Bytes, 1, i64(len(store_override)), i64(len(store_name) - 1))
 			}
 			copy(store_name[:len(store_name) - 1], store_override)
 		} else {
@@ -2136,13 +2149,16 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 			principal_of_the_store := client.place != 0 ? client.principal : caller.principal
 			if !principals.store_name_write(&store_name, process_of_the_store, principal_of_the_store, history) {
 				system.log_fact(.Warning, Store_Name_Too_Long{principal = caller.principal, caller = module_name_field(system.name_of(caller.name[:]))})
-				return nil, nil, 0, 0, .Bad_Operation
+				return nil, nil, 0, 0, root_ring.refuse(refusal, .Argument_Refused, kind, .Too_Long, .Bytes, 1, 0, i64(len(store_name) - 1))
 			}
 		}
 	} else {
 		copy(store_name[:len(store_name) - 1], system.name_of(caller.name[:]))
 	}
-	ring_memory = system.memory_create(ring.PAGE_COUNT) or_return
+	status: system.Status
+	if ring_memory, status = system.memory_create(ring.PAGE_COUNT); status != .Ok {
+		return nil, nil, 0, 0, kernel_refused(refusal, kind, status)
+	}
 	region_memory, status = system.memory_create(isolated.REGION_PAGES)
 	in_service_ring, in_service_region: system.Handle
 	if status == .Ok {
@@ -2156,7 +2172,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 		if region_memory != 0 {
 			system.close(region_memory)
 		}
-		return nil, nil, 0, 0, status
+		return nil, nil, 0, 0, kernel_refused(refusal, kind, status)
 	}
 	caller_name := transmute([4]u64)store_name
 	grant: u64
@@ -2173,7 +2189,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	if !system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Connect), values = {0 = u64(in_service_ring), 1 = u64(in_service_region), 2 = caller_name[0], 3 = caller_name[1], 4 = caller_name[2], 5 = caller_name[3], 6 = grant}}) {
 		system.close(ring_memory)
 		system.close(region_memory)
-		return nil, nil, 0, 0, .No_Slot
+		return nil, nil, 0, 0, root_ring.refuse(refusal, .Callee_Busy, kind, .Busy, .Requests)
 	}
 	// An amount is a store for the storage service only: for the log
 	// service, it names the process of the caller.
@@ -2188,7 +2204,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 		history = history,
 		client  = client,
 	}
-	return free, service, ring_memory, region_memory, .Ok
+	return free, service, ring_memory, region_memory, .Succeeded
 }
 
 // grant_room_short gives the first service whose service ring cannot hold

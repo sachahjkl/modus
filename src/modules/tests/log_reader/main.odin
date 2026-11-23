@@ -344,7 +344,7 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 		return "the ring to the root service does not open"
 	}
 	connection, connected := system.service_connection(&requests, 1, "log")
-	if connected != .Ok {
+	if connected != .Succeeded {
 		return "the root service gave no connection to the log service"
 	}
 	defer system.call_connection_end(&connection)

@@ -79,9 +79,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if opened != .Ok {
 		wrong("the ring to the root service does not open")
 	}
-	connected: system.Status
+	connected: call_outcome.Call_Outcome
 	connection, connected = system.service_connection(&requests, 1, "compositor")
-	if connected != .Ok {
+	if connected != .Succeeded {
 		wrong("the root service gave no connection to the compositor")
 	}
 

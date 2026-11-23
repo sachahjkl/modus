@@ -1785,13 +1785,13 @@ connect_service :: proc "contextless" (arguments: []Value) -> Value {
 	if fresh || sandbox.process == 0 {
 		refused: ring.Record
 		not_ready: bool
-		if status := service_connect(sandbox, &refused, &not_ready); status != .Ok {
+		if outcome := service_connect(sandbox, &refused, &not_ready); outcome != .Succeeded {
 			sandbox^ = {}
 			if not_ready {
 				return fail("cannot connect to ", name, ": the service stopped, or did not open the connection before the hang bound of ", i64(system.ANSWER_BOUND_MILLISECONDS / 1000), " s")
 			}
 			if refused.kind == 0 {
-				return fail("cannot connect to ", name, ": ", status == .Bad_State ? "the root service did not answer" : "the call ring or the call region does not map")
+				return fail("cannot connect to ", name, ": ", outcome == .Deadline_Passed_During_The_Call ? "the root service did not answer" : "the call ring or the call region does not map")
 			}
 			return fail_root(scratch_text("cannot connect to ", name, ": "), refused)
 		}
@@ -1834,7 +1834,9 @@ root_refusal_text :: proc "contextless" (buffer: []u8, completion: ring.Record) 
 // waits for the ready completion of the service. refused: the completion of
 // a refusal of the root service, if the caller asks for it. not_ready: set
 // when the service stopped or sent no ready completion within the bound.
-service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record = nil, not_ready: ^bool = nil) -> system.Status {
+// The outcome is that of the answer of the root service, or of the step
+// of this process that failed after it.
+service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record = nil, not_ready: ^bool = nil) -> call_outcome.Call_Outcome {
 	// The root service can start the service first: only the hang bound
 	// of an answer ends this wait, never a time of a start.
 	completion, answered := request_record(.Connect, sandbox.name, 0, system.ANSWER_BOUND_MILLISECONDS, stoppable = true)
@@ -1848,18 +1850,15 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 			request_count += 1
 			system.connect_abandon(&requests, &abandoned_connects, connect_tag, request_count, system.name_pack(sandbox.name))
 		}
-		return .Bad_State
+		return .Deadline_Passed_During_The_Call
 	}
-	if status, refusal := system.status_of_word(completion.kind); status != .Ok {
+	if outcome, refusal := call_outcome.completion_outcome(completion.kind, completion.values); outcome != .Succeeded {
 		if refused != nil {
-			refused^ = completion
-			// A word that names no status: the record says so.
-			if refusal.kind != 0 {
-				refused.kind = u32(status)
-				refused.values = transmute([7]u64)refusal
-			}
+			// The record of the root service, or for an answer that this
+			// process cannot read, the record of the border.
+			refused^ = {kind = u32(outcome), tag = completion.tag, values = errors.completion_values(refusal)}
 		}
-		return status
+		return outcome
 	}
 	sandbox.process = system.Handle(completion.values[0])
 	sandbox.ring_memory = system.Handle(completion.values[1])
@@ -1872,9 +1871,14 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 	region_pages, _ := system.memory_size(sandbox.region_memory)
 	sandbox.region = ([^]u8)(bytes)[:region_status == .Ok ? region_pages * system.PAGE_SIZE : 0]
 	// After the first connection, the commands are those of one file.
-	if ring_status != .Ok || region_status != .Ok || sandbox.hash != {} && sandbox.hash != hash {
+	if ring_status != .Ok || region_status != .Ok {
 		service_disconnect(sandbox)
-		return .Bad_Operation
+		return system.outcome_of_own_status(ring_status != .Ok ? ring_status : region_status)
+	}
+	// After the first connection, the module is the module of the commands.
+	if sandbox.hash != {} && sandbox.hash != hash {
+		service_disconnect(sandbox)
+		return .Wrong_State
 	}
 	// The service maps the call ring when it reads the Connect of the root
 	// service, which can be after its start on demand: a lend before the
@@ -1887,10 +1891,10 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 		if not_ready != nil {
 			not_ready^ = true
 		}
-		return .Bad_State
+		return .Callee_Unavailable
 	}
 	sandbox.hash = hash
-	return .Ok
+	return .Succeeded
 }
 
 // service_disconnect ends the connection of a sandbox. The service
@@ -2250,7 +2254,12 @@ sandbox_files :: proc "contextless" (sandbox: ^Sandbox, file: []u8) -> bool {
 // boot image.
 sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	if sandbox.service {
-		return service_connect(sandbox)
+		// The connection says its own outcome; this procedure gives the
+		// status of the start of a call host.
+		if service_connect(sandbox) != .Succeeded {
+			return .Bad_State
+		}
+		return .Ok
 	}
 	sandbox.ring.head^ = {}
 	grants: [op.CONTEXT_HANDLES]system.Grant
@@ -2570,12 +2579,17 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 				// values of the console (docs/MODULE_CONTRACT.md, section 8,
 				// "The table of error details").
 				// A wrong table of error details is an answer that the console
-				// cannot read whole: the outcome says so, and the record of
-				// the export stays.
+				// cannot read whole: the outcome and the record say so.
 				details_wrong := false
 				if item.details_parameter != 0 {
-					problem, _ := isolated.error_details_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset)
+					problem, parameter := isolated.error_details_return(item.file, item.function, encoded[:parameter_total], sandbox.region, offset)
 					details_wrong = problem != .None
+					if details_wrong {
+						// The record says what was unreadable, as
+						// system.call_isolated says it.
+						error = errors.error_make(.Bad_Value, .Records, i64(parameter), i64(problem))
+						error.operation = i64(item.export)
+					}
 				}
 				result := export_failure(item, &error, details_wrong ? .Answer_Unreadable : outcome)
 				if details_wrong {
@@ -2681,7 +2695,7 @@ request_record :: proc "contextless" (kind: root_ring.Root_Command, name: string
 	// The ring holds a name of 31 bytes: a longer name is refused here,
 	// because a cut name can be the name of another process.
 	if len(name) >= len(system.Name) {
-		return {kind = u32(system.Status.Bad_Operation), values = errors.ring_fail(u32(kind), .Too_Long, .Bytes, 1, i64(len(name)), len(system.Name) - 1)}, true
+		return {kind = u32(call_outcome.Call_Outcome.Argument_Refused), values = errors.ring_fail(u32(kind), .Too_Long, .Bytes, 1, i64(len(name)), len(system.Name) - 1)}, true
 	}
 	packed := system.name_pack(name)
 	request_count += 1
@@ -2722,7 +2736,7 @@ request :: proc "contextless" (kind: root_ring.Root_Command, name: string) -> Va
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		return fail_root("", completion)
 	}
 	return {}
@@ -2737,7 +2751,7 @@ grants :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		return fail_root("", completion)
 	}
 	columns := [5]Column{text_column("process", 32), text_column("grant", 24), text_column("state", 8), integer_column("principal"), text_column("principal_name", 32)}
@@ -2771,7 +2785,7 @@ principal_create :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		return fail_root("", completion)
 	}
 	return {}
@@ -2784,7 +2798,7 @@ lock_session :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		return fail_root("", completion)
 	}
 	return {kind = .Integer, integer = i64(completion.values[0])}
@@ -2824,7 +2838,7 @@ list_principals :: proc "contextless" (arguments: []Value) -> Value {
 		if !answered {
 			return fail_no_answer()
 		}
-		if system.Status(completion.kind) != .Ok {
+		if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 			continue // No record with this number.
 		}
 		// A state that names no member is refused: it is not taken for a
@@ -2866,7 +2880,7 @@ revoke :: proc "contextless" (arguments: []Value) -> Value {
 		if !answered {
 			return fail_no_answer()
 		}
-		if system.Status(completion.kind) == .Ok {
+		if call_outcome.Call_Outcome(completion.kind) == .Succeeded {
 			return {kind = .Integer, integer = i64(completion.values[0])}
 		}
 		return fail_root("", completion)
@@ -2976,7 +2990,7 @@ start_process :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if status, _ := system.status_of_word(completion.kind); status != .Ok {
+	if outcome, _ := call_outcome.completion_outcome(completion.kind, completion.values); outcome != .Succeeded {
 		return fail_root("", completion)
 	}
 	if !stream_owner_keep(name, system.Handle(completion.values[0])) {
@@ -3036,7 +3050,7 @@ edit_object :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if status, _ := system.status_of_word(completion.kind); status != .Ok {
+	if outcome, _ := call_outcome.completion_outcome(completion.kind, completion.values); outcome != .Succeeded {
 		return fail_root("edit", completion)
 	}
 	return {}
@@ -3084,7 +3098,7 @@ start_from_disk :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(record.kind) == .Ok {
+	if call_outcome.Call_Outcome(record.kind) == .Succeeded {
 		return {}
 	}
 	return start_from_disk_refusal(name, record)
@@ -3175,7 +3189,7 @@ disk_grant_command :: proc "contextless" (command_name: string, action: root_rin
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		return fail_root(command_name == "allow" ? "allow: " : "disallow: ", completion)
 	}
 	return {}
@@ -3205,7 +3219,7 @@ remote_client_request :: proc "contextless" (command_name: string, text: string,
 	if !answered {
 		return {}, fail_no_answer(), true
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		prefix := "remote_disallow: "
 		switch command_name {
 		case "remote_allow":
@@ -3278,7 +3292,7 @@ remote_clients :: proc "contextless" (arguments: []Value) -> Value {
 		if !answered {
 			return fail_no_answer()
 		}
-		if system.Status(completion.kind) != .Ok {
+		if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 			return fail_root("remote_clients: ", completion)
 		}
 		if completion.values[5] == 0 {
@@ -3349,7 +3363,7 @@ nickname_move :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		return fail_root("nickname_move: ", completion)
 	}
 	return {}
@@ -3384,7 +3398,7 @@ disk_persistence :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		return fail_root("disk_persistence: ", completion)
 	}
 	return {}
@@ -3398,7 +3412,7 @@ machine_passphrase :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		return fail_root("", completion)
 	}
 	return {}
@@ -3412,7 +3426,7 @@ machine_seal :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		return fail_root("", completion)
 	}
 	return {}
@@ -3442,7 +3456,7 @@ start_policy_choose :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		return fail_root("start_policy_choose: ", completion)
 	}
 	return {}
@@ -3455,7 +3469,7 @@ start_policy_default :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		return fail_root("start_policy_default: ", completion)
 	}
 	return {}
@@ -3494,7 +3508,7 @@ change_request :: proc "contextless" (change: root_ring.Principal_Change) -> Val
 		// process waits for no more; an abandoned Connect closes its
 		// handles here.
 		if record, came, _ := system.root_answer_step(&requests, request_count, 0, system.WAIT_FOREVER, &abandoned_connects); came {
-			if system.Status(record.kind) != .Ok {
+			if call_outcome.Call_Outcome(record.kind) != .Succeeded {
 				return fail_root("", record)
 			}
 			return change_result(record.values[0], record.values[1])

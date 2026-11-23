@@ -17,16 +17,18 @@
 package root_ring
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:contract/start_grant"
 
 // The ring to the root service. The name of the process is in values[0..4],
 // but for `Start_From_Disk`, whose hash takes those values.
-// The completion record has the tag of the command, and a Status as kind.
-// When the status is not Ok, its values are an error record
-// (errors.completion_record): the argument 1 is the name.
+// The completion record has the tag of the command, and the word of its
+// call outcome as kind (call_outcome.completion_outcome is its border).
+// With any other outcome than Succeeded, its values are an error record
+// (errors.completion_record): the argument 1 is the name. The procedure
+// that refuses names the outcome and the kind together (refuse).
 //
 // A process with a root ring (`system.GRANT_ROOT`) writes these commands;
 // the root service checks the start grant set of the process for each one
@@ -498,18 +500,18 @@ debug_start_step_of_word :: proc "contextless" (word: u64) -> (step: Debug_Start
 
 // debug_start_border is the border of the values of a Debug_Start that are
 // not the name and the call ring: the step of values[5], and values[6],
-// which must be 0. A refusal gives Bad_Operation and the error record
+// which must be 0. A refusal gives Argument_Refused and the error record
 // Bad_Value of the argument (3 for the step, 4 for values[6]), and the root
 // service runs nothing.
-debug_start_border :: proc "contextless" (values: [7]u64) -> (step: Debug_Start_Step, status: op.Status, refusal: [7]u64) {
+debug_start_border :: proc "contextless" (values: [7]u64) -> (step: Debug_Start_Step, outcome: call_outcome.Call_Outcome, refusal: [7]u64) {
 	read, ok := debug_start_step_of_word(values[5])
 	if !ok {
-		return .None, .Bad_Operation, word_refusal(.Debug_Start, 3, values[5], u64(max(Debug_Start_Step)))
+		return .None, .Argument_Refused, word_refusal(.Debug_Start, 3, values[5], u64(max(Debug_Start_Step)))
 	}
 	if values[6] != 0 {
-		return .None, .Bad_Operation, word_refusal(.Debug_Start, 4, values[6], 0)
+		return .None, .Argument_Refused, word_refusal(.Debug_Start, 4, values[6], 0)
 	}
-	return read, .Ok, {}
+	return read, .Succeeded, {}
 }
 
 // values[0] of a Wire: what it does.
@@ -826,72 +828,21 @@ sender_allowed :: proc "contextless" (command: Root_Command, start_grant_set: bi
 	return false
 }
 
-// Who writes the error record of a refused command that runs.
-Refusal_Writer :: enum u8 {
-	// The dispatch of the root service, from the name in values[0..4] and
-	// the word of values[4], after the command refused.
-	Dispatch,
-	// The procedure of the command: its values hold a hash, a nickname or
-	// a key where a name would be, or its cause is a fact that only it
-	// knows (the grant that refuses a debug access, a refused signature).
-	Command,
-}
-
-// The writer of the error record of each command. The table is whole: a
-// new command does not compile until its row says who writes the record,
-// so no record of a command is written over.
-@(rodata)
-ROOT_COMMAND_REFUSAL_WRITERS := [Root_Command]Refusal_Writer {
-	.None                   = .Dispatch,
-	.Start                  = .Dispatch,
-	.Stop                   = .Dispatch,
-	.Connect                = .Command,
-	.Disconnect             = .Dispatch,
-	.Grants                 = .Dispatch,
-	.Revoke                 = .Dispatch,
-	.Replace                = .Command,
-	.Connect_History        = .Dispatch,
-	.Principal_Create       = .Dispatch,
-	.Principal_Lock         = .Dispatch,
-	.Principals             = .Dispatch,
-	.Principal_Record       = .Dispatch,
-	.Principal_Unlock       = .Command,
-	.Debug                  = .Command,
-	.Palette_Provide        = .Dispatch,
-	.Start_From_Disk        = .Command,
-	.Disk_Grant             = .Command,
-	.Nickname_Move          = .Command,
-	.Machine_Passphrase     = .Dispatch,
-	.Machine_Key            = .Command,
-	.Disk_Grant_Persistence = .Command,
-	.Debug_Store            = .Command,
-	.Machine_Seal           = .Dispatch,
-	.Principal_Change       = .Command,
-	.Principal_Change_End   = .Command,
-	.Remote_Client          = .Command,
-	.Machine_Usable         = .Command,
-	.Start_Policy_Choice    = .Command,
-	.Wire                   = .Command,
-	.Start_Edit             = .Command,
-	.Debug_Start            = .Command,
-	.Plan_Roles             = .Command,
-}
-
 // The step at which the dispatch of one record ends, in the order of the
 // steps: the border, the sender, the command.
 Dispatch_Step :: enum u8 {
-	Border  = 0, // The kind names no command, or None: Unsupported, and nothing runs.
-	Sender  = 1, // The sender cannot send the command: No_Grant, and nothing runs.
+	Border  = 0, // The kind names no command, or None: Operation_Unsupported, and nothing runs.
+	Sender  = 1, // The sender cannot send the command: Grant_Or_Right_Missing, and nothing runs.
 	Command = 2, // The command runs.
 }
 
 // What the dispatch decides for one record before any command runs. A
-// refusal holds its status and its error record; a command that runs holds
-// Ok and no record.
+// refusal holds its call outcome and its error record; a command that runs
+// holds Succeeded and no record.
 Dispatch_Decision :: struct {
 	step:    Dispatch_Step,
 	command: Root_Command, // None at the border.
-	status:  op.Status,
+	outcome: call_outcome.Call_Outcome,
 	refusal: [7]u64,
 }
 
@@ -905,16 +856,16 @@ Dispatch_Decision :: struct {
 dispatch_decide :: proc "contextless" (kind: u32, start_grant_set: bit_set[start_grant.Grant], service_listed: bool) -> Dispatch_Decision {
 	command, known := command_of_word(kind)
 	if !known {
-		return {step = .Border, command = .None, status = .Bad_Operation, refusal = command_refusal(kind)}
+		return {step = .Border, command = .None, outcome = .Operation_Unsupported, refusal = command_refusal(kind)}
 	}
 	allowed := sender_allowed(command, start_grant_set)
 	if command == .Connect && .Root_Ring not_in start_grant_set && !service_listed {
 		allowed = false
 	}
 	if !allowed {
-		return {step = .Sender, command = command, status = .No_Right, refusal = sender_refusal(command)}
+		return {step = .Sender, command = command, outcome = .Grant_Or_Right_Missing, refusal = sender_refusal(command)}
 	}
-	return {step = .Command, command = command, status = .Ok}
+	return {step = .Command, command = command, outcome = .Succeeded}
 }
 
 // sender_refusal is the error record of a command that its sender cannot
@@ -927,45 +878,27 @@ sender_refusal :: proc "contextless" (command: Root_Command) -> [7]u64 {
 	return errors.ring_fail(u32(command), .No_Grant, .Root_Commands)
 }
 
-// replace_refusal gives the error record of a refused Replace whose cause
-// the state shows, from the status of the change of the table: `by` past
-// the entries of the boot image, a name that names no module, a module
-// that replaces itself, a full table. entry_count is the count of the
-// entries of the boot image, name_in_image says if a module has the name,
-// and capacity is the count of the records of the table. named false: no
-// such cause, and the caller writes the record Refused with the status.
-// A refusal of the signature of a row is a cause that only the root
-// service knows, and it writes that record itself.
-replace_refusal :: proc "contextless" (status: op.Status, by: u64, entry_count: u64, name_in_image: bool, capacity: i64) -> (record: [7]u64, named: bool) {
-	kind := u32(Root_Command.Replace)
-	switch {
-	case status == .No_Right:
-		// The sender lacks the start grant Replace.
-		return sender_refusal(.Replace), true
-	case status == .Bad_Handle && by > entry_count:
-		return errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(by, 1 << 62)), i64(min(entry_count, 1 << 62))), true
-	case status == .Bad_Handle && !name_in_image:
-		return errors.ring_fail(kind, .Absent, .Modules, 1), true
-	case status == .Bad_Operation:
-		// A module does not replace itself.
-		return errors.ring_fail(kind, .Bad_Value, .None, 2, i64(min(by, 1 << 62))), true
-	case status == .No_Slot:
-		return errors.ring_fail(kind, .Full, .Records, 0, 0, capacity), true
-	}
-	return {}, false
-}
-
 // member_of_word is the border of a word of a root command: the member, or
 // the refusal that the root service answers. A word that names no member
-// gives Bad_Operation and the error record Bad_Value of `argument`, with
+// gives Argument_Refused and the error record Bad_Value of `argument`, with
 // the word (at most 2^62) and the largest member. It reads and changes no
 // state, so a refused word changes nothing.
-member_of_word :: proc "contextless" ($Enum: typeid, word: u64, command: Root_Command, argument: i64) -> (member: Enum, status: op.Status, refusal: [7]u64) where intrinsics.type_is_enum(Enum) {
+member_of_word :: proc "contextless" ($Enum: typeid, word: u64, command: Root_Command, argument: i64) -> (member: Enum, outcome: call_outcome.Call_Outcome, refusal: [7]u64) where intrinsics.type_is_enum(Enum) {
 	read, ok := enum_word.member_of_word(Enum, word)
 	if ok {
-		return read, .Ok, {}
+		return read, .Succeeded, {}
 	}
-	return {}, .Bad_Operation, word_refusal(command, argument, word, u64(max(Enum)))
+	return {}, .Argument_Refused, word_refusal(command, argument, word, u64(max(Enum)))
+}
+
+// refuse writes the error record of a refused root command in values, and
+// gives the call outcome of the refusal. The procedure that refuses names
+// the outcome and the kind together, at the place where it refuses
+// (src/md/api/call_outcome.md, "The borders of the rings"): the root
+// service maps no status to an outcome.
+refuse :: proc "contextless" (values: ^[7]u64, outcome: call_outcome.Call_Outcome, command: u32, kind: errors.Kind, unit: errors.Unit = .None, argument: i64 = 0, value: i64 = 0, limit: i64 = 0, found: i64 = 0) -> call_outcome.Call_Outcome {
+	values^ = errors.ring_fail(command, kind, unit, argument, value, limit, found)
+	return outcome
 }
 
 // word_refusal is the error record of a word that names no member. It is
@@ -986,23 +919,23 @@ Machine_Key_Report :: struct {
 
 // machine_key_report_of_values is the border of a Machine_Key command. A
 // state that names no member, or for .Awaited a form that names no member,
-// gives Bad_Operation: the root service then changes no table.
-machine_key_report_of_values :: proc "contextless" (values: [7]u64) -> (report: Machine_Key_Report, status: op.Status) {
+// gives Argument_Refused: the root service then changes no table.
+machine_key_report_of_values :: proc "contextless" (values: [7]u64) -> (report: Machine_Key_Report, outcome: call_outcome.Call_Outcome) {
 	state, state_ok := enum_word.member_of_word(Machine_Key_State, values[4])
 	if !state_ok {
-		return {}, .Bad_Operation
+		return {}, .Argument_Refused
 	}
 	report.state = state
 	switch state {
 	case .Awaited:
 		form, form_ok := enum_word.member_of_word(Machine_Key_Form, values[5])
 		if !form_ok {
-			return {}, .Bad_Operation
+			return {}, .Argument_Refused
 		}
 		report.form = form
 	case .Opened, .New, .Unreadable:
 	}
-	return report, .Ok
+	return report, .Succeeded
 }
 
 // The state of a principal in the root service.

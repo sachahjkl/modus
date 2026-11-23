@@ -2,8 +2,8 @@
 package root_ring
 
 import "core:testing"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:contract/start_grant"
 
 // values[5] of a Start: one past the last member and the largest word name
@@ -64,7 +64,7 @@ debug_start_step_of_word_refuses_a_word_that_names_no_member :: proc(t: ^testing
 	testing.expect(t, !sender_allowed(.Debug_Start, {}))
 	decision := dispatch_decide(u32(Root_Command.Debug_Start), {.Root_Ring}, false)
 	testing.expect_value(t, decision.step, Dispatch_Step.Sender)
-	testing.expect_value(t, decision.status, op.Status.No_Right)
+	testing.expect_value(t, decision.outcome, call_outcome.Call_Outcome.Grant_Or_Right_Missing)
 	refusal := errors.completion_record(decision.refusal)
 	testing.expect_value(t, errors.Kind(refusal.kind), errors.Kind.No_Grant)
 	testing.expect_value(t, refusal.operation, i64(Root_Command.Debug_Start))
@@ -73,7 +73,7 @@ debug_start_step_of_word_refuses_a_word_that_names_no_member :: proc(t: ^testing
 }
 
 // The border of a Debug_Start: a step that names nothing, then values[6]
-// not 0 (1, the largest word), each refused with Bad_Operation and the
+// not 0 (1, the largest word), each refused with Argument_Refused and the
 // record Bad_Value of its argument; the step is read before values[6].
 // Each step with values[6] 0 passes, last.
 @(test)
@@ -81,7 +81,7 @@ debug_start_border_refuses_each_word_it_does_not_take :: proc(t: ^testing.T) {
 	for word in ([?]u64{u64(Debug_Start_Step.None), u64(max(Debug_Start_Step)) + 1, max(u64)}) {
 		step, status, refusal := debug_start_border({5 = word})
 		testing.expect_value(t, step, Debug_Start_Step.None)
-		testing.expect_value(t, status, op.Status.Bad_Operation)
+		testing.expect_value(t, status, call_outcome.Call_Outcome.Argument_Refused)
 		record := errors.completion_record(refusal)
 		testing.expect_value(t, errors.Kind(record.kind), errors.Kind.Bad_Value)
 		testing.expect_value(t, record.operation, i64(Root_Command.Debug_Start))
@@ -91,7 +91,7 @@ debug_start_border_refuses_each_word_it_does_not_take :: proc(t: ^testing.T) {
 	for word in ([?]u64{1, 1 << 62, max(u64)}) {
 		step, status, refusal := debug_start_border({5 = u64(Debug_Start_Step.Release), 6 = word})
 		testing.expect_value(t, step, Debug_Start_Step.None)
-		testing.expect_value(t, status, op.Status.Bad_Operation)
+		testing.expect_value(t, status, call_outcome.Call_Outcome.Argument_Refused)
 		record := errors.completion_record(refusal)
 		testing.expect_value(t, errors.Kind(record.kind), errors.Kind.Bad_Value)
 		testing.expect_value(t, record.argument, i64(4))
@@ -104,7 +104,7 @@ debug_start_border_refuses_each_word_it_does_not_take :: proc(t: ^testing.T) {
 	for member in ([?]Debug_Start_Step{.Start_Held, .Start_Replay, .Release, .Abandon}) {
 		step, status, refusal := debug_start_border({0 = max(u64), 4 = max(u64), 5 = u64(member)})
 		testing.expect_value(t, step, member)
-		testing.expect_value(t, status, op.Status.Ok)
+		testing.expect_value(t, status, call_outcome.Call_Outcome.Succeeded)
 		testing.expect_value(t, refusal, [7]u64{})
 	}
 }
@@ -281,7 +281,7 @@ the_dispatch_refuses_at_its_first_step_that_refuses :: proc(t: ^testing.T) {
 				decision := dispatch_decide(word, start_grant_set, listed)
 				testing.expect_value(t, decision.step, Dispatch_Step.Border)
 				testing.expect_value(t, decision.command, Root_Command.None)
-				testing.expect_value(t, decision.status, op.Status.Bad_Operation)
+				testing.expect_value(t, decision.outcome, call_outcome.Call_Outcome.Operation_Unsupported)
 				testing.expect_value(t, decision.refusal, command_refusal(word))
 			}
 		}
@@ -293,7 +293,7 @@ the_dispatch_refuses_at_its_first_step_that_refuses :: proc(t: ^testing.T) {
 		for start_grant_set in ([2]bit_set[start_grant.Grant]{{}, {.Store, .Image, .Serve}}) {
 			decision := dispatch_decide(u32(command), start_grant_set, true)
 			testing.expectf(t, decision.step == .Sender, "a start grant set with no ring sends %v", command)
-			testing.expect_value(t, decision.status, op.Status.No_Right)
+			testing.expect_value(t, decision.outcome, call_outcome.Call_Outcome.Grant_Or_Right_Missing)
 			testing.expect_value(t, decision.refusal, sender_refusal(command))
 			testing.expect_value(t, decision, dispatch_decide(u32(command), start_grant_set, true))
 		}
@@ -316,7 +316,7 @@ the_dispatch_refuses_at_its_first_step_that_refuses :: proc(t: ^testing.T) {
 		decision := dispatch_decide(u32(case_of.command), case_of.start_grant_set, case_of.listed)
 		testing.expectf(t, decision.step == .Command, "%v from %v does not run", case_of.command, case_of.start_grant_set)
 		testing.expect_value(t, decision.command, case_of.command)
-		testing.expect_value(t, decision.status, op.Status.Ok)
+		testing.expect_value(t, decision.outcome, call_outcome.Call_Outcome.Succeeded)
 		testing.expect_value(t, decision.refusal, [7]u64{})
 	}
 }
@@ -347,69 +347,43 @@ a_record_of_an_unknown_command_names_no_command :: proc(t: ^testing.T) {
 	testing.expect_value(t, root_argument_name(i64(Root_Command.Start), 2), "")
 }
 
-// The records of a refused Replace. The edges come first: `by` one past
-// the entries and the largest word, a name that names no module, a module
-// that replaces itself, a full table, a sender with no grant Replace. Then
-// the statuses that the state does not explain give no record of their
-// own, last.
+// refuse writes the record of its kind and its values in the values of a
+// completion, with the command as the operation, and gives the outcome
+// that the caller named. The edges of the values come first: the largest
+// and the smallest words; then a record of each field, last.
 @(test)
-a_refused_replace_names_its_cause :: proc(t: ^testing.T) {
-	ENTRIES :: 12
-	CAPACITY :: 32
-	expect_record :: proc(t: ^testing.T, record: [7]u64, named: bool, kind: errors.Kind, unit: errors.Unit, argument: i64, value: i64, limit: i64) {
-		testing.expect(t, named)
-		read := errors.completion_record(record)
-		testing.expect_value(t, errors.Kind(read.kind), kind)
-		testing.expect_value(t, errors.Unit(read.unit), unit)
-		testing.expect_value(t, read.operation, i64(Root_Command.Replace))
-		testing.expect_value(t, read.argument, argument)
-		testing.expect_value(t, read.value, value)
-		testing.expect_value(t, read.limit, limit)
-	}
-	record, named := replace_refusal(.Bad_Handle, ENTRIES + 1, ENTRIES, true, CAPACITY)
-	expect_record(t, record, named, .Bad_Value, .None, 2, ENTRIES + 1, ENTRIES)
-	record, named = replace_refusal(.Bad_Handle, max(u64), ENTRIES, false, CAPACITY)
-	expect_record(t, record, named, .Bad_Value, .None, 2, 1 << 62, ENTRIES)
-	// `by` inside the entries, and the name of no module.
-	record, named = replace_refusal(.Bad_Handle, ENTRIES, ENTRIES, false, CAPACITY)
-	expect_record(t, record, named, .Absent, .Modules, 1, 0, 0)
-	record, named = replace_refusal(.Bad_Handle, 0, ENTRIES, false, CAPACITY)
-	expect_record(t, record, named, .Absent, .Modules, 1, 0, 0)
-	record, named = replace_refusal(.Bad_Operation, 3, ENTRIES, true, CAPACITY)
-	expect_record(t, record, named, .Bad_Value, .None, 2, 3, 0)
-	record, named = replace_refusal(.No_Slot, 3, ENTRIES, true, CAPACITY)
-	expect_record(t, record, named, .Full, .Records, 0, 0, CAPACITY)
-	record, named = replace_refusal(.No_Right, 3, ENTRIES, true, CAPACITY)
-	testing.expect(t, named)
-	testing.expect_value(t, record, sender_refusal(.Replace))
-	// No cause that the state shows: a chain, a name and an entry that
-	// both exist, a success.
-	unexplained := [?]struct {
-		status:        op.Status,
-		name_in_image: bool,
-	}{{.Bad_State, true}, {.Bad_Handle, true}, {.Ok, true}}
-	for case_of in unexplained {
-		record, named = replace_refusal(case_of.status, 3, ENTRIES, case_of.name_in_image, CAPACITY)
-		testing.expectf(t, !named, "the status %v names a cause", case_of.status)
-		testing.expect_value(t, record, [7]u64{})
-	}
+refuse_writes_the_record_and_gives_its_outcome :: proc(t: ^testing.T) {
+	values: [7]u64
+	outcome := refuse(&values, .Nothing_Has_That_Name, u32(Root_Command.Stop), .Absent, .Processes, 1, max(i64), min(i64), -1)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Nothing_Has_That_Name)
+	record := errors.completion_record(values)
+	testing.expect_value(t, errors.Kind(record.kind), errors.Kind.Absent)
+	testing.expect_value(t, errors.Unit(record.unit), errors.Unit.Processes)
+	testing.expect_value(t, record.operation, i64(Root_Command.Stop))
+	testing.expect_value(t, record.argument, i64(1))
+	testing.expect_value(t, record.value, max(i64))
+	testing.expect_value(t, record.limit, min(i64))
+	testing.expect_value(t, record.found, i64(-1))
+	read, read_record := call_outcome.completion_outcome(u32(outcome), values)
+	testing.expect_value(t, read, call_outcome.Call_Outcome.Nothing_Has_That_Name)
+	testing.expect_value(t, read_record, record)
 }
 
 // The border of each root command that the root service reads, as it
 // calls it: the enumeration, the command and the argument of its record.
-// Each word that names no member gives Bad_Operation and the record
+// Each word that names no member gives Argument_Refused and the record
 // Bad_Value of that command and argument, with the word (at most 2^62)
 // and the largest member; the values of the command do not change. The
-// members come last, with Ok and no record.
+// members come last, with Succeeded and no record.
 @(test)
 a_root_command_refuses_a_word_that_names_no_member :: proc(t: ^testing.T) {
-	refuse :: proc(t: ^testing.T, $Enum: typeid, command: Root_Command, argument: i64, place: int, words: []u64) {
+	refuse_each :: proc(t: ^testing.T, $Enum: typeid, command: Root_Command, argument: i64, place: int, words: []u64) {
 		for word in words {
 			values: [7]u64
 			values[place] = word
 			before := values
 			member, status, refusal := member_of_word(Enum, values[place], command, argument)
-			testing.expectf(t, status == .Bad_Operation, "%v: the word %d names no member, and the status is %v", typeid_of(Enum), word, status)
+			testing.expectf(t, status == .Argument_Refused, "%v: the word %d names no member, and the outcome is %v", typeid_of(Enum), word, status)
 			zero: Enum
 			testing.expect_value(t, member, zero)
 			testing.expect_value(t, values, before)
@@ -425,17 +399,17 @@ a_root_command_refuses_a_word_that_names_no_member :: proc(t: ^testing.T) {
 	accept_each :: proc(t: ^testing.T, $Enum: typeid, command: Root_Command, argument: i64) {
 		for member in Enum {
 			read, status, refusal := member_of_word(Enum, u64(member), command, argument)
-			testing.expect_value(t, status, op.Status.Ok)
+			testing.expect_value(t, status, call_outcome.Call_Outcome.Succeeded)
 			testing.expect_value(t, read, member)
 			testing.expect_value(t, refusal, [7]u64{})
 		}
 	}
-	refuse(t, Remote_Client_Action, .Remote_Client, 2, 4, {0, u64(max(Remote_Client_Action)) + 1, 1 << 62 + 1, max(u64)})
-	refuse(t, Disk_Grant_Action, .Disk_Grant, 0, 4, {0, u64(max(Disk_Grant_Action)) + 1, max(u64)})
-	refuse(t, Principal_Change, .Principal_Change, 2, 4, {0, u64(max(Principal_Change)) + 1, max(u64)})
-	refuse(t, Principal_Key_Origin, .Principal_Unlock, 0, 5, {0, u64(max(Principal_Key_Origin)) + 1, max(u64)})
-	refuse(t, Remote_Client_State, .Remote_Client, 2, 6, {u64(max(Remote_Client_State)) + 1, max(u64)})
-	refuse(t, Machine_Key_Form, .Machine_Key, 2, 5, {u64(max(Machine_Key_Form)) + 1, max(u64)})
+	refuse_each(t, Remote_Client_Action, .Remote_Client, 2, 4, {0, u64(max(Remote_Client_Action)) + 1, 1 << 62 + 1, max(u64)})
+	refuse_each(t, Disk_Grant_Action, .Disk_Grant, 0, 4, {0, u64(max(Disk_Grant_Action)) + 1, max(u64)})
+	refuse_each(t, Principal_Change, .Principal_Change, 2, 4, {0, u64(max(Principal_Change)) + 1, max(u64)})
+	refuse_each(t, Principal_Key_Origin, .Principal_Unlock, 0, 5, {0, u64(max(Principal_Key_Origin)) + 1, max(u64)})
+	refuse_each(t, Remote_Client_State, .Remote_Client, 2, 6, {u64(max(Remote_Client_State)) + 1, max(u64)})
+	refuse_each(t, Machine_Key_Form, .Machine_Key, 2, 5, {u64(max(Machine_Key_Form)) + 1, max(u64)})
 	accept_each(t, Remote_Client_Action, .Remote_Client, 2)
 	accept_each(t, Disk_Grant_Action, .Disk_Grant, 0)
 	accept_each(t, Principal_Change, .Principal_Change, 2)
@@ -445,7 +419,7 @@ a_root_command_refuses_a_word_that_names_no_member :: proc(t: ^testing.T) {
 }
 
 // The border of Machine_Key: a state that names no member, and for
-// .Awaited a form that names no member, give Bad_Operation and an empty
+// .Awaited a form that names no member, give Argument_Refused and an empty
 // report; a form is not read for another state. The reports that the
 // root service takes come last.
 @(test)
@@ -460,20 +434,20 @@ a_machine_key_report_refuses_a_word_that_names_no_member :: proc(t: ^testing.T) 
 	for values in refused {
 		before := values
 		report, status := machine_key_report_of_values(values)
-		testing.expect_value(t, status, op.Status.Bad_Operation)
+		testing.expect_value(t, status, call_outcome.Call_Outcome.Argument_Refused)
 		testing.expect_value(t, report, Machine_Key_Report{})
 		testing.expect_value(t, values, before)
 	}
 	for form in Machine_Key_Form {
 		report, status := machine_key_report_of_values({4 = u64(Machine_Key_State.Awaited), 5 = u64(form)})
-		testing.expect_value(t, status, op.Status.Ok)
+		testing.expect_value(t, status, call_outcome.Call_Outcome.Succeeded)
 		testing.expect_value(t, report, Machine_Key_Report{state = .Awaited, form = form})
 	}
 	others := [?]Machine_Key_State{.Opened, .New, .Unreadable}
 	for state in others {
 		// values[5] is not read: a word of no form changes nothing.
 		report, status := machine_key_report_of_values({4 = u64(state), 5 = max(u64)})
-		testing.expect_value(t, status, op.Status.Ok)
+		testing.expect_value(t, status, call_outcome.Call_Outcome.Succeeded)
 		testing.expect_value(t, report.state, state)
 	}
 }

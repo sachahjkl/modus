@@ -34,6 +34,7 @@
 // network is in docs/NETWORK.md.
 package fetch
 
+import "modus:contract/call_outcome"
 import "modus:contract/datagram"
 import "modus:contract/errors"
 import "modus:contract/ring"
@@ -172,7 +173,7 @@ pump :: proc "contextless" () {
 	for record in system.receive(&endpoint.completions) {
 		switch {
 		case record.tag < RECEIVE_PLACES:
-			if datagram.Status(record.kind) == .Ok {
+			if call_outcome.Call_Outcome(record.kind) == .Succeeded {
 				incoming[count] = {remote_address = u32(record.values[2]), segment = place_bytes(record.tag)[:min(record.values[1], PLACE_SIZE)]}
 				used[count] = record.tag
 				count += 1
@@ -359,7 +360,7 @@ cases_run :: proc "contextless" () {
 	refused, has_refused := segment_refused(OTHER, first, CALL_TAG + 2)
 	writer = {buffer = sentence[:]}
 	refusal := network.completion_error_text(&writer, refused)
-	refusal_right := has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(refusal.kind) == .No_Grant && refusal.limit == errors.endpoint_pack(REMOTE, REMOTE_PORT) && refusal.found == 0
+	refusal_right := has_refused && call_outcome.Call_Outcome(refused.kind) == .Grant_Or_Right_Missing && errors.Kind(refusal.kind) == .No_Grant && refusal.limit == errors.endpoint_pack(REMOTE, REMOTE_PORT) && refusal.found == 0
 	note("a SYN to 10.0.2.2 port 80", refusal_right, "refused by the network service: ", system.written(&writer))
 	fields := errors.error_record_fact_fields(refusal)
 	system.log_fact(.Info, Syn_To_Other_Remote_Refused{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, wrong_mark = wrong_mark(refusal_right)})
@@ -367,7 +368,7 @@ cases_run :: proc "contextless" () {
 	refused, has_refused = segment_refused(REMOTE, 1234, CALL_TAG + 3)
 	writer = {buffer = sentence[:]}
 	refusal = network.completion_error_text(&writer, refused)
-	refusal_right = has_refused && datagram.Status(refused.kind) == .Not_Granted && errors.Kind(refusal.kind) == .No_Grant && refusal.found == 1234
+	refusal_right = has_refused && call_outcome.Call_Outcome(refused.kind) == .Grant_Or_Right_Missing && errors.Kind(refusal.kind) == .No_Grant && refusal.found == 1234
 	note("a SYN from the local port 1234", refusal_right, "refused: ", system.written(&writer), " (its ports are ", u64(first), " to ", u64(first) + u64(block) - 1, ")")
 	fields = errors.error_record_fact_fields(refusal)
 	system.log_fact(.Info, Syn_From_Other_Port_Refused{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, first_local_port = u64(first), last_local_port = u64(first) + u64(block) - 1, wrong_mark = wrong_mark(refusal_right)})

@@ -21,6 +21,7 @@ package root
 // (disk_processes.odin).
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/blake3"
 import "modus:contract/errors"
 import op "modus:contract/operation"
@@ -221,7 +222,7 @@ disk_processes_service_end :: proc "contextless" (item: ^Started) {
 	disk_processes_stopping = true
 	if disk_load.step != .Idle {
 		system.log_fact(.Warning, Disk_Load_Refused_Service_Stopped{refused_process = disk_load_name_field()})
-		disk_load_end(.Bad_State, disk_load_refused_values())
+		disk_load_end(.Callee_Unavailable, disk_load_refused_values())
 	}
 	disk_load_return_end()
 	if raw_data(disk_processes_region) != nil {
@@ -309,19 +310,21 @@ disk_load_return_end :: proc "contextless" () {
 // service to the store module_files of the principal, with the right to
 // read only, and the command Load. The caller checked that no load runs,
 // and writes the line of a failure.
-disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, hash: [disk_process.HASH_SIZE]u8, principal: u64, for_start_policy: bool) -> (failure: Disk_Load_Begin_Failure, status: system.Status) {
+disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, hash: [disk_process.HASH_SIZE]u8, principal: u64, for_start_policy: bool, refusal: ^[7]u64) -> (failure: Disk_Load_Begin_Failure, outcome: call_outcome.Call_Outcome) {
+	kind := u32(root_ring.Root_Command.Start_From_Disk)
 	if !disk_processes_service_start() {
-		return .No_Service, .Bad_State
+		return .No_Service, root_ring.refuse(refusal, .Callee_Unavailable, kind, .Refused, .Services)
 	}
 	service_process := disk_processes_process
 	disk_reader = {}
 	copy(disk_reader.name[:len(disk_reader.name) - 1], disk_process.STORE_NAME)
 	disk_reader.principal = principal
 	storage_name := role_holder_name(.Storage)
-	connection, storage_service, ring_memory, region_memory, open_status := connection_open(&disk_reader, storage_name)
-	if open_status != .Ok {
-		return .No_Connection, open_status
+	connection, storage_service, ring_memory, region_memory, opened := connection_open(&disk_reader, storage_name, refusal, kind)
+	if opened != .Succeeded {
+		return .No_Connection, opened
 	}
+	status: system.Status
 	// The service receives copies of the handles through its ring. This
 	// service keeps its own handles until the end of the load, to revoke
 	// the copies then: a service that keeps a handle past its load holds
@@ -345,6 +348,7 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 		}
 		given_count += 1
 	}
+	sent_refused := false
 	service_tag := disk_processes_next_tag
 	disk_processes_next_tag = disk_processes_next_tag == max(u32) ? 1 : disk_processes_next_tag + 1
 	if status == .Ok {
@@ -358,6 +362,7 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 		intrinsics.mem_copy_non_overlapping(&disk_processes_region[rd.LOAD_REQUEST_OFFSET], &disk_load_request, size_of(rd.Load_Request))
 		if !system.send(&disk_processes_ring.commands, ring.Record{kind = u32(rd.Disk_Load_Command.Load), tag = service_tag, values = {0 = u64(given[0]), 1 = u64(given[1]), 2 = u64(given[2])}}) {
 			status = .No_Slot
+			sent_refused = true
 		}
 	}
 	if status != .Ok {
@@ -372,7 +377,10 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 			}
 		}
 		disconnect(connection)
-		return .Not_Given, status
+		if status == .No_Slot && sent_refused {
+			return .Not_Given, root_ring.refuse(refusal, .Callee_Busy, kind, .Busy, .Requests)
+		}
+		return .Not_Given, kernel_refused(refusal, kind, status)
 	}
 	name_bytes: [disk_process.NAME_LIMIT]u8
 	name_length := copy(name_bytes[:], name)
@@ -390,7 +398,7 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 		for_start_policy = for_start_policy,
 		storage_handles  = sources,
 	}
-	return .None, .Ok
+	return .None, .Succeeded
 }
 
 // disk_load_name_field gives the name of the disk process that the load
@@ -400,15 +408,17 @@ disk_load_name_field :: proc "contextless" () -> value_kinds.Module_Name_Field {
 }
 
 // disk_load_refused_values gives the completion of a load that ended for
-// a cause of the services, not of the file.
+// a cause of the services, not of the file: a party that the load needs
+// failed (Callee_Unavailable).
 disk_load_refused_values :: proc "contextless" () -> [7]u64 {
-	return errors.ring_fail(u32(root_ring.Root_Command.Start_From_Disk), .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
+	return errors.ring_fail(u32(root_ring.Root_Command.Start_From_Disk), .Refused)
 }
 
 // disk_load_import_refused gives the completion of a load that the import
-// scan ended, with the kind of the refusal.
+// scan ended, with the kind of the refusal and the kernel status that
+// caused it, if any.
 @(private = "file")
-disk_load_import_refused :: proc "contextless" (status: system.Status, kind_of_error: errors.Kind) -> [7]u64 {
+disk_load_import_refused :: proc "contextless" (kind_of_error: errors.Kind, status: system.Status = .Ok) -> [7]u64 {
 	return errors.ring_fail(u32(root_ring.Root_Command.Start_From_Disk), kind_of_error, .Modules, 2, 0, 0, i64(status))
 }
 
@@ -487,7 +497,7 @@ disk_load_command :: proc "contextless" (command: rd.Disk_Load_Command, values: 
 disk_load_service_fault :: proc "contextless" () {
 	system.log_fact(.Warning, Disk_Load_Refused_Service_Answer_Not_Allowed{refused_process = disk_load_name_field()})
 	disk_processes_service_stop()
-	disk_load_end(.Bad_State, disk_load_refused_values())
+	disk_load_end(.Callee_Unavailable, disk_load_refused_values())
 }
 
 // disk_load_continue sends Continue and moves to the next step.
@@ -504,7 +514,7 @@ disk_load_continue :: proc "contextless" (step: rd.Disk_Load_Step) {
 // back what it held for it (the connection, the memory of each file), and
 // the asker receives the completion. It gives the values back, for a
 // caller that sends the completion itself.
-disk_load_end :: proc "contextless" (status: system.Status, values: [7]u64) -> [7]u64 {
+disk_load_end :: proc "contextless" (outcome: call_outcome.Call_Outcome, values: [7]u64) -> [7]u64 {
 	load := &disk_load
 	// A service that runs gets Cancel, and keeps the file that it writes
 	// and the storage connection until it answers: their loans end at
@@ -540,13 +550,13 @@ disk_load_end :: proc "contextless" (status: system.Status, values: [7]u64) -> [
 		disconnect(load.connection)
 	}
 	if load.asker != nil && load.asker.process != 0 && load.asker.requests.head != nil {
-		system.send(&load.asker.requests.completions, ring.Record{kind = u32(status), tag = load.tag, values = values})
+		system.send(&load.asker.requests.completions, ring.Record{kind = u32(outcome), tag = load.tag, values = values})
 	}
 	for_start_policy := load.for_start_policy
 	load^ = {}
 	disk_processes_stray_allowance = 1
 	if for_start_policy {
-		start_policy_chosen_load_ended(status)
+		start_policy_chosen_load_ended(outcome)
 	}
 	return values
 }
@@ -624,17 +634,17 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 	}
 	if load.asker == nil && !load.for_start_policy {
 		system.log_fact(.Warning, Disk_Load_Refused_Asker_Stopped{refused_process = disk_load_name_field()})
-		disk_load_end(.Bad_State, disk_load_refused_values())
+		disk_load_end(.Callee_Unavailable, disk_load_refused_values())
 		return
 	}
 	if load.connection == nil {
 		system.log_fact(.Warning, Disk_Load_Refused_Storage_Stopped{refused_process = disk_load_name_field()})
-		disk_load_end(.Bad_State, disk_load_refused_values())
+		disk_load_end(.Callee_Unavailable, disk_load_refused_values())
 		return
 	}
 	if system.time() >= load.deadline {
 		system.log_fact(.Warning, Disk_Load_Refused_No_Answer{bound = disk_process.LOAD_DEADLINE_MILLISECONDS, refused_process = disk_load_name_field()})
-		disk_load_end(.Bad_State, errors.ring_fail(u32(root_ring.Root_Command.Start_From_Disk), .No_Answer, .Milliseconds, 0, 0, disk_process.LOAD_DEADLINE_MILLISECONDS))
+		disk_load_end(.Callee_Unavailable, errors.ring_fail(u32(root_ring.Root_Command.Start_From_Disk), .No_Answer, .Milliseconds, 0, 0, disk_process.LOAD_DEADLINE_MILLISECONDS))
 		return
 	}
 	system.wait_records(wait, &disk_processes_ring.completions)
@@ -659,10 +669,11 @@ disk_load_event :: proc "contextless" (record: ring.Record) {
 	case .Memory_Wanted:
 		place, _ := rd.file_place_of_word(report.place)
 		if place == .Module {
+			load_refusal: [7]u64
 			given, status := lent_file_make(&load.module, report.byte_count, 0)
 			if status != .Ok {
 				system.log_fact(.Warning, Disk_Load_Refused_No_Memory{object_bytes = report.byte_count, status = op.Status_Word(status), refused_process = disk_load_name_field()})
-				disk_load_end(status, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status)))
+				disk_load_end(kernel_refused(&load_refusal, kind, status), load_refusal)
 				return
 			}
 			if !disk_load_command(.Memory_Lent, {0 = u64(given)}) {
@@ -680,7 +691,7 @@ disk_load_event :: proc "contextless" (record: ring.Record) {
 		if status != .Ok {
 			file_name := string(report.file_name[:report.file_name_length])
 			system.log_fact(.Warning, Disk_Load_Refused_Import_No_Memory{object_bytes = report.byte_count, status = op.Status_Word(status), refused_process = disk_load_name_field(), file = text_field(file_name, 24)})
-			disk_load_end(status, disk_load_import_refused(status, .Refused))
+			disk_load_end(system.outcome_of_own_status(status), disk_load_import_refused(.Refused, status))
 			return
 		}
 		load.candidate_loans += 1
@@ -702,7 +713,7 @@ disk_load_event :: proc "contextless" (record: ring.Record) {
 		if found != load.hash {
 			head := transmute([4]u64)found
 			system.log_fact(.Warning, Disk_Load_Refused_Hash_Differs{found_hash = value_kinds.Hash_Field(found), hash = value_kinds.Hash_Field(load.hash), refused_process = disk_load_name_field()})
-			disk_load_end(.Bad_Operation, errors.ring_fail(kind, .Not_Authentic, .None, 2, i64(head[0])))
+			disk_load_end(.Argument_Refused, errors.ring_fail(kind, .Not_Authentic, .None, 2, i64(head[0])))
 			return
 		}
 		disk_load_continue(.Module_Checked)
@@ -771,53 +782,53 @@ disk_load_refused :: proc "contextless" (report: ^rd.Event_Report) {
 		disk_load_service_fault()
 	case .Not_Mapped:
 		system.log_fact(.Warning, Disk_Load_Refused_Not_Mapped{refused_process = name})
-		disk_load_end(.No_Memory, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.No_Memory)))
+		disk_load_end(.Callee_Busy, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.No_Memory)))
 	case .Call_Not_Taken:
 		system.log_fact(.Warning, Disk_Load_Refused_Call_Not_Taken{refused_process = name})
-		disk_load_end(.Bad_State, in_scan ? disk_load_import_refused(.Bad_State, .Refused) : disk_load_refused_values())
+		disk_load_end(.Callee_Unavailable, in_scan ? disk_load_import_refused(.Refused) : disk_load_refused_values())
 	case .Storage_Stopped:
 		system.log_fact(.Warning, Disk_Load_Refused_Storage_Stopped{refused_process = name})
-		disk_load_end(.Bad_State, disk_load_refused_values())
+		disk_load_end(.Callee_Unavailable, disk_load_refused_values())
 	case .No_Object:
 		system.log_fact(.Warning, Disk_Load_Refused_No_Object{refused_process = name})
-		disk_load_end(.Bad_Handle, errors.ring_fail(kind, .Absent, .Objects, 1))
+		disk_load_end(.Nothing_Has_That_Name, errors.ring_fail(kind, .Absent, .Objects, 1))
 	case .Read_Refused:
 		// The error record is a fact of its own fields after the line of
 		// the refusal.
 		system.log_fact(.Warning, Disk_Load_Refused_Read_Refused{refused_process = name})
 		system.log_fact(.Warning, Disk_Load_Read_Refused(errors.error_record_fact_fields(report.read_error)))
-		disk_load_end(.Bad_State, errors.ring_fail(kind, report.damaged == 1 ? errors.Kind.Damaged : errors.Kind.Refused, .Objects, 1, 0, 0, report.failed_value))
+		disk_load_end(report.damaged == 1 ? .Data_Damaged : .Callee_Unavailable, errors.ring_fail(kind, report.damaged == 1 ? errors.Kind.Damaged : errors.Kind.Refused, .Objects, 1, 0, 0, report.failed_value))
 	case .Answer_Not_Allowed:
 		system.log_fact(.Warning, Disk_Load_Refused_Answer_Not_Allowed{refused_process = name})
-		disk_load_end(.Bad_State, disk_load_refused_values())
+		disk_load_end(.Callee_Unavailable, disk_load_refused_values())
 	case .Object_Empty:
 		system.log_fact(.Warning, Disk_Load_Refused_Object_Empty{refused_process = name})
-		disk_load_end(.Bad_Operation, errors.ring_fail(kind, .Malformed, .None, 1))
+		disk_load_end(.Argument_Refused, errors.ring_fail(kind, .Malformed, .None, 1))
 	case .Object_Too_Large:
 		size := report.byte_count
 		system.log_fact(.Warning, Disk_Load_Refused_Object_Too_Large{object_bytes = size, file_bytes_limit = u64(disk_process.FILE_BYTES_LIMIT), refused_process = name})
-		disk_load_end(.Bad_Operation, errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(min(size, 1 << 62)), disk_process.FILE_BYTES_LIMIT))
+		disk_load_end(.Argument_Refused, errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(min(size, 1 << 62)), disk_process.FILE_BYTES_LIMIT))
 	case .No_Byte_At:
 		system.log_fact(.Warning, Disk_Load_Refused_No_Byte_At{received_bytes = report.received_bytes, object_bytes = report.byte_count, refused_process = name})
-		disk_load_end(.Bad_State, disk_load_refused_values())
+		disk_load_end(.Callee_Unavailable, disk_load_refused_values())
 	case .Too_Many_Bytes:
 		system.log_fact(.Warning, Disk_Load_Refused_Too_Many_Bytes{given_bytes = report.received_bytes, left_bytes = report.left_bytes, refused_process = name})
-		disk_load_end(.Bad_State, disk_load_refused_values())
+		disk_load_end(.Callee_Unavailable, disk_load_refused_values())
 	case .Import_Entry_Name_Outside:
 		system.log_fact(.Warning, Disk_Load_Refused_Import_Entry_Name_Outside{refused_process = name})
-		disk_load_end(.Bad_State, disk_load_import_refused(.Bad_State, .Refused))
+		disk_load_end(.Data_Damaged, disk_load_import_refused(.Damaged))
 	case .Import_Entry_Kind_Unknown:
 		system.log_fact(.Warning, Disk_Load_Refused_Import_Entry_Kind_Unknown{refused_process = name})
-		disk_load_end(.Bad_State, disk_load_import_refused(.Bad_State, .Refused))
+		disk_load_end(.Data_Damaged, disk_load_import_refused(.Damaged))
 	case .Import_No_Byte_At:
 		// The border bounded the length of the name for each refusal.
 		file_name := text_field(string(report.file_name[:report.file_name_length]), 24)
 		system.log_fact(.Warning, Disk_Load_Refused_Import_No_Byte_At{received_bytes = report.received_bytes, object_bytes = report.byte_count, refused_process = name, file = file_name})
-		disk_load_end(.Bad_State, disk_load_import_refused(.Bad_State, .Refused))
+		disk_load_end(.Data_Damaged, disk_load_import_refused(.Damaged))
 	case .Import_Too_Many_Bytes:
 		file_name := text_field(string(report.file_name[:report.file_name_length]), 24)
 		system.log_fact(.Warning, Disk_Load_Refused_Import_Too_Many_Bytes{given_bytes = report.received_bytes, left_bytes = report.left_bytes, refused_process = name, file = file_name})
-		disk_load_end(.Bad_State, disk_load_import_refused(.Bad_State, .Refused))
+		disk_load_end(.Data_Damaged, disk_load_import_refused(.Damaged))
 	case .Import_Missing:
 		importer := string(disk_load.name[:disk_load.name_length])
 		if report.importer_name_length > 0 {
@@ -829,9 +840,9 @@ disk_load_refused :: proc "contextless" (report: ^rd.Event_Report) {
 		} else {
 			system.log_fact(.Warning, Disk_Load_Refused_Import_Missing{hash = hash, scan_reads = report.scan_reads, refused_process = name, importer = module_name_field(importer)})
 		}
-		disk_load_end(.Bad_Handle, disk_load_import_refused(.Bad_Handle, .Absent))
+		disk_load_end(.Nothing_Has_That_Name, disk_load_import_refused(.Absent))
 	case .Import_Bounds:
 		system.log_fact(.Warning, Disk_Load_Refused_Import_Bounds{wanted_capacity = u64(disk_process.SCAN_WANTED_CAPACITY), depth_limit = u64(disk_process.SCAN_DEPTH_LIMIT), refused_process = name})
-		disk_load_end(.No_Slot, disk_load_import_refused(.No_Slot, .Full))
+		disk_load_end(.Budget_Or_Capacity_Exhausted, disk_load_import_refused(.Full))
 	}
 }

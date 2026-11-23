@@ -258,14 +258,16 @@ party_answer_refused :: proc "contextless" (error: ^errors.Error_Record) -> call
 	return refuse(error, .Callee_Unavailable, .Refused)
 }
 
-// outcome_of_status_word gives the call outcome of a refusal of the root
-// service or of the kernel, from the status word of its completion.
-outcome_of_status_word :: proc "contextless" (word: u32) -> call_outcome.Call_Outcome {
-	status, refusal := system.status_of_word(word)
-	if refusal.kind != 0 {
-		return .Answer_Unreadable
+// root_refusal_taken gives the call outcome of a refusal of the root
+// service, which the export passes on, and writes its error record: the
+// root service named both where it refused (call_outcome.completion_outcome
+// reads them, and names an answer that this service cannot read).
+root_refusal_taken :: proc "contextless" (error: ^errors.Error_Record, completion: ring.Record) -> call_outcome.Call_Outcome {
+	outcome, record := call_outcome.completion_outcome(completion.kind, completion.values)
+	if error != nil {
+		error^ = record
 	}
-	return system.outcome_of_status(status)
+	return outcome
 }
 
 // refuse writes the error record of a refusal and gives its call outcome.
@@ -342,7 +344,7 @@ root_completion_take :: proc "contextless" (record: ring.Record) {
 		// debug access; the connection of a kept stop report is a part of
 		// no access, so this service sends its end.
 		if request.store {
-			if system.Status(record.kind) == .Ok && !request.end {
+			if call_outcome.Call_Outcome(record.kind) == .Succeeded && !request.end {
 				answered := record.values
 				count := request.kept ? 4 : 3
 				for word in answered[:count] {
@@ -372,7 +374,7 @@ root_completion_take :: proc "contextless" (record: ring.Record) {
 		switch request.start {
 		case .None:
 		case .Start_Held, .Start_Replay:
-			if system.Status(record.kind) == .Ok {
+			if call_outcome.Call_Outcome(record.kind) == .Succeeded {
 				handle := system.Handle(record.values[0])
 				if kind, _, through := system.handle_state(handle, requests_memory); kind == .Process && through {
 					system.close(handle)
@@ -383,7 +385,7 @@ root_completion_take :: proc "contextless" (record: ring.Record) {
 		case .Release, .Abandon:
 			return
 		}
-		if request.end || system.Status(record.kind) != .Ok {
+		if request.end || call_outcome.Call_Outcome(record.kind) != .Succeeded {
 			return
 		}
 		handle := system.Handle(record.values[0])

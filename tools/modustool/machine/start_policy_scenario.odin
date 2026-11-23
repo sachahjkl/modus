@@ -82,8 +82,8 @@ scenario_start_policy_missing_console := [?]Step {
 	{kind = .Wait, text = "start_policy: the start list has 5 rows: each starts in its order"},
 	// shortage is not in this image: the root service refuses it before its
 	// procedure, which would stop the machine, and the machine runs on.
-	{kind = .Wait, text = "start_policy: cannot start shortage: status ", fails_on = "kernel: the machine stops with code"},
-	{kind = .Wait, text = "start_policy: cannot start console_missing: status ", fails_on = "kernel: the machine stops with code"},
+	{kind = .Wait, text = "start_policy: cannot start shortage: outcome ", fails_on = "kernel: the machine stops with code"},
+	{kind = .Wait, text = "start_policy: cannot start console_missing: outcome ", fails_on = "kernel: the machine stops with code"},
 	{kind = .Wait, text = "start_policy: the machine is not usable without console_missing: the start policy stops before Machine_Usable"},
 	{kind = .Wait, text = " stopped before the machine was usable: "},
 	{kind = .Wait, text = "; the rescue start policy starts"},

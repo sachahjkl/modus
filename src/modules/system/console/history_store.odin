@@ -27,6 +27,7 @@ package console
 // file runs. A file that a
 // check refuses gives an empty history and one log line.
 
+import "modus:contract/call_outcome"
 import "modus:contract/blake3"
 import "modus:contract/errors"
 import module "modus:contract/module"
@@ -64,7 +65,7 @@ history_store_open :: proc "contextless" () -> (opened: bool) {
 		system.log_fact(.Info, History_Root_Silent{})
 		return false
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		system.log_fact(.Info, History_Root_Refused(errors.error_record_fact_fields(errors.completion_record(completion.values))))
 		return false
 	}

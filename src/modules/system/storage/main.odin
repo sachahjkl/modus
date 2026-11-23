@@ -1318,7 +1318,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// holds a request, a new wait and new lines; and the device can still
 	// write the data region, which a stop would free. It serves on, and
 	// refuses each call with Device (disk_unopened_refusal).
-	if give_status != .Ok || block.Status(command(.Attach, {0 = u64(given)}).kind) != .Ok {
+	if give_status != .Ok || command(.Attach, {0 = u64(given)}).kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		if !disk_silent {
 			system.log_fact(.Error, Data_Region_Refused{})
 			system.stop(.Failed)

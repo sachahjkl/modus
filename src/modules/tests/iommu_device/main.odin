@@ -48,6 +48,8 @@
 package iommu_device_service
 
 import "modus:contract/block"
+import "modus:contract/call_outcome"
+import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:pci"
 import "modus:system"
@@ -376,11 +378,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if !ok {
 				break
 			}
-			kind := block.Status.Unsupported
+			completion := ring.Record{kind = u32(call_outcome.Call_Outcome.Operation_Unsupported), tag = command.tag, values = errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind))}
 			if block.Command(command.kind) == .Info {
-				kind = .Ok
+				completion = {kind = u32(call_outcome.Call_Outcome.Succeeded), tag = command.tag}
 			}
-			ring.push(&clients.completions, ring.Record{kind = u32(kind), tag = command.tag})
+			ring.push(&clients.completions, completion)
 			changed = true
 		}
 		if changed {

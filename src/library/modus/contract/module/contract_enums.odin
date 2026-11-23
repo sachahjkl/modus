@@ -1,6 +1,5 @@
 package module
 
-import "modus:contract/block"
 import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
@@ -89,7 +88,6 @@ CONTRACT_ENUM_SIZES := [value_kinds.Contract_Enum]u32 {
 	.Load_Stage      = size_of(Load_Stage),
 	.Module_Error    = size_of(Error),
 	.Load_Difference = size_of(Difference),
-	.Block_Status    = size_of(block.Status),
 	.Storage_Status  = size_of(storage_status.Status),
 	.Call_Outcome    = size_of(call_outcome.Call_Outcome),
 	.Pointer_Part    = size_of(pointer_pictures.Part),
@@ -113,7 +111,6 @@ CONTRACT_ENUM_WORD_SIZES := [value_kinds.Contract_Enum]u32 {
 	.Load_Stage      = size_of(Load_Stage_Word),
 	.Module_Error    = size_of(Error_Word),
 	.Load_Difference = size_of(Difference_Word),
-	.Block_Status    = size_of(block.Status_Word),
 	.Storage_Status  = size_of(storage_status.Status_Word),
 	.Call_Outcome    = size_of(call_outcome.Call_Outcome_Word),
 	.Pointer_Part    = size_of(pointer_pictures.Part_Word),
@@ -151,8 +148,6 @@ contract_enum_member_count :: proc "contextless" (which: value_kinds.Contract_En
 		return u64(max(Error)) + 1
 	case .Load_Difference:
 		return u64(max(Difference)) + 1
-	case .Block_Status:
-		return u64(max(block.Status)) + 1
 	case .Storage_Status:
 		return u64(max(storage_status.Status)) + 1
 	case .Call_Outcome:
@@ -211,9 +206,6 @@ contract_enum_member_name :: proc "contextless" (which: value_kinds.Contract_Enu
 	case .Load_Difference:
 		member := enum_word.member_of_word(Difference, word) or_return
 		return DIFFERENCE_NAMES[member], true
-	case .Block_Status:
-		member := enum_word.member_of_word(block.Status, word) or_return
-		return block.STATUS_NAMES[member], true
 	case .Storage_Status:
 		member := enum_word.member_of_word(storage_status.Status, word) or_return
 		return storage_status.STATUS_NAMES[member], true
@@ -252,7 +244,7 @@ contract_enum_member_words :: proc "contextless" (which: value_kinds.Contract_En
 	case .Stop_Outcome:
 		outcome := enum_word.member_of_word(op.Stop_Outcome, word) or_return
 		return op.STOP_OUTCOME_TEXTS[outcome], true
-	case .None, .Status, .Log_Level, .Log_Record_Form, .Error_Kind, .Error_Unit, .Object_Kind, .Load_Stage, .Module_Error, .Load_Difference, .Block_Status, .Storage_Status, .Call_Outcome, .Pointer_Part, .Pointer_Field, .Pointer_Problem:
+	case .None, .Status, .Log_Level, .Log_Record_Form, .Error_Kind, .Error_Unit, .Object_Kind, .Load_Stage, .Module_Error, .Load_Difference, .Storage_Status, .Call_Outcome, .Pointer_Part, .Pointer_Field, .Pointer_Problem:
 		return contract_enum_member_name(which, word)
 	}
 	return "", false

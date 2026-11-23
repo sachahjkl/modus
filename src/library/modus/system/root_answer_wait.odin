@@ -8,6 +8,7 @@ package system
 // never a time of a start, which a loaded host makes many times longer
 // (src/md/api/call_ring_ready.md, "The bound is the hang bound").
 
+import "modus:contract/call_outcome"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 
@@ -127,7 +128,7 @@ connect_give_up :: proc "contextless" (requests: ^ring.Ring, connect_tag, discon
 // that the caller does not keep: the process, the call ring and the call
 // region. A refusal holds an error record, not handles.
 connect_answer_close :: proc "contextless" (record: ring.Record) {
-	if record.kind != u32(Status.Ok) {
+	if record.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return
 	}
 	for index in 0 ..< 3 {

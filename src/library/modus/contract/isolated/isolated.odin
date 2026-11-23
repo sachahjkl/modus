@@ -545,7 +545,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 				if has_field && item.type == u8(module.Type.Handle) {
 					handle := (^u32)(uintptr(&call.records[index]) + uintptr(item.offset))^
 					if !lent_handle_add(call, u64(handle), item.detail) {
-						return refuse(refusal, .Full, .Handles, argument, 0, len(call.lent))
+						return refuse(refusal, .Too_Long, .Lent_Handles, argument, 0, len(call.lent))
 					}
 				}
 			}
@@ -553,7 +553,7 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 		case .Handle:
 			call.arguments[index] = load(record[:], field, u64)
 			if !lent_handle_add(call, call.arguments[index], function.parameter_details[index]) {
-				return refuse(refusal, call.arguments[index] >> 32 != 0 ? .Handle_Absent : .Full, .Handles, argument, call.arguments[index], len(call.lent))
+				return refuse(refusal, call.arguments[index] >> 32 != 0 ? .Handle_Absent : .Too_Long, .Lent_Handles, argument, call.arguments[index], len(call.lent))
 			}
 		case .Table, .Bytes:
 			direction, direction_ok := module.direction_of_word(function.parameter_directions[index])
@@ -698,19 +698,11 @@ refusal_completion :: proc "contextless" (tag: u32, outcome: call_outcome.Call_O
 // record that says what was unreadable, and the value 0: the reader trusts
 // nothing of such an answer.
 answer_of_completion :: proc "contextless" (completion: ring.Record) -> (value: i64, outcome: call_outcome.Call_Outcome, record: errors.Error_Record) {
-	unreadable: errors.Error_Record
-	outcome, unreadable = call_outcome.outcome_of_word(u64(completion.kind))
-	if unreadable.kind != 0 {
-		return 0, .Answer_Unreadable, unreadable
-	}
+	outcome, record = call_outcome.completion_outcome(completion.kind, completion.values)
 	if outcome == .Succeeded {
 		return i64(completion.values[0]), .Succeeded, {}
 	}
-	failure, readable := errors.refusal_record_of_values(completion.values)
-	if !readable {
-		return 0, .Answer_Unreadable, errors.error_make(.Malformed, .None, 0, i64(completion.values[0]), 0, i64(completion.kind))
-	}
-	return 0, outcome, failure
+	return 0, outcome, record
 }
 
 completion_value :: proc "contextless" (function: module.Function, register: u64) -> u64 {

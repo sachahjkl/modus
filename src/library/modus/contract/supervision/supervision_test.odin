@@ -463,6 +463,7 @@ client_retry_enforces_idempotent_recovery_and_single_retry_bound :: proc(t: ^tes
 	snap_stop2, _ := connection_page_read(&page)
 	testing.expect_value(t, client_call_on_connection_change(&tracker, snap_stop2), Client_Retry_Decision.Return_Holder_Stopped_In_Flight)
 	testing.expect_value(t, tracker.state, Client_Call_State.Failed)
+	testing.expect_value(t, tracker.ended_outcome, call_outcome.Call_Outcome.Callee_Stopped_During_The_Call)
 	testing.expect_value(t, tracker.retries_used, MAX_AUTOMATIC_RETRIES)
 
 	// Even if gen 3 comes up, this failed call never loops.
@@ -477,6 +478,7 @@ client_retry_enforces_idempotent_recovery_and_single_retry_bound :: proc(t: ^tes
 	snap_closed, _ := connection_page_read(&page)
 	testing.expect_value(t, client_call_on_connection_change(&tracker_closed, snap_closed), Client_Retry_Decision.Return_Connection_Closed)
 	testing.expect_value(t, tracker_closed.state, Client_Call_State.Failed)
+	testing.expect_value(t, tracker_closed.ended_outcome, call_outcome.Call_Outcome.Connection_Ended_During_The_Call)
 }
 
 @(test)

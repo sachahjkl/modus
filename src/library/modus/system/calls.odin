@@ -58,8 +58,13 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 	not_done :: proc "contextless" (error: ^errors.Error_Record, argument: int, value: u64) -> (i64, call_outcome.Call_Outcome) {
 		return path_failure(error, .Operation_Unsupported, errors.error_make(.Unsupported, .None, i64(argument), i64(value)))
 	}
-	if _, described := isolated.record_size(function); !described || len(arguments) != int(function.parameter_count) {
-		return not_done(error, 0, u64(len(arguments)))
+	if _, described := isolated.record_size(function); !described {
+		return not_done(error, 0, 0)
+	}
+	// Another count of arguments than the description has is a fault of the
+	// arguments, as the receiver of an isolated call says.
+	if len(arguments) != int(function.parameter_count) {
+		return path_failure(error, .Argument_Refused, errors.error_make(.Bad_Value, .None, 0, i64(len(arguments)), i64(function.parameter_count)))
 	}
 	if function.result != u8(module.Type.Integer) && function.result != u8(module.Type.None) && function.result != u8(module.Type.Enum) {
 		return not_done(error, 0, u64(function.result))
@@ -301,12 +306,15 @@ call_answer_step :: proc "contextless" (calls: ^ring.Ring, tag: u32, now, deadli
 }
 
 // connection_to_renew says whether a call of this outcome leaves its
-// connection in a state that the caller cannot trust: the call is in doubt,
-// so an answer can still come on the ring, or the callee did not take the
-// command. The caller ends the connection and opens a new one for its next
-// call. Each other outcome is an answer, and the connection serves on.
+// connection in a state that the caller cannot trust: an outcome of the
+// path (Callee_Stopped_During_The_Call, Connection_Ended_During_The_Call,
+// Deadline_Passed_During_The_Call, Answer_Unreadable), after which an
+// answer can still come on the ring or the callee is gone. The caller ends
+// the connection and opens a new one for its next call. Each other outcome
+// is an answer of the callee, Callee_Unavailable too, and the connection
+// serves on.
 connection_to_renew :: proc "contextless" (outcome: call_outcome.Call_Outcome) -> bool {
-	return call_outcome.effect_group_of(outcome) == .Change_In_Doubt || outcome == .Callee_Unavailable
+	return call_outcome.effect_group_of(outcome) == .Change_In_Doubt
 }
 
 // path_failure ends a call that the path ended, with no outcome of the
@@ -478,42 +486,49 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 // of a Connect: it waits for the answer and for the ready completion with
 // the hang bound, and ends what is left when either does not come.
 // refused: the answer of a refusal, with its error record, when the caller
-// asks for it.
-service_connection :: proc "contextless" (requests: ^ring.Ring, tag: u32, name: string, refused: ^ring.Record = nil) -> (connection: Call_Connection, status: Status) {
+// asks for it. The outcome is that of the answer of the root service, or
+// of the kernel refusal of a step that maps the connection.
+service_connection :: proc "contextless" (requests: ^ring.Ring, tag: u32, name: string, refused: ^ring.Record = nil) -> (connection: Call_Connection, outcome: call_outcome.Call_Outcome) {
 	packed := name_pack(name)
 	if !send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Connect), tag = tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
-		return {}, .No_Slot
+		return {}, .Callee_Busy
 	}
 	// The root service can start the service first: only the hang bound
 	// ends this wait.
 	record, answered := root_answer_wait(requests, tag)
 	if !answered {
 		connect_give_up(requests, tag, tag, packed)
-		return {}, .Bad_State
+		return {}, .Deadline_Passed_During_The_Call
 	}
-	if record.kind != u32(Status.Ok) {
+	if answer, _ := call_outcome.completion_outcome(record.kind, record.values); answer != .Succeeded {
 		if refused != nil {
 			refused^ = record
 		}
-		refusal, _ := status_of_word(record.kind)
-		return {}, refusal
+		return {}, answer
 	}
 	connection = {process = Handle(record.values[0]), ring_memory = Handle(record.values[1]), region_memory = Handle(record.values[2])}
 	connection.module_hash = transmute([32]u8)[4]u64{record.values[3], record.values[4], record.values[5], record.values[6]}
-	defer if status != .Ok {
-		call_connection_end(&connection)
+	status: Status
+	region_pages: u64
+	address: rawptr
+	if connection.calls, status = ring_open(connection.ring_memory, receive_handles = true); status == .Ok {
+		if region_pages, status = memory_size(connection.region_memory); status == .Ok {
+			address, status = memory_map(connection.region_memory)
+		}
 	}
-	connection.calls = ring_open(connection.ring_memory, receive_handles = true) or_return
-	region_pages := memory_size(connection.region_memory) or_return
-	address := memory_map(connection.region_memory) or_return
+	if status != .Ok {
+		call_connection_end(&connection)
+		return {}, outcome_of_own_status(status)
+	}
 	connection.region = ([^]u8)(address)[:region_pages * PAGE_SIZE]
 	// The service maps the ring when it reads the Connect of the root
 	// service, which can be after its start on demand: no call before.
 	if connection_ready_wait(&connection.calls, connection.process) != .Ready {
 		service_disconnection(requests, tag, packed)
-		return connection, .Bad_State
+		call_connection_end(&connection)
+		return {}, .Callee_Unavailable
 	}
-	return connection, .Ok
+	return connection, .Succeeded
 }
 
 // service_disconnection asks the root service to end its side of a

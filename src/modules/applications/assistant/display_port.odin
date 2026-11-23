@@ -69,8 +69,8 @@ display_connect :: proc "contextless" () -> (cause: string) {
 		display_port.root, display_port.root_opened = requests, true
 	}
 	display_port.next_tag = display_port.next_tag == max(u32) ? 1 : display_port.next_tag + 1
-	connection, status := system.service_connection(&display_port.root, display_port.next_tag, role_contract.role_properties(.Display).name)
-	if status != .Ok {
+	connection, outcome := system.service_connection(&display_port.root, display_port.next_tag, role_contract.role_properties(.Display).name)
+	if outcome != .Succeeded {
 		return "the root service gives no connection to the trusted display"
 	}
 	entry := system.image_entry_of(display_port.image, connection.module_hash)

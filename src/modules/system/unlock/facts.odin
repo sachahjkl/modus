@@ -202,11 +202,12 @@ Tpm_Region_Not_Mapped :: struct {
 	status: op.Status_Word,
 }
 
-// The TPM service gave a status word that names no status.
-@(log_fact = "unlock: the TPM service gave the status {status_word} to the command {command}, which names no status")
+// The TPM service gave a completion that this process cannot read: an
+// outcome word that names no outcome, or a failure with no record.
+@(log_fact = "unlock: the TPM service gave a completion that this process cannot read to the command {command}: the outcome word {outcome_word}")
 Tpm_Status_Unknown :: struct {
-	status_word: u64,
-	command:     u64,
+	outcome_word: u64,
+	command:      u64,
 }
 
 // The TPM service gave no answer to a request.

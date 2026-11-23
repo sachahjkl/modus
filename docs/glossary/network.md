@@ -34,7 +34,7 @@ Do not use: slow path, packet path.
 
 An endpoint is what a process holds to send and receive datagrams or segments: a datagram ring and a datagram region, with a grant that names what it can reach.
 
-An endpoint replaces the socket of other systems, but the process does not choose its remote. The root service names the grant, and the network service enforces it: a request to another remote fails with `Not_Granted`, and what another remote sends never reaches the process. An endpoint is a datagram endpoint (UDP) or a segment endpoint (TCP), each with a client grant or a listen grant. A process has one. The console shows its grant with `grants` and ends it with `revoke`. An endpoint is not a connection.
+An endpoint replaces the socket of other systems, but the process does not choose its remote. The root service names the grant, and the network service enforces it: a request to another remote fails with `Grant_Or_Right_Missing`, and what another remote sends never reaches the process. An endpoint is a datagram endpoint (UDP) or a segment endpoint (TCP), each with a client grant or a listen grant. A process has one. The console shows its grant with `grants` and ends it with `revoke`. An endpoint is not a connection.
 
 The design: `src/library/modus/contract/datagram`.
 
@@ -54,7 +54,7 @@ Do not use: packet, message.
 
 A remote is the IPv4 address and the UDP port or TCP port at the other end of a datagram or of a connection.
 
-A grant names remotes: a client grant names one, and a listen grant admits the remotes that came to it. A command of the datagram ring names a remote by its address and its port. An error record of `Not_Granted` holds the remote of the request and the remote of the grant. Example: the remote of the client grant of `fetch` is 10.0.2.100 port 80. A remote is not the host, which is the computer that runs QEMU, and not the peer, which is one part of the modus tool.
+A grant names remotes: a client grant names one, and a listen grant admits the remotes that came to it. A command of the datagram ring names a remote by its address and its port. An error record of `Grant_Or_Right_Missing` holds the remote of the request and the remote of the grant. Example: the remote of the client grant of `fetch` is 10.0.2.100 port 80. A remote is not the host, which is the computer that runs QEMU, and not the peer, which is one part of the modus tool.
 
 The design: `src/library/modus/contract/datagram`.
 
@@ -104,7 +104,7 @@ Do not use: TCP socket, listening socket.
 
 A client grant is the grant of an endpoint that reaches one remote: one remote address and one remote port.
 
-A client grant lets a process reach exactly one server. The network service refuses a request to another remote with `Not_Granted`, and drops what another remote sends. With a datagram endpoint, the process gets one local UDP port. With a segment endpoint, it gets a block of 64 local TCP ports, because a closed connection stays in TIME-WAIT. Example: `fetch` has a TCP client grant of 10.0.2.100 port 80. A client grant is not a rule of a firewall: it is the only remote that the endpoint can name.
+A client grant lets a process reach exactly one server. The network service refuses a request to another remote with `Grant_Or_Right_Missing`, and drops what another remote sends. With a datagram endpoint, the process gets one local UDP port. With a segment endpoint, it gets a block of 64 local TCP ports, because a closed connection stays in TIME-WAIT. Example: `fetch` has a TCP client grant of 10.0.2.100 port 80. A client grant is not a rule of a firewall: it is the only remote that the endpoint can name.
 
 The design: `docs/NETWORK.md`, "The grant of a segment endpoint".
 
@@ -114,7 +114,7 @@ Do not use: outbound rule, connect permission.
 
 A listen grant is the grant of an endpoint that receives on one local TCP or UDP port that the root service names, from any remote, and answers only the admitted remotes.
 
-A server must receive from remotes that it does not know in advance, but must not reach a machine that did not come to it. With a listen grant, the process answers, but it does not reach: a send to a remote that is not admitted fails with `Not_Granted`. A UDP listen grant can also name one remote address. Examples: `server` on the TCP port 80; `remote` on the UDP port 7100, for the address 10.0.2.2 only. A listen grant is not a listening socket: it accepts nothing.
+A server must receive from remotes that it does not know in advance, but must not reach a machine that did not come to it. With a listen grant, the process answers, but it does not reach: a send to a remote that is not admitted fails with `Grant_Or_Right_Missing`. A UDP listen grant can also name one remote address. Examples: `server` on the TCP port 80; `remote` on the UDP port 7100, for the address 10.0.2.2 only. A listen grant is not a listening socket: it accepts nothing.
 
 The design: `docs/NETWORK.md`, "The listen grant of UDP".
 

@@ -34,7 +34,7 @@ An `enum` gives the compiler the set: a `switch` with a member missing does not 
 The borders of the library have the same form:
 
 - `display.event_of_record` and `terminal.input_of_record` read an input record. `next_event`, `input` and `key` write one line of the log for a refused record and read the next one: a loop of input never ends on a bad record, and the budget of the log bounds the lines.
-- `system.status_of_word` reads the status of a completion of the kernel and of the root service. A word that names no status is the refusal `Bad_Operation` with the record `Bad_Value` of the word. It is never the status that the caller happens to test.
+- `system.status_of_word` reads the status of a completion of the kernel. A completion of a ring of a service, the root service too, holds the word of its call outcome, which `call_outcome.completion_outcome` reads. A word that names no status is the refusal `Bad_Operation` with the record `Bad_Value` of the word. It is never the status that the caller happens to test.
 - `errors.kind_of_word`, `unit_of_word` and `end_of_word` read the words of an error record. The sentence of a refused word says the number and that it names nothing.
 - `block.command_of_word` and `frame.command_of_word` read the command of an error record. The names of the values are an enumerated array, `ARGUMENT_NAMES`, which the compiler checks whole.
 - `system.service_command_of_record` reads a command of the service ring, `None` refused.

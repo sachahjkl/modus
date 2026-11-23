@@ -3,6 +3,7 @@ package storage_service
 import "base:intrinsics"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
+import "modus:contract/storage_status"
 import format "modus:contract/store"
 import "modus:contract/value_kinds"
 import block_tree "internal:storage/storage_object"
@@ -434,11 +435,7 @@ commit :: proc "c" (place: i64, name: ^string, result: ^[]Commit_Measure, error:
 	measure: Commit_Measure
 	generation, changed := object_change(ranged.named.caller.store, path_names(&ranged.named.path), ranged.named.name, .Ranges, nil, {}, reaches_whole_store(&ranged.named.caller), error, 2, pending, &measure)
 	if changed != .Succeeded {
-		// A race lost drops the pending changes, which start from a state
-		// that is no longer the last one: the connection sees the last
-		// commit at its next read. Each other refusal, a damaged state
-		// before too, changes nothing: the pending changes stay.
-		if changed == .Another_Change_Came_First {
+		if storage_status.commit_refusal_drops_pending(changed) {
 			pending_drop(pending)
 		}
 		return changed, 0

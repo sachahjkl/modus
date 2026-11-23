@@ -1,5 +1,6 @@
 package disk_start_policy
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
@@ -17,8 +18,8 @@ import "modus:contract/value_kinds"
 
 // The bytes of the Text field of the name of a command of the root ring:
 // the longest, "Disk_Grant_Persistence", has 22 bytes, and a zero byte;
-// with the status of 4 bytes before it, the record ends on 4 bytes.
-COMMAND_FIELD_BYTES :: 28
+// with the outcome of 8 bytes before it, the record ends on 8 bytes.
+COMMAND_FIELD_BYTES :: 24
 
 // The start policy from the disk runs.
 @(log_fact = "disk_start_policy: ok, a start policy from the disk: its order is in its code")
@@ -39,20 +40,20 @@ Context_Checked :: struct {}
 Parts_Page_Refused :: struct {}
 
 // The root service refused a start of the start policy of the boot image.
-@(log_fact = "disk_start_policy: a start of the start policy of the boot image is refused with the status {status}: as it must")
+@(log_fact = "disk_start_policy: a start of the start policy of the boot image is refused with the outcome {outcome}: as it must")
 Start_Policy_Start_Refused :: struct {
-	status: op.Status,
+	outcome: call_outcome.Call_Outcome,
 }
 
 // The root service took a start of the start policy of the boot image.
 @(log_fact = "disk_start_policy: a start of the start policy of the boot image is taken: WRONG")
 Wrong_Start_Policy_Start_Taken :: struct {}
 
-// A command of the console was not refused with No_Right.
-@(log_fact = "disk_start_policy: the command {command} gives the status {status}, not No_Right: WRONG")
+// A command of the console was not refused with Grant_Or_Right_Missing.
+@(log_fact = "disk_start_policy: the command {command} gives the outcome {outcome}, not Grant_Or_Right_Missing: WRONG")
 Wrong_Command_Not_Refused :: struct {
-	status:  op.Status,
-	command: [28]u8,
+	outcome: call_outcome.Call_Outcome,
+	command: [24]u8,
 }
 
 // Each command of the console was refused with No_Right.
@@ -60,23 +61,23 @@ Wrong_Command_Not_Refused :: struct {
 Commands_Refused :: struct {}
 
 // A process of its order did not start.
-@(log_fact = "disk_start_policy: cannot start {started_process}: status {status}")
+@(log_fact = "disk_start_policy: cannot start {started_process}: outcome {outcome}")
 Start_Refused :: struct {
-	status:          op.Status,
+	outcome:         call_outcome.Call_Outcome,
 	started_process: value_kinds.Module_Name_Field,
 }
 
 // The root service refused Machine_Usable.
-@(log_fact = "disk_start_policy: the root service refused Machine_Usable: status {status}")
+@(log_fact = "disk_start_policy: the root service refused Machine_Usable: outcome {outcome}")
 Machine_Usable_Refused :: struct {
-	status: op.Status,
+	outcome: call_outcome.Call_Outcome,
 }
 
 // The console runs: the machine is usable.
 @(log_fact = "disk_start_policy: the console runs: the machine is usable")
 Machine_Is_Usable :: struct {}
 
-#assert(size_of(Wrong_Command_Not_Refused) == size_of(op.Status) + COMMAND_FIELD_BYTES)
+#assert(size_of(Wrong_Command_Not_Refused) == size_of(call_outcome.Call_Outcome) + COMMAND_FIELD_BYTES)
 
 // command_field gives the Text field of the name of a command of the root
 // ring.
@@ -110,9 +111,9 @@ Started :: struct {
 Wiring_Refused :: struct {}
 
 // One answer of the wiring refusals differs from the refusal: its case
-// (1: the list page) and its status.
-@(log_fact = "disk_start_policy: WRONG: the case {case_number} of the wiring refusals gave the status {status}")
+// (1: the list page) and its outcome.
+@(log_fact = "disk_start_policy: WRONG: the case {case_number} of the wiring refusals gave the outcome {outcome}")
 Wiring_Wrong :: struct {
-	case_number: u32,
-	status:      op.Status,
+	case_number: u64,
+	outcome:     call_outcome.Call_Outcome,
 }

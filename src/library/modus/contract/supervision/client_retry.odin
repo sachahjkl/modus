@@ -43,6 +43,10 @@ Client_Call_Tracker :: struct {
 	retries_used:           u32,
 	state:                  Client_Call_State,
 	completed_result_word:  u64,
+	// The outcome that the client library gives its caller for a call that
+	// the tracker ended with no answer (the state Failed): a call that left
+	// and lost its holder or its connection is in doubt.
+	ended_outcome:          call_outcome.Call_Outcome,
 }
 
 // client_call_ended_outcome gives the call outcome that the client library
@@ -61,10 +65,19 @@ client_call_ended_outcome :: proc "contextless" (decision: Client_Retry_Decision
 	return .Succeeded, false
 }
 
+// client_call_fail ends a tracked call with no answer: the state Failed and
+// the outcome of the decision (client_call_ended_outcome).
+@(private = "file")
+client_call_fail :: proc "contextless" (tracker: ^Client_Call_Tracker, decision: Client_Retry_Decision) -> Client_Retry_Decision {
+	tracker.state = .Failed
+	tracker.ended_outcome, _ = client_call_ended_outcome(decision)
+	return decision
+}
+
 // client_call_begin starts tracking an outgoing call on a Connected connection.
 // Refuses invalid replay rules, non-Connected snapshots, zero holder
 // generation, or a zero request_serial for Serial_Tracked calls. A call that
-// it refuses did not leave: the client library gives Callee_Unavailable.
+// it refuses did not leave, so nothing changed.
 client_call_begin :: proc "contextless" (
 	replay_rule: Call_Replay_Rule,
 	request_serial: u64,
@@ -143,16 +156,13 @@ client_call_on_connection_change :: proc "contextless" (
 	case .None:
 		return .Refuse_Invalid_Input
 	case .Closed:
-		tracker.state = .Failed
-		return .Return_Connection_Closed
+		return client_call_fail(tracker, .Return_Connection_Closed)
 	case .Holder_Stopped, .Reconnecting:
 		if valid_rule == .Not_Idempotent {
-			tracker.state = .Failed
-			return .Return_Holder_Stopped_In_Flight
+			return client_call_fail(tracker, .Return_Holder_Stopped_In_Flight)
 		}
 		if tracker.retries_used >= MAX_AUTOMATIC_RETRIES {
-			tracker.state = .Failed
-			return .Return_Holder_Stopped_In_Flight
+			return client_call_fail(tracker, .Return_Holder_Stopped_In_Flight)
 		}
 		tracker.state = .Waiting_For_Reconnect
 		return .Continue_Waiting
@@ -170,12 +180,10 @@ client_call_on_connection_change :: proc "contextless" (
 		case .None:
 			return .Refuse_Invalid_Input
 		case .Not_Idempotent:
-			tracker.state = .Failed
-			return .Return_Holder_Stopped_In_Flight
+			return client_call_fail(tracker, .Return_Holder_Stopped_In_Flight)
 		case .Idempotent, .Serial_Tracked:
 			if tracker.retries_used >= MAX_AUTOMATIC_RETRIES {
-				tracker.state = .Failed
-				return .Return_Holder_Stopped_In_Flight
+				return client_call_fail(tracker, .Return_Holder_Stopped_In_Flight)
 			}
 			tracker.retries_used += 1
 			tracker.sent_holder_generation = snapshot.holder_generation

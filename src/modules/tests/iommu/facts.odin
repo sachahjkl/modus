@@ -1,6 +1,6 @@
 package iommu_client
 
-import "modus:contract/block"
+import "modus:contract/call_outcome"
 
 // The log facts of the client of the test device service of the IOMMU
 // (src/md/features/log_facts.md): each line, as a record of fields. Each
@@ -20,13 +20,13 @@ Block_Ring_Full :: struct {}
 @(log_fact = "iommu: the test device service answered after its read into a page that was not declared: the machine goes on: as it must")
 Machine_Goes_On :: struct {}
 
-// The test device service answered Info with another status than Ok. The
-// status is the kind word of the answer of the block service, carried as
-// it is: a reader writes the name of its member, or its number when it
-// names none.
-@(log_fact = "iommu: the test device service gave the status {status} to Info")
+// The test device service answered Info with another outcome than
+// Succeeded. The outcome is the kind word of the answer of the block
+// service, carried as it is: a reader writes the name of its member, or its
+// number when it names none.
+@(log_fact = "iommu: the test device service gave the outcome {outcome} to Info")
 Info_Refused :: struct {
-	status: block.Status_Word,
+	outcome: call_outcome.Call_Outcome_Word,
 }
 
 // The test device service did not answer within the hang bound.

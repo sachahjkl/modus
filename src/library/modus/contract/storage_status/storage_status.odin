@@ -5,6 +5,8 @@
 // (value_kinds.Contract_Enum).
 package storage_status
 
+import "modus:contract/call_outcome"
+
 // The result of a call of a client of the storage service. The values
 // cross the log in a fact: each value is explicit.
 Status :: enum u8 {
@@ -33,3 +35,13 @@ STATUS_NAMES := [Status]string {
 // fields of 8 bytes with no padding (value_kinds.Contract_Enum_Type).
 Status_Word :: distinct u64
 #assert(size_of(Status_Word) >= size_of(Status))
+
+// commit_refusal_drops_pending says whether a refused commit of the storage
+// service drops the pending changes of the connection. A race lost drops
+// them: they start from a state that is no longer the last one, and the
+// connection sees the last commit at its next read. Each other refusal, a
+// damaged state before too, changes nothing, as its outcome says: the
+// pending changes stay.
+commit_refusal_drops_pending :: proc "contextless" (outcome: call_outcome.Call_Outcome) -> bool {
+	return outcome == .Another_Change_Came_First
+}

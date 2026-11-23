@@ -1,5 +1,6 @@
 package console
 
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/isolated"
 import module "modus:contract/module"
@@ -140,7 +141,7 @@ palette_provider_start :: proc "contextless" () {
 	// The root service answers when it reaches its loop, after its boot
 	// passes: the bound only ends a hang.
 	completion, answered := request_record(.Palette_Provide, "console", 0, 60_000)
-	if !answered || system.Status(completion.kind) != .Ok {
+	if !answered || call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		system.log_fact(.Info, Provider_Refused{})
 		return
 	}

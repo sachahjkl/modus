@@ -2,6 +2,7 @@
 package wiring_service
 
 import "core:testing"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/module"
 import op "modus:contract/operation"
@@ -111,38 +112,48 @@ command_from_record_refuses_invalid_fields_and_flags :: proc(t: ^testing.T) {
 	testing.expect(t, !ok)
 }
 
-// Responses refuse unknown status words, Command_Kind.None, handles past u32,
-// zero required handles/ids, and non-zero trailing fields.
+// Responses refuse outcome words that name none, a failure with no record,
+// Command_Kind.None, handles past u32, zero required handles/ids, and
+// non-zero trailing fields. A failure with its record comes last.
 @(test)
 response_from_record_refuses_invalid_statuses_and_values :: proc(t: ^testing.T) {
 	_, ok := response_from_record({kind = 0}, .None)
 	testing.expect(t, !ok)
-	for bad_status in ([?]u32{u32(max(Response_Status)) + 1, 1 << 20, max(u32)}) {
-		_, status_ok := response_from_record({kind = bad_status, tag = 1}, .Wire)
-		testing.expectf(t, !status_ok, "bad response status %d accepted", bad_status)
+	for bad_outcome in ([?]u32{u32(max(call_outcome.Call_Outcome)) + 1, 1 << 20, max(u32)}) {
+		_, outcome_ok := response_from_record({kind = bad_outcome, tag = 1}, .Wire)
+		testing.expectf(t, !outcome_ok, "bad response outcome %d accepted", bad_outcome)
 	}
+	// A failure whose values are no record.
+	_, ok = response_from_record({kind = u32(call_outcome.Call_Outcome.Wrong_State), tag = 1}, .Wire)
+	testing.expect(t, !ok)
 	// List_Page: list_page 0 or > max(u32), wiring_ring > max(u32), trailing non-zero.
-	_, ok = response_from_record({kind = u32(Response_Status.Ok), values = {0, 0, 0, 0, 0, 0, 0}}, .List_Page)
+	_, ok = response_from_record({kind = u32(call_outcome.Call_Outcome.Succeeded), values = {0, 0, 0, 0, 0, 0, 0}}, .List_Page)
 	testing.expect(t, !ok)
-	_, ok = response_from_record({kind = u32(Response_Status.Ok), values = {u64(max(u32)) + 1, 0, 0, 0, 0, 0, 0}}, .List_Page)
+	_, ok = response_from_record({kind = u32(call_outcome.Call_Outcome.Succeeded), values = {u64(max(u32)) + 1, 0, 0, 0, 0, 0, 0}}, .List_Page)
 	testing.expect(t, !ok)
-	_, ok = response_from_record({kind = u32(Response_Status.Ok), values = {5, u64(max(u32)) + 1, 0, 0, 0, 0, 0}}, .List_Page)
+	_, ok = response_from_record({kind = u32(call_outcome.Call_Outcome.Succeeded), values = {5, u64(max(u32)) + 1, 0, 0, 0, 0, 0}}, .List_Page)
 	testing.expect(t, !ok)
-	_, ok = response_from_record({kind = u32(Response_Status.Ok), values = {5, 6, 1, 0, 0, 0, 0}}, .List_Page)
+	_, ok = response_from_record({kind = u32(call_outcome.Call_Outcome.Succeeded), values = {5, 6, 1, 0, 0, 0, 0}}, .List_Page)
 	testing.expect(t, !ok)
 	// Wire: wiring_number 0 or > max(u32).
-	_, ok = response_from_record({kind = u32(Response_Status.Ok), values = {0, 1, 0, 0, 0, 0, 0}}, .Wire)
+	_, ok = response_from_record({kind = u32(call_outcome.Call_Outcome.Succeeded), values = {0, 1, 0, 0, 0, 0, 0}}, .Wire)
 	testing.expect(t, !ok)
-	_, ok = response_from_record({kind = u32(Response_Status.Ok), values = {u64(max(u32)) + 1, 1, 0, 0, 0, 0, 0}}, .Wire)
+	_, ok = response_from_record({kind = u32(call_outcome.Call_Outcome.Succeeded), values = {u64(max(u32)) + 1, 1, 0, 0, 0, 0, 0}}, .Wire)
 	testing.expect(t, !ok)
 	// Prepare_Start_Wiring: batch_id 0 or > max(u32).
-	_, ok = response_from_record({kind = u32(Response_Status.Ok), values = {0, 0, 0, 0, 0, 0, 0}}, .Prepare_Start_Wiring)
+	_, ok = response_from_record({kind = u32(call_outcome.Call_Outcome.Succeeded), values = {0, 0, 0, 0, 0, 0, 0}}, .Prepare_Start_Wiring)
 	testing.expect(t, !ok)
-	_, ok = response_from_record({kind = u32(Response_Status.Ok), values = {u64(max(u32)) + 1, 0, 0, 0, 0, 0, 0}}, .Prepare_Start_Wiring)
+	_, ok = response_from_record({kind = u32(call_outcome.Call_Outcome.Succeeded), values = {u64(max(u32)) + 1, 0, 0, 0, 0, 0, 0}}, .Prepare_Start_Wiring)
 	testing.expect(t, !ok)
 	// Register_Process: non-zero payload refused on Ok.
-	_, ok = response_from_record({kind = u32(Response_Status.Ok), values = {1, 0, 0, 0, 0, 0, 0}}, .Register_Process)
+	_, ok = response_from_record({kind = u32(call_outcome.Call_Outcome.Succeeded), values = {1, 0, 0, 0, 0, 0, 0}}, .Register_Process)
 	testing.expect(t, !ok)
+	// A failure with its record is read whole.
+	refusal := errors.error_make(.Exists, .Wirings, 2)
+	failed, failed_ok := response_from_record({kind = u32(call_outcome.Call_Outcome.Name_Already_Taken), tag = 3, values = errors.completion_values(refusal)}, .Wire)
+	testing.expect(t, failed_ok)
+	testing.expect_value(t, failed.outcome, call_outcome.Call_Outcome.Name_Already_Taken)
+	testing.expect_value(t, failed.error_record, refusal)
 }
 
 // Process_Stop_Notice border refuses invalid kinds, out-of-range slots, zero
@@ -309,19 +320,19 @@ valid_commands_responses_and_stop_notices_round_trip :: proc(t: ^testing.T) {
 	}
 
 	// Valid responses including error records.
-	ok_list := Response{status = .Ok, tag = 3, list_page = 14, wiring_ring = 15}
+	ok_list := Response{outcome = .Succeeded, tag = 3, list_page = 14, wiring_ring = 15}
 	got_list, ok_l := response_from_record(response_to_record(ok_list, .List_Page), .List_Page)
 	testing.expect(t, ok_l)
 	testing.expect_value(t, got_list, ok_list)
 
-	ok_wire := Response{status = .Ok, tag = 4, wiring_number = 9, asker_active = 3}
+	ok_wire := Response{outcome = .Succeeded, tag = 4, wiring_number = 9, asker_active = 3}
 	got_wire, ok_w := response_from_record(response_to_record(ok_wire, .Wire), .Wire)
 	testing.expect(t, ok_w)
 	testing.expect_value(t, got_wire, ok_wire)
 
 	err_rec := errors.error_make(.Full, .Wirings, 0, 9, 8)
 	err_rec.operation = 29
-	err_resp := Response{status = .No_Slot, tag = 4, error_record = err_rec}
+	err_resp := Response{outcome = .Budget_Or_Capacity_Exhausted, tag = 4, error_record = err_rec}
 	got_err, ok_e := response_from_record(response_to_record(err_resp, .Wire), .Wire)
 	testing.expect(t, ok_e)
 	testing.expect_value(t, got_err, err_resp)

@@ -16,8 +16,8 @@ package root
 
 import "base:intrinsics"
 import "internal:root/role_policy"
+import "modus:contract/call_outcome"
 import "modus:contract/blake3"
-import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
 import "modus:contract/role_contract"
@@ -39,43 +39,36 @@ plan_roles_copy: rd.Plan_Roles_Set
 
 // plan_roles_command runs Plan_Roles for its one sender, the process with
 // the start grant Plans.
-plan_roles_command :: proc "contextless" (item: ^Started, values: [7]u64, answer: ^[7]u64) -> system.Status {
+plan_roles_command :: proc "contextless" (item: ^Started, values: [7]u64, answer: ^[7]u64) -> call_outcome.Call_Outcome {
 	step, step_known := rd.plan_roles_step_of_word(values[0])
 	if !step_known {
-		answer^ = errors.ring_fail(u32(root_ring.Root_Command.Plan_Roles), .Bad_Value, .None, 1, i64(min(values[0], u64(max(i64)))), i64(max(rd.Plan_Roles_Step)))
-		return .Bad_Operation
+		return root_ring.refuse(answer, .Argument_Refused, u32(root_ring.Root_Command.Plan_Roles), .Bad_Value, .None, 1, i64(min(values[0], u64(max(i64)))), i64(max(rd.Plan_Roles_Step)))
 	}
 	// values[1] of Loaded is its outcome; each other word is 0.
 	first_zero := step == .Loaded ? 2 : 1
 	for index in first_zero ..< len(values) {
 		if values[index] != 0 {
-			answer^ = errors.ring_fail(u32(root_ring.Root_Command.Plan_Roles), .Bad_Value, .None, i64(index + 1), i64(min(values[index], u64(max(i64)))), 0)
-			return .Bad_Operation
+			return root_ring.refuse(answer, .Argument_Refused, u32(root_ring.Root_Command.Plan_Roles), .Bad_Value, .None, i64(index + 1), i64(min(values[index], u64(max(i64)))), 0)
 		}
 	}
 	switch step {
 	case .None:
-		return .Bad_Operation
+		// The border refuses it; the case keeps the switch whole.
+		return root_ring.refuse(answer, .Argument_Refused, u32(root_ring.Root_Command.Plan_Roles), .Bad_Value, .None, 1)
 	case .Page:
-		status := plan_roles_page_give(item, answer)
-		if status != .Ok {
-			answer^ = errors.ring_fail(u32(root_ring.Root_Command.Plan_Roles), .Refused, .None, 0, 0, 0, i64(status))
-		}
-		return status
+		return plan_roles_page_give(item, answer)
 	case .Loaded:
 		outcome, outcome_known := rd.plan_roles_load_outcome_of_word(values[1])
 		if !outcome_known {
-			answer^ = errors.ring_fail(u32(root_ring.Root_Command.Plan_Roles), .Bad_Value, .None, 2, i64(min(values[1], u64(max(i64)))), i64(max(rd.Plan_Roles_Load_Outcome)))
-			return .Bad_Operation
+			return root_ring.refuse(answer, .Argument_Refused, u32(root_ring.Root_Command.Plan_Roles), .Bad_Value, .None, 2, i64(min(values[1], u64(max(i64)))), i64(max(rd.Plan_Roles_Load_Outcome)))
 		}
 		plan_at_start_loaded(outcome)
 		answer^ = {0 = role_override_names.serial, 1 = role_override_names.generation}
-		return .Ok
+		return .Succeeded
 	case .Apply, .Rollback:
 	}
 	if plan_roles_page == nil {
-		answer^ = errors.ring_fail(u32(root_ring.Root_Command.Plan_Roles), .State, .Requests)
-		return .Bad_State
+		return root_ring.refuse(answer, .Wrong_State, u32(root_ring.Root_Command.Plan_Roles), .State, .Requests)
 	}
 	intrinsics.mem_copy_non_overlapping(&plan_roles_copy, plan_roles_page, size_of(rd.Plan_Roles_Set))
 	// The grant of each connection before the change: the roles of its two
@@ -91,8 +84,7 @@ plan_roles_command :: proc "contextless" (item: ^Started, values: [7]u64, answer
 	refusal, index := role_policy.holder_overrides_replace(&role_holder_names, &role_override_names, &plan_roles_copy, step, resolver)
 	if refusal != .None {
 		system.log_fact(.Warning, Plan_Roles_Refused{refusal_code = u64(refusal), override_index = u64(index), generation = plan_roles_copy.generation, serial = role_override_names.serial})
-		answer^ = errors.ring_fail(u32(root_ring.Root_Command.Plan_Roles), .Refused, .Records, i64(index + 1), 0, 0, i64(refusal))
-		return .Bad_State
+		return root_ring.refuse(answer, .Argument_Refused, u32(root_ring.Root_Command.Plan_Roles), .Refused, .Records, i64(index + 1), 0, 0, i64(refusal))
 	}
 	// Each grant that the change changed is written again, and only when
 	// each service ring has room for its grants: else the change is undone
@@ -101,13 +93,12 @@ plan_roles_command :: proc "contextless" (item: ^Started, values: [7]u64, answer
 	if !plan_roles_grants_room() {
 		role_policy.holder_overrides_restore(&role_holder_names, &role_override_names, &plan_roles_saved)
 		system.log_fact(.Warning, Plan_Roles_Refused{refusal_code = u64(rd.Plan_Roles_Refusal.Grants_Busy), override_index = 0, generation = plan_roles_copy.generation, serial = role_override_names.serial})
-		answer^ = errors.ring_fail(u32(root_ring.Root_Command.Plan_Roles), .Refused, .Records, 0, 0, 0, i64(rd.Plan_Roles_Refusal.Grants_Busy))
-		return .Bad_State
+		return root_ring.refuse(answer, .Callee_Busy, u32(root_ring.Root_Command.Plan_Roles), .Refused, .Records, 0, 0, 0, i64(rd.Plan_Roles_Refusal.Grants_Busy))
 	}
 	plan_roles_grants_send()
 	system.log_fact(.Info, Plan_Roles_Replaced{generation = role_override_names.generation, serial = role_override_names.serial, overrides = plan_roles_copy.override_count, rollback = step == .Rollback ? 1 : 0})
 	answer^ = {0 = role_override_names.serial, 1 = role_override_names.generation}
-	return .Ok
+	return .Succeeded
 }
 
 // The overrides before a change of the roles, and the grant of each
@@ -171,26 +162,27 @@ plan_roles_grants_send :: proc "contextless" () {
 // the sender a handle of it with Read and Write. The core keeps its own
 // handle: a revocation by the sender does not reach it.
 @(private = "file")
-plan_roles_page_give :: proc "contextless" (item: ^Started, answer: ^[7]u64) -> system.Status {
+plan_roles_page_give :: proc "contextless" (item: ^Started, answer: ^[7]u64) -> call_outcome.Call_Outcome {
+	kind := u32(root_ring.Root_Command.Plan_Roles)
 	if plan_roles_memory == 0 {
 		memory, status := system.memory_create(1)
 		if status != .Ok {
-			return status
+			return kernel_refused(answer, kind, status)
 		}
 		address, map_status := system.memory_map(memory, {.Write})
 		if map_status != .Ok {
 			system.close(memory)
-			return map_status
+			return kernel_refused(answer, kind, map_status)
 		}
 		plan_roles_memory = memory
 		plan_roles_page = (^rd.Plan_Roles_Set)(address)
 	}
 	given, status := system.give(item.requests_memory, plan_roles_memory, {.Read, .Write})
 	if status != .Ok {
-		return status
+		return kernel_refused(answer, kind, status)
 	}
 	answer^ = {0 = u64(given), 1 = role_override_names.serial, 2 = role_override_names.generation}
-	return .Ok
+	return .Succeeded
 }
 
 // plan_role_module_of_hash gives the name of the module of the boot image

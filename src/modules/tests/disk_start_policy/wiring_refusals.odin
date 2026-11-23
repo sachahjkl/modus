@@ -1,5 +1,6 @@
 package disk_start_policy
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/root_ring"
 import "modus:system"
@@ -12,40 +13,40 @@ import "modus:system"
 // children. Then each Start that names a list is refused before any
 // start: for a part of the system, for the console that runs, and, with
 // no list page, for a module that the image holds. Each refusal is checked
-// whole, its status and its error record, and each Start is sent twice: a
+// whole, its outcome and its error record, and each Start is sent twice: a
 // second refusal of the same kind, and not Exists, says that the first one
 // started nothing. wrong is the count of the answers that differ, each
 // with its line.
 wiring_refusals :: proc "contextless" () -> (wrong: int) {
 	wire := u32(root_ring.Root_Command.Wire)
 	start := u32(root_ring.Root_Command.Start)
-	status, values := call(.Wire, {0 = u64(root_ring.Wire_Step.List_Page)})
-	wrong += expect(1, status, values, .No_Budget, errors.ring_fail(wire, .Budget_Hidden, .Pages))
+	outcome, values := call(.Wire, {0 = u64(root_ring.Wire_Step.List_Page)})
+	wrong += expect(1, outcome, values, .Budget_Or_Capacity_Exhausted, errors.ring_fail(wire, .Budget_Hidden, .Pages))
 	cases := [3]struct {
 		name:    string,
-		status:  system.Status,
+		outcome: call_outcome.Call_Outcome,
 		refusal: [7]u64,
 	} {
-		{"input", .Bad_Operation, errors.ring_fail(start, .Unsupported, .Wiring_Rows, 2)},
-		{"console", .Bad_State, errors.ring_fail(start, .Exists, .Processes, 1)},
-		{"wired_reader", .Bad_State, errors.ring_fail(start, .Absent, .Wirings)},
+		{"input", .Operation_Unsupported, errors.ring_fail(start, .Unsupported, .Wiring_Rows, 2)},
+		{"console", .Name_Already_Taken, errors.ring_fail(start, .Exists, .Processes, 1)},
+		{"wired_reader", .Nothing_Has_That_Name, errors.ring_fail(start, .Absent, .Wirings)},
 	}
 	for item, index in cases {
 		for again in u32(0) ..< 2 {
 			packed := system.name_pack(item.name)
-			status, values = call(.Start, {packed[0], packed[1], packed[2], packed[3], u64(root_ring.Start_Wiring_List.In_The_List_Page), 0, 0})
-			wrong += expect(u32(2 + 2 * index) + again, status, values, item.status, item.refusal)
+			outcome, values = call(.Start, {packed[0], packed[1], packed[2], packed[3], u64(root_ring.Start_Wiring_List.In_The_List_Page), 0, 0})
+			wrong += expect(u32(2 + 2 * index) + again, outcome, values, item.outcome, item.refusal)
 		}
 	}
 	return wrong
 }
 
-// expect checks one answer whole: its status and its error record.
+// expect checks one answer whole: its outcome and its error record.
 @(private = "file")
-expect :: proc "contextless" (case_number: u32, status: system.Status, values: [7]u64, wanted: system.Status, refusal: [7]u64) -> int {
-	if status == wanted && values == refusal {
+expect :: proc "contextless" (case_number: u32, outcome: call_outcome.Call_Outcome, values: [7]u64, wanted: call_outcome.Call_Outcome, refusal: [7]u64) -> int {
+	if outcome == wanted && values == refusal {
 		return 0
 	}
-	system.log_fact(.Info, Wiring_Wrong{case_number = case_number, status = status})
+	system.log_fact(.Info, Wiring_Wrong{case_number = u64(case_number), outcome = outcome})
 	return 1
 }
