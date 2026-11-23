@@ -18,6 +18,24 @@ import "modus:system"
 
 // The extra budgets that this service holds a handle of.
 screen_budget_table: screen_budgets.Table
+// The bound of the lines of refused grows and releases.
+screen_budget_lines: screen_budgets.Line_Bound
+
+// The time between two passes over the draining extra budgets: a process
+// that released one closes its objects soon after, and the pages count
+// against the share until then.
+SCREEN_BUDGET_DRAIN_PASS_MILLISECONDS :: 100
+
+// The gives of the growth in work: give_both calls these, which hold no
+// context.
+@(private = "file")
+Grow_Gives :: struct {
+	process:      [screen_budgets.Side]system.Handle,
+	budget:       [screen_budgets.Side]system.Handle,
+	given:        [screen_budgets.Side]system.Handle,
+}
+@(private = "file")
+grow_gives: Grow_Gives
 
 // The bytes of the Text field of the cause of a refused growth: the
 // longest sentence of memory_screen.GROW_REFUSAL_SENTENCES, and a zero byte.
@@ -26,6 +44,7 @@ GROW_REFUSAL_FIELD_BYTES :: 96
 // screen_budget_command runs Screen_Budget: the border of its words, then
 // Grow or Release.
 screen_budget_command :: proc "contextless" (item: ^Started, record: ring.Record, values: ^[7]u64) -> system.Status {
+	screen_budgets_drain()
 	command := root_ring.Root_Command.Screen_Budget
 	words, refused_place, words_ok := root_ring.screen_budget_words_of_values(record.values)
 	if !words_ok {
@@ -65,6 +84,8 @@ screen_budget_grow :: proc "contextless" (item: ^Started, width, height: u64, va
 		width                 = width,
 		height                = height,
 		share                 = u64(largest_budget.pages),
+		now                   = system.time(),
+		last_growth_at        = screen_budget_table.last_growth_at,
 	}
 	// The pages of each process: its budget at its start and the extra
 	// budgets that it holds, which a replacement keeps until its new
@@ -94,39 +115,40 @@ screen_budget_grow :: proc "contextless" (item: ^Started, width, height: u64, va
 			refusal = .No_Pages
 		}
 	}
-	given_compositor, given_service: system.Handle
 	if refusal == .None {
-		compositor_status, service_status: system.Status
-		given_compositor, compositor_status = system.give(display_holder, compositor_budget, {.Read, .Spend})
-		if compositor_status == .Ok {
-			given_service, service_status = system.give(item.process, service_budget, {.Read, .Spend})
-		}
-		if compositor_status != .Ok || service_status != .Ok {
-			// A handle given to the compositor alone holds its budget until
-			// the compositor stops; it never learns of it, and makes nothing
-			// from it. The give fails only on a full handle table.
+		// The sender first: a refused give takes back each handle given,
+		// so no process holds a budget that it never learns of.
+		grow_gives = {process = {.Compositor = display_holder, .Service = item.process}, budget = {.Compositor = compositor_budget, .Service = service_budget}}
+		if !screen_budgets.give_both(grow_give, grow_take_back) {
 			refusal = .No_Pages
 		}
 	}
+	given_compositor, given_service := grow_gives.given[.Compositor], grow_gives.given[.Service]
 	growth: u64
 	if refusal == .None {
-		if growth = screen_budgets.grow_take(&screen_budget_table, u64(compositor_budget), compositor_pages, u64(service_budget), service_pages); growth == 0 {
+		if growth = screen_budgets.grow_take(&screen_budget_table, u64(compositor_budget), compositor_pages, u64(service_budget), service_pages, facts.now); growth == 0 {
 			// The decision read the table: only a number past the last one
 			// is left, after 2^64 growths.
 			refusal = .No_Pages
 		}
 	}
 	if refusal == .None && !system.send(&control.commands, ring.Record{kind = u32(display.Control.Screen_Budget_Give), values = {0 = u64(given_compositor), 1 = compositor_pages, 2 = width, 3 = height, 4 = growth}}) {
-		// The room was checked before; the table takes the growth back.
-		screen_budgets.release(&screen_budget_table, .Compositor, growth)
-		screen_budgets.release(&screen_budget_table, .Service, growth)
+		// The room was checked before; the table and the processes give the
+		// growth back.
+		screen_budgets.grow_undo(&screen_budget_table, growth)
 		refusal = .No_Pages
 	}
 	if refusal != .None {
 		for handle in ([2]system.Handle{compositor_budget, service_budget}) {
 			if handle != 0 {
+				// A handle that a process holds ends with this one.
+				system.handle_revoke(handle)
 				system.close(handle)
 			}
+		}
+		if !screen_budgets.line_allowed(&screen_budget_lines, facts.now) {
+			values^ = errors.ring_fail(u32(root_ring.Root_Command.Screen_Budget), .Refused, .Pages, 2, i64(width), 0, i64(refusal))
+			return .No_Budget
 		}
 		system.log_fact(.Info, Screen_Budget_Refused{width = width, height = height, grow_refusal = text_field(memory_screen.GROW_REFUSAL_SENTENCES[refusal], GROW_REFUSAL_FIELD_BYTES)})
 		values^ = errors.ring_fail(u32(root_ring.Root_Command.Screen_Budget), .Refused, .Pages, 2, i64(width), 0, i64(refusal))
@@ -138,6 +160,25 @@ screen_budget_grow :: proc "contextless" (item: ^Started, width, height: u64, va
 	return .Ok
 }
 
+// grow_give gives a process its extra budget, with Read and Spend.
+@(private = "file")
+grow_give :: proc "contextless" (side: screen_budgets.Side) -> bool {
+	given, status := system.give(grow_gives.process[side], grow_gives.budget[side], {.Read, .Spend})
+	if status != .Ok {
+		return false
+	}
+	grow_gives.given[side] = given
+	return true
+}
+
+// grow_take_back ends the handle that grow_give gave: the process holds it
+// and never learns of it.
+@(private = "file")
+grow_take_back :: proc "contextless" (side: screen_budgets.Side) {
+	system.handle_revoke(grow_gives.budget[side], grow_gives.process[side])
+	grow_gives.given[side] = 0
+}
+
 // pages_sum adds two counts of pages, held at the largest count: a sum
 // past it passes every share.
 @(private = "file")
@@ -145,19 +186,54 @@ pages_sum :: proc "contextless" (a, b: u64) -> u64 {
 	return a > max(u64) - b ? max(u64) : a + b
 }
 
-// screen_budget_release ends the extra budget of a growth of a process that
-// closed its handle: this service closes its own, and the pages return
-// when the budget ends. false: the process holds none of that growth.
+// screen_budget_release ends the extra budget of a growth that a process
+// released. A release does not prove that the process closed its handle
+// and its objects: this service takes back each handle of the budget in
+// other processes, so no object comes from it any more, and keeps its own,
+// with the pages counted against the share, until the budget drains.
+// false: the process holds none of that growth.
 screen_budget_release :: proc "contextless" (side: screen_budgets.Side, growth: u64, holder: string) -> bool {
 	handle, held := screen_budgets.release(&screen_budget_table, side, growth)
 	if !held {
-		system.log_fact(.Warning, Screen_Budget_Release_Refused{growth = growth, holder = module_name_field(holder)})
+		if screen_budgets.line_allowed(&screen_budget_lines, system.time()) {
+			system.log_fact(.Warning, Screen_Budget_Release_Refused{growth = growth, holder = module_name_field(holder)})
+		}
 		return false
 	}
-	system.close(system.Handle(handle))
-	budget_pages_note()
+	system.handle_revoke(system.Handle(handle))
 	system.log_fact(.Info, Screen_Budget_Released{growth = growth, holder = module_name_field(holder)})
+	screen_budgets_drain()
 	return true
+}
+
+// screen_budgets_drain closes each released extra budget whose pages are
+// all back: no object of it is left, and no process holds a handle of it,
+// so the budget ends and its pages return to this service.
+screen_budgets_drain :: proc "contextless" () {
+	if !screen_budgets.draining(&screen_budget_table) {
+		return
+	}
+	for side in screen_budgets.Side {
+		for extra in screen_budget_table.extras[side] {
+			if extra.handle == 0 || !extra.draining {
+				continue
+			}
+			amounts, status := system.budget_read(system.Handle(extra.handle))
+			if status == .Ok && screen_budgets.drained(&screen_budget_table, extra.handle, amounts.pages) {
+				system.close(system.Handle(extra.handle))
+				budget_pages_note()
+			}
+		}
+	}
+}
+
+// screen_budgets_drain_wake gives the time of the next pass over the
+// draining extra budgets, or WAIT_FOREVER with none.
+screen_budgets_drain_wake :: proc "contextless" () -> u64 {
+	if !screen_budgets.draining(&screen_budget_table) {
+		return system.WAIT_FOREVER
+	}
+	return system.time() + SCREEN_BUDGET_DRAIN_PASS_MILLISECONDS
 }
 
 // screen_budget_stopped ends each extra budget of a process that stopped,

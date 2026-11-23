@@ -498,8 +498,9 @@ Root_Command :: enum u32 {
 	// extra budgets in force stay.
 	//
 	// Release: values[1] the number of a growth, values[2..6] 0. The sender
-	// closed its extra budget of that growth: the root service closes its
-	// own handle, and the pages return when the budget ends. Refused with
+	// closed its extra budget of that growth: the root service takes back
+	// each handle of it in other processes, and closes its own when all its
+	// pages are back; until then they count against the share. Refused with
 	// Bad_State and the kind Absent when the sender holds none of that
 	// growth.
 	Screen_Budget = 33,

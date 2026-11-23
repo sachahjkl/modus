@@ -37,7 +37,7 @@ Screen_Budget_Refused :: struct {
 
 // A process closed its extra budget of a growth of a screen of memory: this
 // service closed its own handle.
-@(log_fact = "root: {holder} gave back its extra budget of growth {growth} of the screen of memory: its pages return")
+@(log_fact = "root: {holder} gave back its extra budget of growth {growth} of the screen of memory: its pages return when no object of it is left")
 Screen_Budget_Released :: struct {
 	growth: u64,
 	holder: value_kinds.Module_Name_Field,

@@ -234,7 +234,7 @@ the_start_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 				for refusal in memory_screen.GROW_REFUSAL_SENTENCES {
 					expect(t, render(t, file, "Screen_Budget_Refused", {{"width", count}, {"height", max(u64) - count}, {"grow_refusal", refusal}}), line_of_before("root: refused to grow the budgets of the screen of memory for ", count, " x ", max(u64) - count, ": ", refusal))
 				}
-				expect(t, render(t, file, "Screen_Budget_Released", {{"growth", count}, {"holder", process}}), line_of_before("root: ", sentence.Module_Name{process}, " gave back its extra budget of growth ", count, " of the screen of memory: its pages return"))
+				expect(t, render(t, file, "Screen_Budget_Released", {{"growth", count}, {"holder", process}}), line_of_before("root: ", sentence.Module_Name{process}, " gave back its extra budget of growth ", count, " of the screen of memory: its pages return when no object of it is left"))
 				expect(t, render(t, file, "Screen_Budget_Release_Refused", {{"growth", count}, {"holder", process}}), line_of_before("root: refused the release of the extra budget of growth ", count, " of the screen of memory from ", sentence.Module_Name{process}, ", which holds none of it"))
 				expect(t, render(t, file, "Screen_Budget_Ended_At_Stop", {{"holder", process}}), line_of_before("root: ", sentence.Module_Name{process}, " stopped with an extra budget of the screen of memory: its pages return"))
 				expect(t, render(t, file, "Compositor_On_Screen_Of_Memory", {{"width", count}, {"height", max(u64) - count}}), line_of_before("root: the compositor starts on a screen of memory of ", count, " x ", max(u64) - count, ": the machine has no screen"))

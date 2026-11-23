@@ -24,6 +24,13 @@ screen_extras: memory_screen.Held_Extras
 // The growth of the extra budget that holds the frame and the background
 // of the size in force. 0: the budget of this process holds them.
 screen_pictures_growth: u64
+// The growth of the extra budget of the size that the capture face
+// confirmed last, with Capture_Open: it stays until the face confirms the
+// next size, so a step back to it is paid. 0: the start size.
+screen_confirmed_growth: u64
+// The releases that the control ring did not take: a later pass sends
+// them (screen_releases_owed_send).
+screen_releases_owed: memory_screen.Owed_Releases
 
 // screen_budget_take keeps an extra budget that the root service gave. A
 // handle that is no budget, a number of 0, or a third one is closed with
@@ -47,23 +54,42 @@ screen_size_paid_at_start :: proc "contextless" (width, height: u64) -> bool {
 	return width <= u64(screen_start_width) && height <= u64(screen_start_height)
 }
 
-// screen_budgets_give_back closes each extra budget that holds no picture,
-// after each answer to a size: the old one of a replacement, or the new one
-// of a size that was refused or never sent. It tells the root service the
-// number of each, and the root service closes its own handle: the pages
-// return.
+// screen_budgets_give_back closes each extra budget that holds no picture
+// and is not the one of the size that the face confirmed last: the old one
+// of a replacement once the face confirms the new size, or the new one of a
+// size that was refused or never sent. It tells the root service the
+// number of each; a release that the ring does not take is owed.
 @(private = "file")
 screen_budgets_give_back :: proc "contextless" () {
-	for extra in memory_screen.held_extras_give_back(&screen_extras, screen_pictures_growth) {
+	for extra in memory_screen.held_extras_give_back(&screen_extras, screen_pictures_growth, screen_confirmed_growth) {
 		if extra.handle == 0 {
 			continue
 		}
 		system.close(system.Handle(extra.handle))
-		if !system.send(&control.completions, ring.Record{kind = u32(display.Control.Screen_Budget_Release), values = {0 = extra.growth}}) {
+		if !screen_release_send(extra.growth) && !memory_screen.owed_release_add(&screen_releases_owed, extra.growth) {
 			// The root service ends the budget at the stop of this process.
 			system.log_fact(.Warning, Screen_Budget_Release_Not_Sent{})
 		}
 	}
+}
+
+@(private = "file")
+screen_release_send :: proc "contextless" (growth: u64) -> bool {
+	return system.send(&control.completions, ring.Record{kind = u32(display.Control.Screen_Budget_Release), values = {0 = growth}})
+}
+
+// screen_releases_owed_send sends the releases that the control ring did
+// not take, in each pass of the loop.
+screen_releases_owed_send :: proc "contextless" () {
+	memory_screen.owed_releases_send(&screen_releases_owed, screen_release_send)
+}
+
+// screen_of_memory_face_confirmed runs when the capture face opens at the
+// size in force: the size is confirmed, and the extra budget of the size
+// confirmed before goes back.
+screen_of_memory_face_confirmed :: proc "contextless" () {
+	screen_confirmed_growth = screen_pictures_growth
+	screen_budgets_give_back()
 }
 
 // The bytes of the cause in the line of a refused size.
@@ -129,8 +155,8 @@ screen_of_memory_take :: proc "contextless" (width, height: int, paying: memory_
 	frame, frame_memory_handle = new_frame, new_frame_memory
 	background, background_memory_handle = new_background, new_background_memory
 	screen = {width = width, height = height, stride = width}
-	// The old pictures are gone: an extra budget with none of them left goes
-	// back after the answer (screen_budgets_give_back).
+	// The old pictures are gone. Their extra budget stays until the face
+	// confirms the new size, for a step back (screen_of_memory_face_confirmed).
 	screen_pictures_growth = paying.growth
 	desktop_size_follow_screen(true) // scale.odin
 	background_build()
@@ -161,6 +187,7 @@ screen_of_memory_take :: proc "contextless" (width, height: int, paying: memory_
 screen_of_memory_face_ended :: proc "contextless" () {
 	if memory_screen.face_ended_goes_to_start(screen_of_memory, screen_pictures_growth) {
 		if windows, taken := screen_of_memory_take(screen_start_width, screen_start_height, {}); taken {
+			screen_confirmed_growth = 0
 			system.log_fact(.Info, Screen_Of_Memory_Back_To_Start{width = u64(screen_start_width), height = u64(screen_start_height), windows = u64(windows)})
 		} else {
 			// The pictures stay in their extra budget, which stays too: the
@@ -168,5 +195,8 @@ screen_of_memory_face_ended :: proc "contextless" () {
 			system.log_fact(.Warning, Screen_Of_Memory_Not_Back_To_Start{width = u64(screen_start_width), height = u64(screen_start_height)})
 		}
 	}
+	// No face confirms a size any more: only the pictures keep an extra
+	// budget.
+	screen_confirmed_growth = screen_pictures_growth
 	screen_budgets_give_back()
 }

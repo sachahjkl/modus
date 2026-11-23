@@ -564,6 +564,7 @@ Grow_Refusal :: enum u64 {
 	Past_Compositor_Share = 6, // The budget of the compositor, its extra budget and the new one pass the share of a process.
 	Past_Service_Share    = 7, // The budget of the service, its extra budget and the new one pass the share of a process.
 	No_Pages              = 8, // The budget of the root service did not make an extra budget.
+	Too_Soon              = 9, // The last growth is less than RESIZE_INTERVAL_MILLISECONDS ago.
 }
 
 // The words of each refusal of a growth in a line of the log.
@@ -578,6 +579,7 @@ GROW_REFUSAL_SENTENCES := [Grow_Refusal]string {
 	.Past_Compositor_Share = "the budget of the compositor would pass the share of a process",
 	.Past_Service_Share    = "the budget of remote_display would pass the share of a process",
 	.No_Pages              = "the budget of the root service did not make the extra budgets",
+	.Too_Soon              = "the last growth was less than a second ago",
 }
 
 // grow_refusal_of_word is the border of a word of Grow_Refusal: None and a
@@ -600,6 +602,8 @@ resize_refusal_of_grow :: proc "contextless" (refusal: Grow_Refusal) -> Resize_R
 		return .Device_Screen
 	case .Outside_Bounds:
 		return .Outside_Bounds
+	case .Too_Soon:
+		return .Too_Soon
 	case .Compositor_Replacing, .Past_Compositor_Share:
 		return .Compositor_Budget
 	case .Not_The_Service, .Service_Replacing, .Past_Service_Share, .No_Pages:
@@ -617,6 +621,8 @@ Grow_Facts :: struct {
 	compositor_paid:       u64, // The pages of the budget of the compositor at its start, and of the extra budgets that it holds.
 	service_paid:          u64, // The pages of the budget of the service at its start, and of the extra budgets that it holds.
 	share:                 u64, // The largest budget of a process of the machine, in pages.
+	now:                   u64, // The clock of the system, in milliseconds.
+	last_growth_at:        u64, // The time of the last growth; 0: none.
 }
 
 // The extra budgets that a process holds at most: the one of the size in
@@ -673,19 +679,62 @@ held_extras_of_size :: proc "contextless" (held: ^Held_Extras, width, height: u6
 	return
 }
 
-// held_extras_give_back removes each extra budget that holds none of the
-// pictures of the process: all but the one of holding_growth (0: the
-// budget of the process holds them, and each goes). It gives them; the
-// process closes each handle and sends the release of each number. A
-// handle of 0 is none.
-held_extras_give_back :: proc "contextless" (held: ^Held_Extras, holding_growth: u64) -> (given: [EXTRAS_PER_PROCESS]Held_Extra) {
+// held_extras_give_back removes each extra budget but the ones of
+// holding_growth, which holds the pictures of the process, and of
+// kept_growth, which the compositor keeps for a step back to the size that
+// the face confirmed last (0: none; the budget of the process holds the
+// pictures of the start size). It gives them; the process closes each
+// handle and sends the release of each number. A handle of 0 is none.
+held_extras_give_back :: proc "contextless" (held: ^Held_Extras, holding_growth: u64, kept_growth: u64 = 0) -> (given: [EXTRAS_PER_PROCESS]Held_Extra) {
 	for &kept, place in held.extras {
-		if kept.handle != 0 && kept.growth != holding_growth {
+		if kept.handle != 0 && kept.growth != holding_growth && kept.growth != kept_growth {
 			given[place] = kept
 			kept = {}
 		}
 	}
 	return
+}
+
+// The releases that a process sent to no ring yet: the ring had no room.
+// Each place holds the number of a growth; a process holds at most
+// EXTRAS_PER_PROCESS extra budgets, so at most as many releases are owed.
+Owed_Releases :: struct {
+	growths: [EXTRAS_PER_PROCESS]u64,
+}
+
+// owed_release_add keeps a release that the ring did not take. false: the
+// number is 0, or it is owed already, or no place is free; nothing changes.
+owed_release_add :: proc "contextless" (owed: ^Owed_Releases, growth: u64) -> bool {
+	if growth == 0 {
+		return false
+	}
+	free := -1
+	for kept, place in owed.growths {
+		if kept == growth {
+			return false
+		}
+		if kept == 0 && free < 0 {
+			free = place
+		}
+	}
+	if free < 0 {
+		return false
+	}
+	owed.growths[free] = growth
+	return true
+}
+
+// The send of the release of a growth on the ring of a process.
+Release_Send_Procedure :: #type proc "contextless" (growth: u64) -> bool
+
+// owed_releases_send sends the owed releases, oldest place first, and keeps
+// each one that the ring does not take for a later pass.
+owed_releases_send :: proc "contextless" (owed: ^Owed_Releases, send: Release_Send_Procedure) {
+	for &growth in owed.growths {
+		if growth != 0 && send(growth) {
+			growth = 0
+		}
+	}
 }
 
 // face_ended_goes_to_start says if the compositor goes back to the start
@@ -696,8 +745,9 @@ face_ended_goes_to_start :: proc "contextless" (screen_of_memory: bool, pictures
 }
 
 // screen_budget_grow_decide decides a growth for both processes together:
-// the sender, the screen, the size, the extra budgets that each process
-// holds, then the share of each process, in this order. A process that
+// the sender, the screen, the size, the least time since the last growth,
+// the extra budgets that each process holds, then the share of each
+// process, in this order. A process that
 // holds one extra budget keeps it until its new pictures are made, so the
 // share pays both. It gives the pages of each new extra budget, or the
 // refusal and no pages.
@@ -712,6 +762,9 @@ screen_budget_grow_decide :: proc "contextless" (facts: Grow_Facts) -> (refusal:
 		return .No_Screen_Of_Memory, 0, 0
 	case !size_in_bounds(facts.width, facts.height):
 		return .Outside_Bounds, 0, 0
+	case facts.last_growth_at != 0 && facts.now - min(facts.last_growth_at, facts.now) < RESIZE_INTERVAL_MILLISECONDS:
+		// A clock that went back counts as age 0.
+		return .Too_Soon, 0, 0
 	case facts.compositor_extras >= EXTRAS_PER_PROCESS:
 		return .Compositor_Replacing, 0, 0
 	case facts.service_extras >= EXTRAS_PER_PROCESS:

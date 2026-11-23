@@ -1241,12 +1241,20 @@ extras_give_back :: proc "contextless" () {
 			continue
 		}
 		system.close(system.Handle(extra.handle))
-		request_tag += 1
-		if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Screen_Budget), tag = request_tag, values = {0 = u64(root_ring.Screen_Budget_Step.Release), 1 = extra.growth}}) {
+		if !release_send(extra.growth) && !memory_screen.owed_release_add(&releases_owed, extra.growth) {
 			// The root service ends the budget at the stop of this process.
 			system.log_fact(.Warning, Screen_Budget_Release_Not_Sent{})
 		}
 	}
+}
+
+// The releases that the root ring did not take: a later pass sends them,
+// as a Disconnect that the ring did not take.
+releases_owed: memory_screen.Owed_Releases
+
+release_send :: proc "contextless" (growth: u64) -> bool {
+	request_tag += 1
+	return system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Screen_Budget), tag = request_tag, values = {0 = u64(root_ring.Screen_Budget_Step.Release), 1 = growth}})
 }
 
 // screen_change_apply takes the size that the compositor took, while no
@@ -1656,6 +1664,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		count := quic_server.completions_drain(&quic_endpoint, &server, records[:], arrived[:])
 		capture_events()
 		root_completions_work()
+		memory_screen.owed_releases_send(&releases_owed, release_send)
 		screen_change_apply()
 		screen_asks_work()
 		capture_apply()

@@ -1211,6 +1211,7 @@ root_loop_pass :: proc "contextless" () {
 	// The stop of a process is an event.
 	wait := system.wait_begin()
 	control_ring_serve()
+	screen_budgets_drain() // screen_budgets.odin
 	for &item in started {
 		if item.process != 0 && item.requests.head != nil {
 			root_ring_serve(&item)
@@ -1248,7 +1249,7 @@ root_loop_pass :: proc "contextless" () {
 	// read of the entropy device in flight (entropy.odin), the hang
 	// bound of a start policy that runs, and any in-flight request to
 	// the delegated wiring service.
-	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline()))
+	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline(), screen_budgets_drain_wake()))
 }
 
 // control_ring_serve answers the control ring of the compositor: a start

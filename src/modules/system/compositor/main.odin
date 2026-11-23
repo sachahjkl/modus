@@ -910,6 +910,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 			}
 		}
+		screen_releases_owed_send() // screen_of_memory.odin
 		for record in system.receive(&control.commands) {
 			quality_record_read()
 			kind, kind_ok := display.control_of_ring_word(record.kind)

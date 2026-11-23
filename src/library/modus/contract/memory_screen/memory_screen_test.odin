@@ -354,6 +354,9 @@ a_growth_of_the_budgets_is_refused_at_each_edge :: proc(t: ^testing.T) {
 		{proc(facts: ^Grow_Facts) {facts.width = MAX_WIDTH + 1}, .Outside_Bounds},
 		{proc(facts: ^Grow_Facts) {facts.height = MIN_HEIGHT - 1}, .Outside_Bounds},
 		{proc(facts: ^Grow_Facts) {facts.width, facts.height = max(u64), max(u64)}, .Outside_Bounds},
+		{proc(facts: ^Grow_Facts) {facts.now, facts.last_growth_at = 5000, 4001}, .Too_Soon},
+		{proc(facts: ^Grow_Facts) {facts.now, facts.last_growth_at = 5000, 9000}, .Too_Soon},
+		{proc(facts: ^Grow_Facts) {facts.now, facts.last_growth_at = 5000, 4001; facts.compositor_extras = EXTRAS_PER_PROCESS}, .Too_Soon},
 		{proc(facts: ^Grow_Facts) {facts.compositor_extras = EXTRAS_PER_PROCESS}, .Compositor_Replacing},
 		{proc(facts: ^Grow_Facts) {facts.compositor_extras = max(int)}, .Compositor_Replacing},
 		{proc(facts: ^Grow_Facts) {facts.service_extras = EXTRAS_PER_PROCESS}, .Service_Replacing},
@@ -374,6 +377,9 @@ a_growth_of_the_budgets_is_refused_at_each_edge :: proc(t: ^testing.T) {
 	edge.service_paid = edge.share - service_pages
 	refusal, a, b := screen_budget_grow_decide(edge)
 	testing.expect(t, refusal == .None && a == compositor_pages && b == service_pages)
+	edge.now, edge.last_growth_at = 5000, 4000
+	refusal, a, b = screen_budget_grow_decide(edge)
+	testing.expect(t, refusal == .None, "a growth one interval after the last was refused")
 	edge.compositor_extras, edge.service_extras = 1, 1
 	refusal, a, b = screen_budget_grow_decide(edge)
 	testing.expect(t, refusal == .None && a == compositor_pages && b == service_pages, "a replacement at the edge of the share was refused")
@@ -424,6 +430,7 @@ a_grow_refusal_word_at_its_border :: proc(t: ^testing.T) {
 		testing.expect(t, ok && refusal == member)
 		testing.expect(t, resize_refusal_of_grow(member) != .None)
 	}
+	testing.expect_value(t, resize_refusal_of_grow(.Too_Soon), Resize_Refusal.Too_Soon)
 	testing.expect_value(t, resize_refusal_of_grow(.Compositor_Replacing), Resize_Refusal.Compositor_Budget)
 	testing.expect_value(t, resize_refusal_of_grow(.Service_Replacing), Resize_Refusal.Service_Budget)
 	testing.expect_value(t, resize_refusal_of_grow(.Past_Compositor_Share), Resize_Refusal.Compositor_Budget)
@@ -506,4 +513,54 @@ the_last_viewer_leaving_after_a_growth_returns_to_the_start_size :: proc(t: ^tes
 	testing.expect(t, !face_ended_goes_to_start(true, 0), "a screen at its start size changed at the end of the face")
 	testing.expect(t, !face_ended_goes_to_start(false, 3), "a screen of a device changed at the end of the face")
 	testing.expect(t, held_extras_give_back(&held, 0) == {})
+}
+
+// A step back between two grown sizes: the face confirmed A (growth 1),
+// the compositor takes B (growth 2) and keeps the extra budget of A until
+// the face confirms B. If the copies of B are refused and the compositor
+// steps back to A, the extra budget of A pays it, and B goes back when the
+// face confirms A. A step back to the start size keeps A until the start
+// size is confirmed.
+@(test)
+the_extra_budget_of_a_confirmed_size_stays_until_the_next_is_confirmed :: proc(t: ^testing.T) {
+	held: Held_Extras
+	held_extras_take(&held, {5, 1, 2560, 1440})
+	held_extras_take(&held, {9, 2, 3840, 2160})
+	// B taken, A confirmed.
+	testing.expect(t, held_extras_give_back(&held, 2, 1) == {}, "the extra budget of the confirmed size went back before the next was confirmed")
+	extra, ok := held_extras_of_size(&held, 2560, 1440)
+	testing.expect(t, ok && extra.growth == 1)
+	// The step back to A, then the face confirms A.
+	testing.expect(t, held_extras_give_back(&held, 1, 1) == {1 = {9, 2, 3840, 2160}})
+	// B again; the face confirms B: A goes.
+	held_extras_take(&held, {13, 3, 3840, 2160})
+	testing.expect(t, held_extras_give_back(&held, 3, 1) == {})
+	testing.expect(t, held_extras_give_back(&held, 3, 3) == {0 = {5, 1, 2560, 1440}})
+	// A step back to the start size, before and after its confirmation.
+	testing.expect(t, held_extras_give_back(&held, 0, 3) == {})
+	testing.expect(t, held_extras_give_back(&held, 0, 0) == {1 = {13, 3, 3840, 2160}})
+}
+
+// A release that the ring did not take is owed: 0 and a number owed
+// already are refused, at most EXTRAS_PER_PROCESS are held, a later pass
+// sends them, and one that the ring refuses again stays owed.
+@(test)
+an_owed_release_goes_in_a_later_pass :: proc(t: ^testing.T) {
+	owed: Owed_Releases
+	testing.expect(t, !owed_release_add(&owed, 0))
+	testing.expect(t, owed_release_add(&owed, 4))
+	testing.expect(t, !owed_release_add(&owed, 4), "one release was owed twice")
+	testing.expect(t, owed_release_add(&owed, max(u64)))
+	before := owed
+	testing.expect(t, !owed_release_add(&owed, 7), "a release past the places was owed")
+	testing.expect(t, owed == before)
+	refuse_all :: proc "contextless" (growth: u64) -> bool {return false}
+	owed_releases_send(&owed, refuse_all)
+	testing.expect(t, owed == before, "a release that the ring refused again was dropped")
+	take_four :: proc "contextless" (growth: u64) -> bool {return growth == 4}
+	owed_releases_send(&owed, take_four)
+	testing.expect(t, owed.growths == {0, max(u64)})
+	take_all :: proc "contextless" (growth: u64) -> bool {return true}
+	owed_releases_send(&owed, take_all)
+	testing.expect(t, owed == {})
 }

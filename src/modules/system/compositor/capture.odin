@@ -290,6 +290,7 @@ capture_open :: proc "contextless" (index: int, record: ring.Record) {
 		// The client of a capture face has no window, so it has no title:
 		// the root service allows one process, and the line names none.
 		system.log_fact(.Info, Capture_Face_Opened{width = u64(screen.width), height = u64(screen.height)})
+		screen_of_memory_face_confirmed() // screen_of_memory.odin
 		return
 	}
 	system.close(memory)
