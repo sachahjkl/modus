@@ -13,6 +13,8 @@ import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:testing"
+import "modus:contract/call_outcome"
+import "modus:contract/errors"
 import module "modus:contract/module"
 
 Real_Program :: enum {
@@ -171,24 +173,225 @@ real_programs_build_freestanding_with_no_import_and_no_host_instruction :: proc(
 
 // ---- SQLite ----------------------------------------------------------------------------
 
-// The result codes of SQLite that the test reads: the values of sqlite3.h.
-Sqlite_Code :: enum i64 {
-	Ok             = 0,
-	Error          = 1,
-	Nomem          = 7,
-	Toobig         = 18,
-	Misuse         = 21,
-	Constraint_Unique = 2067, // SQLITE_CONSTRAINT | (8 << 8)
+Sqlite_Value_Kind :: enum u8 {
+	None      = 0,
+	Null      = 1,
+	Integer   = 2,
+	Real_Bits = 3,
+	Text      = 4,
+	Blob      = 5,
 }
 
-Sqlite_Session :: struct {
+Sqlite_Open_Options :: struct {
+	fresh:          u8,
+	read_only:      u8,
+	reserved:       [2]u8,
+	page_size:      u32,
+	random_seed:    u64,
+	database_bytes: u64,
+	heap_bytes:     u32,
+	reserved_2:     u32,
+}
+#assert(size_of(Sqlite_Open_Options) == 32)
+
+Sqlite_Session_Info :: struct {
+	version_number: i64,
+	database_bytes: u64,
+	dirty_pages:    u64,
+	page_size:      u32,
+	open:           u8,
+	read_only:      u8,
+	reserved:       [2]u8,
+}
+#assert(size_of(Sqlite_Session_Info) == 32)
+
+Sqlite_Column_Row :: struct {
+	column_index:   u32,
+	declared_kind:  u8,
+	name_length:    u8,
+	name_truncated: u8,
+	reserved:       u8,
+	name:           [64]u8,
+}
+#assert(size_of(Sqlite_Column_Row) == 72)
+
+Sqlite_Cell_Row :: struct {
+	row_index:       u32,
+	column_index:    u32,
+	value_kind:      u8,
+	truncated:       u8,
+	reserved:        [6]u8,
+	integer_or_bits: i64,
+	payload_offset:  u32,
+	payload_length:  u32,
+}
+#assert(size_of(Sqlite_Cell_Row) == 32)
+
+Sqlite_Query_Summary :: struct {
+	column_count:   u32,
+	row_count:      u32,
+	changes:        i64,
+	dirty_pages:    u64,
+	database_bytes: u64,
+	truncated_rows: u8,
+	has_rows:       u8,
+	reserved:       [6]u8,
+}
+#assert(size_of(Sqlite_Query_Summary) == 40)
+
+Sqlite_Dirty_Range_Row :: struct {
+	byte_offset: u64,
+	byte_length: u64,
+}
+#assert(size_of(Sqlite_Dirty_Range_Row) == 16)
+
+Sqlite_Text_Slice :: struct {
+	address: [^]u8,
+	count:   u64,
+}
+#assert(size_of(Sqlite_Text_Slice) == 16)
+
+Sqlite_Answer :: struct {
+	outcome: call_outcome.Call_Outcome,
+	value:   i64,
+}
+#assert(size_of(Sqlite_Answer) == 16)
+
+sqlite_export_ptr :: proc(loaded: Loaded_Module, name: string) -> rawptr {
+	index := module.export_find(loaded.file, name)
+	fmt.assertf(index != 0, "sqlite module has no export %s", name)
+	address, found := module.export_address(loaded.file, uintptr(raw_data(loaded.memory)), index)
+	fmt.assertf(found, "sqlite export %s has no address", name)
+	return rawptr(address)
+}
+
+sqlite_open_call :: proc(loaded: Loaded_Module, opts: ^Sqlite_Open_Options, db_buf: []u8) -> (ans: Sqlite_Answer, info: Sqlite_Session_Info, err: errors.Error_Record) {
+	db_place := module.Table_Place{address = u64(uintptr(raw_data(db_buf))), count = u64(len(db_buf)), capacity = u64(len(db_buf))}
+	info_buf: [1]Sqlite_Session_Info
+	info_place := module.Table_Place{address = u64(uintptr(&info_buf[0])), count = 0, capacity = 1}
+	fn := (proc "c" (^Sqlite_Open_Options, ^module.Table_Place, ^module.Table_Place, ^errors.Error_Record) -> Sqlite_Answer)(sqlite_export_ptr(loaded, "session_open"))
+	ans = fn(opts, &db_place, &info_place, &err)
+	if info_place.count >= 1 {
+		info = info_buf[0]
+	}
+	return
+}
+
+Sqlite_Exec_Result :: struct {
+	answer:     Sqlite_Answer,
+	err:        errors.Error_Record,
+	summary:    Sqlite_Query_Summary,
+	columns:    []Sqlite_Column_Row,
+	cells:      []Sqlite_Cell_Row,
+	payload:    []u8,
+	diagnostic: string,
+}
+
+sqlite_exec_call :: proc(
 	loaded: Loaded_Module,
-	output: []u8,
+	sql: string,
+	db_buf: []u8,
+	col_buf: []Sqlite_Column_Row,
+	cell_buf: []Sqlite_Cell_Row,
+	payload_buf: []u8,
+	diag_buf: []u8,
+) -> (res: Sqlite_Exec_Result) {
+	sql_slice := Sqlite_Text_Slice{address = raw_data(transmute([]u8)sql), count = u64(len(sql))}
+	db_place := module.Table_Place{address = u64(uintptr(raw_data(db_buf))), count = u64(len(db_buf)), capacity = u64(len(db_buf))}
+	col_place := module.Table_Place{address = u64(uintptr(raw_data(col_buf))), count = 0, capacity = u64(len(col_buf))}
+	cell_place := module.Table_Place{address = u64(uintptr(raw_data(cell_buf))), count = 0, capacity = u64(len(cell_buf))}
+	pay_place := module.Table_Place{address = u64(uintptr(raw_data(payload_buf))), count = 0, capacity = u64(len(payload_buf))}
+	diag_place := module.Table_Place{address = u64(uintptr(raw_data(diag_buf))), count = 0, capacity = u64(len(diag_buf))}
+	sum_buf: [1]Sqlite_Query_Summary
+	sum_place := module.Table_Place{address = u64(uintptr(&sum_buf[0])), count = 0, capacity = 1}
+	fn := (proc "c" (
+		^Sqlite_Text_Slice,
+		^module.Table_Place,
+		^module.Table_Place,
+		^module.Table_Place,
+		^module.Table_Place,
+		^module.Table_Place,
+		^module.Table_Place,
+		^errors.Error_Record,
+	) -> Sqlite_Answer)(sqlite_export_ptr(loaded, "session_execute"))
+	res.answer = fn(&sql_slice, &db_place, &col_place, &cell_place, &pay_place, &diag_place, &sum_place, &res.err)
+	if sum_place.count >= 1 {
+		res.summary = sum_buf[0]
+	}
+	res.columns = col_buf[:min(int(col_place.count), len(col_buf))]
+	res.cells = cell_buf[:min(int(cell_place.count), len(cell_buf))]
+	res.payload = payload_buf[:min(int(pay_place.count), len(payload_buf))]
+	res.diagnostic = string(diag_buf[:min(int(diag_place.count), len(diag_buf))])
+	return
 }
 
-sqlite_execute :: proc(session: Sqlite_Session, sql: string) -> (code: i64, rows: string) {
-	code = call(session.loaded, "sqlite_session_execute", text_address(sql), address_of(raw_data(session.output)), i64(len(session.output)))
-	return code, strings.clone(string(cstring(raw_data(session.output))), context.temp_allocator)
+sqlite_dirty_ranges_call :: proc(loaded: Loaded_Module, out_buf: []Sqlite_Dirty_Range_Row) -> (ans: Sqlite_Answer, ranges: []Sqlite_Dirty_Range_Row, err: errors.Error_Record) {
+	place := module.Table_Place{address = u64(uintptr(raw_data(out_buf))), count = 0, capacity = u64(len(out_buf))}
+	fn := (proc "c" (^module.Table_Place, ^errors.Error_Record) -> Sqlite_Answer)(sqlite_export_ptr(loaded, "session_dirty_ranges"))
+	ans = fn(&place, &err)
+	ranges = out_buf[:min(int(place.count), len(out_buf))]
+	return
+}
+
+sqlite_mark_synced_call :: proc(loaded: Loaded_Module) -> (ans: Sqlite_Answer, err: errors.Error_Record) {
+	fn := (proc "c" (^errors.Error_Record) -> Sqlite_Answer)(sqlite_export_ptr(loaded, "session_mark_synced"))
+	ans = fn(&err)
+	return
+}
+
+sqlite_info_call :: proc(loaded: Loaded_Module) -> (ans: Sqlite_Answer, info: Sqlite_Session_Info, err: errors.Error_Record) {
+	buf: [1]Sqlite_Session_Info
+	place := module.Table_Place{address = u64(uintptr(&buf[0])), count = 0, capacity = 1}
+	fn := (proc "c" (^module.Table_Place, ^errors.Error_Record) -> Sqlite_Answer)(sqlite_export_ptr(loaded, "session_info"))
+	ans = fn(&place, &err)
+	if place.count >= 1 {
+		info = buf[0]
+	}
+	return
+}
+
+sqlite_last_diag_call :: proc(loaded: Loaded_Module, buf: []u8) -> (ans: Sqlite_Answer, text: string, err: errors.Error_Record) {
+	place := module.Table_Place{address = u64(uintptr(raw_data(buf))), count = 0, capacity = u64(len(buf))}
+	fn := (proc "c" (^module.Table_Place, ^errors.Error_Record) -> Sqlite_Answer)(sqlite_export_ptr(loaded, "session_last_diagnostic"))
+	ans = fn(&place, &err)
+	text = string(buf[:min(int(place.count), len(buf))])
+	return
+}
+
+sqlite_close_call :: proc(loaded: Loaded_Module, db_buf: []u8) -> (ans: Sqlite_Answer, err: errors.Error_Record) {
+	db_place := module.Table_Place{address = u64(uintptr(raw_data(db_buf))), count = u64(len(db_buf)), capacity = u64(len(db_buf))}
+	fn := (proc "c" (^module.Table_Place, ^errors.Error_Record) -> Sqlite_Answer)(sqlite_export_ptr(loaded, "session_close"))
+	ans = fn(&db_place, &err)
+	return
+}
+
+sqlite_cell_text :: proc(cell: Sqlite_Cell_Row, payload: []u8) -> string {
+	return string(payload[cell.payload_offset:][:cell.payload_length])
+}
+
+sqlite_cell_f64 :: proc(cell: Sqlite_Cell_Row) -> f64 {
+	return transmute(f64)u64(cell.integer_or_bits)
+}
+
+sqlite_sync_to_store :: proc(t: ^testing.T, loaded: Loaded_Module, db_buf: []u8, store_backing: ^[dynamic]u8, db_bytes: u64) {
+	ranges_buf: [256]Sqlite_Dirty_Range_Row
+	ans, ranges, _ := sqlite_dirty_ranges_call(loaded, ranges_buf[:])
+	testing.expect_value(t, ans.outcome, call_outcome.Call_Outcome.Succeeded)
+	// Every emitted dirty range must be strictly clamped to db_bytes.
+	for r in ranges {
+		testing.expect(t, r.byte_length > 0, "dirty range has non-zero length")
+		testing.expect(t, r.byte_offset <= db_bytes && r.byte_length <= db_bytes - r.byte_offset, "dirty range clamped to database_bytes")
+	}
+	if u64(len(store_backing^)) < db_bytes {
+		resize(store_backing, int(db_bytes))
+	}
+	for r in ranges {
+		copy(store_backing[r.byte_offset:][:r.byte_length], db_buf[r.byte_offset:][:r.byte_length])
+	}
+	// Simulate atomic storage.set_size + storage.commit.
+	resize(store_backing, int(db_bytes))
+	mark_ans, _ := sqlite_mark_synced_call(loaded)
+	testing.expect_value(t, mark_ans.outcome, call_outcome.Call_Outcome.Succeeded)
 }
 
 @(test)
@@ -198,93 +401,259 @@ real_sqlite_runs_queries_over_the_modus_vfs :: proc(t: ^testing.T) {
 		return
 	}
 	defer unload_module(loaded)
-	arena := make([]u8, 8 << 20)
-	defer delete(arena)
-	store := make([]u8, 8 << 20)
-	defer delete(store)
-	output := make([]u8, 1 << 16)
-	defer delete(output)
-	session := Sqlite_Session{loaded, output}
-	open :: proc(session: Sqlite_Session, arena, store: []u8, fresh: i64) -> i64 {
-		return call(session.loaded, "sqlite_session_open", address_of(raw_data(arena)), i64(len(arena)), address_of(raw_data(store)), i64(len(store)), fresh)
+
+	// Verify strict .Read_Only_After_Load segment stays present (Option B RELRO).
+	has_relro := false
+	for idx in 1 ..< module.count(loaded.file, .Segments) {
+		seg, _ := module.record(loaded.file, .Segments, idx, module.Segment)
+		if .Read_Only_After_Load in seg.flags {
+			has_relro = true
+		}
 	}
-	expect_rows :: proc(t: ^testing.T, session: Sqlite_Session, sql: string, expected: string, location := #caller_location) {
-		code, rows := sqlite_execute(session, sql)
-		testing.expectf(t, code == i64(Sqlite_Code.Ok), "%s: code %d, %s", sql, code, rows, loc = location)
-		testing.expectf(t, rows == expected, "%s: the rows are %q, not %q", sql, rows, expected, loc = location)
+	testing.expect(t, has_relro, "sqlite preserves Read_Only_After_Load segment")
+	testing.expect_value(t, call(loaded, "version_number"), i64(3054001))
+
+	db_buf := make([]u8, 4 << 20)
+	defer delete(db_buf)
+	col_buf := make([]Sqlite_Column_Row, 64)
+	defer delete(col_buf)
+	cell_buf := make([]Sqlite_Cell_Row, 16384)
+	defer delete(cell_buf)
+	pay_buf := make([]u8, 256 << 10)
+	defer delete(pay_buf)
+	diag_buf := make([]u8, 512)
+	defer delete(diag_buf)
+
+	// ---- Refusals first (edges before success) ----
+	{
+		// Closed-state refusals.
+		info_ans, info, _ := sqlite_info_call(loaded)
+		testing.expect_value(t, info_ans.outcome, call_outcome.Call_Outcome.Succeeded)
+		testing.expect_value(t, info.open, u8(0))
+
+		exec_res := sqlite_exec_call(loaded, "SELECT 1;", db_buf, col_buf, cell_buf, pay_buf, diag_buf)
+		testing.expect_value(t, exec_res.answer.outcome, call_outcome.Call_Outcome.Wrong_State)
+
+		ranges_buf: [8]Sqlite_Dirty_Range_Row
+		dr_ans, _, _ := sqlite_dirty_ranges_call(loaded, ranges_buf[:])
+		testing.expect_value(t, dr_ans.outcome, call_outcome.Call_Outcome.Wrong_State)
+
+		ms_ans, _ := sqlite_mark_synced_call(loaded)
+		testing.expect_value(t, ms_ans.outcome, call_outcome.Call_Outcome.Wrong_State)
+
+		cl_ans, _ := sqlite_close_call(loaded, db_buf)
+		testing.expect_value(t, cl_ans.outcome, call_outcome.Call_Outcome.Wrong_State)
+
+		// Option validation refusals.
+		ans: Sqlite_Answer
+		err: errors.Error_Record
+		bad_fresh := Sqlite_Open_Options{fresh = 2}
+		ans, _, err = sqlite_open_call(loaded, &bad_fresh, db_buf)
+		testing.expect_value(t, ans.outcome, call_outcome.Call_Outcome.Argument_Refused)
+
+		bad_ro := Sqlite_Open_Options{fresh = 1, read_only = 1}
+		ans, _, err = sqlite_open_call(loaded, &bad_ro, db_buf)
+		testing.expect_value(t, ans.outcome, call_outcome.Call_Outcome.Argument_Refused)
+
+		bad_page := Sqlite_Open_Options{fresh = 1, page_size = 1024}
+		ans, _, err = sqlite_open_call(loaded, &bad_page, db_buf)
+		testing.expect_value(t, ans.outcome, call_outcome.Call_Outcome.Argument_Refused)
+		testing.expect_value(t, err.kind, i64(errors.Kind.Not_Multiple))
+
+		small_heap := Sqlite_Open_Options{fresh = 1, heap_bytes = 1024}
+		ans, _, err = sqlite_open_call(loaded, &small_heap, db_buf)
+		testing.expect_value(t, ans.outcome, call_outcome.Call_Outcome.Argument_Refused)
+		testing.expect_value(t, err.kind, i64(errors.Kind.Too_Small))
+
+		huge_heap := Sqlite_Open_Options{fresh = 1, heap_bytes = 8 << 20}
+		ans, _, err = sqlite_open_call(loaded, &huge_heap, db_buf)
+		testing.expect_value(t, ans.outcome, call_outcome.Call_Outcome.Argument_Refused)
+		testing.expect_value(t, err.kind, i64(errors.Kind.Too_Long))
+
+		small_db := Sqlite_Open_Options{fresh = 1}
+		ans, _, err = sqlite_open_call(loaded, &small_db, db_buf[:1024])
+		testing.expect_value(t, ans.outcome, call_outcome.Call_Outcome.Argument_Refused)
+		testing.expect_value(t, err.kind, i64(errors.Kind.Too_Small))
+
+		fresh_with_size := Sqlite_Open_Options{fresh = 1, database_bytes = 4096}
+		ans, _, _ = sqlite_open_call(loaded, &fresh_with_size, db_buf)
+		testing.expect_value(t, ans.outcome, call_outcome.Call_Outcome.Argument_Refused)
+
+		// Corrupted database bytes refused on open with Data_Damaged.
+		corrupt := make([]u8, 8192)
+		defer delete(corrupt)
+		for &b, idx in corrupt {
+			b = u8((idx * 37 + 13) & 0xFF)
+		}
+		corrupt_opts := Sqlite_Open_Options{fresh = 0, database_bytes = 8192}
+		ans, _, err = sqlite_open_call(loaded, &corrupt_opts, corrupt)
+		testing.expect_value(t, ans.outcome, call_outcome.Call_Outcome.Data_Damaged)
+		testing.expect_value(t, err.kind, i64(errors.Kind.Damaged))
 	}
 
-	// The refusals come first: an arena or a store too small, and a query
-	// with no open database.
-	testing.expect_value(t, open(session, arena[:1024], store, 1), i64(Sqlite_Code.Misuse))
-	testing.expect_value(t, open(session, arena, store[:0], 1), i64(Sqlite_Code.Misuse))
-	testing.expect_value(t, open(session, arena, store[:4096], 1), i64(Sqlite_Code.Misuse))
-	code, _ := sqlite_execute(session, "SELECT 1;")
-	testing.expect_value(t, code, i64(Sqlite_Code.Misuse))
-	testing.expect_value(t, call(loaded, "sqlite_session_close"), i64(Sqlite_Code.Misuse))
-
-	testing.expect_value(t, call(loaded, "sqlite_version_number"), i64(3054001))
-	if !testing.expect_value(t, open(session, arena, store, 1), i64(Sqlite_Code.Ok)) {
+	// ---- Open fresh database & verify double-open refusal ----
+	open_opts := Sqlite_Open_Options{fresh = 1, page_size = 4096}
+	open_ans, open_info, _ := sqlite_open_call(loaded, &open_opts, db_buf)
+	if !testing.expect_value(t, open_ans.outcome, call_outcome.Call_Outcome.Succeeded) {
 		return
 	}
-	// A second open while one is open is refused.
-	testing.expect_value(t, open(session, arena, store, 1), i64(Sqlite_Code.Misuse))
-	expect_rows(t, session, "SELECT sqlite_version();", "3.54.1\n")
-	expect_rows(t, session, "CREATE TABLE item(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, amount INTEGER, ratio REAL);", "")
+	testing.expect_value(t, open_info.open, u8(1))
+	testing.expect_value(t, open_info.page_size, u32(4096))
 
-	// 10000 rows in one transaction, by a recursive query of SQLite itself.
-	expect_rows(t, session, "BEGIN; WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 10000) INSERT INTO item(id, name, amount, ratio) SELECT i, 'item-' || i, i * 3, i / 4.0 FROM n; COMMIT;", "")
-	testing.expect_value(t, call(loaded, "sqlite_session_changes"), i64(10000))
-	expected_sum := 0
-	for i in 1 ..= 10000 {
-		expected_sum += i * 3
+	dup_ans, _, _ := sqlite_open_call(loaded, &open_opts, db_buf)
+	testing.expect_value(t, dup_ans.outcome, call_outcome.Call_Outcome.Wrong_State)
+
+	// ---- Typed values: NULL, INTEGER, REAL, TEXT with | and \n, BLOB, long column name ----
+	store_backing := make([dynamic]u8)
+	defer delete(store_backing)
+
+	res := sqlite_exec_call(loaded, "CREATE TABLE typed(id INTEGER PRIMARY KEY, label TEXT, score REAL, raw BLOB, note TEXT);", db_buf, col_buf, cell_buf, pay_buf, diag_buf)
+	testing.expect_value(t, res.answer.outcome, call_outcome.Call_Outcome.Succeeded)
+	testing.expect(t, res.summary.dirty_pages > 0, "CREATE TABLE dirties pages")
+	sqlite_sync_to_store(t, loaded, db_buf, &store_backing, res.summary.database_bytes)
+
+	// Text containing pipe, newline, quotes, and UTF-8; binary blob with 0x00 and 0xFF.
+	res = sqlite_exec_call(loaded, "INSERT INTO typed(id, label, score, raw, note) VALUES (1, 'a|b\nc\"d''e é', -12.75, X'000102FF7F', NULL), (2, '', 0.0, X'', 'ok');", db_buf, col_buf, cell_buf, pay_buf, diag_buf)
+	testing.expect_value(t, res.answer.outcome, call_outcome.Call_Outcome.Succeeded)
+	testing.expect_value(t, res.summary.changes, i64(2))
+
+	res = sqlite_exec_call(loaded, "SELECT id, label, score, raw, note, 1 AS very_long_column_name_that_definitely_exceeds_sixty_four_utf8_bytes_for_truncation_test FROM typed ORDER BY id;", db_buf, col_buf, cell_buf, pay_buf, diag_buf)
+	testing.expect_value(t, res.answer.outcome, call_outcome.Call_Outcome.Succeeded)
+	testing.expect_value(t, res.summary.column_count, u32(6))
+	testing.expect_value(t, res.summary.row_count, u32(2))
+	testing.expect_value(t, res.summary.has_rows, u8(1))
+	testing.expect_value(t, res.summary.truncated_rows, u8(0))
+	testing.expect_value(t, len(res.columns), 6)
+	testing.expect_value(t, res.columns[0].declared_kind, u8(Sqlite_Value_Kind.Integer))
+	testing.expect_value(t, res.columns[1].declared_kind, u8(Sqlite_Value_Kind.Text))
+	testing.expect_value(t, res.columns[2].declared_kind, u8(Sqlite_Value_Kind.Real_Bits))
+	testing.expect_value(t, res.columns[3].declared_kind, u8(Sqlite_Value_Kind.Blob))
+	testing.expect_value(t, res.columns[5].name_length, u8(64))
+	testing.expect_value(t, res.columns[5].name_truncated, u8(1))
+
+	// Row 0 checks.
+	testing.expect_value(t, res.cells[0].value_kind, u8(Sqlite_Value_Kind.Integer))
+	testing.expect_value(t, res.cells[0].integer_or_bits, i64(1))
+	testing.expect_value(t, res.cells[1].value_kind, u8(Sqlite_Value_Kind.Text))
+	testing.expect_value(t, sqlite_cell_text(res.cells[1], res.payload), "a|b\nc\"d'e é")
+	testing.expect_value(t, res.cells[2].value_kind, u8(Sqlite_Value_Kind.Real_Bits))
+	testing.expect_value(t, sqlite_cell_f64(res.cells[2]), f64(-12.75))
+	testing.expect_value(t, res.cells[3].value_kind, u8(Sqlite_Value_Kind.Blob))
+	testing.expect_value(t, res.cells[3].integer_or_bits, i64(5))
+	blob_bytes := res.payload[res.cells[3].payload_offset:][:res.cells[3].payload_length]
+	testing.expect(t, len(blob_bytes) == 5 && blob_bytes[0] == 0x00 && blob_bytes[3] == 0xFF && blob_bytes[4] == 0x7F, "binary blob passes intact")
+	testing.expect_value(t, res.cells[4].value_kind, u8(Sqlite_Value_Kind.Null))
+
+	// Row 1 checks: empty text vs NULL distinction.
+	testing.expect_value(t, res.cells[7].value_kind, u8(Sqlite_Value_Kind.Text))
+	testing.expect_value(t, res.cells[7].payload_length, u32(0))
+	testing.expect_value(t, res.cells[9].value_kind, u8(Sqlite_Value_Kind.Blob))
+	testing.expect_value(t, res.cells[9].integer_or_bits, i64(0))
+
+	// ---- Multi-statement last row-producing result semantics ----
+	res = sqlite_exec_call(loaded, "SELECT 111 AS a; SELECT 222 AS b, 'second' AS c;", db_buf, col_buf, cell_buf, pay_buf, diag_buf)
+	testing.expect_value(t, res.answer.outcome, call_outcome.Call_Outcome.Succeeded)
+	testing.expect_value(t, res.summary.column_count, u32(2))
+	testing.expect_value(t, res.summary.row_count, u32(1))
+	testing.expect_value(t, res.cells[0].integer_or_bits, i64(222))
+	testing.expect_value(t, sqlite_cell_text(res.cells[1], res.payload), "second")
+
+	// ---- Multi-statement error rolls back earlier write via implicit savepoint ----
+	sqlite_sync_to_store(t, loaded, db_buf, &store_backing, res.summary.database_bytes)
+	err_res := sqlite_exec_call(loaded, "UPDATE typed SET label = 'SHOULD_ROLLBACK' WHERE id = 1; SELEC broken;", db_buf, col_buf, cell_buf, pay_buf, diag_buf)
+	testing.expect_value(t, err_res.answer.outcome, call_outcome.Call_Outcome.Argument_Refused)
+	testing.expect(t, strings.contains(err_res.diagnostic, "syntax error"), "syntax diagnostic populated")
+	// session_last_diagnostic returns the same diagnostic text across call boundaries.
+	ld_ans, ld_text, _ := sqlite_last_diag_call(loaded, diag_buf)
+	testing.expect_value(t, ld_ans.outcome, call_outcome.Call_Outcome.Succeeded)
+	testing.expect(t, strings.contains(ld_text, "syntax error"), "session_last_diagnostic returns diagnostic")
+	// Verify row 1 was rolled back cleanly!
+	verify_res := sqlite_exec_call(loaded, "SELECT label FROM typed WHERE id = 1;", db_buf, col_buf, cell_buf, pay_buf, diag_buf)
+	testing.expect_value(t, verify_res.answer.outcome, call_outcome.Call_Outcome.Succeeded)
+	testing.expect_value(t, sqlite_cell_text(verify_res.cells[0], verify_res.payload), "a|b\nc\"d'e é")
+
+	// ---- Atomic row emission (no partial row on cells cap) ----
+	small_cells: [5]Sqlite_Cell_Row // 2 columns per row -> fits 2 full rows (4 cells), must NOT emit half of row 3!
+	trunc_res := sqlite_exec_call(loaded, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 10) SELECT i, i * 10 FROM n;", db_buf, col_buf, small_cells[:], pay_buf, diag_buf)
+	testing.expect_value(t, trunc_res.answer.outcome, call_outcome.Call_Outcome.Succeeded)
+	testing.expect_value(t, trunc_res.summary.column_count, u32(2))
+	testing.expect_value(t, trunc_res.summary.row_count, u32(2))
+	testing.expect_value(t, trunc_res.summary.truncated_rows, u8(1))
+	testing.expect_value(t, len(trunc_res.cells), 4)
+
+	// ---- 10,000 rows, delete 9,900, VACUUM shrink + dirty-range clamping ----
+	res = sqlite_exec_call(loaded, "CREATE TABLE item(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, amount INTEGER); BEGIN; WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 10000) INSERT INTO item(id, name, amount) SELECT i, 'item-' || i, i * 3 FROM n; COMMIT;", db_buf, col_buf, cell_buf, pay_buf, diag_buf)
+	testing.expect_value(t, res.answer.outcome, call_outcome.Call_Outcome.Succeeded)
+	size_before_vacuum := res.summary.database_bytes
+	testing.expect(t, size_before_vacuum > 64 * 1024, "10000 rows grew database past 64 KiB")
+	sqlite_sync_to_store(t, loaded, db_buf, &store_backing, size_before_vacuum)
+
+	res = sqlite_exec_call(loaded, "DELETE FROM item WHERE id > 100;", db_buf, col_buf, cell_buf, pay_buf, diag_buf)
+	testing.expect_value(t, res.answer.outcome, call_outcome.Call_Outcome.Succeeded)
+	res = sqlite_exec_call(loaded, "VACUUM;", db_buf, col_buf, cell_buf, pay_buf, diag_buf)
+	testing.expect_value(t, res.answer.outcome, call_outcome.Call_Outcome.Succeeded)
+	size_after_vacuum := res.summary.database_bytes
+	testing.expect(t, size_after_vacuum > 0 && size_after_vacuum < size_before_vacuum / 2, "VACUUM shrank database")
+	sqlite_sync_to_store(t, loaded, db_buf, &store_backing, size_after_vacuum)
+
+	// Close and reopen ONLY from store_backing (proving dirty-range incremental sync + shrink is 100% lossless!).
+	cl_ans, _ := sqlite_close_call(loaded, db_buf)
+	testing.expect_value(t, cl_ans.outcome, call_outcome.Call_Outcome.Succeeded)
+
+	reopen_buf := make([]u8, 256 << 10)
+	defer delete(reopen_buf)
+	copy(reopen_buf[:len(store_backing)], store_backing[:])
+
+	// Reopen read-only first: SELECT succeeds, INSERT refused with Grant_Or_Right_Missing.
+	ro_opts := Sqlite_Open_Options{fresh = 0, read_only = 1, database_bytes = u64(len(store_backing))}
+	ro_ans, ro_info, _ := sqlite_open_call(loaded, &ro_opts, reopen_buf)
+	if testing.expect_value(t, ro_ans.outcome, call_outcome.Call_Outcome.Succeeded) {
+		testing.expect_value(t, ro_info.read_only, u8(1))
+		testing.expect_value(t, ro_info.dirty_pages, u64(0))
+		chk := sqlite_exec_call(loaded, "PRAGMA integrity_check;", reopen_buf, col_buf, cell_buf, pay_buf, diag_buf)
+		testing.expect_value(t, chk.answer.outcome, call_outcome.Call_Outcome.Succeeded)
+		testing.expect_value(t, sqlite_cell_text(chk.cells[0], chk.payload), "ok")
+		cnt := sqlite_exec_call(loaded, "SELECT count(*) FROM item;", reopen_buf, col_buf, cell_buf, pay_buf, diag_buf)
+		testing.expect_value(t, cnt.answer.outcome, call_outcome.Call_Outcome.Succeeded)
+		testing.expect_value(t, cnt.cells[0].integer_or_bits, i64(100))
+		ro_write := sqlite_exec_call(loaded, "INSERT INTO item(name, amount) VALUES ('ro', 1);", reopen_buf, col_buf, cell_buf, pay_buf, diag_buf)
+		testing.expect_value(t, ro_write.answer.outcome, call_outcome.Call_Outcome.Grant_Or_Right_Missing)
+		close_ro, _ := sqlite_close_call(loaded, reopen_buf)
+		testing.expect_value(t, close_ro.outcome, call_outcome.Call_Outcome.Succeeded)
 	}
-	expect_rows(t, session, "SELECT count(*), sum(amount), min(name), max(id) FROM item;", fmt.tprintf("10000|%d|item-1|10000\n", expected_sum))
-	expect_rows(t, session, "SELECT name, amount, ratio FROM item WHERE id IN (1, 2, 9999) ORDER BY id;", "item-1|3|0.25\nitem-2|6|0.5\nitem-9999|29997|2499.75\n")
-	expect_rows(t, session, "SELECT round(avg(ratio), 3), typeof(ratio), 2 * 3.5, 7 / 2, 7 % 3, abs(-4), length('modus'), upper('modus'), hex('AB') FROM item;", "1250.125|real|7.0|3|1|4|5|MODUS|4142\n")
-	expect_rows(t, session, "PRAGMA integrity_check;", "ok\n")
 
-	expect_rows(t, session, "UPDATE item SET amount = amount + 1 WHERE id % 2 = 0;", "")
-	testing.expect_value(t, call(loaded, "sqlite_session_changes"), i64(5000))
-	expect_rows(t, session, "DELETE FROM item WHERE id > 9000;", "")
-	testing.expect_value(t, call(loaded, "sqlite_session_changes"), i64(1000))
-	expect_rows(t, session, "SELECT count(*), sum(amount) FROM item;", fmt.tprintf("9000|%d\n", 3 * (9000 * 9001 / 2) + 4500))
-	expect_rows(t, session, "CREATE INDEX item_amount ON item(amount); SELECT id FROM item WHERE amount = 31;", "10\n")
-	expect_rows(t, session, "PRAGMA integrity_check;", "ok\n")
-
-	// A transaction that rolls back leaves the rows of the last commit.
-	expect_rows(t, session, "BEGIN; DELETE FROM item; INSERT INTO item(name) VALUES ('ghost'); SELECT count(*) FROM item; ROLLBACK;", "1\n")
-	expect_rows(t, session, "SELECT count(*), sum(amount) FROM item;", fmt.tprintf("9000|%d\n", 3 * (9000 * 9001 / 2) + 4500))
-	expect_rows(t, session, "SELECT count(*) FROM item WHERE name = 'ghost';", "0\n")
-	expect_rows(t, session, "PRAGMA integrity_check;", "ok\n")
-
-	// The refusals of SQLite, with its codes and its messages.
-	rows: string
-	code, rows = sqlite_execute(session, "SELEC 1;")
-	testing.expect_value(t, code, i64(Sqlite_Code.Error))
-	testing.expect_value(t, rows, "near \"SELEC\": syntax error")
-	code, rows = sqlite_execute(session, "INSERT INTO item(name) VALUES ('item-1');")
-	testing.expect_value(t, code, i64(Sqlite_Code.Constraint_Unique))
-	testing.expect_value(t, rows, "UNIQUE constraint failed: item.name")
-	code, rows = sqlite_execute(session, "SELECT * FROM missing;")
-	testing.expect_value(t, code, i64(Sqlite_Code.Error))
-	testing.expect_value(t, rows, "no such table: missing")
-	small := Sqlite_Session{loaded, output[:16]}
-	code, _ = sqlite_execute(small, "SELECT name FROM item;")
-	testing.expect_value(t, code, i64(Sqlite_Code.Toobig))
-	expect_rows(t, session, "PRAGMA integrity_check;", "ok\n")
-
-	// Close, open again over the same store: the bytes of the store are the file.
-	size := call(loaded, "sqlite_session_database_size")
-	testing.expect(t, size > 0 && size % 4096 == 0, "the database has whole pages in the store")
-	testing.expect_value(t, call(loaded, "sqlite_session_close"), i64(Sqlite_Code.Ok))
-	if !testing.expect_value(t, open(session, arena, store, 0), i64(Sqlite_Code.Ok)) {
-		return
+	// ---- Out-of-budget (memsys5 heap) refusal ----
+	tight_opts := Sqlite_Open_Options{fresh = 1, heap_bytes = 64 * 1024}
+	tight_buf := make([]u8, 64 * 1024)
+	defer delete(tight_buf)
+	t_ans, _, _ := sqlite_open_call(loaded, &tight_opts, tight_buf)
+	if testing.expect_value(t, t_ans.outcome, call_outcome.Call_Outcome.Succeeded) {
+		oom := sqlite_exec_call(loaded, "WITH RECURSIVE n(i, s) AS (SELECT 1, printf('%01000d', 1) UNION ALL SELECT i + 1, s || printf('%01000d', i) FROM n WHERE i < 500) SELECT sum(length(s)) FROM n;", tight_buf, col_buf, cell_buf, pay_buf, diag_buf)
+		testing.expect_value(t, oom.answer.outcome, call_outcome.Call_Outcome.Budget_Or_Capacity_Exhausted)
+		cl_t, _ := sqlite_close_call(loaded, tight_buf)
+		testing.expect_value(t, cl_t.outcome, call_outcome.Call_Outcome.Succeeded)
 	}
-	expect_rows(t, session, "SELECT count(*), sum(amount), max(id) FROM item;", fmt.tprintf("9000|%d|9000\n", 3 * (9000 * 9001 / 2) + 4500))
-	expect_rows(t, session, "PRAGMA integrity_check;", "ok\n")
-	testing.expect_value(t, call(loaded, "sqlite_session_close"), i64(Sqlite_Code.Ok))
-	fmt.printfln("sqlite: database of %d bytes in the store", size)
+
+	// ---- Dynamic buffer growth (P14 caller-supplied memory, zero dangling pointers) ----
+	grow_small := make([]u8, 12 * 1024)
+	defer delete(grow_small)
+	grow_opts := Sqlite_Open_Options{fresh = 1}
+	g_ans, _, _ := sqlite_open_call(loaded, &grow_opts, grow_small)
+	if testing.expect_value(t, g_ans.outcome, call_outcome.Call_Outcome.Succeeded) {
+		_ = sqlite_exec_call(loaded, "CREATE TABLE big(x TEXT);", grow_small, col_buf, cell_buf, pay_buf, diag_buf)
+		full_res := sqlite_exec_call(loaded, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200) INSERT INTO big(x) SELECT printf('%0200d', i) FROM n;", grow_small, col_buf, cell_buf, pay_buf, diag_buf)
+		testing.expect_value(t, full_res.answer.outcome, call_outcome.Call_Outcome.Budget_Or_Capacity_Exhausted)
+		// Grow buffer in caller memory and pass the larger buffer on the next call (zero dangling pointers!).
+		grow_big := make([]u8, 256 * 1024)
+		defer delete(grow_big)
+		copy(grow_big[:len(grow_small)], grow_small)
+		ok_res := sqlite_exec_call(loaded, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200) INSERT INTO big(x) SELECT printf('%0200d', i) FROM n;", grow_big, col_buf, cell_buf, pay_buf, diag_buf)
+		testing.expect_value(t, ok_res.answer.outcome, call_outcome.Call_Outcome.Succeeded)
+		testing.expect_value(t, ok_res.summary.changes, i64(200))
+		cl_g, _ := sqlite_close_call(loaded, grow_big)
+		testing.expect_value(t, cl_g.outcome, call_outcome.Call_Outcome.Succeeded)
+	}
+	fmt.printfln("sqlite: typed module verified (%d bytes before VACUUM -> %d bytes after VACUUM)", size_before_vacuum, size_after_vacuum)
 }
 
 // ---- Lua -------------------------------------------------------------------------------

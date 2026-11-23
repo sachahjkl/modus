@@ -165,9 +165,9 @@ A recipe of `recipes/` declares one program: the archive at its SHA-256, the fol
 
 `sqlite/modus_vfs.c` is a VFS whose files are the slots of a store of bytes that the caller lends: each slot has a fixed capacity, a new file takes the first free slot, the lock levels live in the slot, the randomness comes from a seed, and the time is the start of the epoch. SQLite is built with `SQLITE_OS_OTHER`, so it asks the program for `sqlite3_os_init`, which registers the VFS over the store that the program bound first.
 
-- **SQLite calls no `malloc`.** The entry gives SQLite the lent arena with `SQLITE_CONFIG_HEAP` (memsys5, `SQLITE_ENABLE_MEMSYS5`).
-- **The bytes of the store are the file.** A session that opens the same store again finds the database of the last commit.
-- **The entry** (`sqlite/modus_sqlite_entry.c`): open a session over an arena and a store, run SQL text and write the rows as the list mode of the shell of SQLite writes them, close. A fault gives the code of SQLite and its message; rows past the output give `SQLITE_TOOBIG`.
+- **SQLite calls no `malloc`.** The entry gives SQLite a fixed `.bss` arena with `SQLITE_CONFIG_HEAP` (memsys5, `SQLITE_ENABLE_MEMSYS5`), bounded per session by `Open_Options.heap_bytes`.
+- **The bytes of the store are the file.** `main.db` is supplied per call through `database: bytes(change)` (with zero pointers retained past return), and a 4 KiB dirty-page bitmap tracks modified pages for atomic store range commits ([db_browser.md](db_browser.md)).
+- **The entry** (`sqlite/modus_sqlite_entry.c`): typed exports (`session_open`, `session_execute`, `session_dirty_ranges`, `session_mark_synced`, `session_info`, `session_last_diagnostic`, `session_close`, `version_number`) returning `Modus_Answer` and `Error_Record`, with typed `Column_Row`, `Cell_Row`, `Query_Summary`, and `Dirty_Range_Row` tables instead of pipe-delimited text ([db_browser.md](db_browser.md)).
 
 ### The configuration of Lua
 
