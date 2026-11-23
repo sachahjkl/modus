@@ -83,7 +83,9 @@ expected_fields :: proc() -> []Expected_Field {
 		{"module.Header", "table_count", offset_of(module.Header, table_count), size_of(header.table_count)},
 		{"module.Header", "memory_size", offset_of(module.Header, memory_size), size_of(header.memory_size)},
 		{"module.Header", "entry_export", offset_of(module.Header, entry_export), size_of(header.entry_export)},
+		{"module.Header", "category", offset_of(module.Header, category), size_of(header.category)},
 		{"module.Header", "reserved", offset_of(module.Header, reserved), size_of(header.reserved)},
+		{"module.Header", "tags", offset_of(module.Header, tags), size_of(header.tags)},
 		{"module.Table_Entry", "offset", offset_of(module.Table_Entry, offset), size_of(entry.offset)},
 		{"module.Table_Entry", "count", offset_of(module.Table_Entry, count), size_of(entry.count)},
 		{"module.Table_Entry", "record_size", offset_of(module.Table_Entry, record_size), size_of(entry.record_size)},
@@ -636,7 +638,9 @@ byte_layout_text_of_the_header :: proc(t: ^testing.T) {
 		"    28     4  table_count      u32\n" +
 		"    32     8  memory_size      u64\n" +
 		"    40     4  entry_export     u32\n" +
-		"    44     4  reserved         u32\n",
+		"    44     1  category         Module_Category\n" +
+		"    45     1  reserved         u8\n" +
+		"    46     2  tags             Module_Tags\n",
 		size_of(module.Header),
 	)
 	testing.expect_value(t, byte_layout_text(layouts["module.Header"]), expected)

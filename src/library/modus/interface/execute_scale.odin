@@ -101,7 +101,7 @@ record_at_scale_draw :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 			// box: it goes to the edge of the box on the screen.
 			start, count := u64(fields.first), u64(fields.count)
 			if start + count <= u64(table.text_count) {
-				text_draw(view, int(scale_factor.screen_edge(fields.origin_x, scale)) - area.left, y, string(table.text[start:][:count]), color, scale_factor.screen_text_size(fields.size, scale), fields.weight, alpha)
+				text_draw(view, int(scale_factor.screen_edge(fields.origin_x, scale)) - area.left, y, string(table.text[start:][:count]), color, scale_factor.screen_text_size(fields.size, scale), fields.weight, alpha, spleen_advance_on_screen(fields.size, scale))
 			}
 		case .Interface:
 			interface_text_at_scale_draw(table, fields, view, area.left, y, scale)
@@ -217,7 +217,7 @@ interface_text_at_scale_draw :: proc "contextless" (table: ^Draw_Table, fields: 
 	origin := screen_origin - i64(view_left) * draw_record.UNITS_PER_PIXEL
 	color, alpha := draw_record.channels_of(fields.color), u32(draw_record.alpha_of(fields.color))
 	if table.interface_font == nil {
-		text_draw(view, int(origin >> draw_record.UNIT_SHIFT), y, string(text), color, screen_size, font.weight, alpha)
+		text_draw(view, int(origin >> draw_record.UNIT_SHIFT), y, string(text), color, screen_size, font.weight, alpha, spleen_advance_on_screen(fields.size, scale))
 		return
 	}
 	face := interface_face_of(font)
@@ -236,4 +236,18 @@ interface_text_at_scale_draw :: proc "contextless" (table: ^Draw_Table, fields: 
 		glyph.advance = i32(scale_factor.screen_place(glyph.advance, scale))
 	}
 	graphics.text_proportional(view, origin, y, shown, face, screen_size, color, alpha)
+}
+
+// spleen_advance_on_screen gives the advance of a Spleen character of a
+// logical text size on the screen: the advance that the measure took
+// (graphics.cell_advance of the logical size, as interface.text_width)
+// times the scale. The Spleen advance of the screen size differs at a
+// scale that is not whole: 8 for the body at 1.25, in a box of 10 a
+// character, which left an empty band at the end of each box. A Spleen
+// advance is a multiple of 8 and a scale is in eighths, so the product is
+// a whole count of pixels and each character starts at the screen pixel of
+// its logical start.
+@(private)
+spleen_advance_on_screen :: proc "contextless" (size: u16, scale: scale_factor.Scale) -> int {
+	return int(scale_factor.screen_pixel_of_logical_pixel(i32(graphics.cell_advance(int(size))), scale))
 }

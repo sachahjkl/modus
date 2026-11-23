@@ -745,3 +745,61 @@ the_interface_text_follows_the_setting_of_the_font :: proc(t: ^testing.T) {
 		testing.expectf(t, table.record_count == 1 && is_interface_text(table.records[0]) == (each.kind == .Interface), "%v: the record of the text is not in the font in use", each.font)
 	}
 }
+
+// With Spleen, a text of the cells at a scale draws each character in the
+// cell that its measure gives it on the screen: the measure is in logical
+// pixels (text_width), and the Spleen advance of the screen size is not
+// that advance times the scale (8 at 1.25 for a cell of 10). The ink of
+// " H" stays in the cell of its second character, and the ink of "H " in
+// the cell of its first, at each scale: with the advance of the screen
+// size, the H of " H" started 2 pixels inside the first cell at 1.25.
+@(test)
+spleen_at_a_scale_draws_each_character_in_its_measured_cell :: proc(t: ^testing.T) {
+	interface_text_drawing_begin()
+	saved_font, saved_order := graphics.text_state.font, graphics.text_state.order
+	defer graphics.text_choice_set(saved_font, saved_order)
+	graphics.text_choice_set(.Spleen, .Red_Green_Blue)
+	UNITS :: draw_record.UNITS_PER_PIXEL
+	WIDTH :: 64
+	HEIGHT :: 48
+	LEFT :: 3
+	TOP :: 1
+	// The font of the cells at the body: the zero Font.
+	body := Font{}
+	advance := text_width(body, "H")
+	testing.expect_value(t, advance, graphics.CELL_WIDTH)
+	texts := [2]string{" H", "H "}
+	for scale in scale_factor.Scale {
+		for text, inked in texts {
+			records: [4]Draw_Record
+			characters: [8]u8
+			copy(characters[:], text)
+			table := Draw_Table{records = records[:], text = characters[:], text_count = len(text), scale = scale}
+			width := text_width(body, text)
+			fields := draw_record.Draw_Text{first = 0, count = u32(len(text)), color = 0xFFFFFFFF, origin_x = LEFT * UNITS, font = .Cells_8x16, weight = .Regular, size = u16(font_text_size(body))}
+			table.records[0] = draw_record.record_of(fields, 0, LEFT * UNITS, TOP * UNITS, i32((LEFT + width) * UNITS), (TOP + 2 * graphics.CELL_WIDTH) * UNITS)
+			table.record_count = 1
+			pixels: [WIDTH * HEIGHT]graphics.Color
+			execute(&table, {pixels = raw_data(pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH})
+			// The cell of the character with ink: the second one of " H",
+			// the first one of "H ".
+			cell := 1 - inked
+			cell_left := scale_factor.screen_pixel_of_logical_pixel(i32(LEFT + cell * advance), scale)
+			cell_right := scale_factor.screen_pixel_of_logical_pixel(i32(LEFT + (cell + 1) * advance), scale)
+			ink, outside := 0, 0
+			for y in 0 ..< HEIGHT {
+				for x in 0 ..< WIDTH {
+					if pixels[y * WIDTH + x] == 0 {
+						continue
+					}
+					ink += 1
+					if i64(x) < cell_left || i64(x) >= cell_right {
+						outside += 1
+					}
+				}
+			}
+			testing.expectf(t, ink > 0, "%q at %d eighths drew no ink", text, u8(scale))
+			testing.expectf(t, outside == 0, "%q at %d eighths: %d pixels of ink outside the cell %d..%d of its character", text, u8(scale), outside, cell_left, cell_right)
+		}
+	}
+}
