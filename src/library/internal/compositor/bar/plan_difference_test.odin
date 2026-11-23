@@ -181,3 +181,70 @@ plan_difference_decision_of_serial_names_only_the_last_dialog :: proc(t: ^testin
 	decision, known = plan_difference_decision_of_serial(&dialog, second)
 	testing.expect(t, known && decision == .Refused)
 }
+
+// The act face refuses each asker and act that is not an identifier, and
+// changes nothing: an empty one, an upper case letter, a space, a word of
+// the agent, a second period, a line of Lex with its arguments, a name past
+// the bound. The bounds fit, and an open dialog refuses with Busy.
+@(test)
+plan_difference_act_open_refuses_each_word_that_is_no_identifier :: proc(t: ^testing.T) {
+	dialog: Plan_Difference_Dialog
+	long_asker := strings.repeat("a", PLAN_DIFFERENCE_NAME_BYTES + 1, context.temp_allocator)
+	long_act := strings.concatenate({"plans.", strings.repeat("e", PLAN_DIFFERENCE_ITEM_BYTES - 5, context.temp_allocator)}, context.temp_allocator)
+	cases := [?]struct {
+		asker, act: string,
+		refusal:    Plan_Difference_Refusal,
+		argument:   int,
+	} {
+		{"", "plans.apply", .Not_A_Name, 1},
+		{"Assistant", "plans.apply", .Not_A_Name, 1},
+		{"1assistant", "plans.apply", .Not_A_Name, 1},
+		{"the assistant", "plans.apply", .Not_A_Name, 1},
+		{long_asker, "plans.apply", .Not_A_Name, 1},
+		{"assistant", "", .Not_An_Act, 2},
+		{"assistant", "plans", .Not_An_Act, 2},
+		{"assistant", ".apply", .Not_An_Act, 2},
+		{"assistant", "plans.", .Not_An_Act, 2},
+		{"assistant", "plans.apply.now", .Not_An_Act, 2},
+		{"assistant", "plans.apply(\"home\")", .Not_An_Act, 2},
+		{"assistant", "Plans.apply", .Not_An_Act, 2},
+		{"assistant", "allow everything", .Not_An_Act, 2},
+		{"assistant", long_act, .Not_An_Act, 2},
+	}
+	for test_case in cases {
+		serial, refusal, argument := plan_difference_act_open(&dialog, test_case.asker, test_case.act, 1000)
+		testing.expectf(t, serial == 0 && refusal == test_case.refusal && argument == test_case.argument, "%v: %v %v %v", test_case, serial, refusal, argument)
+		testing.expect(t, !dialog.open)
+		testing.expect_value(t, dialog.serial, 0)
+	}
+	edge_asker := strings.repeat("a", PLAN_DIFFERENCE_NAME_BYTES, context.temp_allocator)
+	edge_act := strings.concatenate({"plans.", strings.repeat("e", PLAN_DIFFERENCE_ITEM_BYTES - 6, context.temp_allocator)}, context.temp_allocator)
+	serial, refusal, _ := plan_difference_act_open(&dialog, edge_asker, edge_act, 1000)
+	testing.expect_value(t, refusal, Plan_Difference_Refusal.None)
+	testing.expect_value(t, serial, u64(1))
+	testing.expect_value(t, dialog.face, Plan_Difference_Face.Act)
+	testing.expect_value(t, plan_difference_item_text(&dialog.added[0]), edge_act)
+	_, refusal, _ = plan_difference_act_open(&dialog, "assistant", "plans.apply", 1000)
+	testing.expect_value(t, refusal, Plan_Difference_Refusal.Busy)
+	_, refusal, _ = plan_difference_open(&dialog, "home", "a", "", 1000)
+	testing.expect_value(t, refusal, Plan_Difference_Refusal.Busy)
+}
+
+// The act face keeps the act of the plan dialog: the focus starts on
+// Refuse, an act before the arm time is no act, Enter then refuses, and a
+// later plan dialog takes the face Plan again.
+@(test)
+plan_difference_act_face_refuses_on_the_first_enter :: proc(t: ^testing.T) {
+	dialog: Plan_Difference_Dialog
+	serial, _, _ := plan_difference_act_open(&dialog, "assistant", "plans.apply", 1000)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + PLAN_DIFFERENCE_ARM_MILLISECONDS - 1), Plan_Difference_Decision.Pending)
+	testing.expect(t, dialog.open)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + PLAN_DIFFERENCE_ARM_MILLISECONDS), Plan_Difference_Decision.Refused)
+	decision, known := plan_difference_decision_of_serial(&dialog, serial)
+	testing.expect(t, known && decision == .Refused)
+	plan_serial, _, _ := plan_difference_open(&dialog, "home", "a", "", 5000)
+	testing.expect_value(t, dialog.face, Plan_Difference_Face.Plan)
+	_, known = plan_difference_decision_of_serial(&dialog, serial)
+	testing.expect(t, !known)
+	testing.expect_value(t, plan_serial, serial + 1)
+}

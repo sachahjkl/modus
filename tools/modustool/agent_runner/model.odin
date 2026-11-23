@@ -1,0 +1,320 @@
+package agent_runner
+
+import "core:encoding/json"
+import "core:fmt"
+import "core:mem"
+import "core:net"
+import "core:strconv"
+import "core:strings"
+
+// One turn of the conversation that the model reads.
+Turn_Role :: enum {
+	Principal, // A request of the principal.
+	Model, // A reply of the model that passed the border.
+	Outcome, // The outcome of an act, as the window shows it.
+}
+
+Turn :: struct {
+	role: Turn_Role,
+	text: string,
+}
+
+// A model: it gives the raw text of its reply to a conversation, which the
+// runner reads at the border of model_reply_decode. problem is a sentence
+// that names no secret.
+Model :: struct {
+	user_data: rawptr,
+	reply:     proc(user_data: rawptr, conversation: []Turn, allocator: mem.Allocator) -> (text: string, problem: string),
+}
+
+// The fake model of the tests: a script of replies, given in their order,
+// whatever the conversation. A reply can be any text, a malformed one too:
+// the border of the runner is what a test checks.
+Fake_Model :: struct {
+	replies: []string,
+	next:    int,
+}
+
+fake_model :: proc(fake: ^Fake_Model) -> Model {
+	return {user_data = fake, reply = fake_model_reply}
+}
+
+@(private = "file")
+fake_model_reply :: proc(user_data: rawptr, conversation: []Turn, allocator: mem.Allocator) -> (text: string, problem: string) {
+	fake := (^Fake_Model)(user_data)
+	if fake.next >= len(fake.replies) {
+		return "", "the script of the fake model has no more replies"
+	}
+	fake.next += 1
+	return fake.replies[fake.next - 1], ""
+}
+
+// fake_script_read gives the replies of a script: one reply on each line,
+// in their order; an empty line is no reply.
+fake_script_read :: proc(text: string, allocator := context.allocator) -> []string {
+	replies := make([dynamic]string, allocator)
+	rest := text
+	for line in strings.split_lines_iterator(&rest) {
+		if len(strings.trim_space(line)) > 0 {
+			append(&replies, strings.clone(line, allocator))
+		}
+	}
+	return replies[:]
+}
+
+// The variables of the host that configure the model.
+ENDPOINT_VARIABLE :: "MODUS_ASSISTANT_ENDPOINT"
+KEY_VARIABLE :: "MODUS_ASSISTANT_KEY"
+MODEL_NAME_VARIABLE :: "MODUS_ASSISTANT_MODEL"
+
+// An endpoint of plain HTTP: the standard library of Odin has no TLS.
+Endpoint :: struct {
+	host: string,
+	port: int,
+	path: string,
+}
+
+// endpoint_parse reads http://host:port/path. It refuses another scheme
+// (https too: a local proxy reaches an endpoint of TLS), a user part, no
+// host, no port, a port out of 1 to 65535, and a path that does not start
+// with "/".
+endpoint_parse :: proc(url: string) -> (endpoint: Endpoint, problem: string) {
+	PREFIX :: "http://"
+	if strings.has_prefix(url, "https://") {
+		return {}, "the endpoint is https: the tool has no TLS; name a local proxy, http://127.0.0.1:port/path"
+	}
+	if !strings.has_prefix(url, PREFIX) {
+		return {}, "the endpoint does not start with http://"
+	}
+	rest := url[len(PREFIX):]
+	slash := strings.index_byte(rest, '/')
+	if slash < 0 {
+		return {}, "the endpoint has no path: http://host:port/path"
+	}
+	authority, path := rest[:slash], rest[slash:]
+	if strings.index_byte(authority, '@') >= 0 {
+		return {}, "the endpoint has a user part: give the key in the variable of the key"
+	}
+	colon := strings.last_index_byte(authority, ':')
+	if colon <= 0 {
+		return {}, "the endpoint has no host or no port: http://host:port/path"
+	}
+	port, port_ok := strconv.parse_int(authority[colon + 1:], 10)
+	if !port_ok || port < 1 || port > 65535 {
+		return {}, "the port of the endpoint is not 1 to 65535"
+	}
+	for character in transmute([]u8)path {
+		if character <= ' ' || character >= 0x7F {
+			return {}, "the path of the endpoint has a space or a byte that is no ASCII"
+		}
+	}
+	return {host = authority[:colon], port = port, path = path}, ""
+}
+
+// The model behind an endpoint of the chat completions form.
+Http_Model :: struct {
+	endpoint:   Endpoint,
+	key:        string, // Never printed, never written: the problems name its variable only.
+	model_name: string,
+}
+
+http_model :: proc(model: ^Http_Model) -> Model {
+	return {user_data = model, reply = http_model_reply}
+}
+
+// The words that tell the model what it may reply.
+SYSTEM_PROMPT :: "You are the assistant of a principal of the modus operating system. Reply with one JSON object and nothing else: {\"text\": \"words for the principal\", \"acts\": [{\"kind\": \"eval_lex\", \"line\": \"monitor.processes()\"}]}. The acts are optional, at most 4. An act is one call of Lex, service.export(arguments) with literal arguments. The calls that read run at once: log.records, monitor.processes, monitor.counts, monitor.count, compositor.windows, plans.status. Any other call waits for the principal on the trusted display, and you never answer it."
+
+// http_request_build writes the request of a conversation: a POST with the
+// key in the header Authorization and the conversation as JSON.
+http_request_build :: proc(model: ^Http_Model, conversation: []Turn, allocator := context.temp_allocator) -> string {
+	body := strings.builder_make(allocator)
+	strings.write_string(&body, `{"model":`)
+	json_string_write(&body, model.model_name)
+	strings.write_string(&body, `,"messages":[{"role":"system","content":`)
+	json_string_write(&body, SYSTEM_PROMPT)
+	strings.write_string(&body, "}")
+	for turn in conversation {
+		role := "user"
+		switch turn.role {
+		case .Principal, .Outcome:
+		case .Model:
+			role = "assistant"
+		}
+		strings.write_string(&body, `,{"role":"`)
+		strings.write_string(&body, role)
+		strings.write_string(&body, `","content":`)
+		json_string_write(&body, turn.text)
+		strings.write_string(&body, "}")
+	}
+	strings.write_string(&body, "]}")
+	request := strings.builder_make(allocator)
+	fmt.sbprintf(&request, "POST %s HTTP/1.1\r\nHost: %s:%d\r\nContent-Type: application/json\r\nAuthorization: Bearer %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", model.endpoint.path, model.endpoint.host, model.endpoint.port, model.key, strings.builder_len(body))
+	strings.write_string(&request, strings.to_string(body))
+	return strings.to_string(request)
+}
+
+// json_string_write writes a text as a JSON string.
+json_string_write :: proc(builder: ^strings.Builder, text: string) {
+	strings.write_byte(builder, '"')
+	for character in transmute([]u8)text {
+		switch character {
+		case '"':
+			strings.write_string(builder, "\\\"")
+		case '\\':
+			strings.write_string(builder, "\\\\")
+		case '\n':
+			strings.write_string(builder, "\\n")
+		case '\r':
+			strings.write_string(builder, "\\r")
+		case '\t':
+			strings.write_string(builder, "\\t")
+		case:
+			if character < 0x20 {
+				fmt.sbprintf(builder, "\\u%04x", character)
+			} else {
+				strings.write_byte(builder, character)
+			}
+		}
+	}
+	strings.write_byte(builder, '"')
+}
+
+// The bytes of an answer of the endpoint at most.
+HTTP_ANSWER_BYTES :: 256 * 1024
+
+// http_answer_content reads an answer of the endpoint: the status 200, a
+// body whole by its length, in chunks, or to the end of the connection, and
+// the text of choices[0].message.content. The text then passes the border
+// of the model reply.
+http_answer_content :: proc(answer: []u8, allocator := context.temp_allocator) -> (content: string, problem: string) {
+	text := string(answer)
+	head_end := strings.index(text, "\r\n\r\n")
+	if head_end < 0 {
+		return "", "the answer of the endpoint has no whole head"
+	}
+	head, body := text[:head_end], text[head_end + 4:]
+	lines := strings.split(head, "\r\n", context.temp_allocator)
+	status_parts := strings.fields(lines[0], context.temp_allocator)
+	if len(status_parts) < 2 || !strings.has_prefix(status_parts[0], "HTTP/1.") {
+		return "", "the answer of the endpoint has no status line"
+	}
+	if status_parts[1] != "200" {
+		return "", fmt.tprintf("the endpoint answered with the status %s", status_parts[1])
+	}
+	chunked := false
+	length := -1
+	for line in lines[1:] {
+		colon := strings.index_byte(line, ':')
+		if colon < 0 {
+			continue
+		}
+		name := strings.to_lower(strings.trim_space(line[:colon]), context.temp_allocator)
+		value := strings.trim_space(line[colon + 1:])
+		switch name {
+		case "transfer-encoding":
+			chunked = strings.contains(strings.to_lower(value, context.temp_allocator), "chunked")
+		case "content-length":
+			parsed, ok := strconv.parse_int(value, 10)
+			if !ok || parsed < 0 {
+				return "", "the answer of the endpoint has a length that is no number"
+			}
+			length = parsed
+		}
+	}
+	switch {
+	case chunked:
+		whole, whole_ok := chunks_join(body, allocator)
+		if !whole_ok {
+			return "", "the chunks of the answer of the endpoint are not whole"
+		}
+		body = whole
+	case length >= 0:
+		if length > len(body) {
+			return "", "the answer of the endpoint is shorter than its length"
+		}
+		body = body[:length]
+	}
+	parsed, parse_error := json.parse_string(body, .JSON, true, allocator)
+	if parse_error != .None {
+		return "", "the body of the answer of the endpoint is no JSON"
+	}
+	root, root_ok := parsed.(json.Object)
+	choices, choices_ok := root["choices"].(json.Array)
+	if !root_ok || !choices_ok || len(choices) == 0 {
+		return "", "the answer of the endpoint has no choices"
+	}
+	choice, choice_ok := choices[0].(json.Object)
+	message, message_ok := choice["message"].(json.Object)
+	if !choice_ok || !message_ok {
+		return "", "the first choice of the answer has no message"
+	}
+	content_value, content_ok := message["content"].(json.String)
+	if !content_ok {
+		return "", "the message of the answer has no text content"
+	}
+	return string(content_value), ""
+}
+
+@(private = "file")
+chunks_join :: proc(body: string, allocator: mem.Allocator) -> (whole: string, ok: bool) {
+	builder := strings.builder_make(allocator)
+	rest := body
+	for {
+		line_end := strings.index(rest, "\r\n")
+		if line_end < 0 {
+			return "", false
+		}
+		size_text := rest[:line_end]
+		if semicolon := strings.index_byte(size_text, ';'); semicolon >= 0 {
+			size_text = size_text[:semicolon]
+		}
+		size, size_ok := strconv.parse_int(strings.trim_space(size_text), 16)
+		if !size_ok || size < 0 {
+			return "", false
+		}
+		rest = rest[line_end + 2:]
+		if size == 0 {
+			return strings.to_string(builder), true
+		}
+		if size + 2 > len(rest) {
+			return "", false
+		}
+		strings.write_string(&builder, rest[:size])
+		rest = rest[size + 2:]
+	}
+}
+
+@(private = "file")
+http_model_reply :: proc(user_data: rawptr, conversation: []Turn, allocator: mem.Allocator) -> (text: string, problem: string) {
+	model := (^Http_Model)(user_data)
+	socket, dial_error := net.dial_tcp_from_hostname_with_port_override(model.endpoint.host, model.endpoint.port)
+	if dial_error != nil {
+		return "", fmt.tprintf("the endpoint %s:%d does not answer: %v", model.endpoint.host, model.endpoint.port, dial_error)
+	}
+	defer net.close(socket)
+	request := http_request_build(model, conversation)
+	for sent := 0; sent < len(request); {
+		count, send_error := net.send_tcp(socket, transmute([]u8)request[sent:])
+		if send_error != nil || count <= 0 {
+			return "", "the request did not reach the endpoint"
+		}
+		sent += count
+	}
+	answer := make([]u8, HTTP_ANSWER_BYTES, context.temp_allocator)
+	received := 0
+	for received < len(answer) {
+		count, receive_error := net.recv_tcp(socket, answer[received:])
+		if receive_error != nil {
+			return "", "the answer of the endpoint broke"
+		}
+		if count == 0 {
+			break
+		}
+		received += count
+	}
+	if received == len(answer) {
+		return "", fmt.tprintf("the answer of the endpoint is longer than %d bytes", HTTP_ANSWER_BYTES)
+	}
+	return http_answer_content(answer[:received], allocator)
+}

@@ -58,6 +58,7 @@ Call_Result :: struct {
 	lines:    [dynamic]string, // What the tool prints, one line each.
 	rows:     int, // A Table: its count of rows.
 	value:    i64,
+	text:     string, // A Text: its bytes, whole, for one test step; the lines hold them too.
 	answer_bytes: int, // The bytes of the answer on its stream: its header and its result.
 	datagrams: int, // The datagrams of `remote` that the peer received during the call.
 	new_connection: bool, // The call made a new QUIC connection.
@@ -376,6 +377,14 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 	if parse_problem != "" {
 		return {}, parse_problem
 	}
+	return call_prepare_values(client, service, export, arguments[:])
+}
+
+// call_prepare_values prepares a call whose arguments are values, not a
+// text that call_parse reads: a Text value holds any byte, a quote too,
+// which a text of the call cannot hold. The agent runner sends the words of
+// a model so (tools/modustool/agent_runner).
+call_prepare_values :: proc(client: ^Call_Client, service, export: string, arguments: []Call_Argument) -> (call: Prepared_Call, problem: string) {
 	file, hash, read_problem := module_read(client, service)
 	if read_problem != "" {
 		return {}, read_problem
@@ -668,8 +677,22 @@ answer_refusal_cause :: proc(bytes: []u8) -> (outcome: Remote_Call_Outcome, reas
 
 // call_run makes one call and gives what the tool prints.
 call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
-	outcome.lines = make([dynamic]string, context.temp_allocator)
 	call, problem := call_prepare(client, text)
+	return call_run_prepared(client, &call, problem)
+}
+
+// call_run_values runs a call whose arguments are values
+// (call_prepare_values).
+call_run_values :: proc(client: ^Call_Client, service, export: string, arguments: []Call_Argument) -> (outcome: Call_Result) {
+	call, problem := call_prepare_values(client, service, export, arguments)
+	return call_run_prepared(client, &call, problem)
+}
+
+// call_run_prepared sends a prepared call, or gives the problem of its
+// preparation as the outcome Wrong.
+call_run_prepared :: proc(client: ^Call_Client, prepared: ^Prepared_Call, problem: string) -> (outcome: Call_Result) {
+	outcome.lines = make([dynamic]string, context.temp_allocator)
+	call := prepared^
 	if problem != "" {
 		outcome.outcome = .Wrong
 		append(&outcome.lines, fmt.tprintf("error: %s", problem))
@@ -790,6 +813,7 @@ call_run :: proc(client: ^Call_Client, text: string) -> (outcome: Call_Result) {
 			append(&outcome.lines, fmt.tprintf("%d", value))
 		}
 	case .Text:
+		outcome.text = strings.clone(string(result), context.temp_allocator)
 		for line in strings.split_lines(string(result), context.temp_allocator) {
 			append(&outcome.lines, line)
 		}

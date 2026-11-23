@@ -91,7 +91,7 @@ step_reads_the_log_only :: proc(kind: Step_Kind) -> bool {
 	switch kind {
 	case .Wait, .Date, .Appearance_Auto, .Bar_Local_Time, .Screen_Size, .Generation, .Remember, .Trace, .Fact, .Quic_Key, .Remote_Key, .Remote_Display_Key:
 		return true
-	case .Type, .Keys, .Key, .Key_Until, .Click, .Click_Absolute, .Press_Absolute, .Move_Absolute, .Release_Absolute, .Launch, .Drag, .Shot, .Move, .Resize, .Front, .Close, .Click_Element, .Wheel, .Film_Start, .Film_Stop, .Film_Type, .Film_Hold, .Quit, .Monitor, .Record, .Agree, .Power_Loss_Arm, .Power_Loss, .Disk_Disconnect, .Call, .Peer, .Point, .Distinct, .Peer_Start, .Peer_Result, .Peer_Mark, .Fetch, .Http, .Peer_Quic, .Openssl_Quic, .Remote_Case, .Viewer_Relay, .Remote_Display_Case, .Screen_Text, .Operation_Sequences:
+	case .Type, .Keys, .Key, .Key_Until, .Key_Again_Until, .Assistant_Turn, .Click, .Click_Absolute, .Press_Absolute, .Move_Absolute, .Release_Absolute, .Launch, .Drag, .Shot, .Move, .Resize, .Front, .Close, .Click_Element, .Wheel, .Film_Start, .Film_Stop, .Film_Type, .Film_Hold, .Quit, .Monitor, .Record, .Agree, .Power_Loss_Arm, .Power_Loss, .Disk_Disconnect, .Call, .Peer, .Point, .Distinct, .Peer_Start, .Peer_Result, .Peer_Mark, .Fetch, .Http, .Peer_Quic, .Openssl_Quic, .Remote_Case, .Viewer_Relay, .Remote_Display_Case, .Screen_Text, .Operation_Sequences:
 		// A step that acts on the machine, on the peer or on the host, or
 		// that calls the machine.
 	}
@@ -101,7 +101,7 @@ step_reads_the_log_only :: proc(kind: Step_Kind) -> bool {
 // step_calls_remote says if a step calls `remote` with the key of the
 // client: the kinds that remote_key_problem checks.
 step_calls_remote :: proc(kind: Step_Kind) -> bool {
-	return kind == .Call || kind == .Record || kind == .Agree || kind == .Remote_Case || kind == .Point
+	return kind == .Call || kind == .Record || kind == .Agree || kind == .Remote_Case || kind == .Point || kind == .Assistant_Turn
 }
 
 // Which part of a selection a step is.

@@ -20,8 +20,10 @@ Start_Grant_Set :: struct {
 }
 
 // The services that a process with the grant Connect and not Root_Ring can
-// connect to: the list of its row, an empty text after the last one.
-CALLABLE_LIMIT :: 9
+// connect to: the list of its row, an empty text after the last one. The
+// longest list is the one of remote, whose clients call the services of
+// the principal: ten today, with one place more.
+CALLABLE_LIMIT :: 11
 
 // The parts of a start grant set that are not start grants. Zero is the start grant set of a
 // process that needs none of them.
@@ -195,6 +197,11 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// private store keeps the pictures that the principal saves
 	// (src/md/features/paint_application.md).
 	{name = "paint", grants = {.Serve, .Store}, terms = {store_blocks = 12000}},
+	// A window and a service: the agent runner on the host calls its
+	// exports through remote, and it shows the act dialog of the trusted
+	// display, which needs a caller that acts for the principal
+	// (src/md/features/assistant.md).
+	{name = "assistant", grants = {.Serve, .Image, .Connect, .Acts_For_Principal}, terms = {callable = {0 = "display"}}},
 	// A service: the console calls its exports through a connection.
 	{name = "life", grants = {.Serve}},
 	// A service: the console calls its exports through a connection.
@@ -321,7 +328,7 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// to act for the principal of that row (docs/MODULE_CONTRACT.md, "A
 	// call from the host"; docs/PRINCIPALS.md, "The client keys of
 	// remote").
-	{name = "remote", grants = {.Connect, .Network, .Acts_For_Principal, .Remote_Clients}, terms = {callable = {"compositor", "date", "debugger", "inspect", "log", "manual", "monitor", "settings", "storage"}}},
+	{name = "remote", grants = {.Connect, .Network, .Acts_For_Principal, .Remote_Clients}, terms = {callable = {0 = "assistant", 1 = "compositor", 2 = "date", 3 = "debugger", 4 = "inspect", 5 = "log", 6 = "manual", 7 = "monitor", 8 = "settings", 9 = "storage"}}},
 	// The remote display: a listen grant of UDP that admits the address of
 	// the host only, the client table, which names the uses of the key of
 	// each viewer that a principal allowed, and the capture face and the

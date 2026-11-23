@@ -54,6 +54,7 @@ import "modustool:machine"
 import "modustool:site"
 import "modustool:cache_server"
 import "modustool:agent_bridge"
+import "modustool:agent_runner"
 
 // The three source libraries of the system (docs/glossary/communication.md,
 // "Source library"):
@@ -716,6 +717,7 @@ COMMANDS :: [?]foundation.Command {
 	// - `--wide-grant-serial <u64>`, `--wide-grant-windows <id,...>`,
 	//   `--wide-grant-duration-ms <u64>` (optional): active wide-grant window
 	//   scope required for synthetic input.
+	{name = "assistant", about = "assistant --remote-key <64-hex> --client-key <64-hex> [--socket <path>] [--principal <id>] [--key-variable <NAME>] [--fake <script>] [--once]: the agent runner of the window assistant: it answers each request through remote, a language model and the host agent bridge", run = agent_runner.run_assistant},
 	{name = "agent-bridge", about = "agent-bridge --remote-key <64-hex> --client-key <64-hex> [--socket <path>] [--principal <id>] [--permissions <csv>] [--snapshot-dir <folder>] [--wide-grant-serial <u64> --wide-grant-windows <id,...> [--wide-grant-duration-ms <u64>]]: serve the typed host agent bridge over stdio JSON-RPC 2.0", run = agent_bridge.run_agent_bridge},
 }
 
@@ -733,7 +735,7 @@ main :: proc() {
 	}
 	// Commands that operate on external directories or unpacked SDKs can run
 	// outside a repository checkout.
-	outside_repo_ok := os.args[1] == "module-build" || os.args[1] == "cache-serve" || os.args[1] == "sdk-verify" || os.args[1] == "sdk-convert" || os.args[1] == "agent-bridge"
+	outside_repo_ok := os.args[1] == "module-build" || os.args[1] == "cache-serve" || os.args[1] == "sdk-verify" || os.args[1] == "sdk-convert" || os.args[1] == "agent-bridge" || os.args[1] == "assistant"
 	if !outside_repo_ok && !os.exists(foundation.ROOT_MARK) {
 		fmt.eprintln("modustool: start it from the root of the repository")
 		os.exit(foundation.EXIT_USAGE)

@@ -23,6 +23,14 @@ PLAN_DIFFERENCE_BUTTON_WIDTH :: 156
 PLAN_DIFFERENCE_BUTTON_HEIGHT :: 26
 PLAN_DIFFERENCE_BUTTON_GAP :: 8
 
+// What the dialog asks the principal to decide. The same state, keys and
+// arm time serve both, so the act dialog keeps each rule of the plan
+// dialog (src/md/features/assistant.md, "The act dialog").
+Plan_Difference_Face :: enum u8 {
+	Plan, // The difference of a plan: its name, what it adds and removes.
+	Act, // One act of an agent: the asker, and the act as service.export.
+}
+
 // The decision of the principal.
 Plan_Difference_Decision :: enum u8 {
 	Pending, // The dialog shows, or none was asked.
@@ -56,6 +64,8 @@ Plan_Difference_Refusal :: enum u8 {
 	Item_Too_Long, // An item past PLAN_DIFFERENCE_ITEM_BYTES.
 	Too_Many_Items, // A side past PLAN_DIFFERENCE_ITEM_CAPACITY.
 	No_Change, // Nothing added and nothing removed: nothing to accept.
+	Not_A_Name, // The asker of an act is not an identifier: a name of a process.
+	Not_An_Act, // The act is not two identifiers with a period between them.
 }
 
 Plan_Difference_Item :: struct {
@@ -65,6 +75,7 @@ Plan_Difference_Item :: struct {
 
 Plan_Difference_Dialog :: struct {
 	open:                 bool,
+	face:                 Plan_Difference_Face, // Of the dialog that shows, or of the last one.
 	serial:               u64, // The number of the last dialog shown; 0 before the first.
 	plan_name:            [PLAN_DIFFERENCE_NAME_BYTES]u8,
 	plan_name_length:     int,
@@ -106,6 +117,7 @@ plan_difference_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog, pla
 	}
 	dialog.serial += 1
 	dialog.open = true
+	dialog.face = .Plan
 	copy(dialog.plan_name[:], plan_name)
 	dialog.plan_name_length = len(plan_name)
 	dialog.added, dialog.added_count = added_items, added_count
@@ -114,6 +126,62 @@ plan_difference_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog, pla
 	dialog.focus = .Refuse
 	dialog.decision = .Pending
 	return dialog.serial, .None, 0
+}
+
+// plan_difference_act_open shows one act of an agent: the asker, the name
+// of the calling process, which the compositor reads from the connection,
+// and the act, `service.export`. Both are identifiers that the dialog
+// checks: no word of the agent reaches the trusted display. It gives the
+// serial, or 0 with the refusal and the argument that it names, from 1:
+// the asker, the act; 0 for Busy. A refusal changes nothing.
+plan_difference_act_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog, asker, act: string, now_milliseconds: u64) -> (serial: u64, refusal: Plan_Difference_Refusal, argument: int) {
+	if dialog.open {
+		return 0, .Busy, 0
+	}
+	if len(asker) > PLAN_DIFFERENCE_NAME_BYTES || !identifier_valid(asker) {
+		return 0, .Not_A_Name, 1
+	}
+	period := -1
+	for character, index in transmute([]u8)act {
+		if character == '.' {
+			period = index
+			break
+		}
+	}
+	if len(act) > PLAN_DIFFERENCE_ITEM_BYTES || period < 0 || !identifier_valid(act[:period]) || !identifier_valid(act[period + 1:]) {
+		return 0, .Not_An_Act, 2
+	}
+	dialog.serial += 1
+	dialog.open = true
+	dialog.face = .Act
+	copy(dialog.plan_name[:], asker)
+	dialog.plan_name_length = len(asker)
+	dialog.added = {}
+	copy(dialog.added[0].text[:], act)
+	dialog.added[0].length = len(act)
+	dialog.added_count = 1
+	dialog.removed_count = 0
+	dialog.shown_at_milliseconds = now_milliseconds
+	dialog.focus = .Refuse
+	dialog.decision = .Pending
+	return dialog.serial, .None, 0
+}
+
+// identifier_valid says if a text is an identifier of the system: 1 or more
+// bytes, a lowercase letter first, then lowercase letters, digits and `_`.
+@(private = "file")
+identifier_valid :: proc "contextless" (text: string) -> bool {
+	if len(text) == 0 || text[0] < 'a' || text[0] > 'z' {
+		return false
+	}
+	for character in transmute([]u8)text {
+		letter := character >= 'a' && character <= 'z'
+		digit := character >= '0' && character <= '9'
+		if !letter && !digit && character != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 // plan_difference_items splits a list of names. An empty list has no item.

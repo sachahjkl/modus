@@ -7,8 +7,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 ## Next
 
 - **A machine test of the exact release boot image.** The machine of Secure Boot with the test keys boots the release boot image, with no test module, so the image that a release ships is the image that a machine test ran. [Design](src/md/infrastructure/release_image.md)
-- **The first application.** `notes` moves from the demonstrations to the group `applications` when it is a real program, and the start menu shows it at the top. [Design](src/md/infrastructure/repository_layout.md)
 - **A window that scrolls when it does not fit the work area.** At a large scale, a window whose least size passes the work area takes the size of the work area and scrolls its whole content in the window layer of the interface package, so each window is whole at 2 with no move. [Design](src/md/features/desktop_to_browser.md)
+- **Notes as an application.** `notes` moves from the demonstrations to the group `applications` when it is a real program, beside `assistant`, and the start menu shows it at the top. [Design](src/md/infrastructure/repository_layout.md)
 - **The service `recipes`.** A recipe names how each output is made, and `recipes.build` takes its realisation from the cache or builds it in a sandbox. [Design](src/md/features/recipes.md)
 - **The roles of the plan of principal 0 measured at the start.** The set of the role holders that the plan of principal 0 gives before the start policy is measured, so an attestation sees which holders of the signed image ran. [Design](src/md/features/declarations.md)
 - **Projects, `pins.lex` and the service `projects`.** A developer shares a project as a tree with `project.lex`, `pins.lex` and its sources, moves its inputs with `projects.update(kernel)`, reviews each moved input as one line of `pins.lex`, and builds one output with `recipes.build(kernel.tools)`. [Design](src/md/features/declarations.md)
@@ -38,6 +38,10 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **Agent steps of Lex lines with names, in a read-only agent console.** An agent sends up to 16 lines of Lex at once, binds a result to a name and filters it in the next line, and an agent console on the machine runs them with the reach of the read-only list, each step and each call an act record. [Design](src/md/features/agent_code_mode.md)
 
 ## Later
+
+- **An allowed act of the assistant runs.** An act that the principal allowed once in the act dialog runs in an agent console of a wide grant, with an act record bound to that act, so the assistant does what the principal allowed and nothing else. [Design](src/md/features/assistant.md)
+- **More acts for the assistant.** The model of the assistant reads the log facts, sees the screen and types into a window that a wide grant names, through the same capabilities of the bridge. [Design](src/md/features/assistant.md)
+- **The conversation of the assistant kept.** The conversation stays in a store of the principal across a stop of the window, so a principal reads what the agent proposed and did yesterday. [Design](src/md/features/assistant.md)
 
 - **Builds across paired machines, on the machine.** The root service connects `recipes` to the outbound links of `remote` and gives `remote` the listen grant of each address, so `recipes.build` gives the recipes of a graph to the builders and the caches that a principal paired, and a machine test runs it on two machines. [Design](src/md/features/recipes.md)
 

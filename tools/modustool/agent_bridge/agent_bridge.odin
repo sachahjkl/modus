@@ -1265,8 +1265,8 @@ bridge_serve_stdio :: proc(bridge: ^Agent_Bridge) -> int {
 	return 0
 }
 
-// parse_hex_32 decodes an exact 64-hex-character key.
-@(private = "file")
+// parse_hex_32 decodes an exact 64-hex-character key. The agent runner of
+// the assistant reads its keys with it too.
 parse_hex_32 :: proc(text: string) -> (key: [32]u8, ok: bool) {
 	if len(text) != 64 {
 		return {}, false

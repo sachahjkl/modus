@@ -1319,6 +1319,29 @@ Plan_Difference_Refused :: struct {
 	plan: [56]u8,
 }
 
+// An act of an agent shows on the trusted display: the asker is the
+// process that called act_ask, the act an export that it names
+// (src/md/features/assistant.md, "The act dialog").
+@(log_fact = "compositor: the act {act} of {asker} shows")
+Act_Shown :: struct {
+	asker: [56]u8,
+	act:   [56]u8,
+}
+
+// The principal allowed an act once.
+@(log_fact = "compositor: the act {act} of {asker} is allowed")
+Act_Allowed :: struct {
+	asker: [56]u8,
+	act:   [56]u8,
+}
+
+// The principal refused an act.
+@(log_fact = "compositor: the act {act} of {asker} is refused")
+Act_Refused :: struct {
+	asker: [56]u8,
+	act:   [56]u8,
+}
+
 // A holder of the assistive role reads the trees from here on: the bar
 // shows its mark.
 @(log_fact = "compositor: the assistive holder {holder} reads the trees as {kind}: {nickname}")

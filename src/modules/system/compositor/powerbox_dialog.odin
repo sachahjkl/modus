@@ -198,17 +198,46 @@ plan_difference_asker_check :: proc "contextless" () {
 	plan_difference_answer(bar.plan_difference_key(&plan_difference_dialog, .Escape, system.time()))
 }
 
+// act_dialog_show shows one act of an agent on the trusted display: the
+// asker, the name of the calling process, and the act, service.export. It
+// gives the serial, or 0 with the refusal and the argument that it names.
+act_dialog_show :: proc "contextless" (asker, act: string) -> (serial: u64, refusal: bar.Plan_Difference_Refusal, argument: int) {
+	if powerbox_prompt.open {
+		return 0, .Busy, 0
+	}
+	serial, refusal, argument = bar.plan_difference_act_open(&plan_difference_dialog, asker, act, system.time())
+	if refusal != .None {
+		return
+	}
+	system.log_fact(.Info, Act_Shown{asker = value_kinds.text_field(asker, PLAN_NAME_FIELD_BYTES), act = value_kinds.text_field(act, PLAN_NAME_FIELD_BYTES)})
+	window_switcher_cancel() // window_switcher.odin: the dialog takes the keys.
+	damage_whole_screen()
+	return
+}
+
 // plan_difference_answer records the decision of the principal, if the
-// last key or press made one.
+// last key or press made one, with the fact of the face of the dialog.
 plan_difference_answer :: proc "contextless" (decision: bar.Plan_Difference_Decision) {
-	plan := value_kinds.text_field(bar.plan_difference_name(&plan_difference_dialog), PLAN_NAME_FIELD_BYTES)
+	dialog := &plan_difference_dialog
+	name := value_kinds.text_field(bar.plan_difference_name(dialog), PLAN_NAME_FIELD_BYTES)
+	act := value_kinds.text_field(dialog.added_count > 0 ? bar.plan_difference_item_text(&dialog.added[0]) : "", PLAN_NAME_FIELD_BYTES)
 	switch decision {
 	case .Pending:
 		return
 	case .Accepted:
-		system.log_fact(.Info, Plan_Difference_Accepted{plan = plan})
+		switch dialog.face {
+		case .Plan:
+			system.log_fact(.Info, Plan_Difference_Accepted{plan = name})
+		case .Act:
+			system.log_fact(.Info, Act_Allowed{asker = name, act = act})
+		}
 	case .Refused:
-		system.log_fact(.Info, Plan_Difference_Refused{plan = plan})
+		switch dialog.face {
+		case .Plan:
+			system.log_fact(.Info, Plan_Difference_Refused{plan = name})
+		case .Act:
+			system.log_fact(.Info, Act_Refused{asker = name, act = act})
+		}
 	}
 	damage_whole_screen()
 }
@@ -378,14 +407,23 @@ plan_difference_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	}
 	#assert(bar.PLAN_DIFFERENCE_TITLE_HEIGHT == POWERBOX_TITLE_HEIGHT)
 	x, y, width, height := bar.plan_difference_place(dialog, desktop_width, desktop_work_top(), desktop_work_bottom())
-	interface.draw_element_push(table, {x, y, width, height}, u32(interface.identity("plan difference")), .Alert_Dialog, {name = "plan difference"})
+	// The words of the face: a plan, or one act of an agent that asked.
+	element, header, name_label, accept := "plan difference", "TRUSTED PLAN DIFFERENCE", "plan", "Accept plan"
+	add_heading := "adds"
+	switch dialog.face {
+	case .Plan:
+	case .Act:
+		element, header, name_label, accept = "act", "TRUSTED ACT", "asker", "Allow once"
+		add_heading = "runs"
+	}
+	interface.draw_element_push(table, {x, y, width, height}, u32(interface.identity(element)), .Alert_Dialog, {name = element})
 	defer interface.draw_element_pop(table)
-	trusted_card_records(table, x, y, width, height, "TRUSTED PLAN DIFFERENCE")
+	trusted_card_records(table, x, y, width, height, header)
 	text_x := x + bar.PLAN_DIFFERENCE_MARGIN
 	text_room := width - 2 * bar.PLAN_DIFFERENCE_MARGIN
 	line_y := y + 2 + bar.PLAN_DIFFERENCE_TITLE_HEIGHT + 1 + bar.PLAN_DIFFERENCE_MARGIN
 	text_offset := (bar.PLAN_DIFFERENCE_LINE - graphics.CELL_HEIGHT) / 2
-	name_x := interface.draw_text(table, text_x, line_y + text_offset, "plan", graphics.colors.dim, interface.FONT_INTERFACE) + bar.PLAN_DIFFERENCE_GAP
+	name_x := interface.draw_text(table, text_x, line_y + text_offset, name_label, graphics.colors.dim, interface.FONT_INTERFACE) + bar.PLAN_DIFFERENCE_GAP
 	interface.draw_text(table, name_x, line_y + text_offset, interface.text_fit(table, interface.FONT_INTERFACE_BOLD, bar.plan_difference_name(dialog), x + width - bar.PLAN_DIFFERENCE_MARGIN - name_x), graphics.colors.text_strong, interface.FONT_INTERFACE_BOLD)
 	line_y += bar.PLAN_DIFFERENCE_LINE
 	sides := [2]struct {
@@ -393,7 +431,7 @@ plan_difference_records :: proc "contextless" (table: ^interface.Draw_Table) {
 		items:         []bar.Plan_Difference_Item,
 		color:         graphics.Color,
 	} {
-		{"adds", "+", dialog.added[:dialog.added_count], graphics.colors.process},
+		{add_heading, "+", dialog.added[:dialog.added_count], graphics.colors.process},
 		{"removes", "-", dialog.removed[:dialog.removed_count], graphics.colors.failed},
 	}
 	for &side in sides {
@@ -413,7 +451,7 @@ plan_difference_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	accept_x, button_y, button_width, button_height := bar.plan_difference_button_place(x, y, width, height, .Accept)
 	refuse_x, _, _, _ := bar.plan_difference_button_place(x, y, width, height, .Refuse)
 	interface.draw_text(table, text_x, button_y + (button_height - graphics.CELL_HEIGHT) / 2, "Tab: move", graphics.colors.dim, interface.FONT_INTERFACE)
-	plan_difference_button_records(table, accept_x, button_y, button_width, button_height, "Accept plan", "Enter", true, dialog.focus == .Accept)
+	plan_difference_button_records(table, accept_x, button_y, button_width, button_height, accept, "Enter", true, dialog.focus == .Accept)
 	plan_difference_button_records(table, refuse_x, button_y, button_width, button_height, "Refuse", "Esc", false, dialog.focus == .Refuse)
 }
 

@@ -1,0 +1,215 @@
+package agent_runner
+
+import "core:fmt"
+import "core:mem"
+import "core:strings"
+import "core:testing"
+import "modustool:agent_bridge"
+import assistant_contract "modus:contract/assistant"
+import "modus:contract/cut_mark"
+import "modus:contract/errors"
+
+@(private = "file")
+refused_with :: proc(t: ^testing.T, reply: string, kind: errors.Kind, field: Reply_Field, act: int = 0, loc := #caller_location) {
+	_, record, ok := model_reply_decode(reply)
+	testing.expectf(t, !ok, "%q passed the border", reply, loc = loc)
+	testing.expectf(t, record.kind == i64(kind) && record.argument == i64(field) && record.found == i64(act), "%q: %v, not %v on %v of act %d", reply, record, kind, field, act, loc = loc)
+}
+
+// Each form that the border refuses, first: no JSON, text after the object,
+// a field unknown, missing, duplicated or of another type, a text and a
+// line at the edges of their bounds, a control byte, a bad escape, a lone
+// surrogate, too many acts, a kind that names no member.
+@(test)
+the_border_refuses_each_malformed_model_reply :: proc(t: ^testing.T) {
+	text_most := strings.repeat("a", assistant_contract.REPLY_TEXT_BYTES, context.temp_allocator)
+	line_most := strings.repeat("b", assistant_contract.ACT_LINE_BYTES, context.temp_allocator)
+	refused_with(t, "", .Bad_Value, .Reply)
+	refused_with(t, "There are 12 processes.", .Bad_Value, .Reply)
+	refused_with(t, "[]", .Bad_Value, .Reply)
+	refused_with(t, "{", .Bad_Value, .Reply)
+	refused_with(t, "{}", .Absent, .Text)
+	refused_with(t, `{"text": "a"} {"text": "b"}`, .Bad_Value, .Reply)
+	refused_with(t, `{"text": "a",}`, .Bad_Value, .Reply)
+	refused_with(t, `{"text": "a", "text": "b"}`, .Bad_Value, .Text)
+	refused_with(t, `{"text": "a", "approve": true}`, .Bad_Value, .Reply)
+	refused_with(t, `{"text": 12}`, .Bad_Value, .Text)
+	refused_with(t, `{"text": ""}`, .Empty, .Text)
+	refused_with(t, strings.concatenate({`{"text": "`, text_most, `a"}`}, context.temp_allocator), .Too_Long, .Text)
+	refused_with(t, "{\"text\": \"a\tb\"}", .Bad_Value, .Text)
+	refused_with(t, `{"text": "a\u0001b"}`, .Bad_Value, .Text)
+	refused_with(t, `{"text": "a\qb"}`, .Bad_Value, .Text)
+	refused_with(t, `{"text": "\ud800"}`, .Bad_Value, .Text)
+	refused_with(t, `{"text": "\udc00"}`, .Bad_Value, .Text)
+	refused_with(t, `{"text": "a", "acts": {}}`, .Bad_Value, .Acts)
+	refused_with(t, `{"text": "a", "acts": [], "acts": []}`, .Bad_Value, .Acts)
+	refused_with(t, `{"text": "a", "acts": [{"kind": "eval_lex"}]}`, .Absent, .Line, 1)
+	refused_with(t, `{"text": "a", "acts": [{"line": "monitor.processes()"}]}`, .Absent, .Kind, 1)
+	refused_with(t, `{"text": "a", "acts": [{"kind": "approve", "line": "x"}]}`, .Bad_Value, .Kind, 1)
+	refused_with(t, `{"text": "a", "acts": [{"kind": "eval_lex", "line": "x", "line": "y"}]}`, .Bad_Value, .Line, 1)
+	refused_with(t, `{"text": "a", "acts": [{"kind": "eval_lex", "line": ""}]}`, .Empty, .Line, 1)
+	refused_with(t, `{"text": "a", "acts": [{"kind": "eval_lex", "line": "a\nb"}]}`, .Bad_Value, .Line, 1)
+	refused_with(t, strings.concatenate({`{"text": "a", "acts": [{"kind": "eval_lex", "line": "`, line_most, `b"}]}`}, context.temp_allocator), .Too_Long, .Line, 1)
+	refused_with(t, `{"text": "a", "acts": [{"kind": "eval_lex", "line": "x", "safe": true}]}`, .Bad_Value, .Acts, 1)
+	five := `{"kind": "eval_lex", "line": "x"}`
+	refused_with(t, strings.concatenate({`{"text": "a", "acts": [`, five, ",", five, ",", five, ",", five, ",", five, "]}"}, context.temp_allocator), .Too_Long, .Acts)
+	_, record, _ := model_reply_decode(strings.repeat(" ", MODEL_REPLY_BYTES + 1, context.temp_allocator))
+	testing.expect_value(t, record.kind, i64(errors.Kind.Too_Long))
+	testing.expect_value(t, record.limit, i64(MODEL_REPLY_BYTES))
+}
+
+// The forms that pass, last: the bounds themselves, no act, four acts,
+// escapes, a line end that becomes a space, the fields in any order.
+@(test)
+the_border_passes_a_whole_model_reply :: proc(t: ^testing.T) {
+	text_most := strings.repeat("a", assistant_contract.REPLY_TEXT_BYTES, context.temp_allocator)
+	reply, _, ok := model_reply_decode(strings.concatenate({`{"text": "`, text_most, `"}`}, context.temp_allocator))
+	testing.expect(t, ok)
+	testing.expect_value(t, len(reply.text), assistant_contract.REPLY_TEXT_BYTES)
+	reply, _, ok = model_reply_decode(`  {"acts": [], "text": "two\nlines \u00e9t\u00e9 \"q\" \ud83d\ude00"}  `)
+	testing.expect(t, ok)
+	testing.expect_value(t, reply.text, "two lines été \"q\" 😀")
+	testing.expect_value(t, reply.act_count, 0)
+	act := `{"line": "monitor.processes()", "kind": "eval_lex"}`
+	reply, _, ok = model_reply_decode(strings.concatenate({`{"text": "a", "acts": [`, act, ",", act, ",", act, ",", act, "]}"}, context.temp_allocator))
+	testing.expect(t, ok)
+	testing.expect_value(t, reply.act_count, assistant_contract.MODEL_ACT_CAPACITY)
+	testing.expect_value(t, reply.acts[3].line, "monitor.processes()")
+	testing.expect_value(t, reply.acts[3].kind, assistant_contract.Act_Kind.Eval_Lex)
+}
+
+// An endpoint is plain HTTP with a host, a port and a path: each other form
+// is refused at the start.
+@(test)
+an_endpoint_is_plain_http_with_a_port :: proc(t: ^testing.T) {
+	for url in ([]string{"", "https://api.example:443/v1/chat", "ftp://a:1/b", "http://a/b", "http://a:0/b", "http://a:65536/b", "http://a:x/b", "http://user:secret@a:80/b", "http://a:80", "http://:80/b", "http://a:80/b c"}) {
+		_, problem := endpoint_parse(url)
+		testing.expectf(t, problem != "", "%q passed", url)
+		testing.expectf(t, !strings.contains(problem, "secret"), "%q: the problem names the user part", url)
+	}
+	endpoint, problem := endpoint_parse("http://127.0.0.1:65535/v1/chat/completions")
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, endpoint.host, "127.0.0.1")
+	testing.expect_value(t, endpoint.port, 65535)
+	testing.expect_value(t, endpoint.path, "/v1/chat/completions")
+}
+
+// The request holds the key in its header only, the conversation as JSON
+// with its quotes and line ends escaped; the answer gives the content of
+// the first choice, whole by its length, in chunks, or to the end; each
+// other answer is a problem that names no key.
+@(test)
+the_endpoint_request_and_answer :: proc(t: ^testing.T) {
+	model := Http_Model{endpoint = {host = "127.0.0.1", port = 8080, path = "/v1"}, key = "key-that-must-stay-hidden", model_name = "m"}
+	conversation := []Turn{{role = .Principal, text = "say \"hi\"\nplease"}}
+	request := http_request_build(&model, conversation)
+	testing.expect(t, strings.has_prefix(request, "POST /v1 HTTP/1.1\r\n"))
+	testing.expect_value(t, strings.count(request, model.key), 1)
+	testing.expect(t, strings.contains(request, "Authorization: Bearer key-that-must-stay-hidden\r\n"))
+	testing.expect(t, strings.contains(request, `"content":"say \"hi\"\nplease"`))
+	body := `{"choices":[{"message":{"role":"assistant","content":"{\"text\": \"hi\"}"}}]}`
+	whole := strings.concatenate({"HTTP/1.1 200 OK\r\nContent-Length: ", fmt.tprintf("%d", len(body)), "\r\n\r\n", body}, context.temp_allocator)
+	content, problem := http_answer_content(transmute([]u8)whole)
+	testing.expectf(t, problem == "" && content == `{"text": "hi"}`, "%q %q", content, problem)
+	chunked := strings.concatenate({"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n", "a\r\n", body[:10], "\r\n", fmt.tprintf("%x", len(body) - 10), "\r\n", body[10:], "\r\n0\r\n\r\n"}, context.temp_allocator)
+	content, problem = http_answer_content(transmute([]u8)chunked)
+	testing.expectf(t, problem == "" && content == `{"text": "hi"}`, "%q %q", content, problem)
+	to_the_end := strings.concatenate({"HTTP/1.0 200 OK\r\n\r\n", body}, context.temp_allocator)
+	content, problem = http_answer_content(transmute([]u8)to_the_end)
+	testing.expect_value(t, problem, "")
+	for answer in ([]string{"", "HTTP/1.1 200 OK\r\n", "HTTP/1.1 401 Unauthorized\r\n\r\n{}", "HTTP/1.1 200 OK\r\nContent-Length: 999\r\n\r\n{}", "HTTP/1.1 200 OK\r\n\r\nnot json", "HTTP/1.1 200 OK\r\n\r\n{\"choices\":[]}", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n"}) {
+		_, answer_problem := http_answer_content(transmute([]u8)answer)
+		testing.expectf(t, answer_problem != "", "%q passed", answer)
+		testing.expect(t, !strings.contains(answer_problem, model.key))
+	}
+}
+
+// The fake model gives its script in order, then a problem.
+@(test)
+the_fake_model_gives_its_script_in_order :: proc(t: ^testing.T) {
+	replies := fake_script_read("one\n\n  \ntwo\n", context.temp_allocator)
+	testing.expect_value(t, len(replies), 2)
+	fake := Fake_Model{replies = replies}
+	model := fake_model(&fake)
+	first, _ := model.reply(model.user_data, nil, context.temp_allocator)
+	second, _ := model.reply(model.user_data, nil, context.temp_allocator)
+	_, problem := model.reply(model.user_data, nil, context.temp_allocator)
+	testing.expect_value(t, first, "one")
+	testing.expect_value(t, second, "two")
+	testing.expect(t, problem != "")
+}
+
+// The words of a result keep the bound of the window, cut after a whole
+// character with the mark; a control byte becomes a space; no words say so.
+@(test)
+the_words_of_a_result_keep_the_bound_of_the_window :: proc(t: ^testing.T) {
+	testing.expect_value(t, text_cut(""), "no words")
+	testing.expect_value(t, text_cut("a\nb\x01"), "a b ")
+	most := strings.repeat("é", assistant_contract.REPLY_TEXT_BYTES / 2, context.temp_allocator)
+	testing.expect_value(t, text_cut(most), most)
+	cut := text_cut(strings.concatenate({most, "a"}, context.temp_allocator))
+	testing.expect(t, len(cut) <= assistant_contract.REPLY_TEXT_BYTES)
+	testing.expect(t, strings.has_suffix(cut, " bytes more"))
+	testing.expect(t, strings.contains(cut, cut_mark.MARK_START))
+	testing.expect_value(t, assistant_contract.text_check(cut, assistant_contract.REPLY_TEXT_BYTES), assistant_contract.Text_Refusal.None)
+}
+
+// A fake transport of the bridge: it counts the lines that reach the
+// machine, and gives a table of one row.
+@(private = "file")
+Counting_Transport :: struct {
+	lines: int,
+}
+
+@(private = "file")
+counting_eval_lex :: proc(user_data: rawptr, line: string, allocator: mem.Allocator) -> (result: agent_bridge.Lex_Eval_Result, err: string, ok: bool) {
+	transport := (^Counting_Transport)(user_data)
+	transport.lines += 1
+	columns := make([]string, 2, allocator)
+	columns[0], columns[1] = "slot", "name"
+	row := make([]string, 2, allocator)
+	row[0], row[1] = "3", "console"
+	rows := make([][]string, 1, allocator)
+	rows[0] = row
+	return {value_kind = .Table, record_name = "Process", columns = columns, rows = rows, total_rows = 1}, "", true
+}
+
+// An act runs through the bridge as any agent: a line on the read-only
+// list reaches the machine and is Done; a grant-adding line and a line that
+// names the window stop for the principal and never reach the machine; a
+// line that is no single call is refused at the border of the bridge.
+@(test)
+an_act_runs_only_through_the_bridge :: proc(t: ^testing.T) {
+	counting: Counting_Transport
+	transport := agent_bridge.Machine_Transport{user_data = &counting, eval_lex = counting_eval_lex}
+	bridge: agent_bridge.Agent_Bridge
+	testing.expect(t, agent_bridge.bridge_init(&bridge, runner_policy({1 = 7}, 0), transport))
+	defer agent_bridge.bridge_destroy(&bridge)
+	runner := Runner{bridge = &bridge}
+	awaiting := []string{`plans.apply("home")`, "assistant.act_result(1, 5, \"allowed\")", `compositor.act_ask("plans.apply")`, "settings.set(.french)"}
+	for line in awaiting {
+		report := act_run(&runner, {kind = .Eval_Lex, line = line})
+		testing.expectf(t, report.state == .Awaiting_Principal, "%q: %v %q", line, report.state, report.text)
+	}
+	refused := []string{"monitor.processes() |> first(1)", "let x = 1 in x", "monitor.processes(plans.apply(1))", "lock"}
+	for line in refused {
+		report := act_run(&runner, {kind = .Eval_Lex, line = line})
+		testing.expectf(t, report.state == .Refused, "%q: %v %q", line, report.state, report.text)
+	}
+	testing.expect_value(t, counting.lines, 0)
+	report := act_run(&runner, {kind = .Eval_Lex, line = "monitor.processes()"})
+	testing.expect_value(t, report.state, assistant_contract.Act_State.Done)
+	testing.expect_value(t, report.text, "1 rows of Process: slot 3, name console")
+	testing.expect_value(t, counting.lines, 1)
+}
+
+// An answer of the bridge that is no JSON, or that has neither a result
+// nor an error, is a refusal, never a result.
+@(test)
+a_bridge_answer_that_is_not_whole_is_a_refusal :: proc(t: ^testing.T) {
+	for answer in ([]string{"", "not json", "[]", `{"jsonrpc":"2.0","id":1}`}) {
+		testing.expect_value(t, bridge_answer_read(answer).state, assistant_contract.Act_State.Refused)
+	}
+	report := bridge_answer_read(`{"jsonrpc":"2.0","id":1,"result":{"status":"Ok","value_kind":"Integer","value":12}}`)
+	testing.expect(t, report.state == .Done && report.text == "12")
+}

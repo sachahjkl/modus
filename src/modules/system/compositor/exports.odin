@@ -704,6 +704,8 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_BYTES)
 	case .Too_Many_Items:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
+	case .Not_A_Name, .Not_An_Act:
+		// The plan face checks no identifier: only act_ask gives these.
 	}
 	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
 }
@@ -738,7 +740,79 @@ plan_diff_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> 
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Records, 1, serial, max(i64))
 	}
 	decision, known := bar.plan_difference_decision_of_serial(&plan_difference_dialog, u64(serial))
-	if !known {
+	// The decision on an act is no decision on a plan.
+	if !known || plan_difference_dialog.face != .Plan {
+		return i64(pr.Plan_Display_Decision.Unknown)
+	}
+	switch decision {
+	case .Pending:
+		return i64(pr.Plan_Display_Decision.Pending)
+	case .Accepted:
+		return i64(pr.Plan_Display_Decision.Accepted)
+	case .Refused:
+		return i64(pr.Plan_Display_Decision.Refused)
+	}
+	return i64(pr.Plan_Display_Decision.Unknown)
+}
+
+// act_ask shows one act of an agent on the trusted display, for the principal to allow once or refuse: the asker, which is the name of the calling process, and the act, `service.export`. The result is the serial of the dialog, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal, or the call comes from no connection); Busy (-1, a dialog of the trusted display shows); Bad_Value (-1, the act is not two identifiers with a period between them, or the name of the caller is no identifier).
+//
+// **What it is for.** An agent proposes acts to the principal through a
+// window such as the assistant (src/md/features/assistant.md, "The act
+// dialog"). An act that the bridge stops needs a decision that the agent
+// cannot give: this dialog. It shows no word of the agent: the asker comes
+// from the connection, and the act is two identifiers that it checks.
+//
+// **The act.** As the dialog of a plan: the focus starts on Refuse, an act
+// counts 500 ms after the dialog showed, Enter acts on the button that has
+// the focus, Tab and the arrows move it, a press on a button acts on it,
+// and Escape refuses at once.
+//
+// **Grant**: the caller must **act for the principal**; else the error
+// kind `No_Grant`, with the result -1.
+//
+// ```
+// compositor.act_ask("plans.apply")
+// ```
+@(export, link_name = "act_ask")
+act_ask_export :: proc "c" (act: ^string, error: ^errors.Error_Record) -> i64 {
+	caller := system.service_caller()
+	if caller == nil || !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	serial, refusal, argument := act_dialog_show(system.name_of(caller.caller[:]), act^)
+	switch refusal {
+	case .None:
+		return i64(serial)
+	case .Busy:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Requests, 0, 1, 1)
+	case .Not_A_Name, .Not_An_Act:
+		// The argument of the export is the act; the asker is no argument.
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, i64(argument == 2 ? 1 : 0), i64(len(act^)), bar.PLAN_DIFFERENCE_ITEM_BYTES)
+	case .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items:
+		// The act face gives none of the refusals of a plan.
+	}
+	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
+}
+
+// act_poll gives the decision of the principal on the act that act_ask showed with a serial: 0 while the dialog shows, 1 allowed, 2 refused, 3 unknown (a later dialog replaced it, no dialog had the serial, or it was the dialog of a plan). The result is the decision, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Bad_Value (-1, a serial under 1).
+//
+// **Grant**: the caller must **act for the principal**; else the error
+// kind `No_Grant`, with the result -1.
+//
+// ```
+// compositor.act_poll(1)
+// ```
+@(export, link_name = "act_poll")
+act_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	if serial < 1 {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Records, 1, serial, max(i64))
+	}
+	decision, known := bar.plan_difference_decision_of_serial(&plan_difference_dialog, u64(serial))
+	if !known || plan_difference_dialog.face != .Act {
 		return i64(pr.Plan_Display_Decision.Unknown)
 	}
 	switch decision {
