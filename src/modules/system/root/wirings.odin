@@ -21,6 +21,7 @@ package root
 
 import "base:intrinsics"
 import "modus:contract/errors"
+import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
@@ -286,6 +287,18 @@ wiring_register_process :: proc "contextless" (item: ^Started) {
 	}
 }
 
+// wiring_pages_stated gives the wiring pages that the module file of an
+// asker states, or half of the pages that it asks when it states none.
+@(private = "file")
+wiring_pages_stated :: proc "contextless" (asker: ^Started) -> u64 {
+	file := image_file_checked(system.name_of(asker.name[:]))
+	request: module.Budget_Request
+	if module.validate(file) == .None {
+		request, _ = module.budget_request(file)
+	}
+	return system.wiring_pages_of_request(request)
+}
+
 // wiring_asker_budget_ensure carves a pages-only child wiring budget from
 // asker.budget and gives `wiring` a Spend-only handle to it.
 @(private = "file")
@@ -307,12 +320,17 @@ wiring_asker_budget_ensure :: proc "contextless" (asker: ^Started, command: root
 		values^ = errors.ring_fail(u32(command), .Budget, .Pages, 1, 0, i64(list_cost), i64(avail.pages))
 		return .No_Budget
 	}
-	// The wiring budget of the start policy is what the header of its list
-	// says that its rows cost, which its budget was widened by; each other
-	// asker gives half of what its budget holds at its first wiring, and
-	// keeps the other half for its own work (src/md/features/module_outputs.md,
-	// "The bounds of the wirings").
-	pages := asker == start_policy_process && start_list_wiring_pages > 0 ? min(avail.pages, start_list_wiring_pages) : avail.pages / 2
+	// A stated amount, whatever the asker spent before its first wiring
+	// (src/md/features/module_outputs.md, "The bounds of the wirings"): for
+	// the start policy, what the header of its list says that its rows
+	// cost, which its budget was widened by; for each other asker, the
+	// wiring pages of its module file, or half of the pages that it asks
+	// when it states none.
+	stated := wiring_pages_stated(asker)
+	if asker == start_policy_process && start_list_wiring_pages > 0 {
+		stated = start_list_wiring_pages
+	}
+	pages := min(avail.pages, stated)
 	if pages < list_cost {
 		values^ = errors.ring_fail(u32(command), .Budget, .Pages, 1, 0, i64(list_cost), i64(pages))
 		return .No_Budget

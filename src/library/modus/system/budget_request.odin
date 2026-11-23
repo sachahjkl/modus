@@ -36,6 +36,10 @@ Stated_Budget :: struct {
 	// out: no cut.
 	window_least_width:   u64,
 	window_least_height:  u64,
+	// The pages of the rings of the wirings that the process asks for: the
+	// root service carves its wiring budget to that measure, and the tool
+	// adds them to its pages. Left out: half of its pages.
+	wiring_pages:         u64,
 }
 
 // One part of a budget request.
@@ -89,7 +93,21 @@ budget_decide :: proc "contextless" (request, least, largest: Budget_Request) ->
 	granted.pages = decide(request.pages, least.pages, largest.pages, .Pages, &limited)
 	granted.processes = decide(request.processes, least.processes, largest.processes, .Processes, &limited)
 	granted.threads = decide(request.threads, least.threads, largest.threads, .Threads, &limited)
+	// The wiring pages are a part of the pages: never more than they.
+	granted.wiring_pages = min(request.wiring_pages, granted.pages)
 	return granted, limited
+}
+
+// wiring_pages_of_request gives the pages that the root service carves as
+// the wiring budget of an asker from its request: the wiring pages that it
+// states, never more than its pages, or half of its pages when it states
+// none. A stated amount, whatever the asker spent before its first wiring
+// (src/md/features/module_outputs.md, "The bounds of the wirings").
+wiring_pages_of_request :: proc "contextless" (request: Budget_Request) -> u64 {
+	if request.wiring_pages != 0 {
+		return min(request.wiring_pages, request.pages)
+	}
+	return request.pages / 2
 }
 
 // budget_first_short_part gives the first part of a budget that a holder

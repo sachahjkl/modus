@@ -507,8 +507,13 @@ Budget_Request :: struct {
 	pages:    u64, // Pages of memory: its modules, its stacks, its pictures and its working memory.
 	processes: u64, // Process slots: the process itself, and each child that runs at one time.
 	threads:  u64, // Thread slots: each thread that runs at one time, the first one included, and the threads of its children.
+	// The pages of the rings of the wirings that the process asks for, in
+	// pages: the root service carves its wiring budget to that measure at
+	// its first wiring. 0: half of pages. A shorter record of an older file
+	// reads 0 (src/md/features/module_outputs.md, "The bounds of the wirings").
+	wiring_pages: u64,
 }
-#assert(size_of(Budget_Request) == 24)
+#assert(size_of(Budget_Request) == 32)
 
 // The most that the root service gives a process of the boot image with no
 // exception: a request above it starts with this. A module that sizes its

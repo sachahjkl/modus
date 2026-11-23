@@ -308,6 +308,7 @@ MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2536, threads = 1, 
 | `processes` | The `processes` of the request | The least |
 | `threads` | The `threads` of the request | The least |
 | `window_width`, `window_height` | The size of its window in pixels, as it passes it to `display.open`: an integer literal, or the name of a constant of the package whose value is one integer literal | No window |
+| `wiring_pages` | The pages of the rings of the wirings that the process asks for. The tool adds them to its pages, and the root service carves its wiring budget to that measure at its first wiring | Half of its pages |
 | `window_least_width`, `window_least_height` | The least size of a resizable window: each the name of the constant that the source passes as `least_width` and `least_height` to `display.resizable_set`, a constant of one integer literal, no larger than the window. The tool refuses names that differ from those of a call of `resizable_set` in the package, and least parts with no such call | No cut: the window pages are counted at the full largest scale |
 
 **The tool counts the other pages**, and the table holds the sum: `pages = working memory + module pages + thread pages + window pages`.

@@ -455,6 +455,30 @@ capacity_bounds_and_one_past_bound_are_refused :: proc(t: ^testing.T) {
 	st, _, _, _ = wire_once(&paid, image, askers[1], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent1[:])
 	testing.expect_value(t, st, ws.Response_Status.Ok)
 
+	// One asker fills the entries that its wiring budget pays, 20: its 21st
+	// wiring is refused, and the table does not grow for it; the audit Wire
+	// of a wide grant, which the collector asks and pays, still passes.
+	shared: State
+	shared_port, shared_tables := wiring_tables_heap(256, 256)
+	state_init(&shared, shared_port)
+	filler_index, _ := process_register(&shared, askers[0], 0, 0, {.Can_Wire, .Has_Wiring_Ring})
+	collector_index, _ := process_register(&shared, askers[1], 0, 0, {.Can_Wire, .Has_Wiring_Ring})
+	_, _ = process_register(&shared, writers[1], offs[0], szs[0], {.Is_Service, .Has_Wiring_Ring})
+	shared_tables.asker_paid[filler_index] = 20
+	for _ in 0 ..< 20 {
+		w_st, _, _, _ := wire_once(&shared, image, askers[0], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent1[:])
+		testing.expect_value(t, w_st, ws.Response_Status.Ok)
+	}
+	st, ref, _, _ = wire_once(&shared, image, askers[0], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent1[:])
+	testing.expect_value(t, st, ws.Response_Status.No_Slot)
+	testing.expect_value(t, errors.Kind(ref.kind), errors.Kind.Full)
+	testing.expect_value(t, len(shared.wirings), 20)
+	testing.expect_value(t, shared_tables.asker_charged[filler_index], 20)
+	st, _, _, _ = wire_once(&shared, image, askers[1], make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent1[:])
+	testing.expect_value(t, st, ws.Response_Status.Ok)
+	testing.expect_value(t, shared_tables.asker_charged[collector_index], 1)
+	testing.expect_value(t, shared.wirings_running, 21)
+
 	// A table of processes whose budget pays 2: the 3rd is refused, and the
 	// first two stay.
 	few: State

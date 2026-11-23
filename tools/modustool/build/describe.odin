@@ -1404,7 +1404,7 @@ BUDGET_WINDOW_PART_LIMIT :: 2048
 budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> bool {
 	path := file.fullpath
 	// An argument of the format, not a part of it: its braces are text.
-	FORM :: "the form is " + BUDGET_REQUEST_NAME + " :: system.Stated_Budget{working_memory_pages = N, processes = N, threads = N, window_width = WIDTH, window_height = HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}"
+	FORM :: "the form is " + BUDGET_REQUEST_NAME + " :: system.Stated_Budget{working_memory_pages = N, processes = N, threads = N, window_width = WIDTH, window_height = HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT, wiring_pages = N}"
 	for statement in file.decls {
 		// A declaration inside a `when`: the tool reads the source with no
 		// setting of the build, so it cannot know the branch that the
@@ -1488,8 +1488,10 @@ budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> boo
 				place, window_index = &stated.window_least_width, 2
 			case "window_least_height":
 				place, window_index = &stated.window_least_height, 3
+			case "wiring_pages":
+				place = &stated.wiring_pages
 			case:
-				return describe_fail(path, element, "%s has no part %s: its parts are working_memory_pages, processes, threads, window_width, window_height, window_least_width and window_least_height; the tool counts the other pages, and processor time and log records are limits that the starter sets", BUDGET_REQUEST_NAME, field.name)
+				return describe_fail(path, element, "%s has no part %s: its parts are working_memory_pages, processes, threads, window_width, window_height, window_least_width, window_least_height and wiring_pages; the tool counts the other pages, and processor time and log records are limits that the starter sets", BUDGET_REQUEST_NAME, field.name)
 			}
 			if place^ != 0 || (window_index >= 0 && window_names[window_index] != "") {
 				return describe_fail(path, element, "%s states the part %s two times", BUDGET_REQUEST_NAME, field.name)

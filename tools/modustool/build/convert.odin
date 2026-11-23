@@ -81,6 +81,7 @@ Stated_Budget :: struct {
 	window_height:        u64,
 	window_least_width:   u64, // The least size of a resizable window; 0: no cut of the window pages.
 	window_least_height:  u64,
+	wiring_pages:         u64, // The pages of the rings of its wirings; 0: half of its pages.
 }
 
 // The budget that a module asks for, as its source states it in the

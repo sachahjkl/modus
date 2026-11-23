@@ -108,3 +108,21 @@ budget_first_short_part_names_the_part :: proc(t: ^testing.T) {
 	testing.expect_value(t, part, Budget_Part.Pages)
 	testing.expect_value(t, budget_part_names[part], "pages")
 }
+
+// The wiring budget of an asker is a stated amount: its wiring pages, the
+// pages when it states more, half of its pages when it states none; and a
+// starter grants no more wiring pages than pages.
+@(test)
+the_wiring_pages_are_a_stated_amount :: proc(t: ^testing.T) {
+	testing.expect_value(t, wiring_pages_of_request({pages = 200, wiring_pages = 28}), u64(28))
+	testing.expect_value(t, wiring_pages_of_request({pages = 200, wiring_pages = 200}), u64(200))
+	testing.expect_value(t, wiring_pages_of_request({pages = 200, wiring_pages = 201}), u64(200))
+	testing.expect_value(t, wiring_pages_of_request({pages = 200}), u64(100))
+	testing.expect_value(t, wiring_pages_of_request({pages = 1}), u64(0))
+	testing.expect_value(t, wiring_pages_of_request({}), u64(0))
+	granted, _ := budget_decide({pages = 50000, wiring_pages = 40000}, {2048, 1, 1, 0}, {16384, 8, 32, 0})
+	testing.expect_value(t, granted.pages, u64(16384))
+	testing.expect_value(t, granted.wiring_pages, u64(16384))
+	kept, _ := budget_decide({pages = 300, wiring_pages = 28}, {2048, 1, 1, 0}, {16384, 8, 32, 0})
+	testing.expect_value(t, kept.wiring_pages, u64(28))
+}

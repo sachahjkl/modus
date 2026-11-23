@@ -328,6 +328,29 @@ arena_reset_then_reuse_commits_nothing :: proc(t: ^testing.T) {
 	testing.expect_value(t, fake.budget_pages, 100 - committed)
 }
 
+// A pop takes back the last bytes: the next push takes the same address,
+// the pages stay committed; a pop of more than the arena gave, and of one
+// byte more, change nothing; a pop of 0 is no change.
+@(test)
+arena_pop_takes_back_the_last_push :: proc(t: ^testing.T) {
+	fake := fake_reservation(64, 100)
+	_, _ = arena_push(&fake.arena, 100, 8)
+	last, _ := arena_push(&fake.arena, 64, 8)
+	committed := fake.committed_pages
+	used := fake.used_bytes
+	testing.expect(t, !arena_pop(&fake.arena, used + 1), "a pop past the arena is taken")
+	testing.expect_value(t, fake.used_bytes, used)
+	testing.expect(t, arena_pop(&fake.arena, 0), "a pop of 0 is refused")
+	testing.expect_value(t, fake.used_bytes, used)
+	testing.expect(t, arena_pop(&fake.arena, 64), "the pop of the last push is refused")
+	testing.expect_value(t, fake.used_bytes, used - 64)
+	testing.expect_value(t, fake.committed_pages, committed)
+	again, _ := arena_push(&fake.arena, 64, 8)
+	testing.expect_value(t, again, last)
+	testing.expect(t, arena_pop(&fake.arena, fake.used_bytes), "the pop of the whole arena is refused")
+	testing.expect_value(t, fake.used_bytes, 0)
+}
+
 // The size of a reservation: the edges 0 and 1, a page below and at a list
 // page, one past it, the largest object and past it.
 @(test)

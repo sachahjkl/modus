@@ -10,7 +10,9 @@ import "base:intrinsics"
 import "internal:collector/collector_core"
 import "modus:contract/date"
 import "modus:contract/errors"
+import "modus:contract/output"
 import "modus:contract/ring"
+import "modus:contract/start_list"
 import "modus:contract/value_kinds"
 import "modus:contract/wide_grants"
 import "modus:storage_port"
@@ -25,8 +27,20 @@ COLLECTOR_TABLE_PAGES :: 160
 // The root service widens the budget by wide_grants.SPACE_AUDIT_PAGES for
 // each audit that its start list declares (src/md/features/wide_grants.md,
 // "The starter pays for the audits").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 181, processes = 1, threads = 1}
+// Its wiring pages are the rings of the act records of a wide grant, which
+// the root service asks in its name: the pages of an asker, and for each act
+// ring its compartments, its end page and its description file. The root
+// service carves its wiring budget to that measure.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 181, processes = 1, threads = 1, wiring_pages = 28}
 #assert(181 == COLLECTOR_TABLE_PAGES + wide_grants.ACT_SPACES_RESERVED * wide_grants.SPACE_AUDIT_PAGES)
+#assert(28 == COLLECTOR_ACT_WIRING_PAGES)
+
+// The compartment of an act record in its ring, and the pages of one act
+// ring with its end page and its description file, as
+// start_list.wiring_pages_of_row counts them (a host test checks the two).
+COLLECTOR_ACT_COMPARTMENT :: (output.COMPARTMENT_WORD_SIZE + size_of(wide_grants.Act_Stream_Record) + output.COMPARTMENT_ALIGNMENT - 1) / output.COMPARTMENT_ALIGNMENT * output.COMPARTMENT_ALIGNMENT
+COLLECTOR_ACT_RING_PAGES :: 1 + (u64(wide_grants.ACT_RING_CAPACITY) * (COLLECTOR_ACT_COMPARTMENT + size_of(ring.Record)) + ring.PAGE_SIZE - 1) / ring.PAGE_SIZE + 1 + output.DESCRIPTION_FILE_BYTES_MOST / ring.PAGE_SIZE
+COLLECTOR_ACT_WIRING_PAGES :: start_list.WIRING_PAGES_OF_THE_ASKER + u64(wide_grants.ACT_SPACES_RESERVED) * COLLECTOR_ACT_RING_PAGES
 
 // Maximum act records returned in one shared-region query response.
 QUERY_STAGING_CAPACITY :: 64
@@ -639,6 +653,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// of the spaces is then refused, so no audit space lives in memory alone.
 	store_port, store_open := storage_port.bind(ctx)
 	memory_port, windows := space_memory_reserve() // space_window_memory.odin
+	source_links.port = link_tables_port() // link_tables.odin
 	wide_grants.space_store_init(&space_service.store, principal_id, store_port, memory_port)
 	system.log_fact(.Info, Space_Windows_Paid{windows = u64(windows)})
 	closed_date_page = date.page_of(ctx)
@@ -698,7 +713,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		not_waited := sources_wait(&wait)
 		closed_deadline := store_open ? closed_spaces_pass(now_ms) : system.WAIT_FOREVER // spaces.odin
 		if manager_state.counters.active_grants > 0 || pending || not_waited || grant_ended_pending.grant_serial != 0 {
-			system.wait_end(&wait, min(now_ms + PENDING_RETRY_MILLISECONDS, closed_deadline))
+			retry := min(now_ms + PENDING_RETRY_MILLISECONDS, closed_deadline)
+			woke := system.wait_end(&wait, retry)
+			if not_waited && woke >= retry {
+				poll_wakes_count() // sources.odin
+			}
 		} else if closed_deadline != system.WAIT_FOREVER {
 			system.wait_end(&wait, closed_deadline)
 		} else {

@@ -11,12 +11,16 @@ import "base:runtime"
 WIRING_HEAP_ENTRIES_MOST :: 1024
 
 // The tables of one state on the heap, and the entries that the budget of
-// the test pays for each.
+// the test pays for each; asker_paid: the wiring entries that the wiring
+// budget of each asker pays (0: no bound of its own), by its index.
 Wiring_Heap_Tables :: struct {
 	processes:      ^[WIRING_HEAP_ENTRIES_MOST]Process_Entry,
 	wirings:        ^[WIRING_HEAP_ENTRIES_MOST]Wiring_Entry,
 	processes_paid: int,
 	wirings_paid:   int,
+	asker_paid:     [WIRING_HEAP_ENTRIES_MOST]int,
+	asker_charged:  [WIRING_HEAP_ENTRIES_MOST]int,
+	wirings_grown:  int,
 }
 
 // wiring_tables_heap gives tables on the heap with a budget of
@@ -35,11 +39,18 @@ wiring_tables_heap :: proc "contextless" (processes_paid: int = 256, wirings_pai
 		}
 		return tables.processes[:count]
 	}
-	wirings :: proc "contextless" (user: rawptr, count: int) -> []Wiring_Entry {
+	wirings :: proc "contextless" (user: rawptr, count: int, payer: int) -> []Wiring_Entry {
 		tables := (^Wiring_Heap_Tables)(user)
-		if count > tables.wirings_paid {
+		if count > tables.wirings_paid || payer < 0 || payer >= WIRING_HEAP_ENTRIES_MOST {
 			return nil
 		}
+		// The entries past the table are charged to the asker of the wiring.
+		added := count - tables.wirings_grown
+		if tables.asker_paid[payer] > 0 && tables.asker_charged[payer] + added > tables.asker_paid[payer] {
+			return nil
+		}
+		tables.asker_charged[payer] += added
+		tables.wirings_grown = count
 		return tables.wirings[:count]
 	}
 	return {user = tables, processes_grow = processes, wirings_grow = wirings}, tables

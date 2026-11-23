@@ -112,6 +112,9 @@ space_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, refusal: 
 		return errors.fail(error, ERROR_FULL, .Full, .Records, argument, 0, 0, found)
 	case .Space_Limit_Reached:
 		return errors.fail(error, ERROR_SPACE, .Over_Limit, .Records, argument, 0, 0, found)
+	case .Act_Space:
+		// The act spaces of a wide grant open only with the grant.
+		return errors.fail(error, ERROR_NOT_PRINCIPAL, .No_Grant, .Records, argument, 0, 0, found)
 	case .Space_Removed:
 		// The space closed when its record size changed, and its retention
 		// ended: its records are removed (src/md/features/wide_grants.md,
@@ -185,12 +188,12 @@ space_open_for :: proc "contextless" (service: ^Space_Service, connection: ^syst
 	if !source_ok {
 		return source_failure
 	}
-	if allowed := wide_grants.space_open_allowed(&service.store, source_name, &reader); allowed != .None {
-		return space_refusal_fail(error, allowed, 1)
-	}
 	output_name, output_failure, output_ok := name_copy(output, service.copied_output_name[:], 2, error)
 	if !output_ok {
 		return output_failure
+	}
+	if allowed := wide_grants.space_open_allowed(&service.store, source_name, output_name, &reader); allowed != .None {
+		return space_refusal_fail(error, allowed, allowed == .Act_Space ? 2 : 1)
 	}
 	if terms == nil {
 		return errors.fail(error, ERROR_SPACE, .Bad_Address, .None, 3)

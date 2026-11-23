@@ -29,14 +29,19 @@ CONNECTED_ENDS_OF_AN_ASKER_MOST :: 4
 // the root service.
 LIST_PAGE_ASKERS_MOST :: 4
 
-// Where the tables of the wiring service grow: in arenas of its budget on a
-// machine, on the heap in a host test. Each gives the table with count
-// entries at least, at the same address, the entries before kept, zeroed
-// past them; nil when the budget does not pay them.
+// Where the tables of the wiring service grow: in arenas on a machine, on
+// the heap in a host test. Each gives the table with count entries at
+// least, at the same address, the entries before kept, zeroed past them;
+// nil when the budget does not pay them. The processes are paid by the
+// budget of the service: the root service registers one for each process
+// with a record stream, which the slots of the machine bound. The entries
+// of the wirings are paid by the wiring budget of the asker whose wiring
+// needs them (payer, its index in the processes), so one asker fills no
+// more of the table than its own budget pays.
 Wiring_Tables_Port :: struct {
 	user:           rawptr,
 	processes_grow: proc "contextless" (user: rawptr, count: int) -> []Process_Entry,
-	wirings_grow:   proc "contextless" (user: rawptr, count: int) -> []Wiring_Entry,
+	wirings_grow:   proc "contextless" (user: rawptr, count: int, payer: int) -> []Wiring_Entry,
 }
 
 // The generic record inputs of one process whose fixed type is kept until
@@ -239,16 +244,17 @@ processes_ensure :: proc "contextless" (s: ^State, count: int) -> bool {
 	return true
 }
 
-// wirings_ensure makes the table of the wirings hold count entries.
-// false: the budget does not pay them, and nothing changed.
-wirings_ensure :: proc "contextless" (s: ^State, count: int) -> bool {
+// wirings_ensure makes the table of the wirings hold count entries, the
+// new ones paid by the wiring budget of the asker payer. false: that budget
+// does not pay them, and nothing changed.
+wirings_ensure :: proc "contextless" (s: ^State, count: int, payer: int) -> bool {
 	if len(s.wirings) >= count {
 		return true
 	}
 	if s.tables.wirings_grow == nil {
 		return false
 	}
-	grown := s.tables.wirings_grow(s.tables.user, count)
+	grown := s.tables.wirings_grow(s.tables.user, count, payer)
 	if len(grown) < count || (len(s.wirings) > 0 && raw_data(grown) != raw_data(s.wirings)) {
 		return false
 	}
@@ -883,7 +889,7 @@ check_limits :: proc "contextless" (s: ^State, work: ^Plan_Work, ring_room: Ring
 	// budget of the asker pays the rings, and the table grows here for each
 	// row of the list before any of them takes a place, so an allocation
 	// never fails in the middle of a plan.
-	if !wirings_ensure(s, s.wirings_running + rows) {
+	if !wirings_ensure(s, s.wirings_running + rows, work.asker_index) {
 		return .No_Slot, make_error(op_code, .Full, .Wirings, 0, i64(s.wirings_running + rows), i64(len(s.wirings)))
 	}
 	for number in 1 ..= work.list.row_count {

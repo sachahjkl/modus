@@ -10,6 +10,7 @@ import "modus:contract/isolated"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/wide_grants"
 import "modus:system"
+import "modus:contract/start_list"
 
 // The test runs on the host: the module links src/library/modus/system,
 // whose call of an export is an entry of the machine that the host does
@@ -656,4 +657,43 @@ wide_grant_authority_key_and_act_wiring_in_collector :: proc(t: ^testing.T) {
 		target_window_id = 101,
 	})
 	testing.expect_value(t, post_revoke, wide_grants.Act_Wiring_Refusal.Grant_Revoked)
+}
+
+// The export space_open opens no act space of a wide grant: a caller that
+// acts for the principal, with the terms of the grant or with another
+// record size, is refused with No_Grant and the value Act_Space, and the
+// act space that the grant opened stays open with its records.
+@(test)
+the_export_opens_no_act_space :: proc(t: ^testing.T) {
+	fixture := fixture_make()
+	defer free(fixture)
+	service := &fixture.service
+	act, opened := wide_grants.space_open(&service.store, transmute([]u8)string("remote"), transmute([]u8)string(wide_grants.ACT_OUTPUT_NAME), wide_grants.act_audit_space_terms())
+	testing.expect_value(t, opened, wide_grants.Space_Refusal.None)
+	console := connection_of(PRINCIPAL, true, "console")
+	for record_size in ([?]i64{i64(size_of(wide_grants.Act_Stream_Record)), 8}) {
+		source_text, output_text := "remote", wide_grants.ACT_OUTPUT_NAME
+		terms := wide_grants.act_audit_space_terms()
+		terms.record_size = record_size
+		error: errors.Error_Record
+		expect_refusal(t, space_open_for(service, &console, &source_text, &output_text, &terms, &error), ERROR_NOT_PRINCIPAL, error, .No_Grant, .Records)
+		testing.expect_value(t, error.found, i64(wide_grants.Space_Refusal.Act_Space))
+		testing.expect_value(t, error.argument, i64(2))
+	}
+	space := wide_grants.space_of(&service.store, act)
+	testing.expect(t, space != nil && !space.closed && space.ring != nil, "the act space closed")
+	testing.expect_value(t, wide_grants.space_count(&service.store), 1)
+}
+
+// The wiring pages that the collector states are the pages of its act
+// rings as the start list counts the pages of a wiring row, and the root
+// service carves them whatever the collector spent before: the rule of the
+// root on a request that states them, one that states more than its pages,
+// and one that states none.
+@(test)
+the_collector_states_the_pages_of_its_act_rings :: proc(t: ^testing.T) {
+	row := start_list.wiring_pages_of_row(wide_grants.ACT_RING_CAPACITY, size_of(wide_grants.Act_Stream_Record))
+	testing.expect_value(t, COLLECTOR_ACT_RING_PAGES, row)
+	testing.expect_value(t, COLLECTOR_ACT_WIRING_PAGES, start_list.WIRING_PAGES_OF_THE_ASKER + u64(wide_grants.ACT_SPACES_RESERVED) * row)
+	testing.expect_value(t, MODULE_BUDGET.wiring_pages, COLLECTOR_ACT_WIRING_PAGES)
 }

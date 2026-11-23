@@ -59,8 +59,10 @@ FORWARD_QUEUE_PER_SPACE_LIMIT :: 4
 // The records that wait to be forwarded at most, across the spaces: the
 // part of each source that the collector reads at once.
 FORWARD_QUEUE_CAPACITY :: 64
-// Only a space that a source feeds forwards: the part of each source fits.
-#assert(FORWARD_QUEUE_PER_SPACE_LIMIT * SOURCE_LINKS_MOST <= FORWARD_QUEUE_CAPACITY)
+// Only a space that a source feeds forwards: the part of each fits for the
+// sources that forward at once; past them the queue holds a record, which
+// waits and is not lost.
+#assert(FORWARD_QUEUE_PER_SPACE_LIMIT * FORWARD_SOURCES_SHARED <= FORWARD_QUEUE_CAPACITY)
 
 // The bytes of the name of a source process and of a record output.
 SPACE_NAME_BYTES :: 32
@@ -99,6 +101,7 @@ Space_Refusal :: enum u8 {
 	Memory_Refused      = 20, // The budget of the collector did not pay the window of the space: nothing changed.
 	Space_Closed        = 21, // The space closed when its record size changed: it keeps its records and takes no more.
 	Space_Removed       = 22, // The space closed, and its retention ended: its records are removed, or being removed.
+	Act_Space           = 23, // The pair names an act space of a wide grant, which only the grant opens (act_wiring_attach).
 }
 
 // The window of an open space: the ring of its newest records in memory,
@@ -959,14 +962,22 @@ space_stats :: proc "contextless" (store: ^Space_Store, space_number: u32, reade
 }
 
 // space_open_allowed decides whether reader sets the terms of a space of
-// source: a reader that acts for the principal and is not that source, since
-// the terms of an audit are the choice of the starter, not of its subject.
-space_open_allowed :: proc "contextless" (store: ^Space_Store, source: []u8, reader: ^Space_Reader) -> Space_Refusal {
+// source and output: a reader that acts for the principal and is not that
+// source, since the terms of an audit are the choice of the starter, not of
+// its subject, and a pair that is no act space of a wide grant, which only
+// act_wiring_attach opens.
+space_open_allowed :: proc "contextless" (store: ^Space_Store, source: []u8, output: []u8, reader: ^Space_Reader) -> Space_Refusal {
 	if reader == nil || !reader.acts_for_principal || reader.principal != store.principal {
 		return .Not_Principal
 	}
 	if name_field_equal(&reader.name, source) {
 		return .Own_Space
+	}
+	// The act spaces of a wide grant open only with the grant: a caller
+	// that opened one with another record size would close the audit of
+	// the grant.
+	if space_names_act(source, output) {
+		return .Act_Space
 	}
 	return .None
 }

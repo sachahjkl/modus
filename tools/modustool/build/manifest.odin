@@ -72,6 +72,7 @@ Manifest_Budget_Part :: enum {
 	Threads,
 	Window_Width,
 	Window_Height,
+	Wiring_Pages,
 }
 
 @(private = "file")
@@ -81,6 +82,7 @@ MANIFEST_BUDGET_PART_NAMES := [Manifest_Budget_Part]string {
 	.Threads              = "threads",
 	.Window_Width         = "window_width",
 	.Window_Height        = "window_height",
+	.Wiring_Pages         = "wiring_pages",
 }
 
 @(private = "file")
@@ -458,6 +460,8 @@ manifest_parse_budget :: proc(line_number: int, value: string, budget: ^Budget_D
 			budget.parts.processes = parsed
 		case .Threads:
 			budget.parts.threads = parsed
+		case .Wiring_Pages:
+			budget.parts.wiring_pages = parsed
 		case .Window_Width:
 			if parsed > BUDGET_WINDOW_PART_LIMIT {
 				return fmt.tprintf("line %d: window_width %d exceeds the limit %d", line_number, parsed, BUDGET_WINDOW_PART_LIMIT)

@@ -28,6 +28,18 @@ import "modus:contract/ring"
 // again at this period.
 READ_POLL_MILLISECONDS :: u64(10)
 
+// The wakes of a read at its poll period: a measure of the poll that the
+// wait room of the kernel removes (stream_read_poll_wakes).
+@(private = "package")
+read_poll_wakes: u64
+
+// stream_read_poll_wakes gives the wakes of the reads of this process at
+// their poll period, past the rings that one wait holds: 0 while each read
+// waits on each of its rings.
+stream_read_poll_wakes :: proc "contextless" () -> u64 {
+	return intrinsics.atomic_load(&read_poll_wakes)
+}
+
 // One end that the process holds. Free when command is None.
 @(private = "package")
 Stream_End :: struct {
@@ -177,7 +189,7 @@ stream_ends_grow :: proc "contextless" () -> bool {
 	if tag_status != .Ok {
 		// The place of the end stays in the arena, free: the next growth
 		// counts it once its tag is paid.
-		table.ends.used_bytes -= size_of(Stream_End)
+		_ = arena_pop(&table.ends, size_of(Stream_End))
 		return false
 	}
 	intrinsics.mem_zero(end_place, size_of(Stream_End))
@@ -186,6 +198,13 @@ stream_ends_grow :: proc "contextless" () -> bool {
 	stream_ends = ([^]Stream_End)(table.ends.base)[:table.count]
 	closed_tags = ([^]u32)(table.tags.base)[:table.count]
 	return true
+}
+
+// stream_end_places gives the places of the table of the ends of this
+// process: the most rings that input_tags or output_pairs can list, so a
+// caller sizes its list of tags from it.
+stream_end_places :: proc "contextless" () -> int {
+	return len(stream_ends)
 }
 
 // stream_end_free_place gives a free place of the table of the ends, and
@@ -1757,8 +1776,12 @@ stream_read :: proc "contextless" (command: output.Wiring_Command, index: u32, t
 		if unwaited {
 			wait_until = min(deadline, time() + READ_POLL_MILLISECONDS)
 		}
-		if wait_end(&waiting, wait_until) >= deadline {
+		woke := wait_end(&waiting, wait_until)
+		if woke >= deadline {
 			return {}, .No_Record
+		}
+		if unwaited && woke >= wait_until {
+			intrinsics.atomic_add(&read_poll_wakes, 1)
 		}
 	}
 }

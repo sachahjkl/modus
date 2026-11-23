@@ -23,6 +23,15 @@ Space_Windows_Paid :: struct {
 	windows: u64,
 }
 
+// The wakes of the poll of rings that one wait cannot hold, at each power
+// of two: until the wait room of the kernel, a reader of more rings than a
+// wait holds reads them again on a period.
+@(log_fact = "collector: {wakes} wakes of its loop and {read_wakes} of its reads to read rings that one wait cannot hold")
+Poll_Wakes_Counted :: struct {
+	wakes:      u64,
+	read_wakes: u64,
+}
+
 // A pass removed closed audit spaces whose retention ended.
 @(log_fact = "collector: removed {spaces} closed audit spaces whose retention ended")
 Closed_Spaces_Removed :: struct {

@@ -73,3 +73,27 @@ space_window_heap_port :: proc "contextless" () -> Space_Memory_Port {
 	port, _ := space_memory_heap()
 	return port
 }
+
+// The links of a collector on the heap, and the links that the budget of
+// the test pays.
+Links_Heap :: struct {
+	links: ^[SPACE_HEAP_PLACES_MOST]Source_Link,
+	held:  ^[SPACE_HEAP_PLACES_MOST]u32,
+	paid:  int,
+}
+
+// source_links_heap gives links on the heap with a budget of paid links.
+source_links_heap :: proc "contextless" (paid: int = 256) -> (links: Source_Links, memory: ^Links_Heap) {
+	memory = (^Links_Heap)(runtime.heap_alloc(size_of(Links_Heap)))
+	memory.links = (^[SPACE_HEAP_PLACES_MOST]Source_Link)(runtime.heap_alloc(size_of([SPACE_HEAP_PLACES_MOST]Source_Link)))
+	memory.held = (^[SPACE_HEAP_PLACES_MOST]u32)(runtime.heap_alloc(size_of([SPACE_HEAP_PLACES_MOST]u32)))
+	memory.paid = min(paid, SPACE_HEAP_PLACES_MOST)
+	grow :: proc "contextless" (user: rawptr, count: int) -> (links: []Source_Link, held: []u32) {
+		memory := (^Links_Heap)(user)
+		if count > memory.paid {
+			return nil, nil
+		}
+		return memory.links[:count], memory.held[:count]
+	}
+	return {port = {user = memory, grow = grow}}, memory
+}

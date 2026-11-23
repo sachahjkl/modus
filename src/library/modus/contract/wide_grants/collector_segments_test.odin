@@ -367,6 +367,41 @@ a_closed_audit_space_ends_after_its_retention :: proc(t: ^testing.T) {
 	}
 }
 
+// A closed space whose segments rotated out is removed whole: no slot of its
+// place keeps a segment, the rotated ones too, so a new space in the place
+// takes its slots from 0 and the store starts again; the slots that a
+// rotation left and a removal missed would refuse that start.
+@(test)
+a_removed_rotated_space_leaves_no_slot :: proc(t: ^testing.T) {
+	fixture := new(Fixture)
+	defer free(fixture)
+	restart(fixture)
+	old, _ := space_open(&fixture.store, name_bytes("server"), name_bytes("orders"), terms_audit(SPACE_AUDIT_BOUND_MOST))
+	append_records(t, &fixture.store, old, 0, 6 * SPACE_SEGMENT_RECORDS + 3)
+	// The first four segments rotate out: their slots keep their objects.
+	testing.expect_value(t, space_rotate_before(&fixture.store, old, 4 * SPACE_SEGMENT_RECORDS), Space_Refusal.None)
+	testing.expect(t, object_of(fixture, old, 0) != nil, "a rotation removed a segment")
+	_, _ = space_open(&fixture.store, name_bytes("server"), name_bytes("orders"), terms_audit(SPACE_AUDIT_BOUND_MOST, .Keeps, 16))
+	removed, refusal := space_closed_pass(&fixture.store, 1000, true, 0)
+	testing.expect_value(t, refusal, Space_Refusal.None)
+	removed, refusal = space_closed_pass(&fixture.store, 1000, true, 0)
+	testing.expect_value(t, refusal, Space_Refusal.None)
+	testing.expect_value(t, removed, 1)
+	for slot in u32(0) ..< SPACE_SEGMENT_SLOTS {
+		testing.expectf(t, object_of(fixture, old, slot) == nil, "the slot %d of the removed place keeps a segment", slot)
+	}
+	// A new space in the place, then a restart.
+	taken, taken_refusal := space_open(&fixture.store, name_bytes("other"), name_bytes("orders"), terms_audit(SPACE_AUDIT_BOUND_MOST))
+	testing.expect_value(t, taken_refusal, Space_Refusal.None)
+	testing.expect_value(t, taken, old)
+	append_records(t, &fixture.store, taken, 0, 2 * SPACE_SEGMENT_RECORDS + 1)
+	restart(fixture)
+	testing.expect_value(t, space_store_ready(&fixture.store), Space_Refusal.None)
+	testing.expect_value(t, fixture.store.spaces[taken - 1].next_serial, u64(2 * SPACE_SEGMENT_RECORDS + 1))
+	verified, _ := space_verify(&fixture.store, taken)
+	testing.expect_value(t, verified, Space_Refusal.None)
+}
+
 // A retention of 0, or below it, ends at the first dated pass at or after
 // the close, never before it.
 @(test)

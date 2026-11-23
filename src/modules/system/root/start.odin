@@ -658,7 +658,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	}
 	// The start policy pays the wirings of its list: the header gives their
 	// pages, and this service adds them (start_policy.odin).
-	if start_policy_starting && start_list_wiring_pages > 0 {
+	if is_role_holder(name, .Start_Policy) && start_list_wiring_pages > 0 {
 		process_budget.pages = min(process_budget.pages + start_list_wiring_pages, module.LARGEST_BUDGET_PAGES)
 	}
 	status: system.Status

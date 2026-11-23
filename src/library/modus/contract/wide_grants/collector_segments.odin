@@ -1094,7 +1094,7 @@ space_store_ready :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 		// The budget pays fewer windows than the open spaces of the index:
 		// the next step reads again.
 		return .Memory_Refused
-	case .None, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Space_Full, .Forward_Full, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Bad_Limit, .Store_Failed, .Space_Held, .Space_Closed, .Space_Removed:
+	case .None, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Space_Full, .Forward_Full, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Bad_Limit, .Store_Failed, .Space_Held, .Space_Closed, .Space_Removed, .Act_Space:
 	}
 	return .Store_Failed
 }
@@ -1141,7 +1141,7 @@ space_closed_pass :: proc "contextless" (store: ^Space_Store, date_ms: i64, date
 			}
 			dated = false
 		}
-		if refusal = space_objects_remove(store, u32(index + 1), &space); refusal != .None {
+		if refusal = space_objects_remove(store, u32(index + 1)); refusal != .None {
 			return removed, refusal
 		}
 		space = {place_removed = true}
@@ -1158,20 +1158,19 @@ space_closed_pass :: proc "contextless" (store: ^Space_Store, date_ms: i64, date
 	return removed, .None
 }
 
-// space_objects_remove removes the segments of the kept records of a space
-// and its slot map. An object that is absent was removed before.
+// space_objects_remove removes each slot of the place of a space and its
+// slot map: the slots of the kept records, and those of segments that
+// rotated out, which a rotation leaves in their slot until a later segment
+// takes it. A new space in the place then finds no slot taken. An object
+// that is absent was removed before.
 @(private = "file")
-space_objects_remove :: proc "contextless" (store: ^Space_Store, space_number: u32, space: ^Collector_Space) -> Space_Refusal {
+space_objects_remove :: proc "contextless" (store: ^Space_Store, space_number: u32) -> Space_Refusal {
 	name_place: [SEGMENT_OBJECT_NAME_BYTES]u8
-	if space.next_serial > space.kept_first_serial {
-		first := space.kept_first_serial / SPACE_SEGMENT_RECORDS
-		last := (space.next_serial - 1) / SPACE_SEGMENT_RECORDS
-		for segment in first ..= min(last, first + SPACE_SEGMENT_SLOTS - 1) {
-			switch pr.private_store_remove(&store.store_port, segment_object_name(&name_place, space_number, segment)) {
-			case .Ok, .Absent:
-			case .Too_Large, .Failed:
-				return .Store_Failed
-			}
+	for slot in u64(0) ..< SPACE_SEGMENT_SLOTS {
+		switch pr.private_store_remove(&store.store_port, segment_object_name(&name_place, space_number, slot)) {
+		case .Ok, .Absent:
+		case .Too_Large, .Failed:
+			return .Store_Failed
 		}
 	}
 	switch pr.private_store_remove(&store.store_port, slot_map_object_name(&name_place, space_number)) {
@@ -1247,7 +1246,7 @@ space_segments_verify :: proc "contextless" (store: ^Space_Store, space_number: 
 	case .None:
 	case .Store_Failed:
 		return .Store_Failed, 0
-	case .Store_Damaged, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Forward_Full, .Space_Full, .Bad_Limit, .Space_Held, .Memory_Refused, .Space_Closed, .Space_Removed:
+	case .Store_Damaged, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Forward_Full, .Space_Full, .Bad_Limit, .Space_Held, .Memory_Refused, .Space_Closed, .Space_Removed, .Act_Space:
 		return .Chain_Broken, after * SPACE_SEGMENT_RECORDS
 	}
 	return .None, 0

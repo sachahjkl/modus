@@ -438,7 +438,7 @@ test_a_record_after_revocation_is_refused_and_kept_nowhere :: proc(t: ^testing.T
 		{act_test_remote_record(1, 99), .Clock_Went_Back},
 	}
 	for case_of, index in broken {
-		links: Source_Links
+		links, _ := source_links_heap()
 		link := act_test_remote_link(t, &links, store, 5, ACT_TEST_PLAN.bound_records)
 		record := case_of.record
 		step, act_refusal, _ := act_link_keep(&router, store, link, record[:], .Remote_Service, 110)
@@ -449,7 +449,7 @@ test_a_record_after_revocation_is_refused_and_kept_nowhere :: proc(t: ^testing.T
 	}
 	// A record of a wrong size never decodes.
 	{
-		links: Source_Links
+		links, _ := source_links_heap()
 		link := act_test_remote_link(t, &links, store, 5, ACT_TEST_PLAN.bound_records)
 		step, act_refusal, _ := act_link_keep(&router, store, link, short[:size_of(Act_Stream_Record) - 1], .Remote_Service, 110)
 		testing.expect_value(t, step, Link_Step.Refused)
@@ -457,7 +457,7 @@ test_a_record_after_revocation_is_refused_and_kept_nowhere :: proc(t: ^testing.T
 		testing.expect_value(t, act_test_kept(store, link.space), u64(0))
 	}
 
-	links: Source_Links
+	links, _ := source_links_heap()
 	link := act_test_remote_link(t, &links, store, 5, ACT_TEST_PLAN.bound_records)
 	kept := act_test_remote_record(1, 110)
 	step, act_refusal, _ := act_link_keep(&router, store, link, kept[:], .Remote_Service, 110)
@@ -519,7 +519,7 @@ test_a_grant_keeps_more_records_than_memory :: proc(t: ^testing.T) {
 	router: Grant_Act_Router
 	testing.expect_value(t, act_wiring_attach(&router, store, 1, 0, {.View_Screen, .Send_Input}, 60 * 60_000, 100), Act_Wiring_Refusal.None)
 	testing.expect(t, act_grant_allowance(ACT_SPACE_PLAN, 60 * 60_000) >= 100)
-	links: Source_Links
+	links, _ := source_links_heap()
 	link := act_test_remote_link(t, &links, store, 5, ACT_SPACE_PLAN.bound_records)
 	for index in u64(0) ..< 100 {
 		record := act_test_remote_record(1, 110 + index)
@@ -590,7 +590,7 @@ test_the_seventeenth_grant_rotates_the_oldest_out :: proc(t: ^testing.T) {
 	time := u64(1000)
 	for grant in u64(1) ..= 3 {
 		testing.expect_value(t, act_wiring_attach(&small_router, rotating, grant, 0, {.View_Screen}, 16 * 60_000, time, small), Act_Wiring_Refusal.None)
-		links: Source_Links
+		links, _ := source_links_heap()
 		link := act_test_remote_link(t, &links, rotating, u32(grant), small.bound_records)
 		for index in u64(0) ..< 16 {
 			record := act_test_remote_record(grant, time + 1 + index)
@@ -638,7 +638,7 @@ test_a_replaced_grant_closes_each_of_its_rings :: proc(t: ^testing.T) {
 	defer free(memory)
 	router: Grant_Act_Router
 	testing.expect_value(t, act_wiring_attach(&router, store, 1, 0, {.View_Screen, .Send_Input}, 60_000, 100, ACT_TEST_PLAN), Act_Wiring_Refusal.None)
-	links: Source_Links
+	links, _ := source_links_heap()
 	link := act_test_remote_link(t, &links, store, 5, ACT_TEST_PLAN.bound_records)
 	closed: [4]u32
 	// A grant that holds closes nothing.
@@ -671,7 +671,7 @@ test_a_full_act_space_never_blocks_the_end_of_its_grant :: proc(t: ^testing.T) {
 	defer free(memory)
 	router: Grant_Act_Router
 	testing.expect_value(t, act_wiring_attach(&router, store, 1, 0, {.View_Screen, .Send_Input}, 60_000, 100, ACT_TEST_PLAN), Act_Wiring_Refusal.None)
-	links: Source_Links
+	links, _ := source_links_heap()
 	link := act_test_remote_link(t, &links, store, 5, ACT_TEST_PLAN.bound_records)
 	closed: [4]u32
 	reserve_at := u64(ACT_TEST_PLAN.bound_records) - u64(ACT_RING_CAPACITY)
@@ -712,7 +712,7 @@ test_a_full_act_space_never_blocks_the_end_of_its_grant :: proc(t: ^testing.T) {
 
 	// A ring of another writer, read after the end: its record of before
 	// the end is kept, one of after the end is refused.
-	display_links: Source_Links
+	display_links, _ := source_links_heap()
 	display_link, display_open := link_open(&display_links, store, 6, transmute([]u8)string("compositor"), transmute([]u8)string(ACT_OUTPUT_NAME), act_audit_space_terms(ACT_TEST_PLAN.bound_records), size_of(Act_Stream_Record))
 	testing.expect_value(t, display_open, Space_Refusal.None)
 	before_end := act_test_remote_record(1, 195, .Trusted_Display, .Target_Window_Changed)
@@ -725,3 +725,50 @@ test_a_full_act_space_never_blocks_the_end_of_its_grant :: proc(t: ^testing.T) {
 	testing.expect_value(t, space_kept_count(space_of(store, display_link.space)), u64(1))
 }
 
+// A wide grant beside 20 audited servers: the grant opens its three act
+// spaces, the three rings of its writers and the 20 rings of the servers
+// take 23 links, past the 16 of a fixed table; a budget that pays 22 links
+// refuses the 23rd with Memory_Refused and opens no space for it.
+@(test)
+test_twenty_audited_servers_beside_a_wide_grant :: proc(t: ^testing.T) {
+	for paid in ([?]int{23, 22}) {
+		store := new(Space_Store)
+		defer free(store)
+		memory := act_test_store_bind(store, 0)
+		defer free(memory)
+		router: Grant_Act_Router
+		testing.expect_value(t, act_wiring_attach(&router, store, 1, 0, {.View_Screen, .Send_Input}, 60_000, 100, ACT_TEST_PLAN), Act_Wiring_Refusal.None)
+		links, _ := source_links_heap(paid)
+		tag := u32(1)
+		for writer in ACT_PRODUCERS_WIRED {
+			_, refusal := link_open(&links, store, tag, transmute([]u8)ACT_PRODUCER_NAMES[writer], transmute([]u8)string(ACT_OUTPUT_NAME), act_audit_space_terms(ACT_TEST_PLAN.bound_records), size_of(Act_Stream_Record))
+			testing.expect_value(t, refusal, Space_Refusal.None)
+			tag += 1
+		}
+		name: [2]u8 = {'s', 'a'}
+		for server in 0 ..< 20 {
+			name[1] = 'a' + u8(server)
+			terms := Space_Terms{kind_word = i64(Collector_Space_Kind.Audit), bound_records = 64, forwarding_word = i64(Space_Forwarding.Keeps), record_size = 8}
+			_, refusal := link_open(&links, store, tag, name[:], transmute([]u8)string("orders"), terms, 8)
+			tag += 1
+			if server == 19 && paid == 22 {
+				testing.expect_value(t, refusal, Space_Refusal.Memory_Refused)
+				testing.expect_value(t, space_count(store), 3 + 19)
+				testing.expect_value(t, len(links.links), 22)
+				continue
+			}
+			testing.expectf(t, refusal == .None, "the server %d with %d links paid: %v", server, paid, refusal)
+		}
+		if paid == 23 {
+			testing.expect_value(t, len(links.links), 23)
+			testing.expect_value(t, space_count(store), 23)
+			active := 0
+			for &link in links.links {
+				if link.active {
+					active += 1
+				}
+			}
+			testing.expect_value(t, active, 23)
+		}
+	}
+}

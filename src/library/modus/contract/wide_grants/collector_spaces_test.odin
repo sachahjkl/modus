@@ -722,12 +722,22 @@ space_open_allowed_refuses_the_source_and_a_stranger :: proc(t: ^testing.T) {
 	memory := memory_store_bind(store, 5)
 	defer free(memory)
 	source := principal_reader(5, "server")
-	testing.expect_value(t, space_open_allowed(store, text("server"), &source), Space_Refusal.Own_Space)
-	testing.expect_value(t, space_open_allowed(store, text("shop"), &source), Space_Refusal.None)
+	testing.expect_value(t, space_open_allowed(store, text("server"), text("orders"), &source), Space_Refusal.Own_Space)
+	testing.expect_value(t, space_open_allowed(store, text("shop"), text("orders"), &source), Space_Refusal.None)
 	stranger := principal_reader(6, "console")
-	testing.expect_value(t, space_open_allowed(store, text("server"), &stranger), Space_Refusal.Not_Principal)
-	testing.expect_value(t, space_open_allowed(store, text("server"), nil), Space_Refusal.Not_Principal)
+	testing.expect_value(t, space_open_allowed(store, text("server"), text("orders"), &stranger), Space_Refusal.Not_Principal)
+	testing.expect_value(t, space_open_allowed(store, text("server"), text("orders"), nil), Space_Refusal.Not_Principal)
 	// A name one byte longer than the source is another process.
 	longer := principal_reader(5, "server2")
-	testing.expect_value(t, space_open_allowed(store, text("server"), &longer), Space_Refusal.None)
+	testing.expect_value(t, space_open_allowed(store, text("server"), text("orders"), &longer), Space_Refusal.None)
+	// The act pair of each wired writer is refused, even to the principal;
+	// the output acts of another source, or another output of a writer, is
+	// a space as any other.
+	console := principal_reader(5, "console")
+	for writer in ([?]string{"root", "remote", "compositor"}) {
+		testing.expect_value(t, space_open_allowed(store, text(writer), text(ACT_OUTPUT_NAME), &console), Space_Refusal.Act_Space)
+	}
+	testing.expect_value(t, space_open_allowed(store, text("shop"), text(ACT_OUTPUT_NAME), &console), Space_Refusal.None)
+	testing.expect_value(t, space_open_allowed(store, text("remote"), text("calls"), &console), Space_Refusal.None)
+	testing.expect_value(t, space_open_allowed(store, text("remote"), text("acts2"), &console), Space_Refusal.None)
 }

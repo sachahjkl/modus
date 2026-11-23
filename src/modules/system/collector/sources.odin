@@ -39,8 +39,7 @@ COLLECTOR_WAIT_WORDS_KEPT :: 16
 // word that the loop can wait on.
 PENDING_RETRY_MILLISECONDS :: 1000
 
-source_links: wide_grants.Source_Links
-source_tags: [wide_grants.SOURCE_LINKS_MOST]u32
+source_links: wide_grants.Source_Links // Its port: link_tables_port, set at the start.
 source_record: [module.RECORD_SIZE_LIMIT]u8
 
 // forward_write is the write of the port of the pairs: one record into the
@@ -200,6 +199,7 @@ source_read :: proc "contextless" (link: ^wide_grants.Source_Link) {
 // that ended and whose pair is not settled): the loop then tries again
 // after PENDING_RETRY_MILLISECONDS.
 sources_pass :: proc "contextless" () -> (pending: bool) {
+	link_tables_follow_the_ends() // link_tables.odin
 	act_sources_of_ended_grant_close()
 	count := system.input_tags(&sources, source_tags[:])
 	for tag in source_tags[:count] {
@@ -235,9 +235,8 @@ sources_pass :: proc "contextless" () -> (pending: bool) {
 // one that came after the end, is kept nowhere
 // (wide_grants.act_links_close_ended).
 act_sources_of_ended_grant_close :: proc "contextless" () {
-	closed: [wide_grants.SOURCE_LINKS_MOST]u32
-	closed_count := wide_grants.act_links_close_ended(&grant_act_router, &source_links, closed[:])
-	for tag in closed[:closed_count] {
+	closed_count := wide_grants.act_links_close_ended(&grant_act_router, &source_links, closed_tags)
+	for tag in closed_tags[:closed_count] {
 		system.input_close(&sources, tag)
 	}
 }
@@ -245,9 +244,8 @@ act_sources_of_ended_grant_close :: proc "contextless" () {
 // act_sources_of_replaced_grant_close closes each ring of the act records
 // of a grant that a newer one replaces (wide_grants.act_links_close_replaced).
 act_sources_of_replaced_grant_close :: proc "contextless" () {
-	closed: [wide_grants.SOURCE_LINKS_MOST]u32
-	closed_count := wide_grants.act_links_close_replaced(&grant_act_router, &source_links, closed[:])
-	for tag in closed[:closed_count] {
+	closed_count := wide_grants.act_links_close_replaced(&grant_act_router, &source_links, closed_tags)
+	for tag in closed_tags[:closed_count] {
 		system.input_close(&sources, tag)
 	}
 }
@@ -262,9 +260,8 @@ act_link_ended :: proc "contextless" (link: ^wide_grants.Source_Link) {
 }
 
 // The pairs that forward holds, as output_pairs lists them, and the rings
-// of sources read after them.
-pair_tags: [wide_grants.SOURCE_LINKS_MOST]u32
-pair_source_tags: [wide_grants.SOURCE_LINKS_MOST]u32
+// of sources read after them: pair_tags and pair_source_tags, in
+// link_tables.odin.
 
 // pairs_orphaned_close closes each end of forward whose pair has no source
 // that this collector keeps: no link and no ring of sources of that
@@ -304,6 +301,21 @@ sources_wait :: proc "contextless" (waiting: ^system.Wait) -> (not_waited: bool)
 	not_waited = system.wait_input_records(waiting, &sources, source_rings) > 0
 	not_waited ||= system.wait_output_room(waiting, &forward, pair_rings) > 0
 	return not_waited
+}
+
+// The wakes of the loop at its retry period to read rings that its wait
+// could not hold: a measure of the poll that the wait room of the kernel
+// removes (ROADMAP.md, "A reader waits on each of its rings").
+poll_wakes: u64
+
+// poll_wakes_count counts one wake of the poll, and writes the count, with
+// the wakes of the reads of the library, at each power of two: a bounded
+// line of what the poll costs.
+poll_wakes_count :: proc "contextless" () {
+	poll_wakes += 1
+	if poll_wakes & (poll_wakes - 1) == 0 {
+		system.log_fact(.Info, Poll_Wakes_Counted{wakes = poll_wakes, read_wakes = system.stream_read_poll_wakes()})
+	}
 }
 
 @(private = "file")

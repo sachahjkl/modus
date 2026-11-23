@@ -97,7 +97,9 @@ budget_count :: proc(stated: Stated_Budget, module_memory_size: u64, import_memo
 	add(&pages, counted.module_pages) or_return
 	add(&pages, counted.thread_pages) or_return
 	add(&pages, counted.window_pages) or_return
-	counted.request = {pages = pages, processes = stated.processes, threads = stated.threads}
+	// The wiring budget is carved from the pages of the process.
+	add(&pages, stated.wiring_pages) or_return
+	counted.request = {pages = pages, processes = stated.processes, threads = stated.threads, wiring_pages = stated.wiring_pages}
 	return counted, true
 }
 

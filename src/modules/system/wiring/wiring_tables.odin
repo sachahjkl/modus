@@ -65,7 +65,11 @@ processes_grow :: proc "contextless" (user: rawptr, count: int) -> []wiring_core
 	tables := (^Wiring_Tables)(user)
 	if count > tables.process_count {
 		// Each table of a process grows, or none counts the new entries.
-		if !arena_extend(&tables.processes, wiring_core.Process_Entry, tables.process_count, count) || !arena_extend(&tables.handles, Process_Handles, tables.process_count, count) {
+		if !arena_extend(&tables.processes, wiring_core.Process_Entry, tables.process_count, count) {
+			return nil
+		}
+		if !arena_extend(&tables.handles, Process_Handles, tables.process_count, count) {
+			_ = system.arena_pop(&tables.processes, u64(count - tables.process_count) * size_of(wiring_core.Process_Entry))
 			return nil
 		}
 		tables.process_count = count
@@ -74,13 +78,35 @@ processes_grow :: proc "contextless" (user: rawptr, count: int) -> []wiring_core
 	return ([^]wiring_core.Process_Entry)(tables.processes.base)[:tables.process_count]
 }
 
+// wirings_grow grows the tables of the wirings, the pages that the growth
+// commits paid by the wiring budget of the asker payer, which the root
+// service carved for it: one asker fills no more of the tables than its own
+// budget pays, and an asker with no wiring budget grows none.
 @(private = "file")
-wirings_grow :: proc "contextless" (user: rawptr, count: int) -> []wiring_core.Wiring_Entry {
+wirings_grow :: proc "contextless" (user: rawptr, count: int, payer: int) -> []wiring_core.Wiring_Entry {
 	tables := (^Wiring_Tables)(user)
 	if count > tables.wiring_count {
+		if payer < 0 || payer >= len(process_handles) || process_handles[payer].asker_budget == 0 {
+			return nil
+		}
+		budget := process_handles[payer].asker_budget
+		arenas := [?]^system.Arena{&tables.wirings, &tables.end_memory, &tables.ring_memory, &tables.ring_capacity, &tables.actions}
+		for arena in arenas {
+			arena.budget = budget
+		}
+		defer for arena in arenas {
+			arena.budget = 0
+		}
 		before := tables.wiring_count
 		grown := arena_extend(&tables.wirings, wiring_core.Wiring_Entry, before, count) && arena_extend(&tables.end_memory, system.Handle, before, count) && arena_extend(&tables.ring_memory, system.Handle, before, count) && arena_extend(&tables.ring_capacity, u32, before, count) && arena_extend(&tables.actions, wiring_core.Stop_Action, before, count)
 		if !grown {
+			// The tables that grew give their entries back: they keep one
+			// length.
+			sizes := [?]u64{size_of(wiring_core.Wiring_Entry), size_of(system.Handle), size_of(system.Handle), size_of(u32), size_of(wiring_core.Stop_Action)}
+			for arena, index in arenas {
+				pushed := arena.used_bytes - u64(before) * sizes[index]
+				_ = system.arena_pop(arena, pushed)
+			}
 			return nil
 		}
 		tables.wiring_count = count
