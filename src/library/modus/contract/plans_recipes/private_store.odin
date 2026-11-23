@@ -489,9 +489,13 @@ decode_plan_current :: proc "contextless" (input: []u8, principal: u64) -> (curr
 }
 
 
-// The magic of a realisation object and of a project object.
+// The magic of a realisation object, a project object, and a stored recipe object.
 REALISATION_OBJECT_MAGIC :: [8]u8{'M', 'O', 'D', 'R', 'E', 'A', 'L', '1'}
 PROJECT_OBJECT_MAGIC :: [8]u8{'M', 'O', 'D', 'P', 'R', 'J', 'T', '1'}
+RECIPE_OBJECT_MAGIC :: [8]u8{'M', 'O', 'D', 'R', 'C', 'P', 'S', '1'}
+RECIPE_OBJECT_HEAD_SIZE :: 8 + blake3.HASH_SIZE + 8 + 8 + 8 + 4 + 4
+RECIPE_OBJECT_INPUT_SIZE :: 1 + 1 + 6 + MAX_ENTRY_NAME_BYTES + blake3.HASH_SIZE
+RECIPE_OBJECT_WIRE_MOST :: RECIPE_OBJECT_HEAD_SIZE + MAX_RECIPE_INPUTS * RECIPE_OBJECT_INPUT_SIZE + MAX_RECIPE_ARG_BYTES
 
 // The head of a realisation object: its magic, the recipe hash, the output
 // hash, the output kind, the origin, the signer key, the signature and the
@@ -512,6 +516,24 @@ PROJECT_NAME_HASH_DIGITS :: 24
 realisation_object_name :: proc "contextless" (recipe_hash: blake3.Hash) -> (name: Private_Object_Name) {
 	private_object_name_append(&name, "realisation_")
 	private_object_name_append_hash(&name, recipe_hash, REALISATION_NAME_HASH_DIGITS)
+	return name
+}
+
+// recipe_object_name gives "recipe_" and the first digits of the recipe
+// hash: a recipe that a writer of the store (the machine test, a later
+// import) keeps for the service to register at its first build.
+recipe_object_name :: proc "contextless" (recipe_hash: blake3.Hash) -> (name: Private_Object_Name) {
+	private_object_name_append(&name, "recipe_")
+	private_object_name_append_hash(&name, recipe_hash, REALISATION_NAME_HASH_DIGITS)
+	return name
+}
+
+// blob_object_name gives "blob_" and the first 52 hexadecimal digits of a
+// content hash so content-addressed blobs (inputs, guest kernels, initial
+// archives) live in the private store without colliding with other objects.
+blob_object_name :: proc "contextless" (digest: blake3.Hash) -> (name: Private_Object_Name) {
+	private_object_name_append(&name, "blob_")
+	private_object_name_append_hash(&name, digest, REALISATION_NAME_HASH_DIGITS)
 	return name
 }
 
@@ -654,4 +676,117 @@ decode_project_object :: proc "contextless" (input: []u8, project_name: []u8) ->
 		}
 	}
 	return input[head:head + evaluation_length], input[head + evaluation_length:], true
+}
+
+// encode_recipe_object writes a validated Recipe_Spec into output in the
+// canonical MODRCPS1 wire format for private store storage.
+encode_recipe_object :: proc "contextless" (spec: ^Recipe_Spec, output: []u8) -> (written: int, refusal: Recipe_Refusal) {
+	if validation, _ := recipe_validate(spec); validation != .None {
+		return 0, validation
+	}
+	size := RECIPE_OBJECT_HEAD_SIZE + int(spec.input_count) * RECIPE_OBJECT_INPUT_SIZE + int(spec.arguments_length)
+	if len(output) < size {
+		return 0, .Buffer_Too_Small
+	}
+	magic := RECIPE_OBJECT_MAGIC
+	copy(output[0:8], magic[:])
+	place := 8
+	copy(output[place:place + blake3.HASH_SIZE], spec.builder_hash[:])
+	place += blake3.HASH_SIZE
+	byte_order.write_u64_little_endian(output, place, u64(spec.output_kind))
+	byte_order.write_u64_little_endian(output, place + 8, spec.source_date_unix)
+	byte_order.write_u64_little_endian(output, place + 16, spec.output_block_limit)
+	byte_order.write_u32_little_endian(output, place + 24, spec.input_count)
+	byte_order.write_u32_little_endian(output, place + 28, spec.arguments_length)
+	place += 32
+	for index in u32(0) ..< spec.input_count {
+		item := &spec.inputs[index]
+		output[place] = u8(item.kind)
+		output[place + 1] = item.name_length
+		for pad in 2 ..< 8 {
+			output[place + pad] = 0
+		}
+		copy(output[place + 8:place + 8 + MAX_ENTRY_NAME_BYTES], item.name_bytes[:])
+		copy(output[place + 8 + MAX_ENTRY_NAME_BYTES:place + RECIPE_OBJECT_INPUT_SIZE], item.hash[:])
+		place += RECIPE_OBJECT_INPUT_SIZE
+	}
+	if spec.arguments_length > 0 {
+		copy(output[place:place + int(spec.arguments_length)], spec.arguments[:spec.arguments_length])
+	}
+	return size, .None
+}
+
+// decode_recipe_object reads a canonical MODRCPS1 object and validates every
+// field and reserved byte. On any refusal out is zero.
+decode_recipe_object :: proc "contextless" (input: []u8, out: ^Recipe_Spec) -> Recipe_Refusal {
+	if out == nil {
+		return .Buffer_Too_Small
+	}
+	out^ = {}
+	if len(input) < RECIPE_OBJECT_HEAD_SIZE {
+		return .Damaged_Recipe
+	}
+	magic := RECIPE_OBJECT_MAGIC
+	for index in 0 ..< len(magic) {
+		if input[index] != magic[index] {
+			return .Damaged_Recipe
+		}
+	}
+	place := 8
+	copy(out.builder_hash[:], input[place:place + blake3.HASH_SIZE])
+	place += blake3.HASH_SIZE
+	kind_word := byte_order.read_u64_little_endian(input, place)
+	output_kind, kind_ok := object_cache.cache_object_kind_of_word(kind_word)
+	if !kind_ok {
+		out^ = {}
+		return .Bad_Output_Kind
+	}
+	out.output_kind = output_kind
+	out.source_date_unix = byte_order.read_u64_little_endian(input, place + 8)
+	out.output_block_limit = byte_order.read_u64_little_endian(input, place + 16)
+	input_count := byte_order.read_u32_little_endian(input, place + 24)
+	arguments_length := byte_order.read_u32_little_endian(input, place + 28)
+	place += 32
+	if input_count > MAX_RECIPE_INPUTS {
+		out^ = {}
+		return .Too_Many_Inputs
+	}
+	if arguments_length > MAX_RECIPE_ARG_BYTES {
+		out^ = {}
+		return .Arguments_Too_Large
+	}
+	expected_size := RECIPE_OBJECT_HEAD_SIZE + int(input_count) * RECIPE_OBJECT_INPUT_SIZE + int(arguments_length)
+	if len(input) != expected_size {
+		out^ = {}
+		return .Damaged_Recipe
+	}
+	out.input_count = input_count
+	out.arguments_length = arguments_length
+	for index in u32(0) ..< input_count {
+		input_kind, input_kind_ok := object_cache.cache_object_kind_of_word(u64(input[place]))
+		if !input_kind_ok {
+			out^ = {}
+			return .Bad_Input_Kind
+		}
+		for pad in 2 ..< 8 {
+			if input[place + pad] != 0 {
+				out^ = {}
+				return .Nonzero_Padding
+			}
+		}
+		item := &out.inputs[index]
+		item.kind = input_kind
+		item.name_length = input[place + 1]
+		copy(item.name_bytes[:], input[place + 8:place + 8 + MAX_ENTRY_NAME_BYTES])
+		copy(item.hash[:], input[place + 8 + MAX_ENTRY_NAME_BYTES:place + RECIPE_OBJECT_INPUT_SIZE])
+		place += RECIPE_OBJECT_INPUT_SIZE
+	}
+	if arguments_length > 0 {
+		copy(out.arguments[:arguments_length], input[place:place + int(arguments_length)])
+	}
+	if refusal, _ := recipe_validate(out); refusal != .None {
+		out^ = {}
+		return refusal
+	}
+	return .None
 }

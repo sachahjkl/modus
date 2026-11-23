@@ -352,3 +352,27 @@ timer_strobe_mode_fires_once_for_each_count :: proc(t: ^testing.T) {
 		testing.expectf(t, !gated_armed, "control %x", control)
 	}
 }
+// The width of the line follows the window: a width of 0, a negative width
+// and one past CONSOLE_LINE_BYTES are refused and keep the width; a line at
+// the width ends, and its next byte starts the next line.
+@(test)
+console_line_columns_follow_the_window :: proc(t: ^testing.T) {
+	line: Console_Line
+	testing.expect_value(t, console_line_limit(&line), CONSOLE_LINE_BYTES)
+	for columns in ([?]int{0, -1, CONSOLE_LINE_BYTES + 1, max(int)}) {
+		testing.expectf(t, !console_line_set_columns(&line, columns), "the width %d is refused", columns)
+		testing.expect_value(t, console_line_limit(&line), CONSOLE_LINE_BYTES)
+	}
+	testing.expect(t, !console_line_set_columns(nil, 10))
+	testing.expect(t, console_line_set_columns(&line, CONSOLE_LINE_BYTES))
+	testing.expect(t, console_line_set_columns(&line, 1))
+	testing.expect_value(t, console_line_limit(&line), 1)
+	testing.expect(t, console_line_set_columns(&line, 4))
+	changes := put_all(&line, "abcd")
+	defer delete(changes)
+	testing.expect_value(t, text_of(&line), "abcd")
+	testing.expect_value(t, console_line_put(&line, 'e'), Console_Change.Ended)
+	testing.expect_value(t, text_of(&line), "abcd")
+	console_line_next(&line)
+	testing.expect_value(t, console_line_put(&line, 'f'), Console_Change.Changed)
+}

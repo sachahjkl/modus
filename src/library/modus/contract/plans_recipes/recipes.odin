@@ -77,6 +77,8 @@ Recipe_Refusal :: enum u8 {
 	Not_A_Recipe          = 29, // The value is not a recipe, or its arguments are not a record.
 	Damaged_Recipe        = 30, // The recipe does not decode, or its written hash is not the hash of its record.
 	Unsupported_Argument  = 31, // An argument of a kind that a recipe does not take: a recipe, a follow, a store, a plan, a project, or a negative source_date.
+	Output_Too_Large      = 32, // The output passes the size bound of the recipe.
+	Build_Timed_Out       = 33, // The builder reached its hang bound.
 }
 
 // The words of each refusal of a recipe, for the failure of an evaluation
@@ -115,6 +117,8 @@ recipe_refusal_words := [Recipe_Refusal]string {
 	.Not_A_Recipe          = "the value is not a recipe",
 	.Damaged_Recipe        = "the recipe does not decode",
 	.Unsupported_Argument  = "an argument of a kind that a recipe does not take",
+	.Output_Too_Large      = "the output passes the size bound of the recipe",
+	.Build_Timed_Out       = "the builder reached its hang bound",
 }
 
 // Closed set of commands accepted on the recipes service ring.

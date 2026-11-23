@@ -7,6 +7,7 @@ import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import contract "modus:contract/guest_builder"
 import "modus:contract/guest_os"
+import "modus:guest_regions"
 import op "modus:contract/operation"
 import sm "modus:contract/software_machine"
 
@@ -700,7 +701,7 @@ program_build_start :: proc(build: ^Guest_Program_Build, code: []u8, spec: ^cont
 	build.output_disk = make([]u8, spec.output_size_bound)
 	parsed, parse_refusal := guest_os.linux_image_parse(kernel, u64(len(build.memory)))
 	assert(parse_refusal == .None && parsed.kind == .Elf)
-	staged, archive_refusal := initial_archive_stage(build.memory, parsed, u64(len(build.memory)), spec, raw_data(archive), u64(len(archive)))
+	staged, archive_refusal := guest_regions.initial_archive_stage(build.memory, parsed, u64(len(build.memory)), spec, raw_data(archive), u64(len(archive)))
 	if archive_refusal != .None {
 		return archive_refusal
 	}
@@ -742,7 +743,7 @@ guest_program_build_run :: proc(t: ^testing.T, build: ^Guest_Program_Build) {
 			return
 		}
 		build.exits += 1
-		action := build_exit_handle(&build.runner, &build.machine, &build.registers, exit, &reported)
+		action := guest_regions.build_exit_handle(&build.runner, &build.machine, &build.registers, exit, &reported)
 		testing.expectf(t, build.registers.inject_kind == 0, "no event for the program after %v", exit)
 		switch action {
 		case .Run_Again:
@@ -1045,10 +1046,10 @@ guest_program_initial_archive_refusals :: proc(t: ^testing.T) {
 		kernel := guest_program_elf(ARCHIVE_PROGRAM[:])
 		defer delete(kernel)
 		parsed, _ := guest_os.linux_image_parse(kernel, u64(len(build.memory)))
-		staged, refusal := initial_archive_stage(build.memory, parsed, u64(len(build.memory)), &spec, raw_data(archive), contract.MAX_INITIAL_ARCHIVE_BYTES + 1)
+		staged, refusal := guest_regions.initial_archive_stage(build.memory, parsed, u64(len(build.memory)), &spec, raw_data(archive), contract.MAX_INITIAL_ARCHIVE_BYTES + 1)
 		testing.expect_value(t, refusal, contract.Guest_Builder_Refusal.Initial_Archive_Too_Large)
 		testing.expect(t, staged == nil)
-		_, refusal = initial_archive_stage(build.memory, parsed, u64(len(build.memory)), &spec, raw_data(archive), max(u64))
+		_, refusal = guest_regions.initial_archive_stage(build.memory, parsed, u64(len(build.memory)), &spec, raw_data(archive), max(u64))
 		testing.expect_value(t, refusal, contract.Guest_Builder_Refusal.Initial_Archive_Too_Large)
 		expect_no_archive_bytes(t, build)
 	}

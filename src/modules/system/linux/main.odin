@@ -6,7 +6,11 @@
 // and joins the serial port of the guest to its terminal: the lines of the
 // guest are the lines of the terminal, and the keys of the terminal are the
 // bytes that the guest reads. An idle guest waits for a key, or for the
-// next tick of its timer in the time of the machine.
+// next tick of its timer in the time of the machine. A paste waits here
+// until the port has room for it, and a resize of the window gives the
+// guest its new size: the width of the lines of the serial console, and
+// the size of the virtio console, whose change Linux gives its programs as
+// SIGWINCH.
 //
 // **Start**: from the start menu, or `start("linux")` in the console. The
 // root service starts its terminal with it.
@@ -55,6 +59,11 @@ guest_ram: guest_regions.Owned_Memory
 guest: system.Handle
 exits: u64
 runs: u64 // Each Guest_Run: the exits of the guest and the exits Interrupted.
+pending: Pending_Input // The keys and the pastes that wait for room in the serial port.
+started: bool // The guest waited for a key once: its boot ended, and the status line left.
+
+// The most bytes of one key (key_bytes).
+KEY_BYTES_MOST :: 4
 
 // key_bytes gives the bytes that a key sends to the serial port of the
 // guest (src/md/features/linux_shell.md, "The keys"): at most 4.
@@ -77,6 +86,12 @@ key_bytes :: proc "contextless" (pressed: terminal.Key) -> (bytes: [4]u8, count:
 		return {ESCAPE, '[', 'C', 0}, 3
 	case display.KEY_LEFT:
 		return {ESCAPE, '[', 'D', 0}, 3
+	case display.KEY_HOME:
+		return {ESCAPE, '[', 'H', 0}, 3
+	case display.KEY_END:
+		return {ESCAPE, '[', 'F', 0}, 3
+	case display.KEY_DELETE:
+		return {ESCAPE, '[', '3', '~'}, 4
 	}
 	character := pressed.character
 	if pressed.modifiers & display.MODIFIER_CONTROL != 0 {
@@ -101,16 +116,33 @@ key_bytes :: proc "contextless" (pressed: terminal.Key) -> (bytes: [4]u8, count:
 	return {}, 0
 }
 
-// keys_forward gives each key that waits to the serial port of the guest.
-keys_forward :: proc "contextless" () {
-	for {
-		pressed, has_key := terminal.key(&output)
-		if !has_key {
-			return
+// input_forward takes the input of the terminal while the queue of the
+// waiting bytes has room for a key, and gives the serial port of the guest
+// what it has room for. A key that does not fit stays in the terminal ring
+// until the guest reads: no character of a paste is lost.
+input_forward :: proc "contextless" () {
+	pending_feed(&pending, &machine)
+	for pending_room(&pending) >= KEY_BYTES_MOST {
+		given := terminal.input(&output) or_break
+		switch given.kind {
+		case .None, .List_First:
+		case .Key:
+			bytes, count := key_bytes(given.key)
+			_ = pending_push(&pending, bytes[:count])
+		case .Resized:
+			window_resize(given.columns, given.rows)
 		}
-		bytes, count := key_bytes(pressed)
-		_ = guest_os.linux_machine_serial_input(&machine, bytes[:count])
 	}
+	pending_feed(&pending, &machine)
+}
+
+// window_resize gives the guest the size of the window: the lines of the
+// serial console end at its width, and the virtio console takes its size,
+// which Linux gives the programs of that console as SIGWINCH.
+window_resize :: proc "contextless" (columns, rows: int) {
+	wraps := guest_os.console_line_set_columns(&console, min(columns, guest_os.CONSOLE_LINE_BYTES))
+	sized := guest_os.linux_machine_console_resize(&machine, columns, rows)
+	system.log_fact(.Info, Window_Resized{columns = u64(columns), rows = u64(rows), taken = wraps && sized ? 1 : 0})
 }
 
 // console_drain gives the bytes that the guest wrote to the terminal: each
@@ -170,7 +202,7 @@ guest_wait :: proc "contextless" (registers: ^op.Guest_Registers) {
 	wait := system.wait_begin()
 	system.wait_records(&wait, &output.ring.completions)
 	system.wait_end(&wait, deadline)
-	keys_forward()
+	input_forward()
 	guest_os.linux_machine_resume(&machine, registers, nanoseconds_as_ticks(system.nanoseconds() - start))
 }
 
@@ -214,7 +246,7 @@ fail :: proc "contextless" (text: string) -> ! {
 // step_failed logs a kernel operation that failed, and stops.
 step_failed :: proc "contextless" (status: system.Status, step: string) -> ! {
 	system.log_fact(.Error, Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field(step, 40)})
-	fail("the guest cannot run: a kernel operation failed")
+	fail("The guest stopped: a kernel operation failed. The log names the operation and its status.")
 }
 
 @(export, link_name = "entry")
@@ -227,7 +259,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	client, store_opened := storage.open(ctx)
 	if !store_opened {
 		system.log_fact(.Info, No_Store{})
-		refuse("no store: the guest image is in the private store of linux")
+		refuse("The guest did not start: this window has no private store, which holds the kernel and the initial archive of the guest.")
 	}
 
 	status: system.Status
@@ -241,17 +273,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	kernel_size, size_status := storage.size(&client, storage.ROOT, KERNEL_OBJECT)
 	if size_status != .Ok || kernel_size <= 0 {
 		system.log_fact(.Info, Object_Missing{status = u64(size_status), name = value_kinds.text_field(KERNEL_OBJECT, 16)})
-		refuse("the store linux holds no kernel")
+		refuse("The guest did not start: the store linux holds no object kernel. Put a kernel of Linux there under that name.")
 	}
 	staging_bytes, staging_fits := guest_regions.kernel_staging_bytes(u64(kernel_size), GUEST_MEMORY_BYTES)
 	if !staging_fits {
 		system.log_fact(.Info, Object_Too_Large{bytes = u64(kernel_size), most = GUEST_MEMORY_BYTES - system.PAGE_SIZE, name = value_kinds.text_field(KERNEL_OBJECT, 16)})
-		refuse("the kernel of the store linux does not fit the memory of the guest")
+		refuse("The guest did not start: the kernel of the store linux is larger than the memory of the guest.")
 	}
 	staging := GUEST_MEMORY_BYTES - staging_bytes
 	kernel_count, kernel_read := object_read(&client, KERNEL_OBJECT, ram[staging:])
 	if !kernel_read {
-		refuse("the kernel of the store linux cannot be read")
+		refuse("The guest did not start: the store linux did not give the object kernel whole.")
 	}
 	kernel := ram[staging:][:kernel_count]
 	parsed, parse_refusal := guest_os.linux_image_parse(kernel, GUEST_MEMORY_BYTES)
@@ -260,21 +292,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	if parse_refusal != .None {
 		system.log_fact(.Info, Kernel_Refused{refusal = u64(parse_refusal)})
-		refuse("the kernel of the store linux is refused by the Linux boot protocol")
+		refuse("The guest did not start: the object kernel of the store linux is not a kernel that the boot protocol of Linux loads.")
 	}
 	archive_size, archive_status := storage.size(&client, storage.ROOT, INITIAL_ARCHIVE_OBJECT)
 	if archive_status != .Ok || archive_size <= 0 {
 		system.log_fact(.Info, Object_Missing{status = u64(archive_status), name = value_kinds.text_field(INITIAL_ARCHIVE_OBJECT, 16)})
-		refuse("the store linux holds no initial archive")
+		refuse("The guest did not start: the store linux holds no object initial_archive. Put a cpio archive of the form newc there under that name.")
 	}
 	archive_place, place_refusal := guest_os.linux_initial_archive_place(parsed, u64(archive_size), staging)
 	if place_refusal != .None {
 		system.log_fact(.Info, Object_Too_Large{bytes = u64(archive_size), most = staging - parsed.load_end, name = value_kinds.text_field(INITIAL_ARCHIVE_OBJECT, 16)})
-		refuse("the initial archive of the store linux does not fit the memory of the guest")
+		refuse("The guest did not start: the initial archive of the store linux does not fit the memory of the guest beside the kernel.")
 	}
 	archive_count, archive_read := object_read(&client, INITIAL_ARCHIVE_OBJECT, ram[archive_place:staging])
 	if !archive_read {
-		refuse("the initial archive of the store linux cannot be read")
+		refuse("The guest did not start: the store linux did not give the object initial_archive whole.")
 	}
 	archive := ram[archive_place:][:archive_count]
 
@@ -285,7 +317,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	registers, boot_refusal := guest_os.linux_boot_prepare(guest_memory, kernel, parsed, places[:], nil, archive, staging)
 	if boot_refusal != .None {
 		system.log_fact(.Info, Kernel_Refused{refusal = u64(boot_refusal)})
-		refuse("the kernel of the store linux is refused by the Linux boot protocol")
+		refuse("The guest did not start: the object kernel of the store linux is not a kernel that the boot protocol of Linux loads.")
 	}
 	// The copy of the image leaves the memory of the guest.
 	for &value in ram[staging:] {
@@ -303,13 +335,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		step_failed(map_status, step)
 	}
 
+	// The status line says what a principal waits for, until the guest
+	// waits for its first key.
+	terminal.status(&output, "Linux starts", 0, 1)
 	for {
-		keys_forward()
+		input_forward()
 		run_error: errors.Error_Record
 		exit, run_status := system.guest_run(guest, &registers, &run_error)
 		if run_status == .Bad_Operation && run_error.kind == i64(errors.Kind.Unsupported) {
 			system.log_fact(.Info, Guests_Unsupported{})
-			refuse("no guest runs on this machine: its processors have no virtualization support that the kernel uses")
+			refuse("The guest did not start: the processors of this machine have no virtualization support that modus uses.")
 		}
 		if run_status != .Ok {
 			step_failed(run_status, "Guest_Run")
@@ -331,10 +366,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				guest_failed(registers, exit.code)
 			}
 		case .Waiting:
+			if !started {
+				started = true
+				terminal.status(&output, "", 0, 0)
+			}
 			guest_wait(&registers)
 		case .Halted:
 			system.log_fact(.Info, Guest_Halted{exits = exits, own_page_writes = machine.own_page_writes})
-			terminal.line(&output, {text = "the guest halted", style = {tone = u8(terminal.Tone.Good)}})
+			terminal.line(&output, {text = "Linux halted. The guest ended.", style = {tone = u8(terminal.Tone.Good)}})
 			_ = system.process_stop(guest)
 			system.stop(.Done)
 		case .Failed:
@@ -366,5 +405,5 @@ unclaimed_port_answer :: proc "contextless" (registers: ^op.Guest_Registers, exi
 guest_failed :: proc "contextless" (registers: op.Guest_Registers, exit_code: u64) -> ! {
 	system.log_fact(.Error, Guest_Failed{failure = u64(machine.failure), address = value_kinds.Hexadecimal_Sixteen_Digits(registers.rip), exits = exits, exit_code = value_kinds.Hexadecimal_Sixteen_Digits(exit_code)})
 	_ = system.process_stop(guest)
-	fail("the guest stopped: the machine does not answer what it did")
+	fail("The guest stopped: it did something that the machine of modus does not answer. The log names the address.")
 }

@@ -47,17 +47,34 @@ The tool writes a cpio archive with a static `busybox` of Nixpkgs (`MODUS_LINUX_
 - `\n` ends the line: `linux` writes it to the terminal and as the log fact `linux: guest: <line>`;
 - the sequences `ESC [ <number> K`, `C` and `D` erase to the end of the line and move the cursor; each other sequence is read whole and does nothing; each other control byte does nothing;
 - a byte of 128 or more becomes `?`: a byte of the guest never makes a sequence of UTF-8 that the terminal or the log reads;
-- a line of `CONSOLE_LINE_BYTES` ends at once, as if `\n` came.
+- a line ends at once, as if `\n` came, when it reaches the width of the window: the columns of the terminal, at most `CONSOLE_LINE_BYTES` (192).
 
 The line that does not end yet (the prompt of the shell and what the principal types) is the edit line of the terminal, with its cursor.
 
 ### The keys
 
-A character key gives its UTF-8 bytes. Enter gives `\r`, Backspace `0x7F`, Tab `\t`, Escape `0x1B`, and Control with a letter the control byte of that letter. The four arrows give `ESC [ A` to `ESC [ D`, for the line editing of the shell. Each other key gives nothing.
+A character key gives its UTF-8 bytes. Enter gives `\r`, Backspace `0x7F`, Tab `\t`, Escape `0x1B`, and Control with a letter the control byte of that letter. The four arrows give `ESC [ A` to `ESC [ D`, Home `ESC [ H`, End `ESC [ F` and Delete `ESC [ 3 ~`, for the line editing of the shell. Each other key gives nothing.
+
+### A paste
+
+A paste of the terminal gives up to the limit of its clipboard at once, and the receive queue of the serial port holds `SERIAL_RECEIVE_BYTES` (256). The bytes of the keys wait in a queue of `linux` (`PENDING_INPUT_BYTES`, 8 KiB) and go to the port as the guest makes room, in order. A key goes into that queue whole or waits in the ring of the terminal: no character is cut in two and none is dropped.
+
+### A resize of the window
+
+The terminal gives `linux` the columns and the rows of the window at each resize. `linux` gives them to two places:
+
+- the console line takes the columns as its width, so a long line of the guest wraps at the edge of the window;
+- the virtio console takes the columns and the rows in its configuration, and raises its configuration interrupt when the driver of the guest negotiated `VIRTIO_CONSOLE_F_SIZE`. Linux then gives the size to the terminal `hvc0`, and a program there gets `SIGWINCH`.
+
+The shell runs on `ttyS0`, and a serial port carries no size: the shell on `ttyS0` keeps its size until a shell on `hvc0` replaces it, which needs the virtio console as the console of the window ("Refused forms").
+
+### The status line
+
+The status line of the window says "Linux starts" until the guest waits for its first key, then it is empty. Each line that refuses the start says what did not happen ("The guest did not start"), the cause, and what a principal can do when `linux` knows it, as `docs/WRITING.md` asks.
 
 ### The end of the guest
 
-- **`poweroff` halts the guest.** With `acpi=off`, Linux has no way to turn the machine off: its power off returns, `init` exits, and Linux panics. Its halt runs `hlt` with the interrupts off, which the machine reads as `Halted`. So the initial archive gives `poweroff` the form of `halt`. `linux` writes `linux: the guest halted`, ends the guest and stops with `Done`.
+- **`poweroff` halts the guest.** With `acpi=off`, Linux has no way to turn the machine off: its power off returns, `init` exits, and Linux panics. Its halt runs `hlt` with the interrupts off, which the machine reads as `Halted`. So the initial archive gives `poweroff` the form of `halt`. `linux` writes "Linux halted. The guest ended." in the window and the fact `linux: the guest halted after ...` in the log, ends the guest and stops with `Done`.
 - **A guest that fails** (a triple fault, an instruction that the decode refuses, a state that the processor refuses) gives one line with the failure of the machine, and the process stops with `Failed`.
 - **A machine with no guest support** gives one line, and the process stops with `Refused`.
 - **The close of the window** stops the process; the close of its last handle to the guest process stops the guest.
@@ -66,7 +83,8 @@ A character key gives its UTF-8 bytes. Enter gives `\r`, Backspace `0x7F`, Tab `
 
 - **The kernel and the archive in the boot image.** A foreign binary in the system description, against the scoping rule, and 13 MB more for each machine.
 - **An emulator of a terminal of Linux written for `linux`, or in the terminal of the system.** The terminal draws records, not escape sequences; an emulator in it puts a foreign concept in a process of the system. The console line reads the few sequences that the line editing of the shell writes, inside `linux`, and drops the rest. A program of the guest that draws a whole screen (an editor) needs a VT engine: the later form is the engine of [ghostty_vt.md](ghostty_vt.md) behind a terminal holder, not a second emulator.
-- **A virtio console in place of the serial port.** Linux writes its early messages and its panics on the serial port only, and the serial port needs no driver that a module of Linux may lack.
+- **A virtio console in place of the serial port.** Linux writes its early messages and its panics on the serial port only, and the serial port needs no driver that a module of Linux may lack. The virtio console takes the size of the window anyway, so a later shell on `hvc0` gets it.
+- **Keys sent to the shell to set its size** (`stty rows ... cols ...` typed by `linux`). They would write in the line that the principal edits, and in the input of the program that runs.
 - **The clock of the guest that jumps at an idle `hlt`.** The guest then runs its timer as fast as the processor goes and never waits for a key: a processor is busy for an idle shell.
 - **A device that turns the machine off** (ACPI). ACPI needs the tables of a firmware and their interpreter in Linux; the halt gives the same end with no table.
 
@@ -81,4 +99,4 @@ A character key gives its UTF-8 bytes. Enter gives `\r`, Backspace `0x7F`, Tab `
 
 ## State
 
-Built and checked by host tests: the receive queue of the serial port, the console line, the wait of an idle guest, the keys, the debug registers and the mode 4 of the timer of the machine, the write of an instruction that writes its own page, and the archive of the test. Built and checked by the machine test part `linux`: the bzImage of Nixpkgs boots from the store to the shell of busybox, the test types a command in the terminal window and reads its output, and `poweroff` ends the process. Left: several guest processors, the virtio disks and network for a principal, a screen of the guest, and a way to put a guest image in the store (`ROADMAP.md`).
+Built and checked by host tests: the receive queue of the serial port, the console line and its width, the queue of a paste, the size of the virtio console and its interrupt, the wait of an idle guest, the keys, the debug registers and the mode 4 of the timer of the machine, the write of an instruction that writes its own page, and the archive of the test. Built and checked by the machine test part `linux`: the bzImage of Nixpkgs boots from the store to the shell of busybox, the test types a command in the terminal window and reads its output, resizes the window and reads the fact that the guest took the size, and `poweroff` ends the process. Left: a shell on `hvc0`, so that the shell gets the size of the window, several guest processors, the virtio disks and network for a principal, a screen of the guest, and a way to put a guest image in the store (`ROADMAP.md`).

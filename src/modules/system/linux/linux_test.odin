@@ -81,3 +81,70 @@ budget_holds_the_guest :: proc(t: ^testing.T) {
 	// This process and its guest process.
 	testing.expect(t, MODULE_BUDGET.processes >= 2)
 }
+// The keys of moving in a line: Home, End and Delete send the sequences
+// that the line editor of a shell reads.
+@(test)
+key_bytes_of_moving_in_a_line :: proc(t: ^testing.T) {
+	cases := [?]struct {
+		code:   u32,
+		wanted: string,
+	}{{display.KEY_HOME, "\x1b[H"}, {display.KEY_END, "\x1b[F"}, {display.KEY_DELETE, "\x1b[3~"}}
+	for each in cases {
+		bytes, count := key_bytes({code = each.code})
+		testing.expect_value(t, string(bytes[:count]), each.wanted)
+		testing.expect(t, count <= KEY_BYTES_MOST)
+	}
+}
+
+// A paste larger than the receive queue of the serial port loses no byte:
+// a key that does not fit the queue is refused whole, the port takes what
+// it has room for, and the rest goes as the guest reads, in order.
+@(test)
+pending_input_paces_a_paste :: proc(t: ^testing.T) {
+	machine := new(guest_os.Linux_Machine)
+	defer free(machine)
+	guest_os.linux_machine_start(machine, {}, nil, nil)
+	waiting := new(Pending_Input)
+	defer free(waiting)
+
+	// Nothing waits: nothing moves.
+	testing.expect_value(t, pending_feed(waiting, machine), 0)
+	// The edges of the queue: a full queue refuses one more byte, and a key
+	// of four bytes with three free refuses all four.
+	filler: [PENDING_INPUT_BYTES]u8
+	for &value, index in filler {
+		value = u8('a' + index % 26)
+	}
+	too_long := make([]u8, PENDING_INPUT_BYTES + 1)
+	defer delete(too_long)
+	testing.expect(t, !pending_push(waiting, too_long))
+	testing.expect_value(t, waiting.count, 0)
+	testing.expect(t, pending_push(waiting, filler[:PENDING_INPUT_BYTES - 3]))
+	testing.expect(t, !pending_push(waiting, []u8{0x1B, '[', '3', '~'}))
+	testing.expect_value(t, pending_room(waiting), 3)
+	testing.expect(t, pending_push(waiting, filler[PENDING_INPUT_BYTES - 3:]))
+	testing.expect_value(t, pending_room(waiting), 0)
+	testing.expect(t, !pending_push(waiting, []u8{'x'}))
+
+	// The port takes what its queue holds, and no byte past it.
+	moved := pending_feed(waiting, machine)
+	testing.expect_value(t, moved, guest_os.SERIAL_RECEIVE_BYTES)
+	testing.expect_value(t, guest_os.linux_machine_serial_receive_room(machine), 0)
+	testing.expect_value(t, waiting.count, PENDING_INPUT_BYTES - guest_os.SERIAL_RECEIVE_BYTES)
+	testing.expect_value(t, pending_feed(waiting, machine), 0)
+
+	// The guest reads its queue; the rest goes in order, around the end of
+	// the ring.
+	received: [dynamic]u8
+	defer delete(received)
+	for waiting.count > 0 || machine.serial.receive_count > 0 {
+		for machine.serial.receive_count > 0 {
+			append(&received, guest_os.serial_read(&machine.serial, 0))
+		}
+		if waiting.count > 0 {
+			testing.expect(t, pending_feed(waiting, machine) > 0)
+		}
+	}
+	testing.expect_value(t, len(received), PENDING_INPUT_BYTES)
+	testing.expect(t, string(received[:]) == string(filler[:]), "the bytes reach the guest in order")
+}

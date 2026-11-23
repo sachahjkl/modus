@@ -11,7 +11,8 @@ import "modustool:foundation"
 // the tool writes from the two variables of the flake. The start menu
 // starts linux; Linux boots in a guest, its init writes modus-guest-ready,
 // the tool types a command in the terminal window and waits for its output,
-// then types poweroff, and linux ends with the halt of the guest.
+// resizes the window and checks that the guest takes the size and still
+// answers, then types poweroff, and linux ends with the halt of the guest.
 //
 // Each wait has the hang bound only: the boot of Linux makes many exits, and
 // the waits on the lines of its boot are the progress of the part.
@@ -63,6 +64,12 @@ linux_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		// The echo of the command is the line "... # echo modus-guest-ok":
 		// only the output of the command starts with the word.
 		append(&steps, Step{kind = .Wait, text = "linux: guest: modus-guest-ok", fails_on = "linux: the guest stopped with the failure "})
+		// A resize of the window gives the guest its new size: the console
+		// line and the virtio console take it, and the shell still answers.
+		append(&steps, Step{kind = .Resize, text = "linux", to_x = 880, to_y = 520})
+		append(&steps, Step{kind = .Fact, process = "linux", fact = "linux_shell.Window_Resized", condition = "taken = 1"})
+		append(&steps, Step{kind = .Type, text = "echo modus-guest-resized"})
+		append(&steps, Step{kind = .Wait, text = "linux: guest: modus-guest-resized", fails_on = "linux: the guest stopped with the failure "})
 		append(&steps, Step{kind = .Type, text = "poweroff"})
 		append(&steps, Step{kind = .Wait, text = "linux: the guest halted after ", fails_on = "linux: the guest stopped with the failure "})
 	}

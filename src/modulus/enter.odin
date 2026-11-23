@@ -894,16 +894,16 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			if !registers && !display_memory_range(v[2], v[3]) {
 				return .Bad_Operation
 			}
-			region := region_device(v[2], v[3])
-			if region == 0 {
-				return .No_Slot
-			}
 			// A read of a register has an effect, so it must reach the
 			// device each time. The pixels of a screen page do not: they
 			// keep the rule of the framebuffer of the firmware, which the
-			// kernel maps with no attribute of its own.
-			regions[region].uncached = registers
-			regions[region].cache_types_counted = true
+			// kernel maps with no attribute of its own. Both flags are set
+			// under the frame lock before the region slot becomes visible
+			// to concurrent cache-type conflict walks.
+			region := region_device(v[2], v[3], uncached = registers, cache_types_counted = true)
+			if region == 0 {
+				return .No_Slot
+			}
 			// The function whose registers these are: the process that holds
 			// the handle is its service for the IOMMU. Pixels program no
 			// access of the device: video memory has no requester. Behind a

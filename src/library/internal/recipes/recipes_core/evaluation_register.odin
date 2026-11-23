@@ -75,6 +75,10 @@ recipe_refusal_record :: proc "contextless" (refusal: pr.Recipe_Refusal, argumen
 		return errors.error_make(.Damaged, .Store, argument, 0, 0, found)
 	case .Damaged_Recipe:
 		return errors.error_make(.Damaged, .None, argument, 0, 0, found)
+	case .Output_Too_Large:
+		return errors.error_make(.Over_Limit, .Bytes, argument, 0, 0, found)
+	case .Build_Timed_Out:
+		return errors.error_make(.No_Answer, .None, argument, 0, 0, found)
 	}
 	return errors.error_make(.Refused, .None, argument, 0, 0, found)
 }

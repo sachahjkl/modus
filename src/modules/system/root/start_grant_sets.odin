@@ -250,8 +250,12 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// rollback"). Its callers act for their principal; it acts for nobody.
 	{name = "plans", grants = {.Serve, .Store, .Image, .Connect, .Plans}, terms = {callable = {0 = "display"}, on_demand = true}},
 	// The holder of the role Recipes: the cache of the realisations and the
-	// recipes in its private store (src/md/features/recipes.md).
-	{name = "recipes", grants = {.Serve, .Store}, terms = {on_demand = true}},
+	// recipes in its private store, and the objects of its guest builds by
+	// their hashes: a kernel of 13 MB, an initial archive and the files of
+	// the inputs and the outputs (src/md/features/recipes.md, "The guest
+	// builder"). A guest build needs no grant: the guest is a process that
+	// its own budget pays.
+	{name = "recipes", grants = {.Serve, .Store}, terms = {store_blocks = 16384, on_demand = true}},
 	// The holder of the role Projects: the pins of each project in its
 	// private store (src/md/features/declarations.md).
 	{name = "projects", grants = {.Serve, .Store}, terms = {on_demand = true}},

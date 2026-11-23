@@ -771,10 +771,12 @@ build_spec_wire_round_trip_and_refusals :: proc(t: ^testing.T) {
 	spec := valid_spec()
 	wire: [SPEC_WIRE_SIZE]u8
 	written, enc_ref := encode_build_spec(&spec, wire[:])
+	expected_size := spec_wire_size(spec.input_count)
+	archive_offset := spec_wire_initial_archive_offset(spec.input_count)
 	testing.expect_value(t, enc_ref, Guest_Builder_Refusal.None)
-	testing.expect_value(t, written, SPEC_WIRE_SIZE)
+	testing.expect_value(t, written, expected_size)
 
-	decoded, dec_ref := decode_build_spec(wire[:])
+	decoded, dec_ref := decode_build_spec(wire[:written])
 	testing.expect_value(t, dec_ref, Guest_Builder_Refusal.None)
 	testing.expect_value(t, decoded, spec)
 
@@ -788,33 +790,35 @@ build_spec_wire_round_trip_and_refusals :: proc(t: ^testing.T) {
 	// Flip allow_network byte on wire -> Network_Forbidden.
 	bad_wire := wire
 	bad_wire[112] = 1
-	_, net_ref := decode_build_spec(bad_wire[:])
+	_, net_ref := decode_build_spec(bad_wire[:written])
 	testing.expect_value(t, net_ref, Guest_Builder_Refusal.Network_Forbidden)
 
 	// Flip allow_real_clock byte on wire -> Real_Clock_Forbidden.
 	bad_wire = wire
 	bad_wire[113] = 1
-	_, clock_ref := decode_build_spec(bad_wire[:])
+	_, clock_ref := decode_build_spec(bad_wire[:written])
 	testing.expect_value(t, clock_ref, Guest_Builder_Refusal.Real_Clock_Forbidden)
 
 	// Flip allow_writable_inputs byte on wire -> Writable_Input_Forbidden.
 	bad_wire = wire
 	bad_wire[114] = 1
-	_, ro_ref := decode_build_spec(bad_wire[:])
+	_, ro_ref := decode_build_spec(bad_wire[:written])
 	testing.expect_value(t, ro_ref, Guest_Builder_Refusal.Writable_Input_Forbidden)
 
-	// Truncated wire -> Malformed_Disk_Image.
-	_, trunc_ref := decode_build_spec(wire[:SPEC_WIRE_SIZE - 1])
+	// Truncated wire and trailing byte -> Malformed_Disk_Image.
+	_, trunc_ref := decode_build_spec(wire[:written - 1])
 	testing.expect_value(t, trunc_ref, Guest_Builder_Refusal.Malformed_Disk_Image)
+	_, trail_ref := decode_build_spec(wire[:written + 1])
+	testing.expect_value(t, trail_ref, Guest_Builder_Refusal.Malformed_Disk_Image)
 
-	// The wire of version 1 is refused.
+	// Earlier wire versions are refused.
 	bad_wire = wire
-	byte_order.write_u32_little_endian(bad_wire[:], 8, 1)
-	_, version_ref := decode_build_spec(bad_wire[:])
+	byte_order.write_u32_little_endian(bad_wire[:], 8, 2)
+	_, version_ref := decode_build_spec(bad_wire[:written])
 	testing.expect_value(t, version_ref, Guest_Builder_Refusal.Malformed_Disk_Image)
 
 	// A spec with no initial archive has zero bytes at its place.
-	for value in wire[SPEC_WIRE_INITIAL_ARCHIVE_OFFSET:] {
+	for value in wire[archive_offset:written] {
 		testing.expect_value(t, value, u8(0))
 	}
 
@@ -822,10 +826,11 @@ build_spec_wire_round_trip_and_refusals :: proc(t: ^testing.T) {
 	with_archive := spec
 	testing.expect_value(t, build_spec_set_initial_archive(&with_archive, transmute([]u8)string("070701")), Guest_Builder_Refusal.None)
 	archive_wire: [SPEC_WIRE_SIZE]u8
-	_, archive_ref := encode_build_spec(&with_archive, archive_wire[:])
+	archive_written, archive_ref := encode_build_spec(&with_archive, archive_wire[:])
 	testing.expect_value(t, archive_ref, Guest_Builder_Refusal.None)
-	testing.expect_value(t, byte_order.read_u64_little_endian(archive_wire[:], SPEC_WIRE_INITIAL_ARCHIVE_OFFSET + 32), u64(6))
-	archive_decoded, archive_dec_ref := decode_build_spec(archive_wire[:])
+	testing.expect_value(t, archive_written, written)
+	testing.expect_value(t, byte_order.read_u64_little_endian(archive_wire[:], archive_offset + 32), u64(6))
+	archive_decoded, archive_dec_ref := decode_build_spec(archive_wire[:archive_written])
 	testing.expect_value(t, archive_dec_ref, Guest_Builder_Refusal.None)
 	testing.expect_value(t, archive_decoded, with_archive)
 	archive_hash, _ := build_spec_hash(&with_archive)
@@ -833,16 +838,87 @@ build_spec_wire_round_trip_and_refusals :: proc(t: ^testing.T) {
 
 	// A size on the wire with no hash, and a hash with the size 0.
 	bad_wire = wire
-	byte_order.write_u64_little_endian(bad_wire[:], SPEC_WIRE_INITIAL_ARCHIVE_OFFSET + 32, 6)
-	_, size_ref := decode_build_spec(bad_wire[:])
+	byte_order.write_u64_little_endian(bad_wire[:], archive_offset + 32, 6)
+	_, size_ref := decode_build_spec(bad_wire[:written])
 	testing.expect_value(t, size_ref, Guest_Builder_Refusal.Initial_Archive_Size_Invalid)
 	bad_wire = archive_wire
-	byte_order.write_u64_little_endian(bad_wire[:], SPEC_WIRE_INITIAL_ARCHIVE_OFFSET + 32, 0)
-	_, hash_ref := decode_build_spec(bad_wire[:])
+	byte_order.write_u64_little_endian(bad_wire[:], archive_offset + 32, 0)
+	_, hash_ref := decode_build_spec(bad_wire[:archive_written])
 	testing.expect_value(t, hash_ref, Guest_Builder_Refusal.Initial_Archive_Size_Invalid)
 	// A size past the bound on the wire.
 	bad_wire = archive_wire
-	byte_order.write_u64_little_endian(bad_wire[:], SPEC_WIRE_INITIAL_ARCHIVE_OFFSET + 32, max(u64))
-	_, large_ref := decode_build_spec(bad_wire[:])
+	byte_order.write_u64_little_endian(bad_wire[:], archive_offset + 32, max(u64))
+	_, large_ref := decode_build_spec(bad_wire[:archive_written])
 	testing.expect_value(t, large_ref, Guest_Builder_Refusal.Initial_Archive_Too_Large)
+}
+
+// Streamed MODGBD1 writer supports thousands of entries across subdirectories
+// and matches pack_disk_image byte for byte.
+@(test)
+disk_stream_writer_scales_to_thousands_of_entries :: proc(t: ^testing.T) {
+	// Refusals first: too many entries, unsorted, duplicate, prefix conflict.
+	scratch: [4096]u8
+	writer: Disk_Stream_Writer
+	testing.expect_value(t, disk_stream_begin(&writer, .Inputs_Read_Only, MAX_DISK_ENTRIES + 1, 0, scratch[:]), Guest_Builder_Refusal.Too_Many_Inputs)
+	testing.expect_value(t, disk_stream_begin(&writer, .Inputs_Read_Only, 2, 0, scratch[:10]), Guest_Builder_Refusal.Output_Too_Large)
+	testing.expect_value(t, disk_stream_begin(&writer, .Output_Writable, 2, 0, scratch[:]), Guest_Builder_Refusal.None)
+	testing.expect_value(t, disk_stream_write_entry(&writer, "b.txt", transmute([]u8)string("1")), Guest_Builder_Refusal.None)
+	testing.expect_value(t, disk_stream_write_entry(&writer, "a.txt", transmute([]u8)string("2")), Guest_Builder_Refusal.Malformed_Disk_Image)
+	testing.expect_value(t, disk_stream_write_entry(&writer, "b.txt", transmute([]u8)string("2")), Guest_Builder_Refusal.Duplicate_Input_Mount)
+	testing.expect_value(t, disk_stream_write_entry(&writer, "b.txt/child", transmute([]u8)string("2")), Guest_Builder_Refusal.Duplicate_Input_Mount)
+	_, early_ref := disk_stream_finish(&writer)
+	testing.expect_value(t, early_ref, Guest_Builder_Refusal.Malformed_Disk_Image)
+
+	// 1024 entries across 16 subdirectories (64 files each): well past the old
+	// 64-entry cap and unpacked into a valid recursive MODTREE1 tree.
+	DIRS :: 16
+	PER_DIR :: 64
+	TOTAL :: DIRS * PER_DIR
+	buf := make([]u8, DISK_HEADER_SIZE + TOTAL * (DISK_ENTRY_SIZE + 8) + 4096)
+	defer delete(buf)
+	testing.expect_value(t, disk_stream_begin(&writer, .Output_Writable, TOTAL, 1700000000, buf), Guest_Builder_Refusal.None)
+	path_buf: [16]u8
+	payload: [4]u8
+	for d in 0 ..< DIRS {
+		for f in 0 ..< PER_DIR {
+			path_buf[0] = 'd'
+			path_buf[1] = u8('0' + d / 10)
+			path_buf[2] = u8('0' + d % 10)
+			path_buf[3] = '/'
+			path_buf[4] = 'f'
+			path_buf[5] = u8('0' + f / 10)
+			path_buf[6] = u8('0' + f % 10)
+			payload = {u8(d), u8(f), 'o', 'k'}
+			testing.expect_value(t, disk_stream_write_entry(&writer, string(path_buf[:7]), payload[:]), Guest_Builder_Refusal.None)
+		}
+	}
+	total_bytes, finish_ref := disk_stream_finish(&writer)
+	testing.expect_value(t, finish_ref, Guest_Builder_Refusal.None)
+	testing.expect(t, total_bytes > 0)
+
+	workspace := new(Disk_Unpack_Workspace)
+	defer free(workspace)
+	root_tree: [UNPACK_NODE_BUFFER_BYTES]u8
+	written, digest, unpack_ref := unpack_output_disk(buf, u64(len(buf)), workspace, root_tree[:])
+	testing.expect_value(t, unpack_ref, Guest_Builder_Refusal.None)
+	testing.expect(t, written > 0 && !hash_is_zero(digest))
+
+	// 64 mounts + multi-GiB guest RAM + multi-hundred-MiB output disk spec.
+	big_spec := valid_spec()
+	big_spec.memory_pages = 524_288 // 2 GiB.
+	big_spec.output_size_bound = 256 * 1024 * 1024 // 256 MiB.
+	big_spec.input_count = 0
+	big_spec.inputs = {}
+	for i in 0 ..< MAX_INPUT_MOUNTS {
+		name := [4]u8{'m', u8('0' + i / 10), u8('0' + i % 10), 0}
+		testing.expect_value(t, build_spec_add_input(&big_spec, string(name[:3]), non_zero_hash(u8(i + 1))), Guest_Builder_Refusal.None)
+	}
+	testing.expect_value(t, validate_build_spec(&big_spec), Guest_Builder_Refusal.None)
+	big_wire: [SPEC_WIRE_SIZE]u8
+	big_written, big_enc := encode_build_spec(&big_spec, big_wire[:])
+	testing.expect_value(t, big_enc, Guest_Builder_Refusal.None)
+	testing.expect_value(t, big_written, SPEC_WIRE_SIZE)
+	big_decoded, big_dec := decode_build_spec(big_wire[:big_written])
+	testing.expect_value(t, big_dec, Guest_Builder_Refusal.None)
+	testing.expect_value(t, big_decoded, big_spec)
 }

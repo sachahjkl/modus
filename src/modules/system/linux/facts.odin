@@ -87,6 +87,16 @@ No_Terminal :: struct {}
 @(log_fact = "linux: no store: the guest image is in the private store of the process")
 No_Store :: struct {}
 
+// The window of the guest changed its size: the width of the lines and the
+// size of the virtio console. taken is 0 when the console line or the
+// device refused the size.
+@(log_fact = "linux: the window has {columns} columns and {rows} rows: the guest takes the size ({taken})")
+Window_Resized :: struct {
+	columns: u64,
+	rows:    u64,
+	taken:   u64,
+}
+
 // The processors of the machine have no guest support.
 @(log_fact = "linux: Guest_Run gave Unsupported: the processors of this machine have no virtualization support that the kernel uses, and no guest runs")
 Guests_Unsupported :: struct {}

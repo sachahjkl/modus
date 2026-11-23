@@ -42,6 +42,12 @@ Serial_Port :: struct {
 	receive_dropped:   u64, // The bytes that found the queue full.
 }
 
+// serial_receive_room gives the free bytes in the receive queue of the
+// port, so a caller can pace large pastes without dropping characters.
+serial_receive_room :: proc "contextless" (port: ^Serial_Port) -> int {
+	return int(SERIAL_RECEIVE_BYTES - port.receive_count)
+}
+
 // serial_receive_put puts bytes in the receive queue of the port, as the
 // line of a terminal brings them, and gives how many it took: a byte that
 // finds the queue full is dropped and counted.

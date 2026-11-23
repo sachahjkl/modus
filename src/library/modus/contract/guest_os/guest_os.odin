@@ -55,7 +55,7 @@ Linux_Boot_Config :: struct {
 // build_linux_e820 constructs a clean non-overlapping e820 map for a Linux
 // guest (low conventional RAM, EBDA/BIOS hole, high RAM above 1 MiB).
 build_linux_e820 :: proc "contextless" (cfg: Linux_Boot_Config, out: []E820_Entry) -> (count: int, ok: bool) {
-	if cfg.ram_bytes < 64 * 1024 * 1024 || cfg.vcpu_count == 0 || cfg.vcpu_count > 16 || len(out) < 3 {
+	if cfg.ram_bytes < 64 * 1024 * 1024 || cfg.vcpu_count == 0 || cfg.vcpu_count > 32 || len(out) < 3 {
 		return 0, false
 	}
 	out[0] = {addr = 0x0000_0000, size = 0x0009_FC00, type = u32(E820_Type.Ram)}

@@ -33,20 +33,21 @@ import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:system"
 
-// The memory of the guest, at most, and the disks. The budget pays all of
-// them at once, with the nested page table of the guest and this process.
-GUEST_MEMORY_PAGES_MOST :: u64(65_536) // 256 MiB.
-INPUT_DISK_BYTES_MOST :: u64(16 * 1024 * 1024)
+// Contract bounds on guest RAM and disks (up to 16 GiB RAM and 1 GiB disks).
+// At runtime the process budget granted by the starter bounds the actual
+// allocation cleanly with a Budget error record.
+GUEST_MEMORY_PAGES_MOST :: contract.MAX_GUEST_MEMORY_PAGES
+INPUT_DISK_BYTES_MOST :: contract.MAX_INPUT_DISK_BYTES
 OUTPUT_DISK_BYTES_MOST :: contract.MAX_OUTPUT_DISK_BYTES
-// Working memory for up to 256 MiB guest RAM, 16 MiB input disk, 64 MiB
-// output disk, nested page tables and working scratch; two child guest
-// processes and one service thread.
+// Default budget request for a standalone guest build (256 MiB guest RAM,
+// 16 MiB input disk, 64 MiB output disk, nested page tables and scratch);
+// a starter can grant a larger budget for multi-GiB builds.
+DEFAULT_GUEST_MEMORY_PAGES :: u64(65_536)
+DEFAULT_INPUT_DISK_PAGES :: u64(4_096)
+DEFAULT_OUTPUT_DISK_PAGES :: u64(16_384)
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 88064, processes = 2, threads = 1}
-#assert(88064 == GUEST_MEMORY_PAGES_MOST + INPUT_DISK_BYTES_MOST / system.PAGE_SIZE + OUTPUT_DISK_BYTES_MOST / system.PAGE_SIZE + 2048)
+#assert(88064 == DEFAULT_GUEST_MEMORY_PAGES + DEFAULT_INPUT_DISK_PAGES + DEFAULT_OUTPUT_DISK_PAGES + 2048)
 TREE_OUTPUT_BYTES_MOST :: contract.UNPACK_NODE_BUFFER_BYTES
-
-// Name of the child guest process in kernel reports.
-GUEST_PROCESS_NAME :: "guest_builder guest"
 
 // Failing return code of build(): the error record carries the exact cause.
 ERROR :: i64(-1)
@@ -108,76 +109,6 @@ input_disk_copy :: proc "contextless" (input_disk: ^system.Bytes_To_Read, error:
 	return memory, memory.bytes[:count], true
 }
 
-// initial_archive_stage copies the initial archive of the caller to the
-// place that the boot gives it in the memory of the guest, under ceiling,
-// and checks its size and its hash there: the caller shares its memory and
-// can change it, the copy it cannot. linux_boot_prepare then finds the
-// bytes at their place already. A refused archive leaves no byte of it in
-// the memory of the guest.
-initial_archive_stage :: proc "contextless" (ram: []u8, parsed: guest_os.Linux_Image, ceiling: u64, spec: ^contract.Guest_Build_Spec, source: rawptr, count: u64) -> (archive: []u8, refusal: contract.Guest_Builder_Refusal) {
-	if contract.hash_is_zero(spec.initial_archive_hash) {
-		if count != 0 || spec.initial_archive_size != 0 {
-			return nil, .Initial_Archive_Size_Invalid
-		}
-		return nil, .None
-	}
-	if count > contract.MAX_INITIAL_ARCHIVE_BYTES {
-		return nil, .Initial_Archive_Too_Large
-	}
-	if count != spec.initial_archive_size || source == nil {
-		return nil, .Initial_Archive_Size_Invalid
-	}
-	address, place_refusal := guest_os.linux_initial_archive_place(parsed, count, min(ceiling, u64(len(ram))))
-	if place_refusal != .None {
-		return nil, .Initial_Archive_Too_Large
-	}
-	archive = ram[address:][:count]
-	intrinsics.mem_copy_non_overlapping(raw_data(archive), source, int(count))
-	if refusal = contract.initial_archive_check(spec, archive); refusal != .None {
-		intrinsics.mem_zero(raw_data(archive), int(count))
-		return nil, refusal
-	}
-	return archive, .None
-}
-
-// What the loop of a build does after one exit.
-Build_Exit_Action :: enum u8 {
-	Run_Again      = 1,
-	End            = 4, // The run ended: the state of the runner says how.
-}
-
-// build_exit_handle answers one exit of a build: the bound of the exits,
-// the machine of the guest, then the ports of the runner (the frozen clock,
-// the exit status, the trap of a network device), and the read-only disk,
-// whose first refused write refuses the build.
-build_exit_handle :: proc "contextless" (runner: ^contract.Guest_Sandbox_Runner, linux: ^guest_os.Linux_Machine, registers: ^op.Guest_Registers, exit: guest_os.Machine_Exit, input_writes_reported: ^u64) -> Build_Exit_Action {
-	if !contract.runner_exit_counted(runner, exit.kind) {
-		return .End
-	}
-	action := Build_Exit_Action.Run_Again
-	switch guest_os.linux_machine_handle_exit(linux, registers, exit) {
-	case .Continue:
-	case .Not_Handled:
-		if !contract.runner_answer_exit(runner, registers, exit.kind, exit.a, exit.b, exit.c, exit.next) {
-			action = .End
-		}
-	case .Halted, .Failed, .Waiting:
-		// The guest stopped with no exit status: the build failed. A build
-		// never sets waits_for_input, so Waiting never comes.
-		runner.state = .Failed
-		if runner.refusal == .None {
-			runner.refusal = .Nonzero_Guest_Exit
-		}
-		return .End
-	}
-	if refused := linux.devices[.Input_Disk].writes_refused; refused > input_writes_reported^ {
-		input_writes_reported^ = refused
-		contract.runner_report_violation(runner, .Read_Only_Disk_Write)
-		return .End
-	}
-	return action
-}
-
 // output_tree_map maps the caller's lent output memory object for writing.
 @(private = "file")
 output_tree_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Record) -> (bytes: []u8, ok: bool) {
@@ -217,20 +148,13 @@ write_report :: proc "contextless" (report: ^Guest_Build_Report, state: contract
 	}
 }
 
-// The resources of one build, which build_end gives back in each case.
+// The disks of one build, which build_end gives back in each case.
 Build_Resources :: struct {
-	guest:       system.Handle,
-	guest_ram:   guest_regions.Owned_Memory,
 	input_disk:  guest_regions.Owned_Memory,
 	output_disk: guest_regions.Owned_Memory,
 }
 
 build_end :: proc "contextless" (resources: ^Build_Resources) {
-	if resources.guest != 0 {
-		_ = system.process_stop(resources.guest)
-		system.close(resources.guest)
-	}
-	guest_regions.owned_memory_end(&resources.guest_ram)
 	guest_regions.owned_memory_end(&resources.input_disk)
 	guest_regions.owned_memory_end(&resources.output_disk)
 	resources^ = {}
@@ -244,6 +168,21 @@ refuse :: proc "contextless" (report: ^Guest_Build_Report, error: ^errors.Error_
 	write_report(report, .Refused, refusal)
 	system.log_fact(.Info, Build_Refused{refusal_code = u64(refusal), exit_code = 0, violations = sandbox_runner.sandbox_violations})
 	return errors.fail(error, ERROR, .Bad_Value, .None, argument, 0, 0, i64(refusal))
+}
+
+// argument_of_part gives the argument of build that a refusal before the
+// run of the guest names.
+@(private = "file")
+argument_of_part :: proc "contextless" (part: guest_regions.Guest_Build_Part) -> i64 {
+	switch part {
+	case .None, .Spec:
+		return ARGUMENT_SPEC
+	case .Kernel:
+		return ARGUMENT_KERNEL
+	case .Initial_Archive:
+		return ARGUMENT_INITIAL_ARCHIVE
+	}
+	return ARGUMENT_SPEC
 }
 
 // build boots the Linux kernel of the spec in a sandboxed guest and writes
@@ -269,25 +208,22 @@ build :: proc "c" (
 	output_disk_hash = {}
 	resources: Build_Resources
 
-	// Copy every caller length and buffer once before validating: the caller
-	// shares the call region and can modify memory concurrently.
+	// Copy every caller length once before validating: the caller shares the
+	// call region and can modify memory concurrently.
 	if spec_bytes == nil {
 		return errors.fail(error, ERROR, .Bad_Address, .None, ARGUMENT_SPEC)
 	}
 	spec_count := intrinsics.volatile_load(&spec_bytes.count)
-	if spec_count != contract.SPEC_WIRE_SIZE {
+	if spec_count < contract.SPEC_WIRE_MIN_SIZE || spec_count > contract.SPEC_WIRE_SIZE {
 		return errors.fail(error, ERROR, .Bad_Value, .Bytes, ARGUMENT_SPEC, i64(min(spec_count, 1 << 62)), contract.SPEC_WIRE_SIZE)
 	}
 	if spec_bytes.bytes == nil {
 		return errors.fail(error, ERROR, .Bad_Address, .None, ARGUMENT_SPEC)
 	}
-	intrinsics.mem_copy_non_overlapping(&spec_wire_copy[0], spec_bytes.bytes, contract.SPEC_WIRE_SIZE)
-	spec, spec_refusal := contract.decode_build_spec(spec_wire_copy[:])
+	intrinsics.mem_copy_non_overlapping(&spec_wire_copy[0], spec_bytes.bytes, int(spec_count))
+	spec, spec_refusal := contract.decode_build_spec(spec_wire_copy[:spec_count])
 	if spec_refusal != .None {
 		return refuse(report, error, &resources, spec_refusal, ARGUMENT_SPEC)
-	}
-	if spec.memory_pages > GUEST_MEMORY_PAGES_MOST {
-		return refuse(report, error, &resources, .Memory_Past_Bound, ARGUMENT_SPEC)
 	}
 	memory_bytes := spec.memory_pages * system.PAGE_SIZE
 
@@ -301,46 +237,19 @@ build :: proc "c" (
 	if kernel_image.bytes == nil {
 		return errors.fail(error, ERROR, .Bad_Address, .None, ARGUMENT_KERNEL)
 	}
-	staging_bytes, staging_fits := guest_regions.kernel_staging_bytes(kernel_count, memory_bytes)
-	if !staging_fits {
+	if _, staging_fits := guest_regions.kernel_staging_bytes(kernel_count, memory_bytes); !staging_fits {
 		return errors.fail(error, ERROR, .Too_Long, .Bytes, ARGUMENT_KERNEL, i64(min(kernel_count, 1 << 62)), i64(memory_bytes))
 	}
-	staging := memory_bytes - staging_bytes
-
-	status: system.Status
-	resources.guest_ram, status = guest_regions.owned_memory_make(memory_bytes)
-	if status != .Ok {
-		build_end(&resources)
-		return errors.fail(error, ERROR, .Budget, .Pages, ARGUMENT_SPEC, i64(spec.memory_pages))
-	}
-	ram := resources.guest_ram.bytes[:memory_bytes]
-	kernel_slice := ram[staging:][:kernel_count]
-	intrinsics.mem_copy_non_overlapping(raw_data(kernel_slice), kernel_image.bytes, int(kernel_count))
-	// The hash is of the copy, which the caller cannot change any more.
-	if blake3.hash(kernel_slice) != spec.kernel_hash {
-		return refuse(report, error, &resources, .Malformed_Disk_Image, ARGUMENT_KERNEL)
-	}
-	parsed, boot_refusal := guest_os.linux_image_parse(kernel_slice, memory_bytes)
-	if boot_refusal == .None && parsed.load_end > staging {
-		boot_refusal = .Memory_Too_Small
-	}
-	if boot_refusal != .None {
-		system.log_fact(.Info, Kernel_Refused{refusal_code = u64(boot_refusal)})
-		return refuse(report, error, &resources, boot_refusal == .Memory_Too_Small ? .Memory_Too_Small : .Malformed_Disk_Image, ARGUMENT_KERNEL)
-	}
-
-	// The initial archive goes to its place below the copy of the image,
-	// and is checked there.
-	archive_source: rawptr
-	archive_count: u64
+	archive_bytes: []u8
 	if initial_archive != nil {
-		archive_count = intrinsics.volatile_load(&initial_archive.count)
-		archive_source = initial_archive.bytes
-	}
-	archive, archive_refusal := initial_archive_stage(ram, parsed, staging, &spec, archive_source, archive_count)
-	if archive_refusal != .None {
-		system.log_fact(.Info, Initial_Archive_Refused{refusal_code = u64(archive_refusal), archive_bytes = archive_count})
-		return refuse(report, error, &resources, archive_refusal, ARGUMENT_INITIAL_ARCHIVE)
+		archive_count := intrinsics.volatile_load(&initial_archive.count)
+		if archive_count > contract.MAX_INITIAL_ARCHIVE_BYTES {
+			system.log_fact(.Info, Initial_Archive_Refused{refusal_code = u64(contract.Guest_Builder_Refusal.Initial_Archive_Too_Large), archive_bytes = archive_count})
+			return refuse(report, error, &resources, .Initial_Archive_Too_Large, ARGUMENT_INITIAL_ARCHIVE)
+		}
+		if archive_count > 0 && initial_archive.bytes != nil {
+			archive_bytes = ([^]u8)(initial_archive.bytes)[:archive_count]
+		}
 	}
 
 	input_bytes: []u8
@@ -350,6 +259,7 @@ build :: proc "c" (
 		build_end(&resources)
 		return ERROR
 	}
+	status: system.Status
 	resources.output_disk, status = guest_regions.owned_memory_make(spec.output_size_bound)
 	if status != .Ok {
 		build_end(&resources)
@@ -358,80 +268,44 @@ build :: proc "c" (
 	output_bytes := resources.output_disk.bytes[:spec.output_size_bound]
 
 	// The kernel is no disk of the guest: the runner gets no root disk.
-	prepare_refusal := contract.runner_prepare(&sandbox_runner, &spec, nil, input_bytes, output_bytes)
-	if prepare_refusal != .None {
+	if prepare_refusal := contract.runner_prepare(&sandbox_runner, &spec, nil, input_bytes, output_bytes); prepare_refusal != .None {
 		return refuse(report, error, &resources, prepare_refusal, ARGUMENT_INPUT_DISK)
 	}
-	guest_memory := guest_os.Guest_Memory{ram}
-	guest_os.linux_machine_start(&machine, guest_memory, input_bytes, output_bytes)
-	places := guest_os.linux_machine_places()
-	// The ceiling is the one of initial_archive_stage: the boot finds the
-	// archive at its place, below the copy of the image.
-	registers, start_refusal := guest_os.linux_boot_prepare(guest_memory, kernel_slice, parsed, places[:], spec.command[:spec.command_length], archive, staging)
-	if start_refusal != .None {
-		system.log_fact(.Info, Kernel_Refused{refusal_code = u64(start_refusal)})
-		return refuse(report, error, &resources, .Invalid_Command_Text, ARGUMENT_SPEC)
-	}
-	// The image leaves the memory of the guest: a build sees the same bytes
-	// whatever was staged there.
-	intrinsics.mem_zero(raw_data(kernel_slice), int(staging_bytes))
-	if refusal := contract.runner_start(&sandbox_runner); refusal != .None {
+	if start_refusal := contract.runner_start(&sandbox_runner); start_refusal != .None {
 		build_end(&resources)
-		write_report(report, sandbox_runner.state, refusal)
-		return errors.fail(error, ERROR, .State, .None, 0, 0, 0, i64(refusal))
+		write_report(report, sandbox_runner.state, start_refusal)
+		return errors.fail(error, ERROR, .State, .None, 0, 0, 0, i64(start_refusal))
 	}
 
-	// The guest process: its nested page table holds the memory of the
-	// guest only. Past it, each address is a device of the machine.
-	guest_name := GUEST_PROCESS_NAME
-	created, create_status := system.call(.Process_Create, u64(system.own_budget()), u64(uintptr(raw_data(guest_name))), u64(len(guest_name)))
-	if create_status != .Ok {
+	// The run copies the kernel and the archive out of the memory of the
+	// caller, and checks the copies against the hashes of the spec.
+	kernel_bytes := ([^]u8)(kernel_image.bytes)[:kernel_count]
+	outcome := guest_regions.guest_build_run(&sandbox_runner, &machine, &spec, kernel_bytes, archive_bytes, input_bytes, output_bytes)
+	output_disk_hash = outcome.output_disk_hash
+	switch outcome.end {
+	case .Ran:
+	case .Refused:
+		switch outcome.refused_part {
+		case .Kernel, .Spec:
+			if outcome.boot_refusal != .None {
+				system.log_fact(.Info, Kernel_Refused{refusal_code = u64(outcome.boot_refusal)})
+			}
+		case .Initial_Archive:
+			system.log_fact(.Info, Initial_Archive_Refused{refusal_code = u64(sandbox_runner.refusal), archive_bytes = u64(len(archive_bytes))})
+		case .None:
+		}
+		return refuse(report, error, &resources, sandbox_runner.refusal, argument_of_part(outcome.refused_part))
+	case .Unsupported:
 		build_end(&resources)
-		system.log_fact(.Error, Step_Failed{status_word = op.Status_Word(create_status), step = value_kinds.text_field("Process_Create of the guest", 40)})
-		return errors.fail(error, ERROR, .Refused, .None, 0, i64(create_status))
-	}
-	resources.guest = system.Handle(created[0])
-	if map_status, step := guest_regions.map_memory(resources.guest, resources.guest_ram.handle, memory_bytes); map_status != .Ok {
+		write_report(report, .Refused, .Nonzero_Guest_Exit)
+		system.log_fact(.Info, Guests_Unsupported{})
+		return errors.fail(error, ERROR, .Unsupported, .None)
+	case .Kernel_Failed:
 		build_end(&resources)
-		system.log_fact(.Error, Step_Failed{status_word = op.Status_Word(map_status), step = value_kinds.text_field(step, 40)})
-		return errors.fail(error, ERROR, .Refused, .None, 0, i64(map_status))
+		write_report(report, .Failed, .Nonzero_Guest_Exit)
+		system.log_fact(.Error, Step_Failed{status_word = op.Status_Word(outcome.status), step = value_kinds.text_field(outcome.step, 40)})
+		return errors.fail(error, ERROR, .Refused, .None, 0, i64(outcome.status))
 	}
-
-	// No bound counts the exits Interrupted: they come from the timer of the
-	// host, and a bound on them refuses on a slow machine a build that a fast
-	// one accepts. The bound of the spec counts the exits of the guest; a
-	// guest that runs with no exit of its own runs until its caller stops it.
-	input_writes_reported := u64(0)
-	run_loop: for {
-		run_error: errors.Error_Record
-		exit, run_status := system.guest_run(resources.guest, &registers, &run_error)
-		if run_status == .Bad_Operation && run_error.kind == i64(errors.Kind.Unsupported) {
-			build_end(&resources)
-			write_report(report, .Refused, .Nonzero_Guest_Exit)
-			system.log_fact(.Info, Guests_Unsupported{})
-			return errors.fail(error, ERROR, .Unsupported, .None)
-		}
-		if run_status != .Ok {
-			build_end(&resources)
-			write_report(report, .Failed, .Nonzero_Guest_Exit)
-			system.log_fact(.Error, Step_Failed{status_word = op.Status_Word(run_status), step = value_kinds.text_field("Guest_Run", 40)})
-			return errors.fail(error, ERROR, .Refused, .None, 0, i64(run_status))
-		}
-		machine_exit := guest_os.Machine_Exit{kind = exit.kind, a = exit.a, b = exit.b, c = exit.c, next = exit.next, code = exit.code, information = exit.information}
-		action := build_exit_handle(&sandbox_runner, &machine, &registers, machine_exit, &input_writes_reported)
-		switch action {
-		case .Run_Again:
-		case .End:
-			break run_loop
-		}
-	}
-
-	// Stop the guest before the output disk is read: no instruction of the
-	// guest runs after process_stop returns.
-	_ = system.process_stop(resources.guest)
-	system.close(resources.guest)
-	resources.guest = 0
-	output_disk_hash = blake3.hash(output_bytes)
 
 	output_hash, tree_written, finish_refusal := contract.runner_finish(&sandbox_runner, &unpack_workspace, tree_output_staging[:])
 	if finish_refusal != .None || sandbox_runner.state != .Succeeded {

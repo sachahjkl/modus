@@ -8,6 +8,7 @@ import "internal:recipes/recipes_core"
 import "modus:contract/blake3"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import "modus:contract/object_cache"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/value_kinds"
 import "modus:system"
@@ -160,9 +161,11 @@ register_evaluation :: proc "c" (output: ^system.Bytes_To_Read, result: ^[]pr.Re
 	return 1
 }
 
-// build realises a registered recipe. A mode that takes the cache gives a
-// realisation of the local store at once, with no build; on a miss the
-// service builds the recipe, keeps its output and its realisation, and the
+// build realises a registered recipe, or a recipe that the private store
+// keeps by its hash. A mode that takes the cache gives a realisation of the
+// local store at once, with no build; on a miss the service builds the
+// recipe (the inputs tree builder in the service, the guest builder in a
+// guest of this process), keeps its output and its realisation, and the
 // next build of the recipe is a hit.
 //
 // - **recipe**: the recipe hash that register gave.
@@ -189,13 +192,74 @@ build :: proc "c" (recipe: ^pr.Recipe_Reference, mode: i64, result: ^[]pr.Recipe
 		return recipe_refusal_fail(error, ERROR_BUILD, .Bad_Build_Mode, 2)
 	}
 	copied_reference = intrinsics.volatile_load(recipe)
-	export_result = recipes_core.build_registered(&service_state, &service_registry, blake3.Hash(copied_reference.recipe_hash), checked_mode)
+	recipe_hash := blake3.Hash(copied_reference.recipe_hash)
+	// A recipe that a writer of the store kept there registers at its first
+	// build (guest_build.odin).
+	stored_recipe_register(recipe_hash)
+	guest: ^recipes_core.Guest_Builder_Workspace
+	if spec := recipes_core.registered_recipe(&service_registry, recipe_hash); spec != nil {
+		guest = guest_workspace_for(spec.builder_hash)
+	}
+	export_result = recipes_core.build_registered_with_guest(&service_state, &service_registry, recipe_hash, checked_mode, guest)
 	system.log_fact(.Info, Recipe_Build_Completed{outcome = u64(export_result.outcome), refusal_code = u64(export_result.refusal)})
 	if export_result.refusal != .None {
 		return recipe_refusal_fail(error, ERROR_BUILD, export_result.refusal, 1)
 	}
 	if len(result^) > 0 {
 		result[0] = pr.recipe_build_row_of(&export_result, checked_mode)
+	}
+	return 1
+}
+
+// The bytes of the largest object that put takes in one call.
+OBJECT_PUT_BYTES_MOST :: 32 * 1024
+
+// One object of the private store, as put gives it: its hash.
+Object_Reference :: struct {
+	hash: value_kinds.Hash_Field,
+}
+
+copied_object: [OBJECT_PUT_BYTES_MOST]u8
+
+// put keeps an object in the private store by its hash, so a recipe names
+// it as an input, or a guest build as its kernel or its initial archive.
+//
+// - **kind**: the Cache_Object_Kind word: 1 a blob, 2 a tree, whose bytes
+//   are a canonical MODTREE1 node.
+// - **bytes**: the object, at most OBJECT_PUT_BYTES_MOST bytes.
+// - **result**: one row: the hash of the object.
+//
+// The result is 1, or a negative number with an error record:
+// ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, or
+// ERROR_RECIPE with the refusal as the value found.
+@(export, link_name = "put")
+put :: proc "c" (kind: i64, bytes: ^system.Bytes_To_Read, result: ^[]Object_Reference, error: ^errors.Error_Record) -> i64 {
+	if failure, ok := caller_check(true, error); !ok {
+		return failure
+	}
+	if bytes == nil {
+		return errors.fail(error, ERROR_RECIPE, .Bad_Address, .None, 2)
+	}
+	object_kind, kind_ok := object_cache.cache_object_kind_of_word(u64(max(kind, 0)))
+	if kind < 0 || !kind_ok {
+		return recipe_refusal_fail(error, ERROR_RECIPE, .Bad_Input_Kind, 1)
+	}
+	count := intrinsics.volatile_load(&bytes.count)
+	if count == 0 || count > OBJECT_PUT_BYTES_MOST {
+		return errors.fail(error, ERROR_RECIPE, .Too_Long, .Bytes, 2, i64(min(count, 1 << 62)), OBJECT_PUT_BYTES_MOST)
+	}
+	// A private copy: the hash and the write read the same bytes.
+	intrinsics.mem_copy_non_overlapping(&copied_object[0], bytes.bytes, int(count))
+	hash, refusal := pr.recipe_hash_output(object_kind, copied_object[:count])
+	if refusal != .None {
+		return recipe_refusal_fail(error, ERROR_RECIPE, refusal, 2)
+	}
+	name := pr.blob_object_name(hash)
+	if pr.private_store_write(&service_state.store, pr.private_object_name_text(&name), copied_object[:count]) != .Ok {
+		return recipe_refusal_fail(error, ERROR_RECIPE, .Store_Failed, 2)
+	}
+	if len(result^) > 0 {
+		result[0] = {hash = value_kinds.Hash_Field(hash)}
 	}
 	return 1
 }

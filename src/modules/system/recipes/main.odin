@@ -16,9 +16,15 @@ import "modus:contract/value_kinds"
 import "modus:storage_port"
 import "modus:system"
 
-// Working memory budget for the freestanding recipes service process, including
-// local object staging and realisation tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1024, processes = 1, threads = 1}
+// Working memory budget for the freestanding recipes service process: its
+// local object staging and realisation tables, and one guest build at a
+// time (guest_build.odin): the buffers of its disks and of its kernel and
+// initial archive, the memory of its guest and its nested page table. The
+// guest is a second process.
+SERVICE_WORKING_PAGES :: u64(1024)
+GUEST_BUFFER_PAGES :: (16 + 16 + 32 + 16 + 16) * 1024 * 1024 / system.PAGE_SIZE
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 59392, processes = 2, threads = 1}
+#assert(59392 == SERVICE_WORKING_PAGES + GUEST_BUFFER_PAGES + GUEST_MEMORY_PAGES_MOST + GUEST_NESTED_TABLE_PAGES)
 
 // Status record returned by the status() export.
 Recipes_Status :: struct {
@@ -151,7 +157,7 @@ handle_command :: proc "contextless" (command: ring.Record) {
 			return
 		}
 		intrinsics.mem_copy_non_overlapping(&copied_spec, rawptr(&service_region_base[spec_offset]), size_of(pr.Recipe_Spec))
-		staged_result = recipes_core.build_with_inputs_tree(&service_state, &copied_spec, mode)
+		staged_result = recipes_core.build_with_builders(&service_state, &copied_spec, mode, guest_workspace_for(copied_spec.builder_hash))
 		intrinsics.mem_copy_non_overlapping(rawptr(&service_region_base[result_offset]), &staged_result, size_of(pr.Recipe_Build_Result))
 		if staged_result.refusal == .Verify_Disagreement {
 			system.log_fact(.Warning, Realisation_Disagreement{disagreements = service_state.counters.verify_disagreements})

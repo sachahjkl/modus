@@ -128,7 +128,7 @@ real_linux_bz_image_boot_prepare :: proc(t: ^testing.T) {
 	testing.expect_value(t, registers.rip, parsed.entry_address)
 	testing.expect_value(t, registers.rsi, LINUX_ZERO_PAGE_ADDRESS)
 	testing.expect(t, registers.code_selector == LINUX_CODE_SELECTOR && registers.data_selector == LINUX_DATA_SELECTOR)
-	testing.expect_value(t, registers.rflags & FLAGS_INTERRUPT, u64(0))
+	testing.expect_value(t, registers.rflags & op.GUEST_FLAGS_INTERRUPT, u64(0))
 
 	// The protected-mode kernel at its place, then zeros to the end of its
 	// working space. startup_64 of the decompressor starts with cld; cli.

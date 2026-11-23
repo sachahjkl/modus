@@ -784,12 +784,21 @@ region_slot_take :: proc "contextless" () -> u32 {
 	return 0
 }
 
-region_device :: proc "contextless" (physical: u64, page_count: u64) -> u32 {
+region_device :: proc "contextless" (physical: u64, page_count: u64, uncached: bool = false, cache_types_counted: bool = false) -> u32 {
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
 	index := region_slot_take()
 	if index != 0 {
-		regions[index] = {physical = physical, page_count = page_count, present = page_count, device = true, contiguous = true, serial = regions[index].serial}
+		regions[index] = {
+			physical            = physical,
+			page_count          = page_count,
+			present             = page_count,
+			device              = true,
+			contiguous          = true,
+			uncached            = uncached,
+			cache_types_counted = cache_types_counted,
+			serial              = regions[index].serial,
+		}
 	}
 	return index
 }

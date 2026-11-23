@@ -20,6 +20,10 @@ import "modus:contract/value_kinds"
 // runs itself: the tree of the inputs of a recipe, by their names.
 INPUTS_TREE_BUILDER_DOMAIN :: "modus builder inputs tree v1"
 
+// The context string of the hash of the guest builder: a recipe with this
+// builder runs its deterministic build in a sandboxed Linux guest.
+GUEST_BUILDER_DOMAIN :: "modus builder guest linux v1"
+
 // The prefix of the name of a module of the console of a project: Lex gives
 // a module of the list `modules` as its hash only.
 CONSOLE_MODULE_NAME_PREFIX :: "module_"
@@ -418,6 +422,14 @@ recipe_build_row_of :: proc "contextless" (result: ^Recipe_Build_Result, mode: B
 // so the recipes service builds it with no sandbox and no code of a caller.
 inputs_tree_builder_hash :: proc "contextless" () -> blake3.Hash {
 	return blake3.derive_key(INPUTS_TREE_BUILDER_DOMAIN, nil)
+}
+
+// guest_builder_hash gives the builder hash of the sandboxed Linux guest
+// builder: a recipe with this builder packs its read-only inputs into a
+// MODGBD1 input disk, boots a zero-network guest with frozen epoch time,
+// checks exit status 0, unpacks the output disk, and returns its tree_hash.
+guest_builder_hash :: proc "contextless" () -> blake3.Hash {
+	return blake3.derive_key(GUEST_BUILDER_DOMAIN, nil)
 }
 
 // inputs_tree_build builds the output of the inputs tree builder: one tree
