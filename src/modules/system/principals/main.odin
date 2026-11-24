@@ -291,11 +291,11 @@ handle_command :: proc "contextless" (command: ^ring.Record) {
 // start policy choice validation until stopped.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	open_status: system.Status
+	open_status: call_outcome.Call_Outcome
 	// The ring takes handles: the core gives the connection of each call of
 	// a table through it.
 	service_ring_memory = ctx.handles[rd.PRINCIPALS_RING_SLOT]
-	if service_ring, open_status = system.ring_open(service_ring_memory, receive_handles = true); open_status != .Ok {
+	if service_ring, open_status = system.ring_open(service_ring_memory, receive_handles = true); open_status != .Succeeded {
 		fail("no principals service ring")
 	}
 	image_memory := ctx.handles[rd.PRINCIPALS_IMAGE_SLOT]
@@ -305,18 +305,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("no boot image that reads only")
 	}
 	image_address, image_status := system.memory_map(image_memory, {})
-	if image_status != .Ok {
+	if image_status != .Succeeded {
 		fail("the boot image does not map")
 	}
 	image = ([^]u8)(image_address)[:image_size]
 	region_handle := ctx.handles[rd.PRINCIPALS_REGION_SLOT]
 	if region_handle != 0 {
 		pages, size_status := system.memory_size(region_handle)
-		if size_status != .Ok || pages == 0 {
+		if size_status != .Succeeded || pages == 0 {
 			fail("the principals data region has no pages")
 		}
 		address, map_status := system.memory_map(region_handle, {.Write})
-		if map_status != .Ok {
+		if map_status != .Succeeded {
 			fail("cannot map the principals data region")
 		}
 		service_region_base = ([^]u8)(address)

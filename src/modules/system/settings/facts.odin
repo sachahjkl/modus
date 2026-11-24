@@ -1,7 +1,7 @@
 package settings_process
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:contract/settings"
 import "modus:contract/value_kinds"
 import "internal:settings/appearance"
@@ -278,7 +278,7 @@ Kept_Record_Unread :: struct {}
 // status of the map, which a reader writes by the name of its member.
 @(log_fact = "settings: no settings page: status {status}")
 No_Settings_Page :: struct {
-	status: op.Status_Word,
+	status: call_outcome.Call_Outcome_Word,
 }
 
 // The window is open: the values of the page.

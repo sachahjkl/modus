@@ -44,6 +44,7 @@
 // [compositor](term:compositor).
 package display
 
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "base:intrinsics"
 import "modus:contract/errors"
@@ -942,8 +943,8 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	}
 	text_settings_open(ctx)
 	interface_font_load(ctx)
-	status: system.Status
-	if window.ring, status = system.ring_open(window.ring_memory, error, receive_handles = true); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if window.ring, status = system.ring_open(window.ring_memory, error, receive_handles = true); status != .Succeeded {
 		return {}, false
 	}
 	// The size is logical; the surface is in pixels of the screen, at the
@@ -965,15 +966,15 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	for attempt in 0 ..< OPEN_RING_WAIT_ATTEMPTS {
 		// The compositor makes the surface with a budget of it (scale.odin).
 		granted, status = surface_budget_give(&window, screen_width, screen_height, attempt == OPEN_RING_WAIT_ATTEMPTS - 1 ? error : nil)
-		if status == .No_Budget || status == .Bad_Operation {
+		if status == .Budget_Or_Capacity_Exhausted || status == .Argument_Refused {
 			break // The budget of this process does not pay the surface: no wait changes it.
 		}
-		if status == .Ok {
+		if status == .Succeeded {
 			break
 		}
 		system.sleep(system.time() + 5)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		return {}, false
 	}
 	name := system.name_pack(title)
@@ -1253,45 +1254,47 @@ resizable_set :: proc "contextless" (window: ^Window, limits: Size_Limits) -> (p
 // scrolls (src/md/features/window_scroll.md). A fixed window takes its
 // clamp in next_event, by a release and an offer (clamp_take), never here.
 //
-// The statuses: Ok; Bad_Operation for a fixed window, with no Resized to answer, for another size than
-// the asked one, or for a size past its largest limit (nothing changes); No_Slot when the command ring is
-// full (nothing was made: call again later, or the next present declines
-// the request); No_Budget, or another status of Memory_Create, Memory_Map
-// or Handle_Give, with its error record: the window keeps its size, writes
-// one line, and declines the request (Resize_Declined), so that the
-// principal can drag it again.
-surface_resize :: proc "contextless" (window: ^Window, width, height: int, error: ^errors.Error_Record = nil) -> system.Status {
+// The outcomes: Succeeded; Wrong_State for a fixed window, with no Resized to
+// answer, or for another size than the asked one (nothing changes);
+// Argument_Refused for a size past its largest limit (nothing changes);
+// Callee_Busy when the command ring is full (nothing was made: call again
+// later, or the next present declines the request);
+// Budget_Or_Capacity_Exhausted, or another outcome of Budget_Create or
+// Handle_Give, with its error record: the window keeps its size, writes one
+// line, and declines the request (Resize_Declined), so that the principal can
+// drag it again.
+surface_resize :: proc "contextless" (window: ^Window, width, height: int, error: ^errors.Error_Record = nil) -> call_outcome.Call_Outcome {
 	title := string(window.title[:window.title_count])
 	switch {
 	case !window.resizable:
 		errors.fail(error, 0, .State, .None, 1)
-		return .Bad_Operation
+		return .Wrong_State
 	case window.rescale.phase != .Steady:
 		// A change of the scale goes on: the compositor holds no surface of
 		// this window, or a pending one; the request waits for no answer.
 		errors.fail(error, 0, .State, .None, 1)
 		_ = resize_decline(window)
-		return .Bad_Operation
+		return .Wrong_State
 	case !window.resize_asked || width != window.resize_asked_width || height != window.resize_asked_height:
 		errors.fail(error, 0, .State, .None, 2, i64(width), i64(window.resize_asked_width), i64(height))
-		return .Bad_Operation
+		return .Wrong_State
 	case window.resizable && (width < 1 || height < 1 || width > window.size_limits.largest_width || height > window.size_limits.largest_height):
 		errors.fail(error, 0, .Out_Of_Range, .None, width < 1 || width > window.size_limits.largest_width ? 2 : 3, i64(width), i64(window.size_limits.largest_width), i64(height))
-		return .Bad_Operation
+		return .Argument_Refused
 	case ring.count(&window.ring.commands) == ring.capacity(&window.ring.commands):
 		// The ring has one writer, this thread: the room seen here stays.
 		// Without it, the handle given below would wait in the table of the
 		// compositor with no record that names it.
 		errors.fail(error, 0, .Full, .None, 0)
-		return .No_Slot
+		return .Callee_Busy
 	}
 	// The new surface keeps the scale of the window, which is the scale of
 	// the compositor in the phase Steady; it has the next serial.
 	screen_width, screen_height := surface_size_of(width, height, window.rescale.scale)
 	granted, status := surface_budget_give(window, screen_width, screen_height)
-	if status != .Ok {
-		errors.fail(error, 0, status == .No_Budget ? errors.Kind.Budget : errors.Kind.Refused, .None, 2, i64(screen_width), i64(screen_height))
-		system.log(.Warning, "display: ", title, ": no surface of ", u64(width), "x", u64(height), " (", op.STATUS_NAMES[status], "): the window keeps ", u64(window.view_width), "x", u64(window.view_height))
+	if status != .Succeeded {
+		errors.fail(error, 0, status == .Budget_Or_Capacity_Exhausted ? errors.Kind.Budget : errors.Kind.Refused, .None, 2, i64(screen_width), i64(screen_height))
+		system.log(.Warning, "display: ", title, ": no surface of ", u64(width), "x", u64(height), " (", call_outcome.CALL_OUTCOME_NAMES[status], "): the window keeps ", u64(window.view_width), "x", u64(window.view_height))
 		// A full ring keeps the request: the next present declines it.
 		_ = resize_decline(window)
 		return status
@@ -1305,7 +1308,7 @@ surface_resize :: proc "contextless" (window: ^Window, width, height: int, error
 	window.resize_asked = false
 	layout_width, layout_height := layout_size_of(width, height, window.resizable, window.size_limits, window.opened_width, window.opened_height)
 	window.asked_surface = {screen_width = screen_width, screen_height = screen_height, view_width = width, view_height = height, layout_width = layout_width, layout_height = layout_height}
-	return .Ok
+	return .Succeeded
 }
 
 // resize_decline answers the last Resized with Resize_Declined: the window

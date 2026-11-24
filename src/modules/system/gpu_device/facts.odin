@@ -1,6 +1,6 @@
 package gpu_device_service
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
 // The log facts of the GPU device service: device readiness, Venus capability
@@ -73,8 +73,8 @@ Frame_Batch_First :: struct {
 // The queue memory could not be mapped or translated for DMA.
 @(log_fact = "gpu_device: the map of the queue gave the status {map_status}, its device address the status {address_status}")
 Queue_Not_Mapped :: struct {
-	map_status:     op.Status,
-	address_status: op.Status,
+	map_status:     call_outcome.Call_Outcome,
+	address_status: call_outcome.Call_Outcome,
 }
 
 // The device did not answer a control queue command within the hang bound.

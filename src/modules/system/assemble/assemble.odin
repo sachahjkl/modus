@@ -54,7 +54,7 @@ MEMORY_MAP_ARGUMENT_MEMORY :: 1
 file_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Record) -> (bytes: []u8, outcome: call_outcome.Call_Outcome) {
 	refusal: errors.Error_Record
 	address, status := system.memory_map(memory, {.Write}, error = &refusal)
-	if status != .Ok {
+	if status != .Succeeded {
 		if error != nil {
 			// The record of the kernel names an argument of Memory_Map, and
 			// the kernel operation: the caller called the export, with its
@@ -66,7 +66,7 @@ file_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Reco
 				error^ = errors.error_make(.Refused, argument = ARGUMENT_FILE, found = i64(status))
 			}
 		}
-		return nil, system.outcome_of_status(status)
+		return nil, status
 	}
 	// The map took the handle, so the kernel gives its size.
 	pages, _ := system.memory_size(memory)
@@ -76,22 +76,22 @@ file_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Reco
 // refusal_give writes a refusal of the arena or of the budget in the words
 // of the export: the call of the caller asked for no operation.
 @(private)
-refusal_give :: proc "contextless" (error: ^errors.Error_Record, refusal: errors.Error_Record, status: system.Status) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+refusal_give :: proc "contextless" (error: ^errors.Error_Record, refusal: errors.Error_Record, status: call_outcome.Call_Outcome) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if error != nil {
 		error^ = refusal
 		error.operation = 0
 		error.argument = 0
 	}
-	return system.outcome_of_own_status(status), 0
+	return system.own_operation_outcome(status), 0
 }
 
 // text_and_workspace_push copies the text into the arena and carves a
 // workspace of the scale after it.
 @(private)
-text_and_workspace_push :: proc "contextless" (arena: ^system.Arena, source: ^system.Bytes_To_Read, count: u64, scale: uint, refusal: ^errors.Error_Record) -> (text: string, workspace: assembler.Workspace, status: system.Status) {
+text_and_workspace_push :: proc "contextless" (arena: ^system.Arena, source: ^system.Bytes_To_Read, count: u64, scale: uint, refusal: ^errors.Error_Record) -> (text: string, workspace: assembler.Workspace, status: call_outcome.Call_Outcome) {
 	copy_address: rawptr
 	copy_address, status = system.arena_push(arena, count, 1, refusal)
-	if status != .Ok {
+	if status != .Succeeded {
 		return
 	}
 	intrinsics.mem_copy_non_overlapping(copy_address, source.bytes, int(count))
@@ -99,12 +99,12 @@ text_and_workspace_push :: proc "contextless" (arena: ^system.Arena, source: ^sy
 	workspace_size := assembler.workspace_bytes(bounds)
 	workspace_address: rawptr
 	workspace_address, status = system.arena_push(arena, workspace_size, assembler.WORKSPACE_ALIGNMENT, refusal)
-	if status != .Ok {
+	if status != .Succeeded {
 		return
 	}
 	// The push gives the size and the alignment that the carve takes.
 	workspace, _ = assembler.workspace_carve(([^]u8)(workspace_address)[:workspace_size], bounds)
-	return string(([^]u8)(copy_address)[:count]), workspace, .Ok
+	return string(([^]u8)(copy_address)[:count]), workspace, .Succeeded
 }
 
 // assemble_to_file is the work of both exports, and gives their pair. hash
@@ -131,12 +131,12 @@ assemble_to_file :: proc "contextless" (source: ^system.Bytes_To_Read, file: sys
 	}
 
 	amounts, budget_status := system.budget_read()
-	if budget_status != .Ok {
-		return call_outcome.fail(error, system.outcome_of_own_status(budget_status), .Refused, .None, 0, 0, 0, i64(budget_status))
+	if budget_status != .Succeeded {
+		return call_outcome.fail(error, system.own_operation_outcome(budget_status), .Refused, .None, 0, 0, 0, i64(budget_status))
 	}
 	arena_refusal: errors.Error_Record
 	arena, arena_status := system.arena_create(system.arena_reservation_pages(amounts.pages), 0, &arena_refusal)
-	if arena_status != .Ok {
+	if arena_status != .Succeeded {
 		return refusal_give(error, arena_refusal, arena_status)
 	}
 	defer system.arena_end(&arena)
@@ -152,9 +152,9 @@ assemble_to_file :: proc "contextless" (source: ^system.Bytes_To_Read, file: sys
 	parts: writer.Module_Parts
 	refusal: assembler.Refusal_Record
 	for {
-		push_status: system.Status
+		push_status: call_outcome.Call_Outcome
 		text, workspace, push_status = text_and_workspace_push(&arena, source, count, scale, &arena_refusal)
-		if push_status != .Ok {
+		if push_status != .Succeeded {
 			return refusal_give(error, arena_refusal, push_status)
 		}
 		parts, refusal = assembler.assemble(text, &workspace)

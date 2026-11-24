@@ -7,6 +7,7 @@
 // it holds no kernel operation call and imports no support package.
 package input_history
 
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import op "modus:contract/operation"
 
@@ -136,7 +137,7 @@ Kernel_Completion_Payload :: struct {
 	command_kind:             u32, // Command record kind (Operation plus optional error-details flag).
 	command_tag:              u32, // Caller-supplied tag of the command record.
 	command_values:           [7]u64, // Command arguments for replay comparison.
-	completion_status:        u32, // op.Status word of the completion.
+	completion_status:        u32, // call_outcome.Call_Outcome word of the completion.
 	copied_bytes_count:       u32, // Bytes written to caller memory following this struct.
 	completion_values:        [7]u64, // Completion results or error record words.
 	return_time_milliseconds: u64, // Return value placed in rax on kernel entry return.
@@ -409,7 +410,7 @@ payload_valid :: proc "contextless" (kind: History_Record_Kind, payload: []u8) -
 			return false
 		}
 		entry := copy_from_bytes(payload, Kernel_Completion_Payload)
-		if _, status_ok := enum_word.member_of_word(op.Status, u64(entry.completion_status)); !status_ok {
+		if _, status_ok := enum_word.member_of_word(call_outcome.Call_Outcome, u64(entry.completion_status)); !status_ok {
 			return false
 		}
 		expected_bytes := u64(size_of(Kernel_Completion_Payload)) + u64(entry.copied_bytes_count)
@@ -561,7 +562,7 @@ history_writer_append_kernel_completion :: proc "contextless" (history_writer: ^
 	if u64(entry.copied_bytes_count) != u64(len(copied_bytes)) {
 		return false
 	}
-	if _, status_ok := enum_word.member_of_word(op.Status, u64(entry.completion_status)); !status_ok {
+	if _, status_ok := enum_word.member_of_word(call_outcome.Call_Outcome, u64(entry.completion_status)); !status_ok {
 		return false
 	}
 	if entry.copied_bytes_count == 0 && entry.copied_user_address != 0 {

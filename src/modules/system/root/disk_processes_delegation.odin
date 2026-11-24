@@ -181,15 +181,15 @@ disk_processes_service_start :: proc "contextless" () -> bool {
 	ring_memory, ring_opened, status := system.ring_create()
 	region_memory: system.Handle
 	region_address: rawptr
-	if status == .Ok {
+	if status == .Succeeded {
 		region_memory, status = system.memory_create(rd.DISK_PROCESSES_REGION_PAGES)
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		region_address, status = system.memory_map(region_memory, {.Write})
 	}
 	process: system.Handle
 	service_budget: Start_Budget
-	if status == .Ok {
+	if status == .Succeeded {
 		grants: system.Context_Grants
 		values: system.Context_Values
 		system.grant_put(&grants, rd.DISK_PROCESSES_RING_SLOT, {ring_memory, {.Read, .Write}})
@@ -199,14 +199,14 @@ disk_processes_service_start :: proc "contextless" () -> bool {
 		system.value_put(&values, rd.DISK_PROCESSES_VALUE_IMAGE_SIZE, u64(len(image)))
 		budget_ok: bool
 		if context_refused(name, &grants, &values) {
-			status = .Bad_State
+			status = .Wrong_State
 		} else if service_budget, budget_ok = budget_of(file, name); !budget_ok {
-			status = .No_Budget
+			status = .Budget_Or_Capacity_Exhausted
 		} else {
 			process, status = system.process_start(file, name, grants.grants, random.values_with_seed(&process_generator, values.values), service_budget.amounts, nil, &prepared, load_source(), ready = &slot.ready)
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		if region_address != nil {
 			system.memory_unmap(region_address)
 		}
@@ -345,7 +345,7 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 	if opened != .Succeeded {
 		return .No_Connection, opened
 	}
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	// The service receives copies of the handles through its ring. This
 	// service keeps its own handles until the end of the load, to revoke
 	// the copies then: a service that keeps a handle past its load holds
@@ -360,11 +360,11 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 	given: [3]system.Handle
 	given_count := 0
 	for source, index in sources {
-		if status != .Ok {
+		if status != .Succeeded {
 			break
 		}
 		given[index], status = give_through_service_ring(service_process.process, disk_processes_ring_memory, source, rights[index], &service_process.service_ring_ready)
-		if status != .Ok {
+		if status != .Succeeded {
 			break
 		}
 		given_count += 1
@@ -372,7 +372,7 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 	sent_refused := false
 	service_tag := disk_processes_next_tag
 	disk_processes_next_tag = disk_processes_next_tag == max(u32) ? 1 : disk_processes_next_tag + 1
-	if status == .Ok {
+	if status == .Succeeded {
 		disk_load_request = {}
 		disk_load_request.kind = u8(kind)
 		disk_load_request.principal = principal
@@ -383,11 +383,11 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 		disk_load_request.replacement_count = u32(copy(disk_load_request.replacements[:], replacements))
 		intrinsics.mem_copy_non_overlapping(&disk_processes_region[rd.LOAD_REQUEST_OFFSET], &disk_load_request, size_of(rd.Load_Request))
 		if !system.send(&disk_processes_ring.commands, ring.Record{kind = u32(rd.Disk_Load_Command.Load), tag = service_tag, values = {0 = u64(given[0]), 1 = u64(given[1]), 2 = u64(given[2])}}) {
-			status = .No_Slot
+			status = .Callee_Busy
 			sent_refused = true
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		// A refusal names no handle to the service, so it closes none: the
 		// handles given before the failure are revoked here.
 		for source in sources[:given_count] {
@@ -399,7 +399,7 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 			}
 		}
 		disconnect(connection)
-		if status == .No_Slot && sent_refused {
+		if status == .Callee_Busy && sent_refused {
 			return .Not_Given, root_ring.refuse(refusal, .Callee_Busy, command, .Busy, .Requests)
 		}
 		return .Not_Given, kernel_refused(refusal, command, status)
@@ -441,7 +441,7 @@ disk_load_refused_values :: proc "contextless" () -> [7]u64 {
 // scan ended, with the kind of the refusal and the kernel status that
 // caused it, if any.
 @(private = "file")
-disk_load_import_refused :: proc "contextless" (kind_of_error: errors.Kind, status: system.Status = .Ok) -> [7]u64 {
+disk_load_import_refused :: proc "contextless" (kind_of_error: errors.Kind, status: call_outcome.Call_Outcome = .Succeeded) -> [7]u64 {
 	return errors.ring_fail(u32(root_ring.Root_Command.Start_From_Disk), kind_of_error, .Modules, 2, 0, 0, i64(status))
 }
 
@@ -460,16 +460,16 @@ disk_load_module :: proc "contextless" () -> []u8 {
 // lent_file_make makes the memory of one file and lends it to the service
 // with Read and Write. budget 0 is the budget of this service.
 @(private = "file")
-lent_file_make :: proc "contextless" (file: ^Lent_File, size: u64, budget: system.Handle) -> (given: system.Handle, status: system.Status) {
+lent_file_make :: proc "contextless" (file: ^Lent_File, size: u64, budget: system.Handle) -> (given: system.Handle, status: call_outcome.Call_Outcome) {
 	pages := (size + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	file.memory, status = system.memory_create(pages, budget)
-	if status != .Ok {
+	if status != .Succeeded {
 		file.memory = 0
 		return 0, status
 	}
 	address: rawptr
 	address, status = system.memory_map(file.memory)
-	if status != .Ok {
+	if status != .Succeeded {
 		lent_file_free(file)
 		return 0, status
 	}
@@ -488,7 +488,7 @@ lent_file_take_back :: proc "contextless" (file: ^Lent_File) -> bool {
 		return false
 	}
 	_, status := system.handle_revoke(file.memory, disk_processes_process.process)
-	return status == .Ok
+	return status == .Succeeded
 }
 
 // lent_file_free ends the loan, if the service still runs, and frees the
@@ -701,8 +701,8 @@ disk_load_event :: proc "contextless" (record: ring.Record) {
 		if place == .Module {
 			load_refusal: [7]u64
 			given, status := lent_file_make(&load.module, report.byte_count, 0)
-			if status != .Ok {
-				system.log_fact(.Warning, Disk_Load_Refused_No_Memory{object_bytes = report.byte_count, status = op.Status_Word(status), refused_process = disk_load_name_field()})
+			if status != .Succeeded {
+				system.log_fact(.Warning, Disk_Load_Refused_No_Memory{object_bytes = report.byte_count, status = call_outcome.Call_Outcome_Word(status), refused_process = disk_load_name_field()})
 				disk_load_end(kernel_refused(&load_refusal, kind, status), load_refusal)
 				return
 			}
@@ -715,13 +715,13 @@ disk_load_event :: proc "contextless" (record: ring.Record) {
 		}
 		budget, status := disk_processes_budget_get(string(load.name[:load.name_length]))
 		given: system.Handle
-		if status == .Ok {
+		if status == .Succeeded {
 			given, status = lent_file_make(&load.candidate, report.byte_count, budget)
 		}
-		if status != .Ok {
+		if status != .Succeeded {
 			file_name := string(report.file_name[:report.file_name_length])
-			system.log_fact(.Warning, Disk_Load_Refused_Import_No_Memory{object_bytes = report.byte_count, status = op.Status_Word(status), refused_process = disk_load_name_field(), file = text_field(file_name, 24)})
-			disk_load_end(system.outcome_of_own_status(status), disk_load_import_refused(.Refused, status))
+			system.log_fact(.Warning, Disk_Load_Refused_Import_No_Memory{object_bytes = report.byte_count, status = call_outcome.Call_Outcome_Word(status), refused_process = disk_load_name_field(), file = text_field(file_name, 24)})
+			disk_load_end(system.own_operation_outcome(status), disk_load_import_refused(.Refused, status))
 			return
 		}
 		load.candidate_loans += 1
@@ -826,7 +826,7 @@ disk_load_refused :: proc "contextless" (report: ^rd.Event_Report) {
 		disk_load_service_fault()
 	case .Not_Mapped:
 		system.log_fact(.Warning, Disk_Load_Refused_Not_Mapped{refused_process = name})
-		disk_load_end(.Callee_Busy, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.No_Memory)))
+		disk_load_end(.Callee_Busy, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(call_outcome.Call_Outcome.Callee_Busy)))
 	case .Call_Not_Taken:
 		system.log_fact(.Warning, Disk_Load_Refused_Call_Not_Taken{refused_process = name})
 		disk_load_end(.Callee_Unavailable, in_scan ? disk_load_import_refused(.Refused) : disk_load_refused_values())

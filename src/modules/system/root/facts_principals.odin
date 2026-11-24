@@ -1,7 +1,6 @@
 package root
 
 import "modus:contract/call_outcome"
-import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
 // The log facts of the principals, of their sessions and of the trust of
@@ -142,8 +141,8 @@ Principal_Removed :: struct {
 // A named session child budget could not be opened when the session unlocked.
 @(log_fact = "root: the session budget of principal {principal} was not opened: status {status}")
 Session_Budget_Open_Failed :: struct {
-	principal: u32,
-	status:    op.Status,
+	principal: u64,
+	status:    call_outcome.Call_Outcome,
 }
 
 // The boot image agrees with the system description that the boot program
@@ -318,7 +317,7 @@ Wide_Grant_Authority_Key_Refused :: struct {
 
 @(log_fact = "root: the ring of the wide grants of a collector was not made: {status}")
 Wide_Grant_Collector_Ring_Failed :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 @(log_fact = "root: the trusted display shows the screen {flow} of a wide grant of principal {principal}")

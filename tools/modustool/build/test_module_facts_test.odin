@@ -258,27 +258,27 @@ the_facts_of_log_reader_write_the_lines_of_before :: proc(t: ^testing.T) {
 	// Each status, with the edges of the values of an error record and of
 	// the length of a fact.
 	lengths := [3]u64{0, u64(op.LOG_FACT_HEAD_BYTES), u64(max(u32))}
-	for status in op.Status {
+	for status in call_outcome.Call_Outcome {
 		for refusal in refusals {
 			for signed in TEST_FACT_SIGNED {
 				error_record := []Fact_Test_Field{{"error_kind", signed_bits(signed)}, {"argument", signed_bits(-signed)}, {"value", signed_bits(signed)}, {"status", u64(status)}, {"refusal", refusal}}
-				facts_expect_line(t, render(t, file, "Wrong_Fact_Refusal", error_record), line_of_before("log_reader: WRONG: Log of a fact with ", refusal, " gave ", op.STATUS_NAMES[status], ", the error kind ", signed, " for the argument ", -signed, " with the value ", signed))
-				facts_expect_line(t, render(t, file, "Wrong_Text_Refusal", error_record), line_of_before("log_reader: WRONG: Log with ", refusal, " gave ", op.STATUS_NAMES[status], ", the error kind ", signed, " for the argument ", -signed, " with the value ", signed))
+				facts_expect_line(t, render(t, file, "Wrong_Fact_Refusal", error_record), line_of_before("log_reader: WRONG: Log of a fact with ", refusal, " gave ", call_outcome.CALL_OUTCOME_NAMES[status], ", the error kind ", signed, " for the argument ", -signed, " with the value ", signed))
+				facts_expect_line(t, render(t, file, "Wrong_Text_Refusal", error_record), line_of_before("log_reader: WRONG: Log with ", refusal, " gave ", call_outcome.CALL_OUTCOME_NAMES[status], ", the error kind ", signed, " for the argument ", -signed, " with the value ", signed))
 			}
 		}
 		for length in lengths {
-			facts_expect_line(t, render(t, file, "Wrong_Fact_Edge_Refused", {{"length", length}, {"status", u64(status)}}), line_of_before("log_reader: WRONG: Log of a fact of ", length, " bytes gave ", op.STATUS_NAMES[status]))
+			facts_expect_line(t, render(t, file, "Wrong_Fact_Edge_Refused", {{"length", length}, {"status", u64(status)}}), line_of_before("log_reader: WRONG: Log of a fact of ", length, " bytes gave ", call_outcome.CALL_OUTCOME_NAMES[status]))
 		}
 		for edge in edges {
-			facts_expect_line(t, render(t, file, "Wrong_Edge_Refused", {{"status", u64(status)}, {"edge", edge}}), line_of_before("log_reader: WRONG: Log with ", edge, " gave ", op.STATUS_NAMES[status]))
+			facts_expect_line(t, render(t, file, "Wrong_Edge_Refused", {{"status", u64(status)}, {"edge", edge}}), line_of_before("log_reader: WRONG: Log with ", edge, " gave ", call_outcome.CALL_OUTCOME_NAMES[status]))
 		}
-		facts_expect_line(t, render(t, file, "Wrong_Service_Handle_Lent", {{"status", u64(status)}}), line_of_before("log_reader: WRONG: the lend of the process handle of the log service gave ", op.STATUS_NAMES[status]))
+		facts_expect_line(t, render(t, file, "Wrong_Service_Handle_Lent", {{"status", u64(status)}}), line_of_before("log_reader: WRONG: the lend of the process handle of the log service gave ", call_outcome.CALL_OUTCOME_NAMES[status]))
 		for child in children {
-			facts_expect_line(t, render(t, file, "Wrong_Child_Not_Started", {{"status", u64(status)}, {"child", child}}), line_of_before("log_reader: WRONG: ", child, " did not start: ", op.STATUS_NAMES[status]))
+			facts_expect_line(t, render(t, file, "Wrong_Child_Not_Started", {{"status", u64(status)}, {"child", child}}), line_of_before("log_reader: WRONG: ", child, " did not start: ", call_outcome.CALL_OUTCOME_NAMES[status]))
 		}
 	}
 	// A status word that names no member: the render writes its number.
-	past_status := u64(max(op.Status)) + 1
+	past_status := u64(max(call_outcome.Call_Outcome)) + 1
 	facts_expect_line(t, render(t, file, "Wrong_Service_Handle_Lent", {{"status", past_status}}), line_of_before("log_reader: WRONG: the lend of the process handle of the log service gave ", past_status))
 
 	// The stops of a child: each cause, with each outcome for a stop of
@@ -313,7 +313,7 @@ Fact_With_No_Field :: struct {
 the_facts_with_no_field_of_the_test_modules_write_the_lines_of_before :: proc(t: ^testing.T) {
 	facts := [?]Fact_With_No_Field {
 		{"arena", "arena", "Wrong_Reset", "arena: WRONG: after a reset the same pushes did not take the same pages with no commit"},
-		{"arena", "arena", "Arena_Checked", "arena: the budget refused the commit with No_Budget, the arena kept its state, a reset took the same pages again with no commit, and its end gave every page back to the budget: as it must"},
+		{"arena", "arena", "Arena_Checked", "arena: the budget refused the commit with Budget_Or_Capacity_Exhausted, the arena kept its state, a reset took the same pages again with no commit, and its end gave every page back to the budget: as it must"},
 		{"debug_target", "debug_target", "Rounds_Ran", "debug_target: 64 more rounds ran, so the process is not held: as it must"},
 		{"debug_target", "debug_target", "Running", "debug_target: runs, with a thread that waits"},
 		{"disk_start_policy", "disk_start_policy", "Running", "disk_start_policy: ok, a start policy from the disk: its order is in its code"},
@@ -343,7 +343,7 @@ the_facts_with_no_field_of_the_test_modules_write_the_lines_of_before :: proc(t:
 		{"iommu_device", "iommu_device_service", "Read_After_Domain_End", "iommu_device: a read given to the device after the end of its domain: the service waits for the new size of the disk"},
 		{"iommu_device", "iommu_device_service", "Domain_Ended", "iommu_device: after the end of its domain, a read of the device into a page that this service declared before does not end, the page keeps its 4096 bytes, and no interrupt of the device arrives, also for its new size: as it must"},
 		{"log_reader", "log_reader", "Wrong_Facts_Changed_Budget", "log_reader: WRONG: the facts changed the log records of the budget or its refused count"},
-		{"log_reader", "log_reader", "Service_Handle_Not_Lent", "log_reader: the process handle of the log service from connect, with Read and no Give: the lend failed with No_Right, and it reads no record of the service: as it must"},
+		{"log_reader", "log_reader", "Service_Handle_Not_Lent", "log_reader: the process handle of the log service from connect, with Read and no Give: the lend failed with Grant_Or_Right_Missing, and it reads no record of the service: as it must"},
 		{"log_reader", "log_reader", "Memory_Lent_Refused", "log_reader: a memory object in place of a process handle: the log service refused it with Handle_Kind: as it must"},
 		{"log_reader", "log_reader", "Checked", "log_reader: ok"},
 		{"probe", "probe", "Spin_Runs", "probe: spin runs, and never returns"},
@@ -396,8 +396,8 @@ the_statuses_and_causes_of_the_test_modules_write_their_sentences :: proc(t: ^te
 	process := strings.repeat("p", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
 	commands := [2]string{COMMAND_LONGEST, "Connect"}
 	causes := [2]string{FUZZING_CAUSE_LONGEST, "no mailbox"}
-	for status in op.Status {
-		name := op.STATUS_NAMES[status]
+	for status in call_outcome.Call_Outcome {
+		name := call_outcome.CALL_OUTCOME_NAMES[status]
 		word := u64(status)
 		for count in TEST_FACT_COUNTS {
 			other := max(u64) - count
@@ -406,7 +406,7 @@ the_statuses_and_causes_of_the_test_modules_write_their_sentences :: proc(t: ^te
 			facts_expect_line(t, fact_test_render(t, arena_file, "arena", "Wrong_End", {{"status", word}, {"budget_pages_after", count}, {"budget_pages_before", other}}), line_of_before("arena: WRONG: the end gave ", name, ", and the budget holds ", count, " pages of ", other))
 		}
 		for kind in errors.Kind {
-			facts_expect_line(t, fact_test_render(t, arena_file, "arena", "Wrong_Growth_Stop", {{"status", word}, {"error_kind", u64(kind)}}), line_of_before("arena: WRONG: the growth stopped with ", name, " and the error kind ", errors.KIND_NAMES[kind], ", not with No_Budget"))
+			facts_expect_line(t, fact_test_render(t, arena_file, "arena", "Wrong_Growth_Stop", {{"status", word}, {"error_kind", u64(kind)}}), line_of_before("arena: WRONG: the growth stopped with ", name, " and the error kind ", errors.KIND_NAMES[kind], ", not with Budget_Or_Capacity_Exhausted"))
 		}
 		facts_expect_line(t, fact_test_render(t, debug_file, "debug_target", "Thread_Not_Started", {{"status", word}}), line_of_before("debug_target: the second thread did not start: status ", name))
 		facts_expect_line(t, fact_test_render(t, policy_file, "disk_start_policy", "Root_Ring_Refused", {{"status", word}}), line_of_before("disk_start_policy: the root ring does not open: status ", name))
@@ -433,9 +433,9 @@ the_statuses_and_causes_of_the_test_modules_write_their_sentences :: proc(t: ^te
 	// A status that names no member, the largest status word of 8 bytes and
 	// an error kind that names no member: their numbers, never the name of
 	// another member.
-	past_status := u64(max(op.Status)) + 1
+	past_status := u64(max(call_outcome.Call_Outcome)) + 1
 	past_kind := u64(max(errors.Kind)) + 1
-	facts_expect_line(t, fact_test_render(t, arena_file, "arena", "Wrong_Growth_Stop", {{"status", past_status}, {"error_kind", past_kind}}), line_of_before("arena: WRONG: the growth stopped with ", past_status, " and the error kind ", past_kind, ", not with No_Budget"))
+	facts_expect_line(t, fact_test_render(t, arena_file, "arena", "Wrong_Growth_Stop", {{"status", past_status}, {"error_kind", past_kind}}), line_of_before("arena: WRONG: the growth stopped with ", past_status, " and the error kind ", past_kind, ", not with Budget_Or_Capacity_Exhausted"))
 	facts_expect_line(t, fact_test_render(t, arena_file, "arena", "Wrong_End", {{"status", max(u64)}, {"budget_pages_after", u64(0)}, {"budget_pages_before", u64(0)}}), line_of_before("arena: WRONG: the end gave ", max(u64), ", and the budget holds ", u64(0), " pages of ", u64(0)))
 	facts_expect_line(t, fact_test_render(t, debug_file, "debug_target", "Thread_Not_Started", {{"status", past_status}}), line_of_before("debug_target: the second thread did not start: status ", past_status))
 
@@ -469,10 +469,10 @@ the_statuses_and_causes_of_the_test_modules_write_their_sentences :: proc(t: ^te
 	for count in TEST_FACT_COUNTS {
 		other := max(u64) - count
 		for time in TEST_FACT_TIMES {
-			values := []Fact_Test_Field{{"pages", count}, {"objects", other}, {"threads", u64(4)}, {"elapsed", time}, {"budget_pages", count}, {"payable_pages", other}, {"reserved_pages", count}, {"drains", other}, {"status", u64(op.Status.No_Budget)}, {"error_kind", u64(errors.Kind.Budget)}}
-			facts_expect_line(t, fact_test_render(t, shortage_file, "shortage", "Full_Refused_By_Budget", values), line_of_before("shortage: full: ", count, " pages written in ", other, " objects by ", u64(4), " threads in ", time, " ms; the budget of this process holds ", count, " pages; the free pages that budgets can pay: ", other, " (the pages that the root service kept), and the reserved pages: ", count, "; drains of the stacks: ", other, "; a new memory object of 1 page: status ", "No_Budget", ", error kind ", "Budget", " (Budget: the budget cannot pay)"))
+			values := []Fact_Test_Field{{"pages", count}, {"objects", other}, {"threads", u64(4)}, {"elapsed", time}, {"budget_pages", count}, {"payable_pages", other}, {"reserved_pages", count}, {"drains", other}, {"status", u64(call_outcome.Call_Outcome.Budget_Or_Capacity_Exhausted)}, {"error_kind", u64(errors.Kind.Budget)}}
+			facts_expect_line(t, fact_test_render(t, shortage_file, "shortage", "Full_Refused_By_Budget", values), line_of_before("shortage: full: ", count, " pages written in ", other, " objects by ", u64(4), " threads in ", time, " ms; the budget of this process holds ", count, " pages; the free pages that budgets can pay: ", other, " (the pages that the root service kept), and the reserved pages: ", count, "; drains of the stacks: ", other, "; a new memory object of 1 page: status ", "Budget_Or_Capacity_Exhausted", ", error kind ", "Budget", " (Budget: the budget cannot pay)"))
 			values[9].value = u64(errors.Kind.Budget_Hidden)
-			facts_expect_line(t, fact_test_render(t, shortage_file, "shortage", "Full_Refused_By_Another_Kind", values), line_of_before("shortage: full: ", count, " pages written in ", other, " objects by ", u64(4), " threads in ", time, " ms; the budget of this process holds ", count, " pages; the free pages that budgets can pay: ", other, " (the pages that the root service kept), and the reserved pages: ", count, "; drains of the stacks: ", other, "; a new memory object of 1 page: status ", "No_Budget", ", error kind ", "Budget_Hidden", " (another kind)"))
+			facts_expect_line(t, fact_test_render(t, shortage_file, "shortage", "Full_Refused_By_Another_Kind", values), line_of_before("shortage: full: ", count, " pages written in ", other, " objects by ", u64(4), " threads in ", time, " ms; the budget of this process holds ", count, " pages; the free pages that budgets can pay: ", other, " (the pages that the root service kept), and the reserved pages: ", count, "; drains of the stacks: ", other, "; a new memory object of 1 page: status ", "Budget_Or_Capacity_Exhausted", ", error kind ", "Budget_Hidden", " (another kind)"))
 		}
 	}
 }

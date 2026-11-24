@@ -330,7 +330,7 @@ Status: Decided.
 - **Rule**: A kernel operation writes its result into memory that the caller gives. The kernel does not allocate hidden state per call.
 - **Rule**: "Reserve address space" and "commit pages" are two cheap operations. Processes build arenas on them.
 - **Rule**: The memory that a kernel object uses is charged to the process that created it.
-- **Rule**: A process that holds data with no known bound holds it in arenas: memory objects of its budget that grow by an explicit commit and end whole. A refused growth is the status `No_Budget`, which the process reads; it never stops the process.
+- **Rule**: A process that holds data with no known bound holds it in arenas: memory objects of its budget that grow by an explicit commit and end whole. A refused growth is the outcome `Budget_Or_Capacity_Exhausted` with the error kind `Budget`, which the process reads; it never stops the process.
 - **Forbids**: a kernel heap that a process can fill, a global user-space heap that the system imposes [Blow §12]; a growth of memory that a process does not ask for at a call: a commit that the kernel makes on a fault, an allocator of the language in the code of the system.
 - **Reuse**: The arena conventions of Odin, Zig and Jai. The seL4 model, where user space supplies the memory of kernel objects. [Notes `handmade_sphere_os.md` §4]
 - **Open**: the reservation size of each arena and the rule of the scratch arena (`src/md/features/memory_without_a_bound.md`, "The decision points").

@@ -346,7 +346,7 @@ notifier_open :: proc "contextless" () -> (cause: string) {
 		return "this process has no boot image"
 	}
 	address, mapped := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
-	if mapped != .Ok {
+	if mapped != .Succeeded {
 		return "the boot image does not map"
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -361,9 +361,9 @@ notifier_open :: proc "contextless" () -> (cause: string) {
 	if ctx.handles[system.GRANT_ROOT] == 0 {
 		return "this process has no ring to the root service"
 	}
-	opened: system.Status
+	opened: call_outcome.Call_Outcome
 	notifier.requests, opened = system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true)
-	if opened != .Ok {
+	if opened != .Succeeded {
 		return "the ring to the root service does not open"
 	}
 	connected: call_outcome.Call_Outcome
@@ -785,7 +785,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	date_page = date.page_of(ctx)
 	timer = clock_model.timer_make()
-	if interface.background_work_start(&work) != .Ok {
+	if interface.background_work_start(&work) != .Succeeded {
 		// No worker: the window shows the end of a timer, and no card.
 		notifier.tried = true
 		system.log_fact(.Warning, Notification_Not_Connected{cause = value_kinds.text_field("the worker thread of the window did not start", 80)})

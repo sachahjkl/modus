@@ -412,7 +412,7 @@ first_drawing_time: u64
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "interface_font")
-	if !ok || interface.hand_picture_open(&hand_picture, &window) != .Ok {
+	if !ok || interface.hand_picture_open(&hand_picture, &window) != .Succeeded {
 		system.stop(.Failed)
 	}
 	font_ok: bool

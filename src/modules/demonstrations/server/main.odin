@@ -483,13 +483,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	start_time = system.time()
 	service, _ = system.service_open(ctx)
 	system.wiring_ring_open()
-	status: system.Status
-	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Succeeded {
 		fail("no endpoint: the process has no grant of the network")
 	}
 	region_memory := ctx.handles[datagram.GRANT_REGION]
 	address, map_status := system.memory_map(region_memory, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		fail("no datagram region")
 	}
 	region = ([^]u8)(address)[:datagram.REGION_PAGES * system.PAGE_SIZE]
@@ -516,7 +516,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// process, which gives the library all the memory that it uses.
 	memory, memory_status := system.memory_create(BUFFER_PAGES)
 	buffers, buffers_status := system.memory_map(memory, {.Write})
-	if memory_status != .Ok || buffers_status != .Ok {
+	if memory_status != .Succeeded || buffers_status != .Succeeded {
 		fail("no memory for the buffers of the connections")
 	}
 	// The secret of the initial sequence numbers (RFC 6528): 32 bytes of

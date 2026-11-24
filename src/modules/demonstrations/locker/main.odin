@@ -53,12 +53,12 @@ entries :: proc "contextless" (memory: system.Handle, end, limit: u64) -> (count
 // use. It gives the pages written.
 fault_round :: proc "contextless" () -> u64 {
 	memory, status := system.memory_create(lockers.FAULT_PAGES)
-	if status != .Ok {
+	if status != .Succeeded {
 		return 0
 	}
 	defer system.close(memory)
 	address, map_status := system.memory_map(memory, {.Write}, 0, lockers.FAULT_ADDRESS)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return 0
 	}
 	for &page in ([^][system.PAGE_SIZE]u8)(address)[:lockers.FAULT_PAGES] {
@@ -104,7 +104,7 @@ churn :: proc "contextless" (stop_after: u64, peer: system.Handle) -> ! {
 			system.process_stop(peer)
 			stop_after = 0
 		}
-		if thread, status := system.thread_start(brief, nil); status == .Ok {
+		if thread, status := system.thread_start(brief, nil); status == .Succeeded {
 			system.thread_wait(thread)
 		}
 		spinner := &spinners[round % len(spinners)]
@@ -125,7 +125,7 @@ churn :: proc "contextless" (stop_after: u64, peer: system.Handle) -> ! {
 // slot, for `locks` to check.
 wait_room_role :: proc "contextless" (ctx: ^system.Context) -> ! {
 	address, status := system.memory_map(ctx.handles[lockers.GRANT_BOARD])
-	if status != .Ok {
+	if status != .Succeeded {
 		system.stop(.Failed)
 	}
 	slot := &(^lockers.Board)(address).slots[0]
@@ -173,15 +173,15 @@ untouched_role :: proc "contextless" (ctx: ^system.Context) -> ! {
 	memory, memory_status := system.memory_create(1)
 	page: rawptr
 	page_status := memory_status
-	if memory_status == .Ok {
+	if memory_status == .Succeeded {
 		page, page_status = system.memory_map(memory, {.Write})
 	}
-	if board_status != .Ok || page_status != .Ok || index >= lockers.LOCKER_CAPACITY {
+	if board_status != .Succeeded || page_status != .Succeeded || index >= lockers.LOCKER_CAPACITY {
 		system.stop(.Failed)
 	}
 	untouched_slot = &(^lockers.Board)(board).slots[index]
 	untouched_word = (^u32)(uintptr(page) + lockers.UNTOUCHED_OFFSET)
-	if _, started := system.thread_start(untouched_waiter, nil); started != .Ok {
+	if _, started := system.thread_start(untouched_waiter, nil); started != .Succeeded {
 		system.stop(.Failed)
 	}
 	if ctx.values[lockers.VALUE_WAKES] != 0 {
@@ -226,17 +226,17 @@ unmap_role :: proc "contextless" (ctx: ^system.Context) -> ! {
 	memory, memory_status := system.memory_create(1)
 	page: rawptr
 	page_status := memory_status
-	if memory_status == .Ok {
+	if memory_status == .Succeeded {
 		page, page_status = system.memory_map(memory, {.Write})
 	}
-	if board_status != .Ok || page_status != .Ok || index >= lockers.LOCKER_CAPACITY {
+	if board_status != .Succeeded || page_status != .Succeeded || index >= lockers.LOCKER_CAPACITY {
 		system.stop(.Failed)
 	}
 	untouched_slot = &(^lockers.Board)(board).slots[index]
 	untouched_word = (^u32)(page)
 	intrinsics.atomic_store(untouched_word, 0)
 	waiter, started := system.thread_start(unmap_waiter, nil)
-	if started != .Ok {
+	if started != .Succeeded {
 		system.stop(.Failed)
 	}
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
@@ -279,7 +279,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	address, status := system.memory_map(ctx.handles[lockers.GRANT_BOARD])
 	index := ctx.values[lockers.VALUE_INDEX]
-	if status != .Ok || index >= lockers.LOCKER_CAPACITY {
+	if status != .Succeeded || index >= lockers.LOCKER_CAPACITY {
 		system.log_fact(.Info, Slot_Past_Board{slot = index})
 		system.stop(.Failed)
 	}
@@ -327,7 +327,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			count = faults(end, limit)
 		case .Large:
 			for system.time() < end && (limit == 0 || count < limit) {
-				if memory, made := system.memory_create(lockers.LARGE_PAGES); made == .Ok {
+				if memory, made := system.memory_create(lockers.LARGE_PAGES); made == .Succeeded {
 					system.close(memory)
 					count += 1
 				}

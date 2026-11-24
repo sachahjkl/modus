@@ -133,10 +133,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	_, status := system.memory_map(first, {}, other, OTHER_ADDRESS)
 	system.close(first)
 	_, again := system.memory_map(memory, {}, other, OTHER_ADDRESS)
-	note("map the memory in another process", "mapped", status == .Ok && again == .Bad_Address)
+	note("map the memory in another process", "mapped", status == .Succeeded && again == .Argument_Refused)
 	count, _ = system.handle_revoke(memory)
 	_, again = system.memory_map(memory, {}, other, OTHER_ADDRESS)
-	note("revoke the handle", "the mapping ended", count == 1 && again == .Ok)
+	note("revoke the handle", "the mapping ended", count == 1 && again == .Succeeded)
 
 	// Now the other process has a mapping. It receives a handle too.
 	given, _ := system.give(other, memory, {.Read})
@@ -147,7 +147,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	count, _ = system.handle_revoke(first)
 	note("revoke the copy", "0 ended, the handle stays", count == 0 && live(memory))
 	_, status = system.handle_revoke(system.Handle(0xFFFF))
-	note("revoke a handle that the process does not have", "refused: bad handle", status == .Bad_Handle)
+	note("revoke a handle that the process does not have", "refused: bad handle", status == .Argument_Refused)
 
 	wrong: u64
 	for item in cases[:case_count] {

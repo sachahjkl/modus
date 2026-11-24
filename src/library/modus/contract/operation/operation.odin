@@ -50,6 +50,7 @@
 package operation
 
 import info "modus:contract/boot_info"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/value_kinds"
 
@@ -109,7 +110,7 @@ CONTEXT_ADDRESS :: THREAD_AREA_BASE - 2 * PAGE_SIZE
 THREAD_AREA_BASE :: TIME_ADDRESS - THREAD_CAPACITY * THREAD_AREA_PAGES * PAGE_SIZE
 THREAD_AREA_PAGES :: 4 // One page of thread record, the two pages of the kernel ring (`ring.PAGE_COUNT`), one guard page.
 // The threads of one process, at the same time. `Thread_Create` gives
-// `No_Slot` when all the thread numbers are in use. The 256 thread areas,
+// `Budget_Or_Capacity_Exhausted` when all the thread numbers are in use. The 256 thread areas,
 // 4 MiB, end at `TIME_ADDRESS`. A compiler or a server starts a thread for
 // each processor of a large machine.
 THREAD_CAPACITY :: 256
@@ -156,12 +157,12 @@ Time_Record :: struct {
 // in another process names another object, or none. Its low 16 bits are the
 // index of the slot, and the next 16 bits a generation that changes at each
 // close of the slot: an old number of a closed handle names no new object,
-// and gives `Bad_Handle`. A process gets a handle
+// and gives `Argument_Refused`. A process gets a handle
 // from an operation that makes an object (`Memory_Create`), from its
 // starter in its `Context`, or from another process with `Handle_Give`. The
 // kernel checks each handle argument: a handle that names no object of the
-// kind that an operation needs gives `Bad_Handle`; a handle with too few
-// rights gives `No_Right`. `Handle_Close` ends a handle; an object ends when
+// kind that an operation needs gives `Argument_Refused`; a handle with too few
+// rights gives `Grant_Or_Right_Missing`. `Handle_Close` ends a handle; an object ends when
 // no handle and no mapping names it. See [handle](term:handle) and
 // (docs/ARCHITECTURE.md, "K1. Handle table").
 //
@@ -242,7 +243,7 @@ Object_Kind :: enum u8 {
 // kernel with the `syscall` instruction. The kernel executes the commands
 // of the ring in their order, and gives one completion record for each:
 // `kind` is a `Status`, and the values are the results, in the order that
-// each operation states. A completion with the status `Ok` has the results;
+// each operation states. A completion with the status `Succeeded` has the results;
 // with another status the operation failed, and the values of its
 // completion are an [error record](errors.Error_Record): the
 // argument that was wrong, its value, and what the kernel found (the
@@ -251,13 +252,13 @@ Object_Kind :: enum u8 {
 // receives one error detail for each other wrong argument, in the
 // [table of error details](term:table-of-error-details) that its last value
 // names. The kind 0 (`None`) and each kind past the last operation name no
-// operation: the kernel refuses the command with `Bad_Operation` and the
+// operation: the kernel refuses the command with `Argument_Refused` and the
 // error record `Unknown_Operation`, and changes nothing.
 //
 // A handle argument names an object of this process by the number that a
 // grant or an operation gave. When the handle names no object of the kind
-// that the operation needs, the status is `Bad_Handle`; when it names the
-// object but has not the right that the operation needs, `No_Right`. The
+// that the operation needs, the status is `Argument_Refused`; when it names the
+// object but has not the right that the operation needs, `Grant_Or_Right_Missing`. The
 // rights that each operation needs are in **bold**.
 //
 // `src/library/modus/system` calls each operation with a procedure of its own
@@ -293,13 +294,13 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `log` is not a log handle with **Write**.
-	// - `Bad_Address`: `length` is above `LOG_TEXT_BYTES_MOST`, or the process cannot read the text and its runs.
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `log` is not a log handle with **Write**.
+	// - `Argument_Refused`: `length` is above `LOG_TEXT_BYTES_MOST`, or the process cannot read the text and its runs.
 	//   For a fact: `length` is below `LOG_FACT_HEAD_BYTES` or above `LOG_FACT_CALL_BYTES_MOST`, or the
 	//   process cannot read the bytes.
-	// - `Bad_Operation`: `level` is above `Error`, `runs` is above `LOG_CALL_RUN_LIMIT`, `form` names no
+	// - `Argument_Refused`: `level` is above `Error`, `runs` is above `LOG_CALL_RUN_LIMIT`, `form` names no
 	//   `Log_Record_Form`, or a fact has runs.
-	// - `No_Budget`: the budget of the process accepted all the records of its amount in this second
+	// - `Budget_Or_Capacity_Exhausted`: the budget of the process accepted all the records of its amount in this second
 	//   (`Budget_Amounts`, `log_records`). No other budget counts the record, so the refusal says nothing of
 	//   what other processes wrote. A fact counts one record for each of its parts.
 	Memory_Create  = 2, // (budget, pages, flags: Memory_Flags) -> memory handle.
@@ -325,13 +326,13 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Spend**.
-	// - `Bad_Operation`: `pages` is 0, or above the limit; a flag that the kernel does not know;
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `budget` is not a budget handle with **Spend**.
+	// - `Argument_Refused`: `pages` is 0, or above the limit; a flag that the kernel does not know;
 	//   `Uncommitted` with another flag; `Large_Pages` with a count that is not a multiple of
 	//   `LARGE_PAGE_PAGES`.
-	// - `No_Budget`: the budget cannot pay.
-	// - `No_Slot`: the table of the memory objects of the kernel is full, or the handle table of the process.
-	// - `No_Memory`: a contiguous object finds no free run of its length, though the budget can pay.
+	// - `Budget_Or_Capacity_Exhausted`: the budget cannot pay, or the handle table of the process is full.
+	// - `Callee_Busy`: the table of the memory objects of the kernel is full, or a contiguous object finds
+	//   no free run of its length, though the budget can pay.
 	//
 	// ```odin
 	// memory, status := system.memory_create(16, flags = {.Frames_Now})
@@ -365,25 +366,25 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `memory` or `process` is not a handle of its kind with its rights.
-	// - `No_Right`: also, the process maps in itself at addresses that meet a module record of the
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `memory` or `process` is not a handle of its kind with its rights.
+	// - `Grant_Or_Right_Missing`: also, the process maps in itself at addresses that meet a module record of the
 	//   writer `Starter` (`Module_Writer`). The error kind is `Starter_Module`. The kernel checks it before
 	//   the other mappings. An address that the kernel chooses meets no such record.
-	// - `Bad_State`: the process is stopped; a part of the object has a protection of its own
+	// - `Wrong_State`: the process is stopped; a part of the object has a protection of its own
 	//   (`Memory_Protect`): such an object has one mapping only; guest memory for this process, or for
 	//   a process that a thread ran; or device memory with a live mapping of another cache type (no cache,
 	//   `Write_Combining`, or the entry of a screen) through this object or another object whose physical
 	//   pages meet its pages. The error kind is `Object_Shared`.
-	// - `Bad_Address`: the pages are not inside the object; the address is not a multiple of 4096, is below
+	// - `Argument_Refused`: the pages are not inside the object; the address is not a multiple of 4096, is below
 	//   4096 with no `At_Address_Zero`, is not 0 with it, ends above `USER_END`, or meets another mapping.
-	// - `Bad_Operation`: `Write` with `Execute` and with no `No_Access`; `Write_Combining` on memory that is
+	// - `Argument_Refused`: `Write` with `Execute` and with no `No_Access`; `Write_Combining` on memory that is
 	//   not device memory of `Device_Kind.Memory`, or with `Execute`; or a flag that the kernel does not know, which it refuses
 	//   before it reads the handles; or, with the IOMMU in use, `memory` is device memory over the
 	//   registers of a device with a domain and `process` names another process: only the holder of the
 	//   registers maps them, so that its mappings keep the domain of the device.
-	// - `No_Slot`: the process has 128 mappings, or the kernel finds no free place for the address that it
+	// - `Budget_Or_Capacity_Exhausted`: the process has 128 mappings, or the kernel finds no free place for the address that it
 	//   chooses.
-	// - `No_Budget`, `No_Memory`: the budget of the process that receives the mapping cannot pay its page
+	// - `Budget_Or_Capacity_Exhausted`, `Callee_Busy`: the budget of the process that receives the mapping cannot pay its page
 	//   tables, or no page frame is free.
 	//
 	// ```odin
@@ -403,11 +404,11 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Control**.
-	// - `No_Right`: also, the process unmaps in itself a mapping that meets a module record of the writer
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `process` is not a process handle with **Control**.
+	// - `Grant_Or_Right_Missing`: also, the process unmaps in itself a mapping that meets a module record of the writer
 	//   `Starter` (`Module_Writer`). The error kind is `Starter_Module`.
-	// - `Bad_State`: the process is stopped.
-	// - `Bad_Address`: no mapping starts at the address, or it is a thread area or the time page.
+	// - `Wrong_State`: the process is stopped.
+	// - `Argument_Refused`: no mapping starts at the address, or it is a thread area or the time page.
 	Memory_Size    = 5, // (memory) -> pages, flags: Memory_Flags.
 	// Gives the count of pages of a memory object, and the flags of its creation that it keeps. A process that
 	// reads an object that another process gives checks them before it maps it: the pages of an Uncommitted
@@ -423,7 +424,7 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`: `memory` is not a memory handle.
+	// - `Argument_Refused`: `memory` is not a memory handle.
 	Process_Create = 6, // (budget, name, name_length) -> process handle.
 	// Makes a process, in the state `Created`, and gives a handle to it with **Give**, **Read** and
 	// **Control**. The process has no memory and no handle: its addresses hold the time page only.
@@ -443,12 +444,12 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Spend**.
-	// - `Bad_Address`: `name_length` is above `PROCESS_NAME_BYTES_MOST`, or the process cannot read the name.
-	// - `Bad_Operation`: a byte of the name is outside 32 to 126.
-	// - `No_Budget`: the budget has no process slot or no page left, or it cannot pay the page tables or
-	//   the own log ring.
-	// - `No_Slot`: the table of the processes of the kernel is full, or the handle table of the process.
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `budget` is not a budget handle with **Spend**.
+	// - `Argument_Refused`: `name_length` is above `PROCESS_NAME_BYTES_MOST`, or the process cannot read the name.
+	// - `Argument_Refused`: a byte of the name is outside 32 to 126.
+	// - `Budget_Or_Capacity_Exhausted`: the budget has no process slot or no page left, cannot pay the page
+	//   tables or the own log ring, or the handle table of the process is full.
+	// - `Callee_Busy`: the table of the processes of the kernel is full.
 	Process_Start  = 7, // (process, entry, stack, context).
 	// Starts a process that `Process_Create` made: its first thread runs at `entry`, and the process goes
 	// from `Created` to `Ready`. The budget of the process pays for the thread, as `Thread_Create` does.
@@ -470,14 +471,14 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Control**.
-	// - `Bad_State`: the process is not in the state `Created`, is a guest (`Guest_Run`), or holds guest
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `process` is not a process handle with **Control**.
+	// - `Wrong_State`: the process is not in the state `Created`, is a guest (`Guest_Run`), or holds guest
 	//   memory: a mapping at the address 0, or one with `Write` and `Execute` (`Memory_Map`).
-	// - `Bad_Address`: `entry` or `stack` is out of its range.
-	// - `No_Budget`: the budget of the process has no thread slot left, or it cannot pay for the thread
+	// - `Argument_Refused`: `entry` or `stack` is out of its range.
+	// - `Budget_Or_Capacity_Exhausted`: the budget of the process has no thread slot left, or it cannot pay for the thread
 	//   area or its page tables.
-	// - `No_Slot`: the thread table of the kernel is full, or the process has `THREAD_CAPACITY` threads.
-	// - `No_Memory`: no free run of page frames for the thread area.
+	// - `Callee_Busy`, `Budget_Or_Capacity_Exhausted`: the thread table of the kernel is full, or the process has `THREAD_CAPACITY` threads.
+	// - `Callee_Busy`: no free run of page frames for the thread area.
 	Process_Stop   = 8, // (process, outcome: Stop_Outcome, error: Error_Record).
 	// Stops a process: this one or another one. Each of its threads ends, and the operation returns when no
 	// thread of the process runs an instruction any more. The process is `Stopped` with its stop cause and its
@@ -504,9 +505,9 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Control**.
-	// - `Bad_Address`: `error` is non-zero and names bytes that the caller cannot read.
-	// - `Bad_Operation`: `outcome` names no valid outcome for the target, `error` is non-zero when disallowed,
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `process` is not a process handle with **Control**.
+	// - `Argument_Refused`: `error` is non-zero and names bytes that the caller cannot read.
+	// - `Argument_Refused`: `outcome` names no valid outcome for the target, `error` is non-zero when disallowed,
 	//   or the copied error record has an invalid kind or unit. Nothing changes: the target runs on.
 	Process_State  = 9, // (process, report: Stop_Report) -> state: Process_State, cause: Stop_Cause, outcome: Stop_Outcome, entries, slot, serial.
 	// Gives the state of a process, its stop cause and its stop outcome, its count of kernel entries, and its
@@ -538,8 +539,8 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Read**.
-	// - `Bad_Address`: the process cannot write the `Stop_Report` at `report`.
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `process` is not a process handle with **Read**.
+	// - `Argument_Refused`: the process cannot write the `Stop_Report` at `report`.
 	Handle_Give    = 10, // (target, handle, rights: Rights) -> the handle in the target.
 	// Copies a handle into a process, with a part of its rights: a grant never adds a right. The kernel
 	// records where the copy came from (its origin): `Handle_Revoke` of the given handle ends the copy, and
@@ -564,13 +565,13 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`: `handle` or `target` names nothing; `target` is a handle of another kind; or it is a
-	//   memory object that no other process maps, or that two other processes map with `Receive_Handles`.
-	// - `No_Right`: `handle` has not **Give**, the process handle `target` has not **Control**, or `target`
+	// - `Argument_Refused`: `handle` or `target` names nothing; or `target` is a handle of another kind.
+	// - `Grant_Or_Right_Missing`: `handle` has not **Give**, the process handle `target` has not **Control**, or `target`
 	//   is a memory object that another process maps without `Receive_Handles`.
-	// - `Bad_State`: the target process is stopped; or `handle` names a memory object with a protection of
-	//   its own on a part (`Memory_Protect`), and the target is another process.
-	// - `No_Slot`: the handle table of the target process is full.
+	// - `Wrong_State`: the target process is stopped; `target` is a memory object that no other process maps,
+	//   or that two other processes map with `Receive_Handles`; or `handle` names a memory object with a
+	//   protection of its own on a part (`Memory_Protect`), and the target is another process.
+	// - `Budget_Or_Capacity_Exhausted`: the handle table of the target process is full.
 	//
 	// ```odin
 	// copy, status := system.give(process, memory, {.Read})
@@ -593,7 +594,7 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`: `handle` names nothing.
+	// - `Argument_Refused`: `handle` names nothing.
 	Interrupt_Read = 12, // (interrupt) -> count.
 	// Gives the count of the interrupts of a line or of a message interrupt since the last read, and sets
 	// it to 0. Each interrupt also adds 1 to the `events` word of the threads of the process that holds the
@@ -607,7 +608,7 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `interrupt` is not an interrupt handle with **Read**.
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `interrupt` is not an interrupt handle with **Read**.
 	Device_Create  = 13, // (machine, kind: Device_Kind, a, b) -> handle, address, value.
 	// Makes a handle to a part of the machine, for a device service.
 	//
@@ -644,12 +645,12 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `machine` is not the machine handle with **Devices**.
-	// - `Bad_Address`: the ports, the line or the range of memory is out of its range.
-	// - `Bad_Operation`: `kind` is `None` or a kind that the kernel does not know; or `Display_Memory` over
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `machine` is not the machine handle with **Devices**.
+	// - `Argument_Refused`: the ports, the line or the range of memory is out of its range.
+	// - `Argument_Refused`: `kind` is `None` or a kind that the kernel does not know; or `Display_Memory` over
 	//   a range that does not hold the framebuffer of the firmware: the error record has the kind
 	//   `Bad_Value` for `a`, with the address of that framebuffer as its limit.
-	// - `No_Slot`: no free memory object, no free message interrupt (`MESSAGE_CAPACITY`), or the handle
+	// - `Callee_Busy`, `Budget_Or_Capacity_Exhausted`: no free memory object, no free message interrupt (`MESSAGE_CAPACITY`), or the handle
 	//   table of the process is full.
 	Inspect        = 14, // (machine, kind: Inspect_Kind, index, address, size) -> bytes written.
 	// Writes a report of the kernel into memory of the process. Each `Inspect_Kind` has its report:
@@ -679,9 +680,9 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `machine` is not the machine handle with **Inspect**.
-	// - `Bad_Address`: `size` is below the size of the report, or the process cannot write the memory.
-	// - `Bad_Operation`: `kind` is `None` or a kind that the kernel does not know; for `Pages`, `index` is
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `machine` is not the machine handle with **Inspect**.
+	// - `Argument_Refused`: `size` is below the size of the report, or the process cannot write the memory.
+	// - `Argument_Refused`: `kind` is `None` or a kind that the kernel does not know; for `Pages`, `index` is
 	//   not 0, or the address in the record is not a multiple of 4096, or its 64 pages pass `USER_END`.
 	Machine_Stop   = 15, // (machine, code).
 	// Stops the machine: the kernel writes `kernel: the machine stops with code <code>` on the log, then
@@ -694,8 +695,8 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `machine` is not the machine handle with **Stop**.
-	// - `Bad_Operation`: `code` is above `MACHINE_STOP_CODE_MOST`. A code that the host cannot receive
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `machine` is not the machine handle with **Stop**.
+	// - `Argument_Refused`: `code` is above `MACHINE_STOP_CODE_MOST`. A code that the host cannot receive
 	//   whole is refused: else a code of 256 would end the machine with 0, the code of a normal end.
 	Thread_Create  = 16, // (budget, entry, stack, parameter, weight, request) -> thread handle.
 	// Starts a new thread of this process, and gives a handle to it with **Give**, **Read**, **Write**,
@@ -727,16 +728,16 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Spend**.
-	// - `Bad_Operation`: `weight` is above the limit of a new thread, or `request` above
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `budget` is not a budget handle with **Spend**.
+	// - `Argument_Refused`: `weight` is above the limit of a new thread, or `request` above
 	//   `REQUEST_LIMIT`.
-	// - `Bad_Address`: `entry` or `stack` is out of its range.
-	// - `Bad_State`: the process stops.
-	// - `No_Slot`: the thread table of the kernel is full, the process has `THREAD_CAPACITY` threads, or
+	// - `Argument_Refused`: `entry` or `stack` is out of its range.
+	// - `Wrong_State`: the process stops.
+	// - `Callee_Busy`, `Budget_Or_Capacity_Exhausted`: the thread table of the kernel is full, the process has `THREAD_CAPACITY` threads, or
 	//   its handle table is full.
-	// - `No_Budget`: the budget has no thread slot left, or it cannot pay for the thread area or its page
+	// - `Budget_Or_Capacity_Exhausted`: the budget has no thread slot left, or it cannot pay for the thread area or its page
 	//   tables.
-	// - `No_Memory`: no free run of page frames for the thread area.
+	// - `Callee_Busy`: no free run of page frames for the thread area.
 	//
 	// ```odin
 	// thread, status := system.thread_start(worker, nil)
@@ -756,7 +757,7 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with **Control**.
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `thread` is not a thread handle with **Control**.
 	Thread_State   = 18, // (thread) -> state: Process_State, stop count, area bytes, components, form.
 	// Gives the state of a thread, and what a holder of the thread needs for `Thread_Control`.
 	//
@@ -776,7 +777,7 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with **Read**.
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `thread` is not a thread handle with **Read**.
 	Word_Wait      = 19, // (words: Word, count).
 	// Adds words to the wait of this kernel entry: the one way to wait for something else than a time. A
 	// thread that asks for a wait when it enters the kernel waits at the end of the entry while each word
@@ -797,13 +798,13 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `No_Slot`: the entry would hold more words than the thread has room for.
+	// - `Budget_Or_Capacity_Exhausted`: the entry would hold more words than the thread has room for.
 	// - Each refusal leaves the entry with no wait, also on the words that the commands before it in the
 	//   same entry registered.
-	// - `Bad_Operation`: a word that the entry holds already, at the same address: the entry then
+	// - `Argument_Refused`: a word that the entry holds already, at the same address: the entry then
 	//   does not wait, and its error record names the place of that word in the command. A thread holds
 	//   each word once, so the list of a word never grows with one thread.
-	// - `Bad_Address`: the process cannot read the table or a word, a word is not a multiple of 4, or a
+	// - `Argument_Refused`: the process cannot read the table or a word, a word is not a multiple of 4, or a
 	//   word is in device memory (its record has `found` 2): no wait takes a register of a device. The
 	//   entry then does not wait.
 	//
@@ -825,7 +826,7 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Address`: the process cannot write the word, its address is not a multiple of 4, or it is in
+	// - `Argument_Refused`: the process cannot write the word, its address is not a multiple of 4, or it is in
 	//   device memory. The error record names the word; its `found` is 1 when the process can read the
 	//   word and not write it, 2 when the word is in device memory.
 	//
@@ -851,9 +852,9 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Spend**.
-	// - `No_Budget`: `budget` holds less than an amount that moves, or a limit is above its own.
-	// - `No_Slot`: the table of the budgets of the kernel is full, or the handle table of the process.
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `budget` is not a budget handle with **Spend**.
+	// - `Budget_Or_Capacity_Exhausted`: `budget` holds less than an amount that moves, or a limit is above its own.
+	// - `Callee_Busy`, `Budget_Or_Capacity_Exhausted`: the table of the budgets of the kernel is full, or the handle table of the process.
 	Budget_Read    = 22, // (budget) -> pages, processes, threads, processor, log_records, processor time, refused.
 	// Gives what a budget can still pay, its limits, and what it used.
 	//
@@ -873,7 +874,7 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `budget` is not a budget handle with **Read**.
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `budget` is not a budget handle with **Read**.
 	Handle_State   = 23, // (handle, memory) -> kind: Object_Kind, rights: Rights, through, holdings.
 	// Gives the kind and the rights of a handle of this process, and proves where it came from. A process
 	// that receives the number of a handle from another process, in a ring, proves with this operation that
@@ -894,7 +895,7 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`: `handle` names nothing, or `memory` is not a memory handle.
+	// - `Argument_Refused`: `handle` names nothing, or `memory` is not a memory handle.
 	Handle_Revoke  = 24, // (handle, process) -> holdings ended.
 	// Ends each holding that came from a handle. A holding is a handle or a mapping. The origin of a handle
 	// that `Handle_Give` made is the handle that was given; the origin of a mapping is the memory handle
@@ -914,8 +915,8 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`: `handle` names nothing, or `process` is not a process handle.
-	// - `No_Right`: the process handle has not **Control**.
+	// - `Argument_Refused`: `handle` names nothing, or `process` is not a process handle.
+	// - `Grant_Or_Right_Missing`: the process handle has not **Control**.
 	Memory_Physical = 25, // (machine, memory) -> device address.
 	// Gives the address that a device uses for the first page of a memory object, so that a device service
 	// gives it to its device, which reads and writes the memory with no processor (direct memory access).
@@ -944,21 +945,21 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `machine` or `memory` is not a handle of its kind with its right.
-	// - `Bad_Operation`: the pages of the object are not contiguous, and no IOMMU is in use or the caller
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `machine` or `memory` is not a handle of its kind with its right.
+	// - `Argument_Refused`: the pages of the object are not contiguous, and no IOMMU is in use or the caller
 	//   holds the registers of no device: they get their frames at their first use, from anywhere.
-	// - `Bad_Operation`: also, with the IOMMU in use, a contiguous object ends above 2^38 or above the
+	// - `Argument_Refused`: also, with the IOMMU in use, a contiguous object ends above 2^38 or above the
 	//   address width of the unit of a device; or an object that is not contiguous is `Uncommitted`, larger
 	//   than 128 MiB (`iommu.WINDOW_SIZE`), or declared to a device whose unit gives no windows.
-	// - `Bad_State`: another process declared memory to the same device, and it still holds or maps its
+	// - `Wrong_State`: another process declared memory to the same device, and it still holds or maps its
 	//   registers; or the device is behind a conventional bridge, and the caller does not hold the registers
 	//   of each device behind that bridge, which all share its requester and its domain (the log names the
 	//   device that it misses).
-	// - `No_Slot`: the caller holds the registers of more than 4 devices, the 32 slots of the devices of
+	// - `Callee_Busy`, `Budget_Or_Capacity_Exhausted`: the caller holds the registers of more than 4 devices, the 32 slots of the devices of
 	//   the kernel are in use, or the object is not contiguous and each of the 2047 device windows is held
 	//   (the record `Full` of the unit `Device_Windows`). A window returns when no device has the pages of
 	//   its object.
-	// - `No_Budget`: the budget of the caller cannot pay for a page of the tables of the device.
+	// - `Budget_Or_Capacity_Exhausted`: the budget of the caller cannot pay for a page of the tables of the device.
 	Process_Module = 26, // (process, record: Module_Record).
 	// Records a module that a loader put in a process, in the module records of the process. The kernel
 	// does not read the module: the record is what the loader asserts. The kernel names the module of the
@@ -981,13 +982,13 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Control**.
-	// - `No_Right`: also, the process replaces or removes in itself a record of the writer `Starter`. The
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `process` is not a process handle with **Control**.
+	// - `Grant_Or_Right_Missing`: also, the process replaces or removes in itself a record of the writer `Starter`. The
 	//   error kind is `Starter_Module`: the fix is with the holder of the process handle.
-	// - `Bad_State`: the process is stopped.
-	// - `Bad_Address`: the process cannot read the record; the module passes `USER_END`; it meets another
+	// - `Wrong_State`: the process is stopped.
+	// - `Argument_Refused`: the process cannot read the record; the module passes `USER_END`; it meets another
 	//   record; or a record of size 0 names a base that no record has.
-	// - `No_Slot`: the process has `PROCESS_MODULE_CAPACITY` records.
+	// - `Budget_Or_Capacity_Exhausted`: the process has `PROCESS_MODULE_CAPACITY` records.
 	Strategy_Set = 27, // (machine, strategy: Strategy) -> the strategy before.
 	// Changes the scheduling strategy of the machine while it runs: no thread stops, and none is lost. The
 	// state of the strategy of each thread starts from zero
@@ -1002,8 +1003,8 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `machine` is not the machine handle with **Schedule**.
-	// - `Bad_Operation`: `strategy` is `None` or a strategy that the kernel does not know.
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `machine` is not the machine handle with **Schedule**.
+	// - `Argument_Refused`: `strategy` is `None` or a strategy that the kernel does not know.
 	//
 	// ```odin
 	// before, status := system.strategy_set(machine, .Eevdf)
@@ -1031,15 +1032,15 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `memory` is not a memory handle with **Write**; `budget` is not a budget
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `memory` is not a memory handle with **Write**; `budget` is not a budget
 	//   handle with **Commit** or **Spend**.
-	// - `Bad_Handle`: `budget` names another budget than the budget of the object.
-	// - `Bad_Operation`: `count` is 0 or above `RANGE_TABLE_CAPACITY`; a flag that the kernel does not know;
+	// - `Argument_Refused`: `budget` names another budget than the budget of the object.
+	// - `Argument_Refused`: `count` is 0 or above `RANGE_TABLE_CAPACITY`; a flag that the kernel does not know;
 	//   the table has more than `RANGE_TABLE_PAGE_LIMIT` pages; the object was not made `Uncommitted`.
-	// - `Bad_Address`: the process cannot read the table, or the ranges are not in order, overlap, or pass
+	// - `Argument_Refused`: the process cannot read the table, or the ranges are not in order, overlap, or pass
 	//   the end of the object.
-	// - `No_Budget`: the budget cannot pay the table: nothing changes.
-	// - `Bad_State`: a `Decommit` of an object that another process names, or that has more than one
+	// - `Budget_Or_Capacity_Exhausted`: the budget cannot pay the table: nothing changes.
+	// - `Wrong_State`: a `Decommit` of an object that another process names, or that has more than one
 	//   mapping.
 	//
 	// ```odin
@@ -1068,23 +1069,23 @@ Operation :: enum u32 {
 	// A range that is a part of a mapping, not its whole, takes away from the protection of the mapping now:
 	// it cannot get more. It needs an object with a frame list that only this process names, with one
 	// mapping; while a part has its own protection, the object is not mapped again and not given
-	// (`Bad_State`). At most `RANGE_TABLE_PAGE_LIMIT` pages change in one call.
+	// (`Wrong_State`). At most `RANGE_TABLE_PAGE_LIMIT` pages change in one call.
 	//
 	// **Results**: the count of pages that changed.
 	//
 	// **Statuses**
 	//
-	// - `Bad_Operation`: `count` is 0 or above `RANGE_TABLE_CAPACITY`; a flag that the kernel does not know;
+	// - `Argument_Refused`: `count` is 0 or above `RANGE_TABLE_CAPACITY`; a flag that the kernel does not know;
 	//   `Write` with `Execute`, or `No_Access` with another flag; more than the mapping was made with; one
 	//   table names a mapping whole and in part; more than `RANGE_TABLE_PAGE_LIMIT` pages; read only, or a
 	//   part, of a switching mapping: the switch of a page gives it `Write` or `Execute` whatever such a
 	//   protection said.
-	// - `Bad_Address`: the process cannot read the table; a range is not on whole pages, is empty, or is not
+	// - `Argument_Refused`: the process cannot read the table; a range is not on whole pages, is empty, or is not
 	//   inside one mapping; the mapping is a thread area or the time page; a part of a mapping of a
 	//   contiguous object.
-	// - `Bad_State`: a part of a mapping of an object that another process names, or that has another
+	// - `Wrong_State`: a part of a mapping of an object that another process names, or that has another
 	//   mapping; `process` names a process that a thread ran.
-	// - `Bad_Handle`, `No_Right`: `process` is not 0 and not a process handle with **Control**.
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `process` is not 0 and not a process handle with **Control**.
 	//
 	// ```odin
 	// changed, status := system.memory_protect(ranges[:], {})
@@ -1121,17 +1122,17 @@ Operation :: enum u32 {
 	//
 	// When a thread of the process waits for an answer, a new handler or the end of the delivery ends the
 	// ring that holds its record: the process stops with the stop cause `Fault_Unanswered`, as when the handler
-	// thread ends, and the operation gives `Ok`.
+	// thread ends, and the operation gives `Succeeded`.
 	//
 	// **Results**: none.
 	//
 	// **Statuses**
 	//
-	// - `Bad_Operation`: `end` names no `Fault_Handler_Action`; a kind that the kernel never delivers; kinds with the end of the
+	// - `Argument_Refused`: `end` names no `Fault_Handler_Action`; a kind that the kernel never delivers; kinds with the end of the
 	//   delivery; with `process`, kinds that are not 0 and not the whole of `FAULT_KINDS_DEBUGGER`.
-	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with **Control**; `process` is not a
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `thread` is not a thread handle with **Control**; `process` is not a
 	//   process handle with **Debug**.
-	// - `Bad_State`: the thread is not a live thread of this process; the thread is the debug handler of a
+	// - `Wrong_State`: the thread is not a live thread of this process; the thread is the debug handler of a
 	//   process and would become the fault handler of its own, or the reverse; with `process`: the process is
 	//   the caller, it stopped, it has another debugger, the thread is the debug handler of another process,
 	//   or, for `End`, the caller is not its debugger.
@@ -1160,9 +1161,9 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Operation`: `answer` is not `Resume` or `Stop`; `Stop` with `process`.
-	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Debug**.
-	// - `Bad_State`: no thread with that number waits for the fault of that serial: a wrong answer, a second
+	// - `Argument_Refused`: `answer` is not `Resume` or `Stop`; `Stop` with `process`.
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `process` is not a process handle with **Debug**.
+	// - `Wrong_State`: no thread with that number waits for the fault of that serial: a wrong answer, a second
 	//   answer, or an answer from another process; an answer with no `process` for a fault that went to the
 	//   debugger of the process; with `process`, the caller is not the debugger. Also for `Resume` after a fault kind that does not resume
 	//   by itself (`fault_kind_resumes`) when `Thread_Control` wrote neither the registers nor the extended
@@ -1196,15 +1197,15 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `machine` is not the machine handle with **Events**, or `memory` not a
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `machine` is not the machine handle with **Events**, or `memory` not a
 	//   memory handle with **Write**; the process of a rule is not a process handle with **Read**.
-	// - `Bad_State`: `memory` is 0 and the caller has no table; or another process has the table: one table
+	// - `Wrong_State`: `memory` is 0 and the caller has no table; or another process has the table: one table
 	//   at a time.
-	// - `No_Slot`: `count` is above `EVENT_RULE_CAPACITY`.
-	// - `Bad_Operation`: `count` is 0; `records` is not a power of two in its range; the object is not
+	// - `Argument_Refused`: `count` is above `EVENT_RULE_CAPACITY`.
+	// - `Argument_Refused`: `count` is 0; `records` is not a power of two in its range; the object is not
 	//   contiguous, is the registers of a device, or is too small for the rings; a rule that the kernel
 	//   refuses (its kind, its flags, its reserved values, its least duration or its one in N).
-	// - `Bad_Address`: the process cannot read the table of rules.
+	// - `Argument_Refused`: the process cannot read the table of rules.
 	Thread_Control = 33, // (thread, number, command: Thread_Control_Command, address, size, source) -> see the command.
 	// Controls a thread: holds it and releases it, reads its registers and its extended state, and writes
 	// them ([the control of a thread](docs/ARCHITECTURE.md#the-control-of-a-thread)). `Stop` and `Resume`
@@ -1253,7 +1254,10 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Operation`: `command` is `None` or a command that the kernel does not know; a write of values
+	// - `Operation_Unsupported`: `Start_Counters` or `Read_Counters` on a machine whose processors have no
+	//   counters that the kernel uses, or `Record_Start` / `Replay_Start` without CPUID faulting, with the
+	//   error kind `Unsupported`.
+	// - `Argument_Refused`: `command` is `None` or a command that the kernel does not know; a write of values
 	//   that a thread of a process cannot hold changes nothing (`thread_registers_refusal`,
 	//   `extended_state_refusal`); a `Write_Schedule` through 0 or a thread handle with a weight above
 	//   the weight of the thread or a request above its request; a `Write_Schedule` with a weight above
@@ -1263,27 +1267,25 @@ Operation :: enum u32 {
 	//   (`thread_breakpoints_refusal`) changes nothing; a `Read_Memory` of more than
 	//   `THREAD_MEMORY_READ_LIMIT` bytes; a `Write_Placement` that `thread_placement_after_write` refuses
 	//   changes nothing: through 0 or a thread handle a set with a processor that the set of the thread
-	//   does not have, and for each writer a set or a limit with no processor that the machine has;
-	//   `Start_Counters` or `Read_Counters` on a machine whose processors have no counters that the
-	//   kernel uses, with the error kind `Unsupported`.
-	// - `Bad_Handle`, `No_Right`: `thread` is not a thread handle with the rights of the command, and not
+	//   does not have, and for each writer a set or a limit with no processor that the machine has.
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `thread` is not a thread handle with the rights of the command, and not
 	//   the machine handle with the rights of a command of the schedule or of the placement. The machine
-	//   handle with another command gives `Bad_Handle`. A process handle with no **Debug** gives
-	//   `No_Right`, and a process handle with a command of the schedule or of the placement `Bad_Handle`.
+	//   handle with another command gives `Argument_Refused`. A process handle with no **Debug** gives
+	//   `Grant_Or_Right_Missing`, and a process handle with a command of the schedule or of the placement `Argument_Refused`.
 	//   A command of the schedule of a process, `Start_Counters` or `Read_Counters` with 0 or with a
-	//   handle that is not the machine handle gives `Bad_Handle`; the machine handle with no
-	//   **Counters** gives `No_Right` for `Start_Counters` and `Read_Counters`.
-	// - `Bad_State`: no live process has the slot and the serial of `number`, for a command of the
+	//   handle that is not the machine handle gives `Argument_Refused`; the machine handle with no
+	//   **Counters** gives `Grant_Or_Right_Missing` for `Start_Counters` and `Read_Counters`.
+	// - `Nothing_Has_That_Name`: no live process has the slot and the serial of `number`, for a command of the
 	//   schedule of a process; no live thread of this process has `number`; no live thread of the machine has the
-	//   machine number `number`; the thread or its process ended, also for a read or a write of a
-	//   schedule or of a placement of a thread that ends; a read or
-	//   a write of the registers or of the breakpoints of a thread that is not held, or of the calling
-	//   thread; a `Stop` above
-	//   `THREAD_STOP_COUNT_LIMIT` or of a thread that ends; a `Resume` at the count 0; through a process
+	//   machine number `number`; or the thread or its process ended.
+	// - `Budget_Or_Capacity_Exhausted`: a `Stop` above `THREAD_STOP_COUNT_LIMIT`, or no room in a per-process
+	//   record or replay table.
+	// - `Wrong_State`: a read or a write of the registers or of the breakpoints of a thread that is not held,
+	//   or of the calling thread; a `Stop` of a thread that ends; a `Resume` at the count 0; through a process
 	//   handle with **Debug**: the caller is not the debugger of the process, the process is the caller, or a
 	//   `Resume` of a thread that the debugger did not stop; a `Read_Counters` of a thread that does not
 	//   count.
-	// - `Bad_Address`: `size` is too small, or the process cannot read or write the memory; a `Read_Memory`
+	// - `Argument_Refused`: `size` is too small, or the process cannot read or write the memory; a `Read_Memory`
 	//   whose first byte the process of the thread cannot read, or whose range is not below `USER_END`.
 	Guest_Run = 34, // (process, registers: Guest_Registers, processor) -> kind: Guest_Exit_Kind, a, b, c, next, exit code, exit information.
 	// Runs one guest processor of a process on the calling thread, until an exit that the kernel does not
@@ -1291,7 +1293,7 @@ Operation :: enum u32 {
 	// a process that `Process_Create` made and that no thread ran. Its addresses are the guest physical
 	// addresses: `Memory_Map` with its handle gives the guest memory. The first run makes the process a
 	// guest: the time page leaves it, the `OWN_LOG_PAGES` pages of its own log ring return to its budget (a
-	// guest writes no log record), and `Process_Start` of it gives `Bad_State` after. The first run of each
+	// guest writes no log record), and `Process_Start` of it gives `Wrong_State` after. The first run of each
 	// guest processor takes two pages from the budget of the process. A guest processor starts in 16-bit
 	// real mode, with each segment at base 0, unless the record asks for the load of another mode.
 	//
@@ -1327,14 +1329,15 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Operation`: the processors of the machine have no virtualization support that the kernel uses
-	//   (AMD SVM with nested paging), and the error kind is `Unsupported`; the record has a field that its
-	//   rules refuse (`guest_registers_refusal`); or `processor` is past the last guest processor.
-	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Control**.
-	// - `Bad_State`: the process is the caller, was started, stopped, or another thread runs this guest
+	// - `Operation_Unsupported`: the processors of the machine have no virtualization support that the kernel uses
+	//   (AMD SVM with nested paging), and the error kind is `Unsupported`.
+	// - `Argument_Refused`: the record has a field that its rules refuse (`guest_registers_refusal`);
+	//   or `processor` is past the last guest processor.
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `process` is not a process handle with **Control**.
+	// - `Wrong_State`: the process is the caller, was started, stopped, or another thread runs this guest
 	//   processor now.
-	// - `Bad_Address`: the process cannot read and write the record.
-	// - `No_Budget`: at the first run of the guest processor, the budget of the process cannot pay its two
+	// - `Argument_Refused`: the process cannot read and write the record.
+	// - `Budget_Or_Capacity_Exhausted`: at the first run of the guest processor, the budget of the process cannot pay its two
 	//   pages.
 	//
 	// ```odin
@@ -1370,12 +1373,12 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `memory` is not a handle of the memory of the log with **Read**.
-	// - `Bad_Operation`: `process` is 0 or past the process slots, or `count` is above
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `memory` is not a handle of the memory of the log with **Read**.
+	// - `Argument_Refused`: `process` is 0 or past the process slots, or `count` is above
 	//   `OWN_LOG_RECORD_CAPACITY`.
-	// - `Bad_State`: the slot holds no process with this serial and an own log ring: the slot is free,
+	// - `Wrong_State`: the slot holds no process with this serial and an own log ring: the slot is free,
 	//   another process has it, or the process is a guest.
-	// - `Bad_Address`: the process cannot write the `count` records at `records`.
+	// - `Argument_Refused`: the process cannot write the `count` records at `records`.
 	//
 	// ```odin
 	// results, status := system.call(.Log_Read, u64(log_memory), slot, serial, after, u64(uintptr(&rows[0])), u64(len(rows)))
@@ -1404,11 +1407,11 @@ Operation :: enum u32 {
 	//
 	// **Statuses**
 	//
-	// - `Bad_Handle`, `No_Right`: `memory` is not a memory handle with **Read**.
-	// - `Bad_Operation`: `length` is above `MEMORY_READ_LIMIT`, or the object is device memory.
-	// - `Bad_Address`: the range passes the end of the object, the process cannot write the `length`
+	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `memory` is not a memory handle with **Read**.
+	// - `Argument_Refused`: `length` is above `MEMORY_READ_LIMIT`, or the object is device memory.
+	// - `Argument_Refused`: the range passes the end of the object, the process cannot write the `length`
 	//   bytes at `address`, or those bytes meet a mapping of the same object in this process.
-	// - `Bad_State`: a page of the range is not committed (an Uncommitted object that the copy reaches
+	// - `Wrong_State`: a page of the range is not committed (an Uncommitted object that the copy reaches
 	//   past its committed pages), or is marked No_Access (`Memory_Protect` of a part of a mapping), as a
 	//   mapping refuses it. The kernel checks each page of the range before it copies the first byte: a
 	//   refusal writes nothing at `address`.
@@ -1421,23 +1424,23 @@ Operation :: enum u32 {
 // The bytes of one Memory_Read: a read of a larger range is several calls.
 MEMORY_READ_LIMIT :: 1 << 20
 
-// memory_read_arguments_status is the check of the arguments of a
-// Memory_Read that needs no page: Bad_Operation for a length past
-// MEMORY_READ_LIMIT or device memory, Bad_Address for a range that passes
-// the end of the object of object_pages pages. A length of 0 at any offset
-// up to the end copies nothing and is Ok.
-memory_read_arguments_status :: proc "contextless" (offset, length, object_pages: u64, device: bool) -> Status {
+// memory_read_arguments_outcome is the check of the arguments of a
+// Memory_Read that needs no page: Argument_Refused for a length past
+// MEMORY_READ_LIMIT, device memory, or a range that passes the end of the
+// object of object_pages pages. A length of 0 at any offset up to the end
+// copies nothing and is Succeeded.
+memory_read_arguments_outcome :: proc "contextless" (offset, length, object_pages: u64, device: bool) -> call_outcome.Call_Outcome {
 	if length > MEMORY_READ_LIMIT || device {
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	if object_pages > max(u64) / PAGE_SIZE {
-		return .Bad_Address
+		return .Argument_Refused
 	}
 	object_bytes := object_pages * PAGE_SIZE
 	if offset > object_bytes || length > object_bytes - offset {
-		return .Bad_Address
+		return .Argument_Refused
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // memory_read_destination_meets says if the bytes that a Memory_Read writes
@@ -1509,7 +1512,7 @@ REQUEST_LIMIT :: 100_000
 //
 // - A write through 0 (a thread of the calling process) or through a thread
 //   handle only **lowers**: a weight above the weight that the thread has
-//   now, or a request above its request, gives `Bad_Operation`, and nothing
+//   now, or a request above its request, gives `Argument_Refused`, and nothing
 //   changes. 0 keeps the value that the thread has. `weight_limit` and
 //   `new_thread_weight_limit` are not read.
 // - A write through the machine handle with **Schedule** and **Inspect**
@@ -1627,7 +1630,7 @@ thread_schedule_of_new_thread :: proc "contextless" (new_thread_weight_limit: u3
 
 // thread_schedule_accepted says if a weight and a request are values that a
 // thread can have: `Thread_Create` and `Write_Schedule` refuse the others
-// with `Bad_Operation`. 0 is accepted for each: the default. A weight above
+// with `Argument_Refused`. 0 is accepted for each: the default. A weight above
 // the full weight would raise the share of a thread above the share of a
 // thread that asked for nothing. The kernel also refuses a weight above the
 // weight limit of the thread, which this check does not know.
@@ -1654,7 +1657,7 @@ PLACEMENT_PROCESSOR_CAPACITY :: 64
 //
 // - A write through 0 (a thread of the calling process) or through a thread
 //   handle with **Control** only **narrows**: a set with a processor that
-//   the set of the thread does not have gives `Bad_Operation`, and nothing
+//   the set of the thread does not have gives `Argument_Refused`, and nothing
 //   changes. 0 keeps the set that the thread has. `processors_limit` is not
 //   read.
 // - A write through the machine handle with **Schedule** and **Inspect**
@@ -1670,7 +1673,7 @@ PLACEMENT_PROCESSOR_CAPACITY :: 64
 // For each writer, the bits of processors that the machine does not have
 // are dropped, so a writer can give all ones. A set that then has no
 // processor, and a set with no processor inside the limit, give
-// `Bad_Operation`: a thread with no processor never runs, and that is
+// `Argument_Refused`: a thread with no processor never runs, and that is
 // `Stop`, which has its own right.
 //
 // The limit is the most that the set of the thread can be. A new thread,
@@ -1803,7 +1806,7 @@ Module_Record :: struct {
 // Example: the root service starts `imports` and writes the record of its
 // module: `Starter`. `imports` loads `agenda` in its own memory and writes
 // its record: `Process`. `imports` cannot remove the first record, nor unmap
-// or map at its addresses (`No_Right`).
+// or map at its addresses (`Grant_Or_Right_Missing`).
 Module_Writer :: enum u64 {
 	Process = 0, // The process wrote the record for itself. It can replace or remove it.
 	Starter = 1, // Another process wrote it, through the process handle with Control: the starter, or a process to which it gave that handle. The kernel writes the record of the root service so. The process cannot change it.
@@ -1843,7 +1846,7 @@ module_writer_name :: proc "contextless" (writer: Module_Writer) -> string {
 
 // The module records of one process: its own module, the modules that
 // it imports and the modules that it loads while it runs. `Process_Module`
-// gives `No_Slot` for one more. 64 records hold a program with tens of
+// gives `Budget_Or_Capacity_Exhausted` for one more. 64 records hold a program with tens of
 // libraries and plugins; each record is 88 bytes of the process table of
 // the kernel, and a `Module_Report` holds all of them.
 PROCESS_MODULE_CAPACITY :: 64
@@ -1929,7 +1932,7 @@ Module_Report :: struct {
 // thread uses counts in its budget and in each budget above. A new budget
 // cannot have a limit above the limit of the budget that it came from. With
 // the limit 0 a budget has no time: its threads do not run. With no log
-// records, Log gives No_Budget. The processor limit holds in each period of
+// records, Log gives Budget_Or_Capacity_Exhausted. The processor limit holds in each period of
 // 100 ms, the log records in each second.
 //
 // The kernel gives one budget to the root service: all the free memory and
@@ -1951,7 +1954,7 @@ Budget_Amounts :: struct {
 	processes:    u64, // Moves. Process slots: one for each `Process_Create`.
 	threads:     u64, // Moves. Thread slots: one for each thread that runs, the first one included.
 	processor:   u64, // A limit. Microseconds of processor time in each second, on all the processors together: 1 000 000 is one full processor.
-	log_records: u64, // Moves. Records on the log in each second; `Log` gives `No_Budget` above it.
+	log_records: u64, // Moves. Records on the log in each second; `Log` gives `Budget_Or_Capacity_Exhausted` above it.
 }
 
 // One word of a word wait: the address of 32 bits of memory, and the value
@@ -1969,7 +1972,7 @@ Word :: struct {
 
 // The words of the wait of one kernel entry, in all its `Word_Wait`
 // commands, that each thread has with no wait room: the kernel keeps their
-// entries in its thread table. One more gives `No_Slot`. A `system.Wait`
+// entries in its thread table. One more gives `Budget_Or_Capacity_Exhausted`. A `system.Wait`
 // holds this many words on the stack of its thread, about 3.5 KiB.
 WORD_WAIT_INLINE :: 64
 // The most words of the wait of one kernel entry, with a wait room
@@ -2267,7 +2270,7 @@ Fault_Answer_Kind :: enum u64 {
 // process handle with **Debug** of the debugger. A read or a write of the
 // registers or of the breakpoints needs the thread held: its stop count
 // above 0 and its processor
-// left (`Bad_State` before). The two commands of the schedule, the two of
+// left (`Wrong_State` before). The two commands of the schedule, the two of
 // the placement and the read of the memory need no hold. The three
 // commands of the thread counters act on the calling thread: a start and a
 // read through the machine handle with Counters, a stop with no handle.
@@ -2279,26 +2282,26 @@ Thread_Control_Command :: enum u64 {
 	// thread runs no instruction until its count is 0 again: a thread on
 	// another processor left it; a thread in a wait stays in it, and does
 	// not run when it ends. The calling thread itself stops after its kernel
-	// entry. At most THREAD_STOP_COUNT_LIMIT (Bad_State above).
+	// entry. At most THREAD_STOP_COUNT_LIMIT (Budget_Or_Capacity_Exhausted above).
 	// One case returns earlier: when the calling thread is itself held (it
 	// stopped itself earlier in the same entry, or another thread stopped
 	// it), the operation does not wait for a thread on another processor to
 	// leave it, so that two threads that stop each other do not wait for
 	// each other. That thread then leaves its processor at the interrupt
-	// that the stop sent, and a read of its registers gets Bad_State until
+	// that the stop sent, and a read of its registers gets Wrong_State until
 	// it left.
 	Stop                 = 1,
-	// Takes 1 from the stop count -> the count. Bad_State at 0. At 0, a
+	// Takes 1 from the stop count -> the count. Wrong_State at 0. At 0, a
 	// thread whose wait ended runs again. The debugger of the process
 	// takes back only the stops that it made, and the other callers only
-	// the stops that the debugger did not make: Bad_State when the caller
+	// the stops that the debugger did not make: Wrong_State when the caller
 	// has no stop of its own on the thread.
 	Resume               = 2,
 	// Writes a Thread_Registers at the address (size: at least its size) ->
 	// the bytes written.
 	Read_Registers       = 3,
 	// Reads a Thread_Registers at the address (size: at least its size): the
-	// thread continues with these registers. Bad_Operation for values that
+	// thread continues with these registers. Argument_Refused for values that
 	// a thread cannot hold (thread_registers_refusal): nothing changes.
 	Write_Registers      = 4,
 	// Writes the extended state area of the thread at the address (size: at
@@ -2308,7 +2311,7 @@ Thread_Control_Command :: enum u64 {
 	// the 512 bytes of fxsave on a processor with no xsave.
 	Read_Extended_State  = 5,
 	// Reads the extended state area at the address: the thread continues
-	// with it. Bad_Operation for an area that the processor would refuse
+	// with it. Argument_Refused for an area that the processor would refuse
 	// (extended_state_refusal): nothing changes.
 	Write_Extended_State = 6,
 	// Writes the Thread_Schedule of the thread at the address (size: at
@@ -2319,7 +2322,7 @@ Thread_Control_Command :: enum u64 {
 	Read_Schedule        = 7,
 	// Reads a Thread_Schedule at the address: the thread has this weight and
 	// this request from now on, also while it runs. Through 0 or a thread
-	// handle (with Control) the write only lowers: Bad_Operation for a
+	// handle (with Control) the write only lowers: Argument_Refused for a
 	// weight above the weight of the thread or a request above its request,
 	// and nothing changes; 0 keeps a value. The machine handle with Schedule
 	// and Inspect names any thread by its machine number; its write gives
@@ -2334,9 +2337,9 @@ Thread_Control_Command :: enum u64 {
 	// Reads a Thread_Breakpoints at the address: the thread has these
 	// breakpoints from now on, and no other. The thread is held. Only
 	// through the process handle with Debug, from the debugger of the
-	// process (thread_control_needs_the_debugger): Bad_Handle with 0 or a
+	// process (thread_control_needs_the_debugger): Argument_Refused with 0 or a
 	// thread handle.
-	// Bad_Operation for a breakpoint that a thread cannot have
+	// Argument_Refused for a breakpoint that a thread cannot have
 	// (thread_breakpoints_refusal): nothing changes. A reached breakpoint is
 	// a fault of the kind Debug of the thread.
 	Write_Breakpoints    = 10,
@@ -2345,8 +2348,8 @@ Thread_Control_Command :: enum u64 {
 	// bytes copied. The thread is not held. The copy reads only pages that
 	// the process maps, that it can read and that have a frame: no read
 	// gives a frame to a page. It stops before the first page that is not
-	// so, and gives the count before it; Bad_Address when that page holds
-	// the first byte. Device memory is never read.
+	// so, and gives the count before it; Argument_Refused (Bad_Address) when
+	// that page holds the first byte. Device memory is never read.
 	Read_Memory          = 11,
 	// Writes the Thread_Placement of the thread at the address (size: at
 	// least its size) -> the bytes written. Each set holds only processors
@@ -2358,11 +2361,11 @@ Thread_Control_Command :: enum u64 {
 	// set run the thread from now on, also when it runs now: it then
 	// leaves a processor that is not in the set at the end of its stint at
 	// the latest. Through 0 or a thread handle (with Control) the write
-	// only narrows: Bad_Operation for a set with a processor that the set
+	// only narrows: Argument_Refused for a set with a processor that the set
 	// of the thread does not have, and nothing changes; 0 keeps the set.
 	// The machine handle with Schedule and Inspect names any thread by its
 	// machine number; its write gives the set and the limit, and widens
-	// too. Bad_Operation for a set or a limit with no processor that the
+	// too. Argument_Refused for a set or a limit with no processor that the
 	// machine has, and for a set with no processor inside the limit
 	// (thread_placement_after_write): nothing changes.
 	Write_Placement      = 13,
@@ -2374,7 +2377,7 @@ Thread_Control_Command :: enum u64 {
 	// Reads a Process_Schedule at the address: each thread of the process
 	// creates its threads under it from now on (the creations that come
 	// after the write in the order of the kernel). Only the machine handle
-	// with Schedule and Inspect. Bad_Operation for a value above
+	// with Schedule and Inspect. Argument_Refused for a value above
 	// WEIGHT_FULL (process_schedule_after_write): nothing changes.
 	Write_Process_Schedule = 15,
 	// The calling thread counts the four events of Thread_Counters from 0,
@@ -2385,12 +2388,12 @@ Thread_Control_Command :: enum u64 {
 	Start_Counters       = 16,
 	// Writes the Thread_Counters of the calling thread at the address (size:
 	// at least its size) -> the bytes written. The thread goes on counting.
-	// Bad_State when the thread does not count.
+	// Wrong_State when the thread does not count.
 	Read_Counters        = 17,
 	// The calling thread stops counting -> nothing. A thread that does not
-	// count is left as it is. It needs no handle and no right, and gives Ok
-	// on each machine: it only takes a capability away, so a thread whose
-	// right was revoked can still stop.
+	// count is left as it is. It needs no handle and no right, and gives
+	// Succeeded on each machine: it only takes a capability away, so a thread
+	// whose right was revoked can still stop.
 	Stop_Counters        = 18,
 	// Starts recording process inputs of the target process (handle in
 	// `thread` with Debug) into the contiguous memory object named by the
@@ -2413,10 +2416,10 @@ Thread_Control_Command :: enum u64 {
 	// from the budget of the process (wait_room_pages) and gives back the
 	// pages of the room before; the thread ends with its room, whose pages
 	// return to the budget. A size of WORD_WAIT_INLINE or less removes the
-	// room. Bad_Operation for a size above WORD_WAIT_MOST, or a thread or
-	// a number that is not 0; Bad_State when the entry registered words
-	// already; No_Budget when the budget cannot pay the pages: nothing
-	// changes.
+	// room. Argument_Refused for a size above WORD_WAIT_MOST, or a thread or
+	// a number that is not 0; Wrong_State when the entry registered words
+	// already; Budget_Or_Capacity_Exhausted when the budget cannot pay the
+	// pages: nothing changes.
 	Wait_Room            = 22,
 }
 
@@ -2561,7 +2564,7 @@ thread_control_takes_debug_handle :: proc "contextless" (command: Thread_Control
 // use for a breakpoint on itself, and a breakpoint that a process could
 // set on its own threads would let each process put a debug exception at
 // the place where the kernel copies its memory. With 0 or a thread handle
-// the command gives Bad_Handle.
+// the command gives Argument_Refused.
 thread_control_needs_the_debugger :: proc "contextless" (command: Thread_Control_Command) -> bool {
 	return command == .Write_Breakpoints
 }
@@ -2687,7 +2690,7 @@ thread_breakpoints_control :: proc "contextless" (breakpoints: ^Thread_Breakpoin
 }
 
 // The highest stop count of a thread: `Thread_Control` `Stop` gives
-// `Bad_State` above it.
+// `Wrong_State` above it.
 THREAD_STOP_COUNT_LIMIT :: 1 << 16
 
 // The general registers, the instruction address and the flags of a thread
@@ -2744,7 +2747,7 @@ THREAD_FLAGS_ALLOWED :: u64(0x0025_0FD7)
 // Thread_Schedule, of a Thread_Breakpoints or of a Thread_Placement a write
 // refused.
 //
-// `Thread_Control` gives `Bad_Operation` for a refused write, and the error
+// `Thread_Control` gives `Argument_Refused` for a refused write, and the error
 // record names the refusal and the value. Nothing of the thread changes.
 Thread_Write_Refusal :: enum u64 {
 	None                = 0, // Nothing refused: the write is accepted.
@@ -2894,7 +2897,7 @@ Event_Fault_Outcome :: enum u64 {
 }
 
 // A flag of an event rule. A flag that the kernel does not know makes the
-// rule not valid: `Events_Set` gives `Bad_Operation`.
+// rule not valid: `Events_Set` gives `Argument_Refused`.
 Event_Rule_Flag :: enum u32 {
 	Match_Detail = 0, // The detail of the event must be the detail of the rule. Not for Switch.
 }
@@ -2912,8 +2915,8 @@ Event_Rule_Flags :: bit_set[Event_Rule_Flag;u32]
 // A process gives a table of rules to `Events_Set`; the kernel copies it and
 // checks each rule first: an unknown kind or flag, a reserved word that is
 // not 0, a duration for Switch or Fault, a detail for Switch or a duration
-// above `EVENT_LEAST_NANOSECONDS_MOST` gives `Bad_Operation`; a bad process
-// handle gives `Bad_Handle`. "One in N" is a count, never a random choice.
+// above `EVENT_LEAST_NANOSECONDS_MOST` gives `Argument_Refused`; a bad process
+// handle gives `Argument_Refused`. "One in N" is a count, never a random choice.
 // 64 bytes. See [event rule](term:event-rule).
 //
 // Example: `{kind = u32(Event_Kind.Operation), flags = {.Match_Detail}, detail =
@@ -2965,7 +2968,7 @@ event_rule_check_fields :: proc "contextless" (rule: Event_Rule) -> (kind: Event
 
 // The rules of one event table. The bound makes the cost of an event point
 // a bound that does not depend on the table: at most 16 tests of a few
-// fields. `Events_Set` gives `No_Slot` for more.
+// fields. `Events_Set` gives `Budget_Or_Capacity_Exhausted` for more.
 EVENT_RULE_CAPACITY :: 16
 // The longest least duration of a rule: one second. The kernel converts it
 // to cycles once, when the table is given.
@@ -3036,55 +3039,15 @@ Event_Ring :: struct {
 // The bytes of the head of one event ring, before its records.
 EVENT_RING_HEAD_BYTES :: size_of(Event_Ring)
 
-// The result kind of a kernel operation: the `kind` of its completion
-// record.
-//
-// The kernel writes one completion for each command of the kernel ring;
-// `src/library/modus/system` gives it back as the second result of each wrapper
-// (`system.Status` is this type). With `Ok` the values of the completion
-// are the results of the operation. With another status the operation
-// failed, and the values are an
+// The kernel writes one completion for each command of the kernel ring,
+// with a `call_outcome.Call_Outcome` in its `kind`. With `Succeeded` the
+// values of the completion are the results of the operation. With another
+// outcome the operation failed, and the values are an
 // `errors.Error_Record`: which argument was wrong, its value, and what the
-// kernel found. A status says which class of mistake it is; the error record
-// says which one. The comment of each `Operation` lists its statuses and when
-// each comes. See [status](term:status).
+// kernel found.
 //
-// Example: `memory, status := system.memory_create(1 << 20)` gives
-// `Bad_Operation`: the count is above `MEMORY_PAGE_LIMIT`.
-Status :: enum u32 {
-	Ok            = 0, // The operation ran: the values of the completion are its results.
-	Bad_Operation = 1, // An argument has a value that the operation never takes.
-	// A kind, a flag or a command that the kernel does not know, a count of 0 or above its limit, a combination
-	// that the operation refuses (`Write` with `Execute`). The same call with the same arguments fails again: it
-	// is a mistake of the caller.
-	Bad_Handle    = 2, // A handle argument names no object of the kind that the operation needs.
-	// The handle number is 0 where 0 is not allowed, was never given, was closed, or names an object of another
-	// kind. Each operation that takes a handle can give it.
-	Bad_Address   = 3, // An address argument is wrong.
-	// The process cannot read or write the memory that it names, the address is not aligned as the operation
-	// needs, or a range is outside its object, below 4096 or above `USER_END`, or meets another mapping.
-	No_Memory     = 4, // No page frame is free, though the budget can pay.
-	// A contiguous run of the length asked does not exist, or a page table finds no frame. `Memory_Create`,
-	// `Memory_Map`, `Process_Start` and `Thread_Create` give it. Another try can pass after other objects end.
-	No_Slot       = 5, // A table of fixed capacity is full.
-	// The handle table of a process, the 128 mappings of a process, the threads of a process
-	// (`THREAD_CAPACITY`), the module records (`PROCESS_MODULE_CAPACITY`), the words of a wait
-	// (`WORD_WAIT_INLINE`, or the wait room of the thread), the message interrupts (`MESSAGE_CAPACITY`), the rules of an event table, or a
-	// table of the kernel. Another try can pass after a slot frees.
-	Bad_State     = 6, // The object is not in a state where the operation applies.
-	// The process is stopped or not created, the thread is not held or ended, no thread waits for the fault
-	// that an answer names, another process has the event table, the memory object has a protection of its
-	// own. The arguments are right; the moment is wrong.
-	No_Right      = 7, // The handle names the object, but it does not have the right for this operation.
-	// The `Handle_State` of the handle gives the rights that it has. No operation adds a right: a process
-	// that needs it asks the holder of a handle with that right for a new grant. A process also gets it
-	// when it changes a module record of its starter in itself, or maps or unmaps over it
-	// (`Module_Writer`): only a holder of its process handle does that.
-	No_Budget     = 8, // The budget cannot pay for the operation.
-	// The budget, or a budget above it, does not hold the pages, the process slot or the thread slot that the
-	// operation takes; or for `Log`, the budget accepted all the records of its amount in this second. See
-	// `Budget_Amounts`.
-}
+// Example: `memory, outcome := system.memory_create(1 << 20)` gives
+// `Argument_Refused`: the count is above `MEMORY_PAGE_LIMIT`.
 
 // The kernel keeps the page frames of a memory object in a frame list: in
 // the record of the object for at most MEMORY_INLINE_PAGES pages; else in
@@ -3174,14 +3137,14 @@ mapping_table_pages_most :: proc "contextless" (page_count: u64) -> u64 {
 
 // A flag of `Memory_Create`: how the pages of a new memory object get their
 // page frames and who pays them. A flag that the kernel does not know gives
-// `Bad_Operation`.
+// `Argument_Refused`.
 Memory_Flag :: enum u64 {
 	// Each page gets its page frame at creation, not at its first use. With no flag the frames come on first
 	// use: the budget pays now, and the first access takes the frame (a page on first use).
 	Frames_Now = 0,
 	// The page frames follow each other in physical memory, each one from the creation, and they do
 	// not move: memory that a device reads and writes (Memory_Physical). The budget pays for no frame
-	// list. It can give No_Memory when the budget can pay: no free run is long enough.
+	// list. It can give Callee_Busy when the budget can pay: no free run is long enough.
 	Contiguous = 1,
 	// The pages are not paid at the creation: the budget pays the frame list only. Memory_Commit pays pages
 	// and makes them usable; a page that is not committed has no frame, and an access to it is a fault.
@@ -3193,12 +3156,12 @@ Memory_Flag :: enum u64 {
 // The flags of one `Memory_Create`. Example: `{.Frames_Now}`.
 Memory_Flags :: bit_set[Memory_Flag;u64]
 // The flags that `Memory_Create` knows, as the word of its argument: a word
-// with another bit gives `Bad_Operation`, so that a later kernel can give
+// with another bit gives `Argument_Refused`, so that a later kernel can give
 // that bit a meaning.
 MEMORY_FLAGS_KNOWN :: u64(1) << u64(Memory_Flag.Frames_Now) | u64(1) << u64(Memory_Flag.Contiguous) | u64(1) << u64(Memory_Flag.Uncommitted) | u64(1) << u64(Memory_Flag.Large_Pages)
 
 LARGE_PAGE_PAGES :: 512 // The pages of 4096 bytes of one large page (2 MiB): one entry of the page directory of the processor.
-RANGE_TABLE_CAPACITY :: 256 // The ranges of one Memory_Commit or Memory_Protect. More gives `Bad_Operation`.
+RANGE_TABLE_CAPACITY :: 256 // The ranges of one Memory_Commit or Memory_Protect. More gives `Argument_Refused`.
 // The pages of all the ranges of one Memory_Commit or Memory_Protect (256 MiB): the kernel walks each page with
 // interrupts off; a larger change is several calls.
 RANGE_TABLE_PAGE_LIMIT :: 65536
@@ -3266,7 +3229,7 @@ PROTECT_FLAGS_KNOWN :: u64(1) << u64(Map_Flag.Write) | u64(1) << u64(Map_Flag.Ex
 // firmware; with `Execute`, the processor would fetch instructions from
 // memory that it does not cache. Over the registers of a device, the kernel
 // then keeps one cache type across the live mappings of an object and of
-// each object whose pages meet its pages (`Bad_State` with `Object_Shared`
+// each object whose pages meet its pages (`Wrong_State` with `Object_Shared`
 // else).
 map_write_combining_refused :: proc "contextless" (flags: Map_Flags, device_registers: bool) -> bool {
 	if .Write_Combining not_in flags {
@@ -3299,7 +3262,7 @@ Process_State :: enum u32 {
 // service. The two values `a` and `b` of the call have a meaning for each
 // kind.
 Device_Kind :: enum u64 {
-	None      = 0, // Refused: `Bad_Operation`.
+	None      = 0, // Refused: `Argument_Refused`.
 	Ports     = 1, // A range of input and output ports: `a` the first port, `b` the count.
 	Interrupt = 2, // A line of the 8259: `a` from 1 to 15.
 	Memory    = 3, // The registers of a device: `a` the physical address, `b` the count of pages; mapped with no cache, or write-combining with `Map_Flag.Write_Combining`.
@@ -3326,7 +3289,7 @@ Device_Memory_Fact :: enum u64 {
 Device_Memory_Facts :: bit_set[Device_Memory_Fact; u64]
 
 // The message interrupts: each one has a vector of its own on the first
-// processor. `Device_Create` gives `No_Slot` for a 17th.
+// processor. `Device_Create` gives `Budget_Or_Capacity_Exhausted` for a 17th.
 MESSAGE_CAPACITY :: 16
 
 // What `Inspect` writes: the kind of a report of the kernel, and what its
@@ -3334,7 +3297,7 @@ MESSAGE_CAPACITY :: 16
 // or a processor with no process, or out of the table, gives a report of
 // zeros.
 Inspect_Kind :: enum u64 {
-	None    = 0, // Refused: `Bad_Operation`.
+	None    = 0, // Refused: `Argument_Refused`.
 	System  = 1, // The `System_Report` of the machine. `index` is not read.
 	Process   = 2, // The `Process_Report` of the process slot `index`.
 	Processor = 3, // The `Processor_Report` of the processor `index`, from 0.
@@ -3403,9 +3366,9 @@ Process_Mapping :: struct {
 }
 #assert(size_of(Process_Mapping) == 88)
 
-MAPPING_REPORT_CAPACITY :: 1024 // MAPPING_CAPACITY of the kernel: the mappings of one process. `Memory_Map` gives `No_Slot` for one more.
+MAPPING_REPORT_CAPACITY :: 1024 // MAPPING_CAPACITY of the kernel: the mappings of one process. `Memory_Map` gives `Budget_Or_Capacity_Exhausted` for one more.
 // HANDLE_CAPACITY of the kernel: the places of the handle table of one process. The place 0 holds no handle,
-// so a process holds `HANDLE_TABLE_CAPACITY - 1` handles at most, and one more gives `No_Slot` with the
+// so a process holds `HANDLE_TABLE_CAPACITY - 1` handles at most, and one more gives `Budget_Or_Capacity_Exhausted` with the
 // record `Full` of the unit `Handles`. A server with a ring and a region for each of hundreds of clients
 // holds that many handles.
 HANDLE_TABLE_CAPACITY :: 1024
@@ -3595,7 +3558,7 @@ LOG_RUN_CAPACITY :: 8
 // The value runs that one Log operation takes, after its text.
 LOG_CALL_RUN_LIMIT :: 32
 // The bytes of the text of one Log operation. A longer text gives
-// `Bad_Address`. The kernel copies the text whole before it checks it.
+// `Argument_Refused`. The kernel copies the text whole before it checks it.
 LOG_TEXT_BYTES_MOST :: 4096
 // 128 pages: 2047 records. A reader that starts late copies the newest 2046
 // of them.
@@ -4070,19 +4033,6 @@ seed_strength_names := [Seed_Strength]string {
 // keys from a seed that nothing measured.
 seed_strength_of_word :: proc "contextless" (word: u64) -> (strength: Seed_Strength, ok: bool) {
 	for member in Seed_Strength {
-		if u64(member) == word {
-			return member, true
-		}
-	}
-	return {}, false
-}
-
-// status_of_word reads the word of a status that a record of another
-// process holds. A word that names no status is refused: a reader that
-// named it with a known status would state a fact that the record does
-// not hold.
-status_of_word :: proc "contextless" (word: u64) -> (status: Status, ok: bool) {
-	for member in Status {
 		if u64(member) == word {
 			return member, true
 		}

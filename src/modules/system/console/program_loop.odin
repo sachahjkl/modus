@@ -80,12 +80,12 @@ program_memory :: proc "contextless" (pages: u64, bytes: []u8) -> (memory: syste
 		return 0, false
 	}
 	created, status := system.memory_create(pages)
-	if status != .Ok {
+	if status != .Succeeded {
 		return 0, false
 	}
 	if len(bytes) > 0 {
 		address, map_status := system.memory_map(created)
-		if map_status != .Ok {
+		if map_status != .Succeeded {
 			system.close(created)
 			return 0, false
 		}
@@ -153,7 +153,7 @@ program_source_read :: proc "contextless" (place: Value, file: string) -> (memor
 		return 0, 0, false
 	}
 	address, map_status := system.memory_map(created, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(created)
 		_ = fail("build: the memory of the source ", file, " does not map")
 		return 0, 0, false
@@ -256,7 +256,7 @@ run_program :: proc "contextless" (arguments: []Value) -> Value {
 		return fail("run: the module of ", project, " has ", size.integer, " bytes; a run takes 1 to ", i64(PROGRAM_MODULE_BYTES_MOST))
 	}
 	address, map_status := system.memory_map(module_memory, {})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return fail("run: the memory of the module of ", project, " does not map")
 	}
 	hash := blake3.hash(([^]u8)(address)[:size.integer])

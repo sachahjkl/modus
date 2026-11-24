@@ -6,6 +6,7 @@ import "core:fmt"
 import "core:mem"
 import "core:strings"
 import "core:testing"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/html_css"
 import op "modus:contract/operation"
@@ -19,8 +20,8 @@ import "modus:system"
 TEST_RESERVE_PAGES :: 4096
 
 @(private = "file")
-test_page_change :: proc "contextless" (arena: ^system.Arena, range: op.Page_Range, flags: op.Commit_Flags, error: ^errors.Error_Record) -> system.Status {
-	return .Ok
+test_page_change :: proc "contextless" (arena: ^system.Arena, range: op.Page_Range, flags: op.Commit_Flags, error: ^errors.Error_Record) -> call_outcome.Call_Outcome {
+	return .Succeeded
 }
 
 @(private = "file")

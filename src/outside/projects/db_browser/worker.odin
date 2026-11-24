@@ -179,7 +179,7 @@ db_ensure_capacity :: proc "contextless" (needed_bytes: u64) -> bool {
 	}
 	needed_pages := max((needed_bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE, DB_MEMORY_INITIAL_PAGES)
 	remaining, b_status := system.budget_read()
-	if b_status != .Ok {
+	if b_status != .Succeeded {
 		return false
 	}
 	if remaining.pages <= DB_MEMORY_RESERVE_HEADROOM_PAGES {
@@ -196,11 +196,11 @@ db_ensure_capacity :: proc "contextless" (needed_bytes: u64) -> bool {
 		target_pages = needed_pages
 	}
 	new_mem, m_status := system.memory_create(target_pages)
-	if m_status != .Ok {
+	if m_status != .Succeeded {
 		return false
 	}
 	new_addr, map_status := system.memory_map(new_mem)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(new_mem)
 		return false
 	}
@@ -225,11 +225,11 @@ init_ipc_buffers :: proc "contextless" () -> bool {
 	cells_bytes := u64(core.SNAPSHOT_MAX_CELLS * size_of(core.Cell_Row))
 	cells_pages := (cells_bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	cm, cs := system.memory_create(cells_pages)
-	if cs != .Ok {
+	if cs != .Succeeded {
 		return false
 	}
 	ca, c_map := system.memory_map(cm)
-	if c_map != .Ok {
+	if c_map != .Succeeded {
 		system.close(cm)
 		return false
 	}
@@ -238,11 +238,11 @@ init_ipc_buffers :: proc "contextless" () -> bool {
 
 	pay_pages := (u64(core.SNAPSHOT_PAYLOAD_BYTES) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	pm, ps := system.memory_create(pay_pages)
-	if ps != .Ok {
+	if ps != .Succeeded {
 		return false
 	}
 	pa, p_map := system.memory_map(pm)
-	if p_map != .Ok {
+	if p_map != .Succeeded {
 		system.close(pm)
 		return false
 	}
@@ -268,11 +268,11 @@ sqlite_host_stop :: proc "contextless" () {
 @(private = "file")
 sqlite_host_start_from_memory :: proc "contextless" (host_module_bytes: []u8, sqlite_mem: system.Handle, sqlite_bytes: []u8) -> bool {
 	files_mem, fm_status := system.memory_create(1)
-	if fm_status != .Ok {
+	if fm_status != .Succeeded {
 		return false
 	}
 	page_addr, map_status := system.memory_map(files_mem)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(files_mem)
 		return false
 	}
@@ -288,19 +288,19 @@ sqlite_host_start_from_memory :: proc "contextless" (host_module_bytes: []u8, sq
 	system.memory_unmap(page_addr)
 
 	ring_mem, calls, ring_status := system.ring_create()
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		system.close(files_mem)
 		return false
 	}
 	region_mem, reg_status := system.memory_create(isolated.REGION_PAGES)
-	if reg_status != .Ok {
+	if reg_status != .Succeeded {
 		system.ring_close(&calls)
 		system.close(ring_mem)
 		system.close(files_mem)
 		return false
 	}
 	reg_addr, reg_map := system.memory_map(region_mem)
-	if reg_map != .Ok {
+	if reg_map != .Succeeded {
 		system.close(region_mem)
 		system.ring_close(&calls)
 		system.close(ring_mem)
@@ -334,7 +334,7 @@ sqlite_host_start_from_memory :: proc "contextless" (host_module_bytes: []u8, sq
 		{pages = SQLITE_HOST_PAGES, processes = 1, threads = 1, processor = 500_000, log_records = system.CALL_HOST_LOG_RECORDS},
 		mappings[:],
 	)
-	if p_status != .Ok {
+	if p_status != .Succeeded {
 		system.memory_unmap(reg_addr)
 		system.close(region_mem)
 		system.ring_close(&calls)
@@ -367,11 +367,11 @@ read_store_object_to_memory :: proc "contextless" (name: string) -> (mem: system
 	}
 	mod_pages := (u64(sz) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	mod_mem, m_st := system.memory_create(mod_pages)
-	if m_st != .Ok {
+	if m_st != .Succeeded {
 		return 0, nil, nil, false
 	}
 	mod_addr, map_st := system.memory_map(mod_mem)
-	if map_st != .Ok {
+	if map_st != .Succeeded {
 		system.close(mod_mem)
 		return 0, nil, nil, false
 	}
@@ -405,7 +405,7 @@ sqlite_host_start :: proc "contextless" (ctx: ^system.Context) -> bool {
 		img_h := ctx.handles[system.GRANT_IMAGE]
 		img_sz := ctx.values[system.GRANT_VALUE_IMAGE_SIZE]
 		if img_h != 0 && img_sz > 0 {
-			if addr, st := system.memory_map(img_h, {}); st == .Ok {
+			if addr, st := system.memory_map(img_h, {}); st == .Succeeded {
 				boot_image_handle = img_h
 				boot_image_bytes = ([^]u8)(addr)[:img_sz]
 			}
@@ -430,7 +430,7 @@ sqlite_host_start :: proc "contextless" (ctx: ^system.Context) -> bool {
 			&load_err,
 			added = &added,
 		)
-		if st != .Ok {
+		if st != .Succeeded {
 			return false
 		}
 		sqlite_host.conn = conn
@@ -814,7 +814,7 @@ request_powerbox_store_pick :: proc "contextless" (ctx: ^system.Context) -> bool
 		return false
 	}
 	root_ring, r_st := system.ring_open(root_mem, receive_handles = true)
-	if r_st != .Ok {
+	if r_st != .Succeeded {
 		return false
 	}
 	defer system.ring_close(&root_ring)

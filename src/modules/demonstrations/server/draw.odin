@@ -231,7 +231,7 @@ access_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, record: 
 hand_picture: interface.Hand_Picture
 
 picture_open :: proc "contextless" (window: ^display.Window) -> bool {
-	return interface.hand_picture_open(&hand_picture, window) == .Ok
+	return interface.hand_picture_open(&hand_picture, window) == .Succeeded
 }
 
 draw :: proc "contextless" (window: ^display.Window) {

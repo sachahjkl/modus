@@ -96,7 +96,7 @@ ui_arenas_init :: proc "contextless" () {
 @(private = "file")
 transfer_bytes :: proc "contextless" (count: int) -> []u8 {
 	whole, status := system.arena_extend_to(&transfer_arena, u64(max(count, 0)))
-	if status != .Ok {
+	if status != .Succeeded {
 		return nil
 	}
 	return whole[:count]
@@ -988,7 +988,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ui_arenas_init()
 	editor_layout_refresh()
 
-	if _, st := system.thread_start(worker_thread_entry, ctx, WORKER_THREAD_STACK_PAGES); st != .Ok {
+	if _, st := system.thread_start(worker_thread_entry, ctx, WORKER_THREAD_STACK_PAGES); st != .Succeeded {
 		system.stop(.Failed)
 	}
 
@@ -1043,7 +1043,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Pasted:
 				paste_event(&window, event)
 			case .Resized:
-				if display.surface_resize(&window, event.width, event.height) == .Ok {
+				if display.surface_resize(&window, event.width, event.height) == .Succeeded {
 					interface.draw_whole_window_next(&window_memory.drawing)
 				}
 			case .Presentation, .Surface_Answer:

@@ -49,6 +49,7 @@
 // counter.
 package imports
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:display"
@@ -211,7 +212,7 @@ measure_binds :: proc "contextless" (space: ^system.Module_Space, place: int) ->
 	item := &space.modules[place]
 	head, _ := module.header(item.file)
 	memory_object, status := system.memory_create(head.memory_size / system.PAGE_SIZE)
-	if status != .Ok {
+	if status != .Succeeded {
 		return 0
 	}
 	defer system.close(memory_object)
@@ -286,8 +287,8 @@ Starter_Records :: struct {
 // space of its own, reads the writer of both records from the report of the
 // kernel, and unloads calendar.
 starter_records_check :: proc "contextless" () -> (found: Starter_Records) {
-	refused_by_starter_module :: proc "contextless" (refusal_status: system.Status, refusal: ^errors.Error_Record) -> u64 {
-		return refusal_status == .No_Right && errors.Kind(refusal.kind) == .Starter_Module ? 1 : 0
+	refused_by_starter_module :: proc "contextless" (refusal_status: call_outcome.Call_Outcome, refusal: ^errors.Error_Record) -> u64 {
+		return refusal_status == .Grant_Or_Right_Missing && errors.Kind(refusal.kind) == .Starter_Module ? 1 : 0
 	}
 	own_file := system.image_find(image, "imports")
 	head, _ := module.header(own_file)
@@ -301,7 +302,7 @@ starter_records_check :: proc "contextless" () -> (found: Starter_Records) {
 	segment, _ := module.record(own_file, .Segments, 1, module.Segment)
 	_, status = system.call_with_error(&error, .Memory_Unmap, 0, op.PROCESS_BASE + segment.memory_offset)
 	found.refused += refused_by_starter_module(status, &error)
-	if memory_object, created := system.memory_create(1); created == .Ok {
+	if memory_object, created := system.memory_create(1); created == .Succeeded {
 		_, status = system.call_with_error(&error, .Memory_Map, u64(memory_object), 0, op.PROCESS_BASE, 0, 0, 1)
 		found.refused += refused_by_starter_module(status, &error)
 		system.close(memory_object)
@@ -360,7 +361,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
-	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
+	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Succeeded {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Boot), 0, u64(uintptr(&boot)), size_of(boot))
@@ -467,7 +468,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		own_head, _ := module.header(own)
 		agenda_head, _ := module.header(agenda)
 		segments := code_segments(system.image_find(image, "calendar"))
-		note("two processes import calendar at two places", first_status == .Ok && second_status == .Ok && copies == 1 && mappings == 2 * segments && own_head.memory_size != agenda_head.memory_size, copies, " copy of its code, ", pages, " pages, ", mappings, " mappings")
+		note("two processes import calendar at two places", first_status == .Succeeded && second_status == .Succeeded && copies == 1 && mappings == 2 * segments && own_head.memory_size != agenda_head.memory_size, copies, " copy of its code, ", pages, " pages, ", mappings, " mappings")
 		shared_pages, shared_mappings = pages, mappings
 		system.close(first_process)
 		system.close(second_process)

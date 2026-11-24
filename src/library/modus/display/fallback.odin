@@ -1,7 +1,7 @@
 package display
 
+import "modus:contract/call_outcome"
 import "modus:contract/font_outlines"
-import op "modus:contract/operation"
 import "modus:graphics"
 import "modus:system"
 import "modus:text_rendering"
@@ -101,7 +101,7 @@ GLYPH_MEMORY_PAGES_IN_THE_BUDGETS :: 354
 // budget that cannot pay costs one kernel call, not one at each frame.
 text_memory_tried: bool
 text_memory_given: bool // The copy has its glyph memory.
-text_memory_status: system.Status // The status of a refused reservation; Ok before the try and after a reservation.
+text_memory_status: call_outcome.Call_Outcome // The outcome of a refused reservation; Succeeded before the try and after a reservation.
 text_memory_told: bool // The line of a refused reservation is on the log.
 
 // text_memory_reserve gives this copy of text_rendering its glyph memory:
@@ -119,12 +119,12 @@ text_memory_reserve :: proc "contextless" () -> bool {
 	}
 	text_memory_tried = true
 	memory, status := system.memory_create(TEXT_MEMORY_PAGES)
-	if status != .Ok {
+	if status != .Succeeded {
 		text_memory_status = status
 		return false
 	}
 	address, mapped := system.memory_map(memory)
-	if mapped != .Ok {
+	if mapped != .Succeeded {
 		system.close(memory)
 		text_memory_status = mapped
 		return false
@@ -147,9 +147,9 @@ text_not_kept_tell :: proc "contextless" () {
 	if count, report := text_rendering.concurrent_draw_report(); report {
 		system.log(.Warning, "text_rendering: a second thread drew into the private glyph cache while a draw ran: ", count, " calls refused")
 	}
-	if text_memory_status != .Ok && !text_memory_told {
+	if text_memory_status != .Succeeded && !text_memory_told {
 		text_memory_told = true
-		system.log(.Info, "text_rendering: the glyph memory of ", u64(TEXT_MEMORY_PAGES), " pages is refused: ", op.STATUS_NAMES[text_memory_status], "; each glyph is drawn band by band")
+		system.log(.Info, "text_rendering: the glyph memory of ", u64(TEXT_MEMORY_PAGES), " pages is refused: ", call_outcome.CALL_OUTCOME_NAMES[text_memory_status], "; each glyph is drawn band by band")
 	}
 }
 

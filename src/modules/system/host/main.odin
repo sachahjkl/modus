@@ -69,16 +69,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	region_memory := ctx.handles[isolated.GRANT_REGION]
 	queue, ring_status := system.ring_open(ring_memory, receive_handles = true)
 	bytes, region_status := system.memory_map(region_memory)
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		system.log_fact(.Info, No_Call_Ring_Or_Region{})
 		system.stop(system.stop_outcome_of_grant(ring_memory, ring_status))
 	}
-	if region_status != .Ok {
+	if region_status != .Succeeded {
 		system.log_fact(.Info, No_Call_Ring_Or_Region{})
 		system.stop(system.stop_outcome_of_grant(region_memory, region_status))
 	}
 	region_pages, size_status := system.memory_size(region_memory)
-	if size_status != .Ok {
+	if size_status != .Succeeded {
 		system.log_fact(.Info, Call_Region_Without_Size{})
 		system.stop(.Failed)
 	}

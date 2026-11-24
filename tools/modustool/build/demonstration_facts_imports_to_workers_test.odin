@@ -218,9 +218,9 @@ the_facts_of_kernel_events_write_the_lines_of_before :: proc(t: ^testing.T) {
 		return fact_test_render(t, file, "kernel_events", type_name, values)
 	}
 	children := [2]string{"the child that faults", "the load child"}
-	for status in op.Status {
+	for status in call_outcome.Call_Outcome {
 		word := u64(status)
-		name := op.STATUS_NAMES[status]
+		name := call_outcome.CALL_OUTCOME_NAMES[status]
 		for child in children {
 			facts_expect_line(t, render(t, file, "Shared_Page_Not_Made", {{"status", word}, {"child", child}}), line_of_before("kernel_events: ", child, ": memory_create of the shared page failed: ", name))
 			facts_expect_line(t, render(t, file, "Shared_Page_Not_Mapped", {{"status", word}, {"child", child}}), line_of_before("kernel_events: ", child, ": memory_map of the shared page failed: ", name))
@@ -232,7 +232,7 @@ the_facts_of_kernel_events_write_the_lines_of_before :: proc(t: ^testing.T) {
 		facts_expect_line(t, render(t, file, "Rings_Not_Mapped", {{"status", word}}), line_of_before("kernel_events: memory_map of the rings failed: ", name))
 		for verdict in DEMONSTRATION_VERDICTS {
 			facts_expect_line(t, render(t, file, "No_Grant_Refused", {{"status", word}, {"verdict", verdict}}), line_of_before("kernel_events: no grant: Events_Set with a copy of the machine handle with no right gave ", name, ": ", verdict))
-			facts_expect_line(t, render(t, file, "Seventeenth_Rule_Refused", {{"sixteen_rules", word}, {"seventeen_rules", u64(op.Status.No_Slot)}, {"verdict", verdict}}), line_of_before("kernel_events: a seventeenth rule: 16 rules ", name, ", 17 rules ", op.STATUS_NAMES[.No_Slot], ": ", verdict))
+			facts_expect_line(t, render(t, file, "Seventeenth_Rule_Refused", {{"sixteen_rules", word}, {"seventeen_rules", u64(call_outcome.Call_Outcome.Argument_Refused)}, {"verdict", verdict}}), line_of_before("kernel_events: a seventeenth rule: 16 rules ", name, ", 17 rules ", call_outcome.CALL_OUTCOME_NAMES[.Argument_Refused], ": ", verdict))
 			facts_expect_line(t, render(t, file, "Table_Taken_Away", {{"records_after", max(u64)}, {"second_take", word}, {"verdict", verdict}}), line_of_before("kernel_events: the table taken away: ", max(u64), " records after it; a second take gave ", name, ": ", verdict))
 			facts_expect_line(t, render(t, file, "Right_Revoked", {{"records_before", u64(1000)}, {"calls", u64(1000)}, {"records_after", u64(0)}, {"status", word}, {"verdict", verdict}}), line_of_before("kernel_events: the right revoked: ", u64(1000), " records of ", u64(1000), " before it; ", u64(0), " records after it; Events_Set after it gave ", name, ": ", verdict))
 		}
@@ -478,8 +478,8 @@ the_facts_of_quic_echo_randomness_return_fault_and_rings_write_the_lines_of_befo
 		}
 	}
 	case_names := [2]string{"a stack address that is not canonical at a syscall", "the trap flag at a syscall"}
-	for status in op.Status {
-		name := op.STATUS_NAMES[status]
+	for status in call_outcome.Call_Outcome {
+		name := call_outcome.CALL_OUTCOME_NAMES[status]
 		facts_expect_line(t, fact_test_render(t, return_fault, "return_fault", "Instruction_Page_Not_Made", {{"status", u64(status)}}), line_of_before("return_fault: the child of the instruction address could not make its page: ", name))
 		facts_expect_line(t, fact_test_render(t, return_fault, "return_fault", "Instruction_Page_Not_Mapped_To_Write", {{"status", u64(status)}}), line_of_before("return_fault: the child of the instruction address could not map its page to write it: ", name))
 		facts_expect_line(t, fact_test_render(t, return_fault, "return_fault", "Instruction_Page_Not_Mapped_At_End", {{"status", u64(status)}}), line_of_before("return_fault: the child of the instruction address could not map its page at the last page: ", name))
@@ -535,8 +535,8 @@ the_facts_of_scheduler_write_the_lines_of_before :: proc(t: ^testing.T) {
 			facts_expect_line(t, render(t, file, "Strategy_Changed", {{"strategy", op.STRATEGY_NAMES[strategy]}, {"previous_strategy", op.STRATEGY_NAMES[previous]}}), line_of_before("scheduler: the strategy is now ", op.STRATEGY_NAMES[strategy], ", it was ", op.STRATEGY_NAMES[previous]))
 		}
 	}
-	for status in op.Status {
-		facts_expect_line(t, render(t, file, "Share_Policy_Thread_Not_Started", {{"status", u64(status)}}), line_of_before("scheduler: the thread of the share policy did not start: ", op.STATUS_NAMES[status]))
+	for status in call_outcome.Call_Outcome {
+		facts_expect_line(t, render(t, file, "Share_Policy_Thread_Not_Started", {{"status", u64(status)}}), line_of_before("scheduler: the thread of the share policy did not start: ", call_outcome.CALL_OUTCOME_NAMES[status]))
 	}
 	problems := [2]string{strings.repeat("q", 103, context.temp_allocator), "the stress case"}
 	for problem in problems {
@@ -969,8 +969,8 @@ the_facts_of_the_demonstrations_with_statuses_and_addresses_write_their_lines ::
 	// A status is written by its name, where the lines of locks, rights and
 	// tone wrote its number.
 	attempts := [2]string{strings.repeat("a", 44, context.temp_allocator), "map the memory with no right Map"}
-	for status in op.Status {
-		name := op.STATUS_NAMES[status]
+	for status in call_outcome.Call_Outcome {
+		name := call_outcome.CALL_OUTCOME_NAMES[status]
 		facts_expect_line(t, fact_test_render(t, locks, "locks", "Locker_Not_Started", {{"status", u64(status)}}), line_of_before("locks: cannot start a locker: status ", name))
 		facts_expect_line(t, fact_test_render(t, tone, "tone", "Second_Give_Refused", {{"status", u64(status)}}), line_of_before("tone: the second give of the region gave the status ", name))
 		for attempt in attempts {
@@ -1127,8 +1127,8 @@ the_refused_starts_of_the_demonstrations_write_their_statuses :: proc(t: ^testin
 		text: string,
 	}
 	statuses := make([dynamic]Status_Case, context.temp_allocator)
-	for status in op.Status {
-		append(&statuses, Status_Case{u64(status), op.STATUS_NAMES[status]})
+	for status in call_outcome.Call_Outcome {
+		append(&statuses, Status_Case{u64(status), call_outcome.CALL_OUTCOME_NAMES[status]})
 	}
 	append(&statuses, Status_Case{max(u64), "18446744073709551615"})
 	children := [2]string{"the child that faults", "the load child"}
@@ -1256,10 +1256,10 @@ the_load_errors_of_the_demonstrations_write_each_stage :: proc(t: ^testing.T) {
 			verbs := [2]string{"map", "remove"}
 			for stage, index in stages {
 				error.stage = u32(stage)
-				for status in op.Status {
+				for status in call_outcome.Call_Outcome {
 					error.status = u32(status)
 					memory := module.load_memory_fact_fields(&error)
-					facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, index == 0 ? "Map" : "Unmap"), memory), line_of_before(item.head, "the kernel refused to ", verbs[index], " ", own, " (", demonstration_hash_head(error.module), "): status ", op.STATUS_NAMES[status]))
+					facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, index == 0 ? "Map" : "Unmap"), memory), line_of_before(item.head, "the kernel refused to ", verbs[index], " ", own, " (", demonstration_hash_head(error.module), "): status ", call_outcome.CALL_OUTCOME_NAMES[status]))
 				}
 				error.status = max(u32)
 				memory := module.load_memory_fact_fields(&error)

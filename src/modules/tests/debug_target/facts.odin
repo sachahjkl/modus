@@ -1,6 +1,6 @@
 package debug_target
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 
 // The log facts of the target of the debugger (src/md/features/log_facts.md):
 // each line, as a record of fields. Each fact template is the sentence that
@@ -22,7 +22,7 @@ Wrong_Totals :: struct {
 // The thread that waits did not start.
 @(log_fact = "debug_target: the second thread did not start: status {status}")
 Thread_Not_Started :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // The process runs, with its thread that waits.

@@ -1,6 +1,6 @@
 package log
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
 // The log facts of the window log (src/md/features/log_facts.md, "The
@@ -15,7 +15,7 @@ import "modus:contract/value_kinds"
 // writes by the name of its member.
 @(log_fact = "log: cannot read the records of the log: status {status}")
 Records_Not_Readable :: struct {
-	status: op.Status_Word,
+	status: call_outcome.Call_Outcome_Word,
 }
 
 // The memory of the log at the start of the window: the records that it

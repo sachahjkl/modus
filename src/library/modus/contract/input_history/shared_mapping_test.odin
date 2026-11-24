@@ -2,6 +2,7 @@
 package input_history
 
 import "core:testing"
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 
 // page_delta_capture is what the kernel does at an input point: it encodes
@@ -483,7 +484,7 @@ simulated_event :: proc(t: ^testing.T, session: ^Simulated_Session, actual: Repl
 	if !session.replaying {
 		switch actual.kind {
 		case .Kernel_Completion:
-			entry := Kernel_Completion_Payload{command_kind = actual.command_kind, command_values = actual.command_values, completion_status = u32(op.Status.Ok)}
+			entry := Kernel_Completion_Payload{command_kind = actual.command_kind, command_values = actual.command_values, completion_status = u32(call_outcome.Call_Outcome.Succeeded)}
 			testing.expect(t, history_writer_append_kernel_completion(&session.writer, actual.instruction_address, actual.stack_pointer, entry, nil))
 		case .Cycle_Counter:
 			testing.expect(t, history_writer_append_cycle_counter(&session.writer, actual.instruction_address, actual.stack_pointer, {cycles = recorded_value}))

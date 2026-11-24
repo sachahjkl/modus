@@ -421,16 +421,16 @@ guest_frame_return :: proc "contextless" (process: ^Process, frame: u64) {
 guest_processor_create :: proc "contextless" (process: ^Process) -> (processor: Guest_Processor, status: Operation_Outcome) {
 	control_block := frame_paid(&process.budget)
 	if control_block == 0 {
-		return {}, .No_Budget
+		return {}, .Budget_Or_Capacity_Exhausted
 	}
 	state_area := frame_paid(&process.budget)
 	if state_area == 0 {
 		guest_frame_return(process, control_block)
-		return {}, .No_Budget
+		return {}, .Budget_Or_Capacity_Exhausted
 	}
 	extended_state_start(direct(state_area, Extended_State_Area))
 	guest_control_block_write(control_block, process.table)
-	return {control_block = control_block, state_area = state_area}, .Ok
+	return {control_block = control_block, state_area = state_area}, .Succeeded
 }
 
 // guest_create makes a process a guest, at its first Guest_Run, with the
@@ -458,7 +458,7 @@ guest_create :: proc "contextless" (index: u32, processor_index: u32) -> Operati
 	}
 	guests[index] = {process_serial = process.serial}
 	guests[index].processors[processor_index] = first
-	return .Ok
+	return .Succeeded
 }
 
 // guest_end gives back the pages of the guest of a process that ends. The
@@ -770,7 +770,7 @@ guest_exit_results :: proc "contextless" (exit: Guest_Exit, registers: ^op.Guest
 // process up after it.
 guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
 	if !intrinsics.atomic_load(&guest_support.ready) {
-		return .Bad_Operation
+		return .Operation_Unsupported
 	}
 	thread := &threads[index]
 	caller_index := thread.process
@@ -779,7 +779,7 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 	guest_index, guest_serial: u32
 	caller_taken := process_lock(caller_index)
 	slot, found := handle_find(caller, v[0], .Process, {.Control})
-	readable := found == .Ok && user_range(caller, v[1], size_of(op.Guest_Registers), true)
+	readable := found == .Succeeded && user_range(caller, v[1], size_of(op.Guest_Registers), true)
 	if readable {
 		// A copy, checked after: the process can change its memory meanwhile.
 		user_copy_from_process(&registers, v[1], size_of(registers))
@@ -789,22 +789,22 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 		guest_serial = intrinsics.atomic_load(&processes[guest_index].serial)
 	}
 	process_unlock(caller_index, caller_taken)
-	if found != .Ok {
+	if found != .Succeeded {
 		return found
 	}
 	if !readable {
-		return .Bad_Address
+		return .Argument_Refused
 	}
 	if guest_index == caller_index {
-		return .Bad_State
+		return .Wrong_State
 	}
 	requests, refusal := op.guest_registers_check(registers)
 	if refusal != .None {
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	processor_index, processor_known := op.guest_processor_of_word(v[2])
 	if !processor_known {
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 
 	guest_process := &processes[guest_index]
@@ -813,16 +813,16 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 	// The handle can have closed since: the serial names the process.
 	if intrinsics.atomic_load(&guest_process.serial) != guest_serial || guest_process.state != .Created || guest_process.thread_count != 0 {
 		process_unlock(guest_index, guest_taken)
-		return .Bad_State
+		return .Wrong_State
 	}
 	if !process_is_guest(guest_index) {
-		if status := guest_create(guest_index, processor_index); status != .Ok {
+		if status := guest_create(guest_index, processor_index); status != .Succeeded {
 			process_unlock(guest_index, guest_taken)
 			return status
 		}
 	} else if guest.processors[processor_index].control_block == 0 {
 		made, status := guest_processor_create(guest_process)
-		if status != .Ok {
+		if status != .Succeeded {
 			process_unlock(guest_index, guest_taken)
 			return status
 		}
@@ -831,7 +831,7 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 	processor := &guest.processors[processor_index]
 	if processor.running {
 		process_unlock(guest_index, guest_taken)
-		return .Bad_State // One thread runs a guest processor at a time.
+		return .Wrong_State // One thread runs a guest processor at a time.
 	}
 	processor.running = true
 	intrinsics.atomic_add(&guest_process.holds, 1)
@@ -965,7 +965,7 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 	process_unlock(caller_index, caller_taken)
 	if !writable {
 		results^ = {}
-		return .Bad_Address
+		return .Argument_Refused
 	}
-	return .Ok
+	return .Succeeded
 }

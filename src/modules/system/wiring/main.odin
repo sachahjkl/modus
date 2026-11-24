@@ -182,8 +182,8 @@ end_words_write_and_wake :: proc "contextless" (wiring_slot: int, end_word: outp
 		return
 	}
 	address, status := system.memory_map(end_mem)
-	if status != .Ok {
-		system.log_fact(.Warning, End_Page_Not_Mapped{wiring_slot = u64(wiring_slot), status = op.Status_Word(status)})
+	if status != .Succeeded {
+		system.log_fact(.Warning, End_Page_Not_Mapped{wiring_slot = u64(wiring_slot), status = call_outcome.Call_Outcome_Word(status)})
 		return
 	}
 	words := (^output.End_Words)(address)
@@ -193,19 +193,19 @@ end_words_write_and_wake :: proc "contextless" (wiring_slot: int, end_word: outp
 }
 
 @(private = "file")
-wiring_ring_hold :: proc "contextless" (proc_idx: int, drop_stale: bool = true) -> system.Status {
+wiring_ring_hold :: proc "contextless" (proc_idx: int, drop_stale: bool = true) -> call_outcome.Call_Outcome {
 	if proc_idx < 0 || proc_idx >= len(state.processes) {
-		return .Bad_Handle
+		return .Argument_Refused
 	}
 	ph := &process_handles[proc_idx]
 	if ph.wiring_ring.head != nil {
-		return .Ok
+		return .Succeeded
 	}
 	if ph.wiring_memory == 0 {
-		return .Bad_State
+		return .Wrong_State
 	}
 	opened, status := system.ring_open(ph.wiring_memory)
-	if status != .Ok {
+	if status != .Succeeded {
 		return status
 	}
 	ph.wiring_ring = opened
@@ -216,7 +216,7 @@ wiring_ring_hold :: proc "contextless" (proc_idx: int, drop_stale: bool = true) 
 			}
 		}
 	}
-	return .Ok
+	return .Succeeded
 }
 
 @(private = "file")
@@ -240,7 +240,7 @@ ring_room_callback :: proc "contextless" (data: rawptr, proc_idx: int) -> (avail
 	if ph.wiring_memory == 0 {
 		return 0, 0, false
 	}
-	if wiring_ring_hold(proc_idx) != .Ok {
+	if wiring_ring_hold(proc_idx) != .Succeeded {
 		return 0, 0, false
 	}
 	commands := &ph.wiring_ring.commands
@@ -249,11 +249,11 @@ ring_room_callback :: proc "contextless" (data: rawptr, proc_idx: int) -> (avail
 }
 
 @(private = "file")
-page_write :: proc "contextless" (budget: system.Handle, bytes: []u8, error: ^errors.Error_Record) -> (memory: system.Handle, status: system.Status) {
+page_write :: proc "contextless" (budget: system.Handle, bytes: []u8, error: ^errors.Error_Record) -> (memory: system.Handle, status: call_outcome.Call_Outcome) {
 	pages := u64(max(len(bytes), 1) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	memory = system.memory_create(pages, budget, error = error) or_return
 	address, map_status := system.memory_map(memory, {.Write}, error = error)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(memory)
 		return 0, map_status
 	}
@@ -261,7 +261,7 @@ page_write :: proc "contextless" (budget: system.Handle, bytes: []u8, error: ^er
 		intrinsics.mem_copy_non_overlapping(address, raw_data(bytes), len(bytes))
 	}
 	system.memory_unmap(address)
-	return memory, .Ok
+	return memory, .Succeeded
 }
 
 @(private = "file")
@@ -312,12 +312,12 @@ writer_names :: proc "contextless" (plan: ^wiring_core.Row_Plan, child_offset, c
 }
 
 @(private = "file")
-make_row_objects :: proc "contextless" (asker_budget: system.Handle, plan: ^wiring_core.Row_Plan, obj: ^Row_Objects, error: ^errors.Error_Record, child_offset: u64 = 0, child_size: u64 = 0) -> system.Status {
+make_row_objects :: proc "contextless" (asker_budget: system.Handle, plan: ^wiring_core.Row_Plan, obj: ^Row_Objects, error: ^errors.Error_Record, child_offset: u64 = 0, child_size: u64 = 0) -> call_outcome.Call_Outcome {
 	writer_file := plan_writer_file(plan)
 	description, desc_ok := module.record_stream_type(writer_file, plan.description)
 	if !desc_ok {
 		error^ = errors.error_make(.Bad_Value, .Record_Types)
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	compartment := output.compartment_size(description.size)
 	obj.ring_memory = system.memory_create(ring.compartment_pages(plan.row.capacity, compartment), asker_budget, error = error) or_return
@@ -339,10 +339,10 @@ make_row_objects :: proc "contextless" (asker_budget: system.Handle, plan: ^wiri
 	size, described := output.description_file_write(description_copy[:], writer_file, plan.description)
 	if !described {
 		error^ = errors.error_make(.Too_Long, .Bytes, 0, 0, output.DESCRIPTION_FILE_BYTES_MOST)
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	obj.description_memory = page_write(asker_budget, description_copy[:size], error) or_return
-	return .Ok
+	return .Succeeded
 }
 
 // given_end_of_row gives the end of one side of a row. pair is the number
@@ -411,13 +411,13 @@ process_stop_pending :: proc "contextless" (id: ws.Process_Identity) -> bool {
 // failure it calls handle_revoke(source, 0) on objects it created to clean
 // up any half-delivered handles.
 @(private = "file")
-wiring_end_give :: proc "contextless" (proc_idx: int, end: output.Given_End) -> system.Status {
+wiring_end_give :: proc "contextless" (proc_idx: int, end: output.Given_End) -> call_outcome.Call_Outcome {
 	if proc_idx < 0 || proc_idx >= len(state.processes) || !state.processes[proc_idx].active {
-		return .Bad_Handle
+		return .Argument_Refused
 	}
 	ph := &process_handles[proc_idx]
 	if ph.wiring_memory == 0 {
-		return .Bad_State
+		return .Wrong_State
 	}
 	wiring_ring_hold(proc_idx) or_return
 	given := end
@@ -430,7 +430,7 @@ wiring_end_give :: proc "contextless" (proc_idx: int, end: output.Given_End) -> 
 	}
 	rights := [5]system.Rights{{.Read, .Write}, {.Read}, {.Read}, {.Read}, {.Read}}
 	results := [5]^op.Handle{&given.ring, &given.end_words, &given.terms, &given.description, &given.condition}
-	status := system.Status.Ok
+	status := call_outcome.Call_Outcome.Succeeded
 	gifts := 0
 	target_id := state.processes[proc_idx].id
 	for source, idx in sources {
@@ -439,15 +439,16 @@ wiring_end_give :: proc "contextless" (proc_idx: int, end: output.Given_End) -> 
 		}
 		h, g_status := system.give(ph.wiring_memory, source, rights[idx])
 		// A freshly started process may not have mapped its wiring ring with
-		// Receive_Handles yet (Bad_Handle): retry with bounded exponential
-		// backoff up to DELIVER_STARTUP_GRACE_MS, stopping immediately if a
-		// stop notice is pending, and never retrying No_Right or once ready.
-		if g_status == .Bad_Handle && !ph.wiring_ring_ready {
+		// Receive_Handles yet (Wrong_State / No_Target): retry with bounded
+		// exponential backoff up to DELIVER_STARTUP_GRACE_MS, stopping
+		// immediately if a stop notice is pending, and never retrying
+		// Grant_Or_Right_Missing or once ready.
+		if g_status == .Wrong_State && !ph.wiring_ring_ready {
 			deadline := system.time() + DELIVER_STARTUP_GRACE_MS
 			backoff: u64 = 1
-			for g_status == .Bad_Handle {
+			for g_status == .Wrong_State {
 				if process_stop_pending(target_id) {
-					g_status = .Bad_State
+					g_status = .Wrong_State
 					break
 				}
 				now := system.time()
@@ -460,7 +461,7 @@ wiring_end_give :: proc "contextless" (proc_idx: int, end: output.Given_End) -> 
 				h, g_status = system.give(ph.wiring_memory, source, rights[idx])
 			}
 		}
-		if g_status != .Ok {
+		if g_status != .Succeeded {
 			status = g_status
 			break
 		}
@@ -468,10 +469,10 @@ wiring_end_give :: proc "contextless" (proc_idx: int, end: output.Given_End) -> 
 		results[idx]^ = op.Handle(h)
 		gifts = idx + 1
 	}
-	if status == .Ok && !system.send(&ph.wiring_ring.commands, output.given_end_record(given)) {
-		status = .No_Slot
+	if status == .Succeeded && !system.send(&ph.wiring_ring.commands, output.given_end_record(given)) {
+		status = .Callee_Busy
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		for idx in 0 ..< gifts {
 			if sources[idx] != 0 {
 				_, _ = system.handle_revoke(sources[idx], 0)
@@ -592,12 +593,12 @@ handle_list_page :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 	made_page, made_ring: bool
 	if ph.list_memory == 0 {
 		mem, status := system.memory_create(output.WIRING_LIST_PAGES_MOST, ph.asker_budget, error = &err)
-		if status != .Ok {
+		if status != .Succeeded {
 			if !already {
 				wiring_core.list_page_unreserve(&state, asker_idx)
 			}
 			err.operation = i64(op_code)
-			return {outcome = system.outcome_of_own_status(status), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(status), err)}
+			return {outcome = system.own_operation_outcome(status), tag = cmd.tag, error_record = call_outcome.record_explained(system.own_operation_outcome(status), err)}
 		}
 		ph.list_memory = mem
 		made_page = true
@@ -605,12 +606,12 @@ handle_list_page :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 	ring_given: system.Handle
 	if ph.wiring_memory == 0 {
 		mem, status := system.memory_create(ring.pages(output.WIRING_RING_CAPACITY), ph.asker_budget, error = &err)
-		if status == .Ok {
+		if status == .Succeeded {
 			ph.wiring_memory = mem
 			made_ring = true
 			ring_given, status = system.give(core_ring_memory, mem, {.Read, .Write, .Give})
 		}
-		if status != .Ok {
+		if status != .Succeeded {
 			if made_ring {
 				close_handle(&ph.wiring_memory)
 			}
@@ -619,11 +620,11 @@ handle_list_page :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 				wiring_core.list_page_unreserve(&state, asker_idx)
 			}
 			err.operation = i64(op_code)
-			return {outcome = system.outcome_of_own_status(status), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(status), err)}
+			return {outcome = system.own_operation_outcome(status), tag = cmd.tag, error_record = call_outcome.record_explained(system.own_operation_outcome(status), err)}
 		}
 	}
 	page_given, give_status := system.give(core_ring_memory, ph.list_memory, {.Read, .Write, .Give})
-	if give_status != .Ok {
+	if give_status != .Succeeded {
 		if made_ring {
 			_, _ = system.handle_revoke(ph.wiring_memory, 0)
 			close_handle(&ph.wiring_memory)
@@ -634,7 +635,7 @@ handle_list_page :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 		}
 		rec := errors.error_make(.Refused, .Wirings, 0, 0, 0, i64(give_status))
 		rec.operation = i64(op_code)
-		return {outcome = system.outcome_of_own_status(give_status), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(give_status), rec)}
+		return {outcome = system.own_operation_outcome(give_status), tag = cmd.tag, error_record = call_outcome.record_explained(system.own_operation_outcome(give_status), rec)}
 	}
 	return {
 		outcome      = .Succeeded,
@@ -691,11 +692,11 @@ handle_wire :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 	obj: Row_Objects
 	err: errors.Error_Record
 	make_status := make_row_objects(asker_budget, plan, &obj, &err)
-	if make_status != .Ok {
+	if make_status != .Succeeded {
 		close_row_objects(&obj, keep_end = false)
 		err.operation = i64(op_code)
 		err.found = 1
-		return {outcome = system.outcome_of_own_status(make_status), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(make_status), err)}
+		return {outcome = system.own_operation_outcome(make_status), tag = cmd.tag, error_record = call_outcome.record_explained(system.own_operation_outcome(make_status), err)}
 	}
 	slot, number, alloc_ok := wiring_core.wiring_slot_allocate(&state, asker_idx, plan)
 	if !alloc_ok {
@@ -712,11 +713,11 @@ handle_wire :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 		wiring_ring_capacity[slot] = plan.row.capacity
 	}
 	deliv_status := wiring_end_give(plan.writer_index, given_end_of_row(plan, &obj, true))
-	if deliv_status == .Ok {
+	if deliv_status == .Succeeded {
 		deliv_status = wiring_end_give(plan.reader_index, given_end_of_row(plan, &obj, false))
 	}
 	close_row_objects(&obj, keep_end = true, keep_ring = keep_ring)
-	if deliv_status != .Ok {
+	if deliv_status != .Succeeded {
 		end_word, _ := wiring_core.wiring_end_slot(&state, slot, .Refused)
 		end_words_write_and_wake(slot, end_word)
 		wiring_slot_handles_close(slot)
@@ -772,12 +773,12 @@ handle_prepare_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respon
 		obj := &prepared_batch.objects[number - 1]
 		err: errors.Error_Record
 		make_status := make_row_objects(asker_budget, plan, obj, &err, cmd.module_offset, cmd.module_size)
-		if make_status != .Ok {
+		if make_status != .Succeeded {
 			close_row_objects(obj, keep_end = false)
 			abort_prepared_batch()
 			err.operation = i64(op_code)
 			err.found = i64(number)
-			return {outcome = system.outcome_of_own_status(make_status), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(make_status), err)}
+			return {outcome = system.own_operation_outcome(make_status), tag = cmd.tag, error_record = call_outcome.record_explained(system.own_operation_outcome(make_status), err)}
 		}
 		slot, _, alloc_ok := wiring_core.wiring_slot_allocate(&state, asker_idx, plan)
 		if !alloc_ok {
@@ -801,35 +802,35 @@ handle_prepare_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respon
 		if plan.writer_index == wiring_core.CHILD_PROCESS_INDEX && plan.row.writer_stream == .Log {
 			g_ring, g_st := system.give(core_ring_memory, obj.ring_memory, {.Read, .Write, .Give})
 			g_end: system.Handle
-			if g_st == .Ok {
+			if g_st == .Succeeded {
 				g_end, g_st = system.give(core_ring_memory, obj.end_memory, {.Read, .Give})
 			}
-			if g_st != .Ok {
+			if g_st != .Succeeded {
 				abort_prepared_batch()
 				rec := errors.error_make(.Refused, .Wirings, 0, 0, 0, i64(g_st))
 				rec.operation = i64(op_code)
-				return {outcome = system.outcome_of_own_status(g_st), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(g_st), rec)}
+				return {outcome = system.own_operation_outcome(g_st), tag = cmd.tag, error_record = call_outcome.record_explained(system.own_operation_outcome(g_st), rec)}
 			}
 			response_staging.log_ring = u32(g_ring)
 			response_staging.log_end_words = u32(g_end)
 		} else if plan.writer_index == wiring_core.CHILD_PROCESS_INDEX {
 			given, g_st := give_child_end_to_core(given_end_of_row(plan, obj, true))
-			if g_st != .Ok {
+			if g_st != .Succeeded {
 				abort_prepared_batch()
 				rec := errors.error_make(.Refused, .Wirings, 0, 0, 0, i64(g_st))
 				rec.operation = i64(op_code)
-				return {outcome = system.outcome_of_own_status(g_st), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(g_st), rec)}
+				return {outcome = system.own_operation_outcome(g_st), tag = cmd.tag, error_record = call_outcome.record_explained(system.own_operation_outcome(g_st), rec)}
 			}
 			response_staging.child_ends[response_staging.child_end_count] = ws.given_end_to_prepared(given)
 			response_staging.child_end_count += 1
 		}
 		if plan.reader_index == wiring_core.CHILD_PROCESS_INDEX {
 			given, g_st := give_child_end_to_core(given_end_of_row(plan, obj, false))
-			if g_st != .Ok {
+			if g_st != .Succeeded {
 				abort_prepared_batch()
 				rec := errors.error_make(.Refused, .Wirings, 0, 0, 0, i64(g_st))
 				rec.operation = i64(op_code)
-				return {outcome = system.outcome_of_own_status(g_st), tag = cmd.tag, error_record = call_outcome.record_explained(system.outcome_of_own_status(g_st), rec)}
+				return {outcome = system.own_operation_outcome(g_st), tag = cmd.tag, error_record = call_outcome.record_explained(system.own_operation_outcome(g_st), rec)}
 			}
 			response_staging.child_ends[response_staging.child_end_count] = ws.given_end_to_prepared(given)
 			response_staging.child_end_count += 1
@@ -840,7 +841,7 @@ handle_prepare_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respon
 }
 
 @(private = "file")
-give_child_end_to_core :: proc "contextless" (end: output.Given_End) -> (given: output.Given_End, status: system.Status) {
+give_child_end_to_core :: proc "contextless" (end: output.Given_End) -> (given: output.Given_End, status: call_outcome.Call_Outcome) {
 	given = end
 	sources := [5]system.Handle{
 		system.Handle(end.ring),
@@ -862,12 +863,12 @@ give_child_end_to_core :: proc "contextless" (end: output.Given_End) -> (given: 
 			continue
 		}
 		h, st := system.give(core_ring_memory, source, rights[idx])
-		if st != .Ok {
+		if st != .Succeeded {
 			return {}, st
 		}
 		results[idx]^ = op.Handle(h)
 	}
-	return given, .Ok
+	return given, .Succeeded
 }
 
 @(private = "file")
@@ -901,14 +902,14 @@ handle_commit_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respons
 		if plan.reader_index == wiring_core.CHILD_PROCESS_INDEX {
 			plan.reader_index = child_idx
 		}
-		deliv_status := system.Status.Ok
+		deliv_status := call_outcome.Call_Outcome.Succeeded
 		if plan.paired && !delivered[plan.row.paired_row - 1] {
-			deliv_status = .Bad_State
+			deliv_status = .Wrong_State
 		}
-		if deliv_status == .Ok && plan.writer_index != child_idx {
+		if deliv_status == .Succeeded && plan.writer_index != child_idx {
 			deliv_status = wiring_end_give(plan.writer_index, given_end_of_row(plan, obj, true, pair))
 		}
-		if deliv_status == .Ok && plan.reader_index != child_idx {
+		if deliv_status == .Succeeded && plan.reader_index != child_idx {
 			deliv_status = wiring_end_give(plan.reader_index, given_end_of_row(plan, obj, false))
 		}
 		keep_ring := plan.row.pace == .Always_Holds_Writer
@@ -917,7 +918,7 @@ handle_commit_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respons
 			wiring_ring_capacity[slot] = plan.row.capacity
 		}
 		close_row_objects(obj, keep_end = true, keep_ring = keep_ring)
-		if deliv_status != .Ok {
+		if deliv_status != .Succeeded {
 			end_word, _ := wiring_core.wiring_end_slot(&state, slot, .Refused)
 			end_words_write_and_wake(slot, end_word)
 			wiring_slot_handles_close(slot)
@@ -1145,14 +1146,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	region_memory := ctx.handles[ws.SERVICE_REGION]
 	image_size := ctx.values[ws.VALUE_IMAGE_SIZE]
 
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	core_ring, status = system.ring_open(core_ring_memory, receive_handles = true)
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Error, No_Service_Ring{})
 		system.stop(.Failed)
 	}
 	stops_ring, status = system.ring_open(stops_ring_memory)
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Error, No_Stops_Ring{})
 		system.stop(.Failed)
 	}
@@ -1162,19 +1163,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	img_addr, img_status := system.memory_map(image_memory, {})
-	if img_status != .Ok {
+	if img_status != .Succeeded {
 		system.log_fact(.Error, Boot_Image_Not_Mapped{})
 		system.stop(.Failed)
 	}
 	image = ([^]u8)(img_addr)[:image_size]
 
 	reg_pages, reg_size_status := system.memory_size(region_memory)
-	if reg_size_status != .Ok || reg_pages < ws.SERVICE_REGION_PAGES {
+	if reg_size_status != .Succeeded || reg_pages < ws.SERVICE_REGION_PAGES {
 		system.log_fact(.Error, Transfer_Region_Too_Small{})
 		system.stop(.Failed)
 	}
 	reg_addr, reg_map_status := system.memory_map(region_memory, {.Write})
-	if reg_map_status != .Ok {
+	if reg_map_status != .Succeeded {
 		system.log_fact(.Error, Transfer_Region_Not_Mapped{})
 		system.stop(.Failed)
 	}
@@ -1239,7 +1240,7 @@ stall_rings_check :: proc "contextless" () {
 			continue
 		}
 		address, status := system.memory_map(ring_mem, {})
-		if status != .Ok {
+		if status != .Succeeded {
 			continue
 		}
 		head := (^ring.Head)(address)

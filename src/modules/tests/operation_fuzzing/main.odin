@@ -12,6 +12,7 @@
 // image that holds it.
 package operation_fuzzing
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:contract/enum_word"
 import module "modus:contract/module"
@@ -50,7 +51,7 @@ mailbox: []u8
 sequence_copy: [operation_sequence.SEQUENCE_BYTES_MOST]u8
 sequence: operation_sequence.Sequence
 
-failed :: proc "contextless" (text: string, status: system.Status) -> ! {
+failed :: proc "contextless" (text: string, status: call_outcome.Call_Outcome) -> ! {
 	system.log_fact(.Info, Failed{status = status, cause = cause_field(text)})
 	system.stop(.Failed)
 }
@@ -59,32 +60,32 @@ failed :: proc "contextless" (text: string, status: system.Status) -> ! {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[system.GRANT_MACHINE]
 	if !random.generator_from_context(&generator, ctx) {
-		failed("no random seed in the context", .Bad_Operation)
+		failed("no random seed in the context", .Argument_Refused)
 	}
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
-	if status != .Ok {
+	if status != .Succeeded {
 		failed("no boot image", status)
 	}
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	runner_file = system.image_find(image, operation_sequence.RUNNER_NAME)
 	if len(runner_file) == 0 {
-		failed("the boot image has no runner", .Bad_Operation)
+		failed("the boot image has no runner", .Argument_Refused)
 	}
 	memory: system.Handle
 	memory, status = system.memory_create(operation_sequence.MAILBOX_PAGES, 0, {.Contiguous})
-	if status != .Ok {
+	if status != .Succeeded {
 		failed("no mailbox", status)
 	}
 	mapped: rawptr
 	mapped, status = system.memory_map(memory, {.Write})
-	if status != .Ok {
+	if status != .Succeeded {
 		failed("the mailbox does not map", status)
 	}
 	mailbox = ([^]u8)(mapped)[:operation_sequence.MAILBOX_PAGES * system.PAGE_SIZE]
 	header = (^operation_sequence.Mailbox_Header)(mapped)
 	results: [7]u64
 	results, status = system.call(.Memory_Physical, u64(machine), u64(memory))
-	if status != .Ok {
+	if status != .Succeeded {
 		failed("Memory_Physical refused the mailbox", status)
 	}
 	header.format = operation_sequence.MAILBOX_FORMAT
@@ -131,7 +132,7 @@ execute :: proc "contextless" () {
 		return
 	}
 	budget, status := system.budget_create(amounts_with_processor(SEQUENCE_AMOUNTS))
-	if status != .Ok {
+	if status != .Succeeded {
 		failed("no budget for a sequence", status)
 	}
 	defer system.close(budget)
@@ -153,7 +154,7 @@ amounts_of :: proc "contextless" (budget: system.Handle) -> operation_sequence.M
 // sequence, starts it, waits for its stop, and copies its results. Each
 // handle of this process to an object of the runner is closed before it
 // returns, so the budget then holds again what it held before.
-runner_run :: proc "contextless" (budget: system.Handle, bytes: []u8, results: ^operation_sequence.Runner_Results) -> (outcome: operation_sequence.Execution_Outcome, stop_cause: op.Stop_Cause, stop_outcome: op.Stop_Outcome, start_status: system.Status) {
+runner_run :: proc "contextless" (budget: system.Handle, bytes: []u8, results: ^operation_sequence.Runner_Results) -> (outcome: operation_sequence.Execution_Outcome, stop_cause: op.Stop_Cause, stop_outcome: op.Stop_Outcome, start_status: call_outcome.Call_Outcome) {
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	mappings: [2 + operation_sequence.AREAS_MOST]system.Mapping
 	held: [2 + operation_sequence.AREAS_MOST]system.Handle
@@ -164,20 +165,20 @@ runner_run :: proc "contextless" (budget: system.Handle, bytes: []u8, results: ^
 	}
 	// The copy of the sequence, read-only for the runner.
 	sequence_memory, made := object_with(budget, operation_sequence.SEQUENCE_OBJECT_PAGES, bytes)
-	if made != .Ok {
+	if made != .Succeeded {
 		return .Not_Started, .None, .None, made
 	}
 	held[0] = sequence_memory
 	mappings[0] = {memory = sequence_memory, address = operation_sequence.RUNNER_SEQUENCE_ADDRESS, flags = {}}
 	results_memory, created := system.memory_create(operation_sequence.RESULTS_OBJECT_PAGES, budget)
-	if created != .Ok {
+	if created != .Succeeded {
 		return .Not_Started, .None, .None, created
 	}
 	held[1] = results_memory
 	mappings[1] = {memory = results_memory, address = operation_sequence.RUNNER_RESULTS_ADDRESS, flags = {.Write}}
 	for area in 0 ..< sequence.area_count {
 		memory, area_made := object_with(budget, u64(sequence.areas[area].pages), operation_sequence.area_content(&sequence, area))
-		if area_made != .Ok {
+		if area_made != .Succeeded {
 			return .Not_Started, .None, .None, area_made
 		}
 		held[2 + area] = memory
@@ -190,13 +191,13 @@ runner_run :: proc "contextless" (budget: system.Handle, bytes: []u8, results: ^
 	// This process reads the results through its own mapping, read-only,
 	// which it removes before it reads the budget again.
 	view, viewed := system.memory_map(results_memory, {})
-	if viewed != .Ok {
+	if viewed != .Succeeded {
 		return .Not_Started, .None, .None, viewed
 	}
 	defer system.memory_unmap(view)
 	load_error: module.Load_Error
 	runner, started := system.process_start(runner_file, operation_sequence.RUNNER_NAME, grants, random.values_with_seed(&generator, values), amounts_with_processor(RUNNER_AMOUNTS), mappings[:2 + sequence.area_count], &prepared, {image = image}, &load_error, budget)
-	if started != .Ok {
+	if started != .Succeeded {
 		return .Not_Started, .None, .None, started
 	}
 	// The runner holds its objects now: these handles end with it.
@@ -230,21 +231,21 @@ runner_run :: proc "contextless" (budget: system.Handle, bytes: []u8, results: ^
 	if outcome == .Stopped && stop_outcome == .Done && end_known && end == .Ran && results.steps_run == u64(sequence.step_count) {
 		outcome = .Ran
 	}
-	return outcome, stop_cause, stop_outcome, .Ok
+	return outcome, stop_cause, stop_outcome, .Succeeded
 }
 
 // object_with makes a memory object of pages from a budget, and writes
 // bytes at its start through a mapping that it removes again.
-object_with :: proc "contextless" (budget: system.Handle, pages: u64, bytes: []u8) -> (memory: system.Handle, status: system.Status) {
+object_with :: proc "contextless" (budget: system.Handle, pages: u64, bytes: []u8) -> (memory: system.Handle, status: call_outcome.Call_Outcome) {
 	memory = system.memory_create(pages, budget) or_return
 	address, mapped := system.memory_map(memory, {.Write})
-	if mapped != .Ok {
+	if mapped != .Succeeded {
 		system.close(memory)
 		return 0, mapped
 	}
 	copy(([^]u8)(address)[:len(bytes)], bytes)
 	system.memory_unmap(address)
-	return memory, .Ok
+	return memory, .Succeeded
 }
 
 // amounts_with_processor gives amounts with the processor limit of the

@@ -2,7 +2,6 @@ package root
 
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
 // The log facts of a start from the disk that this service refuses
@@ -157,7 +156,7 @@ Disk_Load_Refused_Object_Too_Large :: struct {
 @(log_fact = "root: refused {refused_process} from the disk: no memory for its {object_bytes} bytes: status {status}")
 Disk_Load_Refused_No_Memory :: struct {
 	object_bytes:    u64,
-	status:          op.Status_Word,
+	status:          call_outcome.Call_Outcome_Word,
 	refused_process: value_kinds.Module_Name_Field,
 }
 
@@ -215,7 +214,7 @@ Disk_Load_Refused_Import_Entry_Kind_Unknown :: struct {
 @(log_fact = "root: refused {refused_process} from the disk: no memory in the budget of the disk processes for the {object_bytes} bytes of the file {file} of the store module_files: status {status}")
 Disk_Load_Refused_Import_No_Memory :: struct {
 	object_bytes:    u64,
-	status:          op.Status_Word,
+	status:          call_outcome.Call_Outcome_Word,
 	refused_process: value_kinds.Module_Name_Field,
 	file:            [24]u8,
 }

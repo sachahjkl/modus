@@ -88,12 +88,11 @@ root_receive :: proc "contextless" (queue: ^ring.Queue, writer: string) -> (reco
 }
 
 // kernel_refused writes the record Refused of a kernel operation that this
-// service ran for a command and that the kernel refused, with the status
+// service ran for a command and that the kernel refused, with the outcome
 // in found, and gives the outcome of a refusal on the objects of this
-// service (system.outcome_of_own_status): the border of the kernel until
-// the kernel gives the call outcome itself.
-kernel_refused :: proc "contextless" (values: ^[7]u64, command: u32, status: system.Status) -> call_outcome.Call_Outcome {
-	return root_ring.refuse(values, system.outcome_of_own_status(status), command, .Refused, .None, 0, 0, 0, i64(status))
+// service (system.own_operation_outcome).
+kernel_refused :: proc "contextless" (values: ^[7]u64, command: u32, status: call_outcome.Call_Outcome) -> call_outcome.Call_Outcome {
+	return root_ring.refuse(values, system.own_operation_outcome(status), command, .Refused, .None, 0, 0, 0, i64(status))
 }
 
 // needed_service_failed gives the end of a command whose service, which the
@@ -370,16 +369,16 @@ stop_command :: proc "contextless" (item: ^Started, name: string, values: ^[7]u6
 // process with the rights Read and Give, through its root ring: the handle
 // that a Wire names, whose stop ends a wait of the asker, and that a start
 // policy lends to a list as the reader of a wiring row.
-start_process_handle_give :: proc "contextless" (asker: ^Started, process: ^Started) -> (u64, system.Status) {
+start_process_handle_give :: proc "contextless" (asker: ^Started, process: ^Started) -> (u64, call_outcome.Call_Outcome) {
 	// Give, so that the asker can lend the handle back through its root
 	// ring, where Wire names the process as a Started end. A copy carries
 	// Read and Give at most, so it stops and maps nothing, and the
 	// revocation of this service reaches each copy.
 	given, status := system.give(asker.requests_memory, process.process, {.Read, .Give})
-	if status != .Ok {
+	if status != .Succeeded {
 		return 0, status
 	}
-	return u64(given), .Ok
+	return u64(given), .Succeeded
 }
 
 // root_connect runs Connect. The process of the client table connects for
@@ -464,11 +463,11 @@ start_edit_command :: proc "contextless" (item: ^Started, record: ring.Record, s
 		return root_ring.refuse(values, .Argument_Refused, command, .Too_Long, .Bytes, 2, i64(min(path_count, u64(max(i64)))), root_ring.EDIT_TARGET_PATH_LIMIT)
 	}
 	pages, size_status := system.memory_size(path_handle)
-	if size_status != .Ok || pages * system.PAGE_SIZE < path_count {
+	if size_status != .Succeeded || pages * system.PAGE_SIZE < path_count {
 		return root_ring.refuse(values, .Argument_Refused, command, .Too_Long, .Bytes, 2, i64(path_count))
 	}
 	mapped, map_status := system.memory_map(path_handle, {})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return kernel_refused(values, command, map_status)
 	}
 	path_bytes: [root_ring.EDIT_TARGET_PATH_LIMIT]u8
@@ -489,12 +488,12 @@ start_edit_command :: proc "contextless" (item: ^Started, record: ring.Record, s
 		return root_ring.refuse(values, .Argument_Refused, command, .Bad_Byte, .Bytes, 2, i64(path_offset), 0, found)
 	}
 	target_page, page_status := system.memory_create(1)
-	if page_status != .Ok {
+	if page_status != .Succeeded {
 		return kernel_refused(values, command, page_status)
 	}
 	defer system.close(target_page)
 	target_address, target_map_status := system.memory_map(target_page)
-	if target_map_status != .Ok {
+	if target_map_status != .Succeeded {
 		return kernel_refused(values, command, target_map_status)
 	}
 	target := (^root_ring.Edit_Target)(target_address)

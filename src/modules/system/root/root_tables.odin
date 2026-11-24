@@ -8,6 +8,7 @@ package root
 // src/md/data/table_sizes.md), in one arena that its budget pays: a small
 // machine pays no entry for a place that no process can take.
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import rd "modus:contract/root_delegation"
 import "modus:contract/root_ring"
@@ -26,7 +27,7 @@ root_tables: system.Arena
 root_tables_start :: proc "contextless" () {
 	machine_process_slots = system.process_slots_of(machine)
 	if machine_process_slots < op.PROCESS_SLOTS_LEAST {
-		fail("cannot read the process slots of the machine", .Bad_State)
+		fail("cannot read the process slots of the machine", .Wrong_State)
 	}
 	places := int(machine_process_slots) - 1
 	words := root_ring.root_wait_words(places)
@@ -38,26 +39,26 @@ root_tables_start :: proc "contextless" () {
 		u64(words) * size_of(op.Word),
 		u64(words) * size_of(system.Wait_Part),
 	}
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	root_tables, status = system.arena_create(system.arena_take_pages(sizes[:]))
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("cannot take the tables of the places", status)
 	}
 	wait_words: []op.Word
 	wait_parts: []system.Wait_Part
 	ok := true
 	started, status = system.arena_take(&root_tables, Started, places)
-	ok &&= status == .Ok
+	ok &&= status == .Succeeded
 	fresh_bytes_given, status = system.arena_take(&root_tables, bool, places)
-	ok &&= status == .Ok
+	ok &&= status == .Succeeded
 	bound_devices, status = system.arena_take(&root_tables, rd.Pci_Discovered_Device, places)
-	ok &&= status == .Ok
+	ok &&= status == .Succeeded
 	bound_device_present, status = system.arena_take(&root_tables, bool, places)
-	ok &&= status == .Ok
+	ok &&= status == .Succeeded
 	wait_words, status = system.arena_take(&root_tables, op.Word, words)
-	ok &&= status == .Ok
+	ok &&= status == .Succeeded
 	wait_parts, status = system.arena_take(&root_tables, system.Wait_Part, words)
-	ok &&= status == .Ok
+	ok &&= status == .Succeeded
 	if !ok {
 		fail("cannot take the tables of the places", status)
 	}

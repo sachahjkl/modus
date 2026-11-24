@@ -54,18 +54,18 @@ tpm_service_start :: proc "contextless" () {
 	// What this service creates here and does not keep: the process holds
 	// its copy of the registers.
 	registers, _, status := device_handle(.Memory, tpm_service.REGISTERS_ADDRESS, 1)
-	if status != .Ok {
-		system.log_fact(.Warning, Tpm_Registers_Refused{registers = value_kinds.Hexadecimal_Sixteen_Digits(tpm_service.REGISTERS_ADDRESS), status = op.Status_Word(status)})
+	if status != .Succeeded {
+		system.log_fact(.Warning, Tpm_Registers_Refused{registers = value_kinds.Hexadecimal_Sixteen_Digits(tpm_service.REGISTERS_ADDRESS), status = call_outcome.Call_Outcome_Word(status)})
 		return
 	}
 	defer system.close(registers)
 	ring_memory, region_memory, measure_memory: system.Handle
 	measure_ring: ring.Ring
 	ring_memory, status = system.memory_create(ring.pages(ring.CAPACITY))
-	if status == .Ok {
+	if status == .Succeeded {
 		region_memory, status = system.memory_create(1)
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		measure_memory, measure_ring, status = system.ring_create()
 	}
 	process: system.Handle
@@ -73,7 +73,7 @@ tpm_service_start :: proc "contextless" () {
 	// The place is cleared after the start: the ready ring waits here.
 	tpm_ready: system.Ready_Ring
 	start_grant_set := start_grant_set_of("tpm")
-	if status == .Ok {
+	if status == .Succeeded {
 		context_grants: system.Context_Grants
 		values: system.Context_Values
 		system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set))
@@ -87,14 +87,14 @@ tpm_service_start :: proc "contextless" () {
 		fresh_bytes_page_give(slot, tpm_mappings[:], &tpm_mapping_count, &values)
 		budget_ok: bool
 		if context_refused(tpm_name, &context_grants, &values) {
-			status = .Bad_State
+			status = .Wrong_State
 		} else if tpm_budget, budget_ok = budget_of(image_file_checked(tpm_name), tpm_name); !budget_ok {
-			status = .No_Budget
+			status = .Budget_Or_Capacity_Exhausted
 		} else {
 			process, status = system.process_start(image_file_checked(tpm_name), tpm_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), tpm_budget.amounts, tpm_mappings[:tpm_mapping_count], nil, load_source(), ready = &tpm_ready)
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		fresh_bytes_forget(slot)
 		if measure_ring.head != nil {
 			system.ring_close(&measure_ring)

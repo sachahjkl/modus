@@ -91,11 +91,11 @@ palette_next_append :: proc "contextless" (count: ^int, entry: palette_table.Ent
 		}
 		pages := (u64(new_cap) * size_of(palette_table.Entry) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 		new_handle, create_status := system.memory_create(pages)
-		if create_status != .Ok {
+		if create_status != .Succeeded {
 			return false
 		}
 		address, map_status := system.memory_map(new_handle, {.Write})
-		if map_status != .Ok {
+		if map_status != .Succeeded {
 			system.close(new_handle)
 			return false
 		}
@@ -125,11 +125,11 @@ palette_kept_ensure :: proc "contextless" (needed: int) -> bool {
 	new_cap := max(len(palette_entries) * 2, needed, palette_table.INITIAL_ENTRY_CAPACITY)
 	pages := (u64(new_cap) * size_of(palette_table.Entry) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	new_handle, create_status := system.memory_create(pages)
-	if create_status != .Ok {
+	if create_status != .Succeeded {
 		return false
 	}
 	address, map_status := system.memory_map(new_handle, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(new_handle)
 		return false
 	}
@@ -162,17 +162,17 @@ palette_provider_start :: proc "contextless" () {
 	palette_table_handle, palette_ring_handle = system.Handle(completion.values[0]), system.Handle(completion.values[1])
 	table_kind, _, _ := system.handle_state(palette_table_handle)
 	table_pages, table_status := system.memory_size(palette_table_handle)
-	if table_kind != .Memory || table_status != .Ok || table_pages < palette_table.MIN_TABLE_PAGES {
+	if table_kind != .Memory || table_status != .Succeeded || table_pages < palette_table.MIN_TABLE_PAGES {
 		system.log_fact(.Info, Provider_Without_Table{})
 		return
 	}
 	address, status := system.memory_map(palette_table_handle)
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Info, Provider_Table_Not_Mapped{})
 		return
 	}
 	opened, ring_status := system.ring_open(palette_ring_handle)
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		system.memory_unmap(address)
 		system.log_fact(.Info, Provider_Without_Ring{})
 		return
@@ -975,7 +975,7 @@ palette_strategy_value :: proc "contextless" (buffer: ^[PALETTE_STRATEGY_VALUE_C
 // no entry then has the mark.
 palette_strategy_in_use :: proc "contextless" () -> op.Strategy {
 	report: op.System_Report
-	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Succeeded {
 		return .None
 	}
 	return report.strategy
@@ -1099,17 +1099,17 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 			new_pages = max(needed_pages, old_pages * 2)
 		}
 		new_handle, create_status := system.memory_create(new_pages)
-		if create_status != .Ok {
+		if create_status != .Succeeded {
 			return
 		}
 		new_addr, map_status := system.memory_map(new_handle, {.Write})
-		if map_status != .Ok {
+		if map_status != .Succeeded {
 			system.close(new_handle)
 			return
 		}
 		number := palette_entries_object_number + 1
 		given, give_status := system.give(palette_ring_handle, new_handle, {.Read})
-		if give_status != .Ok {
+		if give_status != .Succeeded {
 			system.memory_unmap(new_addr)
 			system.close(new_handle)
 			return
@@ -1630,10 +1630,10 @@ palette_candidates_give :: proc "contextless" (record: ring.Record) {
 		report: op.System_Report
 		seen_names: [op.PROCESS_SLOTS_MOST]u64
 		seen_count := 0
-		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status == .Ok {
+		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status == .Succeeded {
 			for slot in 1 ..< report.process_slots {
 				process: op.Process_Report
-				if _, process_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); process_status != .Ok {
+				if _, process_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); process_status != .Succeeded {
 					continue
 				}
 				if process.state == .None || process.state == .Stopped {

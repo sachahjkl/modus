@@ -45,13 +45,13 @@ settings_pass_running_pass: settings.Pass
 // mapped bytes. With no outlines, each process draws with Spleen 8x16, and
 // the log says why.
 text_settings_create :: proc "contextless" () {
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	settings_memory, status = system.memory_create(1)
 	address: rawptr
-	if status == .Ok {
+	if status == .Succeeded {
 		address, status = system.memory_map(settings_memory)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("cannot create the settings page", status)
 	}
 	// The defaults before any process maps the page: the word 0 names no

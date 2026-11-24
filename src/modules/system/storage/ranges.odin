@@ -159,11 +159,15 @@ pool_take :: proc "contextless" (holder: system.Handle, limit: u64, error: ^erro
 // service holds no more.
 pool_push :: proc "contextless" (pool: ^Pending_Pool, size: int, alignment: int, error: ^errors.Error_Record) -> rawptr {
 	if pool.arena_count > 0 {
-		address, status := system.arena_push(&pool.arenas[pool.arena_count - 1], u64(size), u64(alignment), error)
-		if status == .Ok {
+		push_error: errors.Error_Record
+		address, status := system.arena_push(&pool.arenas[pool.arena_count - 1], u64(size), u64(alignment), &push_error)
+		if status == .Succeeded {
 			return address
 		}
-		if status != .No_Slot {
+		if status != .Budget_Or_Capacity_Exhausted || push_error.kind != i64(errors.Kind.Full) {
+			if error != nil {
+				error^ = push_error
+			}
 			return nil // The budget refused the pages.
 		}
 	}
@@ -186,13 +190,13 @@ pool_push :: proc "contextless" (pool: ^Pending_Pool, size: int, alignment: int,
 	// A refused reservation: the kernel wrote its record (Budget, unit
 	// Pages).
 	arena, status := system.arena_create(pages, 0, error)
-	if status != .Ok {
+	if status != .Succeeded {
 		return nil
 	}
 	pool.arenas[pool.arena_count] = arena
 	pool.arena_count += 1
 	address, pushed := system.arena_push(&pool.arenas[pool.arena_count - 1], u64(size), u64(alignment), error)
-	if pushed != .Ok {
+	if pushed != .Succeeded {
 		return nil
 	}
 	return address

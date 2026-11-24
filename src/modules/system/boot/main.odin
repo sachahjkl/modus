@@ -70,11 +70,11 @@ hand_picture: interface.Hand_Picture
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "boot")
-	if !ok || interface.hand_picture_open(&hand_picture, &window) != .Ok {
+	if !ok || interface.hand_picture_open(&hand_picture, &window) != .Succeeded {
 		system.stop(.Failed)
 	}
 	machine := ctx.handles[system.GRANT_MACHINE]
-	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
+	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Succeeded {
 		data.image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 	data.message = "the desktop runs"

@@ -43,6 +43,7 @@
 // threads on several processors shows 100% at most.
 package monitor
 
+import "modus:contract/call_outcome"
 import process_page "modus:contract/disk_process_page"
 import "modus:contract/draw_record"
 import "modus:contract/value_kinds"
@@ -586,13 +587,13 @@ tables_take :: proc "contextless" () {
 		return
 	}
 	sizes := [?]u64{u64(slots) * size_of(u64), u64(slots) * size_of(u64)}
-	status: system.Status
-	if tables, status = system.arena_create(system.arena_take_pages(sizes[:])); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if tables, status = system.arena_create(system.arena_take_pages(sizes[:])); status != .Succeeded {
 		return
 	}
 	run_times, run_status := system.arena_take(&tables, u64, slots)
 	logged, logged_status := system.arena_take(&tables, u64, slots)
-	if run_status != .Ok || logged_status != .Ok {
+	if run_status != .Succeeded || logged_status != .Succeeded {
 		system.arena_end(&tables)
 		return
 	}
@@ -687,7 +688,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		card_draw(table, places.table_card, graphics.colors.process)
 		table_chrome_draw(table, tokens)
-		if status != .Ok {
+		if status != .Succeeded {
 			rows := places.table_rows
 			interface.draw_text(table, rows.x, rows.y + 2, "no grant to inspect the machine", tokens.text)
 			if !lost {

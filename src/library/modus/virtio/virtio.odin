@@ -197,11 +197,11 @@ find :: proc "contextless" (ctx: ^system.Context, configuration: []u8) -> (devic
 				return 0, 0
 			}
 			pages, size_status := system.memory_size(memory)
-			if size_status != .Ok {
+			if size_status != .Succeeded {
 				return 0, 0
 			}
 			address, status := system.memory_map(memory, {.Write})
-			if status != .Ok {
+			if status != .Succeeded {
 				return 0, 0
 			}
 			mapped[bar] = uintptr(address)

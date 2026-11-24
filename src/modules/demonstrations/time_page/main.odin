@@ -324,7 +324,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		compared += 1
 	}
 	system.log_fact(.Info, Page_And_Cycle_Counter{compared = compared, least_behind = least, most_behind = behind, most_ahead = ahead})
-	refused = system.memory_unmap(rawptr(uintptr(op.TIME_ADDRESS))) != .Ok && system.time() != 0
+	refused = system.memory_unmap(rawptr(uintptr(op.TIME_ADDRESS))) != .Succeeded && system.time() != 0
 	checked = true
 	if slot != 0 && went_back == 0 && outside == 0 && page_changes >= PAGE_CHANGES_COMPARED && least <= LEAST_LIMIT && ahead <= AHEAD_LIMIT && refused && measures[0].entries == 0 {
 		system.log_fact(.Info, Clock_Held{})

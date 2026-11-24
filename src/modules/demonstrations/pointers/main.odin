@@ -364,7 +364,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	image_handle := ctx.handles[system.GRANT_IMAGE]
 	image_size := ctx.values[system.GRANT_VALUE_IMAGE_SIZE]
 	address, status := system.memory_map(image_handle, {}) // Read only.
-	if status != .Ok || image_size == 0 {
+	if status != .Succeeded || image_size == 0 {
 		system.log_fact(.Info, No_Boot_Image{})
 		system.stop(.Failed)
 	}
@@ -401,7 +401,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "pointers")
-	if !ok || interface.hand_picture_open(&hand_picture, &window) != .Ok {
+	if !ok || interface.hand_picture_open(&hand_picture, &window) != .Succeeded {
 		system.stop(.Failed)
 	}
 	table = {records = table_records[:], text = table_text[:]}

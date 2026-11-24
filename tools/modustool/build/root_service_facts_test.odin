@@ -11,6 +11,7 @@ import "modus:contract/replacement_list"
 import "modus:contract/start_grant"
 import "modus:contract/system_description"
 import "modus:contract/value_kinds"
+import "internal:root/budget_growth"
 import "internal:root/replacement_signature"
 import "modus:sentence"
 import "core:strings"
@@ -73,7 +74,7 @@ longest :: proc(texts: []string) -> u32 {
 root_text_bytes_most :: proc() -> map[string]u32 {
 	most := make(map[string]u32, context.temp_allocator)
 	name_most := u32(value_kinds.MODULE_NAME_FIELD_BYTES - 1)
-	for name in ([?]string{"started_process", "stopped_process", "refused_process", "loaded_process", "window_process", "service", "caller", "holder", "debugger", "target", "importer", "receiver", "provider", "nickname", "stop_report_name", "replaced", "replacement", "checked_entry", "held_process", "ready_process"}) {
+	for name in ([?]string{"started_process", "stopped_process", "refused_process", "loaded_process", "window_process", "service", "caller", "holder", "requester", "debugger", "target", "importer", "receiver", "provider", "nickname", "stop_report_name", "replaced", "replacement", "checked_entry", "held_process", "ready_process"}) {
 		most[name] = name_most
 	}
 	// A principal name has at most principals.NAME_LIMIT bytes, a store
@@ -81,6 +82,9 @@ root_text_bytes_most :: proc() -> map[string]u32 {
 	// the name of an entry of the boot image.
 	most["principal_name"] = 23
 	for refusal in memory_screen.GROW_REFUSAL_SENTENCES {
+		most["grow_refusal"] = max(most["grow_refusal"], u32(len(refusal)))
+	}
+	for refusal in budget_growth.GROW_REFUSAL_SENTENCES {
 		most["grow_refusal"] = max(most["grow_refusal"], u32(len(refusal)))
 	}
 	most["store"] = 31
@@ -289,7 +293,7 @@ the_start_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 			expect(t, render(t, file, "Font_Outlines_Refused", {{"problem_value", count}, {"problem", problem}}), line_of_before("root: the font outlines are refused: ", problem, ", value ", count, ": they are not given"))
 		}
 		expect(t, render(t, file, "Log_Scope_Refused", {{"slot", count}, {"serial", max(u64) - count}, {"caller", process}}), line_of_before("root: the process slot ", count, " or the process serial ", max(u64) - count, " of ", sentence.Module_Name{process}, " does not fit the grant of the log service: it reads no record"))
-		expect(t, render(t, file, "Machine_Stop_Codes_Refused", {{"first_code", count}, {"second_code", max(u64)}, {"code_limit", u64(op.MACHINE_STOP_CODE_MOST)}}), line_of_before("root: Machine_Stop refused the codes ", count, " and ", max(u64), " with Bad_Operation and the record Bad_Value of the code, limit ", u64(op.MACHINE_STOP_CODE_MOST), ", and the machine runs on: as it must"))
+		expect(t, render(t, file, "Machine_Stop_Codes_Refused", {{"first_code", count}, {"second_code", max(u64)}, {"code_limit", u64(op.MACHINE_STOP_CODE_MOST)}}), line_of_before("root: Machine_Stop refused the codes ", count, " and ", max(u64), " with Argument_Refused and the record Bad_Value of the code, limit ", u64(op.MACHINE_STOP_CODE_MOST), ", and the machine runs on: as it must"))
 		expect(t, render(t, file, "Root_Ready", {{"image_modules", count}}), line_of_before("root: ok", ", ", count, " modules in the boot image"))
 		expect(t, render(t, file, "Compositor_Record_Unknown", {{"record_kind", count}}), line_of_before("root: refused a record of the compositor of the kind ", count, ", which names no control"))
 		expect(t, render(t, file, "Compositor_Record_Not_Taken", {{"record_kind", count}}), line_of_before("root: refused a record of the compositor of the kind ", count, ", which this service sends and does not take"))
@@ -610,12 +614,12 @@ the_statuses_of_the_root_service_are_the_names_of_their_members :: proc(t: ^test
 	for &value, index in hash {
 		value = u8(0x5A + index)
 	}
-	status_words := [3]u64{u64(min(op.Status)), u64(max(op.Status)), u64(max(op.Status)) + 1}
+	status_words := [3]u64{u64(min(call_outcome.Call_Outcome)), u64(max(call_outcome.Call_Outcome)), u64(max(call_outcome.Call_Outcome)) + 1}
 	for word in status_words {
 		// The words of the status: its name, or the number of a word that
 		// names no member.
 		status_text := line_of_before(word)
-		if name, named := module.contract_enum_member_name(.Status, word); named {
+		if name, named := module.contract_enum_member_name(.Call_Outcome, word); named {
 			status_text = name
 		}
 		for item in lines {
@@ -1010,10 +1014,10 @@ the_load_error_facts_of_the_root_service_write_the_fields_of_each_stage :: proc(
 	for import_slot in import_slots {
 		expect(t, render(t, file, "Load_Bind_Failed", {{"import_slot", import_slot}, {"module_name", name}, {"imported_name", imported}, {"export", export}}), line_of_before("root: the import slot ", import_slot, " of ", name, " names no import or no export, or is not in writable data: the import ", imported, ", the export ", export))
 	}
-	statuses := [3]u64{u64(min(op.Status)), u64(max(op.Status)), u64(max(op.Status)) + 1}
+	statuses := [3]u64{u64(min(call_outcome.Call_Outcome)), u64(max(call_outcome.Call_Outcome)), u64(max(call_outcome.Call_Outcome)) + 1}
 	for word in statuses {
-		expect(t, render(t, file, "Load_Map_Failed", {{"status", word}, {"module_hash", hash}, {"module_name", name}}), line_of_before("root: the map of the memory of ", name, " (", head, ") failed: status ", words_of(.Status, word)))
-		expect(t, render(t, file, "Load_Unmap_Failed", {{"status", word}, {"module_hash", hash}, {"module_name", name}}), line_of_before("root: the removal of ", name, " (", head, ") failed: status ", words_of(.Status, word)))
+		expect(t, render(t, file, "Load_Map_Failed", {{"status", word}, {"module_hash", hash}, {"module_name", name}}), line_of_before("root: the map of the memory of ", name, " (", head, ") failed: status ", words_of(.Call_Outcome, word)))
+		expect(t, render(t, file, "Load_Unmap_Failed", {{"status", word}, {"module_hash", hash}, {"module_name", name}}), line_of_before("root: the removal of ", name, " (", head, ") failed: status ", words_of(.Call_Outcome, word)))
 	}
 	expect(t, render(t, file, "Load_Room_Failed", {{"module_hash", hash}, {"module_name", name}}), line_of_before("root: no room for ", name, " (", head, "): the module space, the imports of one module or the table of the loader is full"))
 
@@ -1053,7 +1057,7 @@ the_table_wait_and_wiring_facts_of_the_root_service_write_the_lines_of_before ::
 		expect(t, render(t, file, "Disk_Processes_Service_Started", {{"starts", count}, {"start_limit", other}}), line_of_before("root: started the disk processes service (start ", count, " of ", other, ")"))
 		expect(t, render(t, file, "Wirings_Revoked", {{"ended", count}, {"target", process}}), line_of_before("root: revoked the grant wirings of ", sentence.Module_Name{process}, ", wirings ended: ", count))
 	}
-	for status in op.Status {
+	for status in call_outcome.Call_Outcome {
 		expect(t, render(t, file, "Wiring_Service_Start_Failed", {{"status_number", u64(status)}}), line_of_before("root: cannot start wiring service: status ", status))
 	}
 	expect(t, render(t, file, "Own_Tables_Full_Unreported", {{"started_process", process}}), line_of_before("root: the start of ", sentence.Module_Name{process}, " found a table full; the kernel gives no report of the tables of this service"))

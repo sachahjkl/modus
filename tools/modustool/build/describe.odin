@@ -748,7 +748,7 @@ struct_record_named :: proc(state: ^Describe_State, key, record_name: string, re
 			}
 			item, field_size, field_alignment = {type = .Text, detail = count}, count, 1
 		} else {
-			return 0, true, describe_fail(found.path, field, "the record %s: the type %s has no description. A field is an integer (i64, u64, i32, u32, i16, u16, i8, u8, or an enum of one of them), an integer with a unit (value_kinds.Size_In_Pages and the other types of value_kinds), a field with a kind (value_kinds.Hexadecimal_32, value_kinds.Module_Name_Field, value_kinds.Hash_Field and the other types of value_kinds.FIELD_KIND_TYPES, or a contract enum such as operation.Log_Level or its word type such as operation.Status_Word), a Lent({{...}}) (Handle) or a [N]u8 (Text)", record_name, type_text(found.source, field.type))
+			return 0, true, describe_fail(found.path, field, "the record %s: the type %s has no description. A field is an integer (i64, u64, i32, u32, i16, u16, i8, u8, or an enum of one of them), an integer with a unit (value_kinds.Size_In_Pages and the other types of value_kinds), a field with a kind (value_kinds.Hexadecimal_32, value_kinds.Module_Name_Field, value_kinds.Hash_Field and the other types of value_kinds.FIELD_KIND_TYPES, or a contract enum such as operation.Log_Level or its word type such as call_outcome.Call_Outcome_Word), a Lent({{...}}) (Handle) or a [N]u8 (Text)", record_name, type_text(found.source, field.type))
 		}
 		alignment = max(alignment, field_alignment)
 		for expression in field.names {

@@ -562,31 +562,31 @@ process_leave :: proc "contextless" (index: u32) -> bool {
 // (src/md/features/module_record_writer.md).
 process_module :: proc "contextless" (process: ^Process, record: op.Module_Record, by_the_process: bool) -> Operation_Outcome {
 	if record.size != 0 && (record.base >= op.USER_END || record.size > op.USER_END - record.base) {
-		return .Bad_Address
+		return .Argument_Refused
 	}
 	place: ^op.Module_Record
 	for &item in process.modules {
 		if item.size != 0 && item.base == record.base {
 			place = &item
 		} else if item.size != 0 && record.size != 0 && record.base < item.base + item.size && item.base < record.base + record.size {
-			return .Bad_Address
+			return .Argument_Refused
 		} else if item.size == 0 && place == nil {
 			place = &item
 		}
 	}
 	if place == nil {
-		return .No_Slot
+		return .Budget_Or_Capacity_Exhausted
 	}
 	if record.size == 0 && (place.size == 0 || place.base != record.base) {
-		return .Bad_Address
+		return .Argument_Refused
 	}
 	if by_the_process && place.size != 0 && place.writer == u64(op.Module_Writer.Starter) {
-		return .No_Right
+		return .Grant_Or_Right_Missing
 	}
 	written := record
 	written.writer = by_the_process ? u64(op.Module_Writer.Process) : u64(op.Module_Writer.Starter)
 	place^ = record.size == 0 ? {} : written
-	return .Ok
+	return .Succeeded
 }
 
 // starter_module_meeting gives the module record of the writer Starter that
@@ -680,7 +680,7 @@ budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) ->
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
 	if !from.live || amounts.pages > from.amounts.pages || amounts.processes > from.amounts.processes || amounts.threads > from.amounts.threads || amounts.processor > from.amounts.processor || amounts.log_records > from.amounts.log_records {
-		return 0, .No_Budget
+		return 0, .Budget_Or_Capacity_Exhausted
 	}
 	for &budget, slot in budgets[1:] {
 		if !budget.live {
@@ -699,10 +699,10 @@ budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) ->
 			budget_peak.created(&budget.amounts.pages, &budget.least_pages, amounts.pages)
 			// The count of this second moves with the log records.
 			budget_log_count_to_child(parent, u32(slot + 1))
-			return u32(slot + 1), .Ok
+			return u32(slot + 1), .Succeeded
 		}
 	}
-	return 0, .No_Slot
+	return 0, .Callee_Busy
 }
 
 // budget_release closes one handle to a budget. With no handle, the budget
@@ -788,7 +788,7 @@ frame_take :: proc "contextless" () -> u64 {
 // gives its objects to the parent budget.
 region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous := false, now := false, uncommitted := false, large_pages := false, budget_of_region: u32 = 0) -> (index: u32, status: Operation_Outcome) {
 	if page_count == 0 || !contiguous && page_count > op.MEMORY_PAGE_LIMIT {
-		return 0, .Bad_Operation
+		return 0, .Argument_Refused
 	}
 	// An uncommitted object pays its frame list only, and at least one page:
 	// no budget holds a slot of the table of memory objects for nothing.
@@ -803,12 +803,12 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 	}
 	if !budgets[budget].live || budgets[budget].amounts.pages < cost {
 		lock_free(&frame_lock, .Frame)
-		return 0, .No_Budget
+		return 0, .Budget_Or_Capacity_Exhausted
 	}
 	index = region_slot_take()
 	if index == 0 {
 		lock_free(&frame_lock, .Frame)
-		return 0, .No_Slot
+		return 0, .Callee_Busy
 	}
 	region := &regions[index]
 	region^ = {page_count = page_count, budget = budget, contiguous = contiguous, serial = region.serial, uncommitted = uncommitted, large_pages = large_pages}
@@ -823,7 +823,7 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 		if region.physical == 0 {
 			region^ = {serial = region.serial}
 			lock_free(&frame_lock, .Frame)
-			return 0, .No_Memory
+			return 0, .Callee_Busy
 		}
 		region.present = page_count
 	} else {
@@ -871,7 +871,7 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 	if now {
 		region_prefault_range(region, 0, page_count)
 	}
-	return index, .Ok
+	return index, .Succeeded
 }
 
 region_hint: u32 // Where the search of a free slot starts. Frame lock.
@@ -1223,16 +1223,16 @@ ports_changed :: proc "contextless" (process: ^Process) {
 handle_find :: proc "contextless" (process: ^Process, handle: u64, kind: Object_Kind, rights: op.Rights = {}) -> (slot: ^Handle_Slot, status: Operation_Outcome) {
 	index := handle & 0xFFFF
 	if index == 0 || index >= HANDLE_CAPACITY || handle >> 32 != 0 {
-		return nil, .Bad_Handle
+		return nil, .Argument_Refused
 	}
 	slot = &process.handles[index]
 	if slot.kind == .None || u64(slot.generation) != handle >> 16 || (kind != .None && slot.kind != kind) {
-		return nil, .Bad_Handle
+		return nil, .Argument_Refused
 	}
 	if !(rights <= slot.rights) {
-		return nil, .No_Right
+		return nil, .Grant_Or_Right_Missing
 	}
-	return slot, .Ok
+	return slot, .Succeeded
 }
 
 // handle_close closes a handle of a process. The caller holds the process
@@ -1299,7 +1299,7 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	// An object with marks of protection is mapped once: the marks are of
 	// the object, and would reach a second mapping.
 	if intrinsics.atomic_load(&region.marked_pages) != 0 {
-		return 0, .Bad_State
+		return 0, .Wrong_State
 	}
 	// The counts of the mappings of the object come before the check of the
 	// record, and each refusal below takes them back. A process that maps
@@ -1324,7 +1324,7 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	// A recorded process can map memory that another process holds: the
 	// record takes the mapping after it is made (record_received_mapping_locked).
 	received_by_record, record_status := record_replay_map_check(index_of_process(process), region_index, flags, first, count, by_the_process)
-	if record_status != .Ok {
+	if record_status != .Succeeded {
 		return 0, record_status
 	}
 	count := count
@@ -1332,7 +1332,7 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 		count = region.page_count - first
 	}
 	if count == 0 || first >= region.page_count || count > region.page_count - first {
-		return 0, .Bad_Address
+		return 0, .Argument_Refused
 	}
 	// Guest memory: page 0, and memory that a guest writes and then
 	// executes. Only for a process that no thread ran, which Process_Start
@@ -1342,18 +1342,18 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	at_zero := .At_Address_Zero in flags
 	writable_and_executable := .Write in flags && .Execute in flags
 	if writable_and_executable && .No_Access not_in flags {
-		return 0, .Bad_Operation // No page is writable and executable: it gets Write or Execute in turn.
+		return 0, .Argument_Refused // No page is writable and executable: it gets Write or Execute in turn.
 	}
 	// Write-combining only over the registers of a device, never executed
 	// (map_write_combining_refused).
 	if op.map_write_combining_refused(flags, region.uncached) {
-		return 0, .Bad_Operation
+		return 0, .Argument_Refused
 	}
 	if (at_zero || writable_and_executable) && (by_the_process || process.state != .Created || process.thread_count != 0) {
-		return 0, .Bad_State
+		return 0, .Wrong_State
 	}
 	if at_zero && address != 0 {
-		return 0, .Bad_Address
+		return 0, .Argument_Refused
 	}
 	address := address
 	chosen := address == 0 && !at_zero
@@ -1379,23 +1379,23 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 			address = chosen_address(process, count, PAGE_SIZE)
 		}
 		if address == 0 {
-			return 0, .No_Slot // No gap below MODULE_BASE.
+			return 0, .Budget_Or_Capacity_Exhausted // No gap below MODULE_BASE.
 		}
 	}
 	size := count * PAGE_SIZE
 	if address % PAGE_SIZE != 0 || address < PAGE_SIZE && !at_zero || address >= USER_END || size > USER_END - address {
-		return 0, .Bad_Address
+		return 0, .Argument_Refused
 	}
 	// Memory of the process where its starter recorded a module would run
 	// under the name of that module. Before the check of the mappings, so
 	// that a map over that module always gives the same status.
 	if by_the_process && starter_module_meeting(process, address, size) != nil {
-		return 0, .No_Right
+		return 0, .Grant_Or_Right_Missing
 	}
 	// A page on first use has no page table entry yet: the mappings say
 	// which addresses are taken.
 	if mapping_order.overlaps(process.mapping_order[:process.mapping_order_count], process.mappings[:], address, size) {
-		return 0, .Bad_Address
+		return 0, .Argument_Refused
 	}
 	mapping: ^Mapping
 	for &candidate in process.mappings {
@@ -1405,7 +1405,7 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 		}
 	}
 	if mapping == nil {
-		return 0, .No_Slot
+		return 0, .Budget_Or_Capacity_Exhausted
 	}
 	limit_bits := PAGE_PRESENT | PAGE_USER
 	if .Write in flags {
@@ -1431,11 +1431,11 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	cache_claimed := false
 	if region.cache_types_counted {
 		if !device_cache_type_claim(region_index, cache_type) {
-			return 0, .Bad_State
+			return 0, .Wrong_State
 		}
 		cache_claimed = true
 	}
-	defer if status != .Ok && cache_claimed {
+	defer if status != .Succeeded && cache_claimed {
 		device_cache_type_release(region_index, cache_type)
 	}
 	// The origin first: during a revocation, a path with no control lock
@@ -1454,7 +1454,7 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 			if entry == nil {
 				// The status before the free: the freed tables return pages
 				// to the budget.
-				refusal: Operation_Outcome = budgets[process.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
+				refusal: Operation_Outcome = budgets[process.budget].amounts.pages == 0 ? .Budget_Or_Capacity_Exhausted : .Callee_Busy
 				self := processor_self()
 				for undo in 0 ..< part {
 					undo_address := address + undo * LARGE_PAGE_SIZE
@@ -1491,7 +1491,7 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 		run := min(512 - (run_address >> 12 & 511), count - page)
 		run_first_entry := page_entry_hold(process.table, run_address, run, &process.budget, &freed)
 		if run_first_entry == nil {
-			refusal: Operation_Outcome = budgets[process.budget].amounts.pages == 0 ? .No_Budget : .No_Memory
+			refusal: Operation_Outcome = budgets[process.budget].amounts.pages == 0 ? .Budget_Or_Capacity_Exhausted : .Callee_Busy
 			for undo := u64(0); undo < page; {
 				undo_address := address + undo * PAGE_SIZE
 				undo_run := min(512 - (undo_address >> 12 & 511), page - undo)
@@ -1540,13 +1540,13 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 		process.mappings_peak = process.mappings_held
 	}
 	if received_by_record {
-		if taken_status := record_received_mapping_locked(process, mapping); taken_status != .Ok {
+		if taken_status := record_received_mapping_locked(process, mapping); taken_status != .Succeeded {
 			// The unmap frees what the record took for this mapping.
 			unmap(process, mapping)
 			return 0, taken_status
 		}
 	}
-	return address, .Ok
+	return address, .Succeeded
 }
 
 // chosen_address gives the lowest address from op.CHOSEN_BASE where count
@@ -1887,7 +1887,7 @@ process_reset :: proc "contextless" (process: ^Process, ports_serial: u64, seria
 // slot and for the page tables. The caller holds the control lock.
 process_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, status: Operation_Outcome) {
 	if !budgets[budget].live || budgets[budget].amounts.processes == 0 || budgets[budget].amounts.pages == 0 {
-		return 0, .No_Budget
+		return 0, .Budget_Or_Capacity_Exhausted
 	}
 	for &process, slot in processes[1:] {
 		if process.state != .None {
@@ -1906,7 +1906,7 @@ process_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 		process.table = address_space_create(&process.budget)
 		if process.table == 0 {
 			process_reset(&process, ports_serial, serial)
-			return 0, .No_Budget
+			return 0, .Budget_Or_Capacity_Exhausted
 		}
 		// The own log ring: the budget of the process pays it, as it pays
 		// the top table, so a process with many records fills memory that
@@ -1915,12 +1915,12 @@ process_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 		if !ring_taken {
 			address_space_free(process.table, &process.budget)
 			process_reset(&process, ports_serial, serial)
-			return 0, .No_Budget
+			return 0, .Budget_Or_Capacity_Exhausted
 		}
 		budgets[budget].amounts.processes -= 1
 		copy(process.name[:len(process.name) - 1], name)
 		// The time page: read only. A process cannot remove it (Memory_Unmap).
-		if _, map_status := map_region(&process, time_region, op.TIME_ADDRESS, {}, 0, 1); map_status != .Ok {
+		if _, map_status := map_region(&process, time_region, op.TIME_ADDRESS, {}, 0, 1); map_status != .Succeeded {
 			own_log_ring_give_back(ring_frames, &process.budget)
 			address_space_free(process.table, &process.budget)
 			budgets[budget].amounts.processes += 1
@@ -1934,9 +1934,9 @@ process_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 		log_free(log_taken)
 		process.state = .Created
 		process.start_time = microseconds(cycles_now())
-		return index, .Ok
+		return index, .Succeeded
 	}
-	return 0, .No_Slot
+	return 0, .Callee_Busy
 }
 
 // process_free frees the slot of a stopped process that no handle names,
@@ -2011,7 +2011,7 @@ thread_create :: proc "contextless" (process_index: u32, budget: u32, entry, sta
 	// the state of the process: the fault would be a fault of the kernel,
 	// and one process would stop the machine.
 	if entry >= USER_END || stack > USER_END || stack < 8 {
-		return 0, .Bad_Address
+		return 0, .Argument_Refused
 	}
 	process := &processes[process_index]
 	taken := process_lock(process_index)
@@ -2019,7 +2019,7 @@ thread_create :: proc "contextless" (process_index: u32, budget: u32, entry, sta
 	// A stop marks each thread of the process once: a thread made after it
 	// would run in a process that ends.
 	if process.state != .Created && process.state != .Ready {
-		return 0, .Bad_State
+		return 0, .Wrong_State
 	}
 	// Single-thread record/replay mode refuses creating a second thread and
 	// requires the pinned processor to intersect the creator's placement limit.
@@ -2029,7 +2029,7 @@ thread_create :: proc "contextless" (process_index: u32, budget: u32, entry, sta
 		placement_limit = every_processor
 	}
 	if record_replay_thread_create_refused(process_index, placement_limit) {
-		return 0, .Bad_State
+		return 0, .Wrong_State
 	}
 	number := u32(op.THREAD_CAPACITY)
 	for candidate in 0 ..< u32(op.THREAD_CAPACITY) {
@@ -2044,17 +2044,20 @@ thread_create :: proc "contextless" (process_index: u32, budget: u32, entry, sta
 			break
 		}
 	}
-	if number == op.THREAD_CAPACITY || index == 0 {
-		return 0, .No_Slot
+	if number == op.THREAD_CAPACITY {
+		return 0, .Budget_Or_Capacity_Exhausted
+	}
+	if index == 0 {
+		return 0, .Callee_Busy
 	}
 	if !budgets[budget].live || budgets[budget].amounts.threads == 0 {
-		return 0, .No_Budget
+		return 0, .Budget_Or_Capacity_Exhausted
 	}
 	// The kernel reads the thread area through the direct map, as one
 	// block: it is contiguous.
 	region := region_create(budget, 1 + ring.PAGE_COUNT, contiguous = true) or_return
 	record := op.THREAD_AREA_BASE + u64(number) * op.THREAD_AREA_PAGES * PAGE_SIZE
-	if _, map_status := map_region(process, region, record, {.Write}, 0, 0); map_status != .Ok {
+	if _, map_status := map_region(process, region, record, {.Write}, 0, 0); map_status != .Succeeded {
 		regions[region].references = 1
 		region_release(region)
 		return 0, map_status
@@ -2112,7 +2115,7 @@ thread_create :: proc "contextless" (process_index: u32, budget: u32, entry, sta
 	process.thread_count += 1
 	record_replay_thread_init(process_index, thread)
 	thread_queue(thread)
-	return index, .Ok
+	return index, .Succeeded
 }
 
 // thread_stop ends one thread (docs/ARCHITECTURE.md, "The owner of a

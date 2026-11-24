@@ -43,8 +43,8 @@ nickname_check :: proc "contextless" (nickname: ^string, name_copy: ^[disk_proce
 // does not map is a fault of the caller; a kernel with no memory or no slot
 // for the mapping is short of a capacity of this service.
 @(private = "file")
-memory_failure :: proc "contextless" (error: ^errors.Error_Record, argument: i64, status: system.Status) -> (call_outcome.Call_Outcome, i64) {
-	return call_outcome.fail(error, system.outcome_of_status(status), .Refused, .Kernel_Status, argument, 0, 0, i64(status))
+memory_failure :: proc "contextless" (error: ^errors.Error_Record, argument: i64, status: call_outcome.Call_Outcome) -> (call_outcome.Call_Outcome, i64) {
+	return call_outcome.fail(error, status, .Refused, .Kernel_Status, argument, 0, 0, i64(status))
 }
 
 // put stores the module file that the caller lends in memory in the store module_files under a nickname.
@@ -83,7 +83,7 @@ put :: proc "c" (nickname: ^string, module: system.Lent({.Read}), size: i64, res
 		return name_failure, 0
 	}
 	pages, size_status := system.memory_size(module.handle)
-	if size_status != .Ok {
+	if size_status != .Succeeded {
 		pages = 0
 	}
 	if refusal := disk_process.put_size_refusal(size, pages * system.PAGE_SIZE, 3); refusal.kind != 0 {
@@ -94,7 +94,7 @@ put :: proc "c" (nickname: ^string, module: system.Lent({.Read}), size: i64, res
 		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store)
 	}
 	address, map_status := system.memory_map(module.handle, {})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return memory_failure(error, 2, map_status)
 	}
 	// Each piece is copied one time, then hashed and written from the
@@ -173,7 +173,7 @@ read :: proc "c" (nickname: ^string, module: system.Lent({.Read, .Write}), error
 	}
 	count := int(object_size)
 	pages, pages_status := system.memory_size(module.handle)
-	if pages_status != .Ok {
+	if pages_status != .Succeeded {
 		pages = 0
 	}
 	if refusal := disk_process.read_room_refusal(i64(count), pages * system.PAGE_SIZE, 2); refusal.kind != 0 {
@@ -181,7 +181,7 @@ read :: proc "c" (nickname: ^string, module: system.Lent({.Read, .Write}), error
 		return .Argument_Refused, 0
 	}
 	address, map_status := system.memory_map(module.handle, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return memory_failure(error, 2, map_status)
 	}
 	// The ranges go into the memory of the caller by pieces of this

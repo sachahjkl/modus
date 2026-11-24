@@ -85,7 +85,7 @@ own_records_read :: proc "contextless" (scope: log_scope.Scope, after: i64) -> (
 	// An own number has 32 bits: `after` counts modulo 2^32.
 	own_after := u64(u32(max(after, 0)))
 	results, status := system.call(.Log_Read, u64(log_memory), scope.process, scope.process_serial, own_after, u64(uintptr(&own_copy[0])), u64(len(own_copy)))
-	if status != .Ok {
+	if status != .Succeeded {
 		return nil, 0, 0
 	}
 	return own_copy[:int(min(results[0], u64(len(own_copy))))], results[1], results[2]
@@ -182,8 +182,8 @@ scope_of_lent_process :: proc "contextless" (process: system.Handle, error: ^err
 	// The lent handle keeps the slot of the process for the whole call, so
 	// the slot and the serial name that process, also after it stopped.
 	slot, serial, status := system.process_place(process)
-	if status != .Ok {
-		outcome, _ = call_outcome.fail(error, system.outcome_of_status(status), .Refused, .Kernel_Status, LENT_PROCESS_ARGUMENT, 0, 0, i64(status))
+	if status != .Succeeded {
+		outcome, _ = call_outcome.fail(error, status, .Refused, .Kernel_Status, LENT_PROCESS_ARGUMENT, 0, 0, i64(status))
 		return {}, outcome
 	}
 	return log_scope.lent_process_scope(slot, serial), .Succeeded

@@ -72,6 +72,7 @@
 // ```
 package log
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:contract/enum_word"
 import module "modus:contract/module"
@@ -776,12 +777,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(.Failed)
 	}
-	if interface.hand_picture_open(&hand_picture, &window) != .Ok {
+	if interface.hand_picture_open(&hand_picture, &window) != .Succeeded {
 		system.stop(.Failed)
 	}
 	reader, status := system.log_open(ctx.handles[system.GRANT_LOG_RECORDS])
-	if status != .Ok {
-		system.log_fact(.Error, Records_Not_Readable{status = op.Status_Word(status)})
+	if status != .Succeeded {
+		system.log_fact(.Error, Records_Not_Readable{status = call_outcome.Call_Outcome_Word(status)})
 		system.stop(.Failed)
 	}
 	// The service reads the same memory object: exports.odin. Its handle
@@ -794,7 +795,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	follow_next = intrinsics.atomic_load(&reader_head.written)
 	window_scope := log_scope.Scope{kind = .Principal_Records, principal = window_principal}
 	// The catalog of the facts: with no image, each fact shows raw.
-	if address, mapped := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); mapped == .Ok {
+	if address, mapped := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); mapped == .Succeeded {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 	service, _ = system.service_open(ctx)

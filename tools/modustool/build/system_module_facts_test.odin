@@ -543,10 +543,10 @@ the_facts_with_no_value_write_the_lines_of_before :: proc(t: ^testing.T) {
 @(private = "file")
 status_words :: proc() -> []u64 {
 	words := make([dynamic]u64, context.temp_allocator)
-	for status in op.Status {
+	for status in call_outcome.Call_Outcome {
 		append(&words, u64(status))
 	}
-	append(&words, u64(max(op.Status)) + 1)
+	append(&words, u64(max(call_outcome.Call_Outcome)) + 1)
 	return words[:]
 }
 
@@ -554,7 +554,7 @@ status_words :: proc() -> []u64 {
 // member, or its number for a word that names no member.
 @(private = "file")
 status_text :: proc(word: u64) -> string {
-	if name, named := module.contract_enum_member_name(.Status, word); named {
+	if name, named := module.contract_enum_member_name(.Call_Outcome, word); named {
 		return name
 	}
 	return fmt.tprintf("%d", word)

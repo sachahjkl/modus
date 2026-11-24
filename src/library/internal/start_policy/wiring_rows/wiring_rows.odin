@@ -8,7 +8,7 @@
 // start policy").
 package wiring_rows
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/output"
 import "modus:contract/start_list"
 
@@ -29,7 +29,7 @@ Outcome :: enum u8 {
 Prepared :: struct {
 	outcome:    Outcome,
 	reader_row: u32, // Reader_Not_Running and Lend_Refused: the reader row, from 1. Else 0.
-	status:     op.Status, // Lend_Refused: the status of the lend. List_Not_Written: Bad_Operation. Else Ok.
+	status:     call_outcome.Call_Outcome, // Lend_Refused: the outcome of the lend. List_Not_Written: Argument_Refused. Else Succeeded.
 	// The page holds a list of no row with the numbers lent before the
 	// failure: sent with Wire, the root service refuses it and closes each
 	// one (src/md/features/module_outputs.md, "A lent handle with no
@@ -39,8 +39,8 @@ Prepared :: struct {
 
 // A lend of the process of the start row reader_row (from 0) to the root
 // service, through the root ring: the number that the root service holds,
-// or the status of the refusal.
-Lend :: #type proc "contextless" (reader_row: int) -> (number: u32, status: op.Status)
+// or the outcome of the refusal.
+Lend :: #type proc "contextless" (reader_row: int) -> (number: u32, status: call_outcome.Call_Outcome)
 
 // row_has_wirings says if the start row writer (from 0) writes into a
 // wiring row: its start needs the list page.
@@ -148,17 +148,17 @@ row_list_prepare :: proc "contextless" (list: ^start_list.List, writer: int, run
 	readers: [output.WIRING_LIST_ROW_LIMIT]int
 	count, absent := readers_of_row(list, writer, running, &readers)
 	if absent >= 0 {
-		return {outcome = .Reader_Not_Running, reader_row = u32(absent + 1), status = .Ok}
+		return {outcome = .Reader_Not_Running, reader_row = u32(absent + 1), status = .Succeeded}
 	}
 	if count == 0 {
-		return {outcome = .No_List, status = .Ok}
+		return {outcome = .No_List, status = .Succeeded}
 	}
 	handles: [output.WIRING_LIST_ROW_LIMIT]u32
-	prepared := Prepared{outcome = .Listed, status = .Ok}
+	prepared := Prepared{outcome = .Listed, status = .Succeeded}
 	lent := 0
 	for reader in readers[:count] {
 		number, status := lend(reader)
-		if status != .Ok {
+		if status != .Succeeded {
 			prepared = {outcome = .Lend_Refused, reader_row = u32(reader + 1), status = status}
 			break
 		}
@@ -170,7 +170,7 @@ row_list_prepare :: proc "contextless" (list: ^start_list.List, writer: int, run
 		if _, written := list_of_row(list, writer, readers[:count], handles[:lent], page); written {
 			return prepared
 		}
-		prepared = {outcome = .List_Not_Written, status = .Bad_Operation}
+		prepared = {outcome = .List_Not_Written, status = .Argument_Refused}
 		page_clear(page)
 	}
 	prepared.give_back = lent > 0 && output.wiring_list_write(page, nil, handles[:lent])

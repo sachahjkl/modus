@@ -5,6 +5,7 @@
 // takes it whole or refuses it whole.
 package plans_service
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "internal:plans/plans_core"
 import "modus:contract/enum_word"
@@ -52,12 +53,12 @@ values_pages_map :: proc "contextless" () -> bool {
 		return true
 	}
 	completion, answered := values_command(.Page)
-	if !answered || completion.kind != u32(system.Status.Ok) {
+	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		return false
 	}
 	memory := system.Handle(completion.values[0])
 	address, status := system.memory_map(memory, {.Write})
-	if status != .Ok {
+	if status != .Succeeded {
 		system.close(memory)
 		return false
 	}
@@ -80,7 +81,7 @@ values_replace :: proc "contextless" (user: rawptr, set: []u8, step: rd.Plan_Rol
 	if !completion_answered {
 		return .None, false
 	}
-	if completion.kind == u32(system.Status.Ok) {
+	if completion.kind == u32(call_outcome.Call_Outcome.Succeeded) {
 		return .None, true
 	}
 	// The core names its refusal as the value found; another refusal (no
@@ -100,7 +101,7 @@ values_commit_send :: proc "contextless" (user: rawptr, generation: u64) -> (tak
 	if !completion_answered {
 		return false, false
 	}
-	return completion.kind == u32(system.Status.Ok), true
+	return completion.kind == u32(call_outcome.Call_Outcome.Succeeded), true
 }
 
 // values_port_bind gives the state the port. With no pages, the port has

@@ -53,6 +53,7 @@
 // It has no USB.
 package input
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:display"
 import "modus:key_path"
@@ -243,8 +244,8 @@ mouse_command :: proc "contextless" (command: u8) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	output_memory = ctx.handles[input_context.GRANT_RING]
-	status: system.Status
-	if output, status = system.ring_open(output_memory); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if output, status = system.ring_open(output_memory); status != .Succeeded {
 		system.log_fact(.Info, No_Ring{})
 		system.stop(.Failed)
 	}
@@ -531,7 +532,7 @@ tablet_device_open :: proc "contextless" (ctx: ^system.Context) {
 		return
 	}
 	config_address, config_status := system.memory_map(config_handle, {})
-	if config_status != .Ok {
+	if config_status != .Succeeded {
 		return
 	}
 	device, found := virtio.find(ctx, ([^]u8)(config_address)[:pci.CONFIGURATION_SIZE])
@@ -542,12 +543,12 @@ tablet_device_open :: proc "contextless" (ctx: ^system.Context) {
 		return
 	}
 	queue_pages, pages_status := system.memory_size(queues_handle)
-	if pages_status != .Ok || queue_pages < pci.QUEUE_PAGES {
+	if pages_status != .Succeeded || queue_pages < pci.QUEUE_PAGES {
 		return
 	}
 	queue_address, map_status := system.memory_map(queues_handle, {.Write})
 	queue_physical, phys_status := system.memory_physical(machine_handle, queues_handle)
-	if map_status != .Ok || phys_status != .Ok {
+	if map_status != .Succeeded || phys_status != .Succeeded {
 		return
 	}
 	queue, queue_error := virtio.queue_start(&device, virtio_input.EVENT_QUEUE_INDEX, uintptr(queue_address), queue_physical, 1, 0)

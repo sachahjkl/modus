@@ -27,6 +27,7 @@
 // 1 process and 4 threads: the limits that the steps reach.
 package budget
 
+import "modus:contract/call_outcome"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
@@ -117,17 +118,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// Memory objects, until the budget cannot pay.
 	objects: [OBJECT_CAPACITY]system.Handle
 	object_count: u64
-	status := system.Status.Ok
+	status := call_outcome.Call_Outcome.Succeeded
 	for object_count < OBJECT_CAPACITY {
 		objects[object_count], status = system.memory_create(OBJECT_PAGES)
-		if status != .Ok {
+		if status != .Succeeded {
 			break
 		}
 		object_count += 1
 	}
 	// An object also pays for its frame list (operation.memory_cost).
 	cost := op.memory_cost(OBJECT_PAGES)
-	note("create memory objects of 64 pages", true, status == .No_Budget && object_count == start.pages / cost && pages_left() == start.pages % cost, object_count, " done, then no budget")
+	note("create memory objects of 64 pages", true, status == .Budget_Or_Capacity_Exhausted && object_count == start.pages / cost && pages_left() == start.pages % cost, object_count, " done, then no budget")
 	for object in objects[:object_count] {
 		system.close(object)
 	}
@@ -138,12 +139,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	thread_count: u64
 	for thread_count < THREAD_CAPACITY {
 		threads[thread_count], status = system.thread_start(wait_release, nil)
-		if status != .Ok {
+		if status != .Succeeded {
 			break
 		}
 		thread_count += 1
 	}
-	note("start threads", true, status == .No_Budget && thread_count == start.threads, thread_count, " done, then no budget")
+	note("start threads", true, status == .Budget_Or_Capacity_Exhausted && thread_count == start.threads, thread_count, " done, then no budget")
 	release = 1
 	system.word_wake(&release, THREAD_CAPACITY)
 	for thread in threads[:thread_count] {
@@ -154,11 +155,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	// A part of the budget becomes a new budget.
 	part, part_status := system.budget_create({pages = PART_PAGES})
-	note("take 256 pages for a new budget", false, part_status == .Ok && pages_left() == start.pages - PART_PAGES, "done")
+	note("take 256 pages for a new budget", false, part_status == .Succeeded && pages_left() == start.pages - PART_PAGES, "done")
 	first, first_status := system.memory_create(FIRST_PAGES, part)
-	note("create 200 pages with the new budget", false, first_status == .Ok && pages_left() == start.pages - PART_PAGES, "done")
+	note("create 200 pages with the new budget", false, first_status == .Succeeded && pages_left() == start.pages - PART_PAGES, "done")
 	_, second_status := system.memory_create(SECOND_PAGES, part)
-	note("create 100 pages more with it", true, second_status == .No_Budget, "no budget")
+	note("create 100 pages more with it", true, second_status == .Budget_Or_Capacity_Exhausted, "no budget")
 	system.close(part)
 	note("close the new budget, keep the memory", false, pages_left() == start.pages - op.memory_cost(FIRST_PAGES), "this budget pays for it")
 	system.close(first)
@@ -166,7 +167,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	// The budget paid for one process: this one.
 	_, status = system.call(.Process_Create, u64(system.own_budget()), 0, 0)
-	note("create a process", true, status == .No_Budget, "no budget")
+	note("create a process", true, status == .Budget_Or_Capacity_Exhausted, "no budget")
 
 	wrong: u64
 	for &row in rows[:row_count] {

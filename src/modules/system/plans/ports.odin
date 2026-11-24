@@ -42,7 +42,7 @@ root_requests_open :: proc "contextless" () -> bool {
 		return false
 	}
 	requests, status := system.ring_open(root_requests_handle, receive_handles = true)
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	root_requests.ring = requests
@@ -80,7 +80,7 @@ display_port_bind :: proc "contextless" (ctx: ^system.Context) -> (port: plans_c
 		return {}
 	}
 	address, status := system.memory_map(image_handle, {})
-	if status != .Ok {
+	if status != .Succeeded {
 		return {}
 	}
 	display_image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -170,12 +170,12 @@ display_ask :: proc "contextless" (user: rawptr, plan_name: string, added: strin
 	}
 	pages := (u64(total) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	memory, status := system.memory_create(pages)
-	if status != .Ok {
+	if status != .Succeeded {
 		return 0, false
 	}
 	defer system.close(memory)
 	address, map_status := system.memory_map(memory, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return 0, false
 	}
 	bytes := ([^]u8)(address)[:total]
@@ -184,7 +184,7 @@ display_ask :: proc "contextless" (user: rawptr, plan_name: string, added: strin
 	system.memory_unmap(address)
 	connection := &display_connection.connection
 	given, give_status := system.give(connection.ring_memory, memory, {.Read})
-	if give_status != .Ok {
+	if give_status != .Succeeded {
 		return 0, false
 	}
 	arguments := [4]isolated.Argument{{text = transmute([]u8)plan_name}, {integer = u64(given)}, {integer = u64(len(added))}, {integer = u64(len(removed))}}

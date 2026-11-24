@@ -31,13 +31,13 @@ PROBE_REQUIREMENTS :: work_budget.Work_Budget_Requirements{
 Worker_Runtime_Ops :: struct {
 	state:                   rawptr,
 	handle_state:            proc "contextless" (state: rawptr, handle: op.Handle) -> (kind: op.Object_Kind, rights: op.Rights),
-	budget_read:             proc "contextless" (state: rawptr, budget: op.Handle) -> (amounts: op.Budget_Amounts, status: op.Status),
-	memory_create_on_budget: proc "contextless" (state: rawptr, page_count: u64, budget: op.Handle, flags: op.Memory_Flags, error: ^errors.Error_Record) -> (memory: op.Handle, status: op.Status),
-	memory_map:              proc "contextless" (state: rawptr, memory: op.Handle, error: ^errors.Error_Record) -> (address: rawptr, status: op.Status),
-	memory_unmap:            proc "contextless" (state: rawptr, address: rawptr) -> op.Status,
-	memory_commit_on_budget: proc "contextless" (state: rawptr, memory: op.Handle, budget: op.Handle, first_page: u64, page_count: u64, error: ^errors.Error_Record) -> (changed: u64, status: op.Status),
-	thread_create_on_budget: proc "contextless" (state: rawptr, budget: op.Handle, entry: proc "c" (parameter: rawptr) -> !, stack_top: u64, parameter: rawptr, error: ^errors.Error_Record) -> (thread: op.Handle, status: op.Status),
-	thread_stop:             proc "contextless" (state: rawptr, thread: op.Handle) -> op.Status,
+	budget_read:             proc "contextless" (state: rawptr, budget: op.Handle) -> (amounts: op.Budget_Amounts, status: call_outcome.Call_Outcome),
+	memory_create_on_budget: proc "contextless" (state: rawptr, page_count: u64, budget: op.Handle, flags: op.Memory_Flags, error: ^errors.Error_Record) -> (memory: op.Handle, status: call_outcome.Call_Outcome),
+	memory_map:              proc "contextless" (state: rawptr, memory: op.Handle, error: ^errors.Error_Record) -> (address: rawptr, status: call_outcome.Call_Outcome),
+	memory_unmap:            proc "contextless" (state: rawptr, address: rawptr) -> call_outcome.Call_Outcome,
+	memory_commit_on_budget: proc "contextless" (state: rawptr, memory: op.Handle, budget: op.Handle, first_page: u64, page_count: u64, error: ^errors.Error_Record) -> (changed: u64, status: call_outcome.Call_Outcome),
+	thread_create_on_budget: proc "contextless" (state: rawptr, budget: op.Handle, entry: proc "c" (parameter: rawptr) -> !, stack_top: u64, parameter: rawptr, error: ^errors.Error_Record) -> (thread: op.Handle, status: call_outcome.Call_Outcome),
+	thread_stop:             proc "contextless" (state: rawptr, thread: op.Handle) -> call_outcome.Call_Outcome,
 	handle_close:            proc "contextless" (state: rawptr, handle: op.Handle),
 	word_wait:               proc "contextless" (state: rawptr, word: ^u32, value: u32),
 	word_wake:               proc "contextless" (state: rawptr, word: ^u32),
@@ -90,60 +90,60 @@ modus_handle_state :: proc "contextless" (_: rawptr, handle: op.Handle) -> (kind
 }
 
 @(private = "file")
-modus_budget_read :: proc "contextless" (_: rawptr, budget: op.Handle) -> (amounts: op.Budget_Amounts, status: op.Status) {
+modus_budget_read :: proc "contextless" (_: rawptr, budget: op.Handle) -> (amounts: op.Budget_Amounts, status: call_outcome.Call_Outcome) {
 	return system.budget_read(budget)
 }
 
 @(private = "file")
-modus_memory_create_on_budget :: proc "contextless" (_: rawptr, page_count: u64, budget: op.Handle, flags: op.Memory_Flags, error: ^errors.Error_Record) -> (memory: op.Handle, status: op.Status) {
+modus_memory_create_on_budget :: proc "contextless" (_: rawptr, page_count: u64, budget: op.Handle, flags: op.Memory_Flags, error: ^errors.Error_Record) -> (memory: op.Handle, status: call_outcome.Call_Outcome) {
 	// Refuse zero or the service's own budget so client memory can never fall
 	// back to the service's budget.
 	if budget == 0 || budget == system.own_budget() {
 		errors.fail(error, 0, .Handle_Rights, .Budgets, 1, i64(budget), i64(transmute(u32)work_budget.WORK_BUDGET_REQUIRED_RIGHTS), 0)
-		return 0, .No_Right
+		return 0, .Grant_Or_Right_Missing
 	}
 	return system.memory_create(page_count, budget, flags, error)
 }
 
 @(private = "file")
-modus_memory_map :: proc "contextless" (_: rawptr, memory: op.Handle, error: ^errors.Error_Record) -> (address: rawptr, status: op.Status) {
+modus_memory_map :: proc "contextless" (_: rawptr, memory: op.Handle, error: ^errors.Error_Record) -> (address: rawptr, status: call_outcome.Call_Outcome) {
 	return system.memory_map(memory, {.Write}, error = error)
 }
 
 @(private = "file")
-modus_memory_unmap :: proc "contextless" (_: rawptr, address: rawptr) -> op.Status {
+modus_memory_unmap :: proc "contextless" (_: rawptr, address: rawptr) -> call_outcome.Call_Outcome {
 	return system.memory_unmap(address)
 }
 
 @(private = "file")
-modus_memory_commit_on_budget :: proc "contextless" (_: rawptr, memory: op.Handle, budget: op.Handle, first_page: u64, page_count: u64, error: ^errors.Error_Record) -> (changed: u64, status: op.Status) {
+modus_memory_commit_on_budget :: proc "contextless" (_: rawptr, memory: op.Handle, budget: op.Handle, first_page: u64, page_count: u64, error: ^errors.Error_Record) -> (changed: u64, status: call_outcome.Call_Outcome) {
 	// Refuse zero or the service's own budget so scratch growth is strictly
 	// charged to the client's work budget.
 	if budget == 0 || budget == system.own_budget() {
 		errors.fail(error, 0, .Handle_Rights, .Budgets, 1, i64(budget), i64(transmute(u32)work_budget.WORK_BUDGET_REQUIRED_RIGHTS), 0)
-		return 0, .No_Right
+		return 0, .Grant_Or_Right_Missing
 	}
 	ranges := [1]op.Page_Range{{first = first_page, page_count = page_count}}
 	return system.memory_commit(memory, ranges[:], budget, error)
 }
 
 @(private = "file")
-modus_thread_create_on_budget :: proc "contextless" (_: rawptr, budget: op.Handle, entry: proc "c" (parameter: rawptr) -> !, stack_top: u64, parameter: rawptr, error: ^errors.Error_Record) -> (thread: op.Handle, status: op.Status) {
+modus_thread_create_on_budget :: proc "contextless" (_: rawptr, budget: op.Handle, entry: proc "c" (parameter: rawptr) -> !, stack_top: u64, parameter: rawptr, error: ^errors.Error_Record) -> (thread: op.Handle, status: call_outcome.Call_Outcome) {
 	// Create the work thread directly on the client's work budget so both its
 	// thread area and its processor time count strictly in the client's budget.
 	if budget == 0 || budget == system.own_budget() {
 		errors.fail(error, 0, .Handle_Rights, .Budgets, 1, i64(budget), i64(transmute(u32)work_budget.WORK_BUDGET_REQUIRED_RIGHTS), 0)
-		return 0, .No_Right
+		return 0, .Grant_Or_Right_Missing
 	}
 	results, call_status := system.call_with_error(error, .Thread_Create, u64(budget), u64(uintptr(rawptr(entry))), stack_top, u64(uintptr(parameter)), 0, 0)
-	if call_status != .Ok {
+	if call_status != .Succeeded {
 		return 0, call_status
 	}
-	return op.Handle(results[0]), .Ok
+	return op.Handle(results[0]), .Succeeded
 }
 
 @(private = "file")
-modus_thread_stop :: proc "contextless" (_: rawptr, thread: op.Handle) -> op.Status {
+modus_thread_stop :: proc "contextless" (_: rawptr, thread: op.Handle) -> call_outcome.Call_Outcome {
 	_, status := system.call(.Thread_Stop, u64(thread))
 	return status
 }
@@ -320,7 +320,7 @@ service_connect_client :: proc "contextless" (
 	effective_threads := offered_threads
 	if .Read in rights && service.ops.budget_read != nil {
 		amounts, read_status := service.ops.budget_read(service.ops.state, client_budget)
-		if read_status == .Ok {
+		if read_status == .Succeeded {
 			effective_pages = amounts.pages
 			effective_time = amounts.processor
 			effective_threads = amounts.threads
@@ -362,7 +362,7 @@ service_connect_client :: proc "contextless" (
 
 	// Allocate the work thread stack strictly on client_budget.
 	stack_memory, stack_status := service.ops.memory_create_on_budget(service.ops.state, req.stack_pages, client_budget, {}, error)
-	if stack_status != .Ok {
+	if stack_status != .Succeeded {
 		worker^ = {}
 		_, _ = work_budget.connection_close(&service.table, connection_identifier)
 		return status_to_connect_refusal(stack_status, .Too_Few_Pages)
@@ -370,7 +370,7 @@ service_connect_client :: proc "contextless" (
 	worker.stack_memory = stack_memory
 
 	stack_base, map_status := service.ops.memory_map(service.ops.state, stack_memory, error)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		worker_teardown_resources(service, worker, false)
 		worker^ = {}
 		_, _ = work_budget.connection_close(&service.table, connection_identifier)
@@ -388,7 +388,7 @@ service_connect_client :: proc "contextless" (
 	}
 	if reserve_pages > 0 {
 		scratch_memory, scratch_status := service.ops.memory_create_on_budget(service.ops.state, reserve_pages, client_budget, {.Uncommitted}, error)
-		if scratch_status != .Ok {
+		if scratch_status != .Succeeded {
 			worker_teardown_resources(service, worker, false)
 			worker^ = {}
 			_, _ = work_budget.connection_close(&service.table, connection_identifier)
@@ -398,7 +398,7 @@ service_connect_client :: proc "contextless" (
 		worker.scratch_reserved_pages = reserve_pages
 
 		scratch_base, scratch_map_status := service.ops.memory_map(service.ops.state, scratch_memory, error)
-		if scratch_map_status != .Ok {
+		if scratch_map_status != .Succeeded {
 			worker_teardown_resources(service, worker, false)
 			worker^ = {}
 			_, _ = work_budget.connection_close(&service.table, connection_identifier)
@@ -410,7 +410,7 @@ service_connect_client :: proc "contextless" (
 	// Create the per-connection work thread strictly on client_budget.
 	stack_top := u64(uintptr(worker.stack_base)) + worker.stack_pages * op.PAGE_SIZE
 	thread_handle, thread_status := service.ops.thread_create_on_budget(service.ops.state, client_budget, connection_worker_thread_entry, stack_top, worker, error)
-	if thread_status != .Ok {
+	if thread_status != .Succeeded {
 		worker_teardown_resources(service, worker, false)
 		worker^ = {}
 		_, _ = work_budget.connection_close(&service.table, connection_identifier)
@@ -432,15 +432,15 @@ service_connect_client :: proc "contextless" (
 }
 
 @(private = "file")
-status_to_connect_refusal :: proc "contextless" (status: op.Status, on_no_budget: work_budget.Work_Budget_Refusal) -> work_budget.Work_Budget_Refusal {
+status_to_connect_refusal :: proc "contextless" (status: call_outcome.Call_Outcome, on_no_budget: work_budget.Work_Budget_Refusal) -> work_budget.Work_Budget_Refusal {
 	switch status {
-	case .No_Budget:
+	case .Budget_Or_Capacity_Exhausted:
 		return on_no_budget
-	case .No_Right:
+	case .Grant_Or_Right_Missing:
 		return .Missing_Spend_Right
-	case .Bad_Handle:
+	case .Argument_Refused:
 		return .Budget_Revoked
-	case .Ok, .Bad_Operation, .Bad_Address, .Bad_State, .No_Slot, .No_Memory:
+	case .Succeeded, .Nothing_Has_That_Name, .Name_Already_Taken, .Wrong_State, .Another_Change_Came_First, .Operation_Unsupported, .Callee_Busy, .Callee_Unavailable, .Data_Damaged, .Stopped_After_A_Partial_Change, .Callee_Stopped_During_The_Call, .Connection_Ended_During_The_Call, .Deadline_Passed_During_The_Call, .Answer_Unreadable:
 		return .Invalid_State
 	}
 	return .Invalid_State
@@ -484,8 +484,8 @@ connection_worker_execute_request :: proc "contextless" (
 			return .Budget_Exhausted
 		}
 		_, commit_status := service.ops.memory_commit_on_budget(service.ops.state, worker.scratch_memory, worker.client_budget, worker.scratch_committed_pages, requested_scratch_pages, error)
-		if commit_status != .Ok {
-			if commit_status == .Bad_Handle || commit_status == .No_Right {
+		if commit_status != .Succeeded {
+			if commit_status == .Argument_Refused || commit_status == .Grant_Or_Right_Missing {
 				_, _ = service_revoke_client(service, connection_identifier)
 				return .Budget_Revoked
 			}
@@ -609,35 +609,35 @@ run_two_client_isolation_probe :: proc "c" (error: ^errors.Error_Record) -> (out
 	}
 
 	parent_a, status_a := system.budget_create(amounts_a, own_budget, error)
-	if status_a != .Ok {
-		return system.outcome_of_own_status(status_a), 0
+	if status_a != .Succeeded {
+		return system.own_operation_outcome(status_a), 0
 	}
 	defer system.close(parent_a)
 
 	parent_b, status_b := system.budget_create(amounts_b, own_budget, error)
-	if status_b != .Ok {
-		return system.outcome_of_own_status(status_b), 0
+	if status_b != .Succeeded {
+		return system.own_operation_outcome(status_b), 0
 	}
 	defer system.close(parent_b)
 
 	// Attenuate both handles to Spend only before passing them to the service.
 	spend_a, give_a := system.give(0, parent_a, {.Spend}, error)
-	if give_a != .Ok {
-		return system.outcome_of_own_status(give_a), 0
+	if give_a != .Succeeded {
+		return system.own_operation_outcome(give_a), 0
 	}
 	spend_b, give_b := system.give(0, parent_b, {.Spend}, error)
-	if give_b != .Ok {
+	if give_b != .Succeeded {
 		system.close(spend_a)
-		return system.outcome_of_own_status(give_b), 0
+		return system.own_operation_outcome(give_b), 0
 	}
 
 	// Snapshot the service's own budget after both child budgets have been split
 	// off. Client connections and work must not spend any further own pages.
 	own_before, read_status := system.budget_read(own_budget, error)
-	if read_status != .Ok {
+	if read_status != .Succeeded {
 		system.close(spend_a)
 		system.close(spend_b)
-		return system.outcome_of_own_status(read_status), 0
+		return system.own_operation_outcome(read_status), 0
 	}
 
 	if connect_a := service_connect_client(&probe_service, 1, spend_a, amounts_a.pages, amounts_a.processor, amounts_a.threads, error); connect_a != .None {

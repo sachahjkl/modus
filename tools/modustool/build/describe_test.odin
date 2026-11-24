@@ -245,6 +245,7 @@ describe_reads_the_unit_of_a_field :: proc(t: ^testing.T) {
 TABLE_WITH_KINDS_SOURCE :: `// A table whose fields state their kinds.
 package sample
 
+import "modus:contract/call_outcome"
 import contract "modus:contract/operation"
 import "modus:contract/value_kinds"
 
@@ -253,7 +254,7 @@ Check :: struct {
 	name:        value_kinds.Module_Name_Field,
 	address:     value_kinds.Hexadecimal_64,
 	check:       value_kinds.Hexadecimal_32,
-	status:      contract.Status,
+	status:      call_outcome.Call_Outcome,
 	level:       contract.Log_Level,
 	small:       value_kinds.Hexadecimal_8,
 	wide:        value_kinds.Hexadecimal_16,
@@ -282,18 +283,18 @@ describe_reads_the_kind_of_a_field :: proc(t: ^testing.T) {
 		return
 	}
 	check := records[0]
-	testing.expect_value(t, check.size, 232)
+	testing.expect_value(t, check.size, 240)
 	expected := [?]Field_Description {
 		{"module_hash", 0, .Bytes, value_kinds.HASH_FIELD_BYTES, false, {}, .Hash, .None},
 		{"name", 32, .Text, value_kinds.MODULE_NAME_FIELD_BYTES, false, {}, .Module_Name, .None},
 		{"address", 64, .Integer, 0, true, {}, .Hexadecimal, .None},
 		{"check", 72, .Integer, 4, true, {}, .Hexadecimal, .None},
-		{"status", 76, .Integer, u32(size_of(op.Status)), true, {}, .Status, .Status},
-		{"level", 80, .Integer, u32(size_of(op.Log_Level)), true, {}, .Status, .Log_Level},
-		{"small", 81, .Integer, 1, true, {}, .Hexadecimal, .None},
-		{"wide", 82, .Integer, 2, true, {}, .Hexadecimal, .None},
-		{"form", 84, .Integer, u32(size_of(op.Log_Record_Form)), true, {}, .Status, .Log_Record_Form},
-		{"values", 85, .Bytes, value_kinds.FACT_VALUES_FIELD_BYTES, false, {}, .Fact_Values, .None},
+		{"status", 80, .Integer, 0, true, {}, .Status, .Call_Outcome},
+		{"level", 88, .Integer, u32(size_of(op.Log_Level)), true, {}, .Status, .Log_Level},
+		{"small", 89, .Integer, 1, true, {}, .Hexadecimal, .None},
+		{"wide", 90, .Integer, 2, true, {}, .Hexadecimal, .None},
+		{"form", 92, .Integer, u32(size_of(op.Log_Record_Form)), true, {}, .Status, .Log_Record_Form},
+		{"values", 93, .Bytes, value_kinds.FACT_VALUES_FIELD_BYTES, false, {}, .Fact_Values, .None},
 	}
 	testing.expect_value(t, len(check.fields), len(expected))
 	for item, index in expected[:min(len(expected), len(check.fields))] {

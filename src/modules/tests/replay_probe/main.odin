@@ -32,6 +32,7 @@
 // N cases of 3". The process has no window.
 package replay_probe
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:contract/enum_word"
 import "modus:contract/input_history"
@@ -150,7 +151,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Refused)
 	}
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Info, Probe_No_Boot_Image{})
 		system.stop(.Failed)
 	}
@@ -178,14 +179,14 @@ mapped_create :: proc "contextless" (page_count: u64, contiguous: bool) -> (mapp
 		flags = {.Contiguous}
 	}
 	memory, made := system.memory_create(page_count, flags = flags)
-	if made != .Ok {
-		system.log_fact(.Info, Probe_Step_Failed{status_word = op.Status_Word(made), step = value_kinds.text_field("Memory_Create", 32)})
+	if made != .Succeeded {
+		system.log_fact(.Info, Probe_Step_Failed{status_word = call_outcome.Call_Outcome_Word(made), step = value_kinds.text_field("Memory_Create", 32)})
 		return {}, false
 	}
 	address, mapped_status := system.memory_map(memory, {.Write})
-	if mapped_status != .Ok {
+	if mapped_status != .Succeeded {
 		system.close(memory)
-		system.log_fact(.Info, Probe_Step_Failed{status_word = op.Status_Word(mapped_status), step = value_kinds.text_field("Memory_Map", 32)})
+		system.log_fact(.Info, Probe_Step_Failed{status_word = call_outcome.Call_Outcome_Word(mapped_status), step = value_kinds.text_field("Memory_Map", 32)})
 		return {}, false
 	}
 	return {memory = memory, bytes = ([^]u8)(address)[:page_count * system.PAGE_SIZE]}, true
@@ -213,10 +214,10 @@ reader_start :: proc "contextless" (shared: system.Handle) -> (process: system.H
 		mapping_count = 1
 	}
 	error: module.Load_Error
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	process, status = system.process_start(system.image_find(image, "replay_probe"), "replay_probe reader", grants, random.values_with_seed(&process_generator, values), {pages = 256, processes = 1, threads = 1, processor = 200_000, log_records = 10}, mappings[:mapping_count], nil, {image = image}, &error, held_entry = &entry)
-	if status != .Ok {
-		system.log_fact(.Info, Probe_Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field("process_start", 32)})
+	if status != .Succeeded {
+		system.log_fact(.Info, Probe_Step_Failed{status_word = call_outcome.Call_Outcome_Word(status), step = value_kinds.text_field("process_start", 32)})
 		return 0, 0, false
 	}
 	return process, entry, true
@@ -326,13 +327,13 @@ case_of_the_record :: proc "contextless" (shared: Mapped, history: Mapped) -> bo
 		return false
 	}
 	defer system.close(reader)
-	if status := system.process_record_start(reader, history.memory); status != .Ok {
-		system.log_fact(.Info, Probe_Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field("Record_Start", 32)})
+	if status := system.process_record_start(reader, history.memory); status != .Succeeded {
+		system.log_fact(.Info, Probe_Step_Failed{status_word = call_outcome.Call_Outcome_Word(status), step = value_kinds.text_field("Record_Start", 32)})
 		system.process_stop(reader)
 		return false
 	}
-	if status := system.process_release(reader, entry); status != .Ok {
-		system.log_fact(.Info, Probe_Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field("process_release", 32)})
+	if status := system.process_release(reader, entry); status != .Succeeded {
+		system.log_fact(.Info, Probe_Step_Failed{status_word = call_outcome.Call_Outcome_Word(status), step = value_kinds.text_field("process_release", 32)})
 		system.process_stop(reader)
 		return false
 	}
@@ -373,13 +374,13 @@ replay_of :: proc "contextless" (history: Mapped) -> (header: input_history.Hist
 		return {}, .None, .None, false
 	}
 	defer system.close(reader)
-	if status := system.process_replay_start(reader, history.memory); status != .Ok {
-		system.log_fact(.Info, Probe_Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field("Replay_Start", 32)})
+	if status := system.process_replay_start(reader, history.memory); status != .Succeeded {
+		system.log_fact(.Info, Probe_Step_Failed{status_word = call_outcome.Call_Outcome_Word(status), step = value_kinds.text_field("Replay_Start", 32)})
 		system.process_stop(reader)
 		return {}, .None, .None, false
 	}
-	if status := system.process_release(reader, entry); status != .Ok {
-		system.log_fact(.Info, Probe_Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field("process_release", 32)})
+	if status := system.process_release(reader, entry); status != .Succeeded {
+		system.log_fact(.Info, Probe_Step_Failed{status_word = call_outcome.Call_Outcome_Word(status), step = value_kinds.text_field("process_release", 32)})
 		system.process_stop(reader)
 		return {}, .None, .None, false
 	}

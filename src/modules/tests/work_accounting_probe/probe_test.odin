@@ -1,6 +1,7 @@
 #+build !freestanding
 package work_accounting_probe
 
+import "modus:contract/call_outcome"
 import "core:testing"
 import "modus:contract/errors"
 import op "modus:contract/operation"
@@ -47,7 +48,7 @@ Fake_Kernel_Runtime :: struct {
 	memories:                  [work_budget.MAX_ACCOUNTED_CONNECTIONS * 4 + 16]Fake_Memory,
 	threads:                   [work_budget.MAX_ACCOUNTED_CONNECTIONS + 8]Fake_Thread,
 	non_budget_handle:         op.Handle,
-	force_thread_create_fail:  op.Status,
+	force_thread_create_fail:  call_outcome.Call_Outcome,
 }
 
 @(private = "file")
@@ -133,35 +134,35 @@ fake_handle_state :: proc "contextless" (state: rawptr, handle: op.Handle) -> (k
 }
 
 @(private = "file")
-fake_budget_read :: proc "contextless" (state: rawptr, budget: op.Handle) -> (amounts: op.Budget_Amounts, status: op.Status) {
+fake_budget_read :: proc "contextless" (state: rawptr, budget: op.Handle) -> (amounts: op.Budget_Amounts, status: call_outcome.Call_Outcome) {
 	rt := (^Fake_Kernel_Runtime)(state)
 	b := fake_find_budget(rt, budget)
 	if b == nil || b.revoked {
-		return {}, .Bad_Handle
+		return {}, .Argument_Refused
 	}
 	if .Read not_in b.rights {
-		return {}, .No_Right
+		return {}, .Grant_Or_Right_Missing
 	}
 	return {
 		pages     = b.pages_remaining,
 		threads   = b.threads_remaining,
 		processor = b.processor,
-	}, .Ok
+	}, .Succeeded
 }
 
 @(private = "file")
-fake_memory_create :: proc "contextless" (state: rawptr, page_count: u64, budget: op.Handle, flags: op.Memory_Flags, error: ^errors.Error_Record) -> (memory: op.Handle, status: op.Status) {
+fake_memory_create :: proc "contextless" (state: rawptr, page_count: u64, budget: op.Handle, flags: op.Memory_Flags, error: ^errors.Error_Record) -> (memory: op.Handle, status: call_outcome.Call_Outcome) {
 	rt := (^Fake_Kernel_Runtime)(state)
 	if budget == 0 || budget == rt.service_own_budget {
 		rt.service_budget_touched = true
-		return 0, .No_Right
+		return 0, .Grant_Or_Right_Missing
 	}
 	b := fake_find_budget(rt, budget)
 	if b == nil || b.revoked {
-		return 0, .Bad_Handle
+		return 0, .Argument_Refused
 	}
 	if .Spend not_in b.rights {
-		return 0, .No_Right
+		return 0, .Grant_Or_Right_Missing
 	}
 	is_uncommitted := .Uncommitted in flags
 	full_cost := op.memory_cost(page_count)
@@ -171,7 +172,7 @@ fake_memory_create :: proc "contextless" (state: rawptr, page_count: u64, budget
 		if error != nil {
 			error^ = errors.error_make(.Budget, .Pages, 1, i64(budget), i64(upfront), i64(b.pages_remaining))
 		}
-		return 0, .No_Budget
+		return 0, .Budget_Or_Capacity_Exhausted
 	}
 	for &m in rt.memories {
 		if !m.alive {
@@ -187,101 +188,101 @@ fake_memory_create :: proc "contextless" (state: rawptr, page_count: u64, budget
 				uncommitted     = is_uncommitted,
 				list_pages      = is_uncommitted ? upfront : list_cost,
 			}
-			return h, .Ok
+			return h, .Succeeded
 		}
 	}
-	return 0, .No_Slot
+	return 0, .Budget_Or_Capacity_Exhausted
 }
 
 @(private = "file")
-fake_memory_map :: proc "contextless" (state: rawptr, memory: op.Handle, _: ^errors.Error_Record) -> (address: rawptr, status: op.Status) {
+fake_memory_map :: proc "contextless" (state: rawptr, memory: op.Handle, _: ^errors.Error_Record) -> (address: rawptr, status: call_outcome.Call_Outcome) {
 	rt := (^Fake_Kernel_Runtime)(state)
 	m := fake_find_memory(rt, memory)
 	if m == nil {
-		return nil, .Bad_Handle
+		return nil, .Argument_Refused
 	}
 	addr := rawptr(rt.next_address)
 	rt.next_address += uintptr((m.reserved_pages + 2) * op.PAGE_SIZE)
 	m.mapped = true
 	m.mapped_address = addr
-	return addr, .Ok
+	return addr, .Succeeded
 }
 
 @(private = "file")
-fake_memory_unmap :: proc "contextless" (state: rawptr, address: rawptr) -> op.Status {
+fake_memory_unmap :: proc "contextless" (state: rawptr, address: rawptr) -> call_outcome.Call_Outcome {
 	rt := (^Fake_Kernel_Runtime)(state)
 	for &m in rt.memories {
 		if m.alive && m.mapped && m.mapped_address == address {
 			m.mapped = false
 			m.mapped_address = nil
-			return .Ok
+			return .Succeeded
 		}
 	}
-	return .Bad_Address
+	return .Argument_Refused
 }
 
 @(private = "file")
-fake_memory_commit :: proc "contextless" (state: rawptr, memory: op.Handle, budget: op.Handle, first_page: u64, page_count: u64, error: ^errors.Error_Record) -> (changed: u64, status: op.Status) {
+fake_memory_commit :: proc "contextless" (state: rawptr, memory: op.Handle, budget: op.Handle, first_page: u64, page_count: u64, error: ^errors.Error_Record) -> (changed: u64, status: call_outcome.Call_Outcome) {
 	rt := (^Fake_Kernel_Runtime)(state)
 	if budget == 0 || budget == rt.service_own_budget {
 		rt.service_budget_touched = true
-		return 0, .No_Right
+		return 0, .Grant_Or_Right_Missing
 	}
 	b := fake_find_budget(rt, budget)
 	if b == nil || b.revoked {
-		return 0, .Bad_Handle
+		return 0, .Argument_Refused
 	}
 	if .Spend not_in b.rights {
-		return 0, .No_Right
+		return 0, .Grant_Or_Right_Missing
 	}
 	m := fake_find_memory(rt, memory)
 	if m == nil || m.payer != budget || !m.uncommitted {
-		return 0, .Bad_Handle
+		return 0, .Argument_Refused
 	}
 	if first_page + page_count > m.reserved_pages {
-		return 0, .Bad_Address
+		return 0, .Argument_Refused
 	}
 	if b.pages_remaining < page_count {
 		if error != nil {
 			error^ = errors.error_make(.Budget, .Pages, 1, i64(budget), i64(page_count), i64(b.pages_remaining))
 		}
-		return 0, .No_Budget
+		return 0, .Budget_Or_Capacity_Exhausted
 	}
 	b.pages_remaining -= page_count
 	m.committed_pages += page_count
-	return page_count, .Ok
+	return page_count, .Succeeded
 }
 
 @(private = "file")
-fake_thread_create :: proc "contextless" (state: rawptr, budget: op.Handle, _: proc "c" (parameter: rawptr) -> !, _: u64, _: rawptr, error: ^errors.Error_Record) -> (thread: op.Handle, status: op.Status) {
+fake_thread_create :: proc "contextless" (state: rawptr, budget: op.Handle, _: proc "c" (parameter: rawptr) -> !, _: u64, _: rawptr, error: ^errors.Error_Record) -> (thread: op.Handle, status: call_outcome.Call_Outcome) {
 	rt := (^Fake_Kernel_Runtime)(state)
 	if budget == 0 || budget == rt.service_own_budget {
 		rt.service_budget_touched = true
-		return 0, .No_Right
+		return 0, .Grant_Or_Right_Missing
 	}
-	if rt.force_thread_create_fail != .Ok {
+	if rt.force_thread_create_fail != .Succeeded {
 		fail := rt.force_thread_create_fail
-		rt.force_thread_create_fail = .Ok
+		rt.force_thread_create_fail = .Succeeded
 		return 0, fail
 	}
 	b := fake_find_budget(rt, budget)
 	if b == nil || b.revoked {
-		return 0, .Bad_Handle
+		return 0, .Argument_Refused
 	}
 	if .Spend not_in b.rights {
-		return 0, .No_Right
+		return 0, .Grant_Or_Right_Missing
 	}
 	if b.threads_remaining < 1 {
 		if error != nil {
 			error^ = errors.error_make(.Budget, .Threads, 1, i64(budget), 1, 0)
 		}
-		return 0, .No_Budget
+		return 0, .Budget_Or_Capacity_Exhausted
 	}
 	if b.pages_remaining < work_budget.WORK_THREAD_AREA_PAGES {
 		if error != nil {
 			error^ = errors.error_make(.Budget, .Pages, 1, i64(budget), i64(work_budget.WORK_THREAD_AREA_PAGES), i64(b.pages_remaining))
 		}
-		return 0, .No_Budget
+		return 0, .Budget_Or_Capacity_Exhausted
 	}
 	for &th in rt.threads {
 		if !th.alive {
@@ -290,18 +291,18 @@ fake_thread_create :: proc "contextless" (state: rawptr, budget: op.Handle, _: p
 			b.threads_remaining -= 1
 			b.pages_remaining -= work_budget.WORK_THREAD_AREA_PAGES
 			th = {alive = true, handle = h, payer = budget}
-			return h, .Ok
+			return h, .Succeeded
 		}
 	}
-	return 0, .No_Slot
+	return 0, .Budget_Or_Capacity_Exhausted
 }
 
 @(private = "file")
-fake_thread_stop :: proc "contextless" (state: rawptr, thread: op.Handle) -> op.Status {
+fake_thread_stop :: proc "contextless" (state: rawptr, thread: op.Handle) -> call_outcome.Call_Outcome {
 	rt := (^Fake_Kernel_Runtime)(state)
 	th := fake_find_thread(rt, thread)
 	if th == nil {
-		return .Bad_Handle
+		return .Argument_Refused
 	}
 	if !th.stopped {
 		th.stopped = true
@@ -310,7 +311,7 @@ fake_thread_stop :: proc "contextless" (state: rawptr, thread: op.Handle) -> op.
 			b.pages_remaining += work_budget.WORK_THREAD_AREA_PAGES
 		}
 	}
-	return .Ok
+	return .Succeeded
 }
 
 @(private = "file")
@@ -489,7 +490,7 @@ partial_connect_failure_rolls_back_and_mid_call_revocation_reclaims :: proc(t: ^
 
 	// Inject Thread_Create No_Budget failure after stack and scratch succeed:
 	// verify stack and scratch are rolled back with zero leaks.
-	rt.force_thread_create_fail = .No_Budget
+	rt.force_thread_create_fail = .Budget_Or_Capacity_Exhausted
 	testing.expect_value(t, service_connect_client(&service, 1, budget_1, amounts.pages, amounts.processor, amounts.threads), work_budget.Work_Budget_Refusal.Missing_Thread_Slot)
 
 	mems, maps, ths := fake_live_counts(&rt)

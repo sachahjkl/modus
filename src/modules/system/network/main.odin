@@ -1006,18 +1006,18 @@ controlled :: proc "contextless" (record: ring.Record) {
 			free = -1
 		}
 		region_address: rawptr
-		region_status := system.Status.Bad_Handle
+		region_status := call_outcome.Call_Outcome.Argument_Refused
 		// Give: this service gives the region to the frame service, with
 		// Read only, so that the device reads the data of each send there.
 		needed := system.Rights{.Read, .Write, .Give}
 		if free >= 0 && region_kind == .Memory && region_through && needed <= region_rights {
-			if region_pages, size_status := system.memory_size(region_handle); size_status == .Ok && region_pages == datagram.REGION_PAGES {
+			if region_pages, size_status := system.memory_size(region_handle); size_status == .Succeeded && region_pages == datagram.REGION_PAGES {
 				region_address, region_status = system.memory_map(region_handle, {.Write})
 			}
 		}
 		opened: ring.Ring
-		ring_status := system.Status.Bad_Handle
-		if kind == .Memory && through && free >= 0 && region_status == .Ok {
+		ring_status := call_outcome.Call_Outcome.Argument_Refused
+		if kind == .Memory && through && free >= 0 && region_status == .Succeeded {
 			opened, ring_status = system.ring_open(handle)
 		}
 		ADD :: u32(datagram.Control.Endpoint_Add)
@@ -1032,36 +1032,36 @@ controlled :: proc "contextless" (record: ring.Record) {
 		} else if free < 0 {
 			result = .Callee_Busy
 			values = errors.ring_fail(ADD, .Full, .Records, 0, 0, ENDPOINT_CAPACITY)
-		} else if region_status != .Ok || ring_status != .Ok {
+		} else if region_status != .Succeeded || ring_status != .Succeeded {
 			result = .Argument_Refused
 			refused: bool
 			region_outcome: call_outcome.Call_Outcome
 			if values, region_outcome, refused = system.region_refusal(region_handle, control_memory, ADD); refused {
 				result = region_outcome
 				values[3] = 2 // The argument: the region.
-			} else if size, size_status := system.memory_size(region_handle); size_status != .Ok {
+			} else if size, size_status := system.memory_size(region_handle); size_status != .Succeeded {
 				values = errors.ring_fail(ADD, .Refused, .None, 2, i64(region_handle), 0, i64(size_status))
 			} else if size != datagram.REGION_PAGES {
 				values = errors.ring_fail(ADD, .Bad_Value, .Pages, 2, i64(size), datagram.REGION_PAGES)
 			} else if values, region_outcome, refused = system.region_refusal(handle, control_memory, ADD); refused {
 				result = region_outcome
 			} else {
-				values = errors.ring_fail(ADD, .Refused, .None, 0, 0, 0, i64(region_status != .Ok ? region_status : ring_status))
+				values = errors.ring_fail(ADD, .Refused, .None, 0, 0, 0, i64(region_status != .Succeeded ? region_status : ring_status))
 			}
 		}
 		read_region: system.Handle
 		if result == .Succeeded {
-			give_status: system.Status
-			if read_region, give_status = system.give(frames_memory, region_handle, {.Read}); give_status != .Ok {
+			give_status: call_outcome.Call_Outcome
+			if read_region, give_status = system.give(frames_memory, region_handle, {.Read}); give_status != .Succeeded {
 				result = .Argument_Refused
 				values = errors.ring_fail(ADD, .Refused, .None, 2, i64(region_handle), 0, i64(give_status))
 			}
 		}
 		if result != .Succeeded {
-			if ring_status == .Ok {
+			if ring_status == .Succeeded {
 				system.ring_close(&opened)
 			}
-			if region_status == .Ok {
+			if region_status == .Succeeded {
 				system.memory_unmap(region_address)
 			}
 			system.close(handle)
@@ -1281,37 +1281,37 @@ frame_service_check :: proc "contextless" () {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	frames_memory = ctx.handles[frame.GRANT_RING]
 	control_memory = ctx.handles[datagram.SERVICE_CONTROL]
-	status: system.Status
-	if frames, status = system.ring_open(frames_memory); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if frames, status = system.ring_open(frames_memory); status != .Succeeded {
 		fail("no frame ring")
 	}
 	frame_service = ctx.handles[frame.GRANT_SERVICE]
 	if kind, rights, _ := system.handle_state(frame_service); kind != .Process || .Read not_in rights {
 		fail("no handle of the frame service with the right Read: a wait for the device would have no end")
 	}
-	if control, status = system.ring_open(control_memory, receive_handles = true); status != .Ok {
+	if control, status = system.ring_open(control_memory, receive_handles = true); status != .Succeeded {
 		fail("no control ring")
 	}
 	// The frame region: the device reads and writes it, so it is contiguous.
 	memory, memory_status := system.memory_create(REGION_PAGES, 0, {.Contiguous})
 	address, map_status := system.memory_map(memory, {.Write})
-	if memory_status != .Ok || map_status != .Ok {
+	if memory_status != .Succeeded || map_status != .Succeeded {
 		fail("no frame region")
 	}
 	region = ([^]u8)(address)[:REGION_PAGES * system.PAGE_SIZE]
 	// The frame service maps the ring when it starts: until then, the
 	// kernel does not know the other side.
 	given: system.Handle
-	give_status := system.Status.Bad_Handle
-	for attempt := 0; attempt < 2000 && give_status != .Ok; attempt += 1 {
-		if given, give_status = system.give(frames_memory, memory, {.Read, .Write}); give_status != .Ok {
+	give_status := call_outcome.Call_Outcome.Argument_Refused
+	for attempt := 0; attempt < 2000 && give_status != .Succeeded; attempt += 1 {
+		if given, give_status = system.give(frames_memory, memory, {.Read, .Write}); give_status != .Succeeded {
 			if state, _, _ := system.process_state(frame_service); system.answer_wait_of(system.time(), system.WAIT_FOREVER, state) == .Stopped {
 				frame_service_stopped_fail()
 			}
 			system.sleep(system.time() + 1)
 		}
 	}
-	if give_status != .Ok {
+	if give_status != .Succeeded {
 		fail("the frame service does not map the frame ring")
 	}
 	if attached := call(.Attach, TAG_ATTACH, {0 = u64(given)}); attached.kind != u32(call_outcome.Call_Outcome.Succeeded) {

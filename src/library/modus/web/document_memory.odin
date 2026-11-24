@@ -8,6 +8,7 @@ package web
 // and a part that the budget does not pay cuts the document there, which
 // it says (truncated).
 
+import "modus:contract/call_outcome"
 import "modus:contract/html_css"
 import "modus:system"
 
@@ -31,10 +32,10 @@ Document_Arenas :: [Document_Arena]system.Arena
 // (system.arena_reservation_pages), so that no part is bounded by less than
 // the budget. The budget pays the frame list of each reservation now, and
 // each page at its first use. A refused arena ends the ones before it.
-document_arenas_create :: proc "contextless" (arenas: ^Document_Arenas, reserve_pages: u64) -> system.Status {
+document_arenas_create :: proc "contextless" (arenas: ^Document_Arenas, reserve_pages: u64) -> call_outcome.Call_Outcome {
 	for &arena, part in arenas {
-		status: system.Status
-		if arena, status = system.arena_create(reserve_pages); status != .Ok {
+		status: call_outcome.Call_Outcome
+		if arena, status = system.arena_create(reserve_pages); status != .Succeeded {
 			for &made, before in arenas {
 				if before < part {
 					system.arena_end(&made)
@@ -43,7 +44,7 @@ document_arenas_create :: proc "contextless" (arenas: ^Document_Arenas, reserve_
 			return status
 		}
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // document_memory_bind gives a tree, a style sheet and a layout tree the
@@ -70,7 +71,7 @@ arena_entries :: proc "contextless" (arena: ^system.Arena, entry_size, wanted: i
 		return held, false
 	}
 	for target in ([2]int{min(2 * wanted, reserved), wanted}) {
-		if _, status := system.arena_push(arena, u64((target - held) * entry_size), 1); status == .Ok {
+		if _, status := system.arena_push(arena, u64((target - held) * entry_size), 1); status == .Succeeded {
 			return target, true
 		}
 	}

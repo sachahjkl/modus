@@ -135,7 +135,7 @@ process_lives :: proc "contextless" (state: op.Process_State) -> bool {
 // report is of another process than the one with this serial.
 policy_threads_of :: proc "contextless" (slot, serial: u64) -> int {
 	_, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Threads), slot, u64(uintptr(&policy_table)), size_of(policy_table))
-	if status != .Ok || policy_table.process_serial != serial {
+	if status != .Succeeded || policy_table.process_serial != serial {
 		return 0
 	}
 	return int(min(policy_table.count, op.THREAD_REPORT_CAPACITY))
@@ -184,7 +184,7 @@ setting_weight :: proc "contextless" (table: ^[SETTING_CAPACITY]Process_Setting,
 // again as a new thread.
 thread_weight_write :: proc "contextless" (thread: ^Tracked_Thread, part, new_thread_limit: u32) -> (weight: u32) {
 	schedule, read_status := system.thread_schedule_read(machine, thread.machine_number)
-	if read_status != .Ok {
+	if read_status != .Succeeded {
 		// The thread ended since the report.
 		return 0
 	}
@@ -201,11 +201,11 @@ thread_weight_write :: proc "contextless" (thread: ^Tracked_Thread, part, new_th
 	if schedule.weight != wanted || schedule.weight_limit != part || schedule.new_thread_weight_limit != new_limit {
 		status := system.thread_schedule_write(machine, thread.machine_number, {weight = wanted, request = schedule.request, weight_limit = part, new_thread_weight_limit = new_limit})
 		switch {
-		case status == .Ok:
+		case status == .Succeeded:
 			round_now.writes += 1
 			policy_writes += 1
 			policy_raises += u64(wanted > schedule.weight)
-		case status == .Bad_State:
+		case status == .Wrong_State || status == .Nothing_Has_That_Name:
 			return 0 // It ended between the read and the write.
 		case:
 			policy_refused += 1
@@ -244,7 +244,7 @@ policy_round :: proc "contextless" (on: bool) {
 	round_time_before = now
 	for slot in u64(1) ..< min(system_report().process_slots, PROCESS_SLOT_LIMIT) {
 		report, status := process_report(slot)
-		if status != .Ok || !process_lives(report.state) {
+		if status != .Succeeded || !process_lives(report.state) {
 			slots_before[slot] = {}
 			continue
 		}
@@ -355,11 +355,11 @@ process_limit_write :: proc "contextless" (slot, serial: u64, limit: u32) {
 	}
 	status := system.process_schedule_write(machine, slot, serial, {new_thread_weight_limit = limit})
 	switch {
-	case status == .Ok:
+	case status == .Succeeded:
 		written^ = {serial = serial, limit = limit}
 		round_now.writes += 1
 		policy_writes += 1
-	case status == .Bad_State:
+	case status == .Wrong_State || status == .Nothing_Has_That_Name:
 	// The process ended since its report.
 	case:
 		policy_refused += 1
@@ -383,18 +383,18 @@ policy_weights_give_back :: proc "contextless" () -> bool {
 		written, refused: u64
 		for slot in u64(1) ..< min(system_report().process_slots, PROCESS_SLOT_LIMIT) {
 			report, status := process_report(slot)
-			if status != .Ok || !process_lives(report.state) {
+			if status != .Succeeded || !process_lives(report.state) {
 				continue
 			}
 			// The value of the process first: a thread that the process
 			// creates after it has the full value of its process.
-			if process_schedule, process_status := system.process_schedule_read(machine, slot, report.process_serial); process_status == .Ok && process_schedule.new_thread_weight_limit != op.WEIGHT_FULL {
+			if process_schedule, process_status := system.process_schedule_read(machine, slot, report.process_serial); process_status == .Succeeded && process_schedule.new_thread_weight_limit != op.WEIGHT_FULL {
 				switch system.process_schedule_write(machine, slot, report.process_serial, {}) {
-				case .Ok:
+				case .Succeeded:
 					written += 1
-				case .Bad_State:
+				case .Wrong_State, .Nothing_Has_That_Name:
 				// The process ended.
-				case .Bad_Operation, .Bad_Handle, .Bad_Address, .No_Memory, .No_Slot, .No_Right, .No_Budget:
+				case .Argument_Refused, .Grant_Or_Right_Missing, .Name_Already_Taken, .Another_Change_Came_First, .Operation_Unsupported, .Budget_Or_Capacity_Exhausted, .Callee_Busy, .Callee_Unavailable, .Data_Damaged, .Stopped_After_A_Partial_Change, .Callee_Stopped_During_The_Call, .Connection_Ended_During_The_Call, .Deadline_Passed_During_The_Call, .Answer_Unreadable:
 					refused += 1
 				}
 			}
@@ -405,7 +405,7 @@ policy_weights_give_back :: proc "contextless" () -> bool {
 					continue
 				}
 				schedule, read_status := system.thread_schedule_read(machine, item.machine_number)
-				if read_status != .Ok || (schedule.weight_limit == op.WEIGHT_FULL && schedule.new_thread_weight_limit == op.WEIGHT_FULL) {
+				if read_status != .Succeeded || (schedule.weight_limit == op.WEIGHT_FULL && schedule.new_thread_weight_limit == op.WEIGHT_FULL) {
 					continue
 				}
 				asked := asked_of(schedule)
@@ -413,11 +413,11 @@ policy_weights_give_back :: proc "contextless" () -> bool {
 					asked = schedule.weight < thread.written ? schedule.weight : thread.asked
 				}
 				switch system.thread_schedule_write(machine, item.machine_number, {weight = asked, request = schedule.request, weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL}) {
-				case .Ok:
+				case .Succeeded:
 					written += 1
-				case .Bad_State:
+				case .Wrong_State, .Nothing_Has_That_Name:
 				// The thread ended.
-				case .Bad_Operation, .Bad_Handle, .Bad_Address, .No_Memory, .No_Slot, .No_Right, .No_Budget:
+				case .Argument_Refused, .Grant_Or_Right_Missing, .Name_Already_Taken, .Another_Change_Came_First, .Operation_Unsupported, .Budget_Or_Capacity_Exhausted, .Callee_Busy, .Callee_Unavailable, .Data_Damaged, .Stopped_After_A_Partial_Change, .Callee_Stopped_During_The_Call, .Connection_Ended_During_The_Call, .Deadline_Passed_During_The_Call, .Answer_Unreadable:
 					refused += 1
 				}
 			}
@@ -665,9 +665,9 @@ short_threads_run :: proc "contextless" () -> ! {
 			if thread.handle != 0 {
 				system.thread_wait(thread)
 			}
-			status: system.Status
+			status: call_outcome.Call_Outcome
 			thread, status = system.thread_start(short_thread_run, &share_spin_count[index])
-			if status != .Ok {
+			if status != .Succeeded {
 				thread = {}
 			}
 		}
@@ -721,11 +721,11 @@ case_processes_start :: proc "contextless" (processes: []Share_Process, describe
 		values[SHARE_VALUE_ROLE] = described[index].role
 		amounts := described[index].amounts
 		error: module.Load_Error
-		status: system.Status
+		status: call_outcome.Call_Outcome
 		started.process, status = system.process_start(file, described[index].name, grants, random.values_with_seed(&process_generator, values), amounts, nil, nil, {image = image}, &error)
-		if status != .Ok {
+		if status != .Succeeded {
 			own, _ := system.budget_read()
-			system.log_fact(.Info, Share_Process_Not_Started{status = op.Status_Word(status), given_pages = own.pages, given_processes = own.processes, given_threads = own.threads, asked_pages = amounts.pages, asked_threads = amounts.threads, process_name = value_kinds.text_field(described[index].name, PROCESS_NAME_FIELD_BYTES)})
+			system.log_fact(.Info, Share_Process_Not_Started{status = call_outcome.Call_Outcome_Word(status), given_pages = own.pages, given_processes = own.processes, given_threads = own.threads, asked_pages = amounts.pages, asked_threads = amounts.threads, process_name = value_kinds.text_field(described[index].name, PROCESS_NAME_FIELD_BYTES)})
 			share_load_error_log(&error)
 			return false
 		}
@@ -735,7 +735,7 @@ case_processes_start :: proc "contextless" (processes: []Share_Process, describe
 		for started.slot == 0 && system.time() < deadline {
 			for slot in u64(1) ..< min(system_report().process_slots, PROCESS_SLOT_LIMIT) {
 				report, status := process_report(slot)
-				if status == .Ok && process_lives(report.state) && system.name_of(report.name[:]) == described[index].name {
+				if status == .Succeeded && process_lives(report.state) && system.name_of(report.name[:]) == described[index].name {
 					started.slot, started.serial = slot, report.process_serial
 				}
 			}
@@ -805,7 +805,7 @@ process_weights :: proc "contextless" (slot, serial: u64) -> (weights: Process_W
 			continue
 		}
 		schedule, status := system.thread_schedule_read(machine, item.machine_number)
-		if status != .Ok {
+		if status != .Succeeded {
 			continue
 		}
 		weights.threads += 1
@@ -858,7 +858,7 @@ case_processes_interval :: proc "contextless" (processes: []Share_Process, on: b
 	}
 	for &started, index in processes {
 		report, status := process_report(started.slot)
-		if status != .Ok || report.process_serial != started.serial {
+		if status != .Succeeded || report.process_serial != started.serial {
 			return parts, normalized, false
 		}
 		base[index] = report.run_time
@@ -883,7 +883,7 @@ case_processes_interval :: proc "contextless" (processes: []Share_Process, on: b
 		each_ran = true
 		for &started, index in processes {
 			report, status := process_report(started.slot)
-			if status != .Ok || report.process_serial != started.serial {
+			if status != .Succeeded || report.process_serial != started.serial {
 				return parts, normalized, false
 			}
 			parts[index] = report.run_time - base[index]
@@ -978,7 +978,7 @@ share_case :: proc "contextless" () -> bool {
 		return false
 	}
 	before, set_status := system.strategy_set(machine, .Eevdf)
-	if set_status != .Ok {
+	if set_status != .Succeeded {
 		return false
 	}
 	defer system.strategy_set(machine, before)
@@ -1033,7 +1033,7 @@ share_case :: proc "contextless" () -> bool {
 		lower_status := system.thread_schedule_write(spinner_threads[0].handle, 0, {weight = SHARE_WEIGHT_LOWERED})
 		policy_round(true)
 		lowered, _ = system.thread_schedule_read(machine, numbers[0])
-		kept_right = lower_status == .Ok && asked.weight == SHARE_WEIGHT_ASKED && lowered.weight == SHARE_WEIGHT_LOWERED
+		kept_right = lower_status == .Succeeded && asked.weight == SHARE_WEIGHT_ASKED && lowered.weight == SHARE_WEIGHT_LOWERED
 		kept_right &&= spinners_start(1, SHARE_THREADS_MORE, full_weight) && spinner_machine_numbers(1, SHARE_THREADS_MORE, &numbers)
 		policy_round(true)
 		own = process_weights(self_slot, self_serial)
@@ -1120,7 +1120,7 @@ unseen_threads_check :: proc "contextless" (process: Share_Process, new_part: u3
 				continue
 			}
 			schedule, status := system.thread_schedule_read(machine, item.machine_number)
-			if status != .Ok {
+			if status != .Succeeded {
 				// It ended since the report.
 				continue
 			}
@@ -1192,7 +1192,7 @@ short_threads_case :: proc "contextless" () -> bool {
 		system.sleep(system.time() + 1)
 	}
 	before, set_status := system.strategy_set(machine, .Eevdf)
-	if set_status != .Ok {
+	if set_status != .Succeeded {
 		return false
 	}
 	defer system.strategy_set(machine, before)
@@ -1222,14 +1222,14 @@ short_threads_case :: proc "contextless" () -> bool {
 	// weight limit, its part: above the small value. Its weight, request
 	// and weight limit stay, so nothing is raised. From here each check
 	// holds only when a creation takes the value of the process.
-	opened_status := system.Status.Bad_State
-	if before_open, before_open_status := system.thread_schedule_read(machine, self_machine_number); before_open_status == .Ok {
+	opened_status := call_outcome.Call_Outcome.Wrong_State
+	if before_open, before_open_status := system.thread_schedule_read(machine, self_machine_number); before_open_status == .Succeeded {
 		opened := before_open
 		opened.new_thread_weight_limit = op.WEIGHT_FULL
 		opened_status = system.thread_schedule_write(machine, self_machine_number, opened)
 	}
 	first, first_status := system.thread_schedule_read(machine, self_machine_number)
-	first_open := opened_status == .Ok && first_status == .Ok && first.new_thread_weight_limit > new_part + 1
+	first_open := opened_status == .Succeeded && first_status == .Succeeded && first.new_thread_weight_limit > new_part + 1
 	own_process, own_process_status := system.process_schedule_read(machine, self_slot, self_serial)
 	// A weight between the value of the process and the value of the
 	// thread is refused, and the error record names the value of the
@@ -1238,16 +1238,16 @@ short_threads_case :: proc "contextless" () -> bool {
 	_, between_status := system.thread_start(brief, nil, weight = u64(new_part) + 1, error = &error)
 	// A thread with the weight 0 gets the value of the process as its
 	// weight and as its two limits.
-	limited_child = {read = .Bad_State, raise = .Ok}
+	limited_child = {read = .Wrong_State, raise = .Succeeded}
 	child, child_status := system.thread_start(limited_child_run, nil)
-	if child_status == .Ok {
+	if child_status == .Succeeded {
 		system.thread_wait(child)
 	}
 	child_schedule := limited_child.schedule
-	child_right := child_status == .Ok && limited_child.read == .Ok && child_schedule.weight == new_part && child_schedule.weight_limit == new_part && child_schedule.new_thread_weight_limit == new_part
-	refused_right := first_open && own_process_status == .Ok && own_process.new_thread_weight_limit == new_part
-	refused_right &&= between_status == .Bad_Operation && error.limit == i64(new_part) && child_right
-	system.log_fact(.Info, Own_New_Thread_Limit{above = u64(new_part) + 1, first_open = u64(first_open), process_limit = u64(own_process.new_thread_weight_limit), heavier_weight = u64(new_part) + 1, between_status = op.Status_Word(between_status), error_limit = u64(error.limit), child_weight = u64(child_schedule.weight), child_limit = u64(child_schedule.weight_limit), child_new_thread_limit = u64(child_schedule.new_thread_weight_limit), verdict = verdict_field(refused_right)})
+	child_right := child_status == .Succeeded && limited_child.read == .Succeeded && child_schedule.weight == new_part && child_schedule.weight_limit == new_part && child_schedule.new_thread_weight_limit == new_part
+	refused_right := first_open && own_process_status == .Succeeded && own_process.new_thread_weight_limit == new_part
+	refused_right &&= between_status == .Argument_Refused && error.limit == i64(new_part) && child_right
+	system.log_fact(.Info, Own_New_Thread_Limit{above = u64(new_part) + 1, first_open = u64(first_open), process_limit = u64(own_process.new_thread_weight_limit), heavier_weight = u64(new_part) + 1, between_status = call_outcome.Call_Outcome_Word(between_status), error_limit = u64(error.limit), child_weight = u64(child_schedule.weight), child_limit = u64(child_schedule.weight_limit), child_new_thread_limit = u64(child_schedule.new_thread_weight_limit), verdict = verdict_field(refused_right)})
 
 	// A process that this process starts under the policy, from the first
 	// thread whose own value is above the small value: its first thread

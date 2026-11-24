@@ -601,7 +601,7 @@ persisted_table_open :: proc "contextless" (principal: u64) -> (cause: string, g
 	if opened_outcome != .Succeeded {
 		return TABLE_CAUSE_NO_CONNECTION, {}, false
 	}
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	// The handle of the storage service is a copy of its own, so its
 	// revocation does not reach the handle of its row. The copy has Give so
 	// that this service can give it through the ring; the service receives
@@ -612,17 +612,17 @@ persisted_table_open :: proc "contextless" (principal: u64) -> (cause: string, g
 	rights := [3]system.Rights{{.Read}, {.Read, .Write}, {.Read, .Write}}
 	given_count := 0
 	for source, index in sources {
-		if status != .Ok {
+		if status != .Succeeded {
 			break
 		}
 		given[index], status = give_through_service_ring(principals_process.process, principals_ring_memory, source, rights[index], &principals_process.service_ring_ready)
-		if status == .Ok {
+		if status == .Succeeded {
 			given_count += 1
 		}
 	}
 	table.connection = connection
 	table.storage_handles = sources
-	if status != .Ok {
+	if status != .Succeeded {
 		persisted_table_end(principal)
 		return TABLE_CAUSE_HANDLES_NOT_GIVEN, {}, false
 	}

@@ -66,7 +66,7 @@ STORE_KEPT_PAGES :: 64
 store_push_allowed :: proc "contextless" (arena: ^system.Arena, bytes, alignment: u64) -> bool {
 	pages, fits := system.arena_push_commit_pages(arena, bytes, alignment)
 	amounts, status := system.budget_read()
-	return fits && status == .Ok && amounts.pages >= STORE_KEPT_PAGES && pages <= amounts.pages - STORE_KEPT_PAGES
+	return fits && status == .Succeeded && amounts.pages >= STORE_KEPT_PAGES && pages <= amounts.pages - STORE_KEPT_PAGES
 }
 
 // stores_grow gives the core rows_least rows in place, and a new index of
@@ -79,7 +79,7 @@ stores_grow :: proc "contextless" (_: rawptr, state: ^powerbox_core.Powerbox_Sta
 		if !store_push_allowed(&store_arena, bytes, align_of(powerbox_core.Session_Store)) {
 			return false
 		}
-		if _, status := system.arena_push(&store_arena, bytes, align_of(powerbox_core.Session_Store)); status != .Ok {
+		if _, status := system.arena_push(&store_arena, bytes, align_of(powerbox_core.Session_Store)); status != .Succeeded {
 			return false
 		}
 		state.stores = ([^]powerbox_core.Session_Store)(store_arena.base)[:rows_least]
@@ -96,7 +96,7 @@ stores_grow :: proc "contextless" (_: rawptr, state: ^powerbox_core.Powerbox_Sta
 		return false
 	}
 	address, status := system.arena_push(&store_index_arena, bytes, align_of(u32))
-	if status != .Ok {
+	if status != .Succeeded {
 		state.store_index = nil
 		return false
 	}
@@ -108,27 +108,27 @@ stores_grow :: proc "contextless" (_: rawptr, state: ^powerbox_core.Powerbox_Sta
 // stores empty, in their arena of the size of the budget.
 @(private = "file")
 tables_make :: proc "contextless" () -> (tables: powerbox_core.Powerbox_Tables, ok: bool) {
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	table_arena, status = system.arena_create(TABLE_PAGES)
-	if status != .Ok {
+	if status != .Succeeded {
 		return {}, false
 	}
 	amounts, budget_status := system.budget_read()
-	if budget_status != .Ok {
+	if budget_status != .Succeeded {
 		return {}, false
 	}
 	reserve := system.arena_reservation_pages(amounts.pages)
-	if store_arena, status = system.arena_create(reserve); status != .Ok {
+	if store_arena, status = system.arena_create(reserve); status != .Succeeded {
 		return {}, false
 	}
-	if store_index_arena, status = system.arena_create(reserve); status != .Ok {
+	if store_index_arena, status = system.arena_create(reserve); status != .Succeeded {
 		return {}, false
 	}
 	store_arena.exact_commits = true
 	store_index_arena.exact_commits = true
 	grant_rows := u64(TABLE_PAGES) * system.PAGE_SIZE / size_of(powerbox_core.Held_Grant)
 	grants, grant_status := system.arena_push(&table_arena, grant_rows * size_of(powerbox_core.Held_Grant), align_of(powerbox_core.Held_Grant))
-	if grant_status != .Ok {
+	if grant_status != .Succeeded {
 		return {}, false
 	}
 	tables.held_grants = ([^]powerbox_core.Held_Grant)(grants)[:grant_rows]
@@ -395,12 +395,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	export_service, export_ok := system.service_open(ctx)
 	has_delegated := false
 	if ctx.handles[powerbox.SERVICE_RING_SLOT] != 0 && ctx.handles[powerbox.TRUSTED_DISPLAY_RING_SLOT] != 0 {
-		status_open: system.Status
+		status_open: call_outcome.Call_Outcome
 		// The root service gives the handles of a connection to the
 		// storage service through this ring (Stores_Connection).
 		service_ring_memory = ctx.handles[powerbox.SERVICE_RING_SLOT]
-		if service_ring, status_open = system.ring_open(service_ring_memory, receive_handles = true); status_open == .Ok {
-			if display_ring, status_open = system.ring_open(ctx.handles[powerbox.TRUSTED_DISPLAY_RING_SLOT]); status_open == .Ok {
+		if service_ring, status_open = system.ring_open(service_ring_memory, receive_handles = true); status_open == .Succeeded {
+			if display_ring, status_open = system.ring_open(ctx.handles[powerbox.TRUSTED_DISPLAY_RING_SLOT]); status_open == .Succeeded {
 				has_delegated = true
 			}
 		}
@@ -413,11 +413,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	region_handle := ctx.handles[powerbox.SERVICE_REGION_SLOT]
 	if region_handle != 0 {
 		pages, size_status := system.memory_size(region_handle)
-		if size_status != .Ok || pages == 0 {
+		if size_status != .Succeeded || pages == 0 {
 			fail("the powerbox data region has no pages")
 		}
 		address, map_status := system.memory_map(region_handle, {.Write})
-		if map_status != .Ok {
+		if map_status != .Succeeded {
 			fail("cannot map the powerbox data region")
 		}
 		service_region_base = ([^]u8)(address)

@@ -146,17 +146,17 @@ budget_grow_request :: proc "contextless" (item: ^Started, asked_pages: u64, val
 	given_budget: system.Handle
 	growth: u64
 	if refusal == .None {
-		status: system.Status
+		status: call_outcome.Call_Outcome
 		extra_budget, status = system.budget_create({pages = asked_pages})
-		if status != .Ok {
+		if status != .Succeeded {
 			extra_budget = 0
 			refusal = .No_Pages
 		}
 	}
 	if refusal == .None {
-		status: system.Status
+		status: call_outcome.Call_Outcome
 		given_budget, status = system.give(item.process, extra_budget, {.Read, .Spend})
-		if status != .Ok {
+		if status != .Succeeded {
 			refusal = .No_Pages
 		}
 	}
@@ -227,7 +227,7 @@ budget_growth_drain :: proc "contextless" () {
 			continue
 		}
 		amounts, status := system.budget_read(system.Handle(extra.handle))
-		if status == .Ok && budget_growth.drained(&budget_growth_table, extra.handle, amounts.pages) {
+		if status == .Succeeded && budget_growth.drained(&budget_growth_table, extra.handle, amounts.pages) {
 			system.close(system.Handle(extra.handle))
 			budget_pages_note()
 		}

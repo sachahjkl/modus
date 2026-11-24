@@ -288,12 +288,12 @@ disk_load_start :: proc "contextless" () {
 	if load.for_start_policy {
 		chosen_error: module.Load_Error
 		chosen_status := start_policy_chosen_run(name, disk_load_module(), found, disk_load_files(), &chosen_error)
-		if chosen_status != .Ok && chosen_error.stage != u32(module.Load_Stage.None) {
+		if chosen_status != .Succeeded && chosen_error.stage != u32(module.Load_Stage.None) {
 			disk_loader_refusal_log(name, &chosen_error)
-		} else if chosen_status != .Ok {
-			system.log_fact(.Warning, Disk_Load_Refused_Not_Started{outcome = system.outcome_of_own_status(chosen_status), refused_process = module_name_field(name)})
+		} else if chosen_status != .Succeeded {
+			system.log_fact(.Warning, Disk_Load_Refused_Not_Started{outcome = system.own_operation_outcome(chosen_status), refused_process = module_name_field(name)})
 		}
-		disk_load_end(system.outcome_of_own_status(chosen_status), {})
+		disk_load_end(system.own_operation_outcome(chosen_status), {})
 		return
 	}
 	// The grants are read now, not at the command: a change of the table
@@ -395,7 +395,7 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	context_grants: system.Context_Grants
 	values: system.Context_Values
 	system.grant_put(&context_grants, op.CONTEXT_LOG, {system.context_record().handles[op.CONTEXT_LOG], {.Write}})
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	// This service does not keep the memory of the ring to the compositor.
 	display_memory: system.Handle
 	defer if display_memory != 0 {
@@ -405,11 +405,11 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	// process gets no window, as a process of the boot image
 	// (start_view_give).
 	if !desktop_absent() && console_renderer == .Desktop_Terminal {
-		if display_memory, status = system.memory_create(ring.PAGE_COUNT); status != .Ok {
+		if display_memory, status = system.memory_create(ring.PAGE_COUNT); status != .Succeeded {
 			return kernel_refused(refusal, kind, status)
 		}
 		client: system.Handle
-		if client, status = system.give(display_holder, display_memory, {.Read, .Write}); status != .Ok {
+		if client, status = system.give(display_holder, display_memory, {.Read, .Write}); status != .Succeeded {
 			return kernel_refused(refusal, kind, status)
 		}
 		slot.client = client
@@ -474,26 +474,26 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	// the processes of the boot image need. Its name selects no exception.
 	disk_processes: system.Handle
 	disk_processes, status = disk_processes_budget_get(name)
-	if status == .Ok && context_refused(name, &context_grants, &values) {
+	if status == .Succeeded && context_refused(name, &context_grants, &values) {
 		// Two grants in one slot, or one value written twice: the table of
 		// the grants is damaged.
 		release(slot)
 		return root_ring.refuse(refusal, .Data_Damaged, kind, .Damaged, .Records)
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		budget_ok: bool
 		if process_budget, budget_ok = disk_budget_of(file, name, disk_processes); !budget_ok {
-			status = .No_Budget
+			status = .Budget_Or_Capacity_Exhausted
 		} else {
 			source := load_source()
 			source.files = store_files
 			process, status = system.process_start(file, name, context_grants.grants, random.values_with_seed(&process_generator, values.values), process_budget.amounts, mappings[:mapping_count], nil, source, load_error, disk_processes, ready = &slot.ready)
-			if status == .No_Budget {
+			if status == .Budget_Or_Capacity_Exhausted {
 				budget_refusal_log(name, process_budget.amounts, disk_processes, "the disk processes")
 			}
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		release(slot) // The compositor forgets the ring, and the connection ends.
 		return kernel_refused(refusal, kind, status)
 	}

@@ -1,5 +1,6 @@
 package fault_ring
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
@@ -50,7 +51,7 @@ Wrong_Serial_Answer :: struct {
 Foreign_Answer :: struct {
 	answered_thread: u64,
 	answered_serial: u64,
-	foreign_answer:  [24]u8,
+	foreign_answer:  [32]u8,
 	verdict:         [16]u8,
 }
 
@@ -74,7 +75,7 @@ Breakpoint_Resumed :: struct {
 }
 
 // The kinds of a fault that never come to a handler.
-@(log_fact = "fault_ring: the kinds never delivered: Fault_Handler_Set refused {refused_arguments} arguments of {asked_arguments} with Bad_Operation: {verdict}")
+@(log_fact = "fault_ring: the kinds never delivered: Fault_Handler_Set refused {refused_arguments} arguments of {asked_arguments} with Argument_Refused: {verdict}")
 Kinds_Never_Delivered :: struct {
 	refused_arguments: u64,
 	asked_arguments:   u64,
@@ -114,7 +115,7 @@ Spinning_Thread_Stopped :: struct {
 }
 
 // A frame that a process cannot hold: each hostile write refused.
-@(log_fact = "fault_ring: a frame that a process cannot hold: {refused_writes} writes of {writes} refused with Bad_Operation (the code selector of the kernel, the I/O privilege level, interrupts off, an instruction address that is not canonical); {run_after}: {verdict}")
+@(log_fact = "fault_ring: a frame that a process cannot hold: {refused_writes} writes of {writes} refused with Argument_Refused (the code selector of the kernel, the I/O privilege level, interrupts off, an instruction address that is not canonical); {run_after}: {verdict}")
 Hostile_Frame_Refused :: struct {
 	refused_writes: u64,
 	writes:         u64,
@@ -129,7 +130,7 @@ Layout_Unknown :: struct {
 }
 
 // An extended state that faults: each hostile write refused.
-@(log_fact = "fault_ring: an extended state that faults: every hostile write refused with Bad_Operation, the area that was read accepted; {run_after_resume}: {verdict}")
+@(log_fact = "fault_ring: an extended state that faults: every hostile write refused with Argument_Refused, the area that was read accepted; {run_after_resume}: {verdict}")
 Hostile_Extended_State_Refused :: struct {
 	run_after_resume: [40]u8,
 	verdict:          [16]u8,
@@ -146,7 +147,7 @@ Waiting_Thread_Stopped :: struct {
 // Two stops of a thread need two resumes.
 @(log_fact = "fault_ring: two stops, two resumes: {after_one_resume}, {after_two_resumes}; a third Resume got {third_resume}: {verdict}")
 Two_Stops_Two_Resumes :: struct {
-	third_resume:      op.Status,
+	third_resume:      call_outcome.Call_Outcome,
 	after_one_resume:  [32]u8,
 	after_two_resumes: [32]u8,
 	verdict:           [16]u8,
@@ -156,8 +157,8 @@ Two_Stops_Two_Resumes :: struct {
 @(log_fact = "fault_ring: a divide error skipped by its handler: Resume before the write got {resume_status}; after the write of the instruction address and rax, the thread went on with {result}: {verdict}")
 Divide_Error_Skipped :: struct {
 	result:        u64,
-	resume_status: op.Status,
-	verdict:       [20]u8,
+	resume_status: call_outcome.Call_Outcome,
+	verdict:       [16]u8,
 }
 
 // The thread of another process, which no number and no handle names.
@@ -207,15 +208,15 @@ Two_Debug_Instructions :: struct {
 // The shared page of a child could not be made or mapped.
 @(log_fact = "fault_ring: {case_name}: {failed_call} of the shared page failed: {call_status}")
 Shared_Page_Failed :: struct {
-	call_status: op.Status,
+	call_status: call_outcome.Call_Outcome,
 	case_name:   [56]u8,
 	failed_call: [16]u8,
 }
 
 // An answer of the parent for a fault of the child was not refused.
-@(log_fact = "fault_ring: {case_name}: Fault_Answer of the parent gave {answer_status}, not Bad_State")
+@(log_fact = "fault_ring: {case_name}: Fault_Answer of the parent gave {answer_status}, not Wrong_State")
 Parent_Answer_Not_Refused :: struct {
-	answer_status: op.Status,
+	answer_status: call_outcome.Call_Outcome,
 	case_name:     [56]u8,
 }
 
@@ -309,7 +310,7 @@ Parent_Thread_Kept :: struct {
 // start.
 @(log_fact = "fault_ring: {case_name}: the thread of the parent did not start: {start_status}")
 Parent_Thread_Not_Started :: struct {
-	start_status: op.Status,
+	start_status: call_outcome.Call_Outcome,
 	case_name:    [56]u8,
 }
 
@@ -342,7 +343,7 @@ Lazy_Page_Repaired :: struct {
 Leftover_Word_Answered :: struct {
 	woken:         u64,
 	read_value:    value_kinds.Hexadecimal_Sixteen_Digits,
-	answer_status: op.Status_Word,
+	answer_status: call_outcome.Call_Outcome_Word,
 	before_answer: [56]u8,
 	verdict:       [16]u8,
 }
@@ -357,12 +358,12 @@ Register_Written :: struct {
 // The rights of a thread handle: what each holder got.
 @(log_fact = "fault_ring: the rights of a thread handle: with Read and Control, Stop got {control_stop}, Read_Registers {control_read}, Write_Registers {control_write}; with Inspect only, Stop, Read_Registers and Resume got {inspect_answer}, Write_Registers {inspect_write}; with Write only, Write_Registers got {write_only}; the thread kept running: {verdict}")
 Thread_Handle_Rights :: struct {
-	control_stop:   op.Status,
-	control_read:   op.Status,
-	control_write:  op.Status,
-	inspect_write:  op.Status,
-	write_only:     op.Status,
-	inspect_answer: [12]u8,
+	control_stop:   call_outcome.Call_Outcome,
+	control_read:   call_outcome.Call_Outcome,
+	control_write:  call_outcome.Call_Outcome,
+	inspect_write:  call_outcome.Call_Outcome,
+	write_only:     call_outcome.Call_Outcome,
+	inspect_answer: [16]u8,
 	verdict:        [16]u8,
 }
 
@@ -372,9 +373,9 @@ Thread_Handle_Rights :: struct {
 // the module contract, which a field writes as numbers.
 @(log_fact = "fault_ring: {case_name}: process_start failed: {start_status}; the load: stage {load_stage}, status {load_status}, the error of the file {file_error}; this process can give pages {pages}, processes {processes}, threads {threads}, and the child asks {child_pages}, 1, {child_threads}")
 Child_Start_Failed :: struct {
-	start_status:  op.Status_Word,
+	start_status:  call_outcome.Call_Outcome_Word,
 	load_stage:    u64,
-	load_status:   op.Status_Word,
+	load_status:   call_outcome.Call_Outcome_Word,
 	file_error:    u64,
 	pages:         u64,
 	processes:     u64,

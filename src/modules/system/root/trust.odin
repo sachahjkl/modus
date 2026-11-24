@@ -102,14 +102,14 @@ trust_check :: proc "contextless" () {
 	// names no verifier (info.trust_decision, with its host tests).
 	file_check, verifier, decision := info.trust_decision(trust^)
 	if decision != .Accepted {
-		fail(info.trust_decision_sentences[decision], .Bad_State)
+		fail(info.trust_decision_sentences[decision], .Wrong_State)
 	}
 	description, _, found := system_description.trust_resources(image)
 	if !found {
-		fail("the boot image has no system description", .Bad_State)
+		fail("the boot image has no system description", .Wrong_State)
 	}
 	if blake3.hash(description) != trust.description_hash {
-		fail(verifier == .None ? "the system description is not the one whose hash the boot record gives" : "the system description is not the one that the boot program verified", .Bad_State)
+		fail(verifier == .None ? "the system description is not the one whose hash the boot record gives" : "the system description is not the one that the boot program verified", .Wrong_State)
 	}
 	start := system.nanoseconds()
 	result := file_check == .Root_Service_At_Load ? system_description.image_check_without_bytes(description, image) : system_description.image_check(description, image)
@@ -153,7 +153,7 @@ trust_check :: proc "contextless" () {
 		case .None, .Not_Valid, .Image_Not_Valid, .Count_Differs:
 			// No one file of the boot image is at fault.
 		}
-		fail(text, .Bad_State)
+		fail(text, .Wrong_State)
 	}
 	// The count of the entries that this check read, not the count of the
 	// trust record: a record that the boot program did not write has none.
@@ -172,7 +172,7 @@ trust_check :: proc "contextless" () {
 	case .Root_Service_At_Load:
 		// Each file at its first use.
 	case .None:
-		fail(info.trust_decision_sentences[.No_File_Check], .Bad_State)
+		fail(info.trust_decision_sentences[.No_File_Check], .Wrong_State)
 	}
 	switch file_check {
 	case .Boot_Program:
@@ -182,7 +182,7 @@ trust_check :: proc "contextless" () {
 		}
 		key_kind, key_kind_ok := info.signing_key_kind_of_word(trust.key_kind)
 		if !key_kind_ok || key_kind == .None {
-			fail("the boot record names no signing key kind", .Bad_State)
+			fail("the boot record names no signing key kind", .Wrong_State)
 		}
 		if key_kind == .Test {
 			system.log_fact(.Warning, Description_Signed_By_Test_Key{})
@@ -195,7 +195,7 @@ trust_check :: proc "contextless" () {
 	case .Root_Service_At_Load:
 		system.log_fact(.Warning, Image_Checked_At_Load{checked_entries = checked_entries, check_time = check_time})
 	case .None:
-		fail(info.trust_decision_sentences[.No_File_Check], .Bad_State)
+		fail(info.trust_decision_sentences[.No_File_Check], .Wrong_State)
 	}
 	measure, measure_ok := info.measure_state_of_word(trust.measure)
 	if !measure_ok {

@@ -36,6 +36,7 @@
 // the process prints them as measures and asserts no speed-up.
 package processors
 
+import "modus:contract/call_outcome"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
@@ -254,9 +255,9 @@ processors_same :: proc "contextless" () -> (count: u64) {
 run_together :: proc "contextless" () {
 	threads: [WORKER_COUNT]system.Thread
 	for &thread in threads {
-		status: system.Status
+		status: call_outcome.Call_Outcome
 		thread, status = system.thread_start(spin, nil)
-		if status != .Ok {
+		if status != .Succeeded {
 			system.log_fact(.Info, Thread_Not_Started{})
 			system.stop(.Failed)
 		}
@@ -359,7 +360,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	machine = ctx.handles[system.GRANT_MACHINE]
 	report: op.System_Report
-	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Succeeded {
 		system.log_fact(.Info, No_Inspect_Grant{})
 		system.stop(.Refused)
 	}
@@ -376,7 +377,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	job.done = PICTURE_HEIGHT
 	for &worker, index in workers {
 		worker.number = index
-		if _, status := system.thread_start(compute, &worker); status != .Ok {
+		if _, status := system.thread_start(compute, &worker); status != .Succeeded {
 			system.log_fact(.Info, Thread_Not_Started{})
 			system.stop(.Failed)
 		}

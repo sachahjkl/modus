@@ -43,14 +43,14 @@ link_tables_ensure :: proc "contextless" (count: int) -> bool {
 	}
 	if !tables.made {
 		amounts, read := system.budget_read()
-		if read != .Ok || amounts.pages == 0 {
+		if read != .Succeeded || amounts.pages == 0 {
 			return false
 		}
 		pages := system.arena_reservation_pages(amounts.pages)
 		arenas := [?]^system.Arena{&tables.links, &tables.held, &tables.source_tags, &tables.closed, &tables.pair_tags, &tables.pair_sources}
 		for arena in arenas {
 			made, status := system.arena_create(pages)
-			if status != .Ok {
+			if status != .Succeeded {
 				return false
 			}
 			arena^ = made
@@ -61,7 +61,7 @@ link_tables_ensure :: proc "contextless" (count: int) -> bool {
 	extend :: proc "contextless" (arena: ^system.Arena, $T: typeid, before, count: int) -> bool {
 		size := u64(count - before) * size_of(T)
 		added, status := system.arena_push(arena, size, align_of(T))
-		if status != .Ok {
+		if status != .Succeeded {
 			return false
 		}
 		intrinsics.mem_zero(added, int(size))

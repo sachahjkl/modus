@@ -1,5 +1,6 @@
 package compositor
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:contract/pointer_pictures"
 import "modus:contract/ring"
@@ -144,7 +145,7 @@ surface_budget_facts :: proc "contextless" (budget: system.Handle, kind: op.Obje
 	is_budget = kind == .Budget
 	can_spend = rights & {.Spend, .Read} == {.Spend, .Read}
 	if is_budget && can_spend {
-		if amounts, status := system.budget_read(budget); status == .Ok {
+		if amounts, status := system.budget_read(budget); status == .Succeeded {
 			budget_pages = amounts.pages
 		}
 	}
@@ -164,19 +165,19 @@ surface_budget_facts :: proc "contextless" (budget: system.Handle, kind: op.Obje
 // that the window revoked, gives made false and holds nothing.
 surface_make :: proc "contextless" (client: ^Client, budget: system.Handle, screen_width, screen_height: u64) -> (pictures: [^]graphics.Color, memory, given: system.Handle, made: bool) {
 	pages := (screen_width * screen_height * u64(size_of(graphics.Color) * display.PICTURE_COUNT) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	memory, status = system.memory_create(pages, budget)
-	if status != .Ok {
+	if status != .Succeeded {
 		return nil, 0, 0, false
 	}
 	address, map_status := system.memory_map(memory, {}) // Read only.
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(memory)
 		return nil, 0, 0, false
 	}
-	give_status: system.Status
+	give_status: call_outcome.Call_Outcome
 	given, give_status = system.give(client.ring_memory, memory, {.Read, .Write})
-	if give_status != .Ok {
+	if give_status != .Succeeded {
 		system.memory_unmap(address)
 		system.close(memory)
 		return nil, 0, 0, false

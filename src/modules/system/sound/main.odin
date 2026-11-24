@@ -31,6 +31,7 @@
 // them faster than their time.
 package sound_device_service
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:contract/errors"
 import op "modus:contract/operation"
@@ -261,12 +262,12 @@ start :: proc "contextless" (queues: system.Handle) {
 	case .Reset_Not_Done:
 		fail("the device did not finish its reset")
 	}
-	if queue_pages, queue_status := system.memory_size(queues); queue_status != .Ok || queue_pages < pci.QUEUE_PAGES {
+	if queue_pages, queue_status := system.memory_size(queues); queue_status != .Succeeded || queue_pages < pci.QUEUE_PAGES {
 		fail("the memory of the queues is too small")
 	}
 	address, map_status := system.memory_map(queues, {.Write})
 	physical, physical_status := system.memory_physical(machine, queues)
-	if map_status != .Ok || physical_status != .Ok {
+	if map_status != .Succeeded || physical_status != .Succeeded {
 		system.log_fact(.Error, Queues_Not_Mapped{map_status = map_status, address_status = physical_status})
 		fail("no physical address for the queues")
 	}
@@ -290,13 +291,13 @@ start :: proc "contextless" (queues: system.Handle) {
 
 	// The periods: memory of this budget, which the device reads.
 	period_memory, period_status := system.memory_create(PERIOD_PAGES, 0, {.Contiguous})
-	if period_status != .Ok {
+	if period_status != .Succeeded {
 		system.log_fact(.Error, Periods_Memory_Refused{status = period_status})
 		fail("no memory for the periods")
 	}
 	period_address, period_map_status := system.memory_map(period_memory, {.Write})
 	period_physical, period_physical_status := system.memory_physical(machine, period_memory)
-	if period_map_status != .Ok || period_physical_status != .Ok {
+	if period_map_status != .Succeeded || period_physical_status != .Succeeded {
 		system.log_fact(.Error, Periods_Not_Mapped{map_status = period_map_status, address_status = period_physical_status})
 		fail("no physical address for the periods")
 	}
@@ -339,12 +340,12 @@ attach :: proc "contextless" (command: ring.Record) -> (timed_stream.Status, [7]
 		return .Bad_Command, timed_stream.damaged_values(.Attach, index, command.values)
 	}
 	pages, size_status := system.memory_size(handle)
-	if size_status != .Ok {
+	if size_status != .Succeeded {
 		system.close(handle)
 		return .No_Region, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(size_status))
 	}
 	address, map_status := system.memory_map(handle, {})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(handle)
 		return .No_Region, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(map_status))
 	}
@@ -571,8 +572,8 @@ USED_PROBLEM_TEXTS := [sound_device.Used_Problem]string {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[pci.GRANT_MACHINE]
 	clients_memory = ctx.handles[timed_stream.SERVICE_RING]
-	status: system.Status
-	if clients, status = system.ring_open(clients_memory, receive_handles = true); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if clients, status = system.ring_open(clients_memory, receive_handles = true); status != .Succeeded {
 		fail("no stream ring")
 	}
 	// The table of the pending records has one place for each place of
@@ -581,7 +582,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("the stream ring is larger than the ring of the contract")
 	}
 	configuration_address, configuration_status := system.memory_map(ctx.handles[pci.GRANT_CONFIGURATION], {})
-	if configuration_status != .Ok {
+	if configuration_status != .Succeeded {
 		fail("no configuration of the device")
 	}
 	found: bool

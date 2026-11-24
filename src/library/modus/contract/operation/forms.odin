@@ -116,18 +116,3 @@ STATE_NAMES := [Process_State]string {
 	.Waiting = "waiting",
 	.Stopped = "stopped",
 }
-
-// The name of each status, as `Status` names it: a process prints it with
-// no copy of the enumeration names.
-@(rodata)
-STATUS_NAMES := [Status]string {
-	.Ok            = "Ok",
-	.Bad_Operation = "Bad_Operation",
-	.Bad_Handle    = "Bad_Handle",
-	.Bad_Address   = "Bad_Address",
-	.No_Memory     = "No_Memory",
-	.No_Slot       = "No_Slot",
-	.Bad_State     = "Bad_State",
-	.No_Right      = "No_Right",
-	.No_Budget     = "No_Budget",
-}

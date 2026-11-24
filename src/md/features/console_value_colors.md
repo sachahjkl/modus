@@ -25,7 +25,7 @@ The log facts ([log_facts.md](log_facts.md)) need four more kinds that a line of
 |---|---|---|---|
 | `Plain` | Integer, Text, Handle | `i64`, `[N]u8`, `Lent({...})` | As before |
 | `Hexadecimal` | Integer of 1, 2, 4 or 8 bytes, no unit | `value_kinds.Hexadecimal_8` to `Hexadecimal_64` | `0x` and the digits |
-| `Status` | Unsigned Integer, no unit | a contract enum of `value_kinds.CONTRACT_ENUM_TYPES`: `operation.Status`, `operation.Log_Level`, `errors.Kind`, or its word type: `operation.Status_Word`, `errors.Kind_Word`, `errors.Unit_Word` | The name of the member |
+| `Status` | Unsigned Integer, no unit | a contract enum of `value_kinds.CONTRACT_ENUM_TYPES`: `call_outcome.Call_Outcome`, `operation.Log_Level`, `errors.Kind`, or its word type: `call_outcome.Call_Outcome_Word`, `errors.Kind_Word`, `errors.Unit_Word` | The name of the member |
 | `Module_Name` | Text | `value_kinds.Module_Name_Field`, 32 bytes | The text |
 | `Hash` | Bytes, 1 to 32 bytes | `value_kinds.Hash_Field`, 32 bytes; `value_kinds.Hash_Sixteen_Bytes_Field`, 16 bytes | Two hexadecimal digits for each byte |
 | `Fact_Values` | Bytes, 144 bytes | `value_kinds.Fact_Values_Field`, 144 bytes | Two hexadecimal digits for each byte, up to the last byte that is not zero |

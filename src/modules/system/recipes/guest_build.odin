@@ -12,13 +12,13 @@
 // only while the guest runs: the service then answers each other call.
 package recipes_service
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "internal:recipes/recipes_core"
 import "modus:contract/blake3"
 import gb "modus:contract/guest_builder"
 import "modus:contract/guest_os"
 import "modus:contract/object_cache"
-import op "modus:contract/operation"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
@@ -144,9 +144,9 @@ guest_prepare :: proc "contextless" (spec: ^gb.Guest_Build_Spec, user_data: rawp
 			continue
 		}
 		memory, status := guest_regions.owned_memory_make(sizes[buffer])
-		if status != .Ok {
+		if status != .Succeeded {
 			guest_buffers_end()
-			system.log_fact(.Warning, Guest_Buffers_Refused{status_word = op.Status_Word(status), pages = sizes[buffer] / system.PAGE_SIZE})
+			system.log_fact(.Warning, Guest_Buffers_Refused{status_word = call_outcome.Call_Outcome_Word(status), pages = sizes[buffer] / system.PAGE_SIZE})
 			return .Memory_Past_Bound
 		}
 		guest_buffers[buffer] = memory
@@ -222,7 +222,7 @@ guest_execute :: proc "contextless" (runner: ^gb.Guest_Sandbox_Runner, spec: ^gb
 	case .Unsupported:
 		system.log_fact(.Info, Guests_Unsupported{})
 	case .Kernel_Failed:
-		system.log_fact(.Error, Guest_Step_Failed{status_word = op.Status_Word(outcome.status), step = value_kinds.text_field(outcome.step, 40)})
+		system.log_fact(.Error, Guest_Step_Failed{status_word = call_outcome.Call_Outcome_Word(outcome.status), step = value_kinds.text_field(outcome.step, 40)})
 		return false
 	}
 	return true
@@ -257,9 +257,9 @@ guest_build_next :: proc "contextless" () {
 		guest_workspace.prepare_guest = guest_prepare
 		intrinsics.atomic_store(&guest_finished, 0)
 		thread, status := system.thread_start(guest_build_thread, nil, GUEST_THREAD_STACK_PAGES)
-		if status != .Ok {
+		if status != .Succeeded {
 			// The build ends refused: the next one may find the room.
-			system.log_fact(.Warning, Guest_Thread_Refused{status_word = op.Status_Word(status)})
+			system.log_fact(.Warning, Guest_Thread_Refused{status_word = call_outcome.Call_Outcome_Word(status)})
 			guest_job_result = {outcome = .Refused, refusal = .Builder_Failed, recipe_hash = guest_job.recipe_hash}
 			service_state.counters.total_refusals += 1
 			if guest_job.from_ring {

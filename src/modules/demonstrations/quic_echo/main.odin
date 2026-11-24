@@ -425,7 +425,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The connections and their echo: one mapping of this process.
 	memory, memory_status := system.memory_create(TABLE_PAGES)
 	table, table_status := system.memory_map(memory, {.Write})
-	if memory_status != .Ok || table_status != .Ok {
+	if memory_status != .Succeeded || table_status != .Succeeded {
 		fail("no memory for the table of connections")
 	}
 	connections = ([^]quic.Connection)(table)[:CAPACITY]

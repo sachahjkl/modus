@@ -85,7 +85,7 @@ import "modulus:extended_switch"
 // only, a stop with no handle (thread_counters.odin).
 
 // thread_control_state_refuse records the specific state refusal of
-// Thread_Control on the current processor before returning Bad_State.
+// Thread_Control on the current processor before returning its outcome.
 thread_control_state_refuse :: #force_inline proc "contextless" (
 	refusal: op.Thread_Control_State_Refusal,
 	argument: i64,
@@ -99,7 +99,15 @@ thread_control_state_refuse :: #force_inline proc "contextless" (
 	operation.thread_state_refused_value = value
 	operation.thread_state_refused_limit = limit
 	operation.thread_state_refused_found = found
-	return .Bad_State
+	switch refusal {
+	case .Thread_Absent, .Process_Absent:
+		return .Nothing_Has_That_Name
+	case .Stop_Count_Limit:
+		return .Budget_Or_Capacity_Exhausted
+	case .None, .Thread_Ended, .Process_Stopped, .Not_Debugger, .Not_Stopped, .Not_Held, .Counters_Not_Started, .Thread_Recording, .Process_Recording, .Process_Not_Created, .Process_Disqualified, .History_In_Use, .No_Pinned_Processor, .Not_Recording:
+		return .Wrong_State
+	}
+	return .Wrong_State
 }
 
 // thread_control runs the operation Thread_Control. The caller holds the
@@ -113,7 +121,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	operation := &cpu.operation
 	command, command_known := enum_word.member_of_word(op.Thread_Control_Command, v[2])
 	if !command_known || command == .None {
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	if op.thread_control_names_a_process(command) {
 		return process_schedule_control(caller_process, command, v, results)
@@ -127,7 +135,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	if op.thread_control_sizes_the_wait(command) {
 		// A room serves the thread that waits: no other thread is named.
 		if v[0] != 0 || v[1] != 0 {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		capacity, status := wait_room_set(&threads[caller_index], caller_process, v[4])
 		results[0] = capacity
@@ -144,7 +152,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		// A breakpoint is written only by the debugger of the process of
 		// the thread, through its process handle.
 		if op.thread_control_needs_the_debugger(command) {
-			return .Bad_Handle
+			return .Argument_Refused
 		}
 		// A thread of this process, by its number: under the process lock,
 		// which the caller holds, no thread of this process starts or ends.
@@ -163,7 +171,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			// machine handle goes to the branch below, which refuses a
 			// handle that is not a thread handle.
 			if !(machine_rights <= named.rights) {
-				return .No_Right
+				return .Grant_Or_Right_Missing
 			}
 			by_machine = true
 			place, serial := v[1] & 0xFFFF_FFFF, u32(v[1] >> 32)
@@ -183,7 +191,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			// The debugger of a process names a thread of it by its
 			// number. Two process locks: the control lock first.
 			if .Debug not_in named.rights {
-				return .No_Right
+				return .Grant_Or_Right_Missing
 			}
 			require_control() or_return
 			by_debugger = true
@@ -194,7 +202,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			// holder of a handle of one of its threads, get no way to put
 			// a debug exception where the kernel copies its memory.
 			if op.thread_control_needs_the_debugger(command) {
-				return .Bad_Handle
+				return .Argument_Refused
 			}
 			// The right of the command: a handle that a process gave so
 			// that another one can end a thread (Control) does not let it
@@ -248,10 +256,10 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	}
 	switch command {
 	case .None:
-		return .Bad_Operation
+		return .Argument_Refused
 	case .Stop:
 		status := thread_control_stop(target_index, results, target_argument, target_value, can_read_state)
-		if status == .Ok && by_debugger {
+		if status == .Succeeded && by_debugger {
 			thread.debug_stops += 1
 		}
 		return status
@@ -268,7 +276,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			return thread_control_state_refuse(.Not_Stopped, target_argument, target_value, 1, can_read_state ? u64(intrinsics.atomic_load(&thread.state)) : 0)
 		}
 		status := thread_control_resume(thread, results, target_argument, target_value, can_read_state)
-		if status == .Ok && by_debugger {
+		if status == .Succeeded && by_debugger {
 			thread.debug_stops -= 1
 		}
 		return status
@@ -276,7 +284,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		size := command == .Read_Registers || command == .Write_Registers ? u64(size_of(op.Thread_Registers)) : extended_state_size
 		writes_to_the_caller := command == .Read_Registers || command == .Read_Extended_State
 		if v[4] < size || !user_range(caller_process, v[3], size, writes_to_the_caller) {
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		if target_index == caller_index || !thread_held_off_processor(thread) {
 			thread_state := intrinsics.atomic_load(&thread.state)
@@ -295,7 +303,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			user_copy_from_process(&registers, v[3], size)
 			if refusal, value := op.thread_registers_refusal(&registers); refusal != .None {
 				operation.thread_write_refusal, operation.thread_write_refused_value = refusal, value
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 			thread_frame_write(thread, &registers)
 			extended_switch.thread_mark_modified(&thread.extended_switch)
@@ -315,21 +323,21 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			user_copy_from_process(written, v[3], size)
 			if refusal, value := extended_state_write_refusal(written); refusal != .None {
 				operation.thread_write_refusal, operation.thread_write_refused_value = refusal, value
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 			thread.extended_state = written^
 			extended_switch.thread_mark_modified(&thread.extended_switch)
 			thread.registers_written = true
 		}
 		results[0] = size
-		return .Ok
+		return .Succeeded
 	case .Read_Breakpoints, .Write_Breakpoints:
 		// The breakpoints of a thread (breakpoints.odin). As the registers:
 		// only while the thread is held, so that no processor loads them
 		// while they change.
 		size := u64(size_of(op.Thread_Breakpoints))
 		if v[4] < size || !user_range(caller_process, v[3], size, command == .Read_Breakpoints) {
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		if target_index == caller_index || !thread_held_off_processor(thread) {
 			thread_state := intrinsics.atomic_load(&thread.state)
@@ -350,49 +358,49 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			user_copy_from_process(&breakpoints, v[3], size)
 			if refusal, value := op.thread_breakpoints_refusal(&breakpoints); refusal != .None {
 				operation.thread_write_refusal, operation.thread_write_refused_value = refusal, value
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 			thread_breakpoints_write(thread, &breakpoints)
 		}
 		results[0] = size
-		return .Ok
+		return .Succeeded
 	case .Read_Process_Schedule, .Write_Process_Schedule:
 		// They name a process, not a thread: process_schedule_control runs
 		// them before a thread is named.
-		return .Bad_Operation
+		return .Argument_Refused
 	case .Start_Counters, .Read_Counters, .Stop_Counters:
 		// They act on the calling thread: thread_counters_control runs them
 		// before a thread is named.
-		return .Bad_Operation
+		return .Argument_Refused
 	case .Record_Start, .Record_End, .Replay_Start:
 		// They act on a process handle: record_replay_control runs them
 		// before a thread is named.
-		return .Bad_Operation
+		return .Argument_Refused
 	case .Wait_Room:
 		// It acts on the calling thread: thread_control runs it before a
 		// thread is named.
-		return .Bad_Operation
+		return .Argument_Refused
 	case .Read_Memory:
 		// The bytes of the process of the thread (breakpoints.odin). The
 		// thread is not held: the memory of a process changes while its
 		// other threads run in any case. The process lock of that process
 		// is held here, and the one of the caller.
 		if v[4] > op.THREAD_MEMORY_READ_LIMIT {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		if !user_range(caller_process, v[3], v[4], true) {
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		copied := process_memory_read(&processes[owner], v[5], v[3], v[4])
 		if copied == 0 && v[4] != 0 {
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		results[0] = copied
-		return .Ok
+		return .Succeeded
 	case .Read_Schedule, .Write_Schedule:
 		size := u64(size_of(op.Thread_Schedule))
 		if v[4] < size || !user_range(caller_process, v[3], size, command == .Read_Schedule) {
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		// One copy in the memory of the kernel: the values that the check
 		// accepts are the values that the thread gets.
@@ -400,7 +408,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		if command == .Read_Schedule {
 			read_status: Operation_Outcome
 			schedule, read_status = thread_schedule_read(thread, target_argument, target_value, can_read_state)
-			if read_status != .Ok {
+			if read_status != .Succeeded {
 				return read_status
 			}
 			user_copy_to_process(v[3], &schedule, size)
@@ -422,7 +430,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 				refusal, refused, most = .New_Thread_Weight_Limit, u64(schedule.new_thread_weight_limit), op.WEIGHT_FULL
 			case:
 				write_status, write_refusal, write_most := thread_schedule_write(thread, schedule, by_machine, target_argument, target_value, can_read_state)
-				if write_status != .Ok && write_status != .Bad_Operation {
+				if write_status != .Succeeded && write_status != .Argument_Refused {
 					return write_status
 				}
 				// A weight or a request above the one that the thread has.
@@ -430,15 +438,15 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			}
 			if refusal != .None {
 				operation.thread_write_refusal, operation.thread_write_refused_value, operation.thread_write_refused_limit = refusal, refused, most
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 		}
 		results[0] = size
-		return .Ok
+		return .Succeeded
 	case .Read_Placement, .Write_Placement:
 		size := u64(size_of(op.Thread_Placement))
 		if v[4] < size || !user_range(caller_process, v[3], size, command == .Read_Placement) {
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		// One copy in the memory of the kernel: the sets that the check
 		// accepts are the sets that the thread gets.
@@ -446,26 +454,26 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		if command == .Read_Placement {
 			read_status: Operation_Outcome
 			placement, read_status = thread_placement_read(thread, target_argument, target_value, can_read_state)
-			if read_status != .Ok {
+			if read_status != .Succeeded {
 				return read_status
 			}
 			user_copy_to_process(v[3], &placement, size)
 		} else {
 			user_copy_from_process(&placement, v[3], size)
 			write_status, refusal, most := thread_placement_write(thread, placement, by_machine, target_index == caller_index, target_argument, target_value, can_read_state)
-			if write_status == .Bad_Operation {
+			if write_status == .Argument_Refused {
 				// The refused set, and the set that it had to stay inside.
 				refused := refusal == .Processors_Limit ? placement.processors_limit : placement.processors
 				operation.thread_write_refusal, operation.thread_write_refused_value, operation.thread_write_refused_limit = refusal, refused, most
 			}
-			if write_status != .Ok {
+			if write_status != .Succeeded {
 				return write_status
 			}
 		}
 		results[0] = size
-		return .Ok
+		return .Succeeded
 	}
-	return .Bad_Operation
+	return .Argument_Refused
 }
 
 // process_schedule_control runs the two commands of the schedule of a
@@ -478,19 +486,19 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 // before the write or wholly after it (creation_weight_limit).
 process_schedule_control :: proc "contextless" (caller_process: ^Process, command: op.Thread_Control_Command, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
 	if v[0] == 0 {
-		return .Bad_Handle
+		return .Argument_Refused
 	}
 	named := handle_find(caller_process, v[0], .None) or_return
 	if named.kind != .Machine {
-		return .Bad_Handle
+		return .Argument_Refused
 	}
 	machine_rights, _ := op.thread_control_machine_rights(command)
 	if !(machine_rights <= named.rights) {
-		return .No_Right
+		return .Grant_Or_Right_Missing
 	}
 	size := u64(size_of(op.Process_Schedule))
 	if v[4] < size || !user_range(caller_process, v[3], size, command == .Read_Process_Schedule) {
-		return .Bad_Address
+		return .Argument_Refused
 	}
 	slot, serial := v[1] & 0xFFFF_FFFF, u32(v[1] >> 32)
 	if slot == 0 || slot >= u64(process_capacity) {
@@ -522,12 +530,12 @@ process_schedule_control :: proc "contextless" (caller_process: ^Process, comman
 		if refusal != .None {
 			operation := &processor_self().operation
 			operation.thread_write_refusal, operation.thread_write_refused_value, operation.thread_write_refused_limit = refusal, u64(schedule.new_thread_weight_limit), op.WEIGHT_FULL
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		intrinsics.atomic_store(&process.new_thread_weight_limit, after.new_thread_weight_limit)
 	}
 	results[0] = size
-	return .Ok
+	return .Succeeded
 }
 
 // thread_machine_number gives the machine number of a thread: its place in
@@ -554,7 +562,7 @@ thread_schedule_read :: proc "contextless" (thread: ^Thread, target_argument: i6
 	if thread_schedule_ends(thread) {
 		return {}, thread_control_state_refuse(.Thread_Ended, target_argument, target_value, 0, can_read_state ? u64(op.Process_State.Stopped) : 0)
 	}
-	return op.Thread_Schedule{weight = thread.weight, request = thread.request, weight_limit = thread.weight_limit, new_thread_weight_limit = thread.new_thread_weight_limit}, .Ok
+	return op.Thread_Schedule{weight = thread.weight, request = thread.request, weight_limit = thread.weight_limit, new_thread_weight_limit = thread.new_thread_weight_limit}, .Succeeded
 }
 
 // thread_schedule_write gives a thread a weight and a request, in any state
@@ -566,7 +574,7 @@ thread_schedule_read :: proc "contextless" (thread: ^Thread, target_argument: i6
 // by_machine false: the process of the thread, or the holder of a thread
 // handle, writes. Such a write only lowers: a weight above the weight that
 // the thread has now, or a request above its request, is refused
-// (Bad_Operation, with the part and the value that the thread has), and
+// (Argument_Refused, with the part and the value that the thread has), and
 // nothing changes. 0 keeps the value that the thread has. The weight limit
 // of the record is not read. A process chooses the moment of its writes;
 // with one direction only, no sequence of them gets back what a write
@@ -607,10 +615,10 @@ thread_schedule_write :: proc "contextless" (thread: ^Thread, schedule: op.Threa
 		weight = schedule.weight == 0 ? old_weight : schedule.weight
 		request = schedule.request == 0 ? thread.request : schedule.request
 		if weight > old_weight {
-			return .Bad_Operation, .Weight, old_weight
+			return .Argument_Refused, .Weight, old_weight
 		}
 		if request > thread.request {
-			return .Bad_Operation, .Request, thread.request
+			return .Argument_Refused, .Request, thread.request
 		}
 	}
 	queue := &run_queues[home]
@@ -626,7 +634,7 @@ thread_schedule_write :: proc "contextless" (thread: ^Thread, schedule: op.Threa
 	if weight > old_weight {
 		strategy_weight_raised(queue, home, thread)
 	}
-	return .Ok, .None, 0
+	return .Succeeded, .None, 0
 }
 
 // thread_placement_read gives the set of processors of a thread and the
@@ -638,7 +646,7 @@ thread_placement_read :: proc "contextless" (thread: ^Thread, target_argument: i
 	if thread_schedule_ends(thread) {
 		return {}, thread_control_state_refuse(.Thread_Ended, target_argument, target_value, 0, can_read_state ? u64(op.Process_State.Stopped) : 0)
 	}
-	return op.Thread_Placement{processors = thread.processors, processors_limit = thread.processors_limit}, .Ok
+	return op.Thread_Placement{processors = thread.processors, processors_limit = thread.processors_limit}, .Succeeded
 }
 
 // thread_placement_write gives a thread a set of processors, in any state
@@ -716,7 +724,7 @@ thread_placement_write :: proc "contextless" (thread: ^Thread, written: op.Threa
 		if second != first {
 			lock_take(&run_queues[second].lock, .Run)
 		}
-		status = .Ok
+		status = .Succeeded
 		home_changed := false
 		switch {
 		case intrinsics.atomic_load(&thread.home) != home:
@@ -724,7 +732,7 @@ thread_placement_write :: proc "contextless" (thread: ^Thread, written: op.Threa
 		case thread_schedule_ends(thread):
 			status = thread_control_state_refuse(.Thread_Ended, target_argument, target_value, 0, can_read_state ? u64(op.Process_State.Stopped) : 0)
 		case refusal != .None:
-			status = .Bad_Operation
+			status = .Argument_Refused
 		case:
 			intrinsics.atomic_store(&thread.processors, after.processors)
 			intrinsics.atomic_store(&thread.processors_limit, after.processors_limit)
@@ -760,7 +768,7 @@ thread_placement_write :: proc "contextless" (thread: ^Thread, written: op.Threa
 			break
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		return status, refusal, most
 	}
 	if entered || widened_in_list {
@@ -773,7 +781,7 @@ thread_placement_write :: proc "contextless" (thread: ^Thread, written: op.Threa
 	if cpu := processor_self(); is_caller && after.processors & (u64(1) << cpu.index) == 0 {
 		cpu.slice_left = 0
 	}
-	return .Ok, .None, 0
+	return .Succeeded, .None, 0
 }
 
 // thread_of_number gives the live thread of a process with a number, or 0.
@@ -829,7 +837,7 @@ thread_control_stop :: proc "contextless" (index: u32, results: ^[7]u64, target_
 		self.operation.stopped_thread, self.operation.stopped_thread_serial = index, serial
 	}
 	results[0] = u64(count)
-	return .Ok
+	return .Succeeded
 }
 
 // thread_control_resume takes 1 from the stop count of a thread. At 0, a
@@ -854,7 +862,7 @@ thread_control_resume :: proc "contextless" (thread: ^Thread, results: ^[7]u64, 
 		kick(home, thread)
 	}
 	results[0] = u64(count)
-	return .Ok
+	return .Succeeded
 }
 
 // thread_held_off_processor says if a thread is held, and waits until no
@@ -870,7 +878,7 @@ thread_control_resume :: proc "contextless" (thread: ^Thread, results: ^[7]u64, 
 // processor can be inside an operation that waits for the process lock
 // that the caller holds: no wait for it; Stop already waited for it, so a
 // thread still there is one that another Stop holds now, and the caller
-// gets Bad_State.
+// gets Wrong_State.
 thread_held_off_processor :: proc "contextless" (thread: ^Thread) -> bool {
 	if thread.state == .None || thread.state == .Stopped || intrinsics.atomic_load(&thread.stop_requested) {
 		return false

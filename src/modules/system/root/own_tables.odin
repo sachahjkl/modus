@@ -50,7 +50,7 @@ own_slot_find :: proc "contextless" () -> bool {
 	}
 	report: op.Process_Report
 	for index in u64(1) ..< machine_process_slots {
-		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), index, u64(uintptr(&report)), size_of(report)); status != .Ok {
+		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), index, u64(uintptr(&report)), size_of(report)); status != .Succeeded {
 			continue
 		}
 		if system.name_of(report.name[:]) == "root" && report.state != .None && report.state != .Stopped {
@@ -69,7 +69,7 @@ own_handle_count :: proc "contextless" () -> (handles: u64, ok: bool) {
 		return 0, false
 	}
 	report: op.Process_Report
-	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), own_slot, u64(uintptr(&report)), size_of(report)); status != .Ok {
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), own_slot, u64(uintptr(&report)), size_of(report)); status != .Succeeded {
 		return 0, false
 	}
 	return report.handle_count, true
@@ -97,7 +97,7 @@ own_tables :: proc "contextless" () -> (mappings, handles: u64, ok: bool) {
 		return 0, 0, false
 	}
 	report: op.Process_Report
-	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), own_slot, u64(uintptr(&report)), size_of(report)); status != .Ok {
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), own_slot, u64(uintptr(&report)), size_of(report)); status != .Succeeded {
 		return 0, 0, false
 	}
 	return report.mapping_count, report.handle_count, true

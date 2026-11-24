@@ -251,14 +251,14 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		if .Execute in segment.flags {
 			flags += {.Execute}
 		}
-		if _, status := map_region(process, code, op.PROCESS_BASE + segment.memory_offset, flags, segment.memory_offset / PAGE_SIZE, segment.memory_size / PAGE_SIZE); status != .Ok {
+		if _, status := map_region(process, code, op.PROCESS_BASE + segment.memory_offset, flags, segment.memory_offset / PAGE_SIZE, segment.memory_size / PAGE_SIZE); status != .Succeeded {
 			fail("a segment cannot be mapped")
 		}
 	}
 	_, stack_status := map_region(process, stack, op.STACK_TOP - op.STACK_PAGES * PAGE_SIZE, {.Write}, 0, 0)
 	_, context_status := map_region(process, ctx, op.CONTEXT_ADDRESS, {.Write}, 0, 0)
 	start, has_entry := module.export_address(file, op.PROCESS_BASE, head.entry_export)
-	if stack_status != .Ok || context_status != .Ok || !has_entry {
+	if stack_status != .Succeeded || context_status != .Succeeded || !has_entry {
 		fail("the module has no entry")
 	}
 
@@ -300,7 +300,7 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		}
 	}
 
-	if _, status := thread_create(index, ROOT_BUDGET, u64(start), op.STACK_TOP, op.CONTEXT_ADDRESS); status != .Ok {
+	if _, status := thread_create(index, ROOT_BUDGET, u64(start), op.STACK_TOP, op.CONTEXT_ADDRESS); status != .Succeeded {
 		fail("no memory for the first thread")
 	}
 	process.state = .Ready

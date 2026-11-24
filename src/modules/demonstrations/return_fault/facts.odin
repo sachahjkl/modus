@@ -1,5 +1,6 @@
 package return_fault
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
@@ -71,20 +72,20 @@ CASE_FIELD_BYTES :: 56
 // The child of the instruction address cannot make its page.
 @(log_fact = "return_fault: the child of the instruction address could not make its page: {status}")
 Instruction_Page_Not_Made :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // The child of the instruction address cannot map its page to write it.
 @(log_fact = "return_fault: the child of the instruction address could not map its page to write it: {status}")
 Instruction_Page_Not_Mapped_To_Write :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // The child of the instruction address cannot map its page at the last
 // page below the half of a process.
 @(log_fact = "return_fault: the child of the instruction address could not map its page at the last page: {status}")
 Instruction_Page_Not_Mapped_At_End :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // The child of a case did not start.

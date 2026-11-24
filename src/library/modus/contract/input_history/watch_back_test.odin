@@ -2,6 +2,7 @@
 package input_history
 
 import "core:testing"
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 
 // The page of the variables in these tests, and the address of one of them.
@@ -167,7 +168,7 @@ watch_back_misses_writes_that_do_not_overlap :: proc(t: ^testing.T) {
 	append_cpuid(t, &writer)
 	append_page_write(t, &writer, {0x0F0, 0x200}, {1, 2})
 	// A kernel completion that copies bytes beside the variable, not on it.
-	entry := Kernel_Completion_Payload{completion_status = u32(op.Status.Ok), copied_bytes_count = 8, copied_user_address = TEST_VARIABLE + 8}
+	entry := Kernel_Completion_Payload{completion_status = u32(call_outcome.Call_Outcome.Succeeded), copied_bytes_count = 8, copied_user_address = TEST_VARIABLE + 8}
 	copied := [8]u8{9, 9, 9, 9, 9, 9, 9, 9}
 	testing.expect(t, history_writer_append_kernel_completion(&writer, 0x40_3000, 0x70_0000, entry, copied[:]))
 	testing.expect(t, history_writer_append_end(&writer, 0x40_4000, 0x70_0000, .Normal_Stop))
@@ -214,7 +215,7 @@ watch_back_gives_the_latest_write_before_the_point :: proc(t: ^testing.T) {
 	append_page_write(t, &writer, {0x101}, {0x22}, 0x40_1003) // point 3
 	append_page_write(t, &writer, {0x900}, {0x77}, 0x40_1004) // point 4: another variable
 	// Point 5: the kernel copies 8 bytes over the variable.
-	entry := Kernel_Completion_Payload{completion_status = u32(op.Status.Ok), copied_bytes_count = 8, copied_user_address = TEST_VARIABLE - 4}
+	entry := Kernel_Completion_Payload{completion_status = u32(call_outcome.Call_Outcome.Succeeded), copied_bytes_count = 8, copied_user_address = TEST_VARIABLE - 4}
 	copied := [8]u8{1, 2, 3, 4, 5, 6, 7, 8}
 	testing.expect(t, history_writer_append_kernel_completion(&writer, 0x40_1005, 0x70_0005, entry, copied[:]))
 	append_cpuid(t, &writer) // point 6

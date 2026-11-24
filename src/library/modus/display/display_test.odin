@@ -1,6 +1,7 @@
 #+build !freestanding
 package display
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/memory_screen"
 import op "modus:contract/operation"
@@ -360,9 +361,9 @@ resizable_window_of_test :: proc(ring_memory: []u8) -> Window {
 // surface_resize refuses, with no change of the window: a fixed window; no
 // Resized to answer; another size than the asked one, by one pixel, 0 and
 // a negative size; a size outside the limits that a Resizable narrowed
-// after the request; and a full command ring, with No_Slot. No_Budget comes
-// from the kernel, which a host test does not have: the machine test of a
-// window whose budget refuses is not written.
+// after the request; and a full command ring, with Callee_Busy.
+// Budget_Or_Capacity_Exhausted comes from the kernel, which a host test does
+// not have: the machine test of a window whose budget refuses is not written.
 @(test)
 surface_resize_refuses_before_any_kernel_operation :: proc(t: ^testing.T) {
 	ring_memory := make([]u8, ring.PAGE_COUNT * ring.PAGE_SIZE)
@@ -370,19 +371,19 @@ surface_resize_refuses_before_any_kernel_operation :: proc(t: ^testing.T) {
 	Case :: struct {
 		width, height: int,
 		change:        proc(window: ^Window),
-		status:        op.Status,
+		status:        call_outcome.Call_Outcome,
 	}
 	cases := [?]Case{
-		{880, 384, proc(window: ^Window) {window.resizable = false}, .Bad_Operation},
-		{880, 384, proc(window: ^Window) {window.resize_asked = false}, .Bad_Operation},
-		{881, 384, nil, .Bad_Operation},
-		{880, 383, nil, .Bad_Operation},
-		{0, 0, nil, .Bad_Operation},
-		{-880, -384, nil, .Bad_Operation},
-		{880, 384, proc(window: ^Window) {window.size_limits.largest_width = 872}, .Bad_Operation},
+		{880, 384, proc(window: ^Window) {window.resizable = false}, .Wrong_State},
+		{880, 384, proc(window: ^Window) {window.resize_asked = false}, .Wrong_State},
+		{881, 384, nil, .Wrong_State},
+		{880, 383, nil, .Wrong_State},
+		{0, 0, nil, .Wrong_State},
+		{-880, -384, nil, .Wrong_State},
+		{880, 384, proc(window: ^Window) {window.size_limits.largest_width = 872}, .Argument_Refused},
 		{880, 384, proc(window: ^Window) {
 			for ring.push(&window.ring.commands, ring.Record{kind = u32(Command.Picture_Due)}) {}
-		}, .No_Slot},
+		}, .Callee_Busy},
 	}
 	for each, index in cases {
 		for &value in ring_memory {
@@ -418,7 +419,7 @@ surface_resize_names_the_axis_past_the_largest_limit :: proc(t: ^testing.T) {
 		window.resize_asked_width, window.resize_asked_height = each.width, each.height
 		error: errors.Error_Record
 		status := surface_resize(&window, each.width, each.height, &error)
-		testing.expectf(t, status == .Bad_Operation && error.argument == i64(each.argument), "%dx%d gives %v with the argument %d", each.width, each.height, status, error.argument)
+		testing.expectf(t, status == .Argument_Refused && error.argument == i64(each.argument), "%dx%d gives %v with the argument %d", each.width, each.height, status, error.argument)
 	}
 }
 
@@ -655,7 +656,7 @@ copy_send_refuses_a_copy_that_no_key_asked_for :: proc(t: ^testing.T) {
 	text := [?]u8{'h', 'i'}
 	problem, status := copy_send(&window, text[:])
 	testing.expect_value(t, problem, Clipboard_Problem.Not_Asked)
-	testing.expect_value(t, status, op.Status.Ok)
+	testing.expect_value(t, status, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, window, Window{})
 	testing.expect(t, !copy_decline(&window))
 }

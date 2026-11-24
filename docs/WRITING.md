@@ -46,7 +46,7 @@ A code, a status number or the result of a call is never the message. It goes in
 A status that the sentence can name is said in words: what the status means, not its name and not its number. A status that the sentence cannot name, because the record does not say whose status it is, is left out of the sentence.
 
 - Bad: "monitor.count: the receiver refused the call with the status 2"
-- Bad: "monitor.count: refused with the status Bad_Handle"
+- Bad: "monitor.count: refused with the outcome Argument_Refused"
 - Good: "monitor.count: the kernel refused an operation of the call: a handle names no object of the kind that the operation needs". The record has the unit `Kernel_Status`, so the sentence knows that the status is a status of the kernel.
 
 The negative result of a failed export is not shown at all. The error record holds the facts, and the number tells the reader nothing. The Windows guide gives "-1" as its example of an incorrect error code.

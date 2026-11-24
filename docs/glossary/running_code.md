@@ -586,7 +586,7 @@ Do not use: status type, named enum, enum table.
 
 A word type is a distinct integer of a contract package that holds a word of one contract enum as it came, at its own size.
 
-A field of a word type is a Status field of that enum: a reader writes the name of the member, or the number of a word that names none. A writer copies a word of another party into it with no cast to the enum, and a word type of 8 bytes leaves no padding beside fields of 8 bytes. `value_kinds.CONTRACT_ENUM_TYPES` names it. Examples: `operation.Status_Word`, `errors.Kind_Word`, `errors.Unit_Word`. The design: `src/md/features/log_facts.md`, "Field kinds".
+A field of a word type is a Status field of that enum: a reader writes the name of the member, or the number of a word that names none. A writer copies a word of another party into it with no cast to the enum, and a word type of 8 bytes leaves no padding beside fields of 8 bytes. `value_kinds.CONTRACT_ENUM_TYPES` names it. Examples: `call_outcome.Call_Outcome_Word`, `errors.Kind_Word`, `errors.Unit_Word`. The design: `src/md/features/log_facts.md`, "Field kinds".
 
 Do not use: raw enum, enum word field.
 
@@ -880,7 +880,7 @@ Do not use: affinity, affinity mask, CPU set, pinning, cpuset.
 
 A machine number is the number that names one thread among all the threads of the machine (`op.Thread_Report.machine_number`).
 
-A thread number names a thread inside its process only. The machine handle with **Schedule** needs a name for any thread: the thread report of `Inspect` gives the machine number of each thread, and thread control takes it for the commands of the thread schedule. Its high bits change for each new thread in the same place of the thread table, so the number of a thread that ended names no later thread, and the kernel gives `Bad_State` for it. It is not a handle: it gives no right.
+A thread number names a thread inside its process only. The machine handle with **Schedule** needs a name for any thread: the thread report of `Inspect` gives the machine number of each thread, and thread control takes it for the commands of the thread schedule. Its high bits change for each new thread in the same place of the thread table, so the number of a thread that ended names no later thread, and the kernel gives `Nothing_Has_That_Name` for it. It is not a handle: it gives no right.
 
 The design: `docs/SCHEDULING.md`, "The schedule of a live thread".
 

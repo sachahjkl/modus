@@ -249,30 +249,30 @@ fault_handler_set :: proc "contextless" (process_index: u32, handler_index: u32,
 	// Only a live thread of this process: thread.process is 0 after
 	// thread_finish, which runs under this lock.
 	if handler_index != 0 && (handler.process != process_index || handler.record_in_kernel == nil) {
-		return .Bad_State
+		return .Wrong_State
 	}
 	// One ring has one role: the ring of a debug handler takes the records
 	// of the process that it debugs, with the count of that process.
 	if handler_index != 0 && intrinsics.atomic_load(&handler.debugs_process) != 0 {
-		return .Bad_State
+		return .Wrong_State
 	}
 	if fault_waiter_exists(process_index) {
 		// A stop of the process takes the control lock.
 		require_control() or_return
 		process_stop(process_index, .Fault_Unanswered, .None)
-		return .Ok
+		return .Succeeded
 	}
 	process.fault_handler = handler_index
 	if handler_index == 0 {
 		intrinsics.atomic_store(&process.fault_kinds, 0)
-		return .Ok
+		return .Succeeded
 	}
 	process.fault_handler_serial = handler.serial
 	process.fault_written = 0
 	intrinsics.atomic_store(&handler.record_in_kernel.fault_written, 0)
 	intrinsics.atomic_store(&handler.record_in_kernel.fault_read, 0)
 	intrinsics.atomic_store(&process.fault_kinds, kinds)
-	return .Ok
+	return .Succeeded
 }
 
 // fault_waiter_find gives the thread of a process with a number and a
@@ -310,33 +310,33 @@ debug_handler_set :: proc "contextless" (caller_index: u32, handler_index: u32, 
 	// A process does not debug itself: its debug handler would wait for
 	// its own answer.
 	if debugged_index == caller_index {
-		return .Bad_State
+		return .Wrong_State
 	}
 	handler := &threads[handler_index]
 	// Only a live thread of the calling process, which is not its fault
 	// handler: one ring has one role.
 	if handler.process != caller_index || handler.record_in_kernel == nil || processes[caller_index].fault_handler == handler_index {
-		return .Bad_State
+		return .Wrong_State
 	}
 	if serves := intrinsics.atomic_load(&handler.debugs_process); serves != 0 && serves != debugged_index {
-		return .Bad_State
+		return .Wrong_State
 	}
 	// Two processes do not debug each other: each one could hold the debug
 	// handler of the other, and both would wait for ever.
 	if debugger_is(caller_index, debugged_index) {
-		return .Bad_State
+		return .Wrong_State
 	}
 	taken := process_lock(debugged_index)
 	defer process_unlock(debugged_index, taken)
 	process := &processes[debugged_index]
 	if process.state != .Created && process.state != .Ready {
-		return .Bad_State
+		return .Wrong_State
 	}
 	if process.debug_handler != 0 {
 		// One debugger at a time. The process of a thread changes only
 		// under the control lock, which the caller holds.
 		if threads[process.debug_handler].process != caller_index {
-			return .Bad_State
+			return .Wrong_State
 		}
 		// A new debug handler of the same debugger: the ring of the old
 		// one ends as at a detach, and its threads go on.
@@ -354,7 +354,7 @@ debug_handler_set :: proc "contextless" (caller_index: u32, handler_index: u32, 
 	intrinsics.atomic_store(&record.fault_read, 0)
 	intrinsics.atomic_store(&handler.debugs_process, debugged_index)
 	intrinsics.atomic_store(&process.debug_kinds, kinds)
-	return .Ok
+	return .Succeeded
 }
 
 // debug_handler_detach ends the debugging of a process by its debugger,
@@ -363,10 +363,10 @@ debug_handler_detach :: proc "contextless" (caller_index: u32, debugged_index: u
 	taken := process_lock(debugged_index)
 	defer process_unlock(debugged_index, taken)
 	if !debugger_is(debugged_index, caller_index) {
-		return .Bad_State
+		return .Wrong_State
 	}
 	debug_handler_end(debugged_index)
-	return .Ok
+	return .Succeeded
 }
 
 // debugger_is says if a process is the debugger of another one: a thread
@@ -473,20 +473,20 @@ debug_fault_answer :: proc "contextless" (caller_index: u32, debugged_index: u32
 	taken := process_lock(debugged_index)
 	defer process_unlock(debugged_index, taken)
 	if !debugger_is(debugged_index, caller_index) {
-		return .Bad_State
+		return .Wrong_State
 	}
 	waiter_index := fault_waiter_find(debugged_index, number, serial)
 	if waiter_index == 0 || !threads[waiter_index].fault_to_debugger {
-		return .Bad_State
+		return .Wrong_State
 	}
 	waiter := &threads[waiter_index]
 	// The frame is written below: the thread left its processor first.
 	if !thread_held_off_processor(waiter) {
-		return .Bad_State
+		return .Wrong_State
 	}
 	breakpoint_resume_flag_set(waiter)
 	waiter.fault_waits = false
 	waiter.fault_to_debugger = false
 	thread_wake(waiter)
-	return .Ok
+	return .Succeeded
 }

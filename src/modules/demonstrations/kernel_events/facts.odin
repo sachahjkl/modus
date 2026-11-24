@@ -1,5 +1,6 @@
 package kernel_events
 
+import "modus:contract/call_outcome"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
@@ -26,7 +27,7 @@ import "modus:system"
 // the child asks.
 @(log_fact = "kernel_events: {child}: process_start failed: {status}; this process can give pages {given_pages}, processes {given_processes}, threads {given_threads}, processor {given_processor}, log records {given_log_records}; the child asks pages {asked_pages}, processes {asked_processes}, threads {asked_threads}, processor {asked_processor}, log records {asked_log_records}")
 Child_Start_Refused :: struct {
-	status:            op.Status_Word,
+	status:            call_outcome.Call_Outcome_Word,
 	given_pages:       u64,
 	given_processes:   u64,
 	given_threads:     u64,
@@ -207,15 +208,15 @@ OPERATION_FIELD_BYTES :: 24
 // The shared page of a child cannot be made.
 @(log_fact = "kernel_events: {child}: memory_create of the shared page failed: {status}")
 Shared_Page_Not_Made :: struct {
-	status: op.Status,
-	child:  [28]u8,
+	status: call_outcome.Call_Outcome,
+	child:  [24]u8,
 }
 
 // The shared page of a child cannot be mapped.
 @(log_fact = "kernel_events: {child}: memory_map of the shared page failed: {status}")
 Shared_Page_Not_Mapped :: struct {
-	status: op.Status,
-	child:  [28]u8,
+	status: call_outcome.Call_Outcome,
+	child:  [24]u8,
 }
 
 // The budget of this process did not get back the whole budget of a child
@@ -253,22 +254,22 @@ Round_Not_Ended :: struct {
 @(log_fact = "kernel_events: Events_Set with {rules} rules and {records} records gave {status}")
 Events_Set_Refused :: struct {
 	records: u64,
-	rules:   u32,
-	status:  op.Status,
+	rules:   u64,
+	status:  call_outcome.Call_Outcome,
 }
 
 // Case 1: a copy of the machine handle with no right gives no event table.
 @(log_fact = "kernel_events: no grant: Events_Set with a copy of the machine handle with no right gave {status}: {verdict}")
 No_Grant_Refused :: struct {
-	status:  op.Status,
+	status:  call_outcome.Call_Outcome,
 	verdict: [16]u8,
 }
 
 // Case 2: 16 rules are taken, and 17 refused.
 @(log_fact = "kernel_events: a seventeenth rule: 16 rules {sixteen_rules}, 17 rules {seventeen_rules}: {verdict}")
 Seventeenth_Rule_Refused :: struct {
-	sixteen_rules:   op.Status,
-	seventeen_rules: op.Status,
+	sixteen_rules:   call_outcome.Call_Outcome,
+	seventeen_rules: call_outcome.Call_Outcome,
 	verdict:         [16]u8,
 }
 
@@ -308,8 +309,8 @@ Full_Ring_Counted :: struct {
 @(log_fact = "kernel_events: the table taken away: {records_after} records after it; a second take gave {second_take}: {verdict}")
 Table_Taken_Away :: struct {
 	records_after: u64,
-	second_take:   op.Status,
-	verdict:       [12]u8,
+	second_take:   call_outcome.Call_Outcome,
+	verdict:       [16]u8,
 }
 
 // Case 10: the gives and the ends of a table while the loaders run on
@@ -329,14 +330,14 @@ Right_Revoked :: struct {
 	records_before: u64,
 	calls:          u64,
 	records_after:  u64,
-	status:         op.Status,
-	verdict:        [12]u8,
+	status:         call_outcome.Call_Outcome,
+	verdict:        [16]u8,
 }
 
 // The thread that empties the rings during a measure did not start.
 @(log_fact = "kernel_events: the thread that empties the rings did not start: {status}")
 Drainer_Not_Started :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // What every process did in 200 ms: shown, not checked.
@@ -351,7 +352,7 @@ Every_Process_Shown :: struct {
 // The load child cannot make its memory object.
 @(log_fact = "kernel_events: the load child could not make its memory object: {status}")
 Load_Memory_Not_Made :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // The load child read a word of the shared page that names no round.
@@ -375,13 +376,13 @@ Role_Word_Unknown :: struct {
 // The memory object of the rings cannot be made.
 @(log_fact = "kernel_events: memory_create of the rings failed: {status}")
 Rings_Not_Made :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // The memory object of the rings cannot be mapped.
 @(log_fact = "kernel_events: memory_map of the rings failed: {status}")
 Rings_Not_Mapped :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // Case 11: the child that faults keeps its first stop cause after a stop
@@ -416,7 +417,7 @@ Cases_Failed :: struct {
 #assert(size_of(Child_Budget_Not_Back) == 8 + CHILD_FIELD_BYTES)
 #assert(size_of(Every_Process_Shown) == 24 + OPERATION_FIELD_BYTES)
 #assert(size_of(Load_Child_Stopped) == 12 && size_of(Load_Child_Stopped_Without_Outcome) == 8)
-#assert(size_of(Events_Set_Refused) == 16 && size_of(Table_Taken_Away) == 24 && size_of(Right_Revoked) == 40)
+#assert(size_of(Events_Set_Refused) == 24 && size_of(Table_Taken_Away) == 32 && size_of(Right_Revoked) == 48)
 
 // verdict_field gives the Text field of the verdict of a case in the words
 // of the line: "as it must" or "WRONG".

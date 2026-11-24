@@ -1137,14 +1137,14 @@ log_fact_record :: proc "contextless" (process: u32, process_serial: u32, owner:
 // the host.
 log_fact_operation :: proc "contextless" (process_index: u32, thread_index: u32, process: ^Process, v: [7]u64) -> Operation_Outcome {
 	if v[4] != 0 {
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	if v[2] < op.LOG_FACT_HEAD_BYTES || v[2] > op.LOG_FACT_CALL_BYTES_MOST || !user_range(process, v[1], v[2], false) {
-		return .Bad_Address
+		return .Argument_Refused
 	}
 	level, level_known := enum_word.member_of_word(op.Log_Level, v[3])
 	if !level_known {
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	// The copy before the log lock: a page on first use takes the frame
 	// lock, which comes before it.
@@ -1154,7 +1154,7 @@ log_fact_operation :: proc "contextless" (process_index: u32, thread_index: u32,
 	part_count := op.log_fact_part_count(int(v[2]) - op.LOG_FACT_HEAD_BYTES)
 	if !budget_log(process.budget, u64(part_count)) {
 		process.log_lines_refused += 1
-		return .No_Budget
+		return .Budget_Or_Capacity_Exhausted
 	}
 	process.log_lines_refused = 0
 	name := transmute([]u8)process_name(process)
@@ -1163,7 +1163,7 @@ log_fact_operation :: proc "contextless" (process_index: u32, thread_index: u32,
 		log_fact_record(process_index, intrinsics.atomic_load(&process.serial), process, thread_index, name, level, body)
 		log_free(taken)
 		serial_drain_before_the_tick()
-		return .Ok
+		return .Succeeded
 	}
 	// No memory of the log: the serial port only. Each part is written as
 	// its record would be, after the copy of the fact in the same buffer,
@@ -1180,7 +1180,7 @@ log_fact_operation :: proc "contextless" (process_index: u32, thread_index: u32,
 	}
 	log_bytes({'\r', '\n'})
 	log_free(taken)
-	return .Ok
+	return .Succeeded
 }
 
 // machine_stop ends the machine under QEMU, or halts the processor. It is

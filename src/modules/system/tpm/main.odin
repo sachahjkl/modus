@@ -793,16 +793,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// First: the call erases the seed in the context.
 	seeded := random.generator_from_context(&generator, ctx)
 	clients, ring_status := system.ring_open(ctx.handles[tpm_service.SERVICE_RING])
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		fail("no TPM ring")
 	}
 	region_address, region_status := system.memory_map(ctx.handles[tpm_service.SERVICE_REGION], {.Write})
-	if region_status != .Ok {
+	if region_status != .Succeeded {
 		fail("no TPM region")
 	}
 	region = ([^]u8)(region_address)[:tpm_service.REGION_SIZE]
 	registers_address, registers_status := system.memory_map(ctx.handles[tpm_service.SERVICE_REGISTERS], {.Write})
-	if registers_status != .Ok {
+	if registers_status != .Succeeded {
 		fail("no registers of the TPM")
 	}
 	registers = uintptr(registers_address)
@@ -821,7 +821,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The measure ring of the root service. With none, no start policy is
 	// measured, and the root service says it at each start policy.
 	measures, measure_ring_status := system.ring_open(ctx.handles[tpm_service.SERVICE_MEASURE_RING])
-	measure_ring_open := measure_ring_status == .Ok
+	measure_ring_open := measure_ring_status == .Succeeded
 	if !measure_ring_open {
 		system.log_fact(.Warning, No_Measure_Ring{})
 	}

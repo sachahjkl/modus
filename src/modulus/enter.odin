@@ -1,5 +1,6 @@
 package kernel
 
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/ring"
@@ -56,26 +57,26 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		if event_wanted(cpu, OBSERVED_OPERATION, .Operation, thread.process) {
 			started = cycles_now()
 		}
-		status := command_run(index, command, &completion.values)
+		outcome := command_run(index, command, &completion.values)
 		if started != 0 {
 			// The operation can have stopped this thread or its process: its
 			// slot keeps its process and its number until its processor
 			// leaves it (schedule), so the record names it.
-			event_record(cpu, .Operation, thread.process, thread.number, u64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS), cycles_now() - started, u64(status))
+			event_record(cpu, .Operation, thread.process, thread.number, u64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS), cycles_now() - started, u64(outcome))
 		}
 		// The operation can end the thread: self-stopping commands already
 		// recorded their completion before process_stop ended the history.
 		if intrinsics.atomic_load(&thread.stop_requested) {
 			return
 		}
-		completion.kind = u32(status)
-		if status != .Ok {
+		completion.kind = u32(outcome)
+		if outcome != .Succeeded {
 			// The error record: the values of a failed operation, and the
 			// table of error details that the command names (diagnose.odin).
-			completion.values = transmute([7]u64)diagnose_command(thread.process, command, status)
+			completion.values = transmute([7]u64)diagnose_command(thread.process, command, outcome)
 		}
 		if intrinsics.atomic_load(&thread.record_mode) == .Recording {
-			record_kernel_completion(cpu, thread, command, status, completion.values)
+			record_kernel_completion(cpu, thread, command, outcome, completion.values)
 		}
 		// The room was checked before the run, and only the reader changes
 		// the read counter: the push fails only after a thread of the
@@ -91,87 +92,56 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			// captures post-wake milliseconds and post-wake point copies.
 			thread.record_wait_pending = true
 		} else {
-			record_kernel_completion(cpu, thread, ring.Record{values = {0 = thread.frame.rdi}}, .Ok, {})
+			record_kernel_completion(cpu, thread, ring.Record{values = {0 = thread.frame.rdi}}, .Succeeded, {})
 		}
 	}
 }
 
-// The result of a kernel operation inside the kernel: each status of the
-// contract, with its value, and Needs_Control, which no process sees. An
-// operation that touches another process, or ends an object that other
-// processes name, needs the control lock (docs/ARCHITECTURE.md, "Locks of
-// the kernel"): it gives Needs_Control before it changes anything, and
-// command_run runs it again with the lock. One value says it, so no path
-// can ask for the lock and still run on.
+// The result of a kernel operation inside the kernel: each outcome that the
+// kernel can give, with its contract value, and Needs_Control, which no
+// process sees. An operation that touches another process, or ends an
+// object that other processes name, needs the control lock
+// (docs/ARCHITECTURE.md, "Locks of the kernel"): it gives Needs_Control
+// before it changes anything, and command_run runs it again with the lock.
+// One value says it, so no path can ask for the lock and still run on.
 Operation_Outcome :: enum u32 {
-	Ok            = u32(op.Status.Ok),
-	Bad_Operation = u32(op.Status.Bad_Operation),
-	Bad_Handle    = u32(op.Status.Bad_Handle),
-	Bad_Address   = u32(op.Status.Bad_Address),
-	No_Memory     = u32(op.Status.No_Memory),
-	No_Slot       = u32(op.Status.No_Slot),
-	Bad_State     = u32(op.Status.Bad_State),
-	No_Right      = u32(op.Status.No_Right),
-	No_Budget     = u32(op.Status.No_Budget),
-	Needs_Control = u32(max(op.Status)) + 1,
+	Succeeded                    = u32(call_outcome.Call_Outcome.Succeeded),
+	Argument_Refused             = u32(call_outcome.Call_Outcome.Argument_Refused),
+	Nothing_Has_That_Name        = u32(call_outcome.Call_Outcome.Nothing_Has_That_Name),
+	Grant_Or_Right_Missing       = u32(call_outcome.Call_Outcome.Grant_Or_Right_Missing),
+	Callee_Busy                  = u32(call_outcome.Call_Outcome.Callee_Busy),
+	Budget_Or_Capacity_Exhausted = u32(call_outcome.Call_Outcome.Budget_Or_Capacity_Exhausted),
+	Wrong_State                  = u32(call_outcome.Call_Outcome.Wrong_State),
+	Operation_Unsupported        = u32(call_outcome.Call_Outcome.Operation_Unsupported),
+	Needs_Control                = u32(max(call_outcome.Call_Outcome)) + 1,
 }
-// A status added to the contract does not build until it has its member here.
-#assert(len(Operation_Outcome) == len(op.Status) + 1)
 
-// status_of_outcome gives the status of the completion record of a
-// command. Needs_Control from the run with the control lock is a fault of
-// the kernel: the operation asked for a lock that it held.
-status_of_outcome :: proc "contextless" (outcome: Operation_Outcome) -> op.Status {
+// call_outcome_of_operation_outcome gives the outcome of the completion
+// record of a command. Needs_Control from the run with the control lock is
+// a fault of the kernel: the operation asked for a lock that it held.
+call_outcome_of_operation_outcome :: proc "contextless" (outcome: Operation_Outcome) -> call_outcome.Call_Outcome {
 	switch outcome {
-	case .Ok:
-		return .Ok
-	case .Bad_Operation:
-		return .Bad_Operation
-	case .Bad_Handle:
-		return .Bad_Handle
-	case .Bad_Address:
-		return .Bad_Address
-	case .No_Memory:
-		return .No_Memory
-	case .No_Slot:
-		return .No_Slot
-	case .Bad_State:
-		return .Bad_State
-	case .No_Right:
-		return .No_Right
-	case .No_Budget:
-		return .No_Budget
+	case .Succeeded:
+		return .Succeeded
+	case .Argument_Refused:
+		return .Argument_Refused
+	case .Nothing_Has_That_Name:
+		return .Nothing_Has_That_Name
+	case .Grant_Or_Right_Missing:
+		return .Grant_Or_Right_Missing
+	case .Callee_Busy:
+		return .Callee_Busy
+	case .Budget_Or_Capacity_Exhausted:
+		return .Budget_Or_Capacity_Exhausted
+	case .Wrong_State:
+		return .Wrong_State
+	case .Operation_Unsupported:
+		return .Operation_Unsupported
 	case .Needs_Control:
 	}
 	fault_report_begin()
 	log("kernel: an operation asked for the control lock while it held it: the machine stops")
 	machine_stop(.Invariant_Broken)
-}
-
-// outcome_of_status lifts a contract status into Operation_Outcome with a
-// whole switch so no cast skips the set.
-outcome_of_status :: proc "contextless" (status: op.Status) -> Operation_Outcome {
-	switch status {
-	case .Ok:
-		return .Ok
-	case .Bad_Operation:
-		return .Bad_Operation
-	case .Bad_Handle:
-		return .Bad_Handle
-	case .Bad_Address:
-		return .Bad_Address
-	case .No_Memory:
-		return .No_Memory
-	case .No_Slot:
-		return .No_Slot
-	case .Bad_State:
-		return .Bad_State
-	case .No_Right:
-		return .No_Right
-	case .No_Budget:
-		return .No_Budget
-	}
-	return .Bad_Operation
 }
 
 // The facts of the kernel operation that runs on a processor, in one
@@ -214,7 +184,7 @@ Operation_In_Progress :: struct {
 
 // command_run executes one command under the process lock of the caller,
 // and runs it again with the control lock when it gives Needs_Control.
-command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u64) -> op.Status {
+command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u64) -> call_outcome.Call_Outcome {
 	cpu := processor_self()
 	cpu.operation = {running = true}
 	// A guest runs with no lock held: the operation takes its own locks
@@ -222,12 +192,12 @@ command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[
 	if command.kind == u32(op.Operation.Guest_Run) {
 		if intrinsics.atomic_load(&threads[index].record_mode) != .None {
 			cpu.operation.running = false
-			return .Bad_State
+			return .Wrong_State
 		}
 		guest_outcome := guest_run(index, command.values, results)
 		cpu.operation.running = false
 		stop_wait(cpu)
-		return status_of_outcome(guest_outcome)
+		return call_outcome_of_operation_outcome(guest_outcome)
 	}
 	// A long word wait runs in chunks, with the process lock free between
 	// two: one entry does not hold it for the whole list.
@@ -235,7 +205,7 @@ command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[
 		outcome := word_wait_in_chunks(index, command, results)
 		cpu.operation.running = false
 		stop_wait(cpu)
-		return status_of_outcome(outcome)
+		return call_outcome_of_operation_outcome(outcome)
 	}
 	outcome := execute_locked(index, command, results)
 	if outcome == .Needs_Control {
@@ -251,7 +221,7 @@ command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[
 	}
 	cpu.operation.running = false
 	stop_wait(cpu)
-	return status_of_outcome(outcome)
+	return call_outcome_of_operation_outcome(outcome)
 }
 
 // The words of a Word_Wait that one section of the process lock registers.
@@ -265,7 +235,7 @@ WORD_WAIT_CHUNK :: 1024
 // as chunks of the list, each one with the process lock. The checks of the
 // whole list come first, so a list that the room cannot hold, or whose
 // addresses wrap, registers nothing. A chunk that fails ends the command
-// with its status and sets word_changed: the words of the chunks before
+// with its outcome and sets word_changed: the words of the chunks before
 // stay registered until the next entry, as a list that fails at a word
 // does in one chunk, and the entry does not wait. Between two chunks, a
 // decommit, a revocation or an unmap of a frame of a word finds the words
@@ -275,13 +245,17 @@ WORD_WAIT_CHUNK :: 1024
 word_wait_in_chunks :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u64) -> Operation_Outcome {
 	thread := &threads[index]
 	address, count := command.values[0], command.values[1]
+	if count > op.WORD_WAIT_MOST {
+		thread.word_changed = true
+		return .Argument_Refused
+	}
 	if count > u64(wait_capacity(thread) - thread.word_count) {
 		thread.word_changed = true
-		return .No_Slot
+		return .Budget_Or_Capacity_Exhausted
 	}
 	if address > max(u64) - count * size_of(op.Word) {
 		thread.word_changed = true
-		return .Bad_Address
+		return .Argument_Refused
 	}
 	operation := &processor_self().operation
 	for first := u64(0); first < count; first += WORD_WAIT_CHUNK {
@@ -290,12 +264,12 @@ word_wait_in_chunks :: proc "contextless" (index: u32, command: ring.Record, res
 		chunk.values[1] = min(WORD_WAIT_CHUNK, count - first)
 		operation.word_wait_refused_place = first
 		outcome := execute_locked(index, chunk, results)
-		if outcome != .Ok {
+		if outcome != .Succeeded {
 			thread.word_changed = true
 			return outcome
 		}
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // stop_wait waits, with no lock held, until each thread that this
@@ -335,11 +309,11 @@ execute_locked :: proc "contextless" (index: u32, command: ring.Record, results:
 }
 
 // require_control gives Needs_Control when the operation runs without the
-// control lock, else Ok. The caller writes `require_control() or_return`
+// control lock, else Succeeded. The caller writes `require_control() or_return`
 // before it changes anything: the return cannot be forgotten.
 require_control :: proc "contextless" () -> Operation_Outcome {
 	if processor_self().operation.control {
-		return .Ok
+		return .Succeeded
 	}
 	return .Needs_Control
 }
@@ -349,10 +323,10 @@ require_control :: proc "contextless" () -> Operation_Outcome {
 // control lock when the handle is not 0.
 target_lock :: proc "contextless" (process: ^Process, handle: u64) -> (to: ^Process, taken: bool, status: Operation_Outcome) {
 	if handle == 0 {
-		return process, false, .Ok
+		return process, false, .Succeeded
 	}
 	slot := handle_find(process, handle, .Process, {.Control}) or_return
-	return &processes[slot.object], process_lock(slot.object), .Ok
+	return &processes[slot.object], process_lock(slot.object), .Succeeded
 }
 
 // developer_report_ready checks the memory of a report of a developer tool
@@ -360,7 +334,7 @@ target_lock :: proc "contextless" (process: ^Process, handle: u64) -> (to: ^Proc
 // process, and only the control lock keeps its slot for that process.
 developer_report_ready :: proc "contextless" (process: ^Process, v: [7]u64, size: u64) -> Operation_Outcome {
 	if v[4] < size || !user_range(process, v[3], size, true) {
-		return .Bad_Address
+		return .Argument_Refused
 	}
 	return require_control()
 }
@@ -377,18 +351,18 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// The kind 0 names no operation: a zero record is a command that
 		// a process never filled. It is refused as a kind past the last
 		// operation is, and its error record says Unknown_Operation.
-		return .Bad_Operation
+		return .Operation_Unsupported
 
 	case .Guest_Run:
 		// command_run takes Guest_Run before it comes here: it runs
 		// outside the process lock.
-		return .Bad_Operation
+		return .Operation_Unsupported
 
 	case .Log:
 		_ = handle_find(process, v[0], .Log, {.Write}) or_return
 		form, form_known := enum_word.member_of_word(op.Log_Record_Form, v[5])
 		if !form_known {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		switch form {
 		case .Fact:
@@ -396,15 +370,15 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		case .Text:
 		}
 		if v[4] > op.LOG_CALL_RUN_LIMIT {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		run_bytes := v[4] * size_of(value_kinds.Value_Run_In_Call)
 		if v[2] > op.LOG_TEXT_BYTES_MOST || !user_range(process, v[1], v[2] + run_bytes, false) {
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		level, level_known := enum_word.member_of_word(op.Log_Level, v[3])
 		if !level_known {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		name := transmute([]u8)process_name(process)
 		log_text := &processor_self().log_text
@@ -420,7 +394,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// port, and a text of LOG_TEXT_BYTES_MOST bytes is 25 records.
 		if !budget_log(process.budget, log_records_of_text(log_text[:v[2]])) {
 			process.log_lines_refused += 1
-			return .No_Budget
+			return .Budget_Or_Capacity_Exhausted
 		}
 		process.log_lines_refused = 0
 		// The value runs: checked once, in the copy of this processor. Runs
@@ -439,7 +413,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			log_record(process_index, intrinsics.atomic_load(&process.serial), process, index, name, level, log_text[:v[2]], log_runs)
 			log_free(taken)
 			serial_drain_before_the_tick()
-			return .Ok
+			return .Succeeded
 		}
 		// No memory of the log: the serial port only.
 		log_bytes({'['})
@@ -448,7 +422,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		log_bytes(log_text[:v[2]])
 		log_bytes({'\r', '\n'})
 		log_free(taken)
-		return .Ok
+		return .Succeeded
 
 	case .Log_Read:
 		// The authority is the memory of the log: its holder reads each
@@ -456,24 +430,24 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// nothing new (src/md/features/own_log_ring.md).
 		memory := handle_find(process, v[0], .Memory, {.Read}) or_return
 		if log_region == 0 || memory.object != log_region {
-			return .Bad_Handle
+			return .Argument_Refused
 		}
 		if v[1] == 0 || v[1] >= u64(process_capacity) || v[5] > op.OWN_LOG_RECORD_CAPACITY {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		// The pages of the caller are present before the log lock: a page on
 		// first use takes the frame lock, which comes before it. The process
 		// lock of the caller keeps them mapped until the copy ends.
 		record_size := u64(size_of(op.Log_Record))
 		if !user_range(process, v[4], v[5] * record_size, true) {
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		// The records go to the buffer of this processor under the log
 		// lock, and to the caller after it.
 		buffer := &processor_self().own_log_copy
 		copied, lost, total, found := own_log_ring_copy(&processes[v[1]], v[2], u32(v[3]), v[5], buffer)
 		if !found {
-			return .Bad_State
+			return .Wrong_State
 		}
 		if copied > 0 {
 			user_copy_to_process(v[4], &buffer[0], copied * record_size)
@@ -481,18 +455,18 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		results[0] = copied
 		results[1] = lost
 		results[2] = total
-		return .Ok
+		return .Succeeded
 
 	case .Memory_Create:
 		budget := handle_find(process, v[0], .Budget, {.Spend}) or_return
 		if v[2] & ~op.MEMORY_FLAGS_KNOWN != 0 {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		flags := transmute(op.Memory_Flags)v[2]
 		// An uncommitted object has its pages paid later: no frame now, and
 		// a frame list. A large-page object is contiguous, of whole large pages.
 		if .Uncommitted in flags && flags != {.Uncommitted} || .Large_Pages in flags && v[1] % op.LARGE_PAGE_PAGES != 0 {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		large_pages := .Large_Pages in flags
 		region := region_create(budget.object, v[1], contiguous = .Contiguous in flags || large_pages, now = .Frames_Now in flags, uncommitted = .Uncommitted in flags, large_pages = large_pages) or_return
@@ -500,16 +474,16 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if handle == 0 {
 			regions[region].references = 1
 			region_release(region)
-			return .No_Slot
+			return .Budget_Or_Capacity_Exhausted
 		}
 		results[0] = u64(handle)
-		return .Ok
+		return .Succeeded
 
 	case .Memory_Map:
 		// A bit that the kernel does not know is refused, as the other
 		// memory operations refuse it: a later kernel can give it a meaning.
 		if v[3] & ~op.MAP_FLAGS_KNOWN != 0 {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		flags := transmute(op.Map_Flags)v[3]
 		needed := op.Rights{.Read}
@@ -526,7 +500,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		to, taken := target_lock(process, v[1]) or_return
 		defer process_unlock(index_of_process(to), taken)
 		if to.state == .None || to.state == .Stopped {
-			return .Bad_State
+			return .Wrong_State
 		}
 		// The registers of a device with a domain drive the device only from
 		// the process that holds them: a mapping in another process would
@@ -534,7 +508,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// what the next service of the device declares
 		// (src/md/infrastructure/iommu.md, "Mechanism in the kernel, policy outside").
 		if to != process && regions[slot.object].requester != 0 {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		address, status := map_region(to, slot.object, v[2], flags, v[4], v[5], holding_of_handle(process, slot), by_the_process = to == process)
 		results[0] = address
@@ -547,7 +521,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		to, taken := target_lock(process, v[0]) or_return
 		defer process_unlock(index_of_process(to), taken)
 		if to.state == .None || to.state == .Stopped {
-			return .Bad_State
+			return .Wrong_State
 		}
 		for &mapping in to.mappings {
 			if mapping.page_count != 0 && mapping.address == v[1] && mapping.address < op.THREAD_AREA_BASE {
@@ -556,7 +530,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				// that module. The refusal changes nothing, so it comes
 				// before the request of the control lock.
 				if to == process && starter_module_meeting(to, mapping.address, mapping.page_count * PAGE_SIZE) != nil {
-					return .No_Right
+					return .Grant_Or_Right_Missing
 				}
 				// The registers of a function behind a conventional bridge can
 				// end the domain of its group: the control lock, as for a close.
@@ -564,10 +538,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					require_control() or_return
 				}
 				unmap(to, &mapping)
-				return .Ok
+				return .Succeeded
 			}
 		}
-		return .Bad_Address
+		return .Argument_Refused
 
 	case .Memory_Size:
 		slot := handle_find(process, v[0], .Memory) or_return
@@ -584,35 +558,35 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			flags += {.Large_Pages}
 		}
 		results[1] = transmute(u64)flags
-		return .Ok
+		return .Succeeded
 
 	case .Memory_Read:
 		slot := handle_find(process, v[0], .Memory, {.Read}) or_return
 		region := &regions[slot.object]
 		offset, address, length := v[1], v[2], v[3]
-		if status := op.memory_read_arguments_status(offset, length, region.page_count, region.device); status != .Ok {
-			return outcome_of_status(status)
+		if op.memory_read_arguments_outcome(offset, length, region.page_count, region.device) != .Succeeded {
+			return .Argument_Refused
 		}
 		// The pages of the caller are present (user_range), and its process
 		// lock keeps them so: the copy into them does not fault.
 		if !user_range(process, address, length, true) {
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		// A copy into a mapping of the same object would write the pages
 		// that it reads.
 		for &mapping in process.mappings {
 			if mapping.page_count != 0 && mapping.region == slot.object && op.memory_read_destination_meets(address, length, mapping.address, mapping.page_count * PAGE_SIZE) {
-				return .Bad_Address
+				return .Argument_Refused
 			}
 		}
 		if length == 0 {
-			return .Ok
+			return .Succeeded
 		}
 		first_page, end_page := offset / PAGE_SIZE, (offset + length - 1) / PAGE_SIZE + 1
 		if region.contiguous {
 			user_copy_to_process(address, direct(region.physical + offset, u8), length)
 			results[0] = length
-			return .Ok
+			return .Succeeded
 		}
 		// A committed page with no frame yet gets its zero frame, as a read
 		// through a mapping would. A page keeps a frame that it has: a
@@ -620,7 +594,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// names it.
 		for page in first_page ..< end_page {
 			if region_frame(region, page, true) == 0 {
-				return .Bad_State
+				return .Wrong_State
 			}
 		}
 		// The marks and the commits of the pages change under the lock of the
@@ -631,7 +605,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			value := intrinsics.atomic_load(region_slot(region, page))
 			if value & PAGE_ADDRESS == 0 || !page_committed(region, value) || value & SLOT_NO_ACCESS != 0 {
 				lock_free(&region_locks[slot.object], .Region)
-				return .Bad_State
+				return .Wrong_State
 			}
 		}
 		// The copy runs with the lock of the object free, so a first use of
@@ -656,13 +630,13 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			copied += part
 		}
 		results[0] = copied
-		return .Ok
+		return .Succeeded
 
 	case .Process_Create:
 		require_control() or_return
 		budget := handle_find(process, v[0], .Budget, {.Spend}) or_return
 		if v[2] > op.PROCESS_NAME_BYTES_MOST || !user_range(process, v[1], v[2], false) {
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		name: [op.PROCESS_NAME_BYTES_MOST + 1]u8
 		user_copy_from_process(&name, v[1], v[2])
@@ -671,7 +645,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// and the space ("node 1"), so that no name acts on a terminal of
 		// the host. The check is on the copy. An empty name stays allowed.
 		if v[2] > 0 && !text_encoding.identifier_words_valid(name[:v[2]]) {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		created := process_create(budget.object, name[:v[2]]) or_return
 		when KERNEL_EDGE_COUNTERS {
@@ -681,10 +655,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if handle == 0 {
 			// No handle ever named it, so no reader sees this cause.
 			process_stop(created, .Handles_Closed, .None)
-			return .No_Slot
+			return .Budget_Or_Capacity_Exhausted
 		}
 		results[0] = u64(handle)
-		return .Ok
+		return .Succeeded
 
 	case .Process_Start:
 		require_control() or_return
@@ -695,20 +669,20 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// A guest has no kernel half in its page table: no thread runs on it.
 		// Guest memory is refused to a thread too.
 		if to.state != .Created || process_is_guest(slot.object) || process_holds_guest_memory(to) {
-			return .Bad_State
+			return .Wrong_State
 		}
 		// The first thread of the process gets the limit of a new thread of
 		// the thread that starts it, and the limit of its placement: a
 		// process does not leave a limit by a process that it starts.
-		if _, status := thread_create(slot.object, to.budget, v[1], v[2], v[3], weight_limit = creation_weight_limit(index), processors_limit = intrinsics.atomic_load(&threads[index].processors_limit)); status != .Ok {
+		if _, status := thread_create(slot.object, to.budget, v[1], v[2], v[3], weight_limit = creation_weight_limit(index), processors_limit = intrinsics.atomic_load(&threads[index].processors_limit)); status != .Succeeded {
 			return status
 		}
 		to.state = .Ready
-		return .Ok
+		return .Succeeded
 
 	case .Thread_Create:
 		if intrinsics.atomic_load(&threads[index].record_mode) != .None {
-			return .Bad_State
+			return .Wrong_State
 		}
 		require_control() or_return
 		budget := handle_find(process, v[0], .Budget, {.Spend}) or_return
@@ -723,7 +697,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		weight_limit := creation_weight_limit(index)
 		processor_self().operation.thread_create_weight_limit = weight_limit
 		if _, accepted := op.thread_schedule_of_new_thread(weight_limit, v[4], v[5]); !accepted {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		// The limit of the placement of the calling thread goes to the new
 		// thread in the same way, and a write of it at the same time comes
@@ -732,10 +706,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		handle := handle_insert(process, {kind = .Thread, rights = RIGHTS_THREAD, object = created})
 		if handle == 0 {
 			thread_stop(created)
-			return .No_Slot
+			return .Budget_Or_Capacity_Exhausted
 		}
 		results[0] = u64(handle)
-		return .Ok
+		return .Succeeded
 
 	case .Thread_Stop:
 		require_control() or_return
@@ -744,11 +718,11 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				record_self_stop_completion_locked(processor_self(), &threads[index], command)
 			}
 			thread_stop(index)
-			return .Ok
+			return .Succeeded
 		}
 		slot := handle_find(process, v[0], .Thread, {.Control}) or_return
 		thread_stop(slot.object)
-		return .Ok
+		return .Succeeded
 
 	case .Thread_State:
 		slot := handle_find(process, v[0], .Thread, {.Read}) or_return
@@ -759,7 +733,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		results[2] = extended_state_size
 		results[3] = transmute(u64)extended_state_components
 		results[4] = u64(EXTENDED_STATE_LAYOUTS[extended_state_form])
-		return .Ok
+		return .Succeeded
 
 	case .Process_Stop:
 		require_control() or_return
@@ -776,23 +750,23 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// changes nothing, and the target runs on.
 		outcome, _, outcome_known := op.stop_outcome_of_operation_word(v[1], cause == .Itself)
 		if !outcome_known {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		// An optional error record is allowed only for a Failed or Refused
 		// self-stop; Done, Stopped_On_Request and holder stops must pass 0.
 		if !op.stop_error_address_allowed(cause == .Itself, outcome, v[2]) {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		stop_error: errors.Error_Record
 		if v[2] != 0 {
 			if !user_range(process, v[2], size_of(errors.Error_Record), false) {
-				return .Bad_Address
+				return .Argument_Refused
 			}
 			copied: errors.Error_Record
 			user_copy_from_process(&copied, v[2], size_of(errors.Error_Record))
 			accepted, error_ok := op.stop_error_of_operation(cause == .Itself, outcome, v[2], copied)
 			if !error_ok {
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 			stop_error = accepted
 		}
@@ -800,7 +774,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			record_self_stop_completion_locked(processor_self(), &threads[index], command)
 		}
 		process_stop(index_of_process(to), cause, outcome, stop_error)
-		return .Ok
+		return .Succeeded
 
 	case .Process_State:
 		require_control() or_return
@@ -818,11 +792,11 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		results[5] = u64(intrinsics.atomic_load(&processes[slot.object].serial))
 		if v[1] != 0 {
 			if !user_range(process, v[1], size_of(op.Stop_Report), true) {
-				return .Bad_Address
+				return .Argument_Refused
 			}
 			user_copy_to_process(v[1], &processes[slot.object].stop, size_of(op.Stop_Report))
 		}
-		return .Ok
+		return .Succeeded
 
 	case .Handle_Give:
 		// A copy in this process needs no Give right: no other process receives it.
@@ -840,7 +814,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			switch to_slot.kind {
 			case .Process:
 				if .Control not_in to_slot.rights {
-					return .No_Right
+					return .Grant_Or_Right_Missing
 				}
 				to = &processes[to_slot.object]
 			case .Memory:
@@ -857,7 +831,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					process_unlock(u32(other_index + 1), other_taken)
 					if accepts {
 						if to != nil {
-							return .Bad_Handle // Two processes agree to receive handles through one memory object.
+							return .Wrong_State // Two processes agree to receive handles through one memory object.
 						}
 						to = &other
 					} else if maps {
@@ -865,34 +839,37 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					}
 				}
 				if to == nil && found_without_consent {
-					return .No_Right
+					return .Grant_Or_Right_Missing
+				}
+				if to == nil {
+					return .Wrong_State // No other process maps this memory object with Receive_Handles.
 				}
 				to_region = to_slot.object
 				through = regions[to_slot.object].serial
 			case .Interrupt, .Ports, .Machine, .Thread, .Budget, .Log, .None:
-				// A target of another kind names no process: Bad_Handle below.
+				return .Argument_Refused
 			}
 		}
 		if to == nil {
-			return .Bad_Handle
+			return .Argument_Refused
 		}
 		to_taken := process_lock(index_of_process(to))
 		defer process_unlock(index_of_process(to), to_taken)
 		if to.state == .None || to.state == .Stopped {
-			return .Bad_State
+			return .Wrong_State
 		}
 		// Re-verify receiver consent under the receiver's lock so an unmap
 		// between discovery and insertion never delivers an unsolicited handle.
 		if to_region != 0 {
 			still_maps, still_accepts := maps_region_consent(to, to_region)
 			if !still_accepts {
-				return still_maps ? .No_Right : .Bad_Handle
+				return still_maps ? .Grant_Or_Right_Missing : .Wrong_State
 			}
 		}
 		// An object with marks of protection of a part is not given: the marks
 		// would reach the mapping of the other process.
 		if given.kind == .Memory && to != process && intrinsics.atomic_load(&regions[given.object].marked_pages) != 0 {
-			return .Bad_State
+			return .Wrong_State
 		}
 		copy := given^
 		copy.rights &= transmute(op.Rights)u32(v[2])
@@ -907,14 +884,14 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		previous_peak := to.handles_peak
 		handle := handle_insert(to, copy)
 		if handle == 0 {
-			return .No_Slot
+			return .Budget_Or_Capacity_Exhausted
 		}
 		if !origin_attach(holding_of_handle(to, &to.handles[u32(handle) & 0xFFFF]), holding_of_handle(process, given)) {
 			handle_insert_undo(to, handle, previous_peak)
 			return .Needs_Control
 		}
 		results[0] = u64(handle)
-		return .Ok
+		return .Succeeded
 
 	case .Handle_Revoke:
 		require_control() or_return
@@ -925,7 +902,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			only = in_process.object
 		}
 		results[0] = revoke(holding_of_handle(process, slot), process_index, only)
-		return .Ok
+		return .Succeeded
 
 	case .Process_Module:
 		if v[0] != 0 {
@@ -934,10 +911,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		to, taken := target_lock(process, v[0]) or_return
 		defer process_unlock(index_of_process(to), taken)
 		if to.state == .None || to.state == .Stopped {
-			return .Bad_State
+			return .Wrong_State
 		}
 		if !user_range(process, v[1], size_of(op.Module_Record), false) {
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		record: op.Module_Record
 		user_copy_from_process(&record, v[1], size_of(record))
@@ -958,7 +935,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			require_control() or_return
 		}
 		handle_close(process, slot)
-		return .Ok
+		return .Succeeded
 
 	case .Budget_Create:
 		require_control() or_return
@@ -968,10 +945,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if handle == 0 {
 			budgets[created].references = 1
 			budget_release(created)
-			return .No_Slot
+			return .Budget_Or_Capacity_Exhausted
 		}
 		results[0] = u64(handle)
-		return .Ok
+		return .Succeeded
 
 	case .Handle_State:
 		slot := handle_find(process, v[0], .None) or_return
@@ -982,7 +959,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			results[2] = u64(slot.through != 0 && slot.through == regions[memory.object].serial)
 		}
 		results[3] = origin_count(holding_of_handle(process, slot))
-		return .Ok
+		return .Succeeded
 
 	case .Budget_Read:
 		slot := handle_find(process, v[0], .Budget, {.Read}) or_return
@@ -994,7 +971,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		results[4] = amounts.log_records
 		results[5] = microseconds(budgets[slot.object].spent_total)
 		results[6] = budgets[slot.object].refused
-		return .Ok
+		return .Succeeded
 
 	case .Word_Wait:
 		// A refused command leaves the entry with no wait: the words that
@@ -1002,13 +979,17 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// but the thread does not wait on a list that the kernel refused
 		// in part (word_changed).
 		thread := &threads[index]
+		if v[1] > op.WORD_WAIT_MOST {
+			thread.word_changed = true
+			return .Argument_Refused
+		}
 		if v[1] > u64(wait_capacity(thread) - thread.word_count) {
 			thread.word_changed = true
-			return .No_Slot
+			return .Budget_Or_Capacity_Exhausted
 		}
 		if !user_range(process, v[0], v[1] * size_of(op.Word), false) {
 			thread.word_changed = true
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		for index in 0 ..< v[1] {
 			word: op.Word
@@ -1016,7 +997,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			physical := word_address(process, word.address)
 			if physical == 0 {
 				thread.word_changed = true // The wait cannot end by this word: do not wait.
-				return .Bad_Address
+				return .Argument_Refused
 			}
 			switch wait_register(thread, physical, u32(word.value)) {
 			case .Held:
@@ -1029,53 +1010,53 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				operation := &processor_self().operation
 				operation.word_wait_duplicate = true
 				operation.word_wait_refused_place += index
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 		}
-		return .Ok
+		return .Succeeded
 
 	case .Word_Wake:
 		// A wake is a signal: it needs Write on the word (word_address).
 		word := word_address(process, v[0], write = true)
 		if word == 0 {
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		results[0] = word_wake(word, v[1])
-		return .Ok
+		return .Succeeded
 
 	case .Interrupt_Read:
 		slot := handle_find(process, v[0], .Interrupt, {.Read}) or_return
 		results[0] = u64(intrinsics.atomic_exchange(&interrupt_pending[slot.object], 0))
-		return .Ok
+		return .Succeeded
 
 	case .Device_Create:
 		_ = handle_find(process, v[0], .Machine, {.Devices}) or_return
 		require_control() or_return
 		device_kind, device_kind_known := enum_word.member_of_word(op.Device_Kind, v[1])
 		if !device_kind_known {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		slot: Handle_Slot
 		switch device_kind {
 		case .Ports:
 			if v[2] >= 65536 || v[3] == 0 || v[3] > 65536 - v[2] {
-				return .Bad_Address
+				return .Argument_Refused
 			}
 			slot = {kind = .Ports, rights = RIGHTS_PORTS, object = u32(v[2]), count = u32(v[3])}
 		case .Interrupt:
 			if v[2] == 0 || v[2] >= INTERRUPT_LINES {
-				return .Bad_Address
+				return .Argument_Refused
 			}
 			slot = {kind = .Interrupt, rights = RIGHTS_INTERRUPT, object = u32(v[2])}
 		case .Memory, .Display_Memory:
 			// The registers of the IOMMU and the configuration of the bus
 			// that it reads belong to the kernel while it is in use.
 			if !device_range(v[2], v[3]) || iommu_owns_range(v[2], v[3]) {
-				return .Bad_Address
+				return .Argument_Refused
 			}
 			registers := device_kind == .Memory
 			if !registers && !display_memory_range(v[2], v[3]) {
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 			// A read of a register has an effect, so it must reach the
 			// device each time. The pixels of a screen page do not: they
@@ -1085,7 +1066,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			// to concurrent cache-type conflict walks.
 			region := region_device(v[2], v[3], uncached = registers, cache_types_counted = true)
 			if region == 0 {
-				return .No_Slot
+				return .Callee_Busy
 			}
 			// The function whose registers these are: the process that holds
 			// the handle is its service for the IOMMU. Pixels program no
@@ -1099,14 +1080,14 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			if handle == 0 {
 				regions[region].references = 1
 				region_release(region)
-				return .No_Slot
+				return .Budget_Or_Capacity_Exhausted
 			}
 			results[0] = u64(handle)
 			results[1] = transmute(u64)iommu_device_facts(regions[region].requester)
 			// A function behind a conventional bridge that the check of its
 			// group did not count ends the domain of the group.
 			iommu_bridge_function_made(region)
-			return .Ok
+			return .Succeeded
 		case .Message:
 			message := u32(INTERRUPT_CAPACITY)
 			for candidate in u32(INTERRUPT_LINES) ..< INTERRUPT_CAPACITY {
@@ -1116,12 +1097,12 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				}
 			}
 			if message == INTERRUPT_CAPACITY {
-				return .No_Slot
+				return .Callee_Busy
 			}
 			interrupt_pending[message] = 0
 			handle := handle_insert(process, {kind = .Interrupt, rights = RIGHTS_INTERRUPT, object = message})
 			if handle == 0 {
-				return .No_Slot
+				return .Budget_Or_Capacity_Exhausted
 			}
 			// The first processor receives each message. With interrupt
 			// remapping, the entry of the message names the device whose
@@ -1129,27 +1110,27 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			// it (src/md/infrastructure/iommu.md, "Interrupt remapping").
 			results[0] = u64(handle)
 			results[1], results[2] = iommu_message_bind(message - INTERRUPT_LINES, v[2])
-			return .Ok
+			return .Succeeded
 		case .None:
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		handle := handle_insert(process, slot)
 		if handle == 0 {
-			return .No_Slot
+			return .Budget_Or_Capacity_Exhausted
 		}
 		results[0] = u64(handle)
-		return .Ok
+		return .Succeeded
 
 	case .Inspect:
 		_ = handle_find(process, v[0], .Machine, {.Inspect}) or_return
 		inspect_kind, inspect_kind_known := enum_word.member_of_word(op.Inspect_Kind, v[1])
 		if !inspect_kind_known {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		switch inspect_kind {
 		case .System:
 			if v[4] < size_of(op.System_Report) || !user_range(process, v[3], size_of(op.System_Report), true) {
-				return .Bad_Address
+				return .Argument_Refused
 			}
 			report := op.System_Report {
 				time          = intrinsics.atomic_load(&time_milliseconds),
@@ -1183,7 +1164,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			results[0] = size_of(op.System_Report)
 		case .Process:
 			if v[4] < size_of(op.Process_Report) || !user_range(process, v[3], size_of(op.Process_Report), true) {
-				return .Bad_Address
+				return .Argument_Refused
 			}
 			// Another process: under its lock, with the control lock.
 			require_control() or_return
@@ -1223,7 +1204,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			results[0] = size_of(op.Process_Report)
 		case .Boot:
 			if v[4] < size_of(op.Boot_Report) || !user_range(process, v[3], size_of(op.Boot_Report), true) {
-				return .Bad_Address
+				return .Argument_Refused
 			}
 			record := &processor_self().boot_report
 			boot_report(record)
@@ -1231,7 +1212,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			results[0] = size_of(op.Boot_Report)
 		case .Mappings:
 			if v[4] < size_of(op.Mapping_Report) || !user_range(process, v[3], size_of(op.Mapping_Report), true) {
-				return .Bad_Address
+				return .Argument_Refused
 			}
 			record := &processor_self().mapping_report
 			if v[2] == 0 {
@@ -1243,7 +1224,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			results[0] = size_of(op.Mapping_Report)
 		case .Modules:
 			if v[4] < size_of(op.Module_Report) || !user_range(process, v[3], size_of(op.Module_Report), true) {
-				return .Bad_Address
+				return .Argument_Refused
 			}
 			require_control() or_return
 			report := &processor_self().module_report
@@ -1272,7 +1253,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			results[0] = size_of(op.Module_Report)
 		case .Processor:
 			if v[4] < size_of(op.Processor_Report) || !user_range(process, v[3], size_of(op.Processor_Report), true) {
-				return .Bad_Address
+				return .Argument_Refused
 			}
 			report: op.Processor_Report
 			if v[2] < u64(processor_count) {
@@ -1320,25 +1301,25 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			results[0] = size_of(op.Stop_Report)
 		case .Pages:
 			if v[4] < size_of(op.Page_Report) || !user_range(process, v[3], size_of(op.Page_Report), true) {
-				return .Bad_Address
+				return .Argument_Refused
 			}
 			// The process that asks only: another process is not watched page
 			// by page. Its process lock is held (execute_locked).
 			if v[2] != 0 {
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 			report: op.Page_Report
 			user_copy_from_process(&report, v[3], size_of(report))
 			if report.address & (PAGE_SIZE - 1) != 0 || report.address >= op.USER_END || op.PAGE_REPORT_CAPACITY * PAGE_SIZE > op.USER_END - report.address {
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 			pages_report(&report, process)
 			user_copy_to_process(v[3], &report, size_of(report))
 			results[0] = size_of(op.Page_Report)
 		case .None:
-			return .Bad_Operation
+			return .Argument_Refused
 		}
-		return .Ok
+		return .Succeeded
 
 	case .Memory_Physical:
 		_ = handle_find(process, v[0], .Machine, {.Physical}) or_return
@@ -1347,7 +1328,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// which write it only when this handle can, and gives the address
 		// that they use for it.
 		results[0] = iommu_declare(process_index, slot.object, .Write in slot.rights) or_return
-		return .Ok
+		return .Succeeded
 
 	case .Memory_Commit:
 		memory := handle_find(process, v[0], .Memory, {.Write}) or_return
@@ -1359,17 +1340,17 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if !decommit {
 			budget := handle_find(process, v[1], .Budget) or_return
 			if budget.rights & {.Commit, .Spend} == {} {
-				return .No_Right
+				return .Grant_Or_Right_Missing
 			}
 			if budget.object != intrinsics.atomic_load(&regions[memory.object].budget) {
-				return .Bad_Handle
+				return .Argument_Refused
 			}
 		}
 		if v[3] == 0 || v[3] > op.RANGE_TABLE_CAPACITY || v[4] & ~op.COMMIT_FLAGS_KNOWN != 0 || (.Decommit in flags && .Frames_Now in flags) {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		if !user_range(process, v[2], v[3] * size_of(op.Page_Range), false) {
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		table := &processor_self().range_table
 		user_copy_from_process(table, v[2], v[3] * size_of(op.Page_Range))
@@ -1378,19 +1359,19 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			counts[index] = range.page_count
 		}
 		if table_pages(counts[:v[3]]) > op.RANGE_TABLE_PAGE_LIMIT {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		changed := memory_commit(process, memory.object, table[:v[3]], flags) or_return
 		results[0] = changed
-		return .Ok
+		return .Succeeded
 
 	case .Memory_Protect:
 		if v[1] == 0 || v[1] > op.RANGE_TABLE_CAPACITY || v[2] & ~op.PROTECT_FLAGS_KNOWN != 0 {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		flags := transmute(op.Map_Flags)v[2]
 		if !user_range(process, v[0], v[1] * size_of(op.Address_Range), false) {
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		table := &processor_self().range_table
 		user_copy_from_process(table, v[0], v[1] * size_of(op.Address_Range))
@@ -1403,11 +1384,11 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		to, taken := target_lock(process, v[3]) or_return
 		defer process_unlock(index_of_process(to), taken)
 		if to != process && (to.state != .Created || to.thread_count != 0) {
-			return .Bad_State
+			return .Wrong_State
 		}
 		changed := memory_protect(to, ranges, flags) or_return
 		results[0] = changed
-		return .Ok
+		return .Succeeded
 
 	case .Fault_Handler_Set:
 		// The fault ring (fault_ring.odin): the process names one of its
@@ -1420,7 +1401,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			// the control lock.
 			debugger_kinds, debugger_known := op.fault_kinds_of_debugger_argument(v[2])
 			if !action_known || !debugger_known || action == .End && v[2] != 0 {
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 			debugged := handle_find(process, v[3], .Process, {.Debug}) or_return
 			require_control() or_return
@@ -1438,12 +1419,12 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		kinds, known := op.fault_kinds_of_argument(v[2])
 		if !action_known || !known {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		switch action {
 		case .End:
 			if v[2] != 0 {
-				return .Bad_Operation // The end of the delivery takes no kinds.
+				return .Argument_Refused // The end of the delivery takes no kinds.
 			}
 			return fault_handler_set(process_index, 0, 0)
 		case .Set:
@@ -1458,7 +1439,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 	case .Fault_Answer:
 		answer, answer_known := enum_word.member_of_word(op.Fault_Answer_Kind, v[2])
 		if !answer_known || answer == .None {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		if v[3] != 0 {
 			// The answer of the debugger of another process. Only Resume:
@@ -1466,7 +1447,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			// the page table of this processor, which is the one of the
 			// debugger here; a debugger stops a process with Process_Stop.
 			if answer != .Resume {
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 			debugged := handle_find(process, v[3], .Process, {.Debug}) or_return
 			require_control() or_return
@@ -1480,7 +1461,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// A thread whose record went to the debugger of the process waits
 		// for the debugger: the process does not answer in its place.
 		if waiter_index == 0 || threads[waiter_index].fault_to_debugger {
-			return .Bad_State // No thread with that number and fault serial waits: an old answer, or a wrong one.
+			return .Wrong_State // No thread with that number and fault serial waits: an old answer, or a wrong one.
 		}
 		waiter := &threads[waiter_index]
 		// A fault that is not a page fault and not a trap would run the same
@@ -1493,7 +1474,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// The vector is the one of its fault: a write of Thread_Control
 		// does not change it.
 		if answer == .Resume && !op.fault_kind_resumes(waiter.frame.vector) && !waiter.registers_written {
-			return .Bad_State
+			return .Wrong_State
 		}
 		if answer == .Resume {
 			// A thread that goes on at an execute breakpoint of its own
@@ -1501,13 +1482,13 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			// written only after it left its processor.
 			if waiter.frame.vector == VECTOR_DEBUG && intrinsics.atomic_load(&waiter.has_breakpoints) {
 				if !thread_held_off_processor(waiter) {
-					return .Bad_State
+					return .Wrong_State
 				}
 				breakpoint_resume_flag_set(waiter)
 			}
 			waiter.fault_waits = false
 			thread_wake(waiter)
-			return .Ok
+			return .Succeeded
 		}
 		waiter.fault_waits = false
 		// The report of the fault, as with no handler. A write of
@@ -1521,7 +1502,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		fault_frame.rip = waiter.fault_instruction
 		fault_frame.rbp = waiter.fault_frame_pointer
 		process_stop(process_index, process_fault_report(process_index, &fault_frame, waiter.fault_address), .None)
-		return .Ok
+		return .Succeeded
 
 	case .Events_Set:
 		// Kernel events (events.odin): the table changes under the control
@@ -1532,10 +1513,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		_ = handle_find(process, v[0], .Machine, {.Schedule}) or_return
 		strategy, strategy_known := enum_word.member_of_word(op.Strategy, v[1])
 		if !strategy_known || strategy == .None {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		results[0] = u64(strategy_change(strategy))
-		return .Ok
+		return .Succeeded
 
 	case .Thread_Control:
 		// The control of a thread (thread_control.odin).
@@ -1546,7 +1527,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// The host receives one byte: a larger code would end the machine
 		// with its low byte, and 256 would read as a normal end.
 		if v[1] > op.MACHINE_STOP_CODE_MOST {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		log("kernel: the machine stops with code ", v[1])
 		machine_stop_with_code(u8(v[1]))
@@ -1565,5 +1546,5 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			}
 		}
 	}
-	return .Bad_Operation
+	return .Operation_Unsupported
 }

@@ -17,7 +17,7 @@ import "modus:system"
 process_slot_named :: proc "contextless" (report: op.System_Report, name: string) -> u64 {
 	for slot in u64(1) ..< report.process_slots {
 		process: op.Process_Report
-		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); status != .Ok {
+		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); status != .Succeeded {
 			continue
 		}
 		if process.state != .None && system.name_of(process.name[:]) == name {

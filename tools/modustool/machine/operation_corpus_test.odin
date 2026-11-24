@@ -5,6 +5,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
@@ -34,8 +35,8 @@ test_sequence_bytes :: proc() -> []u8 {
 @(private = "file")
 test_expectations :: proc() -> [2]fuzz.Operation_Step_Expectation {
 	expectations: [2]fuzz.Operation_Step_Expectation
-	expectations[0] = {status = .Ok}
-	expectations[1] = {status = .Bad_Operation, record_kind = .Unknown_Operation, detail_count = 1}
+	expectations[0] = {status = .Succeeded}
+	expectations[1] = {status = .Operation_Unsupported, record_kind = .Unknown_Operation, detail_count = 1}
 	expectations[1].details[0] = {kind = .Unknown_Operation}
 	return expectations
 }
@@ -113,7 +114,7 @@ a_damaged_regression_input_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, damaged_sequence.sequence_refusal.problem, operation_sequence.Problem.Magic)
 	second := len(bytes) - size_of(record)
 	first := second - size_of(record)
-	_ = expect_refused(t, with_word(bytes, second + int(offset_of(record, status)), u64(max(operation.Status)) + 1), .Status, 1)
+	_ = expect_refused(t, with_word(bytes, second + int(offset_of(record, status)), u64(max(call_outcome.Call_Outcome)) + 1), .Status, 1)
 	_ = expect_refused(t, with_word(bytes, second + int(offset_of(record, status)), max(u64)), .Status, 1)
 	_ = expect_refused(t, with_word(bytes, second + int(offset_of(record, record_kind)), u64(max(errors.Kind)) + 1), .Record_Kind, 1)
 	_ = expect_refused(t, with_word(bytes, second + int(offset_of(record, record_kind)), transmute(u64)i64(-1)), .Record_Kind, 1)
@@ -174,10 +175,10 @@ the_writer_of_a_regression_input_refuses_its_bounds :: proc(t: ^testing.T) {
 test_results :: proc() -> operation_sequence.Runner_Results {
 	results: operation_sequence.Runner_Results
 	results.steps_run = 2
-	results.results[0].status = u64(operation.Status.Ok)
-	results.results[0].values[0] = 12345 // A value of Ok, which no expectation reads.
+	results.results[0].status = u64(call_outcome.Call_Outcome.Succeeded)
+	results.results[0].values[0] = 12345 // A value of Succeeded, which no expectation reads.
 	record := errors.Error_Record{kind = i64(errors.Kind.Unknown_Operation), operation = 0}
-	results.results[1].status = u64(operation.Status.Bad_Operation)
+	results.results[1].status = u64(call_outcome.Call_Outcome.Operation_Unsupported)
 	results.results[1].values = transmute([operation_sequence.ARGUMENTS]u64)record
 	results.results[1].kind = u64(operation.COMMAND_NAMES_ERROR_DETAILS)
 	results.results[1].details_count = 1
@@ -187,7 +188,7 @@ test_results :: proc() -> operation_sequence.Runner_Results {
 
 // The check of the answers refuses another count of steps, another status,
 // another record, another count of details and another detail; it takes
-// the answers last, whatever the values of an Ok.
+// the answers last, whatever the values of a Succeeded.
 @(test)
 the_answers_of_a_regression_input_are_checked :: proc(t: ^testing.T) {
 	expected := test_expectations()
@@ -197,10 +198,10 @@ the_answers_of_a_regression_input_are_checked :: proc(t: ^testing.T) {
 	results.steps_run = max(u64)
 	testing.expect(t, operation_step_expectations_problem(expected[:], &results) != "", "the largest count of steps is taken")
 	results = test_results()
-	results.results[1].status = u64(operation.Status.Bad_Handle)
+	results.results[1].status = u64(call_outcome.Call_Outcome.Argument_Refused)
 	testing.expect(t, operation_step_expectations_problem(expected[:], &results) != "", "another status is taken")
 	results = test_results()
-	results.results[0].status = u64(operation.Status.Bad_Operation)
+	results.results[0].status = u64(call_outcome.Call_Outcome.Argument_Refused)
 	testing.expect(t, operation_step_expectations_problem(expected[:], &results) != "", "a refusal of an Ok step is taken")
 	results = test_results()
 	results.results[1].values[0] = u64(errors.Kind.Refused)
@@ -238,7 +239,7 @@ the_answers_kept_from_a_machine_are_read_through_their_borders :: proc(t: ^testi
 	_, past := operation_step_expectations_of(sequence, &results)
 	testing.expect(t, past != "", "more steps than the sequence are taken")
 	results = test_results()
-	results.results[1].status = u64(max(operation.Status)) + 1
+	results.results[1].status = u64(max(call_outcome.Call_Outcome)) + 1
 	_, status := operation_step_expectations_of(sequence, &results)
 	testing.expect(t, status != "", "a status that names nothing is taken")
 	results = test_results()

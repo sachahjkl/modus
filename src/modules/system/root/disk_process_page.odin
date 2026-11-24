@@ -1,5 +1,6 @@
 package root
 
+import "modus:contract/call_outcome"
 import process_page "modus:contract/disk_process_page"
 import "modus:disk_process"
 import "modus:system"
@@ -21,13 +22,13 @@ disk_process_page: ^process_page.Page
 #assert(disk_process.HASH_SIZE == process_page.HASH_SIZE)
 
 disk_process_page_create :: proc "contextless" () {
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	disk_process_page_memory, status = system.memory_create(process_page.page_pages(len(started)))
 	address: rawptr
-	if status == .Ok {
+	if status == .Succeeded {
 		address, status = system.memory_map(disk_process_page_memory)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("cannot create the disk process page", status)
 	}
 	disk_process_page = (^process_page.Page)(address)
@@ -59,7 +60,7 @@ disk_process_page_index :: proc "contextless" (item: ^Started) -> int {
 // the row names this process and no other one with the same name.
 disk_process_page_add :: proc "contextless" (item: ^Started) {
 	slot, serial, status := system.process_place(item.process)
-	if status != .Ok {
+	if status != .Succeeded {
 		return
 	}
 	process_page.row_write(disk_process_page, disk_process_page_index(item), process_page.row_of(slot, serial, system.name_of(item.name[:]), item.hash))

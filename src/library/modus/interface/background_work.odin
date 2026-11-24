@@ -1,6 +1,7 @@
 package interface
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:system"
 
@@ -135,14 +136,14 @@ background_worker :: proc "c" (parameter: rawptr) -> ! {
 
 // background_work_start starts the worker thread once. A second call
 // changes nothing.
-background_work_start :: proc "contextless" (work: ^Background_Work) -> system.Status {
+background_work_start :: proc "contextless" (work: ^Background_Work) -> call_outcome.Call_Outcome {
 	if work.started {
-		return .Ok
+		return .Succeeded
 	}
 	thread, status := system.thread_start(background_worker, work, BACKGROUND_STACK_PAGES)
-	if status != .Ok {
+	if status != .Succeeded {
 		return status
 	}
 	work.thread, work.started = thread, true
-	return .Ok
+	return .Succeeded
 }

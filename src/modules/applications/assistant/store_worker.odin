@@ -8,6 +8,7 @@
 // snapshots asynchronously.
 package assistant_window
 
+import "modus:contract/call_outcome"
 import "internal:assistant/conversation"
 import "modus:contract/errors"
 import "modus:storage"
@@ -62,7 +63,7 @@ store_read_room :: proc "contextless" (data: rawptr, minimum: int) -> (room: []u
 		return store_state.read_arena.base[:0], true
 	}
 	bytes, status := system.arena_extend_to(&store_state.read_arena, u64(minimum))
-	if status != .Ok {
+	if status != .Succeeded {
 		return nil, false
 	}
 	return bytes[:minimum], true
@@ -131,14 +132,14 @@ store_worker_entry :: proc "c" (parameter: rawptr) -> ! {
 
 // store_start reserves the snapshot arenas and launches the store worker thread.
 store_start :: proc "contextless" (ctx: ^system.Context) {
-	read_status, write_status: system.Status
+	read_status, write_status: call_outcome.Call_Outcome
 	store_state.read_arena, read_status = system.arena_create(STORE_RESERVE_PAGES)
 	store_state.write_arena, write_status = system.arena_create(STORE_RESERVE_PAGES)
-	if read_status != .Ok || write_status != .Ok {
-		if read_status == .Ok {
+	if read_status != .Succeeded || write_status != .Succeeded {
+		if read_status == .Succeeded {
 			_ = system.arena_end(&store_state.read_arena)
 		}
-		if write_status == .Ok {
+		if write_status == .Succeeded {
 			_ = system.arena_end(&store_state.write_arena)
 		}
 		store_state.load_done = true
@@ -147,7 +148,7 @@ store_start :: proc "contextless" (ctx: ^system.Context) {
 		system.log_fact(.Info, Store_Unavailable{})
 		return
 	}
-	if _, status := system.thread_start(store_worker_entry, ctx, STORE_THREAD_STACK_PAGES); status != .Ok {
+	if _, status := system.thread_start(store_worker_entry, ctx, STORE_THREAD_STACK_PAGES); status != .Succeeded {
 		_ = system.arena_end(&store_state.read_arena)
 		_ = system.arena_end(&store_state.write_arena)
 		store_state.load_done = true
@@ -214,7 +215,7 @@ store_poll :: proc "contextless" () {
 		return
 	}
 	buf, status := system.arena_extend_to(&store_state.write_arena, u64(needed))
-	if status != .Ok {
+	if status != .Succeeded {
 		store_state.dirty = false
 		system.log_fact(.Info, Store_Write_Failed{status = u64(status)})
 		return

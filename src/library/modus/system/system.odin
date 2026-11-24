@@ -39,7 +39,6 @@ import "base:intrinsics"
 // The names of the contract that a process uses most, so that it writes
 // `system.Handle` and imports no contract package for them.
 Handle :: op.Handle
-Status :: op.Status // The status of a kernel operation: `op.Status`.
 Right :: op.Right
 Rights :: op.Rights
 Budget_Amounts :: op.Budget_Amounts
@@ -113,7 +112,7 @@ enter :: #force_inline proc "contextless" (wait: u64) -> u64 {
 // results, status := system.call(.Memory_Size, u64(memory))
 // pages := results[0]
 // ```
-call :: proc "contextless" (operation: op.Operation, values: ..u64) -> (results: [7]u64, status: Status) {
+call :: proc "contextless" (operation: op.Operation, values: ..u64) -> (results: [7]u64, status: call_outcome.Call_Outcome) {
 	return call_with_error(nil, operation, ..values)
 }
 
@@ -123,7 +122,7 @@ call :: proc "contextless" (operation: op.Operation, values: ..u64) -> (results:
 // values of the completion record. The caller owns the record; no global
 // state keeps the last error. A call that succeeds does not write it.
 // The wrappers below take the same `error` as their last parameter.
-call_with_error :: proc "contextless" (error: ^errors.Error_Record, operation: op.Operation, values: ..u64) -> (results: [7]u64, status: Status) {
+call_with_error :: proc "contextless" (error: ^errors.Error_Record, operation: op.Operation, values: ..u64) -> (results: [7]u64, status: call_outcome.Call_Outcome) {
 	command := ring.Record {
 		kind = u32(operation),
 	}
@@ -136,56 +135,56 @@ call_with_error :: proc "contextless" (error: ^errors.Error_Record, operation: o
 // command_call executes one command record of the kernel ring, as
 // call_with_error, through commands_call.
 @(private = "package")
-command_call :: proc "contextless" (error: ^errors.Error_Record, command: ring.Record) -> (results: [7]u64, status: Status) {
+command_call :: proc "contextless" (error: ^errors.Error_Record, command: ring.Record) -> (results: [7]u64, status: call_outcome.Call_Outcome) {
 	commands := [1]ring.Record{command}
 	completions: [1]ring.Record
 	_, status = commands_call(commands[:], completions[:], 0, error)
-	if status != .Ok {
+	if status != .Succeeded {
 		return {}, status
 	}
 	completion := completions[0]
-	if completion.kind != u32(Status.Ok) {
-		refused, refusal := status_of_word(completion.kind)
+	if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+		refused, refusal := call_outcome.completion_outcome(completion.kind, completion.values)
 		if error != nil {
-			error^ = refusal.kind == i64(errors.Kind.None) ? transmute(errors.Error_Record)completion.values : refusal
+			error^ = refusal
 		}
 		return {}, refused
 	}
-	return completion.values, .Ok
+	return completion.values, .Succeeded
 }
 
 // commands_call executes a batch of command records of the kernel ring in
 // one kernel entry, which waits until deadline when it is not 0 (as
 // `enter`), and writes the completion of each command at the same place of
-// completions. It gives the time. A status that is not Ok is a refusal of
-// the batch by this library, with no command run, or an answer that is not
-// the answer of its command; the status of each command is the kind of its
-// completion.
+// completions. It gives the time. An outcome that is not Succeeded is a
+// refusal of the batch by this library, with no command run, or an answer
+// that is not the answer of its command; the outcome of each command is
+// the kind of its completion.
 //
 // It is the one path of this library into the kernel ring, and it uses an
 // empty kernel ring only: a command or a completion that waits in the ring
 // belongs to code that writes the ring itself, and this call neither reads
-// it nor runs before it. It then gives `Bad_Operation` with an error record
+// it nor runs before it. It then gives `Callee_Busy` with an error record
 // `Busy`, and no command runs. An answer with another tag than its command
-// gives `Bad_Operation` with an error record `Refused`
+// gives `Answer_Unreadable` with an error record `Refused`
 // (src/md/api/kernel_ring_completion_room.md).
 //
 // ```odin
 // commands := [2]ring.Record{{kind = u32(op.Operation.Word_Wake), values = {0 = word, 1 = 1}}, {kind = u32(op.Operation.Word_Wait), values = {0 = words, 1 = 1}}}
 // completions: [2]ring.Record
-// now, status := system.commands_call(commands[:], completions[:], deadline)
+// now, outcome := system.commands_call(commands[:], completions[:], deadline)
 // ```
-commands_call :: proc "contextless" (commands: []ring.Record, completions: []ring.Record, deadline: u64 = 0, error: ^errors.Error_Record = nil) -> (now: u64, status: Status) {
+commands_call :: proc "contextless" (commands: []ring.Record, completions: []ring.Record, deadline: u64 = 0, error: ^errors.Error_Record = nil) -> (now: u64, status: call_outcome.Call_Outcome) {
 	kernel := kernel_ring()
-	first_tag, pushed := kernel_commands_push(&kernel, commands, len(completions), error)
-	if !pushed {
-		return time(), .Bad_Operation
+	first_tag, push_outcome := kernel_commands_push(&kernel, commands, len(completions), error)
+	if push_outcome != .Succeeded {
+		return time(), push_outcome
 	}
 	now = enter(deadline)
 	if !kernel_completions_take(&kernel, first_tag, commands, completions, error) {
-		return now, .Bad_Operation
+		return now, .Answer_Unreadable
 	}
-	return now, .Ok
+	return now, .Succeeded
 }
 
 // kernel_command_tag is the tag of the last command that commands_call
@@ -195,32 +194,38 @@ commands_call :: proc "contextless" (commands: []ring.Record, completions: []rin
 kernel_command_tag: u32
 
 // kernel_commands_push writes a batch of commands into an empty kernel
-// ring, with consecutive new tags from first_tag. false: nothing is written,
-// and error gets its record: an empty batch (`Too_Small`), a batch past the
-// capacity of the ring (`Too_Long`), completions with fewer places than the
-// batch (`Too_Small`, argument 2), or a ring that holds a command or a
-// completion (`Busy`, with the records that wait). A pure part of
-// commands_call, so the host tests it.
+// ring, with consecutive new tags from first_tag. On failure nothing is
+// written, and error gets its record: an empty batch (`Too_Small`), a
+// batch past the capacity of the ring (`Too_Long`), completions with fewer
+// places than the batch (`Too_Small`, argument 2) as `Argument_Refused`, or
+// a ring that holds a command or a completion (`Busy`, with the records
+// that wait) as `Callee_Busy`. A pure part of commands_call, so the host
+// tests it.
 @(private = "package")
-kernel_commands_push :: proc "contextless" (kernel: ^ring.Ring, commands: []ring.Record, completion_places: int, error: ^errors.Error_Record) -> (first_tag: u32, pushed: bool) {
+kernel_commands_push :: proc "contextless" (kernel: ^ring.Ring, commands: []ring.Record, completion_places: int, error: ^errors.Error_Record) -> (first_tag: u32, outcome: call_outcome.Call_Outcome) {
 	capacity_of_ring := int(ring.capacity(&kernel.commands))
 	refusal: errors.Error_Record
+	refusal_outcome: call_outcome.Call_Outcome
 	switch {
 	case len(commands) == 0:
 		refusal = {kind = i64(errors.Kind.Too_Small), unit = i64(errors.Unit.Records), argument = 1, value = 0, limit = 1}
+		refusal_outcome = .Argument_Refused
 	case len(commands) > capacity_of_ring:
 		refusal = {kind = i64(errors.Kind.Too_Long), unit = i64(errors.Unit.Records), argument = 1, value = i64(len(commands)), limit = i64(capacity_of_ring)}
+		refusal_outcome = .Argument_Refused
 	case completion_places < len(commands):
 		refusal = {kind = i64(errors.Kind.Too_Small), unit = i64(errors.Unit.Records), argument = 2, value = i64(completion_places), limit = i64(len(commands))}
+		refusal_outcome = .Argument_Refused
 	case !ring.empty(&kernel.commands) || !ring.empty(&kernel.completions):
 		waiting := u64(ring.count(&kernel.commands)) + u64(ring.count(&kernel.completions))
 		refusal = {kind = i64(errors.Kind.Busy), unit = i64(errors.Unit.Requests), operation = i64(commands[0].kind &~ op.COMMAND_NAMES_ERROR_DETAILS), value = i64(waiting)}
+		refusal_outcome = .Callee_Busy
 	}
 	if refusal.kind != i64(errors.Kind.None) {
 		if error != nil {
 			error^ = refusal
 		}
-		return 0, false
+		return 0, refusal_outcome
 	}
 	first_tag = intrinsics.atomic_add(&kernel_command_tag, u32(len(commands))) + 1
 	// The ring is empty and the batch fits it, so each push takes its record
@@ -234,10 +239,10 @@ kernel_commands_push :: proc "contextless" (kernel: ^ring.Ring, commands: []ring
 			if error != nil {
 				error^ = {kind = i64(errors.Kind.Busy), unit = i64(errors.Unit.Requests), operation = i64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS), value = i64(ring.count(&kernel.commands))}
 			}
-			return 0, false
+			return 0, .Callee_Busy
 		}
 	}
-	return first_tag, true
+	return first_tag, .Succeeded
 }
 
 // kernel_completions_take takes the answer of each command of a batch, in
@@ -251,7 +256,7 @@ kernel_completions_take :: proc "contextless" (kernel: ^ring.Ring, first_tag: u3
 		popped, ok := ring.pop(&kernel.completions)
 		if !ok || popped.tag != first_tag + u32(index) {
 			if error != nil {
-				error^ = {kind = i64(errors.Kind.Refused), operation = i64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS), found = i64(Status.Bad_Operation)}
+				error^ = {kind = i64(errors.Kind.Refused), operation = i64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS), found = i64(call_outcome.Call_Outcome.Answer_Unreadable)}
 			}
 			return false
 		}
@@ -335,7 +340,7 @@ stop :: proc "contextless" (outcome: op.Stop_Outcome, error: ^errors.Error_Recor
 		case .Enter_For_Held_Commands:
 			enter(0)
 		case .Send_Stop:
-			if _, status := call(.Process_Stop, 0, u64(outcome), u64(uintptr(error))); status == .Ok {
+			if _, status := call(.Process_Stop, 0, u64(outcome), u64(uintptr(error))); status == .Succeeded {
 				// The kernel ends this thread when it leaves its processor.
 				for {}
 			}
@@ -419,7 +424,7 @@ own_budget :: proc "contextless" () -> Handle {
 // ```odin
 // budget, status := system.budget_create({pages = 256, threads = 2, processor = 100_000, log_records = 50})
 // ```
-budget_create :: proc "contextless" (amounts: Budget_Amounts, from: Handle = 0, error: ^errors.Error_Record = nil) -> (budget: Handle, status: Status) {
+budget_create :: proc "contextless" (amounts: Budget_Amounts, from: Handle = 0, error: ^errors.Error_Record = nil) -> (budget: Handle, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Budget_Create, u64(from == 0 ? own_budget() : from), amounts.pages, amounts.processes, amounts.threads, amounts.processor, amounts.log_records)
 	return Handle(results[0]), status
@@ -430,7 +435,7 @@ budget_create :: proc "contextless" (amounts: Budget_Amounts, from: Handle = 0, 
 // The handle needs **Read**. `processor` is the limit of the budget, and
 // `log_records` the records of each second that it holds after the budgets
 // that came from it; neither is what is left in this period.
-budget_read :: proc "contextless" (budget: Handle = 0, error: ^errors.Error_Record = nil) -> (amounts: Budget_Amounts, status: Status) {
+budget_read :: proc "contextless" (budget: Handle = 0, error: ^errors.Error_Record = nil) -> (amounts: Budget_Amounts, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Budget_Read, u64(budget == 0 ? own_budget() : budget))
 	return {pages = results[0], processes = results[1], threads = results[2], processor = results[3], log_records = results[4]}, status
@@ -462,7 +467,7 @@ budget_used :: proc "contextless" (budget: Handle = 0) -> (processor_time: u64, 
 // memory := system.memory_create(16) or_return
 // bytes := ([^]u8)(system.memory_map(memory) or_return)[:16 * system.PAGE_SIZE]
 // ```
-memory_create :: proc "contextless" (page_count: u64, budget: Handle = 0, flags: op.Memory_Flags = {}, error: ^errors.Error_Record = nil) -> (memory: Handle, status: Status) {
+memory_create :: proc "contextless" (page_count: u64, budget: Handle = 0, flags: op.Memory_Flags = {}, error: ^errors.Error_Record = nil) -> (memory: Handle, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Memory_Create, u64(budget == 0 ? own_budget() : budget), page_count, transmute(u64)flags)
 	return Handle(results[0]), status
@@ -478,23 +483,23 @@ memory_create :: proc "contextless" (page_count: u64, budget: Handle = 0, flags:
 // ```odin
 // rows, _ := system.table_make(start_list.Wiring_Row, count)
 // ```
-table_make :: proc "contextless" ($T: typeid, count: int) -> (table: []T, status: Status) {
+table_make :: proc "contextless" ($T: typeid, count: int) -> (table: []T, status: call_outcome.Call_Outcome) {
 	if count <= 0 {
-		return nil, .Ok
+		return nil, .Succeeded
 	}
 	pages := (u64(count) * size_of(T) + PAGE_SIZE - 1) / PAGE_SIZE
 	memory: Handle
 	memory, status = memory_create(pages)
-	if status != .Ok {
+	if status != .Succeeded {
 		return nil, status
 	}
 	address: rawptr
 	address, status = memory_map(memory)
-	if status != .Ok {
+	if status != .Succeeded {
 		close(memory)
 		return nil, status
 	}
-	return ([^]T)(address)[:count], .Ok
+	return ([^]T)(address)[:count], .Succeeded
 }
 
 // memory_map maps a memory object in this process (process 0) or in another.
@@ -513,7 +518,7 @@ table_make :: proc "contextless" ($T: typeid, count: int) -> (table: []T, status
 // ```odin
 // address := system.memory_map(memory, {}) or_return // Read only.
 // ```
-memory_map :: proc "contextless" (memory: Handle, flags: op.Map_Flags = {.Write}, process: Handle = 0, address: u64 = 0, first: u64 = 0, page_count: u64 = 0, error: ^errors.Error_Record = nil) -> (result: rawptr, status: Status) {
+memory_map :: proc "contextless" (memory: Handle, flags: op.Map_Flags = {.Write}, process: Handle = 0, address: u64 = 0, first: u64 = 0, page_count: u64 = 0, error: ^errors.Error_Record = nil) -> (result: rawptr, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Memory_Map, u64(memory), u64(process), address, transmute(u64)flags, first, page_count)
 	return rawptr(uintptr(results[0])), status
@@ -523,7 +528,7 @@ memory_map :: proc "contextless" (memory: Handle, flags: op.Map_Flags = {.Write}
 // process (process 0) or in another one (a process handle with
 // **Control**). The memory object ends when no handle and no mapping names
 // it. `Bad_Address` when no mapping starts there.
-memory_unmap :: proc "contextless" (address: rawptr, process: Handle = 0, error: ^errors.Error_Record = nil) -> Status {
+memory_unmap :: proc "contextless" (address: rawptr, process: Handle = 0, error: ^errors.Error_Record = nil) -> call_outcome.Call_Outcome {
 	_, status := call_with_error(error, .Memory_Unmap, u64(process), u64(uintptr(address)))
 	return status
 }
@@ -539,7 +544,7 @@ memory_unmap :: proc "contextless" (address: rawptr, process: Handle = 0, error:
 // ranges := [1]op.Page_Range{{first = 0, page_count = 4}}
 // changed, status := system.memory_commit(memory, ranges[:])
 // ```
-memory_commit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, budget: Handle = 0, error: ^errors.Error_Record = nil) -> (changed: u64, status: Status) {
+memory_commit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, budget: Handle = 0, error: ^errors.Error_Record = nil) -> (changed: u64, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Memory_Commit, u64(memory), u64(budget == 0 ? own_budget() : budget), u64(uintptr(raw_data(ranges))), u64(len(ranges)), 0)
 	return results[0], status
@@ -549,7 +554,7 @@ memory_commit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, bu
 // frames and the pages return to the budget at once; the addresses stay,
 // and a page committed again is zero. The object must be mapped once, by
 // this process only.
-memory_decommit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, error: ^errors.Error_Record = nil) -> (changed: u64, status: Status) {
+memory_decommit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, error: ^errors.Error_Record = nil) -> (changed: u64, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Memory_Commit, u64(memory), 0, u64(uintptr(raw_data(ranges))), u64(len(ranges)), transmute(u64)op.Commit_Flags{.Decommit})
 	return results[0], status
@@ -568,7 +573,7 @@ memory_decommit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, 
 // guard := [1]op.Address_Range{{address = u64(uintptr(stack)), page_count = 1}}
 // system.memory_protect(guard[:], {.No_Access})
 // ```
-memory_protect :: proc "contextless" (ranges: []op.Address_Range, flags: op.Map_Flags, error: ^errors.Error_Record = nil, process: Handle = 0) -> (changed: u64, status: Status) {
+memory_protect :: proc "contextless" (ranges: []op.Address_Range, flags: op.Map_Flags, error: ^errors.Error_Record = nil, process: Handle = 0) -> (changed: u64, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Memory_Protect, u64(uintptr(raw_data(ranges))), u64(len(ranges)), transmute(u64)flags, u64(process))
 	return results[0], status
@@ -590,7 +595,7 @@ memory_protect :: proc "contextless" (ranges: []op.Address_Range, flags: op.Map_
 // 	system.fault_answer(record, .Stop)
 // }
 // ```
-fault_handler_set :: proc "contextless" (thread: Handle = 0, kinds: op.Fault_Kinds = {}, error: ^errors.Error_Record = nil) -> Status {
+fault_handler_set :: proc "contextless" (thread: Handle = 0, kinds: op.Fault_Kinds = {}, error: ^errors.Error_Record = nil) -> call_outcome.Call_Outcome {
 	_, status := call_with_error(error, .Fault_Handler_Set, u64(thread), u64(op.Fault_Handler_Action.Set), transmute(u64)kinds)
 	return status
 }
@@ -598,7 +603,7 @@ fault_handler_set :: proc "contextless" (thread: Handle = 0, kinds: op.Fault_Kin
 // fault_handler_end ends the delivery: a fault stops the process again.
 // If a thread waits for an answer, its record is lost with the ring: the
 // process stops with the stop cause Fault_Unanswered. Answer first.
-fault_handler_end :: proc "contextless" () -> Status {
+fault_handler_end :: proc "contextless" () -> call_outcome.Call_Outcome {
 	_, status := call(.Fault_Handler_Set, 0, u64(op.Fault_Handler_Action.End))
 	return status
 }
@@ -607,7 +612,7 @@ fault_handler_end :: proc "contextless" () -> Status {
 // continue at the instruction of the record (Bad_State for a kind that
 // does not resume: op.fault_kind_resumes), Stop stops the process with the
 // report of the fault.
-fault_answer :: proc "contextless" (record: op.Fault_Record, answer: op.Fault_Answer_Kind, error: ^errors.Error_Record = nil) -> Status {
+fault_answer :: proc "contextless" (record: op.Fault_Record, answer: op.Fault_Answer_Kind, error: ^errors.Error_Record = nil) -> call_outcome.Call_Outcome {
 	_, status := call_with_error(error, .Fault_Answer, record.thread, record.serial, u64(answer))
 	return status
 }
@@ -661,7 +666,7 @@ fault_record_next :: proc "contextless" (deadline: u64 = WAIT_FOREVER) -> (recor
 // The debugging ends at `debug_detach`, when the handler thread ends, when
 // the last handle with Debug closes, and when the process stops: the
 // process then gets back each thread that the debugger held.
-debug_attach :: proc "contextless" (process: Handle, kinds: op.Fault_Kinds = {}, thread: Handle = 0, error: ^errors.Error_Record = nil) -> Status {
+debug_attach :: proc "contextless" (process: Handle, kinds: op.Fault_Kinds = {}, thread: Handle = 0, error: ^errors.Error_Record = nil) -> call_outcome.Call_Outcome {
 	_, status := call_with_error(error, .Fault_Handler_Set, u64(thread), u64(op.Fault_Handler_Action.Set), transmute(u64)kinds, u64(process))
 	return status
 }
@@ -670,7 +675,7 @@ debug_attach :: proc "contextless" (process: Handle, kinds: op.Fault_Kinds = {},
 // removes the breakpoints of each thread of that process, clears the trap
 // flag that the debugger wrote, takes back the stops that it made, and
 // resumes each thread that waits for its answer.
-debug_detach :: proc "contextless" (process: Handle, error: ^errors.Error_Record = nil) -> Status {
+debug_detach :: proc "contextless" (process: Handle, error: ^errors.Error_Record = nil) -> call_outcome.Call_Outcome {
 	_, status := call_with_error(error, .Fault_Handler_Set, 0, u64(op.Fault_Handler_Action.End), 0, u64(process))
 	return status
 }
@@ -679,7 +684,7 @@ debug_detach :: proc "contextless" (process: Handle, error: ^errors.Error_Record
 // on. After an execute breakpoint the thread runs the instruction of the
 // breakpoint once, and the breakpoint stays. A debugger gives no answer
 // Stop: it stops a process with Process_Stop and the right Control.
-debug_fault_answer :: proc "contextless" (process: Handle, record: op.Fault_Record, error: ^errors.Error_Record = nil) -> Status {
+debug_fault_answer :: proc "contextless" (process: Handle, record: op.Fault_Record, error: ^errors.Error_Record = nil) -> call_outcome.Call_Outcome {
 	_, status := call_with_error(error, .Fault_Answer, record.thread, record.serial, u64(op.Fault_Answer_Kind.Resume), u64(process))
 	return status
 }
@@ -693,7 +698,7 @@ debug_fault_answer :: proc "contextless" (process: Handle, record: op.Fault_Reco
 
 // thread_control_stop adds 1 to the stop count of a thread and gives the
 // count: the thread runs no instruction until its count is 0 again.
-thread_control_stop :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (count: u64, status: Status) {
+thread_control_stop :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (count: u64, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Stop))
 	return results[0], status
@@ -703,7 +708,7 @@ thread_control_stop :: proc "contextless" (thread: Handle, number: u64, error: ^
 // the count: at 0 the thread runs again. A debugger takes back only its
 // own stops, and each other caller only the stops that the debugger did
 // not make (Bad_State with no stop of its own).
-thread_control_resume :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (count: u64, status: Status) {
+thread_control_resume :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (count: u64, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Resume))
 	return results[0], status
@@ -715,7 +720,7 @@ thread_control_resume :: proc "contextless" (thread: Handle, number: u64, error:
 // object with Read and Write, which also pays the point copies. The process
 // must not have run yet: the kernel refuses another with the record State,
 // Processes.
-process_record_start :: proc "contextless" (process: Handle, history: Handle, error: ^errors.Error_Record = nil) -> Status {
+process_record_start :: proc "contextless" (process: Handle, history: Handle, error: ^errors.Error_Record = nil) -> call_outcome.Call_Outcome {
 	_, status := call_with_error(error, .Thread_Control, u64(process), u64(history), u64(op.Thread_Control_Command.Record_Start))
 	return status
 }
@@ -727,20 +732,20 @@ process_record_start :: proc "contextless" (process: Handle, history: Handle, er
 // run yet; `history` a contiguous memory object with Read and Write whose
 // record ended. The kernel writes the end of the replay into the header of
 // the history.
-process_replay_start :: proc "contextless" (process: Handle, history: Handle, error: ^errors.Error_Record = nil) -> Status {
+process_replay_start :: proc "contextless" (process: Handle, history: Handle, error: ^errors.Error_Record = nil) -> call_outcome.Call_Outcome {
 	_, status := call_with_error(error, .Thread_Control, u64(process), u64(history), u64(op.Thread_Control_Command.Replay_Start))
 	return status
 }
 
 // process_record_end ends the record that process_record_start began: the
 // kernel writes the end record into the input history and stops writing it.
-process_record_end :: proc "contextless" (process: Handle, error: ^errors.Error_Record = nil) -> Status {
+process_record_end :: proc "contextless" (process: Handle, error: ^errors.Error_Record = nil) -> call_outcome.Call_Outcome {
 	_, status := call_with_error(error, .Thread_Control, u64(process), 0, u64(op.Thread_Control_Command.Record_End))
 	return status
 }
 
 // thread_registers_read gives the registers of a held thread.
-thread_registers_read :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (registers: op.Thread_Registers, status: Status) {
+thread_registers_read :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (registers: op.Thread_Registers, status: call_outcome.Call_Outcome) {
 	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Read_Registers), u64(uintptr(&registers)), size_of(registers))
 	return registers, status
 }
@@ -748,14 +753,14 @@ thread_registers_read :: proc "contextless" (thread: Handle, number: u64, error:
 // thread_registers_write gives a held thread these registers: it goes on
 // with them. Bad_Operation for registers that a thread of a process cannot
 // have; the error record names the refused part.
-thread_registers_write :: proc "contextless" (thread: Handle, number: u64, registers: op.Thread_Registers, error: ^errors.Error_Record = nil) -> (status: Status) {
+thread_registers_write :: proc "contextless" (thread: Handle, number: u64, registers: op.Thread_Registers, error: ^errors.Error_Record = nil) -> (status: call_outcome.Call_Outcome) {
 	written := registers
 	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Write_Registers), u64(uintptr(&written)), size_of(written))
 	return status
 }
 
 // thread_breakpoints_read gives the breakpoints of a held thread.
-thread_breakpoints_read :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (breakpoints: op.Thread_Breakpoints, status: Status) {
+thread_breakpoints_read :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (breakpoints: op.Thread_Breakpoints, status: call_outcome.Call_Outcome) {
 	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Read_Breakpoints), u64(uintptr(&breakpoints)), size_of(breakpoints))
 	return breakpoints, status
 }
@@ -768,7 +773,7 @@ thread_breakpoints_read :: proc "contextless" (thread: Handle, number: u64, erro
 // Debug of that thread, with the number of the breakpoint in the debug
 // status of its record. Bad_Operation for a breakpoint that a thread
 // cannot have; the error record names the refused part.
-thread_breakpoints_write :: proc "contextless" (thread: Handle, number: u64, breakpoints: op.Thread_Breakpoints, error: ^errors.Error_Record = nil) -> (status: Status) {
+thread_breakpoints_write :: proc "contextless" (thread: Handle, number: u64, breakpoints: op.Thread_Breakpoints, error: ^errors.Error_Record = nil) -> (status: call_outcome.Call_Outcome) {
 	written := breakpoints
 	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Write_Breakpoints), u64(uintptr(&written)), size_of(written))
 	return status
@@ -780,7 +785,7 @@ thread_breakpoints_write :: proc "contextless" (thread: Handle, number: u64, bre
 // It reads only pages that the process maps, can read and that have a
 // frame; it stops before the first page that is not so. Bad_Address when
 // no byte is read. A thread handle needs the rights Inspect and Write.
-thread_memory_read :: proc "contextless" (thread: Handle, number: u64, source: u64, buffer: []u8, error: ^errors.Error_Record = nil) -> (count: u64, status: Status) {
+thread_memory_read :: proc "contextless" (thread: Handle, number: u64, source: u64, buffer: []u8, error: ^errors.Error_Record = nil) -> (count: u64, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Read_Memory), u64(uintptr(raw_data(buffer))), u64(len(buffer)), source)
 	return results[0], status
@@ -794,14 +799,14 @@ thread_memory_read :: proc "contextless" (thread: Handle, number: u64, source: u
 // kind Unsupported.
 
 // thread_counters_start makes the calling thread count from 0, from now on.
-thread_counters_start :: proc "contextless" (machine: Handle, error: ^errors.Error_Record = nil) -> Status {
+thread_counters_start :: proc "contextless" (machine: Handle, error: ^errors.Error_Record = nil) -> call_outcome.Call_Outcome {
 	_, status := call_with_error(error, .Thread_Control, u64(machine), 0, u64(op.Thread_Control_Command.Start_Counters))
 	return status
 }
 
 // thread_counters_read gives the counts of the calling thread since its
 // last start; it goes on counting. Bad_State when it does not count.
-thread_counters_read :: proc "contextless" (machine: Handle, error: ^errors.Error_Record = nil) -> (counters: op.Thread_Counters, status: Status) {
+thread_counters_read :: proc "contextless" (machine: Handle, error: ^errors.Error_Record = nil) -> (counters: op.Thread_Counters, status: call_outcome.Call_Outcome) {
 	_, status = call_with_error(error, .Thread_Control, u64(machine), 0, u64(op.Thread_Control_Command.Read_Counters), u64(uintptr(&counters)), size_of(counters))
 	return counters, status
 }
@@ -809,7 +814,7 @@ thread_counters_read :: proc "contextless" (machine: Handle, error: ^errors.Erro
 // thread_counters_stop makes the calling thread stop counting. It needs no
 // handle and no right: it only takes a capability away, so a thread whose
 // right was revoked can still stop.
-thread_counters_stop :: proc "contextless" (error: ^errors.Error_Record = nil) -> Status {
+thread_counters_stop :: proc "contextless" (error: ^errors.Error_Record = nil) -> call_outcome.Call_Outcome {
 	_, status := call_with_error(error, .Thread_Control, 0, 0, u64(op.Thread_Control_Command.Stop_Counters))
 	return status
 }
@@ -819,7 +824,7 @@ thread_counters_stop :: proc "contextless" (error: ^errors.Error_Record = nil) -
 // there. It is the physical address of a contiguous object, or with the
 // IOMMU the window of another object. The machine handle needs the right
 // Physical.
-memory_physical :: proc "contextless" (machine: Handle, memory: Handle, error: ^errors.Error_Record = nil) -> (address: u64, status: Status) {
+memory_physical :: proc "contextless" (machine: Handle, memory: Handle, error: ^errors.Error_Record = nil) -> (address: u64, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Memory_Physical, u64(machine), u64(memory))
 	return results[0], status
@@ -831,25 +836,25 @@ memory_physical :: proc "contextless" (machine: Handle, memory: Handle, error: ^
 //
 // Any rights suffice. The kernel refuses a handle that is not a memory
 // handle (`Bad_Handle`).
-memory_size :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = nil) -> (pages: u64, status: Status) {
+memory_size :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = nil) -> (pages: u64, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Memory_Size, u64(memory))
-	if status != .Ok {
+	if status != .Succeeded {
 		return 0, status
 	}
-	return results[0], .Ok
+	return results[0], .Succeeded
 }
 
 // memory_size_and_flags gives the count of pages of a memory object and the
 // flags of its creation that it keeps (op.Operation.Memory_Size): the
 // check of an object that another process gives, before its first read.
-memory_size_and_flags :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = nil) -> (pages: u64, flags: op.Memory_Flags, status: Status) {
+memory_size_and_flags :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = nil) -> (pages: u64, flags: op.Memory_Flags, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Memory_Size, u64(memory))
-	if status != .Ok {
+	if status != .Succeeded {
 		return 0, {}, status
 	}
-	return results[0], transmute(op.Memory_Flags)results[1], .Ok
+	return results[0], transmute(op.Memory_Flags)results[1], .Succeeded
 }
 
 // give copies a handle to another process. target is a process handle, or a
@@ -865,7 +870,7 @@ memory_size_and_flags :: proc "contextless" (memory: Handle, error: ^errors.Erro
 // ```odin
 // copy, status := system.give(process, memory, {.Read})
 // ```
-give :: proc "contextless" (target: Handle, handle: Handle, rights: Rights, error: ^errors.Error_Record = nil) -> (result: Handle, status: Status) {
+give :: proc "contextless" (target: Handle, handle: Handle, rights: Rights, error: ^errors.Error_Record = nil) -> (result: Handle, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Handle_Give, u64(target), u64(handle), u64(transmute(u32)rights))
 	return Handle(results[0]), status
@@ -878,17 +883,17 @@ give :: proc "contextless" (target: Handle, handle: Handle, rights: Rights, erro
 // not a stop of the reader. A range past op.MEMORY_READ_LIMIT is several
 // calls; after a status other than Ok, the bytes of into are none of the
 // object.
-memory_read :: proc "contextless" (memory: Handle, offset: u64, into: []u8, error: ^errors.Error_Record = nil) -> (copied: u64, status: Status) {
+memory_read :: proc "contextless" (memory: Handle, offset: u64, into: []u8, error: ^errors.Error_Record = nil) -> (copied: u64, status: call_outcome.Call_Outcome) {
 	for copied < u64(len(into)) {
 		part := min(u64(len(into)) - copied, op.MEMORY_READ_LIMIT)
 		results: [7]u64
 		results, status = call_with_error(error, .Memory_Read, u64(memory), offset + copied, u64(uintptr(&into[copied])), part)
-		if status != .Ok {
+		if status != .Succeeded {
 			return copied, status
 		}
 		copied += part
 	}
-	return copied, .Ok
+	return copied, .Succeeded
 }
 
 // handle_state gives the kind of the object of a handle, and the rights of
@@ -907,7 +912,7 @@ memory_read :: proc "contextless" (memory: Handle, offset: u64, into: []u8, erro
 // ```
 handle_state :: proc "contextless" (handle: Handle, memory: Handle = 0) -> (kind: op.Object_Kind, rights: Rights, through: bool) {
 	results, status := call(.Handle_State, u64(handle), u64(memory))
-	if status != .Ok {
+	if status != .Succeeded {
 		return .None, {}, false
 	}
 	object_kind, known := enum_word.member_of_word(op.Object_Kind, results[0])
@@ -930,7 +935,7 @@ kernel_word_refused :: proc "contextless" (what: string, word: u64) -> ! {
 // in one process (a handle with the right Control), or in each process.
 // The handle stays, and the mappings of this process stay. count is the
 // count of holdings that ended.
-handle_revoke :: proc "contextless" (handle: Handle, process: Handle = 0, error: ^errors.Error_Record = nil) -> (count: u64, status: Status) {
+handle_revoke :: proc "contextless" (handle: Handle, process: Handle = 0, error: ^errors.Error_Record = nil) -> (count: u64, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Handle_Revoke, u64(handle), u64(process))
 	return results[0], status
@@ -992,13 +997,13 @@ close :: proc "contextless" (handle: Handle) {
 // ```odin
 // memory, calls := system.ring_create(64) or_return
 // ```
-ring_create :: proc "contextless" (capacity: u32 = ring.CAPACITY, receive_handles := false) -> (memory: Handle, mapped: ring.Ring, status: Status) {
+ring_create :: proc "contextless" (capacity: u32 = ring.CAPACITY, receive_handles := false) -> (memory: Handle, mapped: ring.Ring, status: call_outcome.Call_Outcome) {
 	if capacity < ring.CAPACITY || capacity > ring.CAPACITY_LIMIT || capacity & (capacity - 1) != 0 {
-		return 0, {}, .Bad_Operation
+		return 0, {}, .Argument_Refused
 	}
 	memory = memory_create(ring.pages(capacity)) or_return
 	mapped, status = ring_open(memory, receive_handles = receive_handles)
-	if status != .Ok {
+	if status != .Succeeded {
 		close(memory)
 		memory = 0
 	}
@@ -1014,13 +1019,13 @@ ring_create :: proc "contextless" (capacity: u32 = ring.CAPACITY, receive_handle
 // of the kernel for a handle that it refuses (Memory_Size, Memory_Map), and
 // Bad_Operation with the record of ring_pages_refusal for a size that is no
 // ring.
-ring_open :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = nil, receive_handles := false) -> (mapped: ring.Ring, status: Status) {
+ring_open :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = nil, receive_handles := false) -> (mapped: ring.Ring, status: call_outcome.Call_Outcome) {
 	page_count := memory_size(memory, error) or_return
 	if refusal, refused := ring_pages_refusal(page_count); refused {
 		if error != nil {
 			error^ = refusal
 		}
-		return {}, .Bad_Operation
+		return {}, .Argument_Refused
 	}
 	flags := op.Map_Flags{.Write}
 	if receive_handles {
@@ -1033,9 +1038,9 @@ ring_open :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = n
 		// the memory: its one other refusal is an address of no memory.
 		memory_unmap(address)
 		errors.fail(error, 0, .Bad_Address, .None, 1, i64(uintptr(address)))
-		return {}, .Bad_Address
+		return {}, .Argument_Refused
 	}
-	return opened, .Ok
+	return opened, .Succeeded
 }
 
 // ring_pages_refusal is the check of the size of the memory of a ring: the
@@ -1065,13 +1070,13 @@ ring_close :: proc "contextless" (mapped: ^ring.Ring) {
 
 // shared_create makes the memory of a shared queue and maps it in this
 // process. The capacity is a power of two, 64 or more.
-shared_create :: proc "contextless" (capacity: u32 = ring.SHARED_CAPACITY) -> (memory: Handle, mapped: ring.Shared, status: Status) {
+shared_create :: proc "contextless" (capacity: u32 = ring.SHARED_CAPACITY) -> (memory: Handle, mapped: ring.Shared, status: call_outcome.Call_Outcome) {
 	if capacity < ring.SHARED_CAPACITY || capacity > ring.SHARED_CAPACITY_LIMIT || capacity & (capacity - 1) != 0 {
-		return 0, {}, .Bad_Operation
+		return 0, {}, .Argument_Refused
 	}
 	memory = memory_create(ring.shared_pages(capacity)) or_return
 	mapped, status = shared_open(memory)
-	if status != .Ok {
+	if status != .Succeeded {
 		close(memory)
 		memory = 0
 	}
@@ -1080,18 +1085,18 @@ shared_create :: proc "contextless" (capacity: u32 = ring.SHARED_CAPACITY) -> (m
 
 // shared_open maps the memory of a shared queue in this process. The
 // capacity comes from the size of the memory, that the kernel gives.
-shared_open :: proc "contextless" (memory: Handle) -> (mapped: ring.Shared, status: Status) {
+shared_open :: proc "contextless" (memory: Handle) -> (mapped: ring.Shared, status: call_outcome.Call_Outcome) {
 	page_count := memory_size(memory) or_return
 	if page_count > ring.shared_pages(ring.SHARED_CAPACITY_LIMIT) {
-		return {}, .Bad_Handle
+		return {}, .Argument_Refused
 	}
 	address := memory_map(memory) or_return
 	opened, ok := ring.shared_open(address, page_count)
 	if !ok {
 		memory_unmap(address)
-		return {}, .Bad_Handle
+		return {}, .Argument_Refused
 	}
-	return opened, .Ok
+	return opened, .Succeeded
 }
 
 // shared_close unmaps a shared queue.
@@ -1135,27 +1140,27 @@ THREAD_STACK_PAGES :: op.THREAD_STACK_PAGES
 // limit) and the request in
 // microseconds (0: op.REQUEST_DEFAULT) are for the scheduling strategies
 // that use them (docs/SCHEDULING.md).
-thread_start :: proc "contextless" (entry: proc "c" (parameter: rawptr) -> !, parameter: rawptr, stack_pages: u64 = THREAD_STACK_PAGES, budget: Handle = 0, weight: u64 = 0, request: u64 = 0, error: ^errors.Error_Record = nil) -> (thread: Thread, status: Status) {
+thread_start :: proc "contextless" (entry: proc "c" (parameter: rawptr) -> !, parameter: rawptr, stack_pages: u64 = THREAD_STACK_PAGES, budget: Handle = 0, weight: u64 = 0, request: u64 = 0, error: ^errors.Error_Record = nil) -> (thread: Thread, status: call_outcome.Call_Outcome) {
 	memory := memory_create(stack_pages, 0, {}, error) or_return
 	defer close(memory)
 	thread.stack = memory_map(memory, error = error) or_return
 	results: [7]u64
 	results, status = call_with_error(error, .Thread_Create, u64(budget == 0 ? own_budget() : budget), u64(uintptr(rawptr(entry))), u64(uintptr(thread.stack)) + stack_pages * PAGE_SIZE, u64(uintptr(parameter)), weight, request)
-	if status != .Ok {
+	if status != .Succeeded {
 		memory_unmap(thread.stack)
 		return {}, status
 	}
 	thread.handle = Handle(results[0])
-	return thread, .Ok
+	return thread, .Succeeded
 }
 
 // strategy_set changes the scheduling strategy of the machine while it
 // runs, and gives the strategy before. The machine handle needs the right
 // Schedule.
-strategy_set :: proc "contextless" (machine: Handle, strategy: op.Strategy, error: ^errors.Error_Record = nil) -> (before: op.Strategy, status: Status) {
+strategy_set :: proc "contextless" (machine: Handle, strategy: op.Strategy, error: ^errors.Error_Record = nil) -> (before: op.Strategy, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Strategy_Set, u64(machine), u64(strategy))
-	if status != .Ok {
+	if status != .Succeeded {
 		return {}, status
 	}
 	strategy_before, known := enum_word.member_of_word(op.Strategy, results[0])
@@ -1177,7 +1182,7 @@ strategy_set :: proc "contextless" (machine: Handle, strategy: op.Strategy, erro
 // ```odin
 // schedule, status := system.thread_schedule_read(0, system.thread_record().number)
 // ```
-thread_schedule_read :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (schedule: op.Thread_Schedule, status: Status) {
+thread_schedule_read :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (schedule: op.Thread_Schedule, status: call_outcome.Call_Outcome) {
 	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Read_Schedule), u64(uintptr(&schedule)), size_of(schedule))
 	return schedule, status
 }
@@ -1200,7 +1205,7 @@ thread_schedule_read :: proc "contextless" (thread: Handle, number: u64, error: 
 // ```odin
 // status := system.thread_schedule_write(worker.handle, 0, {weight = 2048})
 // ```
-thread_schedule_write :: proc "contextless" (thread: Handle, number: u64, schedule: op.Thread_Schedule, error: ^errors.Error_Record = nil) -> (status: Status) {
+thread_schedule_write :: proc "contextless" (thread: Handle, number: u64, schedule: op.Thread_Schedule, error: ^errors.Error_Record = nil) -> (status: call_outcome.Call_Outcome) {
 	written := schedule
 	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Write_Schedule), u64(uintptr(&written)), size_of(written))
 	return status
@@ -1215,7 +1220,7 @@ thread_schedule_write :: proc "contextless" (thread: Handle, number: u64, schedu
 // ```odin
 // schedule, status := system.process_schedule_read(machine, slot, report.process_serial)
 // ```
-process_schedule_read :: proc "contextless" (machine: Handle, slot, serial: u64, error: ^errors.Error_Record = nil) -> (schedule: op.Process_Schedule, status: Status) {
+process_schedule_read :: proc "contextless" (machine: Handle, slot, serial: u64, error: ^errors.Error_Record = nil) -> (schedule: op.Process_Schedule, status: call_outcome.Call_Outcome) {
 	_, status = call_with_error(error, .Thread_Control, u64(machine), op.process_slot_and_serial(slot, serial), u64(op.Thread_Control_Command.Read_Process_Schedule), u64(uintptr(&schedule)), size_of(schedule))
 	return schedule, status
 }
@@ -1228,7 +1233,7 @@ process_schedule_read :: proc "contextless" (machine: Handle, slot, serial: u64,
 // ```odin
 // status := system.process_schedule_write(machine, slot, report.process_serial, {new_thread_weight_limit = 32})
 // ```
-process_schedule_write :: proc "contextless" (machine: Handle, slot, serial: u64, schedule: op.Process_Schedule, error: ^errors.Error_Record = nil) -> (status: Status) {
+process_schedule_write :: proc "contextless" (machine: Handle, slot, serial: u64, schedule: op.Process_Schedule, error: ^errors.Error_Record = nil) -> (status: call_outcome.Call_Outcome) {
 	written := schedule
 	_, status = call_with_error(error, .Thread_Control, u64(machine), op.process_slot_and_serial(slot, serial), u64(op.Thread_Control_Command.Write_Process_Schedule), u64(uintptr(&written)), size_of(written))
 	return status
@@ -1243,7 +1248,7 @@ process_schedule_write :: proc "contextless" (machine: Handle, slot, serial: u64
 // ```odin
 // placement, status := system.thread_placement_read(0, system.thread_record().number)
 // ```
-thread_placement_read :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (placement: op.Thread_Placement, status: Status) {
+thread_placement_read :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (placement: op.Thread_Placement, status: call_outcome.Call_Outcome) {
 	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Read_Placement), u64(uintptr(&placement)), size_of(placement))
 	return placement, status
 }
@@ -1264,7 +1269,7 @@ thread_placement_read :: proc "contextless" (thread: Handle, number: u64, error:
 // ```odin
 // status := system.thread_placement_write(worker.handle, 0, {processors = 0b0011})
 // ```
-thread_placement_write :: proc "contextless" (thread: Handle, number: u64, placement: op.Thread_Placement, error: ^errors.Error_Record = nil) -> (status: Status) {
+thread_placement_write :: proc "contextless" (thread: Handle, number: u64, placement: op.Thread_Placement, error: ^errors.Error_Record = nil) -> (status: call_outcome.Call_Outcome) {
 	written := placement
 	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Write_Placement), u64(uintptr(&written)), size_of(written))
 	return status
@@ -1276,7 +1281,7 @@ thread_placement_write :: proc "contextless" (thread: Handle, number: u64, place
 // gives the bytes of one ring and the count of processors. A new table of
 // this process replaces its table. The machine handle needs the right
 // Events.
-events_set :: proc "contextless" (machine: Handle, memory: Handle, rules: []op.Event_Rule, records: u64, error: ^errors.Error_Record = nil) -> (ring_bytes: u64, processor_count: u64, status: Status) {
+events_set :: proc "contextless" (machine: Handle, memory: Handle, rules: []op.Event_Rule, records: u64, error: ^errors.Error_Record = nil) -> (ring_bytes: u64, processor_count: u64, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Events_Set, u64(machine), u64(memory), u64(uintptr(raw_data(rules))), u64(len(rules)), records)
 	return results[0], results[1], status
@@ -1284,7 +1289,7 @@ events_set :: proc "contextless" (machine: Handle, memory: Handle, rules: []op.E
 
 // events_end takes the event table of this process away. When it returns,
 // the kernel writes no more record in the memory object of the rings.
-events_end :: proc "contextless" (machine: Handle, error: ^errors.Error_Record = nil) -> Status {
+events_end :: proc "contextless" (machine: Handle, error: ^errors.Error_Record = nil) -> call_outcome.Call_Outcome {
 	_, status := call_with_error(error, .Events_Set, u64(machine), 0)
 	return status
 }
@@ -1318,20 +1323,20 @@ Guest_Exit :: struct {
 // 	registers.rip = exit.next
 // }
 // ```
-guest_run :: proc "contextless" (process: Handle, registers: ^op.Guest_Registers, error: ^errors.Error_Record = nil, processor: u64 = 0) -> (exit: Guest_Exit, status: Status) {
+guest_run :: proc "contextless" (process: Handle, registers: ^op.Guest_Registers, error: ^errors.Error_Record = nil, processor: u64 = 0) -> (exit: Guest_Exit, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call_with_error(error, .Guest_Run, u64(process), u64(uintptr(registers)), processor)
-	if status != .Ok {
+	if status != .Succeeded {
 		return {}, status
 	}
-	// The kernel writes the kind as a word: a word that names no kind is the
-	// refusal Bad_Operation with the record Bad_Value, never an exit.
+	// The kernel writes the kind as a word: a word that names no kind is
+	// Answer_Unreadable with the record Bad_Value, never an exit.
 	kind, kind_ok := enum_word.member_of_word(op.Guest_Exit_Kind, results[0])
 	if !kind_ok {
 		errors.fail(error, 0, .Bad_Value, .None, 0, i64(results[0]), i64(max(op.Guest_Exit_Kind)))
-		return {}, .Bad_Operation
+		return {}, .Answer_Unreadable
 	}
-	return {kind = kind, a = results[1], b = results[2], c = results[3], next = results[4], code = results[5], information = results[6]}, .Ok
+	return {kind = kind, a = results[1], b = results[2], c = results[3], next = results[4], code = results[5], information = results[6]}, .Succeeded
 }
 
 // event_ring gives the head and the records of the event ring of one
@@ -1367,7 +1372,7 @@ thread_stop :: proc "contextless" () -> ! {
 // thread_stopped says if a thread ended.
 thread_stopped :: proc "contextless" (thread: Thread) -> bool {
 	results, status := call(.Thread_State, u64(thread.handle))
-	return status != .Ok || op.Process_State(results[0]) == .Stopped
+	return status != .Succeeded || op.Process_State(results[0]) == .Stopped
 }
 
 // thread_end stops a thread if it runs, then frees its stack and its handle.

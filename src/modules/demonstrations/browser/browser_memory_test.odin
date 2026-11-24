@@ -1,6 +1,7 @@
 #+build !freestanding
 package browser
 
+import "modus:contract/call_outcome"
 import "base:runtime"
 import "core:mem"
 import "modus:contract/errors"
@@ -16,8 +17,8 @@ import "modus:web"
 TEST_RESERVE_PAGES :: 2048 // 8 MiB for each part: the pages built into the browser and the tests.
 
 @(private = "file")
-test_page_change :: proc "contextless" (arena: ^system.Arena, range: op.Page_Range, flags: op.Commit_Flags, error: ^errors.Error_Record) -> system.Status {
-	return .Ok
+test_page_change :: proc "contextless" (arena: ^system.Arena, range: op.Page_Range, flags: op.Commit_Flags, error: ^errors.Error_Record) -> call_outcome.Call_Outcome {
+	return .Succeeded
 }
 
 @(private = "file")

@@ -688,7 +688,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The arenas of the document reserve the pages that the budget holds:
 	// a page is as large as the budget pays, and no larger.
 	own, _ := system.budget_read()
-	if status := document_memory_create(system.arena_reservation_pages(own.pages)); status != .Ok {
+	if status := document_memory_create(system.arena_reservation_pages(own.pages)); status != .Succeeded {
 		system.log_fact(.Warning, Document_Memory_Refused{status = u64(status)})
 		system.stop(.Failed)
 	}

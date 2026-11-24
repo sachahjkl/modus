@@ -1,7 +1,7 @@
 package arena
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 
 // The log facts of the test of an arena (src/md/features/log_facts.md):
 // each line, as a record of fields. Each fact template is the sentence
@@ -16,13 +16,13 @@ import op "modus:contract/operation"
 @(log_fact = "arena: WRONG: the reservation of {reservation_pages} pages failed with {status}")
 Wrong_Reservation :: struct {
 	reservation_pages: u64,
-	status:            op.Status_Word,
+	status:            call_outcome.Call_Outcome_Word,
 }
 
 // The growth stopped for another refusal than the budget.
-@(log_fact = "arena: WRONG: the growth stopped with {status} and the error kind {error_kind}, not with No_Budget")
+@(log_fact = "arena: WRONG: the growth stopped with {status} and the error kind {error_kind}, not with Budget_Or_Capacity_Exhausted")
 Wrong_Growth_Stop :: struct {
-	status:     op.Status_Word,
+	status:     call_outcome.Call_Outcome_Word,
 	error_kind: errors.Kind_Word,
 }
 
@@ -31,7 +31,7 @@ Wrong_Growth_Stop :: struct {
 @(log_fact = "arena: WRONG: after the refusal the budget held {budget_pages} pages, and a second push gave {status} or changed the arena")
 Wrong_After_Refusal :: struct {
 	budget_pages: u64,
-	status:       op.Status_Word,
+	status:       call_outcome.Call_Outcome_Word,
 }
 
 // After a reset the pushes did not take the same pages with no commit.
@@ -41,13 +41,13 @@ Wrong_Reset :: struct {}
 // The end of the arena failed, or did not give each page back.
 @(log_fact = "arena: WRONG: the end gave {status}, and the budget holds {budget_pages_after} pages of {budget_pages_before}")
 Wrong_End :: struct {
-	status:              op.Status_Word,
+	status:              call_outcome.Call_Outcome_Word,
 	budget_pages_after:  u64,
 	budget_pages_before: u64,
 }
 
 // Each check of the arena passed.
-@(log_fact = "arena: the budget refused the commit with No_Budget, the arena kept its state, a reset took the same pages again with no commit, and its end gave every page back to the budget: as it must")
+@(log_fact = "arena: the budget refused the commit with Budget_Or_Capacity_Exhausted, the arena kept its state, a reset took the same pages again with no commit, and its end gave every page back to the budget: as it must")
 Arena_Checked :: struct {}
 
 // The growth of the arena until the budget refused a commit, and the

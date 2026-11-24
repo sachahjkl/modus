@@ -704,8 +704,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.call(.Inspect, u64(ctx.handles[system.GRANT_MACHINE]), u64(op.Inspect_Kind.Boot), 0, u64(uintptr(&boot)), size_of(boot))
 	cycle_frequency = boot.cycle_frequency
 	ring_memory := ctx.handles[datagram.GRANT_RING]
-	status: system.Status
-	if datagrams, status = system.ring_open(ring_memory); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if datagrams, status = system.ring_open(ring_memory); status != .Succeeded {
 		system.log_fact(.Info, No_Endpoint{})
 		system.stop(.Refused)
 	}
@@ -713,7 +713,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	region_memory := ctx.handles[datagram.GRANT_REGION]
 	address, map_status := system.memory_map(region_memory, {.Write})
 	region_pages, size_status := system.memory_size(region_memory)
-	if map_status != .Ok || size_status != .Ok || region_pages < REGION_PAGES {
+	if map_status != .Succeeded || size_status != .Succeeded || region_pages < REGION_PAGES {
 		system.log_fact(.Info, No_Datagram_Region{})
 		system.stop(.Failed)
 	}

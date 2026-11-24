@@ -10,6 +10,7 @@ package guest_regions
 
 import "base:intrinsics"
 import "modus:contract/blake3"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import gb "modus:contract/guest_builder"
 import "modus:contract/guest_os"
@@ -116,7 +117,7 @@ Guest_Build_Outcome :: struct {
 	end:              Guest_Build_End,
 	refused_part:     Guest_Build_Part,
 	boot_refusal:     guest_os.Linux_Boot_Refusal,
-	status:           system.Status,
+	status:           call_outcome.Call_Outcome,
 	step:             string,
 	output_disk_hash: blake3.Hash, // The BLAKE3 hash of the whole output disk after the run.
 }
@@ -139,7 +140,7 @@ guest_build_run :: proc "contextless" (runner: ^gb.Guest_Sandbox_Runner, machine
 		outcome.refused_part = part
 		return outcome^
 	}
-	kernel_failed :: proc "contextless" (runner: ^gb.Guest_Sandbox_Runner, outcome: ^Guest_Build_Outcome, status: system.Status, step: string) -> Guest_Build_Outcome {
+	kernel_failed :: proc "contextless" (runner: ^gb.Guest_Sandbox_Runner, outcome: ^Guest_Build_Outcome, status: call_outcome.Call_Outcome, step: string) -> Guest_Build_Outcome {
 		runner.state = .Failed
 		if runner.refusal == .None {
 			runner.refusal = .Nonzero_Guest_Exit
@@ -156,7 +157,7 @@ guest_build_run :: proc "contextless" (runner: ^gb.Guest_Sandbox_Runner, machine
 	}
 	staging := memory_bytes - staging_bytes
 	ram, status := owned_memory_make(memory_bytes)
-	if status != .Ok {
+	if status != .Succeeded {
 		return kernel_failed(runner, &outcome, status, "Memory_Create of the guest memory")
 	}
 	defer owned_memory_end(&ram)
@@ -196,12 +197,12 @@ guest_build_run :: proc "contextless" (runner: ^gb.Guest_Sandbox_Runner, machine
 	// guest only. Past it, each address is a device of the machine.
 	name := GUEST_BUILD_PROCESS_NAME
 	created, create_status := system.call(.Process_Create, u64(system.own_budget()), u64(uintptr(raw_data(name))), u64(len(name)))
-	if create_status != .Ok {
+	if create_status != .Succeeded {
 		return kernel_failed(runner, &outcome, create_status, "Process_Create of the guest")
 	}
 	guest := system.Handle(created[0])
 	defer system.close(guest)
-	if map_status, step := map_memory(guest, ram.handle, memory_bytes); map_status != .Ok {
+	if map_status, step := map_memory(guest, ram.handle, memory_bytes); map_status != .Succeeded {
 		_ = system.process_stop(guest)
 		return kernel_failed(runner, &outcome, map_status, step)
 	}
@@ -218,7 +219,7 @@ guest_build_run :: proc "contextless" (runner: ^gb.Guest_Sandbox_Runner, machine
 		run_error: errors.Error_Record
 		exit, run_status := system.guest_run(guest, &registers, &run_error)
 		gb.runner_clock_advance(runner, system.nanoseconds())
-		if run_status == .Bad_Operation && run_error.kind == i64(errors.Kind.Unsupported) {
+		if run_status == .Operation_Unsupported && run_error.kind == i64(errors.Kind.Unsupported) {
 			_ = system.process_stop(guest)
 			runner.state = .Refused
 			if runner.refusal == .None {
@@ -227,7 +228,7 @@ guest_build_run :: proc "contextless" (runner: ^gb.Guest_Sandbox_Runner, machine
 			outcome.end = .Unsupported
 			return outcome
 		}
-		if run_status != .Ok {
+		if run_status != .Succeeded {
 			_ = system.process_stop(guest)
 			return kernel_failed(runner, &outcome, run_status, "Guest_Run")
 		}

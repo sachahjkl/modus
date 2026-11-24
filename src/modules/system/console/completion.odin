@@ -667,7 +667,7 @@ processes_collect :: proc "contextless" (quote_place: int) {
 	completion.processes_kept, completion.processes_quote, completion.processes_lines = true, quote_place, work.started
 	completion.process_count = 0
 	report: op.System_Report
-	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Succeeded {
 		for &sandbox in sandboxes {
 			if sandbox.service && !sandbox.quiet && completion.process_count < PROCESS_NAME_CAPACITY {
 				completion.process_names[completion.process_count] = {}
@@ -682,7 +682,7 @@ processes_collect :: proc "contextless" (quote_place: int) {
 			break
 		}
 		process: op.Process_Report
-		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); status != .Ok {
+		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); status != .Succeeded {
 			continue
 		}
 		if process.state == .None || process.state == .Stopped {

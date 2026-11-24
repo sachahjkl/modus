@@ -1,5 +1,6 @@
 package root
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:contract/fresh_bytes"
 import "modus:random"
@@ -26,13 +27,13 @@ fresh_bytes_given: []bool // The process of the place maps the page of the place
 // fresh_bytes_create creates the pages. A failure is not a failure of the
 // start: the processes then get no page, and the log says it once.
 fresh_bytes_create :: proc "contextless" () {
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	fresh_bytes_memory, status = system.memory_create(u64(max(len(started), 1)))
 	address: rawptr
-	if status == .Ok {
+	if status == .Succeeded {
 		address, status = system.memory_map(fresh_bytes_memory)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Warning, Fresh_Bytes_Pages_Failed{status = status})
 		if fresh_bytes_memory != 0 {
 			system.close(fresh_bytes_memory)

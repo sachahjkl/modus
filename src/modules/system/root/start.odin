@@ -250,7 +250,7 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Out
 		}
 	}
 	// A client of a block service: the service of its disk starts first.
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	if .Data_Disk in grants || .Scratch_Disk in grants {
 		place := .Data_Disk in grants ? pci.Place{device = pci.DATA_DISK_DEVICE} : scratch_disk_place()
 		work.driver, work.device_ring, status = driver_start(place, name == "iommu" ? DRIVER_IOMMU_DEVICE : DRIVER_BLOCK)
@@ -270,12 +270,12 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Out
 		work.driver, work.device_ring, status = driver_start(place, DRIVER_SOUND)
 	}
 	switch status {
-	case .Ok:
+	case .Succeeded:
 		return .Succeeded
-	case .Bad_Handle:
+	case .Nothing_Has_That_Name:
 		// No device of the class at its place: the machine lacks it.
 		return start_refuse(work, .Callee_Unavailable, .Device)
-	case .Bad_Operation, .Bad_Address, .No_Memory, .No_Slot, .Bad_State, .No_Right, .No_Budget:
+	case .Argument_Refused, .Grant_Or_Right_Missing, .Name_Already_Taken, .Wrong_State, .Another_Change_Came_First, .Operation_Unsupported, .Budget_Or_Capacity_Exhausted, .Callee_Busy, .Callee_Unavailable, .Data_Damaged, .Stopped_After_A_Partial_Change, .Callee_Stopped_During_The_Call, .Connection_Ended_During_The_Call, .Deadline_Passed_During_The_Call, .Answer_Unreadable:
 	}
 	return start_kernel_refused(work, status)
 }
@@ -291,8 +291,8 @@ start_refuse :: proc "contextless" (work: ^Start_Work, outcome: call_outcome.Cal
 // the start that the kernel refused, with the status in found, and gives
 // the outcome of a refusal on the objects of this service: the border of
 // the kernel until the kernel gives the call outcome itself.
-start_kernel_refused :: proc "contextless" (work: ^Start_Work, status: system.Status) -> call_outcome.Call_Outcome {
-	return start_refuse(work, system.outcome_of_own_status(status), .Refused, .None, 0, 0, 0, i64(status))
+start_kernel_refused :: proc "contextless" (work: ^Start_Work, status: call_outcome.Call_Outcome) -> call_outcome.Call_Outcome {
+	return start_refuse(work, system.own_operation_outcome(status), .Refused, .None, 0, 0, 0, i64(status))
 }
 
 // start_refusal_keep writes the error record of a refusal that names its
@@ -511,7 +511,7 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_O
 		}
 		return .Succeeded
 	}
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	if terminal_wanted {
 		for &item in started {
 			if place_is_free(&item) && &item != work.slot {
@@ -523,10 +523,10 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_O
 			return start_refuse(work, .Callee_Busy, .Full, .Processes, 0, 0, i64(len(started)))
 		}
 		work.view.reserved = true
-		if work.shared[0], status = system.memory_create(ring.pages(terminal.RING_CAPACITY)); status != .Ok {
+		if work.shared[0], status = system.memory_create(ring.pages(terminal.RING_CAPACITY)); status != .Succeeded {
 			return start_kernel_refused(work, status)
 		}
-		if work.shared[1], status = system.memory_create(terminal.TEXT_PAGES); status != .Ok {
+		if work.shared[1], status = system.memory_create(terminal.TEXT_PAGES); status != .Succeeded {
 			return start_kernel_refused(work, status)
 		}
 		start_grant_put(work, .Terminal_Ring, {work.shared[0], {.Read, .Write}})
@@ -543,10 +543,10 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_O
 	if console_renderer != .Desktop_Terminal {
 		return .Succeeded
 	}
-	if work.shared[0], status = system.memory_create(ring.PAGE_COUNT); status != .Ok {
+	if work.shared[0], status = system.memory_create(ring.PAGE_COUNT); status != .Succeeded {
 		return start_kernel_refused(work, status)
 	}
-	if work.slot.client, status = system.give(display_holder, work.shared[0], {.Read, .Write}); status != .Ok {
+	if work.slot.client, status = system.give(display_holder, work.shared[0], {.Read, .Write}); status != .Succeeded {
 		return start_kernel_refused(work, status)
 	}
 	// The capture face and the input face ride this ring: the compositor
@@ -570,16 +570,16 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_O
 start_rings_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outcome {
 	slot := work.slot
 	grants := work.start_grant_set.grants
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	if root_ring.root_ring_given(grants) {
 		accepts_handles := root_ring.sender_allowed(.Wire, grants) || root_ring.sender_allowed(.Start_Edit, grants)
-		if slot.requests_memory, slot.requests, status = system.ring_create(receive_handles = accepts_handles); status != .Ok {
+		if slot.requests_memory, slot.requests, status = system.ring_create(receive_handles = accepts_handles); status != .Succeeded {
 			return start_kernel_refused(work, status)
 		}
 		start_grant_put(work, .Root_Ring, {slot.requests_memory, {.Read, .Write}})
 	}
 	if .Network_Device in grants {
-		if slot.network_memory, slot.network, status = system.ring_create(); status != .Ok {
+		if slot.network_memory, slot.network, status = system.ring_create(); status != .Succeeded {
 			return start_kernel_refused(work, status)
 		}
 		start_grant_put(work, .Network_Control, {slot.network_memory, {.Read, .Write}})
@@ -648,7 +648,7 @@ start_handles_of_the_start_grant_set_give :: proc "contextless" (work: ^Start_Wo
 	if .Clock in grants {
 		start_grant_put(work, .Date_Page, {date_memory, {.Read, .Write}})
 		results, ports_status := system.call(.Device_Create, u64(machine), u64(op.Device_Kind.Ports), 0x70, 2)
-		if ports_status == .Ok {
+		if ports_status == .Succeeded {
 			work.clock_ports = system.Handle(results[0])
 			start_grant_put(work, .Date_Ports, {work.clock_ports, {}})
 		}
@@ -713,8 +713,8 @@ start_service_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 		return start_refuse(work, .Data_Damaged, .Damaged, .Modules, 1)
 	}
 	slot := work.slot
-	status: system.Status
-	if slot.service_memory, slot.service, status = system.ring_create(); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if slot.service_memory, slot.service, status = system.ring_create(); status != .Succeeded {
 		return start_kernel_refused(work, status)
 	}
 	start_grant_put(work, .Service_Ring, {slot.service_memory, {.Read, .Write}})
@@ -745,7 +745,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 		return start_refuse(work, .Budget_Or_Capacity_Exhausted, .Budget, .Pages)
 	}
 	process_budget := start_budget.amounts
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	// The start of the measure of the start of a window: the load of the
 	// module, its hash and Process_Start are in it
 	// (src/md/features/desktop_to_browser.md, "The three measures on the path of the system").
@@ -775,7 +775,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 		intrinsics.mem_zero_volatile(&work.values.values, size_of(work.values.values))
 	}
 	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, seeded_values, process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, from_budget = session_budget_of(work.principal), wiring = &work.wiring, held_entry = held_entry, ready = &work.slot.ready)
-	if status == .Ok {
+	if status == .Succeeded {
 		start_budget_note(work.slot, start_budget)
 		// A process with a window of its own: the compositor ties the time
 		// to the ring of the window that Client_Add gave.
@@ -789,7 +789,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 		return .Succeeded
 	}
 	// A budget of no page: the start failed before process_start.
-	if status == .No_Budget && process_budget.pages != 0 {
+	if status == .Budget_Or_Capacity_Exhausted && process_budget.pages != 0 {
 		paying := session_budget_of(work.principal)
 		budget_refusal_log(name, process_budget, paying, paying != 0 ? "the session" : "this service")
 	} else if load_error.stage != u32(module.Load_Stage.None) {
@@ -798,10 +798,10 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 	} else {
 		system.log_fact(.Warning, Start_Failed{status = status, refused_process = module_name_field(name)})
 	}
-	// No_Slot is a full table, of the child or of this service, which
-	// prepares the module: the line of the tables of this service tells
+	// Capacity exhaustion or busy tables: of the child or of this service,
+	// which prepares the module; the line of the tables of this service tells
 	// which.
-	if status == .No_Slot {
+	if status == .Budget_Or_Capacity_Exhausted || status == .Callee_Busy {
 		own_tables_log(name)
 	}
 	return start_kernel_refused(work, status)
@@ -830,7 +830,7 @@ start_finish :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outc
 		slot.granted += {.Acts_For_Principal}
 	}
 	if work.view != nil {
-		if status := terminal_start(work.view, slot, work.shared[0], work.shared[1]); status != .Ok {
+		if status := terminal_start(work.view, slot, work.shared[0], work.shared[1]); status != .Succeeded {
 			started_process_stop(slot)
 			return start_kernel_refused(work, status)
 		}

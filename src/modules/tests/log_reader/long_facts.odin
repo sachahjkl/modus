@@ -1,5 +1,6 @@
 package log_reader
 
+import "modus:contract/call_outcome"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
@@ -70,7 +71,7 @@ long_facts_check :: proc "contextless" (connection: ^system.Call_Connection, fil
 	totals := [2]int{SHORT_LONG_FACT_VALUES, op.LOG_FACT_VALUES_MOST}
 	expected_rows := 0
 	for total in totals {
-		if _, status := system.call(.Log, log, u64(uintptr(&long_fact)), u64(op.LOG_FACT_HEAD_BYTES + total), u64(op.Log_Level.Info), 0, u64(op.Log_Record_Form.Fact)); status != .Ok {
+		if _, status := system.call(.Log, log, u64(uintptr(&long_fact)), u64(op.LOG_FACT_HEAD_BYTES + total), u64(op.Log_Level.Info), 0, u64(op.Log_Record_Form.Fact)); status != .Succeeded {
 			return "the operation Log refused a fact of several records that it takes"
 		}
 		expected_rows += op.log_fact_part_count(total)
@@ -147,7 +148,7 @@ fact_budget_check :: proc "contextless" (ctx: ^system.Context, image: []u8, conn
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_CHILD_RUN] = u64(Child_Run.Fact_Budget)
 	child, status := system.process_start(module_file, FACT_BUDGET_NAME, grants, random.values_with_seed(&process_generator, values), FACT_BUDGET_AMOUNTS, nil, nil, {image = image})
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Info, Wrong_Child_Not_Started{status = status, child = value_kinds.module_name_field(FACT_BUDGET_NAME)})
 		return "the child of the log limit did not start"
 	}
@@ -206,7 +207,7 @@ fact_budget_check :: proc "contextless" (ctx: ^system.Context, image: []u8, conn
 
 // budget_fact_write gives Log the fact of the child with a count of value
 // bytes, and gives the status of the kernel.
-budget_fact_write :: proc "contextless" (log: u64, value_bytes: int) -> system.Status {
+budget_fact_write :: proc "contextless" (log: u64, value_bytes: int) -> call_outcome.Call_Outcome {
 	_, status := system.call(.Log, log, u64(uintptr(&budget_fact)), u64(op.LOG_FACT_HEAD_BYTES + value_bytes), u64(op.Log_Level.Info), 0, u64(op.Log_Record_Form.Fact))
 	return status
 }
@@ -218,7 +219,7 @@ budget_fact_refused_whole :: proc "contextless" (log: u64, value_bytes: int) -> 
 	_, refused_before := system.budget_used()
 	status := budget_fact_write(log, value_bytes)
 	_, refused_after := system.budget_used()
-	return status == .No_Budget && refused_after - refused_before == u64(op.log_fact_part_count(value_bytes))
+	return status == .Budget_Or_Capacity_Exhausted && refused_after - refused_before == u64(op.log_fact_part_count(value_bytes))
 }
 
 // fact_budget_run is the child of the log limit. A fact of the most
@@ -238,7 +239,7 @@ fact_budget_run :: proc "contextless" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	next_second()
-	if budget_fact_write(log, FACT_BUDGET_LOG_RECORDS * record) != .Ok {
+	if budget_fact_write(log, FACT_BUDGET_LOG_RECORDS * record) != .Succeeded {
 		system.stop(.Failed)
 	}
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
@@ -252,7 +253,7 @@ fact_budget_run :: proc "contextless" (ctx: ^system.Context) -> ! {
 		if system.time() / MILLISECONDS_OF_A_SECOND != second {
 			continue
 		}
-		if taken != .Ok || left != .No_Budget || refused_after - refused_before != 3 {
+		if taken != .Succeeded || left != .Budget_Or_Capacity_Exhausted || refused_after - refused_before != 3 {
 			system.stop(.Failed)
 		}
 		system.stop(.Done)

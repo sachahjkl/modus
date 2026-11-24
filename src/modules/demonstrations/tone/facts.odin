@@ -1,7 +1,7 @@
 package tone
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:contract/timed_stream"
 import "modus:contract/value_kinds"
 
@@ -77,7 +77,7 @@ Sample_Region_Refused :: struct {
 // The kernel refused the second give of the region.
 @(log_fact = "tone: the second give of the region gave the status {status}")
 Second_Give_Refused :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // The sound service refused Start.

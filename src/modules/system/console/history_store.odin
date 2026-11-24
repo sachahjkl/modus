@@ -86,13 +86,13 @@ history_store_open :: proc "contextless" () -> (opened: bool) {
 		return false
 	}
 	client.file = file
-	ring_status, region_status, size_status: system.Status
+	ring_status, region_status, size_status: call_outcome.Call_Outcome
 	client.calls, ring_status = system.ring_open(client.ring_memory, receive_handles = true)
 	address: rawptr
 	address, region_status = system.memory_map(client.region_memory)
 	region_pages: u64
 	region_pages, size_status = system.memory_size(client.region_memory)
-	if ring_status != .Ok || region_status != .Ok || size_status != .Ok {
+	if ring_status != .Succeeded || region_status != .Succeeded || size_status != .Succeeded {
 		system.log_fact(.Info, History_Region_Not_Mapped{})
 		history_store_close(&client)
 		return false

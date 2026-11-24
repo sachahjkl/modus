@@ -83,7 +83,7 @@ roles_page_read :: proc "contextless" () -> (serial, generation: u64, ok: bool) 
 		return completion.values[1], completion.values[2], true
 	}
 	address, status := system.memory_map(memory, {.Write})
-	if status != .Ok {
+	if status != .Succeeded {
 		system.close(memory)
 		return 0, 0, false
 	}

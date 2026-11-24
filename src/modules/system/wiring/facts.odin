@@ -1,6 +1,6 @@
 package wiring
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
 // The log facts of the wiring service (src/md/features/log_facts.md): each
@@ -41,7 +41,7 @@ Transfer_Region_Not_Mapped :: struct {}
 @(log_fact = "wiring: cannot map end page of slot {wiring_slot}: status {status}")
 End_Page_Not_Mapped :: struct {
 	wiring_slot: u64,
-	status:      op.Status_Word,
+	status:      call_outcome.Call_Outcome_Word,
 }
 
 // The record output log of a process is wired to its asker.

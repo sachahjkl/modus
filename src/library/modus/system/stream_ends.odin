@@ -15,6 +15,7 @@ package system
 // reader.
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -176,27 +177,27 @@ stream_ends_grow :: proc "contextless" () -> bool {
 	}
 	if !table.made {
 		amounts, read := budget_read()
-		if read != .Ok || amounts.pages == 0 {
+		if read != .Succeeded || amounts.pages == 0 {
 			return false
 		}
 		pages := arena_reservation_pages(amounts.pages)
 		ends, ends_status := arena_create(pages)
-		if ends_status != .Ok {
+		if ends_status != .Succeeded {
 			return false
 		}
 		tags, tags_status := arena_create(pages)
-		if tags_status != .Ok {
+		if tags_status != .Succeeded {
 			_ = arena_end(&ends)
 			return false
 		}
 		table.ends, table.tags, table.made = ends, tags, true
 	}
 	end_place, end_status := arena_push(&table.ends, size_of(Stream_End), align_of(Stream_End))
-	if end_status != .Ok {
+	if end_status != .Succeeded {
 		return false
 	}
 	tag_place, tag_status := arena_push(&table.tags, size_of(u32), align_of(u32))
-	if tag_status != .Ok {
+	if tag_status != .Succeeded {
 		// The place of the end stays in the arena, free: the next growth
 		// counts it once its tag is paid.
 		_ = arena_pop(&table.ends, size_of(Stream_End))
@@ -261,13 +262,13 @@ read_compartment: [output.COMPARTMENT_SIZE_MOST]u8
 // wiring_ring_take gives the library the wiring ring that the root
 // service gave an asker with its list page (Wire with List_Page), for a
 // process whose context has none. A process with a wiring ring keeps it.
-wiring_ring_take :: proc "contextless" (memory: Handle) -> Status {
+wiring_ring_take :: proc "contextless" (memory: Handle) -> call_outcome.Call_Outcome {
 	if wiring_ring.head != nil {
-		return .Bad_State
+		return .Wrong_State
 	}
 	wiring_ring = ring_open(memory, receive_handles = true) or_return
 	wiring_ring_memory = memory
-	return .Ok
+	return .Succeeded
 }
 
 // wiring_ring_open maps the wiring ring of the context with Receive_Handles
@@ -292,7 +293,7 @@ wiring_ring_ready :: proc "contextless" () -> bool {
 		return false
 	}
 	opened, status := ring_open(memory, receive_handles = true)
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	wiring_ring, wiring_ring_memory = opened, memory
@@ -596,31 +597,31 @@ given_handles_close :: proc "contextless" (record: ring.Record) {
 // the ring, and keeps the end. It gives the completion.
 @(private = "file")
 stream_end_take :: proc "contextless" (given: output.Given_End, record: ring.Record) -> ring.Record {
-	refuse :: proc "contextless" (record: ring.Record, status: Status, refusal: errors.Error_Record) -> ring.Record {
+	refuse :: proc "contextless" (record: ring.Record, outcome: call_outcome.Call_Outcome, refusal: errors.Error_Record) -> ring.Record {
 		given_handles_close(record)
-		return output.wiring_completion(record.tag, status, refusal)
+		return output.wiring_completion(record.tag, outcome, refusal)
 	}
 	reader := given.command == .Reader_End || given.command == .Asker_End
 	if !handle_through(given.ring, {.Read, .Write}) {
-		return refuse(record, .Bad_Handle, errors.error_make(.Handle_Absent, .Lent_Handles, output.WIRING_VALUE_RING + 1, i64(given.ring)))
+		return refuse(record, .Argument_Refused, errors.error_make(.Handle_Absent, .Lent_Handles, output.WIRING_VALUE_RING + 1, i64(given.ring)))
 	}
 	if !handle_through(given.end_words, {.Read}) {
-		return refuse(record, .Bad_Handle, errors.error_make(.Handle_Absent, .Lent_Handles, output.WIRING_VALUE_END_WORDS + 1, i64(given.end_words)))
+		return refuse(record, .Argument_Refused, errors.error_make(.Handle_Absent, .Lent_Handles, output.WIRING_VALUE_END_WORDS + 1, i64(given.end_words)))
 	}
 	if reader && !handle_through(given.description, {.Read}) {
-		return refuse(record, .Bad_Handle, errors.error_make(.Handle_Absent, .Lent_Handles, output.WIRING_VALUE_DESCRIPTION + 1, i64(given.description)))
+		return refuse(record, .Argument_Refused, errors.error_make(.Handle_Absent, .Lent_Handles, output.WIRING_VALUE_DESCRIPTION + 1, i64(given.description)))
 	}
 	if given.terms != 0 && !handle_through(given.terms, {.Read}) {
-		return refuse(record, .Bad_Handle, errors.error_make(.Handle_Absent, .Lent_Handles, output.WIRING_VALUE_TERMS + 1, i64(given.terms)))
+		return refuse(record, .Argument_Refused, errors.error_make(.Handle_Absent, .Lent_Handles, output.WIRING_VALUE_TERMS + 1, i64(given.terms)))
 	}
 	if given.condition != 0 && !handle_through(given.condition, {.Read}) {
-		return refuse(record, .Bad_Handle, errors.error_make(.Handle_Absent, .Lent_Handles, output.WIRING_VALUE_TERMS + 1, i64(given.condition)))
+		return refuse(record, .Argument_Refused, errors.error_make(.Handle_Absent, .Lent_Handles, output.WIRING_VALUE_TERMS + 1, i64(given.condition)))
 	}
 	// A place that the budget does not pay refuses the end: the wiring
 	// service ends it at the word Refused.
 	place := stream_end_free_place()
 	if place == nil {
-		return refuse(record, .No_Slot, errors.error_make(.Budget, .Pages, 0, i64(len(stream_ends) + 1), i64(len(stream_ends))))
+		return refuse(record, .Budget_Or_Capacity_Exhausted, errors.error_make(.Budget, .Pages, 0, i64(len(stream_ends) + 1), i64(len(stream_ends))))
 	}
 	// A ring of a pair carries the records of one source that this process
 	// reads: the root service gives the end of the source first, so a pair
@@ -631,7 +632,7 @@ stream_end_take :: proc "contextless" (given: output.Given_End, record: ring.Rec
 			source_held ||= held.command == .Reader_End && held.tag == given.pair
 		}
 		if !source_held {
-			return refuse(record, .Bad_State, errors.error_make(.Absent, .Wirings, output.WIRING_VALUE_PAIR + 1, i64(given.pair)))
+			return refuse(record, .Nothing_Has_That_Name, errors.error_make(.Absent, .Wirings, output.WIRING_VALUE_PAIR + 1, i64(given.pair)))
 		}
 	}
 	end := Stream_End {
@@ -649,55 +650,55 @@ stream_end_take :: proc "contextless" (given: output.Given_End, record: ring.Rec
 	// A ring with a condition: the writer leaves out records, so its
 	// serials move forward by any count.
 	end.read_state.filtered = given.filter == .By_Writer
-	status: Status
+	status: call_outcome.Call_Outcome
 	// The condition of a writer end: one copy of the page, which the
 	// handle then leaves. The border of the writer reads the copy when the
 	// size of the record is known (stream_end_open).
 	if given.condition != 0 {
 		address, map_status := memory_map(Handle(given.condition), {})
 		status = map_status
-		if status == .Ok {
+		if status == .Succeeded {
 			intrinsics.mem_copy_non_overlapping(&end.condition_bytes[0], address, size_of(output.Writer_Condition))
 			memory_unmap(address)
 			end.condition_given = true
 		}
 		close(Handle(given.condition))
-		if status != .Ok {
+		if status != .Succeeded {
 			given_handles_close(record)
 			return output.wiring_completion(record.tag, status, errors.error_make(.Refused, .Wirings, 0, 0, 0, i64(status)))
 		}
 	}
 	end.ring_pages, status = memory_size(end.ring_memory)
-	if status == .Ok {
+	if status == .Succeeded {
 		end.ring_address, status = memory_map(end.ring_memory)
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		words: rawptr
 		words, status = memory_map(end.end_memory, {})
 		end.end_words = (^output.End_Words)(words)
 	}
-	if status == .Ok && reader {
+	if status == .Succeeded && reader {
 		pages: u64
 		pages, status = memory_size(end.description_memory)
 		address: rawptr
-		if status == .Ok {
+		if status == .Succeeded {
 			address, status = memory_map(end.description_memory, {})
 		}
-		if status == .Ok {
+		if status == .Succeeded {
 			end.description_file = ([^]u8)(address)[:pages * PAGE_SIZE]
 			described, ok := module.record_stream_type(end.description_file, output.DESCRIPTION_RECORD_INDEX)
 			if !ok {
-				status = .Bad_Operation
+				status = .Argument_Refused
 			}
 			end.description = described
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		stream_end_close(&end)
 		return output.wiring_completion(record.tag, status, errors.error_make(.Refused, .Wirings, 0, 0, 0, i64(status)))
 	}
 	place^ = end
-	return output.wiring_completion(record.tag, .Ok)
+	return output.wiring_completion(record.tag, .Succeeded)
 }
 
 // stream_ends_take takes each end that waits in the wiring ring, while the
@@ -723,7 +724,7 @@ stream_ends_take :: proc "contextless" () {
 			completion = stream_end_take(given, record)
 		} else {
 			given_handles_close(record)
-			completion = output.wiring_completion(record.tag, .Bad_Operation, refusal)
+			completion = output.wiring_completion(record.tag, .Argument_Refused, refusal)
 		}
 		send(&wiring_ring.completions, completion)
 	}
@@ -1652,11 +1653,11 @@ input_source_names :: proc "contextless" (stream: ^Record_Input_With_Terms($Reco
 		return {}, 0, 0, false
 	}
 	pages, size_status := memory_size(end.terms_memory)
-	if size_status != .Ok || pages * PAGE_SIZE < output.SOURCE_NAMES_PAGE_BYTES {
+	if size_status != .Succeeded || pages * PAGE_SIZE < output.SOURCE_NAMES_PAGE_BYTES {
 		return {}, 0, 0, false
 	}
 	address, status := memory_map(end.terms_memory, {})
-	if status != .Ok {
+	if status != .Succeeded {
 		return {}, 0, 0, false
 	}
 	defer memory_unmap(address)
@@ -1715,7 +1716,7 @@ input_terms :: proc "contextless" (stream: ^Record_Input_With_Terms($Record_Type
 		return false
 	}
 	address, status := memory_map(end.terms_memory, {})
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	defer memory_unmap(address)

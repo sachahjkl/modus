@@ -174,18 +174,18 @@ debug_store_open_for_report :: proc "contextless" (holder: ^Started, caller: ^St
 	// The page of the report: memory of this service, given with the
 	// right Read only, and closed here once given.
 	page, created := system.memory_create(1)
-	if created != .Ok {
+	if created != .Succeeded {
 		return kernel_refused(values, kind, created)
 	}
 	defer system.close(page)
 	address, mapped := system.memory_map(page)
-	if mapped != .Ok {
+	if mapped != .Succeeded {
 		return kernel_refused(values, kind, mapped)
 	}
 	(^disk_process.Kept_Stop_Report)(address)^ = report^
 	system.memory_unmap(address)
 	given_page, page_status := system.give(holder.requests_memory, page, {.Read})
-	if page_status != .Ok {
+	if page_status != .Succeeded {
 		return kernel_refused(values, kind, page_status)
 	}
 	given: [3]system.Handle
@@ -221,7 +221,7 @@ debug_store_connection_give :: proc "contextless" (holder: ^Started, principal: 
 	if opened != .Succeeded {
 		return opened
 	}
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	// The debugger service receives the handles through its ring to this
 	// service; this service keeps none of the memory.
 	defer system.close(ring_memory)
@@ -231,12 +231,12 @@ debug_store_connection_give :: proc "contextless" (holder: ^Started, principal: 
 	given_count := 0
 	for source, index in sources {
 		given[index], status = system.give(holder.requests_memory, source, given_rights[index])
-		if status != .Ok {
+		if status != .Succeeded {
 			break
 		}
 		given_count += 1
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		// A refusal names no handle, so the service closes none: the
 		// handles given before the failure are revoked here, as the page
 		// of a report is.

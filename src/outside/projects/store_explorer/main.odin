@@ -805,7 +805,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	})
 
 	core.session_init(&session)
-	if _, st := system.thread_start(worker_thread_entry, ctx, WORKER_THREAD_STACK_PAGES); st != .Ok {
+	if _, st := system.thread_start(worker_thread_entry, ctx, WORKER_THREAD_STACK_PAGES); st != .Succeeded {
 		system.stop(.Failed)
 	}
 
@@ -856,7 +856,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					key_run(press)
 				}
 			case .Resized:
-				if display.surface_resize(&window, event.width, event.height) == .Ok {
+				if display.surface_resize(&window, event.width, event.height) == .Succeeded {
 					interface.draw_whole_window_next(&window_memory.drawing)
 				}
 			case .Presentation, .Surface_Answer:

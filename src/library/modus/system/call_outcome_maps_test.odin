@@ -5,36 +5,26 @@ import "core:testing"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
 
-// A refusal of the kernel changes nothing: each status but Ok maps, in both
-// maps, to an outcome of the group Nothing_Changed, and Ok to Succeeded.
-@(test)
-kernel_refusals_change_nothing :: proc(t: ^testing.T) {
-	for status in Status {
-		for outcome in ([2]call_outcome.Call_Outcome{outcome_of_status(status), outcome_of_own_status(status)}) {
-			if status == .Ok {
-				testing.expect_value(t, outcome, call_outcome.Call_Outcome.Succeeded)
-				continue
-			}
-			testing.expectf(t, call_outcome.effect_group_of(outcome) == .Nothing_Changed, "the status %v gives %v, which is not in Nothing_Changed", status, outcome)
-		}
-	}
-}
-
 // A refusal on an object of the callee is never a fault of the caller: no
 // change of the arguments or of the grants of the caller makes it run.
+// Succeeded stays Succeeded, Callee_Busy and Budget_Or_Capacity_Exhausted
+// stay as they are, and every other outcome becomes Callee_Unavailable.
 @(test)
 own_refusals_never_blame_the_caller :: proc(t: ^testing.T) {
-	for status in Status {
-		outcome := outcome_of_own_status(status)
-		testing.expectf(t, outcome != .Argument_Refused && outcome != .Grant_Or_Right_Missing && outcome != .Nothing_Has_That_Name, "the status %v of an object of the callee gives %v", status, outcome)
+	for outcome in call_outcome.Call_Outcome {
+		mapped := own_operation_outcome(outcome)
+		if outcome == .Succeeded {
+			testing.expect_value(t, mapped, call_outcome.Call_Outcome.Succeeded)
+			continue
+		}
+		testing.expectf(t, call_outcome.effect_group_of(mapped) == .Nothing_Changed, "the outcome %v gives %v, which is not in Nothing_Changed", outcome, mapped)
+		testing.expectf(t, mapped != .Argument_Refused && mapped != .Grant_Or_Right_Missing && mapped != .Nothing_Has_That_Name, "the outcome %v of an object of the callee gives %v", outcome, mapped)
 	}
-	testing.expect_value(t, outcome_of_own_status(.Bad_Handle), call_outcome.Call_Outcome.Callee_Unavailable)
-	testing.expect_value(t, outcome_of_own_status(.No_Right), call_outcome.Call_Outcome.Callee_Unavailable)
-	testing.expect_value(t, outcome_of_own_status(.No_Memory), call_outcome.Call_Outcome.Callee_Busy)
-	testing.expect_value(t, outcome_of_own_status(.No_Budget), call_outcome.Call_Outcome.Budget_Or_Capacity_Exhausted)
-	// The same statuses on a handle that the caller gave are its fault.
-	testing.expect_value(t, outcome_of_status(.Bad_Handle), call_outcome.Call_Outcome.Argument_Refused)
-	testing.expect_value(t, outcome_of_status(.No_Right), call_outcome.Call_Outcome.Grant_Or_Right_Missing)
+	testing.expect_value(t, own_operation_outcome(.Argument_Refused), call_outcome.Call_Outcome.Callee_Unavailable)
+	testing.expect_value(t, own_operation_outcome(.Grant_Or_Right_Missing), call_outcome.Call_Outcome.Callee_Unavailable)
+	testing.expect_value(t, own_operation_outcome(.Wrong_State), call_outcome.Call_Outcome.Callee_Unavailable)
+	testing.expect_value(t, own_operation_outcome(.Callee_Busy), call_outcome.Call_Outcome.Callee_Busy)
+	testing.expect_value(t, own_operation_outcome(.Budget_Or_Capacity_Exhausted), call_outcome.Call_Outcome.Budget_Or_Capacity_Exhausted)
 }
 
 // The path ends a call with the value 0 and its record, and a caller that

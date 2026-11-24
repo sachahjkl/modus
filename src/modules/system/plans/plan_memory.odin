@@ -26,11 +26,11 @@ plan_blocks: Plan_Blocks
 // budget of the service at its start, and gives the port.
 plan_memory_port :: proc "contextless" () -> (port: plans_core.Memory_Port, ok: bool) {
 	amounts, budget_status := system.budget_read()
-	if budget_status != .Ok {
+	if budget_status != .Succeeded {
 		return {}, false
 	}
 	arena, arena_status := system.arena_create(system.arena_reservation_pages(amounts.pages))
-	if arena_status != .Ok {
+	if arena_status != .Succeeded {
 		return {}, false
 	}
 	plan_blocks = {arena = arena}
@@ -62,7 +62,7 @@ plan_block_take :: proc "contextless" (user: rawptr, bytes: int) -> []u8 {
 		return ([^]u8)(block)[:size]
 	}
 	address, status := system.arena_push(&blocks.arena, u64(size), PLAN_BLOCK_LEAST)
-	if status != .Ok {
+	if status != .Succeeded {
 		return nil
 	}
 	return ([^]u8)(address)[:size]

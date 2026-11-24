@@ -239,9 +239,9 @@ note_list_arena_grow :: proc "contextless" (user_data: rawptr, current: []note_l
 	}
 	target := max(minimum_notes, len(current) * 2, note_list.NOTE_CAPACITY * 2)
 	bytes, status := system.arena_extend_to(arena, u64(target) * u64(size_of(note_list.Note)))
-	if status != .Ok {
+	if status != .Succeeded {
 		bytes, status = system.arena_extend_to(arena, u64(minimum_notes) * u64(size_of(note_list.Note)))
-		if status != .Ok {
+		if status != .Succeeded {
 			return nil, false
 		}
 	}
@@ -278,7 +278,7 @@ arenas_start :: proc "contextless" () {
 // `after` bytes, which stay. nil: the budget cannot pay them.
 transfer_bytes :: proc "contextless" (after, count: int) -> []u8 {
 	whole, status := system.arena_extend_to(&transfer_arena, u64(after + count))
-	if status != .Ok {
+	if status != .Succeeded {
 		return nil
 	}
 	return whole[after:][:count]
@@ -1281,7 +1281,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	arenas_start()
 	// Each call of the storage service runs on the store thread: this
 	// thread draws while the store works.
-	if _, status := system.thread_start(store_thread_entry, ctx, STORE_THREAD_STACK_PAGES); status != .Ok {
+	if _, status := system.thread_start(store_thread_entry, ctx, STORE_THREAD_STACK_PAGES); status != .Succeeded {
 		system.stop(.Failed)
 	}
 	list_request := store_work.Request{kind = .List, serial = 1}
@@ -1352,7 +1352,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Resized:
 				// The rows follow the width of the window: computed once at
 				// the resize, not in each frame.
-				if display.surface_resize(&window, event.width, event.height) == .Ok {
+				if display.surface_resize(&window, event.width, event.height) == .Succeeded {
 					interface.draw_whole_window_next(&window_memory.drawing)
 					if width_columns := columns_of_width(window.width); width_columns != columns {
 						columns = width_columns

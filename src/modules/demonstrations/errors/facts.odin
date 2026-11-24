@@ -1,5 +1,6 @@
 package errors_process
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
@@ -21,14 +22,14 @@ import "modus:contract/value_kinds"
 // A name of a process with an escape byte was not refused.
 @(log_fact = "errors: WRONG: a name of a process with an escape byte gave {status_word}")
 Escaped_Name_Not_Refused :: struct {
-	status_word: op.Status_Word,
+	status_word: call_outcome.Call_Outcome_Word,
 }
 
 // A case of the table of error details gave another status or another
 // count than its rule.
 @(log_fact = "errors: WRONG: {details_case} gave the status {status_word} and {details} error details")
 Details_Wrong :: struct {
-	status_word:  op.Status_Word,
+	status_word:  call_outcome.Call_Outcome_Word,
 	details:      u64,
 	details_case: [48]u8,
 }
@@ -36,15 +37,15 @@ Details_Wrong :: struct {
 // A table of one place gave another status or another count than its rule.
 @(log_fact = "errors: WRONG: a table of 1 place gave the status {status_word} and the count {details}")
 Small_Table_Wrong :: struct {
-	status_word: op.Status_Word,
+	status_word: call_outcome.Call_Outcome_Word,
 	details:     u64,
 }
 
 // The case of a full completion queue could not make its memory.
 @(log_fact = "errors: WRONG: the case of a full completion queue has no memory: {held_status_word} {refused_status_word}")
 Full_Queue_Without_Memory :: struct {
-	held_status_word:    op.Status_Word,
-	refused_status_word: op.Status_Word,
+	held_status_word:    call_outcome.Call_Outcome_Word,
+	refused_status_word: call_outcome.Call_Outcome_Word,
 }
 
 // A command past a full completion queue: whether the queue filled, and
@@ -59,7 +60,7 @@ Full_Queue_Command_Wrong :: struct {
 // Busy.
 @(log_fact = "errors: WRONG: a kernel call on a kernel ring that holds records gave {status_word} and the kind {error_kind}")
 Busy_Ring_Call_Not_Refused :: struct {
-	status_word: op.Status_Word,
+	status_word: call_outcome.Call_Outcome_Word,
 	error_kind:  errors.Kind_Word,
 }
 
@@ -112,9 +113,9 @@ Busy_Ring_Stop_Wrong :: struct {
 // load, the status of the kernel and the error of the file.
 @(log_fact = "errors: WRONG: the child of the refusals did not start: {status_word}, the stage {stage_word}, the status of the kernel {kernel_status_word}, the error of the file {file_error_word}")
 Refusals_Child_Not_Started :: struct {
-	status_word:        op.Status_Word,
+	status_word:        call_outcome.Call_Outcome_Word,
 	stage_word:         u64,
-	kernel_status_word: op.Status_Word,
+	kernel_status_word: call_outcome.Call_Outcome_Word,
 	file_error_word:    u64,
 }
 

@@ -3,7 +3,7 @@ package system
 
 import "core:sync"
 import "core:testing"
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/output"
 import "modus:contract/ring"
 
@@ -257,7 +257,7 @@ output_write_gap_at_bound_and_past_bound :: proc(t: ^testing.T) {
 	testing.expect(t, got_closed)
 	comp_status, comp_tag, comp_answer, _, comp_ok := output.wiring_completion_of_record(completion)
 	testing.expect(t, comp_ok)
-	testing.expect_value(t, comp_status, op.Status.Ok)
+	testing.expect_value(t, comp_status, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, comp_tag, STALLED_TAG)
 	testing.expect_value(t, comp_answer, output.Wiring_Answer.Closed)
 

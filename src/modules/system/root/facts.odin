@@ -294,8 +294,8 @@ Gpu_Driver_Started :: struct {
 // The VirtIO-GPU device service could not start for a discovered PCI GPU device.
 @(log_fact = "root: gpu_device at PCI device {device} failed to start with {status}")
 Gpu_Driver_Failed :: struct {
-	status: op.Status,
-	device: u32,
+	status: call_outcome.Call_Outcome,
+	device: u64,
 }
 
 // The tables of this service after the stop of a process that can ask for
@@ -353,7 +353,7 @@ Wiring_Service_Stopped :: struct {}
 // The delegated service disk_processes did not start.
 @(log_fact = "root: cannot start the disk processes service: status {status}")
 Disk_Processes_Service_Start_Failed :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // The delegated service disk_processes started, within its bound of
@@ -390,7 +390,7 @@ Wirings_Revoked :: struct {
 // The delegated devices service did not start.
 @(log_fact = "root: cannot start the devices service: status {status}")
 Devices_Service_Start_Failed :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // The delegated devices service started, within its bound of starts.
@@ -425,7 +425,7 @@ Devices_Service_Absent :: struct {
 
 @(log_fact = "root: cannot read the configuration of the bus: status {status}: no device service starts")
 Bus_Configuration_Unread :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 @(log_fact = "root: the bus holds more than {capacity} devices of a known class: the devices past them get no device service")
@@ -461,7 +461,7 @@ Devices_Notice_Refused :: struct {
 // The delegated principals service did not start.
 @(log_fact = "root: cannot start the principals service: status {status}")
 Principals_Service_Start_Failed :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // The delegated principals service started, within its bound of starts.

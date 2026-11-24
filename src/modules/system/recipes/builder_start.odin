@@ -59,7 +59,7 @@ builder_start_init :: proc "contextless" (ctx: ^system.Context) {
 		return
 	}
 	address, status := system.memory_map(builder_image_memory, {})
-	if status != .Ok {
+	if status != .Succeeded {
 		return
 	}
 	builder_image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -384,7 +384,7 @@ builder_run :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, file: []u8
 	}
 
 	connection, start_status := system.call_host_start(builder_image, builder_image_memory, file, "builder", values, &builder_load_error, added = &added)
-	if start_status != .Ok {
+	if start_status != .Succeeded {
 		system.log_fact(.Warning, Builder_Not_Started{status = u64(start_status), stage = u64(builder_load_error.stage)})
 		return 0, .Builder_Failed
 	}

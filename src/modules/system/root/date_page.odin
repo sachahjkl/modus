@@ -1,5 +1,6 @@
 package root
 
+import "modus:contract/call_outcome"
 import "modus:contract/date"
 import "modus:system"
 
@@ -10,9 +11,9 @@ import "modus:system"
 date_memory: system.Handle
 
 date_page_create :: proc "contextless" () {
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	date_memory, status = system.memory_create(1)
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("cannot create the date page", status)
 	}
 }

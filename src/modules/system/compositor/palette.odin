@@ -1,5 +1,6 @@
 package compositor
 
+import "modus:contract/call_outcome"
 import process_page "modus:contract/disk_process_page"
 import "modus:contract/errors"
 import op "modus:contract/operation"
@@ -98,11 +99,11 @@ palette_list_ensure :: proc "contextless" (slot: u32, provider_needed, total_nee
 		return false
 	}
 	new_handle, create_status := system.memory_create(pages)
-	if create_status != .Ok {
+	if create_status != .Succeeded {
 		return false
 	}
 	address, map_status := system.memory_map(new_handle, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(new_handle)
 		return false
 	}
@@ -280,7 +281,7 @@ palette_start :: proc "contextless" () {
 	palette_before = {records = palette_records_before[:], text = palette_text_before[:], interface_font = palette_now.interface_font}
 	palette_panel.pressed_row = palette.NO_ROW
 	palette_panel.list = &palette_lists[0]
-	if _, status := system.thread_start(palette_ranking_thread, nil); status != .Ok {
+	if _, status := system.thread_start(palette_ranking_thread, nil); status != .Succeeded {
 		system.log_fact(.Info, Ranking_Thread_Not_Started{})
 	}
 	palette_entries_refresh()
@@ -324,7 +325,7 @@ palette_entries_object_prove :: proc "contextless" (offer: Entries_Object, kind:
 		return {}, .Not_Newer
 	}
 	pages, flags, status := system.memory_size_and_flags(offer.handle)
-	if status != .Ok {
+	if status != .Succeeded {
 		return {}, .Not_Memory
 	}
 	if .Uncommitted in flags {
@@ -338,7 +339,7 @@ palette_entries_object_prove :: proc "contextless" (offer: Entries_Object, kind:
 // snapshot gives as Entries_Lost.
 palette_entries_copy :: proc "contextless" (user: rawptr, into: []u8) -> bool {
 	_, status := system.memory_read((^Entries_Object)(user).handle, 0, into)
-	return status == .Ok
+	return status == .Succeeded
 }
 
 // palette_ranking_thread is the entry of the second thread: it makes one
@@ -643,19 +644,19 @@ palette_provider_add :: proc "contextless" (ring_handle, table_handle: system.Ha
 	opened, status := system.ring_open(ring_handle, receive_handles = true)
 	address: rawptr
 	table_pages: u64
-	if status == .Ok {
-		table_status: system.Status
+	if status == .Succeeded {
+		table_status: call_outcome.Call_Outcome
 		table_pages, table_status = system.memory_size(table_handle)
-		if table_status != .Ok {
+		if table_status != .Succeeded {
 			status = table_status
 		} else if table_pages < palette_table.MIN_TABLE_PAGES {
-			status = .Bad_Handle
+			status = .Argument_Refused
 		}
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		address, status = system.memory_map(table_handle, {})
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		if opened.head != nil {
 			system.ring_close(&opened)
 		}

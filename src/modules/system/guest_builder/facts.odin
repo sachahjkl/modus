@@ -1,6 +1,6 @@
 package guest_builder_module
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
 // Log facts of the freestanding sandboxed guest builder module.
@@ -49,6 +49,6 @@ Guests_Unsupported :: struct {}
 // running the guest processor.
 @(log_fact = "guest_builder: failed: {step} gave {status_word}")
 Step_Failed :: struct {
-	status_word: op.Status_Word,
+	status_word: call_outcome.Call_Outcome_Word,
 	step:        [40]u8,
 }

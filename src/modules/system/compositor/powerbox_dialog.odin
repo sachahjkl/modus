@@ -199,11 +199,11 @@ PLAN_DIFFERENCE_KEPT_PAGES :: 2048
 plan_difference_push :: proc "contextless" (bytes, alignment: u64) -> (address: rawptr, ok: bool) {
 	pages, fits := system.arena_push_commit_pages(&plan_difference_arena, bytes, alignment)
 	amounts, status := system.budget_read()
-	if !fits || status != .Ok || amounts.pages < PLAN_DIFFERENCE_KEPT_PAGES || pages > amounts.pages - PLAN_DIFFERENCE_KEPT_PAGES {
+	if !fits || status != .Succeeded || amounts.pages < PLAN_DIFFERENCE_KEPT_PAGES || pages > amounts.pages - PLAN_DIFFERENCE_KEPT_PAGES {
 		return nil, false
 	}
 	pushed, push_status := system.arena_push(&plan_difference_arena, bytes, alignment)
-	return pushed, push_status == .Ok
+	return pushed, push_status == .Succeeded
 }
 
 // plan_difference_memory_step gives the pages of a difference back to the
@@ -243,7 +243,7 @@ plan_difference_worker_running: bool
 // plan_difference_worker_start starts the thread that reads each
 // difference. With none, a difference is refused with Busy.
 plan_difference_worker_start :: proc "contextless" () {
-	if _, status := system.thread_start(plan_difference_worker, nil); status == .Ok {
+	if _, status := system.thread_start(plan_difference_worker, nil); status == .Succeeded {
 		plan_difference_worker_running = true
 	}
 }
@@ -275,7 +275,7 @@ plan_reading_take :: proc "contextless" (_: rawptr, bytes, alignment: int) -> ra
 @(private = "file")
 plan_reading_copy :: proc "contextless" (_: rawptr, into: []u8) -> bool {
 	_, status := system.memory_read(plan_reading.memory, 0, into)
-	return status == .Ok
+	return status == .Succeeded
 }
 
 // plan_difference_worker is the entry of the thread of the readings: it
@@ -292,8 +292,8 @@ plan_difference_worker :: proc "c" (_: rawptr) -> ! {
 		}
 		read := bar.Plan_Difference_Read{refusal = .Too_Many_Items, argument = 2}
 		if plan_difference_arena.base == nil {
-			if amounts, budget_status := system.budget_read(); budget_status == .Ok {
-				if arena, arena_status := system.arena_create(system.arena_reservation_pages(amounts.pages)); arena_status == .Ok {
+			if amounts, budget_status := system.budget_read(); budget_status == .Succeeded {
+				if arena, arena_status := system.arena_create(system.arena_reservation_pages(amounts.pages)); arena_status == .Succeeded {
 					arena.exact_commits = true
 					plan_difference_arena = arena
 				}

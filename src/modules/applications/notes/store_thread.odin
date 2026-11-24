@@ -54,7 +54,7 @@ read_room :: proc "contextless" (data: rawptr, minimum: int) -> (room: []u8, ok:
 		system.event_wait(&read_released_event, seen)
 	}
 	bytes, status := system.arena_extend_to(&read_arena, u64(minimum))
-	if status != .Ok {
+	if status != .Succeeded {
 		return nil, false
 	}
 	return bytes[:minimum], true
@@ -70,7 +70,7 @@ read_memory :: proc "contextless" () -> []u8 {
 // thread alone calls it, with no Write in flight.
 write_memory :: proc "contextless" (count: int) -> (bytes: []u8, ok: bool) {
 	whole, status := system.arena_extend_to(&write_arena, u64(count))
-	if status != .Ok {
+	if status != .Succeeded {
 		return nil, false
 	}
 	return whole[:count], true

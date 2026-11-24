@@ -542,7 +542,7 @@ running :: proc "contextless" (machine: system.Handle, catalog: Catalog, rows: [
 @(private)
 process_slots :: proc "contextless" (machine: system.Handle) -> (slots: u64, problem: Problem) {
 	report: op.System_Report
-	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Succeeded {
 		return 0, {kind = .Refused, value = u64(status)}
 	}
 	return u64(report.process_slots), {}
@@ -559,7 +559,7 @@ process_modules :: proc "contextless" (machine: system.Handle, slot: u64, proces
 	if process.state == .None || process.state == .Stopped {
 		return false, {}
 	}
-	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Modules), slot, u64(uintptr(modules)), size_of(modules^)); status != .Ok {
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Modules), slot, u64(uintptr(modules)), size_of(modules^)); status != .Succeeded {
 		return false, {kind = .Refused, value = u64(status)}
 	}
 	return true, {}

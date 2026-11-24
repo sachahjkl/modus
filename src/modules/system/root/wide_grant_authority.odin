@@ -122,16 +122,16 @@ wide_grant_collector_context :: proc "contextless" (work: ^Start_Work) {
 	}
 	link := &collector_links[work.principal]
 	collector_link_close(link)
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	link.ring_memory, link.ring, status = system.ring_create()
 	region_address: rawptr
-	if status == .Ok {
+	if status == .Succeeded {
 		link.region_memory, status = system.memory_create(COLLECTOR_REGION_PAGES)
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		region_address, status = system.memory_map(link.region_memory, {.Write})
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		collector_link_close(link)
 		system.log_fact(.Warning, Wide_Grant_Collector_Ring_Failed{status = status})
 		return

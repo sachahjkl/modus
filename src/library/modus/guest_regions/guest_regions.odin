@@ -7,6 +7,7 @@
 // guest builder and the process `linux` run their guests with it.
 package guest_regions
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:system"
 
@@ -23,20 +24,20 @@ Owned_Memory :: struct {
 
 // owned_memory_make makes a memory object of at least byte_count bytes and
 // maps it here for writing.
-owned_memory_make :: proc "contextless" (byte_count: u64) -> (memory: Owned_Memory, status: system.Status) {
+owned_memory_make :: proc "contextless" (byte_count: u64) -> (memory: Owned_Memory, status: call_outcome.Call_Outcome) {
 	pages := max((byte_count + system.PAGE_SIZE - 1) / system.PAGE_SIZE, 1)
 	handle: system.Handle
 	handle, status = system.memory_create(pages)
-	if status != .Ok {
+	if status != .Succeeded {
 		return {}, status
 	}
 	address: rawptr
 	address, status = system.memory_map(handle, {.Write})
-	if status != .Ok {
+	if status != .Succeeded {
 		system.close(handle)
 		return {}, status
 	}
-	return {handle = handle, bytes = ([^]u8)(address)[:pages * system.PAGE_SIZE]}, .Ok
+	return {handle = handle, bytes = ([^]u8)(address)[:pages * system.PAGE_SIZE]}, .Succeeded
 }
 
 owned_memory_end :: proc "contextless" (memory: ^Owned_Memory) {
@@ -76,7 +77,7 @@ region_bytes :: proc "contextless" (memory_bytes: u64) -> u64 {
 // whole: a page on first use that a read touches is then executable, as a
 // kernel starts by running code, and the kernel switches each page at the
 // fault of the guest. step names the operation that failed.
-map_memory :: proc "contextless" (guest: system.Handle, memory: system.Handle, memory_bytes: u64) -> (status: system.Status, step: string) {
+map_memory :: proc "contextless" (guest: system.Handle, memory: system.Handle, memory_bytes: u64) -> (status: call_outcome.Call_Outcome, step: string) {
 	region := region_bytes(memory_bytes)
 	for address: u64 = 0; address < memory_bytes; address += region {
 		pages := min(region, memory_bytes - address) / system.PAGE_SIZE
@@ -84,15 +85,15 @@ map_memory :: proc "contextless" (guest: system.Handle, memory: system.Handle, m
 		if address == 0 {
 			flags += {.At_Address_Zero}
 		}
-		if _, status = system.memory_map(memory, flags, guest, address, address / system.PAGE_SIZE, pages); status != .Ok {
+		if _, status = system.memory_map(memory, flags, guest, address, address / system.PAGE_SIZE, pages); status != .Succeeded {
 			return status, "Memory_Map of guest memory"
 		}
 		ranges := [1]op.Address_Range{{address = address, page_count = pages}}
-		if _, status = system.memory_protect(ranges[:], {.Execute}, process = guest); status != .Ok {
+		if _, status = system.memory_protect(ranges[:], {.Execute}, process = guest); status != .Succeeded {
 			return status, "Memory_Protect of guest memory"
 		}
 	}
-	return .Ok, ""
+	return .Succeeded, ""
 }
 
 

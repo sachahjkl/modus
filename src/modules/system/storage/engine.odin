@@ -680,11 +680,11 @@ state_memory_bind :: proc "contextless" (binder: ^storage_mount.Memory_Binder, b
 		return false
 	}
 	memory, status := system.memory_create(pages)
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	address, map_status := system.memory_map(memory, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(memory)
 		return false
 	}

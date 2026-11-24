@@ -93,25 +93,25 @@ devices_service_start :: proc "contextless" () -> bool {
 	slot := part_place_take()
 	file := image_file_checked("devices")
 	if slot == nil {
-		system.log_fact(.Warning, Devices_Service_Start_Failed{status = .No_Slot})
+		system.log_fact(.Warning, Devices_Service_Start_Failed{status = .Budget_Or_Capacity_Exhausted})
 		return false
 	}
 	if len(file) == 0 {
-		system.log_fact(.Warning, Devices_Service_Start_Failed{status = .Bad_Handle})
+		system.log_fact(.Warning, Devices_Service_Start_Failed{status = .Argument_Refused})
 		return false
 	}
 	ring_memory, ring_opened, status := system.ring_create()
 	region_memory: system.Handle
 	region_address: rawptr
-	if status == .Ok {
+	if status == .Succeeded {
 		region_memory, status = system.memory_create(rd.devices_region_pages(len(started)))
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		region_address, status = system.memory_map(region_memory, {.Write})
 	}
 	process: system.Handle
 	devices_budget: Start_Budget
-	if status == .Ok {
+	if status == .Succeeded {
 		grants: system.Context_Grants
 		values: system.Context_Values
 		system.grant_put(&grants, rd.DEVICES_RING_SLOT, {ring_memory, {.Read, .Write}})
@@ -119,14 +119,14 @@ devices_service_start :: proc "contextless" () -> bool {
 		system.grant_put(&grants, op.CONTEXT_LOG, log_grant(start_grant_set_of("devices")))
 		budget_ok: bool
 		if context_refused("devices", &grants, &values) {
-			status = .Bad_State
+			status = .Wrong_State
 		} else if devices_budget, budget_ok = budget_of(file, "devices"); !budget_ok {
-			status = .No_Budget
+			status = .Budget_Or_Capacity_Exhausted
 		} else {
 			process, status = system.process_start(file, "devices", grants.grants, random.values_with_seed(&process_generator, values.values), devices_budget.amounts, nil, &prepared, load_source(), ready = &slot.ready)
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		if region_address != nil {
 			system.memory_unmap(region_address)
 		}
@@ -308,7 +308,7 @@ bus_classify_pass :: proc "contextless" () -> (looked_up: int, ok: bool) {
 // starts; past it, the machine starts with no device service, with one
 // line.
 bus_classify :: proc "contextless" () {
-	if status := configuration_open(); status != .Ok {
+	if status := configuration_open(); status != .Succeeded {
 		system.log_fact(.Warning, Bus_Configuration_Unread{status = status})
 		return
 	}
@@ -380,7 +380,7 @@ devices_bind_send :: proc "contextless" (index: int) {
 	// A device service records no process slot in its place: the kernel
 	// gives it, and the devices service refuses a slot of 0.
 	service_slot, _, place_status := system.process_place(started[index].process)
-	if place_status != .Ok || service_slot == 0 {
+	if place_status != .Succeeded || service_slot == 0 {
 		return
 	}
 	intrinsics.mem_copy_non_overlapping(&devices_region[discovered_offset], &bound_devices[index], size_of(rd.Pci_Discovered_Device))

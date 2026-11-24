@@ -41,15 +41,15 @@ scenario_kernel_events := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"kernel_events\")"},
-	{kind = .Wait, text = "kernel_events: no grant: Events_Set with a copy of the machine handle with no right gave No_Right: as it must"},
+	{kind = .Wait, text = "kernel_events: no grant: Events_Set with a copy of the machine handle with no right gave Grant_Or_Right_Missing: as it must"},
 	{kind = .Wait, text = "kernel: process kernel_events gave the event table: 16 rules, 8192 records in the ring of each of "},
-	{kind = .Wait, text = "kernel_events: a seventeenth rule: 16 rules Ok, 17 rules No_Slot: as it must"},
+	{kind = .Wait, text = "kernel_events: a seventeenth rule: 16 rules Succeeded, 17 rules Argument_Refused: as it must"},
 	{kind = .Wait, text = "kernel_events: 1000 operations Memory_Size of one process: 1000 records, 0 lost: as it must"},
 	{kind = .Wait, text = "kernel_events: a thread that sleeps 20 times: "},
 	{kind = .Wait, text = "kernel_events: a child that faults once: 1 record of a fault that stopped it, vector 14, address 0000000000001000, stopped: a fault: as it must"},
 	{kind = .Wait, text = "kernel_events: one in 10: 100 records of 1000 operations: as it must"},
 	{kind = .Wait, text = "kernel_events: a full ring of 16 records: "},
-	{kind = .Wait, text = "kernel_events: the table taken away: 0 records after it; a second take gave Bad_State: as it must"},
+	{kind = .Wait, text = "kernel_events: the table taken away: 0 records after it; a second take gave Wrong_State: as it must"},
 	{kind = .Wait, text = "kernel_events: the address of a fault: a rule for every process: "},
 	{kind = .Wait, text = "kernel_events: 1000 gives and ends under load: 1000 ends with "},
 	{kind = .Wait, text = "kernel_events: kernel entries in one second of the load child (its own count and time): no rule "},
@@ -66,14 +66,14 @@ scenario_kernel_events := [?]Step {
 	{kind = .Wait, text = "kernel: the event table of process kernel_events ended: its process stopped; "},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"kernel_events\")"},
-	{kind = .Wait, text = "kernel_events: a seventeenth rule: 16 rules Ok, 17 rules No_Slot: as it must"},
+	{kind = .Wait, text = "kernel_events: a seventeenth rule: 16 rules Succeeded, 17 rules Argument_Refused: as it must"},
 	{kind = .Wait, text = "kernel_events: the table is given; waiting for the revocation of the grant machine"},
 	// The end of the table with its right.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "revoke(\"kernel_events\", \"machine\")"},
 	{kind = .Wait, text = "kernel: the event table of process kernel_events ended: its right Events ended; ", any_order = true},
 	{kind = .Wait, text = "root: revoked the grant machine of kernel_events, holdings ended: 1", any_order = true},
-	{kind = .Wait, text = "kernel_events: the right revoked: 1000 records of 1000 before it; 0 records after it; Events_Set after it gave Bad_Handle: as it must"},
+	{kind = .Wait, text = "kernel_events: the right revoked: 1000 records of 1000 before it; 0 records after it; Events_Set after it gave Argument_Refused: as it must"},
 	{kind = .Wait, text = "kernel_events: ok, 12 cases: each count of the rings was exact, each refusal came, and each child gave back every page and every thread"},
 	{kind = .Front, text = "kernel_events"},
 	{kind = .Shot, text = "kernel_events"},
@@ -96,7 +96,7 @@ scenario_kernel_events := [?]Step {
 scenario_thread_counters := [?]Step {
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"counters\")"},
-	{kind = .Wait, text = "counters: Start_Counters with a copy of the machine handle with no right gave No_Right: as it must", fails_on = "counters: failed: "},
+	{kind = .Wait, text = "counters: Start_Counters with a copy of the machine handle with no right gave Grant_Or_Right_Missing: as it must", fails_on = "counters: failed: "},
 	{kind = .Wait, text = "counters: ok", fails_on = "counters: failed: "},
 }
 
@@ -113,20 +113,20 @@ THREAD_COUNTERS_TRIAL_PASSED :: "; the first processor passed the trial of the r
 // their order.
 @(rodata)
 thread_counters_lines_counted := [?]string {
-	"counters: Read_Counters before Start_Counters gave Bad_State: as it must",
+	"counters: Read_Counters before Start_Counters gave Wrong_State: as it must",
 	" instructions: as it must",
 	"counters: the loop (a measure): ",
 	"counters: a second read gave no count below the first: as it must",
 	" pages, in order and by page, read the same words: as it must",
 	"counters: the reads in order (a measure): ",
 	"counters: the reads by page (a measure): ",
-	"counters: Stop_Counters with no handle gave Ok, and Read_Counters after it gave Bad_State: as it must",
+	"counters: Stop_Counters with no handle gave Succeeded, and Read_Counters after it gave Wrong_State: as it must",
 }
 
 // The lines on a machine with no counter plan.
 @(rodata)
 thread_counters_lines_unsupported := [?]string {
-	"counters: Read_Counters and Start_Counters gave Bad_Operation with the error kind Unsupported: the processors of this machine have no counters that the kernel uses: as it must",
+	"counters: Read_Counters and Start_Counters gave Operation_Unsupported with the error kind Unsupported: the processors of this machine have no counters that the kernel uses: as it must",
 }
 
 // thread_counters_outcome_check reads the log of the machine: the last boot

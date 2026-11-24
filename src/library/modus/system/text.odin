@@ -3,6 +3,7 @@ package system
 import "base:intrinsics"
 import "modus:contract/cut_mark"
 import module "modus:contract/module"
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
@@ -37,7 +38,7 @@ direction_name :: sentence.direction_name
 error_text :: sentence.error_text
 call_failure_text :: sentence.call_failure_text
 kernel_error_text :: sentence.kernel_error_text
-kernel_status_text :: sentence.kernel_status_text
+kernel_outcome_text :: sentence.kernel_outcome_text
 export_error_text :: sentence.export_error_text
 ring_error_text :: sentence.ring_error_text
 wrapper_error_text :: sentence.wrapper_error_text
@@ -94,7 +95,7 @@ log :: proc "contextless" (level: op.Log_Level, parts: ..Part) {
 			bytes = transmute([]u8)value
 		case Module_Name:
 			bytes = transmute([]u8)value.name
-		case u64, i64, Hex, Size, Duration, Hash, op.Status:
+		case u64, i64, Hex, Size, Duration, Hash, call_outcome.Call_Outcome:
 			bytes = transmute([]u8)format(number[:], part)
 		}
 		part_start := count
@@ -297,15 +298,15 @@ log_call :: proc "contextless" (handle: Handle, text: ^u8, count: int, level: op
 		digits: [20]u8
 		note_count := copy(note[:], format_decimal(digits[:], refused))
 		note_count += copy(note[note_count:], " lines of this process were refused by its log limit")
-		if _, status := call(.Log, u64(handle), u64(uintptr(&note[0])), u64(note_count), u64(op.Log_Level.Warning), 0); status == .Ok {
+		if _, status := call(.Log, u64(handle), u64(uintptr(&note[0])), u64(note_count), u64(op.Log_Level.Warning), 0); status == .Succeeded {
 			intrinsics.atomic_sub(&log_lines_refused, refused)
 		}
 	}
 	_, status := call(.Log, u64(handle), u64(uintptr(text)), u64(count), u64(level), u64(run_count), u64(form))
-	if status == .No_Budget {
+	if status == .Budget_Or_Capacity_Exhausted {
 		intrinsics.atomic_add(&log_lines_refused, 1)
 	}
-	if status == .Ok || status == .No_Budget {
+	if status == .Succeeded || status == .Budget_Or_Capacity_Exhausted {
 		log_output_copy(text, count, level, run_count, form)
 	}
 }

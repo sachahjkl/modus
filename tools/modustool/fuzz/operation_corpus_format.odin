@@ -8,6 +8,7 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/operation"
@@ -45,10 +46,10 @@ Operation_Detail_Record :: struct {
 }
 
 Operation_Expectation_Record :: struct {
-	status:          u64, // An operation.Status.
-	record_kind:     i64, // An errors.Kind; 0 for Ok.
-	record_argument: i64, // From 1; 0: the call as a whole, and for Ok.
-	detail_count:    u64, // At most ERROR_DETAILS_MOST; 0 for Ok.
+	status:          u64, // A call_outcome.Call_Outcome.
+	record_kind:     i64, // An errors.Kind; 0 for Succeeded.
+	record_argument: i64, // From 1; 0: the call as a whole, and for Succeeded.
+	detail_count:    u64, // At most ERROR_DETAILS_MOST; 0 for Succeeded.
 	details:         [operation.ERROR_DETAILS_MOST]Operation_Detail_Record, // Zero past the count.
 }
 
@@ -65,7 +66,7 @@ Operation_Detail_Expectation :: struct {
 // must get: its status; for a refusal, the kind and the argument of its
 // error record and each record of its table of error details, in order.
 Operation_Step_Expectation :: struct {
-	status:          operation.Status,
+	status:          call_outcome.Call_Outcome,
 	record_kind:     errors.Kind,
 	record_argument: i64,
 	detail_count:    int,
@@ -190,7 +191,7 @@ operation_regression_read :: proc(bytes: []u8, allocator := context.allocator) -
 	for &expected, place in expectations {
 		record: Operation_Expectation_Record
 		copy(([^]u8)(&record)[:size_of(record)], bytes[offset + place * size_of(record):])
-		status, status_known := enum_word.member_of_word(operation.Status, record.status)
+		status, status_known := enum_word.member_of_word(call_outcome.Call_Outcome, record.status)
 		if !status_known {
 			refusal.problem, refusal.index = .Status, place
 			return
@@ -220,7 +221,7 @@ operation_regression_read :: proc(bytes: []u8, allocator := context.allocator) -
 			}
 			expected.details[detail_place] = {kind = detail_kind, argument = detail.argument}
 		}
-		if status == .Ok && (kind != .None || record.record_argument != 0 || expected.detail_count != 0) {
+		if status == .Succeeded && (kind != .None || record.record_argument != 0 || expected.detail_count != 0) {
 			refusal.problem, refusal.index = .Answer_Of_Ok, place
 			return
 		}

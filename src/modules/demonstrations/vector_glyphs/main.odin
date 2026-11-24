@@ -206,7 +206,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "vector_glyphs")
-	if !ok || interface.hand_picture_open(&hand_picture, &window) != .Ok {
+	if !ok || interface.hand_picture_open(&hand_picture, &window) != .Succeeded {
 		system.stop(.Failed)
 	}
 

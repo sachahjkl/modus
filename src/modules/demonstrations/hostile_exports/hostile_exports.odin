@@ -37,11 +37,11 @@ MEMORY_MAP_ARGUMENT_MEMORY :: 1
 // refusal in the words of the export: argument names the parameter of the
 // export that holds the handle. error can be nil.
 @(private)
-bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags, argument: i64 = 0, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: system.Status) {
+bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags, argument: i64 = 0, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: call_outcome.Call_Outcome) {
 	refusal: errors.Error_Record
 	address: rawptr
 	address, status = system.memory_map(memory, flags, error = &refusal)
-	if status != .Ok {
+	if status != .Succeeded {
 		if error != nil {
 			// The record of the kernel names an argument of Memory_Map, and
 			// the kernel operation: the caller called the export, with its
@@ -57,15 +57,15 @@ bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags, argu
 	}
 	// The map took the handle, so the kernel gives its size: a refusal maps no byte.
 	pages, _ := system.memory_size(memory)
-	return ([^]u8)(address)[:pages * system.PAGE_SIZE], .Ok
+	return ([^]u8)(address)[:pages * system.PAGE_SIZE], .Succeeded
 }
 
 // total adds the bytes of a memory object.
 @(private)
 total :: proc "contextless" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	bytes, status := bytes_of(memory.handle, {}, 1, error)
-	if status != .Ok {
-		return system.outcome_of_status(status), 0
+	if status != .Succeeded {
+		return status, 0
 	}
 	sum: i64
 	for b in bytes {
@@ -92,7 +92,7 @@ keep :: proc "c" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> 
 @(export, link_name = "kept")
 kept :: proc "c" () -> i64 {
 	bytes, status := bytes_of(held, {})
-	if status == .Ok {
+	if status == .Succeeded {
 		system.memory_unmap(raw_data(bytes))
 	}
 	return i64(status)
@@ -108,8 +108,8 @@ view: []u8
 @(export, link_name = "hold")
 hold :: proc "c" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	bytes, status := bytes_of(memory.handle, {}, 1, error)
-	if status != .Ok {
-		return system.outcome_of_status(status), 0
+	if status != .Succeeded {
+		return status, 0
 	}
 	view = bytes
 	return .Succeeded, i64(bytes[0])

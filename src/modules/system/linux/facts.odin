@@ -1,6 +1,6 @@
 package linux_shell
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
 // The log facts of the process `linux` (src/md/features/linux_shell.md).
@@ -121,6 +121,6 @@ Guests_Unsupported :: struct {}
 // A kernel operation failed.
 @(log_fact = "linux: failed: {step} gave {status_word}")
 Step_Failed :: struct {
-	status_word: op.Status_Word,
+	status_word: call_outcome.Call_Outcome_Word,
 	step:        [40]u8,
 }

@@ -1,5 +1,6 @@
 package output
 
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/module"
@@ -228,36 +229,37 @@ Wiring_Answer :: enum u64 {
 
 WIRING_ANSWER_VALUE :: 0
 
-// wiring_completion gives the answer of the process to one command: Ok
-// when it took the end, else the status and the error record of its
-// refusal. The tag is the tag of the command.
-wiring_completion :: proc "contextless" (tag: u32, status: op.Status, refusal: errors.Error_Record = {}) -> ring.Record {
-	if status == .Ok {
-		return {kind = u32(op.Status.Ok), tag = tag}
+// wiring_completion gives the answer of the process to one command:
+// Succeeded when it took the end, else the outcome and the error record of
+// its refusal. The tag is the tag of the command.
+wiring_completion :: proc "contextless" (tag: u32, outcome: call_outcome.Call_Outcome, refusal: errors.Error_Record = {}) -> ring.Record {
+	if outcome == .Succeeded {
+		return {kind = u32(call_outcome.Call_Outcome.Succeeded), tag = tag}
 	}
-	return {kind = u32(status), tag = tag, values = errors.completion_values(refusal)}
+	return {kind = u32(outcome), tag = tag, values = errors.completion_values(refusal)}
 }
 
 // wiring_closed_completion gives the word Closed of an end that the
 // process took and closed. The tag is the tag of its command.
 wiring_closed_completion :: proc "contextless" (tag: u32) -> ring.Record {
-	record := ring.Record{kind = u32(op.Status.Ok), tag = tag}
+	record := ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = tag}
 	record.values[WIRING_ANSWER_VALUE] = u64(Wiring_Answer.Closed)
 	return record
 }
 
 // wiring_completion_of_record is the border of the root service for a
-// completion of the wiring ring: the status, the tag of the command, the
-// answer of an Ok, and the error record of a refusal. It refuses a status
-// that names no member, an Ok whose answer word names no Wiring_Answer,
-// and an Ok with another value that is not 0. The root service takes one
-// answer and one Closed for each end it gave, and drops each later word.
-wiring_completion_of_record :: proc "contextless" (record: ring.Record) -> (status: op.Status, tag: u32, answer: Wiring_Answer, refusal: errors.Error_Record, ok: bool) {
-	member, known := op.status_of_word(u64(record.kind))
+// completion of the wiring ring: the outcome, the tag of the command, the
+// answer of a Succeeded, and the error record of a refusal. It refuses an
+// outcome word that names no member, a Succeeded whose answer word names no
+// Wiring_Answer, and a Succeeded with another value that is not 0. The root
+// service takes one answer and one Closed for each end it gave, and drops
+// each later word.
+wiring_completion_of_record :: proc "contextless" (record: ring.Record) -> (outcome: call_outcome.Call_Outcome, tag: u32, answer: Wiring_Answer, refusal: errors.Error_Record, ok: bool) {
+	member, known := enum_word.member_of_word(call_outcome.Call_Outcome, u64(record.kind))
 	if !known {
 		return {}, 0, {}, {}, false
 	}
-	if member != .Ok {
+	if member != .Succeeded {
 		return member, record.tag, .Taken, errors.completion_record(record.values), true
 	}
 	answer_word, answer_known := enum_word.member_of_word(Wiring_Answer, record.values[WIRING_ANSWER_VALUE])
@@ -269,7 +271,7 @@ wiring_completion_of_record :: proc "contextless" (record: ring.Record) -> (stat
 			return {}, 0, {}, {}, false
 		}
 	}
-	return .Ok, record.tag, answer_word, {}, true
+	return .Succeeded, record.tag, answer_word, {}, true
 }
 
 // wiring_ring_capacity gives the capacity of the wiring ring of a process

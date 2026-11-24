@@ -1,5 +1,6 @@
 package root
 
+import "modus:contract/call_outcome"
 import "modus:contract/settings"
 import "modus:system"
 
@@ -22,13 +23,13 @@ presentation_address: uintptr // The object, mapped with Write in this service.
 // of the start: a window then draws with the defaults, and the log says it
 // once.
 presentation_pages_create :: proc "contextless" () {
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	presentation_memory, status = system.memory_create(STARTED_CAPACITY)
 	address: rawptr
-	if status == .Ok {
+	if status == .Succeeded {
 		address, status = system.memory_map(presentation_memory)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Warning, Presentation_Pages_Failed{status = status})
 		if presentation_memory != 0 {
 			system.close(presentation_memory)

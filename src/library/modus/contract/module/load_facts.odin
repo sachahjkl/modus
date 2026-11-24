@@ -1,5 +1,6 @@
 package module
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
@@ -77,7 +78,7 @@ Load_Bind_Fields :: struct {
 
 // Map and Unmap: a kernel operation on the memory of a module failed.
 Load_Memory_Fields :: struct {
-	status:      op.Status_Word,
+	status:      call_outcome.Call_Outcome_Word,
 	module_hash: value_kinds.Hash_Head_Field,
 	module_name: [40]u8,
 }
@@ -143,10 +144,10 @@ load_bind_fact_fields :: proc "contextless" (error: ^Load_Error) -> Load_Bind_Fi
 }
 
 // load_memory_fact_fields gives the fields of a load error of the stage
-// Map or Unmap: the status of the kernel operation. A status word that
+// Map or Unmap: the outcome of the kernel operation. An outcome word that
 // names no member stays its word, which a reader writes as its number.
 load_memory_fact_fields :: proc "contextless" (error: ^Load_Error) -> Load_Memory_Fields {
-	return {status = op.Status_Word(error.status), module_hash = value_kinds.Hash_Head_Field(error.module.hash), module_name = load_name_field(error.module.name)}
+	return {status = call_outcome.Call_Outcome_Word(error.status), module_hash = value_kinds.Hash_Head_Field(error.module.hash), module_name = load_name_field(error.module.name)}
 }
 
 // load_room_fact_fields gives the fields of a load error of the stage Room.

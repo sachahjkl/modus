@@ -54,6 +54,7 @@
 // does not read: the bytes of another process".
 package inspect
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "internal:inspect/addresses"
@@ -114,7 +115,7 @@ logged_process_serial: u64
 
 inspect_call :: proc "contextless" (kind: op.Inspect_Kind, index: u64, record: rawptr, size: int) -> bool {
 	_, status := system.call(.Inspect, u64(machine), u64(kind), index, u64(uintptr(record)), u64(size))
-	return status == .Ok
+	return status == .Succeeded
 }
 
 // The process slots of this machine (System_Report.process_slots), read
@@ -141,14 +142,14 @@ tables_take :: proc "contextless" () {
 		return
 	}
 	sizes := [?]u64{u64(slots) * size_of(Entry), u64(slots) * size_of(int), u64(slots + 1) * size_of(int)}
-	status: system.Status
-	if tables, status = system.arena_create(system.arena_take_pages(sizes[:])); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if tables, status = system.arena_create(system.arena_take_pages(sizes[:])); status != .Succeeded {
 		return
 	}
 	taken_entries, entries_status := system.arena_take(&tables, Entry, slots)
 	taken_shown, shown_status := system.arena_take(&tables, int, slots)
 	taken_rows, rows_status := system.arena_take(&tables, int, slots + 1)
-	if entries_status != .Ok || shown_status != .Ok || rows_status != .Ok {
+	if entries_status != .Succeeded || shown_status != .Succeeded || rows_status != .Succeeded {
 		system.arena_end(&tables)
 		machine_process_slots = 0
 		return
@@ -467,7 +468,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	places, _ = inspect_layout(window.width, window.height, element_tokens)
 	machine = ctx.handles[system.GRANT_MACHINE]
 	tables_take()
-	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
+	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Succeeded {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 	debug_names = system.debug_names_of(ctx)

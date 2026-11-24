@@ -1,5 +1,6 @@
 package locks
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
@@ -31,7 +32,7 @@ No_Boot_Image_Or_Memory :: struct {}
 // The kernel refused the start of a locker.
 @(log_fact = "locks: cannot start a locker: status {status}")
 Locker_Not_Started :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // The stress of the starts and the stops: the processes, how each one
@@ -171,16 +172,16 @@ Word_Wait_Counted :: struct {
 @(log_fact = "locks: the wait room: with no room a wait of {inline_words} words and one more {no_room_status}; a word twice in a wait {twice_status}; a room past {most_words} words {too_many_status}, for another thread {other_status}; a room of {asked} words held {held} words for {pages} pages of the budget; a wait of that many words {held_status}, of one more {past_status}; the room given back returned its pages: {returned}: {verdict}")
 Wait_Room_Checked :: struct {
 	inline_words:    u64,
-	no_room_status:  op.Status_Word,
-	twice_status:    op.Status_Word,
+	no_room_status:  call_outcome.Call_Outcome_Word,
+	twice_status:    call_outcome.Call_Outcome_Word,
 	most_words:      u64,
-	too_many_status: op.Status_Word,
-	other_status:    op.Status_Word,
+	too_many_status: call_outcome.Call_Outcome_Word,
+	other_status:    call_outcome.Call_Outcome_Word,
 	asked:           u64,
 	held:            u64,
 	pages:           u64,
-	held_status:     op.Status_Word,
-	past_status:     op.Status_Word,
+	held_status:     call_outcome.Call_Outcome_Word,
+	past_status:     call_outcome.Call_Outcome_Word,
 	returned:        u64,
 	verdict:         [16]u8,
 }
@@ -198,14 +199,14 @@ Wait_Room_Ends :: struct {
 @(log_fact = "locks: a wait of {words} words: {status} in {time} (a measure)")
 Wait_Room_Long :: struct {
 	words:  u64,
-	status: op.Status_Word,
+	status: call_outcome.Call_Outcome_Word,
 	time:   value_kinds.Time_In_Microseconds,
 }
 
 // A wake through a read-only mapping of the word.
 @(log_fact = "locks: a wake of a word through a read-only mapping {status}, and the thread that waits on it still waits: {still_waits}; a wake through the mapping with Write woke {woken} thread: {verdict}")
 Read_Only_Wake_Refused :: struct {
-	status:      op.Status_Word,
+	status:      call_outcome.Call_Outcome_Word,
 	still_waits: u64,
 	woken:       u64,
 	verdict:     [16]u8,

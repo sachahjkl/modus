@@ -39,7 +39,7 @@ debug_start :: proc "contextless" (holder: ^Started, name: string, record_values
 		if held == nil || system.name_of(held.name[:]) != name {
 			return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Processes, 1)
 		}
-		if status := held_process_release(held); status != .Ok {
+		if status := held_process_release(held); status != .Succeeded {
 			// A process that cannot start holds its place for nothing: it
 			// stops, and the caller sees that change.
 			started_process_stop(held)
@@ -116,7 +116,7 @@ held_process_of :: proc "contextless" (holder: ^Started, caller: ^Started, calle
 // is no longer held, whatever the status: a release is tried once. A
 // replay keeps its mark: it stays a process with no start grant, whose
 // context the history wrote, for as long as it runs.
-held_process_release :: proc "contextless" (item: ^Started) -> system.Status {
+held_process_release :: proc "contextless" (item: ^Started) -> call_outcome.Call_Outcome {
 	entry := item.held_entry
 	item.held_entry = 0
 	return system.process_release(item.process, entry)

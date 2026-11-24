@@ -1,5 +1,6 @@
 package system
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
@@ -49,7 +50,7 @@ error_detail_append :: proc "contextless" (details: ^Error_Details, detail: erro
 // 	system.kernel_error_text(&writer, &detail)
 // }
 // ```
-call_with_error_details :: proc "contextless" (error: ^errors.Error_Record, details: ^Error_Details, operation: op.Operation, values: ..u64) -> (results: [7]u64, status: Status) {
+call_with_error_details :: proc "contextless" (error: ^errors.Error_Record, details: ^Error_Details, operation: op.Operation, values: ..u64) -> (results: [7]u64, status: call_outcome.Call_Outcome) {
 	command := ring.Record {
 		kind = u32(operation),
 	}

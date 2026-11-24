@@ -428,14 +428,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	ring_memory := ctx.handles[block.GRANT_RING]
-	status: system.Status
-	if blocks, status = system.ring_open(ring_memory); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if blocks, status = system.ring_open(ring_memory); status != .Succeeded {
 		system.log_fact(.Info, No_Block_Ring{})
 		system.stop(.Failed)
 	}
 	memory, memory_status := system.memory_create(REGION_PAGES, 0, {.Contiguous}) // The device reads and writes it.
 	address, map_status := system.memory_map(memory, {.Write})
-	if memory_status != .Ok || map_status != .Ok {
+	if memory_status != .Succeeded || map_status != .Succeeded {
 		system.log_fact(.Info, No_Data_Region{})
 		system.stop(.Failed)
 	}
@@ -445,13 +445,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// does not know the other side. The bound only ends a hang: a loaded
 	// host can start the block service late.
 	given: system.Handle
-	give_status := system.Status.Bad_Handle
-	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; give_status != .Ok && system.time() < deadline; {
-		if given, give_status = system.give(ring_memory, memory, {.Read, .Write}); give_status != .Ok {
+	give_status := call_outcome.Call_Outcome.Argument_Refused
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; give_status != .Succeeded && system.time() < deadline; {
+		if given, give_status = system.give(ring_memory, memory, {.Read, .Write}); give_status != .Succeeded {
 			system.sleep(system.time() + 1)
 		}
 	}
-	if give_status != .Ok {
+	if give_status != .Succeeded {
 		system.log_fact(.Info, Block_Ring_Not_Mapped{})
 		system.stop(.Failed)
 	}

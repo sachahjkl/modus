@@ -1,5 +1,6 @@
 package debugged
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
@@ -25,12 +26,12 @@ Attach_Checked :: struct {
 	verdict: [16]u8,
 }
 
-@(log_fact = "debugged: a write of breakpoints on a thread that is not held: refused with Bad_State: {verdict}")
+@(log_fact = "debugged: a write of breakpoints on a thread that is not held: refused with Wrong_State: {verdict}")
 Breakpoints_On_Running_Thread_Refused :: struct {
 	verdict: [16]u8,
 }
 
-@(log_fact = "debugged: a handle with no Debug: attach and Stop refused with No_Right: {verdict}")
+@(log_fact = "debugged: a handle with no Debug: attach and Stop refused with Grant_Or_Right_Missing: {verdict}")
 Handle_Without_Debug_Refused :: struct {
 	verdict: [16]u8,
 }
@@ -55,22 +56,22 @@ Child_Memory_Read :: struct {
 	verdict: [16]u8,
 }
 
-@(log_fact = "debugged: Read_Memory at an address of the kernel: refused with Bad_Address: {verdict}")
+@(log_fact = "debugged: Read_Memory at an address of the kernel: refused with Argument_Refused: {verdict}")
 Kernel_Memory_Read_Refused :: struct {
 	verdict: [16]u8,
 }
 
-@(log_fact = "debugged: Read_Memory of a page that the child does not map: refused with Bad_Address: {verdict}")
+@(log_fact = "debugged: Read_Memory of a page that the child does not map: refused with Argument_Refused: {verdict}")
 Unmapped_Memory_Read_Refused :: struct {
 	verdict: [16]u8,
 }
 
-@(log_fact = "debugged: Read_Memory through a thread handle with Inspect only: refused with No_Right: {verdict}")
+@(log_fact = "debugged: Read_Memory through a thread handle with Inspect only: refused with Grant_Or_Right_Missing: {verdict}")
 Inspect_Only_Memory_Read_Refused :: struct {
 	verdict: [16]u8,
 }
 
-@(log_fact = "debugged: a write of breakpoints on a thread of the caller, with no Debug handle: refused with Bad_Handle: {verdict}")
+@(log_fact = "debugged: a write of breakpoints on a thread of the caller, with no Debug handle: refused with Argument_Refused: {verdict}")
 Own_Thread_Breakpoints_Refused :: struct {
 	verdict: [16]u8,
 }
@@ -188,16 +189,16 @@ Role_Unknown :: struct {
 // The status of the attach, when it is not Ok.
 @(log_fact = "debugged: detail: the attach gave the status {status_word}")
 Attach_Status :: struct {
-	status_word: op.Status_Word,
+	status_word: call_outcome.Call_Outcome_Word,
 }
 
 // The first breakpoint was not set: the words of the status of the stop,
 // of the write and of the resume.
 @(log_fact = "debugged: the first breakpoint was not set: the statuses {stop_status_word} {write_status_word} {resume_status_word}")
 First_Breakpoint_Not_Set :: struct {
-	stop_status_word:   op.Status_Word,
-	write_status_word:  op.Status_Word,
-	resume_status_word: op.Status_Word,
+	stop_status_word:   call_outcome.Call_Outcome_Word,
+	write_status_word:  call_outcome.Call_Outcome_Word,
+	resume_status_word: call_outcome.Call_Outcome_Word,
 }
 
 // The rounds of the child after the breakpoints were removed.
@@ -217,7 +218,7 @@ Revocation_Ended :: struct {
 @(log_fact = "debugged: detail: the stop of the debugger gave the count {stop_count}; the Resume of the child gave the status {resume_status_word} and the count {resume_count}")
 Own_Stop_Counts :: struct {
 	stop_count:         u64,
-	resume_status_word: op.Status_Word,
+	resume_status_word: call_outcome.Call_Outcome_Word,
 	resume_count:       u64,
 }
 
@@ -225,10 +226,10 @@ Own_Stop_Counts :: struct {
 // status of the attach, of the stop, of the write and of the resume.
 @(log_fact = "debugged: the data breakpoints were not set: the statuses {attach_status_word} {stop_status_word} {write_status_word} {resume_status_word}")
 Data_Breakpoints_Not_Set :: struct {
-	attach_status_word: op.Status_Word,
-	stop_status_word:   op.Status_Word,
-	write_status_word:  op.Status_Word,
-	resume_status_word: op.Status_Word,
+	attach_status_word: call_outcome.Call_Outcome_Word,
+	stop_status_word:   call_outcome.Call_Outcome_Word,
+	write_status_word:  call_outcome.Call_Outcome_Word,
+	resume_status_word: call_outcome.Call_Outcome_Word,
 }
 
 // Where the trap of the load of the stack selector went.
@@ -297,7 +298,7 @@ Data_Breakpoint_Record :: struct {
 // its member, and the status of the processor in the record of the read.
 @(log_fact = "debugged: detail: Log gave the status {log_status}; the record of the read of the child: status {error_code}")
 Kernel_Copy_Detail :: struct {
-	log_status: op.Status_Word,
+	log_status: call_outcome.Call_Outcome_Word,
 	error_code: value_kinds.Hexadecimal_Sixteen_Digits,
 }
 

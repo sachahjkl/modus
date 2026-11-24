@@ -262,18 +262,18 @@ handle_command :: proc "contextless" (command: ring.Record) {
 // registration, device binding, release, and query commands until stopped.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	open_status: system.Status
-	if service_ring, open_status = system.ring_open(ctx.handles[rd.DEVICES_RING_SLOT]); open_status != .Ok {
+	open_status: call_outcome.Call_Outcome
+	if service_ring, open_status = system.ring_open(ctx.handles[rd.DEVICES_RING_SLOT]); open_status != .Succeeded {
 		fail("no devices service ring")
 	}
 	region_handle := ctx.handles[rd.DEVICES_REGION_SLOT]
 	if region_handle != 0 {
 		pages, size_status := system.memory_size(region_handle)
-		if size_status != .Ok || pages == 0 {
+		if size_status != .Succeeded || pages == 0 {
 			fail("the devices data region has no pages")
 		}
 		address, map_status := system.memory_map(region_handle, {.Write})
-		if map_status != .Ok {
+		if map_status != .Succeeded {
 			fail("cannot map the devices data region")
 		}
 		service_region_base = ([^]u8)(address)

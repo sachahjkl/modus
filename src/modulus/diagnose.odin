@@ -1,5 +1,6 @@
 package kernel
 
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "base:intrinsics"
 import "modus:contract/errors"
@@ -477,29 +478,88 @@ read_process_state :: proc "contextless" (process: ^Process, handle: u64) -> (sl
 	return slot, state, true
 }
 
-// kind_explains says if an error kind can be the cause of a status.
+// read_memory_info reads the kind flags of the memory object of a handle.
+// Locks, in their order: the process lock, the frame lock.
 @(private = "file")
-kind_explains :: proc "contextless" (kind: errors.Kind, status: op.Status) -> bool {
-	switch status {
-	case .Ok, .No_Memory:
-		// No record explains a success, nor a lack of frames.
-		return false
-	case .Bad_Handle:
-		return kind == .Handle_Absent || kind == .Handle_Ended || kind == .Handle_Kind || kind == .No_Target || kind == .Not_Payer
-	case .No_Right:
-		return kind == .Handle_Rights || kind == .Starter_Module
-	case .No_Budget:
-		return kind == .Budget || kind == .Budget_Hidden || kind == .Over_Limit
-	case .Bad_Address:
-		return kind == .Bad_Address || kind == .Too_Long || kind == .Too_Small || kind == .Overlap || kind == .Absent || kind == .Whole_Only
-	case .No_Slot:
-		return kind == .Full || kind == .Too_Long
-	case .Bad_State:
-		return kind == .State || kind == .Absent || kind == .Over_Limit || kind == .Object_Shared || kind == .Object_Marked
-	case .Bad_Operation:
-		return kind == .Bad_Flags || kind == .Bad_Value || kind == .Too_Small || kind == .Too_Long || kind == .Unknown_Operation || kind == .Not_Multiple || kind == .Unsupported
+read_memory_info :: proc "contextless" (process: ^Process, handle: u64) -> (uncommitted, uncached: bool, ok: bool) {
+	at, taken := caller_lock(process)
+	defer process_unlock(at, taken)
+	slot: Handle_Slot
+	if slot, ok = find(process, handle, .Memory, {}); !ok {
+		return false, false, false
+	}
+	lock_take(&frame_lock, .Frame)
+	uncommitted = regions[slot.object].uncommitted
+	uncached = regions[slot.object].uncached
+	lock_free(&frame_lock, .Frame)
+	return uncommitted, uncached, true
+}
+
+// read_module_problem checks whether a Module_Record fails because no record
+// exists at its base (size == 0) or because it overlaps an existing record
+// (size != 0). Lock: the process lock.
+@(private = "file")
+read_module_problem :: proc "contextless" (process: ^Process, record: op.Module_Record) -> (missing, overlaps: bool) {
+	at, taken := caller_lock(process)
+	defer process_unlock(at, taken)
+	if record.size == 0 {
+		for item in process.modules {
+			if item.size != 0 && item.base == record.base {
+				return false, false
+			}
+		}
+		return true, false
+	}
+	for item in process.modules {
+		if item.size != 0 && record.base < item.base + item.size && item.base < record.base + record.size {
+			return false, true
+		}
+	}
+	return false, false
+}
+
+// read_protect_rights_refused says if a range of a Memory_Protect asks for
+// rights past what its mapping allows. Lock: the process lock.
+@(private = "file")
+read_protect_rights_refused :: proc "contextless" (process: ^Process, address: u64, count: u64, flags: op.Map_Flags) -> bool {
+	at, taken := caller_lock(process)
+	defer process_unlock(at, taken)
+	for index in 0 ..< min(count, op.RANGE_TABLE_CAPACITY) {
+		range: op.Address_Range
+		if !read_user(process, address + index * size_of(op.Address_Range), &range, size_of(range)) {
+			return false
+		}
+		for mapping in process.mappings {
+			if mapping.page_count != 0 && range.address >= mapping.address && (range.address - mapping.address) / PAGE_SIZE + range.page_count <= mapping.page_count {
+				if .Write in flags && mapping.limit_bits & PAGE_WRITE == 0 {
+					return true
+				}
+				if .Execute in flags && mapping.limit_bits & PAGE_NO_EXECUTE != 0 {
+					return true
+				}
+				whole := range.address == mapping.address && range.page_count == mapping.page_count
+				if !whole {
+					if .No_Access not_in flags && mapping.bits == 0 {
+						return true
+					}
+					if .Write in flags && mapping.bits & PAGE_WRITE == 0 {
+						return true
+					}
+					if .Execute in flags && mapping.bits & PAGE_NO_EXECUTE != 0 {
+						return true
+					}
+				}
+				break
+			}
+		}
 	}
 	return false
+}
+
+// kind_explains says if an error kind can be the cause of an outcome.
+@(private = "file")
+kind_explains :: proc "contextless" (kind: errors.Kind, outcome: call_outcome.Call_Outcome) -> bool {
+	return outcome != .Succeeded && kind in call_outcome.KINDS_OF[outcome]
 }
 
 @(private = "file")
@@ -509,8 +569,8 @@ record_set :: proc "contextless" (record: ^errors.Error_Record, kind: errors.Kin
 }
 
 // diagnose gives the error record of an operation of a process that failed
-// with a status.
-diagnose :: proc "contextless" (process_index: u32, command: ring.Record, status: op.Status) -> (record: errors.Error_Record) {
+// with an outcome.
+diagnose :: proc "contextless" (process_index: u32, command: ring.Record, outcome: call_outcome.Call_Outcome) -> (record: errors.Error_Record) {
 	// It runs with no lock held: each read takes its locks in the lock order.
 	when TEST_BUILD_CHECKS_LOCK_ORDER {
 		for kind in op.Lock_Kind {
@@ -529,37 +589,81 @@ diagnose :: proc "contextless" (process_index: u32, command: ring.Record, status
 	process := &processes[process_index]
 	v := command.values
 	explained := false
-	switch status {
-	case .Ok, .No_Memory:
-		// No record explains a success, nor a lack of frames.
-	case .Bad_Handle, .No_Right:
-		explained = handles_explain(&record, process, operation, v)
-		if !explained && status == .Bad_Handle && operation == .Handle_Give && v[0] != 0 {
+	switch outcome {
+	case .Succeeded, .Name_Already_Taken, .Another_Change_Came_First, .Data_Damaged, .Callee_Unavailable, .Stopped_After_A_Partial_Change, .Callee_Stopped_During_The_Call, .Connection_Ended_During_The_Call, .Deadline_Passed_During_The_Call, .Answer_Unreadable:
+		// No record explains a success, nor an outcome the kernel never gives.
+	case .Operation_Unsupported:
+		explained = unsupported_explain(&record, operation, v)
+	case .Argument_Refused:
+		explained = handles_explain(&record, process, operation, v, check_rights = false)
+		if !explained {
+			explained = value_explain(&record, process, operation, v)
+		}
+		if !explained {
+			explained = address_explain(&record, process, operation, v)
+		}
+	case .Grant_Or_Right_Missing:
+		explained = handles_explain(&record, process, operation, v, check_rights = true)
+		if explained && record.kind != i64(errors.Kind.Handle_Rights) {
+			record = {operation = record.operation}
+			explained = false
+		}
+		if !explained {
+			explained = starter_module_explain(&record, process, operation, v)
+		}
+	case .Nothing_Has_That_Name:
+		if operation == .Thread_Control {
+			explained = state_explain(&record, process, operation, v)
+		}
+	case .Callee_Busy:
+		explained = slot_explain(&record, process, operation, v, .Callee_Busy)
+	case .Budget_Or_Capacity_Exhausted:
+		explained = budget_explain(&record, process, operation, v)
+		if !explained && operation == .Thread_Control {
+			explained = state_explain(&record, process, operation, v)
+		}
+		if !explained {
+			explained = slot_explain(&record, process, operation, v, .Budget_Or_Capacity_Exhausted)
+		}
+	case .Wrong_State:
+		explained = state_explain(&record, process, operation, v)
+		if !explained && operation == .Handle_Give && v[0] != 0 {
 			record_set(&record, .No_Target, .None, 1, v[0], 0, 0) // A memory object that no one other process maps with Receive_Handles.
 			explained = true
 		}
-		if !explained && status == .No_Right {
-			explained = starter_module_explain(&record, process, operation, v)
-		}
-	case .No_Budget:
-		explained = budget_explain(&record, process, operation, v)
-	case .Bad_Address:
-		explained = address_explain(&record, process, operation, v)
-	case .No_Slot:
-		explained = slot_explain(&record, process, operation, v)
-	case .Bad_State:
-		explained = state_explain(&record, process, operation, v)
-	case .Bad_Operation:
-		explained = value_explain(&record, process, operation, v)
 	}
 	// The kind is the word that an explanation above wrote: it is read
 	// through its border, as each word of a record is.
 	explained_kind, explained_kind_ok := errors.kind_of_word(record.kind)
-	if !explained || !explained_kind_ok || !kind_explains(explained_kind, status) {
+	if !explained || !explained_kind_ok || !kind_explains(explained_kind, outcome) {
 		record = {operation = record.operation}
-		record_set(&record, .Refused, .None, 0, 0, 0, u64(status))
+		record_set(&record, .Refused, .None, 0, 0, 0, u64(outcome))
 	}
 	return record
+}
+
+// unsupported_explain names an operation or subcommand that the machine
+// does not support.
+@(private = "file")
+unsupported_explain :: proc "contextless" (record: ^errors.Error_Record, operation: op.Operation, v: [7]u64) -> bool {
+	if operation == .Guest_Run {
+		if !intrinsics.atomic_load(&guest_support.ready) {
+			record_set(record, .Unsupported, .None, 0, u64(op.Operation.Guest_Run), 0, 0)
+			return true
+		}
+	} else if operation == .Thread_Control {
+		if command, command_known := enum_word.member_of_word(op.Thread_Control_Command, v[2]); command_known {
+			if op.thread_control_counts_the_caller(command) && counter_plan.vendor == .None {
+				record_set(record, .Unsupported, .None, 0, u64(op.Operation.Thread_Control), 0, 0)
+				return true
+			}
+			if (command == .Record_Start || command == .Replay_Start) && !intrinsics.atomic_load(&cpuid_faulting_supported) {
+				record_set(record, .Unsupported, .None, 0, u64(op.Operation.Thread_Control), 0, 0)
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // diagnose_command gives the error record of a command that failed, as
@@ -567,15 +671,15 @@ diagnose :: proc "contextless" (process_index: u32, command: ring.Record, status
 // (src/md/features/kernel_error_details.md). It runs where diagnose runs:
 // after the operation freed its locks, and only on a failure, so a command
 // that succeeds never reads the bit here.
-diagnose_command :: proc "contextless" (process_index: u32, command: ring.Record, status: op.Status) -> errors.Error_Record {
+diagnose_command :: proc "contextless" (process_index: u32, command: ring.Record, outcome: call_outcome.Call_Outcome) -> errors.Error_Record {
 	if command.kind & op.COMMAND_NAMES_ERROR_DETAILS == 0 {
-		return diagnose(process_index, command, status)
+		return diagnose(process_index, command, outcome)
 	}
 	named := command
 	named.kind &~= op.COMMAND_NAMES_ERROR_DETAILS
 	operation, known := enum_word.member_of_word(op.Operation, u64(named.kind))
 	if !known || operation == .None {
-		return diagnose(process_index, command, status) // Unknown_Operation, with the kind that the process sent.
+		return diagnose(process_index, command, outcome) // Unknown_Operation, with the kind that the process sent.
 	}
 	// The dispatch refused the command before the operation: the last value
 	// is an argument of this operation, or the operation runs before the
@@ -585,7 +689,7 @@ diagnose_command :: proc "contextless" (process_index: u32, command: ring.Record
 		record_set(&unsupported, .Unsupported, .None, 0, u64(named.kind), 0, 0)
 		return unsupported
 	}
-	record := diagnose(process_index, named, status)
+	record := diagnose(process_index, named, outcome)
 	error_details_write(&processes[process_index], operation, named.values, record)
 	return record
 }
@@ -673,7 +777,7 @@ write_user :: proc "contextless" (process: ^Process, address: u64, source: rawpt
 // handle_explain says what is wrong with a handle that an operation needs
 // of a kind (None: any kind) with rights. false: the handle is good.
 @(private = "file")
-handle_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Process, argument: int, handle: u64, kind: Object_Kind, rights: op.Rights) -> bool {
+handle_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Process, argument: int, handle: u64, kind: Object_Kind, rights: op.Rights, check_rights := true) -> bool {
 	index := handle & 0xFFFF
 	generation := handle >> 16
 	if index == 0 || index >= HANDLE_CAPACITY || generation > 0xFFFF {
@@ -696,7 +800,7 @@ handle_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pr
 		record_set(record, .Handle_Kind, .None, argument, handle, u64(kind), u64(slot.kind))
 		return true
 	}
-	if !(rights <= slot.rights) {
+	if check_rights && !(rights <= slot.rights) {
 		record_set(record, .Handle_Rights, .None, argument, handle, u64(transmute(u32)rights), u64(transmute(u32)slot.rights))
 		return true
 	}
@@ -704,9 +808,9 @@ handle_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pr
 }
 
 @(private = "file")
-handles_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Process, operation: op.Operation, v: [7]u64) -> bool {
+handles_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Process, operation: op.Operation, v: [7]u64, check_rights := true) -> bool {
 	for n in 0 ..< len(v) {
-		if handle_argument_explain(record, process, operation, v, n) {
+		if handle_argument_explain(record, process, operation, v, n, check_rights) {
 			return true
 		}
 	}
@@ -718,7 +822,7 @@ handles_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 // needs of it, which can depend on the other arguments. false: the argument
 // is not a handle, or the handle is good.
 @(private = "file")
-handle_argument_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Process, operation: op.Operation, v: [7]u64, n: int) -> bool {
+handle_argument_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Process, operation: op.Operation, v: [7]u64, n: int, check_rights := true) -> bool {
 	// The payer of a commit: a handle of the budget of the object, with
 	// Commit or Spend. The record says nothing of a budget that is not the
 	// payer: a process sees only what its handles let it see.
@@ -727,14 +831,14 @@ handle_argument_explain :: proc "contextless" (record: ^errors.Error_Record, pro
 			record_set(record, .Handle_Absent, .None, 2, 0, 0, 0)
 			return true
 		}
-		if handle_explain(record, process, 2, v[1], .Budget, {}) {
+		if handle_explain(record, process, 2, v[1], .Budget, {}, check_rights = false) {
 			return true
 		}
 		slot, found := read_handle_find(process, v[1], .Budget)
 		if !found {
 			return false
 		}
-		if slot.rights & {.Commit, .Spend} == {} {
+		if check_rights && slot.rights & {.Commit, .Spend} == {} {
 			record_set(record, .Handle_Rights, .None, 2, v[1], u64(transmute(u32)op.Rights{.Commit}), u64(transmute(u32)slot.rights))
 			return true
 		}
@@ -748,7 +852,7 @@ handle_argument_explain :: proc "contextless" (record: ^errors.Error_Record, pro
 	// (parameter `number`, whose generic form is Value).
 	if operation == .Thread_Control && n == 1 {
 		if command, command_known := enum_word.member_of_word(op.Thread_Control_Command, v[2]); command_known && (command == .Record_Start || command == .Replay_Start) {
-			return handle_explain(record, process, 2, v[1], .Memory, {.Read, .Write})
+			return handle_explain(record, process, 2, v[1], .Memory, {.Read, .Write}, check_rights)
 		}
 	}
 	// A handle that the operation does not read with these values names no
@@ -814,7 +918,7 @@ handle_argument_explain :: proc "contextless" (record: ^errors.Error_Record, pro
 			}
 		}
 	}
-	return handle_explain(record, process, n + 1, v[n], kind, rights)
+	return handle_explain(record, process, n + 1, v[n], kind, rights, check_rights)
 }
 
 // read_pays_for says if a budget pays for a memory object now.
@@ -1008,12 +1112,19 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 		if v[0] != 0 {
 			return false
 		}
-		if module.size == 0 {
+		missing, overlaps := read_module_problem(process, module)
+		switch {
+		case missing:
 			record_set(record, .Absent, .Bytes, 2, module.base, 0, 0) // No record has this base.
-		} else {
+		case overlaps:
 			record_set(record, .Overlap, .Bytes, 2, module.base, module.size, 0)
+		case:
+			return false
 		}
 	case .Word_Wait:
+		if v[1] > op.WORD_WAIT_MOST {
+			return false
+		}
 		if !read_range(process, v[0], v[1] * size_of(op.Word)) {
 			record_set(record, .Bad_Address, .Bytes, 1, v[0], v[1] * size_of(op.Word), 0)
 			return true
@@ -1074,7 +1185,7 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 	case .Memory_Commit:
 		// The first range that is not in the object, or not after the one before.
 		pages, found := read_memory_pages(process, v[0])
-		if !found || !read_range(process, v[2], v[3] * size_of(op.Page_Range)) {
+		if !found || v[3] > op.RANGE_TABLE_CAPACITY || !read_range(process, v[2], v[3] * size_of(op.Page_Range)) {
 			return false
 		}
 		end: u64
@@ -1102,7 +1213,7 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 		// a part of a mapping that changes only whole. The mappings of a
 		// guest are not read here: the diagnosis holds the lock of the
 		// caller only.
-		if v[3] != 0 || !read_range(process, v[0], v[1] * size_of(op.Address_Range)) {
+		if v[3] != 0 || v[1] > op.RANGE_TABLE_CAPACITY || !read_range(process, v[0], v[1] * size_of(op.Address_Range)) {
 			return false
 		}
 		for index in 0 ..< v[1] {
@@ -1139,12 +1250,12 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 }
 
 // starter_module_explain names the module record of the starter that a
-// process changed in itself, or mapped or unmapped over (No_Right after the
-// handles are good). The record is read again under the process lock; it
-// names the record only when the range of the call meets it now. A handle
-// that names the caller itself, and an address that the kernel chooses,
-// give Refused: the first needs the handle read again, and the second never
-// meets such a record.
+// process changed in itself, or mapped or unmapped over
+// (Grant_Or_Right_Missing after the handles are good). The record is read
+// again under the process lock; it names the record only when the range of
+// the call meets it now. A handle that names the caller itself, and an
+// address that the kernel chooses, give Refused: the first needs the handle
+// read again, and the second never meets such a record.
 @(private = "file")
 starter_module_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Process, operation: op.Operation, v: [7]u64) -> bool {
 	address, size: u64
@@ -1198,33 +1309,61 @@ starter_module_explain :: proc "contextless" (record: ^errors.Error_Record, proc
 // slot_explain names the full table that refused, only when the table is
 // full now and it is the one cause that the state shows; else Refused.
 @(private = "file")
-slot_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Process, operation: op.Operation, v: [7]u64) -> bool {
-	mappings, modules, areas := read_own_full(process)
-	// An open choice by design: of the many operations, this diagnosis names
-	// the few that give its status; each other one has no explanation here.
+slot_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Process, operation: op.Operation, v: [7]u64, outcome: call_outcome.Call_Outcome) -> bool {
+	if outcome == .Budget_Or_Capacity_Exhausted {
+		mappings, modules, areas := read_own_full(process)
+		// An open choice by design: of the many operations, this diagnosis
+		// names the few whose capacity exhaustion has a specific table to name
+		// here; each other one falls through to the handle table check below.
+		#partial switch operation {
+		case .Word_Wait:
+			// The words of this entry count too: only a list longer than the
+			// room of the calling thread is one cause that the record can name.
+			// The diagnosis runs in the entry of that thread, on its processor.
+			capacity := u64(wait_capacity(&threads[processor_self().current]))
+			if v[1] <= capacity {
+				return false
+			}
+			record_set(record, .Over_Limit, .Words, 2, v[1], capacity, 0)
+			return true
+		case .Memory_Map:
+			if v[1] != 0 || !mappings {
+				return false
+			}
+			record_set(record, .Full, .Mappings, 0, 0, MAPPING_CAPACITY, 0)
+			return true
+		case .Process_Module:
+			if v[0] != 0 || !modules {
+				return false
+			}
+			record_set(record, .Full, .Modules, 0, 0, op.PROCESS_MODULE_CAPACITY, 0)
+			return true
+		case .Handle_Give:
+			// The one cause of capacity exhaustion here: the handle table of the target.
+			record_set(record, .Full, .Handles, 1, v[0], HANDLE_CAPACITY - 1, 0)
+			return true
+		}
+		// The new handle goes in the table of the caller.
+		if operation != .Process_Start && read_free_handles(process) == 0 {
+			record_set(record, .Full, .Handles, 0, 0, HANDLE_CAPACITY - 1, 0)
+			return true
+		}
+		if operation == .Thread_Create {
+			switch {
+			case areas:
+				record_set(record, .Full, .Threads, 0, 0, op.THREAD_CAPACITY, 0)
+				return true
+			case mappings:
+				record_set(record, .Full, .Mappings, 0, 0, MAPPING_CAPACITY, 0)
+				return true
+			}
+		}
+		return false
+	}
+	// Shared tables of the machine (Callee_Busy).
+	// A table of the machine is named only where it is the one cause that
+	// the outcome leaves, and its lock is taken only for that operation.
 	#partial switch operation {
-	case .Word_Wait:
-		// The words of this entry count too: only a list longer than the
-		// room of the calling thread is one cause that the record can name.
-		// The diagnosis runs in the entry of that thread, on its processor.
-		capacity := u64(wait_capacity(&threads[processor_self().current]))
-		if v[1] <= capacity {
-			return false
-		}
-		record_set(record, .Too_Long, .Words, 2, v[1], capacity, 0)
-		return true
-	case .Memory_Map:
-		if v[1] != 0 || !mappings {
-			return false
-		}
-		record_set(record, .Full, .Mappings, 0, 0, MAPPING_CAPACITY, 0)
-		return true
-	case .Process_Module:
-		if v[0] != 0 || !modules {
-			return false
-		}
-		record_set(record, .Full, .Modules, 0, 0, op.PROCESS_MODULE_CAPACITY, 0)
-		return true
 	case .Memory_Physical:
 		// It makes no handle. The device windows are named only when the
 		// object needs one and none is free: a requester past the slots is
@@ -1234,29 +1373,6 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Proc
 			return false
 		}
 		record_set(record, .Full, .Device_Windows, 0, 0, u64(IOMMU_WINDOW_CAPACITY) - 1, 0)
-		return true
-	case .Handle_Give:
-		// The one cause of No_Slot here: the handle table of the target.
-		record_set(record, .Full, .Handles, 1, v[0], HANDLE_CAPACITY - 1, 0)
-		return true
-	case .Events_Set:
-		// The one cause of No_Slot here: more rules than the event table holds.
-		if v[3] <= op.EVENT_RULE_CAPACITY {
-			return false
-		}
-		record_set(record, .Too_Long, .Records, 4, v[3], op.EVENT_RULE_CAPACITY, 0)
-		return true
-	}
-	// The new handle goes in the table of the caller.
-	if operation != .Process_Start && read_free_handles(process) == 0 {
-		record_set(record, .Full, .Handles, 0, 0, HANDLE_CAPACITY - 1, 0)
-		return true
-	}
-	// A table of the machine is named only where it is the one cause that
-	// the status leaves, and its lock is taken only for that operation.
-	// An open choice by design: of the many operations, this diagnosis names
-	// the few that give its status; each other one has no explanation here.
-	#partial switch operation {
 	case .Memory_Create:
 		if !read_regions_full() {
 			return false
@@ -1267,23 +1383,6 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Proc
 			return false
 		}
 		record_set(record, .Full, .Processes, 0, 0, u64(process_capacity) - 1, 0)
-	case .Thread_Create, .Process_Start:
-		// The causes: the thread areas of the process, its mappings (the
-		// thread area is a mapping), the memory objects of the machine (the
-		// thread area is one), the thread table of the machine. The record
-		// names a table of the caller only. Which of two tables of the
-		// machine is full is a fact of the machine that the status does not
-		// give, because a process learns nothing of another process:
-		// Refused. The areas and the mappings of another process
-		// (Process_Start) need its lock: Refused too.
-		switch {
-		case operation == .Thread_Create && areas:
-			record_set(record, .Full, .Threads, 0, 0, op.THREAD_CAPACITY, 0)
-		case operation == .Thread_Create && mappings:
-			record_set(record, .Full, .Mappings, 0, 0, MAPPING_CAPACITY, 0)
-		case:
-			return false
-		}
 	case .Budget_Create:
 		if !read_machine_full().budgets {
 			return false
@@ -1352,7 +1451,7 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 		return true
 	case .Thread_Control:
 		// The state refusal that Thread_Control recorded on this processor
-		// before it returned Bad_State.
+		// before it returned Wrong_State.
 		operation_facts := &processor_self().operation
 		if state_record, ok := op.thread_control_state_error(
 			operation_facts.thread_state_refusal,
@@ -1389,10 +1488,19 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 	// the few that give its status; each other one has no explanation here.
 	#partial switch operation {
 	case .Word_Wait:
+		if v[1] > op.WORD_WAIT_MOST {
+			record_set(record, .Too_Long, .Words, 2, v[1], op.WORD_WAIT_MOST, 0)
+			return true
+		}
 		// A word that the entry holds already: the value is its place in
 		// the whole command.
 		if facts := &processor_self().operation; facts.word_wait_duplicate {
 			record_set(record, .Bad_Value, .Words, 1, facts.word_wait_refused_place, 0, 0)
+			return true
+		}
+	case .Events_Set:
+		if v[1] != 0 && v[3] > op.EVENT_RULE_CAPACITY {
+			record_set(record, .Too_Long, .Records, 4, v[3], op.EVENT_RULE_CAPACITY, 0)
 			return true
 		}
 	case .Log:
@@ -1428,87 +1536,80 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 		switch {
 		case v[2] & ~op.MEMORY_FLAGS_KNOWN != 0:
 			record_set(record, .Bad_Flags, .None, 3, v[2], op.MEMORY_FLAGS_KNOWN, 0)
+			return true
 		case .Uncommitted in flags && flags != {.Uncommitted}:
 			record_set(record, .Bad_Flags, .None, 3, v[2], 1 << u64(op.Memory_Flag.Uncommitted), 0) // Uncommitted goes alone.
+			return true
 		case .Large_Pages in flags && v[1] % op.LARGE_PAGE_PAGES != 0:
 			record_set(record, .Not_Multiple, .Pages, 2, v[1], op.LARGE_PAGE_PAGES, v[1] % op.LARGE_PAGE_PAGES) // Whole large pages of 512 pages.
+			return true
 		case v[1] == 0:
 			record_set(record, .Too_Small, .Pages, 2, 0, 1, 0)
-		case:
+			return true
+		case v[1] > op.MEMORY_PAGE_LIMIT:
 			record_set(record, .Too_Long, .Pages, 2, v[1], op.MEMORY_PAGE_LIMIT, 0)
+			return true
 		}
-		return true
 	case .Memory_Map:
 		if v[3] & ~op.MAP_FLAGS_KNOWN != 0 {
 			record_set(record, .Bad_Flags, .None, 4, v[3], op.MAP_FLAGS_KNOWN, 0)
-		} else {
-			// Write and Execute with no No_Access (no page is both), or
-			// Write_Combining with Execute or on memory that is not the
-			// registers of a device: each is a value of the flags.
-			record_set(record, .Bad_Value, .None, 4, v[3], 0, 0)
+			return true
 		}
-		return true
+		flags := transmute(op.Map_Flags)v[3]
+		_, uncached, info_ok := read_memory_info(process, v[0])
+		if (.Write in flags && .Execute in flags && .No_Access not_in flags) || (info_ok && op.map_write_combining_refused(flags, uncached)) {
+			record_set(record, .Bad_Value, .None, 4, v[3], 0, 0)
+			return true
+		}
 	case .Memory_Commit:
 		switch {
 		case v[3] == 0:
 			record_set(record, .Too_Small, .Records, 4, 0, 1, 0)
+			return true
 		case v[3] > op.RANGE_TABLE_CAPACITY:
 			record_set(record, .Too_Long, .Records, 4, v[3], op.RANGE_TABLE_CAPACITY, 0)
+			return true
 		case v[4] & ~op.COMMIT_FLAGS_KNOWN != 0:
 			record_set(record, .Bad_Flags, .None, 5, v[4], op.COMMIT_FLAGS_KNOWN, 0)
+			return true
 		case transmute(op.Commit_Flags)v[4] >= {.Decommit, .Frames_Now}:
 			record_set(record, .Bad_Value, .None, 5, v[4], 0, 0)
-		case:
-			if pages := read_table_pages(process, v[2], v[3], size_of(op.Page_Range), offset_of(op.Page_Range, page_count)); pages > op.RANGE_TABLE_PAGE_LIMIT {
-				record_set(record, .Too_Long, .Pages, 3, pages, op.RANGE_TABLE_PAGE_LIMIT, 0)
-			} else {
-				record_set(record, .Bad_Value, .None, 1, v[0], 0, 0) // The memory object was not made Uncommitted.
-			}
+			return true
 		}
-		return true
+		if pages := read_table_pages(process, v[2], v[3], size_of(op.Page_Range), offset_of(op.Page_Range, page_count)); pages > op.RANGE_TABLE_PAGE_LIMIT {
+			record_set(record, .Too_Long, .Pages, 3, pages, op.RANGE_TABLE_PAGE_LIMIT, 0)
+			return true
+		}
+		if uncommitted, _, info_ok := read_memory_info(process, v[0]); info_ok && !uncommitted {
+			record_set(record, .Bad_Value, .None, 1, v[0], 0, 0) // The memory object was not made Uncommitted.
+			return true
+		}
 	case .Memory_Protect:
 		switch {
 		case v[1] == 0:
 			record_set(record, .Too_Small, .Records, 2, 0, 1, 0)
+			return true
 		case v[1] > op.RANGE_TABLE_CAPACITY:
 			record_set(record, .Too_Long, .Records, 2, v[1], op.RANGE_TABLE_CAPACITY, 0)
+			return true
 		case v[2] & ~op.PROTECT_FLAGS_KNOWN != 0:
 			record_set(record, .Bad_Flags, .None, 3, v[2], op.PROTECT_FLAGS_KNOWN, 0)
-		case:
-			// The entries that the call changes, as the kernel counts them:
-			// one for each large page, the present pages of a whole mapping.
-			if pages := read_protect_walk(process, v[0], v[1], transmute(op.Map_Flags)v[2]); v[3] == 0 && pages > op.RANGE_TABLE_PAGE_LIMIT {
-				record_set(record, .Too_Long, .Pages, 1, pages, op.RANGE_TABLE_PAGE_LIMIT, 0)
-			} else {
-				// Write and Execute together; No_Access with another flag;
-				// more than the mapping was made with; a part asks more than
-				// its mapping has now.
-				record_set(record, .Bad_Value, .None, 3, v[2], 0, 0)
-			}
+			return true
 		}
-		return true
+		flags := transmute(op.Map_Flags)v[2]
+		if pages := read_protect_walk(process, v[0], v[1], flags); v[3] == 0 && pages > op.RANGE_TABLE_PAGE_LIMIT {
+			record_set(record, .Too_Long, .Pages, 1, pages, op.RANGE_TABLE_PAGE_LIMIT, 0)
+			return true
+		}
+		if (.Write in flags && .Execute in flags) || (.No_Access in flags && flags != {.No_Access}) || (v[3] == 0 && read_protect_rights_refused(process, v[0], v[1], flags)) {
+			record_set(record, .Bad_Value, .None, 3, v[2], 0, 0)
+			return true
+		}
 	case .Thread_Control:
 		// A refused write: the value and the part that the check refused, as
-		// the operation kept them on this processor from its own copy. The
-		// command itself is a choice, below. A weight, a request and a
-		// weight limit have a largest value, which the operation kept too:
-		// for a weight it is the full weight, or the weight that the thread
-		// had then when its own process wrote a higher one. A refused set
-		// of processors has the set that it had to stay inside in the place
-		// of the largest value: the set of the thread, its limit, or the
-		// processors of the machine.
+		// the operation kept them on this processor from its own copy.
 		if operation_facts := &processor_self().operation; operation_facts.thread_write_refusal != .None {
 			record_set(record, .Bad_Value, .None, 4, operation_facts.thread_write_refused_value, operation_facts.thread_write_refused_limit, u64(operation_facts.thread_write_refusal))
-			return true
-		}
-		// A command of the thread counters on a machine with no counter
-		// plan: the value is the operation, as for a guest.
-		if command, command_known := enum_word.member_of_word(op.Thread_Control_Command, v[2]); command_known && op.thread_control_counts_the_caller(command) && counter_plan.vendor == .None {
-			record_set(record, .Unsupported, .None, 0, u64(op.Operation.Thread_Control), 0, 0)
-			return true
-		}
-		if command, command_known := enum_word.member_of_word(op.Thread_Control_Command, v[2]); command_known && (command == .Record_Start || command == .Replay_Start) && !intrinsics.atomic_load(&cpuid_faulting_supported) {
-			record_set(record, .Unsupported, .None, 0, u64(op.Operation.Thread_Control), 0, 0)
 			return true
 		}
 		// A read of the memory of a process of more bytes than one read
@@ -1523,33 +1624,36 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 			switch {
 			case v[4] > op.WORD_WAIT_MOST:
 				record_set(record, .Too_Long, .Words, 5, v[4], op.WORD_WAIT_MOST, 0)
+				return true
 			case v[0] != 0:
 				record_set(record, .Bad_Value, .None, 1, v[0], 0, 0)
-			case:
+				return true
+			case v[1] != 0:
 				record_set(record, .Bad_Value, .None, 2, v[1], 0, 0)
+				return true
 			}
-			return true
 		}
 	case .Fault_Handler_Set:
 		action, action_known := enum_word.member_of_word(op.Fault_Handler_Action, v[1])
 		switch {
 		case !action_known:
 			record_set(record, .Bad_Value, .None, 2, v[1], u64(max(op.Fault_Handler_Action)), 0)
-		case action == .End:
-			record_set(record, .Bad_Flags, .None, 3, v[2], 0, 0) // The end of the delivery takes no kinds.
-		case v[3] != 0:
-			record_set(record, .Bad_Flags, .None, 3, v[2], op.FAULT_KINDS_DEBUGGER, 0) // The debugger of a process takes the two traps only.
-		case:
-			record_set(record, .Bad_Flags, .None, 3, v[2], op.FAULT_KINDS_DELIVERED, 0)
-		}
-		return true
-	case .Guest_Run:
-		// The machine has no virtualization support that the kernel uses;
-		// else the flags of the registers record.
-		if !intrinsics.atomic_load(&guest_support.ready) {
-			record_set(record, .Unsupported, .None, 0, u64(op.Operation.Guest_Run), 0, 0)
 			return true
+		case action == .End && v[2] != 0:
+			record_set(record, .Bad_Flags, .None, 3, v[2], 0, 0) // The end of the delivery takes no kinds.
+			return true
+		case v[3] != 0:
+			if _, debugger_known := op.fault_kinds_of_debugger_argument(v[2]); !debugger_known {
+				record_set(record, .Bad_Flags, .None, 3, v[2], op.FAULT_KINDS_DEBUGGER, 0) // The debugger of a process takes the two traps only.
+				return true
+			}
+		case:
+			if _, kinds_known := op.fault_kinds_of_argument(v[2]); !kinds_known {
+				record_set(record, .Bad_Flags, .None, 3, v[2], op.FAULT_KINDS_DELIVERED, 0)
+				return true
+			}
 		}
+	case .Guest_Run:
 		// A field of the registers record that its rules refuse: the value
 		// of that field. The process can change its memory since the run:
 		// this read is of the record now.

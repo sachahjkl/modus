@@ -102,15 +102,15 @@ open_of_handles :: proc "contextless" (ring_memory, region_memory, service: syst
 		return {}, false
 	}
 	region_pages, size_status := system.memory_size(client.region_memory)
-	if size_status != .Ok {
+	if size_status != .Succeeded {
 		return {}, false
 	}
-	status: system.Status
-	if client.calls, status = system.ring_open(client.ring_memory, receive_handles = true); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if client.calls, status = system.ring_open(client.ring_memory, receive_handles = true); status != .Succeeded {
 		return {}, false
 	}
 	address, map_status := system.memory_map(client.region_memory)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.ring_close(&client.calls)
 		return {}, false
 	}
@@ -674,15 +674,15 @@ open_mapped :: proc "contextless" (ring_memory, region_memory: system.Handle, se
 	client.service = service
 	client.file = file
 	region_pages, size_status := system.memory_size(region_memory)
-	if size_status != .Ok {
+	if size_status != .Succeeded {
 		return {}, false
 	}
-	status: system.Status
-	if client.calls, status = system.ring_open(ring_memory, receive_handles = true); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if client.calls, status = system.ring_open(ring_memory, receive_handles = true); status != .Succeeded {
 		return {}, false
 	}
 	address, map_status := system.memory_map(region_memory)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.ring_close(&client.calls)
 		return {}, false
 	}

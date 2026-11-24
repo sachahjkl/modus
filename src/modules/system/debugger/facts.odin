@@ -1,7 +1,7 @@
 package debugger
 
+import "modus:contract/call_outcome"
 import debug_object "modus:contract/debug_object"
-import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:disk_process"
 import "modus:contract/storage_status"
@@ -206,14 +206,14 @@ Debug_Object_Size_Status_Refused :: struct {
 @(log_fact = "debugger: no debug object for {debugged_process}: no memory for its {size}: status {status}")
 Debug_Object_Memory_Refused :: struct {
 	size:             value_kinds.Size_In_Bytes,
-	status:           op.Status_Word,
+	status:           call_outcome.Call_Outcome_Word,
 	debugged_process: value_kinds.Module_Name_Field,
 }
 
 // The memory of the debug object does not map.
 @(log_fact = "debugger: no debug object for {debugged_process}: its memory does not map: status {status}")
 Debug_Object_Map_Refused :: struct {
-	status:           op.Status_Word,
+	status:           call_outcome.Call_Outcome_Word,
 	debugged_process: value_kinds.Module_Name_Field,
 }
 

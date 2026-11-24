@@ -101,7 +101,7 @@ page_find :: proc "contextless" (name: string) -> int {
 pages_load :: proc "contextless" (ctx: ^system.Context) {
 	memory, memory_status := system.memory_create(PAGE_MEMORY_PAGES)
 	address, map_status := system.memory_map(memory, {.Write})
-	if memory_status != .Ok || map_status != .Ok {
+	if memory_status != .Succeeded || map_status != .Succeeded {
 		fail("no memory for the pages")
 	}
 	page_memory = ([^]u8)(address)[:PAGE_MEMORY_PAGES * system.PAGE_SIZE]

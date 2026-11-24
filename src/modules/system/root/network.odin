@@ -172,23 +172,23 @@ endpoint_open :: proc "contextless" (slot: ^Started, name: string, refusal: ^[7]
 	if service, outcome = network_service(refusal); outcome != .Succeeded {
 		return 0, 0, outcome
 	}
-	status: system.Status
-	if ring_memory, status = system.memory_create(ring.pages(datagram.RING_CAPACITY)); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if ring_memory, status = system.memory_create(ring.pages(datagram.RING_CAPACITY)); status != .Succeeded {
 		return 0, 0, kernel_refused(refusal, kind, status)
 	}
 	region_flags := network_device_windows ? op.Memory_Flags{} : op.Memory_Flags{.Contiguous}
 	region_memory, status = system.memory_create(datagram.REGION_PAGES, 0, region_flags)
 	given: [2]system.Handle
-	if status == .Ok {
+	if status == .Succeeded {
 		given[0], status = give_through_service_ring(service.process, service.network_memory, ring_memory, {.Read, .Write}, &service.network_ring_ready)
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		given[1], status = give_through_service_ring(service.process, service.network_memory, region_memory, {.Read, .Write, .Give}, &service.network_ring_ready)
 	}
 	grant := endpoint_of(name)
 	grant.inspect = .Inspect in slot.start_grant_set.grants
 	packed := system.name_pack(name)
-	sent := status == .Ok && system.send(&service.network.commands, ring.Record{kind = u32(datagram.Control.Endpoint_Add), values = {0 = u64(given[0]), 1 = u64(given[1]), 2 = datagram.grant_pack(grant), 3 = packed[0], 4 = packed[1], 5 = packed[2], 6 = packed[3]}})
+	sent := status == .Succeeded && system.send(&service.network.commands, ring.Record{kind = u32(datagram.Control.Endpoint_Add), values = {0 = u64(given[0]), 1 = u64(given[1]), 2 = datagram.grant_pack(grant), 3 = packed[0], 4 = packed[1], 5 = packed[2], 6 = packed[3]}})
 	if !sent {
 		// A handle that the network service received and never uses stays in
 		// its table until it stops; the case needs a full control ring.
@@ -196,7 +196,7 @@ endpoint_open :: proc "contextless" (slot: ^Started, name: string, refusal: ^[7]
 		if region_memory != 0 {
 			system.close(region_memory)
 		}
-		if status != .Ok {
+		if status != .Succeeded {
 			return 0, 0, kernel_refused(refusal, kind, status)
 		}
 		return 0, 0, root_ring.refuse(refusal, .Callee_Busy, kind, .Busy, .Requests)

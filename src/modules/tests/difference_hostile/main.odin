@@ -60,7 +60,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 @(private = "file")
 uncommitted_case :: proc "contextless" (display: ^Display) {
 	memory, status := system.memory_create(1, 0, {.Uncommitted})
-	if status != .Ok {
+	if status != .Succeeded {
 		wrong("an Uncommitted object of one page was not made; the status word", u64(status))
 	}
 	defer system.close(memory)
@@ -71,7 +71,7 @@ uncommitted_case :: proc "contextless" (display: ^Display) {
 		system.stop(.Failed)
 	}
 	// The display closed its copy at the refusal: no holding is left to end.
-	if ended, revoke_status := system.handle_revoke(memory); revoke_status != .Ok || ended != 0 {
+	if ended, revoke_status := system.handle_revoke(memory); revoke_status != .Succeeded || ended != 0 {
 		wrong("the display kept the refused object; the holdings that the revocation ended", ended)
 	}
 	serving_check(display)
@@ -99,12 +99,12 @@ revoked_case :: proc "contextless" (display: ^Display) {
 	added := items_text[:added_bytes]
 	pages := (u64(added_bytes) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	memory, status := system.memory_create(pages)
-	if status != .Ok {
+	if status != .Succeeded {
 		wrong("the object of the difference was not made; the status word", u64(status))
 	}
 	defer system.close(memory)
 	address, map_status := system.memory_map(memory, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		wrong("the object of the difference does not map; the status word", u64(map_status))
 	}
 	copy(([^]u8)(address)[:added_bytes], added[:added_bytes])
@@ -144,7 +144,7 @@ revoked_case :: proc "contextless" (display: ^Display) {
 @(private = "file")
 give :: proc "contextless" (display: ^Display, memory: system.Handle) -> system.Handle {
 	given, status := system.give(display.connection.ring_memory, memory, {.Read})
-	if status != .Ok {
+	if status != .Succeeded {
 		wrong("the object did not go through the call ring; the status word", u64(status))
 	}
 	return given
@@ -181,12 +181,12 @@ serving_check :: proc "contextless" (display: ^Display) {
 display_connect :: proc "contextless" (ctx: ^system.Context) -> (display: Display) {
 	requests_memory := ctx.handles[system.GRANT_ROOT]
 	requests, ring_status := system.ring_open(requests_memory, receive_handles = true)
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		wrong("no root ring; the status", u64(ring_status))
 	}
 	image_handle := ctx.handles[system.GRANT_IMAGE]
 	address, map_status := system.memory_map(image_handle, {})
-	if image_handle == 0 || map_status != .Ok {
+	if image_handle == 0 || map_status != .Succeeded {
 		wrong("the boot image does not map; the status word", u64(map_status))
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]

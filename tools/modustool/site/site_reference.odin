@@ -18,6 +18,7 @@ import "modustool:build"
 import "modustool:checks"
 
 SITE_OPERATION_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/operation/operation.odin"
+SITE_CALL_OUTCOME_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/call_outcome/call_outcome.odin"
 SITE_ERRORS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/errors/errors.odin"
 SITE_FIXED_ADDRESSES_FILE :: checks.FIXED_ADDRESSES_FOLDER + "/fixed_addresses.odin"
 // The rule of the root service for the budget that a module asks for.
@@ -136,6 +137,7 @@ site_reference_read :: proc(site: ^Site) -> bool {
 		}
 	}
 	operation_text := foundation.read_text_file(SITE_OPERATION_FILE) or_return
+	call_outcome_text := foundation.read_text_file(SITE_CALL_OUTCOME_FILE) or_return
 	errors_text := foundation.read_text_file(SITE_ERRORS_FILE) or_return
 	fixed_text := foundation.read_text_file(SITE_FIXED_ADDRESSES_FILE) or_return
 	grants_text := foundation.read_text_file(foundation.SYSTEM_GRANTS_FILE) or_return
@@ -151,7 +153,7 @@ site_reference_read :: proc(site: ^Site) -> bool {
 		append(&operations, foundation.operation_comment_split(member))
 	}
 	reference.operations = operations[:]
-	reference.statuses, problem = foundation.enumeration_read(operation_text, SITE_OPERATION_FILE, "Status")
+	reference.statuses, problem = foundation.enumeration_read(call_outcome_text, SITE_CALL_OUTCOME_FILE, "Call_Outcome")
 	note(&problems, problem)
 	reference.context_roles, problem = foundation.constants_read(operation_text, SITE_OPERATION_FILE, "CONTEXT_HANDLES ::", {"CONTEXT_", "ROOT_"})
 	note(&problems, problem)
@@ -199,7 +201,7 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	}
 	reference.console_commands = commands[:]
 	reference.operations_about = foundation.comment_above_declaration(operation_text, "Operation :: enum")
-	reference.statuses_about = foundation.comment_above_declaration(operation_text, "Status :: enum")
+	reference.statuses_about = foundation.comment_above_declaration(call_outcome_text, "Call_Outcome :: enum")
 	reference.error_kinds_about = foundation.comment_above_declaration(errors_text, "Kind :: enum")
 	reference.error_units_about = foundation.comment_above_declaration(errors_text, "Unit :: enum")
 	reference.start_grants_about = foundation.comment_above_declaration(start_grant_text, "Grant :: enum")
@@ -651,8 +653,8 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 			site_symbol_write(site, &b, Site_Symbol{id = strings.concatenate({"operation-", foundation.text_slug(name)}, context.temp_allocator), name = name, signature = signature, signature_html = site_operation_signature_html(site, operation), description = operation.text, page = site_page_file(SITE_OPERATIONS_FOLDER), facts = facts[:], source = SITE_OPERATION_FILE, line = operation.member.line})
 		}
 		strings.write_string(&b, "<h2 id=\"status\">The status of a completion</h2>\n")
-		site_about_paragraph(site, &b, site_page_file(SITE_OPERATIONS_FOLDER), reference.statuses_about, SITE_OPERATION_FILE, "Status")
-		site_enumeration_table(site, &b, site_page_file(SITE_OPERATIONS_FOLDER), reference.statuses, SITE_OPERATION_FILE, "status", "Statuses of a completion", {"Number", "Status", "What the contract says"}, .Status)
+		site_about_paragraph(site, &b, site_page_file(SITE_OPERATIONS_FOLDER), reference.statuses_about, SITE_CALL_OUTCOME_FILE, "Call_Outcome")
+		site_enumeration_table(site, &b, site_page_file(SITE_OPERATIONS_FOLDER), reference.statuses, SITE_CALL_OUTCOME_FILE, "status", "Outcomes of a completion", {"Number", "Outcome", "What the contract says"}, .Status)
 		site_source_line(site, &b, SITE_OPERATION_FILE)
 		add(site, entries, site_page_file(SITE_OPERATIONS_FOLDER), "Kernel operations", fmt.tprintf("The %d kernel operations of %s, with their numbers, their parameters and their results, read from the contract.", count, SITE_SYSTEM_NAME), "Each operation that a process asks the kernel, with its number, its parameters and its result; the status of a completion.", SITE_OPERATION_FILE, count, .Operation, &b, SITE_OPERATION_FILE)
 	}

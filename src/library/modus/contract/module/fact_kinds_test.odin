@@ -2,6 +2,7 @@
 package module
 
 import "core:testing"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
@@ -40,7 +41,7 @@ KIND_FIELD :: Field{offset = 24, type = u8(Type.Integer), unsigned = true, kind 
 @(private = "file")
 UNIT_FIELD :: Field{offset = 32, type = u8(Type.Integer), unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Error_Unit)}
 @(private = "file")
-STATUS_FIELD :: Field{offset = 40, type = u8(Type.Integer), unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Status)}
+STATUS_FIELD :: Field{offset = 40, type = u8(Type.Integer), unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Call_Outcome)}
 @(private = "file")
 POLICY_FIELD :: Field{offset = 48, type = u8(Type.Bytes), detail = value_kinds.HASH_FIELD_BYTES, kind = u8(value_kinds.Field_Kind.Hash_Head)}
 // The fields of the second round of kinds, alone at offset 0.
@@ -263,14 +264,14 @@ the_enums_of_a_fact_name_their_members :: proc(t: ^testing.T) {
 	runs: [FACT_SENTENCE_RUNS_MOST]value_kinds.Value_Run_In_Call
 	put_word(values[:], 24, u64(max(errors.Kind)) + 1)
 	put_word(values[:], 32, max(u64))
-	put_word(values[:], 40, u64(max(op.Status)) + 1)
+	put_word(values[:], 40, u64(max(call_outcome.Call_Outcome)) + 1)
 	count, _, refusal := fact_sentence_write(file, KINDS_KEY, values[:], sentence[:], runs[:])
 	testing.expect_value(t, refusal, Fact_Render_Refusal.None)
 	expected_unknown := "a 0000000000000000 p 0.00 s 0.0 us k 43 u 18446744073709551615 t "
 	testing.expectf(t, len(sentence[:count]) > len(expected_unknown) && string(sentence[:len(expected_unknown)]) == expected_unknown, "the sentence is %q", string(sentence[:count]))
 	put_word(values[:], 24, u64(errors.Kind.Too_Long))
 	put_word(values[:], 32, u64(errors.Unit.Bytes))
-	put_word(values[:], 40, u64(op.Status.Bad_Address))
+	put_word(values[:], 40, u64(call_outcome.Call_Outcome.Argument_Refused))
 	put_word(values[:], 0, 0x922)
 	put_word(values[:], 8, 105)
 	put_word(values[:], 16, 812_499)
@@ -280,7 +281,7 @@ the_enums_of_a_fact_name_their_members :: proc(t: ^testing.T) {
 	kept := values
 	count, _, refusal = fact_sentence_write(file, KINDS_KEY, values[:], sentence[:], runs[:])
 	testing.expect_value(t, refusal, Fact_Render_Refusal.None)
-	testing.expect_value(t, string(sentence[:count]), "a 0000000000000922 p 1.05 s 812.4 us k Too_Long u Bytes t Bad_Address h 1a2b3c4d…")
+	testing.expect_value(t, string(sentence[:count]), "a 0000000000000922 p 1.05 s 812.4 us k Too_Long u Bytes t Argument_Refused h 1a2b3c4d…")
 	testing.expect(t, values == kept)
 }
 

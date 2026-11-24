@@ -47,10 +47,10 @@ list_page: []u8
 // refused is a refused input; each other stop is a failure.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	ring_status: system.Status
+	ring_status: call_outcome.Call_Outcome
 	requests_memory = ctx.handles[system.GRANT_ROOT]
 	requests, ring_status = system.ring_open(requests_memory, receive_handles = true)
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		system.log_fact(.Error, Root_Ring_Refused{status = ring_status})
 		system.stop(.Failed)
 	}
@@ -126,7 +126,7 @@ row_start :: proc "contextless" (index: int) -> bool {
 			return false
 		}
 		address, status := system.memory_map(system.Handle(values[0]))
-		if status != .Ok {
+		if status != .Succeeded {
 			system.log_fact(.Warning, Row_Wiring_Refused{status = status, row_process = row_process})
 			return false
 		}
@@ -142,7 +142,7 @@ row_start :: proc "contextless" (index: int) -> bool {
 		system.log_fact(.Warning, Row_Reader_Not_Running{reader_row = prepared.reader_row, row_process = row_process})
 		return false
 	case .Lend_Refused, .List_Not_Written:
-		system.log_fact(.Warning, Row_Wiring_Refused{reader_row = prepared.reader_row, status = prepared.status, row_process = row_process})
+		system.log_fact(.Warning, Row_Wiring_Refused{reader_row = u64(prepared.reader_row), status = prepared.status, row_process = row_process})
 		return false
 	case .No_List, .Listed:
 	}
@@ -158,7 +158,7 @@ row_start :: proc "contextless" (index: int) -> bool {
 }
 
 // reader_lend lends the process of a reader row through the root ring.
-reader_lend :: proc "contextless" (reader_row: int) -> (u32, system.Status) {
+reader_lend :: proc "contextless" (reader_row: int) -> (u32, call_outcome.Call_Outcome) {
 	given, status := system.give(requests_memory, states[reader_row].process, {.Read})
 	return u32(given), status
 }

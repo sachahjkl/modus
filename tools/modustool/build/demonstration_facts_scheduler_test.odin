@@ -1,5 +1,6 @@
 package build
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "core:fmt"
 import "core:testing"
@@ -112,9 +113,9 @@ the_facts_of_a_schedule_write_the_lines_of_before :: proc(t: ^testing.T) {
 	if !ok {
 		return
 	}
-	for status in op.Status {
+	for status in call_outcome.Call_Outcome {
 		word := u64(status)
-		name := op.STATUS_NAMES[status]
+		name := call_outcome.CALL_OUTCOME_NAMES[status]
 		for verdict in SCHEDULER_VERDICTS {
 			for count in SCHEDULER_EDGE_COUNTS {
 				other := max(u64) - count
@@ -152,9 +153,9 @@ the_facts_of_a_placement_write_the_lines_of_before :: proc(t: ^testing.T) {
 	if !ok {
 		return
 	}
-	for status in op.Status {
+	for status in call_outcome.Call_Outcome {
 		word := u64(status)
-		name := op.STATUS_NAMES[status]
+		name := call_outcome.CALL_OUTCOME_NAMES[status]
 		for verdict in SCHEDULER_VERDICTS {
 			for count in SCHEDULER_EDGE_COUNTS {
 				other := max(u64) - count

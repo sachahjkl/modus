@@ -71,10 +71,8 @@ OBJECT_KIND_MEMBER_NAMES := [Object_Kind]string {
 // bytes with no padding, which the build refuses. A field of a word type
 // is a Status of its enum: a reader writes the name of the member, or the
 // number of a word that names none. A writer converts the member, as
-// `op.Status_Word(status)`.
+// `call_outcome.Call_Outcome_Word(status)`.
 
-// The word of a Status: a Status has 4 bytes.
-Status_Word :: distinct u64
 // The word of a Stop_Cause: a Stop_Cause has 1 byte.
 Stop_Cause_Word :: distinct u64
 // The word of a Stop_Outcome: a Stop_Outcome has 1 byte.
@@ -84,7 +82,6 @@ Log_Record_Form_Word :: distinct u64
 // The word of an Object_Kind: an Object_Kind has 1 byte.
 Object_Kind_Word :: distinct u64
 
-#assert(size_of(Status_Word) >= size_of(Status))
 #assert(size_of(Stop_Cause_Word) >= size_of(Stop_Cause))
 #assert(size_of(Stop_Outcome_Word) >= size_of(Stop_Outcome))
 #assert(size_of(Log_Record_Form_Word) >= size_of(Log_Record_Form))

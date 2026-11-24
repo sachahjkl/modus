@@ -3,6 +3,7 @@ package system
 import "base:intrinsics"
 import "modus:contract/blake3"
 import info "modus:contract/boot_info"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
@@ -354,7 +355,7 @@ module_space_release :: proc "contextless" (space: ^Module_Space, index: int, er
 	}
 	imports := item.import_places
 	count := item.import_count
-	if status := place_remove(space, item); status != .Ok && error.stage == u32(module.Load_Stage.None) {
+	if status := place_remove(space, item); status != .Succeeded && error.stage == u32(module.Load_Stage.None) {
 		error^ = {stage = u32(module.Load_Stage.Unmap), status = u32(status), module = named_of(space.source, item.hash)}
 	}
 	for number in 0 ..< count {
@@ -708,10 +709,10 @@ place_finish :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: m
 // the space pays for it.
 @(private)
 place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: module.Header, imports: []module.Bound_Import, error: ^module.Load_Error) -> bool {
-	status: Status
+	status: call_outcome.Call_Outcome
 	if space.prepared == nil {
 		own: Prepared
-		if own, status = module_prepare(item.file, item.hash, .All, item.base, space.budget, imports, error); status == .Ok {
+		if own, status = module_prepare(item.file, item.hash, .All, item.base, space.budget, imports, error); status == .Succeeded {
 			status = segments_map(item.file, item.hash, &own, &own, space.process, item.base, space.budget, imports, error)
 			close(own.memory)
 		}
@@ -721,14 +722,14 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 		lock(&space.prepared.lock)
 		prepared_sweep(space.prepared)
 		code, fixed: ^Prepared
-		if code, status = prepared_find(space.prepared, item.file, item.hash, .Code, 0, {}, nil, error); status == .Ok {
-			if fixed, status = prepared_find(space.prepared, item.file, item.hash, .Fixed, item.base, binding_of(space, item), imports, error, keep = code); status == .Ok {
+		if code, status = prepared_find(space.prepared, item.file, item.hash, .Code, 0, {}, nil, error); status == .Succeeded {
+			if fixed, status = prepared_find(space.prepared, item.file, item.hash, .Fixed, item.base, binding_of(space, item), imports, error, keep = code); status == .Succeeded {
 				status = segments_map(item.file, item.hash, code, fixed, space.process, item.base, space.budget, imports, error)
 			}
 		}
 		unlock(&space.prepared.lock)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		place_unmap(space, item)
 		stage, stage_ok := module.load_stage_of_word(error.stage)
 		if !stage_ok {
@@ -762,7 +763,7 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 		hash     = item.hash,
 		replaces = item.replaces,
 	}
-	if _, status = call(.Process_Module, u64(space.process), u64(uintptr(&record))); status != .Ok {
+	if _, status = call(.Process_Module, u64(space.process), u64(uintptr(&record))); status != .Succeeded {
 		error^ = {stage = u32(module.Load_Stage.Map), status = u32(status), module = named_of(space.source, item.hash)}
 		return false
 	}
@@ -792,10 +793,10 @@ binding_of :: proc "contextless" (space: ^Module_Space, item: ^Placed) -> [32]u8
 // place_unmap removes each segment of a module that is mapped. It gives the
 // first status that is not Ok.
 @(private)
-place_unmap :: proc "contextless" (space: ^Module_Space, item: ^Placed) -> (result: Status) {
+place_unmap :: proc "contextless" (space: ^Module_Space, item: ^Placed) -> (result: call_outcome.Call_Outcome) {
 	for index in 1 ..< module.count(item.file, .Segments) {
 		segment, _ := module.record(item.file, .Segments, index, module.Segment)
-		if status := memory_unmap(rawptr(uintptr(item.base + segment.memory_offset)), space.process); status != .Ok && result == .Ok {
+		if status := memory_unmap(rawptr(uintptr(item.base + segment.memory_offset)), space.process); status != .Succeeded && result == .Succeeded {
 			result = status
 		}
 	}
@@ -803,13 +804,13 @@ place_unmap :: proc "contextless" (space: ^Module_Space, item: ^Placed) -> (resu
 }
 
 @(private)
-place_remove :: proc "contextless" (space: ^Module_Space, item: ^Placed) -> (status: Status) {
+place_remove :: proc "contextless" (space: ^Module_Space, item: ^Placed) -> (status: call_outcome.Call_Outcome) {
 	if item.mapped {
 		status = place_unmap(space, item)
 		record := op.Module_Record {
 			base = item.base,
 		}
-		if _, removed := call(.Process_Module, u64(space.process), u64(uintptr(&record))); removed != .Ok && status == .Ok {
+		if _, removed := call(.Process_Module, u64(space.process), u64(uintptr(&record))); removed != .Succeeded && status == .Succeeded {
 			status = removed
 		}
 	}
@@ -864,14 +865,14 @@ part_range :: proc "contextless" (file: []u8, part: Module_Part) -> (first, end:
 // the module at its own-hash place. Its first page is the page of the
 // module at offset `first`. The budget pays for it.
 @(private)
-module_prepare :: proc "contextless" (file: []u8, hash: [32]u8, part: Module_Part, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> (prepared: Prepared, status: Status) {
+module_prepare :: proc "contextless" (file: []u8, hash: [32]u8, part: Module_Part, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> (prepared: Prepared, status: call_outcome.Call_Outcome) {
 	first, end := part_range(file, part)
 	if end == 0 {
-		return {part = part}, .Ok
+		return {part = part}, .Succeeded
 	}
 	memory := memory_create((end - first) / PAGE_SIZE, budget) or_return
 	address: rawptr
-	if address, status = memory_map(memory); status != .Ok {
+	if address, status = memory_map(memory); status != .Succeeded {
 		close(memory)
 		return {}, status
 	}
@@ -890,9 +891,9 @@ module_prepare :: proc "contextless" (file: []u8, hash: [32]u8, part: Module_Par
 	memory_unmap(address)
 	if !ok {
 		close(memory)
-		return {}, .Bad_Operation
+		return {}, .Argument_Refused
 	}
-	return {part = part, base = base, first = first, memory = memory, pages = (end - first) / PAGE_SIZE}, .Ok
+	return {part = part, base = base, first = first, memory = memory, pages = (end - first) / PAGE_SIZE}, .Succeeded
 }
 
 // code_ready rebases and binds the locations of a module from offset first
@@ -941,13 +942,13 @@ prepared_sweep :: proc "contextless" (table: ^Prepared_Modules) {
 // its part used least recently, but never keep, the part that the caller
 // still holds.
 @(private)
-prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash: [32]u8, part: Module_Part, base: u64, binding: [32]u8, imports: []module.Bound_Import, error: ^module.Load_Error, keep: ^Prepared = nil) -> (found: ^Prepared, status: Status) {
+prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash: [32]u8, part: Module_Part, base: u64, binding: [32]u8, imports: []module.Bound_Import, error: ^module.Load_Error, keep: ^Prepared = nil) -> (found: ^Prepared, status: call_outcome.Call_Outcome) {
 	free: ^Prepared
 	table.uses += 1
 	for &item in table.modules {
 		if item.memory != 0 && item.hash == hash && item.part == part && item.base == base && item.binding == binding {
 			item.last_use = table.uses
-			return &item, .Ok
+			return &item, .Succeeded
 		}
 		if item.memory == 0 && free == nil {
 			free = &item
@@ -963,7 +964,7 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 		chosen: [1]int
 		if prepared_drop_choose(uses[:], 1, chosen[:]) == 0 {
 			error.stage = u32(module.Load_Stage.Room)
-			return nil, .No_Slot
+			return nil, .Budget_Or_Capacity_Exhausted
 		}
 		free = &table.modules[chosen[0]]
 		close(free.memory)
@@ -972,7 +973,7 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 	written := module_prepare(file, hash, part, base, 0, imports, error) or_return
 	if written.memory == 0 {
 		free^ = {} // No segment: nothing to keep, and the place stays free.
-		return free, .Ok
+		return free, .Succeeded
 	}
 	defer close(written.memory)
 	// After the preparation, nobody writes the module: the table keeps a
@@ -983,12 +984,12 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 	// A refused copy leaves the place free: the place must never name the
 	// handle that the defer above closes.
 	given, given_status := give(0, written.memory, {.Read, .Execute})
-	if given_status != .Ok {
+	if given_status != .Succeeded {
 		free^ = {}
 		return nil, given_status
 	}
 	free.memory = given
-	return free, .Ok
+	return free, .Succeeded
 }
 
 // segments_map maps each segment of a module in a process, with the
@@ -998,7 +999,7 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 // rebased and bound, when code is not the part All. A process does not
 // write a prepared module.
 @(private)
-segments_map :: proc "contextless" (file: []u8, hash: [32]u8, code, fixed: ^Prepared, process: Handle, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> Status {
+segments_map :: proc "contextless" (file: []u8, hash: [32]u8, code, fixed: ^Prepared, process: Handle, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> call_outcome.Call_Outcome {
 	for index in 1 ..< module.count(file, .Segments) {
 		segment, _ := module.record(file, .Segments, index, module.Segment)
 		flags := segment_flags(segment)
@@ -1007,7 +1008,7 @@ segments_map :: proc "contextless" (file: []u8, hash: [32]u8, code, fixed: ^Prep
 			own := segment_copy(file, hash, segment, base, budget, imports, error) or_return
 			_, status := memory_map(own, flags, process, base + segment.memory_offset)
 			close(own)
-			if status != .Ok {
+			if status != .Succeeded {
 				return status
 			}
 			continue
@@ -1017,17 +1018,17 @@ segments_map :: proc "contextless" (file: []u8, hash: [32]u8, code, fixed: ^Prep
 		}
 		memory_map(from.memory, flags, process, base + segment.memory_offset, (segment.memory_offset - from.first) / PAGE_SIZE, segment.memory_size / PAGE_SIZE) or_return
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // segment_copy makes the memory of one writable segment for one process:
 // the bytes of the file, rebased and bound. The pages that the copy does
 // not write stay pages on first use.
 @(private)
-segment_copy :: proc "contextless" (file: []u8, hash: [32]u8, segment: module.Segment, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> (memory: Handle, status: Status) {
+segment_copy :: proc "contextless" (file: []u8, hash: [32]u8, segment: module.Segment, base: u64, budget: Handle, imports: []module.Bound_Import, error: ^module.Load_Error) -> (memory: Handle, status: call_outcome.Call_Outcome) {
 	memory = memory_create(segment.memory_size / PAGE_SIZE, budget) or_return
 	address: rawptr
-	if address, status = memory_map(memory); status != .Ok {
+	if address, status = memory_map(memory); status != .Succeeded {
 		close(memory)
 		return 0, status
 	}
@@ -1042,9 +1043,9 @@ segment_copy :: proc "contextless" (file: []u8, hash: [32]u8, segment: module.Se
 	memory_unmap(address)
 	if !ok {
 		close(memory)
-		return 0, .Bad_Operation
+		return 0, .Argument_Refused
 	}
-	return memory, .Ok
+	return memory, .Succeeded
 }
 
 // source_closure gives the files that a load of a module reads from a load
@@ -1130,9 +1131,9 @@ source_closure :: proc "contextless" (source: Load_Source, file: []u8, files: ^[
 //             instruction (src/md/features/record_and_replay.md).
 // The module is at PROCESS_BASE, its imports after it.
 // The process stops when the last handle to it closes.
-process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0, wiring: ^Start_Wiring = nil, held_entry: ^u64 = nil, ready: ^Ready_Ring = nil) -> (process: Handle, status: Status) {
+process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0, wiring: ^Start_Wiring = nil, held_entry: ^u64 = nil, ready: ^Ready_Ring = nil) -> (process: Handle, status: call_outcome.Call_Outcome) {
 	if len(file) == 0 || module.validate(file) != .None || grants[op.CONTEXT_BUDGET].handle != 0 || grants[op.CONTEXT_WIRING_RING].handle != 0 || grants[op.CONTEXT_LOG_OUTPUT].handle != 0 || grants[op.CONTEXT_LOG_OUTPUT_END].handle != 0 || grants[op.CONTEXT_READY_RING].handle != 0 {
-		return 0, .Bad_Operation
+		return 0, .Argument_Refused
 	}
 	// Each process has a random seed from its starter (docs/RANDOMNESS.md):
 	// a starter that forgot it does not start a process with no seed.
@@ -1141,25 +1142,25 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 		seed_given |= values[op.CONTEXT_VALUE_SEED + index]
 	}
 	if seed_given == 0 {
-		return 0, .Bad_Operation
+		return 0, .Argument_Refused
 	}
 	head, _ := module.header(file)
 	entry, has_entry := module.export_address(file, op.PROCESS_BASE, head.entry_export)
 	if !has_entry {
-		return 0, .Bad_Operation
+		return 0, .Argument_Refused
 	}
 
 	// The process holds the one handle to its budget: when the process
 	// stops, the budget ends.
 	budget: Handle
 	budget, status = budget_create(amounts, from_budget)
-	if status != .Ok {
+	if status != .Succeeded {
 		return 0, status
 	}
 	defer close(budget)
 	results: [7]u64
 	results, status = call(.Process_Create, u64(budget), u64(uintptr(raw_data(name))), u64(len(name)))
-	if status != .Ok {
+	if status != .Succeeded {
 		return 0, status
 	}
 	process = Handle(results[0])
@@ -1172,17 +1173,15 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 	}
 	loaded: module.Load_Error
 	if _, ok := module_space_load(&space, file, &loaded); !ok {
-		// The border gives Bad_Operation for a status word that names no
-		// status: the status of the map, never a status that it did not give.
-		status = .Bad_Operation
+		status = .Argument_Refused
 		if loaded.stage == u32(module.Load_Stage.Map) {
-			status, _ = status_of_word(loaded.status)
+			status, _ = call_outcome.outcome_of_word(u64(loaded.status))
 		}
 	}
 	if error != nil {
 		error^ = loaded
 	}
-	if status == .Ok && wiring != nil && wiring.keep_budget {
+	if status == .Succeeded && wiring != nil && wiring.keep_budget {
 		// The starter keeps a handle of the budget, to pay what the child
 		// asks for from it.
 		wiring.budget, status = give(0, budget, {.Read, .Spend})
@@ -1190,25 +1189,25 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 	// The ready ring: the budget of the process pays it, as each object of
 	// its start, so the floor of its module counts it.
 	given := grants
-	if status == .Ok && ready != nil {
+	if status == .Succeeded && ready != nil {
 		ready^ = {}
 		ready.memory, status = memory_create(ring.pages(READY_RING_CAPACITY), budget)
-		if status == .Ok {
+		if status == .Succeeded {
 			ready.mapped, status = ring_open(ready.memory)
 		}
 		given[op.CONTEXT_READY_RING] = {ready.memory, {.Read, .Write}}
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		status = process_fill(process, budget, given, values, mappings, file, wiring)
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		if held_entry != nil {
 			held_entry^ = u64(entry)
 		} else {
 			status = process_release(process, u64(entry))
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		process_stop(process)
 		close(process)
 		if wiring != nil {
@@ -1225,18 +1224,18 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 		}
 		return 0, status
 	}
-	return process, .Ok
+	return process, .Succeeded
 }
 
 // process_release starts a process that process_start built and held
 // before its first instruction, at the entry address that it gave.
-process_release :: proc "contextless" (process: Handle, entry: u64) -> Status {
+process_release :: proc "contextless" (process: Handle, entry: u64) -> call_outcome.Call_Outcome {
 	_, status := call(.Process_Start, u64(process), entry, op.STACK_TOP, op.CONTEXT_ADDRESS)
 	return status
 }
 
 @(private)
-process_fill :: proc "contextless" (process: Handle, budget: Handle, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping, file: []u8 = nil, wiring: ^Start_Wiring = nil) -> Status {
+process_fill :: proc "contextless" (process: Handle, budget: Handle, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, mappings: []Mapping, file: []u8 = nil, wiring: ^Start_Wiring = nil) -> call_outcome.Call_Outcome {
 	for mapping in mappings {
 		memory_map(mapping.memory, mapping.flags, process, mapping.address, mapping.first, mapping.page_count) or_return
 	}
@@ -1266,7 +1265,7 @@ process_fill :: proc "contextless" (process: Handle, budget: Handle, grants: [op
 	}
 	record.values = values
 	memory_map(record_memory, {.Write}, process, op.CONTEXT_ADDRESS) or_return
-	return .Ok
+	return .Succeeded
 }
 
 @(rodata)
@@ -1460,12 +1459,12 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 	case .Map, .Unmap:
 		write_part(writer, stage == .Map ? "the kernel refused to map " : "the kernel refused to remove ")
 		name(writer, &error.module)
-		// The name of the contract (op.STATUS_NAMES). The record can come
-		// from another process: a word that names no status is written as
-		// its number.
+		// The name of the contract (call_outcome.CALL_OUTCOME_NAMES). The
+		// record can come from another process: a word that names no outcome
+		// is written as its number.
 		write_part(writer, ": status ")
-		if status, known := op.status_of_word(u64(error.status)); known {
-			write_part(writer, op.STATUS_NAMES[status])
+		if outcome, known := enum_word.member_of_word(call_outcome.Call_Outcome, u64(error.status)); known {
+			write_part(writer, call_outcome.CALL_OUTCOME_NAMES[outcome])
 		} else {
 			write_part(writer, u64(error.status))
 		}
@@ -1514,7 +1513,7 @@ process_entries :: proc "contextless" (process: Handle) -> u64 {
 // and no later one. The handle needs the right Read.
 //
 // Example: `slot, serial, status := system.process_place(child)`.
-process_place :: proc "contextless" (process: Handle) -> (slot: u64, serial: u64, status: Status) {
+process_place :: proc "contextless" (process: Handle) -> (slot: u64, serial: u64, status: call_outcome.Call_Outcome) {
 	results: [7]u64
 	results, status = call(.Process_State, u64(process))
 	return results[4], results[5], status
@@ -1552,22 +1551,22 @@ process_state :: proc "contextless" (process: Handle) -> (state: op.Process_Stat
 // instruction any more.
 //
 // Example: `system.process_stop(child)`, then `system.close(child)`.
-process_stop :: proc "contextless" (process: Handle) -> Status {
+process_stop :: proc "contextless" (process: Handle) -> call_outcome.Call_Outcome {
 	_, status := call(.Process_Stop, u64(process), 0, 0)
 	return status
 }
 
 // stop_outcome_of_grant gives the stop outcome of a process that cannot use
 // a handle of its context: `Refused` when the starter gave no handle there
-// (0) or one that names no such object or lacks a right (`Bad_Handle`,
-// `No_Right`), since the context is then wrong; `Failed` for each other
-// status, a budget or a memory that ran short, since the same context can
-// work at the next start. A start policy starts a row again after `Failed`
-// and never after `Refused`.
+// (0) or one that names no such object or lacks a right (`Argument_Refused`,
+// `Grant_Or_Right_Missing`), since the context is then wrong; `Failed` for
+// each other outcome, a budget or a memory that ran short, since the same
+// context can work at the next start. A start policy starts a row again
+// after `Failed` and never after `Refused`.
 //
-// Example: `system.stop(system.stop_outcome_of_grant(ctx.handles[GRANT_PAGE], status))`.
-stop_outcome_of_grant :: proc "contextless" (handle: Handle, status: Status) -> op.Stop_Outcome {
-	if handle == 0 || status == .Bad_Handle || status == .No_Right {
+// Example: `system.stop(system.stop_outcome_of_grant(ctx.handles[GRANT_PAGE], outcome))`.
+stop_outcome_of_grant :: proc "contextless" (handle: Handle, outcome: call_outcome.Call_Outcome) -> op.Stop_Outcome {
+	if handle == 0 || outcome == .Argument_Refused || outcome == .Grant_Or_Right_Missing {
 		return .Refused
 	}
 	return .Failed

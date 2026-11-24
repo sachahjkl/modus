@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/operation"
@@ -32,18 +33,18 @@ TEST_OUTPUT_OPERATION_REPLAY :: foundation.BUILD_FOLDER + "/test_output_operatio
 // ---------------------------------------------------------------------
 // The statuses of the reference comments.
 
-// The statuses that the reference comment of each operation lists in its
-// part "**Statuses**". `Ok` is no refusal and is in no list.
-Operation_Statuses :: [operation.Operation]bit_set[operation.Status]
+// The outcomes that the reference comment of each operation lists in its
+// part "**Statuses**". `Succeeded` is no refusal and is in no list.
+Operation_Statuses :: [operation.Operation]bit_set[call_outcome.Call_Outcome]
 
 // operation_statuses_of_comment reads the list "**Statuses**" of the
-// comment of one operation: each line "- `A`, `B`: text" names the statuses
+// comment of one operation: each line "- `A`, `B`: text" names the outcomes
 // in code marks before its first colon. The list ends at the next heading:
 // a line that starts with "**" at its first column. A line of an item that
 // goes on is indented, so a bold word at its start ("  **Counters** gives")
-// is no heading. A name that is no status, a list with no line, and a
+// is no heading. A name that is no outcome, a list with no line, and a
 // comment with no list are refused.
-operation_statuses_of_comment :: proc(comment: string) -> (statuses: bit_set[operation.Status], problem: string) {
+operation_statuses_of_comment :: proc(comment: string) -> (statuses: bit_set[call_outcome.Call_Outcome], problem: string) {
 	heading := strings.index(comment, "**Statuses**")
 	if heading < 0 {
 		return {}, "the comment has no part **Statuses**"
@@ -74,8 +75,8 @@ operation_statuses_of_comment :: proc(comment: string) -> (statuses: bit_set[ope
 			}
 			name := head[open + 1:][:close]
 			known := false
-			for status in operation.Status {
-				if operation.STATUS_NAMES[status] == name && status != .Ok {
+			for status in call_outcome.Call_Outcome {
+				if call_outcome.CALL_OUTCOME_NAMES[status] == name && status != .Succeeded {
 					statuses += {status}
 					known = true
 				}
@@ -252,7 +253,7 @@ operation_stop_pair_problem :: proc(outcome: operation_sequence.Execution_Outcom
 @(private = "file")
 operation_step_findings :: proc(sequence: ^operation_sequence.Sequence, results: ^operation_sequence.Runner_Results, grammar: ^Operation_Grammar, step: int, findings: ^[dynamic]Operation_Finding) {
 	result := &results.results[step]
-	status, status_known := enum_word.member_of_word(operation.Status, result.status)
+	status, status_known := enum_word.member_of_word(call_outcome.Call_Outcome, result.status)
 	if !status_known {
 		append(findings, Operation_Finding{.Status_Word, step, fmt.tprintf("the status word %d names no status", result.status)})
 		return
@@ -264,7 +265,7 @@ operation_step_findings :: proc(sequence: ^operation_sequence.Sequence, results:
 		return
 	}
 	name := operation.OPERATIONS[chosen].name
-	if status != .Ok && status not_in grammar.statuses[chosen] {
+	if status != .Succeeded && status not_in grammar.statuses[chosen] {
 		append(findings, Operation_Finding{.Status_Not_Listed, step, fmt.tprintf("%s gave %v, which its reference does not list", name, status)})
 	}
 	values := result.words
@@ -272,7 +273,7 @@ operation_step_findings :: proc(sequence: ^operation_sequence.Sequence, results:
 		if !operation.argument_is_read(chosen, index, values) {
 			continue
 		}
-		if problem, limit := operation.argument_value_problem(chosen, index, values); problem != .None && status == .Ok {
+		if problem, limit := operation.argument_value_problem(chosen, index, values); problem != .None && status == .Succeeded {
 			append(findings, Operation_Finding{.Form_Refusal_Accepted, step, fmt.tprintf("%s took the value %d of %s, which its form refuses with %v (limit %d)", name, values[index], operation.OPERATIONS[chosen].parameters[index].name, problem, limit)})
 		}
 	}
@@ -280,13 +281,13 @@ operation_step_findings :: proc(sequence: ^operation_sequence.Sequence, results:
 		operation_details_findings(chosen, status, result, step, findings)
 	}
 	// A planted Handle_State of the first value of an earlier step.
-	if chosen == .Handle_State && status == .Ok {
+	if chosen == .Handle_State && status == .Succeeded {
 		argument := sequence.steps[step].arguments[0]
 		if argument.source == .Result && argument.place == 0 && argument.offset == 0 {
 			earlier := &results.results[argument.step]
 			earlier_operation, earlier_known := enum_word.member_of_word(operation.Operation, u64(sequence.steps[argument.step].operation))
 			expected := grammar.results[earlier_operation]
-			if earlier_known && earlier.status == u64(operation.Status.Ok) && expected.handle && expected.kind != .None && result.values[0] != u64(expected.kind) {
+			if earlier_known && earlier.status == u64(call_outcome.Call_Outcome.Succeeded) && expected.handle && expected.kind != .None && result.values[0] != u64(expected.kind) {
 				append(findings, Operation_Finding{.Handle_Kind, step, fmt.tprintf("the handle of step %d (%s) has the kind %d, and its reference says %v", argument.step, operation.OPERATIONS[earlier_operation].name, result.values[0], expected.kind)})
 			}
 		}
@@ -294,14 +295,14 @@ operation_step_findings :: proc(sequence: ^operation_sequence.Sequence, results:
 }
 
 // operation_unknown_findings checks the answer to a word that names no
-// operation: the status Bad_Operation, the error record Unknown_Operation
+// operation: the outcome Operation_Unsupported, the error record Unknown_Operation
 // with the kind that the runner sent (the bit of a table included) and the
 // last operation as its limit, and a table of error details that the kernel
 // did not write: it reads no table for a kind of no operation
 // (src/md/features/kernel_error_details.md).
 @(private = "file")
-operation_unknown_findings :: proc(word: u32, status: operation.Status, result: ^operation_sequence.Step_Result, step: int, findings: ^[dynamic]Operation_Finding) {
-	if status != .Bad_Operation {
+operation_unknown_findings :: proc(word: u32, status: call_outcome.Call_Outcome, result: ^operation_sequence.Step_Result, step: int, findings: ^[dynamic]Operation_Finding) {
+	if status != .Operation_Unsupported {
 		append(findings, Operation_Finding{.Unknown_Operation, step, fmt.tprintf("the word %d names no operation and gave %v", word, status)})
 		return
 	}
@@ -327,9 +328,9 @@ operation_unknown_findings :: proc(word: u32, status: operation.Status, result: 
 // other argument that the checks of its form find wrong
 // (src/md/features/kernel_error_details.md).
 @(private = "file")
-operation_details_findings :: proc(chosen: operation.Operation, status: operation.Status, result: ^operation_sequence.Step_Result, step: int, findings: ^[dynamic]Operation_Finding) {
+operation_details_findings :: proc(chosen: operation.Operation, status: call_outcome.Call_Outcome, result: ^operation_sequence.Step_Result, step: int, findings: ^[dynamic]Operation_Finding) {
 	name := operation.OPERATIONS[chosen].name
-	if status == .Ok {
+	if status == .Succeeded {
 		pattern := operation_sequence.details_pattern()
 		changed := result.details_count != 0
 		for detail in result.details {
@@ -379,7 +380,7 @@ operation_details_findings :: proc(chosen: operation.Operation, status: operatio
 operation_budget_read_findings :: proc(sequence: ^operation_sequence.Sequence, results: ^operation_sequence.Runner_Results, steps_run: int, findings: ^[dynamic]Operation_Finding) {
 	planted :: proc(sequence: ^operation_sequence.Sequence, results: ^operation_sequence.Runner_Results, step: int) -> bool {
 		item := &sequence.steps[step]
-		return item.operation == u32(operation.Operation.Budget_Read) && item.arguments[0].source == .Budget && results.results[step].status == u64(operation.Status.Ok)
+		return item.operation == u32(operation.Operation.Budget_Read) && item.arguments[0].source == .Budget && results.results[step].status == u64(call_outcome.Call_Outcome.Succeeded)
 	}
 	before := -1
 	for step in 0 ..< steps_run {
@@ -393,7 +394,7 @@ operation_budget_read_findings :: proc(sequence: ^operation_sequence.Sequence, r
 			before = step
 			continue
 		}
-		if results.results[step].status == u64(operation.Status.Ok) {
+		if results.results[step].status == u64(call_outcome.Call_Outcome.Succeeded) {
 			before = -1
 		}
 	}
@@ -463,7 +464,7 @@ OPERATION_SEED_TEXT :: "seed"
 Operation_Seed_Expectation :: struct {
 	sequence:               int, // The seed, from 0, in the order of operation_seed_sequences.
 	step:                   int,
-	status:                 operation.Status,
+	status:                 call_outcome.Call_Outcome,
 	record_kind:            errors.Kind,
 	record_argument:        i64, // From 1; 0: the call as a whole.
 	detail_kind:            errors.Kind,
@@ -599,7 +600,7 @@ operation_seed_sequences :: proc(allocator := context.allocator, expectations: ^
 		steps := [?]operation_sequence.Sequence_Step{budget_read, unknown, no_table, none, none_no_table, budget_read}
 		add(&list, operation_seed_sequence(steps[:]), allocator)
 		for step in 1 ..= 4 {
-			expect(expectations, &list, Operation_Seed_Expectation{step = step, status = .Bad_Operation, record_kind = .Unknown_Operation})
+			expect(expectations, &list, Operation_Seed_Expectation{step = step, status = .Operation_Unsupported, record_kind = .Unknown_Operation})
 		}
 	}
 	// A commit whose memory and budget are 0 and whose count passes its
@@ -618,9 +619,9 @@ operation_seed_sequences :: proc(allocator := context.allocator, expectations: ^
 		add(&list, operation_seed_sequence(steps[:]), allocator)
 		COMMIT_BUDGET_ARGUMENT :: 2
 		COMMIT_COUNT_ARGUMENT :: 4
-		expect(expectations, &list, Operation_Seed_Expectation{step = 1, status = .Bad_Handle, record_kind = .Handle_Absent, record_argument = 1, detail_kind = .Handle_Absent, detail_argument = COMMIT_BUDGET_ARGUMENT})
-		expect(expectations, &list, Operation_Seed_Expectation{step = 1, status = .Bad_Handle, record_kind = .Handle_Absent, record_argument = 1, detail_kind = .Too_Long, detail_argument = COMMIT_COUNT_ARGUMENT})
-		expect(expectations, &list, Operation_Seed_Expectation{step = 2, status = .Bad_Handle, record_kind = .Handle_Absent, record_argument = 1, detail_kind = .Too_Long, detail_argument = COMMIT_COUNT_ARGUMENT, absent_detail_argument = COMMIT_BUDGET_ARGUMENT})
+		expect(expectations, &list, Operation_Seed_Expectation{step = 1, status = .Argument_Refused, record_kind = .Handle_Absent, record_argument = 1, detail_kind = .Handle_Absent, detail_argument = COMMIT_BUDGET_ARGUMENT})
+		expect(expectations, &list, Operation_Seed_Expectation{step = 1, status = .Argument_Refused, record_kind = .Handle_Absent, record_argument = 1, detail_kind = .Too_Long, detail_argument = COMMIT_COUNT_ARGUMENT})
+		expect(expectations, &list, Operation_Seed_Expectation{step = 2, status = .Argument_Refused, record_kind = .Handle_Absent, record_argument = 1, detail_kind = .Too_Long, detail_argument = COMMIT_COUNT_ARGUMENT, absent_detail_argument = COMMIT_BUDGET_ARGUMENT})
 	}
 	// A budget and a process from the budget of the runner, with their
 	// kinds: the stop of the runner ends both, and the budget of the

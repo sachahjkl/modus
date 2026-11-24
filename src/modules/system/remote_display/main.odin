@@ -1171,7 +1171,7 @@ screen_asks_work :: proc "contextless" () {
 		// The copies of today are freed before the new ones are made: when
 		// the budget of this process holds them, their pages count.
 		pages_left: u64
-		if budget, budget_status := system.budget_read(); budget_status == .Ok {
+		if budget, budget_status := system.budget_read(); budget_status == .Succeeded {
 			pages_left = u64(budget.pages)
 		}
 		held: u64
@@ -1421,29 +1421,29 @@ capture_size_take :: proc "contextless" (width, height: u64, refuse := true) -> 
 	pages := display.capture_budget_pages(int(width), int(height))
 	copy_pages := mirror_pages_of(width, height)
 	mirror_release()
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	larger := !screen_paid_at_start({u32(width), u32(height)})
 	paying, paying_known := memory_screen.held_extras_of_size(&extras, width, height)
 	if !larger {
 		paying = {}
 	}
 	if larger && !paying_known {
-		status = .No_Budget
+		status = .Budget_Or_Capacity_Exhausted
 	} else {
 		mirror_memory, status = system.memory_create(copy_pages, system.Handle(paying.handle))
 	}
 	mirror_address: rawptr
-	if status == .Ok {
+	if status == .Succeeded {
 		mirror_address, status = system.memory_map(mirror_memory, {.Write})
 	} else {
 		mirror_memory = 0
 	}
 	budget: system.Handle
-	if status == .Ok {
+	if status == .Succeeded {
 		mirror = ([^]u32)(mirror_address)
 		budget, status = system.budget_create({pages = pages}, system.Handle(paying.handle))
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		mirror_release()
 		system.log_fact(.Info, Capture_Memory_Refused{width = width, height = height, pages = value_kinds.Size_In_Pages(pages + copy_pages)})
 		if refuse {
@@ -1453,7 +1453,7 @@ capture_size_take :: proc "contextless" (width, height: u64, refuse := true) -> 
 	}
 	given, give_status := system.give(window_memory, budget, {.Spend, .Read})
 	system.close(budget)
-	if give_status != .Ok {
+	if give_status != .Succeeded {
 		system.log_fact(.Info, Capture_Memory_Not_Given{})
 		mirror_release()
 		if refuse {
@@ -1511,11 +1511,11 @@ capture_opened_take :: proc "contextless" (memory: system.Handle, past_handle: b
 	width, height := int(screen.width), int(screen.height)
 	pages, size_status := system.memory_size(memory)
 	address: rawptr
-	map_status := system.Status.Bad_Handle
-	if kind == .Memory && .Read in rights && size_status == .Ok && pages >= display.capture_pages(width, height) {
+	map_status := call_outcome.Call_Outcome.Argument_Refused
+	if kind == .Memory && .Read in rights && size_status == .Succeeded && pages >= display.capture_pages(width, height) {
 		address, map_status = system.memory_map(memory, {})
 	}
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(memory)
 		capture_open_failed()
 		return
@@ -1704,25 +1704,25 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	quic_endpoint.on_held_overflow = held_overflow_fail
 	listen_port = quic_endpoint.listen_port
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	window_memory = ctx.handles[system.GRANT_DISPLAY]
-	if window, status = system.ring_open(window_memory, receive_handles = true); status != .Ok {
+	if window, status = system.ring_open(window_memory, receive_handles = true); status != .Succeeded {
 		fail("no ring of a window: the capture face rides it")
 	}
 	// The root ring carries Screen_Budget: the growth of the budgets of a
 	// screen of memory.
-	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT]); status != .Ok {
+	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT]); status != .Succeeded {
 		fail("no ring to the root service")
 	}
 	client_table_address, client_table_status := system.memory_map(ctx.handles[remote.GRANT_CLIENT_TABLE], {})
-	if client_table_status != .Ok {
+	if client_table_status != .Succeeded {
 		fail("no client table: the process has no grant Remote_Clients")
 	}
 	client_table = (^remote.Client_Table)(client_table_address)
 	configuration.tls.client_key_check = client_key_allowed
 	memory, memory_status := system.memory_create(TABLE_PAGES)
 	table, table_status := system.memory_map(memory, {.Write})
-	if memory_status != .Ok || table_status != .Ok {
+	if memory_status != .Succeeded || table_status != .Succeeded {
 		fail("no memory for the table of connections")
 	}
 	quic_connections = ([^]quic.Connection)(table)[:CAPACITY]

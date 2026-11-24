@@ -242,32 +242,32 @@ events_set :: proc "contextless" (process_index: u32, v: [7]u64, results: ^[7]u6
 	owned := event_table.owner == process_index && event_table.owner_serial == process.serial
 	if v[1] == 0 {
 		if !owned {
-			return .Bad_State // The caller has no table to take away.
+			return .Wrong_State // The caller has no table to take away.
 		}
 		event_table_end(.Taken_Away)
-		return .Ok
+		return .Succeeded
 	}
 	memory := handle_find(process, v[1], .Memory, {.Write}) or_return
 	if v[3] > op.EVENT_RULE_CAPACITY {
-		return .No_Slot
+		return .Argument_Refused
 	}
 	records := v[4]
 	if v[3] == 0 || records < op.EVENT_RING_RECORDS_LEAST || records > op.EVENT_RING_RECORDS_MOST || records & (records - 1) != 0 {
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	// The rings are written through the direct map, with no fault: frames
 	// that the memory object has from its creation and that do not move,
 	// and frames of the page frame table, not the registers of a device.
 	region := &regions[memory.object]
 	if !region.contiguous || region.device {
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	ring_bytes := op.EVENT_RING_HEAD_BYTES + records * size_of(op.Event_Record)
 	if region.page_count * PAGE_SIZE / ring_bytes < u64(processor_count) {
-		return .Bad_Operation // One ring for each processor does not fit.
+		return .Argument_Refused // One ring for each processor does not fit.
 	}
 	if !user_range(process, v[2], v[3] * size_of(op.Event_Rule), false) {
-		return .Bad_Address
+		return .Argument_Refused
 	}
 	// One copy of the rules of the caller: each later test reads the copy,
 	// never the memory of the process again.
@@ -285,13 +285,13 @@ events_set :: proc "contextless" (process_index: u32, v: [7]u64, results: ^[7]u6
 		slot_set.add(&table.processes[kept.kind], kept.process)
 	}
 	if event_table.owner != 0 && !owned {
-		return .Bad_State // Another process observes the kernel: one table at a time.
+		return .Wrong_State // Another process observes the kernel: one table at a time.
 	}
 	event_table_end(.Taken_Away)
 	event_table_give(&table, memory.object, process_index)
 	results[0] = ring_bytes
 	results[1] = u64(processor_count)
-	return .Ok
+	return .Succeeded
 }
 
 // event_rule_check checks one rule of the caller and gives it as the kernel
@@ -300,7 +300,7 @@ events_set :: proc "contextless" (process_index: u32, v: [7]u64, results: ^[7]u6
 event_rule_check :: proc "contextless" (process: ^Process, rule: op.Event_Rule) -> (kept: Event_Rule_In_Kernel, status: Operation_Outcome) {
 	kind, fields_ok := op.event_rule_check_fields(rule)
 	if !fields_ok {
-		return {}, .Bad_Operation
+		return {}, .Argument_Refused
 	}
 	kept = {
 		kind         = kind,
@@ -315,7 +315,7 @@ event_rule_check :: proc "contextless" (process: ^Process, rule: op.Event_Rule) 
 		kept.process = slot.object
 		kept.process_serial = intrinsics.atomic_load(&processes[slot.object].serial)
 	}
-	return kept, .Ok
+	return kept, .Succeeded
 }
 
 // event_table_give makes a checked table the event table of the machine.

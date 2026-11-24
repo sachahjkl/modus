@@ -98,7 +98,7 @@ a_member_has_the_words_of_its_sentence :: proc(t: ^testing.T) {
 @(test)
 each_contract_enum_has_the_size_of_its_type :: proc(t: ^testing.T) {
 	testing.expect_value(t, CONTRACT_ENUM_SIZES[.None], 0)
-	testing.expect_value(t, CONTRACT_ENUM_SIZES[.Status], u32(size_of(op.Status)))
+	testing.expect_value(t, CONTRACT_ENUM_SIZES[.Call_Outcome], u32(size_of(call_outcome.Call_Outcome)))
 	testing.expect_value(t, CONTRACT_ENUM_SIZES[.Storage_Status], u32(size_of(storage_status.Status)))
 	for which in value_kinds.Contract_Enum {
 		size := CONTRACT_ENUM_SIZES[which]

@@ -31,9 +31,9 @@
 // process stops with `Done`, or with `Failed` after a WRONG line.
 package arena
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:system"
 
 // entry runs the test, writes its result on the log, and stops.
@@ -45,21 +45,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	reservation := system.arena_reservation_pages(before.pages)
 	record: errors.Error_Record
 	arena, created := system.arena_create(reservation, error = &record)
-	if created != .Ok {
-		system.log_fact(.Info, Wrong_Reservation{reservation_pages = reservation, status = op.Status_Word(created)})
+	if created != .Succeeded {
+		system.log_fact(.Info, Wrong_Reservation{reservation_pages = reservation, status = call_outcome.Call_Outcome_Word(created)})
 		system.stop(.Failed)
 	}
 
 	first: rawptr
 	pushes: u64
 	nonzero: u64
-	refused: system.Status
+	refused: call_outcome.Call_Outcome
 	// The start is done: the first state of work of the process
 	// (src/md/features/module_budget_request.md, "The first state of work").
 	system.ready()
 	for {
 		page, status := system.arena_push(&arena, system.PAGE_SIZE, system.PAGE_SIZE, &record)
-		if status != .Ok {
+		if status != .Succeeded {
 			refused = status
 			break
 		}
@@ -76,12 +76,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	kept := arena
 	held, _ := system.budget_read()
-	refusal_is_of_the_budget := refused == .No_Budget && (record.kind == i64(errors.Kind.Budget) || record.kind == i64(errors.Kind.Budget_Hidden))
+	refusal_is_of_the_budget := refused == .Budget_Or_Capacity_Exhausted && (record.kind == i64(errors.Kind.Budget) || record.kind == i64(errors.Kind.Budget_Hidden))
 	system.log_fact(.Info, Arena_Grew{committed_pages = arena.committed_pages, commits = arena.commit_count, reservation_pages = reservation, pushes = pushes, budget_pages_before = before.pages, budget_pages_after = held.pages})
 
 	// A second refused push: the process still runs, and nothing changed.
 	_, again := system.arena_push(&arena, system.PAGE_SIZE, system.PAGE_SIZE)
-	unchanged := again == .No_Budget && arena == kept
+	unchanged := again == .Budget_Or_Capacity_Exhausted && arena == kept
 
 	// The same pushes after a reset: each address the one of its page
 	// before the reset, and no commit.
@@ -89,7 +89,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	reused := true
 	for index in 0 ..< pushes {
 		page, status := system.arena_push(&arena, system.PAGE_SIZE, system.PAGE_SIZE)
-		if status != .Ok || uintptr(page) != uintptr(first) + uintptr(index * system.PAGE_SIZE) {
+		if status != .Succeeded || uintptr(page) != uintptr(first) + uintptr(index * system.PAGE_SIZE) {
 			reused = false
 			break
 		}
@@ -104,15 +104,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	right := false
 	switch {
 	case !refusal_is_of_the_budget:
-		system.log_fact(.Info, Wrong_Growth_Stop{status = op.Status_Word(refused), error_kind = errors.Kind_Word(record.kind)})
+		system.log_fact(.Info, Wrong_Growth_Stop{status = call_outcome.Call_Outcome_Word(refused), error_kind = errors.Kind_Word(record.kind)})
 	case pushes == 0 || nonzero != 0:
 		system.log_fact(.Info, Wrong_Pushes{pushes = pushes, nonzero_pages = nonzero})
 	case held.pages != 0 || !unchanged:
-		system.log_fact(.Info, Wrong_After_Refusal{budget_pages = held.pages, status = op.Status_Word(again)})
+		system.log_fact(.Info, Wrong_After_Refusal{budget_pages = held.pages, status = call_outcome.Call_Outcome_Word(again)})
 	case !reused:
 		system.log_fact(.Info, Wrong_Reset{})
-	case ended != .Ok || after.pages != before.pages:
-		system.log_fact(.Info, Wrong_End{status = op.Status_Word(ended), budget_pages_after = after.pages, budget_pages_before = before.pages})
+	case ended != .Succeeded || after.pages != before.pages:
+		system.log_fact(.Info, Wrong_End{status = call_outcome.Call_Outcome_Word(ended), budget_pages_after = after.pages, budget_pages_before = before.pages})
 	case:
 		system.log_fact(.Info, Arena_Checked{})
 		right = true

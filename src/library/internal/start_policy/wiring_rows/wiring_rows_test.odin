@@ -3,8 +3,8 @@ package wiring_rows
 
 import "base:intrinsics"
 import "core:testing"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/start_list"
 import "modus:contract/wide_grants"
@@ -19,13 +19,13 @@ lend_count: int
 lend_failing: int
 
 @(private = "file")
-test_lend :: proc "contextless" (reader_row: int) -> (number: u32, status: op.Status) {
+test_lend :: proc "contextless" (reader_row: int) -> (number: u32, status: call_outcome.Call_Outcome) {
 	lend_count += 1
 	if lend_count == lend_failing {
-		return 0, .No_Slot
+		return 0, .Budget_Or_Capacity_Exhausted
 	}
 	lent_readers[lend_count - 1] = reader_row
-	return u32(10 + lend_count), .Ok
+	return u32(10 + lend_count), .Succeeded
 }
 
 @(private = "file")
@@ -100,7 +100,7 @@ a_writer_whose_wiring_fails_does_not_start :: proc(t: ^testing.T) {
 	not_running := [4]bool{true, false, false, false}
 	lends_reset(0)
 	prepared := row_list_prepare(&list, 2, not_running[:], page, test_lend)
-	testing.expect_value(t, prepared, Prepared{outcome = .Reader_Not_Running, reader_row = 2, status = .Ok})
+	testing.expect_value(t, prepared, Prepared{outcome = .Reader_Not_Running, reader_row = 2, status = .Succeeded})
 	testing.expect_value(t, lend_count, 0)
 	testing.expect_value(t, page[0], 0xAA)
 	short_running := [1]bool{true}
@@ -111,21 +111,21 @@ a_writer_whose_wiring_fails_does_not_start :: proc(t: ^testing.T) {
 	running := [4]bool{true, true, false, false}
 	lends_reset(1)
 	prepared = row_list_prepare(&list, 2, running[:], page, test_lend)
-	testing.expect_value(t, prepared, Prepared{outcome = .Lend_Refused, reader_row = 1, status = .No_Slot, give_back = false})
+	testing.expect_value(t, prepared, Prepared{outcome = .Lend_Refused, reader_row = 1, status = .Budget_Or_Capacity_Exhausted, give_back = false})
 	for value in page {
 		testing.expect_value(t, value, 0)
 	}
 
 	lends_reset(2)
 	prepared = row_list_prepare(&list, 2, running[:], page, test_lend)
-	testing.expect_value(t, prepared, Prepared{outcome = .Lend_Refused, reader_row = 2, status = .No_Slot, give_back = true})
+	testing.expect_value(t, prepared, Prepared{outcome = .Lend_Refused, reader_row = 2, status = .Budget_Or_Capacity_Exhausted, give_back = true})
 	expect_given_back(t, page, {11})
 
 	// Room for the way back of two numbers, and not for the three rows.
 	short_page := page[:output.wiring_terms_start(3, 2) - 1]
 	lends_reset(0)
 	prepared = row_list_prepare(&list, 2, running[:], short_page, test_lend)
-	testing.expect_value(t, prepared, Prepared{outcome = .List_Not_Written, status = .Bad_Operation, give_back = true})
+	testing.expect_value(t, prepared, Prepared{outcome = .List_Not_Written, status = .Argument_Refused, give_back = true})
 	expect_given_back(t, short_page, {11, 12})
 }
 
@@ -163,11 +163,11 @@ a_writer_gets_the_list_of_its_rows :: proc(t: ^testing.T) {
 	running := [4]bool{true, true, false, false}
 	lends_reset(0)
 	prepared := row_list_prepare(&list, 3, running[:], page, test_lend)
-	testing.expect_value(t, prepared, Prepared{outcome = .No_List, status = .Ok})
+	testing.expect_value(t, prepared, Prepared{outcome = .No_List, status = .Succeeded})
 	testing.expect_value(t, lend_count, 0)
 
 	prepared = row_list_prepare(&list, 2, running[:], page, test_lend)
-	testing.expect_value(t, prepared, Prepared{outcome = .Listed, status = .Ok})
+	testing.expect_value(t, prepared, Prepared{outcome = .Listed, status = .Succeeded})
 	testing.expect_value(t, lend_count, 2)
 	testing.expect_value(t, lent_readers[0], 0)
 	testing.expect_value(t, lent_readers[1], 1)
@@ -221,7 +221,7 @@ the_rows_of_a_writer_are_one_list :: proc(t: ^testing.T) {
 	}
 	lends_reset(0)
 	prepared := row_list_prepare(&list, writer, running, page, test_lend)
-	testing.expect_value(t, prepared, Prepared{outcome = .Listed, status = .Ok})
+	testing.expect_value(t, prepared, Prepared{outcome = .Listed, status = .Succeeded})
 	testing.expect_value(t, lend_count, 20)
 	checked: output.Checked_Wiring_List
 	refusal, ok := output.wiring_list_check(page, .Start, &checked)
@@ -252,7 +252,7 @@ the_terms_of_a_row_follow_the_handles :: proc(t: ^testing.T) {
 	running := [4]bool{true, true, false, false}
 	lends_reset(0)
 	prepared := row_list_prepare(&list, 2, running[:], page, test_lend)
-	testing.expect_value(t, prepared, Prepared{outcome = .Listed, status = .Ok})
+	testing.expect_value(t, prepared, Prepared{outcome = .Listed, status = .Succeeded})
 	checked: output.Checked_Wiring_List
 	refusal, ok := output.wiring_list_check(page, .Start, &checked)
 	testing.expectf(t, ok, "the root service refuses the list: %v", refusal)
