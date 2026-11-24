@@ -8,13 +8,13 @@ import "core:strings"
 import "core:testing"
 import "modustool:foundation"
 
-// The table of the boot volumes: 20 fixed volumes and one for each test of
+// The table of the boot volumes: 21 fixed volumes and one for each test of
 // the kernel on itself, each with its own name and its own files.
 @(test)
 boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 	volumes := boot_volumes()
-	testing.expect_value(t, len(volumes), 20 + len(self_tests))
-	testing.expect_value(t, len(volumes), 27)
+	testing.expect_value(t, len(volumes), 21 + len(self_tests))
+	testing.expect_value(t, len(volumes), 28)
 	// The volumes of the TPM floors are signed for Secure Boot: only a start
 	// with the PCR 7 of Secure Boot raises a floor. The newer key differs
 	// from the newer system by its key number alone.
@@ -79,9 +79,15 @@ boot_volume_table_gives_each_volume_its_own_files :: proc(t: ^testing.T) {
 	testing.expect_value(t, boot_volume_name(foundation.BUILD_FOLDER + "/boot_volume_self_test_3.img"), "self_test_3")
 	testing.expect_value(t, boot_volume_name(BOOT_VOLUME_SHORTAGE), "shortage")
 	testing.expect_value(t, boot_volume_name(BOOT_VOLUME_MEASURE), "measure")
-	// The volume of a measure run has its own boot image.
+	testing.expect_value(t, boot_volume_name(BOOT_VOLUME_CONSOLE), "console")
+	// The volume of a measure run has its own boot image; Secure Boot uses the
+	// exact release boot image; console uses the QEMU console boot image.
 	for volume in volumes {
 		testing.expectf(t, (volume.path == BOOT_VOLUME_MEASURE) == (volume.image == BOOT_IMAGE_MEASURE), "only the volume of a measure run holds the boot image of a measure run: %s", volume.path)
+		if volume.path == BOOT_VOLUME_SECURE_BOOT || volume.path == BOOT_VOLUME_SECURE_BOOT_CHANGED {
+			testing.expect_value(t, volume.image, BOOT_IMAGE_RELEASE)
+		}
+		testing.expectf(t, (volume.path == BOOT_VOLUME_CONSOLE) == (volume.image == BOOT_IMAGE_CONSOLE), "only the console volume holds the console boot image: %s", volume.path)
 	}
 	// The variable store of Secure Boot is an output of one volume.
 	stores := 0
@@ -167,6 +173,8 @@ shared_inputs_of_a_test :: proc(image_content: string) -> Boot_Volume_Shared_Inp
 	append(&built_files, Record_Output{path = BOOT_IMAGE, hash = hash_of_text(image_content)})
 	append(&built_files, Record_Output{path = BOOT_IMAGE_SHORTAGE, hash = hash_of_text("the image of the shortage")})
 	append(&built_files, Record_Output{path = BOOT_IMAGE_MEASURE, hash = hash_of_text("the image of a measure run")})
+	append(&built_files, Record_Output{path = BOOT_IMAGE_RELEASE, hash = hash_of_text("the release boot image")})
+	append(&built_files, Record_Output{path = BOOT_IMAGE_CONSOLE, hash = hash_of_text("the console boot image")})
 	append(&built_files, Record_Output{path = foundation.module_path("kernel"), hash = hash_of_text("the kernel")})
 	append(&built_files, Record_Output{path = DEBUG_IMAGE, hash = hash_of_text("the debug image")})
 	append(&built_files, Record_Output{path = SYSTEM_KEY_FILE, hash = hash_of_text("the public key")})

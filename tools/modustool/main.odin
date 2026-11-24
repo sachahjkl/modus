@@ -270,13 +270,16 @@ COMMANDS :: [?]foundation.Command {
 	//
 	// - `without_checks` (optional): the build of the measures, with no check
 	//   in the kernel.
+	// - `--console` (optional): boots the desktop-free console volume with no
+	//   window, sending the kernel log from COM1 to `build/run_console_log.txt`
+	//   and connecting COM2 (`serial_terminal`) directly to this terminal.
 	//
 	// The data disk `build/data_disk.img` stays from run to run, so the
 	// stores of the storage service keep their objects. The command also
 	// starts the peer of the host that takes the calls of `modustool call`,
 	// on a socket that only this user reaches. Close the window, or run
 	// `shutdown()` in the console, to end it.
-	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build; `run --remote-display <viewer key>`: a machine with no window for a viewer on the host, through the UDP relay of the peer to remote_display", run = run_machine},
+	{name = "run", about = "build, then start the machine under QEMU, with the log of the kernel on this terminal; `run without_checks`: the measure build; `run --console [without_checks]`: the desktop-free console on COM2 with no window and the kernel log on COM1 in " + machine.CONSOLE_RUN_LOG + "; `run --remote-display <viewer key>`: a machine with no window for a viewer on the host, through the UDP relay of the peer to remote_display", run = run_machine},
 	// Takes the results of the check of the flake, which ran the whole
 	// machine test and the second build, then publishes them into the
 	// repository (src/md/infrastructure/full_check.md).
@@ -798,50 +801,58 @@ run_site :: proc(args: []string) -> int {
 }
 
 run_machine :: proc(args: []string) -> int {
-	if len(args) >= 1 && args[0] == "--remote-display" {
+	options, problem := machine.run_arguments_parse(args)
+	if problem != "" {
+		fmt.eprintfln("modustool: %s", problem)
+		return foundation.EXIT_USAGE
+	}
+	build.test_build_checks = options.checks
+	switch options.mode {
+	case .Remote_Display:
 		// A machine for a viewer on the host: no window, the relay of the
 		// peer to remote_display (machine/remote_display_run.odin).
-		if len(args) != 2 {
-			fmt.eprintln("modustool: run --remote-display <viewer key>: the viewer key is the 64 hexadecimal digits that `modus-viewer -print-key` prints")
-			return foundation.EXIT_USAGE
-		}
 		if code := build.build_system(build.boot_volumes_of_command("run")); code != 0 {
 			return code
 		}
-		return machine.remote_display_run(args[1]) ? 0 : foundation.EXIT_FAILURE
+		return machine.remote_display_run(options.viewer_key) ? 0 : foundation.EXIT_FAILURE
+	case .Console:
+		// Desktop-free console on COM2 with no window (machine/console_run.odin).
+		if code := build.build_system(build.boot_volumes_of_command(build.RUN_CONSOLE_COMMAND)); code != 0 {
+			return code
+		}
+		return machine.console_machine_run() ? 0 : foundation.EXIT_FAILURE
+	case .Desktop:
+		if code := build.build_system(build.boot_volumes_of_command("run")); code != 0 {
+			return code
+		}
+		if !machine.disk_prepare(machine.DATA_DISK, build.DATA_DISK_SIZE, false) {
+			return foundation.EXIT_FAILURE
+		}
+		// The peer receives the calls of `modustool call` on a Unix socket of
+		// the private folder of the user: `modustool call` finds it by its name.
+		peer: machine.Peer
+		if !machine.peer_start(&peer, machine.CALL_SOCKET_RUN_NAME) {
+			return foundation.EXIT_FAILURE
+		}
+		// The developer names the key of each start of remote in `modustool
+		// call`: this peer takes it.
+		peer.remote.keys_from_calls = true
+		fmt.printfln("modustool: the peer takes the calls of `modustool call` at %s (only this user reaches it)", peer.call_socket)
+		// remote takes the calls of a client whose key a principal allowed: a
+		// key drawn for this run, which the developer allows in a console.
+		client_key := machine.peer_remote_client_key_draw(peer.remote)
+		fmt.printfln("modustool: the key of the client of remote in the peer, for this run: %s; allow it in a console of the machine: remote_allow(\"%s\")", client_key, client_key)
+		defer machine.peer_stop(&peer)
+		command, ok := machine.machine_command(build.BOOT_VOLUME, "", machine.DATA_DISK, &peer)
+		if !ok {
+			return foundation.EXIT_FAILURE
+		}
+		if !machine.run_with_rendered_serial(command) {
+			return foundation.EXIT_FAILURE
+		}
+		return 0
 	}
-	if len(args) >= 1 && args[0] == "without_checks" {
-		build.test_build_checks = false
-	}
-	if code := build.build_system(build.boot_volumes_of_command("run")); code != 0 {
-		return code
-	}
-	if !machine.disk_prepare(machine.DATA_DISK, build.DATA_DISK_SIZE, false) {
-		return foundation.EXIT_FAILURE
-	}
-	// The peer receives the calls of `modustool call` on a Unix socket of
-	// the private folder of the user: `modustool call` finds it by its name.
-	peer: machine.Peer
-	if !machine.peer_start(&peer, machine.CALL_SOCKET_RUN_NAME) {
-		return foundation.EXIT_FAILURE
-	}
-	// The developer names the key of each start of remote in `modustool
-	// call`: this peer takes it.
-	peer.remote.keys_from_calls = true
-	fmt.printfln("modustool: the peer takes the calls of `modustool call` at %s (only this user reaches it)", peer.call_socket)
-	// remote takes the calls of a client whose key a principal allowed: a
-	// key drawn for this run, which the developer allows in a console.
-	client_key := machine.peer_remote_client_key_draw(peer.remote)
-	fmt.printfln("modustool: the key of the client of remote in the peer, for this run: %s; allow it in a console of the machine: remote_allow(\"%s\")", client_key, client_key)
-	defer machine.peer_stop(&peer)
-	command, ok := machine.machine_command(build.BOOT_VOLUME, "", machine.DATA_DISK, &peer)
-	if !ok {
-		return foundation.EXIT_FAILURE
-	}
-	if !machine.run_with_rendered_serial(command) {
-		return foundation.EXIT_FAILURE
-	}
-	return 0
+	return foundation.EXIT_FAILURE
 }
 
 // run_test runs the parts of the machine test (test_parts.odin): one part,

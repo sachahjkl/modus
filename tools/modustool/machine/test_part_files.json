@@ -14,6 +14,7 @@
   "disk_processes": ["disk_processes.odin", "program_loop_scenario.odin"],
   "missing_devices": ["missing_devices_scenario.odin"],
   "trusted_boot": ["trusted_boot_scenario.odin"],
+  "release_image": ["release_image_scenario.odin"],
   "hierarchy": ["hierarchy_scenario.odin"],
   "tablet": ["tablet_scenario.odin"],
   "power": ["power_loss.odin", "dropped_write.odin", "silent_disk.odin"],

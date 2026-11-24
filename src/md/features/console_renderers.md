@@ -89,8 +89,16 @@ Refused: the demonstration `disk` in the image. It is a window that imports the 
 - **The pixel format.** `grid_terminal` writes the colors of `graphics` as the compositor writes them on the framebuffer of the firmware of the test machine (blue first). A framebuffer with red first shows red and blue swapped.
 - **The list over the output.** On the serial port, a completion list above the edit line covers rows of the output; when it closes, these rows are cleared, and their text is not drawn again.
 
+## The console image on QEMU
+
+The build derives `build/boot_console.image` from `build/boot.image` and packs it into `build/boot_volume_console.img`. It holds `QEMU_CONSOLE_MODULES` and their imports: the same core services and console as `BROWSER_MACHINE_CONSOLE_MODULES`, with `serial_terminal` in place of `dom_terminal`, and the same single-row start list and rescue list naming `console` with no machine part. It holds no compositor, no drawing module, no input service, no font, no pointer theme and no other terminal renderer (`QEMU_CONSOLE_REFUSED_MODULES`); the tool refuses an image that would hold one.
+
+`modustool run --console` builds only `build/boot_volume_console.img` and starts QEMU with `-vga none`, `-display none`, and no tablet: COM1 (`0x3F8`) writes the kernel log to `build/run_console_log.txt`, and COM2 (`0x2F8`) attaches directly to the terminal of the developer (`-chardev stdio,id=console_serial,signal=off -serial chardev:console_serial`). `signal=off` passes Control+C to `serial_terminal` so `console` receives it while `shutdown()` stops the machine cleanly.
+
+Refused: piping standard output through the desktop serial fact renderer in `--console` mode. Standard output carries ANSI sequences of `serial_terminal` on COM2, and QEMU needs the raw terminal directly for key input.
+
 ## State
 
-Built and host-tested: the choice of the renderer and its holders (`role_policy`), the start of each renderer by the root service with its context, `serial_terminal` on COM2, `grid_terminal` with the framebuffer and the keys of the input ring, `dom_terminal` and its lines, the one driver and key decoder of COM2, the intake, the console image and its lists, COM2 in the host of the browser machine, and the console page that draws the lines of `dom_terminal`, with its machine in the worker of the browser machine and the trust of its description beside its image.
+Built and host-tested: the choice of the renderer and its holders (`role_policy`), the start of each renderer by the root service with its context, `serial_terminal` on COM2, `grid_terminal` with the framebuffer and the keys of the input ring, `dom_terminal` and its lines, the one driver and key decoder of COM2, the intake, the console image and its lists, COM2 in the host of the browser machine, the console page that draws the lines of `dom_terminal`, with its machine in the worker of the browser machine and the trust of its description beside its image, and the QEMU console boot image (`build/boot_console.image`), boot volume (`build/boot_volume_console.img`), and `modustool run --console`.
 
-Left: a boot of the console image in Node that types a line on COM2 and reads its answer there; a boot volume of a console image and `modustool run --console` for QEMU (`ROADMAP.md`).
+Left: a boot of the console image in Node that types a line on COM2 and reads its answer there (`ROADMAP.md`).

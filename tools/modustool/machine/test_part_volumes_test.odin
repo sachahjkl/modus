@@ -90,9 +90,13 @@ each_test_part_has_its_boot_volumes :: proc(t: ^testing.T) {
 		found_main = found_main || path == build.BOOT_VOLUME
 	}
 	testing.expect(t, found_other_system && found_secure_boot && found_main, "principals builds the main volume, the signed main volume and the other system")
-	for command in ([]string{"run", build.MEASURE_COMMAND, build.MEASURE_SHORTAGE_COMMAND, "screenshots", "film"}) {
+	for command in ([]string{"run", build.RUN_CONSOLE_COMMAND, build.MEASURE_COMMAND, build.MEASURE_SHORTAGE_COMMAND, "screenshots", "film"}) {
 		testing.expectf(t, len(build.boot_volumes_of_command(command)) > 0, "the command %s names its volumes", command)
 	}
+	run_console := build.boot_volumes_of_command(build.RUN_CONSOLE_COMMAND)
+	testing.expect(t, len(run_console) == 1 && run_console[0] == build.BOOT_VOLUME_CONSOLE, "run --console builds the console volume only")
+	release_part_volumes := boot_volumes_of_test([]string{"release_image"})
+	testing.expect(t, len(release_part_volumes) == 1 && release_part_volumes[0] == build.BOOT_VOLUME_SECURE_BOOT, "release_image builds the Secure Boot release volume only")
 	// Each form of `measure` boots the volume of a measure run, but
 	// `measure shortage`.
 	measure := build.boot_volumes_of_command(build.MEASURE_COMMAND)
@@ -138,6 +142,7 @@ volume_constants := [?][2]string {
 	{"BOOT_VOLUME_SECURE_BOOT_CHANGED", build.BOOT_VOLUME_SECURE_BOOT_CHANGED},
 	{"BOOT_VOLUME_NEWER_SYSTEM", build.BOOT_VOLUME_NEWER_SYSTEM},
 	{"BOOT_VOLUME_NEWER_KEY", build.BOOT_VOLUME_NEWER_KEY},
+	{"BOOT_VOLUME_CONSOLE", build.BOOT_VOLUME_CONSOLE},
 	{"BOOT_VOLUME_RELEASE", build.BOOT_VOLUME_RELEASE},
 }
 

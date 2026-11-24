@@ -22,7 +22,7 @@ The guide for a reader is [`docs/INSTALL.md`](../../../docs/INSTALL.md), "1. The
 
 ### The image: a GPT disk around the release volume
 
-The release volume is the release boot image with its boot program signed for Secure Boot: `build/boot_volume_release.img`, the boot image `build/boot_release.image` (the main boot image with no test module, below), the kernel module `kernel`, the firmware signature `Signed`. It is the volume of the machine of Secure Boot of the tests (`boot_volume_secure_boot.img`) with the keys of the publisher. The main volume of the tests has an unsigned boot program, and a firmware with Secure Boot on refuses it.
+The release volume is the release boot image with its boot program signed for Secure Boot: `build/boot_volume_release.img`, the boot image `build/boot_release.image` (the main boot image with no test module, below), the kernel module `kernel`, the firmware signature `Signed`. It is the volume of the machine of Secure Boot of the tests (`boot_volume_secure_boot.img`, which also holds `build/boot_release.image`) with the keys of the publisher. The main volume of the tests has an unsigned boot program, and a firmware with Secure Boot on refuses it.
 
 The boot volume of the build is a FAT32 file system with no partition table. The firmware of the test machine starts from such a disk. A USB key for a real machine needs a partition table: the UEFI specification makes a firmware read a GPT disk, and the support of a disk with no partition table varies from one firmware to the next. So the release image is a GPT disk:
 
@@ -49,7 +49,7 @@ Refused forms:
 - **The rows of the test modules dropped from the start grant sets of a release.** The root service would be another file than the one that the tests ran.
 - **A list of the test modules.** A new test module that is not in the list ships.
 
-Left: the machine of Secure Boot boots the boot image of the build; a machine test of the exact release image waits for that machine to need no test module.
+The build writes `build/boot_release.image` beside `build/boot.image`, and `boot_volume_secure_boot.img` holds `build/boot_release.image` with its boot program signed by the test firmware signing key. The machine test part `release_image` checks `release_volume_problem` on `boot_volume_secure_boot.img` (proving it holds zero test modules and equals `release_boot_image_of(build/boot.image)`) and boots it with Secure Boot on to `"root: the machine is usable"`. Host tests also verify that zero rows of `start_grant_sets` naming a test module match any module present in `build/boot_release.image`.
 
 ### The pointer theme of a release: the theme of the system only
 
@@ -159,6 +159,6 @@ Each action is pinned by the commit of its version, with the version in a commen
 
 ## State
 
-Built: the release volume, the GPT disk, the files of a release, the refusals, the pointer theme of the system only in a release, `verify`, `key write`, the workflow of a release, the check of each push, the download section of the site, the host tests, and a machine of `test trusted_boot` that starts the decompressed image.
+Built: the release volume, the GPT disk, the files of a release, the refusals, the pointer theme of the system only in a release, `verify`, `key write`, the workflow of a release, the check of each push, the download section of the site, the host tests (including verification that zero test-module rows of `start_grant_sets` match any shipped module), the Secure Boot machine test part `release_image` booting the exact release boot image to usable, and the machine of `test trusted_boot` that starts the decompressed GPT image.
 
 Left: the keys of the publisher and the first published image; a start of the image on a real machine with the certificate enrolled (`ROADMAP.md`).

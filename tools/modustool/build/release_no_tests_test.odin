@@ -136,3 +136,56 @@ no_shipped_module_names_a_test_module :: proc(t: ^testing.T) {
 		testing.expectf(t, false, "%s", problem)
 	}
 }
+
+// Every module in src/modules/tests (and every only_in_image test module) is
+// absent from the derived release boot image, and zero start_grant_sets rows
+// naming a test module match any module present in the release boot image.
+@(test)
+release_image_has_no_test_module_and_no_test_start_grant_matches :: proc(t: ^testing.T) {
+	files := make([dynamic]Image_File, context.temp_allocator)
+	for row in foundation.module_builds {
+		if !foundation.module_in_boot_image(row) {
+			continue
+		}
+		append(&files, Image_File{name = row.name, file = transmute([]u8)row.name})
+	}
+	full_build_image := boot_image_encode(files[:], len(files))
+	release_image, problem := release_boot_image_of(full_build_image)
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, release_test_module_problem(release_image, "release"), "")
+
+	modules, _, valid := info.image_tables(release_image)
+	testing.expect(t, valid, "the derived release image is a valid boot image")
+	present := make(map[string]bool, context.temp_allocator)
+	for &entry in modules {
+		present[system_description.name_of(&entry.name)] = true
+	}
+
+	test_module_names := make(map[string]bool, context.temp_allocator)
+	for row in foundation.module_builds {
+		group, found := foundation.module_group_of_source(row.source)
+		is_test := (found && group == .Tests) || row.only_in_image != ""
+		if is_test {
+			test_module_names[row.name] = true
+			testing.expectf(t, !present[row.name], "test module %s must not be in boot_release.image", row.name)
+		} else if module_included_in_release_image(row) {
+			testing.expectf(t, present[row.name], "shipped module %s must be in boot_release.image", row.name)
+		}
+	}
+	testing.expect(t, len(test_module_names) > 0, "the table defines test modules")
+
+	// Read root's start_grant_sets: root stays byte-identical to the tested
+	// binary, and no row naming a test module matches any shipped module.
+	start_grant_text, read_ok := foundation.read_text_file_quiet(foundation.ROOT_START_GRANT_SETS_FILE)
+	testing.expect(t, read_ok, "start_grant_sets.odin can be read")
+	rows, _, read_problem := start_grant_sets_read(start_grant_text)
+	testing.expect_value(t, read_problem, "")
+	test_grant_rows := 0
+	for row in rows {
+		if test_module_names[row.name] {
+			test_grant_rows += 1
+			testing.expectf(t, !present[row.name], "start_grant_sets test row %s must not match any module in boot_release.image", row.name)
+		}
+	}
+	testing.expect(t, test_grant_rows > 0, "start_grant_sets contains test module rows that match nothing in release")
+}

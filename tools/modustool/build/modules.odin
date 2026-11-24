@@ -143,9 +143,9 @@ build_modules :: proc() -> bool {
 			return false
 		}
 		append(&all_resources, resources.Resource_File{name = MEASURE_RUN_RESOURCE_NAME, path = MEASURE_RUN_RESOURCE_FILE})
-		images_built = build_boot_image(BOOT_IMAGE_MEASURE, "", all_resources[:])
+		images_built = build_boot_image(BOOT_IMAGE_MEASURE, "", all_resources[:]) && release_boot_image_write() && qemu_console_boot_image_write()
 	}
-	build_measure_step("the seven boot images", step_started)
+	build_measure_step("the nine boot images", step_started)
 	if !images_built {
 		return false
 	}
