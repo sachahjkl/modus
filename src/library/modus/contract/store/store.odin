@@ -109,6 +109,17 @@ OLDER_ROOT_MAGIC :: u64(0x36454741524F5453) // The bytes "STORAGE6".
 // "The owner of a store"). A name of a store is text with no control
 // character, so no name starts with it.
 OWNED_CELL_MARK :: u8(0x01)
+// The first byte of the name field of a store cell whose owning principal
+// was removed and whose encrypted blocks are being reclaimed keylessly in
+// bounded copy-on-write commits. The trailing 31 bytes are zero.
+RECLAIMING_CELL_MARK :: u8(0x02)
+
+// cell_uses_encrypted_layout says whether a store cell's blocks follow the
+// split clear/encrypted metadata layout (either an active owned store or an
+// orphaned owned store being reclaimed).
+cell_uses_encrypted_layout :: proc "contextless" (name: [NAME_CAPACITY]u8) -> bool {
+	return name[0] == OWNED_CELL_MARK || name[0] == RECLAIMING_CELL_MARK
+}
 OWNER_FIELD_SIZE :: 32 // Format property: a principal identifier, a salt, a key check, a sealed name.
 MAC_SIZE :: 16 // Format property: 128-bit SIV authentication tag of a metadata block of an encrypted store.
 NAME_CAPACITY :: 32 // A name of a store: the name that the root service gives, with zero bytes after it.

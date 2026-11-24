@@ -8,12 +8,15 @@ import "modus:contract/enum_word"
 //
 // Before the first destructive step, `unlock` writes `REMOVAL_OBJECT` in its
 // store with step `Marked`, then steps strictly through:
-//   Marked -> Keys_Erased -> File_Deleted -> Pin_Freed -> Complete.
+//   Marked -> Keys_Erased -> File_Deleted -> Stores_Marked -> Pin_Freed -> Complete.
 // Erasing the versions of the principal file and recovery file cryptographically
 // destroys the principal's key material so all encrypted stores of the principal
-// are permanently unreadable (reclaiming their orphaned blocks on disk is tracked
-// separately). A crash or power loss at any point leaves the durable record on
-// disk; the next boot reads it and resumes from the recorded step idempotently.
+// are permanently unreadable; `Stores_Marked` asks the storage service (through
+// the root service) to durably mark every store owned by `identifier` as
+// `RECLAIMING_CELL_MARK` so storage reclaims all orphaned trees and blocks
+// keylessly across crashes and reboots. A crash or power loss at any point
+// leaves the durable record on disk; the next boot reads it and resumes from
+// the recorded step idempotently.
 //
 // A slot freed by removal is retired for the remainder of the current run so
 // no stale connection handle can ever alias a newly created principal; after
@@ -35,18 +38,20 @@ REMOVAL_RECORD_SIZE :: 64
 
 // Durable step recorded on disk during principal removal.
 Removal_Step :: enum u8 {
-	Marked       = 1, // Removal authorized and durably recorded before first destructive step.
-	Keys_Erased  = 2, // Principal key material and recovery file versions erased (cryptographic erasure of encrypted stores).
-	File_Deleted = 3, // The principal file object has been removed from unlock's store.
-	Pin_Freed    = 4, // The TPM NV pin holds "free, generation g" (or no TPM pin existed).
+	Marked        = 1, // Removal authorized and durably recorded before first destructive step.
+	Keys_Erased   = 2, // Principal key material and recovery file versions erased (cryptographic erasure of encrypted stores).
+	File_Deleted  = 3, // The principal file object has been removed from unlock's store.
+	Stores_Marked = 4, // Storage service durably marked all orphaned stores of the principal for keyless block reclamation.
+	Pin_Freed     = 5, // The TPM NV pin holds "free, generation g" (or no TPM pin existed).
 }
 
 // Next idempotent action to execute for a durable removal record.
 Removal_Action :: enum u8 {
 	Erase_Keys   = 1,
 	Delete_File  = 2,
-	Free_Pin     = 3,
-	Clear_Marker = 4,
+	Mark_Stores  = 3,
+	Free_Pin     = 4,
+	Clear_Marker = 5,
 }
 
 // Durable removal record stored in `REMOVAL_OBJECT`.
@@ -143,6 +148,8 @@ removal_step_advance :: proc "contextless" (current: Removal_Record, next_step: 
 	case .Keys_Erased:
 		valid = next_step == .File_Deleted
 	case .File_Deleted:
+		valid = next_step == .Stores_Marked
+	case .Stores_Marked:
 		valid = next_step == .Pin_Freed
 	case .Pin_Freed:
 		valid = false
@@ -164,6 +171,8 @@ removal_next_action :: proc "contextless" (record: Removal_Record, has_tpm_pin: 
 	case .Keys_Erased:
 		return .Delete_File
 	case .File_Deleted:
+		return .Mark_Stores
+	case .Stores_Marked:
 		return has_tpm_pin ? .Free_Pin : .Clear_Marker
 	case .Pin_Freed:
 		return .Clear_Marker

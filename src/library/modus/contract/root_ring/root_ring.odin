@@ -603,6 +603,13 @@ Root_Command :: enum u32 {
 	// root service revokes the caller's handle and closes its own once all
 	// pages return.
 	Budget_Grow = 43,
+	// Principal_Stores_Reclaim asks the root service to lock slot `values[4]`
+	// and instruct the storage service to durably mark all encrypted stores
+	// owned by the 256-bit Principal_Identifier in `values[0..3]` for keyless
+	// block reclamation (`values[5..6]` must be 0). Only the holder of
+	// Principals (`unlock`) sends it; completion arrives once storage flushes
+	// the marking commits on disk.
+	Principal_Stores_Reclaim = 44,
 }
 
 // The step of a Budget_Grow, in values[0].
@@ -967,6 +974,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Plan_Values            = .Plans,
 	.Ready                  = .Nobody,
 	.Budget_Grow            = .Each_Ring,
+	.Principal_Stores_Reclaim = .Principals,
 }
 
 // The start grants that give a process a root ring. A process with none of
@@ -1444,6 +1452,7 @@ root_command_names := [Root_Command]string {
 	.Plan_Values            = "Plan_Values",
 	.Ready                  = "Ready",
 	.Budget_Grow            = "Budget_Grow",
+	.Principal_Stores_Reclaim = "Principal_Stores_Reclaim",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -1494,6 +1503,7 @@ root_first_argument_names := [Root_Command]string {
 	.Plan_Values            = "step",
 	.Ready                  = "values",
 	.Budget_Grow            = "step",
+	.Principal_Stores_Reclaim = "identifier",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -1545,6 +1555,7 @@ root_second_argument_names := [Root_Command]string {
 	.Plan_Values            = "",
 	.Ready                  = "",
 	.Budget_Grow            = "pages",
+	.Principal_Stores_Reclaim = "slot",
 }
 
 // command_of_record reads the command that an error record names: the

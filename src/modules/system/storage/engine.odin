@@ -795,6 +795,9 @@ store_name_of :: proc "contextless" (index: int) -> string {
 	if store_cell(index).name[0] == format.OWNED_CELL_MARK {
 		return "(a store of a named principal)"
 	}
+	if store_cell(index).name[0] == format.RECLAIMING_CELL_MARK {
+		return "(a reclaiming store)"
+	}
 	return system.name_of(store_cell(index).name[:])
 }
 
@@ -820,7 +823,7 @@ store_find :: proc "contextless" (name: string) -> int {
 		return owned_find(slot, name)
 	}
 	for index in 0 ..< store_numbers() {
-		if store_listed(index) && !owned_cell(index) && store_name_of(index) == name {
+		if store_listed(index) && !owned_cell(index) && !reclaiming_cell(index) && store_name_of(index) == name {
 			return index
 		}
 	}
@@ -937,6 +940,8 @@ Plan :: struct {
 	release_nodes: [OBJECT_LEVEL_LIMIT + 1]Object_Node,
 	// Store encryption state for this plan (volatile-zeroed on drop/commit).
 	encrypted:     bool,
+	reclaiming:    bool, // True for keyless reclamation mark/step commits: writes clear blocks and skips hash index updates.
+	cell_freed:    bool, // True on the final reclamation commit that zeroes the Store_Entry cell for reuse.
 	owner_slot:    u64,
 	store_keys:    store_encryption.Store_Keys,
 	prev_crypto:   Store_Crypto_Scope,
@@ -1158,6 +1163,8 @@ plan_reset :: proc "contextless" (store_index: int) {
 	plan.leaf_count = 0
 	plan.versions_change = 0
 	plan.thinned = 0
+	plan.reclaiming = false
+	plan.cell_freed = false
 	plan.store_index = store_index
 	later_count = 0
 	plan.next = root
@@ -1199,6 +1206,45 @@ plan_reset :: proc "contextless" (store_index: int) {
 		plan.page_index = page
 		plan.page = page < int(root.store_page_count) ? opened.store_pages[page] : Store_Table_Page{magic = format.STORE_TABLE_MAGIC}
 	}
+	plan.entry_count = 0
+	plan_trees_reset()
+}
+
+// plan_reset_reclaim prepares a clear keyless plan for marking or reclaiming
+// an orphaned store cell without loading principal encryption keys.
+plan_reset_reclaim :: proc "contextless" (store_index: int, sb: Store_Block) {
+	plan_crypto_end()
+	plan_tables_fixed()
+	block_counts.counts_failure_clear(&opened.counts)
+	for &work in plan.index_work[:plan.entry_count] {
+		work.loaded, work.touched = false, false
+	}
+	plan.delta_count = 0
+	plan.write_count = 0
+	plan.taken_count = 0
+	plan.used_change = 0
+	plan.full, plan.device = false, false
+	plan.capacity_reached, plan.capacity_limit = false, 0
+	plan.count_fault, plan.count_overflow = false, false
+	plan.dropped_versions = 0
+	plan.release_damaged = 0
+	plan.dead_blocks = 0
+	plan.tree_damaged = false
+	plan.leaf_count = 0
+	plan.versions_change = 0
+	plan.thinned = 0
+	plan.reclaiming = true
+	plan.cell_freed = false
+	plan.store_index = store_index
+	later_count = 0
+	plan.next = root
+	plan.store_block = sb
+	plan.prev_crypto = store_crypto_enter_keys(store_index, 0, nil)
+	plan.crypto_active = true
+	plan.page_written = {}
+	page, _ := format.store_place(store_index)
+	plan.page_index = page
+	plan.page = page < int(root.store_page_count) ? opened.store_pages[page] : Store_Table_Page{magic = format.STORE_TABLE_MAGIC}
 	plan.entry_count = 0
 	plan_trees_reset()
 }
@@ -2741,7 +2787,11 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, 
 		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Full) // The disk: no number, because the free blocks are a fact of all the stores.
 	}
 	entry := plan_cell()
-	entry.used = u64(i64(entry.used) + plan.used_change)
+	if plan.cell_freed {
+		entry^ = {}
+	} else {
+		entry.used = u64(i64(entry.used) + plan.used_change)
+	}
 	// The page of the store table, with the count of its cell final.
 	if !plan_page_write() {
 		plan_drop()
@@ -2803,17 +2853,32 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, 
 	page_before := root.store_pages[plan.page_index]
 	root = plan.next
 	root_place = place
-	store_blocks[plan.store_index] = storage_mount.store_head_of(&plan.store_block)
+	if plan.cell_freed {
+		store_blocks[plan.store_index] = {}
+	} else {
+		store_blocks[plan.store_index] = storage_mount.store_head_of(&plan.store_block)
+	}
 	// The page of the store table: the root names the new block; the counts
 	// of the new block and of the page before are in the plan.
 	opened.store_pages[plan.page_index] = plan.page
 	_ = page_before
 	commits += 1
-	opened.store_versions[plan.store_index] = u64(i64(opened.store_versions[plan.store_index]) + plan.versions_change)
-	if plan.dropped_versions != 0 {
-		system.log_fact(.Warning, Versions_Dropped_At_Commit{generation = root.generation, dropped = plan.dropped_versions, store = store_field(store_name_of(plan.store_index))})
+	if plan.cell_freed {
+		opened.store_versions[plan.store_index] = 0
+		opened.store_shared[plan.store_index] = 0
+		opened.store_recount[plan.store_index] = 0
+		opened.store_damaged_objects[plan.store_index] = 0
+		store_damaged[plan.store_index] = false
+		store_faulty[plan.store_index] = false
+		removal_stalled[plan.store_index] = false
+		reclaim_stalled[plan.store_index] = false
+	} else {
+		opened.store_versions[plan.store_index] = u64(max(i64(opened.store_versions[plan.store_index]) + plan.versions_change, 0))
+		if plan.dropped_versions != 0 {
+			system.log_fact(.Warning, Versions_Dropped_At_Commit{generation = root.generation, dropped = plan.dropped_versions, store = store_field(store_name_of(plan.store_index))})
+		}
+		opened.store_shared[plan.store_index] = u64(max(i64(opened.store_shared[plan.store_index]) + shared_change, 0))
 	}
-	opened.store_shared[plan.store_index] = u64(i64(opened.store_shared[plan.store_index]) + shared_change)
 	// The tables of the form Tables; in the form Count_Tree the leaves of
 	// the commit hold the counts, and no page is read here.
 	if opened.form == .Tables {
@@ -2831,9 +2896,11 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, 
 	// has a writable share of a tree open, a new root is hidden: never a
 	// candidate, so the holder cannot plant bytes that a later write of the
 	// maker would find (docs/STORAGE.md, "4.7 The same object one time").
-	hidden := writable_tree_share_open(plan_store_name())
-	for &item in plan.entries[:plan.entry_count] {
-		storage_mount.hash_index_entry_change(&opened, item.before, item.entry, item.gone, hidden)
+	if !plan.reclaiming {
+		hidden := writable_tree_share_open(plan_store_name())
+		for &item in plan.entries[:plan.entry_count] {
+			storage_mount.hash_index_entry_change(&opened, item.before, item.entry, item.gone, hidden)
+		}
 	}
 	for item in later[:later_count] {
 		cache_put(item.pointer, item.bytes)
@@ -2846,6 +2913,9 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, 
 			owned_min_generation[plan.store_index] = plan.store_block.store_generation
 		}
 		owned_store_keys_put(plan.store_index, plan.owner_slot, &plan.store_keys)
+	}
+	if !plan.reclaiming || plan.used_change < 0 {
+		reclaim_stalled_clear(plan.reclaiming ? plan.store_index : -1)
 	}
 	plan_crypto_end()
 	// A commit can free the blocks that a repair found no room for.

@@ -73,6 +73,10 @@ Service :: struct {
 	// Principal_Locked). Only the holder of the role Storage sets it; each
 	// other service refuses them.
 	principal_keys: proc "contextless" (service: ^Service, command: isolated.Service_Command, values: ^[7]u64),
+	// principal_reclaim, when set, handles Principal_Reclaim from the root
+	// service (Storage only): marks orphaned stores of a removed principal for
+	// keyless block reclamation and sends a completion on service.names.completions.
+	principal_reclaim: proc "contextless" (service: ^Service, tag: u32, values: ^[7]u64),
 }
 
 // The service ring and the call ring of each caller, two words each, take
@@ -173,6 +177,13 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 				continue
 			}
 			service.principal_keys(service, service_command, &command.values)
+		case .Principal_Reclaim:
+			if service.principal_reclaim == nil {
+				log(.Warning, "service: the root service sent a principal reclaim command to a service that takes none: it is refused")
+				_ = send(&service.names.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Operation_Unsupported), tag = command.tag})
+				continue
+			}
+			service.principal_reclaim(service, command.tag, &command.values)
 		case .Disconnect:
 			for &connection in service.connections {
 				if connection.calls.head != nil && connection.ring_memory == ring_memory {

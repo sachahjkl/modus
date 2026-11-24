@@ -88,6 +88,29 @@ store_page_read_accepts_owned_binary_tags_and_refuses_all_zero_tag :: proc(t: ^t
 	testing.expect(t, !res2.failed)
 	testing.expect(t, res2.older, "mount must fall back to older root when newest has damaged owned cell")
 	testing.expect_value(t, res2.generation, u64(1))
+
+	// Valid RECLAIMING_CELL_MARK (0x02 followed by 31 zero bytes) mounts cleanly.
+	reclaim_cell := cell
+	reclaim_cell.name = {}
+	reclaim_cell.name[0] = format.RECLAIMING_CELL_MARK
+	reclaim_page_ptr := disk_page(&disk, {reclaim_cell})
+	root3 := root_of_page(64, 3, reclaim_page_ptr)
+	disk_set_block(&disk, 1, ([^]u8)(&root3)[:BLOCK_SIZE])
+	res3 := mount(state, &disk.reader, 64)
+	testing.expect(t, !res3.failed && !res3.older)
+	testing.expect_value(t, res3.generation, u64(3))
+	testing.expect_value(t, res3.damaged_store_pages, u64(0))
+	testing.expect_value(t, res3.stores, u64(1))
+
+	// Refusal: RECLAIMING_CELL_MARK with any non-zero trailing byte damages the page.
+	bad_reclaim := reclaim_cell
+	bad_reclaim.name[15] = 0x01
+	bad_reclaim_page := disk_page(&disk, {bad_reclaim})
+	root4 := root_of_page(64, 4, bad_reclaim_page)
+	disk_set_block(&disk, 0, ([^]u8)(&root4)[:BLOCK_SIZE])
+	res4 := mount(state, &disk.reader, 64)
+	testing.expect(t, !res4.failed && res4.older, "RECLAIMING_CELL_MARK with non-zero trailing byte must be refused")
+	testing.expect_value(t, res4.generation, u64(3))
 }
 
 // Keyless mount of a full encrypted store: sealed Store_Block, sealed tree

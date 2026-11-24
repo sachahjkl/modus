@@ -57,6 +57,8 @@ removal_record_codec_and_transitions_refuse_bad_inputs :: proc(t: ^testing.T) {
 	// Transition refusals: skipping steps, repeating steps, rolling back.
 	_, prob = removal_step_advance(valid, .File_Deleted)
 	testing.expect_value(t, prob, Removal_Problem.Bad_Transition)
+	_, prob = removal_step_advance(valid, .Stores_Marked)
+	testing.expect_value(t, prob, Removal_Problem.Bad_Transition)
 	_, prob = removal_step_advance(valid, .Pin_Freed)
 	testing.expect_value(t, prob, Removal_Problem.Bad_Transition)
 	_, prob = removal_step_advance(valid, .Marked)
@@ -68,9 +70,13 @@ removal_record_codec_and_transitions_refuse_bad_inputs :: proc(t: ^testing.T) {
 	testing.expect_value(t, prob, Removal_Problem.Bad_Transition)
 	s3, p3 := removal_step_advance(s2, .File_Deleted)
 	testing.expect_value(t, p3, Removal_Problem.None)
-	s4, p4 := removal_step_advance(s3, .Pin_Freed)
+	_, prob = removal_step_advance(s3, .Pin_Freed)
+	testing.expect_value(t, prob, Removal_Problem.Bad_Transition)
+	s4, p4 := removal_step_advance(s3, .Stores_Marked)
 	testing.expect_value(t, p4, Removal_Problem.None)
-	_, prob = removal_step_advance(s4, .Pin_Freed)
+	s5, p5 := removal_step_advance(s4, .Pin_Freed)
+	testing.expect_value(t, p5, Removal_Problem.None)
+	_, prob = removal_step_advance(s5, .Pin_Freed)
 	testing.expect_value(t, prob, Removal_Problem.Bad_Transition)
 }
 
@@ -92,10 +98,11 @@ create_remove_crash_resume_and_recreate_cycle :: proc(t: ^testing.T) {
 	testing.expect_value(t, pin_a.generation, u64(1))
 
 	// 2. Crash and resume at every step of durable removal.
-	for crash_after in 0 ..< 4 {
+	for crash_after in 0 ..< 5 {
 		// Simulate disk state + TPM pin for this crash point.
 		stores_present := true
 		file_present := true
+		stores_marked := false
 		tpm_pin := pin_a
 		marker_present := true
 		marker_bytes: [REMOVAL_RECORD_SIZE]u8
@@ -119,6 +126,11 @@ create_remove_crash_resume_and_recreate_cycle :: proc(t: ^testing.T) {
 				next, adv_prob := removal_step_advance(loaded, .File_Deleted)
 				testing.expect_value(t, adv_prob, Removal_Problem.None)
 				testing.expect_value(t, removal_record_encode(next, &marker_bytes), Removal_Problem.None)
+			case .Mark_Stores:
+				stores_marked = true
+				next, adv_prob := removal_step_advance(loaded, .Stores_Marked)
+				testing.expect_value(t, adv_prob, Removal_Problem.None)
+				testing.expect_value(t, removal_record_encode(next, &marker_bytes), Removal_Problem.None)
 			case .Free_Pin:
 				// Idempotent: if pin is already Free (crash right after NV write before marker update), keep it.
 				if tpm_pin.state == .Active {
@@ -135,11 +147,11 @@ create_remove_crash_resume_and_recreate_cycle :: proc(t: ^testing.T) {
 			steps_run += 1
 			// Verify crash_after triggers a simulated restart mid-flight (marker stays durable).
 			if steps_run == crash_after {
-				testing.expect(t, marker_present || crash_after >= 4)
+				testing.expect(t, marker_present || crash_after >= 5)
 			}
 		}
 
-		testing.expect(t, !stores_present && !file_present && !marker_present)
+		testing.expect(t, !stores_present && !file_present && stores_marked && !marker_present)
 		testing.expect_value(t, tpm_pin.state, tpm_attestation.Principal_Pin_State.Free)
 		testing.expect_value(t, tpm_pin.generation, u64(2))
 		testing.expect_value(t, tpm_pin.identifier, tpm_attestation.Identifier{})

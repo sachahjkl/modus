@@ -882,7 +882,7 @@ stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> (outcome: cal
 		// The one rule of the stores that a caller may name: here, the
 		// stores that it sees. The name of a store of a principal opens
 		// with the keys of that principal only.
-		if !store_listed(index) {
+		if !store_listed(index) || reclaiming_cell(index) {
 			continue
 		}
 		name_buffer: [format.OWNER_FIELD_SIZE]u8
@@ -1377,6 +1377,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	service.disconnected = connection_ended
 	service.principal_keys = storage_principal_keys // principal_keys.odin
+	service.principal_reclaim = storage_principal_reclaim // reclaim.odin
 	ring_memory := ctx.handles[block.GRANT_RING]
 	status: call_outcome.Call_Outcome
 	if blocks, status = system.ring_open(ring_memory); status != .Succeeded {
@@ -1430,7 +1431,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// after each round of calls; a run of a recount starts when no call and
 	// no removal waits; a service that makes no change runs none, and waits.
 	for {
-		if broken || !removal_waits() && !repair_waits() && !recount_waits() {
+		if broken || !removal_waits() && !reclaim_waits() && !repair_waits() && !recount_waits() {
 			wait: system.Wait
 			system.service_wait(&wait, &service)
 			for &item in shares {
@@ -1450,12 +1451,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			repair_call_came()
 		}
 		// A step of a repair runs after each round of calls, so a service
-		// that is never idle still ends its repair; a removal runs when no
-		// call waits, and a run of a recount when no removal waits either.
+		// that is never idle still ends its repair; a removal or orphaned
+		// store reclamation runs when no call waits, and a run of a recount
+		// when none of those wait either.
 		if repair_waits() {
 			repair_step()
 		} else if calls == 0 {
-			if !removal_step() && recount_waits() {
+			if !removal_step() && !reclaim_step() && recount_waits() {
 				repair_step()
 			}
 		}

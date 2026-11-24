@@ -29,15 +29,15 @@ ROOT_WAIT_WORDS_OF_A_QUEUE :: 2
 // ring of its network device.
 ROOT_WAIT_QUEUES_OF_A_PLACE :: 2
 
-// The queues beside the places: the rings of the delegated wiring service
-// and of the devices service.
-ROOT_WAIT_QUEUES_BESIDE_PLACES :: 2
+// The queues beside the places: the rings of the delegated wiring service,
+// the devices service, and the storage service reclaim completions.
+ROOT_WAIT_QUEUES_BESIDE_PLACES :: 3
 
 // root_wait_words gives the words of the wait of the loop with each queue
 // of `places` places: the size of the wait set of the root service.
 //
-// Example: 255 places (a machine of 1 GiB) give 12 + 2 x (510 + 2) = 1036
-// words; 1023 places give 4108.
+// Example: 255 places (a machine of 1 GiB) give 12 + 2 x (510 + 3) = 1038
+// words; 1023 places give 4110.
 root_wait_words :: proc "contextless" (places: int) -> int {
 	return ROOT_WAIT_FIXED_WORDS + ROOT_WAIT_WORDS_OF_A_QUEUE * (ROOT_WAIT_QUEUES_OF_A_PLACE * max(places, 0) + ROOT_WAIT_QUEUES_BESIDE_PLACES)
 }

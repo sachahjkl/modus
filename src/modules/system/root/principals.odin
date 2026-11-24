@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "internal:root/principal_unlock_flow"
 import info "modus:contract/boot_info"
 import "modus:contract/call_outcome"
+import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
 import "modus:contract/system_description"
@@ -464,6 +465,124 @@ storage_erase_step :: proc "contextless" (wait: ^system.Wait) {
 // the main loop sends again until the ring takes it.
 storage_principal_locked :: proc "contextless" (number: u64) {
 	storage_erase_owe(number)
+}
+
+// In-flight orphaned store reclamation request forwarded from `unlock` to
+// Storage. One request runs at a time (as one `unlock` runs).
+reclaim_waiting: bool
+reclaim_asker: ^Started
+reclaim_asker_tag: u32
+reclaim_service_tag: u32
+
+// principal_stores_reclaim forwards Root_Command.Principal_Stores_Reclaim from
+// `unlock` to the Storage holder: validates the slot and identifier, sends
+// Principal_Locked(slot) followed by Principal_Reclaim(id, slot), and holds
+// the caller's completion until Storage replies on its service completions ring.
+principal_stores_reclaim :: proc "contextless" (asker: ^Started, tag: u32, values: [7]u64, completion: ^[7]u64) -> (outcome: call_outcome.Call_Outcome, held: bool) {
+	kind := u32(root_ring.Root_Command.Principal_Stores_Reclaim)
+	for index in 5 ..< len(values) {
+		if values[index] != 0 {
+			completion^ = root_ring.word_refusal(.Principal_Stores_Reclaim, i64(index) + 1, values[index], 0)
+			return .Argument_Refused, false
+		}
+	}
+	number := values[4]
+	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY {
+		return root_ring.refuse(completion, .Argument_Refused, kind, .Bad_Value, .Principals, 2, i64(min(number, 1 << 62)), principals.PRINCIPAL_CAPACITY - 1), false
+	}
+	identifier := transmute(principals.Principal_Identifier)([4]u64{values[0], values[1], values[2], values[3]})
+	if principals.identifier_is_zero(identifier[:]) {
+		return root_ring.refuse(completion, .Argument_Refused, kind, .Bad_Value, .None, 1), false
+	}
+	// If the slot holds a live principal record with another identifier,
+	// refuse rather than locking or touching another principal's stores.
+	record := &principal_records[number]
+	if record.state != .Absent && !principals.identifier_is_zero(record.identifier[:]) && record.identifier != identifier {
+		return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals, 2, i64(number)), false
+	}
+	if reclaim_waiting {
+		return root_ring.refuse(completion, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1), false
+	}
+	holder := storage_holder()
+	if holder == nil {
+		return root_ring.refuse(completion, .Callee_Unavailable, kind, .Absent, .Services), false
+	}
+	if ring.capacity(&holder.service.commands) - ring.count(&holder.service.commands) < 2 {
+		return root_ring.refuse(completion, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1), false
+	}
+	reclaim_service_tag += 1
+	if reclaim_service_tag == 0 {
+		reclaim_service_tag = 1
+	}
+	// Lock the slot first on the FIFO service ring so Storage erases the slot's
+	// keys before validating and marking the removed principal's stores.
+	locked_sent := system.send(&holder.service.commands, ring.Record{kind = u32(isolated.Service_Command.Principal_Locked), values = {4 = number}})
+	reclaim_sent := locked_sent && system.send(&holder.service.commands, ring.Record{kind = u32(isolated.Service_Command.Principal_Reclaim), tag = reclaim_service_tag, values = values})
+	if !reclaim_sent {
+		if locked_sent {
+			storage_erase_owe(number)
+		}
+		return root_ring.refuse(completion, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1), false
+	}
+	reclaim_waiting = true
+	reclaim_asker = asker
+	reclaim_asker_tag = tag
+	return .Succeeded, true
+}
+
+// storage_reclaim_step drains completions from Storage's service ring and
+// forwards the matching Principal_Reclaim result to the waiting caller.
+storage_reclaim_step :: proc "contextless" (wait: ^system.Wait) {
+	if !reclaim_waiting {
+		return
+	}
+	holder := storage_holder()
+	if holder == nil {
+		storage_reclaim_complete(.Callee_Unavailable, {})
+		return
+	}
+	for {
+		record, ok := root_receive(&holder.service.completions, system.name_of(holder.name[:]))
+		if !ok {
+			break
+		}
+		if record.tag != reclaim_service_tag {
+			continue
+		}
+		outcome, unreadable := call_outcome.outcome_of_word(u64(record.kind))
+		values := outcome == .Answer_Unreadable ? errors.completion_values(unreadable) : record.values
+		storage_reclaim_complete(outcome, values)
+		return
+	}
+	if reclaim_waiting {
+		system.wait_records(wait, &holder.service.completions)
+	}
+}
+
+@(private = "file")
+storage_reclaim_complete :: proc "contextless" (outcome: call_outcome.Call_Outcome, values: [7]u64) {
+	asker := reclaim_asker
+	tag := reclaim_asker_tag
+	reclaim_waiting = false
+	reclaim_asker = nil
+	reclaim_asker_tag = 0
+	if asker != nil && asker.process != 0 && asker.requests.head != nil {
+		_ = system.send(&asker.requests.completions, ring.Record{kind = u32(outcome), tag = tag, values = values})
+	}
+}
+
+// storage_reclaim_forget clears the caller if it stops, or fails the request
+// back to the caller if the Storage holder stops while a reclaim is in flight.
+storage_reclaim_forget :: proc "contextless" (item: ^Started) {
+	if !reclaim_waiting {
+		return
+	}
+	if reclaim_asker == item {
+		reclaim_asker = nil
+	}
+	if is_role_holder(system.name_of(item.name[:]), .Storage) {
+		storage_reclaim_complete(.Callee_Unavailable, {})
+	}
 }
 
 // principal_unlock starts the session of a named principal: from now on the

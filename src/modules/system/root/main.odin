@@ -1401,6 +1401,7 @@ root_loop_pass :: proc "contextless" () {
 	disk_load_step(&wait)
 	persisted_tables_step()
 	storage_erase_step(&wait) // principals.odin
+	storage_reclaim_step(&wait) // principals.odin
 	network_answers(&wait)
 	wiring_request_step(&wait)
 	devices_answers(&wait)
@@ -2674,6 +2675,7 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	endpoint_close(item)
 	disk_load_forget(item)
 	principal_change_forget(item)
+	storage_reclaim_forget(item)
 	if palette_provider == item {
 		palette_provider_end(item, false)
 	}

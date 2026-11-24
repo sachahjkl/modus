@@ -285,6 +285,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		// sender check refuses it here, so this case never runs.
 	case .Budget_Grow:
 		answer.outcome = budget_grow_command(item, record, &answer.values) // budget_growth.odin
+	case .Principal_Stores_Reclaim:
+		answer.outcome, answer.held = principal_stores_reclaim(item, record.tag, record.values, &answer.values)
 	}
 	return answer
 }
