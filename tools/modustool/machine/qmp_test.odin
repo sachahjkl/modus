@@ -17,9 +17,9 @@ KEY_END :: "\"}}}"
 // scenario, and a character with no key is named by its place.
 @(test)
 key_names_of_a_line_with_upper_case_and_symbols :: proc(t: ^testing.T) {
-	names, unknown := key_names_of_a_text("Go(\"a_1\")")
+	names, unknown := key_names_of_a_text("Go(\"a_1\")$")
 	testing.expect_value(t, unknown, -1)
-	expected := []string{"shift-g", "o", "shift-9", "shift-apostrophe", "a", "shift-minus", "1", "shift-apostrophe", "shift-0"}
+	expected := []string{"shift-g", "o", "shift-9", "shift-apostrophe", "a", "shift-minus", "1", "shift-apostrophe", "shift-0", "shift-4"}
 	testing.expect_value(t, len(names), len(expected))
 	for name, index in expected {
 		if index < len(names) {
