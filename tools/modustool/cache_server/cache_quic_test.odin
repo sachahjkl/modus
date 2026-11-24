@@ -1320,3 +1320,88 @@ quic_cache_pipelined_out_of_order_and_fault_refusals :: proc(t: ^testing.T) {
 		free(srv)
 	}
 }
+
+// Sending a malformed request header with fin = false plus trailing bytes must
+// answer with a refusal, send STOP_SENDING, never re-attach that finished
+// stream, and allow a subsequent valid request on a fresh stream to succeed.
+@(test)
+quic_cache_malformed_header_without_fin_does_not_wedge_slot :: proc(t: ^testing.T) {
+	dir := make_temp_store_dir(t)
+	defer {
+		os.remove_all(dir)
+		delete(dir)
+	}
+
+	_, signer_pub, _ := make_test_ed25519_key(0xA1)
+	_, _, quic_seed := make_test_ed25519_key(0xA2)
+
+	server, opened := cache_server_open(dir, [][32]u8{signer_pub})
+	testing.expect(t, opened)
+	defer cache_server_destroy(&server)
+
+	running, err_text := cache_quic_start(&server, net.Endpoint{address = net.IP4_Loopback, port = 0}, quic_seed)
+	testing.expect_value(t, err_text, "")
+	testing.expect(t, running != nil)
+	defer cache_quic_stop(running)
+
+	crypto_table := cache_quic_cryptography()
+	generator: random.Generator
+	udp: Host_Udp_Transport
+	client, made := make_host_quic_client(running.bound_endpoint, running.public_key, &crypto_table, &generator, &udp)
+	testing.expect(t, made)
+	defer {
+		recipes_core.cache_quic_client_close(client)
+		free(client)
+		net.close(udp.socket)
+	}
+
+	testing.expect_value(t, recipes_core.cache_quic_client_connect(client), recipes_core.Cache_Client_Error.None)
+
+	// Open a raw stream and send a malformed 12-byte header + trailing bytes with fin = false.
+	bad_stream, bad_opened := quic.stream_open(&client.connection)
+	testing.expect(t, bad_opened)
+	bad_payload := [32]u8{'B', 'A', 'D', '!', 99, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	wrote := quic.stream_write(&client.connection, bad_stream, bad_payload[:], false)
+	testing.expect_value(t, wrote, len(bad_payload))
+
+	// Pump until the server answers with a refusal response and FIN on bad_stream.
+	resp_buf: [256]u8
+	recv_len := 0
+	got_fin := false
+	deadline := host_udp_now_us(&udp) + 5_000_000
+	for !got_fin && host_udp_now_us(&udp) < deadline {
+		now := host_udp_now_us(&udp)
+		for {
+			dlen := quic.connection_datagram_send(&client.connection, client.datagram_buf[:quic.MAX_DATAGRAM_SIZE], now)
+			if dlen == 0 {
+				break
+			}
+			_ = host_udp_send(client.datagram_buf[:dlen], &udp)
+		}
+		if n, ok := host_udp_recv(client.datagram_buf[:], deadline, &udp); ok && n > 0 {
+			err: errors.Error_Record
+			quic.connection_datagram_receive(&client.connection, client.datagram_buf[:n], host_udp_now_us(&udp), &err)
+		}
+		quic.connection_time_passes(&client.connection, host_udp_now_us(&udp))
+		r, fin, _ := quic.stream_read(&client.connection, bad_stream, resp_buf[recv_len:])
+		recv_len += r
+		if fin {
+			got_fin = true
+		}
+	}
+	testing.expect(t, got_fin, "server must close the malformed non-FIN stream with a refusal response")
+	testing.expect(t, recv_len >= object_cache.FRAME_HEADER_SIZE)
+	bad_resp, bad_dec := object_cache.decode_response(resp_buf[:recv_len])
+	testing.expect_value(t, bad_dec, object_cache.Wire_Refusal.None)
+	testing.expect_value(t, bad_resp.status, object_cache.Cache_Response_Status.Refused)
+
+	// Send additional trailing bytes without FIN on the already-rejected stream,
+	// then verify a fresh stream immediately serves a valid Get_Object request cleanly.
+	_ = quic.stream_write(&client.connection, bad_stream, bad_payload[:8], false)
+
+	probe_hash := blake3.hash(transmute([]u8)string("fresh-stream-after-malformed"))
+	get_req := object_cache.Cache_Request{kind = .Get_Object, object_hash = probe_hash, object_kind = .Blob, offset = 0}
+	get_resp, get_err := recipes_core.cache_quic_client_exchange(client, &get_req)
+	testing.expect_value(t, get_err, recipes_core.Cache_Client_Error.None)
+	testing.expect_value(t, get_resp.status, object_cache.Cache_Response_Status.Not_Found)
+}

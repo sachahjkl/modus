@@ -8,8 +8,9 @@
 // against the object root hash before writing to Recipes_State.store, and
 // recursively fetches missing children of Tree outputs.
 //
-// Cache_Quic_Client holds ~2.3 MiB of fixed buffers and must live in static
-// memory or a heap/page allocation, never on a stack.
+// Cache_Quic_Client holds ~5.5 MiB of fixed buffers (including 4 pipelined
+// 1 MiB response slots) and must live in static memory or a heap/page
+// allocation, never on a stack.
 package recipes_core
 
 import "modus:contract/blake3"

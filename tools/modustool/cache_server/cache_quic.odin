@@ -231,7 +231,7 @@ slot_attach_new_streams :: proc(slot: ^Cache_Quic_Client_Slot, connection: ^quic
 		if !stream.in_use {
 			continue
 		}
-		if stream.end_read && (stream.send_finish || stream.reset_sent) {
+		if stream.send_finish || stream.reset_sent || stream.stop_sending_sent {
 			continue
 		}
 		if slot_find_stream_state(slot, stream.identifier) != nil {
