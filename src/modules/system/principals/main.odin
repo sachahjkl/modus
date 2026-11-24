@@ -18,8 +18,9 @@ import "modus:principals"
 import "modus:system"
 
 // Working memory budget for the freestanding principals service process and
-// its fixed-capacity principal, disk grant, and client key staging buffers.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512, processes = 1, threads = 1}
+// its fixed-capacity principal, disk grant, and client key staging buffers
+// (measured peak at ready 122 pages).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 128, processes = 1, threads = 1}
 
 // Status record returned by the status() export.
 Principals_Status :: struct {

@@ -17,11 +17,10 @@ import "modus:system"
 
 WIDTH :: 1000
 HEIGHT :: 704
-// The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (1375 pages): its module, its
-// stack, its tables and its glyph memory. The tool counts the window at
-// the largest scale (docs/MODULE_CONTRACT.md, "The floor of a module").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 673, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, its stack and the window at the largest scale
+// (docs/MODULE_CONTRACT.md, "The floor of a module"); tables and glyph memory
+// fit inside the floor and growth factor.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: graphics.LINE_HEIGHT
 // The lengths of the layout at the start of the window, in logical pixels.

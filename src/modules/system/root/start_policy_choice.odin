@@ -315,6 +315,7 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 	slot.process = process
 	slot.hash = hash
 	slot.granted += {.Log}
+	session_table_record_slot(slot)
 	start_budget_note(slot, process_budget)
 	disk_process_page_add(slot)
 	start_policy_list = .Chosen

@@ -110,6 +110,7 @@ tpm_service_start :: proc "contextless" () {
 	slot^ = {}
 	slot.process = process
 	slot.process_slot, slot.process_serial, _ = system.process_place(process)
+	session_table_record_slot(slot)
 	start_budget_note(slot, tpm_budget)
 	slot.ready = tpm_ready
 	slot.start_grant_set = start_grant_set

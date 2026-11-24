@@ -1179,6 +1179,28 @@ force :: proc "contextless" (eval: ^Evaluation, node_idx: lex_parser.Node_Index)
 	if eval.tree != nil && node_idx == eval.tree.root && eval.root_forced {
 		return value_to_host(eval, eval.root_value), true
 	}
+	// When called from a host .Condition callback, execute the pre-compiled
+	// condition-value proto in the current chunk with its captured lexical scope
+	// so chained or nested conditions never consume extra Chunk slots.
+	if eval.frame_count > 0 {
+		top := &eval.frames[eval.frame_count - 1]
+		if top.kind == .Call_Site && int(top.chunk_id) < eval.chunk_count {
+			chunk := &eval.chunks[top.chunk_id]
+			site := eval.call_sites[int(chunk.site_start) + int(top.proto_id)]
+			if int(top.cont_index) < int(site.arg_count) {
+				sarg := eval.site_args[int(site.args_start) + int(top.cont_index)]
+				if sarg.kind == .Condition && sarg.val_node == node_idx && sarg.val_node != sarg.node_idx && sarg.proto_id > 0 {
+					parent_frame := &eval.frames[top.ip]
+					eoff, elen, eok := capture_upvals(eval, parent_frame, top.chunk_id, sarg.proto_id, node_idx)
+					if !eok {
+						return {}, false
+					}
+					val := vm_exec_proto(eval, top.chunk_id, sarg.proto_id, eoff, elen, nil, NO_THUNK, node_idx) or_return
+					return value_to_host(eval, val), true
+				}
+			}
+		}
+	}
 	// Compile and run a one-off expression proto in the current root/frame chunk.
 	if eval.tree == nil {
 		return {}, false

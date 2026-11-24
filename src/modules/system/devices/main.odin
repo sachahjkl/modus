@@ -17,9 +17,8 @@ import "modus:system"
 
 // Working memory budget for the freestanding devices service process and its
 // fixed-capacity identity and binding tables, and the shared region of the
-// root service with one bind place for each process slot: 32 pages and
-// their page tables.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256, processes = 1, threads = 1}
+// root service (measured peak at ready 89 pages).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 96, processes = 1, threads = 1}
 
 // Status record returned by the status() export.
 Devices_Status :: struct {

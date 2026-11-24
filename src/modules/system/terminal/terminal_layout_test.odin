@@ -63,6 +63,11 @@ terminal_layout_non_overlap_across_grid_bounds_modes_and_scales :: proc(t: ^test
 				testing.expect(t, areas_apart(places.text_view, places.scroll_bar))
 				testing.expect(t, areas_apart(places.text_view, places.bottom_bar))
 				testing.expect(t, areas_apart(places.scroll_bar, places.bottom_bar))
+				expected_scroll_top := measure_mode ? HEAD_HEIGHT - 6 : 0
+				expected_scroll_end := measure_mode ? places.status_bar.y : places.bottom_bar.y
+				testing.expect_value(t, places.scroll_bar.y, expected_scroll_top)
+				testing.expect_value(t, places.scroll_bar.y + places.scroll_bar.height, expected_scroll_end)
+				testing.expect_value(t, places.text_view.y, measure_mode ? HEAD_HEIGHT : MARGIN)
 
 				if measure_mode {
 					testing.expect(t, area_inside(places.head, window))

@@ -71,10 +71,9 @@ WIDTH :: 520
 // lines at y = 408, where a machine test puts it.
 HEIGHT :: 640
 // The tool counts the module, the stacks and the window at the largest
-// scale (docs/MODULE_CONTRACT.md, "The floor of a module"). The working
-// memory holds the glyph memory (354 pages), the worker stack past the
-// default thread stack (48 pages) and the page tables of the mappings.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512, threads = 2, window_width = WIDTH, window_height = HEIGHT}
+// scale (measured peak at ready 1375 pages for a floor of 3153 pages); glyph
+// memory, worker stack and mapping page tables fit inside the floor.
+MODULE_BUDGET :: system.Stated_Budget{threads = 2, window_width = WIDTH, window_height = HEIGHT}
 LINE :: 20
 // The room between the edge of the window and the cards, and between two
 // cards: the gap token, so the cards line up with the other windows.

@@ -145,4 +145,11 @@ follow_gap_routes_only_to_its_own_principal :: proc(t: ^testing.T) {
 	testing.expect(t, follow_after_write(.No_Writer))
 	testing.expect(t, follow_after_write(.Bad_Record))
 	testing.expect(t, follow_after_write(.No_Record))
+
+	// Missing scope-number gap recovery when record_principals wrapped.
+	testing.expect_value(t, follow_missing_count(0, 0), u64(0))
+	testing.expect_value(t, follow_missing_count(10, 10), u64(0))
+	testing.expect_value(t, follow_missing_count(10, 5), u64(0))
+	testing.expect_value(t, follow_missing_count(1024, 1351), u64(327))
+	testing.expect_value(t, follow_missing_count(0, max(u64)), max(u64))
 }

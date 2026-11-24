@@ -746,8 +746,8 @@ module_convert :: proc(build: foundation.Module_Build) -> bool {
 	// The floor of the table Floor counts the load of each import, at each
 	// level, the start objects of the packages that the compiler read, and
 	// the floors of the children.
-	description.budget.has_entry = build.entry
-	if build.entry || description.budget.stated {
+	description.budget.has_entry = build.entry || description_has_entry(description)
+	if description.budget.has_entry || description.budget.stated {
 		description.budget.import_costs = floor_import_costs(build) or_return
 		description.budget.start_objects = start_objects_of_sources(build.source, sources) or_return
 		description.budget.children = floor_children_of(build) or_return
@@ -991,8 +991,9 @@ test_descriptions :: proc() -> bool {
 		// parts, computed here again from the sources and the files; a
 		// library has no table.
 		floor, has_floor := module.floor_read(file)
-		if has_floor != (build.entry || described.budget.stated) {
-			fmt.eprintfln("modustool: test failed: %s has %s table Floor, and it %s", build.name, has_floor ? "a" : "no", build.entry ? "has an entry" : "has no entry")
+		has_entry := build.entry || description_has_entry(described)
+		if has_floor != (has_entry || described.budget.stated) {
+			fmt.eprintfln("modustool: test failed: %s has %s table Floor, and it %s", build.name, has_floor ? "a" : "no", has_entry ? "has an entry" : "has no entry")
 			return false
 		}
 		if has_floor {

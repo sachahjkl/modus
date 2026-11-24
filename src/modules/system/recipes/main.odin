@@ -18,27 +18,25 @@ import "modus:contract/value_kinds"
 import "modus:storage_port"
 import "modus:system"
 
-// The pages of one typical native C build and of one typical guest build
-// (below).
+// The pages of one typical native C build and of one small guest in the floor
+// (below). A larger guest build (128 MiB, recipes_core.TYPICAL_GUEST_BUILD_PAGES)
+// starts after ready and draws from the growth factor of the budget.
 TYPICAL_C_BUILD_PAGES :: 9216
-TYPICAL_GUEST_BUILD_PAGES :: recipes_core.TYPICAL_GUEST_BUILD_PAGES
+SMALL_GUEST_MEMORY_PAGES :: 16_384
 
-// The budget that the service asks for: 1024 pages of the service (the
-// index of its local store, its staging, the sandbox of a build); one
-// typical native C build: a program of the size of Lua, about 700 KB of C,
-// at C_BUILD_BYTES_FOR_EACH_SOURCE_BYTE, with its call host; and one guest
-// build of a typical guest (guest_build.odin): 128 MiB of guest memory, the
-// kernel of a distribution, its nested page table and its process, its
-// kernel, its initial archive, its output disk and its input disks, and
-// the stack of the build thread past the stack that the tool counts for a
-// thread. A budget reserves its pages, so the service states typical
-// builds, not the largest. The starter grants up to a share of the
-// machine; each build plans its memory from what the grant holds at the
-// call (c_build_plan, recipes_core.guest_build_plan), so a larger grant
-// runs a build of SQLite or a larger guest, and a smaller one refuses it
-// with the pages that it needs.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 60_656, processes = 4, threads = 2}
-#assert(60_656 == C_BUILD_SERVICE_PAGES_KEPT + TYPICAL_C_BUILD_PAGES + TYPICAL_GUEST_BUILD_PAGES + (GUEST_THREAD_STACK_PAGES - op.THREAD_STACK_PAGES))
+// The floor of the service: 1024 pages of the service (the index of its local
+// store, its staging, the sandbox of a build), one build at a time (either a
+// typical native C build of the size of Lua, 9216 pages, or a 64 MiB guest
+// floor of 16384 pages), and the stack of the build thread past the default
+// thread stack (48 pages). Twice the floor reaches the largest budget of a
+// 1 GiB machine (52288 pages), so a 128 MiB guest build runs from the growth
+// factor while the service still starts alongside the desktop. Each build
+// plans its memory from what the grant holds at the call (c_build_plan,
+// recipes_core.guest_build_plan), so a larger grant runs SQLite or a larger
+// guest and a smaller one refuses it with the pages that it needs.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 17_456, processes = 4, threads = 2}
+#assert(17_456 == C_BUILD_SERVICE_PAGES_KEPT + SMALL_GUEST_MEMORY_PAGES + (GUEST_THREAD_STACK_PAGES - op.THREAD_STACK_PAGES))
+#assert(SMALL_GUEST_MEMORY_PAGES >= TYPICAL_C_BUILD_PAGES)
 #assert(TYPICAL_C_BUILD_PAGES * system.PAGE_SIZE >= 700 * 1024 * C_BUILD_BYTES_FOR_EACH_SOURCE_BYTE + system.CALL_HOST_PAGES * system.PAGE_SIZE)
 
 // Status record returned by the status() export.

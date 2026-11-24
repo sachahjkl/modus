@@ -597,6 +597,7 @@ part_place_take :: proc "contextless" () -> ^Started {
 part_place_fill :: proc "contextless" (slot: ^Started, name: string, process: system.Handle) {
 	slot.process = process
 	slot.process_slot, slot.process_serial, _ = system.process_place(process)
+	session_table_record_slot(slot)
 	slot.start_grant_set = start_grant_set_of(name)
 	slot.granted = {.Log}
 	copy(slot.name[:len(slot.name) - 1], name)
@@ -1242,6 +1243,7 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> ca
 	}
 	served.process = display_holder
 	served.process_slot, served.process_serial, _ = system.process_place(display_holder)
+	session_table_record_slot(served)
 	start_budget_note(served, display_budget)
 	served.start_grant_set = start_grant_set
 	served.wiring_memory = display_wiring.wiring_memory
@@ -2225,6 +2227,7 @@ renderer_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started,
 	view.process, view.writer, view.is_terminal = process, writer, true
 	view.start_grant_set = start_grant_set
 	view.principal = writer.principal // The lock stops the terminal of a process of the session with it.
+	session_table_record_slot(view)
 	copy(view.name[:len(view.name) - 1], terminal_name)
 	console_renderer_view = view
 	if console_renderer == .Grid_Terminal {
@@ -2304,6 +2307,7 @@ window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, r
 	view.process, view.client, view.writer, view.is_terminal = process, client, writer, true
 	view.start_grant_set = start_grant_set
 	view.principal = writer.principal // The lock stops the terminal of a process of the session with it.
+	session_table_record_slot(view)
 	copy(view.name[:len(view.name) - 1], terminal_name)
 	return .Succeeded
 }

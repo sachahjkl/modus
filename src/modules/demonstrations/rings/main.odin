@@ -54,10 +54,9 @@ import "modus:random"
 import "modus:system"
 
 // The tool counts the module, the six start budgets (MODULE_START_BUDGETS),
-// the threads and the window at the largest scale. The working memory holds
-// the glyph memory of the drawing module (354 pages) and the ring mappings
-// (measured peak at ready 2991 pages).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512, processes = 7, threads = 7, window_width = WIDTH, window_height = HEIGHT}
+// the threads and the window at the largest scale (measured peak at ready
+// 2991 pages for a floor of 5189 pages).
+MODULE_BUDGET :: system.Stated_Budget{processes = 7, threads = 7, window_width = WIDTH, window_height = HEIGHT}
 
 // The pages of the budget of a node: its module, its stack and its rings
 // fit in them.

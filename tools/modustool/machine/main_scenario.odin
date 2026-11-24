@@ -1191,8 +1191,6 @@ scenario := [?]Step {
 	// budgets fit on the 1 GiB machine alongside the delegated services.
 	{kind = .Close, text = "hall_of_fame"},
 	{kind = .Wait, text = "root: hall_of_fame stopped"},
-	{kind = .Close, text = "workers"},
-	{kind = .Wait, text = "root: workers stopped"},
 
 	// Rights: a process with a part of the rights of two handles. The
 	// kernel refuses each operation that needs another right.
@@ -2834,6 +2832,8 @@ scenario := [?]Step {
 	{kind = .Close, text = "inspect"},
 	{kind = .Close, text = "errors"},
 	{kind = .Record, process = "root", level = "Info", text = "root: errors stopped: a holder"},
+	{kind = .Close, text = "workers"},
+	{kind = .Wait, text = "root: workers stopped"},
 	// The interface package: each element live, the draw table of the last
 	// frame, the damage by difference. The keyboard is a first path: Tab
 	// moves the focus, Enter presses, the arrows move the choice.
@@ -3116,9 +3116,10 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] ê^z"},
 	// AltGr, the right Alt key, gives the third level: the keys of 4, 5, 6,
-	// the key right of 0, the key of =, 3, 0 and 8 give {[|]}#@\. AltGr
-	// with the key of 2 is the dead tilde: the end quote after it gives ~
-	// and the quote. The names are the keys of a QWERTY keyboard.
+	// the key right of 0, the key of =, 3, 0 and 8 give {[|]}#@\. Two presses
+	// of AltGr-8 escape the backslash in a text literal (\\). AltGr with the
+	// key of 2 is the dead tilde: the end quote after it gives ~ and the
+	// quote. The names are the keys of a QWERTY keyboard.
 	{kind = .Keys, text = "3"},
 	{kind = .Key, text = "alt_r-4"},
 	{kind = .Key, text = "alt_r-5"},
@@ -3128,11 +3129,12 @@ scenario := [?]Step {
 	{kind = .Key, text = "alt_r-3"},
 	{kind = .Key, text = "alt_r-0"},
 	{kind = .Key, text = "alt_r-8"},
+	{kind = .Key, text = "alt_r-8"},
 	{kind = .Key, text = "alt_r-2"},
 	{kind = .Keys, text = "3"},
 	{kind = .Key, text = "esc"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "[console] > \"{[|]}#@\\~\""},
+	{kind = .Wait, text = "[console] > \"{[|]}#@\\\\~\""},
 	{kind = .Wait, text = "[console] {[|]}#@\\~"},
 	// AltGr with e gives the euro sign, a character past the Latin-1
 	// Supplement: the keys 3, Shift 5, space, AltGr e, 3 type "5 €". The
@@ -3479,6 +3481,13 @@ scenario := [?]Step {
 	// it, and the output is the input of the next build. The builder writes
 	// before it returns and recipes logs before it answers, so the lines
 	// come in this order.
+	// Free finished demonstration windows before starting build_check and
+	// recipes on the 1 GiB machine.
+	{kind = .Close, text = "rings"},
+	{kind = .Wait, text = "root: rings stopped"},
+	{kind = .Close, text = "time_page"},
+	{kind = .Wait, text = "root: time_page stopped"},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"build_check\")"},
 	{kind = .Wait, text = "builder_probe: the input store refused a write: the error kind 20", fails_on = "builder_probe: WRONG"},
 	{kind = .Wait, text = "builder_probe: the store out refused ..: the error kind 6", fails_on = "builder_probe: WRONG"},

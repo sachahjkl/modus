@@ -43,3 +43,15 @@ session_table_record :: proc "contextless" (process_slot: u64, process_serial: u
 		system.log_fact(.Warning, Session_Table_Row_Refused{slot = process_slot, serial = process_serial, principal = principal})
 	}
 }
+
+// session_table_record_slot caches the kernel slot and serial of `slot` when
+// unset and writes its row in the session table for `slot.principal`.
+session_table_record_slot :: proc "contextless" (slot: ^Started) {
+	if slot == nil || slot.process == 0 {
+		return
+	}
+	if slot.process_slot == 0 && slot.process_serial == 0 {
+		slot.process_slot, slot.process_serial, _ = system.process_place(slot.process)
+	}
+	session_table_record(slot.process_slot, slot.process_serial, slot.principal)
+}

@@ -48,10 +48,9 @@ WIDTH :: 480
 HEIGHT :: 320
 #assert(HEIGHT == ROWS * CELL)
 // The tool counts the module, the stack and the window at the largest
-// scale (docs/MODULE_CONTRACT.md, "The floor of a module"). The working
-// memory holds the glyph memory (354 pages) and the page tables of the
-// mappings.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 384, window_width = WIDTH, window_height = HEIGHT}
+// scale (measured peak at ready 818 pages for a floor of 1767 pages); glyph
+// memory and page tables fit inside the floor.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 STEP_INTERVAL :: 80
 
 cells: [2][ROWS][COLUMNS]u8

@@ -105,13 +105,10 @@ LEAST_HEIGHT :: 320
 LARGEST_WIDTH :: 1024
 LARGEST_HEIGHT :: 800
 // The tool counts the module, the thread stacks and the window at its
-// largest size and largest scale (6400 pages)
-// (docs/MODULE_CONTRACT.md, "The floor of a module"). The working memory of
-// the floor holds the glyph memory (354 pages), the stack of the worker
-// thread past the default stack (48 pages), the store client and the page
-// tables of the mappings. During a resize after ready, the second surface
-// draws from the growth factor of the budget.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1024, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// largest size and largest scale (measured peak at ready 1897 pages for a
+// floor of 6961 pages); glyph memory, worker stack and store client fit
+// inside the floor, and a resize draws from the growth factor.
+MODULE_BUDGET :: system.Stated_Budget{threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 // The window that sets the scale back fits the least work area that each
 // holder of the display leaves at each scale, with its title.
 #assert(LEAST_HEIGHT + 40 <= scale_factor.WORK_AREA_LEAST_HEIGHT)

@@ -65,12 +65,10 @@ LARGEST_WIDTH :: 1216
 LARGEST_HEIGHT :: 640
 
 // The tool counts the module, the thread stack and the two pictures of the
-// window at its largest size (cut on each axis to the reference screen). The
-// working memory holds the glyph memory of the drawing module (354 pages,
-// display.TEXT_MEMORY_PAGES) and tables (measured peak at ready 1044 pages).
-// During a resize after ready, the second surface draws from the growth factor
-// of the budget.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512, processes = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = WIDTH, window_least_height = HEIGHT}
+// window at its largest size (measured peak at ready 1044 pages for a floor
+// of 4481 pages); glyph memory fits inside the floor and a resize draws from
+// the growth factor.
+MODULE_BUDGET :: system.Stated_Budget{processes = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = WIDTH, window_least_height = HEIGHT}
 
 Measure :: struct {
 	name:    string,

@@ -98,11 +98,10 @@ import "modus:contract/value_kinds"
 import "modus:system"
 import "base:intrinsics"
 
-// It starts fault and its child, and 3 threads under contention: 1476
-// pages. And the glyph memory of the copy of the text rendering of the
-// drawing module, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 1476 + 354 = 1830.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1830, processes = 3, threads = 4, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, its stacks and the window at the largest scale
+// (measured peak at ready 3135 pages for a floor of 6017 pages); fault, its
+// child, threads and glyph memory fit inside the floor.
+MODULE_BUDGET :: system.Stated_Budget{processes = 3, threads = 4, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(1024, 16384)

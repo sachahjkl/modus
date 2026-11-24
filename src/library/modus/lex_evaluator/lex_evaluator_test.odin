@@ -1262,3 +1262,29 @@ evaluation_stack_measure :: proc(t: ^testing.T) {
 	run := run_of("let f = (n) => f(n) in f(1)")
 	fmt.printfln("lex_evaluator: measure: %d bytes of stack for %d calls of a recursion, to %v", run.evaluation.stack_deepest, run.evaluation.call_count, run.evaluation.refusal.refusal)
 }
+
+// Chained and nested condition arguments evaluate inside the root chunk
+// without exhausting chunk slots, and can read enclosing let bindings.
+@(test)
+evaluation_runs_chained_and_nested_conditions :: proc(t: ^testing.T) {
+	chained := run_of("where(where(where(where(1, a = 2), b = 3), c = 4), d = 5)")
+	testing.expectf(t, chained.ok, "chained where refused: %v", chained.evaluation.refusal.refusal)
+	testing.expect_value(t, chained.value.integer, i64(4))
+	testing.expect_value(t, chained.evaluation.chunk_count, 1)
+
+	nested := run_of("where(1, a = where(2, b = 3) + where(4, c = 5))")
+	testing.expectf(t, nested.ok, "nested where refused: %v", nested.evaluation.refusal.refusal)
+	testing.expect_value(t, nested.value.integer, i64(3))
+	testing.expect_value(t, nested.evaluation.chunk_count, 1)
+
+	scoped := run_of("let x = 404 in where(where(1, status = x), serial > x - 400)")
+	testing.expectf(t, scoped.ok, "scoped where refused: %v", scoped.evaluation.refusal.refusal)
+	testing.expect_value(t, scoped.value.integer, i64(2))
+	testing.expect_value(t, scoped.evaluation.chunk_count, 1)
+
+	// Refusal inside a chained condition value still stops with the exact error.
+	bad_div := run_of("let x = 404 in where(where(1, status = x), serial > x / 0)")
+	testing.expect(t, !bad_div.ok)
+	testing.expect_value(t, bad_div.evaluation.refusal.refusal, Refusal.Division_By_Zero)
+	testing.expect_value(t, bad_div.evaluation.chunk_count, 1)
+}

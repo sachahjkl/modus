@@ -1529,6 +1529,20 @@ compile_call :: proc "contextless" (c: ^Compiler, call_idx: lex_parser.Node_Inde
 			switch an.kind {
 			case .Condition:
 				sarg.kind = .Condition
+				child := lex_parser.node_child(c.tree, an_idx)
+				if child != lex_parser.NO_NODE {
+					p_idx, p_ok := alloc_proto(c, child)
+					if p_ok {
+						sarg.val_node = child
+						sarg.proto_id = p_idx - c.chunk.proto_start
+						enqueue_pending(c, {
+							kind             = .Expr_Proto,
+							proto_idx        = p_idx,
+							ast_node         = child,
+							parent_let_scope = parent_ls,
+						})
+					}
+				}
 			case .Fact_Name:
 				sarg.kind = .Fact_Name
 			case .Field_Names:

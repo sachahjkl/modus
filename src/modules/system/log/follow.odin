@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "internal:log/scope_rules"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
+import "modus:principals"
 import "modus:system"
 
 // log.follow: the records of the principal of the reader from the next
@@ -80,6 +81,11 @@ follow: system.Record_Output(Follow_Row, .By_Principal)
 
 // The number of the next record of the whole log that follow writes.
 follow_next: u64
+// The next scope number of each principal that follow expects to emit. When
+// the settle pass wraps past follow_next and overwrites record_principals
+// slots before follow drains them, comparing place.scope_number against this
+// cursor recovers the exact lost count for that principal alone.
+follow_principal_next: [principals.PRINCIPAL_CAPACITY]u64
 
 // follow_row_of gives the row of one record, through the borders of its
 // form and its level (record_borders): a record of a byte that names no
@@ -106,12 +112,16 @@ follow_row_of :: proc "contextless" (number: u64, record: ^op.Log_Record) -> (ro
 	return row, true
 }
 
-// follow_lost says the loss of one record of a principal to the rings of
-// that principal only, with its serial and its counts: no follower learns a
-// loss, or a count, of another principal.
+// follow_lost_count says the loss of `count` records of a principal to the
+// rings of that principal only, with its serial and its counts: no follower
+// learns a loss, or a count, of another principal.
 @(private = "file")
-follow_lost :: proc "contextless" (principal: u64) {
-	system.output_gap_principal(&follow, principal, 1)
+follow_lost_count :: proc "contextless" (principal: u64, count: u64) {
+	for left := count; left > 0; {
+		step := u32(min(left, u64(max(u32))))
+		system.output_gap_principal(&follow, principal, step)
+		left -= u64(step)
+	}
 }
 
 // follow_pump writes the settled records that follow did not write yet,
@@ -126,11 +136,14 @@ follow_lost :: proc "contextless" (principal: u64) {
 follow_pump :: proc "contextless" () {
 	if !system.output_read_by(&follow) {
 		follow_next = settled_next
+		for index in 0 ..< principals.PRINCIPAL_CAPACITY {
+			follow_principal_next[index] = scope_counts[index]
+		}
 		return
 	}
 	for follow_next < settled_next {
 		place, settled := record_settled(follow_next)
-		if !settled || !place.known {
+		if !settled || !place.known || place.principal >= principals.PRINCIPAL_CAPACITY {
 			follow_next += 1
 			continue
 		}
@@ -141,16 +154,27 @@ follow_pump :: proc "contextless" () {
 		case .Skip:
 			follow_next += 1
 		case .Emit_Gap:
-			// Written over after the pass, or a byte that names no member:
-			// a loss of its principal only.
-			follow_lost(target)
+			// Written over after the pass (including any earlier records of
+			// this principal whose record_principals slots were also
+			// overwritten), or a byte that names no member: a loss of its
+			// principal only.
+			missing := scope_rules.follow_missing_count(follow_principal_next[target], place.scope_number)
+			follow_lost_count(target, missing + 1)
+			follow_principal_next[target] = place.scope_number + 1
 			follow_next += 1
 		case .Write:
+			if missing := scope_rules.follow_missing_count(follow_principal_next[target], place.scope_number); missing > 0 {
+				follow_lost_count(target, missing)
+				follow_principal_next[target] = place.scope_number
+			}
 			status := system.output_write_principal(&follow, target, row, wait = false, deadline = system.time())
 			if !scope_rules.follow_after_write(status) {
-				// The same record at the next pass: its place is kept.
+				// The same record at the next pass: its place is kept, and
+				// follow_principal_next[target] already holds place.scope_number
+				// so the gap above is never emitted twice.
 				return
 			}
+			follow_principal_next[target] = place.scope_number + 1
 			follow_next += 1
 		}
 	}

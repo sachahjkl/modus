@@ -94,6 +94,14 @@ follow_record_decide :: proc "contextless" (
 	return .Write, principal
 }
 
+// follow_missing_count gives how many settled records of one principal were
+// skipped before `actual_scope_number` (for example because the settle pass
+// wrapped past follow_next and overwrote their record_principals slots).
+// Returns 0 when actual_scope_number <= expected_scope_number.
+follow_missing_count :: proc "contextless" (expected_scope_number, actual_scope_number: u64) -> u64 {
+	return actual_scope_number > expected_scope_number ? actual_scope_number - expected_scope_number : 0
+}
+
 // follow_after_write says whether follow_next advances after a write to a
 // principal's rings. Full and Ended hold the cursor for the next pass.
 follow_after_write :: proc "contextless" (status: output.Stream_Status) -> bool {

@@ -189,34 +189,37 @@ terminal_window_layout :: proc "contextless" (tree: ^box_layout.Box_Tree, surfac
 		graph_box, sg = box_layout.box_add(tree, {size = {.X = box_layout.px(HISTORY * GRAPH_BAR), .Y = box_layout.px(GRAPH_HEIGHT)}})
 		_, sp_right := box_layout.box_add(tree, {size = {.X = box_layout.px(SCROLL_GAP + SCROLL_WIDTH), .Y = box_layout.fill()}})
 		sc_h := box_layout.box_close(tree)
-		_, s_hg := box_layout.box_add(tree, {size = {.X = box_layout.px(0), .Y = box_layout.px(6)}})
-		if sh != .Done || sp_left != .Done || sg != .Done || sp_right != .Done || sc_h != .Done || s_hg != .Done {
-			return {}, false
-		}
-	} else {
-		if _, st := box_layout.box_add(tree, {size = {.X = box_layout.px(0), .Y = box_layout.px(MARGIN)}}); st != .Done {
+		if sh != .Done || sp_left != .Done || sg != .Done || sp_right != .Done || sc_h != .Done {
 			return {}, false
 		}
 	}
 
+	// The scroll bar runs flush from the head (or top edge) to the separator
+	// line over the status bar; the text column keeps its top and bottom inset.
 	_, s_mid := box_layout.box_open(tree, {size = {.X = box_layout.fill(), .Y = box_layout.fill()}, child_axis = .X})
+	_, s_col := box_layout.box_open(tree, {size = {.X = box_layout.fill(), .Y = box_layout.fill()}, child_axis = .Y})
+	top_inset: i32 = measure_mode ? 6 : MARGIN
+	_, s_top := box_layout.box_add(tree, {size = {.X = box_layout.px(0), .Y = box_layout.px(top_inset)}})
+	_, s_row := box_layout.box_open(tree, {size = {.X = box_layout.fill(), .Y = box_layout.fill()}, child_axis = .X})
 	_, s_lp := box_layout.box_add(tree, {size = {.X = box_layout.px(TEXT_X), .Y = box_layout.fill()}})
 	text_box, s_tb := box_layout.box_add(tree, {size = {.X = box_layout.fill(), .Y = box_layout.fill()}})
 	_, s_sg := box_layout.box_add(tree, {size = {.X = box_layout.px(SCROLL_GAP), .Y = box_layout.fill()}})
+	sc_row := box_layout.box_close(tree)
+	_, s_pad := box_layout.box_add(tree, {size = {.X = box_layout.px(0), .Y = box_layout.px(4)}})
+	sc_col := box_layout.box_close(tree)
 	sb_box, s_sb := box_layout.box_add(tree, {size = {.X = box_layout.px(SCROLL_WIDTH), .Y = box_layout.fill()}})
 	sc_mid := box_layout.box_close(tree)
-	if s_mid != .Done || s_lp != .Done || s_tb != .Done || s_sg != .Done || s_sb != .Done || sc_mid != .Done {
+	if s_mid != .Done || s_col != .Done || s_top != .Done || s_row != .Done || s_lp != .Done || s_tb != .Done || s_sg != .Done || sc_row != .Done || s_pad != .Done || sc_col != .Done || s_sb != .Done || sc_mid != .Done {
 		return {}, false
 	}
 
-	_, s_pad := box_layout.box_add(tree, {size = {.X = box_layout.px(0), .Y = box_layout.px(4)}})
 	status_box: box_layout.Box_Index
 	s_stat := box_layout.Box_Status.Done
 	if measure_mode {
 		status_box, s_stat = box_layout.box_add(tree, {size = {.X = box_layout.fill(), .Y = box_layout.px(24)}})
 	}
 	bottom_box, s_bot := box_layout.box_add(tree, {size = {.X = box_layout.fill(), .Y = box_layout.px(CELL_HEIGHT + 10)}})
-	if s_pad != .Done || s_stat != .Done || s_bot != .Done || box_layout.solve(tree) != .Done {
+	if s_stat != .Done || s_bot != .Done || box_layout.solve(tree) != .Done {
 		return {}, false
 	}
 	if measure_mode {

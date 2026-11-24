@@ -106,13 +106,10 @@ WIDTH :: 944
 TOP_LINES :: 4
 HEIGHT :: 568
 #assert(HEIGHT == 2 * MARGIN + (TOP_LINES + ROWS) * LINE)
-// The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (1048 pages): its module, its
-// stack, its tables and its glyph memory. And the picture of the logical
-// size in which it draws by hand (interface.Hand_Picture): 944 x 568
-// pixels of 4 bytes, 524 pages. 1000 + 524 = 1524. The tool counts the
-// window at the largest scale (docs/MODULE_CONTRACT.md, "The floor of a module").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1524, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, its stack and the window at the largest scale
+// (measured peak at ready 2863 pages for a floor of 4651 pages); the hand
+// picture (524 pages), tables and glyph memory fit inside the floor.
+MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
 // The picture of the window, in its logical pixels: the window draws its
 // rows by hand, and the drawing module puts the picture on the screen at

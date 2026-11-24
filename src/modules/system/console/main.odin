@@ -133,13 +133,11 @@ import terminal "modus:terminal"
 import "modus:text_rendering"
 import "base:intrinsics"
 
-// Itself and four sandboxes, each a call host with its thread. The working
-// memory of the floor holds the 144 pages of the stack of the second thread
-// past the default thread stack and 512 pages (2 MiB) for initial variable
-// values and connections (measured peak 2552 pages). Sandboxes and larger
-// variable sets start after ready and draw from the growth factor of the
-// budget.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 656, processes = 5, threads = 6}
+// Itself and four sandboxes, each a call host with its thread. The tool counts
+// the module and six thread stacks (measured peak at ready 2552 pages for a
+// floor of 6246 pages); the line thread stack, variable values, connections
+// and sandboxes fit inside the floor and growth factor.
+MODULE_BUDGET :: system.Stated_Budget{processes = 5, threads = 6}
 
 // The stack of the second thread, which runs the lines: the bytes that the
 // evaluator may take, and 128 KiB for the host and the command that a call
@@ -157,7 +155,7 @@ LINE_THREAD_STACK_PAGES :: 160
 CONSOLE_MODULE_BEFORE_THE_LINE_TABLES_PAGES :: 729
 CONSOLE_LINE_TABLE_BYTES :: size_of(line_tree) + size_of(line_tree_buffers) + size_of(completion_tree_buffers) + size_of(line_evaluation) + size_of(line_eval_buffers) + size_of(list_keeping) + size_of(history) + size_of(history_copy) + TABLE_ARENA + size_of(scratch) + size_of(line_source) + size_of(work) + size_of(shown)
 CONSOLE_THREAD_PAGES :: 72 + (MODULE_BUDGET.threads - 1) * 19
-CONSOLE_REQUEST_PAGES :: MODULE_BUDGET.working_memory_pages + CONSOLE_MODULE_BEFORE_THE_LINE_TABLES_PAGES + (CONSOLE_LINE_TABLE_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE + CONSOLE_THREAD_PAGES
+CONSOLE_REQUEST_PAGES :: CONSOLE_MODULE_BEFORE_THE_LINE_TABLES_PAGES + (CONSOLE_LINE_TABLE_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE + CONSOLE_THREAD_PAGES
 #assert(CONSOLE_REQUEST_PAGES <= module.LARGEST_BUDGET_LEAST_PAGES, "the console asks for more pages than the largest budget of a process of the boot image")
 
 #assert(LINE_THREAD_STACK_PAGES * system.PAGE_SIZE == lex_evaluator.EVALUATION_STACK_BYTES + 128 * 1024)

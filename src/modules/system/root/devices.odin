@@ -383,6 +383,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	if behind_conventional_bridge {
 		driver.bridge_group = group
 	}
+	session_table_record_slot(driver)
 	start_budget_note(driver, driver_budget)
 	driver.start_grant_set = start_grant_set
 	driver.granted = {.Log}
