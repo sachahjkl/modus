@@ -299,3 +299,99 @@ the_writer_refuses_a_wrong_store :: proc(t: ^testing.T) {
 	_, encoded = build.module_disk_encode(large[:], 16 * format.BLOCK_SIZE)
 	testing.expect(t, !encoded)
 }
+
+// Multi-store STORAGE7 images with nested Entry_Kind.Tree subdirectories mount
+// with zero wrong blocks, zero count mismatches, and exact nested bytes;
+// invalid store lists and duplicate names are refused.
+@(test)
+data_disk_encode_stores_supports_multiple_stores_and_nested_trees :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	good := test_file_bytes(320, 7)
+
+	// Refusal cases: empty stores, duplicate store names, empty store,
+	// duplicate entry name between object and tree, empty object, too-small disk.
+	_, ok := build.data_disk_encode_stores(nil, 64 * format.BLOCK_SIZE)
+	testing.expect(t, !ok, "empty store list is refused")
+
+	dup_stores := [?]build.Data_Disk_Store{
+		{name = "alpha", limit = 64, objects = {{name = "a", bytes = good}}},
+		{name = "alpha", limit = 64, objects = {{name = "b", bytes = good}}},
+	}
+	_, ok = build.data_disk_encode_stores(dup_stores[:], 64 * format.BLOCK_SIZE)
+	testing.expect(t, !ok, "duplicate store names are refused")
+
+	empty_store := [?]build.Data_Disk_Store{{name = "empty", limit = 64}}
+	_, ok = build.data_disk_encode_stores(empty_store[:], 64 * format.BLOCK_SIZE)
+	testing.expect(t, !ok, "store with no entry is refused")
+
+	dup_entry := [?]build.Data_Disk_Store{{
+		name    = "dup",
+		limit   = 64,
+		objects = {{name = "core", bytes = good}},
+		trees   = {{name = "core", objects = {{name = "x.odin", bytes = good}}}},
+	}}
+	_, ok = build.data_disk_encode_stores(dup_entry[:], 64 * format.BLOCK_SIZE)
+	testing.expect(t, !ok, "object and subtree sharing a name are refused")
+
+	empty_obj := [?]build.Data_Disk_Store{{name = "zero", limit = 64, objects = {{name = "a", bytes = nil}}}}
+	_, ok = build.data_disk_encode_stores(empty_obj[:], 64 * format.BLOCK_SIZE)
+	testing.expect(t, !ok, "zero-byte object is refused")
+
+	// Valid multi-store disk with two levels of nested trees.
+	root_file := test_file_bytes(512, 11)
+	core_file := test_file_bytes(format.BLOCK_SIZE + 123, 22)
+	deep_file := test_file_bytes(99, 33)
+	mod_file := test_file_bytes(3 * format.BLOCK_SIZE + 7, 44)
+	stores := [?]build.Data_Disk_Store{
+		{
+			name    = "collatz",
+			limit   = 1024,
+			objects = {{name = "project.lex", bytes = root_file}},
+		},
+		{
+			name    = "db_browser",
+			limit   = 2048,
+			objects = {{name = "main.odin", bytes = root_file}, {name = "project.lex", bytes = good}},
+			trees   = {{
+				name    = "core",
+				objects = {{name = "state.odin", bytes = core_file}},
+				trees   = {{
+					name    = "sub",
+					objects = {{name = "leaf.odin", bytes = deep_file}},
+				}},
+			}},
+		},
+		{
+			name    = "disk-db_browser",
+			limit   = disk_process.PRIVATE_STORE_BLOCKS_LIMIT,
+			objects = {{name = "host.module", bytes = good}, {name = "sqlite.module", bytes = mod_file}},
+		},
+	}
+
+	_, too_small := build.data_disk_encode_stores(stores[:], 8 * format.BLOCK_SIZE)
+	testing.expect(t, !too_small, "too-small disk image is refused")
+
+	image, encoded := build.data_disk_encode_stores(stores[:], 256 * format.BLOCK_SIZE)
+	if !testing.expect(t, encoded, "multi-store nested-tree disk encodes cleanly") {
+		return
+	}
+	defer delete(image)
+
+	state := fuzz.mount_state_make()
+	defer fuzz.mount_state_free(state)
+	contents := fuzz.disk_contents(image, state)
+	mount := contents.mount
+	testing.expect(t, !mount.failed && !mount.needs_format, "storage_mount opens the multi-store disk")
+	testing.expect_value(t, mount.wrong, u64(0))
+	testing.expect_value(t, mount.damaged_objects, u64(0))
+	testing.expect_value(t, mount.damaged_stores, u64(0))
+	testing.expect_value(t, mount.stores_with_wrong_count, u64(0))
+	testing.expect_value(t, mount.stores_recounted, u64(0))
+	testing.expect_value(t, mount.named_twice, u64(0))
+	testing.expect_value(t, mount.named_by_two_stores, u64(0))
+	testing.expect_value(t, mount.stores, u64(3))
+	testing.expect_value(t, mount.trees, u64(2))
+	testing.expect_value(t, mount.objects, u64(7))
+	testing.expect_value(t, hashes_wrong(&contents), 0)
+	testing.expect_value(t, storage_mount.store_cell(state, 2).limit, u64(disk_process.PRIVATE_STORE_BLOCKS_LIMIT))
+}

@@ -76,6 +76,7 @@ Peer :: struct {
 	tcp:          ^Peer_Tcp, // The peer as a TCP client (peer_tcp.odin).
 	quic:         ^Peer_Quic, // The peer as QUIC clients (peer_quic.odin).
 	relay:        Peer_Relay, // UDP of programs of the host to the machine (peer_relay.odin).
+	cache:        Peer_Cache, // UDP forwarder for 10.0.2.100:5010 -> host cache-serve (peer_cache.odin).
 	tcp_segments: int, // TCP segments of the machine.
 	dhcp:         Peer_Dhcp, // The DHCP server of the peer (peer_dhcp.odin).
 }
@@ -89,7 +90,7 @@ peers_started: int
 // process and of this peer, so that two machine tests never share one.
 // relay_machine_port: the UDP port of the machine that the UDP relay of the
 // peer reaches (peer_relay.odin).
-peer_start :: proc(peer: ^Peer, call_socket_name := "", relay_machine_port: u16 = QUIC_SERVER_PORT) -> bool {
+peer_start :: proc(peer: ^Peer, call_socket_name := "", relay_machine_port: u16 = QUIC_SERVER_PORT, cache_endpoint: net.Endpoint = {}) -> bool {
 	socket, err := net.make_bound_udp_socket(net.IP4_Loopback, 0)
 	if err != nil {
 		fmt.eprintfln("modustool: the peer has no UDP socket: %v", err)
@@ -149,7 +150,9 @@ peer_start :: proc(peer: ^Peer, call_socket_name := "", relay_machine_port: u16 
 	}
 	peer.tcp = peer_tcp_make()
 	peer.quic = peer_quic_make()
-	if !peer_relay_start(&peer.relay, relay_machine_port) {
+	if !peer_relay_start(&peer.relay, relay_machine_port) || !peer_cache_start(&peer.cache, cache_endpoint) {
+		peer_cache_stop(&peer.cache)
+		peer_relay_stop(&peer.relay)
 		peer_tcp_free(peer.tcp)
 		peer_quic_free(peer.quic)
 		peer_remote_socket_stop(peer.remote)
@@ -220,6 +223,7 @@ peer_stop :: proc(peer: ^Peer) {
 	peer.quic = nil
 	peer_relay_report(&peer.relay)
 	peer_relay_stop(&peer.relay)
+	peer_cache_stop(&peer.cache)
 	peer_remote_report(peer.remote)
 	peer_remote_free(peer.remote)
 	peer.remote = nil
@@ -300,6 +304,8 @@ peer_run :: proc(peer: ^Peer) {
 			peer_display_tick(peer)
 			// The datagrams of programs of the host for the machine.
 			peer_relay_tick(peer)
+			// The datagrams of the host cache-serve for the machine.
+			peer_cache_tick(peer)
 			last_tick = time.tick_now()
 		}
 		free_all(context.temp_allocator)
@@ -383,6 +389,14 @@ peer_frame :: proc(peer: ^Peer, frame: []u8) {
 			copy(reply[38:42], arp[14:18])
 			peer_send(peer, reply[:])
 			peer.arp_answers += 1
+		} else if peer.cache.active && be16(arp, 6) == 1 && address_at(arp, 24) == PEER_CACHE_ADDRESS {
+			if be16(frame, 0) != 0xFFFF {
+				peer_wrong(peer, "an ARP request that is not broadcast")
+				return
+			}
+			reply := peer_cache_arp_reply(frame, arp)
+			peer_send(peer, reply[:])
+			peer.arp_answers += 1
 		}
 	case 0x0800:
 		ip := frame[14:]
@@ -398,7 +412,9 @@ peer_frame :: proc(peer: ^Peer, frame: []u8) {
 		// admit: the peer counts it (peer_remote.odin), and there must be
 		// none.
 		to_stranger := ip[9] == 17 && total >= 28 && address_at(ip, 16) == PEER_REMOTE_STRANGER && be16(ip, 20) == remote.LISTEN_PORT
-		if total < 20 || total > len(ip) || be16(ip, 6) & 0x3FFF != 0 || address_at(ip, 12) != MACHINE_ADDRESS || (address_at(ip, 16) != PEER_ADDRESS && !to_flood && !to_stranger) {
+		// A datagram of `recipes` to the local QUIC object cache forwarder (10.0.2.100:5010).
+		to_cache := peer.cache.active && ip[9] == 17 && total >= 28 && address_at(ip, 16) == PEER_CACHE_ADDRESS && be16(ip, 22) == int(PEER_CACHE_PORT)
+		if total < 20 || total > len(ip) || be16(ip, 6) & 0x3FFF != 0 || address_at(ip, 12) != MACHINE_ADDRESS || (address_at(ip, 16) != PEER_ADDRESS && !to_flood && !to_stranger && !to_cache) {
 			peer_wrong(peer, "an IPv4 header with a wrong length, fragment or address")
 			return
 		}
@@ -431,6 +447,11 @@ peer_frame :: proc(peer: ^Peer, frame: []u8) {
 		case 17:
 			if len(payload) < 8 || be16(payload, 4) != len(payload) || be16(payload, 6) == 0 || internet_sum(pseudo_sum(ip[12:16], ip[16:20], len(payload)), payload) != 0 {
 				peer_wrong(peer, "a UDP datagram with a wrong length or checksum")
+				return
+			}
+			if peer.cache.active && address_at(ip, 16) == PEER_CACHE_ADDRESS && be16(payload, 2) == int(PEER_CACHE_PORT) {
+				peer_cache_datagram(peer, u16(be16(payload, 0)), payload[8:])
+				free_all(context.temp_allocator)
 				return
 			}
 			// A datagram of the port of the relay to a port of the relay goes

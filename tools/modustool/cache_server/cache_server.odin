@@ -2001,3 +2001,159 @@ run_cache_serve :: proc(args: []string) -> int {
 	}
 	return cache_server_serve(options) ? 0 : foundation.EXIT_FAILURE
 }
+
+// cache_server_seed_object uploads one signed Blob or canonical Tree object
+// directly into an open Cache_Server through the full wire request handler so
+// Ed25519 verification, Bao outboard generation, and atomic commits run identically
+// to remote uploads.
+cache_server_seed_object :: proc(
+	server: ^Cache_Server,
+	kind: object_cache.Cache_Object_Kind,
+	data: []u8,
+	signer_private_key: [object_cache.PUBLIC_KEY_SIZE]u8,
+) -> (hash: blake3.Hash, ok: bool) {
+	if server == nil || len(data) == 0 {
+		return {}, false
+	}
+	if _, valid_kind := object_cache.cache_object_kind_of_word(u64(kind)); !valid_kind {
+		return {}, false
+	}
+	switch kind {
+	case .Blob:
+		hash = blake3.hash(data)
+	case .Tree:
+		refusal: tree_hash.Tree_Refusal
+		hash, refusal = tree_hash.tree_hash(data)
+		if refusal != .None {
+			return {}, false
+		}
+	}
+
+	seed := signer_private_key
+	parsed: ed25519.Private_Key
+	defer {
+		ed25519.private_key_clear(&parsed)
+		crypto_compat.zero_explicit(&seed, size_of(seed))
+	}
+	if !ed25519.private_key_set_bytes(&parsed, seed[:]) {
+		return {}, false
+	}
+	signer_pub: [object_cache.PUBLIC_KEY_SIZE]u8
+	ed25519.private_key_public_bytes(&parsed, signer_pub[:])
+
+	signing_bytes, sign_ok := object_cache.put_object_signing_bytes(kind, hash, u64(len(data)), signer_pub)
+	if !sign_ok {
+		return {}, false
+	}
+	signature: [object_cache.SIGNATURE_SIZE]u8
+	ed25519.sign(&parsed, signing_bytes[:], signature[:])
+
+	conn: Cache_Connection
+	cache_connection_init(&conn)
+	defer cache_connection_destroy(&conn)
+
+	frame_count, count_ok := object_cache.object_frame_count(u64(len(data)))
+	if !count_ok || frame_count == 0 {
+		return {}, false
+	}
+
+	put_req := object_cache.Cache_Request {
+		kind                = .Put_Object,
+		object_kind         = kind,
+		object_hash         = hash,
+		object_size         = u64(len(data)),
+		uploader_public_key = signer_pub,
+		uploader_signature  = signature,
+	}
+	written, enc_ref := object_cache.encode_request(&put_req, conn.request_buffer)
+	if enc_ref != .None {
+		return {}, false
+	}
+	resp_frame, status := cache_server_handle_connection_frame(server, &conn, conn.request_buffer[:written])
+	if status != .Ok {
+		return {}, false
+	}
+	resp, dec_ref := object_cache.decode_response(resp_frame)
+	if dec_ref != .None {
+		return {}, false
+	}
+	if resp.put_state == .Already_Present {
+		return hash, true
+	}
+
+	for frame_index in u64(0) ..< frame_count {
+		offset := int(frame_index * object_cache.FRAME_PAYLOAD_BYTES)
+		end := min(offset + int(object_cache.FRAME_PAYLOAD_BYTES), len(data))
+		frame_req := object_cache.Cache_Request {
+			kind        = .Put_Object_Frame,
+			object_kind = kind,
+			object_hash = hash,
+			offset      = u64(offset),
+			payload     = data[offset:end],
+		}
+		frame_written, frame_enc_ref := object_cache.encode_request(&frame_req, conn.request_buffer)
+		if frame_enc_ref != .None {
+			return {}, false
+		}
+		_, frame_status := cache_server_handle_connection_frame(server, &conn, conn.request_buffer[:frame_written])
+		if frame_status != .Ok {
+			return {}, false
+		}
+	}
+	return hash, true
+}
+
+// cache_server_seed_realisation signs and stores a Realisation_Record mapping
+// recipe_hash to output_hash through the full wire request handler.
+cache_server_seed_realisation :: proc(
+	server: ^Cache_Server,
+	recipe_hash: blake3.Hash,
+	output_hash: blake3.Hash,
+	output_kind: object_cache.Cache_Object_Kind,
+	signer_private_key: [object_cache.PUBLIC_KEY_SIZE]u8,
+) -> (record: object_cache.Realisation_Record, ok: bool) {
+	if server == nil {
+		return {}, false
+	}
+	if _, valid_kind := object_cache.cache_object_kind_of_word(u64(output_kind)); !valid_kind {
+		return {}, false
+	}
+	seed := signer_private_key
+	parsed: ed25519.Private_Key
+	defer {
+		ed25519.private_key_clear(&parsed)
+		crypto_compat.zero_explicit(&seed, size_of(seed))
+	}
+	if !ed25519.private_key_set_bytes(&parsed, seed[:]) {
+		return {}, false
+	}
+	record = {
+		recipe_hash = recipe_hash,
+		output_hash = output_hash,
+		output_kind = output_kind,
+	}
+	ed25519.private_key_public_bytes(&parsed, record.signer_public_key[:])
+	signing_bytes, sign_ok := object_cache.realisation_signing_bytes(&record)
+	if !sign_ok {
+		return {}, false
+	}
+	ed25519.sign(&parsed, signing_bytes[:], record.signature[:])
+
+	conn: Cache_Connection
+	cache_connection_init(&conn)
+	defer cache_connection_destroy(&conn)
+
+	req := object_cache.Cache_Request {
+		kind        = .Put_Realisation,
+		realisation = record,
+	}
+	written, enc_ref := object_cache.encode_request(&req, conn.request_buffer)
+	if enc_ref != .None {
+		return {}, false
+	}
+	_, status := cache_server_handle_connection_frame(server, &conn, conn.request_buffer[:written])
+	if status != .Ok {
+		return {}, false
+	}
+	return record, true
+}

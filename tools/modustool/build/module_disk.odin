@@ -329,32 +329,164 @@ module_disk_encode :: proc(files: []Module_File, disk_size: int, principal_files
 	return disk.image, true
 }
 
+// One subtree of a data disk store: its name, its direct objects, and its
+// nested subtrees.
+Data_Disk_Tree :: struct {
+	name:    string,
+	objects: []Module_File,
+	trees:   []Data_Disk_Tree,
+}
+
 // One private store of a data disk that is not module_files: its name, its
-// limit of blocks, and its objects, each with any name that a leaf takes.
+// limit of blocks, its root objects, and any nested subdirectories.
 Data_Disk_Store :: struct {
 	name:    string,
 	limit:   u64,
 	objects: []Module_File,
+	trees:   []Data_Disk_Tree,
 }
 
-// data_disk_encode gives the bytes of a data disk of disk_size bytes that
-// holds one store with these objects, as one commit: the private store of
-// a process of the boot image, which the storage service gives it by its
-// name. It refuses an empty store, two objects of one name, an object with
-// no byte, and a store that does not fit.
-data_disk_encode :: proc(store: Data_Disk_Store, disk_size: int, allocator := context.allocator) -> (image: []u8, ok: bool) {
-	if len(store.objects) == 0 {
-		fmt.eprintfln("modustool: the store %s of the tool holds at least 1 object, and none is given", store.name)
-		return nil, false
+// data_disk_tree_put writes one directory level of a store (objects and nested
+// Entry_Kind.Tree subdirectories) into its own B+ tree, updating store_block
+// counts and accumulating node blocks into nodes.
+@(private = "file")
+data_disk_tree_put :: proc(
+	disk: ^Module_Disk,
+	store_name: string,
+	objects: []Module_File,
+	trees: []Data_Disk_Tree,
+	depth: int,
+	disk_size: int,
+	store_block: ^format.Store_Block,
+	nodes: ^Node_Writer,
+) -> (root: format.Pointer, direct_count: u64, ok: bool) {
+	if depth > format.NESTING_LIMIT {
+		fmt.eprintfln("modustool: the store %s nests directories deeper than %d", store_name, format.NESTING_LIMIT)
+		return {}, 0, false
 	}
-	sorted := slice.clone(store.objects, context.temp_allocator)
-	slice.sort_by(sorted, proc(a, b: Module_File) -> bool {
+	Entry_Ref :: struct {
+		name:    string,
+		is_tree: bool,
+		index:   int,
+	}
+	total := len(objects) + len(trees)
+	if total == 0 {
+		return {}, 0, true
+	}
+	refs := make([]Entry_Ref, total, context.temp_allocator)
+	at := 0
+	for obj, index in objects {
+		refs[at] = {name = obj.name, is_tree = false, index = index}
+		at += 1
+	}
+	for sub, index in trees {
+		refs[at] = {name = sub.name, is_tree = true, index = index}
+		at += 1
+	}
+	slice.sort_by(refs, proc(a, b: Entry_Ref) -> bool {
 		return a.name < b.name
 	})
-	for object, index in sorted {
-		if refusal, _, _ := format.name_refusal(object.name); refusal != .None || len(object.bytes) == 0 || index > 0 && sorted[index - 1].name == object.name {
-			fmt.eprintfln("modustool: the object %q of the store %s has no name of an entry (%v), no byte, or the name of another object", object.name, store.name, refusal)
-			return nil, false
+	for ref, index in refs {
+		if refusal, _, _ := format.name_refusal(ref.name); refusal != .None || (index > 0 && refs[index - 1].name == ref.name) {
+			fmt.eprintfln("modustool: the entry %q of the store %s has no valid entry name (%v) or duplicates another entry", ref.name, store_name, refusal)
+			return {}, 0, false
+		}
+		if !ref.is_tree && len(objects[ref.index].bytes) == 0 {
+			fmt.eprintfln("modustool: the object %q of the store %s has no byte", ref.name, store_name)
+			return {}, 0, false
+		}
+	}
+
+	pool := new(tree.Pool)
+	defer free(pool)
+	tree.pool_reset(pool)
+	source := tree.Source{read = node_source_read}
+	work := tree.Work{pool = pool, source = &source, shape = tree.TREE_SHAPE}
+	for ref in refs {
+		entry: format.Entry
+		if ref.is_tree {
+			sub := trees[ref.index]
+			sub_root, sub_count, sub_ok := data_disk_tree_put(disk, store_name, sub.objects, sub.trees, depth + 1, disk_size, store_block, nodes)
+			if !sub_ok {
+				return {}, 0, false
+			}
+			entry = {
+				kind       = u64(format.Entry_Kind.Tree),
+				size       = sub_count,
+				generation = MODULE_DISK_GENERATION,
+				pointer    = sub_root,
+			}
+			store_block.trees += 1
+		} else {
+			obj := objects[ref.index]
+			held: u64
+			written: bool
+			entry, held, written = module_object_write(disk, obj.bytes)
+			if !written {
+				fmt.eprintfln("modustool: the object %s of the store %s does not fit in a disk of %d bytes", obj.name, store_name, disk_size)
+				return {}, 0, false
+			}
+			store_block.objects += 1
+			store_block.current_blocks += held
+		}
+		key := format.entry_name(ref.name)
+		tree.put(&work, key[:], ([^]u8)(&entry)[:size_of(format.Entry)], false)
+	}
+	root = tree.finish(&work, &nodes.writer)
+	if pool.failure != .None || disk.full {
+		fmt.eprintfln("modustool: the tree of the store %s does not fit in a disk of %d bytes, or in one commit: %v", store_name, disk_size, pool.failure)
+		return {}, 0, false
+	}
+	return root, u64(total), true
+}
+
+// data_disk_store_put writes one Data_Disk_Store (with optional nested trees)
+// and its store block, returning its cell for the store table.
+@(private = "file")
+data_disk_store_put :: proc(disk: ^Module_Disk, store: Data_Disk_Store, disk_size: int) -> (cell: format.Store_Entry, ok: bool) {
+	if len(store.name) == 0 || len(store.name) >= format.NAME_CAPACITY {
+		fmt.eprintfln("modustool: the store name %q must have 1 to %d bytes", store.name, format.NAME_CAPACITY - 1)
+		return {}, false
+	}
+	if len(store.objects) == 0 && len(store.trees) == 0 {
+		fmt.eprintfln("modustool: the store %s of the tool holds at least 1 entry, and none is given", store.name)
+		return {}, false
+	}
+	store_block: format.Store_Block
+	nodes := Node_Writer{writer = {write = node_writer_write}, disk = disk}
+	store_block.tree, _, ok = data_disk_tree_put(disk, store.name, store.objects, store.trees, 0, disk_size, &store_block, &nodes)
+	if !ok {
+		return {}, false
+	}
+	store_block.node_blocks = nodes.nodes
+	store_bytes := ([^]u8)(&store_block)[:format.BLOCK_SIZE]
+	store_number := module_disk_put(disk, store_bytes)
+	if disk.full {
+		fmt.eprintfln("modustool: the store %s does not fit in a disk of %d bytes", store.name, disk_size)
+		return {}, false
+	}
+	copy(cell.name[:format.NAME_CAPACITY - 1], store.name)
+	cell.limit = store.limit
+	cell.used = 1 + nodes.nodes + store_block.current_blocks
+	cell.store = {block = store_number, check = format.check(store_bytes)}
+	return cell, true
+}
+
+// data_disk_encode_stores encodes one or more private stores (each with
+// optional nested subdirectories) into a STORAGE7 data disk image as one
+// commit. Refuses an empty store list, duplicate store names, invalid entry
+// names, empty objects, or images that do not fit in disk_size bytes.
+data_disk_encode_stores :: proc(stores: []Data_Disk_Store, disk_size: int, allocator := context.allocator) -> (image: []u8, ok: bool) {
+	if len(stores) == 0 || len(stores) > format.STORES_OF_A_PAGE {
+		fmt.eprintfln("modustool: data_disk_encode_stores takes 1 to %d stores, got %d", format.STORES_OF_A_PAGE, len(stores))
+		return nil, false
+	}
+	for store, index in stores {
+		for other in stores[index + 1:] {
+			if store.name == other.name {
+				fmt.eprintfln("modustool: two stores of the data disk share the name %q", store.name)
+				return nil, false
+			}
 		}
 	}
 	disk := Module_Disk {
@@ -364,9 +496,33 @@ data_disk_encode :: proc(store: Data_Disk_Store, disk_size: int, allocator := co
 	defer if !ok {
 		delete(disk.image, allocator)
 	}
-	cells := [1]format.Store_Entry{module_files_store_put(&disk, store.name, sorted, disk_size, store.limit) or_return}
-	module_disk_root(&disk, cells[:], disk_size) or_return
+	cells := make([]format.Store_Entry, len(stores), context.temp_allocator)
+	for store, index in stores {
+		cells[index] = data_disk_store_put(&disk, store, disk_size) or_return
+	}
+	module_disk_root(&disk, cells, disk_size) or_return
 	return disk.image, true
+}
+
+// data_disk_encode gives the bytes of a data disk of disk_size bytes that
+// holds one store with these objects, as one commit: the private store of
+// a process of the boot image, which the storage service gives it by its
+// name. It refuses an empty store, two objects of one name, an object with
+// no byte, and a store that does not fit.
+data_disk_encode :: proc(store: Data_Disk_Store, disk_size: int, allocator := context.allocator) -> (image: []u8, ok: bool) {
+	stores := [1]Data_Disk_Store{store}
+	return data_disk_encode_stores(stores[:], disk_size, allocator)
+}
+
+// data_disk_write_stores writes a multi-store STORAGE7 data disk image to path.
+data_disk_write_stores :: proc(path: string, stores: []Data_Disk_Store, disk_size: int = DATA_DISK_SIZE) -> bool {
+	image := data_disk_encode_stores(stores, disk_size) or_return
+	defer delete(image)
+	if err := os.write_entire_file(path, image); err != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", path, err)
+		return false
+	}
+	return true
 }
 
 // module_disk_write writes the disk of the store `module_files`, and of the

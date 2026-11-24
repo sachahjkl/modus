@@ -156,9 +156,9 @@ disk_store_limit :: proc "contextless" (caller: ^Started, service: ^Started) -> 
 		return 0
 	}
 	// The budget that a module asks for has no part for a store yet: the
-	// store of a nickname has the default limit of a store, which no name
-	// of the tables of this service changes for a disk process.
-	return STORE_BLOCKS_DEFAULT
+	// store of a nickname uses disk_process.PRIVATE_STORE_BLOCKS_LIMIT, which
+	// no name of the tables of this service changes for a disk process.
+	return disk_process.PRIVATE_STORE_BLOCKS_LIMIT
 }
 
 // disk_process_running gives the disk process of a nickname that runs in

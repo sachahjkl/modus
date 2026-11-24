@@ -375,13 +375,13 @@ The second line fails each machine test: the floor of the module is wrong. `modu
 
 | Amount | Pages | Processes | Threads | Processor | Log records |
 |---|---|---|---|---|---|
-| The budget of all disk processes | 32768 | 4 | 16 | two processors | 4000 in each second |
-| The largest budget of one disk process | 16384 | 1 | 4 | one processor for each thread | 1000 in each second |
+| The budget of all disk processes | 32768 | 8 | 16 | two processors | 8000 in each second |
+| The largest budget of one disk process | 16384 | 2 | 4 | one processor for each thread | 1000 in each second |
 
-A file chooses its own floor, so the sum of all disk processes has one bound: the processes of the boot image keep the rest of the budget of the root service, also when several hostile files run. A disk process holds no grant that starts a process, so one process slot loses nothing. The log has one line when the budget of the disk processes is made:
+A file chooses its own floor, so the sum of all disk processes has one bound: the processes of the boot image keep the rest of the budget of the root service, also when several hostile files run. A disk process that omits `processes` gets 1 process slot and creates no child; a disk process that states `processes = 2` can start 1 zero-grant child call host paid from its own memory and thread budget. The log has one line when the budget of the disk processes is made:
 
 ```
-root: the disk processes share one budget of 128 MiB, 4 processes and 16 threads
+root: the disk processes share one budget of 128 MiB, 8 processes and 16 threads
 ```
 
 A floor above the largest budget of a disk process does not start, and the line names the part:

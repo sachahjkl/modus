@@ -171,10 +171,15 @@ only_the_scenario_of_a_film_has_fixed_times :: proc(t: ^testing.T) {
 			testing.expectf(t, !step_is_of_a_film(step.kind), "the step %d of a scenario of a test is %v, a step of a film", index + 1, step.kind)
 		}
 	}
-	for name in ([]string{"terminal", "palette", "heron", "boot", "desktop", "console", "program", "monitor"}) {
+	for name in ([]string{"terminal", "palette", "heron", "boot", "desktop", "console", "program", "monitor", "tutorial"}) {
 		film, found := film_of_name(name)
 		testing.expectf(t, found, "the film %s is a film of the tool", name)
 		testing.expectf(t, strings.contains(FILM_NAMES, name), "the usage of the command names the film %s", name)
+		if name == "tutorial" {
+			testing.expect(t, film.needs_data_disk && film.needs_cache_peer, "the tutorial film enables its data disk and cache peer")
+		} else {
+			testing.expect(t, !film.needs_data_disk && !film.needs_cache_peer, "other films do not request the tutorial fixtures")
+		}
 		started, stopped := false, false
 		// Each cue of a film has a valid name, once: the editor of the
 		// tutorial finds each caption by its name.

@@ -482,12 +482,14 @@ film_type :: proc(machine: ^Machine, text: string, seed: u64) -> bool {
 
 // A film that the command `film` makes.
 Film :: struct {
-	name:   string, // The argument of the command, the folder of the pictures and the name of the file.
-	steps:  []Step,
-	output: string, // The log of its machine.
+	name:             string, // The argument of the command, the folder of the pictures and the name of the file.
+	steps:            []Step,
+	output:           string, // The log of its machine.
+	needs_data_disk:  bool, // Prepares the tutorial STORAGE7 multi-store data disk.
+	needs_cache_peer: bool, // Starts a local signed QUIC cache-serve forwarded at 10.0.2.100:5010.
 }
 
-FILM_NAMES :: "terminal | palette | heron | boot | desktop | console | program | monitor"
+FILM_NAMES :: "terminal | palette | heron | boot | desktop | console | program | monitor | tutorial"
 TEST_OUTPUT_FILM_TERMINAL :: foundation.BUILD_FOLDER + "/test_output_film_terminal.txt"
 TEST_OUTPUT_FILM_PALETTE :: foundation.BUILD_FOLDER + "/test_output_film_palette.txt"
 TEST_OUTPUT_FILM_HERON :: foundation.BUILD_FOLDER + "/test_output_film_heron.txt"
@@ -496,6 +498,7 @@ TEST_OUTPUT_FILM_DESKTOP :: foundation.BUILD_FOLDER + "/test_output_film_desktop
 TEST_OUTPUT_FILM_CONSOLE :: foundation.BUILD_FOLDER + "/test_output_film_console.txt"
 TEST_OUTPUT_FILM_PROGRAM :: foundation.BUILD_FOLDER + "/test_output_film_program.txt"
 TEST_OUTPUT_FILM_MONITOR :: foundation.BUILD_FOLDER + "/test_output_film_monitor.txt"
+TEST_OUTPUT_FILM_TUTORIAL :: foundation.BUILD_FOLDER + "/test_output_film_tutorial.txt"
 
 // film_of_name gives the film with a name. The name of a film is the text
 // of the step Film_Start of its scenario.
@@ -517,6 +520,14 @@ film_of_name :: proc(name: string) -> (film: Film, found: bool) {
 		return Film{name = "program", steps = scenario_program_film[:], output = TEST_OUTPUT_FILM_PROGRAM}, true
 	case "monitor":
 		return Film{name = "monitor", steps = scenario_monitor_film[:], output = TEST_OUTPUT_FILM_MONITOR}, true
+	case "tutorial":
+		return Film{
+			name             = "tutorial",
+			steps            = scenario_tutorial_film[:],
+			output           = TEST_OUTPUT_FILM_TUTORIAL,
+			needs_data_disk  = true,
+			needs_cache_peer = true,
+		}, true
 	}
 	return {}, false
 }
@@ -556,8 +567,43 @@ run_film :: proc(args: []string) -> int {
 	}
 	part := test_part_run_make("film")
 	defer test_part_run_free(&part)
+	options := Machine_Options{
+		volume      = build.BOOT_VOLUME,
+		output      = film.output,
+		exit_status = 0,
+		vnc         = true,
+		paused      = paused,
+	}
+	steps := film.steps
+	tutorial_fixture: ^Tutorial_Film_Fixture
+	expanded_steps: []Step
+	defer tutorial_film_teardown(tutorial_fixture)
+	defer if len(expanded_steps) > 0 {
+		tutorial_film_steps_free(expanded_steps)
+	}
+	if film.needs_data_disk || film.needs_cache_peer {
+		prepared, ok := tutorial_film_prepare()
+		if !ok {
+			return foundation.EXIT_FAILURE
+		}
+		tutorial_fixture = prepared
+		expanded, expanded_ok := tutorial_film_expand_steps(film.steps, tutorial_fixture.bindings)
+		if !expanded_ok {
+			fmt.eprintln("modustool: the tutorial film: failed to expand scenario placeholders")
+			return foundation.EXIT_FAILURE
+		}
+		expanded_steps = expanded
+		steps = expanded_steps
+		if film.needs_data_disk {
+			options.data_disk = tutorial_fixture.data_disk_path
+		}
+		if film.needs_cache_peer {
+			options.cache_endpoint = tutorial_fixture.cache_endpoint
+		}
+		options.fact_outside_modules = tutorial_fixture.fact_outside_modules[:]
+	}
 	// The tool ends QEMU: status 0.
-	if !test_part_run_start(&part) || !machine_test(&part, film.steps, {volume = build.BOOT_VOLUME, output = film.output, exit_status = 0, vnc = true, paused = paused}) {
+	if !test_part_run_start(&part) || !machine_test(&part, steps, options) {
 		return foundation.EXIT_FAILURE
 	}
 	return film_write(film.name) ? 0 : foundation.EXIT_FAILURE
