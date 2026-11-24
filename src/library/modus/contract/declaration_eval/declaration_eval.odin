@@ -2,11 +2,11 @@
 // (src/md/features/declarations.md, "Text stops at the evaluation").
 //
 // The evaluation process holds no writable store, no network and no root
-// ring. Its caller passes a read-only bundle of referenced .lex sources and
-// optional tree hash for here(), and receives back either a canonical
-// serialized value or a typed refusal with its source place. Every byte that
-// crosses the border is validated once before use, and every closed set of
-// choices enters through enum_word.member_of_word.
+// ring. Its caller passes a read-only bundle of referenced .lex sources,
+// optional tree hash for here(), and a caller-supplied hash seed, and receives
+// back either a canonical serialized value or a typed refusal with its source
+// place. Every byte that crosses the border is validated once before use, and
+// every closed set of choices enters through enum_word.member_of_word.
 package declaration_eval
 
 import "modus:contract/blake3"
@@ -14,14 +14,16 @@ import "modus:contract/byte_order"
 import "modus:contract/enum_word"
 import "modus:contract/text_encoding"
 
-// ---- Read-only input bundle format.
+// ---- Read-only input bundle format (v2).
 
 BUNDLE_MAGIC :: u32(0x4244454C) // "LEDB"
-BUNDLE_VERSION :: u32(1)
-BUNDLE_HEADER_BYTES :: 48
-BUNDLE_ENTRY_BYTES :: 56 // kind(1) + pad(3) + path_off(4) + path_len(4) + content_off(4) + content_len(4) + hash(32) + pad(4)
-BUNDLE_ENTRY_LIMIT :: 64
+BUNDLE_VERSION :: u32(2)
+// Format property: magic(4) + version(4) + entry_count(4) + flags(4) + here_hash(32) + hash_seed(8).
+BUNDLE_HEADER_BYTES :: 56
+// Format property: kind(1) + pad(3) + path_off(4) + path_len(4) + content_off(4) + content_len(4) + hash(32) + pad(4).
+BUNDLE_ENTRY_BYTES :: 56
 BUNDLE_FLAG_HAS_HERE :: u32(1)
+// Format property: maximum relative .lex import path length in bytes.
 DECLARATION_PATH_LIMIT :: 256
 
 // What an entry of an input bundle keys on.
@@ -32,17 +34,18 @@ Bundle_Entry_Kind :: enum u8 {
 
 // Why an input bundle is refused at the border.
 Bundle_Refusal :: enum u8 {
-	None                 = 0,
-	Too_Small            = 1,
-	Bad_Magic            = 2,
-	Bad_Version          = 3,
-	Bad_Flags            = 4,
-	Too_Many_Entries     = 5,
-	Unknown_Entry_Kind   = 6,
-	Bad_Reserved         = 7,
-	Entry_Out_Of_Bounds  = 8,
-	Invalid_Path         = 9,
-	Buffer_Too_Small     = 10,
+	None                = 0,
+	Too_Small           = 1,
+	Bad_Magic           = 2,
+	Bad_Version         = 3,
+	Bad_Flags           = 4,
+	Unknown_Entry_Kind  = 5,
+	Bad_Reserved        = 6,
+	Entry_Out_Of_Bounds = 7,
+	Bad_Path            = 8,
+	Buffer_Too_Small    = 9,
+	Unsorted_Entries    = 10,
+	Duplicate_Entry     = 11,
 }
 
 // One entry to encode into an input bundle.
@@ -87,27 +90,146 @@ declaration_path_valid :: proc "contextless" (path: string) -> bool {
 	return true
 }
 
-// bundle_write encodes a read-only input bundle into destination.
-bundle_write :: proc "contextless" (destination: []u8, entries: []Bundle_Input_Entry, has_here: bool = false, here_hash: blake3.Hash = {}) -> (written: int, refusal: Bundle_Refusal) {
-	if len(entries) > BUNDLE_ENTRY_LIMIT {
-		return 0, .Too_Many_Entries
+@(private)
+hash_compare :: proc "contextless" (a, b: blake3.Hash) -> int {
+	for i in 0 ..< blake3.HASH_SIZE {
+		if a[i] < b[i] {
+			return -1
+		}
+		if a[i] > b[i] {
+			return 1
+		}
 	}
-	table_end := BUNDLE_HEADER_BYTES + len(entries) * BUNDLE_ENTRY_BYTES
-	total := table_end
+	return 0
+}
+
+@(private)
+string_compare :: proc "contextless" (a, b: string) -> int {
+	n := min(len(a), len(b))
+	for i in 0 ..< n {
+		if a[i] < b[i] {
+			return -1
+		}
+		if a[i] > b[i] {
+			return 1
+		}
+	}
+	if len(a) < len(b) {
+		return -1
+	}
+	if len(a) > len(b) {
+		return 1
+	}
+	return 0
+}
+
+// Compares two already-bounds-checked entry slots inside a bundle buffer by
+// (kind, path/hash).
+@(private)
+bundle_slot_compare :: proc "contextless" (bytes: []u8, a_idx, b_idx: int) -> int {
+	a_off := BUNDLE_HEADER_BYTES + a_idx * BUNDLE_ENTRY_BYTES
+	b_off := BUNDLE_HEADER_BYTES + b_idx * BUNDLE_ENTRY_BYTES
+	ak := bytes[a_off]
+	bk := bytes[b_off]
+	if ak != bk {
+		return ak < bk ? -1 : 1
+	}
+	if ak == u8(Bundle_Entry_Kind.File_Path) {
+		ap_off := int(byte_order.read_u32_little_endian(bytes, a_off + 4))
+		ap_len := int(byte_order.read_u32_little_endian(bytes, a_off + 8))
+		bp_off := int(byte_order.read_u32_little_endian(bytes, b_off + 4))
+		bp_len := int(byte_order.read_u32_little_endian(bytes, b_off + 8))
+		return string_compare(string(bytes[ap_off:ap_off + ap_len]), string(bytes[bp_off:bp_off + bp_len]))
+	}
+	ah, bh: blake3.Hash
+	copy(ah[:], bytes[a_off + 20:a_off + 52])
+	copy(bh[:], bytes[b_off + 20:b_off + 52])
+	return hash_compare(ah, bh)
+}
+
+@(private)
+bundle_slot_swap :: proc "contextless" (bytes: []u8, a_idx, b_idx: int) {
+	if a_idx == b_idx {
+		return
+	}
+	a_off := BUNDLE_HEADER_BYTES + a_idx * BUNDLE_ENTRY_BYTES
+	b_off := BUNDLE_HEADER_BYTES + b_idx * BUNDLE_ENTRY_BYTES
+	tmp: [BUNDLE_ENTRY_BYTES]u8
+	copy(tmp[:], bytes[a_off:a_off + BUNDLE_ENTRY_BYTES])
+	copy(bytes[a_off:a_off + BUNDLE_ENTRY_BYTES], bytes[b_off:b_off + BUNDLE_ENTRY_BYTES])
+	copy(bytes[b_off:b_off + BUNDLE_ENTRY_BYTES], tmp[:])
+}
+
+// In-place heapsort over the 56-byte entry descriptors in destination: O(N log N)
+// time, O(1) stack space, zero allocator.
+@(private)
+bundle_sort_slots :: proc "contextless" (bytes: []u8, count: int) {
+	sift_down :: proc "contextless" (bytes: []u8, start, end: int) {
+		root := start
+		for root * 2 + 1 < end {
+			child := root * 2 + 1
+			swap_idx := root
+			if bundle_slot_compare(bytes, swap_idx, child) < 0 {
+				swap_idx = child
+			}
+			if child + 1 < end && bundle_slot_compare(bytes, swap_idx, child + 1) < 0 {
+				swap_idx = child + 1
+			}
+			if swap_idx == root {
+				return
+			}
+			bundle_slot_swap(bytes, root, swap_idx)
+			root = swap_idx
+		}
+	}
+	for start := count / 2 - 1; start >= 0; start -= 1 {
+		sift_down(bytes, start, count)
+	}
+	for end := count - 1; end > 0; end -= 1 {
+		bundle_slot_swap(bytes, 0, end)
+		sift_down(bytes, 0, end)
+	}
+}
+
+// bundle_write encodes a read-only input bundle into destination with entries
+// sorted by (kind, path/hash) and rejects duplicate keys.
+bundle_write :: proc "contextless" (
+	destination: []u8,
+	entries: []Bundle_Input_Entry,
+	has_here: bool = false,
+	here_hash: blake3.Hash = {},
+	hash_seed: u64 = 0,
+) -> (written: int, refusal: Bundle_Refusal) {
+	entry_count := u64(len(entries))
+	if entry_count > u64(max(u32)) {
+		return 0, .Buffer_Too_Small
+	}
+	table_bytes := entry_count * u64(BUNDLE_ENTRY_BYTES)
+	total := u64(BUNDLE_HEADER_BYTES) + table_bytes
+	if total < u64(BUNDLE_HEADER_BYTES) || total > u64(len(destination)) {
+		return 0, .Buffer_Too_Small
+	}
 	for entry in entries {
 		switch entry.kind {
 		case .File_Path:
 			if !declaration_path_valid(entry.path) {
-				return 0, .Invalid_Path
+				return 0, .Bad_Path
 			}
-			total += len(entry.path)
+			if u64(len(entry.path)) > u64(len(destination)) - total {
+				return 0, .Buffer_Too_Small
+			}
+			total += u64(len(entry.path))
 		case .Declaration_Hash:
 		}
-		total += len(entry.content)
+		if u64(len(entry.content)) > u64(len(destination)) - total {
+			return 0, .Buffer_Too_Small
+		}
+		total += u64(len(entry.content))
 	}
-	if total > len(destination) {
+	if total > u64(max(u32)) {
 		return 0, .Buffer_Too_Small
 	}
+	table_end := int(u64(BUNDLE_HEADER_BYTES) + table_bytes)
 	for &b in destination[:table_end] {
 		b = 0
 	}
@@ -119,6 +241,7 @@ bundle_write :: proc "contextless" (destination: []u8, entries: []Bundle_Input_E
 		here := here_hash
 		copy(destination[16:48], here[:])
 	}
+	byte_order.write_u64_little_endian(destination, 48, hash_seed)
 	cursor := table_end
 	for entry, index in entries {
 		offset := BUNDLE_HEADER_BYTES + index * BUNDLE_ENTRY_BYTES
@@ -140,6 +263,14 @@ bundle_write :: proc "contextless" (destination: []u8, entries: []Bundle_Input_E
 		byte_order.write_u32_little_endian(destination, offset + 12, content_offset)
 		byte_order.write_u32_little_endian(destination, offset + 16, u32(len(entry.content)))
 	}
+	if len(entries) > 1 {
+		bundle_sort_slots(destination[:cursor], len(entries))
+		for index in 1 ..< len(entries) {
+			if bundle_slot_compare(destination[:cursor], index - 1, index) == 0 {
+				return 0, .Duplicate_Entry
+			}
+		}
+	}
 	return cursor, .None
 }
 
@@ -147,15 +278,16 @@ bundle_write :: proc "contextless" (destination: []u8, entries: []Bundle_Input_E
 // integer overflow and starts at or after min_offset.
 @(private)
 range_fits :: proc "contextless" (offset, length: u32, min_offset, total: int) -> bool {
-	if int(offset) < min_offset || int(offset) > total {
+	if u64(offset) < u64(min_offset) || u64(offset) > u64(total) {
 		return false
 	}
-	return int(length) <= total - int(offset)
+	return u64(length) <= u64(total) - u64(offset)
 }
 
 // bundle_validate validates a read-only input bundle at the border: magic,
-// version, unknown flags, entry count, reserved bytes, entry kind enum,
-// path validity, and payload bounds.
+// version, unknown flags, overflow-safe entry table bounds, reserved bytes,
+// entry kind enum, path validity, payload bounds, and strictly ascending
+// sorted unique keys.
 bundle_validate :: proc "contextless" (bytes: []u8) -> Bundle_Refusal {
 	if len(bytes) < BUNDLE_HEADER_BYTES {
 		return .Too_Small
@@ -167,17 +299,15 @@ bundle_validate :: proc "contextless" (bytes: []u8) -> Bundle_Refusal {
 		return .Bad_Version
 	}
 	entry_count := byte_order.read_u32_little_endian(bytes, 8)
-	if entry_count > BUNDLE_ENTRY_LIMIT {
-		return .Too_Many_Entries
-	}
 	flags := byte_order.read_u32_little_endian(bytes, 12)
 	if (flags & ~BUNDLE_FLAG_HAS_HERE) != 0 {
 		return .Bad_Flags
 	}
-	table_end := BUNDLE_HEADER_BYTES + int(entry_count) * BUNDLE_ENTRY_BYTES
-	if len(bytes) < table_end {
+	max_entries := (u64(len(bytes)) - u64(BUNDLE_HEADER_BYTES)) / u64(BUNDLE_ENTRY_BYTES)
+	if u64(entry_count) > max_entries {
 		return .Entry_Out_Of_Bounds
 	}
+	table_end := BUNDLE_HEADER_BYTES + int(entry_count) * BUNDLE_ENTRY_BYTES
 	for index in 0 ..< int(entry_count) {
 		offset := BUNDLE_HEADER_BYTES + index * BUNDLE_ENTRY_BYTES
 		kind, kind_ok := enum_word.member_of_word(Bundle_Entry_Kind, u64(bytes[offset]))
@@ -201,11 +331,20 @@ bundle_validate :: proc "contextless" (bytes: []u8) -> Bundle_Refusal {
 			}
 			path := string(bytes[int(path_off):int(path_off) + int(path_len)])
 			if !declaration_path_valid(path) {
-				return .Invalid_Path
+				return .Bad_Path
 			}
 		case .Declaration_Hash:
 			if path_off != 0 || path_len != 0 {
 				return .Bad_Reserved
+			}
+		}
+		if index > 0 {
+			cmp := bundle_slot_compare(bytes, index - 1, index)
+			if cmp == 0 {
+				return .Duplicate_Entry
+			}
+			if cmp > 0 {
+				return .Unsorted_Entries
 			}
 		}
 	}
@@ -225,63 +364,94 @@ bundle_here_hash :: proc "contextless" (bytes: []u8) -> (hash: blake3.Hash, has_
 	return hash, true
 }
 
-// bundle_lookup_path finds a .lex file entry by relative path in a validated bundle.
+// bundle_hash_seed returns the caller-supplied hash seed carried by a validated
+// bundle for zero-handle evaluation.
+bundle_hash_seed :: proc "contextless" (bytes: []u8) -> u64 {
+	if len(bytes) < BUNDLE_HEADER_BYTES {
+		return 0
+	}
+	return byte_order.read_u64_little_endian(bytes, 48)
+}
+
+// bundle_lookup_path finds a .lex file entry by relative path in a validated
+// sorted bundle in O(log N) time with zero auxiliary memory.
 bundle_lookup_path :: proc "contextless" (bytes: []u8, path: string) -> (content: string, found: bool) {
 	if len(bytes) < BUNDLE_HEADER_BYTES {
 		return "", false
 	}
-	entry_count := int(min(byte_order.read_u32_little_endian(bytes, 8), BUNDLE_ENTRY_LIMIT))
-	for index in 0 ..< entry_count {
-		offset := BUNDLE_HEADER_BYTES + index * BUNDLE_ENTRY_BYTES
-		if offset + BUNDLE_ENTRY_BYTES > len(bytes) {
-			return "", false
-		}
-		if bytes[offset] != u8(Bundle_Entry_Kind.File_Path) {
+	entry_count := byte_order.read_u32_little_endian(bytes, 8)
+	max_entries := (u64(len(bytes)) - u64(BUNDLE_HEADER_BYTES)) / u64(BUNDLE_ENTRY_BYTES)
+	if u64(entry_count) > max_entries {
+		return "", false
+	}
+	lo, hi := 0, int(entry_count)
+	for lo < hi {
+		mid := lo + (hi - lo) / 2
+		offset := BUNDLE_HEADER_BYTES + mid * BUNDLE_ENTRY_BYTES
+		kind := bytes[offset]
+		if kind != u8(Bundle_Entry_Kind.File_Path) {
+			// File_Path (1) precedes Declaration_Hash (2).
+			hi = mid
 			continue
 		}
 		path_off := int(byte_order.read_u32_little_endian(bytes, offset + 4))
 		path_len := int(byte_order.read_u32_little_endian(bytes, offset + 8))
-		if path_off + path_len > len(bytes) {
-			continue
-		}
-		if string(bytes[path_off:path_off + path_len]) != path {
-			continue
-		}
-		content_off := int(byte_order.read_u32_little_endian(bytes, offset + 12))
-		content_len := int(byte_order.read_u32_little_endian(bytes, offset + 16))
-		if content_off + content_len > len(bytes) {
+		if u64(path_off) > u64(len(bytes)) || u64(path_len) > u64(len(bytes)) - u64(path_off) {
 			return "", false
 		}
-		return string(bytes[content_off:content_off + content_len]), true
+		cmp := string_compare(string(bytes[path_off:path_off + path_len]), path)
+		if cmp < 0 {
+			lo = mid + 1
+		} else if cmp > 0 {
+			hi = mid
+		} else {
+			content_off := int(byte_order.read_u32_little_endian(bytes, offset + 12))
+			content_len := int(byte_order.read_u32_little_endian(bytes, offset + 16))
+			if u64(content_off) > u64(len(bytes)) || u64(content_len) > u64(len(bytes)) - u64(content_off) {
+				return "", false
+			}
+			return string(bytes[content_off:content_off + content_len]), true
+		}
 	}
 	return "", false
 }
 
-// bundle_lookup_hash finds a declaration entry by BLAKE3 hash in a validated bundle.
+// bundle_lookup_hash finds a declaration entry by BLAKE3 hash in a validated
+// sorted bundle in O(log N) time with zero auxiliary memory.
 bundle_lookup_hash :: proc "contextless" (bytes: []u8, hash: blake3.Hash) -> (content: string, found: bool) {
 	if len(bytes) < BUNDLE_HEADER_BYTES {
 		return "", false
 	}
-	entry_count := int(min(byte_order.read_u32_little_endian(bytes, 8), BUNDLE_ENTRY_LIMIT))
-	for index in 0 ..< entry_count {
-		offset := BUNDLE_HEADER_BYTES + index * BUNDLE_ENTRY_BYTES
-		if offset + BUNDLE_ENTRY_BYTES > len(bytes) {
-			return "", false
-		}
-		if bytes[offset] != u8(Bundle_Entry_Kind.Declaration_Hash) {
+	entry_count := byte_order.read_u32_little_endian(bytes, 8)
+	max_entries := (u64(len(bytes)) - u64(BUNDLE_HEADER_BYTES)) / u64(BUNDLE_ENTRY_BYTES)
+	if u64(entry_count) > max_entries {
+		return "", false
+	}
+	lo, hi := 0, int(entry_count)
+	for lo < hi {
+		mid := lo + (hi - lo) / 2
+		offset := BUNDLE_HEADER_BYTES + mid * BUNDLE_ENTRY_BYTES
+		kind := bytes[offset]
+		if kind != u8(Bundle_Entry_Kind.Declaration_Hash) {
+			// File_Path (1) precedes Declaration_Hash (2).
+			lo = mid + 1
 			continue
 		}
 		entry_hash: blake3.Hash
 		copy(entry_hash[:], bytes[offset + 20:offset + 52])
-		if entry_hash != hash {
-			continue
+		cmp := hash_compare(entry_hash, hash)
+		if cmp < 0 {
+			lo = mid + 1
+		} else if cmp > 0 {
+			hi = mid
+		} else {
+			content_off := int(byte_order.read_u32_little_endian(bytes, offset + 12))
+			content_len := int(byte_order.read_u32_little_endian(bytes, offset + 16))
+			if u64(content_off) > u64(len(bytes)) || u64(content_len) > u64(len(bytes)) - u64(content_off) {
+				return "", false
+			}
+			return string(bytes[content_off:content_off + content_len]), true
 		}
-		content_off := int(byte_order.read_u32_little_endian(bytes, offset + 12))
-		content_len := int(byte_order.read_u32_little_endian(bytes, offset + 16))
-		if content_off + content_len > len(bytes) {
-			return "", false
-		}
-		return string(bytes[content_off:content_off + content_len]), true
 	}
 	return "", false
 }
@@ -291,8 +461,8 @@ bundle_lookup_hash :: proc "contextless" (bytes: []u8, hash: blake3.Hash) -> (co
 OUTPUT_MAGIC :: u32(0x4F44454C) // "LEDO"
 OUTPUT_VERSION :: u32(1)
 OUTPUT_HEADER_BYTES :: 24
+// Format property: nesting depth limit for canonical serialized values.
 OUTPUT_DEPTH_LIMIT :: 64
-OUTPUT_COLLECTION_LIMIT :: 4096
 
 // Whether an evaluation succeeded or was refused.
 Output_Status :: enum u8 {
@@ -320,6 +490,7 @@ Failure_Kind :: enum u8 {
 	Pool_Exhausted       = 15,
 	Unserializable_Value = 16,
 	Recipe_Refused       = 17, // The conversion of a recipe refused it: the detail is the words of its refusal (plans_recipes.recipe_refusal_words).
+	Assertion_Failed     = 18, // An assert(cond, msg, value) call evaluated cond to false.
 }
 
 // Canonical value tags in the output buffer.
@@ -342,21 +513,20 @@ Value_Tag :: enum u8 {
 
 // Why an output buffer is refused by a reader.
 Output_Refusal :: enum u8 {
-	None                  = 0,
-	Too_Small             = 1,
-	Bad_Magic             = 2,
-	Bad_Version           = 3,
-	Unknown_Status        = 4,
-	Unknown_Failure_Kind  = 5,
-	Bad_Reserved          = 6,
-	Unknown_Value_Tag     = 7,
-	Truncated             = 8,
-	Bad_Boolean           = 9,
-	Invalid_Text          = 10,
-	Depth_Limit_Exceeded  = 11,
-	Count_Limit_Exceeded  = 12,
-	Unsorted_Record       = 13,
-	Trailing_Bytes        = 14,
+	None                 = 0,
+	Too_Small            = 1,
+	Bad_Magic            = 2,
+	Bad_Version          = 3,
+	Unknown_Status       = 4,
+	Unknown_Failure_Kind = 5,
+	Bad_Reserved         = 6,
+	Unknown_Value_Tag    = 7,
+	Truncated            = 8,
+	Bad_Boolean          = 9,
+	Bad_Text             = 10,
+	Depth_Limit_Exceeded = 11,
+	Unsorted_Record      = 12,
+	Trailing_Bytes       = 13,
 }
 
 // Decoded output header.
@@ -564,13 +734,13 @@ output_read_hash :: proc "contextless" (reader: ^Output_Reader) -> (hash: blake3
 
 output_read_string :: proc "contextless" (reader: ^Output_Reader) -> (text: string, refusal: Output_Refusal) {
 	length := output_read_u32(reader) or_return
-	if int(length) > len(reader.bytes) - reader.offset {
+	if u64(length) > u64(len(reader.bytes) - reader.offset) {
 		return "", .Truncated
 	}
 	slice := reader.bytes[reader.offset:reader.offset + int(length)]
 	reader.offset += int(length)
 	if !text_encoding.text_valid(slice) {
-		return "", .Invalid_Text
+		return "", .Bad_Text
 	}
 	return string(slice), .None
 }
@@ -678,8 +848,9 @@ output_validate_value :: proc "contextless" (reader: ^Output_Reader, depth: int)
 		if r != .None {
 			return r
 		}
-		if right_count > OUTPUT_COLLECTION_LIMIT {
-			return .Count_Limit_Exceeded
+		// Each right string occupies at least 4 bytes (u32 length).
+		if u64(right_count) > u64(len(reader.bytes) - reader.offset) / 4 {
+			return .Truncated
 		}
 		for _ in 0 ..< right_count {
 			_, refusal = output_read_string(reader)
@@ -693,8 +864,9 @@ output_validate_value :: proc "contextless" (reader: ^Output_Reader, depth: int)
 		if r != .None {
 			return r
 		}
-		if count > OUTPUT_COLLECTION_LIMIT {
-			return .Count_Limit_Exceeded
+		// Each list item occupies at least 1 byte (Value_Tag).
+		if u64(count) > u64(len(reader.bytes) - reader.offset) {
+			return .Truncated
 		}
 		for _ in 0 ..< count {
 			if err := output_validate_value(reader, depth + 1); err != .None {
@@ -707,8 +879,9 @@ output_validate_value :: proc "contextless" (reader: ^Output_Reader, depth: int)
 		if r != .None {
 			return r
 		}
-		if count > OUTPUT_COLLECTION_LIMIT {
-			return .Count_Limit_Exceeded
+		// Each field occupies at least 5 bytes (u32 name_len + Value_Tag).
+		if u64(count) > u64(len(reader.bytes) - reader.offset) / 5 {
+			return .Truncated
 		}
 		previous_name := ""
 		has_previous := false

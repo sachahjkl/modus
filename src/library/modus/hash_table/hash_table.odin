@@ -513,16 +513,184 @@ index_clear :: proc "contextless" (index: ^$I/Hash_Index($Reference, $GROUP_COUN
 	index.prepared_seed = prepared_seed
 }
 
-// The procedures of both forms under one name.
+// ---- Slice_Hash_Index: slice-backed Swiss index for caller-supplied arenas.
+
+// Slice_Hash_Index: runtime-sized Swiss index backed by caller-supplied
+// controls and references slices (16-slot groups, 7/8 load bound, ZII empty
+// controls). A zero-initialised Slice_Hash_Index has group_count == 0 and
+// safely returns no match and refuses inserts.
+Slice_Hash_Index :: struct($Reference: typeid) where intrinsics.type_is_integer(Reference) {
+	controls:      []u8,
+	references:    []Reference,
+	group_count:   int,
+	count:         int,
+	deleted_count: int,
+	prepared_seed: u64,
+}
+
+// slice_index_groups_for_entries computes the minimum number of 16-slot
+// groups needed to hold `entries` references within the 7/8 load bound
+// (14 entries per group). Returns 0 for negative counts or overflow.
+slice_index_groups_for_entries :: proc "contextless" (entries: int) -> int {
+	if entries < 0 {
+		return 0
+	}
+	if entries == 0 {
+		return 1
+	}
+	per_group := GROUP_WIDTH / 8 * LOAD_BOUND_EIGHTHS // 14
+	if entries > max(int) - (per_group - 1) {
+		return 0
+	}
+	groups := (entries + per_group - 1) / per_group
+	if groups > max(int) / GROUP_WIDTH {
+		return 0
+	}
+	return groups
+}
+
+// slice_index_init binds caller-owned controls and references slices into an
+// empty Slice_Hash_Index and prepares its seed. Refuses buffers smaller than
+// one group, controls whose length is not a multiple of GROUP_WIDTH, or a
+// references slice shorter than controls, leaving caller memory untouched.
+slice_index_init :: proc "contextless" ($Reference: typeid, controls: []u8, references: []Reference, seed: u64 = 0) -> (index: Slice_Hash_Index(Reference), ok: bool) {
+	if len(controls) < GROUP_WIDTH || len(controls) % GROUP_WIDTH != 0 || len(references) < len(controls) {
+		return {}, false
+	}
+	slot_count := len(controls)
+	for &c in controls[:slot_count] {
+		c = u8(Control_Mark.Empty)
+	}
+	return {
+		controls      = controls[:slot_count],
+		references    = references[:slot_count],
+		group_count   = slot_count / GROUP_WIDTH,
+		count         = 0,
+		deleted_count = 0,
+		prepared_seed = seed_prepare_for_table(seed),
+	}, true
+}
+
+slice_index_entry_capacity :: #force_inline proc "contextless" (index: ^Slice_Hash_Index($Reference)) -> int {
+	if index.group_count <= 0 {
+		return 0
+	}
+	return keys_bound(index.group_count * GROUP_WIDTH)
+}
+
+slice_index_seed_set :: proc "contextless" (index: ^Slice_Hash_Index($Reference), seed: u64) -> bool {
+	if index.group_count <= 0 || index.count != 0 || index.deleted_count != 0 {
+		return false
+	}
+	index.prepared_seed = seed_prepare_for_table(seed)
+	return true
+}
+
+slice_index_hash_word :: #force_inline proc "contextless" (index: ^Slice_Hash_Index($Reference), word: u64) -> u64 {
+	return fast_hash.mix_word_with_prepared_seed(word, index.prepared_seed)
+}
+
+slice_index_hash_bytes :: #force_inline proc "contextless" (index: ^Slice_Hash_Index($Reference), bytes: []u8) -> u64 {
+	return fast_hash.hash_bytes_with_prepared_seed(bytes, index.prepared_seed)
+}
+
+slice_index_search_begin :: #force_inline proc "contextless" (index: ^Slice_Hash_Index($Reference), hash: u64) -> Probe {
+	if index.group_count <= 0 || len(index.controls) < index.group_count * GROUP_WIDTH {
+		return {}
+	}
+	return probe_begin(hash, index.group_count)
+}
+
+slice_index_search_next :: #force_inline proc "contextless" (index: ^Slice_Hash_Index($Reference), search: ^Probe) -> (reference: Reference, slot: int, ok: bool) #no_bounds_check {
+	if index.group_count <= 0 || len(index.controls) < index.group_count * GROUP_WIDTH || len(index.references) < index.group_count * GROUP_WIDTH {
+		return 0, -1, false
+	}
+	if search.groups_left == 0 && search.matches == 0 {
+		return 0, -1, false
+	}
+	slot = probe_next(search, raw_data(index.controls), index.group_count) or_return
+	return index.references[slot], slot, true
+}
+
+slice_index_insert :: proc "contextless" (index: ^Slice_Hash_Index($Reference), hash: u64, reference: Reference, owner: rawptr, hash_of_reference: Hash_Of_Reference) -> bool #no_bounds_check {
+	if hash_of_reference == nil || index.group_count <= 0 || len(index.controls) < index.group_count * GROUP_WIDTH || len(index.references) < index.group_count * GROUP_WIDTH {
+		return false
+	}
+	Rebuild_Data :: struct {
+		index:             ^Slice_Hash_Index(Reference),
+		owner:             rawptr,
+		hash_of_reference: Hash_Of_Reference,
+	}
+	data := Rebuild_Data{index, owner, hash_of_reference}
+	slots := Rebuild_Slots {
+		data = &data,
+		hash_of_slot = proc "contextless" (data: rawptr, slot: int) -> u64 {
+			data := (^Rebuild_Data)(data)
+			return data.hash_of_reference(data.owner, u64(data.index.references[slot]))
+		},
+		move = proc "contextless" (data: rawptr, from, to: int) {
+			index := (^Rebuild_Data)(data).index
+			index.references[to] = index.references[from]
+			index.references[from] = 0
+		},
+		swap = proc "contextless" (data: rawptr, first, second: int) {
+			index := (^Rebuild_Data)(data).index
+			index.references[first], index.references[second] = index.references[second], index.references[first]
+		},
+	}
+	slot := slot_take(raw_data(index.controls), index.group_count, &index.count, &index.deleted_count, hash, slots)
+	if slot < 0 {
+		return false
+	}
+	index.references[slot] = reference
+	return true
+}
+
+slice_index_remove_slot :: proc "contextless" (index: ^Slice_Hash_Index($Reference), slot: int) -> bool #no_bounds_check {
+	slot_count := index.group_count * GROUP_WIDTH
+	if index.group_count <= 0 || slot < 0 || slot >= slot_count || len(index.controls) < slot_count || len(index.references) < slot_count {
+		return false
+	}
+	if index.controls[slot] & FULL_BIT == 0 {
+		return false
+	}
+	if mark_removed(raw_data(index.controls), slot) {
+		index.deleted_count += 1
+	}
+	index.references[slot] = 0
+	index.count -= 1
+	return true
+}
+
+slice_index_clear :: proc "contextless" (index: ^Slice_Hash_Index($Reference)) {
+	slot_count := index.group_count * GROUP_WIDTH
+	if index.group_count > 0 && len(index.controls) >= slot_count {
+		for &c in index.controls[:slot_count] {
+			c = u8(Control_Mark.Empty)
+		}
+	}
+	if index.group_count > 0 && len(index.references) >= slot_count {
+		for &r in index.references[:slot_count] {
+			r = 0
+		}
+	}
+	index.count = 0
+	index.deleted_count = 0
+}
+
+// The procedures of all forms under one name.
 entry_capacity :: proc {
 	table_entry_capacity,
 	index_entry_capacity,
+	slice_index_entry_capacity,
 }
 seed_set :: proc {
 	table_seed_set,
 	index_seed_set,
+	slice_index_seed_set,
 }
 clear :: proc {
 	table_clear,
 	index_clear,
+	slice_index_clear,
 }

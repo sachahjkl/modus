@@ -1,151 +1,152 @@
-// The parser of Lex: a text becomes a syntax tree, a typed node for each
-// part with its line and its column (src/md/features/declarations.md, "The
-// parser package"). The console evaluates the tree; this package reads
-// text and evaluates nothing.
+// The parser of Lex: a text becomes a compact SoA syntax tree with 16-byte
+// AST nodes, contiguous child slices, native `|>` pipe and `_` placeholder
+// support, and on-demand line/column resolution (src/md/features/declarations.md,
+// "Lex v2 engine: compact AST, register bytecode VM, sorted shapes, and
+// incremental caching").
 //
-//   line       = name "=" expression | expression
-//   expression = sum { "with" sum }
+//   line       = name "=" pipeline | pipeline
+//   pipeline   = expression { "|>" stage }
+//   stage      = name | name "(" [ arguments ] ")"
+//   expression = with_expr [ ("=" | "!=" | "<" | "<=" | ">" | ">=") with_expr ]
+//   with_expr  = sum { "with" sum }
 //   sum        = term { ("+" | "-") term }
 //   term       = factor { ("*" | "/" | "%") factor }
-//   factor     = "-" factor | integer | "text" | name | "." name | name "(" arguments ")" | "(" expression ")"
-//              | "{" [ name "=" expression { "," name "=" expression } ] "}"
-//              | "let" name "=" expression { "," name "=" expression } "in" expression
-//              | "(" [ name { "," name } ] ")" "=>" expression
-//              | "[" [ expression { "," expression } ] "]"
-//   arguments  = argument { "," argument }
-//   argument   = [ name "=" ] expression | condition | fact name | field names
-//   condition  = name ("=" | "!=" | "<" | "<=" | ">" | ">=") expression
-//   field names = name { "," name }       (the last argument of its call)
-//
-// `_`, `let`, `in` and `with` are words of Lex, never names. After a whole
-// `let`, each name that its values and its body read is bound to its
-// binding: a Name node keeps the Let_Binding in `binding`. After a whole
-// function, each name of its body is bound to its Parameter in the same
-// way, and a call whose name a let or a parameter binds keeps it too. A
-// '(' starts a function when its group closes and "=>" follows
-// (console_language.function_head); each node keeps the innermost
-// function that holds it in `function`.
-//
-// The parser reads no "|>": the console gives it the nested form of the
-// line, with calls in calls (console_language, pipe.odin). The form of
-// each argument of a call (Parameter_Form) comes from the command table of
-// the caller, through a Form_Lookup: inside `where`, `=` is the operator
-// of a condition.
-//
-// A refusal does not end the tree: it is a node at the place of the fault,
-// and the parse stops there. The console evaluates the tree from the left
-// and meets the refusal where its one pass met it before, so the calls of
-// the line before the fault still run, and the line fails with the same
-// sentence. The sentences stay in the console: a refusal is a record.
+//   factor     = "-" factor | postfix
+//   postfix    = primary { "." field_name }
+//   primary    = integer | "true" | "false" | "text" | hash | "." name
+//              | name "(" [ arguments ] ")" | name record_lit | name
+//              | "(" [ name { "," name } ] ")" "=>" pipeline
+//              | "(" pipeline ")"
+//              | record_lit | list_lit
+//              | "let" binding { "," binding } "in" pipeline
+//              | "if" pipeline "then" pipeline "else" pipeline
 //
 // The package has no state, calls no allocator and makes no kernel call:
-// the caller gives the memory of the tree, and host tests give each input.
+// every buffer is supplied by the caller via Tree_Storage or Console_Tree_Buffers.
 package lex_parser
 
-import module "modus:contract/module"
 import "modus:console_condition"
 import "modus:console_language"
+import module "modus:contract/module"
+import "modus:contract/text_encoding"
+import "modus:hash_table"
 import "modus:line_editor"
 
-// The bytes of the longest text: the longest line that the console runs.
-// The nested form of a line is never longer than its line.
+// The bytes of the longest console line.
 TEXT_BYTES_MOST :: line_editor.LINE_CAPACITY
 
-// The nesting depth of a console line: a line of TEXT_BYTES_MOST bytes can
-// nest one level for each byte, and the parser takes the stack of its
-// thread for each level, so the depth has its own bound, as a declaration
-// has.
+// Nesting depth bound for console lines and declarations (Format/safety bound:
+// keeps recursive-descent stack usage under 32 KiB).
 LINE_PARSE_DEPTH_LIMIT :: 256
-
-// The bytes and nesting depth of a multi-line declaration file (.lex). A
-// file of the most bytes is a large generated declaration: its evaluator
-// sizes its pools from the bytes that it reads (lex_evaluator,
-// declaration_workspace_carve), so the bound costs no memory to a short
-// file. A place holds its offset in 32 bits.
-DECLARATION_TEXT_BYTES_MOST :: 16 * 1024 * 1024
 DECLARATION_PARSE_DEPTH_LIMIT :: 256
 
-// The nodes of the longest text: each node but the one refusal reads one
-// byte or more of its own, so a text of TEXT_BYTES_MOST bytes fills the
-// memory at most.
+// Maximum declaration source file size in bytes (u32 span_off holds offsets).
+DECLARATION_TEXT_BYTES_MOST :: 16 * 1024 * 1024
+
+// Console line node capacity: each node consumes at least one byte, plus one
+// optional Refused node.
 NODE_CAPACITY :: TEXT_BYTES_MOST + 1
 
-// The arguments of a call: those of an export at most.
+// Console side-buffer capacities (inline capacities for one console line).
+CONSOLE_INT_CONST_CAPACITY :: 256
+CONSOLE_CONDITION_CAPACITY :: 64
+
+// Maximum arguments of a call / parameters of a function (Format property:
+// matches module.PARAMETER_CAPACITY).
 ARGUMENT_CAPACITY :: module.PARAMETER_CAPACITY
 
-// The place of a node in the memory of its tree.
+// Node index inside Syntax_Tree.nodes.
 Node_Index :: distinct i32
 
-// No node: the end of a list of arguments, or a node with no child.
+// Sentinel for absent node.
 NO_NODE :: Node_Index(-1)
+NO_NODE_U32 :: ~u32(0)
 
-// What the parser reads for a parameter of a command. Most parameters take
-// an expression; a few take a name that the console checks against a
-// description, never a variable (src/md/features/log_facts.md, "Filters
-// of a reader: one form").
+// What the parser reads for a parameter of a command.
 Parameter_Form :: enum u8 {
-	Expression  = 0, // An expression, whose value has the kind of the parameter.
-	Fact_Name   = 1, // The name of a fact type, "package.Type".
-	Condition   = 2, // A field of the table of the first argument, an operator and a value.
-	Field_Names = 3, // The last parameter: one name of a field of the table of the first argument or more, separated by commas.
+	Expression  = 0,
+	Fact_Name   = 1,
+	Condition   = 2,
+	Field_Names = 3,
 }
 
-// The caller gives the form of each parameter of a command. The package
-// keeps no table of commands: the console changes its own with each module
-// that it loads.
+// Caller-supplied lookup for command parameter forms.
 Form_Lookup :: struct {
-	data:    rawptr, // The state of the caller.
-	form_of: proc "contextless" (data: rawptr, command_name: string, index: int) -> Parameter_Form, // The form of the parameter index of a command; Expression for a name that no command has.
+	data:    rawptr,
+	form_of: proc "contextless" (data: rawptr, command_name: string, index: int) -> Parameter_Form,
 }
 
-// form_of gives the form of a parameter through a lookup. A lookup with no
-// procedure knows no command: each argument is an expression.
 form_of :: proc "contextless" (lookup: Form_Lookup, command_name: string, index: int) -> Parameter_Form {
 	return lookup.form_of == nil ? .Expression : lookup.form_of(lookup.data, command_name, index)
 }
 
-// The kinds of nodes.
+// Kinds of AST nodes (1 byte).
 Node_Kind :: enum u8 {
-	Integer     = 0, // An integer literal: its value is in `integer`.
-	Text        = 1, // A text literal: its bytes, with the two quotes.
-	Name        = 2, // A name alone: a variable, `variable.field`, or a command named with no parentheses.
-	Call        = 3, // A name and its arguments: the bytes are the name, the children the arguments.
-	Negate      = 4, // "-" before a factor: the child is the factor.
-	Binary      = 5, // Two operands and an operator: the bytes are the operator, the children the left then the right.
-	Condition   = 6, // A field, an operator and a value: the bytes are the field and the operator, the child the value.
-	Fact_Name   = 7, // The name of a fact type; with the refusal Fact_Name_Missing, no name.
-	Refused     = 8, // The fault where the parse stopped: the child is the part that was read before it, or none.
-	Field_Names = 9, // The names of fields, with their commas and the spaces after the last; with the refusal Field_Name_Missing, a name is missing.
-	Record_Literal = 10, // "{ … }": the bytes are "{", the children its fields.
-	Literal_Field  = 11, // A field of a record literal: the bytes are its name, the child its value.
-	Named_Argument = 12, // An argument `name = value`: the bytes are the name, the child the value.
-	Let            = 13, // "let … in …": the bytes are "let", the children its bindings, then its body.
-	Let_Binding    = 14, // A binding of a let: the bytes are its name, the child its value.
-	Member         = 15, // A member of an enum, `.french`: the bytes are the '.' and the name. The parameter that receives it gives its enum.
-	Function       = 16, // "(…) => …": the bytes are "=>", `integer` the offset of its '(', the children its parameters, then its body.
-	Parameter      = 17, // A parameter of a function: the bytes are its name.
-	List_Literal   = 18, // "[ … ]": the bytes are "[", the children its items.
-	Hash           = 19, // A BLAKE3 hash literal: "blake3:" and 64 lowercase hexadecimal digits.
-	Boolean        = 20, // `true` (integer = 1) or `false` (integer = 0).
-	If             = 21, // `if cond then a else b`: children are cond, then branch, else branch.
-	Field_Select   = 22, // Postfix `.field` on an expression: bytes are the field name, child is the base expression.
+	Integer        = 0,  // span_off..a, sub=0 -> inline i32(b); sub=1 -> int_consts[b]
+	Text           = 1,  // span_off..a (includes quotes)
+	Name           = 2,  // span_off..a
+	Call           = 3,  // span_off..b (callee name), extra_children[a : a + aux], sub = Call_Flags
+	Negate         = 4,  // span_off..b ("-"), child = a
+	Binary         = 5,  // span_off..span_off+aux, sub = Operator, left = a, right = b
+	Condition      = 6,  // span_off, sub = Refusal, value = a, conditions[b]
+	Fact_Name      = 7,  // span_off..a, sub = Refusal
+	Refused        = 8,  // span_off..b, sub = Refusal, before = a
+	Field_Names    = 9,  // span_off..a, sub = Refusal
+	Record_Literal = 10, // span_off ("{"), extra_children[a : a + b]
+	Literal_Field  = 11, // span_off..b (field name), value = a
+	Named_Argument = 12, // span_off..b (arg name), value = a
+	Let            = 13, // span_off ("let"), extra_children[a : a + b] (bindings then body)
+	Let_Binding    = 14, // span_off..b (binding name), value = a
+	Member         = 15, // span_off..a (includes '.')
+	Function       = 16, // span_off ('('), b = arrow_end, extra_children[a : a + aux] (params then body)
+	Parameter      = 17, // span_off..a
+	List_Literal   = 18, // span_off ("["), extra_children[a : a + b]
+	Hash           = 19, // span_off..a
+	Boolean        = 20, // span_off..a, sub = 1 (true) / 0 (false)
+	If             = 21, // span_off ("if"), extra_children[a : a + aux] (cond, then, else)
+	Field_Select   = 22, // span_off..b (field name), base = a
+	Pipe           = 23, // span_off ("|>"), aux = 2, left = a, right_call = b
+	Placeholder    = 24, // span_off..a ("_")
+	Logical_Not    = 25, // span_off..b ("!"), child = a
+	Text_Interp    = 26, // span_off ('"'), extra_children[a : a + b] (Text segments & exprs)
+	Pattern_Record = 27, // span_off ('{' or as_name), sub = PAT_FLAG_*, extra_children[a : a + b]
+	Pattern_Field  = 28, // span_off..b (field name), a = default expr or NO_NODE_U32
 }
 
-// The operators of a Binary node.
+// Flags stored in Ast_Node.sub for .Call nodes.
+CALL_FLAG_IN_PIPE :: u8(1 << 0)
+CALL_FLAG_HAS_PLACEHOLDER :: u8(1 << 1)
+
+// Flags stored in Ast_Node.sub for .Text nodes.
+TEXT_FLAG_ESCAPED :: u8(1 << 0)
+TEXT_FLAG_SEGMENT :: u8(1 << 1)
+
+// Flags stored in Ast_Node.sub for .Pattern_Record nodes.
+PAT_FLAG_REST :: u8(1 << 0)
+PAT_FLAG_HAS_AS :: u8(1 << 1)
+
+// Flag stored in Ast_Node.sub for .Let_Binding when LHS is a Pattern_Record
+// (in which case a = rhs_expr, b = pattern_node).
+LET_BINDING_PATTERN :: u8(1 << 0)
+
+// Operators of a Binary node.
 Operator :: enum u8 {
-	None             = 0, // Each node but a Binary.
-	Add              = 1, // "+": two Integers, or two Texts that it joins.
-	Subtract         = 2, // "-"
-	Multiply         = 3, // "*"
-	Divide           = 4, // "/"
-	Remainder        = 5, // "%"
-	With             = 6, // `with`: a record, with the fields of the record on its right.
-	Equal            = 7, // "="
-	Not_Equal        = 8, // "!="
-	Less             = 9, // "<"
-	Less_Or_Equal    = 10, // "<="
-	Greater          = 11, // ">"
-	Greater_Or_Equal = 12, // ">="
+	None             = 0,
+	Add              = 1,
+	Subtract         = 2,
+	Multiply         = 3,
+	Divide           = 4,
+	Remainder        = 5,
+	With             = 6,
+	Equal            = 7,
+	Not_Equal        = 8,
+	Less             = 9,
+	Less_Or_Equal    = 10,
+	Greater          = 11,
+	Greater_Or_Equal = 12,
+	Logical_And      = 13,
+	Logical_Or       = 14,
+	List_Concat      = 15,
 }
 
 @(rodata)
@@ -163,17 +164,14 @@ OPERATOR_TEXTS := [Operator]string {
 	.Less_Or_Equal    = "<=",
 	.Greater          = ">",
 	.Greater_Or_Equal = ">=",
+	.Logical_And      = "&&",
+	.Logical_Or       = "||",
+	.List_Concat      = "++",
 }
 
-// The words of Lex: no name has one of them.
 @(rodata)
 WORDS_OF_LEX := [?]string{"_", "let", "in", "with", "if", "then", "else", "true", "false"}
 
-// name_valid says if a text is one name of Lex, with no '.': a letter or
-// '_', then letters, digits and '_', and no word of Lex. The console builds
-// a line from the name of an export and of its parameters, which another
-// party wrote in its module file: a name that is no name of Lex could add a
-// call of its own to that line.
 name_valid :: proc "contextless" (name: string) -> bool {
 	if len(name) == 0 || word_of_lex(name) {
 		return false
@@ -188,8 +186,6 @@ name_valid :: proc "contextless" (name: string) -> bool {
 	return true
 }
 
-// word_of_lex says if a name is a word of Lex: `_` is the placeholder of
-// `|>`, and `let`, `in` and `with` are words of its forms.
 word_of_lex :: proc "contextless" (name: string) -> bool {
 	for word in WORDS_OF_LEX {
 		if name == word {
@@ -199,149 +195,261 @@ word_of_lex :: proc "contextless" (name: string) -> bool {
 	return false
 }
 
-
-// Why a text has no whole tree. The values are fixed: a test names the
-// member, and a record keeps it.
+// Parse refusal codes.
 Refusal :: enum u8 {
-	None                      = 0, // The tree is whole.
-	Text_Too_Long             = 1, // More than TEXT_BYTES_MOST bytes. value: the bytes of the text.
-	Nodes_Full                = 2, // The memory of the tree is full; the count of NODE_CAPACITY says that no text reaches it.
-	Line_Ends_Too_Soon        = 3, // A value is missing at the end of the text: "", "1 +", "f(".
-	Unexpected                = 4, // A byte that starts no value here, or more after the expression: the bytes from it to the end.
-	Number_Too_Large          = 5, // The digits are past the largest Integer: the bytes are the digits.
-	Text_Without_End_Quote    = 6, // A quote with no end quote: the bytes run to the end.
-	Close_Parenthesis_Missing = 7, // "(" and an expression, then no ")".
-	Comma_Or_Close_Missing    = 8, // An argument, then neither "," nor ")".
-	Too_Many_Arguments        = 9, // A "," after ARGUMENT_CAPACITY arguments.
-	Fact_Name_Missing         = 10, // The argument of a fact name holds no name.
-	Condition_Head_Refused    = 11, // The field or the operator of a condition. value: the console_condition.Refusal.
-	Field_Name_Missing        = 12, // An argument of field names with no name at the start or after a ",": the place is where the name is missing.
-	Literal_Close_Missing     = 13, // A field of a record literal, then neither "," nor "}".
-	Literal_Name_Missing      = 14, // In "{ }", no name of a field where one starts: "{= 1}", "{1}", "{a = 1,}".
-	Literal_Equal_Missing     = 15, // A name of a field with no single "=" after it: "{a 1}", "{a == 1}".
-	Literal_Field_Twice       = 16, // A field given twice in one literal: the place is the second.
-	Named_Argument_Twice      = 17, // A name given twice in one call: the place is the second.
-	Positional_After_Named    = 18, // An argument with no name after a named one.
-	Let_Name_Missing          = 19, // "let" or a "," of its bindings, then no name.
-	Let_Equal_Missing         = 20, // A name of a binding with no single "=" after it.
-	Let_In_Missing            = 21, // A binding, then neither "," nor "in".
-	Let_Name_Twice            = 22, // A name bound twice in one let: the place is the second.
-	Word_As_Name              = 23, // "_", "let", "in" or "with" where a name is read: the bytes are the word.
-	Parameter_Name_Missing    = 24, // In the parentheses of a function, no name where a parameter starts, or a name with a '.': "(1) =>", "(x,) =>", "(a.b) =>".
-	Parameter_Twice           = 25, // A parameter named twice in one function: the place is the second.
-	Too_Many_Parameters       = 26, // A parameter after ARGUMENT_CAPACITY parameters: a call takes no more arguments.
-	List_Close_Missing        = 27, // An item of a list, then neither "," nor "]".
-	Hash_Not_Valid            = 28, // A `blake3:` literal that does not have exactly 64 lowercase hexadecimal digits.
-	If_Then_Missing           = 29, // `if <condition>` with no `then` after it.
-	If_Else_Missing           = 30, // `if <condition> then <value>` with no `else` after it.
-	Nesting_Too_Deep          = 31, // An expression nested deeper than the parser bound.
-	Thin_Arrow                = 32, // "->" where the line goes on: a function is written "(n) => n * n"; the place is the "->".
+	None                      = 0,
+	Text_Too_Long             = 1,
+	Nodes_Full                = 2,
+	Line_Ends_Too_Soon        = 3,
+	Unexpected                = 4,
+	Number_Too_Large          = 5,
+	Text_Without_End_Quote    = 6,
+	Close_Parenthesis_Missing = 7,
+	Comma_Or_Close_Missing    = 8,
+	Too_Many_Arguments        = 9,
+	Fact_Name_Missing         = 10,
+	Condition_Head_Refused    = 11,
+	Field_Name_Missing        = 12,
+	Literal_Close_Missing     = 13,
+	Literal_Name_Missing      = 14,
+	Literal_Equal_Missing     = 15,
+	Literal_Field_Twice       = 16,
+	Named_Argument_Twice      = 17,
+	Positional_After_Named    = 18,
+	Let_Name_Missing          = 19,
+	Let_Equal_Missing         = 20,
+	Let_In_Missing            = 21,
+	Let_Name_Twice            = 22,
+	Word_As_Name              = 23,
+	Parameter_Name_Missing    = 24,
+	Parameter_Twice           = 25,
+	Too_Many_Parameters       = 26,
+	List_Close_Missing        = 27,
+	Hash_Not_Valid            = 28,
+	If_Then_Missing           = 29,
+	If_Else_Missing           = 30,
+	Nesting_Too_Deep          = 31,
+	Thin_Arrow                = 32,
+	Pipe_No_Left              = 33, // "|>" with no expression on its left.
+	Pipe_Line_End             = 34, // Text ends after "|>".
+	Pipe_Not_A_Call           = 35, // "|>" not followed by a call or command name.
+	Lone_Bar                  = 36, // "|" with no ">" after it.
+	Placeholder_Not_Whole       = 37, // "_" used inside an expression in a piped call argument.
+	Placeholder_Twice           = 38, // Two "_" placeholders in one piped call.
+	Placeholder_Nested          = 39, // "_" inside a call nested in a piped call.
+	Placeholder_Without_Pipe    = 40, // "_" as a call argument with no preceding "|>".
+	Escape_Not_Valid            = 41, // Unknown backslash escape or control/surrogate/out-of-range \u{...}.
+	Interpolation_Close_Missing = 42, // Missing "}" closing a "${...}" string interpolation.
+	Pattern_Field_Missing       = 43, // Missing field name inside a destructuring pattern "{ ... }".
+	Pattern_Close_Missing       = 44, // Missing "}" closing a destructuring pattern.
+	Pattern_Field_Twice         = 45, // Duplicate field name inside one destructuring pattern.
+	Pattern_Rest_Not_Last       = 46, // Fields written after "..." in a destructuring pattern.
+	Pattern_At_Missing_Brace    = 47, // "name @" not followed by "{ ... }".
 }
 
-// Where a node is in its text: its first byte.
+// Source position computed on demand from byte offset.
 Place :: struct {
 	line:   u32, // From 1.
 	column: u32, // From 1, in bytes.
-	offset: u32, // From 0, in bytes from the start of the text.
+	offset: u32, // From 0, in bytes from start of text.
 }
 
-// The first refusal of a text, and where it is.
+// First refusal recorded during parse.
 Refusal_Record :: struct {
 	refusal: Refusal,
 	place:   Place,
-	value:   u64, // What the member of Refusal says.
+	value:   u64,
 }
 
-// One part of a text.
-Node :: struct {
-	kind:              Node_Kind,
-	operator:          Operator, // Binary: its operator.
-	refusal:           Refusal, // Refused: why. Fact_Name and Condition: their refusal, or None.
-	place:             Place, // The first byte of the node.
-	end:               u32, // The byte after the bytes of the node itself (its children have their own).
-	integer:           i64, // Integer: its value. Function: the offset of its '('.
-	first_child:       Node_Index, // The first argument, the left operand, the factor of Negate, the value of a condition, the part before a refusal.
-	next_sibling:      Node_Index, // The next argument of a call, or the right operand after the left one.
-	condition_head:    console_condition.Head, // Condition: the field, the operator and the place of the value, as head_read gives them.
-	condition_refusal: console_condition.Refusal, // Condition: the refusal of head_read; the parse stops at it.
-	member_alone:      bool, // Condition: the first token of the value is followed by "," or ")": a name of a member of a status is the whole value.
-	binding:           Node_Index, // Name: the Let_Binding or the Parameter whose name it reads, before its first '.'. Call: the one whose name it calls. Or NO_NODE: a name of the host.
-	function:          Node_Index, // The innermost Function whose parameters or body hold this node, or NO_NODE: the top of the text.
+// Compact 16-byte AST node with direct inline (a, b) payloads for 0/1/2-child
+// nodes and contiguous extra_children slices for variable-arity nodes.
+Ast_Node :: struct {
+	kind:     Node_Kind,
+	sub:      u8,
+	aux:      u16,
+	span_off: u32,
+	a:        u32,
+	b:        u32,
+}
+#assert(size_of(Ast_Node) == 16)
+
+// Cold side record for console `where` Condition nodes (not allocated in
+// declaration mode).
+Condition_Extra :: struct {
+	head:         console_condition.Head,
+	refusal:      console_condition.Refusal,
+	end:          u32,
+	member_alone: bool,
 }
 
-// The tree of one text, in the memory of the caller. Each string is a part
-// of the text, so the text must live as long as the tree. When external_nodes
-// is non-empty (declaration parsing), nodes are stored there instead of the
-// inline console buffer.
+// Caller-supplied storage slices for parsing one Syntax_Tree.
+Tree_Storage :: struct {
+	nodes:            []Ast_Node,
+	extra_children:   []Node_Index,
+	scratch_children: []Node_Index,
+	int_consts:       []i64,
+	conditions:       []Condition_Extra,
+	// L1 name-binding side slices (parallel to nodes; nil if unused).
+	bindings:         []Node_Index,
+	functions:        []Node_Index,
+	// Optional compile-time interner + O(1) duplicate-name index for large
+	// records and let blocks (> 16 entries).
+	interner:         ^String_Interner,
+	dup_controls:     []u8,
+	dup_refs:         []u32,
+	dup_keys:         []u64,
+	dup_nodes:        []Node_Index,
+}
+
+// Pre-sized buffers for parsing a single console line (caller-owned, never
+// embedded inside Syntax_Tree).
+Console_Tree_Buffers :: struct {
+	nodes:            [NODE_CAPACITY]Ast_Node,
+	extra_children:   [NODE_CAPACITY]Node_Index,
+	scratch_children: [NODE_CAPACITY]Node_Index,
+	int_consts:       [CONSOLE_INT_CONST_CAPACITY]i64,
+	conditions:       [CONSOLE_CONDITION_CAPACITY]Condition_Extra,
+	bindings:         [NODE_CAPACITY]Node_Index,
+	functions:        [NODE_CAPACITY]Node_Index,
+}
+
+console_tree_storage :: proc "contextless" (buf: ^Console_Tree_Buffers) -> Tree_Storage {
+	return {
+		nodes            = buf.nodes[:],
+		extra_children   = buf.extra_children[:],
+		scratch_children = buf.scratch_children[:],
+		int_consts       = buf.int_consts[:],
+		conditions       = buf.conditions[:],
+		bindings         = buf.bindings[:],
+		functions        = buf.functions[:],
+	}
+}
+
+// Lightweight SoA syntax tree handle (~160 bytes; zero inline node arrays).
 Syntax_Tree :: struct {
-	text:           string,
-	nodes:          [NODE_CAPACITY]Node,
-	external_nodes: []Node,
-	node_count:     int,
-	root:           Node_Index, // The expression of the line, or the refusal that holds it.
-	assigned_name:  string, // The variable that the line names before "=", or "".
-	refusal:        Refusal_Record, // The refusal where the parse stopped, or None.
+	text:            string,
+	nodes:           []Ast_Node,
+	node_count:      int,
+	extra_children:  []Node_Index,
+	extra_count:     int,
+	int_consts:      []i64,
+	int_const_count: int,
+	conditions:      []Condition_Extra,
+	condition_count: int,
+	bindings:        []Node_Index,
+	functions:       []Node_Index,
+	root:            Node_Index,
+	assigned_name:   string,
+	refusal:         Refusal_Record,
 }
 
-// The state of one parse.
+// Duplicate-name lookup helper backed by Slice_Hash_Index over (parent<<32)|sym.
+@(private)
+Dup_Table :: struct {
+	index: hash_table.Slice_Hash_Index(u32),
+	keys:  []u64,
+	nodes: []Node_Index,
+	count: u32,
+}
+
+@(private)
+dup_table_hash_of_ref :: proc "contextless" (owner: rawptr, reference: u64) -> u64 {
+	dt := (^Dup_Table)(owner)
+	idx := int(reference)
+	if idx < 0 || idx >= len(dt.keys) {
+		return 0
+	}
+	return hash_table.slice_index_hash_word(&dt.index, dt.keys[idx])
+}
+
+// Threshold above which a record literal or let switches from inline linear
+// scan (1 cache line) to O(1) hash lookup in Dup_Table.
+@(private)
+DUP_HASH_THRESHOLD :: 16
+
 @(private)
 Parser :: struct {
-	tree:            ^Syntax_Tree,
-	lookup:          Form_Lookup,
-	position:        int,
-	counted:         int, // The places before this byte are counted in line and line_start.
-	line:            u32,
-	line_start:      int,
-	function:        Node_Index, // The function whose parameters or body the parser reads, or NO_NODE.
-	multiline:       bool,
-	trailing_commas: bool,
-	depth:           int,
-	depth_limit:     int, // 0: no separate depth bound (bounded by the bytes of the text).
+	tree:               ^Syntax_Tree,
+	lookup:             Form_Lookup,
+	scratch:            []Node_Index,
+	scratch_top:        int,
+	interner:           ^String_Interner,
+	dup:                Dup_Table,
+	position:           int,
+	function:           Node_Index,
+	multiline:          bool,
+	trailing_commas:    bool,
+	depth:              int,
+	depth_limit:        int,
+	// Tracks pipe-RHS call context for native `_` placeholder validation.
+	pipe_call_depth:    int,        // >0 when inside the argument list of a piped RHS call.
+	in_nested_call:     bool,       // true when inside a call nested inside a piped RHS call.
+	in_direct_pipe_arg: bool,       // true only at the start of a direct argument of a piped RHS call.
+	pipe_call_node:     Node_Index, // The enclosing piped RHS Call node.
 }
 
-// tree_nodes gives the active node buffer of tree: external_nodes when
-// provided, else the inline console buffer.
-tree_nodes :: proc "contextless" (tree: ^Syntax_Tree) -> []Node {
-	return len(tree.external_nodes) > 0 ? tree.external_nodes : tree.nodes[:]
+// parse_console reads one console line into `tree` backed by `buf`.
+parse_console :: proc "contextless" (text: string, lookup: Form_Lookup, buf: ^Console_Tree_Buffers, tree: ^Syntax_Tree) {
+	parse_with_storage(text, lookup, console_tree_storage(buf), tree, TEXT_BYTES_MOST, false, false, true, LINE_PARSE_DEPTH_LIMIT)
 }
 
-// parse reads a console line into tree. The tree is whole when
-// tree.refusal.refusal is None; else the parse stopped at the refusal, which
-// is a node in its place, and each node before it is in the tree.
-parse :: proc "contextless" (text: string, lookup: Form_Lookup, tree: ^Syntax_Tree) {
-	tree.external_nodes = nil
-	parse_with_limits(text, lookup, tree, TEXT_BYTES_MOST, false, false, true, LINE_PARSE_DEPTH_LIMIT)
+// parse_declaration reads a multi-line .lex declaration file into `tree`
+// backed by caller-owned `storage`.
+parse_declaration :: proc "contextless" (
+	text: string,
+	storage: Tree_Storage,
+	tree: ^Syntax_Tree,
+	text_bytes_most: int = DECLARATION_TEXT_BYTES_MOST,
+	depth_limit: int = DECLARATION_PARSE_DEPTH_LIMIT,
+) {
+	parse_with_storage(text, {}, storage, tree, text_bytes_most, true, true, false, depth_limit)
 }
 
-// parse_declaration reads a multi-line .lex declaration file into tree,
-// storing its nodes in external_nodes (or tree.nodes when nil). Tabs, line
-// ends, multi-line comments and trailing commas are accepted, top-level
-// console variable assignments are not, and recursion depth is bounded by
-// depth_limit.
-parse_declaration :: proc "contextless" (text: string, external_nodes: []Node, tree: ^Syntax_Tree, text_bytes_most: int = DECLARATION_TEXT_BYTES_MOST, depth_limit: int = DECLARATION_PARSE_DEPTH_LIMIT) {
-	tree.external_nodes = external_nodes
-	parse_with_limits(text, {}, tree, text_bytes_most, true, true, false, depth_limit)
-}
-
-@(private)
-parse_with_limits :: proc "contextless" (text: string, lookup: Form_Lookup, tree: ^Syntax_Tree, text_bytes_most: int, multiline, trailing_commas, allow_assignment: bool, depth_limit: int) {
-	tree.text, tree.node_count, tree.root, tree.assigned_name = text, 0, NO_NODE, ""
-	tree.refusal = {}
+// parse_with_storage is the single entry point for parsing into caller slices.
+parse_with_storage :: proc "contextless" (
+	text: string,
+	lookup: Form_Lookup,
+	storage: Tree_Storage,
+	tree: ^Syntax_Tree,
+	text_bytes_most: int,
+	multiline, trailing_commas, allow_assignment: bool,
+	depth_limit: int,
+) {
+	tree^ = {
+		text           = text,
+		nodes          = storage.nodes,
+		extra_children = storage.extra_children,
+		int_consts     = storage.int_consts,
+		conditions     = storage.conditions,
+		bindings       = storage.bindings,
+		functions      = storage.functions,
+		root           = NO_NODE,
+	}
 	parser := Parser {
 		tree            = tree,
 		lookup          = lookup,
-		line            = 1,
+		scratch         = storage.scratch_children,
+		interner        = storage.interner,
 		function        = NO_NODE,
 		multiline       = multiline,
 		trailing_commas = trailing_commas,
 		depth_limit     = depth_limit,
+		pipe_call_node  = NO_NODE,
+	}
+	if storage.interner != nil && len(storage.dup_controls) >= hash_table.GROUP_WIDTH && len(storage.dup_keys) > 0 && len(storage.dup_nodes) >= len(storage.dup_keys) {
+		if idx, ok := hash_table.slice_index_init(u32, storage.dup_controls, storage.dup_refs, storage.interner.index.prepared_seed); ok {
+			parser.dup = {
+				index = idx,
+				keys  = storage.dup_keys,
+				nodes = storage.dup_nodes,
+				count = 0,
+			}
+		}
 	}
 	if len(text) > text_bytes_most {
 		tree.root = refuse(&parser, .Text_Too_Long, text_bytes_most, len(text), NO_NODE, u64(len(text)))
 		return
 	}
-	// An assignment starts with a name and a single "=". A word of Lex is
-	// no name of a variable. Only console lines accept assignments.
 	if allow_assignment {
 		name := read_name(&parser)
 		name_start := parser.position - len(name)
@@ -358,83 +466,350 @@ parse_with_limits :: proc "contextless" (text: string, lookup: Form_Lookup, tree
 			parser.position = 0
 		}
 	}
-	expression := expression_read(&parser)
+	expr := pipeline_read(&parser)
 	if refused(&parser) {
-		tree.root = expression
+		tree.root = expr
 		return
 	}
 	if peek(&parser) != 0 {
-		tree.root = refuse(&parser, .Unexpected, parser.position, len(text), expression)
+		if peek(&parser) == '|' {
+			tree.root = refuse(&parser, .Lone_Bar, parser.position, parser.position + 1, expr)
+			return
+		}
+		tree.root = refuse(&parser, .Unexpected, parser.position, len(text), expr)
 		return
 	}
-	tree.root = expression
+	tree.root = expr
 }
 
-// let_assignment_read reads `let x = value` with no `in`, the parser just
-// past the word `let`: a principal at the console writes it to keep a
-// value, so it is the assignment `x = value`. It is that assignment only
-// when the line ends after the value with no refusal. Otherwise it gives
-// false with the tree and the parser as they were at the start of the
-// line, and the line is read again as an expression, whose `let` gives
-// its own refusals in their places; the parser stays past `let`, where
-// the reading of an assignment expects it.
 @(private)
 let_assignment_read :: proc "contextless" (parser: ^Parser) -> bool {
 	tree := parser.tree
 	let_end := parser.position
 	name := read_name(parser)
 	if len(name) > 0 && !word_of_lex(name) && equal_accept(parser) {
-		value := expression_read(parser)
+		value := pipeline_read(parser)
 		if !refused(parser) && peek(parser) == 0 {
 			tree.root, tree.assigned_name = value, name
 			return true
 		}
 	}
-	tree.node_count, tree.refusal, tree.assigned_name = 0, {}, ""
-	parser^ = {
-		tree            = tree,
-		lookup          = parser.lookup,
-		line            = 1,
-		function        = NO_NODE,
-		multiline       = parser.multiline,
-		trailing_commas = parser.trailing_commas,
-		depth_limit     = parser.depth_limit,
-		position        = let_end,
+	tree.node_count, tree.extra_count, tree.int_const_count, tree.condition_count = 0, 0, 0, 0
+	tree.refusal, tree.assigned_name = {}, ""
+	parser.position = let_end
+	parser.scratch_top = 0
+	parser.function = NO_NODE
+	parser.depth = 0
+	parser.pipe_call_depth = 0
+	parser.in_nested_call = false
+	parser.in_direct_pipe_arg = false
+	parser.pipe_call_node = NO_NODE
+	if parser.dup.index.group_count > 0 {
+		hash_table.slice_index_clear(&parser.dup.index)
+		parser.dup.count = 0
 	}
 	return false
 }
 
-// node_at gives a node of a tree, or nil for NO_NODE and for an index past
-// the nodes of the tree.
-node_at :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> ^Node {
-	nodes := tree_nodes(tree)
-	if index < 0 || int(index) >= tree.node_count || int(index) >= len(nodes) {
+// ---- Public SoA AST accessors.
+
+node_at :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> ^Ast_Node {
+	if tree == nil || index < 0 || int(index) >= tree.node_count || int(index) >= len(tree.nodes) {
 		return nil
 	}
-	return &nodes[int(index)]
+	return &tree.nodes[int(index)]
 }
 
-// node_text gives the bytes of a node itself: the digits, the text with its
-// quotes, the name, the operator, the field and the operator of a
-// condition, the bytes that a refusal names.
-node_text :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> string {
+node_place :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Place {
 	node := node_at(tree, index)
 	if node == nil {
+		return {}
+	}
+	if node.kind == .Function {
+		// Place of a Function node is its "=>" arrow (matches v1 semantics).
+		arrow_start := node.b >= 2 ? int(node.b) - 2 : int(node.span_off)
+		return place_of_offset(tree.text, arrow_start)
+	}
+	return place_of_offset(tree.text, int(node.span_off))
+}
+
+node_span :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> (start, end: int) {
+	node := node_at(tree, index)
+	if node == nil {
+		return 0, 0
+	}
+	text_len := len(tree.text)
+	switch node.kind {
+	case .Integer, .Boolean, .Text, .Name, .Member, .Hash, .Parameter, .Placeholder, .Fact_Name, .Field_Names:
+		start = min(int(node.span_off), text_len)
+		end = clamp(int(node.a), start, text_len)
+	case .Negate, .Logical_Not, .Field_Select, .Literal_Field, .Named_Argument, .Refused, .Call, .Pattern_Field:
+		start = min(int(node.span_off), text_len)
+		end = clamp(int(node.b), start, text_len)
+	case .Let_Binding:
+		start = min(int(node.span_off), text_len)
+		if (node.sub & LET_BINDING_PATTERN) != 0 {
+			end = clamp(start + 1, start, text_len)
+		} else {
+			end = clamp(int(node.b), start, text_len)
+		}
+	case .Binary, .Pipe:
+		start = min(int(node.span_off), text_len)
+		end = clamp(start + int(node.aux), start, text_len)
+	case .Record_Literal, .List_Literal, .Text_Interp, .Pattern_Record:
+		start = min(int(node.span_off), text_len)
+		end = clamp(start + 1, start, text_len)
+	case .Let:
+		start = min(int(node.span_off), text_len)
+		end = clamp(start + len("let"), start, text_len)
+	case .If:
+		start = min(int(node.span_off), text_len)
+		end = clamp(start + len("if"), start, text_len)
+	case .Function:
+		end = clamp(int(node.b), 0, text_len)
+		start = max(end - len("=>"), 0)
+	case .Condition:
+		start = min(int(node.span_off), text_len)
+		if cond := node_condition(tree, index); cond != nil {
+			end = clamp(int(cond.end), start, text_len)
+		} else {
+			end = start
+		}
+	}
+	return start, end
+}
+
+node_text :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> string {
+	if tree == nil {
 		return ""
 	}
-	start := min(int(node.place.offset), len(tree.text))
-	return tree.text[start:clamp(int(node.end), start, len(tree.text))]
+	start, end := node_span(tree, index)
+	return tree.text[start:end]
 }
 
-// next_of gives the node after a node in the list of its parent, or
-// NO_NODE.
-next_of :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Node_Index {
+node_integer :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> i64 {
 	node := node_at(tree, index)
-	return node == nil ? NO_NODE : node.next_sibling
+	if node == nil {
+		return 0
+	}
+	if node.kind == .Boolean {
+		return node.sub != 0 ? 1 : 0
+	}
+	if node.kind != .Integer {
+		return 0
+	}
+	if node.sub == 0 {
+		return i64(i32(node.b))
+	}
+	if int(node.b) < tree.int_const_count && int(node.b) < len(tree.int_consts) {
+		return tree.int_consts[node.b]
+	}
+	return 0
 }
 
-// place_of_offset gives the line and the column of a byte of a text. An
-// offset before the text is its first byte, and one past it its end.
+@(rodata)
+OPERATORS_IN_ORDER := [len(Operator)]Operator {
+	.None,
+	.Add,
+	.Subtract,
+	.Multiply,
+	.Divide,
+	.Remainder,
+	.With,
+	.Equal,
+	.Not_Equal,
+	.Less,
+	.Less_Or_Equal,
+	.Greater,
+	.Greater_Or_Equal,
+	.Logical_And,
+	.Logical_Or,
+	.List_Concat,
+}
+
+@(rodata)
+REFUSALS_IN_ORDER := [len(Refusal)]Refusal {
+	.None,
+	.Text_Too_Long,
+	.Nodes_Full,
+	.Line_Ends_Too_Soon,
+	.Unexpected,
+	.Number_Too_Large,
+	.Text_Without_End_Quote,
+	.Close_Parenthesis_Missing,
+	.Comma_Or_Close_Missing,
+	.Too_Many_Arguments,
+	.Fact_Name_Missing,
+	.Condition_Head_Refused,
+	.Field_Name_Missing,
+	.Literal_Close_Missing,
+	.Literal_Name_Missing,
+	.Literal_Equal_Missing,
+	.Literal_Field_Twice,
+	.Named_Argument_Twice,
+	.Positional_After_Named,
+	.Let_Name_Missing,
+	.Let_Equal_Missing,
+	.Let_In_Missing,
+	.Let_Name_Twice,
+	.Word_As_Name,
+	.Parameter_Name_Missing,
+	.Parameter_Twice,
+	.Too_Many_Parameters,
+	.List_Close_Missing,
+	.Hash_Not_Valid,
+	.If_Then_Missing,
+	.If_Else_Missing,
+	.Nesting_Too_Deep,
+	.Thin_Arrow,
+	.Pipe_No_Left,
+	.Pipe_Line_End,
+	.Pipe_Not_A_Call,
+	.Lone_Bar,
+	.Placeholder_Not_Whole,
+	.Placeholder_Twice,
+	.Placeholder_Nested,
+	.Placeholder_Without_Pipe,
+	.Escape_Not_Valid,
+	.Interpolation_Close_Missing,
+	.Pattern_Field_Missing,
+	.Pattern_Close_Missing,
+	.Pattern_Field_Twice,
+	.Pattern_Rest_Not_Last,
+	.Pattern_At_Missing_Brace,
+}
+
+operator_of_byte :: #force_inline proc "contextless" (b: u8) -> (Operator, bool) {
+	if int(b) >= len(OPERATORS_IN_ORDER) {
+		return .None, false
+	}
+	return OPERATORS_IN_ORDER[b], true
+}
+
+refusal_of_byte :: #force_inline proc "contextless" (b: u8) -> (Refusal, bool) {
+	if int(b) >= len(REFUSALS_IN_ORDER) {
+		return .None, false
+	}
+	return REFUSALS_IN_ORDER[b], true
+}
+
+node_operator :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Operator {
+	node := node_at(tree, index)
+	if node == nil || node.kind != .Binary {
+		return .None
+	}
+	op, _ := operator_of_byte(node.sub)
+	return op
+}
+
+node_refusal :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Refusal {
+	node := node_at(tree, index)
+	if node == nil {
+		return .None
+	}
+	switch node.kind {
+	case .Refused, .Fact_Name, .Field_Names, .Condition:
+		r, _ := refusal_of_byte(node.sub)
+		return r
+	case .Integer, .Text, .Text_Interp, .Name, .Call, .Negate, .Logical_Not, .Binary, .Record_Literal, .Literal_Field, .Named_Argument, .Let, .Let_Binding, .Member, .Function, .Parameter, .List_Literal, .Hash, .Boolean, .If, .Field_Select, .Pipe, .Placeholder, .Pattern_Record, .Pattern_Field:
+		return .None
+	}
+	return .None
+}
+
+// node_child returns the single child of a 1-child node (Negate, Logical_Not,
+// Field_Select, Literal_Field, Let_Binding, Named_Argument, Refused, Condition,
+// Pattern_Field).
+node_child :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Node_Index {
+	node := node_at(tree, index)
+	if node == nil {
+		return NO_NODE
+	}
+	switch node.kind {
+	case .Negate, .Logical_Not, .Field_Select, .Literal_Field, .Let_Binding, .Named_Argument, .Refused, .Condition, .Pattern_Field:
+		return Node_Index(i32(node.a))
+	case .Integer, .Text, .Text_Interp, .Name, .Call, .Binary, .Fact_Name, .Field_Names, .Record_Literal, .Let, .Member, .Function, .Parameter, .List_Literal, .Hash, .Boolean, .If, .Pipe, .Placeholder, .Pattern_Record:
+		return NO_NODE
+	}
+	return NO_NODE
+}
+
+// node_binary_children returns (left, right) for .Binary or .Pipe nodes.
+node_binary_children :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> (left, right: Node_Index) {
+	node := node_at(tree, index)
+	if node == nil || (node.kind != .Binary && node.kind != .Pipe) {
+		return NO_NODE, NO_NODE
+	}
+	return Node_Index(i32(node.a)), Node_Index(i32(node.b))
+}
+
+// node_children returns the contiguous child slice for variable-arity nodes
+// (.Call, .Record_Literal, .List_Literal, .Let, .Function, .If, .Text_Interp, .Pattern_Record).
+node_children :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> []Node_Index {
+	node := node_at(tree, index)
+	if node == nil {
+		return nil
+	}
+	start, count: int
+	switch node.kind {
+	case .Call, .Function, .If:
+		start, count = int(node.a), int(node.aux)
+	case .Record_Literal, .List_Literal, .Let, .Text_Interp, .Pattern_Record:
+		start, count = int(node.a), int(node.b)
+	case .Integer, .Text, .Name, .Negate, .Logical_Not, .Binary, .Condition, .Fact_Name, .Refused, .Field_Names, .Literal_Field, .Let_Binding, .Named_Argument, .Member, .Parameter, .Hash, .Boolean, .Field_Select, .Pipe, .Placeholder, .Pattern_Field:
+		return nil
+	}
+	if count <= 0 || start < 0 || start > tree.extra_count || count > tree.extra_count - start {
+		return nil
+	}
+	return tree.extra_children[start:start + count]
+}
+
+node_condition :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> ^Condition_Extra {
+	node := node_at(tree, index)
+	if node == nil || node.kind != .Condition {
+		return nil
+	}
+	idx := int(node.b)
+	if idx < 0 || idx >= tree.condition_count || idx >= len(tree.conditions) {
+		return nil
+	}
+	return &tree.conditions[idx]
+}
+
+node_function_offsets :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> (open, arrow_end: int) {
+	node := node_at(tree, index)
+	if node == nil || node.kind != .Function {
+		return 0, 0
+	}
+	return int(node.span_off), int(node.b)
+}
+
+// let_binding_pattern returns the .Pattern_Record node for a destructuring
+// `let { ... } = expr` binding, or (NO_NODE, false) for a plain `let x = expr`.
+let_binding_pattern :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> (pattern: Node_Index, ok: bool) {
+	node := node_at(tree, index)
+	if node == nil || node.kind != .Let_Binding || (node.sub & LET_BINDING_PATTERN) == 0 {
+		return NO_NODE, false
+	}
+	return Node_Index(i32(node.b)), true
+}
+
+node_binding :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Node_Index {
+	if tree == nil || index < 0 || int(index) >= len(tree.bindings) {
+		return NO_NODE
+	}
+	return tree.bindings[int(index)]
+}
+
+node_function :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Node_Index {
+	if tree == nil || index < 0 || int(index) >= len(tree.functions) {
+		return NO_NODE
+	}
+	return tree.functions[int(index)]
+}
+
+// place_of_offset computes 1-based line and column on demand (cold path only).
 place_of_offset :: proc "contextless" (text: string, offset: int) -> Place {
 	place := clamp(offset, 0, len(text))
 	line := u32(1)
@@ -448,106 +823,86 @@ place_of_offset :: proc "contextless" (text: string, offset: int) -> Place {
 	return {line = line, column = u32(place - line_start + 1), offset = u32(place)}
 }
 
-// ---- The memory of the tree.
+// ---- Internal node & child builders.
 
-// place_at gives the place of a byte. The parser makes its nodes from the
-// left, so it counts each line once; a place before the counted bytes
-// counts again from the start.
-@(private)
-place_at :: proc "contextless" (parser: ^Parser, offset: int) -> Place {
-	text := parser.tree.text
-	if offset < parser.counted {
-		parser.counted, parser.line, parser.line_start = 0, 1, 0
-	}
-	for parser.counted < min(offset, len(text)) {
-		if text[parser.counted] == '\n' {
-			parser.line += 1
-			parser.line_start = parser.counted + 1
-		}
-		parser.counted += 1
-	}
-	return {line = parser.line, column = u32(offset - parser.line_start + 1), offset = u32(offset)}
-}
-
-// refused says if the parse stopped.
 @(private)
 refused :: proc "contextless" (parser: ^Parser) -> bool {
 	return parser.tree.refusal.refusal != .None
 }
 
-// refusal_keep keeps the first refusal of the parse: a later one changes
-// nothing.
 @(private)
 refusal_keep :: proc "contextless" (parser: ^Parser, refusal: Refusal, offset: int, value: u64 = 0) {
 	if parser.tree.refusal.refusal == .None {
-		parser.tree.refusal = {refusal = refusal, place = place_at(parser, offset), value = value}
+		parser.tree.refusal = {refusal = refusal, place = place_of_offset(parser.tree.text, offset), value = value}
 	}
 }
 
-// node_add adds a node with the bytes start:end, or gives NO_NODE and
-// stops the parse with Nodes_Full.
 @(private)
-node_add :: proc "contextless" (parser: ^Parser, kind: Node_Kind, start, end: int) -> Node_Index {
+node_add_raw :: proc "contextless" (parser: ^Parser, node: Ast_Node) -> Node_Index {
 	tree := parser.tree
-	nodes := tree_nodes(tree)
-	if tree.node_count >= len(nodes) {
-		refusal_keep(parser, .Nodes_Full, start)
+	if tree.node_count >= len(tree.nodes) {
+		refusal_keep(parser, .Nodes_Full, int(node.span_off))
 		return NO_NODE
 	}
 	index := Node_Index(tree.node_count)
-	nodes[tree.node_count] = {
-		kind         = kind,
-		place        = place_at(parser, start),
-		end          = u32(end),
-		first_child  = NO_NODE,
-		next_sibling = NO_NODE,
-		binding      = NO_NODE,
-		function     = parser.function,
+	tree.nodes[tree.node_count] = node
+	if tree.node_count < len(tree.bindings) {
+		tree.bindings[tree.node_count] = NO_NODE
+	}
+	if tree.node_count < len(tree.functions) {
+		tree.functions[tree.node_count] = parser.function
 	}
 	tree.node_count += 1
 	return index
 }
 
-// child_append puts child after the last child of parent.
 @(private)
-child_append :: proc "contextless" (tree: ^Syntax_Tree, parent, child: Node_Index) {
-	parent_node := node_at(tree, parent)
-	if parent_node == nil || child == NO_NODE {
-		return
+scratch_push :: proc "contextless" (parser: ^Parser, child: Node_Index) -> bool {
+	if child == NO_NODE {
+		return true
 	}
-	if parent_node.first_child == NO_NODE {
-		parent_node.first_child = child
-		return
+	if parser.scratch_top >= len(parser.scratch) {
+		refusal_keep(parser, .Nodes_Full, parser.position)
+		return false
 	}
-	last := parent_node.first_child
-	for next_of(tree, last) != NO_NODE {
-		last = next_of(tree, last)
-	}
-	node_at(tree, last).next_sibling = child
+	parser.scratch[parser.scratch_top] = child
+	parser.scratch_top += 1
+	return true
 }
 
-// refuse adds the Refused node of the fault where the parse stops, with the
-// part that was read before it as its child, and keeps the refusal.
+@(private)
+children_commit :: proc "contextless" (parser: ^Parser, mark: int) -> (start: u32, count: u32, ok: bool) {
+	n := parser.scratch_top - mark
+	parser.scratch_top = mark
+	if n <= 0 {
+		return 0, 0, true
+	}
+	tree := parser.tree
+	if n > len(tree.extra_children) - tree.extra_count {
+		refusal_keep(parser, .Nodes_Full, parser.position)
+		return 0, 0, false
+	}
+	s := tree.extra_count
+	copy(tree.extra_children[s:s + n], parser.scratch[mark:mark + n])
+	tree.extra_count += n
+	return u32(s), u32(n), true
+}
+
 @(private)
 refuse :: proc "contextless" (parser: ^Parser, expected_refusal: Refusal, expected_start, end: int, before: Node_Index, value: u64 = 0) -> Node_Index {
 	refusal, start := thin_arrow_instead(parser, expected_refusal, expected_start)
 	refusal_keep(parser, refusal, start, value)
-	node := node_add(parser, .Refused, start, end)
-	if node_kept := node_at(parser.tree, node); node_kept != nil {
-		node_kept.refusal = refusal
-		node_kept.first_child = before
-	}
-	return node
+	return node_add_raw(parser, {
+		kind     = .Refused,
+		sub      = u8(refusal),
+		span_off = u32(clamp(start, 0, len(parser.tree.text))),
+		a        = u32(before),
+		b        = u32(clamp(end, 0, len(parser.tree.text))),
+	})
 }
 
-// thin_arrow_instead gives the refusal Thin_Arrow, at the "->", in place of
-// a refusal of a token that the line does not expect there, when that token
-// is "->": a principal who knows another language writes `n -> n * n` for a
-// function, and Lex has one form of a function, `(n) => n * n`, so the
-// error names that form rather than a missing ",".
 @(private)
 thin_arrow_instead :: proc "contextless" (parser: ^Parser, refusal: Refusal, start: int) -> (Refusal, int) {
-	// The refusals of a token where another one was expected.
 	expected_other := refusal == .Unexpected || refusal == .Close_Parenthesis_Missing || refusal == .Comma_Or_Close_Missing || refusal == .List_Close_Missing || refusal == .Literal_Close_Missing || refusal == .Let_In_Missing || refusal == .If_Then_Missing || refusal == .If_Else_Missing
 	if !expected_other {
 		return refusal, start
@@ -559,16 +914,103 @@ thin_arrow_instead :: proc "contextless" (parser: ^Parser, refusal: Refusal, sta
 	return refusal, start
 }
 
-// ---- The tokens. The parser reads them with the scanner of
-// console_language, the one that colors the lines: the two agree on each
-// token.
+// ---- O(1) duplicate / child name lookup helper.
+
+@(private)
+dup_key_of :: proc "contextless" (parent: Node_Index, sym: Sym_Id) -> u64 {
+	return (u64(u32(parent)) << 32) | u64(u32(sym))
+}
+
+@(private)
+dup_find :: proc "contextless" (parser: ^Parser, parent: Node_Index, name: string) -> (found_node: Node_Index, used_hash: bool) {
+	if parser.interner == nil || parser.dup.index.group_count <= 0 {
+		return NO_NODE, false
+	}
+	sym, sym_ok := intern_lookup(parser.interner, name)
+	if !sym_ok {
+		return NO_NODE, true
+	}
+	key := dup_key_of(parent, sym)
+	h := hash_table.slice_index_hash_word(&parser.dup.index, key)
+	search := hash_table.slice_index_search_begin(&parser.dup.index, h)
+	for ref, _ in hash_table.slice_index_search_next(&parser.dup.index, &search) {
+		if int(ref) < int(parser.dup.count) && parser.dup.keys[ref] == key {
+			return parser.dup.nodes[ref], true
+		}
+	}
+	return NO_NODE, true
+}
+
+@(private)
+dup_insert :: proc "contextless" (parser: ^Parser, parent: Node_Index, name: string, child: Node_Index) -> bool {
+	if parser.interner == nil || parser.dup.index.group_count <= 0 {
+		return false
+	}
+	if int(parser.dup.count) >= len(parser.dup.keys) {
+		return false
+	}
+	sym, sym_ok := intern(parser.interner, name)
+	if !sym_ok {
+		return false
+	}
+	key := dup_key_of(parent, sym)
+	h := hash_table.slice_index_hash_word(&parser.dup.index, key)
+	slot_id := parser.dup.count
+	parser.dup.keys[slot_id] = key
+	parser.dup.nodes[slot_id] = child
+	if !hash_table.slice_index_insert(&parser.dup.index, h, slot_id, &parser.dup, dup_table_hash_of_ref) {
+		return false
+	}
+	parser.dup.count += 1
+	return true
+}
+
+// scratch_child_named searches children already pushed onto scratch[mark:top].
+@(private)
+scratch_child_named :: proc "contextless" (parser: ^Parser, parent: Node_Index, mark: int, kind: Node_Kind, name: string, hashed: ^bool) -> Node_Index {
+	count := parser.scratch_top - mark
+	if hashed^ {
+		found, ok := dup_find(parser, parent, name)
+		if ok {
+			return found
+		}
+	}
+	if !hashed^ && count >= DUP_HASH_THRESHOLD && parser.interner != nil && parser.dup.index.group_count > 0 {
+		// Promote this parent to O(1) hash lookup by backfilling the first 16 children.
+		all_ok := true
+		for idx in mark ..< parser.scratch_top {
+			c := parser.scratch[idx]
+			if cn := node_at(parser.tree, c); cn != nil && cn.kind == kind {
+				if !dup_insert(parser, parent, node_text(parser.tree, c), c) {
+					all_ok = false
+					break
+				}
+			}
+		}
+		if all_ok {
+			hashed^ = true
+			found, ok := dup_find(parser, parent, name)
+			if ok {
+				return found
+			}
+		}
+	}
+	for idx in mark ..< parser.scratch_top {
+		c := parser.scratch[idx]
+		if cn := node_at(parser.tree, c); cn != nil && cn.kind == kind && node_text(parser.tree, c) == name {
+			return c
+		}
+	}
+	return NO_NODE
+}
+
+// ---- Scanner helpers.
 
 @(private)
 skip_spaces :: proc "contextless" (parser: ^Parser) {
 	parser.position = console_language.space_end(parser.tree.text, parser.position, parser.multiline)
 }
 
-// peek gives the byte after the spaces, or 0 at the end of the text.
 @(private)
 peek :: proc "contextless" (parser: ^Parser) -> u8 {
 	skip_spaces(parser)
@@ -593,8 +1035,6 @@ read_name :: proc "contextless" (parser: ^Parser) -> string {
 	return parser.tree.text[start:parser.position]
 }
 
-// equal_accept takes a single "=": the "=" of an assignment, a named
-// argument, a field or a binding, never the first byte of "==" or "=>".
 @(private)
 equal_accept :: proc "contextless" (parser: ^Parser) -> bool {
 	text := parser.tree.text
@@ -605,8 +1045,6 @@ equal_accept :: proc "contextless" (parser: ^Parser) -> bool {
 	return true
 }
 
-// word_ahead says if the next token is a word of Lex, and gives the byte
-// after it.
 @(private)
 word_ahead :: proc "contextless" (parser: ^Parser, word: string) -> (end: int, found: bool) {
 	token := console_language.token_next(parser.tree.text, parser.position, parser.multiline)
@@ -616,8 +1054,6 @@ word_ahead :: proc "contextless" (parser: ^Parser, word: string) -> (end: int, f
 	return parser.position, false
 }
 
-// named_ahead says if the next tokens are a name and a single "=": a named
-// argument, a field of a literal, a binding.
 @(private)
 named_ahead :: proc "contextless" (parser: ^Parser) -> bool {
 	text := parser.tree.text
@@ -629,19 +1065,265 @@ named_ahead :: proc "contextless" (parser: ^Parser) -> bool {
 	return equal.kind == .Operator && text[equal.start] == '=' && !(equal.end < len(text) && text[equal.end] == '=')
 }
 
-// ---- The grammar.
+// decode_text_escapes validates and decodes backslash escape sequences inside
+// a raw string body (without surrounding quotes). Supported escapes:
+//   \\  \"  \$  \u{XXXXXX} (1..6 hex digits; refuses control characters,
+//   surrogates, and values above 0x10FFFF per src/md/data/text_encoding.md).
+// When `out` is nil, validates and computes `written` without writing bytes.
+decode_text_escapes :: proc "contextless" (raw: string, out: []u8) -> (written: int, bad_offset: int, ok: bool) {
+	i := 0
+	w := 0
+	for i < len(raw) {
+		ch := raw[i]
+		if ch != '\\' {
+			if out != nil {
+				if w >= len(out) {
+					return w, i, false
+				}
+				out[w] = ch
+			}
+			w += 1
+			i += 1
+			continue
+		}
+		esc_pos := i
+		if i + 1 >= len(raw) {
+			return w, esc_pos, false
+		}
+		next := raw[i + 1]
+		switch next {
+		case '\\', '"', '$':
+			if out != nil {
+				if w >= len(out) {
+					return w, esc_pos, false
+				}
+				out[w] = next
+			}
+			w += 1
+			i += 2
+		case 'u':
+			if i + 2 >= len(raw) || raw[i + 2] != '{' {
+				return w, esc_pos, false
+			}
+			j := i + 3
+			cp := u32(0)
+			digits := 0
+			for j < len(raw) && raw[j] != '}' {
+				c := raw[j]
+				v: u32
+				switch c {
+				case '0' ..= '9':
+					v = u32(c - '0')
+				case 'a' ..= 'f':
+					v = u32(c - 'a' + 10)
+				case 'A' ..= 'F':
+					v = u32(c - 'A' + 10)
+				case:
+					return w, esc_pos, false
+				}
+				digits += 1
+				if digits > 6 {
+					return w, esc_pos, false
+				}
+				cp = (cp << 4) | v
+				j += 1
+			}
+			if digits == 0 || j >= len(raw) || raw[j] != '}' {
+				return w, esc_pos, false
+			}
+			if cp > 0x10FFFF || !text_encoding.character_in_text(rune(cp)) {
+				return w, esc_pos, false
+			}
+			// Encode Unicode scalar value to UTF-8.
+			utf8_buf: [4]u8
+			ulen := 0
+			switch {
+			case cp <= 0x7F:
+				utf8_buf[0] = u8(cp)
+				ulen = 1
+			case cp <= 0x7FF:
+				utf8_buf[0] = 0xC0 | u8(cp >> 6)
+				utf8_buf[1] = 0x80 | u8(cp & 0x3F)
+				ulen = 2
+			case cp <= 0xFFFF:
+				utf8_buf[0] = 0xE0 | u8(cp >> 12)
+				utf8_buf[1] = 0x80 | u8((cp >> 6) & 0x3F)
+				utf8_buf[2] = 0x80 | u8(cp & 0x3F)
+				ulen = 3
+			case:
+				utf8_buf[0] = 0xF0 | u8(cp >> 18)
+				utf8_buf[1] = 0x80 | u8((cp >> 12) & 0x3F)
+				utf8_buf[2] = 0x80 | u8((cp >> 6) & 0x3F)
+				utf8_buf[3] = 0x80 | u8(cp & 0x3F)
+				ulen = 4
+			}
+			if out != nil {
+				if w + ulen > len(out) {
+					return w, esc_pos, false
+				}
+				copy(out[w:w + ulen], utf8_buf[:ulen])
+			}
+			w += ulen
+			i = j + 1
+		case:
+			return w, esc_pos, false
+		}
+	}
+	return w, 0, true
+}
 
-// expression_read reads a comparison over `with` expressions:
-//   expression = with_expr [ ("=" | "!=" | "<" | "<=" | ">" | ">=") with_expr ]
-// "==" and "=>" are never comparison operators.
+// ---- Grammar (native |> at lowest precedence, left-associative).
+
 @(private)
-expression_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
+pipeline_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	if parser.depth_limit > 0 && parser.depth >= parser.depth_limit {
 		skip_spaces(parser)
 		return refuse(parser, .Nesting_Too_Deep, parser.position, parser.position, NO_NODE)
 	}
 	parser.depth += 1
 	defer parser.depth -= 1
+
+	// Check for leading "|>" or lone "|" with no left operand.
+	skip_spaces(parser)
+	text := parser.tree.text
+	if parser.position < len(text) && text[parser.position] == '|' {
+		if parser.position + 1 < len(text) && text[parser.position + 1] == '>' {
+			return refuse(parser, .Pipe_No_Left, parser.position, parser.position + 2, NO_NODE)
+		}
+		if !(parser.position + 1 < len(text) && text[parser.position + 1] == '|') {
+			return refuse(parser, .Lone_Bar, parser.position, parser.position + 1, NO_NODE)
+		}
+	}
+
+	left := or_read(parser)
+	for !refused(parser) {
+		skip_spaces(parser)
+		if parser.position >= len(text) || text[parser.position] != '|' {
+			return left
+		}
+		pipe_start := parser.position
+		if pipe_start + 1 >= len(text) || text[pipe_start + 1] != '>' {
+			return refuse(parser, .Lone_Bar, pipe_start, pipe_start + 1, left)
+		}
+		parser.position = pipe_start + 2
+		// Pipe operand clears direct-placeholder state for anything past the stage.
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
+		stage := pipe_stage_read(parser)
+		parser.in_direct_pipe_arg = saved_direct
+		pipe_node := node_add_raw(parser, {
+			kind     = .Pipe,
+			aux      = 2,
+			span_off = u32(pipe_start),
+			a        = u32(left),
+			b        = u32(stage),
+		})
+		if pipe_node == NO_NODE {
+			return left
+		}
+		left = pipe_node
+	}
+	return left
+}
+
+@(private)
+or_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
+	left := and_read(parser)
+	text := parser.tree.text
+	for !refused(parser) {
+		if peek(parser) != '|' || parser.position + 1 >= len(text) || text[parser.position + 1] != '|' {
+			return left
+		}
+		op_start := parser.position
+		parser.position += 2
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
+		right := and_read(parser)
+		parser.in_direct_pipe_arg = saved_direct
+		binary := node_add_raw(parser, {
+			kind     = .Binary,
+			sub      = u8(Operator.Logical_Or),
+			aux      = 2,
+			span_off = u32(op_start),
+			a        = u32(left),
+			b        = u32(right),
+		})
+		if binary == NO_NODE {
+			return left
+		}
+		left = binary
+	}
+	return left
+}
+
+@(private)
+and_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
+	left := comparison_read(parser)
+	text := parser.tree.text
+	for !refused(parser) {
+		if peek(parser) != '&' || parser.position + 1 >= len(text) || text[parser.position + 1] != '&' {
+			return left
+		}
+		op_start := parser.position
+		parser.position += 2
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
+		right := comparison_read(parser)
+		parser.in_direct_pipe_arg = saved_direct
+		binary := node_add_raw(parser, {
+			kind     = .Binary,
+			sub      = u8(Operator.Logical_And),
+			aux      = 2,
+			span_off = u32(op_start),
+			a        = u32(left),
+			b        = u32(right),
+		})
+		if binary == NO_NODE {
+			return left
+		}
+		left = binary
+	}
+	return left
+}
+
+// pipe_stage_read reads the RHS call of `|>`: `name` or `name(arguments)`.
+@(private)
+pipe_stage_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
+	skip_spaces(parser)
+	text := parser.tree.text
+	start := parser.position
+	if start >= len(text) {
+		return refuse(parser, .Pipe_Line_End, start, start, NO_NODE)
+	}
+	tok := console_language.token_next(text, start, parser.multiline)
+	if tok.kind == .None {
+		return refuse(parser, .Pipe_Line_End, start, start, NO_NODE)
+	}
+	if tok.kind != .Name {
+		return refuse(parser, .Pipe_Not_A_Call, tok.start, tok.end, NO_NODE)
+	}
+	name := text[tok.start:tok.end]
+	if word_of_lex(name) {
+		return refuse(parser, .Pipe_Not_A_Call, tok.start, tok.end, NO_NODE)
+	}
+	parser.position = tok.end
+	if accept(parser, '(') {
+		open_pos := parser.position - 1
+		return call_read(parser, name, tok.start, true, open_pos)
+	}
+	// Bare `a |> f`: 0 explicit arguments, piped LHS fills slot 0.
+	return node_add_raw(parser, {
+		kind     = .Call,
+		sub      = CALL_FLAG_IN_PIPE,
+		aux      = 0,
+		span_off = u32(tok.start),
+		a        = 0,
+		b        = u32(tok.end),
+	})
+}
+
+@(private)
+comparison_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	left := with_read(parser)
 	if refused(parser) {
 		return left
@@ -677,18 +1359,21 @@ expression_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	if operator == .None {
 		return left
 	}
-	binary := node_add(parser, .Binary, op_start, op_start + op_len)
 	parser.position = op_start + op_len
-	if binary == NO_NODE {
-		return left
-	}
-	node_at(parser.tree, binary).operator = operator
-	child_append(parser.tree, binary, left)
-	child_append(parser.tree, binary, with_read(parser))
-	return binary
+	saved_direct := parser.in_direct_pipe_arg
+	parser.in_direct_pipe_arg = false
+	right := with_read(parser)
+	parser.in_direct_pipe_arg = saved_direct
+	return node_add_raw(parser, {
+		kind     = .Binary,
+		sub      = u8(operator),
+		aux      = u16(op_len),
+		span_off = u32(op_start),
+		a        = u32(left),
+		b        = u32(right),
+	})
 }
 
-// with_read reads `with`, whose priority is below "+" and "-".
 @(private)
 with_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	left := sum_read(parser)
@@ -698,14 +1383,23 @@ with_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 			return left
 		}
 		skip_spaces(parser)
-		binary := node_add(parser, .Binary, parser.position, end)
+		op_start := parser.position
 		parser.position = end
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
+		right := sum_read(parser)
+		parser.in_direct_pipe_arg = saved_direct
+		binary := node_add_raw(parser, {
+			kind     = .Binary,
+			sub      = u8(Operator.With),
+			aux      = u16(end - op_start),
+			span_off = u32(op_start),
+			a        = u32(left),
+			b        = u32(right),
+		})
 		if binary == NO_NODE {
 			return left
 		}
-		node_at(parser.tree, binary).operator = .With
-		child_append(parser.tree, binary, left)
-		child_append(parser.tree, binary, sum_read(parser))
 		left = binary
 	}
 	return left
@@ -714,22 +1408,44 @@ with_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 @(private)
 sum_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	left := term_read(parser)
+	text := parser.tree.text
 	for !refused(parser) {
 		operator: Operator
+		op_len := 1
 		switch peek(parser) {
 		case '+':
-			operator = .Add
+			if parser.position + 1 < len(text) && text[parser.position + 1] == '+' {
+				operator = .List_Concat
+				op_len = 2
+			} else {
+				operator = .Add
+			}
 		case '-':
-			// "->" is no subtraction: the sum ends, and the refusal of the
-			// token after it names the form of a function (Thin_Arrow).
-			if console_language.token_next(parser.tree.text, parser.position, parser.multiline).kind == .Arrow {
+			if console_language.token_next(text, parser.position, parser.multiline).kind == .Arrow {
 				return left
 			}
 			operator = .Subtract
 		case:
 			return left
 		}
-		left = binary_read(parser, operator, left, term_read)
+		op_start := parser.position
+		parser.position += op_len
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
+		right := term_read(parser)
+		parser.in_direct_pipe_arg = saved_direct
+		binary := node_add_raw(parser, {
+			kind     = .Binary,
+			sub      = u8(operator),
+			aux      = u16(op_len),
+			span_off = u32(op_start),
+			a        = u32(left),
+			b        = u32(right),
+		})
+		if binary == NO_NODE {
+			return left
+		}
+		left = binary
 	}
 	return left
 }
@@ -754,18 +1470,25 @@ term_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	return left
 }
 
-// binary_read reads the operator at the place of the parser and the
-// operand on its right.
 @(private)
 binary_read :: proc "contextless" (parser: ^Parser, operator: Operator, left: Node_Index, right_read: proc "contextless" (parser: ^Parser) -> Node_Index) -> Node_Index {
-	binary := node_add(parser, .Binary, parser.position, parser.position + 1)
+	op_start := parser.position
 	parser.position += 1
+	saved_direct := parser.in_direct_pipe_arg
+	parser.in_direct_pipe_arg = false
+	right := right_read(parser)
+	parser.in_direct_pipe_arg = saved_direct
+	binary := node_add_raw(parser, {
+		kind     = .Binary,
+		sub      = u8(operator),
+		aux      = 1,
+		span_off = u32(op_start),
+		a        = u32(left),
+		b        = u32(right),
+	})
 	if binary == NO_NODE {
 		return left
 	}
-	node_at(parser.tree, binary).operator = operator
-	child_append(parser.tree, binary, left)
-	child_append(parser.tree, binary, right_read(parser))
 	return binary
 }
 
@@ -777,6 +1500,7 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	}
 	parser.depth += 1
 	defer parser.depth -= 1
+
 	text := parser.tree.text
 	character := peek(parser)
 	start := parser.position
@@ -784,19 +1508,38 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	allows_postfix := false
 	switch {
 	case character == '-':
-		negate := node_add(parser, .Negate, start, start + 1)
 		parser.position += 1
-		if negate == NO_NODE {
-			return NO_NODE
-		}
-		child_append(parser.tree, negate, factor_read(parser))
-		return negate
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
+		child := factor_read(parser)
+		parser.in_direct_pipe_arg = saved_direct
+		return node_add_raw(parser, {
+			kind     = .Negate,
+			span_off = u32(start),
+			a        = u32(child),
+			b        = u32(start + 1),
+		})
+	case character == '!':
+		parser.position += 1
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
+		child := factor_read(parser)
+		parser.in_direct_pipe_arg = saved_direct
+		return node_add_raw(parser, {
+			kind     = .Logical_Not,
+			span_off = u32(start),
+			a        = u32(child),
+			b        = u32(start + 1),
+		})
 	case character == '(':
 		if close, arrow_end, found := console_language.function_head(text, start, parser.multiline); found {
 			return function_read(parser, start, close, arrow_end)
 		}
 		parser.position += 1
-		inner := expression_read(parser)
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
+		inner := pipeline_read(parser)
+		parser.in_direct_pipe_arg = saved_direct
 		if refused(parser) {
 			return inner
 		}
@@ -811,40 +1554,36 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 		if !fits {
 			return refuse(parser, .Number_Too_Large, start, end, NO_NODE)
 		}
-		integer := node_add(parser, .Integer, start, end)
-		if int_node := node_at(parser.tree, integer); int_node != nil {
-			int_node.integer = value
-		}
-		return integer
+		return integer_node_add(parser, start, end, value)
 	case character == '"':
-		end, finished := console_language.text_end(text, start)
-		parser.position = end
-		if !finished {
-			return refuse(parser, .Text_Without_End_Quote, start, end, NO_NODE)
-		}
-		return node_add(parser, .Text, start, end)
+		return text_literal_read(parser, start)
 	case character == '{':
 		parser.position += 1
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
 		node, allows_postfix = literal_read(parser, start), true
+		parser.in_direct_pipe_arg = saved_direct
 	case character == '[':
 		parser.position += 1
-		return list_read(parser, start)
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
+		res := list_read(parser, start)
+		parser.in_direct_pipe_arg = saved_direct
+		return res
 	case character == '.':
-		// A member names no variable: its enum comes from the parameter
-		// that receives it, as the type of a record literal does.
 		token := console_language.token_next(text, start, parser.multiline)
 		if token.kind != .Member {
 			return refuse(parser, .Unexpected, start, len(text), NO_NODE)
 		}
 		parser.position = token.end
-		return node_add(parser, .Member, start, token.end)
+		return node_add_raw(parser, {kind = .Member, span_off = u32(start), a = u32(token.end)})
 	case console_language.hash_starts(text, start):
 		end := console_language.hash_end(text, start)
 		parser.position = end
 		if _, valid := console_language.hash_value(text, start, end); !valid {
 			return refuse(parser, .Hash_Not_Valid, start, end, NO_NODE)
 		}
-		return node_add(parser, .Hash, start, end)
+		return node_add_raw(parser, {kind = .Hash, span_off = u32(start), a = u32(end)})
 	case console_language.name_first(character):
 		name := read_name(parser)
 		if name == "let" {
@@ -854,31 +1593,62 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 			return if_read(parser, start)
 		}
 		if name == "true" || name == "false" {
-			boolean := node_add(parser, .Boolean, start, start + len(name))
-			if bool_node := node_at(parser.tree, boolean); bool_node != nil {
-				bool_node.integer = name == "true" ? 1 : 0
+			return node_add_raw(parser, {
+				kind     = .Boolean,
+				sub      = name == "true" ? 1 : 0,
+				span_off = u32(start),
+				a        = u32(start + len(name)),
+			})
+		}
+		if name == "_" {
+			// Context-aware placeholder refusal when `_` appears inside a
+			// sub-expression or nested call of a piped RHS.
+			if parser.pipe_call_depth > 0 {
+				if parser.in_nested_call {
+					return refuse(parser, .Placeholder_Nested, start, start + 1, NO_NODE)
+				}
+				return refuse(parser, .Placeholder_Not_Whole, start, start + 1, NO_NODE)
 			}
-			return boolean
+			return refuse(parser, .Word_As_Name, start, start + 1, NO_NODE)
 		}
 		if word_of_lex(name) {
 			return refuse(parser, .Word_As_Name, start, start + len(name), NO_NODE)
 		}
 		if accept(parser, '(') {
-			node, allows_postfix = call_read(parser, name, start), true
+			open_pos := parser.position - 1
+			node, allows_postfix = call_read(parser, name, start, false, open_pos), true
 		} else if peek(parser) == '{' {
-			// Call on a record literal: `plan { ... }` is `plan({ ... })`.
 			brace_start := parser.position
 			parser.position += 1
-			call := node_add(parser, .Call, start, start + len(name))
+			call := node_add_raw(parser, {
+				kind     = .Call,
+				span_off = u32(start),
+				b        = u32(start + len(name)),
+			})
 			if call != NO_NODE {
-				child_append(parser.tree, call, literal_read(parser, brace_start))
+				mark := parser.scratch_top
+				lit := literal_read(parser, brace_start)
+				scratch_push(parser, lit)
+				cstart, ccount, _ := children_commit(parser, mark)
+				if cn := node_at(parser.tree, call); cn != nil {
+					cn.a = cstart
+					cn.aux = u16(ccount)
+				}
 			}
 			node, allows_postfix = call, true
 		} else {
-			return node_add(parser, .Name, start, start + len(name))
+			return node_add_raw(parser, {kind = .Name, span_off = u32(start), a = u32(start + len(name))})
 		}
 	case character == 0:
 		return refuse(parser, .Line_Ends_Too_Soon, start, start, NO_NODE)
+	case character == '|':
+		if start + 1 < len(text) && text[start + 1] == '>' {
+			return refuse(parser, .Pipe_No_Left, start, start + 2, NO_NODE)
+		}
+		if start + 1 < len(text) && text[start + 1] == '|' {
+			return refuse(parser, .Unexpected, start, start + 2, NO_NODE)
+		}
+		return refuse(parser, .Lone_Bar, start, start + 1, NO_NODE)
 	case:
 		return refuse(parser, .Unexpected, start, len(text), NO_NODE)
 	}
@@ -888,8 +1658,158 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	return postfix_read(parser, node)
 }
 
-// postfix_read reads `.field` selections chained after a parenthesized
-// expression, a record literal or a call: `({a = 1}).a`, `import("x.lex").y.z`.
+@(private)
+text_literal_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
+	text := parser.tree.text
+	// Fast scan to check whether any `${` interpolation appears and find closing `"`.
+	i := start + 1
+	has_escape := false
+	has_interp := false
+	closed := false
+	for i < len(text) {
+		ch := text[i]
+		if ch == '\\' {
+			has_escape = true
+			if i + 1 >= len(text) {
+				parser.position = len(text)
+				return refuse(parser, .Text_Without_End_Quote, start, len(text), NO_NODE)
+			}
+			i += 2
+			continue
+		}
+		if ch == '$' && i + 1 < len(text) && text[i + 1] == '{' {
+			has_interp = true
+			break
+		}
+		if ch == '"' {
+			closed = true
+			i += 1
+			break
+		}
+		i += 1
+	}
+	if !has_interp {
+		if !closed {
+			parser.position = len(text)
+			return refuse(parser, .Text_Without_End_Quote, start, len(text), NO_NODE)
+		}
+		parser.position = i
+		if has_escape {
+			raw := text[start + 1:i - 1]
+			if _, bad_off, ok := decode_text_escapes(raw, nil); !ok {
+				return refuse(parser, .Escape_Not_Valid, start + 1 + bad_off, start + 1 + bad_off + 1, NO_NODE)
+			}
+			return node_add_raw(parser, {kind = .Text, sub = TEXT_FLAG_ESCAPED, span_off = u32(start), a = u32(i)})
+		}
+		return node_add_raw(parser, {kind = .Text, span_off = u32(start), a = u32(i)})
+	}
+
+	// Interpolated string `"prefix ${expr} suffix"`: emit `.Text_Interp` with
+	// alternating literal `.Text` segments (TEXT_FLAG_SEGMENT) and expression children.
+	interp := node_add_raw(parser, {kind = .Text_Interp, span_off = u32(start)})
+	if interp == NO_NODE {
+		return NO_NODE
+	}
+	mark := parser.scratch_top
+	pos := start + 1
+	for !refused(parser) {
+		seg_start := pos
+		seg_escaped := false
+		for pos < len(text) {
+			ch := text[pos]
+			if ch == '\\' {
+				seg_escaped = true
+				if pos + 1 >= len(text) {
+					parser.position = len(text)
+					scratch_push(parser, refuse(parser, .Text_Without_End_Quote, start, len(text), NO_NODE))
+					break
+				}
+				pos += 2
+				continue
+			}
+			if ch == '"' || (ch == '$' && pos + 1 < len(text) && text[pos + 1] == '{') {
+				break
+			}
+			pos += 1
+		}
+		if refused(parser) {
+			break
+		}
+		if pos > seg_start {
+			if seg_escaped {
+				if _, bad_off, ok := decode_text_escapes(text[seg_start:pos], nil); !ok {
+					parser.position = seg_start + bad_off
+					scratch_push(parser, refuse(parser, .Escape_Not_Valid, seg_start + bad_off, seg_start + bad_off + 1, NO_NODE))
+					break
+				}
+			}
+			seg_flags := TEXT_FLAG_SEGMENT | (seg_escaped ? TEXT_FLAG_ESCAPED : 0)
+			seg := node_add_raw(parser, {kind = .Text, sub = seg_flags, span_off = u32(seg_start), a = u32(pos)})
+			scratch_push(parser, seg)
+			if refused(parser) {
+				break
+			}
+		}
+		if pos >= len(text) {
+			parser.position = len(text)
+			scratch_push(parser, refuse(parser, .Text_Without_End_Quote, start, len(text), NO_NODE))
+			break
+		}
+		if text[pos] == '"' {
+			parser.position = pos + 1
+			break
+		}
+		// Parse `${expr}`.
+		parser.position = pos + 2
+		saved_direct := parser.in_direct_pipe_arg
+		parser.in_direct_pipe_arg = false
+		expr := pipeline_read(parser)
+		parser.in_direct_pipe_arg = saved_direct
+		scratch_push(parser, expr)
+		if refused(parser) {
+			break
+		}
+		if !accept(parser, '}') {
+			scratch_push(parser, refuse(parser, .Interpolation_Close_Missing, parser.position, parser.position, NO_NODE))
+			break
+		}
+		pos = parser.position
+	}
+	cstart, ccount, _ := children_commit(parser, mark)
+	if n := node_at(parser.tree, interp); n != nil {
+		n.a = cstart
+		n.b = ccount
+	}
+	return interp
+}
+
+@(private)
+integer_node_add :: proc "contextless" (parser: ^Parser, start, end: int, value: i64) -> Node_Index {
+	if value >= i64(min(i32)) && value <= i64(max(i32)) {
+		return node_add_raw(parser, {
+			kind     = .Integer,
+			sub      = 0,
+			span_off = u32(start),
+			a        = u32(end),
+			b        = u32(i32(value)),
+		})
+	}
+	tree := parser.tree
+	if tree.int_const_count >= len(tree.int_consts) {
+		return refuse(parser, .Nodes_Full, start, end, NO_NODE)
+	}
+	const_idx := u32(tree.int_const_count)
+	tree.int_consts[tree.int_const_count] = value
+	tree.int_const_count += 1
+	return node_add_raw(parser, {
+		kind     = .Integer,
+		sub      = 1,
+		span_off = u32(start),
+		a        = u32(end),
+		b        = const_idx,
+	})
+}
+
 @(private)
 postfix_read :: proc "contextless" (parser: ^Parser, base: Node_Index) -> Node_Index {
 	text := parser.tree.text
@@ -901,80 +1821,155 @@ postfix_read :: proc "contextless" (parser: ^Parser, base: Node_Index) -> Node_I
 			break
 		}
 		parser.position = token.end
-		selected := node_add(parser, .Field_Select, token.start + 1, token.end)
+		selected := node_add_raw(parser, {
+			kind     = .Field_Select,
+			span_off = u32(token.start + 1),
+			a        = u32(current),
+			b        = u32(token.end),
+		})
 		if selected == NO_NODE {
 			return current
 		}
-		child_append(parser.tree, selected, current)
 		current = selected
 	}
 	return current
 }
 
-// if_read reads `if <condition> then <then_expr> else <else_expr>`.
 @(private)
 if_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
-	node := node_add(parser, .If, start, start + len("if"))
+	node := node_add_raw(parser, {kind = .If, span_off = u32(start)})
 	if node == NO_NODE {
 		return NO_NODE
 	}
-	condition := expression_read(parser)
-	child_append(parser.tree, node, condition)
-	if refused(parser) {
-		return node
+	mark := parser.scratch_top
+	saved_direct := parser.in_direct_pipe_arg
+	parser.in_direct_pipe_arg = false
+	defer parser.in_direct_pipe_arg = saved_direct
+
+	cond := pipeline_read(parser)
+	scratch_push(parser, cond)
+	if !refused(parser) {
+		then_end, has_then := word_ahead(parser, "then")
+		if !has_then {
+			skip_spaces(parser)
+			scratch_push(parser, refuse(parser, .If_Then_Missing, parser.position, parser.position, NO_NODE))
+		} else {
+			parser.position = then_end
+			then_branch := pipeline_read(parser)
+			scratch_push(parser, then_branch)
+			if !refused(parser) {
+				else_end, has_else := word_ahead(parser, "else")
+				if !has_else {
+					skip_spaces(parser)
+					scratch_push(parser, refuse(parser, .If_Else_Missing, parser.position, parser.position, NO_NODE))
+				} else {
+					parser.position = else_end
+					else_branch := pipeline_read(parser)
+					scratch_push(parser, else_branch)
+				}
+			}
+		}
 	}
-	then_end, has_then := word_ahead(parser, "then")
-	if !has_then {
-		skip_spaces(parser)
-		child_append(parser.tree, node, refuse(parser, .If_Then_Missing, parser.position, parser.position, NO_NODE))
-		return node
+	cstart, ccount, _ := children_commit(parser, mark)
+	if n := node_at(parser.tree, node); n != nil {
+		n.a = cstart
+		n.aux = u16(ccount)
 	}
-	parser.position = then_end
-	then_branch := expression_read(parser)
-	child_append(parser.tree, node, then_branch)
-	if refused(parser) {
-		return node
-	}
-	else_end, has_else := word_ahead(parser, "else")
-	if !has_else {
-		skip_spaces(parser)
-		child_append(parser.tree, node, refuse(parser, .If_Else_Missing, parser.position, parser.position, NO_NODE))
-		return node
-	}
-	parser.position = else_end
-	else_branch := expression_read(parser)
-	child_append(parser.tree, node, else_branch)
 	return node
 }
 
-// call_read reads the arguments of a call, after its "(". The form of each
-// argument comes from the lookup of the caller.
+// placeholder_whole_ahead checks if the next token is `_` followed directly by
+// `,` or `)` (a whole-argument placeholder).
 @(private)
-call_read :: proc "contextless" (parser: ^Parser, name: string, start: int) -> Node_Index {
-	call := node_add(parser, .Call, start, start + len(name))
+placeholder_whole_ahead :: proc "contextless" (parser: ^Parser) -> (start, end: int, whole: bool) {
+	text := parser.tree.text
+	tok := console_language.token_next(text, parser.position, parser.multiline)
+	if !console_language.word_is(text, tok, "_") {
+		return 0, 0, false
+	}
+	next := console_language.token_next(text, tok.end, parser.multiline)
+	if next.kind == .Operator && (text[next.start] == ',' || text[next.start] == ')') {
+		return tok.start, tok.end, true
+	}
+	return tok.start, tok.end, false
+}
+
+// call_read reads the arguments of a call after `(`. When `in_pipe_rhs` is true,
+// `_` is accepted once as a whole direct argument (or `name = _`), and
+// `Form_Lookup.form_of` receives `arg_offset` (1 when no `_` appears, 0 when
+// `_` appears) so `where` and `columns` parse identically in piped form.
+@(private)
+call_read :: proc "contextless" (parser: ^Parser, name: string, start: int, in_pipe_rhs: bool, open_pos: int) -> Node_Index {
+	call := node_add_raw(parser, {
+		kind     = .Call,
+		sub      = in_pipe_rhs ? CALL_FLAG_IN_PIPE : 0,
+		span_off = u32(start),
+		b        = u32(start + len(name)),
+	})
 	if call == NO_NODE || accept(parser, ')') {
 		return call
 	}
+
+	// Preserve Form_Lookup parameter indices when parsing a piped RHS call.
+	has_placeholder_ahead := in_pipe_rhs && parser.lookup.form_of != nil && console_language.call_has_placeholder(parser.tree.text, open_pos, parser.multiline)
+	arg_offset := (in_pipe_rhs && !has_placeholder_ahead) ? 1 : 0
+
+	saved_depth := parser.pipe_call_depth
+	saved_nested := parser.in_nested_call
+	saved_direct := parser.in_direct_pipe_arg
+	saved_call := parser.pipe_call_node
+	if in_pipe_rhs {
+		parser.pipe_call_depth += 1
+		parser.in_nested_call = false
+		parser.pipe_call_node = call
+	} else if parser.pipe_call_depth > 0 {
+		parser.in_nested_call = true
+	}
+	defer {
+		parser.pipe_call_depth = saved_depth
+		parser.in_nested_call = saved_nested
+		parser.in_direct_pipe_arg = saved_direct
+		parser.pipe_call_node = saved_call
+	}
+
+	mark := parser.scratch_top
 	count := 0
 	named_seen := false
+	placeholder_seen := false
+	hashed := false
+
 	for {
-		if count == ARGUMENT_CAPACITY {
-			child_append(parser.tree, call, refuse(parser, .Too_Many_Arguments, parser.position, parser.position, NO_NODE))
-			return call
+		if count + arg_offset >= ARGUMENT_CAPACITY {
+			scratch_push(parser, refuse(parser, .Too_Many_Arguments, parser.position, parser.position, NO_NODE))
+			break
 		}
 		argument: Node_Index
-		switch form_of(parser.lookup, name, count) {
+		switch form_of(parser.lookup, name, count + arg_offset) {
 		case .Expression:
-			// `name = value` names its parameter; after one, each argument
-			// is named.
 			if named_ahead(parser) {
 				named_seen = true
-				argument = named_argument_read(parser, call)
+				argument = named_argument_read(parser, call, mark, &hashed, in_pipe_rhs, &placeholder_seen)
 			} else if named_seen {
 				skip_spaces(parser)
 				argument = refuse(parser, .Positional_After_Named, parser.position, parser.position, NO_NODE)
+			} else if pstart, pend, is_whole := placeholder_whole_ahead(parser); is_whole {
+				parser.position = pend
+				if !in_pipe_rhs {
+					if parser.pipe_call_depth > 0 {
+						argument = refuse(parser, .Placeholder_Nested, pstart, pend, NO_NODE)
+					} else {
+						argument = refuse(parser, .Placeholder_Without_Pipe, pstart, pend, NO_NODE)
+					}
+				} else if placeholder_seen {
+					argument = refuse(parser, .Placeholder_Twice, pstart, pend, NO_NODE)
+				} else {
+					placeholder_seen = true
+					argument = node_add_raw(parser, {kind = .Placeholder, span_off = u32(pstart), a = u32(pend)})
+				}
 			} else {
-				argument = expression_read(parser)
+				parser.in_direct_pipe_arg = in_pipe_rhs
+				argument = pipeline_read(parser)
+				parser.in_direct_pipe_arg = false
 			}
 		case .Fact_Name:
 			argument = fact_name_read(parser)
@@ -983,280 +1978,575 @@ call_read :: proc "contextless" (parser: ^Parser, name: string, start: int) -> N
 		case .Field_Names:
 			argument = field_names_read(parser)
 		}
-		child_append(parser.tree, call, argument)
+		scratch_push(parser, argument)
 		if refused(parser) {
-			return call
+			break
 		}
 		count += 1
 		if accept(parser, ')') {
-			return call
+			break
 		}
 		if !accept(parser, ',') {
-			child_append(parser.tree, call, refuse(parser, .Comma_Or_Close_Missing, parser.position, parser.position, NO_NODE))
-			return call
+			scratch_push(parser, refuse(parser, .Comma_Or_Close_Missing, parser.position, parser.position, NO_NODE))
+			break
 		}
 	}
-}
 
-// child_named gives the child of a parent of a kind whose bytes are a name,
-// or NO_NODE: a field of a literal, a binding, a named argument given before.
-@(private)
-child_named :: proc "contextless" (tree: ^Syntax_Tree, parent: Node_Index, kind: Node_Kind, name: string) -> Node_Index {
-	parent_node := node_at(tree, parent)
-	if parent_node == nil {
-		return NO_NODE
-	}
-	for child := parent_node.first_child; child != NO_NODE; child = next_of(tree, child) {
-		if node_at(tree, child).kind == kind && node_text(tree, child) == name {
-			return child
+	cstart, ccount, _ := children_commit(parser, mark)
+	if cn := node_at(parser.tree, call); cn != nil {
+		cn.a = cstart
+		cn.aux = u16(ccount)
+		if placeholder_seen {
+			cn.sub |= CALL_FLAG_HAS_PLACEHOLDER
 		}
 	}
-	return NO_NODE
+	return call
 }
 
-// named_argument_read reads `name = value`, an argument of call, after
-// named_ahead saw its name and its "=".
 @(private)
-named_argument_read :: proc "contextless" (parser: ^Parser, call: Node_Index) -> Node_Index {
+named_argument_read :: proc "contextless" (parser: ^Parser, call: Node_Index, mark: int, hashed: ^bool, in_pipe_rhs: bool, placeholder_seen: ^bool) -> Node_Index {
 	skip_spaces(parser)
 	start := parser.position
 	name := read_name(parser)
 	if word_of_lex(name) {
 		return refuse(parser, .Word_As_Name, start, start + len(name), NO_NODE)
 	}
-	if child_named(parser.tree, call, .Named_Argument, name) != NO_NODE {
+	if scratch_child_named(parser, call, mark, .Named_Argument, name, hashed) != NO_NODE {
 		return refuse(parser, .Named_Argument_Twice, start, start + len(name), NO_NODE)
 	}
 	equal_accept(parser)
-	named := node_add(parser, .Named_Argument, start, start + len(name))
-	if named == NO_NODE {
-		return NO_NODE
+	val: Node_Index
+	if pstart, pend, is_whole := placeholder_whole_ahead(parser); is_whole {
+		parser.position = pend
+		if !in_pipe_rhs {
+			if parser.pipe_call_depth > 0 {
+				val = refuse(parser, .Placeholder_Nested, pstart, pend, NO_NODE)
+			} else {
+				val = refuse(parser, .Placeholder_Without_Pipe, pstart, pend, NO_NODE)
+			}
+		} else if placeholder_seen^ {
+			val = refuse(parser, .Placeholder_Twice, pstart, pend, NO_NODE)
+		} else {
+			placeholder_seen^ = true
+			val = node_add_raw(parser, {kind = .Placeholder, span_off = u32(pstart), a = u32(pend)})
+		}
+	} else {
+		parser.in_direct_pipe_arg = in_pipe_rhs
+		val = pipeline_read(parser)
+		parser.in_direct_pipe_arg = false
 	}
-	child_append(parser.tree, named, expression_read(parser))
+	named := node_add_raw(parser, {
+		kind     = .Named_Argument,
+		span_off = u32(start),
+		a        = u32(val),
+		b        = u32(start + len(name)),
+	})
+	if hashed^ && named != NO_NODE {
+		dup_insert(parser, call, name, named)
+	}
 	return named
 }
 
-// literal_read reads a record literal, after its "{": `name = value`, each
-// name once, separated by ",", then "}". A fault is a child in its place,
-// after the fields before it.
 @(private)
 literal_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 	text := parser.tree.text
-	literal := node_add(parser, .Record_Literal, start, start + 1)
+	literal := node_add_raw(parser, {kind = .Record_Literal, span_off = u32(start)})
 	if literal == NO_NODE || accept(parser, '}') {
 		return literal
 	}
+	mark := parser.scratch_top
+	hashed := false
 	for {
 		skip_spaces(parser)
 		field_start := parser.position
 		if console_language.token_next(text, field_start, parser.multiline).kind != .Name {
-			child_append(parser.tree, literal, refuse(parser, .Literal_Name_Missing, field_start, field_start, NO_NODE))
-			return literal
+			scratch_push(parser, refuse(parser, .Literal_Name_Missing, field_start, field_start, NO_NODE))
+			break
 		}
 		name := read_name(parser)
 		if word_of_lex(name) {
-			child_append(parser.tree, literal, refuse(parser, .Word_As_Name, field_start, field_start + len(name), NO_NODE))
-			return literal
+			scratch_push(parser, refuse(parser, .Word_As_Name, field_start, field_start + len(name), NO_NODE))
+			break
 		}
-		if child_named(parser.tree, literal, .Literal_Field, name) != NO_NODE {
-			child_append(parser.tree, literal, refuse(parser, .Literal_Field_Twice, field_start, field_start + len(name), NO_NODE))
-			return literal
+		if scratch_child_named(parser, literal, mark, .Literal_Field, name, &hashed) != NO_NODE {
+			scratch_push(parser, refuse(parser, .Literal_Field_Twice, field_start, field_start + len(name), NO_NODE))
+			break
 		}
 		if !equal_accept(parser) {
-			child_append(parser.tree, literal, refuse(parser, .Literal_Equal_Missing, parser.position, parser.position, NO_NODE))
-			return literal
+			scratch_push(parser, refuse(parser, .Literal_Equal_Missing, parser.position, parser.position, NO_NODE))
+			break
 		}
-		field := node_add(parser, .Literal_Field, field_start, field_start + len(name))
-		child_append(parser.tree, literal, field)
-		child_append(parser.tree, field, expression_read(parser))
+		field := node_add_raw(parser, {
+			kind     = .Literal_Field,
+			span_off = u32(field_start),
+			a        = NO_NODE_U32,
+			b        = u32(field_start + len(name)),
+		})
+		if field == NO_NODE {
+			break
+		}
+		if hashed {
+			dup_insert(parser, literal, name, field)
+		}
+		val := pipeline_read(parser)
+		if fn := node_at(parser.tree, field); fn != nil {
+			fn.a = u32(val)
+		}
+		scratch_push(parser, field)
 		if refused(parser) || accept(parser, '}') {
-			return literal
+			break
 		}
 		if !accept(parser, ',') {
-			child_append(parser.tree, literal, refuse(parser, .Literal_Close_Missing, parser.position, parser.position, NO_NODE))
-			return literal
+			scratch_push(parser, refuse(parser, .Literal_Close_Missing, parser.position, parser.position, NO_NODE))
+			break
 		}
 		if parser.trailing_commas && accept(parser, '}') {
-			return literal
+			break
 		}
 	}
+	cstart, ccount, _ := children_commit(parser, mark)
+	if ln := node_at(parser.tree, literal); ln != nil {
+		ln.a = cstart
+		ln.b = ccount
+	}
+	return literal
 }
 
-// let_read reads a let, after its word: its bindings `name = value`, each
-// name once, separated by ",", then `in` and the body. Then it binds the
-// names that its values and its body read.
+// pattern_record_read reads `{ a, b = 10, ... }` (optionally prefixed with
+// `as_name @` already consumed by the caller).
+@(private)
+pattern_record_read :: proc "contextless" (parser: ^Parser, start: int, has_as: bool, as_start, as_end: int) -> Node_Index {
+	text := parser.tree.text
+	pat := node_add_raw(parser, {
+		kind     = .Pattern_Record,
+		sub      = has_as ? PAT_FLAG_HAS_AS : 0,
+		span_off = u32(start),
+	})
+	if pat == NO_NODE {
+		return NO_NODE
+	}
+	mark := parser.scratch_top
+	if has_as {
+		as_node := node_add_raw(parser, {kind = .Parameter, span_off = u32(as_start), a = u32(as_end)})
+		scratch_push(parser, as_node)
+	}
+	hashed := false
+	has_rest := false
+	if !accept(parser, '}') {
+		for {
+			skip_spaces(parser)
+			fstart := parser.position
+			// Check for `...` open-rest marker.
+			if fstart + 2 < len(text) && text[fstart] == '.' && text[fstart + 1] == '.' && text[fstart + 2] == '.' {
+				parser.position = fstart + 3
+				has_rest = true
+				if accept(parser, ',') {
+					if parser.trailing_commas && accept(parser, '}') {
+						break
+					}
+					skip_spaces(parser)
+					if accept(parser, '}') {
+						break
+					}
+					scratch_push(parser, refuse(parser, .Pattern_Rest_Not_Last, parser.position, parser.position, NO_NODE))
+					break
+				}
+				if !accept(parser, '}') {
+					scratch_push(parser, refuse(parser, .Pattern_Close_Missing, parser.position, parser.position, NO_NODE))
+				}
+				break
+			}
+			tok := console_language.token_next(text, fstart, parser.multiline)
+			if tok.kind != .Name {
+				scratch_push(parser, refuse(parser, .Pattern_Field_Missing, fstart, fstart, NO_NODE))
+				break
+			}
+			fname := read_name(parser)
+			if word_of_lex(fname) {
+				scratch_push(parser, refuse(parser, .Word_As_Name, fstart, fstart + len(fname), NO_NODE))
+				break
+			}
+			dotted := false
+			for ch in fname {
+				if ch == '.' {
+					dotted = true
+					break
+				}
+			}
+			if dotted {
+				scratch_push(parser, refuse(parser, .Pattern_Field_Missing, fstart, fstart + len(fname), NO_NODE))
+				break
+			}
+			if scratch_child_named(parser, pat, mark, .Pattern_Field, fname, &hashed) != NO_NODE {
+				scratch_push(parser, refuse(parser, .Pattern_Field_Twice, fstart, fstart + len(fname), NO_NODE))
+				break
+			}
+			def_node := NO_NODE
+			if equal_accept(parser) {
+				saved_direct := parser.in_direct_pipe_arg
+				parser.in_direct_pipe_arg = false
+				def_node = pipeline_read(parser)
+				parser.in_direct_pipe_arg = saved_direct
+			}
+			fnode := node_add_raw(parser, {
+				kind     = .Pattern_Field,
+				span_off = u32(fstart),
+				a        = u32(def_node),
+				b        = u32(fstart + len(fname)),
+			})
+			if hashed && fnode != NO_NODE {
+				dup_insert(parser, pat, fname, fnode)
+			}
+			scratch_push(parser, fnode)
+			if refused(parser) {
+				break
+			}
+			if accept(parser, '}') {
+				break
+			}
+			if !accept(parser, ',') {
+				scratch_push(parser, refuse(parser, .Pattern_Close_Missing, parser.position, parser.position, NO_NODE))
+				break
+			}
+			if accept(parser, '}') {
+				break
+			}
+		}
+	}
+	cstart, ccount, _ := children_commit(parser, mark)
+	if pn := node_at(parser.tree, pat); pn != nil {
+		if has_rest {
+			pn.sub |= PAT_FLAG_REST
+		}
+		pn.a = cstart
+		pn.b = ccount
+	}
+	return pat
+}
+
 @(private)
 let_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 	text := parser.tree.text
-	let := node_add(parser, .Let, start, start + len("let"))
-	if let == NO_NODE {
+	let_node := node_add_raw(parser, {kind = .Let, span_off = u32(start)})
+	if let_node == NO_NODE {
 		return NO_NODE
 	}
+	mark := parser.scratch_top
+	hashed := false
+	has_body := false
 	for {
 		skip_spaces(parser)
 		name_start := parser.position
-		if console_language.token_next(text, name_start, parser.multiline).kind != .Name {
-			child_append(parser.tree, let, refuse(parser, .Let_Name_Missing, name_start, name_start, NO_NODE))
-			return let
+		if peek(parser) == '{' {
+			// Record destructuring `let { a, b = 1, ... } = expr`.
+			parser.position += 1
+			pat := pattern_record_read(parser, name_start, false, 0, 0)
+			if refused(parser) {
+				scratch_push(parser, pat)
+				break
+			}
+			if !equal_accept(parser) {
+				scratch_push(parser, refuse(parser, .Let_Equal_Missing, parser.position, parser.position, NO_NODE))
+				break
+			}
+			binding := node_add_raw(parser, {
+				kind     = .Let_Binding,
+				sub      = LET_BINDING_PATTERN,
+				span_off = u32(name_start),
+				a        = NO_NODE_U32,
+				b        = u32(pat),
+			})
+			if binding == NO_NODE {
+				break
+			}
+			val := pipeline_read(parser)
+			if bn := node_at(parser.tree, binding); bn != nil {
+				bn.a = u32(val)
+			}
+			scratch_push(parser, binding)
+		} else {
+			if console_language.token_next(text, name_start, parser.multiline).kind != .Name {
+				scratch_push(parser, refuse(parser, .Let_Name_Missing, name_start, name_start, NO_NODE))
+				break
+			}
+			name := read_name(parser)
+			if word_of_lex(name) {
+				scratch_push(parser, refuse(parser, .Word_As_Name, name_start, name_start + len(name), NO_NODE))
+				break
+			}
+			if accept(parser, '@') {
+				// As-pattern destructuring `let r @ { a, b } = expr`.
+				if !accept(parser, '{') {
+					scratch_push(parser, refuse(parser, .Pattern_At_Missing_Brace, parser.position, parser.position, NO_NODE))
+					break
+				}
+				pat := pattern_record_read(parser, name_start, true, name_start, name_start + len(name))
+				if refused(parser) {
+					scratch_push(parser, pat)
+					break
+				}
+				if !equal_accept(parser) {
+					scratch_push(parser, refuse(parser, .Let_Equal_Missing, parser.position, parser.position, NO_NODE))
+					break
+				}
+				binding := node_add_raw(parser, {
+					kind     = .Let_Binding,
+					sub      = LET_BINDING_PATTERN,
+					span_off = u32(name_start),
+					a        = NO_NODE_U32,
+					b        = u32(pat),
+				})
+				if binding == NO_NODE {
+					break
+				}
+				val := pipeline_read(parser)
+				if bn := node_at(parser.tree, binding); bn != nil {
+					bn.a = u32(val)
+				}
+				scratch_push(parser, binding)
+			} else {
+				if scratch_child_named(parser, let_node, mark, .Let_Binding, name, &hashed) != NO_NODE {
+					scratch_push(parser, refuse(parser, .Let_Name_Twice, name_start, name_start + len(name), NO_NODE))
+					break
+				}
+				if !equal_accept(parser) {
+					scratch_push(parser, refuse(parser, .Let_Equal_Missing, parser.position, parser.position, NO_NODE))
+					break
+				}
+				binding := node_add_raw(parser, {
+					kind     = .Let_Binding,
+					span_off = u32(name_start),
+					a        = NO_NODE_U32,
+					b        = u32(name_start + len(name)),
+				})
+				if binding == NO_NODE {
+					break
+				}
+				if hashed {
+					dup_insert(parser, let_node, name, binding)
+				}
+				val := pipeline_read(parser)
+				if bn := node_at(parser.tree, binding); bn != nil {
+					bn.a = u32(val)
+				}
+				scratch_push(parser, binding)
+			}
 		}
-		name := read_name(parser)
-		if word_of_lex(name) {
-			child_append(parser.tree, let, refuse(parser, .Word_As_Name, name_start, name_start + len(name), NO_NODE))
-			return let
-		}
-		if child_named(parser.tree, let, .Let_Binding, name) != NO_NODE {
-			child_append(parser.tree, let, refuse(parser, .Let_Name_Twice, name_start, name_start + len(name), NO_NODE))
-			return let
-		}
-		if !equal_accept(parser) {
-			child_append(parser.tree, let, refuse(parser, .Let_Equal_Missing, parser.position, parser.position, NO_NODE))
-			return let
-		}
-		binding := node_add(parser, .Let_Binding, name_start, name_start + len(name))
-		child_append(parser.tree, let, binding)
-		child_append(parser.tree, binding, expression_read(parser))
 		if refused(parser) {
-			return let
+			break
 		}
 		if accept(parser, ',') {
 			if parser.trailing_commas {
 				if in_end, has_in := word_ahead(parser, "in"); has_in {
 					parser.position = in_end
-					child_append(parser.tree, let, expression_read(parser))
-					for child := node_at(parser.tree, let).first_child; child != NO_NODE; child = next_of(parser.tree, child) {
-						child_node := node_at(parser.tree, child)
-						names_bind(parser.tree, let, .Let_Binding, child_node.kind == .Let_Binding ? child_node.first_child : child)
-					}
-					return let
+					body := pipeline_read(parser)
+					scratch_push(parser, body)
+					has_body = true
+					break
 				}
 			}
 			continue
 		}
 		end, found := word_ahead(parser, "in")
 		if !found {
-			child_append(parser.tree, let, refuse(parser, .Let_In_Missing, parser.position, parser.position, NO_NODE))
-			return let
+			scratch_push(parser, refuse(parser, .Let_In_Missing, parser.position, parser.position, NO_NODE))
+			break
 		}
 		parser.position = end
-		child_append(parser.tree, let, expression_read(parser))
-		// After the whole let: a value can name a later binding, and an
-		// inner let or function has bound its own names already.
-		for child := node_at(parser.tree, let).first_child; child != NO_NODE; child = next_of(parser.tree, child) {
-			child_node := node_at(parser.tree, child)
-			names_bind(parser.tree, let, .Let_Binding, child_node.kind == .Let_Binding ? child_node.first_child : child)
-		}
-		return let
+		body := pipeline_read(parser)
+		scratch_push(parser, body)
+		has_body = true
+		break
 	}
+	cstart, ccount, _ := children_commit(parser, mark)
+	if ln := node_at(parser.tree, let_node); ln != nil {
+		ln.a = cstart
+		ln.b = ccount
+	}
+	if has_body && len(parser.tree.bindings) > 0 {
+		for child in node_children(parser.tree, let_node) {
+			cn := node_at(parser.tree, child)
+			target := cn != nil && cn.kind == .Let_Binding ? node_child(parser.tree, child) : child
+			names_bind(parser, let_node, .Let_Binding, target, hashed)
+		}
+	}
+	return let_node
 }
 
-// function_read reads a function, whose '(' is at open, its ')' at close
-// and the byte after its "=>" at arrow_end (console_language.function_head):
-// its parameters, each name once, then its body. Then it binds the names
-// of its body to its parameters.
 @(private)
 function_read :: proc "contextless" (parser: ^Parser, open, close, arrow_end: int) -> Node_Index {
 	tree := parser.tree
 	text := tree.text
-	function := node_add(parser, .Function, arrow_end - len("=>"), arrow_end)
+	function := node_add_raw(parser, {
+		kind     = .Function,
+		span_off = u32(open),
+		b        = u32(arrow_end),
+	})
 	if function == NO_NODE {
 		return NO_NODE
 	}
-	node_at(tree, function).integer = i64(open)
 	outer := parser.function
 	parser.function = function
 	defer parser.function = outer
+
+	mark := parser.scratch_top
+	hashed := false
 	parser.position = open + 1
+	ok_head := true
 	if !accept(parser, ')') {
 		count := 0
 		for {
 			skip_spaces(parser)
 			name_start := parser.position
 			if count == ARGUMENT_CAPACITY {
-				child_append(tree, function, refuse(parser, .Too_Many_Parameters, name_start, name_start, NO_NODE))
-				return function
+				scratch_push(parser, refuse(parser, .Too_Many_Parameters, name_start, name_start, NO_NODE))
+				ok_head = false
+				break
 			}
-			token := console_language.token_next(text, name_start, parser.multiline)
-			if token.kind != .Name {
-				child_append(tree, function, refuse(parser, .Parameter_Name_Missing, name_start, name_start, NO_NODE))
-				return function
-			}
-			name := read_name(parser)
-			if word_of_lex(name) {
-				child_append(tree, function, refuse(parser, .Word_As_Name, name_start, name_start + len(name), NO_NODE))
-				return function
-			}
-			// A name with a '.' reads a field: no parameter has one.
-			for character in name {
-				if character == '.' {
-					child_append(tree, function, refuse(parser, .Parameter_Name_Missing, name_start, name_start + len(name), NO_NODE))
-					return function
+			if peek(parser) == '{' {
+				parser.position += 1
+				pat := pattern_record_read(parser, name_start, false, 0, 0)
+				scratch_push(parser, pat)
+				if refused(parser) {
+					ok_head = false
+					break
 				}
-			}
-			if child_named(tree, function, .Parameter, name) != NO_NODE {
-				child_append(tree, function, refuse(parser, .Parameter_Twice, name_start, name_start + len(name), NO_NODE))
-				return function
-			}
-			child_append(tree, function, node_add(parser, .Parameter, name_start, name_start + len(name)))
-			if refused(parser) {
-				return function
+			} else {
+				token := console_language.token_next(text, name_start, parser.multiline)
+				if token.kind != .Name {
+					scratch_push(parser, refuse(parser, .Parameter_Name_Missing, name_start, name_start, NO_NODE))
+					ok_head = false
+					break
+				}
+				name := read_name(parser)
+				if word_of_lex(name) {
+					scratch_push(parser, refuse(parser, .Word_As_Name, name_start, name_start + len(name), NO_NODE))
+					ok_head = false
+					break
+				}
+				dotted := false
+				for character in name {
+					if character == '.' {
+						dotted = true
+						break
+					}
+				}
+				if dotted {
+					scratch_push(parser, refuse(parser, .Parameter_Name_Missing, name_start, name_start + len(name), NO_NODE))
+					ok_head = false
+					break
+				}
+				if accept(parser, '@') {
+					if !accept(parser, '{') {
+						scratch_push(parser, refuse(parser, .Pattern_At_Missing_Brace, parser.position, parser.position, NO_NODE))
+						ok_head = false
+						break
+					}
+					pat := pattern_record_read(parser, name_start, true, name_start, name_start + len(name))
+					scratch_push(parser, pat)
+					if refused(parser) {
+						ok_head = false
+						break
+					}
+				} else {
+					if scratch_child_named(parser, function, mark, .Parameter, name, &hashed) != NO_NODE {
+						scratch_push(parser, refuse(parser, .Parameter_Twice, name_start, name_start + len(name), NO_NODE))
+						ok_head = false
+						break
+					}
+					param := node_add_raw(parser, {kind = .Parameter, span_off = u32(name_start), a = u32(name_start + len(name))})
+					scratch_push(parser, param)
+					if refused(parser) {
+						ok_head = false
+						break
+					}
+				}
 			}
 			count += 1
 			if accept(parser, ')') {
 				break
 			}
 			if !accept(parser, ',') {
-				child_append(tree, function, refuse(parser, .Comma_Or_Close_Missing, parser.position, parser.position, NO_NODE))
-				return function
+				scratch_push(parser, refuse(parser, .Comma_Or_Close_Missing, parser.position, parser.position, NO_NODE))
+				ok_head = false
+				break
 			}
 		}
 	}
-	// The ')' of the parameters is the one that function_head found.
-	if parser.position != close + 1 {
-		child_append(tree, function, refuse(parser, .Unexpected, parser.position, len(text), NO_NODE))
-		return function
+	body := NO_NODE
+	if ok_head {
+		if parser.position != close + 1 {
+			scratch_push(parser, refuse(parser, .Unexpected, parser.position, len(text), NO_NODE))
+		} else {
+			parser.position = arrow_end
+			body = pipeline_read(parser)
+			scratch_push(parser, body)
+		}
 	}
-	parser.position = arrow_end
-	body := expression_read(parser)
-	child_append(tree, function, body)
-	names_bind(tree, function, .Parameter, body)
+	cstart, ccount, _ := children_commit(parser, mark)
+	if fn := node_at(tree, function); fn != nil {
+		fn.a = cstart
+		fn.aux = u16(ccount)
+	}
+	if body != NO_NODE && len(tree.bindings) > 0 {
+		names_bind(parser, function, .Parameter, body, false)
+	}
 	return function
 }
 
-// list_read reads a list, after its "[": its items separated by ",", then
-// "]". A fault is a child in its place, after the items before it.
 @(private)
 list_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
-	list := node_add(parser, .List_Literal, start, start + 1)
+	list := node_add_raw(parser, {kind = .List_Literal, span_off = u32(start)})
 	if list == NO_NODE || accept(parser, ']') {
 		return list
 	}
+	mark := parser.scratch_top
 	for {
-		child_append(parser.tree, list, expression_read(parser))
+		scratch_push(parser, pipeline_read(parser))
 		if refused(parser) || accept(parser, ']') {
-			return list
+			break
 		}
 		if !accept(parser, ',') {
-			child_append(parser.tree, list, refuse(parser, .List_Close_Missing, parser.position, parser.position, NO_NODE))
-			return list
+			scratch_push(parser, refuse(parser, .List_Close_Missing, parser.position, parser.position, NO_NODE))
+			break
 		}
 		if parser.trailing_commas && accept(parser, ']') {
-			return list
+			break
 		}
 	}
+	cstart, ccount, _ := children_commit(parser, mark)
+	if ln := node_at(parser.tree, list); ln != nil {
+		ln.a = cstart
+		ln.b = ccount
+	}
+	return list
 }
 
-// names_bind gives each Name or Call of a subtree that nothing inner bound
-// the child of owner of the kind binding_kind with its name before its first
-// '.': a Let_Binding of a let, a Parameter of a function. A Call `gt.fn(...)`
-// binds to `gt` when `gt` is in scope, so record fields holding functions
-// can be called directly.
 @(private)
-names_bind :: proc "contextless" (tree: ^Syntax_Tree, owner: Node_Index, binding_kind: Node_Kind, index: Node_Index) {
+committed_child_named :: proc "contextless" (parser: ^Parser, owner: Node_Index, kind: Node_Kind, name: string, hashed: bool) -> Node_Index {
+	if hashed {
+		if found, ok := dup_find(parser, owner, name); ok {
+			return found
+		}
+	}
+	for child in node_children(parser.tree, owner) {
+		if cn := node_at(parser.tree, child); cn != nil && cn.kind == kind && node_text(parser.tree, child) == name {
+			return child
+		}
+	}
+	return NO_NODE
+}
+
+// names_bind links each unbound Name/Call in a subtree to its enclosing
+// Let_Binding or Parameter (L1 bridge; replaced by De Bruijn compiler in L2).
+@(private)
+names_bind :: proc "contextless" (parser: ^Parser, owner: Node_Index, binding_kind: Node_Kind, index: Node_Index, hashed: bool) {
+	tree := parser.tree
 	node := node_at(tree, index)
 	if node == nil {
 		return
 	}
-	if (node.kind == .Name || node.kind == .Call) && node.binding == NO_NODE {
+	if (node.kind == .Name || node.kind == .Call) && int(index) < len(tree.bindings) && tree.bindings[int(index)] == NO_NODE {
 		name := node_text(tree, index)
 		head := name
 		for character, place in name {
@@ -1266,87 +2556,104 @@ names_bind :: proc "contextless" (tree: ^Syntax_Tree, owner: Node_Index, binding
 			}
 		}
 		if head != "" {
-			node.binding = child_named(tree, owner, binding_kind, head)
+			tree.bindings[int(index)] = committed_child_named(parser, owner, binding_kind, head, hashed)
 		}
 	}
-	for child := node.first_child; child != NO_NODE; child = next_of(tree, child) {
-		names_bind(tree, owner, binding_kind, child)
+	switch node.kind {
+	case .Negate, .Logical_Not, .Field_Select, .Literal_Field, .Let_Binding, .Named_Argument, .Refused, .Condition, .Pattern_Field:
+		names_bind(parser, owner, binding_kind, node_child(tree, index), hashed)
+	case .Binary, .Pipe:
+		left, right := node_binary_children(tree, index)
+		names_bind(parser, owner, binding_kind, left, hashed)
+		names_bind(parser, owner, binding_kind, right, hashed)
+	case .Call, .Record_Literal, .List_Literal, .Let, .Function, .If, .Text_Interp, .Pattern_Record:
+		for child in node_children(tree, index) {
+			names_bind(parser, owner, binding_kind, child, hashed)
+		}
+	case .Integer, .Text, .Name, .Fact_Name, .Field_Names, .Member, .Parameter, .Hash, .Boolean, .Placeholder:
 	}
 }
 
-// fact_name_read reads the argument of a parameter of the form Fact_Name:
-// a name, which the console checks against the fact names of its image.
 @(private)
 fact_name_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	skip_spaces(parser)
 	start := parser.position
 	name := read_name(parser)
-	fact_name := node_add(parser, .Fact_Name, start, start + len(name))
+	ref := Refusal.None
 	if len(name) == 0 {
+		ref = .Fact_Name_Missing
 		refusal_keep(parser, .Fact_Name_Missing, start)
-		if node := node_at(parser.tree, fact_name); node != nil {
-			node.refusal = .Fact_Name_Missing
-		}
 	}
-	return fact_name
+	return node_add_raw(parser, {
+		kind     = .Fact_Name,
+		sub      = u8(ref),
+		span_off = u32(start),
+		a        = u32(start + len(name)),
+	})
 }
 
-// field_names_read reads the argument of a parameter of the form
-// Field_Names: one name or more, separated by commas, so it takes the
-// commas that would end the argument. Each is a name of a field, never a
-// variable: the console checks it against the record of its table. The
-// bytes of the node run from the first name to the byte after the spaces
-// that follow the last.
 @(private)
 field_names_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	skip_spaces(parser)
 	start := parser.position
-	field_names := node_add(parser, .Field_Names, start, start)
-	node := node_at(parser.tree, field_names)
-	if node == nil {
-		return NO_NODE
-	}
+	ref := Refusal.None
 	for {
 		name := read_name(parser)
 		if len(name) == 0 {
-			node.refusal = .Field_Name_Missing
-			node.end = u32(parser.position)
+			ref = .Field_Name_Missing
 			refusal_keep(parser, .Field_Name_Missing, parser.position)
-			return field_names
+			break
 		}
 		if peek(parser) != ',' {
 			break
 		}
 		parser.position += 1
 	}
-	node.end = u32(parser.position)
-	return field_names
+	return node_add_raw(parser, {
+		kind     = .Field_Names,
+		sub      = u8(ref),
+		span_off = u32(start),
+		a        = u32(parser.position),
+	})
 }
 
-// condition_read reads the argument of a parameter of the form Condition:
-// a field, an operator, and a value. The value is an expression; for a
-// field that holds a status, the console reads its first token as the name
-// of a member, and member_alone says if that token is the whole value.
 @(private)
 condition_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
-	text := parser.tree.text
+	tree := parser.tree
+	text := tree.text
 	start := console_language.space_end(text, parser.position)
 	head, head_refusal := console_condition.head_read(text, parser.position)
-	condition := node_add(parser, .Condition, start, head_refusal == .None ? head.value_start : start)
-	node := node_at(parser.tree, condition)
-	if node == nil {
-		return NO_NODE
+	if tree.condition_count >= len(tree.conditions) {
+		return refuse(parser, .Nodes_Full, start, start, NO_NODE)
 	}
-	node.condition_head, node.condition_refusal = head, head_refusal
+	cond_idx := u32(tree.condition_count)
+	tree.condition_count += 1
+	end_off := head_refusal == .None ? u32(head.value_start) : u32(start)
+	tree.conditions[cond_idx] = {
+		head    = head,
+		refusal = head_refusal,
+		end     = end_off,
+	}
 	if head_refusal != .None {
-		node.refusal = .Condition_Head_Refused
 		refusal_keep(parser, .Condition_Head_Refused, start, u64(head_refusal))
-		return condition
+		return node_add_raw(parser, {
+			kind     = .Condition,
+			sub      = u8(Refusal.Condition_Head_Refused),
+			span_off = u32(start),
+			a        = NO_NODE_U32,
+			b        = cond_idx,
+		})
 	}
 	parser.position = head.value_start
 	first := console_language.token_next(text, head.value_start)
 	after := console_language.token_next(text, first.end)
-	node.member_alone = after.kind == .Operator && (text[after.start] == ')' || text[after.start] == ',')
-	child_append(parser.tree, condition, expression_read(parser))
-	return condition
+	tree.conditions[cond_idx].member_alone = after.kind == .Operator && (text[after.start] == ')' || text[after.start] == ',')
+	val := pipeline_read(parser)
+	return node_add_raw(parser, {
+		kind     = .Condition,
+		sub      = u8(Refusal.None),
+		span_off = u32(start),
+		a        = u32(val),
+		b        = cond_idx,
+	})
 }

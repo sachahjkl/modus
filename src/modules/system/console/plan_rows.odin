@@ -66,7 +66,7 @@ plan_name_run :: proc "contextless" (name: string, arguments: []Value) -> Value 
 		if len(arguments) != 1 || arguments[0].kind != .Hash {
 			return fail("module takes one hash: module(blake3:…)")
 		}
-		return {kind = .Module_Ref, detail = arguments[0].detail}
+		return {kind = .Module_Ref, detail = arguments[0].detail, vm_value = {kind = .Module_Ref, meta = arguments[0].vm_value.meta}}
 	case STORE_NAME:
 		made, problem := lex_evaluator.store_ref_make(&line_evaluation, arguments)
 		switch problem {

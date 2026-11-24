@@ -43,12 +43,13 @@ When keys are chosen externally (glyph descriptors, hashes, IP addresses, names)
 
 ## The chosen form
 
-### Two table types sharing one probe
+### Three table types sharing one probe
 
-`src/library/modus/hash_table` provides two generic fixed-capacity structs with `GROUP_COUNT > 0` groups of 16 slots (`GROUP_WIDTH :: 16`):
+`src/library/modus/hash_table` provides two generic fixed-capacity structs with `GROUP_COUNT > 0` groups of 16 slots (`GROUP_WIDTH :: 16`) and one slice-backed index for caller-supplied arenas:
 
 - **`Hash_Table(Key, Value, GROUP_COUNT)`**: stores `controls`, `keys`, and `values` in flat parallel arrays. Keys are hashed and compared by their raw bytes; compile-time constraints (`intrinsics.type_is_simple_compare` and `!intrinsics.type_struct_has_implicit_padding`) refuse structs with implicit padding, floats, pointers, and strings.
 - **`Hash_Index(Reference, GROUP_COUNT)`**: stores only `controls` (1 byte per slot) and integer `references` (`u16`, `u32`, ...) pointing into the caller's own record array. The caller computes the hash (`index_hash_word` or `index_hash_bytes`), walks candidates with `index_search_begin` / `index_search_next`, compares keys on its own records, and removes by slot (`index_remove_slot`). This avoids duplicating keys when records already store them for eviction or iteration.
+- **`Slice_Hash_Index(Reference)`**: same 16-slot SIMD group match, 7/8 load bound, ZII empty controls (`0x00`), seeded rapidhash, and in-place tombstone rebuild as `Hash_Index`, backed by caller-supplied `controls: []u8` and `references: []Reference` slices carved from an arena whose size is decided at runtime (such as a `lex` symbol interner or a large record shape index). `slice_index_init` refuses a control buffer shorter than `GROUP_WIDTH`, not a multiple of `GROUP_WIDTH`, or larger than `references`, leaving the caller memory unchanged. A zero-initialised `Slice_Hash_Index` has capacity 0 and refuses inserts and searches cleanly.
 
 ### 16-slot groups, H1/H2 tags, and SIMD matching
 
@@ -111,4 +112,4 @@ Both packages are clean Odin implementations of published algorithms, with no co
 
 ## State
 
-Built: `src/library/modus/fast_hash` (rapidhash V3 + word mixers, 6 host tests including 105 reference vectors and opt-in host measure), `src/library/modus/hash_table` (`Hash_Table`, `Hash_Index`, SSE2 and scalar 16-tag group match, 19 host tests including 700 000 deterministic fuzz operations and opt-in host measure), and the first user `src/library/modus/text_rendering/private_cache.odin`. Left: adopting `Hash_Index` in `quic/server_budgets.odin` and evaluating `storage_mount/hash_index.odin` against its probe-bound rules.
+Built: `src/library/modus/fast_hash` (rapidhash V3 + word mixers, 6 host tests including 105 reference vectors and opt-in host measure), `src/library/modus/hash_table` (`Hash_Table`, `Hash_Index`, `Slice_Hash_Index`, SSE2 and scalar 16-tag group match, host tests including deterministic fuzz operations and opt-in host measure), and the first user `src/library/modus/text_rendering/private_cache.odin`. Left: adopting `Hash_Index` in `quic/server_budgets.odin` and evaluating `storage_mount/hash_index.odin` against its probe-bound rules.

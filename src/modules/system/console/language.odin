@@ -52,7 +52,7 @@ import "modus:system"
 // condition points into line_conditions, and a Stream names its place in
 // line_streams.
 Kind :: lex_evaluator.Kind
-Value :: lex_evaluator.Value
+Value :: lex_evaluator.Host_Value
 
 // The conditions of the line that runs. A value names one by its address,
 // so that a value stays small: a call keeps 12 of them on the stack.
@@ -265,20 +265,18 @@ scratch_count: int
 
 failed: bool
 
-// The nested form of the line that runs, and the stages of its "|>". A
-// Text value of the line is a part of its nested form, so the nested form
-// lives until the next line.
-NESTED_LINE_SIZE :: 2 * LINE_CAPACITY // A nested form is never longer than its line; the room past it is a margin of the pipe.
-nested_line: [NESTED_LINE_SIZE]u8
-line_stages: [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage
+// The source copy of the line that runs. A Text value of the line is a slice
+// of line_source, so it lives until the next line.
+line_source: [LINE_CAPACITY]u8
 
-// The syntax tree of the nested form of the line that runs. Its names and
-// its texts are parts of the nested form.
+// The syntax tree of the line that runs and its caller-owned buffers.
 line_tree: lex_parser.Syntax_Tree
+line_tree_buffers: lex_parser.Console_Tree_Buffers
 
-// The evaluation of the tree of the line that runs: its thunks keep values
-// whose texts are parts of the nested form and of scratch, for one line.
+// The evaluation of the tree of the line that runs and its caller-owned VM
+// buffers.
 line_evaluation: lex_evaluator.Evaluation
+line_eval_buffers: lex_evaluator.Console_Eval_Buffers
 
 // console_host gives the console as the evaluation host. Each procedure
 // that fails the line gives ok false, and the evaluator stops.
@@ -321,14 +319,15 @@ run_line :: proc "contextless" (text: string) {
 	failure_reset()
 	line_records_start()
 
-	// A fault of "|>" fails the line here, before any call runs.
-	nested := pipe_nested_line(text)
+	// Keep a stable copy of the line text for slices returned during this line.
+	source_len := copy(line_source[:], text)
+	source := string(line_source[:source_len])
 	name: string
 	assigned := false
 	value: Value
 	// A line of spaces and a comment has no token: it does nothing.
-	if !failed && console_language.token_next(nested, 0).kind != .None {
-		lex_parser.parse(nested, {form_of = parameter_form_of}, &line_tree)
+	if !failed && console_language.token_next(source, 0).kind != .None {
+		lex_parser.parse_console(source, {form_of = parameter_form_of}, &line_tree_buffers, &line_tree)
 		name = line_tree.assigned_name
 		assigned = len(name) > 0
 		value = line_evaluate()
@@ -542,7 +541,7 @@ deepest_line_stack: uint
 // writes the sentence of the refusal of the evaluator, if any. A refusal of
 // the host has written its own.
 line_evaluate :: proc "contextless" () -> Value {
-	lex_evaluator.evaluation_start(&line_evaluation, &line_tree, .Console, console_host())
+	lex_evaluator.evaluation_start(&line_evaluation, &line_tree, .Console, console_host(), &line_eval_buffers)
 	value, ok := lex_evaluator.line_force(&line_evaluation)
 	// A line that the bound stopped measures the bound, not the line.
 	if line_evaluation.refusal.refusal != .Stack_Exceeded && line_evaluation.stack_deepest > deepest_line_stack {
@@ -661,7 +660,7 @@ evaluation_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Rec
 			failure_record_set(errors.error_make(.Over_Limit, .None, 0, record.left, record.right), "the stack of the evaluation", nil)
 		}
 	case .Calls_Full:
-		fail("the line makes more calls of functions than the evaluator holds: ", i64(lex_evaluator.CALL_CAPACITY), " calls and ", i64(lex_evaluator.CALL_THUNK_CAPACITY), " values of their bodies")
+		fail("the line makes more calls of functions than the evaluator holds")
 	case .Lists_Full:
 		already := failed
 		fail("the lists of the line hold more than ", i64(lex_evaluator.LIST_ITEM_CAPACITY), " items in all")
@@ -676,6 +675,14 @@ evaluation_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Rec
 		fail("the line nests deeper than the evaluator allows: ", record.right, " levels")
 	case .With_Pairs_Full, .Imports_Full:
 		fail("the evaluation ran out of room for declarations")
+	case .Assertion_Failed:
+		fail("assertion did not hold: ", record.command)
+	case .Interpolation_Kind:
+		fail("a string interpolation does not format ", kind_names[record.left_kind])
+	case .Pattern_Not_A_Record:
+		fail("a record pattern needs a record, not ", kind_names[record.left_kind])
+	case .Pattern_Extra_Field:
+		fail("the record has an extra field ", record.field, " that the pattern does not list; add \"...\" to allow extra fields")
 	}
 }
 
@@ -807,6 +814,36 @@ text_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Record) {
 		} else {
 			fail("\"->\" is no operator: a function is written (", parameters, ") => ", body)
 		}
+	case .Pipe_No_Left:
+		fail("|> has no value on its left: write a value, then |> and a call")
+	case .Pipe_Line_End:
+		fail("the line ends after |>: a call or the name of a command comes after it")
+	case .Pipe_Not_A_Call:
+		fail("|> takes a call or the name of a command on its right, not \"", lex_parser.node_text(&line_tree, record.node), "\"")
+	case .Lone_Bar:
+		fail("\"|\" is no operator: the pipe operator is \"|>\"")
+	case .Placeholder_Not_Whole:
+		fail("|>: _ must be a whole argument of the call on the right, not part of an expression")
+	case .Placeholder_Twice:
+		fail("|>: the call has two _; the value on the left takes one place")
+	case .Placeholder_Nested:
+		fail("|>: _ names an argument of the call on the right of |>, not of a nested call")
+	case .Placeholder_Without_Pipe:
+		fail("_ is a place of the call on the right of |>; this call has no |> before it")
+	case .Escape_Not_Valid:
+		fail("unknown escape sequence in text: use \\\\, \\\", \\n, \\r, \\t, \\$, or \\u{...}")
+	case .Interpolation_Close_Missing:
+		fail("\"}\" is missing at the end of a string interpolation")
+	case .Pattern_Field_Missing:
+		fail("a record pattern holds field names or \"...\": { a, b = 1, ... }")
+	case .Pattern_Close_Missing:
+		fail("\",\" or \"}\" is missing in a record pattern")
+	case .Pattern_Field_Twice:
+		fail("the field ", lex_parser.node_text(&line_tree, record.node), " appears twice in one record pattern")
+	case .Pattern_Rest_Not_Last:
+		fail("\"...\" must be the last item of a record pattern")
+	case .Pattern_At_Missing_Brace:
+		fail("\"@\" in a pattern must be followed by \"{ ... }\"")
 	case .Unexpected, .None, .Fact_Name_Missing, .Condition_Head_Refused:
 		// A Fact_Name or a Condition node holds the last two, and the
 		// console reads them itself.
@@ -1040,8 +1077,21 @@ nearest_names_text :: proc "contextless" (nearest: ^console_language.Nearest_Nam
 // the names of the commands near it, or the way to the list of all.
 command_unknown_fail :: proc "contextless" (name: string) -> Value {
 	nearest := console_language.nearest_names_start(name)
-	console_language.nearest_name_offer(&nearest, lex_evaluator.MAP_NAME)
-	console_language.nearest_name_offer(&nearest, lex_evaluator.FILTER_NAME)
+	for builtin_name in ([?]string{
+		lex_evaluator.MAP_NAME,
+		lex_evaluator.FILTER_NAME,
+		lex_evaluator.FOLD_NAME,
+		lex_evaluator.ZIP_NAME,
+		lex_evaluator.FIELDS_NAME,
+		lex_evaluator.VALUES_NAME,
+		lex_evaluator.HAS_NAME,
+		lex_evaluator.EXTEND_NAME,
+		lex_evaluator.MERGE_DEEP_NAME,
+		lex_evaluator.ASSERT_NAME,
+		lex_evaluator.TRACE_NAME,
+	}) {
+		console_language.nearest_name_offer(&nearest, builtin_name)
+	}
 	for &command in commands[:command_count] {
 		console_language.nearest_name_offer(&nearest, command.name)
 	}
@@ -1240,7 +1290,7 @@ call_run :: proc "contextless" (name: string, arguments: []Value) -> Value {
 	return found.run(arguments[:count])
 }
 
-// ---- The pipe operator.
+// ---- The pipe operator (static left-type knowledge for completion).
 
 // What the console knows, before the run, of the value on the left of a
 // "|>".
@@ -1250,329 +1300,76 @@ Left_Knowledge :: enum u8 {
 	Whole = 2, // Its kind and its record: what argument_accepted reads.
 }
 
-// pipe_nested_line gives the line with calls in calls in the place of each
-// "|>", which the parser then reads. Before any call runs, it fails the
-// line on each fault that the text and the command table show: the form
-// of the operator, a name that no command has, a count of arguments, and a
-// first parameter that refuses a value whose kind the console knows. The
-// call then checks again what it checks for each line.
-pipe_nested_line :: proc "contextless" (text: string) -> string {
-	form := console_language.pipe_nested_form(text, console_language.expression_start(text), nested_line[:], line_stages[:])
-	if form.refusal != .None {
-		pipe_refusal_fail(text, form)
-		return text
+// pipe_left_value_node gives what the console knows before the run of an AST
+// node standing on the left of a "|>".
+pipe_left_value_node :: proc "contextless" (tree: ^lex_parser.Syntax_Tree, left_idx: lex_parser.Node_Index) -> (value: Value, knowledge: Left_Knowledge) {
+	node := lex_parser.node_at(tree, left_idx)
+	if node == nil {
+		return {}, .None
 	}
-	stages := line_stages[:form.stage_count]
-	// The names first, from the last stage: the nested form looks up its
-	// outer call before it reads the arguments of that call. map and a
-	// function that the line binds are no commands: the evaluator counts
-	// their arguments when the call starts, before any of them runs.
-	for index := len(stages) - 1; index >= 0; index -= 1 {
-		name := text[stages[index].name_start:stages[index].name_end]
-		// This check runs before the parse: it connects nothing, and an
-		// export of the image that is not connected is checked from its
-		// file; the call connects when the evaluation forces it.
-		if !stage_of_the_evaluation(text, stages[index]) && command_known(name) == nil {
-			command_unknown_fail(name)
-			return text
-		}
-	}
-	for stage, index in stages {
-		if stage_of_the_evaluation(text, stage) {
-			continue
-		}
-		name := text[stage.name_start:stage.name_end]
-		// A copy: the signature of an export of the image that is not
-		// connected lives in one place, which a later lookup writes again.
-		known := command_known(name)^
-		found := &known
-		if found.parameter_count == 0 {
-			fail(name, " takes no argument, and |> gives it the value on its left")
-			return text
-		}
-		// With a '_', the value on the left takes its place: it is one of
-		// the arguments in the parentheses.
-		placeholder := stage.placeholder_start >= 0
-		if !placeholder && stage.argument_count >= ARGUMENT_CAPACITY {
-			fail(name, " has ", i64(stage.argument_count), " arguments already, and |> gives it one more: a call takes at most ", i64(ARGUMENT_CAPACITY))
-			return text
-		}
-		// The names of a parameter of the form Field_Names are one argument
-		// of the call, which the stage counts as one for each name.
-		names_last := found.parameter_forms[found.parameter_count - 1] == .Field_Names
-		arguments_given := placeholder ? stage.argument_count : stage.argument_count + 1
-		count_ok := arguments_given == found.parameter_count || (names_last && arguments_given > found.parameter_count) || (found.optional_last && arguments_given == found.parameter_count - 1)
-		if !count_ok {
-			argument_count_fail(name, found, arguments_given)
-			return text
-		}
-		// The parameter that takes the value on the left: the first one, or
-		// the place of the '_'. A '_' of a named argument names its
-		// parameter, which the call checks when it runs.
-		parameter := placeholder ? stage.placeholder_argument : 0
-		if stage.placeholder_named || parameter < 0 || parameter >= found.parameter_count {
-			continue
-		}
-		// The sentence of the same line with calls in calls.
-		left, knowledge := pipe_left_value(text, stages, index)
-		if knowledge == .Whole && !argument_accepted(found, parameter, left) {
-			argument_refusal(name, found, parameter, left)
-			return text
-		}
-		if !placeholder && !pipe_stage_names_check(text, stages, index, found, left, knowledge) {
-			return text
-		}
-	}
-	return form.nested
-}
-
-// stage_of_the_evaluation says if the call of a stage is map or a function
-// that a let or a function of the line binds: the evaluator runs it, not a
-// command of the table.
-stage_of_the_evaluation :: proc "contextless" (text: string, stage: console_language.Pipe_Stage) -> bool {
-	token := console_language.Token{kind = .Name, start = stage.name_start, end = stage.name_end}
-	name := text[stage.name_start:stage.name_end]
-	return name == lex_evaluator.MAP_NAME || name == lex_evaluator.FILTER_NAME || console_language.bound_by_let(text, token) || console_language.bound_by_function(text, token)
-}
-
-// pipe_stage_names_check checks, before any call, the argument of a stage
-// that the parser reads as names: a fact name against the fact names of
-// the image, and the field of a condition against the record on the left
-// of the stage when the console knows it (pipe_left_record). A form that
-// it does not read, it leaves to the parser and to the evaluation, which
-// fail on it when the line runs.
-pipe_stage_names_check :: proc "contextless" (text: string, stages: []console_language.Pipe_Stage, index: int, found: ^Command, left: Value, knowledge: Left_Knowledge) -> bool {
-	stage := stages[index]
-	name := text[stage.name_start:stage.name_end]
-	if found.parameter_count != 2 || (stage.argument_count != 1 && found.parameter_forms[1] != .Field_Names) {
-		return true
-	}
-	argument := text[stage.arguments_start:stage.arguments_end]
-	switch found.parameter_forms[1] {
-	case .Field_Names:
-		file, detail, known := pipe_left_record(text, stages, index, left, knowledge)
-		if !known {
-			return true
-		}
-		record, record_ok := module.record_type(file, detail)
-		if !record_ok {
-			return true
-		}
-		// Each name against the record on the left, with the sentence of
-		// the command when it runs.
-		for token := console_language.token_next(argument, 0); token.kind != .None; token = console_language.token_next(argument, token.end) {
-			if token.kind != .Name {
-				continue
-			}
-			field_name := argument[token.start:token.end]
-			if _, field_found := console_condition.field_find(file, record, field_name); !field_found {
-				named := Table {
-					file   = file,
-					record = record,
-				}
-				fail(name, ": the records ", module.string_at(file, record.name_offset, record.name_count), " have no field ", field_name, fields_text(named, field_name))
-				return false
-			}
-		}
-	case .Expression:
-	case .Fact_Name:
-		first := console_language.token_next(argument, 0)
-		if first.kind == .Name && !fact_name_known(argument[first.start:first.end]) {
-			fact_name_fail(name, argument[first.start:first.end])
-			return false
-		}
-	case .Condition:
-		file, detail, known := pipe_left_record(text, stages, index, left, knowledge)
-		if !known {
-			return true
-		}
-		record, record_ok := module.record_type(file, detail)
-		if !record_ok {
-			return true
-		}
-		// The same checks as condition_evaluate, with the same sentences.
-		details := console_condition.Refusal_Details {
-			command = name,
-			file    = file,
-			record  = record,
-		}
-		head, refusal := console_condition.head_read(argument, 0)
-		details.field, details.comparison = head.field, head.comparison
-		if refusal != .None {
-			condition_fail(refusal, details)
-			return false
-		}
-		found_field: bool
-		if details.item, found_field = console_condition.field_find(file, record, head.field); !found_field {
-			condition_fail(.Unknown_Field, details)
-			return false
-		}
-		if refusal = console_condition.field_check(details.item, head.comparison); refusal != .None {
-			condition_fail(refusal, details)
-			return false
-		}
-		if which, status := console_condition.field_is_status(details.item); status {
-			// After the operator of a status: a name of a member, never a
-			// text, a number or an expression.
-			_, details.member, _, refusal = console_condition.member_read(argument, head.value_start, which)
-			if refusal != .None {
-				condition_fail(refusal, details)
-				return false
-			}
-			return true
-		}
-		// A literal alone: its kind and its range are known before the
-		// run. Another expression is checked when it runs.
-		if value_type, value, literal := literal_of(argument, head.value_start); literal {
-			details.value_type = value_type
-			if refusal = console_condition.value_check(details.item, value_type, value); refusal != .None {
-				condition_fail(refusal, details)
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// literal_of reads a value that is one literal and nothing after it, at a
-// byte place of an argument: a number, a number after "-", or a text.
-// literal is false for any other expression, and for a number that does
-// not fit in an Integer: the evaluation checks those when the line runs.
-literal_of :: proc "contextless" (text: string, place: int) -> (type: module.Type, value: i64, literal: bool) {
-	token := console_language.token_next(text, place)
-	negative := false
-	if token.kind == .Operator && text[token.start] == '-' {
-		negative = true
-		token = console_language.token_next(text, token.end)
-	}
-	if console_language.token_next(text, token.end).kind != .None {
-		return .None, 0, false
-	}
-	switch token.kind {
-	case .Number:
-		value = console_language.number_value(text, token.start, token.end) or_return
-		if negative {
-			value = console_language.integer_negate(value) or_return
-		}
-		return .Integer, value, true
+	#partial switch node.kind {
+	case .Integer:
+		return {kind = .Integer}, .Whole
 	case .Text:
-		return .Text, 0, !negative
-	case .None, .Name, .Text_Unfinished, .Operator, .Arrow, .Unknown, .Pipe, .Member, .Function_Arrow, .Hash:
-		// A variable, a call, an expression: its kind comes when it runs.
+		return {kind = .Text}, .Whole
+	case .Name:
+		name := lex_parser.node_text(tree, left_idx)
+		for &variable in variables {
+			if variable.name_count > 0 && string(variable.name[:variable.name_count]) == name {
+				return variable.value, .Whole
+			}
+		}
+		if file, detail, kind, known := stream_name_known(name); known {
+			return {kind = kind, file = file, detail = detail}, .Whole
+		}
+	case .Call:
+		return result_knowledge(command_find(lex_parser.node_text(tree, left_idx)))
+	case .Pipe:
+		_, right := lex_parser.node_binary_children(tree, left_idx)
+		if rn := lex_parser.node_at(tree, right); rn != nil && rn.kind == .Call {
+			return result_knowledge(command_find(lex_parser.node_text(tree, right)))
+		}
 	}
-	return .None, 0, false
+	return {}, .None
 }
 
-// pipe_left_record gives the record of the table on the left of a stage,
-// when the console knows it before the run: the result of an export, the
-// table of a stage `facts(...)`, whose record the console makes from the
-// fact type, and the table of a stage that keeps the record of its own
-// left (where, sort, first, skip). description_buffer: where the
-// description of a table of facts() goes; nil puts it in the memory of the
-// line.
-pipe_left_record :: proc "contextless" (text: string, stages: []console_language.Pipe_Stage, index: int, left: Value, knowledge: Left_Knowledge, description_buffer: []u8 = nil) -> (file: []u8, detail: u32, known: bool) {
+// pipe_left_record_node gives the record of the table on the left of a pipe
+// stage when known statically: the result of an export, a `facts(...)` stage,
+// or a stage that preserves its left record (`where`, `sort`, `first`, `skip`,
+// `table`).
+pipe_left_record_node :: proc "contextless" (tree: ^lex_parser.Syntax_Tree, left_idx: lex_parser.Node_Index, left: Value, knowledge: Left_Knowledge, description_buffer: []u8 = nil) -> (file: []u8, detail: u32, known: bool) {
 	if knowledge == .Whole && (left.kind == .Table || left.kind == .Stream) && left.file != nil {
 		return left.file, left.detail, true
 	}
-	stage := stages[index]
-	if stage.left != .Stage || stage.stage_before < 0 || stage.stage_before >= index {
+	node := lex_parser.node_at(tree, left_idx)
+	if node == nil || node.kind != .Pipe {
 		return nil, 0, false
 	}
-	before := stages[stage.stage_before]
-	before_name := text[before.name_start:before.name_end]
+	prev_left, right := lex_parser.node_binary_children(tree, left_idx)
+	rn := lex_parser.node_at(tree, right)
+	if rn == nil || rn.kind != .Call {
+		return nil, 0, false
+	}
+	before_name := lex_parser.node_text(tree, right)
 	before_command := command_find(before_name)
 	if before_command == nil || before_command.run == nil {
 		return nil, 0, false
 	}
 	switch before_name {
 	case "where", "sort", "first", "skip", "table":
-		before_left, before_knowledge := pipe_left_value(text, stages, stage.stage_before)
-		return pipe_left_record(text, stages, stage.stage_before, before_left, before_knowledge, description_buffer)
+		before_left, before_knowledge := pipe_left_value_node(tree, prev_left)
+		return pipe_left_record_node(tree, prev_left, before_left, before_knowledge, description_buffer)
 	}
-	if before_command.parameter_forms[1] != .Fact_Name || before.argument_count != 1 {
+	args := lex_parser.node_children(tree, right)
+	if before_command.parameter_forms[1] != .Fact_Name || len(args) != 1 {
 		return nil, 0, false
 	}
-	argument := text[before.arguments_start:before.arguments_end]
-	token := console_language.token_next(argument, 0)
-	if token.kind != .Name {
+	arg := args[0]
+	an := lex_parser.node_at(tree, arg)
+	if an == nil || (an.kind != .Fact_Name && an.kind != .Name) {
 		return nil, 0, false
 	}
-	return facts_description(argument[token.start:token.end], description_buffer)
-}
-
-// pipe_refusal_fail fails the line with the sentence of a fault of the
-// form of "|>".
-pipe_refusal_fail :: proc "contextless" (text: string, form: console_language.Pipe_Form) {
-	found_start := clamp(form.found_start, 0, len(text))
-	found := text[found_start:clamp(form.found_end, found_start, len(text))]
-	switch form.refusal {
-	case .None:
-	case .No_Left_Value:
-		fail("|> has no value on its left: write a value, then |> and a call")
-	case .Line_End:
-		fail("the line ends after |>: a call or the name of a command comes after it")
-	case .Not_A_Call:
-		fail("|> takes a call or the name of a command on its right, not \"", found, "\"")
-	case .Lone_Bar:
-		fail("\"|\" is no operator: the pipe operator is \"|>\"")
-	case .Unmatched_Close:
-		fail("unexpected \"", found, "\"")
-	case .Too_Many_Stages:
-		fail("a line holds at most ", i64(console_language.PIPE_STAGE_CAPACITY), " |>")
-	case .Too_Long:
-		fail("the line with calls in calls has more than ", i64(NESTED_LINE_SIZE), " bytes")
-	case .Placeholder_Not_Whole:
-		fail("|>: _ is a whole argument of ", pipe_text_at(text, form.call_start, form.call_end), ", not a part of an expression")
-	case .Placeholder_Twice:
-		fail("|>: ", pipe_text_at(text, form.call_start, form.call_end), " has two _; the value on the left takes one place")
-	case .Placeholder_Nested:
-		fail("|>: _ names an argument of ", pipe_text_at(text, form.call_start, form.call_end), ", not of ", pipe_text_at(text, form.inner_start, form.inner_end), " inside it")
-	case .Placeholder_Without_Pipe:
-		fail("_ is a place of the call on the right of |>; this call has no |> before it")
-	}
-}
-
-// pipe_text_at gives the bytes start:end of a line, cut to the line.
-pipe_text_at :: proc "contextless" (text: string, start, end: int) -> string {
-	first := clamp(start, 0, len(text))
-	return text[first:clamp(end, first, len(text))]
-}
-
-// pipe_left_value gives what the console knows, before the run, of the
-// value on the left of the stage index.
-pipe_left_value :: proc "contextless" (text: string, stages: []console_language.Pipe_Stage, index: int) -> (value: Value, knowledge: Left_Knowledge) {
-	stage := stages[index]
-	switch stage.left {
-	case .Other:
-	case .Integer:
-		value, knowledge = Value{kind = .Integer}, .Whole
-	case .Text:
-		value, knowledge = Value{kind = .Text}, .Whole
-	case .Name:
-		// A name alone is a variable; any other name fails when it runs.
-		name := text[stage.left_start:stage.left_end]
-		for &variable in variables {
-			if variable.name_count > 0 && string(variable.name[:variable.name_count]) == name {
-				value, knowledge = variable.value, .Whole
-			}
-		}
-		// A typed name: its record description is in the module file of its
-		// owner, so the fields of a condition after it are checked before
-		// the line runs, and the completion offers them.
-		if knowledge == .None {
-			if file, detail, kind, known := stream_name_known(name); known {
-				value, knowledge = Value{kind = kind, file = file, detail = detail}, .Whole
-			}
-		}
-	case .Call:
-		value, knowledge = result_knowledge(command_find(text[stage.left_start:stage.left_end]))
-	case .Stage:
-		if stage.stage_before >= 0 && stage.stage_before < index {
-			before := stages[stage.stage_before]
-			value, knowledge = result_knowledge(command_find(text[before.name_start:before.name_end]))
-		}
-	}
-	return value, knowledge
+	return facts_description(lex_parser.node_text(tree, arg), description_buffer)
 }
 
 // result_knowledge gives what the console knows of the result of a

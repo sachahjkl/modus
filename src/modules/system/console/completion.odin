@@ -23,6 +23,7 @@ import "modus:contract/value_kinds"
 import "modus:console_language"
 import "internal:console/console_stream"
 import "modus:lex_evaluator"
+import "modus:lex_parser"
 import "modus:display"
 import "modus:line_editor"
 import "modus:system"
@@ -544,34 +545,45 @@ completion_token_before :: proc "contextless" (text: string, place: int) -> cons
 	return last
 }
 
-// pipe_left_record_at gives the record of the table on the left of the
-// "|>" before the call that starts at call_start, when the console knows
-// it before the run (pipe_left_record). The line is read up to that call,
-// with a name of one byte in its place, as pipe_left_at reads it.
-pipe_left_record_at :: proc "contextless" (text: string, call_start: int) -> (file: []u8, detail: u32, known: bool) {
-	start := clamp(call_start, 0, len(text))
-	line_to_name: [LINE_CAPACITY + 1]u8
-	if start >= len(line_to_name) {
-		return nil, 0, false
+// completion_pipe_left parses the edit line up to a call or stage starting at
+// start (putting a 1-byte name in its place) and locates the left child of the
+// "|>" whose right child starts at start.
+completion_pipe_left :: proc "contextless" (text: string, start_asked: int) -> (left_idx: lex_parser.Node_Index, ok: bool) {
+	start := clamp(start_asked, 0, len(text))
+	if start >= len(completion_line_copy) {
+		return lex_parser.NO_NODE, false
 	}
-	count := copy(line_to_name[:], text[:start])
-	line_to_name[count] = '_'
-	read := string(line_to_name[:count + 1])
-	memory: [2 * (LINE_CAPACITY + 1)]u8
-	form := console_language.pipe_nested_form(read, console_language.expression_start(read), memory[:], completion_line_stages[:])
-	if form.refusal != .None {
-		return nil, 0, false
+	count := copy(completion_line_copy[:], text[:start])
+	completion_line_copy[count] = 'x'
+	read := string(completion_line_copy[:count + 1])
+	lex_parser.parse_console(read, {form_of = parameter_form_of}, &completion_tree_buffers, &completion_tree)
+	if completion_tree.refusal.refusal != .None {
+		return lex_parser.NO_NODE, false
 	}
-	stages := completion_line_stages[:form.stage_count]
-	for index in 0 ..< form.stage_count {
-		if stages[index].name_start == start {
-			left, knowledge := pipe_left_value(read, stages, index)
-			// The description of a table of facts() goes in the memory of
-			// the list, not of a line: the names of the list are in it.
-			return pipe_left_record(read, stages, index, left, knowledge, completion.description[:])
+	for i in 0 ..< completion_tree.node_count {
+		n := &completion_tree.nodes[i]
+		if n.kind == .Pipe {
+			left, right := lex_parser.node_binary_children(&completion_tree, lex_parser.Node_Index(i))
+			if rn := lex_parser.node_at(&completion_tree, right); rn != nil && int(rn.span_off) == start {
+				return left, true
+			}
 		}
 	}
-	return nil, 0, false
+	return lex_parser.NO_NODE, false
+}
+
+// pipe_left_record_at gives the record of the table on the left of the
+// "|>" before the call that starts at call_start, when the console knows
+// it before the run (pipe_left_record_node).
+pipe_left_record_at :: proc "contextless" (text: string, call_start: int) -> (file: []u8, detail: u32, known: bool) {
+	left_idx, found := completion_pipe_left(text, call_start)
+	if !found {
+		return nil, 0, false
+	}
+	left, knowledge := pipe_left_value_node(&completion_tree, left_idx)
+	// The description of a table of facts() goes in the memory of
+	// the list, not of a line: the names of the list are in it.
+	return pipe_left_record_node(&completion_tree, left_idx, left, knowledge, completion.description[:])
 }
 
 // names_collect fills a table of candidates for a place of the caret.
@@ -833,9 +845,11 @@ names_rank :: proc "contextless" (by_tab: bool) {
 	completion.list_changed = true
 }
 
-// The stages of the line that the input types, for the completion after a
-// "|>": the stages of the line that runs are of the second thread.
-completion_line_stages: [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage
+// The parse buffers of the line that the input types, for completion after
+// "|>": thread 1 only (the buffers of the line that runs belong to thread 2).
+completion_line_copy: [LINE_CAPACITY + 1]u8
+completion_tree: lex_parser.Syntax_Tree
+completion_tree_buffers: lex_parser.Console_Tree_Buffers
 
 // pipe_completion_filter keeps, after a "|>", only the commands that can be
 // its call: those that take an argument, and whose first parameter takes
@@ -865,29 +879,13 @@ pipe_completion_filter :: proc "contextless" (table: ^Candidate_Table, text: str
 }
 
 // pipe_left_at gives what the console knows of the value on the left of
-// the "|>" before the name at word_start. The name that the input types
-// does not change it: the line is read up to that "|>", with a name of one
-// byte in the place of the typed one, so that the "|>" has its call.
+// the "|>" before the name at word_start.
 pipe_left_at :: proc "contextless" (text: string, word_start: int) -> (value: Value, knowledge: Left_Knowledge) {
-	start := clamp(word_start, 0, len(text))
-	line_to_name: [LINE_CAPACITY + 1]u8
-	if start >= len(line_to_name) {
+	left_idx, found := completion_pipe_left(text, word_start)
+	if !found {
 		return {}, .None
 	}
-	count := copy(line_to_name[:], text[:start])
-	line_to_name[count] = '_'
-	read := string(line_to_name[:count + 1])
-	memory: [2 * (LINE_CAPACITY + 1)]u8
-	form := console_language.pipe_nested_form(read, console_language.expression_start(read), memory[:], completion_line_stages[:])
-	if form.refusal != .None {
-		return {}, .None
-	}
-	for index in 0 ..< form.stage_count {
-		if completion_line_stages[index].name_start == start {
-			return pipe_left_value(read, completion_line_stages[:form.stage_count], index)
-		}
-	}
-	return {}, .None
+	return pipe_left_value_node(&completion_tree, left_idx)
 }
 
 ranking_measured :: proc "contextless" (started: u64) {

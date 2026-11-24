@@ -184,7 +184,7 @@ system_catalog_is_deterministic_and_evaluates_with_lex_evaluator :: proc(t: ^tes
 
 	// catalog.release matches release.RELEASE_NUMBER.
 	rel_val, rel_ok := lex_evaluator.declaration_force_path(workspace, root.value, "release")
-	testing.expect(t, rel_ok && rel_val.kind == .Text && rel_val.text == release.RELEASE_NUMBER, "catalog.release must match release.RELEASE_NUMBER")
+	testing.expect(t, rel_ok && rel_val.kind == .Text && lex_evaluator.value_text(&workspace.evaluation, rel_val) == release.RELEASE_NUMBER, "catalog.release must match release.RELEASE_NUMBER")
 
 	// catalog.c.compiler, catalog.c.assembler, and catalog.c.module.
 	cc_val, cc_ok := lex_evaluator.declaration_force_path(workspace, root.value, "c.compiler")

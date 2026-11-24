@@ -100,13 +100,14 @@ Reader :: struct {
 
 // read gives the rows of a plan value. count is the rows written; on a
 // refusal, the rows hold nothing that the caller may use.
-read :: proc "contextless" (evaluation: ^lex_evaluator.Evaluation, plan: lex_evaluator.Value, image: Image, rows: []pr.Plan_Entry_Row) -> (count: int, refusal: Refusal) {
+read :: proc "contextless" (evaluation: ^lex_evaluator.Evaluation, plan_host: lex_evaluator.Host_Value, image: Image, rows: []pr.Plan_Entry_Row) -> (count: int, refusal: Refusal) {
+	plan := plan_host.vm_value
 	if plan.kind != .Plan_Value {
 		return 0, {problem = .Not_A_Plan}
 	}
 	reader := Reader{evaluation = evaluation, image = image, rows = rows}
 	names: [lex_evaluator.DECLARATION_RECORD_FIELDS_LIMIT]string
-	name_count, names_ok := lex_evaluator.record_field_names(evaluation, plan, &names)
+	name_count, names_ok := lex_evaluator.record_field_names(evaluation, plan, names[:])
 	if !names_ok {
 		return 0, {problem = .Not_A_Plan}
 	}
@@ -155,7 +156,7 @@ has_field :: proc "contextless" (names: []string, field: string) -> bool {
 // field_of forces one field of a record of the plan.
 @(private = "file")
 field_of :: proc "contextless" (reader: ^Reader, record: lex_evaluator.Value, name: string) -> (value: lex_evaluator.Value, ok: bool) {
-	return lex_evaluator.field_force(reader.evaluation, record, name, {}, lex_parser.NO_NODE)
+	return lex_evaluator.field_force(reader.evaluation, record, name, 0, lex_parser.NO_NODE)
 }
 
 // record_names gives the fields of a record literal of the plan.
@@ -164,7 +165,7 @@ record_names :: proc "contextless" (reader: ^Reader, record: lex_evaluator.Value
 	if record.kind != .Record_Literal && record.kind != .Record_With {
 		return 0, false
 	}
-	return lex_evaluator.record_field_names(reader.evaluation, record, names)
+	return lex_evaluator.record_field_names(reader.evaluation, record, names[:])
 }
 
 // row_add writes the rows of an entry: one, or one for each part of a
@@ -233,6 +234,7 @@ stores_read :: proc "contextless" (reader: ^Reader, plan: lex_evaluator.Value) -
 		if item.kind != .Store_Ref {
 			return {problem = .Store_Not_A_Store, name = STORES_FIELD}
 		}
+		store_name := lex_evaluator.value_store_name(reader.evaluation, item)
 		read, write := false, false
 		for right in lex_evaluator.list_items_of(reader.evaluation, item) {
 			name := lex_evaluator.member_name_of(reader.evaluation, right)
@@ -242,17 +244,17 @@ stores_read :: proc "contextless" (reader: ^Reader, plan: lex_evaluator.Value) -
 			case name == WRITE_RIGHT && !write:
 				write = true
 			case name == READ_RIGHT || name == WRITE_RIGHT:
-				return {problem = .Store_Right_Missing, name = item.text}
+				return {problem = .Store_Right_Missing, name = store_name}
 			case:
-				return {problem = .Store_Right_Unknown, name = item.text, member = name}
+				return {problem = .Store_Right_Unknown, name = store_name, member = name}
 			}
 		}
 		if !read {
-			return {problem = .Store_Right_Missing, name = item.text}
+			return {problem = .Store_Right_Missing, name = store_name}
 		}
-		entry, made := pr.plan_entry_make_store(item.text, write ? .Read_Write : .Read_Only)
+		entry, made := pr.plan_entry_make_store(store_name, write ? .Read_Write : .Read_Only)
 		if !made {
-			return {problem = .Name_Not_Valid, name = item.text}
+			return {problem = .Name_Not_Valid, name = store_name}
 		}
 		if refusal = row_add(reader, &entry); refusal.problem != .None {
 			return refusal
@@ -325,10 +327,11 @@ value_entry :: proc "contextless" (reader: ^Reader, owner, field: string, value:
 			at.problem, at.expected = .Value_Kind, .Integer
 			return {}, at
 		}
-		if checked := description.word_check(described, u64(value.integer)); checked.problem != .None {
+		iv := lex_evaluator.value_integer(value)
+		if checked := description.word_check(described, u64(iv)); checked.problem != .None {
 			return {}, refusal_of_description(checked, owner, field)
 		}
-		entry, made = pr.plan_entry_make_value(owner, field, u64(value.integer), layer)
+		entry, made = pr.plan_entry_make_value(owner, field, u64(iv), layer)
 	case .Enum:
 		if value.kind != .Member {
 			at.problem, at.expected = .Value_Kind, .Enum
@@ -346,10 +349,11 @@ value_entry :: proc "contextless" (reader: ^Reader, owner, field: string, value:
 			at.problem, at.expected = .Value_Kind, .Text
 			return {}, at
 		}
-		if checked := description.text_check(described, value.text); checked.problem != .None {
+		txt := lex_evaluator.value_text(reader.evaluation, value)
+		if checked := description.text_check(described, txt); checked.problem != .None {
 			return {}, refusal_of_description(checked, owner, field)
 		}
-		entry, made = pr.plan_entry_make_text_value(owner, field, value.text, layer)
+		entry, made = pr.plan_entry_make_text_value(owner, field, txt, layer)
 	case:
 		at.problem = .Field_Type
 		return {}, at
