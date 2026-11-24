@@ -375,13 +375,13 @@ The second line fails each machine test: the floor of the module is wrong. `modu
 
 | Amount | Pages | Processes | Threads | Processor | Log records |
 |---|---|---|---|---|---|
-| The budget of all disk processes | 32768 | 4 | 16 | two processors | 4000 in each second |
-| The largest budget of one disk process | 16384 | 1 | 4 | one processor for each thread | 1000 in each second |
+| The budget of all disk processes | 32768 | 8 | 16 | two processors | 8000 in each second |
+| The largest budget of one disk process | 16384 | 2 | 4 | one processor for each thread | 1000 in each second |
 
-A file chooses its own floor, so the sum of all disk processes has one bound: the processes of the boot image keep the rest of the budget of the root service, also when several hostile files run. A disk process holds no grant that starts a process, so one process slot loses nothing. The log has one line when the budget of the disk processes is made:
+A file chooses its own floor, so the sum of all disk processes has one bound: the processes of the boot image keep the rest of the budget of the root service, also when several hostile files run. A disk process that omits `processes` gets 1 process slot and creates no child; a disk process that states `processes = 2` can start 1 zero-grant child call host paid from its own memory and thread budget. The log has one line when the budget of the disk processes is made:
 
 ```
-root: the disk processes share one budget of 128 MiB, 4 processes and 16 threads
+root: the disk processes share one budget of 128 MiB, 8 processes and 16 threads
 ```
 
 A floor above the largest budget of a disk process does not start, and the line names the part:
@@ -907,7 +907,7 @@ Before a move, the log says what follows:
 root: the file 9d41… will get the data of visitor
 ```
 
-**The store of a nickname.** The grant `store` gives an isolated store of its own, attached to the nickname: `disk-visitor` for principal 0, `disk-visitor.principal.1` for principal 1. A new version under the same nickname keeps its data; a file under another nickname gets a new, empty store. The name of a module has no byte `-`, so no process of the boot image has such a store. A nickname with a grant has letters, digits, `-` and `_` only, and a nickname whose store name passes 31 bytes is refused. The limit of the store is the default limit of a store, 64 blocks: the budget that a module asks for (section 1, "The budget that a module asks for") has no part for the size of a store yet.
+**The store of a nickname.** The grant `store` gives an isolated store of its own, attached to the nickname: `disk-visitor` for principal 0, `disk-visitor.principal.1` for principal 1. A new version under the same nickname keeps its data; a file under another nickname gets a new, empty store. The name of a module has no byte `-`, so no process of the boot image has such a store. A nickname with a grant has letters, digits, `-` and `_` only, and a nickname whose store name passes 31 bytes is refused. The limit of the store is `disk_process.PRIVATE_STORE_BLOCKS_LIMIT` (4096 blocks, 16 MiB): the floor of a module (section 1, "The floor of a module") has no part for the size of a store yet.
 
 **The grants that no command gives.** A disk process never gets the ring of the root service (`Root_Ring`, `Connect`, `Principals`, `Debugger`, `Start_Policy`, `Plans`), a right over the machine or a device (`Inspect`, `Stop`, `Schedule`, `Events`, `Data_Disk`, `Scratch_Disk`, `Network_Device`, `Sound_Device`, `Settings`, `Clock`, `Replace`, `System_Part`, `Tpm`), the copy of the screen and the input of the desktop (`Screen_Capture`), or the right to act for the principal. The root service refuses each one with `Reserved`, unit `Grants`:
 

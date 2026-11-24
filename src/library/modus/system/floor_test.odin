@@ -178,8 +178,8 @@ the_share_of_a_plan_passes_its_border :: proc(t: ^testing.T) {
 // one disk process gets half of it at most.
 @(test)
 the_disk_budgets_are_stated :: proc(t: ^testing.T) {
-	testing.expect_value(t, disk_process.PROCESSES_BUDGET, Budget_Amounts{pages = 32768, processes = 4, threads = 16})
-	testing.expect_value(t, disk_process.LARGEST_BUDGET, Budget_Amounts{pages = 16384, processes = 1, threads = 4})
+	testing.expect_value(t, disk_process.PROCESSES_BUDGET, Budget_Amounts{pages = 32768, processes = 8, threads = 16})
+	testing.expect_value(t, disk_process.LARGEST_BUDGET, Budget_Amounts{pages = 16384, processes = 2, threads = 4})
 	largest := disk_process.LARGEST_BUDGET
 	shared := disk_process.PROCESSES_BUDGET
 	testing.expect(t, largest.pages < shared.pages && largest.processes <= shared.processes && largest.threads <= shared.threads)

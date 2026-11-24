@@ -20,6 +20,7 @@ import "modus:system"
 DATABASE_OBJECT_NAME :: "main.db"
 SQLITE_MODULE_NAME :: "sqlite"
 SQLITE_STORE_OBJECT_NAME :: "sqlite.module"
+HOST_STORE_OBJECT_NAME :: "host.module"
 
 // Plan value: 10 MiB child call host budget (4 MiB memsys5 heap + 2 MiB scratch
 // + ~2 MiB sqlite code/data + rings and stack).
@@ -356,8 +357,46 @@ sqlite_host_start_from_memory :: proc "contextless" (host_module_bytes: []u8, sq
 	return true
 }
 
+// read_store_object_to_memory reads one named object from worker_store into a
+// newly created and mapped memory object and validates it as a modus module.
+@(private = "file")
+read_store_object_to_memory :: proc "contextless" (name: string) -> (mem: system.Handle, addr: rawptr, buf: []u8, ok: bool) {
+	sz, sz_status := storage.size(&worker_store, worker_store_place, name)
+	if sz_status != .Ok || sz <= 0 {
+		return 0, nil, nil, false
+	}
+	mod_pages := (u64(sz) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	mod_mem, m_st := system.memory_create(mod_pages)
+	if m_st != .Ok {
+		return 0, nil, nil, false
+	}
+	mod_addr, map_st := system.memory_map(mod_mem)
+	if map_st != .Ok {
+		system.close(mod_mem)
+		return 0, nil, nil, false
+	}
+	mod_buf := ([^]u8)(mod_addr)[:u64(sz)]
+	filled := u64(0)
+	for filled < u64(sz) {
+		part, r_st := storage.read_range(&worker_store, worker_store_place, name, filled, mod_buf[filled:])
+		if r_st != .Ok || len(part) == 0 || u64(len(part)) > u64(sz) - filled {
+			system.memory_unmap(mod_addr)
+			system.close(mod_mem)
+			return 0, nil, nil, false
+		}
+		filled += u64(len(part))
+	}
+	if module.validate(mod_buf) != .None {
+		system.memory_unmap(mod_addr)
+		system.close(mod_mem)
+		return 0, nil, nil, false
+	}
+	return mod_mem, mod_addr, mod_buf, true
+}
+
 // sqlite_host_start starts a zero-grant child call host for sqlite.module,
-// loading sqlite from the boot image if present or from "sqlite.module" in the store.
+// loading sqlite and host from the boot image if GRANT_IMAGE is present or
+// from "sqlite.module" and "host.module" in the private store otherwise.
 @(private = "file")
 sqlite_host_start :: proc "contextless" (ctx: ^system.Context) -> bool {
 	sqlite_host_stop()
@@ -372,12 +411,10 @@ sqlite_host_start :: proc "contextless" (ctx: ^system.Context) -> bool {
 			}
 		}
 	}
-	if len(boot_image_bytes) == 0 {
-		return false
-	}
 
 	// Path 1: sqlite is present in the boot image.
-	if img_sqlite := system.image_find(boot_image_bytes, SQLITE_MODULE_NAME); len(img_sqlite) > 0 {
+	img_sqlite := len(boot_image_bytes) > 0 ? system.image_find(boot_image_bytes, SQLITE_MODULE_NAME) : nil
+	if len(img_sqlite) > 0 {
 		values: [op.CONTEXT_VALUES]u64
 		if worker_rng_ready {
 			values = random.values_with_seed(&worker_rng, {})
@@ -399,40 +436,24 @@ sqlite_host_start :: proc "contextless" (ctx: ^system.Context) -> bool {
 		sqlite_host.conn = conn
 		sqlite_host.sqlite_file = img_sqlite
 	} else if worker_store_opened {
-		// Path 2: sqlite.module resides in the store.
-		host_bytes := system.image_find(boot_image_bytes, "host")
+		// Path 2: sqlite.module resides in the store; load host from the boot
+		// image when granted or from "host.module" in the store for disk processes.
+		host_bytes := len(boot_image_bytes) > 0 ? system.image_find(boot_image_bytes, "host") : nil
+		host_mem: system.Handle
+		host_addr: rawptr
+		defer if host_mem != 0 {
+			system.memory_unmap(host_addr)
+			system.close(host_mem)
+		}
 		if len(host_bytes) == 0 {
-			return false
-		}
-		sz, sz_status := storage.size(&worker_store, worker_store_place, SQLITE_STORE_OBJECT_NAME)
-		if sz_status != .Ok || sz <= 0 {
-			return false
-		}
-		mod_pages := (u64(sz) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-		mod_mem, m_st := system.memory_create(mod_pages)
-		if m_st != .Ok {
-			return false
-		}
-		mod_addr, map_st := system.memory_map(mod_mem)
-		if map_st != .Ok {
-			system.close(mod_mem)
-			return false
-		}
-		mod_buf := ([^]u8)(mod_addr)[:u64(sz)]
-		// Read sqlite.module in call-region chunks.
-		filled := u64(0)
-		for filled < u64(sz) {
-			part, r_st := storage.read_range(&worker_store, worker_store_place, SQLITE_STORE_OBJECT_NAME, filled, mod_buf[filled:])
-			if r_st != .Ok || len(part) == 0 || u64(len(part)) > u64(sz) - filled {
-				system.memory_unmap(mod_addr)
-				system.close(mod_mem)
+			host_ok: bool
+			host_mem, host_addr, host_bytes, host_ok = read_store_object_to_memory(HOST_STORE_OBJECT_NAME)
+			if !host_ok {
 				return false
 			}
-			filled += u64(len(part))
 		}
-		if module.validate(mod_buf) != .None {
-			system.memory_unmap(mod_addr)
-			system.close(mod_mem)
+		mod_mem, mod_addr, mod_buf, mod_ok := read_store_object_to_memory(SQLITE_STORE_OBJECT_NAME)
+		if !mod_ok {
 			return false
 		}
 		if !sqlite_host_start_from_memory(host_bytes, mod_mem, mod_buf) {
@@ -977,6 +998,7 @@ worker_handle_request :: proc "contextless" (ctx: ^system.Context, req: ^core.Wo
 		back_idx, snap := worker_acquire_back_snapshot()
 		snap.serial = req.serial
 		_ = core.snapshot_sort_by_column(snap, req.sort_column, req.sort_direction)
+		system.log_fact(.Info, Query_Sorted{column = u64(req.sort_column), direction = u64(req.sort_direction)})
 		res.snapshot_index = back_idx
 		worker_publish_result(&res, true)
 

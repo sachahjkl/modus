@@ -20,12 +20,13 @@ import "modus:text_model"
 #assert(core.SCROLL_BAR_THICKNESS == interface.SCROLL_BAR_THICKNESS)
 
 // Plan value: 16 MiB working memory, 2 processes (db_browser + isolated sqlite
-// child call host), 2 threads (UI + worker), resizable surface up to 1280x960.
+// child call host), 3 threads (UI + worker + 1 thread for sqlite_host child),
+// resizable surface up to 1280x960.
 // Literals so modustool reads the budget directly without evaluating imports.
 MODULE_BUDGET :: system.Stated_Budget {
 	working_memory_pages = 4096,
 	processes            = 2,
-	threads              = 2,
+	threads              = 3,
 	window_width         = 1280,
 	window_height        = 960,
 }
@@ -737,6 +738,7 @@ draw_editor :: proc "contextless" (frame: ^interface.Frame, lay: ^core.Window_La
 	interface.draw_text(table, int(hdr.x) + core.PANE_PADDING, int(hdr.y) + (int(hdr.height) - graphics.CELL_HEIGHT) / 2, "SQL", tokens.text_dim, interface.FONT_INTERFACE_BOLD)
 
 	body := lay.editor_body
+	interface.element_name(frame, to_area(body), "sql editor")
 	interface.draw_rectangle(table, int(body.x), int(body.y), int(body.width), int(body.height), tokens.surface_background)
 
 	if new_cols := editor_columns_for_width(body.width); new_cols != editor_columns {
@@ -829,9 +831,15 @@ draw_result_grid :: proc "contextless" (frame: ^interface.Frame, lay: ^core.Wind
 		for c in 0 ..< snap.column_count {
 			cw := int(snap.column_widths[c])
 			if x + cw > int(hdr.x) && x < int(hdr.x + hdr.width) {
+				col_name := core.snapshot_column_name(snap, c)
+				col_left := max(x, int(hdr.x))
+				col_right := min(x + cw, int(hdr.x + hdr.width))
+				if col_right > col_left && len(col_name) > 0 {
+					interface.element_name_joined(frame, {col_left, int(hdr.y), col_right - col_left, int(hdr.height)}, "column", col_name)
+				}
 				title_buf: [80]u8
 				pos := 0
-				core.append_text(title_buf[:], &pos, core.snapshot_column_name(snap, c))
+				core.append_text(title_buf[:], &pos, col_name)
 				if snap.sort_column == c {
 					switch snap.sort_direction {
 					case .None:

@@ -9,6 +9,7 @@ import "modus:text_rendering"
 import "modus:contract/wide_grants"
 import "core:fmt"
 import "core:math/rand"
+import "core:net"
 import "core:os"
 import "core:slice"
 import "core:strconv"
@@ -616,6 +617,8 @@ key_name :: proc(character: u8) -> string {
 		return "shift-0"
 	case '"':
 		return "shift-apostrophe"
+	case '\'':
+		return "apostrophe"
 	case '!':
 		return "shift-1"
 	case '%':
@@ -1243,6 +1246,9 @@ Machine_Options :: struct {
 	// The UDP port of the machine that the UDP relay of the peer reaches
 	// (peer_relay.odin). 0: the port of quic_echo, QUIC_SERVER_PORT.
 	relay_machine_port: u16,
+	// Host loopback UDP endpoint of a local cache-serve QUIC listener forwarded
+	// at 10.0.2.100:5010 through the peer (peer_cache.odin). Port 0: inactive.
+	cache_endpoint: net.Endpoint,
 	tablet: Machine_Tablet, // The virtio tablet of the machine (tablet_scenario.odin).
 }
 
@@ -1308,7 +1314,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	}
 	defer tpm_stop(&tpm)
 	peer: Peer
-	if !peer_start(&peer, relay_machine_port = options.relay_machine_port != 0 ? options.relay_machine_port : QUIC_SERVER_PORT) {
+	if !peer_start(&peer, relay_machine_port = options.relay_machine_port != 0 ? options.relay_machine_port : QUIC_SERVER_PORT, cache_endpoint = options.cache_endpoint) {
 		return false
 	}
 	defer peer_stop(&peer)

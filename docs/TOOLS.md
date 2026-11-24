@@ -1984,8 +1984,9 @@ The hang bound ends a wait for a screen that never settles. The test fails, and 
 | `console` | An expression and its value; a variable and a command; an argument of the wrong kind and its error; the completion list; a record; a table; the history search | `scenario_console_film` (`console_film_scenario.odin`) |
 | `program` | `start("plasma")` in the console: the module opens its window; the window moved; its row in the table of the processes; `stop("plasma")` | `scenario_program_film` (`program_film_scenario.odin`) |
 | `monitor` | monitor at the right of the screen, its graphs on a quiet machine; scheduler, whose tests run spinners, as a load, then closed: the curves and the gauges rise, then come down | `scenario_monitor_film` (`monitor_film_scenario.odin`) |
+| `tutorial` | End-to-end developer tutorial: Lex v2 expressions, project ingestion (`collatz`, `db_browser`), native C build (`collatz`), signed QUIC cache pull (`db_browser`), module delivery, sandboxed launch of `db_browser` with isolated `sqlite.module`, live SQL `INSERT` + `SELECT` + column sort, and copy-on-write version history preview | `scenario_tutorial_film` (`tutorial_film_scenario.odin`) |
 
-The films differ by their scenario only. The worker, the list of the encoder and the encoders are the same code.
+The films differ by their scenario and optional machine fixtures (`tutorial` attaches a prepared STORAGE7 data disk and forwards UDP port 5010 through the peer to a local signed QUIC object cache). The worker, the list of the encoder and the encoders are the same code.
 
 The films `boot`, `desktop`, `console` and `program` are the chapters of the tutorial of the system, which a separate project edits from their MP4 files and their cue files. The tutorial shows the code of `plasma` before the film `program`: it is the smallest module that draws a window.
 

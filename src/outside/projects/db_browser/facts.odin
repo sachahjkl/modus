@@ -24,6 +24,12 @@ Query_Executed :: struct {
 	changes: i64,
 }
 
+@(log_fact = "db_browser: sorted column {column}, direction {direction}")
+Query_Sorted :: struct {
+	column:    u64,
+	direction: u64,
+}
+
 @(log_fact = "db_browser: committed {bytes} bytes at generation {generation}")
 Database_Committed :: struct {
 	bytes:      u64,

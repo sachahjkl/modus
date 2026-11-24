@@ -430,11 +430,16 @@ project_lex_and_pins_evaluate_cleanly :: proc(t: ^testing.T) {
 	lex_evaluator.declaration_workspace_carve(workspace, memory, pools)
 
 	here := blake3.hash(project_bytes)
-	cfg := lex_evaluator.Declaration_Config{has_here = true, here_hash = here, stack_bytes = 2 * 1024 * 1024}
+	catalog_src := "{ modules = { host = module(blake3:1111111111111111111111111111111111111111111111111111111111111111) } }"
+	bindings := [1]lex_evaluator.Declaration_Binding{{name = "catalog", kind = .Lex_Source, source = catalog_src}}
+	cfg := lex_evaluator.Declaration_Config{bindings = bindings[:], has_here = true, here_hash = here, stack_bytes = 2 * 1024 * 1024}
 	out_buf: [4096]u8
 	out_len, ok := lex_evaluator.declaration_evaluate_to_buffer(workspace, string(project_bytes), "", cfg, out_buf[:])
 	testing.expect(t, ok, "project.lex must evaluate cleanly")
 	header, refusal := declaration_eval.output_validate(out_buf[:out_len])
 	testing.expect_value(t, refusal, declaration_eval.Output_Refusal.None)
 	testing.expect_value(t, header.status, declaration_eval.Output_Status.Ok)
+
+	def_res := lex_evaluator.declaration_evaluate(workspace, string(project_bytes), "outputs.default", cfg)
+	testing.expect(t, def_res.ok && def_res.value.kind == .Recipe_Ref, "outputs.default must evaluate to a recipe")
 }
