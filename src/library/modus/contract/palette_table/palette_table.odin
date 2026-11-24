@@ -301,7 +301,7 @@ Command :: enum u32 {
 	// Argument gives one typed value (or one ordered chunk of a Text value)
 	// for the Choose or Candidates command of the same tag that follows.
 	// values[0]: parameter index in bits [0..7], Value_Kind in [8..15],
-	// chunk_index in [16..23], chunk_count in [24..31], total_length in
+	// chunk_length in [16..23], chunk_index in [24..31], total_length in
 	// [32..47]. values[1]: an Integer, as an i64. values[1..6]: up to
 	// ARGUMENT_INLINE_TEXT_CAPACITY (48) bytes per chunk, reassembled by
 	// Argument_Assembly up to ARGUMENT_TEXT_CAPACITY (1024) bytes.

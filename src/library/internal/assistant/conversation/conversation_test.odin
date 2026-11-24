@@ -214,7 +214,7 @@ act_refuses_each_bad_input_and_each_act_past_the_turn :: proc(t: ^testing.T) {
 		outcome, result, _ = act(talk, true, serial, 1, "monitor.processes()", "monitor", "processes", &error)
 		expect_refusal(t, outcome, result, error, .Absent, 1)
 	}
-	for kind in ([?]i64{0, -1, 2, 255, max(i64)}) {
+	for kind in ([?]i64{0, -1, 7, 255, max(i64)}) {
 		outcome, result, _ = act(talk, true, 1, kind, "monitor.processes()", "monitor", "processes", &error)
 		expect_refusal(t, outcome, result, error, .Bad_Value, 2)
 	}

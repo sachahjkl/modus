@@ -55,16 +55,17 @@ HEIGHT :: 560
 //
 // 2274 pages; then 1748 pages for the stack, the small tables and the glyph
 // memory, as paint states them for itself, which this process draws as,
-// and the glyph memory of the copy of the text rendering of the drawing
-// module, 354 pages (display.TEXT_MEMORY_PAGES): 2274 + 1748 + 354 = 4376.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4376, window_width = WIDTH, window_height = HEIGHT}
+// 354 pages for the glyph memory of the drawing module (display.TEXT_MEMORY_PAGES),
+// 16 pages for the store worker stack (STORE_THREAD_STACK_PAGES), and 256 pages
+// for live conversation snapshot arenas (STORE_WORKING_PAGES): 2274 + 1748 + 354 + 16 + 256 = 4648.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4648, processes = 1, threads = 2, window_width = WIDTH, window_height = HEIGHT}
 
 // The pages of the stack, the small tables and the glyph memory, as paint
 // counts them (src/modules/demonstrations/paint/main.odin).
 STACK_AND_GLYPH_PAGES :: 1748
-STATE_BYTES :: size_of(talk) + size_of(view_layouts) + size_of(view_places) + size_of(view_scroll) + size_of(result_slots) + size_of(layout_lines) + size_of(result_scratch) + size_of(window_memory) + size_of(box_tree) + size_of(typed) + size_of(typed_count) + size_of(display_port)
+STATE_BYTES :: size_of(talk) + size_of(view_layouts) + size_of(view_places) + size_of(view_scroll) + size_of(result_slots) + size_of(layout_lines) + size_of(result_scratch) + size_of(window_memory) + size_of(box_tree) + size_of(typed) + size_of(typed_count) + size_of(display_port) + size_of(store_state)
 STATE_PAGES :: (STATE_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-#assert(MODULE_BUDGET.working_memory_pages == STATE_PAGES + STACK_AND_GLYPH_PAGES + display.TEXT_MEMORY_PAGES)
+#assert(MODULE_BUDGET.working_memory_pages == STATE_PAGES + STACK_AND_GLYPH_PAGES + display.TEXT_MEMORY_PAGES + STORE_THREAD_STACK_PAGES + STORE_WORKING_PAGES)
 // The window at the largest scale, cut to the reference screen, two
 // pictures, as the tool counts it: the budget stays under the largest
 // budget of a module.
@@ -174,7 +175,7 @@ entry_body :: proc "contextless" (entry: ^conversation.Entry, buffer: []u8) -> (
 			}
 			return code, "decide it in the act dialog of the trusted display", false
 		case .Allowed_By_Principal:
-			return code, "allowed; the act runs when the agent console of a wide grant runs it", false
+			return code, "allowed by the principal; waiting for execution under a wide grant", false
 		case .Refused_By_Principal, .Not_Shown:
 			return code, "nothing ran", false
 		}
@@ -288,6 +289,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
 	display_port_bind(ctx)
+	store_start(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "assistant")
 	if !ok {
 		system.stop(.Failed)
@@ -295,10 +297,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	draw(&window)
 	system.log_fact(.Info, Running{})
 	for {
+		store_done_seen := system.event_count(&store_state.done_event)
+		store_poll()
 		waiting := acts_waiting_step()
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.service_wait(&wait, &service)
+		system.wait_event(&wait, &store_state.done_event, store_done_seen)
 		deadline := waiting ? system.time() + DECISION_POLL_MILLISECONDS : system.WAIT_FOREVER
 		// A held arrow of the scroll bar takes its next step at a time of
 		// the clock: the wait ends there at the latest.
@@ -308,6 +313,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		system.wait_end(&wait, deadline)
 		system.service_run(&service)
+		store_poll()
 		came := interface.window_events(&window_memory.drawing, &window)
 		if came || talk.changed || (step_due && system.time() >= step_time) {
 			talk.changed = false
@@ -317,6 +323,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				talk.changed = false
 				draw(&window)
 			}
+			store_poll()
 		}
 	}
 }

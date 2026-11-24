@@ -317,6 +317,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_INTERNAL + "/grid_terminal/grid_renderer",
 	foundation.SOURCE_FOLDER_INTERNAL + "/dom_terminal/dom_protocol",
 	foundation.SOURCE_FOLDER_INTERNAL + "/debugger/debugging",
+	foundation.SOURCE_FOLDER_INTERNAL + "/assistant/agent_step",
 	foundation.LIBRARY_MODULE_SOURCES + "interface_module",
 	foundation.LIBRARY_MODULE_SOURCES + "drawing",
 	foundation.DEMONSTRATION_MODULE_SOURCES + "sample",

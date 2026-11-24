@@ -55,12 +55,12 @@ make_active_policy :: proc(client_key: [32]u8) -> Bridge_Client_Policy {
 
 @(test)
 test_enum_border_parsers_refuse_zero_and_unknown_values :: proc(t: ^testing.T) {
-	// Bridge_Command_Kind: refuses 0, 6, max(u32)
+	// Bridge_Command_Kind: refuses 0, 7, max(u32)
 	if _, ok := bridge_command_kind_from_word(0); ok {
 		testing.fail_now(t, "bridge_command_kind_from_word accepted 0")
 	}
-	if _, ok := bridge_command_kind_from_word(6); ok {
-		testing.fail_now(t, "bridge_command_kind_from_word accepted 6")
+	if _, ok := bridge_command_kind_from_word(7); ok {
+		testing.fail_now(t, "bridge_command_kind_from_word accepted 7")
 	}
 	if _, ok := bridge_command_kind_from_word(max(u32)); ok {
 		testing.fail_now(t, "bridge_command_kind_from_word accepted max(u32)")
@@ -101,9 +101,9 @@ test_enum_border_parsers_refuse_zero_and_unknown_values :: proc(t: ^testing.T) {
 		testing.expect(t, decision.state == .Ended && decision.outcome == outcome && decision.refusal == refusal)
 	}
 
-	// Bridge_Refusal: accepts 0..19, refuses 20 and max(u32)
-	if _, ok := bridge_refusal_from_word(20); ok {
-		testing.fail_now(t, "bridge_refusal_from_word accepted 20")
+	// Bridge_Refusal: accepts 0..20, refuses 21 and max(u32)
+	if _, ok := bridge_refusal_from_word(21); ok {
+		testing.fail_now(t, "bridge_refusal_from_word accepted 21")
 	}
 	if _, ok := bridge_refusal_from_word(max(u32)); ok {
 		testing.fail_now(t, "bridge_refusal_from_word accepted max(u32)")
@@ -114,23 +114,23 @@ test_enum_border_parsers_refuse_zero_and_unknown_values :: proc(t: ^testing.T) {
 		testing.expect(t, len(bridge_refusal_name(expected)) > 0)
 	}
 
-	// Bridge_Permission and Bridge_Permissions bitmask: refuses 0, bit 0, bit 5, max(u64)
+	// Bridge_Permission and Bridge_Permissions bitmask: refuses 0, bit 0, bit 6, max(u64)
 	if _, ok := bridge_permission_from_word(0); ok {
 		testing.fail_now(t, "bridge_permission_from_word accepted 0")
 	}
-	if _, ok := bridge_permission_from_word(5); ok {
-		testing.fail_now(t, "bridge_permission_from_word accepted 5")
+	if _, ok := bridge_permission_from_word(6); ok {
+		testing.fail_now(t, "bridge_permission_from_word accepted 6")
 	}
 	if _, ok := bridge_permission_from_word(max(u64)); ok {
 		testing.fail_now(t, "bridge_permission_from_word accepted max(u64)")
 	}
-	bad_masks := [?]u64{0, 1, 1 << 5, 1 << 63, BRIDGE_PERMISSION_KNOWN_MASK | 1, BRIDGE_PERMISSION_KNOWN_MASK | (1 << 6), max(u64)}
+	bad_masks := [?]u64{0, 1, 1 << 6, 1 << 63, BRIDGE_PERMISSION_KNOWN_MASK | 1, BRIDGE_PERMISSION_KNOWN_MASK | (1 << 7), max(u64)}
 	for mask in bad_masks {
 		if _, ok := bridge_permissions_from_word(mask); ok {
 			testing.fail_now(t, "bridge_permissions_from_word accepted invalid mask")
 		}
 	}
-	all_perms := Bridge_Permissions{.Eval_Lex, .Read_Screen, .Send_Input, .Read_Log_Facts}
+	all_perms := Bridge_Permissions{.Eval_Lex, .Read_Screen, .Send_Input, .Read_Log_Facts, .Eval_Step}
 	decoded_perms, perms_ok := bridge_permissions_from_word(bridge_permissions_to_word(all_perms))
 	testing.expect(t, perms_ok && decoded_perms == all_perms)
 

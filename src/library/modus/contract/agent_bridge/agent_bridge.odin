@@ -19,6 +19,7 @@
 // calls no kernel operation, and allocates no memory.
 package agent_bridge
 
+import assistant_contract "modus:contract/assistant"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/call_outcome"
@@ -51,6 +52,11 @@ MAX_FILTER_NAME_BYTES :: 64
 MAX_LOG_FACT_QUERY_LIMIT :: 256
 MAX_WAIT_SETTLED_MS :: u32(30_000)
 
+// Plan values for read-only multi-line Lex agent steps (src/md/features/agent_code_mode.md).
+AGENT_STEP_LINE_CAPACITY :: 16
+AGENT_STEP_CALL_CAPACITY :: 64
+AGENT_STEP_TIME_BOUND_MS :: u64(60_000)
+
 // Exact binary payload sizes for fixed-size typed command payloads.
 READ_SCREEN_PAYLOAD_SIZE :: 16 // format(1) + pad(3) + max_width(4) + max_height(4) + wait_settled_ms(4)
 SEND_KEY_PAYLOAD_SIZE :: 16 // code(4) + character(4) + pressed(4) + modifiers(4)
@@ -66,6 +72,7 @@ Bridge_Command_Kind :: enum u32 {
 	Send_Key       = 3,
 	Send_Pointer   = 4,
 	Read_Log_Facts = 5,
+	Eval_Step      = 6,
 }
 
 // The state of a request of the Agent Bridge (src/md/api/call_outcome.md,
@@ -86,6 +93,7 @@ Bridge_Permission :: enum u64 {
 	Read_Screen    = 2,
 	Send_Input     = 3,
 	Read_Log_Facts = 4,
+	Eval_Step      = 5,
 }
 
 // Bit set of granted Bridge_Permission flags.
@@ -95,7 +103,8 @@ Bridge_Permissions :: bit_set[Bridge_Permission; u64]
 BRIDGE_PERMISSION_KNOWN_MASK :: (u64(1) << u64(Bridge_Permission.Eval_Lex)) |
 	(u64(1) << u64(Bridge_Permission.Read_Screen)) |
 	(u64(1) << u64(Bridge_Permission.Send_Input)) |
-	(u64(1) << u64(Bridge_Permission.Read_Log_Facts))
+	(u64(1) << u64(Bridge_Permission.Read_Log_Facts)) |
+	(u64(1) << u64(Bridge_Permission.Eval_Step))
 
 // Closed set of refusal causes returned by bridge framing, payload checks,
 // and authorization rules.
@@ -119,6 +128,8 @@ Bridge_Refusal :: enum u32 {
 	Payload_Too_Large           = 16,
 	Act_Log_Required            = 17,
 	Invalid_Text                = 18,
+	Approval_Mismatch           = 19,
+	Approval_Already_Used       = 20,
 }
 
 // Closed set of picture encodings requested through Read_Screen.
@@ -364,6 +375,7 @@ BRIDGE_COMMAND_KIND_NAMES := [Bridge_Command_Kind]string {
 	.Send_Key       = "Send_Key",
 	.Send_Pointer   = "Send_Pointer",
 	.Read_Log_Facts = "Read_Log_Facts",
+	.Eval_Step      = "Eval_Step",
 }
 
 @(rodata)
@@ -394,6 +406,8 @@ BRIDGE_REFUSAL_NAMES := [Bridge_Refusal]string {
 	.Payload_Too_Large           = "Payload_Too_Large",
 	.Act_Log_Required            = "Act_Log_Required",
 	.Invalid_Text                = "Invalid_Text",
+	.Approval_Mismatch           = "Approval_Mismatch",
+	.Approval_Already_Used       = "Approval_Already_Used",
 }
 
 @(rodata)
@@ -454,6 +468,9 @@ bridge_permissions_to_word :: proc "contextless" (permissions: Bridge_Permission
 	if .Read_Log_Facts in permissions {
 		word |= u64(1) << u64(Bridge_Permission.Read_Log_Facts)
 	}
+	if .Eval_Step in permissions {
+		word |= u64(1) << u64(Bridge_Permission.Eval_Step)
+	}
 	return word
 }
 
@@ -473,6 +490,9 @@ bridge_permissions_from_word :: proc "contextless" (word: u64) -> (permissions: 
 	}
 	if word & (u64(1) << u64(Bridge_Permission.Read_Log_Facts)) != 0 {
 		decoded += {.Read_Log_Facts}
+	}
+	if word & (u64(1) << u64(Bridge_Permission.Eval_Step)) != 0 {
+		decoded += {.Eval_Step}
 	}
 	return decoded, true
 }
@@ -511,7 +531,7 @@ bridge_refusal_outcome :: proc "contextless" (refusal: Bridge_Refusal) -> call_o
 	switch refusal {
 	case .None:
 		return .Succeeded
-	case .Permission_Denied, .Client_Key_Missing, .Wide_Grant_Required, .Wide_Grant_Not_Active, .Wide_Grant_Expired, .Window_Not_In_Scope, .Principal_Approval_Required, .Invalid_Permissions:
+	case .Permission_Denied, .Client_Key_Missing, .Wide_Grant_Required, .Wide_Grant_Not_Active, .Wide_Grant_Expired, .Window_Not_In_Scope, .Principal_Approval_Required, .Invalid_Permissions, .Approval_Mismatch, .Approval_Already_Used:
 		return .Grant_Or_Right_Missing
 	case .Act_Log_Required:
 		return .Callee_Unavailable
@@ -1349,6 +1369,10 @@ bridge_authorize_command :: proc "contextless" (
 		if .Read_Log_Facts not_in permissions || .Calls not_in remote_uses {
 			return bridge_refused(.Permission_Denied)
 		}
+	case .Eval_Step:
+		if .Eval_Step not_in permissions || .Calls not_in remote_uses {
+			return bridge_refused(.Permission_Denied)
+		}
 	}
 
 	// Gate 2: Command-specific structural and wide grant checks.
@@ -1369,6 +1393,12 @@ bridge_authorize_command :: proc "contextless" (
 		case .Read_Only:
 		}
 		return {state = .Ended, outcome = .Succeeded, refusal = .None, required_act_kind = .Action_Invoked}
+
+	case .Eval_Step:
+		if !policy.collector_available {
+			return bridge_refused(.Act_Log_Required)
+		}
+		return {state = .Ended, outcome = .Succeeded, refusal = .None, required_act_kind = .Call_Made}
 
 	case .Read_Screen:
 		return {state = .Ended, outcome = .Succeeded, refusal = .None, required_act_kind = .Frame_Read}
@@ -1429,4 +1459,206 @@ bridge_authorize_command :: proc "contextless" (
 	}
 
 	return bridge_refused(.Unknown_Command)
+}
+
+// Binding proving that the principal allowed one specific assistant act on
+// the trusted display. Verified by bridge_authorize_approved_act before running
+// a non-read-only Lex call under an active wide grant.
+Approved_Act_Binding :: struct {
+	act_number:      u64,
+	principal_state: assistant_contract.Act_State,
+	service:         []u8,
+	export:          []u8,
+	line_hash:       blake3.Hash,
+	already_used:    bool,
+}
+
+// classify_lex_sensitive_action maps a single-call Lex service.export to the
+// closed wide_grants.Sensitive_Action class checked by
+// wide_grants.act_requires_principal_proof. Any sensitive operation requires
+// fresh principal proof and can never execute via an act-dialog approval alone.
+classify_lex_sensitive_action :: proc "contextless" (service, export: []u8) -> wide_grants.Sensitive_Action {
+	if len(service) == 0 || len(export) == 0 {
+		// Fail closed on empty identifiers: act_requires_principal_proof(.None) is true.
+		return .None
+	}
+	if bytes_equal_literal(service, "plans") {
+		if bytes_equal_literal(export, "apply") || bytes_equal_literal(export, "apply_poll") || bytes_equal_literal(export, "rollback") {
+			return .Plans_Apply_Adding_Grant
+		}
+	}
+	if bytes_equal_literal(service, "unlock") || bytes_equal_literal(service, "passphrase") {
+		return .Passphrase_Or_Unlock_Dialog
+	}
+	if bytes_equal_literal(service, "assistant") {
+		// An agent must never call the assistant window's own exports via eval_lex.
+		return .Trusted_Display_Grant_Dialog
+	}
+	if bytes_equal_literal(service, "compositor") {
+		if bytes_equal_literal(export, "act_ask") ||
+		   bytes_equal_literal(export, "act_poll") ||
+		   bytes_equal_literal(export, "act_cancel") ||
+		   bytes_equal_literal(export, "powerbox_ask") ||
+		   bytes_equal_literal(export, "plan_diff_ask") ||
+		   bytes_equal_literal(export, "revoke_grant") {
+			return .Trusted_Display_Grant_Dialog
+		}
+		if bytes_equal_literal(export, "wide_grant_mark") ||
+		   bytes_equal_literal(export, "wide_grant_show") ||
+		   bytes_equal_literal(export, "wide_grant_clear") {
+			return .Wide_Grant_Screen_Or_Mark
+		}
+	}
+	if bytes_equal_literal(service, "collector") {
+		if bytes_equal_literal(export, "create_grant") || bytes_equal_literal(export, "revoke_grant") {
+			return .Wide_Grant_Screen_Or_Mark
+		}
+	}
+	if bytes_equal_literal(service, "principals") {
+		return .Principal_Management
+	}
+	if bytes_equal_literal(service, "remote") {
+		if bytes_equal_literal(export, "allow") ||
+		   bytes_equal_literal(export, "revoke") ||
+		   bytes_equal_literal(export, "client_allow") ||
+		   bytes_equal_literal(export, "client_revoke") {
+			return .Principal_Management
+		}
+	}
+	if bytes_equal_literal(service, "disk_grants") {
+		return .Disk_Grant_Change
+	}
+	if bytes_equal_literal(service, "storage") {
+		if bytes_equal_literal(export, "grant") || bytes_equal_literal(export, "grant_set") || bytes_equal_literal(export, "grant_revoke") {
+			return .Disk_Grant_Change
+		}
+	}
+	if bytes_equal_literal(service, "root") {
+		if bytes_equal_literal(export, "disk_grant_set") || bytes_equal_literal(export, "disk_rows_set") {
+			return .Disk_Grant_Change
+		}
+		if bytes_equal_literal(export, "replace") || bytes_equal_literal(export, "module_replace") || bytes_equal_literal(export, "debug_attach") {
+			return .Module_Replace_Or_Debug
+		}
+	}
+	if bytes_equal_literal(service, "debugger") || bytes_equal_literal(service, "replace") {
+		return .Module_Replace_Or_Debug
+	}
+	return .Normal_Window_Input
+}
+
+// bytes_equal_slices compares two byte slices for exact equality.
+@(private = "file")
+bytes_equal_slices :: proc "contextless" (a, b: []u8) -> bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i in 0 ..< len(a) {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// bridge_authorize_approved_act verifies that a single-call Lex act approved
+// once by the principal on the trusted display (Allowed_By_Principal) may run
+// under an active, non-expired wide grant with a fail-closed collector act log.
+// Any sensitive action for which wide_grants.act_requires_principal_proof is
+// true is always refused hard (Principal_Approval_Required), even with both an
+// active wide grant and Allowed_By_Principal.
+bridge_authorize_approved_act :: proc "contextless" (
+	policy: ^Bridge_Client_Policy,
+	binding: ^Approved_Act_Binding,
+	lex_line: []u8,
+	now_ms: u64,
+) -> Bridge_Authorization_Decision {
+	if policy == nil || binding == nil {
+		return bridge_refused(.Invalid_Field)
+	}
+	client_key := policy.client_key_public
+	if bytes_all_zero(client_key[:]) {
+		return bridge_refused(.Client_Key_Missing)
+	}
+	permissions, perm_ok := bridge_permissions_from_word(policy.permissions_word)
+	if !perm_ok {
+		return bridge_refused(.Invalid_Permissions)
+	}
+	remote_uses, uses_ok := remote.client_uses_of_word(policy.remote_uses_word)
+	if !uses_ok {
+		return bridge_refused(.Invalid_Permissions)
+	}
+	if .Eval_Lex not_in permissions || .Calls not_in remote_uses {
+		return bridge_refused(.Permission_Denied)
+	}
+	if text_refusal := validate_lex_line(lex_line); text_refusal != .None {
+		return bridge_refused(text_refusal)
+	}
+	service, export, single_ok := lex_line_single_call(lex_line)
+	if !single_ok {
+		return bridge_refused(.Invalid_Text)
+	}
+
+	// Hard invariant: never bypass wide_grants.act_requires_principal_proof.
+	sensitive := classify_lex_sensitive_action(service, export)
+	if wide_grants.act_requires_principal_proof(sensitive) {
+		return bridge_refused(.Principal_Approval_Required)
+	}
+
+	// Require an active, non-expired wide grant bound to this principal and key.
+	if !policy.has_wide_grant || policy.wide_grant_serial == 0 {
+		return bridge_refused(.Wide_Grant_Required)
+	}
+	grant_state, state_ok := wide_grants.wide_grant_state_from_word(policy.wide_grant_state_word)
+	if !state_ok {
+		return bridge_refused(.Wide_Grant_Not_Active)
+	}
+	switch grant_state {
+	case .None, .Pending, .Revoked:
+		return bridge_refused(.Wide_Grant_Not_Active)
+	case .Expired:
+		return bridge_refused(.Wide_Grant_Expired)
+	case .Active:
+	}
+	terms := policy.wide_grant_terms
+	if wide_grants.wide_grant_terms_validate(&terms) != .None {
+		return bridge_refused(.Wide_Grant_Not_Active)
+	}
+	if terms.principal_id != policy.principal_id {
+		return bridge_refused(.Wide_Grant_Not_Active)
+	}
+	expected_grantee := blake3.hash(client_key[:])
+	if terms.grantee_identity_hash != expected_grantee {
+		return bridge_refused(.Wide_Grant_Not_Active)
+	}
+	if policy.wide_grant_expires_ms <= policy.wide_grant_created_ms {
+		return bridge_refused(.Wide_Grant_Expired)
+	}
+	if policy.wide_grant_expires_ms - policy.wide_grant_created_ms > terms.duration_ms {
+		return bridge_refused(.Wide_Grant_Not_Active)
+	}
+	if now_ms < policy.wide_grant_created_ms || now_ms >= policy.wide_grant_expires_ms {
+		return bridge_refused(.Wide_Grant_Expired)
+	}
+	if !policy.collector_available {
+		return bridge_refused(.Act_Log_Required)
+	}
+
+	// Verify single-use trusted-display approval bound to exact (act, service, export, line_hash).
+	if binding.act_number == 0 {
+		return bridge_refused(.Invalid_Field)
+	}
+	if binding.already_used {
+		return bridge_refused(.Approval_Already_Used)
+	}
+	if binding.principal_state != .Allowed_By_Principal {
+		return bridge_refused(.Principal_Approval_Required)
+	}
+	expected_line_hash := blake3.hash(lex_line)
+	if !bytes_equal_slices(binding.service, service) ||
+	   !bytes_equal_slices(binding.export, export) ||
+	   binding.line_hash != expected_line_hash {
+		return bridge_refused(.Approval_Mismatch)
+	}
+	return {state = .Ended, outcome = .Succeeded, refusal = .None, required_act_kind = .Call_Made}
 }

@@ -7,12 +7,15 @@
 package conversation
 
 import "base:intrinsics"
+import "internal:assistant/agent_step"
 import bridge_contract "modus:contract/agent_bridge"
 import "modus:contract/enum_word"
 import "modus:contract/value_kinds"
 import assistant_contract "modus:contract/assistant"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
+
+#assert(assistant_contract.MODEL_ACT_CAPACITY == agent_step.STEP_LINE_CAPACITY)
 
 Entry_Kind :: enum u8 {
 	Request, // A request of the principal.
