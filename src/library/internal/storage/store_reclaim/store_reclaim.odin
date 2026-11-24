@@ -73,7 +73,9 @@ Tree_Path :: struct {
 }
 
 Work :: struct {
-	paths:          [format.NESTING_LIMIT + 1]Tree_Path,
+	// Format bound: slot 0 holds sb.removals when step_tree_stack runs from
+	// step_removals, plus root + NESTING_LIMIT nested levels (1 + 1 + 16 = 18).
+	paths:          [format.NESTING_LIMIT + 2]Tree_Path,
 	nesting:        int,
 	node_buf:       Block,
 	parent_buf:     Block,
@@ -433,6 +435,10 @@ drop_object_state :: proc "contextless" (ops: ^Ops, work: ^Work, root: format.Po
 	if !ops.enqueue_release(ops, root, size) {
 		return .Full
 	}
+	// Stop peeling additional objects in this commit after deferring states so
+	// one commit never accumulates deferred versions from multiple objects past
+	// the release queue capacity.
+	work.direct_budget = 0
 	return .Progressed
 }
 
@@ -653,6 +659,26 @@ step_removals :: proc "contextless" (ops: ^Ops, work: ^Work, sb: ^format.Store_B
 		r_leaf := read_tree_node(ops, leaf_ptr, 0, &work.node_buf)
 		if r_leaf == .Device {
 			return .Device
+		}
+		if r_leaf == .Wrong {
+			ops.drop(ops, leaf_ptr.block)
+			node_blocks_sub(sb, 1)
+			ops.note_damaged(ops, 1, 0)
+			new_root, r2 := rewrite_leftmost_path(ops, work, path, leaf_idx, true, {}, sb)
+			if r2 != .Progressed {
+				return r2
+			}
+			sb.removals = new_root
+			if sb.removals.block == 0 {
+				sb.removing = 0
+				if sb.tree.block == 0 {
+					sb.objects = 0
+					sb.trees = 0
+					sb.node_blocks = 0
+					sb.current_blocks = 0
+				}
+			}
+			return .Progressed
 		}
 		ops.drop(ops, leaf_ptr.block)
 		leaf_empty := false

@@ -30,9 +30,12 @@ Test_Disk :: struct {
 	deltas:       [TEST_DISK_BLOCKS]i64,
 	used_delta:   i64,
 	damaged_hits: u64,
-	queued:       [32]format.Release_State,
-	queued_count: int,
-	alloc_cursor: u64,
+	queued:                 [32]format.Release_State,
+	queued_count:           int,
+	queue_limit:            int, // 0 uses len(queued); >0 tests per-commit deferral caps.
+	corrupt_on_second_read: u64, // Block number to return .Wrong on its 2nd read.
+	corrupt_reads_seen:     int,
+	alloc_cursor:           u64,
 }
 
 @(private = "file")
@@ -196,6 +199,12 @@ ops_make :: proc(d: ^Test_Disk, direct_limit := 0) -> Ops {
 			if ptr.block < 2 || ptr.block >= TEST_DISK_BLOCKS {
 				return .Wrong
 			}
+			if d.corrupt_on_second_read != 0 && ptr.block == d.corrupt_on_second_read {
+				d.corrupt_reads_seen += 1
+				if d.corrupt_reads_seen >= 2 {
+					return .Wrong
+				}
+			}
 			into^ = d.blocks[ptr.block]
 			if format.check(into[:]) != ptr.check {
 				return .Wrong
@@ -247,7 +256,8 @@ ops_make :: proc(d: ^Test_Disk, direct_limit := 0) -> Ops {
 		},
 		enqueue_release = proc "contextless" (ops: ^Ops, root: format.Pointer, size: u64) -> bool {
 			d := (^Test_Disk)(ops.data)
-			if d.queued_count >= len(d.queued) {
+			cap := d.queue_limit > 0 ? d.queue_limit : len(d.queued)
+			if d.queued_count >= cap || d.queued_count >= len(d.queued) {
 				return false
 			}
 			d.queued[d.queued_count] = {root = root, size = size}
@@ -667,4 +677,331 @@ keyless_reclaim_prunes_corrupt_nodes_without_stalling :: proc(t: ^testing.T) {
 	testing.expect(t, d.damaged_hits > 0, "corrupt block must report damage for recount")
 	testing.expect_value(t, d.store_page.cells[1].name[0], u8(0))
 	testing.expect_value(t, d.store_page.cells[0].used, u64(3))
+}
+
+// Reclaiming a NESTING_LIMIT-deep nested tree stored inside sb.removals walks
+// all legal nesting levels without pruning or leaking any block.
+@(private = "file")
+test_leaf_entry_at :: proc(node: ^Block, index: int) -> ^format.Entry {
+	offset := format.TREE_HEADER_SIZE + index * (format.ENTRY_NAME_STORAGE + size_of(format.Entry)) + format.ENTRY_NAME_STORAGE
+	return (^format.Entry)(&node[offset])
+}
+
+@(test)
+keyless_reclaim_handles_max_nesting_depth_in_removals :: proc(t: ^testing.T) {
+	d := new(Test_Disk)
+	defer free(d)
+	test_disk_init(d)
+	add_clear_machine_store(d, 0, "machine")
+	disk_verify_mount(t, d, true)
+	baseline_blocks := disk_blocks_in_use(d)
+
+	slot := 1
+	owner := u16(slot + 1)
+	// Innermost data block + object leaf at depth NESTING_LIMIT (16).
+	data_blk := disk_alloc_raw(d, owner)
+	for &b, i in d.blocks[data_blk] {
+		b = u8(0x5A + (i % 13))
+	}
+	data_ptr := format.Pointer{block = data_blk, check = format.check(d.blocks[data_blk][:])}
+
+	child_blk := disk_alloc_raw(d, owner)
+	(^format.Tree_Header)(&d.blocks[child_blk])^ = {level = 0, count = 1, magic = format.NODE_MAGIC}
+	copy(d.blocks[child_blk][format.TREE_HEADER_SIZE:], "deep")
+	test_leaf_entry_at(&d.blocks[child_blk], 0)^ = {
+		kind    = u64(format.Entry_Kind.Object),
+		size    = format.BLOCK_SIZE,
+		pointer = data_ptr,
+	}
+	child_ptr := format.Pointer{block = child_blk, check = format.check(d.blocks[child_blk][:])}
+
+	// Wrap NESTING_LIMIT - 1 enclosing tree leaves so total chain has
+	// NESTING_LIMIT (16) tree roots inside sb.removals (storage_mount counts
+	// sb.removals as nesting 0, queued tree as 1, down to NESTING_LIMIT = 16).
+	for lvl in 0 ..< format.NESTING_LIMIT - 1 {
+		wrap_blk := disk_alloc_raw(d, owner)
+		(^format.Tree_Header)(&d.blocks[wrap_blk])^ = {level = 0, count = 1, magic = format.NODE_MAGIC}
+		name_buf := [4]u8{'t', u8('0' + lvl / 10), u8('0' + lvl % 10), 0}
+		copy(d.blocks[wrap_blk][format.TREE_HEADER_SIZE:], name_buf[:3])
+		test_leaf_entry_at(&d.blocks[wrap_blk], 0)^ = {
+			kind    = u64(format.Entry_Kind.Tree),
+			size    = 1,
+			pointer = child_ptr,
+		}
+		child_ptr = {block = wrap_blk, check = format.check(d.blocks[wrap_blk][:])}
+	}
+
+	// Queue the outermost tree as a .Tree entry inside sb.removals.
+	rem_blk := disk_alloc_raw(d, owner)
+	(^format.Tree_Header)(&d.blocks[rem_blk])^ = {level = 0, count = 1, magic = format.NODE_MAGIC}
+	rem_key := format.removal_name(1)
+	copy(d.blocks[rem_blk][format.TREE_HEADER_SIZE:][:format.ENTRY_NAME_STORAGE], rem_key[:])
+	test_leaf_entry_at(&d.blocks[rem_blk], 0)^ = {
+		kind    = u64(format.Entry_Kind.Tree),
+		size    = 1,
+		pointer = child_ptr,
+	}
+	rem_ptr := format.Pointer{block = rem_blk, check = format.check(d.blocks[rem_blk][:])}
+
+	// Store_Block + OWNED_CELL_MARK cell (1 data + 16 tree nodes + 1 rem leaf + 1 sb = 19 blocks).
+	sb_blk := disk_alloc_raw(d, owner)
+	sb := format.Store_Block{
+		removals       = rem_ptr,
+		objects        = 1,
+		trees          = u64(format.NESTING_LIMIT),
+		removing       = 1,
+		next_removal   = 1,
+		current_blocks = 1,
+		node_blocks    = u64(format.NESTING_LIMIT + 1),
+		owner          = principals.Principal_Identifier{0 = 0xDE, 31 = 0xAD},
+	}
+	d.blocks[sb_blk] = ((^Block)(&sb))^
+	cell := &d.store_page.cells[slot]
+	cell.name[0] = format.OWNED_CELL_MARK
+	cell.name[1] = 0x77
+	cell.limit = 100
+	cell.used = u64(format.NESTING_LIMIT + 3)
+	cell.store = {block = sb_blk, check = format.check(d.blocks[sb_blk][:])}
+
+	old_page := d.root.store_pages[0].block
+	d.refs[old_page] = 0
+	d.owners[old_page] = 0
+	new_page := disk_alloc_raw(d, storage_mount.STORE_TABLE_OWNER)
+	d.blocks[new_page] = ((^Block)(&d.store_page))^
+	d.root.store_pages[0] = {block = new_page, check = format.check(d.blocks[new_page][:])}
+	d.root.generation += 1
+	d.root.check = format.root_check(&d.root)
+	d.root_place = 1 - d.root_place
+	d.blocks[d.root_place] = ((^Block)(&d.root))^
+	disk_verify_mount(t, d, true)
+
+	steps := run_mark_and_reclaim(t, d, slot, 0, true)
+	testing.expect(t, steps >= 2)
+	testing.expect_value(t, d.damaged_hits, u64(0))
+	testing.expect_value(t, disk_blocks_in_use(d), baseline_blocks)
+	testing.expect_value(t, d.store_page.cells[slot].name[0], u8(0))
+}
+
+// A transient checksum mismatch when re-reading the removals leftmost leaf
+// after peeling a queued .Tree prunes the corrupt removals leaf safely instead
+// of writing stale child-tree bytes into sb.removals.
+@(test)
+keyless_reclaim_handles_corrupt_removals_reread_safely :: proc(t: ^testing.T) {
+	d := new(Test_Disk)
+	defer free(d)
+	test_disk_init(d)
+	add_clear_machine_store(d, 0, "machine")
+
+	slot := 1
+	owner := u16(slot + 1)
+	data_blk := disk_alloc_raw(d, owner)
+	d.blocks[data_blk][0] = 0x42
+	child_blk := disk_alloc_raw(d, owner)
+	(^format.Tree_Header)(&d.blocks[child_blk])^ = {level = 0, count = 1, magic = format.NODE_MAGIC}
+	copy(d.blocks[child_blk][format.TREE_HEADER_SIZE:], "item")
+	test_leaf_entry_at(&d.blocks[child_blk], 0)^ = {
+		kind    = u64(format.Entry_Kind.Object),
+		size    = format.BLOCK_SIZE,
+		pointer = {block = data_blk, check = format.check(d.blocks[data_blk][:])},
+	}
+	rem_blk := disk_alloc_raw(d, owner)
+	(^format.Tree_Header)(&d.blocks[rem_blk])^ = {level = 0, count = 1, magic = format.NODE_MAGIC}
+	rem_key := format.removal_name(1)
+	copy(d.blocks[rem_blk][format.TREE_HEADER_SIZE:][:format.ENTRY_NAME_STORAGE], rem_key[:])
+	test_leaf_entry_at(&d.blocks[rem_blk], 0)^ = {
+		kind    = u64(format.Entry_Kind.Tree),
+		size    = 1,
+		pointer = {block = child_blk, check = format.check(d.blocks[child_blk][:])},
+	}
+	sb_blk := disk_alloc_raw(d, owner)
+	sb := format.Store_Block{
+		removals     = {block = rem_blk, check = format.check(d.blocks[rem_blk][:])},
+		objects      = 1,
+		trees        = 1,
+		removing     = 1,
+		next_removal = 1,
+		node_blocks  = 2,
+		owner        = principals.Principal_Identifier{0 = 0x91, 31 = 0x19},
+	}
+	d.blocks[sb_blk] = ((^Block)(&sb))^
+	d.store_page.cells[slot] = {
+		name  = {0 = format.RECLAIMING_CELL_MARK},
+		limit = 100,
+		used  = 4,
+		store = {block = sb_blk, check = format.check(d.blocks[sb_blk][:])},
+	}
+	old_page := d.root.store_pages[0].block
+	d.refs[old_page] = 0
+	d.owners[old_page] = 0
+	new_page := disk_alloc_raw(d, storage_mount.STORE_TABLE_OWNER)
+	d.blocks[new_page] = ((^Block)(&d.store_page))^
+	d.root.store_pages[0] = {block = new_page, check = format.check(d.blocks[new_page][:])}
+	d.root.generation += 1
+	d.root.check = format.root_check(&d.root)
+	d.root_place = 1 - d.root_place
+	d.blocks[d.root_place] = ((^Block)(&d.root))^
+
+	// Force the 2nd read of rem_blk (the re-read after step_tree_stack) to return .Wrong.
+	d.corrupt_on_second_read = rem_blk
+	work := new(Work)
+	defer free(work)
+	ops := ops_make(d, 0)
+
+	disk_commit_begin(d, slot)
+	cur_sb := (^format.Store_Block)(&d.blocks[d.store_page.cells[slot].store.block])^
+	res := step(&ops, work, &cur_sb, 1)
+	testing.expect_value(t, res, Step_Outcome.Progressed)
+	testing.expect(t, d.damaged_hits > 0, "corrupt removals re-read must note damage")
+	testing.expect_value(t, cur_sb.removals.block, u64(0))
+	testing.expect_value(t, cur_sb.removing, u64(0))
+	disk_commit_apply(d, slot, &cur_sb, false)
+	disk_verify_mount(t, d, true)
+
+	// Next step sees empty store and frees the cell cleanly.
+	disk_commit_begin(d, slot)
+	cur_sb = (^format.Store_Block)(&d.blocks[d.store_page.cells[slot].store.block])^
+	res = step(&ops, work, &cur_sb, 1)
+	testing.expect_value(t, res, Step_Outcome.Empty)
+	disk_commit_apply(d, slot, &cur_sb, true)
+	disk_verify_mount(t, d, true)
+	testing.expect_value(t, d.store_page.cells[slot].name[0], u8(0))
+}
+
+// Two adjacent objects in one leaf whose combined deferred states exceed a
+// single-step queue cap never overflow or stall: stopping after the first
+// object that defers states lets both complete cleanly across separate commits.
+@(test)
+keyless_reclaim_bounds_deferred_states_to_one_object_per_step :: proc(t: ^testing.T) {
+	d := new(Test_Disk)
+	defer free(d)
+	test_disk_init(d)
+	add_clear_machine_store(d, 0, "machine")
+	disk_verify_mount(t, d, true)
+	baseline_blocks := disk_blocks_in_use(d)
+
+	slot := 1
+	owner := u16(slot + 1)
+
+	make_2block_obj :: proc(d: ^Test_Disk, owner: u16, seed: u8) -> format.Pointer {
+		b0 := disk_alloc_raw(d, owner)
+		b1 := disk_alloc_raw(d, owner)
+		d.blocks[b0][0] = seed
+		d.blocks[b1][0] = seed + 1
+		node_blk := disk_alloc_raw(d, owner)
+		node := format.Object_Node{
+			header = {magic = format.OBJECT_NODE_MAGIC, level = 1, count = 2},
+			children = {
+				0 = {block = b0, check = format.check(d.blocks[b0][:]), blocks = 1},
+				1 = {block = b1, check = format.check(d.blocks[b1][:]), blocks = 1},
+			},
+		}
+		d.blocks[node_blk] = ((^Block)(&node))^
+		return {block = node_blk, check = format.check(d.blocks[node_blk][:])}
+	}
+
+	make_versioned_entry :: proc(d: ^Test_Disk, owner: u16, seed: u8) -> format.Entry {
+		cur := make_2block_obj(d, owner, seed)
+		v0 := make_2block_obj(d, owner, seed + 10)
+		v1 := make_2block_obj(d, owner, seed + 20)
+		vl_blk := disk_alloc_raw(d, owner)
+		vl := format.Version_Leaf{
+			count = 2,
+			entries = {
+				0 = {root = v0, size = 2 * format.BLOCK_SIZE, time = 10},
+				1 = {root = v1, size = 2 * format.BLOCK_SIZE, time = 20},
+			},
+		}
+		d.blocks[vl_blk] = ((^Block)(&vl))^
+		vi_blk := disk_alloc_raw(d, owner)
+		vi := format.Version_Index{
+			version_count = 2,
+			leaf_count    = 1,
+			leaves        = {0 = {block = vl_blk, check = format.check(d.blocks[vl_blk][:])}},
+		}
+		d.blocks[vi_blk] = ((^Block)(&vi))^
+		return {
+			kind     = u64(format.Entry_Kind.Object),
+			size     = 2 * format.BLOCK_SIZE,
+			pointer  = cur,
+			versions = {block = vi_blk, check = format.check(d.blocks[vi_blk][:])},
+		}
+	}
+
+	// Two adjacent objects in one leaf: each has 3 large states (3 + 3 = 6 > cap 4).
+	leaf_blk := disk_alloc_raw(d, owner)
+	(^format.Tree_Header)(&d.blocks[leaf_blk])^ = {level = 0, count = 2, magic = format.NODE_MAGIC}
+	stride := format.ENTRY_NAME_STORAGE + size_of(format.Entry)
+	copy(d.blocks[leaf_blk][format.TREE_HEADER_SIZE:], "obj_a")
+	test_leaf_entry_at(&d.blocks[leaf_blk], 0)^ = make_versioned_entry(d, owner, 0x10)
+	copy(d.blocks[leaf_blk][format.TREE_HEADER_SIZE + stride:], "obj_b")
+	test_leaf_entry_at(&d.blocks[leaf_blk], 1)^ = make_versioned_entry(d, owner, 0x50)
+
+	sb_blk := disk_alloc_raw(d, owner)
+	sb := format.Store_Block{
+		tree           = {block = leaf_blk, check = format.check(d.blocks[leaf_blk][:])},
+		objects        = 2,
+		current_blocks = 6,
+		node_blocks    = 1,
+		owner          = principals.Principal_Identifier{0 = 0x55, 31 = 0xAA},
+	}
+	d.blocks[sb_blk] = ((^Block)(&sb))^
+	// Blocks: 2 objects * (3 * 3 obj blocks + 2 ver blocks) = 22 + 1 leaf + 1 sb = 24.
+	d.store_page.cells[slot] = {
+		name  = {0 = format.RECLAIMING_CELL_MARK},
+		limit = 200,
+		used  = 24,
+		store = {block = sb_blk, check = format.check(d.blocks[sb_blk][:])},
+	}
+	old_page := d.root.store_pages[0].block
+	d.refs[old_page] = 0
+	d.owners[old_page] = 0
+	new_page := disk_alloc_raw(d, storage_mount.STORE_TABLE_OWNER)
+	d.blocks[new_page] = ((^Block)(&d.store_page))^
+	d.root.store_pages[0] = {block = new_page, check = format.check(d.blocks[new_page][:])}
+	d.root.generation += 1
+	d.root.check = format.root_check(&d.root)
+	d.root_place = 1 - d.root_place
+	d.blocks[d.root_place] = ((^Block)(&d.root))^
+	disk_verify_mount(t, d, true)
+
+	// Cap deferred release queue at 4 states per commit and call step with full
+	// batch entry_limit = RECLAIM_STEP_ENTRIES (16): without the direct_budget=0
+	// guard, peeling both objects in one step would try to enqueue 6 states > 4
+	// and fail with .Full!
+	d.queue_limit = 4
+	work := new(Work)
+	defer free(work)
+	ops := ops_make(d, 1) // direct_limit = 1 forces every 2-block object state to defer.
+
+	steps := 0
+	finished := false
+	for steps < 64 {
+		steps += 1
+		disk_commit_begin(d, slot)
+		cur_sb := (^format.Store_Block)(&d.blocks[d.store_page.cells[slot].store.block])^
+		res := step(&ops, work, &cur_sb, RECLAIM_STEP_ENTRIES)
+		if res == .Empty {
+			disk_commit_apply(d, slot, &cur_sb, true)
+			disk_verify_mount(t, d, true)
+			finished = true
+			break
+		}
+		testing.expect_value(t, res, Step_Outcome.Progressed)
+		if d.queued_count > 0 {
+			rl := format.Release_List{magic = format.RELEASE_LIST_MAGIC, count = u32(d.queued_count)}
+			for i in 0 ..< d.queued_count {
+				rl.states[i] = d.queued[i]
+			}
+			rl_ptr, ok := ops.write_block(&ops, (^Block)(&rl))
+			testing.expect(t, ok)
+			prep := prepend_release_entry(&ops, work, &cur_sb, rl_ptr)
+			testing.expect_value(t, prep, Step_Outcome.Progressed)
+		}
+		disk_commit_apply(d, slot, &cur_sb, false)
+		disk_verify_mount(t, d, true)
+	}
+	testing.expect(t, finished, "adjacent heavily-versioned objects must reclaim without stalling")
+	testing.expect_value(t, d.damaged_hits, u64(0))
+	testing.expect_value(t, disk_blocks_in_use(d), baseline_blocks)
+	testing.expect_value(t, d.store_page.cells[slot].name[0], u8(0))
 }

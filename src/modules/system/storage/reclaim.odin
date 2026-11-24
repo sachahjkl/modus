@@ -26,9 +26,10 @@ import "modus:system"
 //    clear structural pointers, then frees the Store_Block and zeroes the
 //    Store_Entry cell for reuse.
 
-// Format bound: one reclaim step unwinds at most (NESTING_LIMIT + 1) nested
-// trees of depth TREE_DEPTH_LIMIT (17 * 6 = 102) plus Release_List and
-// prepend_release_entry nodes (<= 16), so 128 staging blocks hold every step.
+// Format bound: one reclaim step unwinds at most (NESTING_LIMIT + 2) tree paths
+// (removals queue + root + NESTING_LIMIT nested levels = 18) of depth
+// TREE_DEPTH_LIMIT (6) -> 108 blocks, plus Release_List and
+// prepend_release_entry nodes (<= 16) -> 124 <= 128 staging blocks.
 RECLAIM_WRITE_STAGE_CAPACITY :: 128
 
 reclaim_work: store_reclaim.Work
