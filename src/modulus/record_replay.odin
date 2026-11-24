@@ -444,6 +444,7 @@ point_copies_setup :: proc "contextless" (target_index: u32, rec: ^Process_Recor
 			point_copies_teardown(target_index, rec)
 			return .Bad_State
 		}
+		demote_mapping_range(target, &mapping, region, 0, mapping.page_count, processor_self())
 		for page in u64(0) ..< mapping.page_count {
 			if rec.point_copy_count >= POINT_COPY_CAPACITY {
 				point_copies_teardown(target_index, rec)
@@ -476,6 +477,7 @@ point_copies_setup :: proc "contextless" (target_index: u32, rec: ^Process_Recor
 			entry^ = copy_frame | bits
 			if !was_present {
 				mapping.present_page_count += 1
+				mapping.entries_4k += 1
 			}
 			rec.point_copies[rec.point_copy_count] = {
 				virtual_address = vaddr,
@@ -529,6 +531,7 @@ point_copies_teardown :: proc "contextless" (target_index: u32, rec: ^Process_Re
 					} else {
 						entry^ = 0
 						mapping.present_page_count -= 1
+						mapping.entries_4k -= 1
 					}
 					if self.table == target.table {
 						page_flush(pc.virtual_address)
@@ -800,6 +803,7 @@ point_copies_install_locked :: proc "contextless" (process_index: u32, rec: ^Pro
 	target := &processes[process_index]
 	region := &regions[mapping.region]
 	self := processor_self()
+	demote_mapping_range(target, mapping, region, 0, mapping.page_count, self)
 	status := Operation_Outcome.Ok
 	for page in u64(0) ..< mapping.page_count {
 		source_page := mapping.first + page
@@ -820,6 +824,7 @@ point_copies_install_locked :: proc "contextless" (process_index: u32, rec: ^Pro
 		}
 		if entry^ & PAGE_PRESENT == 0 {
 			mapping.present_page_count += 1
+			mapping.entries_4k += 1
 		}
 		entry^ = copy_frame | bits
 		if self.table == target.table {

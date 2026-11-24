@@ -6,7 +6,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **The budgets set by the rows of the plan.** The plan of principal 0 gives the share of the machine and the growth factor through the borders that the root service has for them (`budget_share_take`, `growth_factor_take`), and a row gives a module its pages or its share, its processor time and its log records, in place of the defaults and of the rows in the code of the root service; the class of the disk processes has its row, and the image of the tests carries its own plan file. [Design](src/md/features/module_budget_request.md)
+- **The test image carries its own plan file.** The image of the tests ships a plan file carrying the budget rows for `limits` and `log_flood`, removing the fallback exception tables from the root service. [Design](src/md/features/module_budget_request.md)
 - **The working memory leaves each module.** With the peak of each module read at its first state of work, its working memory becomes counted parts, start objects and children, so no floor holds a number that the hand writes. [Design](src/md/features/module_budget_request.md)
 - **A surface of unlock in no capture, and the unlock hints.** No capture of the screen holds the window of `unlock`, and the file of a principal keeps the layout in which its passphrase was typed. [Design](src/md/features/several_principals.md)
 - **The script font set from an object cache.** A machine takes the set that its plan names from an object cache by its hash, as a large object, so a machine draws Hebrew, Arabic, the emoji and the ideographs with no disk that the tool wrote. [Design](src/md/features/script_fonts.md)
@@ -35,8 +35,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The whole machine test on a second holder of the display.** The main scenario and the network scenario wait for the facts of the display contract, not for the lines, the start menu and `compositor.windows()` of our compositor, and the tool takes the place of a window from the contract. A second holder of the display then runs the whole machine test. [Design](src/md/features/roles_and_contracts.md)
 - **The rules of the principals in their service.** The rules of the disk grants, the client table of `remote` and the choice of a start policy move to `principals`, which gives the root service each change of a table through `Disk_Rows_Set`, so a fault in those rules is a fault of `principals`, not of the root. [Design](src/md/api/root_service_split.md)
 - **The call outcome of the kernel.** After two services ran on the set of the call outcome, each kernel completion holds it in place of its status, so a call to the kernel and a call to a service end with the same word. [Design](src/md/api/call_outcome.md)
-- **A growth past the size as a second budget.** A process with a row of growth asks the root service for a budget of its own purpose up to its ceiling, refused with no amount, at most one decision in each period, so a process gets more than its size and gives it back. [Design](src/md/features/module_budget_request.md)
-- **The frames of a process.** A commit can ask for its frames now, and an aligned commit of 2 MiB or 1 GiB takes a run with no privilege, demoted on a change of a part and counted when it falls back, so a large process faults less and fills fewer page tables. [Design](src/md/features/frames_of_a_process.md)
 
 ## Later
 

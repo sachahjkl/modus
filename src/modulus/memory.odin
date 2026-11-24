@@ -3,6 +3,7 @@ package kernel
 import "modulus:budget_peak"
 import info "modus:contract/boot_info"
 import "base:intrinsics"
+import "modulus:frame_runs"
 import "modulus:page_attributes"
 import "modulus:word_table"
 
@@ -33,6 +34,7 @@ frame_count: u64 // Read-only after boot.
 usable_pages: u64 // The pages of the free ranges of the memory map: the memory that the sizes of the tables follow. Read-only after boot.
 frame_hint: u64
 free_frames: u64
+frame_runs_table: frame_runs.Table // Aligned 2 MiB and 1 GiB runs, protected by frame_lock.
 kernel_table: u64 // The top level page table that all address spaces share the upper half of.
 
 direct :: #force_inline proc "contextless" (address: u64, $T: typeid) -> ^T {
@@ -158,6 +160,7 @@ frames_take :: proc "contextless" (count: u64) -> u64 {
 					frame_bits[f / 64] |= 1 << (f % 64)
 				}
 				free_frames -= count
+				frame_runs.on_frames_taken(&frame_runs_table, first, count)
 				frame_hint = frame + 1
 				return first * PAGE_SIZE
 			}
@@ -190,6 +193,7 @@ frames_take_aligned :: proc "contextless" (count: u64, alignment: u64) -> u64 {
 			frame_bits[frame / 64] |= 1 << (frame % 64)
 		}
 		free_frames -= count
+		frame_runs.on_frames_taken(&frame_runs_table, first, count)
 		return first * PAGE_SIZE
 	}
 	return 0
@@ -209,7 +213,55 @@ frames_free_held :: proc "contextless" (address: u64, count: u64) {
 		frame_bits[f / 64] &~= 1 << (f % 64)
 	}
 	free_frames += count
+	frame_runs.on_frames_freed(&frame_runs_table, first, count)
 	frame_hint = min(frame_hint, first)
+}
+
+// frames_take_run_2m_held allocates one aligned 2 MiB run for budget if
+// quota permits and a free 2 MiB block exists (draining per-CPU caches once
+// if needed). The caller holds the frame lock and no cache lock.
+frames_take_run_2m_held :: proc "contextless" (budget: u32, budget_total_pages: u64) -> (physical: u64, ok: bool) {
+	if !frame_runs.quota_allows_2m(&frame_runs_table, budget, budget_total_pages) {
+		return 0, false
+	}
+	physical, ok = frame_runs.take_run_2m(&frame_runs_table, frame_bits, budget, budget_total_pages)
+	if !ok {
+		caches_drain()
+		physical, ok = frame_runs.take_run_2m(&frame_runs_table, frame_bits, budget, budget_total_pages)
+	}
+	if ok {
+		free_frames -= frame_runs.RUN_2M_PAGES
+	}
+	return physical, ok
+}
+
+// frames_take_run_1g_held allocates one aligned 1 GiB run for budget if
+// pdpe1gb is supported, quota permits, and a free 1 GiB block exists. The
+// caller holds the frame lock and no cache lock.
+frames_take_run_1g_held :: proc "contextless" (budget: u32, budget_total_pages: u64) -> (physical: u64, ok: bool) {
+	if !frame_runs.quota_allows_1g(&frame_runs_table, budget, budget_total_pages) {
+		return 0, false
+	}
+	physical, ok = frame_runs.take_run_1g(&frame_runs_table, frame_bits, budget, budget_total_pages)
+	if !ok {
+		caches_drain()
+		physical, ok = frame_runs.take_run_1g(&frame_runs_table, frame_bits, budget, budget_total_pages)
+	}
+	if ok {
+		free_frames -= frame_runs.RUN_1G_PAGES
+	}
+	return physical, ok
+}
+
+// frame_release_held returns one region page frame under the frame lock and
+// cache lock: run frames go directly to the bitmap so their 2 MiB / 1 GiB
+// block heals when its last page leaves; other frames go to the CPU cache.
+frame_release_held :: proc "contextless" (cache: ^Frame_Cache, frame: u64) {
+	if frame_runs.is_run_frame(&frame_runs_table, frame / PAGE_SIZE) {
+		frames_free_held(frame, 1)
+		return
+	}
+	cache_put_held(cache, frame)
 }
 
 // The frame cache of each processor (docs/ARCHITECTURE.md, "Locks of the
@@ -410,33 +462,53 @@ frames_check :: proc "contextless" () {
 	}
 }
 
-// page_entry gives the entry of the last level table for an address, or
-// nil when a table on the way is missing. It makes no table. A large page:
-// the entry of the second level is the entry of the address (an object made
-// Large_Pages).
-page_entry :: proc "contextless" (table: u64, address: u64) -> ^u64 {
+// page_entry_with_size gives the leaf page table entry for an address and
+// its page size (4 KiB, 2 MiB, or 1 GiB), or nil when a table on the way is
+// missing. It makes no table.
+page_entry_with_size :: proc "contextless" (table: u64, address: u64) -> (entry: ^u64, size: word_table.Entry_Size) {
 	current := table
 	for level := uint(3); level >= 1; level -= 1 {
-		entry := &direct(current, [512]u64)[address >> (12 + 9 * level) & 511]
-		if level == 1 && entry^ & PAGE_LARGE != 0 {
-			return entry
+		e := &direct(current, [512]u64)[address >> (12 + 9 * level) & 511]
+		if e^ & PAGE_PRESENT == 0 {
+			return nil, .Size_4K
 		}
-		if entry^ & PAGE_PRESENT == 0 {
-			return nil
+		if level == 2 && e^ & PAGE_LARGE != 0 {
+			return e, .Size_1G
 		}
-		current = entry^ & PAGE_ADDRESS
+		if level == 1 && e^ & PAGE_LARGE != 0 {
+			return e, .Size_2M
+		}
+		current = e^ & PAGE_ADDRESS
 	}
-	return &direct(current, [512]u64)[address >> 12 & 511]
+	return &direct(current, [512]u64)[address >> 12 & 511], .Size_4K
+}
+
+// page_entry gives the leaf entry for an address, or nil when a table on the
+// way is missing. It makes no table.
+page_entry :: proc "contextless" (table: u64, address: u64) -> ^u64 {
+	entry, _ := page_entry_with_size(table, address)
+	return entry
+}
+
+// page_directory_pointer_entry gives the entry of the third level (level 2,
+// 1 GiB) for an address aligned on 1 GiB, present or not. nil: top entry
+// missing. It makes no table.
+page_directory_pointer_entry :: proc "contextless" (table: u64, address: u64) -> ^u64 {
+	top := &direct(table, [512]u64)[address >> 39 & 511]
+	if top^ & PAGE_PRESENT == 0 {
+		return nil
+	}
+	return &direct(top^ & PAGE_ADDRESS, [512]u64)[address >> 30 & 511]
 }
 
 // page_directory_entry gives the entry of the second level for an address
-// aligned on 2 MiB, present or not: the place of a large page. nil: a table
-// above it is missing. It makes no table.
+// aligned on 2 MiB, present or not: the place of a 2 MiB entry. nil: a table
+// above it is missing or maps a 1 GiB page. It makes no table.
 page_directory_entry :: proc "contextless" (table: u64, address: u64) -> ^u64 {
 	current := table
 	for level := uint(3); level >= 2; level -= 1 {
 		entry := &direct(current, [512]u64)[address >> (12 + 9 * level) & 511]
-		if entry^ & PAGE_PRESENT == 0 {
+		if entry^ & PAGE_PRESENT == 0 || (level == 2 && entry^ & PAGE_LARGE != 0) {
 			return nil
 		}
 		current = entry^ & PAGE_ADDRESS
@@ -594,7 +666,6 @@ page_entries_release :: proc "contextless" (table: u64, address: u64, holder_lev
 
 // freed_tables_add links a table that left its page table. The test build
 // checks the count: no entry of the table is present.
-@(private = "file")
 freed_tables_add :: proc "contextless" (freed: ^Freed_Tables, table: u64) {
 	when TEST_BUILD_CHECKS_LOCK_ORDER {
 		for entry in direct(table, [512]u64) {
@@ -730,16 +801,27 @@ user_range :: proc "contextless" (process: ^Process, address: u64, size: u64, wr
 	if address >= USER_END || size > USER_END - address {
 		return false
 	}
-	for page := address &~ (PAGE_SIZE - 1); page < address + size; page += PAGE_SIZE {
-		entry := page_entry(process.table, page)
+	end := address + size
+	for page := address &~ (PAGE_SIZE - 1); page < end; {
+		entry, entry_size := page_entry_with_size(process.table, page)
 		if (entry == nil || entry^ & PAGE_PRESENT == 0) && page_give(process, page, write, false) {
-			entry = page_entry(process.table, page)
+			entry, entry_size = page_entry_with_size(process.table, page)
 		}
 		if entry == nil || entry^ & (PAGE_PRESENT | PAGE_USER) != PAGE_PRESENT | PAGE_USER {
 			return false
 		}
 		if write && entry^ & PAGE_WRITE == 0 {
 			return false
+		}
+		switch entry_size {
+		case .Size_4K:
+			page += PAGE_SIZE
+		case .Size_2M:
+			next := (page &~ u64(LARGE_PAGE_SIZE - 1)) + LARGE_PAGE_SIZE
+			page = min(next, end)
+		case .Size_1G:
+			next := (page &~ u64(word_table.GIANT_PAGE_SIZE - 1)) + word_table.GIANT_PAGE_SIZE
+			page = min(next, end)
 		}
 	}
 	return true

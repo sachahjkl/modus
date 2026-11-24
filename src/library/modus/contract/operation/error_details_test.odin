@@ -228,6 +228,8 @@ the_arguments_that_the_operation_reads :: proc(t: ^testing.T) {
 	// the kernel refuses it with a detail of the budget.
 	values[1] = 0
 	testing.expect(t, argument_is_read(.Memory_Commit, 1, values))
+	values[4] = transmute(u64)Commit_Flags{.Frames_Now}
+	testing.expect(t, argument_is_read(.Memory_Commit, 1, values))
 	values[4] = transmute(u64)Commit_Flags{.Decommit}
 	testing.expect(t, !argument_is_read(.Memory_Commit, 1, values))
 	// A flag that the kernel does not know beside Decommit: still a

@@ -553,7 +553,9 @@ names_write :: proc "contextless" (writer: ^sentence.Writer, refusal: Refusal) {
 			put(writer, &first, module.string_at(refusal.file, function.parameter_names[index], u32(function.parameter_name_counts[index])))
 		}
 	}
-	put(writer, &first, root_plan_values.STORE_BLOCKS_FIELD)
+	for item in root_plan_values.OWNER_FIELDS {
+		put(writer, &first, item.name)
+	}
 }
 
 // The fields of Plan_Entry_Row, as the description of an export must hold

@@ -669,6 +669,7 @@ guest_page_answer :: proc "contextless" (process: ^Process, address: u64, write:
 		}
 		entry^ = frame | PAGE_PRESENT | PAGE_USER | mapping.limit_bits & PAGE_CACHE_TYPE_BITS | access_bits
 		mapping.present_page_count += 1 // Under the process lock: the caller holds it.
+		mapping.entries_4k += 1
 		return .Given
 	case .Switch:
 		entry^ = entry^ & PAGE_ADDRESS | PAGE_PRESENT | PAGE_USER | mapping.limit_bits & PAGE_CACHE_TYPE_BITS | access_bits

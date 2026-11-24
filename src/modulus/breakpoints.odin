@@ -3,6 +3,7 @@ package kernel
 import "base:intrinsics"
 import "modulus:debug_exception"
 import op "modus:contract/operation"
+import "modulus:word_table"
 
 // The breakpoints of a thread, and the read of the memory of a process
 // (docs/ARCHITECTURE.md, "The debugger of a process").
@@ -243,12 +244,10 @@ process_page_physical :: proc "contextless" (process: ^Process, address: u64) ->
 	if mapping == nil || process.table == 0 || regions[mapping.region].device {
 		return 0
 	}
-	entry := page_entry(process.table, address)
-	if entry == nil || entry^ & (PAGE_PRESENT | PAGE_USER) != PAGE_PRESENT | PAGE_USER {
+	entry, entry_size := page_entry_with_size(process.table, address)
+	if entry == nil {
 		return 0
 	}
-	if mapping.large {
-		return entry^ & PAGE_ADDRESS &~ u64(LARGE_PAGE_SIZE - 1) | address & (LARGE_PAGE_SIZE - 1)
-	}
-	return entry^ & PAGE_ADDRESS | address & (PAGE_SIZE - 1)
+	physical, ok := word_table.word_physical_of_size(entry^, address, entry_size)
+	return ok ? physical : 0
 }

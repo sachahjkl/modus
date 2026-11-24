@@ -1,6 +1,7 @@
 package kernel
 
 import op "modus:contract/operation"
+import "modulus:frame_runs"
 import "modulus:table_sizes"
 import "modulus:word_table"
 
@@ -36,6 +37,15 @@ tables_start :: proc "contextless" () {
 	wait_words = {heads = table_take(^Wait_Entry, u32(word_table.buckets_of_frames(frame_count)), "the buckets of the word wait"), frames = frame_count}
 	regions = table_take(Region, region_capacity, "the memory objects")
 	region_locks = table_take(Lock, region_capacity, "the locks of the memory objects")
+	if frame_runs_arch_enabled() {
+		run_layout := frame_runs.layout_of(frame_count, BUDGET_CAPACITY)
+		run_backing := table_take(u8, u32(run_layout.total_bytes), "the frame runs")
+		if !frame_runs.table_bind(&frame_runs_table, run_backing, frame_count, BUDGET_CAPACITY, frame_runs_arch_supports_1g()) {
+			log("kernel: no room for the frame run tables")
+			machine_stop(.Start_Failed)
+		}
+		frame_runs.table_init(&frame_runs_table, frame_bits)
+	}
 	log("kernel: tables: ", u64(process_capacity), " process slots, ", u64(thread_table_capacity), " threads, ", u64(region_capacity), " memory objects: ", Size{(before - free_frames) * PAGE_SIZE >> 20, .Mebibytes})
 }
 

@@ -133,6 +133,9 @@ process_mappings_report :: proc "contextless" (report: ^op.Process_Mapping_Repor
 			page_count = mapping.page_count,
 			first      = mapping.first,
 			present    = mapping.present_page_count,
+			entries_4k = mapping.entries_4k,
+			entries_2m = mapping.entries_2m,
+			entries_1g = mapping.entries_1g,
 		}
 		// The protection of the mapping now; a part can have another one
 		// (Protected: the slots of its pages say it).

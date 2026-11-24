@@ -127,10 +127,10 @@ role_of_owner_module :: proc "contextless" (image: Image, holders: ^Role_Holders
 // export plan_only.
 describe :: proc "contextless" (image: Image, holders: ^Role_Holders, owner, field: string) -> (described: Described, refusal: Refusal) {
 	if owner == root_plan_values.OWNER {
-		if range, found := root_plan_values.field_range_of(owner, field); found && field != root_plan_values.STORE_BLOCKS_FIELD {
+		if range, found := root_plan_values.field_range_of(owner, field); found {
 			return {type = .Integer, has_range = true, least = i64(range.least), most = i64(range.most)}, {}
 		}
-		// The core has no store: store_blocks is no value of it.
+		// The core has no store or per-module budget row.
 		return {}, {problem = .Field_Unknown, root = true}
 	}
 	if role, holds := role_of_owner_module(image, holders, owner); holds {
@@ -140,10 +140,9 @@ describe :: proc "contextless" (image: Image, holders: ^Role_Holders, owner, fie
 	if len(file) == 0 {
 		return {}, {problem = .Owner_Unknown}
 	}
-	// The quota of a store is a value of each owner that exists: the core
-	// reads it when it opens the store of that owner.
-	if field == root_plan_values.STORE_BLOCKS_FIELD {
-		range, _ := root_plan_values.field_range_of(owner, field)
+	// Plan-only fields that the core reads for each owner: store_blocks and
+	// the budget policy fields of root_plan_values.OWNER_FIELDS.
+	if range, found := root_plan_values.field_range_of(owner, field); found {
 		return {type = .Integer, has_range = true, least = i64(range.least), most = i64(range.most)}, {}
 	}
 	for export_name in DESCRIBING_EXPORTS {

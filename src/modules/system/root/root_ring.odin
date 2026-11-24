@@ -284,6 +284,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 	case .Ready:
 		// The ready ring carries it (budgets.odin, ready_ring_serve): the
 		// sender check refuses it here, so this case never runs.
+	case .Budget_Grow:
+		answer.outcome = budget_grow_command(item, record, &answer.values) // budget_growth.odin
 	}
 	return answer
 }

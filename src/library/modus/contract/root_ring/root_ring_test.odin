@@ -416,6 +416,41 @@ refuse_writes_the_record_and_gives_its_outcome :: proc(t: ^testing.T) {
 	testing.expect_value(t, read_record, record)
 }
 
+// Budget_Grow border: refuses unknown step, zero pages/growth, and any
+// trailing non-zero word; accepts Grow and Release with exact fields.
+@(test)
+budget_grow_border_checks_step_and_words :: proc(t: ^testing.T) {
+	// Unknown steps refused at place 1.
+	for bad_step in ([?]u64{0, 3, max(u64)}) {
+		_, place, ok := budget_grow_words_of_values({0 = bad_step, 1 = 64})
+		testing.expect(t, !ok && place == 1)
+	}
+	// Zero pages or growth refused at place 2.
+	_, place_g0, ok_g0 := budget_grow_words_of_values({0 = u64(Budget_Grow_Step.Grow), 1 = 0})
+	testing.expect(t, !ok_g0 && place_g0 == 2)
+	_, place_r0, ok_r0 := budget_grow_words_of_values({0 = u64(Budget_Grow_Step.Release), 1 = 0})
+	testing.expect(t, !ok_r0 && place_r0 == 2)
+	// Any non-zero trailing word refused at its 1-based place.
+	for idx in 2 ..< 7 {
+		vals: [7]u64
+		vals[0] = u64(Budget_Grow_Step.Grow)
+		vals[1] = 128
+		vals[idx] = 1
+		_, place, ok := budget_grow_words_of_values(vals)
+		testing.expectf(t, !ok && place == idx + 1, "trailing word %d gave ok=%v place=%d", idx, ok, place)
+	}
+	// Valid Grow and Release.
+	gw, gp, gok := budget_grow_words_of_values({0 = u64(Budget_Grow_Step.Grow), 1 = 512})
+	testing.expect(t, gok && gp == 0 && gw.step == .Grow && gw.pages == 512)
+	rw, rp, rok := budget_grow_words_of_values({0 = u64(Budget_Grow_Step.Release), 1 = 9})
+	testing.expect(t, rok && rp == 0 && rw.step == .Release && rw.growth == 9)
+	// Any process with a root ring can reach the Budget_Grow command border.
+	d := dispatch_decide(u32(Root_Command.Budget_Grow), {.Connect}, false)
+	testing.expect(t, d.step == .Command && d.command == .Budget_Grow)
+	d_no_ring := dispatch_decide(u32(Root_Command.Budget_Grow), {}, false)
+	testing.expect(t, d_no_ring.step == .Sender)
+}
+
 // The border of each root command that the root service reads, as it
 // calls it: the enumeration, the command and the argument of its record.
 // Each word that names no member gives Argument_Refused and the record

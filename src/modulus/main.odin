@@ -215,6 +215,7 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	ROOT_BUDGET :: 1
 	budgets[ROOT_BUDGET] = {
 		live = true,
+		quota_pages = free_frames,
 		amounts = {processes = u64(process_capacity) - 1, threads = u64(thread_table_capacity) - 1, processor = u64(processor_count) * 1_000_000, log_records = u64(process_capacity) * op.LOG_RECORDS_OF_A_PROCESS},
 	}
 	budget_peak.created(&budgets[ROOT_BUDGET].amounts.pages, &budgets[ROOT_BUDGET].least_pages, free_frames)

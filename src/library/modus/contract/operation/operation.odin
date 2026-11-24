@@ -3226,12 +3226,13 @@ Address_Range :: struct {
 
 // A flag of `Memory_Commit`.
 Commit_Flag :: enum u64 {
-	Decommit = 0, // The committed pages of the ranges are no longer paid: their frames return to the budget at once, and a page committed again is zero.
+	Decommit   = 0, // The committed pages of the ranges are no longer paid: their frames return to the budget at once, and a page committed again is zero.
+	Frames_Now = 1, // Commit and allocate zeroed frames immediately, taking aligned 2 MiB or 1 GiB runs when available. Refused with Decommit.
 }
-// The flags of one `Memory_Commit`: `{}` commits, `{.Decommit}` decommits.
+// The flags of one `Memory_Commit`: `{}` commits, `{.Frames_Now}` commits with zeroed frames now, `{.Decommit}` decommits.
 Commit_Flags :: bit_set[Commit_Flag;u64]
 // The flags that `Memory_Commit` knows, as the word of its argument.
-COMMIT_FLAGS_KNOWN :: u64(1) << u64(Commit_Flag.Decommit)
+COMMIT_FLAGS_KNOWN :: (u64(1) << u64(Commit_Flag.Decommit)) | (u64(1) << u64(Commit_Flag.Frames_Now))
 
 // A flag of `Memory_Map` and of `Memory_Protect`: the access that a mapping
 // gives. No flag is read only. A page is never writable and executable.
@@ -3384,7 +3385,7 @@ Process_Mapping_Flag :: enum u32 {
 //
 // The kernel writes it for a developer tool from its own table of mappings
 // and from the page table. Example: a stack of 64 pages of which the process
-// touched 3 has `page_count = 64`, `present = 3` and the flag `Write`. 64
+// touched 3 has `page_count = 64`, `present = 3` and the flag `Write`. 88
 // bytes.
 Process_Mapping :: struct {
 	address:       u64, // The first byte of the mapping in the process.
@@ -3396,8 +3397,11 @@ Process_Mapping :: struct {
 	flags:         bit_set[Process_Mapping_Flag;u32], // What the mapping and its memory object are.
 	references:    u32, // The handles and the mappings that name the memory object, in all processes.
 	committed:     u64, // The committed pages of the memory object: all its pages, unless it was made Uncommitted.
+	entries_4k:    u64, // Present 4 KiB page table entries in this mapping.
+	entries_2m:    u64, // Present 2 MiB page table entries in this mapping.
+	entries_1g:    u64, // Present 1 GiB page table entries in this mapping.
 }
-#assert(size_of(Process_Mapping) == 64)
+#assert(size_of(Process_Mapping) == 88)
 
 MAPPING_REPORT_CAPACITY :: 1024 // MAPPING_CAPACITY of the kernel: the mappings of one process. `Memory_Map` gives `No_Slot` for one more.
 // HANDLE_CAPACITY of the kernel: the places of the handle table of one process. The place 0 holds no handle,
@@ -3487,6 +3491,10 @@ System_Report :: struct {
 	locks:            [LOCK_KIND_CAPACITY]Lock_Count, // By Lock_Kind.
 	strategy:         Strategy, // The scheduling strategy of the machine (Strategy_Set): the new one as soon as a change starts, before each run queue converted (Processor_Report.strategy).
 	strategy_changes: u32, // The calls of Strategy_Set since boot.
+	free_runs_2m:     u64, // Whole aligned free 2 MiB frame runs now (0 on wasm64p32).
+	free_runs_1g:     u64, // Whole aligned free 1 GiB frame runs now (0 on wasm64p32 or without pdpe1gb).
+	fallback_2m:      u64, // 2 MiB prefault commits that fell back to 4 KiB frames since boot.
+	fallback_1g:      u64, // 1 GiB prefault commits that fell back to 2 MiB or 4 KiB frames since boot.
 }
 
 // The locks of the kernel, by the data that each one protects

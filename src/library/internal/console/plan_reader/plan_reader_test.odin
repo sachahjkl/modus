@@ -204,7 +204,7 @@ a_plan_is_refused_at_its_border :: proc(t: ^testing.T) {
 		{"plan { stores = [store(\"notes\")] }", .Store_Right_Missing, ""},
 		{"plan { values = { nowhere = { x = 1 } } }", .Owner_Unknown, "the plan names the owner nowhere, which is no module of the image and no role with a holder"},
 		{"plan { values = { assistive = { x = 1 } } }", .Owner_Unknown, ""},
-		{"plan { values = { display = { bar_edg = .top } } }", .Field_Unknown, "the owner display has no value bar_edg: its values are bar_edge, do_not_disturb, notification_show_milliseconds, magnifier_eighths, consent_arm_milliseconds, store_blocks"},
+		{"plan { values = { display = { bar_edg = .top } } }", .Field_Unknown, "the owner display has no value bar_edg: its values are bar_edge, do_not_disturb, notification_show_milliseconds, magnifier_eighths, consent_arm_milliseconds, store_blocks, budget_pages, budget_share_parts, budget_ceiling_pages, budget_growth_reserve_pages, budget_processor, budget_log_records, budget_screen_pages"},
 		{"plan { values = { display = { bar_edge = 2 } } }", .Value_Kind, "display.bar_edge takes a member, as .name"},
 		{"plan { values = { display = { bar_edge = .botom } } }", .Member_Unknown, "display.bar_edge has no member .botom: its members are .top, .bottom"},
 		{"plan { values = { display = { notification_show_milliseconds = .on } } }", .Value_Kind, "display.notification_show_milliseconds takes a number"},
@@ -216,7 +216,7 @@ a_plan_is_refused_at_its_border :: proc(t: ^testing.T) {
 		{"plan { values = { display = { bar_edge = .top } }, locks = { display = { bar_edge = .bottom } } }", .Default_And_Lock, "display.bar_edge is in the plan twice: a value is a default in values, or a lock in locks, once"},
 		{"plan { values = { root = { budget_share = 0 } } }", .Out_Of_Range, "root.budget_share is 0, outside its range 1 to 64"},
 		{"plan { values = { root = { budget_share = 65 } } }", .Out_Of_Range, ""},
-		{"plan { values = { root = { quota = 2 } } }", .Field_Unknown, "the owner root has no value quota: its values are budget_share, memory_screen_start_width, memory_screen_start_height, memory_screen_most_width, memory_screen_most_height"},
+		{"plan { values = { root = { quota = 2 } } }", .Field_Unknown, "the owner root has no value quota: its values are budget_share, default_growth_factor, budget_growth_period_ms, disk_processes_pages, disk_processes_processes, disk_processes_threads, disk_processes_processor, memory_screen_start_width, memory_screen_start_height, memory_screen_most_width, memory_screen_most_height"},
 		// The core has no store, and an owner that does not exist has none.
 		{"plan { values = { root = { store_blocks = 4 } } }", .Field_Unknown, ""},
 		{"plan { values = { nowhere = { store_blocks = 4 } } }", .Owner_Unknown, ""},
@@ -227,7 +227,7 @@ a_plan_is_refused_at_its_border :: proc(t: ^testing.T) {
 		{"plan { values = { browser = { store_blocks = 0 } } }", .Out_Of_Range, ""},
 		{"plan { values = { display = { Bar = .top } } }", .Name_Not_Valid, ""},
 		// The other holder of Display that the plan names has no magnifier.
-		{"plan { roles = { display = module(blake3:OTHER) }, values = { display = { magnifier_eighths = 16 } } }", .Field_Unknown, "the owner display has no value magnifier_eighths: its values are bar_edge, store_blocks"},
+		{"plan { roles = { display = module(blake3:OTHER) }, values = { display = { magnifier_eighths = 16 } } }", .Field_Unknown, "the owner display has no value magnifier_eighths: its values are bar_edge, store_blocks, budget_pages, budget_share_parts, budget_ceiling_pages, budget_growth_reserve_pages, budget_processor, budget_log_records, budget_screen_pages"},
 	}
 	other_hex := strings.concatenate({"ab", strings.repeat("00", 31, context.temp_allocator)}, context.temp_allocator)
 	for item in cases {
