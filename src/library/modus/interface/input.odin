@@ -3,9 +3,17 @@ package interface
 import "modus:contract/scale_factor"
 import "modus:display"
 
-KEY_CAPACITY :: 16 // The keys of one frame.
-FOCUS_ORDER_CAPACITY :: 64 // The elements that can take the focus in one frame.
+KEY_CAPACITY :: 16 // Plan value: keys buffered per frame before remaining events wait in the window ring.
+// Inline capacity: fast tier for typical windows (observed desktop windows hold
+// 4 to 48 focusable controls). Past this count, an Interface_State configured
+// with interface_state_set_focus_overflow moves to its backing slice without
+// dropping Tab targets, incrementing focus_overflow_moves.
+FOCUS_ORDER_CAPACITY :: 64
 KEY_TAB :: 0x0F // The code of the key Tab: it moves the focus (Shift+Tab: back).
+
+// Caller-supplied growth callback for the slower focus-order tier. Returns a
+// slice of at least minimum_count entries, or false when the budget refuses.
+Focus_Order_Grow :: #type proc "contextless" (user_data: rawptr, current: []Element_Identity, minimum_count: int) -> (grown: []Element_Identity, ok: bool)
 
 // A number that names one element from one frame to the next.
 Element_Identity :: distinct u64
@@ -128,8 +136,13 @@ Interface_State :: struct {
 	pressed:       Element_Identity, // The element where the left button went down, until it goes up.
 	// The order of the elements that can take the focus, in the last frame:
 	// Tab and Shift+Tab follow it.
-	focus_order:   [FOCUS_ORDER_CAPACITY]Element_Identity,
-	focus_count:   int, // The entries of `focus_order` in use.
+	focus_order:          [FOCUS_ORDER_CAPACITY]Element_Identity,
+	focus_count:          int, // The entries of the active focus order in use.
+	focus_external:       []Element_Identity, // Slower tier: caller-supplied backing slice past FOCUS_ORDER_CAPACITY.
+	focus_grow:           Focus_Order_Grow,
+	focus_grow_data:      rawptr,
+	focus_in_overflow:    bool, // True when the last frame's focus order lives in focus_external.
+	focus_overflow_moves: u64, // Count of moves to or growths of the slower focus tier, visible as a measure.
 	view_zoom:     scale_factor.View_Zoom, // Independent per-view zoom in eighths (0 reads as .One).
 	// The scroll bar that holds the press (`pressed` is its identity): one
 	// button is down at a time, so one scroll bar at most is held, and no
@@ -143,7 +156,44 @@ Interface_State :: struct {
 	act_names:      [display.ACT_NAME_SET_CAPACITY]Act_Name,
 	act_name_count: int, // The entries of `act_names` in use.
 }
-#assert(size_of(Interface_State) == 1160)
+#assert(size_of(Interface_State) == 1208)
+
+// interface_state_set_focus_overflow attaches a caller-supplied backing slice
+// and optional growth callback for frames with more than FOCUS_ORDER_CAPACITY
+// focusable elements. Frames within FOCUS_ORDER_CAPACITY stay on the inline tier.
+interface_state_set_focus_overflow :: proc "contextless" (state: ^Interface_State, backing: []Element_Identity, grow: Focus_Order_Grow = nil, grow_data: rawptr = nil) {
+	if state == nil {
+		return
+	}
+	state.focus_external = backing
+	state.focus_grow = grow
+	state.focus_grow_data = grow_data
+	if state.focus_count == 0 {
+		state.focus_in_overflow = false
+	}
+}
+
+// state_focus_order returns the active focus order slice from the last frame.
+state_focus_order :: proc "contextless" (state: ^Interface_State) -> []Element_Identity {
+	if state == nil || state.focus_count <= 0 {
+		return nil
+	}
+	if state.focus_in_overflow {
+		return state.focus_external[:min(state.focus_count, len(state.focus_external))]
+	}
+	return state.focus_order[:min(state.focus_count, FOCUS_ORDER_CAPACITY)]
+}
+
+// frame_focus_order returns the active focus order slice built in this frame.
+frame_focus_order :: proc "contextless" (frame: ^Frame) -> []Element_Identity {
+	if frame == nil || frame.focus_count <= 0 {
+		return nil
+	}
+	if frame.focus_in_overflow && frame.state != nil {
+		return frame.state.focus_external[:min(frame.focus_count, len(frame.state.focus_external))]
+	}
+	return frame.focus_order[:min(frame.focus_count, FOCUS_ORDER_CAPACITY)]
+}
 
 // One act name of a frame: what an element acts on, in the words of a
 // palette entry that does the same thing
@@ -212,13 +262,14 @@ Frame :: struct {
 	scroll_bar_lit: Element_Identity, // The scroll bar that this frame drew lit, so far.
 	scroll_bar_held_drawn: bool, // The scroll bar that holds the press is in this frame.
 	under_pointer: Element_Identity, // The element under the pointer in this frame, so far.
-	focus_order:   [FOCUS_ORDER_CAPACITY]Element_Identity, // The elements that can take the focus in this frame, so far.
-	focus_count:   int, // The entries of `focus_order` in use.
+	focus_order:       [FOCUS_ORDER_CAPACITY]Element_Identity, // The elements that can take the focus in this frame, so far.
+	focus_count:       int, // The entries of the active focus order in use.
+	focus_in_overflow: bool, // True when this frame moved its focus order into state.focus_external.
 	// Two elements with one identity in this frame: both would show the
 	// focus and take a press. The caller makes them two with identity_with.
 	identity_collisions: int,
-	// Elements after the first FOCUS_ORDER_CAPACITY that can take the focus:
-	// a press reaches them, Tab does not.
+	// Elements that did not fit in the inline tier or any configured overflow
+	// tier: a press reaches them, Tab does not.
 	focus_overflow:      int,
 	act_names:           [display.ACT_NAME_SET_CAPACITY]Act_Name, // The act names of this frame, so far: the first element of each one.
 	act_name_count:      int, // The entries of `act_names` in use.
@@ -238,23 +289,24 @@ Frame :: struct {
 // system in milliseconds: a held arrow button of a scroll bar repeats by it.
 frame_begin :: proc "contextless" (table: ^Draw_Table, state: ^Interface_State, input: ^Input, time: u64 = 0) -> Frame {
 	draw_table_clear(table)
+	order := state_focus_order(state)
 	for &key in input.keys[:input.key_count] {
-		if key.code != KEY_TAB || state.focus_count == 0 {
+		if key.code != KEY_TAB || len(order) == 0 {
 			continue
 		}
 		key.taken = true
 		position := -1
-		for item, index in state.focus_order[:state.focus_count] {
+		for item, index in order {
 			if item == state.focus {
 				position = index
 			}
 		}
 		backward := key.modifiers & display.MODIFIER_SHIFT != 0
 		if position < 0 {
-			position = backward ? 0 : state.focus_count - 1
+			position = backward ? 0 : len(order) - 1
 		}
-		step := backward ? state.focus_count - 1 : 1
-		state.focus = state.focus_order[(position + step) % state.focus_count]
+		step := backward ? len(order) - 1 : 1
+		state.focus = order[(position + step) % len(order)]
 	}
 	view_zoom_apply_keys(state, input)
 	return {table = table, state = state, input = input, time = time}
@@ -269,7 +321,10 @@ frame_end :: proc "contextless" (frame: ^Frame) {
 	}
 	state := frame.state
 	state.under_pointer = frame.under_pointer
-	state.focus_order = frame.focus_order
+	state.focus_in_overflow = frame.focus_in_overflow
+	if !frame.focus_in_overflow {
+		state.focus_order = frame.focus_order
+	}
 	state.focus_count = frame.focus_count
 	state.scroll_bar_lit = frame.scroll_bar_lit
 	state.act_names = frame.act_names
@@ -306,17 +361,50 @@ Element_Kind :: enum u8 {
 element_interact :: proc "contextless" (frame: ^Frame, element: Element_Identity, area: Area, kind: Element_Kind) -> (result: Element_Result) {
 	state := frame.state
 	input := frame.input
-	for other in frame.focus_order[:frame.focus_count] {
+	for other in frame_focus_order(frame) {
 		if other == element {
 			frame.identity_collisions += 1
 			break
 		}
 	}
-	if frame.focus_count < FOCUS_ORDER_CAPACITY {
+	if !frame.focus_in_overflow && frame.focus_count < FOCUS_ORDER_CAPACITY {
 		frame.focus_order[frame.focus_count] = element
 		frame.focus_count += 1
 	} else {
-		frame.focus_overflow += 1
+		needed := frame.focus_count + 1
+		ready := false
+		if !frame.focus_in_overflow {
+			target := state.focus_external
+			if len(target) < needed && state.focus_grow != nil {
+				if grown, ok := state.focus_grow(state.focus_grow_data, target, needed); ok && len(grown) >= needed && raw_data(grown) != nil {
+					target = grown
+				}
+			}
+			if len(target) >= needed {
+				copy(target[:frame.focus_count], frame.focus_order[:frame.focus_count])
+				state.focus_external = target
+				frame.focus_in_overflow = true
+				state.focus_overflow_moves += 1
+				ready = true
+			}
+		} else if len(state.focus_external) >= needed {
+			ready = true
+		} else if state.focus_grow != nil {
+			if grown, ok := state.focus_grow(state.focus_grow_data, state.focus_external, needed); ok && len(grown) >= needed && raw_data(grown) != nil {
+				if raw_data(grown) != raw_data(state.focus_external) {
+					copy(grown[:frame.focus_count], state.focus_external[:frame.focus_count])
+				}
+				state.focus_external = grown
+				state.focus_overflow_moves += 1
+				ready = true
+			}
+		}
+		if ready {
+			state.focus_external[frame.focus_count] = element
+			frame.focus_count += 1
+		} else {
+			frame.focus_overflow += 1
+		}
 	}
 	if input.pointer_known && area_contains(area, input.pointer_x, input.pointer_y) {
 		result.under_pointer = true

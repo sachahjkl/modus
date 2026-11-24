@@ -882,3 +882,102 @@ token_stack_bounds :: proc(t: ^testing.T) {
 	stack.depth = TOKEN_STACK_CAPACITY + 1
 	testing.expect(t, !pop_tokens(stack) && !push_tokens(stack, light))
 }
+
+// Crossing BOX_CAPACITY (1024 -> 1025 -> 2048 -> 2049) moves cleanly from the
+// fast inline tier to the caller-supplied overflow tier, counts each move,
+// solves every box accurately, records states past 1024, returns to inline on
+// the next frame, and leaves the tree intact if growth is refused.
+@(test)
+box_tree_overflow_tier_crosses_inline_capacity :: proc(t: ^testing.T) {
+	Grow_Context :: struct {
+		backing:   [dynamic]Box,
+		limit:     int,
+		calls:     int,
+	}
+	grow_proc :: proc "contextless" (user_data: rawptr, current: []Box, minimum_boxes: int) -> (grown: []Box, ok: bool) {
+		ctx := (^Grow_Context)(user_data)
+		ctx.calls += 1
+		if minimum_boxes > ctx.limit {
+			return nil, false
+		}
+		// Copy existing slots before growing in case backing reallocates.
+		return ctx.backing[:min(len(ctx.backing), max(minimum_boxes, min(ctx.limit, max(len(current) * 2, BOX_CAPACITY + 256))))], true
+	}
+
+	tree := new(Box_Tree)
+	defer free(tree)
+	ctx := Grow_Context{limit = 2200}
+	resize(&ctx.backing, 2200)
+	defer delete(ctx.backing)
+	tree_set_overflow(tree, nil, grow_proc, &ctx)
+
+	// Up to BOX_CAPACITY boxes stay on the fast inline tier with zero moves.
+	row_root(tree, 4096, 100)
+	for _ in 1 ..< BOX_CAPACITY {
+		_, status := box_add(tree, {size = {.X = px(1), .Y = px(1)}})
+		testing.expect_value(t, status, Box_Status.Done)
+	}
+	testing.expect_value(t, tree.count, BOX_CAPACITY)
+	testing.expect(t, !tree_on_overflow(tree))
+	testing.expect_value(t, tree.overflow_moves, u64(0))
+
+	// A refused description at the inline boundary must not trigger an overflow move.
+	_, bad_status := box_add(tree, {size = {.X = px(-1), .Y = px(1)}})
+	testing.expect_value(t, bad_status, Box_Status.Size_Refused)
+	testing.expect(t, !tree_on_overflow(tree))
+	testing.expect_value(t, tree.overflow_moves, u64(0))
+
+	// Box 1025 transitions into the slower overflow tier and increments overflow_moves.
+	idx_1025, status_1025 := box_add(tree, {label = "box_1025", size = {.X = px(1), .Y = px(1)}})
+	testing.expect_value(t, status_1025, Box_Status.Done)
+	testing.expect_value(t, idx_1025, Box_Index(BOX_CAPACITY + 1))
+	testing.expect(t, tree_on_overflow(tree))
+	testing.expect_value(t, tree.overflow_moves, u64(1))
+
+	// Continue to 2048 boxes (triggers a second growth past initial 1280 slice).
+	last_index := idx_1025
+	for tree.count < 2048 {
+		idx, st := box_add(tree, {size = {.X = px(1), .Y = px(1)}})
+		testing.expect_value(t, st, Box_Status.Done)
+		last_index = idx
+	}
+	testing.expect_value(t, tree.count, 2048)
+	testing.expect(t, tree.overflow_moves >= 2)
+	testing.expect_value(t, solve(tree), Box_Status.Done)
+
+	box_1025 := box_of(tree, idx_1025)
+	testing.expect(t, box_1025 != nil)
+	testing.expect_value(t, box_1025.rect, Rect{1023, 0, 1, 1})
+	box_2048 := box_of(tree, last_index)
+	testing.expect(t, box_2048 != nil)
+	testing.expect_value(t, box_2048.rect, Rect{2046, 0, 1, 1})
+	testing.expect(t, box_of(tree, Box_Index(max(u32))) == nil)
+
+	// states_record reads boxes past BOX_CAPACITY cleanly.
+	states := new(Box_States)
+	defer free(states)
+	states_frame_begin(states, {})
+	testing.expect_value(t, states_record(states, tree), 0)
+	entry, st_ok := state_of(states, box_1025.identity)
+	testing.expect_value(t, st_ok, State_Status.Done)
+	testing.expect_value(t, entry.last_order, u32(idx_1025))
+	testing.expect_value(t, entry.last_rect, Rect{1023, 0, 1, 1})
+
+	// Refused growth past ctx.limit returns Tree_Full and leaves the tree intact.
+	for tree.count < ctx.limit - 1 {
+		_, st := box_add(tree, {size = {.X = px(1), .Y = px(1)}})
+		testing.expect_value(t, st, Box_Status.Done)
+	}
+	count_before := tree.count
+	moves_before := tree.overflow_moves
+	_, refused_status := box_add(tree, {size = {.X = px(1), .Y = px(1)}})
+	testing.expect_value(t, refused_status, Box_Status.Tree_Full)
+	testing.expect_value(t, tree.count, count_before)
+	testing.expect_value(t, tree.overflow_moves, moves_before)
+
+	// Next frame starts back on the fast inline tier while preserving overflow_moves.
+	row_root(tree, 200, 100)
+	testing.expect(t, !tree_on_overflow(tree))
+	testing.expect_value(t, tree.overflow_moves, moves_before)
+	testing.expect_value(t, tree_capacity(tree), BOX_CAPACITY)
+}

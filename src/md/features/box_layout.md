@@ -16,7 +16,7 @@ The model is the box tree of the RAD Debugger, which `gui_toolkit` uses on the h
 
 ## The chosen form
 
-**The layout tree.** `Box_Tree` holds `BOX_CAPACITY` (1024) boxes in one flat array, linked by indexes (parent, first and last child, next and previous sibling). Index 0 is "no box", so a zero link is no link. `tree_begin` starts a frame with the root box at the size of the view; `box_open` adds a box as the last child of the open box and opens it, `box_close` closes it, and `box_add` adds a box that has no children. The tree is built again at each frame, as the elements of the interface package are called again at each frame.
+**The layout tree.** `Box_Tree` holds an inline capacity of `BOX_CAPACITY` (1024) boxes in one flat array, linked by `Box_Index` (`u32`) indexes (parent, first and last child, next and previous sibling). Index 0 is "no box", so a zero link is no link. Past 1024 boxes, a tree with a caller-supplied overflow slice or growth callback (`tree_set_overflow`) copies its active boxes into the slower tier and continues without refusing the frame; each transition or growth increments `overflow_moves`, so a process that lives on the slow path shows in a measure. A tree with no overflow tier keeps the refusal `Tree_Full`. `tree_begin` starts a frame on the inline tier with the root box at the size of the view; `box_open` adds a box as the last child of the open box and opens it, `box_close` closes it, and `box_add` adds a box that has no children. The tree is built again at each frame, as the elements of the interface package are called again at each frame.
 
 **The size kinds.** Each box has one `Size` on each axis: a `Size_Kind`, a value, a strictness and a least size.
 
@@ -70,7 +70,7 @@ Then one pass snaps each edge (not each size) to the nearest whole logical pixel
 
 Built: the package `modus:layout` with the four passes, the snap and the clip, the split pane, the table columns, the state table, the input of a box, the element tokens and their stack, and host tests, which `modustool check` runs.
 
-Its owners are nine windows of the system, each building its tree at each frame from the live window size and taking its colors and spacing from `tokens_for`:
+Its owners are sixteen windows of the system, each building its tree at each frame from the live window size and taking its colors and spacing from `tokens_for`:
 
 - `monitor` places its summary, its three graphs and the process table via `table_columns` ([monitor_window.md](monitor_window.md), "The layout").
 - `settings` is resizable: it places its section cards (including dynamically discovered module settings) in one column or two by the width, wraps the value buttons of each setting in lines that the builder breaks from their measured widths (the solver has no wrap), scrolls its view with the scroll offset of the tree, and builds the tree a second time with the scroll bar when the content is taller than the view ([settings_window.md](settings_window.md)).
@@ -81,5 +81,12 @@ Its owners are nine windows of the system, each building its tree at each frame 
 - `log` places the counts, process cards, column heads, and records table columns from `table_columns`.
 - `assistant` places the conversation view, its scroll bar, the request input field, and the running Stop button in two rows with dark and light element tokens ([assistant.md](assistant.md)).
 - `manual` places the left module list pane (filter field, exports header, module rows) beside the right page pane (heading, text column, scroll bar) and footer row (action bar, row status) with dark and light element tokens.
+- `clock` is resizable: it places its tab strip, divider, digits, controls, and calendar or laps table through `Box_Tree` and `table_columns` ([clock_application.md](clock_application.md)).
+- `paint` is resizable: it places its tool row, palette row, canvas, side panel (pictures or custom color), status line, and action bar through `Box_Tree` ([paint_application.md](paint_application.md)).
+- `processors` places its header, computed picture, and live statistics panel through `Box_Tree`.
+- `locks` places its header, benchmark tables, lock contention table, frame cache table, and verdict line through `Box_Tree` and `table_columns`.
+- `scheduler` places its header strategy tiles, measures card, processors table, stress card, and process shares view through `Box_Tree` and `table_columns`.
+- `hall_of_fame` places its header, three-column card rows, and scroll bar through `Box_Tree` ([hall_of_fame.md](hall_of_fame.md)).
+- `terminal` computes its header, text grid viewport, scroll bar, status line, and action bar regions from `Box_Tree` on open and resize so per-frame text grid rendering stays zero-allocation.
 
 **What the windows taught.** A split pane is sized before the tree is built: the width of the workspace is known from the size of the view, so `split_pane` gives the widths of the two parts as `Pixels` boxes, and the divider is a box with an identity whose state keeps the ratio and whose input gives the drag. Fixed siblings stay strict so the one fill box of a column takes the room left. Left: the elements of the interface package, making the remaining fixed-budget windows resizable, and the other windows, which [ROADMAP.md](../../../ROADMAP.md) names.

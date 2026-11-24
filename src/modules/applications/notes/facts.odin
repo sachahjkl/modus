@@ -9,14 +9,15 @@ import "modus:contract/errors"
 // zero. A refusal of the storage service writes the fields of its error
 // record.
 
-// The bytes of the Text field of a title: at most TITLE_BYTES bytes, and a
-// zero byte.
+// Format property: log fact preview width bounded by LOG_FACT_VALUE_CAPACITY
+// (144 bytes total for Version_Shown); text_field cuts longer titles cleanly on
+// a UTF-8 boundary.
 TITLE_FIELD_BYTES :: 64
 // The bytes of the Text field of the date of a version: "2026-11-20
 // 10:20:30" has 19 bytes.
 DATE_FIELD_BYTES :: 24
 
-#assert(TITLE_FIELD_BYTES > TITLE_BYTES)
+#assert(TITLE_FIELD_BYTES <= TITLE_BYTES + 1)
 
 // The process has no store: the notes live until it stops.
 @(log_fact = "notes: no store: the notes are not kept")
@@ -105,6 +106,12 @@ Versions_Cut :: struct {
 @(log_fact = "notes: the store has more than {listed} notes; the others are not shown")
 Notes_Cut :: struct {
 	listed: u64,
+}
+
+// The note list moved past its inline capacity to its arena overflow tier.
+@(log_fact = "notes: note list moved to overflow tier; capacity {capacity} notes")
+Note_List_Overflow :: struct {
+	capacity: u64,
 }
 
 // A note of the store whose bytes are not a text: each invalid sequence is

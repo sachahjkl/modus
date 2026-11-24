@@ -22,6 +22,7 @@ package hall_of_fame
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:layout"
 import "modus:contract/value_kinds"
 import "modus:system"
 
@@ -124,6 +125,81 @@ shapes: [PERSON_COUNT]Card_Shape
 row_heights: [ROW_COUNT]int // Each card of a row has the height of the tallest one.
 
 window_memory: interface.Window_Memory(512, 8192)
+hall_layout_tree: layout.Box_Tree
+hall_tokens: layout.Element_Tokens
+
+Hall_Places :: struct {
+	header:     interface.Area,
+	cards_view: interface.Area,
+	scroll_bar: interface.Area,
+	cards:      [PERSON_COUNT]interface.Area,
+	card_shown: [PERSON_COUNT]bool,
+}
+hall_places: Hall_Places
+
+@(private)
+area_of :: proc "contextless" (tree: ^layout.Box_Tree, index: layout.Box_Index) -> interface.Area {
+	box := layout.box_of(tree, index)
+	if box == nil {
+		return {}
+	}
+	return {int(box.rect.x), int(box.rect.y), int(box.rect.width), int(box.rect.height)}
+}
+
+// hall_window_layout computes the header, cards grid rows, and scroll bar
+// with modus:layout.
+hall_window_layout :: proc "contextless" (tree: ^layout.Box_Tree, width, height: int, heights: []int, first, visible: int, tokens: layout.Element_Tokens) -> (places: Hall_Places, ok: bool) {
+	if tree == nil || width <= 0 || height <= 0 || width > layout.LENGTH_LIMIT || height > layout.LENGTH_LIMIT {
+		return {}, false
+	}
+	if layout.tree_begin(tree, i32(width), i32(height), {child_axis = .Y, padding = {.X = MARGIN, .Y = MARGIN}}) != .Done {
+		return {}, false
+	}
+	hdr_box, s0 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(GRID_TOP - MARGIN)}})
+	_, s1 := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.fill()}, child_axis = .X, gap = tokens.gap})
+	view_box, s2 := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.fill()}, child_axis = .Y, gap = tokens.gap, overflow = {.X = .Clip, .Y = .Clip}})
+	if s0 != .Done || s1 != .Done || s2 != .Done {
+		return {}, false
+	}
+	card_boxes: [PERSON_COUNT]layout.Box_Index
+	end_row := min(first + visible, len(heights))
+	for row := max(first, 0); row < end_row; row += 1 {
+		row_h := i32(max(heights[row], 1))
+		if _, st := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.px(row_h)}, child_axis = .X, gap = tokens.gap}); st != .Done {
+			return {}, false
+		}
+		for col in 0 ..< COLUMNS {
+			index := row * COLUMNS + col
+			if index >= PERSON_COUNT {
+				break
+			}
+			st: layout.Box_Status
+			card_boxes[index], st = layout.box_add(tree, {size = {.X = layout.px(CARD_WIDTH), .Y = layout.fill()}})
+			if st != .Done {
+				return {}, false
+			}
+			places.card_shown[index] = true
+		}
+		if layout.box_close(tree) != .Done {
+			return {}, false
+		}
+	}
+	sc_view := layout.box_close(tree)
+	sb_box, s_sb := layout.box_add(tree, {size = {.X = layout.px(interface.SCROLL_BAR_THICKNESS), .Y = layout.fill()}})
+	sc_body := layout.box_close(tree)
+	if sc_view != .Done || s_sb != .Done || sc_body != .Done || layout.solve(tree) != .Done {
+		return {}, false
+	}
+	places.header = area_of(tree, hdr_box)
+	places.cards_view = area_of(tree, view_box)
+	places.scroll_bar = area_of(tree, sb_box)
+	for index in 0 ..< PERSON_COUNT {
+		if places.card_shown[index] {
+			places.cards[index] = area_of(tree, card_boxes[index])
+		}
+	}
+	return places, true
+}
 
 chosen: int // The chosen card.
 first_row: int // The first row of the view.
@@ -220,18 +296,13 @@ last_first_row :: proc "contextless" () -> int {
 	return ROW_COUNT - 1
 }
 
-// card_place gives the area of a card in the view, or false when its row
-// is not in the view.
+// card_place gives the area of a card in the view from the last solved layout,
+// or false when its row is not in the view.
 card_place :: proc "contextless" (index: int) -> (area: interface.Area, shown: bool) {
-	row := index / COLUMNS
-	if row < first_row || row >= first_row + visible_rows_from(first_row) {
+	if index < 0 || index >= PERSON_COUNT || !hall_places.card_shown[index] {
 		return {}, false
 	}
-	y := GRID_TOP
-	for above in first_row ..< row {
-		y += row_heights[above] + GAP
-	}
-	return {MARGIN + index % COLUMNS * (CARD_WIDTH + GAP), y, CARD_WIDTH, row_heights[row]}, true
+	return hall_places.cards[index], true
 }
 
 // choose_by_input moves the chosen card by the keys of the frame and by a
@@ -287,16 +358,16 @@ view_show_chosen :: proc "contextless" () {
 
 // header_draw draws the title, then the caption and the keys when each
 // one has its whole width: a text is whole or absent.
-header_draw :: proc "contextless" (table: ^interface.Draw_Table) {
-	after := interface.draw_text(table, MARGIN, HEADER_Y, TITLE, graphics.colors.text, interface.FONT_INTERFACE_BOLD)
+header_draw :: proc "contextless" (table: ^interface.Draw_Table, area: interface.Area) {
+	after := interface.draw_text(table, area.x, area.y, TITLE, hall_tokens.text, interface.FONT_INTERFACE_BOLD)
 	caption_x := after + 16
 	caption_end := caption_x + interface.text_measured_width(table, interface.FONT_INTERFACE, CAPTION)
-	hint_x := WIDTH - MARGIN - interface.text_measured_width(table, interface.FONT_INTERFACE, HINT)
-	if caption_end <= WIDTH - MARGIN {
-		interface.draw_text(table, caption_x, HEADER_Y, CAPTION, graphics.colors.dim, interface.FONT_INTERFACE)
+	hint_x := area.x + area.width - interface.text_measured_width(table, interface.FONT_INTERFACE, HINT)
+	if caption_end <= area.x + area.width {
+		interface.draw_text(table, caption_x, area.y, CAPTION, hall_tokens.text_dim, interface.FONT_INTERFACE)
 	}
 	if caption_end + 16 <= hint_x {
-		interface.draw_text(table, hint_x, HEADER_Y, HINT, graphics.colors.dim, interface.FONT_INTERFACE)
+		interface.draw_text(table, hint_x, area.y, HINT, hall_tokens.text_dim, interface.FONT_INTERFACE)
 	}
 }
 
@@ -310,32 +381,33 @@ card_draw :: proc "contextless" (frame: ^interface.Frame, index: int, area: inte
 	border := 1
 	if index == chosen {
 		border = 2
-		interface.draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.chosen)
+		interface.draw_rectangle(table, area.x, area.y, area.width, area.height, hall_tokens.surface_chosen)
 	} else {
-		interface.draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(graphics.colors.dim, 28), graphics.shade(graphics.colors.dim, 14))
+		interface.draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(hall_tokens.text_dim, 28), graphics.shade(hall_tokens.text_dim, 14))
 	}
 	interface.draw_vertical_gradient(table, area.x + border, area.y + border, area.width - 2 * border, area.height - 2 * border, graphics.colors.card_top, graphics.colors.card_bottom)
 	interface.element_name(frame, area, person.name)
 
 	text_x := area.x + shape.text_x
 	text_y := area.y + PADDING
-	interface.draw_text_wrapped(table, text_x, text_y, shape.text_room, person.name, graphics.colors.text, interface.FONT_INTERFACE_BOLD)
+	interface.draw_text_wrapped(table, text_x, text_y, shape.text_room, person.name, hall_tokens.text, interface.FONT_INTERFACE_BOLD)
 	text_y += shape.name_lines * LINE + TEXT_GAP
-	interface.draw_text_wrapped(table, text_x, text_y, shape.text_room, person.work, graphics.colors.text, interface.FONT_INTERFACE)
+	interface.draw_text_wrapped(table, text_x, text_y, shape.text_room, person.work, hall_tokens.text, interface.FONT_INTERFACE)
 	if !shape.portrait {
 		return
 	}
 	interface.draw_picture(table, area.x + PADDING, area.y + PADDING, portrait_canvas(person.portrait), 1)
 	credit_y := area.y + PADDING + shape.top_height + TEXT_GAP
-	interface.draw_text_wrapped(table, area.x + PADDING, credit_y, CREDIT_ROOM, interface.text_of(&credit_authors[index]), graphics.colors.dim, interface.FONT_INTERFACE)
+	interface.draw_text_wrapped(table, area.x + PADDING, credit_y, CREDIT_ROOM, interface.text_of(&credit_authors[index]), hall_tokens.text_dim, interface.FONT_INTERFACE)
 	credit_y += shape.author_lines * LINE
-	interface.draw_text_wrapped(table, area.x + PADDING, credit_y, CREDIT_ROOM, person.credit_license, graphics.colors.dim, interface.FONT_INTERFACE)
+	interface.draw_text_wrapped(table, area.x + PADDING, credit_y, CREDIT_ROOM, person.credit_license, hall_tokens.text_dim, interface.FONT_INTERFACE)
 }
 
 // build describes the whole window for one frame, and gives the count of
 // the cards that it drew.
 build :: proc "contextless" (frame: ^interface.Frame) -> (drawn: int) {
 	table := frame.table
+	hall_tokens, _ = layout.tokens_for(graphics.appearance, .Standard)
 	shapes_measure(table)
 	first_row = min(first_row, last_first_row())
 	before := chosen
@@ -346,17 +418,26 @@ build :: proc "contextless" (frame: ^interface.Frame) -> (drawn: int) {
 	}
 
 	interface.background(frame, {0, 0, WIDTH, HEIGHT})
-	header_draw(table)
+	visible := visible_rows_from(first_row)
+	places, layout_ok := hall_window_layout(&hall_layout_tree, WIDTH, HEIGHT, row_heights[:], first_row, visible, hall_tokens)
+	if !layout_ok {
+		return 0
+	}
+	hall_places = places
+	header_draw(table, places.header)
 	// The scroll bar shows the rows: the view can start at each row from
 	// the first to the last first row.
 	last := last_first_row()
 	if last > 0 {
 		rows := interface.Scroll_Range{total = ROW_COUNT, visible = ROW_COUNT - last, first = first_row}
 		// The wheel over the cards moves the rows too.
-		cards_view := interface.Area{MARGIN, GRID_TOP, SCROLL_BAR_X - MARGIN, VIEW_HEIGHT}
-		moved := interface.scroll_bar(frame, {SCROLL_BAR_X, GRID_TOP, interface.SCROLL_BAR_THICKNESS, VIEW_HEIGHT}, interface.identity("people"), .Vertical, rows, {}, "people", cards_view)
+		moved := interface.scroll_bar(frame, places.scroll_bar, interface.identity("people"), .Vertical, rows, {}, "people", places.cards_view)
 		if moved.changed {
 			first_row = moved.first
+			visible = visible_rows_from(first_row)
+			if updated, ok := hall_window_layout(&hall_layout_tree, WIDTH, HEIGHT, row_heights[:], first_row, visible, hall_tokens); ok {
+				hall_places = updated
+			}
 		}
 	}
 	for index in 0 ..< PERSON_COUNT {

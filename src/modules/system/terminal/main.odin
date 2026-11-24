@@ -92,6 +92,7 @@ import "modus:graphics"
 import "modus:interface"
 import "modus:key_path"
 import "modus:kind_icons"
+import box_layout "modus:layout"
 import "modus:contract/value_kinds"
 import "modus:contract/ring"
 import "modus:contract/text_encoding"
@@ -152,6 +153,93 @@ text_y, text_width, text_height, status_y, hint_y, width, height, graph_x: int
 scroll_area: interface.Area // The scroll bar of the lines: at the right edge of the window, from the head to the line over the status.
 text_view_area: interface.Area // The rows of the lines: the wheel over them moves the view.
 scroll_identity: interface.Element_Identity
+terminal_layout_tree: box_layout.Box_Tree
+
+// Minimum chrome bounds: 40x4 minimum terminal grid plus chrome stays positive
+// and avoids overlap in both standard and measure modes.
+#assert(40 * CELL_WIDTH >= HISTORY * GRAPH_BAR)
+#assert(HEAD_HEIGHT - 6 >= GRAPH_HEIGHT + 10)
+#assert(interface.ACTION_BAR_ROW_HEIGHT >= CELL_HEIGHT + 4)
+
+Terminal_Places :: struct {
+	head:       interface.Area,
+	graph:      interface.Area,
+	text_view:  interface.Area,
+	scroll_bar: interface.Area,
+	status_bar: interface.Area,
+	bottom_bar: interface.Area,
+}
+terminal_places: Terminal_Places
+
+@(private)
+area_of :: proc "contextless" (tree: ^box_layout.Box_Tree, index: box_layout.Box_Index) -> interface.Area {
+	box := box_layout.box_of(tree, index)
+	if box == nil {
+		return {}
+	}
+	return {int(box.rect.x), int(box.rect.y), int(box.rect.width), int(box.rect.height)}
+}
+
+// terminal_window_layout solves the terminal chrome regions using modus:layout.
+// Called on startup and Resized (never in the per-frame draw loop) so text grid
+// rendering stays zero-allocation and incurs zero per-frame layout overhead.
+terminal_window_layout :: proc "contextless" (tree: ^box_layout.Box_Tree, surface_width, surface_height, cols, row_count: int, measure_mode: bool) -> (places: Terminal_Places, ok: bool) {
+	if tree == nil || surface_width <= 0 || surface_height <= 0 || surface_width > box_layout.LENGTH_LIMIT || surface_height > box_layout.LENGTH_LIMIT || cols <= 0 || row_count <= 0 {
+		return {}, false
+	}
+	if box_layout.tree_begin(tree, i32(surface_width), i32(surface_height), {child_axis = .Y}) != .Done {
+		return {}, false
+	}
+	head_box, graph_box: box_layout.Box_Index
+	if measure_mode {
+		sh: box_layout.Box_Status
+		head_box, sh = box_layout.box_open(tree, {size = {.X = box_layout.fill(), .Y = box_layout.px(HEAD_HEIGHT - 6)}, child_axis = .X, padding = {.X = TEXT_X, .Y = 9}})
+		_, sp_left := box_layout.box_add(tree, {size = {.X = box_layout.fill(), .Y = box_layout.fill()}})
+		sg: box_layout.Box_Status
+		graph_box, sg = box_layout.box_add(tree, {size = {.X = box_layout.px(HISTORY * GRAPH_BAR), .Y = box_layout.px(GRAPH_HEIGHT)}})
+		_, sp_right := box_layout.box_add(tree, {size = {.X = box_layout.px(SCROLL_GAP + SCROLL_WIDTH), .Y = box_layout.fill()}})
+		sc_h := box_layout.box_close(tree)
+		_, s_hg := box_layout.box_add(tree, {size = {.X = box_layout.px(0), .Y = box_layout.px(6)}})
+		if sh != .Done || sp_left != .Done || sg != .Done || sp_right != .Done || sc_h != .Done || s_hg != .Done {
+			return {}, false
+		}
+	} else {
+		if _, st := box_layout.box_add(tree, {size = {.X = box_layout.px(0), .Y = box_layout.px(MARGIN)}}); st != .Done {
+			return {}, false
+		}
+	}
+
+	_, s_mid := box_layout.box_open(tree, {size = {.X = box_layout.fill(), .Y = box_layout.fill()}, child_axis = .X})
+	_, s_lp := box_layout.box_add(tree, {size = {.X = box_layout.px(TEXT_X), .Y = box_layout.fill()}})
+	text_box, s_tb := box_layout.box_add(tree, {size = {.X = box_layout.fill(), .Y = box_layout.fill()}})
+	_, s_sg := box_layout.box_add(tree, {size = {.X = box_layout.px(SCROLL_GAP), .Y = box_layout.fill()}})
+	sb_box, s_sb := box_layout.box_add(tree, {size = {.X = box_layout.px(SCROLL_WIDTH), .Y = box_layout.fill()}})
+	sc_mid := box_layout.box_close(tree)
+	if s_mid != .Done || s_lp != .Done || s_tb != .Done || s_sg != .Done || s_sb != .Done || sc_mid != .Done {
+		return {}, false
+	}
+
+	_, s_pad := box_layout.box_add(tree, {size = {.X = box_layout.px(0), .Y = box_layout.px(4)}})
+	status_box: box_layout.Box_Index
+	s_stat := box_layout.Box_Status.Done
+	if measure_mode {
+		status_box, s_stat = box_layout.box_add(tree, {size = {.X = box_layout.fill(), .Y = box_layout.px(24)}})
+	}
+	bottom_box, s_bot := box_layout.box_add(tree, {size = {.X = box_layout.fill(), .Y = box_layout.px(CELL_HEIGHT + 10)}})
+	if s_pad != .Done || s_stat != .Done || s_bot != .Done || box_layout.solve(tree) != .Done {
+		return {}, false
+	}
+	if measure_mode {
+		places.head = area_of(tree, head_box)
+		places.graph = area_of(tree, graph_box)
+		places.status_bar = area_of(tree, status_box)
+	}
+	text_slot := area_of(tree, text_box)
+	places.text_view = {text_slot.x, text_slot.y, min(cols * CELL_WIDTH, text_slot.width), min(row_count * CELL_HEIGHT, text_slot.height)}
+	places.scroll_bar = area_of(tree, sb_box)
+	places.bottom_bar = area_of(tree, bottom_box)
+	return places, true
+}
 
 chrome_size :: proc "contextless" () -> (chrome_width, chrome_height: int) {
 	chrome_width = TEXT_X + SCROLL_GAP + SCROLL_WIDTH
@@ -160,17 +248,31 @@ chrome_size :: proc "contextless" () -> (chrome_width, chrome_height: int) {
 }
 
 layout_for_size :: proc "contextless" (surface_width, surface_height: int) {
-	text_y = measure ? HEAD_HEIGHT : MARGIN
-	text_width = columns * CELL_WIDTH
-	text_height = rows * CELL_HEIGHT
-	width = surface_width
-	height = surface_height
-	hint_y = height - CELL_HEIGHT - 6
-	status_y = measure ? hint_y - 24 : hint_y
-	graph_x = TEXT_X + text_width - HISTORY * GRAPH_BAR
-	scroll_top := measure ? HEAD_HEIGHT - 6 : 0
-	scroll_area = {width - SCROLL_WIDTH, scroll_top, SCROLL_WIDTH, status_y - 4 - scroll_top}
-	text_view_area = {TEXT_X, text_y, text_width, text_height}
+	if places, ok := terminal_window_layout(&terminal_layout_tree, surface_width, surface_height, columns, rows, measure); ok {
+		terminal_places = places
+		text_y = places.text_view.y
+		text_width = columns * CELL_WIDTH
+		text_height = rows * CELL_HEIGHT
+		width = surface_width
+		height = surface_height
+		hint_y = places.bottom_bar.y + 4
+		status_y = measure ? places.status_bar.y + 4 : hint_y
+		graph_x = measure ? places.graph.x : TEXT_X + text_width - HISTORY * GRAPH_BAR
+		scroll_area = places.scroll_bar
+		text_view_area = places.text_view
+	} else {
+		text_y = measure ? HEAD_HEIGHT : MARGIN
+		text_width = columns * CELL_WIDTH
+		text_height = rows * CELL_HEIGHT
+		width = surface_width
+		height = surface_height
+		hint_y = height - CELL_HEIGHT - 6
+		status_y = measure ? hint_y - 24 : hint_y
+		graph_x = TEXT_X + text_width - HISTORY * GRAPH_BAR
+		scroll_top := measure ? HEAD_HEIGHT - 6 : 0
+		scroll_area = {width - SCROLL_WIDTH, scroll_top, SCROLL_WIDTH, status_y - 4 - scroll_top}
+		text_view_area = {TEXT_X, text_y, text_width, text_height}
+	}
 	scroll_identity = interface.identity("the scroll bar of the lines")
 	list_scroll_identity = interface.identity("the scroll bar of the completion list")
 }

@@ -252,3 +252,85 @@ write_refused_is_tracked_per_note :: proc(t: ^testing.T) {
 	testing.expect_value(t, note_name(&list.notes[0]), "note_000002")
 	testing.expect(t, !note_is_write_refused(list, 0))
 }
+
+// Titles reach the full 255-byte STORAGE7 format limit, and the list crosses
+// its 256-note inline capacity into its caller-supplied overflow tier cleanly.
+@(test)
+note_list_255_byte_titles_and_overflow_tier :: proc(t: ^testing.T) {
+	testing.expect_value(t, TITLE_BYTES, 255)
+	long_255 := strings.repeat("a", 255, context.temp_allocator)
+	title, count := title_of(transmute([]u8)long_255)
+	testing.expect_value(t, count, 255)
+	testing.expect_value(t, string(title[:count]), long_255)
+
+	Grow_Ctx :: struct {
+		backing: [dynamic]Note,
+		limit:   int,
+	}
+	grow_notes :: proc "contextless" (user_data: rawptr, current: []Note, minimum_notes: int) -> (grown: []Note, ok: bool) {
+		ctx := (^Grow_Ctx)(user_data)
+		if minimum_notes > ctx.limit {
+			return nil, false
+		}
+		target := min(ctx.limit, max(minimum_notes, max(len(current) * 2, NOTE_CAPACITY + 128)))
+		return ctx.backing[:target], true
+	}
+
+	list := new(Note_List)
+	defer free(list)
+	list_reset(list)
+	ctx := Grow_Ctx{limit = 600}
+	resize(&ctx.backing, 600)
+	defer delete(ctx.backing)
+	list_init_overflow(list, nil, grow_notes, &ctx)
+
+	// Fill inline tier: zero overflow moves.
+	for i in 0 ..< NOTE_CAPACITY {
+		_, prob := list_add_new(list)
+		testing.expect_value(t, prob, List_Problem.None)
+		testing.expect_value(t, note_name_take(list, i), List_Problem.None)
+	}
+	testing.expect(t, !list_on_overflow(list))
+	testing.expect_value(t, list.overflow_moves, u64(0))
+
+	// Crossing 256 -> 257 moves to overflow tier with 255-byte title intact.
+	idx_257, prob_257 := list_add_stored(list, "note_000900", transmute([]u8)long_255, 900)
+	testing.expect_value(t, prob_257, List_Problem.None)
+	testing.expect_value(t, idx_257, NOTE_CAPACITY)
+	testing.expect(t, list_on_overflow(list))
+	testing.expect_value(t, list.overflow_moves, u64(1))
+	testing.expect_value(t, note_title(note_at(list, idx_257)), long_255)
+	testing.expect_value(t, note_find(list, "note_000900"), idx_257)
+	testing.expect_value(t, list_newest(list), idx_257)
+
+	// Grow to 600 notes (second overflow growth) and refuse 601 cleanly.
+	for list.count < 600 {
+		_, p := list_add_new(list)
+		testing.expect_value(t, p, List_Problem.None)
+	}
+	testing.expect(t, list.overflow_moves >= 2)
+	_, full_prob := list_add_new(list)
+	testing.expect_value(t, full_prob, List_Problem.Full)
+	testing.expect_value(t, list.count, 600)
+
+	// Copy into a separate list with its own backing: neither aliases the other.
+	dst := new(Note_List)
+	defer free(dst)
+	dst_ctx := Grow_Ctx{limit = 600}
+	resize(&dst_ctx.backing, 600)
+	defer delete(dst_ctx.backing)
+	list_init_overflow(dst, nil, grow_notes, &dst_ctx)
+	testing.expect_value(t, list_copy_from(dst, list), List_Problem.None)
+	testing.expect_value(t, dst.count, 600)
+	testing.expect_value(t, note_title(note_at(dst, idx_257)), long_255)
+
+	// Copy into an unbacked list refuses with Full without changing dst.
+	unbacked := new(Note_List)
+	defer free(unbacked)
+	list_reset(unbacked)
+	_, _ = list_add_stored(unbacked, "keep", transmute([]u8)string("kept"), 1)
+	testing.expect_value(t, list_copy_from(unbacked, list), List_Problem.Full)
+	testing.expect_value(t, unbacked.count, 1)
+	testing.expect_value(t, note_name(note_at(unbacked, 0)), "keep")
+}
+

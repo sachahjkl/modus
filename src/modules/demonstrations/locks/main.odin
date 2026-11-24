@@ -49,6 +49,7 @@ import "base:intrinsics"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:layout"
 import "modus:lockers"
 import op "modus:contract/operation"
 import "modus:contract/ring"
@@ -103,6 +104,161 @@ COLUMN_X :: 304
 COLUMN_WIDTH :: 120
 LOCK_X :: 176 // The table of the locks: the names are short.
 LOCK_COLUMN_WIDTH :: 200
+#assert(WIDTH >= 2 * GAP + (COLUMN_X - GAP) + 3 * COLUMN_WIDTH)
+#assert(WIDTH >= 2 * GAP + (LOCK_X - GAP) + 3 * LOCK_COLUMN_WIDTH)
+
+locks_layout_tree: layout.Box_Tree
+
+Locks_Places :: struct {
+	intro:          interface.Area,
+	lockers_header: interface.Area,
+	lockers_rows:   [2]interface.Area,
+	lockers_cols:   [4]layout.Table_Column_Place,
+	pair_header:    interface.Area,
+	pair_row:       interface.Area,
+	locks_header:   interface.Area,
+	locks_rows:     [len(op.Lock_Kind)]interface.Area,
+	locks_cols:     [4]layout.Table_Column_Place,
+	cache_header:   interface.Area,
+	cache_rows:     [CACHE_ROWS]interface.Area,
+	cache_cols:     [5]layout.Table_Column_Place,
+	stress_row:     interface.Area,
+	verdict_row:    interface.Area,
+}
+
+@(private)
+area_of :: proc "contextless" (tree: ^layout.Box_Tree, index: layout.Box_Index) -> interface.Area {
+	box := layout.box_of(tree, index)
+	if box == nil {
+		return {}
+	}
+	return {int(box.rect.x), int(box.rect.y), int(box.rect.width), int(box.rect.height)}
+}
+
+// locks_window_layout computes all stacked sections and table columns of locks
+// with modus:layout.
+locks_window_layout :: proc "contextless" (tree: ^layout.Box_Tree, width, height: int, tokens: layout.Element_Tokens) -> (places: Locks_Places, ok: bool) {
+	if tree == nil || width <= 0 || height <= 0 || width > layout.LENGTH_LIMIT || height > layout.LENGTH_LIMIT {
+		return {}, false
+	}
+	if layout.tree_begin(tree, i32(width), i32(height), {child_axis = .Y, padding = {.X = tokens.gap, .Y = tokens.margin}, gap = tokens.gap}) != .Done {
+		return {}, false
+	}
+	intro_box, s0 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	// Lockers table: header + 2 rows.
+	_, s1 := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.px(3 * LINE)}, child_axis = .Y})
+	lh_box, s2a := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	lr_boxes: [2]layout.Box_Index
+	s2b, s2c: layout.Box_Status
+	lr_boxes[0], s2b = layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	lr_boxes[1], s2c = layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	s3 := layout.box_close(tree)
+	// Word wait pair table: header + 1 row.
+	_, s4 := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.px(2 * LINE)}, child_axis = .Y})
+	ph_box, s5 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	pr_box, s6 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	s7 := layout.box_close(tree)
+	if s0 != .Done || s1 != .Done || s2a != .Done || s2b != .Done || s2c != .Done || s3 != .Done || s4 != .Done || s5 != .Done || s6 != .Done || s7 != .Done {
+		return {}, false
+	}
+	// Kernel lock contention table.
+	if _, st := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.px((len(op.Lock_Kind) + 1) * LINE)}, child_axis = .Y}); st != .Done {
+		return {}, false
+	}
+	kh_box, skh := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	if skh != .Done {
+		return {}, false
+	}
+	kr_boxes: [len(op.Lock_Kind)]layout.Box_Index
+	for i in 0 ..< len(op.Lock_Kind) {
+		st: layout.Box_Status
+		kr_boxes[i], st = layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+		if st != .Done {
+			return {}, false
+		}
+	}
+	if layout.box_close(tree) != .Done {
+		return {}, false
+	}
+	// Frame cache table.
+	if _, st := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.px((CACHE_ROWS + 1) * LINE)}, child_axis = .Y}); st != .Done {
+		return {}, false
+	}
+	ch_box, sch := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	if sch != .Done {
+		return {}, false
+	}
+	cr_boxes: [CACHE_ROWS]layout.Box_Index
+	for i in 0 ..< CACHE_ROWS {
+		st: layout.Box_Status
+		cr_boxes[i], st = layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+		if st != .Done {
+			return {}, false
+		}
+	}
+	if layout.box_close(tree) != .Done {
+		return {}, false
+	}
+	// Footer: stress count + verdict.
+	if _, st := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.px(2 * LINE)}, child_axis = .Y}); st != .Done {
+		return {}, false
+	}
+	sr_box, ssr := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	vr_box, svr := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	sc := layout.box_close(tree)
+	if ssr != .Done || svr != .Done || sc != .Done || layout.solve(tree) != .Done {
+		return {}, false
+	}
+	places.intro = area_of(tree, intro_box)
+	places.lockers_header = area_of(tree, lh_box)
+	places.lockers_rows[0] = area_of(tree, lr_boxes[0])
+	places.lockers_rows[1] = area_of(tree, lr_boxes[1])
+	places.pair_header = area_of(tree, ph_box)
+	places.pair_row = area_of(tree, pr_box)
+	places.locks_header = area_of(tree, kh_box)
+	for i in 0 ..< len(op.Lock_Kind) {
+		places.locks_rows[i] = area_of(tree, kr_boxes[i])
+	}
+	places.cache_header = area_of(tree, ch_box)
+	for i in 0 ..< CACHE_ROWS {
+		places.cache_rows[i] = area_of(tree, cr_boxes[i])
+	}
+	places.stress_row = area_of(tree, sr_box)
+	places.verdict_row = area_of(tree, vr_box)
+
+	rect_of :: proc "contextless" (a: interface.Area) -> layout.Rect {
+		return {i32(a.x), i32(a.y), i32(a.width), i32(a.height)}
+	}
+	lockers_spec := [4]layout.Table_Column{
+		{width = COLUMN_X - GAP},
+		{weight = 1, least = COLUMN_WIDTH},
+		{weight = 1, least = COLUMN_WIDTH},
+		{weight = 1, least = COLUMN_WIDTH},
+	}
+	if layout.table_columns(lockers_spec[:], places.lockers_cols[:], rect_of(places.lockers_header), 0) != .Done {
+		return {}, false
+	}
+	locks_spec := [4]layout.Table_Column{
+		{width = LOCK_X - GAP},
+		{weight = 1, least = LOCK_COLUMN_WIDTH},
+		{weight = 1, least = LOCK_COLUMN_WIDTH},
+		{weight = 1, least = LOCK_COLUMN_WIDTH},
+	}
+	if layout.table_columns(locks_spec[:], places.locks_cols[:], rect_of(places.locks_header), 0) != .Done {
+		return {}, false
+	}
+	cache_spec := [5]layout.Table_Column{
+		{width = LOCK_X - GAP},
+		{weight = 1, least = LOCK_COLUMN_WIDTH * 3 / 4},
+		{weight = 1, least = LOCK_COLUMN_WIDTH * 3 / 4},
+		{weight = 1, least = LOCK_COLUMN_WIDTH * 3 / 4},
+		{weight = 1, least = LOCK_COLUMN_WIDTH * 3 / 4},
+	}
+	if layout.table_columns(cache_spec[:], places.cache_cols[:], rect_of(places.cache_header), 0) != .Done {
+		return {}, false
+	}
+	return places, true
+}
 
 
 @(rodata)
@@ -351,91 +507,94 @@ pairs :: proc "contextless" (load: int) -> u64 {
 	return pair.rounds[0]
 }
 
-row :: proc "contextless" (table: ^interface.Draw_Table, y: int, label: string, values: []u64) {
-	interface.draw_text(table, LEFT, y, label, graphics.colors.dim)
+row :: proc "contextless" (table: ^interface.Draw_Table, area: interface.Area, cols: []layout.Table_Column_Place, label: string, values: []u64, tokens: layout.Element_Tokens) {
+	text_y := area.y + (area.height - graphics.CELL_HEIGHT) / 2
+	interface.draw_text(table, area.x + GAP, text_y, label, tokens.text_dim)
 	line: [48]u8
 	for value, index in values {
-		interface.draw_text(table, COLUMN_X + index * COLUMN_WIDTH, y, system.format(line[:], value), graphics.colors.text)
+		if index + 1 < len(cols) {
+			interface.draw_text(table, int(cols[index + 1].x), text_y, system.format(line[:], value), tokens.text)
+		}
 	}
 }
 
 // draw builds a frame of the window with the interface package.
 draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_start(&window_memory, window)
-	draw_records(frame.table)
+	draw_records(frame.table, window.width, window.height)
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
-draw_records :: proc "contextless" (table: ^interface.Draw_Table) {
-	y := LEFT
+draw_records :: proc "contextless" (table: ^interface.Draw_Table, width, height: int) {
+	tokens, _ := layout.tokens_for(graphics.appearance, .Standard)
+	places, layout_ok := locks_window_layout(&locks_layout_tree, width, height, tokens)
+	if !layout_ok {
+		return
+	}
+	text_y :: proc "contextless" (a: interface.Area) -> int {
+		return a.y + (a.height - graphics.CELL_HEIGHT) / 2
+	}
 	measured := system.measure_run()
-	interface.draw_text(table, LEFT, y, measured ? "each locker works on its own objects: it waits only if the kernel makes it wait." : "each locker works on its own objects. rates in one second: run `modustool measure`.", graphics.colors.dim)
-	y += LINE + GAP
-	interface.draw_text(table, LEFT, y, measured ? "in one second, all lockers" : "in the check, all lockers", graphics.colors.dim)
+	interface.draw_text(table, places.intro.x + GAP, text_y(places.intro), measured ? "each locker works on its own objects: it waits only if the kernel makes it wait." : "each locker works on its own objects. rates in one second: run `modustool measure`.", tokens.text_dim)
+	interface.draw_text(table, places.lockers_header.x + GAP, text_y(places.lockers_header), measured ? "in one second, all lockers" : "in the check, all lockers", tokens.text_dim)
 	for active, index in counts {
 		line: [24]u8
-		interface.draw_text(table, COLUMN_X + index * COLUMN_WIDTH, y, system.format(line[:], u64(active), active == 1 ? " locker" : " lockers"), graphics.colors.dim)
+		interface.draw_text(table, int(places.lockers_cols[index + 1].x), text_y(places.lockers_header), system.format(line[:], u64(active), active == 1 ? " locker" : " lockers"), tokens.text_dim)
 	}
-	y += LINE
-	interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.colors.card_top)
-	row(table, y, "kernel entries", entry_rates[:])
-	y += LINE
-	row(table, y, "pages on first use", fault_rates[:])
-	y += LINE + GAP
-	interface.draw_text(table, LEFT, y, "word wait, two threads", graphics.colors.dim)
-	interface.draw_text(table, COLUMN_X, y, "alone", graphics.colors.dim)
-	interface.draw_text(table, COLUMN_X + COLUMN_WIDTH, y, "2 lockers enter", graphics.colors.dim)
-	y += LINE
-	interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.colors.card_top)
-	row(table, y, "wakes", {pairs_alone, pairs_loaded})
-	y += LINE + GAP
-	interface.draw_text(table, LEFT, y, "waits of takes", graphics.colors.dim)
+	interface.draw_rectangle(table, places.lockers_rows[0].x, places.lockers_rows[0].y, places.lockers_rows[0].width, places.lockers_rows[0].height, tokens.surface_card)
+	row(table, places.lockers_rows[0], places.lockers_cols[:], "kernel entries", entry_rates[:], tokens)
+	row(table, places.lockers_rows[1], places.lockers_cols[:], "pages on first use", fault_rates[:], tokens)
+
+	interface.draw_text(table, places.pair_header.x + GAP, text_y(places.pair_header), "word wait, two threads", tokens.text_dim)
+	interface.draw_text(table, int(places.lockers_cols[1].x), text_y(places.pair_header), "alone", tokens.text_dim)
+	interface.draw_text(table, int(places.lockers_cols[2].x), text_y(places.pair_header), "2 lockers enter", tokens.text_dim)
+	interface.draw_rectangle(table, places.pair_row.x, places.pair_row.y, places.pair_row.width, places.pair_row.height, tokens.surface_card)
+	row(table, places.pair_row, places.lockers_cols[:], "wakes", {pairs_alone, pairs_loaded}, tokens)
+
+	interface.draw_text(table, places.locks_header.x + GAP, text_y(places.locks_header), "waits of takes", tokens.text_dim)
 	for name, index in ([3]string{"4 lockers, entries", "4 lockers, faults", "word wait"}) {
-		interface.draw_text(table, LOCK_X + index * LOCK_COLUMN_WIDTH, y, name, graphics.colors.dim)
+		interface.draw_text(table, int(places.locks_cols[index + 1].x), text_y(places.locks_header), name, tokens.text_dim)
 	}
-	y += LINE
 	for kind in op.Lock_Kind {
+		row_area := places.locks_rows[int(kind)]
 		if int(kind) % 2 == 0 {
-			interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.colors.card_top)
+			interface.draw_rectangle(table, row_area.x, row_area.y, row_area.width, row_area.height, tokens.surface_card)
 		}
-		interface.draw_text(table, LEFT, y, op.LOCK_KIND_NAMES[kind], graphics.colors.dim)
+		ty := text_y(row_area)
+		interface.draw_text(table, row_area.x + GAP, ty, op.LOCK_KIND_NAMES[kind], tokens.text_dim)
 		line: [48]u8
 		for locks, index in ([3][op.LOCK_KIND_CAPACITY]op.Lock_Count{entry_locks, fault_locks, pair_locks}) {
 			count := locks[kind]
-			interface.draw_text(table, LOCK_X + index * LOCK_COLUMN_WIDTH, y, system.format(line[:], count.waits, " of ", count.takes), graphics.colors.text)
+			interface.draw_text(table, int(places.locks_cols[index + 1].x), ty, system.format(line[:], count.waits, " of ", count.takes), tokens.text)
 		}
-		y += LINE
 	}
-	y += GAP
 	// The frame cache of each processor (Processor_Report): a stack of free
 	// frames that pages on first use take with no frame lock.
-	interface.draw_text(table, LEFT, y, "frame cache", graphics.colors.dim)
+	interface.draw_text(table, places.cache_header.x + GAP, text_y(places.cache_header), "frame cache", tokens.text_dim)
 	for name, index in ([4]string{"frames now", "batches taken", "batches given", "drains"}) {
-		interface.draw_text(table, LOCK_X + index * (LOCK_COLUMN_WIDTH * 3 / 4), y, name, graphics.colors.dim)
+		interface.draw_text(table, int(places.cache_cols[index + 1].x), text_y(places.cache_header), name, tokens.text_dim)
 	}
-	y += LINE
 	for index in 0 ..< CACHE_ROWS {
 		cache := caches[index]
+		row_area := places.cache_rows[index]
 		if index % 2 == 0 {
-			interface.draw_rectangle(table, GAP, y - 4, WIDTH - 2 * GAP, LINE, graphics.colors.card_top)
+			interface.draw_rectangle(table, row_area.x, row_area.y, row_area.width, row_area.height, tokens.surface_card)
 		}
+		ty := text_y(row_area)
 		cache_line: [32]u8
-		interface.draw_text(table, LEFT, y, system.format(cache_line[:], "processor ", u64(index)), graphics.colors.dim)
+		interface.draw_text(table, row_area.x + GAP, ty, system.format(cache_line[:], "processor ", u64(index)), tokens.text_dim)
 		for value, column in ([4]u64{cache.cache_frames, cache.cache_batches_taken, cache.cache_batches_given, cache.cache_drains}) {
-			interface.draw_text(table, LOCK_X + column * (LOCK_COLUMN_WIDTH * 3 / 4), y, system.format(cache_line[:], value), graphics.colors.text)
+			interface.draw_text(table, int(places.cache_cols[column + 1].x), ty, system.format(cache_line[:], value), tokens.text)
 		}
-		y += LINE
 	}
-	y += GAP
 	line: [64]u8
-	interface.draw_text(table, LEFT, y, "processes stopped while they ran", graphics.colors.dim)
-	interface.draw_text(table, COLUMN_X, y, system.format(line[:], stress_started), graphics.colors.text)
-	y += LINE
+	interface.draw_text(table, places.stress_row.x + GAP, text_y(places.stress_row), "processes stopped while they ran", tokens.text_dim)
+	interface.draw_text(table, int(places.lockers_cols[1].x), text_y(places.stress_row), system.format(line[:], stress_started), tokens.text)
 	if done {
 		right := entries_right && faults_right && pages_right && pairs_right && lost_wakes == 0 && stress_right
-		interface.draw_text(table, LEFT, y, right ? "the counts add up, no wake was lost, stopped processes returned all" : "a count is wrong", right ? graphics.colors.process : graphics.colors.failed)
+		interface.draw_text(table, places.verdict_row.x + GAP, text_y(places.verdict_row), right ? "the counts add up, no wake was lost, stopped processes returned all" : "a count is wrong", right ? tokens.expected : tokens.failed)
 	} else {
-		interface.draw_text(table, LEFT, y, measured ? "measures in progress" : "checks in progress", graphics.colors.dim)
+		interface.draw_text(table, places.verdict_row.x + GAP, text_y(places.verdict_row), measured ? "measures in progress" : "checks in progress", tokens.text_dim)
 	}
 }
 

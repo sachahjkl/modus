@@ -53,17 +53,25 @@ SUBPIXELS_PER_PIXEL :: 64
 // of every length of a full tree stays inside an i32 of pixels.
 LENGTH_LIMIT :: 65_536
 
-// The boxes of one tree, the root included.
+// Inline capacity: fast tier for typical windows (observed desktop windows use
+// 12 to 400 boxes), the root included. Past this count, a tree with an overflow
+// tier (tree_set_overflow) moves to its backing slice without refusing the frame.
 BOX_CAPACITY :: 1024
 
-// The boxes that can be open at once: the depth of box_open.
+// Plan value: maximum open nesting depth of box_open; 64 nested containers
+// exceeds any observed desktop window hierarchy by an order of magnitude.
 NESTING_CAPACITY :: 64
 
 // The index of a box in its tree. Index 0 is no box, so a zero link is no link.
-Box_Index :: distinct u16
+Box_Index :: distinct u32
 
 NO_BOX :: Box_Index(0)
 ROOT_BOX :: Box_Index(1)
+
+// Caller-supplied growth callback for the slower box tier. Returns a slice of
+// at least minimum_boxes (index 0 included), or false when the caller's budget
+// refuses the growth.
+Box_Grow :: #type proc "contextless" (user_data: rawptr, current: []Box, minimum_boxes: int) -> (grown: []Box, ok: bool)
 
 // The identity of a box: the element identity of the element that it holds.
 // 0 is no identity: the box keeps no state across frames.
@@ -120,19 +128,26 @@ Box :: struct {
 	children_clip:    Rect, // The clip that its children inherit.
 }
 
-// A layout tree of one frame.
+// A layout tree of one frame. Frames up to BOX_CAPACITY boxes stay on the fast
+// inline tier; larger frames move to external_boxes when configured via
+// tree_set_overflow, incrementing overflow_moves on each tier transition or growth.
 Box_Tree :: struct {
-	boxes:      [BOX_CAPACITY + 1]Box, // Index 0 is no box.
-	count:      int, // The boxes in use, the root included, at indexes 1 to count.
-	open:       [NESTING_CAPACITY]Box_Index,
-	open_depth: int,
+	boxes:          [BOX_CAPACITY + 1]Box, // Inline capacity: index 0 is no box.
+	external_boxes: []Box, // Slower tier: caller-supplied backing slice (index 0 is no box).
+	grow:           Box_Grow,
+	grow_data:      rawptr,
+	using_overflow: bool, // True when this frame holds boxes in external_boxes.
+	count:          int, // The boxes in use, the root included, at indexes 1 to count.
+	open:           [NESTING_CAPACITY]Box_Index,
+	open_depth:     int,
+	overflow_moves: u64, // Count of moves to or growths of the slower tier, visible as a measure.
 }
 
 // The outcome of a procedure that changes a tree. Each refusal leaves the
 // tree as it was.
 Box_Status :: enum u8 {
 	Done                  = 0,
-	Tree_Full             = 1, // The tree holds BOX_CAPACITY boxes.
+	Tree_Full             = 1, // The tree reached its inline capacity with no overflow tier, or the overflow tier refused growth.
 	Nesting_Full          = 2, // NESTING_CAPACITY boxes are open.
 	No_Open_Box           = 3, // No frame began, or box_close found only the root open.
 	Boxes_Open            = 4, // solve found a box that box_close did not close.
@@ -204,8 +219,96 @@ identity_with :: proc "contextless" (base: Identity, number: u64) -> Identity {
 	return Identity(hash | 1)
 }
 
-// tree_begin starts a frame: the tree then holds only its root, at the size
-// of the view, and the root is open. The size fields of root are not read.
+// tree_set_overflow attaches a caller-supplied backing slice and optional
+// growth callback for frames past BOX_CAPACITY boxes. Frames within
+// BOX_CAPACITY stay on the fast inline tier.
+tree_set_overflow :: proc "contextless" (tree: ^Box_Tree, backing: []Box, grow: Box_Grow = nil, grow_data: rawptr = nil) {
+	if tree == nil {
+		return
+	}
+	tree.external_boxes = backing
+	tree.grow = grow
+	tree.grow_data = grow_data
+	if tree.count == 0 {
+		tree.using_overflow = false
+	}
+}
+
+// tree_boxes returns the active box slice of the current frame (index 0 is no box).
+@(private)
+tree_boxes :: #force_inline proc "contextless" (tree: ^Box_Tree) -> []Box {
+	if tree.using_overflow {
+		return tree.external_boxes
+	}
+	return tree.boxes[:]
+}
+
+// tree_on_overflow reports whether the current frame moved to the slower tier.
+tree_on_overflow :: proc "contextless" (tree: ^Box_Tree) -> bool {
+	return tree != nil && tree.using_overflow
+}
+
+// tree_capacity returns the current box capacity without another tier growth.
+tree_capacity :: proc "contextless" (tree: ^Box_Tree) -> int {
+	if tree == nil {
+		return 0
+	}
+	if tree.using_overflow {
+		return max(len(tree.external_boxes) - 1, 0)
+	}
+	return BOX_CAPACITY
+}
+
+// tree_ensure_room guarantees that the active box slice holds at least
+// needed_slots (index 0 plus boxes). Moving from inline to overflow or growing
+// the overflow tier increments overflow_moves. A refusal changes nothing.
+@(private)
+tree_ensure_room :: proc "contextless" (tree: ^Box_Tree, needed_slots: int) -> bool {
+	if needed_slots <= 0 {
+		return false
+	}
+	if !tree.using_overflow {
+		if needed_slots <= len(tree.boxes) {
+			return true
+		}
+		target := tree.external_boxes
+		if len(target) < needed_slots {
+			if tree.grow == nil {
+				return false
+			}
+			grown, ok := tree.grow(tree.grow_data, target, needed_slots)
+			if !ok || len(grown) < needed_slots || raw_data(grown) == nil {
+				return false
+			}
+			target = grown
+		}
+		copy(target[:tree.count + 1], tree.boxes[:tree.count + 1])
+		tree.external_boxes = target
+		tree.using_overflow = true
+		tree.overflow_moves += 1
+		return true
+	}
+	if needed_slots <= len(tree.external_boxes) {
+		return true
+	}
+	if tree.grow == nil {
+		return false
+	}
+	grown, ok := tree.grow(tree.grow_data, tree.external_boxes, needed_slots)
+	if !ok || len(grown) < needed_slots || raw_data(grown) == nil {
+		return false
+	}
+	if raw_data(grown) != raw_data(tree.external_boxes) {
+		copy(grown[:tree.count + 1], tree.external_boxes[:tree.count + 1])
+	}
+	tree.external_boxes = grown
+	tree.overflow_moves += 1
+	return true
+}
+
+// tree_begin starts a frame on the fast inline tier: the tree then holds only
+// its root, at the size of the view, and the root is open. The size fields of
+// root are not read. Configured overflow backing and overflow_moves persist.
 tree_begin :: proc "contextless" (tree: ^Box_Tree, view_width, view_height: i32, root: Box_Description = {}) -> Box_Status {
 	if view_width < 0 || view_width > LENGTH_LIMIT || view_height < 0 || view_height > LENGTH_LIMIT {
 		return .Length_Refused
@@ -215,6 +318,7 @@ tree_begin :: proc "contextless" (tree: ^Box_Tree, view_width, view_height: i32,
 	if status := description_check(&description); status != .Done {
 		return status
 	}
+	tree.using_overflow = false
 	tree.count = 1
 	tree.boxes[NO_BOX] = {}
 	tree.boxes[ROOT_BOX] = box_of_description(&description, NO_BOX)
@@ -246,25 +350,29 @@ box_add :: proc "contextless" (tree: ^Box_Tree, description: Box_Description) ->
 	if tree.open_depth <= 0 || tree.open_depth > NESTING_CAPACITY || tree.count <= 0 {
 		return NO_BOX, .No_Open_Box
 	}
-	if tree.count >= BOX_CAPACITY {
-		return NO_BOX, .Tree_Full
-	}
 	description := description
 	if status := description_check(&description); status != .Done {
 		return NO_BOX, status
 	}
+	if tree.count >= int(max(Box_Index)) {
+		return NO_BOX, .Tree_Full
+	}
+	if !tree_ensure_room(tree, tree.count + 2) {
+		return NO_BOX, .Tree_Full
+	}
+	boxes := tree_boxes(tree)
 	parent := tree.open[tree.open_depth - 1]
 	index := Box_Index(tree.count + 1)
-	tree.boxes[index] = box_of_description(&description, parent)
+	boxes[index] = box_of_description(&description, parent)
 	if description.identity == 0 && description.label != "" {
-		tree.boxes[index].identity = identity_in(tree.boxes[parent].identity, description.label)
+		boxes[index].identity = identity_in(boxes[parent].identity, description.label)
 	}
-	parent_box := &tree.boxes[parent]
+	parent_box := &boxes[parent]
 	if parent_box.last_child == NO_BOX {
 		parent_box.first_child = index
 	} else {
-		tree.boxes[parent_box.last_child].next_sibling = index
-		tree.boxes[index].previous_sibling = parent_box.last_child
+		boxes[parent_box.last_child].next_sibling = index
+		boxes[index].previous_sibling = parent_box.last_child
 	}
 	parent_box.last_child = index
 	tree.count += 1
@@ -283,10 +391,11 @@ box_close :: proc "contextless" (tree: ^Box_Tree) -> Box_Status {
 // box_of gives the box at an index, or nil for an index that names no box
 // of this frame.
 box_of :: proc "contextless" (tree: ^Box_Tree, index: Box_Index) -> ^Box {
-	if index == NO_BOX || int(index) > tree.count || int(index) > BOX_CAPACITY {
+	boxes := tree_boxes(tree)
+	if index == NO_BOX || int(index) > tree.count || int(index) >= len(boxes) {
 		return nil
 	}
-	return &tree.boxes[index]
+	return &boxes[index]
 }
 
 @(private)

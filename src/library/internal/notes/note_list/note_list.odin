@@ -13,9 +13,15 @@ package note_list
 import "modus:contract/store"
 import "modus:contract/text_encoding"
 
-NOTE_CAPACITY :: 256 // The notes that the list holds.
-TITLE_BYTES :: 60 // The bytes of a title: a cut title ends after a whole character.
-NAME_BYTES :: store.ENTRY_NAME_CAPACITY // The bytes of the name of an object.
+// Inline capacity: fast tier for typical note collections (observed <= 256
+// notes). Past this count, a list configured with list_init_overflow moves to
+// its caller-supplied backing slice or arena without refusing new notes.
+NOTE_CAPACITY :: 256
+// Format property: matches the 255-byte STORAGE7 object name limit so a note
+// title is never cut artificially at 60 bytes; a cut title still ends after a
+// whole UTF-8 character.
+TITLE_BYTES :: store.ENTRY_NAME_CAPACITY
+NAME_BYTES :: store.ENTRY_NAME_CAPACITY // Format property: bytes of a STORAGE7 object name.
 OBJECT_NAME_PREFIX :: "note_"
 SERIAL_DIGITS :: 6
 SERIAL_LIMIT :: 999_999 // The largest serial of SERIAL_DIGITS digits.
@@ -36,19 +42,128 @@ Note :: struct {
 	write_refused: bool, // The last write of this note was refused: the store does not hold its text.
 }
 
+// Caller-supplied growth callback for the slower note list tier. Returns a
+// slice of at least minimum_notes entries, or false when the budget refuses.
+Note_Grow :: #type proc "contextless" (user_data: rawptr, current: []Note, minimum_notes: int) -> (grown: []Note, ok: bool)
+
 Note_List :: struct {
-	notes:       [NOTE_CAPACITY]Note,
-	count:       int,
-	next_serial: u64, // The serial of the next new note. 0: none is left.
+	notes:          [NOTE_CAPACITY]Note, // Inline capacity: fast tier for typical note lists.
+	external_notes: []Note, // Slower tier: caller-supplied backing slice or arena-grown buffer.
+	grow:           Note_Grow,
+	grow_data:      rawptr,
+	using_overflow: bool, // True when active entries live in external_notes.
+	count:          int,
+	next_serial:    u64, // The serial of the next new note. 0: none is left.
+	overflow_moves: u64, // Count of moves to or growths of the slower tier, visible as a measure.
 }
 
 // Why a change of the list is refused. A refused change changes nothing.
 List_Problem :: enum u8 {
 	None         = 0,
-	Full         = 1, // The list holds NOTE_CAPACITY notes.
+	Full         = 1, // The list reached its inline capacity with no overflow tier, or growth was refused.
 	No_Place     = 2, // The index names no note.
 	Name_Invalid = 3, // An empty name, or one longer than NAME_BYTES.
 	No_Serial    = 4, // Each serial is taken.
+}
+
+// list_init_overflow attaches a caller-supplied backing slice and optional
+// growth callback for lists past NOTE_CAPACITY notes.
+list_init_overflow :: proc "contextless" (list: ^Note_List, backing: []Note, grow: Note_Grow = nil, grow_data: rawptr = nil) {
+	if list == nil {
+		return
+	}
+	list.external_notes = backing
+	list.grow = grow
+	list.grow_data = grow_data
+	if list.count == 0 {
+		list.using_overflow = false
+	}
+}
+
+@(private)
+list_storage :: #force_inline proc "contextless" (list: ^Note_List) -> []Note {
+	if list.using_overflow {
+		return list.external_notes
+	}
+	return list.notes[:]
+}
+
+// list_notes returns the active notes slice.
+list_notes :: proc "contextless" (list: ^Note_List) -> []Note {
+	if list == nil || list.count <= 0 {
+		return nil
+	}
+	storage := list_storage(list)
+	return storage[:min(list.count, len(storage))]
+}
+
+// note_at returns the note at index, or nil if index names no note.
+note_at :: proc "contextless" (list: ^Note_List, index: int) -> ^Note {
+	if list == nil || index < 0 || index >= list.count {
+		return nil
+	}
+	storage := list_storage(list)
+	if index >= len(storage) {
+		return nil
+	}
+	return &storage[index]
+}
+
+// list_on_overflow reports whether the list moved past its inline tier.
+list_on_overflow :: proc "contextless" (list: ^Note_List) -> bool {
+	return list != nil && list.using_overflow
+}
+
+// list_capacity returns the current note capacity without another tier growth.
+list_capacity :: proc "contextless" (list: ^Note_List) -> int {
+	if list == nil {
+		return 0
+	}
+	return len(list_storage(list))
+}
+
+@(private)
+list_ensure_room :: proc "contextless" (list: ^Note_List, needed: int) -> bool {
+	if needed < 0 {
+		return false
+	}
+	if !list.using_overflow {
+		if needed <= len(list.notes) {
+			return true
+		}
+		target := list.external_notes
+		if len(target) < needed {
+			if list.grow == nil {
+				return false
+			}
+			grown, ok := list.grow(list.grow_data, target, needed)
+			if !ok || len(grown) < needed || raw_data(grown) == nil {
+				return false
+			}
+			target = grown
+		}
+		copy(target[:list.count], list.notes[:list.count])
+		list.external_notes = target
+		list.using_overflow = true
+		list.overflow_moves += 1
+		return true
+	}
+	if needed <= len(list.external_notes) {
+		return true
+	}
+	if list.grow == nil {
+		return false
+	}
+	grown, ok := list.grow(list.grow_data, list.external_notes, needed)
+	if !ok || len(grown) < needed || raw_data(grown) == nil {
+		return false
+	}
+	if raw_data(grown) != raw_data(list.external_notes) {
+		copy(grown[:list.count], list.external_notes[:list.count])
+	}
+	list.external_notes = grown
+	list.overflow_moves += 1
+	return true
 }
 
 note_name :: proc "contextless" (note: ^Note) -> string {
@@ -126,10 +241,42 @@ name_of_serial :: proc "contextless" (serial: u64, buffer: ^[NAME_BYTES]u8) -> (
 	return len(OBJECT_NAME_PREFIX) + SERIAL_DIGITS, true
 }
 
-// list_reset empties the list: the next new note gets the serial 1.
+// list_reset empties the list on its fast inline tier: the next new note gets
+// the serial 1. Configured overflow backing and overflow_moves persist.
 list_reset :: proc "contextless" (list: ^Note_List) {
 	list.count = 0
 	list.next_serial = 1
+	list.using_overflow = false
+}
+
+// list_copy_from replaces the entries and next_serial of dst with a copy of
+// src, growing dst into its overflow tier when needed. A refusal leaves dst
+// unchanged.
+list_copy_from :: proc "contextless" (dst: ^Note_List, src: ^Note_List) -> List_Problem {
+	if dst == nil || src == nil {
+		return .No_Place
+	}
+	src_notes := list_notes(src)
+	if len(src_notes) <= NOTE_CAPACITY {
+		dst.using_overflow = false
+		copy(dst.notes[:len(src_notes)], src_notes)
+		dst.count = len(src_notes)
+		dst.next_serial = src.next_serial
+		return .None
+	}
+	// Ensure room before overwriting dst.count so a refusal keeps dst intact.
+	saved_count := dst.count
+	saved_overflow := dst.using_overflow
+	if !list_ensure_room(dst, len(src_notes)) {
+		dst.count = saved_count
+		dst.using_overflow = saved_overflow
+		return .Full
+	}
+	storage := list_storage(dst)
+	copy(storage[:len(src_notes)], src_notes)
+	dst.count = len(src_notes)
+	dst.next_serial = src.next_serial
+	return .None
 }
 
 // list_add_stored adds a note that the store holds, after the others: the
@@ -139,10 +286,11 @@ list_add_stored :: proc "contextless" (list: ^Note_List, name: string, first_byt
 	if len(name) == 0 || len(name) > NAME_BYTES {
 		return -1, .Name_Invalid
 	}
-	if list.count >= NOTE_CAPACITY {
+	if !list_ensure_room(list, list.count + 1) {
 		return -1, .Full
 	}
-	note := &list.notes[list.count]
+	storage := list_storage(list)
+	note := &storage[list.count]
 	note^ = {}
 	note.name_count = copy(note.name[:], name)
 	title_set(note, first_bytes)
@@ -156,10 +304,11 @@ list_add_stored :: proc "contextless" (list: ^Note_List, name: string, first_byt
 
 // list_add_new adds an empty note at the end, with no object yet.
 list_add_new :: proc "contextless" (list: ^Note_List) -> (index: int, problem: List_Problem) {
-	if list.count >= NOTE_CAPACITY {
+	if !list_ensure_room(list, list.count + 1) {
 		return -1, .Full
 	}
-	list.notes[list.count] = {}
+	storage := list_storage(list)
+	storage[list.count] = {}
 	list.count += 1
 	return list.count - 1, .None
 }
@@ -167,10 +316,10 @@ list_add_new :: proc "contextless" (list: ^Note_List) -> (index: int, problem: L
 // note_name_take gives a note with no object the name of the next serial,
 // before its first commit.
 note_name_take :: proc "contextless" (list: ^Note_List, index: int) -> List_Problem {
-	if index < 0 || index >= list.count {
+	note := note_at(list, index)
+	if note == nil {
 		return .No_Place
 	}
-	note := &list.notes[index]
 	if note.name_count > 0 {
 		return .None
 	}
@@ -190,9 +339,10 @@ list_remove :: proc "contextless" (list: ^Note_List, index: int) -> (shown: int,
 	if index < 0 || index >= list.count {
 		return -1, .No_Place
 	}
-	copy(list.notes[index:list.count - 1], list.notes[index + 1:list.count])
+	storage := list_storage(list)
+	copy(storage[index:list.count - 1], storage[index + 1:list.count])
 	list.count -= 1
-	list.notes[list.count] = {}
+	storage[list.count] = {}
 	if list.count == 0 {
 		return -1, .None
 	}
@@ -205,8 +355,9 @@ note_find :: proc "contextless" (list: ^Note_List, name: string) -> int {
 	if len(name) == 0 {
 		return -1
 	}
+	storage := list_storage(list)
 	for index in 0 ..< list.count {
-		if note_name(&list.notes[index]) == name {
+		if note_name(&storage[index]) == name {
 			return index
 		}
 	}
@@ -222,7 +373,7 @@ note_write_done :: proc "contextless" (list: ^Note_List, name: string, kept: boo
 	if index < 0 {
 		return -1, false
 	}
-	note := &list.notes[index]
+	note := note_at(list, index)
 	note.write_refused = !kept
 	if kept {
 		note.generation = generation
@@ -233,18 +384,20 @@ note_write_done :: proc "contextless" (list: ^Note_List, name: string, kept: boo
 // note_is_write_refused says if the last write of the note at index was
 // refused. false for an index that names no note.
 note_is_write_refused :: proc "contextless" (list: ^Note_List, index: int) -> bool {
-	if index < 0 || index >= list.count {
+	note := note_at(list, index)
+	if note == nil {
 		return false
 	}
-	return list.notes[index].write_refused
+	return note.write_refused
 }
 
 // list_newest gives the note with the latest commit, or -1 for an empty
 // list. Of two with the same commit, the first.
 list_newest :: proc "contextless" (list: ^Note_List) -> int {
+	storage := list_storage(list)
 	newest := -1
 	for index in 0 ..< list.count {
-		if newest < 0 || list.notes[index].generation > list.notes[newest].generation {
+		if newest < 0 || storage[index].generation > storage[newest].generation {
 			newest = index
 		}
 	}
