@@ -85,11 +85,11 @@ output_order: [gb.MAX_DISK_ENTRIES]int
 output_count: int
 directory_entries: [gb.MAX_PATH_DEPTH][8192]u8
 
-// init_main is the entry: stack is the place of argc, then the arguments.
+// init_main is the entry.
 @(export, link_name = "init_main")
-init_main :: proc "sysv" (stack: rawptr) -> ! {
+init_main :: proc "sysv" (_: rawptr) -> ! {
 	context = runtime.default_context()
-	status := build(stack)
+	status := build()
 	_ = linux_call(uintptr(Linux_Call.Iopl), 3)
 	port_out32(u32(gb.Guest_Io_Port.Build_Exit_Status), status)
 	// The port ends the run: the machine stops this guest at the write.
@@ -432,29 +432,48 @@ run :: proc "contextless" (arguments: []uintptr, environment: []uintptr, folder:
 	return 128 + u32(word & 0x7f), true
 }
 
-// command_run runs the command of the spec, the arguments of init joined
-// with one space, with sh -c in /inputs.
-command_run :: proc "contextless" (stack: rawptr, epoch: u64) -> (status: u32, ok: bool) {
-	words := ([^]uintptr)(stack)
-	count := int(words[0])
-	command: [COMMAND_BYTES]u8
-	length := 0
-	for index in 1 ..< count {
-		argument := ([^]u8)(words[1 + index])
-		if index > 1 && length < len(command) - 1 {
-			command[length] = ' '
-			length += 1
-		}
-		for place := 0; argument[place] != 0 && length < len(command) - 1; place += 1 {
-			command[length] = argument[place]
-			length += 1
+// command_run reads the command of the spec after " -- " in /proc/cmdline
+// and runs it with sh -c in /inputs. Reading /proc/cmdline directly avoids
+// early-boot kernel flags without '=' (such as nokaslr) that Linux appends
+// to init's argv, and preserves arbitrary shell syntax and length.
+command_run :: proc "contextless" (epoch: u64) -> (status: u32, ok: bool) {
+	line_buffer: [SMALL_FILE_BYTES]u8
+	line, read_ok := read_whole(line_buffer[:], "/proc/cmdline")
+	if !read_ok {
+		say("linux_build_init: no command was run: /proc/cmdline was not read")
+		return 0, false
+	}
+	MARK :: " -- "
+	found := -1
+	if len(line) >= len(MARK) {
+		for index in 0 ..= len(line) - len(MARK) {
+			if line[index:index + len(MARK)] == MARK {
+				found = index + len(MARK)
+				break
+			}
 		}
 	}
-	command[length] = 0
-	if length == 0 {
+	if found < 0 {
 		say("linux_build_init: no command was run: the command line gives none after --")
 		return 0, false
 	}
+	rest := line[found:]
+	end := len(rest)
+	for end > 0 && (rest[end - 1] == '\n' || rest[end - 1] == '\r' || rest[end - 1] == 0) {
+		end -= 1
+	}
+	rest = rest[:end]
+	if len(rest) == 0 {
+		say("linux_build_init: no command was run: the command line gives none after --")
+		return 0, false
+	}
+	command: [COMMAND_BYTES]u8
+	if len(rest) >= len(command) {
+		say("linux_build_init: no command was run: the command after -- does not fit")
+		return 0, false
+	}
+	copy(command[:], rest)
+	command[len(rest)] = 0
 	shell := [?]u8{'/', 'b', 'i', 'n', '/', 's', 'h', 0}
 	dash_c := [?]u8{'-', 'c', 0}
 	epoch_text: [64]u8
@@ -641,7 +660,7 @@ pack_outputs :: proc "contextless" (epoch: u64) -> bool {
 
 // build runs the steps of a build, and gives the status that the port
 // takes: the status of the command, or INIT_FAILED_STATUS.
-build :: proc "contextless" (stack: rawptr) -> u32 {
+build :: proc "contextless" () -> u32 {
 	if linux_call(uintptr(Linux_Call.Iopl), 3) < 0 {
 		say("linux_build_init: the ports of the build are not open to init")
 		return INIT_FAILED_STATUS
@@ -665,7 +684,7 @@ build :: proc "contextless" (stack: rawptr) -> u32 {
 		say("linux_build_init: the command was not run: the ports of the build did not close")
 		return INIT_FAILED_STATUS
 	}
-	status, ran := command_run(stack, epoch)
+	status, ran := command_run(epoch)
 	// Each process that the command left ends before init reads /outputs:
 	// none changes a file between the walk and the read.
 	_ = linux_call(uintptr(Linux_Call.Kill), ~uintptr(0), 9)

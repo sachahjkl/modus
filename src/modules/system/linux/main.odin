@@ -309,10 +309,6 @@ step_failed :: proc "contextless" (status: call_outcome.Call_Outcome, step: stri
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	// The pages that the granted budget holds before this process makes
-	// anything: the reserve pays the terminal, the store client and the
-	// guest process, and the rest is the memory of the guest.
-	own, _ := system.budget_read()
 	opened: bool
 	if output, opened = terminal.open(ctx); !opened {
 		system.log_fact(.Info, No_Terminal{})
@@ -323,6 +319,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Info, No_Store{})
 		refuse("The guest did not start: this window has no private store, which holds the kernel and the initial archive of the guest.")
 	}
+	// Wait for root to read the startup peak before allocating guest memory
+	// that grows into the granted headroom beyond the minimum floor.
+	system.ready_at_end()
+	// The pages that the granted budget holds before this process makes the
+	// guest: the reserve pays the terminal, the store client and the guest
+	// process, and the rest is the memory of the guest.
+	own, _ := system.budget_read()
 
 	guest_memory_pages = guest_memory_pages_of(own.pages)
 	if guest_memory_pages == 0 {

@@ -664,6 +664,8 @@ key_name :: proc(character: u8) -> string {
 		return "shift-slash"
 	case '@':
 		return "shift-2"
+	case '$':
+		return "shift-4"
 	}
 	return ""
 }

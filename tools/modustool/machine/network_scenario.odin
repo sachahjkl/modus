@@ -135,8 +135,8 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "remote: refused a request: kind Bad_Value, unit None, operation 0, argument 1, value 9, limit 1, found 0"},
 	{kind = .Wait, text = "remote: refused a request: kind Too_Long, unit Bytes, operation 0, argument 5, value 400, limit 16, found 0"},
 	{kind = .Wait, text = "remote: refused a request: kind Too_Long, unit Bytes, operation 0, argument 8, value 65536, limit 65472, found 0"},
-	{kind = .Wait, text = "remote: refused a request: kind Bad_Value, unit Bytes, operation 0, argument 10, value 28, limit 65480, found 0"},
-	{kind = .Wait, text = "remote: refused a request: kind No_Grant, unit Connection, operation 0, argument 3, value 0, limit 0, found 0"},
+	{kind = .Wait, text = "remote: refused a request: kind Bad_Value, unit Bytes, operation 0, argument 10, value 28, limit 8, found 0"},
+	{kind = .Wait, text = "remote: refused a request: kind No_Grant, unit Connection, operation 3, argument 3, value 0, limit 0, found 0"},
 	// The place of the pointer and the windows: each press from now on is
 	// confirmed.
 	{kind = .Call, text = "compositor.pointer()", expected = "1 rows of Pointer", pointer = true},
@@ -167,7 +167,7 @@ scenario_network := [?]Step {
 	{kind = .Call, text = "storage.stores()", expected = " blocks in use"},
 	// Failures: the sentence of the error record of the service.
 	{kind = .Call, text = "monitor.count(\"nothing\")", outcome = .Failed, expected = "error: monitor.count: the argument name names nothing that exists\n  outcome    Nothing_Has_That_Name"},
-	{kind = .Call, text = "storage.size(0, \"note\")", outcome = .Failed, expected = "error: storage.size: the caller has no grant for this: a private store\n  outcome    Grant_Or_Right_Missing"},
+	{kind = .Call, text = "storage.size(0, \"note\")", outcome = .Failed, expected = "error: storage.size: the caller has no grant for this: a private store; only the starter of the process can give this grant\n  outcome    Grant_Or_Right_Missing"},
 	{kind = .Call, text = "manual.exports(\"nothing\")", outcome = .Failed, expected = "error: manual.exports: the argument name names none of the modules\n  outcome    Nothing_Has_That_Name"},
 	// The tool checks the arguments against the description before it sends.
 	{kind = .Call, text = "monitor.count(4)", outcome = .Wrong, expected = "error: the parameter name of monitor.count is a Text, the argument is an Integer"},
@@ -203,19 +203,19 @@ scenario_network := [?]Step {
 	{kind = .Wait, text = "[console] remote   network             held"},
 	{kind = .Wait, text = "[console] remote   acts_for_principal  held"},
 	{kind = .Type, text = "revoke(\"remote\", \"acts_for_principal\")"},
-	{kind = .Wait, text = "root: revoked the grant acts_for_principal of remote, connections changed: 5"},
-	{kind = .Call, text = "inspect.mappings(\"remote\")", outcome = .Failed, expected = "error: inspect.mappings: the caller has no grant for this: to act for the principal\n  outcome    Grant_Or_Right_Missing"},
-	{kind = .Call, text = "inspect.threads(\"remote\")", outcome = .Failed, expected = "error: inspect.threads: the caller has no grant for this: to act for the principal\n  outcome    Grant_Or_Right_Missing"},
-	{kind = .Call, text = "inspect.modules(\"remote\")", outcome = .Failed, expected = "error: inspect.modules: the caller has no grant for this: to act for the principal\n  outcome    Grant_Or_Right_Missing"},
-	{kind = .Call, text = "monitor.processes()", outcome = .Failed, expected = "error: monitor.processes: the caller has no grant for this: to act for the principal\n  outcome    Grant_Or_Right_Missing"},
+	{kind = .Wait, text = "root: revoked the grant acts_for_principal of remote, connections changed: 3"},
+	{kind = .Call, text = "inspect.mappings(\"remote\")", outcome = .Failed, expected = "error: inspect.mappings: the caller has no grant for this: to act for the principal; only the starter of the process can give this grant\n  outcome    Grant_Or_Right_Missing"},
+	{kind = .Call, text = "inspect.threads(\"remote\")", outcome = .Failed, expected = "error: inspect.threads: the caller has no grant for this: to act for the principal; only the starter of the process can give this grant\n  outcome    Grant_Or_Right_Missing"},
+	{kind = .Call, text = "inspect.modules(\"remote\")", outcome = .Failed, expected = "error: inspect.modules: the caller has no grant for this: to act for the principal; only the starter of the process can give this grant\n  outcome    Grant_Or_Right_Missing"},
+	{kind = .Call, text = "monitor.processes()", outcome = .Failed, expected = "error: monitor.processes: the caller has no grant for this: to act for the principal; only the starter of the process can give this grant\n  outcome    Grant_Or_Right_Missing"},
 	// The place of the pointer is a fact of the screen: the
 	// tool moves the pointer with no confirmation again.
-	{kind = .Call, text = "compositor.pointer()", outcome = .Failed, pointer = true, expected = "error: compositor.pointer: the caller has no grant for this: to act for the principal\n  outcome    Grant_Or_Right_Missing"},
+	{kind = .Call, text = "compositor.pointer()", outcome = .Failed, pointer = true, expected = "error: compositor.pointer: the caller has no grant for this: to act for the principal; only the starter of the process can give this grant\n  outcome    Grant_Or_Right_Missing"},
 	// The window of inspect covers the windows under it: it closes now.
 	{kind = .Close, text = "inspect"},
 	{kind = .Wait, text = "root: inspect stopped: a holder"},
-	{kind = .Call, text = "manual.running()", outcome = .Failed, expected = "error: manual.running: the caller has no grant for this: to act for the principal\n  outcome    Grant_Or_Right_Missing"},
-	{kind = .Call, text = "storage.stores()", outcome = .Failed, expected = "error: storage.stores: the caller has no grant for this: to act for the principal\n  outcome    Grant_Or_Right_Missing"},
+	{kind = .Call, text = "manual.running()", outcome = .Failed, expected = "error: manual.running: the caller has no grant for this: to act for the principal; only the starter of the process can give this grant\n  outcome    Grant_Or_Right_Missing"},
+	{kind = .Call, text = "storage.stores()", outcome = .Failed, expected = "error: storage.stores: the caller has no grant for this: to act for the principal; only the starter of the process can give this grant\n  outcome    Grant_Or_Right_Missing"},
 	{kind = .Call, text = "manual.modules()", expected = " rows of Module"},
 	{kind = .Call, text = "monitor.served()", expected = "Served{calls = "},
 	// The principal revokes the key of the client while its connection is
@@ -301,7 +301,7 @@ scenario_network := [?]Step {
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = "p"},
-	{kind = .Wait, text = " for \"p\": plasma (module), plasma (window), paint (module), pages (module), ..."},
+	{kind = .Wait, text = " for \"p\": plasma (module), plasma (window), pages (module), paint (module), ..."},
 	{kind = .Key, text = "down"},
 	{kind = .Wait, text = "compositor: the palette chooses plasma (window)"},
 	{kind = .Shot, text = "palette"},
