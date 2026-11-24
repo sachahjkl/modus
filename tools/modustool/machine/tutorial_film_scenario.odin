@@ -59,15 +59,22 @@ scenario_tutorial_film := [?]Step {
 
 	// Chapter 3: Content-addressed ingestion, signed QUIC cache pull, provenance,
 	// and verified module delivery using clean Lex variables & typed Records.
+	// Variable assignments draw nothing in the console, so each binding is
+	// evaluated on the next line to display its hash or typed Record on screen.
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT, text = "tutorial.cache_start"},
 	{kind = .Film_Type, text = "tree = \"db_browser\" |> recipes.ingest_tree"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Key, text = "ret"},
+	{kind = .Film_Type, text = "tree"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] {db_browser_here}"},
 	{kind = .Film_Hold, milliseconds = 3500},
 
 	{kind = .Film_Type, text = "pkg = \"db_browser\" |> recipes.build_project(\"prefer_cache\")"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "recipes: build completed with outcome "},
+	{kind = .Film_Type, text = "pkg"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console]   output   {db_browser_output}"},
 	{kind = .Film_Hold, milliseconds = TUTORIAL_HOLD_DETAIL, text = "tutorial.cache_pull"},
@@ -80,6 +87,8 @@ scenario_tutorial_film := [?]Step {
 
 	{kind = .Film_Type, text = "mod = pkg.output |> recipes.deliver_module(\"module\", \"db_browser\")"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Key, text = "ret"},
+	{kind = .Film_Type, text = "mod"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] {db_browser_hash}"},
 	{kind = .Film_Hold, milliseconds = TUTORIAL_HOLD_EXPLAIN, text = "tutorial.deliver"},

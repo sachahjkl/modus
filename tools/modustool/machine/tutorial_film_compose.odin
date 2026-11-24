@@ -224,7 +224,7 @@ tutorial_chapter_cards := [7]Tutorial_Chapter_Card {
 
 // Lower-third captions anchored directly to scenario_tutorial_film cues.
 @(rodata)
-tutorial_captions := [13]Tutorial_Caption {
+tutorial_captions := [15]Tutorial_Caption {
 	{
 		cue_name = "tutorial.intro",
 		accent   = .System,
@@ -282,11 +282,18 @@ tutorial_captions := [13]Tutorial_Caption {
 		body     = "mod = pkg.output |> recipes.deliver_module(\"module\", \"db_browser\") checks format and binds its hash.",
 	},
 	{
+		cue_name = "tutorial.sandbox_start",
+		accent   = .Grant,
+		kicker   = "03 / SANDBOX & GRANTS",
+		heading  = "Launching a disk process by verified BLAKE3 hash",
+		body     = "start_from_disk(\"db_browser\", mod) checks the module bytes against mod and starts with zero grants.",
+	},
+	{
 		cue_name = "tutorial.sandboxed",
 		accent   = .Grant,
 		kicker   = "03 / SANDBOX & GRANTS",
 		heading  = "Sandboxed by default: zero ambient disk or network access",
-		body     = "start_from_disk(\"db_browser\", mod) launches the app with no store grant - it stays confined to memory.",
+		body     = "Without a store grant, db_browser cannot touch any store on disk and stays confined to memory.",
 	},
 	{
 		cue_name = "tutorial.grants_window",
@@ -310,11 +317,18 @@ tutorial_captions := [13]Tutorial_Caption {
 		body     = "INSERT commits dirty pages atomically to the CoW store; clicking a column header sorts off-thread.",
 	},
 	{
+		cue_name = "tutorial.versions_start",
+		accent   = .Version,
+		kicker   = "05 / AUTOMATIC COW VERSIONS",
+		heading  = "Opening automatic copy-on-write version history",
+		body     = "Ctrl+H opens the VERSIONS list; every database commit is kept automatically with no Save button.",
+	},
+	{
 		cue_name = "tutorial.versions_preview",
 		accent   = .Version,
 		kicker   = "05 / AUTOMATIC COW VERSIONS",
-		heading  = "Time-travel without a Save button",
-		body     = "Ctrl+H lists every CoW commit; Down previews an earlier generation read-only, and Enter restores it atomically.",
+		heading  = "Previewing and restoring an earlier generation atomically",
+		body     = "Down previews the earlier snapshot read-only; Enter restores it atomically while keeping full history.",
 	},
 }
 
@@ -688,11 +702,16 @@ tutorial_timeline_free :: proc(timeline: ^Tutorial_Timeline, allocator := contex
 }
 
 // tutorial_ffconcat_text serializes spliced ffconcat entries into pictures.ffconcat.
+// FFmpeg's concat demuxer ignores the duration directive on the final entry
+// unless the final file line is repeated once without a duration line.
 tutorial_ffconcat_text :: proc(entries: []Tutorial_Spliced_Entry) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	strings.write_string(&builder, "ffconcat version 1.0\n")
 	for entry in entries {
 		fmt.sbprintf(&builder, "file '%s'\nduration %d.%06d\n", entry.file_name, entry.duration_us / 1_000_000, entry.duration_us % 1_000_000)
+	}
+	if len(entries) > 0 {
+		fmt.sbprintf(&builder, "file '%s'\n", entries[len(entries) - 1].file_name)
 	}
 	return strings.to_string(builder)
 }

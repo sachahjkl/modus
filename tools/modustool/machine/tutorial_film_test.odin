@@ -54,11 +54,18 @@ tutorial_film_expands_placeholders_and_refuses_missing_bindings :: proc(t: ^test
 	_, ok = tutorial_film_expand_steps(scenario_tutorial_film[:], incomplete2)
 	testing.expect(t, !ok, "empty db_browser_output binding is refused")
 
-	// No on-camera Film_Type step may type a raw hash placeholder or mention collatz.
+	// No on-camera Film_Type step may type a raw hash placeholder or mention collatz,
+	// and no console variable assignment may be followed immediately by a [console]
+	// value wait without first evaluating a non-assignment expression (assignments
+	// draw nothing in src/modules/system/console/language.odin).
+	last_typed_was_assignment := false
 	for step, index in scenario_tutorial_film {
 		testing.expectf(t, !strings.contains(step.text, "collatz"), "step %d must not reference collatz: %s", index + 1, step.text)
 		if step.kind == .Film_Type {
 			testing.expectf(t, !strings.contains_rune(step.text, '{'), "on-camera Film_Type step %d must use Lex variables, not raw hash placeholders: %s", index + 1, step.text)
+			last_typed_was_assignment = strings.contains(step.text, " = ")
+		} else if step.kind == .Wait && strings.has_prefix(step.text, "[console] ") && !strings.has_prefix(step.text, "[console] > ") {
+			testing.expectf(t, !last_typed_was_assignment, "step %d waits for drawn console output %q directly after a variable assignment", index + 1, step.text)
 		}
 	}
 
@@ -214,6 +221,27 @@ tutorial_film_compose_splices_cards_and_captions_without_overlap :: proc(t: ^tes
 	for i in 1 ..< len(timeline.caption_spans) {
 		testing.expect(t, timeline.caption_spans[i].start_ms >= timeline.caption_spans[i - 1].end_ms, "captions are ordered without overlap")
 	}
+
+	// Every chapter card spliced before a cue starts a caption at that exact cue
+	// (no uncaptioned gap right after a chapter card).
+	for card in tutorial_chapter_cards {
+		if card.anchor != .Before_Cue {
+			continue
+		}
+		has_caption := false
+		for cap in tutorial_captions {
+			if cap.cue_name == card.cue_name {
+				has_caption = true
+				break
+			}
+		}
+		testing.expectf(t, has_caption, "chapter card %s cue `%s` has an immediate caption", card.id, card.cue_name)
+	}
+
+	// ffconcat output repeats the final file line without a duration so FFmpeg's
+	// concat demuxer honors the final Chapter 7 card's 4.0 s duration.
+	ffconcat := tutorial_ffconcat_text(timeline.entries)
+	testing.expect(t, strings.has_suffix(ffconcat, "file 'card_ch7.ppm'\nduration 4.000000\nfile 'card_ch7.ppm'\n"), "ffconcat repeats final card file line after its 4.0 s duration")
 
 	// 5. ASS formatting helpers, ASCII-only glyph coverage for B612 ASCII, and generated script.
 	testing.expect_value(t, tutorial_ass_color({0x12, 0x34, 0x56}, 0x10), "&H10563412")
