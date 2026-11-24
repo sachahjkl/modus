@@ -68,6 +68,10 @@ a_set_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, short, Set_Problem.Too_Short)
 	_, cut := set_check(buffer[:SET_HEADER_SIZE + 4])
 	testing.expect_value(t, cut, Set_Problem.Too_Short)
+	oversized: [SET_SIZE + 1]u8
+	copy(oversized[:SET_SIZE], buffer[:])
+	_, too_large := set_check(oversized[:])
+	testing.expect_value(t, too_large, Set_Problem.Too_Large)
 	// An owner twice, and a name that is a default and a lock.
 	twice: [SET_SIZE]u8
 	empty: [64]u8

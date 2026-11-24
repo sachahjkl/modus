@@ -226,6 +226,7 @@ frame_to_software_processor :: proc "contextless" (frame: ^Frame) {
 	cpu.rip = frame.rip
 	cpu.rflags = frame.rflags
 	cpu.outcome = .Running
+	cpu.timestamp_disable = processor_self().tsd_loaded
 	cpu.cycle_counter_read = software_processor_cycle_counter_read
 	cpu.blocks = &software_processor_blocks
 	// The map of the task state of this processor: ports_switch opened

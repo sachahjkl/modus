@@ -3,6 +3,8 @@ package build
 
 import "core:testing"
 import info "modus:contract/boot_info"
+import "modus:contract/plan_values"
+import "modus:contract/root_plan_values"
 import "modus:contract/system_description"
 import "modustool:foundation"
 
@@ -188,4 +190,50 @@ release_image_has_no_test_module_and_no_test_start_grant_matches :: proc(t: ^tes
 		}
 	}
 	testing.expect(t, test_grant_rows > 0, "start_grant_sets contains test module rows that match nothing in release")
+}
+
+// The test-image plan file encodes valid budget rows for limits and log_flood,
+// and release_boot_image_of strips it so no release image carries test plan rows.
+@(test)
+test_plan_values_encoded_and_stripped_from_release :: proc(t: ^testing.T) {
+	encoded, ok := test_plan_values_encode()
+	testing.expect(t, ok && len(encoded) > 0, "test plan values failed to encode")
+	head, check_problem := plan_values.set_check(encoded)
+	testing.expect_value(t, check_problem, plan_values.Set_Problem.None)
+	testing.expect_value(t, head.principal, u64(0))
+	testing.expect_value(t, head.owner_count, 2)
+
+	limits_vals, limits_found := plan_values.owner_values_of(encoded, "limits")
+	testing.expect(t, limits_found, "limits owner missing from test plan")
+	limits_policy, limits_conflict, limits_over := root_plan_values.module_budget_policy_of(limits_vals)
+	testing.expect(t, !limits_conflict && !limits_over, "limits policy reported conflict")
+	testing.expect(t, limits_policy.has_processor && limits_policy.processor == TEST_LIMITS_PROCESSOR)
+	testing.expect(t, limits_policy.has_log_records && limits_policy.log_records == TEST_LIMITS_LOG_RECORDS)
+
+	flood_vals, flood_found := plan_values.owner_values_of(encoded, "log_flood")
+	testing.expect(t, flood_found, "log_flood owner missing from test plan")
+	flood_policy, flood_conflict, flood_over := root_plan_values.module_budget_policy_of(flood_vals)
+	testing.expect(t, !flood_conflict && !flood_over, "log_flood policy reported conflict")
+	testing.expect(t, !flood_policy.has_processor)
+	testing.expect(t, flood_policy.has_log_records && flood_policy.log_records == TEST_LOG_FLOOD_LOG_RECORDS)
+
+	_, absent := plan_values.owner_values_of(encoded, "console")
+	testing.expect(t, !absent, "unrelated module unexpectedly present in test plan")
+
+	root_text, fonts_text: string = "root", "fonts"
+	files := []Image_File {
+		{name = ROOT_SERVICE_MODULE, file = transmute([]u8)root_text},
+		{name = "fonts", file = transmute([]u8)fonts_text},
+		{name = plan_values.TEST_IMAGE_PLAN_RESOURCE, file = encoded},
+	}
+	build_image := boot_image_encode(files, 1)
+	testing.expect(t, release_test_module_problem(build_image, "test build") != "", "release check did not refuse test_plan_values resource")
+	release_image, problem := release_boot_image_of(build_image)
+	testing.expect_value(t, problem, "")
+	_, rel_resources, valid := info.image_tables(release_image)
+	testing.expect(t, valid && len(rel_resources) == 1)
+	if len(rel_resources) == 1 {
+		testing.expect_value(t, system_description.name_of(&rel_resources[0].name), "fonts")
+	}
+	testing.expect_value(t, release_test_module_problem(release_image, "release"), "")
 }

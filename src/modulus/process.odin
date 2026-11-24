@@ -8,6 +8,7 @@ import op "modus:contract/operation"
 import "modulus:budget_peak"
 import "modulus:extended_switch"
 import "modulus:frame_runs"
+import "modulus:memory_wx"
 import "modulus:page_attributes"
 import "modulus:processor_counters"
 import "modulus:mapping_order"
@@ -75,6 +76,7 @@ Region :: struct {
 	// images of the boot) is normal memory that the kernel names, and never counts.
 	cache_types_counted: bool,
 	cache_mappings: page_attributes.Mapping_Cache_Counts, // With cache_types_counted: the live mappings of each cache type. Frame lock.
+	wx: memory_wx.Counts, // Live writable, executable, and switching mappings of this object across all processes. Frame lock.
 	uncommitted: bool, // Made Uncommitted: a page is paid when it is committed (the bit SLOT_COMMITTED of its slot).
 	large_pages: bool, // Made Large_Pages: contiguous, aligned on 2 MiB, a whole number of large pages.
 	committed:  u64, // Uncommitted: the committed pages. Region lock and frame lock to change it.
@@ -253,6 +255,10 @@ Thread :: struct #align (64) {
 	// Whether this thread is recorded or replayed (record_replay.odin).
 	// Kept in the hot line so switching normal threads reads no extra line.
 	record_mode: input_history.Record_Mode,
+	// Process was created with Process_Flag.No_Clock: CR4.TSD stays enabled,
+	// kernel entry returns 0, and wall-clock deadlines do not apply.
+	// Kept in the hot line so switching normal threads reads no extra line.
+	no_clock: bool,
 	frame:        Frame,
 	extended_state: Extended_State_Area, // Complete while the thread is on no processor: schedule saves it when a processor leaves the thread, and restores it when a processor takes it (docs/ARCHITECTURE.md, "The extended state of the processor").
 	process:      u32,
@@ -388,6 +394,7 @@ Thread :: struct #align (64) {
 #assert(offset_of(Thread, placed) < 64)
 #assert(offset_of(Thread, counting) < 64)
 #assert(offset_of(Thread, record_mode) < 64)
+#assert(offset_of(Thread, no_clock) < 64)
 #assert(offset_of(Thread, has_breakpoints) < 64)
 #assert(offset_of(Thread, placement_restricted) < 64)
 // One bit of a set of processors for each processor that runs threads.
@@ -447,6 +454,7 @@ Process :: struct {
 	thread_areas: slot_set.Slot_Set(op.THREAD_CAPACITY), // The thread areas in use, by the number of their thread.
 	thread_count: u32,
 	has_ports:    bool,
+	no_clock:     bool, // Process_Flag.No_Clock: no time page, CR4.TSD set, inherited by child processes.
 	// The recorded process whose shared memory this process writes: its
 	// threads run only while the recorded thread is at an input point
 	// (record_replay.odin). 0: none. Written under the control lock (atomic:
@@ -976,6 +984,29 @@ device_cache_type_release :: proc "contextless" (region_index: u32, type: page_a
 	counts[type] -= 1
 }
 
+// region_wx_claim records one more live mapping of access over a memory object
+// under the frame lock, refusing any combination that would make the same
+// object both writable and executable across mappings (modulus:memory_wx).
+region_wx_claim :: proc "contextless" (region_index: u32, access: memory_wx.Access) -> bool {
+	lock_take(&frame_lock, .Frame)
+	defer lock_free(&frame_lock, .Frame)
+	return memory_wx.claim(&regions[region_index].wx, access)
+}
+
+// region_wx_release removes one live mapping of access from a memory object
+// under the frame lock, after the shoot-down of the removed or downgraded
+// mapping has completed.
+region_wx_release :: proc "contextless" (region_index: u32, access: memory_wx.Access) {
+	lock_take(&frame_lock, .Frame)
+	defer lock_free(&frame_lock, .Frame)
+	if !memory_wx.release(&regions[region_index].wx, access) {
+		when TEST_BUILD_CHECKS_LOCK_ORDER {
+			log("kernel: a W^X mapping count of a memory object would go below 0")
+			machine_stop(.Invariant_Broken)
+		}
+	}
+}
+
 // region_slot gives the place of the frame of one page in the frame list of
 // a memory object that is not contiguous.
 region_slot :: proc "contextless" (region: ^Region, page: u64) -> ^u64 {
@@ -1438,6 +1469,19 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	defer if status != .Succeeded && cache_claimed {
 		device_cache_type_release(region_index, cache_type)
 	}
+	// W^X across all mappings of a memory object (modulus:memory_wx): claim
+	// before modifying any page table entry, and release on any refusal before
+	// the mapping takes ownership.
+	wx_access := memory_wx.access_of_bits(bits, limit_bits, PAGE_PRESENT, PAGE_WRITE, PAGE_NO_EXECUTE)
+	wx_claimed := false
+	if !region_wx_claim(region_index, wx_access) {
+		processor_self().operation.memory_wx_conflict = true
+		return 0, .Wrong_State
+	}
+	wx_claimed = true
+	defer if status != .Succeeded && wx_claimed {
+		region_wx_release(region_index, wx_access)
+	}
 	// The origin first: during a revocation, a path with no control lock
 	// adds no holding, and runs again under the control lock.
 	holding := holding_of_mapping(process, mapping)
@@ -1527,9 +1571,10 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 			intrinsics.atomic_sub(&region.writable_mapping_count, 1)
 		}
 	}
-	// The mapping owns its count of the cache type now: its unmap gives it
-	// back, and the deferred release must not give it a second time.
+	// The mapping owns its count of the cache type and W^X access now: its
+	// unmap gives them back, and the deferred releases must not run again.
 	cache_claimed = false
+	wx_claimed = false
 	intrinsics.atomic_add(&region.references, 1)
 	if process_records[index_of_process(process)].mode != .None {
 		intrinsics.atomic_add(&region.recorded_mappings, 1)
@@ -1731,6 +1776,9 @@ unmap :: proc "contextless" (process: ^Process, mapping: ^Mapping) {
 			device_cache_type_release(mapping.region, cache_type)
 		}
 	}
+	if mapping.page_count != 0 {
+		region_wx_release(mapping.region, memory_wx.access_of_bits(mapping.bits, mapping.limit_bits, PAGE_PRESENT, PAGE_WRITE, PAGE_NO_EXECUTE))
+	}
 	region_release(mapping.region)
 	mapping^ = {} // The count of the present pages ends with the mapping (under the process lock: the caller holds it).
 }
@@ -1885,7 +1933,7 @@ process_reset :: proc "contextless" (process: ^Process, ports_serial: u64, seria
 
 // process_create makes a process with no memory. The budget pays for the
 // slot and for the page tables. The caller holds the control lock.
-process_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, status: Operation_Outcome) {
+process_create :: proc "contextless" (budget: u32, name: []u8, no_clock: bool = false) -> (index: u32, status: Operation_Outcome) {
 	if !budgets[budget].live || budgets[budget].amounts.processes == 0 || budgets[budget].amounts.pages == 0 {
 		return 0, .Budget_Or_Capacity_Exhausted
 	}
@@ -1919,13 +1967,17 @@ process_create :: proc "contextless" (budget: u32, name: []u8) -> (index: u32, s
 		}
 		budgets[budget].amounts.processes -= 1
 		copy(process.name[:len(process.name) - 1], name)
+		process.no_clock = no_clock
 		// The time page: read only. A process cannot remove it (Memory_Unmap).
-		if _, map_status := map_region(&process, time_region, op.TIME_ADDRESS, {}, 0, 1); map_status != .Succeeded {
-			own_log_ring_give_back(ring_frames, &process.budget)
-			address_space_free(process.table, &process.budget)
-			budgets[budget].amounts.processes += 1
-			process_reset(&process, ports_serial, serial)
-			return 0, map_status
+		// A process created with Process_Flag.No_Clock receives no time page.
+		if !no_clock {
+			if _, map_status := map_region(&process, time_region, op.TIME_ADDRESS, {}, 0, 1); map_status != .Succeeded {
+				own_log_ring_give_back(ring_frames, &process.budget)
+				address_space_free(process.table, &process.budget)
+				budgets[budget].amounts.processes += 1
+				process_reset(&process, ports_serial, serial)
+				return 0, map_status
+			}
 		}
 		// Under the log lock: Log_Read finds the frames of the ring only
 		// with the serial of this process, which the reset above wrote.
@@ -2079,6 +2131,7 @@ thread_create :: proc "contextless" (process_index: u32, budget: u32, entry, sta
 	intrinsics.mem_zero(thread, size_of(Thread))
 	thread.state = .Ready
 	thread.process = process_index
+	thread.no_clock = process.no_clock
 	thread.budget = budget
 	thread.number = number
 	thread.ring = thread_ring
@@ -2665,7 +2718,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.process) {
 			event_record(cpu, .Fault, thread.process, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.First_Use))
 		}
-	case from_process && frame.vector == VECTOR_PROTECTION_FAULT && (intrinsics.atomic_load(&thread.record_mode) != .None || cpu.record_traps_loaded) && record_replay_handle_gp(cpu, thread):
+	case from_process && frame.vector == VECTOR_PROTECTION_FAULT && (intrinsics.atomic_load(&thread.record_mode) != .None || cpu.cpuid_fault_loaded || (!thread.no_clock && cpu.tsd_loaded)) && record_replay_handle_gp(cpu, thread):
 		// Emulated rdtsc, rdtscp, or cpuid for a recorded or replayed thread
 		// (or stale trap unload after recording ended); never delivered to a
 		// user fault handler.

@@ -204,6 +204,8 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"operation", "Commit_Flags", type_info_of(op.Commit_Flags)},
 		{"operation", "Map_Flag", type_info_of(op.Map_Flag)},
 		{"operation", "Map_Flags", type_info_of(op.Map_Flags)},
+		{"operation", "Process_Flag", type_info_of(op.Process_Flag)},
+		{"operation", "Process_Flags", type_info_of(op.Process_Flags)},
 		{"operation", "Process_State", type_info_of(op.Process_State)},
 		{"operation", "Stop_Cause", type_info_of(op.Stop_Cause)},
 		{"operation", "Stop_Outcome", type_info_of(op.Stop_Outcome)},

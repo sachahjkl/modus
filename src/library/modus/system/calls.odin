@@ -171,7 +171,9 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil, keep_memory_objects := false, rows: []u8 = nil, deadline: u64 = WAIT_FOREVER) -> (result: i64, outcome: call_outcome.Call_Outcome) {
 	bound := deadline == 0 ? WAIT_FOREVER : deadline
 	// A deadline that passed before the call sends nothing: no work starts.
-	if deadline_passed(time(), bound) {
+	// WAIT_FOREVER skips reading the time page so a Process_Flag.No_Clock
+	// caller never faults on the unmapped time page.
+	if bound != WAIT_FOREVER && deadline_passed(time(), bound) {
 		// Nothing left, so nothing ran: the call is not in doubt.
 		return path_failure(error, .Callee_Unavailable, errors.error_make(.No_Answer, .Milliseconds))
 	}
@@ -222,7 +224,8 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 		// The state before the ring: a process that answered and stopped is
 		// read with its answer.
 		state, stop_cause, stop_outcome := process_state(connection.process)
-		completion, waited := call_answer_step(&connection.calls, connection.tag, time(), bound, state)
+		now := bound == WAIT_FOREVER ? u64(0) : time()
+		completion, waited := call_answer_step(&connection.calls, connection.tag, now, bound, state)
 		switch waited {
 		case .Waits:
 			wait_records(&wait, &connection.calls.completions)
@@ -374,6 +377,7 @@ Call_Host_Context :: struct {
 	mappings:  []Mapping,
 	pages:     u64, // The pages of the budget of the call host. 0: CALL_HOST_PAGES.
 	processes: u64, // The processes of the budget of the call host. 0: 1.
+	no_clock:  bool, // Create the call host with Process_Flag.No_Clock (no time page, rdtsc/rdtscp trap).
 }
 
 // call_host_start starts a call host (the module "host" of the boot
@@ -452,7 +456,11 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	grants[isolated.GRANT_REGION] = {connection.region_memory, {.Read, .Write}}
 	values[isolated.VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
 	values[isolated.VALUE_FILE_SIZE] = offset
-	connection.process = process_start(image_find(image, "host"), name, grants, values, {pages = pages, processes = processes, threads = 1, processor = 500_000, log_records = log_records}, mappings[:mapping_count]) or_return
+	process_flags: op.Process_Flags
+	if added != nil && added.no_clock {
+		process_flags += {.No_Clock}
+	}
+	connection.process = process_start(image_find(image, "host"), name, grants, values, {pages = pages, processes = processes, threads = 1, processor = 500_000, log_records = log_records}, mappings[:mapping_count], process_flags = process_flags) or_return
 	// The first completion says if the call host loaded the module.
 	switch connection_ready_wait(&connection.calls, connection.process) {
 	case .Ready:
@@ -535,8 +543,13 @@ call_host_start_from_memory :: proc "contextless" (host_file: []u8, module_memor
 	grants[isolated.GRANT_REGION] = {connection.region_memory, {.Read, .Write}}
 	values[isolated.VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
 	values[isolated.VALUE_FILE_SIZE] = offset
-	connection.process = process_start(host_file, name, grants, values, {pages = pages, processes = processes, threads = 1, processor = 500_000, log_records = log_records}, mappings[:mapping_count]) or_return
-	switch connection_ready_wait(&connection.calls, connection.process) {
+	child_no_clock := added != nil && added.no_clock
+	process_flags: op.Process_Flags
+	if child_no_clock {
+		process_flags += {.No_Clock}
+	}
+	connection.process = process_start(host_file, name, grants, values, {pages = pages, processes = processes, threads = 1, processor = 500_000, log_records = log_records}, mappings[:mapping_count], process_flags = process_flags) or_return
+	switch connection_ready_wait(&connection.calls, connection.process, no_clock = child_no_clock) {
 	case .Ready:
 		return connection, .Succeeded
 	case .Load_Failed:

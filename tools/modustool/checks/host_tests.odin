@@ -427,6 +427,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_INTERNAL + "/sound/sound_device",
 	foundation.SOURCE_FOLDER_KERNEL + "/acpi_processors",
 	foundation.SOURCE_FOLDER_KERNEL + "/frame_runs",
+	foundation.SOURCE_FOLDER_KERNEL + "/memory_wx",
 	foundation.SOURCE_FOLDER_CONTRACT + "/role_contract",
 	foundation.SOURCE_FOLDER_CONTRACT + "/supervision",
 	foundation.SOURCE_FOLDER_INTERNAL + "/root/role_policy",

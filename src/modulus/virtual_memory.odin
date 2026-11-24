@@ -3,6 +3,7 @@ package kernel
 import "modulus:budget_peak"
 import "base:intrinsics"
 import "modulus:frame_runs"
+import "modulus:memory_wx"
 import op "modus:contract/operation"
 import "modulus:mapping_order"
 import "modulus:word_table"
@@ -895,6 +896,62 @@ memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Ra
 			return 0, .Wrong_State
 		}
 	}
+	// W^X across all mappings of each memory object (modulus:memory_wx):
+	// claim every new access under one frame-lock section before modifying any
+	// page table entry, and release the old accesses only after processor_sync.
+	Wx_Change :: struct {
+		region:     u32,
+		old_access: memory_wx.Access,
+		new_access: memory_wx.Access,
+	}
+	wx_changes: [op.RANGE_TABLE_CAPACITY]Wx_Change
+	wx_change_count := 0
+	for range, index in ranges {
+		mapping := &process.mappings[places[index]]
+		whole := range.address == mapping.address && range.page_count == mapping.page_count
+		if !whole {
+			continue
+		}
+		seen_earlier := false
+		for earlier in 0 ..< index {
+			if places[earlier] == places[index] {
+				seen_earlier = true
+				break
+			}
+		}
+		if seen_earlier {
+			continue
+		}
+		old_access := memory_wx.access_of_bits(mapping.bits, mapping.limit_bits, PAGE_PRESENT, PAGE_WRITE, PAGE_NO_EXECUTE)
+		new_access := memory_wx.access_of_bits(protection_bits(mapping, flags), mapping.limit_bits, PAGE_PRESENT, PAGE_WRITE, PAGE_NO_EXECUTE)
+		if new_access != old_access {
+			wx_changes[wx_change_count] = {region = mapping.region, old_access = old_access, new_access = new_access}
+			wx_change_count += 1
+		}
+	}
+	if wx_change_count > 0 {
+		lock_take(&frame_lock, .Frame)
+		claimed_all := true
+		for i in 0 ..< wx_change_count {
+			if !memory_wx.claim(&regions[wx_changes[i].region].wx, wx_changes[i].new_access) {
+				for j in 0 ..< i {
+					_ = memory_wx.release(&regions[wx_changes[j].region].wx, wx_changes[j].new_access)
+				}
+				claimed_all = false
+				break
+			}
+		}
+		lock_free(&frame_lock, .Frame)
+		if !claimed_all {
+			for taken, back in gains[:len(ranges)] {
+				if taken {
+					intrinsics.atomic_sub(&regions[process.mappings[places[back]].region].writable_mapping_count, 1)
+				}
+			}
+			processor_self().operation.memory_wx_conflict = true
+			return 0, .Wrong_State
+		}
+	}
 	self := processor_self()
 	for range, index in ranges {
 		mapping := &process.mappings[places[index]]
@@ -985,5 +1042,17 @@ memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Ra
 	}
 	intrinsics.atomic_thread_fence(.Seq_Cst)
 	processor_sync(processors_with_table(process.table))
+	if wx_change_count > 0 {
+		lock_take(&frame_lock, .Frame)
+		for change in wx_changes[:wx_change_count] {
+			if !memory_wx.release(&regions[change.region].wx, change.old_access) {
+				when TEST_BUILD_CHECKS_LOCK_ORDER {
+					log("kernel: a W^X mapping count of a memory object would go below 0")
+					machine_stop(.Invariant_Broken)
+				}
+			}
+		}
+		lock_free(&frame_lock, .Frame)
+	}
 	return changed, .Succeeded
 }

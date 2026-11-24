@@ -142,6 +142,8 @@ Processor_State :: struct {
 	// The source of rdtsc: the kernel gives its cycle counter. With none,
 	// rdtsc reads the count of steps, which also only grows.
 	cycle_counter_read:   proc "contextless" () -> u64,
+	// Mirrors CR4.TSD: when true, user-mode rdtsc faults with General_Protection.
+	timestamp_disable:    bool,
 	// The ports that in and out reach. With none, each in and each out is
 	// a protection fault, as for a process with no port.
 	ports:                Port_Bus,

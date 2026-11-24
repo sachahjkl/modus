@@ -7,6 +7,7 @@ import "core:os"
 import "core:strings"
 import "modus:contract/blake3"
 import info "modus:contract/boot_info"
+import "modus:contract/plan_values"
 import "modus:contract/pointer_pictures"
 import "modus:contract/release"
 import "modus:contract/replacement_list"
@@ -324,7 +325,7 @@ RELEASE_VOLUME_RESOURCES :: [3]string{replacement_list.RESOURCE_NAME, system_des
 // "" when the image holds none. An image that is not a boot image is
 // refused too.
 release_test_module_problem :: proc(image: []u8, image_name: string) -> string {
-	modules, _, valid := info.image_tables(image)
+	modules, image_resources, valid := info.image_tables(image)
 	if !valid {
 		return fmt.tprintf("%s is not a boot image", image_name)
 	}
@@ -332,6 +333,12 @@ release_test_module_problem :: proc(image: []u8, image_name: string) -> string {
 		name := system_description.name_of(&entry.name)
 		if row, found := module_row_of_name(name); found && !module_included_in_release_image(row) {
 			return fmt.tprintf("%s holds the module %s, a module of a test: a release never publishes it", image_name, name)
+		}
+	}
+	for &entry in image_resources {
+		name := system_description.name_of(&entry.name)
+		if name == plan_values.TEST_IMAGE_PLAN_RESOURCE {
+			return fmt.tprintf("%s holds the resource %s, a plan file of a test image: a release never publishes it", image_name, name)
 		}
 	}
 	return ""

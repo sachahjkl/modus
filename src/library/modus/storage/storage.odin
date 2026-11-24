@@ -81,6 +81,9 @@ Client :: struct {
 	// write the call region, so the next call waits for that answer first.
 	// 0: none.
 	late_tag:      u32,
+	// Caller runs with Process_Flag.No_Clock: never read system.time() or
+	// sleep on wall-clock deadlines.
+	no_clock:      bool,
 }
 
 // open opens the connection that the root service gave in the context of
@@ -187,6 +190,18 @@ repair_retry :: proc "contextless" (status: storage_status.Status, outcome: call
 call :: proc "contextless" (client: ^Client, name: string, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (value: i64, text: []u8, status: storage_status.Status, outcome: call_outcome.Call_Outcome) {
 	local: errors.Error_Record
 	record := error != nil ? error : &local
+	if client.no_clock {
+		attempts := u64(0)
+		for {
+			value, text, status, outcome = call_once(client, name, arguments, record)
+			retry, _ := repair_retry(status, outcome, record, attempts * REPAIR_RETRY_MILLISECONDS)
+			if !retry {
+				return value, text, status, outcome
+			}
+			attempts += 1
+			system.enter(0)
+		}
+	}
 	start := system.time()
 	for {
 		value, text, status, outcome = call_once(client, name, arguments, record)
@@ -210,7 +225,7 @@ call_once :: proc "contextless" (client: ^Client, name: string, arguments: []iso
 	if sent, status = call_send(client, name, arguments); status != .Ok {
 		return 0, nil, status, .Succeeded
 	}
-	deadline := call_deadline(system.time())
+	deadline := client.no_clock ? system.WAIT_FOREVER : call_deadline(system.time())
 	for {
 		// A revocation and the stop of the service are events.
 		wait := system.wait_begin()
@@ -222,7 +237,7 @@ call_once :: proc "contextless" (client: ^Client, name: string, arguments: []iso
 			return 0, nil, .Gone, .Succeeded
 		}
 		system.wait_records(&wait, &client.calls.completions)
-		if system.wait_end(&wait, deadline) >= deadline {
+		if returned := system.wait_end(&wait, deadline); !client.no_clock && returned >= deadline {
 			// One last read: the answer can come with the deadline.
 			if value, text, status, outcome, answered = call_answer(client, &sent, arguments, error); answered {
 				return value, text, status, outcome
@@ -239,7 +254,7 @@ call_once :: proc "contextless" (client: ^Client, name: string, arguments: []iso
 // the connection ended.
 @(private = "file")
 late_answer_wait :: proc "contextless" (client: ^Client) -> storage_status.Status {
-	deadline := call_deadline(system.time())
+	deadline := client.no_clock ? system.WAIT_FOREVER : call_deadline(system.time())
 	for {
 		wait := system.wait_begin()
 		for _ in 0 ..< ring.CAPACITY {
@@ -255,7 +270,7 @@ late_answer_wait :: proc "contextless" (client: ^Client) -> storage_status.Statu
 			return .Gone
 		}
 		system.wait_records(&wait, &client.calls.completions)
-		if system.wait_end(&wait, deadline) >= deadline {
+		if returned := system.wait_end(&wait, deadline); !client.no_clock && returned >= deadline {
 			return .No_Answer
 		}
 	}
@@ -653,9 +668,10 @@ share :: proc "contextless" (client: ^Client, place: Place, read_only: bool, err
 // call ring and its call region, with the file of the storage service that
 // describes its exports. It waits for the ready completion of the storage
 // service (src/md/api/call_ring_ready.md).
-open_handles :: proc "contextless" (ring_memory, region_memory: system.Handle, service: system.Handle, file: []u8) -> (client: Client, ok: bool) {
+open_handles :: proc "contextless" (ring_memory, region_memory: system.Handle, service: system.Handle, file: []u8, no_clock := false) -> (client: Client, ok: bool) {
 	client = open_mapped(ring_memory, region_memory, service, file) or_return
-	if system.connection_ready_wait(&client.calls, service) != .Ready {
+	client.no_clock = no_clock
+	if system.connection_ready_wait(&client.calls, service, no_clock = no_clock) != .Ready {
 		system.ring_close(&client.calls)
 		system.memory_unmap(raw_data(client.region))
 		return {}, false

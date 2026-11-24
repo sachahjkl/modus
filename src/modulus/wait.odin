@@ -262,6 +262,15 @@ wait_begin :: proc "contextless" (thread: ^Thread) {
 // wait_end makes the thread wait, unless a word changed or a waker came
 // during the registration. With no wait, the entries become leftovers.
 wait_end :: proc "contextless" (thread: ^Thread, deadline: u64) {
+	deadline := deadline
+	if thread.no_clock && deadline != 0 {
+		// A Process_Flag.No_Clock thread has no wall-clock oracle: a pure
+		// sleep returns at once, and a word wait ignores any finite deadline.
+		if thread.word_count == 0 {
+			return
+		}
+		deadline = max(u64)
+	}
 	if deadline == 0 && thread.word_count == 0 {
 		return // No wait and no entry: nothing for a waker to see.
 	}

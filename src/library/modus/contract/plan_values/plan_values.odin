@@ -20,6 +20,11 @@ import "modus:contract/fixed_addresses"
 
 // Where an owner maps the page of its plan values.
 OWNER_PAGE_ADDRESS :: fixed_addresses.PLAN_VALUES_PAGE_ADDRESS
+// Name of the optional signed boot-image resource carrying test-only plan
+// values (such as budget rows for `limits` and `log_flood`). Present in test
+// boot images and excluded from release boot images
+// (src/md/features/module_budget_request.md).
+TEST_IMAGE_PLAN_RESOURCE :: "test_plan_values"
 
 // The bytes "PLANVAL1": a set of plan values.
 SET_MAGIC :: u64(0x314C_4156_4E41_4C50)
@@ -63,6 +68,7 @@ Set_Problem :: enum u8 {
 	Default_And_Lock  = 9, // One name is a default and a lock of one owner: the lock and the default would say two things.
 	Reserved_Not_Zero = 10, // The reserved bytes of the header, or bytes after the last block that are not zero.
 	Owner_Too_Large   = 11, // The two records of an owner do not fit its page (OWNER_PAGE_SIZE): the core could not give them.
+	Too_Large         = 12, // More bytes than SET_SIZE.
 }
 
 // The name of each problem, for a line of the log.
@@ -80,6 +86,7 @@ SET_PROBLEM_NAMES := [Set_Problem]string {
 	.Default_And_Lock  = "a default and a lock",
 	.Reserved_Not_Zero = "reserved bytes",
 	.Owner_Too_Large   = "an owner past its page",
+	.Too_Large         = "too large",
 }
 
 // The values of one owner in a checked set or page: two records of chosen
@@ -157,6 +164,9 @@ records_read :: proc "contextless" (defaults_bytes, locks_bytes: []u8) -> (value
 // owner. Each refusal reads nothing more.
 @(private)
 set_walk :: proc "contextless" (bytes: []u8, owner: string) -> (head: Set_Head, values: Owner_Values, found: bool, problem: Set_Problem) {
+	if len(bytes) > SET_SIZE {
+		return {}, {}, false, .Too_Large
+	}
 	if len(bytes) < SET_HEADER_SIZE {
 		return {}, {}, false, .Too_Short
 	}

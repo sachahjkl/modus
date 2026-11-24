@@ -425,9 +425,10 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Argument_Refused`: `memory` is not a memory handle.
-	Process_Create = 6, // (budget, name, name_length) -> process handle.
+	Process_Create = 6, // (budget, name, name_length, flags) -> process handle.
 	// Makes a process, in the state `Created`, and gives a handle to it with **Give**, **Read** and
-	// **Control**. The process has no memory and no handle: its addresses hold the time page only.
+	// **Control**. The process has no memory and no handle: its addresses hold the time page only,
+	// unless `Process_Flag.No_Clock` is set (or inherited from a `No_Clock` creator).
 	// `Process_Start` starts it.
 	//
 	// **Arguments**
@@ -439,6 +440,9 @@ Operation :: enum u32 {
 	// - `name`, `name_length`: the name of the process, at most `PROCESS_NAME_BYTES_MOST` bytes, in memory that the process can
 	//   read: the reports and the log show it. Each byte is a printable character of ASCII or the
 	//   space (32 to 126): a name starts each line of the log on the serial port.
+	// - `flags`: `Process_Flags` (`0` for default; `No_Clock` omits the time page, traps `rdtsc`/`rdtscp`
+	//   with `#GP` via `CR4.TSD`, zeroes kernel entry return time, disables wall-clock deadlines, and is
+	//   inherited by every child process).
 	//
 	// **Results**: the process handle.
 	//
@@ -446,7 +450,7 @@ Operation :: enum u32 {
 	//
 	// - `Argument_Refused`, `Grant_Or_Right_Missing`: `budget` is not a budget handle with **Spend**.
 	// - `Argument_Refused`: `name_length` is above `PROCESS_NAME_BYTES_MOST`, or the process cannot read the name.
-	// - `Argument_Refused`: a byte of the name is outside 32 to 126.
+	// - `Argument_Refused`: a byte of the name is outside 32 to 126, or `flags` sets an unknown bit.
 	// - `Budget_Or_Capacity_Exhausted`: the budget has no process slot or no page left, cannot pay the page
 	//   tables or the own log ring, or the handle table of the process is full.
 	// - `Callee_Busy`: the table of the processes of the kernel is full.
@@ -3237,6 +3241,18 @@ map_write_combining_refused :: proc "contextless" (flags: Map_Flags, device_regi
 	}
 	return !device_registers || .Execute in flags
 }
+
+// Flags of `Process_Create` (v[3]). Zero is the default (time page mapped,
+// cycle counter readable).
+Process_Flag :: enum u64 {
+	// Omits the time page mapping, sets CR4.TSD so rdtsc and rdtscp fault with
+	// #GP, zeroes the kernel entry return value in rax and Budget_Read elapsed
+	// processor time, disables wall-clock deadlines, and inherits to every
+	// child process (src/md/features/recipes.md).
+	No_Clock = 0,
+}
+Process_Flags :: bit_set[Process_Flag;u64]
+PROCESS_FLAGS_KNOWN :: u64(1) << u64(Process_Flag.No_Clock)
 
 // The largest code of `Machine_Stop`: the host receives one byte.
 MACHINE_STOP_CODE_MOST :: 255

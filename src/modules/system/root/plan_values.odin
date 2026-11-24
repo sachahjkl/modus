@@ -45,6 +45,11 @@ plan_values_copy: [plan_values.SET_SIZE]u8
 plan_values_in_force: [plan_values.SET_SIZE]u8
 plan_values_generation: u64
 plan_values_given: bool
+// Optional plan values carried by a signed test boot image
+// (plan_values.TEST_IMAGE_PLAN_RESOURCE): acts as a base layer underneath
+// principal 0's live plan so test-only budget rows need no hardcoded tables.
+plan_values_image: [plan_values.SET_SIZE]u8
+plan_values_image_loaded: bool
 
 // The set that the core took with Apply or Rollback, and its generation:
 // it holds from the step Committed, which the holder of Plans sends once
@@ -210,13 +215,41 @@ plan_values_pages_give :: proc "contextless" (item: ^Started, answer: ^[7]u64) -
 	return .Succeeded
 }
 
-// plan_values_of gives the values of an owner in the set in force: the
-// owner is named by its store (role_policy.store_name_of_module).
-plan_values_of :: proc "contextless" (owner: string) -> (values: plan_values.Owner_Values, found: bool) {
-	if !plan_values_given {
-		return {}, false
+// plan_values_image_load loads the optional signed boot-image plan resource
+// (plan_values.TEST_IMAGE_PLAN_RESOURCE) after trust_check. Release images
+// omit this resource, leaving plan_values_image_loaded false.
+plan_values_image_load :: proc "contextless" () {
+	entry := system.image_resource_find(image, plan_values.TEST_IMAGE_PLAN_RESOURCE)
+	if entry == nil || !image_entry_give(entry) {
+		return
 	}
-	return plan_values.owner_values_of(plan_values_in_force[:], owner)
+	if entry.size > plan_values.SET_SIZE {
+		system.log_fact(.Warning, Plan_Values_Refused{set_problem = text_field(plan_values.SET_PROBLEM_NAMES[.Too_Large], 24)})
+		return
+	}
+	bytes := image[entry.offset:][:entry.size]
+	if _, problem := plan_values.set_check(bytes); problem != .None {
+		system.log_fact(.Warning, Plan_Values_Refused{set_problem = text_field(plan_values.SET_PROBLEM_NAMES[problem], 24)})
+		return
+	}
+	plan_values_image = {}
+	intrinsics.mem_copy_non_overlapping(&plan_values_image, raw_data(bytes), int(entry.size))
+	plan_values_image_loaded = true
+}
+
+// plan_values_of gives the values of an owner in the set in force: the
+// owner is named by its store (role_policy.store_name_of_module). Principal
+// 0's live plan takes precedence over the optional boot-image test plan.
+plan_values_of :: proc "contextless" (owner: string) -> (values: plan_values.Owner_Values, found: bool) {
+	if plan_values_given {
+		if values, found = plan_values.owner_values_of(plan_values_in_force[:], owner); found {
+			return values, true
+		}
+	}
+	if plan_values_image_loaded {
+		return plan_values.owner_values_of(plan_values_image[:], owner)
+	}
+	return {}, false
 }
 
 // store_blocks_planned gives the quota of the store of an owner: the value

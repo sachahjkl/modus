@@ -64,6 +64,19 @@ a_count_above_its_limit :: proc(t: ^testing.T) {
 	values[2] = 31
 	problem, _ = argument_value_problem(.Process_Create, 2, values)
 	testing.expect_value(t, problem, errors.Kind.None)
+	// Process_Create flags (argument index 3): 0 and No_Clock pass; unknown bits fail with Bad_Flags.
+	values = {0, 0, 0, 0, 0, 0, 0}
+	problem, _ = argument_value_problem(.Process_Create, 3, values)
+	testing.expect_value(t, problem, errors.Kind.None)
+	values[3] = transmute(u64)Process_Flags{.No_Clock}
+	problem, _ = argument_value_problem(.Process_Create, 3, values)
+	testing.expect_value(t, problem, errors.Kind.None)
+	for bad_flags in ([3]u64{u64(1) << 1, PROCESS_FLAGS_KNOWN | (u64(1) << 1), max(u64)}) {
+		values[3] = bad_flags
+		problem, limit = argument_value_problem(.Process_Create, 3, values)
+		testing.expect_value(t, problem, errors.Kind.Bad_Flags)
+		testing.expect_value(t, limit, u64(PROCESS_FLAGS_KNOWN))
+	}
 	// A count whose form has no limit is never refused here.
 	values = {0, max(u64), 0, 0, 0, 0, 0}
 	problem, _ = argument_value_problem(.Budget_Create, 1, values)

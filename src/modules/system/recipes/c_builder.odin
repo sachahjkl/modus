@@ -182,7 +182,7 @@ c_build_fail :: proc "contextless" (work: ^C_Build_Work, step: C_Build_Step, rec
 @(private = "file")
 c_builder_call :: proc "contextless" (work: ^C_Build_Work, file: []u8, name: string, export_name: string, arguments: []isolated.Argument, seed: blake3.Hash, start_step, call_step: C_Build_Step) -> (result: i64, ok: bool) {
 	load_error: module.Load_Error
-	added := system.Call_Host_Context{pages = c_builder_host_pages()}
+	added := system.Call_Host_Context{pages = c_builder_host_pages(), no_clock = true}
 	connection, status := system.call_host_start(c_builder.image, c_builder.image_memory, file, name, c_builder_values(seed), &load_error, added = &added)
 	if status != .Succeeded {
 		c_build_fail(work, start_step, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(status)))
