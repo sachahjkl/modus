@@ -183,14 +183,25 @@ kept_fact_lines_render :: proc(kept: ^Kept_Fact_Catalog, paths: []string, access
 	return rendered, ""
 }
 
+// fact_build_module_paths returns the built module paths selected by filter
+// (all module_builds when filter is nil).
+fact_build_module_paths :: proc(filter: []bool, allocator := context.temp_allocator) -> []string {
+	paths := make([dynamic]string, 0, len(foundation.module_builds), allocator)
+	for build, index in foundation.module_builds {
+		if !module_filter_allows(filter, index) {
+			continue
+		}
+		append(&paths, foundation.module_path(build.name))
+	}
+	return paths[:]
+}
+
 // fact_lines_render_of_build gives the text of a log with the line of each
 // fact rendered by the module files of the build, with the catalog that
-// the run of the tool keeps.
+// the run of the tool keeps. When the last build targeted a filtered set of
+// volumes (--fast <part>), only the modules in that filter are read.
 fact_lines_render_of_build :: proc(text: string) -> (rendered: string, problem: string) {
-	paths := make([]string, len(foundation.module_builds), context.temp_allocator)
-	for build, index in foundation.module_builds {
-		paths[index] = foundation.module_path(build.name)
-	}
+	paths := fact_build_module_paths(build_last_module_filter, context.temp_allocator)
 	return kept_fact_lines_render(&kept_build_catalog, paths, build_module_file_access(), text)
 }
 
