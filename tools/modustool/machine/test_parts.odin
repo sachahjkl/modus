@@ -101,6 +101,12 @@ test_parts := [?]Test_Part {
 		procedures = {"trusted_boot_tests_run", "release_image_machine_run", "floor_tests_run"},
 		volumes = {build.BOOT_VOLUME, build.BOOT_VOLUME_CHANGED_MODULE, build.BOOT_VOLUME_WRONG_SIGNATURE, build.BOOT_VOLUME_OTHER_SYSTEM, build.BOOT_VOLUME_CHANGED_KERNEL, build.BOOT_VOLUME_WITHOUT_DESCRIPTION, build.BOOT_VOLUME_STATED_HASH, build.BOOT_VOLUME_KERNEL_MEMORY_RAISED, build.BOOT_VOLUME_SECURE_BOOT, build.BOOT_VOLUME_SECURE_BOOT_CHANGED, build.BOOT_VOLUME_NEWER_SYSTEM, build.BOOT_VOLUME_NEWER_KEY},
 	},
+	{
+		name = "release_image",
+		does = "The machine of the exact release boot image: verifies that the signed Secure Boot volume holds no test module and matches the release image derived from the build, then boots it with Secure Boot on to \"the machine is usable\"",
+		procedures = {"release_image_part_tests_run"},
+		volumes = {build.BOOT_VOLUME_SECURE_BOOT},
+	},
 	{name = "hierarchy", does = "The machines of the hierarchy of storage", procedures = {"hierarchy_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "large_disk", does = "The three machines of a data disk of 32 GiB, larger than the tables of the storage service: the first formats it whole with its count tree, commits an object, and commits and removes another; the second opens it from its count tree, reads the first object back and finds no second one; the third, after the host changed a byte of leaf 0 of the count tree, makes a write that waits through the repair state and passes after the repair", procedures = {"large_disk_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "script_fonts", does = "The machines of the script font set: its data disk holds the set whose hash the boot image names; the root service reads it when the machine is usable, checks it and maps it, and interface_font draws a line of Hebrew, Arabic, Thai, Devanagari, ideographs, an emoji and a geometric shape with no replacement glyph; a set with one changed byte is refused by its hash, and the line keeps the box; a plan of principal 0 that names another set takes it at the next start, where a write to it faults; a set with the right hash and a refused form maps nothing (`FONTS.md`, \"13.9 The script font set and the written shaping\")", procedures = {"script_fonts_tests_run", "script_fonts_planned_run"}, volumes = {build.BOOT_VOLUME, build.BOOT_VOLUME_PLAN_AND_AUDIT}},

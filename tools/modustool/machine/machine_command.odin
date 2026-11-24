@@ -188,7 +188,14 @@ MACHINE_VIDEO_MEMORY_MIB :: 16
 // (src/md/infrastructure/whole_frame.md, "The screen through the scanout
 // of the virtual GPU"). The other test machines keep the standard VGA and
 // its page flip, which the main test checks.
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_screen := false, without_ps2_controller := false, entropy_device_silent := false, no_network_device := false, data_disk_without_ioevent := false, without_pit := false, shared_variables := "", serial_input := "", tablet: Machine_Tablet = .None, gpu_scanout := false) -> (command: []string, ok: bool) {
+// console_log: when non-empty (only when test_output is ""), starts a
+// desktop-free console machine with -display none, -vga none, no tablet,
+// COM1 written to console_log, and COM2 attached to stdio with signal=off.
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_screen := false, without_ps2_controller := false, entropy_device_silent := false, no_network_device := false, data_disk_without_ioevent := false, without_pit := false, shared_variables := "", serial_input := "", tablet: Machine_Tablet = .None, gpu_scanout := false, console_log := "") -> (command: []string, ok: bool) {
+	if console_log != "" && test_output != "" {
+		fmt.eprintln("modustool: console_log and test_output cannot both be set")
+		return nil, false
+	}
 	// A machine starts only from a boot volume that this process built or
 	// kept: a volume that the command did not ask for can be the volume of
 	// older sources, and a test on it proves nothing. The variable store of
@@ -408,7 +415,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		append(&list, "-object", "rng-egd,id=entropy_backend,chardev=entropy_source")
 		append(&list, "-device", fmt.tprintf("virtio-rng-pci,rng=entropy_backend,disable-legacy=on,vectors=2,addr=0x%x%s", pci.ENTROPY_DEVICE, virtio_iommu))
 	}
-	if without_screen {
+	if without_screen || console_log != "" {
 		// No display device: the firmware finds no graphics output, and the
 		// kernel gives the root service no framebuffer.
 		append(&list, "-vga", "none")
@@ -483,6 +490,15 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// its pictures and the keys of the scenario never share a reply
 		// (film.odin). A machine with no film leaves it with no connection.
 		append(&list, "-qmp", strings.concatenate({"unix:", film_qmp_socket_of(test_output), ",server=on,wait=off"}, context.temp_allocator))
+	} else if console_log != "" {
+		// Desktop-free console mode (`modustool run --console`): no window,
+		// kernel log on COM1 written to console_log, and COM2 (serial_terminal)
+		// attached directly to the developer's terminal with signal=off so
+		// Control+C reaches the guest console.
+		append(&list, "-display", "none")
+		append(&list, "-serial", strings.concatenate({"file:", console_log}, context.temp_allocator))
+		append(&list, "-chardev", "stdio,id=console_serial,signal=off")
+		append(&list, "-serial", "chardev:console_serial")
 	} else {
 		append(&list, "-serial", "stdio")
 	}
@@ -491,7 +507,12 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	// is, with no grab of the window. QEMU sends the pointer to the PS/2
 	// mouse only when no device takes absolute moves. A test machine has it
 	// only when its part asks: the other scenarios send relative moves.
-	switch test_output == "" ? Machine_Tablet.At_Its_Place : tablet {
+	// Console mode has no screen and no pointer device.
+	tablet_choice := tablet
+	if test_output == "" && console_log == "" {
+		tablet_choice = .At_Its_Place
+	}
+	switch tablet_choice {
 	case .None:
 	case .At_Its_Place:
 		append(&list, "-device", fmt.tprintf("virtio-tablet-pci,disable-legacy=on,addr=0x%x%s", pci.TABLET_DEVICE, virtio_iommu))

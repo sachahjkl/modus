@@ -61,7 +61,7 @@ BOOT_PROGRAM_OBJECT_FILE_NAME :: "boot.obj"
 // The name of the main volume: the name of its object folder.
 MAIN_BOOT_VOLUME_NAME :: "main"
 
-// boot_volumes gives every boot volume of the build: 20 fixed ones and one
+// boot_volumes gives every boot volume of the build: 21 fixed ones and one
 // for each test of the kernel on itself. The list is new at each call: the
 // path of a self test volume is a text of the temporary memory.
 boot_volumes :: proc() -> []Boot_Volume {
@@ -102,15 +102,17 @@ boot_volumes :: proc() -> []Boot_Volume {
 	// machine has: the boot program stops with its message on the boot
 	// display.
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_KERNEL_MEMORY_RAISED, image = BOOT_IMAGE, kernel = "kernel", change = {kernel_memory_raised = true}})
-	// Secure Boot: the boot program signed with the firmware signing key
-	// (with the variable store that enrols its certificate), and the same
-	// with one byte changed.
-	append(&volumes, Boot_Volume{path = BOOT_VOLUME_SECURE_BOOT, image = BOOT_IMAGE, kernel = "kernel", firmware_signature = .Signed, with_secure_boot_variables = true})
-	append(&volumes, Boot_Volume{path = BOOT_VOLUME_SECURE_BOOT_CHANGED, image = BOOT_IMAGE, kernel = "kernel", firmware_signature = .Signed_Then_Changed})
+	// Secure Boot: the exact release boot image (zero test modules) with its
+	// boot program signed by the firmware signing key (and the variable store
+	// that enrols its certificate), and the same with one byte changed.
+	append(&volumes, Boot_Volume{path = BOOT_VOLUME_SECURE_BOOT, image = BOOT_IMAGE_RELEASE, kernel = "kernel", firmware_signature = .Signed, with_secure_boot_variables = true})
+	append(&volumes, Boot_Volume{path = BOOT_VOLUME_SECURE_BOOT_CHANGED, image = BOOT_IMAGE_RELEASE, kernel = "kernel", firmware_signature = .Signed_Then_Changed})
 	// The TPM floors: a newer system, then a newer system with a newer key,
 	// each signed for Secure Boot, so that its start raises the floors.
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_NEWER_SYSTEM, image = BOOT_IMAGE, kernel = "kernel", change = {security_version_raised = 1}, firmware_signature = .Signed})
 	append(&volumes, Boot_Volume{path = BOOT_VOLUME_NEWER_KEY, image = BOOT_IMAGE, kernel = "kernel", change = {security_version_raised = 1}, key_number_raised = 1, firmware_signature = .Signed})
+	// The desktop-free console volume on COM2 (serial_terminal), for `modustool run --console`.
+	append(&volumes, Boot_Volume{path = BOOT_VOLUME_CONSOLE, image = BOOT_IMAGE_CONSOLE, kernel = "kernel"})
 	// One volume for each test of the kernel on itself.
 	for test in self_tests {
 		append(&volumes, Boot_Volume{path = fmt.tprintf(BOOT_VOLUME_SELF_TEST, test.number), image = BOOT_IMAGE, kernel = "kernel", self_test = test.number})
@@ -845,8 +847,10 @@ Volumes_Of_Part :: struct {
 // the measure runs that it starts on the host.
 MEASURE_COMMAND :: "measure"
 MEASURE_SHORTAGE_COMMAND :: "measure shortage"
+RUN_CONSOLE_COMMAND :: "run --console"
 command_volumes := [?]Volumes_Of_Part {
 	{part = "run", procedures = {"run_machine", "remote_display_run"}, volumes = {BOOT_VOLUME}},
+	{part = RUN_CONSOLE_COMMAND, procedures = {"console_machine_run"}, volumes = {BOOT_VOLUME_CONSOLE}},
 	{part = MEASURE_COMMAND, procedures = {"run_measure", "measure_windows", "measure_process_run"}, volumes = {BOOT_VOLUME_MEASURE}},
 	{part = MEASURE_SHORTAGE_COMMAND, procedures = {"shortage_tests_run"}, volumes = {BOOT_VOLUME_SHORTAGE}},
 	{part = "screenshots", procedures = {"measure_runs_of_the_record", "measure_process_run"}, volumes = {BOOT_VOLUME_MEASURE}},
@@ -970,6 +974,9 @@ BOOT_VOLUME_SECURE_BOOT_CHANGED :: foundation.BUILD_FOLDER + "/boot_volume_secur
 BOOT_VOLUME_NEWER_SYSTEM :: foundation.BUILD_FOLDER + "/boot_volume_newer_system.img"
 
 BOOT_VOLUME_NEWER_KEY :: foundation.BUILD_FOLDER + "/boot_volume_newer_key.img"
+
+// The desktop-free console boot volume for QEMU (`modustool run --console`).
+BOOT_VOLUME_CONSOLE :: foundation.BUILD_FOLDER + "/boot_volume_console.img"
 
 // The path where the firmware looks for the boot program of a disk.
 BOOT_PROGRAM_PATH :: "EFI/BOOT/BOOTX64.EFI"
