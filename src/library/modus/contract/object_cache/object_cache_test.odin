@@ -140,7 +140,7 @@ signing_bytes_domain_separation_and_edges :: proc(t: ^testing.T) {
 @(test)
 enum_borders_refuse_unknown_words :: proc(t: ^testing.T) {
 	// Edges: 0, valid members, one past max, 255, max u64.
-	for bad in ([]u64{0, 9, 10, 255, max(u64)}) {
+	for bad in ([]u64{0, 10, 11, 255, max(u64)}) {
 		_, ok := cache_request_kind_of_word(bad)
 		testing.expect(t, !ok)
 	}
@@ -487,7 +487,7 @@ wire_decoder_refuses_hostile_and_malformed_frames :: proc(t: ^testing.T) {
 	bad_magic[4] = WIRE_VERSION
 
 	// Unknown request kind words: 0, one past the last kind, 255.
-	for bad_kind in ([]u8{0, 9, 255}) {
+	for bad_kind in ([]u8{0, 10, 255}) {
 		bad_magic[5] = bad_kind
 		_, kind_ref := decode_request(bad_magic)
 		testing.expect_value(t, kind_ref, Wire_Refusal.Bad_Request_Kind)
@@ -886,4 +886,101 @@ substitution_policy_enforces_trusted_signers_and_signatures_for_realisations :: 
 		substitution_check(policy, nil, ed25519_verify_callback),
 		Substitution_Decision.Refuse_Malformed,
 	)
+}
+
+@(test)
+get_references_roundtrip_and_refusals :: proc(t: ^testing.T) {
+	buffer: [4096]u8
+	target := make_sample_hash(0x55)
+
+	// Valid request round-trip.
+	req := Cache_Request{kind = .Get_References, object_hash = target}
+	n, enc_ref := encode_request(&req, buffer[:])
+	testing.expect_value(t, enc_ref, Wire_Refusal.None)
+	testing.expect_value(t, n, FRAME_HEADER_SIZE + GET_REFERENCES_BODY_SIZE)
+	got_req, dec_ref := decode_request(buffer[:n])
+	testing.expect_value(t, dec_ref, Wire_Refusal.None)
+	testing.expect_value(t, got_req.kind, Cache_Request_Kind.Get_References)
+	testing.expect_value(t, got_req.object_hash, target)
+
+	// Zero hash refused on encode and decode.
+	zero_req := Cache_Request{kind = .Get_References}
+	_, zero_enc := encode_request(&zero_req, buffer[:])
+	testing.expect_value(t, zero_enc, Wire_Refusal.Zero_Hash)
+	raw_zero: [FRAME_HEADER_SIZE + GET_REFERENCES_BODY_SIZE]u8
+	copy(raw_zero[:], buffer[:n])
+	for i in FRAME_HEADER_SIZE ..< len(raw_zero) {
+		raw_zero[i] = 0
+	}
+	_, zero_dec := decode_request(raw_zero[:])
+	testing.expect_value(t, zero_dec, Wire_Refusal.Zero_Hash)
+
+	// Truncated and trailing bytes refused.
+	_, trunc_req := decode_request(buffer[:n - 1])
+	testing.expect_value(t, trunc_req, Wire_Refusal.Truncated)
+	buffer[n] = 0xAA
+	_, trail_req := decode_request(buffer[:n + 1])
+	testing.expect_value(t, trail_req, Wire_Refusal.Trailing_Bytes)
+
+	// Empty (0 references) and 3-reference Ok response round-trips.
+	empty_resp := Cache_Response{request_kind = .Get_References, status = .Ok}
+	en, er := encode_response(&empty_resp, buffer[:])
+	testing.expect_value(t, er, Wire_Refusal.None)
+	testing.expect_value(t, en, FRAME_HEADER_SIZE + GET_REFERENCES_RESPONSE_HEADER_SIZE)
+	got_empty, de := decode_response(buffer[:en])
+	testing.expect_value(t, de, Wire_Refusal.None)
+	testing.expect_value(t, response_reference_count(&got_empty), 0)
+
+	packed: [3 * blake3.HASH_SIZE]u8
+	h0 := make_sample_hash(1)
+	h1 := make_sample_hash(2)
+	h2 := make_sample_hash(3)
+	copy(packed[0:32], h0[:])
+	copy(packed[32:64], h1[:])
+	copy(packed[64:96], h2[:])
+	three_resp := Cache_Response{request_kind = .Get_References, status = .Ok, references = packed[:]}
+	tn, tr := encode_response(&three_resp, buffer[:])
+	testing.expect_value(t, tr, Wire_Refusal.None)
+	got_three, dt := decode_response(buffer[:tn])
+	testing.expect_value(t, dt, Wire_Refusal.None)
+	testing.expect_value(t, response_reference_count(&got_three), 3)
+	r0, ok0 := response_reference_at(&got_three, 0)
+	r1, ok1 := response_reference_at(&got_three, 1)
+	r2, ok2 := response_reference_at(&got_three, 2)
+	_, ok_oob := response_reference_at(&got_three, 3)
+	testing.expect(t, ok0 && ok1 && ok2 && !ok_oob)
+	testing.expect_value(t, r0, h0)
+	testing.expect_value(t, r1, h1)
+	testing.expect_value(t, r2, h2)
+
+	// Refusals: non-multiple-of-32 references, zero hash inside references, reserved bytes non-zero, count past MAX_REFERENCES, Busy status.
+	bad_len_resp := Cache_Response{request_kind = .Get_References, status = .Ok, references = packed[:31]}
+	_, bad_len_ref := encode_response(&bad_len_resp, buffer[:])
+	testing.expect_value(t, bad_len_ref, Wire_Refusal.Bad_Count)
+
+	zero_packed := packed
+	for i in 32 ..< 64 {
+		zero_packed[i] = 0
+	}
+	zero_entry_resp := Cache_Response{request_kind = .Get_References, status = .Ok, references = zero_packed[:]}
+	_, ze_ref := encode_response(&zero_entry_resp, buffer[:])
+	testing.expect_value(t, ze_ref, Wire_Refusal.Zero_Hash)
+
+	// Reserved bytes non-zero on decode.
+	buffer[FRAME_HEADER_SIZE + 2] = 1
+	_, res_ref := decode_response(buffer[:tn])
+	testing.expect_value(t, res_ref, Wire_Refusal.Reserved_Nonzero)
+	buffer[FRAME_HEADER_SIZE + 2] = 0
+
+	// Count past MAX_REFERENCES on decode.
+	over_count := u16(MAX_REFERENCES + 1)
+	buffer[FRAME_HEADER_SIZE] = u8(over_count)
+	buffer[FRAME_HEADER_SIZE + 1] = u8(over_count >> 8)
+	_, over_ref := decode_response(buffer[:tn])
+	testing.expect_value(t, over_ref, Wire_Refusal.Bad_Count)
+
+	// Busy refused for Get_References.
+	busy_refs := Cache_Response{request_kind = .Get_References, status = .Busy, frames_built = 1, frame_count = 2}
+	_, busy_ref := encode_response(&busy_refs, buffer[:])
+	testing.expect_value(t, busy_ref, Wire_Refusal.Bad_Response_Status)
 }

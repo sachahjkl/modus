@@ -9,7 +9,9 @@ import "modus:contract/blake3"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import "modus:contract/object_cache"
 import pr "modus:contract/plans_recipes"
+import "modus:contract/tree_hash"
 import "modus:contract/value_kinds"
 import "modus:system"
 
@@ -37,7 +39,7 @@ export_result: pr.Recipe_Build_Result
 // caller_check refuses a call with no connection and, when acts is true, a
 // caller that does not act for its principal: a build spends the store of
 // the service for the principal that asks.
-@(private = "file")
+@(private)
 caller_check :: proc "contextless" (acts: bool, error: ^errors.Error_Record) -> (failure: call_outcome.Call_Outcome, ok: bool) {
 	connection := system.service_caller()
 	if connection == nil {
@@ -176,7 +178,7 @@ register_evaluation :: proc "c" (output: ^system.Bytes_To_Read, result: ^[]pr.Re
 // while one runs is refused with Builder_Busy.
 //
 // - **recipe**: the recipe hash that register gave.
-// - **mode**: the Build_Mode word: 1 Cache_First, 2 Build_Only,
+// - **mode**: the Build_Mode word: 1 Prefer_Cache, 2 Build_Only,
 //   3 Cache_Only, 4 Verify.
 // - **result**: one row: the outcome, the recipe hash and the output hash.
 //
@@ -285,7 +287,7 @@ build_cancel :: proc "c" (recipe: ^system.Bytes_To_Read, error: ^errors.Error_Re
 // caller_principal gives the number of the principal of the caller of the
 // call that runs: the key of its quota of put and of its share of the
 // queue. A connection that closes and opens again keeps it.
-@(private = "file")
+@(private)
 caller_principal :: proc "contextless" () -> u64 {
 	connection := system.service_caller()
 	if connection == nil {
@@ -314,7 +316,10 @@ build_of_hash :: proc "contextless" (recipe_hash: blake3.Hash, checked_mode: pr.
 		}
 		return .Succeeded, 1
 	}
-	export_result = recipes_core.build_registered(&service_state, &service_registry, recipe_hash, checked_mode, &builder_start)
+	signer_slot: [1][object_cache.PUBLIC_KEY_SIZE]u8
+	policy := remote_cache_prepare_for_principal(caller_principal(), &signer_slot)
+	defer remote_cache_clear_active()
+	export_result = recipes_core.build_registered(&service_state, &service_registry, recipe_hash, checked_mode, &builder_start, policy)
 	system.log_fact(.Info, Recipe_Build_Completed{outcome = u64(export_result.outcome), refusal_code = u64(export_result.refusal)})
 	if export_result.refusal != .None {
 		return recipe_refusal_fail(error, export_result.refusal, 1)
@@ -372,6 +377,236 @@ put :: proc "c" (kind: i64, bytes: ^system.Bytes_To_Read, result: ^[]Object_Refe
 		result[0] = {hash = value_kinds.Hash_Field(hash)}
 	}
 	return .Succeeded, 1
+}
+
+// put_memory ingests a large content-addressed object (up to 64 MiB) from a
+// lent read-only memory object into recipes's unified content-addressed store.
+// Enforces PUT_OBJECTS_PER_PRINCIPAL_MOST, PUT_BYTES_PER_PRINCIPAL_MOST, and
+// the 75% RETENTION_PERCENT guard before writing.
+@(export, link_name = "put_memory")
+put_memory :: proc "c" (kind: i64, memory: system.Lent({.Read}), size: i64, result: ^[]Object_Reference, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure, ok := caller_check(true, error); !ok {
+		return failure, 0
+	}
+	if size <= 0 || u64(size) > recipes_core.PUT_MEMORY_BYTES_MOST {
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Bytes, 3, size, i64(recipes_core.PUT_MEMORY_BYTES_MOST))
+	}
+	pages, size_status := system.memory_size(memory.handle)
+	if size_status != .Ok || u64(size) > pages * system.PAGE_SIZE {
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Bytes, 3, size, i64(pages * system.PAGE_SIZE))
+	}
+	principal := caller_principal()
+	now_seconds := system.time() / 1000
+	checked_kind, preflight_refusal := recipes_core.put_memory_preflight(&service_state, &put_ledger, principal, now_seconds, kind, u64(size))
+	if preflight_refusal != .None {
+		return recipe_refusal_fail(error, preflight_refusal, preflight_refusal == .Bad_Input_Kind ? 1 : 3)
+	}
+	mapped, map_status := system.memory_map(memory.handle, {})
+	if map_status != .Ok {
+		return call_outcome.fail(error, .Argument_Refused, .Refused, .Kernel_Status, 2, 0, 0, i64(map_status))
+	}
+	defer system.memory_unmap(mapped)
+	src := ([^]u8)(mapped)[:size]
+
+	digest: blake3.Hash
+	switch checked_kind {
+	case .Tree:
+		if u64(size) > u64(object_cache.MAX_TREE_PAYLOAD_BYTES) {
+			return recipe_refusal_fail(error, .Malformed_Output, 3)
+		}
+		// Copy once into private memory before hashing and writing so the
+		// caller cannot mutate shared pages between verification and commit.
+		tree_pages := (u64(size) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+		priv_mem, priv_status := system.memory_create(tree_pages)
+		if priv_status != .Ok {
+			return call_outcome.fail(error, system.outcome_of_own_status(priv_status), .Refused, .Kernel_Status, 2, 0, 0, i64(priv_status))
+		}
+		defer system.close(priv_mem)
+		priv_addr, priv_map := system.memory_map(priv_mem, {.Write})
+		if priv_map != .Ok {
+			return call_outcome.fail(error, system.outcome_of_own_status(priv_map), .Refused, .Kernel_Status, 2, 0, 0, i64(priv_map))
+		}
+		defer system.memory_unmap(priv_addr)
+		priv_bytes := ([^]u8)(priv_addr)[:size]
+		intrinsics.mem_copy_non_overlapping(raw_data(priv_bytes), raw_data(src), int(size))
+		tree_digest, hash_refusal := pr.recipe_hash_output(.Tree, priv_bytes)
+		if hash_refusal != .None {
+			return recipe_refusal_fail(error, hash_refusal, 2)
+		}
+		digest = tree_digest
+		final_name := pr.blob_object_name(digest)
+		if pr.private_store_write(&service_state.store, pr.private_object_name_text(&final_name), priv_bytes) != .Ok {
+			return recipe_refusal_fail(error, .Store_Failed, 2)
+		}
+
+	case .Blob:
+		STAGING_NAME :: "put_staging"
+		_ = pr.private_store_remove(&service_state.store, STAGING_NAME)
+		hasher := blake3.hasher_make()
+		offset := u64(0)
+		total := u64(size)
+		for offset < total {
+			chunk_len := int(min(u64(recipes_core.STORE_PIECE_BYTES), total - offset))
+			// Private copy per chunk closes TOCTOU between hashing and store write.
+			intrinsics.mem_copy_non_overlapping(&copied_object[0], raw_data(src[offset:]), chunk_len)
+			chunk := copied_object[:chunk_len]
+			blake3.hasher_update(&hasher, chunk)
+			is_final := offset + u64(chunk_len) == total
+			if pr.private_store_write_range(&service_state.store, STAGING_NAME, offset, chunk, total, is_final) != .Ok {
+				_ = pr.private_store_remove(&service_state.store, STAGING_NAME)
+				return recipe_refusal_fail(error, .Store_Failed, 2)
+			}
+			offset += u64(chunk_len)
+		}
+		digest = blake3.hasher_finish(&hasher)
+		final_name := pr.blob_object_name(digest)
+		final_text := pr.private_object_name_text(&final_name)
+		existing_valid := false
+		if existing_size, sz_status := pr.private_store_size(&service_state.store, final_text); sz_status == .Ok {
+			if existing_size == total && recipes_core.stored_output_check(&service_state, digest, .Blob, existing_size) == .Whole {
+				existing_valid = true
+			} else {
+				// Replace damaged or truncated object under final_text.
+				_ = pr.private_store_remove(&service_state.store, final_text)
+			}
+		}
+		if existing_valid {
+			_ = pr.private_store_remove(&service_state.store, STAGING_NAME)
+		} else {
+			if pr.private_store_rename(&service_state.store, STAGING_NAME, final_text) != .Ok {
+				_ = pr.private_store_remove(&service_state.store, STAGING_NAME)
+				return recipe_refusal_fail(error, .Store_Failed, 2)
+			}
+		}
+	}
+
+	if commit_refusal := recipes_core.put_memory_commit(&put_ledger, principal, now_seconds, digest, u64(size)); commit_refusal != .None {
+		return recipe_refusal_fail(error, commit_refusal, 2)
+	}
+	if len(result^) > 0 {
+		result[0] = {hash = value_kinds.Hash_Field(digest)}
+	}
+	return .Succeeded, 1
+}
+
+// read_output reads a verified content-addressed output (or a named entry of a
+// verified Tree output) from recipes's store into out_memory, verifying its
+// BLAKE3 hash before returning its byte length. Returns Too_Small with the
+// exact byte count in error.limit when out_memory is undersized.
+@(export, link_name = "read_output")
+read_output :: proc "c" (output_hash_hex: ^system.Bytes_To_Read, entry_name: ^string, out_memory: system.Lent({.Read, .Write}), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure, ok := caller_check(false, error); !ok {
+		return failure, 0
+	}
+	if output_hash_hex == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+	}
+	hex_count := intrinsics.volatile_load(&output_hash_hex.count)
+	if hex_count != 2 * blake3.HASH_SIZE {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 1, i64(hex_count), 2 * blake3.HASH_SIZE)
+	}
+	digits: [2 * blake3.HASH_SIZE]u8
+	intrinsics.mem_copy_non_overlapping(&digits[0], output_hash_hex.bytes, len(digits))
+	root_hash, hash_ok := pr.hash_of_hexadecimal(digits[:])
+	if !hash_ok {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1)
+	}
+
+	target_hash := root_hash
+	if entry_name != nil {
+		name_view := intrinsics.volatile_load(entry_name)
+		if len(name_view) > pr.MAX_ENTRY_NAME_BYTES {
+			return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 2, i64(len(name_view)), pr.MAX_ENTRY_NAME_BYTES)
+		}
+		if len(name_view) > 0 {
+			entry_buf: [pr.MAX_ENTRY_NAME_BYTES]u8
+			intrinsics.mem_copy_non_overlapping(&entry_buf[0], raw_data(name_view), len(name_view))
+			entry_text := string(entry_buf[:len(name_view)])
+			if tree_hash.tree_name_validate(entry_buf[:len(name_view)]) != .None {
+				return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2)
+			}
+			// Read and verify the canonical tree node for root_hash.
+			tree_name := pr.blob_object_name(root_hash)
+			tree_size, sz_status := pr.private_store_size(&service_state.store, pr.private_object_name_text(&tree_name))
+			if sz_status == .Absent {
+				return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Objects, 1)
+			}
+			if sz_status != .Ok || tree_size == 0 || tree_size > u64(object_cache.MAX_TREE_PAYLOAD_BYTES) {
+				return call_outcome.fail(error, .Data_Damaged, .Damaged, .Objects, 1)
+			}
+			tree_pages := (tree_size + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+			tree_mem, tree_create := system.memory_create(tree_pages)
+			if tree_create != .Ok {
+				return call_outcome.fail(error, system.outcome_of_own_status(tree_create), .Refused, .Kernel_Status, 1, 0, 0, i64(tree_create))
+			}
+			defer system.close(tree_mem)
+			tree_addr, tree_map := system.memory_map(tree_mem, {.Write})
+			if tree_map != .Ok {
+				return call_outcome.fail(error, system.outcome_of_own_status(tree_map), .Refused, .Kernel_Status, 1, 0, 0, i64(tree_map))
+			}
+			defer system.memory_unmap(tree_addr)
+			tree_bytes, read_status := pr.private_store_read(&service_state.store, pr.private_object_name_text(&tree_name), ([^]u8)(tree_addr)[:tree_size])
+			if read_status != .Ok || u64(len(tree_bytes)) != tree_size {
+				return call_outcome.fail(error, .Data_Damaged, .Damaged, .Objects, 1)
+			}
+			computed_tree, th_ref := tree_hash.tree_hash(tree_bytes)
+			if th_ref != .None || computed_tree != root_hash {
+				return call_outcome.fail(error, .Data_Damaged, .Damaged, .Objects, 1)
+			}
+			entry, found, lookup_ref := tree_hash.tree_lookup(tree_bytes, entry_text)
+			if lookup_ref != .None || !found {
+				return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Objects, 2)
+			}
+			if entry.kind != .Object {
+				return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Objects, 2)
+			}
+			target_hash = entry.hash
+		}
+	}
+
+	target_name := pr.blob_object_name(target_hash)
+	target_text := pr.private_object_name_text(&target_name)
+	target_size, sz_status := pr.private_store_size(&service_state.store, target_text)
+	if sz_status == .Absent {
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Objects, 1)
+	}
+	if sz_status != .Ok {
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Objects, 1)
+	}
+	if target_size > recipes_core.PUT_MEMORY_BYTES_MOST {
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Bytes, 1, i64(target_size), i64(recipes_core.PUT_MEMORY_BYTES_MOST))
+	}
+
+	out_pages, out_sz_status := system.memory_size(out_memory.handle)
+	if out_sz_status != .Ok {
+		out_pages = 0
+	}
+	if target_size > out_pages * system.PAGE_SIZE {
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, 3, i64(out_pages * system.PAGE_SIZE), i64(target_size))
+	}
+
+	out_addr, out_map := system.memory_map(out_memory.handle, {.Write})
+	if out_map != .Ok {
+		return call_outcome.fail(error, .Argument_Refused, .Refused, .Kernel_Status, 3, 0, 0, i64(out_map))
+	}
+	defer system.memory_unmap(out_addr)
+
+	hasher := blake3.hasher_make()
+	read_offset := u64(0)
+	for read_offset < target_size {
+		want := int(min(u64(recipes_core.STORE_PIECE_BYTES), target_size - read_offset))
+		chunk, chunk_status := pr.private_store_read_range(&service_state.store, target_text, read_offset, copied_object[:want])
+		if chunk_status != .Ok || len(chunk) == 0 || u64(len(chunk)) > target_size - read_offset {
+			return call_outcome.fail(error, .Data_Damaged, .Damaged, .Objects, 1)
+		}
+		blake3.hasher_update(&hasher, chunk)
+		intrinsics.mem_copy_non_overlapping(rawptr(uintptr(out_addr) + uintptr(read_offset)), raw_data(chunk), len(chunk))
+		read_offset += u64(len(chunk))
+	}
+	if blake3.hasher_finish(&hasher) != target_hash {
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Objects, 1)
+	}
+	return .Succeeded, i64(target_size)
 }
 
 // cache_lookup gives the realisation of a recipe in the local store, with
@@ -518,7 +753,7 @@ build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_
 	if refusal := pr.c_build_recipe(c_builder.compiler_hash, c_builder.assembler_hash, name, blake3.hash(work.source), &export_spec); refusal != .None {
 		return recipe_refusal_fail(error, refusal, 1)
 	}
-	export_result = recipes_core.build_recipe(&service_state, &export_spec, .Cache_First, {}, nil, c_builder_invoke, nil, nil, &work)
+	export_result = recipes_core.build_recipe(&service_state, &export_spec, .Prefer_Cache, {}, nil, c_builder_invoke, nil, nil, &work)
 	// The store holds the module now, or the build failed: the memory of
 	// the module of the build ends here.
 	c_build_work_end(&work)

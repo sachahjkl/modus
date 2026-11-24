@@ -15,13 +15,14 @@
 //
 // The local store is the private store of the service, and an index of it
 // in the memory of the service (src/md/features/recipes.md, "The local
-// store"): each output is the object "blob_<hash>" of any size that the
-// store holds, and each realisation the object "realisation_<recipe hash>"
-// that names it. The output is written before its realisation, so a
-// realisation never names an output that the store lacks; a build of the
-// same recipe after a start reads them back, checks the output against its
-// hash, and builds nothing. A retention rule removes the oldest
-// realisations when an output would pass the share of the store.
+// store"): each content-addressed object is stored at storage.ROOT under its
+// exact 64 lowercase hexadecimal BLAKE3 hash, and each realisation is the
+// object "realisation_<recipe hash>" that names it. The output is written
+// before its realisation, so a realisation never names an output that the
+// store lacks; a build of the same recipe after a start reads them back,
+// checks the output against its hash, and builds nothing. A retention rule
+// removes the oldest realisations when an output would pass the share of the
+// store.
 package recipes_core
 
 import "modus:contract/blake3"
@@ -58,11 +59,7 @@ RETENTION_LIST_ROWS :: 32
 STORE_BLOCK_BYTES :: 4096
 
 // Where a recorded realisation came from for provenance auditing.
-Provenance_Origin :: enum u8 {
-	None         = 0,
-	Local_Build  = 1,
-	Remote_Cache = 2,
-}
+Provenance_Origin :: pr.Provenance_Origin
 
 // Callback to query a remote object cache for a realisation and its payload.
 Cache_Lookup_Proc :: #type proc "contextless" (
@@ -71,6 +68,23 @@ Cache_Lookup_Proc :: #type proc "contextless" (
 	out_payload: []u8,
 	user_data: rawptr,
 ) -> (payload_length: int, found: bool)
+
+// Streaming remote cache callback: verifies the signed realisation against
+// policy, fetches the output (and any Tree children) with Bao frame
+// verification directly into state.store under the retention guard, and
+// returns the verified realisation record and output byte length.
+Cache_Fetch_Proc :: #type proc "contextless" (
+	state: ^Recipes_State,
+	spec: ^pr.Recipe_Spec,
+	recipe_hash: blake3.Hash,
+	policy: object_cache.Substitution_Policy,
+	out_realisation: ^object_cache.Realisation_Record,
+	out_length: ^u64,
+	user_data: rawptr,
+) -> (found: bool, refusal: pr.Recipe_Refusal)
+
+// Plan value: trusted realisation signer keys configured for the remote cache.
+REMOTE_CACHE_SIGNERS_CAPACITY :: 8
 
 // Callback to invoke a sandboxed builder process under the validated
 // sandbox. The builder writes its output into staging, or into memory of
@@ -150,6 +164,11 @@ Recipes_State :: struct {
 	building:            ^pr.Recipe_Spec,
 	retention_keep:      proc "contextless" (hash: blake3.Hash, user_data: rawptr) -> bool,
 	retention_keep_user: rawptr,
+	// Streaming remote object cache hook (QUIC UDP:5010). nil when no remote
+	// cache is active for the current caller's principal. Trusted signers are
+	// always supplied per-call in Substitution_Policy, never globally.
+	remote_cache_fetch: Cache_Fetch_Proc,
+	remote_cache_user:  rawptr,
 }
 
 // state_init zeroes state, binds the private store that keeps the
@@ -158,6 +177,21 @@ state_init :: proc "contextless" (state: ^Recipes_State, store: pr.Private_Store
 	state^ = {}
 	state.initialized = true
 	state.store = store
+}
+
+// realisation_head_persist writes only the realisation_<recipe_hash> record
+// when its output object has already been written and verified in state.store.
+@(private = "file")
+realisation_head_persist :: proc "contextless" (state: ^Recipes_State, record: ^object_cache.Realisation_Record, origin: Provenance_Origin, output_length: u64) -> pr.Recipe_Refusal {
+	written, refusal := pr.encode_realisation_object(record, u64(origin), output_length, state.store_head[:])
+	if refusal != .None {
+		return refusal
+	}
+	name := pr.realisation_object_name(record.recipe_hash)
+	if pr.private_store_write(&state.store, pr.private_object_name_text(&name), state.store_head[:written]) != .Ok {
+		return .Store_Failed
+	}
+	return .None
 }
 
 // realisation_persist keeps an output and its realisation in the private
@@ -176,15 +210,7 @@ realisation_persist :: proc "contextless" (state: ^Recipes_State, record: ^objec
 	if pr.private_store_write(&state.store, pr.private_object_name_text(&output_name), payload) != .Ok {
 		return .Store_Failed
 	}
-	written, refusal := pr.encode_realisation_object(record, u64(origin), u64(len(payload)), state.store_head[:])
-	if refusal != .None {
-		return refusal
-	}
-	name := pr.realisation_object_name(record.recipe_hash)
-	if pr.private_store_write(&state.store, pr.private_object_name_text(&name), state.store_head[:written]) != .Ok {
-		return .Store_Failed
-	}
-	return .None
+	return realisation_head_persist(state, record, origin, u64(len(payload)))
 }
 
 // What the read of an output of the store found.
@@ -198,7 +224,6 @@ Stored_Output :: enum u8 {
 // piece, and checks its length and its hash. A tree is read whole into the
 // staging of the cache, as its hash needs its encoding whole: a tree has at
 // most STAGING_BYTES.
-@(private = "file")
 stored_output_check :: proc "contextless" (state: ^Recipes_State, hash: blake3.Hash, kind: object_cache.Cache_Object_Kind, length: u64) -> Stored_Output {
 	name := pr.blob_object_name(hash)
 	text := pr.private_object_name_text(&name)
@@ -637,9 +662,9 @@ build_recipe :: proc "contextless" (
 		trusted_signers = policy.trusted_signers,
 	}
 
-	// Step 1: check local store for Cache_First and Cache_Only: the memory,
+	// Step 1: check local store for Prefer_Cache and Cache_Only: the memory,
 	// then the private store.
-	if checked_mode == .Cache_First || checked_mode == .Cache_Only {
+	if checked_mode == .Prefer_Cache || checked_mode == .Cache_Only {
 		recalled := false
 		// The index can hold the realisation and have forgotten its output:
 		// the store answers then, as for a realisation that it forgot.
@@ -676,11 +701,13 @@ build_recipe :: proc "contextless" (
 		}
 	}
 
-	// Step 2: check remote object_cache for Cache_First, Cache_Only, and Verify.
+	// Step 2: check remote object_cache for Prefer_Cache, Cache_Only, and Verify.
 	have_verified_cache := false
+	cached_fetched_to_store := false
 	cached_realisation: object_cache.Realisation_Record
 	cached_payload_len := 0
-	if checked_mode == .Cache_First || checked_mode == .Cache_Only || checked_mode == .Verify {
+	cached_fetched_len: u64 = 0
+	if checked_mode == .Prefer_Cache || checked_mode == .Cache_Only || checked_mode == .Verify {
 		if cache_lookup != nil {
 			remote_real: object_cache.Realisation_Record
 			payload_len, found := cache_lookup(rhash, &remote_real, state.cache_staging[:], user_data)
@@ -708,7 +735,7 @@ build_recipe :: proc "contextless" (
 					// Tampered payload, bad signature, or malformed data from a
 					// cache is always refused immediately. An untrusted signer
 					// is refused in Cache_Only/Verify, and falls back to local
-					// sandboxed build in Cache_First.
+					// sandboxed build in Prefer_Cache.
 					if verify_refusal != .Untrusted_Realisation || checked_mode == .Cache_Only || checked_mode == .Verify {
 						state.counters.total_refusals += 1
 						result.outcome = .Refused
@@ -717,16 +744,42 @@ build_recipe :: proc "contextless" (
 					}
 				}
 			}
+		} else if state.remote_cache_fetch != nil {
+			remote_real: object_cache.Realisation_Record
+			remote_length: u64 = 0
+			found, fetch_refusal := state.remote_cache_fetch(state, spec, rhash, effective_policy, &remote_real, &remote_length, state.remote_cache_user)
+			if fetch_refusal != .None {
+				if fetch_refusal != .Untrusted_Realisation || checked_mode == .Cache_Only || checked_mode == .Verify {
+					state.counters.total_refusals += 1
+					result.outcome = .Refused
+					result.refusal = fetch_refusal
+					return result
+				}
+			} else if found {
+				have_verified_cache = true
+				cached_fetched_to_store = true
+				cached_realisation = remote_real
+				cached_fetched_len = remote_length
+			}
 		}
 
-		if have_verified_cache && (checked_mode == .Cache_First || checked_mode == .Cache_Only) {
-			if persist_refusal := realisation_persist(state, &cached_realisation, .Remote_Cache, state.cache_staging[:cached_payload_len]); persist_refusal != .None {
+		if have_verified_cache && (checked_mode == .Prefer_Cache || checked_mode == .Cache_Only) {
+			persist_refusal: pr.Recipe_Refusal
+			stored_length: u64
+			if cached_fetched_to_store {
+				persist_refusal = realisation_head_persist(state, &cached_realisation, .Remote_Cache, cached_fetched_len)
+				stored_length = cached_fetched_len
+			} else {
+				persist_refusal = realisation_persist(state, &cached_realisation, .Remote_Cache, state.cache_staging[:cached_payload_len])
+				stored_length = u64(cached_payload_len)
+			}
+			if persist_refusal != .None {
 				state.counters.total_refusals += 1
 				result.outcome = .Refused
 				result.refusal = persist_refusal
 				return result
 			}
-			store_local_object(state, cached_realisation.output_hash, expected_kind, u64(cached_payload_len))
+			store_local_object(state, cached_realisation.output_hash, expected_kind, stored_length)
 			store_local_realisation(state, cached_realisation, .Remote_Cache, false)
 			state.counters.cache_hits_remote += 1
 			return {
@@ -748,7 +801,7 @@ build_recipe :: proc "contextless" (
 		}
 	}
 
-	// Step 3: invoke sandboxed builder (Build_Only, Cache_First fallback, or Verify).
+	// Step 3: invoke sandboxed builder (Build_Only, Prefer_Cache fallback, or Verify).
 	sandbox := &state.sandbox
 	sb_refusal := pr.builder_sandbox_prepare(spec, sandbox)
 	if sb_refusal != .None {

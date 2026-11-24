@@ -30,18 +30,23 @@ import "core:fmt"
 import "core:io"
 import "core:net"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:time"
 import "modus:contract/blake3"
+import "modus:contract/module"
 import "modus:contract/object_cache"
 import "modus:contract/plans_recipes"
+import "modus:contract/tree_hash"
 import crypto_compat "modus:cryptography/compatibility_crypto"
 import "modus:cryptography/ed25519"
+import "modus:quic"
 import "modustool:foundation"
 
-// Default TCP listen address for `modustool cache-serve`.
-DEFAULT_LISTEN_ADDRESS :: "127.0.0.1:7200"
+// Default TCP and QUIC UDP listen address for `modustool cache-serve`
+// (Plan value: matches object_cache.DEFAULT_QUIC_PORT).
+DEFAULT_LISTEN_ADDRESS :: "127.0.0.1:5010"
 
 // Closed set of subdirectories managed inside a cache store root.
 Store_Directory :: enum u8 {
@@ -113,8 +118,9 @@ Cache_Server :: struct {
 	authorized_signers: [dynamic][object_cache.PUBLIC_KEY_SIZE]u8,
 	temp_sequence:      u64,
 	stop:               bool,
+	protocol_lock:      sync.Mutex,
 	status:             Cache_Status,
-	// Only the thread of the protocol uses the builds.
+	// Guarded by protocol_lock when TCP and QUIC listeners run together.
 	outboard_builds:    [OUTBOARD_BUILDS_AT_ONCE]Outboard_Build,
 	outboard_build_use: u64,
 	// OUTBOARD_BUILD_FRAMES_PER_EXCHANGE; a host test sets 1, so a small
@@ -127,6 +133,15 @@ Cache_Serve_Options :: struct {
 	directory:              string,
 	listen_address:         string,
 	authorized_public_keys: [][object_cache.PUBLIC_KEY_SIZE]u8,
+	// Optional Ed25519 private key for the QUIC UDP listener on listen_address.
+	// When has_quic_private_key is false and disable_quic is false, the server
+	// loads <directory>/quic_server.key or creates it on first run so the
+	// pinned server public key stays stable across restarts.
+	quic_private_key:       [quic.ED25519_KEY_SIZE]u8,
+	has_quic_private_key:   bool,
+	// Plan value: concurrent QUIC clients served (0 uses CACHE_QUIC_DEFAULT_CONNECTIONS).
+	quic_connections:       int,
+	disable_quic:           bool,
 	// The listener of the page and of the status record; empty: none.
 	status_listen_address:  string,
 	page:                   Cache_Page_Settings,
@@ -1226,6 +1241,164 @@ handle_put_object_frame :: proc(
 	return status_response(conn.response_buffer, .Put_Object_Frame, .Ok)
 }
 
+// handle_get_references returns the non-zero BLAKE3 hashes referenced by an
+// object (canonical tree entries or module import table) or a realisation
+// (its output hash). A plain blob returns Ok with zero references.
+@(private = "file")
+handle_get_references :: proc(
+	server: ^Cache_Server,
+	conn: ^Cache_Connection,
+	request: ^object_cache.Cache_Request,
+) -> (response_frame: []u8, status: object_cache.Cache_Response_Status) {
+	hex_bytes := hash_to_hex(request.object_hash)
+	hex_name := string(hex_bytes[:])
+	refs_start := object_cache.FRAME_HEADER_SIZE + object_cache.GET_REFERENCES_RESPONSE_HEADER_SIZE
+
+	obj_path, obj_path_ok := store_path_for_hex(server.root_directory, .Objects, hex_name, context.temp_allocator)
+	if !obj_path_ok {
+		return status_response(conn.response_buffer, .Get_References, .Refused)
+	}
+	if os.exists(obj_path) {
+		obj_file, open_err := os.open(obj_path)
+		if open_err != nil {
+			return status_response(conn.response_buffer, .Get_References, .Refused)
+		}
+		defer if obj_file != nil {
+			os.close(obj_file)
+		}
+
+		raw_size, sz_err := os.file_size(obj_file)
+		if sz_err != nil || raw_size < 0 {
+			return status_response(conn.response_buffer, .Get_References, .Refused)
+		}
+		object_size := u64(raw_size)
+
+		prefix_len := int(min(object_size, u64(size_of(module.Header))))
+		prefix: [size_of(module.Header)]u8
+		if prefix_len > 0 && !file_read_exact_at(obj_file, prefix[:prefix_len], 0) {
+			return status_response(conn.response_buffer, .Get_References, .Refused)
+		}
+
+		// Case 1: canonical MODTREE2 tree node.
+		tree_magic := tree_hash.HEADER_MAGIC
+		if object_size >= u64(tree_hash.HEADER_SIZE) && object_size <= u64(object_cache.MAX_TREE_PAYLOAD_BYTES) &&
+		   string(prefix[:len(tree_magic)]) == string(tree_magic[:]) {
+			tree_bytes := conn.request_buffer[:int(object_size)]
+			if !file_read_exact_at(obj_file, tree_bytes, 0) {
+				return status_response(conn.response_buffer, .Get_References, .Refused)
+			}
+			computed_tree, tree_refusal := tree_hash.tree_hash(tree_bytes)
+			if tree_refusal == .None && object_cache.hashes_equal_constant_time(computed_tree, request.object_hash) {
+				entry_count := tree_hash.tree_entry_count(tree_bytes)
+				if entry_count > object_cache.MAX_REFERENCES {
+					return status_response(conn.response_buffer, .Get_References, .Too_Large)
+				}
+				written_refs := 0
+				offset := tree_hash.HEADER_SIZE
+				for _ in 0 ..< entry_count {
+					entry, next_offset, entry_ok := tree_hash.tree_entry_next(tree_bytes, offset)
+					if !entry_ok {
+						return status_response(conn.response_buffer, .Get_References, .Refused)
+					}
+					offset = next_offset
+					if !object_cache.hash_is_zero(entry.hash) {
+						dst := conn.response_buffer[refs_start + written_refs * blake3.HASH_SIZE:]
+						copy(dst[:blake3.HASH_SIZE], entry.hash[:])
+						written_refs += 1
+					}
+				}
+				response := object_cache.Cache_Response {
+					request_kind = .Get_References,
+					status       = .Ok,
+					references   = conn.response_buffer[refs_start:refs_start + written_refs * blake3.HASH_SIZE],
+				}
+				return encode_response_into(conn.response_buffer, &response)
+			}
+			// If bytes starting with MODTREE2 hash neither as a tree nor as a
+			// plain blob to request.object_hash, quarantine the damaged file.
+			blob_hash := blake3.hash(tree_bytes)
+			if !object_cache.hashes_equal_constant_time(blob_hash, request.object_hash) {
+				os.close(obj_file)
+				obj_file = nil
+				store_move_damaged(server, hex_name, object_size)
+				return status_response(conn.response_buffer, .Get_References, .Not_Found)
+			}
+		}
+
+		// Case 2: modus module file — read its Imports table directly without
+		// loading large segments into memory.
+		if prefix_len == size_of(module.Header) {
+			head, head_err := module.header(prefix[:])
+			if head_err == .None && u32(module.Table_Kind.Imports) < head.table_count {
+				entry_offset := u64(head.header_size) + u64(module.Table_Kind.Imports) * size_of(module.Table_Entry)
+				if entry_offset + size_of(module.Table_Entry) <= object_size {
+					entry_bytes: [size_of(module.Table_Entry)]u8
+					if file_read_exact_at(obj_file, entry_bytes[:], i64(entry_offset)) {
+						entry := (cast(^module.Table_Entry)&entry_bytes[0])^
+						table_bytes := u64(entry.count) * u64(entry.record_size)
+						if entry.count > 1 && entry.record_size >= size_of(module.Import) &&
+						   entry.offset <= object_size && table_bytes <= object_size - entry.offset {
+							written_refs := 0
+							for import_index in u32(1) ..< entry.count {
+								if written_refs >= object_cache.MAX_REFERENCES {
+									return status_response(conn.response_buffer, .Get_References, .Too_Large)
+								}
+								rec_pos := entry.offset + u64(import_index) * u64(entry.record_size)
+								imp_hash: blake3.Hash
+								if !file_read_exact_at(obj_file, imp_hash[:], i64(rec_pos)) {
+									return status_response(conn.response_buffer, .Get_References, .Refused)
+								}
+								if !object_cache.hash_is_zero(imp_hash) {
+									dst := conn.response_buffer[refs_start + written_refs * blake3.HASH_SIZE:]
+									copy(dst[:blake3.HASH_SIZE], imp_hash[:])
+									written_refs += 1
+								}
+							}
+							response := object_cache.Cache_Response {
+								request_kind = .Get_References,
+								status       = .Ok,
+								references   = conn.response_buffer[refs_start:refs_start + written_refs * blake3.HASH_SIZE],
+							}
+							return encode_response_into(conn.response_buffer, &response)
+						}
+					}
+				}
+			}
+		}
+
+		// Case 3: plain blob with no outgoing references.
+		response := object_cache.Cache_Response {
+			request_kind = .Get_References,
+			status       = .Ok,
+		}
+		return encode_response_into(conn.response_buffer, &response)
+	}
+
+	// Case 4: realisation mapping a recipe hash to its output hash.
+	data, found, read_ok := store_read_by_hex(server, .Realisations, hex_name, context.temp_allocator)
+	if !read_ok {
+		return status_response(conn.response_buffer, .Get_References, .Refused)
+	}
+	if !found {
+		return status_response(conn.response_buffer, .Get_References, .Not_Found)
+	}
+	record, rec_refusal := object_cache.decode_realisation_record(data)
+	if rec_refusal != .None || !object_cache.hashes_equal_constant_time(record.recipe_hash, request.object_hash) {
+		return status_response(conn.response_buffer, .Get_References, .Refused)
+	}
+	signing_bytes, sign_ok := object_cache.realisation_signing_bytes(&record)
+	if !sign_ok || !cache_server_verify_ed25519(record.signer_public_key, signing_bytes[:], record.signature) {
+		return status_response(conn.response_buffer, .Get_References, .Bad_Signature)
+	}
+	copy(conn.response_buffer[refs_start:refs_start + blake3.HASH_SIZE], record.output_hash[:])
+	response := object_cache.Cache_Response {
+		request_kind = .Get_References,
+		status       = .Ok,
+		references   = conn.response_buffer[refs_start:refs_start + blake3.HASH_SIZE],
+	}
+	return encode_response_into(conn.response_buffer, &response)
+}
+
 // cache_server_handle_connection_frame decodes one binary request frame,
 // validates authentication, signatures, ranges, and content hashes, serves or
 // updates the store, and returns the encoded binary response frame inside
@@ -1235,6 +1408,12 @@ cache_server_handle_connection_frame :: proc(
 	conn: ^Cache_Connection,
 	request_frame: []u8,
 ) -> (response_frame: []u8, status: object_cache.Cache_Response_Status) {
+	if server != nil {
+		sync.mutex_lock(&server.protocol_lock)
+	}
+	defer if server != nil {
+		sync.mutex_unlock(&server.protocol_lock)
+	}
 	request, refusal := object_cache.decode_request(request_frame)
 	if refusal != .None {
 		put_session_abort(&conn.put)
@@ -1362,6 +1541,9 @@ cache_server_handle_connection_frame :: proc(
 			response.release_pointer = pointer
 		}
 		return encode_response_into(conn.response_buffer, &response)
+
+	case .Get_References:
+		return handle_get_references(server, conn, &request)
 	}
 
 	return status_response(conn.response_buffer, .Has, .Refused)
@@ -1540,6 +1722,37 @@ cache_server_serve :: proc(options: Cache_Serve_Options) -> bool {
 		cache_status_stop(status_running)
 	}
 
+	quic_running: ^Cache_Quic_Running
+	if !options.disable_quic {
+		quic_key := options.quic_private_key
+		if !options.has_quic_private_key {
+			if !cache_quic_load_or_create_key(server.root_directory, &quic_key) {
+				fmt.eprintln("modustool: cache-serve: cannot load or create QUIC server key")
+				return false
+			}
+		}
+		defer crypto_compat.zero_explicit(&quic_key, size_of(quic_key))
+		quic_endpoint := bound_err == nil ? bound : endpoint
+		quic_err_text: string
+		quic_conns := options.quic_connections > 0 ? options.quic_connections : CACHE_QUIC_DEFAULT_CONNECTIONS
+		quic_running, quic_err_text = cache_quic_start(&server, quic_endpoint, quic_key, quic_conns)
+		if quic_running == nil {
+			fmt.eprintfln("modustool: cache-serve: cannot start QUIC listener on %s: %s", net.endpoint_to_string(quic_endpoint, context.temp_allocator), quic_err_text)
+			return false
+		}
+		pub_hex := hash_to_hex(quic_running.public_key)
+		fmt.printfln(
+			"modustool: cache-serve: QUIC on udp://%s (ALPN %s, public key %s)",
+			net.endpoint_to_string(quic_running.bound_endpoint, context.temp_allocator),
+			object_cache.APPLICATION_PROTOCOL,
+			string(pub_hex[:]),
+		)
+	}
+	defer if quic_running != nil {
+		sync.atomic_store(&server.stop, true)
+		cache_quic_stop(quic_running)
+	}
+
 	cache_server_serve_listener(&server, listener)
 	return true
 }
@@ -1637,12 +1850,40 @@ read_public_key_file :: proc(command, path: string) -> (public_key: [object_cach
 	return decoded, true
 }
 
-// run_cache_serve implements `modustool cache-serve --dir <path> [--listen <addr>] [--signer-key <path>] [--authorized-key <path>]`.
+// read_private_key_file reads a 64-hex-digit Ed25519 private seed file and
+// checks that it parses as a valid Ed25519 private key.
+read_private_key_file :: proc(command, path: string) -> (seed: [quic.ED25519_KEY_SIZE]u8, ok: bool) {
+	raw, read_err := os.read_entire_file(path, context.temp_allocator)
+	if read_err != nil {
+		fmt.eprintfln("modustool: %s: cannot read key %s: %v", command, path, read_err)
+		return {}, false
+	}
+	defer crypto_compat.zero_explicit(raw_data(raw), len(raw))
+	decoded, decode_ok := decode_hex_32(string(raw))
+	if !decode_ok {
+		fmt.eprintfln("modustool: %s: %s must hold 64 hexadecimal digits", command, path)
+		return {}, false
+	}
+	private_key: ed25519.Private_Key
+	defer ed25519.private_key_clear(&private_key)
+	if !ed25519.private_key_set_bytes(&private_key, decoded[:]) {
+		crypto_compat.zero_explicit(&decoded, size_of(decoded))
+		fmt.eprintfln("modustool: %s: %s is not a valid Ed25519 key", command, path)
+		return {}, false
+	}
+	return decoded, true
+}
+
+// run_cache_serve implements `modustool cache-serve --dir <path> [--listen <addr>] [--quic-key <path>] [--quic-connections <n>] [--signer-key <path>] [--authorized-key <path>]`.
 run_cache_serve :: proc(args: []string) -> int {
-	usage_text :: "modustool: cache-serve --dir <path> [--listen <host:port>] [--signer-key <path>] [--authorized-key <path>] [--status-listen <host:port>] [--endpoint <host:port>] [--site <address>]"
+	usage_text :: "modustool: cache-serve --dir <path> [--listen <host:port>] [--quic-key <path>] [--quic-connections <n>] [--signer-key <path>] [--authorized-key <path>] [--status-listen <host:port>] [--endpoint <host:port>] [--site <address>]"
 	directory := ""
 	listen_address := DEFAULT_LISTEN_ADDRESS
 	status_listen_address := ""
+	quic_private_key: [quic.ED25519_KEY_SIZE]u8
+	has_quic_private_key := false
+	quic_connections := CACHE_QUIC_DEFAULT_CONNECTIONS
+	defer crypto_compat.zero_explicit(&quic_private_key, size_of(quic_private_key))
 	page := Cache_Page_Settings {
 		site_address = DEFAULT_SITE_ADDRESS,
 	}
@@ -1666,6 +1907,30 @@ run_cache_serve :: proc(args: []string) -> int {
 			}
 			index += 1
 			listen_address = args[index]
+		case "--quic-key":
+			if index + 1 >= len(args) {
+				fmt.eprintln(usage_text)
+				return foundation.EXIT_USAGE
+			}
+			index += 1
+			key, ok := read_private_key_file("cache-serve", args[index])
+			if !ok {
+				return foundation.EXIT_FAILURE
+			}
+			quic_private_key = key
+			has_quic_private_key = true
+		case "--quic-connections":
+			if index + 1 >= len(args) {
+				fmt.eprintln(usage_text)
+				return foundation.EXIT_USAGE
+			}
+			index += 1
+			parsed_conns, parse_ok := strconv.parse_int(args[index])
+			if !parse_ok || parsed_conns < 1 || parsed_conns > CACHE_QUIC_MAX_CONNECTIONS {
+				fmt.eprintfln("modustool: cache-serve: --quic-connections must be 1 to %d", CACHE_QUIC_MAX_CONNECTIONS)
+				return foundation.EXIT_USAGE
+			}
+			quic_connections = parsed_conns
 		case "--signer-key":
 			if index + 1 >= len(args) {
 				fmt.eprintln(usage_text)
@@ -1728,6 +1993,9 @@ run_cache_serve :: proc(args: []string) -> int {
 		directory              = directory,
 		listen_address         = listen_address,
 		authorized_public_keys = authorized[:],
+		quic_private_key       = quic_private_key,
+		has_quic_private_key   = has_quic_private_key,
+		quic_connections       = quic_connections,
 		status_listen_address  = status_listen_address,
 		page                   = page,
 	}

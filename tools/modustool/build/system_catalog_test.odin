@@ -60,10 +60,12 @@ system_catalog_refuses_damaged_or_invalid_inputs :: proc(t: ^testing.T) {
 	_, problem = system_catalog_of_image(empty_image, release.RELEASE_NUMBER, .Boot_Image)
 	testing.expect(t, problem != "", "an image with zero modules must be refused")
 
-	// Minimal valid pair of modules for mutation tests.
+	// Minimal valid set of modules for mutation tests.
 	base_files := []Image_File {
+		{name = CATALOG_C_BUILDER_MODULE, file = synthetic_module_bytes(CATALOG_C_BUILDER_MODULE)},
 		{name = CATALOG_C_COMPILER_MODULE, file = synthetic_module_bytes(CATALOG_C_COMPILER_MODULE)},
 		{name = CATALOG_ASSEMBLER_MODULE, file = synthetic_module_bytes(CATALOG_ASSEMBLER_MODULE)},
+		{name = CATALOG_HOST_MODULE, file = synthetic_module_bytes(CATALOG_HOST_MODULE)},
 	}
 	base_image := boot_image_encode(base_files, len(base_files))
 
@@ -91,8 +93,10 @@ system_catalog_refuses_damaged_or_invalid_inputs :: proc(t: ^testing.T) {
 	bad_names := [?]string{"", "1bad", "bad-name", "bad.name", "let", "in", "with", "if", "then", "else", "true", "false", "_"}
 	for bad_name in bad_names {
 		entries := []Module_Hash {
+			{name = CATALOG_C_BUILDER_MODULE, hash = blake3.hash(synthetic_module_bytes(CATALOG_C_BUILDER_MODULE))},
 			{name = CATALOG_C_COMPILER_MODULE, hash = blake3.hash(synthetic_module_bytes(CATALOG_C_COMPILER_MODULE))},
 			{name = CATALOG_ASSEMBLER_MODULE, hash = blake3.hash(synthetic_module_bytes(CATALOG_ASSEMBLER_MODULE))},
+			{name = CATALOG_HOST_MODULE, hash = blake3.hash(synthetic_module_bytes(CATALOG_HOST_MODULE))},
 			{name = bad_name, hash = blake3.hash(synthetic_module_bytes("other"))},
 		}
 		_, problem = system_catalog_of_modules(entries, release.RELEASE_NUMBER, .Boot_Image)
@@ -101,43 +105,54 @@ system_catalog_refuses_damaged_or_invalid_inputs :: proc(t: ^testing.T) {
 
 	// Duplicate module name.
 	duplicate_entries := []Module_Hash {
+		{name = CATALOG_C_BUILDER_MODULE, hash = blake3.hash(synthetic_module_bytes(CATALOG_C_BUILDER_MODULE))},
 		{name = CATALOG_C_COMPILER_MODULE, hash = blake3.hash(synthetic_module_bytes(CATALOG_C_COMPILER_MODULE))},
 		{name = CATALOG_C_COMPILER_MODULE, hash = blake3.hash(synthetic_module_bytes(CATALOG_C_COMPILER_MODULE))},
 		{name = CATALOG_ASSEMBLER_MODULE, hash = blake3.hash(synthetic_module_bytes(CATALOG_ASSEMBLER_MODULE))},
+		{name = CATALOG_HOST_MODULE, hash = blake3.hash(synthetic_module_bytes(CATALOG_HOST_MODULE))},
 	}
 	_, problem = system_catalog_of_modules(duplicate_entries, release.RELEASE_NUMBER, .Boot_Image)
 	testing.expect(t, problem != "", "duplicate module names must be refused")
 
-	// Missing c_compiler, then missing assemble.
-	only_assemble := []Image_File{{name = CATALOG_ASSEMBLER_MODULE, file = synthetic_module_bytes(CATALOG_ASSEMBLER_MODULE)}}
-	_, problem = system_catalog_of_image(boot_image_encode(only_assemble, 1), release.RELEASE_NUMBER, .Boot_Image)
-	testing.expect(t, problem != "", "an image without c_compiler must be refused")
-
-	only_compiler := []Image_File{{name = CATALOG_C_COMPILER_MODULE, file = synthetic_module_bytes(CATALOG_C_COMPILER_MODULE)}}
-	_, problem = system_catalog_of_image(boot_image_encode(only_compiler, 1), release.RELEASE_NUMBER, .Boot_Image)
-	testing.expect(t, problem != "", "an image without assemble must be refused")
+	// Missing any of c_builder, c_compiler, assemble, or host must be refused.
+	for skip in 0 ..< len(base_files) {
+		subset := make([dynamic]Image_File, 0, len(base_files) - 1, context.temp_allocator)
+		for item, idx in base_files {
+			if idx != skip {
+				append(&subset, item)
+			}
+		}
+		_, problem = system_catalog_of_image(boot_image_encode(subset[:], len(subset)), release.RELEASE_NUMBER, .Boot_Image)
+		testing.expectf(t, problem != "", "an image without %s must be refused", base_files[skip].name)
+	}
 
 	// Release scope refuses test modules, single-image test modules, and
 	// unknown modules.
 	with_test := []Image_File {
+		{name = CATALOG_C_BUILDER_MODULE, file = synthetic_module_bytes(CATALOG_C_BUILDER_MODULE)},
 		{name = CATALOG_C_COMPILER_MODULE, file = synthetic_module_bytes(CATALOG_C_COMPILER_MODULE)},
 		{name = CATALOG_ASSEMBLER_MODULE, file = synthetic_module_bytes(CATALOG_ASSEMBLER_MODULE)},
+		{name = CATALOG_HOST_MODULE, file = synthetic_module_bytes(CATALOG_HOST_MODULE)},
 		{name = "flood", file = synthetic_module_bytes("flood")},
 	}
 	_, problem = system_catalog_of_image(boot_image_encode(with_test, len(with_test)), release.RELEASE_NUMBER, .Release_Image)
 	testing.expect(t, problem != "", "a release catalog must refuse a test module")
 
 	with_only_in_image := []Image_File {
+		{name = CATALOG_C_BUILDER_MODULE, file = synthetic_module_bytes(CATALOG_C_BUILDER_MODULE)},
 		{name = CATALOG_C_COMPILER_MODULE, file = synthetic_module_bytes(CATALOG_C_COMPILER_MODULE)},
 		{name = CATALOG_ASSEMBLER_MODULE, file = synthetic_module_bytes(CATALOG_ASSEMBLER_MODULE)},
+		{name = CATALOG_HOST_MODULE, file = synthetic_module_bytes(CATALOG_HOST_MODULE)},
 		{name = foundation.OPERATION_FUZZING_MODULE, file = synthetic_module_bytes(foundation.OPERATION_FUZZING_MODULE)},
 	}
 	_, problem = system_catalog_of_image(boot_image_encode(with_only_in_image, len(with_only_in_image)), release.RELEASE_NUMBER, .Release_Image)
 	testing.expect(t, problem != "", "a release catalog must refuse a single-image test module")
 
 	with_unknown := []Image_File {
+		{name = CATALOG_C_BUILDER_MODULE, file = synthetic_module_bytes(CATALOG_C_BUILDER_MODULE)},
 		{name = CATALOG_C_COMPILER_MODULE, file = synthetic_module_bytes(CATALOG_C_COMPILER_MODULE)},
 		{name = CATALOG_ASSEMBLER_MODULE, file = synthetic_module_bytes(CATALOG_ASSEMBLER_MODULE)},
+		{name = CATALOG_HOST_MODULE, file = synthetic_module_bytes(CATALOG_HOST_MODULE)},
 		{name = "unknown_module_not_in_table", file = synthetic_module_bytes("unknown_module_not_in_table")},
 	}
 	unknown_image := boot_image_encode(with_unknown, len(with_unknown))
@@ -186,7 +201,12 @@ system_catalog_is_deterministic_and_evaluates_with_lex_evaluator :: proc(t: ^tes
 	rel_val, rel_ok := lex_evaluator.declaration_force_path(workspace, root.value, "release")
 	testing.expect(t, rel_ok && rel_val.kind == .Text && lex_evaluator.value_text(&workspace.evaluation, rel_val) == release.RELEASE_NUMBER, "catalog.release must match release.RELEASE_NUMBER")
 
-	// catalog.c.compiler, catalog.c.assembler, and catalog.c.module.
+	// catalog.c.builder, catalog.c.compiler, catalog.c.assembler, and catalog.c.module.
+	cb_val, cb_ok := lex_evaluator.declaration_force_path(workspace, root.value, "c.builder")
+	testing.expect(t, cb_ok && cb_val.kind == .Module_Ref, "catalog.c.builder must be a module file")
+	cb_hash, _ := lex_evaluator.hash_of(&workspace.evaluation, cb_val)
+	testing.expect(t, cb_hash == blake3.hash(synthetic_module_bytes(CATALOG_C_BUILDER_MODULE)), "catalog.c.builder must hold exact c_builder hash")
+
 	cc_val, cc_ok := lex_evaluator.declaration_force_path(workspace, root.value, "c.compiler")
 	testing.expect(t, cc_ok && cc_val.kind == .Module_Ref, "catalog.c.compiler must be a module file")
 	cc_hash, _ := lex_evaluator.hash_of(&workspace.evaluation, cc_val)

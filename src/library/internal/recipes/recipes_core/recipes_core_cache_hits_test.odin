@@ -54,7 +54,7 @@ test_recipes_refused_requests_count_no_build_and_no_hit :: proc(t: ^testing.T) {
 		testing.expect_value(t, result.outcome, pr.Recipe_Build_Outcome.Refused)
 		testing.expect_value(t, result.refusal, pr.Recipe_Refusal.Bad_Build_Mode)
 	}
-	empty := build_recipe(state, &spec, .Cache_First, policy, nil, nil, nil, nil)
+	empty := build_recipe(state, &spec, .Prefer_Cache, policy, nil, nil, nil, nil)
 	testing.expect_value(t, empty.outcome, pr.Recipe_Build_Outcome.Refused)
 	testing.expect(t, empty.refusal != .None, "a recipe with no builder is refused")
 

@@ -143,22 +143,17 @@ build_run :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, out_payload:
 	return output_freeze(&places, out_payload)
 }
 
-// build_places_open makes the place of the objects when it is absent, and
-// a new place of the build: whatever a build before left there is removed
-// first, so the store "out" is empty.
+// build_places_open makes a new place of the build: whatever a build before
+// left there is removed first, so the store "out" is empty. Content-addressed
+// objects live at storage.ROOT under their exact 64 lowercase hexadecimal
+// digits, matching storage.freeze_tree, put, put_memory, guest_build, and
+// remote cache fetches.
 @(private = "file")
 build_places_open :: proc "contextless" (places: ^Build_Places) -> pr.Recipe_Refusal {
 	client := places.client
 	error: errors.Error_Record
 	status: storage_status.Status
-	if places.objects, status = storage.open_tree(client, storage.ROOT, builder.OBJECTS_PLACE, &error); status != .Ok {
-		if !tree_add(client, storage.ROOT, builder.OBJECTS_PLACE) {
-			return .Store_Failed
-		}
-		if places.objects, status = storage.open_tree(client, storage.ROOT, builder.OBJECTS_PLACE, &error); status != .Ok {
-			return .Store_Failed
-		}
-	}
+	places.objects = storage.ROOT
 	_, _ = storage.remove(client, storage.ROOT, builder.BUILD_PLACE, &error)
 	if !tree_add(client, storage.ROOT, builder.BUILD_PLACE) {
 		return .Store_Failed
@@ -237,9 +232,68 @@ objects_tree_read :: proc "contextless" (hash: blake3.Hash, into: []u8, data: ra
 	return into[:len(text)], .None
 }
 
-// objects_take puts a clone of an object of the place of the objects in the
-// place of the inputs, under the same name: a clone shares its blocks, and
-// the rename moves it with no byte copied.
+// boot_image_module_of_hash returns the verified bytes of a boot-image module
+// whose BLAKE3 hash equals hash, or (nil, false) when absent or damaged.
+@(private = "file")
+boot_image_module_of_hash :: proc "contextless" (hash: blake3.Hash) -> (bytes: []u8, found: bool) {
+	if builder_image == nil {
+		return nil, false
+	}
+	for &entry in system.image_entries(builder_image) {
+		if entry.hash != hash || entry.offset > u64(len(builder_image)) || entry.size > u64(len(builder_image)) - entry.offset {
+			continue
+		}
+		candidate := builder_image[entry.offset:][:entry.size]
+		if blake3.hash(candidate) == hash {
+			return candidate, true
+		}
+		return nil, false
+	}
+	return nil, false
+}
+
+// write_place_large writes data into target_place under name in 32 KiB chunks,
+// committing every 1 MiB. Drops pending changes on any failure.
+@(private = "file")
+write_place_large :: proc "contextless" (client: ^storage.Client, target_place: storage.Place, name: string, data: []u8) -> bool {
+	error: errors.Error_Record
+	if len(data) <= storage_port.WRITE_PIECE_BYTES {
+		gen, status := storage.write(client, target_place, name, data, &error)
+		return status == .Ok && gen >= 0
+	}
+	committed := 0
+	for written := 0; written < len(data); {
+		part := data[written:min(written + storage_port.WRITE_PIECE_BYTES, len(data))]
+		if _, status := storage.write_range(client, target_place, name, u64(written), part, &error); status != .Ok {
+			_ = storage.drop_pending(client, target_place, name, &error)
+			return false
+		}
+		written += len(part)
+		if written - committed >= storage_port.COMMIT_STEP_BYTES {
+			if _, status := storage.commit(client, target_place, name, &error); status != .Ok {
+				_ = storage.drop_pending(client, target_place, name, &error)
+				return false
+			}
+			committed = written
+		}
+	}
+	if storage.set_size(client, target_place, name, u64(len(data)), &error) != .Ok {
+		_ = storage.drop_pending(client, target_place, name, &error)
+		return false
+	}
+	_, status := storage.commit(client, target_place, name, &error)
+	if status != .Ok {
+		_ = storage.drop_pending(client, target_place, name, &error)
+		return false
+	}
+	return true
+}
+
+// objects_take puts a clone of an object of the private store in the place of
+// the inputs, under the same 64-hex name: a clone shares its blocks, and the
+// rename moves it with no byte copied. When an input is a module of the boot
+// image (such as c_compiler, assemble, or host for catalog.c.module) not yet
+// in the store, it writes the verified boot-image bytes into places.input.
 @(private = "file")
 objects_take :: proc "contextless" (hash: blake3.Hash, data: rawptr) -> pr.Recipe_Refusal {
 	places := (^Build_Places)(data)
@@ -249,6 +303,12 @@ objects_take :: proc "contextless" (hash: blake3.Hash, data: rawptr) -> pr.Recip
 	arguments := [3]isolated.Argument{{integer = u64(places.objects)}, {text = name[:]}, {text = transmute([]u8)string(TAKING)}}
 	value, _, status, outcome := storage.call(places.client, "clone", arguments[:], &error)
 	if outcome == .Nothing_Has_That_Name {
+		if image_bytes, has_image_module := boot_image_module_of_hash(hash); has_image_module {
+			if !write_place_large(places.client, places.input, string(name[:]), image_bytes) {
+				return .Store_Failed
+			}
+			return .None
+		}
 		return .Input_Absent
 	}
 	if status != .Ok || value < 0 {
@@ -291,7 +351,10 @@ builder_call :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, file: []u
 builder_run :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, file: []u8, export: u32, places: ^Build_Places, input_share, output_share: ^storage.Client) -> (result: i64, refusal: pr.Recipe_Refusal) {
 	error: errors.Error_Record
 
-	added := system.Call_Host_Context{}
+	added := system.Call_Host_Context{
+		pages     = c_builder_host_pages(),
+		processes = 2,
+	}
 	added.grants[builder.GRANT_INPUT_RING] = {input_share.ring_memory, {.Read, .Write}}
 	added.grants[builder.GRANT_INPUT_REGION] = {input_share.region_memory, {.Read, .Write}}
 	added.grants[builder.GRANT_OUTPUT_RING] = {output_share.ring_memory, {.Read, .Write}}

@@ -174,10 +174,10 @@ an_output_of_any_size_reaches_the_store_and_comes_back :: proc(t: ^testing.T) {
 	for size, index in sizes {
 		builder := Large_Builder{output = large_output(size, u8(index))}
 		spec := large_spec(index)
-		built := build_recipe(state, spec, .Cache_First, {}, nil, large_builder_invoke, nil, nil, &builder)
+		built := build_recipe(state, spec, .Prefer_Cache, {}, nil, large_builder_invoke, nil, nil, &builder)
 		testing.expectf(t, built.outcome == .Built_Locally && built.output_hash == blake3.hash(builder.output), "%d bytes: %v %v", size, built.outcome, built.refusal)
 		state_init(state, large_store_port_again(&store))
-		again := build_recipe(state, spec, .Cache_First, {}, nil, large_builder_invoke, nil, nil, &builder)
+		again := build_recipe(state, spec, .Prefer_Cache, {}, nil, large_builder_invoke, nil, nil, &builder)
 		testing.expectf(t, again.outcome == .From_Cache && builder.builds == 1, "%d bytes after a start: %v, %d builds", size, again.outcome, builder.builds)
 		length, found := output_length(state, again.output_hash)
 		testing.expect(t, found && length == u64(size))
@@ -214,7 +214,7 @@ the_retention_rule_removes_the_oldest_realisations :: proc(t: ^testing.T) {
 	hashes: [12]blake3.Hash
 	for index in 0 ..< len(hashes) {
 		builder := Large_Builder{output = large_output(OUTPUT, u8(index))}
-		built := build_recipe(state, large_spec(index), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &builder)
+		built := build_recipe(state, large_spec(index), .Prefer_Cache, {}, nil, large_builder_invoke, nil, nil, &builder)
 		testing.expectf(t, built.outcome == .Built_Locally, "output %d: %v %v", index, built.outcome, built.refusal)
 		hashes[index] = built.output_hash
 		blocks, limit := large_usage(&store)
@@ -242,13 +242,13 @@ the_retention_rule_removes_the_oldest_realisations :: proc(t: ^testing.T) {
 	builder := Large_Builder{output = large_output(OUTPUT, 0)}
 	state_init(state, large_store_port_again(&store))
 	store.block_limit = 400
-	again := build_recipe(state, large_spec(0), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &builder)
+	again := build_recipe(state, large_spec(0), .Prefer_Cache, {}, nil, large_builder_invoke, nil, nil, &builder)
 	testing.expect_value(t, again.outcome, pr.Recipe_Build_Outcome.Built_Locally)
 
 	// Past the share: refused, and no remove.
 	removes := store.removes
 	huge := Large_Builder{output = large_output(310 * 4096, 7)}
-	refused := build_recipe(state, large_spec(200), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &huge)
+	refused := build_recipe(state, large_spec(200), .Prefer_Cache, {}, nil, large_builder_invoke, nil, nil, &huge)
 	testing.expect_value(t, refused.refusal, pr.Recipe_Refusal.Store_Full)
 	testing.expect_value(t, store.removes, removes)
 }
@@ -269,13 +269,13 @@ the_index_forgets_and_the_store_remembers :: proc(t: ^testing.T) {
 	for index in 0 ..= REALISATION_INDEX_CAPACITY {
 		builder.output = large_output(10, u8(index))
 		builder.output[0] = u8(index >> 8)
-		built := build_recipe(state, large_spec(index), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &builder)
+		built := build_recipe(state, large_spec(index), .Prefer_Cache, {}, nil, large_builder_invoke, nil, nil, &builder)
 		if !testing.expectf(t, built.outcome == .Built_Locally, "%d: %v", index, built.refusal) {
 			return
 		}
 	}
 	builds := builder.builds
-	first := build_recipe(state, large_spec(0), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &builder)
+	first := build_recipe(state, large_spec(0), .Prefer_Cache, {}, nil, large_builder_invoke, nil, nil, &builder)
 	testing.expect_value(t, first.outcome, pr.Recipe_Build_Outcome.From_Cache)
 	testing.expect_value(t, builder.builds, builds)
 	testing.expect_value(t, state.counters.cache_hits_store, u64(1))
@@ -297,7 +297,7 @@ the_retention_rule_keeps_inputs_and_removes_nothing_in_vain :: proc(t: ^testing.
 	hashes: [7]blake3.Hash
 	for index in 0 ..< len(hashes) {
 		builder := Large_Builder{output = large_output(OUTPUT, u8(index))}
-		built := build_recipe(state, large_spec(index), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &builder)
+		built := build_recipe(state, large_spec(index), .Prefer_Cache, {}, nil, large_builder_invoke, nil, nil, &builder)
 		testing.expect_value(t, built.outcome, pr.Recipe_Build_Outcome.Built_Locally)
 		hashes[index] = built.output_hash
 	}
@@ -324,14 +324,14 @@ the_retention_rule_keeps_inputs_and_removes_nothing_in_vain :: proc(t: ^testing.
 	removes := store.removes
 	objects := len(store.objects)
 	huge := Large_Builder{output = large_output(279 * 4096, 9)}
-	refused := build_recipe(state, large_spec(100), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &huge)
+	refused := build_recipe(state, large_spec(100), .Prefer_Cache, {}, nil, large_builder_invoke, nil, nil, &huge)
 	testing.expect_value(t, refused.refusal, pr.Recipe_Refusal.Store_Full)
 	testing.expect_value(t, store.removes, removes)
 	testing.expect_value(t, len(store.objects), objects)
 
 	// An output that fits once two realisations go: the protected ones stay.
 	more := Large_Builder{output = large_output(OUTPUT, 20)}
-	built := build_recipe(state, large_spec(20), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &more)
+	built := build_recipe(state, large_spec(20), .Prefer_Cache, {}, nil, large_builder_invoke, nil, nil, &more)
 	testing.expect_value(t, built.outcome, pr.Recipe_Build_Outcome.Built_Locally)
 	testing.expect(t, state.counters.retention_removals >= 1)
 	for kept in hashes[:2] {
@@ -352,12 +352,12 @@ a_forgotten_output_of_a_known_realisation_comes_from_the_store :: proc(t: ^testi
 	store: Large_Store
 	state_init(state, large_store_port(&store))
 	builder := Large_Builder{output = large_output(100, 1)}
-	first := build_recipe(state, large_spec(1), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &builder)
+	first := build_recipe(state, large_spec(1), .Prefer_Cache, {}, nil, large_builder_invoke, nil, nil, &builder)
 	testing.expect_value(t, first.outcome, pr.Recipe_Build_Outcome.Built_Locally)
 	for &slot in state.objects {
 		slot = {}
 	}
-	again := build_recipe(state, large_spec(1), .Cache_First, {}, nil, large_builder_invoke, nil, nil, &builder)
+	again := build_recipe(state, large_spec(1), .Prefer_Cache, {}, nil, large_builder_invoke, nil, nil, &builder)
 	testing.expect_value(t, again.outcome, pr.Recipe_Build_Outcome.From_Cache)
 	testing.expect_value(t, builder.builds, 1)
 }

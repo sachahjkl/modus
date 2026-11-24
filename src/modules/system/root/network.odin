@@ -5,6 +5,7 @@ import "modus:contract/call_outcome"
 import "modus:contract/datagram"
 import "modus:contract/errors"
 import op "modus:contract/operation"
+import "modus:contract/object_cache"
 import "modus:contract/remote"
 import "modus:contract/remote_display"
 import "modus:contract/ring"
@@ -97,6 +98,8 @@ endpoint_of :: proc "contextless" (name: string) -> datagram.Grant {
 		return {port = 80, tcp = true, listen = true}
 	case "fetch", "module_files":
 		return {address = 0x0A000264, port = 80, tcp = true}
+	case "recipes":
+		return {address = 0x0A000264, port = object_cache.DEFAULT_QUIC_PORT}
 	case "quic_echo":
 		return {port = QUIC_ECHO_PORT, listen = true}
 	}

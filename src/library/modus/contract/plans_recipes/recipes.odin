@@ -32,11 +32,11 @@ RECIPES_SERVICE_REGION_SLOT :: 11
 // Closed set of recipe build modes (maps directly to object_cache.Substitution_Mode).
 // Zero means unset and is refused at the border.
 Build_Mode :: enum u8 {
-	None        = 0,
-	Cache_First = 1,
-	Build_Only  = 2,
-	Cache_Only  = 3,
-	Verify      = 4,
+	None         = 0,
+	Prefer_Cache = 1,
+	Build_Only   = 2,
+	Cache_Only   = 3,
+	Verify       = 4,
 }
 
 // Closed set of build result classifications returned by recipes.build.
@@ -46,6 +46,33 @@ Recipe_Build_Outcome :: enum u8 {
 	Built_Locally = 2,
 	Refused       = 3,
 	Building      = 4, // A guest build runs on the build thread of the service: the history gives its end.
+}
+
+// recipe_build_outcome_of_word converts a transport word to Recipe_Build_Outcome,
+// refusing unknown values and None.
+recipe_build_outcome_of_word :: proc "contextless" (word: u64) -> (outcome: Recipe_Build_Outcome, ok: bool) {
+	member := enum_word.member_of_word(Recipe_Build_Outcome, word) or_return
+	if member == .None {
+		return .None, false
+	}
+	return member, true
+}
+
+// Closed set of provenance origins recorded in Realisation_Row.origin_word.
+Provenance_Origin :: enum u8 {
+	None         = 0,
+	Local_Build  = 1,
+	Remote_Cache = 2,
+}
+
+// provenance_origin_of_word converts a transport word to Provenance_Origin,
+// refusing unknown values and None.
+provenance_origin_of_word :: proc "contextless" (word: u64) -> (origin: Provenance_Origin, ok: bool) {
+	member := enum_word.member_of_word(Provenance_Origin, word) or_return
+	if member == .None {
+		return .None, false
+	}
+	return member, true
 }
 
 // Closed set of refusal reasons for recipe validation, cache verification,
@@ -243,7 +270,7 @@ build_mode_to_substitution_mode :: proc "contextless" (mode: Build_Mode) -> (sub
 	switch checked {
 	case .None:
 		return {}, false
-	case .Cache_First:
+	case .Prefer_Cache:
 		return .Prefer_Cache, true
 	case .Build_Only:
 		return .Build_Only, true

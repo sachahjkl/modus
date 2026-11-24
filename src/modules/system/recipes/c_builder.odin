@@ -136,7 +136,7 @@ c_build_plan :: proc "contextless" (budget_pages: u64, source_bytes: u64) -> (ne
 // assembler size their arenas from it, so a build of a large program takes
 // what the budget pays, and one that passes it fails with the error record
 // of the budget.
-@(private = "file")
+@(private)
 c_builder_host_pages :: proc "contextless" () -> u64 {
 	amounts, status := system.budget_read()
 	if status != .Ok || amounts.pages <= C_BUILD_SERVICE_PAGES_KEPT + system.CALL_HOST_PAGES {

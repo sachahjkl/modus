@@ -155,7 +155,14 @@ hash_of_hexadecimal_refusals_then_round_trip :: proc(t: ^testing.T) {
 	}
 	back, ok := hash_of_hexadecimal(digits[:])
 	testing.expect(t, ok && back == digest)
-	testing.expect_value(t, private_object_name_text(&name)[5:], string(digits[:52]))
+	testing.expect_value(t, private_object_name_text(&name), string(digits[:]))
+	parsed, parsed_ok := hash_of_blob_object_name(private_object_name_text(&name))
+	testing.expect(t, parsed_ok && parsed == digest)
+	prefixed: [57]u8
+	copy(prefixed[:5], "blob_")
+	copy(prefixed[5:], digits[:52])
+	_, bad_prefix_ok := hash_of_blob_object_name(string(prefixed[:]))
+	testing.expect(t, !bad_prefix_ok)
 }
 
 // The object of a recipe in a store has one name, which is not the name of

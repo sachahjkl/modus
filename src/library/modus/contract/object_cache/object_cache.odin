@@ -31,6 +31,10 @@ import "modus:contract/tree_hash"
 // The QUIC application protocol (ALPN) of the object cache.
 APPLICATION_PROTOCOL :: "modus-object-cache"
 
+// Default UDP port of the object cache QUIC listener (Plan value: matches the
+// recipes service network grant and the cache-serve QUIC default).
+DEFAULT_QUIC_PORT :: u16(5010)
+
 // Distinct 4-byte magics prevent a request frame from being decoded as a
 // response frame or vice versa.
 REQUEST_MAGIC :: [4]u8{'M', 'O', 'C', 'Q'}
@@ -63,6 +67,11 @@ MAX_TREE_PAYLOAD_BYTES :: min(tree_hash.MAX_ENCODED_TREE_BYTES, FRAME_PAYLOAD_BY
 HAS_HEADER_SIZE :: 4
 GET_OBJECT_BODY_SIZE :: blake3.HASH_SIZE + 1 + 3 + 8
 GET_REALISATION_BODY_SIZE :: blake3.HASH_SIZE
+GET_REFERENCES_BODY_SIZE :: blake3.HASH_SIZE
+GET_REFERENCES_RESPONSE_HEADER_SIZE :: 4
+// Format property: bounded count of 32-byte hashes returned in one Get_References
+// response (128 KiB payload, well below MAX_RESPONSE_BODY_BYTES).
+MAX_REFERENCES :: 4096
 PUT_OBJECT_BODY_SIZE :: blake3.HASH_SIZE + 1 + 3 + 8 + PUBLIC_KEY_SIZE + SIGNATURE_SIZE
 PUT_OBJECT_FRAME_HEADER_SIZE :: blake3.HASH_SIZE + 8 + 4
 REALISATION_WIRE_SIZE :: blake3.HASH_SIZE + blake3.HASH_SIZE + 1 + 3 + PUBLIC_KEY_SIZE + SIGNATURE_SIZE
@@ -75,6 +84,7 @@ BUSY_RESPONSE_BODY_SIZE :: 8 + 8
 // Both are bounded by one frame (FRAME_PAYLOAD_BYTES), never by object size.
 MAX_REQUEST_BODY_BYTES :: PUT_OBJECT_FRAME_HEADER_SIZE + FRAME_PAYLOAD_BYTES
 MAX_RESPONSE_BODY_BYTES :: GET_OBJECT_RESPONSE_HEADER_SIZE + MAX_PROOF_DEPTH * PROOF_ENTRY_SIZE + FRAME_PAYLOAD_BYTES
+#assert(GET_REFERENCES_RESPONSE_HEADER_SIZE + MAX_REFERENCES * blake3.HASH_SIZE <= MAX_RESPONSE_BODY_BYTES)
 
 // Domain separation prefixes for Ed25519 signatures.
 REALISATION_SIGNING_DOMAIN :: "modus realisation v1"
@@ -156,6 +166,7 @@ Cache_Request_Kind :: enum u8 {
 	Put_Release_Pointer = 6, // A signed release pointer; the signer must be a key of the host.
 	Get_Release_Pointer = 7, // The pointer of a publisher and a name with the highest number.
 	Put_Object_Frame    = 8,
+	Get_References      = 9, // The hashes named by a tree, a module's import table, or a realisation.
 }
 
 // Closed set of response statuses returned by an object cache server.
@@ -289,6 +300,30 @@ Cache_Response :: struct {
 	frame_count:     u64,
 	realisation:     Realisation_Record,
 	release_pointer: Release_Pointer,
+	// Get_References with status == .Ok: packed 32-byte non-zero hashes,
+	// borrowing from the input frame during decode.
+	references:      []u8,
+}
+
+// response_reference_count returns the count of hashes carried by a
+// Get_References Ok response.
+response_reference_count :: proc "contextless" (response: ^Cache_Response) -> int {
+	if response == nil || len(response.references) % blake3.HASH_SIZE != 0 {
+		return 0
+	}
+	return len(response.references) / blake3.HASH_SIZE
+}
+
+// response_reference_at returns the hash at index in a Get_References Ok
+// response.
+response_reference_at :: proc "contextless" (response: ^Cache_Response, index: int) -> (hash: blake3.Hash, ok: bool) {
+	count := response_reference_count(response)
+	if index < 0 || index >= count {
+		return {}, false
+	}
+	offset := index * blake3.HASH_SIZE
+	copy(hash[:], response.references[offset:offset + blake3.HASH_SIZE])
+	return hash, true
 }
 
 // Policy governing whether a principal trusts a fetched object or realisation.
@@ -726,6 +761,11 @@ validate_request :: proc "contextless" (request: ^Cache_Request) -> (checked_kin
 			return {}, 0, .Too_Large
 		}
 		return kind, PUT_OBJECT_FRAME_HEADER_SIZE + len(request.payload), .None
+	case .Get_References:
+		if hash_is_zero(request.object_hash) {
+			return {}, 0, .Zero_Hash
+		}
+		return kind, GET_REFERENCES_BODY_SIZE, .None
 	}
 	return {}, 0, .Bad_Request_Kind
 }
@@ -807,6 +847,8 @@ encode_request :: proc "contextless" (request: ^Cache_Request, output: []u8) -> 
 		if len(request.payload) > 0 && raw_data(dst) != raw_data(request.payload) {
 			copy(dst, request.payload)
 		}
+	case .Get_References:
+		copy(body[0:32], request.object_hash[:])
 	}
 	return total_size, .None
 }
@@ -996,6 +1038,17 @@ decode_request :: proc "contextless" (frame: []u8) -> (request: Cache_Request, r
 		}
 		request.offset = offset
 		request.payload = body[PUT_OBJECT_FRAME_HEADER_SIZE:expected_body]
+	case .Get_References:
+		if len(body) < GET_REFERENCES_BODY_SIZE {
+			return {}, .Truncated
+		}
+		if len(body) > GET_REFERENCES_BODY_SIZE {
+			return {}, .Trailing_Bytes
+		}
+		copy(request.object_hash[:], body[0:32])
+		if hash_is_zero(request.object_hash) {
+			return {}, .Zero_Hash
+		}
 	}
 	return request, .None
 }
@@ -1042,7 +1095,7 @@ validate_get_object_response :: proc "contextless" (
 busy_progress_check :: proc "contextless" (kind: Cache_Request_Kind, frames_built, frame_count: u64) -> Wire_Refusal {
 	switch kind {
 	case .Get_Object:
-	case .Has, .Get_Realisation, .Put_Object, .Put_Realisation, .Put_Object_Frame, .Put_Release_Pointer, .Get_Release_Pointer:
+	case .Has, .Get_Realisation, .Put_Object, .Put_Realisation, .Put_Object_Frame, .Put_Release_Pointer, .Get_Release_Pointer, .Get_References:
 		return .Bad_Response_Status
 	}
 	if frame_count < 2 || frame_count > MAX_FRAME_COUNT || frames_built == 0 || frames_built >= frame_count {
@@ -1122,6 +1175,21 @@ validate_response :: proc "contextless" (response: ^Cache_Response) -> (checked_
 		return kind, status, RELEASE_POINTER_WIRE_SIZE, .None
 	case .Put_Object_Frame:
 		return kind, status, 0, .None
+	case .Get_References:
+		if len(response.references) % blake3.HASH_SIZE != 0 {
+			return {}, {}, 0, .Bad_Count
+		}
+		count := len(response.references) / blake3.HASH_SIZE
+		if count > MAX_REFERENCES {
+			return {}, {}, 0, .Bad_Count
+		}
+		for index in 0 ..< count {
+			offset := index * blake3.HASH_SIZE
+			if bytes_all_zero(response.references[offset:offset + blake3.HASH_SIZE]) {
+				return {}, {}, 0, .Zero_Hash
+			}
+		}
+		return kind, status, GET_REFERENCES_RESPONSE_HEADER_SIZE + len(response.references), .None
 	}
 	return {}, {}, 0, .Bad_Request_Kind
 }
@@ -1210,6 +1278,18 @@ encode_response :: proc "contextless" (response: ^Cache_Response, output: []u8) 
 		}
 	case .Put_Object_Frame:
 		// No response body on Ok.
+	case .Get_References:
+		count := u16(len(response.references) / blake3.HASH_SIZE)
+		body[0] = u8(count)
+		body[1] = u8(count >> 8)
+		body[2] = 0
+		body[3] = 0
+		if len(response.references) > 0 {
+			dst := body[GET_REFERENCES_RESPONSE_HEADER_SIZE:]
+			if raw_data(dst) != raw_data(response.references) {
+				copy(dst, response.references)
+			}
+		}
 	}
 	return total_size, .None
 }
@@ -1379,6 +1459,32 @@ decode_response :: proc "contextless" (frame: []u8) -> (response: Cache_Response
 			return {}, pointer_refusal
 		}
 		response.release_pointer = pointer
+	case .Get_References:
+		if len(body) < GET_REFERENCES_RESPONSE_HEADER_SIZE {
+			return {}, .Truncated
+		}
+		if body[2] != 0 || body[3] != 0 {
+			return {}, .Reserved_Nonzero
+		}
+		count := int(u16(body[0]) | u16(body[1]) << 8)
+		if count > MAX_REFERENCES {
+			return {}, .Bad_Count
+		}
+		expected_body := GET_REFERENCES_RESPONSE_HEADER_SIZE + count * blake3.HASH_SIZE
+		if len(body) < expected_body {
+			return {}, .Truncated
+		}
+		if len(body) > expected_body {
+			return {}, .Trailing_Bytes
+		}
+		refs := body[GET_REFERENCES_RESPONSE_HEADER_SIZE:expected_body]
+		for index in 0 ..< count {
+			offset := index * blake3.HASH_SIZE
+			if bytes_all_zero(refs[offset:offset + blake3.HASH_SIZE]) {
+				return {}, .Zero_Hash
+			}
+		}
+		response.references = refs
 	}
 	return response, .None
 }

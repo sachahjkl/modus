@@ -151,8 +151,8 @@ test_recipes_build_cache_sandbox_verify_and_refusals :: proc(t: ^testing.T) {
 	testing.expect_value(t, res_miss.refusal, pr.Recipe_Refusal.Cache_Miss)
 	testing.expect_value(t, harness.builder_calls, 0)
 
-	// Cache_First on miss falls back to sandboxed builder with frozen date, zero network, seed == recipe_hash.
-	res_local := build_recipe(state, &spec, .Cache_First, policy, harness_cache_lookup, harness_builder_invoke, mock_verify, harness_sign_local, &harness)
+	// Prefer_Cache on miss falls back to sandboxed builder with frozen date, zero network, seed == recipe_hash.
+	res_local := build_recipe(state, &spec, .Prefer_Cache, policy, harness_cache_lookup, harness_builder_invoke, mock_verify, harness_sign_local, &harness)
 	testing.expect_value(t, res_local.outcome, pr.Recipe_Build_Outcome.Built_Locally)
 	testing.expect_value(t, res_local.output_hash, h_built)
 	testing.expect_value(t, harness.builder_calls, 1)
@@ -160,8 +160,8 @@ test_recipes_build_cache_sandbox_verify_and_refusals :: proc(t: ^testing.T) {
 	testing.expect_value(t, harness.builder_saw_date, u64(1700001234))
 	testing.expect_value(t, harness.builder_saw_seed, rhash)
 
-	// Second Cache_First hits local store without invoking builder again.
-	res_hit := build_recipe(state, &spec, .Cache_First, policy, harness_cache_lookup, harness_builder_invoke, mock_verify, harness_sign_local, &harness)
+	// Second Prefer_Cache hits local store without invoking builder again.
+	res_hit := build_recipe(state, &spec, .Prefer_Cache, policy, harness_cache_lookup, harness_builder_invoke, mock_verify, harness_sign_local, &harness)
 	testing.expect_value(t, res_hit.outcome, pr.Recipe_Build_Outcome.From_Cache)
 	testing.expect_value(t, res_hit.output_hash, h_built)
 	testing.expect_value(t, harness.builder_calls, 1)
@@ -205,7 +205,7 @@ test_recipes_build_cache_sandbox_verify_and_refusals :: proc(t: ^testing.T) {
 	fresh_store := recipes_test_state_init(state)
 	defer free(fresh_store)
 	harness.cache_payload[n_built - 1] ~= 0x01
-	res_tampered := build_recipe(state, &spec, .Cache_First, policy, harness_cache_lookup, harness_builder_invoke, mock_verify, harness_sign_local, &harness)
+	res_tampered := build_recipe(state, &spec, .Prefer_Cache, policy, harness_cache_lookup, harness_builder_invoke, mock_verify, harness_sign_local, &harness)
 	testing.expect_value(t, res_tampered.outcome, pr.Recipe_Build_Outcome.Refused)
 	testing.expect_value(t, res_tampered.refusal, pr.Recipe_Refusal.Hash_Mismatch)
 

@@ -222,6 +222,63 @@ port_write :: proc "contextless" (user: rawptr, name: string, data: []u8) -> pr.
 }
 
 @(private)
+port_write_range :: proc "contextless" (user: rawptr, name: string, offset: u64, data: []u8, total_size: u64, final: bool) -> pr.Private_Store_Status {
+	if user == nil {
+		return .Failed
+	}
+	error: errors.Error_Record
+	if offset == 0 && pending_state.kept {
+		if !pending_drop_with(user, CLIENT_LARGE_OPS, string(pending_state.name[:pending_state.length])) {
+			return .Failed
+		}
+		pending_state.kept = false
+	}
+	if offset == 0 && final && u64(len(data)) == total_size && len(data) <= WRITE_PIECE_BYTES {
+		generation, status := CLIENT_LARGE_OPS.write(user, name, data, &error)
+		return status == .Ok && generation >= 0 ? .Ok : .Failed
+	}
+	for written := 0; written < len(data); {
+		part := data[written:min(written + WRITE_PIECE_BYTES, len(data))]
+		if _, status := CLIENT_LARGE_OPS.write_range(user, name, offset + u64(written), part, &error); status != .Ok {
+			return write_large_abandon_with(user, CLIENT_LARGE_OPS, &pending_state, name)
+		}
+		written += len(part)
+	}
+	if final {
+		if status := CLIENT_LARGE_OPS.set_size(user, name, total_size, &error); status != .Ok {
+			return write_large_abandon_with(user, CLIENT_LARGE_OPS, &pending_state, name)
+		}
+	}
+	end_offset := offset + u64(len(data))
+	// Commit on the final range or when crossing a COMMIT_STEP_BYTES boundary
+	// (matching write_large_with) so large streamed writes avoid commit
+	// amplification per 32 KiB call-region piece.
+	if final || (len(data) > 0 && offset / COMMIT_STEP_BYTES != end_offset / COMMIT_STEP_BYTES) {
+		if status := CLIENT_LARGE_OPS.commit(user, name, &error); status != .Ok {
+			return write_large_abandon_with(user, CLIENT_LARGE_OPS, &pending_state, name)
+		}
+	}
+	return .Ok
+}
+
+@(private)
+port_rename :: proc "contextless" (user: rawptr, from_name: string, to_name: string) -> pr.Private_Store_Status {
+	if user == nil {
+		return .Failed
+	}
+	client := (^storage.Client)(user)
+	error: errors.Error_Record
+	_, status := storage.rename(client, storage.ROOT, from_name, storage.ROOT, to_name, &error)
+	if status == .Ok {
+		return .Ok
+	}
+	if status == .Failed && error.kind == i64(errors.Kind.Absent) {
+		return .Absent
+	}
+	return .Failed
+}
+
+@(private)
 port_size :: proc "contextless" (user: rawptr, name: string) -> (bytes: u64, status: pr.Private_Store_Status) {
 	client := (^storage.Client)(user)
 	error: errors.Error_Record

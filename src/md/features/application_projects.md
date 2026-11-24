@@ -94,10 +94,13 @@ Each file has one canonical Lex record shape:
     <name> = module(blake3:<64 lowercase hexadecimal digits>),
   },
   c = {
+    builder = module(blake3:<c_builder hash>),
     compiler = module(blake3:<c_compiler hash>),
     assembler = module(blake3:<assemble hash>),
-    module = (path) => recipe(module(blake3:<c_compiler hash>), {
+    module = (path) => recipe(module(blake3:<c_builder hash>), {
       assembler = module(blake3:<assemble hash>),
+      compiler = module(blake3:<c_compiler hash>),
+      host = module(blake3:<host hash>),
       path = path,
       source = here(),
     }),
@@ -107,9 +110,9 @@ Each file has one canonical Lex record shape:
 
 - **`catalog.release`** is the release number string of the build (`release.RELEASE_NUMBER`).
 - **`catalog.modules.<name>`** gives each module of the boot image as a typed module file, `module(blake3:<hash>)`, in ascending byte order of module name. The generator checks every module entry's bytes against its stated BLAKE3 hash and checks that each name is a valid Lex field name with no duplicates.
-- **`catalog.c.module(path)`** gives the recipe that compiles `path` in `here()` with the `c_compiler` and `assemble` hashes of that build: `c_compiler` is the builder module, `assembler` is a typed `Blob` input, `source` is `here()` (a typed `Tree` input), and `path` stays in the recipe arguments. `catalog.c.compiler` and `catalog.c.assembler` expose the same two module files directly. Because both `c_compiler` and `assemble` ship with identical bytes in the development boot image and in the release boot image, a C project evaluates to one recipe hash against either catalog declaration.
+- **`catalog.c.module(path)`** gives the recipe that compiles `path` in `here()` using the real C builder module `c_builder` (which exports `build(inputs, arguments)` of the builder contract): `c_builder` is the builder module, `compiler` (`c_compiler`), `assembler` (`assemble`), and `host` (`host`) are typed `Blob` inputs, `source` is `here()` (a typed `Tree` input), and `path` stays in the recipe arguments. Inside its sandbox, `c_builder` verifies every input hash, runs `c_compiler` and `assemble` sequentially in zero-grant child call hosts, validates the resulting module with `module.validate`, and writes it to its store `"out"` as `module`. Because `c_builder`, `c_compiler`, `assemble`, and `host` ship with identical bytes in the development boot image and in the release boot image, a C project evaluates to one recipe hash against either catalog declaration.
 - **Determinism.** The generator reads only the boot image and the release number, sorts the module entries by name, and writes no host path or timestamp. Two builds of the same boot image write identical bytes.
-- **Border refusals.** The generator refuses a damaged boot image, an entry outside the image, an entry whose bytes do not hash to its stated BLAKE3 hash, an empty or malformed release number, a module name that is not a Lex field name or appears twice, a boot image without `c_compiler` or `assemble`, and, in release scope, any test module or module absent from the module table.
+- **Border refusals.** The generator refuses a damaged boot image, an entry outside the image, an entry whose bytes do not hash to its stated BLAKE3 hash, an empty or malformed release number, a module name that is not a Lex field name or appears twice, a boot image without `c_builder`, `c_compiler`, `assemble`, or `host`, and, in release scope, any test module or module absent from the module table.
 
 Refused forms:
 
@@ -138,9 +141,9 @@ Host tests take the real files of `src/outside/projects/collatz` and pass layer 
 
 - the tree hash of the folder, from the bytes of its files;
 - the generated `catalog.lex` and `catalog_release.lex` from a boot image with every boot module: deterministic bytes, every boot module present with its exact BLAKE3 hash, no test module in the release catalog declaration, and direct parsing and evaluation by `lex_evaluator`;
-- the evaluation of `project.lex` with that `here()` and the generated `catalog.lex`, whole and at `outputs.default`, which is a recipe whose builder is `c_compiler` and whose inputs are `assembler` and `source`;
+- the evaluation of `project.lex` with that `here()` and the generated `catalog.lex`, whole and at `outputs.default`, which is a recipe whose builder is `c_builder` and whose inputs are `assembler`, `compiler`, `host`, and `source`;
 - the load of the evaluation and of `pins.lex` by `projects_core`;
-- the recipe of the output, read back by `recipe_spec_of_output` from what the evaluator wrote, registered by `recipes_core` under the hash that the evaluator gave, and refused at its build with `Builder_Needs_Sandbox`: the stop of layer 2, read as a refusal of the service, not as a fault;
+- the recipe of the output, read back by `recipe_spec_of_output` from what the evaluator wrote, registered by `recipes_core` under the hash that the evaluator gave, and refused when no sandbox builder callback is supplied (`Builder_Needs_Sandbox`);
 - a realisation of that recipe from a cache, trusted only when the key of the policy signed it intact.
 
 The refusals come first: a `pins.lex` with a damaged hash, a project whose `source` is not a tree, a recipe whose builder needs a sandbox, a realisation of the project signed by a key that the policy does not trust and one whose signature is wrong.
@@ -152,6 +155,6 @@ The refusals come first: a `pins.lex` with a damaged hash, a project whose `sour
 
 ## State
 
-Built: the project `src/outside/projects/collatz` (`project.lex`, `pins.lex`, `collatz.c`) and the host test of layer 1 with its refusals; one identity for a recipe: `here()` a tree and `module(...)` a module file as typed values (`Tree_Ref`, `Module_Ref`), the conversion `plans_recipes.recipe_spec_of_arguments` and `recipe_spec_of_output` with host tests of each refusal, and the evaluator that hashes each recipe through it; the catalog declaration of the system written by the build (`build/catalog.lex` and `build/catalog_release.lex`) with its pure generator and host tests.
+Built: the project `src/outside/projects/collatz` (`project.lex`, `pins.lex`, `collatz.c`) and the host test of layer 1 with its refusals; one identity for a recipe: `here()` a tree and `module(...)` a module file as typed values (`Tree_Ref`, `Module_Ref`), the conversion `plans_recipes.recipe_spec_of_arguments` and `recipe_spec_of_output` with host tests of each refusal, and the evaluator that hashes each recipe through it; the catalog declaration of the system written by the build (`build/catalog.lex` and `build/catalog_release.lex`) pointing `catalog.c.module(path)` to `c_builder`; the real `c_builder` module (`src/modules/system/c_builder`) exporting `build(inputs, arguments)` and chaining `c_compiler` and `assemble` in zero-grant child call hosts; source-tree ingestion (`recipes.put_memory`, `recipes.ingest_tree`), `recipes.build_project`, `recipes.provenance`, and verified module delivery (`recipes.read_output`, `recipes.deliver_module`) in `console`; and the QUIC UDP:5010 object cache client and server.
 
-Left: a C builder, a builder started in its sandbox with a signed realisation, and layer 3: each an entry of `ROADMAP.md`.
+Left: a local realisation signed with the key of the principal, and the two-machine QEMU test building `collatz`, caching it, and pulling it with `Cache_Only`: each an entry of `ROADMAP.md`.

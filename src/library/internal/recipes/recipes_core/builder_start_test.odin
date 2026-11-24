@@ -329,11 +329,11 @@ a_started_builder_gives_a_realisation :: proc(t: ^testing.T) {
 	memory.output = objects.tree_bytes[0]
 	start := Builder_Start{invoke = memory_invoke, data = memory}
 	recipe := builder_recipe(registry, 60)
-	result := build_registered(state, registry, recipe, .Cache_First, &start)
+	result := build_registered(state, registry, recipe, .Prefer_Cache, &start)
 	testing.expect_value(t, result.refusal, pr.Recipe_Refusal.None)
 	testing.expect(t, result.output_hash == output, "the output hash is the tree hash of the output")
 	testing.expect_value(t, realisation_rows(state, nil), 1)
-	again := build_registered(state, registry, recipe, .Cache_First, &start)
+	again := build_registered(state, registry, recipe, .Prefer_Cache, &start)
 	testing.expect(t, again.refusal == .None && again.output_hash == output, "the second build takes the realisation")
 	testing.expect_value(t, memory.calls, 1)
 }

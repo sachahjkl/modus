@@ -37,8 +37,10 @@ BUILD_EXPORT :: "build"
 // service ends the call host and refuses the build with Builder_Timed_Out.
 BUILD_TIME_BOUND_MILLISECONDS :: 60_000
 
-// The places of the private store of the service recipes.
-OBJECTS_PLACE :: "objects" // Each object of each output, under its hexadecimal hash.
+// The places of one build in the private store of the service recipes.
+// Content-addressed objects live at the root of the store under their exact
+// 64 lowercase hexadecimal digits; BUILD_PLACE holds the temporary input and
+// output shares of the build that runs.
 BUILD_PLACE :: "build" // The place of the one build that runs.
 INPUT_PLACE :: "in" // Under BUILD_PLACE: the objects of the inputs, the root of the input store.
 OUTPUT_PLACE :: "out" // Under BUILD_PLACE: the root of the store "out".

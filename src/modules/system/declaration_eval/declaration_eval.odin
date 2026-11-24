@@ -131,6 +131,7 @@ evaluate :: proc "c" (
 	// Copy bundle into the arena (bounded only by process memory budget, no 256 KiB cap).
 	bundle_view = nil
 	config := lex_evaluator.Declaration_Config{}
+	catalog_bindings: [1]lex_evaluator.Declaration_Binding
 	if bundle_count > 0 {
 		bundle_address, bundle_status := system.arena_push(&arena, bundle_count, 8, &arena_refusal)
 		if bundle_status != .Ok {
@@ -144,6 +145,10 @@ evaluate :: proc "c" (
 		config.loader = lex_evaluator.bundle_loader(&bundle_view)
 		config.here_hash, config.has_here = contract.bundle_here_hash(bundle_view)
 		config.hash_seed = contract.bundle_hash_seed(bundle_view)
+		if catalog_source, has_catalog := contract.bundle_lookup_path(bundle_view, "catalog.lex"); has_catalog {
+			catalog_bindings[0] = {name = "catalog", kind = .Lex_Source, source = catalog_source}
+			config.bindings = catalog_bindings[:]
+		}
 	}
 
 	// Map output lent memory once to learn its capacity, and carve staging of

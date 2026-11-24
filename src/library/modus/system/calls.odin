@@ -1,6 +1,7 @@
 package system
 
 import "base:intrinsics"
+import "modus:contract/blake3"
 import info "modus:contract/boot_info"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
@@ -395,9 +396,10 @@ CALL_HOST_ADDED_MAPPING_CAPACITY :: 4
 // slot of the call ring or of the call region, and more mappings than
 // CALL_HOST_ADDED_MAPPING_CAPACITY.
 Call_Host_Context :: struct {
-	grants:   [op.CONTEXT_HANDLES]Grant,
-	mappings: []Mapping,
-	pages:    u64, // The pages of the budget of the call host. 0: CALL_HOST_PAGES.
+	grants:    [op.CONTEXT_HANDLES]Grant,
+	mappings:  []Mapping,
+	pages:     u64, // The pages of the budget of the call host. 0: CALL_HOST_PAGES.
+	processes: u64, // The processes of the budget of the call host. 0: 1.
 }
 
 // call_host_start starts a call host (the module "host" of the boot
@@ -457,6 +459,7 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	grants: [op.CONTEXT_HANDLES]Grant
 	mapping_count := count + 1
 	pages := u64(CALL_HOST_PAGES)
+	processes := u64(1)
 	if added != nil {
 		grants = added.grants
 		for item in added.mappings {
@@ -466,14 +469,97 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 		if added.pages != 0 {
 			pages = added.pages
 		}
+		if added.processes != 0 {
+			processes = added.processes
+		}
 	}
 	values := values_with_seed
 	grants[isolated.GRANT_RING] = {connection.ring_memory, {.Read, .Write}}
 	grants[isolated.GRANT_REGION] = {connection.region_memory, {.Read, .Write}}
 	values[isolated.VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
 	values[isolated.VALUE_FILE_SIZE] = offset
-	connection.process = process_start(image_find(image, "host"), name, grants, values, {pages = pages, processes = 1, threads = 1, processor = 500_000, log_records = log_records}, mappings[:mapping_count]) or_return
+	connection.process = process_start(image_find(image, "host"), name, grants, values, {pages = pages, processes = processes, threads = 1, processor = 500_000, log_records = log_records}, mappings[:mapping_count]) or_return
 	// The first completion says if the call host loaded the module.
+	switch connection_ready_wait(&connection.calls, connection.process) {
+	case .Ready:
+		return connection, .Ok
+	case .Load_Failed:
+		if load_error != nil {
+			intrinsics.mem_copy_non_overlapping(load_error, raw_data(connection.region), size_of(module.Load_Error))
+		}
+		return connection, .Bad_State
+	case .Refused:
+		return connection, .Bad_State
+	}
+	return connection, .Bad_State
+}
+
+// call_host_start_from_memory starts a call host from in-memory host and
+// target module bytes (zero external imports), allowing a zero-grant builder
+// module without GRANT_IMAGE to invoke c_compiler and assemble in isolated
+// child call hosts.
+call_host_start_from_memory :: proc "contextless" (host_file: []u8, module_memory: Handle, module_file: []u8, name: string, values_with_seed: [op.CONTEXT_VALUES]u64, load_error: ^module.Load_Error, log_records: u64 = CALL_HOST_LOG_RECORDS, added: ^Call_Host_Context = nil) -> (connection: Call_Connection, status: Status) {
+	if len(host_file) == 0 || module_memory == 0 || len(module_file) == 0 {
+		return {}, .Bad_Operation
+	}
+	if module.validate(host_file) != .None || module.validate(module_file) != .None {
+		return {}, .Bad_Operation
+	}
+	if module.count(module_file, .Imports) > 1 {
+		return {}, .Bad_Operation
+	}
+	if added != nil && (added.grants[isolated.GRANT_RING].handle != 0 || added.grants[isolated.GRANT_REGION].handle != 0 || len(added.mappings) > CALL_HOST_ADDED_MAPPING_CAPACITY) {
+		return {}, .Bad_Operation
+	}
+	defer if status != .Ok {
+		call_connection_end(&connection)
+	}
+	connection.files_memory = memory_create(1) or_return
+	page_address := memory_map(connection.files_memory) or_return
+	page := ([^]u8)(page_address)[:PAGE_SIZE]
+	(^info.Image_Header)(page_address)^ = {magic = info.IMAGE_MAGIC, count = 1}
+	entry := (^info.Image_Entry)(raw_data(page[size_of(info.Image_Header):]))
+	entry^ = {
+		offset = PAGE_SIZE,
+		size   = u64(len(module_file)),
+		hash   = blake3.hash(module_file),
+	}
+	copy(entry.name[:len(entry.name) - 1], name)
+	memory_unmap(page_address)
+
+	module_pages := (u64(len(module_file)) + PAGE_SIZE - 1) / PAGE_SIZE
+	offset := u64(PAGE_SIZE) + module_pages * PAGE_SIZE
+	mappings: [2 + CALL_HOST_ADDED_MAPPING_CAPACITY]Mapping
+	mappings[0] = {memory = connection.files_memory, address = isolated.FILE_ADDRESS}
+	mappings[1] = {memory = module_memory, address = isolated.FILE_ADDRESS + PAGE_SIZE, first = 0, page_count = module_pages}
+	mapping_count := 2
+
+	connection.ring_memory, connection.calls = ring_create() or_return
+	connection.region_memory = memory_create(isolated.REGION_PAGES) or_return
+	region_address := memory_map(connection.region_memory) or_return
+	connection.region = ([^]u8)(region_address)[:isolated.REGION_PAGES * PAGE_SIZE]
+	grants: [op.CONTEXT_HANDLES]Grant
+	pages := u64(CALL_HOST_PAGES)
+	processes := u64(1)
+	if added != nil {
+		grants = added.grants
+		for item in added.mappings {
+			mappings[mapping_count] = item
+			mapping_count += 1
+		}
+		if added.pages != 0 {
+			pages = added.pages
+		}
+		if added.processes != 0 {
+			processes = added.processes
+		}
+	}
+	values := values_with_seed
+	grants[isolated.GRANT_RING] = {connection.ring_memory, {.Read, .Write}}
+	grants[isolated.GRANT_REGION] = {connection.region_memory, {.Read, .Write}}
+	values[isolated.VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
+	values[isolated.VALUE_FILE_SIZE] = offset
+	connection.process = process_start(host_file, name, grants, values, {pages = pages, processes = processes, threads = 1, processor = 500_000, log_records = log_records}, mappings[:mapping_count]) or_return
 	switch connection_ready_wait(&connection.calls, connection.process) {
 	case .Ready:
 		return connection, .Ok

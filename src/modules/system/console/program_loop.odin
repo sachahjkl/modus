@@ -74,7 +74,7 @@ program_build_keep :: proc "contextless" (project: string, digits: string) {
 
 // program_memory makes a memory object of pages and copies bytes into it.
 // The caller closes it.
-@(private = "file")
+@(private)
 program_memory :: proc "contextless" (pages: u64, bytes: []u8) -> (memory: system.Handle, ok: bool) {
 	if u64(len(bytes)) > pages * system.PAGE_SIZE {
 		return 0, false
@@ -100,7 +100,7 @@ program_memory :: proc "contextless" (pages: u64, bytes: []u8) -> (memory: syste
 // Too_Small and the bytes that it needs, at most most_bytes, the console
 // makes a memory object of that size and calls again, once. On success the
 // caller closes memory; on a failure the line has failed.
-@(private = "file")
+@(private)
 program_call_with_room :: proc "contextless" (name: string, arguments: []Value, memory_argument: int, first_pages: u64, most_bytes: u64) -> (result: Value, memory: system.Handle, ok: bool) {
 	pages := first_pages
 	for attempt in 0 ..< 2 {
@@ -131,7 +131,7 @@ program_call_with_room :: proc "contextless" (name: string, arguments: []Value, 
 // program_source_read reads the object file of the store at place into a
 // new memory object of its size, by ranges: a source passes the call region
 // of the connection to the storage service. The caller closes memory.
-@(private = "file")
+@(private)
 program_source_read :: proc "contextless" (place: Value, file: string) -> (memory: system.Handle, size: i64, ok: bool) {
 	size_arguments := [2]Value{place, {kind = .Text, text = file}}
 	size_value := call_run("storage.size", size_arguments[:])

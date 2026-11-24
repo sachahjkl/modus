@@ -1,10 +1,10 @@
 // The retention of the private store of the recipes service
-// (src/md/features/recipes.md, "The retention of the store"). The objects
-// that a guest build keeps and that put keeps are named blob_<hash>; one
-// pass removes each of them that nothing names: no realisation of the
-// store, no recipe of the store or of the registry, and no put of this run
-// of the service. A pass that cannot read all that it must, or whose marks
-// pass their bound, removes nothing.
+// (src/md/features/recipes.md, "The retention of the store"). The content-addressed
+// objects kept by builds, cache fetches, and puts are named by their exact
+// 64 lowercase hexadecimal BLAKE3 hash; one pass removes each of them that
+// nothing names: no realisation of the store, no recipe of the store or of
+// the registry, and no put of this run of the service. A pass that cannot read
+// all that it must, or whose marks pass their bound, removes nothing.
 package recipes_core
 
 import "modus:contract/blake3"
@@ -23,9 +23,10 @@ RETENTION_DEPTH_MOST :: 16
 // The names of one page of a list of the store.
 RETENTION_PAGE_NAMES :: 64
 
-// The bytes of a hash that a name of the store holds (its first 52
-// hexadecimal digits): two objects whose hashes share them share a name.
-RETENTION_NAME_HASH_BYTES :: pr.REALISATION_NAME_HASH_DIGITS / 2
+// The bytes of a hash that a name of the store holds: all 32 bytes (64
+// lowercase hexadecimal digits), matching storage.freeze_tree and
+// plans_recipes.blob_object_name.
+RETENTION_NAME_HASH_BYTES :: blake3.HASH_SIZE
 
 // Why a pass removed nothing.
 Retention_Refusal :: enum u8 {
@@ -69,7 +70,7 @@ Retention_Kind :: enum u8 {
 Retention_Result :: struct {
 	refusal: Retention_Refusal,
 	marked:  int,
-	kept:    int, // The objects blob_ that something names.
+	kept:    int, // The content-addressed objects that something names.
 	removed: int,
 }
 
@@ -224,34 +225,22 @@ retention_mark_recipe :: proc "contextless" (workspace: ^Retention_Workspace, po
 	return .None
 }
 
-// retention_name_key gives the hash bytes that a name blob_<digits> holds.
+// retention_name_key gives the full 32-byte hash that a 64-hex content-addressed
+// object name holds. Prefixed entries (realisation_*, recipe_*) and temporary
+// directories (build) do not match.
 @(private = "file")
 retention_name_key :: proc "contextless" (text: string) -> (key: [RETENTION_NAME_HASH_BYTES]u8, ok: bool) {
-	PREFIX :: "blob_"
-	if len(text) != len(PREFIX) + 2 * RETENTION_NAME_HASH_BYTES || text[:len(PREFIX)] != PREFIX {
+	hash, parsed := pr.hash_of_blob_object_name(text)
+	if !parsed {
 		return {}, false
 	}
-	digit :: proc "contextless" (value: u8) -> (number: u8, ok: bool) {
-		switch value {
-		case '0' ..= '9':
-			return value - '0', true
-		case 'a' ..= 'f':
-			return value - 'a' + 10, true
-		}
-		return 0, false
-	}
-	for index in 0 ..< RETENTION_NAME_HASH_BYTES {
-		high := digit(text[len(PREFIX) + 2 * index]) or_return
-		low := digit(text[len(PREFIX) + 2 * index + 1]) or_return
-		key[index] = high << 4 | low
-	}
-	return key, true
+	return hash, true
 }
 
 // retention_collect runs one pass over the private store of state: it
 // marks what each realisation object and each recipe object of the store,
 // each recipe of registry and each hash of extra names, then removes each
-// object blob_ that is not marked. extra holds the objects that put kept
+// content-addressed object that is not marked. extra holds the objects that put kept
 // in the recent windows, which a recipe may name later, and queue the
 // guest builds that wait or run, whose specs name what they will read.
 retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recipe_Registry, extra: []blake3.Hash, workspace: ^Retention_Workspace, queue: ^Guest_Queue = nil) -> (result: Retention_Result) {
@@ -331,7 +320,7 @@ retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recip
 				}
 				continue
 			}
-			// A realisation names its output, the object blob_ of its output
+			// A realisation names its output object under its exact 64-hex hash.
 			// hash, and its output tree names the rest. A damaged realisation
 			// names nothing: no build takes it.
 			if len(bytes) < pr.REALISATION_OBJECT_HEAD_SIZE {
@@ -356,7 +345,7 @@ retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recip
 	}
 	result.marked = workspace.mark_count
 
-	// The sweep: each object blob_ that nothing names. The removes change
+	// The sweep: each content-addressed object that nothing names. The removes change
 	// no name before the last one read, so the next page starts after it.
 	after_length = 0
 	for {
