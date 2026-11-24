@@ -201,7 +201,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		}
 	case .Grants:
 		answer.outcome = root_ring.refuse(&answer.values, .Nothing_Has_That_Name, kind, .Absent, .Processes, 1)
-		if other := find(name); other != nil && (!grants_manage_only(item) || other.principal == item.principal) {
+		other := grants_manage_only(item) ? find_for_principal(name, item.principal) : find(name)
+		if other != nil {
 			packed := system.name_pack(principal_name(other.principal))
 			answer.values = {transmute(u64)other.granted, transmute(u64)other.revoked, other.principal, packed[0], packed[1], packed[2], packed[3]}
 			answer.outcome = .Succeeded

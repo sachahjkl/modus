@@ -13,7 +13,6 @@ import "internal:grants/grants_model"
 import "modus:contract/module"
 import "modus:contract/reference_screen"
 import "modus:contract/scale_factor"
-import "modus:disk_process"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
@@ -363,7 +362,7 @@ draw :: proc "contextless" (window: ^display.Window) -> (bar_result: interface.A
 				system.write_part(&w, "  ")
 				system.write_part(&w, grants_model.format_hex_prefix(&hex_buf, drow.hash_prefix))
 				system.write_part(&w, "  ")
-				system.write_part(&w, disk_process.disk_grant_names[row.disk_grant])
+				system.write_part(&w, grants_model.disk_row_grant_label(row))
 				system.write_part(&w, "  ")
 				system.write_part(&w, grants_model.disk_persistence_label(drow))
 				shown := interface.text_fit(table, FONT_MONO_CAPTION, system.written(&w), max(text_limit - (row_area.x + 12), 0))
@@ -416,8 +415,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	_, _ = draw(&window)
 	system.log_fact(.Info, Running{})
 
+	wide_grant_next_tick: u64
 	for {
 		if take_worker_result() {
+			wide_grant_next_tick = active_snapshot.wide_grant.active ? system.time() + WIDE_GRANT_TICK_MILLISECONDS : 0
 			_, _ = draw(&window)
 		}
 		wait: system.Wait
@@ -427,15 +428,30 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if worker_ready {
 			deadline = system.time()
 		} else if active_snapshot.wide_grant.active {
-			deadline = system.time() + WIDE_GRANT_TICK_MILLISECONDS
+			if wide_grant_next_tick == 0 {
+				wide_grant_next_tick = system.time() + WIDE_GRANT_TICK_MILLISECONDS
+			}
+			deadline = wide_grant_next_tick
+		} else {
+			wide_grant_next_tick = 0
 		}
 		system.wait_end(&wait, deadline)
 
 		changed := take_worker_result()
+		if changed {
+			wide_grant_next_tick = active_snapshot.wide_grant.active ? system.time() + WIDE_GRANT_TICK_MILLISECONDS : 0
+		}
 		if interface.window_events(&window_memory.drawing, &window) {
 			changed = true
 		}
-		if changed || active_snapshot.wide_grant.active {
+		if active_snapshot.wide_grant.active && wide_grant_next_tick != 0 {
+			now := system.time()
+			if now >= wide_grant_next_tick {
+				changed = true
+				wide_grant_next_tick = now + WIDE_GRANT_TICK_MILLISECONDS
+			}
+		}
+		if changed {
 			bar_result, redraw := draw(&window)
 			if bar_result.ran {
 				switch {

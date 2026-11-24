@@ -167,3 +167,30 @@ display_list_empty_and_formatting_helpers :: proc(t: ^testing.T) {
 	testing.expect_value(t, format_remaining_time(&time_buf, 1000, 42_500), "42 s left")
 	testing.expect_value(t, format_remaining_time(&time_buf, 1000, 121_000), "2 min left")
 }
+
+@(test)
+zero_grant_disk_row_renders_no_grant_and_is_not_removable :: proc(t: ^testing.T) {
+	snap: Snapshot
+	nick := disk_process.name_pack("visitor")
+	meta := root_ring.disk_grant_meta_pack(.Persist, false, .Kept_By_Passphrase)
+	_, added := snapshot_add_disk_completion(&snap, {nick[0], nick[1], nick[2], 0xAABB, 0, meta, 1})
+	testing.expect(t, added && snap.disk_count == 1)
+	testing.expect_value(t, snap.disks[0].grants, disk_process.Disk_Grants{})
+
+	list: Display_List
+	display_list_build(&list, &snap)
+	found := false
+	for row in list.rows[:list.count] {
+		if row.kind == .Disk_Grant_Item {
+			found = true
+			testing.expect(t, !row.has_grant)
+			testing.expect(t, !row.removable)
+			testing.expect_value(t, disk_row_grant_label(row), "no grant")
+		}
+	}
+	testing.expect(t, found)
+
+	confirm: Confirm_State
+	testing.expect(t, !confirm_arm(&confirm, &snap, {kind = .Disk_Grant, disk_index = 0, disk_grant = .Store}))
+	testing.expect(t, !confirm.armed)
+}

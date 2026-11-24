@@ -123,6 +123,7 @@ Display_Row :: struct {
 	grant_revoked: bool, // True when Process_Grant is already revoked (read-only).
 	disk_index:    int,
 	disk_grant:    disk_process.Disk_Grant,
+	has_grant:     bool, // True when Disk_Grant_Item names a held grant; false when the row holds no grant.
 	removable:     bool,
 }
 
@@ -419,6 +420,7 @@ display_list_build :: proc "contextless" (list: ^Display_List, snap: ^Snapshot) 
 						section    = .Disk_Grant,
 						disk_index = d,
 						disk_grant = grant,
+						has_grant  = true,
 						removable  = grant == .Store,
 					})
 					emitted = true
@@ -430,6 +432,7 @@ display_list_build :: proc "contextless" (list: ^Display_List, snap: ^Snapshot) 
 					section    = .Disk_Grant,
 					disk_index = d,
 					disk_grant = .Store,
+					has_grant  = false,
 					removable  = false,
 				})
 			}
@@ -487,6 +490,15 @@ format_remaining_time :: proc "contextless" (out: ^[24]u8, now_ms, ends_at_ms: u
 		system.write_part(&w, " s left")
 	}
 	return system.written(&w)
+}
+
+// disk_row_grant_label returns the display name of the grant held by a
+// Disk_Grant_Item row, or "no grant" when the row holds no grant.
+disk_row_grant_label :: proc "contextless" (row: Display_Row) -> string {
+	if !row.has_grant {
+		return "no grant"
+	}
+	return disk_process.disk_grant_names[row.disk_grant]
 }
 
 // disk_persistence_label returns a concise human-readable durability label
