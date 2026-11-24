@@ -274,30 +274,29 @@ wide_grant_collector_held_at_lock :: proc "contextless" (item: ^Started) -> bool
 	return true
 }
 
-// wide_grant_row_of gives the place of the row of a key of a principal in
-// the client table, or -1. A row that is locked or contested holds no
-// grant.
+// wide_grant_row_of gives the place of the row of (principal, key) in
+// the client table, or -1. A locked row holds no grant.
 @(private = "file")
 wide_grant_row_of :: proc "contextless" (principal: u64, key: [32]u8) -> int {
-	place := remote.client_find(&client_table.clients, key)
+	place := remote.client_find_for_principal(&client_table.clients, principal, key)
 	if place < 0 {
 		return -1
 	}
 	row := client_table.clients[place]
-	if row.principal != principal || row.session_locked != 0 || row.contested != 0 {
+	if row.session_locked != 0 {
 		return -1
 	}
 	return place
 }
 
-// wide_grant_row_set writes the grant serial in the row of the key: the one
-// writer of the field. new_serial: the row held a grant that ends, and
+// wide_grant_row_set writes the grant serial in the row of (principal, key):
+// the one writer of the field. new_serial: the row held a grant that ends, and
 // gets a new serial, so `remote` and `remote_display` end each connection
 // of the key with Revoked (src/md/features/wide_grants.md, "What the agent
 // sees").
 @(private = "file")
-wide_grant_row_set :: proc "contextless" (key: [32]u8, grant_serial: u64, new_serial: bool) {
-	place := remote.client_find(&client_table.clients, key)
+wide_grant_row_set :: proc "contextless" (principal: u64, key: [32]u8, grant_serial: u64, new_serial: bool) {
+	place := remote.client_find_for_principal(&client_table.clients, principal, key)
 	if place < 0 {
 		return
 	}
@@ -382,21 +381,24 @@ wide_grant_ask :: proc "contextless" (caller: ^Started, record: ring.Record, val
 }
 
 // wide_grant_agent_ask serves Wide_Grant_Agent_Ask: `remote` passes the
-// ask of an agent for the key that its client proved. The principal is the
-// one of the row of the key, whose grant to call still holds: the agent
-// names no principal.
+// ask of an agent for the key that its client proved, together with the
+// 1-based row number in the client table bound to that connection (values[6]).
+// The root service verifies that the row holds that key and a `.Calls` grant
+// and uses the row's principal.
 wide_grant_agent_ask :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Wide_Grant_Agent_Ask)
-	if record.values[6] != 0 {
-		values^ = root_ring.word_refusal(.Wide_Grant_Agent_Ask, 7, record.values[6], 0)
+	row_number := record.values[6]
+	if row_number == 0 || row_number > remote.CLIENT_CAPACITY {
+		values^ = root_ring.word_refusal(.Wide_Grant_Agent_Ask, 7, row_number, 0)
 		return .Argument_Refused
 	}
 	key := transmute([32]u8)([4]u64{record.values[0], record.values[1], record.values[2], record.values[3]})
-	place := remote.client_find(&client_table.clients, key)
-	if place < 0 || !remote.client_grant_holds(&client_table.clients, place, client_table.clients[place].serial, .Calls) {
+	place := int(row_number - 1)
+	row := client_table.clients[place]
+	if row.key != key || !remote.client_grant_holds(&client_table.clients, place, row.serial, .Calls) {
 		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Grants, 1)
 	}
-	return wide_grant_ask_open(.Wide_Grant_Agent_Ask, client_table.clients[place].principal, key, record.values[4], record.values[5], values)
+	return wide_grant_ask_open(.Wide_Grant_Agent_Ask, row.principal, key, record.values[4], record.values[5], values)
 }
 
 // wide_grant_second_connection serves Wide_Grant_Second_Connection: a
@@ -583,7 +585,7 @@ wide_grant_wire_answered :: proc "contextless" (request: Audit_Request, flow_ser
 	if !active {
 		return
 	}
-	wide_grant_row_set(flow.client_key, flow.grant_serial, false)
+	wide_grant_row_set(flow.principal, flow.client_key, flow.grant_serial, false)
 	if !wide_grant_mark_send({grant_serial = flow.grant_serial, principal_id = flow.principal, authorities = flow.answer.authorities, ends_at_ms = flow.ends_at_ms, flow_serial = flow.serial}) {
 		// No grant holds without its mark.
 		wide_grant_end(.Mark_Not_Shown, false)
@@ -615,7 +617,7 @@ wide_grant_end :: proc "contextless" (reason: wide_grants.Revocation_Reason, col
 		return
 	}
 	if held {
-		wide_grant_row_set(key, 0, true)
+		wide_grant_row_set(principal, key, 0, true)
 	}
 	wide_grant_mark_clear_due = true
 	wide_grant_writer_count = 0
@@ -691,7 +693,7 @@ wide_grant_pass :: proc "contextless" (wait: ^system.Wait) -> (deadline: u64) {
 		// A row that left, that a lock locked, or that two principals hold
 		// ends the grant: the key no longer acts for its principal.
 		if wide_grant_row_of(flow.principal, flow.client_key) < 0 {
-			row_place := remote.client_find(&client_table.clients, flow.client_key)
+			row_place := remote.client_find_for_principal(&client_table.clients, flow.principal, flow.client_key)
 			reason := wide_grants.Revocation_Reason.Principal_Revoked
 			if row_place >= 0 && client_table.clients[row_place].session_locked != 0 {
 				reason = .Session_Locked

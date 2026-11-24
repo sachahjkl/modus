@@ -83,9 +83,9 @@ A TPM that follows the reference code answers `TPM_RC_RETRY` at the first use of
 
 ### The file
 
-`unlock` keeps one file of a named principal, the object `principal`, in one of two forms by its first 8 bytes: `PRINCIPL` (under the passphrase alone) or `PRINCIPT` (sealed by the TPM). The form `PRINCIPT` keeps the first 124 bytes of `PRINCIPL` (the name, the public keys, the parameters of Argon2id, the salt), then the PCRs, the four parts of the sealed object in the form of the record of the machine key, the keys under the seal key, and the keys under the key of the recovery key.
+`unlock` keeps one file of a named principal, the object `principal`, in one of two forms by its first 8 bytes: `PRINCIPL` (under the passphrase alone) or `PRINCIPT` (sealed by the TPM). Both forms use format 3 (formats 1 and 2 are refused as older formats). The form `PRINCIPT` keeps the first 180 bytes of `PRINCIPL` (the magic, format, name, public keys, principal identifier, Argon2id parameters, salt, and 24-byte `Unlock_Hints` block), then the PCRs, the four parts of the sealed object in the form of the record of the machine key, the keys under the seal key, and the keys under the key of the recovery key.
 
-The additional data of the seal under the seal key is each byte before the PCRs. The additional data of the recovery seal stops before the salt, so a new passphrase, which has a new salt, keeps the copy under the recovery key.
+The additional data of the seal under the seal key covers every byte before the nonce (`PRINCIPL`) or before the PCRs (`PRINCIPT`), which includes the 24-byte `Unlock_Hints` block: tampering with the keyboard layout, assistive flags, or language breaks ChaCha20-Poly1305 verification. The additional data of the recovery seal stops before the salt, so a new passphrase or an authenticated update of `Unlock_Hints` keeps the copy under the recovery key valid.
 
 The opened keys must give the public keys of the file: that check takes the place of the key check of the machine key.
 
@@ -152,16 +152,20 @@ A copy of the disk keeps an older file of a named principal, and the older passp
 
 **The index** of the principal n is `0x01806E00` + n, n from 1 to 64 (`tpm2.pin_index_of`).
 
-**The payload** (format 2, 120 bytes): the magic `MODUSPFP`, the format, two reserved zero bytes, the number of the principal, a generation of 64 bits, SHA-256 of the whole file, SHA-256 of the announced file (zeros when none is), and SHA-256 of a text of its own and the bytes before it. Principal 0 is refused: the machine has no principal file. SHA-256 and not BLAKE2b: the contract of the TPM has SHA-256 only, as each digest of the TPM.
+**The payload** (format 4, 152 bytes): the magic `MODUSPFP`, the format (`4`), the state (`Principal_Pin_State`: `Active = 0` or `Free = 1`), the number of the principal, a generation of 64 bits, the 32-byte principal identifier, SHA-256 of the whole file, SHA-256 of the announced file (zeros when none is), and SHA-256 of a text of its own and the bytes before it. Principal 0 is refused: the machine has no principal file. SHA-256 and not BLAKE2b: the contract of the TPM has SHA-256 only, as each digest of the TPM.
 
-**The rules** (`principal_file_pin_advance`, `principal_file_pin_check` in `modus:contract/tpm_attestation`, `principal_file_pin_verdict` in `modus:contract/tpm_service`):
+**The rules** (`principal_file_pin_advance`, `principal_file_pin_check`, `principal_file_pin_free`, `principal_file_pin_create` in `modus:contract/tpm_attestation`, `principal_file_pin_verdict` in `modus:contract/tpm_service`):
 
-- a new pin names the same principal, a higher generation, and a digest that is not zero;
-- the file of the disk must have the digest of the pin, or the announced digest.
+- an `Active` pin carries a non-zero principal identifier, a non-zero file digest, and a generation above 0;
+- a `Free` pin carries `"free, generation g"`: all-zero identifier, all-zero file digest, all-zero announced digest, and a generation above 0;
+- valid transitions are `Absent -> Active(A, g >= 1)`, `Active(A, g) -> Active(A, g' > g)`, `Active(A, g) -> Free(g' > g)` (during principal removal only), and `Free(g) -> Active(B, g' > g)` (creation of a new principal in a freed slot after reboot);
+- `Absent -> Free`, `Active(A) -> Active(B)`, `Free -> Free`, and any `g' <= g` are refused;
+- when the pin is `Active`, the file on disk must match the pinned identifier and either the file digest or the announced digest;
+- when the pin is `Free`, no principal file may exist on disk for that slot (if a writer puts an old file back, the `Free` pin refuses it), and a new principal creation is allowed from `generation + 1`.
 
 **The check** comes after `unlock` gives the record to the root service, which gives the number of the principal, and before any passphrase is asked. A file that the pin does not name is refused: `unlock` writes "the file of principal 1 is not the file that the TPM pins", with the rule that failed, and no window of the principal opens in this run. The root service keeps the record, so the principal stays locked; the machine key opens as before. A change of the passphrase or of the recovery key on such a file is refused the same way.
 
-**A removed file.** The store gives no file and a pin names one: `unlock` writes the same line with "the pinned record is absent". The removed file is never taken as the absence of a principal: no window of a principal opens, and `principal_create` is refused while the pin exists ("a pin of the TPM names the file of a principal that the disk no longer holds"), as a new principal would move the pin of the removed one to a file of whoever created it. Only a clear of the TPM ends it. The service also refuses each pin that starts the slot again at the generation 1 or at any generation not above the pinned one.
+**A removed file versus an intentional removal.** If the store gives no file and an `Active` pin names one, a writer of the disk removed it: `unlock` refuses it, no window opens, and `principal_create` is refused. Only a deliberate removal (`Principal_Remove`) advances the pin from `Active(A, g)` to `Free(g + 1)`, after erasing the principal's stores and deleting the file. A `Free` pin allows `principal_create` on a later run to reuse the slot at `generation + 1`, while still blocking rollback of any older file from `g` or earlier.
 
 **The creation** writes the file before the root service gives its number, so the pin comes after the record: a stop between the write and the pin leaves a file with no pin, which the next start pins. A pin of that number that appears between the check at the start of the creation and the pin is not moved: the new file stays unpinned, and the next start refuses it.
 

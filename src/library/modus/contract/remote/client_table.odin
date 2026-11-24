@@ -37,33 +37,29 @@ CLIENT_CAPACITY :: 64
 // leaves rows to the others. Remote_Client refuses one more with Full.
 CLIENT_ROWS_OF_ONE_PRINCIPAL :: CLIENT_CAPACITY / 2
 // The places that a read of the client keys of one principal names
-// (Root_Command.Remote_Client): the rows of the client table, then the keys
-// of the disk grant table of the principal, which keeps
-// CLIENT_ROWS_OF_ONE_PRINCIPAL keys at most.
-CLIENT_READ_PLACES :: CLIENT_CAPACITY + CLIENT_ROWS_OF_ONE_PRINCIPAL
+// (Root_Command.Remote_Client): the rows of the client table.
+CLIENT_READ_PLACES :: CLIENT_CAPACITY
 
-// One row of the client table. A row with a serial of 0 is free.
+// One row of the client table, keyed by (principal_identifier, key).
+// A row with a serial of 0 is free.
 Client :: struct {
-	key:            [32]u8, // The Ed25519 public key that the client proves in the handshake.
-	principal:      u64, // The principal that allowed the key: each call of the client acts for it.
-	serial:         u64, // The grant: a new value at each allow, lock and unlock. 0: the row is free.
-	session_locked: u64, // 1 while the session of the principal is locked: the key opens no connection, and an open one ends.
-	// The other principal whose disk grant table also holds the key, plus
-	// one; 0: none. A contested row holds no grant for either principal,
-	// until one of them revokes the key.
-	contested:      u64,
+	key:                  [32]u8, // The Ed25519 public key that the client proves in the handshake.
+	principal_identifier: [32]u8, // Persistent 256-bit principal identifier (all zero for principal 0).
+	principal:            u64, // The slot of the principal that allowed the key: each call of the client acts for it.
+	serial:               u64, // The grant: a new value at each allow, lock and unlock. 0: the row is free.
+	session_locked:       u64, // 1 while the session of the principal is locked: the key opens no connection, and an open one ends.
 	// The word of the uses of the key (Client_Uses): a reader takes it
 	// through client_uses_of_word only.
-	uses:           u64,
+	uses:                 u64,
 	// 1 while the session in front is the session of another principal
 	// (client_display_paused): the row holds no View and no Input, as
 	// principal 0 cannot see the screen of a named session.
-	not_in_front:   u64,
+	not_in_front:         u64,
 	// The serial of the wide grant that the key holds, from the collector;
 	// 0: none. `remote` writes an act record before each call of a key whose
 	// row holds one (src/md/features/wide_grants.md, "The path of a grant,
 	// end to end").
-	wide_grant:     u64,
+	wide_grant:           u64,
 }
 
 // client_display_paused says if a row of a principal holds no View and no
@@ -164,59 +160,129 @@ second_connection_ends_grant :: proc "contextless" (row: Client, key: [32]u8, ot
 	return false
 }
 
-// client_find gives the place of the row of a key in a copy of the table,
-// or -1. A free row has no key.
-client_find :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, key: [32]u8) -> int {
+// client_find_for_principal gives the place of the row of (principal, key) in
+// a copy of the table, or -1. Two principals may enroll the same public key
+// independently in separate rows.
+client_find_for_principal :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, principal: u64, key: [32]u8) -> int {
 	if key == ([32]u8{}) {
 		return -1
 	}
 	for client, place in clients^ {
-		if client.serial != 0 && client.key == key {
+		if client.serial != 0 && client.principal == principal && client.key == key {
 			return place
 		}
 	}
 	return -1
 }
 
+// client_find_for_pair gives the place of the row matching
+// (principal_identifier, principal, key), or -1.
+client_find_for_pair :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, principal_identifier: [32]u8, principal: u64, key: [32]u8) -> int {
+	if key == ([32]u8{}) {
+		return -1
+	}
+	for client, place in clients^ {
+		if client.serial != 0 && client.principal == principal && client.principal_identifier == principal_identifier && client.key == key {
+			return place
+		}
+	}
+	return -1
+}
+
+// client_count_holding counts how many occupied rows for `key` currently hold
+// a grant for `use`.
+client_count_holding :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, key: [32]u8, use: Client_Use) -> int {
+	if key == ([32]u8{}) {
+		return 0
+	}
+	count := 0
+	for client, place in clients^ {
+		if client.serial == 0 || client.key != key {
+			continue
+		}
+		if client_grant_holds(clients, place, client.serial, use) {
+			count += 1
+		}
+	}
+	return count
+}
+
+// client_find_holding finds the unique row for `key` whose grant currently
+// holds for `use`. Refuses ambiguous lookups (more than one holding row for
+// the same key and use) by returning -1 so no call can silently bind to an
+// unintended principal when two unlocked principals enrolled the same key.
+client_find_holding :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, key: [32]u8, use: Client_Use) -> int {
+	if key == ([32]u8{}) {
+		return -1
+	}
+	matched := -1
+	for client, place in clients^ {
+		if client.serial == 0 || client.key != key {
+			continue
+		}
+		if !client_grant_holds(clients, place, client.serial, use) {
+			continue
+		}
+		if matched >= 0 {
+			return -1
+		}
+		matched = place
+	}
+	return matched
+}
+
+// client_find_any finds any active row for `key` (for refusal diagnostics
+// when no row currently holds the requested use), preferring the session in
+// front.
+client_find_any :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, key: [32]u8) -> int {
+	if key == ([32]u8{}) {
+		return -1
+	}
+	fallback := -1
+	for client, place in clients^ {
+		if client.serial == 0 || client.key != key {
+			continue
+		}
+		if client.not_in_front == 0 {
+			return place
+		}
+		if fallback < 0 {
+			fallback = place
+		}
+	}
+	return fallback
+}
+
 // client_grant_holds says if the row at place of a copy of the table still
 // carries the grant with this serial for a use: the same row, not freed and
-// not given again, a session of its principal that is not locked, a key
-// that no other principal holds, a word of uses that holds the use, and,
-// for View and Input, the session of its principal in front.
+// not given again, a session of its principal that is not locked, a word of
+// uses that holds the use, and, for View and Input, the session of its
+// principal in front.
 client_grant_holds :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, place: int, serial: u64, use: Client_Use) -> bool {
 	if place < 0 || place >= CLIENT_CAPACITY || serial == 0 {
 		return false
 	}
 	uses, uses_ok := client_uses_of_word(clients[place].uses)
 	in_front := use == .Calls || clients[place].not_in_front == 0
-	return clients[place].serial == serial && clients[place].session_locked == 0 && clients[place].contested == 0 && uses_ok && use in uses && in_front
+	return clients[place].serial == serial && clients[place].session_locked == 0 && uses_ok && use in uses && in_front
 }
 
 // What the root service does with a client key of the disk grant table of
-// a principal, after the read of that table or the end of a grant: the
-// result of client_restore_decision.
+// a principal, after the read of that table: the result of
+// client_restore_decision.
 Client_Restore :: enum u8 {
-	Holds, // The principal has the row of the key already.
-	Take_Row, // No row has the key: the principal takes the free row at place.
-	Contest, // Another principal has the row at place: the key holds for neither, and the row becomes contested.
-	Contested, // The row at place is contested already.
-	No_Free_Row, // No row has the key, and no row is free.
+	Holds, // The principal already holds a row for this key.
+	Take_Row, // This principal has no row for this key yet: take the free row at place.
+	No_Free_Row, // This principal has no row for this key, and no row is free.
 }
 
 // client_restore_decision decides for one key of the disk grant table of
-// principal. One key acts for one principal: when another principal allowed
-// the same key, the key holds for neither of them, as a call would else act
-// for a principal that the device of the client was not given to.
+// principal. Rows are keyed by (principal_identifier, public_key), so another
+// principal enrolling the same public key never conflicts or contests.
 client_restore_decision :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, key: [32]u8, principal: u64) -> (action: Client_Restore, place: int) {
-	holder := client_find(clients, key)
+	holder := client_find_for_principal(clients, principal, key)
 	if holder >= 0 {
-		if clients[holder].principal == principal {
-			return .Holds, holder
-		}
-		if clients[holder].contested == 0 {
-			return .Contest, holder
-		}
-		return .Contested, holder
+		return .Holds, holder
 	}
 	for client, free in clients^ {
 		if client.serial == 0 {

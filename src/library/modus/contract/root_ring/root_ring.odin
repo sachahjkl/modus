@@ -354,16 +354,14 @@ Root_Command :: enum u32 {
 	// the count of the connections that ended in values[0], and
 	// REMOTE_CLIENT_KEY_CAN_COME_BACK in values[1] when the disk grant table
 	// did not take the revocation. Remote_Client_Action.Read reads the place
-	// values[5], below remote.CLIENT_READ_PLACES: a row of the client table,
-	// then a contested key of the disk grant table of the caller, whose row
-	// is a row of another principal. The completion has the key in
+	// values[5], below remote.CLIENT_READ_PLACES: a row of the client table.
+	// The completion has the key in
 	// values[0..3], the principal in values[4], the word of its uses in
 	// values[5] for a key of the principal of the caller (0: no key at the
 	// place), and its state in values[6]
-	// (Remote_Client_State.Holds, Remote_Client_State.Locked, Remote_Client_State.Contested).
+	// (Remote_Client_State.Holds, Remote_Client_State.Locked).
 	// The caller must act for its principal (`No_Grant`, unit
 	// `Acts_For_Principal`). A key of zeros is refused with `Bad_Value`; a
-	// key that another principal allowed with `Exists` (unit `Grants`); a
 	// full table, or a principal with remote.CLIENT_ROWS_OF_ONE_PRINCIPAL
 	// keys, with `Full` (unit `Grants`); an allow while the disk grant table
 	// of the principal takes no change with `Refused`; a revocation of a key
@@ -527,10 +525,11 @@ Root_Command :: enum u32 {
 	// Wide_Grant_Agent_Ask is the ask of an agent through `remote`
 	// (src/md/features/wide_grants.md, "The ask of an agent"): values[0..3]
 	// the key that the client proved in its handshake, values[4] the word of
-	// the scopes, values[5] the duration in milliseconds, values[6] 0. The
-	// principal is the principal of the row of the key. Only the holder of
-	// Remote_Clients sends it. The completion: the serial of the flow in
-	// values[0], as for Wide_Grant_Ask.
+	// the scopes, values[5] the duration in milliseconds, values[6] the
+	// 1-based row number in the client table (1..CLIENT_CAPACITY) bound to
+	// that connection. The root service verifies the row key and grant and
+	// uses the row's principal. Only the holder of Remote_Clients sends it.
+	// The completion: the serial of the flow in values[0], as for Wide_Grant_Ask.
 	Wide_Grant_Agent_Ask = 37,
 	// Wide_Grant_Second_Connection says that a second connection of a key
 	// came while the row of the key held a wide grant: values[0..3] the key,
@@ -823,9 +822,8 @@ Remote_Client_Action :: enum u64 {
 // The state of a client key in values[6] of the completion of a
 // Remote_Client_Action.Read.
 Remote_Client_State :: enum u64 {
-	Holds     = 0, // Each call of its client acts for the principal.
-	Locked    = 1, // The session of the principal is locked: the key opens no connection until the unlock.
-	Contested = 2, // Two principals allowed the key, one in this run and one in its disk grant table: it acts for neither until one of them revokes it.
+	Holds  = 0, // Each call of its client acts for the principal.
+	Locked = 1, // The session of the principal is locked: the key opens no connection until the unlock.
 }
 
 // The flag of values[1] of the completion of a Remote_Client_Action.Revoke:
@@ -838,6 +836,7 @@ REMOTE_CLIENT_KEY_CAN_COME_BACK :: 1
 Principal_Change :: enum u64 {
 	Passphrase   = 1,
 	Recovery_Key = 2,
+	Remove       = 3,
 }
 
 // The action of a Disk_Grant command, in values[4].
@@ -1394,6 +1393,7 @@ Principal_State :: enum u64 {
 	Locked   = 2, // A named principal with no session.
 	Unlocked = 3, // A named principal whose session runs.
 	Creating = 4, // `unlock` asks for the passphrase of a new principal; no record yet.
+	Removing = 5, // Self-removal is in progress: durable marker written, stores and file being removed.
 }
 
 // The names of the commands of the root ring, for the sentence of the

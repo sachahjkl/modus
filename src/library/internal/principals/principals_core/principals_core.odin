@@ -430,8 +430,9 @@ apply_disk_rows_set :: proc "contextless" (
 		return .Start_Policy_Forbidden_With_Passphrase, .None
 	}
 
-	// Pre-validate cross-principal client key uniqueness and global table
-	// capacity before mutating any state.
+	// Pre-validate global client table capacity before mutating any state.
+	// Rows are keyed by (principal, key), so another principal holding the
+	// same public key never conflicts.
 	other_principal_keys := u32(0)
 	for &row in state.client_table.clients {
 		if row.serial != 0 && row.principal != request.principal {
@@ -441,19 +442,6 @@ apply_disk_rows_set :: proc "contextless" (
 	if other_principal_keys + validation.client_key_row_count > remote.CLIENT_CAPACITY {
 		state.counters.total_refusals += 1
 		return .Client_Table_Full, .None
-	}
-	for row_idx in u32(0) ..< request.row_count {
-		req_row := &request.rows[row_idx]
-		class, _ := rd.disk_row_class_from_word(u64(req_row.class_word))
-		if class != .Client_Key {
-			continue
-		}
-		for &existing in state.client_table.clients {
-			if existing.serial != 0 && existing.principal != request.principal && existing.key == req_row.client_key {
-				state.counters.total_refusals += 1
-				return .Duplicate_Client_Key, .None
-			}
-		}
 	}
 
 	// All checks passed: commit store rows, start policy, and client keys.
@@ -504,7 +492,6 @@ apply_disk_rows_set :: proc "contextless" (
 						principal      = request.principal,
 						serial         = next_serial(state),
 						session_locked = 0,
-						contested      = 0,
 						uses           = req_row.client_uses_word,
 						not_in_front   = u64(remote.client_display_paused(request.principal, principals.principal_in_front(state.seat))),
 					}
@@ -567,11 +554,11 @@ client_key_command :: proc "contextless" (state: ^Principals_State, input: ^rd.C
 				}
 				continue
 			}
-			if row.key == input.client_key {
-				state.counters.total_refusals += 1
-				return 0, .Duplicate_Client_Key
-			}
 			if row.principal == input.principal_id {
+				if row.key == input.client_key {
+					state.counters.total_refusals += 1
+					return 0, .Duplicate_Client_Key
+				}
 				principal_rows += 1
 			}
 		}
@@ -591,7 +578,6 @@ client_key_command :: proc "contextless" (state: ^Principals_State, input: ^rd.C
 			principal      = input.principal_id,
 			serial         = assigned,
 			session_locked = 0,
-			contested      = 0,
 			uses           = input.client_uses_word,
 			not_in_front   = u64(remote.client_display_paused(input.principal_id, principals.principal_in_front(state.seat))),
 		}
@@ -601,11 +587,7 @@ client_key_command :: proc "contextless" (state: ^Principals_State, input: ^rd.C
 
 	case .Revoke:
 		for &row in state.client_table.clients {
-			if row.serial != 0 && row.key == input.client_key {
-				if row.principal != input.principal_id {
-					state.counters.total_refusals += 1
-					return 0, .Wrong_Principal
-				}
+			if row.serial != 0 && row.principal == input.principal_id && row.key == input.client_key {
 				state.client_table.version += 1
 				row = {}
 				state.client_table.version += 1

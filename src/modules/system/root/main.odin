@@ -427,8 +427,9 @@ Connection :: struct {
 	// A connection of `remote` for one row of the client table: it acts
 	// for the principal of the row, and ends when the grant of the row
 	// ends (remote_clients.odin). place 0: none.
-	client:          Client_Grant,
-	role_generation: u64, // Supervision generation of service role at Connect time.
+	client:                 Client_Grant,
+	role_generation:        u64, // Supervision generation of service role at Connect time.
+	storage_blocks_charged: u64, // Blocks reserved in session_block_ledgers for this storage connection.
 }
 
 // The blocks of the store of a line history. The file of a history has 8
@@ -1302,6 +1303,61 @@ display_holder_end :: proc "contextless" () {
 	}
 }
 
+// Fresh display holder restart requested by principal_lock: the old holder
+// stops as a root-asked stop, reap cleans up its handles and screen budget,
+// and the next loop pass starts a fresh display holder before unlock opens.
+display_holder_restart_due: bool
+display_holder_restart_screen_of_memory: [2]u32
+
+// display_holder_restart_request isolates display state at the end of a named
+// session (src/md/features/several_principals.md, "The seat, and a display for
+// each session"). When no surviving machine window remains attached to the
+// display holder, it stops the display holder cleanly so the next loop pass
+// starts a fresh instance. When a surviving machine window (such as the
+// principal-0 console) still holds a display ring on this display holder, it
+// sends `Session_Reset` instead so the compositor wipes clipboard,
+// notifications, palette recents, and open menus without stranding that window.
+display_holder_restart_request :: proc "contextless" () -> bool {
+	if display_holder == 0 {
+		return false
+	}
+	surviving_window := false
+	for &item in started {
+		if item.process != 0 && item.process != display_holder && item.client != 0 && !item.stop_asked_by_root_service {
+			if item.principal == principals.MACHINE && system.name_of(item.name[:]) != "unlock" {
+				surviving_window = true
+				break
+			}
+		}
+	}
+	if surviving_window {
+		_ = system.send(&control.commands, ring.Record{kind = u32(display.Control.Session_Reset)})
+		return false
+	}
+	for &item in started {
+		if item.process == display_holder {
+			display_holder_restart_due = true
+			display_holder_restart_screen_of_memory = desktop_of_memory ? screen_of_memory_size : {}
+			item.stop_asked_by_root_service = true
+			started_process_stop(&item)
+			return true
+		}
+	}
+	return false
+}
+
+// display_holder_restart_step starts a fresh display holder once the stopped
+// holder from the previous session has been reaped.
+display_holder_restart_step :: proc "contextless" () {
+	if !display_holder_restart_due || display_holder != 0 {
+		return
+	}
+	display_holder_restart_due = false
+	size := display_holder_restart_screen_of_memory
+	display_holder_restart_screen_of_memory = {}
+	_ = display_holder_start(size)
+}
+
 // The places of the one wait of the loop, with each queue of each place
 // (root_ring.root_wait_words): made by root_tables_start.
 root_wait_set: system.Wait_Set
@@ -1336,6 +1392,9 @@ root_loop_pass :: proc "contextless" () {
 	// After the start policy: the read of the script font set starts when
 	// the machine is usable (script_fonts.odin).
 	script_fonts_step()
+	// After reap: a stopped display holder from a session lock restarts fresh
+	// before unlock opens on it.
+	display_holder_restart_step()
 	// After reap: a principal that is locked has a window of unlock.
 	unlock_for_a_locked_principal()
 	// After reap: a storage service that stopped ended its connections.
@@ -1386,7 +1445,7 @@ control_ring_serve :: proc "contextless" () {
 			wide_grant_screen_answered(record.values) // wide_grant_authority.odin
 		case .Wide_Grant_Revoke_Pressed:
 			wide_grant_revoke_pressed(record.values)
-		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started, .Settings_Raise, .Screen_Budget_Give, .Wide_Grant_Screen_Show, .Wide_Grant_Mark:
+		case .None, .Client_Add, .Client_Remove, .Palette_Provider_Add, .Palette_Provider_Remove, .Client_Started, .Settings_Raise, .Screen_Budget_Give, .Wide_Grant_Screen_Show, .Wide_Grant_Mark, .Session_Reset:
 			// This service sends these to the compositor, and takes none
 			// from it.
 			system.log_fact(.Warning, Compositor_Record_Not_Taken{record_kind = u64(record.kind)})
@@ -2276,9 +2335,22 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 // then close them. A refusal writes its record in refusal, with the
 // command kind as its operation.
 connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: ^[7]u64, kind: u32, history := false, client: Client_Grant = {}, store_override: string = "", store_limit_override: u64 = 0) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, outcome: call_outcome.Call_Outcome) {
+	// Session-scope services run per principal (with that principal's own
+	// encrypted store); machine-scope services accept named-principal callers
+	// only when they appear in the closed joint_process_names list.
+	target_principal := client.place != 0 ? client.principal : caller.principal
+	row_name := role_policy.grant_row_name_of_module(&role_holder_names, name)
+	target_scope := service_scope_of(row_name)
+	if target_scope == .Machine && target_principal != principals.MACHINE && !name_is_a_joint_process(row_name) {
+		return nil, nil, 0, 0, root_ring.refuse(refusal, .Grant_Or_Right_Missing, kind, .No_Grant, .Connection, 1)
+	}
+	service_principal := target_scope == .Session ? target_principal : principals.MACHINE
 	for pass in 0 ..< 2 {
 		for &item in started {
 			if item.process != 0 && item.service.head != nil && system.name_of(item.name[:]) == name {
+				if target_scope == .Session && item.principal != service_principal {
+					continue
+				}
 				service = &item
 			}
 		}
@@ -2287,7 +2359,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 		}
 		// A service on demand that does not start: the party that the
 		// connection needs failed (needed_service_failed).
-		if started_outcome := start(name, refusal = refusal); started_outcome != .Succeeded {
+		if started_outcome := start(name, principal = service_principal, refusal = refusal); started_outcome != .Succeeded {
 			return nil, nil, 0, 0, needed_service_failed(refusal)
 		}
 	}
@@ -2402,23 +2474,41 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 	case:
 		grant = grant_for(caller, service)
 	}
+	is_storage := is_role_holder(system.name_of(service.name[:]), .Storage)
+	is_root_proxy := caller == &disk_reader || persisted_table_keeper_is(caller) || caller == &debug_store_reader || caller == &picker_store_lister
+	charged_blocks: u64
+	if is_storage && !is_root_proxy && caller.principal != principals.MACHINE {
+		requested_blocks := grant & isolated.CALLER_AMOUNT_MASK
+		if requested_blocks != 0 {
+			granted_blocks, charge_ok := session_storage_blocks_charge(caller.principal, requested_blocks)
+			if !charge_ok {
+				system.close(ring_memory)
+				system.close(region_memory)
+				return nil, nil, 0, 0, root_ring.refuse(refusal, .Budget_Or_Capacity_Exhausted, kind, .Budget, .Blocks)
+			}
+			charged_blocks = granted_blocks
+			grant = (grant & ~isolated.CALLER_AMOUNT_MASK) | granted_blocks
+		}
+	}
 	if !system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Connect), values = {0 = u64(in_service_ring), 1 = u64(in_service_region), 2 = caller_name[0], 3 = caller_name[1], 4 = caller_name[2], 5 = caller_name[3], 6 = grant}}) {
+		session_storage_blocks_release(caller.principal, charged_blocks)
 		system.close(ring_memory)
 		system.close(region_memory)
 		return nil, nil, 0, 0, root_ring.refuse(refusal, .Callee_Busy, kind, .Busy, .Requests)
 	}
 	// An amount is a store for the storage service only: for the log
 	// service, it names the process of the caller.
-	if grant & isolated.CALLER_AMOUNT_MASK != 0 && is_role_holder(system.name_of(service.name[:]), .Storage) {
+	if grant & isolated.CALLER_AMOUNT_MASK != 0 && is_storage {
 		caller.granted += {history ? system.Root_Grant.History : system.Root_Grant.Store}
 	}
 	free^ = {
-		caller  = caller,
-		service = service,
-		ring    = in_service_ring,
-		region  = in_service_region,
-		history = history,
-		client  = client,
+		caller                 = caller,
+		service                = service,
+		ring                   = in_service_ring,
+		region                 = in_service_region,
+		history                = history,
+		client                 = client,
+		storage_blocks_charged = charged_blocks,
 	}
 	return free, service, ring_memory, region_memory, .Succeeded
 }
@@ -2505,6 +2595,9 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 	persisted_table_connection_ended(connection)
 	if debug_store.connection == connection {
 		debug_store = {}
+	}
+	if connection.storage_blocks_charged != 0 && connection.caller != nil {
+		session_storage_blocks_release(connection.caller.principal, connection.storage_blocks_charged)
 	}
 	connection^ = {}
 }

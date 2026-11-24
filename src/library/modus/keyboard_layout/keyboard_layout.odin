@@ -1,8 +1,9 @@
 // The layouts of the keyboard (src/md/features/keyboard_layout.md): the
 // character of each key as a code point, the third level that AltGr gives,
-// and the dead keys of the layout of France. The input service is the one
-// user: it reads the setting `keyboard_layout` at each key, and keeps the
-// accent that waits in a `Dead_Key_State`.
+// and the dead keys of the layout of France. The input service reads the
+// setting `keyboard_layout` at each key, and `unlock` applies a principal's
+// saved unlock hint layout during passphrase entry; each caller keeps its
+// own waiting accent in a `Dead_Key_State`.
 //
 // The package has no state of its own and makes no kernel call, so a host
 // test presses each key of each layout.

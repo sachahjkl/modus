@@ -40,6 +40,7 @@ Source_Constant :: struct {
 // literal itself.
 Start_Grant_Set_Row :: struct {
 	name:    string,
+	scope:   string, // The scope member name ("Machine" or "Session"), or "" when absent.
 	grants:  []string, // The members of the set of start grants, with no period: "Inspect".
 	terms:   string, // The record of the other terms as the source writes it, on one line and with no braces; "" for none.
 	comment: string, // The comment lines above the row, then the comment of its lines.
@@ -416,7 +417,7 @@ start_grant_set_table_read :: proc(content, file, table: string) -> (rows: []Sta
 			return nil, wrong_row
 		}
 		row := Start_Grant_Set_Row{line = element.pos.line}
-		name_seen, grants_seen, terms_seen := false, false, false
+		name_seen, scope_seen, grants_seen, terms_seen := false, false, false, false
 		for part in row_literal.elems {
 			field, is_field := part.derived.(^ast.Field_Value)
 			if !is_field {
@@ -438,6 +439,13 @@ start_grant_set_table_read :: proc(content, file, table: string) -> (rows: []Sta
 				}
 				row.name = strings.clone(name, context.temp_allocator)
 				name_seen = true
+			case "scope":
+				selector, is_selector := field.value.derived.(^ast.Implicit_Selector_Expr)
+				if scope_seen || !is_selector || selector.field == nil {
+					return nil, wrong_row
+				}
+				row.scope = strings.clone(selector.field.name, context.temp_allocator)
+				scope_seen = true
 			case "grants":
 				set, is_set := field.value.derived.(^ast.Comp_Lit)
 				if grants_seen || !is_set || set.type != nil {

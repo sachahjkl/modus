@@ -167,6 +167,7 @@ Pin_Verdict :: enum u8 {
 	Not_Pinned, // No pin of this system: the record is taken, and unlock pins it when it may seal.
 	Record_Pin_Mismatch, // The record of the machine key is not the pinned one, or the pinned one is absent: it is refused.
 	Principal_File_Pin_Mismatch, // The file of the principal is not the pinned one: it is refused.
+	Free_Slot, // The principal file pin holds "free, generation g" and no file is on disk: slot is cleanly free for creation at g + 1.
 }
 
 // machine_record_pin_verdict decides a record of the machine key from the
@@ -212,6 +213,15 @@ principal_file_pin_verdict :: proc "contextless" (state: Pin_State, payload: []u
 	}
 	if principal == 0 || principal > PIN_PRINCIPAL_LIMIT {
 		return .Principal_File_Pin_Mismatch, pin, .Principal_Mismatch
+	}
+	if pin.state == .Free {
+		if u32(principal) != pin.principal {
+			return .Principal_File_Pin_Mismatch, pin, .Principal_Mismatch
+		}
+		if present {
+			return .Principal_File_Pin_Mismatch, pin, .Slot_Free
+		}
+		return .Free_Slot, pin, .None
 	}
 	if !present {
 		return .Principal_File_Pin_Mismatch, pin, .Record_Absent

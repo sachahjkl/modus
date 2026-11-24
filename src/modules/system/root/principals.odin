@@ -55,6 +55,10 @@ Principal_Record :: struct {
 
 principal_records: [principals.PRINCIPAL_CAPACITY]Principal_Record
 
+// Named principal slots retired by removal during this boot run: refused
+// for new creation until reboot so no stale handle aliases a new principal.
+retired_slots: principals.Retired_Slots
+
 // The seat: what the screen shows, and the session in front. It is a fact
 // of its own, not the set of the unlocked records
 // (src/md/features/several_principals.md, "The states"). seat_change
@@ -101,7 +105,7 @@ seat_unlock_window_settle :: proc "contextless" () {
 	switch unlock_run.mode {
 	case .Unlock, .Unlock_Machine_Key_Held, .Create_Principal:
 		seat_change(.Unlock_Window_Opened)
-	case .Set_Machine_Passphrase, .Seal_Machine_Key, .Change_Passphrase, .New_Recovery_Key, .Machine_Key_Without_Window, .Prove_Wide_Grant:
+	case .Set_Machine_Passphrase, .Seal_Machine_Key, .Change_Passphrase, .New_Recovery_Key, .Machine_Key_Without_Window, .Prove_Wide_Grant, .Remove_Principal:
 	}
 }
 
@@ -152,6 +156,7 @@ unlock_run: Unlock_Run
 principal_change_waiting: bool
 principal_change_asker: ^Started // nil when the caller stopped: nobody receives the end.
 principal_change_tag: u32
+principal_change_principal: u64
 
 principal_name :: proc "contextless" (number: u64) -> string {
 	if number >= principals.PRINCIPAL_CAPACITY {
@@ -278,6 +283,11 @@ principal_create :: proc "contextless" (name: string, values: ^[7]u64) -> call_o
 	}
 	if principal_records[1].state == .Creating {
 		return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1)
+	}
+	// A slot freed by removal stays retired for the rest of this boot run so
+	// no stale handle can alias a newly created principal.
+	if !principals.slot_creation_allowed(&retired_slots, 1) {
+		return root_ring.refuse(values, .Wrong_State, kind, .State, .Principals, 0, 1)
 	}
 	// One named principal: several are not built.
 	if principal_records[1].state != .Absent {
@@ -499,6 +509,9 @@ principal_unlock_checked :: proc "contextless" (values: ^[7]u64, completion: ^[7
 	if !seat_change(.Session_Unlocked, number) || !session_change(number, .Unlocked) {
 		return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals, 2, i64(number))
 	}
+	// Reserve the session's child kernel budget and storage block quota so
+	// session processes hit the session limit before any machine limit.
+	session_budget_open(number)
 	// The client keys that the principal allowed take calls again.
 	remote_clients_session_changed(number, false)
 	// The proofs of wide grants not given count from 0 again.
@@ -536,6 +549,7 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> call_outcome.Call_
 	}
 	session_change(number, .Locked)
 	seat_change(.Session_Locked, number)
+	session_budget_close(number)
 	storage_principal_locked(number)
 	// A call from another machine acts for no principal whose session is
 	// locked: the connections of its client keys end.
@@ -556,6 +570,15 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> call_outcome.Call_
 		unlock_stop_ask()
 		started_process_stop(running)
 		system.log_fact(.Info, Unlock_Stopped_By_Lock{unlock_mode = text_field(principals.mode_words(unlock_run.mode), 40)})
+	}
+	// Tear down the display holder of the locked session and start a fresh one
+	// after reap so no clipboard, palette ranking, glyph cache, or notification
+	// state crosses the session boundary; unlock_for_a_locked_principal then
+	// opens unlock on the fresh display holder.
+	if display_holder_restart_request() {
+		return .Succeeded
+	}
+	if find("unlock") != nil {
 		return .Succeeded
 	}
 	unlock_start(.Unlock, "")
@@ -650,9 +673,13 @@ principal_change_end :: proc "contextless" (values: [7]u64, completion: ^[7]u64)
 }
 
 // principal_change_finish gives the end of the change to its caller, when
-// it still runs, and ends the change.
+// it still runs, and ends the change. When `end` is `.Principal_Removed`,
+// the root service tears down the session, revokes its keys, retires the slot
+// for this run, and restarts the display holder.
 principal_change_finish :: proc "contextless" (end: principals.Change_End, problem: principals.Change_Problem) {
 	principal_change_waiting = false
+	changed_principal := principal_change_principal
+	principal_change_principal = principals.MACHINE
 	system.log_fact(.Info, Principal_Change_Ended{change_end = text_field(principals.change_end_sentences[end], 64)})
 	asker := principal_change_asker
 	principal_change_asker = nil
@@ -661,6 +688,55 @@ principal_change_finish :: proc "contextless" (end: principals.Change_End, probl
 			system.log_fact(.Warning, Change_End_Not_Delivered{caller = module_name_field(system.name_of(asker.name[:]))})
 		}
 	}
+	if end == .Principal_Removed && changed_principal != principals.MACHINE && changed_principal < principals.PRINCIPAL_CAPACITY {
+		principal_remove_finish(changed_principal)
+	}
+}
+
+// principal_remove_finish tears down a removed named principal: transitions
+// to Removing, stops all session processes, closes its session budget, clears
+// its storage and client keys, retires the slot for this run, updates the
+// seat, and requests a fresh display holder.
+@(private = "file")
+principal_remove_finish :: proc "contextless" (number: u64) {
+	session_change(number, .Removal_Begun)
+	wide_grant_principal_locked(number)
+	count: u64
+	for &item in started {
+		if item.process != 0 && item.principal == number {
+			if wide_grant_collector_held_at_lock(&item) {
+				count += 1
+				continue
+			}
+			started_process_stop(&item)
+			if !item.is_terminal {
+				count += 1
+			}
+		}
+	}
+	session_budget_close(number)
+	storage_principal_locked(number)
+	remote_clients_principal_removed(number)
+	persisted_tables[number] = {state = .Awaited}
+	principal_created_in_this_run[number] = false
+	principals.slot_retire(&retired_slots, number)
+	record_state := principal_records[number].state
+	principal_records[number] = {state = record_state}
+	session_change(number, .Removal_Finished)
+	seat_change(.Session_Removed, number)
+	any_named := false
+	for idx in u64(1) ..< principals.PRINCIPAL_CAPACITY {
+		if principal_records[idx].state != .Absent {
+			any_named = true
+			break
+		}
+	}
+	if !any_named {
+		seat_change(.Last_Named_Principal_Removed, principals.MACHINE)
+	}
+	remote_clients_front_follow()
+	system.log_fact(.Info, Principal_Removed{principal = number, stopped_processes = count})
+	_ = display_holder_restart_request()
 }
 
 // principal_change_forget takes a process that stops out of the change:
@@ -679,11 +755,11 @@ principal_change_forget :: proc "contextless" (item: ^Started) {
 }
 
 // principal_change runs the command Principal_Change: it starts `unlock` to
-// change the passphrase of the principal of the session of the caller, or
-// to make it a new recovery key. The caller acts for that principal, and
-// its session runs: the console of principal 0 cannot ask for a named
-// principal. The window asks for the current passphrase before any change
-// (src/md/features/tpm_sealed_principal_keys.md). values is the
+// change the passphrase of the principal of the session of the caller, to
+// make it a new recovery key, or to remove the principal. The caller acts for
+// that principal, and its session runs: the console of principal 0 cannot ask
+// for a named principal. The window asks for the current passphrase before any
+// change (src/md/features/tpm_sealed_principal_keys.md). values is the
 // completion: an error record for a refusal. A change that starts holds
 // the completion until it ends (principal_change_finish).
 principal_change :: proc "contextless" (caller: ^Started, tag: u32, change: u64, values: ^[7]u64) -> (outcome: call_outcome.Call_Outcome, held: bool) {
@@ -692,6 +768,7 @@ principal_change :: proc "contextless" (caller: ^Started, tag: u32, change: u64,
 		principal_change_waiting = true
 		principal_change_asker = caller
 		principal_change_tag = tag
+		principal_change_principal = caller.principal
 	}
 	return
 }
@@ -712,6 +789,8 @@ principal_change_begin :: proc "contextless" (caller: ^Started, change: u64, val
 		mode = .Change_Passphrase
 	case .Recovery_Key:
 		mode = .New_Recovery_Key
+	case .Remove:
+		mode = .Remove_Principal
 	}
 	number := caller.principal
 	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state != .In_Front {
@@ -724,10 +803,13 @@ principal_change_begin :: proc "contextless" (caller: ^Started, change: u64, val
 		system.log_fact(.Warning, Passphrase_Change_Refused_Unlock_Runs{})
 		return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1), false
 	}
-	if mode == .Change_Passphrase {
+	switch asked {
+	case .Passphrase:
 		system.log_fact(.Info, Passphrase_Change_Started{principal = number, principal_name = text_field(principal_name(number), 24)})
-	} else {
+	case .Recovery_Key:
 		system.log_fact(.Info, Recovery_Key_Change_Started{principal = number, principal_name = text_field(principal_name(number), 24)})
+	case .Remove:
+		system.log_fact(.Info, Principal_Removal_Started{principal = number, principal_name = text_field(principal_name(number), 24)})
 	}
 	if started := unlock_start(mode, "", number, values); started != .Succeeded {
 		return started, false

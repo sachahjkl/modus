@@ -51,9 +51,9 @@ TABLE_KEYS := [?]string{"the machine key", "the key of the principal"}
 @(private = "file")
 CLIENT_USES := [?]string{"calls, view and input", "calls and view", "view and input", "view", "calls", "no use"}
 @(private = "file")
-UNLOCK_MODES := [?]string{"an unlock", "the creation of a principal", "the machine passphrase that is set", "the machine key that the TPM seals", "a change of the passphrase", "a new recovery key", "the machine key before the start policy", "a mode that names no member"}
+UNLOCK_MODES := [?]string{"an unlock", "the creation of a principal", "the machine passphrase that is set", "the machine key that the TPM seals", "a change of the passphrase", "a new recovery key", "the machine key before the start policy", "the proof of a wide grant", "the removal of a principal", "a mode that names no member"}
 @(private = "file")
-CHANGE_ENDS := [?]string{"unlock stopped before the end: the old or the new secret opens", "the passphrase is changed", "the change is cancelled: nothing changed"}
+CHANGE_ENDS := [?]string{"unlock stopped before the end: the old or the new secret opens", "the passphrase is changed", "the change is cancelled: nothing changed", "the principal keys are destroyed and removed"}
 @(private = "file")
 FAILURE_CAUSES := [?]string{"the rescue start policy is absent from the boot image", "the rescue start policy did not start", "the rescue start policy stopped before the machine was usable", "the rescue start policy stopped after the machine was usable", "the rescue start policy sent no Machine_Usable within the hang bound"}
 
@@ -397,14 +397,11 @@ the_disk_grant_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^t
 			expect(t, render(t, file, "Client_Key_Restored_For_Display", {{"principal", principal}, {"client_key", key_head}, {"uses", uses}}), line_of_before("root: the client key ", key_head, " of the remote display holds again for principal ", principal, ", from its disk grant table: ", uses))
 			expect(t, render(t, file, "Client_Key_Revoked", {{"principal", principal}, {"connections_ended", other}, {"client_key", key_head}, {"uses", uses}}), line_of_before("root: principal ", principal, " revoked the client key ", key_head, " (", uses, "): connections to services ended: ", other))
 		}
-		expect(t, render(t, file, "Client_Key_Revoked_Contested", {{"principal", principal}, {"client_key", key_head}}), line_of_before("root: principal ", principal, " revoked the client key ", key_head, " of remote, which was contested: connections to services ended: 0"))
 		expect(t, render(t, file, "Client_Key_Restored", {{"principal", principal}, {"client_key", key_head}}), line_of_before("root: the client key ", key_head, " of remote holds again for principal ", principal, ", from its disk grant table: each call of that client acts for it"))
 		expect(t, render(t, file, "Client_Table_Full", {{"principal", principal}, {"client_key", key_head}}), line_of_before("root: the client table of remote has no free row for the client key ", key_head, " of principal ", principal, ": the key holds for no principal"))
-		expect(t, render(t, file, "Client_Key_Contest_Ended", {{"principal", principal}, {"revoking_principal", other}, {"client_key", key_head}}), line_of_before("root: the client key ", key_head, " of remote holds again for principal ", principal, ": principal ", other, " revoked it, so it is no longer contested"))
 		expect(t, render(t, file, "Client_Key_Not_In_Table", {{"principal", principal}, {"connections_ended", other}, {"client_key", key_head}}), line_of_before("root: the client key ", key_head, " of remote, which principal ", principal, " allowed before its disk grant table was read, is not in that table: its grant ends; connections to services ended: ", other))
 		expect(t, render(t, file, "Client_Key_View_Paused", {{"principal", principal}, {"front_principal", other}, {"connections_ended", principal}, {"client_key", key_head}}), line_of_before("root: the client key ", key_head, " of principal ", principal, " loses the view and the input while the session of principal ", other, " is in front; connections to services ended: ", principal))
 		expect(t, render(t, file, "Client_Key_View_Back", {{"principal", principal}, {"client_key", key_head}}), line_of_before("root: the client key ", key_head, " of principal ", principal, " has the view again: the session of its principal is in front"))
-		expect(t, render(t, file, "Remote_Connection_Refused_Contested", {{"principal", principal}, {"other_principal", other}, {"client_key", key_head}}), line_of_before("root: refused a connection of remote for the client key ", key_head, ": it is contested between principal ", principal, " and principal ", other, ", and acts for neither"))
 	}
 }
 
@@ -939,7 +936,6 @@ the_table_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 		for lasting in key_lastings {
 			expect(t, render(t, file, lasting[0], {{"principal", principal}, {"client_key", key_head}}), line_of_before("root: principal ", principal, " allowed the client key ", key_head, " of remote: each call of that client acts for it", lasting[1]))
 		}
-		expect(t, render(t, file, "Client_Key_Contested", {{"principal", principal}, {"other_principal", other}, {"connections_ended", principal}, {"client_key", key_head}}), line_of_before("root: the client key ", key_head, " of remote is contested: principal ", principal, " allowed it since the machine started, and the disk grant table of principal ", other, " holds it; it acts for neither until one of them revokes it; connections to services ended: ", principal))
 	}
 }
 

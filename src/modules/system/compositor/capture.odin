@@ -24,6 +24,7 @@ import "modus:display"
 import "modus:graphics"
 import "modus:interface"
 import "internal:compositor/bar"
+import "internal:compositor/capture_filter"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:contract/wide_grants"
@@ -457,15 +458,39 @@ capture_after_draw :: proc "contextless" (areas: []Rectangle) {
 	}
 	written := 1 - capture.last_written
 	debt := &capture.debts[written]
+	// Collect outer rectangles of windows excluded from capture (every
+	// surface of `unlock`) so no pixel of them enters Screen_View or
+	// remote_display frames.
+	excluded: [CLIENT_CAPACITY]capture_filter.Rect
+	excluded_count := 0
+	for &client in clients {
+		if client.ring_memory == 0 || !client.created || client.minimized || !client.exclude_from_capture {
+			continue
+		}
+		outer_w, outer_h := window_outer_size(&client)
+		excluded[excluded_count] = {x = client.x, y = client.y, width = outer_w, height = outer_h}
+		excluded_count += 1
+	}
+	picture := capture.pictures[written]
+	picture_total := picture.height * picture.stride
 	for rectangle in debt.rectangles[:debt.count] {
 		left, top := max(rectangle.left, 0), max(rectangle.top, 0)
 		right, bottom := min(rectangle.right, screen.width), min(rectangle.bottom, screen.height)
 		if right <= left || bottom <= top {
 			continue
 		}
-		target := graphics.view(capture.pictures[written], left, top, right - left, bottom - top)
+		target := graphics.view(picture, left, top, right - left, bottom - top)
 		source := graphics.view(frame, left, top, right - left, bottom - top)
 		graphics.copy(target, 0, 0, source)
+		if excluded_count > 0 {
+			offset := top * picture.stride + left
+			_ = capture_filter.mask_excluded_regions(
+				picture.pixels[offset:picture_total],
+				picture.stride,
+				{x = left, y = top, width = right - left, height = bottom - top},
+				excluded[:excluded_count],
+			)
+		}
 	}
 	debt^ = {}
 	capture.serial += 1

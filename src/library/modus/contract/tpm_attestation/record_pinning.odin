@@ -26,18 +26,17 @@ import "modus:contract/enum_word"
 // reader of this one. Format 1 had no record digest in the pin of the
 // machine key, and no announced digest.
 PIN_RECORD_FORMAT :: u16(2)
-// The format of the payload of a principal file pin. Format 3 added the
-// principal identifier (src/md/features/several_principals.md, "The
-// identity: three names"); a payload of format 2 is refused as of an
-// unknown format, and the file of its principal is of the older format too.
-PRINCIPAL_FILE_PIN_FORMAT :: u16(3)
+// The format of the payload of a principal file pin. Format 4 adds
+// Principal_Pin_State (`Active` vs `Free`, carrying "free, generation g"
+// after deliberate removal); older formats 2 and 3 are refused as unknown.
+PRINCIPAL_FILE_PIN_FORMAT :: u16(4)
 
 // The magics of the two payloads, and the texts of their checksums. Two
 // texts keep a payload of one kind from passing the checksum of the other.
 MACHINE_KEY_PIN_MAGIC :: "MODUSMKP"
 MACHINE_KEY_PIN_DOMAIN :: "MODUS_MACHINE_KEY_PIN_V2"
 PRINCIPAL_FILE_PIN_MAGIC :: "MODUSPFP"
-PRINCIPAL_FILE_PIN_DOMAIN :: "MODUS_PRINCIPAL_FILE_PIN_V3"
+PRINCIPAL_FILE_PIN_DOMAIN :: "MODUS_PRINCIPAL_FILE_PIN_V4"
 
 // The bytes of the first word of a record of the machine key: its magic,
 // which names its form.
@@ -57,7 +56,7 @@ MACHINE_KEY_PIN_RECORD_SIZE :: MACHINE_KEY_PIN_OFFSET_CHECKSUM + SHA256_SIZE
 // The layout of the payload of a principal file pin.
 PRINCIPAL_FILE_PIN_OFFSET_MAGIC :: 0
 PRINCIPAL_FILE_PIN_OFFSET_FORMAT :: 8
-PRINCIPAL_FILE_PIN_OFFSET_RESERVED :: 10
+PRINCIPAL_FILE_PIN_OFFSET_STATE :: 10 // u16: Principal_Pin_State (Active = 0, Free = 1).
 PRINCIPAL_FILE_PIN_OFFSET_PRINCIPAL :: 12
 PRINCIPAL_FILE_PIN_OFFSET_GENERATION :: 16
 PRINCIPAL_FILE_PIN_OFFSET_IDENTIFIER :: 24
@@ -65,6 +64,14 @@ PRINCIPAL_FILE_PIN_OFFSET_DIGEST :: PRINCIPAL_FILE_PIN_OFFSET_IDENTIFIER + IDENT
 PRINCIPAL_FILE_PIN_OFFSET_NEXT_DIGEST :: PRINCIPAL_FILE_PIN_OFFSET_DIGEST + SHA256_SIZE
 PRINCIPAL_FILE_PIN_OFFSET_CHECKSUM :: PRINCIPAL_FILE_PIN_OFFSET_NEXT_DIGEST + SHA256_SIZE
 PRINCIPAL_FILE_PIN_RECORD_SIZE :: PRINCIPAL_FILE_PIN_OFFSET_CHECKSUM + SHA256_SIZE
+
+// State of a principal file TPM pin: Active pins a live principal file; Free
+// ("free, generation g") records an intentional removal so a later reboot may
+// create a new principal in the slot at generation + 1 while blocking rollback.
+Principal_Pin_State :: enum u16 {
+	Active = 0,
+	Free   = 1,
+}
 
 // The bytes of a principal identifier: 32 random bytes that name a named
 // principal on the disk (modus:principals, Principal_Identifier).
@@ -111,6 +118,9 @@ Pin_Refusal :: enum u8 {
 	Announce_Pending     = 26, // The pin announces a record already: it is settled first.
 	Identifier_Zero      = 27, // The principal identifier is all zero: no creation draws it.
 	Identifier_Mismatch  = 28, // The file names another principal identifier than the pin.
+	Unknown_State        = 29, // The state word of a principal file pin names no Principal_Pin_State.
+	Free_Pin_Not_Zero    = 30, // A Free pin carries a non-zero identifier or digest.
+	Slot_Free            = 31, // The slot pin is Free: no file may exist on disk, and Free cannot transition to Free.
 }
 
 // The words of each refusal, for a line of the log.
@@ -145,6 +155,9 @@ pin_refusal_words := [Pin_Refusal]string {
 	.Announce_Pending     = "the pin announces a record already",
 	.Identifier_Zero      = "the principal identifier is zero",
 	.Identifier_Mismatch  = "the principal identifier is not the pinned identifier",
+	.Unknown_State        = "the pin state is not known",
+	.Free_Pin_Not_Zero    = "a free pin carries a non-zero identifier or digest",
+	.Slot_Free            = "the pin marks this principal slot free",
 }
 
 // pin_refusal_of_word is the border of the word of a refusal that crosses
@@ -172,11 +185,12 @@ Machine_Key_Pin :: struct {
 // The pinned file of a named principal. A generation of 0 is the zero value
 // of a pin that does not exist yet: no stored payload holds it.
 Principal_File_Pin :: struct {
+	state:       Principal_Pin_State, // Active (0) or Free (1, "free, generation g").
 	principal:   u32, // The slot of the pin index.
-	identifier:  Identifier, // The principal identifier of the pinned file.
+	identifier:  Identifier, // The principal identifier of the pinned file (all zero when Free).
 	generation:  u64,
-	file_digest: Digest,
-	next_digest: Digest,
+	file_digest: Digest, // All zero when Free.
+	next_digest: Digest, // All zero when Free.
 }
 
 // machine_key_form_of_word is the border of a form word of a pin payload.
@@ -463,7 +477,7 @@ principal_file_pin_encode :: proc "contextless" (pin: Principal_File_Pin, out: [
 	digest, next_digest := pin.file_digest, pin.next_digest
 	copy(payload[PRINCIPAL_FILE_PIN_OFFSET_MAGIC:], PRINCIPAL_FILE_PIN_MAGIC)
 	byte_order.write_u16_big_endian(payload, PRINCIPAL_FILE_PIN_OFFSET_FORMAT, PRINCIPAL_FILE_PIN_FORMAT)
-	byte_order.write_u16_big_endian(payload, PRINCIPAL_FILE_PIN_OFFSET_RESERVED, 0)
+	byte_order.write_u16_big_endian(payload, PRINCIPAL_FILE_PIN_OFFSET_STATE, u16(pin.state))
 	byte_order.write_u32_big_endian(payload, PRINCIPAL_FILE_PIN_OFFSET_PRINCIPAL, pin.principal)
 	byte_order.write_u64_big_endian(payload, PRINCIPAL_FILE_PIN_OFFSET_GENERATION, pin.generation)
 	identifier := pin.identifier
@@ -479,19 +493,30 @@ principal_file_pin_encode :: proc "contextless" (pin: Principal_File_Pin, out: [
 // no principal file.
 @(private = "file")
 principal_file_pin_fields_check :: proc "contextless" (pin: Principal_File_Pin) -> Pin_Refusal {
+	if _, state_ok := enum_word.member_of_word(Principal_Pin_State, u64(pin.state)); !state_ok {
+		return .Unknown_State
+	}
 	if pin.principal == 0 {
 		return .Principal_Zero
-	}
-	identifier := pin.identifier
-	if is_all_zero(identifier[:]) {
-		return .Identifier_Zero
 	}
 	if pin.generation == 0 {
 		return .Generation_Zero
 	}
+	identifier := pin.identifier
 	digest := pin.file_digest
-	if is_all_zero(digest[:]) {
-		return .Zero_Digest
+	next_digest := pin.next_digest
+	switch pin.state {
+	case .Active:
+		if is_all_zero(identifier[:]) {
+			return .Identifier_Zero
+		}
+		if is_all_zero(digest[:]) {
+			return .Zero_Digest
+		}
+	case .Free:
+		if !is_all_zero(identifier[:]) || !is_all_zero(digest[:]) || !is_all_zero(next_digest[:]) {
+			return .Free_Pin_Not_Zero
+		}
 	}
 	return .None
 }
@@ -503,10 +528,13 @@ principal_file_pin_decode :: proc "contextless" (bytes: []u8) -> (pin: Principal
 	if refusal != .None {
 		return {}, refusal
 	}
-	if byte_order.read_u16_big_endian(bytes, PRINCIPAL_FILE_PIN_OFFSET_RESERVED) != 0 {
-		return {}, .Reserved_Not_Zero
+	state_word := byte_order.read_u16_big_endian(bytes, PRINCIPAL_FILE_PIN_OFFSET_STATE)
+	state, state_ok := enum_word.member_of_word(Principal_Pin_State, u64(state_word))
+	if !state_ok {
+		return {}, .Unknown_State
 	}
 	decoded := Principal_File_Pin {
+		state      = state,
 		principal  = byte_order.read_u32_big_endian(bytes, PRINCIPAL_FILE_PIN_OFFSET_PRINCIPAL),
 		generation = byte_order.read_u64_big_endian(bytes, PRINCIPAL_FILE_PIN_OFFSET_GENERATION),
 	}
@@ -521,24 +549,23 @@ principal_file_pin_decode :: proc "contextless" (bytes: []u8) -> (pin: Principal
 }
 
 // principal_file_pin_advance decides if the pin current may become
-// proposed: the same principal, a higher generation. A kept older file
-// then has a generation that the pin refuses, with its old passphrase.
+// proposed: same principal, strictly higher generation, and valid state
+// transition (Absent -> Active, Active(A) -> Active(A), Active(A) -> Free,
+// or Free -> Active(B)). Absent -> Free, Active(A) -> Active(B), and
+// Free -> Free are refused.
 principal_file_pin_advance :: proc "contextless" (current: Principal_File_Pin, proposed: Principal_File_Pin) -> Pin_Refusal {
 	refusal := principal_file_pin_fields_check(proposed)
 	if refusal != .None {
 		return refusal
 	}
 	if current.generation == 0 {
+		if proposed.state == .Free {
+			return .Not_Pinned
+		}
 		return .None
-	}
-	if pin_announce_pending(current.next_digest, proposed.next_digest) {
-		return .Announce_Pending
 	}
 	if proposed.principal != current.principal {
 		return .Principal_Mismatch
-	}
-	if proposed.identifier != current.identifier {
-		return .Identifier_Mismatch
 	}
 	if proposed.generation == current.generation {
 		return .Generation_Replay
@@ -546,17 +573,45 @@ principal_file_pin_advance :: proc "contextless" (current: Principal_File_Pin, p
 	if proposed.generation < current.generation {
 		return .Generation_Rollback
 	}
+	switch current.state {
+	case .Active:
+		switch proposed.state {
+		case .Active:
+			if pin_announce_pending(current.next_digest, proposed.next_digest) {
+				return .Announce_Pending
+			}
+			if proposed.identifier != current.identifier {
+				return .Identifier_Mismatch
+			}
+		case .Free:
+			cur_next := current.next_digest
+			if !is_all_zero(cur_next[:]) {
+				return .Announce_Pending
+			}
+		}
+	case .Free:
+		switch proposed.state {
+		case .Active:
+			// A new principal takes the freed slot at a higher generation.
+		case .Free:
+			return .Slot_Free
+		}
+	}
 	return .None
 }
 
 // principal_file_pin_check checks a principal file that the disk gave
-// against its pin: the current digest, or the announced one.
+// against its pin: the current digest, or the announced one. A Free pin
+// refuses any file on disk.
 principal_file_pin_check :: proc "contextless" (pin: Principal_File_Pin, principal: u32, identifier: Identifier, file: []u8) -> (match: Pin_Match, refusal: Pin_Refusal) {
 	if pin.generation == 0 {
 		return .Current, .Not_Pinned
 	}
 	if principal != pin.principal {
 		return .Current, .Principal_Mismatch
+	}
+	if pin.state == .Free {
+		return .Current, .Slot_Free
 	}
 	// The pin of a slot names the identifier: a file of another principal
 	// in the slot is refused, whatever its digest.
@@ -568,10 +623,13 @@ principal_file_pin_check :: proc "contextless" (pin: Principal_File_Pin, princip
 
 // principal_file_pin_announce gives the pin to write before the write of a
 // new file of a pinned principal: the current file stays current, and the
-// new one is announced. A principal with no pin announces nothing.
+// new one is announced. A principal with no pin or a Free pin announces nothing.
 principal_file_pin_announce :: proc "contextless" (current: Principal_File_Pin, new_file: []u8) -> (proposed: Principal_File_Pin, refusal: Pin_Refusal) {
 	if current.generation == 0 {
 		return {}, .Not_Pinned
+	}
+	if current.state == .Free {
+		return {}, .Slot_Free
 	}
 	if current.generation == max(u64) {
 		return {}, .Generation_Exhausted
@@ -587,13 +645,35 @@ principal_file_pin_announce :: proc "contextless" (current: Principal_File_Pin, 
 }
 
 // principal_file_pin_settle gives the pin to write after a write: kept is
-// the file that the store holds now. A principal with no pin gets its first
-// pin here, at the generation 1.
+// the file that the store holds now. Works for first pin (generation 1),
+// settling an announce, and creating a new principal in a Free slot
+// (advancing from Free(g) to Active(B, g + 1)).
 principal_file_pin_settle :: proc "contextless" (current: Principal_File_Pin, principal: u32, identifier: Identifier, kept: []u8) -> (proposed: Principal_File_Pin, refusal: Pin_Refusal) {
 	if current.generation == max(u64) {
 		return {}, .Generation_Exhausted
 	}
-	proposed = {principal = principal, identifier = identifier, generation = current.generation + 1, file_digest = principal_file_digest(kept)}
+	proposed = {state = .Active, principal = principal, identifier = identifier, generation = current.generation + 1, file_digest = principal_file_digest(kept)}
+	refusal = principal_file_pin_advance(current, proposed)
+	if refusal != .None {
+		return {}, refusal
+	}
+	return proposed, .None
+}
+
+// principal_file_pin_free produces the "free, generation g" pin written at
+// the end of principal removal: increments generation, sets state = .Free,
+// and zeroes identifier and digests.
+principal_file_pin_free :: proc "contextless" (current: Principal_File_Pin) -> (proposed: Principal_File_Pin, refusal: Pin_Refusal) {
+	if current.generation == 0 {
+		return {}, .Not_Pinned
+	}
+	if current.state == .Free {
+		return {}, .Slot_Free
+	}
+	if current.generation == max(u64) {
+		return {}, .Generation_Exhausted
+	}
+	proposed = {state = .Free, principal = current.principal, generation = current.generation + 1}
 	refusal = principal_file_pin_advance(current, proposed)
 	if refusal != .None {
 		return {}, refusal

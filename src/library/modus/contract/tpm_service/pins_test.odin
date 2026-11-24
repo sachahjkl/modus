@@ -202,6 +202,47 @@ a_principal_file_rolled_back_to_an_older_passphrase_is_refused :: proc(t: ^testi
 	testing.expect_value(t, verdict, Pin_Verdict.Not_Pinned)
 }
 
+// A Free pin ("free, generation g") accepts an absent file as Free_Slot,
+// refuses a rolled-back file on disk with Slot_Free, and lets the TPM service
+// advance Free(g) -> Active(B, g+1) while refusing Free -> Free and rollback.
+@(test)
+free_pin_verdict_and_recreation_cycle :: proc(t: ^testing.T) {
+	file_a := transmute([]u8)string("PRINCIPT file A")
+	file_b := transmute([]u8)string("PRINCIPT file B")
+	id_b := TEST_IDENTIFIER
+	id_b[0] ~= 0x55
+
+	pin_a, ref := tpm_attestation.principal_file_pin_settle({}, 1, TEST_IDENTIFIER, file_a)
+	testing.expect_value(t, ref, tpm_attestation.Pin_Refusal.None)
+	payload_a := principal_payload_of(t, pin_a)
+
+	freed, free_ref := tpm_attestation.principal_file_pin_free(pin_a)
+	testing.expect_value(t, free_ref, tpm_attestation.Pin_Refusal.None)
+	payload_free := principal_payload_of(t, freed)
+
+	req := Pin_Request{kind = .Principal_File, principal = 1, bytes = len(payload_free)}
+	// Active -> Free accepted by service; Absent -> Free refused; Free -> Free refused.
+	testing.expect_value(t, pin_write_refusal(req, .Held, payload_a[:], payload_free[:]), tpm_attestation.Pin_Refusal.None)
+	testing.expect_value(t, pin_write_refusal(req, .Absent, nil, payload_free[:]), tpm_attestation.Pin_Refusal.Not_Pinned)
+	freed_again := freed
+	freed_again.generation = 3
+	payload_free3 := principal_payload_of(t, freed_again)
+	testing.expect_value(t, pin_write_refusal(req, .Held, payload_free[:], payload_free3[:]), tpm_attestation.Pin_Refusal.Slot_Free)
+
+	// Verdict on Free pin: absent -> Free_Slot; planted file -> Mismatch(Slot_Free).
+	v, decoded, vref := principal_file_pin_verdict(.Held, payload_free[:], 1, {}, nil, false)
+	testing.expect(t, v == .Free_Slot && vref == .None && decoded == freed)
+	v, _, vref = principal_file_pin_verdict(.Held, payload_free[:], 1, TEST_IDENTIFIER, file_a, true)
+	testing.expect(t, v == .Principal_File_Pin_Mismatch && vref == .Slot_Free)
+
+	// Recreate in freed slot: Free(2) -> Active(B, 3) accepted by service.
+	pin_b, b_ref := tpm_attestation.principal_file_pin_settle(freed, 1, id_b, file_b)
+	testing.expect_value(t, b_ref, tpm_attestation.Pin_Refusal.None)
+	payload_b := principal_payload_of(t, pin_b)
+	testing.expect_value(t, pin_write_refusal(req, .Held, payload_free[:], payload_b[:]), tpm_attestation.Pin_Refusal.None)
+	testing.expect_value(t, pin_write_refusal(req, .Held, payload_b[:], payload_a[:]), tpm_attestation.Pin_Refusal.Generation_Rollback)
+}
+
 // The service writes no pin that goes back, changes the form to the
 // passphrase alone, names another principal, or replaces a damaged pin.
 @(test)

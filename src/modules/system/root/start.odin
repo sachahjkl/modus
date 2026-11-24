@@ -552,15 +552,14 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_O
 	// The capture face and the input face ride this ring: the compositor
 	// takes them only from the client whose record says so.
 	capture: u64 = .Screen_Capture in work.start_grant_set.grants ? display.CLIENT_CAPTURE : 0
-	// The window of unlock that proves a principal for a wide grant takes
-	// the keys of the input service only: an agent with input never types
-	// the proof of its own grant.
-	local_input_only: u64 = work.name == "unlock" && unlock_run.mode == .Prove_Wide_Grant ? display.CLIENT_LOCAL_INPUT_ONLY : 0
+	// Every process holding the Principals grant (`unlock`, in every mode)
+	// accepts local input only and is excluded from every screen capture.
+	client_flags: u64 = .Principals in work.start_grant_set.grants ? (display.CLIENT_LOCAL_INPUT_ONLY | display.CLIENT_EXCLUDE_FROM_CAPTURE) : 0
 	// Values 1 to 3: the name of the module, the one name of the window
 	// that the process does not choose; value 4 is 0 for a process of the
 	// boot image.
 	name := disk_process.name_pack(work.name)
-	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(work.slot.client), 1 = name[0], 2 = name[1], 3 = name[2], display.CLIENT_ADD_CAPTURE = capture, display.CLIENT_ADD_LOCAL_INPUT_ONLY = local_input_only}})
+	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(work.slot.client), 1 = name[0], 2 = name[1], 3 = name[2], display.CLIENT_ADD_CAPTURE = capture, display.CLIENT_ADD_LOCAL_INPUT_ONLY = client_flags}})
 	start_grant_put(work, .Display, {work.shared[0], {.Read, .Write}})
 	return .Succeeded
 }
@@ -775,7 +774,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 		intrinsics.mem_zero_volatile(&seeded_values, size_of(seeded_values))
 		intrinsics.mem_zero_volatile(&work.values.values, size_of(work.values.values))
 	}
-	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, seeded_values, process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring, held_entry = held_entry, ready = &work.slot.ready)
+	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, seeded_values, process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, from_budget = session_budget_of(work.principal), wiring = &work.wiring, held_entry = held_entry, ready = &work.slot.ready)
 	if status == .Ok {
 		start_budget_note(work.slot, start_budget)
 		// A process with a window of its own: the compositor ties the time
@@ -791,7 +790,8 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 	}
 	// A budget of no page: the start failed before process_start.
 	if status == .No_Budget && process_budget.pages != 0 {
-		budget_refusal_log(name, process_budget, 0, "this service")
+		paying := session_budget_of(work.principal)
+		budget_refusal_log(name, process_budget, paying, paying != 0 ? "the session" : "this service")
 	} else if load_error.stage != u32(module.Load_Stage.None) {
 		system.log_fact(.Warning, Start_Refused_By_Loader{refused_process = module_name_field(name)})
 		load_error_log(.Warning, &load_error)

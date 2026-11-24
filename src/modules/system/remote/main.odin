@@ -534,8 +534,8 @@ client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
 	rows: [remote.CLIENT_CAPACITY]remote.Client
 	remote.client_table_read(client_table, &rows)
 	proven := key^
-	row := remote.client_find(&rows, proven)
-	if row >= 0 && remote.client_grant_holds(&rows, row, rows[row].serial, .Calls) {
+	row := remote.client_find_holding(&rows, proven, .Calls)
+	if row >= 0 {
 		return true
 	}
 	if machine_wire.peer_admits(&mesh, proven, system.time()) {
@@ -544,12 +544,11 @@ client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
 	counts.keys_refused += 1
 	if log_allowed() {
 		client_key := key_field(proven)
-		if row >= 0 && rows[row].contested != 0 {
-			system.log_fact(.Info, Client_Key_Refused_Contested{principal = rows[row].principal, other_principal = rows[row].contested - 1, client_key = client_key})
-		} else if row >= 0 && rows[row].session_locked == 0 {
-			system.log_fact(.Info, Client_Key_Refused_For_Display_Only{principal = rows[row].principal, client_key = client_key})
-		} else if row >= 0 {
-			system.log_fact(.Info, Client_Key_Refused_Session_Locked{principal = rows[row].principal, client_key = client_key})
+		any_row := remote.client_find_any(&rows, proven)
+		if any_row >= 0 && rows[any_row].session_locked == 0 {
+			system.log_fact(.Info, Client_Key_Refused_For_Display_Only{principal = rows[any_row].principal, client_key = client_key})
+		} else if any_row >= 0 {
+			system.log_fact(.Info, Client_Key_Refused_Session_Locked{principal = rows[any_row].principal, client_key = client_key})
 		} else {
 			system.log_fact(.Info, Client_Key_Refused{client_key = client_key})
 		}
@@ -562,8 +561,8 @@ client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
 // row can end between the check of the handshake and this pass.
 client_bind :: proc "contextless" (connection: ^quic.Connection, client: ^Record_Client, peer: quic.Remote) {
 	key := connection.tls.client_public_key
-	row := remote.client_find(&client_rows, key)
-	if row < 0 || !remote.client_grant_holds(&client_rows, row, client_rows[row].serial, .Calls) {
+	row := remote.client_find_holding(&client_rows, key, .Calls)
+	if row < 0 {
 		if machine_wire.peer_admits(&mesh, key, system.time()) {
 			client.bound, client.mesh_only, client.row, client.key = true, true, -1, key
 			if log_allowed() {
@@ -650,12 +649,7 @@ client_grant_check :: proc "contextless" (connection: ^quic.Connection, client: 
 	quic.connection_close(connection, u64(remote.Stream_Error.Revoked), now_microseconds())
 	counts.revoked += 1
 	if log_allowed() {
-		place := client.row
-		if place >= 0 && place < remote.CLIENT_CAPACITY && client_rows[place].key == client.key && client_rows[place].contested != 0 {
-			system.log_fact(.Info, Client_Key_Contested{principal = client.principal, other_principal = client_rows[place].contested - 1, client_key_head = key_head_field(client.key), peer = peer_field(peer)})
-		} else {
-			system.log_fact(.Info, Client_Key_Grant_Ended{principal = client.principal, client_key_head = key_head_field(client.key), peer = peer_field(peer)})
-		}
+		system.log_fact(.Info, Client_Key_Grant_Ended{principal = client.principal, client_key_head = key_head_field(client.key), peer = peer_field(peer)})
 	}
 }
 
@@ -1352,10 +1346,13 @@ wide_grant_ask_serve :: proc "contextless" (buffer: []u8, received: int, client:
 	if !ok {
 		return refuse(buffer, .Argument_Refused, error, field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
 	}
+	if client.row < 0 || client.row >= remote.CLIENT_CAPACITY {
+		return refuse(buffer, .Grant_Or_Right_Missing, errors.error_make(.No_Grant, .Grants, 0, 0, 0), field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
+	}
 	key := transmute([4]u64)client.key
 	request_tag += 1
 	tag := request_tag
-	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Wide_Grant_Agent_Ask), tag = tag, values = {0 = key[0], 1 = key[1], 2 = key[2], 3 = key[3], 4 = wide_grants.wide_authorities_to_word(authorities), 5 = duration_ms}}) {
+	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Wide_Grant_Agent_Ask), tag = tag, values = {0 = key[0], 1 = key[1], 2 = key[2], 3 = key[3], 4 = wide_grants.wide_authorities_to_word(authorities), 5 = duration_ms, 6 = u64(client.row + 1)}}) {
 		return refuse(buffer, .Callee_Busy, errors.error_make(.Busy, .Requests, 0, 0, 0), field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
 	}
 	limit := system.time() + REQUEST_TIME_LIMIT

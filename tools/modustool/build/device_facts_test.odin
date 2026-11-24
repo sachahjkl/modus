@@ -116,13 +116,10 @@ the_facts_of_remote_write_the_lines_of_before :: proc(t: ^testing.T) {
 	refused_end :: "; the handshake ends before any call"
 
 	for principal in principals {
-		other := max(u64) - principal
-		facts_expect_line(t, render(t, file, "Client_Key_Refused_Contested", {{"principal", principal}, {"other_principal", other}, {"client_key", KEY_WHOLE}}), line_of_before("remote: refused the client key ", KEY_WHOLE, ": it is contested: principal ", principal, " and principal ", other, " both allowed it, and it acts for neither until one of them revokes it", refused_end))
 		facts_expect_line(t, render(t, file, "Client_Key_Refused_For_Display_Only", {{"principal", principal}, {"client_key", KEY_WHOLE}}), line_of_before("remote: refused the client key ", KEY_WHOLE, ": principal ", principal, " allowed it for the remote display, and not for calls", refused_end))
 		facts_expect_line(t, render(t, file, "Client_Key_Refused_Session_Locked", {{"principal", principal}, {"client_key", KEY_WHOLE}}), line_of_before("remote: refused the client key ", KEY_WHOLE, ": the session of its principal ", principal, " is locked", refused_end))
 		for peer in peers {
 			facts_expect_line(t, render(t, file, "Client_Key_Proved", {{"principal", principal}, {"client_key_head", KEY_HEAD}, {"peer", peer}}), line_of_before("remote: ", peer, " proved the client key ", KEY_HEAD, ": its calls act for principal ", principal))
-			facts_expect_line(t, render(t, file, "Client_Key_Contested", {{"principal", principal}, {"other_principal", other}, {"client_key_head", KEY_HEAD}, {"peer", peer}}), line_of_before("remote: the client key ", KEY_HEAD, " of principal ", principal, " is contested: principal ", other, " allowed it too, and it acts for neither; the connection from ", peer, " ends with the code Revoked"))
 			facts_expect_line(t, render(t, file, "Client_Key_Grant_Ended", {{"principal", principal}, {"client_key_head", KEY_HEAD}, {"peer", peer}}), line_of_before("remote: the grant of the client key ", KEY_HEAD, " of principal ", principal, " ended (a revocation, or a lock of its session): the connection from ", peer, " ends with the code Revoked"))
 		}
 		facts_expect_line(t, render(t, file, "Service_Connected", {{"principal", principal}, {"service", service}}), line_of_before("remote: connected to the service ", service, ", for principal ", principal))

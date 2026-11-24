@@ -127,6 +127,11 @@ desktop_features_init :: proc "contextless" (screen_w, screen_h, bar_h: i32) {
 	desktop_features_ready = true
 }
 
+desktop_notifications_reset :: proc "contextless" () {
+	notifications.queue_init(&desktop_notifications)
+	desktop_notifications.do_not_disturb = display_choices_in_force.do_not_disturb == .On
+}
+
 desktop_features_resize :: proc "contextless" (screen_w, screen_h, bar_h: i32) {
 	if !desktop_features_ready {
 		desktop_features_init(screen_w, screen_h, bar_h)

@@ -232,16 +232,16 @@ fuzz_remote_client_table_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		append(&keys, client.key)
 	}
 	for item in keys {
-		place := remote.client_find(&clients, item)
+		place := remote.client_find_for_principal(&clients, principal, item)
 		switch {
 		case place < -1 || place >= remote.CLIENT_CAPACITY:
-			return fuzz_broken(.Contract, "client_find gives the place %d", place)
-		case place >= 0 && (clients[place].serial == 0 || clients[place].key != item || item == ([32]u8{})):
-			return fuzz_broken(.Contract, "client_find gives a row that does not hold the key")
+			return fuzz_broken(.Contract, "client_find_for_principal gives the place %d", place)
+		case place >= 0 && (clients[place].serial == 0 || clients[place].principal != principal || clients[place].key != item || item == ([32]u8{})):
+			return fuzz_broken(.Contract, "client_find_for_principal gives a row that does not hold the key for the principal")
 		case place == -1:
 			for client in clients {
-				if item != ([32]u8{}) && client.serial != 0 && client.key == item {
-					return fuzz_broken(.Contract, "client_find misses a row that holds the key")
+				if item != ([32]u8{}) && client.serial != 0 && client.principal == principal && client.key == item {
+					return fuzz_broken(.Contract, "client_find_for_principal misses a row that holds the key for the principal")
 				}
 			}
 		}
@@ -250,10 +250,6 @@ fuzz_remote_client_table_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		case .Holds:
 			if at != place || clients[at].principal != principal {
 				return fuzz_broken(.Contract, "Holds names a row of another principal")
-			}
-		case .Contest, .Contested:
-			if at != place || clients[at].principal == principal || (clients[at].contested == 0) != (action == .Contest) {
-				return fuzz_broken(.Contract, "%v names the wrong row", action)
 			}
 		case .Take_Row:
 			if place != -1 || at < 0 || at >= remote.CLIENT_CAPACITY || clients[at].serial != 0 {
@@ -278,7 +274,7 @@ fuzz_remote_client_table_execute :: proc(input: []u8) -> Fuzz_Verdict {
 		for use in remote.Client_Use {
 			holds := remote.client_grant_holds(&clients, place, client.serial, use)
 			in_front := use == .Calls || client.not_in_front == 0
-			if holds != (client.serial != 0 && client.session_locked == 0 && client.contested == 0 && uses_named && word >> u64(use) & 1 != 0 && in_front) {
+			if holds != (client.serial != 0 && client.session_locked == 0 && uses_named && word >> u64(use) & 1 != 0 && in_front) {
 				return fuzz_broken(.Model, "client_grant_holds of the row %d for %v is %v, with the uses %x", place, use, holds, word)
 			}
 		}
@@ -294,7 +290,7 @@ fuzz_remote_client_table_execute :: proc(input: []u8) -> Fuzz_Verdict {
 fuzz_remote_client_table_seeds :: proc(seeds: ^[dynamic][]u8) {
 	table: remote.Client_Table
 	for place in 0 ..< remote.CLIENT_CAPACITY / 2 {
-		client := remote.Client{principal = u64(place % 2), serial = u64(place + 1), session_locked = u64(place == 2 ? 1 : 0), contested = u64(place == 3 ? 1 : 0), uses = remote.client_uses_word(place == 1 ? remote.Client_Uses{.View, .Input} : remote.Client_Uses{.Calls})}
+		client := remote.Client{principal = u64(place % 2), serial = u64(place + 1), session_locked = u64(place == 2 ? 1 : 0), uses = remote.client_uses_word(place == 1 ? remote.Client_Uses{.View, .Input} : remote.Client_Uses{.Calls})}
 		client.key[0], client.key[31] = u8(place + 1), 0x5A
 		table.clients[place] = client
 	}

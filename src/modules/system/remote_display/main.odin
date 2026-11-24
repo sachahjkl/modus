@@ -415,8 +415,8 @@ client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
 	rows: [remote.CLIENT_CAPACITY]remote.Client
 	remote.client_table_read(client_table, &rows)
 	proven := key^
-	row := remote.client_find(&rows, proven)
-	if row >= 0 && remote.client_grant_holds(&rows, row, rows[row].serial, .View) {
+	row := remote.client_find_holding(&rows, proven, .View)
+	if row >= 0 {
 		return true
 	}
 	if log_allowed() {
@@ -440,8 +440,8 @@ viewer_close :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewe
 // viewer_bind binds a record whose handshake ended to the row of its key.
 viewer_bind :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewer, peer: quic.Remote) {
 	key := connection.tls.client_public_key
-	row := remote.client_find(&client_rows, key)
-	if row < 0 || !remote.client_grant_holds(&client_rows, row, client_rows[row].serial, .View) {
+	row := remote.client_find_holding(&client_rows, key, .View)
+	if row < 0 {
 		viewer_close(connection, viewer, .Revoked)
 		if log_allowed() {
 			system.log_fact(.Info, Viewer_Key_Grant_Ended_In_Handshake{viewer_key_head = key_head_field(key), peer = peer_field(peer)})

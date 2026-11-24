@@ -5,6 +5,7 @@ import "core:testing"
 import "modus:contract/byte_order"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
+import "modus:contract/settings"
 import "modus:cryptography_primitives"
 import "modus:tpm2"
 
@@ -200,6 +201,178 @@ hostile_files_are_refused :: proc(t: ^testing.T) {
 	changed = good
 	changed[OFFSET_NAME + 10] = 'x'
 	expect(t, changed[:], .Bytes_After_Name)
+}
+
+// Unlock hints decode refuses unknown keyboard layouts, unknown assistive
+// bits, malformed language tags, non-zero trailing bytes, and short slices.
+// Both PRINCIPL and PRINCIPT authenticate hints under seal AAD while keeping
+// the recovery seal AAD independent of hints updates.
+@(test)
+unlock_hints_refuse_hostile_bytes_and_bind_to_seal_aad :: proc(t: ^testing.T) {
+	// Short slices are refused.
+	raw: [UNLOCK_HINTS_SIZE]u8
+	_, ok := unlock_hints_decode(nil)
+	testing.expect(t, !ok)
+	_, ok = unlock_hints_decode(raw[:UNLOCK_HINTS_SIZE - 1])
+	testing.expect(t, !ok)
+
+	valid := Unlock_Hints {
+		keyboard_layout = .French,
+		assistive       = {.Screen_Reader, .High_Contrast},
+		language_length = 5,
+	}
+	copy(valid.language[:], "fr-FR")
+	unlock_hints_encode(valid, raw[:])
+	parsed, parsed_ok := unlock_hints_decode(raw[:])
+	testing.expect(t, parsed_ok && parsed == valid)
+
+	// Unknown keyboard layout words are refused.
+	for bad_layout in ([?]u32{2, 99, max(u32)}) {
+		bad := raw
+		byte_order.write_u32_little_endian(bad[0:], 0, bad_layout)
+		_, dec_ok := unlock_hints_decode(bad[:])
+		testing.expect(t, !dec_ok, "unknown keyboard layout must be refused")
+	}
+
+	// Unknown assistive bits are refused.
+	for bad_bits in ([?]u32{1 << 4, 1 << 31, max(u32)}) {
+		bad := raw
+		byte_order.write_u32_little_endian(bad[4:], 0, bad_bits)
+		_, dec_ok := unlock_hints_decode(bad[:])
+		testing.expect(t, !dec_ok, "unknown assistive bit must be refused")
+	}
+
+	// Bad language length, disallowed characters, and non-zero trailing bytes.
+	bad := raw
+	bad[8] = HINT_LANGUAGE_LIMIT + 1
+	_, ok = unlock_hints_decode(bad[:])
+	testing.expect(t, !ok)
+	bad = raw
+	bad[9] = ' '
+	_, ok = unlock_hints_decode(bad[:])
+	testing.expect(t, !ok)
+	bad = raw
+	bad[9 + 5] = 'x' // trailing non-zero byte past language_length
+	_, ok = unlock_hints_decode(bad[:])
+	testing.expect(t, !ok)
+
+	// Format 1 and format 2 are both refused as Older_Format.
+	file := test_file()
+	file.hints = valid
+	encoded: [FILE_SIZE]u8
+	file_encode(&file, &encoded)
+	for older in ([?]u32{1, 2}) {
+		old_bytes := encoded
+		byte_order.write_u32_little_endian(old_bytes[OFFSET_FORMAT:], 0, older)
+		_, _, problem := file_decode(old_bytes[:])
+		testing.expect_value(t, problem, File_Problem.Older_Format)
+	}
+
+	// Tampered hints inside PRINCIPL either fail decode or change seal AAD.
+	bad_file := encoded
+	bad_file[OFFSET_UNLOCK_HINTS + 4] = 0x80 // unknown assistive bit
+	_, _, bad_problem := file_decode(bad_file[:])
+	testing.expect_value(t, bad_problem, File_Problem.Bad_Hints)
+
+	alt_file := file
+	alt_file.hints.keyboard_layout = .United_States
+	alt_encoded: [FILE_SIZE]u8
+	file_encode(&alt_file, &alt_encoded)
+	testing.expect(t, string(file_additional_data(&encoded)) != string(file_additional_data(&alt_encoded)), "changing hints must change PRINCIPL seal AAD")
+
+	// Tampered hints inside PRINCIPT change seal AAD while keeping recovery AAD unchanged.
+	tpm_file := test_principal_tpm_file()
+	tpm_file.hints = valid
+	tpm_encoded: [PRINCIPAL_TPM_FILE_SIZE]u8
+	principal_tpm_file_encode(&tpm_file, &tpm_encoded)
+	decoded_tpm, _, tpm_problem := principal_tpm_file_decode(tpm_encoded[:])
+	testing.expect_value(t, tpm_problem, File_Problem.None)
+	testing.expect_value(t, decoded_tpm.hints, valid)
+
+	for older in ([?]u32{1, 2}) {
+		old_tpm := tpm_encoded
+		byte_order.write_u32_little_endian(old_tpm[OFFSET_FORMAT:], 0, older)
+		_, _, problem := principal_tpm_file_decode(old_tpm[:])
+		testing.expect_value(t, problem, File_Problem.Older_Format)
+	}
+
+	alt_tpm := tpm_file
+	alt_tpm.hints.keyboard_layout = .United_States
+	alt_tpm_encoded: [PRINCIPAL_TPM_FILE_SIZE]u8
+	principal_tpm_file_encode(&alt_tpm, &alt_tpm_encoded)
+	testing.expect(t, string(principal_tpm_file_additional_data(&tpm_encoded)) != string(principal_tpm_file_additional_data(&alt_tpm_encoded)), "changing hints must change PRINCIPT seal AAD")
+	testing.expect(t, string(principal_tpm_file_recovery_additional_data(&tpm_encoded)) == string(principal_tpm_file_recovery_additional_data(&alt_tpm_encoded)), "updating hints must keep recovery seal AAD unchanged")
+
+	// Real ChaCha20-Poly1305 AEAD verification: seal PRINCIPL and PRINCIPT with
+	// valid hints, verify open succeeds, flip one valid hint byte (French ->
+	// United_States), verify syntax decode still accepts the altered hints, and
+	// verify AEAD open refuses the tampered file with .Not_Authentic.
+	key_bytes: [KEY_SIZE]u8
+	for i in 0 ..< KEY_SIZE {
+		key_bytes[i] = u8(0x40 + i)
+	}
+	plaintext: [SECRET_KEYS_SIZE]u8
+	for i in 0 ..< SECRET_KEYS_SIZE {
+		plaintext[i] = u8(0xA0 + i)
+	}
+	key_text := string(key_bytes[:])
+	plain_text := string(plaintext[:])
+
+	// PRINCIPL seal + tamper refusal.
+	sealed_file := test_file()
+	sealed_file.hints = valid
+	sealed_encoded: [FILE_SIZE]u8
+	file_encode(&sealed_file, &sealed_encoded)
+	nonce_text := string(sealed_file.nonce[:])
+	aad_text := string(file_additional_data(&sealed_encoded))
+	sealed_out := sealed_file.sealed[:]
+	err: errors.Error_Record
+	outcome, sealed_count := cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &aad_text, &plain_text, &sealed_out, &err)
+	testing.expect(t, outcome == .Succeeded && sealed_count == SEALED_SIZE)
+	file_encode(&sealed_file, &sealed_encoded)
+
+	opened: [SECRET_KEYS_SIZE]u8
+	opened_slice := opened[:]
+	cipher_text := string(sealed_file.sealed[:])
+	aad_check := string(file_additional_data(&sealed_encoded))
+	open_outcome, open_count := cryptography_primitives.open_with_chacha20_poly1305(&key_text, &nonce_text, &aad_check, &cipher_text, &opened_slice, &err)
+	testing.expect(t, open_outcome == .Succeeded && open_count == SECRET_KEYS_SIZE && opened == plaintext)
+
+	tampered := sealed_encoded
+	byte_order.write_u32_little_endian(tampered[OFFSET_UNLOCK_HINTS:], 0, u32(settings.Keyboard_Layout.United_States))
+	tampered_decoded, tampered_kept, tamper_prob := file_decode(tampered[:])
+	testing.expect_value(t, tamper_prob, File_Problem.None)
+	testing.expect_value(t, tampered_decoded.hints.keyboard_layout, settings.Keyboard_Layout.United_States)
+	tampered_aad := string(file_additional_data(&tampered_kept))
+	tampered_cipher := string(tampered_decoded.sealed[:])
+	err = {}
+	tamper_outcome, _ := cryptography_primitives.open_with_chacha20_poly1305(&key_text, &nonce_text, &tampered_aad, &tampered_cipher, &opened_slice, &err)
+	testing.expect_value(t, tamper_outcome, call_outcome.Call_Outcome.Argument_Refused)
+	testing.expect_value(t, err.kind, i64(errors.Kind.Not_Authentic))
+
+	// PRINCIPT seal + tamper refusal (while recovery seal stays valid).
+	sealed_tpm := test_principal_tpm_file()
+	sealed_tpm.hints = valid
+	sealed_tpm_encoded: [PRINCIPAL_TPM_FILE_SIZE]u8
+	principal_tpm_file_encode(&sealed_tpm, &sealed_tpm_encoded)
+	tpm_nonce := string(sealed_tpm.nonce[:])
+	tpm_aad := string(principal_tpm_file_additional_data(&sealed_tpm_encoded))
+	tpm_out := sealed_tpm.sealed[:]
+	err = {}
+	outcome, sealed_count = cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &tpm_nonce, &tpm_aad, &plain_text, &tpm_out, &err)
+	testing.expect(t, outcome == .Succeeded && sealed_count == SEALED_SIZE)
+	principal_tpm_file_encode(&sealed_tpm, &sealed_tpm_encoded)
+
+	tampered_tpm := sealed_tpm_encoded
+	byte_order.write_u32_little_endian(tampered_tpm[OFFSET_UNLOCK_HINTS:], 0, u32(settings.Keyboard_Layout.United_States))
+	tampered_tpm_decoded, tampered_tpm_kept, tpm_tamper_prob := principal_tpm_file_decode(tampered_tpm[:])
+	testing.expect_value(t, tpm_tamper_prob, File_Problem.None)
+	tampered_tpm_aad := string(principal_tpm_file_additional_data(&tampered_tpm_kept))
+	tampered_tpm_cipher := string(tampered_tpm_decoded.sealed[:])
+	err = {}
+	tamper_outcome, _ = cryptography_primitives.open_with_chacha20_poly1305(&key_text, &tpm_nonce, &tampered_tpm_aad, &tampered_tpm_cipher, &opened_slice, &err)
+	testing.expect_value(t, tamper_outcome, call_outcome.Call_Outcome.Argument_Refused)
+	testing.expect_value(t, err.kind, i64(errors.Kind.Not_Authentic))
 }
 
 test_machine_file :: proc() -> (file: Machine_File) {
@@ -564,16 +737,17 @@ a_principal_file_sealed_by_the_tpm_round_trip :: proc(t: ^testing.T) {
 	// The offsets of the table of the guide (docs/PRINCIPALS.md).
 	guide_offsets := [?][2]int {
 		{OFFSET_IDENTIFIER, 44},
-		{PRINCIPAL_TPM_OFFSET_PCRS, 156},
-		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PUBLIC, 168},
-		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PRIVATE, 296},
-		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_CREATION, 552},
-		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_TICKET, 808},
-		{PRINCIPAL_TPM_OFFSET_NONCE, 880},
-		{PRINCIPAL_TPM_OFFSET_SEALED, 892},
-		{PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE, 972},
-		{PRINCIPAL_TPM_OFFSET_RECOVERY_SEALED, 984},
-		{PRINCIPAL_TPM_FILE_SIZE, 1064},
+		{OFFSET_UNLOCK_HINTS, 156},
+		{PRINCIPAL_TPM_OFFSET_PCRS, 180},
+		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PUBLIC, 192},
+		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_PRIVATE, 320},
+		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_CREATION, 576},
+		{PRINCIPAL_TPM_OFFSET_SEALED_OBJECT + SEALED_OBJECT_OFFSET_TICKET, 832},
+		{PRINCIPAL_TPM_OFFSET_NONCE, 904},
+		{PRINCIPAL_TPM_OFFSET_SEALED, 916},
+		{PRINCIPAL_TPM_OFFSET_RECOVERY_NONCE, 996},
+		{PRINCIPAL_TPM_OFFSET_RECOVERY_SEALED, 1008},
+		{PRINCIPAL_TPM_FILE_SIZE, 1088},
 	}
 	for pair in guide_offsets {
 		testing.expect_value(t, pair[0], pair[1])
@@ -710,11 +884,17 @@ the_changes_that_a_file_takes :: proc(t: ^testing.T) {
 		{.Sealed_By_The_Tpm, .Machine_Key_Without_Window, true, true, .Unknown_Change},
 		{.Unknown, .Change_Passphrase, true, true, .Unknown_Form},
 		{.Unknown, .New_Recovery_Key, false, false, .Unknown_Form},
+		{.Unknown, .Remove_Principal, true, true, .Unknown_Form},
 		{.Sealed_By_The_Tpm, .Change_Passphrase, true, false, .Seal_Not_Allowed},
 		{.Sealed_By_The_Tpm, .Change_Passphrase, false, true, .No_Tpm_Service},
 		{.Sealed_By_The_Tpm, .New_Recovery_Key, false, true, .No_Tpm_Service},
+		{.Sealed_By_The_Tpm, .Remove_Principal, false, true, .No_Tpm_Service},
+		{.Sealed_By_The_Tpm, .Remove_Principal, true, false, .Seal_Not_Allowed},
+		{.Sealed_By_The_Tpm, .Remove_Principal, true, true, .None},
 		{.Passphrase, .New_Recovery_Key, true, true, .None},
 		{.Passphrase, .New_Recovery_Key, false, false, .None},
+		{.Passphrase, .Remove_Principal, false, false, .None},
+		{.Passphrase, .Remove_Principal, true, true, .None},
 		{.Sealed_By_The_Tpm, .Change_Passphrase, true, true, .None},
 		{.Sealed_By_The_Tpm, .New_Recovery_Key, true, true, .None},
 		// A new recovery key seals nothing by the TPM.
@@ -1045,7 +1225,7 @@ non_tpm_recovery_seal_and_open_enforces_strict_borders :: proc(t: ^testing.T) {
 // the border refuses it (the_word_of_the_mode_of_unlock).
 @(test)
 the_words_of_each_mode_of_unlock :: proc(t: ^testing.T) {
-	asked := [?]Unlock_Mode{.Create_Principal, .Set_Machine_Passphrase, .Seal_Machine_Key, .Change_Passphrase, .New_Recovery_Key, .Machine_Key_Without_Window}
+	asked := [?]Unlock_Mode{.Create_Principal, .Set_Machine_Passphrase, .Seal_Machine_Key, .Change_Passphrase, .New_Recovery_Key, .Machine_Key_Without_Window, .Prove_Wide_Grant, .Remove_Principal}
 	for mode, index in asked {
 		testing.expect(t, mode_words(mode) != mode_words(.Unlock))
 		for other in asked[index + 1:] {

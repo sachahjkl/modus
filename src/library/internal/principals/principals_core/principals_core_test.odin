@@ -367,19 +367,19 @@ disk_rows_set_enforces_border_atomicity_and_start_policy_rules :: proc(t: ^testi
 	testing.expect_value(t, stale_ref, Principals_Refusal.Stale_Generation)
 	testing.expect(t, snapshot_domain_equal(&state, &before))
 
-	// Principal 1 attempting to claim principal 0's client key is refused atomically.
-	dup_ck_req := rd.Disk_Rows_Set_Request{principal = 1, generation = 1, row_count = 2}
-	dup_ck_req.rows[0].class_word = u32(rd.Disk_Row_Class.Store)
-	dup_ck_req.rows[0].nickname, dup_ck_req.rows[0].nickname_length = fill_nickname("alice_tool")
-	dup_ck_req.rows[0].module_hash = make_hash(9)
-	dup_ck_req.rows[0].store_blocks = 64
-	dup_ck_req.rows[1].class_word = u32(rd.Disk_Row_Class.Client_Key)
-	dup_ck_req.rows[1].client_key = make_key(60) // Owned by principal 0.
-	dup_ck_req.rows[1].client_uses_word = remote.client_uses_word({.Calls})
-	before = state
-	dup_ref, _ := apply_disk_rows_set(&state, &dup_ck_req)
-	testing.expect_value(t, dup_ref, Principals_Refusal.Duplicate_Client_Key)
-	testing.expect(t, snapshot_domain_equal(&state, &before))
+	// Principal 1 may enroll the same public key as principal 0 independently
+	// under (principal, key) with no Duplicate_Client_Key conflict; principal 0's
+	// row stays intact.
+	shared_ck_req := rd.Disk_Rows_Set_Request{principal = 1, generation = 1, row_count = 2}
+	shared_ck_req.rows[0].class_word = u32(rd.Disk_Row_Class.Store)
+	shared_ck_req.rows[0].nickname, shared_ck_req.rows[0].nickname_length = fill_nickname("alice_tool")
+	shared_ck_req.rows[0].module_hash = make_hash(9)
+	shared_ck_req.rows[0].store_blocks = 64
+	shared_ck_req.rows[1].class_word = u32(rd.Disk_Row_Class.Client_Key)
+	shared_ck_req.rows[1].client_key = make_key(60) // Also held by principal 0.
+	shared_ck_req.rows[1].client_uses_word = remote.client_uses_word({.Calls})
+	shared_ref, _ := apply_disk_rows_set(&state, &shared_ck_req)
+	testing.expect_value(t, shared_ref, Principals_Refusal.None)
 
 	// Build canonical Disk_Rows_Set_Request from state and verify it passes border validation.
 	built, build_ref := build_disk_rows_set_request(&state, 0)
@@ -421,17 +421,29 @@ client_keys_and_start_policy_refuse_every_invalid_edge :: proc(t: ^testing.T) {
 	testing.expect_value(t, r_p_limit, Principals_Refusal.Principal_Client_Limit)
 	testing.expect(t, snapshot_domain_equal(&state, &before))
 
-	// Duplicate client key across principals refused.
+	// Duplicate client key for the SAME principal is refused.
 	before = state
-	_, r_dup := client_key_command(&state, &rd.Client_Key_Input{principal_id = 1, action_word = u32(rd.Client_Key_Action.Allow), client_key = make_key(100), client_uses_word = remote.client_uses_word({.Calls})})
-	testing.expect_value(t, r_dup, Principals_Refusal.Duplicate_Client_Key)
+	_, r_same_dup := client_key_command(&state, &rd.Client_Key_Input{principal_id = 0, action_word = u32(rd.Client_Key_Action.Allow), client_key = make_key(100), client_uses_word = remote.client_uses_word({.Calls})})
+	testing.expect_value(t, r_same_dup, Principals_Refusal.Duplicate_Client_Key)
 	testing.expect(t, snapshot_domain_equal(&state, &before))
 
-	// Cross-principal revoke refused (no confused deputy).
+	// Revoking a key that principal 1 has not enrolled is refused with
+	// Client_Key_Not_Found and never touches principal 0's row.
 	before = state
-	_, r_wrong := client_key_command(&state, &rd.Client_Key_Input{principal_id = 1, action_word = u32(rd.Client_Key_Action.Revoke), client_key = make_key(100)})
-	testing.expect_value(t, r_wrong, Principals_Refusal.Wrong_Principal)
+	_, r_missing := client_key_command(&state, &rd.Client_Key_Input{principal_id = 1, action_word = u32(rd.Client_Key_Action.Revoke), client_key = make_key(100)})
+	testing.expect_value(t, r_missing, Principals_Refusal.Client_Key_Not_Found)
 	testing.expect(t, snapshot_domain_equal(&state, &before))
+
+	// Principal 1 may independently enroll the same public key (make_key(100)),
+	// then revoke its own row while principal 0's row stays intact.
+	_, r_shared := client_key_command(&state, &rd.Client_Key_Input{principal_id = 1, action_word = u32(rd.Client_Key_Action.Allow), client_key = make_key(100), client_uses_word = remote.client_uses_word({.Calls})})
+	testing.expect_value(t, r_shared, Principals_Refusal.None)
+	testing.expect_value(t, state.counters.active_client_keys, before.counters.active_client_keys + 1)
+	_, r_rev_own := client_key_command(&state, &rd.Client_Key_Input{principal_id = 1, action_word = u32(rd.Client_Key_Action.Revoke), client_key = make_key(100)})
+	testing.expect_value(t, r_rev_own, Principals_Refusal.None)
+	testing.expect_value(t, state.counters.active_client_keys, before.counters.active_client_keys)
+	testing.expect(t, remote.client_find_for_principal(&state.client_table.clients, 0, make_key(100)) >= 0)
+	testing.expect(t, remote.client_find_for_principal(&state.client_table.clients, 1, make_key(100)) < 0)
 
 	// Fill principal 1's slots -> the global table is full; principal 2's 1st key is refused with Client_Table_Full.
 	for i in u8(0) ..< u8(remote.CLIENT_ROWS_OF_ONE_PRINCIPAL) {

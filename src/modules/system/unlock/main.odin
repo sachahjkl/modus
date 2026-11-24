@@ -121,12 +121,14 @@ import "base:intrinsics"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/ring"
+import "modus:contract/settings"
 import "modus:contract/text_encoding"
 import "modus:contract/tpm_service"
 import "modus:disk_process"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:keyboard_layout"
 import "modus:principals"
 import "modus:random"
 import "modus:storage"
@@ -271,6 +273,13 @@ principal_tpm_file_bytes: [principals.PRINCIPAL_TPM_FILE_SIZE]u8
 // The public keys of the named principal, from its file in either form.
 signing_public_key: [principals.PUBLIC_KEY_SIZE]u8
 unlock_public_key: [principals.PUBLIC_KEY_SIZE]u8
+// Public unlock hints read from the principal file (authenticated under seal
+// AAD) or captured from the active presentation settings during creation /
+// passphrase-proved reseal.
+unlock_hints: principals.Unlock_Hints
+unlock_hints_loaded: bool
+unlock_dead_key: keyboard_layout.Dead_Key_State
+unlock_alt_graph_held: bool
 // The secret keys that a recovery key, or the current passphrase of a
 // change, opened, until a new passphrase seals them again; erased then.
 // Also the keys of a new principal, while the window shows its recovery
@@ -468,6 +477,8 @@ create :: proc "contextless" () {
 	}
 	file.name, file.name_length = name, name_length
 	file.identifier = identifier
+	file.hints = unlock_hints_capture()
+	unlock_hints = file.hints
 	signing_public_key, unlock_public_key = file.signing_public_key, file.unlock_public_key
 	principal_form = .Passphrase
 	derived, sealed := passphrase_file_seal(&secrets, &file, &file_bytes)
@@ -486,6 +497,26 @@ create :: proc "contextless" () {
 	principal_pin_after_creation(file_bytes[:])
 	system.log_fact(.Info, Principal_Created{principal = number, derivation = derivation_field(derived), principal_name = principal_name_field()})
 	session_start(&secrets, root_ring.Principal_Key_Origin.New)
+}
+
+// active_settings_layout reads the keyboard layout currently active in the
+// input service's settings page (default United_States).
+active_settings_layout :: proc "contextless" () -> settings.Keyboard_Layout {
+	if display.settings_page == nil {
+		return .United_States
+	}
+	if choice, ok := settings.read(display.settings_page); ok {
+		return choice.keyboard_layout
+	}
+	return .United_States
+}
+
+// unlock_hints_capture reads the active presentation settings page for the
+// keyboard layout in which the passphrase is being typed. Updated into a
+// principal file only at creation or after passphrase proof.
+unlock_hints_capture :: proc "contextless" () -> (hints: principals.Unlock_Hints) {
+	hints.keyboard_layout = active_settings_layout()
+	return hints
 }
 
 // passphrase_file_seal seals the secret keys in a file of the form under the
@@ -1653,6 +1684,8 @@ create_sealed_by_the_tpm :: proc "contextless" () {
 	}
 	principal_tpm_file.name, principal_tpm_file.name_length = name, name_length
 	principal_tpm_file.identifier = identifier
+	principal_tpm_file.hints = unlock_hints_capture()
+	unlock_hints = principal_tpm_file.hints
 	signing_public_key, unlock_public_key = principal_tpm_file.signing_public_key, principal_tpm_file.unlock_public_key
 	principal_form = .Sealed_By_The_Tpm
 	// The copy under the recovery key: its additional data stops before the
@@ -1798,9 +1831,129 @@ change_proof_try :: proc "contextless" () {
 			recovery_key_prepare(&secrets)
 			return
 		}
+		if change_mode == .Remove_Principal {
+			principal_remove_execute()
+			return
+		}
 		opened_secrets = secrets
 		mode = .New_Passphrase_First
 		message, message_failed = "Type the new passphrase.", false
+	}
+}
+
+// principal_remove_record_write encodes and durably writes a Removal_Record.
+@(private = "file")
+principal_remove_record_write :: proc "contextless" (record: principals.Removal_Record) -> bool {
+	encoded: [principals.REMOVAL_RECORD_SIZE]u8
+	if principals.removal_record_encode(record, &encoded) != .None {
+		return false
+	}
+	return object_write(principals.REMOVAL_OBJECT, encoded[:]) == .Kept
+}
+
+// principal_remove_run_steps drives a durable Removal_Record forward through
+// every remaining idempotent step until the marker object is cleared.
+@(private = "file")
+principal_remove_run_steps :: proc "contextless" (start_record: principals.Removal_Record) -> bool {
+	current := start_record
+	has_tpm_pin := tpm_granted && (current.pin_generation != 0 || principal_pin.generation != 0)
+	for {
+		action := principals.removal_next_action(current, has_tpm_pin)
+		switch action {
+		case .Erase_Keys:
+			object_versions_erase(principals.FILE_OBJECT)
+			object_versions_erase(principals.NON_TPM_RECOVERY_OBJECT)
+			next, prob := principals.removal_step_advance(current, .Keys_Erased)
+			if prob != .None || !principal_remove_record_write(next) {
+				system.log_fact(.Info, Principal_Removal_Failed{principal = u64(current.slot), step = u64(current.step)})
+				return false
+			}
+			current = next
+		case .Delete_File:
+			_, file_status := storage.remove(&client, storage.ROOT, principals.FILE_OBJECT)
+			if file_status != .Ok && file_status != .Absent {
+				system.log_fact(.Info, Principal_Removal_Failed{principal = u64(current.slot), step = u64(current.step)})
+				return false
+			}
+			_, rec_status := storage.remove(&client, storage.ROOT, principals.NON_TPM_RECOVERY_OBJECT)
+			if rec_status != .Ok && rec_status != .Absent {
+				system.log_fact(.Info, Principal_Removal_Failed{principal = u64(current.slot), step = u64(current.step)})
+				return false
+			}
+			next, prob := principals.removal_step_advance(current, .File_Deleted)
+			if prob != .None || !principal_remove_record_write(next) {
+				system.log_fact(.Info, Principal_Removal_Failed{principal = u64(current.slot), step = u64(current.step)})
+				return false
+			}
+			current = next
+		case .Free_Pin:
+			if !principal_pin_free(u64(current.slot), current.identifier, has_tpm_pin) {
+				system.log_fact(.Info, Principal_Removal_Failed{principal = u64(current.slot), step = u64(current.step)})
+				return false
+			}
+			next, prob := principals.removal_step_advance(current, .Pin_Freed)
+			if prob != .None || !principal_remove_record_write(next) {
+				system.log_fact(.Info, Principal_Removal_Failed{principal = u64(current.slot), step = u64(current.step)})
+				return false
+			}
+			current = next
+		case .Clear_Marker:
+			_, clear_status := storage.remove(&client, storage.ROOT, principals.REMOVAL_OBJECT)
+			if clear_status != .Ok && clear_status != .Absent {
+				system.log_fact(.Info, Principal_Removal_Failed{principal = u64(current.slot), step = u64(current.step)})
+				return false
+			}
+			system.log_fact(.Info, Principal_Removed{principal = u64(current.slot)})
+			return true
+		}
+	}
+}
+
+// principal_remove_execute writes the durable removal marker before the first
+// destructive step, executes all removal steps, and reports Principal_Removed
+// to the root service.
+@(private = "file")
+principal_remove_execute :: proc "contextless" () {
+	record := principals.Removal_Record {
+		slot           = u32(number),
+		step           = .Marked,
+		pin_generation = principal_pin.generation,
+		identifier     = identifier,
+	}
+	if !principal_remove_record_write(record) {
+		system.log_fact(.Info, Principal_Removal_Failed{principal = number, step = u64(record.step)})
+		change_end(.Store_Failed)
+		return
+	}
+	if !principal_remove_run_steps(record) {
+		change_end(.Store_Failed)
+		return
+	}
+	change_end(.Principal_Removed)
+}
+
+// principal_removal_resume checks for an interrupted durable removal record
+// left by a crash or power loss and finishes it idempotently before unlock
+// reads the principal file.
+@(private = "file")
+principal_removal_resume :: proc "contextless" () {
+	buffer: [principals.REMOVAL_RECORD_SIZE + 1]u8
+	bytes, present, read_status := storage.read(&client, storage.ROOT, principals.REMOVAL_OBJECT, buffer[:])
+	if read_status != .Ok {
+		system.log_fact(.Info, Principal_File_Not_Read{status_word = u64(read_status)})
+		system.stop(.Failed)
+	}
+	if !present {
+		return
+	}
+	record, problem := principals.removal_record_decode(bytes)
+	if problem != .None {
+		system.log_fact(.Info, Principal_Removal_Failed{principal = 0, step = u64(problem)})
+		system.stop(.Refused)
+	}
+	system.log_fact(.Info, Principal_Removal_Resumed{principal = u64(record.slot), step = u64(record.step)})
+	if !principal_remove_run_steps(record) {
+		system.stop(.Failed)
 	}
 }
 
@@ -1994,6 +2147,7 @@ passphrase_change_seal :: proc "contextless" () {
 	switch principal_form {
 	case .Sealed_By_The_Tpm:
 		renewed := principal_tpm_file
+		renewed.hints = unlock_hints_capture()
 		renewed_bytes: [principals.PRINCIPAL_TPM_FILE_SIZE]u8
 		if !principal_tpm_seal(&opened_secrets, &renewed, &renewed_bytes) {
 			system.log_fact(.Info, Passphrase_Not_Changed_Tpm_Seal_Failed{principal = number})
@@ -2009,6 +2163,7 @@ passphrase_change_seal :: proc "contextless" () {
 		passphrase_change_report(outcome, "the TPM seals its keys to PCR 7 and PCR 11 and to the new passphrase", true)
 	case .Passphrase:
 		renewed := file
+		renewed.hints = unlock_hints_capture()
 		renewed_bytes: [principals.FILE_SIZE]u8
 		if _, sealed := passphrase_file_seal(&opened_secrets, &renewed, &renewed_bytes); !sealed {
 			system.log_fact(.Info, Passphrase_Not_Changed_Seal_Failed{principal = number})
@@ -2072,7 +2227,7 @@ change_end :: proc "contextless" (end: principals.Change_End, problem: principal
 	}
 	mode = .Change_Result
 	message = principals.change_end_sentences[end]
-	message_failed = end != .Passphrase_Changed && end != .Recovery_Key_Changed
+	message_failed = end != .Passphrase_Changed && end != .Recovery_Key_Changed && end != .Principal_Removed
 }
 
 // What a write of the file of the principal, or of the record of the
@@ -2190,6 +2345,7 @@ principal_reseal :: proc "contextless" () {
 	defer erase(opened_secrets[:])
 	if principal_form == .Passphrase {
 		renewed := file
+		renewed.hints = unlock_hints_capture()
 		renewed_bytes: [principals.FILE_SIZE]u8
 		defer erase(renewed_bytes[:])
 		verify_key: [principals.KEY_SIZE]u8
@@ -2214,6 +2370,7 @@ principal_reseal :: proc "contextless" () {
 		return
 	}
 	renewed := principal_tpm_file
+	renewed.hints = unlock_hints_capture()
 	renewed_bytes: [principals.PRINCIPAL_TPM_FILE_SIZE]u8
 	defer erase(renewed_bytes[:])
 	switch {
@@ -2499,6 +2656,9 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		if change_mode == .Prove_Wide_Grant {
 			prompt = proof_by_machine_passphrase ? "Machine passphrase  " : "Passphrase  "
 			enter_name = "Give; empty: cancel"
+		} else if change_mode == .Remove_Principal {
+			label = "Remove account  "
+			enter_name = "Remove; empty: cancel"
 		}
 	case .Change_Result:
 		label = "Passphrase  "
@@ -2833,6 +2993,9 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 		}
 		name, name_length = file.name, file.name_length
 		identifier = file.identifier
+		unlock_hints = file.hints
+		unlock_hints_loaded = true
+		unlock_dead_key = {}
 		signing_public_key, unlock_public_key = file.signing_public_key, file.unlock_public_key
 	case .Sealed_By_The_Tpm:
 		principal_tpm_file, principal_tpm_file_bytes, problem = principals.principal_tpm_file_decode(bytes)
@@ -2842,6 +3005,9 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 		}
 		name, name_length = principal_tpm_file.name, principal_tpm_file.name_length
 		identifier = principal_tpm_file.identifier
+		unlock_hints = principal_tpm_file.hints
+		unlock_hints_loaded = true
+		unlock_dead_key = {}
 		signing_public_key, unlock_public_key = principal_tpm_file.signing_public_key, principal_tpm_file.unlock_public_key
 	case .Unknown:
 		system.log_fact(.Info, Principal_File_Form_Unknown{})
@@ -3002,6 +3168,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	case .Machine_Key_Without_Window:
 		machine_key_without_window()
 	case .Seal_Machine_Key:
+		principal_removal_resume()
 		// The root service refuses this mode with no TPM service, or with a
 		// record of the machine key; the store is read again here, as the
 		// store is the truth.
@@ -3028,6 +3195,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		mode = .Recovery_Shown
 		message = "Write it down, then press Enter to write the record."
 	case .Create_Principal:
+		principal_removal_resume()
 		name, name_length = principals.name_unpack({ctx.values[principals.VALUE_NAME], ctx.values[principals.VALUE_NAME + 1], ctx.values[principals.VALUE_NAME + 2]})
 		if principals.name_problem(the_name()) != .None {
 			system.log_fact(.Info, New_Principal_Name_Refused{})
@@ -3053,7 +3221,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		mode = .Machine_Create_First
 		message = "Type a passphrase of 8 bytes at least."
-	case .Change_Passphrase, .New_Recovery_Key:
+	case .Change_Passphrase, .New_Recovery_Key, .Remove_Principal:
+		principal_removal_resume()
 		// The root service starts these modes only for a principal whose
 		// session runs, passing that principal's number in VALUE_PRINCIPAL.
 		// The file is read again here, as the store is the truth, and its
@@ -3083,15 +3252,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.stop(.Refused)
 		}
 		mode = .Change_Current
-		if principal_form == .Sealed_By_The_Tpm {
+		if change_mode == .Remove_Principal {
+			message = "Type your current passphrase to remove this account."
+		} else if principal_form == .Sealed_By_The_Tpm {
 			message = "Type your current passphrase: the TPM counts wrong tries."
 		} else {
 			message = "Type your current passphrase."
 		}
 		system.log_fact(.Info, Change_Asked{principal = number, principal_name = principal_name_field()})
 	case .Prove_Wide_Grant:
+		principal_removal_resume()
 		prove_start(ctx.values[principals.VALUE_PRINCIPAL])
 	case .Unlock, .Unlock_Machine_Key_Held:
+		principal_removal_resume()
 		principal_found = principal_file_read()
 		// After a lock the root service holds the key of the table of
 		// principal 0 already: the machine passphrase is not asked again.
@@ -3188,16 +3361,38 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// gave it to the input of the next frame, and the next turn
 				// draws a frame with it.
 			case .Key:
+				alt_graph_key := event.code == (0x38 | display.KEY_EXTENDED)
+				if alt_graph_key {
+					unlock_alt_graph_held = event.pressed
+				}
 				if !event.pressed {
 					continue
 				}
 				// The open list of the action bar takes its keys first.
 				press := interface.Key_Press{code = event.code, character = event.character, modifiers = event.modifiers}
+				accent_alone: rune
+				// When the principal's saved unlock keyboard layout differs from
+				// the machine's active layout, translate local scan codes through
+				// the principal's layout so passphrases type in the expected layout.
+				if unlock_hints_loaded && event.code != 0 && (event.modifiers & display.MODIFIER_CONTROL) == 0 && unlock_hints.keyboard_layout != active_settings_layout() {
+					held: keyboard_layout.Level_Keys
+					if (event.modifiers & display.MODIFIER_SHIFT) != 0 {
+						held += {.Shift}
+					}
+					if unlock_alt_graph_held {
+						held += {.Alt_Graph}
+					}
+					modifier_key := alt_graph_key || event.code == 0x2A || event.code == 0x36 || event.code == 0x1D || event.code == (0x1D | display.KEY_EXTENDED) || event.code == 0x38
+					accent_alone, press.character = keyboard_layout.key_press(&unlock_dead_key, unlock_hints.keyboard_layout, held, event.code, modifier_key)
+				}
 				outcome := interface.action_bar_key(&bar, press)
 				if outcome.ran {
 					key_run(&window, outcome.run)
 				}
 				if !outcome.taken {
+					if accent_alone != 0 {
+						key_run(&window, interface.Key_Press{character = accent_alone, modifiers = event.modifiers})
+					}
 					key_run(&window, press)
 				}
 			case .None, .Presentation, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Surface_Answer, .Work_Area:
@@ -3218,7 +3413,9 @@ key_run :: proc "contextless" (window: ^display.Window, press: interface.Key_Pre
 	case press.code == display.KEY_ESCAPE:
 		erase(typed[:])
 		typed_count = 0
+		unlock_dead_key = {}
 	case press.character == '\n':
+		unlock_dead_key = {}
 		enter(window)
 	case press.character == 8:
 		// The passphrase is UTF-8: Backspace removes its last

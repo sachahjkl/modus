@@ -605,9 +605,8 @@ commands_start :: proc "contextless" () {
 	// keeps it until the machine stops.
 	//
 	// Errors: this console does not act for its principal; the key has a
-	// wrong form; another principal allowed the key; the principal has 4
-	// keys, or the table is full; the disk grant table of the principal
-	// takes no change now (the log says why).
+	// wrong form; the principal has 32 keys, or the table is full; the disk
+	// grant table of the principal takes no change now (the log says why).
 	command("remote_allow", {.Text}, .None, "let a client of remote call for the principal of this console, by its key", remote_allow)
 	// Allows the key of a viewer of the process `remote_display` for the
 	// principal of this console: the viewer sees the screen, and with the
@@ -629,9 +628,8 @@ commands_start :: proc "contextless" () {
 	// grant table keeps them.
 	//
 	// Errors: the use is not `view` or `view_and_input`; this console does
-	// not act for its principal; the key has a wrong form; another
-	// principal allowed the key; the principal has 4 keys, or the table is
-	// full.
+	// not act for its principal; the key has a wrong form; the principal has
+	// 32 keys, or the table is full.
 	command("remote_display_allow", {.Text, .Text}, .None, "let a viewer of remote_display see the screen, or see it and type, for the principal of this console", remote_display_allow)
 	// Revokes the key of a client of `remote` that the principal of this
 	// console allowed. `remote` ends the open connection of the client, and
@@ -688,11 +686,9 @@ commands_start :: proc "contextless" () {
 	command("agent_disallow", {.Text}, .None, "end the wide grant of a client key of remote", agent_disallow)
 	// Gives one row for each key of a client of `remote` that the principal
 	// of this console allowed, with its state: `holds` (each call of the
-	// client acts for the principal), `locked` (the session of the
-	// principal is locked), or `contested` (another principal allowed the
-	// key too, one in this run and one in its disk grant table: it acts for
-	// neither until one of them revokes it), and its uses: `calls` (of
-	// `remote`), `view` and `view and input` (of `remote_display`), or both.
+	// client acts for the principal) or `locked` (the session of the
+	// principal is locked), and its uses: `calls` (of `remote`), `view` and
+	// `view and input` (of `remote_display`), or both.
 	//
 	// ```
 	// > remote_clients()
@@ -853,6 +849,14 @@ commands_start :: proc "contextless" () {
 	// Errors: as `passphrase_change()`; the keys under the passphrase alone
 	// have no recovery key.
 	command("recovery_key_change", {}, .Text, "make a new recovery key for the principal of this session: the window of unlock shows it one time", recovery_key_change)
+	// Asks the root service to remove the named principal of the session of
+	// this console after verifying its current passphrase in the window of
+	// unlock. The session stops, the principal file is deleted, the TPM pin
+	// transitions to free, and the slot stays retired until reboot.
+	//
+	// Errors: this console acts for no named principal; its session is
+	// locked; unlock runs; the removal was cancelled or refused.
+	command("principal_remove", {}, .Text, "remove the principal of this session after passphrase proof in unlock", principal_remove)
 	// Asks the root service to lock the session of the named principal that
 	// is unlocked, and gives the count of the processes of the session that
 	// stopped.
@@ -2879,6 +2883,7 @@ principal_state_names := [root_ring.Principal_State]string {
 	.Locked   = "locked",
 	.Unlocked = "unlocked",
 	.Creating = "creating",
+	.Removing = "removing",
 }
 
 // first_bytes_hexadecimal writes 8 bytes, in their order in memory, as 16
@@ -3398,8 +3403,8 @@ remote_clients :: proc "contextless" (arguments: []Value) -> Value {
 	if !made {
 		return fail("remote_clients: the line has no room for the description")
 	}
-	// The rows of the client table, then the contested keys of the disk
-	// grant table, whose rows are rows of another principal.
+	// Each row of the client table; the root service returns rows of the
+	// caller's principal only.
 	for place in u64(0) ..< remote.CLIENT_READ_PLACES {
 		completion, answered := disk_request(.Remote_Client, {4 = u64(root_ring.Remote_Client_Action.Read), 5 = place}, 3000)
 		if !answered {
@@ -3433,8 +3438,6 @@ remote_clients :: proc "contextless" (arguments: []Value) -> Value {
 			state_text = "holds"
 		case .Locked:
 			state_text = "locked"
-		case .Contested:
-			state_text = "contested"
 		}
 		made_text(&table, row, 2, state_text)
 		// The uses come through their border too: a word that names no set
@@ -3603,6 +3606,13 @@ recovery_key_change :: proc "contextless" (arguments: []Value) -> Value {
 	return change_request(root_ring.Principal_Change.Recovery_Key)
 }
 
+// principal_remove asks the root service to remove the named principal of
+// the session of this console after verifying its current passphrase in the
+// window of unlock.
+principal_remove :: proc "contextless" (arguments: []Value) -> Value {
+	return change_request(root_ring.Principal_Change.Remove)
+}
+
 // change_request sends Principal_Change and waits for the end of the
 // change, which takes the time of the typing in the window of unlock: the
 // line gives what changed, or why nothing changed. The wait has no time
@@ -3646,7 +3656,7 @@ change_result :: proc "contextless" (end_value: u64, problem_value: u64) -> Valu
 		return fail("the root service gave the end ", end_value, " of the change, which names no end")
 	}
 	switch end {
-	case .Passphrase_Changed, .Recovery_Key_Changed:
+	case .Passphrase_Changed, .Recovery_Key_Changed, .Principal_Removed:
 		return {kind = .Text, text = principals.change_end_sentences[end]}
 	case .Refused:
 		problem, problem_ok := enum_word.member_of_word(principals.Change_Problem, problem_value)

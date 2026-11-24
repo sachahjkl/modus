@@ -348,9 +348,11 @@ Client :: struct {
 	// the input face from it (capture.odin).
 	capture_allowed: bool,
 	// The window takes the keys and the pointer of the input service only,
-	// as its Client_Add says: the root service marks the window of unlock
-	// that proves a principal for a wide grant (wide_grant_screen.odin).
-	local_input_only: bool,
+	// as its Client_Add says: every window of `unlock`.
+	local_input_only:     bool,
+	// The window is masked out of every screen capture (`remote_display` and
+	// `Screen_View`), as its Client_Add says: every window of `unlock`.
+	exclude_from_capture: bool,
 	// The id of the window in the bound of a wide grant: never given to
 	// another window in this run (wide_grant_screen.odin, window_serial_next).
 	window_serial:     u64,
@@ -471,6 +473,23 @@ damage_screen_add :: proc "contextless" (x, y, width, height: int) {
 	if damage_rectangle_add(x, y, width, height) {
 		desktop_change_waits = true
 	}
+}
+
+// session_reset clears all session-scoped compositor state when a named
+// session ends while a machine window remains connected to this display holder.
+session_reset :: proc "contextless" () {
+	clipboard_reset()
+	desktop_notifications_reset()
+	_ = bar.notification_history_clear(&notification_history)
+	tray_widget_close()
+	tray_others_close()
+	window_switcher_cancel()
+	palette_close("")
+	palette_panel.recents = {}
+	palette_panel.recent_count = 0
+	palette_panel.frecency = {}
+	palette_entries_refresh()
+	damage_whole_screen()
 }
 
 // damage_whole_screen records the whole screen: also the pixels past the
@@ -1014,6 +1033,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				wide_grant_screen_show(record.values) // wide_grant_screen.odin
 			case .Wide_Grant_Mark:
 				wide_grant_mark_take(record.values)
+			case .Session_Reset:
+				session_reset()
 			case .None, .Start, .Stop, .Appearance_Next, .Screen_Budget_Release, .Wide_Grant_Screen_Answer, .Wide_Grant_Revoke_Pressed:
 				// The border refused None above. The others go from the
 				// compositor to the root service, never to the compositor.
@@ -1389,7 +1410,9 @@ client_add :: proc "contextless" (record: ring.Record) {
 		}
 		client = {ring_memory = memory, ring = opened}
 		client.capture_allowed = record.values[display.CLIENT_ADD_CAPTURE] == display.CLIENT_CAPTURE
-		client.local_input_only = record.values[display.CLIENT_ADD_LOCAL_INPUT_ONLY] == display.CLIENT_LOCAL_INPUT_ONLY
+		client_flags := record.values[display.CLIENT_ADD_LOCAL_INPUT_ONLY]
+		client.local_input_only = client_flags & display.CLIENT_LOCAL_INPUT_ONLY != 0
+		client.exclude_from_capture = client_flags & display.CLIENT_EXCLUDE_FROM_CAPTURE != 0
 		client.window_serial = window_serial_next() // wide_grant_screen.odin
 		nickname := process_page.nickname_of({record.values[1], record.values[2], record.values[3]})
 		client.given_name_length = copy(client.given_name[:], process_page.nickname_text(&nickname))

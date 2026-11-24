@@ -30,14 +30,6 @@ KEY_HEAD_FIELD_BYTES :: 24
 // "255.255.255.255 port 65535", has 26 bytes, and a zero byte.
 PEER_FIELD_BYTES :: 32
 
-// The handshake refused a client key that two principals allowed.
-@(log_fact = "remote: refused the client key {client_key}: it is contested: principal {principal} and principal {other_principal} both allowed it, and it acts for neither until one of them revokes it; the handshake ends before any call")
-Client_Key_Refused_Contested :: struct {
-	principal:       u64,
-	other_principal: u64,
-	client_key:      [72]u8,
-}
-
 // The handshake refused a client key that its principal allowed for the
 // remote display only.
 @(log_fact = "remote: refused the client key {client_key}: principal {principal} allowed it for the remote display, and not for calls; the handshake ends before any call")
@@ -130,16 +122,6 @@ Mesh_Link_Ended :: struct {
 // machine list removed it, or its pairing ended.
 @(log_fact = "remote: the machine identity key {client_key_head} is no longer paired: the connection from {peer} ends with the code Revoked")
 Mesh_Peer_Ended :: struct {
-	client_key_head: [24]u8,
-	peer:            [32]u8,
-}
-
-// A second principal allowed the client key of an open connection: the
-// connection ends.
-@(log_fact = "remote: the client key {client_key_head} of principal {principal} is contested: principal {other_principal} allowed it too, and it acts for neither; the connection from {peer} ends with the code Revoked")
-Client_Key_Contested :: struct {
-	principal:       u64,
-	other_principal: u64,
 	client_key_head: [24]u8,
 	peer:            [32]u8,
 }
