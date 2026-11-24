@@ -75,8 +75,8 @@ replace :: proc "contextless" (asker: ^Started, name: string, by: u64, values: ^
 		values^ = refusal
 		return outcome
 	}
-	if written := system.replacements_write(replacement_table, from, to); written != .Ok {
-		if written == .No_Slot {
+	if written := system.replacements_write(replacement_table, from, to); written != .Succeeded {
+		if written == .Budget_Or_Capacity_Exhausted {
 			full_outcome, full_refusal := replacement_rules.table_full_refusal(system.REPLACEMENT_CAPACITY)
 			values^ = full_refusal
 			return full_outcome

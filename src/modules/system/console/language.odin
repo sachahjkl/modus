@@ -430,13 +430,13 @@ assign :: proc "contextless" (name: string, value: Value) {
 		pages := u64(value_end + description_bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 		created, status := system.memory_create(pages)
 		address: rawptr
-		if status == .Ok {
+		if status == .Succeeded {
 			address, status = system.memory_map(created, {.Write})
-			if status != .Ok {
+			if status != .Succeeded {
 				system.close(created)
 			}
 		}
-		if status != .Ok {
+		if status != .Succeeded {
 			// The old value stays: the new one is refused whole.
 			fail("the budget of the console cannot pay the ", i64(value_end + description_bytes), " bytes of the value of ", name)
 			return

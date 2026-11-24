@@ -185,12 +185,12 @@ endpoint_open :: proc "contextless" (
 		return .Bad_Config
 	}
 	datagrams, ring_status := system.ring_open(ctx.handles[datagram.GRANT_RING])
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		return .No_Ring
 	}
 	address, map_status := system.memory_map(ctx.handles[datagram.GRANT_REGION], {.Write})
 	region_pages, size_status := system.memory_size(ctx.handles[datagram.GRANT_REGION])
-	if map_status != .Ok || size_status != .Ok || region_pages < datagram.REGION_PAGES {
+	if map_status != .Succeeded || size_status != .Succeeded || region_pages < datagram.REGION_PAGES {
 		return .No_Region
 	}
 	region := ([^]u8)(address)[:datagram.REGION_PAGES * system.PAGE_SIZE]

@@ -1,5 +1,6 @@
 package system
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
@@ -81,7 +82,7 @@ wait_set_room :: proc "contextless" (set: ^Wait_Set) {
 	if set.refused || len(set.words) <= thread_wait_room() {
 		return
 	}
-	if _, status := call(.Thread_Control, 0, 0, u64(op.Thread_Control_Command.Wait_Room), 0, u64(len(set.words))); status != .Ok {
+	if _, status := call(.Thread_Control, 0, 0, u64(op.Thread_Control_Command.Wait_Room), 0, u64(len(set.words))); status != .Succeeded {
 		set.refused = true
 		log(.Error, "system: the kernel gave no wait room of ", u64(len(set.words)), " words to this thread: its waits hold ", u64(thread_wait_room()), " words, and a wait on more waits until its deadline")
 	}
@@ -194,11 +195,11 @@ wait_set_grow :: proc "contextless" (growing: ^Growing_Wait_Set, count: int) -> 
 		// The arenas reserve the places of the largest wait, and commit
 		// only what a growth pushes.
 		words, words_status := arena_create(u64(op.WORD_WAIT_MOST * size_of(op.Word) + PAGE_SIZE - 1) / PAGE_SIZE)
-		if words_status != .Ok {
+		if words_status != .Succeeded {
 			return false
 		}
 		parts, parts_status := arena_create(u64(op.WORD_WAIT_MOST * size_of(Wait_Part) + PAGE_SIZE - 1) / PAGE_SIZE)
-		if parts_status != .Ok {
+		if parts_status != .Succeeded {
 			_ = arena_end(&words)
 			return false
 		}
@@ -206,11 +207,11 @@ wait_set_grow :: proc "contextless" (growing: ^Growing_Wait_Set, count: int) -> 
 	}
 	added := wanted - held
 	words_place, words_status := arena_push(&growing.words, u64(added * size_of(op.Word)), align_of(op.Word))
-	if words_status != .Ok {
+	if words_status != .Succeeded {
 		return false
 	}
 	parts_place, parts_status := arena_push(&growing.parts, u64(added * size_of(Wait_Part)), align_of(Wait_Part))
-	if parts_status != .Ok {
+	if parts_status != .Succeeded {
 		_ = arena_pop(&growing.words, u64(added * size_of(op.Word)))
 		return false
 	}
@@ -375,7 +376,7 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 	// does not wait. Such a list is a fault of its caller: the list loses its
 	// second places and waits again, so no loop turns with no wait, and the
 	// log says it once. The search runs on this refusal only.
-	if completions[0].kind == u32(Status.Bad_Operation) {
+	if is_duplicate_word_refusal(completions[0]) {
 		if !wait_twice_told {
 			wait_twice_told = true
 			log(.Error, "system: a wait named a word twice, which the kernel refuses: the list waits on each word once; its process adds each word once")
@@ -389,7 +390,7 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 			// names the place of that word, and the words before it hold no
 			// word twice: the wait takes them until its deadline, never a
 			// loop with no wait.
-			if completions[0].kind == u32(Status.Bad_Operation) {
+			if is_duplicate_word_refusal(completions[0]) {
 				commands = {wait_command(words[:words_before_refused(completions[0], kept)])}
 				now, _ = commands_call(commands[:], completions[:], max(deadline, 1))
 			}
@@ -413,6 +414,17 @@ wait_end :: proc "contextless" (wait: ^Wait, deadline: u64 = WAIT_FOREVER) -> u6
 // wait_twice_told: the line of a list that named a word twice is on the log.
 @(private = "file")
 wait_twice_told: bool
+
+// is_duplicate_word_refusal says whether a Word_Wait completion refused
+// because the list named one word twice.
+@(private = "package")
+is_duplicate_word_refusal :: proc "contextless" (completion: ring.Record) -> bool {
+	if completion.kind != u32(call_outcome.Call_Outcome.Argument_Refused) {
+		return false
+	}
+	record := transmute(errors.Error_Record)completion.values
+	return record.kind == i64(errors.Kind.Bad_Value) && record.unit == i64(errors.Unit.Words)
+}
 
 // words_before_refused gives the words of a list before the word that the
 // kernel refused as named twice: the place that the error record of the

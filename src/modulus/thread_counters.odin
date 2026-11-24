@@ -185,27 +185,27 @@ thread_counters_control :: proc "contextless" (caller_index: u32, caller_process
 			thread_counters_unload(thread)
 			thread.counting = false
 		}
-		return .Ok
+		return .Succeeded
 	}
 	if v[0] == 0 {
-		return .Bad_Handle
+		return .Argument_Refused
 	}
 	named := handle_find(caller_process, v[0], .None) or_return
 	if named.kind != .Machine {
-		return .Bad_Handle
+		return .Argument_Refused
 	}
 	if !(op.THREAD_COUNTERS_RIGHTS <= named.rights) {
-		return .No_Right
+		return .Grant_Or_Right_Missing
 	}
 	// The diagnosis gives the error kind Unsupported for it.
 	if counter_plan.vendor == .None {
-		return .Bad_Operation
+		return .Operation_Unsupported
 	}
 	// Stop_Counters returned above; each other command of the set comes to
 	// this procedure only by a fault of its caller.
 	switch command {
 	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Schedule, .Write_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start, .Wait_Room:
-		return .Bad_Operation
+		return .Argument_Refused
 	case .Start_Counters:
 		if thread.counting {
 			thread_counters_unload(thread)
@@ -216,7 +216,7 @@ thread_counters_control :: proc "contextless" (caller_index: u32, caller_process
 	case .Read_Counters:
 		size := u64(size_of(op.Thread_Counters))
 		if v[4] < size || !user_range(caller_process, v[3], size, true) {
-			return .Bad_Address
+			return .Argument_Refused
 		}
 		if !thread.counting {
 			return thread_control_state_refuse(.Counters_Not_Started, 3, u64(command), 1, u64(op.Process_State.Ready))
@@ -236,5 +236,5 @@ thread_counters_control :: proc "contextless" (caller_index: u32, caller_process
 		user_copy_to_process(v[3], &counters, size)
 		results[0] = size
 	}
-	return .Ok
+	return .Succeeded
 }

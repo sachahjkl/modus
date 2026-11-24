@@ -216,7 +216,7 @@ report_threads: op.Thread_Table_Report
 
 inspect_call :: proc "contextless" (kind: op.Inspect_Kind, index: u64, record: rawptr, size: int) -> bool {
 	_, status := system.call(.Inspect, u64(machine), u64(kind), index, u64(uintptr(record)), u64(size))
-	return status == .Ok
+	return status == .Succeeded
 }
 
 session_name :: proc "contextless" () -> string {
@@ -235,19 +235,16 @@ text_copy :: proc "contextless" (buffer: []u8, text: ^string) -> (copied: string
 	return string(buffer[:count]), true
 }
 
-// refused gives the result of an export that the kernel refused for a
-// handle or a value that the caller gave.
-refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status) -> call_outcome.Call_Outcome {
-	return refuse(error, system.outcome_of_status(status), .Refused, .Kernel_Status, 0, 0, 0, i64(status))
-}
-
 // session_refused gives the result of an export whose kernel operation on
 // the debugged process refused. The caller gave no handle of that process,
 // so no change of its arguments makes the call run: the outcome is the one
-// of an operation on an own object, but a thread or a process in a state
-// where the operation does not apply is Wrong_State.
-session_refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status) -> call_outcome.Call_Outcome {
-	outcome := status == .Bad_State ? call_outcome.Call_Outcome.Wrong_State : system.outcome_of_own_status(status)
+// of an operation on an own object, preserving state, absence and
+// unsupported outcomes of the debugged process.
+session_refused :: proc "contextless" (error: ^errors.Error_Record, status: call_outcome.Call_Outcome) -> call_outcome.Call_Outcome {
+	outcome := status == .Wrong_State || status == .Nothing_Has_That_Name || status == .Operation_Unsupported ? status : system.own_operation_outcome(status)
+	if error != nil && error.kind != i64(errors.Kind.None) {
+		return outcome
+	}
 	return refuse(error, outcome, .Refused, .Kernel_Status, 0, 0, 0, i64(status))
 }
 
@@ -676,7 +673,7 @@ record_keep :: proc "contextless" (record: op.Fault_Record, awaited_step := fals
 	hold.record = record
 	if hold.stepping {
 		hold.stepping = false
-		if registers, status := system.thread_registers_read(session.process, record.thread); status == .Ok {
+		if registers, status := system.thread_registers_read(session.process, record.thread); status == .Succeeded {
 			registers.rflags &~= FLAG_TRAP
 			system.thread_registers_write(session.process, record.thread, registers)
 		}
@@ -743,10 +740,10 @@ thread_of_argument :: proc "contextless" (thread: i64, stopped: bool, error: ^er
 }
 
 // thread_release lets a thread run: the answer of its record, and the end
-// of the stop of the debugger. It gives the first status that is not Ok.
-thread_release :: proc "contextless" (number: u64) -> (status: system.Status) {
+// of the stop of the debugger. It gives the first outcome that is not Succeeded.
+thread_release :: proc "contextless" (number: u64) -> (status: call_outcome.Call_Outcome) {
 	hold := &session.threads[number]
-	status = .Ok
+	status = .Succeeded
 	if hold.waits {
 		status = system.debug_fault_answer(session.process, hold.record)
 		hold.waits = false
@@ -754,7 +751,7 @@ thread_release :: proc "contextless" (number: u64) -> (status: system.Status) {
 	if hold.held {
 		_, resumed := system.thread_control_resume(session.process, number)
 		hold.held = false
-		if status == .Ok {
+		if status == .Succeeded {
 			status = resumed
 		}
 	}
@@ -765,14 +762,14 @@ thread_release :: proc "contextless" (number: u64) -> (status: system.Status) {
 // the process: the debug registers belong to a thread, and a thread that
 // the process made later has none until this write. A thread that runs is
 // held for the write, then released.
-breaks_apply :: proc "contextless" () -> (status: system.Status) {
+breaks_apply :: proc "contextless" () -> (status: call_outcome.Call_Outcome) {
 	written: op.Thread_Breakpoints
 	for item, number in session.breaks {
 		if item.kind != .None {
 			written.breakpoints[number] = {address = item.address, kind = item.kind, length = item.length}
 		}
 	}
-	status = .Ok
+	status = .Succeeded
 	for &item in report_threads.threads[:min(report_threads.count, op.THREAD_REPORT_CAPACITY)] {
 		number := u64(item.number)
 		if number >= THREAD_CAPACITY {
@@ -780,12 +777,12 @@ breaks_apply :: proc "contextless" () -> (status: system.Status) {
 		}
 		stopped := thread_stopped(number)
 		if !stopped {
-			if _, held := system.thread_control_stop(session.process, number); held != .Ok {
+			if _, held := system.thread_control_stop(session.process, number); held != .Succeeded {
 				status = held
 				continue
 			}
 		}
-		if wrote := system.thread_breakpoints_write(session.process, number, written); wrote != .Ok {
+		if wrote := system.thread_breakpoints_write(session.process, number, written); wrote != .Succeeded {
 			status = wrote
 		}
 		if !stopped {
@@ -878,7 +875,7 @@ process_memory_read :: proc "contextless" (state: rawptr, address: u64, into: []
 	for done < len(into) {
 		part := into[done:][:min(len(into) - done, op.THREAD_MEMORY_READ_LIMIT)]
 		count, status := system.thread_memory_read(session.process, thread, address + u64(done), part)
-		if status != .Ok || count != u64(len(part)) {
+		if status != .Succeeded || count != u64(len(part)) {
 			return false
 		}
 		done += len(part)
@@ -949,11 +946,11 @@ Stack :: struct {
 thread_stack: Stack
 
 // stack_read reads the registers of a held thread and walks its frames.
-stack_read :: proc "contextless" (thread: u64) -> (walked: ^Stack, status: system.Status) {
+stack_read :: proc "contextless" (thread: u64) -> (walked: ^Stack, status: call_outcome.Call_Outcome) {
 	walked = &thread_stack
 	walked^ = {}
 	walked.registers, status = system.thread_registers_read(session.process, thread)
-	if status != .Ok {
+	if status != .Succeeded {
 		return nil, status
 	}
 	// Before the two first instructions of a procedure, the frame pointer
@@ -971,7 +968,7 @@ stack_read :: proc "contextless" (thread: u64) -> (walked: ^Stack, status: syste
 		}
 	}
 	walked.count = debugging.frames_walk(memory_reader(), walked.registers.rip, walked.registers.rbp, walked.registers.rsp, walked.entry, walked.frames[:])
-	return walked, .Ok
+	return walked, .Succeeded
 }
 
 // frame_registers gives the registers of one frame of a stack, for the
@@ -998,7 +995,7 @@ frame_has_its_pointer :: proc "contextless" (walked: ^Stack, frame: int) -> bool
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[system.GRANT_MACHINE]
-	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
+	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Succeeded {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 	debug_names = system.debug_names_of(ctx)

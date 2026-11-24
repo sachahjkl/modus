@@ -232,13 +232,13 @@ command :: proc "contextless" (name: string, parameters: []Kind, result: Kind, a
 commands_start :: proc "contextless" () {
 	machine = ctx.handles[system.GRANT_MACHINE]
 	image_memory = ctx.handles[system.GRANT_IMAGE]
-	if address, status := system.memory_map(image_memory, {}); status == .Ok {
+	if address, status := system.memory_map(image_memory, {}); status == .Succeeded {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 	debug_names = system.debug_names_of(ctx)
 	requests_memory = ctx.handles[system.GRANT_ROOT]
 	requests, _ = system.ring_open(requests_memory, receive_handles = true)
-	if address, status := system.memory_map(ctx.handles[system.GRANT_REPLACEMENTS], {}); status == .Ok {
+	if address, status := system.memory_map(ctx.handles[system.GRANT_REPLACEMENTS], {}); status == .Succeeded {
 		replacement_table = (^system.Replacement_Table)(address)
 	}
 	space.next = op.MODULE_BASE
@@ -1187,10 +1187,10 @@ processes_of_monitor :: proc "contextless" (arguments: []Value) -> Value {
 
 system_report :: proc "contextless" () -> (report: op.System_Report, ok: bool) {
 	_, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report))
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("the console has no grant to inspect the machine")
 	}
-	return report, status == .Ok
+	return report, status == .Succeeded
 }
 
 module_report: op.Module_Report
@@ -1526,16 +1526,16 @@ isolate_from_memory :: proc "contextless" (arguments: []Value) -> Value {
 
 	copy_pages := (u64(size) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	copy_memory, create_status := system.memory_create(copy_pages)
-	if create_status != .Ok {
+	if create_status != .Succeeded {
 		return fail("isolate_memory: the budget of the console cannot pay for ", copy_pages, " pages")
 	}
 	copy_address, copy_status := system.memory_map(copy_memory)
-	if copy_status != .Ok {
+	if copy_status != .Succeeded {
 		system.close(copy_memory)
 		return fail("isolate_memory: the console cannot map its copy")
 	}
 	source_address, source_status := system.memory_map(memory, {})
-	if source_status != .Ok {
+	if source_status != .Succeeded {
 		system.memory_unmap(copy_address)
 		system.close(copy_memory)
 		return fail("the console cannot map the memory object")
@@ -1922,11 +1922,11 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 	sandbox.ring = calls
 	// A refused handle has no pages: the region is empty.
 	region_pages, _ := system.memory_size(sandbox.region_memory)
-	sandbox.region = ([^]u8)(bytes)[:region_status == .Ok ? region_pages * system.PAGE_SIZE : 0]
+	sandbox.region = ([^]u8)(bytes)[:region_status == .Succeeded ? region_pages * system.PAGE_SIZE : 0]
 	// After the first connection, the commands are those of one file.
-	if ring_status != .Ok || region_status != .Ok {
+	if ring_status != .Succeeded || region_status != .Succeeded {
 		service_disconnect(sandbox)
-		return system.outcome_of_own_status(ring_status != .Ok ? ring_status : region_status)
+		return system.own_operation_outcome(ring_status != .Succeeded ? ring_status : region_status)
 	}
 	// After the first connection, the module is the module of the commands.
 	if sandbox.hash != {} && sandbox.hash != hash {
@@ -2233,17 +2233,17 @@ sandbox_create :: proc "contextless" (sandbox: ^Sandbox, file: []u8) -> bool {
 	if !sandbox_files(sandbox, file) {
 		return false
 	}
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	sandbox.ring_memory, sandbox.ring, status = system.ring_create()
-	if status != .Ok {
+	if status != .Succeeded {
 		system.close(sandbox.files_memory)
 		return false
 	}
 	address: rawptr
-	if sandbox.region_memory, status = system.memory_create(isolated.REGION_PAGES); status == .Ok {
+	if sandbox.region_memory, status = system.memory_create(isolated.REGION_PAGES); status == .Succeeded {
 		address, status = system.memory_map(sandbox.region_memory)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		system.ring_close(&sandbox.ring)
 		system.close(sandbox.ring_memory)
 		system.close(sandbox.region_memory)
@@ -2251,7 +2251,7 @@ sandbox_create :: proc "contextless" (sandbox: ^Sandbox, file: []u8) -> bool {
 		return false
 	}
 	sandbox.region = ([^]u8)(address)[:isolated.REGION_PAGES * system.PAGE_SIZE]
-	if sandbox_start(sandbox) != .Ok {
+	if sandbox_start(sandbox) != .Succeeded {
 		system.ring_close(&sandbox.ring)
 		system.memory_unmap(address)
 		system.close(sandbox.ring_memory)
@@ -2281,12 +2281,12 @@ sandbox_files :: proc "contextless" (sandbox: ^Sandbox, file: []u8) -> bool {
 	if sandbox.file_count == 0 || list_size + len(source.replacements) * size_of(module.Replacement) > system.PAGE_SIZE {
 		return false
 	}
-	status: system.Status
-	if sandbox.files_memory, status = system.memory_create(1); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if sandbox.files_memory, status = system.memory_create(1); status != .Succeeded {
 		return false
 	}
 	address, map_status := system.memory_map(sandbox.files_memory)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(sandbox.files_memory)
 		return false
 	}
@@ -2316,14 +2316,14 @@ sandbox_files :: proc "contextless" (sandbox: ^Sandbox, file: []u8) -> bool {
 // call ring and the call region, and no other handle. The console maps the
 // file of the module in it, read-only: the process has no handle to the
 // boot image.
-sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
+sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> call_outcome.Call_Outcome {
 	if sandbox.service {
 		// The connection says its own outcome; this procedure gives the
 		// status of the start of a call host.
 		if service_connect(sandbox) != .Succeeded {
-			return .Bad_State
+			return .Wrong_State
 		}
-		return .Ok
+		return .Succeeded
 	}
 	sandbox.ring.head^ = {}
 	grants: [op.CONTEXT_HANDLES]system.Grant
@@ -2344,10 +2344,10 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 		}
 		mappings[index + 1] = {memory = source_memory, address = isolated.FILE_ADDRESS + sandbox.file_offsets[index], first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
 	}
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	load_error = {}
 	sandbox.process, status = system.process_start(system.image_find(image, "host"), sandbox.name, grants, random.values_with_seed(&process_generator, values), {pages = 512, processes = 1, threads = 1, processor = 500_000, log_records = SANDBOX_LOG_RECORDS}, mappings[:sandbox.file_count + 1], &prepared)
-	if status != .Ok {
+	if status != .Succeeded {
 		return status
 	}
 	// The first completion of the call host says if it loaded the module.
@@ -2358,13 +2358,13 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	call_stoppable_leave()
 	switch ready {
 	case .Ready:
-		return .Ok
+		return .Succeeded
 	case .Load_Failed:
 		intrinsics.mem_copy_non_overlapping(&load_error, raw_data(sandbox.region), size_of(load_error))
 	case .Refused:
 	}
 	sandbox_end(sandbox)
-	return .Bad_State
+	return .Wrong_State
 }
 
 // load_error is the record of the last load that failed. The console owns
@@ -2550,7 +2550,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			sandbox_end(sandbox)
 		}
 	}
-	if sandbox.process == 0 && sandbox_start(sandbox) != .Ok {
+	if sandbox.process == 0 && sandbox_start(sandbox) != .Succeeded {
 		if !sandbox.service && load_error.stage != u32(module.Load_Stage.None) {
 			load_details.count = 0 // A call host gives no details of its load.
 			return fail_load("cannot start a sandboxed process for ", sandbox.name)
@@ -2588,15 +2588,15 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	lending: system.Lending
 	defer system.lend_end(&lending)
 	switch lend_status := system.lend(item.file, item.function, encoded[:parameter_total], sandbox.ring_memory, &lending); lend_status {
-	case .Ok:
-	case .Bad_Handle:
+	case .Succeeded:
+	case .Argument_Refused:
 		return fail(item.name, ": an argument names no handle of the console")
-	case .No_Right:
+	case .Grant_Or_Right_Missing:
 		return fail(item.name, ": a handle of the console lacks a right that the description asks, or the Give right")
-	case .No_Slot:
+	case .Budget_Or_Capacity_Exhausted:
 		return fail(item.name, ": the process ", sandbox.name, " has no room for one more handle")
-	case .Bad_Operation, .Bad_Address, .No_Memory, .Bad_State, .No_Budget:
-		return fail(item.name, ": the console cannot lend its handles to the process ", sandbox.name, ": ", system.kernel_status_text(lend_status))
+	case .Operation_Unsupported, .Nothing_Has_That_Name, .Name_Already_Taken, .Wrong_State, .Another_Change_Came_First, .Callee_Busy, .Callee_Unavailable, .Data_Damaged, .Stopped_After_A_Partial_Change, .Callee_Stopped_During_The_Call, .Connection_Ended_During_The_Call, .Deadline_Passed_During_The_Call, .Answer_Unreadable:
+		return fail(item.name, ": the console cannot lend its handles to the process ", sandbox.name, ": ", system.kernel_outcome_text(lend_status))
 	}
 	offset, size, buffer, ok := isolated.encode(item.file, item.function, encoded[:parameter_total], sandbox.region)
 	if !ok {
@@ -3093,20 +3093,20 @@ edit_object :: proc "contextless" (arguments: []Value) -> Value {
 		return fail_no_answer()
 	}
 	path_memory, create_status := system.memory_create(1)
-	if create_status != .Ok {
-		return fail("edit: cannot allocate memory for the object path: ", op.STATUS_NAMES[create_status])
+	if create_status != .Succeeded {
+		return fail("edit: cannot allocate memory for the object path: ", call_outcome.CALL_OUTCOME_NAMES[create_status])
 	}
 	mapped, map_status := system.memory_map(path_memory)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(path_memory)
-		return fail("edit: cannot map memory for the object path: ", op.STATUS_NAMES[map_status])
+		return fail("edit: cannot map memory for the object path: ", call_outcome.CALL_OUTCOME_NAMES[map_status])
 	}
 	intrinsics.mem_copy_non_overlapping(mapped, raw_data(object_path), len(object_path))
 	system.memory_unmap(mapped)
 	given_path, give_status := system.give(requests_memory, path_memory, {.Read})
 	system.close(path_memory)
-	if give_status != .Ok {
-		return fail("edit: cannot give the object path to the root service: ", op.STATUS_NAMES[give_status])
+	if give_status != .Succeeded {
+		return fail("edit: cannot give the object path to the root service: ", call_outcome.CALL_OUTCOME_NAMES[give_status])
 	}
 	packed := system.name_pack(store_name)
 	completion, answered := disk_request(.Start_Edit, {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(given_path), 5 = u64(len(object_path)), 6 = 0}, 3000)
@@ -3366,7 +3366,7 @@ agent_allow :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		return fail_root("agent_allow: ", completion)
 	}
 	return {kind = .Integer, integer = i64(completion.values[0])}
@@ -3383,7 +3383,7 @@ agent_disallow :: proc "contextless" (arguments: []Value) -> Value {
 	if !answered {
 		return fail_no_answer()
 	}
-	if system.Status(completion.kind) != .Ok {
+	if call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		return fail_root("agent_disallow: ", completion)
 	}
 	return {}
@@ -3765,7 +3765,7 @@ repeat :: proc "contextless" (arguments: []Value) -> Value {
 // release.
 buffer_create :: proc "contextless" (arguments: []Value) -> Value {
 	memory, status := system.memory_create(u64(arguments[0].integer))
-	if status != .Ok {
+	if status != .Succeeded {
 		return fail("the budget of the console cannot pay for ", arguments[0].integer, " pages")
 	}
 	return {kind = .Handle, integer = i64(memory)}
@@ -3783,7 +3783,7 @@ buffer_byte :: proc "contextless" (arguments: []Value) -> Value {
 		return fail(kind == .Memory ? "the memory object has no byte " : "the handle names no memory object: byte ", arguments[1].integer)
 	}
 	address, status := system.memory_map(memory, {})
-	if status != .Ok {
+	if status != .Succeeded {
 		return fail("the console cannot map the memory object")
 	}
 	defer system.memory_unmap(address)
@@ -3816,7 +3816,7 @@ buffer_bytes :: proc "contextless" (arguments: []Value) -> Value {
 		return fail("bytes: the line has no room for ", count, " bytes")
 	}
 	address, status := system.memory_map(memory, {})
-	if status != .Ok {
+	if status != .Succeeded {
 		return fail("the console cannot map the memory object")
 	}
 	defer system.memory_unmap(address)
@@ -3910,7 +3910,7 @@ shutdown :: proc "contextless" (arguments: []Value) -> Value {
 	// The line history first: the machine stops in the call.
 	history_save()
 	_, status := system.call(.Machine_Stop, u64(machine), 0)
-	if status != .Ok {
+	if status != .Succeeded {
 		return fail("the console has no grant to stop the machine")
 	}
 	return {}

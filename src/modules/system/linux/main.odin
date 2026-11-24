@@ -27,6 +27,7 @@
 // runs `poweroff`.
 package linux_shell
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import gb "modus:contract/guest_builder"
 import "modus:contract/guest_os"
@@ -300,8 +301,8 @@ fail :: proc "contextless" (text: string) -> ! {
 }
 
 // step_failed logs a kernel operation that failed, and stops.
-step_failed :: proc "contextless" (status: system.Status, step: string) -> ! {
-	system.log_fact(.Error, Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field(step, 40)})
+step_failed :: proc "contextless" (status: call_outcome.Call_Outcome, step: string) -> ! {
+	system.log_fact(.Error, Step_Failed{status_word = call_outcome.Call_Outcome_Word(status), step = value_kinds.text_field(step, 40)})
 	buffer: [160]u8
 	fail(system.format(buffer[:], "The guest cannot run: the kernel refused ", step, "."))
 }
@@ -329,8 +330,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		refuse("The guest did not start: the budget of this window holds less memory than a Linux guest needs. Give the process linux a larger budget in the plan.")
 	}
 	guest_memory_bytes = guest_memory_pages * system.PAGE_SIZE
-	status: system.Status
-	if guest_ram, status = guest_regions.owned_memory_make(guest_memory_bytes); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if guest_ram, status = guest_regions.owned_memory_make(guest_memory_bytes); status != .Succeeded {
 		step_failed(status, "Memory_Create of the guest memory")
 	}
 	ram := guest_ram.bytes[:guest_memory_bytes]
@@ -394,11 +395,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	name := GUEST_PROCESS_NAME
 	created, create_status := system.call(.Process_Create, u64(system.own_budget()), u64(uintptr(raw_data(name))), u64(len(name)))
-	if create_status != .Ok {
+	if create_status != .Succeeded {
 		step_failed(create_status, "Process_Create of the guest")
 	}
 	guest = system.Handle(created[0])
-	if map_status, step := guest_regions.map_memory(guest, guest_ram.handle, guest_memory_bytes); map_status != .Ok {
+	if map_status, step := guest_regions.map_memory(guest, guest_ram.handle, guest_memory_bytes); map_status != .Succeeded {
 		step_failed(map_status, step)
 	}
 
@@ -409,11 +410,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		input_forward()
 		run_error: errors.Error_Record
 		exit, run_status := system.guest_run(guest, &registers, &run_error)
-		if run_status == .Bad_Operation && run_error.kind == i64(errors.Kind.Unsupported) {
+		if run_status == .Operation_Unsupported && run_error.kind == i64(errors.Kind.Unsupported) {
 			system.log_fact(.Info, Guests_Unsupported{})
 			refuse("The guest did not start: the processors of this machine have no virtualization support that modus uses.")
 		}
-		if run_status != .Ok {
+		if run_status != .Succeeded {
 			step_failed(run_status, "Guest_Run")
 		}
 		if exit.kind != .Interrupted {

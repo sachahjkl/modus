@@ -95,7 +95,7 @@ probe_write :: proc "contextless" (command: ring.Record) {
 	memory := system.Handle(command.values[output.WIRING_VALUE_RING])
 	pages, size_status := system.memory_size(memory)
 	address, map_status := system.memory_map(memory)
-	if size_status != .Ok || map_status != .Ok {
+	if size_status != .Succeeded || map_status != .Succeeded {
 		wrong("the output ring does not map; the status", u64(map_status))
 	}
 	size := output.compartment_size(size_of(Probe))
@@ -118,12 +118,12 @@ probe_write :: proc "contextless" (command: ring.Record) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	opened, status := system.ring_open(ctx.handles[op.CONTEXT_WIRING_RING], receive_handles = true)
-	if status != .Ok {
+	if status != .Succeeded {
 		wrong("no wiring ring; the status", u64(status))
 	}
 	wiring = opened
 	first := command_wait()
-	answer(output.wiring_completion(first.tag, .Bad_State, errors.error_make(.Refused, .Wirings)))
+	answer(output.wiring_completion(first.tag, .Wrong_State, errors.error_make(.Refused, .Wirings)))
 	second := command_wait()
 	// The word for no wiring comes while this process holds the end of the
 	// Wire: the root service keeps the wiring ring mapped then, and reads
@@ -131,10 +131,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// unmaps the ring at the end of its pass, and drops each word that
 	// waits in it when a later end maps it again, with no line.
 	answer(output.wiring_closed_completion(NUMBER_OF_NO_WIRING))
-	answer(output.wiring_completion(second.tag, .Ok))
+	answer(output.wiring_completion(second.tag, .Succeeded))
 	// The second answer comes before Closed, so the wiring runs when the
 	// root service reads it, whatever the order of its passes: it drops it.
-	answer(output.wiring_completion(second.tag, .Ok))
+	answer(output.wiring_completion(second.tag, .Succeeded))
 	// One probe before Closed: the asker reads it, then the end word
 	// Side_Closed, which says that the root service took the Closed of
 	// this side and kept the wiring for the asker.

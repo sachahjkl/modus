@@ -293,7 +293,7 @@ capture_open :: proc "contextless" (index: int, record: ring.Record) {
 	width, height := record.values[1], record.values[2]
 	budget_pages: u64
 	if kind == .Budget && rights & {.Spend, .Read} == {.Spend, .Read} {
-		if amounts, status := system.budget_read(budget); status == .Ok {
+		if amounts, status := system.budget_read(budget); status == .Succeeded {
 			budget_pages = amounts.pages
 		}
 	}
@@ -311,18 +311,18 @@ capture_open :: proc "contextless" (index: int, record: ring.Record) {
 		capture_refuse(client, "the budget does not pay the header and two pictures")
 	case:
 		memory, create_status := system.memory_create(display.capture_pages(screen.width, screen.height), budget)
-		if create_status != .Ok {
+		if create_status != .Succeeded {
 			capture_refuse(client, "the budget pays no memory")
 			break
 		}
 		address, map_status := system.memory_map(memory, {.Write})
 		given: system.Handle
 		give_status := map_status
-		if map_status == .Ok {
+		if map_status == .Succeeded {
 			given, give_status = system.give(client.ring_memory, memory, {.Read})
 		}
-		if give_status != .Ok {
-			if map_status == .Ok {
+		if give_status != .Succeeded {
+			if map_status == .Succeeded {
 				system.memory_unmap(address)
 			}
 			system.close(memory)

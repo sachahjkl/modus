@@ -426,7 +426,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(.Failed)
 	}
-	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
+	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Succeeded {
 		image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 		file := system.image_find(image, "cryptography")
 		module_hash = blake3.hash(file)

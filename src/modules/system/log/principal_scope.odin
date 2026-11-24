@@ -69,7 +69,7 @@ session_table_open :: proc "contextless" (ctx: ^system.Context) {
 	if handle == 0 {
 		return
 	}
-	if address, status := system.memory_map(handle, {}); status == .Ok {
+	if address, status := system.memory_map(handle, {}); status == .Succeeded {
 		session_table = (^log_scope.SESSION_TABLE)(address)
 	}
 	// The records before this service started: the pass starts at the

@@ -1,6 +1,7 @@
 package system
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
@@ -85,13 +86,13 @@ ready_at_end :: proc "contextless" () {
 // holds none, or when the ring cannot be mapped: then the handle is closed.
 @(private = "file")
 ready_ring_claim :: proc "contextless" () -> (memory: Handle, mapped: ring.Ring, claimed: bool) {
-	start_context := (^op.Context)(uintptr(op.CONTEXT_ADDRESS))
+	start_context := context_record()
 	memory = intrinsics.atomic_exchange(&start_context.handles[op.CONTEXT_READY_RING], 0)
 	if memory == 0 {
 		return 0, {}, false
 	}
-	status: Status
-	if mapped, status = ring_open(memory); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if mapped, status = ring_open(memory); status != .Succeeded {
 		close(memory)
 		return 0, {}, false
 	}

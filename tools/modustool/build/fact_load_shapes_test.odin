@@ -24,7 +24,7 @@ the_shapes_of_a_load_error_are_fact_types :: proc(t: ^testing.T) {
 		{"Load_Cycle_Fields", size_of(module.Load_Cycle_Fields), "", .None},
 		{"Load_Check_Fields", size_of(module.Load_Check_Fields), "difference", .Load_Difference},
 		{"Load_Bind_Fields", size_of(module.Load_Bind_Fields), "", .None},
-		{"Load_Memory_Fields", size_of(module.Load_Memory_Fields), "status", .Status},
+		{"Load_Memory_Fields", size_of(module.Load_Memory_Fields), "status", .Call_Outcome},
 		{"Load_Room_Fields", size_of(module.Load_Room_Fields), "", .None},
 	}
 	text := "package fact_load_probe\n\nimport \"modus:contract/module\"\n"

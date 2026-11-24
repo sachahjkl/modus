@@ -1,5 +1,6 @@
 package build
 
+import "modus:contract/call_outcome"
 import "modus:contract/memory_screen"
 import "modus:contract/chosen_values"
 import module "modus:contract/module"
@@ -648,12 +649,12 @@ contract_enum_words :: proc(which: value_kinds.Contract_Enum, word: u64) -> stri
 	return line_of_before(word)
 }
 
-// The words of the status of a line: each member of op.Status, and a word
+// The words of the status of a line: each member of call_outcome.Call_Outcome, and a word
 // that names no member.
 @(private = "file")
 status_words :: proc() -> []u64 {
 	words := make([dynamic]u64, context.temp_allocator)
-	for status in op.Status {
+	for status in call_outcome.Call_Outcome {
 		append(&words, u64(status))
 	}
 	append(&words, max(u64))
@@ -725,11 +726,11 @@ a_status_of_the_windows_is_written_by_its_member :: proc(t: ^testing.T) {
 		return
 	}
 	for word in status_words() {
-		words := contract_enum_words(.Status, word)
+		words := contract_enum_words(.Call_Outcome, word)
 		facts_expect_line(t, fact_test_render(t, log_file, "log", "Records_Not_Readable", {{"status", word}}), line_of_before("log: cannot read the records of the log: status ", words))
 		facts_expect_line(t, fact_test_render(t, settings_file, "settings_process", "No_Settings_Page", {{"status", word}}), line_of_before("settings: no settings page: status ", words))
 	}
-	testing.expect_value(t, contract_enum_words(.Status, u64(op.Status.Ok)), "Ok")
+	testing.expect_value(t, contract_enum_words(.Call_Outcome, u64(call_outcome.Call_Outcome.Succeeded)), "Succeeded")
 }
 
 // Each error record of the windows is written in the fields form, after

@@ -1,6 +1,6 @@
 package entropy_device_service
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 
 // The log facts of the entropy service (src/md/features/log_facts.md, "The
 // facts of the device services and of the network"): the device found and
@@ -33,6 +33,6 @@ Service_Failed :: struct {
 // name of its member.
 @(log_fact = "entropy: the map of the queue gave the status {map_status}, its device address the status {address_status}")
 Queue_Not_Mapped :: struct {
-	map_status:     op.Status,
-	address_status: op.Status,
+	map_status:     call_outcome.Call_Outcome,
+	address_status: call_outcome.Call_Outcome,
 }

@@ -198,7 +198,7 @@ a_field_of_another_kind_is_another_record :: proc(t: ^testing.T) {
 	plain.kind = u8(value_kinds.Field_Kind.Plain)
 	level := Field{type = u8(Type.Integer), detail = 4, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Log_Level)}
 	status := level
-	status.contract_enum = u8(value_kinds.Contract_Enum.Status)
+	status.contract_enum = u8(value_kinds.Contract_Enum.Call_Outcome)
 	pairs := [?][2]Field{{hexadecimal, plain}, {level, status}, {level, hexadecimal}}
 	for pair in pairs {
 		first := file_with_one_field(pair[0], 4)
@@ -262,7 +262,7 @@ each_field_kind_on_its_type_is_taken :: proc(t: ^testing.T) {
 		{type = u8(Type.Integer), detail = 1, kind = u8(value_kinds.Field_Kind.Hexadecimal)},
 		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Hexadecimal)},
 		{type = u8(Type.Integer), detail = 1, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Log_Level)},
-		{type = u8(Type.Integer), detail = 4, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Status)},
+		{type = u8(Type.Integer), detail = 4, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Load_Stage)},
 		{type = u8(Type.Text), detail = value_kinds.MODULE_NAME_FIELD_BYTES, kind = u8(value_kinds.Field_Kind.Module_Name)},
 		{type = u8(Type.Bytes), detail = 1, kind = u8(value_kinds.Field_Kind.Hash)},
 		{type = u8(Type.Bytes), detail = value_kinds.HASH_FIELD_BYTES, kind = u8(value_kinds.Field_Kind.Hash)},
@@ -278,7 +278,7 @@ each_field_kind_on_its_type_is_taken :: proc(t: ^testing.T) {
 		{type = u8(Type.Integer), detail = 4, unsigned = true, kind = u8(value_kinds.Field_Kind.Nanoseconds_As_Microseconds)},
 		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Error_Kind)},
 		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Error_Unit)},
-		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Status)},
+		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Status), contract_enum = u8(value_kinds.Contract_Enum.Call_Outcome)},
 		{type = u8(Type.Integer), detail = 8, kind = u8(value_kinds.Field_Kind.Tenths)},
 		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Hexadecimal_No_Leading_Zero)},
 		{type = u8(Type.Integer), detail = 8, unsigned = true, kind = u8(value_kinds.Field_Kind.Time_Of_Day)},

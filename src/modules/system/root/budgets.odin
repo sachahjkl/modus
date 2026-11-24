@@ -400,9 +400,9 @@ disk_processes_budget: system.Handle
 // it from the budget of this service the first time. name names the disk
 // process whose start asks for it, so a refusal before Machine_Usable
 // names the process and the start-list reserves as the cause.
-disk_processes_budget_get :: proc "contextless" (name: string) -> (budget: system.Handle, status: system.Status) {
+disk_processes_budget_get :: proc "contextless" (name: string) -> (budget: system.Handle, status: call_outcome.Call_Outcome) {
 	if disk_processes_budget != 0 {
-		return disk_processes_budget, .Ok
+		return disk_processes_budget, .Succeeded
 	}
 	own, _ := system.budget_read()
 	shared := disk_process.PROCESSES_BUDGET
@@ -412,16 +412,16 @@ disk_processes_budget_get :: proc "contextless" (name: string) -> (budget: syste
 	payable := own.pages - min(own.pages, reserved)
 	if reserved != 0 && shared.pages > payable {
 		system.log_fact(.Warning, Disk_Processes_Budget_Refused_Reserved{needed = value_kinds.Size_In_Pages(min(shared.pages, u64(max(i64)))), held = value_kinds.Size_In_Pages(min(payable, u64(max(i64)))), reserved = value_kinds.Size_In_Pages(min(reserved, u64(max(i64)))), refused_process = module_name_field(name)})
-		return 0, .No_Budget
+		return 0, .Budget_Or_Capacity_Exhausted
 	}
 	budget, status = system.budget_create({pages = shared.pages, processes = shared.processes, threads = shared.threads, processor = min(disk_process.SHARED_PROCESSOR_TIME, own.processor), log_records = shared.processes * LOG_RECORDS_OF_A_PROCESS})
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Warning, Disk_Processes_Budget_Refused{status = status})
 		return 0, status
 	}
 	disk_processes_budget = budget
 	system.log_fact(.Info, Disk_Processes_Budget_Made{pages = value_kinds.Size_In_Pages(shared.pages), processes = shared.processes, threads = shared.threads})
-	return budget, .Ok
+	return budget, .Succeeded
 }
 
 // disk_budget_of gives the budget of a disk process: its floor, its size at
@@ -542,11 +542,11 @@ ready_peak_log :: proc "contextless" (item: ^Started) {
 		return
 	}
 	slot, serial, place_status := system.process_place(item.process)
-	if place_status != .Ok {
+	if place_status != .Succeeded {
 		return
 	}
 	report: op.Process_Report
-	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&report)), size_of(report)); status != .Ok || report.process_serial != serial || report.state == .Stopped {
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&report)), size_of(report)); status != .Succeeded || report.process_serial != serial || report.state == .Stopped {
 		return
 	}
 	peak := item.budget_pages - min(item.budget_pages, report.budget_least_pages)

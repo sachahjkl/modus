@@ -1,6 +1,7 @@
 #+build !freestanding
 package system
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
@@ -40,7 +41,7 @@ a_list_keeps_each_word_once :: proc(t: ^testing.T) {
 @(test)
 the_words_before_a_refused_word :: proc(t: ^testing.T) {
 	of :: proc(record: errors.Error_Record) -> ring.Record {
-		return {kind = u32(Status.Bad_Operation), values = transmute([7]u64)record}
+		return {kind = u32(call_outcome.Call_Outcome.Argument_Refused), values = transmute([7]u64)record}
 	}
 	twice :: proc(place: i64) -> errors.Error_Record {
 		return {kind = i64(errors.Kind.Bad_Value), unit = i64(errors.Unit.Words), argument = 1, value = place}

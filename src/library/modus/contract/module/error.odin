@@ -85,7 +85,7 @@ Named :: struct {
 // import>}`.
 Load_Error :: struct {
 	stage:       u32, // The word of a Load_Stage (load_stage_of_word). 0 (None): no error.
-	status:      u32, // Map, Unmap: the status of the kernel operation.
+	status:      u32, // Map, Unmap: the call_outcome.Call_Outcome word of the kernel operation.
 	file_error:  u32, // Read: the word of an Error (file_error_of_word); 0 (None) when the hash differs.
 	difference:  u32, // Check: the word of a Difference (difference_of_word).
 	module:      Named, // The module that was being loaded: the importer, when the stage concerns one of its imports.

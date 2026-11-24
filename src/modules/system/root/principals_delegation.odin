@@ -108,25 +108,25 @@ principals_service_start :: proc "contextless" () -> bool {
 	slot := part_place_take()
 	file := image_file_checked("principals")
 	if slot == nil {
-		system.log_fact(.Warning, Principals_Service_Start_Failed{status = .No_Slot})
+		system.log_fact(.Warning, Principals_Service_Start_Failed{status = .Budget_Or_Capacity_Exhausted})
 		return false
 	}
 	if len(file) == 0 {
-		system.log_fact(.Warning, Principals_Service_Start_Failed{status = .Bad_Handle})
+		system.log_fact(.Warning, Principals_Service_Start_Failed{status = .Argument_Refused})
 		return false
 	}
 	ring_memory, ring_opened, status := system.ring_create()
 	region_memory: system.Handle
 	region_address: rawptr
-	if status == .Ok {
+	if status == .Succeeded {
 		region_memory, status = system.memory_create(rd.PRINCIPALS_REGION_PAGES)
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		region_address, status = system.memory_map(region_memory, {.Write})
 	}
 	process: system.Handle
 	principals_budget: Start_Budget
-	if status == .Ok {
+	if status == .Succeeded {
 		grants: system.Context_Grants
 		values: system.Context_Values
 		system.grant_put(&grants, rd.PRINCIPALS_RING_SLOT, {ring_memory, {.Read, .Write}})
@@ -138,14 +138,14 @@ principals_service_start :: proc "contextless" () -> bool {
 		system.value_put(&values, rd.PRINCIPALS_VALUE_IMAGE_SIZE, u64(len(image)))
 		budget_ok: bool
 		if context_refused("principals", &grants, &values) {
-			status = .Bad_State
+			status = .Wrong_State
 		} else if principals_budget, budget_ok = budget_of(file, "principals"); !budget_ok {
-			status = .No_Budget
+			status = .Budget_Or_Capacity_Exhausted
 		} else {
 			process, status = system.process_start(file, "principals", grants.grants, random.values_with_seed(&process_generator, values.values), principals_budget.amounts, nil, &prepared, load_source(), ready = &slot.ready)
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		if region_address != nil {
 			system.memory_unmap(region_address)
 		}

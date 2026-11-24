@@ -222,7 +222,7 @@ synchronize :: proc "contextless" () -> (at_zero: i64, seconds: i64, edge_millis
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
 	address, status := system.memory_map(ctx.handles[date.GRANT_PAGE], {.Write})
-	if status != .Ok || ctx.handles[date.GRANT_PORTS] == 0 {
+	if status != .Succeeded || ctx.handles[date.GRANT_PORTS] == 0 {
 		system.log_fact(.Error, No_Date_Page_Or_Clock{})
 		// The ports of the clock are a handle of the context: none is a
 		// refused context. A page that does not map is refused only when the

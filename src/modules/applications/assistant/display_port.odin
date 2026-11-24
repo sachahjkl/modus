@@ -48,7 +48,7 @@ display_port_bind :: proc "contextless" (ctx: ^system.Context) {
 	if image_handle == 0 {
 		return
 	}
-	if address, status := system.memory_map(image_handle, {}); status == .Ok {
+	if address, status := system.memory_map(image_handle, {}); status == .Succeeded {
 		display_port.image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 }
@@ -63,7 +63,7 @@ display_connect :: proc "contextless" () -> (cause: string) {
 	}
 	if !display_port.root_opened {
 		requests, status := system.ring_open(display_port.root_handle, receive_handles = true)
-		if status != .Ok {
+		if status != .Succeeded {
 			return "the ring to the root service does not open"
 		}
 		display_port.root, display_port.root_opened = requests, true

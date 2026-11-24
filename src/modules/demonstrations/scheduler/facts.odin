@@ -1,5 +1,6 @@
 package scheduler
 
+import "modus:contract/call_outcome"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
@@ -11,7 +12,7 @@ import "modus:system"
 // fields are the last fields: the serial line of a fact stops at its last
 // byte that is not zero. A status of the kernel is a field of the contract
 // enum, which a reader writes by its name, as the line did; beside 8-byte
-// fields it is the 8-byte word op.Status_Word, so the record has no padding.
+// fields it is the 8-byte word call_outcome.Call_Outcome_Word, so the record has no padding.
 //
 // A share is in hundredths of a percent, written with two decimals: the
 // lines wrote tenths, and no field kind writes one decimal of a number that
@@ -33,7 +34,7 @@ PROCESS_NAME_FIELD_BYTES :: 24
 // this process can give, and what the process asks.
 @(log_fact = "scheduler: the process {process_name} did not start: {status}; this process can give pages {given_pages}, processes {given_processes}, threads {given_threads}; the process asks pages {asked_pages}, threads {asked_threads}")
 Share_Process_Not_Started :: struct {
-	status:          op.Status_Word,
+	status:          call_outcome.Call_Outcome_Word,
 	given_pages:     u64,
 	given_processes: u64,
 	given_threads:   u64,
@@ -191,8 +192,8 @@ Own_Schedule_Read :: struct {
 	request_after:  u64,
 	raised_weight:  u64,
 	raised_request: u64,
-	weight_raise:   op.Status_Word,
-	request_raise:  op.Status_Word,
+	weight_raise:   call_outcome.Call_Outcome_Word,
+	request_raise:  call_outcome.Call_Outcome_Word,
 	kept:           u64,
 	first_weight:   u64,
 	first_request:  u64,
@@ -203,16 +204,16 @@ Own_Schedule_Read :: struct {
 // status of a Thread_Control through the machine handle.
 @(log_fact = "scheduler: refused writes of a schedule: a weight above the full weight {too_heavy}, a request above the limit {too_long}, and the schedule stayed: {kept}; the machine handle with no right Schedule {no_schedule}; a read and a write through the machine handle with Schedule and no Inspect {no_inspect} and {blind_write}; a thread handle with Inspect and no Control {no_control}, and it reads: {reads}; another command with the machine handle {control}; the machine number of a thread that ended {ended}: {verdict}")
 Schedule_Writes_Refused :: struct {
-	too_heavy:   op.Status_Word,
-	too_long:    op.Status_Word,
+	too_heavy:   call_outcome.Call_Outcome_Word,
+	too_long:    call_outcome.Call_Outcome_Word,
 	kept:        u64,
-	no_schedule: op.Status_Word,
-	no_inspect:  op.Status_Word,
-	blind_write: op.Status_Word,
-	no_control:  op.Status_Word,
+	no_schedule: call_outcome.Call_Outcome_Word,
+	no_inspect:  call_outcome.Call_Outcome_Word,
+	blind_write: call_outcome.Call_Outcome_Word,
+	no_control:  call_outcome.Call_Outcome_Word,
 	reads:       u64,
-	control:     op.Status_Word,
-	ended:       op.Status_Word,
+	control:     call_outcome.Call_Outcome_Word,
+	ended:       call_outcome.Call_Outcome_Word,
 	verdict:     [16]u8,
 }
 
@@ -223,7 +224,7 @@ Schedule_Writes_Refused :: struct {
 Weight_Limit_Written :: struct {
 	limit:        u64,
 	weight:       u64,
-	raise:        op.Status_Word,
+	raise:        call_outcome.Call_Outcome_Word,
 	record_right: u64,
 	kept:         u64,
 	verdict:      [16]u8,
@@ -249,10 +250,10 @@ Weight_Limit_Rounds :: struct {
 Under_Weight_Limit :: struct {
 	limit:           u64,
 	heavier_weight:  u64,
-	too_heavy:       op.Status_Word,
+	too_heavy:       call_outcome.Call_Outcome_Word,
 	child_weight:    u64,
 	child_limit:     u64,
-	child_raise:     op.Status_Word,
+	child_raise:     call_outcome.Call_Outcome_Word,
 	restored_weight: u64,
 	verdict:         [16]u8,
 }
@@ -274,7 +275,7 @@ Own_Placement_Read :: struct {
 	processors:   u64,
 	first_right:  u64,
 	processor:    u64,
-	write:        op.Status_Word,
+	write:        call_outcome.Call_Outcome_Word,
 	second_right: u64,
 	samples:      u64,
 	outside:      u64,
@@ -284,11 +285,11 @@ Own_Placement_Read :: struct {
 // The refused sets of a placement.
 @(log_fact = "scheduler: refused sets of a placement, on a spinner that the machine handle keeps on the processor 0: through its thread handle a wider set {wider} and a processor that the machine does not have {nowhere}, with their error records: {process_records}; through the machine handle a limit of no processor of the machine {no_limit} and a set outside its limit {outside_limit}, with their error records: {machine_records}; the placement stayed: {unchanged}: {verdict}")
 Placement_Sets_Refused :: struct {
-	wider:           op.Status_Word,
-	nowhere:         op.Status_Word,
+	wider:           call_outcome.Call_Outcome_Word,
+	nowhere:         call_outcome.Call_Outcome_Word,
 	process_records: u64,
-	no_limit:        op.Status_Word,
-	outside_limit:   op.Status_Word,
+	no_limit:        call_outcome.Call_Outcome_Word,
+	outside_limit:   call_outcome.Call_Outcome_Word,
 	machine_records: u64,
 	unchanged:       u64,
 	verdict:         [16]u8,
@@ -297,14 +298,14 @@ Placement_Sets_Refused :: struct {
 // The rights of a placement.
 @(log_fact = "scheduler: the rights of a placement: the machine handle with no right Schedule {no_schedule}; a read and a write through the machine handle with Schedule and no Inspect {no_inspect} and {blind_write}; a thread handle with Inspect and no Control {no_control}, and it reads: {reads}; the placement stayed: {stayed}; a read and a write by the machine number of a thread that ended {ended_read} and {ended_write}: {verdict}")
 Placement_Rights :: struct {
-	no_schedule: op.Status_Word,
-	no_inspect:  op.Status_Word,
-	blind_write: op.Status_Word,
-	no_control:  op.Status_Word,
+	no_schedule: call_outcome.Call_Outcome_Word,
+	no_inspect:  call_outcome.Call_Outcome_Word,
+	blind_write: call_outcome.Call_Outcome_Word,
+	no_control:  call_outcome.Call_Outcome_Word,
 	reads:       u64,
 	stayed:      u64,
-	ended_read:  op.Status_Word,
-	ended_write: op.Status_Word,
+	ended_read:  call_outcome.Call_Outcome_Word,
+	ended_write: call_outcome.Call_Outcome_Word,
 	verdict:     [16]u8,
 }
 
@@ -313,7 +314,7 @@ Placement_Rights :: struct {
 Placement_Limit_Written :: struct {
 	last_processor: u64,
 	limited:        u64,
-	widen:          op.Status_Word,
+	widen:          call_outcome.Call_Outcome_Word,
 	record_right:   u64,
 	kept:           u64,
 	verdict:        [16]u8,
@@ -335,7 +336,7 @@ Placement_Limit_Rounds :: struct {
 Placement_Limit_Inherited :: struct {
 	inherited:   u64,
 	home_inside: u64,
-	widen:       op.Status_Word,
+	widen:       call_outcome.Call_Outcome_Word,
 	restored:    u64,
 	verdict:     [16]u8,
 }
@@ -510,7 +511,7 @@ Own_New_Thread_Limit :: struct {
 	first_open:             u64,
 	process_limit:          u64,
 	heavier_weight:         u64,
-	between_status:         op.Status_Word,
+	between_status:         call_outcome.Call_Outcome_Word,
 	error_limit:            u64,
 	child_weight:           u64,
 	child_limit:            u64,
@@ -613,7 +614,7 @@ Window_Drawn :: struct {
 // The thread of the share policy did not start.
 @(log_fact = "scheduler: the thread of the share policy did not start: {status}")
 Share_Policy_Thread_Not_Started :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // The case of the refused writes of a placement does not run on a machine

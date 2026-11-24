@@ -33,6 +33,7 @@
 // run; no case checks a speed.
 package frames
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:display"
 import "modus:graphics"
@@ -130,7 +131,7 @@ report_of :: proc "contextless" (name: string) -> (report: op.Process_Report, fo
 	return {}, false
 }
 
-twin_start :: proc "contextless" (name: string, mode: twins.Twin_Mode, table: ^system.Prepared_Modules, page: system.Handle = 0) -> (system.Handle, system.Status) {
+twin_start :: proc "contextless" (name: string, mode: twins.Twin_Mode, table: ^system.Prepared_Modules, page: system.Handle = 0) -> (system.Handle, call_outcome.Call_Outcome) {
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
 	values[twins.VALUE_MODE] = u64(mode)
@@ -147,9 +148,9 @@ TWIN_NAMES := [TWIN_COUNT]string{"twin 1", "twin 2", "twin 3", "twin 4"}
 twins_start :: proc "contextless" (processes: ^[TWIN_COUNT]system.Handle, table: ^system.Prepared_Modules) -> (paid: u64, cycles: u64, ok: bool) {
 	start := intrinsics.read_cycle_counter()
 	for &process, index in processes {
-		status: system.Status
-		if process, status = twin_start(TWIN_NAMES[index], .Wait, table); status != .Ok {
-			system.log_fact(.Info, Twin_Not_Started{status_word = op.Status_Word(status)})
+		status: call_outcome.Call_Outcome
+		if process, status = twin_start(TWIN_NAMES[index], .Wait, table); status != .Succeeded {
+			system.log_fact(.Info, Twin_Not_Started{status_word = call_outcome.Call_Outcome_Word(status)})
 			return 0, 0, false
 		}
 	}
@@ -203,7 +204,7 @@ first_use_cases :: proc "contextless" () {
 	// The budget refuses at creation, never at an access.
 	budget, _ := system.budget_create({pages = SMALL_BUDGET})
 	_, refused := system.memory_create(2 * SMALL_BUDGET, budget)
-	note("create 200 pages with a budget of 100", refused == .No_Budget, "refused at creation")
+	note("create 200 pages with a budget of 100", refused == .Budget_Or_Capacity_Exhausted, "refused at creation")
 	count := SMALL_BUDGET - op.memory_list_pages(SMALL_BUDGET)
 	memory, _ = system.memory_create(count, budget)
 	left, _ := system.budget_read(budget)
@@ -224,7 +225,7 @@ first_use_cases :: proc "contextless" () {
 	word := (^u32)(address)
 	twin, status := twin_start("twin", .Write_Page, &prepared, page)
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
-	for status == .Ok && intrinsics.volatile_load(word) == 0 && system.time() < deadline {
+	for status == .Succeeded && intrinsics.volatile_load(word) == 0 && system.time() < deadline {
 		system.word_wait(word, 0, deadline)
 	}
 	note("a twin writes a page that no one used", intrinsics.volatile_load(word) == twins.WORD, "this process reads it")
@@ -296,7 +297,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	machine = ctx.handles[system.GRANT_MACHINE]
-	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
+	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Succeeded {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Boot), 0, u64(uintptr(&boot)), size_of(boot))

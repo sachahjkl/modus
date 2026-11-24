@@ -63,7 +63,7 @@ is_refusal :: proc "contextless" (error: errors.Error_Record, kind: errors.Kind,
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	address, mapped := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
-	if mapped != .Ok {
+	if mapped != .Succeeded {
 		wrong("the boot image does not map")
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -76,7 +76,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wrong("the compositor has no export notify")
 	}
 	requests, opened := system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true)
-	if opened != .Ok {
+	if opened != .Succeeded {
 		wrong("the ring to the root service does not open")
 	}
 	connected: call_outcome.Call_Outcome

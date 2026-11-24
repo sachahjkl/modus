@@ -32,6 +32,7 @@
 //   picture.
 package workers
 
+import "modus:contract/call_outcome"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
@@ -234,9 +235,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	queue.zoom = 0.012
 	for &worker, index in workers {
 		worker.number = index
-		status: system.Status
+		status: call_outcome.Call_Outcome
 		worker.thread, status = system.thread_start(compute, &worker)
-		if status != .Ok {
+		if status != .Succeeded {
 			system.log_fact(.Info, Thread_Not_Started{})
 			system.stop(.Failed)
 		}

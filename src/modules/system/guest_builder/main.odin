@@ -30,7 +30,6 @@ import "modus:contract/errors"
 import contract "modus:contract/guest_builder"
 import "modus:contract/guest_os"
 import "modus:guest_regions"
-import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:system"
 
@@ -100,9 +99,9 @@ input_disk_copy :: proc "contextless" (input_disk: ^system.Bytes_To_Read, error:
 	if count == 0 {
 		return {}, nil, .Succeeded
 	}
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	memory, status = guest_regions.owned_memory_make(count)
-	if status != .Ok {
+	if status != .Succeeded {
 		outcome, _ = call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Budget, .Pages, ARGUMENT_INPUT_DISK, i64(count / system.PAGE_SIZE + 1))
 		return {}, nil, outcome
 	}
@@ -115,7 +114,7 @@ input_disk_copy :: proc "contextless" (input_disk: ^system.Bytes_To_Read, error:
 output_tree_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Record) -> (bytes: []u8, outcome: call_outcome.Call_Outcome) {
 	refusal: errors.Error_Record
 	address, status := system.memory_map(memory, {.Write}, error = &refusal)
-	if status != .Ok {
+	if status != .Succeeded {
 		if error != nil {
 			error^ = refusal
 			error.operation = 0
@@ -124,7 +123,7 @@ output_tree_map :: proc "contextless" (memory: system.Handle, error: ^errors.Err
 				error^ = errors.error_make(.Refused, argument = ARGUMENT_OUTPUT_TREE, found = i64(status))
 			}
 		}
-		return nil, system.outcome_of_status(status)
+		return nil, status
 	}
 	pages, _ := system.memory_size(memory)
 	return ([^]u8)(address)[:pages * system.PAGE_SIZE], .Succeeded
@@ -262,9 +261,9 @@ build :: proc "c" (
 		build_end(&resources)
 		return copied, 0
 	}
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	resources.output_disk, status = guest_regions.owned_memory_make(spec.output_size_bound)
-	if status != .Ok {
+	if status != .Succeeded {
 		build_end(&resources)
 		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Budget, .Pages, ARGUMENT_SPEC, i64(spec.output_size_bound / system.PAGE_SIZE + 1))
 	}
@@ -306,8 +305,8 @@ build :: proc "c" (
 	case .Kernel_Failed:
 		build_end(&resources)
 		write_report(report, .Failed, .Nonzero_Guest_Exit)
-		system.log_fact(.Error, Step_Failed{status_word = op.Status_Word(run.status), step = value_kinds.text_field(run.step, 40)})
-		return call_outcome.fail(error, system.outcome_of_own_status(run.status), .Refused, .None, 0, i64(run.status))
+		system.log_fact(.Error, Step_Failed{status_word = call_outcome.Call_Outcome_Word(run.status), step = value_kinds.text_field(run.step, 40)})
+		return call_outcome.fail(error, system.own_operation_outcome(run.status), .Refused, .None, 0, i64(run.status))
 	}
 
 	output_hash, tree_written, finish_refusal := contract.runner_finish(&sandbox_runner, &unpack_workspace, tree_output_staging[:])

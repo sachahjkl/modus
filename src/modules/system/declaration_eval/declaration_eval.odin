@@ -47,7 +47,7 @@ refusal_give :: proc "contextless" (error: ^errors.Error_Record, refusal: errors
 output_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Record) -> (bytes: []u8, outcome: call_outcome.Call_Outcome) {
 	refusal: errors.Error_Record
 	address, status := system.memory_map(memory, {.Write}, error = &refusal)
-	if status != .Ok {
+	if status != .Succeeded {
 		if error != nil {
 			error^ = refusal
 			error.operation = 0
@@ -56,7 +56,7 @@ output_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Re
 				error^ = errors.error_make(.Refused, argument = ARGUMENT_OUTPUT, found = i64(status))
 			}
 		}
-		return nil, system.outcome_of_status(status)
+		return nil, status
 	}
 	pages, _ := system.memory_size(memory)
 	return ([^]u8)(address)[:pages * system.PAGE_SIZE], .Succeeded
@@ -105,19 +105,19 @@ evaluate :: proc "c" (
 		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, ARGUMENT_BUNDLE, i64(bundle_count), 0)
 	}
 	amounts, budget_status := system.budget_read()
-	if budget_status != .Ok {
+	if budget_status != .Succeeded {
 		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 0, 0, 0, i64(budget_status))
 	}
 	arena_refusal: errors.Error_Record
 	arena, arena_status := system.arena_create(system.arena_reservation_pages(amounts.pages), 0, &arena_refusal)
-	if arena_status != .Ok {
+	if arena_status != .Succeeded {
 		return refusal_give(error, arena_refusal)
 	}
 	defer system.arena_end(&arena)
 
 	// Copy source into the arena once.
 	source_address, source_status := system.arena_push(&arena, source_count, 1, &arena_refusal)
-	if source_status != .Ok {
+	if source_status != .Succeeded {
 		return refusal_give(error, arena_refusal)
 	}
 	intrinsics.mem_copy_non_overlapping(source_address, source_bytes, int(source_count))
@@ -134,7 +134,7 @@ evaluate :: proc "c" (
 	catalog_bindings: [1]lex_evaluator.Declaration_Binding
 	if bundle_count > 0 {
 		bundle_address, bundle_status := system.arena_push(&arena, bundle_count, 8, &arena_refusal)
-		if bundle_status != .Ok {
+		if bundle_status != .Succeeded {
 			return refusal_give(error, arena_refusal)
 		}
 		intrinsics.mem_copy_non_overlapping(bundle_address, bundle_bytes, int(bundle_count))
@@ -161,7 +161,7 @@ evaluate :: proc "c" (
 
 	output_cap := u64(len(memory))
 	staging_address, staging_status := system.arena_push(&arena, output_cap, 8, &arena_refusal)
-	if staging_status != .Ok {
+	if staging_status != .Succeeded {
 		return refusal_give(error, arena_refusal)
 	}
 	output_staging := ([^]u8)(staging_address)[:output_cap]
@@ -176,7 +176,7 @@ evaluate :: proc "c" (
 		pools := lex_evaluator.declaration_pools_of_scale(scale)
 		need := u64(lex_evaluator.declaration_workspace_bytes(pools))
 		pools_address, pools_status := system.arena_push(&arena, need, 64, &arena_refusal)
-		if pools_status != .Ok {
+		if pools_status != .Succeeded {
 			return refusal_give(error, arena_refusal)
 		}
 		lex_evaluator.declaration_workspace_carve(&workspace, ([^]u8)(pools_address)[:need], pools)

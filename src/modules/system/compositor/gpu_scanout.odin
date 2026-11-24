@@ -79,7 +79,7 @@ gpu_scanout_open :: proc "contextless" (ctx: ^system.Context, width, height: int
 		return
 	}
 	opened, status := system.ring_open(handle)
-	if status != .Ok {
+	if status != .Succeeded {
 		return
 	}
 	gpu_ring_memory = handle
@@ -108,19 +108,19 @@ gpu_scanout_open :: proc "contextless" (ctx: ^system.Context, width, height: int
 	}
 	// Contiguous: the device reads the pixels through one backing entry.
 	memory, create_status := system.memory_create((bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE, 0, {.Contiguous})
-	if create_status != .Ok {
+	if create_status != .Succeeded {
 		system.log_fact(.Info, Gpu_Scanout_Not_Taken{status = u64(create_status)})
 		return
 	}
 	address, map_status := system.memory_map(memory, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(memory)
 		system.log_fact(.Info, Gpu_Scanout_Not_Taken{status = u64(map_status)})
 		return
 	}
 	lent, lend_status := system.give(gpu_ring_memory, memory, {.Read})
 	system.close(memory) // The mapping and the handle of the service keep it.
-	if lend_status != .Ok {
+	if lend_status != .Succeeded {
 		system.memory_unmap(address)
 		system.log_fact(.Info, Gpu_Scanout_Not_Taken{status = u64(lend_status)})
 		return

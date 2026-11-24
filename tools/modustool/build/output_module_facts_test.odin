@@ -158,10 +158,10 @@ the_facts_of_the_wiring_service_write_the_lines_of_before :: proc(t: ^testing.T)
 		facts_expect_line(t, fact_test_render(t, file, "wiring", "Stop_Notice_Refused", {{"notice_kind", count}}), line_of_before("wiring: refused malformed stop notice on stops ring, kind ", count))
 		facts_expect_line(t, fact_test_render(t, file, "wiring", "Ready", {{"image_bytes", count}}), line_of_before("wiring: ready, read-only boot image ", count, " bytes"))
 		facts_expect_line(t, fact_test_render(t, file, "wiring", "Stalled_Wiring_Revoked", {{"wiring_number", count}}), line_of_before("wiring: revoked stalled Always_Holds_Writer wiring ", count))
-		for status in op.Status {
-			facts_expect_line(t, fact_test_render(t, file, "wiring", "End_Page_Not_Mapped", {{"wiring_slot", count}, {"status", u64(status)}}), line_of_before("wiring: cannot map end page of slot ", count, ": status ", op.STATUS_NAMES[status]))
+		for status in call_outcome.Call_Outcome {
+			facts_expect_line(t, fact_test_render(t, file, "wiring", "End_Page_Not_Mapped", {{"wiring_slot", count}, {"status", u64(status)}}), line_of_before("wiring: cannot map end page of slot ", count, ": status ", call_outcome.CALL_OUTCOME_NAMES[status]))
 		}
-		past := u64(max(op.Status)) + 1
+		past := u64(max(call_outcome.Call_Outcome)) + 1
 		facts_expect_line(t, fact_test_render(t, file, "wiring", "End_Page_Not_Mapped", {{"wiring_slot", count}, {"status", past}}), line_of_before("wiring: cannot map end page of slot ", count, ": status ", past))
 	}
 	reasons := [?][2]string{{"No_Service_Ring", "no service ring"}, {"No_Stops_Ring", "no stops ring"}, {"No_Boot_Image", "no read-only boot image"}, {"Boot_Image_Not_Mapped", "cannot map boot image"}, {"Transfer_Region_Too_Small", "transfer region too small"}, {"Transfer_Region_Not_Mapped", "cannot map transfer region"}}

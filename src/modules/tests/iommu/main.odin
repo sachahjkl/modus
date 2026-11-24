@@ -20,7 +20,7 @@ import "modus:system"
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	blocks, status := system.ring_open(ctx.handles[block.GRANT_RING])
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Error, No_Block_Ring{})
 		system.stop(.Failed)
 	}

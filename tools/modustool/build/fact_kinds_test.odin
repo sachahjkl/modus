@@ -1,8 +1,8 @@
 package build
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import module "modus:contract/module"
-import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:testing"
@@ -24,6 +24,7 @@ KINDS_TEST_IMPORTS :: `package fact_kinds_probe
 
 import "modus:system"
 import "modus:contract/value_kinds"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 `
@@ -40,7 +41,7 @@ Kinds :: struct {
 	address: value_kinds.Hexadecimal_Sixteen_Digits,
 	passes:  value_kinds.Hundredths,
 	spent:   value_kinds.Nanoseconds_As_Microseconds,
-	status:  op.Status_Word,
+	status:  call_outcome.Call_Outcome_Word,
 	policy:  value_kinds.Hash_Head_Field,
 	head:    value_kinds.Hash_Sixteen_Bytes_Field,
 }
@@ -86,7 +87,7 @@ a_fact_type_of_the_new_kinds_that_breaks_a_rule_is_refused :: proc(t: ^testing.T
 		{"a fact of an error record that names a field two times", "@(log_fact = \"probe: {kind} kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}\")\nRefused :: distinct errors.Error_Record_Fact_Fields", "system.log_fact(.Warning, Refused(errors.error_record_fact_fields(errors.Error_Record{})))"},
 		{"a conversion by a procedure", "helper :: proc(value: u64) -> u64 {return value}", "system.log_fact(.Info, helper(1))"},
 		{"a conversion of two values", "@(log_fact = \"probe: {block}\")\nProbe :: struct {\n\tblock: u64,\n}", "system.log_fact(.Info, Probe(1, 2))"},
-		{"a status of 4 bytes after a field of 8", "@(log_fact = \"probe: {block} {status}\")\nProbe :: struct {\n\tblock:  u64,\n\tstatus: op.Status,\n}", "system.log_fact(.Info, Probe{block = 1})"},
+		{"a stop cause of 4 bytes after a field of 8", "@(log_fact = \"probe: {block} {cause}\")\nProbe :: struct {\n\tblock: u64,\n\tcause: op.Stop_Cause,\n}", "system.log_fact(.Info, Probe{block = 1})"},
 		{"a word of a kind of an error record of 8 bytes beside a field of 4", "@(log_fact = \"probe: {kind} {small}\")\nProbe :: struct {\n\tkind:  errors.Kind_Word,\n\tsmall: u32,\n}", "system.log_fact(.Info, Probe{small = 1})"},
 	}
 	for item in cases {
@@ -95,7 +96,7 @@ a_fact_type_of_the_new_kinds_that_breaks_a_rule_is_refused :: proc(t: ^testing.T
 		testing.expectf(t, !ok && len(facts) == 0, "the extraction takes %s", item.name)
 	}
 	// The word type of a status covers the 4 bytes: taken.
-	word_type := "@(log_fact = \"probe: {block} {status}\")\nProbe :: struct {\n\tblock:  u64,\n\tstatus: op.Status_Word,\n}"
+	word_type := "@(log_fact = \"probe: {block} {status}\")\nProbe :: struct {\n\tblock:  u64,\n\tstatus: call_outcome.Call_Outcome_Word,\n}"
 	word_sources := [1]Fact_Source{kinds_test_source(word_type, "system.log_fact(.Info, Probe{block = 1})")}
 	word_facts, word_ok := facts_of_sources(word_sources[:])
 	testing.expect(t, word_ok && len(word_facts) == 1 && word_facts[0].record.size == 16)
@@ -135,7 +136,7 @@ the_fact_types_of_the_new_kinds_are_described_and_rendered :: proc(t: ^testing.T
 		{"address", 0, .Integer, 0, true, {}, .Hexadecimal_Sixteen_Digits, .None},
 		{"passes", 8, .Integer, 0, false, {}, .Hundredths, .None},
 		{"spent", 16, .Integer, 0, true, {}, .Nanoseconds_As_Microseconds, .None},
-		{"status", 24, .Integer, 0, true, {}, .Status, .Status},
+		{"status", 24, .Integer, 0, true, {}, .Status, .Call_Outcome},
 		{"policy", 32, .Bytes, value_kinds.HASH_FIELD_BYTES, false, {}, .Hash_Head, .None},
 		{"head", 64, .Bytes, value_kinds.HASH_SIXTEEN_BYTES, false, {}, .Hash, .None},
 	}
@@ -186,10 +187,10 @@ the_fact_types_of_the_new_kinds_are_described_and_rendered :: proc(t: ^testing.T
 		sentence:                       string,
 	}
 	edges := [?]Edge {
-		{0, 0, 0, u64(op.Status.Ok), "probe: at 0000000000000000, 0.00 passes, in 0.0 us, the status Ok, the start policy 1a2b3c4d…, the module 00000000000000000000000000000000..."},
-		{1, 1, 1, u64(max(op.Status)) + 1, fmt.tprintf("probe: at 0000000000000001, 0.01 passes, in 0.0 us, the status %d, the start policy 1a2b3c4d…, the module 00000000000000000000000000000000...", u64(max(op.Status)) + 1)},
+		{0, 0, 0, u64(call_outcome.Call_Outcome.Succeeded), "probe: at 0000000000000000, 0.00 passes, in 0.0 us, the status Succeeded, the start policy 1a2b3c4d…, the module 00000000000000000000000000000000..."},
+		{1, 1, 1, u64(max(call_outcome.Call_Outcome)) + 1, fmt.tprintf("probe: at 0000000000000001, 0.01 passes, in 0.0 us, the status %d, the start policy 1a2b3c4d…, the module 00000000000000000000000000000000...", u64(max(call_outcome.Call_Outcome)) + 1)},
 		{max(u64), signed_bits(-50), 812_499, max(u64), "probe: at ffffffffffffffff, -0.50 passes, in 812.4 us, the status 18446744073709551615, the start policy 1a2b3c4d…, the module 00000000000000000000000000000000..."},
-		{0x922, 105, max(u64), u64(op.Status.Bad_Address), "probe: at 0000000000000922, 1.05 passes, in 18446744073709551.6 us, the status Bad_Address, the start policy 1a2b3c4d…, the module 00000000000000000000000000000000..."},
+		{0x922, 105, max(u64), u64(call_outcome.Call_Outcome.Argument_Refused), "probe: at 0000000000000922, 1.05 passes, in 18446744073709551.6 us, the status Argument_Refused, the start policy 1a2b3c4d…, the module 00000000000000000000000000000000..."},
 	}
 	for edge in edges {
 		written := fact_test_render(t, file, "fact_kinds_probe", "Kinds", {{"address", edge.address}, {"passes", edge.passes}, {"spent", edge.spent}, {"status", edge.status}, {"policy", policy}})
@@ -203,7 +204,7 @@ the_fact_types_of_the_new_kinds_are_described_and_rendered :: proc(t: ^testing.T
 		}
 		count, _, refusal := module.fact_sentence_write(file, key, bytes, buffer[:], nil)
 		testing.expect_value(t, refusal, module.Fact_Render_Refusal.None)
-		testing.expect_value(t, string(buffer[:count]), "probe: at 0000000000000000, 0.00 passes, in 0.0 us, the status Ok, the start policy 1a2b3c4d…, the module a0a1a2a3a4a5a6a7a8a9aaabacadaeaf...")
+		testing.expect_value(t, string(buffer[:count]), "probe: at 0000000000000000, 0.00 passes, in 0.0 us, the status Succeeded, the start policy 1a2b3c4d…, the module a0a1a2a3a4a5a6a7a8a9aaabacadaeaf...")
 	}
 
 	// An error record: each member by its name; a kind or a unit that

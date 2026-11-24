@@ -36,7 +36,7 @@ engine_memory :: proc "contextless" () -> bool {
 		return true
 	}
 	own, _ := system.budget_read()
-	if web.document_arenas_create(&engine_arenas, system.arena_reservation_pages(own.pages)) != .Ok {
+	if web.document_arenas_create(&engine_arenas, system.arena_reservation_pages(own.pages)) != .Succeeded {
 		return false
 	}
 	web.document_memory_bind(&engine_arenas, &engine_dom, &engine_sheet, &engine_layout)

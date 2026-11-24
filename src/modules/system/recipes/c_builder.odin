@@ -91,7 +91,7 @@ c_builder_bind :: proc "contextless" (ctx: ^system.Context) {
 		return
 	}
 	address, map_status := system.memory_map(image_handle, {})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -139,7 +139,7 @@ c_build_plan :: proc "contextless" (budget_pages: u64, source_bytes: u64) -> (ne
 @(private)
 c_builder_host_pages :: proc "contextless" () -> u64 {
 	amounts, status := system.budget_read()
-	if status != .Ok || amounts.pages <= C_BUILD_SERVICE_PAGES_KEPT + system.CALL_HOST_PAGES {
+	if status != .Succeeded || amounts.pages <= C_BUILD_SERVICE_PAGES_KEPT + system.CALL_HOST_PAGES {
 		return system.CALL_HOST_PAGES
 	}
 	return amounts.pages - C_BUILD_SERVICE_PAGES_KEPT
@@ -184,7 +184,7 @@ c_builder_call :: proc "contextless" (work: ^C_Build_Work, file: []u8, name: str
 	load_error: module.Load_Error
 	added := system.Call_Host_Context{pages = c_builder_host_pages()}
 	connection, status := system.call_host_start(c_builder.image, c_builder.image_memory, file, name, c_builder_values(seed), &load_error, added = &added)
-	if status != .Ok {
+	if status != .Succeeded {
 		c_build_fail(work, start_step, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(status)))
 		return 0, false
 	}
@@ -222,9 +222,9 @@ c_builder_call_sized :: proc "contextless" (work: ^C_Build_Work, file: []u8, nam
 	bytes := min(first_bytes, most_bytes)
 	for attempt in 0 ..< 2 {
 		pages := max((bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE, 1)
-		status: system.Status
-		if memory, status = system.memory_create(pages); status != .Ok {
-			c_build_fail(work, call_step, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(status)), system.outcome_of_own_status(status))
+		status: call_outcome.Call_Outcome
+		if memory, status = system.memory_create(pages); status != .Succeeded {
+			c_build_fail(work, call_step, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(status)), system.own_operation_outcome(status))
 			return 0, 0, false
 		}
 		arguments[output].integer = u64(memory)
@@ -254,8 +254,8 @@ c_builder_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, stagi
 	// that it cannot pay is refused before any call host starts, with the
 	// pages that it needs and the pages that are left.
 	own, budget_status := system.budget_read()
-	if budget_status != .Ok {
-		c_build_fail(work, .Compiler_Start, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(budget_status)), system.outcome_of_own_status(budget_status))
+	if budget_status != .Succeeded {
+		c_build_fail(work, .Compiler_Start, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(budget_status)), system.own_operation_outcome(budget_status))
 		return nil, false
 	}
 	if needed, fits := c_build_plan(own.pages, u64(len(work.source))); !fits {
@@ -278,8 +278,8 @@ c_builder_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, stagi
 		return nil, false
 	}
 	text_address, text_map_status := system.memory_map(text_memory, {})
-	if text_map_status != .Ok {
-		c_build_fail(work, .Compile, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(text_map_status)), system.outcome_of_own_status(text_map_status))
+	if text_map_status != .Succeeded {
+		c_build_fail(work, .Compile, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(text_map_status)), system.own_operation_outcome(text_map_status))
 		return nil, false
 	}
 	defer system.memory_unmap(text_address)
@@ -297,8 +297,8 @@ c_builder_invoke :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, stagi
 		return nil, false
 	}
 	module_address, module_map_status := system.memory_map(module_memory, {})
-	if module_map_status != .Ok {
-		c_build_fail(work, .Assemble, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(module_map_status)), system.outcome_of_own_status(module_map_status))
+	if module_map_status != .Succeeded {
+		c_build_fail(work, .Assemble, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(module_map_status)), system.own_operation_outcome(module_map_status))
 		return nil, false
 	}
 	work.module_address = module_address

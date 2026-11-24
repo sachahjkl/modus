@@ -67,7 +67,7 @@ mesh_shares: machine_wire.Memory_Shares
 @(private = "file")
 mesh_growth_allowed :: proc "contextless" (push_pages, store_pages, peer_pages: u64) -> bool {
 	amounts, status := system.budget_read()
-	return status == .Ok && machine_wire.memory_growth_allowed(mesh_shares, amounts.pages, push_pages, store_pages, peer_pages)
+	return status == .Succeeded && machine_wire.memory_growth_allowed(mesh_shares, amounts.pages, push_pages, store_pages, peer_pages)
 }
 
 // mesh_extend pushes bytes more onto an arena that holds one table, and
@@ -84,7 +84,7 @@ mesh_extend :: proc "contextless" (arena: ^system.Arena, table_end: rawptr, byte
 		return false
 	}
 	address, status := system.arena_push(arena, u64(bytes), u64(alignment))
-	return status == .Ok && (table_end == nil || address == table_end)
+	return status == .Succeeded && (table_end == nil || address == table_end)
 }
 
 // The growth of a table in place: the double of its length when the
@@ -138,7 +138,7 @@ mesh_partner_pages :: proc "contextless" (partner: [machine_mesh.PUBLIC_KEY_SIZE
 // two pieces, the bytes past those in use go back to the budget.
 @(private = "file")
 mesh_object_trim :: proc "contextless" (_: rawptr, store: ^machine_sync.Object_Store) {
-	if system.arena_trim(&mesh_object_bytes_arena, u64(store.bytes_used)) == .Ok {
+	if system.arena_trim(&mesh_object_bytes_arena, u64(store.bytes_used)) == .Succeeded {
 		store.bytes = ([^]u8)(mesh_object_bytes_arena.base)[:store.bytes_used]
 	}
 }
@@ -224,11 +224,11 @@ mesh_version_grow :: proc "contextless" (_: rawptr, version: ^machine_wire.Store
 			continue
 		}
 		memory, status := system.memory_create(pages)
-		if status != .Ok {
+		if status != .Succeeded {
 			continue
 		}
 		address, map_status := system.memory_map(memory, {.Write})
-		if map_status != .Ok {
+		if map_status != .Succeeded {
 			system.close(memory)
 			continue
 		}
@@ -259,21 +259,21 @@ mesh_version_trim :: proc "contextless" (_: rawptr, version: ^machine_wire.Store
 // first sync. The tables start empty, and the shares come from the same
 // budget.
 @(private = "file")
-mesh_memory_make :: proc "contextless" (error: ^errors.Error_Record) -> (memory: machine_wire.Peer_Memory, status: system.Status) {
+mesh_memory_make :: proc "contextless" (error: ^errors.Error_Record) -> (memory: machine_wire.Peer_Memory, status: call_outcome.Call_Outcome) {
 	arenas := [3]^system.Arena{&mesh_object_bytes_arena, &mesh_object_rows_arena, &mesh_store_rows_arena}
 	for arena in arenas {
 		system.arena_end(arena)
 	}
 	amounts: system.Budget_Amounts
 	amounts, status = system.budget_read(error = error)
-	if status != .Ok {
+	if status != .Succeeded {
 		return {}, status
 	}
 	mesh_shares = machine_wire.memory_shares_of(amounts.pages, MESH_BUDGET_KEPT_PAGES)
 	reserve := system.arena_reservation_pages(amounts.pages)
 	for arena in arenas {
 		arena^, status = system.arena_create(reserve, error = error)
-		if status != .Ok {
+		if status != .Succeeded {
 			for other in arenas {
 				system.arena_end(other)
 			}
@@ -286,7 +286,7 @@ mesh_memory_make :: proc "contextless" (error: ^errors.Error_Record) -> (memory:
 	memory.store_table_grow = mesh_store_table_grow
 	memory.version_grow = mesh_version_grow
 	memory.version_trim = mesh_version_trim
-	return memory, .Ok
+	return memory, .Succeeded
 }
 
 // The answer of one mesh frame, before it goes to the buffer of its stream,
@@ -328,7 +328,7 @@ mesh_identity_set :: proc "contextless" (public_key: [32]u8, error: ^errors.Erro
 		fill_random      = mesh_fill_random,
 	}
 	memory, memory_status := mesh_memory_make(error)
-	if memory_status != .Ok {
+	if memory_status != .Succeeded {
 		return .Budget_Or_Capacity_Exhausted, 0
 	}
 	if !machine_wire.peer_init(&mesh, public_key, services, memory) {

@@ -136,7 +136,7 @@ Kind :: enum i64 {
 	Unknown_Operation = 24, // value: the number of the operation.
 	// The kernel gives it for a command record whose kind is 0 or above the last `op.Operation`; limit is the
 	// last operation.
-	Refused           = 25, // The call refused, and gives no more detail. found: the status (op.Status for the kernel, and with the unit Kernel_Status).
+	Refused           = 25, // The call refused, and gives no more detail. found: the call_outcome.Call_Outcome word (for the kernel, and with the unit Kernel_Status).
 	// The last resort of a callee that has no better kind: a reader names the status in words with the unit
 	// Kernel_Status, and keeps any other status on the detail lines. `src/library/modus/system`
 	// gives it for a kernel call whose answer has another tag than its command, or is absent.
@@ -146,13 +146,13 @@ Kind :: enum i64 {
 	// call that needs the disk with the kind `Device`.
 	Unsupported       = 27, // The receiver does not do this command. value: the command, or the field that it does not do.
 	// Given by the block and frame services for a command that the device does not have, by the network
-	// service, the root service and QUIC. The kernel gives it with `Bad_Operation` for `Guest_Run` on a machine
+	// service, the root service and QUIC. The kernel gives it with `Operation_Unsupported` for `Guest_Run` on a machine
 	// whose processors have no virtualization support that it uses: value is the operation.
 	Link_Down         = 28, // The link of the network device is down.
 	// The network service gives it for a send while the device reports no link.
 	Busy              = 29, // Too many requests are in flight. value: the requests in flight, or 0 when the receiver does not count them; limit: the most.
 	// The block, frame and network services give it, with the unit `Requests`. Another try can pass after a
-	// completion. `src/library/modus/system` gives it with `Bad_Operation` and limit 0 for a kernel call on a
+	// completion. `src/library/modus/system` gives it with `Callee_Busy` and limit 0 for a kernel call on a
 	// kernel ring that holds a command or a completion: its command does not run.
 	Out_Of_Range      = 30, // The argument names units past the end. value: the end of what it names (its first unit and its count); limit: the units that exist; found: 0, or the number from 1 of the record of a table argument that names them (a record that names bytes of another argument by an offset, docs/MODULE_CONTRACT.md, "Tables and bytes as parameters").
 	// The services of rings give it for a place and a count past the end of their data region (the unit `Bytes`),
@@ -179,7 +179,7 @@ Kind :: enum i64 {
 	Exists            = 39, // The name of the argument names something that exists already, and the call makes a new one. found: 0, or the number from 1 of the row of a table argument that names it.
 	// The storage service gives it for a new tree or object at a name in use.
 	Starter_Module    = 40, // value: the address that the call names; limit: the base of a module record that the starter of the process wrote (op.Module_Writer.Starter); found: its size in bytes.
-	// The kernel gives it with `No_Right` for `Process_Module`, `Memory_Map` and `Memory_Unmap` of a process in
+	// The kernel gives it with `Grant_Or_Right_Missing` for `Process_Module`, `Memory_Map` and `Memory_Unmap` of a process in
 	// itself over that record: only a holder of its process handle changes it.
 	Callee_Stopped    = 41, // The process that ran the call stopped. value: the word of its op.Stop_Cause; found: the word of its op.Stop_Outcome, or 0.
 	// A border of a call gives it with the outcome Callee_Stopped_During_The_Call, or Callee_Unavailable when the
@@ -309,7 +309,7 @@ Unit :: enum i64 {
 	Input_Histories = 59, // The input history of the process that the debugger service debugs (src/md/features/record_and_replay.md). Absent: the debugger started no record of it, or no record runs. Full: a record or a replay of it runs already. Out_Of_Range: value the input points of a step back, or the point before which a watch back looks, limit the input points of the history. Bad_Value: the module of the boot image is not the module of the history. Damaged: the header of the history is not a valid header.
 	Checkpoints = 60, // The checkpoints that the debugger service keeps of a recorded process (src/md/features/record_and_replay.md). Absent: no checkpoint is at or before the input point that a step back names. Exists: a checkpoint is at this input point, or at a later one, already.
 	Recorded_Writes = 61, // Absent: no input of the history before the point wrote a byte of the range of a watch back (src/md/features/record_and_replay.md). value: the address; limit: the count of bytes; found: the point, 0 for the whole history.
-	Kernel_Status = 62, // Refused: a kernel operation inside the call refused, and found is its op.Status, which a sentence names in words.
+	Kernel_Status = 62, // Refused: a kernel operation inside the call refused, and found is its call_outcome.Call_Outcome word, which a sentence names in words.
 	Device_Windows = 63, // Full: the device windows of the IOMMU, which the objects that a service declares and that are not contiguous hold; limit their count.
 	Count_Repair = 64, // Busy: the storage service repairs the counts of the blocks of its disk and makes no change until the end (src/md/data/storage_capacity.md). value: the stores that the repair walked; limit: the stores in all.
 	Act_Records = 65, // Full: the act record of a call under a wide grant found no room, and the call did not run (src/md/features/wide_grants.md, "The size of the act records"): the audit space of the grant in the collector is full, or its ring did not take the record. found: the wide_grants.Act_Write_Status of the write.

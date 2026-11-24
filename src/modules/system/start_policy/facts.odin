@@ -108,7 +108,7 @@ Completion_Status_Refused :: struct {
 // The ring of the root service does not open.
 @(log_fact = "start_policy: the root ring does not open: status {status}")
 Root_Ring_Refused :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // The context names no start list.
@@ -146,8 +146,8 @@ Row_Reader_Not_Running :: struct {
 // A writer row does not start: a lend or its wiring list failed.
 @(log_fact = "start_policy: {row_process} does not start: its wiring list gave the status {status}, at the reader row {reader_row}; the row 0 is the list page or the list")
 Row_Wiring_Refused :: struct {
-	reader_row:  u32,
-	status:      op.Status,
+	status:      call_outcome.Call_Outcome,
+	reader_row:  u64,
 	row_process: value_kinds.Module_Name_Field,
 }
 

@@ -29,6 +29,7 @@
 // "started" after a key.
 package threads
 
+import "modus:contract/call_outcome"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
@@ -135,9 +136,9 @@ add_numbers :: proc "c" (parameter: rawptr) -> ! {
 
 worker_start :: proc "contextless" (index: int) -> bool {
 	worker := &workers[index]
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	worker.thread, status = system.thread_start(draw_square, worker)
-	worker.runs = status == .Ok
+	worker.runs = status == .Succeeded
 	return worker.runs
 }
 
@@ -160,7 +161,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	sum := Sum {
 		last = 1000,
 	}
-	if adder, status := system.thread_start(add_numbers, &sum); status == .Ok {
+	if adder, status := system.thread_start(add_numbers, &sum); status == .Succeeded {
 		system.thread_wait(adder)
 	}
 	system.log_fact(.Info, Sum_Added{result = sum.result})

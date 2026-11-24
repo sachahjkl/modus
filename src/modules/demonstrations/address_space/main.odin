@@ -44,6 +44,7 @@
 // through large pages) are measures of the host of the run.
 package address_space
 
+import "modus:contract/call_outcome"
 import "modus:contract/fixed_addresses"
 import "base:intrinsics"
 import "modus:contract/errors"
@@ -113,8 +114,8 @@ done: bool
 
 Refusal :: struct {
 	name:     string,
-	status:   system.Status,
-	expected: system.Status,
+	status:   call_outcome.Call_Outcome,
+	expected: call_outcome.Call_Outcome,
 	record:   errors.Error_Record,
 	sentence: [160]u8,
 	count:    int,
@@ -154,7 +155,7 @@ find_self :: proc "contextless" () {
 	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&machine_report)), size_of(machine_report))
 	for index in u64(1) ..< machine_report.process_slots {
 		report: op.Process_Report
-		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), index, u64(uintptr(&report)), size_of(report)); status != .Ok {
+		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), index, u64(uintptr(&report)), size_of(report)); status != .Succeeded {
 			continue
 		}
 		if system.name_of(report.name[:]) == "address_space" && report.state != .Stopped && report.state != .None {
@@ -168,7 +169,7 @@ find_self :: proc "contextless" () {
 arena :: proc "contextless" () {
 	before, _ := system.budget_read()
 	memory, status := system.memory_create(GIGABYTE_PAGES, flags = {.Uncommitted})
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("the arena: no object")
 		return
 	}
@@ -178,7 +179,7 @@ arena :: proc "contextless" () {
 	start := system.nanoseconds()
 	address, map_status := system.memory_map(memory)
 	arena_map_microseconds = (system.nanoseconds() - start) / 1000
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		fail("the arena: no mapping")
 		return
 	}
@@ -193,7 +194,7 @@ arena :: proc "contextless" () {
 			for index in 0 ..< batch {
 				ranges[index] = {first = page + index, page_count = 1}
 			}
-			if _, commit := system.memory_commit(memory, ranges[:batch]); commit != .Ok {
+			if _, commit := system.memory_commit(memory, ranges[:batch]); commit != .Succeeded {
 				fail("the arena: a commit was refused")
 				return
 			}
@@ -207,7 +208,7 @@ arena :: proc "contextless" () {
 	}
 	// The pages return.
 	everything := [1]op.Page_Range{{first = 0, page_count = 3 * ARENA_PAGES}}
-	if returned, decommit := system.memory_decommit(memory, everything[:]); decommit != .Ok || returned != 3 * ARENA_PAGES {
+	if returned, decommit := system.memory_decommit(memory, everything[:]); decommit != .Succeeded || returned != 3 * ARENA_PAGES {
 		fail("the arena: the decommit")
 	}
 }
@@ -216,13 +217,13 @@ arena :: proc "contextless" () {
 // decommit and a page committed again.
 sparse :: proc "contextless" () {
 	memory, status := system.memory_create(GIGABYTE_PAGES, flags = {.Uncommitted})
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("the sparse table: no object")
 		return
 	}
 	defer system.close(memory)
 	address, map_status := system.memory_map(memory)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		fail("the sparse table: no mapping")
 		return
 	}
@@ -243,7 +244,7 @@ sparse :: proc "contextless" () {
 		for index in 0 ..< 256 {
 			ranges[index] = {first = pages[part * 256 + index], page_count = 1}
 		}
-		if _, commit := system.memory_commit(memory, ranges[:]); commit != .Ok {
+		if _, commit := system.memory_commit(memory, ranges[:]); commit != .Succeeded {
 			fail("the sparse table: a commit was refused")
 			return
 		}
@@ -267,26 +268,26 @@ sparse :: proc "contextless" () {
 	// the longest is the longest section of the kernel with interrupts off
 	// that a call of this kind makes.
 	returned: u64
-	decommit := system.Status.Ok
+	decommit := call_outcome.Call_Outcome.Succeeded
 	for part in u64(0) ..< GIGABYTE_PAGES / op.RANGE_TABLE_PAGE_LIMIT {
 		quarter := [1]op.Page_Range{{first = part * op.RANGE_TABLE_PAGE_LIMIT, page_count = op.RANGE_TABLE_PAGE_LIMIT}}
 		start := system.nanoseconds()
 		changed, part_status := system.memory_decommit(memory, quarter[:])
 		decommit_microseconds = max(decommit_microseconds, (system.nanoseconds() - start) / 1000)
 		returned += changed
-		if part_status != .Ok {
+		if part_status != .Succeeded {
 			decommit = part_status
 		}
 	}
 	record: errors.Error_Record
 	everything := [1]op.Page_Range{{first = 0, page_count = GIGABYTE_PAGES}}
 	_, too_many := system.memory_decommit(memory, everything[:], &record)
-	if too_many != .Bad_Operation || record.kind != i64(errors.Kind.Too_Long) {
+	if too_many != .Argument_Refused || record.kind != i64(errors.Kind.Too_Long) {
 		fail("a decommit of more than the page limit of one call was not refused with its record")
 	}
 	after, _ := system.budget_read()
 	decommit_returned, decommit_expected = after.pages - before.pages, SPARSE_PAGES
-	if decommit != .Ok || returned != SPARSE_PAGES || decommit_returned != SPARSE_PAGES {
+	if decommit != .Succeeded || returned != SPARSE_PAGES || decommit_returned != SPARSE_PAGES {
 		fail("the decommit: the budget did not get each page back")
 	}
 	// A page committed again is zero.
@@ -316,13 +317,13 @@ run :: proc "c" (parameter: rawptr) -> ! {
 
 protection :: proc "contextless" () {
 	memory, status := system.memory_create(PROTECT_PAGES)
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("the protection: no object")
 		return
 	}
 	defer system.close(memory)
 	address, map_status := system.memory_map(memory)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		fail("the protection: no mapping")
 		return
 	}
@@ -348,7 +349,7 @@ protection :: proc "contextless" () {
 				start := system.nanoseconds()
 				_, protect := system.memory_protect(part[:], call % 2 == 0 ? {} : {.Write})
 				time = system.nanoseconds() - start
-				if protect != .Ok {
+				if protect != .Succeeded {
 					fail("the protection: a change was refused")
 					return
 				}
@@ -389,7 +390,7 @@ child :: proc "contextless" () -> ! {
 guard_page :: proc "contextless" (ctx: ^system.Context) {
 	image_size := ctx.values[system.GRANT_VALUE_IMAGE_SIZE]
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("the guard page: no boot image")
 		return
 	}
@@ -398,7 +399,7 @@ guard_page :: proc "contextless" (ctx: ^system.Context) {
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = 1
 	process, start := system.process_start(system.image_find(image, "address_space"), "address_space child", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
-	if start != .Ok {
+	if start != .Succeeded {
 		fail("the guard page: the child did not start")
 		return
 	}
@@ -437,14 +438,14 @@ reads :: proc "contextless" (base: [^]u64) -> u64 {
 
 large_pages :: proc "contextless" () {
 	memory, status := system.memory_create(LARGE_OBJECT_PAGES, flags = {.Large_Pages})
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("the large pages: no object")
 		return
 	}
 	defer system.close(memory)
 	large, large_status := system.memory_map(memory, {.Write}, 0, LARGE_ADDRESS)
 	small, small_status := system.memory_map(memory, {.Write}, 0, SMALL_ADDRESS)
-	if large_status != .Ok || small_status != .Ok {
+	if large_status != .Succeeded || small_status != .Succeeded {
 		fail("the large pages: no mapping")
 		return
 	}
@@ -461,7 +462,7 @@ large_pages :: proc "contextless" () {
 	small_nanoseconds = reads(([^]u64)(small))
 }
 
-refusal :: proc "contextless" (item: ^Refusal, name: string, expected: system.Status, status: system.Status, record: errors.Error_Record) {
+refusal :: proc "contextless" (item: ^Refusal, name: string, expected: call_outcome.Call_Outcome, status: call_outcome.Call_Outcome, record: errors.Error_Record) {
 	item.name, item.expected, item.status, item.record = name, expected, status, record
 	writer := system.Writer{buffer = item.sentence[:]}
 	system.kernel_error_text(&writer, &item.record)
@@ -477,13 +478,13 @@ refuse :: proc "contextless" () {
 	defer system.close(memory)
 	outside := [1]op.Page_Range{{first = 60, page_count = 10}}
 	_, status := system.memory_commit(memory, outside[:], error = &record)
-	refusal(&refusals[0], "a range outside the object", .Bad_Address, status, record)
+	refusal(&refusals[0], "a range outside the object", .Argument_Refused, status, record)
 	big, _ := system.memory_create(GIGABYTE_PAGES, flags = {.Uncommitted})
 	defer system.close(big)
 	record = {}
 	over := [1]op.Page_Range{{first = 0, page_count = 60_000}} // Under the page limit of one call, over the budget.
 	_, status = system.memory_commit(big, over[:], error = &record)
-	refusal(&refusals[1], "a commit over the budget", .No_Budget, status, record)
+	refusal(&refusals[1], "a commit over the budget", .Budget_Or_Capacity_Exhausted, status, record)
 	plain, _ := system.memory_create(4)
 	defer system.close(plain)
 	address, _ := system.memory_map(plain)
@@ -491,10 +492,10 @@ refuse :: proc "contextless" () {
 	record = {}
 	both := [1]op.Address_Range{{address = u64(uintptr(address)), page_count = 4}}
 	_, status = system.memory_protect(both[:], {.Write, .Execute}, &record)
-	refusal(&refusals[2], "write and execute", .Bad_Operation, status, record)
+	refusal(&refusals[2], "write and execute", .Argument_Refused, status, record)
 	record = {}
 	_, status = system.memory_create(100, flags = {.Large_Pages}, error = &record)
-	refusal(&refusals[3], "large pages of 100 pages", .Bad_Operation, status, record)
+	refusal(&refusals[3], "large pages of 100 pages", .Argument_Refused, status, record)
 }
 
 // The edge cases of the virtual memory: each one is a case where the
@@ -585,15 +586,15 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		system.memory_protect(part[:], {.No_Access})
 		record: errors.Error_Record
 		second, refused := system.memory_map(memory, error = &record)
-		if refused == .Ok {
+		if refused == .Succeeded {
 			system.memory_unmap(second)
 		}
 		system.memory_protect(part[:], {.Write})
 		third, allowed := system.memory_map(memory)
-		if allowed == .Ok {
+		if allowed == .Succeeded {
 			system.memory_unmap(third)
 		}
-		edge_case_results[6] = refused == .Bad_State && record.kind != i64(errors.Kind.Refused) && allowed == .Ok
+		edge_case_results[6] = refused == .Wrong_State && record.kind != i64(errors.Kind.Refused) && allowed == .Succeeded
 		system.memory_unmap(address)
 		system.close(memory)
 	}
@@ -602,11 +603,11 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 	{
 		empty, _ := system.budget_create({pages = 0})
 		memory, status := system.memory_create(4, empty, {.Uncommitted})
-		if status == .Ok {
+		if status == .Succeeded {
 			system.close(memory)
 		}
 		system.close(empty)
-		edge_case_results[7] = status == .No_Budget
+		edge_case_results[7] = status == .Budget_Or_Capacity_Exhausted
 	}
 	// The whole mapping becomes read only; a part of it cannot become
 	// writable alone: refused, not a success that changes nothing.
@@ -618,7 +619,7 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		system.memory_protect(whole[:], {})
 		record: errors.Error_Record
 		_, status := system.memory_protect(part[:], {.Write}, &record)
-		edge_case_results[8] = status == .Bad_Operation && record.kind != i64(errors.Kind.Refused)
+		edge_case_results[8] = status == .Argument_Refused && record.kind != i64(errors.Kind.Refused)
 		system.memory_unmap(address)
 		system.close(memory)
 	}
@@ -654,12 +655,12 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		system.memory_protect(part[:], {.No_Access})
 		system.memory_unmap(address)
 		again, status := system.memory_map(memory)
-		if status == .Ok {
+		if status == .Succeeded {
 			bytes := ([^]u8)(again)
 			bytes[0] = 1 // The page has no mark: no fault.
 			system.memory_unmap(again)
 		}
-		edge_case_results[1] = status == .Ok
+		edge_case_results[1] = status == .Succeeded
 		system.close(memory)
 	}
 	// An object of large pages at an address that the kernel chooses.
@@ -668,7 +669,7 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		address, status := system.memory_map(memory)
 		report := own_mappings()
 		mapping := mapping_at(report, u64(uintptr(address)))
-		edge_case_results[2] = status == .Ok && mapping != nil && .Large in mapping.flags
+		edge_case_results[2] = status == .Succeeded && mapping != nil && .Large in mapping.flags
 		system.memory_unmap(address)
 		system.close(memory)
 	}
@@ -678,7 +679,7 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		address, _ := system.memory_map(memory)
 		ranges := [2]op.Address_Range{{address = u64(uintptr(address)), page_count = 8}, {address = u64(uintptr(address)), page_count = 2}}
 		_, status := system.memory_protect(ranges[:], {.Write})
-		edge_case_results[3] = status == .Bad_Operation
+		edge_case_results[3] = status == .Argument_Refused
 		system.memory_unmap(address)
 		system.close(memory)
 	}
@@ -690,7 +691,7 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		_, not_canonical := system.call_with_error(nil, .Thread_Create, u64(system.own_budget()), 0x0000_8000_0000_0000, op.USER_END, 0)
 		_, of_the_kernel := system.call_with_error(nil, .Thread_Create, u64(system.own_budget()), 0xFFFF_FFFF_8000_0000, op.USER_END, 0)
 		_, stack_past_the_end := system.call_with_error(nil, .Thread_Create, u64(system.own_budget()), op.USER_END - 4096, 0x0000_9000_0000_0000, 0)
-		edge_case_results[12] = not_canonical == .Bad_Address && of_the_kernel == .Bad_Address && stack_past_the_end == .Bad_Address
+		edge_case_results[12] = not_canonical == .Argument_Refused && of_the_kernel == .Argument_Refused && stack_past_the_end == .Argument_Refused
 	}
 	{
 		// A bit of the flags with no meaning, alone and beside a flag that
@@ -704,7 +705,7 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		_, alone := system.call_with_error(&alone_record, .Memory_Map, u64(memory), 0, 0, first_unknown_bit, 0, 0)
 		_, beside := system.call_with_error(&beside_record, .Memory_Map, u64(memory), 0, 0, 1 << 63 | transmute(u64)op.Map_Flags{.Write}, 0, 0)
 		address, known := system.memory_map(memory, {.Write})
-		edge_case_results[13] = alone == .Bad_Operation && beside == .Bad_Operation && alone_record.kind == i64(errors.Kind.Bad_Flags) && alone_record.argument == 4 && beside_record.kind == i64(errors.Kind.Bad_Flags) && known == .Ok
+		edge_case_results[13] = alone == .Argument_Refused && beside == .Argument_Refused && alone_record.kind == i64(errors.Kind.Bad_Flags) && alone_record.argument == 4 && beside_record.kind == i64(errors.Kind.Bad_Flags) && known == .Succeeded
 		system.memory_unmap(address)
 		system.close(memory)
 	}
@@ -752,7 +753,7 @@ child_waits_on_object :: proc "contextless" (ctx: ^system.Context) -> ! {
 
 revocation_wakes_waiter :: proc "contextless" (ctx: ^system.Context) -> bool {
 	object, created := system.memory_create(GIGABYTE_PAGES, flags = {.Uncommitted})
-	if created != .Ok {
+	if created != .Succeeded {
 		return false
 	}
 	defer system.close(object)
@@ -764,7 +765,7 @@ revocation_wakes_waiter :: proc "contextless" (ctx: ^system.Context) -> bool {
 	defer system.memory_unmap(board_address)
 	board := (^Revocation_Board)(board_address)
 	image_address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	image := ([^]u8)(image_address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -774,7 +775,7 @@ revocation_wakes_waiter :: proc "contextless" (ctx: ^system.Context) -> bool {
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = 4
 	process, start := system.process_start(system.image_find(image, "address_space"), "address_space waiter", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
-	if start != .Ok {
+	if start != .Succeeded {
 		return false
 	}
 	defer system.close(process)
@@ -808,13 +809,13 @@ revocation_wakes_waiter :: proc "contextless" (ctx: ^system.Context) -> bool {
 large_object_ends_quickly :: proc "contextless" () -> bool {
 	before, _ := system.budget_read()
 	object, created := system.memory_create(GIGABYTE_PAGES, flags = {.Uncommitted})
-	if created != .Ok {
+	if created != .Succeeded {
 		return false
 	}
 	first := [1]op.Page_Range{{first = 0, page_count = 4}}
 	system.memory_commit(object, first[:])
 	address, status := system.memory_map(object)
-	if status != .Ok {
+	if status != .Succeeded {
 		system.close(object)
 		return false
 	}
@@ -838,7 +839,7 @@ large_object_ends_quickly :: proc "contextless" () -> bool {
 // the hang bound.
 child_stop_cause :: proc "contextless" (ctx: ^system.Context, role: u64) -> (cause: op.Stop_Cause, outcome: op.Stop_Outcome) {
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
-	if status != .Ok {
+	if status != .Succeeded {
 		return .None, .None
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -846,7 +847,7 @@ child_stop_cause :: proc "contextless" (ctx: ^system.Context, role: u64) -> (cau
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = role
 	process, start := system.process_start(system.image_find(image, "address_space"), "address_space child", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
-	if start != .Ok {
+	if start != .Succeeded {
 		return .None, .None
 	}
 	defer system.close(process)
@@ -875,7 +876,7 @@ Own_Handle_Board :: struct {
 // is a fault that the parent sees.
 child_stop_by_own_handle :: proc "contextless" (ctx: ^system.Context) -> ! {
 	address, mapped := system.memory_map(ctx.handles[GRANT_REVOCATION_BOARD])
-	if mapped != .Ok {
+	if mapped != .Succeeded {
 		system.log_fact(.Info, Own_Handle_Child_Board_Not_Mapped{map_status = mapped})
 		system.stop(.Failed)
 	}
@@ -900,7 +901,7 @@ child_stop_by_own_handle :: proc "contextless" (ctx: ^system.Context) -> ! {
 // kernel the words of Process_Stop that it must refuse (stop_word_refusals).
 own_handle_stop :: proc "contextless" (ctx: ^system.Context) -> (own_handle_right: bool, stop_words_right: bool) {
 	board_memory, created := system.memory_create(1)
-	if created != .Ok {
+	if created != .Succeeded {
 		return false, false
 	}
 	defer system.close(board_memory)
@@ -908,7 +909,7 @@ own_handle_stop :: proc "contextless" (ctx: ^system.Context) -> (own_handle_righ
 	defer system.memory_unmap(board_address)
 	board := (^Own_Handle_Board)(board_address)
 	image_address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
-	if status != .Ok {
+	if status != .Succeeded {
 		return false, false
 	}
 	image := ([^]u8)(image_address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -917,7 +918,7 @@ own_handle_stop :: proc "contextless" (ctx: ^system.Context) -> (own_handle_righ
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = 6
 	process, start := system.process_start(system.image_find(image, "address_space"), "address_space own handle", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
-	if start != .Ok {
+	if start != .Succeeded {
 		return false, false
 	}
 	defer system.close(process)
@@ -927,16 +928,16 @@ own_handle_stop :: proc "contextless" (ctx: ^system.Context) -> (own_handle_righ
 	intrinsics.atomic_store(&board.given, 1)
 	system.word_wake(&board.given)
 	cause, outcome, _ := system.process_stop_wait(process, system.time() + system.TEST_HANG_BOUND_MILLISECONDS)
-	refused := intrinsics.atomic_load(&board.status) == u32(system.Status.No_Right) + 1
+	refused := intrinsics.atomic_load(&board.status) == u32(call_outcome.Call_Outcome.Grant_Or_Right_Missing) + 1
 	// The stop of itself is the one cause with an outcome: the sentence of
 	// another cause has no outcome, as the stop line of the root service.
-	stop_verdict: string = refused ? "was refused with No_Right" : "was not refused with No_Right"
+	stop_verdict: string = refused ? "was refused with Grant_Or_Right_Missing" : "was not refused with Grant_Or_Right_Missing"
 	if cause == .Itself {
-		system.log_fact(.Info, Own_Handle_Child_Stopped{give_status = given, cause = cause, outcome = outcome, stop_verdict = value_kinds.text_field(stop_verdict, 36)})
+		system.log_fact(.Info, Own_Handle_Child_Stopped{give_status = given, cause = cause, outcome = outcome, stop_verdict = value_kinds.text_field(stop_verdict, 48)})
 	} else {
-		system.log_fact(.Info, Own_Handle_Child_Stopped_Without_Outcome{give_status = given, cause = cause, stop_verdict = value_kinds.text_field(stop_verdict, 32)})
+		system.log_fact(.Info, Own_Handle_Child_Stopped_Without_Outcome{give_status = given, cause = cause, stop_verdict = value_kinds.text_field(stop_verdict, 44)})
 	}
-	return given == .Ok && refused && outcome == .Done, stop_words_right
+	return given == .Succeeded && refused && outcome == .Done, stop_words_right
 }
 
 // stop_word_refusals gives the kernel the words of Process_Stop that it must
@@ -971,14 +972,14 @@ stop_word_refusals :: proc "contextless" (child: system.Handle) -> bool {
 	for item in refused {
 		commands := [1]ring.Record{{kind = u32(op.Operation.Process_Stop), values = {0 = item.target, 1 = item.word}}}
 		completions: [1]ring.Record
-		if _, status := system.commands_call(commands[:], completions[:]); status != .Ok {
-			system.log_fact(.Info, Stop_Command_Refused_By_Library{stop_word = item.word, call_status = op.Status_Word(status)})
+		if _, status := system.commands_call(commands[:], completions[:]); status != .Succeeded {
+			system.log_fact(.Info, Stop_Command_Refused_By_Library{stop_word = item.word, call_status = call_outcome.Call_Outcome_Word(status)})
 			wrong += 1
 			continue
 		}
 		record := transmute(errors.Error_Record)completions[0].values
-		if completions[0].kind != u32(system.Status.Bad_Operation) || record.kind != i64(errors.Kind.Bad_Value) || record.argument != 2 || record.value != i64(item.word) || record.limit != item.limit {
-			system.log_fact(.Info, Stop_Word_Not_Refused{stop_word = item.word, status_word = op.Status_Word(completions[0].kind), error_kind = errors.Kind_Word(record.kind), argument = record.argument, limit = record.limit, target = value_kinds.text_field(item.target == 0 ? "this process" : "a child", 16)})
+		if completions[0].kind != u32(call_outcome.Call_Outcome.Argument_Refused) || record.kind != i64(errors.Kind.Bad_Value) || record.argument != 2 || record.value != i64(item.word) || record.limit != item.limit {
+			system.log_fact(.Info, Stop_Word_Not_Refused{stop_word = item.word, status_word = call_outcome.Call_Outcome_Word(completions[0].kind), error_kind = errors.Kind_Word(record.kind), argument = record.argument, limit = record.limit, target = value_kinds.text_field(item.target == 0 ? "this process" : "a child", 16)})
 			wrong += 1
 		}
 	}
@@ -1015,7 +1016,7 @@ GRANT_DELEGATION_BUDGET :: 2 // The child budget, with Commit only.
 GRANT_DELEGATION_SPEND :: 3 // A second child budget with Spend: does a revocation end what B made with it?
 
 Delegation_Result :: struct {
-	status:   system.Status,
+	status:   call_outcome.Call_Outcome,
 	record:   errors.Error_Record,
 	value:    u64,
 }
@@ -1065,7 +1066,7 @@ child_delegate :: proc "contextless" (ctx: ^system.Context) -> ! {
 		switch step {
 		case 1:
 			first := [1]op.Page_Range{{first = 0, page_count = 32}}
-			if _, status := system.memory_commit(memory, first[:], budget); status == .Ok {
+			if _, status := system.memory_commit(memory, first[:], budget); status == .Succeeded {
 				one := [1]op.Page_Range{{first = 32, page_count = 1}}
 				_, result.status = system.memory_commit(memory, one[:], budget, &result.record)
 			}
@@ -1112,7 +1113,7 @@ delegation_note :: proc "contextless" (step: int, right: bool, result: ^Delegati
 	for part in parts {
 		system.write_part(&writer, part)
 	}
-	if result != nil && result.status != .Ok {
+	if result != nil && result.status != .Succeeded {
 		system.kernel_error_text(&writer, &result.record)
 	}
 	delegation_line_counts[step] = len(system.written(&writer))
@@ -1130,7 +1131,7 @@ delegation_verdict :: proc "contextless" (right: bool) -> [16]u8 {
 
 delegation :: proc "contextless" (ctx: ^system.Context) {
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("the delegation: no boot image")
 		return
 	}
@@ -1149,7 +1150,7 @@ delegation :: proc "contextless" (ctx: ^system.Context) {
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = 2
 	process, start := system.process_start(system.image_find(image, "address_space"), "address_space delegate", grants, random.values_with_seed(&process_generator, values), {pages = 512, processes = 1, threads = 1, processor = 100_000, log_records = 50})
-	if start != .Ok {
+	if start != .Succeeded {
 		fail("the delegation: B did not start")
 		return
 	}
@@ -1157,46 +1158,46 @@ delegation :: proc "contextless" (ctx: ^system.Context) {
 
 	// A record of 0 when the call of B succeeded: its kind is None.
 	record_of :: proc "contextless" (result: ^Delegation_Result) -> errors.Error_Record_Fact_Fields {
-		return errors.error_record_fact_fields(result.status != .Ok ? result.record : errors.Error_Record{})
+		return errors.error_record_fact_fields(result.status != .Succeeded ? result.record : errors.Error_Record{})
 	}
 	result := delegation_run(board, 1)
-	step_right := result.status == .No_Budget && result.record.kind == i64(errors.Kind.Budget_Hidden)
+	step_right := result.status == .Budget_Or_Capacity_Exhausted && result.record.kind == i64(errors.Kind.Budget_Hidden)
 	delegation_note(1, step_right, result, "32 pages committed; the 33rd: ")
 	fields := record_of(result)
 	system.log_fact(.Info, Delegation_Commit_Past_Budget{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, verdict = delegation_verdict(step_right)})
 	result = delegation_run(board, 2)
-	step_right = result.status == .Bad_Handle && result.value == 55
+	step_right = result.status == .Argument_Refused && result.value == 55
 	delegation_note(2, step_right, result, "B wrote and read 55 in a committed page; a commit: ")
 	fields = record_of(result)
 	system.log_fact(.Info, Delegation_Commit_Without_Budget{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, verdict = delegation_verdict(step_right)})
 	result = delegation_run(board, 3)
-	step_right = result.status == .No_Right
+	step_right = result.status == .Grant_Or_Right_Missing
 	delegation_note(3, step_right, result, "")
 	fields = record_of(result)
 	system.log_fact(.Info, Delegation_Object_With_Commit_Only{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, verdict = delegation_verdict(step_right)})
 	result = delegation_run(board, 4)
-	step_right = result.status == .Bad_Handle && result.record.kind == i64(errors.Kind.Not_Payer)
+	step_right = result.status == .Argument_Refused && result.record.kind == i64(errors.Kind.Not_Payer)
 	delegation_note(4, step_right, result, "")
 	fields = record_of(result)
 	system.log_fact(.Info, Delegation_Commit_With_Other_Payer{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, verdict = delegation_verdict(step_right)})
 	result = delegation_run(board, 7)
-	step_right = result.status == .Bad_State && result.record.kind == i64(errors.Kind.Object_Shared)
+	step_right = result.status == .Wrong_State && result.record.kind == i64(errors.Kind.Object_Shared)
 	delegation_note(7, step_right, result, "")
 	fields = record_of(result)
 	system.log_fact(.Info, Delegation_Decommit_Of_Shared_Object{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, verdict = delegation_verdict(step_right)})
 	result = delegation_run(board, 9)
-	step_right = result.status == .No_Right
+	step_right = result.status == .Grant_Or_Right_Missing
 	delegation_note(9, step_right, result, "")
 	fields = record_of(result)
 	system.log_fact(.Info, Delegation_Give_Without_Right{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, verdict = delegation_verdict(step_right)})
 	result = delegation_run(board, 10)
-	made := result.status == .Ok
+	made := result.status == .Succeeded
 	// 5: A revokes the two budget handles of B.
 	system.handle_revoke(child_budget, process)
 	system.handle_revoke(spend_budget, process)
 	held, _ := system.budget_read(child_budget)
 	result = delegation_run(board, 5)
-	step_right = result.status == .Bad_Handle && result.record.kind == i64(errors.Kind.Handle_Ended) && held.pages == 0
+	step_right = result.status == .Argument_Refused && result.record.kind == i64(errors.Kind.Handle_Ended) && held.pages == 0
 	delegation_note(5, step_right, result, "the 32 pages stay committed and paid (the child budget holds 0); a commit: ")
 	fields = record_of(result)
 	system.log_fact(.Info, Delegation_Commit_After_Revocation{kind = fields.kind, unit = fields.unit, operation = fields.operation, argument = fields.argument, value = fields.value, limit = fields.limit, found = fields.found, verdict = delegation_verdict(step_right)})
@@ -1216,9 +1217,9 @@ delegation :: proc "contextless" (ctx: ^system.Context) {
 	everything := [1]op.Page_Range{{first = 0, page_count = DELEGATION_OBJECT_PAGES}}
 	returned, decommit := system.memory_decommit(object, everything[:])
 	after, _ := system.budget_read(child_budget)
-	step_right = decommit == .Ok && returned == 32 && after.pages - before.pages == 32
-	delegation_note(6, step_right, nil, decommit == .Ok ? "32 pages back in the child budget; A held the object with no mapping" : "the decommit was refused")
-	if decommit == .Ok {
+	step_right = decommit == .Succeeded && returned == 32 && after.pages - before.pages == 32
+	delegation_note(6, step_right, nil, decommit == .Succeeded ? "32 pages back in the child budget; A held the object with no mapping" : "the decommit was refused")
+	if decommit == .Succeeded {
 		system.log_fact(.Info, Delegation_Pages_Taken_Back{verdict = delegation_verdict(step_right)})
 	} else {
 		system.log_fact(.Info, Delegation_Pages_Not_Taken_Back{verdict = delegation_verdict(step_right)})
@@ -1230,9 +1231,9 @@ delegation :: proc "contextless" (ctx: ^system.Context) {
 	one := [1]op.Page_Range{{first = 0, page_count = 1}}
 	_, old := system.memory_commit(object, one[:], child_budget, &record)
 	committed, now := system.memory_commit(object, one[:])
-	step_right = old == .Bad_Handle && now == .Ok && committed == 1
-	delegation_note(8, step_right, nil, now == .Ok ? "a commit with the budget of A: 1 page; with the old handle: refused" : "the commit with the budget of A was refused")
-	if now == .Ok {
+	step_right = old == .Argument_Refused && now == .Succeeded && committed == 1
+	delegation_note(8, step_right, nil, now == .Succeeded ? "a commit with the budget of A: 1 page; with the old handle: refused" : "the commit with the budget of A was refused")
+	if now == .Succeeded {
 		system.log_fact(.Info, Delegation_Object_Moved{verdict = delegation_verdict(step_right)})
 	} else {
 		system.log_fact(.Info, Delegation_Object_Not_Moved{verdict = delegation_verdict(step_right)})
@@ -1256,7 +1257,7 @@ addresses_reused :: proc "contextless" () {
 	defer system.close(memory)
 	for round in 0 ..< 100_000 {
 		address, status := system.memory_map(memory)
-		if status != .Ok {
+		if status != .Succeeded {
 			fail("the reuse of addresses: a map was refused")
 			return
 		}
@@ -1335,7 +1336,7 @@ page_tables_return :: proc "contextless" () {
 		mapped_all := true
 		for index in u64(0) ..< SPREAD_COUNT {
 			address, status := system.memory_map(memory, {.Write}, 0, SPREAD_ADDRESS + index * SPREAD_STRIDE)
-			if status != .Ok {
+			if status != .Succeeded {
 				mapped_all = false
 				break
 			}
@@ -1362,7 +1363,7 @@ page_tables_return :: proc "contextless" () {
 		mapped, _ := system.budget_read()
 		returned: u64
 		decommitted := mapped
-		if status == .Ok {
+		if status == .Succeeded {
 			some := [1]op.Page_Range{{first = 500, page_count = 16}}
 			system.memory_commit(memory, some[:])
 			bytes := ([^]u8)(address)
@@ -1376,7 +1377,7 @@ page_tables_return :: proc "contextless" () {
 		after, _ := system.budget_read()
 		system.close(memory)
 		tables := before.pages - mapped.pages
-		right_case := status == .Ok && returned == 16 && tables == 4 && decommitted.pages == mapped.pages && after.pages == before.pages
+		right_case := status == .Succeeded && returned == 16 && tables == 4 && decommitted.pages == mapped.pages && after.pages == before.pages
 		system.log_fact(.Info, Page_Tables_Of_Reservation{reservation_pages = u64(RESERVATION_PAGES), table_pages = u64(tables), pages_kept = u64(before.pages - after.pages), budget_after_decommit = value_kinds.text_field(decommitted.pages == mapped.pages ? "the same" : "not the same", 16), verdict = page_tables_verdict(right_case)})
 		page_tables_case_end(right_case)
 	}
@@ -1389,14 +1390,14 @@ page_tables_return :: proc "contextless" () {
 		report := own_mappings()
 		mapping := mapping_at(report, SPREAD_ADDRESS + 2 * SPREAD_STRIDE)
 		large := mapping != nil && .Large in mapping.flags
-		if status == .Ok {
+		if status == .Succeeded {
 			intrinsics.volatile_store((^u64)(address), 1)
 			system.memory_unmap(address)
 		}
 		after, _ := system.budget_read()
 		system.close(memory)
 		tables := before.pages - mapped.pages
-		right_case := created == .Ok && status == .Ok && large && tables == 2 && after.pages == before.pages
+		right_case := created == .Succeeded && status == .Succeeded && large && tables == 2 && after.pages == before.pages
 		system.log_fact(.Info, Page_Tables_Of_Large_Page{table_pages = u64(tables), pages_kept = u64(before.pages - after.pages), verdict = page_tables_verdict(right_case)})
 		page_tables_case_end(right_case)
 	}
@@ -1409,7 +1410,7 @@ page_tables_return :: proc "contextless" () {
 		far, _ := system.memory_create(1)
 		watched, _ := system.memory_create(1)
 		word_address, watched_status := system.memory_map(watched, {.Write}, 0, SPREAD_ADDRESS + 3 * SPREAD_STRIDE)
-		if watched_status != .Ok {
+		if watched_status != .Succeeded {
 			system.close(near)
 			system.close(far)
 			system.close(watched)
@@ -1436,7 +1437,7 @@ page_tables_return :: proc "contextless" () {
 		for round := u64(0); round < NEIGHBOUR_ROUNDS || (intrinsics.atomic_load(&neighbour.touches) == touches_before && system.time() < rounds_deadline); round += 1 {
 			near_address, near_status := system.memory_map(near, {.Write}, 0, SPREAD_ADDRESS + 3 * SPREAD_STRIDE + system.PAGE_SIZE)
 			far_address, far_status := system.memory_map(far, {.Write}, 0, SPREAD_ADDRESS + 4 * SPREAD_STRIDE)
-			if near_status != .Ok || far_status != .Ok {
+			if near_status != .Succeeded || far_status != .Succeeded {
 				break
 			}
 			intrinsics.volatile_store((^u64)(near_address), round)
@@ -1452,7 +1453,7 @@ page_tables_return :: proc "contextless" () {
 		after, _ := system.budget_read()
 		touches_after := intrinsics.atomic_load(&neighbour.touches)
 		intrinsics.atomic_store(&neighbour.stop, 1)
-		if thread_status == .Ok {
+		if thread_status == .Succeeded {
 			system.thread_wait(thread)
 		}
 		value_right := intrinsics.atomic_load(&neighbour.wrong) == 0 && intrinsics.volatile_load(neighbour.word) == intrinsics.atomic_load(&neighbour.touches)
@@ -1461,7 +1462,7 @@ page_tables_return :: proc "contextless" () {
 		system.close(far)
 		system.close(watched)
 		system.log_fact(.Info, Neighbour_Touches{touches = touches_after - touches_before})
-		right_case := thread_status == .Ok && rounds_right == NEIGHBOUR_ROUNDS && rounds_wrong == 0 && touches_before != 0 && touches_after > touches_before && value_right && after.pages == before.pages
+		right_case := thread_status == .Succeeded && rounds_right == NEIGHBOUR_ROUNDS && rounds_wrong == 0 && touches_before != 0 && touches_after > touches_before && value_right && after.pages == before.pages
 		system.log_fact(.Info, Page_Tables_Beside_Neighbour{rounds = u64(NEIGHBOUR_ROUNDS), rounds_right = rounds_right, pages_kept = u64(before.pages - after.pages), neighbour_page = value_kinds.text_field(value_right ? "stayed right" : "changed", 16), verdict = page_tables_verdict(right_case)})
 		page_tables_case_end(right_case)
 	}

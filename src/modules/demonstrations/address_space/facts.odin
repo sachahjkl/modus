@@ -1,5 +1,6 @@
 package address_space
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
@@ -40,26 +41,26 @@ Large_Object_Ended :: struct {
 // The child that holds its own process handle could not map its board.
 @(log_fact = "address_space: the child of its own handle could not map its board: {map_status}")
 Own_Handle_Child_Board_Not_Mapped :: struct {
-	map_status: op.Status,
+	map_status: call_outcome.Call_Outcome,
 }
 
 // The child that holds its own process handle stopped itself: its stop
 // cause is Itself, with its outcome.
 @(log_fact = "address_space: a child stopped through its own process handle: the give gave {give_status}, the stop through the handle {stop_verdict}, and the child stopped: {cause}, {outcome}")
 Own_Handle_Child_Stopped :: struct {
-	give_status:  op.Status,
+	give_status:  call_outcome.Call_Outcome,
 	cause:        op.Stop_Cause,
 	outcome:      op.Stop_Outcome,
-	stop_verdict: [36]u8,
+	stop_verdict: [48]u8,
 }
 
 // The child that holds its own process handle stopped for another cause
 // than itself: it chose no outcome.
 @(log_fact = "address_space: a child stopped through its own process handle: the give gave {give_status}, the stop through the handle {stop_verdict}, and the child stopped: {cause}")
 Own_Handle_Child_Stopped_Without_Outcome :: struct {
-	give_status:  op.Status,
+	give_status:  call_outcome.Call_Outcome,
 	cause:        op.Stop_Cause,
-	stop_verdict: [32]u8,
+	stop_verdict: [44]u8,
 }
 
 // The kernel answered a Process_Stop that it must refuse with another
@@ -67,7 +68,7 @@ Own_Handle_Child_Stopped_Without_Outcome :: struct {
 @(log_fact = "address_space: WRONG: Process_Stop of {target} with the word {stop_word} gave the status word {status_word}, the error kind {error_kind}, the argument {argument} and the limit {limit}")
 Stop_Word_Not_Refused :: struct {
 	stop_word:   u64,
-	status_word: op.Status_Word,
+	status_word: call_outcome.Call_Outcome_Word,
 	error_kind:  errors.Kind_Word,
 	argument:    i64,
 	limit:       i64,
@@ -169,7 +170,7 @@ Neighbour_Page_Not_Mapped :: struct {}
 @(log_fact = "address_space: WRONG: the library refused the command of Process_Stop with the word {stop_word}: {call_status}")
 Stop_Command_Refused_By_Library :: struct {
 	stop_word:   u64,
-	call_status: op.Status_Word,
+	call_status: call_outcome.Call_Outcome_Word,
 }
 
 // The measure of the arena: 1 GiB of addresses in one mapping.

@@ -1,7 +1,7 @@
 package display
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:system"
 import "base:intrinsics"
@@ -21,52 +21,52 @@ import "base:intrinsics"
 // problem is None when the copy went. Each other problem answers with
 // Copy_Declined, so the compositor waits no more, but Not_Asked (no
 // request to answer) and Ring_Full (the request waits: call copy_send or
-// copy_decline again). Kernel_Refused has the status of the kernel, with
-// its error record: No_Budget when the budget cannot pay.
-copy_send :: proc "contextless" (window: ^Window, text: []u8, error: ^errors.Error_Record = nil) -> (problem: Clipboard_Problem, status: system.Status) {
+// copy_decline again). Kernel_Refused has the outcome of the kernel, with
+// its error record: Budget_Or_Capacity_Exhausted when the budget cannot pay.
+copy_send :: proc "contextless" (window: ^Window, text: []u8, error: ^errors.Error_Record = nil) -> (problem: Clipboard_Problem, status: call_outcome.Call_Outcome) {
 	if !window.copy_asked {
-		return .Not_Asked, .Ok
+		return .Not_Asked, .Succeeded
 	}
 	// The ring has one writer, this thread: the room seen here stays for
 	// the record of the answer, so no given handle waits in the table of
 	// the compositor with no record that names it.
 	if ring.count(&window.ring.commands) == ring.capacity(&window.ring.commands) {
-		return .Ring_Full, .Ok
+		return .Ring_Full, .Succeeded
 	}
 	title := string(window.title[:window.title_count])
 	problem = clipboard_text_problem(text, CLIPBOARD_TEXT_LIMIT, .Multi_Line)
 	if problem != .None {
 		system.log(.Warning, "display: ", title, ": the copy is refused: ", CLIPBOARD_PROBLEM_SENTENCES[problem])
 		copy_decline(window)
-		return problem, .Ok
+		return problem, .Succeeded
 	}
 	pages := (u64(len(text)) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	memory: system.Handle
 	memory, status = system.memory_create(pages, error = error)
 	address: rawptr
-	if status == .Ok {
+	if status == .Succeeded {
 		address, status = system.memory_map(memory, error = error)
-		if status != .Ok {
+		if status != .Succeeded {
 			system.close(memory)
 		}
 	}
 	granted: system.Handle
-	if status == .Ok {
+	if status == .Succeeded {
 		intrinsics.mem_copy_non_overlapping(address, raw_data(text), len(text))
 		system.memory_unmap(address)
 		granted, status = system.give(window.ring_memory, memory, {.Read, .Give}, error)
 		// This process keeps no handle: no later write can reach the content.
 		system.close(memory)
 	}
-	if status != .Ok {
-		system.log(.Warning, "display: ", title, ": the copy of ", u64(len(text)), " bytes is refused: ", op.STATUS_NAMES[status])
+	if status != .Succeeded {
+		system.log(.Warning, "display: ", title, ": the copy of ", u64(len(text)), " bytes is refused: ", call_outcome.CALL_OUTCOME_NAMES[status])
 		copy_decline(window)
 		return .Kernel_Refused, status
 	}
 	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Copy), values = {0 = u64(granted), 1 = u64(Clipboard_Kind.Text), 2 = u64(len(text)), 3 = window.copy_serial}})
 	window.copy_asked = false
 	system.log(.Info, "display: ", title, ": a copy of ", u64(len(text)), " bytes of text")
-	return .None, .Ok
+	return .None, .Succeeded
 }
 
 // copy_decline answers Copy_Asked with no content: the window has nothing
@@ -156,7 +156,7 @@ paste_copy :: proc "contextless" (window: ^Window, event: Event, room: []u8, for
 	kind, rights, through := system.handle_state(event.paste_handle, window.ring_memory)
 	facts := Paste_Facts{event = event, is_memory = kind == .Memory, readable = .Read in rights, through = through, room = len(room)}
 	if facts.is_memory {
-		if pages, size_status := system.memory_size(event.paste_handle); size_status == .Ok {
+		if pages, size_status := system.memory_size(event.paste_handle); size_status == .Succeeded {
 			facts.memory_bytes = pages * system.PAGE_SIZE
 		}
 	}
@@ -164,7 +164,7 @@ paste_copy :: proc "contextless" (window: ^Window, event: Event, room: []u8, for
 		return 0, refused
 	}
 	address, map_status := system.memory_map(event.paste_handle, {}) // Read only.
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return 0, .Kernel_Refused
 	}
 	intrinsics.mem_copy_non_overlapping(raw_data(room), address, event.byte_count)

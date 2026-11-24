@@ -2,6 +2,7 @@ package kernel
 
 import "modulus:budget_peak"
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/input_history"
 import op "modus:contract/operation"
@@ -442,19 +443,19 @@ point_copies_setup :: proc "contextless" (target_index: u32, rec: ^Process_Recor
 		region := &regions[mapping.region]
 		if mapping.large || mapping.bits & PAGE_PRESENT == 0 || region.uncommitted {
 			point_copies_teardown(target_index, rec)
-			return .Bad_State
+			return .Wrong_State
 		}
 		for page in u64(0) ..< mapping.page_count {
 			if rec.point_copy_count >= POINT_COPY_CAPACITY {
 				point_copies_teardown(target_index, rec)
-				return .No_Slot
+				return .Budget_Or_Capacity_Exhausted
 			}
 			source_page := mapping.first + page
 			state := region_page_state(region, source_page)
 			bits := page_bits(&mapping, state)
 			if bits == 0 || !page_committed(region, state) {
 				point_copies_teardown(target_index, rec)
-				return .Bad_State
+				return .Wrong_State
 			}
 			vaddr := mapping.address + page * PAGE_SIZE
 			entry := page_entry(target.table, vaddr)
@@ -464,7 +465,7 @@ point_copies_setup :: proc "contextless" (target_index: u32, rec: ^Process_Recor
 			copy_frame, allocated := point_copy_frame_allocate(rec.history_region)
 			if !allocated {
 				point_copies_teardown(target_index, rec)
-				return .No_Budget
+				return .Budget_Or_Capacity_Exhausted
 			}
 			if copy_initial {
 				source_frame := region_frame(region, source_page, false)
@@ -488,7 +489,7 @@ point_copies_setup :: proc "contextless" (target_index: u32, rec: ^Process_Recor
 			rec.point_copy_count += 1
 		}
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // point_copies_teardown restores original PTEs (respecting current protection
@@ -632,25 +633,25 @@ record_replay_on_unmap :: proc "contextless" (process_index: u32, region_index: 
 // Called from map_region under process's process lock.
 record_replay_map_check :: proc "contextless" (process_index: u32, region_index: u32, flags: op.Map_Flags, first: u64, count: u64, by_the_process: bool) -> (received: bool, status: Operation_Outcome) {
 	if intrinsics.atomic_load(&record_replay_active_count) == 0 {
-		return false, .Ok
+		return false, .Succeeded
 	}
 	mode := intrinsics.atomic_load(&process_records[process_index].mode)
 	if mode == .None {
 		if .Write in flags && intrinsics.atomic_load(&regions[region_index].recorded_mappings) != 0 {
-			return false, .Bad_State
+			return false, .Wrong_State
 		}
-		return false, .Ok
+		return false, .Succeeded
 	}
 	region := &regions[region_index]
 	if history_region_in_use(region_index) || (region.device && !region_record_allowed_static(region_index)) || intrinsics.atomic_load(&region.declared) != 0 {
-		return false, .Bad_State
+		return false, .Wrong_State
 	}
 	own_refs := process_own_region_references(&processes[process_index], region_index)
 	if intrinsics.atomic_load(&region.references) <= own_refs {
-		return false, .Ok
+		return false, .Succeeded
 	}
 	if mode != .Recording || !by_the_process {
-		return false, .Bad_State
+		return false, .Wrong_State
 	}
 	return true, record_received_mapping_admit(process_index, region_index, flags, first, count)
 }
@@ -671,21 +672,21 @@ record_received_mapping_admit :: proc "contextless" (process_index: u32, region_
 	rec := &process_records[process_index]
 	region := &regions[region_index]
 	if _, access_ok := input_history.shared_mapping_access_of_map_flags(flags); !access_ok || region.uncommitted || region.large_pages {
-		return .Bad_State
+		return .Wrong_State
 	}
 	count := count
 	if count == 0 && first < region.page_count {
 		count = region.page_count - first
 	}
 	if count == 0 || first >= region.page_count || count > region.page_count - first {
-		return .Ok
+		return .Succeeded
 	}
 	if count > input_history.SHARED_MAPPING_PAGE_LIMIT || rec.stand_ins.count >= input_history.STAND_IN_MAPPING_CAPACITY || count > input_history.STAND_IN_PAGE_LIMIT - rec.stand_ins.page_count {
-		return .No_Slot
+		return .Budget_Or_Capacity_Exhausted
 	}
 	for mapping in processes[process_index].mappings {
 		if mapping.page_count != 0 && mapping.region == region_index {
-			return .Bad_State
+			return .Wrong_State
 		}
 	}
 	return require_control()
@@ -714,7 +715,7 @@ record_received_mapping_locked :: proc "contextless" (process: ^Process, mapping
 	for page in u64(0) ..< mapping.page_count {
 		state := region_page_state(region, mapping.first + page)
 		if page_bits(mapping, state) == 0 || !page_committed(region, state) {
-			return .Bad_State
+			return .Wrong_State
 		}
 	}
 	entry := input_history.Shared_Mapping_Payload {
@@ -723,7 +724,7 @@ record_received_mapping_locked :: proc "contextless" (process: ^Process, mapping
 		access          = u32(access),
 	}
 	if !input_history.stand_in_mapping_set_add(&rec.stand_ins, entry, access, mapping.region, region.serial) {
-		return .No_Slot
+		return .Budget_Or_Capacity_Exhausted
 	}
 	// The scan comes after map_region counted this mapping in
 	// recorded_mappings, and a writer counts its mapping, or the Write that
@@ -734,7 +735,7 @@ record_received_mapping_locked :: proc "contextless" (process: ^Process, mapping
 	// lock holds it until its mapping is whole.
 	switch access {
 	case .None:
-		return .Bad_State
+		return .Wrong_State
 	case .Read:
 		if mapping.region == time_region || region_mapped_writable_by_other(process_index, mapping.region) {
 			point_copies_install_locked(process_index, rec, mapping) or_return
@@ -744,7 +745,7 @@ record_received_mapping_locked :: proc "contextless" (process: ^Process, mapping
 		// hold a live read mapping with no gate, so writes here would escape
 		// its input history. Control is held and the own mapping counts 1.
 		if intrinsics.atomic_load(&regions[mapping.region].recorded_mappings) > 1 {
-			return .Bad_State
+			return .Wrong_State
 		}
 		if region_mapped_writable_by_other(process_index, mapping.region) {
 			shared_pages_install_locked(process_index, rec, mapping) or_return
@@ -756,7 +757,7 @@ record_received_mapping_locked :: proc "contextless" (process: ^Process, mapping
 		access          = access,
 		active          = true,
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // point_copy_free_slots gives the count of the point copies that a record
@@ -795,24 +796,24 @@ point_copy_slot_take :: proc "contextless" (rec: ^Process_Record_State) -> ^Poin
 @(private = "file")
 point_copies_install_locked :: proc "contextless" (process_index: u32, rec: ^Process_Record_State, mapping: ^Mapping) -> Operation_Outcome {
 	if point_copy_free_slots(rec) < mapping.page_count {
-		return .No_Slot
+		return .Budget_Or_Capacity_Exhausted
 	}
 	target := &processes[process_index]
 	region := &regions[mapping.region]
 	self := processor_self()
-	status := Operation_Outcome.Ok
+	status := Operation_Outcome.Succeeded
 	for page in u64(0) ..< mapping.page_count {
 		source_page := mapping.first + page
 		bits := page_bits(mapping, region_page_state(region, source_page))
 		virtual_address := mapping.address + page * PAGE_SIZE
 		entry := page_entry(target.table, virtual_address)
 		if entry == nil {
-			status = .Bad_State
+			status = .Wrong_State
 			break
 		}
 		copy_frame, allocated := point_copy_frame_allocate(rec.history_region)
 		if !allocated {
-			status = .No_Budget
+			status = .Budget_Or_Capacity_Exhausted
 			break
 		}
 		if source_frame := region_frame(region, source_page, false); source_frame != 0 {
@@ -879,20 +880,20 @@ shared_page_slot_take :: proc "contextless" (rec: ^Process_Record_State) -> ^Sha
 @(private = "file")
 shared_pages_install_locked :: proc "contextless" (process_index: u32, rec: ^Process_Record_State, mapping: ^Mapping) -> Operation_Outcome {
 	if shared_page_free_slots(rec) < mapping.page_count {
-		return .No_Slot
+		return .Budget_Or_Capacity_Exhausted
 	}
 	shared_writers_add_of_region(process_index, rec, mapping.region, admit_only = true) or_return
 	// The recorded thread is in this kernel entry: it enters the gate at
 	// its input point, and its leave waits for the writers.
 	thread := &threads[processor_self().current]
 	if thread.process != process_index || thread.record_outside_point {
-		return .Bad_State
+		return .Wrong_State
 	}
 	region := &regions[mapping.region]
 	for page in u64(0) ..< mapping.page_count {
 		baseline, allocated := point_copy_frame_allocate(rec.history_region)
 		if !allocated {
-			return .No_Budget
+			return .Budget_Or_Capacity_Exhausted
 		}
 		source_page := mapping.first + page
 		if source_frame := region_frame(region, source_page, false); source_frame != 0 {
@@ -912,24 +913,24 @@ shared_pages_install_locked :: proc "contextless" (process_index: u32, rec: ^Pro
 	if gate_made {
 		if !replay_filter.shared_writer_gate_init(&rec.gate, process_index, processes[process_index].serial, SHARED_WRITER_WAIT_BOUND_MILLISECONDS) {
 			rec.gate = {}
-			return .Bad_State
+			return .Wrong_State
 		}
 		if !replay_filter.register_recorded_thread(&rec.gate, thread_index(thread), starts_at_input_point = true) {
 			rec.gate = {}
-			return .Bad_State
+			return .Wrong_State
 		}
 	}
 	// The admission saw each writer under the control lock, and a new
 	// writer is refused since map_region counted this mapping: the adds
 	// do not fail, and a failure takes back a gate that this map made.
-	if added := shared_writers_add_of_region(process_index, rec, mapping.region); added != .Ok {
+	if added := shared_writers_add_of_region(process_index, rec, mapping.region); added != .Succeeded {
 		if gate_made {
 			rec.gate = {}
 		}
 		return added
 	}
 	shared_writers_publish(process_index, rec)
-	return .Ok
+	return .Succeeded
 }
 
 // record_replay_write_conflict says if Memory_Protect would give Write to a
@@ -998,7 +999,7 @@ choose_pinned_processor :: proc "contextless" (caller_index: u32) -> (cpu_index:
 record_replay_control :: proc "contextless" (caller_index: u32, caller_process: ^Process, command: op.Thread_Control_Command, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
 	_ = results
 	if v[0] == 0 {
-		return .Bad_Handle
+		return .Argument_Refused
 	}
 	target_slot := handle_find(caller_process, v[0], .Process, {.Debug}) or_return
 	target_index := target_slot.object
@@ -1012,7 +1013,7 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		return thread_control_state_refuse(.Process_Not_Created, 1, v[0], u64(op.Process_State.Created), self_found)
 	}
 	if (command == .Record_Start || command == .Replay_Start) && !intrinsics.atomic_load(&cpuid_faulting_supported) {
-		return .Bad_Operation
+		return .Operation_Unsupported
 	}
 	require_control() or_return
 	target_taken := process_lock(target_index)
@@ -1043,7 +1044,7 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		region_index := memory_slot.object
 		region := &regions[region_index]
 		if !region.contiguous || region.device || region.page_count * PAGE_SIZE < input_history.MIN_HISTORY_BUFFER_BYTES {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		if history_region_in_use(region_index) {
 			return thread_control_state_refuse(.History_In_Use, 2, v[1])
@@ -1061,7 +1062,7 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 			transmute(u64)extended_state_components,
 		)
 		if !writer_ok {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		// Hold a kernel reference on history_region before allocating point
 		// copies so regions[history_region] stays valid across rollback or teardown.
@@ -1083,28 +1084,28 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		record_replay_mark_mappings(target_index, true)
 		intrinsics.atomic_add(&record_replay_active_count, 1)
 		cpu := processor_self()
-		if setup_status := record_start_setup(cpu, target_index, rec); setup_status != .Ok {
+		if setup_status := record_start_setup(cpu, target_index, rec); setup_status != .Succeeded {
 			shared_writers_teardown(target_index, rec)
 			point_copies_teardown(target_index, rec)
 			record_replay_mark_mappings(target_index, false)
 			intrinsics.atomic_sub(&record_replay_active_count, 1)
 			intrinsics.mem_zero(rec, size_of(Process_Record_State))
 			region_release(region_index)
-			if setup_status == .Bad_State {
+			if setup_status == .Wrong_State {
 				return thread_control_state_refuse(.Process_Disqualified, 1, v[0], 0, target_state)
 			}
 			return setup_status
 		}
 		intrinsics.atomic_store(&rec.mode, input_history.Record_Mode.Recording)
 		shared_writers_publish(target_index, rec)
-		return .Ok
+		return .Succeeded
 
 	case .Record_End:
 		if rec.mode == .None || rec.recorder_process != caller_process_index || rec.recorder_serial != caller_process.serial {
 			return thread_control_state_refuse(.Not_Recording, 1, v[0], 0, target_state)
 		}
 		record_replay_end_locked(target_index, .Recorder_Stopped)
-		return .Ok
+		return .Succeeded
 
 	case .Replay_Start:
 		if target.state != .Created {
@@ -1120,7 +1121,7 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		region_index := memory_slot.object
 		region := &regions[region_index]
 		if !region.contiguous || region.device || region.page_count * PAGE_SIZE < size_of(input_history.History_Header) {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		if history_region_in_use(region_index) {
 			return thread_control_state_refuse(.History_In_Use, 2, v[1])
@@ -1132,10 +1133,10 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		history_buffer := ([^]u8)(direct(region.physical, u8))[:region.page_count * PAGE_SIZE]
 		reader, reader_ok := input_history.history_reader_open(history_buffer)
 		if !reader_ok {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		if reader.header.xcr0_components & ~transmute(u64)extended_state_components != 0 {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		intrinsics.atomic_add(&region.references, 1)
 		intrinsics.mem_zero(rec, size_of(Process_Record_State))
@@ -1145,10 +1146,10 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		rec.history_buffer = history_buffer
 		rec.reader = reader
 		rec.pinned_processor = pinned_cpu
-		if setup_status := point_copies_setup(target_index, rec, copy_initial = false); setup_status != .Ok {
+		if setup_status := point_copies_setup(target_index, rec, copy_initial = false); setup_status != .Succeeded {
 			intrinsics.mem_zero(rec, size_of(Process_Record_State))
 			region_release(region_index)
-			if setup_status == .Bad_State {
+			if setup_status == .Wrong_State {
 				return thread_control_state_refuse(.Process_Disqualified, 1, v[0], 0, target_state)
 			}
 			return setup_status
@@ -1166,17 +1167,17 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 			point_copies_teardown(target_index, rec)
 			intrinsics.mem_zero(rec, size_of(Process_Record_State))
 			region_release(region_index)
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		record_replay_mark_mappings(target_index, true)
 		intrinsics.atomic_store(&rec.mode, input_history.Record_Mode.Replaying)
 		intrinsics.atomic_add(&record_replay_active_count, 1)
-		return .Ok
+		return .Succeeded
 
 	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Schedule, .Write_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Wait_Room:
-		return .Bad_Operation
+		return .Argument_Refused
 	}
-	return .Bad_Operation
+	return .Argument_Refused
 }
 
 // record_start_setup builds what a record holds before its first
@@ -1204,7 +1205,7 @@ record_start_setup :: proc "contextless" (cpu: ^Processor, target_index: u32, re
 				run += 1
 			}
 			if !record_shared_mapping_locked(rec, first.virtual_address, u64(run), .Read, first.source_region) {
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 		}
 		for page in index ..< index + run {
@@ -1215,7 +1216,7 @@ record_start_setup :: proc "contextless" (cpu: ^Processor, target_index: u32, re
 			after_page := direct(pc.copy_frame, [PAGE_SIZE]u8)
 			written, changed, ok := input_history.page_delta_encode(pc.virtual_address, &RECORD_ZERO_PAGE, after_page, cpu.page_delta_scratch[:])
 			if !ok || (changed && !input_history.history_writer_append(&rec.writer, .Page_Delta, 0, 0, cpu.page_delta_scratch[:written])) {
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 		}
 		index += run
@@ -1223,7 +1224,7 @@ record_start_setup :: proc "contextless" (cpu: ^Processor, target_index: u32, re
 	// The context is an input that the starter wrote before the first
 	// instruction: the replay writes it back at the same place.
 	if !record_context_page_locked(cpu, target_index, rec) {
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	return shared_writers_setup(cpu, target_index, rec)
 }
@@ -1666,7 +1667,7 @@ replay_stand_in_mapping_add_locked :: proc "contextless" (process_index: u32, en
 	// The budget of the history pays: region_create reads it under the
 	// frame lock, as a release of that budget changes it there.
 	region, created := region_create(0, entry.page_count, budget_of_region = rec.history_region)
-	if created != .Ok {
+	if created != .Succeeded {
 		return false
 	}
 	flags: op.Map_Flags
@@ -1679,7 +1680,7 @@ replay_stand_in_mapping_add_locked :: proc "contextless" (process_index: u32, en
 	case .Read_Write:
 		flags = {.Write}
 	}
-	if _, mapped := map_region(process, region, entry.virtual_address, flags, 0, 0, by_the_process = !in_head); mapped != .Ok {
+	if _, mapped := map_region(process, region, entry.virtual_address, flags, 0, 0, by_the_process = !in_head); mapped != .Succeeded {
 		regions[region].references = 1
 		region_release(region)
 		return false
@@ -1971,8 +1972,8 @@ record_replay_handle_gp :: proc "contextless" (cpu: ^Processor, thread: ^Thread)
 // record_command_output_range gives the user-space buffer written by a
 // succeeded kernel command, if any, so the recorder captures those bytes.
 @(private = "file")
-record_command_output_range :: proc "contextless" (command: ring.Record, status: op.Status, results: [7]u64) -> (address: u64, size: u64) {
-	if status != .Ok {
+record_command_output_range :: proc "contextless" (command: ring.Record, outcome: call_outcome.Call_Outcome, results: [7]u64) -> (address: u64, size: u64) {
+	if outcome != .Succeeded {
 		return 0, 0
 	}
 	operation, known := enum_word.member_of_word(op.Operation, u64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS))
@@ -2027,7 +2028,7 @@ record_self_stop_completion_locked :: proc "contextless" (cpu: ^Processor, threa
 		command_kind             = command.kind,
 		command_tag              = command.tag,
 		command_values           = command.values,
-		completion_status        = u32(op.Status.Ok),
+		completion_status        = u32(call_outcome.Call_Outcome.Succeeded),
 		return_time_milliseconds = return_time,
 	}
 	if !input_history.history_writer_append_kernel_completion(&rec.writer, thread.frame.rip, thread.frame.rsp, entry, nil) {
@@ -2038,7 +2039,7 @@ record_self_stop_completion_locked :: proc "contextless" (cpu: ^Processor, threa
 // record_kernel_completion records one executed kernel command (or a
 // zero-command wait entry) and refreshes point copies. Called from enter()
 // or run() with NO locks held.
-record_kernel_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread, command: ring.Record, status: op.Status, completion_values: [7]u64) {
+record_kernel_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread, command: ring.Record, outcome: call_outcome.Call_Outcome, completion_values: [7]u64) {
 	process_index := thread.process
 	process := &processes[process_index]
 	return_time := intrinsics.atomic_load(&time_milliseconds)
@@ -2053,7 +2054,7 @@ record_kernel_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread
 	copied_slice: []u8
 	copied_address: u64
 	if buffer_ok {
-		out_address, out_size := record_command_output_range(command, status, completion_values)
+		out_address, out_size := record_command_output_range(command, outcome, completion_values)
 		if out_size > 0 {
 			if out_address == 0 || out_size > RECORD_COPY_SCRATCH_BYTES || !user_range(process, out_address, out_size, false) {
 				buffer_ok = false
@@ -2069,7 +2070,7 @@ record_kernel_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread
 			command_kind             = command.kind,
 			command_tag              = command.tag,
 			command_values           = command.values,
-			completion_status        = u32(status),
+			completion_status        = u32(outcome),
 			copied_bytes_count       = u32(len(copied_slice)),
 			completion_values        = completion_values,
 			return_time_milliseconds = return_time,
@@ -2084,7 +2085,7 @@ record_kernel_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread
 		// the pending mapping). If it came, the history gets no
 		// Shared_Mapping, and the replay stops at the first delta of that
 		// mapping with Missing_Record: a clear refusal, never a wrong place.
-		if command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS == u32(op.Operation.Memory_Map) && status == .Ok && completion_values[0] == rec.pending_mapping.virtual_address {
+		if command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS == u32(op.Operation.Memory_Map) && outcome == .Succeeded && completion_values[0] == rec.pending_mapping.virtual_address {
 			buffer_ok = record_received_mapping_write_locked(cpu, process_index, thread)
 		} else {
 			rec.pending_mapping = {}
@@ -2213,7 +2214,7 @@ record_context_page_locked :: proc "contextless" (cpu: ^Processor, target_index:
 shared_writers_add_of_region :: proc "contextless" (target_index: u32, rec: ^Process_Record_State, region_index: u32, admit_only := false) -> Operation_Outcome {
 	new_writers: u32
 	if region_others_none(target_index, region_index, true) {
-		return .Ok
+		return .Succeeded
 	}
 	for &other, slot in processes[1:] {
 		other_index := u32(slot + 1)
@@ -2236,10 +2237,10 @@ shared_writers_add_of_region :: proc "contextless" (target_index: u32, rec: ^Pro
 			continue
 		}
 		if intrinsics.atomic_load(&process_records[other_index].mode) != .None {
-			return .Bad_State
+			return .Wrong_State
 		}
 		if writes_for := intrinsics.atomic_load(&other.shared_writer_of); writes_for != 0 && writes_for != target_index {
-			return .Bad_State
+			return .Wrong_State
 		}
 		known := false
 		for entry in rec.gate.writers {
@@ -2254,13 +2255,13 @@ shared_writers_add_of_region :: proc "contextless" (target_index: u32, rec: ^Pro
 		if admit_only {
 			new_writers += 1
 			if new_writers > replay_filter.SHARED_WRITER_CAPACITY - rec.gate.writer_count {
-				return .No_Slot
+				return .Budget_Or_Capacity_Exhausted
 			}
 		} else if !replay_filter.add_shared_writer(&rec.gate, other_index, serial) {
-			return .No_Slot
+			return .Budget_Or_Capacity_Exhausted
 		}
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // shared_writers_setup finds each page that the target maps with Write and
@@ -2278,31 +2279,31 @@ shared_writers_setup :: proc "contextless" (cpu: ^Processor, target_index: u32, 
 		}
 		region := &regions[mapping.region]
 		if mapping.large || region.uncommitted || region.device {
-			return .Bad_State
+			return .Wrong_State
 		}
 		if rec.gate.state == .Inactive && !replay_filter.shared_writer_gate_init(&rec.gate, target_index, target.serial, SHARED_WRITER_WAIT_BOUND_MILLISECONDS) {
-			return .Bad_State
+			return .Wrong_State
 		}
 		shared_writers_add_of_region(target_index, rec, mapping.region) or_return
 		if mapping.page_count > u64(SHARED_PAGE_CAPACITY - rec.shared_page_count) {
-			return .No_Slot
+			return .Budget_Or_Capacity_Exhausted
 		}
 		// The replay holds no writer: it maps private pages here, and each
 		// Page_Delta of the history writes them.
 		if !record_shared_mapping_locked(rec, mapping.address, mapping.page_count, .Read_Write, mapping.region) {
-			return .Bad_Operation
+			return .Argument_Refused
 		}
 		for page in u64(0) ..< mapping.page_count {
 			if rec.shared_page_count >= SHARED_PAGE_CAPACITY {
-				return .No_Slot
+				return .Budget_Or_Capacity_Exhausted
 			}
 			source_page := mapping.first + page
 			if page_bits(&mapping, region_page_state(region, source_page)) == 0 {
-				return .Bad_State
+				return .Wrong_State
 			}
 			baseline, allocated := point_copy_frame_allocate(rec.history_region)
 			if !allocated {
-				return .No_Budget
+				return .Budget_Or_Capacity_Exhausted
 			}
 			virtual_address := mapping.address + page * PAGE_SIZE
 			rec.shared_pages[rec.shared_page_count] = {
@@ -2319,11 +2320,11 @@ shared_writers_setup :: proc "contextless" (cpu: ^Processor, target_index: u32, 
 			// The first bytes of the page are an input, as those of a point copy.
 			written, changed, ok := input_history.page_delta_encode(virtual_address, &RECORD_ZERO_PAGE, direct(baseline, [PAGE_SIZE]u8), cpu.page_delta_scratch[:])
 			if !ok || (changed && !input_history.history_writer_append(&rec.writer, .Page_Delta, 0, 0, cpu.page_delta_scratch[:written])) {
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 		}
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // shared_writers_publish tells each writer of the gate that its threads ask
@@ -2762,7 +2763,7 @@ record_wait_wake_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thr
 	if intrinsics.atomic_load(&thread.record_mode) != .Recording {
 		return
 	}
-	record_kernel_completion(cpu, thread, ring.Record{values = {0 = thread.frame.rdi}}, .Ok, {})
+	record_kernel_completion(cpu, thread, ring.Record{values = {0 = thread.frame.rdi}}, .Succeeded, {})
 }
 
 // record_replay_entry_return_time gives the recorded return time for rax in
@@ -2897,14 +2898,14 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 
 		// Translate recorded local handles while holding process lock.
 		operation, op_known := enum_word.member_of_word(op.Operation, u64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS))
-		recorded_status, status_known := enum_word.member_of_word(op.Status, u64(kc.completion_status))
+		recorded_status, status_known := enum_word.member_of_word(call_outcome.Call_Outcome, u64(kc.completion_status))
 		exec_command := command
 		run_local := false
 		refused_op := false
 		record_new_handle := false
 		received_mapping: input_history.Replay_Check_Result
 		received_mapping_point: u64
-		if !copy_failed && op_known && status_known && recorded_status == .Ok {
+		if !copy_failed && op_known && status_known && recorded_status == .Succeeded {
 			switch replay_filter.replay_operation_policy(operation) {
 			case .Refused:
 				refused_op = true
@@ -2962,7 +2963,7 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			return
 		}
 		if refused_op {
-			replay_stop_on_divergence(process_index, .Unexpected_Operation, rec_header.point_number, u64(operation), u64(op.Status.Bad_State))
+			replay_stop_on_divergence(process_index, .Unexpected_Operation, rec_header.point_number, u64(operation), u64(call_outcome.Call_Outcome.Wrong_State))
 			return
 		}
 		if run_local {

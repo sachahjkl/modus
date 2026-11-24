@@ -180,7 +180,7 @@ Completion_Action :: struct {
 	wiring_number: u32,
 	end_word:     output.End_Word,
 	first_drop:   bool, // True on the first Dropped_Word for this wiring.
-	side_status:  op.Status,
+	side_status:  call_outcome.Call_Outcome,
 	border_ok:    bool,
 }
 
@@ -1198,7 +1198,7 @@ wiring_completion_apply :: proc "contextless" (s: ^State, proc_index: int, recor
 
 	if counted^ && !answered^ {
 		answered^ = true
-		if ok && status == .Ok && answer == .Taken {
+		if ok && status == .Succeeded && answer == .Taken {
 			return {effect = .None, wiring_slot = wiring_slot, wiring_number = kept.number}
 		}
 		end_word, _ := wiring_end_slot(s, wiring_slot, .Refused)
@@ -1211,7 +1211,7 @@ wiring_completion_apply :: proc "contextless" (s: ^State, proc_index: int, recor
 			border_ok     = ok,
 		}
 	}
-	if counted^ && !closed^ && ok && status == .Ok && answer == .Closed {
+	if counted^ && !closed^ && ok && status == .Succeeded && answer == .Closed {
 		closed^ = true
 		counted^ = false
 		s.processes[proc_index].ends_given -= 1

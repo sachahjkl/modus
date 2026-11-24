@@ -78,7 +78,6 @@ Difference_Word :: distinct u64
 @(rodata)
 CONTRACT_ENUM_SIZES := [value_kinds.Contract_Enum]u32 {
 	.None            = 0,
-	.Status          = size_of(op.Status),
 	.Log_Level       = size_of(op.Log_Level),
 	.Log_Record_Form = size_of(op.Log_Record_Form),
 	.Stop_Cause      = size_of(op.Stop_Cause),
@@ -101,7 +100,6 @@ CONTRACT_ENUM_SIZES := [value_kinds.Contract_Enum]u32 {
 @(rodata)
 CONTRACT_ENUM_WORD_SIZES := [value_kinds.Contract_Enum]u32 {
 	.None            = 0,
-	.Status          = size_of(op.Status_Word),
 	.Log_Level       = 0,
 	.Log_Record_Form = size_of(op.Log_Record_Form_Word),
 	.Stop_Cause      = size_of(op.Stop_Cause_Word),
@@ -127,8 +125,6 @@ contract_enum_member_count :: proc "contextless" (which: value_kinds.Contract_En
 	switch which {
 	case .None:
 		return 0
-	case .Status:
-		return u64(max(op.Status)) + 1
 	case .Log_Level:
 		return u64(max(op.Log_Level)) + 1
 	case .Log_Record_Form:
@@ -174,9 +170,6 @@ contract_enum_member_name :: proc "contextless" (which: value_kinds.Contract_Enu
 	switch which {
 	case .None:
 		return "", false
-	case .Status:
-		member := enum_word.member_of_word(op.Status, word) or_return
-		return op.STATUS_NAMES[member], true
 	case .Log_Level:
 		member := enum_word.member_of_word(op.Log_Level, word) or_return
 		return op.LOG_LEVEL_NAMES[member], true
@@ -245,7 +238,7 @@ contract_enum_member_words :: proc "contextless" (which: value_kinds.Contract_En
 	case .Stop_Outcome:
 		outcome := enum_word.member_of_word(op.Stop_Outcome, word) or_return
 		return op.STOP_OUTCOME_TEXTS[outcome], true
-	case .None, .Status, .Log_Level, .Log_Record_Form, .Error_Kind, .Error_Unit, .Object_Kind, .Load_Stage, .Module_Error, .Load_Difference, .Storage_Status, .Call_Outcome, .Pointer_Part, .Pointer_Field, .Pointer_Problem:
+	case .None, .Log_Level, .Log_Record_Form, .Error_Kind, .Error_Unit, .Object_Kind, .Load_Stage, .Module_Error, .Load_Difference, .Storage_Status, .Call_Outcome, .Pointer_Part, .Pointer_Field, .Pointer_Problem:
 		return contract_enum_member_name(which, word)
 	}
 	return "", false

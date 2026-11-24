@@ -4,7 +4,7 @@
 
 A handle is a number that a process holds to name one kernel object with a set of rights: a process can act only on the objects of its handles.
 
-A handle removes ambient access: no global name exists, so a kernel operation names each object that it acts on by a handle. The kernel checks the kind of the object and the rights of the handle: a wrong handle gives `Bad_Handle`, a missing right `No_Right`. A process gets a handle in its context from its starter, as the result of an operation that makes an object, or from another process with `Handle_Give`, which never adds a right. A handle is not a file descriptor: no child inherits it, and it carries rights.
+A handle removes ambient access: no global name exists, so a kernel operation names each object that it acts on by a handle. The kernel checks the kind of the object and the rights of the handle: a wrong handle gives `Argument_Refused`, a missing right `Grant_Or_Right_Missing`. A process gets a handle in its context from its starter, as the result of an operation that makes an object, or from another process with `Handle_Give`, which never adds a right. A handle is not a file descriptor: no child inherits it, and it carries rights.
 
 The design: `docs/ARCHITECTURE.md`, "K1. Handle table".
 
@@ -62,7 +62,7 @@ Do not use: madvise(DONTNEED), VirtualFree(MEM_DECOMMIT), discard.
 
 An arena is an uncommitted object of a process that grows by an explicit commit and ends whole.
 
-A process holds in an arena data with no known bound, such as the tree of a document. A push past the committed end commits the next pages; a budget that cannot pay refuses with `No_Budget`, which the push gives back to its caller, and the arena stays as it was. No object of an arena is freed alone: its end returns every page. A scratch arena of a frame is set back to its start at each frame. An arena is not an allocator of the language and not a heap of the system.
+A process holds in an arena data with no known bound, such as the tree of a document. A push past the committed end commits the next pages; a budget that cannot pay refuses with `Budget_Or_Capacity_Exhausted`, which the push gives back to its caller, and the arena stays as it was. No object of an arena is freed alone: its end returns every page. A scratch arena of a frame is set back to its start at each frame. An arena is not an allocator of the language and not a heap of the system.
 
 The design: `src/md/features/memory_without_a_bound.md`.
 
@@ -166,7 +166,7 @@ Do not use: ptrace, debug API, SuspendThread, thread_suspend (for this).
 
 The stop count of a thread is the count of the stops of thread control that hold it: each `Stop` adds 1, each `Resume` takes 1, and the thread runs only at 0.
 
-A stop is a count, not a state, so two holders that each stop a thread each resume it, and neither releases the hold of the other. The stops of the debugger of the process are counted apart, and the end of the debugging takes back those only. `Resume` at 0 gives `Bad_State`. When `Stop` returns, the thread runs no instruction. The count does not change the wait of the thread: its wait ends as before, but the thread does not run until its count is 0.
+A stop is a count, not a state, so two holders that each stop a thread each resume it, and neither releases the hold of the other. The stops of the debugger of the process are counted apart, and the end of the debugging takes back those only. `Resume` at 0 gives `Wrong_State`. When `Stop` returns, the thread runs no instruction. The count does not change the wait of the thread: its wait ends as before, but the thread does not run until its count is 0.
 
 The design: `docs/ARCHITECTURE.md`, "The control of a thread".
 
@@ -176,7 +176,7 @@ Do not use: suspend count, freeze.
 
 A held thread is a thread that no processor runs and that stays off every processor: its stop count is above 0, or it waits for an answer of the fault ring.
 
-Only a held thread has complete registers in the kernel: the frame of its last kernel entry, and the extended state that the switch of threads saved. A thread that runs has its registers in a processor, where no other thread can read them. So thread control reads and writes the registers of a held thread only, and gives `Bad_State` for any other. A thread that waits for the answer of its fault handler is held too: the handler reads its registers, corrects them and answers.
+Only a held thread has complete registers in the kernel: the frame of its last kernel entry, and the extended state that the switch of threads saved. A thread that runs has its registers in a processor, where no other thread can read them. So thread control reads and writes the registers of a held thread only, and gives `Wrong_State` for any other. A thread that waits for the answer of its fault handler is held too: the handler reads its registers, corrects them and answers.
 
 The design: `docs/ARCHITECTURE.md`, "The control of a thread".
 
@@ -448,7 +448,7 @@ Do not use: window, slice.
 
 A work budget is the budget that the root service takes from the budget of a client at each `Connect`, and gives to the service with the right Spend.
 
-The service pays from it the memory of its work for that client: the call ring, the call region, the connection page, and the tables of the connection. Its work thread runs on it, so the kernel counts that time in the client. A spent work budget gives the client `No_Budget` of the unit `Work_Budget`, and changes nothing in the service. At the end of the connection, what it holds goes back to the client. Designed, not built.
+The service pays from it the memory of its work for that client: the call ring, the call region, the connection page, and the tables of the connection. Its work thread runs on it, so the kernel counts that time in the client. A spent work budget gives the client `Budget_Or_Capacity_Exhausted` of the unit `Work_Budget`, and changes nothing in the service. At the end of the connection, what it holds goes back to the client. Designed, not built.
 
 The design: `src/md/features/work_accounting.md`.
 

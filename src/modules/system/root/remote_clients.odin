@@ -61,13 +61,13 @@ Client_Grant :: struct {
 
 // remote_clients_create makes the client table, empty.
 remote_clients_create :: proc "contextless" () {
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	client_table_memory, status = system.memory_create(remote.CLIENT_TABLE_PAGES)
 	table: rawptr
-	if status == .Ok {
+	if status == .Succeeded {
 		table, status = system.memory_map(client_table_memory)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("cannot create the client table of remote", status)
 	}
 	client_table = (^remote.Client_Table)(table)

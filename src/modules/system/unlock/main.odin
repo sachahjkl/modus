@@ -831,13 +831,13 @@ tpm_open :: proc "contextless" (ctx: ^system.Context) {
 		system.log_fact(.Info, Tpm_Service_Stopped_At_Start{})
 		return
 	}
-	status: system.Status
-	if tpm_requests, status = system.ring_open(ctx.handles[tpm_service.GRANT_RING]); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if tpm_requests, status = system.ring_open(ctx.handles[tpm_service.GRANT_RING]); status != .Succeeded {
 		system.log_fact(.Info, Tpm_Ring_Not_Opened{status = status_field(u32(status))})
 		return
 	}
 	address, map_status := system.memory_map(ctx.handles[tpm_service.GRANT_REGION], {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.ring_close(&tpm_requests)
 		system.log_fact(.Info, Tpm_Region_Not_Mapped{status = status_field(u32(map_status))})
 		return
@@ -1870,7 +1870,7 @@ proof_given :: proc "contextless" () {
 proof_end :: proc "contextless" (outcome: root_ring.Wide_Grant_Proof_Outcome) {
 	proof_values := [7]u64{4 = proof_principal, 5 = u64(outcome)}
 	completion, answered := root_command(.Wide_Grant_Proof, &proof_values)
-	if !answered || system.Status(completion.kind) != .Ok {
+	if !answered || call_outcome.Call_Outcome(completion.kind) != .Succeeded {
 		system.log_fact(.Info, Wide_Grant_Proof_Not_Taken{status = status_field(completion.kind)})
 	}
 }
@@ -2979,8 +2979,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !random.generator_from_context(&generator, ctx) {
 		system.log_fact(.Info, No_Random_Seed{})
 	}
-	status: system.Status
-	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true); status != .Succeeded {
 		system.log_fact(.Info, No_Root_Ring{})
 		system.stop(.Refused)
 	}
@@ -3159,10 +3159,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The blocks of Argon2id.
 	memory, memory_status := system.memory_create(principals.DERIVATION_MEMORY_PAGES)
 	address: rawptr
-	if memory_status == .Ok {
+	if memory_status == .Succeeded {
 		address, memory_status = system.memory_map(memory)
 	}
-	if memory_status != .Ok {
+	if memory_status != .Succeeded {
 		system.log_fact(.Info, Derivation_Memory_Refused{status = status_field(u32(memory_status))})
 		system.stop(.Failed)
 	}

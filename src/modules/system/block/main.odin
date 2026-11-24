@@ -158,12 +158,12 @@ start :: proc "contextless" (queues: system.Handle) {
 	sectors := u64(virtio.load_32(device.device_config)) | u64(virtio.load_32(device.device_config + 4)) << 32
 	disk_blocks = sectors / (block.BLOCK_SIZE / SECTOR_SIZE)
 
-	if queue_pages, queue_status := system.memory_size(queues); queue_status != .Ok || queue_pages < pci.QUEUE_PAGES {
+	if queue_pages, queue_status := system.memory_size(queues); queue_status != .Succeeded || queue_pages < pci.QUEUE_PAGES {
 		fail("the memory of the queue is too small")
 	}
 	address, map_status := system.memory_map(queues, {.Write})
 	physical, physical_status := system.memory_physical(machine, queues)
-	if map_status != .Ok || physical_status != .Ok {
+	if map_status != .Succeeded || physical_status != .Succeeded {
 		fail("no physical address for the queue")
 	}
 	base := uintptr(address)
@@ -214,11 +214,11 @@ attach :: proc "contextless" (handle: system.Handle) -> (call_outcome.Call_Outco
 		return outcome, values
 	}
 	physical, status := system.memory_physical(machine, handle)
-	if status != .Ok {
+	if status != .Succeeded {
 		return .Argument_Refused, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(status))
 	}
 	pages, size_status := system.memory_size(handle)
-	if size_status != .Ok {
+	if size_status != .Succeeded {
 		return .Argument_Refused, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(size_status))
 	}
 	if region_memory != 0 {
@@ -394,12 +394,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[pci.GRANT_MACHINE]
 	interrupt = ctx.handles[pci.GRANT_INTERRUPT]
 	ring_memory = ctx.handles[block.SERVICE_RING]
-	status: system.Status
-	if clients, status = system.ring_open(ring_memory, receive_handles = true); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if clients, status = system.ring_open(ring_memory, receive_handles = true); status != .Succeeded {
 		fail("no block ring")
 	}
 	configuration_address, configuration_status := system.memory_map(ctx.handles[pci.GRANT_CONFIGURATION], {})
-	if configuration_status != .Ok {
+	if configuration_status != .Succeeded {
 		fail("no configuration of the device")
 	}
 	found: bool

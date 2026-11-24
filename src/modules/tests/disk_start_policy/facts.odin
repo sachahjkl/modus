@@ -1,7 +1,6 @@
 package disk_start_policy
 
 import "modus:contract/call_outcome"
-import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
 // The log facts of the start policy from the disk
@@ -28,7 +27,7 @@ Running :: struct {}
 // The root ring does not open.
 @(log_fact = "disk_start_policy: the root ring does not open: status {status}")
 Root_Ring_Refused :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // The context holds the log, the budget and the root ring only.

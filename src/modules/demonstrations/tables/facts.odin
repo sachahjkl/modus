@@ -3,7 +3,6 @@ package tables
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import module "modus:contract/module"
-import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:system"
 
@@ -28,7 +27,7 @@ import "modus:system"
 // The call host did not start.
 @(log_fact = "tables: the call host did not start: status {status}")
 Call_Host_Not_Started :: struct {
-	status: op.Status_Word,
+	status: call_outcome.Call_Outcome_Word,
 }
 
 // The load error of the call host, one fact type for each stage. Map and

@@ -82,7 +82,7 @@ MEMORY_MAP_ARGUMENT_MEMORY :: 1
 bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags, argument: i64, error: ^errors.Error_Record) -> (bytes: []u8, outcome: call_outcome.Call_Outcome) {
 	refusal: errors.Error_Record
 	address, status := system.memory_map(memory, flags, error = &refusal)
-	if status != .Ok {
+	if status != .Succeeded {
 		if error != nil {
 			// The record of the kernel names an argument of Memory_Map, and
 			// the kernel operation: the caller called the export, with its
@@ -94,7 +94,7 @@ bytes_of :: proc "contextless" (memory: system.Handle, flags: op.Map_Flags, argu
 				error^ = errors.error_make(.Refused, .Kernel_Status, found = i64(status))
 			}
 		}
-		return nil, system.outcome_of_status(status)
+		return nil, status
 	}
 	// The map took the handle, so the kernel gives its size: a refusal maps no byte.
 	pages, _ := system.memory_size(memory)
@@ -167,7 +167,7 @@ span_total :: proc "c" (span: ^Span, error: ^errors.Error_Record) -> (outcome: c
 @(export, link_name = "spoil")
 spoil :: proc "c" (memory: system.Lent({.Read})) -> i64 {
 	address, status := system.memory_map(memory.handle, {.Write})
-	if status == .Ok {
+	if status == .Succeeded {
 		// The map took the handle, so the kernel gives its size.
 		if pages, _ := system.memory_size(memory.handle); pages > 0 {
 			([^]u8)(address)[0] = 0xFF

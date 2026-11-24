@@ -123,12 +123,12 @@ window_memory: interface.Window_Memory(256, 4096)
 // process, and jumps there.
 child_instruction_address :: proc "contextless" (holds_ymm: bool) -> ! {
 	memory, created := system.memory_create(1)
-	if created != .Ok {
+	if created != .Succeeded {
 		system.log_fact(.Info, Instruction_Page_Not_Made{status = created})
 		system.stop(.Failed)
 	}
 	address, mapped := system.memory_map(memory, {.Write})
-	if mapped != .Ok {
+	if mapped != .Succeeded {
 		system.log_fact(.Info, Instruction_Page_Not_Mapped_To_Write{status = mapped})
 		system.stop(.Failed)
 	}
@@ -136,7 +136,7 @@ child_instruction_address :: proc "contextless" (holds_ymm: bool) -> ! {
 	page[system.PAGE_SIZE - 2] = 0x0F // syscall
 	page[system.PAGE_SIZE - 1] = 0x05
 	system.memory_unmap(address)
-	if _, at_the_end := system.memory_map(memory, {.Execute}, 0, LAST_PAGE); at_the_end != .Ok {
+	if _, at_the_end := system.memory_map(memory, {.Execute}, 0, LAST_PAGE); at_the_end != .Succeeded {
 		system.log_fact(.Info, Instruction_Page_Not_Mapped_At_End{status = at_the_end})
 		system.stop(.Failed)
 	}
@@ -170,7 +170,7 @@ case_run :: proc "contextless" (item: ^Case) {
 	values[VALUE_WITH_AVX] = with_avx ? 1 : 0
 	error: module.Load_Error
 	process, status := system.process_start(system.image_find(image, "return_fault"), "return_fault child", grants, random.values_with_seed(&process_generator, values), {pages = 256, processes = 1, threads = 1, processor = 200_000, log_records = 10}, nil, nil, {image = image}, &error)
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Info, Child_Not_Started{case_name = case_field(item.name)})
 		return
 	}
@@ -280,7 +280,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Info, No_Boot_Image{})
 		system.stop(.Failed)
 	}

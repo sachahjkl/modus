@@ -158,7 +158,7 @@ waiter :: proc "c" (parameter: rawptr) -> ! {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	#force_no_inline fill_globals()
-	if _, status := system.thread_start(waiter, nil); status != .Ok {
+	if _, status := system.thread_start(waiter, nil); status != .Succeeded {
 		system.log_fact(.Info, Thread_Not_Started{status = status})
 		system.stop(.Failed)
 	}

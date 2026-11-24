@@ -74,7 +74,7 @@ Do not use: IOMMU domain, DMA window.
 
 A shared requester is the one requester that a conventional bridge of PCI gives the accesses of each device behind it.
 
-The IOMMU sees only the shared requester, so the devices behind the bridge have one device domain. The kernel makes it only for a service that holds the registers of each of those devices; else the declaration gives `Bad_State`, with one line. So the root service gives all of them to one service. Example: in the part `iommu_amd` of the machine test, the disk of the measures and an entropy device share the requester 0:1C.0. A device of PCI Express behind a root port keeps its own requester.
+The IOMMU sees only the shared requester, so the devices behind the bridge have one device domain. The kernel makes it only for a service that holds the registers of each of those devices; else the declaration gives `Wrong_State`, with one line. So the root service gives all of them to one service. Example: in the part `iommu_amd` of the machine test, the disk of the measures and an entropy device share the requester 0:1C.0. A device of PCI Express behind a root port keeps its own requester.
 
 The design: `src/md/infrastructure/iommu.md`, "The domain of a conventional bridge".
 

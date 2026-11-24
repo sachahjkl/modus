@@ -179,11 +179,11 @@ page_holds :: proc "contextless" (bytes: [^]u8, value: u8) -> bool {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine := ctx.handles[pci.GRANT_MACHINE]
 	clients, ring_status := system.ring_open(ctx.handles[block.SERVICE_RING], receive_handles = true)
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		fail("no block ring")
 	}
 	configuration_address, configuration_status := system.memory_map(ctx.handles[pci.GRANT_CONFIGURATION], {})
-	if configuration_status != .Ok {
+	if configuration_status != .Succeeded {
 		fail("no configuration of the device")
 	}
 	found: bool
@@ -200,7 +200,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	queue_address, map_status := system.memory_map(queues, {.Write})
 	queue_physical, physical_status := system.memory_physical(machine, queues)
 	queue_pages, queue_status := system.memory_size(queues)
-	if map_status != .Ok || physical_status != .Ok || queue_status != .Ok || queue_pages < pci.QUEUE_PAGES {
+	if map_status != .Succeeded || physical_status != .Succeeded || queue_status != .Succeeded || queue_pages < pci.QUEUE_PAGES {
 		fail("no memory for the queue")
 	}
 	queue_error: virtio.Queue_Error
@@ -215,12 +215,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// 1. Two declared pages: the device reads the first and writes the
 	// second.
 	data, data_status := system.memory_create(2, 0, {.Contiguous})
-	if data_status != .Ok {
+	if data_status != .Succeeded {
 		fail("no memory for the data")
 	}
 	data_address, data_map_status := system.memory_map(data, {.Write})
 	data_physical, data_physical_status := system.memory_physical(machine, data)
-	if data_map_status != .Ok || data_physical_status != .Ok {
+	if data_map_status != .Succeeded || data_physical_status != .Succeeded {
 		fail("no address for the data")
 	}
 	bytes := ([^]u8)(data_address)
@@ -277,12 +277,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// its handle and keeps its mapping, so it can still read the page. The
 	// kernel takes the page out of the domain of the device at the close.
 	page, page_status := system.memory_create(1, 0, {.Contiguous})
-	if page_status != .Ok {
+	if page_status != .Succeeded {
 		fail("no memory for the page that is not declared")
 	}
 	page_address, page_map_status := system.memory_map(page, {.Write})
 	page_physical, page_physical_status := system.memory_physical(machine, page)
-	if page_map_status != .Ok || page_physical_status != .Ok {
+	if page_map_status != .Succeeded || page_physical_status != .Succeeded {
 		fail("no address for the page that is not declared")
 	}
 	page_bytes := ([^]u8)(page_address)
@@ -326,11 +326,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		virtio.ready(&device)
 		system.close(other_device)
 		refused, refused_status := system.memory_create(1, 0, {.Contiguous})
-		if refused_status != .Ok {
+		if refused_status != .Succeeded {
 			fail("no memory for the page of the refused declaration")
 		}
 		_, declare_status := system.memory_physical(machine, refused)
-		if declare_status != .Bad_State {
+		if declare_status != .Wrong_State {
 			fail("without the registers of the other device behind the conventional bridge, a declaration was not refused")
 		}
 		system.close(refused)

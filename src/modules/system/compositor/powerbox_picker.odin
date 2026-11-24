@@ -51,11 +51,11 @@ powerbox_picker_open_ring :: proc "contextless" (ctx: ^system.Context) {
 	}
 	pages, size_status := system.memory_size(region_handle)
 	address, map_status := system.memory_map(region_handle, {.Write})
-	if size_status != .Ok || map_status != .Ok || pages < powerbox.PICKER_REGION_PAGES {
+	if size_status != .Succeeded || map_status != .Succeeded || pages < powerbox.PICKER_REGION_PAGES {
 		return
 	}
 	opened, ring_status := system.ring_open(ring_handle)
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		return
 	}
 	picker_ring = opened

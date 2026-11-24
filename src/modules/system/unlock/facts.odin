@@ -2,7 +2,6 @@ package unlock
 
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:contract/tpm_service"
 import "modus:contract/value_kinds"
 import "modus:principals"
@@ -18,7 +17,7 @@ import "modus:system"
 // of facts(): number, time, process, level.
 //
 // A status of a kernel operation or of the root service is a field of
-// op.Status_Word, which a reader writes by the name of its member: the
+// call_outcome.Call_Outcome_Word, which a reader writes by the name of its member: the
 // sentence says "status No_Right" where the line said "status 7"
 // (src/md/features/log_facts.md, "Field kinds"). A status of the client of
 // the store (storage_status.Status) is an Integer field, and the sentence
@@ -194,13 +193,13 @@ Machine_Passphrase_Set :: struct {
 // The ring of the TPM service does not open.
 @(log_fact = "unlock: the ring of the TPM service does not open: status {status}")
 Tpm_Ring_Not_Opened :: struct {
-	status: op.Status_Word,
+	status: call_outcome.Call_Outcome_Word,
 }
 
 // The region of the TPM service does not map.
 @(log_fact = "unlock: the region of the TPM service does not map: status {status}")
 Tpm_Region_Not_Mapped :: struct {
-	status: op.Status_Word,
+	status: call_outcome.Call_Outcome_Word,
 }
 
 // The TPM service gave a completion that this process cannot read: an
@@ -620,7 +619,7 @@ Wide_Grant_Proof_Given :: struct {
 
 @(log_fact = "unlock: the root service did not take the end of the proof of a wide grant: {status}")
 Wide_Grant_Proof_Not_Taken :: struct {
-	status: op.Status_Word,
+	status: call_outcome.Call_Outcome_Word,
 }
 
 // The current passphrase of a change is not typed.
@@ -677,7 +676,7 @@ Change_Asked :: struct {
 // No memory for the blocks of Argon2id.
 @(log_fact = "unlock: no memory for the derivation of the key: status {status}")
 Derivation_Memory_Refused :: struct {
-	status: op.Status_Word,
+	status: call_outcome.Call_Outcome_Word,
 }
 
 // Ctrl+R asks for the recovery key of a principal.
@@ -1152,8 +1151,8 @@ sixteen_digits_field :: proc "contextless" (code: u64) -> value_kinds.Hexadecima
 // completion of the root service as a field. The word is copied with no
 // cast to the enum: a word that names no member stays its number, which
 // the reader writes.
-status_field :: proc "contextless" (word: u32) -> op.Status_Word {
-	return op.Status_Word(word)
+status_field :: proc "contextless" (word: u32) -> call_outcome.Call_Outcome_Word {
+	return call_outcome.Call_Outcome_Word(word)
 }
 
 // outcome_field gives the outcome word of a completion of the root service

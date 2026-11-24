@@ -13,6 +13,7 @@
 // code lives in the kernel.
 package gpu_device_service
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:contract/byte_order"
 import "modus:contract/errors"
@@ -398,7 +399,7 @@ venus_submit :: proc "contextless" (command: ring.Record) -> (status: virtio_gpu
 		return .Out_Of_Range, errors.ring_fail(SUBMIT, .Bad_Value, .Bytes, 3, i64(min(length, 1 << 62)), MAX_VENUS_SUBMIT_BYTES)
 	}
 	pages, size_status := system.memory_size(handle)
-	if size_status != .Ok {
+	if size_status != .Succeeded {
 		return .Bad_Command, errors.ring_fail(SUBMIT, .Refused, .None, 1, i64(handle), 0, i64(size_status))
 	}
 	region_bytes := pages * system.PAGE_SIZE
@@ -406,7 +407,7 @@ venus_submit :: proc "contextless" (command: ring.Record) -> (status: virtio_gpu
 		return .Out_Of_Range, errors.ring_fail(SUBMIT, .Out_Of_Range, .Bytes, 2, i64(min(offset, 1 << 62)), i64(region_bytes))
 	}
 	address, map_status := system.memory_map(handle, {})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return .Bad_Command, errors.ring_fail(SUBMIT, .Refused, .None, 1, i64(handle), 0, i64(map_status))
 	}
 	payload := request_buffer[virtio_gpu.SUBMIT_3D_HEADER_SIZE:][:length]
@@ -456,12 +457,12 @@ start_device :: proc "contextless" (queues: system.Handle) {
 		fail("the device reports zero scanouts")
 	}
 
-	if queue_pages, queue_status := system.memory_size(queues); queue_status != .Ok || queue_pages < pci.QUEUE_PAGES {
+	if queue_pages, queue_status := system.memory_size(queues); queue_status != .Succeeded || queue_pages < pci.QUEUE_PAGES {
 		fail("the memory of the queue is too small")
 	}
 	address, map_status := system.memory_map(queues, {.Write})
 	physical, physical_status := system.memory_physical(machine, queues)
-	if map_status != .Ok || physical_status != .Ok {
+	if map_status != .Succeeded || physical_status != .Succeeded {
 		system.log_fact(.Error, Queue_Not_Mapped{map_status = map_status, address_status = physical_status})
 		fail("no physical address for the queue")
 	}
@@ -550,11 +551,11 @@ attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virt
 		return .Bad_Command, errors.ring_fail(ATTACH, .Bad_Value, .None, 4, i64(command.values[3]))
 	}
 	physical, phys_status := system.memory_physical(machine, handle)
-	if phys_status != .Ok {
+	if phys_status != .Succeeded {
 		return .No_Framebuffer, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(phys_status))
 	}
 	pages, size_status := system.memory_size(handle)
-	if size_status != .Ok {
+	if size_status != .Succeeded {
 		return .No_Framebuffer, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(size_status))
 	}
 	region_bytes := pages * system.PAGE_SIZE
@@ -570,7 +571,7 @@ attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virt
 	// The service reads the present list through its own mapping, read
 	// only; the device reads the pixels through the backing.
 	mapping, map_status := system.memory_map(handle, {})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return .No_Framebuffer, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(map_status))
 	}
 	mapping_kept := false
@@ -796,12 +797,12 @@ batch_answers_wait :: proc "contextless" (requests: int) -> (received: [2 * virt
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[pci.GRANT_MACHINE]
 	ring_memory = ctx.handles[virtio_gpu.SERVICE_RING]
-	ring_status: system.Status
-	if clients, ring_status = system.ring_open(ring_memory, receive_handles = true); ring_status != .Ok {
+	ring_status: call_outcome.Call_Outcome
+	if clients, ring_status = system.ring_open(ring_memory, receive_handles = true); ring_status != .Succeeded {
 		fail("no gpu device ring")
 	}
 	configuration_address, configuration_status := system.memory_map(ctx.handles[pci.GRANT_CONFIGURATION], {})
-	if configuration_status != .Ok {
+	if configuration_status != .Succeeded {
 		fail("no configuration of the device")
 	}
 	configuration := ([^]u8)(configuration_address)[:pci.CONFIGURATION_SIZE]

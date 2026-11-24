@@ -1,5 +1,6 @@
 package system
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 
@@ -45,7 +46,7 @@ Arena :: struct {
 // The procedure that commits or decommits one range of the pages of an
 // arena: `Memory_Commit` on a machine, a fake in a host test, so that the
 // arithmetic of a push runs with no kernel.
-Arena_Page_Change :: #type proc "contextless" (arena: ^Arena, range: op.Page_Range, flags: op.Commit_Flags, error: ^errors.Error_Record) -> Status
+Arena_Page_Change :: #type proc "contextless" (arena: ^Arena, range: op.Page_Range, flags: op.Commit_Flags, error: ^errors.Error_Record) -> call_outcome.Call_Outcome
 
 // The step of the growth: the first commit takes 16 pages, and each one
 // after it the double of the step before, up to 512 pages, so that a run of
@@ -71,22 +72,22 @@ ARENA_ALIGNMENT_LIMIT :: PAGE_SIZE
 //
 // The statuses are those of `Memory_Create` and of `Memory_Map`; after a
 // refused map, the object is closed and the budget holds what it held.
-arena_create :: proc "contextless" (reserve_pages: u64, budget: Handle = 0, error: ^errors.Error_Record = nil) -> (arena: Arena, status: Status) {
+arena_create :: proc "contextless" (reserve_pages: u64, budget: Handle = 0, error: ^errors.Error_Record = nil) -> (arena: Arena, status: call_outcome.Call_Outcome) {
 	memory: Handle
 	memory, status = memory_create(reserve_pages, budget, {.Uncommitted}, error)
-	if status != .Ok {
+	if status != .Succeeded {
 		return {}, status
 	}
 	address: rawptr
 	address, status = memory_map(memory, {.Write}, error = error)
-	if status != .Ok {
+	if status != .Succeeded {
 		close(memory)
 		return {}, status
 	}
 	arena = arena_of_reservation(([^]u8)(address), reserve_pages, arena_kernel_page_change)
 	arena.memory = memory
 	arena.budget = budget
-	return arena, .Ok
+	return arena, .Succeeded
 }
 
 // arena_of_reservation gives an arena over a reserved range that commits
@@ -144,32 +145,32 @@ arena_reservation_pages :: proc "contextless" (budget_pages: u64) -> u64 {
 //
 // ```odin
 // bytes, status := system.arena_push(&arena, 100, 8)
-// if status == .No_Budget {
+// if status == .Budget_Or_Capacity_Exhausted {
 // 	system.log(.Info, "reader: this page is too large")
 // }
 // ```
-arena_push :: proc "contextless" (arena: ^Arena, size: u64, alignment: u64, error: ^errors.Error_Record = nil) -> (result: rawptr, status: Status) {
+arena_push :: proc "contextless" (arena: ^Arena, size: u64, alignment: u64, error: ^errors.Error_Record = nil) -> (result: rawptr, status: call_outcome.Call_Outcome) {
 	reserved_bytes := arena.reserved_pages * PAGE_SIZE
 	if size == 0 {
 		arena_refusal_write(error, arena_record(.Too_Small, 2, 0, 1, 0))
-		return nil, .Bad_Operation
+		return nil, .Argument_Refused
 	}
 	if alignment == 0 || alignment & (alignment - 1) != 0 || alignment > ARENA_ALIGNMENT_LIMIT {
 		arena_refusal_write(error, arena_record(.Bad_Value, 3, alignment, ARENA_ALIGNMENT_LIMIT, 0))
-		return nil, .Bad_Operation
+		return nil, .Argument_Refused
 	}
 	// Before any sum: a size near the top of the type would wrap the end of
 	// the push to a small one.
 	if size > reserved_bytes {
 		arena_refusal_write(error, arena_record(.Too_Long, 2, size, reserved_bytes, 0))
-		return nil, .Bad_Operation
+		return nil, .Argument_Refused
 	}
 	// The used bytes are at most the reserved bytes, a whole number of
 	// pages, so the rounded start stays inside the reservation.
 	start := (arena.used_bytes + alignment - 1) & ~(alignment - 1)
 	if start > reserved_bytes || size > reserved_bytes - start {
 		arena_refusal_write(error, arena_record(.Full, 2, size, reserved_bytes, arena.used_bytes))
-		return nil, .No_Slot
+		return nil, .Budget_Or_Capacity_Exhausted
 	}
 	end := start + size
 	needed_pages := end / PAGE_SIZE
@@ -177,12 +178,12 @@ arena_push :: proc "contextless" (arena: ^Arena, size: u64, alignment: u64, erro
 		needed_pages += 1
 	}
 	if needed_pages > arena.committed_pages {
-		if grown := arena_grow(arena, needed_pages - arena.committed_pages, error); grown != .Ok {
+		if grown := arena_grow(arena, needed_pages - arena.committed_pages, error); grown != .Succeeded {
 			return nil, grown
 		}
 	}
 	arena.used_bytes = end
-	return &arena.base[start], .Ok
+	return &arena.base[start], .Succeeded
 }
 
 // arena_take gives count values of T from an arena, zero when the arena
@@ -194,12 +195,12 @@ arena_push :: proc "contextless" (arena: ^Arena, size: u64, alignment: u64, erro
 // ```odin
 // started = system.arena_take(&tables, Started, int(slots) - 1) or_return
 // ```
-arena_take :: proc "contextless" (arena: ^Arena, $T: typeid, count: int, error: ^errors.Error_Record = nil) -> (values: []T, status: Status) {
+arena_take :: proc "contextless" (arena: ^Arena, $T: typeid, count: int, error: ^errors.Error_Record = nil) -> (values: []T, status: call_outcome.Call_Outcome) {
 	if count <= 0 {
-		return nil, .Ok
+		return nil, .Succeeded
 	}
 	address := arena_push(arena, u64(count) * size_of(T), align_of(T), error) or_return
-	return ([^]T)(address)[:count], .Ok
+	return ([^]T)(address)[:count], .Succeeded
 }
 
 // arena_take_pages gives the pages that an arena reserves for tables of
@@ -218,7 +219,7 @@ arena_take_pages :: proc "contextless" (sizes: []u64) -> u64 {
 // cannot read the report of the machine (it needs Inspect).
 process_slots_of :: proc "contextless" (machine: Handle) -> u64 {
 	report: op.System_Report
-	if _, status := call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
+	if _, status := call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Succeeded {
 		return 0
 	}
 	return min(report.process_slots, op.PROCESS_SLOTS_MOST)
@@ -235,27 +236,27 @@ process_slots_of :: proc "contextless" (machine: Handle) -> u64 {
 // - `No_Slot`: minimum_bytes is past the reservation (`Full`, unit
 //   `Bytes`).
 // - `No_Budget`: the budget cannot pay the minimum.
-arena_extend_to :: proc "contextless" (arena: ^Arena, minimum_bytes: u64, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: Status) {
+arena_extend_to :: proc "contextless" (arena: ^Arena, minimum_bytes: u64, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: call_outcome.Call_Outcome) {
 	if minimum_bytes <= arena.used_bytes {
-		return arena.base[:arena.used_bytes], .Ok
+		return arena.base[:arena.used_bytes], .Succeeded
 	}
 	reserved_bytes := arena.reserved_pages * PAGE_SIZE
 	if minimum_bytes > reserved_bytes {
 		arena_refusal_write(error, arena_record(.Full, 2, minimum_bytes, reserved_bytes, arena.used_bytes))
-		return nil, .No_Slot
+		return nil, .Budget_Or_Capacity_Exhausted
 	}
 	// The used bytes are at most the reservation, at most 1 GiB: the double
 	// does not wrap.
 	target := min(max(arena.used_bytes * 2, minimum_bytes), reserved_bytes)
-	if _, pushed := arena_push(arena, target - arena.used_bytes, 1, error); pushed != .Ok {
+	if _, pushed := arena_push(arena, target - arena.used_bytes, 1, error); pushed != .Succeeded {
 		if target == minimum_bytes {
 			return nil, pushed
 		}
-		if _, pushed = arena_push(arena, minimum_bytes - arena.used_bytes, 1, error); pushed != .Ok {
+		if _, pushed = arena_push(arena, minimum_bytes - arena.used_bytes, 1, error); pushed != .Succeeded {
 			return nil, pushed
 		}
 	}
-	return arena.base[:arena.used_bytes], .Ok
+	return arena.base[:arena.used_bytes], .Succeeded
 }
 
 // arena_grow is the growth of one buffer of records that an arena holds,
@@ -267,7 +268,7 @@ arena_extend_to :: proc "contextless" (arena: ^Arena, minimum_bytes: u64, error:
 // record type is wanted, and the compiler makes the form of that type.
 arena_grow :: proc "contextless" (data: rawptr, current: []$Record, minimum: int) -> (grown: []Record, ok: bool) {
 	bytes, status := arena_extend_to((^Arena)(data), u64(max(minimum, 0) * size_of(Record)))
-	if status != .Ok {
+	if status != .Succeeded {
 		return nil, false
 	}
 	return ([^]Record)(raw_data(bytes))[:len(bytes) / size_of(Record)], true
@@ -324,12 +325,12 @@ arena_reset_to :: proc "contextless" (arena: ^Arena, mark: u64) {
 // calls of at most `op.RANGE_TABLE_PAGE_LIMIT` pages: a refused call
 // leaves the pages before it committed, the committed end follows them,
 // and the status of the call comes back.
-arena_trim :: proc "contextless" (arena: ^Arena, keep_bytes: u64, error: ^errors.Error_Record = nil) -> Status {
+arena_trim :: proc "contextless" (arena: ^Arena, keep_bytes: u64, error: ^errors.Error_Record = nil) -> call_outcome.Call_Outcome {
 	keep_pages := min((keep_bytes + PAGE_SIZE - 1) / PAGE_SIZE, arena.committed_pages)
-	status := Status.Ok
+	status := call_outcome.Call_Outcome.Succeeded
 	for arena.committed_pages > keep_pages {
 		part := min(arena.committed_pages - keep_pages, op.RANGE_TABLE_PAGE_LIMIT)
-		if status = arena.page_change(arena, {first = arena.committed_pages - part, page_count = part}, {.Decommit}, error); status != .Ok {
+		if status = arena.page_change(arena, {first = arena.committed_pages - part, page_count = part}, {.Decommit}, error); status != .Succeeded {
 			break
 		}
 		arena.committed_pages -= part
@@ -356,10 +357,10 @@ arena_pop :: proc "contextless" (arena: ^Arena, size: u64) -> bool {
 // object, so each committed page and the frame list return to the budget
 // at once. Each address of the arena is then invalid. The arena becomes
 // the zero arena, which refuses each push; a zero arena ends with `Ok`.
-arena_end :: proc "contextless" (arena: ^Arena, error: ^errors.Error_Record = nil) -> Status {
+arena_end :: proc "contextless" (arena: ^Arena, error: ^errors.Error_Record = nil) -> call_outcome.Call_Outcome {
 	if arena.memory == 0 {
 		arena^ = {}
-		return .Ok
+		return .Succeeded
 	}
 	status := memory_unmap(rawptr(arena.base), 0, error)
 	close(arena.memory)
@@ -376,18 +377,18 @@ arena_end :: proc "contextless" (arena: ^Arena, error: ^errors.Error_Record = ni
 // first step: near the end of the budget, a step that doubled after each
 // retry was refused again at each push, and each push then paid two calls.
 @(private = "file")
-arena_grow :: proc "contextless" (arena: ^Arena, missing_pages: u64, error: ^errors.Error_Record) -> Status {
+arena_grow :: proc "contextless" (arena: ^Arena, missing_pages: u64, error: ^errors.Error_Record) -> call_outcome.Call_Outcome {
 	step := arena.exact_commits ? missing_pages : min(max(missing_pages, arena.growth_step_pages), arena.reserved_pages - arena.committed_pages)
 	// The record of the last refusal only: a step that the budget refused
 	// and a smaller commit that it paid is no failure.
 	refusal: errors.Error_Record
 	status := arena_commit_run(arena, step, &refusal)
 	retried := false
-	if status == .No_Budget && step > missing_pages {
+	if status == .Budget_Or_Capacity_Exhausted && step > missing_pages {
 		retried = true
 		status = arena_commit_run(arena, missing_pages, &refusal)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		arena_refusal_write(error, refusal)
 		return status
 	}
@@ -397,7 +398,7 @@ arena_grow :: proc "contextless" (arena: ^Arena, missing_pages: u64, error: ^err
 	} else {
 		arena.growth_step_pages = min(arena.growth_step_pages * 2, ARENA_GROWTH_STEP_LIMIT_PAGES)
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // arena_commit_run commits `page_count` pages after the committed end, in
@@ -409,13 +410,13 @@ arena_grow :: proc "contextless" (arena: ^Arena, missing_pages: u64, error: ^err
 // moves past them, and the run gives `Bad_State` with the record of the
 // decommit.
 @(private = "file")
-arena_commit_run :: proc "contextless" (arena: ^Arena, page_count: u64, error: ^errors.Error_Record) -> Status {
+arena_commit_run :: proc "contextless" (arena: ^Arena, page_count: u64, error: ^errors.Error_Record) -> call_outcome.Call_Outcome {
 	first := arena.committed_pages
 	done: u64
 	for done < page_count {
 		part := min(page_count - done, op.RANGE_TABLE_PAGE_LIMIT)
 		status := arena.page_change(arena, {first = first + done, page_count = part}, {}, error)
-		if status != .Ok {
+		if status != .Succeeded {
 			// The calls before it each committed a whole part, so the undo
 			// takes the same parts back, from the last one.
 			for done > 0 {
@@ -423,9 +424,9 @@ arena_commit_run :: proc "contextless" (arena: ^Arena, page_count: u64, error: ^
 				if back == 0 {
 					back = op.RANGE_TABLE_PAGE_LIMIT
 				}
-				if arena.page_change(arena, {first = first + done - back, page_count = back}, {.Decommit}, error) != .Ok {
+				if arena.page_change(arena, {first = first + done - back, page_count = back}, {.Decommit}, error) != .Succeeded {
 					arena.committed_pages = first + done
-					return .Bad_State
+					return .Wrong_State
 				}
 				done -= back
 			}
@@ -434,13 +435,13 @@ arena_commit_run :: proc "contextless" (arena: ^Arena, page_count: u64, error: ^
 		done += part
 	}
 	arena.committed_pages = first + page_count
-	return .Ok
+	return .Succeeded
 }
 
 // arena_kernel_page_change is the page change of an arena on a machine:
 // one Memory_Commit of one range, paid by the budget of the arena.
 @(private = "file")
-arena_kernel_page_change :: proc "contextless" (arena: ^Arena, range: op.Page_Range, flags: op.Commit_Flags, error: ^errors.Error_Record) -> Status {
+arena_kernel_page_change :: proc "contextless" (arena: ^Arena, range: op.Page_Range, flags: op.Commit_Flags, error: ^errors.Error_Record) -> call_outcome.Call_Outcome {
 	ranges := [1]op.Page_Range{range}
 	if .Decommit in flags {
 		_, decommitted := memory_decommit(arena.memory, ranges[:], error)

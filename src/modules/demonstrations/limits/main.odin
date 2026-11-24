@@ -35,6 +35,7 @@
 // past its limit.
 package limits
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:display"
 import "modus:graphics"
@@ -123,9 +124,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	text := "limits: one record of the 100"
 	for _ in 0 ..< BURST {
 		_, status := system.call(.Log, u64(ctx.handles[op.CONTEXT_LOG]), u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Debug), 0)
-		if status == .Ok {
+		if status == .Succeeded {
 			accepted += 1
-		} else if status == .No_Budget {
+		} else if status == .Budget_Or_Capacity_Exhausted {
 			refused += 1
 		}
 	}
@@ -136,17 +137,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	started := true
 	for &row, index in rows {
 		if index < ROW_COUNT - 1 {
-			status: system.Status
+			status: call_outcome.Call_Outcome
 			row.budget, status = system.budget_create({pages = 64, threads = 1, processor = row.limit})
-			started &&= status == .Ok
+			started &&= status == .Succeeded
 		}
 		_, status := system.thread_start(compute, &sink[index], budget = row.budget)
-		started &&= status == .Ok
+		started &&= status == .Succeeded
 	}
 	// A budget cannot have more than the budget that it came from.
 	_, above := system.budget_create({processor = own.processor + 1})
 	_, zero := system.budget_create({log_records = log_limit + 1})
-	rule_right := above == .No_Budget && zero == .No_Budget
+	rule_right := above == .Budget_Or_Capacity_Exhausted && zero == .Budget_Or_Capacity_Exhausted
 
 	sample := 0
 	reported := false

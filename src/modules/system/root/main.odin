@@ -270,7 +270,7 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 // never the records of another process.
 own_records_amount_of :: proc "contextless" (caller: ^Started) -> u64 {
 	slot, serial, status := system.process_place(caller.process)
-	if status != .Ok {
+	if status != .Succeeded {
 		return 0
 	}
 	amount, ok := log_scope.own_records_amount(slot, serial)
@@ -541,10 +541,10 @@ SHORTAGE_KEEP :: 24
 
 // The start list of the machine of the shortage asks for it: this service
 // then starts nothing else, as its budget is gone.
-shortage_start :: proc "contextless" () -> system.Status {
+shortage_start :: proc "contextless" () -> call_outcome.Call_Outcome {
 	slot := part_place_take()
 	if slot == nil {
-		return .No_Slot
+		return .Budget_Or_Capacity_Exhausted
 	}
 	own, _ := system.budget_read()
 	context_grants: system.Context_Grants
@@ -562,13 +562,13 @@ shortage_start :: proc "contextless" () -> system.Status {
 		log_records = LOG_RECORDS_OF_A_PROCESS,
 	}
 	process, status := system.process_start(image_file_checked("shortage"), "shortage", context_grants.grants, random.values_with_seed(&process_generator, values.values), amounts, nil, &prepared, load_source())
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Info, Shortage_Start_Failed{status = status})
 		shortage_failed()
 	}
 	part_place_fill(slot, "shortage", process)
 	system.log_fact(.Info, Process_Started_With_Budget{started_process = module_name_field("shortage"), pages = value_kinds.Size_In_Pages(amounts.pages)})
-	return .Ok
+	return .Succeeded
 }
 
 // part_place_take takes a free place of the table of the processes for a
@@ -613,10 +613,10 @@ OPERATION_FUZZING_PAGES :: 8192
 // which the tool reaches through the memory file of the machine. It gives
 // no other right of the machine. The start list of the machine of the
 // operation sequences asks for it, and for nothing else.
-operation_fuzzing_start :: proc "contextless" () -> system.Status {
+operation_fuzzing_start :: proc "contextless" () -> call_outcome.Call_Outcome {
 	slot := part_place_take()
 	if slot == nil {
-		return .No_Slot
+		return .Budget_Or_Capacity_Exhausted
 	}
 	own, _ := system.budget_read()
 	context_grants: system.Context_Grants
@@ -627,7 +627,7 @@ operation_fuzzing_start :: proc "contextless" () -> system.Status {
 	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set))
 	system.value_put(&values, system.GRANT_VALUE_IMAGE_SIZE, u64(len(image)))
 	if context_refused(OPERATION_FUZZING_NAME, &context_grants, &values) {
-		return .Bad_State
+		return .Wrong_State
 	}
 	amounts := system.Budget_Amounts {
 		pages       = OPERATION_FUZZING_PAGES,
@@ -637,13 +637,13 @@ operation_fuzzing_start :: proc "contextless" () -> system.Status {
 		log_records = LOG_RECORDS_OF_A_PROCESS,
 	}
 	process, status := system.process_start(image_file_checked(OPERATION_FUZZING_NAME), OPERATION_FUZZING_NAME, context_grants.grants, random.values_with_seed(&process_generator, values.values), amounts, nil, &prepared, load_source())
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Error, Operation_Fuzzing_Start_Failed{status = status})
 		return status
 	}
 	part_place_fill(slot, OPERATION_FUZZING_NAME, process)
 	system.log_fact(.Info, Process_Started_With_Budget{started_process = module_name_field(OPERATION_FUZZING_NAME), pages = value_kinds.Size_In_Pages(amounts.pages)})
-	return .Ok
+	return .Succeeded
 }
 
 // shortage_failed ends the machine of the test of a shortage whose process
@@ -661,8 +661,8 @@ shortage_failed :: proc "contextless" () -> ! {
 // the seed and the pages that every process reads. The machine does not
 // stop: the boot display stays, with the failure, until the machine is
 // stopped from outside.
-fail :: proc "contextless" (text: string, status: system.Status) -> ! {
-	system.log_fact(.Error, Root_Failed{status = status, failure = text_field(text, 140)})
+fail :: proc "contextless" (text: string, status: call_outcome.Call_Outcome) -> ! {
+	system.log_fact(.Error, Root_Failed{status = status, failure = text_field(text, 136)})
 	failure_show(text, status)
 	for {
 		system.sleep(max(u64))
@@ -671,7 +671,7 @@ fail :: proc "contextless" (text: string, status: system.Status) -> ! {
 
 // failure_show takes the screen back from the compositor and shows a
 // failure on the boot display.
-failure_show :: proc "contextless" (text: string, status: system.Status) {
+failure_show :: proc "contextless" (text: string, status: call_outcome.Call_Outcome) {
 	if display_holder != 0 {
 		// This service asks the stop: the screen returns to it, and the
 		// stop is no absence of the screen.
@@ -788,7 +788,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for code in refused_codes {
 		refusal: errors.Error_Record
 		_, refused := system.call_with_error(&refusal, .Machine_Stop, u64(machine), code)
-		if refused != .Bad_Operation || refusal.kind != i64(errors.Kind.Bad_Value) || refusal.argument != 2 || refusal.value != i64(code) || refusal.limit != op.MACHINE_STOP_CODE_MOST {
+		if refused != .Argument_Refused || refusal.kind != i64(errors.Kind.Bad_Value) || refusal.argument != 2 || refusal.value != i64(code) || refusal.limit != op.MACHINE_STOP_CODE_MOST {
 			fail("Machine_Stop did not refuse a code past one byte with its error record", refused)
 		}
 	}
@@ -868,12 +868,12 @@ input_memory: system.Handle
 screen_rings_create :: proc "contextless" (ctx: ^system.Context) {
 	root_screen_values = {ctx.values[op.ROOT_VALUE_WIDTH], ctx.values[op.ROOT_VALUE_HEIGHT], ctx.values[op.ROOT_VALUE_PIXELS_PER_LINE], ctx.values[op.ROOT_VALUE_FORMAT]}
 	root_framebuffer = ctx.handles[op.ROOT_FRAMEBUFFER]
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	input_memory, _, status = system.ring_create()
-	if status == .Ok {
+	if status == .Succeeded {
 		control_memory, control, status = system.ring_create()
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("cannot create a ring", status)
 	}
 }
@@ -883,7 +883,7 @@ screen_rings_create :: proc "contextless" (ctx: ^system.Context) {
 boot_image_take :: proc "contextless" (ctx: ^system.Context) {
 	image_memory = ctx.handles[op.ROOT_BOOT_IMAGE]
 	address, status := system.memory_map(image_memory, {})
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("cannot map the boot image", status)
 	}
 	image = ([^]u8)(address)[:ctx.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE]]
@@ -919,7 +919,7 @@ random_seed_make :: proc "contextless" () {
 		// BLAKE3 does not give 32 zero bytes in practice; if it does, root
 		// says why it cannot start a process, instead of a stop at its
 		// first draw.
-		fail("the random seed of the system is 32 zero bytes: no process can get a seed", .Bad_Operation)
+		fail("the random seed of the system is 32 zero bytes: no process can get a seed", .Argument_Refused)
 	}
 	report := &entropy_report
 	system.log_fact(.Info, Random_Seed_Made{rdseed_good = u64(report.rdseed_good), rdseed_refused = u64(report.rdseed_refused), rdrand_good = u64(report.rdrand_good), rdrand_refused = u64(report.rdrand_refused), jitter_samples = u64(report.jitter_samples), jitter_distinct = u64(report.jitter_distinct), strength = text_field(op.seed_strength_names[report.strength], 32), rdseed_presence = text_field(report.rdseed_present ? "present" : "absent", 8), rdrand_presence = text_field(report.rdrand_present ? "present" : "absent", 8)})
@@ -929,12 +929,12 @@ random_seed_make :: proc "contextless" () {
 // which this service writes and each process reads.
 replacement_table_create :: proc "contextless" () {
 	table: rawptr
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	replacement_memory, status = system.memory_create(1)
-	if status == .Ok {
+	if status == .Succeeded {
 		table, status = system.memory_map(replacement_memory)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("cannot create the replacement table", status)
 	}
 	replacement_table = (^system.Replacement_Table)(table)
@@ -949,11 +949,11 @@ replacement_table_create :: proc "contextless" () {
 // of this service, never an absent controller, and it stays `fail`: the
 // input service finds that absence itself, at its first read of the status
 // port, and stops with its line.
-input_start :: proc "contextless" () -> system.Status {
+input_start :: proc "contextless" () -> call_outcome.Call_Outcome {
 	show("the root service starts input", .Running, .Input)
 	slot := part_place_take()
 	if slot == nil {
-		return .No_Slot
+		return .Budget_Or_Capacity_Exhausted
 	}
 	// The devices: this service closes its handles after the start.
 	devices: [3]system.Handle
@@ -967,7 +967,7 @@ input_start :: proc "contextless" () -> system.Status {
 	device_requests := [3][3]u64{{u64(op.Device_Kind.Ports), 0x60, 5}, {u64(op.Device_Kind.Interrupt), 1, 0}, {u64(op.Device_Kind.Interrupt), 12, 0}}
 	for request, index in device_requests {
 		results, device_status := system.call(.Device_Create, u64(machine), request[0], request[1], request[2])
-		if device_status != .Ok {
+		if device_status != .Succeeded {
 			fail("cannot create a device handle", device_status)
 		}
 		devices[index] = system.Handle(results[0])
@@ -987,9 +987,9 @@ input_start :: proc "contextless" () -> system.Status {
 	tablet_armed := false
 	tablet_place := pci.Place{device = pci.TABLET_DEVICE}
 	if identity, found := classified_identity_at(tablet_place, .Input_Device); found {
-		arm_status: system.Status
+		arm_status: call_outcome.Call_Outcome
 		tablet, arm_status = device_arm(tablet_place, identity, INPUT_TABLET_LAYOUT, &context_grants)
-		if arm_status == .Ok {
+		if arm_status == .Succeeded {
 			tablet_armed = true
 		} else {
 			system.log_fact(.Warning, Input_Tablet_Arm_Failed{status = arm_status})
@@ -1012,16 +1012,16 @@ input_start :: proc "contextless" () -> system.Status {
 	if context_refused(input_name, &context_grants, &input_values) {
 		fresh_bytes_forget(slot)
 		device_arm_undo(&tablet)
-		return .Bad_State
+		return .Wrong_State
 	}
 	input_budget, input_budget_ok := budget_of(image_file_checked(input_name), input_name)
 	if !input_budget_ok {
 		fresh_bytes_forget(slot)
 		device_arm_undo(&tablet)
-		return .No_Budget
+		return .Budget_Or_Capacity_Exhausted
 	}
 	process, status := system.process_start(image_file_checked(input_name), input_name, context_grants.grants, random.values_with_seed(&process_generator, input_values.values), input_budget.amounts, input_mappings[:input_mapping_count], &prepared, load_source(), ready = &slot.ready)
-	if status != .Ok {
+	if status != .Succeeded {
 		fresh_bytes_forget(slot)
 		device_arm_undo(&tablet)
 		system.log_fact(.Warning, Input_Start_Failed{status = status})
@@ -1033,7 +1033,7 @@ input_start :: proc "contextless" () -> system.Status {
 		device_arm_keep(slot, &tablet)
 	}
 	started_log(input_name, principals.MACHINE, false)
-	return .Ok
+	return .Succeeded
 }
 
 // screen_absence_note records that the machine has no screen, and writes
@@ -1064,31 +1064,31 @@ screen_absence_note :: proc "contextless" () {
 // holder then starts with no framebuffer, and draws into its own memory
 // (src/md/features/screen_of_memory.md). A start list that asks for it on
 // such a machine with no size gets Bad_State.
-display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> system.Status {
+display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> call_outcome.Call_Outcome {
 	memory := screen_of_memory[0] != 0 && screen_of_memory[1] != 0
 	if screen_absent && !memory || !screen_absent && memory {
-		return .Bad_State
+		return .Wrong_State
 	}
 	// A console image has no window server: grid_terminal takes the screen
 	// as the terminal of the console (renderer_terminal_start), never by
 	// this procedure, which gives the context of a compositor.
 	if console_renderer != .Desktop_Terminal {
-		return .Bad_State
+		return .Wrong_State
 	}
 	// The address of the framebuffer of the firmware is in the boot record.
 	// With no boot record, the address is 0: no page flip, and the GPU
 	// whose BAR holds the screen is sized as any device.
-	if _, inspect_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Boot), 0, u64(uintptr(&screen_data.boot)), size_of(screen_data.boot)); inspect_status == .Ok {
+	if _, inspect_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Boot), 0, u64(uintptr(&screen_data.boot)), size_of(screen_data.boot)); inspect_status == .Succeeded {
 		firmware_framebuffer_address = screen_data.boot.framebuffer_address
 	}
 	_ = gpu_driver_start()
 	show("the root service starts the compositor", .Running, .Compositor)
 	served := part_place_take()
 	if served == nil {
-		return .No_Slot
+		return .Budget_Or_Capacity_Exhausted
 	}
 	new_control_memory, new_control, status := system.ring_create()
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Warning, Compositor_Control_Ring_Failed{status = status})
 		return status
 	}
@@ -1158,10 +1158,10 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 			file_mapping, given := image_entry_mapping(&item, isolated.FILE_ADDRESS)
 			if !given {
 				served^ = {}
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 			served.service_memory, served.service, status = system.ring_create()
-			if status != .Ok {
+			if status != .Succeeded {
 				system.log_fact(.Warning, Compositor_Service_Ring_Failed{status = status})
 				served^ = {}
 				return status
@@ -1195,7 +1195,7 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 	plan_values_page_give(served, display_name, mappings[:], &mapping_count, &values)
 	if context_refused(display_name, &context_grants, &values) {
 		display_holder_place_free(served)
-		return .Bad_State
+		return .Wrong_State
 	}
 	// The compositor imports the drawing module: its load needs the boot
 	// image as the source of its imports. Pass Start_Wiring so its `acts`
@@ -1204,11 +1204,11 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 	display_budget, display_budget_ok := budget_of(image_file_checked(display_name), display_name)
 	if !display_budget_ok {
 		display_holder_place_free(served)
-		return .No_Budget
+		return .Budget_Or_Capacity_Exhausted
 	}
 	display_wiring: system.Start_Wiring
 	display_holder, status = system.process_start(image_file_checked(display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), display_budget.amounts, mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error, wiring = &display_wiring, ready = &served.ready)
-	if status != .Ok {
+	if status != .Succeeded {
 		if display_holder_load_error.stage != u32(module.Load_Stage.None) {
 			system.log_fact(.Error, Compositor_Load_Refused{})
 			load_error_log(.Error, &display_holder_load_error)
@@ -1239,7 +1239,7 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 	}
 	started_log(display_name, principals.MACHINE, false)
 	powerbox_service_start() // powerbox_picker.odin
-	return .Ok
+	return .Succeeded
 }
 
 // display_role_store_give gives the holder of the display the store of its
@@ -1422,7 +1422,7 @@ budget_pages_now: u64
 budget_pages_lowest: u64 = max(u64)
 
 budget_pages_note :: proc "contextless" () {
-	if own, status := system.budget_read(); status == .Ok {
+	if own, status := system.budget_read(); status == .Succeeded {
 		budget_pages_now = own.pages
 		budget_pages_lowest = min(budget_pages_lowest, own.pages)
 	}
@@ -1674,7 +1674,7 @@ debug_caller_of :: proc "contextless" (holder: ^Started, connection_ring: u64) -
 // process, its principal. kind names the command of a refusal.
 debug_give :: proc "contextless" (holder: ^Started, caller: ^Started, caller_principal: u64, caller_row: int, target: ^Started, name: string, kind: u32, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	given, status := system.give(holder.requests_memory, target.process, {.Debug})
-	if status != .Ok {
+	if status != .Succeeded {
 		return kernel_refused(values, kind, status)
 	}
 	target.debugger = holder
@@ -1906,7 +1906,7 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 		handle = system.context_record().handles[op.ROOT_LOG_RECORDS]
 	}
 	count, revoke_status := system.handle_revoke(handle, item.process)
-	if revoke_status != .Ok {
+	if revoke_status != .Succeeded {
 		return kernel_refused(values, kind, revoke_status), false
 	}
 	item.granted -= {which}
@@ -1922,32 +1922,33 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 SERVICE_RING_STARTUP_GRACE_MS :: 200
 
 // give_through_service_ring gives a handle to a service through a ring that
-// the service opens with Receive_Handles at its start. Retries Bad_Handle
-// only while !ready^ (freshly started) within SERVICE_RING_STARTUP_GRACE_MS,
-// failing immediately if the service stops or refuses consent (No_Right).
-give_through_service_ring :: proc "contextless" (target_process, ring_memory, handle: system.Handle, rights: system.Rights, ready: ^bool) -> (given: system.Handle, status: system.Status) {
+// the service opens with Receive_Handles at its start. Retries Wrong_State
+// (No_Target) only while !ready^ (freshly started) within
+// SERVICE_RING_STARTUP_GRACE_MS, failing immediately if the service stops or
+// refuses consent (Grant_Or_Right_Missing).
+give_through_service_ring :: proc "contextless" (target_process, ring_memory, handle: system.Handle, rights: system.Rights, ready: ^bool) -> (given: system.Handle, status: call_outcome.Call_Outcome) {
 	given, status = system.give(ring_memory, handle, rights)
-	if status == .Ok {
+	if status == .Succeeded {
 		ready^ = true
-		return given, .Ok
+		return given, .Succeeded
 	}
-	if status != .Bad_Handle || ready^ {
+	if status != .Wrong_State || ready^ {
 		return 0, status
 	}
 	deadline := system.time() + SERVICE_RING_STARTUP_GRACE_MS
 	for system.time() < deadline {
 		if target_process != 0 {
 			if state, _, _ := system.process_state(target_process); state == .Stopped || state == .None {
-				return 0, .Bad_State
+				return 0, .Wrong_State
 			}
 		}
 		system.sleep(system.time() + 1)
 		given, status = system.give(ring_memory, handle, rights)
-		if status == .Ok {
+		if status == .Succeeded {
 			ready^ = true
-			return given, .Ok
+			return given, .Succeeded
 		}
-		if status != .Bad_Handle {
+		if status != .Wrong_State {
 			return 0, status
 		}
 	}
@@ -1976,7 +1977,7 @@ palette_provide :: proc "contextless" (caller: ^Started, values: ^[7]u64) -> cal
 	if palette_provider != nil {
 		return root_ring.refuse(values, .Name_Already_Taken, kind, .Exists, .Processes)
 	}
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	initial_pages, pages_ok := palette_table.table_pages_for(palette_table.INITIAL_ENTRY_CAPACITY)
 	if !pages_ok {
 		// The constants of the table give no count of pages: a fault of
@@ -1984,24 +1985,24 @@ palette_provide :: proc "contextless" (caller: ^Started, values: ^[7]u64) -> cal
 		return root_ring.refuse(values, .Callee_Unavailable, kind, .Refused)
 	}
 	palette_table_memory, status = system.memory_create(initial_pages)
-	if status != .Ok {
+	if status != .Succeeded {
 		return kernel_refused(values, kind, status)
 	}
 	palette_ring_memory, status = system.memory_create(ring.PAGE_COUNT)
 	given_table, given_ring: system.Handle
-	if status == .Ok {
+	if status == .Succeeded {
 		palette_table_in_display_holder, status = system.give(display_holder, palette_table_memory, {.Read})
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		palette_ring_in_display_holder, status = system.give(display_holder, palette_ring_memory, {.Read, .Write})
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		given_table, status = system.give(caller.requests_memory, palette_table_memory, {.Read, .Write})
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		given_ring, status = system.give(caller.requests_memory, palette_ring_memory, {.Read, .Write})
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		system.close(palette_table_memory)
 		if palette_ring_memory != 0 {
 			system.close(palette_ring_memory)
@@ -2043,14 +2044,14 @@ palette_provider_end :: proc "contextless" (item: ^Started, revoke: bool) -> (co
 // terminal_start starts the terminal of a process that runs, by the
 // renderer that the boot image chose (role_holders.odin): a window of the
 // desktop, or a renderer that draws no window.
-terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_memory, text_memory: system.Handle) -> system.Status {
+terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_memory, text_memory: system.Handle) -> call_outcome.Call_Outcome {
 	switch console_renderer {
 	case .Desktop_Terminal:
 		return window_terminal_start(view, writer, ring_memory, text_memory)
 	case .Serial_Terminal, .Grid_Terminal, .Dom_Terminal:
 		return renderer_terminal_start(view, writer, ring_memory, text_memory)
 	}
-	return .Bad_State
+	return .Wrong_State
 }
 
 // renderer_terminal_start starts the terminal of a process when the
@@ -2064,7 +2065,7 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 // One renderer runs at a time, and only the module of the renderer that
 // the image chose: a second one, or a module that a plan named, never gets
 // COM2 or the framebuffer (role_policy.console_renderer_start_check).
-renderer_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_memory, text_memory: system.Handle) -> system.Status {
+renderer_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_memory, text_memory: system.Handle) -> call_outcome.Call_Outcome {
 	view^ = {}
 	terminal_name := role_holder_name(.Terminal)
 	running := console_renderer_view != nil && console_renderer_view.process != 0
@@ -2072,10 +2073,10 @@ renderer_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started,
 	case .None:
 	case .Desktop_Terminal, .Holder_Is_Not_The_Renderer:
 		system.log_fact(.Warning, Console_Renderer_Refused_Holder{refused_process = module_name_field(terminal_name)})
-		return .Bad_Operation
+		return .Argument_Refused
 	case .Renderer_Running:
 		system.log_fact(.Warning, Console_Renderer_Refused_Running{refused_process = module_name_field(terminal_name)})
-		return .Bad_State
+		return .Wrong_State
 	}
 	start_grant_set := start_grant_set_of(terminal_name)
 	columns, rows, _ := start_grant_set_terminal(&writer.start_grant_set)
@@ -2088,17 +2089,17 @@ renderer_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started,
 	}
 	switch console_renderer {
 	case .Desktop_Terminal:
-		return .Bad_State
+		return .Wrong_State
 	case .Serial_Terminal, .Dom_Terminal:
 		results, ports_status := system.call(.Device_Create, u64(machine), u64(op.Device_Kind.Ports), terminal.SERIAL_PORT_FIRST, terminal.SERIAL_PORT_COUNT)
-		if ports_status != .Ok {
+		if ports_status != .Succeeded {
 			return ports_status
 		}
 		serial_ports = system.Handle(results[0])
 		handles.device = {serial_ports, {}}
 	case .Grid_Terminal:
 		if screen_absent {
-			return .Bad_State
+			return .Wrong_State
 		}
 		handles.device = {root_framebuffer, {.Read, .Write}}
 		handles.input = {input_memory, {.Read, .Write}}
@@ -2112,16 +2113,16 @@ renderer_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started,
 	fresh_bytes_page_give(view, mappings[:], &mapping_count, &values)
 	if context_refused(terminal_name, &context_grants, &values) {
 		fresh_bytes_forget(view)
-		return .Bad_State
+		return .Wrong_State
 	}
 	load_error: module.Load_Error
 	terminal_budget, terminal_budget_ok := budget_of(image_file_checked(terminal_name), terminal_name)
 	if !terminal_budget_ok {
 		fresh_bytes_forget(view)
-		return .No_Budget
+		return .Budget_Or_Capacity_Exhausted
 	}
 	process, status := system.process_start(image_file_checked(terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), terminal_budget.amounts, mappings[:mapping_count], &prepared, load_source(), &load_error, ready = &view.ready)
-	if status != .Ok {
+	if status != .Succeeded {
 		fresh_bytes_forget(view)
 		if load_error.stage != u32(module.Load_Stage.None) {
 			system.log_fact(.Warning, Terminal_Load_Refused{})
@@ -2138,7 +2139,7 @@ renderer_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started,
 	if console_renderer == .Grid_Terminal {
 		screen_given_to_renderer = true
 	}
-	return .Ok
+	return .Succeeded
 }
 
 // console_renderer_release forgets the renderer of the terminal when it
@@ -2164,7 +2165,7 @@ console_renderer_release :: proc "contextless" (item: ^Started) {
 // the desktop. The terminal receives a surface, the terminal ring, the text
 // region with the right Read, and a handle that reads the state of the
 // process. It receives nothing of the start grant set of the process.
-window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_memory, text_memory: system.Handle) -> system.Status {
+window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_memory, text_memory: system.Handle) -> call_outcome.Call_Outcome {
 	view^ = {}
 	display_memory := system.memory_create(ring.PAGE_COUNT) or_return
 	defer system.close(display_memory)
@@ -2187,7 +2188,7 @@ window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, r
 	if context_refused(terminal_name, &context_grants, &values) {
 		fresh_bytes_forget(view)
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
-		return .Bad_State
+		return .Wrong_State
 	}
 	// The terminal imports the drawing module: its load needs the boot
 	// image as the source of its imports.
@@ -2196,10 +2197,10 @@ window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, r
 	if !terminal_budget_ok {
 		fresh_bytes_forget(view)
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
-		return .No_Budget
+		return .Budget_Or_Capacity_Exhausted
 	}
 	process, status := system.process_start(image_file_checked(terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), terminal_budget.amounts, mappings[:mapping_count], &prepared, load_source(), &load_error, ready = &view.ready)
-	if status != .Ok {
+	if status != .Succeeded {
 		fresh_bytes_forget(view)
 		if load_error.stage != u32(module.Load_Stage.None) {
 			system.log_fact(.Warning, Terminal_Load_Refused{})
@@ -2213,7 +2214,7 @@ window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, r
 	view.start_grant_set = start_grant_set
 	view.principal = writer.principal // The lock stops the terminal of a process of the session with it.
 	copy(view.name[:len(view.name) - 1], terminal_name)
-	return .Ok
+	return .Succeeded
 }
 
 // connect makes a connection from a caller to the service with a name: a
@@ -2230,20 +2231,20 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 	defer system.close(ring_memory)
 	defer system.close(region_memory)
 	// The caller receives its handles through its ring to this service.
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	given: [3]system.Handle
 	// The process handle of the service, with Read only and never Give: a
 	// handle with Read and Give lends to log.process_records, and would give
 	// each client the log records of the service
 	// (src/md/features/log_reader_scope.md).
 	given[0], status = system.give(caller.requests_memory, service.process, {.Read})
-	if status == .Ok {
+	if status == .Succeeded {
 		given[1], status = system.give(caller.requests_memory, ring_memory, {.Read, .Write})
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		given[2], status = system.give(caller.requests_memory, region_memory, {.Read, .Write})
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		disconnect(free)
 		return kernel_refused(values, kind, status)
 	}
@@ -2370,19 +2371,19 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 	} else {
 		copy(store_name[:len(store_name) - 1], system.name_of(caller.name[:]))
 	}
-	status: system.Status
-	if ring_memory, status = system.memory_create(ring.PAGE_COUNT); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if ring_memory, status = system.memory_create(ring.PAGE_COUNT); status != .Succeeded {
 		return nil, nil, 0, 0, kernel_refused(refusal, kind, status)
 	}
 	region_memory, status = system.memory_create(isolated.REGION_PAGES)
 	in_service_ring, in_service_region: system.Handle
-	if status == .Ok {
+	if status == .Succeeded {
 		in_service_ring, status = give_through_service_ring(service.process, service.service_memory, ring_memory, {.Read, .Write}, &service.service_ring_ready)
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		in_service_region, status = give_through_service_ring(service.process, service.service_memory, region_memory, {.Read, .Write}, &service.service_ring_ready)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		system.close(ring_memory)
 		if region_memory != 0 {
 			system.close(region_memory)

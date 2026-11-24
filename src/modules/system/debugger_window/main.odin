@@ -1398,7 +1398,7 @@ frame_build :: proc "contextless" (window: ^display.Window) {
 // that the window calls, and compares the size of each record of its rows
 // with the description of the service. It gives the reason of a failure.
 service_reach :: proc "contextless" (ctx: ^system.Context) -> (problem: string) {
-	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
+	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Succeeded {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 	service_file = system.image_find(image, "debugger")
@@ -1420,9 +1420,9 @@ service_reach :: proc "contextless" (ctx: ^system.Context) -> (problem: string) 
 	if ctx.handles[system.GRANT_ROOT] == 0 {
 		return "this process has no ring to the root service"
 	}
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true)
-	if status != .Ok {
+	if status != .Succeeded {
 		return "the ring to the root service does not open"
 	}
 	has_requests = true

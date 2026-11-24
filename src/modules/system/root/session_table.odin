@@ -1,5 +1,6 @@
 package root
 
+import "modus:contract/call_outcome"
 import "modus:contract/log_scope"
 import "modus:principals"
 import "modus:system"
@@ -17,13 +18,13 @@ session_table: ^log_scope.SESSION_TABLE
 // session_table_create makes the table, with the row of this service: its
 // records are records of principal 0, as those of the kernel.
 session_table_create :: proc "contextless" () {
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	session_table_memory, status = system.memory_create(log_scope.SESSION_TABLE_PAGES)
 	table: rawptr
-	if status == .Ok {
+	if status == .Succeeded {
 		table, status = system.memory_map(session_table_memory)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		fail("cannot create the session table", status)
 	}
 	session_table = (^log_scope.SESSION_TABLE)(table)

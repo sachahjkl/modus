@@ -109,7 +109,7 @@ screen_of_memory_resize :: proc "contextless" (client: ^Client, width, height: u
 		if paid_at_start {
 			paying = {}
 		}
-		if budget, budget_status := system.budget_read(system.Handle(paying.handle)); budget_status == .Ok {
+		if budget, budget_status := system.budget_read(system.Handle(paying.handle)); budget_status == .Succeeded {
 			pages_left = u64(budget.pages)
 		}
 	}

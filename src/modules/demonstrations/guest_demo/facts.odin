@@ -1,6 +1,6 @@
 package guest_demo
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
 // The log facts of the demonstration guest_demo
@@ -18,16 +18,16 @@ import "modus:contract/value_kinds"
 // A step gave a status that stops the demonstration.
 @(log_fact = "guest_demo: failed: {step} gave {status_word}")
 Step_Failed :: struct {
-	status_word: op.Status_Word,
+	status_word: call_outcome.Call_Outcome_Word,
 	step:        [40]u8,
 }
 
 // A step that the kernel must refuse gave another status than the refusal.
 @(log_fact = "guest_demo: failed: {step} gave {status_word}, not {expected}")
 Step_Not_Refused :: struct {
-	status_word: op.Status_Word,
-	expected:    op.Status,
-	step:        [36]u8,
+	status_word: call_outcome.Call_Outcome_Word,
+	expected:    call_outcome.Call_Outcome,
+	step:        [40]u8,
 }
 
 // The exit of the port write names another count of bytes than 1.
@@ -80,7 +80,7 @@ Debug_Exit_Wrong :: struct {
 
 // The cases with no value: each sentence is its fact type.
 
-@(log_fact = "guest_demo: Guest_Run gave Bad_Operation with the error kind Unsupported: the processors of this machine have no virtualization support that the kernel uses, and no guest runs: as it must")
+@(log_fact = "guest_demo: Guest_Run gave Operation_Unsupported with the error kind Unsupported: the processors of this machine have no virtualization support that the kernel uses, and no guest runs: as it must")
 Guests_Unsupported :: struct {}
 
 @(log_fact = "guest_demo: the guest wrote 42 to the port 0x80, then halted after it: as it must")
@@ -105,7 +105,7 @@ Switching_Protect_Refused :: struct {}
 @(log_fact = "guest_demo: the instruction that writes its own page at 0x2010 ended the run with the exit Writes_Own_Page: as it must")
 Own_Page_Write_Arrived :: struct {}
 
-@(log_fact = "guest_demo: Process_Start of the guest gave Bad_State: as it must")
+@(log_fact = "guest_demo: Process_Start of the guest gave Wrong_State: as it must")
 Guest_Start_Refused :: struct {}
 
 // Each case held, or the machine runs no guest and the demonstration ends

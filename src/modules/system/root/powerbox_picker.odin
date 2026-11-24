@@ -9,6 +9,7 @@
 // ended, or at its bound.
 package root
 
+import "modus:contract/call_outcome"
 import "modus:contract/powerbox"
 import "modus:contract/root_ring"
 import "modus:contract/ring"
@@ -55,14 +56,14 @@ picker_rings_make :: proc "contextless" () -> bool {
 		return true
 	}
 	memory, opened, status := system.ring_create()
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	// This service reads no record of the ring: the display and the
 	// powerbox map it.
 	system.ring_close(&opened)
 	region, region_status := system.memory_create(powerbox.PICKER_REGION_PAGES)
-	if region_status != .Ok {
+	if region_status != .Succeeded {
 		system.close(memory)
 		return false
 	}
@@ -91,11 +92,11 @@ powerbox_context_give :: proc "contextless" (work: ^Start_Work) {
 		return
 	}
 	memory, opened, status := system.ring_create(receive_handles = true)
-	if status != .Ok {
+	if status != .Succeeded {
 		return
 	}
 	region, region_status := system.memory_create(4)
-	if region_status != .Ok {
+	if region_status != .Succeeded {
 		system.ring_close(&opened)
 		system.close(memory)
 		return
@@ -206,17 +207,17 @@ picker_listing_begin :: proc "contextless" (principal: u64) {
 	rights := [3]system.Rights{{.Read}, {.Read, .Write}, {.Read, .Write}}
 	given: [3]system.Handle
 	given_count := 0
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	for source, index in sources {
 		given[index], status = system.give(powerbox_ring_memory, source, rights[index])
-		if status != .Ok {
+		if status != .Succeeded {
 			break
 		}
 		given_count += 1
 	}
 	powerbox_next_tag = powerbox_next_tag == max(u32) ? 1 : powerbox_next_tag + 1
 	tag := powerbox_next_tag
-	sent := status == .Ok && system.send(&powerbox_ring.commands, ring.Record{kind = u32(powerbox.Service_Ring_Command.Stores_Connection), tag = tag, values = {u64(given[0]), u64(given[1]), u64(given[2]), principal, storage_place, 0, 0}})
+	sent := status == .Succeeded && system.send(&powerbox_ring.commands, ring.Record{kind = u32(powerbox.Service_Ring_Command.Stores_Connection), tag = tag, values = {u64(given[0]), u64(given[1]), u64(given[2]), principal, storage_place, 0, 0}})
 	if !sent {
 		// A refusal names no handle, so the powerbox closes none: the
 		// handles given before it are revoked here.

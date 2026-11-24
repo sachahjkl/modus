@@ -1,6 +1,6 @@
 package replay_probe
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 
 // Log facts of replay_probe, the machine test of the record and the replay
 // of a process with a shared writer (src/md/features/record_and_replay.md).
@@ -67,7 +67,7 @@ Probe_Failed :: struct {
 // A step of the test process failed with a status.
 @(log_fact = "replay_probe: detail: {step} gave the status {status_word}")
 Probe_Step_Failed :: struct {
-	status_word: op.Status_Word,
+	status_word: call_outcome.Call_Outcome_Word,
 	step:        [32]u8,
 }
 

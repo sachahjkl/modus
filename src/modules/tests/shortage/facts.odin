@@ -1,7 +1,7 @@
 package shortage
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
 // The log facts of the test of the shortage of frames
@@ -25,7 +25,7 @@ Full_Refused_By_Budget :: struct {
 	payable_pages:  u64,
 	reserved_pages: u64,
 	drains:         u64,
-	status:         op.Status_Word,
+	status:         call_outcome.Call_Outcome_Word,
 	error_kind:     errors.Kind_Word,
 }
 
@@ -40,7 +40,7 @@ Full_Refused_By_Another_Kind :: struct {
 	payable_pages:  u64,
 	reserved_pages: u64,
 	drains:         u64,
-	status:         op.Status_Word,
+	status:         call_outcome.Call_Outcome_Word,
 	error_kind:     errors.Kind_Word,
 }
 

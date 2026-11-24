@@ -138,13 +138,13 @@ machine_parts_page_create :: proc "contextless" () {
 		parts += {.Tpm}
 	}
 	machine_parts = parts
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	address: rawptr
 	machine_parts_memory, status = system.memory_create(1)
-	if status == .Ok {
+	if status == .Succeeded {
 		address, status = system.memory_map(machine_parts_memory)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		// With no page, no start policy can read the parts: it starts
 		// nothing, and the rescue does the same, with their lines.
 		system.log_fact(.Error, Machine_Parts_Page_Failed{status = status})
@@ -359,7 +359,7 @@ start_policy_none :: proc "contextless" (cause: string) {
 	start_list_reserves_end()
 	start_policy_deadline = system.WAIT_FOREVER
 	system.log_fact(.Error, No_Start_Policy{failure_cause = text_field(cause, 72)})
-	failure_show(cause, .Bad_State)
+	failure_show(cause, .Wrong_State)
 }
 
 // start_policy_stopped is told of each process that stopped, before its
@@ -553,7 +553,7 @@ start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: stri
 	}
 	// The procedures of the parts of the system start each one through the
 	// kernel: their status is the status of a kernel operation.
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	started_place: ^Started
 	switch start_list.root_procedure_of(name) {
 	case .Input:
@@ -583,7 +583,7 @@ start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: stri
 			return outcome
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		return kernel_refused(values, kind, status)
 	}
 	if step.counted != nil {
@@ -602,7 +602,7 @@ start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: stri
 	}
 	slot.asked_by_start_policy = true
 	given, give_status := start_process_handle_give(sender, slot)
-	if give_status == .Ok {
+	if give_status == .Succeeded {
 		values[0] = given
 	}
 	return .Succeeded

@@ -2,6 +2,7 @@
 package input_history
 
 import "core:testing"
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 
 // Every closed enum border accepts its members and refuses edges past the bound.
@@ -358,7 +359,7 @@ replay_step_check_catches_every_divergence_kind :: proc(t: ^testing.T) {
 		command_kind             = u32(op.Operation.Memory_Size),
 		command_tag              = 7,
 		command_values           = {1, 2, 3, 4, 5, 6, 7},
-		completion_status        = u32(op.Status.Ok),
+		completion_status        = u32(call_outcome.Call_Outcome.Succeeded),
 		completion_values        = {16, 0, 0, 0, 0, 0, 0},
 		return_time_milliseconds = 500,
 	}
@@ -478,7 +479,7 @@ multi_event_history_round_trip :: proc(t: ^testing.T) {
 		command_kind             = u32(op.Operation.Process_State),
 		command_tag              = 42,
 		command_values           = {3, 0x10_0000, 0, 0, 0, 0, 0},
-		completion_status        = u32(op.Status.Ok),
+		completion_status        = u32(call_outcome.Call_Outcome.Succeeded),
 		copied_bytes_count       = u32(len(copied)),
 		completion_values        = {2, 0, 0, 5, 1, 9, 0},
 		return_time_milliseconds = 777,
@@ -574,7 +575,7 @@ single_fetch_snapshot_reader_and_null_copy_address_refusal :: proc(t: ^testing.T
 	bytes := [?]u8{1, 2, 3, 4}
 	bad_kc := Kernel_Completion_Payload {
 		command_kind        = u32(op.Operation.Process_State),
-		completion_status   = u32(op.Status.Ok),
+		completion_status   = u32(call_outcome.Call_Outcome.Succeeded),
 		copied_bytes_count  = 4,
 		copied_user_address = 0,
 	}

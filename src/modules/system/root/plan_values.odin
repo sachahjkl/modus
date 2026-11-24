@@ -90,8 +90,8 @@ plan_values_command :: proc "contextless" (item: ^Started, values: [7]u64, answe
 		// Refused above; the answer still carries its error record.
 		return root_ring.refuse(answer, .Argument_Refused, kind, .Bad_Value, .None, 1, i64(values[0]), i64(rd.Plan_Roles_Step.Rollback))
 	case .Page:
-		if status := plan_values_pages_give(item, answer); status != .Ok {
-			return root_ring.refuse(answer, system.outcome_of_own_status(status), kind, .Refused, .None, 0, 0, 0, i64(status))
+		if status := plan_values_pages_give(item, answer); status != .Succeeded {
+			return root_ring.refuse(answer, system.own_operation_outcome(status), kind, .Refused, .None, 0, 0, 0, i64(status))
 		}
 		return .Succeeded
 	case .Committed:
@@ -188,14 +188,14 @@ plan_values_owner_page :: proc "contextless" (index: int) -> []u8 {
 // gives the sender a handle of them with Read and Write. The core keeps
 // its own handle: a revocation by the sender does not reach it.
 @(private = "file")
-plan_values_pages_give :: proc "contextless" (item: ^Started, answer: ^[7]u64) -> system.Status {
+plan_values_pages_give :: proc "contextless" (item: ^Started, answer: ^[7]u64) -> call_outcome.Call_Outcome {
 	if plan_values_memory == 0 {
 		memory, status := system.memory_create(plan_values.SET_PAGES)
-		if status != .Ok {
+		if status != .Succeeded {
 			return status
 		}
 		address, map_status := system.memory_map(memory, {.Write})
-		if map_status != .Ok {
+		if map_status != .Succeeded {
 			system.close(memory)
 			return map_status
 		}
@@ -203,11 +203,11 @@ plan_values_pages_give :: proc "contextless" (item: ^Started, answer: ^[7]u64) -
 		plan_values_pages = ([^]u8)(address)
 	}
 	given, status := system.give(item.requests_memory, plan_values_memory, {.Read, .Write})
-	if status != .Ok {
+	if status != .Succeeded {
 		return status
 	}
 	answer^ = {0 = u64(given), 1 = plan_values_generation}
-	return .Ok
+	return .Succeeded
 }
 
 // plan_values_of gives the values of an owner in the set in force: the
@@ -251,13 +251,13 @@ root_plan_read :: proc "contextless" () {
 // failure is not a failure of the start: the owners then hold the
 // defaults of their contracts, and the log says it once.
 plan_values_owner_pages_create :: proc "contextless" () {
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	plan_values_owner_memory, status = system.memory_create(STARTED_CAPACITY)
 	address: rawptr
-	if status == .Ok {
+	if status == .Succeeded {
 		address, status = system.memory_map(plan_values_owner_memory)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Warning, Plan_Values_Pages_Failed{status = status})
 		if plan_values_owner_memory != 0 {
 			system.close(plan_values_owner_memory)

@@ -88,6 +88,7 @@
 // pointer is in docs/POINTERS.md.
 package compositor
 
+import "modus:contract/call_outcome"
 import "modus:bochs_display"
 import "modus:display"
 import "modus:contract/errors"
@@ -723,14 +724,14 @@ canvas_create_with_handle :: proc "contextless" (width, height: int) -> (canvas:
 canvas_try_create :: proc "contextless" (width, height: int, budget: system.Handle = 0) -> (canvas: graphics.Canvas, handle: system.Handle, ok: bool) {
 	pages := (u64(width * height * 4) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	memory, status := system.memory_create(pages, budget, {.Contiguous})
-	if status != .Ok {
+	if status != .Succeeded {
 		memory, status = system.memory_create(pages, budget)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		return {}, 0, false
 	}
 	address, map_status := system.memory_map(memory)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(memory)
 		return {}, 0, false
 	}
@@ -759,7 +760,7 @@ screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
 	// A refused handle has no pages: the screen keeps one page.
 	framebuffer_pages, _ := system.memory_size(ctx.handles[GRANT_FRAMEBUFFER])
 	if registers != 0 && framebuffer_pages * system.PAGE_SIZE >= u64(bochs_display.PAGE_COUNT * page_pixels * size_of(graphics.Color)) {
-		if address, status := system.memory_map(registers); status == .Ok {
+		if address, status := system.memory_map(registers); status == .Succeeded {
 			display_registers = rawptr(uintptr(address) + bochs_display.DISPLAY_REGISTERS_OFFSET)
 			if bochs_display.screen_pages(display_registers, u64(screen.width), u64(screen.height), u64(screen.stride)) == bochs_display.PAGE_COUNT {
 				screen_pages[1] = {pixels = screen.pixels[page_pixels:], width = screen.width, height = screen.height, stride = screen.stride}
@@ -824,7 +825,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	date_page = date.page_of(ctx)
 	display_choices_open(ctx) // display_choices.odin: the role store; its read waits for the first frame.
 	address, status := system.memory_map(ctx.handles[GRANT_FRAMEBUFFER])
-	input_status, control_status: system.Status
+	input_status, control_status: call_outcome.Call_Outcome
 	input, input_status = system.ring_open(ctx.handles[GRANT_INPUT])
 	control, control_status = system.ring_open(ctx.handles[GRANT_CONTROL])
 	powerbox_picker_open_ring(ctx) // powerbox_picker.odin
@@ -837,7 +838,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	screen_of_memory = form == .Memory
-	if input_status != .Ok || control_status != .Ok {
+	if input_status != .Succeeded || control_status != .Succeeded {
 		system.log_fact(.Info, No_Input_Or_Control_Ring{})
 		system.stop(.Failed)
 	}
@@ -863,7 +864,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		needed_pages += canvas_pages + 1 // The screen memory of the scanout and its present list.
 	}
 	budget_left, budget_status := system.budget_read()
-	if budget_status != .Ok || budget_left.pages < needed_pages {
+	if budget_status != .Succeeded || budget_left.pages < needed_pages {
 		system.log_fact(.Info, Screen_Past_Budget{width = u64(width), height = u64(height), needed_pages = needed_pages, budget_pages = u64(budget_left.pages)})
 		system.stop(.Failed)
 	}
@@ -1384,7 +1385,7 @@ client_add :: proc "contextless" (record: ring.Record) {
 			continue
 		}
 		opened, status := system.ring_open(memory, receive_handles = true)
-		if status != .Ok {
+		if status != .Succeeded {
 			break
 		}
 		client = {ring_memory = memory, ring = opened}

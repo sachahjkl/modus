@@ -35,7 +35,7 @@ Step :: struct {
 // false: the owner has no store, or no worker; the values of this run hold
 // for this run only.
 kept_open :: proc "contextless" (kept: ^Kept, store: storage.Client, store_open: bool, object_name: string) -> bool {
-	opened := store_open && interface.background_work_start(&kept.work) == .Ok
+	opened := store_open && interface.background_work_start(&kept.work) == .Succeeded
 	keeper_start(&kept.keeper, opened)
 	kept.object_name, kept.store = object_name, store
 	return opened

@@ -158,7 +158,7 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 		// with the right Read. It is copied, then closed.
 		page := system.Handle(completion.values[3])
 		if page_kind, _, page_through := system.handle_state(page, requests_memory); page_kind == .Memory && page_through {
-			if address, mapped := system.memory_map(page, {}); mapped == .Ok {
+			if address, mapped := system.memory_map(page, {}); mapped == .Succeeded {
 				kept^ = (^disk_process.Kept_Stop_Report)(address)^
 				system.memory_unmap(address)
 				report_received = true
@@ -232,16 +232,16 @@ store_debug_object_read :: proc "contextless" (name: string, connection_ring: sy
 		return
 	}
 	object_memory, create_status := system.memory_create((object_read.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
-	if create_status != .Ok {
-		system.log_fact(.Info, Debug_Object_Memory_Refused{size = value_kinds.Size_In_Bytes(object_read.size), status = op.Status_Word(create_status), debugged_process = value_kinds.module_name_field(name)})
+	if create_status != .Succeeded {
+		system.log_fact(.Info, Debug_Object_Memory_Refused{size = value_kinds.Size_In_Bytes(object_read.size), status = call_outcome.Call_Outcome_Word(create_status), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
 	into.memory = object_memory
 	address, map_status := system.memory_map(object_memory)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		held_object_forget(into)
 		into.module_hash = module_hash
-		system.log_fact(.Info, Debug_Object_Map_Refused{status = op.Status_Word(map_status), debugged_process = value_kinds.module_name_field(name)})
+		system.log_fact(.Info, Debug_Object_Map_Refused{status = call_outcome.Call_Outcome_Word(map_status), debugged_process = value_kinds.module_name_field(name)})
 		return
 	}
 	bytes := ([^]u8)(address)[:object_read.size]

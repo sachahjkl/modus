@@ -11,6 +11,7 @@
 // more processors than the machine has says so and checks nothing.
 package scheduler
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:contract/errors"
 import op "modus:contract/operation"
@@ -38,7 +39,7 @@ placement_holds :: proc "contextless" (item: ^op.Thread_Report, set: u64) -> boo
 // a limit.
 placement_is :: proc "contextless" (thread: system.Handle, number: u64, processors, processors_limit: u64) -> bool {
 	placement, status := system.thread_placement_read(thread, number)
-	return status == .Ok && placement.processors == processors && placement.processors_limit == processors_limit
+	return status == .Succeeded && placement.processors == processors && placement.processors_limit == processors_limit
 }
 
 // refusal_recorded says if an error record is the record of a refused
@@ -98,7 +99,7 @@ Own_Placement :: struct {
 	processor: u32, // The one processor that the thread keeps.
 	first:     op.Thread_Placement, // What it read first.
 	second:    op.Thread_Placement, // What it read after its write.
-	read, write, again: system.Status,
+	read, write, again: call_outcome.Call_Outcome,
 	samples:   u64,
 	outside:   u64, // Samples where its home or its processor was another one.
 }
@@ -136,16 +137,16 @@ placement_own :: proc "contextless" (processors: u64) -> bool {
 	every := every_processor(processors)
 	own_placement = {processor = u32(processors - 1)}
 	thread, status := system.thread_start(own_placement_run, nil)
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	system.thread_wait(thread)
 	result := &own_placement
 	kept := u64(1) << result.processor
-	first_right := result.read == .Ok && result.first.processors == every && result.first.processors_limit == every
-	second_right := result.again == .Ok && result.second.processors == kept && result.second.processors_limit == every
-	as_it_must := first_right && result.write == .Ok && second_right && result.samples == PLACEMENT_SAMPLES && result.outside == 0
-	system.log_fact(.Info, Own_Placement_Read{processors = processors, first_right = u64(first_right), processor = u64(result.processor), write = op.Status_Word(result.write), second_right = u64(second_right), samples = result.samples, outside = result.outside, verdict = verdict_field(as_it_must)})
+	first_right := result.read == .Succeeded && result.first.processors == every && result.first.processors_limit == every
+	second_right := result.again == .Succeeded && result.second.processors == kept && result.second.processors_limit == every
+	as_it_must := first_right && result.write == .Succeeded && second_right && result.samples == PLACEMENT_SAMPLES && result.outside == 0
+	system.log_fact(.Info, Own_Placement_Read{processors = processors, first_right = u64(first_right), processor = u64(result.processor), write = call_outcome.Call_Outcome_Word(result.write), second_right = u64(second_right), samples = result.samples, outside = result.outside, verdict = verdict_field(as_it_must)})
 	return as_it_must
 }
 
@@ -168,8 +169,8 @@ placement_refusals :: proc "contextless" (processors: u64) -> bool {
 	}
 	spinner := spinner_threads[0].handle
 	narrowed := system.thread_placement_write(machine, numbers[0], {processors = 0b01})
-	unchanged := narrowed == .Ok && placement_is(spinner, 0, 0b01, every)
-	rights_changed_nothing := narrowed == .Ok
+	unchanged := narrowed == .Succeeded && placement_is(spinner, 0, 0b01, every)
+	rights_changed_nothing := narrowed == .Succeeded
 	error: errors.Error_Record
 	// The process side: a wider set, and a set with no processor of the
 	// machine.
@@ -193,18 +194,18 @@ placement_refusals :: proc "contextless" (processors: u64) -> bool {
 	// The machine with no right Schedule; the machine with Schedule and no
 	// Inspect, which names no thread; a thread handle with Inspect and no
 	// Control, which reads and does not write.
-	no_schedule, no_inspect, blind_write, no_control := system.Status.Ok, system.Status.Ok, system.Status.Ok, system.Status.Ok
+	no_schedule, no_inspect, blind_write, no_control := call_outcome.Call_Outcome.Succeeded, call_outcome.Call_Outcome.Succeeded, call_outcome.Call_Outcome.Succeeded, call_outcome.Call_Outcome.Succeeded
 	reads := false
-	if copy, status := system.give(0, machine, {.Inspect}); status == .Ok {
+	if copy, status := system.give(0, machine, {.Inspect}); status == .Succeeded {
 		no_schedule = system.thread_placement_write(copy, numbers[0], {})
 		system.close(copy)
 	}
-	if copy, status := system.give(0, machine, {.Schedule}); status == .Ok {
+	if copy, status := system.give(0, machine, {.Schedule}); status == .Succeeded {
 		_, no_inspect = system.thread_placement_read(copy, numbers[0])
 		blind_write = system.thread_placement_write(copy, numbers[0], {})
 		system.close(copy)
 	}
-	if copy, status := system.give(0, spinner, {.Inspect}); status == .Ok {
+	if copy, status := system.give(0, spinner, {.Inspect}); status == .Succeeded {
 		no_control = system.thread_placement_write(copy, 0, {processors = 0b01})
 		reads = placement_is(copy, 0, 0b01, every)
 		system.close(copy)
@@ -214,12 +215,12 @@ placement_refusals :: proc "contextless" (processors: u64) -> bool {
 	spinners_stop(0, 1)
 	_, ended_read := system.thread_placement_read(machine, numbers[0])
 	ended_write := system.thread_placement_write(machine, numbers[0], {})
-	sets_right := wider == .Bad_Operation && nowhere == .Bad_Operation && process_records && no_limit == .Bad_Operation && outside_limit == .Bad_Operation && machine_records && unchanged
-	rights_right := no_schedule == .No_Right && no_inspect == .No_Right && blind_write == .No_Right && no_control == .No_Right && reads && rights_changed_nothing
-	rights_right &&= ended_read == .Bad_State && ended_write == .Bad_State
+	sets_right := wider == .Argument_Refused && nowhere == .Argument_Refused && process_records && no_limit == .Argument_Refused && outside_limit == .Argument_Refused && machine_records && unchanged
+	rights_right := no_schedule == .Grant_Or_Right_Missing && no_inspect == .Grant_Or_Right_Missing && blind_write == .Grant_Or_Right_Missing && no_control == .Grant_Or_Right_Missing && reads && rights_changed_nothing
+	rights_right &&= ended_read == .Nothing_Has_That_Name && ended_write == .Nothing_Has_That_Name
 	// Two lines: one line of the log holds 512 bytes.
-	system.log_fact(.Info, Placement_Sets_Refused{wider = op.Status_Word(wider), nowhere = op.Status_Word(nowhere), process_records = u64(process_records), no_limit = op.Status_Word(no_limit), outside_limit = op.Status_Word(outside_limit), machine_records = u64(machine_records), unchanged = u64(unchanged), verdict = verdict_field(sets_right)})
-	system.log_fact(.Info, Placement_Rights{no_schedule = op.Status_Word(no_schedule), no_inspect = op.Status_Word(no_inspect), blind_write = op.Status_Word(blind_write), no_control = op.Status_Word(no_control), reads = u64(reads), stayed = u64(rights_changed_nothing), ended_read = op.Status_Word(ended_read), ended_write = op.Status_Word(ended_write), verdict = verdict_field(rights_right)})
+	system.log_fact(.Info, Placement_Sets_Refused{wider = call_outcome.Call_Outcome_Word(wider), nowhere = call_outcome.Call_Outcome_Word(nowhere), process_records = u64(process_records), no_limit = call_outcome.Call_Outcome_Word(no_limit), outside_limit = call_outcome.Call_Outcome_Word(outside_limit), machine_records = u64(machine_records), unchanged = u64(unchanged), verdict = verdict_field(sets_right)})
+	system.log_fact(.Info, Placement_Rights{no_schedule = call_outcome.Call_Outcome_Word(no_schedule), no_inspect = call_outcome.Call_Outcome_Word(no_inspect), blind_write = call_outcome.Call_Outcome_Word(blind_write), no_control = call_outcome.Call_Outcome_Word(no_control), reads = u64(reads), stayed = u64(rights_changed_nothing), ended_read = call_outcome.Call_Outcome_Word(ended_read), ended_write = call_outcome.Call_Outcome_Word(ended_write), verdict = verdict_field(rights_right)})
 	return sets_right && rights_right
 }
 
@@ -233,8 +234,8 @@ placement_refusals :: proc "contextless" (processors: u64) -> bool {
 Limited_Placement_Child :: struct {
 	every:     u64,
 	placement: op.Thread_Placement,
-	read:      system.Status,
-	widen:     system.Status,
+	read:      call_outcome.Call_Outcome,
+	widen:     call_outcome.Call_Outcome,
 	home:      u32,
 	reported:  bool,
 }
@@ -269,39 +270,39 @@ placement_limits :: proc "contextless" (processors: u64) -> bool {
 	// keeps its limit, and the set 0 keeps its set.
 	ignored := system.thread_placement_write(0, number, {processors_limit = every})
 	kept := placement_is(0, number, limit, limit)
-	first_right := lowered == .Ok && limited && widen == .Bad_Operation && record_right && ignored == .Ok && kept
+	first_right := lowered == .Succeeded && limited && widen == .Argument_Refused && record_right && ignored == .Succeeded && kept
 	// One processor of the limit is accepted. The set of the limit and
 	// each processor are refused then: a process only narrows. Only the
 	// machine handle gives the set of the limit back.
 	accepted, refused, machine_widened, wrong: u64
 	for _ in 0 ..< PLACEMENT_LIMIT_ROUNDS {
-		accepted += u64(system.thread_placement_write(0, number, {processors = 0b01}) == .Ok)
-		refused += u64(system.thread_placement_write(0, number, {processors = limit}) == .Bad_Operation)
-		refused += u64(system.thread_placement_write(0, number, {processors = every}) == .Bad_Operation)
+		accepted += u64(system.thread_placement_write(0, number, {processors = 0b01}) == .Succeeded)
+		refused += u64(system.thread_placement_write(0, number, {processors = limit}) == .Argument_Refused)
+		refused += u64(system.thread_placement_write(0, number, {processors = every}) == .Argument_Refused)
 		// The refused writes changed nothing: the set is still one processor.
 		narrow_kept := placement_is(0, number, 0b01, limit)
-		machine_widened += u64(system.thread_placement_write(machine, self_machine_number, {processors_limit = limit}) == .Ok)
+		machine_widened += u64(system.thread_placement_write(machine, self_machine_number, {processors_limit = limit}) == .Succeeded)
 		wrong += u64(!narrow_kept || !placement_is(0, number, limit, limit))
 	}
 	rounds_right := accepted == PLACEMENT_LIMIT_ROUNDS && refused == 2 * PLACEMENT_LIMIT_ROUNDS && machine_widened == PLACEMENT_LIMIT_ROUNDS && wrong == 0
-	system.log_fact(.Info, Placement_Limit_Written{last_processor = processors / 2 - 1, limited = u64(limited), widen = op.Status_Word(widen), record_right = u64(record_right), kept = u64(kept), verdict = verdict_field(first_right)})
+	system.log_fact(.Info, Placement_Limit_Written{last_processor = processors / 2 - 1, limited = u64(limited), widen = call_outcome.Call_Outcome_Word(widen), record_right = u64(record_right), kept = u64(kept), verdict = verdict_field(first_right)})
 	system.log_fact(.Info, Placement_Limit_Rounds{rounds = u64(PLACEMENT_LIMIT_ROUNDS), accepted = accepted, refused = refused, widened = machine_widened, wrong = wrong, verdict = verdict_field(rounds_right)})
 
 	// A new thread has the limit as its set and as its limit, and its
 	// first queue is the queue of a processor of the limit.
-	limited_placement_child = {every = every, read = .Bad_State, widen = .Ok}
+	limited_placement_child = {every = every, read = .Wrong_State, widen = .Succeeded}
 	child, child_status := system.thread_start(limited_placement_child_run, nil)
-	if child_status == .Ok {
+	if child_status == .Succeeded {
 		system.thread_wait(child)
 	}
 	result := &limited_placement_child
-	inherited := child_status == .Ok && result.read == .Ok && result.placement.processors == limit && result.placement.processors_limit == limit
+	inherited := child_status == .Succeeded && result.read == .Succeeded && result.placement.processors == limit && result.placement.processors_limit == limit
 	home_inside := result.reported && limit & (u64(1) << result.home) != 0
 	// The machine handle gives each processor back, on each path.
 	widened := system.thread_placement_write(machine, self_machine_number, {})
-	restored := widened == .Ok && placement_is(0, number, every, every)
-	child_right := inherited && home_inside && result.widen == .Bad_Operation
-	system.log_fact(.Info, Placement_Limit_Inherited{inherited = u64(inherited), home_inside = u64(home_inside), widen = op.Status_Word(result.widen), restored = u64(restored), verdict = verdict_field(child_right && restored)})
+	restored := widened == .Succeeded && placement_is(0, number, every, every)
+	child_right := inherited && home_inside && result.widen == .Argument_Refused
+	system.log_fact(.Info, Placement_Limit_Inherited{inherited = u64(inherited), home_inside = u64(home_inside), widen = call_outcome.Call_Outcome_Word(result.widen), restored = u64(restored), verdict = verdict_field(child_right && restored)})
 	return first_right && rounds_right && child_right && restored
 }
 
@@ -342,7 +343,7 @@ set_without :: proc "contextless" (every: u64, processor: u32) -> u64 {
 waiting_placed :: proc "contextless" (every: u64) -> (moved_at_once: bool, settled: bool, outside: u64) {
 	placement_waiter = {}
 	thread, status := system.thread_start(placement_wait_run, nil)
-	if status != .Ok {
+	if status != .Succeeded {
 		return
 	}
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
@@ -363,7 +364,7 @@ waiting_placed :: proc "contextless" (every: u64) -> (moved_at_once: bool, settl
 		}
 	}
 	set := set_without(every, home)
-	if waits && system.thread_placement_write(machine, machine_number, {processors = set}) == .Ok {
+	if waits && system.thread_placement_write(machine, machine_number, {processors = set}) == .Succeeded {
 		if item := thread_item(number); item != nil {
 			moved_at_once = item.state == .Waiting && item.home != home && placement_holds(item, set)
 		}
@@ -385,25 +386,25 @@ waiting_placed :: proc "contextless" (every: u64) -> (moved_at_once: bool, settl
 held_placed :: proc "contextless" (every: u64, spinner: int, machine_number: u64) -> (moved_at_once: bool, settled: bool, outside: u64) {
 	thread := spinner_threads[spinner].handle
 	number := intrinsics.atomic_load(&spinners[spinner].number) - 1
-	if _, stop_status := system.call(.Thread_Control, u64(thread), 0, u64(op.Thread_Control_Command.Stop)); stop_status != .Ok {
+	if _, stop_status := system.call(.Thread_Control, u64(thread), 0, u64(op.Thread_Control_Command.Stop)); stop_status != .Succeeded {
 		return
 	}
 	set: u64
 	if item := thread_item(number); item != nil && item.processor == 0 && item.queued == 0 {
 		home := item.home
 		set = set_without(every, home)
-		if system.thread_placement_write(machine, machine_number, {processors = set}) == .Ok {
+		if system.thread_placement_write(machine, machine_number, {processors = set}) == .Succeeded {
 			if after := thread_item(number); after != nil {
 				moved_at_once = after.processor == 0 && after.queued == 0 && after.home != home && placement_holds(after, set)
 			}
 		}
 	}
 	_, resume_status := system.call(.Thread_Control, u64(thread), 0, u64(op.Thread_Control_Command.Resume))
-	if moved_at_once && resume_status == .Ok {
+	if moved_at_once && resume_status == .Succeeded {
 		settled, outside = placement_settles(number, set, true)
 	}
 	widened := system.thread_placement_write(machine, machine_number, {})
-	settled &&= widened == .Ok
+	settled &&= widened == .Succeeded
 	return
 }
 
@@ -439,11 +440,11 @@ listed_or_running_placed :: proc "contextless" (every: u64, count: int, numbers:
 		return
 	}
 	set := set_without(every, home)
-	if system.thread_placement_write(machine, numbers[spinner], {processors = set}) == .Ok {
+	if system.thread_placement_write(machine, numbers[spinner], {processors = set}) == .Succeeded {
 		settled, outside = placement_settles(intrinsics.atomic_load(&spinners[spinner].number) - 1, set, true)
 	}
 	widened := system.thread_placement_write(machine, numbers[spinner], {})
-	settled &&= widened == .Ok
+	settled &&= widened == .Succeeded
 	return
 }
 
@@ -493,10 +494,10 @@ placement_apart :: proc "contextless" (processors: u64) -> bool {
 	count := 2 * APART_GROUP
 	started := self_machine_number != 0
 	for group in 0 ..< 2 {
-		started &&= system.thread_placement_write(machine, self_machine_number, {processors_limit = sets[group]}) == .Ok
+		started &&= system.thread_placement_write(machine, self_machine_number, {processors_limit = sets[group]}) == .Succeeded
 		started &&= spinners_start(group * APART_GROUP, APART_GROUP, full_weight)
 	}
-	restored := system.thread_placement_write(machine, self_machine_number, {}) == .Ok
+	restored := system.thread_placement_write(machine, self_machine_number, {}) == .Succeeded
 	numbers: [SPINNER_LIMIT]u64
 	started &&= spinner_machine_numbers(0, count, &numbers)
 	inherited := started
@@ -570,20 +571,20 @@ placement_balance_case :: proc "contextless" (processors: u64, by_budget: bool) 
 	if by_budget {
 		// The new threads enter the queue of the processor that creates
 		// them: the first thread is on the processor 0 after this write.
-		prepared = system.thread_placement_write(machine, self_machine_number, {processors = 0b01}) == .Ok
-		status: system.Status
+		prepared = system.thread_placement_write(machine, self_machine_number, {processors = 0b01}) == .Succeeded
+		status: call_outcome.Call_Outcome
 		budget, status = system.budget_create({pages = BLOCKERS_BUDGET_PAGES, threads = BLOCKERS})
-		prepared &&= status == .Ok
+		prepared &&= status == .Succeeded
 		for &thread in blocked {
 			if prepared {
 				thread, status = system.thread_start(brief, nil, budget = budget)
-				prepared &&= status == .Ok
+				prepared &&= status == .Succeeded
 			}
 		}
-		prepared &&= system.thread_placement_write(machine, self_machine_number, {processors = away}) == .Ok
+		prepared &&= system.thread_placement_write(machine, self_machine_number, {processors = away}) == .Succeeded
 	} else {
 		first = BLOCKERS
-		prepared = system.thread_placement_write(machine, self_machine_number, {processors = away}) == .Ok
+		prepared = system.thread_placement_write(machine, self_machine_number, {processors = away}) == .Succeeded
 	}
 	count := first + 2 + pacers
 	prepared &&= spinners_start(0, count, full_weight) && spinner_machine_numbers(0, count, &numbers)
@@ -597,7 +598,7 @@ placement_balance_case :: proc "contextless" (processors: u64, by_budget: bool) 
 			continue
 		}
 		if prepared {
-			prepared = system.thread_placement_write(machine, numbers[index], {processors = set}) == .Ok
+			prepared = system.thread_placement_write(machine, numbers[index], {processors = set}) == .Succeeded
 		}
 		if prepared {
 			prepared, _ = placement_settles(intrinsics.atomic_load(&spinners[index].number) - 1, set, false)
@@ -609,7 +610,7 @@ placement_balance_case :: proc "contextless" (processors: u64, by_budget: bool) 
 	for side in 0 ..< 2 {
 		if prepared {
 			pair_numbers[side] = intrinsics.atomic_load(&spinners[first + side].number) - 1
-			prepared = system.thread_placement_write(machine, numbers[first + side], {processors = 0b10}) == .Ok
+			prepared = system.thread_placement_write(machine, numbers[first + side], {processors = 0b10}) == .Succeeded
 		}
 	}
 	for side in 0 ..< 2 {
@@ -619,7 +620,7 @@ placement_balance_case :: proc "contextless" (processors: u64, by_budget: bool) 
 	}
 	for side in 0 ..< 2 {
 		if prepared {
-			prepared = system.thread_placement_write(machine, numbers[first + side], {processors = every &~ u64(0b01)}) == .Ok
+			prepared = system.thread_placement_write(machine, numbers[first + side], {processors = every &~ u64(0b01)}) == .Succeeded
 		}
 	}
 	apart := false
@@ -648,7 +649,7 @@ placement_balance_case :: proc "contextless" (processors: u64, by_budget: bool) 
 	if budget != 0 {
 		system.close(budget)
 	}
-	restored := system.thread_placement_write(machine, self_machine_number, {}) == .Ok
+	restored := system.thread_placement_write(machine, self_machine_number, {}) == .Succeeded
 	as_it_must := prepared && apart && restored
 	if by_budget {
 		system.log_fact(.Info, Balance_Past_Budget_Queue{blockers = u64(BLOCKERS), last_processor = processors - 1, apart = u64(apart), verdict = verdict_field(as_it_must)})
@@ -691,11 +692,11 @@ placement_widened :: proc "contextless" (processors: u64) -> bool {
 		return true
 	}
 	numbers: [SPINNER_LIMIT]u64
-	prepared := system.thread_placement_write(machine, self_machine_number, {processors = 0b01}) == .Ok
+	prepared := system.thread_placement_write(machine, self_machine_number, {processors = 0b01}) == .Succeeded
 	prepared &&= spinners_start(0, 2, full_weight) && spinner_machine_numbers(0, 2, &numbers)
 	for index in 0 ..< 2 {
 		if prepared {
-			prepared = system.thread_placement_write(machine, numbers[index], {processors = 0b01}) == .Ok
+			prepared = system.thread_placement_write(machine, numbers[index], {processors = 0b01}) == .Succeeded
 		}
 		if prepared {
 			prepared, _ = placement_settles(intrinsics.atomic_load(&spinners[index].number) - 1, 0b01, false)
@@ -722,7 +723,7 @@ placement_widened :: proc "contextless" (processors: u64) -> bool {
 			break
 		}
 		number := intrinsics.atomic_load(&spinners[chosen].number) - 1
-		prepared = system.thread_placement_write(machine, numbers[chosen], {processors = 0b11}) == .Ok
+		prepared = system.thread_placement_write(machine, numbers[chosen], {processors = 0b11}) == .Succeeded
 		for seen := 0; prepared && !reached && seen < WIDENED_REPORTS; seen += 1 {
 			item := thread_item(number)
 			reached = item != nil && item.processor == 2
@@ -731,14 +732,14 @@ placement_widened :: proc "contextless" (processors: u64) -> bool {
 			}
 		}
 		if prepared && !reached {
-			prepared = system.thread_placement_write(machine, numbers[chosen], {processors = 0b01}) == .Ok
+			prepared = system.thread_placement_write(machine, numbers[chosen], {processors = 0b01}) == .Succeeded
 			if prepared {
 				prepared, _ = placement_settles(number, 0b01, false)
 			}
 		}
 	}
 	spinners_stop(0, 2)
-	restored := system.thread_placement_write(machine, self_machine_number, {}) == .Ok
+	restored := system.thread_placement_write(machine, self_machine_number, {}) == .Succeeded
 	as_it_must := prepared && reached && restored
 	system.log_fact(.Info, Idle_Processor_Reached{reached = u64(reached), verdict = verdict_field(as_it_must)})
 	system.log_fact(.Info, Idle_Processor_Round{round = rounds})
@@ -766,7 +767,7 @@ placement_write_run :: proc "c" (parameter: rawptr) -> ! {
 			if step := u64(spinner) + round; step % 3 != 0 {
 				placement.processors = u64(1) << (step % writer.processors)
 			}
-			if system.thread_placement_write(machine, writer.numbers[spinner], placement) == .Ok {
+			if system.thread_placement_write(machine, writer.numbers[spinner], placement) == .Succeeded {
 				writer.writes += 1
 			} else {
 				writer.refused += 1
@@ -781,7 +782,7 @@ placement_write_run :: proc "c" (parameter: rawptr) -> ! {
 placement_changes :: proc "contextless" (processors: u64) -> bool {
 	every := every_processor(processors)
 	before, set_status := system.strategy_set(machine, .Eevdf)
-	if set_status != .Ok {
+	if set_status != .Succeeded {
 		return false
 	}
 	placement_writer = {processors = processors}
@@ -789,14 +790,14 @@ placement_changes :: proc "contextless" (processors: u64) -> bool {
 	started := spinners_start(0, EQUAL_COUNT, full_weight) && spinner_machine_numbers(0, EQUAL_COUNT, &placement_writer.numbers)
 	changing, writing: system.Thread
 	if started {
-		status: system.Status
+		status: call_outcome.Call_Outcome
 		changing, status = system.thread_start(change_run, nil)
-		started = status == .Ok
+		started = status == .Succeeded
 	}
 	if started {
-		status: system.Status
+		status: call_outcome.Call_Outcome
 		writing, status = system.thread_start(placement_write_run, nil)
-		if status != .Ok {
+		if status != .Succeeded {
 			// The changer ends by itself after its changes.
 			system.thread_wait(changing)
 			started = false
@@ -809,7 +810,7 @@ placement_changes :: proc "contextless" (processors: u64) -> bool {
 		// The zero record, written last, gives each spinner each processor.
 		placed = placement_writer.writes != 0 && placement_writer.refused == 0
 		for spinner in 0 ..< EQUAL_COUNT {
-			placed &&= system.thread_placement_write(machine, placement_writer.numbers[spinner], {}) == .Ok
+			placed &&= system.thread_placement_write(machine, placement_writer.numbers[spinner], {}) == .Succeeded
 			placed &&= placement_is(machine, placement_writer.numbers[spinner], every, every)
 		}
 		// After the last change, each spinner still runs: the wait is for

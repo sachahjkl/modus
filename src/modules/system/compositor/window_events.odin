@@ -50,13 +50,13 @@ window_queue_memory_open :: proc "contextless" (index: int) {
 	if window_queue_records[index] == nil {
 		memory, status := system.memory_create(WINDOW_QUEUE_PAGES)
 		address: rawptr
-		if status == .Ok {
+		if status == .Succeeded {
 			address, status = system.memory_map(memory)
-			if status != .Ok {
+			if status != .Succeeded {
 				system.close(memory)
 			}
 		}
-		if status != .Ok {
+		if status != .Succeeded {
 			window_queue_memory_refused[index] = true
 			system.log_fact(.Info, No_Memory_For_Waiting_Records{window = window_field(clients[index].title[:])})
 			return

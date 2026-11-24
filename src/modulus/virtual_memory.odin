@@ -86,10 +86,10 @@ table_pages :: proc "contextless" (counts: []u64) -> (sum: u64) {
 memory_commit :: proc "contextless" (process: ^Process, region_index: u32, ranges: []op.Page_Range, decommit: bool) -> (changed: u64, status: Operation_Outcome) {
 	region := &regions[region_index]
 	if !region.uncommitted {
-		return 0, .Bad_Operation
+		return 0, .Argument_Refused
 	}
 	if !ranges_valid(ranges, region.page_count) {
-		return 0, .Bad_Address
+		return 0, .Argument_Refused
 	}
 	region_lock := &region_locks[region_index]
 	if !decommit {
@@ -105,7 +105,7 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 		defer lock_free(&frame_lock, .Frame)
 		budget := &budgets[region.budget]
 		if !budget.live || budget.amounts.pages < needed {
-			return 0, .No_Budget
+			return 0, .Budget_Or_Capacity_Exhausted
 		}
 		budget_pages_spend(budget, needed)
 		reserved_pages += needed
@@ -116,11 +116,11 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 				intrinsics.atomic_store(slot, intrinsics.atomic_load(slot) | SLOT_COMMITTED)
 			}
 		}
-		return needed, .Ok
+		return needed, .Succeeded
 	}
 	mapping, alone := object_only_here(process, region_index)
 	if !alone {
-		return 0, .Bad_State
+		return 0, .Wrong_State
 	}
 	lock_take(region_lock, .Region)
 	defer lock_free(region_lock, .Region)
@@ -173,7 +173,7 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 	}
 	budget_peak.give_back(&budgets[region.budget].amounts.pages, changed)
 	region.committed -= changed
-	return changed, .Ok
+	return changed, .Succeeded
 }
 
 // waiters_on_frames_wake wakes each thread of a process that has a word
@@ -364,30 +364,30 @@ protection_bits :: proc "contextless" (mapping: ^Mapping, flags: op.Map_Flags) -
 // mapping needs an object with a frame list named only by this process.
 protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Range, flags: op.Map_Flags) -> (mappings: [op.RANGE_TABLE_CAPACITY]u16, status: Operation_Outcome) {
 	if .Write in flags && .Execute in flags || .No_Access in flags && flags != {.No_Access} {
-		return mappings, .Bad_Operation
+		return mappings, .Argument_Refused
 	}
 	for range, index in ranges {
 		address, count := range.address, range.page_count
 		if address % PAGE_SIZE != 0 || count == 0 || address >= USER_END || count > (USER_END - address) / PAGE_SIZE {
-			return mappings, .Bad_Address
+			return mappings, .Argument_Refused
 		}
 		found, inside := mapping_order.containing(process.mapping_order[:process.mapping_order_count], process.mappings[:], address)
 		if !inside || (address - process.mappings[found].address) / PAGE_SIZE + count > process.mappings[found].page_count {
-			return mappings, .Bad_Address
+			return mappings, .Argument_Refused
 		}
 		mapping := &process.mappings[found]
 		if mapping.address >= op.THREAD_AREA_BASE {
-			return mappings, .Bad_Address // The thread areas and the time page keep their protection.
+			return mappings, .Argument_Refused // The thread areas and the time page keep their protection.
 		}
 		if record_replay_mapping_has_point_copies(index_of_process(process), mapping) {
-			return mappings, .Bad_State // Point-copied shared pages keep their read-only protection while recorded/replayed.
+			return mappings, .Wrong_State // Point-copied shared pages keep their read-only protection while recorded/replayed.
 		}
 		if .Write in flags && mapping.bits & PAGE_WRITE == 0 && record_replay_write_conflict(index_of_process(process), mapping.region) {
-			return mappings, .Bad_State // A new writer of memory that a recorded process maps would write outside its gate.
+			return mappings, .Wrong_State // A new writer of memory that a recorded process maps would write outside its gate.
 		}
 		// More than the handle permitted when the process mapped the object.
 		if .Write in flags && mapping.limit_bits & PAGE_WRITE == 0 || .Execute in flags && mapping.limit_bits & PAGE_NO_EXECUTE != 0 {
-			return mappings, .Bad_Operation
+			return mappings, .Argument_Refused
 		}
 		whole := address == mapping.address && count == mapping.page_count
 		// A switching mapping takes Write, Execute or No_Access whole: the
@@ -395,20 +395,20 @@ protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Ran
 		// guest, so a read-only protection or a part would not hold
 		// (src/md/features/guest.md, "The switch of a page").
 		if mapping_is_switching(mapping) && (!whole || flags == {}) {
-			return mappings, .Bad_Operation
+			return mappings, .Argument_Refused
 		}
 		// A part takes away from the protection of its mapping now: it
 		// cannot get more than it (a part that asked for more
 		// changed nothing and succeeded).
 		if !whole && .No_Access not_in flags && (mapping.bits == 0 || .Write in flags && mapping.bits & PAGE_WRITE == 0 || .Execute in flags && mapping.bits & PAGE_NO_EXECUTE != 0) {
-			return mappings, .Bad_Operation
+			return mappings, .Argument_Refused
 		}
 		if !whole {
 			if regions[mapping.region].contiguous {
-				return mappings, .Bad_Address // Device memory, large pages: the protection is of the whole mapping.
+				return mappings, .Argument_Refused // Device memory, large pages: the protection is of the whole mapping.
 			}
 			if _, alone := object_only_here(process, mapping.region); !alone {
-				return mappings, .Bad_State
+				return mappings, .Wrong_State
 			}
 		}
 		mappings[index] = found
@@ -421,11 +421,11 @@ protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Ran
 		whole := range.address == mapping.address && range.page_count == mapping.page_count
 		for other, other_index in ranges {
 			if other_index != index && mappings[other_index] == mappings[index] && whole != (other.address == mapping.address && other.page_count == mapping.page_count) {
-				return mappings, .Bad_Operation
+				return mappings, .Argument_Refused
 			}
 		}
 	}
-	return mappings, .Ok
+	return mappings, .Succeeded
 }
 
 // protect_entries_change gives the present entries of pages of a mapping
@@ -491,7 +491,7 @@ memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Ra
 		walked += protect_walk_count(&process.mappings[places[index]], range)
 	}
 	if walked > op.RANGE_TABLE_PAGE_LIMIT {
-		return 0, .Bad_Operation
+		return 0, .Argument_Refused
 	}
 	// A whole mapping that gains Write counts as a writer of its object
 	// before the check of the recorded mappings, as a new mapping does
@@ -524,7 +524,7 @@ memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Ra
 					intrinsics.atomic_sub(&regions[process.mappings[places[back]].region].writable_mapping_count, 1)
 				}
 			}
-			return 0, .Bad_State
+			return 0, .Wrong_State
 		}
 	}
 	self := processor_self()
@@ -612,5 +612,5 @@ memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Ra
 	}
 	intrinsics.atomic_thread_fence(.Seq_Cst)
 	processor_sync(processors_with_table(process.table))
-	return changed, .Ok
+	return changed, .Succeeded
 }

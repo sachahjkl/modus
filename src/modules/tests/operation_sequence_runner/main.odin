@@ -96,7 +96,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The number of the first step of the batch, from 1: a stop during
 		// the entry names it.
 		intrinsics.volatile_store(&results.step_started, u64(first + 1))
-		if _, status := system.commands_call(commands[:end - first], completions[:end - first], 0); status != .Ok {
+		if _, status := system.commands_call(commands[:end - first], completions[:end - first], 0); status != .Succeeded {
 			end_and_stop(results, .Batch_Refused)
 		}
 		for step in first ..< end {

@@ -282,7 +282,7 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 	}
 	commands_start()
 	palette_provider_start() // palette_provider.odin
-	if _, status := system.thread_start(run_lines, nil, LINE_THREAD_STACK_PAGES); status != .Ok {
+	if _, status := system.thread_start(run_lines, nil, LINE_THREAD_STACK_PAGES); status != .Succeeded {
 		system.log_fact(.Info, Thread_Not_Started{})
 		system.stop(.Failed)
 	}

@@ -34,7 +34,7 @@ import "modus:contract/value_kinds"
 // The bytes of the Text field of the name of a call of Log that the kernel
 // must refuse: the longest, "a fact at the level one past the last
 // member", has 44 bytes. The record ends on 8 bytes with no padding.
-REFUSAL_NAME_FIELD_BYTES :: 52
+REFUSAL_NAME_FIELD_BYTES :: 56
 // The bytes of the Text field of the name of an edge that Log takes: the
 // longest, "one byte on the last byte of a mapped page", has 42 bytes.
 EDGE_NAME_FIELD_BYTES :: 48
@@ -105,8 +105,8 @@ Wrong_Fact_Refusal :: struct {
 	error_kind: i64,
 	argument:   i64,
 	value:      i64,
-	status:     op.Status,
-	refusal:    [52]u8,
+	status:     call_outcome.Call_Outcome,
+	refusal:    [56]u8,
 }
 
 // The refused facts changed the own log ring or the budget.
@@ -121,8 +121,8 @@ Wrong_Refused_Facts_Changed :: struct {
 // with no padding.
 @(log_fact = "log_reader: WRONG: Log of a fact of {length} bytes gave {status}")
 Wrong_Fact_Edge_Refused :: struct {
-	length: u32,
-	status: op.Status,
+	length: u64,
+	status: call_outcome.Call_Outcome,
 }
 
 // The facts at the edges took another count of records than one each.
@@ -160,8 +160,8 @@ Wrong_Text_Refusal :: struct {
 	error_kind: i64,
 	argument:   i64,
 	value:      i64,
-	status:     op.Status,
-	refusal:    [52]u8,
+	status:     call_outcome.Call_Outcome,
+	refusal:    [56]u8,
 }
 
 // A refused call of Log wrote a record.
@@ -183,7 +183,7 @@ Wrong_Refused_Calls_Changed_Budget :: struct {
 // Log refused a call at an edge that it takes.
 @(log_fact = "log_reader: WRONG: Log with {edge} gave {status}")
 Wrong_Edge_Refused :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 	edge:   [48]u8,
 }
 
@@ -214,13 +214,13 @@ Texts_Written :: struct {
 // did not fail with No_Right.
 @(log_fact = "log_reader: WRONG: the lend of the process handle of the log service gave {status}")
 Wrong_Service_Handle_Lent :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // A child did not start.
 @(log_fact = "log_reader: WRONG: {child} did not start: {status}")
 Wrong_Child_Not_Started :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 	child:  value_kinds.Module_Name_Field,
 }
 
@@ -352,7 +352,7 @@ Wrong_Service_Handle_Call :: struct {
 }
 
 // The process handle of the log service, which has no Give, is not lent.
-@(log_fact = "log_reader: the process handle of the log service from connect, with Read and no Give: the lend failed with No_Right, and it reads no record of the service: as it must")
+@(log_fact = "log_reader: the process handle of the log service from connect, with Read and no Give: the lend failed with Grant_Or_Right_Missing, and it reads no record of the service: as it must")
 Service_Handle_Not_Lent :: struct {}
 
 // The call of log.process_records for a child did not come back.
@@ -412,9 +412,9 @@ Fact_Budget_Checked :: struct {
 Checked :: struct {}
 
 #assert(size_of(Wrong_Check) == PROBLEM_FIELD_BYTES)
-#assert(size_of(Wrong_Fact_Refusal) == 3 * size_of(i64) + size_of(op.Status) + REFUSAL_NAME_FIELD_BYTES)
+#assert(size_of(Wrong_Fact_Refusal) == 3 * size_of(i64) + size_of(call_outcome.Call_Outcome) + REFUSAL_NAME_FIELD_BYTES)
 #assert(size_of(Wrong_Text_Refusal) == size_of(Wrong_Fact_Refusal))
-#assert(size_of(Wrong_Edge_Refused) == size_of(op.Status) + EDGE_NAME_FIELD_BYTES)
+#assert(size_of(Wrong_Edge_Refused) == size_of(call_outcome.Call_Outcome) + EDGE_NAME_FIELD_BYTES)
 
 // refusal_name_field gives the Text field of the name of a refused call.
 refusal_name_field :: proc "contextless" (name: string) -> [REFUSAL_NAME_FIELD_BYTES]u8 {

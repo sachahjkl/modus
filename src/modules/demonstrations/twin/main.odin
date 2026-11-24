@@ -42,7 +42,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The first use of the page in this process: the page has the frame
 		// that the process `frames` took, or it takes it now.
 		address, status := system.memory_map(ctx.handles[twins.GRANT_PAGE])
-		if status != .Ok {
+		if status != .Succeeded {
 			system.stop(.Failed)
 		}
 		word := (^u32)(address)

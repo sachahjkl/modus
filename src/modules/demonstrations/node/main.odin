@@ -25,6 +25,7 @@
 // It writes nothing on the log and has no window.
 package node
 
+import "modus:contract/call_outcome"
 import "modus:relay"
 import "modus:contract/ring"
 import "modus:system"
@@ -48,8 +49,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	address: [4]rawptr
 	for &item, role in memory {
 		item = ctx.handles[role]
-		status: system.Status
-		if address[role], status = system.memory_map(item); status != .Ok {
+		status: call_outcome.Call_Outcome
+		if address[role], status = system.memory_map(item); status != .Succeeded {
 			system.stop(.Failed)
 		}
 	}

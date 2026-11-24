@@ -38,7 +38,7 @@ ring_memory: system.Handle
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ring_memory = ctx.handles[system.GRANT_DISPLAY]
 	opened, status := system.ring_open(ring_memory, receive_handles = true)
-	if ring_memory == 0 || status != .Ok {
+	if ring_memory == 0 || status != .Succeeded {
 		wrong("the ring of the window does not open; the status word", u64(status))
 	}
 	window_ring = opened
@@ -80,7 +80,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wrong("the surface that the compositor gave is no memory with Read and Write through the ring; the kind word", u64(memory_kind))
 	}
 	address, map_status := system.memory_map(memory, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		wrong("the surface that the compositor gave does not map; the status word", u64(map_status))
 	}
 	picture := graphics.Canvas{pixels = ([^]graphics.Color)(address), width = screen_width, height = screen_height, stride = screen_width}
@@ -91,7 +91,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	// The compositor is the origin of the copy of the window: a revocation
 	// of the window ends no holding of the compositor.
-	if ended, revoke_status := system.handle_revoke(memory); revoke_status != .Ok || ended != 0 {
+	if ended, revoke_status := system.handle_revoke(memory); revoke_status != .Succeeded || ended != 0 {
 		wrong("the revocation of the window ended holdings of its surface; the count", ended)
 	}
 	system.log_fact(.Info, Surface_Made_By_The_Compositor{width = u64(screen_width), height = u64(screen_height)})
@@ -104,7 +104,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	measured := budget_make(pages)
 	picture_pages := (u64(screen_width * screen_height * size_of(graphics.Color) * display.PICTURE_COUNT) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	object, object_status := system.memory_create(picture_pages, measured)
-	if object_status != .Ok {
+	if object_status != .Succeeded {
 		wrong("the object of the measure was not made; the status word", u64(object_status))
 	}
 	start := system.nanoseconds()
@@ -128,7 +128,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 @(private = "file")
 budget_make :: proc "contextless" (pages: u64) -> system.Handle {
 	budget, status := system.budget_create({pages = pages})
-	if status != .Ok {
+	if status != .Succeeded {
 		wrong("a budget of the case was not made; the status word", u64(status))
 	}
 	return budget
@@ -138,7 +138,7 @@ budget_make :: proc "contextless" (pages: u64) -> system.Handle {
 @(private = "file")
 give :: proc "contextless" (budget: system.Handle, rights: system.Rights) -> system.Handle {
 	given, status := system.give(ring_memory, budget, rights)
-	if status != .Ok {
+	if status != .Succeeded {
 		wrong("the budget did not go through the ring; the status word", u64(status))
 	}
 	return given

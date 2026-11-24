@@ -207,11 +207,11 @@ Frame_Times :: [ROUNDS]u64
 canvas_make :: proc "contextless" (width, height: int) -> (canvas: graphics.Canvas, ok: bool) {
 	pages := (u64(width * height) + PIXELS_IN_A_PAGE - 1) / PIXELS_IN_A_PAGE
 	memory, status := system.memory_create(pages)
-	if status != .Ok {
+	if status != .Succeeded {
 		return {}, false
 	}
 	address, map_status := system.memory_map(memory)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return {}, false
 	}
 	return {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}, true

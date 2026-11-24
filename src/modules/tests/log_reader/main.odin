@@ -125,6 +125,7 @@
 // log only.
 package log_reader
 
+import "modus:contract/call_outcome"
 import "modus:contract/blake3"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
@@ -301,7 +302,7 @@ is_own_number :: proc "contextless" (number: i64) -> bool {
 // first check that fails, or "".
 check :: proc "contextless" (ctx: ^system.Context) -> string {
 	address, mapped := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
-	if mapped != .Ok {
+	if mapped != .Succeeded {
 		return "the boot image does not map"
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -326,7 +327,7 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 	}
 	own_module_hash := blake3.hash(own_file)
 	own, read_status := system.budget_read()
-	if read_status != .Ok {
+	if read_status != .Succeeded {
 		return "the budget of this process does not read"
 	}
 	whole_log_records = own.log_records
@@ -340,7 +341,7 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 		return "this process has no ring to the root service"
 	}
 	requests, opened := system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true)
-	if opened != .Ok {
+	if opened != .Succeeded {
 		return "the ring to the root service does not open"
 	}
 	connection, connected := system.service_connection(&requests, 1, "log")
@@ -511,7 +512,7 @@ Fact_Refusal :: struct {
 	level:    u64,
 	runs:     u64,
 	form:     u64,
-	status:   system.Status,
+	status:   call_outcome.Call_Outcome,
 	kind:     errors.Kind,
 	argument: i64,
 	value:    u64,
@@ -538,12 +539,12 @@ log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file:
 	// One page with no mapping after it: a fact from its last byte passes
 	// the end of what the process can read.
 	page_memory, created := system.memory_create(1)
-	if created != .Ok {
+	if created != .Succeeded {
 		return "the page of the test of a fact was not made"
 	}
 	defer system.close(page_memory)
 	page_address, mapped := system.memory_map(page_memory)
-	if mapped != .Ok {
+	if mapped != .Succeeded {
 		return "the page of the test of a fact was not mapped"
 	}
 	defer system.memory_unmap(page_address)
@@ -557,22 +558,22 @@ log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file:
 	info := u64(op.Log_Level.Info)
 	fact := u64(op.Log_Record_Form.Fact)
 	refusals := [?]Fact_Refusal {
-		{"the form one past the last member", body, head, info, 0, u64(max(op.Log_Record_Form)) + 1, .Bad_Operation, .Bad_Value, LOG_ARGUMENT_FORM, u64(max(op.Log_Record_Form)) + 1},
-		{"a form word whose low byte names a member", body, head, info, 0, 1 << 8 | fact, .Bad_Operation, .Bad_Value, LOG_ARGUMENT_FORM, 1 << 8 | fact},
-		{"the largest form word", body, head, info, 0, max(u64), .Bad_Operation, .Bad_Value, LOG_ARGUMENT_FORM, max(u64)},
-		{"a fact with one run", body, head, info, 1, fact, .Bad_Operation, .Too_Long, LOG_ARGUMENT_RUNS, 1},
-		{"a fact of 0 bytes", body, 0, info, 0, fact, .Bad_Address, .Too_Small, LOG_ARGUMENT_LENGTH, 0},
-		{"a fact one byte shorter than its head", body, head - 1, info, 0, fact, .Bad_Address, .Too_Small, LOG_ARGUMENT_LENGTH, head - 1},
-		{"a fact one byte longer than the longest fact", body, call_most + 1, info, 0, fact, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, call_most + 1},
-		{"a fact of the largest length", body, max(u64), info, 0, fact, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, max(u64)},
-		{"a fact at the address 0", 0, head, info, 0, fact, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, 0},
-		{"a fact past the end of a mapped page", last_byte_of_page, head, info, 0, fact, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, last_byte_of_page},
-		{"a fact at the level one past the last member", body, head, u64(max(op.Log_Level)) + 1, 0, fact, .Bad_Operation, .Bad_Value, LOG_ARGUMENT_LEVEL, u64(max(op.Log_Level)) + 1},
+		{"the form one past the last member", body, head, info, 0, u64(max(op.Log_Record_Form)) + 1, .Argument_Refused, .Bad_Value, LOG_ARGUMENT_FORM, u64(max(op.Log_Record_Form)) + 1},
+		{"a form word whose low byte names a member", body, head, info, 0, 1 << 8 | fact, .Argument_Refused, .Bad_Value, LOG_ARGUMENT_FORM, 1 << 8 | fact},
+		{"the largest form word", body, head, info, 0, max(u64), .Argument_Refused, .Bad_Value, LOG_ARGUMENT_FORM, max(u64)},
+		{"a fact with one run", body, head, info, 1, fact, .Argument_Refused, .Too_Long, LOG_ARGUMENT_RUNS, 1},
+		{"a fact of 0 bytes", body, 0, info, 0, fact, .Argument_Refused, .Too_Small, LOG_ARGUMENT_LENGTH, 0},
+		{"a fact one byte shorter than its head", body, head - 1, info, 0, fact, .Argument_Refused, .Too_Small, LOG_ARGUMENT_LENGTH, head - 1},
+		{"a fact one byte longer than the longest fact", body, call_most + 1, info, 0, fact, .Argument_Refused, .Too_Long, LOG_ARGUMENT_LENGTH, call_most + 1},
+		{"a fact of the largest length", body, max(u64), info, 0, fact, .Argument_Refused, .Too_Long, LOG_ARGUMENT_LENGTH, max(u64)},
+		{"a fact at the address 0", 0, head, info, 0, fact, .Argument_Refused, .Bad_Address, LOG_ARGUMENT_ADDRESS, 0},
+		{"a fact past the end of a mapped page", last_byte_of_page, head, info, 0, fact, .Argument_Refused, .Bad_Address, LOG_ARGUMENT_ADDRESS, last_byte_of_page},
+		{"a fact at the level one past the last member", body, head, u64(max(op.Log_Level)) + 1, 0, fact, .Argument_Refused, .Bad_Value, LOG_ARGUMENT_LEVEL, u64(max(op.Log_Level)) + 1},
 	}
 	before, read := own_record_count(connection, file, records_export)
 	amounts_before, amounts_read := system.budget_read()
 	_, refused_before := system.budget_used()
-	if !read || amounts_read != .Ok {
+	if !read || amounts_read != .Succeeded {
 		return "the own records or the budget of this process do not read"
 	}
 	for refusal in refusals {
@@ -587,7 +588,7 @@ log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file:
 	after, read_after := own_record_count(connection, file, records_export)
 	amounts_after, amounts_read_after := system.budget_read()
 	_, refused_after := system.budget_used()
-	if !read_after || after != before || amounts_read_after != .Ok || amounts_after.log_records != amounts_before.log_records || refused_after != refused_before {
+	if !read_after || after != before || amounts_read_after != .Succeeded || amounts_after.log_records != amounts_before.log_records || refused_after != refused_before {
 		system.log_fact(.Error, Wrong_Refused_Facts_Changed{records_before = before, records_after = after})
 		return "a refused fact of Log wrote a record or changed the budget"
 	}
@@ -606,8 +607,8 @@ log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file:
 	}
 	edges := [2]u64{head, whole}
 	for length in edges {
-		if _, status := system.call(.Log, log, body, length, info, 0, fact); status != .Ok {
-			system.log_fact(.Error, Wrong_Fact_Edge_Refused{length = u32(length), status = status})
+		if _, status := system.call(.Log, log, body, length, info, 0, fact); status != .Succeeded {
+			system.log_fact(.Error, Wrong_Fact_Edge_Refused{length = u64(length), status = status})
 			return "the operation Log refused a fact at an edge that it takes"
 		}
 	}
@@ -621,7 +622,7 @@ log_fact_check :: proc "contextless" (connection: ^system.Call_Connection, file:
 	}
 	// The amount of the budget is what it holds for each second, not what
 	// it spent: it stays, and no fact was refused.
-	if amounts_read_written != .Ok || amounts_written.log_records != amounts_before.log_records || refused_written != refused_before {
+	if amounts_read_written != .Succeeded || amounts_written.log_records != amounts_before.log_records || refused_written != refused_before {
 		system.log_fact(.Error, Wrong_Facts_Changed_Budget{})
 		return "a fact changed the log records of the budget"
 	}
@@ -720,7 +721,7 @@ Log_Refusal :: struct {
 	length:   u64,
 	level:    u64,
 	runs:     u64,
-	status:   system.Status,
+	status:   call_outcome.Call_Outcome,
 	kind:     errors.Kind,
 	argument: i64,
 	value:    u64,
@@ -766,12 +767,12 @@ log_operation_check :: proc "contextless" (connection: ^system.Call_Connection, 
 	// One page that the kernel maps with no mapping after it: its last
 	// byte can be read, and the byte after it cannot.
 	page_memory, created := system.memory_create(1)
-	if created != .Ok {
+	if created != .Succeeded {
 		return "the page of the test of Log was not made"
 	}
 	defer system.close(page_memory)
 	page_address, mapped := system.memory_map(page_memory)
-	if mapped != .Ok {
+	if mapped != .Succeeded {
 		return "the page of the test of Log was not mapped"
 	}
 	defer system.memory_unmap(page_address)
@@ -783,18 +784,18 @@ log_operation_check :: proc "contextless" (connection: ^system.Call_Connection, 
 	info := u64(op.Log_Level.Info)
 	end_of_addresses := u64(op.USER_END - 1)
 	refusals := [?]Log_Refusal {
-		{"the level one past the last member", text, 1, u64(max(op.Log_Level)) + 1, 0, .Bad_Operation, .Bad_Value, LOG_ARGUMENT_LEVEL, u64(max(op.Log_Level)) + 1},
-		{"a level word whose low byte names a member", text, 1, 1 << 8, 0, .Bad_Operation, .Bad_Value, LOG_ARGUMENT_LEVEL, 1 << 8},
-		{"the largest level word", text, 1, max(u64), 0, .Bad_Operation, .Bad_Value, LOG_ARGUMENT_LEVEL, max(u64)},
-		{"one run past the bound", text, 1, info, op.LOG_CALL_RUN_LIMIT + 1, .Bad_Operation, .Too_Long, LOG_ARGUMENT_RUNS, op.LOG_CALL_RUN_LIMIT + 1},
-		{"the largest count of runs", text, 1, info, max(u64), .Bad_Operation, .Too_Long, LOG_ARGUMENT_RUNS, max(u64)},
-		{"one byte past the bound of the text", text, op.LOG_TEXT_BYTES_MOST + 1, info, 0, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, op.LOG_TEXT_BYTES_MOST + 1},
-		{"the largest length", text, max(u64), info, 0, .Bad_Address, .Too_Long, LOG_ARGUMENT_LENGTH, max(u64)},
-		{"the address 0", 0, 1, info, 0, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, 0},
-		{"the address of the end of the addresses", op.USER_END, 1, info, 0, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, op.USER_END},
-		{"the largest address", max(u64), 1, info, 0, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, max(u64)},
-		{"a text past the end of the addresses", end_of_addresses, 2, info, 0, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, end_of_addresses},
-		{"runs past the end of a mapped page", last_byte_of_page, 1, info, 1, .Bad_Address, .Bad_Address, LOG_ARGUMENT_ADDRESS, last_byte_of_page},
+		{"the level one past the last member", text, 1, u64(max(op.Log_Level)) + 1, 0, .Argument_Refused, .Bad_Value, LOG_ARGUMENT_LEVEL, u64(max(op.Log_Level)) + 1},
+		{"a level word whose low byte names a member", text, 1, 1 << 8, 0, .Argument_Refused, .Bad_Value, LOG_ARGUMENT_LEVEL, 1 << 8},
+		{"the largest level word", text, 1, max(u64), 0, .Argument_Refused, .Bad_Value, LOG_ARGUMENT_LEVEL, max(u64)},
+		{"one run past the bound", text, 1, info, op.LOG_CALL_RUN_LIMIT + 1, .Argument_Refused, .Too_Long, LOG_ARGUMENT_RUNS, op.LOG_CALL_RUN_LIMIT + 1},
+		{"the largest count of runs", text, 1, info, max(u64), .Argument_Refused, .Too_Long, LOG_ARGUMENT_RUNS, max(u64)},
+		{"one byte past the bound of the text", text, op.LOG_TEXT_BYTES_MOST + 1, info, 0, .Argument_Refused, .Too_Long, LOG_ARGUMENT_LENGTH, op.LOG_TEXT_BYTES_MOST + 1},
+		{"the largest length", text, max(u64), info, 0, .Argument_Refused, .Too_Long, LOG_ARGUMENT_LENGTH, max(u64)},
+		{"the address 0", 0, 1, info, 0, .Argument_Refused, .Bad_Address, LOG_ARGUMENT_ADDRESS, 0},
+		{"the address of the end of the addresses", op.USER_END, 1, info, 0, .Argument_Refused, .Bad_Address, LOG_ARGUMENT_ADDRESS, op.USER_END},
+		{"the largest address", max(u64), 1, info, 0, .Argument_Refused, .Bad_Address, LOG_ARGUMENT_ADDRESS, max(u64)},
+		{"a text past the end of the addresses", end_of_addresses, 2, info, 0, .Argument_Refused, .Bad_Address, LOG_ARGUMENT_ADDRESS, end_of_addresses},
+		{"runs past the end of a mapped page", last_byte_of_page, 1, info, 1, .Argument_Refused, .Bad_Address, LOG_ARGUMENT_ADDRESS, last_byte_of_page},
 	}
 	before, read := own_record_count(connection, file, records_export)
 	if !read {
@@ -802,7 +803,7 @@ log_operation_check :: proc "contextless" (connection: ^system.Call_Connection, 
 	}
 	amounts_before, amounts_read := system.budget_read()
 	_, refused_before := system.budget_used()
-	if amounts_read != .Ok {
+	if amounts_read != .Succeeded {
 		return "the budget of this process does not read"
 	}
 	for refusal in refusals {
@@ -821,7 +822,7 @@ log_operation_check :: proc "contextless" (connection: ^system.Call_Connection, 
 		system.log_fact(.Error, Wrong_Refused_Calls_Wrote{records_before = before, records_after = after})
 		return "a refused call of Log wrote a record"
 	}
-	if amounts_read_after != .Ok || amounts_after.log_records != amounts_before.log_records || refused_after != refused_before {
+	if amounts_read_after != .Succeeded || amounts_after.log_records != amounts_before.log_records || refused_after != refused_before {
 		system.log_fact(.Error, Wrong_Refused_Calls_Changed_Budget{log_records_before = amounts_before.log_records, refused_before = refused_before, log_records_after = amounts_after.log_records, refused_after = refused_after})
 		return "a refused call of Log changed the log records of the budget"
 	}
@@ -847,7 +848,7 @@ log_operation_check :: proc "contextless" (connection: ^system.Call_Connection, 
 	before, read = own_record_count(connection, file, records_export)
 	expected := before
 	for edge in accepted {
-		if _, status := system.call(.Log, log, edge.address, edge.length, edge.level, edge.runs); status != .Ok {
+		if _, status := system.call(.Log, log, edge.address, edge.length, edge.level, edge.runs); status != .Succeeded {
 			system.log_fact(.Error, Wrong_Edge_Refused{status = status, edge = edge_name_field(edge.name)})
 			return "the operation Log refused a call at an edge that it takes"
 		}
@@ -888,7 +889,7 @@ lent_service_handle_refused :: proc "contextless" (connection: ^system.Call_Conn
 	lending: system.Lending
 	status := system.lend(file, function, arguments[:], connection.ring_memory, &lending)
 	system.lend_end(&lending)
-	if status != .No_Right {
+	if status != .Grant_Or_Right_Missing {
 		system.log_fact(.Info, Wrong_Service_Handle_Lent{status = status})
 		return "the process handle of the log service, with no Give, was lent"
 	}
@@ -922,7 +923,7 @@ children_start :: proc "contextless" (ctx: ^system.Context, image: []u8) -> stri
 		values: [op.CONTEXT_VALUES]u64
 		values[VALUE_CHILD] = CHILD_TAG | u64(index + 1)
 		process, status := system.process_start(file, child_names[index], grants, random.values_with_seed(&process_generator, values), CHILD_AMOUNTS, nil, nil, {image = image})
-		if status != .Ok {
+		if status != .Succeeded {
 			system.log_fact(.Info, Wrong_Child_Not_Started{status = status, child = value_kinds.module_name_field(child_names[index])})
 			return "a child did not start"
 		}
@@ -961,11 +962,11 @@ storm_write :: proc "contextless" (log: u64, text: string) -> bool {
 	for {
 		_, status := system.call(.Log, log, u64(uintptr(raw_data(text))), u64(len(text)), u64(op.Log_Level.Info), 0)
 		switch status {
-		case .Ok:
+		case .Succeeded:
 			return true
-		case .No_Budget:
+		case .Budget_Or_Capacity_Exhausted:
 			next_second()
-		case .Bad_Operation, .Bad_Handle, .Bad_Address, .No_Memory, .No_Slot, .Bad_State, .No_Right:
+		case .Argument_Refused, .Grant_Or_Right_Missing, .Nothing_Has_That_Name, .Name_Already_Taken, .Wrong_State, .Another_Change_Came_First, .Operation_Unsupported, .Callee_Busy, .Callee_Unavailable, .Data_Damaged, .Stopped_After_A_Partial_Change, .Callee_Stopped_During_The_Call, .Connection_Ended_During_The_Call, .Deadline_Passed_During_The_Call, .Answer_Unreadable:
 			return false
 		}
 	}
@@ -1023,7 +1024,7 @@ storm_run :: proc "contextless" (ctx: ^system.Context, image: []u8) -> string {
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_CHILD_RUN] = u64(Child_Run.Storm)
 	child, status := system.process_start(file, STORM_NAME, grants, random.values_with_seed(&process_generator, values), STORM_AMOUNTS, nil, nil, {image = image})
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Info, Wrong_Child_Not_Started{status = status, child = value_kinds.module_name_field(STORM_NAME)})
 		return "the storm child did not start"
 	}
@@ -1109,7 +1110,7 @@ child_records_check :: proc "contextless" (connection: ^system.Call_Connection, 
 // of a wrong answer, or "".
 lent_memory_refused :: proc "contextless" (connection: ^system.Call_Connection, file: []u8, records_export: u32) -> string {
 	memory, created := system.memory_create(1)
-	if created != .Ok {
+	if created != .Succeeded {
 		return "the memory object of the refusal was not created"
 	}
 	defer system.close(memory)

@@ -387,7 +387,7 @@ run_hostile :: proc "contextless" () {
 	scale_index, scale_function, _ := export_of("scale_values")
 	copy_handle, give_status := system.give(0, large_memory, {.Read, .Give})
 	receiver: system.Handle
-	if give_status == .Ok {
+	if give_status == .Succeeded {
 		receiver, give_status = system.give(host.ring_memory, copy_handle, {.Read})
 	}
 	arguments[0].table = {records = bytes_of(raw_data(large), 64 * 40), count = 64, memory_handle = u64(receiver)}
@@ -395,7 +395,7 @@ run_hostile :: proc "contextless" () {
 	_, size, _, encoded := isolated.encode(sample_file, scale_function, arguments[:2], host.region)
 	refused := call_outcome.Call_Outcome.Succeeded
 	refusal: errors.Error_Record
-	if encoded && give_status == .Ok {
+	if encoded && give_status == .Succeeded {
 		refused, refusal = raw_call(&host, scale_index, size)
 	}
 	system.handle_revoke(copy_handle)
@@ -405,13 +405,13 @@ run_hostile :: proc "contextless" () {
 	// A budget lent as the memory of a table: the receiver checks the kind
 	// of the object: a table names a memory object, and no other kind.
 	budget_copy, budget_status := system.give(0, system.own_budget(), {.Read, .Give})
-	if budget_status == .Ok {
+	if budget_status == .Succeeded {
 		receiver, budget_status = system.give(host.ring_memory, budget_copy, {.Read})
 	}
 	arguments[0].table = {records = bytes_of(raw_data(large), 64 * 40), count = 64, memory_handle = u64(receiver)}
 	_, size, _, encoded = isolated.encode(sample_file, function, arguments[:1], host.region)
 	refused, refusal = .Succeeded, {}
-	if encoded && budget_status == .Ok {
+	if encoded && budget_status == .Succeeded {
 		refused, refusal = raw_call(&host, index, size)
 	}
 	system.handle_revoke(budget_copy)
@@ -689,11 +689,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Refused)
 	}
 	window, opened := display.open(ctx, WIDTH, HEIGHT, "tables")
-	if !opened || interface.hand_picture_open(&hand_picture, &window) != .Ok {
+	if !opened || interface.hand_picture_open(&hand_picture, &window) != .Succeeded {
 		system.stop(.Failed)
 	}
 	image_memory = ctx.handles[system.GRANT_IMAGE]
-	if address, status := system.memory_map(image_memory, {}); status == .Ok {
+	if address, status := system.memory_map(image_memory, {}); status == .Succeeded {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 	sample_file = system.image_find(image, "sample")
@@ -706,16 +706,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		ways_ready[.Direct] = true
 	}
 	// The call host: the module in a process of its own.
-	status: system.Status
-	if host, status = system.call_host_start(image, image_memory, sample_file, "sample host", random.values_with_seed(&process_generator, {}), &load_error); status == .Ok {
+	status: call_outcome.Call_Outcome
+	if host, status = system.call_host_start(image, image_memory, sample_file, "sample host", random.values_with_seed(&process_generator, {}), &load_error); status == .Succeeded {
 		ways_ready[.Call_Host] = true
 	} else {
-		system.log_fact(.Info, Call_Host_Not_Started{status = op.Status_Word(status)})
+		system.log_fact(.Info, Call_Host_Not_Started{status = call_outcome.Call_Outcome_Word(status)})
 		call_host_load_error_log(&load_error)
 	}
 	// The service: the root service starts sample as a process.
 	if ring_handle := ctx.handles[system.GRANT_ROOT]; ring_handle != 0 {
-		if requests, status = system.ring_open(ring_handle, receive_handles = true); status == .Ok {
+		if requests, status = system.ring_open(ring_handle, receive_handles = true); status == .Succeeded {
 			connected: call_outcome.Call_Outcome
 			service, connected = system.service_connection(&requests, 1, "sample")
 			ways_ready[.Service] = connected == .Succeeded
@@ -727,15 +727,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		hostile_base = space.modules[place].base
 		hostile_ready[.Direct] = true
 	}
-	if hostile_host, status = system.call_host_start(image, image_memory, hostile_file, "hostile host", random.values_with_seed(&process_generator, {}), &load_error); status == .Ok {
+	if hostile_host, status = system.call_host_start(image, image_memory, hostile_file, "hostile host", random.values_with_seed(&process_generator, {}), &load_error); status == .Succeeded {
 		hostile_ready[.Call_Host] = true
 	}
 	system.log_fact(.Info, Ways_Ready{direct = way_state_field(ways_ready[.Direct]), call_host = way_state_field(ways_ready[.Call_Host]), service = way_state_field(ways_ready[.Service])})
 
 	// The table of the measures: 65536 readings in a memory object.
 	pages := u64(LARGE_COUNT * size_of(Reading) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-	if large_memory, status = system.memory_create(pages); status == .Ok {
-		if address, map_status := system.memory_map(large_memory); map_status == .Ok {
+	if large_memory, status = system.memory_create(pages); status == .Succeeded {
+		if address, map_status := system.memory_map(large_memory); map_status == .Succeeded {
 			large = ([^]Reading)(address)[:LARGE_COUNT]
 			for &reading, index in large {
 				reading = {sensor = i64(index), value = i64(index)}

@@ -1,5 +1,6 @@
 package root
 
+import "modus:contract/call_outcome"
 import "internal:root/device_stop"
 import "modus:contract/block"
 import "modus:bochs_display"
@@ -29,7 +30,7 @@ configuration_ports: system.Handle
 // network service gives it a read region.
 network_device_windows: bool
 
-device_handle :: proc "contextless" (kind: op.Device_Kind, a, b: u64) -> (handle: system.Handle, values: [7]u64, status: system.Status) {
+device_handle :: proc "contextless" (kind: op.Device_Kind, a, b: u64) -> (handle: system.Handle, values: [7]u64, status: call_outcome.Call_Outcome) {
 	values, status = system.call(.Device_Create, u64(machine), u64(kind), a, b)
 	return system.Handle(values[0]), values, status
 }
@@ -121,8 +122,8 @@ gpu_driver_start :: proc "contextless" () -> bool {
 		return false
 	}
 	_, ring_mem, status := driver_start(place, DRIVER_GPU)
-	if status != .Ok {
-		system.log_fact(.Warning, Gpu_Driver_Failed{status = status, device = place.device})
+	if status != .Succeeded {
+		system.log_fact(.Warning, Gpu_Driver_Failed{status = status, device = u64(place.device)})
 		return false
 	}
 	system.log_fact(.Info, Gpu_Driver_Started{device = u64(place.device)})
@@ -131,11 +132,11 @@ gpu_driver_start :: proc "contextless" () -> bool {
 }
 
 // configuration_open takes the ports of the configuration, once.
-configuration_open :: proc "contextless" () -> system.Status {
+configuration_open :: proc "contextless" () -> call_outcome.Call_Outcome {
 	if configuration_ports != 0 {
-		return .Ok
+		return .Succeeded
 	}
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	configuration_ports, _, status = device_handle(.Ports, pci.PORT_ADDRESS, pci.PORT_COUNT)
 	return status
 }
@@ -146,7 +147,7 @@ configuration_open :: proc "contextless" () -> system.Status {
 // bridge, which the firmware numbered.
 scratch_disk_place :: proc "contextless" () -> pci.Place {
 	place := pci.Place{device = pci.SCRATCH_DISK_DEVICE}
-	if configuration_open() != .Ok || pci.read_32(place, 0) & 0xFFFF == pci.VENDOR_VIRTIO {
+	if configuration_open() != .Succeeded || pci.read_32(place, 0) & 0xFFFF == pci.VENDOR_VIRTIO {
 		return place
 	}
 	bridge := pci.Place{device = pci.SCRATCH_BRIDGE_DEVICE}
@@ -223,7 +224,7 @@ bridge_group_of :: proc "contextless" (bus: u32) -> (group: Bridge_Group, found:
 // BAR gets no handle, and the kernel then refuses the domain of all of
 // them. More than pci.BRIDGE_DEVICE_COUNT other devices give No_Slot, with
 // one line.
-bridge_devices_hold :: proc "contextless" (group: Bridge_Group, place: pci.Place) -> (handles: [pci.BRIDGE_DEVICE_COUNT]system.Handle, count: u32, status: system.Status) {
+bridge_devices_hold :: proc "contextless" (group: Bridge_Group, place: pci.Place) -> (handles: [pci.BRIDGE_DEVICE_COUNT]system.Handle, count: u32, status: call_outcome.Call_Outcome) {
 	for bus in group.first_bus ..= group.last_bus {
 		for device in u32(0) ..< 32 {
 			for function in u32(0) ..< 8 {
@@ -240,7 +241,7 @@ bridge_devices_hold :: proc "contextless" (group: Bridge_Group, place: pci.Place
 				if header_type & 0x7F == 0 && member != place {
 					if count == pci.BRIDGE_DEVICE_COUNT {
 						system.log_fact(.Error, Bridge_Devices_Too_Many{device_limit = u64(pci.BRIDGE_DEVICE_COUNT + 1), bus = u64(group.first_bus)})
-						return handles, count, .No_Slot
+						return handles, count, .Budget_Or_Capacity_Exhausted
 					}
 					// The handle names the device for the IOMMU by the first
 					// page of its register: the address is enough. A size
@@ -249,7 +250,7 @@ bridge_devices_hold :: proc "contextless" (group: Bridge_Group, place: pci.Place
 					for index in 0 ..< pci.BAR_COUNT {
 						if address := pci.bar_address(member, index); address != 0 {
 							handles[count], _, status = device_handle(.Memory, address &~ (system.PAGE_SIZE - 1), 1)
-							if status != .Ok {
+							if status != .Succeeded {
 								return handles, count, status
 							}
 							break
@@ -263,21 +264,21 @@ bridge_devices_hold :: proc "contextless" (group: Bridge_Group, place: pci.Place
 			}
 		}
 	}
-	return handles, count, .Ok
+	return handles, count, .Succeeded
 }
 
 // driver_start starts the device service of the device at a place of the
 // bus. It gives the ring of the device service: this service gives it to
 // the client. The lines of the log name a device of bus 0 by its place
 // only, and another one with its bus.
-driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOCK) -> (driver: ^Started, ring_memory: system.Handle, status: system.Status) {
+driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOCK) -> (driver: ^Started, ring_memory: system.Handle, status: call_outcome.Call_Outcome) {
 	configuration_open() or_return
 	service_name := kind.fixed_module ? kind.name : device_class_holder_name(kind.role, kind.name)
 	// The devices service classified the bus before any device service:
 	// a device that it did not give the class of the service is not armed.
 	if !bus_classified {
 		system.log_fact(.Error, Device_Unclassified{device = u64(place.device), bus = u64(place.bus), service = module_name_field(service_name)})
-		return nil, 0, .Bad_State
+		return nil, 0, .Wrong_State
 	}
 	identity, identity_found := classified_identity_at(place, kind.role)
 	if !identity_found {
@@ -286,12 +287,12 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		} else {
 			system.log_fact(.Error, Virtio_Device_Absent_Behind_Bridge{device = u64(place.device), bus = u64(place.bus), service = module_name_field(service_name)})
 		}
-		return nil, 0, .Bad_Handle
+		return nil, 0, .Nothing_Has_That_Name
 	}
 	group, behind_conventional_bridge := bridge_group_of(place.bus)
 	for &item in started {
 		if item.process != 0 && item.is_driver && (item.device == place || (behind_conventional_bridge && item.bridge_group == group)) {
-			return nil, 0, .Bad_State // One service for one device, and for all the devices behind one conventional bridge.
+			return nil, 0, .Wrong_State // One service for one device, and for all the devices behind one conventional bridge.
 		}
 	}
 	// The layout of the context first, before the device is armed: a
@@ -300,7 +301,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	trial := pci.service_context_trial(kind.ring_role)
 	no_values: system.Context_Values
 	if context_refused(kind.name, &trial, &no_values) {
-		return nil, 0, .Bad_State
+		return nil, 0, .Wrong_State
 	}
 	for &item in started {
 		if place_is_free(&item) {
@@ -309,7 +310,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		}
 	}
 	if driver == nil {
-		return nil, 0, .No_Slot
+		return nil, 0, .Callee_Busy
 	}
 	driver^ = {}
 
@@ -333,7 +334,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	}
 	if behind_conventional_bridge {
 		bridge_devices, bridge_device_count, status = bridge_devices_hold(group, place)
-		if status != .Ok {
+		if status != .Succeeded {
 			return nil, 0, status
 		}
 		for handle, index in bridge_devices {
@@ -346,7 +347,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	driver_budget: Start_Budget
 	armed: Armed_Device
 	armed, status = device_arm(place, identity, DEVICE_SERVICE_LAYOUT, &context_grants)
-	if status != .Ok {
+	if status != .Succeeded {
 		return nil, 0, status
 	}
 	defer device_arm_handles_close(&armed)
@@ -354,21 +355,21 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		network_device_windows = armed.windows
 	}
 	ring_memory, status = system.memory_create(ring.pages(kind.ring_capacity))
-	if status == .Ok {
+	if status == .Succeeded {
 		system.grant_put(&context_grants, kind.ring_role, {ring_memory, {.Read, .Write}})
 		driver_mappings: [1]system.Mapping
 		driver_mapping_count := 0
 		fresh_bytes_page_give(driver, driver_mappings[:], &driver_mapping_count, &values)
 		budget_ok: bool
 		if context_refused(service_name, &context_grants, &values) {
-			status = .Bad_State
+			status = .Wrong_State
 		} else if driver_budget, budget_ok = budget_of(image_file_checked(service_name), service_name); !budget_ok {
-			status = .No_Budget
+			status = .Budget_Or_Capacity_Exhausted
 		} else {
 			driver.process, status = system.process_start(image_file_checked(service_name), service_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), driver_budget.amounts, driver_mappings[:driver_mapping_count], &prepared, load_source(), ready = &driver.ready)
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		fresh_bytes_forget(driver)
 		device_arm_undo(&armed)
 		if ring_memory != 0 {
@@ -393,7 +394,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		system.log_fact(.Info, Bridge_Registers_Held{bus = u64(group.first_bus), other_devices = u64(bridge_device_count), service = module_name_field(kind.name)})
 	}
 	device_arm_keep(driver, &armed)
-	return driver, ring_memory, .Ok
+	return driver, ring_memory, .Succeeded
 }
 
 // The slots of the context where this service puts a virtio device. A
@@ -443,7 +444,7 @@ Armed_Device :: struct {
 // with a role. A place whose device changed since the classification does
 // not take the class of the device of before.
 classified_identity_at :: proc "contextless" (place: pci.Place, role: rd.Device_Class_Role) -> (identity: u32, found: bool) {
-	if !bus_classified || configuration_open() != .Ok {
+	if !bus_classified || configuration_open() != .Succeeded {
 		return 0, false
 	}
 	identity = pci.read_32(place, 0)
@@ -460,7 +461,7 @@ classified_identity_at :: proc "contextless" (place: pci.Place, role: rd.Device_
 // its configuration and the memory of each BAR, at the slots of a layout.
 // On a failure, it leaves the device with no bus master, closes what it
 // made, and puts no grant into the context.
-device_arm :: proc "contextless" (place: pci.Place, identity: u32, layout: Device_Context_Layout, context_grants: ^system.Context_Grants) -> (armed: Armed_Device, status: system.Status) {
+device_arm :: proc "contextless" (place: pci.Place, identity: u32, layout: Device_Context_Layout, context_grants: ^system.Context_Grants) -> (armed: Armed_Device, status: call_outcome.Call_Outcome) {
 	armed.place = place
 	armed.identity = identity
 	succeeded := false
@@ -479,21 +480,21 @@ device_arm :: proc "contextless" (place: pci.Place, identity: u32, layout: Devic
 	armed.bars = holds_screen ? screen_bars : pci.bars(place)
 	table := pci.capability(bytes[:], pci.CAPABILITY_MSI_X)
 	if table == 0 {
-		return armed, .Bad_Operation
+		return armed, .Argument_Refused
 	}
 	// A virtio device that a process held before keeps the addresses of
 	// its queues in memory that is free now: it is reset before its bus
 	// master goes on, so it writes nowhere until its new holder gives it
 	// queues.
 	if identity & 0xFFFF == pci.VENDOR_VIRTIO && !virtio_device_reset(armed.bars, bytes[:]) {
-		return armed, .Bad_State
+		return armed, .Wrong_State
 	}
 	table_place := configuration[(table + 4) / 4]
 	pending_place := configuration[(table + 8) / 4]
 	armed.table_bar = table_place & 7
 	armed.pending_bar = pending_place & 7
 	if armed.table_bar >= pci.BAR_COUNT || armed.bars[armed.table_bar].size == 0 {
-		return armed, .Bad_Operation
+		return armed, .Argument_Refused
 	}
 	// The message interrupt of this device: the kernel names the device by
 	// the base of the register that holds the table, so with interrupt
@@ -501,7 +502,7 @@ device_arm :: proc "contextless" (place: pci.Place, identity: u32, layout: Devic
 	interrupt: system.Handle
 	message: [7]u64
 	interrupt, message, status = device_handle(.Message, armed.bars[armed.table_bar].address, 0)
-	if status != .Ok {
+	if status != .Succeeded {
 		return armed, status
 	}
 	armed.made[0] = interrupt
@@ -537,7 +538,7 @@ device_arm :: proc "contextless" (place: pci.Place, identity: u32, layout: Devic
 		memory: system.Handle
 		facts: [7]u64
 		memory, facts, status = device_handle(.Memory, bar.address, (bar.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
-		if status != .Ok {
+		if status != .Succeeded {
 			return armed, status
 		}
 		windows &&= .Windows in transmute(op.Device_Memory_Facts)facts[1]
@@ -565,7 +566,7 @@ device_arm :: proc "contextless" (place: pci.Place, identity: u32, layout: Devic
 	system.grant_put(context_grants, layout.queues, {armed.queues, {.Read, .Write}})
 	system.grant_put(context_grants, layout.machine, {machine, {.Physical}})
 	succeeded = true
-	return armed, .Ok
+	return armed, .Succeeded
 }
 
 // virtio_device_reset writes the device status 0 in the common
@@ -582,12 +583,12 @@ virtio_device_reset :: proc "contextless" (bars: [pci.BAR_COUNT]pci.Bar, configu
 	first_page := start &~ (system.PAGE_SIZE - 1)
 	last_page := (start + u64(virtio.COMMON_CONFIG_SIZE) - 1) &~ (system.PAGE_SIZE - 1)
 	registers, _, status := device_handle(.Memory, first_page, (last_page - first_page) / system.PAGE_SIZE + 1)
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	defer system.close(registers)
 	address, map_status := system.memory_map(registers, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return false
 	}
 	defer system.memory_unmap(address)
@@ -651,7 +652,7 @@ display_screen_height: int
 // machine has no such device or when its mode holds no two pages: the
 // compositor then gets the framebuffer of the firmware.
 display_open :: proc "contextless" (framebuffer_address, width, height, pixels_per_line: u64) -> (pages_memory, registers: system.Handle) {
-	if framebuffer_address == 0 || configuration_open() != .Ok {
+	if framebuffer_address == 0 || configuration_open() != .Succeeded {
 		return 0, 0
 	}
 	place := pci.Place{device = bochs_display.PLACE_DEVICE}
@@ -673,13 +674,13 @@ display_open :: proc "contextless" (framebuffer_address, width, height, pixels_p
 		system.log_fact(.Info, Standard_Vga_Without_Framebuffer{})
 		return 0, 0
 	}
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	registers, _, status = device_handle(.Memory, registers_address, 1)
-	if status != .Ok {
+	if status != .Succeeded {
 		return 0, 0
 	}
 	address, map_status := system.memory_map(registers, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(registers)
 		return 0, 0
 	}
@@ -691,7 +692,7 @@ display_open :: proc "contextless" (framebuffer_address, width, height, pixels_p
 		return 0, 0
 	}
 	pages_memory, _, status = device_handle(.Display_Memory, video_address, (bochs_display.PAGE_COUNT * page_bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
-	if status != .Ok {
+	if status != .Succeeded {
 		system.memory_unmap(address)
 		system.close(registers)
 		return 0, 0

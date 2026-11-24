@@ -482,23 +482,22 @@ field_kind_value_kind :: proc "contextless" (kind: Field_Kind) -> Value_Kind {
 // it through contract_enum_of_word. A new enum that a field needs is a new
 // member, with its names in the contract.
 Contract_Enum :: enum u8 {
-	None      = 0, // No enum: a field that is not a Status.
-	Status    = 1, // operation.Status: the status of a kernel operation.
-	Log_Level = 2, // operation.Log_Level: the level of a log record.
-	Log_Record_Form = 3, // operation.Log_Record_Form: what a log record holds, a text or a fact.
-	Stop_Cause      = 4, // operation.Stop_Cause: why a process stopped, as the kernel recorded it.
-	Stop_Outcome    = 5, // operation.Stop_Outcome: what a process said of its work when it stopped itself.
-	Error_Kind      = 6, // errors.Kind: what is wrong, in an error record.
-	Error_Unit      = 7, // errors.Unit: what the values of an error record count.
-	Object_Kind     = 8, // operation.Object_Kind: the kind of the object of a handle.
-	Load_Stage      = 9, // module.Load_Stage: the stage of a load that failed.
-	Module_Error    = 10, // module.Error: what is not valid in a module file.
-	Load_Difference = 11, // module.Difference: what differs between an export and its replacement.
-	Storage_Status  = 12, // storage_status.Status: the result of a call of a client of the storage service.
-	Call_Outcome    = 13, // call_outcome.Call_Outcome: how a call ended (src/md/api/call_outcome.md).
-	Pointer_Part    = 14, // pointer_pictures.Part: the part of a pointer theme file where a check found a problem.
-	Pointer_Field   = 15, // pointer_pictures.Field: the field of a pointer theme file that holds the bad value.
-	Pointer_Problem = 16, // pointer_pictures.Problem_Kind: the rule that a pointer theme file breaks.
+	None            = 0, // No enum: a field that is not a Status.
+	Log_Level       = 1, // operation.Log_Level: the level of a log record.
+	Log_Record_Form = 2, // operation.Log_Record_Form: what a log record holds, a text or a fact.
+	Stop_Cause      = 3, // operation.Stop_Cause: why a process stopped, as the kernel recorded it.
+	Stop_Outcome    = 4, // operation.Stop_Outcome: what a process said of its work when it stopped itself.
+	Error_Kind      = 5, // errors.Kind: what is wrong, in an error record.
+	Error_Unit      = 6, // errors.Unit: what the values of an error record count.
+	Object_Kind     = 7, // operation.Object_Kind: the kind of the object of a handle.
+	Load_Stage      = 8, // module.Load_Stage: the stage of a load that failed.
+	Module_Error    = 9, // module.Error: what is not valid in a module file.
+	Load_Difference = 10, // module.Difference: what differs between an export and its replacement.
+	Storage_Status  = 11, // storage_status.Status: the result of a call of a client of the storage service.
+	Call_Outcome    = 12, // call_outcome.Call_Outcome: how a call ended (src/md/api/call_outcome.md).
+	Pointer_Part    = 13, // pointer_pictures.Part: the part of a pointer theme file where a check found a problem.
+	Pointer_Field   = 14, // pointer_pictures.Field: the field of a pointer theme file that holds the bad value.
+	Pointer_Problem = 15, // pointer_pictures.Problem_Kind: the rule that a pointer theme file breaks.
 }
 
 // contract_enum_of_word is the border of the byte of a contract enum in a
@@ -526,9 +525,8 @@ Contract_Enum_Type :: struct {
 // them for the tool and for a reader that writes the type of a field.
 @(rodata)
 CONTRACT_ENUM_TYPES := [Contract_Enum]Contract_Enum_Type {
-	.None      = {},
-	.Status    = {package_name = "operation", name = "Status", word_name = "Status_Word"},
-	.Log_Level = {package_name = "operation", name = "Log_Level"},
+	.None            = {},
+	.Log_Level       = {package_name = "operation", name = "Log_Level"},
 	.Log_Record_Form = {package_name = "operation", name = "Log_Record_Form", word_name = "Log_Record_Form_Word"},
 	.Stop_Cause      = {package_name = "operation", name = "Stop_Cause", word_name = "Stop_Cause_Word"},
 	.Stop_Outcome    = {package_name = "operation", name = "Stop_Outcome", word_name = "Stop_Outcome_Word"},

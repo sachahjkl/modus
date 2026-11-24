@@ -570,12 +570,12 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, "the connection of the call ended in an unknown state")
 		}
 	case .Refused:
-		// A status is named in words only when the record says whose status
-		// it is; any other status is a code, which stays on the detail lines
+		// An outcome is named in words only when the record says it came
+		// from the kernel; any other code stays on the detail lines
 		// (docs/WRITING.md).
-		if status, known := enum_word.member_of_word(op.Status, u64(record.found)); known && record.unit == i64(errors.Unit.Kernel_Status) && record.found >= 0 {
+		if outcome, known := enum_word.member_of_word(call_outcome.Call_Outcome, u64(record.found)); known && record.unit == i64(errors.Unit.Kernel_Status) && record.found >= 0 {
 			write_part(writer, "the kernel refused an operation of the call: ")
-			write_part(writer, kernel_status_text(status))
+			write_part(writer, kernel_outcome_text(outcome))
 			return
 		}
 		write_part(writer, "the receiver refused the call and gave no cause")
@@ -643,37 +643,53 @@ kernel_error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_
 			argument = form.parameters[record.argument - 1].name
 		}
 	}
-	if status, status_known := enum_word.member_of_word(op.Status, u64(record.found)); record.kind == i64(errors.Kind.Refused) && status_known {
+	if outcome, outcome_known := enum_word.member_of_word(call_outcome.Call_Outcome, u64(record.found)); record.kind == i64(errors.Kind.Refused) && record.found >= 0 && outcome_known {
 		write_part(writer, name)
 		write_part(writer, ": the kernel refused the call: ")
-		write_part(writer, kernel_status_text(status))
+		write_part(writer, kernel_outcome_text(outcome))
 		return
 	}
 	error_text(writer, record, name, argument)
 }
 
-// kernel_status_text gives the words of a status of the kernel, for a
-// sentence: what the status says, never its name or its number.
-kernel_status_text :: proc "contextless" (status: op.Status) -> string {
-	switch status {
-	case .Ok:
+// kernel_outcome_text gives the words of a call outcome from the kernel,
+// for a sentence: what the outcome says, never its name or its number.
+kernel_outcome_text :: proc "contextless" (outcome: call_outcome.Call_Outcome) -> string {
+	switch outcome {
+	case .Succeeded:
 		return "the operation ran"
-	case .Bad_Operation:
-		return "an argument has a value that the operation never takes"
-	case .Bad_Handle:
-		return "a handle names no object of the kind that the operation needs"
-	case .Bad_Address:
-		return "an address names memory that the operation cannot use"
-	case .No_Memory:
-		return "no page frame is free"
-	case .No_Slot:
-		return "a table of fixed capacity is full"
-	case .Bad_State:
-		return "the object is not in a state where the operation applies"
-	case .No_Right:
+	case .Argument_Refused:
+		return "an argument broke a rule of the operation"
+	case .Nothing_Has_That_Name:
+		return "a name or number named nothing that exists"
+	case .Name_Already_Taken:
+		return "the name is already in use"
+	case .Grant_Or_Right_Missing:
 		return "a handle does not have the right that the operation needs"
-	case .No_Budget:
-		return "the budget cannot pay for the operation"
+	case .Callee_Busy:
+		return "a shared resource of the kernel is full now"
+	case .Budget_Or_Capacity_Exhausted:
+		return "the budget or capacity cannot pay for the operation"
+	case .Wrong_State:
+		return "the object is not in a state where the operation applies"
+	case .Another_Change_Came_First:
+		return "another change came before the operation"
+	case .Operation_Unsupported:
+		return "the kernel does not do this operation"
+	case .Data_Damaged:
+		return "held data broke its check"
+	case .Callee_Unavailable:
+		return "a needed party is unavailable"
+	case .Stopped_After_A_Partial_Change:
+		return "the operation stopped after a partial change"
+	case .Callee_Stopped_During_The_Call:
+		return "the receiver stopped during the call"
+	case .Connection_Ended_During_The_Call:
+		return "the connection ended during the call"
+	case .Deadline_Passed_During_The_Call:
+		return "the deadline passed during the call"
+	case .Answer_Unreadable:
+		return "the answer cannot be read"
 	}
 	return "the operation ran"
 }

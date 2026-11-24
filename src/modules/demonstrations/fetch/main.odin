@@ -501,13 +501,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(.Failed)
 	}
-	status: system.Status
-	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Succeeded {
 		system.log_fact(.Info, No_Endpoint{})
 		system.stop(.Refused)
 	}
 	address, map_status := system.memory_map(ctx.handles[datagram.GRANT_REGION], {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.log_fact(.Info, No_Datagram_Region{})
 		system.stop(.Failed)
 	}
@@ -517,7 +517,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	BUFFER_PAGES :: CAPACITY * (SEND_SIZE + RECEIVE_SIZE) / system.PAGE_SIZE
 	memory, memory_status := system.memory_create(BUFFER_PAGES)
 	buffers, buffers_status := system.memory_map(memory, {.Write})
-	if memory_status != .Ok || buffers_status != .Ok {
+	if memory_status != .Succeeded || buffers_status != .Succeeded {
 		system.log_fact(.Info, No_Connection_Memory{})
 		system.stop(.Failed)
 	}

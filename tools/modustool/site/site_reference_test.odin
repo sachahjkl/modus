@@ -4,6 +4,7 @@ import "core:reflect"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/fixed_addresses"
 import module "modus:contract/module"
@@ -48,9 +49,10 @@ site_operations_of_the_repository :: proc(t: ^testing.T) {
 		testing.expect(t, strings.has_prefix(operation.parameters, "memory, process, address"))
 		testing.expect_value(t, operation.result, "address")
 	}
-	statuses, status_problem := foundation.enumeration_read(text, SITE_OPERATION_FILE, "Status")
+	outcome_text := read_text(t, SITE_CALL_OUTCOME_FILE)
+	statuses, status_problem := foundation.enumeration_read(outcome_text, SITE_CALL_OUTCOME_FILE, "Call_Outcome")
 	testing.expect_value(t, status_problem, "")
-	expect_members_of(t, statuses, op.Status)
+	expect_members_of(t, statuses, call_outcome.Call_Outcome)
 }
 
 @(test)
@@ -211,8 +213,8 @@ site_reference_of_the_repository :: proc(t: ^testing.T) {
 	}
 	target, found := site_code_link(&site, "Memory_Map")
 	testing.expect(t, found && target == "docs/reference/operations/index.html#operation-memory-map", target)
-	_, ambiguous := site_code_link(&site, "Bad_Address")
-	testing.expect(t, !ambiguous, "Bad_Address is a status and an error kind: it links nowhere")
+	bad_address, bad_address_found := site_code_link(&site, "Bad_Address")
+	testing.expect(t, bad_address_found && bad_address == "docs/reference/errors/index.html#kind-bad-address", bad_address)
 	command, command_found := site_code_link(&site, "load(\"math\")")
 	testing.expect(t, command_found && command == "docs/reference/console/index.html#command-load", command)
 	_, spaced := site_code_link(&site, "Memory_Map and more")

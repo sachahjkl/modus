@@ -175,11 +175,11 @@ plan_roles_page_give :: proc "contextless" (item: ^Started, answer: ^[7]u64) -> 
 	kind := u32(root_ring.Root_Command.Plan_Roles)
 	if plan_roles_memory == 0 {
 		memory, status := system.memory_create(1)
-		if status != .Ok {
+		if status != .Succeeded {
 			return kernel_refused(answer, kind, status)
 		}
 		address, map_status := system.memory_map(memory, {.Write})
-		if map_status != .Ok {
+		if map_status != .Succeeded {
 			system.close(memory)
 			return kernel_refused(answer, kind, map_status)
 		}
@@ -187,7 +187,7 @@ plan_roles_page_give :: proc "contextless" (item: ^Started, answer: ^[7]u64) -> 
 		plan_roles_page = (^rd.Plan_Roles_Set)(address)
 	}
 	given, status := system.give(item.requests_memory, plan_roles_memory, {.Read, .Write})
-	if status != .Ok {
+	if status != .Succeeded {
 		return kernel_refused(answer, kind, status)
 	}
 	answer^ = {0 = u64(given), 1 = role_override_names.serial, 2 = role_override_names.generation}

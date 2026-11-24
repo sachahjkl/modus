@@ -1,6 +1,6 @@
 package frames
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 
 // The log facts of the demonstration frames (src/md/features/log_facts.md,
 // "The facts of the demonstrations"): its measures and its cases, as
@@ -12,7 +12,7 @@ import op "modus:contract/operation"
 // A twin did not start: the word of the status.
 @(log_fact = "frames: cannot start a twin: status {status_word}")
 Twin_Not_Started :: struct {
-	status_word: op.Status_Word,
+	status_word: call_outcome.Call_Outcome_Word,
 }
 
 // The pages of 4 twins with a copy of the module each, and with the shared

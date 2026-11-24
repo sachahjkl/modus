@@ -1,5 +1,6 @@
 package browser
 
+import "modus:contract/call_outcome"
 import "modus:contract/draw_record"
 import "modus:contract/html_css"
 import "modus:graphics"
@@ -112,18 +113,18 @@ document_workspace_clear :: proc "contextless" () {
 // document_memory_create reserves the arenas of the document and of the
 // tables of the window, each of the pages that the budget holds, and binds
 // them to the tree, the sheet and the layout tree.
-document_memory_create :: proc "contextless" (reserve_pages: u64) -> system.Status {
-	if status := web.document_arenas_create(&document_arenas, reserve_pages); status != .Ok {
+document_memory_create :: proc "contextless" (reserve_pages: u64) -> call_outcome.Call_Outcome {
+	if status := web.document_arenas_create(&document_arenas, reserve_pages); status != .Succeeded {
 		return status
 	}
 	for &arena in table_arenas {
-		status: system.Status
-		if arena, status = system.arena_create(reserve_pages); status != .Ok {
+		status: call_outcome.Call_Outcome
+		if arena, status = system.arena_create(reserve_pages); status != .Succeeded {
 			return status
 		}
 	}
 	web.document_memory_bind(&document_arenas, &document_tree, &sheet, &document_layout)
-	return .Ok
+	return .Succeeded
 }
 
 // document_tables_hold grows the tables of the window to the nodes of the

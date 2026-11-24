@@ -566,7 +566,7 @@ stop_cleanup_notifies_peers_reclaims_slots_and_ignores_stale_serials :: proc(t: 
 	st2, _, _, num2 := wire_once(&s, image, asker, make_wire_row(.Started, 1, 1, .Started, 2, 1), lent2[:])
 	testing.expect_value(t, st2, call_outcome.Call_Outcome.Succeeded)
 
-	act_taken := wiring_completion_apply(&s, w2_idx, output.wiring_completion(num2, .Ok))
+	act_taken := wiring_completion_apply(&s, w2_idx, output.wiring_completion(num2, .Succeeded))
 	testing.expect_value(t, act_taken.effect, Completion_Effect.None)
 	act_closed := wiring_completion_apply(&s, w2_idx, output.wiring_closed_completion(num2))
 	testing.expect_value(t, act_closed.effect, Completion_Effect.Write_End_Word)

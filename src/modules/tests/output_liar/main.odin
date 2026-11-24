@@ -71,7 +71,7 @@ command_wait :: proc "contextless" () -> ring.Record {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	opened, status := system.ring_open(ctx.handles[op.CONTEXT_WIRING_RING], receive_handles = true)
-	if status != .Ok {
+	if status != .Succeeded {
 		wrong("no wiring ring; the status", u64(status))
 	}
 	wiring = opened
@@ -80,13 +80,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if command.values[output.WIRING_VALUE_TERMS] == 0 {
 		wrong("the end came with no condition; the tag", u64(command.tag))
 	}
-	if !system.send(&wiring.completions, output.wiring_completion(command.tag, .Ok)) {
+	if !system.send(&wiring.completions, output.wiring_completion(command.tag, .Succeeded)) {
 		wrong("the completion queue of the wiring ring is full; the tag", u64(command.tag))
 	}
 	memory := system.Handle(command.values[output.WIRING_VALUE_RING])
 	pages, size_status := system.memory_size(memory)
 	address, map_status := system.memory_map(memory)
-	if size_status != .Ok || map_status != .Ok {
+	if size_status != .Succeeded || map_status != .Succeeded {
 		wrong("the output ring does not map; the status", u64(map_status))
 	}
 	size := output.compartment_size(size_of(Counted))

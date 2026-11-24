@@ -22,11 +22,11 @@ hex_memory: [^]u8 // HEX_PAGES pages of a memory object: pages on first use.
 // get a frame by a write, two stay with no frame.
 hex_start :: proc "contextless" () {
 	memory, status := system.memory_create(HEX_PAGES)
-	if status != .Ok {
+	if status != .Succeeded {
 		return
 	}
 	address, map_status := system.memory_map(memory)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return
 	}
 	hex_memory = ([^]u8)(address)

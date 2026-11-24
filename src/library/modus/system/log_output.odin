@@ -83,11 +83,11 @@ log_output_open :: proc "contextless" () {
 		return
 	}
 	pages, size_status := memory_size(ring_memory)
-	if size_status != .Ok {
+	if size_status != .Succeeded {
 		return
 	}
 	address, map_status := memory_map(ring_memory)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return
 	}
 	queue, opened := ring.compartment_open(address, pages, output.compartment_size(size_of(output.Log_Output_Record)))
@@ -96,7 +96,7 @@ log_output_open :: proc "contextless" () {
 		return
 	}
 	words, words_status := memory_map(end_memory, {})
-	if words_status != .Ok {
+	if words_status != .Succeeded {
 		memory_unmap(address)
 		return
 	}

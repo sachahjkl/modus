@@ -81,6 +81,7 @@
 // between two writers: one terminal serves one process.
 package terminal_process
 
+import "modus:contract/call_outcome"
 import "internal:terminal/grid_resize"
 import "internal:terminal/wide_cells"
 import "modus:contract/enum_word"
@@ -1576,11 +1577,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The areas of the lines.
 	area :: proc "contextless" (size: u64) -> rawptr {
 		memory, status := system.memory_create((size + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
-		if status != .Ok {
+		if status != .Succeeded {
 			fail("no memory for the lines")
 		}
 		address: rawptr
-		if address, status = system.memory_map(memory); status != .Ok {
+		if address, status = system.memory_map(memory); status != .Succeeded {
 			fail("no memory for the lines")
 		}
 		return address
@@ -1591,19 +1592,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	// The terminal ring and the text region, from the root service. This
 	// process has the right Read only on the text region.
-	status: system.Status
-	if source, status = system.ring_open(ctx.handles[terminal.GRANT_RING]); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if source, status = system.ring_open(ctx.handles[terminal.GRANT_RING]); status != .Succeeded {
 		fail("no terminal ring")
 	}
-	if text_pages, text_status := system.memory_size(ctx.handles[terminal.GRANT_TEXT]); text_status != .Ok || text_pages != terminal.TEXT_PAGES {
+	if text_pages, text_status := system.memory_size(ctx.handles[terminal.GRANT_TEXT]); text_status != .Succeeded || text_pages != terminal.TEXT_PAGES {
 		fail("no text region")
 	}
-	if address, map_status := system.memory_map(ctx.handles[terminal.GRANT_TEXT], {}); map_status == .Ok {
+	if address, map_status := system.memory_map(ctx.handles[terminal.GRANT_TEXT], {}); map_status == .Succeeded {
 		source_text = ([^]u8)(address)[:terminal.TEXT_SIZE]
 	} else {
 		fail("no text region")
 	}
-	if _, status = system.thread_start(read, nil); status != .Ok {
+	if _, status = system.thread_start(read, nil); status != .Succeeded {
 		fail("no thread")
 	}
 	system.log_fact(.Info, Window_Ready{ring_records = u64(ring.capacity(&source.commands)), shown_process = shown_process_field()})
@@ -1709,7 +1710,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					_ = display.resize_decline(&window)
 					continue
 				}
-				if display.surface_resize(&window, event.width, event.height) != .Ok {
+				if display.surface_resize(&window, event.width, event.height) != .Succeeded {
 					continue
 				}
 				if grid_resize.grid_resize_cells(&grid, new_columns, new_rows) == .None {

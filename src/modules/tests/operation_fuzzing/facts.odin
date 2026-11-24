@@ -1,6 +1,6 @@
 package operation_fuzzing
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
 // The log facts of the process that runs operation sequences
@@ -23,7 +23,7 @@ CAUSE_FIELD_BYTES :: 40
 // A step of the start failed: the process stops with Failed.
 @(log_fact = "operation_fuzzing: failed: {cause}: status {status}")
 Failed :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 	cause:  [40]u8,
 }
 
@@ -45,7 +45,7 @@ Sequence_Ended :: struct {
 	sequence: u64,
 }
 
-#assert(size_of(Failed) == size_of(op.Status) + CAUSE_FIELD_BYTES)
+#assert(size_of(Failed) == size_of(call_outcome.Call_Outcome) + CAUSE_FIELD_BYTES)
 
 // cause_field gives the Text field of the cause of a failure.
 cause_field :: proc "contextless" (cause: string) -> [CAUSE_FIELD_BYTES]u8 {

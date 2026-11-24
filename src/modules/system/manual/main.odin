@@ -979,10 +979,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(.Failed)
 	}
-	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
+	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Succeeded {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
-	if address, status := system.memory_map(ctx.handles[system.GRANT_REPLACEMENTS], {}); status == .Ok {
+	if address, status := system.memory_map(ctx.handles[system.GRANT_REPLACEMENTS], {}); status == .Succeeded {
 		replacement_table = (^system.Replacement_Table)(address)
 	}
 	// Before the first page: its links to terms and guides read the

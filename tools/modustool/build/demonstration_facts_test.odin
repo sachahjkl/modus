@@ -1,5 +1,6 @@
 package build
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -26,7 +27,7 @@ DEMONSTRATION_VERDICTS := [2]string{"as it must", "WRONG"}
 // its member, or its number when it names none.
 @(private = "file")
 status_text :: proc(word: u64) -> string {
-	if name, named := module.contract_enum_member_name(.Status, word); named {
+	if name, named := module.contract_enum_member_name(.Call_Outcome, word); named {
 		return name
 	}
 	return fmt.tprint(word)
@@ -102,7 +103,7 @@ Demonstration_Text :: struct {
 
 @(private = "file")
 DEMONSTRATION_TEXTS := [?]Demonstration_Texts {
-	{"address_space", {{"verdict", "as expected"}, {"refusal_name", "a range outside the object"}, {"case_name", "a holder's stop with an outcome and a stop of itself with no outcome are refused, and nothing stops"}, {"waiter", "did not wake"}, {"stop_verdict", "was not refused with No_Right"}, {"target", "this process"}, {"budget_after_decommit", "not the same"}, {"neighbour_page", "stayed right"}, {"problem", "a decommit of more than the page limit of one call was not refused with its record"}}},
+	{"address_space", {{"verdict", "as expected"}, {"refusal_name", "a range outside the object"}, {"case_name", "a holder's stop with an outcome and a stop of itself with no outcome are refused, and nothing stops"}, {"waiter", "did not wake"}, {"stop_verdict", "was not refused with Grant_Or_Right_Missing"}, {"target", "this process"}, {"budget_after_decommit", "not the same"}, {"neighbour_page", "stayed right"}, {"problem", "a decommit of more than the page limit of one call was not refused with its record"}}},
 	{"budget", {{"step", "close the new budget, keep the memory"}, {"answer", "0123456789012345678901234567890123456789"}}},
 	{"time_page", {{"cause", "a least size is below the least size of a resizable surface"}, {"removal", "does not refuse"}}},
 	{"counters", {{"step", "Read_Counters gave Unsupported and Start_Counters"}, {"refused_step", "Start_Counters with a copy of the machine handle with no right"}, {"measure", "the reads in order"}}},
@@ -112,7 +113,7 @@ DEMONSTRATION_TEXTS := [?]Demonstration_Texts {
 	{"disk", {{"direction", "write"}, {"block_word", "blocks"}}},
 	{"errors", {{"details_case", "a kernel command with two wrong arguments"}, {"queue_filled", "yes"}, {"command_held", "yes"}, {"answers_in_order", "yes"}, {"held_command_ran", "yes"}, {"child_state", "running, its stop cause "}}},
 	{"extended_state", {{"components", "x87, SSE, AVX, AVX-512"}, {"xmm_sets", "SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2, AES, PCLMULQDQ"}, {"avx_sets", "AVX, F16C, FMA, AVX2, AVX-512 F, AVX-512 DQ, AVX-512 CD, AVX-512 BW, AVX-512 VL"}, {"general_register_sets", "POPCNT, BMI1, BMI2"}, {"register", "the x87 control word"}, {"moment", "start state, pass"}, {"part_name", "xsaveopt64 + vzeroupper + xrstor64"}, {"kept_registers", "zmm0 to zmm31 and k0 to k7 (64 bits)"}}},
-	{"fault_ring", {{"step", "Fault_Handler_Set with the kinds of the entries"}, {"before_answer", "the thread ran or faulted again with no answer: WRONG"}, {"inspect_answer", "an error"}, {"verdict", "as it must"}, {"serial_answer", "refused with Bad_State, then the right answer resumed the thread: as it must"}, {"foreign_answer", "refused with Bad_State"}, {"case_name", "a word wait, a fault, a decommit of the word"}, {"resume_answer", "a word that names no status"}, {"address_place", "the instruction address is NOT inside its loop"}, {"loop_motion", "and the loop did not turn while the thread was stopped"}, {"run_after", "the thread did not run after its Resume"}, {"run_after_resume", "the thread did not run after its Resume"}, {"before_resume", "it did not run before its Resume"}, {"after_resume", "and it did not run after it"}, {"after_one_resume", "still stopped after one Resume"}, {"after_two_resumes", "not running after the second"}, {"failed_call", "memory_create"}, {"parent_thread_running", "kept running"}}},
+	{"fault_ring", {{"step", "Fault_Handler_Set with the kinds of the entries"}, {"before_answer", "the thread ran or faulted again with no answer: WRONG"}, {"inspect_answer", "an error"}, {"verdict", "as it must"}, {"serial_answer", "refused with Wrong_State, then the right answer resumed the thread: as it must"}, {"foreign_answer", "refused with Wrong_State"}, {"case_name", "a word wait, a fault, a decommit of the word"}, {"resume_answer", "a word that names no status"}, {"address_place", "the instruction address is NOT inside its loop"}, {"loop_motion", "and the loop did not turn while the thread was stopped"}, {"run_after", "the thread did not run after its Resume"}, {"run_after_resume", "the thread did not run after its Resume"}, {"before_resume", "it did not run before its Resume"}, {"after_resume", "and it did not run after it"}, {"after_one_resume", "still stopped after one Resume"}, {"after_two_resumes", "not running after the second"}, {"failed_call", "memory_create"}, {"parent_thread_running", "kept running"}}},
 	{"fetch", {{"remote_address", "255.255.255.255"}, {"hash_check", "NOT the expected one"}, {"hash_answer", "the remote answered another hash"}, {"wrong_mark", " (WRONG)"}, {"body", "hello from the host"}, {"close_end", "and keeps its half open: FIN-WAIT-2"}}},
 	{"flow", {{"waiting", "read the counters then wait"}}},
 	{"frames", {{"case_text", "4 twins, each with a copy of the module"}, {"answer", "012345678901234567890123456789012345678901234567"}}},
@@ -189,18 +190,18 @@ the_facts_of_address_space_write_the_lines_of_before :: proc(t: ^testing.T) {
 			facts_expect_line(t, render(t, file, "Stop_Word_Not_Refused", {{"stop_word", count}, {"status_word", max(u64) - count}, {"error_kind", count}, {"argument", u64(2)}, {"limit", signed_bits(-1)}, {"target", target}}), line_of_before("address_space: WRONG: Process_Stop of ", target, " with the word ", count, " gave the status word ", status_text(max(u64) - count), ", the error kind ", kind_text(count), ", the argument ", i64(2), " and the limit ", i64(-1)))
 		}
 	}
-	statuses := [2]op.Status{min(op.Status), max(op.Status)}
+	statuses := [2]call_outcome.Call_Outcome{min(call_outcome.Call_Outcome), max(call_outcome.Call_Outcome)}
 	for status in statuses {
-		facts_expect_line(t, render(t, file, "Own_Handle_Child_Board_Not_Mapped", {{"map_status", u64(status)}}), line_of_before("address_space: the child of its own handle could not map its board: ", op.STATUS_NAMES[status]))
-		for stop_verdict in ([2]string{"was refused with No_Right", "was not refused with No_Right"}) {
+		facts_expect_line(t, render(t, file, "Own_Handle_Child_Board_Not_Mapped", {{"map_status", u64(status)}}), line_of_before("address_space: the child of its own handle could not map its board: ", call_outcome.CALL_OUTCOME_NAMES[status]))
+		for stop_verdict in ([2]string{"was refused with Grant_Or_Right_Missing", "was not refused with Grant_Or_Right_Missing"}) {
 			for outcome in op.Stop_Outcome {
-				facts_expect_line(t, render(t, file, "Own_Handle_Child_Stopped", {{"give_status", u64(status)}, {"cause", u64(op.Stop_Cause.Itself)}, {"outcome", u64(outcome)}, {"stop_verdict", stop_verdict}}), line_of_before("address_space: a child stopped through its own process handle: the give gave ", op.STATUS_NAMES[status], ", the stop through the handle ", stop_verdict, ", and the child stopped: ", op.STOP_CAUSE_TEXTS[.Itself], ", ", op.STOP_OUTCOME_TEXTS[outcome]))
+				facts_expect_line(t, render(t, file, "Own_Handle_Child_Stopped", {{"give_status", u64(status)}, {"cause", u64(op.Stop_Cause.Itself)}, {"outcome", u64(outcome)}, {"stop_verdict", stop_verdict}}), line_of_before("address_space: a child stopped through its own process handle: the give gave ", call_outcome.CALL_OUTCOME_NAMES[status], ", the stop through the handle ", stop_verdict, ", and the child stopped: ", op.STOP_CAUSE_TEXTS[.Itself], ", ", op.STOP_OUTCOME_TEXTS[outcome]))
 			}
 			for cause in op.Stop_Cause {
 				if cause == .Itself {
 					continue
 				}
-				facts_expect_line(t, render(t, file, "Own_Handle_Child_Stopped_Without_Outcome", {{"give_status", u64(status)}, {"cause", u64(cause)}, {"stop_verdict", stop_verdict}}), line_of_before("address_space: a child stopped through its own process handle: the give gave ", op.STATUS_NAMES[status], ", the stop through the handle ", stop_verdict, ", and the child stopped: ", op.STOP_CAUSE_TEXTS[cause]))
+				facts_expect_line(t, render(t, file, "Own_Handle_Child_Stopped_Without_Outcome", {{"give_status", u64(status)}, {"cause", u64(cause)}, {"stop_verdict", stop_verdict}}), line_of_before("address_space: a child stopped through its own process handle: the give gave ", call_outcome.CALL_OUTCOME_NAMES[status], ", the stop through the handle ", stop_verdict, ", and the child stopped: ", op.STOP_CAUSE_TEXTS[cause]))
 			}
 		}
 	}
@@ -291,15 +292,15 @@ the_facts_of_counters_and_guest_demo_write_the_lines_of_before :: proc(t: ^testi
 	if !counters_ok || !guest_ok {
 		return
 	}
-	expected := [2]op.Status{.No_Right, .Bad_State}
+	expected := [2]call_outcome.Call_Outcome{.Grant_Or_Right_Missing, .Wrong_State}
 	for count in DEMONSTRATION_COUNTS {
 		other := max(u64) - count
 		for step in ([2]string{"Read_Counters gave Unsupported and Start_Counters", "Read_Counters after the loop"}) {
 			facts_expect_line(t, fact_test_render(t, counters, "counters", "Step_Failed", {{"status_word", count}, {"step", step}}), line_of_before("counters: failed: ", step, " gave ", status_text(count)))
 		}
 		for status in expected {
-			facts_expect_line(t, fact_test_render(t, counters, "counters", "Step_Not_Refused", {{"status_word", count}, {"expected", u64(status)}, {"refused_step", "Start_Counters with a copy of the machine handle with no right"}}), line_of_before("counters: failed: ", "Start_Counters with a copy of the machine handle with no right", " gave ", status_text(count), ", not ", op.STATUS_NAMES[status]))
-			facts_expect_line(t, fact_test_render(t, guest, "guest_demo", "Step_Not_Refused", {{"status_word", count}, {"expected", u64(status)}, {"step", "Process_Start of the guest"}}), line_of_before("guest_demo: failed: ", "Process_Start of the guest", " gave ", status_text(count), ", not ", op.STATUS_NAMES[status]))
+			facts_expect_line(t, fact_test_render(t, counters, "counters", "Step_Not_Refused", {{"status_word", count}, {"expected", u64(status)}, {"refused_step", "Start_Counters with a copy of the machine handle with no right"}}), line_of_before("counters: failed: ", "Start_Counters with a copy of the machine handle with no right", " gave ", status_text(count), ", not ", call_outcome.CALL_OUTCOME_NAMES[status]))
+			facts_expect_line(t, fact_test_render(t, guest, "guest_demo", "Step_Not_Refused", {{"status_word", count}, {"expected", u64(status)}, {"step", "Process_Start of the guest"}}), line_of_before("guest_demo: failed: ", "Process_Start of the guest", " gave ", status_text(count), ", not ", call_outcome.CALL_OUTCOME_NAMES[status]))
 		}
 		facts_expect_line(t, fact_test_render(t, counters, "counters", "Loop_Too_Short", {{"turns", count}, {"instructions", other}, {"least_instructions", count}, {"cycles", other}, {"cache_misses", count}, {"branch_misses", other}}), line_of_before("counters: failed: a loop of ", count, " turns retired ", other, " instructions, fewer than ", count, "; ", other, " cycles, ", count, " cache misses, ", other, " branch misses"))
 		facts_expect_line(t, fact_test_render(t, counters, "counters", "Orders_Read_Other_Words", {{"sum_in_order", count}, {"sum_by_page", other}}), line_of_before("counters: failed: the two orders read other words: ", count, " and ", other))
@@ -338,16 +339,16 @@ the_facts_of_debugged_write_the_lines_of_before :: proc(t: ^testing.T) {
 	}
 	cases := [?]Case_Line {
 		{"Attach_Checked", "attach: the debugger is the debug handler of the child"},
-		{"Breakpoints_On_Running_Thread_Refused", "a write of breakpoints on a thread that is not held: refused with Bad_State"},
-		{"Handle_Without_Debug_Refused", "a handle with no Debug: attach and Stop refused with No_Right"},
+		{"Breakpoints_On_Running_Thread_Refused", "a write of breakpoints on a thread that is not held: refused with Wrong_State"},
+		{"Handle_Without_Debug_Refused", "a handle with no Debug: attach and Stop refused with Grant_Or_Right_Missing"},
 		{"Kernel_Breakpoint_Refused", "a breakpoint at an address of the kernel: refused with the breakpoint address in the error record"},
 		{"Execute_Breakpoint_Reached", "an execute breakpoint at a procedure of the child: the fault record names breakpoint 0 and the address"},
 		{"Registers_At_Breakpoint", "the registers at the stop: the instruction address is the breakpoint"},
 		{"Child_Memory_Read", "Read_Memory of a value of the child: the bytes of the child, not of the debugger"},
-		{"Kernel_Memory_Read_Refused", "Read_Memory at an address of the kernel: refused with Bad_Address"},
-		{"Unmapped_Memory_Read_Refused", "Read_Memory of a page that the child does not map: refused with Bad_Address"},
-		{"Inspect_Only_Memory_Read_Refused", "Read_Memory through a thread handle with Inspect only: refused with No_Right"},
-		{"Own_Thread_Breakpoints_Refused", "a write of breakpoints on a thread of the caller, with no Debug handle: refused with Bad_Handle"},
+		{"Kernel_Memory_Read_Refused", "Read_Memory at an address of the kernel: refused with Argument_Refused"},
+		{"Unmapped_Memory_Read_Refused", "Read_Memory of a page that the child does not map: refused with Argument_Refused"},
+		{"Inspect_Only_Memory_Read_Refused", "Read_Memory through a thread handle with Inspect only: refused with Grant_Or_Right_Missing"},
+		{"Own_Thread_Breakpoints_Refused", "a write of breakpoints on a thread of the caller, with no Debug handle: refused with Argument_Refused"},
 		{"Single_Step_Checked", "a single step: one instruction ran, and the record names the step"},
 		{"Data_Breakpoint_Reached", "a data breakpoint on a word that the child writes: the fault record names breakpoint 1"},
 		{"Breakpoints_Removed", "the breakpoints removed: the child resumed and stopped itself at its end"},
@@ -532,7 +533,7 @@ the_facts_of_fault_ring_write_the_lines_of_before :: proc(t: ^testing.T) {
 		{"Stack_Selector_Then_Breakpoint", "mov ss, then int3, with the trap flag: on this processor the machine went on; one breakpoint record after the int3, and each other record is a debug trap of this process, in its code"},
 		{"Two_Debug_Instructions", "two int1 in a row: two debug records, at the address of the first plus 1 and plus 2"},
 	}
-	statuses := [2]op.Status{min(op.Status), max(op.Status)}
+	statuses := [2]call_outcome.Call_Outcome{min(call_outcome.Call_Outcome), max(call_outcome.Call_Outcome)}
 	for verdict in DEMONSTRATION_VERDICTS {
 		for entry in entries {
 			facts_expect_line(t, render(t, file, entry.type_name, {{"verdict", verdict}}), line_of_before("fault_ring: ", entry.sentence, ": ", verdict))
@@ -541,19 +542,19 @@ the_facts_of_fault_ring_write_the_lines_of_before :: proc(t: ^testing.T) {
 			other := max(u64) - count
 			facts_expect_line(t, render(t, file, "Read_Only_Write_Repaired", {{"page_value", count}, {"verdict", verdict}}), line_of_before("fault_ring: a write to a read-only page: the handler gave Write back; the page holds ", count, ": ", verdict))
 			facts_expect_line(t, render(t, file, "Stack_Grown", {{"repaired_pages", count}, {"stack_pages", other}, {"least_repair_time", count}, {"verdict", verdict}}), line_of_before("fault_ring: a stack that grows: ", count, " pages of ", other, ", each one committed by the handler at its first touch; one repaired fault took ", count, " ns at least", ": ", verdict))
-			for answer in ([2]string{"refused with Bad_State", "not refused"}) {
+			for answer in ([2]string{"refused with Wrong_State", "not refused"}) {
 				facts_expect_line(t, render(t, file, "Foreign_Answer", {{"answered_thread", count}, {"answered_serial", other}, {"foreign_answer", answer}, {"verdict", verdict}}), line_of_before("fault_ring: an answer from another process: the parent answered for the thread ", count, " and the serial ", other, ": ", answer, "; the thread still waited, and the answer of its own process resumed it", ": ", verdict))
 			}
 			facts_expect_line(t, render(t, file, "Early_Answers", {{"answers", count}, {"right_values", other}, {"early_faults", count}, {"elapsed", other}, {"verdict", verdict}}), line_of_before("fault_ring: 10 000 answers given at once: ", count, " faults resumed, ", other, " values right, of ", count, ": ", verdict, ", in ", other, " ms"))
 			facts_expect_line(t, render(t, file, "Breakpoint_Resumed", {{"records_seen", count}, {"record_kind", other}, {"computed", count}, {"verdict", verdict}}), line_of_before("fault_ring: a breakpoint, answered resume: ", count, " record of the kind ", other, "; the thread went on after the int3 and computed ", count, ": ", verdict))
-			facts_expect_line(t, render(t, file, "Kinds_Never_Delivered", {{"refused_arguments", count}, {"asked_arguments", other}, {"verdict", verdict}}), line_of_before("fault_ring: the kinds never delivered: Fault_Handler_Set refused ", count, " arguments of ", other, " with Bad_Operation", ": ", verdict))
-			for resume in ([3]string{"no answer", "a word that names no status", "Bad_State"}) {
+			facts_expect_line(t, render(t, file, "Kinds_Never_Delivered", {{"refused_arguments", count}, {"asked_arguments", other}, {"verdict", verdict}}), line_of_before("fault_ring: the kinds never delivered: Fault_Handler_Set refused ", count, " arguments of ", other, " with Argument_Refused", ": ", verdict))
+			for resume in ([3]string{"no answer", "a word that names no status", "Wrong_State"}) {
 				facts_expect_line(t, render(t, file, "Fault_Kind_At_Report_Instruction", {{"records_seen", count}, {"record_kind", other}, {"error_code", count}, {"case_name", name}, {"resume_answer", resume}, {"verdict", verdict}}), line_of_before("fault_ring: ", name, ": ", count, " record of the kind ", other, ", the error code ", count, ", ", "the instruction of the stop report", "; Resume got ", resume, ": ", verdict))
 				facts_expect_line(t, render(t, file, "Fault_Kind_Not_At_Report_Instruction", {{"records_seen", count}, {"record_kind", other}, {"error_code", count}, {"case_name", name}, {"resume_answer", resume}, {"verdict", verdict}}), line_of_before("fault_ring: ", name, ": ", count, " record of the kind ", other, ", the error code ", count, ", ", "not the instruction of the stop report", "; Resume got ", resume, ": ", verdict))
 			}
 			for run_after in ([2]string{"the thread ran after its Resume", "the thread did not run after its Resume"}) {
-				facts_expect_line(t, render(t, file, "Hostile_Frame_Refused", {{"refused_writes", count}, {"writes", other}, {"run_after", run_after}, {"verdict", verdict}}), line_of_before("fault_ring: a frame that a process cannot hold: ", count, " writes of ", other, " refused with Bad_Operation (the code selector of the kernel, the I/O privilege level, interrupts off, an instruction address that is not canonical); ", run_after, ": ", verdict))
-				facts_expect_line(t, render(t, file, "Hostile_Extended_State_Refused", {{"run_after_resume", run_after}, {"verdict", verdict}}), line_of_before("fault_ring: an extended state that faults: every hostile write refused with Bad_Operation, the area that was read accepted; ", run_after, ": ", verdict))
+				facts_expect_line(t, render(t, file, "Hostile_Frame_Refused", {{"refused_writes", count}, {"writes", other}, {"run_after", run_after}, {"verdict", verdict}}), line_of_before("fault_ring: a frame that a process cannot hold: ", count, " writes of ", other, " refused with Argument_Refused (the code selector of the kernel, the I/O privilege level, interrupts off, an instruction address that is not canonical); ", run_after, ": ", verdict))
+				facts_expect_line(t, render(t, file, "Hostile_Extended_State_Refused", {{"run_after_resume", run_after}, {"verdict", verdict}}), line_of_before("fault_ring: an extended state that faults: every hostile write refused with Argument_Refused, the area that was read accepted; ", run_after, ": ", verdict))
 			}
 			facts_expect_line(t, render(t, file, "Foreign_Thread_Refused", {{"refused_calls", count}, {"tried_calls", other}, {"verdict", verdict}}), line_of_before("fault_ring: the thread of another process: ", count, " calls of ", other, " refused; no number and no handle of this process names it", ": ", verdict))
 			facts_expect_line(t, render(t, file, "Handler_Records_Read", {{"records_read", count}, {"vector", other}, {"case_name", name}, {"verdict", verdict}}), line_of_before("fault_ring: ", name, ": the handler read ", count, " records; the stop report names the vector ", other, ": ", verdict))
@@ -572,26 +573,26 @@ the_facts_of_fault_ring_write_the_lines_of_before :: proc(t: ^testing.T) {
 			}
 		}
 		for status in statuses {
-			facts_expect_line(t, render(t, file, "Two_Stops_Two_Resumes", {{"third_resume", u64(status)}, {"after_one_resume", "still stopped after one Resume"}, {"after_two_resumes", "not running after the second"}, {"verdict", verdict}}), line_of_before("fault_ring: two stops, two resumes: ", "still stopped after one Resume", ", ", "not running after the second", "; a third Resume got ", op.STATUS_NAMES[status], ": ", verdict))
+			facts_expect_line(t, render(t, file, "Two_Stops_Two_Resumes", {{"third_resume", u64(status)}, {"after_one_resume", "still stopped after one Resume"}, {"after_two_resumes", "not running after the second"}, {"verdict", verdict}}), line_of_before("fault_ring: two stops, two resumes: ", "still stopped after one Resume", ", ", "not running after the second", "; a third Resume got ", call_outcome.CALL_OUTCOME_NAMES[status], ": ", verdict))
 			for result in DEMONSTRATION_COUNTS {
-				facts_expect_line(t, render(t, file, "Divide_Error_Skipped", {{"result", result}, {"resume_status", u64(status)}, {"verdict", verdict}}), line_of_before("fault_ring: a divide error skipped by its handler: Resume before the write got ", op.STATUS_NAMES[status], "; after the write of the instruction address and rax, the thread went on with ", result, ": ", verdict))
+				facts_expect_line(t, render(t, file, "Divide_Error_Skipped", {{"result", result}, {"resume_status", u64(status)}, {"verdict", verdict}}), line_of_before("fault_ring: a divide error skipped by its handler: Resume before the write got ", call_outcome.CALL_OUTCOME_NAMES[status], "; after the write of the instruction address and rax, the thread went on with ", result, ": ", verdict))
 			}
 		}
 		for cause in op.Stop_Cause {
 			facts_expect_line(t, render(t, file, "Stopped_Again", {{"cause", u64(cause)}, {"case_name", name}, {"verdict", verdict}}), line_of_before("fault_ring: ", name, ": stopped again by this process, the child keeps the stop cause ", op.STOP_CAUSE_TEXTS[cause], ": ", verdict))
 		}
 	}
-	for serial_answer in ([2]string{"refused with Bad_State, then the right answer resumed the thread: as it must", "not refused: WRONG"}) {
+	for serial_answer in ([2]string{"refused with Wrong_State, then the right answer resumed the thread: as it must", "not refused: WRONG"}) {
 		facts_expect_line(t, render(t, file, "Wrong_Serial_Answer", {{"serial_answer", serial_answer}}), line_of_before("fault_ring: an answer with a wrong serial: ", serial_answer))
 	}
 	step :: "Fault_Handler_Set with the kinds of the entries"
 	facts_expect_line(t, render(t, file, "Child_Step_Failed", {{"step", step}}), line_of_before("fault_ring: a child: ", step, " failed"))
 	for status in statuses {
 		for call in ([2]string{"memory_create", "memory_map"}) {
-			facts_expect_line(t, render(t, file, "Shared_Page_Failed", {{"call_status", u64(status)}, {"case_name", name}, {"failed_call", call}}), line_of_before("fault_ring: ", name, ": ", call, " of the shared page failed: ", op.STATUS_NAMES[status]))
+			facts_expect_line(t, render(t, file, "Shared_Page_Failed", {{"call_status", u64(status)}, {"case_name", name}, {"failed_call", call}}), line_of_before("fault_ring: ", name, ": ", call, " of the shared page failed: ", call_outcome.CALL_OUTCOME_NAMES[status]))
 		}
-		facts_expect_line(t, render(t, file, "Parent_Answer_Not_Refused", {{"answer_status", u64(status)}, {"case_name", name}}), line_of_before("fault_ring: ", name, ": Fault_Answer of the parent gave ", op.STATUS_NAMES[status], ", not Bad_State"))
-		facts_expect_line(t, render(t, file, "Parent_Thread_Not_Started", {{"start_status", u64(status)}, {"case_name", name}}), line_of_before("fault_ring: ", name, ": the thread of the parent did not start: ", op.STATUS_NAMES[status]))
+		facts_expect_line(t, render(t, file, "Parent_Answer_Not_Refused", {{"answer_status", u64(status)}, {"case_name", name}}), line_of_before("fault_ring: ", name, ": Fault_Answer of the parent gave ", call_outcome.CALL_OUTCOME_NAMES[status], ", not Wrong_State"))
+		facts_expect_line(t, render(t, file, "Parent_Thread_Not_Started", {{"start_status", u64(status)}, {"case_name", name}}), line_of_before("fault_ring: ", name, ": the thread of the parent did not start: ", call_outcome.CALL_OUTCOME_NAMES[status]))
 	}
 	for count in DEMONSTRATION_COUNTS {
 		other := max(u64) - count
@@ -678,12 +679,12 @@ the_facts_with_no_field_write_the_lines_of_before :: proc(t: ^testing.T) {
 		{"address_space", "address_space", "Refused_Stop_Stopped_Child", "address_space: WRONG: a refused Process_Stop stopped the child"},
 		{"address_space", "address_space", "Neighbour_Page_Not_Mapped", "address_space: page tables: the page of the other thread: no mapping: WRONG"},
 		{"time_page", "time_page", "Clock_Held", "time_page: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page"},
-		{"counters", "counters", "Start_Without_Right_Refused", "counters: Start_Counters with a copy of the machine handle with no right gave No_Right: as it must"},
-		{"counters", "counters", "Counters_Unsupported", "counters: Read_Counters and Start_Counters gave Bad_Operation with the error kind Unsupported: the processors of this machine have no counters that the kernel uses: as it must"},
-		{"counters", "counters", "Read_Before_Start_Refused", "counters: Read_Counters before Start_Counters gave Bad_State: as it must"},
+		{"counters", "counters", "Start_Without_Right_Refused", "counters: Start_Counters with a copy of the machine handle with no right gave Grant_Or_Right_Missing: as it must"},
+		{"counters", "counters", "Counters_Unsupported", "counters: Read_Counters and Start_Counters gave Operation_Unsupported with the error kind Unsupported: the processors of this machine have no counters that the kernel uses: as it must"},
+		{"counters", "counters", "Read_Before_Start_Refused", "counters: Read_Counters before Start_Counters gave Wrong_State: as it must"},
 		{"counters", "counters", "Second_Read_Below_First", "counters: failed: a second read gave a count below the first"},
 		{"counters", "counters", "Second_Read_Not_Below", "counters: a second read gave no count below the first: as it must"},
-		{"counters", "counters", "Stop_Without_Handle_Checked", "counters: Stop_Counters with no handle gave Ok, and Read_Counters after it gave Bad_State: as it must"},
+		{"counters", "counters", "Stop_Without_Handle_Checked", "counters: Stop_Counters with no handle gave Succeeded, and Read_Counters after it gave Wrong_State: as it must"},
 		{"counters", "counters", "Counters_Held", "counters: ok"},
 		{"debugged", "debugged", "No_Shared_Page", "debugged: no shared page"},
 		{"debugged", "debugged", "Child_Not_Started", "debugged: a child did not start"},
@@ -724,10 +725,10 @@ the_facts_with_no_field_write_the_lines_of_before :: proc(t: ^testing.T) {
 		{"fetch", "fetch", "Sequence_Secret_Taken", "fetch: the secret of the initial sequence numbers from the generator of the process"},
 		{"fetch", "fetch", "Connection_Ended", "fetch: the connection ended, its record is free"},
 		{"frames", "frames", "No_Random_Seed", "frames: no random seed in the context"},
-		{"guest_demo", "guest_demo", "Guests_Unsupported", "guest_demo: Guest_Run gave Bad_Operation with the error kind Unsupported: the processors of this machine have no virtualization support that the kernel uses, and no guest runs: as it must"},
+		{"guest_demo", "guest_demo", "Guests_Unsupported", "guest_demo: Guest_Run gave Operation_Unsupported with the error kind Unsupported: the processors of this machine have no virtualization support that the kernel uses, and no guest runs: as it must"},
 		{"guest_demo", "guest_demo", "Port_Written_Then_Halted", "guest_demo: the guest wrote 42 to the port 0x80, then halted after it: as it must"},
 		{"guest_demo", "guest_demo", "Debug_Exit_Arrived", "guest_demo: the int1 of the guest arrived as an exit Other with the exit code 0x88: as it must"},
-		{"guest_demo", "guest_demo", "Guest_Start_Refused", "guest_demo: Process_Start of the guest gave Bad_State: as it must"},
+		{"guest_demo", "guest_demo", "Guest_Start_Refused", "guest_demo: Process_Start of the guest gave Wrong_State: as it must"},
 		{"guest_demo", "guest_demo", "Guest_Demo_Held", "guest_demo: ok"},
 		{"heron", "heron", "No_Random_Seed", "heron: no random seed in the context"},
 		{"heron", "heron", "First_Picture_Presented", "heron: ok, the first picture is presented"},
@@ -778,7 +779,7 @@ DEMONSTRATION_WORDS := [4]u64{0, 1, 0x5eed000000000003, max(u64)}
 // The status words of these tests: the first member, a refusal, the last
 // member, one past it, and the largest word, which name no member.
 @(private = "file")
-DEMONSTRATION_STATUS_WORDS := [5]u64{u64(min(op.Status)), u64(op.Status.No_Right), u64(max(op.Status)), u64(max(op.Status)) + 1, max(u64)}
+DEMONSTRATION_STATUS_WORDS := [5]u64{u64(min(call_outcome.Call_Outcome)), u64(call_outcome.Call_Outcome.Grant_Or_Right_Missing), u64(max(call_outcome.Call_Outcome)), u64(max(call_outcome.Call_Outcome)) + 1, max(u64)}
 
 // Each fact type of address_space of the second round writes its line: the
 // library refusal of a stop with each status word, the measures, the guard
@@ -984,7 +985,7 @@ the_facts_of_fault_ring_of_the_second_round_write_their_lines :: proc(t: ^testin
 		return fact_test_render(t, file, "fault_ring", type_name, values)
 	}
 	name :: "a word wait, a fault, a decommit of the word"
-	statuses := [2]op.Status{min(op.Status), max(op.Status)}
+	statuses := [2]call_outcome.Call_Outcome{min(call_outcome.Call_Outcome), max(call_outcome.Call_Outcome)}
 	for verdict in DEMONSTRATION_VERDICTS {
 		for word in DEMONSTRATION_WORDS {
 			other := max(u64) - word
@@ -1013,7 +1014,7 @@ the_facts_of_fault_ring_of_the_second_round_write_their_lines :: proc(t: ^testin
 		}
 		for status in statuses {
 			for answer in ([2]string{"Ok", "an error"}) {
-				facts_expect_line(t, render(t, file, "Thread_Handle_Rights", {{"control_stop", u64(status)}, {"control_read", u64(status)}, {"control_write", u64(status)}, {"inspect_write", u64(status)}, {"write_only", u64(status)}, {"inspect_answer", answer}, {"verdict", verdict}}), line_of_before("fault_ring: the rights of a thread handle: with Read and Control, Stop got ", op.STATUS_NAMES[status], ", Read_Registers ", op.STATUS_NAMES[status], ", Write_Registers ", op.STATUS_NAMES[status], "; with Inspect only, Stop, Read_Registers and Resume got ", answer, ", Write_Registers ", op.STATUS_NAMES[status], "; with Write only, Write_Registers got ", op.STATUS_NAMES[status], "; the thread kept running", ": ", verdict))
+				facts_expect_line(t, render(t, file, "Thread_Handle_Rights", {{"control_stop", u64(status)}, {"control_read", u64(status)}, {"control_write", u64(status)}, {"inspect_write", u64(status)}, {"write_only", u64(status)}, {"inspect_answer", answer}, {"verdict", verdict}}), line_of_before("fault_ring: the rights of a thread handle: with Read and Control, Stop got ", call_outcome.CALL_OUTCOME_NAMES[status], ", Read_Registers ", call_outcome.CALL_OUTCOME_NAMES[status], ", Write_Registers ", call_outcome.CALL_OUTCOME_NAMES[status], "; with Inspect only, Stop, Read_Registers and Resume got ", answer, ", Write_Registers ", call_outcome.CALL_OUTCOME_NAMES[status], "; with Write only, Write_Registers got ", call_outcome.CALL_OUTCOME_NAMES[status], "; the thread kept running", ": ", verdict))
 			}
 		}
 		Outcome_Line :: struct {

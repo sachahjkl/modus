@@ -62,13 +62,13 @@ picker_region_open :: proc "contextless" (ctx: ^system.Context) {
 	if handle := ctx.handles[powerbox.PICKER_REGION_SLOT]; handle != 0 {
 		pages, size_status := system.memory_size(handle)
 		address, map_status := system.memory_map(handle, {.Write})
-		if size_status == .Ok && map_status == .Ok && pages >= powerbox.PICKER_REGION_PAGES {
+		if size_status == .Succeeded && map_status == .Succeeded && pages >= powerbox.PICKER_REGION_PAGES {
 			picker_region = ([^]u8)(address)[:pages * system.PAGE_SIZE]
 		}
 	}
 	if handle := ctx.handles[powerbox.IMAGE_SLOT]; handle != 0 {
 		address, map_status := system.memory_map(handle, {})
-		if map_status == .Ok {
+		if map_status == .Succeeded {
 			image = ([^]u8)(address)[:ctx.values[powerbox.CONTEXT_VALUE_IMAGE_SIZE]]
 		}
 	}

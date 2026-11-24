@@ -723,11 +723,11 @@ share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors
 		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Connections, 0, 0, SHARE_CAPACITY)
 	}
 	ring_memory, ring_status := system.memory_create(ring.PAGE_COUNT)
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 0, 0, 0, i64(ring_status))
 	}
 	region_memory, region_status := system.memory_create(isolated.REGION_PAGES)
-	if region_status != .Ok {
+	if region_status != .Succeeded {
 		system.close(ring_memory)
 		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 0, 0, 0, i64(region_status))
 	}
@@ -743,10 +743,10 @@ share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors
 	// process that has one.
 	given_ring, give_status := system.give(caller.connection.ring_memory, ring_memory, {.Give, .Read, .Write})
 	given_region: system.Handle
-	if give_status == .Ok {
+	if give_status == .Succeeded {
 		given_region, give_status = system.give(caller.connection.ring_memory, region_memory, {.Give, .Read, .Write})
 	}
-	if give_status != .Ok {
+	if give_status != .Succeeded {
 		system.handle_revoke(ring_memory)
 		system.connection_end(&connection)
 		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 0, 0, 0, i64(give_status))
@@ -1378,8 +1378,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service.disconnected = connection_ended
 	service.principal_keys = storage_principal_keys // principal_keys.odin
 	ring_memory := ctx.handles[block.GRANT_RING]
-	status: system.Status
-	if blocks, status = system.ring_open(ring_memory); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if blocks, status = system.ring_open(ring_memory); status != .Succeeded {
 		system.log_fact(.Error, No_Block_Ring{})
 		system.stop(.Failed)
 	}
@@ -1390,22 +1390,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	memory, memory_status := system.memory_create(REGION_BLOCKS, 0, {.Contiguous}) // The device reads and writes it.
 	address, map_status := system.memory_map(memory, {.Write})
-	if memory_status != .Ok || map_status != .Ok {
+	if memory_status != .Succeeded || map_status != .Succeeded {
 		system.log_fact(.Error, No_Data_Region{})
 		system.stop(.Failed)
 	}
 	region = ([^]u8)(address)
 	// The block service maps the ring when it starts.
 	given: system.Handle
-	give_status := system.Status.Bad_Handle
-	for attempt := 0; attempt < 2000 && give_status != .Ok; attempt += 1 {
-		if given, give_status = system.give(ring_memory, memory, {.Read, .Write}); give_status != .Ok {
+	give_status := call_outcome.Call_Outcome.Argument_Refused
+	for attempt := 0; attempt < 2000 && give_status != .Succeeded; attempt += 1 {
+		if given, give_status = system.give(ring_memory, memory, {.Read, .Write}); give_status != .Succeeded {
 			system.sleep(system.time() + 1)
 		}
 	}
 	// A block service that stopped before it mapped the ring: the disk is
 	// silent, as at a stop during a wait.
-	if give_status != .Ok {
+	if give_status != .Succeeded {
 		if state, _, _ := system.process_state(block_service); system.answer_wait_of(system.time(), system.WAIT_FOREVER, state) == .Stopped {
 			disk_silence_note(.Block_Service_Stopped)
 		}
@@ -1417,7 +1417,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// holds a request, a new wait and new lines; and the device can still
 	// write the data region, which a stop would free. It serves on, and
 	// refuses each call with Device (disk_unopened_refusal).
-	if give_status != .Ok || command(.Attach, {0 = u64(given)}).kind != u32(call_outcome.Call_Outcome.Succeeded) {
+	if give_status != .Succeeded || command(.Attach, {0 = u64(given)}).kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		if !disk_silent {
 			system.log_fact(.Error, Data_Region_Refused{})
 			system.stop(.Failed)

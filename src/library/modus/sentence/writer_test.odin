@@ -1,7 +1,7 @@
 #+build !freestanding
 package sentence
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 import "core:testing"
 
@@ -73,7 +73,7 @@ a_value_with_a_kind_writes_the_same_text :: proc(t: ^testing.T) {
 	testing.expect_value(t, format(first[:], Duration{5, .Nanoseconds}), format(second[:], u64(5), " ns"))
 	testing.expect_value(t, format(first[:], Duration{3, .Seconds}), format(second[:], u64(3), " s"))
 	testing.expect_value(t, format(first[:], Module_Name{"storage"}), "storage")
-	testing.expect_value(t, format(first[:], op.Status.No_Budget), format(second[:], u64(8)))
+	testing.expect_value(t, format(first[:], call_outcome.Call_Outcome.Budget_Or_Capacity_Exhausted), format(second[:], u64(call_outcome.Call_Outcome.Budget_Or_Capacity_Exhausted)))
 	// The head of a hash: the hexadecimal of a Hex of its first 8 bytes,
 	// as the kernel wrote it.
 	hash := [32]u8{0 = 0x0A, 1 = 0x1B, 2 = 0x2C, 3 = 0x3D, 4 = 0x4E, 5 = 0x5F, 6 = 0x60, 7 = 0xF7}
@@ -91,5 +91,5 @@ each_part_has_its_kind :: proc(t: ^testing.T) {
 	testing.expect_value(t, part_kind(Duration{1, .Seconds}), value_kinds.Value_Kind.Time)
 	testing.expect_value(t, part_kind(Hash{}), value_kinds.Value_Kind.Version)
 	testing.expect_value(t, part_kind(Module_Name{"root"}), value_kinds.Value_Kind.Module)
-	testing.expect_value(t, part_kind(op.Status.Ok), value_kinds.Value_Kind.Status)
+	testing.expect_value(t, part_kind(call_outcome.Call_Outcome.Succeeded), value_kinds.Value_Kind.Status)
 }

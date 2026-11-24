@@ -377,15 +377,15 @@ remote_cache_bind :: proc "contextless" (ctx: ^system.Context) {
 		return
 	}
 	opened_ring, ring_status := system.ring_open(ring_handle)
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		return
 	}
 	pages, size_status := system.memory_size(region_handle)
-	if size_status != .Ok || pages * system.PAGE_SIZE < (REMOTE_CACHE_SEND_FIRST + REMOTE_CACHE_SEND_SLOTS) * REMOTE_CACHE_PLACE_SIZE {
+	if size_status != .Succeeded || pages * system.PAGE_SIZE < (REMOTE_CACHE_SEND_FIRST + REMOTE_CACHE_SEND_SLOTS) * REMOTE_CACHE_PLACE_SIZE {
 		return
 	}
 	addr, map_status := system.memory_map(region_handle, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return
 	}
 	remote_cache.datagrams = opened_ring

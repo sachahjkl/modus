@@ -47,7 +47,7 @@ framebuffer_open :: proc "contextless" (ctx: ^system.Context) -> graphics.Canvas
 		return {}
 	}
 	address, status := system.memory_map(handle, {.Write})
-	if status != .Ok {
+	if status != .Succeeded {
 		return {}
 	}
 	return {pixels = ([^]graphics.Color)(address), width = int(width), height = int(height), stride = int(pixels_per_line)}
@@ -63,7 +63,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	terminal_ring, ring_status := system.ring_open(ring_handle)
 	text_address, map_status := system.memory_map(text_handle, {})
-	if ring_status != .Ok || map_status != .Ok {
+	if ring_status != .Succeeded || map_status != .Succeeded {
 		system.log(.Error, "grid_terminal: cannot map terminal ring or text region")
 		system.stop(.Failed)
 	}
@@ -79,7 +79,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	has_input := false
 	if input_handle := ctx.handles[terminal_records.GRANT_INPUT]; input_handle != 0 {
 		opened, input_status := system.ring_open(input_handle)
-		if input_status == .Ok {
+		if input_status == .Succeeded {
 			input_ring, has_input = opened, true
 		}
 	}

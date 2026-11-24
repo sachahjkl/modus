@@ -1683,15 +1683,15 @@ device_slot :: proc "contextless" (requester: u16, process_index: u32) -> (slot:
 		}
 		if device.requester == requester {
 			if device.owner != process_index || device.owner_serial != processes[process_index].serial {
-				return 0, .Bad_State
+				return 0, .Wrong_State
 			}
-			return u32(index), .Ok
+			return u32(index), .Succeeded
 		}
 	}
 	if free == IOMMU_DEVICE_CAPACITY {
-		return 0, .No_Slot
+		return 0, .Callee_Busy
 	}
-	return free, .Ok
+	return free, .Succeeded
 }
 
 // table_take takes a zero page for a table of a domain, paid by a budget;
@@ -1895,13 +1895,13 @@ declare_to_device :: proc "contextless" (process_index: u32, requester: u16, slo
 		case writable && region.declared_writable & bit == 0:
 			object_pages_change(slot, region_index, .Allow_Write)
 			region.declared_writable |= bit
-			return .Write_Allowed, false, .Ok
+			return .Write_Allowed, false, .Succeeded
 		case !write_held && region.declared_writable & bit != 0:
 			object_pages_change(slot, region_index, .Deny_Write)
 			region.declared_writable &~= bit
-			return .Write_Denied, false, .Ok
+			return .Write_Denied, false, .Succeeded
 		}
-		return .None, false, .Ok
+		return .None, false, .Succeeded
 	}
 	budget := &processes[process_index].budget
 	new_domain := device.owner == 0
@@ -1910,20 +1910,20 @@ declare_to_device :: proc "contextless" (process_index: u32, requester: u16, slo
 		// covers, on a bus with the entries of the unit.
 		unit, covered := unit_of(requester)
 		if !covered || !bus_translated(unit, iommu.requester_bus(requester)) {
-			return .None, false, .Bad_State
+			return .None, false, .Wrong_State
 		}
 		device^ = {requester = requester, unit = unit}
 		device.top = table_take(budget)
 		if device.top == 0 {
 			device^ = {}
-			return .None, false, .No_Budget
+			return .None, false, .Budget_Or_Capacity_Exhausted
 		}
 		// The firmware keeps using the reserved ranges of the device while
 		// the service drives it.
 		if !reserved_ranges_map(requester, device.top, iommu_units[unit].levels, budget) {
 			budget_peak.give_back(&budgets[budget^].amounts.pages, tables_free(device.top, iommu_units[unit].levels))
 			device^ = {}
-			return .None, false, .No_Budget
+			return .None, false, .Budget_Or_Capacity_Exhausted
 		}
 	}
 	if !object_pages_change(slot, region_index, .Map, writable, budget) {
@@ -1932,10 +1932,10 @@ declare_to_device :: proc "contextless" (process_index: u32, requester: u16, slo
 			// return at once, and nothing was visible to the device.
 			budget_peak.give_back(&budgets[budget^].amounts.pages, tables_free(device.top, iommu_units[device.unit].levels))
 			device^ = {}
-			return .None, false, .No_Budget
+			return .None, false, .Budget_Or_Capacity_Exhausted
 		}
 		object_pages_change(slot, region_index, .Clear)
-		return .Undone, false, .No_Budget
+		return .Undone, false, .Budget_Or_Capacity_Exhausted
 	}
 	region.declared |= bit
 	if writable {
@@ -1953,9 +1953,9 @@ declare_to_device :: proc "contextless" (process_index: u32, requester: u16, slo
 		}
 		device_entry_write(device.unit, requester, true, device.top, u16(slot + 1))
 		device.present = true
-		return .Mapped, true, .Ok
+		return .Mapped, true, .Succeeded
 	}
-	return .Mapped, false, .Ok
+	return .Mapped, false, .Succeeded
 }
 
 // write_deny_for takes the write out of the pages of a memory object in
@@ -2041,13 +2041,13 @@ bridge_domain_check :: proc "contextless" (process: ^Process, requester: u32) ->
 	walk := Bus_Walk{group = requester, holder = process}
 	buses_walk(&walk)
 	if !walk.unheld && walk.member_count != 0 {
-		return walk.member_count, .Ok
+		return walk.member_count, .Succeeded
 	}
 	if !walk.unheld {
-		return 0, .Bad_State // The root service numbered the bus again: no function shares it now.
+		return 0, .Wrong_State // The root service numbered the bus again: no function shares it now.
 	}
 	if intrinsics.atomic_exchange(&iommu_bridge_refusal_last, 1 + u32(walk.unheld_requester)) == 1 + u32(walk.unheld_requester) {
-		return 0, .Bad_State
+		return 0, .Wrong_State
 	}
 	shared := u16(requester - 1)
 	if walk.odd_bridge {
@@ -2055,7 +2055,7 @@ bridge_domain_check :: proc "contextless" (process: ^Process, requester: u32) ->
 	} else {
 		log("kernel: IOMMU: the service ", process_name(process), " does not hold the registers of the device at bus ", u64(iommu.requester_bus(walk.unheld_requester)), ", device ", u64(iommu.requester_device(walk.unheld_requester)), ", function ", u64(iommu.requester_function(walk.unheld_requester)), ", which shares the requester at bus ", u64(iommu.requester_bus(shared)), ", device ", u64(iommu.requester_device(shared)), ", function ", u64(iommu.requester_function(shared)), " behind a conventional bridge: the declaration is refused, and they get no domain")
 	}
-	return 0, .Bad_State
+	return 0, .Wrong_State
 }
 
 // region_end_for takes the pages of a memory object out of the domains of
@@ -2129,9 +2129,9 @@ declare :: proc "contextless" (process_index: u32, region_index: u32, writable: 
 	region := &regions[region_index]
 	if !iommu_in_use || region.device {
 		if !region.contiguous {
-			return 0, .Bad_Operation // Its frames come at first use, from anywhere: no one address names them.
+			return 0, .Argument_Refused // Its frames come at first use, from anywhere: no one address names them.
 		}
-		return region.physical, .Ok
+		return region.physical, .Succeeded
 	}
 	process := &processes[process_index]
 	requesters: [IOMMU_DEVICES_OF_A_SERVICE]u32
@@ -2152,16 +2152,16 @@ declare :: proc "contextless" (process_index: u32, region_index: u32, writable: 
 			continue
 		}
 		if count == len(requesters) {
-			return 0, .No_Slot
+			return 0, .Callee_Busy
 		}
 		requesters[count] = requester
 		count += 1
 	}
 	if count == 0 {
 		if !region.contiguous {
-			return 0, .Bad_Operation // No device of the caller has a window for it.
+			return 0, .Argument_Refused // No device of the caller has a window for it.
 		}
-		return region.physical, .Ok
+		return region.physical, .Succeeded
 	}
 	// Each unit of the call translates the whole object: the identity pages
 	// end below the windows and below the width of the unit, and a window
@@ -2170,7 +2170,7 @@ declare :: proc "contextless" (process_index: u32, region_index: u32, writable: 
 		unit, _ := unit_of(u16(requester - 1))
 		beyond := region.contiguous ? (region.physical + region.page_count * PAGE_SIZE > iommu_units[unit].address_end) : !iommu_units[unit].windows
 		if beyond {
-			return 0, .Bad_Operation
+			return 0, .Argument_Refused
 		}
 	}
 	// The devices behind a conventional bridge share one requester, so one
@@ -2194,20 +2194,20 @@ declare :: proc "contextless" (process_index: u32, region_index: u32, writable: 
 			return 0, .Needs_Control
 		}
 		members, check_status := bridge_domain_check(process, requester)
-		if check_status != .Ok {
+		if check_status != .Succeeded {
 			return 0, check_status
 		}
 		member_counts[index] = members
 	}
 	if region.contiguous {
 		if region.physical + region.page_count * PAGE_SIZE > iommu.WINDOW_BASE {
-			return 0, .Bad_Operation
+			return 0, .Argument_Refused
 		}
 	} else {
 		// A decommit would take a frame from under the device; an object
 		// larger than its window would reach the window of the next slot.
 		if region.uncommitted || region.page_count > iommu.WINDOW_PAGES {
-			return 0, .Bad_Operation
+			return 0, .Argument_Refused
 		}
 		// Each page gets its frame before the frame lock: the region lock
 		// comes first in the lock order. The frames do not move until the
@@ -2221,14 +2221,14 @@ declare :: proc "contextless" (process_index: u32, region_index: u32, writable: 
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
 	if !region.contiguous && !iommu_window_take(region) {
-		return 0, .No_Slot
+		return 0, .Callee_Busy
 	}
 	added, write_allowed, changed, made: u32
-	status = .Ok
+	status = .Succeeded
 	for requester, index in requesters[:count] {
 		slot: u32
 		slot, status = device_slot(u16(requester - 1), process_index)
-		if status != .Ok {
+		if status != .Succeeded {
 			break
 		}
 		// A domain of a shared requester that this call did not check: its
@@ -2239,8 +2239,8 @@ declare :: proc "contextless" (process_index: u32, region_index: u32, writable: 
 			// With the control lock the domain is gone: a state that the
 			// call cannot change.
 			status = require_control()
-			if status == .Ok {
-				status = .Bad_State
+			if status == .Succeeded {
+				status = .Wrong_State
 			}
 			break
 		}
@@ -2264,11 +2264,11 @@ declare :: proc "contextless" (process_index: u32, region_index: u32, writable: 
 		case .Write_Denied, .Undone:
 			changed |= 1 << slot
 		}
-		if status != .Ok {
+		if status != .Succeeded {
 			break
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		// The device could use a new entry before the undo: the undo
 		// invalidates.
 		changed |= region_end_for(region_index, added)
@@ -2280,7 +2280,7 @@ declare :: proc "contextless" (process_index: u32, region_index: u32, writable: 
 	// A declaration that failed and left no device with the pages gives
 	// its window back.
 	iommu_window_return(region_index)
-	if status != .Ok {
+	if status != .Succeeded {
 		return 0, status
 	}
 	for members, index in member_counts[:count] {
@@ -2292,7 +2292,7 @@ declare :: proc "contextless" (process_index: u32, region_index: u32, writable: 
 		shared := u16(requesters[index] - 1)
 		log("kernel: IOMMU: the service ", process_name(process), " holds the registers of each of the ", u64(members), " devices that share the requester at bus ", u64(iommu.requester_bus(shared)), ", device ", u64(iommu.requester_device(shared)), ", function ", u64(iommu.requester_function(shared)), " behind a conventional bridge: they have one domain")
 	}
-	return device_address(region_index), .Ok
+	return device_address(region_index), .Succeeded
 }
 
 // iommu_region_end_held takes the pages of a memory object out of each

@@ -1,5 +1,6 @@
 package system
 
+import "modus:contract/call_outcome"
 import op "modus:contract/operation"
 import "base:intrinsics"
 
@@ -34,11 +35,11 @@ Log_Record :: op.Log_Record
 // at the record 0. The memory needs **Read**; the status is the one of
 // `memory_map`. A reader that starts late loses the old records: the first
 // `log_next` gives their count in `lost`.
-log_open :: proc "contextless" (memory: Handle) -> (reader: Log_Reader, status: Status) {
+log_open :: proc "contextless" (memory: Handle) -> (reader: Log_Reader, status: call_outcome.Call_Outcome) {
 	address := memory_map(memory, {}) or_return
 	reader.head = (^op.Log_Head)(address)
 	reader.records = ([^]op.Log_Record)(rawptr(uintptr(address) + size_of(op.Log_Head)))
-	return reader, .Ok
+	return reader, .Succeeded
 }
 
 // log_next gives the next record. lost is the count of records that the

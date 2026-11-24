@@ -3,6 +3,7 @@ package system
 
 import "core:slice"
 import "core:testing"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
@@ -55,8 +56,8 @@ kernel_commands_push_refuses_a_batch_that_does_not_fit :: proc(t: ^testing.T) {
 		defer delete(memory)
 		kernel := kernel_ring_of(t, memory)
 		error: errors.Error_Record
-		first_tag, pushed := kernel_commands_push(&kernel, commands[:batch.count], batch.places, &error)
-		testing.expectf(t, !pushed, "a batch of %v commands with %v places is taken", batch.count, batch.places)
+		first_tag, push_outcome := kernel_commands_push(&kernel, commands[:batch.count], batch.places, &error)
+		testing.expectf(t, push_outcome == .Argument_Refused, "a batch of %v commands with %v places gives %v", batch.count, batch.places, push_outcome)
 		testing.expect_value(t, first_tag, 0)
 		testing.expect(t, ring.empty(&kernel.commands), "a refused batch writes a command")
 		testing.expect_value(t, error.kind, i64(batch.kind))
@@ -99,8 +100,8 @@ kernel_commands_push_refuses_a_ring_that_holds_a_record :: proc(t: ^testing.T) {
 		before := slice.clone(memory)
 		defer delete(before)
 		error: errors.Error_Record
-		first_tag, pushed := kernel_commands_push(&kernel, commands[:], len(commands), &error)
-		testing.expectf(t, !pushed, "a ring with %v records that wait takes a command", held.waiting)
+		first_tag, push_outcome := kernel_commands_push(&kernel, commands[:], len(commands), &error)
+		testing.expectf(t, push_outcome == .Callee_Busy, "a ring with %v records that wait gives %v", held.waiting, push_outcome)
 		testing.expect_value(t, first_tag, 0)
 		testing.expect(t, slice.equal(before, memory), "a refused push writes no byte of the ring")
 		testing.expect_value(t, error.kind, i64(errors.Kind.Busy))
@@ -116,8 +117,8 @@ kernel_commands_push_refuses_a_ring_that_holds_a_record :: proc(t: ^testing.T) {
 	kernel.head.completions.write = 1
 	before := slice.clone(memory)
 	defer delete(before)
-	_, pushed := kernel_commands_push(&kernel, commands[:], len(commands), nil)
-	testing.expect(t, !pushed, "a ring with a completion takes a command with no error record")
+	_, push_outcome := kernel_commands_push(&kernel, commands[:], len(commands), nil)
+	testing.expect_value(t, push_outcome, call_outcome.Call_Outcome.Callee_Busy)
 	testing.expect(t, slice.equal(before, memory), "a refused push with no error record writes no byte")
 }
 
@@ -144,7 +145,7 @@ kernel_completions_take_refuses_an_answer_that_is_not_its_own :: proc(t: ^testin
 		testing.expect_value(t, completions[0], ring.Record{})
 		testing.expect_value(t, error.kind, i64(errors.Kind.Refused))
 		testing.expect_value(t, error.operation, i64(op.Operation.Memory_Size))
-		testing.expect_value(t, error.found, i64(Status.Bad_Operation))
+		testing.expect_value(t, error.found, i64(call_outcome.Call_Outcome.Answer_Unreadable))
 	}
 	other_tags := [?]u32{FIRST_TAG - 1, FIRST_TAG + 1, 0, max(u32)}
 	for other in other_tags {
@@ -283,8 +284,8 @@ kernel_commands_push_and_take_give_the_answer_of_each_command :: proc(t: ^testin
 	completions: [ring.CAPACITY]ring.Record
 	last_tag_before: u32
 	for count, round in ([?]int{1, ring.CAPACITY}) {
-		first_tag, pushed := kernel_commands_push(&kernel, commands[:count], count, &error)
-		testing.expectf(t, pushed, "an empty ring refuses a batch of %v", count)
+		first_tag, push_outcome := kernel_commands_push(&kernel, commands[:count], count, &error)
+		testing.expectf(t, push_outcome == .Succeeded, "an empty ring refuses a batch of %v with %v", count, push_outcome)
 		if round > 0 {
 			testing.expect(t, first_tag > last_tag_before, "two batches share a tag")
 		}
@@ -295,7 +296,7 @@ kernel_commands_push_and_take_give_the_answer_of_each_command :: proc(t: ^testin
 			written := TEST_COMMAND
 			written.tag = first_tag + u32(index)
 			testing.expect_value(t, command, written)
-			testing.expect(t, ring.push(&kernel.completions, ring.Record{kind = u32(Status.Ok), tag = written.tag, values = {0 = u64(index)}}))
+			testing.expect(t, ring.push(&kernel.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Succeeded), tag = written.tag, values = {0 = u64(index)}}))
 		}
 		taken := kernel_completions_take(&kernel, first_tag, commands[:count], completions[:count], &error)
 		testing.expect(t, taken, "the answers of the batch are refused")

@@ -103,20 +103,10 @@ history_end_names := [input_history.History_End_Reason]string {
 	.Divergence          = "divergence",
 }
 
-// kernel_refused gives the result of an export whose kernel operation on
-// the debugged process failed: the record of the kernel when it gave one,
-// else Refused with the status. The outcome is the one of session_refused.
-kernel_refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status) -> call_outcome.Call_Outcome {
-	if error != nil && error.kind != i64(errors.Kind.None) {
-		return status == .Bad_State ? .Wrong_State : system.outcome_of_own_status(status)
-	}
-	return session_refused(error, status)
-}
-
 // own_kernel_refused gives the outcome of a kernel refusal on an object
 // that the service owns (its history memory), never blaming the caller.
-own_kernel_refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Status) -> call_outcome.Call_Outcome {
-	outcome := system.outcome_of_own_status(status)
+own_kernel_refused :: proc "contextless" (error: ^errors.Error_Record, status: call_outcome.Call_Outcome) -> call_outcome.Call_Outcome {
+	outcome := system.own_operation_outcome(status)
 	if error != nil && error.kind != i64(errors.Kind.None) {
 		return outcome
 	}
@@ -222,19 +212,19 @@ record_of_caller :: proc "contextless" (error: ^errors.Error_Record) -> (failure
 record_begin :: proc "contextless" (error: ^errors.Error_Record) -> (failure: call_outcome.Call_Outcome) {
 	record_session_release()
 	history, made := system.memory_create(HISTORY_PAGES, flags = {.Contiguous}, error = error)
-	if made != .Ok {
+	if made != .Succeeded {
 		return own_kernel_refused(error, made)
 	}
 	record_session.history = history
 	address, mapped := system.memory_map(history, {}, error = error)
-	if mapped != .Ok {
+	if mapped != .Succeeded {
 		record_session_release()
 		return own_kernel_refused(error, mapped)
 	}
 	record_session.bytes = ([^]u8)(address)[:HISTORY_PAGES * system.PAGE_SIZE]
-	if started := system.process_record_start(session.process, history, error); started != .Ok {
+	if started := system.process_record_start(session.process, history, error); started != .Succeeded {
 		record_session_release()
-		return kernel_refused(error, started)
+		return session_refused(error, started)
 	}
 	input_history.checkpoint_ring_init(&record_session.checkpoints)
 	record_session.caller_ring = session.caller_ring
@@ -321,7 +311,7 @@ held_session_begin :: proc "contextless" (name: string, caller: ^system.Connecti
 			break
 		}
 	}
-	if status := system.debug_attach(handle); status != .Ok {
+	if status := system.debug_attach(handle); status != .Succeeded {
 		system.close(handle)
 		root_debug_start(name, caller.ring_memory, .Abandon)
 		return session_refused(error, status)
@@ -380,10 +370,10 @@ replay_begin :: proc "contextless" (caller: ^system.Connection, error: ^errors.E
 		}
 		return refuse(error, .Argument_Refused, .Bad_Value, .Processes, 1, i64(matches), 1)
 	}
-	if status := system.process_replay_start(handle, record_session.history, error); status != .Ok {
+	if status := system.process_replay_start(handle, record_session.history, error); status != .Succeeded {
 		system.close(handle)
 		root_debug_start(name, caller.ring_memory, .Abandon)
-		return kernel_refused(error, status)
+		return session_refused(error, status)
 	}
 	released, released_answered := root_debug_start(name, caller.ring_memory, .Release)
 	if !released_answered {

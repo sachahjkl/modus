@@ -123,27 +123,27 @@ word_wake :: proc "contextless" (word: u64, count: u64) -> (woken: u64) {
 // in a bucket.
 wait_room_set :: proc "contextless" (thread: ^Thread, process: ^Process, words: u64) -> (capacity: u64, status: Operation_Outcome) {
 	if words > op.WORD_WAIT_MOST {
-		return 0, .Bad_Operation
+		return 0, .Argument_Refused
 	}
 	if thread.word_count != 0 {
-		return 0, .Bad_State
+		return 0, .Wrong_State
 	}
 	pages := op.wait_room_pages(words)
 	if pages == u64(thread.wait_room_pages) {
-		return op.wait_room_words(pages), .Ok
+		return op.wait_room_words(pages), .Succeeded
 	}
 	room: u64
 	if pages != 0 {
 		room = frame_paid(&process.budget)
 		if room == 0 {
-			return 0, .No_Budget
+			return 0, .Budget_Or_Capacity_Exhausted
 		}
 		names := direct(room, [op.WAIT_ROOM_PAGES_MOST]u64)
 		for page in 0 ..< pages - 1 {
 			names[page] = frame_paid(&process.budget)
 			if names[page] == 0 {
 				wait_room_give_back(room, u32(pages), &process.budget)
-				return 0, .No_Budget
+				return 0, .Budget_Or_Capacity_Exhausted
 			}
 		}
 	}
@@ -156,7 +156,7 @@ wait_room_set :: proc "contextless" (thread: ^Thread, process: ^Process, words: 
 	if record := thread.record_in_kernel; record != nil {
 		intrinsics.atomic_store(&record.wait_room_words, u32(op.wait_room_words(pages)))
 	}
-	return op.wait_room_words(pages), .Ok
+	return op.wait_room_words(pages), .Succeeded
 }
 
 // wait_room_end gives the pages of the wait room of a thread back to the

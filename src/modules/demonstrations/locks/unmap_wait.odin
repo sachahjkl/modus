@@ -19,12 +19,12 @@ unmap_wait_case :: proc "contextless" (image: []u8) {
 	right := false
 	defer system.log_fact(.Info, Unmap_Wakes_Waiter{unmap_woke = unmap_woke, other_woken = other_woken, verdict = verdict_field(right)})
 	board_memory, memory_status := system.memory_create(1)
-	if memory_status != .Ok {
+	if memory_status != .Succeeded {
 		return
 	}
 	defer system.close(board_memory)
 	address, map_status := system.memory_map(board_memory)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return
 	}
 	defer system.memory_unmap(address)
@@ -35,7 +35,7 @@ unmap_wait_case :: proc "contextless" (image: []u8) {
 	values[lockers.VALUE_ROLE] = u64(lockers.Role.Unmap_Wait)
 	values[lockers.VALUE_INDEX] = 0
 	unmapper, start_status := system.process_start(system.image_find(image, "locker"), "unmapper", grants, random.values_with_seed(&process_generator, values), UNTOUCHED_AMOUNTS)
-	if start_status != .Ok {
+	if start_status != .Succeeded {
 		return
 	}
 	defer system.close(unmapper)

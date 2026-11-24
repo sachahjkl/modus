@@ -14,6 +14,7 @@ package interface
 // picture, not glyphs at the size of the screen. A window that moves its
 // drawing to the elements of this package loses both.
 
+import "modus:contract/call_outcome"
 import "modus:display"
 import "modus:graphics"
 import "modus:system"
@@ -72,14 +73,14 @@ hand_picture_pages :: proc "contextless" (width, height: int) -> u64 {
 // from the budget of the process, and the drawing that shows it. It gives
 // the status of the memory: a process with no picture has no window to
 // draw.
-hand_picture_open :: proc "contextless" (picture: ^Hand_Picture, window: ^display.Window) -> system.Status {
+hand_picture_open :: proc "contextless" (picture: ^Hand_Picture, window: ^display.Window) -> call_outcome.Call_Outcome {
 	memory, status := system.memory_create(hand_picture_pages(window.width, window.height))
-	if status != .Ok {
+	if status != .Succeeded {
 		return status
 	}
 	address: rawptr
 	address, status = system.memory_map(memory)
-	if status != .Ok {
+	if status != .Succeeded {
 		system.close(memory)
 		return status
 	}
@@ -88,7 +89,7 @@ hand_picture_open :: proc "contextless" (picture: ^Hand_Picture, window: ^displa
 	picture.canvas = {pixels = pixels, width = window.width, height = window.height, stride = window.width}
 	picture.picture_memories[0] = pixels[:window.width * window.height]
 	picture.drawing = window_drawing_of_picture(picture.records_now[:], picture.records_before[:], picture.picture_memories[:])
-	return .Ok
+	return .Succeeded
 }
 
 // hand_picture_show shows the picture that the process drew: one frame of

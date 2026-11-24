@@ -45,6 +45,7 @@
 // on the host of the run.
 package locks
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:display"
 import "modus:graphics"
@@ -417,7 +418,7 @@ pair_round :: proc "contextless" (side: int, turn: u32) {
 	completions: [2]ring.Record
 	deadline := system.time() + LOST_WAIT
 	now, status := system.commands_call(commands[:], completions[:], deadline)
-	if status != .Ok {
+	if status != .Succeeded {
 		pair.refused[side] += 1
 	}
 	// The word changed while the wait ended at its deadline: a lost wake.
@@ -449,7 +450,7 @@ pairs :: proc "contextless" (load: int) -> u64 {
 	measured := system.measure_run()
 	pair = {}
 	thread, status := system.thread_start(pair_second, nil)
-	if status != .Ok {
+	if status != .Succeeded {
 		pairs_right = false
 		return 0
 	}
@@ -627,9 +628,9 @@ stress :: proc "contextless" (image: []u8, processes_free: u64) {
 			if index != 0 {
 				grants[lockers.GRANT_PEER] = {churners[index - 1], {.Control}}
 			}
-			status: system.Status
+			status: call_outcome.Call_Outcome
 			churner, status = system.process_start(file, "churn", grants, random.values_with_seed(&process_generator, values), CHURN_AMOUNTS)
-			if status == .Ok {
+			if status == .Succeeded {
 				started += 1
 			}
 		}
@@ -801,12 +802,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[system.GRANT_MACHINE]
 	at_start, _ := system.budget_read()
 	image: []u8
-	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
+	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Succeeded {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 	memory, memory_status := system.memory_create(1)
 	address, map_status := system.memory_map(memory)
-	if image == nil || memory_status != .Ok || map_status != .Ok {
+	if image == nil || memory_status != .Succeeded || map_status != .Succeeded {
 		system.log_fact(.Info, No_Boot_Image_Or_Memory{})
 		system.stop(.Failed)
 	}
@@ -817,8 +818,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		values: [op.CONTEXT_VALUES]u64
 		grants[lockers.GRANT_BOARD] = {memory, {.Read, .Write}}
 		values[lockers.VALUE_INDEX] = u64(index)
-		status: system.Status
-		if process, status = system.process_start(system.image_find(image, "locker"), names[index], grants, random.values_with_seed(&process_generator, values), LOCKER_AMOUNTS); status != .Ok {
+		status: call_outcome.Call_Outcome
+		if process, status = system.process_start(system.image_find(image, "locker"), names[index], grants, random.values_with_seed(&process_generator, values), LOCKER_AMOUNTS); status != .Succeeded {
 			system.log_fact(.Info, Locker_Not_Started{status = status})
 			system.stop(.Failed)
 		}

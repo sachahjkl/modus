@@ -119,13 +119,13 @@ processes :: proc "c" (result: ^[]Process, error: ^errors.Error_Record) -> (outc
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	report: op.System_Report
-	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
-		return call_outcome.fail(error, system.outcome_of_own_status(status), .Refused, .Kernel_Status, 0, 0, 0, i64(status))
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Succeeded {
+		return call_outcome.fail(error, system.own_operation_outcome(status), .Refused, .Kernel_Status, 0, 0, 0, i64(status))
 	}
 	total := 0
 	for slot in 1 ..< report.process_slots {
 		process: op.Process_Report
-		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); status != .Ok || process.state == .None {
+		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); status != .Succeeded || process.state == .None {
 			continue
 		}
 		if total < len(result^) {
@@ -190,8 +190,8 @@ counts :: proc "c" (result: ^[]Count, error: ^errors.Error_Record) -> (outcome: 
 	}
 	rows: [COUNT_CAPACITY]Count
 	total, status := counts_read(&rows)
-	if status != .Ok {
-		return call_outcome.fail(error, system.outcome_of_own_status(status), .Refused, .Kernel_Status, 0, 0, 0, i64(status))
+	if status != .Succeeded {
+		return call_outcome.fail(error, system.own_operation_outcome(status), .Refused, .Kernel_Status, 0, 0, 0, i64(status))
 	}
 	copy(result^, rows[:total])
 	return .Succeeded, i64(total)
@@ -224,8 +224,8 @@ count :: proc "c" (name: ^string, error: ^errors.Error_Record) -> (outcome: call
 	copied := copy(wanted[:], name^)
 	rows: [COUNT_CAPACITY]Count
 	total, status := counts_read(&rows)
-	if status != .Ok {
-		return call_outcome.fail(error, system.outcome_of_own_status(status), .Refused, .Kernel_Status, 0, 0, 0, i64(status))
+	if status != .Succeeded {
+		return call_outcome.fail(error, system.own_operation_outcome(status), .Refused, .Kernel_Status, 0, 0, 0, i64(status))
 	}
 	for &row in rows[:total] {
 		if system.name_of(row.name[:]) == string(wanted[:copied]) {
@@ -259,8 +259,8 @@ counts_named :: proc "c" (names: ^system.Table_To_Read(Count_Name), details: ^sy
 	}
 	rows: [COUNT_CAPACITY]Count
 	total, status := counts_read(&rows)
-	if status != .Ok {
-		return call_outcome.fail(error, system.outcome_of_own_status(status), .Refused, .Kernel_Status, 0, 0, 0, i64(status))
+	if status != .Succeeded {
+		return call_outcome.fail(error, system.own_operation_outcome(status), .Refused, .Kernel_Status, 0, 0, 0, i64(status))
 	}
 	first_absent: errors.Error_Record
 	absent_count := 0
@@ -305,15 +305,15 @@ counts_named :: proc "c" (names: ^system.Table_To_Read(Count_Name), details: ^sy
 COUNT_CAPACITY :: 16
 
 // counts_read fills the counts of the machine from the system report.
-counts_read :: proc "contextless" (rows: ^[COUNT_CAPACITY]Count) -> (total: int, status: system.Status) {
+counts_read :: proc "contextless" (rows: ^[COUNT_CAPACITY]Count) -> (total: int, status: call_outcome.Call_Outcome) {
 	report: op.System_Report
-	if _, status = system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
+	if _, status = system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Succeeded {
 		return 0, status
 	}
 	running: u64
 	for slot in 1 ..< report.process_slots {
 		process: op.Process_Report
-		if _, process_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); process_status == .Ok && process.state != .None {
+		if _, process_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); process_status == .Succeeded && process.state != .None {
 			running += 1
 		}
 	}
@@ -351,7 +351,7 @@ counts_read :: proc "contextless" (rows: ^[COUNT_CAPACITY]Count) -> (total: int,
 		copy(rows[index].name[:len(rows[index].name) - 1], item.name)
 		copy(rows[index].unit[:len(rows[index].unit) - 1], item.unit)
 	}
-	return len(items), .Ok
+	return len(items), .Succeeded
 }
 
 // served gives what the monitor did as a service: the calls that it executed, the connections that it has now, and the pictures of its window.

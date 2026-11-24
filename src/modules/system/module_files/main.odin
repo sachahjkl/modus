@@ -676,12 +676,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("no store: the root service gave no connection to the store module_files")
 	}
 	staging_objects_remove()
-	status: system.Status
-	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Succeeded {
 		fail("no endpoint: the process has no grant of the network")
 	}
 	region_address, region_status := system.memory_map(ctx.handles[datagram.GRANT_REGION], {.Write})
-	if region_status != .Ok {
+	if region_status != .Succeeded {
 		fail("no datagram region")
 	}
 	region = ([^]u8)(region_address)[:datagram.REGION_PAGES * system.PAGE_SIZE]
@@ -706,11 +706,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The buffers of the connections: memory of this process, which gives
 	// the library all the memory that it uses.
 	buffer_memory, buffer_status := system.memory_create(BUFFER_PAGES)
-	if buffer_status != .Ok {
+	if buffer_status != .Succeeded {
 		fail("no memory for the buffers of the connections")
 	}
 	buffers, buffers_status := system.memory_map(buffer_memory, {.Write})
-	if buffers_status != .Ok {
+	if buffers_status != .Succeeded {
 		fail("no memory for the buffers of the connections")
 	}
 	// The secret of the initial sequence numbers (RFC 6528): 32 bytes of

@@ -120,7 +120,7 @@ record :: proc "contextless" (file: []u8, kind: Table_Kind, index: u32, $T: type
 //
 // ```odin
 // if module.validate(file) != .None {
-// 	return .Bad_Operation
+// 	return .Argument_Refused
 // }
 // ```
 validate :: proc "contextless" (file: []u8) -> Error {

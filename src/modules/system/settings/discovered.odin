@@ -749,13 +749,13 @@ discovered_worker_entry :: proc "c" (_: rawptr) -> ! {
 // the background worker thread when the window opens.
 discovered_start :: proc "contextless" (ctx: ^system.Context) {
 	if ctx.handles[system.GRANT_IMAGE] != 0 && ctx.values[system.GRANT_VALUE_IMAGE_SIZE] > 0 {
-		if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
+		if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Succeeded {
 			image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 			discovered_modules_scan(image, &discovered_set)
 		}
 	}
 	if ctx.handles[system.GRANT_ROOT] != 0 {
-		if opened, status := system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true); status == .Ok {
+		if opened, status := system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true); status == .Succeeded {
 			discovered_root_ring = opened
 			discovered_has_root = true
 		}

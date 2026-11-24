@@ -118,7 +118,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	image_handle := ctx.handles[system.GRANT_IMAGE]
 	address, map_status := system.memory_map(image_handle, {})
-	if image_handle == 0 || map_status != .Ok {
+	if image_handle == 0 || map_status != .Succeeded {
 		wrong("the boot image does not map; the status word", u64(map_status))
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
@@ -130,7 +130,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wrong("the module plans lacks apply, apply_poll or current_generation; the size of its file", u64(len(plans.file)))
 	}
 	requests, ring_status := system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true)
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		wrong("no root ring; the status word", u64(ring_status))
 	}
 	connected: call_outcome.Call_Outcome

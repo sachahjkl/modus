@@ -165,7 +165,7 @@ Argument_Numbers :: struct {
 @(private)
 memory_provide :: proc "c" (provider_context: rawptr, size: u64, alignment: u64) -> rawptr {
 	address, status := system.arena_push((^system.Arena)(provider_context), size, alignment, &memory_refusal)
-	if status != .Ok {
+	if status != .Succeeded {
 		memory_refused = true
 		return nil
 	}
@@ -210,7 +210,7 @@ diagnostic_log :: proc "contextless" (size: u64) {
 output_map :: proc "contextless" (memory: system.Handle, argument: i64, error: ^errors.Error_Record) -> (bytes: []u8, outcome: call_outcome.Call_Outcome) {
 	refusal: errors.Error_Record
 	address, status := system.memory_map(memory, {.Write}, error = &refusal)
-	if status != .Ok {
+	if status != .Succeeded {
 		if error != nil {
 			// The record of the kernel names an argument of Memory_Map, and
 			// the kernel operation: the caller called the export, with its
@@ -222,7 +222,7 @@ output_map :: proc "contextless" (memory: system.Handle, argument: i64, error: ^
 				error^ = errors.error_make(.Refused, argument = argument, found = i64(status))
 			}
 		}
-		return nil, system.outcome_of_status(status)
+		return nil, status
 	}
 	// The map took the handle, so the kernel gives its size.
 	pages, _ := system.memory_size(memory)
@@ -278,14 +278,14 @@ program_refusal_give :: proc "contextless" (error: ^errors.Error_Record, refusal
 // bytes_copy copies bytes of the caller into the arena, with `zero_after`
 // more bytes of 0 after them.
 @(private)
-bytes_copy :: proc "contextless" (from: [^]u8, count: u64, zero_after: u64, refusal: ^errors.Error_Record) -> (copied: [^]u8, status: system.Status) {
+bytes_copy :: proc "contextless" (from: [^]u8, count: u64, zero_after: u64, refusal: ^errors.Error_Record) -> (copied: [^]u8, status: call_outcome.Call_Outcome) {
 	// The arena refuses a push of 0 bytes: an empty list is no bytes.
 	if count + zero_after == 0 {
-		return nil, .Ok
+		return nil, .Succeeded
 	}
 	address: rawptr
 	address, status = system.arena_push(&arena, count + zero_after, 1, refusal)
-	if status != .Ok {
+	if status != .Succeeded {
 		return nil, status
 	}
 	copied = ([^]u8)(address)
@@ -297,7 +297,7 @@ bytes_copy :: proc "contextless" (from: [^]u8, count: u64, zero_after: u64, refu
 	for index in count ..< count + zero_after {
 		copied[index] = 0
 	}
-	return copied, .Ok
+	return copied, .Succeeded
 }
 
 // unit_program_fill copies the name, the files and the exports of a unit
@@ -308,7 +308,7 @@ bytes_copy :: proc "contextless" (from: [^]u8, count: u64, zero_after: u64, refu
 unit_program_fill :: proc "contextless" (unit: ^Unit_Arguments, call: ^Compile_Call, error: ^errors.Error_Record) -> call_outcome.Call_Outcome {
 	refusal: errors.Error_Record
 	name_copy, name_status := bytes_copy(unit.name.bytes, unit.name_count, 1, &refusal)
-	if name_status != .Ok {
+	if name_status != .Succeeded {
 		return arena_refusal_give(error, refusal)
 	}
 	name := string(name_copy[:unit.name_count])
@@ -318,11 +318,11 @@ unit_program_fill :: proc "contextless" (unit: ^Unit_Arguments, call: ^Compile_C
 	call.source_name = cstring(name_copy)
 
 	list_copy, list_status := bytes_copy(unit.files.bytes, unit.files_count, 0, &refusal)
-	if list_status != .Ok {
+	if list_status != .Succeeded {
 		return arena_refusal_give(error, refusal)
 	}
 	files_address, files_status := system.arena_push(&arena, program_files.FILES_MOST * size_of(program_files.File), align_of(program_files.File), &refusal)
-	if files_status != .Ok {
+	if files_status != .Succeeded {
 		return arena_refusal_give(error, refusal)
 	}
 	files := ([^]program_files.File)(files_address)[:program_files.FILES_MOST]
@@ -332,14 +332,14 @@ unit_program_fill :: proc "contextless" (unit: ^Unit_Arguments, call: ^Compile_C
 	}
 	if file_count > 0 {
 		table_address, table_status := system.arena_push(&arena, u64(file_count) * size_of(Readable_File), align_of(Readable_File), &refusal)
-		if table_status != .Ok {
+		if table_status != .Succeeded {
 			return arena_refusal_give(error, refusal)
 		}
 		table := ([^]Readable_File)(table_address)
 		for file, index in files[:file_count] {
 			// The thin libc compares a name up to its byte 0.
 			file_name, file_name_status := bytes_copy(raw_data(file.name), u64(len(file.name)), 1, &refusal)
-			if file_name_status != .Ok {
+			if file_name_status != .Succeeded {
 				return arena_refusal_give(error, refusal)
 			}
 			table[index] = {name = cstring(file_name), bytes = raw_data(file.content), size = u64(len(file.content))}
@@ -349,13 +349,13 @@ unit_program_fill :: proc "contextless" (unit: ^Unit_Arguments, call: ^Compile_C
 	}
 
 	exports_copy, exports_status := bytes_copy(unit.exports.bytes, unit.exports_count, 0, &refusal)
-	if exports_status != .Ok {
+	if exports_status != .Succeeded {
 		return arena_refusal_give(error, refusal)
 	}
 	// The views of the names are in the arena: a table of EXPORTS_MOST
 	// views is too large for the stack of the call host.
 	names_address, names_status := system.arena_push(&arena, program_files.EXPORTS_MOST * size_of(string), align_of(string), &refusal)
-	if names_status != .Ok {
+	if names_status != .Succeeded {
 		return arena_refusal_give(error, refusal)
 	}
 	names := ([^]string)(names_address)[:program_files.EXPORTS_MOST]
@@ -365,13 +365,13 @@ unit_program_fill :: proc "contextless" (unit: ^Unit_Arguments, call: ^Compile_C
 	}
 	if export_count > 0 {
 		pointers_address, pointers_status := system.arena_push(&arena, u64(export_count) * size_of(cstring), align_of(cstring), &refusal)
-		if pointers_status != .Ok {
+		if pointers_status != .Succeeded {
 			return arena_refusal_give(error, refusal)
 		}
 		pointers := ([^]cstring)(pointers_address)
 		for export_name, index in names[:export_count] {
 			copied, copied_status := bytes_copy(raw_data(export_name), u64(len(export_name)), 1, &refusal)
-			if copied_status != .Ok {
+			if copied_status != .Succeeded {
 				return arena_refusal_give(error, refusal)
 			}
 			pointers[index] = cstring(copied)
@@ -397,22 +397,22 @@ compile_to_output :: proc "contextless" (source: ^system.Bytes_To_Read, unit: ^U
 	}
 
 	amounts, budget_status := system.budget_read()
-	if budget_status != .Ok {
-		return call_outcome.fail(error, system.outcome_of_own_status(budget_status), .Refused, .None, 0, 0, 0, i64(budget_status))
+	if budget_status != .Succeeded {
+		return call_outcome.fail(error, system.own_operation_outcome(budget_status), .Refused, .None, 0, 0, 0, i64(budget_status))
 	}
 	arena_refusal: errors.Error_Record
-	arena_status: system.Status
+	arena_status: call_outcome.Call_Outcome
 	arena, arena_status = system.arena_create(system.arena_reservation_pages(amounts.pages), 0, &arena_refusal)
-	if arena_status != .Ok {
+	if arena_status != .Succeeded {
 		if error != nil {
 			error^ = arena_refusal
 			error.operation = 0
 			error.argument = 0
 		}
-		return system.outcome_of_own_status(arena_status), 0
+		return system.own_operation_outcome(arena_status), 0
 	}
 	source_copy, copy_status := bytes_copy(source.bytes, count, 0, &arena_refusal)
-	if copy_status != .Ok {
+	if copy_status != .Succeeded {
 		return arena_refusal_give(error, arena_refusal), 0
 	}
 	// chibicc reads a file up to its first byte 0: a source with one would

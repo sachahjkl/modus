@@ -29,14 +29,14 @@ wiring_tables: Wiring_Tables
 // each registration is refused with its cause.
 wiring_tables_reserve :: proc "contextless" () -> wiring_core.Wiring_Tables_Port {
 	amounts, read := system.budget_read()
-	if read != .Ok || amounts.pages == 0 {
+	if read != .Succeeded || amounts.pages == 0 {
 		return {}
 	}
 	pages := system.arena_reservation_pages(amounts.pages)
 	arenas := [?]^system.Arena{&wiring_tables.processes, &wiring_tables.handles, &wiring_tables.wirings, &wiring_tables.end_memory, &wiring_tables.ring_memory, &wiring_tables.ring_capacity, &wiring_tables.actions}
 	for arena in arenas {
 		made, status := system.arena_create(pages)
-		if status != .Ok {
+		if status != .Succeeded {
 			return {}
 		}
 		arena^ = made
@@ -53,7 +53,7 @@ arena_extend :: proc "contextless" (arena: ^system.Arena, $T: typeid, before, co
 	}
 	size := u64(count - before) * size_of(T)
 	added, status := system.arena_push(arena, size, align_of(T))
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	intrinsics.mem_zero(added, int(size))

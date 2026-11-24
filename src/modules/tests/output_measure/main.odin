@@ -103,12 +103,12 @@ list_page_take :: proc "contextless" () {
 	page := system.Handle(answer[0])
 	address, map_status := system.memory_map(page)
 	pages, _ := system.memory_size(page)
-	if map_status != .Ok || pages * system.PAGE_SIZE < output.WIRING_LIST_BYTES_MOST {
+	if map_status != .Succeeded || pages * system.PAGE_SIZE < output.WIRING_LIST_BYTES_MOST {
 		wrong("the list page does not map; the status", u64(map_status))
 	}
 	list_page = ([^]u8)(address)[:output.WIRING_LIST_BYTES_MOST]
 	if answer[1] != 0 {
-		if taken := system.wiring_ring_take(system.Handle(answer[1])); taken != .Ok {
+		if taken := system.wiring_ring_take(system.Handle(answer[1])); taken != .Succeeded {
 			wrong("the wiring ring of the asker does not open; the status", u64(taken))
 		}
 	}
@@ -155,7 +155,7 @@ measure_run :: proc "contextless" (count: int) {
 		}
 		processes[index] = system.Handle(answer[0])
 		lent, lend_status := system.give(requests_memory, processes[index], {.Read})
-		if lend_status != .Ok {
+		if lend_status != .Succeeded {
 			wrong("the gift of the handle of a reader to the root service gave the status", u64(lend_status))
 		}
 		handles[index] = u32(lent)
@@ -199,7 +199,7 @@ measure_log_run :: proc "contextless" () {
 	processes: [2]system.Handle
 	processes[0] = system.Handle(answer[0])
 	lent, lend_status := system.give(requests_memory, processes[0], {.Read})
-	if lend_status != .Ok {
+	if lend_status != .Succeeded {
 		wrong("the gift of the handle of a reader to the root service gave the status", u64(lend_status))
 	}
 	rows := [2]output.Wiring {
@@ -274,7 +274,7 @@ wirings_ended_wait :: proc "contextless" () {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	requests_memory = ctx.handles[system.GRANT_ROOT]
 	opened, ring_status := system.ring_open(requests_memory, receive_handles = true)
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		wrong("no root ring; the status", u64(ring_status))
 	}
 	requests = opened

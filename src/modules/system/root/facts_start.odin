@@ -427,7 +427,7 @@ Log_Scope_Refused :: struct {
 
 // The kernel refused two stop codes past one byte, and the machine runs
 // on: a case of the start that ends with "as it must".
-@(log_fact = "root: Machine_Stop refused the codes {first_code} and {second_code} with Bad_Operation and the record Bad_Value of the code, limit {code_limit}, and the machine runs on: as it must")
+@(log_fact = "root: Machine_Stop refused the codes {first_code} and {second_code} with Argument_Refused and the record Bad_Value of the code, limit {code_limit}, and the machine runs on: as it must")
 Machine_Stop_Codes_Refused :: struct {
 	first_code:  u64,
 	second_code: u64,

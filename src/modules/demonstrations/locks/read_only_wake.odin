@@ -1,5 +1,6 @@
 package locks
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:contract/errors"
 import op "modus:contract/operation"
@@ -22,26 +23,26 @@ read_only_waiter :: proc "c" (parameter: rawptr) -> ! {
 }
 
 read_only_wake_case :: proc "contextless" () {
-	refused_status := system.Status.Ok
+	refused_status := call_outcome.Call_Outcome.Succeeded
 	record: errors.Error_Record
 	still_waits, woken: u64
 	right := false
-	defer system.log_fact(.Info, Read_Only_Wake_Refused{status = op.Status_Word(refused_status), still_waits = still_waits, woken = woken, verdict = verdict_field(right)})
+	defer system.log_fact(.Info, Read_Only_Wake_Refused{status = call_outcome.Call_Outcome_Word(refused_status), still_waits = still_waits, woken = woken, verdict = verdict_field(right)})
 	memory, memory_status := system.memory_create(1)
-	if memory_status != .Ok {
+	if memory_status != .Succeeded {
 		return
 	}
 	defer system.close(memory)
 	writable, writable_status := system.memory_map(memory, {.Write})
 	readable, readable_status := system.memory_map(memory, {})
-	if writable_status != .Ok || readable_status != .Ok {
+	if writable_status != .Succeeded || readable_status != .Succeeded {
 		return
 	}
 	defer system.memory_unmap(writable)
 	defer system.memory_unmap(readable)
 	read_only_waiter_word = (^u32)(writable)
 	waiter, started := system.thread_start(read_only_waiter, nil)
-	if started != .Ok {
+	if started != .Succeeded {
 		return
 	}
 	defer system.thread_wait(waiter)
@@ -57,5 +58,5 @@ read_only_wake_case :: proc "contextless" () {
 	still_waits = u64(waiting(waiter) && intrinsics.atomic_load(&read_only_waiter_ended) == 0)
 	record_right := record.kind == i64(errors.Kind.Bad_Address) && record.value == i64(uintptr(readable)) && record.found == 1
 	woken = system.word_wake(read_only_waiter_word, system.WAKE_ALL)
-	right = refused_status == .Bad_Address && record_right && still_waits == 1 && woken == 1
+	right = refused_status == .Argument_Refused && record_right && still_waits == 1 && woken == 1
 }

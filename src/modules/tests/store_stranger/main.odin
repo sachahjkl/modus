@@ -64,12 +64,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 display_connect :: proc "contextless" (ctx: ^system.Context) -> (connection: system.Call_Connection, file: []u8) {
 	requests_memory := ctx.handles[system.GRANT_ROOT]
 	requests, ring_status := system.ring_open(requests_memory, receive_handles = true)
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		wrong("no root ring; the status", u64(ring_status))
 	}
 	image_handle := ctx.handles[system.GRANT_IMAGE]
 	address, map_status := system.memory_map(image_handle, {})
-	if image_handle == 0 || map_status != .Ok {
+	if image_handle == 0 || map_status != .Succeeded {
 		wrong("the boot image does not map; the status word", u64(map_status))
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]

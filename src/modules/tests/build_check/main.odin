@@ -153,13 +153,13 @@ head_of :: proc "contextless" (hash: value_kinds.Hash_Field) -> u64 {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	opened, ring_status := system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true)
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		wrong("no root ring; the status", u64(ring_status))
 	}
 	requests = opened
 	image_handle := ctx.handles[system.GRANT_IMAGE]
 	address, map_status := system.memory_map(image_handle, {})
-	if image_handle == 0 || map_status != .Ok {
+	if image_handle == 0 || map_status != .Succeeded {
 		wrong("the boot image does not map; the status", u64(map_status))
 	}
 	image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]

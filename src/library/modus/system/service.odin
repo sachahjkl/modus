@@ -91,7 +91,7 @@ service_open :: proc "contextless" (ctx: ^Context) -> (service: Service, ok: boo
 		return {}, false
 	}
 	names, status := ring_open(memory, receive_handles = true)
-	if status != .Ok {
+	if status != .Succeeded {
 		return {}, false
 	}
 	service.file = ([^]u8)(uintptr(ctx.values[GRANT_VALUE_FILE_ADDRESS]))[:ctx.values[GRANT_VALUE_FILE_SIZE]]
@@ -215,15 +215,15 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 // with connection_serve, and ends it with connection_end.
 connection_make :: proc "contextless" (ring_memory, region_memory: Handle, caller: Name) -> (connection: Connection, ok: bool) {
 	region_pages, size_status := memory_size(region_memory)
-	if size_status != .Ok {
+	if size_status != .Succeeded {
 		return {}, false
 	}
 	calls, ring_status := ring_open(ring_memory, receive_handles = true)
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		return {}, false
 	}
 	bytes, region_status := memory_map(region_memory)
-	if region_status != .Ok {
+	if region_status != .Succeeded {
 		ring_close(&calls)
 		return {}, false
 	}
@@ -268,15 +268,15 @@ connection_add :: proc "contextless" (service: ^Service, ring_memory, region_mem
 			continue
 		}
 		region_pages, size_status := memory_size(region_memory)
-		if size_status != .Ok {
+		if size_status != .Succeeded {
 			return false
 		}
 		calls, ring_status := ring_open(ring_memory, receive_handles = true)
-		if ring_status != .Ok {
+		if ring_status != .Succeeded {
 			return false
 		}
 		bytes, region_status := memory_map(region_memory)
-		if region_status != .Ok {
+		if region_status != .Succeeded {
 			ring_close(&calls)
 			return false
 		}
@@ -415,7 +415,7 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 	for item, index in prepared.mappings[:prepared.mapping_count] {
 		memory := Handle(item.handle)
 		object_pages, object_status := memory_size(memory)
-		if object_status != .Ok {
+		if object_status != .Succeeded {
 			// The kernel refused the handle: the record says which argument.
 			return refused(&completion, .Argument_Refused, errors.error_make(.Handle_Absent, .Lent_Handles, i64(item.parameter + 1), i64(item.handle)))
 		}
@@ -434,12 +434,12 @@ export_serve :: proc "contextless" (file: []u8, base: u64, region: []u8, ring_me
 		first := item.start / PAGE_SIZE
 		pages := (item.start + item.size + PAGE_SIZE - 1) / PAGE_SIZE - first
 		start, status := memory_map(memory, item.writable ? {.Write} : {}, 0, mapping_address, first, pages)
-		if status != .Ok {
+		if status != .Succeeded {
 			// A lent object that does not map is a fault of the caller; a
 			// kernel that has no memory or no slot for the mapping is short
 			// of a capacity of this receiver, which no change of the
 			// arguments mends.
-			return refused(&completion, outcome_of_status(status), errors.error_make(.Refused, .Kernel_Status, i64(item.parameter + 1), 0, 0, i64(status)))
+			return refused(&completion, status, errors.error_make(.Refused, .Kernel_Status, i64(item.parameter + 1), 0, 0, i64(status)))
 		}
 		mapped[index] = start
 		prepared.places[item.parameter].address = u64(uintptr(start)) + item.start % PAGE_SIZE
@@ -479,22 +479,22 @@ Lending :: struct {
 // handle if it kept it, and each mapping that it made with it. The kernel
 // does this; the receiver cannot refuse. If one handle fails, lend ends
 // the copies itself.
-lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []isolated.Argument, ring_memory: Handle, lending: ^Lending) -> (status: Status) {
+lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []isolated.Argument, ring_memory: Handle, lending: ^Lending) -> (status: call_outcome.Call_Outcome) {
 	function := function
 	lending.count = 0
-	lend_one_handle :: proc "contextless" (ring_memory: Handle, handle: Handle, wanted: Rights, lending: ^Lending) -> (result: Handle, status: Status) {
+	lend_one_handle :: proc "contextless" (ring_memory: Handle, handle: Handle, wanted: Rights, lending: ^Lending) -> (result: Handle, status: call_outcome.Call_Outcome) {
 		if handle == 0 {
-			return 0, .Ok
+			return 0, .Succeeded
 		}
 		if lending.count == len(lending.copies) {
-			return 0, .No_Slot
+			return 0, .Budget_Or_Capacity_Exhausted
 		}
 		kind, held, _ := handle_state(handle)
 		if kind == .None {
-			return 0, .Bad_Handle
+			return 0, .Argument_Refused
 		}
 		if !(wanted + {.Give} <= held) {
-			return 0, .No_Right
+			return 0, .Grant_Or_Right_Missing
 		}
 		copy := give(0, handle, wanted + {.Give}) or_return
 		lending.copies[lending.count] = copy
@@ -504,7 +504,7 @@ lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []
 	each: for word, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
 		type, type_ok := module.type_of_word(word)
 		if !type_ok {
-			status = .Bad_Operation
+			status = .Argument_Refused
 			break each
 		}
 		// An absent optional parameter carries nothing to lend.
@@ -517,7 +517,7 @@ lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []
 		case .Handle:
 			result: Handle
 			result, status = lend_one_handle(ring_memory, Handle(arguments[index].integer), transmute(Rights)function.parameter_details[index], lending)
-			if status != .Ok {
+			if status != .Succeeded {
 				break each
 			}
 			arguments[index].integer = u64(result)
@@ -528,12 +528,12 @@ lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []
 			if arguments[index].table.memory_handle != 0 {
 				direction, direction_ok := module.direction_of_word(function.parameter_directions[index])
 				if !direction_ok {
-					status = .Bad_Operation
+					status = .Argument_Refused
 					break each
 				}
 				result: Handle
 				result, status = lend_one_handle(ring_memory, Handle(arguments[index].table.memory_handle), isolated.direction_rights(direction), lending)
-				if status != .Ok {
+				if status != .Succeeded {
 					break each
 				}
 				arguments[index].table.memory_handle = u64(result)
@@ -541,7 +541,7 @@ lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []
 		case .Record:
 			described, ok := module.record_type(file, function.parameter_details[index])
 			if !ok || len(arguments[index].record) != int(described.size) {
-				status = .Bad_Operation
+				status = .Argument_Refused
 				break each
 			}
 			for number in 0 ..< described.field_count {
@@ -551,13 +551,13 @@ lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []
 				}
 				place := (^Handle)(&arguments[index].record[item.offset])
 				place^, status = lend_one_handle(ring_memory, place^, transmute(Rights)item.detail, lending)
-				if status != .Ok {
+				if status != .Succeeded {
 					break each
 				}
 			}
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		lend_end(lending)
 	}
 	return status

@@ -187,7 +187,7 @@ recipes_ingest_object :: proc "contextless" (client: ^storage.Client, sandbox: ^
 	}
 	defer system.close(mem)
 	addr, map_status := system.memory_map(mem, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		_ = fail("recipes.ingest_tree: cannot map memory for ", name)
 		return {}, false
 	}
@@ -726,7 +726,7 @@ recipes_build_project_command :: proc "contextless" (arguments: []Value) -> Valu
 	}
 
 	eval_addr, map_status := system.memory_map(eval_mem, {})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return fail("recipes.build_project: cannot map declaration_eval output")
 	}
 	defer system.memory_unmap(eval_addr)
@@ -867,7 +867,7 @@ recipes_deliver_module_command :: proc "contextless" (arguments: []Value) -> Val
 		return fail("recipes.deliver_module: output size is out of range")
 	}
 	addr, map_status := system.memory_map(mod_mem, {})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return fail("recipes.deliver_module: cannot map output module memory")
 	}
 	valid := module.validate(([^]u8)(addr)[:size_val.integer]) == .None

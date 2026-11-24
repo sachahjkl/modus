@@ -239,7 +239,7 @@ start_policy_chosen_load_ended :: proc "contextless" (outcome: call_outcome.Call
 // window, no right of the machine. Its budget comes from the one budget of
 // the disk processes, as each module of a disk. It is measured into PCR 12
 // before Process_Start.
-start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [disk_process.HASH_SIZE]u8, store_files: []system.Source_File, load_error: ^module.Load_Error) -> system.Status {
+start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [disk_process.HASH_SIZE]u8, store_files: []system.Source_File, load_error: ^module.Load_Error) -> call_outcome.Call_Outcome {
 	slot: ^Started
 	for &item in started {
 		if place_is_free(&item) {
@@ -248,7 +248,7 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 		}
 	}
 	if slot == nil {
-		return .No_Slot
+		return .Budget_Or_Capacity_Exhausted
 	}
 	slot^ = {}
 	copy(slot.name[:len(slot.name) - 1], name)
@@ -259,9 +259,9 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 	context_grants: system.Context_Grants
 	values: system.Context_Values
 	system.grant_put(&context_grants, op.CONTEXT_LOG, {system.context_record().handles[op.CONTEXT_LOG], {.Write}})
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	slot.requests_memory, slot.requests, status = system.ring_create(receive_handles = true)
-	if status != .Ok {
+	if status != .Succeeded {
 		slot^ = {}
 		return status
 	}
@@ -278,12 +278,12 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 	}
 	disk_processes: system.Handle
 	disk_processes, status = disk_processes_budget_get(name)
-	if status == .Ok && context_refused(name, &context_grants, &values) {
-		status = .Bad_State
+	if status == .Succeeded && context_refused(name, &context_grants, &values) {
+		status = .Wrong_State
 	}
 	process: system.Handle
 	process_budget: Start_Budget
-	if status == .Ok {
+	if status == .Succeeded {
 		words: [64]u8
 		// A chosen start policy never runs unmeasured: else PCR 12 would
 		// show the rescue alone after a module of the disk ran and failed,
@@ -291,23 +291,23 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 		// place, and is measured, or says why not.
 		if !start_policy_measure(hash, {}, system.format(words[:], "(nickname \"", name, "\")")) {
 			system.log_fact(.Warning, Chosen_Start_Policy_Unmeasured{nickname = module_name_field(name)})
-			status = .Bad_State
+			status = .Wrong_State
 		}
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		budget_ok: bool
 		if process_budget, budget_ok = disk_budget_of(file, name, disk_processes); !budget_ok {
-			status = .No_Budget
+			status = .Budget_Or_Capacity_Exhausted
 		} else {
 			source := load_source()
 			source.files = store_files
 			process, status = system.process_start(file, name, context_grants.grants, random.values_with_seed(&process_generator, values.values), process_budget.amounts, mappings[:mapping_count], nil, source, load_error, disk_processes, ready = &slot.ready)
-			if status == .No_Budget {
+			if status == .Budget_Or_Capacity_Exhausted {
 				budget_refusal_log(name, process_budget.amounts, disk_processes, "the disk processes")
 			}
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		release(slot)
 		return status
 	}
@@ -328,7 +328,7 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 	start_policy_stage = .Running
 	start_policy_deadline = system.time() + START_POLICY_HANG_BOUND_MILLISECONDS
 	system.log_fact(.Info, Chosen_Start_Policy_Started{started_process = module_name_field(name), hash = value_kinds.Hash_Field(start_policy_hash)})
-	return .Ok
+	return .Succeeded
 }
 
 // start_policy_choice_command runs the command Start_Policy_Choice of the

@@ -386,19 +386,19 @@ open :: proc "contextless" (ctx: ^system.Context, error: ^errors.Error_Record = 
 		return {}, false
 	}
 	size, size_status := system.memory_size(ctx.handles[GRANT_TEXT], error)
-	if size_status != .Ok {
+	if size_status != .Succeeded {
 		return {}, false // memory_size wrote the record of the kernel.
 	}
 	if size != TEXT_PAGES {
 		errors.fail(error, 0, .Bad_Value, .Pages, 1, i64(size), TEXT_PAGES) // The text region of the grant has another size.
 		return {}, false
 	}
-	status: system.Status
-	if terminal.ring, status = system.ring_open(ctx.handles[GRANT_RING], error); status != .Ok {
+	ring_status: type_of(size_status)
+	if terminal.ring, ring_status = system.ring_open(ctx.handles[GRANT_RING], error); ring_status != .Succeeded {
 		return {}, false
 	}
-	address: rawptr
-	if address, status = system.memory_map(ctx.handles[GRANT_TEXT], error = error); status != .Ok {
+	address, map_status := system.memory_map(ctx.handles[GRANT_TEXT], error = error)
+	if map_status != .Succeeded {
 		return {}, false
 	}
 	terminal.text = ([^]u8)(address)[:TEXT_SIZE]

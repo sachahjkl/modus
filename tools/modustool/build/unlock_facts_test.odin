@@ -3,7 +3,6 @@ package build
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import module "modus:contract/module"
-import op "modus:contract/operation"
 import "modus:contract/tpm_attestation"
 import "modus:contract/tpm_service"
 import "modus:principals"
@@ -428,7 +427,7 @@ Unlock_Status_Case :: struct {
 
 // Each fact type of unlock with a status of a kernel operation or of the
 // root service writes the name of the member where the line wrote its
-// number: each member of op.Status, the first word past the last member,
+// number: each member of call_outcome.Call_Outcome, the first word past the last member,
 // and max(u64), which name no member and stay their numbers.
 @(test)
 the_facts_of_unlock_write_a_status_by_its_name :: proc(t: ^testing.T) {
@@ -440,10 +439,10 @@ the_facts_of_unlock_write_a_status_by_its_name :: proc(t: ^testing.T) {
 		return fact_test_render(t, file, "unlock", type_name, values)
 	}
 	cases := make([dynamic]Unlock_Status_Case, context.temp_allocator)
-	for member in op.Status {
-		append(&cases, Unlock_Status_Case{word = u64(member), written = op.STATUS_NAMES[member]})
+	for member in call_outcome.Call_Outcome {
+		append(&cases, Unlock_Status_Case{word = u64(member), written = call_outcome.CALL_OUTCOME_NAMES[member]})
 	}
-	past_the_last := u64(max(op.Status)) + 1
+	past_the_last := u64(max(call_outcome.Call_Outcome)) + 1
 	append(&cases, Unlock_Status_Case{word = past_the_last, written = past_the_last})
 	append(&cases, Unlock_Status_Case{word = max(u64), written = max(u64)})
 	names := [2]string{"a", strings.repeat("n", principals.NAME_LIMIT, context.temp_allocator)}

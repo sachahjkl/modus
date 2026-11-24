@@ -158,7 +158,7 @@ entries :: proc "contextless" () -> u64 {
 run :: proc "contextless" (measure: ^Measure) -> bool {
 	measured := system.measure_run()
 	memory, mapped, status := system.ring_create(measure.capacity)
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	defer system.close(memory)
@@ -169,7 +169,7 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 	start := system.time()
 	reader, reader_status := system.thread_start(read_records, nil)
 	writer, writer_status := system.thread_start(write_records, nil)
-	if reader_status != .Ok || writer_status != .Ok {
+	if reader_status != .Succeeded || writer_status != .Succeeded {
 		return false
 	}
 	end := start

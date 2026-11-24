@@ -1,7 +1,6 @@
 package recipes_service
 
 import "modus:contract/call_outcome"
-import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
 // Log facts emitted by the delegated recipes service.
@@ -32,7 +31,7 @@ Recipe_Build_Completed :: struct {
 // build is refused.
 @(log_fact = "recipes: the disks of a guest build were not made: a buffer of {pages} pages was refused with {status_word}")
 Guest_Buffers_Refused :: struct {
-	status_word: op.Status_Word,
+	status_word: call_outcome.Call_Outcome_Word,
 	pages:       u64,
 }
 
@@ -82,7 +81,7 @@ Guest_Recipe_Realised :: struct {
 // The kernel did not start the build thread: the build is refused.
 @(log_fact = "recipes: the build thread did not start: Thread_Create gave {status_word}")
 Guest_Thread_Refused :: struct {
-	status_word: op.Status_Word,
+	status_word: call_outcome.Call_Outcome_Word,
 }
 
 // One pass of the retention of the store.
@@ -108,7 +107,7 @@ Guests_Unsupported :: struct {}
 // A kernel operation of a guest build failed.
 @(log_fact = "recipes: the guest build stopped: {step} gave {status_word}")
 Guest_Step_Failed :: struct {
-	status_word: op.Status_Word,
+	status_word: call_outcome.Call_Outcome_Word,
 	step:        [40]u8,
 }
 

@@ -134,18 +134,18 @@ wiring_service_start :: proc "contextless" () -> bool {
 	stops_opened: ring.Ring
 	reg_mem: system.Handle
 	reg_addr: rawptr
-	if status == .Ok {
+	if status == .Succeeded {
 		stops_mem, stops_opened, status = system.ring_create()
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		reg_mem, status = system.memory_create(ws.SERVICE_REGION_PAGES)
 	}
-	if status == .Ok {
+	if status == .Succeeded {
 		reg_addr, status = system.memory_map(reg_mem, {.Write})
 	}
 	process: system.Handle
 	wiring_budget: Start_Budget
-	if status == .Ok {
+	if status == .Succeeded {
 		grants: system.Context_Grants
 		values: system.Context_Values
 		system.grant_put(&grants, ws.SERVICE_RING, {ring_mem, {.Read, .Write}})
@@ -156,14 +156,14 @@ wiring_service_start :: proc "contextless" () -> bool {
 		system.value_put(&values, ws.VALUE_IMAGE_SIZE, u64(len(image)))
 		budget_ok: bool
 		if context_refused("wiring", &grants, &values) {
-			status = .Bad_State
+			status = .Wrong_State
 		} else if wiring_budget, budget_ok = budget_of(file, "wiring"); !budget_ok {
-			status = .No_Budget
+			status = .Budget_Or_Capacity_Exhausted
 		} else {
 			process, status = system.process_start(file, "wiring", grants.grants, random.values_with_seed(&process_generator, values.values), wiring_budget.amounts, nil, &prepared, load_source(), ready = &slot.ready)
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		if reg_addr != nil {
 			system.memory_unmap(reg_addr)
 		}
@@ -265,13 +265,13 @@ wiring_register_process :: proc "contextless" (item: ^Started) {
 		return
 	}
 	token, status := give_through_service_ring(wiring_process.process, wiring_ring_memory, item.process, {.Give}, &wiring_process.service_ring_ready)
-	if status != .Ok {
+	if status != .Succeeded {
 		return
 	}
 	ring_given: system.Handle
 	if item.wiring_memory != 0 {
 		ring_given, status = give_through_service_ring(wiring_process.process, wiring_ring_memory, item.wiring_memory, {.Read, .Write}, &wiring_process.service_ring_ready)
-		if status != .Ok {
+		if status != .Succeeded {
 			return
 		}
 	}
@@ -318,7 +318,7 @@ wiring_asker_budget_ensure :: proc "contextless" (asker: ^Started, command: root
 		return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, u32(command), .Budget_Hidden, .Pages)
 	}
 	avail, read_status := system.budget_read(asker.budget)
-	if read_status != .Ok {
+	if read_status != .Succeeded {
 		return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, u32(command), .Budget_Hidden, .Pages)
 	}
 	list_cost := op.memory_cost(output.WIRING_LIST_PAGES_MOST)
@@ -341,18 +341,18 @@ wiring_asker_budget_ensure :: proc "contextless" (asker: ^Started, command: root
 	}
 	err: errors.Error_Record
 	child, status := system.budget_create({pages = pages}, asker.budget, error = &err)
-	if status != .Ok {
+	if status != .Succeeded {
 		// The budget of the asker cannot give the budget of its wirings:
 		// the record of the kernel, under the outcome of its status.
 		err.operation = i64(command)
-		outcome := system.outcome_of_own_status(status)
+		outcome := system.own_operation_outcome(status)
 		values^ = errors.completion_values(call_outcome.record_explained(outcome, err))
 		return outcome
 	}
 	given, give_status := give_through_service_ring(wiring_process.process, wiring_ring_memory, child, {.Spend}, &wiring_process.service_ring_ready)
-	if give_status != .Ok {
+	if give_status != .Succeeded {
 		system.close(child)
-		return root_ring.refuse(values, system.outcome_of_own_status(give_status), u32(command), .Refused, .Wirings, 0, 0, 0, i64(give_status))
+		return root_ring.refuse(values, system.own_operation_outcome(give_status), u32(command), .Refused, .Wirings, 0, 0, 0, i64(give_status))
 	}
 	cmd := ws.Command{
 		kind          = .Grant_Asker_Budget,
@@ -433,7 +433,7 @@ lent_handle_of :: proc "contextless" (asker: ^Started, handle: u32) -> (kind: op
 @(private = "file")
 process_of_lent_handle :: proc "contextless" (handle: system.Handle) -> ^Started {
 	lent_slot, lent_serial, lent_status := system.process_place(handle)
-	if lent_status != .Ok {
+	if lent_status != .Succeeded {
 		return nil
 	}
 	for &item in started {
@@ -469,7 +469,7 @@ list_page_copy :: proc "contextless" (asker: ^Started) -> bool {
 		return false
 	}
 	address, status := system.memory_map(asker.list_memory, {})
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	intrinsics.mem_copy_non_overlapping(&core_list_copy[0], address, output.WIRING_LIST_BYTES_MOST)
@@ -832,7 +832,7 @@ audit_wire_begin :: proc "contextless" (collector: ^Started, writer: ^Started, p
 // wiring service, or no collector, no wiring is left: done says that the
 // end is done at once, and the caller marks the request sent before it
 // gives the answer, so the flow reads the answer of a request that it
-// sent. .No_Slot: the wiring service serves another request; the caller
+// sent. .Budget_Or_Capacity_Exhausted: the wiring service serves another request; the caller
 // tries again at the next pass.
 audit_unwire_begin :: proc "contextless" (collector: ^Started, flow_serial: u64) -> (outcome: call_outcome.Call_Outcome, done: bool) {
 	if wiring_process == nil || collector == nil || collector.process == 0 {
@@ -994,7 +994,7 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 			}
 			asker.list_memory = system.Handle(resp.list_page)
 			ring_for_asker: system.Handle
-			status := system.Status.Ok
+			status := call_outcome.Call_Outcome.Succeeded
 			if resp.wiring_ring != 0 {
 				if asker.wiring_memory != 0 {
 					system.close(asker.wiring_memory)
@@ -1003,11 +1003,11 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 				ring_for_asker, status = system.give(asker.requests_memory, asker.wiring_memory, {.Read, .Write})
 			}
 			page_for_asker: system.Handle
-			if status == .Ok {
+			if status == .Succeeded {
 				page_for_asker, status = system.give(asker.requests_memory, asker.list_memory, {.Read, .Write})
 			}
-			if status != .Ok {
-				wiring_request_fail(system.outcome_of_own_status(status), errors.ring_fail(u32(root_ring.Root_Command.Wire), .Refused, .Wirings, 0, 0, 0, i64(status)))
+			if status != .Succeeded {
+				wiring_request_fail(system.own_operation_outcome(status), errors.ring_fail(u32(root_ring.Root_Command.Wire), .Refused, .Wirings, 0, 0, 0, i64(status)))
 				continue
 			}
 			wiring_request_reply(.Succeeded, {u64(page_for_asker), u64(ring_for_asker), 0, 0, 0, 0, 0})

@@ -279,9 +279,9 @@ spin :: proc "c" (parameter: rawptr) -> ! {
 spinners_start :: proc "contextless" (first, count: int, weight_of: proc "contextless" (index: int) -> u64) -> bool {
 	for index in first ..< first + count {
 		spinners[index] = {}
-		status: system.Status
+		status: call_outcome.Call_Outcome
 		spinner_threads[index], status = system.thread_start(spin, &spinners[index], weight = weight_of(index - first))
-		if status != .Ok {
+		if status != .Succeeded {
 			return false
 		}
 	}
@@ -321,7 +321,7 @@ self_slot, self_serial: u64
 self_machine_number: u64 // The machine number of the first thread of this process.
 thread_table: op.Thread_Table_Report
 
-process_report :: proc "contextless" (slot: u64) -> (report: op.Process_Report, status: system.Status) {
+process_report :: proc "contextless" (slot: u64) -> (report: op.Process_Report, status: call_outcome.Call_Outcome) {
 	_, status = system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&report)), size_of(report))
 	return report, status
 }
@@ -330,7 +330,7 @@ process_report :: proc "contextless" (slot: u64) -> (report: op.Process_Report, 
 // true: the report is of the process with this serial.
 threads_of :: proc "contextless" (slot, serial: u64) -> bool {
 	_, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Threads), slot, u64(uintptr(&thread_table)), size_of(thread_table))
-	return status == .Ok && thread_table.process_serial == serial
+	return status == .Succeeded && thread_table.process_serial == serial
 }
 
 // machine_number_is_this_thread says if a machine number names the calling
@@ -344,18 +344,18 @@ threads_of :: proc "contextless" (slot, serial: u64) -> bool {
 machine_number_is_this_thread :: proc "contextless" (candidate: u64) -> bool {
 	number := system.thread_record().number
 	start, start_status := system.thread_schedule_read(0, number)
-	own := start_status == .Ok && start.request > 2
+	own := start_status == .Succeeded && start.request > 2
 	for round in u32(1) ..= 2 {
 		if !own {
 			break
 		}
-		own = system.thread_schedule_write(0, number, {request = start.request - round}) == .Ok
+		own = system.thread_schedule_write(0, number, {request = start.request - round}) == .Succeeded
 		schedule, status := system.thread_schedule_read(machine, candidate)
-		own &&= status == .Ok && schedule.request == start.request - round
+		own &&= status == .Succeeded && schedule.request == start.request - round
 	}
 	if own {
 		// The weight is the same: no raise, the thread keeps its place.
-		own = system.thread_schedule_write(machine, candidate, start) == .Ok
+		own = system.thread_schedule_write(machine, candidate, start) == .Succeeded
 	}
 	return own
 }
@@ -368,7 +368,7 @@ find_self :: proc "contextless" () -> bool {
 	number := u32(system.thread_record().number)
 	for index in u64(1) ..< system_report().process_slots {
 		report, status := process_report(index)
-		if status != .Ok || system.name_of(report.name[:]) != "scheduler" || report.state == .Stopped || report.state == .None {
+		if status != .Succeeded || system.name_of(report.name[:]) != "scheduler" || report.state == .Stopped || report.state == .None {
 			continue
 		}
 		if !threads_of(index, report.process_serial) {
@@ -534,7 +534,7 @@ pair_round :: proc "contextless" (side: int, turn: u32) {
 	completions: [2]ring.Record
 	deadline := system.time() + LOST_WAIT
 	now, status := system.commands_call(commands[:], completions[:], deadline)
-	if status != .Ok {
+	if status != .Succeeded {
 		pair.refused[side] += 1
 	}
 	if now >= deadline && intrinsics.atomic_load(&pair.turn) != next {
@@ -562,8 +562,8 @@ pair_threads: [2]system.Thread
 pair_start :: proc "contextless" () -> bool {
 	pair = {}
 	for side in 0 ..< 2 {
-		status: system.Status
-		if pair_threads[side], status = system.thread_start(pair_side, rawptr(uintptr(side))); status != .Ok {
+		status: call_outcome.Call_Outcome
+		if pair_threads[side], status = system.thread_start(pair_side, rawptr(uintptr(side))); status != .Succeeded {
 			return false
 		}
 	}
@@ -624,7 +624,7 @@ share_hundredths :: proc "contextless" (part, total: u64) -> u64 {
 // measure runs the four cases under one strategy.
 measure :: proc "contextless" (index: int, processors: u64) {
 	result := &results[index]
-	if _, status := system.strategy_set(machine, strategies[index]); status != .Ok {
+	if _, status := system.strategy_set(machine, strategies[index]); status != .Succeeded {
 		fail("Strategy_Set refused")
 		return
 	}
@@ -693,7 +693,7 @@ measure :: proc "contextless" (index: int, processors: u64) {
 		system.sleep(system.time() + WARM_TIME)
 		sleeper = {}
 		sleeping, status := system.thread_start(sleep_run, nil, request = 500)
-		if status != .Ok {
+		if status != .Succeeded {
 			spinners_stop(0, EQUAL_COUNT)
 			fail("a thread did not start")
 			return
@@ -766,8 +766,8 @@ measure :: proc "contextless" (index: int, processors: u64) {
 			break
 		}
 		weight := u32(weights[spinner % 3])
-		weights_written = system.thread_schedule_write(machine, numbers[spinner], {weight = weight}) == .Ok
-		if schedule, read_status := system.thread_schedule_read(machine, numbers[spinner]); read_status != .Ok || schedule.weight != weight || schedule.request != op.REQUEST_DEFAULT {
+		weights_written = system.thread_schedule_write(machine, numbers[spinner], {weight = weight}) == .Succeeded
+		if schedule, read_status := system.thread_schedule_read(machine, numbers[spinner]); read_status != .Succeeded || schedule.weight != weight || schedule.request != op.REQUEST_DEFAULT {
 			weights_written = false
 		}
 	}
@@ -851,7 +851,7 @@ change_run :: proc "c" (parameter: rawptr) -> ! {
 		start := system.nanoseconds()
 		_, status := system.strategy_set(machine, strategies[index % STRATEGY_COUNT])
 		changer.times[index] = system.nanoseconds() - start
-		if status == .Ok {
+		if status == .Succeeded {
 			changer.changes += 1
 		} else {
 			changer.refused += 1
@@ -887,7 +887,7 @@ schedule_write_run :: proc "c" (parameter: rawptr) -> ! {
 				weight  = u32(weights[(spinner + round) % 3]),
 				request = u32(500 + (round % 4) * 1000),
 			}
-			if system.thread_schedule_write(machine, schedule_writer.numbers[spinner], schedule) == .Ok {
+			if system.thread_schedule_write(machine, schedule_writer.numbers[spinner], schedule) == .Succeeded {
 				schedule_writer.writes += 1
 			} else {
 				schedule_writer.refused += 1
@@ -916,14 +916,14 @@ stress :: proc "contextless" () {
 	}
 	changer = {}
 	thread, status := system.thread_start(change_run, nil)
-	if status != .Ok {
+	if status != .Succeeded {
 		pair_stop()
 		spinners_stop(0, EQUAL_COUNT)
 		fail("a thread did not start")
 		return
 	}
 	writing, writing_status := system.thread_start(schedule_write_run, nil)
-	if writing_status != .Ok {
+	if writing_status != .Succeeded {
 		// The changer ends by itself after its changes.
 		system.thread_wait(thread)
 		pair_stop()
@@ -932,7 +932,7 @@ stress :: proc "contextless" () {
 		return
 	}
 	for intrinsics.atomic_load(&changer.ended) == 0 {
-		if churn, churn_status := system.thread_start(brief, nil); churn_status == .Ok {
+		if churn, churn_status := system.thread_start(brief, nil); churn_status == .Succeeded {
 			system.thread_wait(churn)
 			stress_churned += 1
 		}
@@ -945,7 +945,7 @@ stress :: proc "contextless" () {
 	for spinner in 0 ..< EQUAL_COUNT {
 		write_status := system.thread_schedule_write(machine, schedule_writer.numbers[spinner], last_schedule)
 		schedule, read_status := system.thread_schedule_read(machine, schedule_writer.numbers[spinner])
-		schedules_right &&= write_status == .Ok && read_status == .Ok && schedule == last_schedule
+		schedules_right &&= write_status == .Succeeded && read_status == .Succeeded && schedule == last_schedule
 	}
 	// After the last change, each thread still runs: the wait is for each
 	// count to grow, and the bound only ends a hang.
@@ -998,7 +998,7 @@ Own_Schedule :: struct {
 	created: op.Thread_Schedule, // What the thread read first: the values of its creation.
 	written: op.Thread_Schedule, // What it read after it wrote half the weight and the request 0.
 	last:    op.Thread_Schedule, // What it read after the two refused writes.
-	weight_raise, request_raise: system.Status, // Its writes of the weight and of the request of its creation.
+	weight_raise, request_raise: call_outcome.Call_Outcome, // Its writes of the weight and of the request of its creation.
 	statuses_right: bool,
 }
 
@@ -1006,7 +1006,7 @@ own_schedule: Own_Schedule
 
 own_schedule_run :: proc "c" (parameter: rawptr) -> ! {
 	number := system.thread_record().number
-	read_status, write_status, again_status, last_status: system.Status
+	read_status, write_status, again_status, last_status: call_outcome.Call_Outcome
 	own_schedule.created, read_status = system.thread_schedule_read(0, number)
 	// A thread lowers its own weight and its own request.
 	write_status = system.thread_schedule_write(0, number, {weight = OWN_WEIGHT / 2, request = OWN_REQUEST / 2})
@@ -1015,7 +1015,7 @@ own_schedule_run :: proc "c" (parameter: rawptr) -> ! {
 	own_schedule.weight_raise = system.thread_schedule_write(0, number, {weight = OWN_WEIGHT})
 	own_schedule.request_raise = system.thread_schedule_write(0, number, {request = OWN_REQUEST})
 	own_schedule.last, last_status = system.thread_schedule_read(0, number)
-	own_schedule.statuses_right = read_status == .Ok && write_status == .Ok && again_status == .Ok && last_status == .Ok
+	own_schedule.statuses_right = read_status == .Succeeded && write_status == .Succeeded && again_status == .Succeeded && last_status == .Succeeded
 	system.thread_stop()
 }
 
@@ -1026,18 +1026,18 @@ own_schedule_run :: proc "c" (parameter: rawptr) -> ! {
 own_schedules :: proc "contextless" () -> bool {
 	own_schedule = {}
 	thread, status := system.thread_start(own_schedule_run, nil, weight = OWN_WEIGHT, request = OWN_REQUEST)
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	system.thread_wait(thread)
 	first, first_status := system.thread_schedule_read(0, system.thread_record().number)
 	lowered := op.Thread_Schedule{weight = OWN_WEIGHT / 2, request = OWN_REQUEST / 2, weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL}
-	as_it_must := own_schedule.statuses_right && first_status == .Ok
+	as_it_must := own_schedule.statuses_right && first_status == .Succeeded
 	as_it_must &&= own_schedule.created == op.Thread_Schedule{weight = OWN_WEIGHT, request = OWN_REQUEST, weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL}
 	as_it_must &&= own_schedule.written == lowered && own_schedule.last == lowered
-	as_it_must &&= own_schedule.weight_raise == .Bad_Operation && own_schedule.request_raise == .Bad_Operation
+	as_it_must &&= own_schedule.weight_raise == .Argument_Refused && own_schedule.request_raise == .Argument_Refused
 	as_it_must &&= first == op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL}
-	system.log_fact(.Info, Own_Schedule_Read{asked_weight = u64(OWN_WEIGHT), asked_request = u64(OWN_REQUEST), read_weight = u64(own_schedule.created.weight), read_request = u64(own_schedule.created.request), half_weight = u64(OWN_WEIGHT / 2), half_request = u64(OWN_REQUEST / 2), weight_after = u64(own_schedule.written.weight), request_after = u64(own_schedule.written.request), raised_weight = u64(OWN_WEIGHT), raised_request = u64(OWN_REQUEST), weight_raise = op.Status_Word(own_schedule.weight_raise), request_raise = op.Status_Word(own_schedule.request_raise), kept = u64(own_schedule.last == lowered), first_weight = u64(first.weight), first_request = u64(first.request), verdict = verdict_field(as_it_must)})
+	system.log_fact(.Info, Own_Schedule_Read{asked_weight = u64(OWN_WEIGHT), asked_request = u64(OWN_REQUEST), read_weight = u64(own_schedule.created.weight), read_request = u64(own_schedule.created.request), half_weight = u64(OWN_WEIGHT / 2), half_request = u64(OWN_REQUEST / 2), weight_after = u64(own_schedule.written.weight), request_after = u64(own_schedule.written.request), raised_weight = u64(OWN_WEIGHT), raised_request = u64(OWN_REQUEST), weight_raise = call_outcome.Call_Outcome_Word(own_schedule.weight_raise), request_raise = call_outcome.Call_Outcome_Word(own_schedule.request_raise), kept = u64(own_schedule.last == lowered), first_weight = u64(first.weight), first_request = u64(first.request), verdict = verdict_field(as_it_must)})
 	return as_it_must
 }
 
@@ -1057,26 +1057,26 @@ schedule_refusals :: proc "contextless" () -> bool {
 	too_long := system.thread_schedule_write(spinner, 0, {request = op.REQUEST_LIMIT + 1})
 	// A refused write changed nothing.
 	kept, kept_status := system.thread_schedule_read(spinner, 0)
-	unchanged := kept_status == .Ok && kept == op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL}
+	unchanged := kept_status == .Succeeded && kept == op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL}
 	// The machine with no right Schedule; the machine with Schedule and no
 	// Inspect, which names no thread; a thread handle with Inspect and no
 	// Control, which reads and does not write.
-	no_schedule, no_inspect, no_control := system.Status.Ok, system.Status.Ok, system.Status.Ok
+	no_schedule, no_inspect, no_control := call_outcome.Call_Outcome.Succeeded, call_outcome.Call_Outcome.Succeeded, call_outcome.Call_Outcome.Succeeded
 	reads := false
-	if copy, status := system.give(0, machine, {.Inspect}); status == .Ok {
+	if copy, status := system.give(0, machine, {.Inspect}); status == .Succeeded {
 		no_schedule = system.thread_schedule_write(copy, numbers[0], {weight = 1})
 		system.close(copy)
 	}
-	blind_write := system.Status.Ok
-	if copy, status := system.give(0, machine, {.Schedule}); status == .Ok {
+	blind_write := call_outcome.Call_Outcome.Succeeded
+	if copy, status := system.give(0, machine, {.Schedule}); status == .Succeeded {
 		_, no_inspect = system.thread_schedule_read(copy, numbers[0])
 		blind_write = system.thread_schedule_write(copy, numbers[0], {weight = 1})
 		system.close(copy)
 	}
-	if copy, status := system.give(0, spinner, {.Inspect}); status == .Ok {
+	if copy, status := system.give(0, spinner, {.Inspect}); status == .Succeeded {
 		no_control = system.thread_schedule_write(copy, 0, {weight = 1})
 		_, read_status := system.thread_schedule_read(copy, 0)
-		reads = read_status == .Ok
+		reads = read_status == .Succeeded
 		system.close(copy)
 	}
 	// The machine handle names a thread for the schedule only.
@@ -1084,8 +1084,8 @@ schedule_refusals :: proc "contextless" () -> bool {
 	// The spinner ends: its machine number names no thread.
 	spinners_stop(0, 1)
 	ended := system.thread_schedule_write(machine, numbers[0], {weight = 1})
-	as_it_must := too_heavy == .Bad_Operation && too_long == .Bad_Operation && unchanged && no_schedule == .No_Right && no_inspect == .No_Right && blind_write == .No_Right && no_control == .No_Right && reads && other_command == .Bad_Handle && ended == .Bad_State
-	system.log_fact(.Info, Schedule_Writes_Refused{too_heavy = op.Status_Word(too_heavy), too_long = op.Status_Word(too_long), kept = u64(unchanged), no_schedule = op.Status_Word(no_schedule), no_inspect = op.Status_Word(no_inspect), blind_write = op.Status_Word(blind_write), no_control = op.Status_Word(no_control), reads = u64(reads), control = op.Status_Word(other_command), ended = op.Status_Word(ended), verdict = verdict_field(as_it_must)})
+	as_it_must := too_heavy == .Argument_Refused && too_long == .Argument_Refused && unchanged && no_schedule == .Grant_Or_Right_Missing && no_inspect == .Grant_Or_Right_Missing && blind_write == .Grant_Or_Right_Missing && no_control == .Grant_Or_Right_Missing && reads && other_command == .Argument_Refused && ended == .Nothing_Has_That_Name
+	system.log_fact(.Info, Schedule_Writes_Refused{too_heavy = call_outcome.Call_Outcome_Word(too_heavy), too_long = call_outcome.Call_Outcome_Word(too_long), kept = u64(unchanged), no_schedule = call_outcome.Call_Outcome_Word(no_schedule), no_inspect = call_outcome.Call_Outcome_Word(no_inspect), blind_write = call_outcome.Call_Outcome_Word(blind_write), no_control = call_outcome.Call_Outcome_Word(no_control), reads = u64(reads), control = call_outcome.Call_Outcome_Word(other_command), ended = call_outcome.Call_Outcome_Word(ended), verdict = verdict_field(as_it_must)})
 	return as_it_must
 }
 
@@ -1100,7 +1100,7 @@ other_process_schedule :: proc "contextless" () -> bool {
 	slot, serial: u64
 	for index in u64(1) ..< system_report().process_slots {
 		report, status := process_report(index)
-		if status == .Ok && system.name_of(report.name[:]) == "root" && report.state != .Stopped && report.state != .None && report.process_serial != self_serial {
+		if status == .Succeeded && system.name_of(report.name[:]) == "root" && report.state != .Stopped && report.state != .None && report.process_serial != self_serial {
 			slot, serial = index, report.process_serial
 			break
 		}
@@ -1118,14 +1118,14 @@ other_process_schedule :: proc "contextless" () -> bool {
 		before, before_status := system.thread_schedule_read(machine, number)
 		changed := before
 		changed.request = before.request == 2999 ? 2998 : 2999
-		write_status := before_status == .Ok ? system.thread_schedule_write(machine, number, changed) : system.Status.Bad_State
+		write_status := before_status == .Succeeded ? system.thread_schedule_write(machine, number, changed) : call_outcome.Call_Outcome.Wrong_State
 		after, after_status := system.thread_schedule_read(machine, number)
-		restore_status := before_status == .Ok ? system.thread_schedule_write(machine, number, before) : system.Status.Bad_State
+		restore_status := before_status == .Succeeded ? system.thread_schedule_write(machine, number, before) : call_outcome.Call_Outcome.Wrong_State
 		restored, restored_status := system.thread_schedule_read(machine, number)
 		again, again_status := process_report(slot)
-		as_it_must = before_status == .Ok && write_status == .Ok && after_status == .Ok && restore_status == .Ok && restored_status == .Ok
+		as_it_must = before_status == .Succeeded && write_status == .Succeeded && after_status == .Succeeded && restore_status == .Succeeded && restored_status == .Succeeded
 		as_it_must &&= after == changed && restored == before
-		as_it_must &&= again_status == .Ok && again.process_serial == serial
+		as_it_must &&= again_status == .Succeeded && again.process_serial == serial
 	}
 	system.log_fact(.Info, Other_Process_Schedule{verdict = verdict_field(as_it_must)})
 	return as_it_must
@@ -1142,8 +1142,8 @@ LIMIT_ROUNDS :: 1000
 // schedule, and the status of its own write of the full weight.
 Limited_Child :: struct {
 	schedule: op.Thread_Schedule,
-	read:     system.Status,
-	raise:    system.Status,
+	read:     call_outcome.Call_Outcome,
+	raise:    call_outcome.Call_Outcome,
 }
 
 limited_child: Limited_Child
@@ -1174,43 +1174,43 @@ weight_limits :: proc "contextless" () -> bool {
 	// thread keeps its limits, and the weight 0 is the limit.
 	ignored := system.thread_schedule_write(0, number, {weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL})
 	kept, kept_status := system.thread_schedule_read(0, number)
-	first_right := lowered == .Ok && now_status == .Ok && now == limited && raise == .Bad_Operation && record_right && ignored == .Ok && kept_status == .Ok && kept == limited
+	first_right := lowered == .Succeeded && now_status == .Succeeded && now == limited && raise == .Argument_Refused && record_right && ignored == .Succeeded && kept_status == .Succeeded && kept == limited
 	// The same weight again and a lower one are accepted. The full weight
 	// and the weight of the limit are refused then: a process only lowers.
 	// Only the machine handle gives the weight of the limit back.
 	accepted, refused, machine_raises, above: u64
 	for _ in 0 ..< LIMIT_ROUNDS {
-		accepted += u64(system.thread_schedule_write(0, number, {weight = LIMIT}) == .Ok)
-		accepted += u64(system.thread_schedule_write(0, number, {weight = 1}) == .Ok)
-		refused += u64(system.thread_schedule_write(0, number, {weight = op.WEIGHT_FULL}) == .Bad_Operation)
-		refused += u64(system.thread_schedule_write(0, number, {weight = LIMIT}) == .Bad_Operation)
+		accepted += u64(system.thread_schedule_write(0, number, {weight = LIMIT}) == .Succeeded)
+		accepted += u64(system.thread_schedule_write(0, number, {weight = 1}) == .Succeeded)
+		refused += u64(system.thread_schedule_write(0, number, {weight = op.WEIGHT_FULL}) == .Argument_Refused)
+		refused += u64(system.thread_schedule_write(0, number, {weight = LIMIT}) == .Argument_Refused)
 		// The refused writes changed nothing: the weight is still 1.
 		after_refusal, after_status := system.thread_schedule_read(0, number)
-		machine_raises += u64(system.thread_schedule_write(machine, self_machine_number, {weight_limit = LIMIT}) == .Ok)
+		machine_raises += u64(system.thread_schedule_write(machine, self_machine_number, {weight_limit = LIMIT}) == .Succeeded)
 		last, last_status := system.thread_schedule_read(0, number)
-		if after_status != .Ok || after_refusal.weight != 1 || after_refusal.weight_limit != LIMIT || last_status != .Ok || last != limited {
+		if after_status != .Succeeded || after_refusal.weight != 1 || after_refusal.weight_limit != LIMIT || last_status != .Succeeded || last != limited {
 			above += 1
 		}
 	}
 	rounds_right := accepted == 2 * LIMIT_ROUNDS && refused == 2 * LIMIT_ROUNDS && machine_raises == LIMIT_ROUNDS && above == 0
-	system.log_fact(.Info, Weight_Limit_Written{limit = u64(LIMIT), weight = u64(now.weight), raise = op.Status_Word(raise), record_right = u64(record_right), kept = u64(kept == limited), verdict = verdict_field(first_right)})
+	system.log_fact(.Info, Weight_Limit_Written{limit = u64(LIMIT), weight = u64(now.weight), raise = call_outcome.Call_Outcome_Word(raise), record_right = u64(record_right), kept = u64(kept == limited), verdict = verdict_field(first_right)})
 	system.log_fact(.Info, Weight_Limit_Rounds{limit = u64(LIMIT), rounds = u64(LIMIT_ROUNDS), round_weight = u64(LIMIT), last_round_weight = u64(LIMIT), machine_weight = u64(LIMIT), accepted = accepted, refused = refused, machine_raises = machine_raises, above = above, verdict = verdict_field(rounds_right)})
 
 	// A new thread: a weight above the limit is refused; with the weight
 	// 0 it has the limit as its weight and as its limit.
-	limited_child = {read = .Bad_State, raise = .Ok}
+	limited_child = {read = .Wrong_State, raise = .Succeeded}
 	_, too_heavy := system.thread_start(brief, nil, weight = LIMIT + 1)
 	child, child_status := system.thread_start(limited_child_run, nil)
-	if child_status == .Ok {
+	if child_status == .Succeeded {
 		system.thread_wait(child)
 	}
-	child_right := too_heavy == .Bad_Operation && child_status == .Ok && limited_child.read == .Ok && limited_child.schedule == limited && limited_child.raise == .Bad_Operation
+	child_right := too_heavy == .Argument_Refused && child_status == .Succeeded && limited_child.read == .Succeeded && limited_child.schedule == limited && limited_child.raise == .Argument_Refused
 	// The machine handle gives the full limit back, on each path.
 	full := op.Thread_Schedule{weight = op.WEIGHT_FULL, request = op.REQUEST_DEFAULT, weight_limit = op.WEIGHT_FULL, new_thread_weight_limit = op.WEIGHT_FULL}
 	raised := system.thread_schedule_write(machine, self_machine_number, {})
 	restored, restored_status := system.thread_schedule_read(0, number)
-	restored_right := raised == .Ok && restored_status == .Ok && restored == full
-	system.log_fact(.Info, Under_Weight_Limit{limit = u64(LIMIT), heavier_weight = u64(LIMIT + 1), too_heavy = op.Status_Word(too_heavy), child_weight = u64(limited_child.schedule.weight), child_limit = u64(limited_child.schedule.weight_limit), child_raise = op.Status_Word(limited_child.raise), restored_weight = u64(restored.weight), verdict = verdict_field(child_right && restored_right)})
+	restored_right := raised == .Succeeded && restored_status == .Succeeded && restored == full
+	system.log_fact(.Info, Under_Weight_Limit{limit = u64(LIMIT), heavier_weight = u64(LIMIT + 1), too_heavy = call_outcome.Call_Outcome_Word(too_heavy), child_weight = u64(limited_child.schedule.weight), child_limit = u64(limited_child.schedule.weight_limit), child_raise = call_outcome.Call_Outcome_Word(limited_child.raise), restored_weight = u64(restored.weight), verdict = verdict_field(child_right && restored_right)})
 	return first_right && rounds_right && child_right && restored_right
 }
 
@@ -1310,7 +1310,7 @@ owing_kept :: proc "contextless" (processors: u64) -> bool {
 	}
 	result: Owing_Result
 	before, set_status := system.strategy_set(machine, .Eevdf)
-	if set_status != .Ok {
+	if set_status != .Succeeded {
 		return false
 	}
 	count := int(processors) + 1
@@ -1326,7 +1326,7 @@ owing_kept :: proc "contextless" (processors: u64) -> bool {
 		if item := thread_item(number); item != nil {
 			ran_before = item.run_time
 		}
-		round_right := system.thread_schedule_write(thread, 0, {weight = 1}) == .Ok
+		round_right := system.thread_schedule_write(thread, 0, {weight = 1}) == .Succeeded
 		// The wait is for a count of the kernel; the bound only ends a hang.
 		for ran := false; round_right && !ran && system.time() < deadline; {
 			system.sleep(system.time() + 1)
@@ -1334,7 +1334,7 @@ owing_kept :: proc "contextless" (processors: u64) -> bool {
 			ran = item != nil && item.run_time > ran_before
 		}
 		_, stop_status := system.call(.Thread_Control, u64(thread), 0, u64(op.Thread_Control_Command.Stop))
-		if stop_status == .Ok {
+		if stop_status == .Succeeded {
 			first, held := held_lag(number)
 			round_right &&= held
 			// The process: a raise is refused, a lower request is accepted.
@@ -1342,16 +1342,16 @@ owing_kept :: proc "contextless" (processors: u64) -> bool {
 			after_raise, held_after_raise := held_lag(number)
 			lower := system.thread_schedule_write(thread, 0, {request = 1})
 			after_lower, held_after_lower := held_lag(number)
-			round_right &&= held_after_raise && held_after_lower && lower == .Ok
-			result.raised += u64(raise != .Bad_Operation)
+			round_right &&= held_after_raise && held_after_lower && lower == .Succeeded
+			result.raised += u64(raise != .Argument_Refused)
 			result.changed += u64(after_raise != first) + u64(after_lower != first)
 			// The machine handle: the full weight and the default request.
 			by_machine := system.thread_schedule_write(machine, numbers[target], {})
 			after_machine, held_after_machine := held_lag(number)
-			round_right &&= by_machine == .Ok && held_after_machine
+			round_right &&= by_machine == .Succeeded && held_after_machine
 			result.not_new += u64(after_machine != 0)
 			_, resume_status := system.call(.Thread_Control, u64(thread), 0, u64(op.Thread_Control_Command.Resume))
-			round_right &&= resume_status == .Ok
+			round_right &&= resume_status == .Succeeded
 			if first < 0 {
 				result.owing += 1
 				result.largest = max(result.largest, u64(-first))
@@ -1386,13 +1386,13 @@ owing_kept :: proc "contextless" (processors: u64) -> bool {
 // right Schedule, and a weight above the full weight.
 refusals :: proc "contextless" () -> bool {
 	copy, status := system.give(0, machine, {.Inspect})
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	_, refused := system.strategy_set(copy, .Fair)
 	system.close(copy)
 	_, too_heavy := system.thread_start(brief, nil, weight = op.WEIGHT_FULL + 1)
-	return refused == .No_Right && too_heavy == .Bad_Operation
+	return refused == .Grant_Or_Right_Missing && too_heavy == .Argument_Refused
 }
 
 // The window (docs/DESIGN.md): cards of rectangles with the spacing
@@ -2032,8 +2032,8 @@ strategy_set :: proc "c" (name: ^string, error: ^errors.Error_Record) -> (outcom
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1)
 	}
 	before, status := system.strategy_set(machine, wanted)
-	if status != .Ok {
-		return call_outcome.fail(error, system.outcome_of_own_status(status), .Refused, .Kernel_Status, 0, 0, 0, i64(status))
+	if status != .Succeeded {
+		return call_outcome.fail(error, system.own_operation_outcome(status), .Refused, .Kernel_Status, 0, 0, 0, i64(status))
 	}
 	if before != wanted {
 		system.log_fact(.Info, Strategy_Changed{strategy = strategy_field(wanted), previous_strategy = strategy_field(before)})
@@ -2045,7 +2045,7 @@ choose :: proc "contextless" (index: int) {
 	if index < 0 || index >= STRATEGY_COUNT {
 		return
 	}
-	if before, status := system.strategy_set(machine, strategies[index]); status == .Ok && before != strategies[index] {
+	if before, status := system.strategy_set(machine, strategies[index]); status == .Succeeded && before != strategies[index] {
 		system.log_fact(.Info, Strategy_Changed{strategy = strategy_field(strategies[index]), previous_strategy = strategy_field(before)})
 	}
 }
@@ -2078,7 +2078,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[system.GRANT_MACHINE]
 	// The boot image holds the file of this process, for the processes of
 	// the case of the shares; each one needs a seed from this process.
-	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok && random.generator_from_context(&process_generator, ctx) {
+	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Succeeded && random.generator_from_context(&process_generator, ctx) {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 	// A process `scheduler` that was stopped with the share policy on left
@@ -2159,7 +2159,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The rounds of the share policy run on a thread of their own: a round
 	// enters the kernel for each process, and this thread draws and serves
 	// the commands.
-	if _, policy_status := system.thread_start(policy_run, nil); policy_status != .Ok {
+	if _, policy_status := system.thread_start(policy_run, nil); policy_status != .Succeeded {
 		system.log_fact(.Info, Share_Policy_Thread_Not_Started{status = policy_status})
 	}
 	for {

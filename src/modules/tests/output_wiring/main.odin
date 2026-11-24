@@ -173,7 +173,7 @@ root_call :: proc "contextless" (command: root_ring.Root_Command, values: [7]u64
 @(private = "file")
 lend :: proc "contextless" (handle: system.Handle) -> u32 {
 	given, status := system.give(requests_memory, handle, {.Read})
-	if status != .Ok {
+	if status != .Succeeded {
 		wrong("the gift of a handle to the root service gave the status", u64(status))
 	}
 	return u32(given)
@@ -421,7 +421,7 @@ asker_ends_close :: proc "contextless" (numbers: []u32, $Record_Type: typeid) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	requests_memory = ctx.handles[system.GRANT_ROOT]
 	opened, ring_status := system.ring_open(requests_memory, receive_handles = true)
-	if ring_status != .Ok {
+	if ring_status != .Succeeded {
 		wrong("no root ring; the status", u64(ring_status))
 	}
 	requests = opened
@@ -445,15 +445,15 @@ list_page_take :: proc "contextless" () -> (page: system.Handle, address: rawptr
 		wrong("the list page was refused with the status", u64(status))
 	}
 	page = system.Handle(answer[0])
-	map_status: system.Status
+	map_status: call_outcome.Call_Outcome
 	address, map_status = system.memory_map(page)
 	pages, _ := system.memory_size(page)
-	if map_status != .Ok || pages * system.PAGE_SIZE < output.WIRING_LIST_BYTES_MOST {
+	if map_status != .Succeeded || pages * system.PAGE_SIZE < output.WIRING_LIST_BYTES_MOST {
 		wrong("the list page does not map; the status", u64(map_status))
 	}
 	list_page = ([^]u8)(address)[:output.WIRING_LIST_BYTES_MOST]
 	if answer[1] != 0 {
-		if taken := system.wiring_ring_take(system.Handle(answer[1])); taken != .Ok {
+		if taken := system.wiring_ring_take(system.Handle(answer[1])); taken != .Succeeded {
 			wrong("the wiring ring of the asker does not open; the status", u64(taken))
 		}
 	}
@@ -488,7 +488,7 @@ words_case :: proc "contextless" () {
 		filler_pages -= 1
 	}
 	filler, filler_status := system.memory_create(filler_pages)
-	if filler_status != .Ok {
+	if filler_status != .Succeeded {
 		wrong("the memory that fills the budget was refused with the status", u64(filler_status))
 	}
 	short := budget_pages()
@@ -520,7 +520,7 @@ words_case :: proc "contextless" () {
 @(private = "file")
 lent_return_case :: proc "contextless" () {
 	memory, memory_status := system.memory_create(1)
-	if memory_status != .Ok {
+	if memory_status != .Succeeded {
 		wrong("the memory to lend was refused with the status", u64(memory_status))
 	}
 	before := budget_pages()
@@ -569,7 +569,7 @@ probes_case :: proc "contextless" () {
 	// with the budget before it, which comes back only if the root service
 	// closed each lent copy.
 	memory, memory_status := system.memory_create(1)
-	if memory_status != .Ok {
+	if memory_status != .Succeeded {
 		wrong("the memory to lend was refused with the status", u64(memory_status))
 	}
 	with_memory := budget_pages()

@@ -115,11 +115,11 @@ screen_budget_grow :: proc "contextless" (item: ^Started, width, height: u64, va
 	}
 	compositor_budget, service_budget: system.Handle
 	if refusal == .None {
-		status: system.Status
-		if compositor_budget, status = system.budget_create({pages = compositor_pages}); status != .Ok {
+		status: call_outcome.Call_Outcome
+		if compositor_budget, status = system.budget_create({pages = compositor_pages}); status != .Succeeded {
 			compositor_budget = 0
 			refusal = .No_Pages
-		} else if service_budget, status = system.budget_create({pages = service_pages}); status != .Ok {
+		} else if service_budget, status = system.budget_create({pages = service_pages}); status != .Succeeded {
 			service_budget = 0
 			refusal = .No_Pages
 		}
@@ -170,7 +170,7 @@ screen_budget_grow :: proc "contextless" (item: ^Started, width, height: u64, va
 @(private = "file")
 grow_give :: proc "contextless" (side: screen_budgets.Side) -> bool {
 	given, status := system.give(grow_gives.process[side], grow_gives.budget[side], {.Read, .Spend})
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	grow_gives.given[side] = given
@@ -225,7 +225,7 @@ screen_budgets_drain :: proc "contextless" () {
 				continue
 			}
 			amounts, status := system.budget_read(system.Handle(extra.handle))
-			if status == .Ok && screen_budgets.drained(&screen_budget_table, extra.handle, amounts.pages) {
+			if status == .Succeeded && screen_budgets.drained(&screen_budget_table, extra.handle, amounts.pages) {
 				system.close(system.Handle(extra.handle))
 				budget_pages_note()
 			}

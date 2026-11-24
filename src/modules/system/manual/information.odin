@@ -50,11 +50,11 @@ table_count :: proc "contextless" (count: int, problem: information.Problem, err
 	case .No_Module:
 		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Modules, 1)
 	case .Refused:
-		status, refusal := system.status_of_word(u32(problem.value))
+		status, refusal := call_outcome.outcome_of_word(u64(problem.value))
 		if refusal.kind != 0 {
 			return call_outcome.fail(error, .Answer_Unreadable, .Refused, .None, 0, 0, 0, i64(problem.value))
 		}
-		return call_outcome.fail(error, system.outcome_of_own_status(status), .Refused, .None, 0, 0, 0, i64(problem.value))
+		return call_outcome.fail(error, system.own_operation_outcome(status), .Refused, .None, 0, 0, 0, i64(problem.value))
 	case .Header, .Table, .Segment, .Entry, .Export, .Text, .Function, .Record, .Import_Slot, .Direction, .Enum, .Member_Text, .Need, .Parameter_Setting:
 		// Each of these is a fault of the module file that the boot image holds.
 	}

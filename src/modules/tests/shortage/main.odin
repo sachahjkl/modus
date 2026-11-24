@@ -35,6 +35,7 @@
 // each frame returned", or "shortage: wrong". Then the machine stops.
 package shortage
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:contract/errors"
 import op "modus:contract/operation"
@@ -76,14 +77,14 @@ fill :: proc "c" (parameter: rawptr) -> ! {
 	size := u64(OBJECT_PAGES)
 	for size != 0 && filler.count < OBJECT_CAPACITY {
 		memory, status := system.memory_create(size)
-		if status != .Ok {
+		if status != .Succeeded {
 			size /= 2
 			continue
 		}
 		filler.objects[filler.count] = memory
 		filler.count += 1
 		address, map_status := system.memory_map(memory)
-		if map_status != .Ok {
+		if map_status != .Succeeded {
 			// The budget paid the object and cannot pay the page tables of
 			// a mapping: the object returns, and a smaller one comes.
 			system.close(memory)
@@ -168,9 +169,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	refusal: errors.Error_Record
 	_, refused := system.memory_create(1, error = &refusal)
 	if refusal.kind == i64(errors.Kind.Budget) {
-		system.log_fact(.Info, Full_Refused_By_Budget{pages = pages, objects = objects, threads = u64(THREAD_COUNT), elapsed = value_kinds.Time_In_Milliseconds(filled / 1_000_000), budget_pages = empty.pages, payable_pages = payable, reserved_pages = full.reserved_pages, drains = drains_full - drains_before, status = op.Status_Word(refused), error_kind = errors.Kind_Word(refusal.kind)})
+		system.log_fact(.Info, Full_Refused_By_Budget{pages = pages, objects = objects, threads = u64(THREAD_COUNT), elapsed = value_kinds.Time_In_Milliseconds(filled / 1_000_000), budget_pages = empty.pages, payable_pages = payable, reserved_pages = full.reserved_pages, drains = drains_full - drains_before, status = call_outcome.Call_Outcome_Word(refused), error_kind = errors.Kind_Word(refusal.kind)})
 	} else {
-		system.log_fact(.Info, Full_Refused_By_Another_Kind{pages = pages, objects = objects, threads = u64(THREAD_COUNT), elapsed = value_kinds.Time_In_Milliseconds(filled / 1_000_000), budget_pages = empty.pages, payable_pages = payable, reserved_pages = full.reserved_pages, drains = drains_full - drains_before, status = op.Status_Word(refused), error_kind = errors.Kind_Word(refusal.kind)})
+		system.log_fact(.Info, Full_Refused_By_Another_Kind{pages = pages, objects = objects, threads = u64(THREAD_COUNT), elapsed = value_kinds.Time_In_Milliseconds(filled / 1_000_000), budget_pages = empty.pages, payable_pages = payable, reserved_pages = full.reserved_pages, drains = drains_full - drains_before, status = call_outcome.Call_Outcome_Word(refused), error_kind = errors.Kind_Word(refusal.kind)})
 	}
 
 	began = system.nanoseconds()
@@ -200,7 +201,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// same state.
 	after := system_report()
 	kept := own.pages - back.pages
-	right := kept == 0 && drains_full > drains_before && refused == .No_Budget && (refusal.kind == i64(errors.Kind.Budget) || refusal.kind == i64(errors.Kind.Budget_Hidden)) && empty.pages == 0 && payable == full.budget_pages && after.free_pages - after.reserved_pages == start.free_pages - start.reserved_pages && after.budget_pages + after.reserved_pages == after.free_pages
+	right := kept == 0 && drains_full > drains_before && refused == .Budget_Or_Capacity_Exhausted && (refusal.kind == i64(errors.Kind.Budget) || refusal.kind == i64(errors.Kind.Budget_Hidden)) && empty.pages == 0 && payable == full.budget_pages && after.free_pages - after.reserved_pages == start.free_pages - start.reserved_pages && after.budget_pages + after.reserved_pages == after.free_pages
 	system.log_fact(.Info, Freed{elapsed = value_kinds.Time_In_Milliseconds(freed / 1_000_000), budget_pages = back.pages, own_pages = own.pages, kept_pages = kept, payable_pages_after = after.free_pages - after.reserved_pages, payable_pages_before = start.free_pages - start.reserved_pages})
 	if right {
 		system.log_fact(.Info, Shortage_Checked{})

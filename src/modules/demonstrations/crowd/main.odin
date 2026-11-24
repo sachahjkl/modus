@@ -37,6 +37,7 @@
 // run. The check is of order and of count, not of speed.
 package crowd
 
+import "modus:contract/call_outcome"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
@@ -232,13 +233,13 @@ entries :: proc "contextless" () -> u64 {
 run :: proc "contextless" (measure: ^Measure) -> bool {
 	measured := system.measure_run()
 	memory: system.Handle
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	if measure.with_lock {
 		memory, locked, status = system.ring_create(CAPACITY)
 	} else {
 		memory, shared, status = system.shared_create(CAPACITY)
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	defer {
@@ -255,7 +256,7 @@ run :: proc "contextless" (measure: ^Measure) -> bool {
 		is_writer := index < measure.writers
 		members[index].number = is_writer ? index : index - measure.writers
 		threads[index], status = system.thread_start(is_writer ? write_records : read_records, &members[index])
-		if status != .Ok {
+		if status != .Succeeded {
 			return false
 		}
 	}

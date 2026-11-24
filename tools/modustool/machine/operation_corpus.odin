@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/operation"
@@ -95,13 +96,13 @@ operation_step_expectations_of :: proc(sequence: ^operation_sequence.Sequence, r
 	expectations = make([]fuzz.Operation_Step_Expectation, int(results.steps_run), allocator)
 	for &expected, step in expectations {
 		result := &results.results[step]
-		status, known := enum_word.member_of_word(operation.Status, result.status)
+		status, known := enum_word.member_of_word(call_outcome.Call_Outcome, result.status)
 		if !known {
 			delete(expectations, allocator)
 			return nil, fmt.tprintf("the step %d gave the status word %d, which names no status", step, result.status)
 		}
 		expected.status = status
-		if status == .Ok {
+		if status == .Succeeded {
 			continue
 		}
 		record := transmute(errors.Error_Record)result.values
@@ -137,7 +138,7 @@ operation_step_expectations_problem :: proc(expectations: []fuzz.Operation_Step_
 		if result.status != u64(expected.status) {
 			return fmt.tprintf("the step %d gave the status word %d, and must give %v", step, result.status, expected.status)
 		}
-		if expected.status == .Ok {
+		if expected.status == .Succeeded {
 			continue
 		}
 		record := transmute(errors.Error_Record)result.values
@@ -263,7 +264,7 @@ operation_regression_add :: proc(folder: string) -> int {
 	state.part.passed = true
 	fmt.printfln("modustool: fuzz regression operations: the regression input %s of %s, %d sequences; the last sequence must get:", path, signature, len(life))
 	for expected, step in expectations {
-		if expected.status == .Ok {
+		if expected.status == .Succeeded {
 			fmt.printfln("modustool:   step %d: %s: Ok", step, operation_word_name(last.steps[step].operation))
 			continue
 		}

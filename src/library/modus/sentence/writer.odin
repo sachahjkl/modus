@@ -22,8 +22,8 @@
 // ```
 package sentence
 
+import "modus:contract/call_outcome"
 import "modus:contract/cut_mark"
-import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
 // Text without an allocator: a Part is a string or a value with a kind, and
@@ -37,8 +37,8 @@ Module_Name :: value_kinds.Module_Name
 
 // A string is plain text. Each other part is a value with a kind
 // (part_kind): an integer and a Hex are numbers, a Size a size, a Duration
-// a time, a Hash a version, a Module_Name a module, and a status of the
-// kernel a status, written as its number.
+// a time, a Hash a version, a Module_Name a module, and a call outcome a
+// status, written as its number.
 Part :: union {
 	string,
 	u64,
@@ -48,7 +48,7 @@ Part :: union {
 	Duration,
 	Hash,
 	Module_Name,
-	op.Status,
+	call_outcome.Call_Outcome,
 }
 
 // part_kind gives the value kind of a part: the log keeps it beside the
@@ -67,7 +67,7 @@ part_kind :: proc "contextless" (part: Part) -> value_kinds.Value_Kind {
 		return .Version
 	case Module_Name:
 		return .Module
-	case op.Status:
+	case call_outcome.Call_Outcome:
 		return .Status
 	}
 	return .None
@@ -175,7 +175,7 @@ write_part :: proc "contextless" (writer: ^Writer, part: Part) {
 		}
 	case Module_Name:
 		write_bytes(writer, transmute([]u8)value.name)
-	case op.Status:
+	case call_outcome.Call_Outcome:
 		write_unsigned(writer, u64(value))
 	}
 }

@@ -12,9 +12,9 @@ package display
 // pointer, a size that Resized asks for and the size limits are logical
 // pixels, which mean the same at each scale.
 
+import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
-import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/scale_factor"
 import "modus:contract/settings"
@@ -292,7 +292,7 @@ Surface_Not_Made :: struct {
 	width:  u64,
 	height: u64,
 	scale:  u64,
-	status: op.Status_Word,
+	status: call_outcome.Call_Outcome_Word,
 	window: [40]u8,
 }
 
@@ -480,8 +480,8 @@ rescale_offer_send :: proc "contextless" (window: ^Window) -> (sent: bool) {
 	scale := window.rescale.scale
 	screen_width, screen_height := surface_size_of(window.view_width, window.view_height, scale)
 	granted, status := surface_budget_give(window, screen_width, screen_height)
-	if status != .Ok {
-		system.log_fact(.Warning, Surface_Not_Made{width = u64(screen_width), height = u64(screen_height), scale = u64(scale), status = op.Status_Word(status), window = window_fact_title(window)})
+	if status != .Succeeded {
+		system.log_fact(.Warning, Surface_Not_Made{width = u64(screen_width), height = u64(screen_height), scale = u64(scale), status = call_outcome.Call_Outcome_Word(status), window = window_fact_title(window)})
 		rescale_decline(window)
 		return false
 	}
@@ -548,15 +548,15 @@ window_fact_title :: proc "contextless" (window: ^Window) -> [WINDOW_FACT_TEXT_B
 // memory object that this process made (window_resize.md, "The
 // compositor makes each surface"). It gives the number of the copy.
 @(private)
-surface_budget_give :: proc "contextless" (window: ^Window, screen_width, screen_height: int, error: ^errors.Error_Record = nil) -> (granted: system.Handle, status: system.Status) {
+surface_budget_give :: proc "contextless" (window: ^Window, screen_width, screen_height: int, error: ^errors.Error_Record = nil) -> (granted: system.Handle, status: call_outcome.Call_Outcome) {
 	pages := surface_budget_pages(u64(max(screen_width, 0)), u64(max(screen_height, 0)))
 	if pages == 0 {
 		errors.fail(error, 0, .Out_Of_Range, .None, 2, i64(screen_width), i64(SURFACE_SCREEN_LIMIT), i64(screen_height))
-		return 0, .Bad_Operation
+		return 0, .Argument_Refused
 	}
 	budget: system.Handle
 	budget, status = system.budget_create({pages = pages}, error = error)
-	if status != .Ok {
+	if status != .Succeeded {
 		return 0, status
 	}
 	// The copy of the compositor holds the budget until it made the surface.
@@ -586,11 +586,11 @@ surface_answer_map :: proc "contextless" (window: ^Window, memory: system.Handle
 	if kind != .Memory || rights & {.Read, .Write} != {.Read, .Write} || needed == 0 {
 		return false
 	}
-	if pages, size_status := system.memory_size(memory); size_status != .Ok || pages < needed {
+	if pages, size_status := system.memory_size(memory); size_status != .Succeeded || pages < needed {
 		return false
 	}
 	address, map_status := system.memory_map(memory, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return false
 	}
 	surface_take(window, memory, address, screen_width, screen_height)

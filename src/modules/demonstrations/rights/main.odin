@@ -36,6 +36,7 @@
 // ..." for each unexpected answer.
 package rights
 
+import "modus:contract/call_outcome"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
@@ -65,38 +66,54 @@ HEIGHT :: 332
 // One operation that the process asked, and the answer of the kernel.
 Attempt :: struct {
 	text:     string,
-	expected: system.Status,
-	status:   system.Status,
+	expected: call_outcome.Call_Outcome,
+	status:   call_outcome.Call_Outcome,
 }
 
 attempts: [ATTEMPT_CAPACITY]Attempt
 attempt_count: int
 
-note :: proc "contextless" (text: string, expected: system.Status, status: system.Status) {
+note :: proc "contextless" (text: string, expected: call_outcome.Call_Outcome, status: call_outcome.Call_Outcome) {
 	attempts[attempt_count] = {text, expected, status}
 	attempt_count += 1
 }
 
-answer :: proc "contextless" (status: system.Status) -> string {
+answer :: proc "contextless" (status: call_outcome.Call_Outcome) -> string {
 	switch status {
-	case .Ok:
+	case .Succeeded:
 		return "done"
-	case .No_Right:
+	case .Grant_Or_Right_Missing:
 		return "refused: no right"
-	case .Bad_Operation:
-		return "bad operation"
-	case .Bad_Handle:
-		return "bad handle"
-	case .Bad_Address:
-		return "bad address"
-	case .No_Memory:
-		return "no memory"
-	case .No_Slot:
-		return "no slot"
-	case .Bad_State:
-		return "bad state"
-	case .No_Budget:
-		return "no budget"
+	case .Argument_Refused:
+		return "argument refused"
+	case .Operation_Unsupported:
+		return "operation unsupported"
+	case .Nothing_Has_That_Name:
+		return "nothing has that name"
+	case .Name_Already_Taken:
+		return "name already taken"
+	case .Wrong_State:
+		return "wrong state"
+	case .Another_Change_Came_First:
+		return "another change came first"
+	case .Budget_Or_Capacity_Exhausted:
+		return "no budget or capacity"
+	case .Callee_Busy:
+		return "callee busy"
+	case .Callee_Unavailable:
+		return "callee unavailable"
+	case .Data_Damaged:
+		return "data damaged"
+	case .Stopped_After_A_Partial_Change:
+		return "stopped after a partial change"
+	case .Callee_Stopped_During_The_Call:
+		return "callee stopped during the call"
+	case .Connection_Ended_During_The_Call:
+		return "connection ended during the call"
+	case .Deadline_Passed_During_The_Call:
+		return "deadline passed during the call"
+	case .Answer_Unreadable:
+		return "answer unreadable"
 	}
 	return "?"
 }
@@ -120,50 +137,50 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	machine := ctx.handles[system.GRANT_MACHINE]
 	image := ctx.handles[system.GRANT_IMAGE]
-	status: system.Status
+	status: call_outcome.Call_Outcome
 
 	report: op.System_Report
 	_, status = system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report))
-	note("read the report of the machine", .Ok, status)
+	note("read the report of the machine", .Succeeded, status)
 	_, status = system.call(.Device_Create, u64(machine), u64(op.Device_Kind.Ports), 0x60, 5)
-	note("create a handle to the ports of the keyboard", .No_Right, status)
+	note("create a handle to the ports of the keyboard", .Grant_Or_Right_Missing, status)
 	_, status = system.call(.Machine_Stop, u64(machine), 0)
-	note("stop the machine", .No_Right, status)
+	note("stop the machine", .Grant_Or_Right_Missing, status)
 
 	_, status = system.memory_map(image, {})
-	note("map the boot image to read it", .Ok, status)
+	note("map the boot image to read it", .Succeeded, status)
 	_, status = system.memory_map(image, {.Write})
-	note("map the boot image to write in it", .No_Right, status)
+	note("map the boot image to write in it", .Grant_Or_Right_Missing, status)
 	_, status = system.memory_map(image, {.Execute})
-	note("map the boot image to execute it", .No_Right, status)
+	note("map the boot image to execute it", .Grant_Or_Right_Missing, status)
 	_, status = system.give(window.ring_memory, image, {.Read})
-	note("give the boot image to the compositor", .No_Right, status)
+	note("give the boot image to the compositor", .Grant_Or_Right_Missing, status)
 
 	// The handle of an object that the process creates has each right.
 	memory: system.Handle
 	memory, status = system.memory_create(1)
-	if status == .Ok {
+	if status == .Succeeded {
 		address: rawptr
 		address, status = system.memory_map(memory)
-		if status == .Ok {
+		if status == .Succeeded {
 			(^u64)(address)^ = 1
 		}
 	}
-	note("create memory and write in it", .Ok, status)
+	note("create memory and write in it", .Succeeded, status)
 	thread: system.Thread
 	thread, status = system.thread_start(idle, nil)
-	if status == .Ok {
+	if status == .Succeeded {
 		_, status = system.call(.Thread_State, u64(thread.handle))
 		system.thread_wait(thread)
 	}
-	note("start a thread and read its state", .Ok, status)
+	note("start a thread and read its state", .Succeeded, status)
 
 	allowed, refused, wrong: u64
 	for attempt in attempts[:attempt_count] {
 		if attempt.status != attempt.expected {
 			wrong += 1
 			system.log_fact(.Info, Attempt_Wrong{status = attempt.status, attempt = attempt_field(attempt.text)})
-		} else if attempt.status == .Ok {
+		} else if attempt.status == .Succeeded {
 			allowed += 1
 		} else {
 			refused += 1

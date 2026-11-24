@@ -79,7 +79,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Info, Wrong_Grant_Handles{grant_handles = u64(granted)})
 	}
 	_, status := system.ring_open(ctx.handles[system.GRANT_ROOT])
-	if ctx.handles[system.GRANT_ROOT] == 0 && status == .Bad_Handle {
+	if ctx.handles[system.GRANT_ROOT] == 0 && status == .Argument_Refused {
 		system.log_fact(.Info, Root_Ring_Refused{})
 	} else {
 		system.log_fact(.Info, Wrong_Root_Ring{status = status})

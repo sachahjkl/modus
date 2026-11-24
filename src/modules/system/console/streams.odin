@@ -147,12 +147,12 @@ console_own_process_slot :: proc "contextless" () -> i64 {
 		return 0
 	}
 	report: op.System_Report
-	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Succeeded {
 		return 0
 	}
 	for slot in u64(1) ..< report.process_slots {
 		process: op.Process_Report
-		if _, p_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); p_status != .Ok {
+		if _, p_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); p_status != .Succeeded {
 			continue
 		}
 		if process.state != .None && system.name_of(process.name[:]) == "console" {
@@ -636,12 +636,12 @@ list_page_ready :: proc "contextless" () -> bool {
 	page := system.Handle(completion.values[0])
 	address, map_status := system.memory_map(page)
 	pages, _ := system.memory_size(page)
-	if map_status != .Ok || pages * system.PAGE_SIZE < output.WIRING_LIST_BYTES_MOST {
-		fail("the console cannot map the list page of the root service: ", map_status == .Ok ? "the page is smaller than the wiring list" : system.kernel_status_text(map_status))
+	if map_status != .Succeeded || pages * system.PAGE_SIZE < output.WIRING_LIST_BYTES_MOST {
+		fail("the console cannot map the list page of the root service: ", map_status == .Succeeded ? "the page is smaller than the wiring list" : system.kernel_outcome_text(map_status))
 		return false
 	}
 	if completion.values[1] != 0 {
-		if taken := system.wiring_ring_take(system.Handle(completion.values[1])); taken != .Ok {
+		if taken := system.wiring_ring_take(system.Handle(completion.values[1])); taken != .Succeeded {
 			fail("the wiring ring of the root service does not open: ", taken)
 			return false
 		}
@@ -733,8 +733,8 @@ stream_wire :: proc "contextless" (stream: ^Line_Stream) -> bool {
 		// which is how it proves the handle (src/md/features/module_outputs.md,
 		// "How the root service names a lent handle").
 		lent, give_status := system.give(requests_memory, stream.process, {.Read})
-		if give_status != .Ok {
-			fail("the console cannot lend the handle of ", stream.owner, " to the root service: ", system.kernel_status_text(give_status))
+		if give_status != .Succeeded {
+			fail("the console cannot lend the handle of ", stream.owner, " to the root service: ", system.kernel_outcome_text(give_status))
 			return false
 		}
 		handles[0] = u32(lent)
@@ -1552,11 +1552,11 @@ start_with_list :: proc "contextless" (name: string, list: Value) -> Value {
 			switch owner.end {
 			case .Started:
 				lent, give_status := system.give(requests_memory, owner.process, {.Read})
-				if give_status != .Ok {
+				if give_status != .Succeeded {
 					// The handles lent before this one go back to the root
 					// service, which would keep them for its whole life.
 					lent_handles_return(handles[:lent_count])
-					return fail("start: the console cannot lend the handle of ", owner.name, " to the root service: ", system.kernel_status_text(give_status))
+					return fail("start: the console cannot lend the handle of ", owner.name, " to the root service: ", system.kernel_outcome_text(give_status))
 				}
 				handles[lent_count] = u32(lent)
 				lent_count += 1

@@ -1,6 +1,6 @@
 package visitor
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/storage_status"
 
 // The log facts of the disk process visitor (src/md/features/log_facts.md):
@@ -54,7 +54,7 @@ Root_Ring_Refused :: struct {}
 // A ring to the root service opened, or its open gave another status.
 @(log_fact = "visitor: a ring to the root service opens with status {status}: WRONG")
 Wrong_Root_Ring :: struct {
-	status: op.Status,
+	status: call_outcome.Call_Outcome,
 }
 
 // The store did not give the count of the visits.

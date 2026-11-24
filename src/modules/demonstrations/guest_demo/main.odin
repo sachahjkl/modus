@@ -47,6 +47,7 @@
 // The design: src/md/features/guest.md.
 package guest_demo
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
@@ -93,11 +94,11 @@ INTERRUPTED_RUNS_LIMIT :: 1000
 // protection and a part of it.
 switching_mapping :: proc "contextless" (guest: system.Handle) {
 	memory, memory_status := system.memory_create(SWITCHING_PAGES)
-	if memory_status != .Ok {
+	if memory_status != .Succeeded {
 		step_failed("Memory_Create of the switching pages", memory_status)
 	}
 	page, map_status := system.memory_map(memory, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		step_failed("Memory_Map of the switching pages", map_status)
 	}
 	code := OWN_PAGE_CODE
@@ -106,29 +107,29 @@ switching_mapping :: proc "contextless" (guest: system.Handle) {
 		bytes[index] = code_byte
 	}
 	system.memory_unmap(page)
-	if _, guest_status := system.memory_map(memory, {.Write, .Execute, .No_Access}, guest, SWITCHING_ADDRESS); guest_status != .Ok {
+	if _, guest_status := system.memory_map(memory, {.Write, .Execute, .No_Access}, guest, SWITCHING_ADDRESS); guest_status != .Succeeded {
 		step_failed("Memory_Map of the switching pages in the guest", guest_status)
 	}
 	whole := [1]op.Address_Range{{address = SWITCHING_ADDRESS, page_count = SWITCHING_PAGES}}
 	part := [1]op.Address_Range{{address = SWITCHING_ADDRESS, page_count = 1}}
-	if _, status := system.memory_protect(whole[:], {}, process = guest); status != .Bad_Operation {
-		system.log_fact(.Info, Step_Not_Refused{status_word = op.Status_Word(status), expected = .Bad_Operation, step = value_kinds.text_field("Memory_Protect read only", 36)})
+	if _, status := system.memory_protect(whole[:], {}, process = guest); status != .Argument_Refused {
+		system.log_fact(.Info, Step_Not_Refused{status_word = call_outcome.Call_Outcome_Word(status), expected = .Argument_Refused, step = value_kinds.text_field("Memory_Protect read only", 40)})
 		system.stop(.Failed)
 	}
-	if _, status := system.memory_protect(part[:], {.Execute}, process = guest); status != .Bad_Operation {
-		system.log_fact(.Info, Step_Not_Refused{status_word = op.Status_Word(status), expected = .Bad_Operation, step = value_kinds.text_field("Memory_Protect of a part", 36)})
+	if _, status := system.memory_protect(part[:], {.Execute}, process = guest); status != .Argument_Refused {
+		system.log_fact(.Info, Step_Not_Refused{status_word = call_outcome.Call_Outcome_Word(status), expected = .Argument_Refused, step = value_kinds.text_field("Memory_Protect of a part", 40)})
 		system.stop(.Failed)
 	}
 	system.log_fact(.Info, Switching_Protect_Refused{})
-	if _, status := system.memory_protect(whole[:], {.Execute}, process = guest); status != .Ok {
+	if _, status := system.memory_protect(whole[:], {.Execute}, process = guest); status != .Succeeded {
 		step_failed("Memory_Protect of the switching pages", status)
 	}
 }
 
 // step_failed writes the fact of a step that gave a status that stops the
 // demonstration, and stops the process with `Failed`.
-step_failed :: proc "contextless" (step: string, status: system.Status) -> ! {
-	system.log_fact(.Info, Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field(step, 40)})
+step_failed :: proc "contextless" (step: string, status: call_outcome.Call_Outcome) -> ! {
+	system.log_fact(.Info, Step_Failed{status_word = call_outcome.Call_Outcome_Word(status), step = value_kinds.text_field(step, 40)})
 	system.stop(.Failed)
 }
 
@@ -136,7 +137,7 @@ step_failed :: proc "contextless" (step: string, status: system.Status) -> ! {
 entry :: proc "c" (_: ^system.Context) -> ! {
 	name := GUEST_NAME
 	created, create_status := system.call(.Process_Create, u64(system.own_budget()), u64(uintptr(raw_data(name))), u64(len(name)))
-	if create_status != .Ok {
+	if create_status != .Succeeded {
 		step_failed("Process_Create of the guest", create_status)
 	}
 	guest := system.Handle(created[0])
@@ -144,11 +145,11 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 	// The code goes in one memory object, written here, then mapped in the
 	// guest with Execute only: no page is writable and executable.
 	memory, memory_status := system.memory_create(1)
-	if memory_status != .Ok {
+	if memory_status != .Succeeded {
 		step_failed("Memory_Create", memory_status)
 	}
 	page, map_status := system.memory_map(memory, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		step_failed("Memory_Map of the code", map_status)
 	}
 	code := GUEST_CODE
@@ -157,7 +158,7 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 		bytes[index] = code_byte
 	}
 	system.memory_unmap(page)
-	if _, guest_map_status := system.memory_map(memory, {.Execute}, guest, CODE_ADDRESS); guest_map_status != .Ok {
+	if _, guest_map_status := system.memory_map(memory, {.Execute}, guest, CODE_ADDRESS); guest_map_status != .Succeeded {
 		step_failed("Memory_Map of the code in the guest", guest_map_status)
 	}
 
@@ -170,12 +171,12 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 	for !halted {
 		error: errors.Error_Record
 		exit, run_status := system.guest_run(guest, &registers, &error)
-		if run_status == .Bad_Operation && error.kind == i64(errors.Kind.Unsupported) {
+		if run_status == .Operation_Unsupported && error.kind == i64(errors.Kind.Unsupported) {
 			system.log_fact(.Info, Guests_Unsupported{})
 			system.log_fact(.Info, Guest_Demo_Held{})
 			system.stop(.Done)
 		}
-		if run_status != .Ok {
+		if run_status != .Succeeded {
 			step_failed("Guest_Run", run_status)
 		}
 		switch exit.kind {
@@ -219,7 +220,7 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 	system.ready()
 	for {
 		exit, run_status := system.guest_run(guest, &registers)
-		if run_status != .Ok {
+		if run_status != .Succeeded {
 			step_failed("Guest_Run at int1", run_status)
 		}
 		if exit.kind == .Interrupted {
@@ -243,7 +244,7 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 	interrupted = 0
 	for {
 		exit, run_status := system.guest_run(guest, &registers)
-		if run_status != .Ok {
+		if run_status != .Succeeded {
 			step_failed("Guest_Run at the write of its own page", run_status)
 		}
 		if exit.kind == .Interrupted {
@@ -263,8 +264,8 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 	system.log_fact(.Info, Own_Page_Write_Arrived{})
 
 	// A guest has no kernel half in its page table: no thread runs on it.
-	if _, start_status := system.call(.Process_Start, u64(guest), CODE_ADDRESS, op.STACK_TOP, op.CONTEXT_ADDRESS); start_status != .Bad_State {
-		system.log_fact(.Info, Step_Not_Refused{status_word = op.Status_Word(start_status), expected = .Bad_State, step = value_kinds.text_field("Process_Start of the guest", 36)})
+	if _, start_status := system.call(.Process_Start, u64(guest), CODE_ADDRESS, op.STACK_TOP, op.CONTEXT_ADDRESS); start_status != .Wrong_State {
+		system.log_fact(.Info, Step_Not_Refused{status_word = call_outcome.Call_Outcome_Word(start_status), expected = .Wrong_State, step = value_kinds.text_field("Process_Start of the guest", 40)})
 		system.stop(.Failed)
 	}
 	system.log_fact(.Info, Guest_Start_Refused{})

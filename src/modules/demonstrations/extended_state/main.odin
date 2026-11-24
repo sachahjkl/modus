@@ -42,6 +42,7 @@
 // registers are not checked. The rules are in docs/SIMD.md.
 package extended_state
 
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:display"
 import "modus:graphics"
@@ -549,7 +550,7 @@ hand_over_measure :: proc "contextless" (with_avx: bool) -> (count: u64, nanosec
 	hand_over = {with_avx = with_avx}
 	pattern_fill(&hand_over_image, 77, 1)
 	thread, status := system.thread_start(hand_over_second, nil)
-	if status != .Ok {
+	if status != .Succeeded {
 		return 0, 0
 	}
 	for intrinsics.atomic_load(&hand_over.ready) == 0 {
@@ -781,9 +782,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for index in 0 ..< worker_count {
 		worker := &workers[index]
 		worker.number = u32(index + 1)
-		status: system.Status
+		status: call_outcome.Call_Outcome
 		worker.thread, status = system.thread_start(worker_run, worker)
-		if status != .Ok {
+		if status != .Succeeded {
 			system.log_fact(.Info, Thread_Not_Started{thread_number = u64(index + 1)})
 			system.stop(.Failed)
 		}

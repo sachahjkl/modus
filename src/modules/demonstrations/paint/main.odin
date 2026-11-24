@@ -787,7 +787,7 @@ store_job :: proc "contextless" (parameter: rawptr) {
 			request.file_count = paint_model.FILE_HEADER_BYTES
 			return
 		}
-		if arena_hold(&backup_arena, place.bytes) != .Ok {
+		if arena_hold(&backup_arena, place.bytes) != .Succeeded {
 			request.file_count = paint_model.FILE_HEADER_BYTES
 			request.too_large = true
 			return
@@ -952,11 +952,11 @@ picture_changed_rows :: proc "contextless" (box: paint_model.Box) {
 // arena. false: the budget does not pay the spans.
 fill_stack_grow :: proc "contextless" (memory: ^paint_model.Fill_Memory, wanted: int) -> bool {
 	status := arena_hold(&fill_arena, max(wanted, 2 * len(memory.spans)) * size_of(paint_model.Fill_Span))
-	if status != .Ok {
+	if status != .Succeeded {
 		status = arena_hold(&fill_arena, wanted * size_of(paint_model.Fill_Span))
 	}
 	memory.spans = ([^]paint_model.Fill_Span)(fill_arena.base)[:fill_arena.used_bytes / size_of(paint_model.Fill_Span)]
-	return status == .Ok
+	return status == .Succeeded
 }
 
 // history_ring_grow grows the ring of the history to the bytes that a
@@ -965,15 +965,15 @@ fill_stack_grow :: proc "contextless" (memory: ^paint_model.Fill_Memory, wanted:
 history_ring_grow :: proc "contextless" (ring_history: ^paint_model.History, wanted: int) -> bool {
 	status := arena_hold(&history_arena, wanted)
 	ring_history.ring = history_arena.base[:history_arena.used_bytes]
-	return status == .Ok
+	return status == .Succeeded
 }
 
 // arena_hold grows an arena to hold bytes from its base: a push of the
 // missing bytes at its end, so its memory stays one run from the base,
 // which never moves.
-arena_hold :: proc "contextless" (arena: ^system.Arena, bytes: int) -> system.Status {
+arena_hold :: proc "contextless" (arena: ^system.Arena, bytes: int) -> call_outcome.Call_Outcome {
 	if bytes <= 0 || u64(bytes) <= arena.used_bytes {
-		return .Ok
+		return .Succeeded
 	}
 	_, status := system.arena_push(arena, u64(bytes) - arena.used_bytes, 1)
 	return status
@@ -993,7 +993,7 @@ picture_memory_take :: proc "contextless" () {
 // of pixels. false: the budget does not pay them; the picture keeps its
 // extent and its pixels, in what the arenas hold.
 picture_memory_hold :: proc "contextless" (pixels: int) -> bool {
-	held := arena_hold(&picture_arena, pixels * size_of(graphics.Color)) == .Ok && arena_hold(&backup_arena, pixels * size_of(graphics.Color)) == .Ok
+	held := arena_hold(&picture_arena, pixels * size_of(graphics.Color)) == .Succeeded && arena_hold(&backup_arena, pixels * size_of(graphics.Color)) == .Succeeded
 	picture_memory_take()
 	return held
 }
@@ -1851,7 +1851,7 @@ events_take :: proc "contextless" (window: ^display.Window) {
 		case .Resized:
 			// The surface of the new size has no picture known: the next
 			// frame draws it whole. A refused surface keeps the old one.
-			if display.surface_resize(window, event.width, event.height) == .Ok {
+			if display.surface_resize(window, event.width, event.height) == .Succeeded {
 				interface.draw_whole_window_next(drawing)
 			}
 		case .Presentation, .Surface_Answer:
@@ -1894,17 +1894,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// (src/md/features/memory_without_a_bound.md, "The decision points").
 	own, _ := system.budget_read()
 	reservation := system.arena_reservation_pages(own.pages)
-	arena_status: system.Status
-	if picture_arena, arena_status = system.arena_create(reservation); arena_status == .Ok {
-		if backup_arena, arena_status = system.arena_create(reservation); arena_status == .Ok {
-			if history_arena, arena_status = system.arena_create(reservation); arena_status == .Ok {
+	arena_status: call_outcome.Call_Outcome
+	if picture_arena, arena_status = system.arena_create(reservation); arena_status == .Succeeded {
+		if backup_arena, arena_status = system.arena_create(reservation); arena_status == .Succeeded {
+			if history_arena, arena_status = system.arena_create(reservation); arena_status == .Succeeded {
 				fill_arena, arena_status = system.arena_create(reservation)
 			}
 		}
 	}
 	history.grow = history_ring_grow
 	fill_memory.grow = fill_stack_grow
-	if arena_status != .Ok || picture_grow(WIDTH, HEIGHT - CANVAS_TOP - STATUS_HEIGHT) != .Grown {
+	if arena_status != .Succeeded || picture_grow(WIDTH, HEIGHT - CANVAS_TOP - STATUS_HEIGHT) != .Grown {
 		system.log_fact(.Warning, Picture_Memory_Refused{width = WIDTH, height = HEIGHT - CANVAS_TOP - STATUS_HEIGHT})
 		system.stop(.Failed)
 	}
@@ -1913,8 +1913,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The store opens on the worker thread: the window draws at once.
 	process_context = ctx
 	// The worker of the long changes: with none, a change runs on the window.
-	change_worker = interface.background_work_start(&change_work) == .Ok
-	if interface.background_work_start(&work) == .Ok {
+	change_worker = interface.background_work_start(&change_work) == .Succeeded
+	if interface.background_work_start(&work) == .Succeeded {
 		store_ask(.Open, "")
 	} else {
 		// No worker, so no open will be taken: the picture may change from

@@ -416,7 +416,6 @@ c_render_modus_operation_h :: proc(allocator := context.temp_allocator) -> strin
 	c_emit_enum_u32(&out, "Modus_Right", "MODUS_RIGHT", op.Right)
 	c_emit_enum_u8(&out, "Modus_Object_Kind", "MODUS_OBJECT_KIND", op.Object_Kind)
 	c_emit_enum_u32(&out, "Modus_Operation", "MODUS_OPERATION", op.Operation)
-	c_emit_enum_u32(&out, "Modus_Status", "MODUS_STATUS", op.Status)
 	c_emit_enum_u32(&out, "Modus_Process_State", "MODUS_PROCESS_STATE", op.Process_State)
 	c_emit_enum_u32(&out, "Modus_Stop_Cause", "MODUS_STOP_CAUSE", op.Stop_Cause)
 	c_emit_enum_u32(&out, "Modus_Stop_Outcome", "MODUS_STOP_OUTCOME", op.Stop_Outcome)

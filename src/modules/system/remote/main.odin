@@ -1044,17 +1044,17 @@ connection_answer :: proc "contextless" (connection: ^Service_Connection, record
 	connection.ring_memory = system.Handle(record.values[1])
 	connection.region_memory = system.Handle(record.values[2])
 	connection.hash = transmute([32]u8)[4]u64{record.values[3], record.values[4], record.values[5], record.values[6]}
-	ring_status: system.Status
+	ring_status: call_outcome.Call_Outcome
 	connection.calls, ring_status = system.ring_open(connection.ring_memory, receive_handles = true)
 	address, map_status := system.memory_map(connection.region_memory)
 	region_pages, size_status := system.memory_size(connection.region_memory)
-	if ring_status != .Ok || map_status != .Ok || size_status != .Ok {
-		if map_status == .Ok {
+	if ring_status != .Succeeded || map_status != .Succeeded || size_status != .Succeeded {
+		if map_status == .Succeeded {
 			system.memory_unmap(address)
 		}
-		refused := ring_status != .Ok ? ring_status : map_status != .Ok ? map_status : size_status
+		refused := ring_status != .Succeeded ? ring_status : map_status != .Succeeded ? map_status : size_status
 		// Root returned Ok for Connect, so root holds the connection until told.
-		connection_refuse(connection, true, system.outcome_of_own_status(refused), errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(refused)))
+		connection_refuse(connection, true, system.own_operation_outcome(refused), errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(refused)))
 		return
 	}
 	connection.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]
@@ -1562,14 +1562,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	quic_endpoint.on_held_overflow = held_overflow_fail
 	listen_port = quic_endpoint.listen_port
-	status: system.Status
-	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true); status != .Succeeded {
 		fail("no ring to the root service")
 	}
 	// The client table, read-only: the root service writes it, and this
 	// process cannot give a key a row.
 	client_table_address, client_table_status := system.memory_map(ctx.handles[remote.GRANT_CLIENT_TABLE], {})
-	if client_table_status != .Ok {
+	if client_table_status != .Succeeded {
 		fail("no client table: the process has no grant Remote_Clients")
 	}
 	client_table = (^remote.Client_Table)(client_table_address)
@@ -1579,7 +1579,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The connections, their streams and their buffers: one mapping.
 	memory, memory_status := system.memory_create(TABLE_PAGES)
 	table, table_status := system.memory_map(memory, {.Write})
-	if memory_status != .Ok || table_status != .Ok {
+	if memory_status != .Succeeded || table_status != .Succeeded {
 		fail("no memory for the table of connections")
 	}
 	quic_connections = ([^]quic.Connection)(table)[:CAPACITY]

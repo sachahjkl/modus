@@ -1,6 +1,6 @@
 package rights
 
-import op "modus:contract/operation"
+import "modus:contract/call_outcome"
 import "modus:contract/value_kinds"
 
 // The log facts of rights (src/md/features/log_facts.md): each fact
@@ -11,7 +11,7 @@ import "modus:contract/value_kinds"
 
 // The bytes of the Text field of the text of an attempt: the longest has
 // 44 bytes.
-ATTEMPT_FIELD_BYTES :: 52
+ATTEMPT_FIELD_BYTES :: 56
 
 // Each attempt gave the status that it must give.
 @(log_fact = "rights: ok, {allowed} allowed, {refused} refused")
@@ -23,13 +23,13 @@ Attempts_Passed :: struct {
 // An attempt gave another status than the one it must give.
 @(log_fact = "rights: wrong answer: {attempt}: status {status}")
 Attempt_Wrong :: struct {
-	status:  op.Status,
-	attempt: [52]u8,
+	status:  call_outcome.Call_Outcome,
+	attempt: [56]u8,
 }
 
-#assert(size_of(Attempt_Wrong) == 4 + ATTEMPT_FIELD_BYTES)
+#assert(size_of(Attempt_Wrong) == 8 + ATTEMPT_FIELD_BYTES)
 
 // attempt_field gives the Text field of the text of an attempt.
-attempt_field :: proc "contextless" (text: string) -> [52]u8 {
-	return value_kinds.text_field(text, 52)
+attempt_field :: proc "contextless" (text: string) -> [56]u8 {
+	return value_kinds.text_field(text, 56)
 }

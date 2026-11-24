@@ -32,7 +32,7 @@ space_memory: Space_Memory
 // that pays nothing, so each space is refused with its cause.
 space_memory_reserve :: proc "contextless" () -> (port: wide_grants.Space_Memory_Port, windows: u32) {
 	amounts, read := system.budget_read()
-	if read != .Ok || amounts.pages == 0 {
+	if read != .Succeeded || amounts.pages == 0 {
 		return {}, 0
 	}
 	reserve_pages := system.arena_reservation_pages(amounts.pages)
@@ -41,22 +41,22 @@ space_memory_reserve :: proc "contextless" () -> (port: wide_grants.Space_Memory
 		return {}, 0
 	}
 	memory, created := system.memory_create(u64(windows) * wide_grants.SPACE_WINDOW_PAGES, 0, {.Uncommitted})
-	if created != .Ok {
+	if created != .Succeeded {
 		return {}, 0
 	}
 	address, mapped := system.memory_map(memory, {.Write})
-	if mapped != .Ok {
+	if mapped != .Succeeded {
 		system.close(memory)
 		return {}, 0
 	}
 	flags, flags_made := system.arena_create(system.arena_reservation_pages(u64(windows) / system.PAGE_SIZE + 1))
 	places, places_made := system.arena_create(reserve_pages)
 	index, index_made := system.arena_create(reserve_pages)
-	if flags_made != .Ok || places_made != .Ok || index_made != .Ok {
+	if flags_made != .Succeeded || places_made != .Succeeded || index_made != .Succeeded {
 		return {}, 0
 	}
 	used, pushed := system.arena_push(&flags, u64(windows), 1)
-	if pushed != .Ok {
+	if pushed != .Succeeded {
 		return {}, 0
 	}
 	space_memory = {
@@ -94,7 +94,7 @@ space_window_commit :: proc "contextless" (user: rawptr) -> ^wide_grants.Space_W
 			continue
 		}
 		ranges := space_window_range(u32(slot))
-		if _, committed := system.memory_commit(memory.windows_memory, ranges[:]); committed != .Ok {
+		if _, committed := system.memory_commit(memory.windows_memory, ranges[:]); committed != .Succeeded {
 			return nil
 		}
 		used = true
@@ -113,7 +113,7 @@ space_window_decommit :: proc "contextless" (user: rawptr, window: ^wide_grants.
 		return
 	}
 	ranges := space_window_range(u32(slot))
-	if _, decommitted := system.memory_decommit(memory.windows_memory, ranges[:]); decommitted == .Ok {
+	if _, decommitted := system.memory_decommit(memory.windows_memory, ranges[:]); decommitted == .Succeeded {
 		memory.windows_used[slot] = false
 	}
 }
@@ -124,7 +124,7 @@ space_window_decommit :: proc "contextless" (user: rawptr, window: ^wide_grants.
 space_windows_paid_left :: proc "contextless" (user: rawptr) -> u32 {
 	memory := (^Space_Memory)(user)
 	amounts, read := system.budget_read()
-	if read != .Ok {
+	if read != .Succeeded {
 		return 0
 	}
 	free: u32 = 0
@@ -144,7 +144,7 @@ space_places_grow :: proc "contextless" (user: rawptr, count: u32) -> []wide_gra
 	if count > memory.places_count {
 		size := u64(count - memory.places_count) * size_of(wide_grants.Collector_Space)
 		added, pushed := system.arena_push(&memory.places, size, align_of(wide_grants.Collector_Space))
-		if pushed != .Ok {
+		if pushed != .Succeeded {
 			return nil
 		}
 		intrinsics.mem_zero(added, int(size))
@@ -161,7 +161,7 @@ space_index_grow :: proc "contextless" (user: rawptr, bytes: int) -> []u8 {
 	memory := (^Space_Memory)(user)
 	system.arena_reset(&memory.index)
 	buffer, pushed := system.arena_push(&memory.index, u64(bytes), 8)
-	if pushed != .Ok {
+	if pushed != .Succeeded {
 		return nil
 	}
 	return ([^]u8)(buffer)[:bytes]

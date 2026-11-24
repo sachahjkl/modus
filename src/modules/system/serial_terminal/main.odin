@@ -45,7 +45,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	terminal_ring, ring_status := system.ring_open(ring_handle)
 	text_address, map_status := system.memory_map(text_handle, {})
-	if ring_status != .Ok || map_status != .Ok {
+	if ring_status != .Succeeded || map_status != .Succeeded {
 		system.log(.Error, "serial_terminal: cannot map terminal ring or text region")
 		system.stop(.Failed)
 	}

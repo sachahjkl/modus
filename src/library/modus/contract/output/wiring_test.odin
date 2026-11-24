@@ -2,6 +2,7 @@
 package output
 
 import "core:testing"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/module"
 import op "modus:contract/operation"
@@ -236,56 +237,56 @@ the_border_takes_each_valid_end_back_as_it_was :: proc(t: ^testing.T) {
 	}
 }
 
-// The completion of the wiring ring: a status word that names no member is
-// refused; an Ok whose answer word names no Wiring_Answer (one past the
-// last, the largest word); an Ok with any other value that is not 0, the
-// answer Closed among them.
+// The completion of the wiring ring: an outcome word that names no member is
+// refused; a Succeeded whose answer word names no Wiring_Answer (one past
+// the last, the largest word); a Succeeded with any other value that is not
+// 0, the answer Closed among them.
 @(test)
 a_completion_with_an_unknown_status_or_an_ok_with_values_is_refused :: proc(t: ^testing.T) {
-	words := [?]u32{u32(max(op.Status)) + 1, max(u32)}
+	words := [?]u32{u32(max(call_outcome.Call_Outcome)) + 1, max(u32)}
 	for word in words {
 		_, _, _, _, ok := wiring_completion_of_record({kind = word, tag = 1})
-		testing.expectf(t, !ok, "the status word %d is taken", word)
+		testing.expectf(t, !ok, "the outcome word %d is taken", word)
 	}
 	for answer in ([?]u64{u64(max(Wiring_Answer)) + 1, max(u64)}) {
-		record := wiring_completion(5, .Ok)
+		record := wiring_completion(5, .Succeeded)
 		record.values[WIRING_ANSWER_VALUE] = answer
 		_, _, _, _, ok := wiring_completion_of_record(record)
 		testing.expectf(t, !ok, "the answer word %d is taken", answer)
 	}
-	for base in ([?]ring.Record{wiring_completion(5, .Ok), wiring_closed_completion(5)}) {
+	for base in ([?]ring.Record{wiring_completion(5, .Succeeded), wiring_closed_completion(5)}) {
 		for index in WIRING_ANSWER_VALUE + 1 ..< 7 {
 			record := base
 			record.values[index] = 1
 			_, _, _, _, ok := wiring_completion_of_record(record)
-			testing.expectf(t, !ok, "an Ok with the value %d is taken", index)
+			testing.expectf(t, !ok, "a Succeeded with the value %d is taken", index)
 		}
 	}
 }
 
-// The completions that the border takes, last: Ok with the answer Taken,
-// the word Closed, and a refusal with its error record and the tag of its
-// command.
+// The completions that the border takes, last: Succeeded with the answer
+// Taken, the word Closed, and a refusal with its error record and the tag
+// of its command.
 @(test)
 a_completion_comes_back_with_its_status_its_tag_and_its_record :: proc(t: ^testing.T) {
-	status, tag, answer, refusal, ok := wiring_completion_of_record(wiring_completion(max(u32), .Ok))
+	outcome, tag, answer, refusal, ok := wiring_completion_of_record(wiring_completion(max(u32), .Succeeded))
 	testing.expect(t, ok)
-	testing.expect_value(t, status, op.Status.Ok)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, tag, max(u32))
 	testing.expect_value(t, answer, Wiring_Answer.Taken)
 	testing.expect_value(t, refusal, errors.Error_Record{})
 
-	status, tag, answer, refusal, ok = wiring_completion_of_record(wiring_closed_completion(7))
+	outcome, tag, answer, refusal, ok = wiring_completion_of_record(wiring_closed_completion(7))
 	testing.expect(t, ok)
-	testing.expect_value(t, status, op.Status.Ok)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Succeeded)
 	testing.expect_value(t, tag, 7)
 	testing.expect_value(t, answer, Wiring_Answer.Closed)
 	testing.expect_value(t, refusal, errors.Error_Record{})
 
 	refused := errors.error_make(.Bad_Value, .None, WIRING_VALUE_INDEX + 1, 9, 2)
-	status, tag, answer, refusal, ok = wiring_completion_of_record(wiring_completion(6, .Bad_Operation, refused))
+	outcome, tag, answer, refusal, ok = wiring_completion_of_record(wiring_completion(6, .Argument_Refused, refused))
 	testing.expect(t, ok)
-	testing.expect_value(t, status, op.Status.Bad_Operation)
+	testing.expect_value(t, outcome, call_outcome.Call_Outcome.Argument_Refused)
 	testing.expect_value(t, tag, 6)
 	testing.expect_value(t, refusal, refused)
 }
@@ -497,7 +498,7 @@ each_property_of_a_field_is_part_of_the_type :: proc(t: ^testing.T) {
 
 	// Another enum of the contract: the reader would check its members.
 	other_enum := probe_fields()
-	other_enum[1].contract_enum = .Status
+	other_enum[1].contract_enum = .Call_Outcome
 	expect_difference(t, probe, 1, probe_file(other_enum), 1, .Field, 2)
 
 	// Bytes of 7 in place of a Text of 7: the same size, another type.

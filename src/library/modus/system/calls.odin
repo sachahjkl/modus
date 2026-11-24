@@ -205,8 +205,8 @@ call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, e
 	}
 	lending: Lending
 	defer lend_end(&lending)
-	if lent := lend(file, function, arguments, connection.ring_memory, &lending); lent != .Ok {
-		return path_failure(error, outcome_of_status(lent), errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(lent)))
+	if lent := lend(file, function, arguments, connection.ring_memory, &lending); lent != .Succeeded {
+		return path_failure(error, lent, errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(lent)))
 	}
 	offset, size, result_place, encoded := isolated.encode(file, function, arguments, connection.region)
 	if !encoded {
@@ -337,45 +337,19 @@ path_failure :: proc "contextless" (error: ^errors.Error_Record, outcome: call_o
 	return 0, outcome
 }
 
-// outcome_of_status gives the call outcome of a kernel refusal that an
-// export passes on to its caller: the one place of this map until each
-// completion of the kernel carries the outcome itself
-// (src/md/api/call_outcome.md, "The vocabularies of today"). The kernel
-// says No_Slot for a table of the caller (its handles, its mappings) and
-// for a table of the machine: the export that knows which table gives
-// Callee_Busy for the second itself.
-outcome_of_status :: proc "contextless" (status: Status) -> call_outcome.Call_Outcome {
-	switch status {
-	case .Ok:
-		return .Succeeded
-	case .Bad_Operation, .Bad_Handle, .Bad_Address:
-		return .Argument_Refused
-	case .No_Memory:
-		return .Callee_Busy
-	case .No_Slot, .No_Budget:
-		return .Budget_Or_Capacity_Exhausted
-	case .Bad_State:
-		return .Wrong_State
-	case .No_Right:
-		return .Grant_Or_Right_Missing
-	}
-	return .Argument_Refused
-}
-
-// outcome_of_own_status gives the call outcome of a kernel refusal of an
+// own_operation_outcome gives the call outcome of a kernel refusal of an
 // operation that an export runs on its own objects: its budget, its scratch
-// memory, its own grant. outcome_of_status reads a refusal as a fault of
-// the caller, who gave the handle or the address; here the caller gave
-// neither, and no change of its arguments makes the call run.
-outcome_of_own_status :: proc "contextless" (status: Status) -> call_outcome.Call_Outcome {
-	switch status {
-	case .Ok:
+// memory, its own grant. A refusal on the callee's own objects never blames
+// the caller: no change of its arguments or grants makes the call run.
+own_operation_outcome :: proc "contextless" (outcome: call_outcome.Call_Outcome) -> call_outcome.Call_Outcome {
+	switch outcome {
+	case .Succeeded:
 		return .Succeeded
-	case .No_Memory:
+	case .Callee_Busy:
 		return .Callee_Busy
-	case .No_Slot, .No_Budget:
+	case .Budget_Or_Capacity_Exhausted:
 		return .Budget_Or_Capacity_Exhausted
-	case .Bad_Operation, .Bad_Handle, .Bad_Address, .Bad_State, .No_Right:
+	case .Argument_Refused, .Nothing_Has_That_Name, .Name_Already_Taken, .Grant_Or_Right_Missing, .Wrong_State, .Another_Change_Came_First, .Operation_Unsupported, .Data_Damaged, .Callee_Unavailable, .Stopped_After_A_Partial_Change, .Callee_Stopped_During_The_Call, .Connection_Ended_During_The_Call, .Deadline_Passed_During_The_Call, .Answer_Unreadable:
 		return .Callee_Unavailable
 	}
 	return .Callee_Unavailable
@@ -416,9 +390,9 @@ Call_Host_Context :: struct {
 //
 // `added`: the handles, the mappings and the pages that the starter adds
 // (Call_Host_Context); nil adds none.
-call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: []u8, name: string, values_with_seed: [op.CONTEXT_VALUES]u64, load_error: ^module.Load_Error, log_records: u64 = CALL_HOST_LOG_RECORDS, added: ^Call_Host_Context = nil) -> (connection: Call_Connection, status: Status) {
+call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: []u8, name: string, values_with_seed: [op.CONTEXT_VALUES]u64, load_error: ^module.Load_Error, log_records: u64 = CALL_HOST_LOG_RECORDS, added: ^Call_Host_Context = nil) -> (connection: Call_Connection, status: call_outcome.Call_Outcome) {
 	if added != nil && (added.grants[isolated.GRANT_RING].handle != 0 || added.grants[isolated.GRANT_REGION].handle != 0 || len(added.mappings) > CALL_HOST_ADDED_MAPPING_CAPACITY) {
-		return {}, .Bad_Operation
+		return {}, .Argument_Refused
 	}
 	files: [MODULE_SPACE_CAPACITY + IMPORT_CAPACITY]^info.Image_Entry
 	source := Load_Source {
@@ -427,9 +401,9 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	count := source_closure(source, file, &files)
 	list_size := size_of(info.Image_Header) + count * size_of(info.Image_Entry)
 	if count == 0 || list_size > PAGE_SIZE {
-		return {}, .Bad_Operation
+		return {}, .Argument_Refused
 	}
-	defer if status != .Ok {
+	defer if status != .Succeeded {
 		call_connection_end(&connection)
 	}
 	connection.files_memory = memory_create(1) or_return
@@ -443,7 +417,7 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	for item, index in files[:count] {
 		if item.offset % PAGE_SIZE != 0 {
 			memory_unmap(page_address)
-			return connection, .Bad_Operation
+			return connection, .Argument_Refused
 		}
 		entries[index] = item^
 		entries[index].offset = offset
@@ -482,36 +456,36 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	// The first completion says if the call host loaded the module.
 	switch connection_ready_wait(&connection.calls, connection.process) {
 	case .Ready:
-		return connection, .Ok
+		return connection, .Succeeded
 	case .Load_Failed:
 		if load_error != nil {
 			intrinsics.mem_copy_non_overlapping(load_error, raw_data(connection.region), size_of(module.Load_Error))
 		}
-		return connection, .Bad_State
+		return connection, .Wrong_State
 	case .Refused:
-		return connection, .Bad_State
+		return connection, .Wrong_State
 	}
-	return connection, .Bad_State
+	return connection, .Wrong_State
 }
 
 // call_host_start_from_memory starts a call host from in-memory host and
 // target module bytes (zero external imports), allowing a zero-grant builder
 // module without GRANT_IMAGE to invoke c_compiler and assemble in isolated
 // child call hosts.
-call_host_start_from_memory :: proc "contextless" (host_file: []u8, module_memory: Handle, module_file: []u8, name: string, values_with_seed: [op.CONTEXT_VALUES]u64, load_error: ^module.Load_Error, log_records: u64 = CALL_HOST_LOG_RECORDS, added: ^Call_Host_Context = nil) -> (connection: Call_Connection, status: Status) {
+call_host_start_from_memory :: proc "contextless" (host_file: []u8, module_memory: Handle, module_file: []u8, name: string, values_with_seed: [op.CONTEXT_VALUES]u64, load_error: ^module.Load_Error, log_records: u64 = CALL_HOST_LOG_RECORDS, added: ^Call_Host_Context = nil) -> (connection: Call_Connection, status: call_outcome.Call_Outcome) {
 	if len(host_file) == 0 || module_memory == 0 || len(module_file) == 0 {
-		return {}, .Bad_Operation
+		return {}, .Argument_Refused
 	}
 	if module.validate(host_file) != .None || module.validate(module_file) != .None {
-		return {}, .Bad_Operation
+		return {}, .Argument_Refused
 	}
 	if module.count(module_file, .Imports) > 1 {
-		return {}, .Bad_Operation
+		return {}, .Argument_Refused
 	}
 	if added != nil && (added.grants[isolated.GRANT_RING].handle != 0 || added.grants[isolated.GRANT_REGION].handle != 0 || len(added.mappings) > CALL_HOST_ADDED_MAPPING_CAPACITY) {
-		return {}, .Bad_Operation
+		return {}, .Argument_Refused
 	}
-	defer if status != .Ok {
+	defer if status != .Succeeded {
 		call_connection_end(&connection)
 	}
 	connection.files_memory = memory_create(1) or_return
@@ -562,16 +536,16 @@ call_host_start_from_memory :: proc "contextless" (host_file: []u8, module_memor
 	connection.process = process_start(host_file, name, grants, values, {pages = pages, processes = processes, threads = 1, processor = 500_000, log_records = log_records}, mappings[:mapping_count]) or_return
 	switch connection_ready_wait(&connection.calls, connection.process) {
 	case .Ready:
-		return connection, .Ok
+		return connection, .Succeeded
 	case .Load_Failed:
 		if load_error != nil {
 			intrinsics.mem_copy_non_overlapping(load_error, raw_data(connection.region), size_of(module.Load_Error))
 		}
-		return connection, .Bad_State
+		return connection, .Wrong_State
 	case .Refused:
-		return connection, .Bad_State
+		return connection, .Wrong_State
 	}
-	return connection, .Bad_State
+	return connection, .Wrong_State
 }
 
 
@@ -603,20 +577,20 @@ service_connection :: proc "contextless" (requests: ^ring.Ring, tag: u32, name: 
 	}
 	connection = {process = Handle(record.values[0]), ring_memory = Handle(record.values[1]), region_memory = Handle(record.values[2])}
 	connection.module_hash = transmute([32]u8)[4]u64{record.values[3], record.values[4], record.values[5], record.values[6]}
-	status: Status
+	status: call_outcome.Call_Outcome
 	region_pages: u64
 	address: rawptr
-	if connection.calls, status = ring_open(connection.ring_memory, receive_handles = true); status == .Ok {
-		if region_pages, status = memory_size(connection.region_memory); status == .Ok {
+	if connection.calls, status = ring_open(connection.ring_memory, receive_handles = true); status == .Succeeded {
+		if region_pages, status = memory_size(connection.region_memory); status == .Succeeded {
 			address, status = memory_map(connection.region_memory)
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		// The root service holds its side of the connection: it ends it,
 		// else it refuses the next Connect of this caller to the service.
 		service_disconnection(requests, tag, packed)
 		call_connection_end(&connection)
-		return {}, outcome_of_own_status(status)
+		return {}, own_operation_outcome(status)
 	}
 	connection.region = ([^]u8)(address)[:region_pages * PAGE_SIZE]
 	// The service maps the ring when it reads the Connect of the root

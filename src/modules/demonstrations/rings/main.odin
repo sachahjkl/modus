@@ -42,6 +42,7 @@
 // "rings: node N does not run: M records wait in the ring before it".
 package rings
 
+import "modus:contract/call_outcome"
 import "modus:contract/draw_record"
 import "modus:display"
 import "modus:graphics"
@@ -125,10 +126,10 @@ node_start :: proc "contextless" (index: int) -> bool {
 	grants[op.CONTEXT_LOG] = {system.context_record().handles[op.CONTEXT_LOG], {.Write}}
 	values[relay.VALUE_WORK_TIME] = work_times[index]
 	name := [?]u8{'n', 'o', 'd', 'e', ' ', u8('1' + index)}
-	status: system.Status
+	status: call_outcome.Call_Outcome
 	node.process, status = system.process_start(system.image_find(image, "node"), string(name[:]), grants, random.values_with_seed(&process_generator, values), {pages = NODE_BUDGET_PAGES, processes = 1, threads = 1, processor = 200_000, log_records = 100}, nil, &prepared)
 	node.waiting_logged = false
-	return status == .Ok
+	return status == .Succeeded
 }
 
 // node_stop closes the handle of the process: the kernel stops it. The
@@ -189,25 +190,25 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		fail("no surface")
 	}
-	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
+	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Succeeded {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	} else {
 		fail("no grant to read the boot image")
 	}
 	for &node in nodes {
-		status: system.Status
+		status: call_outcome.Call_Outcome
 		node.after_memory, node.after, status = system.ring_create()
-		if status == .Ok {
+		if status == .Succeeded {
 			node.control_memory, node.control, status = system.ring_create()
 		}
-		if status == .Ok {
+		if status == .Succeeded {
 			node.state_memory, status = system.memory_create(1)
 		}
 		address: rawptr
-		if status == .Ok {
+		if status == .Succeeded {
 			address, status = system.memory_map(node.state_memory)
 		}
-		if status != .Ok {
+		if status != .Succeeded {
 			fail("no memory for the rings")
 		}
 		node.state = (^relay.State)(address)

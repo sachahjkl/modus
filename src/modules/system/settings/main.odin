@@ -80,7 +80,6 @@ import "modus:contract/isolated"
 import "modus:contract/language_tag"
 import "modus:contract/module"
 import "modus:contract/plan_values"
-import op "modus:contract/operation"
 import "modus:contract/scale_factor"
 import "modus:contract/settings"
 import "modus:contract/value_kinds"
@@ -1985,8 +1984,8 @@ draw_with_bar :: proc "contextless" (window: ^display.Window) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	page_handle := ctx.handles[settings.GRANT_PAGE]
 	address, status := system.memory_map(page_handle)
-	if status != .Ok {
-		system.log_fact(.Info, No_Settings_Page{status = op.Status_Word(status)})
+	if status != .Succeeded {
+		system.log_fact(.Info, No_Settings_Page{status = call_outcome.Call_Outcome_Word(status)})
 		system.stop(system.stop_outcome_of_grant(page_handle, status))
 	}
 	page = (^settings.Page)(address)

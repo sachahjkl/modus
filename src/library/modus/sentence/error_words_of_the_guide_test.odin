@@ -1,6 +1,7 @@
 #+build !freestanding
 package sentence
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/start_grant"
@@ -50,21 +51,21 @@ a_refusal_with_no_cause_says_who_refused :: proc(t: ^testing.T) {
 	error_text(&writer, &record, "storage.write", "")
 	testing.expect_value(t, written(&writer), "storage.write: the receiver refused the call and gave no cause")
 
-	// A kernel status is named in words, never by its name or its number.
+	// A kernel outcome is named in words, never by its name or its number.
 	writer = Writer{buffer = buffer[:]}
-	record = errors.error_make(.Refused, .None, 0, 0, 0, i64(op.Status.No_Right))
+	record = errors.error_make(.Refused, .None, 0, 0, 0, i64(call_outcome.Call_Outcome.Grant_Or_Right_Missing))
 	record.operation = i64(op.Operation.Memory_Map)
 	kernel_error_text(&writer, &record)
 	testing.expect_value(t, written(&writer), "Memory_Map: the kernel refused the call: a handle does not have the right that the operation needs")
 
 	writer = Writer{buffer = buffer[:]}
-	record = errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(op.Status.Bad_Handle))
+	record = errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, i64(call_outcome.Call_Outcome.Argument_Refused))
 	error_text(&writer, &record, "monitor.count", "")
-	testing.expect_value(t, written(&writer), "monitor.count: the kernel refused an operation of the call: a handle names no object of the kind that the operation needs")
+	testing.expect_value(t, written(&writer), "monitor.count: the kernel refused an operation of the call: an argument broke a rule of the operation")
 
-	// A word of Kernel_Status that names no status, a negative word and the
+	// A word of Kernel_Status that names no outcome, a negative word and the
 	// largest word give the sentence with no cause: never a number.
-	for word in ([?]i64{i64(max(op.Status)) + 1, -1, max(i64)}) {
+	for word in ([?]i64{i64(max(call_outcome.Call_Outcome)) + 1, -1, max(i64)}) {
 		writer = Writer{buffer = buffer[:]}
 		record = errors.error_make(.Refused, .Kernel_Status, 0, 0, 0, word)
 		error_text(&writer, &record, "monitor.count", "")
@@ -99,9 +100,9 @@ no_status_or_kind_is_written_as_a_number :: proc(t: ^testing.T) {
 		line := written(&writer)
 		testing.expectf(t, !strings.contains(line, fmt.tprint(item.code)), "the sentence %q writes the code %d", line, item.code)
 	}
-	for status in op.Status {
-		text := kernel_status_text(status)
-		testing.expectf(t, len(text) > 0 && !strings.contains_any(text, "0123456789_"), "the words of %v are %q", status, text)
+	for outcome in call_outcome.Call_Outcome {
+		text := kernel_outcome_text(outcome)
+		testing.expectf(t, len(text) > 0 && !strings.contains_any(text, "0123456789_"), "the words of %v are %q", outcome, text)
 	}
 }
 

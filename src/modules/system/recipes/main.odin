@@ -265,8 +265,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	export_service, export_ok := system.service_open(ctx)
 	has_delegated := false
 	if ctx.handles[pr.RECIPES_SERVICE_RING_SLOT] != 0 {
-		open_status: system.Status
-		if service_ring, open_status = system.ring_open(ctx.handles[pr.RECIPES_SERVICE_RING_SLOT]); open_status == .Ok {
+		open_status: call_outcome.Call_Outcome
+		if service_ring, open_status = system.ring_open(ctx.handles[pr.RECIPES_SERVICE_RING_SLOT]); open_status == .Succeeded {
 			has_delegated = true
 		}
 	}
@@ -276,11 +276,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	region_handle := ctx.handles[pr.RECIPES_SERVICE_REGION_SLOT]
 	if region_handle != 0 {
 		pages, size_status := system.memory_size(region_handle)
-		if size_status != .Ok || pages == 0 {
+		if size_status != .Succeeded || pages == 0 {
 			fail("the recipes data region has no pages")
 		}
 		address, map_status := system.memory_map(region_handle, {.Write})
-		if map_status != .Ok {
+		if map_status != .Succeeded {
 			fail("cannot map the recipes data region")
 		}
 		service_region_base = ([^]u8)(address)

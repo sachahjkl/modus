@@ -65,7 +65,7 @@ entropy_read_asked_at: u64 // The time of the last read that this service asked 
 // With no device, it writes one line and starts nothing.
 entropy_service_start :: proc "contextless" () {
 	place := pci.Place{device = pci.ENTROPY_DEVICE}
-	if configuration_status := configuration_open(); configuration_status != .Ok {
+	if configuration_status := configuration_open(); configuration_status != .Succeeded {
 		system.log_fact(.Warning, Entropy_Configuration_Unread{status = configuration_status})
 		return
 	}
@@ -75,12 +75,12 @@ entropy_service_start :: proc "contextless" () {
 		return
 	}
 	driver, ring_memory, status := driver_start(place, DRIVER_ENTROPY)
-	if status != .Ok {
+	if status != .Succeeded {
 		system.log_fact(.Warning, Entropy_Service_Start_Failed{status = status})
 		return
 	}
 	opened: ring.Ring
-	if opened, status = system.ring_open(ring_memory); status != .Ok {
+	if opened, status = system.ring_open(ring_memory); status != .Succeeded {
 		// Turn off bus master before stopping the entropy service; reap closes its queue memory.
 		started_process_stop(driver)
 		system.close(ring_memory)

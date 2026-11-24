@@ -76,7 +76,7 @@ log_builder_failure :: proc "contextless" (step: u64, error: ^errors.Error_Recor
 @(private = "file")
 child_host_pages :: proc "contextless" () -> u64 {
 	amounts, status := system.budget_read()
-	if status != .Ok || amounts.pages <= BUILDER_PAGES_KEPT + system.CALL_HOST_PAGES {
+	if status != .Succeeded || amounts.pages <= BUILDER_PAGES_KEPT + system.CALL_HOST_PAGES {
 		return system.CALL_HOST_PAGES
 	}
 	return amounts.pages - BUILDER_PAGES_KEPT
@@ -167,13 +167,13 @@ read_blob_to_memory :: proc "contextless" (
 	}
 	pages := (u64(size) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	mem_handle, create_status := system.memory_create(pages)
-	if create_status != .Ok {
-		return 0, nil, nil, fail_outcome(error, system.outcome_of_own_status(create_status), .Refused, .Kernel_Status, 1, 0, 0, i64(create_status))
+	if create_status != .Succeeded {
+		return 0, nil, nil, fail_outcome(error, system.own_operation_outcome(create_status), .Refused, .Kernel_Status, 1, 0, 0, i64(create_status))
 	}
 	mapped, map_status := system.memory_map(mem_handle, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(mem_handle)
-		return 0, nil, nil, fail_outcome(error, system.outcome_of_own_status(map_status), .Refused, .Kernel_Status, 1, 0, 0, i64(map_status))
+		return 0, nil, nil, fail_outcome(error, system.own_operation_outcome(map_status), .Refused, .Kernel_Status, 1, 0, 0, i64(map_status))
 	}
 	dst := ([^]u8)(mapped)[:size]
 	read_total := u64(0)
@@ -264,13 +264,13 @@ call_child_sized :: proc "contextless" (
 	for attempt in 0 ..< 2 {
 		pages := max((bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE, 1)
 		mem_handle, create_status := system.memory_create(pages)
-		if create_status != .Ok {
-			return 0, 0, fail_outcome(error, system.outcome_of_own_status(create_status), .Refused, .Kernel_Status, 0, 0, 0, i64(create_status))
+		if create_status != .Succeeded {
+			return 0, 0, fail_outcome(error, system.own_operation_outcome(create_status), .Refused, .Kernel_Status, 0, 0, 0, i64(create_status))
 		}
 		arguments[output_index].integer = u64(mem_handle)
 		added := system.Call_Host_Context{pages = child_host_pages(), processes = 1}
 		conn, start_status := system.call_host_start_from_memory(host_file, module_memory, module_file, name, seed_values, &child_load_error, added = &added)
-		if start_status != .Ok {
+		if start_status != .Succeeded {
 			system.close(mem_handle)
 			return 0, 0, fail_outcome(error, .Callee_Unavailable, .Refused, .Kernel_Status, 0, 0, 0, i64(start_status))
 		}
@@ -409,8 +409,8 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 		return .Callee_Unavailable, 0
 	}
 	text_addr, text_map_status := system.memory_map(text_mem, {})
-	if text_map_status != .Ok {
-		return call_outcome.fail(error, system.outcome_of_own_status(text_map_status), .Refused, .Kernel_Status, 0, 0, 0, i64(text_map_status))
+	if text_map_status != .Succeeded {
+		return call_outcome.fail(error, system.own_operation_outcome(text_map_status), .Refused, .Kernel_Status, 0, 0, 0, i64(text_map_status))
 	}
 	defer system.memory_unmap(text_addr)
 	text_bytes := ([^]u8)(text_addr)[:text_size]
@@ -445,8 +445,8 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 		return .Callee_Unavailable, 0
 	}
 	module_addr, module_map_status := system.memory_map(module_mem, {})
-	if module_map_status != .Ok {
-		return call_outcome.fail(error, system.outcome_of_own_status(module_map_status), .Refused, .Kernel_Status, 0, 0, 0, i64(module_map_status))
+	if module_map_status != .Succeeded {
+		return call_outcome.fail(error, system.own_operation_outcome(module_map_status), .Refused, .Kernel_Status, 0, 0, 0, i64(module_map_status))
 	}
 	defer system.memory_unmap(module_addr)
 	module_bytes := ([^]u8)(module_addr)[:module_size]

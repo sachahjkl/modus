@@ -253,7 +253,7 @@ arenas_start :: proc "contextless" () {
 // `after` bytes, which stay. nil: the budget cannot pay them.
 transfer_bytes :: proc "contextless" (after, count: int) -> []u8 {
 	whole, status := system.arena_extend_to(&transfer_arena, u64(after + count))
-	if status != .Ok {
+	if status != .Succeeded {
 		return nil
 	}
 	return whole[after:][:count]
@@ -1447,7 +1447,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// The surface of the new size has no picture known: the next
 				// frame draws it whole, laid out at the new size. A refused
 				// surface keeps the old one, whose pictures stay known.
-				if display.surface_resize(&window, event.width, event.height) == .Ok {
+				if display.surface_resize(&window, event.width, event.height) == .Succeeded {
 					interface.draw_whole_window_next(&window_memory.drawing)
 				}
 			case .Presentation, .Surface_Answer:

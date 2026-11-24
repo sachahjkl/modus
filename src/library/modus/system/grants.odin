@@ -1,6 +1,7 @@
 package system
 
 import "base:intrinsics"
+import "modus:contract/call_outcome"
 import "modus:contract/fixed_addresses"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -400,7 +401,7 @@ replacements_read :: proc "contextless" (table: ^Replacement_Table, records: ^[R
 // replacements_write changes a replacement table: it sets the record of
 // `from`, or removes it when `to` is zero. The one writer is the root
 // service.
-replacements_write :: proc "contextless" (table: ^Replacement_Table, from, to: [32]u8) -> Status {
+replacements_write :: proc "contextless" (table: ^Replacement_Table, from, to: [32]u8) -> call_outcome.Call_Outcome {
 	place := -1
 	for index in 0 ..< int(table.count) {
 		if table.records[index].from == from {
@@ -408,10 +409,10 @@ replacements_write :: proc "contextless" (table: ^Replacement_Table, from, to: [
 		}
 	}
 	if to == {} && place < 0 {
-		return .Bad_Handle
+		return .Argument_Refused
 	}
 	if to != {} && place < 0 && table.count == REPLACEMENT_CAPACITY {
-		return .No_Slot
+		return .Budget_Or_Capacity_Exhausted
 	}
 	intrinsics.atomic_store_explicit(&table.version, table.version + 1, .Release)
 	intrinsics.atomic_thread_fence(.Release)
@@ -427,7 +428,7 @@ replacements_write :: proc "contextless" (table: ^Replacement_Table, from, to: [
 		table.records[place].to = to
 	}
 	intrinsics.atomic_store_explicit(&table.version, table.version + 1, .Release)
-	return .Ok
+	return .Succeeded
 }
 
 // The grants that the root service records for each process, and that it

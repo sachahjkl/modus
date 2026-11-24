@@ -392,7 +392,7 @@ put_memory :: proc "c" (kind: i64, memory: system.Lent({.Read}), size: i64, resu
 		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Bytes, 3, size, i64(recipes_core.PUT_MEMORY_BYTES_MOST))
 	}
 	pages, size_status := system.memory_size(memory.handle)
-	if size_status != .Ok || u64(size) > pages * system.PAGE_SIZE {
+	if size_status != .Succeeded || u64(size) > pages * system.PAGE_SIZE {
 		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Bytes, 3, size, i64(pages * system.PAGE_SIZE))
 	}
 	principal := caller_principal()
@@ -402,7 +402,7 @@ put_memory :: proc "c" (kind: i64, memory: system.Lent({.Read}), size: i64, resu
 		return recipe_refusal_fail(error, preflight_refusal, preflight_refusal == .Bad_Input_Kind ? 1 : 3)
 	}
 	mapped, map_status := system.memory_map(memory.handle, {})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return call_outcome.fail(error, .Argument_Refused, .Refused, .Kernel_Status, 2, 0, 0, i64(map_status))
 	}
 	defer system.memory_unmap(mapped)
@@ -418,13 +418,13 @@ put_memory :: proc "c" (kind: i64, memory: system.Lent({.Read}), size: i64, resu
 		// caller cannot mutate shared pages between verification and commit.
 		tree_pages := (u64(size) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 		priv_mem, priv_status := system.memory_create(tree_pages)
-		if priv_status != .Ok {
-			return call_outcome.fail(error, system.outcome_of_own_status(priv_status), .Refused, .Kernel_Status, 2, 0, 0, i64(priv_status))
+		if priv_status != .Succeeded {
+			return call_outcome.fail(error, system.own_operation_outcome(priv_status), .Refused, .Kernel_Status, 2, 0, 0, i64(priv_status))
 		}
 		defer system.close(priv_mem)
 		priv_addr, priv_map := system.memory_map(priv_mem, {.Write})
-		if priv_map != .Ok {
-			return call_outcome.fail(error, system.outcome_of_own_status(priv_map), .Refused, .Kernel_Status, 2, 0, 0, i64(priv_map))
+		if priv_map != .Succeeded {
+			return call_outcome.fail(error, system.own_operation_outcome(priv_map), .Refused, .Kernel_Status, 2, 0, 0, i64(priv_map))
 		}
 		defer system.memory_unmap(priv_addr)
 		priv_bytes := ([^]u8)(priv_addr)[:size]
@@ -536,13 +536,13 @@ read_output :: proc "c" (output_hash_hex: ^system.Bytes_To_Read, entry_name: ^st
 			}
 			tree_pages := (tree_size + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 			tree_mem, tree_create := system.memory_create(tree_pages)
-			if tree_create != .Ok {
-				return call_outcome.fail(error, system.outcome_of_own_status(tree_create), .Refused, .Kernel_Status, 1, 0, 0, i64(tree_create))
+			if tree_create != .Succeeded {
+				return call_outcome.fail(error, system.own_operation_outcome(tree_create), .Refused, .Kernel_Status, 1, 0, 0, i64(tree_create))
 			}
 			defer system.close(tree_mem)
 			tree_addr, tree_map := system.memory_map(tree_mem, {.Write})
-			if tree_map != .Ok {
-				return call_outcome.fail(error, system.outcome_of_own_status(tree_map), .Refused, .Kernel_Status, 1, 0, 0, i64(tree_map))
+			if tree_map != .Succeeded {
+				return call_outcome.fail(error, system.own_operation_outcome(tree_map), .Refused, .Kernel_Status, 1, 0, 0, i64(tree_map))
 			}
 			defer system.memory_unmap(tree_addr)
 			tree_bytes, read_status := pr.private_store_read(&service_state.store, pr.private_object_name_text(&tree_name), ([^]u8)(tree_addr)[:tree_size])
@@ -578,7 +578,7 @@ read_output :: proc "c" (output_hash_hex: ^system.Bytes_To_Read, entry_name: ^st
 	}
 
 	out_pages, out_sz_status := system.memory_size(out_memory.handle)
-	if out_sz_status != .Ok {
+	if out_sz_status != .Succeeded {
 		out_pages = 0
 	}
 	if target_size > out_pages * system.PAGE_SIZE {
@@ -586,7 +586,7 @@ read_output :: proc "c" (output_hash_hex: ^system.Bytes_To_Read, entry_name: ^st
 	}
 
 	out_addr, out_map := system.memory_map(out_memory.handle, {.Write})
-	if out_map != .Ok {
+	if out_map != .Succeeded {
 		return call_outcome.fail(error, .Argument_Refused, .Refused, .Kernel_Status, 3, 0, 0, i64(out_map))
 	}
 	defer system.memory_unmap(out_addr)
@@ -720,7 +720,7 @@ build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_
 	intrinsics.mem_copy_non_overlapping(&copied_source_name[0], raw_data(name_view), len(name_view))
 	name := string(copied_source_name[:len(name_view)])
 	pages, size_status := system.memory_size(source.handle)
-	if size_status != .Ok {
+	if size_status != .Succeeded {
 		pages = 0
 	}
 	if refusal := pr.c_build_source_refusal(source_size, pages * system.PAGE_SIZE); refusal.kind != 0 {
@@ -733,17 +733,17 @@ build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_
 	// caller.
 	work := C_Build_Work{}
 	source_memory, source_status := system.memory_create((u64(source_size) + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
-	if source_status != .Ok {
-		return call_outcome.fail(error, system.outcome_of_own_status(source_status), .Refused, .Kernel_Status, pr.C_BUILD_ARGUMENT_SOURCE, 0, 0, i64(source_status))
+	if source_status != .Succeeded {
+		return call_outcome.fail(error, system.own_operation_outcome(source_status), .Refused, .Kernel_Status, pr.C_BUILD_ARGUMENT_SOURCE, 0, 0, i64(source_status))
 	}
 	defer system.close(source_memory)
 	copy_address, copy_status := system.memory_map(source_memory, {.Write})
-	if copy_status != .Ok {
-		return call_outcome.fail(error, system.outcome_of_own_status(copy_status), .Refused, .Kernel_Status, pr.C_BUILD_ARGUMENT_SOURCE, 0, 0, i64(copy_status))
+	if copy_status != .Succeeded {
+		return call_outcome.fail(error, system.own_operation_outcome(copy_status), .Refused, .Kernel_Status, pr.C_BUILD_ARGUMENT_SOURCE, 0, 0, i64(copy_status))
 	}
 	defer system.memory_unmap(copy_address)
 	caller_address, caller_status := system.memory_map(source.handle, {})
-	if caller_status != .Ok {
+	if caller_status != .Succeeded {
 		return call_outcome.fail(error, .Argument_Refused, .Refused, .Kernel_Status, pr.C_BUILD_ARGUMENT_SOURCE, 0, 0, i64(caller_status))
 	}
 	intrinsics.mem_copy_non_overlapping(copy_address, caller_address, int(source_size))
@@ -784,7 +784,7 @@ build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_
 		return recipe_refusal_fail(error, .Cache_Miss, 1)
 	}
 	module_pages, module_size_status := system.memory_size(module.handle)
-	if module_size_status != .Ok {
+	if module_size_status != .Succeeded {
 		module_pages = 0
 	}
 	if refusal := pr.c_build_module_room_refusal(int(length), module_pages * system.PAGE_SIZE); refusal.kind != 0 {
@@ -792,7 +792,7 @@ build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_
 		return .Argument_Refused, 0
 	}
 	module_address, module_status := system.memory_map(module.handle, {.Write})
-	if module_status != .Ok {
+	if module_status != .Succeeded {
 		return call_outcome.fail(error, .Argument_Refused, .Refused, .Kernel_Status, pr.C_BUILD_ARGUMENT_MODULE, 0, 0, i64(module_status))
 	}
 	// The module goes from the store into the memory of the caller by

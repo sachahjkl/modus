@@ -82,12 +82,12 @@ start :: proc "contextless" (queues: system.Handle) {
 	case .Reset_Not_Done:
 		fail("the device did not finish its reset")
 	}
-	if queue_pages, queue_status := system.memory_size(queues); queue_status != .Ok || queue_pages < pci.QUEUE_PAGES {
+	if queue_pages, queue_status := system.memory_size(queues); queue_status != .Succeeded || queue_pages < pci.QUEUE_PAGES {
 		fail("the memory of the queue is too small")
 	}
 	address, map_status := system.memory_map(queues, {.Write})
 	physical, physical_status := system.memory_physical(machine, queues)
-	if map_status != .Ok || physical_status != .Ok {
+	if map_status != .Succeeded || physical_status != .Succeeded {
 		system.log_fact(.Error, Queue_Not_Mapped{map_status = map_status, address_status = physical_status})
 		fail("no physical address for the queue")
 	}
@@ -158,12 +158,12 @@ answer :: proc "contextless" (tag: u32, asked: u32, used: virtio.Used) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[pci.GRANT_MACHINE]
-	status: system.Status
-	if clients, status = system.ring_open(ctx.handles[entropy_service.SERVICE_RING]); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if clients, status = system.ring_open(ctx.handles[entropy_service.SERVICE_RING]); status != .Succeeded {
 		fail("no entropy ring")
 	}
 	configuration_address, configuration_status := system.memory_map(ctx.handles[pci.GRANT_CONFIGURATION], {})
-	if configuration_status != .Ok {
+	if configuration_status != .Succeeded {
 		fail("no configuration of the device")
 	}
 	found: bool

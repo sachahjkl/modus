@@ -21,10 +21,10 @@ untouched_threads: op.Thread_Table_Report
 // report is refused.
 untouched_waiting :: proc "contextless" (process: system.Handle) -> (waiting: u64) {
 	slot, _, place_status := system.process_place(process)
-	if place_status != .Ok {
+	if place_status != .Succeeded {
 		return 0
 	}
-	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Threads), slot, u64(uintptr(&untouched_threads)), size_of(untouched_threads)); status != .Ok {
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Threads), slot, u64(uintptr(&untouched_threads)), size_of(untouched_threads)); status != .Succeeded {
 		return 0
 	}
 	for &thread in untouched_threads.threads[:min(untouched_threads.count, op.THREAD_REPORT_CAPACITY)] {
@@ -52,12 +52,12 @@ untouched_page_case :: proc "contextless" (image: []u8) {
 	right := false
 	defer system.log_fact(.Info, Untouched_Page_Waits{woken = woken, other_waits = u64(other_waits), verdict = verdict_field(right)})
 	board_memory, memory_status := system.memory_create(1)
-	if memory_status != .Ok {
+	if memory_status != .Succeeded {
 		return
 	}
 	defer system.close(board_memory)
 	address, map_status := system.memory_map(board_memory)
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		return
 	}
 	defer system.memory_unmap(address)

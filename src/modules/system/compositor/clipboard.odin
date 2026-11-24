@@ -80,11 +80,11 @@ clipboard_store_local :: proc "contextless" (text: []u8, source: string) -> bool
 	}
 	pages := (u64(len(text)) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	memory, status := system.memory_create(pages)
-	if status != .Ok {
+	if status != .Succeeded {
 		return false
 	}
 	address, map_status := system.memory_map(memory, {.Write})
-	if map_status != .Ok {
+	if map_status != .Succeeded {
 		system.close(memory)
 		return false
 	}
@@ -113,7 +113,7 @@ clipboard_read_local :: proc "contextless" (out: []u8) -> (count: int, ok: bool)
 	if clipboard_content.memory == 0 || clipboard_content.kind != .Text || clipboard_content.count <= 0 || clipboard_content.count > len(out) || clipboard_content.count > display.CLIPBOARD_TEXT_LIMIT {
 		return 0, false
 	}
-	if _, status := system.memory_read(clipboard_content.memory, 0, out[:clipboard_content.count]); status != .Ok {
+	if _, status := system.memory_read(clipboard_content.memory, 0, out[:clipboard_content.count]); status != .Succeeded {
 		return 0, false
 	}
 	return clipboard_content.count, true
@@ -178,13 +178,13 @@ clipboard_paste_key :: proc "contextless" () {
 	}
 	lent, status := system.give(0, clipboard_content.memory, {.Read, .Give})
 	given: system.Handle
-	if status == .Ok {
+	if status == .Succeeded {
 		given, status = system.give(client.ring_memory, lent, {.Read})
-		if status != .Ok {
+		if status != .Succeeded {
 			system.close(lent)
 		}
 	}
-	if status != .Ok {
+	if status != .Succeeded {
 		client.clipboard.lend_serial = 0
 		system.log_fact(.Warning, Paste_Refused{window = window_field(client.title[:])})
 		return
@@ -219,7 +219,7 @@ clipboard_copy_take :: proc "contextless" (index: int, record: ring.Record) {
 		count      = record.values[2],
 	}
 	if facts.through && !facts.names_held && facts.is_memory {
-		if pages, size_status := system.memory_size(memory); size_status == .Ok {
+		if pages, size_status := system.memory_size(memory); size_status == .Succeeded {
 			facts.memory_bytes = pages * system.PAGE_SIZE
 		}
 	}

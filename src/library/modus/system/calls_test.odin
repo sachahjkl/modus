@@ -2,6 +2,7 @@
 package system
 
 import "core:testing"
+import "modus:contract/call_outcome"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 
@@ -29,10 +30,10 @@ a_call_host_refuses_a_context_that_takes_its_call_slots :: proc(t: ^testing.T) {
 		added := Call_Host_Context{}
 		added.grants[slot] = {Handle(7), {.Read}}
 		_, status := call_host_start(nil, 0, nil, "builder", {}, &load_error, added = &added)
-		testing.expect_value(t, status, Status.Bad_Operation)
+		testing.expect_value(t, status, call_outcome.Call_Outcome.Argument_Refused)
 	}
 	mappings: [CALL_HOST_ADDED_MAPPING_CAPACITY + 1]Mapping
 	added := Call_Host_Context{mappings = mappings[:]}
 	_, status := call_host_start(nil, 0, nil, "builder", {}, &load_error, added = &added)
-	testing.expect_value(t, status, Status.Bad_Operation)
+	testing.expect_value(t, status, call_outcome.Call_Outcome.Argument_Refused)
 }

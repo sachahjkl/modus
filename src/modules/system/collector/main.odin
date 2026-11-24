@@ -614,8 +614,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	export_service, export_ok := system.service_open(ctx)
 	has_delegated := false
 	if ctx.handles[wide_grants.SERVICE_RING_SLOT] != 0 {
-		status_open: system.Status
-		if service_ring, status_open = system.ring_open(ctx.handles[wide_grants.SERVICE_RING_SLOT]); status_open == .Ok {
+		status_open: call_outcome.Call_Outcome
+		if service_ring, status_open = system.ring_open(ctx.handles[wide_grants.SERVICE_RING_SLOT]); status_open == .Succeeded {
 			has_delegated = true
 		}
 	}
@@ -626,11 +626,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	region_handle := ctx.handles[wide_grants.SERVICE_REGION_SLOT]
 	if region_handle != 0 {
 		pages, size_status := system.memory_size(region_handle)
-		if size_status != .Ok || pages == 0 {
+		if size_status != .Succeeded || pages == 0 {
 			fail("the collector data region has no pages")
 		}
 		address, map_status := system.memory_map(region_handle, {.Write})
-		if map_status != .Ok {
+		if map_status != .Succeeded {
 			fail("cannot map the collector data region")
 		}
 		service_region_base = ([^]u8)(address)

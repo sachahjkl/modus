@@ -310,10 +310,10 @@ handle_command :: proc "contextless" (command: ring.Record) {
 		pages, size_status := system.memory_size(lent_memory)
 		address: rawptr
 		map_status := size_status
-		if size_status == .Ok {
+		if size_status == .Succeeded {
 			address, map_status = system.memory_map(lent_memory, {.Write})
 		}
-		if map_status != .Ok {
+		if map_status != .Succeeded {
 			perform(dpc.command_refused(&machine))
 			return
 		}
@@ -337,17 +337,17 @@ handle_command :: proc "contextless" (command: ring.Record) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	core_ring_memory = ctx.handles[rd.DISK_PROCESSES_RING_SLOT]
-	open_status: system.Status
-	if core_ring, open_status = system.ring_open(core_ring_memory, receive_handles = true); open_status != .Ok {
+	open_status: call_outcome.Call_Outcome
+	if core_ring, open_status = system.ring_open(core_ring_memory, receive_handles = true); open_status != .Succeeded {
 		fail("no ring of the core")
 	}
 	region_memory := ctx.handles[rd.DISK_PROCESSES_REGION_SLOT]
 	pages, size_status := system.memory_size(region_memory)
-	if size_status != .Ok || pages < rd.DISK_PROCESSES_REGION_PAGES {
+	if size_status != .Succeeded || pages < rd.DISK_PROCESSES_REGION_PAGES {
 		fail("the transfer region is smaller than its two pages")
 	}
 	region_address, region_status := system.memory_map(region_memory, {.Write})
-	if region_status != .Ok {
+	if region_status != .Succeeded {
 		fail("the transfer region does not map")
 	}
 	region = ([^]u8)(region_address)[:rd.DISK_PROCESSES_REGION_PAGES * system.PAGE_SIZE]
@@ -358,7 +358,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("no boot image that reads only")
 	}
 	image_address, image_status := system.memory_map(image_memory, {})
-	if image_status != .Ok {
+	if image_status != .Succeeded {
 		fail("the boot image does not map")
 	}
 	image = ([^]u8)(image_address)[:image_size]

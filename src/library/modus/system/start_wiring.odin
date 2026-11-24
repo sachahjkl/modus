@@ -1,5 +1,6 @@
 package system
 
+import "modus:contract/call_outcome"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/output"
@@ -25,7 +26,7 @@ Start_Wiring :: struct {
 	// In: makes the objects of the ends and gives the ends, after the load
 	// of the modules. A refusal stops the start; the starter ends what it
 	// made. nil: ends is the list.
-	ends_make:     proc "contextless" (data: rawptr) -> (ends: []output.Given_End, status: Status),
+	ends_make:     proc "contextless" (data: rawptr) -> (ends: []output.Given_End, status: call_outcome.Call_Outcome),
 	ends_data:     rawptr,
 	// In: the starter keeps a handle of the budget of the child, because
 	// the child can ask for wirings, which its budget pays.
@@ -58,40 +59,40 @@ module_declares_record_streams :: proc "contextless" (file: []u8) -> bool {
 // ring when each end is given through it. A failure closes what it made;
 // the caller then stops the process.
 @(private)
-start_wiring_give :: proc "contextless" (process: Handle, budget: Handle, record: ^op.Context, file: []u8, wiring: ^Start_Wiring) -> Status {
+start_wiring_give :: proc "contextless" (process: Handle, budget: Handle, record: ^op.Context, file: []u8, wiring: ^Start_Wiring) -> call_outcome.Call_Outcome {
 	// The end of log, in its two places of the context. Both or neither: a
 	// ring with no end page would hold a writer that never learns the end
 	// of its reader.
 	if (wiring.log_ring == 0) != (wiring.log_end_words == 0) {
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	if wiring.log_ring != 0 {
-		status: Status
+		status: call_outcome.Call_Outcome
 		record.handles[op.CONTEXT_LOG_OUTPUT], status = give(process, wiring.log_ring, {.Read, .Write})
-		if status == .Ok {
+		if status == .Succeeded {
 			record.handles[op.CONTEXT_LOG_OUTPUT_END], status = give(process, wiring.log_end_words, {.Read})
 		}
-		if status != .Ok {
+		if status != .Succeeded {
 			return status
 		}
 	}
 	if len(wiring.ends) == 0 && !module_declares_record_streams(file) {
-		return .Ok
+		return .Succeeded
 	}
 	capacity, capacity_ok := output.wiring_ring_capacity(u64(len(wiring.ends)))
 	if !capacity_ok {
-		return .Bad_Operation
+		return .Argument_Refused
 	}
 	memory := memory_create(ring.pages(capacity), budget) or_return
-	status: Status
+	status: call_outcome.Call_Outcome
 	record.handles[op.CONTEXT_WIRING_RING], status = give(process, memory, {.Read, .Write})
-	if status != .Ok {
+	if status != .Succeeded {
 		close(memory)
 		return status
 	}
 	mapped: ring.Ring
 	mapped, status = ring_open(memory)
-	if status != .Ok {
+	if status != .Succeeded {
 		close(memory)
 		return status
 	}
@@ -102,7 +103,7 @@ start_wiring_give :: proc "contextless" (process: Handle, budget: Handle, record
 		// through it before Process_Start, then unmap before the child runs.
 		child_ring_address: rawptr
 		child_ring_address, status = memory_map(memory, {.Receive_Handles}, process)
-		if status != .Ok {
+		if status != .Succeeded {
 			close(memory)
 			return status
 		}
@@ -112,32 +113,32 @@ start_wiring_give :: proc "contextless" (process: Handle, budget: Handle, record
 			// The handles go through the memory of the wiring ring: the child
 			// proves with Handle_State that each one came through it.
 			given.ring, status = give(memory, end.ring, {.Read, .Write})
-			if status == .Ok && end.terms != 0 {
+			if status == .Succeeded && end.terms != 0 {
 				given.terms, status = give(memory, end.terms, {.Read})
 			}
-			if status == .Ok && end.description != 0 {
+			if status == .Succeeded && end.description != 0 {
 				given.description, status = give(memory, end.description, {.Read})
 			}
 			// The condition of a writer end, with Read only: only the root
 			// service writes it.
-			if status == .Ok && end.condition != 0 {
+			if status == .Succeeded && end.condition != 0 {
 				given.condition, status = give(memory, end.condition, {.Read})
 			}
 			// The end page with Read only: only the root service writes the end.
-			if status == .Ok {
+			if status == .Succeeded {
 				given.end_words, status = give(memory, end.end_words, {.Read})
 			}
-			if status != .Ok {
+			if status != .Succeeded {
 				close(memory)
 				return status
 			}
 			// The capacity holds each end, and no one reads the ring yet.
 			if !ring.push(&mapped.commands, output.given_end_record(given)) {
 				close(memory)
-				return .Bad_Operation
+				return .Argument_Refused
 			}
 		}
 	}
 	wiring.wiring_memory = memory
-	return .Ok
+	return .Succeeded
 }

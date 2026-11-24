@@ -33,6 +33,7 @@
 // reason on the log and stops with `Failed`.
 package tone
 
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/timed_stream"
@@ -196,14 +197,14 @@ timed_stream_status_name :: proc "contextless" (status: timed_stream.Status) -> 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ring_memory := ctx.handles[timed_stream.GRANT_RING]
-	status: system.Status
-	if stream, status = system.ring_open(ring_memory); status != .Ok {
+	status: call_outcome.Call_Outcome
+	if stream, status = system.ring_open(ring_memory); status != .Succeeded {
 		system.log_fact(.Info, No_Stream_Ring{})
 		fail()
 	}
 	memory, memory_status := system.memory_create(REGION_PAGES)
 	address, map_status := system.memory_map(memory, {.Write})
-	if memory_status != .Ok || map_status != .Ok {
+	if memory_status != .Succeeded || map_status != .Succeeded {
 		system.log_fact(.Info, No_Sample_Region{})
 		fail()
 	}
@@ -213,13 +214,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// sound service maps the ring when it starts: until then, the kernel
 	// does not know the other side. The bound only ends a hang.
 	given: system.Handle
-	give_status := system.Status.Bad_Handle
-	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; give_status != .Ok && system.time() < deadline; {
-		if given, give_status = system.give(ring_memory, memory, {.Read}); give_status != .Ok {
+	give_status := call_outcome.Call_Outcome.Argument_Refused
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; give_status != .Succeeded && system.time() < deadline; {
+		if given, give_status = system.give(ring_memory, memory, {.Read}); give_status != .Succeeded {
 			system.sleep(system.time() + 1)
 		}
 	}
-	if give_status != .Ok {
+	if give_status != .Succeeded {
 		system.log_fact(.Info, Stream_Ring_Not_Mapped{})
 		fail()
 	}
@@ -231,7 +232,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// it got, as it keeps it not; a damaged Start is refused, and the
 	// stream does not start.
 	second, second_status := system.give(ring_memory, memory, {.Read})
-	if second_status != .Ok {
+	if second_status != .Succeeded {
 		system.log_fact(.Info, Second_Give_Refused{status = second_status})
 		fail()
 	}

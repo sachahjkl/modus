@@ -1050,7 +1050,7 @@ enum_type_name_of :: proc(walk: ^Enum_Cast_Walk, expression: ^ast.Expr) -> (type
 }
 
 // enum_member_of says if an expression names one member of an enum: `.Ok`,
-// `Status.Ok` or `system.Status.Ok`.
+// `Call_Outcome.Succeeded` or `call_outcome.Call_Outcome.Succeeded`.
 @(private = "file")
 enum_member_of :: proc(walk: ^Enum_Cast_Walk, expression: ^ast.Expr) -> bool {
 	if expression == nil {
