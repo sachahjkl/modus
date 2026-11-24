@@ -6,84 +6,109 @@ import "core:testing"
 
 // Refusals and edge cases come first: no row refused before reading pool or
 // rate limit; 0 and > ceiling refused; rate limit enforced on both growth
-// and refusal; ceiling overflow refused; capacity refused; pool shortage
-// refused with no leaked amount in any refusal sentence.
+// and refusal (including now < last_decision_at and period_ms == 0);
+// ceiling overflow refused; capacity and rate-slot exhaustion refused;
+// start-list reserve theft and caller-reserve double-counting both refused;
+// no leaked amount in any refusal sentence.
 @(test)
 decide_enforces_refusals_and_edges :: proc(t: ^testing.T) {
-	// 1. No growth row (ceiling == 0): refused at border even if pool is 0
+	// 1. No growth row (ceiling == 0): refused at border even if available is 0
 	// and rate limit would otherwise trigger.
 	ref, res, pool, counted := decide({
-		ceiling_pages     = 0,
-		asked_pages       = 100,
-		now               = 10,
-		last_decision_at  = 10,
-		has_last_decision = true,
-		period_ms         = 1000,
-		shared_pool_pages = 0,
+		ceiling_pages       = 0,
+		asked_pages         = 100,
+		rate_slot_available = true,
+		now                 = 10,
+		last_decision_at    = 10,
+		has_last_decision   = true,
+		period_ms           = 1000,
+		available_pages     = 0,
 	})
 	testing.expect(t, ref == .No_Row && res == 0 && pool == 0 && !counted)
 
 	// 2. Bad pages: 0, ceiling + 1, max(u64).
 	for bad in ([?]u64{0, 4097, max(u64)}) {
-		r, _, _, c := decide({ceiling_pages = 4096, asked_pages = bad, period_ms = 1000, shared_pool_pages = 100_000})
+		r, _, _, c := decide({ceiling_pages = 4096, asked_pages = bad, rate_slot_available = true, period_ms = 1000, available_pages = 100_000})
 		testing.expectf(t, r == .Bad_Pages && !c, "asked %d gave %v", bad, r)
 	}
 
-	// 3. Rate limit: now == last, now == last + period - 1 refused; now == last + period allowed.
-	r_same, _, _, c_same := decide({ceiling_pages = 4096, asked_pages = 100, now = 5000, last_decision_at = 5000, has_last_decision = true, period_ms = 1000, shared_pool_pages = 10_000})
+	// 3. Rate limit: now < last, now == last, now == last + period - 1 refused;
+	// now == last + period allowed; period_ms == 0 clamped to 1 ms.
+	r_back, _, _, c_back := decide({ceiling_pages = 4096, asked_pages = 100, rate_slot_available = true, now = 4999, last_decision_at = 5000, has_last_decision = true, period_ms = 1000, available_pages = 10_000})
+	testing.expect(t, r_back == .Too_Soon && !c_back)
+	r_same, _, _, c_same := decide({ceiling_pages = 4096, asked_pages = 100, rate_slot_available = true, now = 5000, last_decision_at = 5000, has_last_decision = true, period_ms = 1000, available_pages = 10_000})
 	testing.expect(t, r_same == .Too_Soon && !c_same)
-	r_before, _, _, _ := decide({ceiling_pages = 4096, asked_pages = 100, now = 5999, last_decision_at = 5000, has_last_decision = true, period_ms = 1000, shared_pool_pages = 10_000})
+	r_zero_period, _, _, _ := decide({ceiling_pages = 4096, asked_pages = 100, rate_slot_available = true, now = 5000, last_decision_at = 5000, has_last_decision = true, period_ms = 0, available_pages = 10_000})
+	testing.expect(t, r_zero_period == .Too_Soon)
+	r_before, _, _, _ := decide({ceiling_pages = 4096, asked_pages = 100, rate_slot_available = true, now = 5999, last_decision_at = 5000, has_last_decision = true, period_ms = 1000, available_pages = 10_000})
 	testing.expect(t, r_before == .Too_Soon)
-	r_edge, _, p_edge, c_edge := decide({ceiling_pages = 4096, asked_pages = 100, now = 6000, last_decision_at = 5000, has_last_decision = true, period_ms = 1000, shared_pool_pages = 10_000})
+	r_edge, _, p_edge, c_edge := decide({ceiling_pages = 4096, asked_pages = 100, rate_slot_available = true, now = 6000, last_decision_at = 5000, has_last_decision = true, period_ms = 1000, available_pages = 10_000})
 	testing.expect(t, r_edge == .None && p_edge == 100 && c_edge)
 
-	// 4. Ceiling edges: paid + asked == ceiling succeeds, +1 fails, overflow fails.
-	r_exact, _, p_exact, _ := decide({ceiling_pages = 4096, paid_pages = 3096, asked_pages = 1000, period_ms = 1000, shared_pool_pages = 1000})
+	// 4. Ceiling edges: paid + asked == ceiling succeeds, +1 fails, u64 wrap fails.
+	r_exact, _, p_exact, _ := decide({ceiling_pages = 4096, paid_pages = 3096, asked_pages = 1000, rate_slot_available = true, period_ms = 1000, available_pages = 1000})
 	testing.expect(t, r_exact == .None && p_exact == 1000)
-	r_over, _, _, c_over := decide({ceiling_pages = 4096, paid_pages = 3096, asked_pages = 1001, period_ms = 1000, shared_pool_pages = 10_000})
+	r_over, _, _, c_over := decide({ceiling_pages = 4096, paid_pages = 3096, asked_pages = 1001, rate_slot_available = true, period_ms = 1000, available_pages = 10_000})
 	testing.expect(t, r_over == .Over_Ceiling && c_over)
-	r_wrap, _, _, _ := decide({ceiling_pages = 4096, paid_pages = max(u64) - 10, asked_pages = 20, period_ms = 1000, shared_pool_pages = 10_000})
+	r_wrap, _, _, _ := decide({ceiling_pages = max(u64), paid_pages = max(u64) - 10, asked_pages = 20, rate_slot_available = true, period_ms = 1000, available_pages = 10_000})
 	testing.expect(t, r_wrap == .Over_Ceiling)
 
-	// 5. Capacity: EXTRAS_PER_PROCESS and TABLE_CAPACITY refused.
-	r_proc_full, _, _, _ := decide({ceiling_pages = 4096, asked_pages = 1, extras_held = EXTRAS_PER_PROCESS, period_ms = 1000, shared_pool_pages = 10_000})
+	// 5. Capacity: EXTRAS_PER_PROCESS, TABLE_CAPACITY, and full rate table refused.
+	r_proc_full, _, _, _ := decide({ceiling_pages = 4096, asked_pages = 1, extras_held = EXTRAS_PER_PROCESS, rate_slot_available = true, period_ms = 1000, available_pages = 10_000})
 	testing.expect(t, r_proc_full == .Full)
-	r_tbl_full, _, _, _ := decide({ceiling_pages = 4096, asked_pages = 1, table_used = TABLE_CAPACITY, period_ms = 1000, shared_pool_pages = 10_000})
+	r_tbl_full, _, _, _ := decide({ceiling_pages = 4096, asked_pages = 1, table_used = TABLE_CAPACITY, rate_slot_available = true, period_ms = 1000, available_pages = 10_000})
 	testing.expect(t, r_tbl_full == .Full)
+	r_rate_full, _, _, _ := decide({ceiling_pages = 4096, asked_pages = 1, rate_slot_available = false, period_ms = 1000, available_pages = 10_000})
+	testing.expect(t, r_rate_full == .Full)
 
-	// 6. Growth reserve bypasses an empty shared pool; overflow into empty shared pool fails.
+	// 6. Start-list reserve protection: caller's reserve_left (50) cannot
+	// steal pages when available_pages (own - start_list_reserved = 20) < asked (50).
+	r_steal, _, _, c_steal := decide({
+		ceiling_pages        = 4096,
+		growth_reserve_pages = 50,
+		asked_pages          = 50,
+		rate_slot_available  = true,
+		period_ms            = 1000,
+		available_pages      = 20,
+	})
+	testing.expect(t, r_steal == .No_Pages && c_steal)
+
+	// 7. No double-counting of caller reserve: own/available = 100, caller
+	// reserve = 50, asked = 120 must be refused (only 100 exist in total).
+	r_double, _, _, c_double := decide({
+		ceiling_pages        = 4096,
+		growth_reserve_pages = 50,
+		asked_pages          = 120,
+		rate_slot_available  = true,
+		period_ms            = 1000,
+		available_pages      = 100,
+	})
+	testing.expect(t, r_double == .No_Pages && c_double)
+
+	// 8. Reserve-only and split allocations within available_pages succeed.
 	r_res, from_res, from_pool, _ := decide({
 		ceiling_pages        = 4096,
 		growth_reserve_pages = 1024,
 		reserve_used_pages   = 256,
 		asked_pages          = 768,
+		rate_slot_available  = true,
 		period_ms            = 1000,
-		shared_pool_pages    = 0,
+		available_pages      = 768,
 	})
 	testing.expect(t, r_res == .None && from_res == 768 && from_pool == 0)
 
-	r_short, _, _, c_short := decide({
-		ceiling_pages        = 4096,
-		growth_reserve_pages = 1024,
-		reserve_used_pages   = 256,
-		asked_pages          = 769,
-		period_ms            = 1000,
-		shared_pool_pages    = 0,
-	})
-	testing.expect(t, r_short == .No_Pages && c_short)
-
-	// 7. Split between reserve and shared pool when both contribute.
 	r_split, s_res, s_pool, _ := decide({
 		ceiling_pages        = 4096,
 		growth_reserve_pages = 500,
 		reserve_used_pages   = 200,
 		asked_pages          = 600,
+		rate_slot_available  = true,
 		period_ms            = 1000,
-		shared_pool_pages    = 300,
+		available_pages      = 600,
 	})
 	testing.expect(t, r_split == .None && s_res == 300 && s_pool == 300)
 
-	// 8. Every refusal sentence is non-empty (except None) and obeys docs/WRITING.md.
+	// 9. Every refusal sentence is non-empty (except None) and obeys docs/WRITING.md.
 	for kind in Grow_Refusal {
 		sentence := GROW_REFUSAL_SENTENCES[kind]
 		if kind == .None {
@@ -95,8 +120,9 @@ decide_enforces_refusals_and_edges :: proc(t: ^testing.T) {
 	}
 }
 
-// Table lifecycle: take, duplicate/zero refusal, release, drain waiting for
-// full pages back, stop cleanup, and rate-limit cleanup.
+// Table lifecycle: take, duplicate/zero/capacity+1 refusal, rate-table
+// saturation, double release refusal, drain waiting for full pages back,
+// and stop cleanup.
 @(test)
 table_lifecycle_take_release_drain_and_stop :: proc(t: ^testing.T) {
 	tbl: Table
@@ -105,6 +131,35 @@ table_lifecycle_take_release_drain_and_stop :: proc(t: ^testing.T) {
 	testing.expect(t, grow_take(&tbl, 1, 0, 100, 0, 1000) == 0)
 	testing.expect(t, grow_take(&tbl, 1, 10, 0, 0, 1000) == 0)
 	testing.expect(t, grow_take(&tbl, 1, 10, 100, 101, 1000) == 0)
+	testing.expect(t, !has_rate_slot(&tbl, 0))
+
+	// Fill EXTRAS_PER_PROCESS slots for owner 1; slot EXTRAS_PER_PROCESS + 1 refused.
+	for idx in u64(0) ..< u64(EXTRAS_PER_PROCESS) {
+		g := grow_take(&tbl, 1, 100 + idx, 64, 0, 1000 + idx)
+		testing.expect(t, g == idx + 1)
+	}
+	testing.expect(t, grow_take(&tbl, 1, 999, 64, 0, 2000) == 0)
+	handles1, count1 := stop(&tbl, 1)
+	testing.expect(t, count1 == EXTRAS_PER_PROCESS && handles1[0] == 100)
+	testing.expect(t, table_used(&tbl) == 0)
+
+	// Fill TABLE_CAPACITY across owners; TABLE_CAPACITY + 1 refused.
+	for idx in u64(0) ..< u64(TABLE_CAPACITY) {
+		owner := 10 + idx / u64(EXTRAS_PER_PROCESS)
+		testing.expect(t, grow_take(&tbl, owner, 1000 + idx, 32, 0, 3000) != 0)
+	}
+	testing.expect(t, table_used(&tbl) == TABLE_CAPACITY)
+	testing.expect(t, grow_take(&tbl, 99, 9999, 32, 0, 3000) == 0)
+	tbl = {}
+
+	// Fill rate table completely: existing owner keeps its slot, new owner gets false.
+	for idx in u64(1) ..= u64(PROCESS_LIMIT_CAPACITY) {
+		testing.expect(t, has_rate_slot(&tbl, idx))
+		note_decision(&tbl, idx, 5000)
+	}
+	testing.expect(t, has_rate_slot(&tbl, 1))
+	testing.expect(t, !has_rate_slot(&tbl, u64(PROCESS_LIMIT_CAPACITY) + 1))
+	tbl = {}
 
 	g1 := grow_take(&tbl, 1, 101, 512, 128, 2000)
 	testing.expect(t, g1 == 1)
@@ -116,7 +171,7 @@ table_lifecycle_take_release_drain_and_stop :: proc(t: ^testing.T) {
 	at, has_last := last_decision(&tbl, 1)
 	testing.expect(t, has_last && at == 2000)
 
-	// Another owner cannot release owner 1's growth.
+	// Another owner cannot release owner 1's growth; 0 growth refused.
 	_, wrong_owner := release(&tbl, 2, g1)
 	testing.expect(t, !wrong_owner)
 	_, zero_growth := release(&tbl, 1, 0)

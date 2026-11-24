@@ -34,30 +34,46 @@ bitmap_clear_range :: proc(bits: []u64, first: u64, count: u64) {
 // pdpe1gb disabled.
 @(test)
 edges_and_refusals :: proc(t: ^testing.T) {
-	// Undersized backing refused.
+	// Undersized backing refused; 0-frame machine binds cleanly with 0 blocks.
 	small_table: Table
 	layout := layout_of(RUN_2M_PAGES * 4, 8)
 	short_buf := make([]u8, layout.total_bytes - 1, context.temp_allocator)
 	testing.expect(t, !table_bind(&small_table, short_buf, RUN_2M_PAGES * 4, 8, true))
+	zero_table: Table
+	zero_layout := layout_of(0, 4)
+	zero_buf := make([]u8, zero_layout.total_bytes, context.temp_allocator)
+	testing.expect(t, table_bind(&zero_table, zero_buf, 0, 4, true))
+	table_init(&zero_table, nil)
+	testing.expect(t, zero_table.block_2m_count == 0 && zero_table.block_1g_count == 0 && zero_table.free_runs_2m == 0 && zero_table.free_runs_1g == 0)
 
-	// best_run_for_range at 0, 1, 511, 512, 513, 1G-1, 1G, misaligned.
+	// best_run_for_range at 0, 1, 511, 512, 513, 1G-1, 1G, misaligned, supports_1g false/true.
 	testing.expect_value(t, best_run_for_range(0, 0, true), Run_Size.Pages_4K)
 	testing.expect_value(t, best_run_for_range(0, 1, true), Run_Size.Pages_4K)
 	testing.expect_value(t, best_run_for_range(0, RUN_2M_PAGES - 1, true), Run_Size.Pages_4K)
 	testing.expect_value(t, best_run_for_range(0, RUN_2M_PAGES, true), Run_Size.Run_2M)
+	testing.expect_value(t, best_run_for_range(0, RUN_2M_PAGES + 1, true), Run_Size.Run_2M)
 	testing.expect_value(t, best_run_for_range(1, RUN_2M_PAGES, true), Run_Size.Pages_4K)
+	testing.expect_value(t, best_run_for_range(RUN_2M_PAGES - 1, RUN_2M_PAGES, true), Run_Size.Pages_4K)
 	testing.expect_value(t, best_run_for_range(0, RUN_1G_PAGES - 1, true), Run_Size.Run_2M)
 	testing.expect_value(t, best_run_for_range(0, RUN_1G_PAGES, true), Run_Size.Run_1G)
 	testing.expect_value(t, best_run_for_range(0, RUN_1G_PAGES, false), Run_Size.Run_2M)
 	testing.expect_value(t, best_run_for_range(RUN_2M_PAGES, RUN_1G_PAGES, true), Run_Size.Run_2M)
+	testing.expect_value(t, best_run_for_range(1, RUN_1G_PAGES, true), Run_Size.Pages_4K)
 
 	table, bits, _ := make_machine(RUN_2M_PAGES * 4, 8, false)
 	testing.expect_value(t, table.free_runs_2m, u64(4))
-	// Budget 0 and out-of-range budgets are refused without touching bitmap.
+	// Budget 0 and out-of-range budgets are refused without touching bitmap (2M and 1G).
 	_, ok0 := take_run_2m(&table, bits, 0, RUN_2M_PAGES * 4)
 	testing.expect(t, !ok0 && table.free_runs_2m == 4)
 	_, ok_oob := take_run_2m(&table, bits, 8, RUN_2M_PAGES * 4)
 	testing.expect(t, !ok_oob && table.free_runs_2m == 4)
+	_, ok1g_0 := take_run_1g(&table, bits, 0, RUN_1G_PAGES)
+	testing.expect(t, !ok1g_0)
+	_, ok1g_oob := take_run_1g(&table, bits, 8, RUN_1G_PAGES)
+	testing.expect(t, !ok1g_oob)
+	testing.expect(t, !quota_allows_2m(&table, 0, RUN_2M_PAGES))
+	testing.expect(t, !quota_allows_2m(&table, 8, RUN_2M_PAGES))
+	testing.expect(t, !quota_allows_1g(&table, 1, RUN_1G_PAGES)) // supports_1g is false.
 	// Budget smaller than 512 pages gets quota 0 and is refused.
 	_, ok_small := take_run_2m(&table, bits, 1, RUN_2M_PAGES - 1)
 	testing.expect(t, !ok_small && table.free_runs_2m == 4)

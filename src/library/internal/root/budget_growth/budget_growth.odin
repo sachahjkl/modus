@@ -8,6 +8,8 @@
 // and process keys are u64 words.
 package budget_growth
 
+import op "modus:contract/operation"
+
 // Maximum concurrent extra budgets held by one process (active or draining).
 // Bounded because the root service keeps one handle per open extra budget
 // out of its handle table, and a process needs only a few concurrent purpose
@@ -19,9 +21,10 @@ EXTRAS_PER_PROCESS :: 8
 // process, ring, and screen-budget handles.
 TABLE_CAPACITY :: 64
 
-// Maximum distinct processes whose rate-limit timestamp is tracked.
-// Sized to the process slot capacity of the root service.
-PROCESS_LIMIT_CAPACITY :: 64
+// Maximum distinct processes whose rate-limit timestamp is tracked: matches
+// the root service's STARTED_CAPACITY (op.PROCESS_SLOTS_MOST - 1). If ever
+// exhausted, decide refuses with Full instead of bypassing the rate limit.
+PROCESS_LIMIT_CAPACITY :: op.PROCESS_SLOTS_MOST - 1
 
 // Refused log lines per second: a sender that loops cannot fill the log.
 REFUSED_LINES_PER_SECOND :: 4
@@ -60,11 +63,16 @@ Grow_Facts :: struct {
 	reserve_used_pages:   u64,  // Reserve pages currently held by this process's extra budgets.
 	extras_held:          int,  // Count of extra budgets held by this process (active and draining).
 	table_used:           int,  // Total extra budgets held across all processes.
+	rate_slot_available:  bool, // True if owner already has a rate slot or a free slot exists.
 	now:                  u64,  // Current monotonic time in milliseconds.
 	last_decision_at:     u64,  // Time of the previous decision for this process.
 	has_last_decision:    bool, // True once this process has had a prior decision.
 	period_ms:            u64,  // Rate-limit period in milliseconds (>= 1).
-	shared_pool_pages:    u64,  // Free pages of the starter past start-list and growth reserves.
+	// Total pages of the starter available to this caller: starter free
+	// pages minus start-list reserves and other processes' unspent growth
+	// reserves. Bounds from_reserve + from_pool together so neither
+	// start-list reserves nor double-counted caller reserves can be taken.
+	available_pages:      u64,
 }
 
 // One extra budget handle tracked by the root service.
@@ -118,15 +126,15 @@ decide :: proc "contextless" (facts: Grow_Facts) -> (refusal: Grow_Refusal, from
 	if facts.paid_pages > facts.ceiling_pages || facts.asked_pages > facts.ceiling_pages - facts.paid_pages {
 		return .Over_Ceiling, 0, 0, true
 	}
-	if facts.extras_held >= EXTRAS_PER_PROCESS || facts.table_used >= TABLE_CAPACITY {
+	if facts.extras_held >= EXTRAS_PER_PROCESS || facts.table_used >= TABLE_CAPACITY || !facts.rate_slot_available {
 		return .Full, 0, 0, true
+	}
+	if facts.asked_pages > facts.available_pages {
+		return .No_Pages, 0, 0, true
 	}
 	reserve_left := facts.growth_reserve_pages > facts.reserve_used_pages ? facts.growth_reserve_pages - facts.reserve_used_pages : 0
 	from_reserve = min(facts.asked_pages, reserve_left)
 	from_pool = facts.asked_pages - from_reserve
-	if from_pool > facts.shared_pool_pages {
-		return .No_Pages, 0, 0, true
-	}
 	return .None, from_reserve, from_pool, true
 }
 
@@ -167,6 +175,20 @@ last_decision :: proc "contextless" (table: ^Table, owner: u64) -> (at: u64, fou
 		}
 	}
 	return 0, false
+}
+
+// has_rate_slot reports whether owner already holds a rate-limit slot or a
+// free slot exists in table.rates.
+has_rate_slot :: proc "contextless" (table: ^Table, owner: u64) -> bool {
+	if owner == 0 {
+		return false
+	}
+	for entry in table.rates {
+		if entry.owner == owner || entry.owner == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // note_decision records the timestamp of a decision for owner so the next

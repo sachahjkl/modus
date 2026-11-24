@@ -17,6 +17,7 @@ import "modus:system"
 budget_growth_table: budget_growth.Table
 // Rate limit on refusal log lines.
 budget_growth_lines: budget_growth.Line_Bound
+#assert(budget_growth.PROCESS_LIMIT_CAPACITY >= STARTED_CAPACITY)
 
 // Interval between drain passes over released extra budgets, matching
 // SCREEN_BUDGET_DRAIN_PASS_MILLISECONDS.
@@ -48,10 +49,12 @@ budget_grow_command :: proc "contextless" (item: ^Started, record: ring.Record, 
 }
 
 // growth_reserves_reserved_for_others sums the unspent growth reserves of
-// every other running process of the boot image, so one process never draws
-// from another process's growth reserve.
+// every other running process of the boot image and every unstarted row of
+// the start list, so one process never draws from another process's growth
+// reserve before or after Machine_Usable.
 @(private = "file")
 growth_reserves_reserved_for_others :: proc "contextless" (caller: ^Started) -> (reserved: u64) {
+	caller_name := system.name_of(caller.name[:])
 	for &other in started {
 		if other.process == 0 || &other == caller || other.from_disk {
 			continue
@@ -65,6 +68,17 @@ growth_reserves_reserved_for_others :: proc "contextless" (caller: ^Started) -> 
 			left := policy.growth_reserve_pages - used
 			reserved = reserved > max(u64) - left ? max(u64) : reserved + left
 		}
+	}
+	for &row in start_list_reserves.rows[:start_list_reserves.count] {
+		row_name := system.name_of(row.name[:])
+		if row_name == caller_name || find_running(row_name) != nil {
+			continue
+		}
+		policy, _, _ := module_budget_policy_for(row_name)
+		if !policy.has_growth_reserve || policy.growth_reserve_pages == 0 {
+			continue
+		}
+		reserved = reserved > max(u64) - policy.growth_reserve_pages ? max(u64) : reserved + policy.growth_reserve_pages
 	}
 	return reserved
 }
@@ -105,7 +119,7 @@ budget_grow_request :: proc "contextless" (item: ^Started, asked_pages: u64, val
 	reserved_start := start_list_reserved_all()
 	reserved_other := growth_reserves_reserved_for_others(item)
 	reserved_total := reserved_start > max(u64) - reserved_other ? max(u64) : reserved_start + reserved_other
-	shared_pool := own.pages > reserved_total ? own.pages - reserved_total : 0
+	available := own.pages > reserved_total ? own.pages - reserved_total : 0
 
 	paid := item.budget_pages > max(u64) - extra_pages ? max(u64) : item.budget_pages + extra_pages
 	facts := budget_growth.Grow_Facts {
@@ -116,11 +130,12 @@ budget_grow_request :: proc "contextless" (item: ^Started, asked_pages: u64, val
 		reserve_used_pages   = reserve_used,
 		extras_held          = held_count,
 		table_used           = budget_growth.table_used(&budget_growth_table),
+		rate_slot_available  = budget_growth.has_rate_slot(&budget_growth_table, owner),
 		now                  = now,
 		last_decision_at     = last_at,
 		has_last_decision    = has_last,
 		period_ms            = root_plan_in_force.budget_growth_period_ms,
-		shared_pool_pages    = shared_pool,
+		available_pages      = available,
 	}
 	refusal, from_reserve, _, counts_as_decision := budget_growth.decide(facts)
 	if counts_as_decision {

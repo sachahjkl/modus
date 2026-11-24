@@ -429,6 +429,15 @@ point_copy_frame_free :: proc "contextless" (history_region: u32, frame: u64) {
 @(private = "file")
 point_copies_setup :: proc "contextless" (target_index: u32, rec: ^Process_Record_State, copy_initial: bool) -> Operation_Outcome {
 	target := &processes[target_index]
+	// A recorded or replayed process holds no large entry on any mapping
+	// (src/md/features/frames_of_a_process.md, "Subtle points"): demote
+	// every non-Large_Pages mapping with active 2 MiB or 1 GiB entries first.
+	self := processor_self()
+	for &mapping in target.mappings {
+		if mapping.page_count != 0 && !mapping.large && (mapping.entries_2m != 0 || mapping.entries_1g != 0) {
+			demote_mapping_range(target, &mapping, &regions[mapping.region], 0, mapping.page_count, self)
+		}
+	}
 	for &mapping in target.mappings {
 		if mapping.page_count == 0 || mapping.bits & PAGE_WRITE != 0 {
 			continue
@@ -444,7 +453,6 @@ point_copies_setup :: proc "contextless" (target_index: u32, rec: ^Process_Recor
 			point_copies_teardown(target_index, rec)
 			return .Bad_State
 		}
-		demote_mapping_range(target, &mapping, region, 0, mapping.page_count, processor_self())
 		for page in u64(0) ..< mapping.page_count {
 			if rec.point_copy_count >= POINT_COPY_CAPACITY {
 				point_copies_teardown(target_index, rec)
