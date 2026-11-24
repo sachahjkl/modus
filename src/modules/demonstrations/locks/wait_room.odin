@@ -72,7 +72,6 @@ room_thread_run :: proc "c" (parameter: rawptr) -> ! {
 // pages again. budget_end: the locker ends its budget first, so the pages
 // of the room return to the budget that pays the process then.
 room_locker_case :: proc "contextless" (image: []u8, budget_end: bool) -> (room_status: system.Status, back: bool) {
-	before, _ := system.budget_read()
 	board_memory, memory_status := system.memory_create(1)
 	if memory_status != .Ok {
 		return memory_status, false
@@ -84,6 +83,11 @@ room_locker_case :: proc "contextless" (image: []u8, budget_end: bool) -> (room_
 	}
 	defer system.memory_unmap(address)
 	slot := &(^lockers.Board)(address).slots[0]
+	_ = intrinsics.atomic_load(&slot.done)
+	// Read the budget after board_memory is created, mapped, and faulted so
+	// before.pages matches the budget once the child process stops (while
+	// board_memory is still held by defer).
+	before, _ := system.budget_read()
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
 	grants[lockers.GRANT_BOARD] = {board_memory, {.Read, .Write}}

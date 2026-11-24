@@ -3,6 +3,7 @@ package system
 
 import "core:testing"
 import op "modus:contract/operation"
+import "modus:contract/output"
 
 // The places of a list at their edges: the last word that fits is taken,
 // one more is refused and changes nothing; a word with a flag needs two
@@ -115,4 +116,32 @@ a_wait_on_the_stack_is_small :: proc(t: ^testing.T) {
 	testing.expect(t, size_of(Wait) < 4096, "a wait takes more than a page of the stack")
 	// A set names the places of its caller, and holds none itself.
 	testing.expect(t, size_of(Wait_Set) <= 48)
+}
+
+// A reader wait set sized with output.reader_wait_words(N) holds all fixed
+// words beside the rings plus every one of the N rings, including for N = 1.
+@(test)
+reader_wait_set_fits_all_rings_and_fixed_words :: proc(t: ^testing.T) {
+	word, flag: u32
+	for rings in ([?]int{1, 2, 20, 30}) {
+		total := output.reader_wait_words(rings)
+		words := make([]op.Word, total)
+		parts := make([]Wait_Part, total)
+		defer delete(words)
+		defer delete(parts)
+		set := wait_set_of(words, parts)
+		wait := Wait{set = &set, room = max(total, WAIT_INLINE_WORDS)}
+		// Fixed words: event (1), wiring ring + flag (2), wake word (1), closed + flag (2).
+		testing.expect(t, wait_word(&wait, &word, 0))
+		testing.expect(t, wait_word(&wait, &word, 0, &flag))
+		testing.expect(t, wait_word(&wait, &word, 0))
+		testing.expect(t, wait_word(&wait, &word, 0, &flag))
+		for _ in 0 ..< rings {
+			testing.expect(t, wait_room_left(&wait) >= output.READER_WAIT_WORDS_OF_A_RING)
+			testing.expect(t, wait_word(&wait, &word, 0, &flag))
+			testing.expect(t, wait_word(&wait, &word, 0))
+		}
+		testing.expect_value(t, wait_room_left(&wait), 0)
+		testing.expect(t, !wait.refused)
+	}
 }

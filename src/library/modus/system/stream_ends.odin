@@ -1741,15 +1741,22 @@ stream_read :: proc "contextless" (command: output.Wiring_Command, index: u32, t
 		if !found {
 			return {}, .No_Writer
 		}
-		// The set holds the words of each ring of the table and the words
-		// beside them; a ring past a room that the budget did not pay is
-		// left out, so the words beside the rings always fit.
+		// Add the fixed words first so they always fit; each ring then needs
+		// only READER_WAIT_WORDS_OF_A_RING (events was added by wait_begin,
+		// so READER_WAIT_WORDS_BESIDE_RINGS is never double-counted).
 		waiting := wait_begin(&reader_wait.set)
+		if wiring_ring.head != nil {
+			wait_records(&waiting, &wiring_ring.commands)
+		}
+		if wake_word != nil {
+			wait_word(&waiting, wake_word, wake_value)
+		}
+		closed_words_wait(&waiting)
 		for &end in stream_ends {
 			if end.command != command || !end.opened || (command == .Reader_End && (end.index != index || (tag != 0 && end.tag != tag))) || (command == .Asker_End && end.tag != tag) {
 				continue
 			}
-			if wait_room_left(&waiting) < output.READER_WAIT_WORDS_OF_A_RING + output.READER_WAIT_WORDS_BESIDE_RINGS {
+			if wait_room_left(&waiting) < output.READER_WAIT_WORDS_OF_A_RING {
 				break
 			}
 			// The write that stream_end_read loaded when it found the ring
@@ -1759,13 +1766,6 @@ stream_read :: proc "contextless" (command: output.Wiring_Command, index: u32, t
 			wait_word(&waiting, &counters.write, end.write_seen, &counters.reader_waits, &counters.writer_waits, &counters.read)
 			wait_word(&waiting, &end.end_words.end, u32(output.End_Word.None))
 		}
-		if wiring_ring.head != nil {
-			wait_records(&waiting, &wiring_ring.commands)
-		}
-		if wake_word != nil {
-			wait_word(&waiting, wake_word, wake_value)
-		}
-		closed_words_wait(&waiting)
 		if wait_end(&waiting, deadline) >= deadline {
 			return {}, .No_Record
 		}

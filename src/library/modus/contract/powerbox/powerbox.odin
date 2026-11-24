@@ -72,14 +72,16 @@ SERVICE_REGION_SLOT :: 12 // The region of the root service and the powerbox.
 PICKER_REGION_SLOT :: 13 // The picker region: the requests and the pages of the picker.
 IMAGE_SLOT :: 19 // The boot image, read-only: the file of the storage service.
 CONTEXT_VALUE_DISPLAY_SLOT :: 0
-CONTEXT_VALUE_IMAGE_SIZE :: 1
+// Slots 1 and 2 hold GRANT_VALUE_FILE_ADDRESS and GRANT_VALUE_FILE_SIZE
+// because the powerbox holds the start grant Serve.
+CONTEXT_VALUE_IMAGE_SIZE :: 3
 
 // The context of the holder of Display: the picker ring and the picker
 // region, which the root service makes at its start and gives the
 // powerbox at the start of the powerbox (src/md/features/powerbox.md, "The
-// picker ring").
-DISPLAY_PICKER_RING_SLOT :: 6
-DISPLAY_PICKER_REGION_SLOT :: 7
+// picker ring"). Slots 7..9 hold the role store of the display.
+DISPLAY_PICKER_RING_SLOT :: 10
+DISPLAY_PICKER_REGION_SLOT :: 11
 
 // The picker region: the request of a page from the trusted display at
 // one place, the page that the powerbox writes at the other.

@@ -397,7 +397,7 @@ guard_page :: proc "contextless" (ctx: ^system.Context) {
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = 1
-	process, start := system.process_start(system.image_find(image, "address_space"), "address_space child", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
+	process, start := system.process_start(system.image_find(image, "address_space"), "address_space child", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10}, source = {image = image})
 	if start != .Ok {
 		fail("the guard page: the child did not start")
 		return
@@ -773,7 +773,7 @@ revocation_wakes_waiter :: proc "contextless" (ctx: ^system.Context) -> bool {
 	grants[GRANT_REVOCATION_BOARD] = {board_memory, {.Read, .Write}}
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = 4
-	process, start := system.process_start(system.image_find(image, "address_space"), "address_space waiter", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
+	process, start := system.process_start(system.image_find(image, "address_space"), "address_space waiter", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10}, source = {image = image})
 	if start != .Ok {
 		return false
 	}
@@ -845,7 +845,7 @@ child_stop_cause :: proc "contextless" (ctx: ^system.Context, role: u64) -> (cau
 	grants: [op.CONTEXT_HANDLES]system.Grant
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = role
-	process, start := system.process_start(system.image_find(image, "address_space"), "address_space child", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
+	process, start := system.process_start(system.image_find(image, "address_space"), "address_space child", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10}, source = {image = image})
 	if start != .Ok {
 		return .None, .None
 	}
@@ -916,7 +916,7 @@ own_handle_stop :: proc "contextless" (ctx: ^system.Context) -> (own_handle_righ
 	grants[GRANT_REVOCATION_BOARD] = {board_memory, {.Read, .Write}}
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = 6
-	process, start := system.process_start(system.image_find(image, "address_space"), "address_space own handle", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10})
+	process, start := system.process_start(system.image_find(image, "address_space"), "address_space own handle", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 10}, source = {image = image})
 	if start != .Ok {
 		return false, false
 	}
@@ -1148,7 +1148,7 @@ delegation :: proc "contextless" (ctx: ^system.Context) {
 	grants[GRANT_DELEGATION_SPEND] = {spend_budget, {.Spend}}
 	values: [op.CONTEXT_VALUES]u64
 	values[VALUE_ROLE] = 2
-	process, start := system.process_start(system.image_find(image, "address_space"), "address_space delegate", grants, random.values_with_seed(&process_generator, values), {pages = 512, processes = 1, threads = 1, processor = 100_000, log_records = 50})
+	process, start := system.process_start(system.image_find(image, "address_space"), "address_space delegate", grants, random.values_with_seed(&process_generator, values), {pages = 2048, processes = 1, threads = 1, processor = 100_000, log_records = 50}, source = {image = image})
 	if start != .Ok {
 		fail("the delegation: B did not start")
 		return

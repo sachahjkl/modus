@@ -946,29 +946,45 @@ Plan_Room :: struct {
 	outside:     int, // Places of the table of the blocks outside the stores: a power of 2.
 }
 
+// Base overhead of one commit besides the changed object blocks and nodes:
+// B+ tree nodes, version index and leaves (LEAF_WORK_CAPACITY), store block,
+// store page, and their count-tree pages. All three stay well below the fixed
+// capacities so normal range commits fit in plan_fixed without growing pool
+// arenas.
+PLAN_BASE_WRITES :: 512
+PLAN_BASE_DELTAS :: 4096
+PLAN_BASE_COUNT_PAGES :: 64
+
 // plan_room_of_changes gives the room of a commit of `changes` changed
-// blocks of data on an object of at most `blocks` blocks: the fixed room
+// blocks of data on an object of at most `blocks` blocks: the base overhead
 // of a commit, and the blocks, nodes and releases of those changes.
 plan_room_of_changes :: proc "contextless" (changes: u64, blocks: u64) -> Plan_Room {
 	slots := block_tree.slots_needed(changes, blocks)
 	// Each changed block and node is written once, and the block or the
 	// node that it replaces loses one name.
 	written := changes + slots
-	entries := u64(DELTA_CAPACITY / 2) + 2 * written
-	delta := u64(DELTA_CAPACITY)
-	for delta < 2 * entries {
-		delta *= 2
-	}
 	// The new blocks of a commit are near each other (the search of a free
 	// block goes on from the last one), so a leaf holds many of them; a
 	// commit whose blocks spread past this room is refused, and its caller
 	// commits in parts.
-	count_pages := storage_mount.COUNT_STAGING_PAGES + 4 * (written / format.COUNTS_OF_A_PAGE + format.COUNT_LEVEL_LIMIT)
+	count_pages := u64(PLAN_BASE_COUNT_PAGES) + 4 * (written / format.COUNTS_OF_A_PAGE + format.COUNT_LEVEL_LIMIT)
+	writes := u64(PLAN_BASE_WRITES) + written + count_pages
+	entries := u64(PLAN_BASE_DELTAS) + 2 * (written + count_pages)
+	delta := u64(DELTA_CAPACITY)
+	for delta < 2 * entries {
+		delta *= 2
+	}
 	outside := u64(OUTSIDE_SLOTS)
 	for outside < 4 * count_pages + 8 {
 		outside *= 2
 	}
-	return {writes = WRITE_CAPACITY + int(written + count_pages), delta = int(delta), slot_pages = int(block_tree.slot_pages_needed(changes, blocks)), count_pages = int(count_pages), outside = int(outside)}
+	return {
+		writes      = max(WRITE_CAPACITY, int(writes)),
+		delta       = int(delta),
+		slot_pages  = int(block_tree.slot_pages_needed(changes, blocks)),
+		count_pages = max(storage_mount.COUNT_STAGING_PAGES, int(count_pages)),
+		outside     = int(outside),
+	}
 }
 
 // plan_room_fits says if the fixed tables hold a room.

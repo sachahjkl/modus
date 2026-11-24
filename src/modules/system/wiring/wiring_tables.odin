@@ -39,6 +39,9 @@ wiring_tables_reserve :: proc "contextless" () -> wiring_core.Wiring_Tables_Port
 		if status != .Ok {
 			return {}
 		}
+		// Exact commits keep each of the seven small tables to one page per
+		// growth instead of committing ARENA_GROWTH_STEP_FIRST_PAGES each.
+		made.exact_commits = true
 		arena^ = made
 	}
 	return {user = &wiring_tables, processes_grow = processes_grow, wirings_grow = wirings_grow}
@@ -81,10 +84,9 @@ processes_grow :: proc "contextless" (user: rawptr, count: int) -> []wiring_core
 	return ([^]wiring_core.Process_Entry)(tables.processes.base)[:tables.process_count]
 }
 
-// wirings_grow grows the tables of the wirings, the pages that the growth
-// commits paid by the wiring budget of the asker payer, which the root
-// service carved for it: one asker fills no more of the tables than its own
-// budget pays, and an asker with no wiring budget grows none.
+// wirings_grow grows the tables of the wirings from the service's own budget
+// (Memory_Commit requires the budget that created each arena), after verifying
+// that the asker holds a wiring budget so an asker without one cannot grow them.
 @(private = "file")
 wirings_grow :: proc "contextless" (user: rawptr, count: int, payer: int) -> []wiring_core.Wiring_Entry {
 	tables := (^Wiring_Tables)(user)
@@ -92,14 +94,7 @@ wirings_grow :: proc "contextless" (user: rawptr, count: int, payer: int) -> []w
 		if payer < 0 || payer >= len(process_handles) || process_handles[payer].asker_budget == 0 {
 			return nil
 		}
-		budget := process_handles[payer].asker_budget
 		arenas := [?]^system.Arena{&tables.wirings, &tables.end_memory, &tables.ring_memory, &tables.ring_capacity, &tables.actions}
-		for arena in arenas {
-			arena.budget = budget
-		}
-		defer for arena in arenas {
-			arena.budget = 0
-		}
 		before := tables.wiring_count
 		grown := arena_extend(&tables.wirings, wiring_core.Wiring_Entry, before, count) && arena_extend(&tables.end_memory, system.Handle, before, count) && arena_extend(&tables.ring_memory, system.Handle, before, count) && arena_extend(&tables.ring_capacity, u32, before, count) && arena_extend(&tables.actions, wiring_core.Stop_Action, before, count)
 		if !grown {

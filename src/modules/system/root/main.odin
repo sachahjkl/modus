@@ -243,7 +243,10 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	// grant again (plan_roles.odin).
 	if is_role_holder(service_name, .Storage) {
 		amount: u64
-		if .Store in start_grant_set.grants && .Store not_in caller.revoked {
+		// The holder of Display is a System_Part and receives its role store
+		// directly through display_role_store_give without carrying .Store in
+		// its start grant set.
+		if (.Store in start_grant_set.grants && .Store not_in caller.revoked) || is_role_holder(system.name_of(caller.name[:]), .Display) {
 			amount = store_blocks_planned(role_policy.store_name_of_module(&role_holder_names, system.name_of(caller.name[:])), start_grant_set)
 		}
 		grant := isolated.caller_grant_make(amount, caller.principal, acts)
@@ -772,6 +775,8 @@ entropy_report: random.Entropy_Report
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[op.ROOT_MACHINE]
+	// The default holders of each role, before anything resolves a role.
+	role_holders_start()
 	// The places of the processes, before anything reads them.
 	root_tables_start()
 	boot_image_take(ctx)
@@ -1177,6 +1182,9 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 	text_settings_give(mappings[:], &mapping_count, &values, .Machine)
 	date_page_give(mappings[:], &mapping_count, &values)
 	fresh_bytes_page_give(served, mappings[:], &mapping_count, &values)
+	// Set the start grant set before display_role_store_give so grant_for
+	// sees the Store grant when opening the role store connection.
+	served.start_grant_set = start_grant_set
 	display_role_store_give(served, display_name, &context_grants, &values, mappings[:], &mapping_count)
 	plan_values_page_give(served, display_name, mappings[:], &mapping_count, &values)
 	if context_refused(display_name, &context_grants, &values) {

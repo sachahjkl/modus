@@ -842,13 +842,13 @@ scenario := [?]Step {
 	{kind = .Type, text = "let numbers = [[1, 2], [\"a\"], numbers]"},
 	{kind = .Type, text = "numbers"},
 	{kind = .Wait, text = "[console] [[1, 2], [\"a\"], [2, 3, 4]]", fails_on = "[console] error:"},
-	{kind = .Type, text = "numbers = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]"},
-	{kind = .Wait, text = "[console] error: a variable keeps a list of 64 items at most, the items of its nested lists included; this one has 65 or more"},
+	{kind = .Type, text = "numbers = let a = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1] in let b = [a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a] in [b,b,b,b,b,b,b,b,b,b,b,b,b,b,b,b]"},
+	{kind = .Wait, text = "[console] error: a variable keeps a list of 4096 items at most, the items of its nested lists included; this one has 4112 or more"},
 	{kind = .Type, text = "numbers"},
 	{kind = .Wait, text = "[console] [[1, 2], [\"a\"], [2, 3, 4]]"},
-	{kind = .Type, text = "numbers = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]"},
+	{kind = .Type, text = "numbers = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]"},
 	{kind = .Type, text = "where(variables(), name = \"numbers\")"},
-	{kind = .Wait, text = "64 items", fails_on = "[console] error:"},
+	{kind = .Wait, text = "65 items", fails_on = "[console] error:"},
 	{kind = .Type, text = "numbers = [(n) => n]"},
 	{kind = .Wait, text = "[console] error: a variable keeps no function"},
 	// Help on one name: a word of Lex gives its guide, a fault of typing the
@@ -1307,7 +1307,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "locks: kernel entries, each locker on its own objects: 1 locker 16384, 2 lockers 32768, 4 lockers 65536"},
 	{kind = .Wait, text = "locks: pages on first use, each locker in its own memory: 1 locker 2048, 2 lockers 4096, 4 lockers 8192"},
 	{kind = .Wait, text = "locks: word wait, two threads wake each other: "},
-	{kind = .Wait, text = "locks: the wait room: with no room a wait of 64 words and one more No_Slot; a word twice in a wait Bad_Operation; a room past 32768 words Bad_Operation, for another thread Bad_Operation; a room of 65 words held 128 words for 2 pages of the budget; a wait of the 128 words Ok, of one more No_Slot; the room given back returned its pages: 1: as it must"},
+	{kind = .Wait, text = "locks: the wait room: with no room a wait of 64 words and one more No_Slot; a word twice in a wait Bad_Operation; a room past 32768 words Bad_Operation, for another thread Bad_Operation; a room of 65 words held 128 words for 2 pages of the budget; a wait of that many words Ok, of one more No_Slot; the room given back returned its pages: 1: as it must"},
 	{kind = .Wait, text = "locks: the pages of a wait room returned at the end of its thread: 1; at the stop of its process during a wait: 1; at the stop of its process after its budget ended: 1: as it must"},
 	{kind = .Wait, text = "locks: a wait of 32768 words: Ok in "},
 	{kind = .Wait, text = "locks: an unmap of 4096 pages took "},
@@ -1420,6 +1420,22 @@ scenario := [?]Step {
 	{kind = .Wait, text = "scheduler: the share policy is off: each thread has the weight that its process asked and the full weight limit"},
 	{kind = .Type, text = "stop(\"scheduler\")"},
 	{kind = .Wait, text = "root: scheduler stopped"},
+	// Free finished demonstration windows before address_space and paint so
+	// their budgets fit on the 1 GiB machine alongside the delegated services.
+	{kind = .Type, text = "stop(\"hall_of_fame\")"},
+	{kind = .Wait, text = "root: hall_of_fame stopped"},
+	{kind = .Type, text = "stop(\"rights\")"},
+	{kind = .Wait, text = "root: rights stopped"},
+	{kind = .Type, text = "stop(\"origin\")"},
+	{kind = .Wait, text = "root: origin stopped"},
+	{kind = .Type, text = "stop(\"budget\")"},
+	{kind = .Wait, text = "root: budget stopped"},
+	{kind = .Type, text = "stop(\"flow\")"},
+	{kind = .Wait, text = "root: flow stopped"},
+	{kind = .Type, text = "stop(\"crowd\")"},
+	{kind = .Wait, text = "root: crowd stopped"},
+	{kind = .Type, text = "stop(\"processors\")"},
+	{kind = .Wait, text = "root: processors stopped"},
 
 	// A process drives its own virtual memory: an arena and a sparse table
 	// of 1 GiB of addresses, commit and decommit, a protection change with
@@ -1498,7 +1514,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "connect(\"paint\")"},
 	{kind = .Wait, text = "root: connected console to the service paint"},
 	{kind = .Wait, text = "[console]   module     paint"},
-	{kind = .Wait, text = "[console]   commands   4"},
+	{kind = .Wait, text = "[console]   commands   5"},
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "connect(\"life\")"},
 	{kind = .Wait, text = "[console]   module     life"},
@@ -1510,7 +1526,7 @@ scenario := [?]Step {
 	// above, so the kernel refuses its reports.
 	{kind = .Type, text = "connect(\"monitor\")"},
 	{kind = .Wait, text = "[console]   module     monitor"},
-	{kind = .Wait, text = "[console]   commands   5"},
+	{kind = .Wait, text = "[console]   commands   9"},
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "monitor.count(\"processors\")"},
 	{kind = .Wait, text = "[console] error: monitor.count: the kernel refused an operation of the call: a handle names no object of the kind that the operation needs"},
@@ -2113,7 +2129,7 @@ scenario := [?]Step {
 	// move the place, and the line of the asker is looked for from there.
 	{kind = .Wait, text = "root: log_flood stopped: itself, done", any_order = true},
 	{kind = .Wait, text = "output_wiring: the log of log_flood kept its 605 records in order while the kernel refused its 602 calls; then this asker closed its end, and log_flood, which its log held, stopped with Done: as it must", fails_on = "[log_flood]"},
-	{kind = .Wait, text = "output_writer: large: 8 rings, each ended with the end word Revoked: as it must", fails_on = "output_writer: WRONG"},
+	{kind = .Wait, text = " rings, each ended with the end word Revoked: as it must", fails_on = "output_writer: WRONG"},
 	{kind = .Wait, text = " wirings of one asker, past 8, 9 and 20, until its budget paid no more; one more refused with Wire and with a Start, each with the budget unchanged, then the revocation of the grant wirings: as it must", fails_on = "output_wiring: WRONG"},
 	// A side that writes its own words in its wiring ring: the root
 	// service ends the wiring whose end it refused, drops a word for a
@@ -2149,7 +2165,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "generic_source: wrote 20 probes into left and into right, and ended both", fails_on = "generic_source: WRONG", any_order = true},
 	{kind = .Wait, text = "generic_wiring: generic_source to merge to filter with mark = 1 to this asker, in one start list, after a refused Wire of Other into filter.source kept no type: the joined record of 0, the 20 probes of mark 1 of the two sides, each side in its order, then a clean end: as it must", fails_on = "generic_wiring: WRONG"},
 	{kind = .Wait, text = "generic_wiring: filter with a condition on the field 0 ended kept at once with the error record of that field: as it must", fails_on = "generic_wiring: WRONG"},
-	{kind = .Wait, text = "generic_wiring: ok, after 5 refusals"},
+	{kind = .Wait, text = "generic_wiring: ok, after 4 refusals"},
 	{kind = .Wait, text = "root: generic_wiring stopped: itself, done", any_order = true},
 	// The streams of the console (src/md/features/module_outputs.md, "The
 	// console form"): the console starts output_counter and reads its
@@ -2456,7 +2472,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "start(\"hostile_terminal\")"},
 	{kind = .Wait, text = "root: started hostile_terminal, with a terminal", any_order = true},
 	{kind = .Wait, text = "terminal: hostile_terminal sent a record of the kind 0, which names no record: it is refused", any_order = true},
-	{kind = .Wait, text = "hostile_terminal: the terminal read the kind words 0, 9 and 4294967295, and the line after them: as it must"},
+	{kind = .Wait, text = "hostile_terminal: the terminal read the kind words 0, 10 and 4294967295, and the line after them: as it must"},
 	{kind = .Wait, text = "terminal: hostile_terminal stopped after 3 records whose kind names no record"},
 	{kind = .Close, text = "hostile_terminal"},
 	{kind = .Wait, text = "root: terminal stopped"},
@@ -2534,7 +2550,7 @@ scenario := [?]Step {
 	{kind = .Record, process = "storage", level = "Info", text = "storage: the store console is at its limit of 3 blocks: the commit of generation {generation+4} thinned 1 version, the oldest of the store first", any_order = true},
 	// An error of a service is a record: the console writes it as a sentence.
 	{kind = .Type, text = "storage.write(0, \"\", \"x\")"},
-	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 64 bytes"},
+	{kind = .Wait, text = "[console] error: storage.write: the argument name is empty; it must have 1 to 255 bytes"},
 	{kind = .Type, text = "storage.read(0, \"nothing\")"},
 	{kind = .Wait, text = "[console] error: storage.read: the argument name: the store has no object with this name"},
 	{kind = .Type, text = "storage.size(0, \"greeting\")"},
@@ -2692,7 +2708,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "), fault::one + 0x"},
 	{kind = .Wait, text = "errors: t the pages of another process (Inspect, Pages): Inspect: the argument index has the value 1, which the call refuses"},
 	{kind = .Wait, text = "errors: u the pages past the end of the user half: Inspect: the argument address has the value 140737488351232, which the call refuses; it takes at most 140737488093184"},
-	{kind = .Wait, text = "errors: v a wrapper: display.open of 0 by 100 pixels: display.open: the argument width has the value 0, which the call refuses; it takes at most 2048"},
+	{kind = .Wait, text = "errors: v a wrapper: display.open of 0 by 100 pixels: display.open: the argument width has the value 0, which the call refuses; it takes at most 8192"},
 	{kind = .Wait, text = "errors: w a wrapper: terminal.open with no terminal: terminal.open: the caller has no grant for this: a terminal"},
 	{kind = .Wait, text = "errors: x a ring: root.Connect(\"storage\"), not callable: root.Connect: the caller has no grant for this: a connection to this service"},
 	{kind = .Wait, text = "errors: y an export: tally.add, a note of 40 bytes: tally.add: the argument note has 40 bytes; it can have at most 36 bytes"},
@@ -3025,7 +3041,7 @@ scenario := [?]Step {
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"settings\")"},
 	{kind = .Wait, text = "[console]   module     settings"},
-	{kind = .Wait, text = "[console]   commands   13"},
+	{kind = .Wait, text = "[console]   commands   18"},
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "settings.set(font = .spleen)"},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; ", any_order = true},

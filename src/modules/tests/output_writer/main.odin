@@ -159,9 +159,9 @@ ended_case :: proc "contextless" (stream: ^system.Record_Output(Probe), wanted: 
 	system.log_fact(.Info, Ring_Ended{case_name = value_kinds.text_field(name, CASE_FIELD_BYTES), end_word = value_kinds.text_field(output.end_word_names[wanted], END_WORD_FIELD_BYTES)})
 }
 
-// The wirings of `large` that the asker makes: the limit of the wirings of
-// an asker in the root service.
-LARGE_WIRINGS :: 8
+// The least wirings of `large` that the asker makes before its budget pays
+// no more: past the old 8-wiring limit and at least 20.
+LARGE_WIRINGS_AT_LEAST :: 20
 
 // revoked_case waits until each wiring of its asker on `large` came and
 // ended. The count of the rings that ended does not depend on whether this
@@ -171,7 +171,7 @@ revoked_case :: proc "contextless" () {
 	deadline := hang_deadline()
 	for {
 		count := system.output_reader_count(&large)
-		if large.rings_ended >= LARGE_WIRINGS && count == 0 {
+		if large.rings_ended >= LARGE_WIRINGS_AT_LEAST && count == 0 {
 			break
 		}
 		if system.time() >= deadline {
@@ -179,8 +179,8 @@ revoked_case :: proc "contextless" () {
 		}
 		system.wiring_wait(deadline, large.index)
 	}
-	if large.rings_ended != LARGE_WIRINGS || large.last_end != .Revoked {
+	if large.rings_ended < LARGE_WIRINGS_AT_LEAST || large.last_end != .Revoked {
 		wrong("the rings of large ended with the end word", u64(large.last_end))
 	}
-	system.log_fact(.Info, Large_Rings_Revoked{rings = LARGE_WIRINGS})
+	system.log_fact(.Info, Large_Rings_Revoked{rings = large.rings_ended})
 }

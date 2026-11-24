@@ -674,17 +674,41 @@ short_threads_run :: proc "contextless" () -> ! {
 	}
 }
 
+// Computed bound: pages of this module and the library modules it imports,
+// read from the boot image headers so the child budget tracks module growth.
+share_process_module_pages :: proc "contextless" () -> u64 {
+	names := [3]string{"scheduler", "drawing", "text_rendering"}
+	pages: u64
+	for name in names {
+		if file := system.image_find(image, name); len(file) != 0 {
+			if head, err := module.header(file); err == .None {
+				pages += (head.memory_size + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+			}
+		}
+	}
+	return max(pages, 512)
+}
+
+// Computed bound: page-table and loader headroom for one child process
+// (4-level page tables for the loaded modules, stack, context, and thread
+// areas).
+SHARE_PROCESS_TABLE_PAGES :: 64
+
 // What a process of the case asks of the budget of this process. pages:
-// its copy of the data of the module and of the module that it imports,
-// its stack, its context and its page tables, with room; then a stack of
-// 16 pages and a thread area of 3 for each thread more. processor: one
-// processor for each thread, and no more than the machine has: its threads
-// cannot run on more, so its budget never stops it, and the four processes
-// ask together for no more than this process holds. It has no handle of
-// this process and writes no log record.
+// the loaded pages of the module and its imports, the first thread (stack,
+// context, thread area, own log), page-table headroom, and a stack plus
+// thread area for each thread after the first. processor: one processor
+// for each thread, and no more than the machine has: its threads cannot
+// run on more, so its budget never stops it, and the four processes ask
+// together for no more than this process holds. It has no handle of this
+// process and writes no log record.
 share_process_amounts :: proc "contextless" (threads: u64) -> system.Budget_Amounts {
 	processors := min(threads, u64(system.thread_record().processors))
-	return {pages = 512 + threads * (system.THREAD_STACK_PAGES + 3), processes = 1, threads = threads, processor = processors * 1_000_000, log_records = 0}
+	first_thread_pages := u64(op.STACK_PAGES + 1 + (op.THREAD_AREA_PAGES - 1) + op.OWN_LOG_PAGES)
+	other_threads := max(threads, 1) - 1
+	other_thread_pages := other_threads * u64(system.THREAD_STACK_PAGES + (op.THREAD_AREA_PAGES - 1))
+	pages := share_process_module_pages() + first_thread_pages + SHARE_PROCESS_TABLE_PAGES + other_thread_pages
+	return {pages = pages, processes = 1, threads = threads, processor = processors * 1_000_000, log_records = 0}
 }
 
 process_generator: random.Generator

@@ -25,16 +25,19 @@ Replacement_Row_Of_The_Build :: struct {
 }
 
 // The rows of the build: the replacements of the demonstration of an
-// import. calendar_changed (another description) and agenda (an import
-// cycle) are signed so that the check of the loader can refuse them: the
-// signature is consent, the load check is compatibility. calendar by
-// lonely is signed by another key, so that the root service refuses it.
-// A module of a row that a volume does not hold leaves its row out.
+// import. calendar_changed (another description), agenda (an import
+// cycle), and calendar_fixed by math (a chain of replacements) are signed
+// so that the check of the loader or of chains can refuse them: the
+// signature is consent, the load check is compatibility, and a missing row
+// is refused before a chain. calendar by lonely is signed by another key,
+// so that the root service refuses it. A module of a row that a volume
+// does not hold leaves its row out.
 @(rodata)
 replacement_rows_of_the_build := [?]Replacement_Row_Of_The_Build {
 	{from = "calendar", to = "calendar_fixed"},
 	{from = "calendar", to = "calendar_changed"},
 	{from = "calendar", to = "agenda"},
+	{from = "calendar_fixed", to = "math"},
 	{from = "calendar", to = "lonely", signed_by_another_key = true},
 }
 

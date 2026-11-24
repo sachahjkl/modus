@@ -666,8 +666,9 @@ open_handles :: proc "contextless" (ring_memory, region_memory: system.Handle, s
 // open_mapped maps a call ring and a call region of a connection. A share
 // is ready when the storage service gives it: the service maps its ring
 // before it gives the handles (system.connection_make), and sends no ready
-// completion. The process that made the share opens it.
-@(private = "file")
+// completion. The process that made the share, or a builder that received
+// it in its context (builder_stores_open), opens it here.
+@(private = "package")
 open_mapped :: proc "contextless" (ring_memory, region_memory: system.Handle, service: system.Handle, file: []u8) -> (client: Client, ok: bool) {
 	client.ring_memory = ring_memory
 	client.region_memory = region_memory

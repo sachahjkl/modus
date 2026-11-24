@@ -289,8 +289,9 @@ wiring_register_process :: proc "contextless" (item: ^Started) {
 	}
 }
 
-// wiring_pages_stated gives the wiring pages that the module file of an
-// asker states, or half of the pages that it asks when it states none.
+// wiring_pages_stated gives the wiring pages of an asker's decided budget:
+// the wiring pages that its module file states, or half of the pages that the
+// starter gave it (LEAST_BUDGET when the module file states no budget).
 @(private = "file")
 wiring_pages_stated :: proc "contextless" (asker: ^Started) -> u64 {
 	file := image_file_checked(system.name_of(asker.name[:]))
@@ -298,7 +299,8 @@ wiring_pages_stated :: proc "contextless" (asker: ^Started) -> u64 {
 	if module.validate(file) == .None {
 		request, _ = module.budget_request(file)
 	}
-	return system.wiring_pages_of_request(request)
+	granted, _ := system.budget_decide(request, LEAST_BUDGET, largest_budget)
+	return system.wiring_pages_of_request(granted)
 }
 
 // wiring_asker_budget_ensure carves a pages-only child wiring budget from

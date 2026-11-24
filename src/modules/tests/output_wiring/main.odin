@@ -827,7 +827,6 @@ log_text_expect :: proc "contextless" (serial: u32, record: ^output.Log_Output_R
 // kernel refused, which must be each call before it.
 @(private = "file")
 log_case :: proc "contextless" () {
-	settled := budget_pages()
 	log_row := row(.Child, 0, 0, .Asker, 0, 0)
 	log_row.writer_stream = u32(output.Writer_Stream.Log)
 	log_row.pace = u32(output.Wiring_Pace.Always_Holds_Writer)
@@ -844,6 +843,9 @@ log_case :: proc "contextless" () {
 	if read_status != .Ok || item.kind != .Joined || item.serial != 0 {
 		wrong("the first compartment of the log of log_flood is not the joined record of 0; the status word", u64(read_status))
 	}
+	// Snapshot after the first asker_read, which initializes this process's
+	// permanent stream-end and reader-wait arenas from its own budget.
+	settled := budget_pages()
 	next := u32(0)
 	read_next :: proc "contextless" (number: u32, record: ^output.Log_Output_Record, serial: u32) {
 		item, read_status := system.asker_read(number, record, hang_deadline())
@@ -927,7 +929,6 @@ LIMIT_CASE_WIRINGS_MOST :: 1024
 // with the budget unchanged; then the revocation of the grant wirings.
 @(private = "file")
 limit_case :: proc "contextless" () {
-	settled := budget_pages()
 	writer := start_child("output_writer")
 	numbers: [LIMIT_CASE_WIRINGS_MOST]u32
 	held := 0
@@ -941,6 +942,10 @@ limit_case :: proc "contextless" () {
 		}
 		numbers[held] = u32(answer[0])
 		held += 1
+		// Take the end from this process's wiring ring so the ring does not
+		// fill at WIRING_RING_CAPACITY before the wiring budget runs out.
+		probe: Large
+		_, _ = system.asker_read(numbers[held - 1], &probe, 0)
 		// The root service records the grant before it answers the Wire.
 		if granted, _ := grants_read(); .Wirings not_in granted {
 			wrong("a wiring is held and the grant wirings is not granted; the grants", transmute(u64)granted)
@@ -953,11 +958,11 @@ limit_case :: proc "contextless" () {
 		wrong("the budget of this asker paid each wiring of the test; wirings:", u64(held))
 	}
 	// The refusal that ended the loop is the budget's: of the wirings
-	// (Budget of Pages) or of the place of an end (Full), and it changed
-	// nothing.
+	// (Budget or Budget_Hidden of Pages, since wiring holds Spend only) or of
+	// the place of an end (Full), and it changed nothing.
 	budget_refused :: proc "contextless" (what: string, before: u64, status: call_outcome.Call_Outcome, answer: [7]u64) {
 		record := errors.completion_record(answer)
-		by_budget := status == .Budget_Or_Capacity_Exhausted && errors.Kind(record.kind) == .Budget && errors.Unit(record.unit) == .Pages
+		by_budget := status == .Budget_Or_Capacity_Exhausted && (errors.Kind(record.kind) == .Budget || errors.Kind(record.kind) == .Budget_Hidden) && errors.Unit(record.unit) == .Pages
 		by_place := (status == .Budget_Or_Capacity_Exhausted || status == .Callee_Busy) && errors.Kind(record.kind) == .Full
 		if !by_budget && !by_place {
 			wrong_refused(what, status, answer)
@@ -981,7 +986,7 @@ limit_case :: proc "contextless" () {
 	processes := [1]system.Handle{writer}
 	stopped_wait(processes[:])
 	system.close(writer)
-	budget_settled_wait(settled, "the wirings of an asker")
+	grant_wirings_gone_wait("the grant wirings stayed after limit_case revoked its wirings; the grants")
 	system.log_fact(.Info, Asker_Limit_Checked{wirings = u64(held)})
 }
 
