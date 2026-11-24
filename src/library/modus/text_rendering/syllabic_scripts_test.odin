@@ -277,3 +277,33 @@ the_syllabic_scripts_shape_as_harfbuzz :: proc(t: ^testing.T) {
 	testing.expect_value(t, failed, 0)
 	fmt.printfln("text_rendering: the work of the words of Khmer, Myanmar and USE: at most %d units for a byte, of a budget of %d for a byte", most_per_byte, vector_font.LAYOUT_WORK_PER_BYTE)
 }
+
+@(test)
+syllable_script_and_sara_am_predicates_cover_every_script_range :: proc(t: ^testing.T) {
+	in_syllable := [?]rune{
+		0x0900, 0x0915, 0x0D7F, // Indic blocks
+		0x0F00, 0x0FC0, 0x0FFF, // Tibetan (including Dril Bu U+0FC0)
+		0x1000, 0x109F, 0xA9E0, 0xA9FF, 0xAA60, 0xAA7F, // Myanmar
+		0x1780, 0x17FF, 0x19E0, 0x19FF, // Khmer
+		0x1B00, 0x1B7F, // Balinese
+		0x1B80, 0x1BBF, 0x1CC0, 0x1CCF, // Sundanese
+		0xA980, 0xA9DF, // Javanese
+	}
+	for ch in in_syllable {
+		testing.expectf(t, is_syllable_script(ch), "U+%04X must be a syllable script character", ch)
+	}
+	outside := [?]rune{
+		'A', '0', 0x00E9, 0x03A9, 0x0416, 0x08FF, 0x0D80, 0x0EFF,
+		0x10A0, 0x177F, 0x1800, 0x19DF, 0x1A00, 0x1AFF, 0x1BC0,
+		0x1CBF, 0x1CD0, 0xA97F, 0xAA00, 0xAA5F, 0xAA80,
+	}
+	for ch in outside {
+		testing.expectf(t, !is_syllable_script(ch), "U+%04X must not be a syllable script character", ch)
+	}
+	testing.expect(t, is_sara_am(SARA_AM_THAI))
+	testing.expect(t, is_sara_am(SARA_AM_LAO))
+	testing.expect(t, !is_sara_am(SARA_AM_THAI - 1))
+	testing.expect(t, !is_sara_am(SARA_AM_THAI + 1))
+	testing.expect(t, !is_sara_am(SARA_AM_LAO - 1))
+	testing.expect(t, !is_sara_am(SARA_AM_LAO + 1))
+}

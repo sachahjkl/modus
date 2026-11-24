@@ -86,6 +86,17 @@ syllabic_script_of :: proc "contextless" (character: rune) -> (script: Syllabic_
 	return {}, false
 }
 
+// is_syllable_script says if a character belongs to a script whose syllable
+// shaper (India, Khmer, Myanmar or the Universal Shaping Engine) shapes its
+// cluster into direct font glyphs.
+is_syllable_script :: proc "contextless" (character: rune) -> bool {
+	if is_indic_character(character) {
+		return true
+	}
+	_, found := syllabic_script_of(character)
+	return found
+}
+
 // syllabic_chain_of gives the chain of a face for a character of the rows.
 @(private)
 syllabic_chain_of :: proc "contextless" (kind: Chain_Kind, character: rune) -> (chain: Chain, found: bool) {

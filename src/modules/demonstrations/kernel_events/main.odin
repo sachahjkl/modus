@@ -75,17 +75,16 @@ import "modus:system"
 // The tool counts its module, a stack and a thread area for each of its 7
 // threads, and its window. The working memory: its rings, 4 processors x
 // (128 + 8192 x 64 bytes), 513; one shared page for each child, 2; the
-// load child, 256; the child that faults, at the same time, 320, because it
-// loads this whole module, whose image grows with the drawing code; its page
-// tables; and the rest of the 3072 pages that it had before the tool
-// counted. Processes: itself and two children at one time. Threads: its
-// main thread, 1; the load child, its main thread and 4 loaders, 5 (taken
-// from this budget when it starts, for its life); then either the child
-// that faults or the thread that empties the rings, 1, never both at one
-// time: 7. Its pages: 1769, and the glyph memory of the copy of the text
-// rendering of the drawing module, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 1769 + 354 = 2123.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2123, processes = 3, threads = 7, window_width = WIDTH, window_height = HEIGHT}
+// load child, 592 (CHILD_BASE_PAGES + 4 loaders); the child that faults,
+// at the same time, 512 (CHILD_BASE_PAGES), because each child loads this
+// module with its imports drawing and text_rendering; its page tables;
+// the glyph memory of the drawing module, 354 pages
+// (display.TEXT_MEMORY_PAGES); and headroom: 2575 pages. Processes: itself
+// and two children at one time. Threads: its main thread, 1; the load
+// child, its main thread and 4 loaders, 5 (taken from this budget when it
+// starts, for its life); then either the child that faults or the thread
+// that empties the rings, 1, never both at one time: 7.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2575, processes = 3, threads = 7, window_width = WIDTH, window_height = HEIGHT}
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 960
@@ -128,12 +127,15 @@ STRESS_PATTERN :: u64(0x5EED_E7E7_0000_0000)
 FAULT_ADDRESS :: u64(0x1000) // Below the module of the process: no mapping.
 MEASURE_TIME :: 300 // Milliseconds of one measure.
 
+// Base pages for each child process: this module plus its imports drawing
+// and text_rendering, its 64-page main stack, context, thread area, page
+// tables, and child objects in both optimized and unoptimized builds.
+CHILD_BASE_PAGES :: 512
+
 // What each child asks of the budget of this process: only what it uses.
-// pages: its own copy of the module (the file is about 160 KiB, 40 pages,
-// with its data), its stack (64 pages), its context (1), its thread area
-// (1 + 2), its page tables (about 8) and its own objects (at most 2): under
-// 130 pages; 256 leaves room for a larger module. The load child also has
-// LOADERS_MOST loaders, each a stack of 16 pages and a thread area of 3.
+// pages: CHILD_BASE_PAGES for the module, imports, main stack and tables;
+// the load child also has LOADERS_MOST loaders, each with a stack of
+// op.THREAD_STACK_PAGES, a 3-page thread area, and 1 page table page.
 // processes 1; threads: the main thread, and the loaders of the load child.
 // Process_Create takes the process and its first thread from this budget.
 // processor: the load child runs the measure of the cost for 300 ms with no
@@ -142,8 +144,8 @@ MEASURE_TIME :: 300 // Milliseconds of one measure.
 // with less, its budget would stop it in each period, and the measure
 // would count the stops. The child that faults waits: 100 000.
 // log_records 0: a child has no log handle and writes no record.
-LOAD_AMOUNTS :: system.Budget_Amounts{pages = 256 + LOADERS_MOST * (16 + 3), processes = 1, threads = 1 + LOADERS_MOST, processor = (1 + LOADERS_MOST) * 1_000_000, log_records = 0}
-WAITER_AMOUNTS :: system.Budget_Amounts{pages = 320, processes = 1, threads = 1, processor = 100_000, log_records = 0}
+LOAD_AMOUNTS :: system.Budget_Amounts{pages = CHILD_BASE_PAGES + LOADERS_MOST * (op.THREAD_STACK_PAGES + 4), processes = 1, threads = 1 + LOADERS_MOST, processor = (1 + LOADERS_MOST) * 1_000_000, log_records = 0}
+WAITER_AMOUNTS :: system.Budget_Amounts{pages = CHILD_BASE_PAGES, processes = 1, threads = 1, processor = 100_000, log_records = 0}
 
 // The rounds of the load child: internal:kernel_events/kernel_events_rounds.
 Round :: rounds.Round

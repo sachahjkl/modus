@@ -41,8 +41,18 @@ linux_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	}
 	fmt.printfln("modustool: %s: the store linux holds the kernel, %d bytes, and the initial archive, %d bytes", TEST_DISK_LINUX, len(kernel), len(archive))
 	// The memory of the guest comes from the granted budget: the wait names
-	// the objects, which the tool knows, and not the pages.
-	boots := fmt.tprintf("linux: boots the kernel of %d bytes and the initial archive of %d bytes of the store linux, in ", len(kernel), len(archive))
+	// the objects, which the tool knows, and not the pages. Heap-owned so
+	// scenario_run's per-step free_all(context.temp_allocator) never frees
+	// step text still needed by later steps.
+	owned: [dynamic]string
+	defer {
+		for text in owned {
+			delete(text)
+		}
+		delete(owned)
+	}
+	boots := fmt.aprintf("linux: boots the kernel of %d bytes and the initial archive of %d bytes of the store linux, in ", len(kernel), len(archive))
+	append(&owned, boots)
 	gives, reason := host_gives_guest_support()
 	steps := make([dynamic]Step)
 	defer delete(steps)
@@ -62,7 +72,9 @@ linux_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		// so each line reads the same in each run; its first lines, before
 		// it reads the command line, have the time 0.
 		for line in ([?]string{"[    0.000000] Linux version ", "Memory: ", "NET: Registered PF_INET protocol family", "Freeing initrd memory", "Run /init as init process", "modus-guest-ready"}) {
-			append(&steps, Step{kind = .Wait, text = fmt.aprintf("linux: guest: %s", line), fails_on = "linux: the guest stopped with the failure "})
+			wait_text := fmt.aprintf("linux: guest: %s", line)
+			append(&owned, wait_text)
+			append(&steps, Step{kind = .Wait, text = wait_text, fails_on = "linux: the guest stopped with the failure "})
 		}
 		append(&steps, Step{kind = .Front, text = "linux"})
 		append(&steps, Step{kind = .Type, text = "echo modus-guest-ok"})

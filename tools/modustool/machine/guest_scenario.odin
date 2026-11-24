@@ -1,8 +1,6 @@
 package machine
 
 import "core:fmt"
-import "core:os"
-import "core:strings"
 import "modustool:foundation"
 import "modustool:build"
 
@@ -59,52 +57,6 @@ scenario_guest_unsupported := [?]Step {
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
-}
-
-// host_gives_guest_support says if the test machine of this host has SVM
-// with nested paging, and why. Without KVM, QEMU emulates the processor of
-// `-cpu max`, which has both. With KVM, the machine has SVM only on an AMD
-// host whose module kvm_amd has nested virtualization on.
-host_gives_guest_support :: proc() -> (gives: bool, reason: string) {
-	if !os.exists("/dev/kvm") {
-		return true, "QEMU emulates the processor (no KVM), with SVM and nested paging"
-	}
-	bytes, err := os.read_entire_file("/proc/cpuinfo", context.temp_allocator)
-	if err != nil {
-		return false, "the tool cannot read /proc/cpuinfo"
-	}
-	text := string(bytes)
-	svm := false
-	for line in strings.split_lines_iterator(&text) {
-		if !strings.has_prefix(line, "flags") {
-			continue
-		}
-		flags := line
-		for flag in strings.fields_iterator(&flags) {
-			svm = svm || flag == "svm"
-		}
-		break
-	}
-	if !svm {
-		return false, "the host processor has no SVM: KVM gives the test machine the form of the host only, and the kernel does not use the form of Intel (VMX) yet"
-	}
-	nested, nested_err := os.read_entire_file("/sys/module/kvm_amd/parameters/nested", context.temp_allocator)
-	if nested_err != nil {
-		// The build sandbox of Nix shows /dev/kvm and the flags of the
-		// processor, and hides /sys: the module of the host is unknown
-		// there. A KVM that the sandbox hands on is the KVM of the host,
-		// with its nested virtualization: the boot line of the kernel shows
-		// what the test machine gets.
-		if !os.exists("/sys/module") {
-			return true, "KVM on an AMD host, in a sandbox that hides /sys: the kernel reads the support of the test machine"
-		}
-		return false, "the host has no module kvm_amd loaded (/sys/module/kvm_amd/parameters/nested)"
-	}
-	value := strings.trim_space(string(nested))
-	if value != "1" && value != "Y" {
-		return false, "the module kvm_amd of the host has nested virtualization off (/sys/module/kvm_amd/parameters/nested is not 1)"
-	}
-	return true, "KVM on an AMD host with nested virtualization on"
 }
 
 guest_tests_run :: proc(part: ^Test_Part_Run) -> bool {
