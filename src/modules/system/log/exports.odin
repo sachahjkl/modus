@@ -16,8 +16,9 @@ import "base:intrinsics"
 // runs, and when the network does not.
 //
 // The records of the log are facts of all the processes, and a process sees
-// no other process: the exports give the whole log only to a caller that
-// acts for the principal, and to each other caller its own records, by the
+// no other process: the exports give the records of a principal only to a
+// caller that acts for that principal (principal_scope.odin), and to each
+// other caller its own records, by the
 // process slot and the process serial that the root service wrote in the
 // grant of its connection (modus:contract/log_scope). A starter also reads
 // the records of a child: it lends the process handle of the child, which
@@ -158,7 +159,7 @@ record_copy :: proc "contextless" (number: u64) -> (record: op.Log_Record, whole
 caller_scope :: proc "contextless" () -> log_scope.Scope {
 	caller := system.service_caller()
 	if caller == nil {
-		return {whole_log = true}
+		return {kind = .Whole_Log}
 	}
 	return log_scope.scope_of(caller.grant)
 }
@@ -226,8 +227,9 @@ scope_of_lent_process :: proc "contextless" (process: system.Handle, error: ^err
 // result.
 //
 // **Grant**: the [log scope](term:log-scope) of the connection. A caller
-// that **acts for the principal** receives the whole log: the records are
-// facts of all the processes. Each other caller receives its
+// that **acts for its principal** receives the records of the processes of
+// that principal, and never a record of another one. Each other caller
+// receives its
 // [own records](term:own-records) only: the records that the kernel wrote
 // for its process, which the root service names in the grant of the
 // connection by its process slot and its process serial.
@@ -279,7 +281,8 @@ process_records :: proc "c" (process: system.Lent({.Read}), after: i64, result: 
 // log ring of that process: the records of other processes never push them
 // out (src/md/features/own_log_ring.md).
 records_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, result: ^[]Record) -> i64 {
-	if !scope.whole_log {
+	principals_settle()
+	if !log_scope.reads_whole_ring(scope) {
 		// The numbers and `lost` count the records of that process only,
 		// so the reader learns no count of the records of others.
 		own, own_lost, own_total := own_records_read(scope, after)
@@ -304,20 +307,17 @@ records_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, resu
 		}
 		return i64(own_total)
 	}
-	written := intrinsics.atomic_load(&reader_head.written)
-	next, lost := op.log_first_kept(u64(max(after, 0)), written)
+	// A reader of a principal walks the records of that principal, by
+	// their scope numbers: a record of another principal is no row, no
+	// loss and no number (principal_scope.odin).
+	walk := scope_walk_begin(scope, after)
 	count := 0
 	total: u64
-	for ; next < written; next += 1 {
-		if count == len(result^) {
-			// The rest of the whole log does not fit: each record is a row.
-			total += written - next
+	lost: u64
+	for {
+		record, row_number, more := scope_walk_next(&walk)
+		if !more {
 			break
-		}
-		record, whole := record_copy(next)
-		if !whole {
-			lost += 1
-			continue
 		}
 		form, level, known := record_borders(&record)
 		if !known {
@@ -326,13 +326,16 @@ records_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, resu
 			continue
 		}
 		total += 1
+		if count == len(result^) {
+			continue
+		}
 		// Each place of the result has a row (a Table result: the caller
 		// reads min(count, capacity) rows).
-		row_fill(&result[count], i64(record.sequence), &record, form, level)
+		row_fill(&result[count], i64(row_number), &record, form, level)
 		count += 1
 	}
 	if count > 0 {
-		result[0].lost = i64(lost)
+		result[0].lost = i64(lost + walk.lost)
 	}
 	return i64(total)
 }
@@ -355,7 +358,8 @@ records_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, resu
 // not fit in the table of the caller.
 //
 // **Grant**: the [log scope](term:log-scope) of the connection, as for
-// `records`: the whole log for a caller that **acts for the principal**,
+// `records`: the records of its principal for a caller that **acts for
+// its principal**,
 // else the runs of its [own records](term:own-records) only.
 //
 // ```
@@ -393,21 +397,21 @@ process_value_runs :: proc "c" (process: system.Lent({.Read}), after: i64, resul
 value_runs_in_scope :: proc "contextless" (scope: log_scope.Scope, after: i64, result: ^[]Value_Run) -> i64 {
 	total := 0
 	count := 0
-	if !scope.whole_log {
+	principals_settle()
+	if !log_scope.reads_whole_ring(scope) {
 		own, _, _ := own_records_read(scope, after)
 		for &record in own {
 			runs_add(i64(record.own_number), &record, result, &total, &count)
 		}
 		return i64(total)
 	}
-	written := intrinsics.atomic_load(&reader_head.written)
-	next, _ := op.log_first_kept(u64(max(after, 0)), written)
-	for ; next < written; next += 1 {
-		record, whole := record_copy(next)
-		if !whole {
-			continue
+	walk := scope_walk_begin(scope, after)
+	for {
+		record, row_number, more := scope_walk_next(&walk)
+		if !more {
+			break
 		}
-		runs_add(i64(record.sequence), &record, result, &total, &count)
+		runs_add(i64(row_number), &record, result, &total, &count)
 	}
 	return i64(total)
 }
@@ -490,21 +494,21 @@ fact_records :: proc "c" (after: i64, result: ^[]Fact_Row) -> i64 {
 	scope := caller_scope()
 	total := 0
 	count := 0
-	if !scope.whole_log {
+	principals_settle()
+	if !log_scope.reads_whole_ring(scope) {
 		own, _, _ := own_records_read(scope, after)
 		for &record in own {
 			fact_row_add(i64(record.own_number), &record, result, &total, &count)
 		}
 		return i64(total)
 	}
-	written := intrinsics.atomic_load(&reader_head.written)
-	next, _ := op.log_first_kept(u64(max(after, 0)), written)
-	for ; next < written; next += 1 {
-		record, whole := record_copy(next)
-		if !whole {
-			continue
+	walk := scope_walk_begin(scope, after)
+	for {
+		record, row_number, more := scope_walk_next(&walk)
+		if !more {
+			break
 		}
-		fact_row_add(i64(record.sequence), &record, result, &total, &count)
+		fact_row_add(i64(row_number), &record, result, &total, &count)
 	}
 	return i64(total)
 }

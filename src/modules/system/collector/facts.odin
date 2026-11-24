@@ -50,6 +50,18 @@ Spaces_Store_Damaged :: struct {
 	space: u64,
 }
 
+// The private store holds the audit spaces of an older release, which named
+// the principal by its slot: the collector reads none of them.
+@(log_fact = "collector: the audit spaces in the store are of an older release of modus, which this release does not read: the collector keeps no record of them; remove the store of the collector to start again")
+Spaces_Older_Format :: struct {}
+
+// The root service wrote no principal identifier for a named principal:
+// its audit spaces would name principal 0.
+@(log_fact = "collector: the root service gave no principal identifier for principal {principal_id}: the collector keeps no audit space")
+Spaces_Refused_No_Identifier :: struct {
+	principal_id: u64,
+}
+
 @(log_fact = "collector: {failure}")
 Service_Failed :: struct {
 	failure: [96]u8,

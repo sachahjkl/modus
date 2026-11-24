@@ -104,7 +104,7 @@ Link_Fixture :: struct {
 link_fixture_start :: proc(fixture: ^Link_Fixture) {
 	// A budget of 16 windows: 13 beside the three of the act spaces.
 	port, _ := space_memory_heap(16)
-	space_store_init(&fixture.store, LINK_PRINCIPAL, pr.memory_private_store_port(&fixture.memory), port)
+	space_store_init(&fixture.store, LINK_PRINCIPAL, TEST_COLLECTOR_IDENTIFIER, pr.memory_private_store_port(&fixture.memory), port)
 	fixture.links, _ = source_links_heap()
 }
 

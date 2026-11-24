@@ -202,7 +202,7 @@ machine_record_pin_verdict :: proc "contextless" (state: Pin_State, payload: []u
 // principal_file_pin_verdict decides a file of a named principal from the
 // disk (present false: the store holds none) against the index of the pin
 // of its principal.
-principal_file_pin_verdict :: proc "contextless" (state: Pin_State, payload: []u8, principal: u64, file: []u8, present: bool) -> (verdict: Pin_Verdict, pin: tpm_attestation.Principal_File_Pin, refusal: tpm_attestation.Pin_Refusal) {
+principal_file_pin_verdict :: proc "contextless" (state: Pin_State, payload: []u8, principal: u64, identifier: tpm_attestation.Identifier, file: []u8, present: bool) -> (verdict: Pin_Verdict, pin: tpm_attestation.Principal_File_Pin, refusal: tpm_attestation.Pin_Refusal) {
 	if !pin_state_holds_payload(state) {
 		return .Not_Pinned, {}, .Not_Pinned
 	}
@@ -217,7 +217,7 @@ principal_file_pin_verdict :: proc "contextless" (state: Pin_State, payload: []u
 		return .Principal_File_Pin_Mismatch, pin, .Record_Absent
 	}
 	match: tpm_attestation.Pin_Match
-	match, refusal = tpm_attestation.principal_file_pin_check(pin, u32(principal), file)
+	match, refusal = tpm_attestation.principal_file_pin_check(pin, u32(principal), identifier, file)
 	if refusal != .None {
 		return .Principal_File_Pin_Mismatch, pin, refusal
 	}

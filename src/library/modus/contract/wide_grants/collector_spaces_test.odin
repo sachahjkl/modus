@@ -4,14 +4,37 @@ package wide_grants
 import "core:testing"
 import pr "modus:contract/plans_recipes"
 
+// The principal identifier of the stores of these tests.
+TEST_COLLECTOR_IDENTIFIER :: [COLLECTOR_IDENTIFIER_SIZE]u8{0 = 0xC0, 31 = 0x11}
+
 // memory_store_bind empties store for principal over a new private store in
 // memory, which the caller frees.
 @(private = "file")
 memory_store_bind :: proc(store: ^Space_Store, principal: u64, windows_paid: u32 = 64, places_paid: u32 = 256) -> ^pr.Memory_Private_Store {
 	memory := new(pr.Memory_Private_Store)
 	port, _ := space_memory_heap(windows_paid, places_paid)
-	space_store_init(store, principal, pr.memory_private_store_port(memory), port)
+	space_store_init(store, principal, TEST_COLLECTOR_IDENTIFIER, pr.memory_private_store_port(memory), port)
 	return memory
+}
+
+// A named principal with an identifier of zero bytes gets no store: each
+// step is refused, so no object names it as principal 0. Principal 0 with
+// zero bytes, its own name, gets its store.
+@(test)
+a_named_principal_with_no_identifier_gets_no_store :: proc(t: ^testing.T) {
+	store := new(Space_Store)
+	defer free(store)
+	memory := new(pr.Memory_Private_Store)
+	defer free(memory)
+	port, _ := space_memory_heap(64, 256)
+	for principal in ([?]u64{1, max(u64)}) {
+		testing.expect(t, !space_store_init(store, principal, {}, pr.memory_private_store_port(memory), port), "a named principal with no identifier got a store")
+		_, refusal := space_open(store, text("server"), text("orders"), audit_terms(4))
+		testing.expect(t, refusal != .None, "a space opened with no identifier")
+		testing.expect(t, memory.writes == 0 && memory.reads == 0 && memory.removes == 0, "a step with no identifier used the store")
+	}
+	testing.expect(t, space_store_init(store, 0, {}, pr.memory_private_store_port(memory), port))
+	testing.expect(t, space_store_init(store, 1, TEST_COLLECTOR_IDENTIFIER, pr.memory_private_store_port(memory), port))
 }
 
 @(private = "file")
@@ -162,7 +185,7 @@ a_window_that_is_not_committed_refuses_the_space :: proc(t: ^testing.T) {
 	memory := new(pr.Memory_Private_Store)
 	defer free(memory)
 	port, heap := space_memory_heap()
-	space_store_init(store, 0, pr.memory_private_store_port(memory), port)
+	space_store_init(store, 0, TEST_COLLECTOR_IDENTIFIER, pr.memory_private_store_port(memory), port)
 	heap.refuse_take = true
 	_, refusal := space_open(store, text("server"), text("orders"), audit_terms(4))
 	testing.expect_value(t, refusal, Space_Refusal.Memory_Refused)
@@ -186,7 +209,7 @@ a_refused_change_of_record_size_changes_nothing :: proc(t: ^testing.T) {
 			memory := new(pr.Memory_Private_Store)
 			defer free(memory)
 			port, heap := space_memory_heap()
-			space_store_init(store, 0, pr.memory_private_store_port(memory), port)
+			space_store_init(store, 0, TEST_COLLECTOR_IDENTIFIER, pr.memory_private_store_port(memory), port)
 			terms := kind == .Audit ? audit_terms(SPACE_AUDIT_BOUND_MOST) : keep_terms(SPACE_RECORDS_MOST)
 			old, _ := space_open(store, text("server"), text("orders"), terms)
 			for value in 0 ..< 20 {
@@ -343,7 +366,7 @@ a_closed_audit_space_keeps_its_records :: proc(t: ^testing.T) {
 	testing.expect_value(t, refusal, Space_Refusal.None)
 	// A restart: the closed space comes back from its row, with no window.
 	restarted_port, _ := space_memory_heap()
-	space_store_init(store, 0, pr.memory_private_store_port(memory), restarted_port)
+	space_store_init(store, 0, TEST_COLLECTOR_IDENTIFIER, pr.memory_private_store_port(memory), restarted_port)
 	testing.expect_value(t, space_store_ready(store), Space_Refusal.None)
 	check(t, store, old, &reader)
 	open, _ := space_windows_open(store)

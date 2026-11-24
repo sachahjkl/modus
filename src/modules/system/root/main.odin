@@ -815,6 +815,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	presentation_pages_create() // presentation_pages.odin
 	plan_values_owner_pages_create() // plan_values.odin
 	replacement_table_create()
+	session_table_create() // session_table.odin
 	remote_clients_create()
 	// The control ring exists with no compositor too: the loop waits on it,
 	// and a record for a compositor that is absent stays there.
@@ -1339,6 +1340,7 @@ root_loop_pass :: proc "contextless" () {
 	// After reap: a storage service that stopped ended its connections.
 	disk_load_step(&wait)
 	persisted_tables_step()
+	storage_erase_step(&wait) // principals.odin
 	network_answers(&wait)
 	wiring_request_step(&wait)
 	devices_answers(&wait)

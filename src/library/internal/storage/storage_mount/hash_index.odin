@@ -40,17 +40,19 @@ HASH_PROBE_LIMIT :: 32
 // bits): a product by it spreads the bits of the key into the high bits.
 HASH_SLOT_MIX :: u64(0x9E37_79B9_7F4A_7C15)
 
-// What the index knows of one root. 40 bytes.
+// What the index knows of one root. 48 bytes.
 Root_Record :: struct {
 	block:       u64, // The root block. 0: the record is free.
 	hash_prefix: u64, // The first 8 bytes of the hash of the state, as the entry that named it first gave it, or as a confirmation found it.
 	size:        u64, // The size of the state.
 	check:       u64, // The check of the root: its Pointer is the block and this check.
+	data_check:  u64, // Plaintext value_check for a 1-block encrypted object; 0 otherwise.
 	entries:     u32, // The current entries that name the block as their root.
+	owner:       u16, // The store owning this root block, plus 1 (0 if unknown).
 	hidden:      bool, // Never a candidate, and no slot: the root was named first while its store had a writable share of a tree open, or the service found it damaged.
-	reserved:    [3]u8, // 0.
+	reserved:    u8, // 0.
 }
-#assert(size_of(Root_Record) == 40)
+#assert(size_of(Root_Record) == 48)
 
 // The index of one disk.
 Hash_Index :: struct {
@@ -153,7 +155,7 @@ record_free :: proc "contextless" (index: ^Hash_Index, block: u64) {
 	}
 	capacity := u64(len(index.records))
 	mask := capacity - 1
-	index.records[hole] = {}
+	intrinsics.mem_zero_volatile(&index.records[hole], size_of(Root_Record))
 	index.record_count -= 1
 	next := hole
 	for _ in 0 ..< capacity {
@@ -165,7 +167,7 @@ record_free :: proc "contextless" (index: ^Hash_Index, block: u64) {
 		home := record_home(index, moved.block)
 		if (hole - home) & mask < (next - home) & mask {
 			index.records[hole] = moved
-			index.records[next] = {}
+			intrinsics.mem_zero_volatile(&index.records[next], size_of(Root_Record))
 			hole = next
 		}
 	}
@@ -183,10 +185,10 @@ same_key :: proc "contextless" (state: ^State, block: u64, prefix: u64, size: u6
 hash_index_reset :: proc "contextless" (state: ^State) {
 	index := &state.hash_index
 	if len(index.records) > 0 {
-		intrinsics.mem_zero(raw_data(index.records), len(index.records) * size_of(Root_Record))
+		intrinsics.mem_zero_volatile(raw_data(index.records), len(index.records) * size_of(Root_Record))
 	}
 	if len(index.slots) > 0 {
-		intrinsics.mem_zero(raw_data(index.slots), len(index.slots) * size_of(u64))
+		intrinsics.mem_zero_volatile(raw_data(index.slots), len(index.slots) * size_of(u64))
 	}
 	index.record_count = 0
 	index.roots = 0
@@ -266,12 +268,37 @@ slot_remove :: proc "contextless" (state: ^State, record: ^Root_Record) {
 	index.slots[hole] = 0
 }
 
+// hash_index_clear_store removes and volatile-zeroes every hash-index record
+// and slot belonging to one store (called when its owning principal locks).
+// Uses the owner stored in each Root_Record so lock erasure never reads the
+// count tree from disk or modifies count-tree failure state.
+hash_index_clear_store :: proc "contextless" (state: ^State, store_index: int) {
+	index := &state.hash_index
+	if len(index.records) == 0 || index.record_count == 0 {
+		return
+	}
+	target := u16(store_index + 1)
+	for pos := 0; pos < len(index.records); {
+		record := &index.records[pos]
+		if record.block == 0 || record.owner != target {
+			pos += 1
+			continue
+		}
+		block := record.block
+		if !record.hidden {
+			slot_remove(state, record)
+		}
+		record_free(index, block)
+		// Do not advance pos: record_free may shift another record into pos.
+	}
+}
+
 // hash_index_name counts one more entry that names `root` as the root of
 // a state of `size` bytes with the hash `hash`. A root that the index does
 // not hold yet gets a record, when the records have room, and a slot unless
 // `hidden`. It gives true when the store of the root has another root with
 // the same key: the open counts these.
-hash_index_name :: proc "contextless" (state: ^State, hash: [32]u8, root: format.Pointer, size: u64, hidden: bool = false) -> (repeated: bool) {
+hash_index_name :: proc "contextless" (state: ^State, hash: [32]u8, root: format.Pointer, size: u64, hidden: bool = false, data_check: u64 = 0) -> (repeated: bool) {
 	if root.block < 2 || root.block >= state.capacity {
 		return false
 	}
@@ -285,7 +312,8 @@ hash_index_name :: proc "contextless" (state: ^State, hash: [32]u8, root: format
 	if record == nil {
 		return false
 	}
-	record^ = {block = root.block, hash_prefix = hash_prefix(hash), size = size, check = root.check, entries = 1, hidden = hidden}
+	owner := block_owner(state, root.block)
+	record^ = {block = root.block, hash_prefix = hash_prefix(hash), size = size, check = root.check, data_check = data_check, entries = 1, owner = owner, hidden = hidden}
 	if hidden {
 		return false
 	}
@@ -318,14 +346,14 @@ hash_index_entry_change :: proc "contextless" (state: ^State, before: format.Ent
 	// The index keys a root by its hash and its size. A change that keeps
 	// all three (an erase of the versions, which changes only the version
 	// index) leaves the record as it is: a hidden root stays hidden.
-	if !gone && after.kind == before.kind && after.pointer == before.pointer && after.hash == before.hash && after.size == before.size {
+	if !gone && after.kind == before.kind && after.pointer == before.pointer && after.hash == before.hash && after.size == before.size && after.data_check == before.data_check {
 		return
 	}
 	if before.kind == u64(format.Entry_Kind.Object) {
 		hash_index_release(state, before.pointer)
 	}
 	if !gone && after.kind == u64(format.Entry_Kind.Object) {
-		hash_index_name(state, after.hash, after.pointer, after.size, hidden)
+		hash_index_name(state, after.hash, after.pointer, after.size, hidden, after.data_check)
 	}
 }
 

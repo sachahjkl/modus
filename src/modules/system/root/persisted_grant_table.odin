@@ -472,7 +472,7 @@ persisted_table_refusal :: proc "contextless" (principal: u64) -> bool {
 	}
 	// A record of a process of a session that the lock stopped can still be
 	// in its ring: no change comes from a session that is not unlocked.
-	if principal != principals.MACHINE && principal_records[principal].state != .Unlocked {
+	if principal != principals.MACHINE && principal_records[principal].state != .In_Front {
 		system.log_fact(.Warning, Table_Change_Refused_Session_Locked{principal = principal})
 		return true
 	}

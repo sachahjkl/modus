@@ -77,7 +77,7 @@ A new file comes with `modustool cryptography-take <origin> <file>`, which write
 
 A taken file can also have listed adjustments: `cryptography_adjustments` in `tools/modustool/checks/cryptography_origin.odin` names, for one file of the origin, lines of the origin and the lines in their place. The lines of the origin must be in the origin exactly one time: when the origin changes them, the check fails and the adjustment must be read again. The first line of an adjusted file says so.
 
-There are three groups of adjustments.
+There are four groups of adjustments.
 
 **Argon2id takes no allocator.** Three adjustments of `argon2id/argon2id.odin`: its import of `core:mem` goes to `compatibility_memory`; the parameter `allocator` of `derive` becomes `work_memory`, the blocks that the caller supplies; the allocation of the blocks becomes a check that `work_memory` has the bytes that the parameters ask and is aligned on 8 bytes, else the result `Out_Of_Memory` before any work. The code of a module, with an entry or with no entry, has no allocator. The origin erases the blocks at its end.
 
@@ -85,15 +85,17 @@ There are three groups of adjustments.
 
 **The table of the base point of edwards25519 is read where it is used.** One adjustment of `_edwards25519/edwards25519_table.odin` removes the package variable `GE_BASEPOINT_TABLE := &Gen_Multiply_Table_edwards25519_lo[0]`, and two adjustments of `_edwards25519/edwards25519_scalar_mul.odin` pass `&Gen_Multiply_Table_edwards25519_lo[0]` in its place. The compiler writes the address of such a variable at the start of a program, which a module with an entry never runs (`MODULE_CONTRACT.md`, "Package variables are constant data at the load"), and `modustool rule-checks` refuses such a variable. The library module `cryptography` passes the Ed25519 vectors on the machine with the variable: how its load filled it is not proven, so the adjustment makes the code depend on no start.
 
+**Baseline SSE2 target features for vector ChaCha20.** Three adjustments of `_chacha20/simd128/chacha20_simd128.odin`: its import of `core:simd` goes to `compatibility_simd`, its `amd64` feature attribute uses baseline `"sse2"` instead of `"sse2,ssse3"`, and its runtime `is_performant` check becomes a compile-time architecture predicate (`amd64` or `arm64`) with no `core:sys/info` call. Every x86-64 processor guarantees SSE2, so the vector implementation runs safely on baseline machines and QEMU without runtime feature probing.
+
 ## 5. The primitives, and their tests
 
 Each primitive passes the published vectors of its standard, on the host and on the machine. The table names each primitive, the packages of the origin that hold it, and its vectors.
 
-40 files are taken, in 22 package folders (`src/library/modus/cryptography/origin.manifest`). Each line of the table has a host test with its published vectors (`src/library/modus/cryptography/vectors`), and the module runs the same vectors on the machine (section 6).
+41 files are taken, in 24 package folders (`src/library/modus/cryptography/origin.manifest`). Each line of the table has a host test with its published vectors (`src/library/modus/cryptography/vectors`), and the module runs the same vectors on the machine (section 6).
 
 | Primitive | Origin packages | Vectors |
 |---|---|---|
-| ChaCha20 | `_chacha20`, `_chacha20/ref`, `chacha20`, `_subtle` | RFC 8439 2.3.2, 2.4.2, A.1 |
+| ChaCha20 | `_chacha20`, `_chacha20/ref`, `_chacha20/simd128`, `chacha20`, `_subtle` | RFC 8439 2.3.2, 2.4.2, A.1 |
 | Poly1305 | `poly1305`, `_fiat`, `_fiat/field_poly1305` | RFC 8439 2.5.2 |
 | ChaCha20-Poly1305 | `chacha20poly1305` | RFC 8439 2.8.2, and a changed byte that `open` refuses |
 | SHA-256, SHA-384, SHA-512 | `sha2` (`sha2.odin`, `sha512_impl_hw_gen.odin`) | FIPS 180-4, "abc" |
@@ -105,13 +107,15 @@ Each primitive passes the published vectors of its standard, on the host and on 
 | BLAKE2b | `blake2b`, `_blake2` | RFC 7693, appendix A, on the host only |
 | Argon2id | `argon2id` | RFC 9106, section 5.3; the blocks are erased after the derivation; too few blocks is `Out_Of_Memory`. On the host only: `cryptography_vectors` does not run it on the machine; `unlock` runs the module there (`modustool test principals`) |
 
-**What the system puts in the place of the hardware code.** The origin chooses a hardware implementation by the processor features, which it reads with `core:sys/info`; a module does not have that package. On another processor the origin itself compiles a generic file. A file of the system takes the place of that dispatch, with the procedures of that generic file, unchanged:
+**What the system puts in the place of the hardware code.** The origin chooses a hardware implementation by the processor features, which it reads with `core:sys/info`; a module does not have that package. A file of the system takes the place of that dispatch:
 - `sha2/sha256_implementation_portable.odin`;
 - `aes/aes_implementation_portable.odin`;
 - `_aes/hw/no_hardware.odin` (the package `aes_hw`, which says that no hardware GHASH is used);
-- `chacha20/chacha20_implementation_portable.odin`.
+- `chacha20/chacha20_implementation_portable.odin` (which selects `_chacha20/simd128` on `amd64` and `arm64`, and `_chacha20/ref` elsewhere).
 
-So the code that runs is the portable code of the origin: the bitsliced, constant-time AES of `_aes/ct64`, and the portable SHA-2 and ChaCha20.
+So the code that runs is the bitsliced, constant-time AES of `_aes/ct64`, the portable SHA-2, and the 128-bit vector ChaCha20 (`_chacha20/simd128`) on `amd64` and `arm64`.
+
+**`compatibility_simd`** provides the subset of `core:simd` that `_chacha20/simd128` uses (`u32x4`, `swizzle`, `add`, `bit_xor`, `shl`, `shr`, `bit_or`, `from_slice`, `to_array`, `lanes_eq`, `reduce_and`), built directly on `base:intrinsics` and `#simd` types with no host imports.
 
 **`compatibility_hash`** takes the place of `core:crypto/hash` for `hmac` and `hkdf`. The origin package imports each hash of Odin, `core:io` and `core:os`; this one has the SHA-2 algorithms only, with the names of the origin.
 

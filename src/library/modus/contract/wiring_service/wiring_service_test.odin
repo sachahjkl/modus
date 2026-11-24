@@ -43,8 +43,27 @@ command_from_record_refuses_invalid_fields_and_flags :: proc(t: ^testing.T) {
 	for flag_word in bad_flag_words {
 		_, flags_ok := process_flags_from_word(flag_word)
 		testing.expectf(t, !flags_ok, "unknown flag word %x accepted", flag_word)
+		// The bits 32 to 46 are the principal: the word 1 << 32 names
+		// principal 1 with no flag, which the border takes.
+		if flag_word == u64(1) << 32 {
+			continue
+		}
 		_, cmd_ok := command_from_record({kind = u32(Command_Kind.Register_Process), values = {1, 1, 4096, 4096, 5, 0, flag_word}})
 		testing.expectf(t, !cmd_ok, "Register_Process accepted bad flag word %x", flag_word)
+	}
+	// The principal: past the field, the largest word, and a flag bit with
+	// a principal past the field.
+	for principal_word in ([?]u64{REGISTER_PRINCIPAL_LIMIT << REGISTER_PRINCIPAL_SHIFT, max(u64) &~ u64(max(u32)), (REGISTER_PRINCIPAL_LIMIT << REGISTER_PRINCIPAL_SHIFT) | u64(transmute(u32)Process_Flags{.Can_Wire})}) {
+		_, cmd_ok := command_from_record({kind = u32(Command_Kind.Register_Process), values = {1, 1, 4096, 4096, 5, 0, principal_word}})
+		testing.expectf(t, !cmd_ok, "Register_Process accepted the principal word %x", principal_word)
+	}
+	// The principal round-trips beside the flags, at its edges.
+	for principal in ([?]u64{0, 1, REGISTER_PRINCIPAL_LIMIT - 1}) {
+		sent := Command{kind = .Register_Process, process = {1, 1}, module_offset = 4096, module_size = 4096, process_handle = 5, flags = {.Can_Wire}, principal = principal}
+		back, back_ok := command_from_record(command_to_record(sent))
+		testing.expect(t, back_ok)
+		testing.expect_value(t, back.principal, principal)
+		testing.expect_value(t, back.flags, Process_Flags{.Can_Wire})
 	}
 	// Process handle 0 or > max(u32).
 	_, ok = command_from_record({kind = u32(Command_Kind.Register_Process), values = {1, 1, 0, 0, 0, 0, 0}})

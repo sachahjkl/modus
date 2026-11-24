@@ -359,13 +359,14 @@ given_end_of_row :: proc "contextless" (plan: ^wiring_core.Row_Plan, obj: ^Row_O
 			end_words = op.Handle(obj.end_memory),
 			condition = op.Handle(obj.condition_memory),
 			pair      = pair,
+			reader_principal = wiring_core.reader_principal_word(&state, plan),
 		}
 	}
 	cmd := plan.row.reader_end == .Asker ? output.Wiring_Command.Asker_End : output.Wiring_Command.Reader_End
 	// The writer of a pair gives each record the serial of its record
 	// output, which the rings of its other pairs share: the serials of one
 	// ring then move forward by any count, as on a ring with a condition.
-	filter := plan.has_condition || plan.paired ? output.Reader_Filter.By_Writer : output.Reader_Filter.None
+	filter := plan.has_condition || plan.paired || plan.by_principal ? output.Reader_Filter.By_Writer : output.Reader_Filter.None
 	return {
 		command     = cmd,
 		tag         = plan.allocated_number,
@@ -538,6 +539,7 @@ handle_register_process :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 		}
 		return {outcome = st, tag = cmd.tag, error_record = register_refusal}
 	}
+	wiring_core.process_principal_set(&state, idx, cmd.principal)
 	ph := &process_handles[idx]
 	if ph.process_token != 0 {
 		system.close(ph.process_token)

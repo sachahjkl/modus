@@ -35,7 +35,7 @@ ACT_TEST_PLAN :: Act_Space_Plan{bound_records = 48, retained_grants = 1, records
 @(private = "file")
 act_test_store_bind :: proc(store: ^Space_Store, principal: u64) -> ^pr.Memory_Private_Store {
 	memory := new(pr.Memory_Private_Store)
-	space_store_init(store, principal, pr.memory_private_store_port(memory), space_window_heap_port())
+	space_store_init(store, principal, TEST_COLLECTOR_IDENTIFIER, pr.memory_private_store_port(memory), space_window_heap_port())
 	return memory
 }
 
@@ -71,13 +71,25 @@ test_authority_key_refuses_weak_entropy_zero_key_and_tampering :: proc(t: ^testi
 		testing.expect(t, !words_ok, "zero-key authority must not expose context words")
 	}
 
-	// Success: fresh key from Processor/Entropy strength passes through context words.
-	testing.expect(t, authority_init_from_bytes(&auth, fresh_key, .Entropy))
+	// A fresh key from Processor/Entropy strength is the key of the run: it
+	// never leaves the authority and signs nothing.
+	run: Wide_Grant_Authority
+	testing.expect(t, authority_init_from_bytes(&run, fresh_key, .Entropy))
+	testing.expect_value(t, run.status, Authority_Key_Status.Ready)
+	_, run_words_ok := authority_context_words(&run)
+	testing.expect(t, !run_words_ok, "the key of the run never goes to a collector")
+	_, run_mint := authority_mint_proof(&run, &terms, .Passphrase_Verified, .Local_Unlock_Dialog, verifier, 1000)
+	testing.expect_value(t, run_mint, Wide_Grant_Refusal.Invalid_Proof)
+
+	// The key of principal 0 comes from the run, and passes through the
+	// context words.
+	testing.expect(t, authority_init_for_principal(&auth, &run, 0))
 	testing.expect_value(t, auth.status, Authority_Key_Status.Ready)
+	testing.expect(t, auth.key != fresh_key, "the key of a principal is not the key of the run")
 	words, words_ok := authority_context_words(&auth)
 	testing.expect(t, words_ok)
 	rebuilt := authority_key_from_words(words)
-	testing.expect_value(t, rebuilt, fresh_key)
+	testing.expect_value(t, rebuilt, auth.key)
 
 	// Refusal 3: Remote_Display_Input origin is refused and does not advance proof serial.
 	serial_before := auth.next_proof_serial
@@ -113,6 +125,68 @@ test_authority_key_refuses_weak_entropy_zero_key_and_tampering :: proc(t: ^testi
 	testing.expect_value(t, auth.key, Authority_Key{})
 	_, after_erase := authority_mint_proof(&auth, &terms, .Passphrase_Verified, .Local_Unlock_Dialog, verifier, 3000)
 	testing.expect_value(t, after_erase, Wide_Grant_Refusal.Invalid_Proof)
+}
+
+// The key of each principal comes from the key of the run, and signs the
+// terms of that principal only: the collector of one principal accepts no
+// proof that the key of another principal made, and a key of a principal
+// makes no other key.
+@(test)
+the_key_of_one_principal_makes_no_proof_for_another :: proc(t: ^testing.T) {
+	verifier := act_test_hash("unlock-passphrase-token")
+	run: Wide_Grant_Authority
+	testing.expect(t, authority_init_from_bytes(&run, act_test_hash("run-key"), .Processor))
+	first, second: Wide_Grant_Authority
+	testing.expect(t, authority_init_for_principal(&first, &run, 0))
+	testing.expect(t, authority_init_for_principal(&second, &run, 1))
+	testing.expect(t, first.key != second.key)
+
+	// The refusals first: a key of a principal makes no key; an authority
+	// is not its own run; nil and an erased run make none.
+	derived: Wide_Grant_Authority
+	testing.expect(t, !authority_init_for_principal(&derived, &first, 1), "a key of a principal makes no other key")
+	testing.expect_value(t, derived.status, Authority_Key_Status.Uninitialized)
+	testing.expect(t, !authority_init_for_principal(&derived, nil, 1))
+	testing.expect(t, !authority_init_for_principal(nil, &run, 1))
+	self := run
+	testing.expect(t, !authority_init_for_principal(&self, &self, 1), "an authority is not its own run")
+	erased := run
+	authority_erase(&erased)
+	testing.expect(t, !authority_init_for_principal(&derived, &erased, 1))
+	testing.expect_value(t, derived.key, Authority_Key{})
+
+	// The key of principal 1 refuses the terms of principal 0, and the
+	// largest slot.
+	terms_of_first := act_test_terms(0)
+	serial_before := second.next_proof_serial
+	_, other := authority_mint_proof(&second, &terms_of_first, .Passphrase_Verified, .Local_Unlock_Dialog, verifier, 1000)
+	testing.expect_value(t, other, Wide_Grant_Refusal.Invalid_Proof)
+	testing.expect_value(t, second.next_proof_serial, serial_before)
+	terms_of_largest := act_test_terms(max(u64))
+	_, largest := authority_mint_proof(&second, &terms_of_largest, .Passphrase_Verified, .Local_Unlock_Dialog, verifier, 1000)
+	testing.expect_value(t, largest, Wide_Grant_Refusal.Invalid_Proof)
+
+	// A proof that the key of principal 1 made for its own terms does not
+	// verify under the key of principal 0, even with the field principal
+	// changed to 0.
+	terms_of_second := act_test_terms(1)
+	proof, made := authority_mint_proof(&second, &terms_of_second, .Passphrase_Verified, .Local_Unlock_Dialog, verifier, 2000)
+	testing.expect_value(t, made, Wide_Grant_Refusal.None)
+	testing.expect_value(t, wide_grant_proof_validate(first.key, &terms_of_second, &proof, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+	forged := proof
+	forged.principal_id = 0
+	testing.expect_value(t, wide_grant_proof_validate(first.key, &terms_of_first, &forged, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+	testing.expect_value(t, wide_grant_proof_validate(second.key, &terms_of_second, &proof, {}, 0), Wide_Grant_Refusal.None)
+
+	// Each principal has its own sequence of proof serials.
+	testing.expect_value(t, proof.proof_serial, u64(1))
+	first_proof, _ := authority_mint_proof(&first, &terms_of_first, .Passphrase_Verified, .Local_Unlock_Dialog, verifier, 2000)
+	testing.expect_value(t, first_proof.proof_serial, u64(1))
+
+	// The same run and slot give the same key: one key for a slot in a run.
+	again: Wide_Grant_Authority
+	testing.expect(t, authority_init_for_principal(&again, &run, 1))
+	testing.expect_value(t, again.key, second.key)
 }
 
 // Border validation of Act_Producer, Act_Stream_Record, and act_wiring_rows_build
@@ -492,7 +566,7 @@ test_the_lock_leaves_its_end_record :: proc(t: ^testing.T) {
 	testing.expect(t, router.revocation_recorded)
 	again := new(Space_Store)
 	defer free(again)
-	space_store_init(again, 0, pr.memory_private_store_port(memory), space_window_heap_port())
+	space_store_init(again, 0, TEST_COLLECTOR_IDENTIFIER, pr.memory_private_store_port(memory), space_window_heap_port())
 	reader := Space_Reader{principal = 0, acts_for_principal = true}
 	copy(reader.name[:], "console")
 	heads: [4]Kept_Record_Head
@@ -537,7 +611,7 @@ test_a_grant_keeps_more_records_than_memory :: proc(t: ^testing.T) {
 
 	again := new(Space_Store)
 	defer free(again)
-	space_store_init(again, 0, pr.memory_private_store_port(memory), space_window_heap_port())
+	space_store_init(again, 0, TEST_COLLECTOR_IDENTIFIER, pr.memory_private_store_port(memory), space_window_heap_port())
 	testing.expect_value(t, space_store_ready(again), Space_Refusal.None)
 	loaded := space_of(again, space_number)
 	testing.expect_value(t, loaded.next_serial, u64(100))
@@ -573,7 +647,7 @@ test_the_seventeenth_grant_rotates_the_oldest_out :: proc(t: ^testing.T) {
 	// A collector that starts again reads the same ring.
 	again := new(Space_Store)
 	defer free(again)
-	space_store_init(again, 0, pr.memory_private_store_port(memory), space_window_heap_port())
+	space_store_init(again, 0, TEST_COLLECTOR_IDENTIFIER, pr.memory_private_store_port(memory), space_window_heap_port())
 	restarted: Grant_Act_Router
 	testing.expect_value(t, act_wiring_attach(&restarted, again, 18, 0, {.View_Screen}, 60_000, now), Act_Wiring_Refusal.None)
 	testing.expect_value(t, restarted.retained.count, ACT_SPACE_PLAN.retained_grants)
@@ -609,7 +683,7 @@ test_the_seventeenth_grant_rotates_the_oldest_out :: proc(t: ^testing.T) {
 	testing.expect_value(t, verified, Space_Refusal.None)
 	restart := new(Space_Store)
 	defer free(restart)
-	space_store_init(restart, 0, pr.memory_private_store_port(rotating_memory), space_window_heap_port())
+	space_store_init(restart, 0, TEST_COLLECTOR_IDENTIFIER, pr.memory_private_store_port(rotating_memory), space_window_heap_port())
 	testing.expect_value(t, space_store_ready(restart), Space_Refusal.None)
 	reloaded := space_of(restart, small_router.space_numbers[.Remote_Service])
 	testing.expect_value(t, reloaded.kept_first_serial, u64(16))

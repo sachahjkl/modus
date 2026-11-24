@@ -4,6 +4,9 @@ package collector_service
 import "base:intrinsics"
 import "core:testing"
 import "internal:collector/collector_core"
+
+// The principal identifier of the stores of these tests.
+TEST_COLLECTOR_IDENTIFIER :: [wide_grants.COLLECTOR_IDENTIFIER_SIZE]u8{0 = 0xC0, 31 = 0x11}
 import "modus:contract/blake3"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
@@ -55,7 +58,7 @@ fixture_restart :: proc(fixture: ^Service_Fixture) {
 	port := pr.memory_private_store_port(&fixture.memory)
 	fixture.memory.writes_allowed = writes_allowed
 	fixture.service = {}
-	wide_grants.space_store_init(&fixture.service.store, PRINCIPAL, port, wide_grants.space_window_heap_port())
+	wide_grants.space_store_init(&fixture.service.store, PRINCIPAL, TEST_COLLECTOR_IDENTIFIER, port, wide_grants.space_window_heap_port())
 }
 
 @(private = "file")
@@ -582,7 +585,7 @@ a_refused_store_write_keeps_and_forwards_nothing :: proc(t: ^testing.T) {
 
 	no_store := new(Space_Service)
 	defer free(no_store)
-	wide_grants.space_store_init(&no_store.store, PRINCIPAL, {}, wide_grants.space_window_heap_port())
+	wide_grants.space_store_init(&no_store.store, PRINCIPAL, TEST_COLLECTOR_IDENTIFIER, {}, wide_grants.space_window_heap_port())
 	source_text, output_text, terms := "server", "orders", terms_of(.Audit, 4)
 	error = {}
 	expect_refusal(t, answer_of(space_open_for(no_store, &console, &source_text, &output_text, &terms, &error)), .Callee_Unavailable, error, .Device, .Store)
@@ -603,8 +606,9 @@ wide_grant_authority_key_and_act_wiring_in_collector :: proc(t: ^testing.T) {
 	other_key := blake3.hash(transmute([]u8)string("fresh-start-key-2"))
 	verifier := blake3.hash(transmute([]u8)string("passphrase-verified"))
 
-	auth: wide_grants.Wide_Grant_Authority
-	testing.expect(t, wide_grants.authority_init_from_bytes(&auth, fresh_key, .Entropy))
+	run, auth: wide_grants.Wide_Grant_Authority
+	testing.expect(t, wide_grants.authority_init_from_bytes(&run, fresh_key, .Entropy))
+	testing.expect(t, wide_grants.authority_init_for_principal(&auth, &run, PRINCIPAL))
 	key_words, words_ok := wide_grants.authority_context_words(&auth)
 	testing.expect(t, words_ok)
 	collector_key := wide_grants.authority_key_from_words(key_words)
@@ -625,9 +629,10 @@ wide_grant_authority_key_and_act_wiring_in_collector :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, wide_grants.wide_grant_terms_seal(&terms), wide_grants.Wide_Grant_Refusal.None)
 
-	// Proof from another key is refused.
-	other_auth: wide_grants.Wide_Grant_Authority
-	testing.expect(t, wide_grants.authority_init_from_bytes(&other_auth, other_key, .Processor))
+	// Proof from the key of another start is refused.
+	other_run, other_auth: wide_grants.Wide_Grant_Authority
+	testing.expect(t, wide_grants.authority_init_from_bytes(&other_run, other_key, .Processor))
+	testing.expect(t, wide_grants.authority_init_for_principal(&other_auth, &other_run, PRINCIPAL))
 	wrong_proof, _ := wide_grants.authority_mint_proof(&other_auth, &terms, .Passphrase_Verified, .Local_Unlock_Dialog, verifier, 100)
 	_, wrong_refusal := collector_core.manager_create_grant(manager, &terms, &wrong_proof, 100, 100 + terms.duration_ms)
 	testing.expect_value(t, wrong_refusal, wide_grants.Wide_Grant_Refusal.Invalid_Proof)

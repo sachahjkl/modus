@@ -8,6 +8,7 @@
 src/library/modus/cryptography/_subtle/subtle.odin core/crypto/_subtle/subtle.odin 8aad340c7d5e46a52329ed143ffb58c0a867e078c744f688b4e825d21b160c44
 src/library/modus/cryptography/_chacha20/chacha20.odin core/crypto/_chacha20/chacha20.odin 56b808ec73700917864ab7f74f5c8a1f2ba6293eec994a40de939f2e0267cc53
 src/library/modus/cryptography/_chacha20/ref/chacha20_ref.odin core/crypto/_chacha20/ref/chacha20_ref.odin eace1cb27b37ae425a61ddbada988f645e0a6a7dd4185f13ca8af16ee29042f7
+src/library/modus/cryptography/_chacha20/simd128/chacha20_simd128.odin core/crypto/_chacha20/simd128/chacha20_simd128.odin 9f8bc3b49601f2c6b89d4ae777af5cae1b3116ba5bef1ebda7bcbccf8b9bc998
 src/library/modus/cryptography/chacha20/chacha20.odin core/crypto/chacha20/chacha20.odin 9b3a0928089cf8b0ef0ba21157b962889bf968c60bf4bb3b5050beeeec607de7
 src/library/modus/cryptography/_fiat/fiat.odin core/crypto/_fiat/fiat.odin 24bf73023264b3443fb1073cfb5103c5c5f765bd0a81743df3fb73f9aac6bf0a
 src/library/modus/cryptography/_fiat/field_poly1305/field.odin core/crypto/_fiat/field_poly1305/field.odin 24ef3666929c72b7f39918041241e3e00f3f3f281181d487f2eedd864b50ee0d

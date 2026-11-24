@@ -26,13 +26,18 @@ import "modus:contract/enum_word"
 // reader of this one. Format 1 had no record digest in the pin of the
 // machine key, and no announced digest.
 PIN_RECORD_FORMAT :: u16(2)
+// The format of the payload of a principal file pin. Format 3 added the
+// principal identifier (src/md/features/several_principals.md, "The
+// identity: three names"); a payload of format 2 is refused as of an
+// unknown format, and the file of its principal is of the older format too.
+PRINCIPAL_FILE_PIN_FORMAT :: u16(3)
 
 // The magics of the two payloads, and the texts of their checksums. Two
 // texts keep a payload of one kind from passing the checksum of the other.
 MACHINE_KEY_PIN_MAGIC :: "MODUSMKP"
 MACHINE_KEY_PIN_DOMAIN :: "MODUS_MACHINE_KEY_PIN_V2"
 PRINCIPAL_FILE_PIN_MAGIC :: "MODUSPFP"
-PRINCIPAL_FILE_PIN_DOMAIN :: "MODUS_PRINCIPAL_FILE_PIN_V2"
+PRINCIPAL_FILE_PIN_DOMAIN :: "MODUS_PRINCIPAL_FILE_PIN_V3"
 
 // The bytes of the first word of a record of the machine key: its magic,
 // which names its form.
@@ -55,10 +60,16 @@ PRINCIPAL_FILE_PIN_OFFSET_FORMAT :: 8
 PRINCIPAL_FILE_PIN_OFFSET_RESERVED :: 10
 PRINCIPAL_FILE_PIN_OFFSET_PRINCIPAL :: 12
 PRINCIPAL_FILE_PIN_OFFSET_GENERATION :: 16
-PRINCIPAL_FILE_PIN_OFFSET_DIGEST :: 24
+PRINCIPAL_FILE_PIN_OFFSET_IDENTIFIER :: 24
+PRINCIPAL_FILE_PIN_OFFSET_DIGEST :: PRINCIPAL_FILE_PIN_OFFSET_IDENTIFIER + IDENTIFIER_SIZE
 PRINCIPAL_FILE_PIN_OFFSET_NEXT_DIGEST :: PRINCIPAL_FILE_PIN_OFFSET_DIGEST + SHA256_SIZE
 PRINCIPAL_FILE_PIN_OFFSET_CHECKSUM :: PRINCIPAL_FILE_PIN_OFFSET_NEXT_DIGEST + SHA256_SIZE
 PRINCIPAL_FILE_PIN_RECORD_SIZE :: PRINCIPAL_FILE_PIN_OFFSET_CHECKSUM + SHA256_SIZE
+
+// The bytes of a principal identifier: 32 random bytes that name a named
+// principal on the disk (modus:principals, Principal_Identifier).
+IDENTIFIER_SIZE :: 32
+Identifier :: [IDENTIFIER_SIZE]u8
 
 // The form of the record of the machine key. None is the zero value of a
 // pin that does not exist yet: no stored payload holds it.
@@ -98,6 +109,8 @@ Pin_Refusal :: enum u8 {
 	Generation_Exhausted = 24, // The generation is the largest of its type.
 	Record_Absent        = 25, // The pin names a record or a file that the disk does not hold.
 	Announce_Pending     = 26, // The pin announces a record already: it is settled first.
+	Identifier_Zero      = 27, // The principal identifier is all zero: no creation draws it.
+	Identifier_Mismatch  = 28, // The file names another principal identifier than the pin.
 }
 
 // The words of each refusal, for a line of the log.
@@ -130,6 +143,8 @@ pin_refusal_words := [Pin_Refusal]string {
 	.Generation_Exhausted = "the generation is exhausted",
 	.Record_Absent        = "the pinned record is absent",
 	.Announce_Pending     = "the pin announces a record already",
+	.Identifier_Zero      = "the principal identifier is zero",
+	.Identifier_Mismatch  = "the principal identifier is not the pinned identifier",
 }
 
 // pin_refusal_of_word is the border of the word of a refusal that crosses
@@ -157,7 +172,8 @@ Machine_Key_Pin :: struct {
 // The pinned file of a named principal. A generation of 0 is the zero value
 // of a pin that does not exist yet: no stored payload holds it.
 Principal_File_Pin :: struct {
-	principal:   u32,
+	principal:   u32, // The slot of the pin index.
+	identifier:  Identifier, // The principal identifier of the pinned file.
 	generation:  u64,
 	file_digest: Digest,
 	next_digest: Digest,
@@ -212,7 +228,7 @@ pin_checksum :: proc "contextless" (domain: string, covered: []u8) -> Digest {
 }
 
 @(private = "file")
-pin_payload_frame_check :: proc "contextless" (bytes: []u8, size: int, magic: string, domain: string, checksum_offset: int) -> Pin_Refusal {
+pin_payload_frame_check :: proc "contextless" (bytes: []u8, size: int, magic: string, domain: string, checksum_offset: int, format: u16 = PIN_RECORD_FORMAT) -> Pin_Refusal {
 	if len(bytes) < size {
 		return .Truncated
 	}
@@ -222,7 +238,7 @@ pin_payload_frame_check :: proc "contextless" (bytes: []u8, size: int, magic: st
 	if string(bytes[:len(magic)]) != magic {
 		return .Bad_Magic
 	}
-	if byte_order.read_u16_big_endian(bytes, len(magic)) != PIN_RECORD_FORMAT {
+	if byte_order.read_u16_big_endian(bytes, len(magic)) != format {
 		return .Unknown_Format
 	}
 	expected := pin_checksum(domain, bytes[:checksum_offset])
@@ -446,10 +462,12 @@ principal_file_pin_encode :: proc "contextless" (pin: Principal_File_Pin, out: [
 	payload := out[:PRINCIPAL_FILE_PIN_RECORD_SIZE]
 	digest, next_digest := pin.file_digest, pin.next_digest
 	copy(payload[PRINCIPAL_FILE_PIN_OFFSET_MAGIC:], PRINCIPAL_FILE_PIN_MAGIC)
-	byte_order.write_u16_big_endian(payload, PRINCIPAL_FILE_PIN_OFFSET_FORMAT, PIN_RECORD_FORMAT)
+	byte_order.write_u16_big_endian(payload, PRINCIPAL_FILE_PIN_OFFSET_FORMAT, PRINCIPAL_FILE_PIN_FORMAT)
 	byte_order.write_u16_big_endian(payload, PRINCIPAL_FILE_PIN_OFFSET_RESERVED, 0)
 	byte_order.write_u32_big_endian(payload, PRINCIPAL_FILE_PIN_OFFSET_PRINCIPAL, pin.principal)
 	byte_order.write_u64_big_endian(payload, PRINCIPAL_FILE_PIN_OFFSET_GENERATION, pin.generation)
+	identifier := pin.identifier
+	copy(payload[PRINCIPAL_FILE_PIN_OFFSET_IDENTIFIER:], identifier[:])
 	copy(payload[PRINCIPAL_FILE_PIN_OFFSET_DIGEST:], digest[:])
 	copy(payload[PRINCIPAL_FILE_PIN_OFFSET_NEXT_DIGEST:], next_digest[:])
 	checksum := pin_checksum(PRINCIPAL_FILE_PIN_DOMAIN, payload[:PRINCIPAL_FILE_PIN_OFFSET_CHECKSUM])
@@ -464,6 +482,10 @@ principal_file_pin_fields_check :: proc "contextless" (pin: Principal_File_Pin) 
 	if pin.principal == 0 {
 		return .Principal_Zero
 	}
+	identifier := pin.identifier
+	if is_all_zero(identifier[:]) {
+		return .Identifier_Zero
+	}
 	if pin.generation == 0 {
 		return .Generation_Zero
 	}
@@ -477,7 +499,7 @@ principal_file_pin_fields_check :: proc "contextless" (pin: Principal_File_Pin) 
 // principal_file_pin_decode reads the payload of a pin, as the TPM index
 // gave it.
 principal_file_pin_decode :: proc "contextless" (bytes: []u8) -> (pin: Principal_File_Pin, refusal: Pin_Refusal) {
-	refusal = pin_payload_frame_check(bytes, PRINCIPAL_FILE_PIN_RECORD_SIZE, PRINCIPAL_FILE_PIN_MAGIC, PRINCIPAL_FILE_PIN_DOMAIN, PRINCIPAL_FILE_PIN_OFFSET_CHECKSUM)
+	refusal = pin_payload_frame_check(bytes, PRINCIPAL_FILE_PIN_RECORD_SIZE, PRINCIPAL_FILE_PIN_MAGIC, PRINCIPAL_FILE_PIN_DOMAIN, PRINCIPAL_FILE_PIN_OFFSET_CHECKSUM, PRINCIPAL_FILE_PIN_FORMAT)
 	if refusal != .None {
 		return {}, refusal
 	}
@@ -488,6 +510,7 @@ principal_file_pin_decode :: proc "contextless" (bytes: []u8) -> (pin: Principal
 		principal  = byte_order.read_u32_big_endian(bytes, PRINCIPAL_FILE_PIN_OFFSET_PRINCIPAL),
 		generation = byte_order.read_u64_big_endian(bytes, PRINCIPAL_FILE_PIN_OFFSET_GENERATION),
 	}
+	copy(decoded.identifier[:], bytes[PRINCIPAL_FILE_PIN_OFFSET_IDENTIFIER:][:IDENTIFIER_SIZE])
 	copy(decoded.file_digest[:], bytes[PRINCIPAL_FILE_PIN_OFFSET_DIGEST:][:SHA256_SIZE])
 	copy(decoded.next_digest[:], bytes[PRINCIPAL_FILE_PIN_OFFSET_NEXT_DIGEST:][:SHA256_SIZE])
 	refusal = principal_file_pin_fields_check(decoded)
@@ -514,6 +537,9 @@ principal_file_pin_advance :: proc "contextless" (current: Principal_File_Pin, p
 	if proposed.principal != current.principal {
 		return .Principal_Mismatch
 	}
+	if proposed.identifier != current.identifier {
+		return .Identifier_Mismatch
+	}
 	if proposed.generation == current.generation {
 		return .Generation_Replay
 	}
@@ -525,12 +551,17 @@ principal_file_pin_advance :: proc "contextless" (current: Principal_File_Pin, p
 
 // principal_file_pin_check checks a principal file that the disk gave
 // against its pin: the current digest, or the announced one.
-principal_file_pin_check :: proc "contextless" (pin: Principal_File_Pin, principal: u32, file: []u8) -> (match: Pin_Match, refusal: Pin_Refusal) {
+principal_file_pin_check :: proc "contextless" (pin: Principal_File_Pin, principal: u32, identifier: Identifier, file: []u8) -> (match: Pin_Match, refusal: Pin_Refusal) {
 	if pin.generation == 0 {
 		return .Current, .Not_Pinned
 	}
 	if principal != pin.principal {
 		return .Current, .Principal_Mismatch
+	}
+	// The pin of a slot names the identifier: a file of another principal
+	// in the slot is refused, whatever its digest.
+	if identifier != pin.identifier {
+		return .Current, .Identifier_Mismatch
 	}
 	return digest_match(principal_file_digest(file), pin.file_digest, pin.next_digest)
 }
@@ -558,11 +589,11 @@ principal_file_pin_announce :: proc "contextless" (current: Principal_File_Pin, 
 // principal_file_pin_settle gives the pin to write after a write: kept is
 // the file that the store holds now. A principal with no pin gets its first
 // pin here, at the generation 1.
-principal_file_pin_settle :: proc "contextless" (current: Principal_File_Pin, principal: u32, kept: []u8) -> (proposed: Principal_File_Pin, refusal: Pin_Refusal) {
+principal_file_pin_settle :: proc "contextless" (current: Principal_File_Pin, principal: u32, identifier: Identifier, kept: []u8) -> (proposed: Principal_File_Pin, refusal: Pin_Refusal) {
 	if current.generation == max(u64) {
 		return {}, .Generation_Exhausted
 	}
-	proposed = {principal = principal, generation = current.generation + 1, file_digest = principal_file_digest(kept)}
+	proposed = {principal = principal, identifier = identifier, generation = current.generation + 1, file_digest = principal_file_digest(kept)}
 	refusal = principal_file_pin_advance(current, proposed)
 	if refusal != .None {
 		return {}, refusal

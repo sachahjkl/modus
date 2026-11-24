@@ -50,6 +50,26 @@ The design: `docs/STORAGE.md`, "1. The model".
 
 Do not use: reference (for this), volume, file system, mount, head.
 
+### Storage key
+
+The storage key of a principal is the key that keyed BLAKE2b of its secret unlock key over a text of its own gives, and from which the key of each of its stores comes.
+
+The process `unlock` makes it at the unlock; the storage service holds it in memory while the principal is unlocked, derives the key of each store from it, the principal identifier and the salt of the store, encrypts and authenticates each block of the store with it, and erases it at the lock. It is not the unlock key, and no disk keeps it.
+
+The design: `src/md/features/store_encryption.md`, "The keys".
+
+Do not use: disk key, volume key, master key.
+
+### Name tag
+
+A name tag is the keyed BLAKE3 hash of the name of a store under the name key of its principal, which the cell of the store keeps in place of the name.
+
+The storage service finds a store of a principal by the tag of its name, so a name is found only while its principal is unlocked, and two principals with one name have two tags. The cell keeps the byte 1, then the first 31 bytes of the tag.
+
+The design: `src/md/features/store_encryption.md`, "The owner of a store".
+
+Do not use: hashed name, encrypted name.
+
 ### Place
 
 A place is a number that a connection to the storage service holds: the names of a path from the root of the connection, and the right to change or read only.

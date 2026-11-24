@@ -657,7 +657,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	store_port, store_open := storage_port.bind(ctx)
 	memory_port, windows := space_memory_reserve() // space_window_memory.odin
 	source_links.port = link_tables_port() // link_tables.odin
-	wide_grants.space_store_init(&space_service.store, principal_id, store_port, memory_port)
+	// The principal identifier, which the root service wrote in the region
+	// before the start: the name of the principal in each object of the
+	// store. Copied before the first request writes over it.
+	identifier: [wide_grants.COLLECTOR_IDENTIFIER_SIZE]u8
+	if service_region_base != nil && service_region_bytes >= wide_grants.COLLECTOR_REGION_IDENTIFIER_AT + wide_grants.COLLECTOR_IDENTIFIER_SIZE {
+		copy(identifier[:], service_region_base[wide_grants.COLLECTOR_REGION_IDENTIFIER_AT:][:wide_grants.COLLECTOR_IDENTIFIER_SIZE])
+	}
+	if !wide_grants.space_store_init(&space_service.store, principal_id, identifier, store_port, memory_port) {
+		store_open = false
+		system.log_fact(.Error, Spaces_Refused_No_Identifier{principal_id = principal_id})
+	}
 	system.log_fact(.Info, Space_Windows_Paid{windows = u64(windows)})
 	closed_date_page = date.page_of(ctx)
 
@@ -669,6 +679,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log_fact(.Info, Spaces_Loaded{spaces = u64(wide_grants.space_count(&space_service.store)), records = wide_grants.kept_record_count(&space_service.store), objects = u64(space_service.store.load_reads)})
 		} else if loaded == .Store_Damaged {
 			system.log_fact(.Error, Spaces_Store_Damaged{space = u64(space_service.store.damaged_space)})
+		} else if loaded == .Older_Format {
+			system.log_fact(.Error, Spaces_Older_Format{})
 		}
 	}
 

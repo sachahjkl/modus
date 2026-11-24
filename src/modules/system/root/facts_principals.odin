@@ -17,6 +17,41 @@ Machine_Principal_Measured :: struct {
 	measure_value:    value_kinds.Hash_Field,
 }
 
+// An event that has no meaning in the state of a session: the root
+// service checked the state before, so this is its own fault. The codes
+// are the members of principals.Session_Event and Session_State.
+@(log_fact = "root: the session of principal {principal} refused the event {event_code} in the state {state_code}")
+Session_Event_Refused :: struct {
+	principal:  u64,
+	event_code: u64,
+	state_code: u64,
+}
+
+// An event that has no meaning in the state of the seat. The codes are
+// the members of principals.Seat_Event and Seat_State.
+@(log_fact = "root: the seat refused the event {event_code} for principal {principal} in the state {state_code}")
+Seat_Event_Refused :: struct {
+	principal:  u64,
+	event_code: u64,
+	state_code: u64,
+}
+
+// The session table has no row for a process: a slot or a serial past its
+// field. Its records then reach no reader of a principal.
+@(log_fact = "root: the session table has no row for the process in slot {slot} with serial {serial} of principal {principal}: its records reach no reader of a principal")
+Session_Table_Row_Refused :: struct {
+	slot:      u64,
+	serial:    u64,
+	principal: u64,
+}
+
+// The ring of the storage service had no room for the erase of the keys of
+// a principal: the root service sends it again when the ring has room.
+@(log_fact = "root: the storage service did not take the erase of the keys of principal {principal}: its ring is full, and the root service sends it again when the ring has room")
+Storage_Lock_Not_Sent :: struct {
+	principal: u64,
+}
+
 // The creation of a named principal starts in the window of unlock.
 @(log_fact = "root: the principal \"{principal_name}\" is created in the window of unlock")
 Principal_Creation_Started :: struct {

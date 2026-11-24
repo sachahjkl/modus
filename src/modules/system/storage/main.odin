@@ -17,8 +17,8 @@
 // `storage.write(0, "greeting", "kept on the disk")` and `storage.read(0, "greeting")`.
 //
 // **What it proves**: a process keeps its state across a stop of the machine with no file system, no path and no
-// save action, and it reaches no store but its own. It does not prove secrecy against a reader of the disk: the
-// blocks are not encrypted.
+// save action, and it reaches no store but its own. Stores of named principals are encrypted under keys derived
+// from the unlock key of the principal and authenticated on every block read; stores of principal 0 stay in clear.
 //
 // The design: `docs/STORAGE.md`; the large objects: [read_range](storage.read_range) and the exports after it.
 package storage_service
@@ -258,7 +258,7 @@ place_path :: proc "contextless" (caller: ^Caller, place: i64, error: ^errors.Er
 			refuse(error, .Argument_Refused, .Absent, .Places, argument, place)
 			return {}, false
 		}
-		path.store = {store_name_of(store_index), store_cell(store_index).limit}
+		path.store = {name, store_cell(store_index).limit}
 	}
 	path.depth = item.depth
 	copy(path.names[:], item.path[:path.depth])
@@ -607,6 +607,14 @@ list :: proc "c" (place: i64, after: ^string, rows: ^system.Table_To_Append(List
 	if store_damaged[store_index] {
 		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Stores)
 	}
+	scope, crypto_read := store_crypto_enter(store_index)
+	if crypto_read != .Good {
+		if crypto_read == .Device {
+			return call_outcome.fail(error, .Callee_Unavailable, .Device)
+		}
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Stores)
+	}
+	defer store_crypto_leave(&scope)
 	root_node, lookup := tree_of(store_index, path_names(&path))
 	if lookup != .Found {
 		if lookup == .Absent {
@@ -872,19 +880,25 @@ stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> (outcome: cal
 	}
 	for index in 0 ..< store_numbers() {
 		// The one rule of the stores that a caller may name: here, the
-		// stores that it sees.
-		if !store_listed(index) || !may_name_store(&caller, store_name_of(index)) {
+		// stores that it sees. The name of a store of a principal opens
+		// with the keys of that principal only.
+		if !store_listed(index) {
+			continue
+		}
+		name_buffer: [format.OWNER_FIELD_SIZE]u8
+		store_name := owned_cell(index) ? owned_name_into(index, caller.principal, &name_buffer) : store_name_of(index)
+		if store_name == "" || !may_name_store(&caller, store_name) {
 			continue
 		}
 		store := store_cell(index)
 		holders: u64
 		for &connection in service.connections {
-			if connection.calls.head != nil && system.name_of(connection.caller[:]) == system.name_of(store.name[:]) && connection.grant & isolated.CALLER_AMOUNT_MASK != 0 {
+			if connection.calls.head != nil && system.name_of(connection.caller[:]) == store_name && connection.grant & isolated.CALLER_AMOUNT_MASK != 0 {
 				holders += 1
 			}
 		}
 		counts := &store_blocks[index]
-		line := [?]system.Part{"\n", system.name_of(store.name[:]), ": ", counts.objects, " objects, ", counts.trees, " trees, ", opened.store_versions[index], " versions, ", store.used, " of ", store.limit, " blocks, ", opened.store_shared[index], " shared, ", holders, holders == 1 ? string(" connection") : string(" connections")}
+		line := [?]system.Part{"\n", store_name, ": ", counts.objects, " objects, ", counts.trees, " trees, ", opened.store_versions[index], " versions, ", store.used, " of ", store.limit, " blocks, ", opened.store_shared[index], " shared, ", holders, holders == 1 ? string(" connection") : string(" connections")}
 		for part in line {
 			system.write_part(&writer, part)
 		}
@@ -954,7 +968,9 @@ open_store :: proc "c" (store: ^string, error: ^errors.Error_Record) -> (outcome
 	if index < 0 || len(store^) >= len(copied) {
 		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Stores, 1)
 	}
-	path := Path{store = {store_name_of(index), store_cell(index).limit}}
+	// The name that the caller gave: a store of a principal keeps only its
+	// name tag in its cell.
+	path := Path{store = {name, store_cell(index).limit}}
 	opened_place, ok := place_new(&caller, &path)
 	if !ok {
 		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Places, 0, 0, PLACE_CAPACITY)
@@ -994,19 +1010,19 @@ versions :: proc "c" (place: i64, name: ^string, result: ^[]Version, error: ^err
 	if refused != .Succeeded {
 		return refused, 0
 	}
-	_, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
+	store_index, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
 	if located != .Succeeded {
 		return located, 0
 	}
-	if _, listed_outcome := versions_list(&object, error); listed_outcome != .Succeeded {
+	if _, listed_outcome := versions_list(store_index, &object, error); listed_outcome != .Succeeded {
 		return listed_outcome, 0
 	}
 	rows := listed_count + 1
 	// The blocks that only one state holds: the walk of each state goes
 	// down the nodes that only it names.
 	for row in 0 ..< min(rows, len(result)) {
-		entry := row < listed_count ? listed[row] : Version_Entry{generation = object.generation, size = object.size, time = object.time, date = object.date, root = object.pointer}
-		result[row] = {generation = i64(entry.generation), time = i64(entry.time), date = i64(entry.date), bytes = i64(entry.size), own_blocks = i64(own_blocks(entry.root, entry.size)), current = i64(row == listed_count)}
+		entry := row < listed_count ? listed[row] : Version_Entry{generation = object.generation, size = object.size, time = object.time, date = object.date, root = object.pointer, data_check = object.data_check}
+		result[row] = {generation = i64(entry.generation), time = i64(entry.time), date = i64(entry.date), bytes = i64(entry.size), own_blocks = i64(own_blocks(store_index, entry.root, entry.size)), current = i64(row == listed_count)}
 	}
 	return .Succeeded, i64(rows)
 }
@@ -1026,11 +1042,11 @@ version :: proc "c" (place: i64, name: ^string, generation: i64, offset: i64, re
 	if refused != .Succeeded {
 		return refused, 0
 	}
-	_, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
+	store_index, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
 	if located != .Succeeded {
 		return located, 0
 	}
-	state, state_refused := state_at(&object, generation, 3, error)
+	state, state_refused := state_at(store_index, &object, generation, 3, error)
 	if state_refused != .Succeeded {
 		return state_refused, 0
 	}
@@ -1044,7 +1060,7 @@ version :: proc "c" (place: i64, name: ^string, generation: i64, offset: i64, re
 	if count == 0 {
 		return .Succeeded, 0
 	}
-	value, outcome = state_read(state, u64(offset), result^[:count], error, 2)
+	value, outcome = state_read(store_index, state, u64(offset), result^[:count], error, 2)
 	return
 }
 
@@ -1062,7 +1078,7 @@ restore :: proc "c" (place: i64, name: ^string, generation: i64, error: ^errors.
 	if named.caller.read_only {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Changes)
 	}
-	_, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
+	store_index, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
 	if located != .Succeeded {
 		return located, 0
 	}
@@ -1071,7 +1087,7 @@ restore :: proc "c" (place: i64, name: ^string, generation: i64, error: ^errors.
 		// damage, and say that the object is whole.
 		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Objects, 2)
 	}
-	state, state_refused := state_at(&object, generation, 3, error)
+	state, state_refused := state_at(store_index, &object, generation, 3, error)
 	if state_refused != .Succeeded {
 		return state_refused, 0
 	}
@@ -1121,13 +1137,21 @@ compare :: proc "c" (place: i64, name: ^string, first: i64, second: i64, result:
 	if refused != .Succeeded {
 		return refused, 0
 	}
-	_, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
+	store_index, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
 	if located != .Succeeded {
 		return located, 0
 	}
+	scope, crypto_read := store_crypto_enter(store_index)
+	if crypto_read != .Good {
+		if crypto_read == .Device {
+			return call_outcome.fail(error, .Callee_Unavailable, .Device)
+		}
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Stores)
+	}
+	defer store_crypto_leave(&scope)
 	states: [2]State_Of_Object
 	for generation, index in ([2]i64{first, second}) {
-		state, state_refused := state_at(&object, generation, 3 + i64(index), error)
+		state, state_refused := state_at(store_index, &object, generation, 3 + i64(index), error)
 		if state_refused != .Succeeded {
 			return state_refused, 0
 		}
@@ -1180,7 +1204,7 @@ compare :: proc "c" (place: i64, name: ^string, first: i64, second: i64, result:
 				if here[side].block == 0 {
 					continue
 				}
-				if _, block_outcome := block_tree.block_check(&object_source, here[side], next, &compare_blocks[side]); block_outcome != .Good {
+				if block_outcome := block_tree.block_read(&object_source, trees[side], next, &compare_blocks[side], &object_node); block_outcome != .Good {
 					return call_outcome.fail(error, block_outcome == .Device ? .Callee_Unavailable : .Data_Damaged, block_outcome == .Device ? .Device : .Damaged, .Objects, 3 + i64(side))
 				}
 			}
@@ -1332,8 +1356,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// that no party can choose hashes whose first slots make one long run.
 	// The generator is local: it serves this one draw, and leaves no state
 	// of the key in the data of the module.
-	slot_key_generator: random.Generator
-	if !random.generator_from_context(&slot_key_generator, ctx) {
+	// The generator then serves the salts of new stores (owned_stores.odin):
+	// a salt is public, and a generator that erases each key it served
+	// keeps no state of the key of the slots.
+	if !random.generator_from_context(&salt_generator, ctx) {
 		system.log_fact(.Error, No_Seed{})
 		system.stop(.Refused)
 	}
@@ -1341,8 +1367,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// same draw: a page that a start before wrote is not taken for a page of
 	// this start, with a date or with none.
 	slot_key: [16]u8
-	random.fill(&slot_key_generator, slot_key[:])
-	slot_key_generator = {}
+	random.fill(&salt_generator, slot_key[:])
 	opened.hash_index.slot_key = intrinsics.unaligned_load((^u64)(&slot_key[0]))
 	repair_disk.nonce = intrinsics.unaligned_load((^u64)(&slot_key[8]))
 	ok: bool
@@ -1351,6 +1376,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Refused)
 	}
 	service.disconnected = connection_ended
+	service.principal_keys = storage_principal_keys // principal_keys.odin
 	ring_memory := ctx.handles[block.GRANT_RING]
 	status: system.Status
 	if blocks, status = system.ring_open(ring_memory); status != .Ok {

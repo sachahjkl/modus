@@ -1,20 +1,23 @@
 package log
 
 import "base:intrinsics"
+import "internal:log/scope_rules"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
 import "modus:system"
 
-// log.follow: the records of the whole log from the next one on, as a
-// record output of this service, which the console reads as a Stream
-// (src/md/features/log_facts.md, "The frequent tasks").
+// log.follow: the records of the principal of the reader from the next
+// one on, as a record output of this service, which the console reads as
+// a Stream (src/md/features/log_facts.md, "The frequent tasks").
 //
 // **Who reads it.** A reader wires `log.follow` through its connection to
 // this service, with the end Connected, which the root service gives only
 // to a caller that acts for the principal (src/md/features/module_outputs.md,
-// "The wiring and its rights"). So each reader of follow has the scope of
-// the whole log, and one record output serves them all: the writer never
-// knows which ring is which connection, and needs not.
+// "The wiring and its rights"). The record output is By_Principal: the
+// wiring service names the principal of the reader on each ring, and the
+// pump writes each settled record of a principal to the rings of that
+// principal only, with its scope number (principal_scope.odin). A record
+// of no principal reaches no follower.
 //
 // **The loss.** The log of the kernel stays lossy below it. When the
 // kernel wrote over records before this service wrote them into follow,
@@ -57,7 +60,7 @@ log_wait_follow_the_ends :: proc "contextless" () {
 // it, with no byte that no field names. A fact has no text, as in
 // records(): fact_records() gives its values.
 Follow_Row :: struct {
-	number:     i64, // The number of the log record, from 0.
+	number:     i64, // The number of the record among the records of the principal of the reader, from 0.
 	time:       i64, // Microseconds since the start of the machine.
 	slot:       i64, // The slot of the process. 0: the kernel.
 	process:    [32]u8, // The name of the process, or "kernel".
@@ -71,9 +74,9 @@ Follow_Row :: struct {
 #assert(size_of(Follow_Row) == 232)
 #assert(op.LOG_TEXT_CAPACITY == 168)
 
-// The records of the whole log, from the next one on, for a caller that
-// acts for the principal: `log.follow |> where(level = Warning)`.
-follow: system.Record_Output(Follow_Row)
+// The records of the principal of the reader, from the next one on, for a
+// caller that acts for the principal: `log.follow |> where(level = Warning)`.
+follow: system.Record_Output(Follow_Row, .By_Principal)
 
 // The number of the next record of the whole log that follow writes.
 follow_next: u64
@@ -103,73 +106,52 @@ follow_row_of :: proc "contextless" (number: u64, record: ^op.Log_Record) -> (ro
 	return row, true
 }
 
-// follow_lost writes a gap of count records of the log in each ring of
-// follow, in parts that a gap record holds.
+// follow_lost says the loss of one record of a principal to the rings of
+// that principal only, with its serial and its counts: no follower learns a
+// loss, or a count, of another principal.
 @(private = "file")
-follow_lost :: proc "contextless" (count: u64) {
-	rest := count
-	for rest > 0 {
-		part := min(rest, u64(max(u32)))
-		system.output_gap(&follow, u32(part))
-		rest -= part
-	}
+follow_lost :: proc "contextless" (principal: u64) {
+	system.output_gap_principal(&follow, principal, 1)
 }
 
-// follow_pump writes the records of the log that follow did not write yet,
-// until the first one that a ring of a follower refuses. With no follower,
-// the next one joins from the next record.
+// follow_pump writes the settled records that follow did not write yet,
+// each to the rings of its principal with its scope number, until the
+// first one that a ring of its principal refuses. With no follower, the
+// next one joins from the next record.
+//
+// A record that the kernel wrote over after the pass settled it is a loss
+// of its principal, said to that principal. A record that the kernel wrote
+// over before the pass read it has no principal, and no scope number: no
+// follower's numbers miss it (principal_scope.odin).
 follow_pump :: proc "contextless" () {
-	written := intrinsics.atomic_load(&reader_head.written)
 	if !system.output_read_by(&follow) {
-		follow_next = written
+		follow_next = settled_next
 		return
 	}
-	// The records lost since the last row, said as one gap right before
-	// the next row: a torn copy right after a loss adds to the same gap.
-	next, lost := op.log_first_kept(follow_next, written)
-	follow_next = next
-	for follow_next < written {
+	for follow_next < settled_next {
+		place, settled := record_settled(follow_next)
+		if !settled || !place.known {
+			follow_next += 1
+			continue
+		}
 		record, whole := record_copy(follow_next)
-		if !whole {
-			// The kernel wrote over this record during the copy, and maybe
-			// over the records after it: the head again gives each one.
-			written = intrinsics.atomic_load(&reader_head.written)
-			kept, more := op.log_first_kept(follow_next, written)
-			if more == 0 {
-				kept, more = follow_next + 1, 1
+		row, row_ok := follow_row_of(place.scope_number, &record)
+		action, target := scope_rules.follow_record_decide(settled, place.known, place.principal, whole, row_ok)
+		switch action {
+		case .Skip:
+			follow_next += 1
+		case .Emit_Gap:
+			// Written over after the pass, or a byte that names no member:
+			// a loss of its principal only.
+			follow_lost(target)
+			follow_next += 1
+		case .Write:
+			status := system.output_write_principal(&follow, target, row, wait = false, deadline = system.time())
+			if !scope_rules.follow_after_write(status) {
+				// The same record at the next pass: its place is kept.
+				return
 			}
-			lost += more
-			follow_next = kept
-			continue
-		}
-		row, row_ok := follow_row_of(follow_next, &record)
-		if !row_ok {
-			// A byte that names no member: a record that no follower
-			// reads, in the same gap.
-			lost += 1
-			follow_next += 1
-			continue
-		}
-		if lost > 0 {
-			follow_lost(lost)
-			lost = 0
-		}
-		switch system.output_write(&follow, row, wait = false, deadline = system.time()) {
-		case .Ok, .No_Reader:
-			follow_next += 1
-		case .Full:
-			// The same record at the next pass: its place is kept.
-			return
-		case .Ended:
-			// follow never ends: a call that gives Ended names no ring.
-			return
-		case .No_Writer, .Bad_Record, .No_Record:
-			// No write gives them; the record is passed, never written
-			// twice.
 			follow_next += 1
 		}
-	}
-	if lost > 0 {
-		follow_lost(lost)
 	}
 }

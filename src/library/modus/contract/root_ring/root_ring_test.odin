@@ -615,8 +615,8 @@ the_wide_grant_commands_keep_their_senders :: proc(t: ^testing.T) {
 }
 // Ready travels on the ready ring alone: the root ring refuses it at its
 // sender, whatever the start grants, so the one way to say the first
-// state of work is the same for each process. The word one past Ready
-// names no command.
+// state of work is the same for each process. The word one past the last
+// command names no command.
 @(test)
 ready_never_runs_on_the_root_ring :: proc(t: ^testing.T) {
 	for grant in ROOT_RING_GRANTS {
@@ -624,7 +624,7 @@ ready_never_runs_on_the_root_ring :: proc(t: ^testing.T) {
 		testing.expectf(t, decision.step == .Sender, "Ready on the root ring with the start grant %v", grant)
 	}
 	testing.expect_value(t, root_command_name(i64(Root_Command.Ready)), "Ready")
-	past := dispatch_decide(u32(Root_Command.Ready) + 1, {.Root_Ring}, false)
+	past := dispatch_decide(u32(max(Root_Command)) + 1, {.Root_Ring}, false)
 	testing.expect_value(t, past.step, Dispatch_Step.Border)
 }
 
@@ -638,7 +638,7 @@ the_ready_ring_takes_ready_alone :: proc(t: ^testing.T) {
 	testing.expect(t, !ready_record_refused({kind = u32(Root_Command.Ready), tag = 7}), "the tag is no value")
 	testing.expect(t, ready_record_refused({}))
 	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Start)}))
-	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Ready) + 1}))
+	testing.expect(t, ready_record_refused({kind = u32(max(Root_Command)) + 1}))
 	testing.expect(t, ready_record_refused({kind = max(u32)}))
 	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Ready), values = {0 = 1}}))
 	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Ready), values = {6 = 1}}))

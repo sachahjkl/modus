@@ -91,8 +91,8 @@ Fixture :: struct {
 }
 
 @(private = "file")
-restart :: proc(fixture: ^Fixture, principal := PRINCIPAL) {
-	space_store_init(&fixture.store, principal, failing_store_port(&fixture.failing), space_window_heap_port())
+restart :: proc(fixture: ^Fixture, principal := PRINCIPAL, identifier := TEST_COLLECTOR_IDENTIFIER) {
+	space_store_init(&fixture.store, principal, identifier, failing_store_port(&fixture.failing), space_window_heap_port())
 }
 
 @(private = "file")
@@ -655,8 +655,8 @@ a_restart_keeps_each_space_and_its_isolation :: proc(t: ^testing.T) {
 // expect_damaged restarts the fixture and checks that each step is refused
 // with Store_Damaged and that no space is served.
 @(private = "file")
-expect_damaged :: proc(t: ^testing.T, fixture: ^Fixture, what: string, principal := PRINCIPAL, location := #caller_location) -> bool {
-	restart(fixture, principal)
+expect_damaged :: proc(t: ^testing.T, fixture: ^Fixture, what: string, principal := PRINCIPAL, identifier := TEST_COLLECTOR_IDENTIFIER, location := #caller_location) -> bool {
+	restart(fixture, principal, identifier)
 	refusal := space_store_ready(&fixture.store)
 	if !testing.expectf(t, refusal == .Store_Damaged, "%s: the restart gave %v", what, refusal, loc = location) {
 		return false
@@ -759,8 +759,26 @@ a_moved_missing_or_older_object_refuses_the_restart :: proc(t: ^testing.T) {
 	expect_damaged(t, fixture, "a removed index")
 	index.used = true
 
-	// Another principal reads the store.
-	expect_damaged(t, fixture, "another principal", PRINCIPAL + 1)
+	// Another principal reads the store: another identifier, also in the
+	// same slot. With no identifier, a named principal gets no store: the
+	// restart reads nothing and keeps no space.
+	other_identifier := TEST_COLLECTOR_IDENTIFIER
+	other_identifier[31] ~= 1
+	expect_damaged(t, fixture, "another principal", PRINCIPAL + 1, other_identifier)
+	expect_damaged(t, fixture, "another principal in the same slot", PRINCIPAL, other_identifier)
+	testing.expect(t, !space_store_init(&fixture.store, PRINCIPAL, {}, failing_store_port(&fixture.failing), space_window_heap_port()))
+	testing.expect(t, space_store_ready(&fixture.store) != .None, "a named principal with no identifier read the store")
+	testing.expect_value(t, space_count(&fixture.store), 0)
+
+	// The index of an older release names its principal by its slot: it is
+	// refused as such, not as damage.
+	older_index := pr.memory_private_store_find(&fixture.failing.memory, SPACE_INDEX_OBJECT_NAME)
+	saved_version := older_index.bytes[SPACE_INDEX_VERSION_AT]
+	older_index.bytes[SPACE_INDEX_VERSION_AT] = u8(OLDER_SPACE_INDEX_VERSION)
+	restart(fixture)
+	testing.expect_value(t, space_store_ready(&fixture.store), Space_Refusal.Older_Format)
+	testing.expect_value(t, space_count(&fixture.store), 0)
+	older_index.bytes[SPACE_INDEX_VERSION_AT] = saved_version
 
 	// The segment of one space under the name of another space: its head
 	// names its own space and terms.
@@ -926,7 +944,7 @@ a_failed_read_refuses_until_the_store_answers :: proc(t: ^testing.T) {
 	// A store with no port keeps no audit space.
 	no_port := new(Space_Store)
 	defer free(no_port)
-	space_store_init(no_port, PRINCIPAL, {}, space_window_heap_port())
+	space_store_init(no_port, PRINCIPAL, TEST_COLLECTOR_IDENTIFIER, {}, space_window_heap_port())
 	_, refused := space_open(no_port, name_bytes("server"), name_bytes("orders"), terms_audit(4))
 	testing.expect_value(t, refused, Space_Refusal.Store_Failed)
 }

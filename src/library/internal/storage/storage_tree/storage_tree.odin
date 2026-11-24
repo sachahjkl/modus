@@ -234,7 +234,9 @@ copy_bytes :: #force_inline proc "contextless" (to, from: []u8) {
 
 // node_valid checks the rules of the format for a node: its magic, its
 // level, its count, the block of each child, and the order of its keys.
-node_valid :: proc "contextless" (bytes: ^Block, shape: Shape) -> bool {
+// When `encrypted` is true (keyless walk of an encrypted store), key bytes
+// are ciphertext so key-order checking is skipped.
+node_valid :: proc "contextless" (bytes: ^Block, shape: Shape, encrypted := false) -> bool {
 	head := header(bytes)
 	if head.magic != format.NODE_MAGIC || head.level >= DEPTH_LIMIT || head.count == 0 || int(head.count) > capacity_of(shape, head.level) {
 		return false
@@ -249,6 +251,9 @@ node_valid :: proc "contextless" (bytes: ^Block, shape: Shape) -> bool {
 				return false
 			}
 		}
+	}
+	if encrypted {
+		return true
 	}
 	// In a branch, the key of the record 0 is a bound that the search never
 	// reads, and it can be stale: a smaller key that went into the child 0
@@ -881,6 +886,7 @@ Walk :: struct {
 	// order, each one once, else the tree is damaged.
 	last_key:     [KEY_SIZE_LIMIT]u8,
 	has_last:     bool,
+	encrypted:    bool, // True for keyless walk of an encrypted store: keys are ciphertext.
 }
 
 // walk_tree walks the tree of a root: each node once, in the order of the
@@ -923,7 +929,7 @@ walk_node :: proc "contextless" (walk: ^Walk, pointer: Pointer, depth: int, leve
 		return
 	case .Good:
 	}
-	if !node_valid(bytes, walk.shape) || level >= 0 && int(header(bytes).level) != level {
+	if !node_valid(bytes, walk.shape, walk.encrypted) || level >= 0 && int(header(bytes).level) != level {
 		walk.failure, walk.failed_block = .Damaged, pointer.block
 		return
 	}
@@ -932,12 +938,14 @@ walk_node :: proc "contextless" (walk: ^Walk, pointer: Pointer, depth: int, leve
 	for index in 0 ..< int(head.count) {
 		if head.level == 0 {
 			key := key_at(bytes, walk.shape, index)
-			if walk.has_last && compare(walk.last_key[:walk.shape.key_size], key) >= 0 {
-				walk.failure, walk.failed_block = .Damaged, pointer.block
-				return
+			if !walk.encrypted {
+				if walk.has_last && compare(walk.last_key[:walk.shape.key_size], key) >= 0 {
+					walk.failure, walk.failed_block = .Damaged, pointer.block
+					return
+				}
+				copy(walk.last_key[:], key)
+				walk.has_last = true
 			}
-			copy(walk.last_key[:], key)
-			walk.has_last = true
 			walk.records += 1
 			if walk.visit_record != nil {
 				walk.visit_record(walk, key, value_at(bytes, walk.shape, index))

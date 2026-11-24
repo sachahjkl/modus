@@ -257,7 +257,10 @@ client: storage.Client
 
 name: [principals.NAME_LIMIT]u8
 name_length: int
-number: u64 // The number of the principal in the root service.
+number: u64 // The number of the principal in the root service: a slot of this run.
+// The principal identifier: drawn at the creation, read from the file at
+// each other run, and given to the root service after the record.
+identifier: principals.Principal_Identifier
 // The file of the named principal, in its form: under the passphrase alone
 // (file), or sealed by the TPM with the passphrase (principal_tpm_file).
 principal_form: principals.Principal_Record_Form
@@ -331,10 +334,15 @@ object_versions_erase :: proc "contextless" (object: string) {
 }
 
 // root_command sends a command of the principals to the root service and
-// waits for its completion.
-root_command :: proc "contextless" (kind: root_ring.Root_Command, values: [7]u64) -> (completion: ring.Record, answered: bool) {
+// waits for its completion. values is passed by pointer so key commands leave
+// no copy in the call parameter slot.
+root_command :: proc "contextless" (kind: root_ring.Root_Command, values: ^[7]u64) -> (completion: ring.Record, answered: bool) {
 	request_tag += 1
-	if !system.send(&requests.commands, ring.Record{kind = u32(kind), tag = request_tag, values = values}) {
+	command_record := ring.Record{kind = u32(kind), tag = request_tag, values = values^}
+	sent := system.send(&requests.commands, command_record)
+	// Key commands carry secrets in values: leave no copy on this stack.
+	erase(([^]u8)(&command_record)[:size_of(command_record)])
+	if !sent {
 		return {}, false
 	}
 	limit := system.time() + ROOT_ANSWER_LIMIT
@@ -357,12 +365,32 @@ root_command :: proc "contextless" (kind: root_ring.Root_Command, values: [7]u64
 record_give :: proc "contextless" () -> bool {
 	key := transmute([4]u64)signing_public_key
 	packed := principals.name_pack(the_name())
-	completion, answered := root_command(.Principal_Record, {key[0], key[1], key[2], key[3], packed[0], packed[1], packed[2]})
+	record_values := [7]u64{key[0], key[1], key[2], key[3], packed[0], packed[1], packed[2]}
+	completion, answered := root_command(.Principal_Record, &record_values)
 	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Record_Not_Taken{outcome = outcome_field(completion.kind), principal_name = principal_name_field()})
 		return false
 	}
 	number = completion.values[0]
+	words := transmute([4]u64)identifier
+	id_values := [7]u64{words[0], words[1], words[2], words[3], number, 0, 0}
+	identified, identifier_answered := root_command(.Principal_Identifier, &id_values)
+	if !identifier_answered || identified.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+		system.log_fact(.Info, Record_Not_Taken{outcome = outcome_field(identified.kind), principal_name = principal_name_field()})
+		return false
+	}
+	return true
+}
+
+// identifier_draw draws the identifier of a new principal: 256 bits of the
+// generator of this process, refused from a weak seed, as a key is.
+identifier_draw :: proc "contextless" () -> bool {
+	error: errors.Error_Record
+	if !random.fill_for_a_key(&generator, identifier[:], .Processor, &error) || principals.identifier_is_zero(identifier[:]) {
+		system.log_fact(.Info, Principal_Not_Created_Seed_Too_Weak{})
+		message, message_failed = "The seed of the machine is too weak for a key.", true
+		return false
+	}
 	return true
 }
 
@@ -435,7 +463,11 @@ create :: proc "contextless" () {
 		message, message_failed = "The module cryptography refused the keys.", true
 		return
 	}
+	if !identifier_draw() {
+		return
+	}
 	file.name, file.name_length = name, name_length
+	file.identifier = identifier
 	signing_public_key, unlock_public_key = file.signing_public_key, file.unlock_public_key
 	principal_form = .Passphrase
 	derived, sealed := passphrase_file_seal(&secrets, &file, &file_bytes)
@@ -598,7 +630,9 @@ machine_key_give :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SI
 	values := transmute([4]u64)table_key
 	defer erase(table_key[:])
 	defer erase(([^]u8)(rawptr(&values))[:size_of(values)])
-	completion, answered := root_command(.Machine_Key, {values[0], values[1], values[2], values[3], u64(origin), 0, 0})
+	cmd_values := [7]u64{values[0], values[1], values[2], values[3], u64(origin), 0, 0}
+	defer erase(([^]u8)(&cmd_values)[:size_of(cmd_values)])
+	completion, answered := root_command(.Machine_Key, &cmd_values)
 	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Machine_Table_Key_Not_Taken{outcome = outcome_field(completion.kind)})
 		return false
@@ -1614,7 +1648,11 @@ create_sealed_by_the_tpm :: proc "contextless" () {
 		message, message_failed = "The module cryptography refused the keys.", true
 		return
 	}
+	if !identifier_draw() {
+		return
+	}
 	principal_tpm_file.name, principal_tpm_file.name_length = name, name_length
+	principal_tpm_file.identifier = identifier
 	signing_public_key, unlock_public_key = principal_tpm_file.signing_public_key, principal_tpm_file.unlock_public_key
 	principal_form = .Sealed_By_The_Tpm
 	// The copy under the recovery key: its additional data stops before the
@@ -1830,7 +1868,8 @@ proof_given :: proc "contextless" () {
 // proof_end tells the root service how the proof ended. The root service
 // binds it to the terms of the screen; this process sees no terms.
 proof_end :: proc "contextless" (outcome: root_ring.Wide_Grant_Proof_Outcome) {
-	completion, answered := root_command(.Wide_Grant_Proof, {4 = proof_principal, 5 = u64(outcome)})
+	proof_values := [7]u64{4 = proof_principal, 5 = u64(outcome)}
+	completion, answered := root_command(.Wide_Grant_Proof, &proof_values)
 	if !answered || system.Status(completion.kind) != .Ok {
 		system.log_fact(.Info, Wide_Grant_Proof_Not_Taken{status = status_field(completion.kind)})
 	}
@@ -2026,7 +2065,8 @@ passphrase_change_report :: proc "contextless" (outcome: Write_Outcome, how: str
 // to the console that asked, and shows it in the window until Enter: a
 // change never ends with a silent close.
 change_end :: proc "contextless" (end: principals.Change_End, problem: principals.Change_Problem = .None) {
-	completion, answered := root_command(.Principal_Change_End, {4 = u64(end), 5 = u64(problem)})
+	end_values := [7]u64{4 = u64(end), 5 = u64(problem)}
+	completion, answered := root_command(.Principal_Change_End, &end_values)
 	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Change_End_Not_Taken{outcome = outcome_field(completion.kind)})
 	}
@@ -2286,7 +2326,25 @@ session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, 
 	defer erase(unlock_key[:])
 	defer erase(table_key[:])
 	defer erase(([^]u8)(rawptr(&values))[:size_of(values)])
-	completion, answered := root_command(.Principal_Unlock, {values[0], values[1], values[2], values[3], number, u64(origin), 0})
+	// The storage key first: the stores of the session open with it
+	// (src/md/features/store_encryption.md, "The keys").
+	storage_key := principals.principal_storage_key(&unlock_key)
+	storage_words := transmute([4]u64)storage_key
+	defer erase(storage_key[:])
+	defer erase(([^]u8)(rawptr(&storage_words))[:size_of(storage_words)])
+	storage_cmd := [7]u64{storage_words[0], storage_words[1], storage_words[2], storage_words[3], number, 0, 0}
+	defer erase(([^]u8)(&storage_cmd)[:size_of(storage_cmd)])
+	stored, stored_answered := root_command(.Principal_Storage_Key, &storage_cmd)
+	erase(([^]u8)(&storage_cmd)[:size_of(storage_cmd)])
+	if !stored_answered || stored.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+		system.log_fact(.Info, Session_Not_Started{principal = number, outcome = outcome_field(stored.kind)})
+		message, message_failed = "The root service did not start the session.", true
+		return
+	}
+	unlock_cmd := [7]u64{values[0], values[1], values[2], values[3], number, u64(origin), 0}
+	defer erase(([^]u8)(&unlock_cmd)[:size_of(unlock_cmd)])
+	completion, answered := root_command(.Principal_Unlock, &unlock_cmd)
+	erase(([^]u8)(&unlock_cmd)[:size_of(unlock_cmd)])
 	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Session_Not_Started{principal = number, outcome = outcome_field(completion.kind)})
 		message, message_failed = "The root service did not start the session.", true
@@ -2774,6 +2832,7 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 			system.stop(.Refused)
 		}
 		name, name_length = file.name, file.name_length
+		identifier = file.identifier
 		signing_public_key, unlock_public_key = file.signing_public_key, file.unlock_public_key
 	case .Sealed_By_The_Tpm:
 		principal_tpm_file, principal_tpm_file_bytes, problem = principals.principal_tpm_file_decode(bytes)
@@ -2782,6 +2841,7 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 			system.stop(.Refused)
 		}
 		name, name_length = principal_tpm_file.name, principal_tpm_file.name_length
+		identifier = principal_tpm_file.identifier
 		signing_public_key, unlock_public_key = principal_tpm_file.signing_public_key, principal_tpm_file.unlock_public_key
 	case .Unknown:
 		system.log_fact(.Info, Principal_File_Form_Unknown{})
@@ -2823,7 +2883,8 @@ machine_key_without_window :: proc "contextless" () -> ! {
 		system.log_fact(.Info, No_Machine_Record{})
 		system.stop(.Done)
 	case .Unreadable:
-		completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Unreadable)})
+		unreadable_cmd := [7]u64{4 = u64(root_ring.Machine_Key_State.Unreadable)}
+		completion, answered := root_command(.Machine_Key, &unreadable_cmd)
 		taken := answered && completion.kind == u32(call_outcome.Call_Outcome.Succeeded)
 		if !taken {
 			system.log_fact(.Info, Machine_State_Not_Taken{outcome = outcome_field(completion.kind)})
@@ -2839,7 +2900,8 @@ machine_key_without_window :: proc "contextless" () -> ! {
 	}
 	sealed_by_the_tpm := machine_form == .Sealed_By_The_Tpm
 	key_form := sealed_by_the_tpm ? root_ring.Machine_Key_Form.Sealed_By_The_Tpm : root_ring.Machine_Key_Form.Passphrase
-	completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Awaited), 5 = u64(key_form)})
+	awaited_cmd := [7]u64{4 = u64(root_ring.Machine_Key_State.Awaited), 5 = u64(key_form)}
+	completion, answered := root_command(.Machine_Key, &awaited_cmd)
 	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Machine_State_Not_Taken{outcome = outcome_field(completion.kind)})
 		system.stop(.Failed)
@@ -3044,7 +3106,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		case .Present:
 			sealed_by_the_tpm := machine_form == .Sealed_By_The_Tpm
 			key_form := sealed_by_the_tpm ? root_ring.Machine_Key_Form.Sealed_By_The_Tpm : root_ring.Machine_Key_Form.Passphrase
-			completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Awaited), 5 = u64(key_form)})
+			awaited_cmd := [7]u64{4 = u64(root_ring.Machine_Key_State.Awaited), 5 = u64(key_form)}
+			completion, answered := root_command(.Machine_Key, &awaited_cmd)
 			switch {
 			case !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded):
 				system.log_fact(.Info, Machine_State_Not_Taken{outcome = outcome_field(completion.kind)})
@@ -3064,7 +3127,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// service refuses each change of the table of principal 0, and
 			// a new machine passphrase, so nothing is written over a table
 			// or a record that can be good.
-			completion, answered := root_command(.Machine_Key, {4 = u64(root_ring.Machine_Key_State.Unreadable)})
+			unreadable_cmd := [7]u64{4 = u64(root_ring.Machine_Key_State.Unreadable)}
+			completion, answered := root_command(.Machine_Key, &unreadable_cmd)
 			if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 				system.log_fact(.Info, Machine_State_Not_Taken{outcome = outcome_field(completion.kind)})
 			}

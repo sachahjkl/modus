@@ -116,9 +116,10 @@ Work :: struct {
 	free_slot:      i32, // 1 + the first free slot under slots_high, 0 for none.
 	// The root when root_reference is 0: a block of the disk, or a hole.
 	// root_known: its value and its blocks are known.
-	root:           Child,
-	root_known:     bool,
-	root_reference: i32, // As Slot.refs.
+	root:            Child,
+	root_data_check: u64, // Plaintext value_check of a 1-block encrypted root before or after cut.
+	root_known:      bool,
+	root_reference:  i32, // As Slot.refs.
 	levels:         int, // The levels of the block tree for `size`.
 	size_before:    u64, // The size of the state before.
 	size:           u64, // The size after the commit.
@@ -159,6 +160,7 @@ work_begin :: proc "contextless" (work: ^Work, source: ^Source, counter: ^Counte
 	work.free_slot = 0
 	work.source, work.counter = source, counter
 	work.root = {block = before.root.block, check = before.root.check}
+	work.root_data_check = before.data_check
 	work.root_known = before.root.block == 0
 	work.root_reference = 0
 	work.levels = format.object_levels(before.size)
@@ -303,6 +305,7 @@ work_cut :: proc "contextless" (work: ^Work, cut_size: u64) {
 		}
 		work.root_reference = 0
 		work.root = {}
+		work.root_data_check = 0
 		work.root_known = true
 		work.levels = 0
 		return
@@ -325,9 +328,11 @@ work_cut :: proc "contextless" (work: ^Work, cut_size: u64) {
 		if first_reference != 0 {
 			work.root_reference = first_reference
 			work.root = {}
+			work.root_data_check = 0
 		} else {
 			work.root_reference = 0
 			work.root = first
+			work.root_data_check = work.levels - 1 == 0 && first.block != 0 ? format.value_check(first.value) : 0
 			work.root_known = true
 			if first.block != 0 {
 				// The copy that named it goes; the caller names the root.
@@ -393,7 +398,7 @@ root_complete :: proc "contextless" (work: ^Work) -> (child: Child, outcome: Rea
 	if work.levels == 0 {
 		block: ^Block = (^Block)(&work.scratch)
 		value: Value
-		value, outcome = block_check(work.source, {block = child.block, check = child.check}, 0, block)
+		value, outcome = block_check(work.source, {block = child.block, check = child.check}, 0, block, work.root_data_check)
 		work.measure.hashed_blocks += 1
 		child.value, child.blocks = value, 1
 		return child, outcome
@@ -615,10 +620,11 @@ write_of :: proc "contextless" (work: ^Work, reference: i32, level: int) -> Poin
 
 // The result of a commit on an object.
 Finished :: struct {
-	root:     Pointer, // The root of the new state. After work_hash with root_new: no block yet.
-	root_new: bool, // The work makes the root: its one name is counted when work_write writes it. Else the caller names it.
-	blocks:   u64, // The blocks that the new state holds.
-	hash:     blake3.Hash,
+	root:       Pointer, // The root of the new state. After work_hash with root_new: no block yet.
+	root_new:   bool, // The work makes the root: its one name is counted when work_write writes it. Else the caller names it.
+	blocks:     u64, // The blocks that the new state holds.
+	hash:       blake3.Hash,
+	data_check: u64, // For a 1-block encrypted object: value_check of its plaintext block; 0 otherwise.
 }
 
 // work_finish computes the values and the hash (work_hash), then writes the
@@ -704,8 +710,14 @@ work_hash :: proc "contextless" (work: ^Work) -> (result: Finished) {
 	result.blocks = root.blocks
 	if work.root_reference != 0 {
 		result.root_new = true
+		if work.levels == 0 && work.source.encrypted {
+			result.data_check = format.value_check(root.value)
+		}
 	} else {
 		result.root = {block = root.block, check = root.check}
+		if work.levels == 0 && root.block != 0 && work.source.encrypted {
+			result.data_check = work.root_data_check
+		}
 	}
 	return result
 }
@@ -789,7 +801,8 @@ work_last_block :: proc "contextless" (from: ^Hash_Source, index: u64, into: ^Bl
 		into^ = {}
 		return .Good
 	}
-	_, outcome := block_check(work.source, {block = child.block, check = child.check}, index, into)
+	data_check := work.levels == 0 ? work.root_data_check : format.value_check(child.value)
+	_, outcome := block_check(work.source, {block = child.block, check = child.check}, index, into, data_check, child.value, work.levels > 0)
 	return outcome
 }
 

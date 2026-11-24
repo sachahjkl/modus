@@ -29,6 +29,10 @@ RECORD_STREAM_INDEX_MOST :: 64
 Record_Output_Pairing :: enum u8 {
 	Unpaired = 0, // One type for the record output: its own record, or the one type of the generic record input.
 	Paired   = 1, // One ring for each wiring of the generic record input, of the type of that wiring: the record output `forward` of the collector.
+	// One type; the writer gives each record to the rings whose reader is of
+	// one principal, which the wiring service names on each writer end:
+	// the record output `follow` of the log service.
+	By_Principal = 2,
 }
 
 // How many wirings a record input takes, and of which types.

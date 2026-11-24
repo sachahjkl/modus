@@ -156,6 +156,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 start_wiring_keep :: proc "contextless" (work: ^Start_Work) {
 	slot := work.slot
 	slot.process_slot, slot.process_serial, _ = system.process_place(slot.process)
+	session_table_record(slot.process_slot, slot.process_serial, work.principal)
 	slot.module_offset = work.entry.offset
 	slot.module_size = work.entry.size
 	slot.budget = work.wiring.budget
@@ -620,6 +621,9 @@ start_handles_of_the_start_grant_set_give :: proc "contextless" (work: ^Start_Wo
 	}
 	if .Log_Records in grants {
 		start_grant_put(work, .Log_Records, {system.context_record().handles[op.ROOT_LOG_RECORDS], {.Read}})
+		start_grant_put(work, .Session_Table, {session_table_memory, {.Read}})
+		// The window of the log shows the records of this principal only.
+		system.value_put(&work.values, system.GRANT_VALUE_SERVICE_PRINCIPAL, work.principal)
 	}
 	if .Image in grants {
 		start_grant_put(work, .Image, {image_memory, {.Read}})

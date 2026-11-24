@@ -199,6 +199,22 @@ pop :: proc "contextless" (queue: ^Queue) -> (record: Record, ok: bool) {
 	return record, true
 }
 
+// pop_erasing takes the first record of a queue, as pop does, and writes
+// zeros over its slot before the writer can use it again: a record that
+// holds a key leaves no copy in the memory that the two sides share.
+pop_erasing :: proc "contextless" (queue: ^Queue) -> (record: Record, ok: bool) {
+	read := intrinsics.atomic_load_explicit(&queue.counters.read, .Relaxed)
+	write := intrinsics.atomic_load_explicit(&queue.counters.write, .Acquire)
+	if write == read || write - read > queue.mask + 1 {
+		return {}, false
+	}
+	slot := &queue.records[read & queue.mask]
+	record = slot^
+	intrinsics.mem_zero_volatile(slot, size_of(Record))
+	intrinsics.atomic_store_explicit(&queue.counters.read, read + 1, .Release)
+	return record, true
+}
+
 // empty says if a queue has no record to read.
 empty :: proc "contextless" (queue: ^Queue) -> bool {
 	return intrinsics.atomic_load_explicit(&queue.counters.write, .Relaxed) == intrinsics.atomic_load_explicit(&queue.counters.read, .Relaxed)

@@ -178,7 +178,7 @@ picker_listing_begin :: proc "contextless" (principal: u64) {
 	if picker_listing.connection != nil || powerbox_holder == nil {
 		return
 	}
-	if principal >= principals.PRINCIPAL_CAPACITY || (principal != principals.MACHINE && principal_records[principal].state != .Unlocked) {
+	if principal >= principals.PRINCIPAL_CAPACITY || (principal != principals.MACHINE && principal_records[principal].state != .In_Front) {
 		picker_listing_refuse(principal)
 		return
 	}

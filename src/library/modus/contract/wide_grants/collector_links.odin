@@ -226,7 +226,7 @@ link_retry :: proc "contextless" (store: ^Space_Store, link: ^Source_Link) -> (s
 		link.pending = false
 		link.pending_size = 0
 		return .Kept, .None
-	case .Space_Full, .Forward_Full, .Store_Failed, .Store_Damaged:
+	case .Space_Full, .Forward_Full, .Store_Failed, .Store_Damaged, .Older_Format:
 		return .Held, refusal
 	case .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Bad_Limit, .Space_Held, .Memory_Refused, .Space_Closed, .Space_Removed, .Act_Space:
 		return .Refused, refusal

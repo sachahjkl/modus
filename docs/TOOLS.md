@@ -256,12 +256,14 @@ The log has the records of every process, and a process sees no other process. S
 
 | Caller | Its log scope |
 |---|---|
-| A caller that acts for the principal: the console, `remote` | The whole log |
+| A caller that acts for its principal: the console, `remote` | The records of the processes of the session of that principal; for principal 0, also the records of the kernel and of the root service |
 | Each other caller with a connection to the log service: `log_reader` | Its own records: the records with its process slot and its process serial |
 | A process with no connection to the log service | No record through the service. Its records are on the serial port and in the whole log |
 | Each caller, in `process_records` and `process_value_runs`, with a process handle that it lends with the right Read: a starter and the handle of its child | The records of that process only |
 
 The kernel writes the process slot, the process serial and the own number in each record. The root service writes the two numbers of the caller in the grant of its connection, and the caller cannot change them (`modus:contract/log_scope`). A new process in the same slot has another serial, so it does not read the records of the process before it. A record that another process wrote about a process, such as "root: started log_reader", is not one of its own records.
+
+The root service writes the principal of each process that it starts in the session table, which the log service reads with Read. A record of a process that the root service did not start, such as a child that a process made, belongs to no principal: only a reader of its own records or of the lent process receives it.
 
 A reader of its own records sees no number of the whole log. The number of each of its rows is the own number of the record (`glossary/running_code.md`): 0 for the first record of its process. It gives `after` in own numbers, and `lost` counts its own records that its ring no longer keeps. So it receives no number or count of the records of other processes.
 

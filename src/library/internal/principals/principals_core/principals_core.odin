@@ -17,17 +17,17 @@ import rd "modus:contract/root_delegation"
 import "modus:principals"
 
 // Fixed capacities of the principals service state.
-MAX_PRINCIPALS :: 8
+// The capacity of the machine: one number for the root service and this
+// service (src/md/features/several_principals.md, "The decisions").
+MAX_PRINCIPALS :: principals.PRINCIPAL_CAPACITY
 MACHINE_PRINCIPAL_NAME :: "machine"
 
 #assert(MAX_PRINCIPALS >= 2)
 
-// Lifecycle state of one principal slot.
-Session_State :: enum u8 {
-	Absent = 0,
-	Locked = 1,
-	Active = 2,
-}
+// The state of the session of each principal and the seat are those of
+// the root service: one state machine for one concept
+// (modus:principals, session_states.odin). Principal 0 has no session
+// state: its session needs no unlock and never locks (session_running).
 
 // Why a principals_core operation refused its input.
 Principals_Refusal :: enum u8 {
@@ -85,7 +85,7 @@ Start_Policy_Choice :: struct {
 Principal_Entry :: struct {
 	active:           bool,
 	id:               u64,
-	state:            Session_State,
+	state:            principals.Session_State,
 	name:             [rd.PRINCIPAL_NAME_CAPACITY]u8,
 	name_length:      u8,
 	public_key:       [32]u8,
@@ -109,7 +109,10 @@ Principals_Counters :: struct {
 Principals_State :: struct {
 	initialized:                 bool,
 	principals:                  [MAX_PRINCIPALS]Principal_Entry,
-	front_principal:             u64,
+	// What the screen shows, and the session in front: a fact of its own,
+	// changed by principals.seat_next only. remote reads the principal in
+	// front through principals.principal_in_front.
+	seat:                        Seat,
 	start_policy:                Start_Policy_Choice,
 	machine_passphrase_required: bool,
 	client_table:                remote.Client_Table,
@@ -117,8 +120,8 @@ Principals_State :: struct {
 	counters:                    Principals_Counters,
 }
 
-// state_init resets state and installs principal 0 (the machine) in Active
-// state as the initial front principal.
+// state_init resets state and installs principal 0 (the machine), whose
+// session runs, in front.
 state_init :: proc "contextless" (state: ^Principals_State) {
 	if state == nil {
 		return
@@ -127,11 +130,10 @@ state_init :: proc "contextless" (state: ^Principals_State) {
 	machine := &state.principals[0]
 	machine.active = true
 	machine.id = role_contract.MACHINE_PRINCIPAL
-	machine.state = .Active
 	machine.session_serial = 1
 	copy(machine.name[:], MACHINE_PRINCIPAL_NAME)
 	machine.name_length = u8(len(MACHINE_PRINCIPAL_NAME))
-	state.front_principal = role_contract.MACHINE_PRINCIPAL
+	state.seat, _ = principals.seat_next({}, .Machine_Alone)
 	state.next_client_serial = 1
 	state.counters.principal_count = 1
 	state.counters.active_sessions = 1
@@ -204,7 +206,7 @@ sync_client_table_front :: proc "contextless" (state: ^Principals_State) {
 		if row.serial == 0 {
 			continue
 		}
-		row.not_in_front = u64(remote.client_display_paused(row.principal, state.front_principal))
+		row.not_in_front = u64(remote.client_display_paused(row.principal, principals.principal_in_front(state.seat)))
 	}
 	state.client_table.version += 1
 }
@@ -251,6 +253,13 @@ register_principal :: proc "contextless" (state: ^Principals_State, input: ^rd.R
 			return .Duplicate_Public_Key
 		}
 	}
+	// The number of a principal is its slot in the root service: a slot
+	// past the capacity names no principal. After the checks of the
+	// duplicates, so a duplicate name or key says so first.
+	if input.principal_id >= MAX_PRINCIPALS {
+		state.counters.total_refusals += 1
+		return .Invalid_Principal_Id
+	}
 	if free_index < 0 {
 		state.counters.total_refusals += 1
 		return .Principals_Full
@@ -260,12 +269,26 @@ register_principal :: proc "contextless" (state: ^Principals_State, input: ^rd.R
 	slot^ = {}
 	slot.active = true
 	slot.id = input.principal_id
-	slot.state = .Locked
+	slot.state, _ = principals.session_next(.Absent, .Record_Given)
 	slot.name = input.name
 	slot.name_length = input.name_length
 	slot.public_key = input.public_key
 	state.counters.principal_count += 1
+	// A named principal takes the seat from principal 0, as in the root
+	// service: a record while a named session holds it changes nothing.
+	state.seat, _ = principals.seat_next(state.seat, .Named_Principal_Recorded)
+	sync_client_table_front(state)
 	return .None
+}
+
+// The seat of the root service: a name at file scope, as the field
+// `principals` of Principals_State hides the package inside it.
+Seat :: principals.Seat
+
+// session_running says if the session of a principal runs: principal 0
+// always, a named principal in front.
+session_running :: proc "contextless" (entry: ^Principal_Entry) -> bool {
+	return entry.id == role_contract.MACHINE_PRINCIPAL || entry.state == .In_Front
 }
 
 // session_transition applies a validated Session_Action to a registered
@@ -297,11 +320,16 @@ session_transition :: proc "contextless" (state: ^Principals_State, input: ^rd.S
 			state.counters.total_refusals += 1
 			return .Machine_Principal_Protected
 		}
-		if entry.state != .Locked {
+		// The seat first, then the session: a refusal of either changes
+		// nothing.
+		next_state, state_ok := principals.session_next(entry.state, .Unlocked)
+		next_seat, seat_ok := principals.seat_next(state.seat, .Session_Unlocked, entry.id)
+		if !state_ok || !seat_ok {
 			state.counters.total_refusals += 1
 			return .Session_State_Conflict
 		}
-		entry.state = .Active
+		entry.state = next_state
+		state.seat = next_seat
 		entry.session_serial += 1
 		state.counters.active_sessions += 1
 		state.client_table.version += 1
@@ -309,8 +337,8 @@ session_transition :: proc "contextless" (state: ^Principals_State, input: ^rd.S
 			if row.serial != 0 && row.principal == entry.id {
 				row.session_locked = 0
 				row.serial = next_serial(state)
-				row.not_in_front = u64(remote.client_display_paused(row.principal, state.front_principal))
 			}
+			row.not_in_front = u64(remote.client_display_paused(row.principal, principals.principal_in_front(state.seat)))
 		}
 		state.client_table.version += 1
 		return .None
@@ -320,15 +348,15 @@ session_transition :: proc "contextless" (state: ^Principals_State, input: ^rd.S
 			state.counters.total_refusals += 1
 			return .Machine_Principal_Protected
 		}
-		if entry.state != .Active {
+		next_state, state_ok := principals.session_next(entry.state, .Locked)
+		next_seat, seat_ok := principals.seat_next(state.seat, .Session_Locked, entry.id)
+		if !state_ok || !seat_ok {
 			state.counters.total_refusals += 1
 			return .Session_State_Conflict
 		}
-		entry.state = .Locked
+		entry.state = next_state
+		state.seat = next_seat
 		state.counters.active_sessions -= 1
-		if state.front_principal == entry.id {
-			state.front_principal = role_contract.MACHINE_PRINCIPAL
-		}
 		state.client_table.version += 1
 		for &row in state.client_table.clients {
 			if row.serial == 0 {
@@ -338,17 +366,24 @@ session_transition :: proc "contextless" (state: ^Principals_State, input: ^rd.S
 				row.session_locked = 1
 				row.serial = next_serial(state)
 			}
-			row.not_in_front = u64(remote.client_display_paused(row.principal, state.front_principal))
+			row.not_in_front = u64(remote.client_display_paused(row.principal, principals.principal_in_front(state.seat)))
 		}
 		state.client_table.version += 1
 		return .None
 
 	case .Bring_To_Front:
-		if entry.state != .Active {
+		// One open session: the session that unlocks is in front, so the
+		// front is a fact that this action checks and never changes.
+		// Principal 0 is in front while no named session holds the seat; the
+		// start alone puts it there (principals.seat_next).
+		if !session_running(entry) {
 			state.counters.total_refusals += 1
 			return .Session_State_Conflict
 		}
-		state.front_principal = entry.id
+		if principals.principal_in_front(state.seat) != entry.id {
+			state.counters.total_refusals += 1
+			return .Session_State_Conflict
+		}
 		sync_client_table_front(state)
 		return .None
 	}
@@ -382,7 +417,7 @@ apply_disk_rows_set :: proc "contextless" (
 		return .Unknown_Principal, .None
 	}
 	entry := &state.principals[idx]
-	if entry.state != .Active {
+	if !session_running(entry) {
 		state.counters.total_refusals += 1
 		return .Session_State_Conflict, .None
 	}
@@ -471,7 +506,7 @@ apply_disk_rows_set :: proc "contextless" (
 						session_locked = 0,
 						contested      = 0,
 						uses           = req_row.client_uses_word,
-						not_in_front   = u64(remote.client_display_paused(request.principal, state.front_principal)),
+						not_in_front   = u64(remote.client_display_paused(request.principal, principals.principal_in_front(state.seat))),
 					}
 					state.counters.active_client_keys += 1
 					break
@@ -515,7 +550,7 @@ client_key_command :: proc "contextless" (state: ^Principals_State, input: ^rd.C
 		return 0, .Invalid_Client_Key_Action
 
 	case .Allow:
-		if entry.state != .Active {
+		if !session_running(entry) {
 			state.counters.total_refusals += 1
 			return 0, .Session_State_Conflict
 		}
@@ -558,7 +593,7 @@ client_key_command :: proc "contextless" (state: ^Principals_State, input: ^rd.C
 			session_locked = 0,
 			contested      = 0,
 			uses           = input.client_uses_word,
-			not_in_front   = u64(remote.client_display_paused(input.principal_id, state.front_principal)),
+			not_in_front   = u64(remote.client_display_paused(input.principal_id, principals.principal_in_front(state.seat))),
 		}
 		state.client_table.version += 1
 		state.counters.active_client_keys += 1

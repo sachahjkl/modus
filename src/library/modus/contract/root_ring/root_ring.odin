@@ -568,6 +568,24 @@ Root_Command :: enum u32 {
 	// record: Succeeded, or Argument_Refused for another record. A process
 	// that stops waits for it (system.ready_at_end); another reads none.
 	Ready = 40,
+	// Principal_Identifier gives the principal identifier of the record of a
+	// named principal, from its file (src/md/features/several_principals.md,
+	// "The identity: three names"): values[0..3] the 32 bytes of the
+	// identifier, values[4] the number of the principal that
+	// Principal_Record gave, values[5..6] 0. Only the holder of Principals
+	// sends it, after Principal_Record and before Principal_Unlock. Refused:
+	// a number with no record, an identifier of zero bytes, and another
+	// identifier for a record that has one.
+	Principal_Identifier = 41,
+	// Principal_Storage_Key gives the storage key of a named principal at
+	// its unlock (src/md/features/store_encryption.md, "The keys"):
+	// values[0..3] the key, values[4] the number of the principal, values[5..6]
+	// 0. Only the holder of Principals sends it, after Principal_Identifier
+	// and before Principal_Unlock. The root service passes the key and the
+	// identifier to the holder of Storage, and keeps no copy. Refused: a
+	// number with no record or no identifier, a key of zero bytes, and no
+	// storage service to take it.
+	Principal_Storage_Key = 42,
 }
 
 // The step of a Screen_Budget, in values[0].
@@ -859,6 +877,8 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Principals             = .Root_Ring,
 	.Principal_Record       = .Principals,
 	.Principal_Unlock       = .Principals,
+	.Principal_Identifier   = .Principals,
+	.Principal_Storage_Key  = .Principals,
 	.Debug                  = .Debugger,
 	.Palette_Provide        = .Root_Ring,
 	.Start_From_Disk        = .Root_Ring,
@@ -928,6 +948,7 @@ Start_Grant_Set_Handle :: enum u8 {
 	Tpm_Service, // Tpm.
 	Tpm_Region, // Tpm.
 	Client_Table, // Remote_Clients.
+	Session_Table, // Log_Records: the principal of each process (modus:contract/log_scope).
 	Device_Service, // Data_Disk, Scratch_Disk, Network_Device or Sound_Device: the device service, with Read, so that its stop ends a wait for its answer.
 	Log, // Each process: the log.
 }
@@ -952,7 +973,7 @@ start_grant_set_handles :: proc "contextless" (start_grant_set: bit_set[start_gr
 		handles += {.Image}
 	}
 	if .Log_Records in start_grant_set {
-		handles += {.Log_Records}
+		handles += {.Log_Records, .Session_Table}
 	}
 	if .Serve in start_grant_set {
 		handles += {.Service_Ring}
@@ -1331,6 +1352,8 @@ root_command_names := [Root_Command]string {
 	.Principals             = "Principals",
 	.Principal_Record       = "Principal_Record",
 	.Principal_Unlock       = "Principal_Unlock",
+	.Principal_Identifier   = "Principal_Identifier",
+	.Principal_Storage_Key  = "Principal_Storage_Key",
 	.Debug                  = "Debug",
 	.Palette_Provide        = "Palette_Provide",
 	.Start_From_Disk        = "Start_From_Disk",
@@ -1378,6 +1401,8 @@ root_first_argument_names := [Root_Command]string {
 	.Principals             = "name",
 	.Principal_Record       = "name",
 	.Principal_Unlock       = "name",
+	.Principal_Identifier   = "identifier",
+	.Principal_Storage_Key  = "key",
 	.Debug                  = "name",
 	.Palette_Provide        = "name",
 	.Start_From_Disk        = "name",
@@ -1426,6 +1451,8 @@ root_second_argument_names := [Root_Command]string {
 	.Principals             = "number",
 	.Principal_Record       = "",
 	.Principal_Unlock       = "number",
+	.Principal_Identifier   = "",
+	.Principal_Storage_Key  = "",
 	.Debug                  = "",
 	.Palette_Provide        = "",
 	.Start_From_Disk        = "hash",

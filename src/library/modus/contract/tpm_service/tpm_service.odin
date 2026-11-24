@@ -82,7 +82,9 @@ REGION_AUTHORIZATION :: 2048
 AUTHORIZATION_SIZE :: 32
 // The payload of a pin of Pin_Read and Pin_Write: at most PIN_LIMIT bytes.
 REGION_PIN :: 2560
-PIN_LIMIT :: 128
+// Format property: the payload of a principal file pin, 152 bytes, with
+// its principal identifier, is the largest.
+PIN_LIMIT :: 160
 
 // The authorization of a sealed object, in values[0] of Seal and values[4]
 // of Unseal. Its word crosses the ring, so each value is explicit.

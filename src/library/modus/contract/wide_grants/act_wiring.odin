@@ -405,7 +405,7 @@ act_space_refusal_map :: proc "contextless" (refusal: Space_Refusal) -> Act_Wiri
 		return .None
 	case .Space_Full, .Forward_Full:
 		return .Audit_Space_Full
-	case .Store_Failed, .Store_Damaged:
+	case .Store_Failed, .Store_Damaged, .Older_Format:
 		return .Store_Refused
 	case .Bad_Bound, .Space_Limit_Reached:
 		return .Bad_Bound

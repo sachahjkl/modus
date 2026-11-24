@@ -14,6 +14,7 @@ import "internal:storage/storage_release"
 import block_tree "internal:storage/storage_object"
 import "internal:storage/storage_retention"
 import tree "internal:storage/storage_tree"
+import "internal:storage/store_encryption"
 import "modus:system"
 
 // The format of the disk, and the one rule that keeps it whole (copy on
@@ -420,15 +421,17 @@ read_checked :: proc "contextless" (pointers: []Pointer, first_slot: u64) -> (wr
 // nothing. An entry is found by its number and its check, so a block that
 // was freed and written again is never taken for the old one.
 Cached_Block :: struct {
-	number: u64,
-	check:  u64,
-	used:   u64, // The count of reads at its last use.
-	bytes:  Block,
+	number:      u64,
+	check:       u64,
+	used:        u64, // The count of reads at its last use.
+	store_index: i32, // Owning store cell index, or -1 for non-store blocks.
+	owner_slot:  u8,  // Principal slot + 1 for owned stores; 0 for principal 0 or untagged.
+	bytes:       Block,
 }
-block_cache: [64]Cached_Block // The nodes near the roots of the trees that the last calls used.
+block_cache: [64]Cached_Block // The nodes near the roots of the trees that the last calls used (always on-disk bytes).
 cache_reads: u64
 
-cache_put :: proc "contextless" (pointer: Pointer, bytes: ^Block) {
+cache_put :: proc "contextless" (pointer: Pointer, bytes: ^Block, store_index := active_store_index, owner_slot := active_store_owner_slot) {
 	oldest := 0
 	for &entry, index in block_cache {
 		if entry.number == pointer.block {
@@ -440,8 +443,22 @@ cache_put :: proc "contextless" (pointer: Pointer, bytes: ^Block) {
 		}
 	}
 	cache_reads += 1
-	block_cache[oldest] = {number = pointer.block, check = pointer.check, used = cache_reads}
+	block_cache[oldest] = {number = pointer.block, check = pointer.check, used = cache_reads, store_index = i32(store_index), owner_slot = owner_slot}
 	block_cache[oldest].bytes = bytes^
+}
+
+// cache_tag binds an already cached block to its verified store and principal slot.
+cache_tag :: proc "contextless" (pointer: Pointer, store_index: int, owner_slot: u8) {
+	if pointer.block == 0 {
+		return
+	}
+	for &entry in block_cache {
+		if entry.number == pointer.block && entry.check == pointer.check {
+			entry.store_index = i32(store_index)
+			entry.owner_slot = owner_slot
+			return
+		}
+	}
 }
 
 // cache_forget drops a block from the cache: the erase of versions writes
@@ -449,17 +466,25 @@ cache_put :: proc "contextless" (pointer: Pointer, bytes: ^Block) {
 cache_forget :: proc "contextless" (number: u64) {
 	for &entry in block_cache {
 		if entry.number == number {
-			entry = {}
+			intrinsics.mem_zero_volatile(&entry, size_of(Cached_Block))
 		}
 	}
 }
 
-// read_single reads one block, checked, through the cache.
-read_single :: proc "contextless" (pointer: Pointer, into: ^Block) -> Read {
+// read_single_tagged reads one block, checked, through the cache (on-disk
+// bytes), tagging any cache fill or untagged cache hit with store_index and
+// owner_slot so lock eviction always removes every block of that principal.
+read_single_tagged :: proc "contextless" (pointer: Pointer, into: ^Block, store_index: int, owner_slot: u8) -> Read {
 	cache_reads += 1
 	for &entry in block_cache {
 		if entry.number == pointer.block && entry.check == pointer.check && pointer.block != 0 {
 			entry.used = cache_reads
+			if store_index >= 0 && entry.store_index < 0 {
+				entry.store_index = i32(store_index)
+			}
+			if owner_slot != 0 && entry.owner_slot == 0 {
+				entry.owner_slot = owner_slot
+			}
 			into^ = entry.bytes
 			return .Good
 		}
@@ -467,9 +492,74 @@ read_single :: proc "contextless" (pointer: Pointer, into: ^Block) -> Read {
 	_, state := read_checked({pointer}, 0)
 	if state == .Good {
 		intrinsics.mem_copy_non_overlapping(into, raw_data(slot(0)), BLOCK_SIZE)
-		cache_put(pointer, into)
+		cache_put(pointer, into, store_index, owner_slot)
 	}
 	return state
+}
+
+// read_single reads one block, checked, through the cache (on-disk bytes).
+read_single :: proc "contextless" (pointer: Pointer, into: ^Block) -> Read {
+	return read_single_tagged(pointer, into, active_store_index, active_store_owner_slot)
+}
+
+// read_tree_node reads a B+ tree node and opens/authenticates it when an
+// encrypted store scope is active.
+read_tree_node :: proc "contextless" (pointer: Pointer, into: ^Block) -> Read {
+	outcome := read_single(pointer, into)
+	if outcome == .Good && active_store_keys != nil {
+		if !store_encryption.tree_node_open(active_store_keys, pointer.block, pointer.check, into) {
+			return .Wrong
+		}
+	}
+	return outcome
+}
+
+// read_object_node reads an Object_Node and opens/authenticates it when an
+// encrypted store scope is active.
+read_object_node :: proc "contextless" (pointer: Pointer, into: ^Object_Node) -> Read {
+	outcome := read_single(pointer, (^Block)(into))
+	if outcome == .Good && active_store_keys != nil {
+		if !store_encryption.object_node_open(active_store_keys, pointer.block, pointer.check, into) {
+			return .Wrong
+		}
+	}
+	return outcome
+}
+
+// read_version_index reads a Version_Index and opens/authenticates it when
+// an encrypted store scope is active.
+read_version_index :: proc "contextless" (pointer: Pointer, into: ^Version_Index) -> Read {
+	outcome := read_single(pointer, (^Block)(into))
+	if outcome == .Good && active_store_keys != nil {
+		if !store_encryption.version_index_open(active_store_keys, pointer.block, pointer.check, into) {
+			return .Wrong
+		}
+	}
+	return outcome
+}
+
+// read_version_leaf reads a Version_Leaf and opens/authenticates it when an
+// encrypted store scope is active.
+read_version_leaf :: proc "contextless" (pointer: Pointer, into: ^Version_Leaf) -> Read {
+	outcome := read_single(pointer, (^Block)(into))
+	if outcome == .Good && active_store_keys != nil {
+		if !store_encryption.version_leaf_open(active_store_keys, pointer.block, pointer.check, into) {
+			return .Wrong
+		}
+	}
+	return outcome
+}
+
+// read_release_list reads a Release_List and verifies its MAC when an
+// encrypted store scope is active.
+read_release_list :: proc "contextless" (pointer: Pointer, into: ^format.Release_List) -> Read {
+	outcome := read_single(pointer, (^Block)(into))
+	if outcome == .Good && active_store_keys != nil {
+		if !store_encryption.release_list_open(active_store_keys, pointer.block, pointer.check, into) {
+			return .Wrong
+		}
+	}
+	return outcome
 }
 
 // read_raw reads one block with no check.
@@ -486,17 +576,18 @@ read_raw :: proc "contextless" (number: u64, into: ^Block) -> Read {
 
 // The block trees of the objects (src/library/internal/storage/storage_object) read their
 // object nodes through the cache, checked, and their blocks of data with
-// no check: the tree checks each one by its value at its place.
+// no check (clear) or ciphertext check plus decryption (encrypted).
 object_source := block_tree.Source {
-	read_node  = object_read_node,
-	read_block = object_read_block,
+	read_node            = object_read_node,
+	read_block           = object_read_block,
+	read_encrypted_block = object_read_encrypted_block,
 }
 
 object_read_node :: proc "contextless" (_: ^block_tree.Source, pointer: Pointer, into: ^block_tree.Block) -> block_tree.Read {
 	if pointer.block < 2 || pointer.block >= disk_size {
 		return .Wrong
 	}
-	switch read_single(pointer, into) {
+	switch read_object_node(pointer, (^Object_Node)(into)) {
 	case .Good:
 		return .Good
 	case .Wrong:
@@ -510,6 +601,24 @@ object_read_node :: proc "contextless" (_: ^block_tree.Source, pointer: Pointer,
 object_read_block :: proc "contextless" (_: ^block_tree.Source, number: u64, into: ^block_tree.Block) -> block_tree.Read {
 	switch read_raw(number, into) {
 	case .Good:
+		return .Good
+	case .Wrong:
+		return .Wrong
+	case .Device:
+	}
+	return .Device
+}
+
+object_read_encrypted_block :: proc "contextless" (_: ^block_tree.Source, pointer: Pointer, data_check: u64, into: ^block_tree.Block) -> block_tree.Read {
+	if active_store_keys == nil || pointer.block < 2 || pointer.block >= disk_size {
+		return .Wrong
+	}
+	switch read_raw(pointer.block, into) {
+	case .Good:
+		if !store_encryption.data_block_decrypt(active_store_keys, pointer.block, pointer.check, data_check, into) {
+			storage_mount.wrong_block_set(&opened, pointer.block)
+			return .Wrong
+		}
 		return .Good
 	case .Wrong:
 		return .Wrong
@@ -679,9 +788,21 @@ store_cell :: proc "contextless" (index: int) -> ^Store_Entry {
 	return storage_mount.store_cell(&opened, index)
 }
 
-// store_name_of gives the name of the store of a number.
+// store_name_of gives the name of the store of a number. A store of a
+// named principal keeps a name tag only: it is said as such, and its name
+// comes from the caller (plan_store_name) or its keys (owned_name_into).
 store_name_of :: proc "contextless" (index: int) -> string {
+	if store_cell(index).name[0] == format.OWNED_CELL_MARK {
+		return "(a store of a named principal)"
+	}
 	return system.name_of(store_cell(index).name[:])
+}
+
+// The name of the store of the plan, as the caller named it.
+plan_store_name_bytes: system.Name
+
+plan_store_name :: proc "contextless" () -> string {
+	return system.name_of(plan_store_name_bytes[:])
 }
 
 // store_listed says if a number names a store that the service serves: a
@@ -691,9 +812,15 @@ store_listed :: proc "contextless" (index: int) -> bool {
 	return !opened.store_page_damaged[page] && store_cell(index).name[0] != 0
 }
 
+// store_find gives the store of a name: a store of a named principal by
+// its name tag, with the keys of that principal (owned_stores.odin), a
+// store of principal 0 by its name.
 store_find :: proc "contextless" (name: string) -> int {
+	if slot := owned_slot(name); slot != 0 {
+		return owned_find(slot, name)
+	}
 	for index in 0 ..< store_numbers() {
-		if store_listed(index) && store_name_of(index) == name {
+		if store_listed(index) && !owned_cell(index) && store_name_of(index) == name {
 			return index
 		}
 	}
@@ -727,8 +854,10 @@ LEAF_WORK_CAPACITY :: 300 // More than the leaves of one index.
 REFERENCE_LIMIT :: storage_mount.REFERENCE_LIMIT
 
 Write :: struct {
-	number: u64,
-	bytes:  ^Block,
+	number:         u64,
+	bytes:          ^Block,
+	encrypted_data: bool, // True for encrypted data blocks: encrypt on the fly into transfer region without mutating bytes^.
+	data_check:     u64, // Plaintext value_check used to derive the data block nonce when encrypted_data is true.
 }
 
 Index_Work :: struct {
@@ -806,6 +935,12 @@ Plan :: struct {
 	// The object nodes of the releases, one for each level: a release walks
 	// down the nodes that lose their last name.
 	release_nodes: [OBJECT_LEVEL_LIMIT + 1]Object_Node,
+	// Store encryption state for this plan (volatile-zeroed on drop/commit).
+	encrypted:     bool,
+	owner_slot:    u64,
+	store_keys:    store_encryption.Store_Keys,
+	prev_crypto:   Store_Crypto_Scope,
+	crypto_active: bool,
 }
 
 plan: Plan
@@ -992,7 +1127,18 @@ plan_tables_bind :: proc "contextless" (writes: []Write, taken: []u64, delta_blo
 	plan.outside_places = outside_places
 }
 
+plan_crypto_end :: proc "contextless" () {
+	if plan.crypto_active {
+		store_crypto_leave(&plan.prev_crypto)
+		plan.crypto_active = false
+	}
+	intrinsics.mem_zero_volatile(&plan.store_keys, size_of(plan.store_keys))
+	plan.encrypted = false
+	plan.owner_slot = 0
+}
+
 plan_reset :: proc "contextless" (store_index: int) {
+	plan_crypto_end()
 	plan_tables_fixed()
 	block_counts.counts_failure_clear(&opened.counts)
 	for &work in plan.index_work[:plan.entry_count] {
@@ -1016,6 +1162,37 @@ plan_reset :: proc "contextless" (store_index: int) {
 	later_count = 0
 	plan.next = root
 	plan.store_block = store_index >= 0 ? storage_mount.store_block_of(store_blocks[store_index]) : {}
+	// Always switch away from any outer crypto scope before inspecting the
+	// target store, so a failure never leaks outer keys and plan_drop restores
+	// the outer scope cleanly.
+	plan.prev_crypto = store_crypto_enter_keys(store_index, 0, nil)
+	plan.crypto_active = true
+	// The head keeps no owner fields: the commit of a store of a principal
+	// keeps those of its verified store block and activates its Store_Keys.
+	if store_index >= 0 && store_index < store_numbers() && owned_cell(store_index) {
+		keys, keys_read := owned_store_keys_get(store_index)
+		defer intrinsics.mem_zero_volatile(&keys, size_of(keys))
+		switch keys_read {
+		case .Good:
+			owner, fields_read := owned_fields_read(store_index)
+			switch fields_read {
+			case .Good:
+				format.store_owner_set(&plan.store_block, owner)
+				plan.encrypted = true
+				plan.owner_slot = u64(owned_checked[store_index] - 1)
+				plan.store_keys = keys
+				store_crypto_set_active(store_index, owned_checked[store_index], &plan.store_keys)
+			case .Device:
+				plan.device = true
+			case .Wrong:
+				plan.tree_damaged = true
+			}
+		case .Device:
+			plan.device = true
+		case .Wrong:
+			plan.tree_damaged = true
+		}
+	}
 	plan.page_written = {}
 	if store_index >= 0 {
 		page, _ := format.store_place(store_index)
@@ -1026,13 +1203,14 @@ plan_reset :: proc "contextless" (store_index: int) {
 	plan_trees_reset()
 }
 
-// plan_drop frees the blocks that the plan allocated.
+// plan_drop frees the blocks that the plan allocated and erases plan keys.
 plan_drop :: proc "contextless" () {
 	for number in plan.taken[:plan.taken_count] {
 		mark(number, false)
 	}
 	plan.taken_count = 0
 	block_counts.commit_drop(&opened.count_commit)
+	plan_crypto_end()
 }
 
 delta_place :: proc "contextless" (number: u64) -> (place: u32, found: bool) {
@@ -1188,6 +1366,163 @@ plan_write_checked :: proc "contextless" (bytes: ^Block, given_check: u64, given
 	return {block = number, check = given ? given_check : check_of(bytes[:])}
 }
 
+plan_write_tree_node :: proc "contextless" (bytes: ^Block) -> Pointer {
+	if !plan.encrypted {
+		return plan_write(bytes)
+	}
+	if plan.write_count >= len(plan.writes) {
+		capacity_reached(len(plan.writes))
+		return {}
+	}
+	number := plan_allocate()
+	if number == 0 {
+		return {}
+	}
+	check, ok := store_encryption.tree_node_seal(&plan.store_keys, number, bytes)
+	if !ok {
+		plan.tree_damaged = true
+		return {}
+	}
+	plan.writes[plan.write_count] = {number = number, bytes = bytes}
+	plan.write_count += 1
+	return {block = number, check = check}
+}
+
+plan_write_object_node :: proc "contextless" (bytes: ^Block) -> Pointer {
+	if !plan.encrypted {
+		return plan_write(bytes)
+	}
+	if plan.write_count >= len(plan.writes) {
+		capacity_reached(len(plan.writes))
+		return {}
+	}
+	number := plan_allocate()
+	if number == 0 {
+		return {}
+	}
+	check, ok := store_encryption.object_node_seal(&plan.store_keys, number, (^Object_Node)(bytes))
+	if !ok {
+		plan.tree_damaged = true
+		return {}
+	}
+	plan.writes[plan.write_count] = {number = number, bytes = bytes}
+	plan.write_count += 1
+	return {block = number, check = check}
+}
+
+plan_write_data_block :: proc "contextless" (bytes: ^Block, data_check: u64) -> Pointer {
+	if !plan.encrypted {
+		return plan_write_checked(bytes, data_check, true)
+	}
+	if plan.write_count >= len(plan.writes) {
+		capacity_reached(len(plan.writes))
+		return {}
+	}
+	number := plan_allocate()
+	if number == 0 {
+		return {}
+	}
+	// Encrypt into a volatile-zeroed scratch block to compute cipher_check
+	// without mutating Pending_Block.bytes or whole_blocks in place.
+	scratch: Block = bytes^
+	cipher_check := store_encryption.data_block_encrypt(&plan.store_keys, number, data_check, &scratch)
+	intrinsics.mem_zero_volatile(&scratch, size_of(scratch))
+	plan.writes[plan.write_count] = {number = number, bytes = bytes, encrypted_data = true, data_check = data_check}
+	plan.write_count += 1
+	return {block = number, check = cipher_check}
+}
+
+plan_write_version_leaf :: proc "contextless" (leaf: ^Version_Leaf) -> Pointer {
+	if !plan.encrypted {
+		return plan_write((^Block)(leaf))
+	}
+	if plan.write_count >= len(plan.writes) {
+		capacity_reached(len(plan.writes))
+		return {}
+	}
+	number := plan_allocate()
+	if number == 0 {
+		return {}
+	}
+	check, ok := store_encryption.version_leaf_seal(&plan.store_keys, number, leaf)
+	if !ok {
+		plan.tree_damaged = true
+		return {}
+	}
+	plan.writes[plan.write_count] = {number = number, bytes = (^Block)(leaf)}
+	plan.write_count += 1
+	return {block = number, check = check}
+}
+
+plan_write_version_index :: proc "contextless" (bytes: ^Block) -> Pointer {
+	if !plan.encrypted {
+		return plan_write(bytes)
+	}
+	if plan.write_count >= len(plan.writes) {
+		capacity_reached(len(plan.writes))
+		return {}
+	}
+	number := plan_allocate()
+	if number == 0 {
+		return {}
+	}
+	check, ok := store_encryption.version_index_seal(&plan.store_keys, number, (^Version_Index)(bytes))
+	if !ok {
+		plan.tree_damaged = true
+		return {}
+	}
+	plan.writes[plan.write_count] = {number = number, bytes = bytes}
+	plan.write_count += 1
+	return {block = number, check = check}
+}
+
+plan_write_release_list :: proc "contextless" (list: ^format.Release_List) -> Pointer {
+	if !plan.encrypted {
+		return plan_write((^Block)(list))
+	}
+	if plan.write_count >= len(plan.writes) {
+		capacity_reached(len(plan.writes))
+		return {}
+	}
+	number := plan_allocate()
+	if number == 0 {
+		return {}
+	}
+	check, ok := store_encryption.release_list_seal(&plan.store_keys, number, list)
+	if !ok {
+		plan.tree_damaged = true
+		return {}
+	}
+	plan.writes[plan.write_count] = {number = number, bytes = (^Block)(list)}
+	plan.write_count += 1
+	return {block = number, check = check}
+}
+
+plan_write_store_block :: proc "contextless" (bytes: ^Block) -> Pointer {
+	if !plan.encrypted {
+		return plan_write(bytes)
+	}
+	if plan.write_count >= len(plan.writes) {
+		capacity_reached(len(plan.writes))
+		return {}
+	}
+	number := plan_allocate()
+	if number == 0 {
+		return {}
+	}
+	sb := (^Store_Block)(bytes)
+	sb.store_generation = root.generation + 1
+	plan.store_block.store_generation = sb.store_generation
+	check, ok := store_encryption.store_block_seal(&plan.store_keys, number, sb)
+	if !ok {
+		plan.tree_damaged = true
+		return {}
+	}
+	plan.writes[plan.write_count] = {number = number, bytes = bytes}
+	plan.write_count += 1
+	return {block = number, check = check}
+}
+
 // state_name counts one more name of the root of a state of an object (a
 // current version, a version, a clone).
 state_name :: proc "contextless" (root: Pointer) {
@@ -1274,7 +1609,7 @@ release_lists_write :: proc "contextless" () {
 	for index := lists - 1; index >= 0; index -= 1 {
 		list := &plan_fixed.release_lists[index]
 		list.next = next
-		next = plan_write((^Block)(list))
+		next = plan_write_release_list(list)
 		if next.block == 0 {
 			return // plan_write gave the cause.
 		}
@@ -1346,7 +1681,7 @@ release_node_read :: proc "contextless" (_: ^storage_release.Releaser, child: Ob
 	if storage_mount.wrong_block(&opened, child.block) || storage_mount.damaged_under(&opened, child.block) {
 		return .Wrong
 	}
-	switch read_single({block = child.block, check = child.check}, (^Block)(into)) {
+	switch read_object_node({block = child.block, check = child.check}, into) {
 	case .Device:
 		return .Device
 	case .Wrong:
@@ -1379,7 +1714,7 @@ child_release :: proc "contextless" (child: Object_Child, level: int) {
 		return
 	}
 	node := &plan.release_nodes[level]
-	switch read_single({block = child.block, check = child.check}, (^Block)(node)) {
+	switch read_object_node({block = child.block, check = child.check}, node) {
 	case .Device:
 		plan.device = true
 	case .Wrong:
@@ -1419,11 +1754,11 @@ counter_release :: proc "contextless" (_: ^block_tree.Counter, child: Object_Chi
 }
 
 counter_write_node :: proc "contextless" (_: ^block_tree.Counter, bytes: ^block_tree.Block) -> Pointer {
-	return plan_write(bytes)
+	return plan_write_object_node(bytes)
 }
 
 counter_write_data :: proc "contextless" (_: ^block_tree.Counter, bytes: ^block_tree.Block, check: u64) -> Pointer {
-	return plan_write_checked(bytes, check, true)
+	return plan_write_data_block(bytes, check)
 }
 
 // index_load gives the version work of an object of the plan.
@@ -1437,7 +1772,7 @@ index_load :: proc "contextless" (entry_index: int) -> ^Index_Work {
 	work.original = plan.entries[entry_index].entry.versions
 	work.index = {}
 	if work.original.block != 0 {
-		switch read_single(work.original, (^Block)(&work.index)) {
+		switch read_version_index(work.original, &work.index) {
 		case .Device:
 			plan.device = true
 		case .Wrong:
@@ -1479,7 +1814,7 @@ leaf_load :: proc "contextless" (entry_index: int, position: int) -> ^Leaf_Work 
 	work^ = {entry = entry_index, position = position}
 	if position < int(index.index.leaf_count) && index.index.leaves[position].block != 0 {
 		work.original = index.index.leaves[position]
-		switch read_single(work.original, (^Block)(&work.leaf)) {
+		switch read_version_leaf(work.original, &work.leaf) {
 		case .Device:
 			plan.device = true
 		case .Wrong:
@@ -2139,6 +2474,7 @@ repair_commit :: proc "contextless" () -> (committed: bool, full: bool) {
 	}
 	count_pages_install()
 	plan.taken_count = 0
+	plan_crypto_end()
 	storage_mount.repair_commit_came(&opened)
 	repair_start_said, repair_device_said, repair_room_said, repair_commit_said = false, false, false, false
 	return true, false
@@ -2211,7 +2547,7 @@ plan_finish :: proc "contextless" () {
 				if leaf.leaf.count == 0 {
 					continue
 				}
-				pointer = plan_write((^Block)(&leaf.leaf))
+				pointer = plan_write_version_leaf(&leaf.leaf)
 				if pointer.block != 0 {
 					cache_later(pointer, (^Block)(&leaf.leaf))
 				}
@@ -2231,7 +2567,7 @@ plan_finish :: proc "contextless" () {
 		}
 		block_bytes := &plan.index_blocks[entry_index]
 		intrinsics.mem_copy_non_overlapping(block_bytes, &next, BLOCK_SIZE)
-		item.entry.versions = plan_write(block_bytes)
+		item.entry.versions = plan_write_version_index(block_bytes)
 		if item.entry.versions.block != 0 {
 			cache_later(item.entry.versions, block_bytes)
 		}
@@ -2244,7 +2580,7 @@ plan_finish :: proc "contextless" () {
 		delta_add(entry.store.block, -1)
 	}
 	intrinsics.mem_copy_non_overlapping(&plan.store_block_bytes, &plan.store_block, BLOCK_SIZE)
-	entry.store = plan_write(&plan.store_block_bytes)
+	entry.store = plan_write_store_block(&plan.store_block_bytes)
 }
 
 // The leaves and indexes that the commit writes go to the cache after it.
@@ -2273,6 +2609,9 @@ plan_write_with_root :: proc "contextless" (error: ^errors.Error_Record) -> (pla
 		requests: [REGION_BLOCKS]Request
 		for write, index in part {
 			intrinsics.mem_copy_non_overlapping(raw_data(slot(u64(index))), write.bytes, BLOCK_SIZE)
+			if write.encrypted_data {
+				_ = store_encryption.data_block_encrypt(&plan.store_keys, write.number, write.data_check, (^Block)(raw_data(slot(u64(index)))))
+			}
 			requests[index] = {number = write.number, slot = u64(index)}
 		}
 		if !transfer(.Write, requests[:len(part)]) {
@@ -2492,7 +2831,7 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, 
 	// has a writable share of a tree open, a new root is hidden: never a
 	// candidate, so the holder cannot plant bytes that a later write of the
 	// maker would find (docs/STORAGE.md, "4.7 The same object one time").
-	hidden := writable_tree_share_open(store_name_of(plan.store_index))
+	hidden := writable_tree_share_open(plan_store_name())
 	for &item in plan.entries[:plan.entry_count] {
 		storage_mount.hash_index_entry_change(&opened, item.before, item.entry, item.gone, hidden)
 	}
@@ -2501,6 +2840,14 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, 
 	}
 	later_count = 0
 	plan.taken_count = 0
+	if plan.encrypted {
+		owned_checked[plan.store_index] = u8(plan.owner_slot + 1)
+		if plan.store_block.store_generation > owned_min_generation[plan.store_index] {
+			owned_min_generation[plan.store_index] = plan.store_block.store_generation
+		}
+		owned_store_keys_put(plan.store_index, plan.owner_slot, &plan.store_keys)
+	}
+	plan_crypto_end()
 	// A commit can free the blocks that a repair found no room for.
 	storage_mount.repair_commit_came(&opened)
 	return i64(root.generation), .Succeeded
@@ -2677,7 +3024,14 @@ commit_blocks_read_back :: proc "contextless" () -> (differ: u64, state: Read) {
 		}
 		blocks_read_back += u64(len(part))
 		for write, index in part {
-			if string(slot(u64(index))) != string(write.bytes^[:]) {
+			if write.encrypted_data {
+				expected: Block = write.bytes^
+				_ = store_encryption.data_block_encrypt(&plan.store_keys, write.number, write.data_check, &expected)
+				if string(slot(u64(index))) != string(expected[:]) {
+					differ += 1
+				}
+				intrinsics.mem_zero_volatile(&expected, size_of(expected))
+			} else if string(slot(u64(index))) != string(write.bytes^[:]) {
 				differ += 1
 			}
 		}

@@ -48,14 +48,29 @@ Any_Record :: struct {}
 // writer. A process that writes one record output from several threads
 // holds its own lock around each write (src/md/features/module_outputs.md,
 // "Subtle points").
-Output_State :: struct {
-	index:       u32, // The loader writes it.
+// The serial and the counts of the records of one set of rings: the whole
+// record output, or the rings of the readers of one principal of a record
+// output By_Principal, so no reader learns a count of another principal
+// (src/md/features/log_reader_scope.md, "The scope of a principal").
+Serial_Counts :: struct {
 	next_serial: u32, // The serial of the next record of the record output, in each ring.
 	written:     u64, // The records that one ring or more took.
 	discarded:   u64, // The records that no ring took: the record output had no reader, the condition of each ring left the record out, or each ring of the pace Never_Holds_Writer was full and counted it in its gap.
 	refused:     u64, // The writes refused with Full: no ring took them, and they have no serial.
 	held:        u64, // The writes that waited for room in a full ring that holds the writer, once each.
 	rings_past_gap: u64, // The rings that the writer closed as their gap reached its largest count (output.gap_after_refused_record).
+}
+
+// The principals whose rings a record output By_Principal counts apart:
+// plan value, the capacity of principals of the machine
+// (principals.PRINCIPAL_CAPACITY), which the log service asserts. A
+// principal past it has no rings that take a record.
+SCOPED_PRINCIPALS_MOST :: 2
+
+Output_State :: struct {
+	index:       u32, // The loader writes it.
+	using counts: Serial_Counts, // The whole record output; a record output By_Principal counts in scoped.
+	scoped:      [SCOPED_PRINCIPALS_MOST]Serial_Counts, // A record output By_Principal: the counts of the rings of each principal.
 	refused_by_readers: u64, // The compartments that a reader refused (output.Completion_Kind.Bad_Record): the writer closes each such ring.
 	ended:       bool, // output_end ended the record output.
 	last_end:    output.End_Word, // The end word of the last ring that ended by an end word.

@@ -62,6 +62,12 @@ WIRING_VALUE_FILTER :: 6 // A reader end: the word of its Reader_Filter. A write
 // of its pair, for a ring of a record output Paired, or 0. It is a number
 // of a wiring, never a handle, so no path closes it.
 WIRING_VALUE_PAIR :: WIRING_VALUE_FILTER
+// The word of the description for a writer end: the principal of the
+// reader of a ring of a record output By_Principal, plus 1, or 0 for each
+// other ring. It is a number, never a handle, so no path closes it.
+WIRING_VALUE_READER_PRINCIPAL :: WIRING_VALUE_DESCRIPTION
+// The principals that the word names: the numbers of a grant.
+READER_PRINCIPAL_LIMIT :: u64(1) << 15
 
 // Whether the writer leaves out records of a ring: the wiring has a
 // condition. 0 names no condition. The values cross the border of the
@@ -87,6 +93,7 @@ Given_End :: struct {
 	condition: op.Handle, // A writer end: the page of its Writer_Condition, or 0. A reader end: 0.
 	filter:    Reader_Filter, // A reader end: whether the writer leaves out records. A writer end: None.
 	pair:      u32, // A writer end of a record output Paired: the number of the wiring of the source of its pair. Else 0.
+	reader_principal: u64, // A writer end of a record output By_Principal: the principal of its reader, plus 1. Else 0.
 }
 
 // given_end_of_record is the border of a command of the wiring ring: the
@@ -141,8 +148,8 @@ given_end_of_record :: proc "contextless" (record: ring.Record) -> (end: Given_E
 		if values[WIRING_VALUE_TERMS] > u64(max(u32)) {
 			return {}, word_refusal(WIRING_VALUE_TERMS + 1, values[WIRING_VALUE_TERMS], u64(max(u32))), false
 		}
-		if values[WIRING_VALUE_DESCRIPTION] != 0 {
-			return {}, word_refusal(WIRING_VALUE_DESCRIPTION + 1, values[WIRING_VALUE_DESCRIPTION], 0), false
+		if values[WIRING_VALUE_READER_PRINCIPAL] > READER_PRINCIPAL_LIMIT {
+			return {}, word_refusal(WIRING_VALUE_READER_PRINCIPAL + 1, values[WIRING_VALUE_READER_PRINCIPAL], READER_PRINCIPAL_LIMIT), false
 		}
 		if values[WIRING_VALUE_PAIR] > u64(max(u32)) {
 			return {}, word_refusal(WIRING_VALUE_PAIR + 1, values[WIRING_VALUE_PAIR], u64(max(u32))), false
@@ -150,6 +157,7 @@ given_end_of_record :: proc "contextless" (record: ring.Record) -> (end: Given_E
 		end.pace = pace
 		end.condition = op.Handle(values[WIRING_VALUE_TERMS])
 		end.pair = u32(values[WIRING_VALUE_PAIR])
+		end.reader_principal = values[WIRING_VALUE_READER_PRINCIPAL]
 	case .Reader_End, .Asker_End:
 		if values[WIRING_VALUE_PACE] != 0 {
 			return {}, word_refusal(WIRING_VALUE_PACE + 1, values[WIRING_VALUE_PACE], 0), false
@@ -199,6 +207,7 @@ given_end_record :: proc "contextless" (end: Given_End) -> ring.Record {
 		record.values[WIRING_VALUE_PACE] = u64(end.pace)
 		record.values[WIRING_VALUE_TERMS] = u64(end.condition)
 		record.values[WIRING_VALUE_PAIR] = u64(end.pair)
+		record.values[WIRING_VALUE_READER_PRINCIPAL] = end.reader_principal
 	case .Reader_End, .Asker_End:
 		record.values[WIRING_VALUE_TERMS] = u64(end.terms)
 		record.values[WIRING_VALUE_DESCRIPTION] = u64(end.description)

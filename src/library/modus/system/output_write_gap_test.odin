@@ -559,3 +559,91 @@ the_end_of_a_pair_with_no_source_closes_alone :: proc(t: ^testing.T) {
 	testing.expect_value(t, output_pairs(&forward, listed[:]), 1)
 	testing.expect_value(t, listed[0], u32(6))
 }
+
+// A record output By_Principal: a write of one principal reaches the rings
+// of the readers of that principal only. Refused first: a principal past
+// the field, and a write of a principal with no ring, with no record in any
+// ring; a ring whose reader principal is not known takes no record of a
+// principal; then the rings of one principal take it, and a live count
+// sees each ring.
+@(test)
+a_write_of_a_principal_reaches_the_rings_of_that_principal_only :: proc(t: ^testing.T) {
+	wiring_mem := host_stream_seam_begin(t)
+	defer host_stream_seam_end(wiring_mem)
+	STREAM_INDEX :: u32(1)
+	ring_machine := host_output_ring_make(t, size_of(Gap_Test_Record))
+	defer host_output_ring_destroy(&ring_machine)
+	ring_named := host_output_ring_make(t, size_of(Gap_Test_Record))
+	defer host_output_ring_destroy(&ring_named)
+	ring_unknown := host_output_ring_make(t, size_of(Gap_Test_Record))
+	defer host_output_ring_destroy(&ring_unknown)
+	host_seed_writer_end(t, 0, &ring_machine, STREAM_INDEX, 11, size_of(Gap_Test_Record), .Writer_Chooses, full = false, joined = false)
+	stream_ends[0].reader_principal = 0 + 1
+	host_seed_writer_end(t, 1, &ring_named, STREAM_INDEX, 12, size_of(Gap_Test_Record), .Writer_Chooses, full = false, joined = false)
+	stream_ends[1].reader_principal = 1 + 1
+	host_seed_writer_end(t, 2, &ring_unknown, STREAM_INDEX, 13, size_of(Gap_Test_Record), .Writer_Chooses, full = false, joined = false)
+	stream := Record_Output(Gap_Test_Record, .By_Principal){}
+	stream.state.index = STREAM_INDEX
+
+	record := Gap_Test_Record{sequence = 1, tag = 5}
+	testing.expect_value(t, output_write_principal(&stream, output.READER_PRINCIPAL_LIMIT, record, wait = false), output.Stream_Status.Bad_Record)
+	testing.expect_value(t, output_write_principal(&stream, max(u64), record, wait = false), output.Stream_Status.Bad_Record)
+	testing.expect_value(t, output_write_principal(&stream, SCOPED_PRINCIPALS_MOST, record, wait = false), output.Stream_Status.Bad_Record)
+	testing.expect_value(t, output_principal_rings(&stream, SCOPED_PRINCIPALS_MOST), 0)
+	testing.expect_value(t, output_gap_principal(&stream, SCOPED_PRINCIPALS_MOST, 1), output.Stream_Status.Bad_Record)
+	testing.expect(t, stream.state.scoped == {} && stream.state.counts == {}, "a refused write changed a count")
+	// A principal with no ring: no reader.
+	stream_ends[1].reader_principal = 0
+	testing.expect_value(t, output_write_principal(&stream, 1, record, wait = false), output.Stream_Status.No_Reader)
+	stream_ends[1].reader_principal = 1 + 1
+	for backing in ([?]^Host_Output_Ring{&ring_machine, &ring_named, &ring_unknown}) {
+		_, _, _, has := host_pop_record(t, backing, size_of(Gap_Test_Record))
+		testing.expect(t, !has, "a refused write reached a ring")
+	}
+
+	// Principal 1: its ring alone.
+	testing.expect_value(t, output_write_principal(&stream, 1, record, wait = false), output.Stream_Status.Ok)
+	kind, _, _, ok := host_pop_record(t, &ring_named, size_of(Gap_Test_Record))
+	testing.expect(t, ok && kind == .Joined)
+	record_kind, _, got, record_ok := host_pop_record(t, &ring_named, size_of(Gap_Test_Record))
+	testing.expect(t, record_ok && record_kind == .Record)
+	testing.expect_value(t, got, record)
+	_, _, _, machine_has := host_pop_record(t, &ring_machine, size_of(Gap_Test_Record))
+	testing.expect(t, !machine_has, "the record of principal 1 reached principal 0")
+	_, _, _, unknown_has := host_pop_record(t, &ring_unknown, size_of(Gap_Test_Record))
+	testing.expect(t, !unknown_has, "the record of principal 1 reached a ring of no principal")
+
+	// Principal 0: its ring alone.
+	testing.expect_value(t, output_write_principal(&stream, 0, record, wait = false), output.Stream_Status.Ok)
+	_, _, _, named_has := host_pop_record(t, &ring_named, size_of(Gap_Test_Record))
+	testing.expect(t, !named_has, "the record of principal 0 reached principal 1")
+	testing.expect_value(t, output_principal_rings(&stream, 0), 1)
+	// Each principal has its own serials and counts: principal 0 reads the
+	// serial 0 and no count of the two records of principal 1.
+	_, _, _, _ = host_pop_record(t, &ring_machine, size_of(Gap_Test_Record))
+	machine_kind, machine_serial, _, machine_ok := host_pop_record(t, &ring_machine, size_of(Gap_Test_Record))
+	testing.expect(t, machine_ok && machine_kind == .Record)
+	testing.expect_value(t, machine_serial, u32(0))
+	testing.expect_value(t, stream.state.scoped[0].written, u64(1))
+	testing.expect_value(t, stream.state.scoped[1].next_serial, u32(2))
+	testing.expect(t, stream.state.counts == {}, "a write of a principal counted in the whole record output")
+	// A loss of principal 1 reaches its ring only.
+	testing.expect_value(t, output_gap_principal(&stream, 1, 3), output.Stream_Status.Ok)
+	gap_kind, gap_serial, _, gap_ok := host_pop_record(t, &ring_named, size_of(Gap_Test_Record))
+	testing.expect(t, gap_ok && gap_kind == .Gap)
+	testing.expect_value(t, gap_serial, u32(2))
+	_, _, _, machine_gap := host_pop_record(t, &ring_machine, size_of(Gap_Test_Record))
+	testing.expect(t, !machine_gap, "a loss of principal 1 reached principal 0")
+	testing.expect_value(t, stream.state.scoped[0].next_serial, u32(1))
+	// A live count sees the ring of each principal.
+	testing.expect_value(t, output_reader_count(&stream), 3)
+	// Ending the output writes each principal's own serial in its end record,
+	// never the serial of another principal or of the whole output.
+	testing.expect_value(t, output_end(&stream, deadline = 0), output.Stream_Status.Ok)
+	end_kind_m, end_serial_m, _, end_ok_m := host_pop_record(t, &ring_machine, size_of(Gap_Test_Record))
+	testing.expect(t, end_ok_m && end_kind_m == .End)
+	testing.expect_value(t, end_serial_m, u32(1))
+	end_kind_n, end_serial_n, _, end_ok_n := host_pop_record(t, &ring_named, size_of(Gap_Test_Record))
+	testing.expect(t, end_ok_n && end_kind_n == .End)
+	testing.expect_value(t, end_serial_n, u32(5))
+}

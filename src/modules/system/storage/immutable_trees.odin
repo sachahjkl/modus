@@ -143,7 +143,7 @@ immutable_read_object :: proc "contextless" (backend: ^immutable_tree.Store_Back
 		return int(min(value.size, u64(max(int)))), .Buffer_Too_Small
 	}
 	read_err: errors.Error_Record
-	read_bytes, read_outcome := state_read(current_state(&value), 0, buffer[:value.size], &read_err, 2)
+	read_bytes, read_outcome := state_read(store_index, current_state(&value), 0, buffer[:value.size], &read_err, 2)
 	if read_outcome != .Succeeded {
 		ctx.last_error = read_err
 		ctx.last_outcome = read_outcome
@@ -226,7 +226,8 @@ immutable_persist_entry_object :: proc "contextless" (backend: ^immutable_tree.S
 		return .Full
 	}
 	entry_copy := entry
-	read_bytes, read_outcome := state_read(current_state(&entry_copy), 0, immutable_tree_scratch[:entry.size], &write_err, 1)
+	source_store_index := store_find(ctx.source_path.store.name)
+	read_bytes, read_outcome := state_read(source_store_index, current_state(&entry_copy), 0, immutable_tree_scratch[:entry.size], &write_err, 1)
 	if read_outcome != .Succeeded {
 		ctx.last_error = write_err
 		ctx.last_outcome = read_outcome
@@ -388,6 +389,14 @@ freeze_tree :: proc "c" (place: i64, target_place: i64, result: ^[]u8, error: ^e
 		persist_entry_object = immutable_persist_entry_object,
 		data                 = &ctx,
 	}
+	scope, crypto_read := store_crypto_enter(source_store_index)
+	if crypto_read != .Good {
+		if crypto_read == .Device {
+			return call_outcome.fail(error, .Callee_Unavailable, .Device)
+		}
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Stores)
+	}
+	defer store_crypto_leave(&scope)
 	root_hash, status := immutable_tree.freeze_tree(&freeze_work, &node_source, &freeze_tree_pool, source_root, &backend)
 	if status != .Ok {
 		return tree_store_status_fail(status, &ctx, error, 1)
@@ -533,7 +542,7 @@ gc_read_object :: proc "contextless" (reader: ^module_gc.Object_Reader, hash: bl
 		return 0, .Too_Large
 	}
 	read_err: errors.Error_Record
-	read_bytes, read_outcome := state_read(current_state(&value), 0, buffer[:value.size], &read_err, 1)
+	read_bytes, read_outcome := state_read(ctx.store_index, current_state(&value), 0, buffer[:value.size], &read_err, 1)
 	if read_outcome != .Succeeded {
 		return 0, .Device_Error
 	}
@@ -613,6 +622,14 @@ collect_garbage :: proc "c" (place: i64, roots: ^system.Table_To_Read(Garbage_Ro
 			return lookup_refusal(lookup, error, 1), 0
 		}
 		// Scan content-addressed (64 lowercase hex digit) object entries under place.
+		gc_scope, gc_crypto_read := store_crypto_enter(store_index)
+		if gc_crypto_read != .Good {
+			if gc_crypto_read == .Device {
+				return call_outcome.fail(error, .Callee_Unavailable, .Device)
+			}
+			return call_outcome.fail(error, .Data_Damaged, .Damaged, .Stores)
+		}
+		defer store_crypto_leave(&gc_scope)
 		cursor: Entry_Name
 		has_cursor := false
 		for {

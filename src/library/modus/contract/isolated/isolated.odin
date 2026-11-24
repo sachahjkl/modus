@@ -233,6 +233,12 @@ Service_Command :: enum u32 {
 	Connect    = 1, // The service maps the two memory objects, and serves the calls of the call ring.
 	Disconnect = 2, // The service unmaps them and closes the two handles.
 	Grant      = 3, // The grant of the connection of the call ring changes to values[6]: a revocation, for example.
+	// The three keys of a named principal for the holder of the role
+	// Storage only (src/md/features/store_encryption.md, "The keys"); each
+	// other service refuses them. values[4] is the slot of the principal.
+	Principal_Identity    = 4, // values[0..3]: the principal identifier of the slot.
+	Principal_Storage_Key = 5, // values[0..3]: the storage key of the principal, after its identity.
+	Principal_Locked      = 6, // The session of the principal ended: the service erases its keys.
 }
 
 // In the call region, `start` is an offset. In a process, it is an address.

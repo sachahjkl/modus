@@ -77,7 +77,7 @@ generic_writer_step_of :: proc "contextless" (record: u32, pairing: module.Recor
 	switch pairing {
 	case .Paired:
 		return .Paired_Source
-	case .Unpaired:
+	case .Unpaired, .By_Principal:
 	}
 	if input_wirings == .Many_Types || !fixed {
 		return .Not_Fixed

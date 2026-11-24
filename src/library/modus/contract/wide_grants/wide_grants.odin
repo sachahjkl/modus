@@ -37,6 +37,11 @@ PROOF_TAG_DOMAIN_PREFIX :: "modus wide grant proof v2"
 // BLAKE3 tag under it proves that the unlock authority issued the proof.
 Authority_Key :: blake3.Hash
 
+// The domain of the key of one principal: the keyed BLAKE3 hash, under the
+// key of the run, of this text and the slot of the principal in 8 bytes
+// little-endian.
+PRINCIPAL_KEY_DOMAIN_PREFIX :: "modus wide grant authority key of one principal v1"
+
 // Fixed stack buffer capacities for canonical encoding before BLAKE3 hashing.
 TERMS_ENCODE_BUFFER_CAPACITY :: 256
 PROOF_ENCODE_BUFFER_CAPACITY :: 160
@@ -53,6 +58,11 @@ GENESIS_PREVIOUS_HASH :: blake3.Hash{}
 SERVICE_RING_SLOT :: 10
 SERVICE_REGION_SLOT :: 11
 CONTEXT_VALUE_PRINCIPAL_SLOT :: 4
+// At the start of a collector, the region of its ring holds the principal
+// identifier of its principal in its first 32 bytes, which the root service
+// wrote before the start; all zero for principal 0, which has none. The
+// collector copies it before its first request, which writes over it.
+COLLECTOR_REGION_IDENTIFIER_AT :: 0
 CONTEXT_VALUE_AUTHORITY_KEY_FIRST_SLOT :: 5
 CONTEXT_VALUE_AUTHORITY_KEY_SLOT_COUNT :: 4
 
@@ -372,11 +382,27 @@ Authority_Key_Status :: enum u8 {
 	Refused_Zero_Key     = 3,
 }
 
+// What an authority key is for. The key of the run never signs a proof
+// and never leaves the unlock authority: it only makes the key of each
+// principal. The key of a principal signs the proofs of that principal
+// only, and goes to the collector of that principal only, so a collector
+// makes no proof that the collector of another principal accepts
+// (src/md/features/several_principals.md, "The authority key of the wide
+// grants, for each principal").
+Authority_Scope :: enum u8 {
+	Run       = 0,
+	Principal = 1,
+}
+
 // State held exclusively by the unlock authority (the root service) for
 // minting keyed Wide_Grant_Proof records and handing the authority key to
-// the collector in its context at start.
+// the collector in its context at start. The proof serial is one sequence
+// for each principal: a collector learns no count of the proofs of
+// another principal.
 Wide_Grant_Authority :: struct {
 	status:            Authority_Key_Status,
+	scope:             Authority_Scope,
+	principal:         u64, // Scope Principal: the slot of the principal.
 	key:               Authority_Key,
 	next_proof_serial: u64,
 }
@@ -402,16 +428,57 @@ authority_init_from_bytes :: proc "contextless" (
 		return false
 	}
 	authority.key = key_bytes
+	authority.scope = .Run
+	authority.status = .Ready
+	return true
+}
+
+// authority_init_for_principal makes the authority of one principal from
+// the authority of the run: its key is the keyed hash of the slot under the
+// key of the run, and its proof serial starts at 1. Refuses a run that is
+// not ready, and an authority of a principal in place of the run: a key is
+// made from the key of the run only.
+//
+// Example: the run key K gives the principal 1 the key
+// keyed_hash(K, "modus wide grant authority key of one principal v1" ||
+// 01 00 00 00 00 00 00 00).
+authority_init_for_principal :: proc "contextless" (authority: ^Wide_Grant_Authority, run: ^Wide_Grant_Authority, principal: u64) -> bool {
+	if authority == nil {
+		return false
+	}
+	authority_erase(authority)
+	if run == nil || run == authority || run.status != .Ready || run.scope != .Run || !authority_key_is_valid(run.key) {
+		return false
+	}
+	material: [len(PRINCIPAL_KEY_DOMAIN_PREFIX) + 8]u8
+	copy(material[:], PRINCIPAL_KEY_DOMAIN_PREFIX)
+	byte_order.write_u64_little_endian(material[:], len(PRINCIPAL_KEY_DOMAIN_PREFIX), principal)
+	key := blake3.keyed_hash(run.key, material[:])
+	defer intrinsics.mem_zero_volatile(&key, size_of(key))
+	if !authority_key_is_valid(key) {
+		authority.status = .Refused_Zero_Key
+		return false
+	}
+	authority.key = key
+	authority.scope = .Principal
+	authority.principal = principal
 	authority.next_proof_serial = 1
 	authority.status = .Ready
 	return true
+}
+
+// authority_ready_for_principal says if an authority signs the proofs of a
+// principal: a ready authority of that principal, never the run.
+authority_ready_for_principal :: proc "contextless" (authority: ^Wide_Grant_Authority, principal: u64) -> bool {
+	return authority != nil && authority.status == .Ready && authority.scope == .Principal && authority.principal == principal && authority_key_is_valid(authority.key)
 }
 
 // authority_context_words returns the four context value words carrying the
 // authority key to the collector when the authority is ready. Refuses any
 // non-ready or zero-key state with ok == false.
 authority_context_words :: proc "contextless" (authority: ^Wide_Grant_Authority) -> (words: [CONTEXT_VALUE_AUTHORITY_KEY_SLOT_COUNT]u64, ok: bool) {
-	if authority == nil || authority.status != .Ready || !authority_key_is_valid(authority.key) {
+	// The key of the run never leaves the unlock authority.
+	if authority == nil || !authority_ready_for_principal(authority, authority.principal) {
 		return {}, false
 	}
 	return authority_key_to_words(authority.key), true
@@ -429,7 +496,9 @@ authority_mint_proof :: proc "contextless" (
 	verifier_key_or_token_hash: blake3.Hash,
 	proof_timestamp_ms: u64,
 ) -> (proof: Wide_Grant_Proof, refusal: Wide_Grant_Refusal) {
-	if authority == nil || authority.status != .Ready || !authority_key_is_valid(authority.key) {
+	// The key of the run signs nothing, and the key of a principal signs
+	// the terms of that principal only.
+	if authority == nil || terms == nil || !authority_ready_for_principal(authority, terms.principal_id) {
 		return {}, .Invalid_Proof
 	}
 	if authority.next_proof_serial == 0 || authority.next_proof_serial == max(u64) {
@@ -458,6 +527,8 @@ authority_erase :: proc "contextless" (authority: ^Wide_Grant_Authority) {
 	}
 	intrinsics.mem_zero_volatile(&authority.key, size_of(authority.key))
 	authority.status = .Uninitialized
+	authority.scope = .Run
+	authority.principal = 0
 	authority.next_proof_serial = 0
 }
 

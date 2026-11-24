@@ -41,7 +41,7 @@ The model has three things, and two concepts that the system has already.
 
 | Concept that exists | Its part |
 |---|---|
-| Principal | A key pair. It signs trees (a package is a signed tree), and its key encrypts its data (not built) |
+| Principal | A key pair. It signs trees (a package is a signed tree; not built), and its unlock key encrypts the blocks and metadata of its stores (built) |
 | Grant, handle | Access: a handle on a tree or on a store reaches what is under it and nothing above it, with or without the right to change, and its grant can be revoked |
 
 The four needs, in the model:
@@ -91,7 +91,7 @@ What these rules forbid, so that nobody adds it later:
 
 **Collection.** An object that no store reaches, through any tree or any version, can go. The disk counts the names of each block, so each block becomes free at the commit that drops its last name: no walk. Two names of one object in one store (section 4.7) are two names of its root, counted the same way. A walk would be needed only for an object that several stores share by its hash, which the system refuses (the secrecy, below). The start of the service walks every block already to check it and count it (section 3.3).
 
-**Secrecy.** The data of a principal are encrypted under a key of that principal. Then two principals with the same bytes have two different objects: the store does not share them across principals. This is intended: a shared object tells one principal what another one has. Not built. The free blocks of the disk are one count for all the stores: a store that fills the disk sees, by its own refusal `Full`, that a commit of another store took no block. It learns only that the other store wrote a copy of its own bytes (section 4.7), not what they are.
+**Secrecy.** Built for named principals (`src/md/features/store_encryption.md`). The data blocks and secret metadata of each store of a named principal are encrypted with vector XChaCha20 (`simd128`) under keys derived from its unlock key, and every metadata block carries a 128-bit SIV MAC plus a monotonic store generation floor. Two principals with the same bytes have two different objects: the store does not share them across principals. The free blocks of the disk are one count for all the stores: a store that fills the disk sees, by its own refusal `Full`, that a commit of another store took no block. It learns only that the other store wrote a copy of its own bytes (section 4.7), not what they are. Stores of principal 0 stay in clear.
 
 ### 1.3 Where the model does not hold as it was first stated
 
@@ -119,14 +119,15 @@ The model of section 1 is the direction; the service of today builds a part of i
 
 Built. The disk is blocks of 4096 bytes. A root block names each store; a store names one tree; a tree is a B+ tree of entries; an entry names an object, whose bytes are a tree of blocks. Nothing on the disk is written in place: a commit writes new blocks, then switches the root block, so a loss of power leaves the state before or after the commit, never a mix.
 
-The format is the contract `src/library/modus/contract/store`, `STORAGE7`. A disk of an earlier format is not read, and never formatted: the open refuses it whole with the fact `Disk_Of_An_Older_Format`. `STORAGE6` had no record of the leaves to recount, `STORAGE5` had no count tree, and `STORAGE4` had the stores in 60 cells of the root block and names of 64 bytes.
+The format is the contract `src/library/modus/contract/store`, `STORAGE7`. A disk of an earlier format is not read, and never formatted: the open refuses it whole with the fact `Disk_Of_An_Older_Format`. `STORAGE6` had no record of the leaves to recount and no owner in a store block, `STORAGE5` had no count tree, and `STORAGE4` had the stores in 60 cells of the root block and names of 64 bytes.
 
 ### 3.1 The blocks
 
 - **Root block** (`Root` of `src/library/modus/contract/store`): the mark `STORAGE7`, the generation, the count of blocks of the disk, the time since the format, the date, the pointer of the top directory of the count tree and whether that tree holds each count (`counts_complete`), and the pointers of the pages of the store table. Blocks 0 and 1 are its two places. The root block has its own check, over the bytes before it.
 - **Store table page** (`Store_Table_Page`): 63 cells, each one store: its name, its limit of blocks, the blocks that it uses, and the pointer of its store block. The root names up to 251 pages, so a disk holds up to 15 813 stores (`STORE_CAPACITY`). A store keeps its cell, and so its number, for the life of the disk; a commit of a store writes its page again, with copy on write. A page with a wrong check damages its stores only: the service serves none of them and makes no new store in that page.
 - **Store block**: one for each store: the root node of its tree, the root node of its removal queue, and its counts (objects, trees, the blocks of the current objects, the nodes of its trees, the trees that the removal queue holds).
-- **Node**: a node of the B+ tree of one tree. A leaf holds up to 11 records of a name (256 bytes) and its entry (104 bytes); a branch up to 14 records of a name and the pointer of a child. Each node starts with a header with its level, its count and the mark "TREE", so a block of another kind is damage. Each tree of a store is its own B+ tree: a tree inside a tree is an entry whose pointer names the root node of the inner tree.
+- **The owner of a store of a named principal**: its store block keeps the principal identifier of its owner, its salt, the key check of its key, its name sealed under its key, the root generation of its last commit (`store_generation`), and a 128-bit `mac`; its cell keeps the byte 1 then 31 bytes of its name tag in place of its name. A store of principal 0 has zero bytes there and its name in its cell. The storage service finds, makes, lists, reads, and writes such a store only with the keys of its principal, which the root service gives it at the unlock and which the lock erases along with its cached blocks, hash-index entries, pending pools, and transient buffers. Every data block of an owned store is encrypted with vector XChaCha20; every metadata block keeps its structural pointers in clear for keyless open and count repair while encrypting its secret fields (entry names, hashes, timestamps, generations, object child values, and 1-block `data_check`) under a 128-bit SIV MAC. The design is `src/md/features/store_encryption.md`.
+- **Node**: a node of the B+ tree of one tree. A leaf holds up to 11 records of a name (256 bytes) and its entry (112 bytes); a branch up to 14 records of a name and the pointer of a child. Each node starts with a header with its level, its count, the mark "TREE", and its 128-bit `mac` (zero for clear stores), so a block of another kind is damage. Each tree of a store is its own B+ tree: a tree inside a tree is an entry whose pointer names the root node of the inner tree.
 - **Object node**: a node of the block tree of one state of an object: 64 children, each an object node of the level below, a block of data, or a hole (section 4.6). It starts with the mark "BLOB".
 - **Data**: 4096 bytes of an object, at one place of it. The block service reads and writes blocks of data through a data region that its client shares with it: the storage service makes a region of 64 blocks (`REGION_BLOCKS`), the process `disk` one of 1 MiB.
 - **Version index, version leaf**: the versions of an object, as before; a version names the root of the block tree of its state.
@@ -171,17 +172,23 @@ offset  size  field  type
      8     8  check  u64
 
 store.Store_Block, 4096 bytes: the block of one store
-offset  size  field           type
-     0    16  tree            Pointer
-    16    16  removals        Pointer
-    32     8  next_removal    u64
-    40     8  objects         u64
-    48     8  trees           u64
-    56     8  current_blocks  u64
-    64     8  node_blocks     u64
-    72     8  removing        u64
-    80    32  reserved        [4]u64
-   112  3984  padding         [BLOCK_SIZE - 112]u8
+offset  size  field             type
+     0    16  tree              Pointer
+    16    16  removals          Pointer
+    32     8  next_removal      u64
+    40     8  objects           u64
+    48     8  trees             u64
+    56     8  current_blocks    u64
+    64     8  node_blocks       u64
+    72     8  removing          u64
+    80    32  owner             [OWNER_FIELD_SIZE]u8
+   112    32  salt              [OWNER_FIELD_SIZE]u8
+   144    32  key_check         [OWNER_FIELD_SIZE]u8
+   176    32  name_sealed       [OWNER_FIELD_SIZE]u8
+   208     8  store_generation  u64
+   216    16  mac               [MAC_SIZE]u8
+   232    32  reserved          [4]u64
+   264  3832  padding           [BLOCK_SIZE - 264]u8
 
 store.Tree_Header, 32 bytes: the start of a node and of an object node
 offset  size  field     type
@@ -189,7 +196,7 @@ offset  size  field     type
      4     4  count     u32
      8     4  magic     u32
     12     4  reserved  u32
-    16    16  unused    [2]u64
+    16    16  mac       [MAC_SIZE]u8
 
 store.Object_Node, 4096 bytes: one node of the block tree of an object
 offset  size  field     type
@@ -210,26 +217,30 @@ offset  size  field           type
      8     8  version_count   u64
     16     8  retention_time  u64
     24     8  reserved        u64
-    32  4064  leaves          [VERSION_INDEX_CAPACITY]Pointer
+    32    16  mac             [MAC_SIZE]u8
+    48  4048  leaves          [VERSION_INDEX_CAPACITY]Pointer
 
 store.Version_Leaf, 4096 bytes: one block of version entries of one object
 offset  size  field     type
      0     8  count     u64
      8     8  reserved  u64
-    16  4080  entries   [VERSION_LEAF_CAPACITY]Version_Entry
+    16    16  mac       [MAC_SIZE]u8
+    32  4032  entries   [VERSION_LEAF_CAPACITY]Version_Entry
+  4064    32  padding   [BLOCK_SIZE - 32 - VERSION_LEAF_CAPACITY * size_of(Version_Entry)]u8
 
-store.Version_Entry, 48 bytes: one version of an object
+store.Version_Entry, 56 bytes: one version of an object
 offset  size  field       type
-     0     8  generation  u64
-     8     8  size        u64
-    16     8  time        u64
-    24     8  date        u64
-    32    16  root        Pointer
+     0     8  size        u64
+     8    16  root        Pointer
+    24     8  generation  u64
+    32     8  time        u64
+    40     8  date        u64
+    48     8  data_check  u64
 ```
 
 ### 3.2 An entry
 
-An entry is 104 bytes (`Entry` of `src/library/modus/contract/store`):
+An entry is 112 bytes (`Entry` of `src/library/modus/contract/store`):
 
 | Field | An object | A tree |
 |---|---|---|
@@ -238,13 +249,14 @@ An entry is 104 bytes (`Entry` of `src/library/modus/contract/store`):
 | Size | its bytes | its entries |
 | Generation, time, date | of its last change | of its last change |
 | Hash | the hash of the object (section 4.6) | zero (not built) |
+| Data check | `value_check` of a 1-block encrypted object; zero otherwise | zero |
 | Pointer | the root of its block tree: an object node, or its one block of data when it has one block; none when each of its bytes is zero | its root node; none when it is empty |
 | Versions | its version index | none |
 
-The removal queue of a store holds one more kind: a release (`Entry_Kind.Release`, 3), states of objects that steps free (section 4.4). Its pointer is the first of a chain of release lists (`Release_List`): each one block of up to 127 states, each state its root, its size and the first block of data that no step has freed (its cursor), and the pointer of the next list, or none (no block, check 0) for the last; the other fields of the entry are zero. A list is a block of its store. A list with another magic, a count of 0 or past 127, bytes in the places of no state or in its padding, or a next list in block 1 or of no block with a check is wrong: the open counts the lists before it and none of its states or of the lists after it, and a step drops the entry; the store stays whole. The commit of that step starts a recount of the count tree (section 3.5), which frees the blocks that only those states named. No tree of a store holds a release.
+The removal queue of a store holds one more kind: a release (`Entry_Kind.Release`, 3), states of objects that steps free (section 4.4). Its pointer is the first of a chain of release lists (`Release_List`): each one block of up to 126 states, each state its root, its size and the first block of data that no step has freed (its cursor), and the pointer of the next list, or none (no block, check 0) for the last; the other fields of the entry are zero. A list is a block of its store. A list with another magic, a count of 0 or past 126, bytes in the places of no state or in its padding, or a next list in block 1 or of no block with a check is wrong: the open counts the lists before it and none of its states or of the lists after it, and a step drops the entry; the store stays whole. The commit of that step starts a recount of the count tree (section 3.5), which frees the blocks that only those states named. No tree of a store holds a release.
 
 ```byte-layout store.Entry
-store.Entry, 104 bytes: the record of a leaf after its name of 256 bytes
+store.Entry, 112 bytes: the record of a leaf after its name of 256 bytes
 offset  size  field       type
      0     8  kind        u64
      8     8  size        u64
@@ -252,8 +264,9 @@ offset  size  field       type
     24     8  time        u64
     32     8  date        u64
     40    32  hash        [32]u8
-    72    16  pointer     Pointer
-    88    16  versions    Pointer
+    72     8  data_check  u64
+    80    16  pointer     Pointer
+    96    16  versions    Pointer
 ```
 
 A name is one step: it has no separator, and it never names the tree above. So a name that a process looks up under a place never reaches a node outside it.
@@ -354,8 +367,9 @@ offset  size  field    type
      0     4  magic    u32
      4     4  count    u32
      8    16  next     Pointer
-    24  4064  states   [RELEASES_OF_A_LIST]Release_State
-  4088     8  padding  [BLOCK_SIZE - 24 - RELEASES_OF_A_LIST * size_of(Release_State)]u8
+    24    16  mac      [MAC_SIZE]u8
+    40  4032  states   [RELEASES_OF_A_LIST]Release_State
+  4072    24  padding  [BLOCK_SIZE - 40 - RELEASES_OF_A_LIST * size_of(Release_State)]u8
 
 store.Release_State, 32 bytes: one state of a release list
 offset  size  field   type
@@ -595,7 +609,7 @@ Each step is one tested capability on a system that works.
 3. **Objects by their hash.** Built in part: the hash index of section 4.7 finds the current object of a store by its hash, so an object that two entries name is kept one time. Not built: the hash of a tree on its entries (section 1.3).
 4. **The first objects from storage.** Built for one case: a principal starts a process whose module file is in the store `module_files`, by its name and its hash, and the module file service puts such a file there from the network (`MODULE_CONTRACT.md`, "A module from a disk"). An import of such a process comes from the same store too: the root service reads each object of the store and keeps the bytes whose BLAKE3 hash the import names (`glossary/code.md`, "Import scan"); the index of step 3 is not needed for it, as the root service checks the bytes anyway. Not built: the boot image carries only what the storage service needs; the root service loads the other modules, the fonts and the pointer themes from the tree of the system, by hash.
 5. **Packages.** A signed tree with its six facts; the store of the data of an application, attached to the identity of the package.
-6. **Encryption for a principal.**
+6. **Encryption for a principal.** Built (`src/md/features/store_encryption.md`): vector XChaCha20 encryption of data blocks and secret metadata fields with 128-bit SIV MAC authentication, store rollback floor, keyless open and count repair, and per-principal key, cache, hash-index, and buffer erasure at lock.
 7. **The network as a channel.** An object comes from a peer; its hash proves it.
 
 ## 6. The tests
