@@ -295,8 +295,9 @@ wiring_register_process :: proc "contextless" (item: ^Started) {
 	}
 }
 
-// wiring_pages_stated gives the wiring pages that the module file of an
-// asker states, or half of the pages that it asks when it states none.
+// wiring_pages_stated gives the wiring pages of an asker's module floor:
+// the wiring pages that its module file states, or half of its floor pages
+// when it states none.
 @(private = "file")
 wiring_pages_stated :: proc "contextless" (asker: ^Started) -> u64 {
 	file := image_file_checked(system.name_of(asker.name[:]))

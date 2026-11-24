@@ -160,16 +160,22 @@ pool_take :: proc "contextless" (holder: system.Handle, limit: u64, error: ^erro
 // service holds no more.
 pool_push :: proc "contextless" (pool: ^Pending_Pool, size: int, alignment: int, error: ^errors.Error_Record) -> rawptr {
 	if pool.arena_count > 0 {
-		push_error: errors.Error_Record
-		address, status := system.arena_push(&pool.arenas[pool.arena_count - 1], u64(size), u64(alignment), &push_error)
-		if status == .Succeeded {
-			return address
-		}
-		if status != .Budget_Or_Capacity_Exhausted || push_error.kind != i64(errors.Kind.Full) {
-			if error != nil {
-				error^ = push_error
+		last := &pool.arenas[pool.arena_count - 1]
+		// A push larger than the whole reservation of the last arena gets
+		// Argument_Refused (Too_Long) from arena_push, not Full: open a
+		// larger arena below instead of failing the push.
+		if u64(size) <= last.reserved_pages * system.PAGE_SIZE {
+			push_error: errors.Error_Record
+			address, status := system.arena_push(last, u64(size), u64(alignment), &push_error)
+			if status == .Succeeded {
+				return address
 			}
-			return nil // The budget refused the pages.
+			if status != .Budget_Or_Capacity_Exhausted || push_error.kind != i64(errors.Kind.Full) {
+				if error != nil {
+					error^ = push_error
+				}
+				return nil // The budget refused the pages.
+			}
 		}
 	}
 	// The reservation of the last arena is full: one more, twice as large,

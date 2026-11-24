@@ -17,8 +17,17 @@ import "modus:system"
 // The holder of each role: the default of the boot image, then the override
 // that a plan installs. Nothing of this service names the module of a role
 // elsewhere: it starts, routes and trusts the holder through this table.
-role_holder_names := role_policy.Holder_Names {
-	defaults = role_contract.DEFAULT_HOLDER_NAMES,
+// Initialized by role_holders_start in entry: a freestanding module runs no
+// startup runtime, so a package-level initializer copying another global
+// variable (role_contract.DEFAULT_HOLDER_NAMES) leaves the table zeroed.
+role_holder_names: role_policy.Holder_Names
+
+// role_holders_start installs the default holders of the boot image before any
+// lookup of a role.
+role_holders_start :: proc "contextless" () {
+	role_holder_names = {
+		defaults = role_contract.DEFAULT_HOLDER_NAMES,
+	}
 }
 
 // The renderer of the terminal of the console: the boot image and the screen

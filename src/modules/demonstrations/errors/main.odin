@@ -89,6 +89,7 @@ import "modus:display"
 import "modus:graphics"
 import "modus:interface"
 import "modus:storage"
+import store "modus:contract/store"
 import terminal "modus:terminal"
 import "modus:contract/ring"
 import "modus:random"
@@ -157,7 +158,7 @@ cases := [CASE_CAPACITY]Case {
 	{text = "load agenda, calendar_changed", expected = "load: Check"},
 	{text = "direct call: square_root(-4)", expected = "Too_Small"},
 	{text = "storage.write(\"\", \"x\")", expected = "Empty"},
-	{text = "storage.write: a name of 65 bytes", expected = "Too_Long"},
+	{text = "storage.write: a name of 256 bytes", expected = "Too_Long"},
 	{text = "storage.write: a zero byte", expected = "Bad_Byte"},
 	{text = "storage.write over the limit", expected = "Over_Limit"},
 	{text = "storage.size(\"nothing\")", expected = "Absent"},
@@ -590,7 +591,7 @@ case_replacement :: proc "contextless" (writer: ^system.Writer) -> bool {
 // The module math, loaded in this process: a direct call of its export
 // square_root, with the address of an error record.
 math_space: system.Module_Space
-square_root: proc "c" (value: i64, error: ^errors.Error_Record) -> i64
+square_root: proc "c" (value: i64, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)
 square_root_export: u32
 math_place: int
 
@@ -609,13 +610,13 @@ math_load :: proc "contextless" () -> bool {
 	if !found || !described || function.error_record == 0 {
 		return false
 	}
-	square_root = cast(proc "c" (value: i64, error: ^errors.Error_Record) -> i64)rawptr(address)
+	square_root = cast(proc "c" (value: i64, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64))rawptr(address)
 	return true
 }
 
 // tally, loaded as a library: its export add, called directly.
 tally_space: system.Module_Space
-tally_add: proc "c" (amount: i64, note: ^string, error: ^errors.Error_Record) -> i64
+tally_add: proc "c" (amount: i64, note: ^string, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64)
 tally_add_export: u32
 tally_place: int
 
@@ -633,7 +634,7 @@ tally_load :: proc "contextless" () -> bool {
 	if !found {
 		return false
 	}
-	tally_add = cast(proc "c" (amount: i64, note: ^string, error: ^errors.Error_Record) -> i64)rawptr(address)
+	tally_add = cast(proc "c" (amount: i64, note: ^string, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64))rawptr(address)
 	return true
 }
 
@@ -702,7 +703,7 @@ case_tally_add :: proc "contextless" (writer: ^system.Writer) -> bool {
 	}
 	error: errors.Error_Record
 	note := "a note of forty bytes, four more than 36"
-	if tally_add(1, &note, &error) >= 0 {
+	if outcome, _ := tally_add(1, &note, &error); outcome != .Argument_Refused {
 		return false
 	}
 	error.operation = i64(tally_add_export) // The caller knows the export that it called.
@@ -739,7 +740,7 @@ families_measure :: proc "contextless" (ctx: ^system.Context) {
 		note := "a note of forty bytes, four more than 36"
 		start = system.nanoseconds()
 		for _ in 0 ..< EXPORT_CALLS {
-			tally_add(1, &note, &error)
+			_, _ = tally_add(1, &note, &error)
 		}
 		family_export = (system.nanoseconds() - start) * 10 / EXPORT_CALLS
 	}
@@ -753,8 +754,7 @@ case_direct :: proc "contextless" (writer: ^system.Writer) -> bool {
 		return false
 	}
 	error: errors.Error_Record
-	result := square_root(-4, &error)
-	if result >= 0 {
+	if outcome, _ := square_root(-4, &error); outcome != .Argument_Refused {
 		return false
 	}
 	error.operation = i64(square_root_export) // The caller knows the export that it called.
@@ -781,7 +781,11 @@ case_empty :: proc "contextless" (writer: ^system.Writer) -> bool {
 }
 
 case_long :: proc "contextless" (writer: ^system.Writer) -> bool {
-	return storage_case(writer, "write", .Too_Long, "a name of sixty-five bytes: one more than the longest name can be", "x")
+	long_name: [store.ENTRY_NAME_CAPACITY + 1]u8
+	for &b in long_name {
+		b = 'a'
+	}
+	return storage_case(writer, "write", .Too_Long, string(long_name[:]), "x")
 }
 
 case_byte :: proc "contextless" (writer: ^system.Writer) -> bool {
@@ -952,12 +956,14 @@ measure :: proc "contextless" () {
 	sum: i64
 	start := system.nanoseconds()
 	for index in 0 ..< DIRECT {
-		sum += square_root(i64(index & 0xFF), &error)
+		_, root := square_root(i64(index & 0xFF), &error)
+		sum += root
 	}
 	direct_good = (system.nanoseconds() - start) / DIRECT
 	start = system.nanoseconds()
 	for index in 0 ..< DIRECT {
-		sum += square_root(-1 - i64(index & 0xFF), &error)
+		_, root := square_root(-1 - i64(index & 0xFF), &error)
+		sum += root
 	}
 	direct_failed = (system.nanoseconds() - start) / DIRECT
 	if sum == 0 {

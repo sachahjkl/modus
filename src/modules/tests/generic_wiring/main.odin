@@ -7,9 +7,9 @@
 //
 // 1. a second source of merge.sources of another record than the first;
 // 2. a Wire of filter.kept before a wiring fixed the type of filter.source;
+// 2b. a refused Wire of Other into filter.source with no terms keeps no type;
 // 3. a condition on merge.merged that names no field of the record that
-//    merge.sources fixed;
-// 4. more wirings than an asker holds.
+//    merge.sources fixed.
 //
 // Then one start list: filter.kept to this process, generic_source.left
 // and generic_source.right to merge.sources, and merge.merged to

@@ -672,8 +672,7 @@ share :: proc "contextless" (client: ^Client, place: Place, read_only: bool, err
 // describes its exports. It waits for the ready completion of the storage
 // service (src/md/api/call_ring_ready.md).
 open_handles :: proc "contextless" (ring_memory, region_memory: system.Handle, service: system.Handle, file: []u8, no_clock := false) -> (client: Client, ok: bool) {
-	client = open_mapped(ring_memory, region_memory, service, file) or_return
-	client.no_clock = no_clock
+	client = open_mapped(ring_memory, region_memory, service, file, no_clock = no_clock) or_return
 	if system.connection_ready_wait(&client.calls, service, no_clock = no_clock) != .Ready {
 		system.ring_close(&client.calls)
 		system.memory_unmap(raw_data(client.region))
@@ -685,13 +684,15 @@ open_handles :: proc "contextless" (ring_memory, region_memory: system.Handle, s
 // open_mapped maps a call ring and a call region of a connection. A share
 // is ready when the storage service gives it: the service maps its ring
 // before it gives the handles (system.connection_make), and sends no ready
-// completion. The process that made the share opens it.
-@(private = "file")
-open_mapped :: proc "contextless" (ring_memory, region_memory: system.Handle, service: system.Handle, file: []u8) -> (client: Client, ok: bool) {
+// completion. The process that made the share, or a builder that received
+// it in its context (builder_stores_open), opens it here.
+@(private = "package")
+open_mapped :: proc "contextless" (ring_memory, region_memory: system.Handle, service: system.Handle, file: []u8, no_clock := false) -> (client: Client, ok: bool) {
 	client.ring_memory = ring_memory
 	client.region_memory = region_memory
 	client.service = service
 	client.file = file
+	client.no_clock = no_clock
 	region_pages, size_status := system.memory_size(region_memory)
 	if size_status != .Succeeded {
 		return {}, false

@@ -11,7 +11,7 @@ import op "modus:contract/operation"
 
 // The slots of the context of a builder. The call host takes the call
 // ring and the call region, as each call host; the two stores are shares
-// of the storage service, opened with storage.open_handles.
+// of the storage service, opened with storage.builder_stores_open.
 GRANT_CALL_RING :: isolated.GRANT_RING // Memory: the call ring of the call host.
 GRANT_CALL_REGION :: isolated.GRANT_REGION // Memory: the call region of the call host.
 GRANT_INPUT_RING :: 2 // Memory: the call ring of the input store, a share that reads only.

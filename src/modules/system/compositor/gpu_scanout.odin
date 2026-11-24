@@ -21,7 +21,9 @@ import "modus:interface"
 import "modus:system"
 
 GRANT_GPU_RING :: 4
-GRANT_GPU_PROCESS :: system.GRANT_DEVICE_SERVICE
+// Slot 12 matches root.COMPOSITOR_GRANT_GPU_PROCESS and stays disjoint from
+// powerbox.DISPLAY_PICKER_RING_SLOT (10) and DISPLAY_PICKER_REGION_SLOT (11).
+GRANT_GPU_PROCESS :: 12
 
 gpu_ring_memory: system.Handle
 gpu_process: system.Handle

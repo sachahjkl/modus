@@ -9,15 +9,15 @@ import "modustool:build"
 // A data disk larger than the tables of the storage service
 // (src/md/data/storage_capacity.md, "The open has two forms"): 32 GiB,
 // where the budget of the service holds the tables of 16 GiB. The first
-// machine formats the whole disk with its count tree, commits an object,
-// and commits and removes another; the second opens the disk from its
-// count tree, with no walk of its blocks, reads the first object back and
-// finds no second one. Then the host changes a byte of leaf 0 of the count
-// tree in the image: the third machine opens it, and its first write meets
-// the wrong leaf. The service enters the repair state and answers Busy;
-// the client of the console makes the write again until the repair has
-// written the leaf, and the write passes (src/md/data/storage_capacity.md,
-// "The repair state").
+// machine formats the whole disk with its count tree, commits and removes
+// an object, then commits another (within the 3-block store limit of the
+// console); the second opens the disk from its count tree, with no walk of
+// its blocks, reads the kept object back and finds no removed one. Then
+// the host changes a byte of leaf 0 of the count tree in the image: the
+// third machine opens it, and its overwrite meets the wrong leaf. The
+// service enters the repair state and answers Busy; the client of the
+// console makes the write again until the repair has written the leaf, and
+// the write passes (src/md/data/storage_capacity.md, "The repair state").
 
 TEST_LARGE_DISK :: foundation.BUILD_FOLDER + "/test_large_disk.img"
 TEST_OUTPUT_LARGE_DISK :: foundation.BUILD_FOLDER + "/test_output_large_disk_%d.txt"
@@ -32,19 +32,21 @@ scenario_large_disk_first := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"storage\")"},
-	{kind = .Record, process = "root", level = "Info", text = "root: connected console to the service storage"},
-	{kind = .Type, text = "storage.write(0, \"large\", \"kept on a large disk\")"},
-	{kind = .Wait, text = "> storage.write(0, \"large\", \"kept on a large disk\")"},
-	{kind = .Type, text = "storage.read(0, \"large\")"},
-	{kind = .Wait, text = "[console] kept on a large disk"},
+	{kind = .Wait, text = "root: connected console to the service storage"},
 	// A remove: its commit releases the state of the object through the
-	// count tree.
+	// count tree, freeing its block under the 3-block store limit of console.
 	{kind = .Type, text = "storage.write(0, \"gone\", \"removed on a large disk\")"},
 	{kind = .Wait, text = "> storage.write(0, \"gone\", \"removed on a large disk\")"},
+	{kind = .Type, text = "storage.read(0, \"gone\")"},
+	{kind = .Wait, text = "[console] removed on a large disk", fails_on = "[console] error:"},
 	{kind = .Type, text = "storage.remove(0, \"gone\")"},
 	{kind = .Wait, text = "> storage.remove(0, \"gone\")"},
 	{kind = .Type, text = "storage.read(0, \"gone\")"},
 	{kind = .Wait, text = "[console] error: storage.read: the argument name: the store has no object with this name"},
+	{kind = .Type, text = "storage.write(0, \"large\", \"kept on a large disk\")"},
+	{kind = .Wait, text = "> storage.write(0, \"large\", \"kept on a large disk\")"},
+	{kind = .Type, text = "storage.read(0, \"large\")"},
+	{kind = .Wait, text = "[console] kept on a large disk", fails_on = "[console] error:"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
@@ -55,7 +57,7 @@ scenario_large_disk_second := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"storage\")"},
-	{kind = .Record, process = "root", level = "Info", text = "root: connected console to the service storage"},
+	{kind = .Wait, text = "root: connected console to the service storage"},
 	{kind = .Type, text = "storage.read(0, \"large\")"},
 	{kind = .Wait, text = "[console] kept on a large disk"},
 	{kind = .Type, text = "storage.read(0, \"gone\")"},
@@ -67,17 +69,16 @@ scenario_large_disk_second := [?]Step {
 scenario_large_disk_third := [?]Step {
 	{kind = .Wait, text = "the service reads the counts of the blocks from the count tree of the disk", any_order = true},
 	{kind = .Wait, text = "storage: ok, generation "},
+	{kind = .Wait, text = "storage: the count tree has a wrong check in 1 of its leaves"},
+	{kind = .Wait, text = "storage: the leaves of the count tree that had a wrong check are counted again and written"},
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"storage\")"},
-	{kind = .Record, process = "root", level = "Info", text = "root: connected console to the service storage"},
-	{kind = .Type, text = "storage.write(0, \"after\", \"written after the repair\")"},
-	{kind = .Wait, text = "storage: the count tree has a wrong check in 1 of its leaves"},
-	{kind = .Wait, text = "storage: the leaves of the count tree that had a wrong check are counted again and written"},
-	{kind = .Type, text = "storage.read(0, \"after\")"},
-	{kind = .Wait, text = "[console] written after the repair"},
+	{kind = .Wait, text = "root: connected console to the service storage"},
+	{kind = .Type, text = "storage.write(0, \"large\", \"written after the repair\")"},
+	{kind = .Wait, text = "> storage.write(0, \"large\", \"written after the repair\")"},
 	{kind = .Type, text = "storage.read(0, \"large\")"},
-	{kind = .Wait, text = "[console] kept on a large disk"},
+	{kind = .Wait, text = "[console] written after the repair", fails_on = "[console] error:"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }

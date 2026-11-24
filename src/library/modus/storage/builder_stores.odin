@@ -21,11 +21,15 @@ builder_stores_open :: proc "contextless" (ctx: ^system.Context) -> (input, outp
 	if module.validate(file) != .None {
 		return {}, {}, false
 	}
-	// Builders run with Process_Flag.No_Clock and have no time page.
-	if input, ok = open_handles(ctx.handles[builder.GRANT_INPUT_RING], ctx.handles[builder.GRANT_INPUT_REGION], service, file, no_clock = true); !ok {
+	// Both stores are shares that the storage service mapped before it gave
+	// them (system.connection_make), with no ready completion. Builders run
+	// with Process_Flag.No_Clock and have no time page.
+	if input, ok = open_mapped(ctx.handles[builder.GRANT_INPUT_RING], ctx.handles[builder.GRANT_INPUT_REGION], service, file, no_clock = true); !ok {
 		return {}, {}, false
 	}
-	if output, ok = open_handles(ctx.handles[builder.GRANT_OUTPUT_RING], ctx.handles[builder.GRANT_OUTPUT_REGION], service, file, no_clock = true); !ok {
+	if output, ok = open_mapped(ctx.handles[builder.GRANT_OUTPUT_RING], ctx.handles[builder.GRANT_OUTPUT_REGION], service, file, no_clock = true); !ok {
+		system.ring_close(&input.calls)
+		system.memory_unmap(raw_data(input.region))
 		return {}, {}, false
 	}
 	return input, output, true

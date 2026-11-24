@@ -402,10 +402,14 @@ Thread :: struct #align (64) {
 #assert(offset_of(Thread, frame) == 64)
 
 // word_in_device_memory says if a word of a process is in a memory object
-// of a device (Device_Create). The caller holds the process lock.
+// of a device (Device_Create or the framebuffer of the firmware:
+// Region.cache_types_counted). Normal memory that the kernel names (the log,
+// the time page, the boot images) has frames in the memory map and is not
+// device memory: the log service waits on the counter of the log. The caller
+// holds the process lock.
 word_in_device_memory :: proc "contextless" (process: ^Process, address: u64) -> bool {
 	mapping := mapping_at(process, address)
-	return mapping != nil && regions[mapping.region].device
+	return mapping != nil && regions[mapping.region].cache_types_counted
 }
 
 // word_address gives the physical address of a 32-bit word of a process,

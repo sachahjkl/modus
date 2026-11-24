@@ -74,6 +74,10 @@ picker_rings_make :: proc "contextless" () -> bool {
 // display_picker_grants_put gives the holder of Display its end of the
 // picker ring and the region. With no ring, the holder starts with no
 // picker of stores.
+#assert(powerbox.DISPLAY_PICKER_RING_SLOT != COMPOSITOR_GRANT_GPU_PROCESS)
+#assert(powerbox.DISPLAY_PICKER_REGION_SLOT != COMPOSITOR_GRANT_GPU_PROCESS)
+#assert(powerbox.DISPLAY_PICKER_RING_SLOT != COMPOSITOR_GRANT_GPU_RING)
+#assert(powerbox.DISPLAY_PICKER_REGION_SLOT != COMPOSITOR_GRANT_GPU_RING)
 display_picker_grants_put :: proc "contextless" (context_grants: ^system.Context_Grants) {
 	if !picker_rings_make() {
 		return

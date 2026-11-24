@@ -21,7 +21,7 @@
 // it shares with its terminal. Nothing else.
 //
 // **What a reader sees**: a terminal with one line. The log has
-// `hostile_terminal: the terminal read the kind words 0, 9 and 4294967295,
+// `hostile_terminal: the terminal read the kind words 0, 10 and 4294967295,
 // and the line after them: as it must`, then the two lines of the
 // terminal: `terminal: hostile_terminal sent a record of the kind 0, which
 // names no record: it is refused` and, at the stop, `terminal:
