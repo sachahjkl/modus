@@ -71,7 +71,7 @@ Act_State :: enum u8 {
 	Done                 = 2, // The bridge ran it: the text is its result.
 	Refused              = 3, // The bridge refused it at its border: the text says why.
 	Awaiting_Principal   = 4, // The bridge stopped it with Awaiting_Principal_Approval: the act dialog decides.
-	Allowed_By_Principal = 5, // The principal allowed it on the trusted display. It does not run yet.
+	Allowed_By_Principal = 5, // The principal allowed it on the trusted display; eligible for verified single-use execution under an active wide grant when not gated by principal proof.
 	Refused_By_Principal = 6, // The principal refused it on the trusted display. Nothing runs.
 	Not_Shown            = 7, // The trusted display refused its act dialog for a cause other than Busy, or the window has no connection to it. Nothing runs.
 }

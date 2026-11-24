@@ -263,6 +263,18 @@ act_state_export :: proc "c" (act: i64, error: ^errors.Error_Record) -> (outcome
 	return conversation.act_state(&talk, caller_acts_for_principal(), act, error)
 }
 
+// act_line gives the authoritative line stored for an act so approved-act
+// verification binds to the exact text kept by the window.
+//
+// The result is the byte count of the line, or a failure with its call outcome
+// and an error record: `No_Grant` (Grant_Or_Right_Missing); `Absent`
+// (Nothing_Has_That_Name: no act has the number); `Too_Long` (Argument_Refused:
+// the result buffer is smaller than the line).
+@(export, link_name = "act_line")
+act_line_export :: proc "c" (act: i64, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	return conversation.act_line(&talk, caller_acts_for_principal(), act, result^, error)
+}
+
 // stop_requested gives 1 if you pressed Stop or Escape on the running loop of a taken request, and 0 otherwise.
 //
 // The runner polls this export before each step and stops the loop when it reads 1.
@@ -307,7 +319,11 @@ acts_waiting_step :: proc "contextless" () -> (waiting: bool) {
 		system.log_fact(.Info, Act_Dialog_Refused{act = entry.act, cause = value_kinds.text_field(cause, FACT_TEXT_BYTES)})
 	case .Decided:
 		store_mark_dirty()
-		system.log_fact(.Info, Act_Decided{act = entry.act, state = value_kinds.text_field(STATE_WORDS[entry.state], FACT_NAME_BYTES)})
+		if entry.state == .Allowed_By_Principal {
+			system.log_fact(.Info, Act_Allowed{act = entry.act, state = value_kinds.text_field(STATE_WORDS[entry.state], FACT_NAME_BYTES)})
+		} else {
+			system.log_fact(.Info, Act_Decided{act = entry.act, state = value_kinds.text_field(STATE_WORDS[entry.state], FACT_NAME_BYTES)})
+		}
 	}
 	return waiting
 }

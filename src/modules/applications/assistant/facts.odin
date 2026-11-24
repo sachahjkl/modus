@@ -91,10 +91,16 @@ Act_Dialog_Refused :: struct {
 	cause: [96]u8,
 }
 
-// The principal decided an act on the trusted display. Nothing runs: an
-// allowed act runs only in an agent console of a wide grant.
+// The principal refused an act on the trusted display. Nothing ran.
 @(log_fact = "assistant: act {act} is {state}; nothing ran")
 Act_Decided :: struct {
+	act:   u64,
+	state: [32]u8,
+}
+
+// The principal allowed an act once on the trusted display.
+@(log_fact = "assistant: act {act} is {state}")
+Act_Allowed :: struct {
 	act:   u64,
 	state: [32]u8,
 }

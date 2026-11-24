@@ -24,9 +24,10 @@ STORE_THREAD_STACK_PAGES :: 16
 // pages are committed on demand via system.arena_extend_to.
 STORE_RESERVE_PAGES :: (conversation.PERSIST_MAX_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 
-// Computed: working memory pages budgeted for live conversation snapshot
-// encode/decode arenas.
-STORE_WORKING_PAGES :: 256
+// Computed: working memory pages budgeted for the live snapshot arena (read_arena
+// is released via system.arena_end right after startup load completes, so one
+// full PERSIST_MAX_BYTES snapshot fits cleanly without truncation).
+STORE_WORKING_PAGES :: STORE_RESERVE_PAGES
 
 Store_State :: struct {
 	lock:            system.Lock,
@@ -130,9 +131,25 @@ store_worker_entry :: proc "c" (parameter: rawptr) -> ! {
 
 // store_start reserves the snapshot arenas and launches the store worker thread.
 store_start :: proc "contextless" (ctx: ^system.Context) {
-	store_state.read_arena, _ = system.arena_create(STORE_RESERVE_PAGES)
-	store_state.write_arena, _ = system.arena_create(STORE_RESERVE_PAGES)
+	read_status, write_status: system.Status
+	store_state.read_arena, read_status = system.arena_create(STORE_RESERVE_PAGES)
+	store_state.write_arena, write_status = system.arena_create(STORE_RESERVE_PAGES)
+	if read_status != .Ok || write_status != .Ok {
+		if read_status == .Ok {
+			_ = system.arena_end(&store_state.read_arena)
+		}
+		if write_status == .Ok {
+			_ = system.arena_end(&store_state.write_arena)
+		}
+		store_state.load_done = true
+		store_state.load_applied = true
+		store_state.opened = false
+		system.log_fact(.Info, Store_Unavailable{})
+		return
+	}
 	if _, status := system.thread_start(store_worker_entry, ctx, STORE_THREAD_STACK_PAGES); status != .Ok {
+		_ = system.arena_end(&store_state.read_arena)
+		_ = system.arena_end(&store_state.write_arena)
 		store_state.load_done = true
 		store_state.load_applied = true
 		store_state.opened = false
@@ -162,6 +179,8 @@ store_poll :: proc "contextless" () {
 		}
 		store_state.load_applied = true
 		if !opened {
+			_ = system.arena_end(&store_state.read_arena)
+			_ = system.arena_end(&store_state.write_arena)
 			system.log_fact(.Info, Store_Unavailable{})
 			return
 		}
@@ -175,6 +194,9 @@ store_poll :: proc "contextless" () {
 				system.log_fact(.Info, Store_Corrupt_Recovered{refusal = u64(refusal)})
 			}
 		}
+		// Release read_arena immediately after startup restore so only
+		// write_arena consumes physical pages during the session.
+		_ = system.arena_end(&store_state.read_arena)
 	}
 	if !store_state.opened || !store_state.dirty {
 		return
@@ -188,16 +210,19 @@ store_poll :: proc "contextless" () {
 	needed := conversation.persist_encoded_size(&talk)
 	if needed <= 0 || needed > conversation.PERSIST_MAX_BYTES {
 		store_state.dirty = false
+		system.log_fact(.Info, Store_Write_Failed{status = u64(conversation.Persist_Refusal.Bad_Length)})
 		return
 	}
 	buf, status := system.arena_extend_to(&store_state.write_arena, u64(needed))
 	if status != .Ok {
 		store_state.dirty = false
+		system.log_fact(.Info, Store_Write_Failed{status = u64(status)})
 		return
 	}
 	written, refusal := conversation.persist_encode(&talk, buf[:needed])
 	if refusal != .None {
 		store_state.dirty = false
+		system.log_fact(.Info, Store_Write_Failed{status = u64(refusal)})
 		return
 	}
 	store_state.dirty = false

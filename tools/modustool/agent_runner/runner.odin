@@ -42,6 +42,7 @@ Window_Port :: struct {
 	act:            proc(user_data: rawptr, serial: i64, kind: assistant_contract.Act_Kind, line, service, export: string) -> (number: i64, problem: string, grant_ended: bool),
 	act_result:     proc(user_data: rawptr, number: i64, state: assistant_contract.Act_State, text: string) -> (problem: string, grant_ended: bool),
 	act_state:      proc(user_data: rawptr, number: i64) -> (state: assistant_contract.Act_State, problem: string, grant_ended: bool),
+	act_line:       proc(user_data: rawptr, number: i64) -> (line: string, problem: string, grant_ended: bool),
 	act_table:      proc(user_data: rawptr, number: i64, table: Act_Result_Table) -> (problem: string, grant_ended: bool),
 	loop_end:       proc(user_data: rawptr, serial: i64, cause: Agent_Loop_End) -> (problem: string, grant_ended: bool),
 }
@@ -176,14 +177,44 @@ act_names :: proc(line: string) -> (service, export: string) {
 }
 
 // acts_equal reports whether two steps propose the exact same sequence of
-// acts (same count, same kind and line at every index).
+// acts across every kind-specific field.
 acts_equal :: proc(first, second: []Model_Act) -> bool {
 	if len(first) != len(second) {
 		return false
 	}
 	for index in 0 ..< len(first) {
-		if first[index].kind != second[index].kind || first[index].line != second[index].line {
+		a := first[index]
+		b := second[index]
+		if a.kind != b.kind || a.line != b.line {
 			return false
+		}
+		switch a.kind {
+		case .Eval_Lex:
+		case .Eval_Step:
+			if a.step_line_count != b.step_line_count {
+				return false
+			}
+			for i in 0 ..< a.step_line_count {
+				if a.step_lines[i] != b.step_lines[i] {
+					return false
+				}
+			}
+		case .Read_Screen:
+			if a.screen_format != b.screen_format || a.max_width != b.max_width || a.max_height != b.max_height {
+				return false
+			}
+		case .Read_Log_Facts:
+			if a.module_filter != b.module_filter || a.fact_name_filter != b.fact_name_filter || a.max_records != b.max_records {
+				return false
+			}
+		case .Send_Key:
+			if a.window_id != b.window_id || a.key_code != b.key_code || a.key_character != b.key_character || a.key_pressed != b.key_pressed || a.key_modifiers != b.key_modifiers {
+				return false
+			}
+		case .Send_Pointer:
+			if a.window_id != b.window_id || a.pointer_x != b.pointer_x || a.pointer_y != b.pointer_y || a.pointer_buttons != b.pointer_buttons || a.pointer_wheel != b.pointer_wheel {
+				return false
+			}
 		}
 	}
 	return true
@@ -276,6 +307,7 @@ remote_window_port :: proc(client: ^machine.Call_Client) -> Window_Port {
 		act            = remote_act,
 		act_result     = remote_act_result,
 		act_state      = remote_act_state,
+		act_line       = remote_act_line,
 		act_table      = remote_act_table,
 		loop_end       = remote_loop_end,
 	}
@@ -341,6 +373,13 @@ remote_act_state :: proc(user_data: rawptr, number: i64) -> (state: assistant_co
 		return {}, "assistant.act_state gave a word that names no state", false
 	}
 	return parsed, "", false
+}
+
+@(private = "file")
+remote_act_line :: proc(user_data: rawptr, number: i64) -> (line: string, problem: string, grant_ended: bool) {
+	arguments := [1]machine.Call_Argument{{integer = number}}
+	result, call_problem, call_grant := remote_window_call((^machine.Call_Client)(user_data), "act_line", arguments[:])
+	return result.text, call_problem, call_grant
 }
 
 @(private = "file")
@@ -666,8 +705,8 @@ act_run :: proc(runner: ^Runner, act: Model_Act, model_byte_budget := MODEL_STEP
 // or Refused outcome back to the window.
 runner_run_approved_act :: proc(runner: ^Runner, act_number: i64, act_line: string, model_byte_budget := MODEL_STEP_RESULT_BYTES) -> (report: Act_Report, problem: string, grant_ended: bool) {
 	window := runner_window(runner)
-	if window.act_state == nil {
-		msg := "window port has no act_state reader"
+	if window.act_state == nil || window.act_line == nil {
+		msg := "window port has no act_state or act_line reader"
 		return {number = act_number, state = .Refused, text = msg, model_text = msg}, msg, false
 	}
 	state, state_problem, state_grant := window.act_state(window.user_data, act_number)
@@ -678,13 +717,20 @@ runner_run_approved_act :: proc(runner: ^Runner, act_number: i64, act_line: stri
 		msg := text_cut(fmt.tprintf("act %d is %v, not Allowed_By_Principal", act_number, state))
 		return {number = act_number, state = .Refused, text = msg, model_text = msg}, "", false
 	}
-	service, export := act_names(act_line)
+	stored_line, line_problem, line_grant := window.act_line(window.user_data, act_number)
+	if line_problem != "" {
+		return {number = act_number, state = .Refused, text = line_problem, model_text = line_problem, grant_ended = line_grant}, line_problem, line_grant
+	}
+	// Build Approved_Act_Binding strictly from the window's authoritative stored
+	// line — never from the caller's act_line parameter — so any substitution
+	// fails bridge_authorize_approved_act with Approval_Mismatch.
+	service, export := act_names(stored_line)
 	binding := bridge_contract.Approved_Act_Binding {
 		act_number      = u64(act_number),
 		principal_state = state,
 		service         = transmute([]u8)service,
 		export          = transmute([]u8)export,
-		line_hash       = blake3.hash(transmute([]u8)act_line),
+		line_hash       = blake3.hash(transmute([]u8)stored_line),
 	}
 	eval_res, decision, _, err_text := agent_bridge.bridge_run_approved_act(runner.bridge, binding, act_line, context.temp_allocator)
 	report.number = act_number

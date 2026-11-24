@@ -127,6 +127,7 @@ The runner calls them through `remote`; each refuses a caller that does not act 
 | `assistant.stop_requested(serial)` | 1 when you pressed Stop or Escape on the running request, else 0 |
 | `assistant.loop_end(serial, cause)` | Ends the work on the request with its cause, which the window shows once |
 | `assistant.act_state(act)` | The state of an act: 5 allowed or 6 refused by the principal once you decided, 7 not shown by the trusted display |
+| `assistant.act_line(act)` | The authoritative line stored for an act, used to bind approved execution to the exact text kept by the window |
 
 The runner cannot write the states 5, 6 and 7: `act_result` refuses them with `Bad_Value`.
 

@@ -670,6 +670,24 @@ act_state :: proc "contextless" (conversation: ^Conversation, acts_for_principal
 	return .Succeeded, i64(entry.state)
 }
 
+// act_line copies the authoritative line stored for an act into result so
+// callers bind principal approvals to the exact line kept by the window.
+act_line :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bool, act: i64, result: []u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, count: i64) {
+	if !acts_for_principal {
+		return no_grant(error), 0
+	}
+	entry := act_of(conversation, act)
+	if entry == nil {
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Records, 1, act)
+	}
+	line := string(entry.line[:entry.line_count])
+	if len(result) < len(line) {
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 0, i64(len(line)), i64(len(result)))
+	}
+	copy(result, line)
+	return .Succeeded, i64(len(line))
+}
+
 // The decision of the principal on an act, from the word of act_poll.
 Act_Decision :: enum u8 {
 	Pending,

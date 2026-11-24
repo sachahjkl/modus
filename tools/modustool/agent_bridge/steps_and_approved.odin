@@ -13,6 +13,7 @@ import step_runner "internal:assistant/agent_step"
 import contract "modus:contract/agent_bridge"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
+import "modus:contract/text_encoding"
 import "modus:contract/wide_grants"
 
 // bridge_ensure_step_session lazily allocates and initializes the persistent
@@ -83,20 +84,47 @@ step_adapter_call_export :: proc "contextless" (
 		case .Boolean:
 			strings.write_string(&b, arg.integer != 0 ? "true" : "false")
 		case .Text:
-			// Lex string literals have no escapes; refuse embedded quotes.
-			if strings.index_byte(arg.text, '"') >= 0 {
-				adapter.last_err = "string argument contains quote"
+			// Validate UTF-8 with no control bytes, and refuse quotes,
+			// backslashes, or interpolation markers that could alter Lex syntax.
+			if !text_encoding.display_text_valid(transmute([]u8)arg.text) ||
+			   strings.index_byte(arg.text, '"') >= 0 ||
+			   strings.index_byte(arg.text, '\\') >= 0 ||
+			   strings.contains(arg.text, "${") {
+				adapter.last_err = "string argument contains forbidden characters"
 				return false
 			}
 			strings.write_byte(&b, '"')
 			strings.write_string(&b, arg.text)
 			strings.write_byte(&b, '"')
 		case .Member:
+			if len(arg.text) < 2 || arg.text[0] != '.' || arg.text[1] < 'a' || arg.text[1] > 'z' {
+				adapter.last_err = "invalid member argument"
+				return false
+			}
+			for ch in transmute([]u8)arg.text[1:] {
+				if !((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_') {
+					adapter.last_err = "invalid member argument"
+					return false
+				}
+			}
 			strings.write_string(&b, arg.text)
 		}
 	}
 	strings.write_byte(&b, ')')
 	call_line := strings.to_string(b)
+
+	// Defense in depth: verify the formatted line passes the exact single-call
+	// read-only Lex classifier and targets the exact (service, export) pair.
+	call_bytes := transmute([]u8)call_line
+	if contract.validate_lex_line(call_bytes) != .None || contract.lex_line_classify(call_bytes) != .Read_Only {
+		adapter.last_err = "formatted step call failed read-only border"
+		return false
+	}
+	parsed_svc, parsed_exp, parsed_ok := contract.lex_line_single_call(call_bytes)
+	if !parsed_ok || string(parsed_svc) != service || string(parsed_exp) != export {
+		adapter.last_err = "formatted step call mismatch"
+		return false
+	}
 
 	// Fail-closed: record the export call in bridge.act_log BEFORE executing it.
 	digest := blake3.hash(transmute([]u8)call_line)
@@ -153,7 +181,12 @@ step_adapter_call_export :: proc "contextless" (
 			for c in 0 ..< cols {
 				cell := &tbl.cells[r * cols + c]
 				if c < len(row_cells) {
-					cell.text_count = u8(copy(cell.text[:], row_cells[c]))
+					src_cell := row_cells[c]
+					take := len(src_cell)
+					if take > len(cell.text) {
+						take = text_encoding.complete_characters(transmute([]u8)src_cell[:len(cell.text)])
+					}
+					cell.text_count = u8(copy(cell.text[:take], src_cell[:take]))
 				}
 				if has_row_ints && c < len(res.row_integers[r]) && tbl.column_kinds[c] != .Text {
 					cell.has_integer = true

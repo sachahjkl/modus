@@ -16,7 +16,7 @@ The terms Assistant, Agent runner, Model reply and Act dialog are in [`docs/glos
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "19. A command is a function: no text between processes". The window never parses a text of another process. The request, the reply and the result text are words for a person; they cross as Text fields that the window shows. Each fact that the window acts on is a typed value: a serial, an act number, an act state, the words of an error record.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "20. No ambient access: the other holes to close". The window draws no false system dialog: the act dialog is drawn by the trusted display, and shows names that the trusted display checks, never a word of the model.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "21. Principals: who acts, without users". The principal is the one source of a new grant. No act of the agent, no reply of the model and no call of the runner answers the act dialog.
-- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "2. Sandbox by default". The assistant holds a window, its exports, and a connection to the trusted display with the right to ask an act: no store, no network, no machine, and no grant to act for the principal.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "2. Sandbox by default". The assistant holds a window, its exports, its private store for conversation persistence, and a connection to the trusted display with the right to ask an act: no network, no machine, and no grant to act for the principal.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "24. Every input of a process passes through a channel that can be recorded". A request comes from the keys of the window; a reply and an act come through calls of `remote`, each a record of its connection.
 - The tool uses the Odin standard library only, and no secret is in the repository, in the system, or in a log.
 
@@ -169,7 +169,7 @@ The runner keeps the conversation that the model reads: the last 16 requests wit
 - **The window cuts `service.export` from the line.** The window would read a text of another party and act on it (property 19). The runner sends the two names, taken by the parser of the bridge.
 - **An act that asks the trusted display again after a refusal that is not `Busy`.** The refusal stays: the act would ask ten times a second forever, and hold back each act after it.
 - **The act line or the text of the model on the trusted display.** Such words are a claim of the agent; the trusted display shows the asker and two identifiers that it checks.
-- **An allowed act that the runner runs.** It is the self-approval that the bridge refuses: the runner would carry the approval as a claim.
+- **An allowed act run on a self-issued approval claim.** The bridge never trusts an approval flag from its caller: an approved act runs only from the authoritative state and line read from the trusted `assistant` window (`act_state` and `act_line`), under an active wide grant with a single-use binding, a fail-closed BLAKE3 act record, and hard refusal of any action gated by `wide_grants.act_requires_principal_proof`.
 - **The key in a file of the repository, in the command line, or in the log.** A command line is visible to each process of the host; an environment variable of one process is not.
 - **HTTPS through a TLS library of C.** The tool uses the Odin standard library only.
 

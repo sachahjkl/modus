@@ -222,3 +222,25 @@ test_step_bounds_and_fail_closed_act_log :: proc(t: ^testing.T) {
 	chain_refusal, _ := wide_grants.act_chain_verify(session_act_records(session), 0, wide_grants.GENESIS_PREVIOUS_HASH)
 	testing.expect_value(t, chain_refusal, wide_grants.Wide_Grant_Refusal.None)
 }
+
+@(test)
+test_parse_int64_overflow_edges_and_utf8_cut_safety :: proc(t: ^testing.T) {
+	v, ok := parse_int64("9223372036854775807")
+	testing.expect(t, ok && v == max(i64))
+	_, ok = parse_int64("9223372036854775808")
+	testing.expect(t, !ok)
+
+	v, ok = parse_int64("-9223372036854775808")
+	testing.expect(t, ok && v == min(i64))
+	_, ok = parse_int64("-9223372036854775809")
+	testing.expect(t, !ok)
+	_, ok = parse_int64("-9223372036854775810")
+	testing.expect(t, !ok)
+
+	// Multi-byte UTF-8 truncation must never split a character.
+	buf: [5]u8
+	pos := 0
+	write_str(buf[:], &pos, "aété") // 'a' (1) + 'é' (2) + 't' (1) + 'é' (2) = 6 bytes -> must cut at 4 ("aét")
+	testing.expect_value(t, pos, 4)
+	testing.expect_value(t, string(buf[:pos]), "aét")
+}

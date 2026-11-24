@@ -30,6 +30,7 @@ import "modus:console_language"
 import "modus:contract/agent_bridge"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
+import "modus:contract/text_encoding"
 import "modus:contract/wide_grants"
 import "modus:lex_evaluator"
 import "modus:lex_parser"
@@ -454,9 +455,18 @@ recompute_pinned_tables :: proc "contextless" (session: ^Step_Session) {
 		tbl.pinned = false
 	}
 	for &v in session.variables {
-		if v.used && (v.kind == .Table || v.kind == .Record) {
+		if !v.used {
+			continue
+		}
+		if v.kind == .Table || v.kind == .Record {
 			if v.integer >= 0 && int(v.integer) < len(session.tables) {
 				session.tables[int(v.integer)].pinned = true
+			}
+		} else if v.kind == .List {
+			for item in session.var_list_items[v.list_first:v.list_first + v.list_count] {
+				if (item.kind == .Table || item.kind == .Record) && item.integer >= 0 && int(item.integer) < len(session.tables) {
+					session.tables[int(item.integer)].pinned = true
+				}
 			}
 		}
 	}
@@ -600,7 +610,7 @@ host_command_find :: proc "contextless" (data: rawptr, name: string) -> (sig: le
 	return sig, true
 }
 
-@(private = "file")
+@(private)
 parse_int64 :: proc "contextless" (s: string) -> (val: i64, ok: bool) {
 	if len(s) == 0 {
 		return 0, false
@@ -614,6 +624,7 @@ parse_int64 :: proc "contextless" (s: string) -> (val: i64, ok: bool) {
 	if idx >= len(s) {
 		return 0, false
 	}
+	limit := neg ? u64(max(i64)) + 1 : u64(max(i64))
 	acc: u64 = 0
 	for ; idx < len(s); idx += 1 {
 		c := s[idx]
@@ -621,7 +632,7 @@ parse_int64 :: proc "contextless" (s: string) -> (val: i64, ok: bool) {
 			return 0, false
 		}
 		digit := u64(c - '0')
-		if acc > (u64(max(i64)) - digit) / 10 + (neg ? 1 : 0) {
+		if acc > (limit - digit) / 10 {
 			return 0, false
 		}
 		acc = acc * 10 + digit
@@ -1190,11 +1201,13 @@ bind_variable :: proc "contextless" (session: ^Step_Session, name: string, value
 			return .Variables_Full
 		}
 		first := session.var_list_item_count
+		saved_string_used := session.string_used
 		for item, idx in items {
 			stored := item
 			if item.kind == .Text {
 				off, ln, ok := intern_string(session, item.text)
 				if !ok {
+					session.string_used = saved_string_used
 					return .Strings_Full
 				}
 				stored.text = string(session.strings[off:off + ln])
@@ -1249,13 +1262,20 @@ write_i64 :: proc "contextless" (dst: []u8, pos: ^int, value: i64) {
 	}
 }
 
-@(private = "file")
+@(private)
 write_str :: proc "contextless" (dst: []u8, pos: ^int, s: string) {
 	if pos^ >= len(dst) || len(s) == 0 {
 		return
 	}
-	n := copy(dst[pos^:], s)
-	pos^ += n
+	room := len(dst) - pos^
+	take := len(s)
+	if take > room {
+		take = text_encoding.complete_characters(transmute([]u8)s[:room])
+	}
+	if take > 0 {
+		copy(dst[pos^:pos^ + take], s[:take])
+		pos^ += take
+	}
 }
 
 @(private = "file")
@@ -1429,7 +1449,9 @@ step_run :: proc "contextless" (session: ^Step_Session, lines: []string, transpo
 		summarize_value(session, val, line_out)
 		if summary_bytes_used + line_out.summary_len > STEP_RESULT_TEXT_BYTES {
 			room := max(STEP_RESULT_TEXT_BYTES - summary_bytes_used, 0)
-			line_out.summary_len = min(line_out.summary_len, room)
+			if line_out.summary_len > room {
+				line_out.summary_len = text_encoding.complete_characters(line_out.summary[:room])
+			}
 			outcome.text_budget_exceeded = true
 		}
 		summary_bytes_used += line_out.summary_len

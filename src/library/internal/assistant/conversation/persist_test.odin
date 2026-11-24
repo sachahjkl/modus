@@ -5,6 +5,7 @@ import "core:testing"
 import assistant_contract "modus:contract/assistant"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
+import "modus:contract/call_outcome"
 import "modus:contract/errors"
 
 @(private = "file")
@@ -227,4 +228,44 @@ persist_decode_refuses_corrupt_data_without_mutating_destination :: proc(t: ^tes
 	testing.expect_value(t, dst.last_serial, sentinel_serial)
 	testing.expect_value(t, dst.entry_count, sentinel_count)
 	testing.expect_value(t, string(entry_at(dst, 0).text[:entry_at(dst, 0).text_count]), "keep me intact")
+}
+
+// A persisted Allowed_By_Principal act must downgrade to Refused on reload so
+// approvals cannot outlive a wide grant or replay across a window restart.
+@(test)
+persist_decode_downgrades_allowed_by_principal_across_restart :: proc(t: ^testing.T) {
+	src := new(Conversation)
+	defer free(src)
+	dst := new(Conversation)
+	defer free(dst)
+
+	_ = request_keep(src, "change setting")
+	err: errors.Error_Record
+	req_buf: [64]u8
+	_, _, _ = request_text(src, true, 1, req_buf[:], &err)
+	_, _, _ = reply(src, true, 1, "proposing setting change", 1, &err)
+	_, act_num, _ := act(src, true, 1, i64(assistant_contract.Act_Kind.Eval_Lex), "settings.set(.french)", "settings", "set", &err)
+	_, _, _ = act_result(src, true, act_num, i64(assistant_contract.Act_State.Awaiting_Principal), "waiting", &err)
+	act_of(src, act_num).state = .Allowed_By_Principal
+
+	size := persist_encoded_size(src)
+	buf := make([]u8, size)
+	defer delete(buf)
+	written, enc_refusal := persist_encode(src, buf)
+	testing.expect_value(t, enc_refusal, Persist_Refusal.None)
+	testing.expect_value(t, persist_decode(dst, buf[:written]), Persist_Refusal.None)
+
+	reloaded := act_of(dst, act_num)
+	testing.expect(t, reloaded != nil)
+	testing.expect_value(t, reloaded.state, assistant_contract.Act_State.Refused)
+
+	// Verify act_line returns the authoritative line and refuses small buffers.
+	line_buf: [64]u8
+	line_out, line_len := act_line(dst, true, act_num, line_buf[:], &err)
+	testing.expect_value(t, line_out, call_outcome.Call_Outcome.Succeeded)
+	testing.expect_value(t, string(line_buf[:line_len]), "settings.set(.french)")
+	small_out, _ := act_line(dst, true, act_num, line_buf[:4], &err)
+	testing.expect_value(t, small_out, call_outcome.Call_Outcome.Argument_Refused)
+	no_grant_out, _ := act_line(dst, false, act_num, line_buf[:], &err)
+	testing.expect_value(t, no_grant_out, call_outcome.Call_Outcome.Grant_Or_Right_Missing)
 }

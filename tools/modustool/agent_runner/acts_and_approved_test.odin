@@ -186,6 +186,15 @@ local_window_port :: proc(conv: ^conversation.Conversation) -> Window_Port {
 			st, ok := assistant_contract.act_state_of_word(word)
 			return st, ok ? "" : "bad state word", false
 		},
+		act_line = proc(ud: rawptr, number: i64) -> (string, string, bool) {
+			err: errors.Error_Record
+			buf := make([]u8, assistant_contract.ACT_LINE_BYTES, context.temp_allocator)
+			outcome, n := conversation.act_line((^conversation.Conversation)(ud), true, number, buf, &err)
+			if outcome != .Succeeded {
+				return "", "act_line refused", false
+			}
+			return string(buf[:n]), "", false
+		},
 		act_table = proc(ud: rawptr, number: i64, table: Act_Result_Table) -> (string, bool) {
 			_ = ud
 			_ = number
@@ -356,4 +365,50 @@ test_runner_run_approved_act_runs_non_sensitive_once_and_refuses_proof_gated :: 
 	// Verify collector BLAKE3 chain remained valid.
 	chain_refusal, _ := agent_bridge.bridge_act_log_verify(&bridge.act_log)
 	testing.expect_value(t, chain_refusal, wide_grants.Wide_Grant_Refusal.None)
+}
+
+@(test)
+test_runner_run_approved_act_refuses_line_substitution_and_acts_equal_checks_all_fields :: proc(t: ^testing.T) {
+	mock: Full_Mock_Transport
+	transport := agent_bridge.Machine_Transport{user_data = &mock, eval_lex = mock_eval_lex}
+	bridge: agent_bridge.Agent_Bridge
+	testing.expect(t, agent_bridge.bridge_init(&bridge, wide_grant_runner_policy({0 = 0x91, 31 = 0x92}, 5000, 42), transport))
+	defer agent_bridge.bridge_destroy(&bridge)
+	bridge.clock_ms_proc = fixed_runner_clock
+
+	conv := new(conversation.Conversation)
+	defer free(conv)
+	_ = conversation.request_keep(conv, "approve french")
+	script := []string{
+		`{"text":"propose","acts":[{"kind":"eval_lex","line":"settings.set(.french)"}]}`,
+		`{"text":"waiting"}`,
+	}
+	fake := Fake_Model{replies = script}
+	runner := Runner{window = local_window_port(conv), bridge = &bridge, model = fake_model(&fake)}
+	defer conversation_close(&runner)
+
+	report := runner_turn(&runner)
+	act_num := report.steps[0].acts[0].number
+	conversation.act_of(conv, act_num).state = .Allowed_By_Principal
+
+	// Substituting a different non-sensitive line against the approved act_number
+	// must fail with Approval_Mismatch and zero machine calls!
+	sub_rep, sub_prob, _ := runner_run_approved_act(&runner, act_num, "settings.set(.english)")
+	testing.expect_value(t, sub_prob, "")
+	testing.expect_value(t, sub_rep.state, assistant_contract.Act_State.Refused)
+	testing.expect(t, strings.contains(sub_rep.text, "Approval_Mismatch"))
+	testing.expect_value(t, mock.eval_hits, 0)
+
+	// Verify acts_equal distinguishes kind-specific fields even when display lines match.
+	log_a := Model_Act{kind = .Read_Log_Facts, line = "read_log_facts(max_records = 10)", module_filter = "assistant", max_records = 10}
+	log_b := Model_Act{kind = .Read_Log_Facts, line = "read_log_facts(max_records = 10)", module_filter = "storage", max_records = 10}
+	testing.expect(t, !acts_equal([]Model_Act{log_a}, []Model_Act{log_b}))
+
+	key_a := Model_Act{kind = .Send_Key, line = "send_key(window = 4, code = 65, pressed = true)", window_id = 4, key_code = 65, key_character = 'a', key_pressed = true}
+	key_b := Model_Act{kind = .Send_Key, line = "send_key(window = 4, code = 65, pressed = true)", window_id = 4, key_code = 65, key_character = 'A', key_pressed = true, key_modifiers = 1}
+	testing.expect(t, !acts_equal([]Model_Act{key_a}, []Model_Act{key_b}))
+
+	ptr_a := Model_Act{kind = .Send_Pointer, line = "send_pointer(window = 4, x = 1, y = 2, buttons = 0)", window_id = 4, pointer_x = 1, pointer_y = 2, pointer_wheel = 1}
+	ptr_b := Model_Act{kind = .Send_Pointer, line = "send_pointer(window = 4, x = 1, y = 2, buttons = 0)", window_id = 4, pointer_x = 1, pointer_y = 2, pointer_wheel = -1}
+	testing.expect(t, !acts_equal([]Model_Act{ptr_a}, []Model_Act{ptr_b}))
 }

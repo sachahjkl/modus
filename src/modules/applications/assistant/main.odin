@@ -56,9 +56,10 @@ HEIGHT :: 560
 // 2274 pages; then 1748 pages for the stack, the small tables and the glyph
 // memory, as paint states them for itself, which this process draws as,
 // 354 pages for the glyph memory of the drawing module (display.TEXT_MEMORY_PAGES),
-// 16 pages for the store worker stack (STORE_THREAD_STACK_PAGES), and 256 pages
-// for live conversation snapshot arenas (STORE_WORKING_PAGES): 2274 + 1748 + 354 + 16 + 256 = 4648.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4648, processes = 1, threads = 2, window_width = WIDTH, window_height = HEIGHT}
+// 16 pages for the store worker stack (STORE_THREAD_STACK_PAGES), and 1452 pages
+// for the full PERSIST_MAX_BYTES snapshot arena (STORE_WORKING_PAGES):
+// 2274 + 1748 + 354 + 16 + 1452 = 5844.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 5844, processes = 1, threads = 2, window_width = WIDTH, window_height = HEIGHT}
 
 // The pages of the stack, the small tables and the glyph memory, as paint
 // counts them (src/modules/demonstrations/paint/main.odin).
@@ -300,6 +301,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		store_done_seen := system.event_count(&store_state.done_event)
 		store_poll()
 		waiting := acts_waiting_step()
+		if talk.changed {
+			talk.changed = false
+			draw(&window)
+		}
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.service_wait(&wait, &service)

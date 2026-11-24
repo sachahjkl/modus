@@ -198,3 +198,31 @@ test_bridge_run_approved_act_enforces_single_use_and_principal_proof :: proc(t: 
 	verify_refusal, _ := bridge_act_log_verify(&bridge.act_log)
 	testing.expect_value(t, verify_refusal, wide_grants.Wide_Grant_Refusal.None)
 }
+
+@(test)
+test_bridge_eval_step_refuses_lex_injection_in_arguments :: proc(t: ^testing.T) {
+	st: Step_Test_Transport
+	defer {
+		for s in st.calls {
+			delete(s)
+		}
+		delete(st.calls)
+	}
+	bridge: Agent_Bridge
+	testing.expect(t, bridge_init(&bridge, step_test_policy({0 = 0xEE, 31 = 0xFF}, 1000), {user_data = &st, eval_lex = step_test_eval_lex}))
+	defer bridge_destroy(&bridge)
+	bridge.clock_ms_proc = fixed_clock_1000
+
+	// Backslash or ${ interpolation marker in dynamic string arg must be refused before transport.
+	for bad_req in ([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"eval_step","params":{"lines":["s = \"a\\\\b\"","manual.exports(s)"]}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"eval_step","params":{"lines":["s = \"a${plans.apply(1)}\"","manual.exports(s)"]}}`,
+	}) {
+		ans := bridge_handle_json_line(&bridge, bad_req, context.temp_allocator)
+		parsed, err := json.parse_string(ans, .JSON, true, context.temp_allocator)
+		testing.expect_value(t, err, json.Error.None)
+		_, has_err := parsed.(json.Object)["error"]
+		testing.expectf(t, has_err, "expected injection refusal for %s", bad_req)
+		testing.expect_value(t, st.call_hits, 0)
+	}
+}

@@ -1475,73 +1475,35 @@ Approved_Act_Binding :: struct {
 
 // classify_lex_sensitive_action maps a single-call Lex service.export to the
 // closed wide_grants.Sensitive_Action class checked by
-// wide_grants.act_requires_principal_proof. Any sensitive operation requires
-// fresh principal proof and can never execute via an act-dialog approval alone.
+// wide_grants.act_requires_principal_proof. Fails closed by service for all
+// privileged, grant-bearing, storage, display, collector, principal, remote,
+// TPM, module, and root services so no export of those services can execute
+// via an act-dialog approval alone (read-only calls never enter
+// bridge_authorize_approved_act).
 classify_lex_sensitive_action :: proc "contextless" (service, export: []u8) -> wide_grants.Sensitive_Action {
 	if len(service) == 0 || len(export) == 0 {
 		// Fail closed on empty identifiers: act_requires_principal_proof(.None) is true.
 		return .None
 	}
 	if bytes_equal_literal(service, "plans") {
-		if bytes_equal_literal(export, "apply") || bytes_equal_literal(export, "apply_poll") || bytes_equal_literal(export, "rollback") {
-			return .Plans_Apply_Adding_Grant
-		}
+		return .Plans_Apply_Adding_Grant
 	}
 	if bytes_equal_literal(service, "unlock") || bytes_equal_literal(service, "passphrase") {
 		return .Passphrase_Or_Unlock_Dialog
 	}
-	if bytes_equal_literal(service, "assistant") {
-		// An agent must never call the assistant window's own exports via eval_lex.
+	if bytes_equal_literal(service, "assistant") || bytes_equal_literal(service, "compositor") || bytes_equal_literal(service, "powerbox") {
 		return .Trusted_Display_Grant_Dialog
 	}
-	if bytes_equal_literal(service, "compositor") {
-		if bytes_equal_literal(export, "act_ask") ||
-		   bytes_equal_literal(export, "act_poll") ||
-		   bytes_equal_literal(export, "act_cancel") ||
-		   bytes_equal_literal(export, "powerbox_ask") ||
-		   bytes_equal_literal(export, "plan_diff_ask") ||
-		   bytes_equal_literal(export, "revoke_grant") {
-			return .Trusted_Display_Grant_Dialog
-		}
-		if bytes_equal_literal(export, "wide_grant_mark") ||
-		   bytes_equal_literal(export, "wide_grant_show") ||
-		   bytes_equal_literal(export, "wide_grant_clear") {
-			return .Wide_Grant_Screen_Or_Mark
-		}
-	}
 	if bytes_equal_literal(service, "collector") {
-		if bytes_equal_literal(export, "create_grant") || bytes_equal_literal(export, "revoke_grant") {
-			return .Wide_Grant_Screen_Or_Mark
-		}
+		return .Wide_Grant_Screen_Or_Mark
 	}
-	if bytes_equal_literal(service, "principals") {
+	if bytes_equal_literal(service, "principals") || bytes_equal_literal(service, "remote") {
 		return .Principal_Management
 	}
-	if bytes_equal_literal(service, "remote") {
-		if bytes_equal_literal(export, "allow") ||
-		   bytes_equal_literal(export, "revoke") ||
-		   bytes_equal_literal(export, "client_allow") ||
-		   bytes_equal_literal(export, "client_revoke") {
-			return .Principal_Management
-		}
-	}
-	if bytes_equal_literal(service, "disk_grants") {
+	if bytes_equal_literal(service, "disk_grants") || bytes_equal_literal(service, "storage") || bytes_equal_literal(service, "tpm") {
 		return .Disk_Grant_Change
 	}
-	if bytes_equal_literal(service, "storage") {
-		if bytes_equal_literal(export, "grant") || bytes_equal_literal(export, "grant_set") || bytes_equal_literal(export, "grant_revoke") {
-			return .Disk_Grant_Change
-		}
-	}
-	if bytes_equal_literal(service, "root") {
-		if bytes_equal_literal(export, "disk_grant_set") || bytes_equal_literal(export, "disk_rows_set") {
-			return .Disk_Grant_Change
-		}
-		if bytes_equal_literal(export, "replace") || bytes_equal_literal(export, "module_replace") || bytes_equal_literal(export, "debug_attach") {
-			return .Module_Replace_Or_Debug
-		}
-	}
-	if bytes_equal_literal(service, "debugger") || bytes_equal_literal(service, "replace") {
+	if bytes_equal_literal(service, "root") || bytes_equal_literal(service, "debugger") || bytes_equal_literal(service, "replace") || bytes_equal_literal(service, "module_files") {
 		return .Module_Replace_Or_Debug
 	}
 	return .Normal_Window_Input
