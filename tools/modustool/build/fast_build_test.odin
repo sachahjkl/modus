@@ -35,12 +35,15 @@ optimization_mode_arguments_and_refusals :: proc(t: ^testing.T) {
 module_commands_follow_optimization_mode_and_keep_kernel_at_speed :: proc(t: ^testing.T) {
 	user_module := foundation.Module_Build{name = "console", source = foundation.SOURCE_FOLDER_MODULES + "/console"}
 	kernel_module := foundation.Module_Build{name = "kernel", source = foundation.SOURCE_FOLDER_KERNEL, kernel = true}
+	library_module := foundation.Module_Build{name = "text_rendering", source = foundation.LIBRARY_MODULE_SOURCES + "text_rendering", library = true}
 	main_volume := Boot_Volume{path = BOOT_VOLUME, image = BOOT_IMAGE, kernel = "kernel"}
 
 	testing.expect_value(t, module_effective_optimization(user_module, .Speed), Optimization_Mode.Speed)
 	testing.expect_value(t, module_effective_optimization(user_module, .None), Optimization_Mode.None)
 	testing.expect_value(t, module_effective_optimization(kernel_module, .Speed), Optimization_Mode.Speed)
 	testing.expect_value(t, module_effective_optimization(kernel_module, .None), Optimization_Mode.Speed)
+	testing.expect_value(t, module_effective_optimization(library_module, .Speed), Optimization_Mode.Speed)
+	testing.expect_value(t, module_effective_optimization(library_module, .None), Optimization_Mode.Speed)
 
 	// Speed mode: user module and kernel both use -o:speed, no opt pass, llc -O3.
 	user_speed_compile := module_compile_command(user_module, .Speed)

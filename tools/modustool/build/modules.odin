@@ -241,9 +241,12 @@ optimization_mode_of_argument :: proc(text: string) -> (mode: Optimization_Mode,
 // actually compiles with. A kernel module always compiles with Speed: at
 // None, llc -O0 emits dynamic stack alignment and frame-pointer restores that
 // kernel_stack_check refuses, and unoptimized frames risk exceeding the fixed
-// kernel stack and interrupt stacks (src/md/infrastructure/fast_build.md).
+// kernel stack and interrupt stacks. A library module also compiles with
+// Speed: under -o:none, Odin emits un-folded read-only address tables (relro
+// rebases) in text_rendering and drawing that library modules cannot carry
+// (src/md/infrastructure/fast_build.md).
 module_effective_optimization :: proc(build: foundation.Module_Build, requested: Optimization_Mode) -> Optimization_Mode {
-	if build.kernel {
+	if build.kernel || build.library {
 		return .Speed
 	}
 	return requested
