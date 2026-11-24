@@ -144,6 +144,7 @@ wiring_service_start :: proc "contextless" () -> bool {
 		reg_addr, status = system.memory_map(reg_mem, {.Write})
 	}
 	process: system.Handle
+	wiring_budget: Start_Budget
 	if status == .Ok {
 		grants: system.Context_Grants
 		values: system.Context_Values
@@ -153,10 +154,13 @@ wiring_service_start :: proc "contextless" () -> bool {
 		system.grant_put(&grants, ws.SERVICE_REGION, {reg_mem, {.Read, .Write}})
 		system.grant_put(&grants, op.CONTEXT_LOG, log_grant(start_grant_set_of("wiring")))
 		system.value_put(&values, ws.VALUE_IMAGE_SIZE, u64(len(image)))
+		budget_ok: bool
 		if context_refused("wiring", &grants, &values) {
 			status = .Bad_State
+		} else if wiring_budget, budget_ok = budget_of(file, "wiring"); !budget_ok {
+			status = .No_Budget
 		} else {
-			process, status = system.process_start(file, "wiring", grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, "wiring"), nil, &prepared, load_source())
+			process, status = system.process_start(file, "wiring", grants.grants, random.values_with_seed(&process_generator, values.values), wiring_budget.amounts, nil, &prepared, load_source(), ready = &slot.ready)
 		}
 	}
 	if status != .Ok {
@@ -178,6 +182,7 @@ wiring_service_start :: proc "contextless" () -> bool {
 		return false
 	}
 	part_place_fill(slot, "wiring", process)
+	start_budget_note(slot, wiring_budget)
 	slot.process_slot, slot.process_serial, _ = system.process_place(process)
 	wiring_process = slot
 	wiring_ring_memory, wiring_ring = ring_mem, ring_opened
@@ -294,11 +299,11 @@ wiring_register_process :: proc "contextless" (item: ^Started) {
 @(private = "file")
 wiring_pages_stated :: proc "contextless" (asker: ^Started) -> u64 {
 	file := image_file_checked(system.name_of(asker.name[:]))
-	request: module.Budget_Request
+	request: module.Floor
 	if module.validate(file) == .None {
-		request, _ = module.budget_request(file)
+		request, _ = module.floor_read(file)
 	}
-	return system.wiring_pages_of_request(request)
+	return system.wiring_pages_of_floor(request)
 }
 
 // wiring_asker_budget_ensure carves a pages-only child wiring budget from
@@ -947,7 +952,7 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 	if wiring_ring.head == nil {
 		return
 	}
-	for record in system.receive(&wiring_ring.completions) {
+	for record in root_receive(&wiring_ring.completions, "the wiring service") {
 		if record.tag == 0 {
 			if emptied_id, is_empty := ws.asker_wirings_empty_from_record(record); is_empty {
 				for &item in started {

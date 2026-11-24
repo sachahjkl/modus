@@ -1,5 +1,6 @@
 package kernel
 
+import "modulus:budget_peak"
 import "base:intrinsics"
 import op "modus:contract/operation"
 import "modulus:word_table"
@@ -185,11 +186,11 @@ wait_room_give_back :: proc "contextless" (room: u64, pages: u32, budget_field: 
 	for page in 0 ..< pages - 1 {
 		if names[page] != 0 {
 			frames_free_held(names[page], 1)
-			budgets[budget].amounts.pages += 1
+			budget_peak.give_back(&budgets[budget].amounts.pages, 1)
 		}
 	}
 	frames_free_held(room, 1)
-	budgets[budget].amounts.pages += 1
+	budget_peak.give_back(&budgets[budget].amounts.pages, 1)
 	lock_free(&frame_lock, .Frame)
 }
 

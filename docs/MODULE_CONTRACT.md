@@ -288,20 +288,20 @@ A link that opens has a line under it, in the color of the link. A link that doe
 
 The model is the BTF format of Linux, changed so that all records have a fixed size. [Types §5]
 
-### The budget that a module asks for
+### The floor of a module
 
-The table `Budget` holds one record at index 1, `module.Budget_Request` (32 bytes): the pages, the processes, the threads and the screen pictures that the module asks for its process. It is a request, never a grant: the starter of the process decides. No loader reads it.
+The table `Floor` holds one record at index 1, `module.Floor` (40 bytes): what the process of the module needs to reach its first state of work. It is a fact of the module and of the build, never a grant: the starter reserves it and decides the size of the budget. No loader reads it. Each module with an entry has the table; a library has none. A starter refuses a file with no table `Floor`, or with a floor of no page, no process or no thread: `root: cannot start <name>: its module file gives no floor`.
 
 | Part | What it counts |
 |---|---|
-| `pages` | The pages of memory: the modules, the stacks, the pictures and the working memory of the process |
-| `processes` | The process itself, and each child that runs at one time |
-| `threads` | Each thread that runs at one time, the first one included, and the threads of the children |
-| `screen_pictures` | Pictures of the size of the screen in force, 4 bytes a pixel, that the process holds: the frame and the background of the compositor, the copy and the capture pictures of the remote display. 4 at most (`module.SCREEN_PICTURES_LIMIT`). The build cannot know the screen, so the starter adds their pages for the screen of the machine (`module.budget_request_of_screen`): a machine of a 4K screen pays a 4K screen, and a machine of 1080p does not. A row of the plan of principal 0 may lower those pages, never raise them: the cost of the screen is a machine policy. A request past 4 gets no page for its screen, with one line |
+| `pages` | The pages of memory: the modules and their load, the stacks, the pictures, the start objects, the floors of the children and the working memory that is left |
+| `processes` | The process itself, and each child that runs at one time: at least 1 |
+| `threads` | Each thread that runs at one time, the first one included, and the threads of the children: at least 1 |
+| `screen_pictures` | Pictures of the size of the screen in force, 4 bytes a pixel, that the process holds: the frame and the background of the compositor, the copy and the capture pictures of the remote display. 4 at most (`module.SCREEN_PICTURES_LIMIT`). The build cannot know the screen, so the starter adds their pages for the screen of the machine (`module.floor_of_screen`): a machine of a 4K screen pays a 4K screen, and a machine of 1080p does not. A row of the plan of principal 0 may lower those pages, never raise them: the cost of the screen is a machine policy |
 | `wiring_pages` | The pages of the rings of the wirings that the process asks for: the root service carves its wiring budget to that measure at its first wiring. 0: half of `pages` (`src/md/features/module_outputs.md`, "The bounds of the wirings") |
 
-```byte-layout module.Budget_Request
-module.Budget_Request, 40 bytes: the record 1 of the table Budget
+```byte-layout module.Floor
+module.Floor, 40 bytes: the record 1 of the table Floor
 offset  size  field            type
      0     8  pages            u64
      8     8  processes        u64
@@ -310,47 +310,66 @@ offset  size  field            type
     32     8  wiring_pages     u64
 ```
 
-- **No table.** A module with no table `Budget` asks for the least budget of its starter.
-- **A part that is 0** asks for the least budget of that part. So a record of an older, shorter size reads its missing parts as the least, by the rule of the table directory.
-- **Processor time and log records are not in the request.** They protect the other processes: the starter sets them.
+Processor time and log records are not in the floor: they protect the other processes, and the starter sets them.
 
-**The source states only what the tool cannot count**: its stated budget, one constant of the type `system.Stated_Budget`, with a comment that gives the reasons of the amounts:
+**The source states only what the tool cannot count**: its stated budget, one constant of the type `system.Stated_Budget`, with a comment that gives the reasons of the amounts, and the lists of its start objects:
 
 ```odin
 // The draw tables of the interface, and the tables of the rows.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2536, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// The two rings of its loop and the page that it lends.
+MODULE_START_OBJECTS :: [?]system.Start_Object{RING_PAGES, RING_PAGES, LENT_PAGES}
 ```
 
 | Part of the stated budget | What it states | Left out |
 |---|---|---|
-| `working_memory_pages` | The pages that the process chooses: its tables, its caches, the budgets of its children, a stack of another size, its page tables | 0 |
-| `processes` | The `processes` of the request | The least |
-| `threads` | The `threads` of the request | The least |
+| `working_memory_pages` | The pages that the counted parts do not hold yet: a table, a cache, a budget of a child that the module table does not name, a stack of another size. It leaves module by module | 0 |
+| `processes` | The `processes` of the floor | 1 |
+| `threads` | The `threads` of the floor | 1 |
 | `window_width`, `window_height` | The size of its window in pixels, as it passes it to `display.open`: an integer literal, or the name of a constant of the package whose value is one integer literal | No window |
-| `screen_pictures` | The `screen_pictures` of the request, 1 to 4: the tool refuses 5 and more, and adds no page for them | No screen picture |
+| `screen_pictures` | The `screen_pictures` of the floor, 1 to 4: the tool refuses 5 and more, and adds no page for them | No screen picture |
 | `wiring_pages` | The pages of the rings of the wirings that the process asks for. The tool adds them to its pages, and the root service carves its wiring budget to that measure at its first wiring | Half of its pages |
 | `window_least_width`, `window_least_height` | The least size of a resizable window: each the name of the constant that the source passes as `least_width` and `least_height` to `display.resizable_set`, a constant of one integer literal, no larger than the window. The tool refuses names that differ from those of a call of `resizable_set` in the package, and least parts with no such call | No cut: the window pages are counted at the full largest scale |
 
-**The tool counts the other pages**, and the table holds the sum: `pages = working memory + module pages + thread pages + window pages`.
+**The start objects** are the memory objects of a fixed size that the process makes before its first state of work. The package of the module lists them in `MODULE_START_OBJECTS`, and a package that the module compiles in lists its own in `PACKAGE_START_OBJECTS`, which each module that compiles the package pays. Each element names a constant of the package whose value is one integer literal, the constant that the code passes to `memory_create`. The tool refuses another form: a list inside a `when`, a variable, a list of another type, an element that is not a name, a name that is no constant of one integer literal, an object of 0 pages, a list with no comment, two lists in a package, and `MODULE_START_OBJECTS` in another package or `PACKAGE_START_OBJECTS` in the package of the module. A table that every start uses is a variable of the package: the module pages count it.
+
+**The children** are the modules that the process starts before its first state of work. The module table of the tool names them (`children`), and lists each one before the module, as an import: the floor of each child is a part of the floor of the module, and the module has at least one process more than the processes of its children, and one thread more than their threads. A child that the module starts with a fixed amount, not with its floor, is listed in the source instead: `MODULE_START_BUDGETS :: [?]system.Start_Budget{NODE_PAGES}`, each element the constant that the code passes to `budget_create`, in the package of the module alone; the tool counts each at its pages.
+
+**The wiring budget** that the root service carves from an asker at its first wiring is a part of the floor: the `wiring_pages` that the source states, or, for a module whose start grants send `Wire` from its root ring (the start grant `Root_Ring`, not `Start_Policy`), whose own package syntax tree sends `Wire` (`root_ring.Root_Command.Wire`, a step of `root_ring.Wire_Step`, or `.Wire` passed to a package procedure taking `root_ring.Root_Command`), and that states none, as many pages as the rest of its floor, which the table holds as its `wiring_pages`. The start policy gets the wirings of its list in the floor of its start.
+
+**The tool counts the other pages**, and the table holds the sum: `pages = working memory + module pages + load pages + thread pages + window pages + start objects + children`.
 
 | Counted part | Pages |
 |---|---|
 | The module pages | The memory size of the module, and of each module that it imports at each level, each module one time, from their files |
+| The load pages | The top table of the process and the tables of the time page; for each module, the larger of the frame list of one copy of the module and the frame lists of its segments (`op.memory_list_pages`), and the tables of its mapping at any address (`op.mapping_table_pages_most`); the frame list and the tables of each stack, of the context page and of each picture of the window. A worst case: two mappings that share a table cost less |
 | The thread pages | The first thread: its stack (`op.STACK_PAGES`, 64), the page of the context, its thread area (3), and the own log ring of the process (`op.OWN_LOG_PAGES`, 4), which the kernel takes from the budget at `Process_Create`: 72. Each other thread of `threads`: a stack of `op.THREAD_STACK_PAGES` (16) and its thread area: 19 |
 | The window pages | Two pictures of the width times the height times 4 bytes, in whole pages: the width and the height are logical pixels, counted in pixels of the screen at the largest scale, 2 (scale_factor.LARGEST): a budget is fixed at the start of its process, so it pays the surface at each scale that a principal sets. A window whose budget states window_least_width and window_least_height, which fit the logical screen at 2 (960 x 540), has each side cut to the reference screen, 1920 x 1080 (scale_factor.window_surface_largest): the compositor fits a resizable window into the screen before a scale applies, so its surface is not larger |
+| The start objects | Each object: its pages, its frame list and the tables of its mapping (`op.memory_cost`, `op.mapping_table_pages_most`) |
+| The children | The `pages` of the floor of each child, from its file |
 
-A window of 1000 x 704 logical pixels is 2000 x 1408 pixels of the screen at 2: 5500 pages. With a least size of 600 x 360 stated, it is cut to 1920 x 1080: 4050 pages. A size that the source computes is written as a literal, with an assertion of its expression beside it, so that the compiler checks the number: `WIDTH :: 774` and `#assert(WIDTH == BAR_X + BAR_WIDTH + 64)`. A module with no constant has no table: it asks for the least budget. A module that grows asks for more with no change of its source.
+A window of 1000 x 704 logical pixels is 2000 x 1408 pixels of the screen at 2: 5500 pages. With a least size of 600 x 360 stated, it is cut to 1920 x 1080: 4050 pages. A size that the source computes is written as a literal, with an assertion of its expression beside it, so that the compiler checks the number: `WIDTH :: 774` and `#assert(WIDTH == BAR_X + BAR_WIDTH + 64)`. A module that grows has a larger floor with no change of its source.
 
-The step that describes the exports reads the constant from the tree of the parser, and the conversion adds the counted parts and writes the table (section "The steps of one module, as implemented"). The type can also be on the declaration: `MODULE_BUDGET : system.Stated_Budget : {threads = 2}`. Each part is an integer literal from 1, decimal or with the prefix `0x`, `0o` or `0b`, with `_` between digits if the source wants. The tool refuses another form, and its message says why: no comment, a variable, an expression, a name of a constant in a part that is not a window part, a window part that names a constant of an expression or a name that the package does not have, one window part alone, a window part above 2048, a part of 0, a part that the record does not have, a part two times, a second constant in the package. A declaration of `MODULE_BUDGET` that the tool would not read is refused too, never read as no request: inside a `when` (the tool reads the source with no setting of the build), or with other names in one declaration. The compiler checks the type and the names of the fields, because the constant has the type of the record. `modustool test descriptions` computes the request of each module again from its source and the files, compares it with the table, and prints its four parts. The measure of each build has one line with the request of each module that has a table.
+The step that describes the exports reads the constant from the tree of the parser, and the conversion adds the counted parts and writes the table (section "The steps of one module, as implemented"). The type can also be on the declaration: `MODULE_BUDGET : system.Stated_Budget : {threads = 2}`. Each part is an integer literal from 1, decimal or with the prefix `0x`, `0o` or `0b`, with `_` between digits if the source wants. The tool refuses another form, and its message says why: no comment, a variable, an expression, a name of a constant in a part that is not a window part, a window part that names a constant of an expression or a name that the package does not have, one window part alone, a window part above 2048, a part of 0, a part that the record does not have, a part two times, a second constant in the package. A declaration of `MODULE_BUDGET` that the tool would not read is refused too: inside a `when` (the tool reads the source with no setting of the build), or with other names in one declaration. The compiler checks the type and the names of the fields, because the constant has the type of the record. `modustool test descriptions` computes the floor of each module again from its sources and the files, compares it with the table, and prints its parts. The measure of each build has one line with the floor of each module.
 
-**The rule of a starter** is `system.budget_decide`: for each part, a part of 0 takes the least budget; a part up to the largest budget of the starter is accepted; a part above it gets the largest budget. The root service applies it with its own amounts:
+**The floor of a start** is the floor of the file with the parts that the starter adds: the screen pictures at the screen of the machine, and for the root service, the audits of the collector of principal 0 and the wirings of the start list for the start policy. The root service reserves the divided size of each row of its start list before the first row starts, and keeps it from each other start until the start of the row succeeds, or until the list is done (`Machine_Usable`). The division keeps for the starts that are no row their floors, and at least one largest budget; the budget of the disk processes and a growth of the budgets of a screen take no reserved page. The tool proves at each build that the floors of every start of the root service fit in the least machine of the system (its own, the start policy, each part of the system in the image, the largest renderer of the console, each row, the budget of the disk processes, and the kept share past those floors), 1 GiB at the reference screen (`module.TEST_MACHINE_ROOT_PAGES`); a list whose floors do not fit stops the build.
 
-| Amount | Pages | Processes | Threads |
-|---|---|---|---|
-| The least budget | 2048 | 1 | 1 |
-| The largest budget of a process | 16384 | 8 | 32 |
+**The size of a budget** is the floor of the start times a growth factor, rounded up to a whole count of 512 pages, at most the largest budget of a process, and never below the floor (`system.budget_size`). The factor is a value of the plan of principal 0, `default_growth_factor`; the plan gives none yet, and the default is 2 (`module.DEFAULT_GROWTH_FACTOR`): a process can double its start memory. The rows of the start list share the pages that the root service holds past their floors and past one share of the machine, which it keeps for itself and for the starts after the list (`system.start_list_sizes`): each row gets its whole size when they fit, else the same part of its growth as each other row. A floor that the paying budget cannot give refuses the start, and no page moves:
 
-Each process gets one processor of time for each of its threads, and 1000 log records in each second (`op.LOG_RECORDS_OF_A_PROCESS`), which leave the budget of the root service while it runs: the machine has 1000 for each process slot, 256 000 on a machine of 1 GiB and at most 1 024 000 (`op.LOG_RECORDS_OF_THE_MACHINE_MOST`; `src/md/features/log_side_channels.md`). The largest budget of a process of the boot image is one share of the pages and of the threads that the root service holds at its start, a quarter unless the plan of principal 0 gives another share, never less than 16384 pages (`module.largest_budget_of_machine`; `src/md/features/module_budget_request.md`): a machine of 1 GiB gives one process a quarter of the memory that the kernel and its tables leave (`src/md/data/table_sizes.md`, "The cost, measured"). The root service keeps a table of budget exceptions (`processor_exceptions` in `src/modules/system/root/budgets.odin`): a row names one module of the boot image, gives it another limit of processor time, and holds its reason. No row gives pages. A disk process and a module of another project have no row.
+```
+root: cannot start locks: its floor is 36 MiB, and this service can give 15.6 MiB
+```
+
+Each process gets one processor of time for each of its threads, and 1000 log records in each second (`op.LOG_RECORDS_OF_A_PROCESS`), which leave the budget of the root service while it runs: the machine has 1000 for each process slot, 256 000 on a machine of 1 GiB and at most 1 024 000 (`op.LOG_RECORDS_OF_THE_MACHINE_MOST`; `src/md/features/log_side_channels.md`). The largest budget of a process of the boot image is one share of the pages and of the threads that the root service holds at its start, a quarter unless the plan of principal 0 gives another share, never less than 16384 pages (`module.largest_budget_of_machine`; `src/md/features/module_budget_request.md`). The root service keeps a table of budget exceptions (`processor_exceptions` in `src/modules/system/root/budgets.odin`): a row names one module of the boot image, gives it another limit of processor time, and holds its reason. No row gives pages. A disk process and a module of another project have no row.
+
+**The peak of a budget** checks the floor. A budget keeps the least count of its free pages since its creation, and `Process_Report` gives it (`budget_least_pages`). A process says its first state of work with `system.ready`, which sends `Root_Command.Ready` on its ready ring, the handle 19 of its context: the library says it at the first present of a window and at the first wait of a service for its calls, a process with neither calls it before its main loop, and `system.stop` says it for a process that runs once and stops, then waits for the root service to read the peak, at most the answer bound of a ready ring (`root_ring.READY_ANSWER_BOUND_MILLISECONDS`). The root service then writes the peak with the floor of the start, and a second line when the peak passed the floor:
+
+```
+root: console reached its first state of work with a peak of 10496 pages, for a floor of 11315 pages
+root: clock passed its floor before its first state of work: a peak of 6656 pages, for a floor of 6195 pages
+```
+
+The second line fails each machine test: the floor of the module is wrong. `modustool floors measured <log> ...` reads the first lines of the logs of machine runs and prints, for each module, the working memory that makes its floor its peak; a working memory with no measure yet is marked `Measure pending` in its comment.
 
 **A disk process** is paid by one budget that the root service makes from its own at the first disk process, and keeps (`src/library/modus/disk_process/budget.odin`):
 
@@ -359,27 +378,20 @@ Each process gets one processor of time for each of its threads, and 1000 log re
 | The budget of all disk processes | 32768 | 4 | 16 | two processors | 4000 in each second |
 | The largest budget of one disk process | 16384 | 1 | 4 | one processor for each thread | 1000 in each second |
 
-A file chooses its own request, so the sum of all disk processes has one bound: the processes of the boot image keep the rest of the budget of the root service, also when several hostile files run. A disk process holds no grant that starts a process, so one process slot loses nothing. The log has one line when the budget of the disk processes is made:
+A file chooses its own floor, so the sum of all disk processes has one bound: the processes of the boot image keep the rest of the budget of the root service, also when several hostile files run. A disk process holds no grant that starts a process, so one process slot loses nothing. The log has one line when the budget of the disk processes is made:
 
 ```
 root: the disk processes share one budget of 128 MiB, 4 processes and 16 threads
 ```
 
-A request above the largest budget starts the process with the largest budget, and the log has one line for each part:
+A floor above the largest budget of a disk process does not start, and the line names the part:
 
 ```
-root: big asks for 50000 pages, and a process gets at most 16384: it starts with 16384
-root: visitor asks for 8 threads, and a disk process gets at most 4: it starts with 4
+root: cannot start visitor: it gets 8 threads, and the budget of a disk process holds 4
+root: cannot start big: its floor is 195.3 MiB, and the disk processes can give 64 MiB
 ```
 
-A start that fails for the budget names the part that is short, and the budget that pays:
-
-```
-root: cannot start locks: it gets 9216 pages, and the budget of this service holds 4000
-root: cannot start visitor: it gets 1 processes, and the budget of the disk processes holds 0
-```
-
-When the budget of the root service holds each part, the budget of the process was too small for its own load, and the line says that the module asks for too little.
+A start that the kernel refuses for the budget names the part that is short, and the budget that pays. When the budget that pays holds each part, the budget of the process was too small for its own load, and the line says that the module asks for too little.
 
 The design and the refused forms: `src/md/features/module_budget_request.md`.
 
@@ -1614,7 +1626,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 | Part | Content |
 |---|---|
-| `handles` | 20 handles (`CONTEXT_HANDLES`). The index of a handle is its role. The handles 0 to 13 have the roles that the starter and its process agree on. From 14 the roles are the same for every process: 14 the log of the kernel (`CONTEXT_LOG`), 15 the budget of the process (`CONTEXT_BUDGET`), 16 the wiring ring of a process whose module declares a record output or a record input (`CONTEXT_WIRING_RING`; "The record outputs and the record inputs", above), 17 the output ring of its record output `log` with Read and Write (`CONTEXT_LOG_OUTPUT`), and 18 the end page of that output with Read (`CONTEXT_LOG_OUTPUT_END`), both given only when the wiring list of its start wires `log`, and never by a grant of the starter. The handle 19 has no role yet. A new role of the system takes a handle from 19. A role that the process was not granted holds 0 |
+| `handles` | 20 handles (`CONTEXT_HANDLES`). The index of a handle is its role. The handles 0 to 13 have the roles that the starter and its process agree on. From 14 the roles are the same for every process: 14 the log of the kernel (`CONTEXT_LOG`), 15 the budget of the process (`CONTEXT_BUDGET`), 16 the wiring ring of a process whose module declares a record output or a record input (`CONTEXT_WIRING_RING`; "The record outputs and the record inputs", above), 17 the output ring of its record output `log` with Read and Write (`CONTEXT_LOG_OUTPUT`), and 18 the end page of that output with Read (`CONTEXT_LOG_OUTPUT_END`), both given only when the wiring list of its start wires `log`, and never by a grant of the starter; 19 the ready ring, on which the process says its first state of work once (`CONTEXT_READY_RING`, `system.ready`), given by the root service to each process that it starts with a floor. A new role of the system needs a larger context. A role that the process was not granted holds 0 |
 | `values` | 24 values of 64 bits (`CONTEXT_VALUES`): sizes, addresses, flags. The values 0 to 8 and 13 have the roles that the starter and its process agree on. The other values have the roles of the table below |
 
 ```byte-layout operation.Context

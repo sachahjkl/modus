@@ -827,6 +827,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	// Before the ring: a request of unlock waits in the ring until then.
 	count_limits_log()
+	// The start is done: the first state of work of the process
+	// (src/md/features/module_budget_request.md, "The first state of work").
+	system.ready()
 	for {
 		wait := system.wait_begin()
 		requests_serve(&clients, .Client_Ring, seeded)

@@ -294,7 +294,7 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"module", "Record", type_info_of(module.Record)},
 		{"module", "Field", type_info_of(module.Field)},
 		{"module", "Documentation", type_info_of(module.Documentation)},
-		{"module", "Budget_Request", type_info_of(module.Budget_Request)},
+		{"module", "Floor", type_info_of(module.Floor)},
 		{"module", "Fact", type_info_of(module.Fact)},
 		{"module", "Own_Hash_Place", type_info_of(module.Own_Hash_Place)},
 		{"module", "Fact_Template_Fault", type_info_of(module.Fact_Template_Fault)},

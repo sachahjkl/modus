@@ -1436,6 +1436,14 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		machine.range_selection = selection
 	}
 	passed := qmp_opened && scenario_run(&machine, selected)
+	// A floor that a process passed before its first state of work fails
+	// each machine test, whatever its scenario checks (floor_check.odin).
+	if passed {
+		if line, found := floor_passed_line(log_read(&machine)); found {
+			fmt.eprintfln("modustool: test failed: a process paid more than its floor before its first state of work: %s", line)
+			passed = false
+		}
+	}
 	scenario_ended := time.tick_now()
 	if range_target && qmp_opened {
 		step_range_times_print(&machine, scenario_ended, passed)

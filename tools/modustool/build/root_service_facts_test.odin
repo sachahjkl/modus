@@ -37,9 +37,9 @@ STORE_NAME :: "module_files"
 @(private = "file")
 BUDGET_PARTS := [?]string{"pages", "processes", "threads"}
 @(private = "file")
-LARGEST_OF := [?]string{"a process", "a disk process"}
+RING_WRITERS := [?]string{"the entropy service", "the network service", "the powerbox", "the collector", "the wiring service", "the TPM service", "the compositor", "the disk processes service", "the principals service", "the devices service"}
 @(private = "file")
-PAYING_BUDGETS := [?]string{"this service", "the disk processes"}
+PAYING_BUDGETS := [?]string{"this service", "the disk processes", "a disk process"}
 @(private = "file")
 MAPPINGS := [?]string{"the date page", "the debug image", "the disk process page", "the fresh bytes page", "the settings page and the font outlines", "the script font set", "the file of the storage service", "the file of the service", "the machine parts page", "the start list"}
 @(private = "file")
@@ -73,7 +73,7 @@ longest :: proc(texts: []string) -> u32 {
 root_text_bytes_most :: proc() -> map[string]u32 {
 	most := make(map[string]u32, context.temp_allocator)
 	name_most := u32(value_kinds.MODULE_NAME_FIELD_BYTES - 1)
-	for name in ([?]string{"started_process", "stopped_process", "refused_process", "loaded_process", "window_process", "service", "caller", "holder", "debugger", "target", "importer", "receiver", "provider", "nickname", "stop_report_name", "replaced", "replacement", "checked_entry", "held_process"}) {
+	for name in ([?]string{"started_process", "stopped_process", "refused_process", "loaded_process", "window_process", "service", "caller", "holder", "debugger", "target", "importer", "receiver", "provider", "nickname", "stop_report_name", "replaced", "replacement", "checked_entry", "held_process", "ready_process"}) {
 		most[name] = name_most
 	}
 	// A principal name has at most principals.NAME_LIMIT bytes, a store
@@ -95,8 +95,8 @@ root_text_bytes_most :: proc() -> map[string]u32 {
 	append(&grants, ..DISK_GRANT_NAMES[:])
 	most["grant"] = longest(grants[:])
 	most["budget_part"] = longest(BUDGET_PARTS[:])
-	most["largest_of"] = longest(LARGEST_OF[:])
 	most["paying_budget"] = longest(PAYING_BUDGETS[:])
+	most["ring_writer"] = longest(RING_WRITERS[:])
 	most["mapping"] = longest(MAPPINGS[:])
 	most["network_cause"] = longest(NETWORK_CAUSES[:])
 	most["table_key"] = longest(TABLE_KEYS[:])
@@ -235,8 +235,7 @@ the_start_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 	counts := [3]u64{0, 1, max(u64)}
 	for count in counts {
 		for part in BUDGET_PARTS {
-			for who in LARGEST_OF {
-				expect(t, render(t, file, "Budget_Part_Limited", {{"asked", count}, {"largest", max(u64) - count}, {"granted", count}, {"started_process", process}, {"budget_part", part}, {"largest_of", who}}), line_of_before("root: ", sentence.Module_Name{process}, " asks for ", count, " ", part, ", and ", who, " gets at most ", max(u64) - count, ": it starts with ", count))
+			{
 				expect(t, render(t, file, "Screen_Budget_Grown", {{"width", count}, {"height", max(u64) - count}, {"growth", max(u64) - count}, {"compositor_pages", min(count, u64(max(i64)))}, {"service_pages", u64(max(i64)) - min(count, u64(max(i64)))}}), line_of_before("root: the budgets of the screen of memory grow for ", count, " x ", max(u64) - count, ", growth ", max(u64) - count, ": an extra budget of ", sentence.Size{min(count, u64(max(i64))), .Pages}, " for the compositor and of ", sentence.Size{u64(max(i64)) - min(count, u64(max(i64))), .Pages}, " for remote_display"))
 				for refusal in memory_screen.GROW_REFUSAL_SENTENCES {
 					expect(t, render(t, file, "Screen_Budget_Refused", {{"width", count}, {"height", max(u64) - count}, {"grow_refusal", refusal}}), line_of_before("root: refused to grow the budgets of the screen of memory for ", count, " x ", max(u64) - count, ": ", refusal))
@@ -245,7 +244,6 @@ the_start_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 				expect(t, render(t, file, "Screen_Budget_Release_Refused", {{"growth", count}, {"holder", process}}), line_of_before("root: refused the release of the extra budget of growth ", count, " of the screen of memory from ", sentence.Module_Name{process}, ", which holds none of it"))
 				expect(t, render(t, file, "Screen_Budget_Ended_At_Stop", {{"holder", process}}), line_of_before("root: ", sentence.Module_Name{process}, " stopped with an extra budget of the screen of memory: its pages return"))
 				expect(t, render(t, file, "Compositor_On_Screen_Of_Memory", {{"width", count}, {"height", max(u64) - count}}), line_of_before("root: the compositor starts on a screen of memory of ", count, " x ", max(u64) - count, ": the machine has no screen"))
-				expect(t, render(t, file, "Budget_Screen_Pictures_Refused", {{"screen_pictures", count}, {"started_process", process}}), line_of_before("root: ", sentence.Module_Name{process}, " asks for ", count, " pictures of the screen, past the 4 that a module may ask for: its budget pays no picture of the screen"))
 			}
 			for holder in PAYING_BUDGETS {
 				expect(t, render(t, file, "Start_Refused_Budget_Part", {{"needed", count}, {"held", max(u64) - count}, {"refused_process", process}, {"budget_part", part}, {"paying_budget", holder}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": it gets ", count, " ", part, ", and the budget of ", holder, " holds ", max(u64) - count))
@@ -255,7 +253,21 @@ the_start_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 			expect(t, render(t, file, "Start_Refused_Log_Records", {{"log_records", count}, {"held_log_records", max(u64) - count}, {"refused_process", process}, {"paying_budget", holder}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": it gets ", count, " log records of each second, and the budget of ", holder, " holds ", max(u64) - count))
 			expect(t, render(t, file, "Start_Refused_Processor_Time", {{"processor", count}, {"processor_limit", max(u64) - count}, {"refused_process", process}, {"paying_budget", holder}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": it gets ", count, " microseconds of processor time in each second, and the limit of the budget of ", holder, " is ", max(u64) - count))
 		}
+		for holder in PAYING_BUDGETS {
+			expect(t, render(t, file, "Start_Refused_Floor", {{"floor", min(count, largest_size)}, {"held", largest_size - min(count, largest_size)}, {"refused_process", process}, {"paying_budget", holder}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": its floor is ", sentence.Size{min(count, largest_size), .Pages}, ", and ", holder, " can give ", sentence.Size{largest_size - min(count, largest_size), .Pages}))
+		}
+		expect(t, render(t, file, "Start_Refused_No_Floor", {{"refused_process", process}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": its module file gives no floor"))
+		expect(t, render(t, file, "Budget_Peak_At_Ready", {{"peak_pages", count}, {"floor_pages", max(u64) - count}, {"ready_process", process}}), line_of_before("root: ", sentence.Module_Name{process}, " reached its first state of work with a peak of ", count, " pages, for a floor of ", max(u64) - count, " pages"))
+		expect(t, render(t, file, "Budget_Floor_Passed", {{"peak_pages", count}, {"floor_pages", max(u64) - count}, {"ready_process", process}}), line_of_before("root: ", sentence.Module_Name{process}, " passed its floor before its first state of work: a peak of ", count, " pages, for a floor of ", max(u64) - count, " pages"))
+		expect(t, render(t, file, "Ready_Ring_Write_With_No_Record", {{"ready_process", process}}), line_of_before("root: the ready ring of ", sentence.Module_Name{process}, " counts a record that it does not hold: it ends, and the floor is not checked"))
+		for writer in RING_WRITERS {
+			expect(t, render(t, file, "Ring_Counters_Refused", {{"ring_writer", writer}}), line_of_before("root: the ring of ", writer, " counts more records than it holds: its records are dropped"))
+		}
+		expect(t, render(t, file, "Ready_Ring_Counters_Refused", {{"ready_process", process}}), line_of_before("root: the ready ring of ", sentence.Module_Name{process}, " counts more records than it holds: it ends, and the floor is not checked"))
+		expect(t, render(t, file, "Root_Ring_Counters_Refused", {{"caller", process}}), line_of_before("root: the root ring of ", sentence.Module_Name{process}, " counts more records than it holds: it ends, and no command of it is read"))
+		expect(t, render(t, file, "Ready_Record_Refused", {{"kind", count}, {"ready_process", process}}), line_of_before("root: ", sentence.Module_Name{process}, " sent the record ", count, " on its ready ring, which carries Ready alone: its floor is not checked"))
 		expect(t, render(t, file, "Disk_Processes_Budget_Made", {{"pages", largest_size}, {"processes", count}, {"threads", count}}), line_of_before("root: the disk processes share one budget of ", sentence.Size{largest_size, .Pages}, ", ", count, " processes and ", count, " threads"))
+		expect(t, render(t, file, "Disk_Processes_Budget_Refused_Reserved", {{"needed", min(count, largest_size)}, {"held", largest_size - min(count, largest_size)}, {"reserved", min(count, largest_size)}, {"refused_process", process}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": the budget of the disk processes needs ", sentence.Size{min(count, largest_size), .Pages}, ", and this service can give ", sentence.Size{largest_size - min(count, largest_size), .Pages}, " because the start-list reserves hold ", sentence.Size{min(count, largest_size), .Pages}))
 		expect(t, render(t, file, "Start_Refused_Budget_Too_Small", {{"pages", min(count, largest_size)}, {"processes", count}, {"threads", count}, {"refused_process", process}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": its budget of ", sentence.Size{min(count, largest_size), .Pages}, ", ", count, " processes and ", count, " threads is too small for its load: the module asks for too little"))
 		// A slot is the word of the starter: a negative slot writes its
 		// bits, as u64(slot) did.

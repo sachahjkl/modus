@@ -61,6 +61,21 @@ module_levels :: proc() -> (levels: []int, ok: bool) {
 				return nil, false
 			}
 		}
+		// A child gives its floor to the conversion of its parent, as an
+		// import gives its hash.
+		for name in build.children {
+			found := false
+			for earlier, earlier_index in foundation.module_builds[:index] {
+				if earlier.name == name {
+					levels[index] = max(levels[index], levels[earlier_index] + 1)
+					found = earlier.entry
+				}
+			}
+			if !found {
+				fmt.eprintfln("modustool: the module %s starts %s before its first state of work, which is not a module with an entry before it in the table", build.name, name)
+				return nil, false
+			}
+		}
 	}
 	return levels, true
 }
@@ -229,7 +244,7 @@ build_modules_in_parallel :: proc() -> bool {
 	build_measure.modules_converted += converted_count
 	build_measure.modules_kept += kept_count
 	build_measure.modules += time.tick_since(modules_started)
-	build_measure_budget_requests()
+	build_measure_floors()
 	if built_count + converted_count == 0 {
 		fmt.printfln("modustool: %d of %d modules kept: the inputs of each one are the same, and its outputs have their recorded hashes", kept_count, len(foundation.module_builds))
 	} else if kept_count + converted_count > 0 || !build_whole {

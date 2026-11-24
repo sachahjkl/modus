@@ -69,6 +69,9 @@ tpm_service_start :: proc "contextless" () {
 		measure_memory, measure_ring, status = system.ring_create()
 	}
 	process: system.Handle
+	tpm_budget: Start_Budget
+	// The place is cleared after the start: the ready ring waits here.
+	tpm_ready: system.Ready_Ring
 	start_grant_set := start_grant_set_of("tpm")
 	if status == .Ok {
 		context_grants: system.Context_Grants
@@ -82,11 +85,13 @@ tpm_service_start :: proc "contextless" () {
 		tpm_mappings: [1]system.Mapping
 		tpm_mapping_count := 0
 		fresh_bytes_page_give(slot, tpm_mappings[:], &tpm_mapping_count, &values)
+		budget_ok: bool
 		if context_refused(tpm_name, &context_grants, &values) {
 			status = .Bad_State
+		} else if tpm_budget, budget_ok = budget_of(image_file_checked(tpm_name), tpm_name); !budget_ok {
+			status = .No_Budget
 		} else {
-			file := image_file_checked(tpm_name)
-			process, status = system.process_start(file, tpm_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, tpm_name), tpm_mappings[:tpm_mapping_count], nil, load_source())
+			process, status = system.process_start(image_file_checked(tpm_name), tpm_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), tpm_budget.amounts, tpm_mappings[:tpm_mapping_count], nil, load_source(), ready = &tpm_ready)
 		}
 	}
 	if status != .Ok {
@@ -104,6 +109,9 @@ tpm_service_start :: proc "contextless" () {
 	}
 	slot^ = {}
 	slot.process = process
+	slot.process_slot, slot.process_serial, _ = system.process_place(process)
+	start_budget_note(slot, tpm_budget)
+	slot.ready = tpm_ready
 	slot.start_grant_set = start_grant_set
 	slot.granted = {.Log}
 	copy(slot.name[:len(slot.name) - 1], "tpm")
@@ -185,7 +193,7 @@ start_policy_measure :: proc "contextless" (module_hash: [32]u8, list_hash: [32]
 	limit := system.time() + TPM_MEASURE_BOUND_MILLISECONDS
 	for {
 		wait := system.wait_begin()
-		for record in system.receive(&tpm_measure_ring.completions) {
+		for record in root_receive(&tpm_measure_ring.completions, "the TPM service") {
 			if record.tag != tag {
 				// A completion of a measure whose wait ended at the bound.
 				continue

@@ -187,6 +187,7 @@ disk_processes_service_start :: proc "contextless" () -> bool {
 		region_address, status = system.memory_map(region_memory, {.Write})
 	}
 	process: system.Handle
+	service_budget: Start_Budget
 	if status == .Ok {
 		grants: system.Context_Grants
 		values: system.Context_Values
@@ -195,10 +196,13 @@ disk_processes_service_start :: proc "contextless" () -> bool {
 		system.grant_put(&grants, rd.DISK_PROCESSES_IMAGE_SLOT, {image_memory, {.Read}})
 		system.grant_put(&grants, op.CONTEXT_LOG, log_grant(start_grant_set_of(name)))
 		system.value_put(&values, rd.DISK_PROCESSES_VALUE_IMAGE_SIZE, u64(len(image)))
+		budget_ok: bool
 		if context_refused(name, &grants, &values) {
 			status = .Bad_State
+		} else if service_budget, budget_ok = budget_of(file, name); !budget_ok {
+			status = .No_Budget
 		} else {
-			process, status = system.process_start(file, name, grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, name), nil, &prepared, load_source())
+			process, status = system.process_start(file, name, grants.grants, random.values_with_seed(&process_generator, values.values), service_budget.amounts, nil, &prepared, load_source(), ready = &slot.ready)
 		}
 	}
 	if status != .Ok {
@@ -217,6 +221,7 @@ disk_processes_service_start :: proc "contextless" () -> bool {
 		return false
 	}
 	part_place_fill(slot, name, process)
+	start_budget_note(slot, service_budget)
 	disk_processes_process = slot
 	disk_processes_ring_memory, disk_processes_ring = ring_memory, ring_opened
 	disk_processes_region_memory = region_memory
@@ -615,7 +620,7 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 		if disk_processes_stopping {
 			break
 		}
-		record, has := system.receive(&disk_processes_ring.completions)
+		record, has := root_receive(&disk_processes_ring.completions, "the disk processes service")
 		if !has {
 			break
 		}
@@ -707,7 +712,7 @@ disk_load_event :: proc "contextless" (record: ring.Record) {
 			load.step = .Module_Lent
 			return
 		}
-		budget, status := disk_processes_budget_get()
+		budget, status := disk_processes_budget_get(string(load.name[:load.name_length]))
 		given: system.Handle
 		if status == .Ok {
 			given, status = lent_file_make(&load.candidate, report.byte_count, budget)

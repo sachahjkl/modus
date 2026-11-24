@@ -240,7 +240,7 @@ powerbox_answers :: proc "contextless" (wait: ^system.Wait) {
 		return
 	}
 	for _ in 0 ..< powerbox.REQUESTS_PER_PASS {
-		record := system.receive(&powerbox_ring.completions) or_break
+		record := root_receive(&powerbox_ring.completions, "the powerbox") or_break
 		if record.tag == 0 && record.kind == u32(powerbox.Service_Ring_Status.Stores_Wanted) {
 			picker_listing_begin(record.values[0])
 		} else if picker_listing.connection != nil && record.tag == picker_listing.tag {

@@ -277,11 +277,12 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 		system.range_mapped_put(&values, .Start_Policy_Pages)
 	}
 	disk_processes: system.Handle
-	disk_processes, status = disk_processes_budget_get()
+	disk_processes, status = disk_processes_budget_get(name)
 	if status == .Ok && context_refused(name, &context_grants, &values) {
 		status = .Bad_State
 	}
 	process: system.Handle
+	process_budget: Start_Budget
 	if status == .Ok {
 		words: [64]u8
 		// A chosen start policy never runs unmeasured: else PCR 12 would
@@ -294,12 +295,16 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 		}
 	}
 	if status == .Ok {
-		process_budget := disk_budget_of(file, name, disk_processes)
-		source := load_source()
-		source.files = store_files
-		process, status = system.process_start(file, name, context_grants.grants, random.values_with_seed(&process_generator, values.values), process_budget, mappings[:mapping_count], nil, source, load_error, disk_processes)
-		if status == .No_Budget {
-			budget_refusal_log(name, process_budget, disk_processes, "the disk processes")
+		budget_ok: bool
+		if process_budget, budget_ok = disk_budget_of(file, name, disk_processes); !budget_ok {
+			status = .No_Budget
+		} else {
+			source := load_source()
+			source.files = store_files
+			process, status = system.process_start(file, name, context_grants.grants, random.values_with_seed(&process_generator, values.values), process_budget.amounts, mappings[:mapping_count], nil, source, load_error, disk_processes, ready = &slot.ready)
+			if status == .No_Budget {
+				budget_refusal_log(name, process_budget.amounts, disk_processes, "the disk processes")
+			}
 		}
 	}
 	if status != .Ok {
@@ -310,9 +315,13 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 	slot.process = process
 	slot.hash = hash
 	slot.granted += {.Log}
+	start_budget_note(slot, process_budget)
 	disk_process_page_add(slot)
 	start_policy_list = .Chosen
 	start_policy_from_disk = true
+	// A start policy from the disk holds its own order and no list of
+	// this service: no row keeps pages.
+	start_list_reserves_end()
 	start_policy_name_counts = {}
 	start_policy_process = slot
 	start_policy_hash = hash

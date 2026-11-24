@@ -73,6 +73,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ansi_terminal.emit_layout(&sink, rows, .Dark)
 	serial_write_bytes(ansi_terminal.sink_written(&sink))
 
+	// The start is done: the first state of work of the process
+	// (src/md/features/module_budget_request.md, "The first state of work").
+	system.ready()
 	for {
 		terminal_records.serial_port_poll(&serial_port, &terminal_ring)
 		for record in system.receive(&terminal_ring.commands) {

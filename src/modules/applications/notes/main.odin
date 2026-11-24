@@ -92,7 +92,7 @@ LARGEST_HEIGHT :: 960
 // layout tree, the queues of the store thread with their records, and the
 // stack of that thread; two threads: the window and the store. The tool
 // counts the window at the largest scale, 2, at its largest size
-// (docs/MODULE_CONTRACT.md, "The budget that a module asks for").
+// (docs/MODULE_CONTRACT.md, "The floor of a module").
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1700, processes = 1, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 // The bytes of one display row as the frame draws it: each cell is one
 // character of at most 4 bytes, or a space of a tab.

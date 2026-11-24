@@ -68,9 +68,9 @@ A module of the boot image has a row in the grant table: its name gives it its g
 - the log, with the right Write only, and a window, as each process has;
 - the date page, the settings page and the glyph caches, read-only, as each process with a window has;
 - no start grant: no root ring, no machine handle, no boot image, no endpoint, no service ring, and no store unless the disk grant table gives one to its nickname (see below);
-- the budget that its file asks for, up to the largest budget of a disk process, with no budget exception, paid by the one budget of all disk processes; a file that asks for nothing gets the least budget, 2048 pages, one process, one thread ([module_budget_request.md](module_budget_request.md)).
+- the floor of its file and a size of twice it, at most the largest budget of a disk process, with no budget exception, paid by the one budget of all disk processes; a file with no table `Floor`, or a floor above the largest budget of a disk process, does not start ([module_budget_request.md](module_budget_request.md)).
 
-Nothing in the file gives a grant. The root service reads no table of the file to decide a grant: it reads the disk grant table of the principal, which only a command of the principal changes. The table `Budget` of the file is a request, which the root service limits.
+Nothing in the file gives a grant. The root service reads no table of the file to decide a grant: it reads the disk grant table of the principal, which only a command of the principal changes. The table `Floor` of the file is a fact that the root service reserves and bounds, never a grant.
 
 **A disk process cannot take a row by its name.** The root service refuses, before any read, a name that a module of the boot image has, a name that the grant table gives a grant, a name of a process of the system, and the name `module_files`. Without this rule a file named `notes` would start with the store of `notes`, and a file named `console` with the root ring.
 

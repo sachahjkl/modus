@@ -125,6 +125,7 @@ principals_service_start :: proc "contextless" () -> bool {
 		region_address, status = system.memory_map(region_memory, {.Write})
 	}
 	process: system.Handle
+	principals_budget: Start_Budget
 	if status == .Ok {
 		grants: system.Context_Grants
 		values: system.Context_Values
@@ -135,10 +136,13 @@ principals_service_start :: proc "contextless" () -> bool {
 		system.grant_put(&grants, rd.PRINCIPALS_IMAGE_SLOT, {image_memory, {.Read}})
 		system.grant_put(&grants, op.CONTEXT_LOG, log_grant(start_grant_set_of("principals")))
 		system.value_put(&values, rd.PRINCIPALS_VALUE_IMAGE_SIZE, u64(len(image)))
+		budget_ok: bool
 		if context_refused("principals", &grants, &values) {
 			status = .Bad_State
+		} else if principals_budget, budget_ok = budget_of(file, "principals"); !budget_ok {
+			status = .No_Budget
 		} else {
-			process, status = system.process_start(file, "principals", grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, "principals"), nil, &prepared, load_source())
+			process, status = system.process_start(file, "principals", grants.grants, random.values_with_seed(&process_generator, values.values), principals_budget.amounts, nil, &prepared, load_source(), ready = &slot.ready)
 		}
 	}
 	if status != .Ok {
@@ -157,6 +161,7 @@ principals_service_start :: proc "contextless" () -> bool {
 		return false
 	}
 	part_place_fill(slot, "principals", process)
+	start_budget_note(slot, principals_budget)
 	principals_process = slot
 	principals_ring_memory, principals_ring = ring_memory, ring_opened
 	principals_region_memory = region_memory
@@ -465,7 +470,7 @@ principals_sync :: proc "contextless" () {
 principals_answers :: proc "contextless" (wait: ^system.Wait) {
 	if principals_ring.head != nil {
 		read := 0
-		for record in system.receive(&principals_ring.completions) {
+		for record in root_receive(&principals_ring.completions, "the principals service") {
 			read += 1
 			place := -1
 			if record.tag != 0 {

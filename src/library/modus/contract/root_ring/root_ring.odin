@@ -22,6 +22,7 @@ import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/memory_screen"
 import "modus:contract/replacement_list"
+import "modus:contract/ring"
 import "modus:contract/start_grant"
 
 // The ring to the root service. The name of the process is in values[0..4],
@@ -555,6 +556,18 @@ Root_Command :: enum u32 {
 	// Bad_State with no pages. Only the process with the start grant Plans
 	// sends this command.
 	Plan_Values = 39,
+	// Ready says that the sender reached its first state of work: its start
+	// is done, and it waits for its work. It travels on the ready ring of
+	// the process (op.CONTEXT_READY_RING), never on the root ring, which
+	// refuses it at its sender: each process has a ready ring, and only some
+	// have a root ring. Each value is 0 (ready_record_refused). The root
+	// service then reads the peak of the budget of the sender, writes it
+	// with the floor of its start as a fact, and closes the ready ring
+	// (src/md/features/module_budget_request.md, "The first state of
+	// work"). One completion comes after the read, with the tag of the
+	// record: Succeeded, or Argument_Refused for another record. A process
+	// that stops waits for it (system.ready_at_end); another reads none.
+	Ready = 40,
 }
 
 // The step of a Screen_Budget, in values[0].
@@ -872,6 +885,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Wide_Grant_Agent_Ask   = .Remote_Clients,
 	.Wide_Grant_Second_Connection = .Remote_Clients,
 	.Plan_Values            = .Plans,
+	.Ready                  = .Nobody,
 }
 
 // The start grants that give a process a root ring. A process with none of
@@ -1183,6 +1197,76 @@ refuse :: proc "contextless" (values: ^[7]u64, outcome: call_outcome.Call_Outcom
 	return outcome
 }
 
+// The bound of the wait of a process that stops for the one completion of
+// its ready ring (system.ready_at_end), in milliseconds. The root service
+// answers in one pass of its loop, and its stop is the end of the machine:
+// the bound only ends a hang of the root service, so it is the hang bound
+// of an answer of a process (system.ANSWER_BOUND_MILLISECONDS, which the
+// library checks against it), never a measure of the root service. Past
+// it the stop goes on, and the floor of the process is not checked.
+READY_ANSWER_BOUND_MILLISECONDS :: 60_000
+
+// What the starter does with the ready ring of a process at one pass.
+Ready_Ring_Step :: enum u8 {
+	Wait,              // No record yet, and nothing changed: the ring stays.
+	Ready,             // The record Ready: read the peak, answer, close the ring.
+	Refused_Record,    // Another record: one line, answer, close the ring.
+	Counters_Refused,  // Counters that say more records than the ring holds: one line, close the ring.
+	Write_With_No_Record, // The count of the writer changed and no record can be read: one line, close the ring.
+}
+
+// ready_ring_step decides one pass of a starter over the ready ring of a
+// process, its queue of commands. A new ring counts no record, and an
+// honest process changes the count once, with its one record, which the
+// starter reads and then closes the ring. Loading write once before pop
+// keeps an honest push that lands after pop from being read as a write
+// with no record: Write_With_No_Record happens only when write was already
+// non-zero before pop and pop still failed. Each step but Wait ends the
+// ring, so the starter writes at most one line for it and reads it at no
+// later pass.
+ready_ring_step :: proc "contextless" (queue: ^ring.Queue) -> (record: ring.Record, step: Ready_Ring_Step) {
+	write := intrinsics.atomic_load_explicit(&queue.counters.write, .Acquire)
+	return ready_ring_step_from_write(queue, write)
+}
+
+// ready_ring_step_from_write runs the pop and the refusal checks of
+// ready_ring_step with the write counter loaded before pop.
+ready_ring_step_from_write :: proc "contextless" (queue: ^ring.Queue, write_before: u32) -> (record: ring.Record, step: Ready_Ring_Step) {
+	popped: bool
+	if record, popped = ring.pop(queue); popped {
+		return record, ready_record_refused(record) ? .Refused_Record : .Ready
+	}
+	return {}, ready_ring_step_after_pop(queue, write_before)
+}
+
+// ready_ring_step_after_pop decides the step after pop gave no record,
+// using the write counter loaded before pop.
+ready_ring_step_after_pop :: proc "contextless" (queue: ^ring.Queue, write_before: u32) -> Ready_Ring_Step {
+	if ring.counters_refused(queue) {
+		return .Counters_Refused
+	}
+	if write_before != 0 {
+		return .Write_With_No_Record
+	}
+	return .Wait
+}
+
+// ready_record_refused says if a record of a ready ring is not the record
+// Ready with each value 0: the one record that the ring carries. A refused
+// record ends the ring as a Ready does, with a line, and the starter reads
+// no peak.
+ready_record_refused :: proc "contextless" (record: ring.Record) -> bool {
+	if record.kind != u32(Root_Command.Ready) {
+		return true
+	}
+	for value in record.values {
+		if value != 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // word_refusal is the error record of a word that names no member. It is
 // not polymorphic, so a process that never reads such a word still uses
 // the import of its record.
@@ -1273,6 +1357,7 @@ root_command_names := [Root_Command]string {
 	.Wide_Grant_Agent_Ask   = "Wide_Grant_Agent_Ask",
 	.Wide_Grant_Second_Connection = "Wide_Grant_Second_Connection",
 	.Plan_Values            = "Plan_Values",
+	.Ready                  = "Ready",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -1319,6 +1404,7 @@ root_first_argument_names := [Root_Command]string {
 	.Wide_Grant_Agent_Ask   = "key",
 	.Wide_Grant_Second_Connection = "key",
 	.Plan_Values            = "step",
+	.Ready                  = "values",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -1366,6 +1452,7 @@ root_second_argument_names := [Root_Command]string {
 	.Wide_Grant_Agent_Ask   = "scopes",
 	.Wide_Grant_Second_Connection = "",
 	.Plan_Values            = "",
+	.Ready                  = "",
 }
 
 // command_of_record reads the command that an error record names: the

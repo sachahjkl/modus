@@ -93,7 +93,7 @@ STACK_PAGES :: 64
 // The pages of the stack of a thread that `system.thread_start` makes when
 // its caller gives no other count. It is here, beside STACK_PAGES, because
 // the tool counts both in the budget that a module asks for
-// (docs/MODULE_CONTRACT.md, "The budget that a module asks for").
+// (docs/MODULE_CONTRACT.md, "The floor of a module").
 THREAD_STACK_PAGES :: 16
 // The address of the context of the process (`Context`): the starter maps one
 // page there and gives this address as the parameter of the entry. One page
@@ -3137,6 +3137,41 @@ memory_cost :: proc "contextless" (page_count: u64) -> u64 {
 	return page_count + list_pages
 }
 
+// The levels of page tables under the top table of a process: a fact of
+// the processor, four levels for addresses of 48 bits. The budget of the
+// process pays its top table at Process_Create, and each table under it
+// that a map needs.
+PAGE_TABLE_LEVELS_UNDER_THE_TOP :: 3
+// The entries of one page table: 4096 bytes of 8-byte entries, a fact of
+// the processor.
+PAGE_TABLE_ENTRIES :: 512
+
+// mapping_table_pages_most gives the most page tables under the top table
+// that a mapping of `page_count` pages pays, at any address, when it shares
+// no table with another mapping: at each level, the tables that its range
+// can cross. A starter prices a load with it, as the floor of a module does
+// (src/md/features/module_budget_request.md, "The floor is counted whole").
+// The tables of two mappings that share one cost less, never more.
+//
+// Example: `mapping_table_pages_most(1)` is 3, one table at each level;
+// `mapping_table_pages_most(512)` is 6: a range that crosses a border at
+// each level touches two tables there.
+mapping_table_pages_most :: proc "contextless" (page_count: u64) -> u64 {
+	if page_count == 0 {
+		return 0
+	}
+	tables: u64 = 0
+	covered: u64 = 1 // The pages that one table of the level maps.
+	for _ in 0 ..< PAGE_TABLE_LEVELS_UNDER_THE_TOP {
+		covered *= PAGE_TABLE_ENTRIES
+		// A range of n pages crosses the tables of the first and of the
+		// last of its pages: (n - 1) / covered rounded up, and one.
+		after_first := page_count - 1
+		tables += after_first / covered + u64(after_first % covered != 0) + 1
+	}
+	return tables
+}
+
 // A flag of `Memory_Create`: how the pages of a new memory object get their
 // page frames and who pays them. A flag that the kernel does not know gives
 // `Bad_Operation`.
@@ -3904,6 +3939,10 @@ Process_Report :: struct {
 	handles_peak:   u64, // Largest count of handles held at once since this process was created.
 	mapping_count:  u64, // Mappings currently in its mapping table.
 	mappings_peak:  u64, // Largest count of mappings held at once since this process was created.
+	// The least count of free pages of the budget that pays for the process
+	// since that budget was made: its pages at the creation less this are
+	// the most that it paid at one time, its peak.
+	budget_least_pages: u64,
 }
 
 // The context: the one record that a process receives when it starts, in
@@ -4118,6 +4157,14 @@ CONTEXT_LOG_OUTPUT :: 17 // The output ring of the record output log.
 // its reader stopped or closed, and no side forges the end of the other.
 // 0 when the handle 17 is 0.
 CONTEXT_LOG_OUTPUT_END :: 18 // The end page of the record output log.
+// The handle 19: the ready ring, a ring of the smallest capacity with
+// **Read** and **Write**, which the starter makes from the budget of the
+// process and reads. The process sends on it one record, the first state
+// of work of the process (`system.ready`), and the starter then reads the
+// peak of its budget, sends one completion and closes the ring
+// (src/md/features/module_budget_request.md, "The first state of work").
+// 0: the starter reads none.
+CONTEXT_READY_RING :: 19 // The ready ring.
 // The values 13 and 15 have no role: the settings page and the date page
 // are fixed ranges, mapped when their bit of the value 20 is set. A new
 // role of the system takes a number from 16, never 13 or 15, so that an

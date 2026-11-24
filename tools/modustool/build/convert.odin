@@ -74,7 +74,7 @@ Module_Description :: struct {
 	records:        []Record_Description, // The records that the exports, the log facts and the record streams use. Record n + 1 of the module is records[n].
 	enums:          []Enum_Description, // The enums that the exports take and give. Enum n + 1 of the module is enums[n].
 	member_texts:   []Member_Text_Description, // The display texts of the members, in the order of the enum, the member and the language: the table Member_Texts.
-	budget:         Budget_Description, // The budget that the module asks for: the table Budget.
+	budget:         Budget_Description, // The floor of the module: the table Floor.
 	category:       module.Module_Category, // The category of the row of the module; None for a module from outside the repository.
 	tags:           module.Module_Tags, // The tags of the row of the module.
 	facts:          []Fact_Description, // The log facts that the module writes, sorted by key (facts_merge): the table Facts.
@@ -98,20 +98,59 @@ Stated_Budget :: struct {
 	wiring_pages:         u64, // The pages of the rings of its wirings; 0: half of its pages.
 }
 
-// The budget that a module asks for, as its source states it in the
-// constant BUDGET_REQUEST_NAME (describe.odin). The conversion adds the
-// counted parts (budget_count.odin).
+// The floor of a module, as its source states it in the constant
+// BUDGET_REQUEST_NAME and in the lists of its start objects
+// (describe.odin). The conversion adds the counted parts
+// (floor_count.odin).
 Budget_Description :: struct {
-	stated:       bool, // The source has the constant: the module has the table Budget.
+	stated:       bool, // The source has the constant BUDGET_REQUEST_NAME.
+	// A module with an entry: the conversion writes its table Floor, with
+	// the counted parts alone when the source states none.
+	has_entry:    bool,
 	parts:        Stated_Budget, // A window part that named a constant holds its value.
 	window_names: [4]string, // The constant that each window part names, or "": the width, the height, the least width, the least height.
 	comment:      string, // The comment before the constant, in its Markdown: the reasons of the amounts.
 	// Where the source declares it: the site links the budget to its line.
 	file:         string,
 	line:         int,
-	// The memory size of each module that the module imports, at each
-	// level, each one time: module_convert reads them from their files.
-	import_memory_sizes: []u64,
+	// The load of each module that the module imports, at each level, each
+	// one time: module_convert reads them from their files.
+	import_costs:  []Module_Cost,
+	// The pages of each start object of the module and of each package
+	// compiled into its load (start_objects_of_sources).
+	start_objects: []u64,
+	// The floor of each child that the module table names.
+	children:      []module.Floor,
+	// The pages of each budget of a fixed amount of a child (start_budgets_of_sources).
+	start_budgets: []u64,
+	// The module wires from its root ring with no stated wiring pages
+	// (floor_wiring_derived).
+	wiring_derived: bool,
+}
+
+// description_has_entry says if a described module has the export entry: a
+// module that runs as a process, which has a table Floor.
+description_has_entry :: proc(description: Module_Description) -> bool {
+	for item in description.exports {
+		if item.name == ENTRY_NAME {
+			return true
+		}
+	}
+	return false
+}
+
+// floor_inputs_of gives what the count of the floor of a module reads: the
+// module itself from the segments that the conversion writes, then the
+// parts that module_convert read before.
+floor_inputs_of :: proc(budget: Budget_Description, memory_size: u64, segments: []module_file_writer.Segment_Part) -> Floor_Inputs {
+	segment_pages := make([dynamic]u64, context.temp_allocator)
+	for segment in segments {
+		append(&segment_pages, module_pages_of_size(segment.memory_size))
+	}
+	modules := make([dynamic]Module_Cost, context.temp_allocator)
+	append(&modules, Module_Cost{pages = module_pages_of_size(memory_size), segment_pages = segment_pages[:]})
+	append(&modules, ..budget.import_costs)
+	return {stated = budget.parts, modules = modules[:], start_objects = budget.start_objects, children = budget.children, start_budgets = budget.start_budgets, wiring_derived = budget.wiring_derived}
 }
 
 // convert_fail reports a conversion refusal with the module name and returns nil, false.
@@ -670,14 +709,13 @@ module_parts_finalize :: proc(
 	// build writes its lists from the table (start_menu_names.odin).
 	parts.category, parts.tags = description.category, description.tags
 
-	// A module whose source states no budget has no table Budget: it asks
-	// for the least budget.
-	if description.budget.stated {
-		counted, counted_ok := budget_count(description.budget.parts, memory_size, description.budget.import_memory_sizes)
+	// Each module with an entry has its table Floor; a library has none.
+	if description.budget.has_entry || description.budget.stated {
+		counted, counted_ok := floor_count(floor_inputs_of(description.budget, memory_size, segment_parts))
 		if !counted_ok {
-			return convert_fail(name, "the budget that the module asks for passes the end of 64 bits")
+			return convert_fail(name, "the floor of the module passes the end of 64 bits")
 		}
-		parts.has_budget, parts.budget = true, counted.request
+		parts.has_floor, parts.floor = true, counted.floor
 	}
 
 	size, refusal := module_file_writer.file_size_needed(parts)
@@ -737,7 +775,7 @@ module_file_refusal_text :: proc(parts: module_file_writer.Module_Parts, refusal
 				part = fmt.tprintf(" (the parameter %d of %s)", row.parameter + 1, parts.exports[row.export_index - 1].name)
 			}
 		}
-	case .None, .Segments, .Imports, .Import_Slots, .Rebases, .Strings, .Documentation, .Budget, .Facts, .Own_Hash:
+	case .None, .Segments, .Imports, .Import_Slots, .Rebases, .Strings, .Documentation, .Floor, .Facts, .Own_Hash:
 	}
 	return fmt.tprintf("the module file writer refuses the module: %v in the table %v, part %d%s, value %d (src/library/modus/contract/module_file_writer)", refusal.refusal, refusal.table, refusal.index, part, refusal.value)
 }

@@ -94,8 +94,8 @@ test_parts :: proc(storage: ^Test_Storage) -> Module_Parts {
 		own_hash_place = OWN_HASH_PLACE,
 		about = "A probe of the writer.",
 		text = "A probe of the writer, with each table.",
-		has_budget = true,
-		budget = {pages = 100, processes = 1, threads = 2},
+		has_floor = true,
+		floor = {pages = 100, processes = 1, threads = 2},
 	}
 }
 
@@ -717,8 +717,8 @@ zero_exports_and_an_empty_string_table :: proc(t: ^testing.T) {
 	testing.expect_value(t, module.count(file, .Rebases), 0)
 	testing.expect_value(t, module.count(file, .Facts), 0)
 	testing.expect_value(t, module.count(file, .Own_Hash), 0)
-	testing.expect_value(t, module.count(file, .Budget), 0)
-	_, stated := module.budget_request(file)
+	testing.expect_value(t, module.count(file, .Floor), 0)
+	_, stated := module.floor_read(file)
 	testing.expect(t, !stated)
 }
 
@@ -869,9 +869,9 @@ a_written_module_is_valid :: proc(t: ^testing.T) {
 	place, present := module.own_hash_place(file)
 	testing.expect(t, present)
 	testing.expect_value(t, place, OWN_HASH_PLACE)
-	budget, stated := module.budget_request(file)
+	budget, stated := module.floor_read(file)
 	testing.expect(t, stated)
-	testing.expect_value(t, budget, parts.budget)
+	testing.expect_value(t, budget, parts.floor)
 	about, text := module.documentation(file)
 	testing.expect_value(t, about, parts.about)
 	testing.expect_value(t, text, parts.text)

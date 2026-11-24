@@ -16,7 +16,6 @@ import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/settings"
-import "modus:contract/wide_grants"
 import "modus:disk_process"
 import "modus:display"
 import "modus:pci"
@@ -733,19 +732,15 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 		return start_refuse(work, .Data_Damaged, .Damaged, .Records)
 	}
 	load_error: module.Load_Error
-	process_budget := budget_of(work.file, name)
-	// The collector of principal 0 keeps the audits of the start list: this
-	// service pays their memory (start_policy.odin, start_list_audits). The
-	// largest budget of one process bounds it, as each part.
-	if name == wide_grants.COLLECTOR_MODULE_NAME && work.principal == principals.MACHINE && start_list_audits > 0 {
-		widened := process_budget.pages + start_list_audits * wide_grants.SPACE_AUDIT_PAGES
-		process_budget.pages = min(widened, largest_budget.pages)
+	// The floor of the start holds the audits of the collector and the
+	// wirings of the start policy (start_floor_of). A floor that this
+	// service cannot pay refuses the start, with its line, before any page
+	// moves.
+	start_budget, budget_ok := budget_of(work.file, name, work.principal)
+	if !budget_ok {
+		return start_refuse(work, .Budget_Or_Capacity_Exhausted, .Budget, .Pages)
 	}
-	// The start policy pays the wirings of its list: the header gives their
-	// pages, and this service adds them (start_policy.odin).
-	if is_role_holder(name, .Start_Policy) && start_list_wiring_pages > 0 {
-		process_budget.pages = min(process_budget.pages + start_list_wiring_pages, largest_budget.pages)
-	}
+	process_budget := start_budget.amounts
 	status: system.Status
 	// The start of the measure of the start of a window: the load of the
 	// module, its hash and Process_Start are in it
@@ -770,14 +765,14 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 		held_entry = &work.slot.held_entry
 		work.slot.held_for_replay = true
 	}
-	work.slot.budget_pages = process_budget.pages
 	seeded_values := random.values_with_seed(&process_generator, work.values.values)
 	defer {
 		intrinsics.mem_zero_volatile(&seeded_values, size_of(seeded_values))
 		intrinsics.mem_zero_volatile(&work.values.values, size_of(work.values.values))
 	}
-	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, seeded_values, process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring, held_entry = held_entry)
+	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, seeded_values, process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring, held_entry = held_entry, ready = &work.slot.ready)
 	if status == .Ok {
+		start_budget_note(work.slot, start_budget)
 		// A process with a window of its own: the compositor ties the time
 		// to the ring of the window that Client_Add gave.
 		if .Terminal not_in work.start_grant_set.grants && work.slot.client != 0 {

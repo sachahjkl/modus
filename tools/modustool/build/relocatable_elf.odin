@@ -813,15 +813,15 @@ convert_elf_with_manifest :: proc(
 		input_places[index] = place
 	}
 
-	// Fill import memory sizes for budget accounting when not pre-populated.
+	// The load of each import, for the floor, when the caller gave none.
 	description := manifest.description
-	if description.budget.stated && len(description.budget.import_memory_sizes) == 0 && len(imports) > 0 {
-		import_sizes := make([]u64, len(imports), context.temp_allocator)
+	description.budget.has_entry ||= description_has_entry(description)
+	if (description.budget.has_entry || description.budget.stated) && len(description.budget.import_costs) == 0 && len(imports) > 0 {
+		import_costs := make([]Module_Cost, len(imports), context.temp_allocator)
 		for item, index in imports {
-			import_head, _ := module.header(item.file)
-			import_sizes[index] = import_head.memory_size
+			import_costs[index], _ = module_cost_of_file(item.file)
 		}
-		description.budget.import_memory_sizes = import_sizes
+		description.budget.import_costs = import_costs
 	}
 
 	output := module_parts_finalize(

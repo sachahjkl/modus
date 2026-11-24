@@ -60,6 +60,7 @@ package kernel
 
 import info "modus:contract/boot_info"
 import "modus:contract/fixed_addresses"
+import "modulus:budget_peak"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "base:intrinsics"
@@ -214,8 +215,9 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	ROOT_BUDGET :: 1
 	budgets[ROOT_BUDGET] = {
 		live = true,
-		amounts = {pages = free_frames, processes = u64(process_capacity) - 1, threads = u64(thread_table_capacity) - 1, processor = u64(processor_count) * 1_000_000, log_records = u64(process_capacity) * op.LOG_RECORDS_OF_A_PROCESS},
+		amounts = {processes = u64(process_capacity) - 1, threads = u64(thread_table_capacity) - 1, processor = u64(processor_count) * 1_000_000, log_records = u64(process_capacity) * op.LOG_RECORDS_OF_A_PROCESS},
 	}
+	budget_peak.created(&budgets[ROOT_BUDGET].amounts.pages, &budgets[ROOT_BUDGET].least_pages, free_frames)
 	index, _ := process_create(ROOT_BUDGET, transmute([]u8)name)
 	// The kernel writes the module and the context through the direct map:
 	// these two are contiguous. The stack has its pages on first use.

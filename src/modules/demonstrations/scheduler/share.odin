@@ -684,7 +684,7 @@ short_threads_run :: proc "contextless" () -> ! {
 // this process and writes no log record.
 share_process_amounts :: proc "contextless" (threads: u64) -> system.Budget_Amounts {
 	processors := min(threads, u64(system.thread_record().processors))
-	return {pages = 512 + threads * (system.THREAD_STACK_PAGES + 3), processes = 1, threads = threads, processor = processors * 1_000_000, log_records = 0}
+	return {pages = SHARE_PROCESS_BASE_PAGES + threads * (system.THREAD_STACK_PAGES + 3), processes = 1, threads = threads, processor = processors * 1_000_000, log_records = 0}
 }
 
 process_generator: random.Generator

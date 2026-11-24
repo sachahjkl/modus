@@ -38,6 +38,9 @@ STATUS_NOT_FOUND :: 404
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_fact(.Info, Running{interval_milliseconds = COUNT_INTERVAL_MILLISECONDS})
 	had_reader := false
+	// The start is done: the first state of work of the process
+	// (src/md/features/module_budget_request.md, "The first state of work").
+	system.ready()
 	for {
 		if !system.output_read_by(&counts) {
 			if had_reader {
@@ -62,3 +65,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wiring_wait(system.time() + COUNT_INTERVAL_MILLISECONDS, counts.index)
 	}
 }
+
+// Measure pending: the 2048 pages of the least budget in which it ran
+// before its floor was counted. The first machine pass with the check of
+// the floors (the check boot-test of the flake) writes the peak of its
+// budget at its first state of work; modustool floors measured on the log
+// of that pass gives the working memory that replaces this number
+// (src/md/features/module_budget_request.md, "The first state of work").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2048}

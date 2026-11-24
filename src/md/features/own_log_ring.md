@@ -19,7 +19,7 @@ A process reads its own log records back through the log service ([log_reader_sc
 **The own log ring is small, and the budget of the process pays it.** It has `op.OWN_LOG_PAGES` pages, 4, which hold `op.OWN_LOG_RECORD_CAPACITY` records, 64. `Process_Create` takes its frames from the budget that pays the process, beside the top table of the address space; the cleanup of the process gives them back to that budget. The ring has no head in memory: the kernel keeps the count of the records of the process (`log_records_written`, 64 bits, under the log lock) in the process record, and the record `n` is in the place `n % 64`. The reasons of the size:
 
 - 64 records fill the rows of one call of `log.records` of a reader with 64 rows (16 KiB of a call region of 64 KiB, as `log_reader` has): one call reads the whole ring.
-- 4 pages are 16 KiB for each process: 0.2 % of the least budget of a process, 2048 pages. A budget that does not hold them refuses `Process_Create` with `No_Budget`, as for its top table. The working memory of a module holds them, as it holds its page tables ([module_budget_request.md](module_budget_request.md)).
+- 4 pages are 16 KiB for each process: 0.2 % of a budget of 2048 pages. A budget that does not hold them refuses `Process_Create` with `No_Budget`, as for its top table. The floor of a module counts them with its first thread, as it counts its top table in its load ([module_budget_request.md](module_budget_request.md)).
 
 **The whole log stays one ring.** A reader of the whole log reads the ring of before, with no change: the merge of the own log rings was refused (see the refused forms). The cost of the second copy is one store of 256 bytes for each record, under the log lock, which the record already holds.
 

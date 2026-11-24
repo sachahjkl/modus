@@ -242,6 +242,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	interrupt := ctx.handles[pci.GRANT_INTERRUPT]
 	interrupts: u64
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	// The start is done: the first state of work of the process
+	// (src/md/features/module_budget_request.md, "The first state of work").
+	system.ready()
 	for {
 		wait := system.wait_begin()
 		counted, _ := system.call(.Interrupt_Read, u64(interrupt))

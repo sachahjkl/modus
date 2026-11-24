@@ -178,7 +178,6 @@ Describe_State :: struct {
 	enum_keys:         [dynamic]string, // The key in `enums` of each of enum_descriptions.
 }
 
-@(private = "file")
 describe_fail :: proc(path: string, node: ^ast.Node, format: string, args: ..any) -> bool {
 	fmt.eprintf("modustool: describe %s(%d): ", path, node.pos.line)
 	fmt.eprintfln(format, ..args)
@@ -1568,7 +1567,7 @@ enum_getters_resolve :: proc(exports: []Export_Description, enums: []Enum_Descri
 }
 
 // The constant of a source that states the budget of its module
-// (docs/MODULE_CONTRACT.md, "The budget that a module asks for").
+// (docs/MODULE_CONTRACT.md, "The floor of a module").
 BUDGET_REQUEST_NAME :: "MODULE_BUDGET"
 
 // The largest width and the largest height of a window part: the limit of
@@ -1590,7 +1589,8 @@ budget_request_read :: proc(file: ^ast.File, budget: ^Budget_Description) -> boo
 	for statement in file.decls {
 		// A declaration inside a `when`: the tool reads the source with no
 		// setting of the build, so it cannot know the branch that the
-		// compiler takes, and it never gives the least budget in silence.
+		// compiler takes, and it never leaves the stated parts out in
+		// silence.
 		if when_statement, is_when := statement.derived.(^ast.When_Stmt); is_when {
 			if found := budget_request_in_when(when_statement); found != nil {
 				return describe_fail(path, found, "%s is inside a `when`: the tool reads the source with no setting of the build and cannot know the branch that the compiler takes. Declare it at the top level of a file, with one value", BUDGET_REQUEST_NAME)
@@ -1900,7 +1900,6 @@ or_else_text :: proc(name: string) -> string {
 }
 
 // declaration_names says if one of the names of a declaration is name.
-@(private = "file")
 declaration_names :: proc(declaration: ^ast.Value_Decl, name: string) -> bool {
 	for expression in declaration.names {
 		if identifier, is_identifier := expression.derived.(^ast.Ident); is_identifier && identifier.name == name {

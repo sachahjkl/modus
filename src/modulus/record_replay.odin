@@ -1,5 +1,6 @@
 package kernel
 
+import "modulus:budget_peak"
 import "base:intrinsics"
 import "modus:contract/enum_word"
 import "modus:contract/input_history"
@@ -398,7 +399,7 @@ point_copy_frame_allocate :: proc "contextless" (history_region: u32) -> (frame:
 		lock_free(&frame_lock, .Frame)
 		return 0, false
 	}
-	budgets[budget].amounts.pages -= 1
+	budget_pages_spend(&budgets[budget], 1)
 	lock_free(&frame_lock, .Frame)
 	frames_zero(frame, 1)
 	return frame, true
@@ -415,7 +416,7 @@ point_copy_frame_free :: proc "contextless" (history_region: u32, frame: u64) {
 	frames_free_held(frame, 1)
 	budget := regions[history_region].budget
 	if budget != 0 && budgets[budget].live {
-		budgets[budget].amounts.pages += 1
+		budget_peak.give_back(&budgets[budget].amounts.pages, 1)
 	}
 	lock_free(&frame_lock, .Frame)
 }

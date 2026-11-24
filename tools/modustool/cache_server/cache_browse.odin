@@ -783,7 +783,7 @@ browse_write_module_sections :: proc(b: ^strings.Builder, file: []u8) {
 	doc_text := browse_module_text(doc_text_raw, BROWSE_TEXT_PREVIEW_BYTES, true)
 	export_total := int(module.count(file, .Exports))
 	export_count := max(0, export_total - 1)
-	budget, budget_stated := module.budget_request(file)
+	budget, budget_stated := module.floor_read(file)
 
 	strings.write_string(b, "<section class=\"card accent-boot\" aria-labelledby=\"module-meta\">\n<h2 id=\"module-meta\">Module</h2>\n<dl class=\"symbol-facts\">\n")
 	fmt.sbprintf(b, "<dt>Category</dt><dd>%s</dd>\n", module_category_words(hdr.category))

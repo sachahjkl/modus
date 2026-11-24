@@ -5,6 +5,7 @@ import "modus:contract/input_history"
 import "modus:contract/ring"
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modulus:budget_peak"
 import "modulus:extended_switch"
 import "modulus:page_attributes"
 import "modulus:processor_counters"
@@ -617,6 +618,12 @@ Budget :: struct {
 	parent:     u32, // The budget that this budget came from. It is live, or it is 0.
 	references: u32, // Handles to this budget.
 	amounts:    op.Budget_Amounts,
+	// The least count of free pages since the budget was made: its pages at
+	// the creation less this is its peak. The root service reads it at the
+	// first state of work of a process, to check its floor
+	// (src/md/features/module_budget_request.md, "The peak of a budget").
+	// Frame lock, as amounts.pages.
+	least_pages: u64,
 	// limit.odin:
 	spent:       u64, // Cycles of processor time in this period, and what was above the part of the periods before.
 	spent_total: u64, // Cycles of processor time since the budget was made.
@@ -643,6 +650,14 @@ boot_image_region: u32 // Immutable read-only boot image memory object (not MMIO
 debug_image_region: u32 // Immutable read-only debug image memory object (not MMIO).
 time_record: ^op.Time_Record
 
+// budget_pages_spend takes count pages from a budget that holds them. Each
+// place that takes pages from a budget calls it, so that the least count of
+// free pages holds the peak of every spend, also of an object that ended
+// before a read. The caller holds the frame lock.
+budget_pages_spend :: proc "contextless" (budget: ^Budget, count: u64) {
+	_ = budget_peak.spend(&budget.amounts.pages, &budget.least_pages, count)
+}
+
 // budget_create moves amounts from a budget to a new budget.
 budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) -> (index: u32, status: Operation_Outcome) {
 	from := &budgets[parent]
@@ -658,12 +673,13 @@ budget_create :: proc "contextless" (parent: u32, amounts: op.Budget_Amounts) ->
 				// through this slot: after processor_sync, none does.
 				processor_sync(all_other_processors())
 			}
-			from.amounts.pages -= amounts.pages
+			budget_pages_spend(from, amounts.pages)
 			from.amounts.processes -= amounts.processes
 			from.amounts.threads -= amounts.threads
 			// Log reads it with no lock (budget_log).
 			intrinsics.atomic_sub(&from.amounts.log_records, amounts.log_records)
 			budget = {live = true, parent = parent, amounts = amounts}
+			budget_peak.created(&budget.amounts.pages, &budget.least_pages, amounts.pages)
 			// The count of this second moves with the log records.
 			budget_log_count_to_child(parent, u32(slot + 1))
 			return u32(slot + 1), .Ok
@@ -685,7 +701,7 @@ budget_release :: proc "contextless" (index: u32) {
 	parent := budget.parent
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
-	budgets[parent].amounts.pages += budget.amounts.pages
+	budget_peak.give_back(&budgets[parent].amounts.pages, budget.amounts.pages)
 	budgets[parent].amounts.processes += budget.amounts.processes
 	budgets[parent].amounts.threads += budget.amounts.threads
 	for &region in regions {
@@ -813,7 +829,7 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 			reserved_pages += cost - lists
 		}
 	}
-	budgets[budget].amounts.pages -= cost
+	budget_pages_spend(&budgets[budget], cost)
 	lock_free(&frame_lock, .Frame)
 	if contiguous {
 		frames_zero(region.physical, page_count)
@@ -1019,7 +1035,7 @@ region_release :: proc "contextless" (index: u32) {
 		// before its frames are free.
 		iommu_region_end_held(index)
 		frames_free_held(region.physical, region.page_count)
-		budgets[region.budget].amounts.pages += region.page_count
+		budget_peak.give_back(&budgets[region.budget].amounts.pages, region.page_count)
 	case:
 		// A device that the window of the object was declared to reaches it
 		// no more before its frames are free.
@@ -1053,7 +1069,7 @@ region_release :: proc "contextless" (index: u32) {
 		reserved_pages -= paid - region.present
 		base := region.uncommitted ? uncommitted_base_cost(region.page_count) : list_pages(region.page_count)
 		reserved_pages -= base - list_pages(region.page_count) // The page with no frame of a small Uncommitted object.
-		budgets[region.budget].amounts.pages += base + paid
+		budget_peak.give_back(&budgets[region.budget].amounts.pages, base + paid)
 	}
 	region^ = {serial = region.serial}
 	lock_free(&frame_lock, .Frame)

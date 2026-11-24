@@ -99,10 +99,14 @@ service_open :: proc "contextless" (ctx: ^Context) -> (service: Service, ok: boo
 
 // service_wait adds the service to a wait list: the thread waits while no
 // connection has a call, and while the root service names no connection.
+// Its first call says the first state of work of the process (ready).
 service_wait :: proc "contextless" (wait: ^Wait, service: ^Service) {
 	if service.names.head == nil {
 		return
 	}
+	// The first wait for calls is the first state of work of a service.
+	// Each later call does nothing.
+	ready()
 	wait_records(wait, &service.names.commands)
 	for &connection in service.connections {
 		if connection.calls.head != nil {

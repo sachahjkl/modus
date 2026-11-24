@@ -1,5 +1,6 @@
 package kernel
 
+import "modulus:budget_peak"
 import info "modus:contract/boot_info"
 import "modus:contract/bridge_requester"
 import "modulus:iommu"
@@ -1920,7 +1921,7 @@ declare_to_device :: proc "contextless" (process_index: u32, requester: u16, slo
 		// The firmware keeps using the reserved ranges of the device while
 		// the service drives it.
 		if !reserved_ranges_map(requester, device.top, iommu_units[unit].levels, budget) {
-			budgets[budget^].amounts.pages += tables_free(device.top, iommu_units[unit].levels)
+			budget_peak.give_back(&budgets[budget^].amounts.pages, tables_free(device.top, iommu_units[unit].levels))
 			device^ = {}
 			return .None, false, .No_Budget
 		}
@@ -1929,7 +1930,7 @@ declare_to_device :: proc "contextless" (process_index: u32, requester: u16, slo
 		if new_domain {
 			// No unit reads a domain with no context entry: its tables
 			// return at once, and nothing was visible to the device.
-			budgets[budget^].amounts.pages += tables_free(device.top, iommu_units[device.unit].levels)
+			budget_peak.give_back(&budgets[budget^].amounts.pages, tables_free(device.top, iommu_units[device.unit].levels))
 			device^ = {}
 			return .None, false, .No_Budget
 		}
@@ -2496,7 +2497,7 @@ domains_end :: proc "contextless" (process_index: u32, owned: u32) {
 				invalidate_unit(unit, domain_batch(standing_domain, true, 0, device.requester))
 			}
 		}
-		budgets[budget].amounts.pages += tables_free(device.top, unit.levels)
+		budget_peak.give_back(&budgets[budget].amounts.pages, tables_free(device.top, unit.levels))
 		intrinsics.atomic_store(&device.owner, 0)
 		device^ = {}
 	}

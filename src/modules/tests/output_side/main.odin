@@ -59,6 +59,10 @@ wrong :: proc "contextless" (text: string, value: u64) -> ! {
 // record output of this process.
 @(private = "file")
 command_wait :: proc "contextless" () -> ring.Record {
+	// The first wait for a command is the first state of work of the
+	// process (src/md/features/module_budget_request.md, "The first state
+	// of work"); a later call says nothing.
+	system.ready()
 	deadline := hang_deadline()
 	for {
 		wait := system.wait_begin()
@@ -144,3 +148,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	wrong("the asker did not stop this process within the hang bound, in milliseconds:", system.TEST_HANG_BOUND_MILLISECONDS)
 }
+
+// Measure pending: the 2048 pages of the least budget in which it ran
+// before its floor was counted. The first machine pass with the check of
+// the floors (the check boot-test of the flake) writes the peak of its
+// budget at its first state of work; modustool floors measured on the log
+// of that pass gives the working memory that replaces this number
+// (src/md/features/module_budget_request.md, "The first state of work").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2048}

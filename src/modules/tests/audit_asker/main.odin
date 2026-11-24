@@ -324,6 +324,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	received := u64(0)
 	last_serial: u32
+	// The start is done: the first state of work of the process
+	// (src/md/features/module_budget_request.md, "The first state of work").
+	system.ready()
 	for {
 		item, read_status = system.asker_read(number, &probe, hang_deadline())
 		if read_status == .Ended {
@@ -361,3 +364,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_fact(.Info, Pair_Forwarded{probes = received})
 	system.stop(.Done)
 }
+
+// Measure pending: the 2048 pages of the least budget in which it ran
+// before its floor was counted. The first machine pass with the check of
+// the floors (the check boot-test of the flake) writes the peak of its
+// budget at its first state of work; modustool floors measured on the log
+// of that pass gives the working memory that replaces this number
+// (src/md/features/module_budget_request.md, "The first state of work").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2048}

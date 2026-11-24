@@ -281,3 +281,55 @@ screen_of_memory_of_start :: proc "contextless" (word: u64, from_start_policy: b
 	}
 	return
 }
+
+// One floor candidate for kept_pages_of_start_list.
+Kept_Floor :: struct {
+	name:  string,
+	pages: u64,
+}
+
+// kept_pages_of_start_list sums the floors that the division of a start
+// list keeps beside its rows: the start policy once (when no row names
+// it), each part of system_parts that is neither "root", policy_name, nor
+// a row (with at most the largest renderer of console_renderers), and
+// disk_budget_pages when the budget of the disk processes is not made yet.
+// The result is never below largest_pages and saturates at max(u64).
+kept_pages_of_start_list :: proc "contextless" (
+	policy_name: string,
+	policy_pages: u64,
+	system_parts: []Kept_Floor,
+	console_renderers: []string,
+	rows: []string,
+	disk_budget_pages: u64,
+	largest_pages: u64,
+) -> u64 {
+	add :: proc "contextless" (kept: ^u64, pages: u64) {
+		kept^ = kept^ > max(u64) - pages ? max(u64) : kept^ + pages
+	}
+	in_names :: proc "contextless" (target: string, names: []string) -> bool {
+		for item in names {
+			if item == target {
+				return true
+			}
+		}
+		return false
+	}
+	kept: u64 = 0
+	if !in_names(policy_name, rows) {
+		add(&kept, policy_pages)
+	}
+	renderer: u64 = 0
+	for part in system_parts {
+		if part.name == "root" || part.name == policy_name || in_names(part.name, rows) {
+			continue
+		}
+		if in_names(part.name, console_renderers) {
+			renderer = max(renderer, part.pages)
+			continue
+		}
+		add(&kept, part.pages)
+	}
+	add(&kept, renderer)
+	add(&kept, disk_budget_pages)
+	return max(kept, largest_pages)
+}

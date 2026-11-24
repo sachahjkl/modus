@@ -270,46 +270,43 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			site_comment_cell(site, &b, item.page, has_start_grant_set ? start_grant_set.comment : "No row: the kernel starts the root service, and a disk process has the start grant set of its row in the disk grant table of its principal.")
 			strings.write_string(&b, "</tr>\n<tr><td>Other terms of its start grant set</td>")
 			site_start_grant_set_terms_cell(&b, start_grant_set.terms)
-			strings.write_string(&b, "<td></td></tr>\n<tr><td>Budget that it asks for</td><td>")
+			strings.write_string(&b, "<td></td></tr>\n<tr><td>Floor</td><td>")
 			// The parts that the source states, and the counted parts that
 			// the source alone gives: the threads and the window. The pages
-			// of the module and of its imports come from the files of a
-			// build, which the site does not read. A part of processes or of
-			// threads that the source does not state asks for the least
-			// budget of that part: its starter chooses that amount.
+			// of the module and of its imports, of their load and of the
+			// start objects come from the files of a build, which the site
+			// does not read.
 			amounts := make([dynamic]string, context.temp_allocator)
 			if budget.stated {
-				counted, _ := build.budget_count(budget.parts, 0, nil)
+				counted, _ := build.floor_count({stated = budget.parts})
 				parts := [6]struct {
 					name:  string,
 					value: u64,
-					least: bool, // 0 is the least budget of the part, not none.
-				}{{"working memory pages", counted.working_memory_pages, false}, {"pages of its threads", counted.thread_pages, false}, {"pages of the pictures of its window", counted.window_pages, false}, {"pages of the module and its imports", 0, false}, {"processes", counted.request.processes, true}, {"threads", counted.request.threads, true}}
+					count: bool, // A count of slots, not a size.
+				}{{"working memory pages", counted.working_memory_pages, false}, {"pages of its threads", counted.thread_pages, false}, {"pages of the pictures of its window", counted.window_pages, false}, {"pages of the module, its imports, their load and its start objects", 0, false}, {"processes", counted.floor.processes, true}, {"threads", counted.floor.threads, true}}
 				for part in parts {
 					switch {
-					case part.name == "pages of the module and its imports":
+					case part.name == "pages of the module, its imports, their load and its start objects":
 						append(&amounts, strings.concatenate({site_text_html(part.name), " from the files of the build"}, context.temp_allocator))
-					case part.value == 0 && part.least:
-						append(&amounts, strings.concatenate({site_text_html(part.name), " the least"}, context.temp_allocator))
 					case:
 						// The pages are a size; the processes and the threads are counts.
-						kind := part.least ? value_kinds.Value_Kind.Number : value_kinds.Value_Kind.Size
+						kind := part.count ? value_kinds.Value_Kind.Number : value_kinds.Value_Kind.Size
 						append(&amounts, strings.concatenate({site_text_html(part.name), " ", site_value_html_with_icon(kind, fmt.tprintf("%d", part.value))}, context.temp_allocator))
 					}
 				}
 			} else {
-				append(&amounts, "the least budget")
+				append(&amounts, "the counted parts alone, one process and one thread")
 			}
 			site_value_list(&b, amounts[:])
 			strings.write_string(&b, "</td>")
-			site_comment_cell(site, &b, item.page, budget.stated ? budget.comment : "No `MODULE_BUDGET` in its source: it asks for the least budget.")
+			site_comment_cell(site, &b, item.page, budget.stated ? budget.comment : "No `MODULE_BUDGET` in its source: its floor is what the tool counts.")
 			strings.write_string(&b, "</tr>\n")
 			site_table_end(&b, budget_table)
 			fmt.sbprintf(&b, "<p class=\"source\">The start grant set is read from <code>start_grant_sets</code> in <a href=\"%s\"><code>%s</code></a>. The stated budget is read from the constant <code>MODULE_BUDGET</code> of the source of the module", site_repository_file(site, foundation.ROOT_START_GRANT_SETS_FILE), foundation.ROOT_START_GRANT_SETS_FILE)
 			if budget.stated {
 				fmt.sbprintf(&b, " (<a href=\"%s\">its line</a>)", site_line_address(site, budget.file, budget.line))
 			}
-			fmt.sbprintf(&b, "; the build adds the counted parts and writes the sum in the module (<a href=\"%s\"><code>tools/modustool/build/budget_count.odin</code></a>); the root service accepts it up to the largest budget of a process, and adds the limits of processor time and of log records (<a href=\"%s\"><code>%s</code></a>).</p>\n", site_repository_file(site, "tools/modustool/build/budget_count.odin"), site_repository_file(site, SITE_ROOT_BUDGETS_FILE), SITE_ROOT_BUDGETS_FILE)
+			fmt.sbprintf(&b, "; the build adds the counted parts and writes the sum in the module (<a href=\"%s\"><code>tools/modustool/build/floor_count.odin</code></a>); the root service reserves that floor, gives a size of twice it at most a share of the machine, and adds the limits of processor time and of log records (<a href=\"%s\"><code>%s</code></a>).</p>\n", site_repository_file(site, "tools/modustool/build/floor_count.odin"), site_repository_file(site, SITE_ROOT_BUDGETS_FILE), SITE_ROOT_BUDGETS_FILE)
 			append(&sources, foundation.ROOT_START_GRANT_SETS_FILE, SITE_ROOT_BUDGETS_FILE)
 		}
 		about := description.about != "" ? site_source_comment_plain(site, description.about) : "no documentation"

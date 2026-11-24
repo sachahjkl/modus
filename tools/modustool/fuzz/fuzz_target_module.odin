@@ -58,8 +58,8 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 				_, _ = module.record(file, kind, index, module.Record)
 			case .Fields:
 				_, _ = module.record(file, kind, index, module.Field)
-			case .Budget:
-				_, _ = module.record(file, kind, index, module.Budget_Request)
+			case .Floor:
+				_, _ = module.record(file, kind, index, module.Floor)
 			case .Facts:
 				_, _ = module.record(file, kind, index, module.Fact)
 			case .Own_Hash:
@@ -281,7 +281,7 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 		}
 	}
 	_, _ = module.documentation(file)
-	_, _ = module.budget_request(file)
+	_, _ = module.floor_read(file)
 	if head.memory_size <= FUZZ_MODULE_MEMORY_LIMIT {
 		memory := make([]u8, head.memory_size, context.temp_allocator)
 		module.copy_segments(file, memory)
@@ -337,8 +337,8 @@ fuzz_module_record_type :: proc(kind: module.Table_Kind) -> (type: typeid, size:
 		return module.Record, size_of(module.Record)
 	case .Fields:
 		return module.Field, size_of(module.Field)
-	case .Budget:
-		return module.Budget_Request, size_of(module.Budget_Request)
+	case .Floor:
+		return module.Floor, size_of(module.Floor)
 	case .Facts:
 		return module.Fact, size_of(module.Fact)
 	case .Own_Hash:
@@ -636,7 +636,7 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 
 	documentation := [2]module.Documentation{}
 	documentation[1].about_offset, documentation[1].about_count = fuzz_module_name_add(&strings_bytes, &choices, 'd')
-	budget := [2]module.Budget_Request{{}, {pages = u64(fuzz_choice_below(&choices, 64)), processes = 1, threads = 1}}
+	budget := [2]module.Floor{{}, {pages = u64(fuzz_choice_below(&choices, 64)), processes = 1, threads = 1}}
 
 	// A rare broken field, chosen by the choices.
 	broken_kind := module.Table_Kind.None
@@ -667,7 +667,7 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 	fuzz_module_table_write(&writer, &directory, .Documentation, documentation[:])
 	fuzz_module_table_write(&writer, &directory, .Records, records[:])
 	fuzz_module_table_write(&writer, &directory, .Fields, fields[:])
-	fuzz_module_table_write(&writer, &directory, .Budget, budget[:])
+	fuzz_module_table_write(&writer, &directory, .Floor, budget[:])
 	fuzz_module_table_write(&writer, &directory, .Facts, facts[:])
 	if has_own_hash {
 		fuzz_module_table_write(&writer, &directory, .Own_Hash, own_hash[:])

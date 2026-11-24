@@ -1,10 +1,14 @@
 #+build !freestanding
 package root_ring
 
+import "base:intrinsics"
 import "core:testing"
+import "core:thread"
+import "core:time"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/replacement_list"
+import "modus:contract/ring"
 import "modus:contract/start_grant"
 
 // values[5] of a Start: one past the last member and the largest word name
@@ -608,4 +612,259 @@ the_wide_grant_commands_keep_their_senders :: proc(t: ^testing.T) {
 		read, ok := wide_grant_proof_outcome_of_word(u64(outcome))
 		testing.expect(t, ok && read == outcome)
 	}
+}
+// Ready travels on the ready ring alone: the root ring refuses it at its
+// sender, whatever the start grants, so the one way to say the first
+// state of work is the same for each process. The word one past Ready
+// names no command.
+@(test)
+ready_never_runs_on_the_root_ring :: proc(t: ^testing.T) {
+	for grant in ROOT_RING_GRANTS {
+		decision := dispatch_decide(u32(Root_Command.Ready), {grant}, true)
+		testing.expectf(t, decision.step == .Sender, "Ready on the root ring with the start grant %v", grant)
+	}
+	testing.expect_value(t, root_command_name(i64(Root_Command.Ready)), "Ready")
+	past := dispatch_decide(u32(Root_Command.Ready) + 1, {.Root_Ring}, false)
+	testing.expect_value(t, past.step, Dispatch_Step.Border)
+}
+
+// The ready ring carries Ready with each value 0, and refuses each other
+// record: another kind, None, a word past the last command, and a Ready
+// with one value that is not 0, in the first place, the last, and the
+// largest word.
+@(test)
+the_ready_ring_takes_ready_alone :: proc(t: ^testing.T) {
+	testing.expect(t, !ready_record_refused({kind = u32(Root_Command.Ready)}))
+	testing.expect(t, !ready_record_refused({kind = u32(Root_Command.Ready), tag = 7}), "the tag is no value")
+	testing.expect(t, ready_record_refused({}))
+	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Start)}))
+	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Ready) + 1}))
+	testing.expect(t, ready_record_refused({kind = max(u32)}))
+	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Ready), values = {0 = 1}}))
+	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Ready), values = {6 = 1}}))
+	testing.expect(t, ready_record_refused({kind = u32(Root_Command.Ready), values = {3 = max(u64)}}))
+}
+
+// A model of the starter over a ready ring: each pass reads the step, and
+// each step but Wait closes the ring with one line, so no later pass reads
+// it. A ring never written waits; a Ready, a wrong record, a false count
+// and a count that moves with no record each end it after one pass.
+@(test)
+the_ready_ring_ends_after_one_line :: proc(t: ^testing.T) {
+	Model :: struct {
+		memory: [2 * ring.PAGE_SIZE]u8,
+		mapped: ring.Ring,
+		open:   bool,
+		lines:  int,
+		passes: int,
+	}
+	pass :: proc(model: ^Model) -> Ready_Ring_Step {
+		if !model.open {
+			return .Wait
+		}
+		model.passes += 1
+		_, step := ready_ring_step(&model.mapped.commands)
+		if step != .Wait {
+			if step != .Ready {
+				model.lines += 1
+			}
+			model.open = false
+		}
+		return step
+	}
+	start :: proc(model: ^Model) {
+		model^ = {}
+		mapped, opened := ring.open(&model.memory[0], 2)
+		assert(opened)
+		model.mapped, model.open = mapped, true
+	}
+	model := new(Model, context.temp_allocator)
+	start(model)
+	testing.expect_value(t, pass(model), Ready_Ring_Step.Wait)
+	testing.expect_value(t, pass(model), Ready_Ring_Step.Wait)
+	testing.expect(t, model.open && model.lines == 0, "a ring never written waits")
+	testing.expect(t, ring.push(&model.mapped.commands, ring.Record{kind = u32(Root_Command.Ready)}))
+	testing.expect_value(t, pass(model), Ready_Ring_Step.Ready)
+	testing.expect(t, !model.open && model.lines == 0)
+	start(model)
+	testing.expect(t, ring.push(&model.mapped.commands, ring.Record{kind = u32(Root_Command.Start)}))
+	testing.expect_value(t, pass(model), Ready_Ring_Step.Refused_Record)
+	start(model)
+	model.mapped.head.commands.write = u32(ring.CAPACITY) + 1
+	testing.expect_value(t, pass(model), Ready_Ring_Step.Counters_Refused)
+	before := model.passes
+	testing.expect_value(t, pass(model), Ready_Ring_Step.Wait)
+	testing.expect(t, model.passes == before && model.lines == 1, "one line, and no second pass")
+	start(model)
+	model.mapped.head.commands.write = 1
+	model.mapped.head.commands.read = 1
+	testing.expect_value(t, pass(model), Ready_Ring_Step.Write_With_No_Record)
+	testing.expect(t, !model.open && model.lines == 1)
+}
+
+// A push by an honest process between the reads of ready_ring_step never
+// gives Write_With_No_Record:
+// 1. Push between the initial write load (0) and pop: pop returns Ready.
+// 2. Push between a failed pop and the refusal checks: returns Wait, and
+//    the next ready_ring_step returns Ready.
+// Refusal edges: write == read == max(u32), write == 1 reset to 0 before
+// pop, write behind read (0, 1), and write == max(u32) with read == 0.
+@(test)
+a_push_between_ready_ring_reads_is_never_write_with_no_record :: proc(t: ^testing.T) {
+	memory := new([2 * ring.PAGE_SIZE]u8, context.temp_allocator)
+	fresh :: proc(memory: ^[2 * ring.PAGE_SIZE]u8) -> ring.Ring {
+		memory^ = {}
+		mapped, opened := ring.open(&memory[0], 2)
+		assert(opened)
+		return mapped
+	}
+
+	// Refusal edges first.
+	mapped := fresh(memory)
+	mapped.head.commands.write, mapped.head.commands.read = max(u32), max(u32)
+	_, step := ready_ring_step(&mapped.commands)
+	testing.expect_value(t, step, Ready_Ring_Step.Write_With_No_Record)
+
+	mapped = fresh(memory)
+	mapped.head.commands.write, mapped.head.commands.read = 0, 1
+	_, step = ready_ring_step(&mapped.commands)
+	testing.expect_value(t, step, Ready_Ring_Step.Counters_Refused)
+
+	mapped = fresh(memory)
+	mapped.head.commands.write, mapped.head.commands.read = max(u32), 0
+	_, step = ready_ring_step(&mapped.commands)
+	testing.expect_value(t, step, Ready_Ring_Step.Counters_Refused)
+
+	// Hostile writer sets write = 1 before ready_ring_step, then resets
+	// write = 0 before pop: write_before was non-zero and pop fails.
+	mapped = fresh(memory)
+	_, step = ready_ring_step_from_write(&mapped.commands, 1)
+	testing.expect_value(t, step, Ready_Ring_Step.Write_With_No_Record)
+
+	// Interleaving 1: write loaded as 0, then honest push happens before pop.
+	mapped = fresh(memory)
+	write_before := intrinsics.atomic_load_explicit(&mapped.commands.counters.write, .Acquire)
+	testing.expect_value(t, write_before, u32(0))
+	testing.expect(t, ring.push(&mapped.commands, ring.Record{kind = u32(Root_Command.Ready), tag = 9}))
+	record, step_between := ready_ring_step_from_write(&mapped.commands, write_before)
+	testing.expect_value(t, step_between, Ready_Ring_Step.Ready)
+	testing.expect_value(t, record.tag, u32(9))
+
+	// Interleaving 2: write loaded as 0, pop returns false, then honest push
+	// lands before ready_ring_step_after_pop.
+	mapped = fresh(memory)
+	write_before = intrinsics.atomic_load_explicit(&mapped.commands.counters.write, .Acquire)
+	_, popped := ring.pop(&mapped.commands)
+	testing.expect(t, !popped)
+	testing.expect(t, ring.push(&mapped.commands, ring.Record{kind = u32(Root_Command.Ready), tag = 11}))
+	step_after := ready_ring_step_after_pop(&mapped.commands, write_before)
+	testing.expect_value(t, step_after, Ready_Ring_Step.Wait)
+	// Next pass pops the Ready record cleanly.
+	record, step = ready_ring_step(&mapped.commands)
+	testing.expect_value(t, step, Ready_Ring_Step.Ready)
+	testing.expect_value(t, record.tag, u32(11))
+}
+
+// Two threads racing an honest Ready push against ready_ring_step across
+// many fresh rings: every round sees only Wait followed by Ready, never
+// Write_With_No_Record, Counters_Refused or Refused_Record.
+@(test)
+concurrent_honest_ready_pushes_never_refuse :: proc(t: ^testing.T) {
+	ROUNDS :: u32(10_000)
+	STALL_BOUND_MS :: 60_000
+	Race :: struct {
+		memory:     [2 * ring.PAGE_SIZE]u8,
+		mapped:     ring.Ring,
+		stage:      u32, // 0: reader resetting, 1: round active, 2: done.
+		round:      u32,
+		bad_steps:  u32,
+		ready_seen: u32,
+		progress:   u32,
+		abandoned:  bool,
+	}
+	race := new(Race)
+	defer free(race)
+	opened: bool
+	race.mapped, opened = ring.open(&race.memory[0], 2)
+	testing.expect(t, opened)
+
+	writer_proc :: proc(race: ^Race) {
+		since := time.tick_now()
+		last := intrinsics.atomic_load(&race.progress)
+		for {
+			stage := intrinsics.atomic_load_explicit(&race.stage, .Acquire)
+			if stage == 2 || intrinsics.atomic_load(&race.abandoned) {
+				return
+			}
+			if stage == 1 {
+				round := intrinsics.atomic_load_explicit(&race.round, .Acquire)
+				_ = ring.push(&race.mapped.commands, ring.Record{kind = u32(Root_Command.Ready), tag = round})
+				intrinsics.atomic_store_explicit(&race.stage, 0, .Release)
+				intrinsics.atomic_add(&race.progress, 1)
+				continue
+			}
+			now_progress := intrinsics.atomic_load(&race.progress)
+			if now_progress != last {
+				last = now_progress
+				since = time.tick_now()
+			} else if time.duration_milliseconds(time.tick_since(since)) > STALL_BOUND_MS {
+				intrinsics.atomic_store(&race.abandoned, true)
+				return
+			}
+			intrinsics.cpu_relax()
+		}
+	}
+
+	worker := thread.create_and_start_with_poly_data(race, writer_proc)
+	since := time.tick_now()
+	last := intrinsics.atomic_load(&race.progress)
+	for round in u32(0) ..< ROUNDS {
+		// Reset counters while writer waits on stage == 0.
+		for intrinsics.atomic_load_explicit(&race.stage, .Acquire) != 0 {
+			if intrinsics.atomic_load(&race.abandoned) {
+				break
+			}
+			intrinsics.cpu_relax()
+		}
+		if intrinsics.atomic_load(&race.abandoned) {
+			break
+		}
+		race.mapped.head.commands.write = 0
+		race.mapped.head.commands.read = 0
+		intrinsics.atomic_store_explicit(&race.round, round, .Release)
+		intrinsics.atomic_store_explicit(&race.stage, 1, .Release)
+		for {
+			record, step := ready_ring_step(&race.mapped.commands)
+			if step == .Ready {
+				if record.tag != round {
+					race.bad_steps += 1
+				}
+				race.ready_seen += 1
+				intrinsics.atomic_add(&race.progress, 1)
+				break
+			}
+			if step != .Wait {
+				race.bad_steps += 1
+				break
+			}
+			now_progress := intrinsics.atomic_load(&race.progress)
+			if now_progress != last {
+				last = now_progress
+				since = time.tick_now()
+			} else if time.duration_milliseconds(time.tick_since(since)) > STALL_BOUND_MS {
+				intrinsics.atomic_store(&race.abandoned, true)
+				break
+			}
+			intrinsics.cpu_relax()
+		}
+		if race.bad_steps != 0 || intrinsics.atomic_load(&race.abandoned) {
+			break
+		}
+	}
+	intrinsics.atomic_store_explicit(&race.stage, 2, .Release)
+	thread.join(worker)
+	thread.destroy(worker)
+	testing.expect(t, !race.abandoned, "the concurrent ready ring race stalled")
+	testing.expect_value(t, race.bad_steps, u32(0))
+	testing.expect_value(t, race.ready_seen, ROUNDS)
 }

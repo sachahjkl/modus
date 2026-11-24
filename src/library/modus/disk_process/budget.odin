@@ -1,13 +1,14 @@
 package disk_process
 
 import module "modus:contract/module"
+import op "modus:contract/operation"
 
 // The budget that pays every disk process together: the root service makes
 // it from its own budget at the first disk process, and keeps it. A disk
 // process runs a file that its principal chose, not a module of the
 // system, so the sum of all of them has one bound, and the processes of the
 // boot image keep the rest of the budget of the root service
-// (docs/MODULE_CONTRACT.md, "The budget that a module asks for").
+// (docs/MODULE_CONTRACT.md, "The floor of a module").
 //
 // Its amounts are stated, not a share of the machine: the budget never
 // returns to the root service, so a share would keep a quarter of a large
@@ -19,7 +20,7 @@ import module "modus:contract/module"
 // - 32768 pages, 128 MiB: two disk processes of the largest budget, or
 //   four of half that, each with the two pictures of a window of the
 //   reference screen (4050 pages) and its working memory.
-PROCESSES_BUDGET :: module.Budget_Request{pages = 32768, processes = 4, threads = 16}
+PROCESSES_BUDGET :: op.Budget_Amounts{pages = 32768, processes = 4, threads = 16}
 
 // The processor time of all disk processes together, in microseconds in
 // each second: two processors. A disk process that computes with no end
@@ -30,6 +31,7 @@ SHARED_PROCESSOR_TIME :: 2_000_000
 // starts a process, so it needs its own process slot only, and with one
 // slot it creates no child; 4 threads; and half of the pages of the budget
 // of the disk processes, the least largest budget of a process of the boot
-// image, so one disk process never takes all of it.
-LARGEST_BUDGET :: module.Budget_Request{pages = PROCESSES_BUDGET.pages / 2, processes = 1, threads = 4}
+// image, so one disk process never takes all of it. A floor above one of
+// these parts does not start: no row of a disk process raises them.
+LARGEST_BUDGET :: op.Budget_Amounts{pages = PROCESSES_BUDGET.pages / 2, processes = 1, threads = 4}
 #assert(LARGEST_BUDGET.pages == module.LARGEST_BUDGET_LEAST_PAGES)

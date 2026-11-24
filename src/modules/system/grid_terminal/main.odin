@@ -101,6 +101,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The last row is the edit line; the rows above it are the output.
 	edit_row := rows - 1
 	system.log(.Info, "grid_terminal: ready")
+	// The start is done: the first state of work of the process
+	// (src/md/features/module_budget_request.md, "The first state of work").
+	system.ready()
 
 	for {
 		if has_input {

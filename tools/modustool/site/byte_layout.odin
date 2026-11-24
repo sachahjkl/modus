@@ -130,7 +130,7 @@ byte_layout_table_sources :: proc() -> [module.Table_Kind]Byte_Layout_Source {
 		.Documentation = {key = "module.Documentation", file = file, declaration = "Documentation", info = type_info_of(module.Documentation), what = "one record of the table Documentation"},
 		.Records       = {key = "module.Record", file = file, declaration = "Record", info = type_info_of(module.Record), what = "one record of the table Records"},
 		.Fields        = {key = "module.Field", file = file, declaration = "Field", info = type_info_of(module.Field), what = "one record of the table Fields"},
-		.Budget        = {key = "module.Budget_Request", file = file, declaration = "Budget_Request", info = type_info_of(module.Budget_Request), what = "the record 1 of the table Budget"},
+		.Floor         = {key = "module.Floor", file = file, declaration = "Floor", info = type_info_of(module.Floor), what = "the record 1 of the table Floor"},
 		.Facts         = {key = "module.Fact", file = BYTE_LAYOUT_FACTS_FILE, declaration = "Fact", info = type_info_of(module.Fact), what = "one record of the table Facts"},
 		.Own_Hash      = {key = "module.Own_Hash_Place", file = BYTE_LAYOUT_FACTS_FILE, declaration = "Own_Hash_Place", info = type_info_of(module.Own_Hash_Place), what = "the record 1 of the table Own_Hash"},
 		.Record_Outputs = {key = "module.Record_Output", file = BYTE_LAYOUT_RECORD_STREAMS_FILE, declaration = "Record_Output", info = type_info_of(module.Record_Output), what = "one record of the table Record_Outputs"},

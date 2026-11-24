@@ -7,6 +7,7 @@ import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
 import module "modus:contract/module"
+import "modus:contract/ring"
 import "modus:contract/system_description"
 import "modus:contract/value_kinds"
 
@@ -1129,8 +1130,8 @@ source_closure :: proc "contextless" (source: Load_Source, file: []u8, files: ^[
 //             instruction (src/md/features/record_and_replay.md).
 // The module is at PROCESS_BASE, its imports after it.
 // The process stops when the last handle to it closes.
-process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0, wiring: ^Start_Wiring = nil, held_entry: ^u64 = nil) -> (process: Handle, status: Status) {
-	if len(file) == 0 || module.validate(file) != .None || grants[op.CONTEXT_BUDGET].handle != 0 || grants[op.CONTEXT_WIRING_RING].handle != 0 || grants[op.CONTEXT_LOG_OUTPUT].handle != 0 || grants[op.CONTEXT_LOG_OUTPUT_END].handle != 0 {
+process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0, wiring: ^Start_Wiring = nil, held_entry: ^u64 = nil, ready: ^Ready_Ring = nil) -> (process: Handle, status: Status) {
+	if len(file) == 0 || module.validate(file) != .None || grants[op.CONTEXT_BUDGET].handle != 0 || grants[op.CONTEXT_WIRING_RING].handle != 0 || grants[op.CONTEXT_LOG_OUTPUT].handle != 0 || grants[op.CONTEXT_LOG_OUTPUT_END].handle != 0 || grants[op.CONTEXT_READY_RING].handle != 0 {
 		return 0, .Bad_Operation
 	}
 	// Each process has a random seed from its starter (docs/RANDOMNESS.md):
@@ -1186,8 +1187,19 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 		// asks for from it.
 		wiring.budget, status = give(0, budget, {.Read, .Spend})
 	}
+	// The ready ring: the budget of the process pays it, as each object of
+	// its start, so the floor of its module counts it.
+	given := grants
+	if status == .Ok && ready != nil {
+		ready^ = {}
+		ready.memory, status = memory_create(ring.pages(READY_RING_CAPACITY), budget)
+		if status == .Ok {
+			ready.mapped, status = ring_open(ready.memory)
+		}
+		given[op.CONTEXT_READY_RING] = {ready.memory, {.Read, .Write}}
+	}
 	if status == .Ok {
-		status = process_fill(process, budget, grants, values, mappings, file, wiring)
+		status = process_fill(process, budget, given, values, mappings, file, wiring)
 	}
 	if status == .Ok {
 		if held_entry != nil {
@@ -1207,6 +1219,9 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 				close(wiring.wiring_memory)
 			}
 			wiring.budget, wiring.wiring_memory = 0, 0
+		}
+		if ready != nil {
+			ready_ring_close(ready)
 		}
 		return 0, status
 	}

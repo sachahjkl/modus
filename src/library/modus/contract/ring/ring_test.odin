@@ -702,3 +702,76 @@ two_writers_and_two_readers_move_each_record_once :: proc(t: ^testing.T) {
 	testing.expectf(t, wrong == 0, "%v numbers were not read exactly once", wrong)
 	testing.expect_value(t, shared_count(&work.queue), 0)
 }
+
+// The counters that a reader in a loop must end the queue for: a ring
+// never written, a flood up to the capacity (each record is read, then the
+// queue is empty), and the false counts, one past the capacity, a write
+// behind the read, and the largest distance. None is refused while a pop
+// can give its records.
+@(test)
+a_false_count_is_refused_and_a_flood_is_not :: proc(t: ^testing.T) {
+	memory := memory_of_pages(PAGE_COUNT)
+	defer delete(memory)
+	ring, opened := open(raw_data(memory), PAGE_COUNT)
+	testing.expect(t, opened)
+	queue := &ring.commands
+	testing.expect(t, !counters_refused(queue), "a ring never written")
+	for number in 0 ..< u32(CAPACITY) {
+		testing.expect(t, push(queue, numbered_record(number)))
+	}
+	testing.expect(t, !counters_refused(queue), "a flood up to the capacity")
+	for _ in 0 ..< CAPACITY {
+		_, popped := pop(queue)
+		testing.expect(t, popped)
+	}
+	testing.expect(t, empty(queue) && !counters_refused(queue), "a flood that was read")
+	ring.head.commands.write = ring.head.commands.read + u32(CAPACITY) + 1
+	testing.expect(t, counters_refused(queue), "one past the capacity")
+	_, popped := pop(queue)
+	testing.expect(t, !popped && !empty(queue), "pop refuses it and the counts differ: a wait ends at once")
+	ring.head.commands.write = ring.head.commands.read - 1
+	testing.expect(t, counters_refused(queue), "a write behind the read")
+	ring.head.commands.write, ring.head.commands.read = max(u32), 0
+	testing.expect(t, counters_refused(queue), "the largest distance")
+	ring.head.commands.write, ring.head.commands.read = 5, max(u32) - u32(CAPACITY) + 6
+	testing.expect(t, !counters_refused(queue), "a full queue across the wrap")
+}
+
+// A reader refuses a false count by its own counter: the queue is empty, a
+// push works again, and an honest queue, empty or full, is left as it is.
+// first is true only on the first refusal of a ring since open, so a
+// reader logs once per ring and not once per false count.
+@(test)
+a_false_count_is_refused_by_the_count_of_the_reader :: proc(t: ^testing.T) {
+	memory := memory_of_pages(PAGE_COUNT)
+	defer delete(memory)
+	ring, opened := open(raw_data(memory), PAGE_COUNT)
+	testing.expect(t, opened)
+	queue := &ring.commands
+	refused, first := false_count_refuse(queue)
+	testing.expect(t, !refused && !first, "an empty queue")
+	for number in 0 ..< u32(CAPACITY) {
+		testing.expect(t, push(queue, numbered_record(number)))
+	}
+	refused, first = false_count_refuse(queue)
+	testing.expect(t, !refused && !first, "a full queue")
+	testing.expect_value(t, count(queue), u32(CAPACITY))
+	ring.head.commands.write = ring.head.commands.read + u32(CAPACITY) + 1
+	refused, first = false_count_refuse(queue)
+	testing.expect(t, refused && first, "the first false count on this ring")
+	testing.expect(t, empty(queue) && !counters_refused(queue))
+	testing.expect(t, push(queue, numbered_record(7)))
+	record, popped := pop(queue)
+	testing.expect(t, popped && record == numbered_record(7))
+	// A second false count on the same ring is still dropped, with first == false.
+	ring.head.commands.write, ring.head.commands.read = 3, 9
+	refused, first = false_count_refuse(queue)
+	testing.expect(t, refused && !first, "a later false count on the same ring does not log again")
+	testing.expect_value(t, ring.head.commands.read, 3)
+	// A freshly opened ring logs once again.
+	reopened, reopened_ok := open(raw_data(memory), PAGE_COUNT)
+	testing.expect(t, reopened_ok)
+	reopened.head.commands.write, reopened.head.commands.read = u32(CAPACITY) + 1, 0
+	refused, first = false_count_refuse(&reopened.commands)
+	testing.expect(t, refused && first, "a newly opened ring reports its first false count")
+}

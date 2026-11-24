@@ -17,6 +17,12 @@ Module_Build :: struct {
 	name:    string,
 	source:  string,
 	imports: []string,
+	// The modules that the process of this module starts before its first
+	// state of work: its floor holds their floors
+	// (src/md/features/module_budget_request.md, "The floor is counted
+	// whole"). The table lists each one before this module, as an import,
+	// so its file is there at the conversion of this one.
+	children: []string,
 	kernel:  bool,
 	// A module with an entry function, which the root service
 	// starts. The start grant sets of the root service name each such module of the

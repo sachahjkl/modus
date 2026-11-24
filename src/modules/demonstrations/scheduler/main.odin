@@ -129,10 +129,23 @@ import "modus:system"
 // stack and a thread area for each of the 24 threads, and its window. The
 // working memory: 512 for each of the four processes of the shares, its
 // own tables, and the rest of the 5632 pages that it had before the tool
-// counted: 3659 pages. And the glyph memory of the copy of the text
-// rendering of the drawing module, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 3659 + 354 = 4013.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4013, processes = 5, threads = 24, window_width = WIDTH, window_height = HEIGHT}
+// counted: 3659 pages, of which the start budgets (MODULE_START_BUDGETS)
+// are 4 x 512 for the processes of the shares and 80 for the blockers of
+// the placement case: 1531 pages. And the glyph memory of the copy of the
+// text rendering of the drawing module, which draws its text: 354 pages
+// (display.TEXT_MEMORY_PAGES). 1531 + 354 = 1885.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1885, processes = 5, threads = 24, window_width = WIDTH, window_height = HEIGHT}
+
+// Pages per share child process (modules, stack, context, page tables) and
+// pages for the placement blockers child (16 pages per thread).
+SHARE_PROCESS_BASE_PAGES :: 512
+BLOCKERS_BUDGET_PAGES :: 80
+#assert(BLOCKERS_BUDGET_PAGES == 16 * BLOCKERS)
+// The budgets that this process makes for its children before its first
+// frame: the four processes of the shares and the blockers of the placement
+// case.
+MODULE_START_BUDGETS :: [?]system.Start_Budget{SHARE_PROCESS_BASE_PAGES, SHARE_PROCESS_BASE_PAGES, SHARE_PROCESS_BASE_PAGES, SHARE_PROCESS_BASE_PAGES, BLOCKERS_BUDGET_PAGES}
+#assert(len(MODULE_START_BUDGETS) == SHARE_PROCESS_COUNT + 1)
 
 STRATEGY_COUNT :: 3
 @(rodata)

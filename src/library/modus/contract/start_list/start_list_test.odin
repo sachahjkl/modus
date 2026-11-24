@@ -802,3 +802,39 @@ a_screen_of_memory_gives_the_rows_a_screen :: proc(t: ^testing.T) {
 	testing.expect(t, problem == .None)
 	testing.expect_value(t, parts_for_rows(&list, {}), Machine_Parts{})
 }
+// The read of the rows alone, which the root service makes to reserve the
+// floor of each row: it needs no place for the wiring rows, gives the rows
+// of a wired list in their order, and refuses what the border of the rows
+// refuses, the list left empty. A cut list, a list with a byte more, no
+// list and a name twice are refused.
+@(test)
+the_rows_of_a_list_are_read_without_its_wirings :: proc(t: ^testing.T) {
+	_, _, wired := wired_rows()
+	list: List
+	problem, place := list_rows_read(wired, &list)
+	testing.expect_value(t, problem, List_Problem.None)
+	testing.expect_value(t, place, 0)
+	testing.expect_value(t, list.row_count, 4)
+	testing.expect_value(t, row_name(&list.rows[2]), "writer")
+	testing.expect_value(t, list.wiring_count, 0)
+	rows, bytes := three_rows()
+	problem, _ = list_rows_read(bytes, &list)
+	testing.expect(t, problem == .None && list.row_count == 3 && row_name(&list.rows[0]) == row_name(&rows[0]))
+	problem, _ = list_rows_read(bytes[:len(bytes) - 1], &list)
+	testing.expect_value(t, problem, List_Problem.Too_Short)
+	testing.expect_value(t, list.row_count, 0)
+	longer := make([]u8, len(bytes) + 1, context.temp_allocator)
+	copy(longer, bytes)
+	problem, _ = list_rows_read(longer, &list)
+	testing.expect_value(t, problem, List_Problem.Bytes_After_Rows)
+	problem, _ = list_rows_read(nil, &list)
+	testing.expect_value(t, problem, List_Problem.Too_Short)
+	twice := record_change(bytes, 2, proc(record: ^Row_Record) {
+		record.module_name = {}
+		copy(record.module_name[:], "input")
+	})
+	problem, place = list_rows_read(twice, &list)
+	testing.expect_value(t, problem, List_Problem.Name_Twice)
+	testing.expect_value(t, place, 2)
+	testing.expect_value(t, list.row_count, 0)
+}

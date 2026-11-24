@@ -214,6 +214,9 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 	// raised it again would hold the processor for ever.
 	registers.rip = DEBUG_ADDRESS
 	interrupted = 0
+	// The start is done: the first state of work of the process
+	// (src/md/features/module_budget_request.md, "The first state of work").
+	system.ready()
 	for {
 		exit, run_status := system.guest_run(guest, &registers)
 		if run_status != .Ok {

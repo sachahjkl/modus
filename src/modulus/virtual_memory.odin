@@ -1,5 +1,6 @@
 package kernel
 
+import "modulus:budget_peak"
 import "base:intrinsics"
 import op "modus:contract/operation"
 import "modulus:mapping_order"
@@ -106,7 +107,7 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 		if !budget.live || budget.amounts.pages < needed {
 			return 0, .No_Budget
 		}
-		budget.amounts.pages -= needed
+		budget_pages_spend(budget, needed)
 		reserved_pages += needed
 		region.committed += needed
 		for range in ranges {
@@ -170,7 +171,7 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 			changed += 1
 		}
 	}
-	budgets[region.budget].amounts.pages += changed
+	budget_peak.give_back(&budgets[region.budget].amounts.pages, changed)
 	region.committed -= changed
 	return changed, .Ok
 }

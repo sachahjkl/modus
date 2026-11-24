@@ -1,6 +1,7 @@
 package machine
 
 import module "modus:contract/module"
+import op "modus:contract/operation"
 import "core:strings"
 import "core:testing"
 import "modustool:build"
@@ -22,8 +23,8 @@ budget_request_read_takes_the_constant :: proc(t: ^testing.T) {
 	testing.expect_value(t, budget.comment, "Its loop, and one more thread.")
 	testing.expect_value(t, budget.line, 6)
 
-	// A source with no constant states no request: the module asks for the
-	// least budget, and the conversion writes no table.
+	// A source with no constant states no part: the floor of a module with
+	// an entry is then its counted parts alone.
 	other_state: build.Describe_State
 	other, other_parsed := build.parse_source("none.odin", "package p\n\nWIDTH :: 720\n", &other_state)
 	if !testing.expect(t, other_parsed) {
@@ -183,18 +184,18 @@ budget_least_parts_follow_the_calls_of_resizable_set :: proc(t: ^testing.T) {
 	testing.expect_value(t, budget.parts, build.Stated_Budget{window_width = 1536, window_height = 864, window_least_width = 600, window_least_height = 360})
 	// Cut: 1920 x 1080, two pictures, 4050 pages. With no least parts: 3072
 	// x 1728, 10368 pages.
-	cut, cut_ok := build.budget_count(budget.parts, 0, nil)
+	cut, cut_ok := build.floor_count({stated = budget.parts})
 	testing.expect(t, cut_ok)
 	testing.expect_value(t, cut.window_pages, 4050)
-	whole, whole_ok := build.budget_count({window_width = 1536, window_height = 864}, 0, nil)
+	whole, whole_ok := build.floor_count({stated = {window_width = 1536, window_height = 864}})
 	testing.expect(t, whole_ok)
 	testing.expect_value(t, whole.window_pages, u64(3072 * 1728 * 8 / 4096))
 	// A least size past the logical screen at the largest scale: no cut.
-	past, past_ok := build.budget_count({window_width = 1536, window_height = 864, window_least_width = 961, window_least_height = 360}, 0, nil)
+	past, past_ok := build.floor_count({stated = {window_width = 1536, window_height = 864, window_least_width = 961, window_least_height = 360}})
 	testing.expect(t, past_ok)
 	testing.expect_value(t, past.window_pages, whole.window_pages)
 	// A least size larger than the window is refused by the count too.
-	_, larger_ok := build.budget_count({window_width = 500, window_height = 864, window_least_width = 600, window_least_height = 360}, 0, nil)
+	_, larger_ok := build.floor_count({stated = {window_width = 500, window_height = 864, window_least_width = 600, window_least_height = 360}})
 	testing.expect(t, !larger_ok)
 	// A budget with no least parts and a call of resizable_set: no cut, and
 	// no refusal.
@@ -203,15 +204,19 @@ budget_least_parts_follow_the_calls_of_resizable_set :: proc(t: ^testing.T) {
 }
 
 // The sum on one module: the stated working memory, the pages of the
-// module and of its two imports, the first thread and two more, and the
-// two pictures of a window of 1000 x 704.
+// module and of its two imports with their load, the first thread and two
+// more, the two pictures of a window of 1000 x 704, two start objects and
+// one child. Each load part is priced by the cost functions of the
+// contract, written out here.
 @(test)
-budget_count_adds_the_counted_parts :: proc(t: ^testing.T) {
+floor_count_adds_the_counted_parts :: proc(t: ^testing.T) {
 	stated := build.Stated_Budget{working_memory_pages = 2536, processes = 2, threads = 3, window_width = 1000, window_height = 704}
-	// 98 pages and a part of one more; two imports of 19 and of 72 pages.
-	module_size := u64(98 * 4096 + 1)
-	imports := []u64{19 * 4096, 72 * 4096}
-	counted, ok := build.budget_count(stated, module_size, imports)
+	// A module of 99 pages in two segments; two imports of 19 and of 72
+	// pages in one segment each.
+	modules := []build.Module_Cost{{pages = 99, segment_pages = {90, 9}}, {pages = 19, segment_pages = {19}}, {pages = 72, segment_pages = {72}}}
+	objects := []u64{16, 2}
+	children := []module.Floor{{pages = 300, processes = 1, threads = 1}}
+	counted, ok := build.floor_count({stated = stated, modules = modules, start_objects = objects, children = children})
 	testing.expect(t, ok)
 	testing.expect_value(t, counted.working_memory_pages, 2536)
 	testing.expect_value(t, counted.module_pages, 99 + 19 + 72)
@@ -223,49 +228,81 @@ budget_count_adds_the_counted_parts :: proc(t: ^testing.T) {
 	// pixels of the screen of 4 bytes, two pictures: 22528000 bytes, 5500
 	// pages. No least size: no cut.
 	testing.expect_value(t, counted.window_pages, 5500)
-	testing.expect_value(t, counted.request, module.Budget_Request{pages = 2536 + 190 + 110 + 5500, processes = 2, threads = 3})
+	// The load: the top table, the 3 tables of the time page and the ready
+	// ring; for each
+	// module the larger frame list (one object or its segments) and the
+	// tables of its mapping; the stack of the first thread and the context
+	// page; the two other stacks; the two pictures of 2750 pages.
+	picture_load := op.memory_list_pages(2750) + op.mapping_table_pages_most(2750)
+	load := 1 + 3 + build.floor_ready_ring_pages() +
+		max(op.memory_list_pages(99), op.memory_list_pages(90) + op.memory_list_pages(9)) + op.mapping_table_pages_most(99) +
+		op.memory_list_pages(19) + op.mapping_table_pages_most(19) +
+		op.memory_list_pages(72) + op.mapping_table_pages_most(72) +
+		op.memory_list_pages(op.STACK_PAGES) + op.mapping_table_pages_most(op.STACK_PAGES) + op.mapping_table_pages_most(1) +
+		2 * (op.memory_list_pages(op.THREAD_STACK_PAGES) + op.mapping_table_pages_most(op.THREAD_STACK_PAGES)) +
+		2 * picture_load
+	testing.expect_value(t, counted.load_pages, load)
+	// Each start object with its frame list and the tables of its mapping.
+	testing.expect_value(t, counted.start_object_pages, op.memory_cost(16) + op.mapping_table_pages_most(16) + op.memory_cost(2) + op.mapping_table_pages_most(2))
+	testing.expect_value(t, counted.children_pages, 300)
+	testing.expect_value(t, counted.floor, module.Floor{pages = 2536 + 190 + load + 110 + 5500 + counted.start_object_pages + 300, processes = 2, threads = 3})
+
+	// The children raise the slots to the process itself and each child:
+	// two children of 2 processes and 3 threads need 5 and 7.
+	raised, raised_ok := build.floor_count({stated = {processes = 2, threads = 2}, children = {{pages = 1, processes = 2, threads = 3}, {pages = 1, processes = 2, threads = 3}}})
+	testing.expect(t, raised_ok)
+	testing.expect_value(t, raised.floor.processes, 5)
+	testing.expect_value(t, raised.floor.threads, 7)
 
 	// A window part past the limit is refused, also when the source did
 	// not go through the describe step; the limit itself is counted.
-	_, past_ok := build.budget_count({window_width = build.BUDGET_WINDOW_PART_LIMIT + 1, window_height = 1}, 0, nil)
+	_, past_ok := build.floor_count({stated = {window_width = build.BUDGET_WINDOW_PART_LIMIT + 1, window_height = 1}})
 	testing.expect(t, !past_ok)
-	_, largest_ok := build.budget_count({window_width = ~u64(0), window_height = ~u64(0)}, 0, nil)
+	_, largest_ok := build.floor_count({stated = {window_width = ~u64(0), window_height = ~u64(0)}})
 	testing.expect(t, !largest_ok)
-	at_limit, at_limit_ok := build.budget_count({window_width = build.BUDGET_WINDOW_PART_LIMIT, window_height = build.BUDGET_WINDOW_PART_LIMIT}, 0, nil)
+	at_limit, at_limit_ok := build.floor_count({stated = {window_width = build.BUDGET_WINDOW_PART_LIMIT, window_height = build.BUDGET_WINDOW_PART_LIMIT}})
 	testing.expect(t, at_limit_ok)
 	// 8192 logical pixels are 16384 pixels of the screen at the largest
 	// scale, 2; with a least size, cut to the screen.
 	testing.expect_value(t, at_limit.window_pages, u64(16384 * 16384 * 8 / 4096))
-	at_limit_cut, _ := build.budget_count({window_width = build.BUDGET_WINDOW_PART_LIMIT, window_height = build.BUDGET_WINDOW_PART_LIMIT, window_least_width = 1, window_least_height = 1}, 0, nil)
+	at_limit_cut, _ := build.floor_count({stated = {window_width = build.BUDGET_WINDOW_PART_LIMIT, window_height = build.BUDGET_WINDOW_PART_LIMIT, window_least_width = 1, window_least_height = 1}})
 	testing.expect_value(t, at_limit_cut.window_pages, 4050)
 	// The cut on one axis only: 1000 x 100 are 1920 x 200 pixels; and a
 	// window under the screen is not cut: 512 x 256 are 1024 x 512.
-	one_axis, one_axis_ok := build.budget_count({window_width = 1000, window_height = 100, window_least_width = 600, window_least_height = 50}, 0, nil)
+	one_axis, one_axis_ok := build.floor_count({stated = {window_width = 1000, window_height = 100, window_least_width = 600, window_least_height = 50}})
 	testing.expect(t, one_axis_ok)
 	testing.expect_value(t, one_axis.window_pages, u64(1920 * 200 * 8 / 4096))
-	under, under_ok := build.budget_count({window_width = 512, window_height = 256, window_least_width = 100, window_least_height = 100}, 0, nil)
+	under, under_ok := build.floor_count({stated = {window_width = 512, window_height = 256, window_least_width = 100, window_least_height = 100}})
 	testing.expect(t, under_ok)
 	testing.expect_value(t, under.window_pages, u64(1024 * 512 * 8 / 4096))
 
-	// No part of threads: the tool counts the first thread, and the table
-	// leaves the part to the starter. No window: no pictures.
-	alone, alone_ok := build.budget_count({working_memory_pages = 10}, 4096, nil)
+	// A module with an entry and no stated part: one process, the first
+	// thread, its module and the load. No window: no pictures, no load of
+	// pictures.
+	alone, alone_ok := build.floor_count({modules = {{pages = 1, segment_pages = {1}}}})
 	testing.expect(t, alone_ok)
-	testing.expect_value(t, alone.request, module.Budget_Request{pages = 10 + 1 + 72})
+	alone_load := 1 + 3 + build.floor_ready_ring_pages() + op.mapping_table_pages_most(1) + op.memory_list_pages(op.STACK_PAGES) + op.mapping_table_pages_most(op.STACK_PAGES) + op.mapping_table_pages_most(1)
+	testing.expect_value(t, alone.floor, module.Floor{pages = 1 + 72 + alone_load, processes = 1, threads = 1})
 	testing.expect_value(t, alone.window_pages, 0)
 
-	// A count of threads that passes the end of 64 bits is refused.
-	_, huge_ok := build.budget_count({threads = ~u64(0)}, 0, nil)
+	// A count of threads, of start objects or of children that passes the
+	// end of 64 bits is refused.
+	_, huge_ok := build.floor_count({stated = {threads = ~u64(0)}})
 	testing.expect(t, !huge_ok)
+	_, huge_object_ok := build.floor_count({start_objects = {~u64(0)}})
+	testing.expect(t, !huge_object_ok)
+	_, huge_children_ok := build.floor_count({children = {{pages = ~u64(0), processes = 1, threads = 1}}})
+	testing.expect(t, !huge_children_ok)
 
-	// The screen pictures go to the request as a part of their own, at
-	// the limit too; one past the limit is refused. They add no page: the
+	// The screen pictures go to the floor as a part of their own, at the
+	// limit too; one past the limit is refused. They add no page: the
 	// starter pays them at the size of the screen of the machine.
-	_, past_screen_ok := build.budget_count({working_memory_pages = 10, screen_pictures = module.SCREEN_PICTURES_LIMIT + 1}, 4096, nil)
+	_, past_screen_ok := build.floor_count({stated = {screen_pictures = module.SCREEN_PICTURES_LIMIT + 1}})
 	testing.expect(t, !past_screen_ok)
-	screen, screen_ok := build.budget_count({working_memory_pages = 10, screen_pictures = module.SCREEN_PICTURES_LIMIT}, 4096, nil)
+	screen, screen_ok := build.floor_count({stated = {screen_pictures = module.SCREEN_PICTURES_LIMIT}})
 	testing.expect(t, screen_ok)
-	testing.expect_value(t, screen.request, module.Budget_Request{pages = 10 + 1 + 72, screen_pictures = module.SCREEN_PICTURES_LIMIT})
+	testing.expect_value(t, screen.floor.screen_pictures, module.SCREEN_PICTURES_LIMIT)
+	testing.expect_value(t, screen.floor.pages, alone.floor.pages - 1 - op.mapping_table_pages_most(1))
 }
 
 // The part screen_pictures of a source: read as a part, and refused past
@@ -294,9 +331,9 @@ budget_request_read_takes_screen_pictures_and_refuses_one_past_the_limit :: proc
 // The measure of a build has one line with the request of each module.
 @(test)
 build_measure_lines_name_each_budget_request_once :: proc(t: ^testing.T) {
-	requests := make([dynamic]build.Build_Budget_Request, context.temp_allocator)
-	append(&requests, build.Build_Budget_Request{name = "block", request = {pages = 256, processes = 1, threads = 1}}, build.Build_Budget_Request{name = "console", request = {pages = 8192, processes = 5, threads = 6}})
-	lines := build.build_measure_lines(build.Build_Measure{budget_requests = requests}, 0)
+	floors := make([dynamic]build.Build_Floor, context.temp_allocator)
+	append(&floors, build.Build_Floor{name = "block", floor = {pages = 256, processes = 1, threads = 1}}, build.Build_Floor{name = "console", floor = {pages = 8192, processes = 5, threads = 6}})
+	lines := build.build_measure_lines(build.Build_Measure{floors = floors}, 0)
 	last := lines[len(lines) - 1]
 	testing.expect(t, strings.contains(last, "block 256 pages, 1 processes, 1 threads; console 8192 pages, 5 processes, 6 threads"), last)
 	testing.expect_value(t, strings.count(last, "console"), 1)
@@ -330,7 +367,7 @@ budget_request_read_refuses_another_form :: proc(t: ^testing.T) {
 		{"a part that does not fit in 64 bits", "package p\n// Why.\nMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 0x1_0000_0000_0000_0000}\n"},
 		{"two constants", "package p\n// Why.\nMODULE_BUDGET :: system.Stated_Budget{threads = 1}\n// Why.\nMODULE_BUDGET :: system.Stated_Budget{threads = 2}\n"},
 		// A declaration that the tool would not read is an error, never a
-		// module that asks for the least budget in silence.
+		// floor with its stated parts left out in silence.
 		{"inside a when", "package p\nwhen ODIN_DEBUG {\n\t// Why.\n\tMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4096}\n}\n"},
 		{"inside the else of a when", "package p\nwhen ODIN_DEBUG {\n\tWIDTH :: 1\n} else {\n\t// Why.\n\tMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4096}\n}\n"},
 		{"inside a when in a when", "package p\nwhen ODIN_DEBUG {\n\twhen ODIN_OS == .Linux {\n\t\t// Why.\n\t\tMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4096}\n\t}\n}\n"},
@@ -354,20 +391,20 @@ budget_request_read_refuses_another_form :: proc(t: ^testing.T) {
 // A module file with a table Budget of one record of record_size bytes, or
 // with no table when record_size is 0 and count is 0.
 @(private = "file")
-file_with_budget :: proc(storage: ^[512]u8, count: u32, record_size: u32, request: module.Budget_Request) -> []u8 {
+file_with_budget :: proc(storage: ^[512]u8, count: u32, record_size: u32, request: module.Floor) -> []u8 {
 	Directory :: [module.TABLE_COUNT]module.Table_Entry
 	directory: Directory
 	offset := u64(size_of(module.Header) + size_of(Directory))
-	records := [2]module.Budget_Request{1 = request}
+	records := [2]module.Floor{1 = request}
 	bytes := ([^]u8)(rawptr(&records))[:size_of(records)]
 	// Record n of the table starts at n * record_size: a shorter record holds
 	// the first bytes of each part, a longer one has zero bytes after them.
 	for index in 0 ..< int(count) {
-		size := min(int(record_size), size_of(module.Budget_Request))
-		copy(storage[int(offset) + index * int(record_size):][:size], bytes[index * size_of(module.Budget_Request):][:size])
+		size := min(int(record_size), size_of(module.Floor))
+		copy(storage[int(offset) + index * int(record_size):][:size], bytes[index * size_of(module.Floor):][:size])
 	}
 	if count != 0 {
-		directory[module.Table_Kind.Budget] = {offset = offset, count = count, record_size = record_size}
+		directory[module.Table_Kind.Floor] = {offset = offset, count = count, record_size = record_size}
 	}
 	end := offset + u64(count) * u64(record_size)
 	(^module.Header)(&storage[0])^ = {magic = module.MAGIC, version = module.VERSION, header_size = size_of(module.Header), machine = .X86_64, table_count = module.TABLE_COUNT}
@@ -379,27 +416,27 @@ file_with_budget :: proc(storage: ^[512]u8, count: u32, record_size: u32, reques
 // with no table, and the rule of the growth of a record.
 @(test)
 budget_request_reads_the_table :: proc(t: ^testing.T) {
-	asked := module.Budget_Request{pages = 4096, processes = 3, threads = 7, screen_pictures = 2}
+	asked := module.Floor{pages = 4096, processes = 3, threads = 7, screen_pictures = 2}
 
 	storage: [512]u8
-	file := file_with_budget(&storage, 2, size_of(module.Budget_Request), asked)
+	file := file_with_budget(&storage, 2, size_of(module.Floor), asked)
 	testing.expect_value(t, module.validate(file), module.Error.None)
-	request, stated := module.budget_request(file)
+	request, stated := module.floor_read(file)
 	testing.expect(t, stated)
 	testing.expect_value(t, request, asked)
 
-	// No table: the module asks for the least budget.
+	// No table: the starter refuses the start.
 	empty_storage: [512]u8
 	empty := file_with_budget(&empty_storage, 0, 0, {})
 	testing.expect_value(t, module.validate(empty), module.Error.None)
-	request, stated = module.budget_request(empty)
+	request, stated = module.floor_read(empty)
 	testing.expect(t, !stated)
-	testing.expect_value(t, request, module.Budget_Request{})
+	testing.expect_value(t, request, module.Floor{})
 
-	// A table with only the empty record 0 states no request.
+	// A table with only the empty record 0 gives no floor.
 	only_storage: [512]u8
-	only_empty := file_with_budget(&only_storage, 1, size_of(module.Budget_Request), {})
-	_, stated = module.budget_request(only_empty)
+	only_empty := file_with_budget(&only_storage, 1, size_of(module.Floor), {})
+	_, stated = module.floor_read(only_empty)
 	testing.expect(t, !stated)
 
 	// A record of an older size, 8 bytes: the pages only; the parts that
@@ -407,32 +444,32 @@ budget_request_reads_the_table :: proc(t: ^testing.T) {
 	short_storage: [512]u8
 	short := file_with_budget(&short_storage, 2, 8, asked)
 	testing.expect_value(t, module.validate(short), module.Error.None)
-	request, stated = module.budget_request(short)
+	request, stated = module.floor_read(short)
 	testing.expect(t, stated)
-	testing.expect_value(t, request, module.Budget_Request{pages = 4096})
+	testing.expect_value(t, request, module.Floor{pages = 4096})
 
 	// A record of the size before the screen pictures, 24 bytes: no
 	// picture of the screen.
 	older_storage: [512]u8
 	older := file_with_budget(&older_storage, 2, 24, asked)
 	testing.expect_value(t, module.validate(older), module.Error.None)
-	request, stated = module.budget_request(older)
+	request, stated = module.floor_read(older)
 	testing.expect(t, stated)
-	testing.expect_value(t, request, module.Budget_Request{pages = 4096, processes = 3, threads = 7})
+	testing.expect_value(t, request, module.Floor{pages = 4096, processes = 3, threads = 7})
 
 	// A record of a newer size, 40 bytes: the reader takes its first parts.
 	long_storage: [512]u8
 	long := file_with_budget(&long_storage, 2, 40, asked)
 	testing.expect_value(t, module.validate(long), module.Error.None)
-	request, stated = module.budget_request(long)
+	request, stated = module.floor_read(long)
 	testing.expect(t, stated)
 	testing.expect_value(t, request, asked)
 
 	// A table that passes the end of the file: validate refuses the file
 	// before a reader takes a request from it.
 	cut_storage: [512]u8
-	cut := file_with_budget(&cut_storage, 2, size_of(module.Budget_Request), asked)
+	cut := file_with_budget(&cut_storage, 2, size_of(module.Floor), asked)
 	testing.expect_value(t, module.validate(cut[:len(cut) - 1]), module.Error.Bad_Table)
-	request, stated = module.budget_request(cut[:len(cut) - 1])
+	request, stated = module.floor_read(cut[:len(cut) - 1])
 	testing.expect(t, !stated, "a record that is not inside the file is no request")
 }

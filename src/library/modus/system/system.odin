@@ -316,11 +316,19 @@ sleep :: proc "contextless" (deadline: u64) -> u64 {
 // take the stop ends the process with a fault that no handler can take,
 // and the stop cause is then `Fault`, never `Itself`
 // (src/md/api/kernel_ring_completion_room.md, "The stop of a process").
+// Before it, a process that never said its first state of work says it,
+// and waits for its starter to read the peak of its budget, at most the
+// bound of that answer, root_ring.READY_ANSWER_BOUND_MILLISECONDS
+// (ready_at_end).
 //
 // Example: `system.stop(.Done)` at the end of the work; `system.stop(.Failed)`
 // after a check of a test that failed, with its line on the log before;
 // `system.stop(.Refused)` for a context or an argument that it refuses.
 stop :: proc "contextless" (outcome: op.Stop_Outcome, error: ^errors.Error_Record = nil) -> ! {
+	// A process that runs once and stops never waited for work: its whole
+	// life was its start, and its starter reads its peak now, while its
+	// budget lives (ready.odin).
+	ready_at_end()
 	kernel := kernel_ring()
 	for round := 0; ; round += 1 {
 		switch stop_step(&kernel, round) {

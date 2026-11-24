@@ -413,3 +413,75 @@ the_input_service_restarts_within_a_window :: proc(t: ^testing.T) {
 	allowed, _ = start_list.restart_window_take(&window, INPUT_RESTARTS, INPUT_RESTART_WINDOW_SECONDS, FIRST + WINDOW + 1)
 	testing.expect(t, allowed)
 }
+// The floors of a list against the least machine, edges first: no floor,
+// the floors at the pages exactly, one page more, a floor alone past the
+// pages, and floors whose sum passes the end of 64 bits. A refusal names
+// the module that does not fit.
+@(test)
+the_floors_of_a_list_fit_in_the_least_machine :: proc(t: ^testing.T) {
+	pages := u64(module.TEST_MACHINE_ROOT_PAGES)
+	testing.expect_value(t, start_list_floors_problem(nil, pages), "")
+	exact := []Start_List_Floor{{"root", 1000}, {"start_policy", 200}, {"compositor", pages - 1200}}
+	testing.expect_value(t, start_list_floors_problem(exact, pages), "")
+	past := []Start_List_Floor{{"root", 1000}, {"start_policy", 200}, {"compositor", pages - 1199}}
+	problem := start_list_floors_problem(past, pages)
+	testing.expect(t, strings.contains(problem, "compositor adds"), problem)
+	alone := []Start_List_Floor{{"terminal", pages + 1}}
+	testing.expect(t, start_list_floors_problem(alone, pages) != "")
+	wrapping := []Start_List_Floor{{"a", max(u64)}, {"b", max(u64)}}
+	testing.expect(t, start_list_floors_problem(wrapping, max(u64)) != "")
+	testing.expect_value(t, start_list_floors_problem(exact, 0) != "", true)
+}
+
+// The modules whose floors the proof of the least machine sums: the root
+// service and the start policy first, each part of the system that the
+// image holds but the renderers of the console, then the rows, each one
+// time; a part that the image lacks is left out, and the row of the role
+// Display is its holder.
+@(test)
+the_floors_of_the_least_machine_hold_each_start_of_the_root_service :: proc(t: ^testing.T) {
+	rows := []Start_List_Row{{name = "input"}, {name = "display"}, {name = "clock"}}
+	parts := []string{"root", "input", "compositor", "wiring", "devices", "serial_terminal", "grid_terminal", "tpm"}
+	image := []string{"root", "input", "compositor", "wiring", "devices", "serial_terminal", "grid_terminal", "clock", "start_policy"}
+	names := start_list_floor_names(rows, parts, image)
+	expected := []string{"root", foundation.START_POLICY_MODULE, "input", "compositor", "wiring", "devices", "clock"}
+	testing.expect_value(t, len(names), len(expected))
+	for name, index in expected {
+		if index < len(names) {
+			testing.expect_value(t, names[index], name)
+		}
+	}
+	// With no file, the first module is named, and the budget of the disk
+	// processes and no renderer are counted before it.
+	_, problem := start_list_floors(names, nil, 0, 0)
+	testing.expect(t, strings.contains(problem, "root has no table Floor"), problem)
+}
+
+// The division keeps the floors of the starts that are no row, which come
+// before the list is done, and at least one largest budget: the proof adds
+// what that largest budget keeps past those floors. Rows and the root
+// service are not kept; a row that is a part of the system is a row.
+@(test)
+the_kept_share_holds_the_starts_outside_the_list :: proc(t: ^testing.T) {
+	rows := []Start_List_Row{{name = "input"}, {name = "clock"}}
+	floors := []Start_List_Floor{{"root", 900}, {"start_policy", 100}, {"input", 5000}, {"compositor", 300}, {"clock", 7000}, {"the budget of the disk processes", 200}}
+	share := start_list_kept_share(floors, rows, 1000)
+	testing.expect_value(t, share.pages, 1000 - 600)
+	share = start_list_kept_share(floors, rows, 600)
+	testing.expect_value(t, share.pages, 0)
+	share = start_list_kept_share(floors, rows, 0)
+	testing.expect_value(t, share.pages, 0)
+	share = start_list_kept_share(floors, nil, 1000)
+	testing.expect_value(t, share.pages, 0)
+	// The many starts outside the list fit beside the rows, or the proof
+	// names the share.
+	all := []Start_List_Floor{{"root", 900}, {"start_policy", 100}, {"clock", 7000}, start_list_kept_share(floors[:2], {{name = "clock"}}, 2000)}
+	testing.expect_value(t, start_list_floors_problem(all, 9900), "")
+	testing.expect(t, strings.contains(start_list_floors_problem(all, 9899), "keeps for a start that a process asks"))
+	// On the least machine, the kept share is TEST_MACHINE_LARGEST_BUDGET_PAGES
+	// (the machine share), not LARGEST_BUDGET_LEAST_PAGES: non-row floors
+	// between the two still keep the difference up to the machine share.
+	mid := []Start_List_Floor{{"root", 1000}, {"start_policy", module.LARGEST_BUDGET_LEAST_PAGES + 1000}, {"clock", 5000}}
+	least_share := start_list_kept_share(mid, {{name = "clock"}}, module.TEST_MACHINE_LARGEST_BUDGET_PAGES)
+	testing.expect_value(t, least_share.pages, module.TEST_MACHINE_LARGEST_BUDGET_PAGES - (module.LARGEST_BUDGET_LEAST_PAGES + 1000))
+}

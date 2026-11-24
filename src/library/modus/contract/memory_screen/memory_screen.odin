@@ -23,7 +23,7 @@ PAGE_SIZE :: 4096
 // The maximum is the largest screen of the remote display, 8K UHD: the
 // screen of memory follows the size that its start row or a viewer asks,
 // and the compositor pays it as its screen pictures, at the size in force
-// (module.budget_request_of_screen). The byte budget of the caller bounds
+// (module.floor_of_screen). The byte budget of the caller bounds
 // a size that its budget does not pay. With no size asked, the screen of
 // memory has the size of the reference screen.
 MIN_WIDTH :: 320

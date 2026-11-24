@@ -1181,6 +1181,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	wiring_core.state_init(&state, wiring_tables_reserve()) // wiring_tables.odin
 	system.log_fact(.Info, Ready{image_bytes = image_size})
 
+	// The start is done: the first state of work of the process
+	// (src/md/features/module_budget_request.md, "The first state of work").
+	system.ready()
 	for {
 		wait := system.wait_begin(&wiring_wait.set)
 		// Serve core commands (Register_Process, Commit_Start_Wiring) before

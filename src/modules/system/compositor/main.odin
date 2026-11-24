@@ -177,10 +177,10 @@ MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 21879, processes = 
 // reference screen: 21879 working pages, 2 x 2025 pages of the frame and
 // the background, and the code, the data and the stacks that the tool
 // counts, under a bound of 8192 pages: 34121 pages, under the largest
-// budget of that machine (50 000 pages), so no boot of a test writes
-// Budget_Part_Limited for the compositor. It passes the least largest
-// budget (16384 pages): a machine whose root holds less than about 128 000
-// pages starts it with the least, and fewer windows at the largest surface.
+// budget of that machine (50 000 pages), so its size on a test machine is
+// twice its floor or that share. It passes the least largest budget (16384
+// pages): on a machine whose root holds less than about 128 000 pages its
+// size is its floor alone, and fewer windows reach the largest surface.
 MODULE_PAGES_BOUND :: 8192
 #assert(MODULE_BUDGET.working_memory_pages + MODULE_BUDGET.screen_pictures * ((u64(reference_screen.WIDTH) * u64(reference_screen.HEIGHT) * 4 + 4095) / 4096) + MODULE_PAGES_BOUND <= module.TEST_MACHINE_LARGEST_BUDGET_PAGES)
 

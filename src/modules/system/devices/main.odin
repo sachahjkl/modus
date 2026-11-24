@@ -281,6 +281,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	dc.state_init(&service_state)
 	system.log_fact(.Info, Service_Ready{identities = service_state.counters.identity_count})
 
+	// The start is done: the first state of work of the process
+	// (src/md/features/module_budget_request.md, "The first state of work").
+	system.ready()
 	for {
 		wait := system.wait_begin()
 		answered := false
