@@ -15,6 +15,7 @@ package cache_server
 
 import "base:runtime"
 import "core:crypto"
+import "core:fmt"
 import "core:net"
 import "core:os"
 import "core:strings"
@@ -833,6 +834,476 @@ quic_cache_adversarial_frame1_size_change_and_busy :: proc(t: ^testing.T) {
 			testing.expect_value(t, kept_ref, pr.Recipe_Refusal.None)
 			testing.expect_value(t, kept_sz, u64(blob_len))
 			testing.expect_value(t, recipes_core.stored_output_check(state, blob_hash, .Blob, kept_sz), recipes_core.Stored_Output.Whole)
+		}
+
+		recipes_core.cache_quic_client_close(client)
+		free(client)
+		net.close(udp.socket)
+		free(state)
+		delete(large_backing)
+		free(mem_store)
+
+		sync.atomic_store(&srv.stop, true)
+		thread.join(srv.worker)
+		thread.destroy(srv.worker)
+		net.close(srv.socket)
+		free(srv)
+	}
+}
+
+@(test)
+quic_cache_pipelined_multiframe_and_window_bounds :: proc(t: ^testing.T) {
+	dir := make_temp_store_dir(t)
+	defer {
+		os.remove_all(dir)
+		delete(dir)
+	}
+
+	signer_priv, signer_pub, _ := make_test_ed25519_key(0x61)
+	_, _, quic_seed := make_test_ed25519_key(0x62)
+
+	server, opened := cache_server_open(dir, [][32]u8{signer_pub})
+	testing.expect(t, opened)
+	defer cache_server_destroy(&server)
+
+	running, err_text := cache_quic_start(&server, net.Endpoint{address = net.IP4_Loopback, port = 0}, quic_seed)
+	testing.expect_value(t, err_text, "")
+	testing.expect(t, running != nil)
+	defer cache_quic_stop(running)
+
+	crypto_table := cache_quic_cryptography()
+	generator: random.Generator
+	udp: Host_Udp_Transport
+	client, made := make_host_quic_client(running.bound_endpoint, running.public_key, &crypto_table, &generator, &udp)
+	testing.expect(t, made)
+	defer {
+		recipes_core.cache_quic_client_close(client)
+		free(client)
+		net.close(udp.socket)
+	}
+
+	// Pipeline window border refusals leave the configured window intact.
+	testing.expect_value(t, client.pipeline_window, recipes_core.CACHE_PIPELINE_WINDOW)
+	testing.expect(t, !recipes_core.cache_quic_client_set_pipeline_window(nil, 2))
+	testing.expect(t, !recipes_core.cache_quic_client_set_pipeline_window(client, 0))
+	testing.expect(t, !recipes_core.cache_quic_client_set_pipeline_window(client, -1))
+	testing.expect(t, !recipes_core.cache_quic_client_set_pipeline_window(client, recipes_core.CACHE_PIPELINE_WINDOW + 1))
+	testing.expect(t, !recipes_core.cache_quic_client_set_pipeline_window(client, max(int)))
+	testing.expect_value(t, client.pipeline_window, recipes_core.CACHE_PIPELINE_WINDOW)
+
+	// Upload a 5-frame (4 MiB + 123 KiB) blob over QUIC.
+	blob_len := 4 * int(object_cache.FRAME_PAYLOAD_BYTES) + 123_456
+	blob := make([]u8, blob_len)
+	defer delete(blob)
+	for i in 0 ..< blob_len {
+		blob[i] = u8((i * 73 + 29) & 0xFF)
+	}
+	blob_hash := blake3.hash(blob)
+	sign_bytes, sign_ok := object_cache.put_object_signing_bytes(.Blob, blob_hash, u64(blob_len), signer_pub)
+	testing.expect(t, sign_ok)
+	sig: [64]u8
+	ed25519.sign(&signer_priv, sign_bytes[:], sig[:])
+
+	put_status, put_err := recipes_core.cache_quic_put_object(client, .Blob, blob_hash, blob, signer_pub, sig)
+	testing.expect_value(t, put_err, recipes_core.Cache_Client_Error.None)
+	testing.expect_value(t, put_status, object_cache.Cache_Response_Status.Ok)
+
+	// Run 1: single-frame lockstep (window = 1).
+	testing.expect(t, recipes_core.cache_quic_client_set_pipeline_window(client, 1))
+	mem_lockstep := new(pr.Memory_Private_Store)
+	defer free(mem_lockstep)
+	backing_lockstep := make([]u8, 6 * 1024 * 1024)
+	defer delete(backing_lockstep)
+	mem_lockstep.large_bytes = backing_lockstep
+	state_lockstep := new(recipes_core.Recipes_State)
+	defer free(state_lockstep)
+	recipes_core.state_init(state_lockstep, pr.memory_private_store_port(mem_lockstep))
+
+	t0 := time.tick_now()
+	sz1, ref1 := recipes_core.cache_quic_fetch_object_to_store(client, state_lockstep, blob_hash, .Blob)
+	dur_lockstep := time.tick_since(t0)
+	testing.expect_value(t, ref1, pr.Recipe_Refusal.None)
+	testing.expect_value(t, sz1, u64(blob_len))
+	testing.expect_value(t, client.last_fetch_frames, u64(5))
+	testing.expect_value(t, client.last_fetch_max_in_flight, 1)
+
+	// Run 2: pipelined 4 frames in flight (window = 4).
+	testing.expect(t, recipes_core.cache_quic_client_set_pipeline_window(client, recipes_core.CACHE_PIPELINE_WINDOW))
+	mem_pipe := new(pr.Memory_Private_Store)
+	defer free(mem_pipe)
+	backing_pipe := make([]u8, 6 * 1024 * 1024)
+	defer delete(backing_pipe)
+	mem_pipe.large_bytes = backing_pipe
+	state_pipe := new(recipes_core.Recipes_State)
+	defer free(state_pipe)
+	recipes_core.state_init(state_pipe, pr.memory_private_store_port(mem_pipe))
+
+	t1 := time.tick_now()
+	sz4, ref4 := recipes_core.cache_quic_fetch_object_to_store(client, state_pipe, blob_hash, .Blob)
+	dur_pipe := time.tick_since(t1)
+	testing.expect_value(t, ref4, pr.Recipe_Refusal.None)
+	testing.expect_value(t, sz4, u64(blob_len))
+	testing.expect_value(t, client.last_fetch_frames, u64(5))
+	testing.expect_value(t, client.last_fetch_max_in_flight, recipes_core.CACHE_PIPELINE_WINDOW)
+
+	// Verify both fetched blobs match the original byte-for-byte.
+	obj_name := pr.blob_object_name(blob_hash)
+	verify_buf := make([]u8, blob_len)
+	defer delete(verify_buf)
+	for st in ([2]^recipes_core.Recipes_State{state_lockstep, state_pipe}) {
+		got, r_st := pr.private_store_read(&st.store, pr.private_object_name_text(&obj_name), verify_buf)
+		testing.expect_value(t, r_st, pr.Private_Store_Status.Ok)
+		testing.expect_value(t, len(got), blob_len)
+		testing.expect_value(t, blake3.hash(got), blob_hash)
+	}
+
+	// Print measured transfer durations (measure only, never asserted).
+	fmt.printf("measure: quic 5-frame fetch (%d bytes): lockstep(w=1)=%.2f ms, pipelined(w=%d)=%.2f ms\n",
+		blob_len,
+		time.duration_milliseconds(dur_lockstep),
+		recipes_core.CACHE_PIPELINE_WINDOW,
+		time.duration_milliseconds(dur_pipe),
+	)
+}
+
+@(private = "file")
+Pipeline_Fault_Mode :: enum u8 {
+	Reverse_Order_Valid = 0, // Hold frames 1..4 until all 4 arrive, then reply in reverse order (4,3,2,1).
+	Corrupt_Mid_Pipeline = 1, // Corrupt 1 byte in frame 2 while delivering valid frames 4,3,1.
+	Truncate_Mid_Pipeline = 2, // Truncate frame 2 response mid-body with FIN.
+	Reset_Mid_Pipeline = 3, // Send RESET_STREAM on frame 2 mid-pipeline.
+}
+
+@(private = "file")
+Pipeline_Held_Stream :: struct {
+	active:      bool,
+	stream_id:   u64,
+	frame_index: u64,
+	req_buf:     [128]u8,
+	req_len:     int,
+	req_done:    bool,
+	resp_bytes:  []u8,
+	send_len:    int,
+	send_off:    int,
+	reset_only:  bool,
+	released:    bool,
+}
+
+@(private = "file")
+Pipeline_Adversarial_Server :: struct {
+	backing:        ^Cache_Server,
+	socket:         net.UDP_Socket,
+	bound_endpoint: net.Endpoint,
+	mode:           Pipeline_Fault_Mode,
+	stop:           bool,
+	worker:         ^thread.Thread,
+	cryptography:   quic.Cryptography,
+	generator:      random.Generator,
+	quic_server:    quic.Server,
+	connections:    [2]quic.Connection,
+	records:        [2]quic.Server_Record,
+	streams:        [2 * CACHE_QUIC_STREAMS_PER_CONNECTION]quic.Stream,
+	start_tick:     time.Tick,
+}
+
+@(private = "file")
+pipeline_adversarial_worker :: proc(t: ^thread.Thread) {
+	srv := (^Pipeline_Adversarial_Server)(t.data)
+	recv_buf: [quic.DATAGRAM_LIMIT]u8
+	ans_buf: [quic.MAX_DATAGRAM_SIZE]u8
+	dgram_buf: [quic.MAX_DATAGRAM_SIZE]u8
+	released: [2]quic.Remote
+
+	conn_helper: Cache_Connection
+	cache_connection_init(&conn_helper)
+	defer cache_connection_destroy(&conn_helper)
+
+	held: [CACHE_QUIC_STREAMS_PER_CONNECTION]Pipeline_Held_Stream
+	defer {
+		for &h in held {
+			delete(h.resp_bytes)
+		}
+	}
+	batch_released := false
+
+	for !sync.atomic_load(&srv.stop) {
+		now := u64(time.duration_microseconds(time.tick_since(srv.start_tick))) + 1
+		_ = net.set_option(srv.socket, .Receive_Timeout, 2 * time.Millisecond)
+		n, sender, err := net.recv_udp(srv.socket, recv_buf[:])
+		if err == nil && n > 0 {
+			if remote, ok := endpoint_to_quic_remote(sender); ok {
+				out := quic.server_datagram_receive(&srv.quic_server, recv_buf[:n], remote, ans_buf[:], now)
+				if out.answer_length > 0 {
+					_, _ = net.send_udp(srv.socket, ans_buf[:out.answer_length], sender)
+				}
+				if out.validate_remote && out.record >= 0 {
+					quic.server_validation_confirmed(&srv.quic_server, out.record, srv.records[out.record].generation, true)
+				}
+			}
+			_ = net.set_blocking(srv.socket, false)
+			for _ in 0 ..< 64 {
+				mn, msender, merr := net.recv_udp(srv.socket, recv_buf[:])
+				if merr != nil || mn <= 0 {
+					break
+				}
+				if remote, ok := endpoint_to_quic_remote(msender); ok {
+					out := quic.server_datagram_receive(&srv.quic_server, recv_buf[:mn], remote, ans_buf[:], now)
+					if out.answer_length > 0 {
+						_, _ = net.send_udp(srv.socket, ans_buf[:out.answer_length], msender)
+					}
+					if out.validate_remote && out.record >= 0 {
+						quic.server_validation_confirmed(&srv.quic_server, out.record, srv.records[out.record].generation, true)
+					}
+				}
+			}
+			_ = net.set_blocking(srv.socket, true)
+		}
+
+		for idx in 0 ..< len(srv.records) {
+			if !srv.records[idx].in_use || srv.connections[idx].state != .Connected {
+				continue
+			}
+			conn := &srv.connections[idx]
+
+			// Attach newly opened streams.
+			for &stream in conn.streams {
+				if !stream.in_use || (stream.end_read && (stream.send_finish || stream.reset_sent)) {
+					continue
+				}
+				known := false
+				for &h in held {
+					if h.active && h.stream_id == stream.identifier {
+						known = true
+						break
+					}
+				}
+				if !known {
+					for &h in held {
+						if !h.active {
+							delete(h.resp_bytes)
+							h = {active = true, stream_id = stream.identifier}
+							break
+						}
+					}
+				}
+			}
+
+			// Read incoming requests across all concurrent streams.
+			ready_nonzero := 0
+			for &h in held {
+				if !h.active {
+					continue
+				}
+				if !h.req_done {
+					r, fin, rst := quic.stream_read(conn, h.stream_id, h.req_buf[h.req_len:])
+					if rst {
+						delete(h.resp_bytes)
+						h = {}
+						continue
+					}
+					h.req_len += r
+					if fin && h.req_len >= object_cache.FRAME_HEADER_SIZE {
+						req, dec_ref := object_cache.decode_request(h.req_buf[:h.req_len])
+						if dec_ref == .None && req.kind == .Get_Object {
+							h.frame_index = req.offset / object_cache.FRAME_PAYLOAD_BYTES
+							resp, _ := cache_server_handle_connection_frame(srv.backing, &conn_helper, h.req_buf[:h.req_len])
+							h.resp_bytes = make([]u8, len(resp))
+							copy(h.resp_bytes, resp)
+							h.send_len = len(resp)
+							if h.frame_index == 2 {
+								switch srv.mode {
+								case .Reverse_Order_Valid:
+								case .Corrupt_Mid_Pipeline:
+									// Flip one byte inside frame 2's payload so Bao verification must fail.
+									if len(h.resp_bytes) > 64 {
+										h.resp_bytes[len(h.resp_bytes) - 17] ~= 0xFF
+									}
+								case .Truncate_Mid_Pipeline:
+									if h.send_len > 512 {
+										h.send_len = 512
+									}
+								case .Reset_Mid_Pipeline:
+									h.reset_only = true
+								}
+							}
+							h.req_done = true
+							// Frame 0 answers immediately so the client learns object_size and opens frames 1..4.
+							if h.frame_index == 0 {
+								h.released = true
+							}
+						}
+					}
+				}
+				if h.req_done && h.frame_index > 0 {
+					ready_nonzero += 1
+				}
+			}
+
+			// Release frames 1..4 ONLY once all 4 concurrent requests have arrived,
+			// proving the client had all 4 frames in flight simultaneously!
+			if !batch_released && ready_nonzero == CACHE_QUIC_STREAMS_PER_CONNECTION {
+				batch_released = true
+				for &h in held {
+					if h.active && h.req_done && h.frame_index > 0 {
+						h.released = true
+					}
+				}
+			}
+
+			// Send released responses in REVERSE frame_index order (4, 3, 2, 1) so
+			// later frames complete ahead of earlier frames.
+			for target_frame := i64(CACHE_QUIC_STREAMS_PER_CONNECTION); target_frame >= 0; target_frame -= 1 {
+				for &h in held {
+					if !h.active || !h.released || i64(h.frame_index) != target_frame {
+						continue
+					}
+					if h.reset_only {
+						quic.stream_reset(conn, h.stream_id, 1)
+						quic.stream_stop_sending(conn, h.stream_id, 1)
+						delete(h.resp_bytes)
+						h = {}
+						continue
+					}
+					if h.send_off < h.send_len {
+						w := quic.stream_write(conn, h.stream_id, h.resp_bytes[h.send_off:h.send_len], true)
+						h.send_off += w
+					}
+					if h.send_off >= h.send_len {
+						delete(h.resp_bytes)
+						h = {}
+					}
+				}
+			}
+		}
+
+		now = u64(time.duration_microseconds(time.tick_since(srv.start_tick))) + 1
+		quic.server_time_passes(&srv.quic_server, now)
+		for {
+			dlen, remote := quic.server_datagram_send(&srv.quic_server, dgram_buf[:], now)
+			if dlen == 0 {
+				break
+			}
+			_, _ = net.send_udp(srv.socket, dgram_buf[:dlen], quic_remote_to_endpoint(remote))
+		}
+		_ = quic.server_sweep(&srv.quic_server, released[:])
+	}
+}
+
+@(test)
+quic_cache_pipelined_out_of_order_and_fault_refusals :: proc(t: ^testing.T) {
+	dir := make_temp_store_dir(t)
+	defer {
+		os.remove_all(dir)
+		delete(dir)
+	}
+
+	signer_priv, signer_pub, _ := make_test_ed25519_key(0x91)
+	_, quic_pub, quic_seed := make_test_ed25519_key(0x92)
+
+	backing, opened := cache_server_open(dir, [][32]u8{signer_pub})
+	testing.expect(t, opened)
+	defer cache_server_destroy(&backing)
+
+	// Populate backing store with a 5-frame (4 MiB + 64 KiB) blob and its Bao outboard.
+	blob_len := 4 * int(object_cache.FRAME_PAYLOAD_BYTES) + 64 * 1024
+	blob := make([]u8, blob_len)
+	defer delete(blob)
+	for i in 0 ..< blob_len {
+		blob[i] = u8((i * 47 + 13) & 0xFF)
+	}
+	blob_hash := blake3.hash(blob)
+	sign_bytes, sign_ok := object_cache.put_object_signing_bytes(.Blob, blob_hash, u64(blob_len), signer_pub)
+	testing.expect(t, sign_ok)
+	sig: [64]u8
+	ed25519.sign(&signer_priv, sign_bytes[:], sig[:])
+
+	put_conn: Cache_Connection
+	cache_connection_init(&put_conn)
+	defer cache_connection_destroy(&put_conn)
+	head_req := object_cache.Cache_Request {
+		kind                = .Put_Object,
+		object_hash         = blob_hash,
+		object_kind         = .Blob,
+		object_size         = u64(blob_len),
+		uploader_public_key = signer_pub,
+		uploader_signature  = sig,
+	}
+	hlen, _ := object_cache.encode_request(&head_req, put_conn.request_buffer[:])
+	hresp, _ := cache_server_handle_connection_frame(&backing, &put_conn, put_conn.request_buffer[:hlen])
+	hdec, _ := object_cache.decode_response(hresp)
+	testing.expect_value(t, hdec.status, object_cache.Cache_Response_Status.Ok)
+	for fidx in u64(0) ..< 5 {
+		off := fidx * object_cache.FRAME_PAYLOAD_BYTES
+		flen, _ := object_cache.object_frame_length(u64(blob_len), fidx)
+		freq := object_cache.Cache_Request{kind = .Put_Object_Frame, object_hash = blob_hash, offset = off, payload = blob[off:off + flen]}
+		req_n, _ := object_cache.encode_request(&freq, put_conn.request_buffer[:])
+		fresp, _ := cache_server_handle_connection_frame(&backing, &put_conn, put_conn.request_buffer[:req_n])
+		fdec, _ := object_cache.decode_response(fresp)
+		testing.expect_value(t, fdec.status, object_cache.Cache_Response_Status.Ok)
+	}
+
+	modes := [4]Pipeline_Fault_Mode{.Reverse_Order_Valid, .Corrupt_Mid_Pipeline, .Truncate_Mid_Pipeline, .Reset_Mid_Pipeline}
+	expected := [4]pr.Recipe_Refusal{.None, .Hash_Mismatch, .Malformed_Output, .Malformed_Output}
+
+	for mode, idx in modes {
+		sock, sock_err := net.make_bound_udp_socket(net.IP4_Loopback, 0)
+		testing.expect(t, sock_err == nil)
+		ep, _ := net.bound_endpoint(sock)
+
+		srv := new(Pipeline_Adversarial_Server)
+		srv.backing = &backing
+		srv.socket = sock
+		srv.bound_endpoint = ep
+		srv.mode = mode
+		srv.cryptography = cache_quic_cryptography()
+		srv.start_tick = time.tick_now()
+		rng_seed: [random.SEED_SIZE]u8
+		crypto.rand_bytes(rng_seed[:])
+		random.generator_seed(&srv.generator, &rng_seed, .Processor)
+
+		cfg := quic.Connection_Configuration {
+			idle_timeout_milliseconds = 10_000,
+			tls = {role = .Server, least_seed_strength = .Processor, server_private_key = quic_seed},
+		}
+		cfg.tls.application_protocol_length = copy(cfg.tls.application_protocol[:], object_cache.APPLICATION_PROTOCOL)
+		init_err: errors.Error_Record
+		testing.expect(t, quic.server_init(&srv.quic_server, srv.connections[:], srv.records[:], srv.streams[:], &cfg, &srv.cryptography, &srv.generator, quic.server_limits_of_one_address(2), &init_err))
+		srv.worker = thread.create(pipeline_adversarial_worker)
+		srv.worker.data = srv
+		thread.start(srv.worker)
+
+		crypto_table := cache_quic_cryptography()
+		generator: random.Generator
+		udp: Host_Udp_Transport
+		client, made := make_host_quic_client(ep, quic_pub, &crypto_table, &generator, &udp)
+		testing.expect(t, made)
+
+		mem_store := new(pr.Memory_Private_Store)
+		large_backing := make([]u8, 6 * 1024 * 1024)
+		mem_store.large_bytes = large_backing
+		state := new(recipes_core.Recipes_State)
+		recipes_core.state_init(state, pr.memory_private_store_port(mem_store))
+
+		got_sz, ref := recipes_core.cache_quic_fetch_object_to_store(client, state, blob_hash, .Blob)
+		testing.expect_value(t, ref, expected[idx])
+		testing.expect_value(t, client.last_fetch_max_in_flight, recipes_core.CACHE_PIPELINE_WINDOW)
+
+		obj_name := pr.blob_object_name(blob_hash)
+		if mode == .Reverse_Order_Valid {
+			testing.expect_value(t, got_sz, u64(blob_len))
+			testing.expect(t, client.last_fetch_out_of_order > 0, "reverse-order responses must trigger out-of-order completion")
+			read_buf := make([]u8, blob_len)
+			got_slice, r_st := pr.private_store_read(&state.store, pr.private_object_name_text(&obj_name), read_buf)
+			testing.expect_value(t, r_st, pr.Private_Store_Status.Ok)
+			testing.expect_value(t, len(got_slice), blob_len)
+			testing.expect_value(t, blake3.hash(got_slice), blob_hash)
+			delete(read_buf)
+		} else {
+			// Any mid-pipeline fault must leave neither <64-hex> nor fetch_staging behind.
+			_, final_st := pr.private_store_size(&state.store, pr.private_object_name_text(&obj_name))
+			testing.expect_value(t, final_st, pr.Private_Store_Status.Absent)
+			_, stage_st := pr.private_store_size(&state.store, recipes_core.FETCH_STAGING_NAME)
+			testing.expect_value(t, stage_st, pr.Private_Store_Status.Absent)
 		}
 
 		recipes_core.cache_quic_client_close(client)

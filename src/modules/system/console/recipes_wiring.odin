@@ -886,3 +886,31 @@ recipes_deliver_module_command :: proc "contextless" (arguments: []Value) -> Val
 	}
 	return digits
 }
+
+// Mirror of recipes_service.Collect_Result for decoding recipes.collect_garbage.
+@(private = "file")
+Recipes_Collect_Row :: struct {
+	marked:  i64,
+	kept:    i64,
+	removed: i64,
+}
+#assert(size_of(Recipes_Collect_Row) == 24)
+
+// recipes_collect_garbage_command runs mark-and-sweep garbage collection over
+// recipes's private store and reports marked, kept, and removed counts.
+recipes_collect_garbage_command :: proc "contextless" (_: []Value) -> Value {
+	row_table := call_run("recipes.collect_garbage", nil)
+	if failed {
+		return {}
+	}
+	table, has_table := table_of(row_table)
+	if !has_table || table.rows < 1 {
+		return fail("recipes.collect_garbage: did not return a collection summary row")
+	}
+	raw := table_row(table, row_table, 0)
+	if len(raw) < size_of(Recipes_Collect_Row) {
+		return fail("recipes.collect_garbage: collection summary row is truncated")
+	}
+	row := (^Recipes_Collect_Row)(raw_data(raw))^
+	return {kind = .Text, text = scratch_text("marked ", row.marked, " kept ", row.kept, " removed ", row.removed)}
+}

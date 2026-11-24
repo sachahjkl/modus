@@ -321,17 +321,27 @@ objects_take :: proc "contextless" (hash: blake3.Hash, data: rawptr) -> pr.Recip
 }
 
 // builder_call makes the two shares, runs the builder with them, and ends
-// the shares, whatever the outcome. A share that does not end leaves the
-// builder a way to change the store "out", so the build is refused and
-// nothing is frozen.
+// the shares, whatever the outcome. The writable output share gets a block
+// quota of its own computed from the recipe's output_block_limit and the
+// store's free headroom so a runaway builder never fills or evicts versions
+// in recipes's own store. A share that does not end leaves the builder a way
+// to change the store "out", so the build is refused and nothing is frozen.
 @(private = "file")
 builder_call :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, file: []u8, export: u32, places: ^Build_Places) -> (result: i64, refusal: pr.Recipe_Refusal) {
+	counts, usage_status := storage.usage(places.client)
+	if usage_status != .Ok || counts.blocks < 0 || counts.limit <= 0 {
+		return 0, .Store_Failed
+	}
+	output_block_limit := recipes_core.builder_output_block_limit(sandbox.output_block_limit, u64(counts.limit), u64(counts.blocks))
+	if output_block_limit == 0 {
+		return 0, .Store_Full
+	}
 	error: errors.Error_Record
-	input_share, input_number, input_status := storage.share(places.client, places.input, true, &error)
+	input_share, input_number, input_status := storage.share(places.client, places.input, true, &error, 0)
 	if input_status != .Ok {
 		return 0, .Store_Failed
 	}
-	output_share, output_number, output_status := storage.share(places.client, places.output, false, &error)
+	output_share, output_number, output_status := storage.share(places.client, places.output, false, &error, output_block_limit)
 	if output_status != .Ok {
 		_ = share_end(places.client, &input_share, input_number)
 		return 0, .Store_Failed

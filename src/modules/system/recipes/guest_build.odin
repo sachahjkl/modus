@@ -330,11 +330,21 @@ guest_build_thread :: proc "c" (parameter: rawptr) -> ! {
 }
 
 // retention_pass removes the objects that nothing names, under
-// service_lock (src/md/features/recipes.md, "The retention of the store").
-retention_pass :: proc "contextless" () {
+// service_lock (src/md/features/recipes.md, "The retention and garbage
+// collection of the store").
+retention_pass :: proc "contextless" () -> recipes_core.Retention_Result {
 	recipes_core.put_ledger_age(&put_ledger, system.time() / 1000)
 	result := recipes_core.retention_collect(&service_state, &service_registry, recipes_core.put_hashes(&put_ledger, &put_hashes_now), &retention_workspace, &guest_queue)
 	system.log_fact(.Info, Retention_Passed{marked = u64(result.marked), kept = u64(result.kept), removed = u64(result.removed), refusal = u64(result.refusal)})
+	return result
+}
+
+// retention_collect_for_room runs a mark-and-sweep pass before
+// retention_make_room evicts any live realisation, reclaiming orphaned outputs
+// and unreferenced tree children first.
+retention_collect_for_room :: proc "contextless" (_: rawptr) -> int {
+	result := retention_pass()
+	return result.refusal == .None ? result.removed : 0
 }
 
 // stored_recipe_register registers the recipe object of recipe_hash that the

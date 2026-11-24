@@ -44,19 +44,26 @@ Cache_Quic_Stream_Phase :: enum u8 {
 	Writing_Response = 2,
 }
 
+// Per-stream framing state for one concurrent bidirectional QUIC stream.
+Cache_Quic_Stream_State :: struct {
+	in_use:           bool,
+	stream_id:        u64,
+	phase:            Cache_Quic_Stream_Phase,
+	recv_len:         int,
+	expected_len:     int,
+	send_len:         int,
+	send_offset:      int,
+	peer_finished:    bool,
+	close_after_send: bool,
+	request_buf:      [dynamic]u8,
+	response_buf:     [dynamic]u8,
+}
+
 // Per-connection application state paired with one quic.Server record slot.
 Cache_Quic_Client_Slot :: struct {
-	generation:        u64,
-	conn:              Cache_Connection,
-	active_stream_id:  u64,
-	has_active_stream: bool,
-	phase:             Cache_Quic_Stream_Phase,
-	recv_len:          int,
-	expected_len:      int,
-	send_len:          int,
-	send_offset:       int,
-	peer_finished:     bool,
-	close_after_send:  bool,
+	generation:    u64,
+	conn:          Cache_Connection,
+	stream_states: [CACHE_QUIC_STREAMS_PER_CONNECTION]Cache_Quic_Stream_State,
 }
 
 // Running QUIC listener state and its worker thread.
@@ -183,20 +190,184 @@ cache_quic_now_us :: proc(running: ^Cache_Quic_Running) -> u64 {
 }
 
 @(private = "file")
+stream_state_clear :: proc(st: ^Cache_Quic_Stream_State) {
+	st.in_use = false
+	st.stream_id = 0
+	st.phase = .Reading_Header
+	st.recv_len = 0
+	st.expected_len = object_cache.FRAME_HEADER_SIZE
+	st.send_len = 0
+	st.send_offset = 0
+	st.peer_finished = false
+	st.close_after_send = false
+	clear(&st.request_buf)
+	clear(&st.response_buf)
+}
+
+@(private = "file")
 slot_reset_for_new_connection :: proc(slot: ^Cache_Quic_Client_Slot, generation: u64) {
 	put_session_abort(&slot.conn.put)
 	slot.generation = generation
-	slot.active_stream_id = 0
-	slot.has_active_stream = false
-	slot.phase = .Reading_Header
-	slot.recv_len = 0
-	slot.expected_len = object_cache.FRAME_HEADER_SIZE
-	slot.send_len = 0
-	slot.send_offset = 0
-	slot.peer_finished = false
-	slot.close_after_send = false
+	for &st in slot.stream_states {
+		delete(st.request_buf)
+		delete(st.response_buf)
+		st = {}
+	}
 }
 
+@(private = "file")
+slot_find_stream_state :: proc(slot: ^Cache_Quic_Client_Slot, stream_id: u64) -> ^Cache_Quic_Stream_State {
+	for &st in slot.stream_states {
+		if st.in_use && st.stream_id == stream_id {
+			return &st
+		}
+	}
+	return nil
+}
+
+@(private = "file")
+slot_attach_new_streams :: proc(slot: ^Cache_Quic_Client_Slot, connection: ^quic.Connection) {
+	for &stream in connection.streams {
+		if !stream.in_use {
+			continue
+		}
+		if stream.end_read && (stream.send_finish || stream.reset_sent) {
+			continue
+		}
+		if slot_find_stream_state(slot, stream.identifier) != nil {
+			continue
+		}
+		for &st in slot.stream_states {
+			if !st.in_use {
+				stream_state_clear(&st)
+				st.in_use = true
+				st.stream_id = stream.identifier
+				st.phase = .Reading_Header
+				st.expected_len = object_cache.FRAME_HEADER_SIZE
+				break
+			}
+		}
+	}
+}
+
+@(private = "file")
+stream_queue_response :: proc(st: ^Cache_Quic_Stream_State, resp: []u8, close_after: bool) {
+	resize(&st.response_buf, len(resp))
+	copy(st.response_buf[:len(resp)], resp)
+	st.send_len = len(resp)
+	st.send_offset = 0
+	st.close_after_send = close_after
+	st.phase = .Writing_Response
+}
+
+@(private = "file")
+slot_step_one_stream :: proc(running: ^Cache_Quic_Running, slot: ^Cache_Quic_Client_Slot, connection: ^quic.Connection, st: ^Cache_Quic_Stream_State) -> (progressed: bool) {
+	stream := quic.stream_of(connection, st.stream_id)
+	if stream == nil {
+		stream_state_clear(st)
+		return true
+	}
+
+	switch st.phase {
+	case .Reading_Header:
+		if len(st.request_buf) < object_cache.FRAME_HEADER_SIZE {
+			resize(&st.request_buf, object_cache.FRAME_HEADER_SIZE)
+		}
+		need := object_cache.FRAME_HEADER_SIZE - st.recv_len
+		n, finished, reset := quic.stream_read(connection, st.stream_id, st.request_buf[st.recv_len:st.recv_len + need])
+		if reset {
+			put_session_abort(&slot.conn.put)
+			quic.stream_reset(connection, st.stream_id, 0)
+			stream_state_clear(st)
+			return true
+		}
+		st.recv_len += n
+		if finished {
+			st.peer_finished = true
+		}
+		if st.recv_len == 0 && st.peer_finished {
+			_ = quic.stream_write(connection, st.stream_id, nil, true)
+			stream_state_clear(st)
+			return true
+		}
+		if st.recv_len < object_cache.FRAME_HEADER_SIZE {
+			if st.peer_finished {
+				resp, _ := cache_server_handle_connection_frame(running.server, &slot.conn, st.request_buf[:st.recv_len])
+				stream_queue_response(st, resp, true)
+				return true
+			}
+			return n > 0
+		}
+		_, body_length, header_refusal := object_cache.inspect_request_header(st.request_buf[:object_cache.FRAME_HEADER_SIZE])
+		if header_refusal != .None {
+			resp, _ := cache_server_handle_connection_frame(running.server, &slot.conn, st.request_buf[:object_cache.FRAME_HEADER_SIZE])
+			stream_queue_response(st, resp, true)
+			quic.stream_stop_sending(connection, st.stream_id, 1)
+			return true
+		}
+		st.expected_len = object_cache.FRAME_HEADER_SIZE + body_length
+		if len(st.request_buf) < st.expected_len {
+			resize(&st.request_buf, st.expected_len)
+		}
+		st.phase = .Reading_Body
+		return true
+
+	case .Reading_Body:
+		before := st.recv_len
+		for st.recv_len < st.expected_len {
+			n, finished, reset := quic.stream_read(connection, st.stream_id, st.request_buf[st.recv_len:st.expected_len])
+			if reset {
+				put_session_abort(&slot.conn.put)
+				quic.stream_reset(connection, st.stream_id, 0)
+				stream_state_clear(st)
+				return true
+			}
+			st.recv_len += n
+			if finished {
+				st.peer_finished = true
+			}
+			if n == 0 {
+				break
+			}
+		}
+		if st.recv_len < st.expected_len {
+			if st.peer_finished {
+				resp, _ := cache_server_handle_connection_frame(running.server, &slot.conn, st.request_buf[:st.recv_len])
+				stream_queue_response(st, resp, true)
+				return true
+			}
+			return st.recv_len > before
+		}
+		resp, _ := cache_server_handle_connection_frame(running.server, &slot.conn, st.request_buf[:st.expected_len])
+		stream_queue_response(st, resp, false)
+		return true
+
+	case .Writing_Response:
+		want_fin := st.peer_finished || st.close_after_send
+		remaining := st.response_buf[st.send_offset:st.send_len]
+		wrote := quic.stream_write(connection, st.stream_id, remaining, want_fin)
+		st.send_offset += wrote
+		if st.send_offset < st.send_len {
+			return wrote > 0
+		}
+		if want_fin {
+			if st.close_after_send {
+				quic.stream_stop_sending(connection, st.stream_id, 1)
+			}
+			stream_state_clear(st)
+			return true
+		}
+		st.recv_len = 0
+		st.expected_len = object_cache.FRAME_HEADER_SIZE
+		st.phase = .Reading_Header
+		return true
+	}
+	return false
+}
+
+// slot_service_streams advances all concurrent active bidirectional streams on
+// connection index in round-robin so pipelined multi-frame Get_Object requests
+// interleave without head-of-line blocking.
 @(private = "file")
 slot_service_streams :: proc(running: ^Cache_Quic_Running, index: int) {
 	record := &running.records[index]
@@ -215,137 +386,21 @@ slot_service_streams :: proc(running: ^Cache_Quic_Running, index: int) {
 		return
 	}
 
-	for {
-		if !slot.has_active_stream {
-			found := false
-			for &stream in connection.streams {
-				if !stream.in_use {
-					continue
-				}
-				if stream.end_read && (stream.send_finish || stream.reset_sent) {
-					continue
-				}
-				slot.active_stream_id = stream.identifier
-				slot.has_active_stream = true
-				slot.phase = .Reading_Header
-				slot.recv_len = 0
-				slot.expected_len = object_cache.FRAME_HEADER_SIZE
-				slot.send_len = 0
-				slot.send_offset = 0
-				slot.peer_finished = false
-				slot.close_after_send = false
-				found = true
-				break
+	// Bounded round-robin passes per tick so all active streams read requests
+	// and refill their QUIC send windows together without starving siblings.
+	for _ in 0 ..< 16 {
+		slot_attach_new_streams(slot, connection)
+		any_progress := false
+		for &st in slot.stream_states {
+			if !st.in_use {
+				continue
 			}
-			if !found {
-				return
+			if slot_step_one_stream(running, slot, connection, &st) {
+				any_progress = true
 			}
 		}
-
-		stream := quic.stream_of(connection, slot.active_stream_id)
-		if stream == nil {
-			slot.has_active_stream = false
-			continue
-		}
-
-		switch slot.phase {
-		case .Reading_Header:
-			need := object_cache.FRAME_HEADER_SIZE - slot.recv_len
-			n, finished, reset := quic.stream_read(connection, slot.active_stream_id, slot.conn.request_buffer[slot.recv_len:slot.recv_len + need])
-			if reset {
-				put_session_abort(&slot.conn.put)
-				quic.stream_reset(connection, slot.active_stream_id, 0)
-				slot.has_active_stream = false
-				continue
-			}
-			slot.recv_len += n
-			if finished {
-				slot.peer_finished = true
-			}
-			if slot.recv_len == 0 && slot.peer_finished {
-				_ = quic.stream_write(connection, slot.active_stream_id, nil, true)
-				slot.has_active_stream = false
-				continue
-			}
-			if slot.recv_len < object_cache.FRAME_HEADER_SIZE {
-				if slot.peer_finished {
-					resp, _ := cache_server_handle_connection_frame(running.server, &slot.conn, slot.conn.request_buffer[:slot.recv_len])
-					slot.send_len = len(resp)
-					slot.send_offset = 0
-					slot.close_after_send = true
-					slot.phase = .Writing_Response
-					continue
-				}
-				return
-			}
-			_, body_length, header_refusal := object_cache.inspect_request_header(slot.conn.request_buffer[:object_cache.FRAME_HEADER_SIZE])
-			if header_refusal != .None {
-				resp, _ := cache_server_handle_connection_frame(running.server, &slot.conn, slot.conn.request_buffer[:object_cache.FRAME_HEADER_SIZE])
-				slot.send_len = len(resp)
-				slot.send_offset = 0
-				slot.close_after_send = true
-				slot.phase = .Writing_Response
-				quic.stream_stop_sending(connection, slot.active_stream_id, 1)
-				continue
-			}
-			slot.expected_len = object_cache.FRAME_HEADER_SIZE + body_length
-			slot.phase = .Reading_Body
-
-		case .Reading_Body:
-			for slot.recv_len < slot.expected_len {
-				n, finished, reset := quic.stream_read(connection, slot.active_stream_id, slot.conn.request_buffer[slot.recv_len:slot.expected_len])
-				if reset {
-					put_session_abort(&slot.conn.put)
-					quic.stream_reset(connection, slot.active_stream_id, 0)
-					slot.has_active_stream = false
-					break
-				}
-				slot.recv_len += n
-				if finished {
-					slot.peer_finished = true
-				}
-				if n == 0 {
-					break
-				}
-			}
-			if !slot.has_active_stream {
-				continue
-			}
-			if slot.recv_len < slot.expected_len {
-				if slot.peer_finished {
-					resp, _ := cache_server_handle_connection_frame(running.server, &slot.conn, slot.conn.request_buffer[:slot.recv_len])
-					slot.send_len = len(resp)
-					slot.send_offset = 0
-					slot.close_after_send = true
-					slot.phase = .Writing_Response
-					continue
-				}
-				return
-			}
-			resp, _ := cache_server_handle_connection_frame(running.server, &slot.conn, slot.conn.request_buffer[:slot.expected_len])
-			slot.send_len = len(resp)
-			slot.send_offset = 0
-			slot.phase = .Writing_Response
-
-		case .Writing_Response:
-			want_fin := slot.peer_finished || slot.close_after_send
-			remaining := slot.conn.response_buffer[slot.send_offset:slot.send_len]
-			wrote := quic.stream_write(connection, slot.active_stream_id, remaining, want_fin)
-			slot.send_offset += wrote
-			if slot.send_offset < slot.send_len {
-				return
-			}
-			if want_fin {
-				if slot.close_after_send {
-					quic.stream_stop_sending(connection, slot.active_stream_id, 1)
-				}
-				slot.has_active_stream = false
-				slot.phase = .Reading_Header
-			} else {
-				slot.recv_len = 0
-				slot.expected_len = object_cache.FRAME_HEADER_SIZE
-				slot.phase = .Reading_Header
-			}
+		if !any_progress {
+			return
 		}
 	}
 }
@@ -532,6 +587,10 @@ cache_quic_free_resources :: proc(running: ^Cache_Quic_Running) {
 	}
 	net.close(running.socket)
 	for &slot in running.slots {
+		for &st in slot.stream_states {
+			delete(st.request_buf)
+			delete(st.response_buf)
+		}
 		cache_connection_destroy(&slot.conn)
 	}
 	crypto_compat.zero_explicit(&running.quic_server, size_of(running.quic_server))

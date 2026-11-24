@@ -6,6 +6,7 @@ import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import format "modus:contract/store"
+import "internal:storage/share_quota"
 import "internal:storage/storage_mount"
 import block_tree "internal:storage/storage_object"
 import tree "internal:storage/storage_tree"
@@ -431,10 +432,12 @@ name_keep :: proc "contextless" (given: string, error: ^errors.Error_Record, arg
 // ---------------------------------------------------------------------
 // The store of a change.
 
-// The store of a call: its name and its limit (the last grant).
+// The store of a call: its name, its limit (the last grant), and an optional
+// per-share block quota (0 when the caller is not a block-limited share).
 Store_Of :: struct {
-	name:  string,
-	limit: u64,
+	name:        string,
+	limit:       u64,
+	share_limit: u64,
 }
 
 // store_prepare starts the plan of a change of a store: it refuses a store
@@ -473,11 +476,25 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 		return -1, refuse(error, .Data_Damaged, .Damaged, .Counts)
 	}
 	if store_index >= 0 {
+		share_blocks_before: u64 = 0
+		share_counted := false
+		if store.share_limit > 0 {
+			if item := share_of(system.service_caller()); item != nil && item.depth > 0 {
+				counts, usage_outcome := tree_usage(store_index, item.path[:item.depth])
+				share_blocks_before = counts.blocks
+				share_counted = usage_outcome == .Found && !counts.over_bound && !counts.failed
+			} else {
+				share_blocks_before = store_cell(store_index).used
+				share_counted = true
+			}
+		}
 		plan_reset(store_index)
 		if plan_refused() {
 			_, refusal := plan_refusal(error)
 			return -1, refusal
 		}
+		plan.share_blocks_before = share_blocks_before
+		plan.share_counted = share_counted
 		plan_cell().limit = store.limit
 		removal_stalled[store_index] = false // A change of the store tries a stopped removal again.
 		return store_index, .Succeeded
@@ -518,6 +535,8 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 		return -1, refuse(error, .Budget_Or_Capacity_Exhausted, .Full, .Stores, 0, 0, format.STORE_CAPACITY)
 	}
 	plan_reset(store_index)
+	plan.share_blocks_before = 0
+	plan.share_counted = true
 	plan_cell()^ = {limit = store.limit}
 	if slot != 0 {
 		plan_cell().name = owned_field
@@ -569,10 +588,46 @@ plan_commit_refused :: proc "contextless" (error: ^errors.Error_Record) -> (valu
 	return call_outcome.fail_with_value_first(error, .Data_Damaged, .Damaged, .Counts)
 }
 
+// share_quota_refusal checks a finished plan against a share's own block
+// quota and the parent store's limit without ever thinning versions of the
+// parent store. Reports only the share's own projected usage and cap so the
+// share holder learns nothing about the rest of the store.
+@(private = "file")
+share_quota_refusal :: proc "contextless" (store: Store_Of, error: ^errors.Error_Record, limit_argument: i64) -> (refused: bool, outcome: call_outcome.Call_Outcome) {
+	if store.share_limit == 0 || plan_refused() {
+		return false, .Succeeded
+	}
+	entry := plan_cell()
+	decision, projected_share, _ := share_quota.check_commit(
+		store.share_limit,
+		plan.share_blocks_before,
+		plan.used_change,
+		entry.used,
+		store.limit,
+		plan.share_counted,
+	)
+	switch decision {
+	case .Allow:
+		return false, .Succeeded
+	case .Over_Share_Limit, .Over_Store_Limit, .Uncounted:
+		plan_drop()
+		return true, refuse(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Blocks, limit_argument, projected_share, i64(store.share_limit))
+	}
+	return false, .Succeeded
+}
+
 // commit_at_limit thins the oldest versions of the store until the plan
 // fits in the limit, writes the plan, checks the limit with the nodes
-// that the trees wrote, and commits.
+// that the trees wrote, and commits. A share with its own block quota never
+// thins versions of the parent store.
 commit_at_limit :: proc "contextless" (store: Store_Of, error: ^errors.Error_Record, limit_argument: i64) -> (value: i64, outcome: call_outcome.Call_Outcome) {
+	if store.share_limit > 0 {
+		plan_finish()
+		if refused, refusal := share_quota_refusal(store, error, limit_argument); refused {
+			return 0, refusal
+		}
+		return plan_commit(error)
+	}
 	thinned_before := plan.thinned
 	for !plan_refused() && projected() > i64(store.limit) {
 		item, found := oldest_version_entry()
@@ -610,6 +665,9 @@ limit_reached: [STORE_CAPACITY]bool
 // minimum_refusal refuses a change whose current objects alone do not fit
 // in the limit: no version is thinned for it.
 minimum_refusal :: proc "contextless" (store: Store_Of, error: ^errors.Error_Record, argument: i64) -> (refused: bool, result: call_outcome.Call_Outcome) {
+	if store.share_limit > 0 {
+		return false, .Succeeded
+	}
 	needed := 1 + plan.store_block.node_blocks + plan.store_block.current_blocks
 	if needed > store.limit {
 		plan_drop()
@@ -1155,10 +1213,16 @@ entries_add :: proc "contextless" (store: Store_Of, path: []Entry_Name, rows: []
 	opened_tree.count_change += i64(count)
 	opened_tree.changed = true
 	plan_finish()
-	entry := plan_cell()
-	if !plan_refused() && i64(entry.used) + plan.used_change > i64(store.limit) {
-		plan_drop()
-		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Blocks, 2, i64(entry.used) + plan.used_change, i64(store.limit))
+	if store.share_limit > 0 {
+		if refused, refusal := share_quota_refusal(store, error, 2); refused {
+			return 0, refusal
+		}
+	} else {
+		entry := plan_cell()
+		if !plan_refused() && i64(entry.used) + plan.used_change > i64(store.limit) {
+			plan_drop()
+			return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Blocks, 2, i64(entry.used) + plan.used_change, i64(store.limit))
+		}
 	}
 	return plan_commit(error)
 }
@@ -1224,10 +1288,16 @@ entry_rename :: proc "contextless" (store: Store_Of, from_path: []Entry_Name, fr
 	plan.trees[to_tree].count_change += 1
 	plan.trees[to_tree].changed = true
 	plan_finish()
-	entry := plan_cell()
-	if !plan_refused() && i64(entry.used) + plan.used_change > i64(store.limit) {
-		plan_drop()
-		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Blocks, 0, i64(entry.used) + plan.used_change, i64(store.limit))
+	if store.share_limit > 0 {
+		if refused, refusal := share_quota_refusal(store, error, 0); refused {
+			return 0, refusal
+		}
+	} else {
+		entry := plan_cell()
+		if !plan_refused() && i64(entry.used) + plan.used_change > i64(store.limit) {
+			plan_drop()
+			return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Blocks, 0, i64(entry.used) + plan.used_change, i64(store.limit))
+		}
 	}
 	return plan_commit(error)
 }

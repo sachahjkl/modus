@@ -31,6 +31,7 @@ import "modus:contract/isolated"
 import module "modus:contract/module"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
+import "internal:storage/share_quota"
 import "internal:storage/storage_retention"
 import format "modus:contract/store"
 import answers "modus:storage"
@@ -104,11 +105,12 @@ places: [PLACE_CAPACITY]Place
 // A connection that the service made for the caller of share: its root is
 // a tree of the store of its maker.
 Share :: struct {
-	connection: system.Connection, // calls.head nil: the place is free.
-	maker:      system.Handle, // The call ring of the connection that made it.
-	read_only:  bool,
-	depth:      int,
-	path:       [NESTING_LIMIT]Entry_Name,
+	connection:  system.Connection, // calls.head nil: the place is free.
+	maker:       system.Handle, // The call ring of the connection that made it.
+	read_only:   bool,
+	depth:       int,
+	path:        [NESTING_LIMIT]Entry_Name,
+	block_limit: u64, // 0: inherits store limit; >0: per-share block quota.
 }
 shares: [SHARE_CAPACITY]Share
 
@@ -143,7 +145,7 @@ connection_store :: proc "contextless" (ring_memory: system.Handle, steps: int) 
 	}
 	for &connection in service.connections {
 		if connection.calls.head != nil && connection.ring_memory == ring_memory {
-			return {system.name_of(connection.caller[:]), connection.grant & isolated.CALLER_AMOUNT_MASK}, true, true
+			return {name = system.name_of(connection.caller[:]), limit = connection.grant & isolated.CALLER_AMOUNT_MASK}, true, true
 		}
 	}
 	for &item in shares {
@@ -165,7 +167,7 @@ caller_of :: proc "contextless" () -> (caller: Caller) {
 	caller.connection = connection
 	item := share_of(connection)
 	if item == nil {
-		caller.store = {system.name_of(connection.caller[:]), connection.grant & isolated.CALLER_AMOUNT_MASK}
+		caller.store = {name = system.name_of(connection.caller[:]), limit = connection.grant & isolated.CALLER_AMOUNT_MASK}
 		caller.acts_for_principal = connection.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0
 		caller.principal = isolated.caller_principal(connection.grant)
 		// The root service gives a connection that reads only, for the
@@ -183,7 +185,7 @@ caller_of :: proc "contextless" () -> (caller: Caller) {
 		caller.connection = nil
 		return caller
 	}
-	caller.store = store
+	caller.store = {name = store.name, limit = store.limit, share_limit = item.block_limit}
 	caller.read_only = item.read_only
 	caller.depth = item.depth
 	caller.path = item.path
@@ -258,7 +260,7 @@ place_path :: proc "contextless" (caller: ^Caller, place: i64, error: ^errors.Er
 			refuse(error, .Argument_Refused, .Absent, .Places, argument, place)
 			return {}, false
 		}
-		path.store = {name, store_cell(store_index).limit}
+		path.store = {name = name, limit = store_cell(store_index).limit}
 	}
 	path.depth = item.depth
 	copy(path.names[:], item.path[:path.depth])
@@ -682,16 +684,17 @@ Shared :: struct {
 	region: i64, // Memory: the call region.
 }
 
-// share makes a new connection to this service whose root is the tree of a place, and gives its call ring and its call region to the caller, which can give them to another process. With read_only 1 the connection changes nothing. A connection that reads only makes shares that read only. The share ends when the caller calls unshare, or when the connection that made it loses its store. The result is one row, or a failure with its call outcome and an error record.
+// share makes a new connection to this service whose root is the tree of a place, and gives its call ring and its call region to the caller, which can give them to another process. With read_only 1 the connection changes nothing. A connection that reads only makes shares that read only. With block_limit > 0 a writable share gets a block quota of its own (at most the limit of the maker's store) that refuses writes past it without thinning versions of the parent store; 0 inherits the store limit. The share ends when the caller calls unshare, or when the connection that made it loses its store. The result is one row, or a failure with its call outcome and an error record.
 //
 // **Error kinds**
 //
 // - `No_Grant`;
 // - `Absent` (Argument_Refused, Nothing_Has_That_Name: the place);
+// - `Bad_Value` or `Out_Of_Range` (Argument_Refused, unit Blocks: negative block_limit, non-zero block_limit on a read-only share, or block_limit above the store limit);
 // - `Full` (Budget_Or_Capacity_Exhausted, unit Connections: no free share);
 // - `Refused` (Callee_Unavailable: the kernel refused a memory object or a give).
 @(export, link_name = "share")
-share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+share :: proc "c" (place: i64, read_only: i64, block_limit: i64, result: ^[]Shared, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if refused, refusal := disk_unopened_refusal(error); refused {
 		return refusal, 0
 	}
@@ -704,6 +707,15 @@ share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors
 	// Read only, and revocation").
 	if share_of(caller.connection) != nil {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Connections)
+	}
+	effective_read_only := read_only != 0 || caller.read_only
+	checked_limit, limit_refusal := share_quota.effective_share_limit(block_limit, effective_read_only, caller.store.limit)
+	switch limit_refusal {
+	case .None:
+	case .Negative, .Read_Only_Has_Limit:
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Blocks, 3, block_limit)
+	case .Exceeds_Store_Limit:
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Blocks, 3, block_limit, i64(caller.store.limit))
 	}
 	path, ok := place_path(&caller, place, error, 1)
 	if !ok {
@@ -751,7 +763,7 @@ share :: proc "c" (place: i64, read_only: i64, result: ^[]Shared, error: ^errors
 		system.connection_end(&connection)
 		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 0, 0, 0, i64(give_status))
 	}
-	free^ = {connection = connection, maker = caller.connection.ring_memory, read_only = read_only != 0 || caller.read_only, depth = path.depth}
+	free^ = {connection = connection, maker = caller.connection.ring_memory, read_only = effective_read_only, depth = path.depth, block_limit = checked_limit}
 	copy(free.path[:], path.names[:path.depth])
 	number := i64(intrinsics.ptr_sub(free, &shares[0])) + 1
 	if len(result) > 0 {
@@ -830,10 +842,10 @@ usage :: proc "c" (result: ^[]Usage) -> i64 {
 	row: Usage
 	if caller.connection != nil && !disk_opened {
 		// A disk that went silent before the open: no count is known.
-		row.limit = i64(caller.store.limit)
+		row.limit = i64(share_quota.effective_usage_limit(caller.store.share_limit, caller.store.limit))
 		row.objects, row.trees, row.versions, row.blocks = USAGE_NOT_COUNTED, USAGE_NOT_COUNTED, USAGE_NOT_COUNTED, USAGE_NOT_COUNTED
 	} else if caller.connection != nil && caller.depth > 0 {
-		row.limit = i64(caller.store.limit)
+		row.limit = i64(share_quota.effective_usage_limit(caller.store.share_limit, caller.store.limit))
 		if index := store_find(caller.store.name); index >= 0 && !store_damaged[index] {
 			counts, outcome := tree_usage(index, caller.path[:caller.depth])
 			if outcome != .Found || counts.over_bound || counts.failed {
@@ -843,7 +855,7 @@ usage :: proc "c" (result: ^[]Usage) -> i64 {
 			}
 		}
 	} else if caller.connection != nil {
-		row.limit = i64(caller.store.limit)
+		row.limit = i64(share_quota.effective_usage_limit(caller.store.share_limit, caller.store.limit))
 		if index := store_find(caller.store.name); index >= 0 {
 			row.objects = i64(store_blocks[index].objects)
 			row.trees = i64(store_blocks[index].trees)
@@ -970,7 +982,7 @@ open_store :: proc "c" (store: ^string, error: ^errors.Error_Record) -> (outcome
 	}
 	// The name that the caller gave: a store of a principal keeps only its
 	// name tag in its cell.
-	path := Path{store = {name, store_cell(index).limit}}
+	path := Path{store = {name = name, limit = store_cell(index).limit}}
 	opened_place, ok := place_new(&caller, &path)
 	if !ok {
 		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Places, 0, 0, PLACE_CAPACITY)

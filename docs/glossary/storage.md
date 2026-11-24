@@ -84,7 +84,7 @@ Do not use: file descriptor, directory handle, working directory, path.
 
 A share is a connection to the storage service that the service itself makes for a caller, whose root is a tree of the store of the caller, with or without the right to change.
 
-A share gives another process one part of a store. `storage.share(place, read_only)` gives the caller two handles, which it gives to the other process with `Handle_Give`. That process reaches the tree and what is under it, and nothing above. `storage.unshare(share)` revokes the handles in each process. When the grant of the store of the maker ends, each of its shares ends too. A share is not a mount: it adds no name to any tree.
+A share gives another process one part of a store. `storage.share(place, read_only, block_limit)` returns two handles to pass with `Handle_Give`; a positive `block_limit` caps writable share blocks without thinning parent store versions. That process reaches only the shared tree. `storage.unshare(share)` revokes its handles. When the maker's store grant ends, its shares end too. A share adds no name to any tree.
 
 The design: `docs/STORAGE.md`, "4.3 Read only, and revocation".
 
