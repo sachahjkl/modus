@@ -210,18 +210,18 @@ worker_job_run :: proc "contextless" (_: rawptr) {
 			worker_status_set(res, true, "Cannot revoke ", grant_name, " from ", name, ": the root service gave no answer.")
 			fact: Revocation_Refused
 			worker_fact_copy(fact.cause[:], "no answer from the root service")
-			system.log_fact(.Warning, fact)
+			system.log_fact(.Warning, Revocation_Refused(fact))
 		} else if outcome, _ := call_outcome.completion_outcome(rec.kind, rec.values); outcome != .Succeeded {
 			worker_status_set(res, true, "Cannot revoke ", grant_name, " from ", name, ": the root service refused the request.")
 			fact: Revocation_Refused
 			worker_fact_copy(fact.cause[:], call_outcome.CALL_OUTCOME_NAMES[outcome])
-			system.log_fact(.Warning, fact)
+			system.log_fact(.Warning, Revocation_Refused(fact))
 		} else {
 			worker_status_set(res, false, "Revoked ", grant_name, " from ", name, ".")
 			fact: Process_Grant_Revoked
 			worker_fact_copy(fact.process[:], name)
 			worker_fact_copy(fact.grant[:], grant_name)
-			system.log_fact(.Info, fact)
+			system.log_fact(.Info, Process_Grant_Revoked(fact))
 		}
 		_, _ = worker_read_snapshot(&res.snapshot)
 		res.has_snapshot = true
@@ -232,12 +232,12 @@ worker_job_run :: proc "contextless" (_: rawptr) {
 			worker_status_set(res, true, "Cannot end the active wide grant: the root service gave no answer.")
 			fact: Revocation_Refused
 			worker_fact_copy(fact.cause[:], "no answer from the root service")
-			system.log_fact(.Warning, fact)
+			system.log_fact(.Warning, Revocation_Refused(fact))
 		} else if outcome, _ := call_outcome.completion_outcome(rec.kind, rec.values); outcome != .Succeeded {
 			worker_status_set(res, true, "Cannot end the active wide grant: the root service refused the request.")
 			fact: Revocation_Refused
 			worker_fact_copy(fact.cause[:], call_outcome.CALL_OUTCOME_NAMES[outcome])
-			system.log_fact(.Warning, fact)
+			system.log_fact(.Warning, Revocation_Refused(fact))
 		} else {
 			worker_status_set(res, false, "Ended the active wide grant.")
 			system.log_fact(.Info, Wide_Grant_Ended{})
@@ -258,18 +258,18 @@ worker_job_run :: proc "contextless" (_: rawptr) {
 			worker_status_set(res, true, "Cannot disallow store for ", nickname, ": the root service gave no answer.")
 			fact: Revocation_Refused
 			worker_fact_copy(fact.cause[:], "no answer from the root service")
-			system.log_fact(.Warning, fact)
+			system.log_fact(.Warning, Revocation_Refused(fact))
 		} else if outcome, _ := call_outcome.completion_outcome(rec.kind, rec.values); outcome != .Succeeded {
 			worker_status_set(res, true, "Cannot disallow store for ", nickname, ": the root service refused the request.")
 			fact: Revocation_Refused
 			worker_fact_copy(fact.cause[:], call_outcome.CALL_OUTCOME_NAMES[outcome])
-			system.log_fact(.Warning, fact)
+			system.log_fact(.Warning, Revocation_Refused(fact))
 		} else {
 			worker_status_set(res, false, "Disallowed store for ", nickname, ".")
 			fact: Disk_Grant_Disallowed
 			worker_fact_copy(fact.nickname[:], nickname)
 			worker_fact_copy(fact.grant[:], "store")
-			system.log_fact(.Info, fact)
+			system.log_fact(.Info, Disk_Grant_Disallowed(fact))
 		}
 		_, _ = worker_read_snapshot(&res.snapshot)
 		res.has_snapshot = true
