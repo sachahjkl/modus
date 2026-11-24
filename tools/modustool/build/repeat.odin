@@ -182,6 +182,7 @@ run_repeat :: proc(args: []string) -> int {
 	// Each build of this command is a whole build: it counts the results
 	// of the compiler, not the outputs that a build record keeps.
 	build_whole = true
+	build_optimization_mode = .Speed
 	if args[0] == "all" {
 		return repeat_all(count)
 	}
@@ -227,6 +228,7 @@ run_repeat :: proc(args: []string) -> int {
 // boot programs), LLVM IR files, objects and debug objects.
 repeat_all :: proc(count: int) -> int {
 	build_whole = true
+	build_optimization_mode = .Speed
 	if !foundation.reset_folder(DIFFERENT_BUILDS_FOLDER) {
 		return foundation.EXIT_FAILURE
 	}
@@ -293,6 +295,7 @@ outputs_same_after_second_build :: proc() -> bool {
 	// is the same bytes with no proof. The first build must be whole too:
 	// the commands that call this procedure set build_whole before it.
 	build_whole = true
+	build_optimization_mode = .Speed
 	foundation.reset_folder(DIFFERENT_BUILDS_FOLDER) or_return
 	all := make([dynamic]Distinct_Results)
 	defer {
@@ -348,6 +351,7 @@ outputs_same_after_second_build :: proc() -> bool {
 // (docs/MODULE_CONTRACT.md, "Debug information").
 modules_same_without_debug_information :: proc() -> bool {
 	build_whole = true
+	build_optimization_mode = .Speed
 	debug_information = false
 	foundation.module_build_folder = MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION
 	built := build_modules_in_parallel()

@@ -989,6 +989,7 @@ release_image_command :: proc() -> int {
 	// work tree.
 	build_whole = true
 	test_build_checks = true
+	build_optimization_mode = .Speed
 	// The theme of the system only, whatever the environment names: the
 	// license of the theme of the owner allows no public download.
 	resources.build_pointer_theme_of_the_owner = false

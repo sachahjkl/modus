@@ -130,6 +130,30 @@ boot_volume_name :: proc(path: string) -> string {
 	return name == "" ? MAIN_BOOT_VOLUME_NAME : name
 }
 
+// boot_volume_path_of_name gives the volume file path of a short volume name
+// (such as "main" or "shortage"), or "", false when no volume has that name.
+boot_volume_path_of_name :: proc(name: string) -> (path: string, found: bool) {
+	if name == "" {
+		return "", false
+	}
+	for volume in boot_volumes() {
+		if boot_volume_name(volume.path) == name {
+			return volume.path, true
+		}
+	}
+	return "", false
+}
+
+// boot_volume_names gives the short names of every boot volume of the build,
+// in the order of boot_volumes(), separated by ", ".
+boot_volume_names :: proc() -> string {
+	names := strings.builder_make(context.temp_allocator)
+	for volume, index in boot_volumes() {
+		fmt.sbprintf(&names, "%s%s", index > 0 ? ", " : "", boot_volume_name(volume.path))
+	}
+	return strings.to_string(names)
+}
+
 // The object folder of a volume: no other volume writes in it.
 boot_volume_folder :: proc(volume: Boot_Volume) -> string {
 	return foundation.join(BOOT_OBJECT_FOLDER, "/", boot_volume_name(volume.path))
@@ -421,25 +445,42 @@ main_boot_volume_build :: proc() -> bool {
 	return false
 }
 
+// volume_arguments_parse reads the arguments of `modustool volume`:
+// `<name> [speed|none]`. An unknown optimization mode is refused.
+volume_arguments_parse :: proc(args: []string) -> (name: string, optimization: Optimization_Mode, ok: bool) {
+	if len(args) != 1 && len(args) != 2 {
+		return "", .Speed, false
+	}
+	if args[0] == "" {
+		return "", .Speed, false
+	}
+	optimization = .Speed
+	if len(args) == 2 {
+		mode_ok: bool
+		optimization, mode_ok = optimization_mode_of_argument(args[1])
+		if !mode_ok {
+			return "", .Speed, false
+		}
+	}
+	return args[0], optimization, true
+}
+
 // The command volume: build one boot volume in this process. The build
 // runs it for each volume that it must build; a developer can run it to
 // see the errors of one volume alone, after a build wrote the modules, the
 // boot images and the public key of the system.
 run_volume :: proc(args: []string) -> int {
-	if len(args) == 1 {
+	if name, optimization, parsed := volume_arguments_parse(args); parsed {
 		for volume in boot_volumes() {
-			if boot_volume_name(volume.path) == args[0] {
+			if boot_volume_name(volume.path) == name {
 				// The process that leads the build said which key signs.
 				signing_key_said = true
+				build_optimization_mode = optimization
 				return boot_volume_build(volume) ? 0 : foundation.EXIT_FAILURE
 			}
 		}
 	}
-	names := strings.builder_make(context.temp_allocator)
-	for volume, index in boot_volumes() {
-		fmt.sbprintf(&names, "%s%s", index > 0 ? ", " : "", boot_volume_name(volume.path))
-	}
-	fmt.eprintfln("modustool: volume <name>; the names: %s", strings.to_string(names))
+	fmt.eprintfln("modustool: volume <name> [speed|none]; the names: %s", boot_volume_names())
 	return foundation.EXIT_USAGE
 }
 
@@ -493,9 +534,10 @@ boot_volume_shared_inputs_read :: proc(volumes: []Boot_Volume) -> Boot_Volume_Sh
 // its firmware signature), the assembly files, the test keys, the host programs
 // that build and sign, the tool, and the sources of the boot program (the
 // list of its compiler). ok is false when a built file cannot be read.
-boot_volume_key_inputs :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared_Inputs, source_files, load_files: []string) -> (inputs: Build_Key_Inputs, ok: bool) {
+boot_volume_key_inputs :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared_Inputs, source_files, load_files: []string, optimization: Optimization_Mode = build_optimization_mode) -> (inputs: Build_Key_Inputs, ok: bool) {
 	settings := make([dynamic]string, context.temp_allocator)
 	append(&settings, ..shared.settings)
+	append(&settings, "optimization", optimization_mode_argument(optimization))
 	append(&settings, "the compiler")
 	append(&settings, ..boot_program_compile_command(volume))
 	append(&settings, "the assembler")
@@ -581,7 +623,7 @@ boot_volumes_kept :: proc(volumes: []Boot_Volume, shared: Boot_Volume_Shared_Inp
 			reasons[index] = "an input cannot be read"
 			continue
 		}
-		records[index], kept[index], reasons[index] = recorded_build_has_its_key(boot_volume_record_path(volume), inputs, build_inputs.table)
+		records[index], kept[index], reasons[index] = recorded_build_has_its_key(boot_volume_record_path(volume), inputs, build_inputs.table, build_optimization_mode)
 		if kept[index] && !record_names_each_output(records[index], boot_volume_recorded_outputs(volume)) {
 			kept[index] = false
 			reasons[index] = OUTPUT_CHANGED_REASON
@@ -633,7 +675,7 @@ boot_volume_record_write :: proc(volume: Boot_Volume, shared: Boot_Volume_Shared
 	if !complete {
 		return false
 	}
-	return build_record_write_of_contents(record_path, key, boot_volume_recorded_outputs(volume), output_contents, inputs.source_files, inputs.load_files)
+	return build_record_write_of_contents(record_path, key, boot_volume_recorded_outputs(volume), output_contents, inputs.source_files, inputs.load_files, build_optimization_mode)
 }
 
 // The boot volumes that this process built or kept in its last build: a
@@ -733,7 +775,7 @@ boot_volumes_build :: proc(needed_paths: []string) -> bool {
 		}
 	}
 	checks_started := time.tick_now()
-	shared := boot_volume_shared_inputs_read(all)
+	shared := boot_volume_shared_inputs_read(needed[:])
 	to_build := make([dynamic]Boot_Volume, context.temp_allocator)
 	built_names := strings.builder_make(context.temp_allocator)
 	kept_count := 0
@@ -769,10 +811,11 @@ boot_volumes_build :: proc(needed_paths: []string) -> bool {
 	tool_path := foundation.tool_executable_path() or_return
 	commands := make([][]string, len(to_build), context.temp_allocator)
 	for volume, place in to_build {
-		command := make([]string, 3, context.temp_allocator)
+		command := make([]string, 4, context.temp_allocator)
 		command[0] = tool_path
 		command[1] = "volume"
 		command[2] = boot_volume_name(volume.path)
+		command[3] = optimization_mode_argument(build_optimization_mode)
 		commands[place] = command
 	}
 	host_processes := boot_volume_host_processes(len(to_build), module_build_host_processes, os.get_processor_core_count())

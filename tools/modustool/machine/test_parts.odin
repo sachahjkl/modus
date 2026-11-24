@@ -194,52 +194,80 @@ test_part_names :: proc() -> string {
 // folder, with no build (test_derivations.odin).
 TEST_FROM_WORD :: "from"
 
+// The flag of `test --fast <part>`: build user modules in fast iteration mode
+// (Optimization_Mode.None) and build only the boot volumes of the part
+// (src/md/infrastructure/fast_build.md).
+TEST_FAST_FLAG :: "--fast"
+
+// test_arguments_optimization separates a leading `--fast` flag from the
+// remaining arguments of `modustool test`.
+test_arguments_optimization :: proc(args: []string) -> (optimization: build.Optimization_Mode, rest: []string) {
+	if len(args) >= 1 && args[0] == TEST_FAST_FLAG {
+		return .None, args[1:]
+	}
+	return .Speed, args
+}
+
 // test_arguments_problem gives the refusal of the arguments of `test`, or
-// "" when they name the whole test, one part, or one part on the test
-// inputs of a folder. A word that is not a part is refused: the whole test
-// in its place takes minutes and passes, and the reader believes that the
-// part passed.
+// "" when they name the whole test, one part (optionally with `--fast`), or
+// one part on the test inputs of a folder. A word that is not a part is
+// refused: the whole test in its place takes minutes and passes, and the
+// reader believes that the part passed.
 test_arguments_problem :: proc(args: []string) -> string {
-	if len(args) == 0 {
+	optimization, rest := test_arguments_optimization(args)
+	if optimization == .None {
+		if len(rest) == 0 {
+			return fmt.tprintf("test %s requires a test part: `test %s <part>`; the parts: %s", TEST_FAST_FLAG, TEST_FAST_FLAG, test_part_names())
+		}
+		if rest[0] == TEST_FAST_FLAG {
+			return fmt.tprintf("test: %s is written two times", TEST_FAST_FLAG)
+		}
+		if len(rest) >= 2 && rest[1] == TEST_FROM_WORD {
+			return fmt.tprintf("test %s cannot be used with `%s <folder>`: a part on given test inputs runs no build", TEST_FAST_FLAG, TEST_FROM_WORD)
+		}
+	}
+	if len(rest) == 0 {
 		if missing := test_parts_without_run(test_parts[:]); missing != "" {
 			return fmt.tprintf("this binary of the tool holds no scenario of the test parts %s: it is the binary of one test part, which the check of the flake builds; the whole test runs with the binary of the development shell", missing)
 		}
 		return ""
 	}
-	part, found := test_part_find(args[0])
+	part, found := test_part_find(rest[0])
 	if found && part.run == nil {
-		return fmt.tprintf("this binary of the tool holds no scenario of the test part %s: it is the binary of another test part, which the check of the flake builds; the part runs with the binary of the development shell or with its own binary", args[0])
+		return fmt.tprintf("this binary of the tool holds no scenario of the test part %s: it is the binary of another test part, which the check of the flake builds; the part runs with the binary of the development shell or with its own binary", rest[0])
 	}
-	if found && (len(args) == 1 || (len(args) == 3 && args[1] == TEST_FROM_WORD && args[2] != "")) {
+	if found && (len(rest) == 1 || (optimization == .Speed && len(rest) == 3 && rest[1] == TEST_FROM_WORD && rest[2] != "")) {
 		return ""
 	}
-	if found && len(args) >= 2 && args[1] == TEST_STEPS_WORD {
-		_, problem := step_range_parse(args[2:], context.temp_allocator)
+	if found && len(rest) >= 2 && rest[1] == TEST_STEPS_WORD {
+		_, problem := step_range_parse(rest[2:], context.temp_allocator)
 		if problem != "" {
-			return fmt.tprintf("test %s %s: %s; the form: `test <part> %s <first> %s <last> [%s <machine>] [%s <first> %s <last>]...`", args[0], TEST_STEPS_WORD, problem, TEST_STEPS_WORD, TEST_TO_WORD, TEST_OF_WORD, TEST_WITH_WORD, TEST_TO_WORD)
+			return fmt.tprintf("test %s %s: %s; the form: `test [%s] <part> %s <first> %s <last> [%s <machine>] [%s <first> %s <last>]...`", rest[0], TEST_STEPS_WORD, problem, TEST_FAST_FLAG, TEST_STEPS_WORD, TEST_TO_WORD, TEST_OF_WORD, TEST_WITH_WORD, TEST_TO_WORD)
 		}
 		return ""
 	}
 	given := strings.join(args, " ", context.temp_allocator)
-	return fmt.tprintf("test does not know the part `%s`; the parts: %s; with no argument, the whole test; `test <part> %s <folder>`: one part on the test inputs of a folder, with no build; `test <part> %s <first> %s <last>`: some steps of one machine of a part", given, test_part_names(), TEST_FROM_WORD, TEST_STEPS_WORD, TEST_TO_WORD)
+	return fmt.tprintf("test does not know the part `%s`; the parts: %s; with no argument, the whole test; `test %s <part>`: one part built without full optimization; `test <part> %s <folder>`: one part on the test inputs of a folder, with no build; `test [%s] <part> %s <first> %s <last>`: some steps of one machine of a part", given, test_part_names(), TEST_FAST_FLAG, TEST_FROM_WORD, TEST_FAST_FLAG, TEST_STEPS_WORD, TEST_TO_WORD)
 }
 
 // test_arguments_give_step_range says if arguments that
 // test_arguments_problem accepted name a step range, and gives it, in the
 // memory of the caller.
 test_arguments_give_step_range :: proc(args: []string, allocator := context.allocator) -> (range: Step_Range, given: bool) {
-	if len(args) < 2 || args[1] != TEST_STEPS_WORD {
+	_, rest := test_arguments_optimization(args)
+	if len(rest) < 2 || rest[1] != TEST_STEPS_WORD {
 		return {}, false
 	}
-	range, _ = step_range_parse(args[2:], allocator)
+	range, _ = step_range_parse(rest[2:], allocator)
 	return range, true
 }
 
 // test_arguments_give_inputs says if arguments that test_arguments_problem
 // accepted name a folder of test inputs, and gives it.
 test_arguments_give_inputs :: proc(args: []string) -> (folder: string, given: bool) {
-	if len(args) == 3 && args[1] == TEST_FROM_WORD {
-		return args[2], true
+	optimization, rest := test_arguments_optimization(args)
+	if optimization == .Speed && len(rest) == 3 && rest[1] == TEST_FROM_WORD {
+		return rest[2], true
 	}
 	return "", false
 }
@@ -261,10 +289,11 @@ test_part_volumes_of :: proc(part: Test_Part) -> []string {
 // boots: those of the row of its part. nil is every volume: the whole test,
 // and a name that is no part (test_arguments_problem refuses it first).
 boot_volumes_of_test :: proc(args: []string) -> []string {
-	if len(args) == 0 {
+	_, rest := test_arguments_optimization(args)
+	if len(rest) == 0 {
 		return nil
 	}
-	part, found := test_part_find(args[0])
+	part, found := test_part_find(rest[0])
 	if !found {
 		return nil
 	}

@@ -44,9 +44,10 @@ import "modustool:foundation"
 // (repeat.odin), and the full checks (`check`, `screenshots`).
 build_whole := false
 
-BUILD_RECORD_FIRST_LINE :: "build record, form 1"
+BUILD_RECORD_FIRST_LINE :: "build record, form 2"
 BUILD_RECORD_SUFFIX :: ".build_record"
 DEPENDENCY_FILE_NAME :: "dependencies.json"
+OPTIMIZATION_CHANGED_REASON :: "the optimization mode changed"
 
 // The folders of the repository that hold sources of a build. The tool
 // hashes each of their files once, before the first compiler starts. A
@@ -444,6 +445,7 @@ Record_Output :: struct {
 
 // A build record: what the tool keeps of one build of one thing.
 Build_Record :: struct {
+	optimization: Optimization_Mode,
 	key:          blake3.Hash,
 	outputs:      []Record_Output,
 	source_files: []string,
@@ -484,6 +486,7 @@ hash_from_hexadecimal :: proc(text: string) -> (hash: blake3.Hash, ok: bool) {
 build_record_text :: proc(record: Build_Record) -> string {
 	text := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&text, "%s\n", BUILD_RECORD_FIRST_LINE)
+	fmt.sbprintf(&text, "optimization %s\n", optimization_mode_argument(record.optimization))
 	fmt.sbprintf(&text, "key %s\n", hash_as_hexadecimal(record.key))
 	for output in record.outputs {
 		fmt.sbprintf(&text, "output %s %s\n", hash_as_hexadecimal(output.hash), output.path)
@@ -506,6 +509,7 @@ build_record_parse :: proc(text: string) -> (record: Build_Record, ok: bool) {
 	load_files := make([dynamic]string, context.temp_allocator)
 	rest := text
 	line_number := 0
+	optimization_count := 0
 	key_count := 0
 	for line in strings.split_lines_iterator(&rest) {
 		line_number += 1
@@ -517,6 +521,9 @@ build_record_parse :: proc(text: string) -> (record: Build_Record, ok: bool) {
 		}
 		switch {
 		case line == "":
+		case strings.has_prefix(line, "optimization "):
+			record.optimization = optimization_mode_of_argument(line[len("optimization "):]) or_return
+			optimization_count += 1
 		case strings.has_prefix(line, "key "):
 			record.key = hash_from_hexadecimal(line[len("key "):]) or_return
 			key_count += 1
@@ -536,7 +543,7 @@ build_record_parse :: proc(text: string) -> (record: Build_Record, ok: bool) {
 			return {}, false
 		}
 	}
-	if key_count != 1 || len(outputs) == 0 || len(source_files) == 0 {
+	if optimization_count != 1 || key_count != 1 || len(outputs) == 0 || len(source_files) == 0 {
 		return {}, false
 	}
 	record.outputs = outputs[:]
@@ -559,15 +566,15 @@ build_record_read :: proc(path: string) -> (record: Build_Record, ok: bool) {
 // build_record_write hashes the outputs and writes the record file. If
 // it cannot, it removes the file: an old record must not stay beside new
 // outputs.
-build_record_write :: proc(path: string, key: blake3.Hash, output_paths: []string, source_files, load_files: []string) -> bool {
+build_record_write :: proc(path: string, key: blake3.Hash, output_paths: []string, source_files, load_files: []string, optimization: Optimization_Mode = .Speed) -> bool {
 	contents := file_contents_read_in_parallel(output_paths, context.temp_allocator)
-	return build_record_write_of_contents(path, key, output_paths, contents, source_files, load_files)
+	return build_record_write_of_contents(path, key, output_paths, contents, source_files, load_files, optimization)
 }
 
 // build_record_write_of_contents writes the record file with the hashes
 // that the caller read: contents has the order of output_paths. A caller
 // with many large outputs reads them all at once, on several threads.
-build_record_write_of_contents :: proc(path: string, key: blake3.Hash, output_paths: []string, contents: []File_Content, source_files, load_files: []string) -> bool {
+build_record_write_of_contents :: proc(path: string, key: blake3.Hash, output_paths: []string, contents: []File_Content, source_files, load_files: []string, optimization: Optimization_Mode = .Speed) -> bool {
 	outputs := make([]Record_Output, len(output_paths), context.temp_allocator)
 	written := len(contents) == len(output_paths)
 	for output_path, index in output_paths {
@@ -581,6 +588,7 @@ build_record_write_of_contents :: proc(path: string, key: blake3.Hash, output_pa
 		}
 	}
 	record := Build_Record {
+		optimization = optimization,
 		key          = key,
 		outputs      = outputs,
 		source_files = source_files,
@@ -637,15 +645,18 @@ record_outputs_are_present :: proc(record: Build_Record, required_paths: []strin
 	return record_outputs_have_their_hashes(record, file_contents_read_in_parallel(paths, context.temp_allocator))
 }
 
-// recorded_build_has_its_key reads the record of one thing and says if the
-// build key of the inputs as they are now is the key of the record. inputs
-// has every input but the list of the compiler, which the record gives.
-// reason says why the thing is built.
-recorded_build_has_its_key :: proc(record_path: string, inputs: Build_Key_Inputs, table: ^Input_File_Table) -> (record: Build_Record, same: bool, reason: string) {
+// recorded_build_has_its_key reads the record of one thing and says if its
+// optimization mode and build key match this build. inputs has every input
+// but the list of the compiler, which the record gives. reason says why the
+// thing is built.
+recorded_build_has_its_key :: proc(record_path: string, inputs: Build_Key_Inputs, table: ^Input_File_Table, optimization: Optimization_Mode = .Speed) -> (record: Build_Record, same: bool, reason: string) {
 	recorded: bool
 	record, recorded = build_record_read(record_path)
 	if !recorded {
 		return {}, false, "no build record"
+	}
+	if record.optimization != optimization {
+		return {}, false, OPTIMIZATION_CHANGED_REASON
 	}
 	inputs_now := inputs
 	inputs_now.source_files = record.source_files
@@ -665,11 +676,11 @@ recorded_build_has_its_key :: proc(record_path: string, inputs: Build_Key_Inputs
 OUTPUT_CHANGED_REASON :: "an output is absent or changed"
 
 // recorded_build_is_kept says if the outputs of one thing are those of
-// this build with no build: the record is there, the build key of the
-// inputs as they are now is the key of the record, and each output is
-// there with its recorded hash. reason says why the thing is built.
-recorded_build_is_kept :: proc(record_path: string, inputs: Build_Key_Inputs, table: ^Input_File_Table, required_outputs: []string) -> (kept: bool, reason: string) {
-	record, same, why := recorded_build_has_its_key(record_path, inputs, table)
+// this build with no build: the record is there, its optimization mode and
+// build key match this build, and each output is there with its recorded
+// hash. reason says why the thing is built.
+recorded_build_is_kept :: proc(record_path: string, inputs: Build_Key_Inputs, table: ^Input_File_Table, required_outputs: []string, optimization: Optimization_Mode = .Speed) -> (kept: bool, reason: string) {
+	record, same, why := recorded_build_has_its_key(record_path, inputs, table, optimization)
 	if !same {
 		return false, why
 	}
@@ -953,6 +964,7 @@ CONVERSION_INPUT_CHANGED_REASON :: "an import or the linked file changed"
 // The two steps of one module: the record, the inputs and the outputs of
 // each. No field names a global of the build, so a test gives its own.
 Module_Steps :: struct {
+	optimization:        Optimization_Mode,
 	compile_record_path: string,
 	convert_record_path: string,
 	// Every input of the compile step but the list of the compiler.
@@ -984,13 +996,13 @@ module_convert_key :: proc(steps: Module_Steps, compile_key: blake3.Hash, compil
 }
 
 // module_step_needed says what a build does with a module. The compile
-// step is kept when its record has the build key of its inputs as they
-// are now and the linked file has its recorded hash. The conversion is
-// kept when, with that, its record has the key of the conversion as it is
-// now (the file of each import) and each of its outputs has its recorded
-// hash. reason says why a step runs.
+// step is kept when its record has the optimization mode and build key of
+// its inputs as they are now and the linked file has its recorded hash. The
+// conversion is kept when, with that, its record has the optimization mode
+// and key of the conversion as it is now (the file of each import) and each
+// of its outputs has its recorded hash. reason says why a step runs.
 module_step_needed :: proc(steps: Module_Steps, table: ^Input_File_Table) -> (step: Module_Step, reason: string) {
-	compile_record, same, why := recorded_build_has_its_key(steps.compile_record_path, steps.compile_inputs, table)
+	compile_record, same, why := recorded_build_has_its_key(steps.compile_record_path, steps.compile_inputs, table, steps.optimization)
 	if !same {
 		return .Built, why
 	}
@@ -1005,6 +1017,9 @@ module_step_needed :: proc(steps: Module_Steps, table: ^Input_File_Table) -> (st
 	convert_record, recorded := build_record_read(steps.convert_record_path)
 	if !recorded {
 		return .Converted, "no build record of the conversion"
+	}
+	if convert_record.optimization != steps.optimization {
+		return .Converted, OPTIMIZATION_CHANGED_REASON
 	}
 	if convert_record.key != convert_key {
 		return .Converted, CONVERSION_INPUT_CHANGED_REASON
@@ -1048,7 +1063,7 @@ module_step_records_write :: proc(steps: Module_Steps, table: ^Input_File_Table,
 		}
 	}
 	if compiled {
-		if !build_record_write_of_contents(steps.compile_record_path, compile_key, steps.compile_outputs, compiled_contents, source_files, load_files) {
+		if !build_record_write_of_contents(steps.compile_record_path, compile_key, steps.compile_outputs, compiled_contents, source_files, load_files, steps.optimization) {
 			_ = os.remove(steps.convert_record_path)
 			return false
 		}
@@ -1067,7 +1082,7 @@ module_step_records_write :: proc(steps: Module_Steps, table: ^Input_File_Table,
 	}
 	// The form of a record asks for a list of sources: the record of the
 	// conversion names those of the compile step, which its key covers.
-	return build_record_write(steps.convert_record_path, convert_key, steps.convert_outputs, source_files, load_files)
+	return build_record_write(steps.convert_record_path, convert_key, steps.convert_outputs, source_files, load_files, steps.optimization)
 }
 
 module_compile_record_path :: proc(name: string) -> string {
@@ -1081,17 +1096,22 @@ module_convert_record_path :: proc(name: string) -> string {
 // module_compile_key_inputs gives the inputs of the build key of the
 // compile step of a module, without the list of the compiler. It names no
 // import: the compile step reads none (modules.odin, module_compile).
-module_compile_key_inputs :: proc(build: foundation.Module_Build) -> (inputs: Build_Key_Inputs, ok: bool) {
+module_compile_key_inputs :: proc(build: foundation.Module_Build, optimization: Optimization_Mode = build_optimization_mode) -> (inputs: Build_Key_Inputs, ok: bool) {
 	settings := make([dynamic]string, context.temp_allocator)
 	append(&settings, ..build_inputs.module_programs[:])
+	append(&settings, "optimization", optimization_mode_argument(module_effective_optimization(build, optimization)))
 	append(&settings, "the compiler")
-	append(&settings, ..module_compile_command(build))
+	append(&settings, ..module_compile_command(build, optimization))
+	if fast_ir := module_fast_ir_command(build, optimization); fast_ir != nil {
+		append(&settings, "the fast IR pass")
+		append(&settings, ..fast_ir)
+	}
 	if pass := module_edge_counter_command(build); pass != nil {
 		append(&settings, "the edge counters")
 		append(&settings, ..pass)
 	}
 	append(&settings, "the object")
-	append(&settings, ..module_object_command(build))
+	append(&settings, ..module_object_command(build, optimization))
 	append(&settings, build.source, build.kernel ? "runs in kernel mode" : "runs in user mode", build.image ? "with the system library" : "with no system library")
 	// Each command names the folder of the store of the outside source,
 	// whose name holds the hash of its content: the source, the patches
@@ -1161,6 +1181,7 @@ module_steps_of :: proc(build: foundation.Module_Build) -> (steps: Module_Steps,
 	}
 	compile_inputs := module_compile_key_inputs(build) or_return
 	steps = {
+		optimization        = module_effective_optimization(build, build_optimization_mode),
 		compile_record_path = module_compile_record_path(build.name),
 		convert_record_path = module_convert_record_path(build.name),
 		compile_inputs      = compile_inputs,

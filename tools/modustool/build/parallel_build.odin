@@ -99,13 +99,14 @@ module_step_host_processes_run :: proc(tool_path: string, indexes: []int, step: 
 	// module of another build, with no error.
 	commands := make([][]string, len(indexes), context.temp_allocator)
 	for index, place in indexes {
-		command := make([]string, 6, context.temp_allocator)
+		command := make([]string, 7, context.temp_allocator)
 		command[0] = tool_path
 		command[1] = "module"
 		command[2] = foundation.module_builds[index].name
 		command[3] = test_build_checks ? "with_checks" : "without_checks"
 		command[4] = debug_information ? "with_debug_information" : "without_debug_information"
-		command[5] = step
+		command[5] = optimization_mode_argument(build_optimization_mode)
+		command[6] = step
 		commands[place] = command
 	}
 	outcomes := foundation.build_host_processes_run(commands, host_processes, context.temp_allocator)
@@ -254,44 +255,82 @@ build_modules_in_parallel :: proc() -> bool {
 	return true
 }
 
+// The parsed arguments of the command `module`.
+Module_Command_Options :: struct {
+	name:              string,
+	checks:            bool,
+	debug_information: bool,
+	optimization:      Optimization_Mode,
+	step:              string, // "", MODULE_STEP_COMPILE or MODULE_STEP_CONVERT.
+}
+
+// module_arguments_parse reads the arguments of `modustool module`.
+module_arguments_parse :: proc(args: []string) -> (options: Module_Command_Options, ok: bool) {
+	if len(args) != 4 && len(args) != 5 {
+		return {}, false
+	}
+	if args[0] == "" || (args[1] != "with_checks" && args[1] != "without_checks") || (args[2] != "with_debug_information" && args[2] != "without_debug_information") {
+		return {}, false
+	}
+	optimization, mode_ok := optimization_mode_of_argument(args[3])
+	if !mode_ok {
+		return {}, false
+	}
+	step := ""
+	if len(args) == 5 {
+		if args[4] != MODULE_STEP_COMPILE && args[4] != MODULE_STEP_CONVERT {
+			return {}, false
+		}
+		step = args[4]
+	}
+	return {
+		name              = args[0],
+		checks            = args[1] == "with_checks",
+		debug_information = args[2] == "with_debug_information",
+		optimization      = optimization,
+		step              = step,
+	}, true
+}
+
 // The command module: build one module of the table in this process, or
 // run one of its two steps. The parallel build runs each step in its own
 // process; a developer runs the command with no step to build one module.
 run_module :: proc(args: []string) -> int {
-	step_is_known := len(args) == 3 || (len(args) == 4 && (args[3] == MODULE_STEP_COMPILE || args[3] == MODULE_STEP_CONVERT))
-	if !step_is_known || (args[1] != "with_checks" && args[1] != "without_checks") || (args[2] != "with_debug_information" && args[2] != "without_debug_information") {
-		fmt.eprintln("modustool: module <name> with_checks|without_checks with_debug_information|without_debug_information [compile|convert]")
+	options, ok := module_arguments_parse(args)
+	if !ok {
+		fmt.eprintln("modustool: module <name> with_checks|without_checks with_debug_information|without_debug_information speed|none [compile|convert]")
 		return foundation.EXIT_USAGE
 	}
-	test_build_checks = args[1] == "with_checks"
+	test_build_checks = options.checks
 	// A module with no debug information goes to a folder of its own: the
 	// modules of the build stay as they are.
-	debug_information = args[2] == "with_debug_information"
+	debug_information = options.debug_information
+	build_optimization_mode = options.optimization
 	foundation.module_build_folder = debug_information ? foundation.MODULE_BUILD_FOLDER : MODULE_BUILD_FOLDER_WITHOUT_DEBUG_INFORMATION
 	// A developer who builds one module passes no parallel build: the rule
 	// of the imports is read here. A step of the parallel build has a
 	// parent that read it.
-	if len(args) == 3 {
+	if options.step == "" {
 		if _, imports_hold := library_imports_hold(); !imports_hold {
 			return foundation.EXIT_FAILURE
 		}
 	}
 	for build in foundation.module_builds {
-		if build.name != args[0] {
+		if build.name != options.name {
 			continue
 		}
 		built: bool
-		switch {
-		case len(args) == 3:
+		switch options.step {
+		case "":
 			built = build_module(build)
-		case args[3] == MODULE_STEP_COMPILE:
+		case MODULE_STEP_COMPILE:
 			built = module_compile(build)
-		case:
+		case MODULE_STEP_CONVERT:
 			built = module_convert(build)
 		}
 		return built ? 0 : foundation.EXIT_FAILURE
 	}
-	fmt.eprintfln("modustool: module: no module %s", args[0])
+	fmt.eprintfln("modustool: module: no module %s", options.name)
 	return foundation.EXIT_USAGE
 }
 
