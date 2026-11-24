@@ -1,0 +1,4 @@
+name: db_browser
+imports: drawing text_rendering
+defines: DRAWING_THROUGH_MODULE=true
+library: no

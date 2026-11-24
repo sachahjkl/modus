@@ -1,35 +1,118 @@
 module: sqlite
-about: SQLite 3.54.1 over the thin libc and the VFS of modus: a session runs SQL on a database in lent bytes.
+about: SQLite 3.54.1 over the thin libc and store-backed VFS of modus: typed records, tables, dirty-page tracking, and isolated execution with zero dangling pointers.
 library: no
 
-export sqlite_session_open
-  about: Open main.db over a lent arena and lent store bytes, the store made anew when fresh is 1; give the SQLite code.
-  param arena: integer
-  param arena_size: integer
-  param store: integer
-  param store_size: integer
-  param fresh: integer
-  result: integer
+enum Value_Kind u8
+  member none = 0
+  member null = 1
+  member integer = 2
+  member real_bits = 3
+  member text = 4
+  member blob = 5
 
-export sqlite_session_execute
-  about: Run each statement of a SQL text; write the rows or the message; give the SQLite code.
-  param sql: integer
-  param output: integer
-  param capacity: integer
-  result: integer
+record Error_Record size=56
+  field kind offset=0 type=i64
+  field unit offset=8 type=i64
+  field operation offset=16 type=i64
+  field argument offset=24 type=i64
+  field value offset=32 type=i64
+  field limit offset=40 type=i64
+  field found offset=48 type=i64
 
-export sqlite_session_changes
-  about: Give the count of rows that the last statement changed.
-  result: integer
+record Open_Options size=32
+  field fresh offset=0 type=u8
+  field read_only offset=1 type=u8
+  field page_size offset=4 type=u32
+  field random_seed offset=8 type=u64
+  field database_bytes offset=16 type=size_bytes
+  field heap_bytes offset=24 type=u32
 
-export sqlite_session_close
-  about: Close the database and end SQLite; give the SQLite code.
-  result: integer
+record Session_Info size=32
+  field version_number offset=0 type=i64
+  field database_bytes offset=8 type=size_bytes
+  field dirty_pages offset=16 type=u64
+  field page_size offset=24 type=u32
+  field open offset=28 type=u8
+  field read_only offset=29 type=u8
 
-export sqlite_session_database_size
-  about: Give the size of main.db in the store, or -1.
-  result: integer
+record Column_Row size=72
+  field column_index offset=0 type=u32
+  field declared_kind offset=4 type=u8
+  field name_length offset=5 type=u8
+  field name_truncated offset=6 type=u8
+  field name offset=8 type=text(64)
 
-export sqlite_version_number
-  about: Give the version number of SQLite.
+record Cell_Row size=32
+  field row_index offset=0 type=u32
+  field column_index offset=4 type=u32
+  field value_kind offset=8 type=u8
+  field truncated offset=9 type=u8
+  field integer_or_bits offset=16 type=i64
+  field payload_offset offset=24 type=u32
+  field payload_length offset=28 type=u32
+
+record Query_Summary size=40
+  field column_count offset=0 type=u32
+  field row_count offset=4 type=u32
+  field changes offset=8 type=i64
+  field dirty_pages offset=16 type=u64
+  field database_bytes offset=24 type=size_bytes
+  field truncated_rows offset=32 type=u8
+  field has_rows offset=33 type=u8
+
+record Dirty_Range_Row size=16
+  field byte_offset offset=0 type=u64
+  field byte_length offset=8 type=u64
+
+export session_open
+  about: Open main.db using per-call database bytes, validate existing databases, and append one Session_Info row.
+  param options: record(Open_Options)
+  param database: bytes(change)
+  param info: table(Session_Info, append)
+  result: integer
+  error_record: Error_Record
+
+export session_execute
+  about: Execute SQL statements over per-call database bytes and write typed columns, cells, payload, diagnostic, and one Query_Summary row.
+  param sql: text
+  param database: bytes(change)
+  param columns: table(Column_Row, append)
+  param cells: table(Cell_Row, append)
+  param payload: bytes(append)
+  param diagnostic: bytes(append)
+  param summary: table(Query_Summary, append)
+  result: integer
+  error_record: Error_Record
+
+export session_dirty_ranges
+  about: Append coalesced dirty 4 KiB byte ranges of main.db clamped to current database_bytes and return the total range count.
+  param ranges: table(Dirty_Range_Row, append)
+  result: integer
+  error_record: Error_Record
+
+export session_mark_synced
+  about: Clear the dirty-page bitmap of main.db after the caller commits modified ranges to storage.
+  result: integer
+  error_record: Error_Record
+
+export session_info
+  about: Append one Session_Info row with the current session state, database size, and dirty page count.
+  param info: table(Session_Info, append)
+  result: integer
+  error_record: Error_Record
+
+export session_last_diagnostic
+  about: Append the last SQLite diagnostic UTF-8 text into diagnostic and return its byte length.
+  param diagnostic: bytes(append)
+  result: integer
+  error_record: Error_Record
+
+export session_close
+  about: Close main.db and shut down SQLite using per-call database bytes.
+  param database: bytes(change)
+  result: integer
+  error_record: Error_Record
+
+export version_number
+  about: Return the SQLite library version number.
   result: integer

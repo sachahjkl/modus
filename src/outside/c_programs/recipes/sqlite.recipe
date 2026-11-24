@@ -45,8 +45,8 @@ flag: -fno-unwind-tables
 flag: -fno-common
 include: thin_libc/include
 include: thin_libc
-test: create a table, insert 10000 rows in one transaction, and compare SELECT SUM with the sum of the rows
-test: update and delete rows, roll back a transaction, and find the rows of the last commit
-test: refuse a syntax error, a constraint, an output too small and a store too small, with the code of SQLite
-test: close, open again over the same store, and find the rows
+test: create a table, insert 10000 rows in one transaction, and verify typed Column_Row, Cell_Row, and Query_Summary results
+test: update, delete, VACUUM shrink, clamp dirty ranges, sync incrementally, and reopen over the synced database bytes
+test: refuse a syntax error, multi-statement rollback, read-only write, corrupted bytes, and an out-of-budget query with typed Call_Outcome and Error_Record
+test: preserve embedded delimiters and binary blobs without truncation or dangling pointers across calls
 test: run PRAGMA integrity_check after each test
