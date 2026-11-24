@@ -1315,6 +1315,7 @@ root_loop_pass :: proc "contextless" () {
 	wait := system.wait_begin(&root_wait_set)
 	control_ring_serve()
 	screen_budgets_drain() // screen_budgets.odin
+	budget_growth_drain() // budget_growth.odin
 	for &item in started {
 		if item.process != 0 && item.requests.head != nil {
 			root_ring_serve(&item)
@@ -1364,7 +1365,7 @@ root_loop_pass :: proc "contextless" () {
 	// read of the entropy device in flight (entropy.odin), the hang
 	// bound of a start policy that runs, and any in-flight request to
 	// the delegated wiring service.
-	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline(), screen_budgets_drain_wake(), picker_listing_deadline(), wide_grant_deadline))
+	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline(), screen_budgets_drain_wake(), budget_growth_drain_wake(), picker_listing_deadline(), wide_grant_deadline))
 }
 
 // control_ring_serve answers the control ring of the compositor: a start
@@ -2683,6 +2684,7 @@ reap :: proc "contextless" () {
 			if .Screen_Capture in item.start_grant_set.grants {
 				screen_budget_stopped(.Service, system.name_of(item.name[:]))
 			}
+			budget_growth_stopped(&item)
 			// A compositor that this service stopped for the rescue is
 			// started again by the rescue: it is no absence of the screen.
 			stopped_for_the_rescue := item.stop_asked_by_root_service

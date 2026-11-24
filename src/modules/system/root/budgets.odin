@@ -6,6 +6,7 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/reference_screen"
 import "modus:contract/ring"
+import "modus:contract/root_plan_values"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
 import "modus:contract/value_kinds"
@@ -108,6 +109,9 @@ plan_screen_row_count: int
 // plan_screen_pages_of gives the pages that a row of the plan gives the
 // screen pictures of a module, or 0: no row.
 plan_screen_pages_of :: proc "contextless" (name: string) -> u64 {
+	if policy, _, _ := module_budget_policy_for(name); policy.has_screen_pages {
+		return policy.screen_pages
+	}
 	for &row in plan_screen_rows[:plan_screen_row_count] {
 		if system.name_of(row.name[:]) == name {
 			return row.pages
@@ -174,9 +178,13 @@ log_records_exceptions := [?]Log_Records_Exception {
 }
 
 // processor_of gives the limit of processor time of a process of the boot
-// image, by its name, or false: one processor for each thread. A disk
-// process never asks: its name gives nothing.
+// image, from its plan row when present, else from the fallback exceptions,
+// else false (one processor for each thread). A disk process never asks:
+// its name gives nothing.
 processor_of :: proc "contextless" (name: string) -> (processor: u64, found: bool) {
+	if policy, _, _ := module_budget_policy_for(name); policy.has_processor {
+		return policy.processor, true
+	}
 	for item in processor_exceptions {
 		if item.name == name {
 			return item.processor, true
@@ -186,14 +194,56 @@ processor_of :: proc "contextless" (name: string) -> (processor: u64, found: boo
 }
 
 // log_records_of gives the log records of each second of a process of the
-// boot image, by its name.
+// boot image, from its plan row when present, else from the fallback
+// exceptions, else LOG_RECORDS_OF_A_PROCESS.
 log_records_of :: proc "contextless" (name: string) -> u64 {
+	if policy, _, _ := module_budget_policy_for(name); policy.has_log_records {
+		return policy.log_records
+	}
 	for item in log_records_exceptions {
 		if item.name == name {
 			return item.log_records
 		}
 	}
 	return LOG_RECORDS_OF_A_PROCESS
+}
+
+// planned_size_of gives the target page size for a module of the boot image:
+// its plan row (pages or share parts of machine_at_start.pages) when set,
+// else system.budget_size(floor_pages, largest_budget.pages, growth_factor).
+// A plan row below floor_pages raises to floor_pages and sets row_below_floor.
+planned_size_of :: proc "contextless" (name: string, floor_pages: u64) -> (size: u64, row_below_floor: bool, row_pages: u64) {
+	policy, _, _ := module_budget_policy_for(name)
+	if planned, has_size := root_plan_values.planned_pages_of(policy, machine_at_start.pages); has_size {
+		if planned < floor_pages {
+			return floor_pages, true, planned
+		}
+		step := u64(op.MEMORY_LIST_ENTRIES)
+		rounded := planned > max(u64) - (step - 1) ? planned : ((planned + step - 1) / step) * step
+		return rounded, false, planned
+	}
+	return system.budget_size(floor_pages, largest_budget.pages, growth_factor), false, 0
+}
+
+// disk_processes_class_budget gives the shared budget amounts and processor
+// time of the disk processes class, applying any plan overrides from the
+// root plan over the defaults in modus:disk_process.
+disk_processes_class_budget :: proc "contextless" () -> (amounts: system.Budget_Amounts, processor: u64) {
+	amounts = disk_process.PROCESSES_BUDGET
+	processor = disk_process.SHARED_PROCESSOR_TIME
+	if root_plan_in_force.disk_processes_pages != 0 {
+		amounts.pages = root_plan_in_force.disk_processes_pages
+	}
+	if root_plan_in_force.disk_processes_processes != 0 {
+		amounts.processes = root_plan_in_force.disk_processes_processes
+	}
+	if root_plan_in_force.disk_processes_threads != 0 {
+		amounts.threads = root_plan_in_force.disk_processes_threads
+	}
+	if root_plan_in_force.disk_processes_processor != 0 {
+		processor = root_plan_in_force.disk_processes_processor
+	}
+	return amounts, processor
 }
 
 // start_floor_of gives the floor of the start of a module: the floor of its
@@ -292,7 +342,8 @@ start_list_reserve :: proc "contextless" (bytes: []u8) {
 			continue
 		}
 		names[count] = module_name
-		sizes[count] = {floor = floor.pages, size = system.budget_size(floor.pages, largest_budget.pages, growth_factor)}
+		target_size, _, _ := planned_size_of(module_name, floor.pages)
+		sizes[count] = {floor = floor.pages, size = target_size}
 		count += 1
 	}
 	own, _ := system.budget_read()
@@ -332,7 +383,8 @@ start_list_kept_pages :: proc "contextless" (rows: []string) -> u64 {
 	for part, index in system_part_names {
 		parts[index] = {name = part, pages = part == "root" || part == policy_name ? 0 : floor_pages(part)}
 	}
-	disk_pages := disk_processes_budget == 0 ? disk_process.PROCESSES_BUDGET.pages : 0
+	disk_class, _ := disk_processes_class_budget()
+	disk_pages := disk_processes_budget == 0 ? disk_class.pages : 0
 	renderers := CONSOLE_RENDERERS
 	return start_policy_rules.kept_pages_of_start_list(policy_name, floor_pages(policy_name), parts[:], renderers[:], rows, disk_pages, largest_budget.pages)
 }
@@ -372,7 +424,10 @@ budget_of :: proc "contextless" (file: []u8, name: string, principal: u64 = prin
 		system.log_fact(.Warning, Start_Refused_Floor{floor = value_kinds.Size_In_Pages(min(floor.pages, u64(max(i64)))), held = value_kinds.Size_In_Pages(min(payable, u64(max(i64)))), refused_process = module_name_field(name), paying_budget = text_field("this service", 24)})
 		return {}, false
 	}
-	size := system.budget_size(floor.pages, largest_budget.pages, growth_factor)
+	size, row_below_floor, row_pages := planned_size_of(name, floor.pages)
+	if row_below_floor {
+		system.log_fact(.Info, Budget_Plan_Row_Below_Floor{row_pages = value_kinds.Size_In_Pages(min(row_pages, u64(max(i64)))), floor_pages = value_kinds.Size_In_Pages(min(floor.pages, u64(max(i64)))), started_process = module_name_field(name)})
+	}
 	if divided, found := system.start_list_reserve_size(&start_list_reserves, name); found {
 		size = max(divided, floor.pages)
 		budget.list_row = true
@@ -405,7 +460,7 @@ disk_processes_budget_get :: proc "contextless" (name: string) -> (budget: syste
 		return disk_processes_budget, .Ok
 	}
 	own, _ := system.budget_read()
-	shared := disk_process.PROCESSES_BUDGET
+	shared, shared_processor := disk_processes_class_budget()
 	// The rows of the start list that did not start keep their sizes: the
 	// budget of the disk processes takes no page of them.
 	reserved := start_list_reserved_all()
@@ -414,7 +469,7 @@ disk_processes_budget_get :: proc "contextless" (name: string) -> (budget: syste
 		system.log_fact(.Warning, Disk_Processes_Budget_Refused_Reserved{needed = value_kinds.Size_In_Pages(min(shared.pages, u64(max(i64)))), held = value_kinds.Size_In_Pages(min(payable, u64(max(i64)))), reserved = value_kinds.Size_In_Pages(min(reserved, u64(max(i64)))), refused_process = module_name_field(name)})
 		return 0, .No_Budget
 	}
-	budget, status = system.budget_create({pages = shared.pages, processes = shared.processes, threads = shared.threads, processor = min(disk_process.SHARED_PROCESSOR_TIME, own.processor), log_records = shared.processes * LOG_RECORDS_OF_A_PROCESS})
+	budget, status = system.budget_create({pages = shared.pages, processes = shared.processes, threads = shared.threads, processor = min(shared_processor, own.processor), log_records = shared.processes * LOG_RECORDS_OF_A_PROCESS})
 	if status != .Ok {
 		system.log_fact(.Warning, Disk_Processes_Budget_Refused{status = status})
 		return 0, status

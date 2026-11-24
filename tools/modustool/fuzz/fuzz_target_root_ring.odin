@@ -136,7 +136,7 @@ fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, start_grant
 		return .Debugger in start_grant_set
 	case .Connect:
 		return .Root_Ring in start_grant_set || .Connect in start_grant_set && listed
-	case .Disconnect:
+	case .Disconnect, .Budget_Grow:
 		return true
 	case .Machine_Usable:
 		return .Start_Policy in start_grant_set

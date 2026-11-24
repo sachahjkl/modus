@@ -335,7 +335,7 @@ read_protect_range :: proc "contextless" (process: ^Process, address: u64, page_
 // change costs, as memory_protect counts it (protect_walk_count). A range
 // that no mapping covers counts its pages.
 @(private = "file")
-read_protect_walk :: proc "contextless" (process: ^Process, address: u64, count: u64) -> (walked: u64) {
+read_protect_walk :: proc "contextless" (process: ^Process, address: u64, count: u64, flags: op.Map_Flags) -> (walked: u64) {
 	at, taken := caller_lock(process)
 	defer process_unlock(at, taken)
 	for index in 0 ..< min(count, op.RANGE_TABLE_CAPACITY) {
@@ -346,7 +346,7 @@ read_protect_walk :: proc "contextless" (process: ^Process, address: u64, count:
 		cost := min(range.page_count, op.RANGE_TABLE_PAGE_LIMIT + 1)
 		for &mapping in process.mappings {
 			if mapping.page_count != 0 && range.address >= mapping.address && (range.address - mapping.address) / PAGE_SIZE + range.page_count <= mapping.page_count {
-				cost = protect_walk_count(&mapping, range)
+				cost = protect_walk_count(&mapping, range, flags)
 				break
 			}
 		}
@@ -1456,6 +1456,8 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 			record_set(record, .Too_Long, .Records, 4, v[3], op.RANGE_TABLE_CAPACITY, 0)
 		case v[4] & ~op.COMMIT_FLAGS_KNOWN != 0:
 			record_set(record, .Bad_Flags, .None, 5, v[4], op.COMMIT_FLAGS_KNOWN, 0)
+		case transmute(op.Commit_Flags)v[4] >= {.Decommit, .Frames_Now}:
+			record_set(record, .Bad_Value, .None, 5, v[4], 0, 0)
 		case:
 			if pages := read_table_pages(process, v[2], v[3], size_of(op.Page_Range), offset_of(op.Page_Range, page_count)); pages > op.RANGE_TABLE_PAGE_LIMIT {
 				record_set(record, .Too_Long, .Pages, 3, pages, op.RANGE_TABLE_PAGE_LIMIT, 0)
@@ -1475,7 +1477,7 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 		case:
 			// The entries that the call changes, as the kernel counts them:
 			// one for each large page, the present pages of a whole mapping.
-			if pages := read_protect_walk(process, v[0], v[1]); v[3] == 0 && pages > op.RANGE_TABLE_PAGE_LIMIT {
+			if pages := read_protect_walk(process, v[0], v[1], transmute(op.Map_Flags)v[2]); v[3] == 0 && pages > op.RANGE_TABLE_PAGE_LIMIT {
 				record_set(record, .Too_Long, .Pages, 1, pages, op.RANGE_TABLE_PAGE_LIMIT, 0)
 			} else {
 				// Write and Execute together; No_Access with another flag;

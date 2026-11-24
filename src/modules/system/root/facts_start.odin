@@ -56,6 +56,52 @@ Screen_Budget_Ended_At_Stop :: struct {
 	holder: value_kinds.Module_Name_Field,
 }
 
+// A plan budget row for a process was smaller than its start floor: the
+// starter gave the floor instead and logged both amounts.
+@(log_fact = "root: the plan budget of {started_process} is {row_pages}, below its floor {floor_pages}: the starter gives the floor")
+Budget_Plan_Row_Below_Floor :: struct {
+	row_pages:       value_kinds.Size_In_Pages,
+	floor_pages:     value_kinds.Size_In_Pages,
+	started_process: value_kinds.Module_Name_Field,
+}
+
+// A process received a second budget handle through Budget_Grow.
+@(log_fact = "root: gave {requester} a growth budget of {pages}, growth {growth}")
+Budget_Grow_Granted :: struct {
+	pages:     value_kinds.Size_In_Pages,
+	growth:    u64,
+	requester: value_kinds.Module_Name_Field,
+}
+
+// A Budget_Grow request was refused: no free-page count is reported.
+@(log_fact = "root: refused a growth budget of {pages} for {requester}: {grow_refusal}")
+Budget_Grow_Refused :: struct {
+	pages:        value_kinds.Size_In_Pages,
+	requester:    value_kinds.Module_Name_Field,
+	grow_refusal: [96]u8,
+}
+
+// A process released one extra budget handle from Budget_Grow.
+@(log_fact = "root: {holder} released growth budget {growth}: its pages return when no object of it stays")
+Budget_Grow_Released :: struct {
+	growth: u64,
+	holder: value_kinds.Module_Name_Field,
+}
+
+// A process asked to release a growth budget that it does not hold.
+@(log_fact = "root: refused the release of growth budget {growth} from {holder}, which holds none of it")
+Budget_Grow_Release_Refused :: struct {
+	growth: u64,
+	holder: value_kinds.Module_Name_Field,
+}
+
+// A process stopped while holding one or more extra budgets from Budget_Grow.
+@(log_fact = "root: {holder} stopped with {count} growth budgets open: their pages return")
+Budget_Grow_Ended_At_Stop :: struct {
+	count:  u64,
+	holder: value_kinds.Module_Name_Field,
+}
+
 // The holder of Display starts on a machine with no screen, on the screen
 // of memory that its start row gives (src/md/features/screen_of_memory.md).
 @(log_fact = "root: the compositor starts on a screen of memory of {width} x {height}: the machine has no screen")

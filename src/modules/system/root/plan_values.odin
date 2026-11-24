@@ -238,13 +238,29 @@ root_plan_in_force: root_plan_values.Root_Plan = root_plan_values.ROOT_PLAN_DEFA
 
 // root_plan_read reads the values of the owner `root` at the start of the
 // holder of the display and on each committed plan change, updates the budget
-// share in force, and logs them once.
+// share and growth factor in force, and logs them once.
 root_plan_read :: proc "contextless" () {
 	values, _ := plan_values_of(root_plan_values.OWNER)
 	plan, sizes_refused := root_plan_values.root_plan_of(values)
 	root_plan_in_force = plan
 	_ = budget_share_take(root_plan_in_force.budget_share)
+	_ = growth_factor_take(root_plan_in_force.default_growth_factor)
 	system.log_fact(.Info, Root_Plan_Values_Read{budget_share = plan.budget_share, start_width = u64(plan.memory_screen_start_width), start_height = u64(plan.memory_screen_start_height), most_width = u64(plan.memory_screen_most_width), most_height = u64(plan.memory_screen_most_height), sizes_refused = sizes_refused ? 1 : 0})
+}
+
+// module_budget_policy_for gives the plan budget policy row of a module of
+// the boot image, keyed by its role name (if it holds a role) or its module
+// name. Returns zero policy when the plan gives no row.
+module_budget_policy_for :: proc "contextless" (name: string) -> (policy: root_plan_values.Module_Budget_Policy, size_conflict: bool, reserve_over_ceiling: bool) {
+	owner := role_policy.store_name_of_module(&role_holder_names, name)
+	values, found := plan_values_of(owner)
+	if !found && owner != name {
+		values, found = plan_values_of(name)
+	}
+	if !found {
+		return {}, false, false
+	}
+	return root_plan_values.module_budget_policy_of(values)
 }
 
 // plan_values_owner_pages_create creates the pages of the owners. A

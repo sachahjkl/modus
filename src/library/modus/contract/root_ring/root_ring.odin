@@ -586,6 +586,67 @@ Root_Command :: enum u32 {
 	// number with no record or no identifier, a key of zero bytes, and no
 	// storage service to take it.
 	Principal_Storage_Key = 42,
+	// Budget_Grow asks for a second budget handle for one purpose of the
+	// caller, or releases one that it holds
+	// (src/md/features/module_budget_request.md, "The growth is a second
+	// budget"): values[0] is a Budget_Grow_Step (Grow or Release).
+	//
+	// Grow: values[1] is the requested pages (non-zero), values[2..6] 0.
+	// Refused at the border before reading starter free pages when the plan
+	// gives the process no growth ceiling. Rate-limited per process to one
+	// decision per period. On success, completion values[0] is the new budget
+	// handle (Read, Spend), values[1] the pages, values[2] the growth serial.
+	// On refusal, completion carries Budget_Or_Capacity_Exhausted (or
+	// Grant_Or_Right_Missing for No_Row) and the error record names no free
+	// page count.
+	//
+	// Release: values[1] is the non-zero growth serial, values[2..6] 0. The
+	// root service revokes the caller's handle and closes its own once all
+	// pages return.
+	Budget_Grow = 43,
+}
+
+// The step of a Budget_Grow, in values[0].
+Budget_Grow_Step :: enum u64 {
+	Grow    = 1,
+	Release = 2,
+}
+
+// budget_grow_step_of_word is the border of values[0] of a Budget_Grow.
+budget_grow_step_of_word :: proc "contextless" (word: u64) -> (step: Budget_Grow_Step, ok: bool) {
+	return enum_word.member_of_word(Budget_Grow_Step, word)
+}
+
+// The words of a Budget_Grow that passed its border.
+Budget_Grow_Words :: struct {
+	step:   Budget_Grow_Step,
+	pages:  u64, // Grow: requested pages, never 0.
+	growth: u64, // Release: growth serial, never 0.
+}
+
+// budget_grow_words_of_values is the border of the values of a Budget_Grow:
+// a step that names no member, a 0 pages/growth word, or a trailing non-zero
+// word is refused with its 1-based place (1 to 7) for its error record.
+budget_grow_words_of_values :: proc "contextless" (values: [7]u64) -> (words: Budget_Grow_Words, refused_place: int, ok: bool) {
+	step, step_ok := budget_grow_step_of_word(values[0])
+	if !step_ok {
+		return {}, 1, false
+	}
+	if values[1] == 0 {
+		return {}, 2, false
+	}
+	switch step {
+	case .Grow:
+		words = {step = step, pages = values[1]}
+	case .Release:
+		words = {step = step, growth = values[1]}
+	}
+	for place in 2 ..< len(values) {
+		if values[place] != 0 {
+			return {}, place + 1, false
+		}
+	}
+	return words, 0, true
 }
 
 // The step of a Screen_Budget, in values[0].
@@ -906,6 +967,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Wide_Grant_Second_Connection = .Remote_Clients,
 	.Plan_Values            = .Plans,
 	.Ready                  = .Nobody,
+	.Budget_Grow            = .Each_Ring,
 }
 
 // The start grants that give a process a root ring. A process with none of
@@ -1381,6 +1443,7 @@ root_command_names := [Root_Command]string {
 	.Wide_Grant_Second_Connection = "Wide_Grant_Second_Connection",
 	.Plan_Values            = "Plan_Values",
 	.Ready                  = "Ready",
+	.Budget_Grow            = "Budget_Grow",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -1430,6 +1493,7 @@ root_first_argument_names := [Root_Command]string {
 	.Wide_Grant_Second_Connection = "key",
 	.Plan_Values            = "step",
 	.Ready                  = "values",
+	.Budget_Grow            = "step",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -1480,6 +1544,7 @@ root_second_argument_names := [Root_Command]string {
 	.Wide_Grant_Second_Connection = "",
 	.Plan_Values            = "",
 	.Ready                  = "",
+	.Budget_Grow            = "pages",
 }
 
 // command_of_record reads the command that an error record names: the

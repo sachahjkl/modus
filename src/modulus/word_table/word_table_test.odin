@@ -29,6 +29,22 @@ a_word_has_an_address_only_in_a_frame_of_its_process :: proc(t: ^testing.T) {
 	_, one := word_physical(0, 0x1000_0010)
 	_, other := word_physical(0, 0x2000_0010)
 	testing.expect(t, !one && !other)
+
+	// 1 GiB entries: present + user + large required; preserves all 30 offset bits.
+	_, g1_no_large := word_physical_of_size(0x4000_0000 | ENTRY_PRESENT | ENTRY_USER, 0x7123_4568, .Size_1G)
+	testing.expect(t, !g1_no_large)
+	_, g1_kernel := word_physical_of_size(0x4000_0000 | ENTRY_PRESENT | ENTRY_LARGE, 0x7123_4568, .Size_1G)
+	testing.expect(t, !g1_kernel)
+	_, g2_no_large := word_physical_of_size(0x0040_0000 | ENTRY_PRESENT | ENTRY_USER, 0x7012_3454, .Size_2M)
+	testing.expect(t, !g2_no_large)
+	_, s4_with_large := word_physical_of_size(0x0012_3000 | ENTRY_PRESENT | ENTRY_USER | ENTRY_LARGE, 0x7000_0010, .Size_4K)
+	testing.expect(t, !s4_with_large)
+	giant, giant_ok := word_physical_of_size(0x1_4000_0000 | ENTRY_PRESENT | ENTRY_USER | ENTRY_LARGE | 1 << 63, 0x7_3FFF_FFFC, .Size_1G)
+	testing.expect(t, giant_ok)
+	testing.expect_value(t, giant, u64(0x1_7FFF_FFFC))
+	giant_zero, giant_zero_ok := word_physical_of_size(0x0_8000_0000 | ENTRY_PRESENT | ENTRY_USER | ENTRY_LARGE, 0x4_0000_0000, .Size_1G)
+	testing.expect(t, giant_zero_ok)
+	testing.expect_value(t, giant_zero, u64(0x0_8000_0000))
 }
 
 // A table of 16 frames on the host.

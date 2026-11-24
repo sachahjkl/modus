@@ -2,6 +2,7 @@ package kernel
 
 import "modulus:budget_peak"
 import "base:intrinsics"
+import "modulus:frame_runs"
 import op "modus:contract/operation"
 import "modulus:mapping_order"
 import "modulus:word_table"
@@ -65,25 +66,341 @@ table_pages :: proc "contextless" (counts: []u64) -> (sum: u64) {
 	return sum
 }
 
+// demotion_table_push parks a zeroed 4 KiB page table frame on process for
+// zero-allocation demotion later. Caller holds process lock.
+demotion_table_push :: proc "contextless" (process: ^Process, table_phys: u64) {
+	direct(table_phys, u64)^ = process.demotion_tables
+	process.demotion_tables = table_phys
+	process.demotion_table_count += 1
+}
+
+// demotion_table_pop pops one zeroed 4 KiB page table frame parked on
+// process. Caller holds process lock.
+demotion_table_pop :: proc "contextless" (process: ^Process) -> u64 {
+	if process.demotion_tables == 0 {
+		page_table_count_broken("parked demotion table list empty")
+	}
+	table_phys := process.demotion_tables
+	process.demotion_tables = direct(table_phys, u64)^
+	direct(table_phys, u64)^ = 0
+	process.demotion_table_count -= 1
+	return table_phys
+}
+
+// pt_has_present_entries reports whether a level-1 page table has any
+// present entry.
+@(private = "file")
+pt_has_present_entries :: proc "contextless" (pt: u64) -> bool {
+	entries := direct(pt, [512]u64)
+	for e in entries {
+		if e & PAGE_PRESENT != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// mapping_install_present_range installs page table entries (1 GiB, 2 MiB,
+// or 4 KiB) for pages in [first_in_mapping, first_in_mapping + count) of
+// mapping that already have physical frames in region and no present entry
+// yet. Caller holds process lock; all level-1 tables of mapping are held.
+//
+// Replaced upper-level tables stay intact until after the new large entry is
+// visible, every sibling CPU has reloaded cr3 (processor_sync), and this CPU
+// has reloaded cr3 (clearing paging-structure caches per Intel SDM Vol. 3A).
+// Only then are replaced tables zeroed or parked onto process.demotion_tables.
+mapping_install_present_range :: proc "contextless" (process: ^Process, mapping: ^Mapping, region: ^Region, first_in_mapping: u64, count: u64) {
+	if mapping.large || mapping.bits == 0 || mapping_is_switching(mapping) {
+		return
+	}
+	allow_runs := !region.contiguous && frame_runs_arch_enabled() && process_records[index_of_process(process)].mode == .None && intrinsics.atomic_load(&region.marked_pages) == 0
+	flush_and_park_pts :: proc "contextless" (process: ^Process, replaced: []u64) {
+		if len(replaced) == 0 {
+			return
+		}
+		intrinsics.atomic_thread_fence(.Seq_Cst)
+		processor_sync(processors_with_table(process.table))
+		if self := processor_self(); intrinsics.atomic_load(&self.table) == process.table {
+			control_register_3_write(process.table)
+		}
+		for pt in replaced {
+			demotion_table_push(process, pt)
+		}
+	}
+	// Stack batch of replaced level-1 tables (512 bytes, 128 MiB per shootdown).
+	replaced_pts: [64]u64
+	replaced_count := 0
+	end := first_in_mapping + count
+	for page := first_in_mapping; page < end; {
+		addr := mapping.address + page * PAGE_SIZE
+		region_page := mapping.first + page
+		remaining := end - page
+		// Try 1 GiB hardware entry when aligned in both virtual address and
+		// region offset and backed by an intact 1 GiB run.
+		if allow_runs && frame_runs_table.supports_1g && addr % word_table.GIANT_PAGE_SIZE == 0 && region_page % frame_runs.RUN_1G_PAGES == 0 && remaining >= frame_runs.RUN_1G_PAGES {
+			slot0 := intrinsics.atomic_load(region_slot(region, region_page))
+			if slot0 & SLOT_RUN_1G != 0 && slot0 & PAGE_ADDRESS != 0 && slot0 & SLOT_MARKS == 0 {
+				if pdpte := page_directory_pointer_entry(process.table, addr); pdpte != nil && pdpte^ & PAGE_PRESENT != 0 && pdpte^ & PAGE_LARGE == 0 && table_held_count(pdpte^) == 512 {
+					pd := pdpte^ & PAGE_ADDRESS
+					pd_entries := direct(pd, [512]u64)
+					all_empty := true
+					for k in 0 ..< 512 {
+						pe := pd_entries[k]
+						if pe & PAGE_PRESENT == 0 || pe & PAGE_LARGE != 0 || table_held_count(pe) != 512 || pt_has_present_entries(pe & PAGE_ADDRESS) {
+							all_empty = false
+							break
+						}
+					}
+					if all_empty {
+						// Replace PDPTE first while pd and its 512 PTs stay
+						// intact, shoot down all CPUs + local paging-structure
+						// caches, then park the 512 PTs and zeroed pd.
+						intrinsics.atomic_store(pdpte, (slot0 & PAGE_ADDRESS) | mapping.bits | PAGE_LARGE)
+						intrinsics.atomic_thread_fence(.Seq_Cst)
+						processor_sync(processors_with_table(process.table))
+						if self := processor_self(); intrinsics.atomic_load(&self.table) == process.table {
+							control_register_3_write(process.table)
+						}
+						for pt in replaced_pts[:replaced_count] {
+							demotion_table_push(process, pt)
+						}
+						replaced_count = 0
+						for k in 0 ..< 512 {
+							demotion_table_push(process, pd_entries[k] & PAGE_ADDRESS)
+						}
+						frames_zero(pd, 1)
+						demotion_table_push(process, pd)
+						mapping.present_page_count += frame_runs.RUN_1G_PAGES
+						mapping.entries_1g += 1
+						page += frame_runs.RUN_1G_PAGES
+						continue
+					}
+				}
+			}
+		}
+		// Try 2 MiB hardware entry when aligned in both virtual address and
+		// region offset and backed by an intact 2 MiB run.
+		if allow_runs && addr % LARGE_PAGE_SIZE == 0 && region_page % frame_runs.RUN_2M_PAGES == 0 && remaining >= frame_runs.RUN_2M_PAGES {
+			slot0 := intrinsics.atomic_load(region_slot(region, region_page))
+			if slot0 & SLOT_RUN_2M != 0 && slot0 & PAGE_ADDRESS != 0 && slot0 & SLOT_MARKS == 0 {
+				if pde := page_directory_entry(process.table, addr); pde != nil && pde^ & PAGE_PRESENT != 0 && pde^ & PAGE_LARGE == 0 && table_held_count(pde^) == 512 {
+					pt := pde^ & PAGE_ADDRESS
+					if !pt_has_present_entries(pt) {
+						// Replace PDE first while pt stays intact; park pt
+						// only after shootdown + local cr3 reload.
+						intrinsics.atomic_store(pde, (slot0 & PAGE_ADDRESS) | mapping.bits | PAGE_LARGE)
+						replaced_pts[replaced_count] = pt
+						replaced_count += 1
+						if replaced_count == len(replaced_pts) {
+							flush_and_park_pts(process, replaced_pts[:replaced_count])
+							replaced_count = 0
+						}
+						mapping.present_page_count += frame_runs.RUN_2M_PAGES
+						mapping.entries_2m += 1
+						page += frame_runs.RUN_2M_PAGES
+						continue
+					}
+				}
+			}
+		}
+		// Fallback / normal 4 KiB entries for this PT span.
+		run := min(512 - (addr >> 12 & 511), remaining)
+		entry, entry_size := page_entry_with_size(process.table, addr)
+		if entry != nil && entry_size == .Size_4K {
+			run_entries := ([^]u64)(entry)
+			for at in 0 ..< run {
+				if run_entries[at] & PAGE_PRESENT != 0 {
+					continue
+				}
+				frame := region_frame(region, region_page + at, false)
+				if frame == 0 {
+					continue
+				}
+				page_bits_now := page_bits(mapping, region_page_state(region, region_page + at))
+				if page_bits_now != 0 {
+					run_entries[at] = frame | page_bits_now
+					mapping.present_page_count += 1
+					mapping.entries_4k += 1
+				}
+			}
+		}
+		page += run
+	}
+	flush_and_park_pts(process, replaced_pts[:replaced_count])
+}
+
+// demote_mapping_range splits any 1 GiB or 2 MiB hardware large page
+// entries intersecting [first_in_mapping, first_in_mapping + count) of a
+// non-Large_Pages mapping down to 4 KiB entries using parked demotion
+// tables (zero allocation). Clears SLOT_RUN_* bits on demoted runs in
+// region. Caller holds process lock; pass region_locked = true if caller
+// already holds region_locks[mapping.region].
+demote_mapping_range :: proc "contextless" (process: ^Process, mapping: ^Mapping, region: ^Region, first_in_mapping: u64, count: u64, self: ^Processor, region_locked := false) {
+	if mapping.large || (mapping.entries_2m == 0 && mapping.entries_1g == 0) || count == 0 {
+		return
+	}
+	start_addr := mapping.address + first_in_mapping * PAGE_SIZE
+	end_addr := start_addr + count * PAGE_SIZE
+	flushed := false
+	// Step 1: split any intersecting 1 GiB entry into 512 x 2 MiB entries.
+	if mapping.entries_1g != 0 {
+		addr_1g := start_addr &~ u64(word_table.GIANT_PAGE_SIZE - 1)
+		for addr_1g < end_addr {
+			if addr_1g >= mapping.address && addr_1g + word_table.GIANT_PAGE_SIZE <= mapping.address + mapping.page_count * PAGE_SIZE {
+				if pdpte := page_directory_pointer_entry(process.table, addr_1g); pdpte != nil && pdpte^ & (PAGE_PRESENT | PAGE_LARGE) == (PAGE_PRESENT | PAGE_LARGE) {
+					base_phys := pdpte^ & PAGE_ADDRESS &~ u64(word_table.GIANT_PAGE_SIZE - 1)
+					leaf_bits := pdpte^ &~ (PAGE_ADDRESS | TABLE_HELD_MASK)
+					pd := demotion_table_pop(process)
+					pd_entries := direct(pd, [512]u64)
+					for k in u64(0) ..< 512 {
+						pd_entries[k] = (base_phys + k * LARGE_PAGE_SIZE) | leaf_bits
+					}
+					intrinsics.atomic_store(pdpte, pd | PAGE_PRESENT | PAGE_WRITE | PAGE_USER | 512 * TABLE_HELD_ONE)
+					mapping.entries_1g -= 1
+					mapping.entries_2m += 512
+					if !region.contiguous {
+						if !region_locked {
+							lock_take(&region_locks[mapping.region], .Region)
+						}
+						rpage0 := mapping.first + (addr_1g - mapping.address) / PAGE_SIZE
+						s0 := region_slot(region, rpage0)
+						intrinsics.atomic_store(s0, intrinsics.atomic_load(s0) &~ SLOT_RUN_1G)
+						for sub in u64(0) ..< 512 {
+							ss := region_slot(region, rpage0 + sub * frame_runs.RUN_2M_PAGES)
+							intrinsics.atomic_store(ss, intrinsics.atomic_load(ss) | SLOT_RUN_2M)
+						}
+						if !region_locked {
+							lock_free(&region_locks[mapping.region], .Region)
+						}
+					}
+					if self.table == process.table {
+						page_flush(addr_1g)
+					}
+					flushed = true
+				}
+			}
+			addr_1g += word_table.GIANT_PAGE_SIZE
+		}
+	}
+	// Step 2: split any intersecting 2 MiB entry into 512 x 4 KiB entries.
+	if mapping.entries_2m != 0 {
+		addr_2m := start_addr &~ u64(LARGE_PAGE_SIZE - 1)
+		for addr_2m < end_addr {
+			if addr_2m >= mapping.address && addr_2m + LARGE_PAGE_SIZE <= mapping.address + mapping.page_count * PAGE_SIZE {
+				if pde := page_directory_entry(process.table, addr_2m); pde != nil && pde^ & (PAGE_PRESENT | PAGE_LARGE) == (PAGE_PRESENT | PAGE_LARGE) {
+					base_phys := pde^ & PAGE_ADDRESS &~ u64(LARGE_PAGE_SIZE - 1)
+					leaf_bits := pde^ &~ (PAGE_ADDRESS | TABLE_HELD_MASK | PAGE_LARGE)
+					pt := demotion_table_pop(process)
+					pt_entries := direct(pt, [512]u64)
+					for k in u64(0) ..< 512 {
+						pt_entries[k] = (base_phys + k * PAGE_SIZE) | leaf_bits
+					}
+					intrinsics.atomic_store(pde, pt | PAGE_PRESENT | PAGE_WRITE | PAGE_USER | 512 * TABLE_HELD_ONE)
+					mapping.entries_2m -= 1
+					mapping.entries_4k += 512
+					if !region.contiguous {
+						if !region_locked {
+							lock_take(&region_locks[mapping.region], .Region)
+						}
+						rpage0 := mapping.first + (addr_2m - mapping.address) / PAGE_SIZE
+						s0 := region_slot(region, rpage0)
+						intrinsics.atomic_store(s0, intrinsics.atomic_load(s0) &~ SLOT_RUN_2M)
+						if !region_locked {
+							lock_free(&region_locks[mapping.region], .Region)
+						}
+					}
+					if self.table == process.table {
+						page_flush(addr_2m)
+					}
+					flushed = true
+				}
+			}
+			addr_2m += LARGE_PAGE_SIZE
+		}
+	}
+	if flushed {
+		intrinsics.atomic_thread_fence(.Seq_Cst)
+		processor_sync(processors_with_table(process.table))
+	}
+}
+
+// range_all_frameless reports whether every committed page in [first,
+// first + count) currently has no frame (and is committed).
+@(private = "file")
+range_all_frameless :: proc "contextless" (region: ^Region, first: u64, count: u64) -> bool {
+	for page in first ..< first + count {
+		val := intrinsics.atomic_load(region_slot(region, page))
+		if val & PAGE_ADDRESS != 0 || !page_committed(region, val) {
+			return false
+		}
+	}
+	return true
+}
+
+// region_prefault_range allocates and zeroes frames for every frameless
+// committed page in [first, first + count) of a non-contiguous region,
+// taking aligned 2 MiB runs when available and permitted by quota, zeroing
+// outside frame_lock, and counting fallbacks.
+//
+// Holding region_lock across the frameless check, the frame_lock run take +
+// reserved_pages update (preserving Region -> Frame lock order), zeroing,
+// and slot installation prevents any concurrent fault or decommit from
+// racing on the range and double-subtracting reserved_pages.
+//
+// 1 GiB run prefaulting waits for bounded resumable zeroing steps across
+// yields so no kernel section zeroes 1 GiB with interrupts off.
+region_prefault_range :: proc "contextless" (region: ^Region, first: u64, count: u64) {
+	if region.contiguous || count == 0 {
+		return
+	}
+	region_index := u32(intrinsics.ptr_sub(region, &regions[0]))
+	region_lock := &region_locks[region_index]
+	end := first + count
+	for offset := first; offset < end; {
+		wanted := frame_runs_arch_enabled() ? frame_runs.best_run_for_range(offset, end - offset, false) : .Pages_4K
+		if wanted == .Run_2M {
+			lock_take(region_lock, .Region)
+			if range_all_frameless(region, offset, frame_runs.RUN_2M_PAGES) {
+				lock_take(&frame_lock, .Frame)
+				b := region.budget
+				phys, ok := frames_take_run_2m_held(b, budgets[b].quota_pages)
+				if ok {
+					reserved_pages -= frame_runs.RUN_2M_PAGES
+				} else {
+					frame_runs.note_fallback(&frame_runs_table, .Run_2M)
+				}
+				lock_free(&frame_lock, .Frame)
+				if ok {
+					frames_zero(phys, frame_runs.RUN_2M_PAGES)
+					for k in u64(0) ..< frame_runs.RUN_2M_PAGES {
+						slot := region_slot(region, offset + k)
+						state := intrinsics.atomic_load(slot) & (SLOT_STATE &~ SLOT_RUN_MASK)
+						if k == 0 {
+							state |= SLOT_RUN_2M
+						}
+						intrinsics.atomic_store(slot, (phys + k * PAGE_SIZE) | state)
+					}
+					intrinsics.atomic_add(&region.present, frame_runs.RUN_2M_PAGES)
+					lock_free(region_lock, .Region)
+					offset += frame_runs.RUN_2M_PAGES
+					continue
+				}
+			}
+			lock_free(region_lock, .Region)
+		}
+		// Single 4 KiB pages up to the next 2 MiB boundary or end of range.
+		next_2m := ((offset / frame_runs.RUN_2M_PAGES) + 1) * frame_runs.RUN_2M_PAGES
+		step_end := min(end, next_2m)
+		for page := offset; page < step_end; page += 1 {
+			region_frame(region, page, true)
+		}
+		offset = step_end
+	}
+}
+
 // memory_commit commits, or decommits, the pages of the ranges of an
 // uncommitted object. It gives the pages that changed.
-//
-// Commit: one section of the region lock and the frame lock for the table:
-// the budget of the object pays one page for each page that was not
-// committed, reserved_pages grows by as much, the bits are set. A budget
-// that cannot pay the table changes nothing.
-//
-// Decommit: the object must be named only by this process, with one
-// mapping. First, under the region lock, the present entries of the pages
-// are cleared and each processor that uses the page table of the process
-// forgets them (one processor_sync for the table): no processor can reach a
-// frame of the table after. Then, in one section of the frame lock and the
-// cache lock of this processor: each frame goes to the frame cache, each
-// committed page with no frame leaves reserved_pages, the budget receives
-// one page for each page, the slots keep only their protection. The process
-// lock keeps the faults of the process out between the two steps (a fault
-// takes it).
-memory_commit :: proc "contextless" (process: ^Process, region_index: u32, ranges: []op.Page_Range, decommit: bool) -> (changed: u64, status: Operation_Outcome) {
+memory_commit :: proc "contextless" (process: ^Process, region_index: u32, ranges: []op.Page_Range, flags: op.Commit_Flags) -> (changed: u64, status: Operation_Outcome) {
 	region := &regions[region_index]
 	if !region.uncommitted {
 		return 0, .Bad_Operation
@@ -91,10 +408,11 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 	if !ranges_valid(ranges, region.page_count) {
 		return 0, .Bad_Address
 	}
+	decommit := .Decommit in flags
+	frames_now := .Frames_Now in flags
 	region_lock := &region_locks[region_index]
 	if !decommit {
 		lock_take(region_lock, .Region)
-		defer lock_free(region_lock, .Region)
 		needed: u64
 		for range in ranges {
 			for page in range.first ..< range.first + range.page_count {
@@ -102,9 +420,10 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 			}
 		}
 		lock_take(&frame_lock, .Frame)
-		defer lock_free(&frame_lock, .Frame)
 		budget := &budgets[region.budget]
 		if !budget.live || budget.amounts.pages < needed {
+			lock_free(&frame_lock, .Frame)
+			lock_free(region_lock, .Region)
 			return 0, .No_Budget
 		}
 		budget_pages_spend(budget, needed)
@@ -114,6 +433,29 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 			for page in range.first ..< range.first + range.page_count {
 				slot := region_slot(region, page)
 				intrinsics.atomic_store(slot, intrinsics.atomic_load(slot) | SLOT_COMMITTED)
+			}
+		}
+		lock_free(&frame_lock, .Frame)
+		lock_free(region_lock, .Region)
+		if frames_now {
+			for range in ranges {
+				region_prefault_range(region, range.first, range.page_count)
+			}
+			// Install entries (4 KiB, 2 MiB, or 1 GiB) into any existing
+			// mapping of this region in the calling process so arenas get
+			// prefaulted large pages immediately.
+			for &mapping in process.mappings {
+				if mapping.page_count == 0 || mapping.region != region_index || mapping.large {
+					continue
+				}
+				map_end := mapping.first + mapping.page_count
+				for range in ranges {
+					r_start := max(range.first, mapping.first)
+					r_end := min(range.first + range.page_count, map_end)
+					if r_start < r_end {
+						mapping_install_present_range(process, &mapping, region, r_start - mapping.first, r_end - r_start)
+					}
+				}
 			}
 		}
 		return needed, .Ok
@@ -126,6 +468,13 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 	defer lock_free(region_lock, .Region)
 	self := processor_self()
 	for range in ranges {
+		if mapping != nil {
+			r_start := max(range.first, mapping.first)
+			r_end := min(range.first + range.page_count, mapping.first + mapping.page_count)
+			if r_start < r_end {
+				demote_mapping_range(process, mapping, region, r_start - mapping.first, r_end - r_start, self, region_locked = true)
+			}
+		}
 		for page in range.first ..< range.first + range.page_count {
 			if mapping == nil || page < mapping.first || page - mapping.first >= mapping.page_count {
 				continue // Not in the mapping: no entry.
@@ -134,6 +483,7 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 			if entry := page_entry(process.table, address); entry != nil && entry^ & PAGE_PRESENT != 0 {
 				entry^ = 0
 				mapping.present_page_count -= 1
+				mapping.entries_4k -= 1
 				if self.table == process.table {
 					page_flush(address)
 				}
@@ -142,12 +492,6 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 	}
 	intrinsics.atomic_thread_fence(.Seq_Cst)
 	processor_sync(processors_with_table(process.table))
-	// A thread of the process that waits on a word of a page whose frame
-	// returns wakes now, before the frame can serve another process: its
-	// wait names the frame, so a later wake through a new frame of the page
-	// would not reach it, and a wake by the next user of the frame would.
-	// Only this process names the object, and the process lock keeps its
-	// threads from a new wait meanwhile. It runs again and reads its words.
 	waiters_on_frames_wake(process, region, ranges)
 	lock_take(&frame_lock, .Frame)
 	defer lock_free(&frame_lock, .Frame)
@@ -162,12 +506,12 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 				continue
 			}
 			if frame := value & PAGE_ADDRESS; frame != 0 {
-				cache_put_held(cache, frame)
+				frame_release_held(cache, frame)
 				region.present -= 1
 			} else {
 				reserved_pages -= 1
 			}
-			intrinsics.atomic_store(slot, value & (SLOT_STATE &~ SLOT_COMMITTED))
+			intrinsics.atomic_store(slot, value & (SLOT_STATE &~ (SLOT_COMMITTED | SLOT_RUN_MASK)))
 			changed += 1
 		}
 	}
@@ -306,15 +650,14 @@ waiters_on_pages_wake :: proc "contextless" (process: ^Process, address: u64, pa
 	for page := u64(0); page < page_count; {
 		virtual := address + page * PAGE_SIZE
 		run := min(512 - (virtual >> 12 & 511), page_count - page)
-		entry := page_entry(process.table, virtual)
+		entry, entry_size := page_entry_with_size(process.table, virtual)
 		if entry == nil {
 			page += run // No table under this 2 MiB: no page of it is present.
 			continue
 		}
-		if entry^ & PAGE_LARGE != 0 {
-			// One large page: its 4 KiB frames in order, from the frame of
-			// this address.
-			if base, ok := word_table.word_physical(entry^, virtual); ok {
+		if entry_size != .Size_4K {
+			// One large (2 MiB or 1 GiB) page: walk its 4 KiB frames in this 2 MiB span.
+			if base, ok := word_table.word_physical_of_size(entry^, virtual, entry_size); ok {
 				for at in 0 ..< run {
 					remaining -= waiting_words_wake_frame(words[:count], base + at * PAGE_SIZE)
 				}
@@ -323,7 +666,7 @@ waiters_on_pages_wake :: proc "contextless" (process: ^Process, address: u64, pa
 		} else {
 			entries := ([^]u64)(entry)
 			for at in 0 ..< run {
-				frame, ok := word_table.word_physical(entries[at], virtual + at * PAGE_SIZE)
+				frame, ok := word_table.word_physical_of_size(entries[at], virtual + at * PAGE_SIZE, .Size_4K)
 				if !ok {
 					continue
 				}
@@ -429,17 +772,41 @@ protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Ran
 }
 
 // protect_entries_change gives the present entries of pages of a mapping
-// the protection of their mapping and of their slot. One table of the last
-// level at a time; a range with no table is skipped; the walk ends when it
-// has seen each present entry of the mapping (the entries that are not
-// present take their protection at their first use, in page_give).
+// the protection of their mapping and of their slot. Handles 1 GiB, 2 MiB,
+// and 4 KiB entries; demotes before clearing any large entry to No_Access
+// so parked demotion tables stay 1-to-1 with present large entries.
 protect_entries_change :: proc "contextless" (process: ^Process, mapping: ^Mapping, region: ^Region, first, count: u64, self: ^Processor) {
+	if mapping.bits == 0 {
+		demote_mapping_range(process, mapping, region, first, count, self)
+	}
 	seen: u64
 	present := mapping.present_page_count
 	for page := first; page < first + count && seen < present; {
 		address := mapping.address + page * PAGE_SIZE
+		if address % word_table.GIANT_PAGE_SIZE == 0 && first + count - page >= frame_runs.RUN_1G_PAGES {
+			if pdpte := page_directory_pointer_entry(process.table, address); pdpte != nil && pdpte^ & (PAGE_PRESENT | PAGE_LARGE) == (PAGE_PRESENT | PAGE_LARGE) {
+				seen += frame_runs.RUN_1G_PAGES
+				pdpte^ = pdpte^ & PAGE_ADDRESS | mapping.bits | PAGE_LARGE
+				if self.table == process.table {
+					page_flush(address)
+				}
+				page += frame_runs.RUN_1G_PAGES
+				continue
+			}
+		}
+		if address % LARGE_PAGE_SIZE == 0 && first + count - page >= frame_runs.RUN_2M_PAGES {
+			if pde := page_directory_entry(process.table, address); pde != nil && pde^ & (PAGE_PRESENT | PAGE_LARGE) == (PAGE_PRESENT | PAGE_LARGE) {
+				seen += frame_runs.RUN_2M_PAGES
+				pde^ = pde^ & PAGE_ADDRESS | mapping.bits | PAGE_LARGE
+				if self.table == process.table {
+					page_flush(address)
+				}
+				page += frame_runs.RUN_2M_PAGES
+				continue
+			}
+		}
 		run := min(512 - (address >> 12 & 511), first + count - page)
-		if entry := page_entry(process.table, address); entry != nil {
+		if entry, entry_size := page_entry_with_size(process.table, address); entry != nil && entry_size == .Size_4K {
 			entries := ([^]u64)(entry)
 			for at in 0 ..< run {
 				if entries[at] & PAGE_PRESENT == 0 {
@@ -450,6 +817,7 @@ protect_entries_change :: proc "contextless" (process: ^Process, mapping: ^Mappi
 				if bits == 0 {
 					entries[at] = 0
 					mapping.present_page_count -= 1
+					mapping.entries_4k -= 1
 				} else {
 					entries[at] = entries[at] & PAGE_ADDRESS | bits
 				}
@@ -463,20 +831,20 @@ protect_entries_change :: proc "contextless" (process: ^Process, mapping: ^Mappi
 }
 
 // protect_walk_count gives what a protection change of a range costs, for
-// the limit of one call: the entries that the kernel changes. A large page
-// is one entry. A whole mapping of 4 KiB pages changes only its present
-// entries, and its walk ends at the last of them (protect_entries_change),
-// so it counts its present pages: a mapping of 1 GiB of an object that
-// several processes name can change its protection whole, as long as it has
-// at most RANGE_TABLE_PAGE_LIMIT pages with a frame. A part counts each of
-// its pages: its marks are written in each slot.
-protect_walk_count :: proc "contextless" (mapping: ^Mapping, range: op.Address_Range) -> u64 {
+// the limit of one call: the entries that the kernel changes. A whole
+// mapping without No_Access updates its 4 KiB, 2 MiB, and 1 GiB entries in
+// place without demoting; No_Access demotes and clears every present 4 KiB
+// page. A part counts each of its pages: its marks are written in each slot.
+protect_walk_count :: proc "contextless" (mapping: ^Mapping, range: op.Address_Range, flags: op.Map_Flags) -> u64 {
 	whole := range.address == mapping.address && range.page_count == mapping.page_count
 	switch {
 	case mapping.large:
 		return range.page_count / op.LARGE_PAGE_PAGES
 	case whole && intrinsics.atomic_load(&regions[mapping.region].marked_pages) == 0:
-		return mapping.present_page_count
+		if .No_Access in flags {
+			return mapping.present_page_count
+		}
+		return mapping.entries_4k + mapping.entries_2m + mapping.entries_1g
 	}
 	return range.page_count
 }
@@ -488,7 +856,7 @@ memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Ra
 	places := protect_check(process, ranges, flags) or_return
 	walked: u64
 	for range, index in ranges {
-		walked += protect_walk_count(&process.mappings[places[index]], range)
+		walked += protect_walk_count(&process.mappings[places[index]], range, flags)
 	}
 	if walked > op.RANGE_TABLE_PAGE_LIMIT {
 		return 0, .Bad_Operation
@@ -559,6 +927,9 @@ memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Ra
 		// again and not given: the marks are of the object, so
 		// they would reach another mapping.
 		whole := first == 0 && count == mapping.page_count
+		if !whole && !mapping.large {
+			demote_mapping_range(process, mapping, region, first, count, self)
+		}
 		if !region.contiguous && (!whole || intrinsics.atomic_load(&region.marked_pages) != 0) {
 			marks: u64
 			if !whole {
@@ -597,8 +968,10 @@ memory_protect :: proc "contextless" (process: ^Process, ranges: []op.Address_Ra
 				entry^ = mapping.bits == 0 ? 0 : frame | mapping.bits | PAGE_LARGE
 				if present && mapping.bits == 0 {
 					mapping.present_page_count -= op.LARGE_PAGE_PAGES
+					mapping.entries_2m -= 1
 				} else if !present && mapping.bits != 0 {
 					mapping.present_page_count += op.LARGE_PAGE_PAGES
+					mapping.entries_2m += 1
 				}
 				if self.table == process.table {
 					page_flush(address)

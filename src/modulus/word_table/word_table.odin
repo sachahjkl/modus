@@ -46,24 +46,53 @@ ENTRY_USER :: u64(1) << 2
 ENTRY_LARGE :: u64(1) << 7
 ENTRY_ADDRESS :: u64(0x000F_FFFF_FFFF_F000)
 LARGE_PAGE_SIZE :: 2 * 1024 * 1024
+GIANT_PAGE_SIZE :: 1024 * 1024 * 1024
 
-// word_physical gives the physical address of a waited word from the entry
-// of its page, or false when the entry names no frame of the process: not
-// present, or not a page of the process. Only an entry that names a frame
-// gives an address: an entry with no frame would give the offset of the
-// word alone, a low physical address that the same offset in a page of
-// another process gives too, and the two waits would share a word. The
-// wait makes the page present first, as a read of the word would
-// (src/md/data/table_sizes.md, "The word of a wait is a frame of its
-// process"); this is the check that it did.
-word_physical :: proc "contextless" (entry: u64, address: u64) -> (physical: u64, ok: bool) {
+// The size of the page mapped by a leaf page table entry.
+Entry_Size :: enum u8 {
+	Size_4K = 0,
+	Size_2M = 1,
+	Size_1G = 2,
+}
+
+// word_physical_of_size gives the physical address of a waited word from a
+// leaf page table entry of the given size (4 KiB, 2 MiB, or 1 GiB), or false
+// when the entry names no frame of the process.
+word_physical_of_size :: proc "contextless" (entry: u64, address: u64, size: Entry_Size) -> (physical: u64, ok: bool) {
 	if entry & (ENTRY_PRESENT | ENTRY_USER) != ENTRY_PRESENT | ENTRY_USER {
 		return 0, false
 	}
-	if entry & ENTRY_LARGE != 0 {
+	switch size {
+	case .Size_4K:
+		if entry & ENTRY_LARGE != 0 {
+			return 0, false
+		}
+		return entry & ENTRY_ADDRESS | address & (PAGE_SIZE - 1), true
+	case .Size_2M:
+		if entry & ENTRY_LARGE == 0 {
+			return 0, false
+		}
 		return entry & ENTRY_ADDRESS &~ u64(LARGE_PAGE_SIZE - 1) | address & (LARGE_PAGE_SIZE - 1), true
+	case .Size_1G:
+		if entry & ENTRY_LARGE == 0 {
+			return 0, false
+		}
+		return entry & ENTRY_ADDRESS &~ u64(GIANT_PAGE_SIZE - 1) | address & (GIANT_PAGE_SIZE - 1), true
 	}
-	return entry & ENTRY_ADDRESS | address & (PAGE_SIZE - 1), true
+	return 0, false
+}
+
+// word_physical gives the physical address of a waited word from the entry
+// of its page (4 KiB or 2 MiB), or false when the entry names no frame of
+// the process: not present, or not a page of the process. Only an entry that
+// names a frame gives an address: an entry with no frame would give the
+// offset of the word alone, a low physical address that the same offset in a
+// page of another process gives too, and the two waits would share a word.
+// The wait makes the page present first, as a read of the word would
+// (src/md/data/table_sizes.md, "The word of a wait is a frame of its
+// process"); this is the check that it did.
+word_physical :: proc "contextless" (entry: u64, address: u64) -> (physical: u64, ok: bool) {
+	return word_physical_of_size(entry, address, entry & ENTRY_LARGE != 0 ? .Size_2M : .Size_4K)
 }
 
 // The buckets: frames buckets, one for each frame, then DEVICE_BUCKETS.

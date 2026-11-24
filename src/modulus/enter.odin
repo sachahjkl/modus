@@ -1164,6 +1164,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			// the budgets and the reserved pages, at this moment.
 			lock_take(&frame_lock, .Frame)
 			report.free_pages, report.reserved_pages = frames_counted() // With the frame caches.
+			report.free_runs_2m, report.free_runs_1g, report.fallback_2m, report.fallback_1g = frame_runs_report_counts(&frame_runs_table)
 			for budget in budgets {
 				report.budget_pages += budget.amounts.pages
 			}
@@ -1364,7 +1365,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				return .Bad_Handle
 			}
 		}
-		if v[3] == 0 || v[3] > op.RANGE_TABLE_CAPACITY || v[4] & ~op.COMMIT_FLAGS_KNOWN != 0 {
+		if v[3] == 0 || v[3] > op.RANGE_TABLE_CAPACITY || v[4] & ~op.COMMIT_FLAGS_KNOWN != 0 || (.Decommit in flags && .Frames_Now in flags) {
 			return .Bad_Operation
 		}
 		if !user_range(process, v[2], v[3] * size_of(op.Page_Range), false) {
@@ -1379,7 +1380,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if table_pages(counts[:v[3]]) > op.RANGE_TABLE_PAGE_LIMIT {
 			return .Bad_Operation
 		}
-		changed := memory_commit(process, memory.object, table[:v[3]], decommit) or_return
+		changed := memory_commit(process, memory.object, table[:v[3]], flags) or_return
 		results[0] = changed
 		return .Ok
 
