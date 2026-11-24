@@ -127,7 +127,16 @@ cache_quic_load_or_create_key :: proc(root_directory: string, out: ^[quic.ED2551
 	}
 	hex_bytes := hash_to_hex(out^)
 	defer crypto_compat.zero_explicit(&hex_bytes, size_of(hex_bytes))
-	if os.write_entire_file(key_path, hex_bytes[:]) != nil {
+	// Create directly with 0o600 so the private key is never world-readable.
+	key_file, open_err := os.open(key_path, {.Write, .Create, .Trunc}, os.perm(0o600))
+	if open_err != nil {
+		crypto_compat.zero_explicit(out, size_of(out^))
+		return false
+	}
+	written_ok := file_write_all(key_file, hex_bytes[:])
+	synced_ok := file_sync_and_close(key_file)
+	if !written_ok || !synced_ok {
+		_ = os.remove(key_path)
 		crypto_compat.zero_explicit(out, size_of(out^))
 		return false
 	}

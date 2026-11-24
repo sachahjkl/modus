@@ -480,9 +480,12 @@ quic_cache_module_imports_damaged_tree_quarantine_and_key_persistence :: proc(t:
 		delete(dir)
 	}
 
-	// Verify persistent QUIC key file creation and reload across restarts.
+	// Verify persistent QUIC key file creation (0o600) and reload across restarts.
 	key_first, key_second: [quic.ED25519_KEY_SIZE]u8
 	testing.expect(t, cache_quic_load_or_create_key(dir, &key_first))
+	key_stat, stat_err := os.stat(strings.concatenate({dir, "/quic_server.key"}, context.temp_allocator), context.temp_allocator)
+	testing.expect(t, stat_err == nil)
+	testing.expect_value(t, key_stat.mode & os.perm(0o777), os.perm(0o600))
 	testing.expect(t, cache_quic_load_or_create_key(dir, &key_second))
 	testing.expect_value(t, key_first, key_second)
 

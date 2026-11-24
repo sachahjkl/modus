@@ -1263,7 +1263,9 @@ handle_get_references :: proc(
 		if open_err != nil {
 			return status_response(conn.response_buffer, .Get_References, .Refused)
 		}
-		defer os.close(obj_file)
+		defer if obj_file != nil {
+			os.close(obj_file)
+		}
 
 		raw_size, sz_err := os.file_size(obj_file)
 		if sz_err != nil || raw_size < 0 {
@@ -1317,6 +1319,7 @@ handle_get_references :: proc(
 			blob_hash := blake3.hash(tree_bytes)
 			if !object_cache.hashes_equal_constant_time(blob_hash, request.object_hash) {
 				os.close(obj_file)
+				obj_file = nil
 				store_move_damaged(server, hex_name, object_size)
 				return status_response(conn.response_buffer, .Get_References, .Not_Found)
 			}
