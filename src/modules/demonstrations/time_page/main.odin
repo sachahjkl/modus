@@ -56,22 +56,21 @@ LINE :: interface.TABLE_LINE
 // The size of the window at its start, and its least size: each text of
 // the window fits in this width. The principal can make it larger, up to
 // LARGEST_WIDTH by LARGEST_HEIGHT (src/md/features/window_resize.md).
+// A literal, because the tool counts the pictures of the window from it;
+// the assertion keeps it equal to its layout.
 WIDTH :: 816
-HEIGHT :: 312 + LINE
+HEIGHT :: 336
+#assert(HEIGHT == 312 + LINE)
 LARGEST_WIDTH :: 1216
 LARGEST_HEIGHT :: 640
 
-// The window is counted at its largest size: 1216 x 640 pixels, 4 bytes
-// each, two pictures, 6 225 920 bytes, 1520 pages. A resize holds the old
-// surface and the new one together until the compositor shows the new one,
-// so the working memory holds a second surface at the largest size: 1520
-// pages. It also holds what time_page used before it stated a budget: the
-// least budget of 2048 pages less its window of 816 x 336 (2 193 408
-// bytes, 536 pages), 1512 pages, for its module, its stack, the glyphs
-// that it draws itself and its tables. And the glyph memory of the copy of
-// the text rendering of the drawing module, which draws its text: 354
-// pages (display.TEXT_MEMORY_PAGES). 1520 + 1512 + 354 = 3386.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3386, processes = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// The tool counts the module, the thread stack and the two pictures of the
+// window at its largest size (cut on each axis to the reference screen). The
+// working memory holds the glyph memory of the drawing module (354 pages,
+// display.TEXT_MEMORY_PAGES) and tables (measured peak at ready 1044 pages).
+// During a resize after ready, the second surface draws from the growth factor
+// of the budget.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512, processes = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = WIDTH, window_least_height = HEIGHT}
 
 Measure :: struct {
 	name:    string,

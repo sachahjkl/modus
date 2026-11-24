@@ -425,6 +425,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wrong("no root ring; the status", u64(ring_status))
 	}
 	requests = opened
+	// Signal the first state of work before words_case fills the budget on
+	// purpose, and wait until the starter closes its side of the ready ring so
+	// those pages do not return during exact budget checks.
+	had_ready := ctx.handles[op.CONTEXT_READY_RING] != 0
+	before_ready := budget_pages()
+	system.ready_at_end()
+	if had_ready {
+		deadline := system.time() + system.ANSWER_BOUND_MILLISECONDS
+		for budget_pages() <= before_ready && system.time() < deadline {
+			system.sleep(system.time() + 1)
+		}
+	}
 	words_case()
 	lent_return_case()
 	probes_case()
@@ -975,9 +987,10 @@ limit_case :: proc "contextless" () {
 	handles := [1]u32{lend(writer)}
 	status, answer = wire(row(.Started, 1, WRITER_LARGE, .Asker, 0, 0), handles[:])
 	budget_refused("one wiring past the budget of an asker gave the status", before, status, answer)
-	// The row of a Start counts as a Wire does: the start is refused
-	// whole, before the child runs.
-	rows := [1]output.Wiring{row(.Child, 0, WRITER_ASKED, .Asker, 0, 0)}
+	// The row of a Start counts as a Wire does: wire the same output that the
+	// remaining wiring budget cannot pay, so the start is refused whole before
+	// the child runs.
+	rows := [1]output.Wiring{row(.Child, 0, WRITER_LARGE, .Asker, 0, 0)}
 	list_write(rows[:], nil)
 	status, answer = start_listed("output_writer", true)
 	budget_refused("one row of a Start past the budget of an asker gave the status", before, status, answer)
@@ -1114,10 +1127,6 @@ asker_case :: proc "contextless" () -> ! {
 	system.stop(.Done)
 }
 
-// Measure pending: the 2048 pages of the least budget in which it ran
-// before its floor was counted. The first machine pass with the check of
-// the floors (the check boot-test of the flake) writes the peak of its
-// budget at its first state of work; modustool floors measured on the log
-// of that pass gives the working memory that replaces this number
-// (src/md/features/module_budget_request.md, "The first state of work").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2048}
+// Working memory for the wiring test rings, list page and lent handles; the
+// tool adds the derived wiring budget and counts the module and stack.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512}

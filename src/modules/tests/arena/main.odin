@@ -34,11 +34,28 @@ package arena
 import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modus:contract/errors"
+import op "modus:contract/operation"
 import "modus:system"
 
 // entry runs the test, writes its result on the log, and stops.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	// Signal the first state of work before reading the starting budget and
+	// spending the whole budget on purpose, and wait until the starter closes
+	// its side of the ready ring so those pages do not return during the test.
+	had_ready := ctx.handles[op.CONTEXT_READY_RING] != 0
+	before_ready, _ := system.budget_read()
+	system.ready_at_end()
+	if had_ready {
+		deadline := system.time() + system.ANSWER_BOUND_MILLISECONDS
+		for system.time() < deadline {
+			now_budget, _ := system.budget_read()
+			if now_budget.pages > before_ready.pages {
+				break
+			}
+			system.sleep(system.time() + 1)
+		}
+	}
 	before, _ := system.budget_read()
 	// The reservation holds more pages than the budget can pay, so the
 	// budget refuses first, not the end of the reservation.
@@ -54,9 +71,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	pushes: u64
 	nonzero: u64
 	refused: call_outcome.Call_Outcome
-	// The start is done: the first state of work of the process
-	// (src/md/features/module_budget_request.md, "The first state of work").
-	system.ready()
 	for {
 		page, status := system.arena_push(&arena, system.PAGE_SIZE, system.PAGE_SIZE, &record)
 		if status != .Succeeded {

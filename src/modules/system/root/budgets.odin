@@ -3,6 +3,7 @@ package root
 import "internal:root/session_budgets"
 import "internal:root/start_policy_rules"
 import "modus:contract/call_outcome"
+import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/reference_screen"
@@ -479,8 +480,12 @@ start_own_reserve_pages :: proc "contextless" (file: []u8) -> u64 {
 		reserve += op.memory_cost(shared_pages) + op.mapping_table_pages_most(shared_pages)
 	}
 	// Ready ring, context page, writable segment copy, and service ring
-	// temporary mappings in this service's address space.
+	// temporary mappings in this service's address space, plus headroom for
+	// four service connections (call ring and call region each) so capping
+	// growth above a child's floor never leaves this service unable to open a
+	// connection for a started process.
 	reserve += 4 * op.mapping_table_pages_most(1)
+	reserve += 4 * (op.memory_cost(ring.PAGE_COUNT) + op.memory_cost(isolated.REGION_PAGES))
 	return reserve
 }
 

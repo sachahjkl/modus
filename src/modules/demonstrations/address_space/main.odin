@@ -57,14 +57,12 @@ import "modus:interface"
 import "modus:random"
 import "modus:system"
 
-// 64 MiB of large pages, two ranges of 1 GiB with their page tables, and
-// a child: 40530 pages. And the glyph memory of the copy of the text
-// rendering of the drawing module, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 40530 + 354 = 40884. With the counted
-// parts, the pages are above the least largest budget of a process, so it
-// runs on a machine whose share for one process holds them: a machine of
-// 1 GiB does (module.largest_budget_of_machine).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 40884, processes = 2, threads = 6, window_width = WIDTH, window_height = HEIGHT}
+// The largest concurrent allocation across the sequential cases is the 64 MiB
+// large-pages object (16384 pages) with its frame list and two mappings (354
+// pages for drawing glyph memory, plus page tables and margins): 17920 pages.
+// The tool counts the module, the six threads and the window at the largest
+// scale.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 17920, processes = 2, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 WIDTH :: 960
 HEIGHT :: 640

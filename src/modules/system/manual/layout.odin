@@ -1,7 +1,8 @@
+package manual
+
 // Pure box-tree layout for the manual window (src/md/features/box_layout.md).
 // No system calls: host tests verify bounds, dark/light element tokens, and
 // zero overlap across heading heights and window sizes.
-package manual
 
 import "modus:interface"
 import box_layout "modus:layout"

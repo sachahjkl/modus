@@ -999,11 +999,16 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 		if status != .Budget_Or_Capacity_Exhausted {
 			break
 		}
-		// Evict the least-recently-used cached part to reclaim starter pages
-		// before giving up on caching this part.
+		// Evict the least-recently-used unheld cached part to reclaim starter
+		// pages before giving up on caching this part; held entries remain
+		// mapped by live processes and free no pages if closed.
 		uses: [PREPARED_CAPACITY]Prepared_Use
 		for item, place in table.modules {
-			uses[place] = {held = item.memory != 0, last_use = item.last_use, in_use = &table.modules[place] == keep || &table.modules[place] == free}
+			uses[place] = {
+				held     = item.memory != 0,
+				last_use = item.last_use,
+				in_use   = &table.modules[place] == keep || &table.modules[place] == free || (item.memory != 0 && handle_holdings(item.memory) > 0),
+			}
 		}
 		chosen: [1]int
 		if prepared_drop_choose(uses[:], 1, chosen[:]) == 0 {

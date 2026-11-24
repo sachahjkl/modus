@@ -542,6 +542,9 @@ deepest_line_stack: uint
 // writes the sentence of the refusal of the evaluator, if any. A refusal of
 // the host has written its own.
 line_evaluate :: proc "contextless" () -> Value {
+	if !pipe_stage_precheck(&line_tree, line_tree.root) {
+		return {}
+	}
 	lex_evaluator.evaluation_start(&line_evaluation, &line_tree, .Console, console_host(), &line_eval_buffers)
 	value, ok := lex_evaluator.line_force(&line_evaluation)
 	// A line that the bound stopped measures the bound, not the line.
@@ -1525,6 +1528,148 @@ result_knowledge :: proc "contextless" (found: ^Command) -> (value: Value, knowl
 		knowledge = .Kind
 	}
 	return value, knowledge
+}
+
+// Buffer for fact record descriptions synthesized during static pipe precheck.
+precheck_description: [DESCRIPTION_SIZE]u8
+
+// pipe_stage_precheck checks static fact names, conditions and field names of
+// pipe stages before any call on the left runs (src/md/features/log_facts.md,
+// "Filters of a reader: one form"). A stage whose left record is unknown is
+// left for runtime evaluation.
+pipe_stage_precheck :: proc "contextless" (tree: ^lex_parser.Syntax_Tree, idx: lex_parser.Node_Index) -> bool {
+	if tree.refusal.refusal != .None {
+		return true
+	}
+	node := lex_parser.node_at(tree, idx)
+	if node == nil || node.kind != .Pipe {
+		return true
+	}
+	left_idx, right_idx := lex_parser.node_binary_children(tree, idx)
+	if !pipe_stage_precheck(tree, left_idx) {
+		return false
+	}
+	rn := lex_parser.node_at(tree, right_idx)
+	if rn == nil || rn.kind != .Call {
+		return true
+	}
+	name := lex_parser.node_text(tree, right_idx)
+	found := command_find(name)
+	if found == nil || found.parameter_count != 2 {
+		return true
+	}
+	args := lex_parser.node_children(tree, right_idx)
+	arg: lex_parser.Node_Index
+	if len(args) == 1 {
+		arg = args[0]
+	} else if len(args) == 2 {
+		if first := lex_parser.node_at(tree, args[0]); first != nil && first.kind == .Placeholder {
+			arg = args[1]
+		} else {
+			return true
+		}
+	} else {
+		return true
+	}
+	an := lex_parser.node_at(tree, arg)
+	if an == nil {
+		return true
+	}
+	switch found.parameter_forms[1] {
+	case .Expression:
+	case .Fact_Name:
+		fact_name_evaluate(name, arg)
+		return !failed
+	case .Condition:
+		left_val, left_knowledge := pipe_left_value_node(tree, left_idx)
+		file, detail, known := pipe_left_record_node(tree, left_idx, left_val, left_knowledge, precheck_description[:])
+		if !known {
+			return true
+		}
+		record, record_ok := module.record_type(file, detail)
+		if !record_ok {
+			return true
+		}
+		cond := lex_parser.node_condition(tree, arg)
+		if cond == nil {
+			return true
+		}
+		details := console_condition.Refusal_Details {
+			command    = name,
+			file       = file,
+			record     = record,
+			field      = cond.head.field,
+			comparison = cond.head.comparison,
+		}
+		if cond.refusal != .None {
+			condition_fail(cond.refusal, details)
+			return false
+		}
+		found_field: bool
+		if details.item, found_field = console_condition.field_find(file, record, cond.head.field); !found_field {
+			condition_fail(.Unknown_Field, details)
+			return false
+		}
+		if refusal := console_condition.field_check(details.item, cond.head.comparison); refusal != .None {
+			condition_fail(refusal, details)
+			return false
+		}
+		if which, status := console_condition.field_is_status(details.item); status {
+			refusal: console_condition.Refusal
+			_, details.member, _, refusal = console_condition.member_read(tree.text, cond.head.value_start, which)
+			if refusal != .None {
+				condition_fail(refusal, details)
+				return false
+			}
+			if !cond.member_alone {
+				fail("\",\" or \")\" is missing")
+				return false
+			}
+			return true
+		}
+		val_idx := lex_parser.node_child(tree, arg)
+		if val_node := lex_parser.node_at(tree, val_idx); val_node != nil {
+			if val_node.kind == .Integer {
+				details.value_type = .Integer
+				if refusal := console_condition.value_check(details.item, .Integer, lex_parser.node_integer(tree, val_idx)); refusal != .None {
+					condition_fail(refusal, details)
+					return false
+				}
+			} else if val_node.kind == .Text {
+				details.value_type = .Text
+				if refusal := console_condition.value_check(details.item, .Text, 0); refusal != .None {
+					condition_fail(refusal, details)
+					return false
+				}
+			}
+		}
+	case .Field_Names:
+		if an.kind != .Field_Names || lex_parser.node_refusal(tree, arg) != .None {
+			return true
+		}
+		left_val, left_knowledge := pipe_left_value_node(tree, left_idx)
+		file, detail, known := pipe_left_record_node(tree, left_idx, left_val, left_knowledge, precheck_description[:])
+		if !known {
+			return true
+		}
+		record, record_ok := module.record_type(file, detail)
+		if !record_ok {
+			return true
+		}
+		argument := lex_parser.node_text(tree, arg)
+		for token := console_language.token_next(argument, 0); token.kind != .None; token = console_language.token_next(argument, token.end) {
+			if token.kind != .Name {
+				continue
+			}
+			field_name := argument[token.start:token.end]
+			if _, field_found := console_condition.field_find(file, record, field_name); !field_found {
+				named := Table{file = file, record = record}
+				fail(name, ": the records ", module.string_at(file, record.name_offset, record.name_count), " have no field ", field_name, fields_text(named, field_name))
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // pipe_stage_takes says if a command can be the call on the right of a

@@ -1,7 +1,8 @@
+package assistant_window
+
 // Pure box-tree layout for the assistant window (src/md/features/box_layout.md
 // and src/md/features/assistant.md). No system calls: host tests verify bounds,
 // dark/light element tokens, and zero overlap.
-package assistant_window
 
 import "modus:interface"
 import box_layout "modus:layout"

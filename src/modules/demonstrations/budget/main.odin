@@ -56,7 +56,9 @@ HEIGHT :: 332
 #assert(HEIGHT == 12 + 3 * LINE + ROW_CAPACITY * LINE + 12)
 
 OBJECT_PAGES :: 64
-OBJECT_CAPACITY :: 64
+// Format property: the kernel handle table holds HANDLE_TABLE_CAPACITY entries,
+// so any budget exhaustion fits in this table.
+OBJECT_CAPACITY :: op.HANDLE_TABLE_CAPACITY
 THREAD_CAPACITY :: 8
 PART_PAGES :: 256
 FIRST_PAGES :: 200
@@ -76,6 +78,7 @@ Row :: struct {
 
 rows: [ROW_CAPACITY]Row
 row_count: int
+objects: [OBJECT_CAPACITY]system.Handle
 release: u32 // The threads of the test wait while this word is 0.
 
 pages_left :: proc "contextless" () -> u64 {
@@ -112,11 +115,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(.Failed)
 	}
+	// Signal the first state of work before the demonstration spends the whole
+	// budget on purpose, and wait until the starter has closed its side of the
+	// ready ring so those pages do not return during the object loop.
+	had_ready := ctx.handles[op.CONTEXT_READY_RING] != 0
+	before_ready := pages_left()
+	system.ready_at_end()
+	if had_ready {
+		deadline := system.time() + system.ANSWER_BOUND_MILLISECONDS
+		for pages_left() <= before_ready && system.time() < deadline {
+			system.sleep(system.time() + 1)
+		}
+	}
 	start, _ := system.budget_read()
 	note("the budget from the root service", false, start.pages != 0, start.pages, " pages")
 
 	// Memory objects, until the budget cannot pay.
-	objects: [OBJECT_CAPACITY]system.Handle
 	object_count: u64
 	status := call_outcome.Call_Outcome.Succeeded
 	for object_count < OBJECT_CAPACITY {

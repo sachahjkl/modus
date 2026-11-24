@@ -1,8 +1,9 @@
+package grants_window
+
 // Pure box-tree layout for the desktop Grants window
 // (src/md/features/grants_window.md and src/md/features/box_layout.md).
 // No kernel calls: host tests verify bounds, dark and light element tokens,
 // and zero overlap.
-package grants_window
 
 import "modus:graphics"
 import "modus:interface"

@@ -1187,6 +1187,12 @@ scenario := [?]Step {
 	{kind = .Wait, text = "remote: listening on the UDP port 7100, for the host 10.0.2.2 only", any_order = true},
 	{kind = .Call, text = "compositor.pointer()", expected = "1 rows of Pointer", pointer = true},
 	{kind = .Call, text = "compositor.windows()", expected = "remote"},
+	// Free finished demonstration windows right after their checks so later
+	// budgets fit on the 1 GiB machine alongside the delegated services.
+	{kind = .Close, text = "hall_of_fame"},
+	{kind = .Wait, text = "root: hall_of_fame stopped"},
+	{kind = .Close, text = "workers"},
+	{kind = .Wait, text = "root: workers stopped"},
 
 	// Rights: a process with a part of the rights of two handles. The
 	// kernel refuses each operation that needs another right.
@@ -1194,6 +1200,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "rights: ok, 4 allowed, 5 refused", any_order = true},
 	{kind = .Wait, text = "compositor: surface rights"},
 	{kind = .Shot, text = "rights"},
+	{kind = .Close, text = "rights"},
+	{kind = .Wait, text = "root: rights stopped"},
 
 	// The origin of a handle: the kernel ends what came from a handle, in
 	// this process and in another one.
@@ -1202,6 +1210,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "origin: lend a handle and take it back: ", any_order = true},
 	{kind = .Wait, text = "compositor: surface origin"},
 	{kind = .Shot, text = "origin"},
+	{kind = .Close, text = "origin"},
+	{kind = .Wait, text = "root: origin stopped"},
 
 	// Budgets: no object comes from nothing. The process creates until
 	// its budget cannot pay; what it frees returns.
@@ -1209,6 +1219,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "budget: ok, ", any_order = true},
 	{kind = .Wait, text = "compositor: surface budget"},
 	{kind = .Shot, text = "budget"},
+	{kind = .Close, text = "budget"},
+	{kind = .Wait, text = "root: budget stopped"},
 
 	// The limits of a budget: the kernel stops a thread at the processor
 	// time of its budget, and refuses the log records above the limit.
@@ -1227,6 +1239,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "flow: capacity 1024, read the counters then wait: "},
 	{kind = .Wait, text = "flow: ok, 4 rings, 0 records lost"},
 	{kind = .Shot, text = "flow"},
+	{kind = .Close, text = "flow"},
+	{kind = .Wait, text = "root: flow stopped"},
 
 	// One queue for several writers and several readers, with no lock; one
 	// event starts the threads of each run.
@@ -1238,6 +1252,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "crowd: queue with a lock, 2 writers, 2 readers: "},
 	{kind = .Wait, text = "crowd: ok, 5 runs, each record written is read one time, each event started all the threads"},
 	{kind = .Shot, text = "crowd"},
+	{kind = .Close, text = "crowd"},
+	{kind = .Wait, text = "root: crowd stopped"},
 
 	// The time is in a page that each process reads: no kernel entry. The
 	// demonstration is not in the start menu: the console starts it.
@@ -1299,6 +1315,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "processors: ok, 4 processors ran the process at the same time"},
 	{kind = .Wait, text = "processors: the picture took "},
 	{kind = .Shot, text = "processors"},
+	{kind = .Close, text = "processors"},
+	{kind = .Wait, text = "root: processors stopped"},
 
 	// The locks of the kernel: four processes that each work on their own
 	// objects, with 1, 2 and 4 at one time; two threads that wake each
@@ -1420,22 +1438,6 @@ scenario := [?]Step {
 	{kind = .Wait, text = "scheduler: the share policy is off: each thread has the weight that its process asked and the full weight limit"},
 	{kind = .Type, text = "stop(\"scheduler\")"},
 	{kind = .Wait, text = "root: scheduler stopped"},
-	// Free finished demonstration windows before address_space and paint so
-	// their budgets fit on the 1 GiB machine alongside the delegated services.
-	{kind = .Type, text = "stop(\"hall_of_fame\")"},
-	{kind = .Wait, text = "root: hall_of_fame stopped"},
-	{kind = .Type, text = "stop(\"rights\")"},
-	{kind = .Wait, text = "root: rights stopped"},
-	{kind = .Type, text = "stop(\"origin\")"},
-	{kind = .Wait, text = "root: origin stopped"},
-	{kind = .Type, text = "stop(\"budget\")"},
-	{kind = .Wait, text = "root: budget stopped"},
-	{kind = .Type, text = "stop(\"flow\")"},
-	{kind = .Wait, text = "root: flow stopped"},
-	{kind = .Type, text = "stop(\"crowd\")"},
-	{kind = .Wait, text = "root: crowd stopped"},
-	{kind = .Type, text = "stop(\"processors\")"},
-	{kind = .Wait, text = "root: processors stopped"},
 
 	// A process drives its own virtual memory: an arena and a sparse table
 	// of 1 GiB of addresses, commit and decommit, a protection change with
@@ -1529,7 +1531,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   commands   9"},
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "monitor.count(\"processors\")"},
-	{kind = .Wait, text = "[console] error: monitor.count: the kernel refused an operation of the call: a handle names no object of the kind that the operation needs"},
+	{kind = .Wait, text = "[console] error: monitor.count: the kernel refused an operation of the call: an argument broke a rule of the operation"},
 	{kind = .Type, text = "where(help(), name = \"paint.write\")"},
 	// The help table fits the window of the console, so the signature
 	// breaks between two words, in its own column.
@@ -2003,11 +2005,12 @@ scenario := [?]Step {
 	// same fact below (src/md/api/process_stop.md).
 	{kind = .Fact, process = "root", fact = "root.Process_Stopped", condition = "stopped_process = \"log_reader\"", any_order = true},
 	{kind = .Wait, text = "root: log_reader stopped: itself, done"},
-	// The remote service acts for the principal and still reads the whole
-	// log in order: the last record of the storm child, then the line of
-	// log_reader after it, then the stop that the root service writes. The
-	// earlier records of the run are gone from the whole log.
-	{kind = .Record, process = "log_reader storm", level = "Info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
+	// The remote service acts for principal 0 and reads the records of
+	// principal 0 in order (children created directly with Process_Create,
+	// such as log_reader storm, have no session-table row and settle to no
+	// principal): the connection of log_reader after the storm, then the line
+	// of log_reader, then the stop that the root service writes.
+	{kind = .Record, process = "root", level = "Info", text = "root: connected log_reader to the service log, for principal 0"},
 	// The console reads the fact of log_reader as a row of a table, by its
 	// fields: facts() reads its values through log.fact_records, and where
 	// takes a field of the fact type, which the console checks before the
@@ -2063,7 +2066,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[log_reader] log_reader: ok"},
 	{kind = .Fact, process = "root", fact = "root.Process_Stopped", condition = "stopped_process = \"log_reader\"", any_order = true},
 	{kind = .Wait, text = "root: log_reader stopped: itself, done"},
-	{kind = .Record, process = "log_reader storm", level = "Info", text = "log_reader storm: the last record, after more records than the whole log keeps"},
+	{kind = .Record, process = "root", level = "Info", text = "root: connected log_reader to the service log, for principal 0"},
 	{kind = .Record, process = "log_reader", level = "Info", text = "log_reader: ok"},
 	{kind = .Record, process = "root", level = "Info", text = "root: log_reader stopped: itself, done"},
 	// The names that facts() and a condition read are checked before any

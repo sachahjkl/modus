@@ -76,7 +76,7 @@ LARGEST_HEIGHT :: 900
 // The keeper of the settings (settings.odin) runs a worker thread: its
 // stack past the 16 pages that the tool counts for a thread, 48 pages.
 // 2604 + 8192 + 48 = 10844 (DOCUMENT_PAGES: the document).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10844, processes = 1, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10844, processes = 1, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
 // The second surface, the glyph memory, the document and the stack of the
 // keeper of the settings.
 #assert(MODULE_BUDGET.working_memory_pages == 2250 + 354 + DOCUMENT_PAGES + 48)
