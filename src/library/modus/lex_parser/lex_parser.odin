@@ -29,6 +29,7 @@ import "modus:console_condition"
 import "modus:console_language"
 import module "modus:contract/module"
 import "modus:contract/text_encoding"
+import "modus:contract/value_kinds"
 import "modus:hash_table"
 import "modus:line_editor"
 
@@ -82,35 +83,41 @@ form_of :: proc "contextless" (lookup: Form_Lookup, command_name: string, index:
 
 // Kinds of AST nodes (1 byte).
 Node_Kind :: enum u8 {
-	Integer        = 0,  // span_off..a, sub=0 -> inline i32(b); sub=1 -> int_consts[b]
-	Text           = 1,  // span_off..a (includes quotes)
-	Name           = 2,  // span_off..a
-	Call           = 3,  // span_off..b (callee name), extra_children[a : a + aux], sub = Call_Flags
-	Negate         = 4,  // span_off..b ("-"), child = a
-	Binary         = 5,  // span_off..span_off+aux, sub = Operator, left = a, right = b
-	Condition      = 6,  // span_off, sub = Refusal, value = a, conditions[b]
-	Fact_Name      = 7,  // span_off..a, sub = Refusal
-	Refused        = 8,  // span_off..b, sub = Refusal, before = a
-	Field_Names    = 9,  // span_off..a, sub = Refusal
-	Record_Literal = 10, // span_off ("{"), extra_children[a : a + b]
-	Literal_Field  = 11, // span_off..b (field name), value = a
-	Named_Argument = 12, // span_off..b (arg name), value = a
-	Let            = 13, // span_off ("let"), extra_children[a : a + b] (bindings then body)
-	Let_Binding    = 14, // span_off..b (binding name), value = a
-	Member         = 15, // span_off..a (includes '.')
-	Function       = 16, // span_off ('('), b = arrow_end, extra_children[a : a + aux] (params then body)
-	Parameter      = 17, // span_off..a
-	List_Literal   = 18, // span_off ("["), extra_children[a : a + b]
-	Hash           = 19, // span_off..a
-	Boolean        = 20, // span_off..a, sub = 1 (true) / 0 (false)
-	If             = 21, // span_off ("if"), extra_children[a : a + aux] (cond, then, else)
-	Field_Select   = 22, // span_off..b (field name), base = a
-	Pipe           = 23, // span_off ("|>"), aux = 2, left = a, right_call = b
-	Placeholder    = 24, // span_off..a ("_")
-	Logical_Not    = 25, // span_off..b ("!"), child = a
-	Text_Interp    = 26, // span_off ('"'), extra_children[a : a + b] (Text segments & exprs)
-	Pattern_Record = 27, // span_off ('{' or as_name), sub = PAT_FLAG_*, extra_children[a : a + b]
-	Pattern_Field  = 28, // span_off..b (field name), a = default expr or NO_NODE_U32
+	Integer         = 0,  // span_off..a, sub=0 -> inline i32(b); sub=1 -> int_consts[b]; aux = packed Integer_Unit
+	Text            = 1,  // span_off..a (includes quotes)
+	Name            = 2,  // span_off..a
+	Call            = 3,  // span_off..b (callee name), extra_children[a : a + aux], sub = Call_Flags
+	Negate          = 4,  // span_off..b ("-"), child = a
+	Binary          = 5,  // span_off..span_off+aux, sub = Operator, left = a, right = b
+	Condition       = 6,  // span_off, sub = Refusal, value = a, conditions[b]
+	Fact_Name       = 7,  // span_off..a, sub = Refusal
+	Refused         = 8,  // span_off..b, sub = Refusal, before = a
+	Field_Names     = 9,  // span_off..a, sub = Refusal
+	Record_Literal  = 10, // span_off ("{"), sub = REC_FLAG_*, extra_children[a : a + b]
+	Literal_Field   = 11, // span_off..b (field name or dotted path), value = a
+	Named_Argument  = 12, // span_off..b (arg name), value = a
+	Let             = 13, // span_off ("let"), extra_children[a : a + b] (bindings then body)
+	Let_Binding     = 14, // span_off..b (binding name), value = a
+	Member          = 15, // span_off..a (includes '.')
+	Function        = 16, // span_off ('('), b = arrow_end, extra_children[a : a + aux] (params then body)
+	Parameter       = 17, // span_off..a, sub = Param_Kind_Annot, aux = packed Integer_Unit, b = default expr or NO_NODE_U32
+	List_Literal    = 18, // span_off ("["), extra_children[a : a + b]
+	Hash            = 19, // span_off..a
+	Boolean         = 20, // span_off..a, sub = 1 (true) / 0 (false)
+	If              = 21, // span_off ("if"), extra_children[a : a + aux] (cond, then, else)
+	Field_Select    = 22, // span_off..b (field name), base = a
+	Pipe            = 23, // span_off ("|>"), aux = 2, left = a, right_call = b
+	Placeholder     = 24, // span_off..a ("_")
+	Logical_Not     = 25, // span_off..b ("!"), child = a
+	Text_Interp     = 26, // span_off ('"'), extra_children[a : a + b] (Text segments & exprs)
+	Pattern_Record  = 27, // span_off ('{' or as_name), sub = PAT_FLAG_*, extra_children[a : a + b]
+	Pattern_Field   = 28, // span_off..b (field name), sub = Param_Kind_Annot, aux = packed Integer_Unit, a = default expr or NO_NODE_U32
+	Record_Comp     = 29, // span_off ('{'), sub = REC_COMP_*, extra_children[a : a + b] ([bind_pat, iter, (cond), key, val])
+	Match           = 30, // span_off ("match"), extra_children[a : a + b] ([scrutinee, arm_0, ...])
+	Match_Arm       = 31, // span_off (pat start), sub = MATCH_ARM_*, b = arrow_end, extra_children[a : a + aux] ([pat, (guard), body])
+	Match_Pat_Field = 32, // span_off..b (field name), a = sub-pattern or NO_NODE_U32 (shorthand bind)
+	Match_Pat_Wild  = 33, // span_off..a ("_")
+	Match_Pat_Bind  = 34, // span_off..a (bound variable name)
 }
 
 // Flags stored in Ast_Node.sub for .Call nodes.
@@ -121,13 +128,150 @@ CALL_FLAG_HAS_PLACEHOLDER :: u8(1 << 1)
 TEXT_FLAG_ESCAPED :: u8(1 << 0)
 TEXT_FLAG_SEGMENT :: u8(1 << 1)
 
+// Flags stored in Ast_Node.sub for .Record_Literal nodes.
+REC_FLAG_HAS_PATH :: u8(1 << 0)
+
 // Flags stored in Ast_Node.sub for .Pattern_Record nodes.
 PAT_FLAG_REST :: u8(1 << 0)
 PAT_FLAG_HAS_AS :: u8(1 << 1)
+PAT_FLAG_MATCH :: u8(1 << 2)
+
+// Flags stored in Ast_Node.sub for .Record_Comp nodes.
+REC_COMP_HAS_COND :: u8(1 << 0)
+
+// Flags stored in Ast_Node.sub for .Match_Arm nodes.
+MATCH_ARM_HAS_GUARD :: u8(1 << 0)
 
 // Flag stored in Ast_Node.sub for .Let_Binding when LHS is a Pattern_Record
 // (in which case a = rhs_expr, b = pattern_node).
 LET_BINDING_PATTERN :: u8(1 << 0)
+
+// Closed set of optional parameter kind annotations (`: Kind` / `: Integer[Unit]`).
+Param_Kind_Annot :: enum u8 {
+	None       = 0,
+	Integer    = 1,
+	Boolean    = 2,
+	Text       = 3,
+	Hash       = 4,
+	Enum       = 5,
+	List       = 6,
+	Record     = 7,
+	Function   = 8,
+	Module_Ref = 9,
+	Tree_Ref   = 10,
+	Recipe_Ref = 11,
+	Follow_Ref = 12,
+	Store_Ref  = 13,
+	Plan       = 14,
+	Project    = 15,
+	Handle     = 16,
+	Table      = 17,
+	Bytes      = 18,
+}
+
+@(rodata)
+PARAM_KIND_NAMES := [Param_Kind_Annot]string {
+	.None       = "",
+	.Integer    = "Integer",
+	.Boolean    = "Boolean",
+	.Text       = "Text",
+	.Hash       = "Hash",
+	.Enum       = "Enum",
+	.List       = "List",
+	.Record     = "Record",
+	.Function   = "Function",
+	.Module_Ref = "Module_Ref",
+	.Tree_Ref   = "Tree_Ref",
+	.Recipe_Ref = "Recipe_Ref",
+	.Follow_Ref = "Follow_Ref",
+	.Store_Ref  = "Store_Ref",
+	.Plan       = "Plan",
+	.Project    = "Project",
+	.Handle     = "Handle",
+	.Table      = "Table",
+	.Bytes      = "Bytes",
+}
+
+@(rodata)
+PARAM_KINDS_IN_ORDER := [len(Param_Kind_Annot)]Param_Kind_Annot {
+	.None,
+	.Integer,
+	.Boolean,
+	.Text,
+	.Hash,
+	.Enum,
+	.List,
+	.Record,
+	.Function,
+	.Module_Ref,
+	.Tree_Ref,
+	.Recipe_Ref,
+	.Follow_Ref,
+	.Store_Ref,
+	.Plan,
+	.Project,
+	.Handle,
+	.Table,
+	.Bytes,
+}
+
+param_kind_of_name :: proc "contextless" (name: string) -> (kind: Param_Kind_Annot, ok: bool) {
+	if len(name) == 0 {
+		return .None, false
+	}
+	for k in Param_Kind_Annot {
+		if k != .None && PARAM_KIND_NAMES[k] == name {
+			return k, true
+		}
+	}
+	return .None, false
+}
+
+param_kind_of_byte :: #force_inline proc "contextless" (b: u8) -> (Param_Kind_Annot, bool) {
+	if int(b) >= len(PARAM_KINDS_IN_ORDER) {
+		return .None, false
+	}
+	return PARAM_KINDS_IN_ORDER[b], true
+}
+
+// integer_unit_of_name resolves the 9 closed unit suffixes of Lex literals and
+// Integer[Unit] parameter annotations.
+integer_unit_of_name :: proc "contextless" (name: string) -> (unit: value_kinds.Integer_Unit, ok: bool) {
+	switch name {
+	case "bytes":  return value_kinds.size_in(.Bytes), true
+	case "KiB":    return value_kinds.size_in(.Kibibytes), true
+	case "MiB":    return value_kinds.size_in(.Mebibytes), true
+	case "pages":  return value_kinds.size_in(.Pages), true
+	case "blocks": return value_kinds.size_in(.Blocks), true
+	case "ns":     return value_kinds.time_in(.Nanoseconds), true
+	case "us":     return value_kinds.time_in(.Microseconds), true
+	case "ms":     return value_kinds.time_in(.Milliseconds), true
+	case "s":      return value_kinds.time_in(.Seconds), true
+	}
+	return {}, false
+}
+
+pack_integer_unit :: #force_inline proc "contextless" (unit: value_kinds.Integer_Unit) -> u16 {
+	if unit.kind == .None {
+		return 0
+	}
+	return u16(unit.kind) | (u16(unit.unit) << 8)
+}
+
+unpack_integer_unit :: proc "contextless" (word: u16) -> value_kinds.Integer_Unit {
+	if word == 0 {
+		return {}
+	}
+	kind, ok := value_kinds.value_kind_of(u8(word & 0xFF))
+	if !ok {
+		return {}
+	}
+	u := value_kinds.Integer_Unit{kind = kind, unit = u8(word >> 8)}
+	if !value_kinds.integer_unit_valid(u) {
+		return {}
+	}
+	return u
+}
 
 // Operators of a Binary node.
 Operator :: enum u8 {
@@ -147,6 +291,7 @@ Operator :: enum u8 {
 	Logical_And      = 13,
 	Logical_Or       = 14,
 	List_Concat      = 15,
+	Coalesce         = 16,
 }
 
 @(rodata)
@@ -167,10 +312,11 @@ OPERATOR_TEXTS := [Operator]string {
 	.Logical_And      = "&&",
 	.Logical_Or       = "||",
 	.List_Concat      = "++",
+	.Coalesce         = "??",
 }
 
 @(rodata)
-WORDS_OF_LEX := [?]string{"_", "let", "in", "with", "if", "then", "else", "true", "false"}
+WORDS_OF_LEX := [?]string{"_", "let", "in", "with", "if", "then", "else", "true", "false", "match"}
 
 name_valid :: proc "contextless" (name: string) -> bool {
 	if len(name) == 0 || word_of_lex(name) {
@@ -245,6 +391,19 @@ Refusal :: enum u8 {
 	Pattern_Field_Twice         = 45, // Duplicate field name inside one destructuring pattern.
 	Pattern_Rest_Not_Last       = 46, // Fields written after "..." in a destructuring pattern.
 	Pattern_At_Missing_Brace    = 47, // "name @" not followed by "{ ... }".
+	Literal_Path_Conflict       = 48, // Conflicting nested field paths in one record literal ("a" and "a.b").
+	Comp_Bind_Missing           = 49, // Missing binding name or pattern after "for" in record comprehension.
+	Comp_In_Missing             = 50, // Missing "in" in record comprehension "{ for x in xs: k = v }".
+	Comp_Colon_Missing          = 51, // Missing ":" before key = value in record comprehension.
+	Comp_Equal_Missing          = 52, // Missing "=" between key and value in record comprehension.
+	Match_Open_Missing          = 53, // Missing "{" after scrutinee in "match expr { ... }".
+	Match_Empty                 = 54, // "match expr {}" with no arms.
+	Match_Arrow_Missing         = 55, // Missing "=>" after pattern/guard in a match arm.
+	Match_Close_Missing         = 56, // Missing "," or "}" after a match arm.
+	Match_Pattern_Expected      = 57, // Expected a pattern at the start of a match arm or sub-pattern.
+	Match_Duplicate_Bind        = 58, // Same variable bound twice in one match arm pattern.
+	Param_Kind_Unknown          = 59, // Unknown kind annotation after ":" on a parameter.
+	Param_Unit_Not_Valid        = 60, // Invalid unit or missing "]" in Integer[Unit] annotation.
 }
 
 // Source position computed on demand from byte offset.
@@ -386,6 +545,7 @@ Parser :: struct {
 	in_nested_call:     bool,       // true when inside a call nested inside a piped RHS call.
 	in_direct_pipe_arg: bool,       // true only at the start of a direct argument of a piped RHS call.
 	pipe_call_node:     Node_Index, // The enclosing piped RHS Call node.
+	in_match_scrutinee: bool,       // true while reading `match <scrutinee> { ... }` so `name {` ends scrutinee.
 }
 
 // parse_console reads one console line into `tree` backed by `buf`.
@@ -540,10 +700,10 @@ node_span :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> (star
 	}
 	text_len := len(tree.text)
 	switch node.kind {
-	case .Integer, .Boolean, .Text, .Name, .Member, .Hash, .Parameter, .Placeholder, .Fact_Name, .Field_Names:
+	case .Integer, .Boolean, .Text, .Name, .Member, .Hash, .Parameter, .Placeholder, .Fact_Name, .Field_Names, .Match_Pat_Wild, .Match_Pat_Bind:
 		start = min(int(node.span_off), text_len)
 		end = clamp(int(node.a), start, text_len)
-	case .Negate, .Logical_Not, .Field_Select, .Literal_Field, .Named_Argument, .Refused, .Call, .Pattern_Field:
+	case .Negate, .Logical_Not, .Field_Select, .Literal_Field, .Named_Argument, .Refused, .Call, .Pattern_Field, .Match_Pat_Field:
 		start = min(int(node.span_off), text_len)
 		end = clamp(int(node.b), start, text_len)
 	case .Let_Binding:
@@ -556,7 +716,7 @@ node_span :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> (star
 	case .Binary, .Pipe:
 		start = min(int(node.span_off), text_len)
 		end = clamp(start + int(node.aux), start, text_len)
-	case .Record_Literal, .List_Literal, .Text_Interp, .Pattern_Record:
+	case .Record_Literal, .List_Literal, .Text_Interp, .Pattern_Record, .Record_Comp:
 		start = min(int(node.span_off), text_len)
 		end = clamp(start + 1, start, text_len)
 	case .Let:
@@ -565,6 +725,12 @@ node_span :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> (star
 	case .If:
 		start = min(int(node.span_off), text_len)
 		end = clamp(start + len("if"), start, text_len)
+	case .Match:
+		start = min(int(node.span_off), text_len)
+		end = clamp(start + len("match"), start, text_len)
+	case .Match_Arm:
+		start = min(int(node.span_off), text_len)
+		end = clamp(int(node.b), start, text_len)
 	case .Function:
 		end = clamp(int(node.b), 0, text_len)
 		start = max(end - len("=>"), 0)
@@ -625,6 +791,7 @@ OPERATORS_IN_ORDER := [len(Operator)]Operator {
 	.Logical_And,
 	.Logical_Or,
 	.List_Concat,
+	.Coalesce,
 }
 
 @(rodata)
@@ -677,6 +844,19 @@ REFUSALS_IN_ORDER := [len(Refusal)]Refusal {
 	.Pattern_Field_Twice,
 	.Pattern_Rest_Not_Last,
 	.Pattern_At_Missing_Brace,
+	.Literal_Path_Conflict,
+	.Comp_Bind_Missing,
+	.Comp_In_Missing,
+	.Comp_Colon_Missing,
+	.Comp_Equal_Missing,
+	.Match_Open_Missing,
+	.Match_Empty,
+	.Match_Arrow_Missing,
+	.Match_Close_Missing,
+	.Match_Pattern_Expected,
+	.Match_Duplicate_Bind,
+	.Param_Kind_Unknown,
+	.Param_Unit_Not_Valid,
 }
 
 operator_of_byte :: #force_inline proc "contextless" (b: u8) -> (Operator, bool) {
@@ -711,24 +891,67 @@ node_refusal :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Re
 	case .Refused, .Fact_Name, .Field_Names, .Condition:
 		r, _ := refusal_of_byte(node.sub)
 		return r
-	case .Integer, .Text, .Text_Interp, .Name, .Call, .Negate, .Logical_Not, .Binary, .Record_Literal, .Literal_Field, .Named_Argument, .Let, .Let_Binding, .Member, .Function, .Parameter, .List_Literal, .Hash, .Boolean, .If, .Field_Select, .Pipe, .Placeholder, .Pattern_Record, .Pattern_Field:
+	case .Integer, .Text, .Text_Interp, .Name, .Call, .Negate, .Logical_Not, .Binary, .Record_Literal, .Literal_Field, .Named_Argument, .Let, .Let_Binding, .Member, .Function, .Parameter, .List_Literal, .Hash, .Boolean, .If, .Field_Select, .Pipe, .Placeholder, .Pattern_Record, .Pattern_Field, .Record_Comp, .Match, .Match_Arm, .Match_Pat_Field, .Match_Pat_Wild, .Match_Pat_Bind:
 		return .None
 	}
 	return .None
 }
 
+// node_integer_unit returns the optional typed Integer_Unit carried by an
+// .Integer literal, .Parameter, or .Pattern_Field node.
+node_integer_unit :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> value_kinds.Integer_Unit {
+	node := node_at(tree, index)
+	if node == nil {
+		return {}
+	}
+	switch node.kind {
+	case .Integer, .Parameter, .Pattern_Field:
+		return unpack_integer_unit(node.aux)
+	case .Text, .Text_Interp, .Name, .Call, .Negate, .Logical_Not, .Binary, .Condition, .Fact_Name, .Refused, .Field_Names, .Record_Literal, .Literal_Field, .Named_Argument, .Let, .Let_Binding, .Member, .Function, .List_Literal, .Hash, .Boolean, .If, .Field_Select, .Pipe, .Placeholder, .Pattern_Record, .Record_Comp, .Match, .Match_Arm, .Match_Pat_Field, .Match_Pat_Wild, .Match_Pat_Bind:
+		return {}
+	}
+	return {}
+}
+
+// node_param_kind returns the optional Param_Kind_Annot on a .Parameter or
+// .Pattern_Field node.
+node_param_kind :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Param_Kind_Annot {
+	node := node_at(tree, index)
+	if node == nil || (node.kind != .Parameter && node.kind != .Pattern_Field) {
+		return .None
+	}
+	k, _ := param_kind_of_byte(node.sub)
+	return k
+}
+
+// node_param_default returns the optional default expression Node_Index on a
+// .Parameter or .Pattern_Field node (NO_NODE if absent).
+node_param_default :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Node_Index {
+	node := node_at(tree, index)
+	if node == nil {
+		return NO_NODE
+	}
+	if node.kind == .Parameter {
+		return Node_Index(i32(node.b))
+	}
+	if node.kind == .Pattern_Field {
+		return Node_Index(i32(node.a))
+	}
+	return NO_NODE
+}
+
 // node_child returns the single child of a 1-child node (Negate, Logical_Not,
 // Field_Select, Literal_Field, Let_Binding, Named_Argument, Refused, Condition,
-// Pattern_Field).
+// Pattern_Field, Match_Pat_Field).
 node_child :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> Node_Index {
 	node := node_at(tree, index)
 	if node == nil {
 		return NO_NODE
 	}
 	switch node.kind {
-	case .Negate, .Logical_Not, .Field_Select, .Literal_Field, .Let_Binding, .Named_Argument, .Refused, .Condition, .Pattern_Field:
+	case .Negate, .Logical_Not, .Field_Select, .Literal_Field, .Let_Binding, .Named_Argument, .Refused, .Condition, .Pattern_Field, .Match_Pat_Field:
 		return Node_Index(i32(node.a))
-	case .Integer, .Text, .Text_Interp, .Name, .Call, .Binary, .Fact_Name, .Field_Names, .Record_Literal, .Let, .Member, .Function, .Parameter, .List_Literal, .Hash, .Boolean, .If, .Pipe, .Placeholder, .Pattern_Record:
+	case .Integer, .Text, .Text_Interp, .Name, .Call, .Binary, .Fact_Name, .Field_Names, .Record_Literal, .Let, .Member, .Function, .Parameter, .List_Literal, .Hash, .Boolean, .If, .Pipe, .Placeholder, .Pattern_Record, .Record_Comp, .Match, .Match_Arm, .Match_Pat_Wild, .Match_Pat_Bind:
 		return NO_NODE
 	}
 	return NO_NODE
@@ -744,7 +967,8 @@ node_binary_children :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Inde
 }
 
 // node_children returns the contiguous child slice for variable-arity nodes
-// (.Call, .Record_Literal, .List_Literal, .Let, .Function, .If, .Text_Interp, .Pattern_Record).
+// (.Call, .Record_Literal, .List_Literal, .Let, .Function, .If, .Text_Interp,
+// .Pattern_Record, .Record_Comp, .Match, .Match_Arm).
 node_children :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> []Node_Index {
 	node := node_at(tree, index)
 	if node == nil {
@@ -752,11 +976,11 @@ node_children :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> [
 	}
 	start, count: int
 	switch node.kind {
-	case .Call, .Function, .If:
+	case .Call, .Function, .If, .Match_Arm:
 		start, count = int(node.a), int(node.aux)
-	case .Record_Literal, .List_Literal, .Let, .Text_Interp, .Pattern_Record:
+	case .Record_Literal, .List_Literal, .Let, .Text_Interp, .Pattern_Record, .Record_Comp, .Match:
 		start, count = int(node.a), int(node.b)
-	case .Integer, .Text, .Name, .Negate, .Logical_Not, .Binary, .Condition, .Fact_Name, .Refused, .Field_Names, .Literal_Field, .Let_Binding, .Named_Argument, .Member, .Parameter, .Hash, .Boolean, .Field_Select, .Pipe, .Placeholder, .Pattern_Field:
+	case .Integer, .Text, .Name, .Negate, .Logical_Not, .Binary, .Condition, .Fact_Name, .Refused, .Field_Names, .Literal_Field, .Let_Binding, .Named_Argument, .Member, .Parameter, .Hash, .Boolean, .Field_Select, .Pipe, .Placeholder, .Pattern_Field, .Match_Pat_Field, .Match_Pat_Wild, .Match_Pat_Bind:
 		return nil
 	}
 	if count <= 0 || start < 0 || start > tree.extra_count || count > tree.extra_count - start {
@@ -1324,7 +1548,7 @@ pipe_stage_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 
 @(private)
 comparison_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
-	left := with_read(parser)
+	left := coalesce_read(parser)
 	if refused(parser) {
 		return left
 	}
@@ -1362,12 +1586,39 @@ comparison_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	parser.position = op_start + op_len
 	saved_direct := parser.in_direct_pipe_arg
 	parser.in_direct_pipe_arg = false
-	right := with_read(parser)
+	right := coalesce_read(parser)
 	parser.in_direct_pipe_arg = saved_direct
 	return node_add_raw(parser, {
 		kind     = .Binary,
 		sub      = u8(operator),
 		aux      = u16(op_len),
+		span_off = u32(op_start),
+		a        = u32(left),
+		b        = u32(right),
+	})
+}
+
+// Right-associative safe field fallback (`a.b ?? c.d ?? 8080`).
+@(private)
+coalesce_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
+	left := with_read(parser)
+	if refused(parser) {
+		return left
+	}
+	text := parser.tree.text
+	if peek(parser) != '?' || parser.position + 1 >= len(text) || text[parser.position + 1] != '?' {
+		return left
+	}
+	op_start := parser.position
+	parser.position += 2
+	saved_direct := parser.in_direct_pipe_arg
+	parser.in_direct_pipe_arg = false
+	right := coalesce_read(parser)
+	parser.in_direct_pipe_arg = saved_direct
+	return node_add_raw(parser, {
+		kind     = .Binary,
+		sub      = u8(Operator.Coalesce),
+		aux      = 2,
 		span_off = u32(op_start),
 		a        = u32(left),
 		b        = u32(right),
@@ -1537,9 +1788,12 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 		}
 		parser.position += 1
 		saved_direct := parser.in_direct_pipe_arg
+		saved_match := parser.in_match_scrutinee
 		parser.in_direct_pipe_arg = false
+		parser.in_match_scrutinee = false
 		inner := pipeline_read(parser)
 		parser.in_direct_pipe_arg = saved_direct
+		parser.in_match_scrutinee = saved_match
 		if refused(parser) {
 			return inner
 		}
@@ -1554,14 +1808,37 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 		if !fits {
 			return refuse(parser, .Number_Too_Large, start, end, NO_NODE)
 		}
-		return integer_node_add(parser, start, end, value)
+		// Optional same-line unit suffix (e.g. `64 MiB`, `2048 pages`, `120 ms`).
+		// Horizontal whitespace only: never cross a newline so a following line
+		// starting with `s` is never misread as seconds.
+		unit := value_kinds.Integer_Unit{}
+		u_start := end
+		for u_start < len(text) && (text[u_start] == ' ' || text[u_start] == '\t') {
+			u_start += 1
+		}
+		if u_start < len(text) && console_language.name_first(text[u_start]) {
+			u_end := u_start + 1
+			for u_end < len(text) && (console_language.name_first(text[u_end]) || console_language.digit(text[u_end])) {
+				u_end += 1
+			}
+			if u, u_ok := integer_unit_of_name(text[u_start:u_end]); u_ok {
+				unit = u
+				end = u_end
+				parser.position = u_end
+			}
+		}
+		return integer_node_add(parser, start, end, value, unit)
 	case character == '"':
 		return text_literal_read(parser, start)
 	case character == '{':
 		parser.position += 1
 		saved_direct := parser.in_direct_pipe_arg
 		parser.in_direct_pipe_arg = false
-		node, allows_postfix = literal_read(parser, start), true
+		if is_record_comp_ahead(parser) {
+			node, allows_postfix = record_comp_read(parser, start), true
+		} else {
+			node, allows_postfix = literal_read(parser, start), true
+		}
 		parser.in_direct_pipe_arg = saved_direct
 	case character == '[':
 		parser.position += 1
@@ -1592,6 +1869,9 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 		if name == "if" {
 			return if_read(parser, start)
 		}
+		if name == "match" {
+			return match_read(parser, start)
+		}
 		if name == "true" || name == "false" {
 			return node_add_raw(parser, {
 				kind     = .Boolean,
@@ -1616,8 +1896,11 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 		}
 		if accept(parser, '(') {
 			open_pos := parser.position - 1
+			saved_match := parser.in_match_scrutinee
+			parser.in_match_scrutinee = false
 			node, allows_postfix = call_read(parser, name, start, false, open_pos), true
-		} else if peek(parser) == '{' {
+			parser.in_match_scrutinee = saved_match
+		} else if !parser.in_match_scrutinee && peek(parser) == '{' {
 			brace_start := parser.position
 			parser.position += 1
 			call := node_add_raw(parser, {
@@ -1784,11 +2067,13 @@ text_literal_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_In
 }
 
 @(private)
-integer_node_add :: proc "contextless" (parser: ^Parser, start, end: int, value: i64) -> Node_Index {
+integer_node_add :: proc "contextless" (parser: ^Parser, start, end: int, value: i64, unit: value_kinds.Integer_Unit = {}) -> Node_Index {
+	aux := pack_integer_unit(unit)
 	if value >= i64(min(i32)) && value <= i64(max(i32)) {
 		return node_add_raw(parser, {
 			kind     = .Integer,
 			sub      = 0,
+			aux      = aux,
 			span_off = u32(start),
 			a        = u32(end),
 			b        = u32(i32(value)),
@@ -1804,6 +2089,7 @@ integer_node_add :: proc "contextless" (parser: ^Parser, start, end: int, value:
 	return node_add_raw(parser, {
 		kind     = .Integer,
 		sub      = 1,
+		aux      = aux,
 		span_off = u32(start),
 		a        = u32(end),
 		b        = const_idx,
@@ -2047,6 +2333,160 @@ named_argument_read :: proc "contextless" (parser: ^Parser, call: Node_Index, ma
 	return named
 }
 
+// is_record_comp_ahead reports whether `{` opens a record comprehension
+// `{ for pat in iter [if cond]: key = val }` rather than a field named `for`.
+@(private)
+is_record_comp_ahead :: proc "contextless" (parser: ^Parser) -> bool {
+	text := parser.tree.text
+	first := console_language.token_next(text, parser.position, parser.multiline)
+	if !console_language.word_is(text, first, "for") {
+		return false
+	}
+	second := console_language.token_next(text, first.end, parser.multiline)
+	if second.kind == .Operator && (text[second.start] == '=' || text[second.start] == ',' || text[second.start] == '}') {
+		return false
+	}
+	return true
+}
+
+// record_comp_read reads `{ for pat in iter [if cond]: key = val }` after `{`.
+@(private)
+record_comp_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
+	text := parser.tree.text
+	comp := node_add_raw(parser, {kind = .Record_Comp, span_off = u32(start)})
+	if comp == NO_NODE {
+		return NO_NODE
+	}
+	// Consume contextual "for".
+	for_end, _ := word_ahead(parser, "for")
+	parser.position = for_end
+	mark := parser.scratch_top
+	has_cond := false
+
+	skip_spaces(parser)
+	bind_start := parser.position
+	bind_node := NO_NODE
+	if peek(parser) == '{' {
+		parser.position += 1
+		bind_node = pattern_record_read(parser, bind_start, false, 0, 0)
+	} else {
+		tok := console_language.token_next(text, bind_start, parser.multiline)
+		if tok.kind != .Name {
+			scratch_push(parser, refuse(parser, .Comp_Bind_Missing, bind_start, bind_start, NO_NODE))
+		} else {
+			bname := read_name(parser)
+			if word_of_lex(bname) {
+				scratch_push(parser, refuse(parser, .Word_As_Name, bind_start, bind_start + len(bname), NO_NODE))
+			} else if !name_valid(bname) {
+				scratch_push(parser, refuse(parser, .Comp_Bind_Missing, bind_start, bind_start + len(bname), NO_NODE))
+			} else if accept(parser, '@') {
+				if !accept(parser, '{') {
+					scratch_push(parser, refuse(parser, .Pattern_At_Missing_Brace, parser.position, parser.position, NO_NODE))
+				} else {
+					bind_node = pattern_record_read(parser, bind_start, true, bind_start, bind_start + len(bname))
+				}
+			} else {
+				bind_node = node_add_raw(parser, {kind = .Parameter, span_off = u32(bind_start), a = u32(bind_start + len(bname)), b = NO_NODE_U32})
+			}
+		}
+	}
+	if bind_node != NO_NODE {
+		scratch_push(parser, bind_node)
+	}
+	if !refused(parser) {
+		in_end, has_in := word_ahead(parser, "in")
+		if !has_in {
+			skip_spaces(parser)
+			scratch_push(parser, refuse(parser, .Comp_In_Missing, parser.position, parser.position, NO_NODE))
+		} else {
+			parser.position = in_end
+			iter_node := pipeline_read(parser)
+			scratch_push(parser, iter_node)
+		}
+	}
+	if !refused(parser) {
+		if if_end, has_if := word_ahead(parser, "if"); has_if {
+			parser.position = if_end
+			cond_node := pipeline_read(parser)
+			scratch_push(parser, cond_node)
+			has_cond = true
+		}
+	}
+	if !refused(parser) {
+		if !accept(parser, ':') {
+			skip_spaces(parser)
+			scratch_push(parser, refuse(parser, .Comp_Colon_Missing, parser.position, parser.position, NO_NODE))
+		} else {
+			// Parse key up to `=` (stop before comparison `=`).
+			key_node := coalesce_read(parser)
+			scratch_push(parser, key_node)
+			if !refused(parser) {
+				if !equal_accept(parser) {
+					skip_spaces(parser)
+					scratch_push(parser, refuse(parser, .Comp_Equal_Missing, parser.position, parser.position, NO_NODE))
+				} else {
+					val_node := pipeline_read(parser)
+					scratch_push(parser, val_node)
+					if !refused(parser) && !accept(parser, '}') {
+						scratch_push(parser, refuse(parser, .Literal_Close_Missing, parser.position, parser.position, NO_NODE))
+					}
+				}
+			}
+		}
+	}
+	cstart, ccount, _ := children_commit(parser, mark)
+	if cn := node_at(parser.tree, comp); cn != nil {
+		if has_cond {
+			cn.sub |= REC_COMP_HAS_COND
+		}
+		cn.a = cstart
+		cn.b = ccount
+	}
+	return comp
+}
+
+// dotted_field_path_valid checks that a field name (possibly dotted like
+// `display.font`) has non-empty valid non-keyword identifier segments.
+@(private)
+dotted_field_path_valid :: proc "contextless" (name: string) -> (has_dot: bool, bad_word_start, bad_word_end: int, valid: bool) {
+	if len(name) == 0 {
+		return false, 0, 0, false
+	}
+	seg_start := 0
+	for i := 0; i <= len(name); i += 1 {
+		if i == len(name) || name[i] == '.' {
+			if i < len(name) {
+				has_dot = true
+			}
+			seg := name[seg_start:i]
+			if len(seg) == 0 {
+				return has_dot, seg_start, i, false
+			}
+			if word_of_lex(seg) {
+				return has_dot, seg_start, i, false
+			}
+			if !name_valid(seg) {
+				return has_dot, seg_start, i, false
+			}
+			seg_start = i + 1
+		}
+	}
+	return has_dot, 0, 0, true
+}
+
+// paths_conflict reports whether one dotted path is a strict dot-prefix of the
+// other (e.g. `a` and `a.b`, or `a.b` and `a.b.c`).
+@(private)
+paths_conflict :: proc "contextless" (a, b: string) -> bool {
+	if len(a) < len(b) {
+		return b[:len(a)] == a && b[len(a)] == '.'
+	}
+	if len(b) < len(a) {
+		return a[:len(b)] == b && a[len(b)] == '.'
+	}
+	return false
+}
+
 @(private)
 literal_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 	text := parser.tree.text
@@ -2056,6 +2496,7 @@ literal_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 	}
 	mark := parser.scratch_top
 	hashed := false
+	has_path := false
 	for {
 		skip_spaces(parser)
 		field_start := parser.position
@@ -2064,35 +2505,78 @@ literal_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 			break
 		}
 		name := read_name(parser)
-		if word_of_lex(name) {
-			scratch_push(parser, refuse(parser, .Word_As_Name, field_start, field_start + len(name), NO_NODE))
+		is_dotted, bad_s, bad_e, path_ok := dotted_field_path_valid(name)
+		if !path_ok {
+			if bad_e > bad_s && word_of_lex(name[bad_s:bad_e]) {
+				scratch_push(parser, refuse(parser, .Word_As_Name, field_start + bad_s, field_start + bad_e, NO_NODE))
+			} else {
+				scratch_push(parser, refuse(parser, .Literal_Name_Missing, field_start, field_start + len(name), NO_NODE))
+			}
 			break
+		}
+		if is_dotted {
+			has_path = true
 		}
 		if scratch_child_named(parser, literal, mark, .Literal_Field, name, &hashed) != NO_NODE {
 			scratch_push(parser, refuse(parser, .Literal_Field_Twice, field_start, field_start + len(name), NO_NODE))
 			break
 		}
-		if !equal_accept(parser) {
+		if has_path {
+			// Check prefix conflicts (`a = {...}, a.b = 1` or `a.b = 1, a = {...}`).
+			conflict := false
+			for idx in mark ..< parser.scratch_top {
+				c := parser.scratch[idx]
+				if cn := node_at(parser.tree, c); cn != nil && cn.kind == .Literal_Field {
+					if paths_conflict(node_text(parser.tree, c), name) {
+						conflict = true
+						break
+					}
+				}
+			}
+			if conflict {
+				scratch_push(parser, refuse(parser, .Literal_Path_Conflict, field_start, field_start + len(name), NO_NODE))
+				break
+			}
+		}
+		val := NO_NODE
+		if equal_accept(parser) {
+			field := node_add_raw(parser, {
+				kind     = .Literal_Field,
+				span_off = u32(field_start),
+				a        = NO_NODE_U32,
+				b        = u32(field_start + len(name)),
+			})
+			if field == NO_NODE {
+				break
+			}
+			if hashed {
+				dup_insert(parser, literal, name, field)
+			}
+			val = pipeline_read(parser)
+			if fn := node_at(parser.tree, field); fn != nil {
+				fn.a = u32(val)
+			}
+			scratch_push(parser, field)
+		} else if !is_dotted && (peek(parser) == ',' || peek(parser) == '}') {
+			// Record field shorthand (punning): `{ host, port }` -> `{ host = host, port = port }`.
+			val = node_add_raw(parser, {kind = .Name, span_off = u32(field_start), a = u32(field_start + len(name))})
+			field := node_add_raw(parser, {
+				kind     = .Literal_Field,
+				span_off = u32(field_start),
+				a        = u32(val),
+				b        = u32(field_start + len(name)),
+			})
+			if field == NO_NODE {
+				break
+			}
+			if hashed {
+				dup_insert(parser, literal, name, field)
+			}
+			scratch_push(parser, field)
+		} else {
 			scratch_push(parser, refuse(parser, .Literal_Equal_Missing, parser.position, parser.position, NO_NODE))
 			break
 		}
-		field := node_add_raw(parser, {
-			kind     = .Literal_Field,
-			span_off = u32(field_start),
-			a        = NO_NODE_U32,
-			b        = u32(field_start + len(name)),
-		})
-		if field == NO_NODE {
-			break
-		}
-		if hashed {
-			dup_insert(parser, literal, name, field)
-		}
-		val := pipeline_read(parser)
-		if fn := node_at(parser.tree, field); fn != nil {
-			fn.a = u32(val)
-		}
-		scratch_push(parser, field)
 		if refused(parser) || accept(parser, '}') {
 			break
 		}
@@ -2106,10 +2590,54 @@ literal_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 	}
 	cstart, ccount, _ := children_commit(parser, mark)
 	if ln := node_at(parser.tree, literal); ln != nil {
+		if has_path {
+			ln.sub |= REC_FLAG_HAS_PATH
+		}
 		ln.a = cstart
 		ln.b = ccount
 	}
 	return literal
+}
+
+// param_annotation_read parses optional `: Kind` (and `[Unit]` on `Integer`).
+@(private)
+param_annotation_read :: proc "contextless" (parser: ^Parser) -> (kind: Param_Kind_Annot, unit: value_kinds.Integer_Unit, refusal_node: Node_Index) {
+	if !accept(parser, ':') {
+		return .None, {}, NO_NODE
+	}
+	text := parser.tree.text
+	skip_spaces(parser)
+	k_start := parser.position
+	tok := console_language.token_next(text, k_start, parser.multiline)
+	if tok.kind != .Name {
+		return .None, {}, refuse(parser, .Param_Kind_Unknown, k_start, k_start, NO_NODE)
+	}
+	kname := read_name(parser)
+	parsed_kind, ok := param_kind_of_name(kname)
+	if !ok {
+		return .None, {}, refuse(parser, .Param_Kind_Unknown, k_start, k_start + len(kname), NO_NODE)
+	}
+	if accept(parser, '[') {
+		if parsed_kind != .Integer {
+			return .None, {}, refuse(parser, .Param_Unit_Not_Valid, parser.position - 1, parser.position, NO_NODE)
+		}
+		skip_spaces(parser)
+		u_start := parser.position
+		utok := console_language.token_next(text, u_start, parser.multiline)
+		if utok.kind != .Name {
+			return .None, {}, refuse(parser, .Param_Unit_Not_Valid, u_start, u_start, NO_NODE)
+		}
+		uname := read_name(parser)
+		parsed_unit, uok := integer_unit_of_name(uname)
+		if !uok {
+			return .None, {}, refuse(parser, .Param_Unit_Not_Valid, u_start, u_start + len(uname), NO_NODE)
+		}
+		if !accept(parser, ']') {
+			return .None, {}, refuse(parser, .Param_Unit_Not_Valid, parser.position, parser.position, NO_NODE)
+		}
+		return parsed_kind, parsed_unit, NO_NODE
+	}
+	return parsed_kind, {}, NO_NODE
 }
 
 // pattern_record_read reads `{ a, b = 10, ... }` (optionally prefixed with
@@ -2127,7 +2655,7 @@ pattern_record_read :: proc "contextless" (parser: ^Parser, start: int, has_as: 
 	}
 	mark := parser.scratch_top
 	if has_as {
-		as_node := node_add_raw(parser, {kind = .Parameter, span_off = u32(as_start), a = u32(as_end)})
+		as_node := node_add_raw(parser, {kind = .Parameter, span_off = u32(as_start), a = u32(as_end), b = NO_NODE_U32})
 		scratch_push(parser, as_node)
 	}
 	hashed := false
@@ -2181,6 +2709,11 @@ pattern_record_read :: proc "contextless" (parser: ^Parser, start: int, has_as: 
 				scratch_push(parser, refuse(parser, .Pattern_Field_Twice, fstart, fstart + len(fname), NO_NODE))
 				break
 			}
+			f_kind, f_unit, annot_ref := param_annotation_read(parser)
+			if annot_ref != NO_NODE {
+				scratch_push(parser, annot_ref)
+				break
+			}
 			def_node := NO_NODE
 			if equal_accept(parser) {
 				saved_direct := parser.in_direct_pipe_arg
@@ -2190,6 +2723,8 @@ pattern_record_read :: proc "contextless" (parser: ^Parser, start: int, has_as: 
 			}
 			fnode := node_add_raw(parser, {
 				kind     = .Pattern_Field,
+				sub      = u8(f_kind),
+				aux      = pack_integer_unit(f_unit),
 				span_off = u32(fstart),
 				a        = u32(def_node),
 				b        = u32(fstart + len(fname)),
@@ -2454,7 +2989,27 @@ function_read :: proc "contextless" (parser: ^Parser, open, close, arrow_end: in
 						ok_head = false
 						break
 					}
-					param := node_add_raw(parser, {kind = .Parameter, span_off = u32(name_start), a = u32(name_start + len(name))})
+					p_kind, p_unit, annot_ref := param_annotation_read(parser)
+					if annot_ref != NO_NODE {
+						scratch_push(parser, annot_ref)
+						ok_head = false
+						break
+					}
+					def_node := NO_NODE
+					if equal_accept(parser) {
+						saved_direct := parser.in_direct_pipe_arg
+						parser.in_direct_pipe_arg = false
+						def_node = pipeline_read(parser)
+						parser.in_direct_pipe_arg = saved_direct
+					}
+					param := node_add_raw(parser, {
+						kind     = .Parameter,
+						sub      = u8(p_kind),
+						aux      = pack_integer_unit(p_unit),
+						span_off = u32(name_start),
+						a        = u32(name_start + len(name)),
+						b        = u32(def_node),
+					})
 					scratch_push(parser, param)
 					if refused(parser) {
 						ok_head = false
@@ -2492,6 +3047,344 @@ function_read :: proc "contextless" (parser: ^Parser, open, close, arrow_end: in
 		names_bind(parser, function, .Parameter, body, false)
 	}
 	return function
+}
+
+// ---- Pattern matching (`match expr { pat [if guard] => body, ... }`).
+
+// Bounded tracker for duplicate variable bindings within one match arm pattern.
+@(private)
+MATCH_ARM_BIND_LIMIT :: 64
+
+@(private)
+Match_Arm_Binds :: struct {
+	names: [MATCH_ARM_BIND_LIMIT]string,
+	count: int,
+}
+
+@(private)
+match_arm_bind_add :: proc "contextless" (binds: ^Match_Arm_Binds, name: string) -> (dup: bool) {
+	for i in 0 ..< binds.count {
+		if binds.names[i] == name {
+			return true
+		}
+	}
+	if binds.count < MATCH_ARM_BIND_LIMIT {
+		binds.names[binds.count] = name
+		binds.count += 1
+	}
+	return false
+}
+
+@(private)
+match_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
+	text := parser.tree.text
+	mnode := node_add_raw(parser, {kind = .Match, span_off = u32(start)})
+	if mnode == NO_NODE {
+		return NO_NODE
+	}
+	mark := parser.scratch_top
+	saved_direct := parser.in_direct_pipe_arg
+	parser.in_direct_pipe_arg = false
+	defer parser.in_direct_pipe_arg = saved_direct
+
+	saved_match := parser.in_match_scrutinee
+	parser.in_match_scrutinee = true
+	scrut := pipeline_read(parser)
+	parser.in_match_scrutinee = saved_match
+	scratch_push(parser, scrut)
+	if !refused(parser) {
+		if !accept(parser, '{') {
+			skip_spaces(parser)
+			scratch_push(parser, refuse(parser, .Match_Open_Missing, parser.position, parser.position, NO_NODE))
+		} else if accept(parser, '}') {
+			scratch_push(parser, refuse(parser, .Match_Empty, parser.position - 1, parser.position, NO_NODE))
+		} else {
+			for !refused(parser) {
+				skip_spaces(parser)
+				arm_start := parser.position
+				arm := node_add_raw(parser, {kind = .Match_Arm, span_off = u32(arm_start)})
+				if arm == NO_NODE {
+					break
+				}
+				arm_mark := parser.scratch_top
+				binds: Match_Arm_Binds
+				pat := match_pattern_read(parser, &binds)
+				scratch_push(parser, pat)
+				has_guard := false
+				if !refused(parser) {
+					if if_end, has_if := word_ahead(parser, "if"); has_if {
+						parser.position = if_end
+						guard := pipeline_read(parser)
+						scratch_push(parser, guard)
+						has_guard = true
+					}
+				}
+				arrow_end := parser.position
+				if !refused(parser) {
+					tok := console_language.token_next(text, parser.position, parser.multiline)
+					if tok.kind != .Function_Arrow {
+						scratch_push(parser, refuse(parser, .Match_Arrow_Missing, tok.start, tok.start, NO_NODE))
+					} else {
+						parser.position = tok.end
+						arrow_end = tok.end
+						body := pipeline_read(parser)
+						scratch_push(parser, body)
+					}
+				}
+				ac_start, ac_count, _ := children_commit(parser, arm_mark)
+				if an := node_at(parser.tree, arm); an != nil {
+					if has_guard {
+						an.sub |= MATCH_ARM_HAS_GUARD
+					}
+					an.a = ac_start
+					an.aux = u16(ac_count)
+					an.b = u32(arrow_end)
+				}
+				scratch_push(parser, arm)
+				if refused(parser) || accept(parser, '}') {
+					break
+				}
+				if !accept(parser, ',') {
+					scratch_push(parser, refuse(parser, .Match_Close_Missing, parser.position, parser.position, NO_NODE))
+					break
+				}
+				if accept(parser, '}') {
+					break
+				}
+			}
+		}
+	}
+	cstart, ccount, _ := children_commit(parser, mark)
+	if mn := node_at(parser.tree, mnode); mn != nil {
+		mn.a = cstart
+		mn.b = ccount
+	}
+	return mnode
+}
+
+@(private)
+match_pattern_read :: proc "contextless" (parser: ^Parser, binds: ^Match_Arm_Binds) -> Node_Index {
+	if parser.depth_limit > 0 && parser.depth >= parser.depth_limit {
+		skip_spaces(parser)
+		return refuse(parser, .Nesting_Too_Deep, parser.position, parser.position, NO_NODE)
+	}
+	parser.depth += 1
+	defer parser.depth -= 1
+
+	text := parser.tree.text
+	character := peek(parser)
+	start := parser.position
+	switch {
+	case character == '-':
+		parser.position += 1
+		skip_spaces(parser)
+		nstart := parser.position
+		if !console_language.digit(peek(parser)) {
+			return refuse(parser, .Match_Pattern_Expected, start, parser.position, NO_NODE)
+		}
+		end := console_language.number_end(text, nstart)
+		parser.position = end
+		value, fits := console_language.number_value(text, nstart, end)
+		if !fits {
+			return refuse(parser, .Number_Too_Large, nstart, end, NO_NODE)
+		}
+		unit := value_kinds.Integer_Unit{}
+		u_start := end
+		for u_start < len(text) && (text[u_start] == ' ' || text[u_start] == '\t') {
+			u_start += 1
+		}
+		if u_start < len(text) && console_language.name_first(text[u_start]) {
+			u_end := u_start + 1
+			for u_end < len(text) && (console_language.name_first(text[u_end]) || console_language.digit(text[u_end])) {
+				u_end += 1
+			}
+			if u, u_ok := integer_unit_of_name(text[u_start:u_end]); u_ok {
+				unit = u
+				end = u_end
+				parser.position = u_end
+			}
+		}
+		inner := integer_node_add(parser, nstart, end, value, unit)
+		return node_add_raw(parser, {kind = .Negate, span_off = u32(start), a = u32(inner), b = u32(start + 1)})
+	case console_language.digit(character):
+		end := console_language.number_end(text, start)
+		parser.position = end
+		value, fits := console_language.number_value(text, start, end)
+		if !fits {
+			return refuse(parser, .Number_Too_Large, start, end, NO_NODE)
+		}
+		unit := value_kinds.Integer_Unit{}
+		u_start := end
+		for u_start < len(text) && (text[u_start] == ' ' || text[u_start] == '\t') {
+			u_start += 1
+		}
+		if u_start < len(text) && console_language.name_first(text[u_start]) {
+			u_end := u_start + 1
+			for u_end < len(text) && (console_language.name_first(text[u_end]) || console_language.digit(text[u_end])) {
+				u_end += 1
+			}
+			if u, u_ok := integer_unit_of_name(text[u_start:u_end]); u_ok {
+				unit = u
+				end = u_end
+				parser.position = u_end
+			}
+		}
+		return integer_node_add(parser, start, end, value, unit)
+	case character == '"':
+		node := text_literal_read(parser, start)
+		if n := node_at(parser.tree, node); n != nil && n.kind == .Text_Interp {
+			return refuse(parser, .Match_Pattern_Expected, start, parser.position, NO_NODE)
+		}
+		return node
+	case character == '.':
+		tok := console_language.token_next(text, start, parser.multiline)
+		if tok.kind != .Member {
+			return refuse(parser, .Match_Pattern_Expected, start, len(text), NO_NODE)
+		}
+		parser.position = tok.end
+		return node_add_raw(parser, {kind = .Member, span_off = u32(start), a = u32(tok.end)})
+	case console_language.hash_starts(text, start):
+		end := console_language.hash_end(text, start)
+		parser.position = end
+		if _, valid := console_language.hash_value(text, start, end); !valid {
+			return refuse(parser, .Hash_Not_Valid, start, end, NO_NODE)
+		}
+		return node_add_raw(parser, {kind = .Hash, span_off = u32(start), a = u32(end)})
+	case character == '{':
+		parser.position += 1
+		return match_record_pattern_read(parser, start, false, 0, 0, binds)
+	case console_language.name_first(character):
+		name := read_name(parser)
+		if name == "_" {
+			return node_add_raw(parser, {kind = .Match_Pat_Wild, span_off = u32(start), a = u32(start + 1)})
+		}
+		if name == "true" || name == "false" {
+			return node_add_raw(parser, {
+				kind     = .Boolean,
+				sub      = name == "true" ? 1 : 0,
+				span_off = u32(start),
+				a        = u32(start + len(name)),
+			})
+		}
+		if word_of_lex(name) {
+			return refuse(parser, .Word_As_Name, start, start + len(name), NO_NODE)
+		}
+		if !name_valid(name) {
+			return refuse(parser, .Match_Pattern_Expected, start, start + len(name), NO_NODE)
+		}
+		if accept(parser, '@') {
+			if !accept(parser, '{') {
+				return refuse(parser, .Pattern_At_Missing_Brace, parser.position, parser.position, NO_NODE)
+			}
+			if match_arm_bind_add(binds, name) {
+				return refuse(parser, .Match_Duplicate_Bind, start, start + len(name), NO_NODE)
+			}
+			return match_record_pattern_read(parser, start, true, start, start + len(name), binds)
+		}
+		if match_arm_bind_add(binds, name) {
+			return refuse(parser, .Match_Duplicate_Bind, start, start + len(name), NO_NODE)
+		}
+		return node_add_raw(parser, {kind = .Match_Pat_Bind, span_off = u32(start), a = u32(start + len(name))})
+	}
+	return refuse(parser, .Match_Pattern_Expected, start, start, NO_NODE)
+}
+
+@(private)
+match_record_pattern_read :: proc "contextless" (parser: ^Parser, start: int, has_as: bool, as_start, as_end: int, binds: ^Match_Arm_Binds) -> Node_Index {
+	text := parser.tree.text
+	pat := node_add_raw(parser, {
+		kind     = .Pattern_Record,
+		sub      = PAT_FLAG_MATCH | (has_as ? PAT_FLAG_HAS_AS : 0),
+		span_off = u32(start),
+	})
+	if pat == NO_NODE {
+		return NO_NODE
+	}
+	mark := parser.scratch_top
+	if has_as {
+		as_node := node_add_raw(parser, {kind = .Parameter, span_off = u32(as_start), a = u32(as_end), b = NO_NODE_U32})
+		scratch_push(parser, as_node)
+	}
+	hashed := false
+	has_rest := false
+	if !accept(parser, '}') {
+		for {
+			skip_spaces(parser)
+			fstart := parser.position
+			if fstart + 2 < len(text) && text[fstart] == '.' && text[fstart + 1] == '.' && text[fstart + 2] == '.' {
+				parser.position = fstart + 3
+				has_rest = true
+				if accept(parser, ',') {
+					if accept(parser, '}') {
+						break
+					}
+					scratch_push(parser, refuse(parser, .Pattern_Rest_Not_Last, parser.position, parser.position, NO_NODE))
+					break
+				}
+				if !accept(parser, '}') {
+					scratch_push(parser, refuse(parser, .Pattern_Close_Missing, parser.position, parser.position, NO_NODE))
+				}
+				break
+			}
+			tok := console_language.token_next(text, fstart, parser.multiline)
+			if tok.kind != .Name {
+				scratch_push(parser, refuse(parser, .Pattern_Field_Missing, fstart, fstart, NO_NODE))
+				break
+			}
+			fname := read_name(parser)
+			if word_of_lex(fname) {
+				scratch_push(parser, refuse(parser, .Word_As_Name, fstart, fstart + len(fname), NO_NODE))
+				break
+			}
+			if !name_valid(fname) {
+				scratch_push(parser, refuse(parser, .Pattern_Field_Missing, fstart, fstart + len(fname), NO_NODE))
+				break
+			}
+			if scratch_child_named(parser, pat, mark, .Match_Pat_Field, fname, &hashed) != NO_NODE {
+				scratch_push(parser, refuse(parser, .Pattern_Field_Twice, fstart, fstart + len(fname), NO_NODE))
+				break
+			}
+			sub_pat := NO_NODE
+			if equal_accept(parser) {
+				sub_pat = match_pattern_read(parser, binds)
+			} else {
+				// Shorthand `{ a, b }` binds variable `a` to field `a`.
+				if match_arm_bind_add(binds, fname) {
+					scratch_push(parser, refuse(parser, .Match_Duplicate_Bind, fstart, fstart + len(fname), NO_NODE))
+					break
+				}
+			}
+			fnode := node_add_raw(parser, {
+				kind     = .Match_Pat_Field,
+				span_off = u32(fstart),
+				a        = u32(sub_pat),
+				b        = u32(fstart + len(fname)),
+			})
+			if hashed && fnode != NO_NODE {
+				dup_insert(parser, pat, fname, fnode)
+			}
+			scratch_push(parser, fnode)
+			if refused(parser) || accept(parser, '}') {
+				break
+			}
+			if !accept(parser, ',') {
+				scratch_push(parser, refuse(parser, .Pattern_Close_Missing, parser.position, parser.position, NO_NODE))
+				break
+			}
+			if accept(parser, '}') {
+				break
+			}
+		}
+	}
+	cstart, ccount, _ := children_commit(parser, mark)
+	if pn := node_at(parser.tree, pat); pn != nil {
+		if has_rest {
+			pn.sub |= PAT_FLAG_REST
+		}
+		pn.a = cstart
+		pn.b = ccount
+	}
+	return pat
 }
 
 @(private)
@@ -2560,17 +3453,17 @@ names_bind :: proc "contextless" (parser: ^Parser, owner: Node_Index, binding_ki
 		}
 	}
 	switch node.kind {
-	case .Negate, .Logical_Not, .Field_Select, .Literal_Field, .Let_Binding, .Named_Argument, .Refused, .Condition, .Pattern_Field:
+	case .Negate, .Logical_Not, .Field_Select, .Literal_Field, .Let_Binding, .Named_Argument, .Refused, .Condition, .Pattern_Field, .Match_Pat_Field:
 		names_bind(parser, owner, binding_kind, node_child(tree, index), hashed)
 	case .Binary, .Pipe:
 		left, right := node_binary_children(tree, index)
 		names_bind(parser, owner, binding_kind, left, hashed)
 		names_bind(parser, owner, binding_kind, right, hashed)
-	case .Call, .Record_Literal, .List_Literal, .Let, .Function, .If, .Text_Interp, .Pattern_Record:
+	case .Call, .Record_Literal, .List_Literal, .Let, .Function, .If, .Text_Interp, .Pattern_Record, .Record_Comp, .Match, .Match_Arm:
 		for child in node_children(tree, index) {
 			names_bind(parser, owner, binding_kind, child, hashed)
 		}
-	case .Integer, .Text, .Name, .Fact_Name, .Field_Names, .Member, .Parameter, .Hash, .Boolean, .Placeholder:
+	case .Integer, .Text, .Name, .Fact_Name, .Field_Names, .Member, .Parameter, .Hash, .Boolean, .Placeholder, .Match_Pat_Wild, .Match_Pat_Bind:
 	}
 }
 

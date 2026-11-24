@@ -7,6 +7,7 @@ import "modus:console_condition"
 import "modus:console_language"
 import "modus:contract/blake3"
 import module "modus:contract/module"
+import "modus:contract/value_kinds"
 import "modus:hash_table"
 import "modus:lex_parser"
 
@@ -42,6 +43,21 @@ EXTEND_NAME :: "extend"
 MERGE_DEEP_NAME :: "merge_deep"
 ASSERT_NAME :: "assert"
 TRACE_NAME :: "trace"
+FROM_ENTRIES_NAME :: "from_entries"
+LEN_NAME :: "len"
+AT_NAME :: "at"
+SLICE_NAME :: "slice"
+ANY_NAME :: "any"
+ALL_NAME :: "all"
+FLAT_MAP_NAME :: "flat_map"
+UNIQUE_NAME :: "unique"
+SORT_BY_NAME :: "sort_by"
+SPLIT_NAME :: "split"
+JOIN_TEXT_NAME :: "join_text"
+STARTS_WITH_NAME :: "starts_with"
+ENDS_WITH_NAME :: "ends_with"
+CONTAINS_NAME :: "contains"
+REPLACE_TEXT_NAME :: "replace_text"
 
 // Recursive depth bound for `merge_deep(a, b)` (Plan value: 64 nested record
 // levels exceeds real declarations while preventing unbounded nesting).
@@ -140,6 +156,10 @@ Thunk_State :: enum u8 {
 	Forced   = 1,
 	Forcing  = 2,
 }
+
+// Flag in Thunk_Code.flags when the last captured env slot holds the single
+// forced argument for a lazy 1-parameter comprehension thunk.
+THUNK_FLAG_ONE_ARG :: u16(1 << 0)
 
 // Unforced thunk payload: compiled thunk proto + captured lexical environment.
 Thunk_Code :: struct {
@@ -246,57 +266,67 @@ Host_Obj :: struct {
 // variables, tables, conditions). Inside the VM itself, every register, thunk,
 // list item, and record field is the 16-byte Value.
 Host_Value :: struct {
-	kind:      Kind,
-	integer:   i64,
-	text:      string,
-	record:    []u8,
-	file:      []u8,
-	detail:    u32,
-	condition: ^console_condition.Condition,
-	vm_value:  Value,
+	kind:         Kind,
+	integer:      i64,
+	integer_unit: value_kinds.Integer_Unit,
+	text:         string,
+	record:       []u8,
+	file:         []u8,
+	detail:       u32,
+	condition:    ^console_condition.Condition,
+	vm_value:     Value,
 }
 
 // Why an evaluation stopped.
 Refusal :: enum u8 {
-	None                  = 0,
-	Text                  = 1,
-	Operator_Kinds        = 2,
-	Negate_Kind           = 3,
-	Overflow              = 4,
-	Division_By_Zero      = 5,
-	Budget_Exceeded       = 6,
-	Effect_Refused        = 7,
-	Host_Refused          = 8,
-	Literal_No_Type       = 9,
-	Literal_Field_Unknown = 10,
-	Literal_Field_Missing = 11,
-	Literal_Field_Kind    = 12,
-	Literal_Field_Range   = 13,
-	Argument_Unknown      = 14,
-	Argument_Twice        = 15,
-	Argument_Missing      = 16,
-	With_Kinds            = 17,
-	With_Records_Differ   = 18,
-	Field_Unknown         = 19,
-	Cycle                 = 20,
-	Member_No_Type        = 21,
-	Member_Unknown        = 22,
-	Not_A_Function        = 23,
-	Function_Arguments    = 24,
-	Value_At_Border       = 25,
-	Stack_Exceeded        = 26,
-	Calls_Full            = 27,
-	Lists_Full            = 28,
-	Not_A_List            = 29,
-	List_Item_Kind        = 30,
-	Condition_Not_Boolean = 31,
-	Depth_Exceeded        = 32,
-	With_Pairs_Full       = 33,
-	Imports_Full          = 34,
-	Assertion_Failed      = 35,
-	Interpolation_Kind    = 36,
-	Pattern_Not_A_Record  = 37,
-	Pattern_Extra_Field   = 38,
+	None                      = 0,
+	Text                      = 1,
+	Operator_Kinds            = 2,
+	Negate_Kind               = 3,
+	Overflow                  = 4,
+	Division_By_Zero          = 5,
+	Budget_Exceeded           = 6,
+	Effect_Refused            = 7,
+	Host_Refused              = 8,
+	Literal_No_Type           = 9,
+	Literal_Field_Unknown     = 10,
+	Literal_Field_Missing     = 11,
+	Literal_Field_Kind        = 12,
+	Literal_Field_Range       = 13,
+	Argument_Unknown          = 14,
+	Argument_Twice            = 15,
+	Argument_Missing          = 16,
+	With_Kinds                = 17,
+	With_Records_Differ       = 18,
+	Field_Unknown             = 19,
+	Cycle                     = 20,
+	Member_No_Type            = 21,
+	Member_Unknown            = 22,
+	Not_A_Function            = 23,
+	Function_Arguments        = 24,
+	Value_At_Border           = 25,
+	Stack_Exceeded            = 26,
+	Calls_Full                = 27,
+	Lists_Full                = 28,
+	Not_A_List                = 29,
+	List_Item_Kind            = 30,
+	Condition_Not_Boolean     = 31,
+	Depth_Exceeded            = 32,
+	With_Pairs_Full           = 33,
+	Imports_Full              = 34,
+	Assertion_Failed          = 35,
+	Interpolation_Kind        = 36,
+	Pattern_Not_A_Record      = 37,
+	Pattern_Extra_Field       = 38,
+	Unit_Mismatch             = 39,
+	Literal_Path_Outside_With = 40,
+	Duplicate_Field           = 41,
+	Field_Name_Invalid        = 42,
+	No_Matching_Arm           = 43,
+	Coalesce_Not_Field_Access = 44,
+	Index_Out_Of_Bounds       = 45,
+	Parameter_Kind            = 46,
+	Empty_Separator           = 47,
 }
 
 // First refusal of an evaluation, with exact diagnostic fields, byte span,
@@ -311,6 +341,9 @@ Refusal_Record :: struct {
 	operator:         lex_parser.Operator,
 	left_kind:        Kind,
 	right_kind:       Kind,
+	left_unit:        value_kinds.Integer_Unit,
+	right_unit:       value_kinds.Integer_Unit,
+	expected_annot:   lex_parser.Param_Kind_Annot,
 	left:             i64,
 	right:            i64,
 	text_refusal:     lex_parser.Refusal,
@@ -383,6 +416,28 @@ value_none :: #force_inline proc "contextless" () -> Value {
 
 value_int :: #force_inline proc "contextless" (v: i64) -> Value {
 	return {kind = .Integer, data = u64(v)}
+}
+
+value_int_unit :: #force_inline proc "contextless" (v: i64, unit: value_kinds.Integer_Unit) -> Value {
+	if unit.kind == .None || !value_kinds.integer_unit_valid(unit) {
+		return {kind = .Integer, data = u64(v)}
+	}
+	return {kind = .Integer, flags = u8(unit.kind), aux = u16(unit.unit), data = u64(v)}
+}
+
+value_unit :: proc "contextless" (v: Value) -> value_kinds.Integer_Unit {
+	if v.kind != .Integer || v.flags == 0 {
+		return {}
+	}
+	kind, ok := value_kinds.value_kind_of(v.flags)
+	if !ok {
+		return {}
+	}
+	u := value_kinds.Integer_Unit{kind = kind, unit = u8(v.aux)}
+	if !value_kinds.integer_unit_valid(u) {
+		return {}
+	}
+	return u
 }
 
 value_bool :: #force_inline proc "contextless" (v: bool) -> Value {
@@ -573,6 +628,48 @@ function_source_offsets :: proc "contextless" (eval: ^Evaluation, v: Value) -> (
 	}
 	proto := eval.protos[int(chunk.proto_start) + int(cl.proto_id)]
 	return chunk.source, int(proto.fn_open_off), int(proto.fn_arrow_end), true
+}
+
+// Public parameter metadata for inspecting Lex functions (manual, palette, callers).
+Function_Param_Info :: struct {
+	name:        string,
+	kind_annot:  lex_parser.Param_Kind_Annot,
+	unit:        value_kinds.Integer_Unit,
+	has_default: bool,
+	is_pattern:  bool,
+}
+
+// function_param_meta writes parameter names, optional kind/unit annotations,
+// and default presence for a .Function value into `out`, returning the count.
+function_param_meta :: proc "contextless" (eval: ^Evaluation, fn_val: Value, out: []Function_Param_Info) -> (count: int, ok: bool) {
+	if eval == nil || fn_val.kind != .Function {
+		return 0, false
+	}
+	cidx := int(fn_val.data)
+	if cidx < 0 || cidx >= eval.closure_count {
+		return 0, false
+	}
+	cl := eval.closures[cidx]
+	if int(cl.chunk_id) >= eval.chunk_count {
+		return 0, false
+	}
+	chunk := &eval.chunks[cl.chunk_id]
+	if int(cl.proto_id) >= int(chunk.proto_count) {
+		return 0, false
+	}
+	proto := eval.protos[int(chunk.proto_start) + int(cl.proto_id)]
+	n := min(int(proto.param_count), len(out))
+	for i in 0 ..< n {
+		pm := proto.params[i]
+		out[i] = {
+			name        = lex_parser.sym_text(&eval.interner, pm.name_sym),
+			kind_annot  = pm.kind_annot,
+			unit        = pm.unit,
+			has_default = pm.has_default,
+			is_pattern  = pm.is_pattern,
+		}
+	}
+	return int(proto.param_count), true
 }
 
 // is_lazy_record reports whether kind is a lazy record (literal, overlay, plan, or project).

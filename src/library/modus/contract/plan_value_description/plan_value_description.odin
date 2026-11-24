@@ -16,6 +16,7 @@ import module "modus:contract/module"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/role_contract"
 import "modus:contract/root_plan_values"
+import "modus:contract/value_kinds"
 
 // The boot image as the description reads it: the module file of a name,
 // or of a hash; an empty file for none.
@@ -39,12 +40,13 @@ DESCRIBING_EXPORTS := [2]string{"set", "plan_only"}
 
 // The description of one value of an owner.
 Described :: struct {
-	file:      []u8, // The module whose description it is; empty for a field of the core.
-	type:      module.Type,
-	enum_type: module.Enum_Type,
-	has_range: bool,
-	least:     i64,
-	most:      i64,
+	file:         []u8, // The module whose description it is; empty for a field of the core.
+	type:         module.Type,
+	enum_type:    module.Enum_Type,
+	integer_unit: value_kinds.Integer_Unit,
+	has_range:    bool,
+	least:        i64,
+	most:         i64,
 }
 
 // Why a value is refused at the border of a plan.
@@ -121,6 +123,26 @@ role_of_owner_module :: proc "contextless" (image: Image, holders: ^Role_Holders
 	return .None, false
 }
 
+@(private = "file")
+root_field_unit :: proc "contextless" (field: string) -> value_kinds.Integer_Unit {
+	switch field {
+	case root_plan_values.BUDGET_GROWTH_PERIOD_MS_FIELD:
+		return value_kinds.time_in(.Milliseconds)
+	case root_plan_values.DISK_PROCESSES_PAGES_FIELD,
+	     root_plan_values.BUDGET_PAGES_FIELD,
+	     root_plan_values.BUDGET_CEILING_PAGES_FIELD,
+	     root_plan_values.BUDGET_GROWTH_RESERVE_PAGES_FIELD,
+	     root_plan_values.BUDGET_SCREEN_PAGES_FIELD:
+		return value_kinds.size_in(.Pages)
+	case root_plan_values.DISK_PROCESSES_PROCESSOR_FIELD,
+	     root_plan_values.BUDGET_PROCESSOR_FIELD:
+		return value_kinds.time_in(.Microseconds)
+	case root_plan_values.STORE_BLOCKS_FIELD:
+		return value_kinds.size_in(.Blocks)
+	}
+	return {}
+}
+
 // describe gives the description of a value of an owner: a field of the
 // core from its contract, the quota of the store of an owner that exists,
 // else the parameter of that name of the setter of the owner, else of its
@@ -128,7 +150,7 @@ role_of_owner_module :: proc "contextless" (image: Image, holders: ^Role_Holders
 describe :: proc "contextless" (image: Image, holders: ^Role_Holders, owner, field: string) -> (described: Described, refusal: Refusal) {
 	if owner == root_plan_values.OWNER {
 		if range, found := root_plan_values.field_range_of(owner, field); found {
-			return {type = .Integer, has_range = true, least = i64(range.least), most = i64(range.most)}, {}
+			return {type = .Integer, integer_unit = root_field_unit(field), has_range = true, least = i64(range.least), most = i64(range.most)}, {}
 		}
 		// The core has no store or per-module budget row.
 		return {}, {problem = .Field_Unknown, root = true}
@@ -143,7 +165,7 @@ describe :: proc "contextless" (image: Image, holders: ^Role_Holders, owner, fie
 	// Plan-only fields that the core reads for each owner: store_blocks and
 	// the budget policy fields of root_plan_values.OWNER_FIELDS.
 	if range, found := root_plan_values.field_range_of(owner, field); found {
-		return {type = .Integer, has_range = true, least = i64(range.least), most = i64(range.most)}, {}
+		return {type = .Integer, integer_unit = root_field_unit(field), has_range = true, least = i64(range.least), most = i64(range.most)}, {}
 	}
 	for export_name in DESCRIBING_EXPORTS {
 		export_index, function, found := export_of_name(file, export_name)
@@ -156,6 +178,11 @@ describe :: proc "contextless" (image: Image, holders: ^Role_Holders, owner, fie
 			}
 			type, _ := module.function_parameter_type(function, index)
 			described.type, described.file = type, file
+			if type == .Integer {
+				if unit, unit_ok := value_kinds.integer_unit_of_detail(function.parameter_details[index]); unit_ok {
+					described.integer_unit = unit
+				}
+			}
 			if type == .Enum {
 				enum_index, _ := module.enum_detail_of(function.parameter_details[index])
 				enum_type, problem := module.enum_type(file, enum_index)

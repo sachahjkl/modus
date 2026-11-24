@@ -13,6 +13,7 @@ import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/enum_word"
 import "modus:contract/text_encoding"
+import "modus:contract/value_kinds"
 
 // ---- Read-only input bundle format (v2).
 
@@ -491,24 +492,26 @@ Failure_Kind :: enum u8 {
 	Unserializable_Value = 16,
 	Recipe_Refused       = 17, // The conversion of a recipe refused it: the detail is the words of its refusal (plans_recipes.recipe_refusal_words).
 	Assertion_Failed     = 18, // An assert(cond, msg, value) call evaluated cond to false.
+	No_Matching_Arm      = 19, // A match expression reached the end of its arms with no match.
 }
 
 // Canonical value tags in the output buffer.
 Value_Tag :: enum u8 {
-	Integer    = 1,
-	Boolean    = 2,
-	Text       = 3,
-	Hash       = 4,
-	Member     = 5,
-	Module_Ref = 6,
-	Recipe_Ref = 7,
-	Follow_Ref = 8,
-	Store_Ref  = 9,
-	List       = 10,
-	Record     = 11,
-	Plan       = 12,
-	Project    = 13,
-	Tree_Ref   = 14, // A tree by its hash, as here() gives it: an input of a recipe that names its kind.
+	Integer      = 1,
+	Boolean      = 2,
+	Text         = 3,
+	Hash         = 4,
+	Member       = 5,
+	Module_Ref   = 6,
+	Recipe_Ref   = 7,
+	Follow_Ref   = 8,
+	Store_Ref    = 9,
+	List         = 10,
+	Record       = 11,
+	Plan         = 12,
+	Project      = 13,
+	Tree_Ref     = 14, // A tree by its hash, as here() gives it: an input of a recipe that names its kind.
+	Integer_Unit = 15, // A typed unit integer: kind:u8, unit:u8, value:i64 LE (kind != .None).
 }
 
 // Why an output buffer is refused by a reader.
@@ -527,6 +530,7 @@ Output_Refusal :: enum u8 {
 	Depth_Limit_Exceeded = 11,
 	Unsorted_Record      = 12,
 	Trailing_Bytes       = 13,
+	Bad_Integer_Unit     = 14,
 }
 
 // Decoded output header.
@@ -606,6 +610,17 @@ output_write_string :: proc "contextless" (writer: ^Output_Writer, text: string)
 
 output_write_integer :: proc "contextless" (writer: ^Output_Writer, value: i64) {
 	output_write_u8(writer, u8(Value_Tag.Integer))
+	output_write_i64(writer, value)
+}
+
+output_write_integer_unit :: proc "contextless" (writer: ^Output_Writer, value: i64, unit: value_kinds.Integer_Unit) {
+	if unit.kind == .None || !value_kinds.integer_unit_valid(unit) {
+		output_write_integer(writer, value)
+		return
+	}
+	output_write_u8(writer, u8(Value_Tag.Integer_Unit))
+	output_write_u8(writer, u8(unit.kind))
+	output_write_u8(writer, unit.unit)
 	output_write_i64(writer, value)
 }
 
@@ -723,6 +738,21 @@ output_read_i64 :: proc "contextless" (reader: ^Output_Reader) -> (value: i64, r
 	return value, .None
 }
 
+output_read_integer_unit :: proc "contextless" (reader: ^Output_Reader) -> (value: i64, unit: value_kinds.Integer_Unit, refusal: Output_Refusal) {
+	kind_byte := output_read_u8(reader) or_return
+	unit_byte := output_read_u8(reader) or_return
+	kind, kind_ok := value_kinds.value_kind_of(kind_byte)
+	if !kind_ok || kind == .None {
+		return 0, {}, .Bad_Integer_Unit
+	}
+	u := value_kinds.Integer_Unit{kind = kind, unit = unit_byte}
+	if !value_kinds.integer_unit_valid(u) {
+		return 0, {}, .Bad_Integer_Unit
+	}
+	v := output_read_i64(reader) or_return
+	return v, u, .None
+}
+
 output_read_hash :: proc "contextless" (reader: ^Output_Reader) -> (hash: blake3.Hash, refusal: Output_Refusal) {
 	if len(reader.bytes) - reader.offset < blake3.HASH_SIZE {
 		return {}, .Truncated
@@ -806,6 +836,9 @@ output_validate_value :: proc "contextless" (reader: ^Output_Reader, depth: int)
 	switch tag {
 	case .Integer:
 		_, refusal = output_read_i64(reader)
+		return refusal
+	case .Integer_Unit:
+		_, _, refusal = output_read_integer_unit(reader)
 		return refusal
 	case .Boolean:
 		b, r := output_read_u8(reader)

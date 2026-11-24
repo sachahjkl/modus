@@ -102,7 +102,7 @@ spec_of_arguments :: proc "contextless" (builder: blake3.Hash, arguments: []u8, 
 			spec.input_count += 1
 		case .Hash:
 			return .Untyped_Hash
-		case .Integer, .Boolean, .Text, .Member, .Record, .List, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan, .Project:
+		case .Integer, .Integer_Unit, .Boolean, .Text, .Member, .Record, .List, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan, .Project:
 			reader.offset = value_start
 			if refusal := argument_value_check(&reader, 0); refusal != .None {
 				return refusal
@@ -168,7 +168,7 @@ argument_value_check :: proc "contextless" (reader: ^declaration_eval.Output_Rea
 		return .Damaged_Recipe
 	}
 	switch tag {
-	case .Integer, .Boolean, .Text, .Member:
+	case .Integer, .Integer_Unit, .Boolean, .Text, .Member:
 		reader.offset -= 1
 		if declaration_eval.output_skip_value(reader, depth) != .None {
 			return .Damaged_Recipe

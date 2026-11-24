@@ -243,7 +243,15 @@ value_parts_draw :: proc "contextless" (sink: ^console_results.Sink, value: Valu
 			}
 		}
 	case .Integer:
-		console_results.draw_integer(sink, value.integer)
+		if value.integer_unit.kind != .None {
+			ubuf: [48]u8
+			part: console_results.Part = value.integer_unit.kind == .Time ? .Time : .Size
+			sink.continuation = 0
+			sink.write(sink, system.format(ubuf[:], value.integer, value_kinds.integer_unit_text(value.integer_unit)), part)
+			sink.end_line(sink)
+		} else {
+			console_results.draw_integer(sink, value.integer)
+		}
 	case .Text:
 		console_results.draw_text(sink, value.text)
 	case .Record:
@@ -323,7 +331,13 @@ list_inline_write :: proc "contextless" (sink: ^console_results.Sink, value: Val
 		buffer: [24]u8
 		switch item.kind {
 		case .Integer:
-			sink.write(sink, system.format(buffer[:], item.integer), .Number)
+			if item.integer_unit.kind != .None {
+				ubuf: [48]u8
+				part: console_results.Part = item.integer_unit.kind == .Time ? .Time : .Size
+				sink.write(sink, system.format(ubuf[:], item.integer, value_kinds.integer_unit_text(item.integer_unit)), part)
+			} else {
+				sink.write(sink, system.format(buffer[:], item.integer), .Number)
+			}
 		case .Text:
 			sink.write(sink, "\"", .Plain)
 			sink.write(sink, item.text, .Plain)

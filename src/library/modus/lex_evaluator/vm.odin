@@ -10,7 +10,9 @@ package lex_evaluator
 import "modus:console_condition"
 import "modus:console_language"
 import "modus:contract/blake3"
+import "modus:contract/enum_word"
 import module "modus:contract/module"
+import "modus:contract/value_kinds"
 import "modus:hash_table"
 import "modus:lex_parser"
 
@@ -42,6 +44,7 @@ CONSOLE_SHAPE_FIELD_CAPACITY :: 1024
 CONSOLE_SHAPE_IDX_SLOTS :: 2048
 CONSOLE_PAT_DESC_CAPACITY :: 64
 CONSOLE_PAT_FIELD_CAPACITY :: 256
+CONSOLE_COMP_DESC_CAPACITY :: 64
 CONSOLE_INTERN_SYMS :: 1024
 CONSOLE_INTERN_GROUPS :: 74 // ceil(1024 / 14)
 CONSOLE_INTERN_BYTES :: 16 * 1024
@@ -68,6 +71,11 @@ Frame_Kind :: enum u8 {
 	Console_Let_Force = 3,
 	Console_Rec_Force = 4,
 	Fold              = 5,
+	Any               = 6,
+	All               = 7,
+	Flat_Map          = 8,
+	Sort_By           = 9,
+	Rec_Comp          = 10,
 }
 
 // One frame on the arena-backed VM frame stack.
@@ -81,10 +89,11 @@ VM_Frame :: struct {
 	let_base:      u32,
 	env_off:       u32,
 	env_len:       u16,
-	pad:           u16,
+	cont_phase:    u8,
+	cont_flags:    u8,
 	return_thunk:  Thunk_Ref,
 	boxed_params:  [lex_parser.ARGUMENT_CAPACITY]Thunk_Ref,
-	// Continuation state for iterative Map / Filter / Console eager forcing:
+	// Continuation state for iterative Map / Filter / Fold / Any / All / Flat_Map / Sort_By / Rec_Comp:
 	cont_list_off: u32,
 	cont_count:    u32,
 	cont_index:    u32,
@@ -118,6 +127,7 @@ Eval_Pools :: struct {
 	shape_idx_refs:     []u32,
 	pat_descs:          []Pattern_Desc,
 	pat_fields:         []Pattern_Field_Desc,
+	comp_descs:         []Comp_Desc,
 	interner:           lex_parser.String_Interner,
 	compile_scratch:   Compile_Scratch,
 	// Runtime pools
@@ -168,6 +178,7 @@ Console_Eval_Buffers :: struct {
 	shape_idx_refs:     [CONSOLE_SHAPE_IDX_SLOTS]u32,
 	pat_descs:          [CONSOLE_PAT_DESC_CAPACITY]Pattern_Desc,
 	pat_fields:         [CONSOLE_PAT_FIELD_CAPACITY]Pattern_Field_Desc,
+	comp_descs:         [CONSOLE_COMP_DESC_CAPACITY]Comp_Desc,
 	intern_controls:    [CONSOLE_INTERN_GROUPS * hash_table.GROUP_WIDTH]u8,
 	intern_refs:       [CONSOLE_INTERN_GROUPS * hash_table.GROUP_WIDTH]u32,
 	intern_spans:      [CONSOLE_INTERN_SYMS + 1]lex_parser.Sym_Span,
@@ -231,6 +242,7 @@ console_eval_pools :: proc "contextless" (buf: ^Console_Eval_Buffers, seed: u64 
 		shape_idx_refs     = buf.shape_idx_refs[:],
 		pat_descs          = buf.pat_descs[:],
 		pat_fields         = buf.pat_fields[:],
+		comp_descs         = buf.comp_descs[:],
 		interner           = interner,
 		compile_scratch   = {
 			locals     = buf.scratch_locals[:],
@@ -330,6 +342,8 @@ Evaluation :: struct {
 	pat_desc_count:        int,
 	pat_fields:            []Pattern_Field_Desc,
 	pat_field_count:       int,
+	comp_descs:            []Comp_Desc,
+	comp_desc_count:       int,
 	interner:              lex_parser.String_Interner,
 	compile_scratch:       Compile_Scratch,
 	// Runtime pools
@@ -430,6 +444,7 @@ evaluation_start_with_pools :: proc "contextless" (
 		shape_idx_refs     = pools.shape_idx_refs,
 		pat_descs          = pools.pat_descs,
 		pat_fields         = pools.pat_fields,
+		comp_descs         = pools.comp_descs,
 		interner           = pools.interner,
 		compile_scratch   = pools.compile_scratch,
 		reg_stack         = pools.reg_stack,
@@ -574,7 +589,7 @@ value_to_host :: proc "contextless" (eval: ^Evaluation, v: Value) -> Host_Value 
 	case .None:
 		return {}
 	case .Integer:
-		return {kind = .Integer, integer = value_integer(v), vm_value = v}
+		return {kind = .Integer, integer = value_integer(v), integer_unit = value_unit(v), vm_value = v}
 	case .Boolean:
 		return {kind = .Boolean, integer = v.data != 0 ? 1 : 0, vm_value = v}
 	case .Handle:
@@ -631,7 +646,7 @@ host_to_value :: proc "contextless" (eval: ^Evaluation, hv: Host_Value) -> (v: V
 	case .None:
 		return {}, true
 	case .Integer:
-		return value_int(hv.integer), true
+		return value_int_unit(hv.integer, hv.integer_unit), true
 	case .Boolean:
 		return value_bool(hv.integer != 0), true
 	case .Handle:
@@ -1047,7 +1062,7 @@ line_force_value :: proc "contextless" (eval: ^Evaluation) -> (value: Value, ok:
 	switch tree.refusal.refusal {
 	case .Text_Too_Long, .Nodes_Full, .Nesting_Too_Deep, .Thin_Arrow, .Pipe_No_Left, .Pipe_Line_End, .Pipe_Not_A_Call, .Lone_Bar, .Placeholder_Not_Whole, .Placeholder_Twice, .Placeholder_Nested, .Placeholder_Without_Pipe:
 		return refuse(eval, {refusal = .Text, text_refusal = tree.refusal.refusal, place = tree.refusal.place, node = tree.root})
-	case .None, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing, .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice, .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing, .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name, .Parameter_Name_Missing, .Parameter_Twice, .Too_Many_Parameters, .List_Close_Missing, .Hash_Not_Valid, .If_Then_Missing, .If_Else_Missing, .Escape_Not_Valid, .Interpolation_Close_Missing, .Pattern_Field_Missing, .Pattern_Close_Missing, .Pattern_Field_Twice, .Pattern_Rest_Not_Last, .Pattern_At_Missing_Brace:
+	case .None, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing, .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice, .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing, .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name, .Parameter_Name_Missing, .Parameter_Twice, .Too_Many_Parameters, .List_Close_Missing, .Hash_Not_Valid, .If_Then_Missing, .If_Else_Missing, .Escape_Not_Valid, .Interpolation_Close_Missing, .Pattern_Field_Missing, .Pattern_Close_Missing, .Pattern_Field_Twice, .Pattern_Rest_Not_Last, .Pattern_At_Missing_Brace, .Literal_Path_Conflict, .Comp_Bind_Missing, .Comp_In_Missing, .Comp_Colon_Missing, .Comp_Equal_Missing, .Match_Open_Missing, .Match_Empty, .Match_Arrow_Missing, .Match_Close_Missing, .Match_Pattern_Expected, .Match_Duplicate_Bind, .Param_Kind_Unknown, .Param_Unit_Not_Valid:
 	}
 
 	cid, comp_ok := compile_tree(eval, tree)
@@ -1063,6 +1078,11 @@ line_force_value :: proc "contextless" (eval: ^Evaluation) -> (value: Value, ok:
 		if untyped.kind == .Record_Literal {
 			rec := eval.records[int(untyped.data)]
 			return refuse(eval, {refusal = .Literal_No_Type, chunk_id = rec.chunk_id, node = rec.node_idx})
+		}
+		if untyped.kind == .Record_With {
+			ov := eval.overlays[int(untyped.data)]
+			rec := eval.records[ov.patch_rec]
+			return refuse(eval, {refusal = .Literal_No_Type, chunk_id = rec.chunk_id, node = tree.root})
 		}
 		if untyped.kind == .Member {
 			return refuse(eval, {refusal = .Member_No_Type, chunk_id = untyped.aux, node = lex_parser.Node_Index(i32(u32(untyped.data)))})
@@ -1127,7 +1147,7 @@ field_force :: proc "contextless" (eval: ^Evaluation, base: Value, field_name: s
 // console result (or nested List).
 @(private)
 untyped_find :: proc "contextless" (eval: ^Evaluation, value: Value, depth: int) -> Value {
-	if value.kind == .Record_Literal || value.kind == .Member {
+	if value.kind == .Record_Literal || value.kind == .Record_With || value.kind == .Member {
 		return value
 	}
 	if value.kind != .List || depth > 64 {
@@ -1319,6 +1339,12 @@ vm_force_thunk :: proc "contextless" (eval: ^Evaluation, tref: Thunk_Ref, caller
 		if eval.profile != nil {
 			eval.profile.thunks_forced += 1
 		}
+		if (code.flags & THUNK_FLAG_ONE_ARG) != 0 && code.env_len > 0 {
+			arg_tref := eval.env_slots[int(code.env_off) + int(code.env_len) - 1]
+			arg_val := eval.thunks[arg_tref].payload.value
+			one_arg := [1]Value{arg_val}
+			return vm_exec_proto(eval, code.chunk_id, code.proto_id, code.env_off, u16(code.env_len - 1), one_arg[:], tref, ref_node)
+		}
 		return vm_exec_proto(eval, code.chunk_id, code.proto_id, code.env_off, u16(code.env_len), nil, tref, ref_node)
 	}
 	return {}, false
@@ -1432,7 +1458,7 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 			ce := eval.consts[int(chunk.const_start) + int(ci)]
 			switch ce.kind {
 			case .Integer:
-				eval.reg_stack[reg_base + a] = value_int(ce.integer)
+				eval.reg_stack[reg_base + a] = value_int_unit(ce.integer, ce.unit)
 			case .Text:
 				eval.reg_stack[reg_base + a] = value_text_source(frame.chunk_id, ce.offset, ce.length)
 			case .Arena_Text:
@@ -1531,7 +1557,7 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 				refuse(eval, {refusal = .Overflow, chunk_id = frame.chunk_id, node = node_idx, operator = .Subtract, left = 0, right = iv})
 				return false
 			}
-			eval.reg_stack[reg_base + a] = value_int(opp)
+			eval.reg_stack[reg_base + a] = value_int_unit(opp, value_unit(v))
 
 		case .Not:
 			v := eval.reg_stack[reg_base + int(inst_b(inst))]
@@ -1554,13 +1580,23 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 			lv := eval.reg_stack[reg_base + int(inst_b(inst))]
 			rv := eval.reg_stack[reg_base + int(inst_c(inst))]
 			if lv.kind == .Integer && rv.kind == .Integer {
-				li, ri := value_integer(lv), value_integer(rv)
+				lu, ru := value_unit(lv), value_unit(rv)
+				li, ri, out_u, astatus := align_integer_units(value_integer(lv), value_integer(rv), lu, ru)
+				switch astatus {
+				case .Ok:
+				case .Incompatible, .Non_Exact:
+					refuse(eval, {refusal = .Unit_Mismatch, chunk_id = frame.chunk_id, node = node_idx, operator = .Add, left_kind = .Integer, right_kind = .Integer, left_unit = lu, right_unit = ru})
+					return false
+				case .Overflow:
+					refuse(eval, {refusal = .Overflow, chunk_id = frame.chunk_id, node = node_idx, operator = .Add, left_kind = .Integer, right_kind = .Integer, left = value_integer(lv), right = value_integer(rv)})
+					return false
+				}
 				res, fits := console_language.integer_add(li, ri)
 				if !fits {
 					refuse(eval, {refusal = .Overflow, chunk_id = frame.chunk_id, node = node_idx, operator = .Add, left_kind = .Integer, right_kind = .Integer, left = li, right = ri})
 					return false
 				}
-				eval.reg_stack[reg_base + a] = value_int(res)
+				eval.reg_stack[reg_base + a] = value_int_unit(res, out_u)
 			} else if lv.kind == .Text && rv.kind == .Text {
 				lt := value_text(eval, lv)
 				rt := value_text(eval, rv)
@@ -1618,13 +1654,23 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 				refuse(eval, {refusal = .Operator_Kinds, chunk_id = frame.chunk_id, node = node_idx, operator = .Subtract, left_kind = lv.kind, right_kind = rv.kind})
 				return false
 			}
-			li, ri := value_integer(lv), value_integer(rv)
+			lu, ru := value_unit(lv), value_unit(rv)
+			li, ri, out_u, astatus := align_integer_units(value_integer(lv), value_integer(rv), lu, ru)
+			switch astatus {
+			case .Ok:
+			case .Incompatible, .Non_Exact:
+				refuse(eval, {refusal = .Unit_Mismatch, chunk_id = frame.chunk_id, node = node_idx, operator = .Subtract, left_kind = .Integer, right_kind = .Integer, left_unit = lu, right_unit = ru})
+				return false
+			case .Overflow:
+				refuse(eval, {refusal = .Overflow, chunk_id = frame.chunk_id, node = node_idx, operator = .Subtract, left_kind = .Integer, right_kind = .Integer, left = value_integer(lv), right = value_integer(rv)})
+				return false
+			}
 			res, fits := console_language.integer_subtract(li, ri)
 			if !fits {
 				refuse(eval, {refusal = .Overflow, chunk_id = frame.chunk_id, node = node_idx, operator = .Subtract, left_kind = .Integer, right_kind = .Integer, left = li, right = ri})
 				return false
 			}
-			eval.reg_stack[reg_base + a] = value_int(res)
+			eval.reg_stack[reg_base + a] = value_int_unit(res, out_u)
 
 		case .Mul:
 			lv := eval.reg_stack[reg_base + int(inst_b(inst))]
@@ -1633,13 +1679,19 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 				refuse(eval, {refusal = .Operator_Kinds, chunk_id = frame.chunk_id, node = node_idx, operator = .Multiply, left_kind = lv.kind, right_kind = rv.kind})
 				return false
 			}
+			lu, ru := value_unit(lv), value_unit(rv)
+			if lu.kind != .None && ru.kind != .None {
+				refuse(eval, {refusal = .Unit_Mismatch, chunk_id = frame.chunk_id, node = node_idx, operator = .Multiply, left_kind = .Integer, right_kind = .Integer, left_unit = lu, right_unit = ru})
+				return false
+			}
+			out_u := lu.kind != .None ? lu : ru
 			li, ri := value_integer(lv), value_integer(rv)
 			res, fits := console_language.integer_multiply(li, ri)
 			if !fits {
 				refuse(eval, {refusal = .Overflow, chunk_id = frame.chunk_id, node = node_idx, operator = .Multiply, left_kind = .Integer, right_kind = .Integer, left = li, right = ri})
 				return false
 			}
-			eval.reg_stack[reg_base + a] = value_int(res)
+			eval.reg_stack[reg_base + a] = value_int_unit(res, out_u)
 
 		case .Div, .Rem:
 			lv := eval.reg_stack[reg_base + int(inst_b(inst))]
@@ -1649,7 +1701,30 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 				refuse(eval, {refusal = .Operator_Kinds, chunk_id = frame.chunk_id, node = node_idx, operator = op_kind, left_kind = lv.kind, right_kind = rv.kind})
 				return false
 			}
+			lu, ru := value_unit(lv), value_unit(rv)
 			li, ri := value_integer(lv), value_integer(rv)
+			out_u := value_kinds.Integer_Unit{}
+			if lu.kind == .None && ru.kind == .None {
+				out_u = {}
+			} else if lu.kind != .None && ru.kind == .None {
+				out_u = lu
+			} else if lu.kind == .None && ru.kind != .None {
+				refuse(eval, {refusal = .Unit_Mismatch, chunk_id = frame.chunk_id, node = node_idx, operator = op_kind, left_kind = .Integer, right_kind = .Integer, left_unit = lu, right_unit = ru})
+				return false
+			} else {
+				ali, ari, common_u, astatus := align_integer_units(li, ri, lu, ru)
+				switch astatus {
+				case .Ok:
+					li, ri = ali, ari
+					out_u = op == .Div ? value_kinds.Integer_Unit{} : common_u
+				case .Incompatible, .Non_Exact:
+					refuse(eval, {refusal = .Unit_Mismatch, chunk_id = frame.chunk_id, node = node_idx, operator = op_kind, left_kind = .Integer, right_kind = .Integer, left_unit = lu, right_unit = ru})
+					return false
+				case .Overflow:
+					refuse(eval, {refusal = .Overflow, chunk_id = frame.chunk_id, node = node_idx, operator = op_kind, left_kind = .Integer, right_kind = .Integer, left = li, right = ri})
+					return false
+				}
+			}
 			if ri == 0 {
 				refuse(eval, {refusal = .Division_By_Zero, chunk_id = frame.chunk_id, node = node_idx, operator = op_kind, left_kind = .Integer, right_kind = .Integer, left = li, right = ri})
 				return false
@@ -1660,9 +1735,9 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 					refuse(eval, {refusal = .Overflow, chunk_id = frame.chunk_id, node = node_idx, operator = .Divide, left_kind = .Integer, right_kind = .Integer, left = li, right = ri})
 					return false
 				}
-				eval.reg_stack[reg_base + a] = value_int(q)
+				eval.reg_stack[reg_base + a] = value_int_unit(q, out_u)
 			} else {
-				eval.reg_stack[reg_base + a] = value_int(ri == -1 ? 0 : rem)
+				eval.reg_stack[reg_base + a] = value_int_unit(ri == -1 ? 0 : rem, out_u)
 			}
 
 		case .Eq, .Neq, .Lt, .Le, .Gt, .Ge:
@@ -1761,7 +1836,7 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 			cl := eval.closures[int(callee.data)]
 			cchunk := &eval.chunks[cl.chunk_id]
 			cproto := &eval.protos[int(cchunk.proto_start) + int(cl.proto_id)]
-			if argc != int(cproto.param_count) {
+			if !fn_arity_accepts_positional(cproto, argc) {
 				refuse(eval, {refusal = .Function_Arguments, chunk_id = frame.chunk_id, node = node_idx, command = node_text_in_chunk(eval, frame.chunk_id, node_idx), left = i64(argc), right = i64(cproto.param_count)})
 				return false
 			}
@@ -1776,10 +1851,16 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 			cl := eval.closures[int(callee.data)]
 			cchunk := &eval.chunks[cl.chunk_id]
 			cproto := &eval.protos[int(cchunk.proto_start) + int(cl.proto_id)]
-			if argc != int(cproto.param_count) {
+			if !fn_arity_accepts_positional(cproto, argc) {
 				refuse(eval, {refusal = .Function_Arguments, chunk_id = frame.chunk_id, node = node_idx, command = node_text_in_chunk(eval, frame.chunk_id, node_idx), left = i64(argc), right = i64(cproto.param_count)})
 				return false
 			}
+			prepared: [lex_parser.ARGUMENT_CAPACITY]Value
+			raw_args := eval.reg_stack[reg_base + a + 1 : reg_base + a + 1 + argc]
+			if !vm_prepare_fn_args(eval, cl, cproto, raw_args, nil, prepared[:int(cproto.param_count)], frame.chunk_id, node_idx, node_text_in_chunk(eval, frame.chunk_id, node_idx)) {
+				return false
+			}
+			pcount := int(cproto.param_count)
 			eval.call_count += 1
 			if eval.profile != nil {
 				eval.profile.calls_total += 1
@@ -1789,15 +1870,14 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 				if eval.profile != nil {
 					eval.profile.tail_calls_total += 1
 				}
-				need_regs := u32(max(int(cproto.max_regs), argc))
+				need_regs := u32(max(int(cproto.max_regs), pcount))
 				if int(frame.reg_base) + int(need_regs) > len(eval.reg_stack) ||
 				   int(frame.let_base) + int(cproto.let_slot_count) > len(eval.let_slots) {
 					refuse(eval, {refusal = .Calls_Full, chunk_id = frame.chunk_id, node = node_idx})
 					return false
 				}
-				// Move args from reg_base + a + 1 .. reg_base + a + argc to reg_base + 0 .. argc - 1.
-				for i in 0 ..< argc {
-					eval.reg_stack[reg_base + i] = eval.reg_stack[reg_base + a + 1 + i]
+				for i in 0 ..< pcount {
+					eval.reg_stack[reg_base + i] = prepared[i]
 				}
 				eval.reg_top = frame.reg_base + need_regs
 				eval.let_slot_top = frame.let_base + u32(cproto.let_slot_count)
@@ -1807,7 +1887,7 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 				frame.env_off = cl.upval_off
 				frame.env_len = cl.upval_len
 				if cproto.boxed_param_mask != 0 {
-					for i in 0 ..< argc {
+					for i in 0 ..< pcount {
 						if (cproto.boxed_param_mask & (u16(1) << u16(i))) != 0 {
 							if eval.thunk_count >= len(eval.thunks) {
 								refuse(eval, {refusal = .Calls_Full, chunk_id = cl.chunk_id, node = node_idx})
@@ -1821,8 +1901,7 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 					}
 				}
 			} else {
-				args := eval.reg_stack[reg_base + a + 1 : reg_base + a + 1 + argc]
-				if !push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, args, u8(a), NO_THUNK, node_idx) {
+				if !push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, prepared[:pcount], u8(a), NO_THUNK, node_idx) {
 					return false
 				}
 			}
@@ -1922,6 +2001,47 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 			refuse(eval, rec)
 			return false
 
+		case .Try_Get_Field:
+			b := int(inst_b(inst))
+			c_op := int(inst_c(inst))
+			sym_rel := has_extra && c_op == 255 ? extra : u32(c_op)
+			chunk := &eval.chunks[frame.chunk_id]
+			sym := eval.field_syms[int(chunk.field_sym_start) + int(sym_rel)]
+			base := eval.reg_stack[reg_base + b]
+			if is_lazy_record(base.kind) {
+				if sid, sok := lazy_record_base_shape(eval, base); sok {
+					record_shape_dep(eval, base, sid)
+				}
+				if tref, found := lazy_record_lookup_thunk(eval, base, sym); found {
+					eval.reg_stack[reg_base + a + 1] = value_bool(true)
+					if !vm_push_or_load_thunk(eval, frame, tref, u8(a), node_idx) {
+						return false
+					}
+					continue
+				}
+				eval.reg_stack[reg_base + a + 1] = value_bool(false)
+				continue
+			} else if base.kind == .Record {
+				hv := value_to_host(eval, base)
+				fname := lex_parser.sym_text(&eval.interner, sym)
+				if res, found := record_field_value(hv, fname); found {
+					vv, vok := host_to_value(eval, res)
+					if !vok {
+						refuse(eval, {refusal = .Calls_Full, chunk_id = frame.chunk_id, node = node_idx})
+						return false
+					}
+					eval.reg_stack[reg_base + a] = vv
+					eval.reg_stack[reg_base + a + 1] = value_bool(true)
+					continue
+				}
+				eval.reg_stack[reg_base + a + 1] = value_bool(false)
+				continue
+			}
+			// Non-record base or intermediate value: refuse rather than mask type error!
+			fname := lex_parser.sym_text(&eval.interner, sym)
+			refuse(eval, {refusal = .Field_Unknown, chunk_id = frame.chunk_id, node = node_idx, field = fname, left_kind = base.kind})
+			return false
+
 		case .With:
 			lv := eval.reg_stack[reg_base + int(inst_b(inst))]
 			rv := eval.reg_stack[reg_base + int(inst_c(inst))]
@@ -1931,12 +2051,102 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 			}
 			eval.reg_stack[reg_base + a] = res
 
+		case .With_Field_Reg:
+			b := int(inst_b(inst))
+			c_op := int(inst_c(inst))
+			sym_rel := has_extra && c_op == 255 ? extra : u32(c_op)
+			chunk := &eval.chunks[frame.chunk_id]
+			sym := eval.field_syms[int(chunk.field_sym_start) + int(sym_rel)]
+			base := eval.reg_stack[reg_base + a]
+			val := eval.reg_stack[reg_base + b]
+			res, wok := vm_with_single_field(eval, base, sym, val, frame.chunk_id, node_idx)
+			if !wok {
+				return false
+			}
+			eval.reg_stack[reg_base + a] = res
+
+		case .Make_Rec_Comp:
+			comp_rel := has_extra ? extra : u32(inst_bx(inst))
+			iter_val := eval.reg_stack[reg_base + a]
+			if !vm_start_rec_comp(eval, frame, u8(a), iter_val, comp_rel, node_idx) {
+				return false
+			}
+
 		case .Destructure:
 			pat_rel := has_extra ? extra : u32(inst_bx(inst))
 			src_val := eval.reg_stack[reg_base + a]
 			if !vm_destructure(eval, frame, src_val, pat_rel, node_idx) {
 				return false
 			}
+
+		case .Set_Let_Val:
+			slot := int(inst_bx(inst))
+			tref, tok := alloc_forced_thunk(eval, eval.reg_stack[reg_base + a], frame.chunk_id, node_idx)
+			if !tok {
+				return false
+			}
+			eval.let_slots[int(frame.let_base) + slot] = tref
+
+		case .Match_Eq:
+			lv := eval.reg_stack[reg_base + int(inst_b(inst))]
+			rv := eval.reg_stack[reg_base + int(inst_c(inst))]
+			eq, ok := vm_match_eq(eval, lv, rv, frame.chunk_id, node_idx)
+			if !ok {
+				return false
+			}
+			eval.reg_stack[reg_base + a] = value_bool(eq)
+
+		case .Check_Rec_Shape:
+			pat_rel := has_extra ? extra : u32(inst_bx(inst))
+			src_val := eval.reg_stack[reg_base + a]
+			matched, ok := vm_check_rec_shape(eval, frame, src_val, pat_rel, node_idx)
+			if !ok {
+				return false
+			}
+			eval.reg_stack[reg_base + a + 1] = value_bool(matched)
+
+		case .Match_Bind_Field:
+			pf_abs := int(has_extra ? extra : u32(inst_bx(inst)))
+			pf := eval.pat_fields[pf_abs]
+			src_val := eval.reg_stack[reg_base + a]
+			if is_lazy_record(src_val.kind) {
+				if tref, found := lazy_record_lookup_thunk(eval, src_val, pf.sym); found {
+					eval.let_slots[int(frame.let_base) + int(pf.let_slot)] = tref
+				} else {
+					refuse(eval, {refusal = .Field_Unknown, chunk_id = frame.chunk_id, node = pf.node_idx, field = lex_parser.sym_text(&eval.interner, pf.sym), left_kind = src_val.kind})
+					return false
+				}
+			} else if src_val.kind == .Record {
+				hv := value_to_host(eval, src_val)
+				fname := lex_parser.sym_text(&eval.interner, pf.sym)
+				if fhv, found := record_field_value(hv, fname); found {
+					fv, vok := host_to_value(eval, fhv)
+					if !vok {
+						refuse(eval, {refusal = .Calls_Full, chunk_id = frame.chunk_id, node = pf.node_idx})
+						return false
+					}
+					tref, tok := alloc_forced_thunk(eval, fv, frame.chunk_id, pf.node_idx)
+					if !tok {
+						return false
+					}
+					eval.let_slots[int(frame.let_base) + int(pf.let_slot)] = tref
+				} else {
+					refuse(eval, {refusal = .Field_Unknown, chunk_id = frame.chunk_id, node = pf.node_idx, field = fname, left_kind = .Record, file = hv.file, detail = hv.detail})
+					return false
+				}
+			}
+
+		case .Match_Fail:
+			refuse(eval, {refusal = .No_Matching_Arm, chunk_id = frame.chunk_id, node = node_idx})
+			return false
+
+		case .Refuse_Eval:
+			r_code, r_ok := enum_word.member_of_word(Refusal, u64(inst_b(inst)))
+			if !r_ok {
+				r_code = .Host_Refused
+			}
+			refuse(eval, {refusal = r_code, chunk_id = frame.chunk_id, node = node_idx})
+			return false
 
 		case .List_Begin, .Str_Begin:
 			if eval.list_mark_count >= len(eval.list_marks) {
@@ -2055,7 +2265,8 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 						     .Refused, .Field_Names, .Record_Literal, .Literal_Field, .Named_Argument,
 						     .Let_Binding, .Member, .Function, .Parameter, .List_Literal, .Boolean,
 						     .Field_Select, .Pipe, .Placeholder, .Logical_Not, .Text_Interp,
-						     .Pattern_Record, .Pattern_Field:
+						     .Pattern_Record, .Pattern_Field, .Record_Comp, .Match, .Match_Arm,
+						     .Match_Pat_Field, .Match_Pat_Wild, .Match_Pat_Bind:
 						}
 					}
 				}
@@ -2085,6 +2296,12 @@ vm_push_or_load_thunk :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame
 		th.state = .Forcing
 		if eval.profile != nil {
 			eval.profile.thunks_forced += 1
+		}
+		if (code.flags & THUNK_FLAG_ONE_ARG) != 0 && code.env_len > 0 {
+			arg_tref := eval.env_slots[int(code.env_off) + int(code.env_len) - 1]
+			arg_val := eval.thunks[arg_tref].payload.value
+			one_arg := [1]Value{arg_val}
+			return push_bytecode_frame(eval, code.chunk_id, code.proto_id, code.env_off, u16(code.env_len - 1), one_arg[:], dst_reg, tref, node_idx)
 		}
 		return push_bytecode_frame(eval, code.chunk_id, code.proto_id, code.env_off, u16(code.env_len), nil, dst_reg, tref, node_idx)
 	}
@@ -2175,12 +2392,19 @@ vm_step_continuation :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame,
 		arg := eval.list_items[frame.cont_list_off + frame.cont_index]
 		frame.cont_index += 1
 		cl := eval.closures[int(frame.cont_fn.data)]
+		cchunk := &eval.chunks[cl.chunk_id]
+		cproto := &eval.protos[int(cchunk.proto_start) + int(cl.proto_id)]
 		eval.call_count += 1
 		if eval.profile != nil {
 			eval.profile.calls_total += 1
 		}
-		args := [1]Value{arg}
-		return push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, args[:], 0, NO_THUNK, frame.cont_node)
+		raw_args := [1]Value{arg}
+		prepared: [lex_parser.ARGUMENT_CAPACITY]Value
+		pcount := int(cproto.param_count)
+		if !vm_prepare_fn_args(eval, cl, cproto, raw_args[:], nil, prepared[:pcount], frame.chunk_id, frame.cont_node, MAP_NAME) {
+			return false
+		}
+		return push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, prepared[:pcount], 0, NO_THUNK, frame.cont_node)
 
 	case .Filter:
 		if frame.cont_index > 0 {
@@ -2215,12 +2439,19 @@ vm_step_continuation :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame,
 		arg := eval.list_items[frame.cont_list_off + frame.cont_index]
 		frame.cont_index += 1
 		cl := eval.closures[int(frame.cont_fn.data)]
+		cchunk := &eval.chunks[cl.chunk_id]
+		cproto := &eval.protos[int(cchunk.proto_start) + int(cl.proto_id)]
 		eval.call_count += 1
 		if eval.profile != nil {
 			eval.profile.calls_total += 1
 		}
-		args := [1]Value{arg}
-		return push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, args[:], 0, NO_THUNK, frame.cont_node)
+		raw_args := [1]Value{arg}
+		prepared: [lex_parser.ARGUMENT_CAPACITY]Value
+		pcount := int(cproto.param_count)
+		if !vm_prepare_fn_args(eval, cl, cproto, raw_args[:], nil, prepared[:pcount], frame.chunk_id, frame.cont_node, FILTER_NAME) {
+			return false
+		}
+		return push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, prepared[:pcount], 0, NO_THUNK, frame.cont_node)
 
 	case .Fold:
 		acc := eval.reg_stack[frame.reg_base]
@@ -2231,12 +2462,267 @@ vm_step_continuation :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame,
 		item := eval.list_items[frame.cont_list_off + frame.cont_index]
 		frame.cont_index += 1
 		cl := eval.closures[int(frame.cont_fn.data)]
+		cchunk := &eval.chunks[cl.chunk_id]
+		cproto := &eval.protos[int(cchunk.proto_start) + int(cl.proto_id)]
 		eval.call_count += 1
 		if eval.profile != nil {
 			eval.profile.calls_total += 1
 		}
-		args := [2]Value{acc, item}
-		return push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, args[:], 0, NO_THUNK, frame.cont_node)
+		raw_args := [2]Value{acc, item}
+		prepared: [lex_parser.ARGUMENT_CAPACITY]Value
+		pcount := int(cproto.param_count)
+		if !vm_prepare_fn_args(eval, cl, cproto, raw_args[:], nil, prepared[:pcount], frame.chunk_id, frame.cont_node, FOLD_NAME) {
+			return false
+		}
+		return push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, prepared[:pcount], 0, NO_THUNK, frame.cont_node)
+
+	case .Any, .All:
+		if frame.cont_index > 0 {
+			pred := eval.reg_stack[frame.reg_base]
+			if pred.kind != .Boolean {
+				refuse(eval, {refusal = .Condition_Not_Boolean, chunk_id = frame.chunk_id, node = frame.cont_node, left_kind = pred.kind})
+				return false
+			}
+			b := value_boolean(pred)
+			if frame.kind == .Any && b {
+				vm_return_to_caller(eval, target_depth, value_bool(true))
+				return true
+			}
+			if frame.kind == .All && !b {
+				vm_return_to_caller(eval, target_depth, value_bool(false))
+				return true
+			}
+		}
+		if frame.cont_index >= frame.cont_count {
+			vm_return_to_caller(eval, target_depth, value_bool(frame.kind == .All))
+			return true
+		}
+		arg := eval.list_items[frame.cont_list_off + frame.cont_index]
+		frame.cont_index += 1
+		cl := eval.closures[int(frame.cont_fn.data)]
+		cchunk := &eval.chunks[cl.chunk_id]
+		cproto := &eval.protos[int(cchunk.proto_start) + int(cl.proto_id)]
+		eval.call_count += 1
+		if eval.profile != nil {
+			eval.profile.calls_total += 1
+		}
+		raw_args := [1]Value{arg}
+		prepared: [lex_parser.ARGUMENT_CAPACITY]Value
+		pcount := int(cproto.param_count)
+		cmd := frame.kind == .Any ? ANY_NAME : ALL_NAME
+		if !vm_prepare_fn_args(eval, cl, cproto, raw_args[:], nil, prepared[:pcount], frame.chunk_id, frame.cont_node, cmd) {
+			return false
+		}
+		return push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, prepared[:pcount], 0, NO_THUNK, frame.cont_node)
+
+	case .Flat_Map:
+		if frame.cont_index > 0 {
+			sub := eval.reg_stack[frame.reg_base]
+			if sub.kind != .List {
+				refuse(eval, {refusal = .Not_A_List, chunk_id = frame.chunk_id, node = frame.cont_node, command = FLAT_MAP_NAME, parameter = 2, left_kind = sub.kind})
+				return false
+			}
+			sub_items := list_items_of(eval, sub)
+			if !charge_steps(eval, u32(1 + len(sub_items) / 8), frame.chunk_id, frame.cont_node) {
+				return false
+			}
+			if len(sub_items) > len(eval.list_scratch) - int(eval.list_scratch_top) {
+				refuse(eval, {refusal = .Lists_Full, chunk_id = frame.chunk_id, node = frame.cont_node})
+				return false
+			}
+			for item in sub_items {
+				if eval.mode == .Console && (item.kind == .None || item.kind == .Stream || item.kind == .Record_Input) {
+					refuse(eval, {refusal = .List_Item_Kind, chunk_id = frame.chunk_id, node = frame.cont_node, left_kind = item.kind})
+					return false
+				}
+				eval.list_scratch[eval.list_scratch_top] = item
+				eval.list_scratch_top += 1
+			}
+		}
+		if frame.cont_index >= frame.cont_count {
+			mark := frame.cont_out_off
+			cnt := int(eval.list_scratch_top - mark)
+			eval.list_scratch_top = mark
+			if cnt > len(eval.list_items) - eval.list_item_count {
+				refuse(eval, {refusal = .Lists_Full, chunk_id = frame.chunk_id, node = frame.cont_node})
+				return false
+			}
+			first := eval.list_item_count
+			copy(eval.list_items[first:], eval.list_scratch[mark:mark + u32(cnt)])
+			eval.list_item_count += cnt
+			vm_return_to_caller(eval, target_depth, {kind = .List, data = u64(first), meta = u32(cnt)})
+			return true
+		}
+		arg := eval.list_items[frame.cont_list_off + frame.cont_index]
+		frame.cont_index += 1
+		cl := eval.closures[int(frame.cont_fn.data)]
+		cchunk := &eval.chunks[cl.chunk_id]
+		cproto := &eval.protos[int(cchunk.proto_start) + int(cl.proto_id)]
+		eval.call_count += 1
+		if eval.profile != nil {
+			eval.profile.calls_total += 1
+		}
+		raw_args := [1]Value{arg}
+		prepared: [lex_parser.ARGUMENT_CAPACITY]Value
+		pcount := int(cproto.param_count)
+		if !vm_prepare_fn_args(eval, cl, cproto, raw_args[:], nil, prepared[:pcount], frame.chunk_id, frame.cont_node, FLAT_MAP_NAME) {
+			return false
+		}
+		return push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, prepared[:pcount], 0, NO_THUNK, frame.cont_node)
+
+	case .Sort_By:
+		if frame.cont_index > 0 {
+			key := eval.reg_stack[frame.reg_base]
+			if int(eval.list_scratch_top) >= len(eval.list_scratch) {
+				refuse(eval, {refusal = .Lists_Full, chunk_id = frame.chunk_id, node = frame.cont_node})
+				return false
+			}
+			eval.list_scratch[eval.list_scratch_top] = key
+			eval.list_scratch_top += 1
+		}
+		if frame.cont_index >= frame.cont_count {
+			return vm_finish_sort_by(eval, frame, target_depth)
+		}
+		arg := eval.list_items[frame.cont_list_off + frame.cont_index]
+		frame.cont_index += 1
+		cl := eval.closures[int(frame.cont_fn.data)]
+		cchunk := &eval.chunks[cl.chunk_id]
+		cproto := &eval.protos[int(cchunk.proto_start) + int(cl.proto_id)]
+		eval.call_count += 1
+		if eval.profile != nil {
+			eval.profile.calls_total += 1
+		}
+		raw_args := [1]Value{arg}
+		prepared: [lex_parser.ARGUMENT_CAPACITY]Value
+		pcount := int(cproto.param_count)
+		if !vm_prepare_fn_args(eval, cl, cproto, raw_args[:], nil, prepared[:pcount], frame.chunk_id, frame.cont_node, SORT_BY_NAME) {
+			return false
+		}
+		return push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, prepared[:pcount], 0, NO_THUNK, frame.cont_node)
+
+	case .Rec_Comp:
+		for {
+			switch frame.cont_phase {
+			case 1:
+				// Condition returned in reg_base + 0.
+				cond_v := eval.reg_stack[frame.reg_base]
+				if cond_v.kind != .Boolean {
+					refuse(eval, {refusal = .Condition_Not_Boolean, chunk_id = frame.chunk_id, node = frame.cont_node, left_kind = cond_v.kind})
+					return false
+				}
+				if !value_boolean(cond_v) {
+					frame.cont_index += 1
+					frame.cont_phase = 0
+					continue
+				}
+				item := eval.list_items[frame.cont_list_off + frame.cont_index]
+				kcl := eval.closures[int(eval.reg_stack[frame.reg_base + 2].data)]
+				frame.cont_phase = 2
+				one_arg := [1]Value{item}
+				return push_bytecode_frame(eval, kcl.chunk_id, kcl.proto_id, kcl.upval_off, kcl.upval_len, one_arg[:], 0, NO_THUNK, frame.cont_node)
+
+			case 2:
+				// Key returned in reg_base + 0.
+				key_v := eval.reg_stack[frame.reg_base]
+				if key_v.kind != .Text {
+					refuse(eval, {refusal = .Field_Name_Invalid, chunk_id = frame.chunk_id, node = frame.cont_node, left_kind = key_v.kind})
+					return false
+				}
+				ktxt := value_text(eval, key_v)
+				if !lex_parser.name_valid(ktxt) {
+					refuse(eval, {refusal = .Field_Name_Invalid, chunk_id = frame.chunk_id, node = frame.cont_node, field = ktxt, left_kind = .Text})
+					return false
+				}
+				if int(eval.list_scratch_top) + 2 > len(eval.list_scratch) {
+					refuse(eval, {refusal = .Lists_Full, chunk_id = frame.chunk_id, node = frame.cont_node})
+					return false
+				}
+				eval.list_scratch[eval.list_scratch_top] = key_v
+				eval.list_scratch_top += 1
+				item := eval.list_items[frame.cont_list_off + frame.cont_index]
+				vcl := eval.closures[int(eval.reg_stack[frame.reg_base + 3].data)]
+				if eval.mode == .Console {
+					frame.cont_phase = 3
+					one_arg := [1]Value{item}
+					return push_bytecode_frame(eval, vcl.chunk_id, vcl.proto_id, vcl.upval_off, vcl.upval_len, one_arg[:], 0, NO_THUNK, frame.cont_node)
+				}
+				// Declaration mode: build lazy 1-arg thunk carrying [vcl.upvals..., forced(item)].
+				item_tref, it_ok := alloc_forced_thunk(eval, item, frame.chunk_id, frame.cont_node)
+				if !it_ok {
+					return false
+				}
+				need_env := int(vcl.upval_len) + 1
+				if eval.env_slot_count + need_env > len(eval.env_slots) || eval.thunk_count >= len(eval.thunks) {
+					refuse(eval, {refusal = .Calls_Full, chunk_id = frame.chunk_id, node = frame.cont_node})
+					return false
+				}
+				eoff := u32(eval.env_slot_count)
+				for ui in 0 ..< int(vcl.upval_len) {
+					eval.env_slots[eval.env_slot_count] = eval.env_slots[int(vcl.upval_off) + ui]
+					eval.env_slot_count += 1
+				}
+				eval.env_slots[eval.env_slot_count] = item_tref
+				eval.env_slot_count += 1
+				vtref := Thunk_Ref(eval.thunk_count)
+				eval.thunk_count += 1
+				eval.thunks[vtref] = {
+					state   = .Unforced,
+					site_id = u32(frame.cont_node),
+					payload = {code = {
+						chunk_id = vcl.chunk_id,
+						flags    = THUNK_FLAG_ONE_ARG,
+						proto_id = vcl.proto_id,
+						env_off  = eoff,
+						env_len  = u32(need_env),
+					}},
+				}
+				if eval.profile != nil {
+					eval.profile.thunks_created += 1
+				}
+				eval.list_scratch[eval.list_scratch_top] = Value{kind = .None, data = u64(vtref)}
+				eval.list_scratch_top += 1
+				frame.cont_index += 1
+				frame.cont_phase = 0
+				continue
+
+			case 3:
+				// Console mode: value returned in reg_base + 0.
+				val_v := eval.reg_stack[frame.reg_base]
+				vtref, tok := alloc_forced_thunk(eval, val_v, frame.chunk_id, frame.cont_node)
+				if !tok {
+					return false
+				}
+				eval.list_scratch[eval.list_scratch_top] = Value{kind = .None, data = u64(vtref)}
+				eval.list_scratch_top += 1
+				frame.cont_index += 1
+				frame.cont_phase = 0
+				continue
+
+			case:
+				// Phase 0: start next element or finalize record.
+				if frame.cont_index >= frame.cont_count {
+					mark := frame.cont_out_off
+					pairs := eval.list_scratch[mark:eval.list_scratch_top]
+					eval.list_scratch_top = mark
+					rec_val, rok := build_dynamic_record_from_pairs(eval, pairs, frame.chunk_id, frame.cont_node)
+					if !rok {
+						return false
+					}
+					vm_return_to_caller(eval, target_depth, rec_val)
+					return true
+				}
+				item := eval.list_items[frame.cont_list_off + frame.cont_index]
+				one_arg := [1]Value{item}
+				if (frame.cont_flags & 1) != 0 {
+					ccl := eval.closures[int(eval.reg_stack[frame.reg_base + 1].data)]
+					frame.cont_phase = 1
+					return push_bytecode_frame(eval, ccl.chunk_id, ccl.proto_id, ccl.upval_off, ccl.upval_len, one_arg[:], 0, NO_THUNK, frame.cont_node)
+				}
+				kcl := eval.closures[int(eval.reg_stack[frame.reg_base + 2].data)]
+				frame.cont_phase = 2
+				return push_bytecode_frame(eval, kcl.chunk_id, kcl.proto_id, kcl.upval_off, kcl.upval_len, one_arg[:], 0, NO_THUNK, frame.cont_node)
+			}
+		}
 	}
 	return true
 }
@@ -2255,7 +2741,7 @@ vm_start_map_filter :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, 
 	cl := eval.closures[int(fn_val.data)]
 	cchunk := &eval.chunks[cl.chunk_id]
 	cproto := &eval.protos[int(cchunk.proto_start) + int(cl.proto_id)]
-	if cproto.param_count != 1 {
+	if !fn_arity_accepts_positional(cproto, 1) {
 		refuse(eval, {refusal = .Function_Arguments, chunk_id = frame.chunk_id, node = node_idx, command = cmd, parameter = 2, left = 1, right = i64(cproto.param_count)})
 		return false
 	}
@@ -2363,7 +2849,9 @@ vm_compare :: proc "contextless" (eval: ^Evaluation, op: Opcode, left, right: Va
 	     .Get_Upval, .Get_Let, .Let_Enter, .Neg, .Not, .Add, .Sub, .Mul, .Div, .Rem,
 	     .List_Concat, .Jmp, .Jmp_If_False, .Jmp_If_False_Keep, .Jmp_If_True_Keep,
 	     .Check_Bool, .Closure, .Check_Call, .Call, .Tail_Call, .Call_Builtin,
-	     .Call_Site, .Ret, .Make_Record, .Get_Field, .With, .Destructure,
+	     .Call_Site, .Ret, .Make_Record, .Get_Field, .Try_Get_Field, .With,
+	     .With_Field_Reg, .Make_Rec_Comp, .Destructure, .Set_Let_Val, .Match_Eq,
+	     .Check_Rec_Shape, .Match_Bind_Field, .Match_Fail, .Refuse_Eval,
 	     .List_Begin, .List_Push, .List_End, .Str_Begin, .Str_Push, .Str_End,
 	     .Assert_Fail, .Trace, .Load_Global, .Refuse_Parse, .Extra_Arg:
 		refuse(eval, {refusal = .Host_Refused, chunk_id = chunk_id, node = node_idx})
@@ -2376,7 +2864,17 @@ vm_compare :: proc "contextless" (eval: ^Evaluation, op: Opcode, left, right: Va
 	is_order := cmp_op != .Eq && cmp_op != .Neq
 	switch left.kind {
 	case .Integer:
-		li, ri := value_integer(left), value_integer(right)
+		lu, ru := value_unit(left), value_unit(right)
+		li, ri, _, ustatus := align_integer_units(value_integer(left), value_integer(right), lu, ru)
+		switch ustatus {
+		case .Ok:
+		case .Overflow:
+			refuse(eval, {refusal = .Overflow, chunk_id = chunk_id, node = node_idx, operator = parser_op, left = value_integer(left), right = value_integer(right)})
+			return false, false
+		case .Incompatible, .Non_Exact:
+			refuse(eval, {refusal = .Unit_Mismatch, chunk_id = chunk_id, node = node_idx, operator = parser_op, left_kind = .Integer, right_kind = .Integer, left_unit = lu, right_unit = ru})
+			return false, false
+		}
 		switch cmp_op {
 		case .Eq:  return li == ri, true
 		case .Neq: return li != ri, true
@@ -2436,8 +2934,8 @@ vm_compare :: proc "contextless" (eval: ^Evaluation, op: Opcode, left, right: Va
 
 @(private)
 vm_with :: proc "contextless" (eval: ^Evaluation, left, right: Value, chunk_id: u16, node_idx: lex_parser.Node_Index) -> (result: Value, ok: bool) {
-	// Lazy record composition in declaration mode (and on Plan/Project values).
-	if (eval.mode == .Declaration || left.kind == .Plan_Value || left.kind == .Project_Value) && is_lazy_record(left.kind) && is_lazy_record(right.kind) {
+	// Lazy record composition in both modes (including Plan_Value and Project_Value).
+	if is_lazy_record(left.kind) && is_lazy_record(right.kind) {
 		left_shape_id, ls_ok := lazy_record_base_shape(eval, left)
 		right_shape_id, rs_ok := lazy_record_base_shape(eval, right)
 		if !ls_ok || !rs_ok {
@@ -2458,27 +2956,41 @@ vm_with :: proc "contextless" (eval: ^Evaluation, left, right: Value, chunk_id: 
 			}
 		}
 		patch_rec := lazy_record_compact(eval, right, chunk_id, node_idx) or_return
+		inner_left := left
+		preserve_tag := left.kind == .Plan_Value || left.kind == .Project_Value
+		if preserve_tag {
+			inner_left = eval.tagged_records[int(left.data)]
+		}
 		base_depth: u16 = 0
-		if left.kind == .Record_With {
-			base_depth = eval.overlays[int(left.data)].depth
+		if inner_left.kind == .Record_With {
+			base_depth = eval.overlays[int(inner_left.data)].depth
 		}
 		if eval.overlay_count >= len(eval.overlays) {
 			return refuse(eval, {refusal = .With_Pairs_Full, chunk_id = chunk_id, node = node_idx})
 		}
 		ov_idx := u32(eval.overlay_count)
 		eval.overlays[ov_idx] = {
-			base          = left,
+			base          = inner_left,
 			base_shape_id = left_shape_id,
 			patch_rec     = patch_rec,
 			depth         = base_depth + 1,
 		}
 		eval.overlay_count += 1
-		ov_val := Value{kind = .Record_With, data = u64(ov_idx), meta = u32(base_depth + 1)}
+		out_val := Value{kind = .Record_With, data = u64(ov_idx), meta = u32(base_depth + 1)}
 		if base_depth + 1 > OVERLAY_COMPACT_THRESHOLD {
-			flat_idx := lazy_record_compact(eval, ov_val, chunk_id, node_idx) or_return
-			return {kind = .Record_Literal, data = u64(flat_idx), meta = left_shape_id}, true
+			flat_idx := lazy_record_compact(eval, out_val, chunk_id, node_idx) or_return
+			out_val = {kind = .Record_Literal, data = u64(flat_idx), meta = left_shape_id}
 		}
-		return ov_val, true
+		if preserve_tag {
+			if eval.tagged_record_count >= len(eval.tagged_records) {
+				return refuse(eval, {refusal = .With_Pairs_Full, chunk_id = chunk_id, node = node_idx})
+			}
+			tidx := eval.tagged_record_count
+			eval.tagged_records[tidx] = out_val
+			eval.tagged_record_count += 1
+			return {kind = left.kind, data = u64(tidx)}, true
+		}
+		return out_val, true
 	}
 
 	// Console host Record `with` Record / Record_Literal.
@@ -2498,6 +3010,398 @@ vm_with :: proc "contextless" (eval: ^Evaluation, left, right: Value, chunk_id: 
 	}
 	res_hv := literal_type_to_record(eval, right, lhv.file, lhv.detail, lhv.record) or_return
 	return host_to_value(eval, res_hv)
+}
+
+// ---- Lex v3 VM helpers: nested with, parameter annotations/defaults, match, comprehensions.
+
+@(private)
+fn_arity_accepts_positional :: proc "contextless" (proto: ^Proto, argc: int) -> bool {
+	if argc > int(proto.param_count) {
+		return false
+	}
+	for i in argc ..< int(proto.param_count) {
+		if !proto.params[i].has_default {
+			return false
+		}
+	}
+	return true
+}
+
+@(private)
+vm_check_param_annot :: proc "contextless" (
+	eval: ^Evaluation,
+	val: Value,
+	annot: lex_parser.Param_Kind_Annot,
+	unit: value_kinds.Integer_Unit,
+	chunk_id: u16,
+	node_idx: lex_parser.Node_Index,
+	command: string,
+	parameter: int,
+	field: string,
+) -> (Value, bool) {
+	switch annot {
+	case .None:
+		return val, true
+	case .Integer:
+		if val.kind != .Integer {
+			return refuse(eval, {refusal = .Parameter_Kind, chunk_id = chunk_id, node = node_idx, command = command, parameter = parameter, field = field, left_kind = val.kind, expected_annot = .Integer, right_unit = unit})
+		}
+		if unit.kind != .None {
+			vu := value_unit(val)
+			converted, status := convert_integer_unit(value_integer(val), vu, unit, false)
+			switch status {
+			case .Ok:
+				return value_int_unit(converted, unit), true
+			case .Overflow:
+				return refuse(eval, {refusal = .Overflow, chunk_id = chunk_id, node = node_idx, left = value_integer(val)})
+			case .Incompatible, .Non_Exact:
+				return refuse(eval, {refusal = .Unit_Mismatch, chunk_id = chunk_id, node = node_idx, command = command, parameter = parameter, field = field, left_kind = .Integer, right_kind = .Integer, left_unit = vu, right_unit = unit})
+			}
+		}
+		return val, true
+	case .Boolean:
+		if val.kind == .Boolean {
+			return val, true
+		}
+	case .Text:
+		if val.kind == .Text {
+			return val, true
+		}
+	case .Hash:
+		if val.kind == .Hash {
+			return val, true
+		}
+	case .List:
+		if val.kind == .List {
+			return val, true
+		}
+	case .Record:
+		if is_lazy_record(val.kind) || val.kind == .Record {
+			return val, true
+		}
+	case .Function:
+		if val.kind == .Function {
+			return val, true
+		}
+	case .Enum:
+		if val.kind == .Member || val.kind == .Enum {
+			return val, true
+		}
+	case .Module_Ref:
+		if val.kind == .Module_Ref {
+			return val, true
+		}
+	case .Tree_Ref:
+		if val.kind == .Tree_Ref {
+			return val, true
+		}
+	case .Recipe_Ref:
+		if val.kind == .Recipe_Ref {
+			return val, true
+		}
+	case .Follow_Ref:
+		if val.kind == .Follow_Ref {
+			return val, true
+		}
+	case .Store_Ref:
+		if val.kind == .Store_Ref {
+			return val, true
+		}
+	case .Plan:
+		if val.kind == .Plan_Value {
+			return val, true
+		}
+	case .Project:
+		if val.kind == .Project_Value {
+			return val, true
+		}
+	case .Handle:
+		if val.kind == .Handle {
+			return val, true
+		}
+	case .Table:
+		if val.kind == .Table {
+			return val, true
+		}
+	case .Bytes:
+		if val.kind == .Bytes {
+			return val, true
+		}
+	}
+	return refuse(eval, {refusal = .Parameter_Kind, chunk_id = chunk_id, node = node_idx, command = command, parameter = parameter, field = field, left_kind = val.kind, expected_annot = annot, right_unit = unit})
+}
+
+@(private)
+vm_prepare_fn_args :: proc "contextless" (
+	eval: ^Evaluation,
+	cl: Closure,
+	cproto: ^Proto,
+	raw_args: []Value,
+	given_mask: []bool,
+	out_args: []Value,
+	call_chunk_id: u16,
+	call_node: lex_parser.Node_Index,
+	command: string,
+) -> bool {
+	cchunk := &eval.chunks[cl.chunk_id]
+	pcount := int(cproto.param_count)
+	for i in 0 ..< pcount {
+		pm := cproto.params[i]
+		supplied := given_mask != nil ? (i < len(given_mask) && given_mask[i]) : (i < len(raw_args))
+		val: Value
+		err_chunk := call_chunk_id
+		err_node := call_node
+		if supplied {
+			val = raw_args[i]
+		} else if pm.has_default {
+			// Map default_proto's Parent_Upval descriptors from cl.upval_off.
+			dp := &eval.protos[int(cchunk.proto_start) + int(pm.default_proto)]
+			deoff := u32(0)
+			delen := dp.upval_count
+			if delen > 0 {
+				if eval.env_slot_count + int(delen) > len(eval.env_slots) {
+					refuse(eval, {refusal = .Calls_Full, chunk_id = cl.chunk_id, node = pm.node_idx})
+					return false
+				}
+				deoff = u32(eval.env_slot_count)
+				for ui in 0 ..< int(delen) {
+					uv := eval.upvals[int(dp.upval_start) + ui]
+					if int(uv.index) >= int(cl.upval_len) {
+						refuse(eval, {refusal = .Host_Refused, chunk_id = cl.chunk_id, node = pm.node_idx})
+						return false
+					}
+					eval.env_slots[eval.env_slot_count] = eval.env_slots[int(cl.upval_off) + int(uv.index)]
+					eval.env_slot_count += 1
+				}
+			}
+			dv, dok := vm_exec_proto(eval, cl.chunk_id, pm.default_proto, deoff, delen, nil, NO_THUNK, pm.node_idx)
+			if !dok {
+				return false
+			}
+			val = dv
+			err_chunk = cl.chunk_id
+			err_node = pm.node_idx
+		} else {
+			refuse(eval, {refusal = .Function_Arguments, chunk_id = call_chunk_id, node = call_node, command = command, left = i64(len(raw_args)), right = i64(pcount)})
+			return false
+		}
+		if pm.kind_annot != .None {
+			pname := pm.name_sym != lex_parser.NO_SYM ? lex_parser.sym_text(&eval.interner, pm.name_sym) : ""
+			checked, cok := vm_check_param_annot(eval, val, pm.kind_annot, pm.unit, err_chunk, err_node, command, i + 1, pname)
+			if !cok {
+				return false
+			}
+			val = checked
+		}
+		out_args[i] = val
+	}
+	return true
+}
+
+@(private)
+vm_with_single_field :: proc "contextless" (eval: ^Evaluation, base: Value, sym: lex_parser.Sym_Id, val: Value, chunk_id: u16, node_idx: lex_parser.Node_Index) -> (Value, bool) {
+	if !is_lazy_record(base.kind) {
+		return refuse(eval, {refusal = .With_Kinds, chunk_id = chunk_id, node = node_idx, left_kind = base.kind, right_kind = .Record_Literal})
+	}
+	if eval.shape_count >= len(eval.shapes) ||
+	   eval.shape_field_count >= len(eval.shape_fields) ||
+	   eval.record_count >= len(eval.records) ||
+	   eval.record_thunk_ref_count >= len(eval.record_thunk_refs) {
+		return refuse(eval, {refusal = .With_Pairs_Full, chunk_id = chunk_id, node = node_idx})
+	}
+	tref, tok := alloc_forced_thunk(eval, val, chunk_id, node_idx)
+	if !tok {
+		return {}, false
+	}
+	foff := u32(eval.shape_field_count)
+	eval.shape_fields[foff] = sym
+	eval.shape_field_count += 1
+	sid := u32(eval.shape_count)
+	eval.shapes[sid] = {
+		fields_off  = foff,
+		field_count = 1,
+		shape_hash  = shape_hash_of_fields(&eval.interner, eval.shape_fields[int(foff):int(foff) + 1]),
+	}
+	eval.shape_count += 1
+	roff := u32(eval.record_thunk_ref_count)
+	eval.record_thunk_refs[roff] = tref
+	eval.record_thunk_ref_count += 1
+	ridx := u32(eval.record_count)
+	eval.records[ridx] = {shape_id = sid, refs_off = roff, chunk_id = chunk_id, node_idx = node_idx}
+	eval.record_count += 1
+	patch := Value{kind = .Record_Literal, data = u64(ridx), meta = sid}
+	return vm_with(eval, base, patch, chunk_id, node_idx)
+}
+
+@(private)
+vm_match_eq :: proc "contextless" (eval: ^Evaluation, left, right: Value, chunk_id: u16, node_idx: lex_parser.Node_Index) -> (bool, bool) {
+	if left.kind != right.kind {
+		return false, true
+	}
+	switch left.kind {
+	case .Integer:
+		li, ri, _, ustatus := align_integer_units(value_integer(left), value_integer(right), value_unit(left), value_unit(right))
+		if ustatus != .Ok {
+			return false, true
+		}
+		return li == ri, true
+	case .Boolean:
+		return value_boolean(left) == value_boolean(right), true
+	case .Text:
+		lt := value_text(eval, left)
+		rt := value_text(eval, right)
+		if !charge_steps(eval, u32(min(len(lt), len(rt)) / 64), chunk_id, node_idx) {
+			return false, false
+		}
+		return lt == rt, true
+	case .Hash, .Module_Ref, .Tree_Ref:
+		lh, lok := hash_of(eval, left)
+		rh, rok := hash_of(eval, right)
+		return lok && rok && lh == rh, true
+	case .Member:
+		return left.meta == right.meta, true
+	case .None, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal,
+	     .Enum, .Function, .List, .Record_With, .Recipe_Ref, .Follow_Ref, .Store_Ref,
+	     .Plan_Value, .Project_Value:
+		return false, true
+	}
+	return false, true
+}
+
+@(private)
+vm_check_rec_shape :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, src_val: Value, pat_desc_rel: u32, node_idx: lex_parser.Node_Index) -> (bool, bool) {
+	chunk := &eval.chunks[frame.chunk_id]
+	desc := eval.pat_descs[int(chunk.pat_desc_start) + int(pat_desc_rel)]
+	pfields := eval.pat_fields[int(desc.fields_start):int(desc.fields_start) + int(desc.field_count)]
+	if !charge_steps(eval, u32(1 + len(pfields)), frame.chunk_id, node_idx) {
+		return false, false
+	}
+	if is_lazy_record(src_val.kind) {
+		shape_id, sok := lazy_record_base_shape(eval, src_val)
+		if !sok {
+			return false, true
+		}
+		record_shape_dep(eval, src_val, shape_id)
+		shape := &eval.shapes[shape_id]
+		if !desc.has_rest && int(shape.field_count) != len(pfields) {
+			return false, true
+		}
+		for pf in pfields {
+			if _, found := shape_lookup_sym(eval, shape_id, pf.sym); !found {
+				return false, true
+			}
+		}
+		return true, true
+	}
+	if src_val.kind == .Record {
+		hv := value_to_host(eval, src_val)
+		described, dok := module.record_type(hv.file, hv.detail)
+		if !dok {
+			return false, true
+		}
+		if !desc.has_rest && int(described.field_count) != len(pfields) {
+			return false, true
+		}
+		for pf in pfields {
+			fname := lex_parser.sym_text(&eval.interner, pf.sym)
+			if _, _, found := record_field_find(hv.file, described, fname); !found {
+				return false, true
+			}
+		}
+		return true, true
+	}
+	return false, true
+}
+
+@(private)
+vm_start_rec_comp :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, dst_reg: u8, iter_val: Value, comp_rel: u32, node_idx: lex_parser.Node_Index) -> bool {
+	if iter_val.kind != .List {
+		refuse(eval, {refusal = .Not_A_List, chunk_id = frame.chunk_id, node = node_idx, left_kind = iter_val.kind})
+		return false
+	}
+	cnt := iter_val.meta
+	if cnt == 0 {
+		rec_val, rok := build_dynamic_record_from_pairs(eval, nil, frame.chunk_id, node_idx)
+		if !rok {
+			return false
+		}
+		eval.reg_stack[int(frame.reg_base) + int(dst_reg)] = rec_val
+		return true
+	}
+	chunk := &eval.chunks[frame.chunk_id]
+	cdesc := eval.comp_descs[int(chunk.comp_desc_start) + int(comp_rel)]
+
+	// Capture enclosing upvalues once for cond (if any), key, and val protos.
+	cond_cl_val: Value
+	if cdesc.has_cond {
+		eoff, elen, eok := capture_upvals(eval, frame, frame.chunk_id, cdesc.cond_proto, node_idx)
+		if !eok {
+			return false
+		}
+		if eval.closure_count >= len(eval.closures) {
+			refuse(eval, {refusal = .Calls_Full, chunk_id = frame.chunk_id, node = node_idx})
+			return false
+		}
+		cidx := u32(eval.closure_count)
+		eval.closures[cidx] = {chunk_id = frame.chunk_id, upval_len = elen, proto_id = cdesc.cond_proto, upval_off = eoff}
+		eval.closure_count += 1
+		cond_cl_val = {kind = .Function, data = u64(cidx)}
+	}
+	keoff, kelen, keok := capture_upvals(eval, frame, frame.chunk_id, cdesc.key_proto, node_idx)
+	if !keok {
+		return false
+	}
+	if eval.closure_count >= len(eval.closures) {
+		refuse(eval, {refusal = .Calls_Full, chunk_id = frame.chunk_id, node = node_idx})
+		return false
+	}
+	kidx := u32(eval.closure_count)
+	eval.closures[kidx] = {chunk_id = frame.chunk_id, upval_len = kelen, proto_id = cdesc.key_proto, upval_off = keoff}
+	eval.closure_count += 1
+	key_cl_val := Value{kind = .Function, data = u64(kidx)}
+
+	veoff, velen, veok := capture_upvals(eval, frame, frame.chunk_id, cdesc.val_proto, node_idx)
+	if !veok {
+		return false
+	}
+	if eval.closure_count >= len(eval.closures) {
+		refuse(eval, {refusal = .Calls_Full, chunk_id = frame.chunk_id, node = node_idx})
+		return false
+	}
+	vidx := u32(eval.closure_count)
+	eval.closures[vidx] = {chunk_id = frame.chunk_id, upval_len = velen, proto_id = cdesc.val_proto, upval_off = veoff}
+	eval.closure_count += 1
+	val_cl_val := Value{kind = .Function, data = u64(vidx)}
+
+	if eval.frame_count >= len(eval.frames) || int(eval.reg_top) + 4 > len(eval.reg_stack) {
+		refuse(eval, {refusal = .Calls_Full, chunk_id = frame.chunk_id, node = node_idx})
+		return false
+	}
+	reg_base := eval.reg_top
+	eval.reg_top += 4
+	eval.reg_stack[reg_base] = {}
+	eval.reg_stack[reg_base + 1] = cond_cl_val
+	eval.reg_stack[reg_base + 2] = key_cl_val
+	eval.reg_stack[reg_base + 3] = val_cl_val
+
+	cframe := &eval.frames[eval.frame_count]
+	cframe^ = {
+		kind          = .Rec_Comp,
+		dst_reg       = dst_reg,
+		chunk_id      = frame.chunk_id,
+		reg_base      = reg_base,
+		let_base      = eval.let_slot_top,
+		cont_phase    = 0,
+		cont_flags    = cdesc.has_cond ? 1 : 0,
+		return_thunk  = NO_THUNK,
+		cont_list_off = u32(iter_val.data),
+		cont_count    = cnt,
+		cont_index    = 0,
+		cont_out_off  = eval.list_scratch_top,
+		cont_node     = node_idx,
+	}
+	eval.frame_count += 1
+	return true
 }
 
 // ---- Call_Site execution (host commands, named args, console special forms).
@@ -2538,7 +3442,8 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 		cproto := &eval.protos[int(cchunk.proto_start) + int(cl.proto_id)]
 		sig = {parameter_count = int(cproto.param_count), untyped = true}
 		for i in 0 ..< sig.parameter_count {
-			sig.names[i] = lex_parser.sym_text(&eval.interner, cproto.param_syms[i])
+			sig.names[i] = lex_parser.sym_text(&eval.interner, cproto.params[i].name_sym)
+			sig.optional[i] = cproto.params[i].has_default
 		}
 	} else if name == MAP_NAME {
 		callee, builtin_id = .Builtin, .Map
@@ -2576,6 +3481,66 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 		callee, builtin_id = .Builtin, .Merge_Deep
 		sig = {parameter_count = 2, untyped = true}
 		sig.names[0], sig.names[1] = "left", "right"
+	} else if name == FROM_ENTRIES_NAME {
+		callee, builtin_id = .Builtin, .From_Entries
+		sig = {parameter_count = 1, untyped = true}
+		sig.names[0] = "entries"
+	} else if name == LEN_NAME {
+		callee, builtin_id = .Builtin, .Len
+		sig = {parameter_count = 1, untyped = true}
+		sig.names[0] = "value"
+	} else if name == AT_NAME {
+		callee, builtin_id = .Builtin, .At
+		sig = {parameter_count = 2, untyped = true}
+		sig.names[0], sig.names[1] = "list", "index"
+	} else if name == SLICE_NAME {
+		callee, builtin_id = .Builtin, .Slice
+		sig = {parameter_count = 3, untyped = true}
+		sig.names[0], sig.names[1], sig.names[2] = "list", "start", "end"
+	} else if name == ANY_NAME {
+		callee, builtin_id = .Builtin, .Any
+		sig = {parameter_count = 2, untyped = true}
+		sig.names[0], sig.names[1] = "list", "function"
+	} else if name == ALL_NAME {
+		callee, builtin_id = .Builtin, .All
+		sig = {parameter_count = 2, untyped = true}
+		sig.names[0], sig.names[1] = "list", "function"
+	} else if name == FLAT_MAP_NAME {
+		callee, builtin_id = .Builtin, .Flat_Map
+		sig = {parameter_count = 2, untyped = true}
+		sig.names[0], sig.names[1] = "list", "function"
+	} else if name == UNIQUE_NAME {
+		callee, builtin_id = .Builtin, .Unique
+		sig = {parameter_count = 1, untyped = true}
+		sig.names[0] = "list"
+	} else if name == SORT_BY_NAME {
+		callee, builtin_id = .Builtin, .Sort_By
+		sig = {parameter_count = 2, untyped = true}
+		sig.names[0], sig.names[1] = "list", "function"
+	} else if name == SPLIT_NAME {
+		callee, builtin_id = .Builtin, .Split
+		sig = {parameter_count = 2, untyped = true}
+		sig.names[0], sig.names[1] = "text", "separator"
+	} else if name == JOIN_TEXT_NAME {
+		callee, builtin_id = .Builtin, .Join_Text
+		sig = {parameter_count = 2, untyped = true}
+		sig.names[0], sig.names[1] = "list", "separator"
+	} else if name == STARTS_WITH_NAME {
+		callee, builtin_id = .Builtin, .Starts_With
+		sig = {parameter_count = 2, untyped = true}
+		sig.names[0], sig.names[1] = "text", "prefix"
+	} else if name == ENDS_WITH_NAME {
+		callee, builtin_id = .Builtin, .Ends_With
+		sig = {parameter_count = 2, untyped = true}
+		sig.names[0], sig.names[1] = "text", "suffix"
+	} else if name == CONTAINS_NAME {
+		callee, builtin_id = .Builtin, .Contains
+		sig = {parameter_count = 2, untyped = true}
+		sig.names[0], sig.names[1] = "text", "needle"
+	} else if name == REPLACE_TEXT_NAME {
+		callee, builtin_id = .Builtin, .Replace_Text
+		sig = {parameter_count = 3, untyped = true}
+		sig.names[0], sig.names[1], sig.names[2] = "text", "old", "new"
 	} else {
 		if eval.host.command_find == nil {
 			refuse(eval, {refusal = .Host_Refused, chunk_id = frame.chunk_id, node = site.node_idx})
@@ -2647,9 +3612,23 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 				}
 			}
 		}
-		if callee != .Host && given_count != param_count {
+		if callee == .Builtin && given_count != param_count {
 			refuse(eval, {refusal = .Function_Arguments, chunk_id = frame.chunk_id, node = site.node_idx, command = name, left = i64(given_count), right = i64(param_count)})
 			return false
+		}
+		if callee == .Function {
+			cl := eval.closures[int(fn_val.data)]
+			cchunk := &eval.chunks[cl.chunk_id]
+			cproto := &eval.protos[int(cchunk.proto_start) + int(cl.proto_id)]
+			if site.has_named {
+				if given_count > param_count {
+					refuse(eval, {refusal = .Function_Arguments, chunk_id = frame.chunk_id, node = site.node_idx, command = name, left = i64(given_count), right = i64(param_count)})
+					return false
+				}
+			} else if !fn_arity_accepts_positional(cproto, given_count) {
+				refuse(eval, {refusal = .Function_Arguments, chunk_id = frame.chunk_id, node = site.node_idx, command = name, left = i64(given_count), right = i64(param_count)})
+				return false
+			}
 		}
 	}
 
@@ -2803,11 +3782,17 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 		return vm_exec_builtin(eval, frame, builtin_id, vm_args[:param_count], dst_reg, site.node_idx)
 	case .Function:
 		cl := eval.closures[int(fn_val.data)]
+		cchunk := &eval.chunks[cl.chunk_id]
+		cproto := &eval.protos[int(cchunk.proto_start) + int(cl.proto_id)]
+		prepared: [lex_parser.ARGUMENT_CAPACITY]Value
+		if !vm_prepare_fn_args(eval, cl, cproto, vm_args[:param_count], given[:param_count], prepared[:param_count], frame.chunk_id, site.node_idx, name) {
+			return false
+		}
 		eval.call_count += 1
 		if eval.profile != nil {
 			eval.profile.calls_total += 1
 		}
-		return push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, vm_args[:param_count], dst_reg, NO_THUNK, site.node_idx)
+		return push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, prepared[:param_count], dst_reg, NO_THUNK, site.node_idx)
 	case .Host:
 		if eval.host.call_run == nil {
 			refuse(eval, {refusal = .Host_Refused, chunk_id = frame.chunk_id, node = site.node_idx})

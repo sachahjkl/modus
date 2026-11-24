@@ -98,7 +98,7 @@ fake_command_find :: proc "contextless" (data: rawptr, name: string) -> (signatu
 		signature.parameter_count = 2
 		signature.names[0], signature.kinds[0] = "first", .Integer
 		signature.names[1], signature.kinds[1] = "second", .Integer
-	case "any":
+	case "sink":
 		signature.parameter_count = 1
 		signature.kinds[0] = .None
 	case "set":
@@ -245,7 +245,7 @@ test_form_of :: proc "contextless" (data: rawptr, command_name: string, index: i
 }
 
 // One evaluation of a text, with its tree, its host and its result.
-@(private = "file")
+@(private)
 Run :: struct {
 	buffers:      lex_parser.Console_Tree_Buffers,
 	eval_buffers: Console_Eval_Buffers,
@@ -273,7 +273,7 @@ the_thread_of_a_test_holds_the_stack_bound :: proc(t: ^testing.T) {
 	testing.expectf(t, limit.rlim_cur == posix.RLIM_INFINITY || u64(limit.rlim_cur) >= 2 * TEST_STACK_BYTES, "the stack limit %d holds less than twice %d bytes", limit.rlim_cur, TEST_STACK_BYTES)
 }
 
-@(private = "file")
+@(private)
 run_of :: proc(text: string, mode := Evaluation_Mode.Console, budget: u32 = EVALUATION_BUDGET_STEPS, stack_bytes: uint = TEST_STACK_BYTES, depth_limit: int = EVALUATION_DEPTH_LIMIT) -> ^Run {
 	run := new(Run, context.temp_allocator)
 	fake_records_make(&run.fake)
@@ -632,7 +632,7 @@ evaluation_refusals_of_the_forms :: proc(t: ^testing.T) {
 		{"{a = 1}", .Literal_No_Type, 1, "", .None, .None, nil},
 		{"r = {a = 1}", .Literal_No_Type, 5, "", .None, .None, nil},
 		{"pair({a = 1}, g())", .Literal_No_Type, 6, "", .None, .Integer, nil},
-		{"any({a = 1})", .Literal_No_Type, 5, "", .None, .None, nil},
+		{"sink({a = 1})", .Literal_No_Type, 6, "", .None, .None, nil},
 		{"f({a = 1})", .Literal_No_Type, 3, "", .None, .None, nil},
 		{"let s = {x = 1} in pair(s, 2)", .Literal_No_Type, 25, "", .None, .Integer, nil},
 		{"{a = 1} + 1", .Operator_Kinds, 9, "", .Record_Literal, .Integer, nil},
@@ -646,7 +646,8 @@ evaluation_refusals_of_the_forms :: proc(t: ^testing.T) {
 		// with: on two records only, of one description.
 		{"1 with {a = 1}", .With_Kinds, 3, "", .Integer, .Record_Literal, nil},
 		{"rect with 1", .With_Kinds, 6, "", .Record, .Integer, nil},
-		{"{a = 1} with {a = 2}", .With_Kinds, 9, "", .Record_Literal, .Record_Literal, nil},
+		{"{a = 1} with 2", .With_Kinds, 9, "", .Record_Literal, .Integer, nil},
+		{"{a = 1} with {a = 2}", .Literal_No_Type, 9, "", .None, .None, nil},
 		{"rect with labelled", .With_Records_Differ, 6, "", .None, .None, nil},
 		{"rect with {widht = 1}", .Literal_Field_Unknown, 12, "widht", .None, .None, nil},
 		{"g() with {width = 1}", .With_Kinds, 5, "", .Integer, .Record_Literal, {"g"}},
@@ -718,7 +719,7 @@ evaluation_of_members :: proc(t: ^testing.T) {
 		{"set(layout = .US)", .Member_Unknown, 14, "US", .None, .None},
 		{"set(layout = .us)", .Member_Unknown, 14, "us", .None, .None},
 		{"pair(.french, g())", .Member_No_Type, 6, "", .None, .Integer},
-		{"any(.french)", .Member_No_Type, 5, "", .None, .None},
+		{"sink(.french)", .Member_No_Type, 6, "", .None, .None},
 		{"f(.french)", .Member_No_Type, 3, "", .None, .None},
 		{".french", .Member_No_Type, 1, "", .None, .None},
 		{"v = .french", .Member_No_Type, 5, "", .None, .None},
@@ -919,9 +920,9 @@ evaluation_refusals_of_functions :: proc(t: ^testing.T) {
 		// after the arguments before it ran, before the call runs.
 		{"pair((x) => x, 1)", .Value_At_Border, 10, .Function, nil},
 		{"pair(g(), [h()])", .Value_At_Border, 11, .List, {"g", "h"}},
-		{"any([])", .Value_At_Border, 5, .List, nil},
-		{"any(map([1], (x) => x))", .Value_At_Border, 5, .List, nil},
-		{"let f = (x) => x in any(f)", .Value_At_Border, 25, .Function, nil},
+		{"sink([])", .Value_At_Border, 6, .List, nil},
+		{"sink(map([1], (x) => x))", .Value_At_Border, 6, .List, nil},
+		{"let f = (x) => x in sink(f)", .Value_At_Border, 26, .Function, nil},
 		{"let f = (x) => pair(x, 1) in f((y) => y)", .Value_At_Border, 21, .Function, nil},
 		// A field of a function or of a list, `with`, an operator.
 		{"let f = (x) => x in f.a", .Field_Unknown, 21, .Function, nil},
