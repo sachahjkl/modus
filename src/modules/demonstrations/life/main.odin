@@ -47,11 +47,11 @@ WIDTH :: 480
 #assert(WIDTH == COLUMNS * CELL)
 HEIGHT :: 320
 #assert(HEIGHT == ROWS * CELL)
-// The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (300 pages): its module, its
-// stack, its grids and its glyph memory. The tool counts the window at the
-// largest scale (docs/MODULE_CONTRACT.md, "The floor of a module").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1748, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, the stack and the window at the largest
+// scale (docs/MODULE_CONTRACT.md, "The floor of a module"). The working
+// memory holds the glyph memory (354 pages) and the page tables of the
+// mappings.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 384, window_width = WIDTH, window_height = HEIGHT}
 STEP_INTERVAL :: 80
 
 cells: [2][ROWS][COLUMNS]u8

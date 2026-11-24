@@ -82,14 +82,15 @@ LARGEST_HEIGHT :: 1080
 // The picture: its pixels, its copy before a stroke, the stack of a fill
 // and the history are arenas that the budget pays, sized to the picture
 // (src/md/features/paint_application.md, "The memory of a picture";
-// src/md/features/paint_application.md, "The memory of the history"). The budget states the picture of a photo of a
-// phone of 24 MP, 6000 x 4000: three arenas of 23438 pages (the picture,
-// its copy, and the history at its bound of one copy), the stack of a fill
-// of 733 pages, and the frame lists of the four reservations, at most 640
-// pages. A budget that pays less holds a smaller picture: a picture past it
-// is refused, and paint says so. 6248 + 3 * 23438 + 733 + 640 = 77935. The
-// tool reads the literal; a check below ties it to these parts.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 77935, threads = 3, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
+// src/md/features/paint_application.md, "The memory of the history"). The
+// floor states a screen-sized picture, 1920 x 1080: three arenas of 2025
+// pages (the picture, its copy, and the history at its bound of one copy),
+// the stack of a fill of 128 pages, and the frame lists of the four
+// reservations, at most 128 pages. Larger pictures draw from the growth
+// factor of the budget or a plan row; a picture past the budget is refused,
+// and paint says so. 6248 + 3 * 2025 + 128 + 128 = 12579. The tool reads
+// the literal; a check below ties it to these parts.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 12579, threads = 3, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
 
 PAGE_BYTES :: 4096
 // The rule of the tool (scale_factor.window_surface_largest), from the same
@@ -101,20 +102,18 @@ PAGE_BYTES :: 4096
 WINDOW_SCREEN_WIDTH :: min((u64(LARGEST_WIDTH) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.WIDTH))
 WINDOW_SCREEN_HEIGHT :: min((u64(LARGEST_HEIGHT) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.HEIGHT))
 WINDOW_PAGES :: (2 * WINDOW_SCREEN_WIDTH * WINDOW_SCREEN_HEIGHT * 4 + PAGE_BYTES - 1) / PAGE_BYTES
-// The picture that the budget states, and its arenas.
-STATED_PICTURE_WIDTH :: 6000
-STATED_PICTURE_HEIGHT :: 4000
+// The picture that the floor states, and its arenas.
+STATED_PICTURE_WIDTH :: LARGEST_WIDTH
+STATED_PICTURE_HEIGHT :: LARGEST_HEIGHT
 STATED_PICTURE_PAGES :: (STATED_PICTURE_WIDTH * STATED_PICTURE_HEIGHT * 4 + PAGE_BYTES - 1) / PAGE_BYTES
-// The stack of spans of a fill: 733 pages, 187 600 spans of 16 bytes. A
-// fill of the sky of the stated photo holds 5 spans at most; a maze of the
-// stated photo (a wall at each odd pixel of each odd row), the worst case
-// that was measured, holds 5 995 004 (96 MB, a copy of the picture): it
-// takes the pages of the budget that the history does not use, or it is
-// refused, and the picture stays.
-STATED_FILL_PAGES :: 733
+// The stack of spans of a fill: 128 pages, 32 768 spans of 16 bytes. A
+// fill of a uniform sky holds 5 spans at most; a dense maze takes the
+// pages of the budget that the history does not use, or it is refused, and
+// the picture stays.
+STATED_FILL_PAGES :: 128
 // The frame list of a reservation costs 8 bytes for each page of it: four
 // reservations of the whole budget, rounded up.
-FRAME_LIST_PAGES :: 640
+FRAME_LIST_PAGES :: 128
 // The stack of a worker thread past the 16 pages that the tool counts.
 WORKER_STACK_PAGES :: 48
 #assert(FRAME_LIST_PAGES >= 4 * ((MODULE_BUDGET.working_memory_pages + 512) * 8 / PAGE_BYTES + 1) + 8)
@@ -373,7 +372,7 @@ clear :: proc "c" () {
 // extend grows the picture to at least a width and a height, with paper in the new pixels.
 //
 // The picture never gets smaller: a size below it changes nothing. The memory of the picture comes from the
-// budget of paint, so a picture of 6000 x 4000 (a photo of 24 MP) needs the budget that paint states. The window
+// budget of paint; larger pictures such as 6000 x 4000 need a plan row with enough pages. The window
 // shows the top left part of the picture.
 //
 // - **width**: 1 to 65536 pixels.

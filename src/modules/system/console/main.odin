@@ -134,11 +134,11 @@ import "modus:text_rendering"
 import "base:intrinsics"
 
 // Itself and four sandboxes, each a call host with its thread. The working
-// memory holds 7583 pages, the 144 pages of the stack of the second thread
-// past the stack of a thread that names no size, and 2048 pages (8 MiB)
-// for the values that the variables keep, each in a memory object of its
-// size.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 9775, processes = 5, threads = 6}
+// memory of the floor holds the 144 pages of the stack of the second thread
+// past the default thread stack and 2048 pages (8 MiB) for variable values,
+// each in a memory object of its size. Sandboxes start at a command after
+// the first state of work and draw from the growth factor of the budget.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2192, processes = 5, threads = 6}
 
 // The stack of the second thread, which runs the lines: the bytes that the
 // evaluator may take, and 128 KiB for the host and the command that a call

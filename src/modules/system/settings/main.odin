@@ -104,16 +104,14 @@ LEAST_WIDTH :: 400
 LEAST_HEIGHT :: 320
 LARGEST_WIDTH :: 1024
 LARGEST_HEIGHT :: 800
-// The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (648 pages): its module, its
-// stack, its tables and its glyph memory, 1400 pages. A resize holds the
-// old surface and the new one together until the compositor shows the new
-// one, so the working memory also holds a second surface at the largest
-// size: 1024 x 800 logical pixels are 2048 x 1600 at the largest scale, 2,
-// two pictures of 4 bytes a pixel, 26 214 400 bytes, 6400 pages. 1400 +
-// 6400 = 7800. The tool counts the window at its largest size, at the
-// largest scale (docs/MODULE_CONTRACT.md, "The floor of a module").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7840, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// The tool counts the module, the thread stacks and the window at its
+// largest size and largest scale (6400 pages)
+// (docs/MODULE_CONTRACT.md, "The floor of a module"). The working memory of
+// the floor holds the glyph memory (354 pages), the stack of the worker
+// thread past the default stack (48 pages), the store client and the page
+// tables of the mappings. During a resize after ready, the second surface
+// draws from the growth factor of the budget.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1024, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 // The window that sets the scale back fits the least work area that each
 // holder of the display leaves at each scale, with its title.
 #assert(LEAST_HEIGHT + 40 <= scale_factor.WORK_AREA_LEAST_HEIGHT)

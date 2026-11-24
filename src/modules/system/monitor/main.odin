@@ -70,14 +70,11 @@ WIDTH :: 520
 // do not fit. With its title bar the window stays inside a screen of 1080
 // lines at y = 408, where a machine test puts it.
 HEIGHT :: 640
-// The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (650 pages): its module, its
-// stack, its tables and its glyph memory. The tool counts the window at
-// the largest scale (docs/MODULE_CONTRACT.md, "The floor of a module").
-// The keeper of the settings (settings.odin) runs a worker thread: its
-// stack past the 16 pages that the tool counts for a thread, 48 pages.
-// 1398 + 48 = 1446.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1446, threads = 2, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, the stacks and the window at the largest
+// scale (docs/MODULE_CONTRACT.md, "The floor of a module"). The working
+// memory holds the glyph memory (354 pages), the worker stack past the
+// default thread stack (48 pages) and the page tables of the mappings.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512, threads = 2, window_width = WIDTH, window_height = HEIGHT}
 LINE :: 20
 // The room between the edge of the window and the cards, and between two
 // cards: the gap token, so the cards line up with the other windows.
