@@ -1110,11 +1110,12 @@ commands_start :: proc "contextless" () {
 	command("recipes.ingest_tree", {.Text}, .Text, "ingest a store tree into recipes objects and return its here() hash", recipes_ingest_tree_command)
 	// Ingests a project store, evaluates project.lex outputs.default in a
 	// zero-grant declaration_eval call host, registers the recipe, and builds
-	// or substitutes it through recipes.build_stored.
-	command("recipes.build_project", {.Text, .Text}, .Text, "evaluate project.lex and build or substitute its default output", recipes_build_project_command, optional_last = true)
-	// Queries recipes.realisations() for a 64-hex recipe hash and returns its
-	// output hash, origin, and signer public key.
-	command("recipes.provenance", {.Text}, .Text, "show the realisation provenance of a 64-hex recipe hash", recipes_provenance_command)
+	// or substitutes it through recipes.build_stored, returning a Project_Build
+	// record with outcome, recipe, and output fields.
+	command("recipes.build_project", {.Text, .Text}, .Record, "evaluate project.lex and build or substitute its default output", recipes_build_project_command, optional_last = true)
+	// Queries recipes.realisations() for a 64-hex recipe hash and returns a
+	// Provenance record with origin, output, and signer fields.
+	command("recipes.provenance", {.Text}, .Record, "show the realisation provenance of a 64-hex recipe hash", recipes_provenance_command)
 	// Reads a verified built or cached module from recipes (direct blob when
 	// entry is empty, or named entry of a Tree output such as "module"),
 	// validates its module format, and stores it in module_files under nickname.

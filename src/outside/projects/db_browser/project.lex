@@ -1,13 +1,24 @@
-// db_browser as a Lex project (src/md/features/db_browser.md): an outside
-// module whose source is this folder tree, built by the host builder and
-// distributed through the signed object cache.
-project {
-  source = here(),
-  outputs = {
-    default = recipe(catalog.modules.host, {
-      source = here(),
-      target = "db_browser",
-    }),
+// db_browser: sandboxed SQLite GUI application for modus.
+// Every build input is named by content hash; zero ambient disk or network access.
+let
+  default_build = {
     source = here(),
+    target = "db_browser",
+    heap   = 2 MiB,
   },
-}
+  release_build = default_build with { heap = 4 MiB },
+in
+  project {
+    source = here(),
+    inputs = {
+      modus = catalog,
+    },
+    outputs = {
+      default = recipe(catalog.modules.host, release_build),
+      source  = here(),
+    },
+    console = {
+      modules = [catalog.modules.host],
+      stores  = [store("db_browser", .read, .write)],
+    },
+  }
