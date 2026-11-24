@@ -30,14 +30,11 @@ import "modus:disk_process"
 import "modus:storage"
 import "modus:system"
 
-// The answer of the root service to Debug_Store and the read of the object
-// have this one deadline together. With the ROOT_ANSWER_MILLISECONDS of the
-// answer to Debug, the two waits of `attach` take at most 3500 ms: 1500 ms
-// stay under the 5000 ms after which the service `remote` ends a call, for
-// the reports of the process, the attach in the kernel and the transit of
-// `remote`.
-DISK_DEBUG_OBJECT_MILLISECONDS :: 1500
-#assert(ROOT_ANSWER_MILLISECONDS + DISK_DEBUG_OBJECT_MILLISECONDS + 1500 <= 5000)
+// Hang bound of Debug_Store and the storage read of a debug object: matches
+// system.ANSWER_BOUND_MILLISECONDS (60 s) so a loaded host never cuts off a
+// live read while a stopped storage service ends store_call at once.
+DISK_DEBUG_OBJECT_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
+#assert(DISK_DEBUG_OBJECT_MILLISECONDS == system.ANSWER_BOUND_MILLISECONDS)
 
 // The debug object of the module of a disk process.
 Disk_Debug_Object :: struct {

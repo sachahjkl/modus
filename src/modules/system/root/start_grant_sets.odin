@@ -223,6 +223,11 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// act"). The boot image checks that the holder of Display has the act
 	// dialog.
 	{name = "assistant", scope = .Session, grants = {.Serve, .Image, .Connect, .Store}, terms = {callable = {0 = "display"}, asks_acts = true, store_blocks = 12000}},
+	// The desktop Grants window (src/md/features/grants_window.md): holds only
+	// Grants_Manage, which gives a root ring restricted to reading and revoking
+	// grants of the caller's own principal session (never Allow, Start, Stop,
+	// Replace, or Acts_For_Principal).
+	{name = "grants", scope = .Session, grants = {.Grants_Manage}},
 	// A service: the console calls its exports through a connection.
 	{name = "life", scope = .Session, grants = {.Serve}},
 	// A service: the console calls its exports through a connection.

@@ -54,9 +54,11 @@ DISK_PROCESSES_RESTART_LIMIT :: 3
 SCRIPT_FONTS_LOAD_DEADLINE_MILLISECONDS :: (font_outlines.SCRIPT_FONTS_BYTES_LIMIT + disk_process.FILE_BYTES_LIMIT - 1) / disk_process.FILE_BYTES_LIMIT * disk_process.LOAD_DEADLINE_MILLISECONDS
 #assert(disk_process.LOAD_DEADLINE_MILLISECONDS == system.ANSWER_BOUND_MILLISECONDS)
 
-// The time that the service has to answer Cancel with Cancelled. Past it
-// the service is stopped: the core then ends each loan with no wait.
-DISK_LOAD_CANCEL_BOUND_MILLISECONDS :: 2000
+// Hang bound for disk_processes to answer Cancel with Cancelled: matches
+// system.ANSWER_BOUND_MILLISECONDS (60 s). A stop of the service ends the
+// wait at once in disk_processes_stopped; past the hang bound the service is
+// stopped so the core ends each loan.
+DISK_LOAD_CANCEL_BOUND_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
 
 // The service, its ring and its transfer region. nil: it does not run.
 disk_processes_process: ^Started

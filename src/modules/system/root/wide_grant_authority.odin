@@ -420,10 +420,10 @@ wide_grant_second_connection :: proc "contextless" (caller: ^Started, record: ri
 }
 
 // wide_grant_end_command serves Wide_Grant_End: the principal of the grant
-// ends it from a console.
+// ends it from a console or from the Grants window.
 wide_grant_end_command :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Wide_Grant_End)
-	if .Acts_For_Principal not_in grants_held(caller) {
+	if !grants_manage_only(caller) && .Acts_For_Principal not_in grants_held(caller) {
 		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Acts_For_Principal, 1)
 	}
 	for index in 4 ..< len(record.values) {

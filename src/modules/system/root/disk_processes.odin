@@ -513,13 +513,19 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 	kind := u32(root_ring.Root_Command.Disk_Grant)
 	nickname_bytes, nickname_length := disk_process.name_unpack({record.values[0], record.values[1], record.values[2]})
 	nickname := string(nickname_bytes[:nickname_length])
-	if .Acts_For_Principal not_in grants_held(caller) {
-		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Acts_For_Principal, 1)
-	}
 	action, action_outcome, action_refusal := root_ring.member_of_word(root_ring.Disk_Grant_Action, record.values[4], .Disk_Grant, 0)
 	if action_outcome != .Succeeded {
 		values^ = action_refusal
 		return action_outcome
+	}
+	if grants_manage_only(caller) {
+		// Grants_Manage only revokes remembered disk grants; it can never mint
+		// new grants via Allow.
+		if action != .Disallow {
+			return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Grants, 1)
+		}
+	} else if .Acts_For_Principal not_in grants_held(caller) {
+		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Acts_For_Principal, 1)
 	}
 	number := record.values[5]
 	asked, known := enum_word.member_of_word(start_grant.Grant, number)

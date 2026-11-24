@@ -2759,8 +2759,9 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 }
 
 // request_record sends one command to the root service and waits for its
-// completion. answered is false when the root service gave none.
-request_record :: proc "contextless" (kind: root_ring.Root_Command, name: string, value: u64 = 0, time_limit: u64 = 3000, stoppable := false) -> (completion: ring.Record, answered: bool) {
+// completion up to time_limit (defaulting to system.ANSWER_BOUND_MILLISECONDS).
+// answered is false when the root service gave none.
+request_record :: proc "contextless" (kind: root_ring.Root_Command, name: string, value: u64 = 0, time_limit: u64 = system.ANSWER_BOUND_MILLISECONDS, stoppable := false) -> (completion: ring.Record, answered: bool) {
 	if requests.head == nil {
 		return {}, false
 	}
@@ -3054,7 +3055,7 @@ start_process :: proc "contextless" (arguments: []Value) -> Value {
 	// the end Started of a wiring, and its record outputs by their typed
 	// names (streams.odin).
 	packed := system.name_pack(name)
-	completion, answered := disk_request(.Start, {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(root_ring.Start_Wiring_List.None), 5 = u64(root_ring.Start_Answer.Process_Handle)}, 3000)
+	completion, answered := disk_request(.Start, {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(root_ring.Start_Wiring_List.None), 5 = u64(root_ring.Start_Answer.Process_Handle)})
 	if !answered {
 		return fail_no_answer()
 	}
@@ -3114,7 +3115,7 @@ edit_object :: proc "contextless" (arguments: []Value) -> Value {
 		return fail("edit: cannot give the object path to the root service: ", call_outcome.CALL_OUTCOME_NAMES[give_status])
 	}
 	packed := system.name_pack(store_name)
-	completion, answered := disk_request(.Start_Edit, {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(given_path), 5 = u64(len(object_path)), 6 = 0}, 3000)
+	completion, answered := disk_request(.Start_Edit, {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(given_path), 5 = u64(len(object_path)), 6 = 0})
 	if !answered {
 		return fail_no_answer()
 	}
@@ -3173,9 +3174,10 @@ start_from_disk :: proc "contextless" (arguments: []Value) -> Value {
 }
 
 // disk_request sends one command of the disk processes to the root service,
-// whose values are not a name of 31 bytes, and waits for its completion.
+// whose values are not a name of 31 bytes, and waits for its completion up to
+// time_limit (defaulting to system.ANSWER_BOUND_MILLISECONDS).
 // answered is false when the root service gave none before the limit.
-disk_request :: proc "contextless" (kind: root_ring.Root_Command, values: [7]u64, time_limit: u64) -> (completion: ring.Record, answered: bool) {
+disk_request :: proc "contextless" (kind: root_ring.Root_Command, values: [7]u64, time_limit: u64 = system.ANSWER_BOUND_MILLISECONDS) -> (completion: ring.Record, answered: bool) {
 	if requests.head == nil {
 		return {}, false
 	}
@@ -3253,7 +3255,7 @@ disk_grant_command :: proc "contextless" (command_name: string, action: root_rin
 		return fail(command_name, ": no start grant has the name ", arguments[1].text, "; a command gives a disk process the grant store")
 	}
 	packed := disk_process.name_pack(nickname)
-	completion, answered := disk_request(.Disk_Grant, {0 = packed[0], 1 = packed[1], 2 = packed[2], 4 = u64(action), 5 = u64(grant)}, 3000)
+	completion, answered := disk_request(.Disk_Grant, {0 = packed[0], 1 = packed[1], 2 = packed[2], 4 = u64(action), 5 = u64(grant)})
 	if !answered {
 		return fail_no_answer()
 	}
@@ -3283,7 +3285,7 @@ remote_client_request :: proc "contextless" (command_name: string, text: string,
 	}
 	key_values := transmute([4]u64)key
 	answered: bool
-	completion, answered = disk_request(.Remote_Client, {0 = key_values[0], 1 = key_values[1], 2 = key_values[2], 3 = key_values[3], 4 = u64(action), 5 = remote.client_uses_word(uses)}, 3000)
+	completion, answered = disk_request(.Remote_Client, {0 = key_values[0], 1 = key_values[1], 2 = key_values[2], 3 = key_values[3], 4 = u64(action), 5 = remote.client_uses_word(uses)})
 	if !answered {
 		return {}, fail_no_answer(), true
 	}
@@ -3367,7 +3369,7 @@ agent_allow :: proc "contextless" (arguments: []Value) -> Value {
 		return fail("agent_allow: the key must be 64 hexadecimal digits; the argument has ", u64(len(arguments[0].text)), " bytes, or a byte that is no digit")
 	}
 	key_values := transmute([4]u64)key
-	completion, answered := disk_request(.Wide_Grant_Ask, {0 = key_values[0], 1 = key_values[1], 2 = key_values[2], 3 = key_values[3], 4 = wide_grants.wide_authorities_to_word(scopes), 5 = u64(minutes) * 60_000}, 3000)
+	completion, answered := disk_request(.Wide_Grant_Ask, {0 = key_values[0], 1 = key_values[1], 2 = key_values[2], 3 = key_values[3], 4 = wide_grants.wide_authorities_to_word(scopes), 5 = u64(minutes) * 60_000})
 	if !answered {
 		return fail_no_answer()
 	}
@@ -3384,7 +3386,7 @@ agent_disallow :: proc "contextless" (arguments: []Value) -> Value {
 		return fail("agent_disallow: the key must be 64 hexadecimal digits; the argument has ", u64(len(arguments[0].text)), " bytes, or a byte that is no digit")
 	}
 	key_values := transmute([4]u64)key
-	completion, answered := disk_request(.Wide_Grant_End, {0 = key_values[0], 1 = key_values[1], 2 = key_values[2], 3 = key_values[3]}, 3000)
+	completion, answered := disk_request(.Wide_Grant_End, {0 = key_values[0], 1 = key_values[1], 2 = key_values[2], 3 = key_values[3]})
 	if !answered {
 		return fail_no_answer()
 	}
@@ -3406,7 +3408,7 @@ remote_clients :: proc "contextless" (arguments: []Value) -> Value {
 	// Each row of the client table; the root service returns rows of the
 	// caller's principal only.
 	for place in u64(0) ..< remote.CLIENT_READ_PLACES {
-		completion, answered := disk_request(.Remote_Client, {4 = u64(root_ring.Remote_Client_Action.Read), 5 = place}, 3000)
+		completion, answered := disk_request(.Remote_Client, {4 = u64(root_ring.Remote_Client_Action.Read), 5 = place})
 		if !answered {
 			return fail_no_answer()
 		}
@@ -3475,7 +3477,7 @@ nickname_move :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	hash_values := transmute([4]u64)hash
 	packed := disk_process.name_pack(nickname)
-	completion, answered := disk_request(.Nickname_Move, {0 = hash_values[0], 1 = hash_values[1], 2 = hash_values[2], 3 = hash_values[3], 4 = packed[0], 5 = packed[1], 6 = packed[2]}, 3000)
+	completion, answered := disk_request(.Nickname_Move, {0 = hash_values[0], 1 = hash_values[1], 2 = hash_values[2], 3 = hash_values[3], 4 = packed[0], 5 = packed[1], 6 = packed[2]})
 	if !answered {
 		return fail_no_answer()
 	}
@@ -3510,7 +3512,7 @@ disk_persistence :: proc "contextless" (arguments: []Value) -> Value {
 		return fail("disk_persistence: the setting is \"persist\", \"forget\" or \"global\"")
 	}
 	packed := disk_process.name_pack(nickname)
-	completion, answered := disk_request(.Disk_Grant_Persistence, {0 = packed[0], 1 = packed[1], 2 = packed[2], 4 = u64(persistence)}, 3000)
+	completion, answered := disk_request(.Disk_Grant_Persistence, {0 = packed[0], 1 = packed[1], 2 = packed[2], 4 = u64(persistence)})
 	if !answered {
 		return fail_no_answer()
 	}
@@ -3568,7 +3570,7 @@ start_policy_choose :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	hash_values := transmute([4]u64)hash
 	packed := disk_process.name_pack(nickname)
-	completion, answered := disk_request(.Start_Policy_Choice, {0 = hash_values[0], 1 = hash_values[1], 2 = hash_values[2], 3 = hash_values[3], 4 = packed[0], 5 = packed[1], 6 = packed[2]}, 3000)
+	completion, answered := disk_request(.Start_Policy_Choice, {0 = hash_values[0], 1 = hash_values[1], 2 = hash_values[2], 3 = hash_values[3], 4 = packed[0], 5 = packed[1], 6 = packed[2]})
 	if !answered {
 		return fail_no_answer()
 	}
@@ -3581,7 +3583,7 @@ start_policy_choose :: proc "contextless" (arguments: []Value) -> Value {
 // start_policy_default asks the root service to end the choice of a start
 // policy: a nickname of no byte.
 start_policy_default :: proc "contextless" (arguments: []Value) -> Value {
-	completion, answered := disk_request(.Start_Policy_Choice, {}, 3000)
+	completion, answered := disk_request(.Start_Policy_Choice, {})
 	if !answered {
 		return fail_no_answer()
 	}
