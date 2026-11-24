@@ -561,11 +561,6 @@ Owned_Store_Refused :: struct {
 	slot:  u64,
 }
 
-// The disk has the format of an older release: the service reads nothing
-// of it, and changes nothing.
-@(log_fact = "storage: the data disk has the format of an older release of modus, which this release does not read: write the data disk again")
-Disk_Of_An_Older_Format :: struct {}
-
 // The root service sent a key of a principal that this service refuses: a
 // slot that names no named principal, a key before its identity, or zero
 // bytes. The codes are of isolated.Service_Command.

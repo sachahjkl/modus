@@ -28,13 +28,14 @@ RECIPES_TREE_DEPTH_MOST :: 32
 // Inline capacity: one storage.list page per directory scan step.
 RECIPES_LIST_PAGE_ROWS :: 64
 RECIPES_LIST_PAGE_NAMES :: 4096
-// Format property: declaration_eval accepts bundles up to 256 KiB and 64 entries.
+// Inline capacity for console project declaration_eval bundles.
+RECIPES_BUNDLE_ENTRIES_MOST :: 64
 RECIPES_BUNDLE_BYTES_MOST :: 256 * 1024
 RECIPES_CATALOG_BYTES_MOST :: 64 * 1024
 RECIPES_LEX_ARENA_BYTES :: 192 * 1024
 // Format property: boot image holds at most 256 module entries.
 RECIPES_CATALOG_MODULES_MOST :: 256
-// Policy bound matching declaration_eval OUTPUT_BYTES_MOST (256 KiB).
+// Inline capacity for console declaration_eval output staging.
 RECIPES_EVAL_OUTPUT_FIRST_PAGES :: 16
 RECIPES_EVAL_OUTPUT_BYTES_MOST :: u64(256 * 1024)
 
@@ -52,7 +53,7 @@ recipes_catalog_buf: [RECIPES_CATALOG_BYTES_MOST]u8
 @(private = "file")
 recipes_lex_arena: [RECIPES_LEX_ARENA_BYTES]u8
 @(private = "file")
-recipes_bundle_entries: [declaration_eval.BUNDLE_ENTRY_LIMIT]declaration_eval.Bundle_Input_Entry
+recipes_bundle_entries: [RECIPES_BUNDLE_ENTRIES_MOST]declaration_eval.Bundle_Input_Entry
 
 // recipes_build_mode_of_text parses the optional build mode text argument of
 // recipes.build_project. Empty text selects Prefer_Cache.
@@ -511,7 +512,7 @@ recipes_read_small_store_file :: proc "contextless" (client: ^storage.Client, sa
 
 // recipes_collect_lex_entries recursively gathers all .lex files under place
 // (root and nested subdirectories) into recipes_bundle_entries, failing if the
-// project exceeds declaration_eval.BUNDLE_ENTRY_LIMIT - 1 files or arena space.
+// project exceeds RECIPES_BUNDLE_ENTRIES_MOST - 1 files or arena space.
 @(private = "file")
 recipes_collect_lex_entries :: proc "contextless" (
 	client: ^storage.Client,
@@ -606,8 +607,8 @@ recipes_collect_lex_entries :: proc "contextless" (
 				if !declaration_eval.declaration_path_valid(path_kept) {
 					continue
 				}
-				if bundle_count^ >= declaration_eval.BUNDLE_ENTRY_LIMIT - 1 {
-					_ = fail("recipes.build_project: project has more than ", i64(declaration_eval.BUNDLE_ENTRY_LIMIT - 1), " .lex files")
+				if bundle_count^ >= RECIPES_BUNDLE_ENTRIES_MOST - 1 {
+					_ = fail("recipes.build_project: project has more than ", i64(RECIPES_BUNDLE_ENTRIES_MOST - 1), " .lex files")
 					return false
 				}
 				lex_used^ += rel_len
