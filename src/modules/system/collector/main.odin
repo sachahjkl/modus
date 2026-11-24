@@ -622,6 +622,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !export_ok && !has_delegated {
 		fail("no collector service ring")
 	}
+	// Map the wiring ring with Receive_Handles before loading the store so wirings deliver at once.
+	system.wiring_ring_open()
 
 	region_handle := ctx.handles[wide_grants.SERVICE_REGION_SLOT]
 	if region_handle != 0 {

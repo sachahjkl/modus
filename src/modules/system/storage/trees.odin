@@ -302,10 +302,17 @@ plan_trees_node_change :: proc "contextless" () -> i64 {
 }
 
 // state_blocks_of gives the blocks that a state of an object holds: its
-// object nodes and its blocks of data, from its root node. A root that is
-// wrong gives 0, as the open counts it.
+// object nodes and its blocks of data, from its root node. A 1-block state
+// (level 0) holds 1 block even when damaged, matching storage_mount.reference_state;
+// a damaged root node of a multi-block state gives 0, as the open counts it.
 state_blocks_of :: proc "contextless" (root: Pointer, size: u64) -> u64 {
-	if root.block == 0 || size > format.OBJECT_SIZE_LIMIT || storage_mount.wrong_block(&opened, root.block) {
+	if root.block == 0 || size > format.OBJECT_SIZE_LIMIT {
+		return 0
+	}
+	if format.object_levels(size) == 0 {
+		return 1
+	}
+	if storage_mount.wrong_block(&opened, root.block) {
 		return 0
 	}
 	blocks, outcome := block_tree.state_blocks(&object_source, {root = root, size = size}, &object_node)

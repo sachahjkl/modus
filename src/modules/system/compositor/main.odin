@@ -834,6 +834,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	input_status, control_status: call_outcome.Call_Outcome
 	input, input_status = system.ring_open(ctx.handles[GRANT_INPUT])
 	control, control_status = system.ring_open(ctx.handles[GRANT_CONTROL])
+	// Map the wiring ring with Receive_Handles before wide-grant act wirings arrive.
+	system.wiring_ring_open()
 	powerbox_picker_open_ring(ctx) // powerbox_picker.odin
 	// The same test as the root service makes before it starts this
 	// process: the two never disagree on a screen. With no framebuffer and

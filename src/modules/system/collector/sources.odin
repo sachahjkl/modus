@@ -227,6 +227,10 @@ sources_pass :: proc "contextless" () -> (pending: bool) {
 	for &link in source_links.links {
 		pending ||= link.active && (link.pending || link.state == .Ended)
 	}
+	// An end that arrived after link_tables_follow_the_ends needs another pass once the tag tables grow.
+	if system.stream_end_places() > link_tables.count {
+		pending = true
+	}
 	return pending
 }
 

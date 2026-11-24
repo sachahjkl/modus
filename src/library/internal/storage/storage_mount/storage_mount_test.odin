@@ -324,6 +324,27 @@ the_recount_of_a_damaged_store :: proc(t: ^testing.T) {
 	testing.expect(t, !state.store_damaged[0])
 }
 
+// A damaged single-block object (level 0) still counts as 1 current block on
+// mount while marking its root wrong, so replacing it in a tight-limit store
+// subtracts 1 old block rather than 0.
+@(test)
+a_damaged_single_block_object_counts_as_one_current_block :: proc(t: ^testing.T) {
+	disk := disk_make(16)
+	defer delete(disk.bytes)
+	object := disk_object(&disk)
+	disk.bytes[object.root.block * BLOCK_SIZE + 5] ~= 0x80 // Corrupt the single data block.
+	disk_root(&disk, disk_store(&disk, object, {}), 3)
+	state := test_state_make()
+	defer test_state_free(state)
+	result := mount(state, &disk, 16)
+	testing.expect_value(t, result.damaged_objects, 1)
+	testing.expect_value(t, state.store_damaged_objects[0], 1)
+	testing.expect_value(t, state.store_recount[0], 3) // Store block, leaf, and the damaged data block.
+	testing.expect_value(t, state.store_heads[0].current_blocks, 1)
+	testing.expect(t, wrong_block(state, object.root.block))
+	testing.expect(t, !state.store_damaged[0])
+}
+
 // A block of data whose bytes changed on the disk: its value at its place
 // is not the value that its node holds. Its object is damaged; the node is
 // read and counted.

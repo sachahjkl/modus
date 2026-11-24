@@ -214,10 +214,12 @@ stream_ends_grow :: proc "contextless" () -> bool {
 	return true
 }
 
-// stream_end_places gives the places of the table of the ends of this
-// process: the most rings that input_tags or output_pairs can list, so a
-// caller sizes its list of tags from it.
+// stream_end_places takes pending ends from the wiring ring and gives the
+// places of the table of the ends of this process: the most rings that
+// input_tags or output_pairs can list, so a caller sizes its list of tags
+// from it.
 stream_end_places :: proc "contextless" () -> int {
+	stream_ends_take()
 	return len(stream_ends)
 }
 

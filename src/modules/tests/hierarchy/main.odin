@@ -485,9 +485,12 @@ confinement :: proc "contextless" () {
 		verdict := outcome(refused_with(own_status, &error, .No_Grant) && errors.Unit(error.unit) == .Acts_For_Principal)
 		system.log_fact(verdict.level, Share_Root_Refused{verdict = verdict.words})
 	}
-	share_and_same_bytes(&writable, tree_4)
+	// part_000 of tree_004 is outside tree_005 and its rightmost leaf has room for one more name without a split.
+	part_4_0, _ := storage.open_tree(&client, tree_4, "part_000")
+	share_and_same_bytes(&writable, part_4_0)
 	storage.unshare(&client, writable_number)
-	guess_hidden_after_unshare(tree_5, tree_4)
+	guess_hidden_after_unshare(tree_5, part_4_0)
+	storage.close_tree(&client, part_4_0)
 	storage.close_tree(&client, tree_3)
 	storage.close_tree(&client, tree_4)
 	storage.close_tree(&client, tree_5)
