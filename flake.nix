@@ -172,22 +172,9 @@
         url = "https://raw.githubusercontent.com/polarsys/b612/48ac6ba67ecab8123e8e36d6aa05367db0c7b638/fonts/ttf/${name}";
         inherit hash;
       };
-    vectorFontSources = {
-      VECTOR_FONT_SOURCES = builtins.concatStringsSep ";" [
-        "paper_mono=${paperMonoFile "PaperMono-Regular.ttf" "sha256-Ew4aCbZLTxUNNMk6a3vVLWxcNRN2HR+8e+QtaDmLjBA="}"
-        "paper_mono_semibold=${paperMonoFile "PaperMono-SemiBold.ttf" "sha256-Gx5gctnLUz5DBacHayRKoSEnElaJyTSf25d1c6Naxl4="}"
-        "dejavu_sans_mono=${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSansMono.ttf"
-        "jetbrains_mono=${pkgs.jetbrains-mono}/share/fonts/truetype/JetBrainsMono-Regular.ttf"
-        "ibm_mono=${pkgs.ibm-plex}/share/fonts/truetype/IBMPlexMono-Regular.ttf"
-        "fira_mono=${pkgs.fira-mono}/share/fonts/truetype/FiraMono-Regular.ttf"
-        "commit_mono=${pkgs.commit-mono}/share/fonts/truetype/CommitMono-400-Regular.ttf"
-        "iosevka=${pkgs.iosevka-bin}/share/fonts/truetype/Iosevka-Regular.ttc"
-        "b612=${b612File "B612-Regular.ttf" "sha256-E53OZZEAqDv5W0hHRpbkSL7pVjHvhP09BDfO0r8zz3M="}"
-        "b612_bold=${b612File "B612-Bold.ttf" "sha256-kXSVQax7LDKLWIMrfixN+AnX4ro41io6WqP444snGBQ="}"
-        "noto_sans=${pkgs.noto-fonts}/share/fonts/noto/NotoSans.ttf"
-      ];
+    scriptFontSources = {
       # The script fonts (src/md/features/script_fonts.md): whole files,
-      # for the command "script_fonts" and the host tests of the text.
+      # for the command "script_fonts", the system build, and the host tests of the text.
       SCRIPT_FONT_SOURCES = builtins.concatStringsSep ";" [
         "noto_sans_hebrew=${pkgs.noto-fonts}/share/fonts/noto/NotoSansHebrew.ttf"
         "noto_sans_arabic=${pkgs.noto-fonts}/share/fonts/noto/NotoSansArabic.ttf"
@@ -210,6 +197,21 @@
         "noto_sans_balinese=${pkgs.noto-fonts}/share/fonts/noto/NotoSansBalinese.ttf"
         "noto_sans_javanese=${pkgs.noto-fonts}/share/fonts/noto/NotoSansJavanese.ttf"
         "noto_sans_sundanese=${pkgs.noto-fonts}/share/fonts/noto/NotoSansSundanese.ttf"
+      ];
+    };
+    vectorFontSources = {
+      VECTOR_FONT_SOURCES = builtins.concatStringsSep ";" [
+        "paper_mono=${paperMonoFile "PaperMono-Regular.ttf" "sha256-Ew4aCbZLTxUNNMk6a3vVLWxcNRN2HR+8e+QtaDmLjBA="}"
+        "paper_mono_semibold=${paperMonoFile "PaperMono-SemiBold.ttf" "sha256-Gx5gctnLUz5DBacHayRKoSEnElaJyTSf25d1c6Naxl4="}"
+        "dejavu_sans_mono=${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSansMono.ttf"
+        "jetbrains_mono=${pkgs.jetbrains-mono}/share/fonts/truetype/JetBrainsMono-Regular.ttf"
+        "ibm_mono=${pkgs.ibm-plex}/share/fonts/truetype/IBMPlexMono-Regular.ttf"
+        "fira_mono=${pkgs.fira-mono}/share/fonts/truetype/FiraMono-Regular.ttf"
+        "commit_mono=${pkgs.commit-mono}/share/fonts/truetype/CommitMono-400-Regular.ttf"
+        "iosevka=${pkgs.iosevka-bin}/share/fonts/truetype/Iosevka-Regular.ttc"
+        "b612=${b612File "B612-Regular.ttf" "sha256-E53OZZEAqDv5W0hHRpbkSL7pVjHvhP09BDfO0r8zz3M="}"
+        "b612_bold=${b612File "B612-Bold.ttf" "sha256-kXSVQax7LDKLWIMrfixN+AnX4ro41io6WqP444snGBQ="}"
+        "noto_sans=${pkgs.noto-fonts}/share/fonts/noto/NotoSans.ttf"
       ];
       # The Unicode Character Database, for the command "unicode_tables"
       # (src/md/features/written_shaping.md).
@@ -463,6 +465,7 @@
         '';
       }
       // firmware
+      // scriptFontSources
       // outsideSources);
 
     # The test inputs as a fixed-output derivation: Nix names it by the hash
@@ -563,6 +566,7 @@
       // firmware
       # The source fonts: a test of the tool reads the feature "zero" of Paper Mono in them.
       // vectorFontSources
+      // scriptFontSources
       // outsideSources
       // cProgramSources);
 
@@ -618,6 +622,7 @@
         // firmware
         // ownerPointerTheme
         // vectorFontSources
+        // scriptFontSources
         // outsideSources
         // cProgramSources);
 
@@ -630,6 +635,7 @@
           packages = buildTools ++ [modustoolBinary];
         }
         // firmware
+        // scriptFontSources
         // outsideSources);
 
       # The shell of a developer who builds a module of their own project:
