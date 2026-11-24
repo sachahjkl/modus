@@ -603,6 +603,79 @@ Root_Command :: enum u32 {
 	// root service revokes the caller's handle and closes its own once all
 	// pages return.
 	Budget_Grow = 43,
+	// Grants_Read reads the grants of the caller's own principal session
+	// (src/md/features/grants_window.md): values[0] is a Grants_Read_Kind
+	// (Process, Wide_Grant, or Disk_Grant), values[1] is the 0-based row
+	// index for Process and Disk_Grant (0 for Wide_Grant), values[2..6] 0.
+	// Only a caller with Root_Ring or Grants_Manage sends it, and every
+	// answer is strictly scoped to caller.principal.
+	Grants_Read = 44,
+}
+
+// The kind of a Grants_Read query, in values[0].
+Grants_Read_Kind :: enum u64 {
+	Process    = 1, // Active or revoked Root_Grants of running processes in caller.principal.
+	Wide_Grant = 2, // Active wide grant of caller.principal (values[6] == 0 when none).
+	Disk_Grant = 3, // Remembered disk grant rows of caller.principal.
+}
+
+// grants_read_kind_of_word is the border of values[0] of Grants_Read.
+grants_read_kind_of_word :: proc "contextless" (word: u64) -> (kind: Grants_Read_Kind, ok: bool) {
+	return enum_word.member_of_word(Grants_Read_Kind, word)
+}
+
+// grants_read_words_of_values checks the words of a Grants_Read command at the
+// border: values[0] must name a Grants_Read_Kind, values[1] must be 0 for
+// Wide_Grant, and values[2..6] must be 0. On refusal, bad_place is the 1-based
+// index of the offending word.
+grants_read_words_of_values :: proc "contextless" (values: [7]u64) -> (kind: Grants_Read_Kind, index: u64, bad_place: i64, ok: bool) {
+	parsed, kind_ok := grants_read_kind_of_word(values[0])
+	if !kind_ok {
+		return .Process, 0, 1, false
+	}
+	if parsed == .Wide_Grant && values[1] != 0 {
+		return .Process, 0, 2, false
+	}
+	for place in 2 ..< len(values) {
+		if values[place] != 0 {
+			return .Process, 0, i64(place) + 1, false
+		}
+	}
+	return parsed, values[1], 0, true
+}
+
+// Persistence mode of a remembered disk grant row returned by Grants_Read.
+Disk_Grant_Row_Persistence :: enum u8 {
+	Global  = 0,
+	Persist = 1,
+	Forget  = 2,
+}
+
+// Durability of the principal's disk grant table returned by Grants_Read.
+Disk_Grant_Lasting :: enum u8 {
+	Until_Stop                 = 0,
+	Kept_By_Machine_Passphrase = 1,
+	Kept_By_Passphrase         = 2,
+}
+
+// disk_grant_meta_pack packs persistence, global forget default, and table
+// durability into values[5] of a Grants_Read(.Disk_Grant) completion.
+disk_grant_meta_pack :: proc "contextless" (persistence: Disk_Grant_Row_Persistence, forget_by_default: bool, lasting: Disk_Grant_Lasting) -> u64 {
+	return u64(persistence) | (u64(forget_by_default ? 1 : 0) << 8) | (u64(lasting) << 16)
+}
+
+// disk_grant_meta_unpack is the border for values[5] of Grants_Read(.Disk_Grant):
+// refuses any unknown enum word or non-zero reserved bit.
+disk_grant_meta_unpack :: proc "contextless" (word: u64) -> (persistence: Disk_Grant_Row_Persistence, forget_by_default: bool, lasting: Disk_Grant_Lasting, ok: bool) {
+	if word >> 24 != 0 || ((word >> 8) & 0xFF) > 1 {
+		return .Global, false, .Until_Stop, false
+	}
+	p, p_ok := enum_word.member_of_word(Disk_Grant_Row_Persistence, word & 0xFF)
+	l, l_ok := enum_word.member_of_word(Disk_Grant_Lasting, (word >> 16) & 0xFF)
+	if !p_ok || !l_ok {
+		return .Global, false, .Until_Stop, false
+	}
+	return p, ((word >> 8) & 1) != 0, l, true
 }
 
 // The step of a Budget_Grow, in values[0].
@@ -917,6 +990,9 @@ Root_Command_Sender :: enum u8 {
 	// The process with the start grant Remote_Clients and a root ring: it
 	// names a client key that proved itself in its handshake.
 	Remote_Clients,
+	// A process with Root_Ring or Grants_Manage: the Grants window reads and
+	// revokes grants of its own principal session without broader authority.
+	Root_Ring_Or_Grants_Manage,
 }
 
 // The sender of each command. The table is whole: a new command does not
@@ -928,8 +1004,8 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Stop                   = .Root_Ring_Or_Start_Policy,
 	.Connect                = .Root_Ring_Or_Connect,
 	.Disconnect             = .Each_Ring,
-	.Grants                 = .Root_Ring,
-	.Revoke                 = .Root_Ring,
+	.Grants                 = .Root_Ring_Or_Grants_Manage,
+	.Revoke                 = .Root_Ring_Or_Grants_Manage,
 	.Replace                = .Root_Ring,
 	.Connect_History        = .Root_Ring,
 	.Principal_Create       = .Root_Ring,
@@ -942,7 +1018,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Debug                  = .Debugger,
 	.Palette_Provide        = .Root_Ring,
 	.Start_From_Disk        = .Root_Ring,
-	.Disk_Grant             = .Root_Ring,
+	.Disk_Grant             = .Root_Ring_Or_Grants_Manage,
 	.Nickname_Move          = .Root_Ring,
 	.Machine_Passphrase     = .Root_Ring,
 	.Machine_Key            = .Principals,
@@ -961,18 +1037,19 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Screen_Budget          = .Screen_Capture,
 	.Wide_Grant_Ask         = .Root_Ring,
 	.Wide_Grant_Proof       = .Principals,
-	.Wide_Grant_End         = .Root_Ring,
+	.Wide_Grant_End         = .Root_Ring_Or_Grants_Manage,
 	.Wide_Grant_Agent_Ask   = .Remote_Clients,
 	.Wide_Grant_Second_Connection = .Remote_Clients,
 	.Plan_Values            = .Plans,
 	.Ready                  = .Nobody,
 	.Budget_Grow            = .Each_Ring,
+	.Grants_Read            = .Root_Ring_Or_Grants_Manage,
 }
 
 // The start grants that give a process a root ring. A process with none of
 // them has no root ring, so it sends no command: a disk process, whose
 // grants a command gives, and which no command gives one of these.
-ROOT_RING_GRANTS :: bit_set[start_grant.Grant]{.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy, .Plans, .Screen_Capture}
+ROOT_RING_GRANTS :: bit_set[start_grant.Grant]{.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy, .Plans, .Screen_Capture, .Grants_Manage}
 
 // root_ring_given says if a process with these start grants receives a
 // root ring at its start.
@@ -1100,6 +1177,8 @@ sender_allowed :: proc "contextless" (command: Root_Command, start_grant_set: bi
 		return .Screen_Capture in start_grant_set
 	case .Remote_Clients:
 		return .Remote_Clients in start_grant_set
+	case .Root_Ring_Or_Grants_Manage:
+		return .Root_Ring in start_grant_set || .Grants_Manage in start_grant_set
 	}
 	return false
 }
@@ -1444,6 +1523,7 @@ root_command_names := [Root_Command]string {
 	.Plan_Values            = "Plan_Values",
 	.Ready                  = "Ready",
 	.Budget_Grow            = "Budget_Grow",
+	.Grants_Read            = "Grants_Read",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -1494,6 +1574,7 @@ root_first_argument_names := [Root_Command]string {
 	.Plan_Values            = "step",
 	.Ready                  = "values",
 	.Budget_Grow            = "step",
+	.Grants_Read            = "kind",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -1545,6 +1626,7 @@ root_second_argument_names := [Root_Command]string {
 	.Plan_Values            = "",
 	.Ready                  = "",
 	.Budget_Grow            = "pages",
+	.Grants_Read            = "index",
 }
 
 // command_of_record reads the command that an error record names: the

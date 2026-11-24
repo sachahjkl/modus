@@ -59,6 +59,7 @@ DRIVER_SOUND :: Driver{"sound", .Sound_Device, timed_stream.RING_CAPACITY, timed
 // Venus Vulkan capability discovery (src/md/features/gpu_access.md).
 DRIVER_GPU :: Driver{"gpu_device", .Gpu_Device, virtio_gpu.RING_CAPACITY, virtio_gpu.SERVICE_RING, true}
 gpu_client_ring_memory: system.Handle
+gpu_device_started: ^Started
 #assert(timed_stream.GRANT_RING == system.GRANT_DEVICE_RING)
 
 // gpu_device_place gives the place of the first device of bus 0 that the
@@ -121,12 +122,13 @@ gpu_driver_start :: proc "contextless" () -> bool {
 	if !found {
 		return false
 	}
-	_, ring_mem, status := driver_start(place, DRIVER_GPU)
+	driver, ring_mem, status := driver_start(place, DRIVER_GPU)
 	if status != .Succeeded {
 		system.log_fact(.Warning, Gpu_Driver_Failed{status = status, device = u64(place.device)})
 		return false
 	}
 	system.log_fact(.Info, Gpu_Driver_Started{device = u64(place.device)})
+	gpu_device_started = driver
 	gpu_client_ring_memory = ring_mem
 	return true
 }

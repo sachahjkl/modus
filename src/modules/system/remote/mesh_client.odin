@@ -48,8 +48,11 @@ import "modus:system"
 // in the data of the process, which its budget pays as module pages.
 MESH_LINK_CAPACITY :: 8
 MESH_STREAMS_PER_LINK :: machine_wire.MESH_REQUESTS_AT_ONCE
-MESH_HANDSHAKE_BOUND_MILLISECONDS :: 10_000
-MESH_REQUEST_BOUND_MILLISECONDS :: 10_000
+// Hang bounds of an outbound mesh handshake and request: match
+// system.ANSWER_BOUND_MILLISECONDS (60 s) so a loaded host or peer never turns
+// a live mesh exchange into a timeout.
+MESH_HANDSHAKE_BOUND_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
+MESH_REQUEST_BOUND_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
 
 Mesh_Client_Phase :: enum u8 {
 	Free      = 0,

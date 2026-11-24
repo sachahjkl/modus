@@ -13,6 +13,7 @@
 // for an answer in its loop.
 package compositor
 
+import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/virtio_gpu"
 import "modus:graphics"
@@ -20,8 +21,10 @@ import "modus:interface"
 import "modus:system"
 
 GRANT_GPU_RING :: 4
+GRANT_GPU_PROCESS :: system.GRANT_DEVICE_SERVICE
 
 gpu_ring_memory: system.Handle
+gpu_process: system.Handle
 gpu_ring: ring.Ring
 gpu_present: bool // The ring of gpu_device answered at the start.
 gpu_attached: bool // The screen is the scanout: each frame goes through it.
@@ -43,8 +46,20 @@ gpu_waiting: interface.Damage
 gpu_presents: u64 // The frames that the scanout showed: the service answered each.
 gpu_frames_merged: u64 // The frames whose damage waited for an answer, and went with a later present.
 
-// gpu_call_at_start sends one command and waits for its answer, up to the
-// answer bound: the start of the compositor only, before its loop.
+// gpu_process_state reads the state of gpu_device when its process handle was
+// given; without a handle, returns Ready so the hang bound alone applies.
+@(private = "file")
+gpu_process_state :: proc "contextless" () -> op.Process_State {
+	if gpu_process == 0 {
+		return .Ready
+	}
+	state, _, _ := system.process_state(gpu_process)
+	return state
+}
+
+// gpu_call_at_start sends one command and waits for its answer, ending on
+// gpu_device stop or at the answer hang bound: the start of the compositor
+// only, before its loop.
 @(private = "file")
 gpu_call_at_start :: proc "contextless" (cmd: virtio_gpu.Service_Command, values: [7]u64 = {}) -> (reply: ring.Record, ok: bool) {
 	tag := gpu_tag
@@ -52,16 +67,18 @@ gpu_call_at_start :: proc "contextless" (cmd: virtio_gpu.Service_Command, values
 	if !system.send(&gpu_ring.commands, ring.Record{kind = u32(cmd), tag = tag, values = values}) {
 		return {}, false
 	}
-	deadline := system.time() + system.ANSWER_BOUND_MILLISECONDS
+	deadline := system.answer_deadline(system.time())
 	for {
 		wait := system.wait_begin()
+		// State before ring: a service that answered then stopped is read with its answer.
+		state := gpu_process_state()
 		if record, got := system.receive(&gpu_ring.completions); got {
 			if record.tag == tag {
 				return record, record.kind == u32(virtio_gpu.Service_Status.Ok)
 			}
 			continue
 		}
-		if system.time() >= deadline {
+		if system.answer_wait_of(system.time(), deadline, state) != .Waits {
 			return {}, false
 		}
 		system.wait_records(&wait, &gpu_ring.completions)
@@ -83,6 +100,7 @@ gpu_scanout_open :: proc "contextless" (ctx: ^system.Context, width, height: int
 		return
 	}
 	gpu_ring_memory = handle
+	gpu_process = ctx.handles[GRANT_GPU_PROCESS]
 	gpu_ring = opened
 	reply, ok := gpu_call_at_start(.Display_Info)
 	if !ok {
@@ -193,12 +211,15 @@ gpu_present_send :: proc "contextless" (in_draw: bool) {
 }
 
 // gpu_scanout_poll takes the answer of the present in flight, then sends
-// the damage that waited. A refusal, or no answer in the answer bound, ends
-// the scanout.
+// the damage that waited. A refusal, a stop of gpu_device, or no answer in the
+// answer bound ends the scanout.
 gpu_scanout_poll :: proc "contextless" (now: u64) {
 	if !gpu_attached {
 		return
 	}
+	// Read state before draining completions so a service that answered then
+	// stopped still delivers its answer.
+	state := gpu_process_state()
 	for record in system.receive(&gpu_ring.completions) {
 		if !gpu_in_flight || record.tag != gpu_in_flight_tag {
 			continue
@@ -210,11 +231,15 @@ gpu_scanout_poll :: proc "contextless" (now: u64) {
 		}
 		gpu_presents = record.values[0]
 	}
-	if gpu_in_flight && now - gpu_in_flight_since >= system.ANSWER_BOUND_MILLISECONDS {
+	if gpu_in_flight && system.answer_wait_of(now, system.answer_deadline(gpu_in_flight_since), state) != .Waits {
 		gpu_scanout_end(u64(virtio_gpu.Service_Status.Device_Error), false)
 		return
 	}
 	if !gpu_in_flight {
+		if state == .None || state == .Stopped {
+			gpu_scanout_end(u64(virtio_gpu.Service_Status.Device_Error), false)
+			return
+		}
 		gpu_present_send(false)
 	}
 }
@@ -249,6 +274,10 @@ gpu_scanout_end :: proc "contextless" (status: u64, in_draw: bool) {
 	if gpu_ring_memory != 0 {
 		system.close(gpu_ring_memory)
 		gpu_ring_memory = 0
+	}
+	if gpu_process != 0 {
+		system.close(gpu_process)
+		gpu_process = 0
 	}
 	if in_draw {
 		whole := [1]Rectangle{{0, 0, screen.width, screen.height}}

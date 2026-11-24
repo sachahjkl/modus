@@ -57,7 +57,7 @@ icon_of :: proc "contextless" (name: string) -> Icon {
 		return .Network
 	case "debugger", "debugger_window", "inspect", "errors", "extended_state", "fault", "fault_ring", "locks", "return_fault":
 		return .Debugger
-	case "cryptography_vectors", "origin", "rights":
+	case "cryptography_vectors", "grants", "origin", "rights":
 		return .Grant
 	case "frames", "heron", "life", "paint", "plasma", "vector_glyphs":
 		return .Picture

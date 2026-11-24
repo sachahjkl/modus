@@ -50,9 +50,10 @@ PLANNED_FILE_CAPACITY :: 8
 // each Stream.
 LINE_STREAM_CAPACITY :: 8
 STREAM_CONDITION_CAPACITY :: 4
-// How long the console waits for the answer of the root service to Wire
-// and to a Start with a list.
-WIRE_ANSWER_LIMIT :: 3000
+// Hang bound of the wait for the answer of the root service to Wire and to a
+// Start with a list: matches system.ANSWER_BOUND_MILLISECONDS so a loaded host
+// never turns a live wiring or start into a timeout.
+WIRE_ANSWER_LIMIT :: system.ANSWER_BOUND_MILLISECONDS
 
 // The owner of a typed name.
 Stream_Owner :: struct {

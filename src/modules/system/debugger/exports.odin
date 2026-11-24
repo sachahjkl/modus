@@ -1225,8 +1225,8 @@ step_one :: proc "contextless" (number: u64, deadline: u64) -> (stepped: bool, a
 // The debugger writes the trap flag in the registers of the thread and
 // lets it run: the processor stops it after one instruction. A thread
 // that waits in the kernel runs its next instruction only when its wait
-// ends: the export waits 1000 ms at most, then gives the row of a thread
-// that runs, with `pending` 1, and the stop comes later as an event. The
+// ends: the export waits up to the 60 s hang bound, then gives the row of a
+// thread that runs, with `pending` 1, and the stop comes later as an event. The
 // end of a step that the export waited for is its result, and no event.
 //
 // - **thread**: the number of a thread that is held or stopped.
@@ -1262,7 +1262,7 @@ step :: proc "c" (thread: i64, result: ^[]Thread_Row, error: ^errors.Error_Recor
 // the thread reaches before the line changes ends the export there: the
 // row is the row of the thread at the breakpoint, with `pending` 0, and
 // the stop is also an event. The whole export has two
-// bounds: 4096 instructions, and 2000 ms, because the debugged process
+// bounds: 4096 instructions, and the 60 s hang bound, because the debugged process
 // chooses how long one of its instructions takes and the service serves
 // each caller with one thread. At a bound the row has `pending` 1: the
 // line did not change yet. When its state is `stopped`, call `step_line`
@@ -1665,12 +1665,12 @@ events :: proc "c" (result: ^[]Event_Row, error: ^errors.Error_Record) -> (outco
 // the call returns at once when a stop waits already, at the next stop,
 // or with no row when the time ends. The service serves no other call
 // while it waits, and the service `remote` ends a call and its connection
-// after 5000 ms: so the wait is 3000 ms at most, whatever the caller
+// after 60 s: so the wait is 60 000 ms at most, whatever the caller
 // gives. A caller that waits longer calls again, or reads `events()` after
 // the line of the stop in the log.
 //
 // - **milliseconds**: the longest wait; 0 or less does not wait; more than
-//   3000 is 3000.
+//   60 000 is 60 000.
 //
 // **Errors**: as for `events`.
 //

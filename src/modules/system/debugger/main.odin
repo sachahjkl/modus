@@ -114,16 +114,14 @@ SOURCE_PATH_SIZE :: 80
 // mark too. The longest of the sources of the system has 99 bytes.
 PROCEDURE_NAME_SIZE :: 80
 #assert(SOURCE_PATH_SIZE <= TEXT_ARGUMENT_LIMIT) // A path that a row gives is a path that `source` and `break_at` take.
-// The bounds of the exports that wait. The service has one thread and
-// serves each caller, and the debugged process chooses how long one of its
-// instructions takes: so no export waits longer than a stated bound. Each
-// bound is under the 5000 ms after which the service `remote` ends a call
-// and its connection (CALL_LIMIT in src/modules/system/remote), with room for the
-// work around the wait.
-ROOT_ANSWER_MILLISECONDS :: 2000 // `attach`: the wait for the answer of the root service. A later answer is taken when it comes (root_completion_take).
-STEP_WAIT_MILLISECONDS :: 1000 // `step`: the wait for the record of one step. A thread in a wait of the kernel steps only when its wait ends: its stop then comes as an event.
-STEP_LINE_WAIT_MILLISECONDS :: 2000 // `step_line`: the whole export, for each of its steps together.
-WAIT_STOP_LIMIT_MILLISECONDS :: 3000 // `wait_stop`: the longest wait, whatever the caller asks.
+// Hang bounds of the exports that wait: each matches
+// system.ANSWER_BOUND_MILLISECONDS (60 s), matching remote.CALL_LIMIT, so a
+// loaded host never turns a live answer or step into a timeout while a hung
+// debugged process or silent service still stops waiting cleanly.
+ROOT_ANSWER_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS // `attach` and `Debug_Start`: wait for the root service. A later answer is taken when it comes (root_completion_take).
+STEP_WAIT_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS // `step`: wait for one step record. A thread in a wait of the kernel steps only when its wait ends: its stop then comes as an event.
+STEP_LINE_WAIT_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS // `step_line` and `step_over`: whole export across its steps together.
+WAIT_STOP_LIMIT_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS // `wait_stop`: longest wait, whatever the caller asks.
 ROOT_REQUEST_CAPACITY :: 8 // The commands to the root service whose completion did not come yet.
 STEP_LINE_INSTRUCTION_LIMIT :: 4096 // The instructions of one `step_line`.
 MEMORY_COUNT_LIMIT :: op.THREAD_MEMORY_READ_LIMIT // The bytes of one `memory`.

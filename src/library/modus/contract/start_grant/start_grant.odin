@@ -67,6 +67,7 @@ Grant :: enum i64 {
 	Screen_Capture     = 32, // The capture face and the input face of the compositor on the ring of its window: a copy of the screen, and keys and a pointer that go to the desktop, while the bar shows the mark of a viewer (src/md/features/remote_display.md).
 	Plans              = 33, // A root ring for Plan_Roles only, and Connect to the services of its start grant set: the holder of the role Plans, which gives the core the roles of the plan of principal 0 that the principal accepted (src/md/features/declarations.md).
 	Recount            = 34, // Ask the storage service for a recount of the count tree of its disk (isolated.CALLER_RECOUNTS), which refuses each change while it walks each store: the console of the person (docs/STORAGE.md, "3.5 The count tree").
+	Grants_Manage      = 35, // A root ring restricted to reading and revoking active process grants, active wide grants, and remembered disk grants (Disallow only) of the caller's own principal session (src/md/features/grants_window.md).
 }
 
 // The name of each start grant, as the log of the root service and the
@@ -108,6 +109,7 @@ GRANT_NAMES := [Grant]string {
 	.Screen_Capture     = "Screen_Capture",
 	.Plans              = "Plans",
 	.Recount            = "Recount",
+	.Grants_Manage      = "Grants_Manage",
 }
 
 // grant_name gives the name of the start grant with a number, and says if

@@ -48,8 +48,10 @@ HELD_CAPACITY :: PLACE_COUNT + 2 * RECEIVE_PLACES_LIMIT + MAX_CAPACITY
 // Rounds of application work and datagram sends in one exchange pass.
 SEND_ROUNDS :: 4
 
-// Wait bound for the initial Info completion when opening an endpoint.
-INFO_WAIT_MILLISECONDS :: 2000
+// Hang bound for the initial Info completion when opening an endpoint: matches
+// system.ANSWER_BOUND_MILLISECONDS (60 s) so a loaded host never turns a slow
+// start of the network service into a timeout.
+INFO_WAIT_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
 
 // Result of opening a UDP listen endpoint from a process context.
 Open_Error :: enum u8 {

@@ -27,9 +27,19 @@ import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
+import "modus:contract/wide_grants"
+import "modus:disk_process"
 import "internal:root/start_policy_rules"
 import "modus:principals"
 import "modus:system"
+
+// grants_manage_only reports whether a caller holds the narrow Grants_Manage
+// grant without full Root_Ring authority. Such a caller can only inspect and
+// revoke grants belonging to its own principal session and can never allow new
+// disk grants.
+grants_manage_only :: proc "contextless" (caller: ^Started) -> bool {
+	return .Grants_Manage in caller.start_grant_set.grants && .Root_Ring not_in caller.start_grant_set.grants
+}
 
 // The answer of a command of the root ring: the completion that the sender
 // receives, or none yet.
@@ -191,7 +201,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		}
 	case .Grants:
 		answer.outcome = root_ring.refuse(&answer.values, .Nothing_Has_That_Name, kind, .Absent, .Processes, 1)
-		if other := find(name); other != nil {
+		if other := find(name); other != nil && (!grants_manage_only(item) || other.principal == item.principal) {
 			packed := system.name_pack(principal_name(other.principal))
 			answer.values = {transmute(u64)other.granted, transmute(u64)other.revoked, other.principal, packed[0], packed[1], packed[2], packed[3]}
 			answer.outcome = .Succeeded
@@ -285,8 +295,113 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		// sender check refuses it here, so this case never runs.
 	case .Budget_Grow:
 		answer.outcome = budget_grow_command(item, record, &answer.values) // budget_growth.odin
+	case .Grants_Read:
+		answer.outcome = grants_read_command(item, record, &answer.values)
 	}
 	return answer
+}
+
+// grants_read_command serves Grants_Read: returns active process grants, active
+// wide grant, or remembered disk grants strictly for caller.principal.
+grants_read_command :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> call_outcome.Call_Outcome {
+	read_kind, index, bad_place, ok := root_ring.grants_read_words_of_values(record.values)
+	if !ok {
+		limit: u64 = bad_place == 1 ? u64(max(root_ring.Grants_Read_Kind)) : 0
+		values^ = root_ring.word_refusal(.Grants_Read, bad_place, record.values[bad_place - 1], limit)
+		return .Argument_Refused
+	}
+	switch read_kind {
+	case .Process:
+		total: u64
+		found: ^Started
+		for &other in started {
+			if other.process == 0 || other.is_terminal || other.principal != caller.principal {
+				continue
+			}
+			if other.granted == {} && other.revoked == {} {
+				continue
+			}
+			if total == index {
+				found = &other
+			}
+			total += 1
+		}
+		if found == nil {
+			values^ = {6 = total}
+			return .Succeeded
+		}
+		packed := system.name_pack(system.name_of(found.name[:]))
+		values^ = {
+			0 = packed[0],
+			1 = packed[1],
+			2 = packed[2],
+			3 = packed[3],
+			4 = transmute(u64)found.granted,
+			5 = transmute(u64)found.revoked,
+			6 = total,
+		}
+		return .Succeeded
+	case .Wide_Grant:
+		flow := &wide_grant_flow_state
+		if flow.stage != .Active || flow.principal != caller.principal || flow.grant_serial == 0 {
+			values^ = {}
+			return .Succeeded
+		}
+		key_words := transmute([4]u64)flow.client_key
+		values^ = {
+			0 = key_words[0],
+			1 = key_words[1],
+			2 = key_words[2],
+			3 = key_words[3],
+			4 = wide_grants.wide_authorities_to_word(flow.answer.authorities),
+			5 = flow.ends_at_ms,
+			6 = flow.grant_serial,
+		}
+		return .Succeeded
+	case .Disk_Grant:
+		table := disk_grant_table_of(caller.principal)
+		if table == nil {
+			values^ = {}
+			return .Succeeded
+		}
+		total := u64(table.count)
+		if index >= total {
+			values^ = {6 = total}
+			return .Succeeded
+		}
+		row := &table.rows[index]
+		packed := disk_process.name_pack(disk_process.row_nickname(row))
+		hash_words := transmute([4]u64)row.hash
+		persistence: root_ring.Disk_Grant_Row_Persistence
+		switch row.persistence {
+		case .Global:
+			persistence = .Global
+		case .Persist:
+			persistence = .Persist
+		case .Forget:
+			persistence = .Forget
+		}
+		lasting: root_ring.Disk_Grant_Lasting
+		switch disk_grant_table_lasting(caller.principal) {
+		case .Until_Stop:
+			lasting = .Until_Stop
+		case .Kept_By_Machine_Passphrase:
+			lasting = .Kept_By_Machine_Passphrase
+		case .Kept_By_Passphrase:
+			lasting = .Kept_By_Passphrase
+		}
+		values^ = {
+			0 = packed[0],
+			1 = packed[1],
+			2 = packed[2],
+			3 = hash_words[0],
+			4 = u64(transmute(u8)row.grants),
+			5 = root_ring.disk_grant_meta_pack(persistence, table.forget_by_default, lasting),
+			6 = total,
+		}
+		return .Succeeded
+	}
+	return .Operation_Unsupported
 }
 
 // start_command runs Start: the border of values[4..6], the start with its

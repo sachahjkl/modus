@@ -154,7 +154,7 @@ palette_kept_ensure :: proc "contextless" (needed: int) -> bool {
 palette_provider_start :: proc "contextless" () {
 	// The root service answers when it reaches its loop, after its boot
 	// passes: the bound only ends a hang.
-	completion, answered := request_record(.Palette_Provide, "console", 0, 60_000)
+	completion, answered := request_record(.Palette_Provide, "console", 0, system.ANSWER_BOUND_MILLISECONDS)
 	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Provider_Refused{})
 		return
@@ -350,9 +350,9 @@ palette_row_takes :: proc "contextless" (item: ^Command) -> bool {
 }
 
 // PALETTE_GETTERS_LIMIT bounds one refresh of the marks, all getters
-// together: a service that is slow, or many rows, cannot hold the thread
-// of the lines past it.
-PALETTE_GETTERS_LIMIT :: 1000 // Milliseconds.
+// together: matches system.ANSWER_BOUND_MILLISECONDS (60 s) so a slow host
+// never drops live getter marks while a stopped service ends immediately.
+PALETTE_GETTERS_LIMIT :: system.ANSWER_BOUND_MILLISECONDS
 
 // One refresh of the marks: its end, and the sandboxes and services that
 // missed a getter in it, which it asks nothing more.
@@ -1888,7 +1888,7 @@ palette_stop_before_revoke :: proc "contextless" () {
 	}
 	intrinsics.atomic_store(&palette_stop_request, 1)
 	change()
-	limit := system.time() + 3000
+	limit := system.time() + system.ANSWER_BOUND_MILLISECONDS
 	for intrinsics.atomic_load_explicit(&palette_stopped, .Relaxed) == 0 && system.time() < limit {
 		system.word_wait(&palette_stopped, 0, limit)
 	}

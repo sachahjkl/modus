@@ -117,7 +117,7 @@ Status: Decided.
 - **Cost**: The desktop must give access through user actions. A file picker that runs outside the process and returns a handle is the standard solution. Processes that need broad access, such as a backup tool or a file manager, need an explicit grant model.
 - **Reuse**: Zircon handles with rights. Capsicum. The "powerbox" file picker pattern. [Notes `existing_kernels_good_ideas.md` §3, §4]
 - **Revocation**: the kernel keeps the origin of each handle and each mapping. `Handle_Revoke` ends what came from a handle, through each chain of gifts.
-- **Open**: how the principal sees and revokes grants on the desktop. The console has `grants` and `revoke`. No window shows the grants. Blow gives no design for the desktop part. [Blow §7]
+- **Desktop**: the `grants` window (`src/modules/applications/grants`, `src/md/features/grants_window.md`) lists active process grants, any active wide grant, and remembered disk grants for the current principal session with one-click inline-confirmed revocation under the least-privilege `Grants_Manage` grant. The console keeps `grants`, `revoke`, `disallow`, and `agent_disallow`. [Blow §7]
 
 ## 3. No "everything is a file"
 

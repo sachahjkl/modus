@@ -201,6 +201,8 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 		case .Remote_Clients:
 			// A ring grant alone is never Remote_Clients, which gives no ring.
 			return false
+		case .Root_Ring_Or_Grants_Manage:
+			return grant == .Root_Ring || grant == .Grants_Manage
 		}
 		return false
 	}
@@ -227,6 +229,55 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 	testing.expect(t, sender_allowed(.Screen_Budget, {.Screen_Capture}))
 	testing.expect(t, !sender_allowed(.Start, {.Screen_Capture}))
 	testing.expect(t, !sender_allowed(.Connect, {.Screen_Capture}))
+	// Grants_Manage sends only grant inspection/revocation commands, never Start/Stop/Replace/Wide_Grant_Ask.
+	testing.expect(t, sender_allowed(.Grants_Read, {.Grants_Manage}))
+	testing.expect(t, sender_allowed(.Grants, {.Grants_Manage}))
+	testing.expect(t, sender_allowed(.Revoke, {.Grants_Manage}))
+	testing.expect(t, sender_allowed(.Disk_Grant, {.Grants_Manage}))
+	testing.expect(t, sender_allowed(.Wide_Grant_End, {.Grants_Manage}))
+	testing.expect(t, !sender_allowed(.Start, {.Grants_Manage}))
+	testing.expect(t, !sender_allowed(.Stop, {.Grants_Manage}))
+	testing.expect(t, !sender_allowed(.Connect, {.Grants_Manage}))
+	testing.expect(t, !sender_allowed(.Replace, {.Grants_Manage}))
+	testing.expect(t, !sender_allowed(.Wide_Grant_Ask, {.Grants_Manage}))
+	testing.expect(t, !sender_allowed(.Principal_Lock, {.Grants_Manage}))
+	testing.expect(t, !sender_allowed(.Grants_Read, {.Connect}))
+	// Grants_Read border checks: invalid kind, non-zero index for Wide_Grant, non-zero trailing words.
+	for bad_kind in ([?]u64{0, u64(max(Grants_Read_Kind)) + 1, max(u64)}) {
+		_, _, place, ok := grants_read_words_of_values({0 = bad_kind})
+		testing.expect(t, !ok && place == 1)
+	}
+	{
+		_, _, place, ok := grants_read_words_of_values({0 = u64(Grants_Read_Kind.Wide_Grant), 1 = 1})
+		testing.expect(t, !ok && place == 2)
+		kind, idx, _, valid := grants_read_words_of_values({0 = u64(Grants_Read_Kind.Wide_Grant)})
+		testing.expect(t, valid && kind == .Wide_Grant && idx == 0)
+	}
+	for trailing in 2 ..< 7 {
+		vals: [7]u64
+		vals[0] = u64(Grants_Read_Kind.Process)
+		vals[trailing] = 1
+		_, _, place, ok := grants_read_words_of_values(vals)
+		testing.expect(t, !ok && place == i64(trailing) + 1)
+	}
+	{
+		kind, idx, _, valid := grants_read_words_of_values({0 = u64(Grants_Read_Kind.Disk_Grant), 1 = 5})
+		testing.expect(t, valid && kind == .Disk_Grant && idx == 5)
+	}
+	// Disk grant metadata packing/unpacking border.
+	for p in Disk_Grant_Row_Persistence {
+		for forget in ([2]bool{false, true}) {
+			for l in Disk_Grant_Lasting {
+				packed := disk_grant_meta_pack(p, forget, l)
+				up, uforget, ul, ok := disk_grant_meta_unpack(packed)
+				testing.expect(t, ok && up == p && uforget == forget && ul == l)
+			}
+		}
+	}
+	for bad_meta in ([?]u64{3, 2 << 8, 3 << 16, 1 << 24, max(u64)}) {
+		_, _, _, ok := disk_grant_meta_unpack(bad_meta)
+		testing.expectf(t, !ok, "bad disk grant meta 0x%x must be refused", bad_meta)
+	}
 	// The word of its step at its border.
 	for word in ([?]u64{0, u64(max(Screen_Budget_Step)) + 1, max(u64)}) {
 		_, step_ok := screen_budget_step_of_word(word)

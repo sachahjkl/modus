@@ -162,6 +162,7 @@ COMPOSITOR_GRANT_CONTROL :: 2 // The control ring from this service.
 // screen pages (devices.odin, display_open). 0: no page flip.
 COMPOSITOR_GRANT_DISPLAY_REGISTERS :: 3
 COMPOSITOR_GRANT_GPU_RING :: 4 // Optional VirtIO-GPU client ring when gpu_device started.
+COMPOSITOR_GRANT_GPU_PROCESS :: system.GRANT_DEVICE_SERVICE // Optional gpu_device process handle (Read) so scanout waits end on stop.
 // The values 0 to 3 of the context of the compositor: the screen.
 COMPOSITOR_VALUE_WIDTH :: 0
 COMPOSITOR_VALUE_HEIGHT :: 1
@@ -1123,6 +1124,9 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> ca
 	system.grant_put(&context_grants, COMPOSITOR_GRANT_CONTROL, {control_memory, {.Read, .Write}})
 	if gpu_client_ring_memory != 0 {
 		system.grant_put(&context_grants, COMPOSITOR_GRANT_GPU_RING, {gpu_client_ring_memory, {.Read, .Write}})
+		if gpu_device_started != nil && gpu_device_started.process != 0 {
+			system.grant_put(&context_grants, COMPOSITOR_GRANT_GPU_PROCESS, {gpu_device_started.process, {.Read}})
+		}
 	}
 	display_picker_grants_put(&context_grants) // powerbox_picker.odin
 	display_name := role_holder_name(.Display)
@@ -1825,7 +1829,7 @@ debug_check_again :: proc "contextless" (caller: ^Started) {
 revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, grant: u64, values: ^[7]u64) -> (outcome: call_outcome.Call_Outcome, held: bool) {
 	kind := u32(root_ring.Root_Command.Revoke)
 	item := find(name)
-	if item == nil {
+	if item == nil || (grants_manage_only(caller) && item.principal != caller.principal) {
 		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Processes, 1), false
 	}
 	which, known := enum_word.member_of_word(system.Root_Grant, grant)
@@ -2642,6 +2646,9 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	principals_service_end(item)
 	powerbox_service_end(item) // powerbox_picker.odin
 	wide_grant_process_released(item) // wide_grant_authority.odin
+	if gpu_device_started == item {
+		gpu_device_started = nil
+	}
 	wiring_emit_stop_notice(item, stop)
 	for &other in started {
 		if other.process != 0 && (other.debugger == item || other.debug_for == item) {
