@@ -26,9 +26,8 @@ areas_apart :: proc(first, second: interface.Area) -> bool {
 terminal_layout_refuses_bad_sizes :: proc(t: ^testing.T) {
 	tree := new(layout.Box_Tree)
 	defer free(tree)
-	tokens, _ := layout.tokens_for(.Dark, .Standard)
 	for bad in ([][4]int{{0, 400, 80, 24}, {640, 0, 80, 24}, {-1, 400, 80, 24}, {640, 400, 0, 24}, {640, 400, 80, 0}, {layout.LENGTH_LIMIT + 1, 400, 80, 24}}) {
-		places, ok := terminal_window_layout(tree, bad[0], bad[1], bad[2], bad[3], false, tokens)
+		places, ok := terminal_window_layout(tree, bad[0], bad[1], bad[2], bad[3], false)
 		testing.expect(t, !ok && places == {})
 	}
 }
@@ -43,7 +42,7 @@ terminal_layout_non_overlap_across_grid_bounds_modes_and_scales :: proc(t: ^test
 		{COLUMNS_LIMIT, ROWS_LIMIT},
 	}
 	for appearance in graphics.Appearance {
-		tokens, tok_ok := layout.tokens_for(appearance, .Standard)
+		_, tok_ok := layout.tokens_for(appearance, .Standard)
 		testing.expect(t, tok_ok)
 		for measure_mode in ([2]bool{false, true}) {
 			chrome_w := TEXT_X + SCROLL_GAP + SCROLL_WIDTH
@@ -52,7 +51,7 @@ terminal_layout_non_overlap_across_grid_bounds_modes_and_scales :: proc(t: ^test
 				w := chrome_w + g[0] * CELL_WIDTH
 				h := chrome_h + g[1] * CELL_HEIGHT
 				window := interface.Area{0, 0, w, h}
-				places, ok := terminal_window_layout(tree, w, h, g[0], g[1], measure_mode, tokens)
+				places, ok := terminal_window_layout(tree, w, h, g[0], g[1], measure_mode)
 				testing.expectf(t, ok, "terminal layout failed for %v measure=%v", g, measure_mode)
 
 				testing.expect(t, area_inside(places.text_view, window))

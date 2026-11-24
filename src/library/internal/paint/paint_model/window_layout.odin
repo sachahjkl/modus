@@ -66,7 +66,7 @@ rect_of :: proc "contextless" (tree: ^layout.Box_Tree, index: layout.Box_Index) 
 
 // window_layout computes the tool bar, palette bar, canvas, active side panel
 // controls, and status bar using modus:layout.
-window_layout :: proc "contextless" (tree: ^layout.Box_Tree, width, height: int, panel_open: Panel_Kind, tokens: layout.Element_Tokens) -> (places: Window_Layout, ok: bool) {
+window_layout :: proc "contextless" (tree: ^layout.Box_Tree, width, height: int, panel_open: Panel_Kind) -> (places: Window_Layout, ok: bool) {
 	if tree == nil || width <= 0 || height <= 0 || width > layout.LENGTH_LIMIT || height > layout.LENGTH_LIMIT {
 		return {}, false
 	}
@@ -161,7 +161,6 @@ window_layout :: proc "contextless" (tree: ^layout.Box_Tree, width, height: int,
 	if sc_ws != .Done || s_st != .Done || layout.solve(tree) != .Done {
 		return {}, false
 	}
-	_ = tokens
 	places.tools_row = rect_of(tree, tools_box)
 	places.palette_row = rect_of(tree, palette_box)
 	places.canvas = rect_of(tree, canvas_box)

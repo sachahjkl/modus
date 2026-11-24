@@ -46,6 +46,7 @@
 // commit.
 package notes
 
+import "base:intrinsics"
 import "modus:calendar"
 import "modus:contract/value_kinds"
 import "internal:notes/note_list"
@@ -229,6 +230,7 @@ rows_arena: system.Arena
 transfer_arena: system.Arena
 notes_arena: system.Arena
 store_listed_arena: system.Arena
+note_list_overflow_logged: u32
 
 note_list_arena_grow :: proc "contextless" (user_data: rawptr, current: []note_list.Note, minimum_notes: int) -> (grown: []note_list.Note, ok: bool) {
 	arena := (^system.Arena)(user_data)
@@ -246,6 +248,9 @@ note_list_arena_grow :: proc "contextless" (user_data: rawptr, current: []note_l
 	count := len(bytes) / size_of(note_list.Note)
 	if count < minimum_notes {
 		return nil, false
+	}
+	if intrinsics.atomic_exchange(&note_list_overflow_logged, 1) == 0 {
+		system.log_fact(.Info, Note_List_Overflow{capacity = u64(count)})
 	}
 	return ([^]note_list.Note)(raw_data(bytes))[:count], true
 }

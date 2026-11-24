@@ -183,7 +183,7 @@ area_of :: proc "contextless" (tree: ^box_layout.Box_Tree, index: box_layout.Box
 // terminal_window_layout solves the terminal chrome regions using modus:layout.
 // Called on startup and Resized (never in the per-frame draw loop) so text grid
 // rendering stays zero-allocation and incurs zero per-frame layout overhead.
-terminal_window_layout :: proc "contextless" (tree: ^box_layout.Box_Tree, surface_width, surface_height, cols, row_count: int, measure_mode: bool, tokens: box_layout.Element_Tokens) -> (places: Terminal_Places, ok: bool) {
+terminal_window_layout :: proc "contextless" (tree: ^box_layout.Box_Tree, surface_width, surface_height, cols, row_count: int, measure_mode: bool) -> (places: Terminal_Places, ok: bool) {
 	if tree == nil || surface_width <= 0 || surface_height <= 0 || surface_width > box_layout.LENGTH_LIMIT || surface_height > box_layout.LENGTH_LIMIT || cols <= 0 || row_count <= 0 {
 		return {}, false
 	}
@@ -229,7 +229,6 @@ terminal_window_layout :: proc "contextless" (tree: ^box_layout.Box_Tree, surfac
 	if s_pad != .Done || s_stat != .Done || s_bot != .Done || box_layout.solve(tree) != .Done {
 		return {}, false
 	}
-	_ = tokens
 	if measure_mode {
 		places.head = area_of(tree, head_box)
 		places.graph = area_of(tree, graph_box)
@@ -249,8 +248,7 @@ chrome_size :: proc "contextless" () -> (chrome_width, chrome_height: int) {
 }
 
 layout_for_size :: proc "contextless" (surface_width, surface_height: int) {
-	tokens, _ := box_layout.tokens_for(graphics.appearance, .Standard)
-	if places, ok := terminal_window_layout(&terminal_layout_tree, surface_width, surface_height, columns, rows, measure, tokens); ok {
+	if places, ok := terminal_window_layout(&terminal_layout_tree, surface_width, surface_height, columns, rows, measure); ok {
 		terminal_places = places
 		text_y = places.text_view.y
 		text_width = columns * CELL_WIDTH

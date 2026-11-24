@@ -147,17 +147,18 @@ locks_window_layout :: proc "contextless" (tree: ^layout.Box_Tree, width, height
 	intro_box, s0 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
 	// Lockers table: header + 2 rows.
 	_, s1 := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.px(3 * LINE)}, child_axis = .Y})
-	lh_box, s2 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	lh_box, s2a := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
 	lr_boxes: [2]layout.Box_Index
-	lr_boxes[0], s2 = layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
-	lr_boxes[1], s2 = layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	s2b, s2c: layout.Box_Status
+	lr_boxes[0], s2b = layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
+	lr_boxes[1], s2c = layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
 	s3 := layout.box_close(tree)
 	// Word wait pair table: header + 1 row.
 	_, s4 := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.px(2 * LINE)}, child_axis = .Y})
 	ph_box, s5 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
 	pr_box, s6 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(LINE)}})
 	s7 := layout.box_close(tree)
-	if s0 != .Done || s1 != .Done || s2 != .Done || s3 != .Done || s4 != .Done || s5 != .Done || s6 != .Done || s7 != .Done {
+	if s0 != .Done || s1 != .Done || s2a != .Done || s2b != .Done || s2c != .Done || s3 != .Done || s4 != .Done || s5 != .Done || s6 != .Done || s7 != .Done {
 		return {}, false
 	}
 	// Kernel lock contention table.

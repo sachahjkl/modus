@@ -108,6 +108,12 @@ Notes_Cut :: struct {
 	listed: u64,
 }
 
+// The note list moved past its inline capacity to its arena overflow tier.
+@(log_fact = "notes: note list moved to overflow tier; capacity {capacity} notes")
+Note_List_Overflow :: struct {
+	capacity: u64,
+}
+
 // A note of the store whose bytes are not a text: each invalid sequence is
 // shown as the replacement character, and the next commit writes the clean
 // text.

@@ -1718,7 +1718,7 @@ frame_build :: proc "contextless" (window: ^display.Window) -> (bar_result: inte
 	interface.action_bar_input_take(&frame, &bar)
 	width, height := window.width, window.height
 	interface.background(&frame, {0, 0, width, height})
-	places, layout_ok := paint_model.window_layout(&paint_layout_tree, width, height, panel, paint_tokens)
+	places, layout_ok := paint_model.window_layout(&paint_layout_tree, width, height, panel)
 	if layout_ok {
 		canvas_area = {int(places.canvas.x), int(places.canvas.y), max(int(places.canvas.width), 1), max(int(places.canvas.height), 1)}
 		// A larger window grows the picture; a smaller one keeps it. A growth

@@ -20,9 +20,8 @@ rects_apart :: proc(first, second: layout.Rect) -> bool {
 paint_layout_refuses_bad_sizes :: proc(t: ^testing.T) {
 	tree := new(layout.Box_Tree)
 	defer free(tree)
-	tokens, _ := layout.tokens_for(.Dark, .Standard)
 	for size in ([][2]int{{0, LAYOUT_DEFAULT_HEIGHT}, {LAYOUT_DEFAULT_WIDTH, 0}, {-1, LAYOUT_DEFAULT_HEIGHT}, {LAYOUT_DEFAULT_WIDTH, -1}, {layout.LENGTH_LIMIT + 1, LAYOUT_DEFAULT_HEIGHT}}) {
-		places, ok := window_layout(tree, size[0], size[1], .None, tokens)
+		places, ok := window_layout(tree, size[0], size[1], .None)
 		testing.expect(t, !ok && places == {})
 	}
 }
@@ -37,12 +36,12 @@ paint_layout_non_overlap_across_panels_sizes_and_scales :: proc(t: ^testing.T) {
 		{LAYOUT_LARGEST_WIDTH, LAYOUT_LARGEST_HEIGHT},
 	}
 	for appearance in graphics.Appearance {
-		tokens, tok_ok := layout.tokens_for(appearance, .Standard)
+		_, tok_ok := layout.tokens_for(appearance, .Standard)
 		testing.expect(t, tok_ok)
 		for size in sizes {
 			window := layout.Rect{0, 0, i32(size[0]), i32(size[1])}
 			for panel_kind in Panel_Kind {
-				places, ok := window_layout(tree, size[0], size[1], panel_kind, tokens)
+				places, ok := window_layout(tree, size[0], size[1], panel_kind)
 				testing.expectf(t, ok, "window_layout failed for %v %v", size, panel_kind)
 				main_rects := [4]layout.Rect{places.tools_row, places.palette_row, places.canvas, places.status_bar}
 				for a, i in main_rects {
