@@ -61,7 +61,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// no right of the machine.
 	other := 0
 	for handle, index in ctx.handles {
-		if handle != 0 && index != system.GRANT_ROOT && index != op.CONTEXT_LOG && index != op.CONTEXT_BUDGET {
+		if handle != 0 && index != system.GRANT_ROOT && index != op.CONTEXT_LOG && index != op.CONTEXT_BUDGET && index != op.CONTEXT_READY_RING {
 			other += 1
 		}
 	}

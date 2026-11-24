@@ -65,7 +65,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	granted := 0
 	for handle, index in ctx.handles {
 		of_the_store := index == storage.GRANT_RING || index == storage.GRANT_REGION || index == storage.GRANT_SERVICE
-		if handle != 0 && index != system.GRANT_DISPLAY && index != op.CONTEXT_LOG && index != op.CONTEXT_BUDGET && !(has_store && of_the_store) {
+		if handle != 0 && index != system.GRANT_DISPLAY && index != op.CONTEXT_LOG && index != op.CONTEXT_BUDGET && index != op.CONTEXT_READY_RING && !(has_store && of_the_store) {
 			granted += 1
 		}
 	}

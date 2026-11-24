@@ -3638,6 +3638,19 @@ Call_Site_Callee_Kind :: enum u8 {
 }
 
 @(private)
+call_site_callee_of_byte :: proc "contextless" (b: u8) -> (Call_Site_Callee_Kind, bool) {
+	switch b {
+	case u8(Call_Site_Callee_Kind.Host):
+		return .Host, true
+	case u8(Call_Site_Callee_Kind.Function):
+		return .Function, true
+	case u8(Call_Site_Callee_Kind.Builtin):
+		return .Builtin, true
+	}
+	return .Host, false
+}
+
+@(private)
 call_site_resolve_callee :: #force_no_inline proc "contextless" (
 	eval: ^Evaluation,
 	chunk_id: u16,
@@ -4037,7 +4050,11 @@ vm_step_call_site :: #force_no_inline proc "contextless" (eval: ^Evaluation, fra
 	site := eval.call_sites[int(chunk.site_start) + int(frame.proto_id)]
 	name := lex_parser.sym_text(&eval.interner, site.name_sym)
 	args := eval.site_args[int(site.args_start):int(site.args_start) + int(site.arg_count)]
-	callee := Call_Site_Callee_Kind(frame.cont_flags & 0x03)
+	callee, callee_ok := call_site_callee_of_byte(frame.cont_flags & 0x03)
+	if !callee_ok {
+		refuse(eval, {refusal = .Host_Refused, chunk_id = frame.chunk_id, node = site.node_idx})
+		return false
+	}
 	missing_required := (frame.cont_flags & 0x80) != 0
 	untyped := (frame.cont_flags & 0x40) != 0
 	optional_last := (frame.cont_flags & 0x20) != 0
@@ -4162,7 +4179,11 @@ vm_step_call_site :: #force_no_inline proc "contextless" (eval: ^Evaluation, fra
 	// Step 5: All arguments evaluated. Copy out, pop the .Call_Site frame, and invoke callee.
 	dst_reg := frame.dst_reg
 	chunk_id := frame.chunk_id
-	builtin_id := Builtin_Id(frame.env_off)
+	builtin_id, bid_ok := builtin_of_byte(u8(frame.env_off))
+	if callee == .Builtin && !bid_ok {
+		refuse(eval, {refusal = .Host_Refused, chunk_id = chunk_id, node = site.node_idx})
+		return false
+	}
 	given_mask := frame.env_len
 	arg_total := int(frame.cont_out_off)
 	fn_val := frame.cont_fn
