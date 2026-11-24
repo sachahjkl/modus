@@ -137,11 +137,11 @@ import "modus:system"
 import "modus:tpm2"
 
 // The tool counts the module, the stack and the window at the largest
-// scale. At the first state of work the window is shown before any
-// passphrase runs Argon2id (4864 pages, DERIVATION_MEMORY_PAGES); 2560
-// working pages cover the glyph memory (354 pages), the store and TPM
-// mappings, and ensure that twice the floor holds Argon2id during unlock.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2560, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// scale. Before its first present, entry allocates the Argon2id work
+// buffer (4864 pages, principals.DERIVATION_MEMORY_PAGES, plus 11 frame
+// list pages and 10 page tables), the glyph memory (354 pages), and the
+// store, TPM and root ring mappings (81 pages): 5320 working pages.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 5320, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 // The cost record of the export argon2id of the module cryptography: the
 // same fields, in the same order (src/modules/libraries/cryptography).

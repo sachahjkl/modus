@@ -368,7 +368,7 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	append(&fourth, Step{kind = .Type, text = "shutdown()"})
 	append(&fourth, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
 	machine_test(part, fourth[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DISK_PROCESSES, 4), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_DISK_MODULES_DISK}) or_return
-	disk_processes_named_principal_tests_run(part, hash) or_return
+	disk_processes_named_principal_tests_run(part, hash, served_bytes) or_return
 	return program_loop_run(part)
 }
 
@@ -376,21 +376,23 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 // (docs/PRINCIPALS.md, "The disk grant table of a named principal").
 //
 // The fifth machine: the machine passphrase is skipped, and the console
-// creates the principal alice. Its first unlock gives the root service the
-// key of the tag of its table: the table that the tool wrote in the store
-// processes of alice does not verify, and as the principal is new, the table
-// of this machine is written over it. A console that the desktop starts
-// during the session acts for alice: it starts visitor from the store of
-// alice, gives it the grant store, and visitor counts its first visit in
-// the store of its nickname for alice. The console also allows the client
-// key of the peer, which goes into her table.
+// creates the principal alice. Store encryption isolates her stores by her
+// random identifier and keys, so the unencrypted module_files.principal.1
+// that the tool wrote before she existed is invisible to her: the root
+// service sees no disk grant table for principal 1 and writes a fresh one.
+// A console that the desktop starts during the session acts for alice: it
+// fetches visitor into her encrypted module_files store through the module
+// file service, starts visitor from that store, gives it the grant store,
+// and visitor counts its first visit in the store of its nickname for alice.
+// The console also allows the client key of the peer, which goes into her
+// table.
 //
 // The sixth machine: the passphrase of alice gives the key again, the
 // table is read with its row and her client key, which holds again, and
 // visitor starts by its nickname with the grant store and finds its first
 // visit. A call of the peer acts for alice with no new allow; her
 // revocation writes the table with no key.
-disk_processes_named_principal_tests_run :: proc(part: ^Test_Part_Run, hash: string) -> bool {
+disk_processes_named_principal_tests_run :: proc(part: ^Test_Part_Run, hash: string, served_bytes: []u8) -> bool {
 	fifth := make([dynamic]Step)
 	defer delete(fifth)
 	append(&fifth, Step{kind = .Wait, text = "storage: ok, generation ", any_order = true})
@@ -412,13 +414,19 @@ disk_processes_named_principal_tests_run :: proc(part: ^Test_Part_Run, hash: str
 	// unlock stops before or after the lines of the root service on the
 	// table: this wait does not move the place of the log.
 	append(&fifth, Step{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true})
-	// The table that the tool wrote has a tag under a key of zero bytes:
-	// refused, and written over, as no record of alice signed it.
-	append(&fifth, Step{kind = .Wait, text = "root: refused the disk grant table of principal 1 from the store module_files: its tag does not verify under the key of the principal: another key wrote it, or a byte changed; it gives no grant, and the table of the new principal is written over it"})
+	// Store encryption keys each named principal's store by her identifier
+	// and keys, so the unencrypted store written before alice existed is
+	// ignored and principal 1 gets a fresh encrypted disk grant table.
+	append(&fifth, Step{kind = .Wait, text = "root: the store module_files holds no disk grant table of principal 1: the table of this machine is written there"})
 	append(&fifth, Step{kind = .Wait, text = "root: the disk grant table of principal 1 is written in the store module_files: 0 rows, with the tag of the key of the principal"})
 	// A console of the session: it acts for alice, and for no other
 	// principal.
 	disk_processes_session_console_steps(&fifth)
+	append(&fifth, Step{kind = .Type, text = "connect(\"module_files\")"})
+	append(&fifth, Step{kind = .Wait, text = "module_files: serves the store module_files of principal 1: a file from the web server 10.0.2.100 port 80, and the list of the files with the hash of their bytes", any_order = true})
+	append(&fifth, Step{kind = .Wait, text = "[console]   module     module_files"})
+	append(&fifth, Step{kind = .Type, text = fmt.aprintf("module_files.receive(\"%s\", \"/%s\")", foundation.DISK_MODULE_NAME, foundation.DISK_MODULE_NAME)})
+	append(&fifth, Step{kind = .Wait, text = fmt.aprintf("module_files: stored %s from /%s: %d bytes, the BLAKE3 hash of its bytes %s", foundation.DISK_MODULE_NAME, foundation.DISK_MODULE_NAME, len(served_bytes), hash)})
 	append(&fifth, Step{kind = .Type, text = fmt.aprintf("start_from_disk(\"%s\", \"%s\")", foundation.DISK_MODULE_NAME, hash)})
 	append(&fifth, Step{kind = .Wait, text = fmt.aprintf("root: reads %s from the store module_files of the storage service, for principal 1", foundation.DISK_MODULE_NAME)})
 	append(&fifth, Step{kind = .Wait, text = fmt.aprintf("root: started %s from the disk, hash %s, with no grant, in the session of principal 1 \"alice\"", foundation.DISK_MODULE_NAME, hash), any_order = true})
@@ -438,7 +446,8 @@ disk_processes_named_principal_tests_run :: proc(part: ^Test_Part_Run, hash: str
 	disk_processes_principal_store_steps(&fifth, hash, 1)
 	append(&fifth, Step{kind = .Type, text = "shutdown()"})
 	append(&fifth, Step{kind = .Wait, text = "kernel: the machine stops with code 0"})
-	machine_test(part, fifth[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DISK_PROCESSES, 5), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_DISK_MODULES_DISK}) or_return
+	served := [?]Listener_File{{path = "/" + foundation.DISK_MODULE_NAME, bytes = served_bytes}}
+	machine_test(part, fifth[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_DISK_PROCESSES, 5), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_DISK_MODULES_DISK, user_network = true, served_files = served[:]}) or_return
 
 	// The sixth machine: the grant of alice is back after her unlock.
 	sixth := make([dynamic]Step)

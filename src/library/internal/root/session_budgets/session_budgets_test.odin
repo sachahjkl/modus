@@ -2,15 +2,16 @@
 package session_budgets
 
 import "core:testing"
+import op "modus:contract/operation"
 
 @(test)
 compute_session_budget_refuses_starvation_and_keeps_machine_reserve :: proc(t: ^testing.T) {
 	machine := Session_Budget_Amounts {
-		pages          = 65536,
+		pages          = 131_072,
 		processes      = 120,
 		threads        = 256,
 		processor      = 16_000_000,
-		log_records    = 1000,
+		log_records    = 256 * op.LOG_RECORDS_OF_A_PROCESS,
 		storage_blocks = 65536,
 	}
 	reserve := DEFAULT_MACHINE_RESERVE
@@ -67,6 +68,13 @@ compute_session_budget_refuses_starvation_and_keeps_machine_reserve :: proc(t: ^
 		testing.expect(t, per.processor + scaled_reserve.processor <= small.processor)
 		testing.expect(t, per.processor < small.processor)
 	}
+
+	// Machine reserve keeps enough log records for root plus every reserved
+	// machine process slot, and enough pages for the shared disk-process
+	// budget plus on-demand machine services.
+	real_reserve := machine_reserve_for(machine)
+	testing.expect(t, real_reserve.log_records >= (DEFAULT_MACHINE_RESERVE_PROCESSES + 1) * op.LOG_RECORDS_OF_A_PROCESS)
+	testing.expect(t, real_reserve.pages >= 65_536)
 
 	// Starvation guard: 0 or 1 unit on any resource is still refused even with scaling.
 	starved := machine

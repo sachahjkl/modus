@@ -12,6 +12,7 @@
 package memory_screen
 
 import "modus:contract/enum_word"
+import op "modus:contract/operation"
 import "modus:contract/reference_screen"
 
 // Pixel format: 32-bit opaque 0x00RRGGBB, matching reference_screen and
@@ -494,7 +495,7 @@ resize_decide :: proc "contextless" (memory: bool, width, height: u64, current_w
 		return .None, true
 	case blocked:
 		return .Trusted_Surface, false
-	case pages_left < COMPOSITOR_PICTURES * picture_pages(width, height):
+	case pages_left < compositor_grow_pages(width, height):
 		return .Compositor_Budget, false
 	}
 	return .None, false
@@ -534,24 +535,31 @@ resize_interval_decide :: proc "contextless" (now, viewer_asked_at, screen_chang
 	return .None
 }
 
-// The pages of the frame and the background of the compositor at a size:
-// the extra budget of a growth pays both new ones, as the compositor makes
-// them before it frees the old ones. A size past the bounds gives 0.
+// The pages of the frame and the background of the compositor at a size,
+// each with its frame list: the extra budget of a growth pays both new
+// ones, as the compositor makes them before it frees the old ones. A size
+// past the bounds gives 0.
 compositor_grow_pages :: proc "contextless" (width, height: u64) -> u64 {
-	return COMPOSITOR_PICTURES * picture_pages(width, height)
+	pages := picture_pages(width, height)
+	if pages == 0 {
+		return 0
+	}
+	return COMPOSITOR_PICTURES * op.memory_cost(pages)
 }
 
-// The pages of the copies of the service of the remote display at a size:
-// the memory of its capture face (one header page and two pictures) and
-// its copy of the screen. The display package makes them
-// (display.capture_pages); its host test checks that both agree. A size
-// past the bounds gives 0.
+// The pages of the copies of the service of the remote display at a size,
+// each with its frame list: the memory of its capture face (one header page
+// and two pictures) and its copy of the screen. The display package makes
+// them (display.capture_budget_pages); its host test checks that both
+// agree. A size past the bounds gives 0.
 service_copies_pages :: proc "contextless" (width, height: u64) -> u64 {
 	if !size_in_bounds(width, height) {
 		return 0
 	}
 	pixels := width * height * BYTES_PER_PIXEL
-	return 1 + (2 * pixels + PAGE_SIZE - 1) / PAGE_SIZE + (pixels + PAGE_SIZE - 1) / PAGE_SIZE
+	capture := 1 + (2 * pixels + PAGE_SIZE - 1) / PAGE_SIZE
+	mirror := (pixels + PAGE_SIZE - 1) / PAGE_SIZE
+	return op.memory_cost(capture) + op.memory_cost(mirror)
 }
 
 // Why the root service refuses a growth of the budgets of a screen of

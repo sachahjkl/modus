@@ -2,6 +2,7 @@
 package memory_screen
 
 import "core:testing"
+import op "modus:contract/operation"
 
 @(test)
 source_of_word_refuses_unknown_and_none :: proc(t: ^testing.T) {
@@ -308,8 +309,8 @@ resize_decide_refuses_at_each_edge :: proc(t: ^testing.T) {
 	testing.expect(t, refusal == .Trusted_Surface && !same)
 	refusal, same = resize_decide(true, 2560, 1440, 1920, 1080, 0, blocked = true)
 	testing.expect(t, refusal == .Trusted_Surface && !same, "Trusted_Surface runs before Compositor_Budget")
-	needed := COMPOSITOR_PICTURES * picture_pages(2560, 1440)
-	testing.expect_value(t, needed, 7200)
+	needed := compositor_grow_pages(2560, 1440)
+	testing.expect_value(t, needed, 2 * op.memory_cost(3600))
 	refusal, same = resize_decide(true, 2560, 1440, 1920, 1080, needed - 1)
 	testing.expect(t, refusal == .Compositor_Budget && !same)
 	refusal, same = resize_decide(true, 2560, 1440, 1920, 1080, needed)
@@ -356,8 +357,8 @@ a_growth_of_the_budgets_is_refused_at_each_edge :: proc(t: ^testing.T) {
 	good := Grow_Facts{from_service = true, screen_of_memory = true, width = 2560, height = 1440, compositor_paid = 30000, service_paid = 8000, share = 50000}
 	compositor_pages := compositor_grow_pages(2560, 1440)
 	service_pages := service_copies_pages(2560, 1440)
-	testing.expect_value(t, compositor_pages, 7200)
-	testing.expect_value(t, service_pages, 1 + 7200 + 3600)
+	testing.expect_value(t, compositor_pages, 2 * op.memory_cost(3600))
+	testing.expect_value(t, service_pages, op.memory_cost(1 + 7200) + op.memory_cost(3600))
 	cases := [?]struct {
 		change:  proc(facts: ^Grow_Facts),
 		refusal: Grow_Refusal,

@@ -56,7 +56,7 @@ scenario_program_loop := [?]Step {
 	// A build of a source that the store of the project does not hold: the
 	// store exists from the first text that edit kept.
 	{kind = .Type, text = "build(\"hello\", \"absent.c\")"},
-	{kind = .Wait, text = "[console] error: storage.read: ", fails_on = PROGRAM_BUILT},
+	{kind = .Wait, text = "[console] error: storage.size: ", fails_on = PROGRAM_BUILT},
 	// The first build compiles; run calls the module.
 	{kind = .Type, text = "build(\"hello\", \"hello.c\")"},
 	{kind = .Wait, text = "recipes: built hello.c into a module of ", fails_on = PROGRAM_BUILD_FAILED},

@@ -54,6 +54,7 @@ import "modus:contract/enum_word"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/memory_screen"
+import op "modus:contract/operation"
 import "modus:contract/pointer_pictures"
 import "modus:contract/remote"
 import protocol "modus:contract/remote_display"
@@ -1123,10 +1124,10 @@ viewer_size_refuse :: proc "contextless" (viewer: ^Viewer, asked: protocol.Scree
 	}
 }
 
-// The pages of the copies of this process for a screen: the memory of the
-// capture face and the copy of the screen.
+// The pages of the copies of this process for a screen, each with its
+// frame list: the memory of the capture face and the copy of the screen.
 copies_pages_of :: proc "contextless" (width, height: u64) -> u64 {
-	return display.capture_pages(int(width), int(height)) + mirror_pages_of(width, height)
+	return display.capture_budget_pages(int(width), int(height)) + op.memory_cost(mirror_pages_of(width, height))
 }
 
 // screen_asks_work sends the compositor the next size that a viewer asked,
@@ -1445,7 +1446,7 @@ capture_size_take :: proc "contextless" (width, height: u64, refuse := true) -> 
 	}
 	if status != .Succeeded {
 		mirror_release()
-		system.log_fact(.Info, Capture_Memory_Refused{width = width, height = height, pages = value_kinds.Size_In_Pages(pages + copy_pages)})
+		system.log_fact(.Info, Capture_Memory_Refused{width = width, height = height, pages = value_kinds.Size_In_Pages(pages + op.memory_cost(copy_pages))})
 		if refuse {
 			capture_refuse()
 		}

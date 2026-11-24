@@ -81,7 +81,7 @@ scenario_remote_display := [?]Step {
 	// A screen of a device has the size that the firmware gave: an ask of
 	// a size is refused with its cause, and the session goes on.
 	{kind = .Remote_Display_Case, text = "ask 2560x1440 refused Device_Screen"},
-	{kind = .Wait, text = "compositor: refused a screen of 2560 x 1440 that a viewer asked: the machine has a screen of a device, whose size the system does not set", any_order = true},
+	{kind = .Wait, text = "root: refused to grow the budgets of the screen of memory for 2560 x 1440: the compositor does not draw into a screen of memory", any_order = true},
 	{kind = .Wait, text = "remote_display: refused the screen of 2560 x 1440 that the viewer ", any_order = true},
 	{kind = .Remote_Display_Case, text = "pointer over the clock"},
 	{kind = .Remote_Display_Case, text = "super"},

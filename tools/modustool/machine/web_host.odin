@@ -43,7 +43,7 @@ Listener_File :: struct {
 	path:   string,
 	bytes:  []u8,
 	// Not 0: the listener sends the Content-Length of all the bytes, then
-	// this many bytes only, and closes: a body that ends early.
+	// this many bytes only, and stops sending: a body that stops early.
 	cut_at: int,
 }
 
@@ -317,10 +317,16 @@ listener_serve :: proc(listener: ^Listener, client: net.TCP_Socket) {
 			served := listener.files[listener_file_find(listener.files, path)]
 			head_text := fmt.tprintf("HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n", len(served.bytes))
 			if served.cut_at > 0 {
-				// The body ends early: the connection closes after the cut.
-				_ = send_all(client, transmute([]u8)head_text) && send_all(client, served.bytes[:min(served.cut_at, len(served.bytes))])
+				// The body stops early: QEMU guestfwd keeps one socket for the
+				// whole machine, so closing it kills later requests without
+				// sending a FIN to the guest. Sending only the cut leaves the
+				// guest to hit its body deadline while keeping guestfwd open.
+				if !send_all(client, transmute([]u8)head_text) || !send_all(client, served.bytes[:min(served.cut_at, len(served.bytes))]) {
+					return
+				}
 				sync.atomic_add(&listener.requests, 1)
-				return
+				length = copy(buffer[:], rest)
+				continue
 			}
 			if !send_all(client, transmute([]u8)head_text) || !send_all(client, served.bytes) {
 				return

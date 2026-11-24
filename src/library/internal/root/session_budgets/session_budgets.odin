@@ -1,5 +1,7 @@
 package session_budgets
 
+import op "modus:contract/operation"
+
 // Per-session reserved budget calculation and storage block accounting
 // (src/md/features/several_principals.md, "The rest").
 //
@@ -24,25 +26,30 @@ Session_Budget_Amounts :: struct {
 DEFAULT_MACHINE_STORAGE_BLOCKS :: u64(262_144)
 
 // Machine reserve floors held back for principal 0 and joint processes so no
-// named session can starve the root service, display holder, or unlock.
-// Computed from observed machine baseline: root + compositor + storage + log +
-// unlock + drivers fit within these reserves; machine_reserve_for scales a
-// reserve downward to at most one quarter of available capacity on small
-// machines (for example 1-CPU to 4-CPU hosts) while always keeping at least
-// one unit reserved for the machine.
+// named session can starve the root service, display holder, unlock, the
+// shared disk-process budget (32 768 pages), or on-demand machine services
+// (frame, network, remote, remote_display, disk_processes, and connection
+// rings). Computed from observed machine baseline: 24 reserved machine
+// process slots plus the root service need 25 * op.LOG_RECORDS_OF_A_PROCESS
+// log records per second and 65 536 pages (256 MiB: 128 MiB for the shared
+// disk-process budget plus 128 MiB for on-demand services and rings);
+// machine_reserve_for scales each floor downward to at most half of
+// available capacity on small machines (for example 1-CPU to 4-CPU hosts)
+// while always keeping at least one unit reserved for the machine.
+DEFAULT_MACHINE_RESERVE_PROCESSES :: u64(24)
 DEFAULT_MACHINE_RESERVE :: Session_Budget_Amounts {
-	pages          = 8192,
-	processes      = 24,
+	pages          = 65_536,
+	processes      = DEFAULT_MACHINE_RESERVE_PROCESSES,
 	threads        = 48,
 	processor      = 4_000_000,
-	log_records    = 200,
+	log_records    = (DEFAULT_MACHINE_RESERVE_PROCESSES + 1) * op.LOG_RECORDS_OF_A_PROCESS,
 	storage_blocks = 4096,
 }
 
 // machine_reserve_for adapts DEFAULT_MACHINE_RESERVE to `machine_available`:
 // each component stays at DEFAULT_MACHINE_RESERVE when the machine holds at
-// least four times that reserve, and otherwise reserves one quarter (at least
-// 1) so 1-CPU and small-memory hosts still open a bounded session budget.
+// least twice that reserve, and otherwise reserves half (at least 1) so
+// 1-CPU and small-memory hosts still open a bounded session budget.
 // When `machine_available` holds 0 or 1 on any resource, the unscaled floor is
 // kept so compute_session_budget refuses to starve the machine.
 machine_reserve_for :: proc "contextless" (machine_available: Session_Budget_Amounts) -> Session_Budget_Amounts {
@@ -50,7 +57,7 @@ machine_reserve_for :: proc "contextless" (machine_available: Session_Budget_Amo
 		if avail <= 1 {
 			return floor
 		}
-		return min(floor, max(u64(1), avail / 4))
+		return min(floor, max(u64(1), avail / 2))
 	}
 	return {
 		pages          = cap_part(machine_available.pages, DEFAULT_MACHINE_RESERVE.pages),
