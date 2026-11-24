@@ -245,74 +245,22 @@ LOG_RECORDS_OF_THIS_SERVICE :: op.LOG_RECORDS_OF_A_PROCESS
 // less its own.
 PROCESS_SLOTS :: op.PROCESS_SLOTS_MOST - 1
 #assert(PROCESS_SLOTS * LOG_RECORDS_OF_A_PROCESS + LOG_RECORDS_OF_THIS_SERVICE <= op.LOG_RECORDS_OF_THE_MACHINE_MOST)
-// The log records of the rows of log_records_exceptions: none above
-// LOG_RECORDS_OF_A_PROCESS, so the sum above holds.
-LOG_RECORDS_OF_LIMITS :: 40 // Its burst of 100 reaches the limit.
-#assert(LOG_RECORDS_OF_LIMITS <= LOG_RECORDS_OF_A_PROCESS)
-// The test of the record output log: the log of the kernel refuses each line
-// of log_flood, whatever the speed of the machine, and its wired log holds
-// each one (src/md/features/log_facts.md, "The record output `log`").
-LOG_RECORDS_OF_LOG_FLOOD :: 0
-#assert(LOG_RECORDS_OF_LOG_FLOOD <= LOG_RECORDS_OF_A_PROCESS)
-
-// One process of the boot image that gets another limit of processor time
-// than one processor for each thread. A floor holds no limit in time, so
-// these rows are the one place of such a limit. No row gives pages: the
-// largest budget of a process is the share of the machine for each one.
-Processor_Exception :: struct {
-	name:      string,
-	processor: u64, // In place of one processor for each thread.
-}
-
-@(rodata)
-processor_exceptions := [?]Processor_Exception {
-	// Its cases reach the limit of processor time: a small limit makes
-	// them short.
-	{name = "limits", processor = 1_500_000},
-}
-
-// One process of the boot image that gets fewer log records of each second
-// than LOG_RECORDS_OF_A_PROCESS.
-Log_Records_Exception :: struct {
-	name:        string,
-	log_records: u64,
-}
-
-// Each row is a named constant at most LOG_RECORDS_OF_A_PROCESS, checked by
-// the compiler above.
-@(rodata)
-log_records_exceptions := [?]Log_Records_Exception {
-	{"limits", LOG_RECORDS_OF_LIMITS},
-	{"log_flood", LOG_RECORDS_OF_LOG_FLOOD},
-}
 
 // processor_of gives the limit of processor time of a process of the boot
-// image, from its plan row when present, else from the fallback exceptions,
-// else false (one processor for each thread). A disk process never asks:
-// its name gives nothing.
+// image from its plan row when present, else false (one processor for each
+// thread). A disk process never asks: its name gives nothing.
 processor_of :: proc "contextless" (name: string) -> (processor: u64, found: bool) {
 	if policy, _, _ := module_budget_policy_for(name); policy.has_processor {
 		return policy.processor, true
-	}
-	for item in processor_exceptions {
-		if item.name == name {
-			return item.processor, true
-		}
 	}
 	return 0, false
 }
 
 // log_records_of gives the log records of each second of a process of the
-// boot image, from its plan row when present, else from the fallback
-// exceptions, else LOG_RECORDS_OF_A_PROCESS.
+// boot image from its plan row when present, else LOG_RECORDS_OF_A_PROCESS.
 log_records_of :: proc "contextless" (name: string) -> u64 {
 	if policy, _, _ := module_budget_policy_for(name); policy.has_log_records {
 		return policy.log_records
-	}
-	for item in log_records_exceptions {
-		if item.name == name {
-			return item.log_records
-		}
 	}
 	return LOG_RECORDS_OF_A_PROCESS
 }

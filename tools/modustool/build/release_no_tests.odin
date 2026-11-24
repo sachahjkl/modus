@@ -7,6 +7,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import info "modus:contract/boot_info"
+import "modus:contract/plan_values"
 import "modus:contract/release"
 import "modus:contract/system_description"
 import "modustool:foundation"
@@ -171,6 +172,10 @@ release_boot_image_of :: proc(build_image: []u8) -> (image: []u8, problem: strin
 	module_count := len(files)
 	for &entry in image_resources {
 		name := system_description.name_of(&entry.name)
+		// The test plan file belongs only to test boot images.
+		if name == plan_values.TEST_IMAGE_PLAN_RESOURCE {
+			continue
+		}
 		bytes, inside := info.image_entry_bytes(build_image, &entry)
 		if !inside {
 			return nil, fmt.tprintf("the entry %s of the boot image of the build points outside it", name)

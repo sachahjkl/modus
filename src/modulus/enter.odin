@@ -180,6 +180,9 @@ Operation_In_Progress :: struct {
 	thread_state_refused_value:    u64,
 	thread_state_refused_limit:    u64,
 	thread_state_refused_found:    u64,
+	// Memory_Map or Memory_Protect refused a mapping that would make a memory
+	// object both writable and executable across mappings (modulus:memory_wx).
+	memory_wx_conflict:            bool,
 }
 
 // command_run executes one command under the process lock of the caller,
@@ -638,6 +641,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if v[2] > op.PROCESS_NAME_BYTES_MOST || !user_range(process, v[1], v[2], false) {
 			return .Argument_Refused
 		}
+		if v[3] & ~op.PROCESS_FLAGS_KNOWN != 0 {
+			return .Argument_Refused
+		}
 		name: [op.PROCESS_NAME_BYTES_MOST + 1]u8
 		user_copy_from_process(&name, v[1], v[2])
 		// The name starts each line of the log of the process on the serial
@@ -647,7 +653,10 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if v[2] > 0 && !text_encoding.identifier_words_valid(name[:v[2]]) {
 			return .Argument_Refused
 		}
-		created := process_create(budget.object, name[:v[2]]) or_return
+		// Process_Flag.No_Clock is inherited: a child of a clockless process
+		// cannot regain a clock by omitting the flag.
+		no_clock := process.no_clock || .No_Clock in transmute(op.Process_Flags)v[3]
+		created := process_create(budget.object, name[:v[2]], no_clock = no_clock) or_return
 		when KERNEL_EDGE_COUNTERS {
 			edge_counted_mark(created, process_index, name[:v[2]])
 		}

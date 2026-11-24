@@ -785,6 +785,14 @@ test_integer_counter_identification_and_flags_stack :: proc(t: ^testing.T) {
 	testing.expect_value(t, sse_machine_step(&machine), Step_Outcome.Running)
 	testing.expect_value(t, machine.cpu.registers[rax], u64(0x1122_3344))
 	testing.expect_value(t, machine.cpu.registers[rdx], u64(0xAABB_CCDD))
+	// rdtsc faults with General_Protection when timestamp_disable (CR4.TSD) is set,
+	// leaving rip and registers untouched.
+	sse_machine_load(&machine, {0x0F, 0x31})
+	machine.cpu.timestamp_disable = true
+	machine.cpu.registers[rax] = 0xDEAD_BEEF
+	machine.cpu.registers[rdx] = 0xCAFE_BABE
+	sse_expect_fault_kept_state(t, &machine, machine.cpu, .General_Protection)
+	machine.cpu.timestamp_disable = false
 
 	// cpuid leaf 1 names SSE2 and no more; an unknown leaf gives zeros.
 	sse_machine_load(&machine, {0x0F, 0xA2})

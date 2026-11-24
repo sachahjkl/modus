@@ -744,7 +744,7 @@ A process can take rights away from pages that it already maps: make them read-o
 
 **What the operation sets.** `Memory_Protect` sets, for each page of each range, the protection of the page: Read only, Read and Write, Read and Execute, or `No_Access`. The whole table is checked before any change, so a refused table changes nothing.
 
-**What it can never give.** It can only take away what the mapping was made with: a range of a mapping made without Write cannot become writable, because the handle was checked for the rights of the mapping when it was mapped. Write and Execute together are refused: no page is both.
+**What it can never give.** It can only take away what the mapping was made with: a range of a mapping made without Write cannot become writable, because the handle was checked for the rights of the mapping when it was mapped. Write and Execute together are refused: no page is both. Across mappings of one memory object (`modulus:memory_wx`), the kernel counts live writable, executable, and guest-switching mappings under the frame lock and refuses any `Memory_Map` or `Memory_Protect` that would give an object both `Write` and `Execute` or map guest switching memory executable (`Wrong_State`, kind `Object_Shared`); downgraded counts return only after `processor_sync`.
 
 **Where the protection is kept.**
 

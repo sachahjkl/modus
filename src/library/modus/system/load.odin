@@ -711,10 +711,19 @@ place_finish :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: m
 place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: module.Header, imports: []module.Bound_Import, error: ^module.Load_Error) -> bool {
 	status: call_outcome.Call_Outcome
 	if space.prepared == nil {
-		own: Prepared
-		if own, status = module_prepare(item.file, item.hash, .All, item.base, space.budget, imports, error); status == .Succeeded {
-			status = segments_map(item.file, item.hash, &own, &own, space.process, item.base, space.budget, imports, error)
-			close(own.memory)
+		// Keep executable, fixed, and writable segments in separate memory
+		// objects so no memory object holds both Write and Execute mappings.
+		code, fixed: Prepared
+		if code, status = module_prepare(item.file, item.hash, .Code, item.base, space.budget, imports, error); status == .Succeeded {
+			if fixed, status = module_prepare(item.file, item.hash, .Fixed, item.base, space.budget, imports, error); status == .Succeeded {
+				status = segments_map(item.file, item.hash, &code, &fixed, space.process, item.base, space.budget, imports, error)
+				if fixed.memory != 0 {
+					close(fixed.memory)
+				}
+			}
+			if code.memory != 0 {
+				close(code.memory)
+			}
 		}
 	} else {
 		// The code from the table at any base; the fixed part for this base
@@ -1131,7 +1140,7 @@ source_closure :: proc "contextless" (source: Load_Source, file: []u8, files: ^[
 //             instruction (src/md/features/record_and_replay.md).
 // The module is at PROCESS_BASE, its imports after it.
 // The process stops when the last handle to it closes.
-process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0, wiring: ^Start_Wiring = nil, held_entry: ^u64 = nil, ready: ^Ready_Ring = nil) -> (process: Handle, status: call_outcome.Call_Outcome) {
+process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0, wiring: ^Start_Wiring = nil, held_entry: ^u64 = nil, ready: ^Ready_Ring = nil, process_flags: op.Process_Flags = {}) -> (process: Handle, status: call_outcome.Call_Outcome) {
 	if len(file) == 0 || module.validate(file) != .None || grants[op.CONTEXT_BUDGET].handle != 0 || grants[op.CONTEXT_WIRING_RING].handle != 0 || grants[op.CONTEXT_LOG_OUTPUT].handle != 0 || grants[op.CONTEXT_LOG_OUTPUT_END].handle != 0 || grants[op.CONTEXT_READY_RING].handle != 0 {
 		return 0, .Argument_Refused
 	}
@@ -1159,7 +1168,7 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 	}
 	defer close(budget)
 	results: [7]u64
-	results, status = call(.Process_Create, u64(budget), u64(uintptr(raw_data(name))), u64(len(name)))
+	results, status = call(.Process_Create, u64(budget), u64(uintptr(raw_data(name))), u64(len(name)), transmute(u64)process_flags)
 	if status != .Succeeded {
 		return 0, status
 	}

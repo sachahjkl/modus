@@ -134,7 +134,11 @@ integer_two_byte_step :: proc "contextless" (cpu: ^Processor_State, physical_mem
 	width := operand_width_from_prefixes(prefixes)
 	switch opcode {
 	case 0x31:
-		// rdtsc: the counter in edx:eax, the high halves cleared.
+		// rdtsc: #GP when CR4.TSD is enabled, else the counter in edx:eax with
+		// the high halves cleared.
+		if cpu.timestamp_disable {
+			return record_fault(cpu, cursor.start_rip, .General_Protection, 0), true
+		}
 		counter := cpu.steps_executed
 		if cpu.cycle_counter_read != nil {
 			counter = cpu.cycle_counter_read()

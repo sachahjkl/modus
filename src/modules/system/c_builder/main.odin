@@ -268,14 +268,16 @@ call_child_sized :: proc "contextless" (
 			return 0, 0, fail_outcome(error, system.own_operation_outcome(create_status), .Refused, .Kernel_Status, 0, 0, 0, i64(create_status))
 		}
 		arguments[output_index].integer = u64(mem_handle)
-		added := system.Call_Host_Context{pages = child_host_pages(), processes = 1}
+		added := system.Call_Host_Context{pages = child_host_pages(), processes = 1, no_clock = true}
 		conn, start_status := system.call_host_start_from_memory(host_file, module_memory, module_file, name, seed_values, &child_load_error, added = &added)
 		if start_status != .Succeeded {
 			system.close(mem_handle)
 			return 0, 0, fail_outcome(error, .Callee_Unavailable, .Refused, .Kernel_Status, 0, 0, 0, i64(start_status))
 		}
 		call_err: errors.Error_Record
-		called, call_out := system.call_isolated(&conn, module_file, export, arguments, &call_err, keep_memory_objects = true, deadline = system.answer_deadline(system.time()))
+		// c_builder runs with Process_Flag.No_Clock; the recipes service
+		// bounds the outer build call.
+		called, call_out := system.call_isolated(&conn, module_file, export, arguments, &call_err, keep_memory_objects = true, deadline = system.WAIT_FOREVER)
 		system.call_connection_end(&conn)
 		if call_out == .Succeeded {
 			return called, mem_handle, .Succeeded

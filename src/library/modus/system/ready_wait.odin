@@ -40,9 +40,10 @@ connection_ready_step :: proc "contextless" (calls: ^ring.Ring, now, deadline: u
 // an answer (ANSWER_BOUND_MILLISECONDS). The caller sends its first call
 // only after Ready. cancel: a word that another thread of the caller sets
 // to stop the wait (the Escape of the console): the wait then ends at once
-// with Refused.
-connection_ready_wait :: proc "contextless" (calls: ^ring.Ring, process: Handle, cancel: ^u32 = nil) -> isolated.Ready_Reading {
-	deadline := answer_deadline(time())
+// with Refused. no_clock: true for a Process_Flag.No_Clock caller, which has
+// no time page and waits until ready, cancel, or process stop.
+connection_ready_wait :: proc "contextless" (calls: ^ring.Ring, process: Handle, cancel: ^u32 = nil, no_clock := false) -> isolated.Ready_Reading {
+	deadline := no_clock ? WAIT_FOREVER : answer_deadline(time())
 	for {
 		wait := wait_begin()
 		if cancel != nil {
@@ -54,7 +55,8 @@ connection_ready_wait :: proc "contextless" (calls: ^ring.Ring, process: Handle,
 		// The state before the ring: a process that sent its completion and
 		// stopped is read with its completion.
 		state, _, _ := process_state(process)
-		if reading, done := connection_ready_step(calls, time(), deadline, state); done {
+		now := no_clock ? u64(0) : time()
+		if reading, done := connection_ready_step(calls, now, deadline, state); done {
 			return reading
 		}
 		wait_records(&wait, &calls.completions)

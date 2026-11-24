@@ -354,6 +354,7 @@ builder_run :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, file: []u8
 	added := system.Call_Host_Context{
 		pages     = c_builder_host_pages(),
 		processes = 2,
+		no_clock  = true,
 	}
 	added.grants[builder.GRANT_INPUT_RING] = {input_share.ring_memory, {.Read, .Write}}
 	added.grants[builder.GRANT_INPUT_REGION] = {input_share.region_memory, {.Read, .Write}}

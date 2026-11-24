@@ -59,13 +59,12 @@ build(inputs: Table(Recipe_Input_Row, Read), arguments: Bytes) -> Integer
 - the storage service with Read, and the file of the storage service, which describes its exports. The handles of a share carry Give, and the term `store_gives` of the start grant set of `recipes` gives it the storage service with Give, so the service can pass both on;
 - the log;
 - a seed equal to the recipe hash, with the strength `None`: the seed is public, so the random generator refuses to make a key from it;
-- no date page: a read of the date gives no date. The date of a recipe is the field `source_date` of its arguments.
+- no date page and no clock: `recipes` creates each builder call host (`builder_start` and `c_builder`) with `Process_Flag.No_Clock` (heritable to child processes), so the kernel omits the time page mapping, sets `CR4.TSD` on every context switch so `rdtsc` and `rdtscp` fault with `#GP` (never emulated, even under recording), zeroes the kernel entry return value in `rax`, and ignores wall-clock deadlines. `storage.builder_stores_open`, `call_host_start_from_memory`, and `call_isolated` (`WAIT_FOREVER`) run with no reads of the time page. The date of a recipe is the field `source_date` of its arguments.
 
 No network, no root ring, no boot image, no window, no other grant: none has a slot in the context.
 
 **What the sandbox does not take away yet**, each an entry of `ROADMAP.md`:
 
-- **The clock.** The kernel maps the time page in each process, and the processor gives its cycle counter, so a builder can read a time and write it in its output. The date page is not mapped; the time is.
 - **A limit of blocks of its own.** The store "out" is a share of the store of `recipes`, with its limit. A builder can fill that store; at the limit, a write of `recipes` frees the oldest versions of its objects to make room. The output of a build stays in the place `objects`: no collection removes an output that no realisation names.
 - **The places of the storage service.** The 512 places are one table of the service. A builder can hold each of them, for up to the bound of a build, and other callers then get Full until its call host ends.
 
@@ -75,6 +74,7 @@ No network, no root ring, no boot image, no window, no other grant: none has a s
 
 - **change its inputs**: the input store reads only, and the storage service refuses each change with `No_Grant`;
 - **write outside its store "out"**: the share of `build/out` has no name above its root;
+- **read the clock or cycle counter**: `op.TIME_ADDRESS` is unmapped (page fault), `rdtsc`/`rdtscp` trap with `#GP` through `CR4.TSD`, kernel entry returns 0 in `rax`, wall-clock deadlines do not run, and `No_Clock` inherits to every child process;
 - **reach the network or the root service**: it holds no handle of either;
 - **run past the bound**: the service ends the call host, refuses the build with `Builder_Timed_Out`, and keeps nothing;
 - **fail, or stop**: a negative result, a refusal of the call, or a process that stops is `Builder_Failed`, and nothing is kept;
@@ -82,7 +82,7 @@ No network, no root ring, no boot image, no window, no other grant: none has a s
 
 The refusals before a start: a builder that no module of the boot image is (`Builder_Absent`), an input whose objects are not in the private store and not a module of the boot image (`Input_Absent`), and a step of the stores that fails (`Store_Failed`).
 
-The sandbox of modus removes the ambient causes of a different output already: no global file system, no `PATH`, no environment variables, no network without a grant. It does not remove the clock yet (above).
+The sandbox of modus removes the ambient causes of a different output: no global file system, no `PATH`, no environment variables, no network without a grant, no date page, and no clock or cycle counter.
 
 ### The realisation
 

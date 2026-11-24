@@ -504,8 +504,8 @@ schedule :: proc "contextless" () -> ! {
 		if cpu.breakpoints_loaded {
 			breakpoints_unload(cpu)
 		}
-		if cpu.record_traps_loaded {
-			record_traps_unload(cpu)
+		if cpu.tsd_loaded || cpu.cpuid_fault_loaded {
+			processor_traps_sync(cpu, false, false)
 		}
 		// The counters of the thread leave the processor with it, before
 		// the release of the run lock below orders its totals before a take
@@ -634,9 +634,9 @@ schedule :: proc "contextless" () -> ! {
 			if thread.counting {
 				thread_counters_load()
 			}
-			// One byte of the hot line: a normal thread pays this test only.
-			if mode := intrinsics.atomic_load(&thread.record_mode); mode != .None {
-				record_traps_load(cpu)
+			// Two bytes of the hot line: a normal thread pays these tests only.
+			if mode := intrinsics.atomic_load(&thread.record_mode); mode != .None || thread.no_clock {
+				processor_traps_sync(cpu, true, mode != .None)
 				if mode == .Recording {
 					record_replay_stint_start(thread.process)
 				}
@@ -741,16 +741,22 @@ run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 		cpu.record_leave_retry = true
 		schedule_on_a_fresh_stack(cpu)
 	}
-	if wants_traps := intrinsics.atomic_load(&thread.record_mode) != .None; cpu.record_traps_loaded != wants_traps {
-		if wants_traps {
-			record_traps_load(cpu)
-		} else {
-			record_traps_unload(cpu)
-		}
+	mode := intrinsics.atomic_load(&thread.record_mode)
+	want_tsd := mode != .None || thread.no_clock
+	want_cpuid := mode != .None
+	if cpu.tsd_loaded != want_tsd || cpu.cpuid_fault_loaded != want_cpuid {
+		processor_traps_sync(cpu, want_tsd, want_cpuid)
 	}
 	if thread.in_enter {
 		thread.in_enter = false
-		thread.frame.rax = intrinsics.atomic_load(&thread.record_mode) != .None ? record_replay_entry_return_time(thread) : intrinsics.atomic_load(&time_milliseconds)
+		switch {
+		case thread.no_clock:
+			thread.frame.rax = 0
+		case mode != .None:
+			thread.frame.rax = record_replay_entry_return_time(thread)
+		case:
+			thread.frame.rax = intrinsics.atomic_load(&time_milliseconds)
+		}
 	}
 	resume(&thread.frame)
 }

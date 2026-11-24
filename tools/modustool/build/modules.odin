@@ -117,11 +117,15 @@ build_modules :: proc() -> bool {
 	link_pages := build_manual_pages() or_return
 	build_measure_step("the link pages of the manual", step_started)
 	step_started = time.tick_now()
+	// The plan values of the test image (limits, log_flood): signed with the
+	// test boot images and stripped from the release boot image (test_plan.odin).
+	test_plan_resource := test_plan_values_write() or_return
 	all_resources := make([dynamic]resources.Resource_File, context.temp_allocator)
 	append(&all_resources, ..pointer_themes)
 	append(&all_resources, outlines_resource)
 	append(&all_resources, script_fonts_name)
 	append(&all_resources, link_pages)
+	append(&all_resources, test_plan_resource)
 	// The start policy reads a list and asks for the starts, and nothing
 	// more: its source is checked before any image holds it.
 	start_policy_source_check() or_return

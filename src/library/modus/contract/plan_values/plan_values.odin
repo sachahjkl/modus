@@ -20,6 +20,11 @@ import "modus:contract/fixed_addresses"
 
 // Where an owner maps the page of its plan values.
 OWNER_PAGE_ADDRESS :: fixed_addresses.PLAN_VALUES_PAGE_ADDRESS
+// Name of the optional signed boot-image resource carrying test-only plan
+// values (such as budget rows for `limits` and `log_flood`). Present in test
+// boot images and excluded from release boot images
+// (src/md/features/module_budget_request.md).
+TEST_IMAGE_PLAN_RESOURCE :: "test_plan_values"
 
 // The bytes "PLANVAL1": a set of plan values.
 SET_MAGIC :: u64(0x314C_4156_4E41_4C50)

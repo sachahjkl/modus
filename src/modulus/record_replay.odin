@@ -185,25 +185,23 @@ record_replay_log :: proc "contextless" () {
 	}
 }
 
-// record_traps_load turns on CR4.TSD and CPUID faulting on this processor for
-// a recorded or replayed thread, and fixes TSC_AUX when supported.
-record_traps_load :: proc "contextless" (cpu: ^Processor) {
-	control_register_4_write(replay_filter.cr4_with_timestamp_disable(control_register_4_read(), true))
-	misc := model_specific_register_read(replay_filter.MSR_MISC_FEATURES_ENABLES)
-	model_specific_register_write(replay_filter.MSR_MISC_FEATURES_ENABLES, replay_filter.misc_features_with_cpuid_faulting(misc, true))
-	if intrinsics.atomic_load(&tsc_aux_supported) {
-		model_specific_register_write(replay_filter.MSR_TSC_AUX, u64(replay_filter.RECORDED_PROCESSOR_AUXILIARY))
+// processor_traps_sync brings CR4.TSD and CPUID faulting on this processor to
+// match (want_tsd, want_cpuid_fault), touching each hardware control only when
+// its state changes. No_Clock sets only CR4.TSD so it works on machines without
+// CPUID faulting.
+processor_traps_sync :: proc "contextless" (cpu: ^Processor, want_tsd, want_cpuid_fault: bool) {
+	if cpu.tsd_loaded != want_tsd {
+		control_register_4_write(replay_filter.cr4_with_timestamp_disable(control_register_4_read(), want_tsd))
+		cpu.tsd_loaded = want_tsd
 	}
-	cpu.record_traps_loaded = true
-}
-
-// record_traps_unload clears CR4.TSD and CPUID faulting on this processor so
-// normal threads run with no trap overhead.
-record_traps_unload :: proc "contextless" (cpu: ^Processor) {
-	control_register_4_write(replay_filter.cr4_with_timestamp_disable(control_register_4_read(), false))
-	misc := model_specific_register_read(replay_filter.MSR_MISC_FEATURES_ENABLES)
-	model_specific_register_write(replay_filter.MSR_MISC_FEATURES_ENABLES, replay_filter.misc_features_with_cpuid_faulting(misc, false))
-	cpu.record_traps_loaded = false
+	if cpu.cpuid_fault_loaded != want_cpuid_fault {
+		misc := model_specific_register_read(replay_filter.MSR_MISC_FEATURES_ENABLES)
+		model_specific_register_write(replay_filter.MSR_MISC_FEATURES_ENABLES, replay_filter.misc_features_with_cpuid_faulting(misc, want_cpuid_fault))
+		if want_cpuid_fault && intrinsics.atomic_load(&tsc_aux_supported) {
+			model_specific_register_write(replay_filter.MSR_TSC_AUX, u64(replay_filter.RECORDED_PROCESSOR_AUXILIARY))
+		}
+		cpu.cpuid_fault_loaded = want_cpuid_fault
+	}
 }
 
 // region_mappings_of gives the mappings of region_index in one process, and
@@ -1381,8 +1379,10 @@ record_replay_end_locked :: proc "contextless" (target_index: u32, reason: input
 	intrinsics.atomic_thread_fence(.Seq_Cst)
 	processor_sync(all_other_processors())
 	self := processor_self()
-	if self.record_traps_loaded && (self.current == 0 || intrinsics.atomic_load(&threads[self.current].record_mode) == .None) {
-		record_traps_unload(self)
+	want_tsd := self.current != 0 && (intrinsics.atomic_load(&threads[self.current].record_mode) != .None || threads[self.current].no_clock)
+	want_cpuid := self.current != 0 && intrinsics.atomic_load(&threads[self.current].record_mode) != .None
+	if (self.tsd_loaded && !want_tsd) || (self.cpuid_fault_loaded && !want_cpuid) {
+		processor_traps_sync(self, want_tsd, want_cpuid)
 	}
 	point_copies_teardown(target_index, rec)
 	history_region := rec.history_region
@@ -1832,14 +1832,22 @@ record_replay_handle_gp :: proc "contextless" (cpu: ^Processor, thread: ^Thread)
 	decoded := replay_filter.decode_trapped_instruction(instruction_bytes[:byte_count])
 	if mode == .None {
 		process_unlock(process_index, taken)
-		if cpu.record_traps_loaded {
-			record_traps_unload(cpu)
-			if decoded.kind != .None {
+		want_tsd := thread.no_clock
+		had_stale := (cpu.tsd_loaded && !want_tsd) || cpu.cpuid_fault_loaded
+		if had_stale {
+			processor_traps_sync(cpu, want_tsd, false)
+			if decoded.kind != .None && !(thread.no_clock && (decoded.kind == .Rdtsc || decoded.kind == .Rdtscp)) {
 				// Recording ended concurrently before the IPI arrived; retry
 				// the instruction with hardware traps now disabled.
 				return true
 			}
 		}
+		return false
+	}
+	// A Process_Flag.No_Clock thread never reads the cycle counter, even when
+	// recorded or replayed: rdtsc and rdtscp always fault with #GP.
+	if thread.no_clock && (decoded.kind == .Rdtsc || decoded.kind == .Rdtscp) {
+		process_unlock(process_index, taken)
 		return false
 	}
 	if decoded.kind == .None {

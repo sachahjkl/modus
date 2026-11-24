@@ -131,9 +131,12 @@ Processor :: struct {
 	// debug exception of a thread whose breakpoints were removed, clears
 	// it with the control register.
 	breakpoints_loaded: bool,
-	// CR4.TSD and CPUID faulting are enabled on this processor for a recorded
-	// or replayed thread (record_replay.odin). Only this processor writes it.
-	record_traps_loaded: bool,
+	// CR4.TSD is enabled on this processor (for a recorded/replayed thread or
+	// a Process_Flag.No_Clock thread). Only this processor writes it.
+	tsd_loaded: bool,
+	// CPUID faulting is enabled on this processor (for a recorded or replayed
+	// thread). Only this processor writes it.
+	cpuid_fault_loaded: bool,
 	// The recorded thread of this processor could not leave its input point
 	// while a shared writer ran: the next pass of schedule opens one
 	// interrupt window first (schedule.odin). Only this processor writes it.
@@ -310,8 +313,10 @@ sync_acknowledge :: proc "contextless" (cpu: ^Processor) {
 	if current != 0 {
 		current_table = processes[threads[current].process].table
 	}
-	if cpu.record_traps_loaded && (current == 0 || intrinsics.atomic_load(&threads[current].record_mode) == .None) {
-		record_traps_unload(cpu)
+	want_tsd := current != 0 && (intrinsics.atomic_load(&threads[current].record_mode) != .None || threads[current].no_clock)
+	want_cpuid := current != 0 && intrinsics.atomic_load(&threads[current].record_mode) != .None
+	if (cpu.tsd_loaded && !want_tsd) || (cpu.cpuid_fault_loaded && !want_cpuid) {
+		processor_traps_sync(cpu, want_tsd, want_cpuid)
 	}
 	if current_table == 0 || intrinsics.atomic_load(&cpu.table) != current_table {
 		intrinsics.atomic_store(&cpu.table, kernel_table)

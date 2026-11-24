@@ -220,12 +220,13 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	}
 	budget_peak.created(&budgets[ROOT_BUDGET].amounts.pages, &budgets[ROOT_BUDGET].least_pages, free_frames)
 	index, _ := process_create(ROOT_BUDGET, transmute([]u8)name)
-	// The kernel writes the module and the context through the direct map:
-	// these two are contiguous. The stack has its pages on first use.
-	code, _ := region_create(ROOT_BUDGET, head.memory_size / PAGE_SIZE, contiguous = true)
+	// The kernel writes each segment and the context through the direct map:
+	// these are contiguous. Each segment gets its own memory object so
+	// executable and writable segments never share one object. The stack has
+	// its pages on first use.
 	stack, _ := region_create(ROOT_BUDGET, op.STACK_PAGES)
 	ctx, _ := region_create(ROOT_BUDGET, 1, contiguous = true)
-	if index == 0 || code == 0 || stack == 0 || ctx == 0 {
+	if index == 0 || stack == 0 || ctx == 0 {
 		fail("no memory")
 	}
 	process := &processes[index]
@@ -234,16 +235,33 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	// The kernel is the starter of the root service: the record is of the
 	// writer Starter, which the root service cannot change.
 	process_module(process, {base = op.PROCESS_BASE, size = head.memory_size, hash = hash}, by_the_process = false)
-	memory := info.physical_slice(regions[code].physical, head.memory_size, u8)
-	module.copy_segments(file, memory)
-	// The root service has no loader for imports: the kernel writes its
-	// own-hash place and the index of each record stream, as a loader
-	// writes the places of each module.
-	if module.rebase(file, memory, op.PROCESS_BASE) != .None || module.count(file, .Imports) > 1 || !module.own_hash_write(file, memory, hash) || !module.record_stream_indexes_write(file, memory) {
+	if module.count(file, .Imports) > 1 || module.rebase_range(file, nil, op.PROCESS_BASE, 0, 0) != .None {
 		fail("the module cannot be loaded")
 	}
 	for segment_index in 1 ..< module.count(file, .Segments) {
 		segment, _ := module.record(file, .Segments, segment_index, module.Segment)
+		if segment.memory_size == 0 {
+			fail("a segment has no pages")
+		}
+		seg_region, _ := region_create(ROOT_BUDGET, segment.memory_size / PAGE_SIZE, contiguous = true)
+		if seg_region == 0 {
+			fail("no memory")
+		}
+		seg_memory := info.physical_slice(regions[seg_region].physical, segment.memory_size, u8)
+		if segment.file_size != 0 {
+			copy(seg_memory, file[segment.file_offset:][:segment.file_size])
+		}
+		// The root service has no loader for imports: the kernel writes its
+		// rebases, own-hash place, and record stream indexes in each segment
+		// that was writable at load time, as a loader does.
+		if .Write in segment.flags {
+			seg_first := segment.memory_offset
+			seg_end := seg_first + segment.memory_size
+			view := ([^]u8)(uintptr(raw_data(seg_memory)) - uintptr(seg_first))[:seg_end]
+			if module.rebase_range(file, view, op.PROCESS_BASE, seg_first, seg_end) != .None || !module.own_hash_write(file, view, hash, seg_first, seg_end) || !module.record_stream_indexes_write(file, view, seg_first, seg_end) {
+				fail("the module cannot be loaded")
+			}
+		}
 		flags: op.Map_Flags
 		if .Write in segment.flags && .Read_Only_After_Load not_in segment.flags {
 			flags += {.Write}
@@ -251,7 +269,7 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		if .Execute in segment.flags {
 			flags += {.Execute}
 		}
-		if _, status := map_region(process, code, op.PROCESS_BASE + segment.memory_offset, flags, segment.memory_offset / PAGE_SIZE, segment.memory_size / PAGE_SIZE); status != .Succeeded {
+		if _, status := map_region(process, seg_region, op.PROCESS_BASE + segment.memory_offset, flags, 0, segment.memory_size / PAGE_SIZE); status != .Succeeded {
 			fail("a segment cannot be mapped")
 		}
 	}

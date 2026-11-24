@@ -1009,8 +1009,13 @@ budget_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pr
 	case .Process_Create:
 		unit, asked, held = .Processes, 1, holds.processes
 		if holds.processes != 0 {
-			// The top table, the own log ring, and the tables of the time page.
-			unit, asked, held = .Pages, 1 + op.OWN_LOG_PAGES + TIME_PAGE_TABLES, holds.pages
+			// The top table, the own log ring, and the tables of the time page
+			// when the new process receives one.
+			time_tables := u64(0)
+			if !process.no_clock && .No_Clock not_in transmute(op.Process_Flags)v[3] {
+				time_tables = TIME_PAGE_TABLES
+			}
+			unit, asked, held = .Pages, 1 + op.OWN_LOG_PAGES + time_tables, holds.pages
 		}
 	case .Thread_Create:
 		unit, asked, held = .Threads, 1, holds.threads
@@ -1433,6 +1438,12 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 			record_set(record, .Object_Shared, .None, 1, v[0], 0, 0)
 			return true
 		}
+		// Another live mapping of this memory object conflicts with the
+		// requested Write or Execute access (modulus:memory_wx).
+		if operation == .Memory_Map && processor_self().operation.memory_wx_conflict {
+			record_set(record, .Object_Shared, .None, 1, v[0], 0, 0)
+			return true
+		}
 		argument = operation == .Memory_Map ? 2 : 1
 	case .Memory_Unmap, .Process_Start, .Process_Module, .Guest_Run:
 		argument = 1
@@ -1441,6 +1452,10 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 		record_set(record, .Object_Shared, .None, 1, v[0], 0, 0)
 		return true
 	case .Memory_Protect:
+		if processor_self().operation.memory_wx_conflict {
+			record_set(record, .Object_Shared, .None, 1, 0, 0, 0)
+			return true
+		}
 		// A part of a mapping needs an object that only this process names.
 		// For a guest, the state of the guest can be the cause too: no
 		// record names one of the two.
@@ -1529,6 +1544,11 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 			// aligned, and its 64 pages in the user half. The record gives that
 			// first page, and the last first page that the call takes.
 			record_set(record, .Bad_Value, .None, 4, page_report.address, USER_END - op.PAGE_REPORT_CAPACITY * PAGE_SIZE, 0)
+			return true
+		}
+	case .Process_Create:
+		if v[3] & ~op.PROCESS_FLAGS_KNOWN != 0 {
+			record_set(record, .Bad_Flags, .None, 4, v[3], op.PROCESS_FLAGS_KNOWN, 0)
 			return true
 		}
 	case .Memory_Create:
