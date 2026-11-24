@@ -78,6 +78,7 @@ picker_rings_make :: proc "contextless" () -> bool {
 #assert(powerbox.DISPLAY_PICKER_REGION_SLOT != COMPOSITOR_GRANT_GPU_PROCESS)
 #assert(powerbox.DISPLAY_PICKER_RING_SLOT != COMPOSITOR_GRANT_GPU_RING)
 #assert(powerbox.DISPLAY_PICKER_REGION_SLOT != COMPOSITOR_GRANT_GPU_RING)
+#assert(powerbox.IMAGE_SLOT == system.GRANT_IMAGE)
 display_picker_grants_put :: proc "contextless" (context_grants: ^system.Context_Grants) {
 	if !picker_rings_make() {
 		return

@@ -70,7 +70,7 @@ SERVICE_RING_SLOT :: 10 // The ring from the root service, opened to receive han
 TRUSTED_DISPLAY_RING_SLOT :: 11 // The picker ring: the trusted display writes its commands, the powerbox answers.
 SERVICE_REGION_SLOT :: 12 // The region of the root service and the powerbox.
 PICKER_REGION_SLOT :: 13 // The picker region: the requests and the pages of the picker.
-IMAGE_SLOT :: 19 // The boot image, read-only: the file of the storage service.
+IMAGE_SLOT :: 3 // The boot image, read-only (matches system.GRANT_IMAGE; avoids op.CONTEXT_READY_RING at 19).
 CONTEXT_VALUE_DISPLAY_SLOT :: 0
 // Slots 1 and 2 hold GRANT_VALUE_FILE_ADDRESS and GRANT_VALUE_FILE_SIZE
 // because the powerbox holds the start grant Serve.
