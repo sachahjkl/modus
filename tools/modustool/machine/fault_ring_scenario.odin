@@ -82,7 +82,7 @@ scenario_fault_ring := [?]Step {
 	{kind = .Wait, text = "fault_ring: the rights of a thread handle: with Read and Control, Stop got Grant_Or_Right_Missing, Read_Registers Grant_Or_Right_Missing, Write_Registers Grant_Or_Right_Missing; with Inspect only, Stop, Read_Registers and Resume got Succeeded, Write_Registers Grant_Or_Right_Missing; with Write only, Write_Registers got Grant_Or_Right_Missing; the thread kept running: as it must"},
 	{kind = .Wait, text = "fault_ring: a divide error skipped by its handler: Resume before the write got Wrong_State; after the write of the instruction address and rax, the thread went on with 42: as it must"},
 	{kind = .Wait, text = "fault_ring: the control of a thread: the child stopped: itself, done, the result bits 00000000000000ff: as it must"},
-	{kind = .Wait, text = "fault_ring: the thread of another process: 32 calls of 32 refused; no number and no handle of this process names it: as it must"},
+	{kind = .Wait, text = "fault_ring: the thread of another process: 256 calls of 256 refused; no number and no handle of this process names it: as it must"},
 	{kind = .Wait, text = "fault_ring: the thread of another process: the thread of the parent has the stop count 0 and kept running: as it must"},
 	// The entries to the gates and the debug trap, in one child.
 	{kind = .Wait, text = "fault_ring: int 3 in two bytes: one breakpoint record, at the address of the instruction plus 2: as it must"},
