@@ -131,12 +131,13 @@ reference_screen_line_names_the_reference_screen :: proc(t: ^testing.T) {
 // spans at a 1 GiB edge, the page table and the page directory of the
 // display registers, and the second mappings of the resizes.
 @(private = "file")
+COMPOSITOR_SCREEN_CANVAS_PAGES :: (reference_screen.WIDTH * reference_screen.HEIGHT * 4 + 4095) / 4096
+#assert(COMPOSITOR_SCREEN_CANVAS_PAGES == 2025)
+
+@(private = "file")
 compositor_screen_pages_needed :: proc() -> u64 {
-	PAGE :: 4096
 	TABLE_SPAN :: 2 << 20 // The memory that one page table maps.
 	SCREEN_BYTES :: reference_screen.WIDTH * reference_screen.HEIGHT * 4
-	SCREEN_CANVAS_PAGES :: (SCREEN_BYTES + PAGE - 1) / PAGE
-	#assert(SCREEN_CANVAS_PAGES == 2025)
 	// A span that does not start on the edge of a page table touches one
 	// table more than its size.
 	CANVAS_TABLES :: (SCREEN_BYTES + TABLE_SPAN - 1) / TABLE_SPAN + 1
@@ -146,12 +147,13 @@ compositor_screen_pages_needed :: proc() -> u64 {
 	// The second mapping of a resize for each of 32 clients, from the
 	// comment of the budget of the compositor.
 	RESIZE_MAPPINGS :: 32 * 19
-	return 2 * SCREEN_CANVAS_PAGES + 2 * CANVAS_TABLES + SCREEN_PAGE_TABLES + SPAN_DIRECTORIES + REGISTER_TABLES + RESIZE_MAPPINGS
+	return 2 * COMPOSITOR_SCREEN_CANVAS_PAGES + 2 * CANVAS_TABLES + SCREEN_PAGE_TABLES + SPAN_DIRECTORIES + REGISTER_TABLES + RESIZE_MAPPINGS
 }
 
 // compositor_budget_problem reads the stated budget of a source of the
-// compositor and gives "" when its working memory holds the pages that the
-// reference screen needs, else the sentence of the fault.
+// compositor and gives "" when its working memory plus its stated screen
+// pictures hold the pages that the reference screen needs, else the
+// sentence of the fault.
 @(private = "file")
 compositor_budget_problem :: proc(path, source: string) -> string {
 	state: build.Describe_State
@@ -164,8 +166,9 @@ compositor_budget_problem :: proc(path, source: string) -> string {
 		return "the source states no budget"
 	}
 	needed := compositor_screen_pages_needed()
-	if budget.parts.working_memory_pages < needed {
-		return fmt.tprintf("the compositor states %d pages of working memory; the reference screen and the resizes need %d at least", budget.parts.working_memory_pages, needed)
+	held := budget.parts.working_memory_pages + budget.parts.screen_pictures * COMPOSITOR_SCREEN_CANVAS_PAGES
+	if held < needed {
+		return fmt.tprintf("the compositor states %d pages (%d working memory and %d screen pictures); the reference screen and the resizes need %d at least", held, budget.parts.working_memory_pages, budget.parts.screen_pictures, needed)
 	}
 	return ""
 }
@@ -173,7 +176,8 @@ compositor_budget_problem :: proc(path, source: string) -> string {
 // The stated budget of the compositor holds the reference screen. The same
 // check refuses a source that states 4411 pages, the budget counted at a
 // screen of 1024 x 768, and a source one page short; it takes the exact
-// amount.
+// amount, both when stated in working memory alone and when screen_pictures
+// carries the frame and the background.
 @(test)
 compositor_budget_holds_the_reference_screen :: proc(t: ^testing.T) {
 	path :: "src/modules/system/compositor/main.odin"
@@ -186,11 +190,18 @@ compositor_budget_holds_the_reference_screen :: proc(t: ^testing.T) {
 	needed := compositor_screen_pages_needed()
 	// The braces are not in a format: the formatter reads a brace as the
 	// start of a value.
-	source_of :: proc(pages: u64) -> string {
-		return strings.concatenate({"package compositor\n\n// Its loop.\nMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = ", fmt.tprintf("%d", pages), ", processes = 1, threads = 2}\n"}, context.temp_allocator)
+	source_of :: proc(pages: u64, screen_pictures: u64 = 0) -> string {
+		if screen_pictures == 0 {
+			return strings.concatenate({"package compositor\n\n// Its loop.\nMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = ", fmt.tprintf("%d", pages), ", processes = 1, threads = 2}\n"}, context.temp_allocator)
+		}
+		return strings.concatenate({"package compositor\n\n// Its loop.\nMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = ", fmt.tprintf("%d", pages), ", processes = 1, threads = 2, screen_pictures = ", fmt.tprintf("%d", screen_pictures), "}\n"}, context.temp_allocator)
 	}
 	for pages in ([]u64{0, 1, 4411, needed - 1}) {
 		testing.expectf(t, compositor_budget_problem("budget.odin", source_of(pages)) != "", "a budget of %d pages holds the reference screen", pages)
 	}
 	testing.expect_value(t, compositor_budget_problem("budget.odin", source_of(needed)), "")
+
+	working_with_screen := needed - 2 * COMPOSITOR_SCREEN_CANVAS_PAGES
+	testing.expectf(t, compositor_budget_problem("budget.odin", source_of(working_with_screen - 1, 2)) != "", "a budget one page short with 2 screen pictures holds the reference screen")
+	testing.expect_value(t, compositor_budget_problem("budget.odin", source_of(working_with_screen, 2)), "")
 }

@@ -42,16 +42,11 @@ import "modus:system"
 import "modus:text_rendering"
 import "modus:vector_font"
 
-// Its own memory: 1023 pages, with no glyph of a candidate kept: each is
-// drawn band by band at each draw. And the glyph memory of its two
-// copies of the text rendering, its own, which draws the measure of one
-// glyph of the system and the candidates, and the one of the drawing
-// module, which draws its labels: each reserves its memory at its first
-// glyph, 2 x 354 pages (display.TEXT_MEMORY_PAGES) = 708 pages.
-// And the picture of its window, which it draws by hand at its logical
-// size: 1008 x 704 pixels of 4 bytes, 693 pages
-// (interface.hand_picture_pages). 1023 + 708 + 693 = 2424.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2424, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// Both copies of text rendering (2 x 354 = 708 pages), the logical hand
+// picture (1008 x 704 pixels of 4 bytes, 693 pages,
+// interface.hand_picture_pages), and 391 pages for tables and mappings
+// (measured peak at ready 3429 pages): 708 + 693 + 391 = 1792.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1792, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 // The picture of the window, in its logical pixels (interface.Hand_Picture).
 hand_picture: interface.Hand_Picture

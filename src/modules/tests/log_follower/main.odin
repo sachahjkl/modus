@@ -267,10 +267,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 }
 
-// Measure pending: the 2048 pages of the least budget in which it ran
-// before its floor was counted. The first machine pass with the check of
-// the floors (the check boot-test of the flake) writes the peak of its
-// budget at its first state of work; modustool floors measured on the log
-// of that pass gives the working memory that replaces this number
-// (src/md/features/module_budget_request.md, "The first state of work").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2048}
+// Measured at ready: 102 working pages past the counted floor and derived
+// wiring carve. 256 working pages cover the connection, list page and wired
+// follow ring with headroom.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256}

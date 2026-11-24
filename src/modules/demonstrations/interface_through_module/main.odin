@@ -91,11 +91,11 @@ foreign _ {
 
 WIDTH :: 816
 HEIGHT :: 336
-// The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (536 pages): its module, its
-// stack, its tables and its glyph memory. The tool counts the window at
-// the largest scale (docs/MODULE_CONTRACT.md, "The floor of a module").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1512, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, the stack and the window at the largest scale
+// (docs/MODULE_CONTRACT.md, "The floor of a module"). 512 working pages
+// hold the glyph memory (354 pages), comparison canvases and page tables
+// (measured peak at ready 1172 pages).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512, window_width = WIDTH, window_height = HEIGHT}
 LINE :: interface.TABLE_LINE
 RECORD_CAPACITY :: 256
 TEXT_CAPACITY :: 4096

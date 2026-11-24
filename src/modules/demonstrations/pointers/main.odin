@@ -50,12 +50,12 @@ import "modus:graphics"
 import "modus:interface"
 import "modus:system"
 
-// The pointer themes that it checks: 1616 pages. And the glyph memory of
-// its own copy of the text rendering, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). And the picture of its window, which it
-// draws by hand at its logical size: 976 x 704 pixels of 4 bytes, 671
-// pages (interface.hand_picture_pages). 1616 + 354 + 671 = 2641.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2641, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// The glyph memory of its own copy of the text rendering (354 pages,
+// display.TEXT_MEMORY_PAGES), the logical hand picture (976 x 704 pixels of
+// 4 bytes, 671 pages, interface.hand_picture_pages), and 767 pages for
+// pointer theme mappings and tables (measured peak at ready 3332 pages):
+// 354 + 671 + 767 = 1792.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1792, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 // The picture of the window, in its logical pixels (interface.Hand_Picture).
 hand_picture: interface.Hand_Picture

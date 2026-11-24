@@ -44,10 +44,11 @@ import "modus:contract/value_kinds"
 import "modus:system"
 import "modus:twins"
 
-// 8192 pages at a time, and five twins: 11446 pages. And the glyph memory
-// of the copy of the text rendering of the drawing module, which draws its
-// text: 354 pages (display.TEXT_MEMORY_PAGES). 11446 + 354 = 11800.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 11800, processes = 6, threads = 6, window_width = WIDTH, window_height = HEIGHT}
+// 8192 pages for LARGE_PAGES, four twins of 256 pages (1024 pages), the
+// glyph memory of the drawing module (354 pages, display.TEXT_MEMORY_PAGES)
+// and 30 pages for page tables (measured peak at ready 9411 pages):
+// 8192 + 1024 + 354 + 30 = 9600.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 9600, processes = 6, threads = 6, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)

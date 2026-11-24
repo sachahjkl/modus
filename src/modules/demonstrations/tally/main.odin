@@ -41,11 +41,11 @@ window_memory: interface.Window_Memory(512, 8192)
 
 WIDTH :: 400
 HEIGHT :: 214
-// The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (168 pages): its module, its
-// stack, its tables and its glyph memory. The tool counts the window at
-// the largest scale (docs/MODULE_CONTRACT.md, "The floor of a module").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1880, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, the stack and the window at the largest scale
+// (docs/MODULE_CONTRACT.md, "The floor of a module"). 384 working pages
+// hold the glyph memory (354 pages) and page tables (measured peak at ready
+// 797 pages).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 384, window_width = WIDTH, window_height = HEIGHT}
 NOTE_CAPACITY :: 8
 NOTE_SIZE :: 36
 
