@@ -40,6 +40,7 @@ While iterating on a bug or a machine test, compiling all 179 modules with `-o:s
 - **Single-volume and single-part commands.**
   - `modustool build [whole] [--fast] [--cache <dir>] [volume_name] [host_processes]` builds all boot volumes when no volume name is given, or only the named boot volume (for example `modustool build --fast console` or `modustool build --fast main`), skipping the other 27 volumes. Unknown volume names, unknown flags and invalid flag combinations are refused before any build starts.
   - `modustool test [--fast] [--no-shots] [--cache <dir>] <part> [steps ...]` builds only the boot volumes declared for `<part>` and runs `<part>`. `test --fast` requires a part name, and `--fast`, `--no-shots` and `--cache` are refused with `from <folder>`.
+  - `modustool film [--fast] [<name>]` compiles user modules in `.None` mode and filters to the main boot volume's modules when `--fast` is passed (before or after `<name>`), keeping `-o:speed` when `--fast` is omitted.
 
 ## The refused forms
 

@@ -266,14 +266,115 @@ film_slot_count :: proc(runs: []Film_Run) -> int {
 FILM_MP4_SUFFIX :: ".mp4"
 FILM_WEBM_SUFFIX :: checks.FILM_DOCUMENT_SUFFIX
 
+// Film_Encoder_Backend selects the ffmpeg video encoder backend.
+Film_Encoder_Backend :: enum u8 {
+	Cpu,
+	Nvenc,
+}
+
+FILM_ENCODER_BACKEND_NAMES :: [Film_Encoder_Backend]string{
+	.Cpu   = "cpu",
+	.Nvenc = "nvenc",
+}
+
+// Default WebM AV1 quality parameter (CRF for libsvtav1, CQ for av1_nvenc).
+FILM_WEBM_DEFAULT_CRF :: 45
+
+// Minimum frame size for the one-shot NVENC probe: NVIDIA NVENC rejects
+// dimensions below 256x256 with invalid param (8).
+FILM_NVENC_PROBE_SOURCE :: "color=c=black:s=256x256:d=0.05:r=30"
+
 // The encoder of the MP4 file: H.264, which each site that takes a film
 // plays. The index of the file is at its start, so a player starts before
 // it has the whole file.
 FILM_MP4_ENCODER :: [8]string{"-c:v", "libx264", "-preset", "slow", "-crf", "18", "-movflags", "+faststart"}
+FILM_MP4_ENCODER_NVENC :: [12]string{"-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "19", "-b:v", "0", "-movflags", "+faststart"}
 // The encoder of the WebM file: AV1, about half of the bytes of the MP4
 // file for the same pictures, so this is the file that the repository
 // holds and that the site shows. A film has no sound.
 FILM_WEBM_ENCODER :: [7]string{"-c:v", "libsvtav1", "-preset", "6", "-crf", "45", "-an"}
+
+// film_mp4_encoder_args returns the ffmpeg video encoder arguments for MP4
+// output on the chosen backend.
+film_mp4_encoder_args :: proc(backend: Film_Encoder_Backend, allocator := context.temp_allocator) -> []string {
+	switch backend {
+	case .Cpu:
+		args := FILM_MP4_ENCODER
+		return slice.clone(args[:], allocator)
+	case .Nvenc:
+		args := FILM_MP4_ENCODER_NVENC
+		return slice.clone(args[:], allocator)
+	}
+	return nil
+}
+
+// film_webm_encoder_args returns the ffmpeg video encoder arguments for WebM
+// AV1 output on the chosen backend at quality crf (CRF for libsvtav1, CQ for
+// av1_nvenc).
+film_webm_encoder_args :: proc(backend: Film_Encoder_Backend, crf := FILM_WEBM_DEFAULT_CRF, allocator := context.temp_allocator) -> []string {
+	crf_text := fmt.aprintf("%d", crf, allocator = allocator)
+	switch backend {
+	case .Cpu:
+		args := [7]string{"-c:v", "libsvtav1", "-preset", "6", "-crf", crf_text, "-an"}
+		return slice.clone(args[:], allocator)
+	case .Nvenc:
+		args := [11]string{"-c:v", "av1_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", crf_text, "-b:v", "0", "-an"}
+		return slice.clone(args[:], allocator)
+	}
+	return nil
+}
+
+// film_nvenc_probe_command builds the 1-frame null-muxed ffmpeg command that
+// tests whether codec works on the current host GPU.
+film_nvenc_probe_command :: proc(codec: string, allocator := context.temp_allocator) -> []string {
+	command := make([dynamic]string, 0, 15, allocator)
+	append(&command, "ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", FILM_NVENC_PROBE_SOURCE, "-frames:v", "1", "-c:v", codec, "-f", "null", "-")
+	return command[:]
+}
+
+@(private = "file")
+film_nvenc_probe :: proc(codec: string) -> Film_Encoder_Backend {
+	state, _, _, err := os.process_exec({command = film_nvenc_probe_command(codec)}, context.temp_allocator)
+	if err == nil && state.success {
+		return .Nvenc
+	}
+	return .Cpu
+}
+
+@(private = "file")
+film_probe_lock: sync.Mutex
+@(private = "file")
+film_mp4_probed: bool
+@(private = "file")
+film_mp4_cached_backend: Film_Encoder_Backend
+@(private = "file")
+film_webm_probed: bool
+@(private = "file")
+film_webm_cached_backend: Film_Encoder_Backend
+
+// film_detect_mp4_backend probes h264_nvenc once per tool run and falls back
+// to Cpu when no NVENC-capable GPU is available.
+film_detect_mp4_backend :: proc() -> Film_Encoder_Backend {
+	sync.mutex_lock(&film_probe_lock)
+	defer sync.mutex_unlock(&film_probe_lock)
+	if !film_mp4_probed {
+		film_mp4_cached_backend = film_nvenc_probe("h264_nvenc")
+		film_mp4_probed = true
+	}
+	return film_mp4_cached_backend
+}
+
+// film_detect_webm_backend probes av1_nvenc once per tool run and falls back
+// to Cpu when no AV1 NVENC-capable GPU is available.
+film_detect_webm_backend :: proc() -> Film_Encoder_Backend {
+	sync.mutex_lock(&film_probe_lock)
+	defer sync.mutex_unlock(&film_probe_lock)
+	if !film_webm_probed {
+		film_webm_cached_backend = film_nvenc_probe("av1_nvenc")
+		film_webm_probed = true
+	}
+	return film_webm_cached_backend
+}
 
 // film_encode_command gives the command of an encoder of a film, from the
 // list of the timed pictures: the constant rate of the film, each pixel
@@ -295,17 +396,15 @@ film_encode_command :: proc(list_path, output: string, encoder: []string) -> []s
 }
 
 // film_mp4_encode_command gives the command that writes the MP4 file of a
-// film.
-film_mp4_encode_command :: proc(list_path, output: string) -> []string {
-	encoder := FILM_MP4_ENCODER
-	return film_encode_command(list_path, output, encoder[:])
+// film for the given backend.
+film_mp4_encode_command :: proc(list_path, output: string, backend: Film_Encoder_Backend = .Cpu) -> []string {
+	return film_encode_command(list_path, output, film_mp4_encoder_args(backend))
 }
 
 // film_webm_encode_command gives the command that writes the WebM file of
-// a film.
-film_webm_encode_command :: proc(list_path, output: string) -> []string {
-	encoder := FILM_WEBM_ENCODER
-	return film_encode_command(list_path, output, encoder[:])
+// a film for the given backend and quality parameter.
+film_webm_encode_command :: proc(list_path, output: string, backend: Film_Encoder_Backend = .Cpu, crf := FILM_WEBM_DEFAULT_CRF) -> []string {
+	return film_encode_command(list_path, output, film_webm_encoder_args(backend, crf))
 }
 
 // film_key_periods gives the time after each key of a typed text of a
@@ -532,6 +631,45 @@ film_of_name :: proc(name: string) -> (film: Film, found: bool) {
 	return {}, false
 }
 
+// The parsed arguments of `modustool film`.
+Film_Command_Options :: struct {
+	name:         string,
+	optimization: build.Optimization_Mode,
+}
+
+FILM_COMMAND_USAGE :: "film [--fast] [" + FILM_NAMES + "]"
+
+// film_arguments_parse parses `film [--fast] [<name>]` (accepting `--fast`
+// before or after the optional film name).
+film_arguments_parse :: proc(args: []string) -> (options: Film_Command_Options, problem: string) {
+	options.name = "terminal"
+	options.optimization = .Speed
+	seen_fast := false
+	seen_name := false
+	for arg in args {
+		if arg == build.BUILD_FAST_FLAG {
+			if seen_fast {
+				return {}, "film: `--fast` is written two times; the form: `" + FILM_COMMAND_USAGE + "`"
+			}
+			seen_fast = true
+			options.optimization = .None
+			continue
+		}
+		if strings.has_prefix(arg, "-") {
+			return {}, fmt.tprintf("film: unknown option `%s`; the form: `%s`", arg, FILM_COMMAND_USAGE)
+		}
+		if seen_name {
+			return {}, "film: too many arguments; the form: `" + FILM_COMMAND_USAGE + "`"
+		}
+		if _, found := film_of_name(arg); !found {
+			return {}, fmt.tprintf("film: unknown film `%s`; the form: `%s`", arg, FILM_COMMAND_USAGE)
+		}
+		seen_name = true
+		options.name = arg
+	}
+	return options, ""
+}
+
 // run_film makes one film: `film` and `film terminal` the film of the
 // terminal, `film palette` the film of the palette, `film heron` the film
 // of the process heron, `film boot` the film of the boot of the machine,
@@ -542,16 +680,16 @@ film_of_name :: proc(name: string) -> (film: Film, found: bool) {
 // encoder and the encoder are the same. A film is for the development log, and for the
 // news entry that names it: it is not a test, and no check runs it.
 run_film :: proc(args: []string) -> int {
-	name := "terminal"
-	if len(args) == 1 {
-		name = args[0]
-	}
-	film, found := film_of_name(name)
-	if len(args) > 1 || !found {
-		fmt.eprintln("modustool: film [" + FILM_NAMES + "]")
+	command_options, problem := film_arguments_parse(args)
+	if problem != "" {
+		fmt.eprintfln("modustool: %s", problem)
 		return foundation.EXIT_USAGE
 	}
-	if code := build.build_system(build.boot_volumes_of_command("film")); code != 0 {
+	film, _ := film_of_name(command_options.name)
+	build.build_optimization_mode = command_options.optimization
+	build.build_cache_folder_set(build.build_whole ? "" : build.build_cache_resolve(""))
+	filter_modules := command_options.optimization == .None && !build.build_whole
+	if code := build.build_system(build.boot_volumes_of_command("film"), filter_modules = filter_modules); code != 0 {
 		return code
 	}
 	if !foundation.make_folder(FILM_FOLDER) || !foundation.make_folder(SCREENSHOT_FOLDER) {
@@ -648,10 +786,12 @@ film_write :: proc(name: string) -> bool {
 	// Two files from the same timed pictures: the MP4 file for a post on
 	// another site, and the WebM file, which the repository holds when a
 	// news entry names the film.
+	mp4_backend := film_detect_mp4_backend()
 	output := foundation.join(FILM_FOLDER, "/", name, FILM_MP4_SUFFIX)
-	foundation.run(film_mp4_encode_command(list_path, output)) or_return
+	foundation.run(film_mp4_encode_command(list_path, output, mp4_backend)) or_return
+	webm_backend := film_detect_webm_backend()
 	webm_output := foundation.join(FILM_FOLDER, "/", name, FILM_WEBM_SUFFIX)
-	foundation.run(film_webm_encode_command(list_path, webm_output)) or_return
+	foundation.run(film_webm_encode_command(list_path, webm_output, webm_backend)) or_return
 	// The name of the folder is the time of the run, in UTC.
 	year, month, day := time.date(time.now())
 	hour, minute, second := time.clock(time.now())
@@ -676,7 +816,8 @@ film_write :: proc(name: string) -> bool {
 		fmt.eprintfln("modustool: cannot remove %s: %v", folder, remove_error)
 		return false
 	}
-	fmt.printfln("modustool: wrote %s and %s (%d pictures in %d slots of the film, %.1f s), and %s", output, webm_output, len(paths), slot_count, f64(slot_count) / FILM_RATE, target)
+	backend_names := FILM_ENCODER_BACKEND_NAMES
+	fmt.printfln("modustool: wrote %s (%s) and %s (%s) (%d pictures in %d slots of the film, %.1f s), and %s", output, backend_names[mp4_backend], webm_output, backend_names[webm_backend], len(paths), slot_count, f64(slot_count) / FILM_RATE, target)
 	if film_is_named_by_a_news_entry(name) {
 		film_document_write(name, webm_output) or_return
 	}

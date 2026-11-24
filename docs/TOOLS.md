@@ -1977,7 +1977,7 @@ The hang bound ends a wait for a screen that never settles. The test fails, and 
 
 ### The film
 
-`modustool film <name>` builds the main boot volume, starts a test machine, runs the scenario of the film, and writes two files from the same pictures: `build/films/<name>.mp4` and `build/films/<name>.webm`. It copies the MP4 file and three of its pictures, as PNG files, to a new folder of the development log (`<date>_film_<name>`). It copies the WebM file to `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). A film is not a test: no check runs it. The code is `tools/modustool/machine/film.odin`.
+`modustool film [--fast] [<name>]` builds the main boot volume, starts a test machine, runs the scenario of the film, and writes two files from the same pictures: `build/films/<name>.mp4` and `build/films/<name>.webm`. Passing `--fast` (before or after `<name>`) compiles user modules in fast iteration mode (`Optimization_Mode.None`) and builds only the modules needed by the main boot volume; omitting `--fast` uses `-o:speed`. It copies the MP4 file and three of its pictures, as PNG files, to a new folder of the development log (`<date>_film_<name>`). It copies the WebM file to `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). A film is not a test: no check runs it. The code is `tools/modustool/machine/film.odin`.
 
 | Film | What it shows | Scenario |
 |---|---|---|
@@ -2007,7 +2007,7 @@ The films `boot`, `desktop`, `console` and `program` are the chapters of the tut
 
 **The list of the encoder.** After the machine, the tool reads the times in the names and gives the encoder one list (`pictures.ffconcat`): each picture with the time that it stays on the screen. A slot shows the newest picture that was asked for before its end. A slot with no picture of its own shows the picture before, and the pictures after it keep their own slots: a picture that came late shifts nothing, and the film has the speed of the machine, also on a loaded host. The time of a run of slots is the difference of its two ends in microseconds, so no rounding adds from run to run.
 
-**The encoders.** `ffmpeg`, from the development shell, runs twice on the same list. The two commands differ by the arguments of their encoder (`FILM_MP4_ENCODER`, `FILM_WEBM_ENCODER`) and by their output only:
+**The encoders.** `ffmpeg`, from the development shell, runs twice on the same list. Before encoding, the tool probes `h264_nvenc` and `av1_nvenc` once with a 1-frame 256×256 null-muxed encode (`film_detect_mp4_backend`, `film_detect_webm_backend`). When NVIDIA NVENC is available, the tool uses `h264_nvenc` (`-preset p4 -rc vbr -cq 19 -b:v 0 -movflags +faststart`) for MP4 and `av1_nvenc` (`-preset p4 -rc vbr -cq 45 -b:v 0 -an`) for WebM; otherwise it falls back to CPU (`libx264` and `libsvtav1`). The summary line names the chosen backend (`nvenc` or `cpu`) for each file. The two commands differ by the arguments of their encoder (`film_mp4_encoder_args`, `film_webm_encoder_args`) and by their output only:
 
 ```
 ffmpeg -f concat -safe 0 -i build/films/<name>/pictures.ffconcat

@@ -3,6 +3,7 @@ package machine
 import "core:strings"
 import "core:testing"
 import "core:time"
+import "modustool:build"
 
 // The name of a picture of a film is the time when the tool asked for it,
 // and the time is read back from the name: the encoder gets the real time
@@ -150,6 +151,102 @@ the_encoder_of_the_film_of_a_document_is_av1_from_the_same_pictures :: proc(t: ^
 		testing.expect_value(t, command[place], part)
 	}
 	testing.expect_value(t, film_document_path("palette"), "docs/films/palette.webm")
+}
+
+// Both CPU and NVENC encoder backends emit their exact ffmpeg flags, respect
+// explicit CRF/CQ values, and keep the shared filter head intact.
+@(test)
+film_encoder_backends_build_expected_cpu_and_nvenc_commands :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+
+	mp4_cpu := strings.join(film_mp4_encoder_args(.Cpu), " ", context.temp_allocator)
+	testing.expect_value(t, mp4_cpu, "-c:v libx264 -preset slow -crf 18 -movflags +faststart")
+
+	mp4_nvenc := strings.join(film_mp4_encoder_args(.Nvenc), " ", context.temp_allocator)
+	testing.expect_value(t, mp4_nvenc, "-c:v h264_nvenc -preset p4 -rc vbr -cq 19 -b:v 0 -movflags +faststart")
+
+	webm_cpu_default := strings.join(film_webm_encoder_args(.Cpu), " ", context.temp_allocator)
+	testing.expect_value(t, webm_cpu_default, "-c:v libsvtav1 -preset 6 -crf 45 -an")
+
+	webm_cpu_custom := strings.join(film_webm_encoder_args(.Cpu, 38), " ", context.temp_allocator)
+	testing.expect_value(t, webm_cpu_custom, "-c:v libsvtav1 -preset 6 -crf 38 -an")
+
+	webm_nvenc_default := strings.join(film_webm_encoder_args(.Nvenc), " ", context.temp_allocator)
+	testing.expect_value(t, webm_nvenc_default, "-c:v av1_nvenc -preset p4 -rc vbr -cq 45 -b:v 0 -an")
+
+	webm_nvenc_custom := strings.join(film_webm_encoder_args(.Nvenc, 52), " ", context.temp_allocator)
+	testing.expect_value(t, webm_nvenc_custom, "-c:v av1_nvenc -preset p4 -rc vbr -cq 52 -b:v 0 -an")
+
+	mp4_cmd := film_mp4_encode_command("build/films/tutorial/pictures.ffconcat", "build/films/tutorial.mp4", .Nvenc)
+	mp4_joined := strings.join(mp4_cmd, " ", context.temp_allocator)
+	for part in ([]string{"-c:v h264_nvenc", "-preset p4", "-rc vbr", "-cq 19", "-b:v 0", "-movflags +faststart", "-pix_fmt yuv420p", "-colorspace bt709"}) {
+		testing.expectf(t, strings.contains(mp4_joined, part), "NVENC MP4 command has \"%s\": %s", part, mp4_joined)
+	}
+	testing.expect(t, !strings.contains(mp4_joined, "libx264") && !strings.contains(mp4_joined, "av1_nvenc"))
+
+	webm_cmd := film_webm_encode_command("build/films/tutorial/pictures.ffconcat", "build/films/tutorial.webm", .Nvenc, 42)
+	webm_joined := strings.join(webm_cmd, " ", context.temp_allocator)
+	for part in ([]string{"-c:v av1_nvenc", "-preset p4", "-rc vbr", "-cq 42", "-b:v 0", "-an", "-pix_fmt yuv420p", "-colorspace bt709"}) {
+		testing.expectf(t, strings.contains(webm_joined, part), "NVENC WebM command has \"%s\": %s", part, webm_joined)
+	}
+	testing.expect(t, !strings.contains(webm_joined, "libsvtav1") && !strings.contains(webm_joined, "faststart"))
+
+	for part, place in mp4_cmd[:12] {
+		testing.expect_value(t, webm_cmd[place], part)
+	}
+
+	probe := strings.join(film_nvenc_probe_command("av1_nvenc"), " ", context.temp_allocator)
+	for part in ([]string{"ffmpeg", "-f lavfi", "256x256", "-frames:v 1", "-c:v av1_nvenc", "-f null -"}) {
+		testing.expectf(t, strings.contains(probe, part), "NVENC probe command has \"%s\": %s", part, probe)
+	}
+}
+
+// film_arguments_parse accepts --fast before or after an optional film name
+// and refuses duplicate flags, unknown flags, unknown film names, and extra
+// positional arguments.
+@(test)
+film_arguments_parse_handles_fast_flag_and_refuses_bad_arguments :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+
+	opts, problem := film_arguments_parse(nil)
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, opts.name, "terminal")
+	testing.expect_value(t, opts.optimization, build.Optimization_Mode.Speed)
+
+	opts, problem = film_arguments_parse([]string{"--fast"})
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, opts.name, "terminal")
+	testing.expect_value(t, opts.optimization, build.Optimization_Mode.None)
+
+	opts, problem = film_arguments_parse([]string{"palette"})
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, opts.name, "palette")
+	testing.expect_value(t, opts.optimization, build.Optimization_Mode.Speed)
+
+	opts, problem = film_arguments_parse([]string{"--fast", "tutorial"})
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, opts.name, "tutorial")
+	testing.expect_value(t, opts.optimization, build.Optimization_Mode.None)
+
+	opts, problem = film_arguments_parse([]string{"tutorial", "--fast"})
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, opts.name, "tutorial")
+	testing.expect_value(t, opts.optimization, build.Optimization_Mode.None)
+
+	refused := [?][]string{
+		{"--fast", "--fast"},
+		{"--fast", "palette", "--fast"},
+		{"--unknown"},
+		{"palette", "--unknown"},
+		{"not_a_film"},
+		{"--fast", "not_a_film"},
+		{"palette", "heron"},
+		{"--fast", "palette", "heron"},
+	}
+	for bad in refused {
+		_, err := film_arguments_parse(bad)
+		testing.expectf(t, err != "", "film_arguments_parse must refuse %v", bad)
+	}
 }
 
 @(private = "file")
