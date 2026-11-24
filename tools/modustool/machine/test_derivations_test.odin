@@ -386,6 +386,7 @@ dropped_file_readers := [?]string {
 	"boot_volumes_kept",
 	"module_compile",
 	"module_compile_command",
+	"module_cache_store",
 	"module_convert",
 	"module_dependency_file",
 	"module_linked_file",

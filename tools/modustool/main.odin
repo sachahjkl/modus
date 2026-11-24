@@ -119,7 +119,7 @@ COMMANDS :: [?]foundation.Command {
 	// ```
 	// nix develop -c modustool build 8
 	// ```
-	{name = "build", about = "the modules, the boot image and the boot program, as " + build.BOOT_PROGRAM + "; one host process for each module, as many at once as the processors, or `build <host_processes>`; a module or a boot volume whose inputs are the same is kept; `build whole`: ignore the build records and build all; `build --fast [volume]`: build user modules without full optimization, and build only the named boot volume when given", run = build.run_build},
+	{name = "build", about = "the modules, the boot image and the boot program, as " + build.BOOT_PROGRAM + "; one host process for each module, as many at once as the processors, or `build <host_processes>`; a module or a boot volume whose inputs are the same is kept; `build whole`: ignore the build records and build all; `build --fast [--cache <dir>] [volume]`: build user modules without full optimization, and when a volume is named, build only the modules and boot image needed by that volume (optional shared host module cache via `--cache <dir>` or `MODUS_BUILD_CACHE`)", run = build.run_build},
 	// Builds one module of the table of modules in this process, with the
 	// options of one build.
 	//
@@ -236,7 +236,7 @@ COMMANDS :: [?]foundation.Command {
 	// ```
 	// nix develop -c modustool test network
 	// ```
-	{name = "test", about = "build, then run the parts of the machine test, several at once: start each machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test [--fast] <part>`: one part only (with `--fast`, build user modules without full optimization and only the boot volumes of the part); `test <part> from <folder>`: one part on the test inputs of a folder, with no build; `test [--fast] <part> steps <first> to <last> [of <machine>] [with <first> to <last>]...`: the boot steps, the setup steps and the steps of a range of one machine", run = run_test},
+	{name = "test", about = "build, then run the parts of the machine test, several at once: start each machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test [--fast] [--no-shots] [--cache <dir>] <part>`: one part only (`--fast`: user modules without full optimization and only the modules and boot volumes of the part; `--no-shots`: skip QMP screenshot capture steps; `--cache <dir>` or `MODUS_BUILD_CACHE`: opt-in shared host module cache); `test <part> from <folder>`: one part on the test inputs of a folder, with no build; `test [--fast] [--no-shots] <part> steps <first> to <last> [of <machine>] [with <first> to <last>]...`: the boot steps, the setup steps and the steps of a range of one machine", run = run_test},
 	// Copies the test inputs of the build folder (the files of a whole build
 	// that the machine test reads) into `<folder>/test_inputs`, and writes
 	// the names of the test parts into `<folder>/test_parts.json`: the
@@ -858,34 +858,45 @@ run_machine :: proc(args: []string) -> int {
 // run_test runs the parts of the machine test (test_parts.odin): one part,
 // or every part, several at once.
 run_test :: proc(args: []string) -> int {
-	if problem := machine.test_arguments_problem(args); problem != "" {
+	options, problem := machine.test_arguments_parse(args)
+	if problem != "" {
 		fmt.eprintfln("modustool: %s", problem)
 		return foundation.EXIT_USAGE
 	}
-	optimization, part_args := machine.test_arguments_optimization(args)
-	build.build_optimization_mode = optimization
+	build.build_optimization_mode = options.optimization
 	// The times of the test are measures: the report never changes the result.
 	test_started := time.tick_now()
 	build_duration: time.Duration
-	inputs_folder, inputs_given := machine.test_arguments_give_inputs(args)
+	inputs_folder, inputs_given := options.inputs_folder, options.has_inputs
 	if inputs_given {
 		// A part derivation of the flake: the part on the test inputs of
 		// the whole build, with no build of its own.
-		part, _ := machine.test_part_find(part_args[0])
+		build.build_cache_folder = ""
+		build.build_last_module_filter_set(nil)
+		part, _ := machine.test_part_find(options.part_name)
 		if !machine.test_inputs_take(inputs_folder, part^) {
 			return foundation.EXIT_FAILURE
 		}
 	} else {
+		// Whole builds (such as `modustool check`) never use the shared cache.
+		build.build_cache_folder = build.build_whole ? "" : build.build_cache_resolve(options.cache_folder)
+		filter_modules := false
+		extra_modules: []string = nil
+		if options.optimization == .None && options.part_name != "" && !build.build_whole {
+			filter_modules, extra_modules = machine.test_part_fast_filter(options.part_name)
+		}
 		// One part boots only its own boot volumes: the build builds those.
-		build_code := build.build_system(machine.boot_volumes_of_test(args))
+		build_code := build.build_system(machine.boot_volumes_of_test(args), filter_modules = filter_modules, extra_modules = extra_modules)
 		build_duration = time.tick_since(test_started)
 		if build_code != 0 {
 			return build_code
 		}
 		// A wait on a fact that no module renders fails here, not at the
 		// end of a hang bound. A part derivation has no source of the tool:
-		// the host checks of the flake run this check there.
-		if !checks.scenario_waits_check() {
+		// the host checks of the flake run this check there. Filtered fast
+		// iteration builds omit modules of other parts, so skip the global
+		// wait check here while keeping it on every full build.
+		if !filter_modules && !checks.scenario_waits_check() {
 			return foundation.EXIT_FAILURE
 		}
 	}
@@ -893,9 +904,9 @@ run_test :: proc(args: []string) -> int {
 		return foundation.EXIT_FAILURE
 	}
 	parts := machine.test_parts[:]
-	if len(part_args) >= 1 {
+	if options.part_name != "" {
 		for part, place in machine.test_parts {
-			if part.name == part_args[0] {
+			if part.name == options.part_name {
 				parts = machine.test_parts[place:][:1]
 			}
 		}
@@ -912,7 +923,7 @@ run_test :: proc(args: []string) -> int {
 	step_range, range_given := machine.test_arguments_give_step_range(args)
 	defer delete(step_range.setup)
 	defer delete(step_range.machine)
-	runs, passed := machine.test_parts_run(parts, at_once, step_range = step_range)
+	runs, passed := machine.test_parts_run(parts, at_once, step_range = step_range, skip_shots = options.skip_shots)
 	defer {
 		for &part_run in runs {
 			machine.test_part_run_free(&part_run)
@@ -1214,6 +1225,7 @@ run_check :: proc(args: []string) -> int {
 	// The full check proves the build: it keeps no output of an earlier build.
 	build.build_whole = true
 	build.build_optimization_mode = .Speed
+	build.build_cache_folder = ""
 	if !foundation.run({"odin", "check", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG}) {
 		return foundation.EXIT_FAILURE
 	}

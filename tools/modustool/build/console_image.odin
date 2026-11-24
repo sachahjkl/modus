@@ -116,6 +116,79 @@ qemu_console_boot_image_of :: proc(base: []u8) -> (image: []u8, problem: string)
 	return boot_image_encode(files, module_count), ""
 }
 
+// qemu_console_wanted_modules computes the closed set of module names needed by
+// the QEMU console image (QEMU_CONSOLE_MODULES plus transitive imports) and
+// rejects any module in QEMU_CONSOLE_REFUSED_MODULES.
+qemu_console_wanted_modules :: proc(allocator := context.temp_allocator) -> (wanted: map[string]bool, problem: string) {
+	wanted = make(map[string]bool, allocator)
+	console_modules := QEMU_CONSOLE_MODULES
+	for name in console_modules {
+		wanted[name] = false
+	}
+	for added := true; added; {
+		added = false
+		for row in foundation.module_builds {
+			if row.name not_in wanted {
+				continue
+			}
+			for import_name in row.imports {
+				if import_name not_in wanted {
+					wanted[import_name] = false
+					added = true
+				}
+			}
+		}
+	}
+	refused := QEMU_CONSOLE_REFUSED_MODULES
+	for name in refused {
+		if name in wanted {
+			delete(wanted)
+			return nil, fmt.tprintf("the QEMU console image would hold the module %s", name)
+		}
+	}
+	return wanted, ""
+}
+
+// qemu_console_boot_image_write_direct encodes build/boot_console.image
+// directly from the built module files of QEMU_CONSOLE_MODULES and their
+// transitive imports without requiring build/boot.image. The encoded bytes are
+// identical to qemu_console_boot_image_of(boot.image).
+qemu_console_boot_image_write_direct :: proc() -> bool {
+	wanted, wanted_problem := qemu_console_wanted_modules(context.temp_allocator)
+	if wanted_problem != "" {
+		fmt.eprintfln("modustool: console image: %s", wanted_problem)
+		return false
+	}
+	list := make([dynamic]Image_File, context.temp_allocator)
+	for row in foundation.module_builds {
+		if !foundation.module_in_boot_image(row) || row.name not_in wanted {
+			continue
+		}
+		bytes := foundation.read_file(foundation.module_path(row.name)) or_return
+		wanted[row.name] = true
+		append(&list, Image_File{name = row.name, file = bytes})
+	}
+	module_count := len(list)
+	for name, found in wanted {
+		if !found {
+			fmt.eprintfln("modustool: console image: it holds no module %s", name)
+			return false
+		}
+	}
+	lists, list_problem := browser_machine_console_list_files(context.temp_allocator)
+	if list_problem != "" {
+		fmt.eprintfln("modustool: console image: %s", list_problem)
+		return false
+	}
+	append(&list, ..lists[:])
+	image := boot_image_encode(list[:], module_count)
+	if err := os.write_entire_file(BOOT_IMAGE_CONSOLE, image); err != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", BOOT_IMAGE_CONSOLE, err)
+		return false
+	}
+	return true
+}
+
 // qemu_console_boot_image_write writes build/boot_console.image from
 // build/boot.image.
 qemu_console_boot_image_write :: proc() -> bool {

@@ -1269,10 +1269,13 @@ text_until_zero :: proc(bytes: []u8, offset: u64) -> string {
 // debug_image_write writes the debug image: the debug object of each module
 // of the table, in the form of a boot image, each one named after its
 // module. It prints its size: the boot program reads it at each start.
-debug_image_write :: proc() -> bool {
+debug_image_write :: proc(module_filter: []bool = nil) -> bool {
 	files := make([dynamic]Image_File, context.temp_allocator)
 	procedures, rows, types, globals, variables, ranges := 0, 0, 0, 0, 0, 0
-	for build in foundation.module_builds {
+	for build, index in foundation.module_builds {
+		if !module_filter_allows(module_filter, index) {
+			continue
+		}
 		object := foundation.read_file(debug_object_path(build.name)) or_return
 		parts, fault := debug_object.tables(object)
 		if fault != .None {

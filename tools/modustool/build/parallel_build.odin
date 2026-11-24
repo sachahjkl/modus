@@ -146,7 +146,7 @@ module_step_host_processes_run :: proc(tool_path: string, indexes: []int, step: 
 // In a level, the compile steps run first, all at once, then the
 // conversions: each step has its own process and its own time in the
 // measure of the build.
-build_modules_in_parallel :: proc() -> bool {
+build_modules_in_parallel :: proc(module_filter: []bool = nil) -> bool {
 	// Each build of each command passes here, in the process that starts
 	// the module processes: the rule of the imports is read one time,
 	// before the first compiler starts (library_imports_check.odin).
@@ -160,7 +160,9 @@ build_modules_in_parallel :: proc() -> bool {
 	modules_started := time.tick_now()
 	// Before the first compiler starts: the hash of each source.
 	build_inputs_prepare()
+	target_count := module_filter_count(module_filter)
 	kept_count := 0
+	cached_count := 0
 	converted_count := 0
 	built_count := 0
 	step_names := strings.builder_make(context.temp_allocator)
@@ -177,7 +179,7 @@ build_modules_in_parallel :: proc() -> bool {
 	// The folder that every module process writes under exists before the
 	// first process starts.
 	foundation.make_folder(foundation.module_build_folder) or_return
-	// The modules whose steps of this build are done, kept ones too.
+	// The modules whose steps of this build are done, kept and cached ones too.
 	done_count := 0
 	highest := 0
 	for level in levels {
@@ -190,7 +192,7 @@ build_modules_in_parallel :: proc() -> bool {
 		convert_indexes := make([dynamic]int, context.temp_allocator)
 		convert_steps := make([dynamic]Module_Step, context.temp_allocator)
 		for level, index in levels {
-			if level != level_number {
+			if level != level_number || !module_filter_allows(module_filter, index) {
 				continue
 			}
 			step, reason := module_step_of_build(foundation.module_builds[index])
@@ -200,8 +202,18 @@ build_modules_in_parallel :: proc() -> bool {
 				done_count += 1
 				continue
 			case .Converted:
+				if module_cache_restore(foundation.module_builds[index]) {
+					cached_count += 1
+					done_count += 1
+					continue
+				}
 				converted_count += 1
 			case .Built:
+				if module_cache_restore(foundation.module_builds[index]) {
+					cached_count += 1
+					done_count += 1
+					continue
+				}
 				built_count += 1
 				append(&compile_indexes, index)
 			}
@@ -233,24 +245,33 @@ build_modules_in_parallel :: proc() -> bool {
 			done_count += 1
 			if !module_records_write(foundation.module_builds[index], convert_steps[place]) && build_inputs.usable {
 				fmt.printfln("modustool: no build record for %s: the compiler gave no list of its files, or an input changed during the build; the next build builds it again", foundation.module_builds[index].name)
+			} else {
+				_ = module_cache_store(foundation.module_builds[index], convert_steps[place])
 			}
 		}
 		build_measure.record_writes += time.tick_since(writes_started)
 		if !compiled || !converted {
-			fmt.eprintfln("modustool: %d of %d modules are not built, because a step of a module failed", len(foundation.module_builds) - done_count, len(foundation.module_builds))
+			fmt.eprintfln("modustool: %d of %d modules are not built, because a step of a module failed", target_count - done_count, target_count)
 			return false
 		}
 	}
 	build_measure.modules_built += built_count
 	build_measure.modules_converted += converted_count
 	build_measure.modules_kept += kept_count
+	build_measure.modules_cached += cached_count
 	build_measure.modules += time.tick_since(modules_started)
 	build_measure_floors()
+	cached_part := cached_count > 0 ? fmt.tprintf(", %d cached", cached_count) : ""
+	skipped_part := target_count < len(foundation.module_builds) ? fmt.tprintf(" (%d not needed by this volume)", len(foundation.module_builds) - target_count) : ""
 	if built_count + converted_count == 0 {
-		fmt.printfln("modustool: %d of %d modules kept: the inputs of each one are the same, and its outputs have their recorded hashes", kept_count, len(foundation.module_builds))
-	} else if kept_count + converted_count > 0 || !build_whole {
+		if cached_count > 0 {
+			fmt.printfln("modustool: %d of %d modules kept%s%s: no compiler ran", kept_count, target_count, cached_part, skipped_part)
+		} else {
+			fmt.printfln("modustool: %d of %d modules kept%s: the inputs of each one are the same, and its outputs have their recorded hashes", kept_count, target_count, skipped_part)
+		}
+	} else if kept_count + cached_count + converted_count > 0 || !build_whole || target_count < len(foundation.module_builds) {
 		more := built_count + converted_count > BUILT_MODULE_NAMES_MOST ? fmt.tprintf(", and %d more", built_count + converted_count - BUILT_MODULE_NAMES_MOST) : ""
-		fmt.printfln("modustool: %d of %d modules kept, %d converted, %d built: %s%s", kept_count, len(foundation.module_builds), converted_count, built_count, strings.to_string(step_names), more)
+		fmt.printfln("modustool: %d of %d modules kept%s, %d converted, %d built%s: %s%s", kept_count, target_count, cached_part, converted_count, built_count, skipped_part, strings.to_string(step_names), more)
 	}
 	return true
 }
