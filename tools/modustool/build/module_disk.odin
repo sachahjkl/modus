@@ -468,6 +468,10 @@ data_disk_store_put :: proc(disk: ^Module_Disk, store: Data_Disk_Store, disk_siz
 	copy(cell.name[:format.NAME_CAPACITY - 1], store.name)
 	cell.limit = store.limit
 	cell.used = 1 + nodes.nodes + store_block.current_blocks
+	if store.limit > 0 && cell.used > store.limit {
+		fmt.eprintfln("modustool: the store %s uses %d blocks, past its limit of %d blocks", store.name, cell.used, store.limit)
+		return {}, false
+	}
 	cell.store = {block = store_number, check = format.check(store_bytes)}
 	return cell, true
 }

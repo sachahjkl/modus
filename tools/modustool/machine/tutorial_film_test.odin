@@ -212,6 +212,15 @@ peer_cache_answers_arp_and_forwards_udp_bidirectionally :: proc(t: ^testing.T) {
 	testing.expect(t, r_err == nil && n == len(payload))
 	testing.expect(t, slice.equal(got[:n], payload))
 
+	// Stray loopback datagram from another sender is dropped, never injected.
+	stray_sock, stray_err := net.make_bound_udp_socket(net.IP4_Loopback, 0)
+	if testing.expect(t, stray_err == nil) {
+		defer net.close(stray_sock)
+		cache_ep, cache_ep_err := net.bound_endpoint(peer.cache.socket)
+		testing.expect(t, cache_ep_err == nil)
+		_, _ = net.send_udp(stray_sock, transmute([]u8)string("spoofed"), cache_ep)
+	}
+
 	reply_msg := transmute([]u8)string("cache-reply")
 	_, s_err := net.send_udp(echo_sock, reply_msg, from)
 	testing.expect(t, s_err == nil)
@@ -233,6 +242,7 @@ peer_cache_answers_arp_and_forwards_udp_bidirectionally :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, relayed, "peer_cache relayed UDP reply back to machine")
 	testing.expect_value(t, peer.cache.to_machine, 1)
+	testing.expect_value(t, peer.cache.wrong_sender, 1)
 }
 
 @(private = "file")

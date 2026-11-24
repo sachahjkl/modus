@@ -20,12 +20,13 @@ import "modus:text_model"
 #assert(core.SCROLL_BAR_THICKNESS == interface.SCROLL_BAR_THICKNESS)
 
 // Plan value: 16 MiB working memory, 2 processes (db_browser + isolated sqlite
-// child call host), 2 threads (UI + worker), resizable surface up to 1280x960.
+// child call host), 3 threads (UI + worker + 1 thread for sqlite_host child),
+// resizable surface up to 1280x960.
 // Literals so modustool reads the budget directly without evaluating imports.
 MODULE_BUDGET :: system.Stated_Budget {
 	working_memory_pages = 4096,
 	processes            = 2,
-	threads              = 2,
+	threads              = 3,
 	window_width         = 1280,
 	window_height        = 960,
 }

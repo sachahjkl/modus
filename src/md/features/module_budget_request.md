@@ -67,7 +67,7 @@ The rule of the division (`system.start_list_sizes`) runs once, before the first
 
 **The growth is not reserved, and says so.** The pages between the size and the ceiling come from one pool, first come, first served. Three rules reduce what a refusal tells: it carries no amount; each process gets at most one decision in each period, a value of the plan of principal 0 whose default is one second, which bounds the channel to about one bit in a second; each growth and each refusal is a log fact that the principal sees. A row can give a growth reserve, pages that the starter holds for that row alone, with 0 as its default: a growth inside its reserve reads no pool and tells nothing.
 
-**The class of the disk processes.** Its row gives its pages, its slots and its processor time. The defaults: the pages of two disk processes at the least ceiling of the machine; 4 processes and 4 threads each, so the processes of the image keep the other slots; the default share of the processors, a quarter. Its pages return to the root service never; a row that lowers the class takes effect when the class holds no process.
+**The class of the disk processes.** Its row gives its pages, its slots and its processor time. The defaults: the pages of two disk processes at the least ceiling of the machine; 8 processes (up to 4 disk processes with 1 isolated child each) and 16 threads (up to 4 threads each), so the processes of the image keep the other slots; the default share of the processors, a quarter. Its pages return to the root service never; a row that lowers the class takes effect when the class holds no process.
 
 ## The refused forms
 

@@ -337,6 +337,10 @@ data_disk_encode_stores_supports_multiple_stores_and_nested_trees :: proc(t: ^te
 	_, ok = build.data_disk_encode_stores(empty_obj[:], 64 * format.BLOCK_SIZE)
 	testing.expect(t, !ok, "zero-byte object is refused")
 
+	over_quota := [?]build.Data_Disk_Store{{name = "tiny_quota", limit = 2, objects = {{name = "big", bytes = test_file_bytes(4 * format.BLOCK_SIZE, 9)}}}}
+	_, ok = build.data_disk_encode_stores(over_quota[:], 64 * format.BLOCK_SIZE)
+	testing.expect(t, !ok, "store exceeding its own block limit is refused")
+
 	// Valid multi-store disk with two levels of nested trees.
 	root_file := test_file_bytes(512, 11)
 	core_file := test_file_bytes(format.BLOCK_SIZE + 123, 22)

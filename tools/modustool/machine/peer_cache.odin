@@ -29,6 +29,7 @@ Peer_Cache :: struct {
 	to_cache:     int,
 	to_machine:   int,
 	too_long:     int,
+	wrong_sender: int,
 }
 
 // peer_cache_start binds a non-blocking loopback UDP socket for forwarding
@@ -123,8 +124,16 @@ peer_cache_datagram :: proc(peer: ^Peer, machine_port: u16, data: []u8) {
 	}
 }
 
+@(private = "file")
+peer_cache_same_endpoint :: proc(first, second: net.Endpoint) -> bool {
+	a, a_ok := first.address.(net.IP4_Address)
+	b, b_ok := second.address.(net.IP4_Address)
+	return first.port == second.port && a_ok && b_ok && a == b
+}
+
 // peer_cache_tick drains pending UDP replies from the host cache-serve QUIC
 // socket and sends them back to the machine as Ethernet frames from 10.0.2.100:5010.
+// Datagrams from any endpoint other than cache.target are dropped and counted.
 peer_cache_tick :: proc(peer: ^Peer) {
 	cache := &peer.cache
 	if !cache.active || cache.machine_port == 0 {
@@ -132,9 +141,13 @@ peer_cache_tick :: proc(peer: ^Peer) {
 	}
 	buffer: [65536]u8
 	for _ in 0 ..< PEER_CACHE_PER_TICK {
-		count, _, err := net.recv_udp(cache.socket, buffer[:])
+		count, from, err := net.recv_udp(cache.socket, buffer[:])
 		if err != nil || count <= 0 {
 			return
+		}
+		if !peer_cache_same_endpoint(from, cache.target) {
+			cache.wrong_sender += 1
+			continue
 		}
 		if count > PEER_CACHE_DATA_LIMIT {
 			cache.too_long += 1
