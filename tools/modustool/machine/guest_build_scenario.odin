@@ -30,11 +30,21 @@ RECIPES_STORE_BLOCKS :: 16384
 
 @(private = "file")
 hexadecimal :: proc(hash: blake3.Hash) -> string {
-	builder := strings.builder_make(context.temp_allocator)
+	builder := strings.builder_make(context.allocator)
 	for value in hash {
 		fmt.sbprintf(&builder, "%02x", value)
 	}
 	return strings.to_string(builder)
+}
+
+// guest_build_owned formats a step string on the heap and tracks it so
+// scenario_run's per-step free_all(context.temp_allocator) never frees
+// step text still needed by later steps.
+@(private = "file")
+guest_build_owned :: proc(owned: ^[dynamic]string, format: string, args: ..any) -> string {
+	text := fmt.aprintf(format, ..args)
+	append(owned, text)
+	return text
 }
 
 guest_build_tests_run :: proc(part: ^Test_Part_Run) -> bool {
@@ -47,23 +57,32 @@ guest_build_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		return false
 	}
 	recipe := hexadecimal(test.recipe_hash)
+	defer delete(recipe)
 	expected := hexadecimal(test.expected_output)
+	defer delete(expected)
 	fmt.printfln("modustool: %s: the store recipes holds the kernel, %d bytes, the archive of a build, %d bytes, an input and the recipe %s, whose output must be %s", TEST_DISK_GUEST_BUILD, len(kernel), len(archive), recipe, expected)
 	gives, reason := host_gives_guest_support()
+	owned: [dynamic]string
+	defer {
+		for text in owned {
+			delete(text)
+		}
+		delete(owned)
+	}
 	steps := make([dynamic]Step)
 	defer delete(steps)
-	append(&steps, Step{kind = .Wait, text = fmt.tprintf("storage: ok, generation 2: 1 stores, %d objects", len(test.objects)), any_order = true})
+	append(&steps, Step{kind = .Wait, text = guest_build_owned(&owned, "storage: ok, generation 2: 1 stores, %d objects", len(test.objects)), any_order = true})
 	append(&steps, Step{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true})
 	append(&steps, Step{kind = .Front, text = "console"})
-	append(&steps, Step{kind = .Type, text = fmt.tprintf("recipes.build_stored(\"%s\", 2)", recipe)})
-	append(&steps, Step{kind = .Wait, text = fmt.tprintf("recipes: the guest build of the recipe %s started", recipe), fails_on = "recipes: the guest build was not started"})
+	append(&steps, Step{kind = .Type, text = guest_build_owned(&owned, "recipes.build_stored(\"%s\", 2)", recipe)})
+	append(&steps, Step{kind = .Wait, text = guest_build_owned(&owned, "recipes: the guest build of the recipe %s started", recipe), fails_on = "recipes: the guest build was not started"})
 	if !gives {
 		fmt.printfln("modustool: the part guest_build runs NO guest on this host: %s; the machine checks only that the service says that no guest runs", reason)
 		append(&steps, Step{kind = .Wait, text = "recipes: Guest_Run gave Unsupported"})
 	} else {
 		fmt.printfln("modustool: the part guest_build runs a guest: %s", reason)
 		append(&steps, Step{kind = .Fact, process = "recipes", fact = "recipes_service.Guest_Build_Ended", condition = "exit_code = 0"})
-		append(&steps, Step{kind = .Wait, text = fmt.tprintf("recipes: the recipe %s is realised with the output %s", recipe, expected), fails_on = "recipes: the guest build was refused before its run"})
+		append(&steps, Step{kind = .Wait, text = guest_build_owned(&owned, "recipes: the recipe %s is realised with the output %s", recipe, expected), fails_on = "recipes: the guest build was refused before its run"})
 	}
 	append(&steps, Step{kind = .Front, text = "console"})
 	append(&steps, Step{kind = .Type, text = "shutdown()"})

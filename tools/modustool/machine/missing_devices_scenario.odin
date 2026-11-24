@@ -23,8 +23,6 @@ import "modustool:foundation"
 
 TEST_OUTPUT_MISSING_DEVICES :: foundation.BUILD_FOLDER + "/test_output_missing_devices_%d.txt"
 
-// The line of the root service on a machine with no screen.
-NO_SCREEN_LINE :: "root: no screen: a console and windows only on a screen of memory that the start list gives; the other services start"
 // The line of the input service on a machine with no PS/2 controller.
 NO_PS2_CONTROLLER_LINE :: "input: no PS/2 controller: no keyboard and no mouse"
 // The line of the root service when the two reads of the start of the
