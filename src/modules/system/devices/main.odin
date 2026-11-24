@@ -55,23 +55,25 @@ region_range_valid :: proc "contextless" (offset: u64, length: u64) -> bool {
 	return offset <= service_region_bytes - length
 }
 
-// status writes aggregate devices service counters into out.
+// status writes aggregate devices service counters into result.
 @(export)
-status :: proc "c" (out: ^Devices_Status, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	if out == nil {
-		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+status :: proc "c" (result: ^Devices_Status, error: ^errors.Error_Record) -> call_outcome.Call_Outcome {
+	if result == nil {
+		outcome, _ := call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+		return outcome
 	}
 	if !service_state.initialized {
-		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
+		outcome, _ := call_outcome.fail(error, .Wrong_State, .State, .Requests)
+		return outcome
 	}
-	out^ = {
+	result^ = {
 		identity_count  = i64(service_state.counters.identity_count),
 		active_bindings = i64(service_state.counters.active_bindings),
 		total_binds     = i64(service_state.counters.total_binds),
 		total_releases  = i64(service_state.counters.total_releases),
 		total_refusals  = i64(service_state.counters.total_refusals),
 	}
-	return .Succeeded, 0
+	return .Succeeded
 }
 
 @(private = "file")

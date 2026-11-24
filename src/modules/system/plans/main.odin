@@ -41,22 +41,24 @@ fail :: proc "contextless" (text: string) -> ! {
 	system.stop(.Failed)
 }
 
-// status writes aggregate plans service counters into out.
+// status writes aggregate plans service counters into result.
 @(export)
-status :: proc "c" (out: ^Plans_Status, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	if out == nil {
-		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+status :: proc "c" (result: ^Plans_Status, error: ^errors.Error_Record) -> call_outcome.Call_Outcome {
+	if result == nil {
+		outcome, _ := call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+		return outcome
 	}
 	if !service_state.initialized {
-		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
+		outcome, _ := call_outcome.fail(error, .Wrong_State, .State, .Requests)
+		return outcome
 	}
-	out^ = {
+	result^ = {
 		total_diffs     = i64(service_state.counters.total_diffs),
 		total_applies   = i64(service_state.counters.total_applies),
 		total_rollbacks = i64(service_state.counters.total_rollbacks),
 		total_refusals  = i64(service_state.counters.total_refusals),
 	}
-	return .Succeeded, 0
+	return .Succeeded
 }
 
 // current_generation returns the active applied plan generation of the

@@ -975,7 +975,7 @@ signed_grant_holds_for_a_day_and_refuses_expired_revoked_and_forged :: proc(t: ^
 	long.expires_at_ms = now + 30 * machine_mesh.MAX_SHORT_GRANT_LIFE_MS
 	sign_grant(&long, &signing_key)
 	revocations := machine_mesh.Revocation_List{grantor_root_public_key = root_public, signer_public_key = signing_public, epoch = 1}
-	revocation_bytes: [machine_mesh.MAX_REVOCATION_LIST_SIGNING_BYTES]u8
+	revocation_bytes: [machine_mesh.INLINE_REVOCATION_LIST_SIGNING_BYTES]u8
 	revocation_written, _ := machine_mesh.revocation_list_signing_bytes(&revocations, revocation_bytes[:])
 	ed25519.sign(&signing_key, revocation_bytes[:revocation_written], revocations.signature[:])
 	testing.expect_value(t, machine_mesh.revocation_list_apply_update(&home.peer.machine_list.list, &home.peer.revocations, false, &revocations, verify_ed25519), machine_mesh.Revocation_List_Status.Accepted)

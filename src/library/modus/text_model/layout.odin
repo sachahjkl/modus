@@ -17,11 +17,11 @@ TAB_WIDTH :: 4 // A tab goes to the next column that is a multiple of it.
 COLUMNS_LEAST :: TAB_WIDTH
 COLUMNS_LIMIT :: 1024
 
-// Each row starts at a place after the start of the row before it: a
-// character that does not fit starts a new row only when its row holds a
-// byte already, and a word moves to the next row only from after a space
-// of its row. Each other row starts after a line end. So a text of
-// TEXT_CAPACITY bytes has at most TEXT_CAPACITY + 1 rows.
+// Inline capacity for display rows matching TEXT_CAPACITY: each row holds at
+// least one byte (and an empty text has one row), so a document within the
+// 32 KiB inline text tier needs at most TEXT_CAPACITY + 1 rows. Past this
+// threshold layout_ensure_capacity moves to external_rows and increments
+// tier_moves.
 ROW_CAPACITY :: TEXT_CAPACITY + 1
 
 // Where a line that is longer than a row goes on the next row.
@@ -62,6 +62,7 @@ Layout :: struct {
 	line_count:    int,
 	columns:       int, // The cells of a row, of the last layout that was not refused.
 	wrap:          Wrap,
+	tier_moves:    u64, // Visible counter of moves onto or growths of external_rows.
 }
 
 // layout_init_buffer attaches a caller-supplied row buffer and optional
@@ -73,6 +74,7 @@ layout_init_buffer :: proc "contextless" (layout: ^Layout, buffer: []Row, grow: 
 	layout.grow_data = grow_data
 	layout.row_count = 0
 	layout.line_count = 0
+	layout.tier_moves = 0
 }
 
 @(private)
@@ -106,6 +108,7 @@ layout_ensure_capacity :: proc "contextless" (layout: ^Layout, needed: int, used
 	}
 	layout.external_rows = grown
 	layout.rows = grown
+	layout.tier_moves += 1
 	return true
 }
 

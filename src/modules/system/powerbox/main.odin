@@ -157,16 +157,18 @@ pending_count :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcom
 	return .Succeeded, i64(service_state.counters.pending_dialogs)
 }
 
-// status writes the aggregate powerbox counters into out.
+// status writes the aggregate powerbox counters into result.
 @(export)
-status :: proc "c" (out: ^Powerbox_Status, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	if out == nil {
-		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+status :: proc "c" (result: ^Powerbox_Status, error: ^errors.Error_Record) -> call_outcome.Call_Outcome {
+	if result == nil {
+		outcome, _ := call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+		return outcome
 	}
 	if service_state.next_dialog_serial == 0 {
-		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
+		outcome, _ := call_outcome.fail(error, .Wrong_State, .State, .Requests)
+		return outcome
 	}
-	out^ = {
+	result^ = {
 		pending_dialogs        = i64(service_state.counters.pending_dialogs),
 		total_requests         = i64(service_state.counters.total_requests),
 		total_dialogs_shown    = i64(service_state.counters.total_dialogs_shown),
@@ -175,7 +177,7 @@ status :: proc "c" (out: ^Powerbox_Status, error: ^errors.Error_Record) -> (outc
 		total_refused_requests = i64(service_state.counters.total_refused_requests),
 		total_expired_dialogs  = i64(service_state.counters.total_expired_dialogs),
 	}
-	return .Succeeded, 0
+	return .Succeeded
 }
 
 // region_range_valid checks that [offset, offset + length) lies wholly within

@@ -936,7 +936,7 @@ Start_Grant_Set_Handle :: enum u8 {
 	Device_Ring, // Data_Disk, Scratch_Disk, Network_Device or Sound_Device: one device service.
 	Date_Page, // Clock.
 	Date_Ports, // Clock.
-	Storage_Ring, // Store, without Acts_For_Principal: its private store at its start.
+	Storage_Ring, // Store, without Root_Ring: its private store at its start.
 	Storage_Region,
 	Storage_Service,
 	Replacements,
@@ -987,7 +987,7 @@ start_grant_set_handles :: proc "contextless" (start_grant_set: bit_set[start_gr
 	if .Clock in start_grant_set {
 		handles += {.Date_Page, .Date_Ports}
 	}
-	if .Store in start_grant_set && .Acts_For_Principal not_in start_grant_set {
+	if .Store in start_grant_set && .Root_Ring not_in start_grant_set {
 		handles += {.Storage_Ring, .Storage_Region, .Storage_Service}
 	}
 	if .Replacements in start_grant_set {

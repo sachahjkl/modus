@@ -522,6 +522,335 @@ palette_line_name_valid :: proc "contextless" (name: string) -> bool {
 	return true
 }
 
+// palette_is_optional_setter says if a command is an export whose parameters
+// are all optional (such as settings.set, compositor.set, monitor.set),
+// excluding plan_only (whose calls are always refused).
+palette_is_optional_setter :: proc "contextless" (item: ^Command) -> bool {
+	if item.run != nil || item.record != 0 || item.export == 0 || item.parameter_count == 0 || item.parameter_count > ARGUMENT_CAPACITY {
+		return false
+	}
+	if fn, ok := module.function(item.file, item.export); ok && module.string_at(item.file, fn.name_offset, fn.name_count) == "plan_only" {
+		return false
+	}
+	for index in 0 ..< item.parameter_count {
+		if !module.parameter_optional(item.function, index) {
+			return false
+		}
+	}
+	return true
+}
+
+// palette_integer_getter_value calls a 0-parameter Integer getter export on
+// item's service/sandbox within refresh.limit. Used to mark the stop in use
+// for a ranged Integer setting when a getter of the parameter name exists.
+palette_integer_getter_value :: proc "contextless" (refresh: ^Palette_Getters, item: ^Command, parameter_name: string) -> (value: i64, ok: bool) {
+	if refresh == nil {
+		return 0, false
+	}
+	found: ^Command
+	for &command in commands[:command_count] {
+		if command.run == nil && command.record == 0 && command.export != 0 && command.parameter_count == 0 && command.result == .Integer && raw_data(command.file) == raw_data(item.file) {
+			if fn, fn_ok := module.function(command.file, command.export); fn_ok && module.string_at(command.file, fn.name_offset, fn.name_count) == parameter_name {
+				found = &command
+			}
+		}
+	}
+	if found == nil || found.address != 0 || found.sandbox == 0 || int(found.sandbox) > SANDBOX_CAPACITY {
+		return 0, false
+	}
+	place := int(found.sandbox - 1)
+	sandbox := &sandboxes[place]
+	if sandbox.process == 0 || place in refresh.missed || system.time() >= refresh.limit {
+		return 0, false
+	}
+	missed := true
+	defer if missed {
+		refresh.missed += {place}
+	}
+	offset, size, _, encoded := isolated.encode(found.file, found.function, nil, sandbox.region)
+	if !encoded {
+		return 0, false
+	}
+	sandbox.calls += 1
+	if !system.send(&sandbox.ring.commands, ring.Record{kind = found.export, tag = sandbox.calls, values = {0 = offset, 1 = size}}) {
+		return 0, false
+	}
+	refresh.sent += 1
+	for {
+		wait := system.wait_begin()
+		for _ in 0 ..< ring.CAPACITY {
+			completion, has_completion := system.receive(&sandbox.ring.completions)
+			if !has_completion {
+				break
+			}
+			if completion.tag != sandbox.calls {
+				continue
+			}
+			register, outcome, _ := isolated.answer_of_completion(completion)
+			if outcome != .Succeeded {
+				return 0, false
+			}
+			missed = false
+			return i64(register), true
+		}
+		if state, _, _ := system.process_state(sandbox.process); state == .Stopped {
+			return 0, false
+		}
+		system.wait_records(&wait, &sandbox.ring.completions)
+		if system.wait_end(&wait, refresh.limit) >= refresh.limit {
+			return 0, false
+		}
+	}
+}
+
+// One choice decoded from a parameter's choices_export table: its integer
+// identity and display label.
+Palette_Choice_Row :: struct {
+	id:           i64,
+	label:        [palette_table.VALUE_NAME_CAPACITY]u8,
+	label_length: int,
+}
+
+// palette_choices_call invokes a 0-parameter Table choices_export on item's
+// service/sandbox within deadline and extracts up to len(out) (id, label) rows
+// from the returned record table (first Integer field = id, first Text field =
+// label, or formatted id if no Text field is present).
+palette_choices_call :: proc "contextless" (item: ^Command, choices_export: u32, limit: u64, missed: ^bit_set[0 ..< SANDBOX_CAPACITY], out: []Palette_Choice_Row) -> (count: int) {
+	if choices_export == 0 || len(out) == 0 {
+		return 0
+	}
+	found: ^Command
+	for &command in commands[:command_count] {
+		if command.run == nil && command.record == 0 && command.export == choices_export && raw_data(command.file) == raw_data(item.file) {
+			found = &command
+		}
+	}
+	if found == nil || found.address != 0 || found.sandbox == 0 || int(found.sandbox) > SANDBOX_CAPACITY || found.result != .Table {
+		return 0
+	}
+	place := int(found.sandbox - 1)
+	sandbox := &sandboxes[place]
+	if sandbox.process == 0 || (missed != nil && place in missed^) || system.time() >= limit {
+		return 0
+	}
+	rec, rec_ok := module.record_type(found.file, found.function.result_detail)
+	if !rec_ok || rec.size == 0 {
+		return 0
+	}
+	id_field: module.Field
+	has_id := false
+	label_field: module.Field
+	has_label := false
+	for field_idx in 0 ..< rec.field_count {
+		f, f_ok := module.field(found.file, rec, field_idx)
+		if !f_ok {
+			continue
+		}
+		if !has_id && f.type == u8(module.Type.Integer) {
+			id_field = f
+			has_id = true
+		} else if !has_label && f.type == u8(module.Type.Text) {
+			label_field = f
+			has_label = true
+		}
+	}
+	if !has_id {
+		return 0
+	}
+	call_missed := true
+	defer if call_missed && missed != nil {
+		missed^ += {place}
+	}
+	offset, size, buffer, encoded := isolated.encode(found.file, found.function, nil, sandbox.region)
+	if !encoded {
+		return 0
+	}
+	sandbox.calls += 1
+	if !system.send(&sandbox.ring.commands, ring.Record{kind = choices_export, tag = sandbox.calls, values = {0 = offset, 1 = size}}) {
+		return 0
+	}
+	for {
+		wait := system.wait_begin()
+		for _ in 0 ..< ring.CAPACITY {
+			completion, has_completion := system.receive(&sandbox.ring.completions)
+			if !has_completion {
+				break
+			}
+			if completion.tag != sandbox.calls {
+				continue
+			}
+			register, outcome, _ := isolated.answer_of_completion(completion)
+			if outcome != .Succeeded || register <= 0 {
+				return 0
+			}
+			call_missed = false
+			row_size := int(rec.size)
+			if row_size <= 0 || row_size > module.RECORD_SIZE_LIMIT || buffer.start > u64(len(sandbox.region)) {
+				return 0
+			}
+			avail := len(sandbox.region) - int(buffer.start)
+			total_rows := int(min(u64(register), u64(buffer.count), u64(avail / row_size), u64(len(out))))
+			for i in 0 ..< total_rows {
+				// Copy row out of shared sandbox.region into private memory before
+				// decoding or validating fields (prevents shared-memory TOCTOU).
+				row_copy: [module.RECORD_SIZE_LIMIT]u8
+				copy(row_copy[:row_size], sandbox.region[int(buffer.start) + i * row_size:][:row_size])
+				row_bytes := row_copy[:row_size]
+				id := module.field_integer(row_bytes, id_field)
+				row := &out[count]
+				row.id = id
+				if has_label {
+					txt := module.field_text(row_bytes, label_field)
+					if len(txt) > 0 && len(txt) <= palette_table.VALUE_NAME_CAPACITY && text_encoding.display_text_valid(transmute([]u8)txt) {
+						row.label_length = copy(row.label[:], txt)
+						count += 1
+						continue
+					}
+				}
+				w := system.Writer{buffer = row.label[:]}
+				system.write_part(&w, id)
+				if w.dropped == 0 && w.count > 0 {
+					row.label_length = w.count
+					count += 1
+				}
+			}
+			return count
+		}
+		if state, _, _ := system.process_state(sandbox.process); state == .Stopped {
+			return 0
+		}
+		system.wait_records(&wait, &sandbox.ring.completions)
+		if system.wait_end(&wait, limit) >= limit {
+			return 0
+		}
+	}
+}
+
+// palette_setting_rows_write adds Provider_Setting rows for ranged Integer
+// parameters (via module.range_stops) and choices_export parameters from
+// module.Parameter_Settings, so every module setting is reachable directly in
+// the palette.
+palette_setting_rows_write :: proc "contextless" (start: int, refresh: ^Palette_Getters) -> (count: int) {
+	count = start
+	commands_loop: for number in 0 ..< command_count {
+		item := &commands[number]
+		if !palette_is_optional_setter(item) || len(item.name) > palette_table.NAME_CAPACITY || !palette_line_name_valid(item.name) {
+			continue
+		}
+		for &later in commands[number + 1:command_count] {
+			if later.name == item.name {
+				continue commands_loop
+			}
+		}
+		for parameter in 0 ..< item.parameter_count {
+			if item.parameters[parameter] != .Integer {
+				continue
+			}
+			setting, has_setting := module.parameter_setting(item.file, item.export, parameter)
+			if !has_setting {
+				continue
+			}
+			parameter_name := item.parameter_names[parameter]
+			if !lex_parser.name_valid(parameter_name) || len(parameter_name) > palette_table.SETTING_NAME_CAPACITY {
+				continue
+			}
+			act_buffer: [palette_table.ACT_NAME_CAPACITY]u8
+			act_writer := system.Writer{buffer = act_buffer[:]}
+			system.write_part(&act_writer, item.name)
+			system.write_part(&act_writer, ":")
+			system.write_part(&act_writer, parameter_name)
+			act := act_writer.dropped == 0 ? string(act_buffer[:act_writer.count]) : ""
+			in_use, in_use_known := palette_integer_getter_value(refresh, item, parameter_name)
+			if setting.choices_export != 0 && refresh != nil {
+				choices: [palette_table.CANDIDATE_CAPACITY]Palette_Choice_Row
+				choice_count := palette_choices_call(item, setting.choices_export, refresh.limit, &refresh.missed, choices[:])
+				for i in 0 ..< choice_count {
+					label := string(choices[i].label[:choices[i].label_length])
+					entry := palette_table.Entry{kind = u8(palette_table.Entry_Kind.Provider_Setting), result = u8(palette_value_kind_of(item.result))}
+					if in_use_known && choices[i].id == in_use {
+						entry.flags += {.In_Use}
+					}
+					name := system.Writer{buffer = entry.name[:]}
+					system.write_part(&name, item.name)
+					system.write_part(&name, " ")
+					system.write_part(&name, parameter_name)
+					system.write_part(&name, " to ")
+					system.write_part(&name, label)
+					about := system.Writer{buffer = entry.about[:]}
+					system.write_part(&about, item.name)
+					system.write_part(&about, "(")
+					system.write_part(&about, parameter_name)
+					system.write_part(&about, " = ")
+					system.write_part(&about, choices[i].id)
+					system.write_part(&about, ")")
+					row := system.Writer{buffer = entry.setting_name[:]}
+					system.write_part(&row, parameter_name)
+					value_name := system.Writer{buffer = entry.value_name[:]}
+					system.write_part(&value_name, label)
+					if name.dropped != 0 || about.dropped != 0 || row.dropped != 0 || value_name.dropped != 0 {
+						continue
+					}
+					entry.name_length = u8(name.count)
+					entry.signature_length = u8(copy(entry.signature[:], entry.name[:name.count]))
+					entry.about_length = u8(about.count)
+					entry.act_name_length = u8(copy(entry.act_name[:], act))
+					entry.setting_name_length = u8(row.count)
+					entry.value_name_length = u8(value_name.count)
+					if !palette_next_append(&count, entry) {
+						return count
+					}
+				}
+			} else if module.parameter_setting_ranged(setting) {
+				stops: [module.RANGE_STOP_CAPACITY]i64
+				stop_count := module.range_stops(setting.least, setting.most, stops[:])
+				for stop in stops[:stop_count] {
+					stop_buf: [palette_table.VALUE_NAME_CAPACITY]u8
+					stop_w := system.Writer{buffer = stop_buf[:]}
+					system.write_part(&stop_w, stop)
+					if stop_w.dropped != 0 || stop_w.count == 0 {
+						continue
+					}
+					stop_text := string(stop_buf[:stop_w.count])
+					entry := palette_table.Entry{kind = u8(palette_table.Entry_Kind.Provider_Setting), result = u8(palette_value_kind_of(item.result))}
+					if in_use_known && stop == in_use {
+						entry.flags += {.In_Use}
+					}
+					name := system.Writer{buffer = entry.name[:]}
+					system.write_part(&name, item.name)
+					system.write_part(&name, " ")
+					system.write_part(&name, parameter_name)
+					system.write_part(&name, " to ")
+					system.write_part(&name, stop_text)
+					about := system.Writer{buffer = entry.about[:]}
+					system.write_part(&about, item.name)
+					system.write_part(&about, "(")
+					system.write_part(&about, parameter_name)
+					system.write_part(&about, " = ")
+					system.write_part(&about, stop)
+					system.write_part(&about, ")")
+					row := system.Writer{buffer = entry.setting_name[:]}
+					system.write_part(&row, parameter_name)
+					value_name := system.Writer{buffer = entry.value_name[:]}
+					system.write_part(&value_name, stop_text)
+					if name.dropped != 0 || about.dropped != 0 || row.dropped != 0 || value_name.dropped != 0 {
+						continue
+					}
+					entry.name_length = u8(name.count)
+					entry.signature_length = u8(copy(entry.signature[:], entry.name[:name.count]))
+					entry.about_length = u8(about.count)
+					entry.act_name_length = u8(copy(entry.act_name[:], act))
+					entry.setting_name_length = u8(row.count)
+					entry.value_name_length = u8(value_name.count)
+					if !palette_next_append(&count, entry) {
+						return count
+					}
+				}
+			}
+		}
+	}
+	return count
+}
+
 // palette_enum_rows_write adds the rows of buttons of the Enum parameters
 // of the commands after count entries, and gives the new count: one entry
 // for each member, whose line is the call with that member. The entries of
@@ -532,7 +861,7 @@ palette_enum_rows_write :: proc "contextless" (start: int, refresh: ^Palette_Get
 	count = start
 	commands_loop: for number in 0 ..< command_count {
 		item := &commands[number]
-		if !palette_row_takes(item) || len(item.name) > palette_table.NAME_CAPACITY || !palette_line_name_valid(item.name) {
+		if (!palette_row_takes(item) && !palette_is_optional_setter(item)) || len(item.name) > palette_table.NAME_CAPACITY || !palette_line_name_valid(item.name) {
 			continue
 		}
 		for &later in commands[number + 1:command_count] {
@@ -541,6 +870,9 @@ palette_enum_rows_write :: proc "contextless" (start: int, refresh: ^Palette_Get
 			}
 		}
 		for parameter in 0 ..< item.parameter_count {
+			if item.parameters[parameter] != .Enum {
+				continue
+			}
 			enum_index, getter := module.enum_detail_of(item.function.parameter_details[parameter])
 			described, problem := module.enum_type(item.file, enum_index)
 			parameter_name := item.parameter_names[parameter]
@@ -552,10 +884,7 @@ palette_enum_rows_write :: proc "contextless" (start: int, refresh: ^Palette_Get
 			system.write_part(&act_writer, item.name)
 			system.write_part(&act_writer, ":")
 			system.write_part(&act_writer, parameter_name)
-			if act_writer.dropped != 0 {
-				continue
-			}
-			act := string(act_buffer[:act_writer.count])
+			act := act_writer.dropped == 0 ? string(act_buffer[:act_writer.count]) : ""
 			in_use, in_use_known, moved := palette_row_in_use(act, item, getter, described, refresh)
 			// A row whose name the table cannot hold has no entry: its mark
 			// is not logged either.
@@ -685,6 +1014,9 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 	// with one member is one choice: "settings.set font to spleen". Its
 	// help is the line that the console runs for it.
 	count = palette_enum_rows_write(count, call_getters ? &refresh : nil)
+	// Setting rows for ranged Integer parameters (module.range_stops) and
+	// choices_export parameters from module.Parameter_Settings.
+	count = palette_setting_rows_write(count, call_getters ? &refresh : nil)
 	// One entry for each scheduling strategy: "set strategy to eevdf". Its
 	// help is the line that the console runs for it. The strategy is a
 	// state of the kernel that no page holds: the console reads it in the
@@ -891,17 +1223,13 @@ palette_turn :: proc "contextless" () {
 			// Refused above.
 			continue
 		case .Argument:
-			if parameter, argument, ok := palette_table.argument_unpack(record.values); ok {
-				if palette_arguments_tag != record.tag {
-					palette_arguments_tag = record.tag
-					palette_arguments_given = {}
-				}
-				palette_arguments[parameter] = argument
-				palette_arguments_given += {parameter}
-			} else {
-				// A value that is none: the choice of this tag is refused.
+			if palette_arguments_tag != record.tag {
 				palette_arguments_tag = record.tag
-				palette_arguments_given = {}
+				palette_table.argument_assembly_reset(&palette_arguments)
+			}
+			if palette_arguments_bad == record.tag || !palette_table.argument_assembly_take(&palette_arguments, record.values) {
+				// A value that fails the border: the choice of this tag is refused.
+				palette_table.argument_assembly_reset(&palette_arguments)
 				palette_arguments_bad = record.tag
 			}
 			continue
@@ -927,8 +1255,7 @@ palette_turn :: proc "contextless" () {
 }
 
 // The typed values of the choice that comes next on the ring.
-palette_arguments: [palette_table.PARAMETER_CAPACITY]palette_table.Argument_Value
-palette_arguments_given: bit_set[0 ..< palette_table.PARAMETER_CAPACITY]
+palette_arguments: palette_table.Argument_Assembly
 palette_arguments_tag: u32 // The tag of the choice that the values are for.
 palette_arguments_bad: u32 // The tag of a choice with a value that failed its check.
 palette_manual: bool // The line that runs shows a page of the manual.
@@ -1012,7 +1339,7 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 		if found.optional_last && record.values[4] == u64(count - 1) {
 			count -= 1
 		}
-		fits := count <= palette_table.PARAMETER_CAPACITY && palette_arguments_tag == record.tag && palette_arguments_bad != record.tag && record.values[4] == u64(count) && count > 0
+		fits := count <= palette_table.PARAMETER_CAPACITY && palette_arguments_tag == record.tag && palette_arguments_bad != record.tag && palette_arguments.in_progress == {} && record.values[4] == u64(count) && count > 0
 		// A Text of the palette and a line of the console are UTF-8. A text
 		// that a line cannot hold (an invalid sequence, which the
 		// compositor already refuses, or a quote) is refused in words,
@@ -1020,11 +1347,11 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 		outside_line := false
 		no_member_name := false
 		for index in 0 ..< count {
-			if !fits || index not_in palette_arguments_given {
+			if !fits || index not_in palette_arguments.given {
 				fits = false
 				break
 			}
-			argument := &palette_arguments[index]
+			argument := &palette_arguments.values[index]
 			system.write_part(&writer, index > 0 ? ", " : "")
 			switch {
 			case found.parameters[index] == .Integer && argument.kind == .Integer:
@@ -1056,7 +1383,7 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 				fits = false
 			}
 		}
-		palette_arguments_given = {}
+		palette_table.argument_assembly_reset(&palette_arguments)
 		system.write_part(&writer, ")")
 		if fits && outside_line {
 			palette_refuse(record.tag, "a line of the console holds no quote and no broken sequence of UTF-8 in a text")
@@ -1144,21 +1471,35 @@ palette_candidate_kind :: proc "contextless" (command_name: string, parameter: u
 		}
 	}
 	// An Enum parameter of an export: the members of its enum.
-	if found := palette_command_named(command_name); found != nil && parameter < u64(found.parameter_count) && found.parameters[parameter] == .Enum {
-		return .Member
+	// A ranged Integer or choices_export parameter: stops or open choices from
+	// module.Parameter_Settings.
+	if found := palette_command_named(command_name); found != nil && parameter < u64(found.parameter_count) {
+		if found.parameters[parameter] == .Enum {
+			return .Member
+		}
+		if found.run == nil && found.record == 0 && found.export != 0 && found.parameters[parameter] == .Integer {
+			if setting, has_setting := module.parameter_setting(found.file, found.export, int(parameter)); has_setting {
+				if setting.choices_export != 0 {
+					return .Choice
+				}
+				if module.parameter_setting_ranged(setting) {
+					return .Range_Stop
+				}
+			}
+		}
 	}
 	return .None
 }
 
 // palette_candidates_closed says if the candidates of a kind are the only
-// values that a parameter takes: the strategies of the kernel and the
-// members of an enum are; the processes that run, the modules and the
-// grants are suggestions, since a line can name another one.
+// values that a parameter takes: the strategies of the kernel, the members of
+// an enum, and open choices from a choices_export are closed; the processes,
+// modules, grants, and range stops are suggestions.
 palette_candidates_closed :: proc "contextless" (kind: palette_table.Candidate_Kind) -> bool {
 	switch kind {
-	case .Strategy, .Member:
+	case .Strategy, .Member, .Choice:
 		return true
-	case .None, .Process, .Module, .Grant:
+	case .None, .Process, .Module, .Grant, .Range_Stop:
 	}
 	return false
 }
@@ -1209,11 +1550,18 @@ palette_candidates_give :: proc "contextless" (record: ring.Record) {
 	}
 	page: Palette_Candidate_Page
 	page.first = int(min(record.values[4], u64(max(i32))))
-	if palette_arguments_tag == record.tag && palette_arguments_bad != record.tag && record.values[3] < palette_table.PARAMETER_CAPACITY && int(record.values[3]) in palette_arguments_given {
-		argument := &palette_arguments[record.values[3]]
-		if argument.kind == .Text {
-			page.query = string(argument.text[:argument.length])
+	query_copy: [palette_table.ARGUMENT_TEXT_CAPACITY]u8
+	if palette_arguments_tag == record.tag {
+		if palette_arguments_bad != record.tag && palette_arguments.in_progress == {} && record.values[3] < palette_table.PARAMETER_CAPACITY && int(record.values[3]) in palette_arguments.given {
+			argument := &palette_arguments.values[record.values[3]]
+			if argument.kind == .Text {
+				n := copy(query_copy[:], argument.text[:argument.length])
+				page.query = string(query_copy[:n])
+			}
 		}
+		palette_table.argument_assembly_reset(&palette_arguments)
+		palette_arguments_tag = 0
+		palette_arguments_bad = 0
 	}
 	switch kind {
 	case .None:
@@ -1234,6 +1582,36 @@ palette_candidates_give :: proc "contextless" (record: ring.Record) {
 				for number in 0 ..< described.member_count {
 					member, _ := module.enum_member(found.file, described, number)
 					palette_candidate_add(&page, module.string_at(found.file, member.name_offset, member.name_count))
+				}
+			}
+		}
+	case .Range_Stop:
+		if found := palette_command_named(string(entry.name[:entry.name_length])); found != nil && record.values[3] < u64(found.parameter_count) {
+			if setting, has_setting := module.parameter_setting(found.file, found.export, int(record.values[3])); has_setting && module.parameter_setting_ranged(setting) {
+				stops: [module.RANGE_STOP_CAPACITY]i64
+				stop_count := module.range_stops(setting.least, setting.most, stops[:])
+				for stop in stops[:stop_count] {
+					stop_buf: [palette_table.CANDIDATE_NAME_CAPACITY]u8
+					stop_w := system.Writer{buffer = stop_buf[:]}
+					system.write_part(&stop_w, stop)
+					if stop_w.dropped == 0 && stop_w.count > 0 {
+						palette_candidate_add(&page, string(stop_buf[:stop_w.count]))
+					}
+				}
+			}
+		}
+	case .Choice:
+		if found := palette_command_named(string(entry.name[:entry.name_length])); found != nil && record.values[3] < u64(found.parameter_count) {
+			if setting, has_setting := module.parameter_setting(found.file, found.export, int(record.values[3])); has_setting && setting.choices_export != 0 {
+				choices: [palette_table.CANDIDATE_CAPACITY]Palette_Choice_Row
+				choice_count := palette_choices_call(found, setting.choices_export, system.time() + PALETTE_GETTERS_LIMIT, nil, choices[:])
+				for i in 0 ..< choice_count {
+					id_buf: [palette_table.CANDIDATE_NAME_CAPACITY]u8
+					id_w := system.Writer{buffer = id_buf[:]}
+					system.write_part(&id_w, choices[i].id)
+					if id_w.dropped == 0 && id_w.count > 0 {
+						palette_candidate_add(&page, string(id_buf[:id_w.count]))
+					}
 				}
 			}
 		}

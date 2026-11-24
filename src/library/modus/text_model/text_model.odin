@@ -16,10 +16,12 @@ package text_model
 
 import "modus:contract/text_encoding"
 
-// The inline capacity of a zero-value Text when the caller supplies no
-// external buffer or growth callback (src/md/features/editor.md, "The text
-// model"). Callers that edit larger documents supply a growable buffer
-// backed by an arena of their process budget.
+// Inline capacity of a zero-value Text when the caller supplies no external
+// buffer or growth callback (src/md/features/editor.md, "The text model").
+// Observed measure: typical modus source files and notes fit within 32 KiB
+// without committing arena pages; past this threshold text_ensure_capacity
+// moves to the caller-supplied external_bytes tier via grow and increments
+// tier_moves.
 TEXT_CAPACITY :: 32768
 
 LINE_END :: '\n'
@@ -52,6 +54,8 @@ Text :: struct {
 	// for the lines after it.
 	goal_column:    int,
 	has_goal:       bool,
+	// Visible counter of moves onto or growths of the slower external_bytes tier.
+	tier_moves:     u64,
 }
 
 // Why an edit is refused. A refused edit changes nothing.
@@ -75,6 +79,7 @@ text_init_buffer :: proc "contextless" (text: ^Text, buffer: []u8, grow: Buffer_
 	text.anchor = 0
 	text.goal_column = 0
 	text.has_goal = false
+	text.tier_moves = 0
 }
 
 // text_storage returns the active backing slice of text.
@@ -121,6 +126,7 @@ text_ensure_capacity :: proc "contextless" (text: ^Text, needed: int) -> bool {
 		copy(grown[new_after:len(grown)], storage[old_after:old_capacity])
 	}
 	text.external_bytes = grown
+	text.tier_moves += 1
 	return true
 }
 

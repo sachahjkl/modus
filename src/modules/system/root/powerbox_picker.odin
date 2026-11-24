@@ -36,9 +36,10 @@ powerbox_next_tag: u32
 // only.
 picker_store_lister: Started
 
-// The bound of one listing: the bound of the powerbox for the call, and
-// the same again for its answer to come back.
-PICKER_LISTING_BOUND_MILLISECONDS :: 2 * 10_000
+// Hang bound of one store listing: matches system.ANSWER_BOUND_MILLISECONDS so
+// a loaded host never cuts off a live listing; a stop of the powerbox ends the
+// listing at once in powerbox_service_end.
+PICKER_LISTING_BOUND_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
 
 Picker_Listing :: struct {
 	connection: ^Connection,

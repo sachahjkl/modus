@@ -608,7 +608,7 @@ signed_grant_from_the_wire_is_refused_past_one_day_when_revoked_and_when_damaged
 	// A revocation list that names the serial ends the grant before its day.
 	revocations := Revocation_List{grantor_root_public_key = root_public, signer_public_key = machine.signing_public_key, epoch = 1, revoked_count = 1}
 	revocations.revoked_serials[0] = grant.grant_serial
-	revocation_bytes: [MAX_REVOCATION_LIST_SIGNING_BYTES]u8
+	revocation_bytes: [INLINE_REVOCATION_LIST_SIGNING_BYTES]u8
 	revocation_written, revocation_status := revocation_list_signing_bytes(&revocations, revocation_bytes[:])
 	testing.expect_value(t, revocation_status, Revocation_List_Status.Accepted)
 	ed25519.sign(&signing_private, revocation_bytes[:revocation_written], revocations.signature[:])

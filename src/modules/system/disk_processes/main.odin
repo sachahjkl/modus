@@ -75,19 +75,20 @@ fail :: proc "contextless" (text: string) -> ! {
 	system.stop(.Failed)
 }
 
-// status writes the counts of the loads into out.
+// status writes the counts of the loads into result.
 @(export)
-status :: proc "c" (out: ^Disk_Processes_Status, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	if out == nil {
-		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+status :: proc "c" (result: ^Disk_Processes_Status, error: ^errors.Error_Record) -> call_outcome.Call_Outcome {
+	if result == nil {
+		outcome, _ := call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+		return outcome
 	}
-	out^ = {
+	result^ = {
 		loads            = i64(machine.counters.loads),
 		starts_requested = i64(machine.counters.starts_requested),
 		refusals         = i64(machine.counters.refusals),
 		commands_refused = i64(machine.counters.commands_refused),
 	}
-	return .Succeeded, 0
+	return .Succeeded
 }
 
 @(private = "file")

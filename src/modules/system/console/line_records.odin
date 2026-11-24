@@ -30,7 +30,9 @@ LINE_RECORD_SERVICE :: "log" // The service that serves the log records.
 LINE_RECORD_BATCH :: 32 // The records that the console draws from one answer of the service.
 LINE_RECORD_ANSWERS :: 8 // The most answers that the console reads at one time: a process that writes faster keeps its records in the log.
 LINE_RECORD_PROCESSES :: 4 // The processes that one line follows.
-LINE_RECORD_ANSWER_LIMIT :: 1000 // Milliseconds: the service that does not answer in this time is not asked again in the line.
+// Hang bound for an answer from the log service; a stopped service ends the
+// wait immediately (src/md/api/call_ring_ready.md).
+LINE_RECORD_ANSWER_LIMIT :: system.ANSWER_BOUND_MILLISECONDS
 LINE_RECORD_INDENT :: 4 // The column of the text of a record.
 
 Line_Records :: struct {

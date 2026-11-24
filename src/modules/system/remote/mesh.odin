@@ -31,6 +31,13 @@ import "modus:system"
 
 // The state of the mesh: in the data of the process, never on a stack.
 mesh: machine_wire.Peer
+
+// Plan value: persistent slow-tier backing and verification scratch for up to
+// 1024 revoked grant serials in remote (~16 KiB total), avoiding dangling
+// external_serials slices across revocation list updates.
+REMOTE_REVOCATION_CAPACITY :: 1024
+mesh_revocation_serials: [REMOTE_REVOCATION_CAPACITY]u64
+mesh_revocation_scratch: [machine_mesh.REVOCATION_LIST_SIGNING_HEADER_SIZE + REMOTE_REVOCATION_CAPACITY * 8]u8
 // The tables of the mesh that grow with the principal: the bytes and the
 // rows of the objects by hash and the rows of the exchanged stores, each
 // in an arena of the budget of remote that reserves as many pages as the
@@ -468,15 +475,25 @@ mesh_revocation_list_update :: proc "contextless" (candidate: ^machine_mesh.Revo
 	if !mesh.machine_list.has_list {
 		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Versions, 1)
 	}
+	if int(candidate.revoked_count) > REMOTE_REVOCATION_CAPACITY {
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 1, i64(candidate.revoked_count), REMOTE_REVOCATION_CAPACITY)
+	}
 	status := machine_mesh.revocation_list_apply_update(
 		&mesh.machine_list.list,
 		&mesh.revocations,
 		mesh.has_revocations,
 		candidate,
 		mesh_signature_verify,
+		nil,
+		mesh_revocation_scratch[:],
 	)
 	switch status {
 	case .Accepted:
+		if len(mesh.revocations.external_serials) > 0 {
+			count := int(mesh.revocations.revoked_count)
+			copy(mesh_revocation_serials[:count], mesh.revocations.external_serials[:count])
+			mesh.revocations.external_serials = mesh_revocation_serials[:count]
+		}
 		mesh.has_revocations = true
 		return .Succeeded, 0
 	case .Refused_Invalid_Signature, .Refused_Wrong_Grantor, .Refused_Signer_Not_Active:
@@ -484,7 +501,8 @@ mesh_revocation_list_update :: proc "contextless" (candidate: ^machine_mesh.Revo
 	case .Refused_Replay_Or_Downgrade:
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Versions, 1, i64(candidate.epoch), 0, i64(mesh.revocations.epoch))
 	case .Refused_Too_Many_Entries:
-		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 1, i64(candidate.revoked_count), machine_mesh.MAX_REVOKED_GRANTS)
+		active_limit := len(candidate.external_serials) > 0 ? i64(min(len(candidate.external_serials), machine_mesh.MAX_REVOKED_GRANTS)) : i64(machine_mesh.INLINE_REVOKED_GRANTS)
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 1, i64(candidate.revoked_count), active_limit)
 	case .Refused_Buffer_Too_Small:
 		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, 1)
 	case .Refused_Nil_Input, .Refused_Zero_Key, .Refused_Zero_Epoch, .Refused_Zero_Serial, .Refused_Not_Strictly_Sorted:
@@ -519,6 +537,8 @@ mesh_grant_check :: proc "contextless" (wire: []u8, grantee_root_public_key: [32
 		now,
 		revocations,
 		mesh_signature_verify,
+		nil,
+		mesh_revocation_scratch[:],
 	)
 	if status != .Accepted {
 		return mesh_grant_fail(error, status, &grant, now)

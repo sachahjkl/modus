@@ -19,10 +19,10 @@ import "modus:contract/value_kinds"
 import "modus:storage"
 import "modus:system"
 
-// The bound of a wait for the list: the root service gives the
-// connection, then the storage service answers the call. Past it the
-// Open gets No_List, and the principal asks again.
-STORES_CALL_BOUND_MILLISECONDS :: 10_000
+// Hang bound of a wait for the store list: matches system.ANSWER_BOUND_MILLISECONDS
+// so a slow storage answer never fails prematurely; a refusal from root or a
+// stop of the storage service ends the wait at once.
+STORES_CALL_BOUND_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
 
 picker_region: []u8
 image: []u8

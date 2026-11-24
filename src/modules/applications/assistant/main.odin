@@ -30,6 +30,7 @@ import "modus:contract/scale_factor"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import box_layout "modus:layout"
 import "modus:system"
 
 // Room for a table of the processes: about 90 cells of the font of the
@@ -41,26 +42,27 @@ HEIGHT :: 560
 // the window bound, docs/MODULE_CONTRACT.md, "The budget that a module asks
 // for"):
 //
-//   talk               6 738 376 bytes  288 entries of 16 KiB, 16 kept tables of 64 rows and the staging copy
+//   talk               7 860 424 bytes  288 entries of 16 KiB text + 4 KiB act line, 16 kept tables of 64 rows and staging copy
 //   view_layouts         617 472        the layout of each entry: its lines
 //   view_places            4 624        the place of each entry in the view
 //   result_slots         394 032        the lines of 6 results that a frame paints
 //   layout_lines          65 624        the lines that measure a result at its layout
 //   result_scratch        20 480        the description and the rows of one draw
 //   window_memory        139 256        the two draw tables of the worst frame
+//   box_tree             205 144        the modus:layout tree of each frame
 //   typed                  4 096        the request that the principal types
 //   the rest of the state, the port of the act dialog: some hundred bytes
 //
-// 1950 pages; then 1748 pages for the stack, the small tables and the glyph
+// 2274 pages; then 1748 pages for the stack, the small tables and the glyph
 // memory, as paint states them for itself, which this process draws as,
 // and the glyph memory of the copy of the text rendering of the drawing
-// module, 354 pages (display.TEXT_MEMORY_PAGES): 1950 + 1748 + 354 = 4052.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4052, window_width = WIDTH, window_height = HEIGHT}
+// module, 354 pages (display.TEXT_MEMORY_PAGES): 2274 + 1748 + 354 = 4376.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4376, window_width = WIDTH, window_height = HEIGHT}
 
 // The pages of the stack, the small tables and the glyph memory, as paint
 // counts them (src/modules/demonstrations/paint/main.odin).
 STACK_AND_GLYPH_PAGES :: 1748
-STATE_BYTES :: size_of(talk) + size_of(view_layouts) + size_of(view_places) + size_of(view_scroll) + size_of(result_slots) + size_of(layout_lines) + size_of(result_scratch) + size_of(window_memory) + size_of(typed) + size_of(typed_count) + size_of(display_port)
+STATE_BYTES :: size_of(talk) + size_of(view_layouts) + size_of(view_places) + size_of(view_scroll) + size_of(result_slots) + size_of(layout_lines) + size_of(result_scratch) + size_of(window_memory) + size_of(box_tree) + size_of(typed) + size_of(typed_count) + size_of(display_port)
 STATE_PAGES :: (STATE_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 #assert(MODULE_BUDGET.working_memory_pages == STATE_PAGES + STACK_AND_GLYPH_PAGES + display.TEXT_MEMORY_PAGES)
 // The window at the largest scale, cut to the reference screen, two
@@ -82,6 +84,8 @@ DECISION_POLL_MILLISECONDS :: 100
 // window of results, each line a record for each run of one color
 // (result_table.odin).
 window_memory: interface.Window_Memory(WINDOW_RECORDS, WINDOW_TEXT_BYTES)
+// The layout tree of each frame: lives in module state, never on the stack.
+box_tree: box_layout.Box_Tree
 
 // The text that the principal types: one request.
 typed: [assistant_contract.REQUEST_TEXT_BYTES]u8
@@ -200,13 +204,21 @@ entry_body :: proc "contextless" (entry: ^conversation.Entry, buffer: []u8) -> (
 draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_start(&window_memory, window)
 	table := frame.table
-	interface.background(&frame, {0, 0, window.width, window.height})
-	room := window.width - 2 * MARGIN
-	input_top := window.height - MARGIN - INPUT_HEIGHT
-	metrics := view_metrics(table)
+	tokens, tokens_ok := box_layout.tokens_for(graphics.appearance, .Standard)
+	if !tokens_ok {
+		interface.window_frame_end(&window_memory.drawing, &frame, window)
+		return
+	}
+	interface.draw_rectangle(table, 0, 0, window.width, window.height, tokens.surface_background)
 	running := conversation.request_running(&talk)
-	view_area := interface.Area{MARGIN, MARGIN, room - interface.SCROLL_BAR_THICKNESS - MARGIN / 2, input_top - 2 * MARGIN}
-	bar_area := interface.Area{MARGIN + room - interface.SCROLL_BAR_THICKNESS, MARGIN, interface.SCROLL_BAR_THICKNESS, view_area.height}
+	boxes, layout_ok := assistant_layout(&box_tree, window.width, window.height, running != nil, tokens)
+	if !layout_ok {
+		interface.window_frame_end(&window_memory.drawing, &frame, window)
+		return
+	}
+	metrics := view_metrics(table)
+	view_area := boxes.view
+	bar_area := boxes.scroll_bar
 	view_layout(table, view_area.width, view_area.height, metrics)
 	conversation_view.settle(&view_scroll, &view_places, view_area.height)
 	// A page key moves the view by its height less one line, so the line at
@@ -244,14 +256,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 	}
 	view_paint(&frame, view_area, metrics)
 	if talk.entry_count == 0 {
-		interface.draw_text_wrapped(table, MARGIN, MARGIN, room, "Ask the agent for help. It reads your request on the host, and each act that it proposes shows here before its result.", graphics.colors.dim, interface.FONT_INTERFACE)
+		interface.draw_text_wrapped(table, boxes.body_row.x, boxes.body_row.y, boxes.body_row.width, "Ask the agent for help. It reads your request on the host, and each act that it proposes shows here before its result.", tokens.text_dim, interface.FONT_INTERFACE)
 	}
 	// The field takes the keys when nothing else has the focus.
 	if frame.state.focus == 0 || (running == nil && frame.state.focus == interface.identity(STOP_IDENTITY)) {
 		frame.state.focus = interface.identity(INPUT_IDENTITY)
 	}
-	input_width := running != nil ? room - STOP_WIDTH - MARGIN / 2 : room
-	field := interface.text_input(&frame, {MARGIN, input_top, input_width, INPUT_HEIGHT}, interface.identity(INPUT_IDENTITY), typed[:], &typed_count, "ask the assistant")
+	field := interface.text_input(&frame, boxes.input, interface.identity(INPUT_IDENTITY), typed[:], &typed_count, "ask the assistant")
 	if field.activated && typed_count > 0 {
 		if request_keep(string(typed[:typed_count])) {
 			typed_count = 0
@@ -259,10 +270,9 @@ draw :: proc "contextless" (window: ^display.Window) {
 			view_scroll.following = true
 		}
 	}
-	if running != nil {
+	if running != nil && boxes.has_stop {
 		stop_label := running.stop_requested ? "Stopping" : "Stop"
-		stop_area := interface.Area{MARGIN + room - STOP_WIDTH, input_top, STOP_WIDTH, INPUT_HEIGHT}
-		stop_result := interface.button(&frame, stop_area, interface.identity(STOP_IDENTITY), stop_label)
+		stop_result := interface.button(&frame, boxes.stop_button, interface.identity(STOP_IDENTITY), stop_label)
 		if stop_result.activated {
 			request_stop()
 		}

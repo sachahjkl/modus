@@ -777,7 +777,7 @@ START_POLICY_SOURCE_LINE_LIMIT :: 400
 // holds the decisions of the wiring rows, with their host tests, so the
 // start policy keeps only their calls.
 @(rodata)
-START_POLICY_ALLOWED_IMPORTS := [?]string{"modus:contract/start_list", "modus:contract/root_ring", "modus:contract/ring", "modus:contract/operation", "modus:contract/value_kinds", "internal:start_policy/wiring_rows", "modus:system", "modus:contract/call_outcome"}
+START_POLICY_ALLOWED_IMPORTS := [?]string{"modus:contract/start_list", "modus:contract/root_ring", "modus:contract/ring", "modus:contract/operation", "modus:contract/value_kinds", "modus:contract/wiring_service", "internal:start_policy/wiring_rows", "modus:system", "modus:contract/call_outcome"}
 
 // source_import_problems gives each import of the sources, tests not
 // counted, that allowed refuses, each foreign import or block, and each

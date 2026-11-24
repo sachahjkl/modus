@@ -439,9 +439,9 @@ candidate_icon :: proc "contextless" (kind: palette_table.Candidate_Kind) -> (ic
 		return kind_icons.cells_of_value_kind(.Module), graphics.value_kind_color(value_kinds.Value_Kind.Module, graphics.appearance)
 	case .Grant:
 		return kind_icons.cells_of_value_kind(.Grant), graphics.value_kind_color(value_kinds.Value_Kind.Grant, graphics.appearance)
-	case .Strategy, .Member:
-		// A strategy and a member of an enum are values that the provider
-		// sets: the icon and the color of a setting row.
+	case .Strategy, .Member, .Range_Stop, .Choice:
+		// A strategy, enum member, range stop, or open choice is a setting
+		// value: the icon and the color of a setting row.
 		return kind_icons.cells_of_desktop_kind(.Setting), graphics.colors.text
 	}
 	return nil, 0
@@ -800,7 +800,9 @@ Band_Class :: enum u8 {
 	Time_Unit, // The unit after the number of a field that counts a time.
 }
 
-BAND_CAPACITY :: 512 // The characters of the band of a form: more than a name and six fields of 48 characters with their names.
+// Plan value: holds a command name, up to 12 parameter names, and a text
+// argument up to ARGUMENT_TEXT_CAPACITY (1024 bytes).
+BAND_CAPACITY :: 1536
 BAND_CELL_WIDTH :: graphics.CELL_WIDTH * INPUT_SCALE // One character of the band.
 BAND_CARET_WIDTH :: 2 * INPUT_SCALE // The caret of the band.
 
@@ -1107,6 +1109,10 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 		words = "strategy"
 	case .Member:
 		words = "member"
+	case .Range_Stop:
+		words = "in range"
+	case .Choice:
+		words = "choice"
 	}
 	if buttons := form_buttons_layout(table, form, x, y); buttons.count > 0 {
 		// A few closed values: a row of buttons in place of the list, in

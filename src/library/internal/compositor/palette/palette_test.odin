@@ -1264,7 +1264,7 @@ a_hostile_table_gives_no_entry :: proc(t: ^testing.T) {
 		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.flags = transmute(palette_table.Entry_Flags)u8(0x80)}},
 		{.Bad_Signature, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.signature[0] = 'x'}},
 		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.reserved_first = 1}},
-		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.reserved[1] = 9}},
+		{.Bad_Kind, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.reserved_tail[1] = 9}},
 		{.Bad_Setting, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.flags = {.In_Use}}},
 		{.Bad_Length, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.parameter_name_lengths[0] = 99}},
 	}
@@ -1296,6 +1296,64 @@ a_hostile_table_gives_no_entry :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expect(t, found)
+}
+
+// A command with 12 parameters opens in the palette form, accepts 1024-byte
+// chunked text arguments, and renders Range_Stop and Choice candidates.
+@(test)
+twelve_parameter_form_and_range_choice_candidates :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	bytes, ok := palette_table.table_bytes_for(1)
+	testing.expect(t, ok)
+	memory := make([]u8, int(bytes))
+	defer delete(memory)
+	header := (^palette_table.Header)(raw_data(memory))
+	header^ = {magic = palette_table.MAGIC, version = palette_table.VERSION, change_count = 2, entry_count = 1, byte_length = bytes}
+	entry := (^palette_table.Entry)(&memory[palette_table.ENTRIES_OFFSET])
+	entry.kind = u8(palette_table.Entry_Kind.Export)
+	entry.parameter_count = palette_table.PARAMETER_CAPACITY
+	entry.result = u8(palette_table.Value_Kind.Integer)
+	entry.name_length = u8(copy(entry.name[:], "sample.weigh"))
+	entry.signature_length = u8(copy(entry.signature[:], "sample.weigh(...) -> Integer"))
+	for i in 0 ..< palette_table.PARAMETER_CAPACITY {
+		entry.parameters[i] = i == 0 ? u8(palette_table.Value_Kind.Text) : u8(palette_table.Value_Kind.Integer)
+		entry.parameter_name_lengths[i] = u8(copy(entry.parameter_names[i][:], "p"))
+	}
+	testing.expect_value(t, collect_with_table(panel, memory), palette_table.Problem.None)
+	type_text(panel, "sample.weigh")
+	picked := chosen_entry(panel)
+	testing.expect(t, picked != nil && form_can_open(given_of(panel.list, picked)))
+	form_open(panel, picked)
+	testing.expect_value(t, panel.form.field_count, palette_table.PARAMETER_CAPACITY)
+	// Paste a 120-byte text into field 0 (past 48-byte inline fast path, fits in 1024-byte bound).
+	long_text: [120]u8
+	for &b in long_text { b = 'x' }
+	drawn, changed, pasted := form_field_paste(panel, string(long_text[:]))
+	testing.expect(t, drawn && changed && pasted)
+	testing.expect_value(t, form_argument_chunks(&panel.form, 0), 3)
+	assembly: palette_table.Argument_Assembly
+	for chunk in 0 ..< 3 {
+		vals, _ := form_argument_chunk(&panel.form, 0, chunk)
+		testing.expect(t, palette_table.argument_assembly_take(&assembly, vals))
+	}
+	testing.expect_value(t, string(assembly.values[0].text[:assembly.values[0].length]), string(long_text[:]))
+	testing.expect_value(t, assembly.chunked_arguments, u64(1))
+	// Candidate_Kind.Range_Stop (suggestions) and .Choice (closed buttons) both render cleanly.
+	cand_area := ([^]palette_table.Candidate)(&memory[palette_table.CANDIDATES_OFFSET])[:palette_table.CANDIDATE_CAPACITY]
+	cand_area[0].length = u8(copy(cand_area[0].name[:], "250"))
+	cand_area[1].length = u8(copy(cand_area[1].name[:], "5000"))
+	form_field_move(panel, 1)
+	form_candidates_set(&panel.form, memory, 2, u64(palette_table.Candidate_Kind.Range_Stop), 0, 2, 0)
+	testing.expect_value(t, panel.form.candidate_kind, palette_table.Candidate_Kind.Range_Stop)
+	testing.expect_value(t, field_control(&panel.form, 1), Field_Control.Candidate_List)
+	form_candidates_set(&panel.form, memory, 2, u64(palette_table.Candidate_Kind.Choice), palette_table.CANDIDATES_CLOSED, 2, 0)
+	testing.expect_value(t, panel.form.candidate_kind, palette_table.Candidate_Kind.Choice)
+	testing.expect_value(t, field_control(&panel.form, 1), Field_Control.Buttons)
+	screen := screen_make()
+	defer screen_free(screen)
+	panel_build(screen, panel)
+	testing.expect(t, !screen.table.full)
 }
 
 // The keys of the states Running and Result, and what an answer of the

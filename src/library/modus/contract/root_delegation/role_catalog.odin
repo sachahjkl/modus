@@ -1,6 +1,6 @@
-// Canonical BLAKE3 role contract catalog for all 14 remaining core system and
-// delegated roles (src/md/features/roles_and_contracts.md;
-// src/md/api/root_service_split.md).
+// Canonical BLAKE3 role contract catalog for all 21 core system, device,
+// accessibility, and delegated roles beyond Display and Powerbox
+// (src/md/features/roles_and_contracts.md; src/md/api/root_service_split.md).
 //
 // Each role contract is described strictly in terms of required exports, ring
 // faces, and record streams, then hashed canonically by role_contract.contract_hash.
@@ -20,15 +20,23 @@ import "modus:contract/role_contract"
 // Version number of the first canonical contract catalog revision.
 CORE_ROLE_CONTRACT_VERSION :: u32(1)
 
-// Exact list of the 14 remaining core roles covered by this catalog.
+// Exact list of all 21 roles defined in this catalog (every Role except None,
+// Display, and Powerbox, which live in modus:contract/role_contract).
 @(rodata)
-CORE_CATALOG_ROLES := [14]role_contract.Role {
+CORE_CATALOG_ROLES := [21]role_contract.Role {
 	.Input,
 	.Console,
+	.Assistive,
+	.Speech,
 	.Terminal,
 	.Start_Policy,
 	.Storage,
 	.Network,
+	.Block_Device,
+	.Network_Device,
+	.Sound_Device,
+	.Entropy_Device,
+	.Tpm,
 	.Remote_Display,
 	.Disk_Processes,
 	.Principals,
@@ -139,9 +147,8 @@ storage_faces := [1]role_contract.Required_Face {
 			parameters        = {
 				{type = .Integer, direction = .Read},
 				{type = .Text, direction = .Read},
-				{type = .Bytes, direction = .Change},
 			},
-			result            = .Integer,
+			result            = .Text,
 			has_error_record  = true,
 			error_record_name = "Error_Record",
 		},
@@ -150,7 +157,7 @@ storage_faces := [1]role_contract.Required_Face {
 			parameters        = {
 				{type = .Integer, direction = .Read},
 				{type = .Text, direction = .Read},
-				{type = .Bytes, direction = .Read},
+				{type = .Text, direction = .Read},
 			},
 			result            = .Integer,
 			has_error_record  = true,
@@ -458,9 +465,148 @@ projects_faces := [2]role_contract.Required_Face {
 	},
 }
 
-// role_contract_by_role returns the canonical Role_Contract for each of the 14
-// core and delegated roles in this catalog as well as Display and Powerbox.
-// Unknown roles and roles without a defined contract are refused.
+// --- Assistive ---
+@(private = "file", rodata)
+assistive_faces := [1]role_contract.Required_Face {
+	{
+		kind = .Ring,
+		name = "assistive_ring",
+		ring_face = {
+			name             = "assistive_ring",
+			command_count    = 4,
+			event_count      = 4,
+			carries_handles  = true,
+			handle_rights    = READ_ONLY_RIGHTS,
+			protocol_version = 1,
+		},
+	},
+}
+
+// --- Speech ---
+@(private = "file", rodata)
+speech_faces := [2]role_contract.Required_Face {
+	{
+		kind = .Record_Stream,
+		name = "utterances",
+		record_stream = {
+			name        = "utterances",
+			is_input    = true,
+			record_name = "Speech_Utterance",
+		},
+	},
+	{
+		kind = .Ring,
+		name = "speech_stream_ring",
+		ring_face = {
+			name             = "speech_stream_ring",
+			command_count    = 3,
+			event_count      = 9,
+			carries_handles  = true,
+			handle_rights    = READ_ONLY_RIGHTS,
+			protocol_version = 1,
+		},
+	},
+}
+
+// --- Block_Device ---
+@(private = "file", rodata)
+block_device_faces := [1]role_contract.Required_Face {
+	{
+		kind = .Ring,
+		name = "block_ring",
+		ring_face = {
+			name             = "block_ring",
+			command_count    = 6,
+			event_count      = 1,
+			carries_handles  = true,
+			handle_rights    = READ_WRITE_RIGHTS,
+			protocol_version = 1,
+		},
+	},
+}
+
+// --- Network_Device ---
+@(private = "file", rodata)
+network_device_faces := [1]role_contract.Required_Face {
+	{
+		kind = .Ring,
+		name = "frame_ring",
+		ring_face = {
+			name             = "frame_ring",
+			command_count    = 7,
+			event_count      = 1,
+			carries_handles  = true,
+			handle_rights    = READ_WRITE_RIGHTS,
+			protocol_version = 1,
+		},
+	},
+}
+
+// --- Sound_Device ---
+@(private = "file", rodata)
+sound_device_faces := [1]role_contract.Required_Face {
+	{
+		kind = .Ring,
+		name = "sound_stream_ring",
+		ring_face = {
+			name             = "sound_stream_ring",
+			command_count    = 3,
+			event_count      = 9,
+			carries_handles  = true,
+			handle_rights    = READ_ONLY_RIGHTS,
+			protocol_version = 1,
+		},
+	},
+}
+
+// --- Entropy_Device ---
+@(private = "file", rodata)
+entropy_device_faces := [1]role_contract.Required_Face {
+	{
+		kind = .Ring,
+		name = "entropy_ring",
+		ring_face = {
+			name             = "entropy_ring",
+			command_count    = 1,
+			event_count      = 1,
+			carries_handles  = false,
+			handle_rights    = 0,
+			protocol_version = 1,
+		},
+	},
+}
+
+// --- Tpm ---
+@(private = "file", rodata)
+tpm_faces := [2]role_contract.Required_Face {
+	{
+		kind = .Ring,
+		name = "tpm_client_ring",
+		ring_face = {
+			name             = "tpm_client_ring",
+			command_count    = 4,
+			event_count      = 1,
+			carries_handles  = false,
+			handle_rights    = 0,
+			protocol_version = 1,
+		},
+	},
+	{
+		kind = .Ring,
+		name = "tpm_measure_ring",
+		ring_face = {
+			name             = "tpm_measure_ring",
+			command_count    = 1,
+			event_count      = 1,
+			carries_handles  = false,
+			handle_rights    = 0,
+			protocol_version = 1,
+		},
+	},
+}
+
+// role_contract_by_role returns the canonical Role_Contract for every member of
+// role_contract.Role except .None. Unknown roles are refused.
 role_contract_by_role :: proc "contextless" (role: role_contract.Role) -> (contract: role_contract.Role_Contract, ok: bool) {
 	validated, valid := role_contract.role_from_word(u64(role))
 	if !valid {
@@ -477,6 +623,10 @@ role_contract_by_role :: proc "contextless" (role: role_contract.Role) -> (contr
 		return {role = .Input, version = CORE_ROLE_CONTRACT_VERSION, faces = input_faces[:]}, true
 	case .Console:
 		return {role = .Console, version = CORE_ROLE_CONTRACT_VERSION, faces = console_faces[:]}, true
+	case .Assistive:
+		return {role = .Assistive, version = CORE_ROLE_CONTRACT_VERSION, faces = assistive_faces[:]}, true
+	case .Speech:
+		return {role = .Speech, version = CORE_ROLE_CONTRACT_VERSION, faces = speech_faces[:]}, true
 	case .Terminal:
 		return {role = .Terminal, version = CORE_ROLE_CONTRACT_VERSION, faces = terminal_faces[:]}, true
 	case .Start_Policy:
@@ -485,6 +635,16 @@ role_contract_by_role :: proc "contextless" (role: role_contract.Role) -> (contr
 		return {role = .Storage, version = CORE_ROLE_CONTRACT_VERSION, faces = storage_faces[:]}, true
 	case .Network:
 		return {role = .Network, version = CORE_ROLE_CONTRACT_VERSION, faces = network_faces[:]}, true
+	case .Block_Device:
+		return {role = .Block_Device, version = CORE_ROLE_CONTRACT_VERSION, faces = block_device_faces[:]}, true
+	case .Network_Device:
+		return {role = .Network_Device, version = CORE_ROLE_CONTRACT_VERSION, faces = network_device_faces[:]}, true
+	case .Sound_Device:
+		return {role = .Sound_Device, version = CORE_ROLE_CONTRACT_VERSION, faces = sound_device_faces[:]}, true
+	case .Entropy_Device:
+		return {role = .Entropy_Device, version = CORE_ROLE_CONTRACT_VERSION, faces = entropy_device_faces[:]}, true
+	case .Tpm:
+		return {role = .Tpm, version = CORE_ROLE_CONTRACT_VERSION, faces = tpm_faces[:]}, true
 	case .Remote_Display:
 		return {role = .Remote_Display, version = CORE_ROLE_CONTRACT_VERSION, faces = remote_display_faces[:]}, true
 	case .Disk_Processes:
@@ -501,8 +661,6 @@ role_contract_by_role :: proc "contextless" (role: role_contract.Role) -> (contr
 		return {role = .Recipes, version = CORE_ROLE_CONTRACT_VERSION, faces = recipes_faces[:]}, true
 	case .Projects:
 		return {role = .Projects, version = CORE_ROLE_CONTRACT_VERSION, faces = projects_faces[:]}, true
-	case .Assistive, .Speech, .Block_Device, .Network_Device, .Sound_Device, .Entropy_Device, .Tpm:
-		return {}, false
 	}
 	return {}, false
 }

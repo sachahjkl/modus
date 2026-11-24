@@ -402,20 +402,20 @@ ingest_handshake_bytes :: proc "contextless" (session: ^Tls_Session, bytes: []u8
 			break
 		}
 
-		// Copy message out so reassembly buffer can shift cleanly before dispatch.
-		msg_copy: [MAX_HANDSHAKE_REASSEMBLY]u8
-		copy(msg_copy[:total_msg], session.handshake_buf[:total_msg])
+		// Dispatch directly from handshake_buf without allocating a 64 KiB
+		// stack copy: none of the handshake handlers read or mutate
+		// handshake_buf or handshake_len. Shift the tail after dispatch.
 		rem := session.handshake_len - total_msg
+		key_change := false
+		ref := dispatch_handshake_message(session, msg_type, session.handshake_buf[:total_msg], &key_change)
+		if ref != .None {
+			session.handshake_len = 0
+			return ref
+		}
 		if rem > 0 {
 			copy(session.handshake_buf[:rem], session.handshake_buf[total_msg:session.handshake_len])
 		}
 		session.handshake_len = rem
-
-		key_change := false
-		ref := dispatch_handshake_message(session, msg_type, msg_copy[:total_msg], &key_change)
-		if ref != .None {
-			return ref
-		}
 		// RFC 8446 section 5.1: handshake messages must not cross an encryption key boundary in one record.
 		if key_change && session.handshake_len > 0 {
 			return fail_session(session, .Unexpected_Handshake_Message)

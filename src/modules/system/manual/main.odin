@@ -68,6 +68,7 @@ import "modus:contract/errors"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import box_layout "modus:layout"
 import "internal:manual/manual_navigation"
 import "internal:manual/module_list"
 import info "modus:contract/boot_info"
@@ -79,6 +80,10 @@ import "modus:system"
 // The window is built with the interface package (docs/INTERFACE.md).
 // The page, and the action bar with its open list (about 120 records).
 window_memory: interface.Window_Memory(1024, 8192)
+// The layout tree of each frame and its last solved rectangles: lives in
+// module state, never on the stack.
+box_tree: box_layout.Box_Tree
+last_boxes: Manual_Boxes
 
 CELL_WIDTH :: graphics.CELL_WIDTH
 CELL_HEIGHT :: graphics.CELL_HEIGHT
@@ -97,22 +102,35 @@ WIDTH :: 889
 HEIGHT :: 576
 #assert(HEIGHT == ROWS * CELL_HEIGHT + 2 * MARGIN + CELL_HEIGHT + 8)
 // The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (1001 pages): its module, its
-// stack, its pages of text, its tables and its glyph memory. The tool
-// counts the window at the largest scale (docs/MODULE_CONTRACT.md, "The
-// budget that a module asks for").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1047, window_width = WIDTH, window_height = HEIGHT}
+// window, less that window at the scale 1 (1001 pages), plus the pages of
+// box_tree for modus:layout. The tool counts the window at the largest scale
+// (docs/MODULE_CONTRACT.md, "The budget that a module asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1105, window_width = WIDTH, window_height = HEIGHT}
+#assert(MODULE_BUDGET.working_memory_pages >= 1047 + (size_of(box_tree) + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
 
-// scroll_area gives the place of the scroll bar of the text: at the right
-// edge of the window, from its top to the line over the keys.
-scroll_area :: proc "contextless" () -> interface.Area {
-	return {WIDTH - SCROLL_WIDTH, 0, SCROLL_WIDTH, HEIGHT - CELL_HEIGHT - 6 - 4}
+// layout_refresh solves the layout tree for width x height using the element
+// tokens of the appearance in force and records last_boxes.
+layout_refresh :: proc "contextless" (width, height: int) -> (tokens: box_layout.Element_Tokens, ok: bool) {
+	tokens, ok = box_layout.tokens_for(graphics.appearance, .Standard)
+	if !ok {
+		return {}, false
+	}
+	boxes, solved := manual_layout(&box_tree, width, height, heading_rows, tokens)
+	if !solved {
+		return tokens, false
+	}
+	last_boxes = boxes
+	return tokens, true
 }
 
-// text_view_area gives the place of the text, at the right of the list:
-// the wheel over it moves the text.
+// scroll_area gives the place of the scroll bar of the text from the last solved layout.
+scroll_area :: proc "contextless" () -> interface.Area {
+	return last_boxes.scroll_bar
+}
+
+// text_view_area gives the place of the text from the last solved layout.
 text_view_area :: proc "contextless" () -> interface.Area {
-	return {LIST_WIDTH, 0, WIDTH - SCROLL_WIDTH - LIST_WIDTH, HEIGHT - CELL_HEIGHT - 6 - 4}
+	return last_boxes.text_view
 }
 
 // scroll_identity gives the identity of the scroll bar of the text.
@@ -442,13 +460,18 @@ page_build :: proc "contextless" () {
 	}
 }
 
-// draw builds a frame of the window with the interface package.
+// draw builds a frame of the window with the interface package and modus:layout.
 draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_start(&window_memory, window)
+	tokens, layout_ok := layout_refresh(window.width, window.height)
+	if !layout_ok {
+		interface.window_frame_end(&window_memory.drawing, &frame, window)
+		return
+	}
 	// A press on the action bar, or while its list is open, is the bar's:
 	// the scroll bar under the list does not take it.
 	interface.action_bar_input_take(&frame, &bar)
-	draw_records(&frame)
+	draw_records(&frame, tokens)
 	// The scroll bar of the text: the pointer on it moves the text as Page
 	// Up and Page Down do, and the wheel over the text moves it too.
 	moved := interface.scroll_bar(&frame, scroll_area(), scroll_identity(), .Vertical, {total = rows(), visible = view_rows(), first = first_line}, {page = view_rows() - 2}, "", text_view_area())
@@ -495,10 +518,9 @@ bar_acted: bool // A press on an item of the action bar ran its key in the last 
 // numbers change.
 PLACE_COLUMNS :: 28
 
-// bar_area gives the place of the action bar: under the text, from the
-// list of the modules to the place of the rows.
+// bar_area gives the place of the action bar from the last solved layout.
 bar_area :: proc "contextless" () -> interface.Area {
-	return {LIST_WIDTH, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH - LIST_WIDTH - PLACE_COLUMNS * CELL_WIDTH - MARGIN, interface.ACTION_BAR_ROW_HEIGHT}
+	return last_boxes.action_bar
 }
 
 // key_run runs one key: a typed key, or the key of an item of the action
@@ -542,29 +564,33 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 	}
 }
 
-draw_records :: proc "contextless" (frame: ^interface.Frame) {
+draw_records :: proc "contextless" (frame: ^interface.Frame, tokens: box_layout.Element_Tokens) {
 	table := frame.table
-	interface.draw_rectangle(table, 0, 0, LIST_WIDTH, HEIGHT, graphics.colors.card_top)
+	list_pane := last_boxes.list_pane
+	interface.draw_rectangle(table, list_pane.x, list_pane.y, list_pane.width, list_pane.height, tokens.surface_card)
 	entries := system.image_entries(image)
 	// The filter: a field at the top of the list, which each typed letter
 	// fills; its placeholder says what typing does.
 	field := filter_field_area()
 	interface.draw_element_push(table, {field.x, field.y, field.width, field.height}, u32(interface.identity("filter")), .Search_Box, {name = "filter"})
-	interface.draw_rectangle(table, field.x, field.y, field.width, field.height, graphics.colors.recess)
-	interface.draw_outline(table, field.x, field.y, field.width, field.height, 1, graphics.colors.track)
+	interface.draw_rectangle(table, field.x, field.y, field.width, field.height, tokens.surface_recess)
+	interface.draw_outline(table, field.x, field.y, field.width, field.height, 1, tokens.surface_track)
 	if filter_count > 0 {
 		shown := interface.text_fit(table, {}, string(filter[:filter_count]), field.width - 16 - CELL_WIDTH)
-		end := interface.draw_text(table, field.x + 8, field.y + 3, shown, graphics.colors.text)
-		interface.draw_rectangle(table, end, field.y + 3, 2, CELL_HEIGHT, graphics.colors.text)
+		end := interface.draw_text(table, field.x + 8, field.y + 3, shown, tokens.text)
+		interface.draw_rectangle(table, end, field.y + 3, 2, CELL_HEIGHT, tokens.text)
 	} else {
-		interface.draw_text(table, field.x + 8, field.y + 3, interface.text_fit(table, {}, "type to filter", field.width - 16), graphics.colors.dim)
+		interface.draw_text(table, field.x + 8, field.y + 3, interface.text_fit(table, {}, "type to filter", field.width - 16), tokens.text_dim)
 	}
 	interface.draw_element_pop(table)
 	// The head of the column of the counts: the number at the right of a
 	// name is the count of its exports.
-	interface.draw_text_right(table, LIST_WIDTH - 8, LIST_HEAD_Y, "exports", graphics.colors.dim)
+	list_header := last_boxes.list_header
+	list_rows_area := last_boxes.list_rows
+	visible_list_rows := list_rows_visible()
+	interface.draw_text_right(table, list_pane.x + list_pane.width - 8, list_header.y, "exports", tokens.text_dim)
 	if list_item_count == 0 {
-		interface.draw_text(table, 8, LIST_TOP, "no module", graphics.colors.dim)
+		interface.draw_text(table, list_pane.x + 8, list_rows_area.y, "no module", tokens.text_dim)
 	}
 	first_row := list_first_row()
 	for place in 0 ..< list_item_count {
@@ -572,10 +598,10 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 		if start < first_row {
 			continue // A name whose first line is over the window: its row is not drawn in part.
 		}
-		if end > first_row + LIST_ROWS {
+		if end > first_row + visible_list_rows {
 			break
 		}
-		y := LIST_TOP + (start - first_row) * CELL_HEIGHT
+		y := list_rows_area.y + (start - first_row) * CELL_HEIGHT
 		item := list_items[place]
 		if item.module < 0 {
 			// The heading of a group, dim, with a mark of the closed
@@ -586,30 +612,30 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 			if item.group == .Tests {
 				text = item.closed_count > 0 ? system.format(heading[:], "+ ", title, " (", u64(item.closed_count), ")") : system.format(heading[:], "- ", title)
 			}
-			interface.draw_text(table, 8, y, text, graphics.colors.dim)
+			interface.draw_text(table, list_pane.x + 8, y, text, tokens.text_dim)
 			continue
 		}
 		index := item.module
 		exports := list_exports[index]
-		name_color, count_color := module_color(exports, list_has_entry[index]), graphics.colors.dim
+		name_color, count_color := module_color(exports, list_has_entry[index]), tokens.text_dim
 		// The chosen row of a list: the chosen blue, its texts in white
 		// (docs/DESIGN.md, "The chosen row").
 		if index == selected && page_kind == .Module {
-			interface.draw_rectangle(table, 0, y, LIST_WIDTH, (end - start) * CELL_HEIGHT, graphics.colors.chosen)
-			name_color, count_color = graphics.COLOR_WHITE, graphics.COLOR_WHITE
+			interface.draw_rectangle(table, list_pane.x, y, list_pane.width, (end - start) * CELL_HEIGHT, tokens.surface_chosen)
+			name_color, count_color = tokens.text_on_chosen, tokens.text_on_chosen
 		}
-		interface.draw_text_wrapped(table, LIST_NAME_INDENT, y, list_name_room(exports), system.name_of(entries[index].name[:]), name_color)
+		interface.draw_text_wrapped(table, list_pane.x + LIST_NAME_INDENT, y, list_name_room(exports), system.name_of(entries[index].name[:]), name_color)
 		if exports > 0 {
 			buffer: [8]u8
 			count := system.format(buffer[:], u64(exports))
-			interface.draw_text_right(table, LIST_WIDTH - 8, y, count, count_color)
+			interface.draw_text_right(table, list_pane.x + list_pane.width - 8, y, count, count_color)
 		}
 	}
 
-	left := LIST_WIDTH + MARGIN
+	left := last_boxes.text_column.x
 	// The heading of the page, over the rows: it stays when they move.
-	if page_heading != "" {
-		interface.draw_heading(frame, left, MARGIN, TEXT_WIDTH, page_heading, page_heading_color)
+	if page_heading != "" && last_boxes.heading.height > 0 {
+		interface.draw_heading(frame, last_boxes.heading.x, last_boxes.heading.y, last_boxes.heading.width, page_heading, page_heading_color)
 	}
 	top := rows_top()
 	shown_rows := view_rows()
@@ -629,24 +655,24 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 		if .Code_Block in part.flags {
 			// An example is a block: a band from its indentation to the end
 			// of the text, on each of its rows.
-			interface.draw_rectangle(table, x - 4, y, left + TEXT_WIDTH + 4 - (x - 4), CELL_HEIGHT, graphics.colors.track)
+			interface.draw_rectangle(table, x - 4, y, left + TEXT_WIDTH + 4 - (x - 4), CELL_HEIGHT, tokens.surface_track)
 		}
 		focused := part.link > 0 && int(part.link) == focused_link
 		if focused {
 			// The band is the box of the part: it covers no other text. It
 			// is the track, as a button: the color of a link keeps its
 			// contrast there in both appearances.
-			interface.draw_rectangle(table, x, y, int(part.width), CELL_HEIGHT, graphics.colors.track)
+			interface.draw_rectangle(table, x, y, int(part.width), CELL_HEIGHT, tokens.surface_track)
 		}
 		interface.draw_text(table, x, y, part.text, part.color, part.font)
 		switch {
 		case focused:
 			// The outline of the focus, in the strong text color.
-			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 2, graphics.colors.text_strong)
+			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 2, tokens.focus_outline)
 		case .Opens_A_Page in part.flags:
 			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 1, part.color)
 		case .Underlined in part.flags:
-			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 1, graphics.colors.dim)
+			interface.draw_rectangle(table, x, y + CELL_HEIGHT - 2, int(part.width), 1, tokens.text_dim)
 		}
 		// A link names itself by its label, at its first part: a machine
 		// test presses it by that name (src/md/infrastructure/test_pointer.md).
@@ -656,15 +682,14 @@ draw_records :: proc "contextless" (frame: ^interface.Frame) {
 	}
 	// The band of the action bar goes on under the place of the rows, at
 	// the right of the bar (draw: the bar draws its own part last).
-	keys := bar_area()
-	place_left := keys.x + keys.width
-	interface.draw_rectangle(table, place_left, keys.y, WIDTH - place_left, keys.height, graphics.colors.card_bottom)
-	interface.draw_rectangle(table, place_left, keys.y, WIDTH - place_left, 1, graphics.colors.track)
+	status_box := last_boxes.row_status
+	interface.draw_rectangle(table, status_box.x, status_box.y, status_box.width, status_box.height, graphics.colors.card_bottom)
+	interface.draw_rectangle(table, status_box.x, status_box.y, status_box.width, 1, tokens.surface_track)
 	buffer: [64]u8
 	total := rows()
 	place := system.format(buffer[:], "rows ", u64(min(first_line + 1, total)), " to ", u64(min(first_line + view_rows(), total)), " of ", u64(total))
-	place_room := WIDTH - MARGIN - place_left
-	interface.draw_text_right(table, WIDTH - MARGIN, keys.y + (keys.height - CELL_HEIGHT) / 2, interface.text_fit(table, {}, place, place_room), graphics.colors.dim)
+	place_room := max(status_box.width - int(tokens.margin), 0)
+	interface.draw_text_right(table, status_box.x + status_box.width - int(tokens.margin), status_box.y + (status_box.height - CELL_HEIGHT) / 2, interface.text_fit(table, {}, place, place_room), tokens.text_dim)
 }
 
 // The list of the modules, at the left of the window, under the filter
@@ -696,10 +721,17 @@ filter: [module_list.FILTER_BYTES]u8 // The text that the principal typed.
 filter_count: int
 tests_open: bool // The principal opened the group of the tests.
 
-// filter_field_area gives the place of the filter field, at the top of the
-// list.
+// filter_field_area gives the place of the filter field from the last solved layout.
 filter_field_area :: proc "contextless" () -> interface.Area {
-	return {6, LIST_FIELD_Y, LIST_WIDTH - 12, CELL_HEIGHT + 6}
+	return last_boxes.filter_field
+}
+
+// list_rows_visible gives how many module list rows fit in the last solved layout.
+list_rows_visible :: proc "contextless" () -> int {
+	if last_boxes.list_rows.height > 0 {
+		return max(last_boxes.list_rows.height / CELL_HEIGHT, 1)
+	}
+	return LIST_ROWS
 }
 
 // filter_character_valid says if a typed character goes into the filter: a
@@ -798,20 +830,23 @@ list_build :: proc "contextless" () {
 list_first_row :: proc "contextless" () -> int {
 	place := module_list.row_of_module(list_items[:list_item_count], selected)
 	selected_row := place >= 0 ? list_row[place] : 0
-	return clamp(selected_row - LIST_ROWS / 2, 0, max(list_row[list_item_count] - LIST_ROWS, 0))
+	visible := list_rows_visible()
+	return clamp(selected_row - visible / 2, 0, max(list_row[list_item_count] - visible, 0))
 }
 
 // list_place_at gives the row of the list at a height of the window, or
 // -1: a row that the window does not show whole takes no press.
 list_place_at :: proc "contextless" (y: int) -> int {
-	if y < LIST_TOP {
+	top := last_boxes.list_rows.y > 0 ? last_boxes.list_rows.y : LIST_TOP
+	if y < top {
 		return -1
 	}
+	visible := list_rows_visible()
 	first_row := list_first_row()
-	row := first_row + (y - LIST_TOP) / CELL_HEIGHT
+	row := first_row + (y - top) / CELL_HEIGHT
 	for place in 0 ..< list_item_count {
 		if row >= list_row[place] && row < list_row[place + 1] {
-			return list_row[place] >= first_row && list_row[place + 1] <= first_row + LIST_ROWS ? place : -1
+			return list_row[place] >= first_row && list_row[place + 1] <= first_row + visible ? place : -1
 		}
 	}
 	return -1
@@ -962,6 +997,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		documented += int(line != "")
 	}
 	select(max(find("manual"), 0))
+	_, _ = layout_refresh(window.width, window.height)
 	system.log_fact(.Info, Window_Ready{modules = u64(len(entries)), documented = u64(documented)})
 	markdown_check()
 	changed := true
@@ -1039,7 +1075,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					pressed = down
 					continue
 				}
-				if down && !pressed && pointer.x >= 0 && pointer.x < LIST_WIDTH {
+				if down && !pressed && pointer.x >= last_boxes.list_pane.x && pointer.x < last_boxes.list_pane.x + last_boxes.list_pane.width {
 					if place := list_place_at(pointer.y); place >= 0 {
 						item := list_items[place]
 						switch {
@@ -1056,7 +1092,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 						changed = true
 					}
 				}
-				if down && !pressed && pointer.x >= LIST_WIDTH {
+				if down && !pressed && pointer.x >= last_boxes.right_pane.x {
 					if number := link_at_place(pointer.x, pointer.y); number > 0 {
 						link_open(number)
 						changed = true

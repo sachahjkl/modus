@@ -18,8 +18,13 @@ ED25519_SIGNATURE_SIZE :: 64
 ED25519_SPKI_SIZE :: 44 // 12-byte DER SubjectPublicKeyInfo prefix + 32-byte public key.
 HANDSHAKE_HEADER_SIZE :: 4
 MAX_SERVER_NAME_LEN :: 255
-MAX_TRANSCRIPT_SIZE :: 8192
-MAX_HANDSHAKE_REASSEMBLY :: 4096
+// Format property: RFC 8446 practical multi-record handshake message bound
+// (65535 bytes) covering real-world X.509 certificate chains.
+MAX_HANDSHAKE_REASSEMBLY :: 65535
+// Computed: holds one maximum-size handshake message (e.g. Certificate chain)
+// plus up to 8 KiB for ClientHello, ServerHello, EncryptedExtensions,
+// CertificateVerify, and Finished.
+MAX_TRANSCRIPT_SIZE :: MAX_HANDSHAKE_REASSEMBLY + 8192
 MAX_WIRE_BUFFER :: 20480
 MAX_APP_BUFFER :: 16384
 

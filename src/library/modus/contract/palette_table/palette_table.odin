@@ -50,22 +50,33 @@ import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 
 MAGIC :: 0x544C4150 // "PALT", little-endian.
-VERSION :: 10 // A new field or a new meaning of a field is a new version. 10: the entries past the table move to an object of the entries alone, which Header.entries_object names.
+VERSION :: 11 // A new field or a new meaning of a field is a new version. 11: 12 parameters matching module.PARAMETER_CAPACITY, 32-byte setting names, chunked text arguments up to 1024 bytes, Range_Stop and Choice candidates.
 
 INITIAL_ENTRY_CAPACITY :: 256 // Initial allocation hint for a new table; not a protocol limit.
 NAME_CAPACITY :: 64 // The bytes of the name of an entry.
 SIGNATURE_CAPACITY :: 128 // The bytes of the signature of an entry: its name, its parameters, its result.
 ABOUT_CAPACITY :: 128 // The bytes of the help sentence of an entry.
-PARAMETER_CAPACITY :: 6 // The parameters of an entry: the parameters of an export at most.
+// Format property: matches module.PARAMETER_CAPACITY so no export of the
+// system is hidden from the palette.
+PARAMETER_CAPACITY :: 12
 RESULT_CAPACITY :: 2048 // The bytes of the result area.
 RESULT_LINE_CAPACITY :: 12 // The lines of a result that the panel shows.
 RESULT_COLUMN_CAPACITY :: 76 // The cells of one line of a result that the panel shows.
 PARAMETER_NAME_CAPACITY :: 16 // The bytes of the name of a parameter. A longer name is absent.
-ARGUMENT_TEXT_CAPACITY :: 48 // The bytes of a Text argument that the panel sends: 6 values of a ring record.
+// Inline capacity: 6 u64 words in one ring.Record (values[1..6]), covering
+// short names (process, module, grant, enum, setting) in a single ring record.
+// Longer texts cross as ordered chunk records up to ARGUMENT_TEXT_CAPACITY.
+ARGUMENT_INLINE_TEXT_CAPACITY :: 48
+// Format property: matches chosen_values.TEXT_BYTES_MOST so any bounded module
+// text setting (such as browser.home) crosses the palette ring whole.
+ARGUMENT_TEXT_CAPACITY :: 1024
+ARGUMENT_MAX_CHUNKS :: (ARGUMENT_TEXT_CAPACITY + ARGUMENT_INLINE_TEXT_CAPACITY - 1) / ARGUMENT_INLINE_TEXT_CAPACITY
 CANDIDATE_CAPACITY :: 96 // The candidates of one page: a parameter has any count of candidates, which come by pages.
 CANDIDATE_NAME_CAPACITY :: 31 // The bytes of the name of a candidate.
 ACT_NAME_CAPACITY :: 32 // The bytes of the act name of an entry: what it acts on, as an element of a window names it ("settings.set:font").
-SETTING_NAME_CAPACITY :: 24 // The bytes of the name of the row of a Provider_Setting entry: the name of its setting row.
+// Format property: matches module.NAME_CAPACITY / chosen_values.NAME_CAPACITY
+// so every setting parameter name fits a setting row.
+SETTING_NAME_CAPACITY :: 32
 VALUE_NAME_CAPACITY :: 24 // The bytes of the name of the value of a Provider_Setting entry: one button of its setting row.
 SNAPSHOT_TRIES :: 4 // The times that a reader copies a table that changes while it reads.
 
@@ -132,7 +143,7 @@ parameter_kind_of :: proc "contextless" (entry: ^Entry, index: int) -> (kind: Va
 	return value_kind_of_word(u64(entry.parameters[index]))
 }
 
-// One entry: 536 bytes.
+// One entry: 664 bytes.
 //
 // The integer unit of a parameter says what its Integer counts, a size or
 // a time and its unit, as the command states it: the panel shows the unit
@@ -148,32 +159,31 @@ parameter_kind_of :: proc "contextless" (entry: ^Entry, index: int) -> (kind: Va
 // table, and differ only in their value. The provider writes the three, so
 // the panel never parses the name of an entry.
 Entry :: struct {
-	kind:             u8, // What the entry is: the word of an Entry_Kind, read through entry_kind_of_word.
-	flags:            Entry_Flags, // Its facts.
-	parameter_count:  u8, // Its parameters: 0 to PARAMETER_CAPACITY. 0: the panel runs it with no argument.
-	result:           u8, // The kind of its result: the word of a Value_Kind, read through result_kind_of.
-	name_length:      u8, // The bytes of `name` in use: 1 to NAME_CAPACITY.
-	signature_length: u8, // The bytes of `signature` in use. It starts with the name.
-	about_length:     u8, // The bytes of `about` in use.
-	reserved_first:   u8, // 0.
-	parameters:       [PARAMETER_CAPACITY]u8, // The kind of each parameter: the word of a Value_Kind, read through parameter_kind_of.
-	reserved:         [2]u8, // 0.
+	kind:                   u8, // What the entry is: the word of an Entry_Kind, read through entry_kind_of_word.
+	flags:                  Entry_Flags, // Its facts.
+	parameter_count:        u8, // Its parameters: 0 to PARAMETER_CAPACITY. 0: the panel runs it with no argument.
+	result:                 u8, // The kind of its result: the word of a Value_Kind, read through result_kind_of.
+	name_length:            u8, // The bytes of `name` in use: 1 to NAME_CAPACITY.
+	signature_length:       u8, // The bytes of `signature` in use. It starts with the name.
+	about_length:           u8, // The bytes of `about` in use.
+	reserved_first:         u8, // 0.
+	parameters:             [PARAMETER_CAPACITY]u8, // The kind of each parameter: the word of a Value_Kind, read through parameter_kind_of.
 	parameter_name_lengths: [PARAMETER_CAPACITY]u8, // The bytes of each parameter name in use. 0: the parameter has no name.
-	reserved_more:    [2]u8, // 0.
-	name:             [NAME_CAPACITY]u8, // The name, identifiers joined by spaces: ASCII 32 to 126 (text_encoding.identifier_words_valid); on a Provider_Setting entry, a display text, as its value name (text_encoding.display_text_valid).
-	signature:        [SIGNATURE_CAPACITY]u8, // "revoke(name: Text, grant: Text) -> Integer": UTF-8.
-	about:            [ABOUT_CAPACITY]u8, // What the entry does, in one sentence: UTF-8.
-	parameter_names:  [PARAMETER_CAPACITY][PARAMETER_NAME_CAPACITY]u8, // The name of each parameter: UTF-8.
-	act_name_length:     u8, // The bytes of `act_name` in use. 0: no element of a window acts on what the entry does.
-	setting_name_length: u8, // The bytes of `setting_name` in use. 0: the entry joins no setting row. Only on a Provider_Setting entry.
-	value_name_length:   u8, // The bytes of `value_name` in use. Only on an entry with a setting name, and then at least 1.
-	reserved_end:        u8, // 0.
-	act_name:         [ACT_NAME_CAPACITY]u8, // "settings.set:font", "strategy": an identifier, ASCII 33 to 126 (text_encoding.identifier_valid).
-	setting_name:     [SETTING_NAME_CAPACITY]u8, // "font", "strategy": identifiers joined by spaces, ASCII 32 to 126.
-	value_name:       [VALUE_NAME_CAPACITY]u8, // "spleen", "1.75", "eevdf": the display text of a button (text_encoding.display_text_valid).
-	parameter_units:  [PARAMETER_CAPACITY]value_kinds.Integer_Unit, // What the Integer of each parameter counts. {}: a plain number, and each parameter that is no Integer.
+	name:                   [NAME_CAPACITY]u8, // The name, identifiers joined by spaces: ASCII 32 to 126 (text_encoding.identifier_words_valid); on a Provider_Setting entry, a display text, as its value name (text_encoding.display_text_valid).
+	signature:              [SIGNATURE_CAPACITY]u8, // "revoke(name: Text, grant: Text) -> Integer": UTF-8.
+	about:                  [ABOUT_CAPACITY]u8, // What the entry does, in one sentence: UTF-8.
+	parameter_names:        [PARAMETER_CAPACITY][PARAMETER_NAME_CAPACITY]u8, // The name of each parameter: UTF-8.
+	act_name_length:        u8, // The bytes of `act_name` in use. 0: no element of a window acts on what the entry does.
+	setting_name_length:    u8, // The bytes of `setting_name` in use. 0: the entry joins no setting row. Only on a Provider_Setting entry.
+	value_name_length:      u8, // The bytes of `value_name` in use. Only on an entry with a setting name, and then at least 1.
+	reserved_end:           u8, // 0.
+	act_name:               [ACT_NAME_CAPACITY]u8, // "settings.set:font", "strategy": an identifier, ASCII 33 to 126 (text_encoding.identifier_valid).
+	setting_name:           [SETTING_NAME_CAPACITY]u8, // "font", "strategy": identifiers joined by spaces, ASCII 32 to 126.
+	value_name:             [VALUE_NAME_CAPACITY]u8, // "spleen", "1.75", "eevdf": the display text of a button (text_encoding.display_text_valid).
+	parameter_units:        [PARAMETER_CAPACITY]value_kinds.Integer_Unit, // What the Integer of each parameter counts. {}: a plain number, and each parameter that is no Integer.
+	reserved_tail:          [4]u8, // 0. Keeps Entry 8-byte aligned.
 }
-#assert(size_of(Entry) == 536)
+#assert(size_of(Entry) == 664)
 
 // The start of the memory object.
 Header :: struct {
@@ -198,12 +208,14 @@ Candidate :: struct {
 
 // What the candidates of a parameter are: the list says it in words.
 Candidate_Kind :: enum u64 {
-	None    = 0, // The provider gives no candidate for the parameter.
-	Process = 1, // The processes that run.
-	Module  = 2, // The modules of the boot image.
-	Grant   = 3, // The grants that the root service can revoke.
-	Strategy = 4, // The scheduling strategies of the kernel, as the command `strategy` takes them.
-	Member   = 5, // The members of the enum of the parameter, as its module file names them, with no ".".
+	None       = 0, // The provider gives no candidate for the parameter.
+	Process    = 1, // The processes that run.
+	Module     = 2, // The modules of the boot image.
+	Grant      = 3, // The grants that the root service can revoke.
+	Strategy   = 4, // The scheduling strategies of the kernel, as the command `strategy` takes them.
+	Member     = 5, // The members of the enum of the parameter, as its module file names them, with no ".".
+	Range_Stop = 6, // Stops of a ranged Integer parameter (module.Parameter_Setting): suggestions across [least, most].
+	Choice     = 7, // Open choices returned by a parameter's choices_export (module.Parameter_Setting).
 }
 
 // The bit of values[3] of the answer Candidates_Ready that says that the
@@ -274,7 +286,8 @@ Command :: enum u32 {
 	// change_count of the table that the panel showed. values[1]: the
 	// index of the entry in that table. values[2]: name_hash of its name.
 	// values[3]: a Choose_Mode. values[4]: with Run_With_Arguments, the
-	// count of the Argument commands of the same tag before it.
+	// count of parameters supplied by the Argument commands of the same tag
+	// before it (each Text parameter spans 1..ARGUMENT_MAX_CHUNKS records).
 	Choose = 1,
 	// Candidates asks for one page of the values that one parameter of an
 	// entry can take. values[0..2]: as Choose. values[3]: the number of the
@@ -285,11 +298,13 @@ Command :: enum u32 {
 	// matches (line_editor.fuzzy_match); with none, each candidate. The
 	// answer is Candidates_Ready.
 	Candidates = 2,
-	// Argument gives one typed value for the Choose of the same tag that
-	// follows. values[0]: the number of the parameter in its low byte, the
-	// Value_Kind in the next byte, the count of the bytes of a Text in the
-	// byte after it. values[1]: an Integer, as an i64. values[1..6]: the
-	// bytes of a Text, ARGUMENT_TEXT_CAPACITY at most.
+	// Argument gives one typed value (or one ordered chunk of a Text value)
+	// for the Choose or Candidates command of the same tag that follows.
+	// values[0]: parameter index in bits [0..7], Value_Kind in [8..15],
+	// chunk_length in [16..23], chunk_index in [24..31], total_length in
+	// [32..47]. values[1]: an Integer, as an i64. values[1..6]: up to
+	// ARGUMENT_INLINE_TEXT_CAPACITY (48) bytes per chunk, reassembled by
+	// Argument_Assembly up to ARGUMENT_TEXT_CAPACITY (1024) bytes.
 	Argument = 3,
 	// Manual asks for the page of the manual of a module. values[0..3]:
 	// its name, 31 bytes at most, zero bytes after it.
@@ -431,7 +446,7 @@ ENTRY_FLAGS_KNOWN :: u8(1 << u8(Entry_Flag.Destroys)) | u8(1 << u8(Entry_Flag.In
 entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 	entry_kind, entry_kind_ok := entry_kind_of_word(u64(entry.kind))
 	_, result_ok := result_kind_of(entry)
-	if !entry_kind_ok || (transmute(u8)entry.flags) &~ ENTRY_FLAGS_KNOWN != 0 || !result_ok || entry.reserved_first != 0 || entry.reserved != {} || entry.reserved_more != {} || entry.reserved_end != 0 {
+	if !entry_kind_ok || (transmute(u8)entry.flags) &~ ENTRY_FLAGS_KNOWN != 0 || !result_ok || entry.reserved_first != 0 || entry.reserved_end != 0 || entry.reserved_tail != {} {
 		return .Bad_Kind
 	}
 	if int(entry.act_name_length) > ACT_NAME_CAPACITY || int(entry.setting_name_length) > SETTING_NAME_CAPACITY || int(entry.value_name_length) > VALUE_NAME_CAPACITY {
@@ -731,85 +746,255 @@ candidates_copy :: proc "contextless" (memory: []u8, count: u64, candidates: ^[C
 	return copied, true
 }
 
-// argument_pack gives the values of an Argument command: an Integer in
-// values[1], or the bytes of a Text in values[1..6]. A text longer than
-// ARGUMENT_TEXT_CAPACITY is cut after a whole character: the sender
-// refuses a longer one before.
-argument_pack :: proc "contextless" (parameter: int, kind: Value_Kind, integer: i64, text: string) -> (values: [7]u64) {
+// argument_chunk_count gives how many Command.Argument ring records carry one
+// value: 1 for an Integer or an inline Text (<= ARGUMENT_INLINE_TEXT_CAPACITY),
+// and ceil(len(text) / ARGUMENT_INLINE_TEXT_CAPACITY) for a longer Text.
+argument_chunk_count :: proc "contextless" (kind: Value_Kind, text: string) -> int {
+	if kind != .Text {
+		return 1
+	}
 	length := min(len(text), ARGUMENT_TEXT_CAPACITY)
 	if length < len(text) {
 		length = text_encoding.complete_characters(transmute([]u8)text[:length])
 	}
-	values[0] = u64(parameter) & 0xFF | u64(kind) << 8 | u64(length) << 16
-	if kind == .Integer {
-		values[1] = u64(integer)
-		return values
+	if length <= ARGUMENT_INLINE_TEXT_CAPACITY {
+		return 1
 	}
-	bytes: [ARGUMENT_TEXT_CAPACITY]u8
-	copy(bytes[:], text[:length])
+	return (length + ARGUMENT_INLINE_TEXT_CAPACITY - 1) / ARGUMENT_INLINE_TEXT_CAPACITY
+}
+
+// argument_pack_chunk gives the values of chunk chunk_index of an Argument
+// command: values[0] packs parameter (bits 0..7), Value_Kind (bits 8..15),
+// chunk_length (bits 16..23), chunk_index (bits 24..31), and total_length
+// (bits 32..47). An Integer uses chunk 0 with chunk_length = total_length = 0.
+// A Text up to ARGUMENT_INLINE_TEXT_CAPACITY uses 1 record (fast tier); longer
+// texts up to ARGUMENT_TEXT_CAPACITY cross as ordered chunks (slow tier).
+argument_pack_chunk :: proc "contextless" (parameter: int, kind: Value_Kind, integer: i64, text: string, chunk_index: int) -> (values: [7]u64, more: bool) {
+	if kind == .Integer {
+		values[0] = u64(parameter) & 0xFF | u64(kind) << 8
+		values[1] = u64(integer)
+		return values, false
+	}
+	total := min(len(text), ARGUMENT_TEXT_CAPACITY)
+	if total < len(text) {
+		total = text_encoding.complete_characters(transmute([]u8)text[:total])
+	}
+	offset := max(chunk_index, 0) * ARGUMENT_INLINE_TEXT_CAPACITY
+	if offset > total || (offset == total && chunk_index > 0) {
+		return {}, false
+	}
+	chunk_len := min(total - offset, ARGUMENT_INLINE_TEXT_CAPACITY)
+	values[0] = u64(parameter) & 0xFF | u64(kind) << 8 | u64(chunk_len) << 16 | u64(chunk_index) << 24 | u64(total) << 32
+	bytes: [ARGUMENT_INLINE_TEXT_CAPACITY]u8
+	if chunk_len > 0 {
+		copy(bytes[:], text[offset:offset + chunk_len])
+	}
 	packed := transmute([6]u64)bytes
 	for value, index in packed {
 		values[1 + index] = value
 	}
+	return values, offset + chunk_len < total
+}
+
+// argument_pack gives the single-record values of an inline Argument command:
+// an Integer in values[1], or up to ARGUMENT_INLINE_TEXT_CAPACITY bytes of a
+// Text in values[1..6]. A longer Text is cut after a whole character; callers
+// sending full texts up to ARGUMENT_TEXT_CAPACITY use argument_pack_chunk.
+argument_pack :: proc "contextless" (parameter: int, kind: Value_Kind, integer: i64, text: string) -> (values: [7]u64) {
+	length := min(len(text), ARGUMENT_INLINE_TEXT_CAPACITY)
+	if length < len(text) {
+		length = text_encoding.complete_characters(transmute([]u8)text[:length])
+	}
+	values, _ = argument_pack_chunk(parameter, kind, integer, text[:length], 0)
 	return values
 }
 
-// One typed value that an Argument command carried, checked.
+// One typed value that one or more Argument commands carried, checked.
 Argument_Value :: struct {
 	kind:    Value_Kind, // Integer or Text.
 	integer: i64, // An Integer.
-	length:  int, // A Text: its bytes.
+	length:  int, // A Text: its bytes, up to ARGUMENT_TEXT_CAPACITY.
 	text:    [ARGUMENT_TEXT_CAPACITY]u8, // A Text: UTF-8, and no quote.
 }
 
-// argument_unpack reads the values of an Argument command. ok is false
-// for a parameter past PARAMETER_CAPACITY, a kind that is not Integer or
-// Text, an Integer with a length of text, a length past
-// ARGUMENT_TEXT_CAPACITY, a text that is not valid UTF-8, and a quote: a
-// line has no way to hold one in a text. A refusal gives the parameter 0
-// and the zero value.
-argument_unpack :: proc "contextless" (values: [7]u64) -> (parameter: int, argument: Argument_Value, ok: bool) {
-	parameter = int(values[0] & 0xFF)
-	kind := values[0] >> 8 & 0xFF
-	length := int(values[0] >> 16 & 0xFF)
-	if values[0] >> 24 != 0 || parameter >= PARAMETER_CAPACITY {
-		return 0, {}, false
+// One validated Argument chunk record read from the palette ring.
+Argument_Chunk :: struct {
+	parameter:    int,
+	kind:         Value_Kind,
+	integer:      i64,
+	chunk_index:  int,
+	chunk_length: int,
+	total_length: int,
+	bytes:        [ARGUMENT_INLINE_TEXT_CAPACITY]u8,
+}
+
+// argument_unpack_chunk checks one raw Argument ring record at the border.
+// Refuses out-of-range parameter, unknown or unsupported kind, nonzero high
+// bits, non-zero lengths on Integer, lengths past ARGUMENT_INLINE_TEXT_CAPACITY
+// or ARGUMENT_TEXT_CAPACITY, and out-of-range chunk_index.
+argument_unpack_chunk :: proc "contextless" (values: [7]u64) -> (chunk: Argument_Chunk, ok: bool) {
+	parameter := int(values[0] & 0xFF)
+	kind_word := values[0] >> 8 & 0xFF
+	chunk_length := int(values[0] >> 16 & 0xFF)
+	chunk_index := int(values[0] >> 24 & 0xFF)
+	total_length := int(values[0] >> 32 & 0xFFFF)
+	if values[0] >> 48 != 0 || parameter >= PARAMETER_CAPACITY {
+		return {}, false
 	}
-	value_kind, value_kind_ok := value_kind_of_word(kind)
+	value_kind, value_kind_ok := value_kind_of_word(kind_word)
 	if !value_kind_ok {
-		return 0, {}, false
+		return {}, false
 	}
 	switch value_kind {
 	case .Integer:
-		// An Integer has no bytes of text: a length is a record that no
-		// panel writes, and its refusal gives nothing, as each other.
-		if length != 0 {
-			return 0, {}, false
+		if chunk_length != 0 || chunk_index != 0 || total_length != 0 {
+			return {}, false
 		}
-		return parameter, {kind = .Integer, integer = i64(values[1])}, true
+		return {parameter = parameter, kind = .Integer, integer = i64(values[1])}, true
 	case .Text:
-		if length > ARGUMENT_TEXT_CAPACITY {
-			return 0, {}, false
+		if chunk_length > ARGUMENT_INLINE_TEXT_CAPACITY || total_length > ARGUMENT_TEXT_CAPACITY || chunk_index >= ARGUMENT_MAX_CHUNKS {
+			return {}, false
+		}
+		offset := chunk_index * ARGUMENT_INLINE_TEXT_CAPACITY
+		if offset > total_length || chunk_length > total_length - offset {
+			return {}, false
+		}
+		// Every non-final chunk must be full; chunk 0 with total_length 0 has chunk_length 0.
+		if offset + chunk_length < total_length && chunk_length != ARGUMENT_INLINE_TEXT_CAPACITY {
+			return {}, false
+		}
+		if total_length > 0 && chunk_length == 0 {
+			return {}, false
 		}
 		packed: [6]u64
 		for index in 0 ..< 6 {
 			packed[index] = values[1 + index]
 		}
-		argument = {kind = .Text, length = length, text = transmute([ARGUMENT_TEXT_CAPACITY]u8)packed}
-		if !text_encoding.text_valid(argument.text[:length]) {
+		return {
+			parameter    = parameter,
+			kind         = .Text,
+			chunk_index  = chunk_index,
+			chunk_length = chunk_length,
+			total_length = total_length,
+			bytes        = transmute([ARGUMENT_INLINE_TEXT_CAPACITY]u8)packed,
+		}, true
+	case .None, .Record, .Handle, .Table, .Bytes, .Enum:
+	}
+	return {}, false
+}
+
+// argument_unpack reads one self-contained inline Argument command (single
+// chunk). ok is false for chunked records (use Argument_Assembly), invalid
+// UTF-8, or a quote.
+argument_unpack :: proc "contextless" (values: [7]u64) -> (parameter: int, argument: Argument_Value, ok: bool) {
+	chunk, chunk_ok := argument_unpack_chunk(values)
+	if !chunk_ok {
+		return 0, {}, false
+	}
+	if chunk.kind == .Integer {
+		return chunk.parameter, {kind = .Integer, integer = chunk.integer}, true
+	}
+	if chunk.chunk_index != 0 || chunk.chunk_length != chunk.total_length {
+		return 0, {}, false
+	}
+	argument.kind = .Text
+	argument.length = chunk.total_length
+	copy(argument.text[:chunk.total_length], chunk.bytes[:chunk.chunk_length])
+	if !text_encoding.text_valid(argument.text[:argument.length]) {
+		return 0, {}, false
+	}
+	for value in argument.text[:argument.length] {
+		if value == '"' {
 			return 0, {}, false
 		}
-		for value in argument.text[:length] {
-			if value == '"' {
-				return 0, {}, false
+	}
+	return chunk.parameter, argument, true
+}
+
+// Argument_Assembly reassembles one tag's inline and multi-chunk Argument
+// records. chunked_arguments counts every Text argument that crossed the
+// ARGUMENT_INLINE_TEXT_CAPACITY fast tier into the multi-record slower tier.
+Argument_Assembly :: struct {
+	values:            [PARAMETER_CAPACITY]Argument_Value,
+	given:             bit_set[0 ..< PARAMETER_CAPACITY],
+	in_progress:       bit_set[0 ..< PARAMETER_CAPACITY],
+	expected_length:   [PARAMETER_CAPACITY]int,
+	received_length:   [PARAMETER_CAPACITY]int,
+	next_chunk:        [PARAMETER_CAPACITY]int,
+	chunked_arguments: u64, // Visible counter of slow-tier (> 48 B) arguments assembled.
+}
+
+// argument_assembly_reset clears per-tag state while preserving the lifetime
+// chunked_arguments counter.
+argument_assembly_reset :: proc "contextless" (assembly: ^Argument_Assembly) {
+	assembly.given = {}
+	assembly.in_progress = {}
+	assembly.expected_length = {}
+	assembly.received_length = {}
+	assembly.next_chunk = {}
+}
+
+// argument_assembly_take validates and incorporates one Command.Argument record.
+// Refuses out-of-order chunks, mismatched totals, duplicate completed
+// parameters, invalid UTF-8, or quotes on completion.
+argument_assembly_take :: proc "contextless" (assembly: ^Argument_Assembly, values: [7]u64) -> bool {
+	chunk, ok := argument_unpack_chunk(values)
+	if !ok {
+		return false
+	}
+	p := chunk.parameter
+	if p in assembly.given {
+		return false
+	}
+	if chunk.kind == .Integer {
+		if p in assembly.in_progress {
+			return false
+		}
+		assembly.values[p] = {kind = .Integer, integer = chunk.integer}
+		assembly.given += {p}
+		return true
+	}
+	if p not_in assembly.in_progress {
+		if chunk.chunk_index != 0 {
+			return false
+		}
+		assembly.values[p] = {kind = .Text, length = 0}
+		assembly.expected_length[p] = chunk.total_length
+		assembly.received_length[p] = 0
+		assembly.next_chunk[p] = 0
+		assembly.in_progress += {p}
+	} else {
+		if chunk.chunk_index != assembly.next_chunk[p] || chunk.total_length != assembly.expected_length[p] {
+			return false
+		}
+	}
+	offset := assembly.received_length[p]
+	if offset != chunk.chunk_index * ARGUMENT_INLINE_TEXT_CAPACITY || offset + chunk.chunk_length > assembly.expected_length[p] {
+		return false
+	}
+	if chunk.chunk_length > 0 {
+		copy(assembly.values[p].text[offset:offset + chunk.chunk_length], chunk.bytes[:chunk.chunk_length])
+	}
+	assembly.received_length[p] = offset + chunk.chunk_length
+	assembly.next_chunk[p] += 1
+	if assembly.received_length[p] == assembly.expected_length[p] {
+		total := assembly.expected_length[p]
+		assembly.in_progress -= {p}
+		if !text_encoding.text_valid(assembly.values[p].text[:total]) {
+			return false
+		}
+		for b in assembly.values[p].text[:total] {
+			if b == '"' {
+				return false
 			}
 		}
-		return parameter, argument, true
-	case .None, .Record, .Handle, .Table, .Bytes, .Enum:
-		// A member goes as the Text of its name: the provider writes the
-		// "." and checks the name against the enum when the line runs.
+		assembly.values[p].length = total
+		assembly.given += {p}
+		if total > ARGUMENT_INLINE_TEXT_CAPACITY {
+			assembly.chunked_arguments += 1
+		}
 	}
-	return 0, {}, false
+	return true
 }
 
 // The largest count of the whole list of candidates that an answer may

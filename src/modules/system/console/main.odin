@@ -118,6 +118,8 @@
 // that is the work of the grants of the root service.
 package console
 
+import "modus:contract/call_outcome"
+import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
@@ -739,4 +741,10 @@ screen_clear :: proc "contextless" () {
 	terminal.clear(&output)
 	output_column = 0
 	system.unlock(&output_lock)
+}
+
+// status gives the count of lines that the console finished running since it started.
+@(export, link_name = "status")
+status :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	return .Succeeded, i64(intrinsics.atomic_load(&work.finished))
 }
