@@ -370,9 +370,9 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "display: time_page" + WINDOW_TAKEN, any_order = true},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "columns(debug(\"time_page\"), process, described)"},
-	// Two modules with a debug object: time_page and the drawing module it
-	// imports.
-	{kind = .Wait, text = "[console] time_page          2"},
+	// Three modules with a debug object: time_page, drawing, and
+	// text_rendering.
+	{kind = .Wait, text = "[console] time_page          3"},
 	{kind = .Type, text = "columns(hold(0), thread, state)"},
 	{kind = .Wait, text = "[console]      0  held"},
 	{kind = .Type, text = "revoke(\"console\", \"machine\")"},

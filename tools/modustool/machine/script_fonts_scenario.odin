@@ -76,26 +76,62 @@ script_fonts_disk_write :: proc(set: []u8) -> bool {
 	return true
 }
 
+@(private = "file")
+script_fonts_read_owned :: proc(path: string) -> (data: []u8, ok: bool) {
+	err: os.Error
+	data, err = os.read_entire_file(path, context.allocator)
+	if err != nil {
+		fmt.eprintfln("modustool: cannot read %s: %v", path, err)
+		return nil, false
+	}
+	return data, true
+}
+
+// script_fonts_owned formats a step string on the heap and tracks it so
+// scenario_run's per-step free_all(context.temp_allocator) never frees step
+// text or hashes still needed by later steps or machines.
+@(private = "file")
+script_fonts_owned :: proc(owned: ^[dynamic]string, format: string, args: ..any) -> string {
+	text := fmt.aprintf(format, ..args)
+	append(owned, text)
+	return text
+}
+
+@(private = "file")
+script_fonts_free_owned :: proc(owned: ^[dynamic]string) {
+	for text in owned {
+		delete(text)
+	}
+	delete(owned^)
+}
+
 script_fonts_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	owned: [dynamic]string
+	defer script_fonts_free_owned(&owned)
+
 	// The set that the build wrote, and whose hash the boot image names.
-	set := foundation.read_file(resources.SCRIPT_FONTS_OUTPUT) or_return
-	named := foundation.read_file(resources.SCRIPT_FONTS_NAME_OUTPUT) or_return
+	// Heap-owned because machine_test frees context.temp_allocator after each
+	// step.
+	set := script_fonts_read_owned(resources.SCRIPT_FONTS_OUTPUT) or_return
+	defer delete(set)
+	named := script_fonts_read_owned(resources.SCRIPT_FONTS_NAME_OUTPUT) or_return
+	defer delete(named)
 	if len(named) != 32 {
 		fmt.eprintfln("modustool: test failed: %s holds %d bytes, not one hash", resources.SCRIPT_FONTS_NAME_OUTPUT, len(named))
 		return false
 	}
 	hash: [32]u8
 	copy(hash[:], named)
-	digits := resources.hash_digits(hash)
+	digits := script_fonts_owned(&owned, "%s", resources.hash_digits(hash))
 
 	// 1. The set: mapped, and drawn with no replacement glyph.
 	script_fonts_disk_write(set) or_return
 	fmt.printfln("modustool: %s: the store %s holds the script font set, %d bytes, hash %s", TEST_DISK_SCRIPT_FONTS, font_outlines.SCRIPT_FONTS_STORE_NAME, len(set), digits)
 	mapped := [?]Step {
 		{kind = .Wait, text = "storage: ok, generation 2: 1 stores, 1 objects", any_order = true},
-		{kind = .Wait, text = fmt.tprintf("root: the boot image names the script font set %s", digits), any_order = true},
+		{kind = .Wait, text = script_fonts_owned(&owned, "root: the boot image names the script font set %s", digits), any_order = true},
 		{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
-		{kind = .Wait, text = fmt.tprintf("root: reads the script font set %s from the store script_fonts of the machine", digits)},
+		{kind = .Wait, text = script_fonts_owned(&owned, "root: reads the script font set %s from the store script_fonts of the machine", digits)},
 		{kind = .Wait, text = "21 fonts) is checked: each process that starts from now maps it, read-only", fails_on = "root: the script font set was not read"},
 		{kind = .Launch, text = "interface_font"},
 		{kind = .Wait, text = "interface_font: 2 characters that no font of the chain has draw the replacement glyph: as it must", fails_on = "interface_font: the fallback chain of the interface is wrong: "},
@@ -103,7 +139,7 @@ script_fonts_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		// interface_font draws its window by hand, with the fast part of the
 		// text only: the library module shaped the line and drew its glyphs
 		// of the set from their outlines.
-		{kind = .Wait, text = fmt.tprintf("interface_font: the library module text_rendering shaped the line and holds the %d fonts of the set", card(text_rendering.SCRIPT_FONTS)), fails_on = "interface_font: WRONG: the font "},
+		{kind = .Wait, text = script_fonts_owned(&owned, "interface_font: the library module text_rendering shaped the line and holds the %d fonts of the set", card(text_rendering.SCRIPT_FONTS)), fails_on = "interface_font: WRONG: the font "},
 		{kind = .Wait, text = "interface_font: ok, ", any_order = true},
 		{kind = .Shot, text = "interface_font_script_fonts"},
 		{kind = .Front, text = "console"},
@@ -122,9 +158,9 @@ script_fonts_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	refused := [?]Step {
 		{kind = .Wait, text = "storage: ok, generation 2: 1 stores, 1 objects", any_order = true},
 		{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
-		{kind = .Wait, text = fmt.tprintf("root: reads the script font set %s from the store script_fonts of the machine", digits)},
-		{kind = .Wait, text = fmt.tprintf("root: refused script_fonts from the disk: its bytes have the hash "), fails_on = " fonts) is checked: each process that starts from now maps it"},
-		{kind = .Wait, text = "root: the script font set was not read: status "},
+		{kind = .Wait, text = script_fonts_owned(&owned, "root: reads the script font set %s from the store script_fonts of the machine", digits)},
+		{kind = .Wait, text = "root: refused script_fonts from the disk: its bytes have the hash ", fails_on = " fonts) is checked: each process that starts from now maps it"},
+		{kind = .Wait, text = "root: the script font set was not read: Argument_Refused:"},
 		{kind = .Launch, text = "interface_font"},
 		{kind = .Wait, text = "interface_font: no script font set is mapped: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs and an emoji draws the replacement glyph", fails_on = "interface_font: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs, an emoji and a geometric shape draws "},
 		{kind = .Wait, text = "interface_font: ok, ", any_order = true},
@@ -142,9 +178,9 @@ script_fonts_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	too_large := [?]Step {
 		{kind = .Wait, text = "storage: ok, generation 2: 1 stores, 1 objects", any_order = true},
 		{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
-		{kind = .Wait, text = fmt.tprintf("root: reads the script font set %s from the store script_fonts of the machine", digits)},
+		{kind = .Wait, text = script_fonts_owned(&owned, "root: reads the script font set %s from the store script_fonts of the machine", digits)},
 		{kind = .Wait, text = "root: refused the script font set: the object has ", fails_on = " fonts) is checked: each process that starts from now maps it"},
-		{kind = .Wait, text = "root: the script font set was not read: status "},
+		{kind = .Wait, text = "root: the script font set was not read: Data_Damaged:"},
 		{kind = .Front, text = "console"},
 		{kind = .Type, text = "shutdown()"},
 		{kind = .Wait, text = "kernel: the machine stops with code 0"},
@@ -152,7 +188,8 @@ script_fonts_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	machine_test(part, too_large[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_SCRIPT_FONTS, 3), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_DISK_SCRIPT_FONTS}) or_return
 	foundation.test_passed_print("an object of %d bytes, one block past the bound of a script font set, was refused by its size: no set was mapped", len(large))
 
-	outlines := foundation.read_file(resources.FONT_OUTLINES_OUTPUT) or_return
+	outlines := script_fonts_read_owned(resources.FONT_OUTLINES_OUTPUT) or_return
+	defer delete(outlines)
 	script_fonts_planned_run(part, digits, outlines, false) or_return
 	return script_fonts_planned_run(part, digits, outlines[:len(outlines) - SCRIPT_FONTS_CUT_BYTES], true)
 }
@@ -166,27 +203,30 @@ SCRIPT_FONTS_CUT_BYTES :: 8
 // set is mapped, and its writer faults; a cut set is refused by its form.
 @(private = "file")
 script_fonts_planned_run :: proc(part: ^Test_Part_Run, image_digits: string, set: []u8, cut: bool) -> bool {
-	digits := resources.hash_digits(blake3.hash(set))
+	owned: [dynamic]string
+	defer script_fonts_free_owned(&owned)
+
+	digits := script_fonts_owned(&owned, "%s", resources.hash_digits(blake3.hash(set)))
 	planner := cut ? "script_fonts_cut_planner" : "script_fonts_planner"
 	plan := cut ? "the cut font outlines" : "the font outlines"
 	first_number := cut ? 6 : 4
 	script_fonts_disk_write(set) or_return
 	fmt.printfln("modustool: %s: the store %s holds %s, %d bytes, hash %s", TEST_DISK_SCRIPT_FONTS, font_outlines.SCRIPT_FONTS_STORE_NAME, plan, len(set), digits)
-	wrong := fmt.tprintf("%s: WRONG", planner)
+	wrong := script_fonts_owned(&owned, "%s: WRONG", planner)
 	planned := [?]Step {
 		{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
-		{kind = .Wait, text = fmt.tprintf("root: reads the script font set %s from the store script_fonts of the machine", image_digits)},
+		{kind = .Wait, text = script_fonts_owned(&owned, "root: reads the script font set %s from the store script_fonts of the machine", image_digits)},
 		{kind = .Wait, text = "root: refused script_fonts from the disk: its bytes have the hash ", fails_on = " fonts) is checked: each process that starts from now maps it"},
-		{kind = .Type, text = fmt.tprintf("start(\"%s\")", planner)},
-		{kind = .Wait, text = fmt.tprintf("script_fonts_planner: names the script font set %s, ", digits), fails_on = wrong},
-		{kind = .Wait, text = fmt.tprintf("compositor: the difference of the plan %s shows: 1 added, 0 removed", plan), any_order = true},
-		{kind = .Wait, text = fmt.tprintf("script_fonts_planner: the dialog of the plan %s takes the decision of the principal now", plan), fails_on = wrong},
+		{kind = .Type, text = script_fonts_owned(&owned, "start(\"%s\")", planner)},
+		{kind = .Wait, text = script_fonts_owned(&owned, "script_fonts_planner: names the script font set %s, ", digits), fails_on = wrong},
+		{kind = .Wait, text = script_fonts_owned(&owned, "compositor: the difference of the plan %s shows: 1 added, 0 removed", plan), any_order = true},
+		{kind = .Wait, text = script_fonts_owned(&owned, "script_fonts_planner: the dialog of the plan %s takes the decision of the principal now", plan), fails_on = wrong},
 		{kind = .Key, text = "tab"},
 		{kind = .Key, text = "ret"},
-		{kind = .Wait, text = fmt.tprintf("compositor: the difference of the plan %s is accepted", plan), fails_on = fmt.tprintf("compositor: the difference of the plan %s is refused", plan)},
-		{kind = .Wait, text = fmt.tprintf("root: the plan of principal 0 names the script font set %s: it holds at the next start of the machine", digits), any_order = true},
-		{kind = .Wait, text = fmt.tprintf("script_fonts_planner: the principal accepted the plan: generation 1, which names the script font set %s", digits), fails_on = wrong},
-		{kind = .Wait, text = fmt.tprintf("root: %s stopped: itself, done", planner)},
+		{kind = .Wait, text = script_fonts_owned(&owned, "compositor: the difference of the plan %s is accepted", plan), fails_on = script_fonts_owned(&owned, "compositor: the difference of the plan %s is refused", plan)},
+		{kind = .Wait, text = script_fonts_owned(&owned, "root: the plan of principal 0 names the script font set %s: it holds at the next start of the machine", digits), any_order = true},
+		{kind = .Wait, text = script_fonts_owned(&owned, "script_fonts_planner: the principal accepted the plan: generation 1, which names the script font set %s", digits), fails_on = wrong},
+		{kind = .Wait, text = script_fonts_owned(&owned, "root: %s stopped: itself, done", planner)},
 		{kind = .Front, text = "console"},
 		{kind = .Type, text = "shutdown()"},
 		{kind = .Wait, text = "kernel: the machine stops with code 0"},
@@ -195,23 +235,24 @@ script_fonts_planned_run :: proc(part: ^Test_Part_Run, image_digits: string, set
 	foundation.test_passed_print("%s applied a plan of principal 0 that names %s, %s, and the root service took it for the next start", planner, plan, digits)
 
 	reading := [?]Step {
-		{kind = .Wait, text = fmt.tprintf("root: the plan of principal 0 names the script font set %s", digits), any_order = true},
+		{kind = .Wait, text = script_fonts_owned(&owned, "root: the plan of principal 0 names the script font set %s", digits), any_order = true},
 		{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
-		{kind = .Wait, text = fmt.tprintf("root: reads the script font set %s from the store script_fonts of the machine", digits)},
+		{kind = .Wait, text = script_fonts_owned(&owned, "root: reads the script font set %s from the store script_fonts of the machine", digits)},
 	}
-	read := make([dynamic]Step, context.temp_allocator)
+	read: [dynamic]Step
+	defer delete(read)
 	append(&read, ..reading[:])
 	if cut {
 		refused := [?]Step {
-			{kind = .Wait, text = fmt.tprintf("root: the script font set is refused: %s, value %d", font_outlines.problem_sentences[.Bad_Size], len(set) + SCRIPT_FONTS_CUT_BYTES), fails_on = " fonts) is checked: each process that starts from now maps it"},
+			{kind = .Wait, text = script_fonts_owned(&owned, "root: the script font set is refused: %s, value %d", font_outlines.problem_sentences[.Bad_Size], len(set) + SCRIPT_FONTS_CUT_BYTES), fails_on = " fonts) is checked: each process that starts from now maps it"},
 		}
 		append(&read, ..refused[:])
 	} else {
-		writer_fault := fmt.tprintf(" address %016x, in module ", fixed_addresses.SCRIPT_FONTS_ADDRESS)
+		writer_fault := script_fonts_owned(&owned, " address %016x, in module ", fixed_addresses.SCRIPT_FONTS_ADDRESS)
 		mapped := [?]Step {
-			{kind = .Wait, text = fmt.tprintf("root: the script font set %s (", digits), fails_on = "root: the script font set was not read"},
+			{kind = .Wait, text = script_fonts_owned(&owned, "root: the script font set %s (", digits), fails_on = "root: the script font set was not read"},
 			{kind = .Type, text = "start(\"script_fonts_writer\")"},
-			{kind = .Wait, text = fmt.tprintf("script_fonts_writer: writes the byte at %016x, the first of the script font set", fixed_addresses.SCRIPT_FONTS_ADDRESS), fails_on = "script_fonts_writer: WRONG"},
+			{kind = .Wait, text = script_fonts_owned(&owned, "script_fonts_writer: writes the byte at %016x, the first of the script font set", fixed_addresses.SCRIPT_FONTS_ADDRESS), fails_on = "script_fonts_writer: WRONG"},
 			// The line of the kernel names the process, then the address of
 			// the fault: the next wait searches the same line.
 			{kind = .Wait, text = "kernel: process script_fonts_writer stopped: page fault vector 14 ", any_order = true, fails_on = "script_fonts_writer: WRONG"},
