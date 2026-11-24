@@ -1,9 +1,9 @@
 // Freestanding read-only multi-line Lex step engine for agent code mode
-// (src/md/features/agent_code_mode.md, layer 2).
+// (src/md/features/agent_code_mode.md).
 //
 // Executes 1 to AGENT_STEP_LINE_CAPACITY (16) lines of Lex per step using
-// modus:console_language (|> pipe desugaring), modus:lex_parser, and
-// modus:lex_evaluator in Evaluation_Mode.Console.
+// modus:lex_parser (with native |> pipes) and modus:lex_evaluator in
+// Evaluation_Mode.Console.
 //
 // Security and resource invariants:
 // - Persistent variable bindings (`name = expr`) survive across lines within
@@ -26,7 +26,6 @@
 package agent_step
 
 import "base:intrinsics"
-import "modus:console_language"
 import "modus:contract/agent_bridge"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
@@ -46,9 +45,6 @@ STEP_TIME_BOUND_MS :: agent_bridge.AGENT_STEP_TIME_BOUND_MS
 
 // Format property: maximum bytes of one Lex line (line_editor.LINE_CAPACITY).
 STEP_LINE_BYTES :: agent_bridge.MAX_LEX_LINE_BYTES
-
-// Computed: pipe-desugared line buffer size (matches console NESTED_LINE_SIZE).
-NESTED_LINE_BYTES :: 2 * STEP_LINE_BYTES
 
 // Plan value: variables persisted across lines and steps of one request.
 VARIABLE_CAPACITY :: 32
@@ -254,7 +250,7 @@ Step_Session :: struct {
 	last_act_hash:       blake3.Hash,
 
 	variables:           [VARIABLE_CAPACITY]Step_Variable,
-	var_list_items:      [VAR_LIST_ITEM_CAPACITY]lex_evaluator.Value,
+	var_list_items:      [VAR_LIST_ITEM_CAPACITY]lex_evaluator.Host_Value,
 	var_list_item_count: int,
 
 	strings:             [STRING_POOL_BYTES]u8,
@@ -265,10 +261,10 @@ Step_Session :: struct {
 	condition_count:     int,
 
 	// Per-line parser and evaluator working storage (kept in session, never on stack).
-	nested_line:         [NESTED_LINE_BYTES]u8,
-	pipe_stages:         [console_language.PIPE_STAGE_CAPACITY]console_language.Pipe_Stage,
 	tree:                lex_parser.Syntax_Tree,
+	tree_buffers:        lex_parser.Console_Tree_Buffers,
 	evaluation:          lex_evaluator.Evaluation,
+	eval_buffers:        lex_evaluator.Console_Eval_Buffers,
 	call_result:         Step_Call_Result,
 
 	// Active step transient fields accessed by evaluation host callbacks.
@@ -544,7 +540,7 @@ variable_find :: proc "contextless" (session: ^Step_Session, name: string) -> ^S
 }
 
 @(private = "file")
-host_name_value :: proc "contextless" (data: rawptr, name: string) -> (value: lex_evaluator.Value, ok: bool) {
+host_name_value :: proc "contextless" (data: rawptr, name: string) -> (value: lex_evaluator.Host_Value, ok: bool) {
 	session := (^Step_Session)(data)
 	v := variable_find(session, name)
 	if v == nil {
@@ -562,7 +558,7 @@ host_name_value :: proc "contextless" (data: rawptr, name: string) -> (value: le
 		return {kind = v.kind, integer = v.integer}, true
 	case .List:
 		items := session.var_list_items[v.list_first:v.list_first + v.list_count]
-		first, added := lex_evaluator.list_items_add(&session.evaluation, items)
+		first, added := lex_evaluator.list_items_add_host(&session.evaluation, items)
 		if !added {
 			set_refusal(session, .Evaluation_Refused, name)
 			return {}, false
@@ -647,7 +643,7 @@ parse_int64 :: proc "contextless" (s: string) -> (val: i64, ok: bool) {
 }
 
 @(private = "file")
-host_condition_value :: proc "contextless" (data: rawptr, evaluation: ^lex_evaluator.Evaluation, command_name: string, before: []lex_evaluator.Value, node: lex_parser.Node_Index) -> (value: lex_evaluator.Value, ok: bool) {
+host_condition_value :: proc "contextless" (data: rawptr, evaluation: ^lex_evaluator.Evaluation, command_name: string, before: []lex_evaluator.Host_Value, node: lex_parser.Node_Index) -> (value: lex_evaluator.Host_Value, ok: bool) {
 	_ = command_name
 	_ = before
 	session := (^Step_Session)(data)
@@ -655,12 +651,12 @@ host_condition_value :: proc "contextless" (data: rawptr, evaluation: ^lex_evalu
 		set_refusal(session, .Evaluation_Refused, "where")
 		return {}, false
 	}
-	cond_node := lex_parser.node_at(evaluation.tree, node)
-	if cond_node == nil || cond_node.condition_refusal != .None {
+	cond_data := lex_parser.node_condition(evaluation.tree, node)
+	if cond_data == nil || cond_data.refusal != .None {
 		set_refusal(session, .Invalid_Argument, "where")
 		return {}, false
 	}
-	head := cond_node.condition_head
+	head := cond_data.head
 	if len(head.field) == 0 || len(head.field) > RESULT_NAME_BYTES {
 		set_refusal(session, .Invalid_Argument, "where")
 		return {}, false
@@ -688,13 +684,14 @@ host_condition_value :: proc "contextless" (data: rawptr, evaluation: ^lex_evalu
 
 	// Evaluate the RHS expression directly via lex_evaluator (supports literals,
 	// variables, arithmetic, and read-only calls; forbids unauthorized calls!).
-	rhs_val, rhs_ok := lex_evaluator.force(evaluation, cond_node.first_child)
+	rhs_node := lex_parser.node_child(evaluation.tree, node)
+	rhs_val, rhs_ok := lex_evaluator.force(evaluation, rhs_node)
 	if !rhs_ok {
 		if session.active_refusal == .None {
 			// Fallback for bare status/member name like `level = Warning`.
-			child_node := lex_parser.node_at(evaluation.tree, cond_node.first_child)
-			if child_node != nil && child_node.kind == .Name && cond_node.member_alone {
-				member := lex_parser.node_text(evaluation.tree, cond_node.first_child)
+			child_node := lex_parser.node_at(evaluation.tree, rhs_node)
+			if child_node != nil && child_node.kind == .Name && cond_data.member_alone {
+				member := lex_parser.node_text(evaluation.tree, rhs_node)
 				if len(member) > 0 && len(member) <= RESULT_CELL_BYTES {
 					cond.is_integer = false
 					cond.text_len = u8(copy(cond.text_val[:], member))
@@ -732,7 +729,7 @@ host_condition_value :: proc "contextless" (data: rawptr, evaluation: ^lex_evalu
 }
 
 @(private = "file")
-host_values_add :: proc "contextless" (data: rawptr, left, right: lex_evaluator.Value) -> (sum: lex_evaluator.Value, ok: bool) {
+host_values_add :: proc "contextless" (data: rawptr, left, right: lex_evaluator.Host_Value) -> (sum: lex_evaluator.Host_Value, ok: bool) {
 	session := (^Step_Session)(data)
 	if left.kind == .Text && right.kind == .Text {
 		total := len(left.text) + len(right.text)
@@ -846,7 +843,7 @@ table_copy_row :: proc "contextless" (dst: ^Step_Table, dst_row: int, src: ^Step
 }
 
 @(private = "file")
-run_builtin_helper :: proc "contextless" (session: ^Step_Session, name: string, args: []lex_evaluator.Value) -> (value: lex_evaluator.Value, ok: bool) {
+run_builtin_helper :: proc "contextless" (session: ^Step_Session, name: string, args: []lex_evaluator.Host_Value) -> (value: lex_evaluator.Host_Value, ok: bool) {
 	switch name {
 	case "count":
 		if len(args) < 1 {
@@ -1018,7 +1015,7 @@ run_builtin_helper :: proc "contextless" (session: ^Step_Session, name: string, 
 			set_refusal(session, .Invalid_Argument, name)
 			return {}, false
 		}
-		items: [RESULT_ROW_CAPACITY]lex_evaluator.Value
+		items: [RESULT_ROW_CAPACITY]lex_evaluator.Host_Value
 		for r in 0 ..< src.row_count {
 			cell := &src.cells[r * src.column_count + col]
 			if cell.has_integer {
@@ -1032,7 +1029,7 @@ run_builtin_helper :: proc "contextless" (session: ^Step_Session, name: string, 
 				items[r] = {kind = .Text, text = string(session.strings[off:off + ln])}
 			}
 		}
-		first, added := lex_evaluator.list_items_add(&session.evaluation, items[:src.row_count])
+		first, added := lex_evaluator.list_items_add_host(&session.evaluation, items[:src.row_count])
 		if !added {
 			set_refusal(session, .Evaluation_Refused, name)
 			return {}, false
@@ -1043,7 +1040,7 @@ run_builtin_helper :: proc "contextless" (session: ^Step_Session, name: string, 
 }
 
 @(private = "file")
-host_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []lex_evaluator.Value) -> (value: lex_evaluator.Value, ok: bool) {
+host_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []lex_evaluator.Host_Value) -> (value: lex_evaluator.Host_Value, ok: bool) {
 	session := (^Step_Session)(data)
 	switch name {
 	case "count", "rows", "first", "skip", "where", "sort", "column":
@@ -1073,6 +1070,7 @@ host_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []le
 		effective -= 1
 	}
 	args_buf: [lex_parser.ARGUMENT_CAPACITY]Step_Arg
+	member_bufs: [lex_parser.ARGUMENT_CAPACITY][RESULT_NAME_BYTES + 1]u8
 	for i in 0 ..< effective {
 		arg := arguments[i]
 		switch arg.kind {
@@ -1083,12 +1081,14 @@ host_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []le
 		case .Boolean:
 			args_buf[i] = {kind = .Boolean, integer = arg.integer}
 		case .Member:
-			member_node := lex_parser.node_at(session.evaluation.tree, lex_parser.Node_Index(arg.integer))
-			if member_node == nil {
+			member_name := lex_evaluator.member_name_of(&session.evaluation, arg.vm_value)
+			if len(member_name) == 0 || len(member_name) > RESULT_NAME_BYTES {
 				set_refusal(session, .Invalid_Argument, name)
 				return {}, false
 			}
-			args_buf[i] = {kind = .Member, text = lex_parser.node_text(session.evaluation.tree, lex_parser.Node_Index(arg.integer))}
+			member_bufs[i][0] = '.'
+			copied := copy(member_bufs[i][1:], member_name)
+			args_buf[i] = {kind = .Member, text = string(member_bufs[i][:1 + copied])}
 		case .None, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Function, .List, .Hash, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value, .Tree_Ref:
 			set_refusal(session, .Invalid_Argument, name)
 			return {}, false
@@ -1158,7 +1158,7 @@ host_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []le
 }
 
 @(private = "file")
-bind_variable :: proc "contextless" (session: ^Step_Session, name: string, value: lex_evaluator.Value) -> Step_Refusal {
+bind_variable :: proc "contextless" (session: ^Step_Session, name: string, value: lex_evaluator.Host_Value) -> Step_Refusal {
 	if len(name) == 0 || len(name) > VARIABLE_NAME_BYTES {
 		return .Invalid_Argument
 	}
@@ -1196,16 +1196,17 @@ bind_variable :: proc "contextless" (session: ^Step_Session, name: string, value
 		}
 		slot.name_count = u8(copy(slot.name[:], name))
 	case .List:
-		items := lex_evaluator.list_items_of(&session.evaluation, value)
+		items := lex_evaluator.list_items_of(&session.evaluation, value.vm_value)
 		if session.var_list_item_count + len(items) > len(session.var_list_items) {
 			return .Variables_Full
 		}
 		first := session.var_list_item_count
 		saved_string_used := session.string_used
-		for item, idx in items {
-			stored := item
-			if item.kind == .Text {
-				off, ln, ok := intern_string(session, item.text)
+		for vm_item, idx in items {
+			stored := lex_evaluator.value_to_host(&session.evaluation, vm_item)
+			stored.vm_value = {}
+			if stored.kind == .Text {
+				off, ln, ok := intern_string(session, stored.text)
 				if !ok {
 					session.string_used = saved_string_used
 					return .Strings_Full
@@ -1279,7 +1280,7 @@ write_str :: proc "contextless" (dst: []u8, pos: ^int, s: string) {
 }
 
 @(private = "file")
-summarize_value :: proc "contextless" (session: ^Step_Session, value: lex_evaluator.Value, out: ^Line_Outcome) {
+summarize_value :: proc "contextless" (session: ^Step_Session, value: lex_evaluator.Host_Value, out: ^Line_Outcome) {
 	out.kind = value.kind
 	out.integer = value.integer
 	out.table_index = -1
@@ -1303,9 +1304,9 @@ summarize_value :: proc "contextless" (session: ^Step_Session, value: lex_evalua
 			write_str(out.summary[:], &pos, " rows")
 		}
 	case .List:
-		items := lex_evaluator.list_items_of(&session.evaluation, value)
+		items := lex_evaluator.list_items_of(&session.evaluation, value.vm_value)
 		write_str(out.summary[:], &pos, "[")
-		for item, idx in items {
+		for vm_item, idx in items {
 			if idx > 0 {
 				write_str(out.summary[:], &pos, ", ")
 			}
@@ -1313,6 +1314,7 @@ summarize_value :: proc "contextless" (session: ^Step_Session, value: lex_evalua
 				write_str(out.summary[:], &pos, "...")
 				break
 			}
+			item := lex_evaluator.value_to_host(&session.evaluation, vm_item)
 			switch item.kind {
 			case .Integer:
 				write_i64(out.summary[:], &pos, item.integer)
@@ -1400,28 +1402,22 @@ step_run :: proc "contextless" (session: ^Step_Session, lines: []string, transpo
 		session.active_refusal = .None
 		session.refused_command_len = 0
 
-		// Desugar `|>` pipes before parsing (identical to console).
-		expr_start := console_language.expression_start(line)
-		pipe_form := console_language.pipe_nested_form(line, expr_start, session.nested_line[:], session.pipe_stages[:])
-		if pipe_form.refusal != .None {
-			outcome.refusal = .Pipe_Refused
-			outcome.failed_line = line_num
-			outcome.calls_made = session.step_calls_made
-			outcome.act_records_written = session.step_records_added
-			return outcome
-		}
-		nested := pipe_form.nested
-
-		lex_parser.parse(nested, {form_of = parameter_form_of}, &session.tree)
+		// Parse line natively with Lex v2 (handles `|>` pipes directly).
+		lex_parser.parse_console(line, {form_of = parameter_form_of}, &session.tree_buffers, &session.tree)
 		if session.tree.refusal.refusal != .None {
-			outcome.refusal = .Parse_Refused
+			switch session.tree.refusal.refusal {
+			case .Pipe_No_Left, .Pipe_Line_End, .Pipe_Not_A_Call, .Lone_Bar, .Placeholder_Not_Whole, .Placeholder_Twice, .Placeholder_Nested, .Placeholder_Without_Pipe:
+				outcome.refusal = .Pipe_Refused
+			case .None, .Text_Too_Long, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Nodes_Full, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing, .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice, .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing, .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name, .Parameter_Name_Missing, .Parameter_Twice, .Too_Many_Parameters, .List_Close_Missing, .Hash_Not_Valid, .If_Then_Missing, .If_Else_Missing, .Nesting_Too_Deep, .Thin_Arrow, .Escape_Not_Valid, .Interpolation_Close_Missing, .Pattern_Field_Missing, .Pattern_Close_Missing, .Pattern_Field_Twice, .Pattern_Rest_Not_Last, .Pattern_At_Missing_Brace:
+				outcome.refusal = .Parse_Refused
+			}
 			outcome.failed_line = line_num
 			outcome.calls_made = session.step_calls_made
 			outcome.act_records_written = session.step_records_added
 			return outcome
 		}
 
-		lex_evaluator.evaluation_start(&session.evaluation, &session.tree, .Console, host, eval_budget)
+		lex_evaluator.evaluation_start(&session.evaluation, &session.tree, .Console, host, &session.eval_buffers, eval_budget)
 		val, ok := lex_evaluator.line_force(&session.evaluation)
 		if !ok {
 			outcome.refusal = session.active_refusal != .None ? session.active_refusal : .Evaluation_Refused

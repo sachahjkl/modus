@@ -1,6 +1,6 @@
 // Console wiring for recipes tree ingestion, project evaluation/building,
 // provenance queries, and module delivery into module_files
-// (src/md/features/recipes.md, src/md/features/application_projects.md).
+// (src/md/features/recipes.md and src/md/features/application_projects.md).
 //
 // Exposes only dotted service commands (recipes.ingest_tree,
 // recipes.build_project, recipes.provenance, recipes.deliver_module); no bare

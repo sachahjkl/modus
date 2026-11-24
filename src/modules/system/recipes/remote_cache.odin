@@ -6,8 +6,8 @@
 // endpoint granted to recipes by root. Never passed to builders or guests.
 //
 // Cache endpoints and trusted signers are keyed strictly per principal
-// (Property 21; src/md/features/recipes.md:207, 335, 337): a configuration
-// set by one principal never applies to another principal.
+// (src/md/features/recipes.md): a configuration set by one principal never
+// applies to another principal.
 package recipes_service
 
 import "base:intrinsics"

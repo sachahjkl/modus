@@ -86,7 +86,7 @@ step_adapter_call_export :: proc "contextless" (
 		case .Text:
 			// Validate UTF-8 with no control bytes, and refuse quotes,
 			// backslashes, or interpolation markers that could alter Lex syntax.
-			if !text_encoding.display_text_valid(transmute([]u8)arg.text) ||
+			if (len(arg.text) > 0 && !text_encoding.text_valid(transmute([]u8)arg.text)) ||
 			   strings.index_byte(arg.text, '"') >= 0 ||
 			   strings.index_byte(arg.text, '\\') >= 0 ||
 			   strings.contains(arg.text, "${") {
@@ -97,12 +97,12 @@ step_adapter_call_export :: proc "contextless" (
 			strings.write_string(&b, arg.text)
 			strings.write_byte(&b, '"')
 		case .Member:
-			if len(arg.text) < 2 || arg.text[0] != '.' || arg.text[1] < 'a' || arg.text[1] > 'z' {
+			if len(arg.text) < 2 || arg.text[0] != '.' || !((arg.text[1] >= 'a' && arg.text[1] <= 'z') || (arg.text[1] >= 'A' && arg.text[1] <= 'Z')) {
 				adapter.last_err = "invalid member argument"
 				return false
 			}
 			for ch in transmute([]u8)arg.text[1:] {
-				if !((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_') {
+				if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
 					adapter.last_err = "invalid member argument"
 					return false
 				}

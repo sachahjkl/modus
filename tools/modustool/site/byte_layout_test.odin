@@ -150,6 +150,8 @@ expected_fields :: proc() -> []Expected_Field {
 		{"module.Floor", "pages", offset_of(module.Floor, pages), size_of(budget.pages)},
 		{"module.Floor", "processes", offset_of(module.Floor, processes), size_of(budget.processes)},
 		{"module.Floor", "threads", offset_of(module.Floor, threads), size_of(budget.threads)},
+		{"module.Floor", "screen_pictures", offset_of(module.Floor, screen_pictures), size_of(budget.screen_pictures)},
+		{"module.Floor", "wiring_pages", offset_of(module.Floor, wiring_pages), size_of(budget.wiring_pages)},
 		{"module.Fact", "key", offset_of(module.Fact, key), size_of(fact.key)},
 		{"module.Fact", "record", offset_of(module.Fact, record), size_of(fact.record)},
 		{"module.Fact", "template_offset", offset_of(module.Fact, template_offset), size_of(fact.template_offset)},

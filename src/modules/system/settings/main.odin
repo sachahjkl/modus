@@ -113,8 +113,7 @@ LARGEST_HEIGHT :: 800
 // size: 1024 x 800 logical pixels are 2048 x 1600 at the largest scale, 2,
 // two pictures of 4 bytes a pixel, 26 214 400 bytes, 6400 pages. 1400 +
 // 6400 = 7800. The tool counts the window at its largest size, at the
-// largest scale (docs/MODULE_CONTRACT.md, "The budget that a module asks
-// for").
+// largest scale (docs/MODULE_CONTRACT.md, "The floor of a module").
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7840, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 // The window that sets the scale back fits the least work area that each
 // holder of the display leaves at each scale, with its title.

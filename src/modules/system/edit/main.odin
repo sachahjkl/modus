@@ -125,8 +125,7 @@ LARGEST_HEIGHT :: 960
 // window, less that window at the scale 1 (735 pages): its module, with
 // its layout tree and the states of its boxes, its stack, its text, its
 // tables and its glyph memory. The tool counts the window at the window
-// bound, at its largest size (docs/MODULE_CONTRACT.md, "The budget that a
-// module asks for").
+// bound, at its largest size (docs/MODULE_CONTRACT.md, "The floor of a module").
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7457, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 CARET_WIDTH :: 2
 // The bytes of one display row as the frame draws it: each cell is one

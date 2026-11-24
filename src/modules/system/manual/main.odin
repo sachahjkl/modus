@@ -104,7 +104,7 @@ HEIGHT :: 576
 // The least budget of 2048 pages, in which it ran before it stated its
 // window, less that window at the scale 1 (1001 pages), plus the pages of
 // box_tree for modus:layout. The tool counts the window at the largest scale
-// (docs/MODULE_CONTRACT.md, "The budget that a module asks for").
+// (docs/MODULE_CONTRACT.md, "The floor of a module").
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1105, window_width = WIDTH, window_height = HEIGHT}
 #assert(MODULE_BUDGET.working_memory_pages >= 1047 + (size_of(box_tree) + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
 

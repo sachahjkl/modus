@@ -1,7 +1,7 @@
 package settings_process
 
 // Dynamic module settings discovery and background service worker
-// (src/md/features/module_settings.md, src/md/features/settings_window.md).
+// (src/md/features/module_settings.md and src/md/features/settings_window.md).
 //
 // Reads module descriptions from the boot image (`module.parameter_setting`,
 // `module.enum_type`, `choices_export`, `instances_export`, `settings_state`)

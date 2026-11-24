@@ -818,7 +818,7 @@ Do not use: audit log, activity log.
 
 The authority key is the secret key of 32 bytes of one principal under which the root service tags the proof of each wide grant of that principal, and with which the collector of that principal checks it.
 
-The root service makes a fresh key of the run at each start, from a seed of the strength `Processor` at least, makes from it the key of each principal, and erases it. It gives the collector of a principal the key of that principal only, in four values of its context, which the collector erases after it reads them. No disk keeps it, so a proof of one start gives no grant after a restart. A collector with no key, or with the all-zero key, refuses each wide grant. It is not the signing key of a principal.
+The root service makes a fresh run key at each start from a seed of strength `Processor` or higher, derives each principal's key from it, and erases it. It gives a principal's collector only that principal's key in four context values, which the collector erases after reading. No disk stores it, so a proof never survives a restart. A collector with no key or an all-zero key refuses every wide grant. It is not the principal's signing key.
 
 The design: `src/md/features/wide_grants.md`, "The deliberate act: the proof of the principal".
 
@@ -1004,7 +1004,7 @@ Do not use: user account, login.
 
 The principal identifier is the 32 random bytes that name a named principal on the disk, drawn at its creation and never changed.
 
-The process `unlock` draws it from its random generator with the strength of a key, and keeps it in the file of the principal, under the seal. The number of a principal in the root service is a slot of one run of the machine, and names nothing on the disk; `unlock` gives the root service the identifier of the file beside the slot. The identifier comes from no key, so it needs no key at the creation, and no search of keys finds a chosen one. It is not the principal root key and not a public key.
+The process `unlock` draws it from its key-strength random generator and keeps it sealed in the principal file. The principal number in the root service is a slot for one run and names nothing on disk; `unlock` gives the root service the identifier beside the slot. It comes from no key, needs no key at creation, and prevents key search for a chosen identifier. It is not the principal root key or a public key.
 
 The design: `src/md/features/several_principals.md`, "The identity: three names".
 

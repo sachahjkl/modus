@@ -49,8 +49,7 @@ HEIGHT :: 708
 // stack, its records of the kernel and its glyph memory. And the picture
 // of the logical size in which it draws by hand (interface.Hand_Picture):
 // 976 x 708 pixels of 4 bytes, 675 pages. 698 + 675 = 1373. The tool
-// counts the window at the largest scale (docs/MODULE_CONTRACT.md, "The
-// budget that a module asks for").
+// counts the window at the largest scale (docs/MODULE_CONTRACT.md, "The floor of a module").
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1373, window_width = WIDTH, window_height = HEIGHT}
 
 data: bootscreen.Data

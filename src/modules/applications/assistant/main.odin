@@ -39,8 +39,7 @@ WIDTH :: 760
 HEIGHT :: 560
 // The working memory, counted from the sizes of the state below (the
 // checks after it tie the literal to them; the tool counts the window at
-// the window bound, docs/MODULE_CONTRACT.md, "The budget that a module asks
-// for"):
+// the window bound, docs/MODULE_CONTRACT.md, "The floor of a module"):
 //
 //   talk               7 860 424 bytes  288 entries of 16 KiB text + 4 KiB act line, 16 kept tables of 64 rows and staging copy
 //   view_layouts         617 472        the layout of each entry: its lines
@@ -49,17 +48,17 @@ HEIGHT :: 560
 //   layout_lines          65 624        the lines that measure a result at its layout
 //   result_scratch        20 480        the description and the rows of one draw
 //   window_memory        139 256        the two draw tables of the worst frame
-//   box_tree             205 144        the modus:layout tree of each frame
+//   box_tree             213 520        the modus:layout tree of each frame
 //   typed                  4 096        the request that the principal types
 //   the rest of the state, the port of the act dialog: some hundred bytes
 //
-// 2274 pages; then 1748 pages for the stack, the small tables and the glyph
+// 2276 pages; then 1748 pages for the stack, the small tables and the glyph
 // memory, as paint states them for itself, which this process draws as,
 // 354 pages for the glyph memory of the drawing module (display.TEXT_MEMORY_PAGES),
 // 16 pages for the store worker stack (STORE_THREAD_STACK_PAGES), and 1452 pages
 // for the full PERSIST_MAX_BYTES snapshot arena (STORE_WORKING_PAGES):
-// 2274 + 1748 + 354 + 16 + 1452 = 5844.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 5844, processes = 1, threads = 2, window_width = WIDTH, window_height = HEIGHT}
+// 2276 + 1748 + 354 + 16 + 1452 = 5846.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 5846, processes = 1, threads = 2, window_width = WIDTH, window_height = HEIGHT}
 
 // The pages of the stack, the small tables and the glyph memory, as paint
 // counts them (src/modules/demonstrations/paint/main.odin).

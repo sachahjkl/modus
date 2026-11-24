@@ -474,9 +474,6 @@ persist_read_entry :: proc "contextless" (data: []u8, cursor: int, entry: ^Entry
 		entry.export_count = copy(entry.export[:], data[pos:pos + export_len])
 		pos += export_len
 	}
-	if pos > cursor + PERSIST_ENTRY_HEADER_BYTES {
-		// Checked during pass 1; text/line/service/export slices are in bounds.
-	}
 	// Wide grants and single-use consumed-act records never survive a restart,
 	// so downgrade any persisted Allowed_By_Principal act to Refused on reload
 	// to prevent cross-restart approval replay.

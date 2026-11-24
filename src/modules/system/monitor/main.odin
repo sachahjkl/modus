@@ -72,8 +72,7 @@ HEIGHT :: 640
 // The least budget of 2048 pages, in which it ran before it stated its
 // window, less that window at the scale 1 (650 pages): its module, its
 // stack, its tables and its glyph memory. The tool counts the window at
-// the largest scale (docs/MODULE_CONTRACT.md, "The budget that a module
-// asks for").
+// the largest scale (docs/MODULE_CONTRACT.md, "The floor of a module").
 // The keeper of the settings (settings.odin) runs a worker thread: its
 // stack past the 16 pages that the tool counts for a thread, 48 pages.
 // 1398 + 48 = 1446.

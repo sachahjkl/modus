@@ -472,7 +472,12 @@ WEEKDAY_HEADS := [7]string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
 
 // calendar_draw draws the month: its title with its buttons, the heads of
 // the days, and a cell for each day; today is in the chosen blue.
-calendar_draw :: proc "contextless" (frame: ^interface.Frame, places: Clock_Section_Places, today: calendar.Civil) {
+//
+// It is never inlined. Inlined into draw, its calendar grid loop raises the
+// register pressure enough that LLVM schedules spills differently when debug
+// instructions stand in the function, changing the module bytes with and
+// without debug information (src/md/infrastructure/debug_information_and_code.md).
+calendar_draw :: #force_no_inline proc "contextless" (frame: ^interface.Frame, places: Clock_Section_Places, today: calendar.Civil) {
 	year, month := calendar_month_shown(today)
 	grid, ok := clock_model.month_grid(year, month)
 	if !ok {

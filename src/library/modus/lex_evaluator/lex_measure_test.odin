@@ -145,7 +145,7 @@ generate_m5_source :: proc(count: int, allocator := context.allocator) -> string
 	return strings.to_string(b)
 }
 
-// W1: multi-file .lex DAG (N files total: catalog.lex, lib files, app files).
+// Multi-file .lex DAG (N files total: catalog.lex, lib files, app files).
 @(private = "file")
 Measure_File_Map :: struct {
 	names:   []string,
@@ -210,7 +210,7 @@ generate_w1_graph :: proc(total_files: int, allocator := context.allocator) -> (
 	return strings.to_string(rb), Measure_File_Map{names = names, sources = sources}
 }
 
-// W3: 10,000 console lines.
+// Ten thousand console lines.
 @(private = "file")
 generate_w3_lines :: proc(allocator := context.allocator) -> []string {
 	templates := [?]string{

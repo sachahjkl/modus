@@ -1,6 +1,6 @@
 # The frames of a process: prefault and page sizes
 
-Status: Proposed, with the decisions taken. Nothing of this form is built. The study is [`docs/research/budgets_as_policy_study.md`](../../../docs/research/budgets_as_policy_study.md), sections 4.5 to 4.13 and 10; the critique is [`docs/research/budgets_as_policy_critique.md`](../../../docs/research/budgets_as_policy_critique.md), sections 7 to 9. The budgets that pay these frames are [module_budget_request.md](module_budget_request.md).
+Status: Proposed, with the decisions taken. Nothing of this form is built. The study is [`docs/research/budgets_as_policy_study.md`](../../../docs/research/budgets_as_policy_study.md) (sections 4.5 to 4.13 and 10); the critique is [`docs/research/budgets_as_policy_critique.md`](../../../docs/research/budgets_as_policy_critique.md) (sections 7 to 9). The budgets that pay these frames are [module_budget_request.md](module_budget_request.md).
 
 ## Purpose
 
