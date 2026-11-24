@@ -866,7 +866,7 @@ tool_identity_of :: proc(table: ^Input_File_Table, tool_folder: string) -> (iden
 		key_add(&text, "folder", folder)
 		for name in names {
 			path := foundation.join(folder, "/", name)
-			if !key_add_input_file(&text, table, "file of the tool", path, false) {
+			if !key_add_input_file(&text, table, "file of the tool", path, false, canonical_paths = true) {
 				complete = false
 				continue
 			}

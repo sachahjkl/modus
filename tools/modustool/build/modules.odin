@@ -1149,7 +1149,7 @@ build_arguments_parse :: proc(args: []string) -> (options: Build_Command_Options
 			if options.cache_folder != "" {
 				return {}, "build: `--cache` is written two times; the form: `" + BUILD_COMMAND_USAGE + "`"
 			}
-			if index + 1 >= len(args) || args[index + 1] == "" {
+			if index + 1 >= len(args) || args[index + 1] == "" || strings.has_prefix(args[index + 1], "-") {
 				return {}, "build: `--cache` requires a folder path; the form: `" + BUILD_COMMAND_USAGE + "`"
 			}
 			index += 1
@@ -1196,7 +1196,7 @@ run_build :: proc(args: []string) -> int {
 	}
 	build_whole = options.whole
 	build_optimization_mode = options.optimization
-	build_cache_folder = options.whole ? "" : build_cache_resolve(options.cache_folder)
+	build_cache_folder_set(options.whole ? "" : build_cache_resolve(options.cache_folder))
 	if options.host_processes > 0 {
 		module_build_host_processes = options.host_processes
 	}

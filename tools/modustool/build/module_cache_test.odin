@@ -20,16 +20,18 @@ module_cache_reuses_artifacts_across_worktrees_and_invalidates_on_changes :: pro
 	wt_a := fmt.tprintf("%s/worktree_alpha", base)
 	wt_b := fmt.tprintf("%s/worktree_beta_longer_name", base)
 
-	setup_worktree :: proc(root: string, app_source: string, import_bytes: string) {
+	setup_worktree :: proc(root: string, app_source: string, import_bytes: string, tool_source := "package modustool\nmain :: proc() {}\n") {
 		_ = os.make_directory_all(fmt.tprintf("%s/src/app", root))
 		_ = os.make_directory_all(fmt.tprintf("%s/src/runtime", root))
+		_ = os.make_directory_all(fmt.tprintf("%s/tools/modustool", root))
 		_ = os.make_directory_all(fmt.tprintf("%s/build/modules/app", root))
 		_ = os.write_entire_file(fmt.tprintf("%s/src/app/main.odin", root), app_source)
 		_ = os.write_entire_file(fmt.tprintf("%s/src/runtime/memory.asm", root), "global copy\ncopy: ret\n")
+		_ = os.write_entire_file(fmt.tprintf("%s/tools/modustool/main.odin", root), tool_source)
 		_ = os.write_entire_file(fmt.tprintf("%s/build/modules/dep.module", root), import_bytes)
 	}
 
-	make_steps :: proc(root: string, mode: Optimization_Mode, with_debug: bool) -> (steps: Module_Steps, outputs: []Cache_Output_Spec) {
+	make_steps :: proc(root: string, tool_identity: blake3.Hash, mode: Optimization_Mode, with_debug: bool) -> (steps: Module_Steps, outputs: []Cache_Output_Spec) {
 		compile_settings := make([]string, 3, context.temp_allocator)
 		compile_settings[0] = "host program odin: /nix/store/test/bin/odin"
 		compile_settings[1] = "optimization"
@@ -51,14 +53,16 @@ module_cache_reuses_artifacts_across_worktrees_and_invalidates_on_changes :: pro
 			compile_record_path = fmt.tprintf("%s/build/modules/app.compile%s", root, BUILD_RECORD_SUFFIX),
 			convert_record_path = fmt.tprintf("%s/build/modules/app.convert%s", root, BUILD_RECORD_SUFFIX),
 			compile_inputs      = {
-				subject     = "the compile step of the module app",
-				settings    = compile_settings,
-				fixed_files = fixed_files,
+				subject       = "the compile step of the module app",
+				tool_identity = tool_identity,
+				settings      = compile_settings,
+				fixed_files   = fixed_files,
 			},
 			convert_inputs = {
-				subject     = "the conversion of the module app",
-				settings    = convert_settings,
-				built_files = built_files,
+				subject       = "the conversion of the module app",
+				tool_identity = tool_identity,
+				settings      = convert_settings,
+				built_files   = built_files,
 			},
 		}
 		list := make([dynamic]Cache_Output_Spec, context.temp_allocator)
@@ -80,16 +84,23 @@ module_cache_reuses_artifacts_across_worktrees_and_invalidates_on_changes :: pro
 	_ = os.write_entire_file(fmt.tprintf("%s/build/modules/app/reached_facts.list", wt_a), "")
 	_ = os.write_entire_file(fmt.tprintf("%s/build/modules/app.debug", wt_a), "MODUS_DEBUG_BYTES_V1")
 
-	table_a := input_file_table_make(wt_a, {"src"})
+	table_a := input_file_table_make(wt_a, {"src", "tools"})
 	defer input_file_table_destroy(table_a)
 	table_a.started = time.time_add(time.now(), time.Hour)
 
-	table_b := input_file_table_make(wt_b, {"src"})
+	table_b := input_file_table_make(wt_b, {"src", "tools"})
 	defer input_file_table_destroy(table_b)
 	table_b.started = time.time_add(time.now(), time.Hour)
 
-	steps_a, outputs_a := make_steps(wt_a, .None, true)
-	steps_b, outputs_b := make_steps(wt_b, .None, true)
+	// Real tool_identity_of must hash canonical repo-relative tool paths so
+	// two worktrees at different roots share the same tool identity.
+	tool_a, tool_ok_a := tool_identity_of(table_a, "tools/modustool")
+	tool_b, tool_ok_b := tool_identity_of(table_b, "tools/modustool")
+	testing.expect(t, tool_ok_a && tool_ok_b, "tool_identity_of succeeds on both worktrees")
+	testing.expect_value(t, tool_a, tool_b)
+
+	steps_a, outputs_a := make_steps(wt_a, tool_a, .None, true)
+	steps_b, outputs_b := make_steps(wt_b, tool_b, .None, true)
 	// convert_inputs.built_files uses relative paths in real builds; mirror that here.
 	steps_a.convert_inputs.built_files = nil
 	steps_b.convert_inputs.built_files = nil
@@ -118,10 +129,24 @@ module_cache_reuses_artifacts_across_worktrees_and_invalidates_on_changes :: pro
 	testing.expect_value(t, string(restored_dbg), "MODUS_DEBUG_BYTES_V1")
 
 	// Optimization mode switch misses cleanly (.Speed != .None).
-	steps_speed, outputs_speed := make_steps(wt_b, .Speed, true)
+	steps_speed, outputs_speed := make_steps(wt_b, tool_b, .Speed, true)
 	steps_speed.convert_inputs.built_files = nil
 	steps_speed.convert_inputs.hashed_built_files = {{path = "build/modules/dep.module", hash = dep_hash}}
 	testing.expect(t, !module_cache_restore_entries(cache_dir, steps_speed, table_b, outputs_speed), "Speed mode does not reuse None cache entry")
+
+	// Changing a source of modustool changes tool_identity and misses cleanly.
+	_ = os.write_entire_file(fmt.tprintf("%s/tools/modustool/main.odin", wt_b), "package modustool\nmain :: proc() { _ = 1 }\n")
+	table_b_tool := input_file_table_make(wt_b, {"src", "tools"})
+	defer input_file_table_destroy(table_b_tool)
+	table_b_tool.started = time.time_add(time.now(), time.Hour)
+	tool_b_changed, tool_ok_changed := tool_identity_of(table_b_tool, "tools/modustool")
+	testing.expect(t, tool_ok_changed && tool_b_changed != tool_b, "tool edit changes tool_identity")
+	steps_tool_changed, _ := make_steps(wt_b, tool_b_changed, .None, true)
+	steps_tool_changed.convert_inputs.built_files = nil
+	steps_tool_changed.convert_inputs.hashed_built_files = {{path = "build/modules/dep.module", hash = dep_hash}}
+	testing.expect(t, !module_cache_restore_entries(cache_dir, steps_tool_changed, table_b_tool, outputs_b), "changed tool_identity misses shared cache")
+	// Restore original tool source in wt_b for the remaining checks.
+	_ = os.write_entire_file(fmt.tprintf("%s/tools/modustool/main.odin", wt_b), "package modustool\nmain :: proc() {}\n")
 
 	// Import module hash change misses cleanly.
 	steps_dep_changed := steps_b
@@ -167,9 +192,12 @@ module_cache_refuses_corrupt_entries_and_whole_builds :: proc(t: ^testing.T) {
 		testing.expectf(t, !ok, "malformed cache manifest `%s` is refused", bad)
 	}
 
-	base, err := os.make_directory_temp("", "module_cache_corrupt_*", context.temp_allocator)
+	base, err := os.make_directory_temp("", "module_cache_corrupt_*", context.allocator)
 	testing.expect_value(t, err, nil)
-	defer os.remove_all(base)
+	defer {
+		os.remove_all(base)
+		delete(base)
+	}
 
 	cache_dir := fmt.tprintf("%s/cache", base)
 	wt := fmt.tprintf("%s/wt", base)
@@ -205,16 +233,22 @@ module_cache_refuses_corrupt_entries_and_whole_builds :: proc(t: ^testing.T) {
 	local_after, _ := os.read_entire_file(mod_path, context.temp_allocator)
 	testing.expect_value(t, string(local_after), "LOCAL_UNTOUCHED")
 
-	// Whole builds disable the cache even when build_cache_folder is set.
+	// Whole builds disable the cache even when build_cache_folder is set, and
+	// build_cache_folder_set owns its string across temp allocator resets.
 	saved_whole := build_whole
-	saved_cache := build_cache_folder
+	saved_cache := strings.clone(build_cache_folder)
 	saved_inputs := build_inputs
 	defer {
 		build_whole = saved_whole
-		build_cache_folder = saved_cache
+		build_cache_folder_set(saved_cache)
+		delete(saved_cache)
 		build_inputs = saved_inputs
 	}
-	build_cache_folder = cache_dir
+	expected_cache := strings.clone(cache_dir)
+	defer delete(expected_cache)
+	build_cache_folder_set(fmt.tprintf("%s", expected_cache))
+	free_all(context.temp_allocator)
+	testing.expect_value(t, build_cache_folder, expected_cache)
 	build_inputs = {table = table, usable = true}
 	build_whole = false
 	testing.expect(t, build_cache_active(), "cache is active when configured and not a whole build")
@@ -223,12 +257,14 @@ module_cache_refuses_corrupt_entries_and_whole_builds :: proc(t: ^testing.T) {
 }
 
 // `build --cache <dir>` argument parsing accepts valid combinations and refuses
-// missing paths, duplicates, and `--cache` combined with `whole`.
+// missing paths, flag-like paths, duplicates, and `--cache` combined with `whole`.
 @(test)
 build_cache_flag_parse_and_refusals :: proc(t: ^testing.T) {
 	refused := [][]string {
 		{BUILD_CACHE_FLAG},
 		{BUILD_CACHE_FLAG, ""},
+		{BUILD_CACHE_FLAG, BUILD_FAST_FLAG, "console"},
+		{BUILD_CACHE_FLAG, "-x"},
 		{BUILD_CACHE_FLAG, "/tmp/a", BUILD_CACHE_FLAG, "/tmp/b"},
 		{"whole", BUILD_CACHE_FLAG, "/tmp/a"},
 		{BUILD_CACHE_FLAG, "/tmp/a", "whole"},

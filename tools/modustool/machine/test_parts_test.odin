@@ -90,6 +90,8 @@ test_accepts_and_refuses_no_shots_and_cache_flags :: proc(t: ^testing.T) {
 		{TEST_NO_SHOTS_FLAG, "main", TEST_FROM_WORD, "folder"},
 		{TEST_CACHE_FLAG},
 		{TEST_CACHE_FLAG, ""},
+		{TEST_CACHE_FLAG, TEST_NO_SHOTS_FLAG, "main"},
+		{TEST_CACHE_FLAG, TEST_FAST_FLAG, "main"},
 		{TEST_CACHE_FLAG, "/tmp/c", TEST_CACHE_FLAG, "/tmp/d", "main"},
 		{TEST_CACHE_FLAG, "/tmp/c", "main", TEST_FROM_WORD, "folder"},
 		{TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG},

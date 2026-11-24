@@ -243,10 +243,10 @@ build_modules_in_parallel :: proc(module_filter: []bool = nil) -> bool {
 				continue
 			}
 			done_count += 1
-			if !module_records_write(foundation.module_builds[index], convert_steps[place]) && build_inputs.usable {
-				fmt.printfln("modustool: no build record for %s: the compiler gave no list of its files, or an input changed during the build; the next build builds it again", foundation.module_builds[index].name)
-			} else {
+			if module_records_write(foundation.module_builds[index], convert_steps[place]) {
 				_ = module_cache_store(foundation.module_builds[index], convert_steps[place])
+			} else if build_inputs.usable {
+				fmt.printfln("modustool: no build record for %s: the compiler gave no list of its files, or an input changed during the build; the next build builds it again", foundation.module_builds[index].name)
 			}
 		}
 		build_measure.record_writes += time.tick_since(writes_started)

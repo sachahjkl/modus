@@ -39,7 +39,21 @@ BUILD_CACHE_RECORD_FILE :: "build.record"
 BUILD_CACHE_MANIFEST_FIRST_LINE :: "module cache manifest, form 1"
 
 // Active shared module cache folder for this process, or "" when disabled.
+// Owned on the heap via build_cache_folder_set so temporary allocator resets
+// never invalidate it.
 build_cache_folder: string
+
+// build_cache_folder_set records folder in heap memory (or clears it when
+// folder is "") so callers never leave a context.temp_allocator slice in the
+// package global.
+build_cache_folder_set :: proc(folder: string) {
+	delete(build_cache_folder)
+	if folder == "" {
+		build_cache_folder = ""
+		return
+	}
+	build_cache_folder = strings.clone(folder)
+}
 
 @(private = "file")
 cache_temp_sequence: u64

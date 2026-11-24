@@ -871,7 +871,7 @@ run_test :: proc(args: []string) -> int {
 	if inputs_given {
 		// A part derivation of the flake: the part on the test inputs of
 		// the whole build, with no build of its own.
-		build.build_cache_folder = ""
+		build.build_cache_folder_set("")
 		build.build_last_module_filter_set(nil)
 		part, _ := machine.test_part_find(options.part_name)
 		if !machine.test_inputs_take(inputs_folder, part^) {
@@ -879,7 +879,7 @@ run_test :: proc(args: []string) -> int {
 		}
 	} else {
 		// Whole builds (such as `modustool check`) never use the shared cache.
-		build.build_cache_folder = build.build_whole ? "" : build.build_cache_resolve(options.cache_folder)
+		build.build_cache_folder_set(build.build_whole ? "" : build.build_cache_resolve(options.cache_folder))
 		filter_modules := false
 		extra_modules: []string = nil
 		if options.optimization == .None && options.part_name != "" && !build.build_whole {
@@ -1225,7 +1225,7 @@ run_check :: proc(args: []string) -> int {
 	// The full check proves the build: it keeps no output of an earlier build.
 	build.build_whole = true
 	build.build_optimization_mode = .Speed
-	build.build_cache_folder = ""
+	build.build_cache_folder_set("")
 	if !foundation.run({"odin", "check", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG}) {
 		return foundation.EXIT_FAILURE
 	}

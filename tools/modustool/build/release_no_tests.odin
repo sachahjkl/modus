@@ -186,10 +186,12 @@ release_boot_image_of :: proc(build_image: []u8) -> (image: []u8, problem: strin
 	return boot_image_encode(files[:], module_count), ""
 }
 
-// release_boot_image_write_direct encodes build/boot_release.image directly
-// from shipped module files and non-test resources without building
-// build/boot.image or any test module. The encoded bytes are identical to
-// release_boot_image_of(boot.image).
+// release_boot_image_write_direct is a `--fast` iteration path that encodes
+// build/boot_release.image directly from shipped module files and non-test
+// resources without building build/boot.image or any test module. Default,
+// check, and release builds still derive build/boot_release.image from
+// build/boot.image through release_boot_image_write, where manual_pages.resource
+// covers all boot-image modules.
 release_boot_image_write_direct :: proc(resource_files: []resources.Resource_File) -> bool {
 	files := make([dynamic]Image_File, context.temp_allocator)
 	for row in foundation.module_builds {

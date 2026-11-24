@@ -251,7 +251,7 @@ test_arguments_leading_flags :: proc(args: []string) -> (optimization: build.Opt
 			if cache_folder != "" {
 				return .Speed, false, "", nil, fmt.tprintf("test: %s is written two times", TEST_CACHE_FLAG)
 			}
-			if index + 1 >= len(args) || args[index + 1] == "" {
+			if index + 1 >= len(args) || args[index + 1] == "" || strings.has_prefix(args[index + 1], "-") {
 				return .Speed, false, "", nil, fmt.tprintf("test: %s requires a folder path", TEST_CACHE_FLAG)
 			}
 			cache_folder = args[index + 1]
