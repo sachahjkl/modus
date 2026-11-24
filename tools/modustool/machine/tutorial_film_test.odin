@@ -297,17 +297,27 @@ tutorial_film_compose_splices_cards_and_captions_without_overlap :: proc(t: ^tes
 		testing.expect_value(t, len(ppm), len("P6\n192 108\n255\n") + 192 * 108 * 3)
 	}
 
-	// 7. Encoder command shapes: native 1920x1080 30 fps with libass + resources/fonts
-	//    and exact `-t` duration clamping the trailing ffconcat repeat.
+	// 7. Encoder command shapes: native 1920x1080 30 fps with libass + resources/fonts,
+	//    both CPU and NVENC backends, and exact `-t` duration clamping the trailing ffconcat repeat.
 	mp4_cmd := tutorial_mp4_encode_command("build/films/tutorial/pictures.ffconcat", "build/films/tutorial/tutorial.ass", TUTORIAL_FONTS_FOLDER, 65_432, "build/films/tutorial.mp4")
 	mp4_joined := strings.join(mp4_cmd, " ", context.temp_allocator)
 	for part in ([]string{"fps=30,scale=1920:1080:flags=neighbor,ass=filename=", "fontsdir=resources/fonts", "-c:v libx264", "-movflags +faststart", "-t 65.432 build/films/tutorial.mp4"}) {
-		testing.expectf(t, strings.contains(mp4_joined, part), "tutorial MP4 command contains `%s`: %s", part, mp4_joined)
+		testing.expectf(t, strings.contains(mp4_joined, part), "tutorial CPU MP4 command contains `%s`: %s", part, mp4_joined)
 	}
-	webm_cmd := tutorial_webm_encode_command("build/films/tutorial/pictures.ffconcat", "build/films/tutorial/tutorial.ass", TUTORIAL_FONTS_FOLDER, "42", 65_432, "build/films/tutorial.webm")
+	mp4_nvenc_cmd := tutorial_mp4_encode_command("build/films/tutorial/pictures.ffconcat", "build/films/tutorial/tutorial.ass", TUTORIAL_FONTS_FOLDER, 65_432, "build/films/tutorial.mp4", .Nvenc)
+	mp4_nvenc_joined := strings.join(mp4_nvenc_cmd, " ", context.temp_allocator)
+	for part in ([]string{"-c:v h264_nvenc", "-preset p4", "-cq 19", "-movflags +faststart", "-t 65.432 build/films/tutorial.mp4"}) {
+		testing.expectf(t, strings.contains(mp4_nvenc_joined, part), "tutorial NVENC MP4 command contains `%s`: %s", part, mp4_nvenc_joined)
+	}
+	webm_cmd := tutorial_webm_encode_command("build/films/tutorial/pictures.ffconcat", "build/films/tutorial/tutorial.ass", TUTORIAL_FONTS_FOLDER, 42, 65_432, "build/films/tutorial.webm")
 	webm_joined := strings.join(webm_cmd, " ", context.temp_allocator)
 	for part in ([]string{"fps=30,scale=1920:1080:flags=neighbor,ass=filename=", "fontsdir=resources/fonts", "-c:v libsvtav1", "-crf 42", "-an", "-t 65.432 build/films/tutorial.webm"}) {
-		testing.expectf(t, strings.contains(webm_joined, part), "tutorial WebM command contains `%s`: %s", part, webm_joined)
+		testing.expectf(t, strings.contains(webm_joined, part), "tutorial CPU WebM command contains `%s`: %s", part, webm_joined)
+	}
+	webm_nvenc_cmd := tutorial_webm_encode_command("build/films/tutorial/pictures.ffconcat", "build/films/tutorial/tutorial.ass", TUTORIAL_FONTS_FOLDER, 46, 65_432, "build/films/tutorial.webm", .Nvenc)
+	webm_nvenc_joined := strings.join(webm_nvenc_cmd, " ", context.temp_allocator)
+	for part in ([]string{"-c:v av1_nvenc", "-preset p4", "-cq 46", "-an", "-t 65.432 build/films/tutorial.webm"}) {
+		testing.expectf(t, strings.contains(webm_nvenc_joined, part), "tutorial NVENC WebM command contains `%s`: %s", part, webm_nvenc_joined)
 	}
 }
 

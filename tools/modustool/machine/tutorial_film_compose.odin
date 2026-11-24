@@ -76,9 +76,10 @@ tutorial_accent_rgb := [Tutorial_Accent]Tutorial_Rgb {
 	.Version = {163, 113, 247},
 }
 
-// Bounded AV1 CRF step-up ladder guaranteeing tutorial.webm fits <= 4 MiB.
+// Bounded AV1 quality step-up ladder (CRF for libsvtav1, CQ for av1_nvenc)
+// guaranteeing tutorial.webm fits <= 4 MiB.
 @(rodata)
-TUTORIAL_WEBM_CRF_LADDER := [4]string{"42", "46", "50", "54"}
+TUTORIAL_WEBM_CRF_LADDER := [4]int{42, 46, 50, 54}
 
 Tutorial_Card_Anchor :: enum u8 {
 	Start_Of_Film = 0,
@@ -843,15 +844,13 @@ tutorial_encode_command :: proc(list_path, ass_path, fonts_dir: string, total_ms
 }
 
 // tutorial_mp4_encode_command builds the 1920x1080 30 fps H.264 command for tutorial.mp4.
-tutorial_mp4_encode_command :: proc(list_path, ass_path, fonts_dir: string, total_ms: i64, output: string) -> []string {
-	encoder := FILM_MP4_ENCODER
-	return tutorial_encode_command(list_path, ass_path, fonts_dir, total_ms, output, encoder[:])
+tutorial_mp4_encode_command :: proc(list_path, ass_path, fonts_dir: string, total_ms: i64, output: string, backend: Film_Encoder_Backend = .Cpu) -> []string {
+	return tutorial_encode_command(list_path, ass_path, fonts_dir, total_ms, output, film_mp4_encoder_args(backend))
 }
 
 // tutorial_webm_encode_command builds the 1920x1080 30 fps AV1 command for tutorial.webm.
-tutorial_webm_encode_command :: proc(list_path, ass_path, fonts_dir, crf: string, total_ms: i64, output: string) -> []string {
-	encoder := [7]string{"-c:v", "libsvtav1", "-preset", "6", "-crf", crf, "-an"}
-	return tutorial_encode_command(list_path, ass_path, fonts_dir, total_ms, output, encoder[:])
+tutorial_webm_encode_command :: proc(list_path, ass_path, fonts_dir: string, crf: int, total_ms: i64, output: string, backend: Film_Encoder_Backend = .Cpu) -> []string {
+	return tutorial_encode_command(list_path, ass_path, fonts_dir, total_ms, output, film_webm_encoder_args(backend, crf))
 }
 
 // tutorial_film_write composes the chaptered 1920x1080 tutorial.mp4 and
@@ -929,17 +928,19 @@ tutorial_film_write :: proc(name: string) -> bool {
 		return false
 	}
 
-	// Encode 1920x1080 30 fps H.264 MP4.
+	// Encode 1920x1080 30 fps H.264 MP4 using detected NVENC or CPU fallback.
+	mp4_backend := film_detect_mp4_backend()
 	output := foundation.join(FILM_FOLDER, "/", name, FILM_MP4_SUFFIX)
-	foundation.run(tutorial_mp4_encode_command(list_path, ass_path, TUTORIAL_FONTS_FOLDER, timeline.total_ms, output)) or_return
+	foundation.run(tutorial_mp4_encode_command(list_path, ass_path, TUTORIAL_FONTS_FOLDER, timeline.total_ms, output, mp4_backend)) or_return
 
-	// Encode 1920x1080 30 fps AV1 WebM, stepping up CRF if needed to guarantee
+	// Encode 1920x1080 30 fps AV1 WebM, stepping up quality if needed to guarantee
 	// strict compliance with checks.FILM_DOCUMENT_SIZE_LIMIT (4 MiB).
+	webm_backend := film_detect_webm_backend()
 	webm_output := foundation.join(FILM_FOLDER, "/", name, FILM_WEBM_SUFFIX)
 	webm_ok := false
 	webm_bytes := 0
 	for crf in TUTORIAL_WEBM_CRF_LADDER {
-		foundation.run(tutorial_webm_encode_command(list_path, ass_path, TUTORIAL_FONTS_FOLDER, crf, timeline.total_ms, webm_output)) or_return
+		foundation.run(tutorial_webm_encode_command(list_path, ass_path, TUTORIAL_FONTS_FOLDER, crf, timeline.total_ms, webm_output, webm_backend)) or_return
 		data := foundation.read_file(webm_output) or_return
 		if problem := checks.film_document_problem(data); problem == "" {
 			webm_ok = true
@@ -972,7 +973,8 @@ tutorial_film_write :: proc(name: string) -> bool {
 		fmt.eprintfln("modustool: cannot remove %s: %v", folder, remove_err)
 		return false
 	}
-	fmt.printfln("modustool: wrote %s and %s (%d bytes, %.1f s, 1920x1080), and %s", output, webm_output, webm_bytes, f64(timeline.total_ms) / 1000.0, target)
+	backend_names := FILM_ENCODER_BACKEND_NAMES
+	fmt.printfln("modustool: wrote %s (%s) and %s (%s) (%d bytes, %.1f s, 1920x1080), and %s", output, backend_names[mp4_backend], webm_output, backend_names[webm_backend], webm_bytes, f64(timeline.total_ms) / 1000.0, target)
 	if film_is_named_by_a_news_entry(name) {
 		film_document_write(name, webm_output) or_return
 	}
