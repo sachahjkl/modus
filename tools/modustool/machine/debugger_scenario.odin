@@ -433,9 +433,6 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Quit},
 }
 
-// The exit status of QEMU after a step Quit.
-QEMU_QUIT_STATUS :: 0
-
 // debugger_tests_run runs the two machines of the debugger: the contract
 // of the kernel, then the commands. The second one runs also when the
 // first one fails: each one has its own verdict.

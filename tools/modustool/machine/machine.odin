@@ -36,6 +36,8 @@ PRINCIPAL_PASSPHRASE :: "correct horse battery"
 MACHINE_PASSPHRASE :: "a machine of the test"
 // The wave file of the sound device, beside the log of its machine.
 SOUND_OUTPUT_SUFFIX :: "_sound.wav"
+// The exit status of QEMU after a step Quit.
+QEMU_QUIT_STATUS :: 0
 // The boot line of kernel_without_return_check: the same text as
 // TEST_BUILD_LINE_WITHOUT_RETURN_CHECK in src/modulus/return_to_process.odin.
 // Every machine checks that it did not run that kernel by mistake.
