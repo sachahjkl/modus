@@ -461,6 +461,29 @@ start_list_reserves_end :: proc "contextless" () {
 	start_list_reserves = {}
 }
 
+// start_own_reserve_pages computes the pages that this service itself needs in
+// its own budget during process_start: the prepared Code and Fixed segments of
+// `file` plus temporary page-table mappings for loading, ready ring, context
+// page, and service ring. Keeping this computed reserve prevents budget_of from
+// draining this service to zero free pages before process_start loads `file`.
+start_own_reserve_pages :: proc "contextless" (file: []u8) -> u64 {
+	shared_pages: u64 = 0
+	for index in 1 ..< module.count(file, .Segments) {
+		segment, _ := module.record(file, .Segments, index, module.Segment)
+		if .Write not_in segment.flags || .Read_Only_After_Load in segment.flags {
+			shared_pages += segment.memory_size / system.PAGE_SIZE
+		}
+	}
+	reserve: u64 = 0
+	if shared_pages != 0 {
+		reserve += op.memory_cost(shared_pages) + op.mapping_table_pages_most(shared_pages)
+	}
+	// Ready ring, context page, writable segment copy, and service ring
+	// temporary mappings in this service's address space.
+	reserve += 4 * op.mapping_table_pages_most(1)
+	return reserve
+}
+
 // budget_of gives the budget of a process of the boot image: the floor of
 // its start, its size (system.budget_size, or the size of the division of
 // the start list), at most what this service holds past the sizes that it
@@ -496,8 +519,13 @@ budget_of :: proc "contextless" (file: []u8, name: string, principal: u64 = prin
 	}
 	exception_processor, has_exception := processor_of(name)
 	processor := has_exception ? exception_processor : floor.threads * PROCESSOR_OF_A_THREAD
+	pages_limit := payable
+	if paying == 0 {
+		own_reserve := start_own_reserve_pages(file)
+		pages_limit = payable > own_reserve ? max(floor.pages, payable - own_reserve) : floor.pages
+	}
 	budget.amounts = {
-		pages       = min(size, payable),
+		pages       = min(size, pages_limit),
 		processes   = floor.processes,
 		threads     = floor.threads,
 		processor   = min(processor, holds.processor),

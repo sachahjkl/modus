@@ -710,7 +710,33 @@ place_finish :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: m
 @(private)
 place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: module.Header, imports: []module.Bound_Import, error: ^module.Load_Error) -> bool {
 	status: call_outcome.Call_Outcome
-	if space.prepared == nil {
+	use_private := space.prepared == nil
+	if !use_private {
+		// The code from the table at any base; the fixed part for this base
+		// and this binding; the writable segments of this process.
+		lock(&space.prepared.lock)
+		prepared_sweep(space.prepared)
+		code, fixed: ^Prepared
+		prepared_budget_short := false
+		if code, status = prepared_find(space.prepared, item.file, item.hash, .Code, 0, {}, nil, error); status == .Succeeded {
+			if fixed, status = prepared_find(space.prepared, item.file, item.hash, .Fixed, item.base, binding_of(space, item), imports, error, keep = code); status == .Succeeded {
+				status = segments_map(item.file, item.hash, code, fixed, space.process, item.base, space.budget, imports, error)
+			} else if status == .Budget_Or_Capacity_Exhausted {
+				prepared_budget_short = true
+			}
+		} else if status == .Budget_Or_Capacity_Exhausted {
+			prepared_budget_short = true
+		}
+		unlock(&space.prepared.lock)
+		// If the starter's own budget cannot pay to cache a shared part even
+		// after evicting unused entries, prepare private copies from the
+		// child's own budget, whose floor already counts its module pages.
+		if prepared_budget_short {
+			error^ = {}
+			use_private = true
+		}
+	}
+	if use_private {
 		// Keep executable, fixed, and writable segments in separate memory
 		// objects so no memory object holds both Write and Execute mappings.
 		code, fixed: Prepared
@@ -725,18 +751,6 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 				close(code.memory)
 			}
 		}
-	} else {
-		// The code from the table at any base; the fixed part for this base
-		// and this binding; the writable segments of this process.
-		lock(&space.prepared.lock)
-		prepared_sweep(space.prepared)
-		code, fixed: ^Prepared
-		if code, status = prepared_find(space.prepared, item.file, item.hash, .Code, 0, {}, nil, error); status == .Succeeded {
-			if fixed, status = prepared_find(space.prepared, item.file, item.hash, .Fixed, item.base, binding_of(space, item), imports, error, keep = code); status == .Succeeded {
-				status = segments_map(item.file, item.hash, code, fixed, space.process, item.base, space.budget, imports, error)
-			}
-		}
-		unlock(&space.prepared.lock)
 	}
 	if status != .Succeeded {
 		place_unmap(space, item)
@@ -979,7 +993,29 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 		close(free.memory)
 		free^ = {}
 	}
-	written := module_prepare(file, hash, part, base, 0, imports, error) or_return
+	written: Prepared
+	for {
+		written, status = module_prepare(file, hash, part, base, 0, imports, error)
+		if status != .Budget_Or_Capacity_Exhausted {
+			break
+		}
+		// Evict the least-recently-used cached part to reclaim starter pages
+		// before giving up on caching this part.
+		uses: [PREPARED_CAPACITY]Prepared_Use
+		for item, place in table.modules {
+			uses[place] = {held = item.memory != 0, last_use = item.last_use, in_use = &table.modules[place] == keep || &table.modules[place] == free}
+		}
+		chosen: [1]int
+		if prepared_drop_choose(uses[:], 1, chosen[:]) == 0 {
+			return nil, .Budget_Or_Capacity_Exhausted
+		}
+		victim := &table.modules[chosen[0]]
+		close(victim.memory)
+		victim^ = {}
+	}
+	if status != .Succeeded {
+		return nil, status
+	}
 	if written.memory == 0 {
 		free^ = {} // No segment: nothing to keep, and the place stays free.
 		return free, .Succeeded
