@@ -40,17 +40,19 @@ start_grant_set_table_refuses_another_form :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(absent, "no table"), absent)
 	_, broken := start_grant_set_table_read(head + "start_grant_sets := [?]Row {\n", "file.odin", "start_grant_sets")
 	testing.expect(t, strings.contains(broken, "the parser of Odin refuses the file"), broken)
-	good := head + "start_grant_sets := [?]Row {\n\t// The first line,\n\t// and the second.\n\t{name = \"one\", grants = {\n\t\t.A,\n\t\t.B,\n\t}, terms = {a = 1}}, // Its own.\n\t{name = \"two\"},\n}\n"
+	good := head + "start_grant_sets := [?]Row {\n\t// The first line,\n\t// and the second.\n\t{name = \"one\", scope = .Machine, grants = {\n\t\t.A,\n\t\t.B,\n\t}, terms = {a = 1}}, // Its own.\n\t{name = \"two\", scope = .Session},\n}\n"
 	rows, problem := start_grant_set_table_read(good, "file.odin", "start_grant_sets")
 	testing.expect_value(t, problem, "")
 	testing.expect_value(t, len(rows), 2)
 	if len(rows) == 2 {
 		testing.expect_value(t, rows[0].name, "one")
+		testing.expect_value(t, rows[0].scope, "Machine")
 		testing.expect_value(t, len(rows[0].grants), 2)
 		testing.expect_value(t, rows[0].terms, "a = 1")
 		testing.expect_value(t, rows[0].line, 9)
 		testing.expect_value(t, rows[0].comment, "The first line,\nand the second.\nIts own.")
 		testing.expect_value(t, rows[1].name, "two")
+		testing.expect_value(t, rows[1].scope, "Session")
 		testing.expect_value(t, len(rows[1].grants), 0)
 		testing.expect_value(t, rows[1].terms, "")
 		testing.expect_value(t, rows[1].comment, "")

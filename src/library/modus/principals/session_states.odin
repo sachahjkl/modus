@@ -24,6 +24,7 @@ Session_State :: enum u8 {
 	Creating, // unlock asks for the passphrase of a new principal; no record yet.
 	Locked, // A record, and no session.
 	In_Front, // Its session runs, and the seat shows it.
+	Removing, // Self-removal is in progress: durable marker written before first destructive step.
 }
 
 // What happens to a session.
@@ -33,6 +34,8 @@ Session_Event :: enum u8 {
 	Record_Given, // unlock gave the record: from a creation, or from a file at the start.
 	Unlocked, // The passphrase opened its keys.
 	Locked, // Its session ended.
+	Removal_Begun, // Removal marker written; processes stopped and stores being erased.
+	Removal_Finished, // Stores erased, file deleted, TPM pin freed; slot retired for this run.
 }
 
 // session_next gives the state of a session after an event, or ok false:
@@ -63,6 +66,14 @@ session_next :: proc "contextless" (state: Session_State, event: Session_Event) 
 		if state == .In_Front {
 			return .Locked, true
 		}
+	case .Removal_Begun:
+		if state == .In_Front || state == .Locked {
+			return .Removing, true
+		}
+	case .Removal_Finished:
+		if state == .Removing {
+			return .Absent, true
+		}
 	}
 	return state, false
 }
@@ -90,6 +101,8 @@ Seat_Event :: enum u8 {
 	Unlock_Window_Closed, // That unlock stopped.
 	Session_Unlocked, // A named session comes in front: the argument names it.
 	Session_Locked, // The session in front ended.
+	Session_Removed, // The named principal was removed: returns to Chooser.
+	Last_Named_Principal_Removed, // No named principal remains: machine returns to front.
 }
 
 // seat_next gives the seat after an event, or ok false: the event has no
@@ -140,6 +153,14 @@ seat_next :: proc "contextless" (seat: Seat, event: Seat_Event, principal: u64 =
 		if principal != MACHINE && seat.state == .Session && seat.in_front == principal {
 			return {state = .Chooser}, true
 		}
+	case .Session_Removed:
+		if principal != MACHINE && seat.state == .Session && seat.in_front == principal {
+			return {state = .Chooser}, true
+		}
+	case .Last_Named_Principal_Removed:
+		if principal == MACHINE && seat.state == .Chooser {
+			return {state = .Session, in_front = MACHINE}, true
+		}
 	}
 	return seat, false
 }
@@ -170,6 +191,8 @@ principal_state_word :: proc "contextless" (slot: u64, state: Session_State) -> 
 		return .Locked
 	case .In_Front:
 		return .Unlocked
+	case .Removing:
+		return .Removing
 	}
 	return .Absent
 }

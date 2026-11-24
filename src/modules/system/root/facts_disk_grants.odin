@@ -248,13 +248,6 @@ Client_Key_Restored_For_Display :: struct {
 	uses:       [24]u8,
 }
 
-// A principal revoked a client key that was contested.
-@(log_fact = "root: principal {principal} revoked the client key {client_key} of remote, which was contested: connections to services ended: 0")
-Client_Key_Revoked_Contested :: struct {
-	principal:  u64,
-	client_key: [24]u8,
-}
-
 // A principal revoked a client key, with the uses that it had.
 @(log_fact = "root: principal {principal} revoked the client key {client_key} ({uses}): connections to services ended: {connections_ended}")
 Client_Key_Revoked :: struct {
@@ -276,14 +269,6 @@ Client_Key_Restored :: struct {
 Client_Table_Full :: struct {
 	principal:  u64,
 	client_key: [24]u8,
-}
-
-// A contest of a client key ended by the revocation of one principal.
-@(log_fact = "root: the client key {client_key} of remote holds again for principal {principal}: principal {revoking_principal} revoked it, so it is no longer contested")
-Client_Key_Contest_Ended :: struct {
-	principal:          u64,
-	revoking_principal: u64,
-	client_key:         [24]u8,
 }
 
 // A client key allowed before the read of the disk grant table, which the
@@ -311,16 +296,6 @@ Client_Key_View_Paused :: struct {
 Client_Key_View_Back :: struct {
 	principal:  u64,
 	client_key: [24]u8,
-}
-
-// A client key allowed by a principal in this run is in the disk grant
-// table of another principal: it acts for neither.
-@(log_fact = "root: the client key {client_key} of remote is contested: principal {principal} allowed it since the machine started, and the disk grant table of principal {other_principal} holds it; it acts for neither until one of them revokes it; connections to services ended: {connections_ended}")
-Client_Key_Contested :: struct {
-	principal:         u64,
-	other_principal:   u64,
-	connections_ended: u64,
-	client_key:        [24]u8,
 }
 
 // A principal allowed a client key of Calls: one fact type for each case of
@@ -536,12 +511,4 @@ Row_Persistence_Set_Kept_By_Passphrase :: struct {
 	principal:   u64,
 	nickname:    value_kinds.Module_Name_Field,
 	persistence: [32]u8,
-}
-
-// A connection of remote refused for a contested client key.
-@(log_fact = "root: refused a connection of remote for the client key {client_key}: it is contested between principal {principal} and principal {other_principal}, and acts for neither")
-Remote_Connection_Refused_Contested :: struct {
-	principal:       u64,
-	other_principal: u64,
-	client_key:      [24]u8,
 }

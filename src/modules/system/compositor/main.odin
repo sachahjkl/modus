@@ -348,9 +348,11 @@ Client :: struct {
 	// the input face from it (capture.odin).
 	capture_allowed: bool,
 	// The window takes the keys and the pointer of the input service only,
-	// as its Client_Add says: the root service marks the window of unlock
-	// that proves a principal for a wide grant (wide_grant_screen.odin).
-	local_input_only: bool,
+	// as its Client_Add says: every window of `unlock`.
+	local_input_only:     bool,
+	// The window is masked out of every screen capture (`remote_display` and
+	// `Screen_View`), as its Client_Add says: every window of `unlock`.
+	exclude_from_capture: bool,
 	// The id of the window in the bound of a wide grant: never given to
 	// another window in this run (wide_grant_screen.odin, window_serial_next).
 	window_serial:     u64,
@@ -1389,7 +1391,9 @@ client_add :: proc "contextless" (record: ring.Record) {
 		}
 		client = {ring_memory = memory, ring = opened}
 		client.capture_allowed = record.values[display.CLIENT_ADD_CAPTURE] == display.CLIENT_CAPTURE
-		client.local_input_only = record.values[display.CLIENT_ADD_LOCAL_INPUT_ONLY] == display.CLIENT_LOCAL_INPUT_ONLY
+		client_flags := record.values[display.CLIENT_ADD_LOCAL_INPUT_ONLY]
+		client.local_input_only = client_flags & display.CLIENT_LOCAL_INPUT_ONLY != 0
+		client.exclude_from_capture = client_flags & display.CLIENT_EXCLUDE_FROM_CAPTURE != 0
 		client.window_serial = window_serial_next() // wide_grant_screen.odin
 		nickname := process_page.nickname_of({record.values[1], record.values[2], record.values[3]})
 		client.given_name_length = copy(client.given_name[:], process_page.nickname_text(&nickname))

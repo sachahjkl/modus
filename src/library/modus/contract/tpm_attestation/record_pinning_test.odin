@@ -305,7 +305,7 @@ principal_file_pin_payload_refuses_damage :: proc(t: ^testing.T) {
 	count, refusal = principal_file_pin_encode(pin, payload[:])
 	testing.expect_value(t, refusal, Pin_Refusal.None)
 	testing.expect_value(t, count, 152)
-	expected_head := [24]u8{'M', 'O', 'D', 'U', 'S', 'P', 'F', 'P', 0x00, 0x03, 0x00, 0x00, 0x0A, 0x0B, 0x0C, 0x0D, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88}
+	expected_head := [24]u8{'M', 'O', 'D', 'U', 'S', 'P', 'F', 'P', 0x00, 0x04, 0x00, 0x00, 0x0A, 0x0B, 0x0C, 0x0D, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88}
 	testing.expect(t, string(payload[:24]) == string(expected_head[:]))
 	identifier := TEST_IDENTIFIER
 	testing.expect(t, string(payload[24:56]) == string(identifier[:]))
@@ -313,11 +313,13 @@ principal_file_pin_payload_refuses_damage :: proc(t: ^testing.T) {
 	testing.expect(t, string(payload[88:120]) == string(next_digest[:]))
 	checksum := reference_pin_checksum(PRINCIPAL_FILE_PIN_DOMAIN, payload[:120])
 	testing.expect(t, string(payload[120:]) == string(checksum[:]))
-	// A payload of format 2, before the identifier, is of no known format.
-	older_format := payload
-	older_format[9] = 0x02
-	_, older_refusal := principal_file_pin_decode(older_format[:])
-	testing.expect_value(t, older_refusal, Pin_Refusal.Unknown_Format)
+	// Payloads of older formats 2 and 3 are of no known format.
+	for older in ([?]u8{0x02, 0x03}) {
+		older_format := payload
+		older_format[9] = older
+		_, older_refusal := principal_file_pin_decode(older_format[:])
+		testing.expect_value(t, older_refusal, Pin_Refusal.Unknown_Format)
+	}
 	decoded, decode_refusal := principal_file_pin_decode(payload[:])
 	testing.expect_value(t, decode_refusal, Pin_Refusal.None)
 	testing.expect_value(t, decoded, pin)
@@ -349,10 +351,16 @@ principal_file_pin_payload_refuses_damage :: proc(t: ^testing.T) {
 
 	// Behind a correct checksum, each field is still checked.
 	damaged = payload
-	damaged[PRINCIPAL_FILE_PIN_OFFSET_RESERVED + 1] = 1
+	damaged[PRINCIPAL_FILE_PIN_OFFSET_STATE + 1] = 2 // unknown Principal_Pin_State
 	reseal_principal_file_pin(damaged[:])
 	_, decode_refusal = principal_file_pin_decode(damaged[:])
-	testing.expect_value(t, decode_refusal, Pin_Refusal.Reserved_Not_Zero)
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Unknown_State)
+	// Free state with non-zero identifier/digest is refused.
+	damaged = payload
+	damaged[PRINCIPAL_FILE_PIN_OFFSET_STATE + 1] = u8(Principal_Pin_State.Free)
+	reseal_principal_file_pin(damaged[:])
+	_, decode_refusal = principal_file_pin_decode(damaged[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Free_Pin_Not_Zero)
 	damaged = payload
 	byte_order.write_u32_big_endian(damaged[:], PRINCIPAL_FILE_PIN_OFFSET_PRINCIPAL, 0)
 	reseal_principal_file_pin(damaged[:])
@@ -466,6 +474,64 @@ principal_file_pin_refuses_rollback_and_mismatch :: proc(t: ^testing.T) {
 	testing.expect_value(t, first.generation, u64(1))
 	match, refusal = principal_file_pin_check(settled, 7, TEST_IDENTIFIER, file_four)
 	testing.expect(t, refusal == .None && match == .Current)
+}
+
+// Free pin ("free, generation g") transitions and refusals:
+// Absent -> Free refused; Active -> Free advances generation and zeroes
+// identifier/digests; Free -> Free refused; Free refuses any file on disk;
+// Free(g) -> Active(B, g+1) succeeds for a new principal identifier.
+@(test)
+principal_file_pin_free_and_recreate_transitions :: proc(t: ^testing.T) {
+	file_a := transmute([]u8)string("PRINCIPT file A")
+	file_b := transmute([]u8)string("PRINCIPT file B")
+	id_b := TEST_IDENTIFIER
+	id_b[0] ~= 0xFF
+
+	// Absent -> Free is refused.
+	_, ref := principal_file_pin_free({})
+	testing.expect_value(t, ref, Pin_Refusal.Not_Pinned)
+	testing.expect_value(t, principal_file_pin_advance({}, {state = .Free, principal = 1, generation = 1}), Pin_Refusal.Not_Pinned)
+
+	// Active(A, 1) -> Free(2).
+	pin_a, ref_a := principal_file_pin_settle({}, 1, TEST_IDENTIFIER, file_a)
+	testing.expect_value(t, ref_a, Pin_Refusal.None)
+	freed, ref_free := principal_file_pin_free(pin_a)
+	testing.expect_value(t, ref_free, Pin_Refusal.None)
+	testing.expect_value(t, freed.state, Principal_Pin_State.Free)
+	testing.expect_value(t, freed.generation, u64(2))
+	testing.expect_value(t, freed.identifier, Identifier{})
+	testing.expect_value(t, freed.file_digest, Digest{})
+
+	// Round-trip encode/decode of Free pin.
+	payload: [PRINCIPAL_FILE_PIN_RECORD_SIZE]u8
+	count, enc_ref := principal_file_pin_encode(freed, payload[:])
+	testing.expect(t, enc_ref == .None && count == PRINCIPAL_FILE_PIN_RECORD_SIZE)
+	decoded, dec_ref := principal_file_pin_decode(payload[:])
+	testing.expect(t, dec_ref == .None && decoded == freed)
+
+	// Free -> Free is refused, announce on Free is refused, file check on Free is refused.
+	_, ref = principal_file_pin_free(freed)
+	testing.expect_value(t, ref, Pin_Refusal.Slot_Free)
+	testing.expect_value(t, principal_file_pin_advance(freed, {state = .Free, principal = 1, generation = 3}), Pin_Refusal.Slot_Free)
+	_, ref = principal_file_pin_announce(freed, file_b)
+	testing.expect_value(t, ref, Pin_Refusal.Slot_Free)
+	_, ref = principal_file_pin_check(freed, 1, TEST_IDENTIFIER, file_a)
+	testing.expect_value(t, ref, Pin_Refusal.Slot_Free)
+
+	// Rollback from Free(2) to Active(A, 1) or Active(A, 2) is refused.
+	testing.expect_value(t, principal_file_pin_advance(freed, pin_a), Pin_Refusal.Generation_Rollback)
+	replay_active := pin_a
+	replay_active.generation = 2
+	testing.expect_value(t, principal_file_pin_advance(freed, replay_active), Pin_Refusal.Generation_Replay)
+
+	// Free(2) -> Active(B, 3) succeeds with new principal identifier B.
+	pin_b, ref_b := principal_file_pin_settle(freed, 1, id_b, file_b)
+	testing.expect_value(t, ref_b, Pin_Refusal.None)
+	testing.expect_value(t, pin_b.state, Principal_Pin_State.Active)
+	testing.expect_value(t, pin_b.generation, u64(3))
+	testing.expect_value(t, pin_b.identifier, id_b)
+	match, check_ref := principal_file_pin_check(pin_b, 1, id_b, file_b)
+	testing.expect(t, check_ref == .None && match == .Current)
 }
 
 @(test)

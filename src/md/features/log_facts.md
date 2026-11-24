@@ -532,8 +532,8 @@ The device services, the network service, `remote` and `remote_display` are the 
 
 | Line | Fact types | Fields |
 |---|---|---|
-| A client key that the handshake of `remote` refuses, by its cause | `remote_service.Client_Key_Refused`, `Client_Key_Refused_Contested`, `Client_Key_Refused_For_Display_Only`, `Client_Key_Refused_Session_Locked` | `client_key`, the whole key; `principal`, `other_principal` |
-| A connection of `remote` taken, or ended by the end of its grant | `Connection_Arrived`, `Client_Key_Proved`, `Client_Key_Grant_Ended_In_Handshake`, `Client_Key_Contested`, `Client_Key_Grant_Ended` | `peer`, `client_key_head`, `principal`, `other_principal` |
+| A client key that the handshake of `remote` refuses, by its cause | `remote_service.Client_Key_Refused`, `Client_Key_Refused_For_Display_Only`, `Client_Key_Refused_Session_Locked` | `client_key`, the whole key; `principal` |
+| A connection of `remote` taken, or ended by the end of its grant | `Connection_Arrived`, `Client_Key_Proved`, `Client_Key_Grant_Ended_In_Handshake`, `Client_Key_Grant_Ended` | `peer`, `client_key_head`, `principal` |
 | A stream of `remote` that a bound resets, and the idle end of a connection | `Request_Too_Large`, `Request_Timeout`, `Answer_Timeout`, `Stream_Not_Ended_After_Reset`, `Idle_End_Held`, `Idle_End_Not_Held` | `stream_identifier`, `peer`, `bound` and the times in milliseconds, `request_limit`, `bytes_received`, `bytes_written`, `answer_length` |
 | A connection of `remote` to a service | `Service_Connected`, `Service_Stopped_During_Call`, `Service_Silent`, `Service_Connections_Ended` | `service`, `principal`, `bound`, the counts |
 | A viewer key that the handshake of `remote_display` refuses or takes, and the end of a viewer | `remote_display_service.Viewer_Key_Refused`, `Viewer_Key_Proved_With_Input`, `Viewer_Key_Proved_Without_Input`, `Viewer_Key_Grant_Ended_In_Handshake`, `Viewer_Key_Grant_Ended`, `Viewer_Input_Not_Allowed`, `Viewer_Bound_Passed`, `Viewer_Input_Records_Dropped`, `Viewer_Damage_Full` | `viewer_key`, the whole key, for a refusal; `viewer_key_head` for each other; `peer`, `principal`, `missed_step`, `bound`, the counts |

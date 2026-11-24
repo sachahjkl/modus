@@ -400,6 +400,26 @@ Current_Passphrase_Opened :: struct {
 	principal_name: [24]u8,
 }
 
+// unlock resumed an interrupted principal removal from the durable marker.
+@(log_fact = "unlock: resumed removal of principal {principal} from durable step {step}")
+Principal_Removal_Resumed :: struct {
+	principal: u64,
+	step:      u64,
+}
+
+// A step of durable principal removal failed.
+@(log_fact = "unlock: removal of principal {principal} did not finish at step {step}")
+Principal_Removal_Failed :: struct {
+	principal: u64,
+	step:      u64,
+}
+
+// Durable principal removal completed: file deleted, TPM pin freed, marker cleared.
+@(log_fact = "unlock: principal {principal} is removed and its TPM pin is freed")
+Principal_Removed :: struct {
+	principal: u64,
+}
+
 // No new recovery key: the seed is too weak.
 @(log_fact = "unlock: the seed of this process is too weak for a key: principal {principal} keeps its recovery key")
 Recovery_Key_Kept_Seed_Too_Weak :: struct {

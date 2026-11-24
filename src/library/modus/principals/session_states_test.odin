@@ -20,6 +20,9 @@ each_session_event_out_of_its_state_is_refused :: proc(t: ^testing.T) {
 		{.Creating, .Record_Given, .Locked},
 		{.Locked, .Unlocked, .In_Front},
 		{.In_Front, .Locked, .Locked},
+		{.Locked, .Removal_Begun, .Removing},
+		{.In_Front, .Removal_Begun, .Removing},
+		{.Removing, .Removal_Finished, .Absent},
 	}
 	for state in Session_State {
 		for event in Session_Event {
@@ -157,4 +160,5 @@ the_word_of_the_ring_comes_from_the_session_state :: proc(t: ^testing.T) {
 	testing.expect_value(t, principal_state_word(1, .In_Front), root_ring.Principal_State.Unlocked)
 	testing.expect_value(t, principal_state_word(1, .Locked), root_ring.Principal_State.Locked)
 	testing.expect_value(t, principal_state_word(1, .Creating), root_ring.Principal_State.Creating)
+	testing.expect_value(t, principal_state_word(1, .Removing), root_ring.Principal_State.Removing)
 }

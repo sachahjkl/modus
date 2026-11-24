@@ -1,5 +1,6 @@
 package root
 
+import "internal:root/session_budgets"
 import "internal:root/start_policy_rules"
 import "modus:contract/call_outcome"
 import module "modus:contract/module"
@@ -43,6 +44,74 @@ growth_factor: u64 = module.DEFAULT_GROWTH_FACTOR
 // What this service held at its start: the share is of the machine, not of
 // what the processes left.
 machine_at_start: system.Budget_Amounts
+// Reserved child kernel budgets and storage block ledgers for unlocked named
+// principal sessions (src/md/features/several_principals.md, "The rest").
+// Index 0 (machine) is never a child budget.
+session_budget_handles: [principals.PRINCIPAL_CAPACITY]system.Handle
+session_block_ledgers: [principals.PRINCIPAL_CAPACITY]session_budgets.Session_Block_Ledger
+
+// session_budget_open reserves a child kernel budget and storage block ledger
+// for a named principal when its session unlocks, always holding back a
+// machine reserve so the session reaches its own limit before machine limits.
+session_budget_open :: proc "contextless" (principal: u64) {
+	if principal == principals.MACHINE || principal >= principals.PRINCIPAL_CAPACITY {
+		return
+	}
+	if session_budget_handles[principal] != 0 {
+		return
+	}
+	own, status := system.budget_read()
+	if status != .Ok {
+		return
+	}
+	named_slots := u64(max(principals.PRINCIPAL_CAPACITY - 1, 1))
+	avail := session_budgets.Session_Budget_Amounts {
+		pages          = own.pages,
+		processes      = own.processes,
+		threads        = own.threads,
+		processor      = own.processor,
+		log_records    = own.log_records,
+		storage_blocks = max(session_budgets.DEFAULT_MACHINE_RESERVE.storage_blocks + disk_process.STORE_BLOCKS_LIMIT, 65536),
+	}
+	per_session, ok := session_budgets.compute_session_budget(avail, session_budgets.DEFAULT_MACHINE_RESERVE, named_slots)
+	if !ok {
+		return
+	}
+	child, create_status := system.budget_create({
+		pages       = per_session.pages,
+		processes   = per_session.processes,
+		threads     = per_session.threads,
+		processor   = per_session.processor,
+		log_records = per_session.log_records,
+	})
+	if create_status == .Ok {
+		session_budget_handles[principal] = child
+		_ = session_budgets.ledger_init(&session_block_ledgers[principal], per_session.storage_blocks)
+	}
+}
+
+// session_budget_close releases the reserved child budget of a named principal
+// on lock or removal, returning all unused resources to the machine budget.
+session_budget_close :: proc "contextless" (principal: u64) {
+	if principal == principals.MACHINE || principal >= principals.PRINCIPAL_CAPACITY {
+		return
+	}
+	if session_budget_handles[principal] != 0 {
+		system.close(session_budget_handles[principal])
+		session_budget_handles[principal] = 0
+	}
+	session_block_ledgers[principal] = {}
+}
+
+// session_budget_of returns the paying budget handle for a process of
+// `principal`: its reserved session budget for a named principal when open,
+// or 0 (the root service's own budget) for principal 0.
+session_budget_of :: proc "contextless" (principal: u64) -> system.Handle {
+	if principal == principals.MACHINE || principal >= principals.PRINCIPAL_CAPACITY {
+		return 0
+	}
+	return session_budget_handles[principal]
+}
 // budgets_start reads the budget of this service once, before the first
 // start, and decides the largest budget of this machine. The pages of a
 // later read are lower by what the processes hold, so the share is of the

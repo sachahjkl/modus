@@ -11,7 +11,7 @@ import "core:testing"
 client_table_round_trip :: proc(t: ^testing.T) {
 	table := new(Client_Table, context.temp_allocator)
 	first := Client{key = {0 = 0x11, 31 = 0x22}, principal = 0, serial = 1, uses = client_uses_word({.Calls})}
-	second := Client{key = {0 = 0x33}, principal = 1, serial = 2, uses = client_uses_word({.Calls})}
+	second := Client{key = {0 = 0x33}, principal_identifier = {0 = 0xA1}, principal = 1, serial = 2, uses = client_uses_word({.Calls})}
 	client_table_write(table, 0, first)
 	client_table_write(table, CLIENT_CAPACITY - 1, second)
 	testing.expect_value(t, table.version & 1, 0)
@@ -20,28 +20,33 @@ client_table_round_trip :: proc(t: ^testing.T) {
 	client_table_read(table, &copied)
 	testing.expect(t, copied[0] == first)
 	testing.expect(t, copied[CLIENT_CAPACITY - 1] == second)
-	testing.expect_value(t, client_find(&copied, first.key), 0)
-	testing.expect_value(t, client_find(&copied, second.key), CLIENT_CAPACITY - 1)
-	testing.expect_value(t, client_find(&copied, [32]u8{0 = 0x44}), -1)
+	testing.expect_value(t, client_find_for_principal(&copied, 0, first.key), 0)
+	testing.expect_value(t, client_find_for_principal(&copied, 1, first.key), -1)
+	testing.expect_value(t, client_find_for_pair(&copied, second.principal_identifier, 1, second.key), CLIENT_CAPACITY - 1)
+	testing.expect_value(t, client_find_for_pair(&copied, [32]u8{0 = 0xFF}, 1, second.key), -1)
+	testing.expect_value(t, client_find_for_principal(&copied, 1, second.key), CLIENT_CAPACITY - 1)
+	testing.expect_value(t, client_find_for_principal(&copied, 0, [32]u8{0 = 0x44}), -1)
 	// A key of zeros names no row, though each free row has zeros.
-	testing.expect_value(t, client_find(&copied, [32]u8{}), -1)
+	testing.expect_value(t, client_find_for_principal(&copied, 0, [32]u8{}), -1)
+	testing.expect_value(t, client_find_holding(&copied, first.key, .Calls), 0)
 	testing.expect(t, client_grant_holds(&copied, 0, first.serial, .Calls))
 	testing.expect(t, !client_grant_holds(&copied, 0, first.serial + 1, .Calls), "another serial is another grant")
 	testing.expect(t, !client_grant_holds(&copied, 1, 0, .Calls), "a free row holds no grant")
 	testing.expect(t, !client_grant_holds(&copied, -1, first.serial, .Calls))
 	testing.expect(t, !client_grant_holds(&copied, CLIENT_CAPACITY, first.serial, .Calls))
 	// The session of principal 1 locked: its row holds no grant, and its
-	// key is still found, so the refusal names the principal.
+	// key is still found for its principal.
 	locked := second
 	locked.session_locked = 1
 	client_table_write(table, CLIENT_CAPACITY - 1, locked)
 	client_table_read(table, &copied)
 	testing.expect(t, !client_grant_holds(&copied, CLIENT_CAPACITY - 1, second.serial, .Calls))
-	testing.expect_value(t, client_find(&copied, second.key), CLIENT_CAPACITY - 1)
+	testing.expect_value(t, client_find_for_principal(&copied, 1, second.key), CLIENT_CAPACITY - 1)
+	testing.expect_value(t, client_find_holding(&copied, second.key, .Calls), -1)
 	// A revocation frees the row.
 	client_table_write(table, 0, {})
 	client_table_read(table, &copied)
-	testing.expect_value(t, client_find(&copied, first.key), -1)
+	testing.expect_value(t, client_find_for_principal(&copied, 0, first.key), -1)
 	testing.expect(t, !client_grant_holds(&copied, 0, first.serial, .Calls))
 	// A place out of the table changes nothing.
 	version := table.version
@@ -49,33 +54,45 @@ client_table_round_trip :: proc(t: ^testing.T) {
 	testing.expect_value(t, table.version, version)
 }
 
-// A key of the disk grant table of a principal: its own row holds; a free
-// row takes it; a row of another principal becomes contested, and holds no
-// grant for either; a contested row stays so; a full table is said.
+// Two principals may enroll the same public key independently under
+// (principal_identifier, public_key) with no Exists refusal and no Contested
+// state. Locking or revoking one principal's row leaves the other intact,
+// and client_find_holding prefers the session in front.
 @(test)
-client_restore_decides_one_key_for_one_principal :: proc(t: ^testing.T) {
+client_restore_and_lookup_key_by_principal_and_key :: proc(t: ^testing.T) {
 	clients: [CLIENT_CAPACITY]Client
 	own := [32]u8{0 = 0x11}
-	other := [32]u8{0 = 0x22}
+	shared := [32]u8{0 = 0x22}
 	fresh := [32]u8{0 = 0x33}
-	clients[1] = {key = own, principal = 1, serial = 5}
-	clients[2] = {key = other, principal = 0, serial = 6, uses = client_uses_word({.Calls})}
+	id_one := [32]u8{0 = 0xA1}
+	clients[1] = {key = own, principal_identifier = id_one, principal = 1, serial = 5, uses = client_uses_word({.Calls})}
+	clients[2] = {key = shared, principal = 0, serial = 6, uses = client_uses_word({.Calls, .View}), not_in_front = 1}
+
 	action, place := client_restore_decision(&clients, own, 1)
 	testing.expect(t, action == .Holds && place == 1)
 	action, place = client_restore_decision(&clients, fresh, 1)
 	testing.expect(t, action == .Take_Row && place == 0)
-	// The key that principal 0 allowed in this run, and that the table of
-	// principal 1 holds: contested.
-	action, place = client_restore_decision(&clients, other, 1)
-	testing.expect(t, action == .Contest && place == 2)
-	clients[2].contested = 1 + 1
-	clients[2].serial = 7
-	testing.expect(t, !client_grant_holds(&clients, 2, 7, .Calls), "a contested row holds no grant")
-	action, place = client_restore_decision(&clients, other, 1)
-	testing.expect(t, action == .Contested && place == 2)
-	// The holder too finds its row contested: its own row, with no grant.
-	action, place = client_restore_decision(&clients, other, 0)
-	testing.expect(t, action == .Holds && place == 2)
+
+	// Principal 1 restores the same public key that principal 0 holds: gets its
+	// own free row (0), never Contested or Exists.
+	action, place = client_restore_decision(&clients, shared, 1)
+	testing.expect(t, action == .Take_Row && place == 0)
+	clients[0] = {key = shared, principal_identifier = id_one, principal = 1, serial = 7, uses = client_uses_word({.Calls, .View}), not_in_front = 0}
+
+	// Both rows resolve independently and client_find_holding prefers front (row 0).
+	testing.expect_value(t, client_find_for_principal(&clients, 0, shared), 2)
+	testing.expect_value(t, client_find_for_principal(&clients, 1, shared), 0)
+	testing.expect_value(t, client_find_holding(&clients, shared, .Calls), 0)
+	testing.expect_value(t, client_find_holding(&clients, shared, .View), 0)
+
+	// Locking principal 1 leaves principal 0 holding .Calls cleanly.
+	clients[0].session_locked = 1
+	testing.expect(t, !client_grant_holds(&clients, 0, 7, .Calls))
+	testing.expect(t, client_grant_holds(&clients, 2, 6, .Calls))
+	testing.expect_value(t, client_find_holding(&clients, shared, .Calls), 2)
+	testing.expect_value(t, client_find_holding(&clients, shared, .View), -1) // principal 0 not_in_front == 1
+
+	// Filling the table refuses any further key with No_Free_Row.
 	for &client, index in clients {
 		if client.serial == 0 {
 			client = {key = [32]u8{0 = 0x40, 1 = u8(index)}, principal = 0, serial = u64(10 + index)}
@@ -159,7 +176,7 @@ client_table_holds_many_clients_and_refuses_one_past_the_last_row :: proc(t: ^te
 		testing.expectf(t, client_grant_holds(&clients, place, u64(index + 1), .Calls), "key %d holds no grant", index + 1)
 	}
 	for edge in ([?]int{8, 32, CLIENT_CAPACITY - 1}) {
-		testing.expect_value(t, client_find(&clients, clients[edge].key), edge)
+		testing.expect_value(t, client_find_for_principal(&clients, 0, clients[edge].key), edge)
 	}
 	action, place := client_restore_decision(&clients, [32]u8{0 = 0x60}, 0)
 	testing.expect(t, action == .No_Free_Row && place == -1)

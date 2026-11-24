@@ -200,13 +200,13 @@ CLIENT_ADD_CAPTURE :: 5
 // The flag of a client that holds the start grant Screen_Capture. A flag,
 // not a choice: 0 says the opposite.
 CLIENT_CAPTURE :: 1
-// The place of the flag of a window that takes the keys of the input
-// service only, in the values of Client_Add: the window of `unlock` that
-// proves a principal for a wide grant (src/md/features/wide_grants.md, "The
-// deliberate act: the proof of the principal"). No key and no pointer of the
-// remote display reaches it.
+// The place of the bitflags of a trusted window in the values of Client_Add:
+// CLIENT_LOCAL_INPUT_ONLY takes keys and pointer from the local input service
+// only (never from remote_display); CLIENT_EXCLUDE_FROM_CAPTURE masks the
+// window out of every screen capture (Screen_View and remote_display).
 CLIENT_ADD_LOCAL_INPUT_ONLY :: 6
 CLIENT_LOCAL_INPUT_ONLY :: 1
+CLIENT_EXCLUDE_FROM_CAPTURE :: 2
 
 // The viewers of the capture face: each viewer that the service of the
 // remote display holds has its place here, by the place of its record.

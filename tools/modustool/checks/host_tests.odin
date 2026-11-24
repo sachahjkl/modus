@@ -299,6 +299,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_KERNEL + "/process_memory",
 	foundation.SOURCE_FOLDER_KERNEL + "/virtual_interrupt_controller",
 	foundation.SOURCE_FOLDER_CONTRACT + "/input_history",
+	foundation.SOURCE_FOLDER_INTERNAL + "/compositor/capture_filter",
+	foundation.SOURCE_FOLDER_INTERNAL + "/root/session_budgets",
 	foundation.SOURCE_FOLDER_INTERNAL + "/network/dhcp_client",
 	foundation.SOURCE_FOLDER_INTERNAL + "/storage/storage_mount",
 	foundation.SOURCE_FOLDER_INTERNAL + "/storage/storage_object",

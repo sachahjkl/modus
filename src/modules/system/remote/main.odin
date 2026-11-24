@@ -534,8 +534,8 @@ client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
 	rows: [remote.CLIENT_CAPACITY]remote.Client
 	remote.client_table_read(client_table, &rows)
 	proven := key^
-	row := remote.client_find(&rows, proven)
-	if row >= 0 && remote.client_grant_holds(&rows, row, rows[row].serial, .Calls) {
+	row := remote.client_find_holding(&rows, proven, .Calls)
+	if row >= 0 {
 		return true
 	}
 	if machine_wire.peer_admits(&mesh, proven, system.time()) {
@@ -544,12 +544,11 @@ client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
 	counts.keys_refused += 1
 	if log_allowed() {
 		client_key := key_field(proven)
-		if row >= 0 && rows[row].contested != 0 {
-			system.log_fact(.Info, Client_Key_Refused_Contested{principal = rows[row].principal, other_principal = rows[row].contested - 1, client_key = client_key})
-		} else if row >= 0 && rows[row].session_locked == 0 {
-			system.log_fact(.Info, Client_Key_Refused_For_Display_Only{principal = rows[row].principal, client_key = client_key})
-		} else if row >= 0 {
-			system.log_fact(.Info, Client_Key_Refused_Session_Locked{principal = rows[row].principal, client_key = client_key})
+		any_row := remote.client_find_any(&rows, proven)
+		if any_row >= 0 && rows[any_row].session_locked == 0 {
+			system.log_fact(.Info, Client_Key_Refused_For_Display_Only{principal = rows[any_row].principal, client_key = client_key})
+		} else if any_row >= 0 {
+			system.log_fact(.Info, Client_Key_Refused_Session_Locked{principal = rows[any_row].principal, client_key = client_key})
 		} else {
 			system.log_fact(.Info, Client_Key_Refused{client_key = client_key})
 		}
@@ -562,8 +561,8 @@ client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
 // row can end between the check of the handshake and this pass.
 client_bind :: proc "contextless" (connection: ^quic.Connection, client: ^Record_Client, peer: quic.Remote) {
 	key := connection.tls.client_public_key
-	row := remote.client_find(&client_rows, key)
-	if row < 0 || !remote.client_grant_holds(&client_rows, row, client_rows[row].serial, .Calls) {
+	row := remote.client_find_holding(&client_rows, key, .Calls)
+	if row < 0 {
 		if machine_wire.peer_admits(&mesh, key, system.time()) {
 			client.bound, client.mesh_only, client.row, client.key = true, true, -1, key
 			if log_allowed() {
@@ -650,12 +649,7 @@ client_grant_check :: proc "contextless" (connection: ^quic.Connection, client: 
 	quic.connection_close(connection, u64(remote.Stream_Error.Revoked), now_microseconds())
 	counts.revoked += 1
 	if log_allowed() {
-		place := client.row
-		if place >= 0 && place < remote.CLIENT_CAPACITY && client_rows[place].key == client.key && client_rows[place].contested != 0 {
-			system.log_fact(.Info, Client_Key_Contested{principal = client.principal, other_principal = client_rows[place].contested - 1, client_key_head = key_head_field(client.key), peer = peer_field(peer)})
-		} else {
-			system.log_fact(.Info, Client_Key_Grant_Ended{principal = client.principal, client_key_head = key_head_field(client.key), peer = peer_field(peer)})
-		}
+		system.log_fact(.Info, Client_Key_Grant_Ended{principal = client.principal, client_key_head = key_head_field(client.key), peer = peer_field(peer)})
 	}
 }
 

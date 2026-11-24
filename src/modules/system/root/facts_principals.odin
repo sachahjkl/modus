@@ -125,6 +125,20 @@ Recovery_Key_Change_Started :: struct {
 	principal_name: [24]u8,
 }
 
+// Self-removal of a named principal starts in the window of unlock.
+@(log_fact = "root: the removal of principal {principal} \"{principal_name}\" starts in the window of unlock")
+Principal_Removal_Started :: struct {
+	principal:      u64,
+	principal_name: [24]u8,
+}
+
+// A named principal was removed: its processes stopped and its slot is retired until reboot.
+@(log_fact = "root: principal {principal} is removed: {stopped_processes} processes stopped, slot retired until reboot")
+Principal_Removed :: struct {
+	principal:         u64,
+	stopped_processes: u64,
+}
+
 // The boot image agrees with the system description that the boot program
 // verified: the entries that this service checked, and the time of the
 // check.

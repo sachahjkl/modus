@@ -1302,6 +1302,44 @@ display_holder_end :: proc "contextless" () {
 	}
 }
 
+// Fresh display holder restart requested by principal_lock: the old holder
+// stops as a root-asked stop, reap cleans up its handles and screen budget,
+// and the next loop pass starts a fresh display holder before unlock opens.
+display_holder_restart_due: bool
+display_holder_restart_screen_of_memory: [2]u32
+
+// display_holder_restart_request stops the current display holder cleanly so
+// the next loop pass starts a fresh display holder with no residual session
+// state (src/md/features/several_principals.md, "The seat, and a display for
+// each session").
+display_holder_restart_request :: proc "contextless" () -> bool {
+	if display_holder == 0 {
+		return false
+	}
+	for &item in started {
+		if item.process == display_holder {
+			display_holder_restart_due = true
+			display_holder_restart_screen_of_memory = desktop_of_memory ? screen_of_memory_size : {}
+			item.stop_asked_by_root_service = true
+			started_process_stop(&item)
+			return true
+		}
+	}
+	return false
+}
+
+// display_holder_restart_step starts a fresh display holder once the stopped
+// holder from the previous session has been reaped.
+display_holder_restart_step :: proc "contextless" () {
+	if !display_holder_restart_due || display_holder != 0 {
+		return
+	}
+	display_holder_restart_due = false
+	size := display_holder_restart_screen_of_memory
+	display_holder_restart_screen_of_memory = {}
+	_ = display_holder_start(size)
+}
+
 // The places of the one wait of the loop, with each queue of each place
 // (root_ring.root_wait_words): made by root_tables_start.
 root_wait_set: system.Wait_Set
@@ -1335,6 +1373,9 @@ root_loop_pass :: proc "contextless" () {
 	// After the start policy: the read of the script font set starts when
 	// the machine is usable (script_fonts.odin).
 	script_fonts_step()
+	// After reap: a stopped display holder from a session lock restarts fresh
+	// before unlock opens on it.
+	display_holder_restart_step()
 	// After reap: a principal that is locked has a window of unlock.
 	unlock_for_a_locked_principal()
 	// After reap: a storage service that stopped ended its connections.
@@ -2275,9 +2316,22 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 // then close them. A refusal writes its record in refusal, with the
 // command kind as its operation.
 connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: ^[7]u64, kind: u32, history := false, client: Client_Grant = {}, store_override: string = "", store_limit_override: u64 = 0) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, outcome: call_outcome.Call_Outcome) {
+	// Session-scope services run per principal (with that principal's own
+	// encrypted store); machine-scope services accept named-principal callers
+	// only when they appear in the closed joint_process_names list.
+	target_principal := client.place != 0 ? client.principal : caller.principal
+	row_name := role_policy.grant_row_name_of_module(&role_holder_names, name)
+	target_scope := service_scope_of(row_name)
+	if target_scope == .Machine && target_principal != principals.MACHINE && !name_is_a_joint_process(row_name) {
+		return nil, nil, 0, 0, root_ring.refuse(refusal, .Grant_Or_Right_Missing, kind, .No_Grant, .Connection, 1)
+	}
+	service_principal := target_scope == .Session ? target_principal : principals.MACHINE
 	for pass in 0 ..< 2 {
 		for &item in started {
 			if item.process != 0 && item.service.head != nil && system.name_of(item.name[:]) == name {
+				if target_scope == .Session && item.principal != service_principal {
+					continue
+				}
 				service = &item
 			}
 		}
@@ -2286,7 +2340,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 		}
 		// A service on demand that does not start: the party that the
 		// connection needs failed (needed_service_failed).
-		if started_outcome := start(name, refusal = refusal); started_outcome != .Succeeded {
+		if started_outcome := start(name, principal = service_principal, refusal = refusal); started_outcome != .Succeeded {
 			return nil, nil, 0, 0, needed_service_failed(refusal)
 		}
 	}

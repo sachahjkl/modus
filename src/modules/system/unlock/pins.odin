@@ -126,7 +126,7 @@ machine_record_pin_check :: proc "contextless" (record: []u8, present: bool) -> 
 	}
 	verdict, pin, refusal := tpm_service.machine_record_pin_verdict(state, pin_payload[:count], record, present)
 	switch verdict {
-	case .Record_Pin_Mismatch, .Principal_File_Pin_Mismatch:
+	case .Record_Pin_Mismatch, .Principal_File_Pin_Mismatch, .Free_Slot:
 		system.log_fact(.Info, Record_Pin_Mismatch{pin_refusal = pin_refusal_field(refusal)})
 		return true
 	case .Accepted, .Accepted_Next, .Not_Pinned:
@@ -155,7 +155,7 @@ principal_file_pin_check :: proc "contextless" (principal: u64, file: []u8) -> (
 	}
 	verdict, pin, refusal := tpm_service.principal_file_pin_verdict(state, pin_payload[:count], principal, identifier, file, true)
 	switch verdict {
-	case .Record_Pin_Mismatch, .Principal_File_Pin_Mismatch:
+	case .Record_Pin_Mismatch, .Principal_File_Pin_Mismatch, .Free_Slot:
 		system.log_fact(.Info, Principal_File_Pin_Mismatch{principal = principal, pin_refusal = pin_refusal_field(refusal)})
 		return true
 	case .Accepted, .Accepted_Next, .Not_Pinned:
@@ -186,27 +186,69 @@ principal_file_removed_check :: proc "contextless" () -> (removed: bool) {
 			removed = true
 			continue
 		}
-		verdict, _, refusal := tpm_service.principal_file_pin_verdict(state, pin_payload[:count], principal, identifier, nil, false)
-		if verdict == .Principal_File_Pin_Mismatch {
+		verdict, free_pin, refusal := tpm_service.principal_file_pin_verdict(state, pin_payload[:count], principal, identifier, nil, false)
+		switch verdict {
+		case .Principal_File_Pin_Mismatch, .Record_Pin_Mismatch:
 			system.log_fact(.Info, Principal_File_Pin_Mismatch{principal = principal, pin_refusal = pin_refusal_field(refusal)})
 			removed = true
+		case .Free_Slot:
+			// Deliberately freed slot: preserve its Free pin generation so a
+			// new creation advances cleanly to generation + 1.
+			principal_pin, principal_pin_read = free_pin, true
+		case .Not_Pinned, .Accepted, .Accepted_Next:
 		}
 	}
 	return removed
 }
 
 // principal_creation_allowed says if a new principal may be created: not
-// while a pin names the file of a principal. Such a file was removed from
-// the disk, and a new principal in its place would make the pin of the
-// removed one move on to a file of whoever created it. Only a clear of the
-// TPM removes the pin. When it allows, the new file has no pin to announce
-// in: its first pin comes after the root service gives its number.
+// while an Active pin names the file of a principal. A Free pin from a prior
+// deliberate removal allows creation at generation + 1.
 principal_creation_allowed :: proc "contextless" () -> bool {
+	principal_pin, principal_pin_read = {}, false
 	if principal_file_removed_check() {
 		system.log_fact(.Info, Principal_Creation_Refused_By_Pin{})
 		return false
 	}
-	principal_pin, principal_pin_read = {}, true
+	principal_pin_read = true
+	return true
+}
+
+// principal_pin_free writes the "free, generation g" TPM pin payload at the
+// end of a deliberate principal removal. Returns true when no TPM pin existed,
+// when the pin is already Free, or when the Free pin write succeeded.
+principal_pin_free :: proc "contextless" (slot: u64) -> bool {
+	if !tpm_granted || !pins_writable() {
+		return true
+	}
+	state, count, read_ok := pin_read(.Principal_File, slot)
+	if !read_ok {
+		return false
+	}
+	if !tpm_service.pin_state_holds_payload(state) {
+		return true
+	}
+	current, dec_ref := tpm_attestation.principal_file_pin_decode(pin_payload[:count])
+	if dec_ref != .None {
+		return false
+	}
+	if current.state == .Free {
+		principal_pin, principal_pin_read = current, true
+		return true
+	}
+	freed, free_ref := tpm_attestation.principal_file_pin_free(current)
+	if free_ref != .None {
+		return false
+	}
+	payload: [tpm_service.PIN_LIMIT]u8
+	out_count, enc_ref := tpm_attestation.principal_file_pin_encode(freed, payload[:])
+	if enc_ref != .None {
+		return false
+	}
+	if !pin_write(.Principal_File, slot, payload[:out_count]) {
+		return false
+	}
+	principal_pin, principal_pin_read = freed, true
 	return true
 }
 
@@ -351,16 +393,24 @@ principal_pin_after_creation :: proc "contextless" (file: []u8) {
 	if !pins_writable() || number == 0 || number > tpm_service.PIN_PRINCIPAL_LIMIT {
 		return
 	}
-	state, _, read_ok := pin_read(.Principal_File, number)
+	state, count, read_ok := pin_read(.Principal_File, number)
 	if !read_ok {
 		system.log_fact(.Info, Principal_Pin_Not_Read{principal = number})
 		return
 	}
-	// A pin of this number names a file that the creation did not read: a
-	// removed principal. The new file is not pinned over it, so the next
-	// start refuses the new file rather than move the pin of the removed one.
+	// If the slot holds a Free pin ("free, generation g") from a prior
+	// deliberate removal, advance from Free(g) to Active(new_id, g + 1).
+	// An Active or unreadable pin refuses creation so a writer cannot replace
+	// a removed file without freeing the pin first.
 	if tpm_service.pin_state_holds_payload(state) {
-		system.log_fact(.Info, Principal_Creation_Refused_By_Pin{})
+		decoded, dec_ref := tpm_attestation.principal_file_pin_decode(pin_payload[:count])
+		if dec_ref != .None || decoded.state != .Free || decoded.principal != u32(number) {
+			system.log_fact(.Info, Principal_Creation_Refused_By_Pin{})
+			return
+		}
+		principal_pin = decoded
+		principal_pin_read = true
+		pin_settle(.Principal_File, file)
 		return
 	}
 	principal_pin = {}

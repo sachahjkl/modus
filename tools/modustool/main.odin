@@ -1220,7 +1220,7 @@ run_check :: proc(args: []string) -> int {
 	// no family of integer constants is a
 	// closed set of choices; only the loader and the root service name the
 	// field image_checks of a load source.
-	if !checks.operation_count_check() || !checks.allocator_check() || !checks.outcome_binding_check() || !checks.choice_constant_check() || !checks.processor_random_check() || !checks.image_checks_field_check() || !checks.display_text_check() || !checks.service_deadline_check() {
+	if !checks.operation_count_check() || !checks.allocator_check() || !checks.outcome_binding_check() || !checks.choice_constant_check() || !checks.processor_random_check() || !checks.image_checks_field_check() || !checks.display_text_check() || !checks.service_deadline_check() || !checks.joint_processes_check() {
 		return foundation.EXIT_FAILURE
 	}
 	// The stage tracker of the host of the browser machine, in Node: the

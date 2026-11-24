@@ -83,7 +83,7 @@ The process `unlock` keeps the record in its private store (a store of principal
 | Offset | Bytes | Field |
 |---|---|---|
 | 0 | 8 | `PRINCIPL` |
-| 8 | 4 | The format: 2 |
+| 8 | 4 | The format: 3 |
 | 12 | 4 | The KiB of Argon2id: 19456 |
 | 16 | 4 | The passes of Argon2id: 2 |
 | 20 | 1 | The bytes of the name: 1 to 23 |
@@ -92,14 +92,15 @@ The process `unlock` keeps the record in its private store (a store of principal
 | 76 | 32 | The public signing key |
 | 108 | 32 | The public unlock key |
 | 140 | 16 | The salt of Argon2id |
-| 156 | 12 | The nonce of the seal |
-| 168 | 80 | The two secret keys (64 bytes) sealed with ChaCha20-Poly1305, and the tag |
+| 156 | 24 | The unlock hints: keyboard layout (`u32`), assistive hint bits (`u32`), language length (`u8`), and 15-byte BCP-47 language tag with zero bytes after it |
+| 180 | 12 | The nonce of the seal |
+| 192 | 80 | The two secret keys (64 bytes) sealed with ChaCha20-Poly1305, and the tag |
 
-The additional data of the seal is each byte before the sealed keys. So a change of the name, of the identifier, of a public key, of the salt or of a parameter makes the open fail.
+The additional data of the seal is each byte before the sealed keys (192 bytes). So a change of the name, of the identifier, of a public key, of the salt, of the unlock hints, or of a parameter makes the open fail. The unlock hints are updated only at creation or after passphrase proof, and the window of `unlock` is excluded from screen capture (`CLIENT_EXCLUDE_FROM_CAPTURE`) and takes local keyboard input only (`CLIENT_LOCAL_INPUT_ONLY`).
 
 **The principal identifier** names the principal on the disk: `unlock` draws it at the creation from its random generator, with the strength of a key, and it never changes. The number of a principal in the root service is a slot of one run of the machine: `unlock` gives the root service the identifier of the file after its record (`Principal_Identifier`), and the root service starts no session of a record with no identifier. The design is `src/md/features/several_principals.md`, "The identity: three names".
 
-The file is data from the disk. `file_decode` copies it once and checks the copy: the size, the magic, the format, the name, the zero bytes after it, and an identifier that is not all zero. A file of the format 1 of an older release is refused with the sentence "the file has the format of an older release of modus, which this release does not read: create the principal again": before 1.0 a format changes with no migration. A file with other parameters of Argon2id is refused: a file cannot ask for a cheaper derivation, or for more memory than the process has.
+The file is data from the disk. `file_decode` copies it once and checks the copy: the size (272 bytes), the magic, the format, the name, the zero bytes after it, an identifier that is not all zero, and valid unlock hints. A file of format 1 or 2 of an older release is refused with the sentence "the file has the format of an older release of modus, which this release does not read: create the principal again": before 1.0 a format changes with no migration. A file with other parameters of Argon2id is refused: a file cannot ask for a cheaper derivation, or for more memory than the process has.
 
 ### The key derivation
 
@@ -179,29 +180,29 @@ unlock: the recovery key of principal 1 "alice" opens its keys
 unlock: the keys of principal 1 "alice" are sealed again to PCR 7 and PCR 11 of the system that runs and to the new passphrase: its next unlock needs no recovery key
 ```
 
-**The file `PRINCIPT`.** Each number is little-endian.
+**The file `PRINCIPT`.** Each number is little-endian (1088 bytes total).
 
 | Offset | Bytes | Field |
 |---|---|---|
-| 0 | 156 | As the form `PRINCIPL`, to the salt, with `PRINCIPT` and the format 2, the principal identifier too |
-| 156 | 4 | The PCRs of the policy: `0x880`, PCR 7 and PCR 11 |
-| 160 | 8 | The bytes of the public area, of the private area, of the creation data and of the creation ticket, 2 bytes each |
-| 168 | 128 | The public area of the sealed object |
-| 296 | 256 | The private area |
-| 552 | 256 | The creation data |
-| 808 | 72 | The creation ticket |
-| 880 | 12 | The nonce of the seal under the seal key |
-| 892 | 80 | The two secret keys sealed under the seal key, and the tag |
-| 972 | 12 | The nonce of the recovery seal |
-| 984 | 80 | The two secret keys sealed under keyed BLAKE2b of the recovery key, and the tag |
+| 0 | 180 | As the form `PRINCIPL`, through the salt and the 24-byte unlock hints, with `PRINCIPT` and the format 3, the principal identifier too |
+| 180 | 4 | The PCRs of the policy: `0x880`, PCR 7 and PCR 11 |
+| 184 | 8 | The bytes of the public area, of the private area, of the creation data and of the creation ticket, 2 bytes each |
+| 192 | 128 | The public area of the sealed object |
+| 320 | 256 | The private area |
+| 576 | 256 | The creation data |
+| 832 | 72 | The creation ticket |
+| 904 | 12 | The nonce of the seal under the seal key |
+| 916 | 80 | The two secret keys sealed under the seal key, and the tag |
+| 996 | 12 | The nonce of the recovery seal |
+| 1008 | 80 | The two secret keys sealed under keyed BLAKE2b of the recovery key, and the tag |
 
-Each part of the sealed object has zero bytes after it. The additional data of the seal under the seal key is the first 156 bytes. The additional data of the recovery seal is the first 140 bytes, before the salt, so a new passphrase keeps the copy valid; both cover the identifier. `principal_tpm_file_decode` refuses other parameters of Argon2id, other PCRs, a name that is not a name, an identifier that is all zero, a part of the sealed object that is not whole, and the format 1 of an older release, with the sentence of the form `PRINCIPL`.
+Each part of the sealed object has zero bytes after it. The additional data of the seal under the seal key is the first 180 bytes (covering the unlock hints). The additional data of the recovery seal is the first 140 bytes, before the salt, so a new passphrase or updated unlock hints keep the recovery copy valid; both cover the identifier. `principal_tpm_file_decode` refuses other parameters of Argon2id, other PCRs, a name that is not a name, an identifier that is all zero, bad unlock hints, a part of the sealed object that is not whole, and format 1 or 2 of an older release, with the sentence of the form `PRINCIPL`.
 
 **What it protects, and what it does not.**
 
 - A copy of the disk opens nothing on another machine or another system without the recovery key.
 - The TPM counts the tries on this machine, and limits their rate, only while its lockout hierarchy has an authorization value that the attacker does not know. With an empty one, an attacker with the machine starts another system, changes the count limits of the TPM or resets the count (`TPM2_DictionaryAttackParameters`, `TPM2_DictionaryAttackLockReset`, which do not depend on the PCRs), and starts this system again: each guess in the window of `unlock` then costs one derivation of Argon2id only, as for the form `PRINCIPL`. The TPM service sets a value before the first use of a passphrase on a TPM with an empty one, so the count holds from that use. It does not hold against a system that set the value before: the service leaves such a value, and only a clear from the firmware gives the hierarchy back. The value crosses the bus of the TPM in clear at that first use. The window of the creation does not show the state of the lockout hierarchy: only the log says it. On the test TPM the rate is three tries, then one for each 1000 seconds of the time of the TPM.
-- The pin of the file of a principal (format 3 of its payload, 152 bytes) names its slot, its principal identifier, its generation and the digests of its file: a file of another principal in the slot is refused ("the principal identifier is not the pinned identifier"), whatever its digest. A pin of format 2, before the identifier, is of no known format.
+- The pin of the file of a principal (format 4 of its payload, 152 bytes) names its slot, its state (`Active` or `Free`), its principal identifier, its generation, and the digests of its file: a file of another principal in the slot is refused ("the principal identifier is not the pinned identifier"), whatever its digest. A pin of format 2 or 3 is of no known format. Deliberate self-removal (`principal_remove()`) writes a durable removal record (`principal_removing`), erases old versions, deletes the principal file, and transitions the TPM pin to `"free, generation g"` so a later boot can create a new principal in the slot at generation `g + 1` while still refusing any rollback of the removed principal's file. The slot stays retired until reboot.
 - A new passphrase, after a recovery or a change, does not revoke the old sealed object, but the TPM pins the current file: a writer of the disk who kept the old file and puts it back gets "the file of principal 1 is not the file that the TPM pins" on the log, and the old passphrase opens nothing. Code with the TPM (another system on the machine) can remove the pin, as the owner hierarchy has no authorization value; the next start then takes the file that it finds. A file removed while its pin exists is not a missing principal: `principal_create` is refused until a clear of the TPM. On a machine where the TPM is given and its pin cannot be read, the file is refused. With no TPM, nothing pins the file.
 - Who holds the recovery key holds the principal, on this disk or any copy of it, with no TPM. A new recovery key ("A change of the passphrase") opens the files written after it; the old one still opens the version from before that the store keeps on the same disk.
 - The TPM secret and the authorization value cross the bus of the TPM in clear: no session encrypts them. A reader of the bus still runs Argon2id for each guess of the passphrase.
@@ -258,7 +259,7 @@ The root service starts `unlock` at boot, after the boot pass of `settings`.
 
 **The keys are not kept after the unlock.** `unlock` gives the root service two keys, derived from the unlock key: the storage key of the principal (`Principal_Storage_Key`), which the root service passes to the storage service with the principal identifier and keeps no copy of, and the key of the tag of the disk grant table of the principal (section 5, "The disk grant table of a named principal"). Then it erases the secret keys. The storage service finds, makes, lists, encrypts, decrypts, and authenticates the stores of the principal with its storage key; the lock erases its keys, cached blocks, hash-index records, pending pools, and transient buffers there (`src/md/features/store_encryption.md`). No grant is signed yet.
 
-**The lock** (`lock()` in the console): the root service stops each process of the session and its terminals, marks the principal locked, and starts `unlock` again. The processes stop; they are not frozen: a frozen process needs a kernel operation that does not exist. A process that keeps its state in its store at each change (`notes`) loses nothing.
+**The lock** (`lock()` in the console): the root service stops each process of the session and its terminals, closes the session's reserved child budget, marks the principal locked, stops and restarts the display holder so no session display state crosses the boundary, and starts `unlock` again on the fresh display holder. The processes stop; they are not frozen: a frozen process needs a kernel operation that does not exist. A process that keeps its state in its store at each change (`notes`) loses nothing.
 
 **No window of `unlock` outlives a lock.** A console of the session can start `unlock` for a change of the passphrase, a new recovery key, the machine passphrase or the seal of the machine key. The lock stops that `unlock`, whatever it shows: anyone at the keyboard of the locked machine then reads no recovery key and sets no machine passphrase. Each window that shows a new recovery key writes its file or its record only after Enter, so the stop loses no key that nobody wrote down: the disk stays as it was, and the owner asks again. The log says what the stopped window ran for:
 
@@ -312,7 +313,7 @@ A call from another machine acts for the principal that allowed its client, and 
 
 **The key of a client.** A client of the process `remote` proves an Ed25519 key of its own in the QUIC handshake: a raw public key and its signature, in mutual TLS 1.3 (`QUIC.md`, section 4, "The key of the client"). The tool prints the key of its client.
 
-**The grant.** A principal allows a key from a console that acts for it: `remote_allow("<64 hexadecimal digits>")`. The root service keeps the grant as a row of the client table: the key, the principal, and a serial that names the grant. `remote` maps the table with the right Read only, by its start grant `Remote_Clients`; it cannot give a key a row. One key belongs to one principal: a key that another principal allowed is refused (`Exists`). The table holds 64 rows (`remote.CLIENT_CAPACITY`), 32 of them for one principal at most (`remote.CLIENT_ROWS_OF_ONE_PRINCIPAL`; one more is refused with `Full`). A row allowed while the session of its principal is locked holds no grant until the unlock. `remote_clients()` gives the keys of the principal of the console, each with its state: `holds`, `locked`, or `contested` (see "Across a restart").
+**The grant.** A principal allows a key from a console that acts for it: `remote_allow("<64 hexadecimal digits>")`. The root service keeps the grant as a row of the client table keyed by `(principal_identifier, public_key)`: the key, the principal identifier, the principal slot, and a serial that names the grant. `remote` maps the table with the right Read only, by its start grant `Remote_Clients`; it cannot give a key a row. Each principal allows and revokes keys independently without blocking or revealing another principal's keys. The table holds 64 rows (`remote.CLIENT_CAPACITY`), 32 of them for one principal at most (`remote.CLIENT_ROWS_OF_ONE_PRINCIPAL`; one more is refused with `Full`). A row allowed while the session of its principal is locked holds no grant until the unlock. `remote_clients()` gives the keys of the principal of the console, each with its state: `holds` or `locked`.
 
 ```
 root: principal 0 allowed the client key 6a1f0c2d9e8b7a65 of remote: each call of that client acts for it; the disk grant table of the principal keeps the key across a restart
@@ -356,13 +357,7 @@ root: the client key 6a1f0c2d9e8b7a65 of remote holds again for principal 1, fro
 
 - An allow is refused while the table takes no change (the machine passphrase is not typed, the read runs, or the table is refused, unread or unwritten), with the line of that refusal.
 - A revocation is never refused: it ends the grant at once. A table whose writes failed is written again. A key revoked before the read of the table in this run is taken out of the table that the read gives, and the table is written again. When the disk can still give the key back at the next start, `remote_disallow` says it: "1 connections to services ended; the disk grant table of this principal did not take the revocation, so the key can come back at the next start of the machine: revoke it again then".
-- A key of the table that another principal allowed since the start is contested: it acts for neither of them, and `remote` refuses it in the handshake. One line names both principals. The first revocation by either one ends the contest, and the key holds again for the other one:
-
-```
-root: the client key 6a1f0c2d9e8b7a65 of remote is contested: principal 0 allowed it since the machine started, and the disk grant table of principal 1 holds it; it acts for neither until one of them revokes it; connections to services ended: 2
-remote: refused the client key 6a1f...: it is contested: principal 0 and principal 1 both allowed it, and it acts for neither until one of them revokes it; the handshake ends before any call
-root: the client key 6a1f0c2d9e8b7a65 of remote holds again for principal 0: principal 1 revoked it, so it is no longer contested
-```
+- Two principals can allow the same client public key independently because rows are keyed by `(principal_identifier, public_key)`. A peer key never contests or reveals another principal's grant.
 
 - A key that a principal allowed before its table was read, and that the table does not hold, ends at the read, as each change made before the key of the table came.
 - A table of 1008, 1136 or 1168 bytes is a table of the format 1, 2 or 3, from a build before 32 client keys with their uses. It is refused as an older format that this system does not read, and no version of it can be restored to verify: the disk grants of that principal stay absent on that disk. The line of the refusal names the principal and says what to do: pair each client again (`remote_allow`, or `remote_display_allow` for a viewer, from a console of the principal) and give each disk process its grants again. A key is never lost with no line.
@@ -614,13 +609,13 @@ So two principals that run one module have two stores, and the stores of the sys
 | `Machine_Key` | `unlock` only | values[4] a `Machine_Key_State`. `Awaited`: the machine has a record of its machine key, not opened yet (values[5] a `Machine_Key_Form`: `Sealed_By_The_Tpm` or `Passphrase`). `Unreadable`: its record cannot be read. `Opened` or `New`: values[0..3] is the key of the tag of the disk grant table of principal 0, from the open of the record or from a new record. A value that names no member is refused with `Argument_Refused` |
 | `Machine_Seal` | A process with the grant `Root_Ring` | Starts `unlock` to make a machine key sealed by the TPM, with a recovery key; refused with Secure Boot off (`Refused`) |
 | `Start_Policy_Choice` | A process with the grant `Root_Ring` that acts for principal 0 | values[0..3] the hash of a module file (0: the hash of the row), values[4..6] the nickname; the start policy of the next start. A nickname of no byte ends the choice. Refused with `Absent` (unit `Principals`) to a caller of a named principal, `Refused` (unit `Principals`) when the machine key does not open with no passphrase, and with the unit `Grants`: `Absent` (no row and no hash), `Exists` (a row with another hash), `Reserved` (a row with the grant store), `Full` ("The start policy of principal 0") |
-| `Principal_Change` | A process with the grant `Root_Ring` that acts for a named principal whose session runs | Starts `unlock` to change the passphrase of that principal (values[4] `Principal_Change.Passphrase`) or to make it a new recovery key (`Principal_Change.Recovery_Key`); another value is refused with `Bad_Value`; the completion comes at the end of the change, values[0] the end and values[1] the cause of a refusal; refused at once with `No_Grant` (unit `Acts_For_Principal`) to a caller that does not act for its principal, `Absent` (unit `Principals`) to a caller of principal 0 or of a locked session, `Busy` while `unlock` runs |
+| `Principal_Change` | A process with the grant `Root_Ring` that acts for a named principal whose session runs | Starts `unlock` to change the passphrase of that principal (values[4] `Principal_Change.Passphrase`), to make it a new recovery key (`Principal_Change.Recovery_Key`), or to remove the principal (`Principal_Change.Remove`); another value is refused with `Bad_Value`; the completion comes at the end of the change, values[0] the end and values[1] the cause of a refusal; refused at once with `No_Grant` (unit `Acts_For_Principal`) to a caller that does not act for its principal, `Absent` (unit `Principals`) to a caller of principal 0 or of a locked session, `Busy` while `unlock` runs |
 | `Principal_Change_End` | `unlock` only | The end of the change (values[4]) and the cause of a refusal (values[5]); the root service gives them to the caller of `Principal_Change` |
-| `Remote_Client` | A process with the grant `Root_Ring` that acts for its principal | values[0..3] a client key of `remote`, values[4] the action, a `Remote_Client_Action`: `Allow` allows it for the principal of the caller, `Revoke` revokes it, each one in the disk grant table of that principal too, `Read` reads the place values[5]: a row of the client table, then a contested key of the disk grant table (the key, the principal, 1 for a key of the principal of the caller, and its `Remote_Client_State` in values[6]: `Holds`, `Locked` or `Contested`); another action is refused with `Bad_Value`; the completion of a revocation has the count of the connections that ended in values[0], and 1 in values[1] when the key can come back from the disk ("The client keys of remote"). Refused with `No_Grant` (unit `Acts_For_Principal`), `Exists` (another principal allowed the key), `Full`, `Absent` (a revocation of a key that the principal did not allow), each with the unit `Grants`, and `Refused` (an allow while the disk grant table of the principal takes no change) |
+| `Remote_Client` | A process with the grant `Root_Ring` that acts for its principal | values[0..3] a client key of `remote`, values[4] the action, a `Remote_Client_Action`: `Allow` allows it for the principal of the caller, `Revoke` revokes it, each one in the disk grant table of that principal too, `Read` reads the place values[5] of the client table (the key, the principal, its uses for a key of the principal of the caller, and its `Remote_Client_State` in values[6]: `Holds` or `Locked`); another action is refused with `Bad_Value`; the completion of a revocation has the count of the connections that ended in values[0], and 1 in values[1] when the key can come back from the disk ("The client keys of remote"). Refused with `No_Grant` (unit `Acts_For_Principal`), `Full`, `Absent` (a revocation of a key that the principal did not allow), each with the unit `Grants`, and `Refused` (an allow while the disk grant table of the principal takes no change) |
 
 A refusal is an error record with the unit `Principals`: a second named principal ("the receiver has no free place: the table has its 1 named principals"), a lock with no session, a number with no record, a second record of the machine key (`Exists`), a machine key sealed by the TPM on a machine with no TPM service (`Unsupported`).
 
-**The console:** `principal_create("name")`, `lock()`, `principals()`, `grants("name")`, `machine_passphrase()`, `machine_seal()`, `start_policy_choose("nickname", "hash")`, `start_policy_default()`, `remote_allow("key")`, `remote_display_allow("key", "view")`, `remote_disallow("key")`, `remote_clients()`, and, in a console of the session of a named principal, `passphrase_change()` and `recovery_key_change()`.
+**The console:** `principal_create("name")`, `lock()`, `principals()`, `grants("name")`, `machine_passphrase()`, `machine_seal()`, `start_policy_choose("nickname", "hash")`, `start_policy_default()`, `remote_allow("key")`, `remote_display_allow("key", "view")`, `remote_disallow("key")`, `remote_clients()`, and, in a console of the session of a named principal, `passphrase_change()`, `recovery_key_change()`, and `principal_remove()`.
 
 ## 8. The tests
 
