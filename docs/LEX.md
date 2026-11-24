@@ -71,7 +71,7 @@ pat_field     = name [ ":" kind_annot ] [ "=" pipeline ]
 record_lit    = "{" [ field_init { "," field_init } [ "," ] ] "}"
 field_init    = field_path "=" pipeline | name
 field_path    = name { "." name }
-record_comp   = "{" "for" (name | record_pat) "in" pipeline [ "if" pipeline ] ":" pipeline "=" pipeline "}"
+record_comp   = "{" "for" (name | record_pat) "in" pipeline [ "if" pipeline ] ":" coalesce "=" pipeline "}"
 match_arm     = match_pat [ "if" pipeline ] "=>" pipeline
 match_pat     = "_" | name | literal | "." name | match_rec_pat
 match_rec_pat = [ name "@" ] "{" [ name [ "=" match_pat ] { "," name [ "=" match_pat ] } [ "," ] ] [ "..." [ "," ] ] "}"

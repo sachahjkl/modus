@@ -243,6 +243,34 @@ patch_jmp :: proc "contextless" (c: ^Compiler, jmp_pos: u32, node_idx: lex_parse
 	c.eval.code[jmp_pos] = inst_asbx(op, inst_a(old), i16(delta))
 }
 
+// jmp_list_push links jmp_pos into an intrusive singly-linked list stored in
+// each unpatched jump instruction's sBx field (head == -1 means empty).
+@(private)
+jmp_list_push :: proc "contextless" (c: ^Compiler, head: ^i32, jmp_pos: u32) {
+	if c.failed {
+		return
+	}
+	step := head^ < 0 ? i64(0) : i64(jmp_pos) - i64(head^)
+	if step < 0 || step > i64(max(i16)) {
+		compiler_fail_pool(c)
+		return
+	}
+	old := c.eval.code[jmp_pos]
+	op, _ := inst_op(old)
+	c.eval.code[jmp_pos] = inst_asbx(op, inst_a(old), i16(step))
+	head^ = i32(jmp_pos)
+}
+
+@(private)
+jmp_list_patch :: proc "contextless" (c: ^Compiler, head: i32, node_idx: lex_parser.Node_Index) {
+	cur := head
+	for cur >= 0 && !c.failed {
+		step := i32(inst_sbx(c.eval.code[cur]))
+		patch_jmp(c, u32(cur), node_idx)
+		cur = step == 0 ? -1 : cur - step
+	}
+}
+
 @(private)
 reserve_reg :: proc "contextless" (c: ^Compiler, reg: u8) {
 	sc := cur_scope(c)
@@ -314,18 +342,6 @@ emit_try_get_field :: proc "contextless" (c: ^Compiler, dst, base: u8, field_nam
 	} else {
 		emit(c, inst_ax(.Extra_Arg, sym_idx), node_idx)
 		emit(c, inst_abc(.Try_Get_Field, dst, base, 255), node_idx)
-	}
-}
-
-@(private)
-emit_with_field_reg :: proc "contextless" (c: ^Compiler, dst, val_reg: u8, field_name: string, node_idx: lex_parser.Node_Index) {
-	sym := intern_str(c, field_name)
-	sym_idx := add_field_sym(c, sym)
-	if sym_idx < 255 {
-		emit(c, inst_abc(.With_Field_Reg, dst, val_reg, u8(sym_idx)), node_idx)
-	} else {
-		emit(c, inst_ax(.Extra_Arg, sym_idx), node_idx)
-		emit(c, inst_abc(.With_Field_Reg, dst, val_reg, 255), node_idx)
 	}
 }
 
@@ -711,12 +727,6 @@ compile_expr :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Inde
 			compile_coalesce(c, left, right, dst, node_idx, in_tail)
 			return
 		}
-		if op == .With {
-			if rn := lex_parser.node_at(c.tree, right); rn != nil && rn.kind == .Record_Literal && (rn.sub & lex_parser.REC_FLAG_HAS_PATH) != 0 {
-				compile_nested_with(c, left, right, dst, node_idx)
-				return
-			}
-		}
 		if op == .Logical_And {
 			compile_expr(c, left, dst, false)
 			jmp_end := emit_jmp(c, .Jmp_If_False_Keep, dst, node_idx)
@@ -740,6 +750,13 @@ compile_expr :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Inde
 		}
 		tmp := dst + 1
 		reserve_reg(c, tmp)
+		if op == .With {
+			if rn := lex_parser.node_at(c.tree, right); rn != nil && rn.kind == .Record_Literal && (rn.sub & lex_parser.REC_FLAG_HAS_PATH) != 0 {
+				compile_record_literal(c, right, tmp)
+				emit(c, inst_abc(.With, dst, dst, tmp), node_idx)
+				return
+			}
+		}
 		compile_expr(c, right, tmp, false)
 		vm_op: Opcode
 		switch op {
@@ -1297,6 +1314,7 @@ build_record_desc :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node
 	c.eval.shape_count += 1
 	build_shape_hash_index(c.eval, shape_id)
 
+	rn := lex_parser.node_at(c.tree, node_idx)
 	desc_rel = u32(c.eval.rec_desc_count) - c.chunk.rec_desc_start
 	c.eval.rec_descs[c.eval.rec_desc_count] = {
 		shape_id         = shape_id,
@@ -1305,6 +1323,7 @@ build_record_desc :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node
 		nodes_start      = protos_off,
 		source_order_off = protos_off,
 		literal_node     = node_idx,
+		has_paths        = rn != nil && (rn.sub & lex_parser.REC_FLAG_HAS_PATH) != 0,
 	}
 	c.eval.rec_desc_count += 1
 	return desc_rel, lex_parser.NO_NODE, true
@@ -1551,7 +1570,7 @@ compile_call :: proc "contextless" (c: ^Compiler, call_idx: lex_parser.Node_Inde
 @(private)
 compile_call_arg_expr :: proc "contextless" (c: ^Compiler, sarg: ^Call_Site_Arg, val_idx: lex_parser.Node_Index, parent_ls: i32) {
 	vn := lex_parser.node_at(c.tree, val_idx)
-	if vn != nil && vn.kind == .Record_Literal {
+	if vn != nil && vn.kind == .Record_Literal && (vn.sub & lex_parser.REC_FLAG_HAS_PATH) == 0 {
 		desc_rel, refused_node, ok := build_record_desc(c, val_idx)
 		if ok {
 			sarg.is_literal = true
@@ -1633,200 +1652,53 @@ refusal_inside_ast :: proc "contextless" (tree: ^lex_parser.Syntax_Tree, root: l
 	return lex_parser.NO_NODE
 }
 
-// ---- Lex v3 compilers: nested `with` paths, `??`, record comprehension, `match`.
+// ---- Lex v3 compilers: `??`, record comprehension, `match`.
 
 @(private)
-MAX_WITH_PATH_DEPTH :: 32
-
-@(private)
-Path_Field_Item :: struct {
-	full_path: string,
-	node:      lex_parser.Node_Index,
-	val_node:  lex_parser.Node_Index,
-}
-
-@(private)
-compile_nested_with :: proc "contextless" (c: ^Compiler, left, right_lit: lex_parser.Node_Index, dst: u8, with_node: lex_parser.Node_Index) {
-	children := lex_parser.node_children(c.tree, right_lit)
-	for child in children {
-		if cn := lex_parser.node_at(c.tree, child); cn != nil && cn.kind == .Refused {
-			emit_abx_wide(c, .Refuse_Parse, dst, u32(child), child)
-			return
-		}
-	}
-	compile_expr(c, left, dst, false)
+compile_coalesce_lhs :: proc "contextless" (c: ^Compiler, cur: lex_parser.Node_Index, dst: u8, fail_head: ^i32, depth: int) {
 	if c.failed {
 		return
 	}
-	if len(children) > 256 {
+	// Computed bound: matches the parser nesting depth limit.
+	if depth >= lex_parser.DECLARATION_PARSE_DEPTH_LIMIT {
 		compiler_fail_pool(c)
 		return
 	}
-	items: [256]Path_Field_Item
-	count := 0
-	for child in children {
-		if cn := lex_parser.node_at(c.tree, child); cn != nil && cn.kind == .Literal_Field {
-			items[count] = {
-				full_path = lex_parser.node_text(c.tree, child),
-				node      = child,
-				val_node  = lex_parser.node_child(c.tree, child),
-			}
-			count += 1
-		}
-	}
-	compile_path_group(c, dst, items[:count], 0, 0, with_node, right_lit)
-}
-
-@(private)
-compile_path_group :: proc "contextless" (
-	c: ^Compiler,
-	base_reg: u8,
-	items: []Path_Field_Item,
-	prefix_len: int,
-	depth: int,
-	with_node: lex_parser.Node_Index,
-	lit_node: lex_parser.Node_Index,
-) {
-	if c.failed || len(items) == 0 {
+	cn := lex_parser.node_at(c.tree, cur)
+	if cn == nil {
+		emit_abx_wide(c, .Refuse_Parse, dst, u32(cur), cur)
 		return
 	}
-	if depth >= MAX_WITH_PATH_DEPTH || base_reg >= 254 {
-		compiler_fail_pool(c)
+	if cn.kind == .Field_Select {
+		compile_coalesce_lhs(c, lex_parser.node_child(c.tree, cur), dst, fail_head, depth + 1)
+		emit_try_get_field(c, dst, dst, lex_parser.node_text(c.tree, cur), cur)
+		jmp_list_push(c, fail_head, emit_jmp(c, .Jmp_If_False, dst + 1, cur))
 		return
 	}
-	sub_reg := base_reg + 1
-	reserve_reg(c, sub_reg)
-
-	// 1. Collect and apply all direct leaf fields at this level via one lazy Record_Desc.
-	leaf_count := 0
-	for item in items {
-		rem := item.full_path[prefix_len:]
-		if index_byte(rem, '.') < 0 {
-			leaf_count += 1
-		}
-	}
-	if leaf_count > 0 {
-		if leaf_count > len(c.scratch.rec_sort) ||
-		   c.eval.shape_count >= len(c.eval.shapes) ||
-		   c.eval.shape_field_count + leaf_count > len(c.eval.shape_fields) ||
-		   c.eval.rec_desc_count >= len(c.eval.rec_descs) ||
-		   c.eval.rec_field_proto_count + leaf_count > len(c.eval.rec_field_protos) {
-			compiler_fail_pool(c)
-			return
-		}
-		parent_ls := cur_scope(c).current_let_scope
-		entries := c.scratch.rec_sort[:leaf_count]
-		li := 0
-		for item in items {
-			rem := item.full_path[prefix_len:]
-			if index_byte(rem, '.') >= 0 {
-				continue
+	if cn.kind == .Name {
+		full := lex_parser.node_text(c.tree, cur)
+		if dot := index_byte(full, '.'); dot > 0 && dot + 1 < len(full) {
+			root_name := full[:dot]
+			if !compile_name_load(c, root_name, dst, cur) {
+				sym := intern_str(c, root_name)
+				ci := add_const(c, {kind = .Sym, offset = u32(sym)})
+				emit_abx_wide(c, .Load_Global, dst, ci, cur)
 			}
-			sym := intern_str(c, rem)
-			p_idx, p_ok := alloc_proto(c, item.val_node)
-			if !p_ok {
-				return
-			}
-			enqueue_pending(c, {
-				kind             = .Expr_Proto,
-				proto_idx        = p_idx,
-				ast_node         = item.val_node,
-				parent_let_scope = parent_ls,
-			})
-			entries[li] = {
-				sym     = sym,
-				proto   = p_idx - c.chunk.proto_start,
-				node    = item.node,
-				src_idx = u32(li),
-			}
-			li += 1
-		}
-		if leaf_count > 1 {
-			sort_record_entries_utf8(&c.eval.interner, entries)
-		}
-		fields_off := u32(c.eval.shape_field_count)
-		protos_off := u32(c.eval.rec_field_proto_count)
-		shape_h := u64(0xcbf29ce484222325)
-		for e, ci in entries {
-			c.eval.shape_fields[int(fields_off) + ci] = e.sym
-			c.eval.rec_field_protos[int(protos_off) + ci] = e.proto
-			c.eval.rec_field_nodes[int(protos_off) + ci] = e.node
-			c.eval.rec_source_orders[int(protos_off) + int(e.src_idx)] = u32(ci)
-			txt := lex_parser.sym_text(&c.eval.interner, e.sym)
-			for b in transmute([]u8)txt {
-				shape_h = (shape_h ~ u64(b)) * 0x100000001b3
-			}
-			shape_h = (shape_h ~ 0xff) * 0x100000001b3
-		}
-		c.eval.shape_field_count += leaf_count
-		c.eval.rec_field_proto_count += leaf_count
-		shape_id := u32(c.eval.shape_count)
-		c.eval.shapes[shape_id] = {
-			fields_off  = fields_off,
-			field_count = u32(leaf_count),
-			shape_hash  = shape_h,
-		}
-		c.eval.shape_count += 1
-		build_shape_hash_index(c.eval, shape_id)
-		desc_rel := u32(c.eval.rec_desc_count) - c.chunk.rec_desc_start
-		c.eval.rec_descs[c.eval.rec_desc_count] = {
-			shape_id         = shape_id,
-			field_count      = u32(leaf_count),
-			protos_start     = protos_off,
-			nodes_start      = protos_off,
-			source_order_off = protos_off,
-			literal_node     = lit_node,
-		}
-		c.eval.rec_desc_count += 1
-		emit_abx_wide(c, .Make_Record, sub_reg, desc_rel, lit_node)
-		emit(c, inst_abc(.With, base_reg, base_reg, sub_reg), with_node)
-	}
-
-	// 2. Group and apply each unique nested path prefix recursively.
-	seen_segs: [64]string
-	seen_count := 0
-	for item in items {
-		rem := item.full_path[prefix_len:]
-		dot := index_byte(rem, '.')
-		if dot < 0 {
-			continue
-		}
-		seg := rem[:dot]
-		already := false
-		for s in seen_segs[:seen_count] {
-			if s == seg {
-				already = true
-				break
-			}
-		}
-		if already {
-			continue
-		}
-		if seen_count >= len(seen_segs) {
-			compiler_fail_pool(c)
-			return
-		}
-		seen_segs[seen_count] = seg
-		seen_count += 1
-
-		sub_items: [64]Path_Field_Item
-		sub_count := 0
-		for cand in items {
-			crem := cand.full_path[prefix_len:]
-			cdot := index_byte(crem, '.')
-			if cdot == len(seg) && crem[:cdot] == seg {
-				if sub_count >= len(sub_items) {
-					compiler_fail_pool(c)
-					return
+			rest := full[dot + 1:]
+			for len(rest) > 0 {
+				nd := index_byte(rest, '.')
+				seg := nd < 0 ? rest : rest[:nd]
+				emit_try_get_field(c, dst, dst, seg, cur)
+				jmp_list_push(c, fail_head, emit_jmp(c, .Jmp_If_False, dst + 1, cur))
+				if nd < 0 {
+					break
 				}
-				sub_items[sub_count] = cand
-				sub_count += 1
+				rest = rest[nd + 1:]
 			}
+			return
 		}
-		emit_get_field(c, sub_reg, base_reg, seg, item.node)
-		compile_path_group(c, sub_reg, sub_items[:sub_count], prefix_len + len(seg) + 1, depth + 1, with_node, lit_node)
-		emit_with_field_reg(c, base_reg, sub_reg, seg, with_node)
 	}
+	compile_expr(c, cur, dst, false)
 }
 
 @(private)
@@ -1835,68 +1707,18 @@ compile_coalesce :: proc "contextless" (c: ^Compiler, left, right: lex_parser.No
 		compiler_fail_pool(c)
 		return
 	}
-	// Unwind Field_Select chain and dotted Name into root + ordered segments.
-	rev_segs: [32]string
-	rev_nodes: [32]lex_parser.Node_Index
-	seg_count := 0
-	cur := left
-	root_name := ""
-	root_name_node := lex_parser.NO_NODE
-
-	for {
-		cn := lex_parser.node_at(c.tree, cur)
-		if cn == nil {
-			break
-		}
-		if cn.kind == .Field_Select {
-			if seg_count >= len(rev_segs) {
-				compiler_fail_pool(c)
-				return
-			}
-			rev_segs[seg_count] = lex_parser.node_text(c.tree, cur)
-			rev_nodes[seg_count] = cur
-			seg_count += 1
-			cur = lex_parser.node_child(c.tree, cur)
-			continue
-		}
-		if cn.kind == .Name {
-			full := lex_parser.node_text(c.tree, cur)
+	is_field_access := false
+	if ln := lex_parser.node_at(c.tree, left); ln != nil {
+		if ln.kind == .Field_Select {
+			is_field_access = true
+		} else if ln.kind == .Name {
+			full := lex_parser.node_text(c.tree, left)
 			if dot := index_byte(full, '.'); dot > 0 && dot + 1 < len(full) {
-				root_name = full[:dot]
-				root_name_node = cur
-				// Split remaining dotted segments in reverse onto rev_segs.
-				tail_segs: [32]string
-				tcount := 0
-				rest := full[dot + 1:]
-				for len(rest) > 0 {
-					nd := index_byte(rest, '.')
-					seg := nd < 0 ? rest : rest[:nd]
-					if tcount >= len(tail_segs) {
-						compiler_fail_pool(c)
-						return
-					}
-					tail_segs[tcount] = seg
-					tcount += 1
-					if nd < 0 {
-						break
-					}
-					rest = rest[nd + 1:]
-				}
-				for i := tcount - 1; i >= 0; i -= 1 {
-					if seg_count >= len(rev_segs) {
-						compiler_fail_pool(c)
-						return
-					}
-					rev_segs[seg_count] = tail_segs[i]
-					rev_nodes[seg_count] = cur
-					seg_count += 1
-				}
+				is_field_access = true
 			}
 		}
-		break
 	}
-
-	if seg_count == 0 {
+	if !is_field_access {
 		emit(c, inst_abc(.Refuse_Eval, dst, u8(Refusal.Coalesce_Not_Field_Access), 0), node_idx)
 		return
 	}
@@ -1904,23 +1726,8 @@ compile_coalesce :: proc "contextless" (c: ^Compiler, left, right: lex_parser.No
 	ok_reg := dst + 1
 	reserve_reg(c, ok_reg)
 
-	// Load root expression into dst.
-	if len(root_name) > 0 {
-		if !compile_name_load(c, root_name, dst, root_name_node) {
-			sym := intern_str(c, root_name)
-			ci := add_const(c, {kind = .Sym, offset = u32(sym)})
-			emit_abx_wide(c, .Load_Global, dst, ci, root_name_node)
-		}
-	} else {
-		compile_expr(c, cur, dst, false)
-	}
-
-	fail_jmps: [32]u32
-	for i := 0; i < seg_count; i += 1 {
-		idx := seg_count - 1 - i
-		emit_try_get_field(c, dst, dst, rev_segs[idx], rev_nodes[idx])
-		fail_jmps[i] = emit_jmp(c, .Jmp_If_False, ok_reg, rev_nodes[idx])
-	}
+	fail_head := i32(-1)
+	compile_coalesce_lhs(c, left, dst, &fail_head, 0)
 
 	jmp_end: u32
 	if in_tail {
@@ -1929,9 +1736,7 @@ compile_coalesce :: proc "contextless" (c: ^Compiler, left, right: lex_parser.No
 		jmp_end = emit_jmp(c, .Jmp, 0, node_idx)
 	}
 
-	for i in 0 ..< seg_count {
-		patch_jmp(c, fail_jmps[i], node_idx)
-	}
+	jmp_list_patch(c, fail_head, node_idx)
 	compile_expr(c, right, dst, in_tail)
 	if !in_tail {
 		patch_jmp(c, jmp_end, node_idx)
@@ -2051,22 +1856,6 @@ compile_record_comp :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.No
 }
 
 @(private)
-Match_Fail_Jmps :: struct {
-	jmps:  [128]u32,
-	count: int,
-}
-
-@(private)
-match_fail_push :: proc "contextless" (c: ^Compiler, fj: ^Match_Fail_Jmps, jmp_pos: u32) {
-	if fj.count >= len(fj.jmps) {
-		compiler_fail_pool(c)
-		return
-	}
-	fj.jmps[fj.count] = jmp_pos
-	fj.count += 1
-}
-
-@(private)
 compile_match :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Index, dst: u8, in_tail: bool) {
 	children := lex_parser.node_children(c.tree, node_idx)
 	if len(children) < 2 {
@@ -2095,8 +1884,7 @@ compile_match :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Ind
 
 	compile_expr(c, children[0], scrut_reg, false)
 
-	end_jmps: [256]u32
-	end_count := 0
+	end_head := i32(-1)
 	sc := cur_scope(c)
 
 	for arm_idx in 1 ..< len(children) {
@@ -2119,9 +1907,9 @@ compile_match :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Ind
 
 		prev_let_scope := sc.current_let_scope
 		locals_start := u32(c.local_count)
-		fj: Match_Fail_Jmps
+		fail_head := i32(-1)
 
-		compile_match_pattern(c, pat_node, scrut_reg, work_reg, &fj)
+		compile_match_pattern(c, pat_node, scrut_reg, work_reg, &fail_head)
 		if c.failed {
 			return
 		}
@@ -2144,37 +1932,28 @@ compile_match :: proc "contextless" (c: ^Compiler, node_idx: lex_parser.Node_Ind
 
 		if has_guard {
 			compile_expr(c, guard_node, work_reg, false)
-			match_fail_push(c, &fj, emit_jmp(c, .Jmp_If_False, work_reg, guard_node))
+			jmp_list_push(c, &fail_head, emit_jmp(c, .Jmp_If_False, work_reg, guard_node))
 		}
 
 		compile_expr(c, body_node, dst, in_tail)
 		if in_tail {
 			emit(c, inst_abc(.Ret, dst, 0, 0), body_node)
 		} else {
-			if end_count >= len(end_jmps) {
-				compiler_fail_pool(c)
-				return
-			}
-			end_jmps[end_count] = emit_jmp(c, .Jmp, 0, arm_node)
-			end_count += 1
+			jmp_list_push(c, &end_head, emit_jmp(c, .Jmp, 0, arm_node))
 		}
 
-		for j in 0 ..< fj.count {
-			patch_jmp(c, fj.jmps[j], arm_node)
-		}
+		jmp_list_patch(c, fail_head, arm_node)
 		sc.current_let_scope = prev_let_scope
 	}
 
 	emit(c, inst_abc(.Match_Fail, dst, 0, 0), node_idx)
 	if !in_tail {
-		for j in 0 ..< end_count {
-			patch_jmp(c, end_jmps[j], node_idx)
-		}
+		jmp_list_patch(c, end_head, node_idx)
 	}
 }
 
 @(private)
-compile_match_pattern :: proc "contextless" (c: ^Compiler, pat_node: lex_parser.Node_Index, val_reg, work_reg: u8, fj: ^Match_Fail_Jmps) {
+compile_match_pattern :: proc "contextless" (c: ^Compiler, pat_node: lex_parser.Node_Index, val_reg, work_reg: u8, fail_head: ^i32) {
 	if c.failed {
 		return
 	}
@@ -2208,7 +1987,7 @@ compile_match_pattern :: proc "contextless" (c: ^Compiler, pat_node: lex_parser.
 	case .Integer, .Negate, .Boolean, .Text, .Hash, .Member:
 		compile_expr(c, pat_node, work_reg, false)
 		emit(c, inst_abc(.Match_Eq, work_reg, val_reg, work_reg), pat_node)
-		match_fail_push(c, fj, emit_jmp(c, .Jmp_If_False, work_reg, pat_node))
+		jmp_list_push(c, fail_head, emit_jmp(c, .Jmp_If_False, work_reg, pat_node))
 
 	case .Pattern_Record:
 		has_rest := (pn.sub & lex_parser.PAT_FLAG_REST) != 0
@@ -2243,9 +2022,7 @@ compile_match_pattern :: proc "contextless" (c: ^Compiler, pat_node: lex_parser.
 				}
 			}
 		}
-		// Allocate Pattern_Field_Desc entries for shape checking and lazy var bindings.
-		field_desc_indices: [64]u32
-		fd_count := 0
+		// Allocate contiguous Pattern_Field_Desc entries at fields_start + fi.
 		for ch in children {
 			cn := lex_parser.node_at(c.tree, ch)
 			if cn == nil || cn.kind != .Match_Pat_Field {
@@ -2283,13 +2060,6 @@ compile_match_pattern :: proc "contextless" (c: ^Compiler, pat_node: lex_parser.
 				node_idx = ch,
 			}
 			c.eval.pat_field_count += 1
-			if fd_count < len(field_desc_indices) {
-				field_desc_indices[fd_count] = pf_abs
-				fd_count += 1
-			} else {
-				compiler_fail_pool(c)
-				return
-			}
 		}
 
 		pat_desc_rel := u32(c.eval.pat_desc_count) - c.chunk.pat_desc_start
@@ -2307,7 +2077,7 @@ compile_match_pattern :: proc "contextless" (c: ^Compiler, pat_node: lex_parser.
 		// Copy val_reg into work_reg so Check_Rec_Shape writes Bool into work_reg+1.
 		emit(c, inst_abc(.Move, work_reg, val_reg, 0), pat_node)
 		emit_abx_wide(c, .Check_Rec_Shape, work_reg, pat_desc_rel, pat_node)
-		match_fail_push(c, fj, emit_jmp(c, .Jmp_If_False, work_reg + 1, pat_node))
+		jmp_list_push(c, fail_head, emit_jmp(c, .Jmp_If_False, work_reg + 1, pat_node))
 
 		// 2. Bind `as` variable if present.
 		if has_as {
@@ -2316,13 +2086,13 @@ compile_match_pattern :: proc "contextless" (c: ^Compiler, pat_node: lex_parser.
 
 		// 3. Process each field: lazy bind for shorthand / Match_Pat_Bind, skip for Wild,
 		// force + recurse for literals and nested record patterns.
-		fi := 0
+		fi := u32(0)
 		for ch in children {
 			cn := lex_parser.node_at(c.tree, ch)
 			if cn == nil || cn.kind != .Match_Pat_Field {
 				continue
 			}
-			pf_abs := field_desc_indices[fi]
+			pf_abs := fields_start + fi
 			fi += 1
 			sub_pat := lex_parser.node_child(c.tree, ch)
 			if sub_pat == lex_parser.NO_NODE {
@@ -2342,7 +2112,7 @@ compile_match_pattern :: proc "contextless" (c: ^Compiler, pat_node: lex_parser.
 			}
 			// Nested pattern (literal or nested record): force field into work_reg and match.
 			emit_get_field(c, work_reg, val_reg, lex_parser.node_text(c.tree, ch), ch)
-			compile_match_pattern(c, sub_pat, work_reg, work_reg + 1, fj)
+			compile_match_pattern(c, sub_pat, work_reg, work_reg + 1, fail_head)
 		}
 
 	case .Name, .Call, .Binary, .Condition, .Fact_Name, .Refused, .Field_Names, .Record_Literal,

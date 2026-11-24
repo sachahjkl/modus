@@ -59,8 +59,7 @@ Opcode :: enum u8 {
 	Make_Record,       // R[A] = Lazy_Record(record_descs[Bx]); Console forces fields in source order
 	Get_Field,         // R[A] = R[B].field_syms[C] (or Extra_Arg if C == 255)
 	Try_Get_Field,     // R[A] = try R[B].field_syms[C_or_extra], R[A+1] = Bool(found); refuses non-record R[B]
-	With,              // R[A] = R[B] with R[C] (strictly override-only)
-	With_Field_Reg,    // R[A] = R[A] with { field_syms[C_or_extra] = forced(R[B]) }
+	With,              // R[A] = R[B] with R[C] (strictly override-only; handles nested path patches)
 	Make_Rec_Comp,     // R[A] = record comprehension over list R[A] using comp_descs[Bx]
 	Destructure,       // destructure R[A] using pattern_descs[Bx] into frame.let_slots
 	Set_Let_Val,       // frame.let_slots[Bx] = forced_thunk(R[A])
@@ -172,7 +171,6 @@ OPCODES_IN_ORDER := [len(Opcode)]Opcode {
 	.Get_Field,
 	.Try_Get_Field,
 	.With,
-	.With_Field_Reg,
 	.Make_Rec_Comp,
 	.Destructure,
 	.Set_Let_Val,
@@ -348,6 +346,7 @@ Record_Desc :: struct {
 	nodes_start:      u32, // Field AST Node_Index in canonical shape order.
 	source_order_off: u32, // Permutation 0..F-1 mapping source index -> canonical field index.
 	literal_node:     lex_parser.Node_Index,
+	has_paths:        bool, // True when one or more field keys are dotted `with` paths.
 }
 
 // How a Call_Site resolves its callee.

@@ -3051,27 +3051,96 @@ function_read :: proc "contextless" (parser: ^Parser, open, close, arrow_end: in
 
 // ---- Pattern matching (`match expr { pat [if guard] => body, ... }`).
 
-// Bounded tracker for duplicate variable bindings within one match arm pattern.
-@(private)
-MATCH_ARM_BIND_LIMIT :: 64
-
+// Two-tier tracker for duplicate variable bindings within one match arm.
+// Inline capacity matches DUP_HASH_THRESHOLD (16) for common arms; past it,
+// lookups promote to parser.dup keyed by arm_node, or fall back to an exact
+// scan of the arm's pattern AST nodes when parser.dup is absent or full.
 @(private)
 Match_Arm_Binds :: struct {
-	names: [MATCH_ARM_BIND_LIMIT]string,
-	count: int,
+	names:            [DUP_HASH_THRESHOLD]string,
+	count:            int,
+	hashed:           bool,
+	scan_tree:        bool,
+	slow_tier_checks: u32,
 }
 
 @(private)
-match_arm_bind_add :: proc "contextless" (binds: ^Match_Arm_Binds, name: string) -> (dup: bool) {
+match_arm_tree_has_bind :: proc "contextless" (tree: ^Syntax_Tree, arm: Node_Index, name: string) -> bool {
+	start := int(arm) + 1
+	for idx := start; idx < tree.node_count; idx += 1 {
+		n := &tree.nodes[idx]
+		switch n.kind {
+		case .Match_Pat_Bind, .Parameter:
+			if node_text(tree, Node_Index(idx)) == name {
+				return true
+			}
+		case .Match_Pat_Field:
+			if n.a == NO_NODE_U32 && node_text(tree, Node_Index(idx)) == name {
+				return true
+			}
+		case .Integer, .Text, .Name, .Call, .Negate, .Logical_Not, .Binary, .Condition, .Fact_Name,
+		     .Refused, .Field_Names, .Record_Literal, .Literal_Field, .Named_Argument, .Let,
+		     .Let_Binding, .Member, .Function, .List_Literal, .Hash, .Boolean, .If, .Field_Select,
+		     .Pipe, .Placeholder, .Text_Interp, .Pattern_Record, .Pattern_Field, .Record_Comp,
+		     .Match, .Match_Arm, .Match_Pat_Wild:
+		}
+	}
+	return false
+}
+
+@(private)
+match_arm_bind_add :: proc "contextless" (parser: ^Parser, arm: Node_Index, binds: ^Match_Arm_Binds, name: string) -> (dup: bool) {
+	if binds.scan_tree {
+		binds.slow_tier_checks += 1
+		return match_arm_tree_has_bind(parser.tree, arm, name)
+	}
+	if binds.hashed {
+		if found, ok := dup_find(parser, arm, name); ok {
+			if found != NO_NODE {
+				return true
+			}
+			if !dup_insert(parser, arm, name, arm) {
+				binds.hashed = false
+				binds.scan_tree = true
+				binds.slow_tier_checks += 1
+			}
+			binds.count += 1
+			return false
+		}
+		binds.hashed = false
+		binds.scan_tree = true
+		binds.slow_tier_checks += 1
+		return match_arm_tree_has_bind(parser.tree, arm, name)
+	}
 	for i in 0 ..< binds.count {
 		if binds.names[i] == name {
 			return true
 		}
 	}
-	if binds.count < MATCH_ARM_BIND_LIMIT {
+	if binds.count < DUP_HASH_THRESHOLD {
 		binds.names[binds.count] = name
 		binds.count += 1
+		return false
 	}
+	// Promote past inline capacity to O(1) parser.dup keyed by arm, or fall back
+	// to exact AST scan so duplicate checks are never silently dropped.
+	if parser.interner != nil && parser.dup.index.group_count > 0 {
+		all_ok := true
+		for i in 0 ..< binds.count {
+			if !dup_insert(parser, arm, binds.names[i], arm) {
+				all_ok = false
+				break
+			}
+		}
+		if all_ok && dup_insert(parser, arm, name, arm) {
+			binds.hashed = true
+			binds.count += 1
+			return false
+		}
+	}
+	binds.scan_tree = true
+	binds.slow_tier_checks += 1
+	binds.count += 1
 	return false
 }
 
@@ -3108,7 +3177,7 @@ match_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 				}
 				arm_mark := parser.scratch_top
 				binds: Match_Arm_Binds
-				pat := match_pattern_read(parser, &binds)
+				pat := match_pattern_read(parser, arm, &binds)
 				scratch_push(parser, pat)
 				has_guard := false
 				if !refused(parser) {
@@ -3163,7 +3232,7 @@ match_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 }
 
 @(private)
-match_pattern_read :: proc "contextless" (parser: ^Parser, binds: ^Match_Arm_Binds) -> Node_Index {
+match_pattern_read :: proc "contextless" (parser: ^Parser, arm: Node_Index, binds: ^Match_Arm_Binds) -> Node_Index {
 	if parser.depth_limit > 0 && parser.depth >= parser.depth_limit {
 		skip_spaces(parser)
 		return refuse(parser, .Nesting_Too_Deep, parser.position, parser.position, NO_NODE)
@@ -3252,7 +3321,7 @@ match_pattern_read :: proc "contextless" (parser: ^Parser, binds: ^Match_Arm_Bin
 		return node_add_raw(parser, {kind = .Hash, span_off = u32(start), a = u32(end)})
 	case character == '{':
 		parser.position += 1
-		return match_record_pattern_read(parser, start, false, 0, 0, binds)
+		return match_record_pattern_read(parser, arm, start, false, 0, 0, binds)
 	case console_language.name_first(character):
 		name := read_name(parser)
 		if name == "_" {
@@ -3276,12 +3345,12 @@ match_pattern_read :: proc "contextless" (parser: ^Parser, binds: ^Match_Arm_Bin
 			if !accept(parser, '{') {
 				return refuse(parser, .Pattern_At_Missing_Brace, parser.position, parser.position, NO_NODE)
 			}
-			if match_arm_bind_add(binds, name) {
+			if match_arm_bind_add(parser, arm, binds, name) {
 				return refuse(parser, .Match_Duplicate_Bind, start, start + len(name), NO_NODE)
 			}
-			return match_record_pattern_read(parser, start, true, start, start + len(name), binds)
+			return match_record_pattern_read(parser, arm, start, true, start, start + len(name), binds)
 		}
-		if match_arm_bind_add(binds, name) {
+		if match_arm_bind_add(parser, arm, binds, name) {
 			return refuse(parser, .Match_Duplicate_Bind, start, start + len(name), NO_NODE)
 		}
 		return node_add_raw(parser, {kind = .Match_Pat_Bind, span_off = u32(start), a = u32(start + len(name))})
@@ -3290,7 +3359,7 @@ match_pattern_read :: proc "contextless" (parser: ^Parser, binds: ^Match_Arm_Bin
 }
 
 @(private)
-match_record_pattern_read :: proc "contextless" (parser: ^Parser, start: int, has_as: bool, as_start, as_end: int, binds: ^Match_Arm_Binds) -> Node_Index {
+match_record_pattern_read :: proc "contextless" (parser: ^Parser, arm: Node_Index, start: int, has_as: bool, as_start, as_end: int, binds: ^Match_Arm_Binds) -> Node_Index {
 	text := parser.tree.text
 	pat := node_add_raw(parser, {
 		kind     = .Pattern_Record,
@@ -3346,10 +3415,10 @@ match_record_pattern_read :: proc "contextless" (parser: ^Parser, start: int, ha
 			}
 			sub_pat := NO_NODE
 			if equal_accept(parser) {
-				sub_pat = match_pattern_read(parser, binds)
+				sub_pat = match_pattern_read(parser, arm, binds)
 			} else {
 				// Shorthand `{ a, b }` binds variable `a` to field `a`.
-				if match_arm_bind_add(binds, fname) {
+				if match_arm_bind_add(parser, arm, binds, fname) {
 					scratch_push(parser, refuse(parser, .Match_Duplicate_Bind, fstart, fstart + len(fname), NO_NODE))
 					break
 				}

@@ -100,10 +100,31 @@ p with { outputs.default = 9 }
 	_, r3 := v3_decl_eval(`{ a = 42 } with { a.b = 2 }`)
 	testing.expect_value(t, r3.failure_kind, declaration_eval.Failure_Kind.Type_Error)
 
+	// Non-record base and multi-level non-record intermediate refuse with Type_Error / With_Kinds.
+	_, r3b := v3_decl_eval(`42 with { a.b = 1 }`)
+	testing.expect_value(t, r3b.failure_kind, declaration_eval.Failure_Kind.Type_Error)
+	c3b := run_of(`42 with { a.b = 1 }`)
+	testing.expect_value(t, c3b.evaluation.refusal.refusal, Refusal.With_Kinds)
+
+	_, r3c := v3_decl_eval(`{ a = 42 } with { a.b.c = 2 }`)
+	testing.expect_value(t, r3c.failure_kind, declaration_eval.Failure_Kind.Type_Error)
+	c3c := run_of(`{ a = 42 } with { a.b.c = 2 }`)
+	testing.expect_value(t, c3c.evaluation.refusal.refusal, Refusal.With_Kinds)
+
+	// Console mode nested with evaluates leaves and nested paths strictly left-to-right.
+	corder := run_of(`let cfg = { a = { b = 0, c = 0 }, top = 0 } in (cfg with { a.b = first(), top = second(), a.c = third() }).top`)
+	testing.expectf(t, corder.ok && corder.value.integer == 2, "console nested with order: ok=%v val=%d ref=%v", corder.ok, corder.value.integer, corder.evaluation.refusal.refusal)
+	testing.expect_value(t, corder.fake.log_count, 3)
+	testing.expect_value(t, corder.fake.log[0], "first")
+	testing.expect_value(t, corder.fake.log[1], "second")
+	testing.expect_value(t, corder.fake.log[2], "third")
+
 	_, r4 := v3_decl_eval(`{ a.b = 1 }`)
 	testing.expect_value(t, r4.failure_kind, declaration_eval.Failure_Kind.Parse_Error)
 	c4 := run_of(`{ a.b = 1 }`)
 	testing.expect_value(t, c4.evaluation.refusal.refusal, Refusal.Literal_Path_Outside_With)
+	c4_arg := run_of(`sink({ a.b = 1 })`)
+	testing.expect_value(t, c4_arg.evaluation.refusal.refusal, Refusal.Literal_Path_Outside_With)
 
 	_, r5 := v3_decl_eval(`{ a = { b = 1 } } with { a.b = 2, a.b = 3 }`)
 	testing.expect_value(t, r5.failure_kind, declaration_eval.Failure_Kind.Parse_Error)
@@ -196,6 +217,9 @@ v3_typed_unit_literals_and_algebra :: proc(t: ^testing.T) {
 		{"1 MiB = 1048576", .Unit_Mismatch},
 		{"1 MiB < 1 ms", .Unit_Mismatch},
 		{"1000000000000000 MiB + 1 bytes", .Overflow},
+		// Binary console record borders refuse integer units on dimensionless fields.
+		{"area({ x = 0, y = 0, width = 5 MiB, height = 6 })", .Unit_Mismatch},
+		{"rect with { width = 10 ms }", .Unit_Mismatch},
 	}
 	for r in refused {
 		crun := run_of(r.expr)
@@ -505,6 +529,19 @@ v3_core_list_and_text_stdlib :: proc(t: ^testing.T) {
 	testing.expect_value(t, run_of(`split("a,b", "")`).evaluation.refusal.refusal, Refusal.Empty_Separator)
 	testing.expect_value(t, run_of(`replace_text("abc", "", "x")`).evaluation.refusal.refusal, Refusal.Empty_Separator)
 	testing.expect_value(t, run_of(`len(42)`).evaluation.refusal.refusal, Refusal.Operator_Kinds)
+
+	// Adversarial quadratic substring searches are charged against EVALUATION_BUDGET_STEPS
+	// (would only cost ~126 steps if uncharged, but exceeds budget = 10_000 when charged).
+	hay := strings.repeat("a", 2000, context.temp_allocator)
+	ndl := strings.concatenate({strings.repeat("a", 1000, context.temp_allocator), "b"}, context.temp_allocator)
+	for call_expr in ([?]string{
+		fmt.tprintf(`contains("%s", "%s")`, hay, ndl),
+		fmt.tprintf(`split("%s", "%s")`, hay, ndl),
+		fmt.tprintf(`replace_text("%s", "%s", "x")`, hay, ndl),
+	}) {
+		_, bres := v3_decl_eval(call_expr, "", {budget = 10_000})
+		testing.expectf(t, !bres.ok && bres.failure_kind == .Step_Bound_Reached, "expected Step_Bound_Reached, got ok=%v kind=%v", bres.ok, bres.failure_kind)
+	}
 }
 
 // Feature 8: Optional parameter kind annotations, unit annotations, defaults, and metadata inspection.

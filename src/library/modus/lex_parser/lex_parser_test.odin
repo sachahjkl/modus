@@ -1316,4 +1316,57 @@ lex_v3_grammar_parse_and_refusals :: proc(t: ^testing.T) {
 	u := node_integer_unit(tree, tree.root)
 	testing.expect_value(t, u.kind, value_kinds.Value_Kind.Size)
 	testing.expect_value(t, u.unit, u8(value_kinds.Size_Unit.Mebibytes))
+
+	// Match arm duplicate-binding detection works past 64 bindings both without
+	// parser.dup (console tree-scan tier) and with parser.dup (declaration hash tier).
+	ok_arm_b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&ok_arm_b, "match x { { ")
+	for i in 0 ..< 70 {
+		if i > 0 {
+			strings.write_string(&ok_arm_b, ", ")
+		}
+		fmt.sbprintf(&ok_arm_b, "f%d = v%d", i, i)
+	}
+	strings.write_string(&ok_arm_b, " } => v69 }")
+	ok_arm := strings.to_string(ok_arm_b)
+
+	dup_arm_b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&dup_arm_b, "match x { { ")
+	for i in 0 ..< 70 {
+		if i > 0 {
+			strings.write_string(&dup_arm_b, ", ")
+		}
+		fmt.sbprintf(&dup_arm_b, "f%d = v%d", i, i)
+	}
+	strings.write_string(&dup_arm_b, ", f70 = v68 } => v68 }")
+	dup_arm := strings.to_string(dup_arm_b)
+
+	// Console storage (no dup hash table -> promotes past 16 to exact tree scan).
+	parse_console(ok_arm, {}, bufs, tree)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
+	parse_console(dup_arm, {}, bufs, tree)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.Match_Duplicate_Bind)
+
+	// Declaration storage with String_Interner + dup table (promotes past 16 to O(1) hash).
+	ibytes := make([]u8, 16 * 1024, context.temp_allocator)
+	ispans := make([]Sym_Span, 512, context.temp_allocator)
+	ictrls := make([]u8, 1024, context.temp_allocator)
+	irefs := make([]u32, 1024, context.temp_allocator)
+	interner, iok := interner_init(ictrls, irefs, ispans, ibytes, 11)
+	testing.expect(t, iok)
+	dup_ctrls := make([]u8, 1024, context.temp_allocator)
+	dup_refs := make([]u32, 1024, context.temp_allocator)
+	dup_keys := make([]u64, 512, context.temp_allocator)
+	dup_nodes := make([]Node_Index, 512, context.temp_allocator)
+	decl_storage := console_tree_storage(bufs)
+	decl_storage.interner = &interner
+	decl_storage.dup_controls = dup_ctrls
+	decl_storage.dup_refs = dup_refs
+	decl_storage.dup_keys = dup_keys
+	decl_storage.dup_nodes = dup_nodes
+
+	parse_declaration(ok_arm, decl_storage, tree)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
+	parse_declaration(dup_arm, decl_storage, tree)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.Match_Duplicate_Bind)
 }

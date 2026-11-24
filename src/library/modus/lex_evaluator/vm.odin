@@ -2051,20 +2051,6 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 			}
 			eval.reg_stack[reg_base + a] = res
 
-		case .With_Field_Reg:
-			b := int(inst_b(inst))
-			c_op := int(inst_c(inst))
-			sym_rel := has_extra && c_op == 255 ? extra : u32(c_op)
-			chunk := &eval.chunks[frame.chunk_id]
-			sym := eval.field_syms[int(chunk.field_sym_start) + int(sym_rel)]
-			base := eval.reg_stack[reg_base + a]
-			val := eval.reg_stack[reg_base + b]
-			res, wok := vm_with_single_field(eval, base, sym, val, frame.chunk_id, node_idx)
-			if !wok {
-				return false
-			}
-			eval.reg_stack[reg_base + a] = res
-
 		case .Make_Rec_Comp:
 			comp_rel := has_extra ? extra : u32(inst_bx(inst))
 			iter_val := eval.reg_stack[reg_base + a]
@@ -2821,7 +2807,7 @@ vm_instantiate_record :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame
 		desc_id  = desc_rel,
 	}
 	eval.record_count += 1
-	return {kind = .Record_Literal, data = u64(rec_idx), meta = desc.shape_id}, true
+	return {kind = .Record_Literal, flags = desc.has_paths ? REC_VAL_FLAG_HAS_PATH : 0, data = u64(rec_idx), meta = desc.shape_id}, true
 }
 
 // ---- Comparison (step-charged).
@@ -2850,7 +2836,7 @@ vm_compare :: proc "contextless" (eval: ^Evaluation, op: Opcode, left, right: Va
 	     .List_Concat, .Jmp, .Jmp_If_False, .Jmp_If_False_Keep, .Jmp_If_True_Keep,
 	     .Check_Bool, .Closure, .Check_Call, .Call, .Tail_Call, .Call_Builtin,
 	     .Call_Site, .Ret, .Make_Record, .Get_Field, .Try_Get_Field, .With,
-	     .With_Field_Reg, .Make_Rec_Comp, .Destructure, .Set_Let_Val, .Match_Eq,
+	     .Make_Rec_Comp, .Destructure, .Set_Let_Val, .Match_Eq,
 	     .Check_Rec_Shape, .Match_Bind_Field, .Match_Fail, .Refuse_Eval,
 	     .List_Begin, .List_Push, .List_End, .Str_Begin, .Str_Push, .Str_End,
 	     .Assert_Fail, .Trace, .Load_Global, .Refuse_Parse, .Extra_Arg:
@@ -2933,7 +2919,13 @@ vm_compare :: proc "contextless" (eval: ^Evaluation, op: Opcode, left, right: Va
 // ---- `with` operator (strictly override-only in both modes).
 
 @(private)
+REC_VAL_FLAG_HAS_PATH :: u8(1)
+
+@(private)
 vm_with :: proc "contextless" (eval: ^Evaluation, left, right: Value, chunk_id: u16, node_idx: lex_parser.Node_Index) -> (result: Value, ok: bool) {
+	if right.kind == .Record_Literal && (right.flags & REC_VAL_FLAG_HAS_PATH) != 0 {
+		return vm_with_nested(eval, left, right, chunk_id, node_idx)
+	}
 	// Lazy record composition in both modes (including Plan_Value and Project_Value).
 	if is_lazy_record(left.kind) && is_lazy_record(right.kind) {
 		left_shape_id, ls_ok := lazy_record_base_shape(eval, left)
@@ -3199,38 +3191,178 @@ vm_prepare_fn_args :: proc "contextless" (
 }
 
 @(private)
-vm_with_single_field :: proc "contextless" (eval: ^Evaluation, base: Value, sym: lex_parser.Sym_Id, val: Value, chunk_id: u16, node_idx: lex_parser.Node_Index) -> (Value, bool) {
+vm_with_nested :: proc "contextless" (eval: ^Evaluation, left, right: Value, chunk_id: u16, node_idx: lex_parser.Node_Index) -> (Value, bool) {
+	if !is_lazy_record(left.kind) {
+		return refuse(eval, {refusal = .With_Kinds, chunk_id = chunk_id, node = node_idx, left_kind = left.kind, right_kind = .Record_Literal})
+	}
+	rec := eval.records[int(right.data)]
+	shape := &eval.shapes[rec.shape_id]
+	chunk := &eval.chunks[rec.chunk_id]
+	desc := eval.rec_descs[int(chunk.rec_desc_start) + int(rec.desc_id)]
+	fcount := int(shape.field_count)
+	patch_syms := eval.shape_fields[int(shape.fields_off):int(shape.fields_off) + fcount]
+	patch_thunks := eval.record_thunk_refs[int(rec.refs_off):int(rec.refs_off) + fcount]
+	patch_nodes := eval.rec_field_nodes[int(desc.nodes_start):int(desc.nodes_start) + fcount]
+	return vm_with_nested_group(eval, left, patch_syms, patch_thunks, patch_nodes, 0, 0, chunk_id, node_idx)
+}
+
+@(private)
+vm_with_nested_group :: proc "contextless" (
+	eval: ^Evaluation,
+	base: Value,
+	patch_syms: []lex_parser.Sym_Id,
+	patch_thunks: []Thunk_Ref,
+	patch_nodes: []lex_parser.Node_Index,
+	prefix_len: int,
+	depth: int,
+	chunk_id: u16,
+	node_idx: lex_parser.Node_Index,
+) -> (Value, bool) {
 	if !is_lazy_record(base.kind) {
 		return refuse(eval, {refusal = .With_Kinds, chunk_id = chunk_id, node = node_idx, left_kind = base.kind, right_kind = .Record_Literal})
 	}
-	if eval.shape_count >= len(eval.shapes) ||
-	   eval.shape_field_count >= len(eval.shape_fields) ||
-	   eval.record_count >= len(eval.records) ||
-	   eval.record_thunk_ref_count >= len(eval.record_thunk_refs) {
-		return refuse(eval, {refusal = .With_Pairs_Full, chunk_id = chunk_id, node = node_idx})
+	if depth >= lex_parser.DECLARATION_PARSE_DEPTH_LIMIT {
+		return refuse(eval, {refusal = .Depth_Exceeded, chunk_id = chunk_id, node = node_idx})
 	}
-	tref, tok := alloc_forced_thunk(eval, val, chunk_id, node_idx)
-	if !tok {
+	if len(patch_syms) == 0 {
+		return base, true
+	}
+	if !charge_steps(eval, u32(1 + len(patch_syms)), chunk_id, node_idx) {
 		return {}, false
 	}
-	foff := u32(eval.shape_field_count)
-	eval.shape_fields[foff] = sym
-	eval.shape_field_count += 1
+	base_shape_id, bs_ok := lazy_record_base_shape(eval, base)
+	if !bs_ok {
+		return refuse(eval, {refusal = .With_Kinds, chunk_id = chunk_id, node = node_idx, left_kind = base.kind, right_kind = .Record_Literal})
+	}
+	record_shape_dep(eval, base, base_shape_id)
+
+	// Pass 1: count distinct direct leaves and nested segment groups at this level.
+	// Because patch_syms is UTF-8 sorted and '.' (46) precedes every identifier byte,
+	// paths sharing a prefix are contiguous and distinct segments stay UTF-8 sorted.
+	level_count := 0
+	for i := 0; i < len(patch_syms); {
+		rem := lex_parser.sym_text(&eval.interner, patch_syms[i])[prefix_len:]
+		dot := index_byte(rem, '.')
+		if dot < 0 {
+			level_count += 1
+			i += 1
+		} else {
+			seg := rem[:dot]
+			j := i + 1
+			for j < len(patch_syms) {
+				jrem := lex_parser.sym_text(&eval.interner, patch_syms[j])[prefix_len:]
+				if len(jrem) > len(seg) && jrem[:len(seg)] == seg && jrem[len(seg)] == '.' {
+					j += 1
+				} else {
+					break
+				}
+			}
+			level_count += 1
+			i = j
+		}
+	}
+
+	// Reserve this level's contiguous slices before recursing so child allocations
+	// append strictly after this level's slots.
+	if eval.shape_field_count + level_count > len(eval.shape_fields) ||
+	   eval.record_thunk_ref_count + level_count > len(eval.record_thunk_refs) {
+		return refuse(eval, {refusal = .With_Pairs_Full, chunk_id = chunk_id, node = node_idx})
+	}
+	foff := eval.shape_field_count
+	eval.shape_field_count += level_count
+	roff := eval.record_thunk_ref_count
+	eval.record_thunk_ref_count += level_count
+
+	// Pass 2: validate and fill each direct leaf (unforced) and nested segment.
+	li := 0
+	for i := 0; i < len(patch_syms); {
+		full := lex_parser.sym_text(&eval.interner, patch_syms[i])
+		rem := full[prefix_len:]
+		dot := index_byte(rem, '.')
+		if dot < 0 {
+			sym := patch_syms[i]
+			if prefix_len > 0 {
+				s, sok := lex_parser.intern(&eval.interner, rem)
+				if !sok {
+					return refuse(eval, {refusal = .With_Pairs_Full, chunk_id = chunk_id, node = patch_nodes[i]})
+				}
+				sym = s
+			}
+			if _, exists := shape_lookup_sym(eval, base_shape_id, sym); !exists {
+				rec := Refusal_Record{refusal = .Field_Unknown, chunk_id = chunk_id, node = patch_nodes[i], field = rem, left_kind = base.kind}
+				suggest_shape_fields(eval, base_shape_id, rem, &rec)
+				return refuse(eval, rec)
+			}
+			eval.shape_fields[foff + li] = sym
+			eval.record_thunk_refs[roff + li] = patch_thunks[i]
+			li += 1
+			i += 1
+		} else {
+			seg := rem[:dot]
+			j := i + 1
+			for j < len(patch_syms) {
+				jrem := lex_parser.sym_text(&eval.interner, patch_syms[j])[prefix_len:]
+				if len(jrem) > len(seg) && jrem[:len(seg)] == seg && jrem[len(seg)] == '.' {
+					j += 1
+				} else {
+					break
+				}
+			}
+			seg_sym, sok := lex_parser.intern(&eval.interner, seg)
+			if !sok {
+				return refuse(eval, {refusal = .With_Pairs_Full, chunk_id = chunk_id, node = patch_nodes[i]})
+			}
+			sub_tref, found := lazy_record_lookup_thunk(eval, base, seg_sym)
+			if !found {
+				rec := Refusal_Record{refusal = .Field_Unknown, chunk_id = chunk_id, node = patch_nodes[i], field = seg, left_kind = base.kind}
+				suggest_shape_fields(eval, base_shape_id, seg, &rec)
+				return refuse(eval, rec)
+			}
+			sub_val, fok := vm_force_thunk(eval, sub_tref, chunk_id, patch_nodes[i])
+			if !fok {
+				return {}, false
+			}
+			updated_sub, uok := vm_with_nested_group(
+				eval,
+				sub_val,
+				patch_syms[i:j],
+				patch_thunks[i:j],
+				patch_nodes[i:j],
+				prefix_len + dot + 1,
+				depth + 1,
+				chunk_id,
+				node_idx,
+			)
+			if !uok {
+				return {}, false
+			}
+			new_tref, tok := alloc_forced_thunk(eval, updated_sub, chunk_id, patch_nodes[i])
+			if !tok {
+				return {}, false
+			}
+			eval.shape_fields[foff + li] = seg_sym
+			eval.record_thunk_refs[roff + li] = new_tref
+			li += 1
+			i = j
+		}
+	}
+
+	if eval.shape_count >= len(eval.shapes) || eval.record_count >= len(eval.records) {
+		return refuse(eval, {refusal = .With_Pairs_Full, chunk_id = chunk_id, node = node_idx})
+	}
 	sid := u32(eval.shape_count)
 	eval.shapes[sid] = {
-		fields_off  = foff,
-		field_count = 1,
-		shape_hash  = shape_hash_of_fields(&eval.interner, eval.shape_fields[int(foff):int(foff) + 1]),
+		fields_off  = u32(foff),
+		field_count = u32(level_count),
+		shape_hash  = shape_hash_of_fields(&eval.interner, eval.shape_fields[foff:foff + level_count]),
 	}
 	eval.shape_count += 1
-	roff := u32(eval.record_thunk_ref_count)
-	eval.record_thunk_refs[roff] = tref
-	eval.record_thunk_ref_count += 1
+	build_shape_hash_index(eval, sid)
 	ridx := u32(eval.record_count)
-	eval.records[ridx] = {shape_id = sid, refs_off = roff, chunk_id = chunk_id, node_idx = node_idx}
+	eval.records[ridx] = {shape_id = sid, refs_off = u32(roff), chunk_id = chunk_id, node_idx = node_idx}
 	eval.record_count += 1
-	patch := Value{kind = .Record_Literal, data = u64(ridx), meta = sid}
-	return vm_with(eval, base, patch, chunk_id, node_idx)
+	level_patch := Value{kind = .Record_Literal, data = u64(ridx), meta = sid}
+	return vm_with(eval, base, level_patch, chunk_id, node_idx)
 }
 
 @(private)
@@ -3951,6 +4083,10 @@ literal_type_to_record :: proc "contextless" (eval: ^Evaluation, lit_val: Value,
 		case .Integer:
 			if fval.kind != .Integer {
 				refuse(eval, {refusal = .Literal_Field_Kind, chunk_id = rec.chunk_id, node = fnode, field = fname, field_item = item, left_kind = fval.kind, file = file, detail = detail})
+				return {}, false
+			}
+			if fu := value_unit(fval); fu.kind != .None {
+				refuse(eval, {refusal = .Unit_Mismatch, chunk_id = rec.chunk_id, node = fnode, field = fname, field_item = item, left_kind = .Integer, right_kind = .Integer, left_unit = fu, file = file, detail = detail})
 				return {}, false
 			}
 			iv := value_integer(fval)

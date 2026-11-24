@@ -1600,21 +1600,55 @@ vm_finish_sort_by :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, ta
 // ---- Core pure Text stdlib functions (`split`, `join_text`, `starts_with`, `ends_with`, `contains`, `replace_text`).
 
 @(private)
-find_substr :: proc "contextless" (haystack, needle: string, start: int) -> int {
+find_substr :: proc "contextless" (eval: ^Evaluation, haystack, needle: string, start: int, chunk_id: u16, node_idx: lex_parser.Node_Index) -> (pos: int, ok: bool) {
 	if len(needle) == 0 {
-		return start
+		return start, true
 	}
 	if len(needle) > len(haystack) - start {
-		return -1
+		return -1, true
 	}
 	limit := len(haystack) - len(needle)
 	first := needle[0]
+	comps := 0
 	for i := start; i <= limit; i += 1 {
-		if haystack[i] == first && haystack[i:i + len(needle)] == needle {
-			return i
+		comps += 1
+		if haystack[i] == first {
+			matched := true
+			for k := 1; k < len(needle); k += 1 {
+				comps += 1
+				if haystack[i + k] != needle[k] {
+					matched = false
+					break
+				}
+				if comps >= 16 {
+					if !charge_steps(eval, u32(comps >> 4), chunk_id, node_idx) {
+						return -1, false
+					}
+					comps &= 15
+				}
+			}
+			if matched {
+				if comps > 0 {
+					if !charge_steps(eval, u32((comps + 15) >> 4), chunk_id, node_idx) {
+						return -1, false
+					}
+				}
+				return i, true
+			}
+		}
+		if comps >= 16 {
+			if !charge_steps(eval, u32(comps >> 4), chunk_id, node_idx) {
+				return -1, false
+			}
+			comps &= 15
 		}
 	}
-	return -1
+	if comps > 0 {
+		if !charge_steps(eval, u32((comps + 15) >> 4), chunk_id, node_idx) {
+			return -1, false
+		}
+	}
+	return -1, true
 }
 
 @(private)
@@ -1627,15 +1661,19 @@ vm_builtin_split :: proc "contextless" (eval: ^Evaluation, text_val, sep_val: Va
 	if len(sep) == 0 {
 		return refuse(eval, {refusal = .Empty_Separator, chunk_id = chunk_id, node = node_idx, command = SPLIT_NAME})
 	}
-	if !charge_steps(eval, u32(1 + len(txt) / 16), chunk_id, node_idx) {
+	if !charge_steps(eval, 1, chunk_id, node_idx) {
 		return {}, false
 	}
 	mark := eval.list_scratch_top
 	pos := 0
 	for {
-		hit := find_substr(txt, sep, pos)
+		hit, fok := find_substr(eval, txt, sep, pos, chunk_id, node_idx)
+		if !fok {
+			eval.list_scratch_top = mark
+			return {}, false
+		}
 		seg := hit < 0 ? txt[pos:] : txt[pos:hit]
-		if !charge_steps(eval, 1, chunk_id, node_idx) {
+		if !charge_steps(eval, u32(1 + len(seg) / 64), chunk_id, node_idx) {
 			eval.list_scratch_top = mark
 			return {}, false
 		}
@@ -1749,10 +1787,14 @@ vm_builtin_contains :: proc "contextless" (eval: ^Evaluation, text_val, needle_v
 	}
 	txt := value_text(eval, text_val)
 	needle := value_text(eval, needle_val)
-	if !charge_steps(eval, u32(1 + len(txt) / 16), chunk_id, node_idx) {
+	if !charge_steps(eval, 1, chunk_id, node_idx) {
 		return {}, false
 	}
-	return value_bool(find_substr(txt, needle, 0) >= 0), true
+	hit, fok := find_substr(eval, txt, needle, 0, chunk_id, node_idx)
+	if !fok {
+		return {}, false
+	}
+	return value_bool(hit >= 0), true
 }
 
 @(private)
@@ -1767,16 +1809,20 @@ vm_builtin_replace_text :: proc "contextless" (eval: ^Evaluation, text_val, old_
 	if len(old_s) == 0 {
 		return refuse(eval, {refusal = .Empty_Separator, chunk_id = chunk_id, node = node_idx, command = REPLACE_TEXT_NAME})
 	}
-	if !charge_steps(eval, u32(1 + len(txt) / 16), chunk_id, node_idx) {
+	if !charge_steps(eval, 1, chunk_id, node_idx) {
 		return {}, false
 	}
 	start := eval.text_used
 	cur := start
 	pos := 0
 	for {
-		hit := find_substr(txt, old_s, pos)
+		hit, fok := find_substr(eval, txt, old_s, pos, chunk_id, node_idx)
+		if !fok {
+			return {}, false
+		}
 		seg := hit < 0 ? txt[pos:] : txt[pos:hit]
-		if !charge_steps(eval, 1, chunk_id, node_idx) {
+		piece_bytes := len(seg) + (hit >= 0 ? len(new_s) : 0)
+		if !charge_steps(eval, u32(1 + piece_bytes / 64), chunk_id, node_idx) {
 			return {}, false
 		}
 		if len(seg) > len(eval.text_arena) - cur {
