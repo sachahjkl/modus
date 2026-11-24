@@ -110,6 +110,16 @@ thread_control_state_refuse :: #force_inline proc "contextless" (
 	return .Wrong_State
 }
 
+// thread_control_ended_refuse reports Thread_Absent (Nothing_Has_That_Name)
+// when the caller named the thread by machine number, and Thread_Ended
+// (Wrong_State) when the caller named it by handle or process-local number.
+thread_control_ended_refuse :: #force_inline proc "contextless" (by_machine: bool, target_argument: i64, target_value: u64, can_read_state: bool) -> Operation_Outcome {
+	if by_machine {
+		return thread_control_state_refuse(.Thread_Absent, 2, target_value)
+	}
+	return thread_control_state_refuse(.Thread_Ended, target_argument, target_value, 0, can_read_state ? u64(op.Process_State.Stopped) : 0)
+}
+
 // thread_control runs the operation Thread_Control. The caller holds the
 // process lock of the process of the calling thread, and the control lock
 // when the operation asked for it.
@@ -183,10 +193,12 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			// with it the serial names one thread until the operation ends.
 			require_control() or_return
 			target_index = u32(place)
-			if threads[target_index].serial != serial {
-				return thread_control_state_refuse(.Thread_Absent, 2, v[1]) // The thread of that number ended, and the place serves another one.
+			target_state := intrinsics.atomic_load(&threads[target_index].state)
+			target_owner := intrinsics.atomic_load(&threads[target_index].process)
+			if threads[target_index].serial != serial || target_state == .None || target_state == .Stopped || target_owner == 0 {
+				return thread_control_state_refuse(.Thread_Absent, 2, v[1]) // The thread of that number ended, or its place is free or serves another one.
 			}
-			owner = threads[target_index].process
+			owner = target_owner
 		} else if named.kind == .Process && op.thread_control_takes_debug_handle(command) {
 			// The debugger of a process names a thread of it by its
 			// number. Two process locks: the control lock first.
@@ -240,7 +252,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		if by_debugger {
 			return thread_control_state_refuse(.Process_Stopped, 1, v[0], 0, can_read_state ? u64(processes[owner].state) : 0)
 		}
-		return thread_control_state_refuse(.Thread_Ended, target_argument, target_value, 0, can_read_state ? u64(op.Process_State.Stopped) : 0)
+		return thread_control_ended_refuse(by_machine, target_argument, target_value, can_read_state)
 	}
 	if by_debugger {
 		// Under the process lock of the process, no thread of it starts
@@ -252,7 +264,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	}
 	thread := &threads[target_index]
 	if thread.process != owner {
-		return thread_control_state_refuse(.Thread_Ended, target_argument, target_value, 0, can_read_state ? u64(op.Process_State.Stopped) : 0)
+		return thread_control_ended_refuse(by_machine, target_argument, target_value, can_read_state)
 	}
 	switch command {
 	case .None:
@@ -407,7 +419,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		schedule: op.Thread_Schedule
 		if command == .Read_Schedule {
 			read_status: Operation_Outcome
-			schedule, read_status = thread_schedule_read(thread, target_argument, target_value, can_read_state)
+			schedule, read_status = thread_schedule_read(thread, by_machine, target_argument, target_value, can_read_state)
 			if read_status != .Succeeded {
 				return read_status
 			}
@@ -453,7 +465,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		placement: op.Thread_Placement
 		if command == .Read_Placement {
 			read_status: Operation_Outcome
-			placement, read_status = thread_placement_read(thread, target_argument, target_value, can_read_state)
+			placement, read_status = thread_placement_read(thread, by_machine, target_argument, target_value, can_read_state)
 			if read_status != .Succeeded {
 				return read_status
 			}
@@ -556,11 +568,11 @@ thread_schedule_ends :: #force_inline proc "contextless" (thread: ^Thread) -> bo
 // thread_schedule_read gives the weight, the request and the two weight
 // limits of a thread, all of one moment: they change together under the
 // run lock of its home. The caller holds the process lock of the thread.
-thread_schedule_read :: proc "contextless" (thread: ^Thread, target_argument: i64, target_value: u64, can_read_state: bool) -> (schedule: op.Thread_Schedule, status: Operation_Outcome) {
+thread_schedule_read :: proc "contextless" (thread: ^Thread, by_machine: bool, target_argument: i64, target_value: u64, can_read_state: bool) -> (schedule: op.Thread_Schedule, status: Operation_Outcome) {
 	home := run_lock(thread)
 	defer run_unlock(home)
 	if thread_schedule_ends(thread) {
-		return {}, thread_control_state_refuse(.Thread_Ended, target_argument, target_value, 0, can_read_state ? u64(op.Process_State.Stopped) : 0)
+		return {}, thread_control_ended_refuse(by_machine, target_argument, target_value, can_read_state)
 	}
 	return op.Thread_Schedule{weight = thread.weight, request = thread.request, weight_limit = thread.weight_limit, new_thread_weight_limit = thread.new_thread_weight_limit}, .Succeeded
 }
@@ -602,7 +614,7 @@ thread_schedule_write :: proc "contextless" (thread: ^Thread, schedule: op.Threa
 	home := run_lock(thread)
 	defer run_unlock(home)
 	if thread_schedule_ends(thread) {
-		return thread_control_state_refuse(.Thread_Ended, target_argument, target_value, 0, can_read_state ? u64(op.Process_State.Stopped) : 0), .None, 0
+		return thread_control_ended_refuse(by_machine, target_argument, target_value, can_read_state), .None, 0
 	}
 	old_weight := thread.weight
 	weight_limit := thread.weight_limit
@@ -640,11 +652,11 @@ thread_schedule_write :: proc "contextless" (thread: ^Thread, schedule: op.Threa
 // thread_placement_read gives the set of processors of a thread and the
 // limit of that set, both of one moment: they change together under the
 // run lock of its home. The caller holds the process lock of the thread.
-thread_placement_read :: proc "contextless" (thread: ^Thread, target_argument: i64, target_value: u64, can_read_state: bool) -> (placement: op.Thread_Placement, status: Operation_Outcome) {
+thread_placement_read :: proc "contextless" (thread: ^Thread, by_machine: bool, target_argument: i64, target_value: u64, can_read_state: bool) -> (placement: op.Thread_Placement, status: Operation_Outcome) {
 	home := run_lock(thread)
 	defer run_unlock(home)
 	if thread_schedule_ends(thread) {
-		return {}, thread_control_state_refuse(.Thread_Ended, target_argument, target_value, 0, can_read_state ? u64(op.Process_State.Stopped) : 0)
+		return {}, thread_control_ended_refuse(by_machine, target_argument, target_value, can_read_state)
 	}
 	return op.Thread_Placement{processors = thread.processors, processors_limit = thread.processors_limit}, .Succeeded
 }
@@ -730,7 +742,7 @@ thread_placement_write :: proc "contextless" (thread: ^Thread, written: op.Threa
 		case intrinsics.atomic_load(&thread.home) != home:
 			home_changed = true // Another processor took the thread from its list.
 		case thread_schedule_ends(thread):
-			status = thread_control_state_refuse(.Thread_Ended, target_argument, target_value, 0, can_read_state ? u64(op.Process_State.Stopped) : 0)
+			status = thread_control_ended_refuse(by_machine, target_argument, target_value, can_read_state)
 		case refusal != .None:
 			status = .Argument_Refused
 		case:
