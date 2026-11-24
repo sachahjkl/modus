@@ -1391,9 +1391,6 @@ vm_exec_proto :: proc "contextless" (
 		if real_stack > eval.stack_bytes {
 			return refuse(eval, {refusal = .Stack_Exceeded, chunk_id = chunk_id, node = call_node, left = i64(real_stack), right = i64(eval.stack_bytes)})
 		}
-		if real_stack > eval.stack_deepest {
-			eval.stack_deepest = real_stack
-		}
 	}
 	target_depth := eval.frame_count
 	if !push_bytecode_frame(eval, chunk_id, proto_id, env_off, env_len, args, 0, return_thunk, call_node) {
