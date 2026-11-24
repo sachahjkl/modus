@@ -55,7 +55,7 @@ module_commands_follow_optimization_mode_and_keep_kernel_at_speed :: proc(t: ^te
 	testing.expect(t, slice.contains(module_object_command(user_module, .Speed), "-O3"), "Speed runs llc -O3")
 
 	// None mode (--fast): user module uses -o:none, -use-single-module,
-	// -no-thread-local, opt -O1 -S, and llc -O0.
+	// -no-thread-local, opt -O1 -S, and llc -O1.
 	user_none_compile := module_compile_command(user_module, .None)
 	testing.expect(t, slice.contains(user_none_compile, "-o:none"), "None compiles user modules with -o:none")
 	testing.expect(t, slice.contains(user_none_compile, "-use-single-module"), "None passes -use-single-module")
@@ -68,7 +68,7 @@ module_commands_follow_optimization_mode_and_keep_kernel_at_speed :: proc(t: ^te
 	testing.expect(t, slice.contains(fast_ir, "-S"), "None writes textual LLVM IR from opt")
 
 	user_none_object := module_object_command(user_module, .None)
-	testing.expect(t, slice.contains(user_none_object, "-O0"), "None runs llc -O0 on user modules")
+	testing.expect(t, slice.contains(user_none_object, "-O1"), "None runs llc -O1 on user modules")
 	testing.expect(t, !slice.contains(user_none_object, "-O3"), "None does not run llc -O3 on user modules")
 
 	// Kernel stays at Speed even when requested optimization is None.

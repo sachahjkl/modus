@@ -339,7 +339,7 @@ module_compile_command :: proc(build: foundation.Module_Build, optimization: Opt
 // module_fast_ir_command gives the light opt pass that runs on user-module
 // LLVM IR under Optimization_Mode.None to eliminate dead foreign imports
 // (such as text_rendering calls in bootscreen) and unreached support-package
-// log facts before facts_reached and llc -O0 (src/md/infrastructure/fast_build.md).
+// log facts before facts_reached and llc -O1 (src/md/infrastructure/fast_build.md).
 module_fast_ir_command :: proc(build: foundation.Module_Build, optimization: Optimization_Mode = build_optimization_mode) -> []string {
 	if module_effective_optimization(build, optimization) != .None {
 		return nil
@@ -364,7 +364,9 @@ module_fast_ir_command :: proc(build: foundation.Module_Build, optimization: Opt
 module_object_command :: proc(build: foundation.Module_Build, optimization: Optimization_Mode = build_optimization_mode) -> []string {
 	folder := foundation.join(foundation.module_build_folder, "/", build.name)
 	effective := module_effective_optimization(build, optimization)
-	llc_level := effective == .None ? "-O0" : "-O3"
+	// llc -O1 enables stack slot coloring over the allocas inlined by opt -O1:
+	// under llc -O0, root_loop_pass grew to 169 KiB and overflowed the 256 KiB stack.
+	llc_level := effective == .None ? "-O1" : "-O3"
 	llc := make([dynamic]string, context.temp_allocator)
 	// -misched-topdown: with debug instructions in a block, the instruction
 	// scheduler of this LLVM (18) orders some register copies in another
