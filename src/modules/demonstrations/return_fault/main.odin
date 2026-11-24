@@ -92,6 +92,11 @@ foreign _ {
 	syscall_with_a_stack_that_is_not_canonical :: proc "c" () -> ! ---
 }
 
+// Pages for each hostile child process: return_fault plus its imports
+// (drawing and text_rendering), a 64-page stack, load tables and the test
+// page, covering both optimized and unoptimized builds.
+CHILD_BUDGET_PAGES :: 1024
+
 // One case: what the child gave, and if it is what the kernel must give.
 Case :: struct {
 	name:      string,
@@ -169,7 +174,7 @@ case_run :: proc "contextless" (item: ^Case) {
 	values[VALUE_ROLE] = u64(item.role)
 	values[VALUE_WITH_AVX] = with_avx ? 1 : 0
 	error: module.Load_Error
-	process, status := system.process_start(system.image_find(image, "return_fault"), "return_fault child", grants, random.values_with_seed(&process_generator, values), {pages = 256, processes = 1, threads = 1, processor = 200_000, log_records = 10}, nil, nil, {image = image}, &error)
+	process, status := system.process_start(system.image_find(image, "return_fault"), "return_fault child", grants, random.values_with_seed(&process_generator, values), {pages = CHILD_BUDGET_PAGES, processes = 1, threads = 1, processor = 200_000, log_records = 10}, nil, nil, {image = image}, &error)
 	if status != .Succeeded {
 		system.log_fact(.Info, Child_Not_Started{case_name = case_field(item.name)})
 		return

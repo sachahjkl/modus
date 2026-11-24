@@ -62,6 +62,22 @@ system_report :: proc "contextless" () -> (report: op.System_Report) {
 	return report
 }
 
+// start_policy_present says whether start_policy still occupies a process slot.
+// Waiting until it exits keeps its closing pages out of the before/after
+// payable-pages comparison.
+start_policy_present :: proc "contextless" () -> bool {
+	for slot := u64(0); ; slot += 1 {
+		report: op.Process_Report
+		_, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&report)), size_of(report))
+		if status != .Succeeded {
+			return false
+		}
+		if report.state != .None && system.name_of(report.name[:]) == "start_policy" {
+			return true
+		}
+	}
+}
+
 drains :: proc "contextless" (processors: u64) -> (sum: u64) {
 	for index in 0 ..< processors {
 		report: op.Processor_Report
@@ -122,6 +138,11 @@ fill :: proc "c" (parameter: rawptr) -> ! {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[system.GRANT_MACHINE]
+	// Wait for start_policy to finish its start list and return its pages
+	// before sampling the baseline free-page count.
+	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; start_policy_present() && system.time() < deadline; {
+		system.sleep(system.time() + 1)
+	}
 	start := system_report()
 	own, _ := system.budget_read()
 	processors := start.processors

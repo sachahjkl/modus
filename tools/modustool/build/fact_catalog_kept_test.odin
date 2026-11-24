@@ -2,6 +2,7 @@ package build
 
 import "modus:contract/blake3"
 import "core:testing"
+import "modustool:foundation"
 
 // The kept catalog of the module files (fact_catalog_kept.odin): it reads
 // a file once, and again only when its stamp changed. The files are in
@@ -142,4 +143,31 @@ the_kept_catalog_reads_nothing_for_a_log_with_no_fact :: proc(t: ^testing.T) {
 	for item in kept.files {
 		testing.expect(t, item.file == nil)
 	}
+}
+
+// A nil module filter includes every module of foundation.module_builds; a
+// non-nil filter omits excluded modules (such as test_caller during a
+// filtered --fast build) so fact rendering does not fail on unbuilt files.
+@(test)
+fact_build_module_paths_respects_module_filter :: proc(t: ^testing.T) {
+	all_paths := fact_build_module_paths(nil, context.temp_allocator)
+	testing.expect_value(t, len(all_paths), len(foundation.module_builds))
+
+	filter := make([]bool, len(foundation.module_builds), context.temp_allocator)
+	kept_index := -1
+	excluded_index := -1
+	for row, index in foundation.module_builds {
+		if row.name == "kernel" {
+			filter[index] = true
+			kept_index = index
+		} else if row.name == "test_caller" {
+			excluded_index = index
+		}
+	}
+	testing.expect(t, kept_index >= 0)
+	testing.expect(t, excluded_index >= 0)
+
+	filtered := fact_build_module_paths(filter, context.temp_allocator)
+	testing.expect_value(t, len(filtered), 1)
+	testing.expect_value(t, filtered[0], foundation.module_path("kernel"))
 }

@@ -1705,7 +1705,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
+	// Hold the ready ring across the first draw so we can wait for the starter
+	// to close its side and return the 2 ready-ring pages before child_run
+	// samples before.pages for exact budget-return checks.
+	ready_ring_handle := intrinsics.atomic_exchange(&ctx.handles[op.CONTEXT_READY_RING], 0)
 	draw(&window)
+	if ready_ring_handle != 0 {
+		before_ready, _ := system.budget_read()
+		intrinsics.atomic_store(&ctx.handles[op.CONTEXT_READY_RING], ready_ring_handle)
+		system.ready_at_end()
+		for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; system.time() < deadline; {
+			now_budget, _ := system.budget_read()
+			if now_budget.pages > before_ready.pages {
+				break
+			}
+			system.sleep(system.time() + 1)
+		}
+	}
 
 	// The child that repairs: one run for the cases 1 to 4.
 	cause, stop_outcome, _, left, ran, page := child_run(.Repairs, "the child that repairs")
