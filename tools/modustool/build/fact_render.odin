@@ -60,12 +60,16 @@ fact_catalog_add :: proc(catalog: ^Fact_Catalog, hash: [module.HASH_SIZE]u8, pat
 	return ""
 }
 
-// fact_catalog_of_build gives the catalog of each module file of the
+// fact_catalog_of_build gives the catalog of each built module file of the
 // build, with no file read but for its hash. problem: two hashes share
-// their module tag, or a file cannot be read.
-fact_catalog_of_build :: proc(allocator: runtime.Allocator) -> (catalog: Fact_Catalog, problem: string) {
+// their module tag, or a required file cannot be read.
+fact_catalog_of_build :: proc(allocator: runtime.Allocator, module_filter: []bool = nil) -> (catalog: Fact_Catalog, problem: string) {
 	catalog.allocator = allocator
-	for build in foundation.module_builds {
+	effective_filter := module_filter != nil ? module_filter : build_last_module_filter
+	for build, index in foundation.module_builds {
+		if !module_filter_allows(effective_filter, index) {
+			continue
+		}
 		path := foundation.module_path(build.name)
 		file, readable := foundation.read_file(path)
 		if !readable {

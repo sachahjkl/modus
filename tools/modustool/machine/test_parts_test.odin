@@ -80,6 +80,65 @@ test_accepts_and_refuses_fast_flag :: proc(t: ^testing.T) {
 	}
 }
 
+// `test --no-shots` and `test --cache <dir>` combine in any order with `--fast`
+// and step ranges, and refuse duplicates, missing cache paths, and `from`.
+@(test)
+test_accepts_and_refuses_no_shots_and_cache_flags :: proc(t: ^testing.T) {
+	// Refusals first.
+	refused := [][]string {
+		{TEST_NO_SHOTS_FLAG, TEST_NO_SHOTS_FLAG, "main"},
+		{TEST_NO_SHOTS_FLAG, "main", TEST_FROM_WORD, "folder"},
+		{TEST_CACHE_FLAG},
+		{TEST_CACHE_FLAG, ""},
+		{TEST_CACHE_FLAG, TEST_NO_SHOTS_FLAG, "main"},
+		{TEST_CACHE_FLAG, TEST_FAST_FLAG, "main"},
+		{TEST_CACHE_FLAG, "/tmp/c", TEST_CACHE_FLAG, "/tmp/d", "main"},
+		{TEST_CACHE_FLAG, "/tmp/c", "main", TEST_FROM_WORD, "folder"},
+		{TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG},
+		{TEST_FAST_FLAG, TEST_CACHE_FLAG, "/tmp/c"},
+		{"main", TEST_NO_SHOTS_FLAG},
+		{"--unknown", "main"},
+	}
+	for arguments in refused {
+		problem := test_arguments_problem(arguments)
+		testing.expectf(t, problem != "", "`test %v` is refused", arguments)
+	}
+
+	// Valid combinations.
+	opts, problem := test_arguments_parse([]string{TEST_NO_SHOTS_FLAG})
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, opts.optimization, build.Optimization_Mode.Speed)
+	testing.expect(t, opts.skip_shots, "`test --no-shots` skips shots")
+	testing.expect_value(t, opts.part_name, "")
+
+	opts, problem = test_arguments_parse([]string{TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG, TEST_CACHE_FLAG, "/tmp/cache", "main"})
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, opts.optimization, build.Optimization_Mode.None)
+	testing.expect(t, opts.skip_shots, "`--no-shots` sets skip_shots")
+	testing.expect_value(t, opts.cache_folder, "/tmp/cache")
+	testing.expect_value(t, opts.part_name, "main")
+
+	opts, problem = test_arguments_parse([]string{TEST_NO_SHOTS_FLAG, TEST_CACHE_FLAG, "/tmp/cache", TEST_FAST_FLAG, "tcp", "steps", "1", "to", "2"})
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, opts.optimization, build.Optimization_Mode.None)
+	testing.expect(t, opts.skip_shots)
+	testing.expect_value(t, opts.cache_folder, "/tmp/cache")
+	testing.expect_value(t, opts.part_name, "tcp")
+	testing.expect(t, opts.has_step_range)
+
+	// Per-part fast module filtering classification.
+	filter_main, extras_main := test_part_fast_filter("main")
+	testing.expect(t, filter_main && len(extras_main) == 0, "main uses filtered fast build with no extras")
+	filter_disk, extras_disk := test_part_fast_filter("disk_processes")
+	testing.expect(t, filter_disk && len(extras_disk) == 3, "disk_processes adds its three disk modules")
+	filter_sp, extras_sp := test_part_fast_filter("start_policy")
+	testing.expect(t, filter_sp && len(extras_sp) == 1, "start_policy adds disk_start_policy")
+	filter_hm, _ := test_part_fast_filter("host_modules")
+	testing.expect(t, !filter_hm, "host_modules builds all modules")
+	filter_rel, _ := test_part_fast_filter("release_image")
+	testing.expect(t, !filter_rel, "release_image builds all modules to cross-check BOOT_IMAGE")
+}
+
 // No part is in the table two times, each part has its sentence and its
 // procedure, and its name is a word that a command line and a file name
 // take as it is.

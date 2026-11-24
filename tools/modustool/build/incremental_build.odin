@@ -308,9 +308,29 @@ key_add :: proc(text: ^[dynamic]u8, label: string, value: string) {
 	key_add_bytes(text, label, transmute([]u8)value)
 }
 
+// canonical_key_path turns a repository file path into a worktree-independent
+// path relative to table_root, while leaving paths outside the repository
+// (such as compiler libraries in the Nix store) absolute.
+canonical_key_path :: proc(table_root: string, path: string) -> string {
+	root := strings.trim_right(table_root, "/")
+	if !strings.has_prefix(path, "/") {
+		return path_without_dots(path)
+	}
+	if root != "" && strings.has_prefix(path, root) {
+		if len(path) == len(root) {
+			return "."
+		}
+		if path[len(root)] == '/' {
+			return path_without_dots(path[len(root) + 1:])
+		}
+	}
+	return path
+}
+
 @(private = "file")
-key_add_input_file :: proc(text: ^[dynamic]u8, table: ^Input_File_Table, label: string, path: string, must_be_unchanged: bool) -> bool {
-	key_add(text, label, input_path(table, path))
+key_add_input_file :: proc(text: ^[dynamic]u8, table: ^Input_File_Table, label: string, path: string, must_be_unchanged: bool, canonical_paths := false) -> bool {
+	recorded_path := canonical_paths ? canonical_key_path(table.root, input_path(table, path)) : input_path(table, path)
+	key_add(text, label, recorded_path)
 	file := input_file(table, path)
 	if !file.readable {
 		return false
@@ -323,6 +343,19 @@ key_add_input_file :: proc(text: ^[dynamic]u8, table: ^Input_File_Table, label: 
 @(private = "file")
 sorted_copy :: proc(list: []string) -> []string {
 	result := slice.clone(list, context.temp_allocator)
+	slice.sort(result)
+	return result
+}
+
+@(private = "file")
+sorted_key_paths :: proc(list: []string, table_root: string, canonical_paths: bool) -> []string {
+	if !canonical_paths {
+		return sorted_copy(list)
+	}
+	result := make([]string, len(list), context.temp_allocator)
+	for path, index in list {
+		result[index] = canonical_key_path(table_root, path)
+	}
 	slice.sort(result)
 	return result
 }
@@ -353,9 +386,10 @@ Build_Key_Inputs :: struct {
 // each list sorted. The files of the folder of each source file are
 // inputs too. complete is false when an input cannot be read; with
 // inputs_must_be_unchanged, also when a file changed after the tool
-// hashed it. A key that is not complete is never recorded and never
-// compared.
-build_key :: proc(inputs: Build_Key_Inputs, table: ^Input_File_Table, inputs_must_be_unchanged := false) -> (key: blake3.Hash, complete: bool) {
+// hashed it. With canonical_paths, repository paths are hashed relative to
+// table.root so identical checkouts in different worktrees produce the same
+// key. A key that is not complete is never recorded and never compared.
+build_key :: proc(inputs: Build_Key_Inputs, table: ^Input_File_Table, inputs_must_be_unchanged := false, canonical_paths := false) -> (key: blake3.Hash, complete: bool) {
 	text := make([dynamic]u8, context.temp_allocator)
 	complete = true
 	key_add(&text, "subject", inputs.subject)
@@ -364,8 +398,8 @@ build_key :: proc(inputs: Build_Key_Inputs, table: ^Input_File_Table, inputs_mus
 	for setting in inputs.settings {
 		key_add(&text, "setting", setting)
 	}
-	for path in sorted_copy(inputs.fixed_files) {
-		if !key_add_input_file(&text, table, "file", path, inputs_must_be_unchanged) {
+	for path in sorted_key_paths(inputs.fixed_files, table.root, canonical_paths) {
+		if !key_add_input_file(&text, table, "file", path, inputs_must_be_unchanged, canonical_paths) {
 			complete = false
 		}
 	}
@@ -389,14 +423,14 @@ build_key :: proc(inputs: Build_Key_Inputs, table: ^Input_File_Table, inputs_mus
 		hash := file.hash
 		key_add_bytes(&text, "content", hash[:])
 	}
-	source_paths := sorted_copy(inputs.source_files)
+	source_paths := sorted_key_paths(inputs.source_files, table.root, canonical_paths)
 	for path in source_paths {
-		if !key_add_input_file(&text, table, "source", path, inputs_must_be_unchanged) {
+		if !key_add_input_file(&text, table, "source", path, inputs_must_be_unchanged, canonical_paths) {
 			complete = false
 		}
 	}
-	for path in sorted_copy(inputs.load_files) {
-		if !key_add_input_file(&text, table, "load", path, inputs_must_be_unchanged) {
+	for path in sorted_key_paths(inputs.load_files, table.root, canonical_paths) {
+		if !key_add_input_file(&text, table, "load", path, inputs_must_be_unchanged, canonical_paths) {
 			complete = false
 		}
 	}
@@ -405,7 +439,11 @@ build_key :: proc(inputs: Build_Key_Inputs, table: ^Input_File_Table, inputs_mus
 	// build tag in an old one, makes it a source.
 	folders := make([dynamic]string, context.temp_allocator)
 	for path in source_paths {
-		append(&folders, folder_of_path(input_path(table, path)))
+		if canonical_paths {
+			append(&folders, folder_of_path(canonical_key_path(table.root, input_path(table, path))))
+		} else {
+			append(&folders, folder_of_path(input_path(table, path)))
+		}
 	}
 	slice.sort(folders[:])
 	for folder, index in folders {
@@ -828,7 +866,7 @@ tool_identity_of :: proc(table: ^Input_File_Table, tool_folder: string) -> (iden
 		key_add(&text, "folder", folder)
 		for name in names {
 			path := foundation.join(folder, "/", name)
-			if !key_add_input_file(&text, table, "file of the tool", path, false) {
+			if !key_add_input_file(&text, table, "file of the tool", path, false, canonical_paths = true) {
 				complete = false
 				continue
 			}
@@ -1277,6 +1315,7 @@ Build_Measure :: struct {
 	modules_built:        int, // The two steps ran.
 	modules_converted:    int, // The conversion ran alone.
 	modules_kept:         int,
+	modules_cached:       int, // Restored from the shared host build cache.
 	// The time of the processes of each step, all levels together, as a
 	// clock on the wall sees it: several processes run at once.
 	module_compile_steps: time.Duration,
@@ -1344,7 +1383,8 @@ build_measure_lines :: proc(measure: Build_Measure, whole: time.Duration) -> []s
 		return time.duration_seconds(duration)
 	}
 	lines := make([dynamic]string, context.temp_allocator)
-	append(&lines, fmt.tprintf("the build %.1f s: the hash of %d input files (%d bytes) %.2f s; the modules %.1f s: %d built, %d converted, %d kept (the compile steps %.2f s, the conversions %.2f s, the checks of the build records %.2f s, their writes %.2f s)", seconds(whole), measure.input_files, measure.input_bytes, seconds(measure.input_hash), seconds(measure.modules), measure.modules_built, measure.modules_converted, measure.modules_kept, seconds(measure.module_compile_steps), seconds(measure.module_conversions), seconds(measure.record_checks), seconds(measure.record_writes)))
+	cached_text := measure.modules_cached > 0 ? fmt.tprintf(", %d cached", measure.modules_cached) : ""
+	append(&lines, fmt.tprintf("the build %.1f s: the hash of %d input files (%d bytes) %.2f s; the modules %.1f s: %d built, %d converted, %d kept%s (the compile steps %.2f s, the conversions %.2f s, the checks of the build records %.2f s, their writes %.2f s)", seconds(whole), measure.input_files, measure.input_bytes, seconds(measure.input_hash), seconds(measure.modules), measure.modules_built, measure.modules_converted, measure.modules_kept, cached_text, seconds(measure.module_compile_steps), seconds(measure.module_conversions), seconds(measure.record_checks), seconds(measure.record_writes)))
 	for step in measure.steps {
 		append(&lines, fmt.tprintf("the build: %8.2f s: %s", seconds(step.duration), step.name))
 	}

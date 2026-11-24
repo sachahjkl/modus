@@ -53,10 +53,10 @@ Manual_Module_File :: struct {
 
 // build_manual_pages writes the resource of the link pages from the module
 // files of the boot image and the documents and sources of the repository.
-build_manual_pages :: proc() -> (resource: resources.Resource_File, ok: bool) {
+build_manual_pages :: proc(module_filter: []bool = nil) -> (resource: resources.Resource_File, ok: bool) {
 	modules := make([dynamic]Manual_Module_File, context.temp_allocator)
-	for build in foundation.module_builds {
-		if foundation.module_in_boot_image(build) {
+	for build, index in foundation.module_builds {
+		if foundation.module_in_boot_image(build) && module_filter_allows(module_filter, index) {
 			file := foundation.read_file(foundation.module_path(build.name)) or_return
 			append(&modules, Manual_Module_File{name = build.name, file = file})
 		}

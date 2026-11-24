@@ -63,7 +63,7 @@ debug_information := true
 // object ask for it (outside_module.odin).
 outside_source_folder := ""
 
-build_modules :: proc() -> bool {
+build_modules :: proc(needed_volumes: []string = nil, filter_for_volumes := false, extra_modules: []string = nil) -> bool {
 	// Each module file states its category: a row whose category disagrees
 	// with its group stops the build before any module is written.
 	for row in foundation.module_builds {
@@ -72,90 +72,134 @@ build_modules :: proc() -> bool {
 			return false
 		}
 	}
+	module_filter: []bool = nil
+	if filter_for_volumes && len(needed_volumes) > 0 && !build_whole {
+		ok: bool
+		module_filter, ok = modules_needed_for_volumes(needed_volumes, extra_modules)
+		if !ok {
+			fmt.eprintln("modustool: cannot resolve the modules needed for the requested boot volumes")
+			return false
+		}
+	}
+	build_last_module_filter_set(module_filter)
 	// The lists of the start menu come from the table of the modules: the
 	// compositor that this build compiles lists them.
 	start_menu_names_write() or_return
 	// One process for each module, several at once (parallel_build.odin).
 	// A module whose inputs are the same is kept (incremental_build.odin).
-	build_modules_in_parallel() or_return
+	build_modules_in_parallel(module_filter) or_return
 	// The line of a log fact names its module by its module tag, the first
 	// 4 bytes of its hash: two module files that share it would make one
 	// line two facts.
-	if _, problem := fact_catalog_of_build(context.temp_allocator); problem != "" {
+	if _, problem := fact_catalog_of_build(context.temp_allocator, module_filter); problem != "" {
 		fmt.eprintfln("modustool: %s", problem)
 		return false
 	}
 	// The release refuses a test kernel by a text of its bytes: the kernel
 	// that ships must not hold it, and each test kernel must.
-	kernel_test_texts_check() or_return
-	library_modules_measure_print()
+	kernel_test_texts_check(module_filter) or_return
+	library_modules_measure_print(module_filter)
 	kernel_stack_measure_print()
 	// The steps below run at each build: each one reads outputs of the
 	// modules or files of the repository, and its time is in the measure of
 	// the build.
 	step_started := time.tick_now()
 	// The debug objects, beside the modules, in one file for the boot volumes.
-	debug_image_write() or_return
+	debug_image_write(module_filter) or_return
 	build_measure_step("the debug image", step_started)
-	step_started = time.tick_now()
-	// The pointer themes: the resources of the boot image (pointers.odin).
-	pointer_themes := resources.build_pointer_themes(resources.pointer_theme_source_of_the_build(), false) or_return
-	build_measure_step("the pointer themes", step_started)
-	step_started = time.tick_now()
-	// The font outlines: one more resource, from which each process draws
-	// each glyph of its text (vector_fonts.odin).
-	outlines_resource := resources.font_outlines_write() or_return
-	build_measure_step("the font outlines", step_started)
-	step_started = time.tick_now()
-	// The name of the script font set: 32 bytes in the boot image, the
-	// set of a machine whose plan names none. The set itself is an object
-	// of a data disk (script_fonts.odin).
-	script_fonts_name := resources.script_fonts_name_write() or_return
-	build_measure_step("the script font set", step_started)
-	step_started = time.tick_now()
-	// The pages of the links of the documentation of the modules: one more
-	// resource, for the process manual (manual_link_pages.odin).
-	link_pages := build_manual_pages() or_return
-	build_measure_step("the link pages of the manual", step_started)
-	step_started = time.tick_now()
-	// The plan values of the test image (limits, log_flood): signed with the
-	// test boot images and stripped from the release boot image (test_plan.odin).
-	test_plan_resource := test_plan_values_write() or_return
+
+	volume_scope: []string = filter_for_volumes ? needed_volumes : nil
+	need_main := boot_image_needed_for_volumes(volume_scope, BOOT_IMAGE)
+	need_fails := boot_image_needed_for_volumes(volume_scope, BOOT_IMAGE_FAILS)
+	need_shortage := boot_image_needed_for_volumes(volume_scope, BOOT_IMAGE_SHORTAGE)
+	need_op_seq := boot_image_needed_for_volumes(volume_scope, foundation.BOOT_IMAGE_OPERATION_SEQUENCES)
+	need_missing_console := boot_image_needed_for_volumes(volume_scope, BOOT_IMAGE_MISSING_CONSOLE)
+	need_plan_and_audit := boot_image_needed_for_volumes(volume_scope, BOOT_IMAGE_PLAN_AND_AUDIT)
+	need_measure := boot_image_needed_for_volumes(volume_scope, BOOT_IMAGE_MEASURE)
+	need_release := boot_image_needed_for_volumes(volume_scope, BOOT_IMAGE_RELEASE)
+	need_console := boot_image_needed_for_volumes(volume_scope, BOOT_IMAGE_CONSOLE)
+	need_desktop_resources := need_main || need_fails || need_shortage || need_op_seq || need_missing_console || need_plan_and_audit || need_measure || need_release
+
 	all_resources := make([dynamic]resources.Resource_File, context.temp_allocator)
-	append(&all_resources, ..pointer_themes)
-	append(&all_resources, outlines_resource)
-	append(&all_resources, script_fonts_name)
-	append(&all_resources, link_pages)
-	append(&all_resources, test_plan_resource)
+	if need_desktop_resources {
+		step_started = time.tick_now()
+		// The pointer themes: the resources of the boot image (pointers.odin).
+		pointer_themes := resources.build_pointer_themes(resources.pointer_theme_source_of_the_build(), false) or_return
+		build_measure_step("the pointer themes", step_started)
+		step_started = time.tick_now()
+		// The font outlines: one more resource, from which each process draws
+		// each glyph of its text (vector_fonts.odin).
+		outlines_resource := resources.font_outlines_write() or_return
+		build_measure_step("the font outlines", step_started)
+		step_started = time.tick_now()
+		// The name of the script font set: 32 bytes in the boot image, the
+		// set of a machine whose plan names none. The set itself is an object
+		// of a data disk (script_fonts.odin).
+		script_fonts_name := resources.script_fonts_name_write() or_return
+		build_measure_step("the script font set", step_started)
+		step_started = time.tick_now()
+		// The pages of the links of the documentation of the modules: one more
+		// resource, for the process manual (manual_link_pages.odin).
+		link_pages := build_manual_pages(module_filter) or_return
+		build_measure_step("the link pages of the manual", step_started)
+		// The plan values of the test image (limits, log_flood): signed with the
+		// test boot images and stripped from the release boot image (test_plan.odin).
+		test_plan_resource := test_plan_values_write() or_return
+		append(&all_resources, ..pointer_themes)
+		append(&all_resources, outlines_resource)
+		append(&all_resources, script_fonts_name)
+		append(&all_resources, link_pages)
+		append(&all_resources, test_plan_resource)
+	}
+	step_started = time.tick_now()
 	// The start policy reads a list and asks for the starts, and nothing
 	// more: its source is checked before any image holds it.
 	start_policy_source_check() or_return
-	// The second boot image has no start policy: with it, the start fails.
-	// The third has no input service, and its start list starts only the
-	// process shortage (the test of the shortage of frames).
-	// The fifth holds the module of the operation sequences, which no
-	// other image holds. The sixth has a start list whose row of the
-	// console names no module: the rescue takes over. The seventh holds the
-	// test modules of the plan of principal 0 and of the audit.
-	images_built := build_boot_image(BOOT_IMAGE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_FAILS, foundation.START_POLICY_MODULE, all_resources[:]) && build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:]) && build_boot_image(foundation.BOOT_IMAGE_OPERATION_SEQUENCES, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_MISSING_CONSOLE, "", all_resources[:]) && build_boot_image(BOOT_IMAGE_PLAN_AND_AUDIT, "", all_resources[:])
-	if images_built {
-		// The fourth is the image of a measure run: the same modules and one
-		// resource more, so a measure runs the code that a test checked.
+	images_built := true
+	if images_built && need_main {
+		images_built = build_boot_image(BOOT_IMAGE, "", all_resources[:])
+	}
+	if images_built && need_fails {
+		images_built = build_boot_image(BOOT_IMAGE_FAILS, foundation.START_POLICY_MODULE, all_resources[:])
+	}
+	if images_built && need_shortage {
+		images_built = build_boot_image(BOOT_IMAGE_SHORTAGE, "input", all_resources[:])
+	}
+	if images_built && need_op_seq {
+		images_built = build_boot_image(foundation.BOOT_IMAGE_OPERATION_SEQUENCES, "", all_resources[:])
+	}
+	if images_built && need_missing_console {
+		images_built = build_boot_image(BOOT_IMAGE_MISSING_CONSOLE, "", all_resources[:])
+	}
+	if images_built && need_plan_and_audit {
+		images_built = build_boot_image(BOOT_IMAGE_PLAN_AND_AUDIT, "", all_resources[:])
+	}
+	if images_built && need_measure {
 		resource_text: string = MEASURE_RUN_RESOURCE_TEXT
 		if err := os.write_entire_file(MEASURE_RUN_RESOURCE_FILE, transmute([]u8)resource_text); err != nil {
 			fmt.eprintfln("modustool: cannot write %s: %v", MEASURE_RUN_RESOURCE_FILE, err)
 			return false
 		}
-		append(&all_resources, resources.Resource_File{name = MEASURE_RUN_RESOURCE_NAME, path = MEASURE_RUN_RESOURCE_FILE})
-		images_built = build_boot_image(BOOT_IMAGE_MEASURE, "", all_resources[:]) && release_boot_image_write() && qemu_console_boot_image_write()
+		measure_resources := make([dynamic]resources.Resource_File, 0, len(all_resources) + 1, context.temp_allocator)
+		append(&measure_resources, ..all_resources[:])
+		append(&measure_resources, resources.Resource_File{name = MEASURE_RUN_RESOURCE_NAME, path = MEASURE_RUN_RESOURCE_FILE})
+		images_built = build_boot_image(BOOT_IMAGE_MEASURE, "", measure_resources[:])
 	}
-	build_measure_step("the nine boot images", step_started)
+	if images_built && need_release {
+		images_built = need_main ? release_boot_image_write() : release_boot_image_write_direct(all_resources[:])
+	}
+	if images_built && need_console {
+		images_built = need_main ? qemu_console_boot_image_write() : qemu_console_boot_image_write_direct()
+	}
+	build_measure_step(filter_for_volumes ? "the requested boot images" : "the nine boot images", step_started)
 	if !images_built {
 		return false
 	}
-	step_started = time.tick_now()
-	system_catalogs_write() or_return
-	build_measure_step("the system catalog declarations", step_started)
+	if need_main {
+		step_started = time.tick_now()
+		system_catalogs_write() or_return
+		build_measure_step("the system catalog declarations", step_started)
+	}
 	return true
 }
 
@@ -164,9 +208,9 @@ build_modules :: proc() -> bool {
 // that imports it and their sum: a measure, to compare with the build
 // before a module became an importer. It checks nothing, and a file that
 // cannot be read only ends the line of its library.
-library_modules_measure_print :: proc() {
-	for library in foundation.module_builds {
-		if !library.library {
+library_modules_measure_print :: proc(module_filter: []bool = nil) {
+	for library, library_index in foundation.module_builds {
+		if !library.library || !module_filter_allows(module_filter, library_index) {
 			continue
 		}
 		file, readable := foundation.read_file(foundation.module_path(library.name))
@@ -175,8 +219,8 @@ library_modules_measure_print :: proc() {
 		}
 		line := strings.builder_make(context.temp_allocator)
 		sum, count := 0, 0
-		for build in foundation.module_builds {
-			if !slice.contains(build.imports, library.name) {
+		for build, index in foundation.module_builds {
+			if !module_filter_allows(module_filter, index) || !slice.contains(build.imports, library.name) {
 				continue
 			}
 			importer, importer_readable := foundation.read_file(foundation.module_path(build.name))
@@ -1059,9 +1103,9 @@ test_modules :: proc() -> bool {
 // and nil is every volume. A volume that the caller does not name is not
 // built and not checked: no machine of this process starts from it
 // (machine_command).
-build_system :: proc(needed_volumes: []string) -> int {
+build_system :: proc(needed_volumes: []string, filter_modules := false, extra_modules: []string = nil) -> int {
 	build_measure_start()
-	if !build_modules() {
+	if !build_modules(needed_volumes, filter_modules, extra_modules) {
 		return foundation.EXIT_FAILURE
 	}
 	volumes_started := time.tick_now()
@@ -1077,17 +1121,19 @@ build_system :: proc(needed_volumes: []string) -> int {
 Build_Command_Options :: struct {
 	whole:          bool,
 	optimization:   Optimization_Mode,
+	cache_folder:   string, // "": use MODUS_BUILD_CACHE if set (except in whole builds).
 	volume_path:    string, // "": every boot volume.
 	host_processes: int,    // 0: default (processor count).
 }
 
-BUILD_COMMAND_USAGE :: "build [whole] [--fast] [volume_name] [host_processes]"
+BUILD_COMMAND_USAGE :: "build [whole] [--fast] [--cache <dir>] [volume_name] [host_processes]"
 
 // build_arguments_parse parses the arguments of `modustool build`. It refuses
-// duplicate options, unknown flags, non-positive process counts and unknown
-// volume names before any build starts.
+// duplicate options, unknown flags, non-positive process counts, unknown
+// volume names, and `--cache` combined with `whole` before any build starts.
 build_arguments_parse :: proc(args: []string) -> (options: Build_Command_Options, problem: string) {
-	for argument in args {
+	for index := 0; index < len(args); index += 1 {
+		argument := args[index]
 		switch {
 		case argument == "whole":
 			if options.whole {
@@ -1099,6 +1145,15 @@ build_arguments_parse :: proc(args: []string) -> (options: Build_Command_Options
 				return {}, "build: `--fast` is written two times; the form: `" + BUILD_COMMAND_USAGE + "`"
 			}
 			options.optimization = .None
+		case argument == BUILD_CACHE_FLAG:
+			if options.cache_folder != "" {
+				return {}, "build: `--cache` is written two times; the form: `" + BUILD_COMMAND_USAGE + "`"
+			}
+			if index + 1 >= len(args) || args[index + 1] == "" || strings.has_prefix(args[index + 1], "-") {
+				return {}, "build: `--cache` requires a folder path; the form: `" + BUILD_COMMAND_USAGE + "`"
+			}
+			index += 1
+			options.cache_folder = args[index]
 		case strings.has_prefix(argument, "-"):
 			return {}, fmt.tprintf("build: unknown option `%s`; the form: `%s`", argument, BUILD_COMMAND_USAGE)
 		case len(argument) > 0 && argument[0] >= '0' && argument[0] <= '9':
@@ -1121,6 +1176,9 @@ build_arguments_parse :: proc(args: []string) -> (options: Build_Command_Options
 			options.volume_path = path
 		}
 	}
+	if options.whole && options.cache_folder != "" {
+		return {}, "build: `--cache` cannot be used with `whole`: a whole build keeps no cached module"
+	}
 	return options, ""
 }
 
@@ -1128,7 +1186,8 @@ build_arguments_parse :: proc(args: []string) -> (options: Build_Command_Options
 // every boot volume (or one named boot volume). A module whose inputs are
 // the same is kept, and so is each boot volume (incremental_build.odin,
 // boot_volumes.odin); `build whole` keeps nothing; `build --fast [volume]`
-// compiles user modules in Optimization_Mode.None.
+// compiles user modules in Optimization_Mode.None, and when a single volume
+// is named, compiles only the modules needed by that volume.
 run_build :: proc(args: []string) -> int {
 	options, problem := build_arguments_parse(args)
 	if problem != "" {
@@ -1137,6 +1196,7 @@ run_build :: proc(args: []string) -> int {
 	}
 	build_whole = options.whole
 	build_optimization_mode = options.optimization
+	build_cache_folder_set(options.whole ? "" : build_cache_resolve(options.cache_folder))
 	if options.host_processes > 0 {
 		module_build_host_processes = options.host_processes
 	}
@@ -1144,5 +1204,6 @@ run_build :: proc(args: []string) -> int {
 	if options.volume_path != "" {
 		needed = []string{options.volume_path}
 	}
-	return build_system(needed)
+	filter_modules := options.optimization == .None && options.volume_path != "" && !options.whole
+	return build_system(needed, filter_modules = filter_modules)
 }

@@ -397,9 +397,9 @@ kernel_test_text_problem :: proc(name: string, kernel_module: []u8) -> string {
 
 // kernel_test_texts_check reads the module of each kernel of the table
 // after the build, and checks the text of the test kernels.
-kernel_test_texts_check :: proc() -> bool {
-	for row in foundation.module_builds {
-		if !row.kernel {
+kernel_test_texts_check :: proc(module_filter: []bool = nil) -> bool {
+	for row, index in foundation.module_builds {
+		if !row.kernel || !module_filter_allows(module_filter, index) {
 			continue
 		}
 		module_bytes := foundation.read_file(foundation.module_path(row.name)) or_return
@@ -997,6 +997,7 @@ release_image_command :: proc() -> int {
 	build_whole = true
 	test_build_checks = true
 	build_optimization_mode = .Speed
+	build_cache_folder_set("")
 	// The theme of the system only, whatever the environment names: the
 	// license of the theme of the owner allows no public download.
 	resources.build_pointer_theme_of_the_owner = false

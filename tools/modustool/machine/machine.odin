@@ -559,6 +559,7 @@ Machine :: struct {
 	picture_time: Picture_Time, // The times of the picture that the tool takes now: each picture of QEMU and each read of its file.
 	pictures_settled_by_calls: int, // The pictures that the tool took when the processes and the compositor said that the screen was settled (screen_settle.odin).
 	pictures_settled_by_pictures: int, // The pictures that the tool took when two pictures in a row were the same.
+	shots_skipped: int, // `.Shot` steps skipped because `--no-shots` was passed.
 	confirmations: [dynamic]time.Duration, // The time of each confirmation of a place.
 	corrected:   int, // The places that needed a correction.
 	record_next: i64, // The number of the log record where the next Record step searches.
@@ -1473,6 +1474,9 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	}
 	if machine.pictures_settled_by_calls + machine.pictures_settled_by_pictures > 0 {
 		foundation.test_passed_print("the tool took %d pictures when the processes were in a wait and the compositor had drawn each picture that it received, and %d when two pictures in a row were the same", machine.pictures_settled_by_calls, machine.pictures_settled_by_pictures)
+	}
+	if machine.shots_skipped > 0 {
+		fmt.printfln("modustool: skipped %d screenshots (%s)", machine.shots_skipped, TEST_NO_SHOTS_FLAG)
 	}
 	if len(machine.confirmations) > 0 {
 		slice.sort(machine.confirmations[:])
@@ -2632,7 +2636,13 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			}
 			disk_server_disconnect(machine.disk_server)
 		case .Shot:
-			if !screen_save(machine, step.text) {
+			if machine.part.skip_shots {
+				if owner, claimed := picture_name_claim(&picture_names, machine.part.name, step.text); !claimed {
+					fmt.eprintfln("modustool: test failed: the picture %s is a picture of the part %s too: two parts that run at once would write one file; give one of them another name", step.text, owner)
+					return false
+				}
+				machine.shots_skipped += 1
+			} else if !screen_save(machine, step.text) {
 				return false
 			}
 		case .Film_Start:

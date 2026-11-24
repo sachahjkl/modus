@@ -52,6 +52,7 @@ Test_Part_Run :: struct {
 	screen_text_before: string, // The text that the step Screen_Text before the last one read.
 	times:              Test_Times,
 	step_range:         Step_Range, // `test <part> steps ...`: the machine and the steps that run (step_range.odin).
+	skip_shots:         bool, // `test --no-shots`: skip QMP screendump capture steps during iteration runs.
 	started:            bool, // A worker took the part: after a failure, the parts that no worker took did not start.
 	passed:             bool,
 	duration:           time.Duration, // A measure: from the start of its first machine to the end of its last one.
@@ -201,81 +202,186 @@ test_part_names :: proc() -> string {
 TEST_FROM_WORD :: "from"
 
 // The flag of `test --fast <part>`: build user modules in fast iteration mode
-// (Optimization_Mode.None) and build only the boot volumes of the part
-// (src/md/infrastructure/fast_build.md).
+// (Optimization_Mode.None) and build only the boot volumes and modules of the
+// part (src/md/infrastructure/fast_build.md).
 TEST_FAST_FLAG :: "--fast"
 
-// test_arguments_optimization separates a leading `--fast` flag from the
-// remaining arguments of `modustool test`.
-test_arguments_optimization :: proc(args: []string) -> (optimization: build.Optimization_Mode, rest: []string) {
-	if len(args) >= 1 && args[0] == TEST_FAST_FLAG {
-		return .None, args[1:]
-	}
-	return .Speed, args
+// The flag of `test --no-shots`: skip `.Shot` QMP screendump capture steps
+// during iteration runs while keeping full screenshot verification for default
+// `test`, `check`, and `screenshots`.
+TEST_NO_SHOTS_FLAG :: "--no-shots"
+
+// The flag of `test --cache <dir>`: opt into the shared host module cache.
+TEST_CACHE_FLAG :: build.BUILD_CACHE_FLAG
+
+// Parsed arguments of `modustool test`.
+Test_Command_Options :: struct {
+	optimization:    build.Optimization_Mode,
+	skip_shots:      bool,
+	cache_folder:    string,
+	part_name:       string,
+	inputs_folder:   string,
+	has_inputs:      bool,
+	has_step_range:  bool,
+	step_range_args: []string,
 }
 
-// test_arguments_problem gives the refusal of the arguments of `test`, or
-// "" when they name the whole test, one part (optionally with `--fast`), or
-// one part on the test inputs of a folder. A word that is not a part is
-// refused: the whole test in its place takes minutes and passes, and the
-// reader believes that the part passed.
-test_arguments_problem :: proc(args: []string) -> string {
-	optimization, rest := test_arguments_optimization(args)
-	if optimization == .None {
-		if len(rest) == 0 {
-			return fmt.tprintf("test %s requires a test part: `test %s <part>`; the parts: %s", TEST_FAST_FLAG, TEST_FAST_FLAG, test_part_names())
+// test_arguments_leading_flags parses leading `--fast`, `--no-shots`, and
+// `--cache <dir>` flags in any order before the optional part name.
+@(private = "file")
+test_arguments_leading_flags :: proc(args: []string) -> (optimization: build.Optimization_Mode, skip_shots: bool, cache_folder: string, rest: []string, problem: string) {
+	optimization = .Speed
+	index := 0
+	for index < len(args) {
+		argument := args[index]
+		switch {
+		case argument == TEST_FAST_FLAG:
+			if optimization == .None {
+				return .Speed, false, "", nil, fmt.tprintf("test: %s is written two times", TEST_FAST_FLAG)
+			}
+			optimization = .None
+			index += 1
+		case argument == TEST_NO_SHOTS_FLAG:
+			if skip_shots {
+				return .Speed, false, "", nil, fmt.tprintf("test: %s is written two times", TEST_NO_SHOTS_FLAG)
+			}
+			skip_shots = true
+			index += 1
+		case argument == TEST_CACHE_FLAG:
+			if cache_folder != "" {
+				return .Speed, false, "", nil, fmt.tprintf("test: %s is written two times", TEST_CACHE_FLAG)
+			}
+			if index + 1 >= len(args) || args[index + 1] == "" || strings.has_prefix(args[index + 1], "-") {
+				return .Speed, false, "", nil, fmt.tprintf("test: %s requires a folder path", TEST_CACHE_FLAG)
+			}
+			cache_folder = args[index + 1]
+			index += 2
+		case strings.has_prefix(argument, "-"):
+			return .Speed, false, "", nil, fmt.tprintf("test: unknown option `%s`; the flags: `%s`, `%s`, `%s <dir>`", argument, TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG, TEST_CACHE_FLAG)
+		case:
+			return optimization, skip_shots, cache_folder, args[index:], ""
 		}
-		if rest[0] == TEST_FAST_FLAG {
-			return fmt.tprintf("test: %s is written two times", TEST_FAST_FLAG)
+	}
+	return optimization, skip_shots, cache_folder, args[index:], ""
+}
+
+// test_arguments_optimization separates leading flags from the remaining
+// arguments of `modustool test` and returns the requested optimization mode.
+test_arguments_optimization :: proc(args: []string) -> (optimization: build.Optimization_Mode, rest: []string) {
+	opt, _, _, tail, problem := test_arguments_leading_flags(args)
+	if problem != "" {
+		return .Speed, args
+	}
+	return opt, tail
+}
+
+// test_arguments_parse parses and validates all arguments of `modustool test`.
+test_arguments_parse :: proc(args: []string) -> (options: Test_Command_Options, problem: string) {
+	optimization, skip_shots, cache_folder, rest, flag_problem := test_arguments_leading_flags(args)
+	if flag_problem != "" {
+		return {}, flag_problem
+	}
+	options.optimization = optimization
+	options.skip_shots = skip_shots
+	options.cache_folder = cache_folder
+	if optimization == .None && len(rest) == 0 {
+		return {}, fmt.tprintf("test %s requires a test part: `test %s <part>`; the parts: %s", TEST_FAST_FLAG, TEST_FAST_FLAG, test_part_names())
+	}
+	if len(rest) >= 2 && rest[1] == TEST_FROM_WORD {
+		if optimization == .None {
+			return {}, fmt.tprintf("test %s cannot be used with `%s <folder>`: a part on given test inputs runs no build", TEST_FAST_FLAG, TEST_FROM_WORD)
 		}
-		if len(rest) >= 2 && rest[1] == TEST_FROM_WORD {
-			return fmt.tprintf("test %s cannot be used with `%s <folder>`: a part on given test inputs runs no build", TEST_FAST_FLAG, TEST_FROM_WORD)
+		if skip_shots {
+			return {}, fmt.tprintf("test %s cannot be used with `%s <folder>`: a part on given test inputs keeps full screenshot verification", TEST_NO_SHOTS_FLAG, TEST_FROM_WORD)
+		}
+		if cache_folder != "" {
+			return {}, fmt.tprintf("test %s cannot be used with `%s <folder>`: a part on given test inputs runs no build", TEST_CACHE_FLAG, TEST_FROM_WORD)
 		}
 	}
 	if len(rest) == 0 {
 		if missing := test_parts_without_run(test_parts[:]); missing != "" {
-			return fmt.tprintf("this binary of the tool holds no scenario of the test parts %s: it is the binary of one test part, which the check of the flake builds; the whole test runs with the binary of the development shell", missing)
+			return {}, fmt.tprintf("this binary of the tool holds no scenario of the test parts %s: it is the binary of one test part, which the check of the flake builds; the whole test runs with the binary of the development shell", missing)
 		}
-		return ""
+		return options, ""
 	}
 	part, found := test_part_find(rest[0])
 	if found && part.run == nil {
-		return fmt.tprintf("this binary of the tool holds no scenario of the test part %s: it is the binary of another test part, which the check of the flake builds; the part runs with the binary of the development shell or with its own binary", rest[0])
+		return {}, fmt.tprintf("this binary of the tool holds no scenario of the test part %s: it is the binary of another test part, which the check of the flake builds; the part runs with the binary of the development shell or with its own binary", rest[0])
 	}
-	if found && (len(rest) == 1 || (optimization == .Speed && len(rest) == 3 && rest[1] == TEST_FROM_WORD && rest[2] != "")) {
-		return ""
+	if found && len(rest) == 1 {
+		options.part_name = rest[0]
+		return options, ""
+	}
+	if found && optimization == .Speed && !skip_shots && cache_folder == "" && len(rest) == 3 && rest[1] == TEST_FROM_WORD && rest[2] != "" {
+		options.part_name = rest[0]
+		options.inputs_folder = rest[2]
+		options.has_inputs = true
+		return options, ""
 	}
 	if found && len(rest) >= 2 && rest[1] == TEST_STEPS_WORD {
-		_, problem := step_range_parse(rest[2:], context.temp_allocator)
-		if problem != "" {
-			return fmt.tprintf("test %s %s: %s; the form: `test [%s] <part> %s <first> %s <last> [%s <machine>] [%s <first> %s <last>]...`", rest[0], TEST_STEPS_WORD, problem, TEST_FAST_FLAG, TEST_STEPS_WORD, TEST_TO_WORD, TEST_OF_WORD, TEST_WITH_WORD, TEST_TO_WORD)
+		_, range_problem := step_range_parse(rest[2:], context.temp_allocator)
+		if range_problem != "" {
+			return {}, fmt.tprintf("test %s %s: %s; the form: `test [%s] [%s] [%s <dir>] <part> %s <first> %s <last> [%s <machine>] [%s <first> %s <last>]...`", rest[0], TEST_STEPS_WORD, range_problem, TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG, TEST_CACHE_FLAG, TEST_STEPS_WORD, TEST_TO_WORD, TEST_OF_WORD, TEST_WITH_WORD, TEST_TO_WORD)
 		}
-		return ""
+		options.part_name = rest[0]
+		options.has_step_range = true
+		options.step_range_args = rest[2:]
+		return options, ""
 	}
 	given := strings.join(args, " ", context.temp_allocator)
-	return fmt.tprintf("test does not know the part `%s`; the parts: %s; with no argument, the whole test; `test %s <part>`: one part built without full optimization; `test <part> %s <folder>`: one part on the test inputs of a folder, with no build; `test [%s] <part> %s <first> %s <last>`: some steps of one machine of a part", given, test_part_names(), TEST_FAST_FLAG, TEST_FROM_WORD, TEST_FAST_FLAG, TEST_STEPS_WORD, TEST_TO_WORD)
+	return {}, fmt.tprintf("test does not know the part `%s`; the parts: %s; with no argument, the whole test; `test [%s] [%s] [%s <dir>] <part>`: one part for iteration; `test <part> %s <folder>`: one part on the test inputs of a folder, with no build; `test [%s] [%s] <part> %s <first> %s <last>`: some steps of one machine of a part", given, test_part_names(), TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG, TEST_CACHE_FLAG, TEST_FROM_WORD, TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG, TEST_STEPS_WORD, TEST_TO_WORD)
+}
+
+// test_arguments_problem gives the refusal of the arguments of `test`, or
+// "" when they name the whole test, one part (optionally with `--fast`,
+// `--no-shots`, and `--cache <dir>`), or one part on the test inputs of a
+// folder. A word that is not a part is refused: the whole test in its place
+// takes minutes and passes, and the reader believes that the part passed.
+test_arguments_problem :: proc(args: []string) -> string {
+	_, problem := test_arguments_parse(args)
+	return problem
 }
 
 // test_arguments_give_step_range says if arguments that
 // test_arguments_problem accepted name a step range, and gives it, in the
 // memory of the caller.
 test_arguments_give_step_range :: proc(args: []string, allocator := context.allocator) -> (range: Step_Range, given: bool) {
-	_, rest := test_arguments_optimization(args)
-	if len(rest) < 2 || rest[1] != TEST_STEPS_WORD {
+	options, problem := test_arguments_parse(args)
+	if problem != "" || !options.has_step_range {
 		return {}, false
 	}
-	range, _ = step_range_parse(rest[2:], allocator)
+	range, _ = step_range_parse(options.step_range_args, allocator)
 	return range, true
 }
 
 // test_arguments_give_inputs says if arguments that test_arguments_problem
 // accepted name a folder of test inputs, and gives it.
 test_arguments_give_inputs :: proc(args: []string) -> (folder: string, given: bool) {
-	optimization, rest := test_arguments_optimization(args)
-	if optimization == .Speed && len(rest) == 3 && rest[1] == TEST_FROM_WORD {
-		return rest[2], true
+	options, problem := test_arguments_parse(args)
+	if problem != "" || !options.has_inputs {
+		return "", false
 	}
-	return "", false
+	return options.inputs_folder, true
+}
+
+// test_part_fast_filter says whether `test --fast <part>` can filter compiled
+// modules to the part's volumes and names any extra module files outside its
+// boot image that the part's setup reads from build/modules/.
+test_part_fast_filter :: proc(part_name: string) -> (filter_modules: bool, extra_modules: []string) {
+	switch part_name {
+	case "host_modules", "release_image":
+		// host_modules checks every module description; release_image compares
+		// BOOT_VOLUME_SECURE_BOOT against BOOT_IMAGE.
+		return false, nil
+	case "disk_processes":
+		@(static) disk_extras := [3]string{foundation.DISK_MODULE_NAME, foundation.STORE_LIBRARY_MODULE, foundation.STORE_IMPORTER_MODULE}
+		return true, disk_extras[:]
+	case "start_policy":
+		@(static) start_policy_extras := [1]string{foundation.DISK_START_POLICY_MODULE}
+		return true, start_policy_extras[:]
+	case:
+		return true, nil
+	}
 }
 
 // test_part_volumes_of gives the paths of the boot volumes of one part, in
@@ -486,7 +592,7 @@ Test_Parts_Pool :: struct {
 // starts; the parts that run end. It prints the time of each part as a
 // measure. start prepares a part before its first machine: its new data
 // disk. The caller frees the runs, which have the order of the parts.
-test_parts_run :: proc(parts: []Test_Part, at_once: int, start: proc(part: ^Test_Part_Run) -> bool = test_part_run_start, step_range: Step_Range = {}) -> (runs: []Test_Part_Run, passed: bool) {
+test_parts_run :: proc(parts: []Test_Part, at_once: int, start: proc(part: ^Test_Part_Run) -> bool = test_part_run_start, step_range: Step_Range = {}, skip_shots := false) -> (runs: []Test_Part_Run, passed: bool) {
 	pool := Test_Parts_Pool {
 		parts = parts,
 		runs  = make([]Test_Part_Run, len(parts)),
@@ -495,6 +601,7 @@ test_parts_run :: proc(parts: []Test_Part, at_once: int, start: proc(part: ^Test
 	for part, place in parts {
 		pool.runs[place] = test_part_run_make(part.name)
 		pool.runs[place].step_range = step_range
+		pool.runs[place].skip_shots = skip_shots
 	}
 	if at_once <= 1 {
 		test_parts_worker(&pool)

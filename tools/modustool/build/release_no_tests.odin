@@ -11,6 +11,7 @@ import "modus:contract/plan_values"
 import "modus:contract/release"
 import "modus:contract/system_description"
 import "modustool:foundation"
+import "modustool:resources"
 
 // The boot image of the release volume. Only `release image` writes it,
 // from the boot image of the build.
@@ -183,6 +184,48 @@ release_boot_image_of :: proc(build_image: []u8) -> (image: []u8, problem: strin
 		append(&files, Image_File{name = name, file = bytes})
 	}
 	return boot_image_encode(files[:], module_count), ""
+}
+
+// release_boot_image_write_direct is a `--fast` iteration path that encodes
+// build/boot_release.image directly from shipped module files and non-test
+// resources without building build/boot.image or any test module. Default,
+// check, and release builds still derive build/boot_release.image from
+// build/boot.image through release_boot_image_write, where manual_pages.resource
+// covers all boot-image modules.
+release_boot_image_write_direct :: proc(resource_files: []resources.Resource_File) -> bool {
+	files := make([dynamic]Image_File, context.temp_allocator)
+	for row in foundation.module_builds {
+		if !module_included_in_release_image(row) {
+			continue
+		}
+		append(&files, Image_File{name = row.name, file = foundation.read_file(foundation.module_path(row.name)) or_return})
+	}
+	module_count := len(files)
+	for resource in resource_files {
+		if resource.name == plan_values.TEST_IMAGE_PLAN_RESOURCE {
+			continue
+		}
+		append(&files, Image_File{name = resource.name, file = foundation.read_file(resource.path) or_return})
+	}
+	lists := start_list_resources(BOOT_IMAGE, "") or_return
+	for resource in lists {
+		append(&files, Image_File{name = resource.name, file = foundation.read_file(resource.path) or_return})
+	}
+	image := boot_image_encode(files[:], module_count)
+	if error := os.write_entire_file(BOOT_IMAGE_RELEASE, image); error != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", BOOT_IMAGE_RELEASE, error)
+		return false
+	}
+	catalog_text, catalog_problem := system_catalog_of_image(image, release.RELEASE_NUMBER, .Release_Image)
+	if catalog_problem != "" {
+		fmt.eprintfln("modustool: release: %s", catalog_problem)
+		return false
+	}
+	if error := os.write_entire_file(CATALOG_RELEASE_FILE, transmute([]u8)catalog_text); error != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", CATALOG_RELEASE_FILE, error)
+		return false
+	}
+	return true
 }
 
 // release_boot_image_write writes the boot image of a release from the
