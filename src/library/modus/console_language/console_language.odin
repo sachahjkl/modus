@@ -276,6 +276,8 @@ token_next :: proc "contextless" (text: string, position: int, multiline := fals
 		return {kind = .Operator, start = start, end = start + 2}
 	case character == '+' && start + 1 < len(text) && text[start + 1] == '+':
 		return {kind = .Operator, start = start, end = start + 2}
+	case character == '?' && start + 1 < len(text) && text[start + 1] == '?':
+		return {kind = .Operator, start = start, end = start + 2}
 	case character == '=' && start + 1 < len(text) && text[start + 1] == '>':
 		return {kind = .Function_Arrow, start = start, end = start + 2}
 	case character == '.' && start + 2 < len(text) && text[start + 1] == '.' && text[start + 2] == '.':
@@ -543,9 +545,9 @@ comment_runs :: proc "contextless" (text: string, from, to: int, runs: []termina
 }
 
 // word_of_lex says if a token is a word of Lex: `let`, `in`, `with`,
-// `if`, `then`, `else`, or the placeholder `_`.
+// `if`, `then`, `else`, `match`, or the placeholder `_`.
 word_of_lex :: proc "contextless" (text: string, token: Token) -> bool {
-	return word_is(text, token, "let") || word_is(text, token, "in") || word_is(text, token, "with") || word_is(text, token, "_") || word_is(text, token, "if") || word_is(text, token, "then") || word_is(text, token, "else")
+	return word_is(text, token, "let") || word_is(text, token, "in") || word_is(text, token, "with") || word_is(text, token, "_") || word_is(text, token, "if") || word_is(text, token, "then") || word_is(text, token, "else") || word_is(text, token, "match")
 }
 
 // boolean_of_lex says if a token is a boolean literal of Lex: `true` or `false`.
@@ -598,10 +600,9 @@ bound_by_let :: proc "contextless" (text: string, token: Token) -> bool {
 }
 
 // Maximum tokens scanned inside a single `(...)` group when probing for `=>`.
-// Covers up to 12 parameters, commas, destructuring patterns, and parens
-// while bounding lookahead to O(1) per `(` (preventing O(N^2) scanning on
-// deeply nested expressions).
-FUNCTION_HEAD_TOKEN_LIMIT :: 96
+// Covers up to 12 parameters, commas, destructuring patterns, kind/unit
+// annotations, defaults, and parens while bounding lookahead to O(1) per `(`.
+FUNCTION_HEAD_TOKEN_LIMIT :: 160
 
 // function_head says if the '(' at open starts a function: its group
 // closes within FUNCTION_HEAD_TOKEN_LIMIT tokens, and "=>" follows its ')'.
@@ -725,7 +726,7 @@ head_parameters :: proc "contextless" (text: string, first, close: int, tokens: 
 			alone = true
 		case:
 			next := token_next(text, token.end)
-			ends := next.start >= close || next.kind == .Operator && text[next.start] == ','
+			ends := next.start >= close || next.kind == .Operator && (text[next.start] == ',' || text[next.start] == ':' || text[next.start] == '=')
 			dotted := false
 			for character in text[token.start:token.end] {
 				dotted ||= character == '.'

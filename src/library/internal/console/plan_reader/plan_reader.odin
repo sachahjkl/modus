@@ -17,6 +17,7 @@ import description "modus:contract/plan_value_description"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/role_contract"
 import "modus:contract/root_plan_values"
+import "modus:contract/value_kinds"
 import "modus:lex_evaluator"
 import "modus:lex_parser"
 import "modus:sentence"
@@ -62,24 +63,27 @@ Problem :: enum u8 {
 	Name_Not_Valid      = 20, // A name of an owner, a field or a store that a plan cannot hold (name, field).
 	Field_Type          = 21, // A parameter that is no Integer, Enum or Text: a plan gives it no value (name, field).
 	Owner_Is_A_Holder   = 22, // A module that holds a role: its values are named by the role (name, role).
+	Unit_Mismatch       = 23, // A number with an incompatible or non-exact unit for its parameter (name, field, given_unit, expected_unit).
 }
 
 // A refusal: its problem and what it names.
 Refusal :: struct {
-	problem:   Problem,
-	name:      string, // The field of the plan, the role, the store or the owner.
-	field:     string, // The field of the owner.
-	member:    string, // A member or a right that is refused.
-	integer:   i64,
-	least:     i64,
-	most:      i64,
-	expected:  module.Type, // With Value_Kind: the type of the parameter.
+	problem:       Problem,
+	name:          string, // The field of the plan, the role, the store or the owner.
+	field:         string, // The field of the owner.
+	member:        string, // A member or a right that is refused.
+	integer:       i64,
+	least:         i64,
+	most:          i64,
+	expected:      module.Type, // With Value_Kind: the type of the parameter.
+	given_unit:    value_kinds.Integer_Unit,
+	expected_unit: value_kinds.Integer_Unit,
 	// With Field_Unknown and Member_Unknown: the description that names what
 	// the owner has.
-	file:      []u8,
-	enum_type: module.Enum_Type,
-	root:      bool, // With Field_Unknown: the owner is the core.
-	role:      role_contract.Role, // With Owner_Is_A_Holder: the role that the module holds.
+	file:          []u8,
+	enum_type:     module.Enum_Type,
+	root:          bool, // With Field_Unknown: the owner is the core.
+	role:          role_contract.Role, // With Owner_Is_A_Holder: the role that the module holds.
 }
 
 // The description of one value of an owner.
@@ -328,6 +332,21 @@ value_entry :: proc "contextless" (reader: ^Reader, owner, field: string, value:
 			return {}, at
 		}
 		iv := lex_evaluator.value_integer(value)
+		vu := lex_evaluator.value_unit(value)
+		if vu.kind != .None || described.integer_unit.kind != .None {
+			converted, status := lex_evaluator.convert_integer_unit(iv, vu, described.integer_unit, true)
+			switch status {
+			case .Ok:
+				iv = converted
+			case .Overflow:
+				at.problem, at.integer, at.least, at.most = .Out_Of_Range, iv, described.least, described.most
+				return {}, at
+			case .Incompatible, .Non_Exact:
+				at.problem, at.expected = .Unit_Mismatch, .Integer
+				at.given_unit, at.expected_unit = vu, described.integer_unit
+				return {}, at
+			}
+		}
 		if checked := description.word_check(described, u64(iv)); checked.problem != .None {
 			return {}, refusal_of_description(checked, owner, field)
 		}
@@ -524,6 +543,17 @@ refusal_write :: proc "contextless" (writer: ^sentence.Writer, refusal: Refusal)
 	case .Field_Type:
 		owner_field(writer, refusal)
 		part(writer, " is no number, member or text: a plan gives it no value")
+	case .Unit_Mismatch:
+		owner_field(writer, refusal)
+		if refusal.expected_unit.kind == .None {
+			part(writer, " takes a number with no unit, not")
+			part(writer, value_kinds.integer_unit_text(refusal.given_unit))
+		} else {
+			part(writer, " takes")
+			part(writer, value_kinds.integer_unit_text(refusal.expected_unit))
+			part(writer, ", not")
+			part(writer, value_kinds.integer_unit_text(refusal.given_unit))
+		}
 	}
 }
 

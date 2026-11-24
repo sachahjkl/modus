@@ -249,6 +249,26 @@ output_validation_and_round_trip :: proc(t: ^testing.T) {
 	_, err = output_validate(bad)
 	testing.expect_value(t, err, Output_Refusal.Unknown_Value_Tag)
 
+	// Integer_Unit round-trip and Bad_Integer_Unit refusal on wire.
+	ubuf: [128]u8
+	uw := output_writer_start(ubuf[:], {status = .Ok, failure_kind = .None, steps_taken = 1})
+	output_write_integer_unit(&uw, 64, {kind = .Size, unit = 2}) // 64 MiB
+	testing.expect(t, !uw.overflow)
+	_, uerr := output_validate(ubuf[:uw.written])
+	testing.expect_value(t, uerr, Output_Refusal.None)
+	_, ur, hr := output_read_header(ubuf[:uw.written])
+	testing.expect_value(t, hr, Output_Refusal.None)
+	utag, tr := output_read_tag(&ur)
+	testing.expect_value(t, tr, Output_Refusal.None)
+	testing.expect_value(t, utag, Value_Tag.Integer_Unit)
+	uv, uu, uref := output_read_integer_unit(&ur)
+	testing.expect(t, uref == .None && uv == 64 && uu.kind == .Size && uu.unit == 2 && ur.offset == uw.written)
+
+	// Corrupt unit byte past valid Size_Unit range -> Bad_Integer_Unit.
+	ubuf[OUTPUT_HEADER_BYTES + 2] = 99
+	_, bad_uerr := output_validate(ubuf[:uw.written])
+	testing.expect_value(t, bad_uerr, Output_Refusal.Bad_Integer_Unit)
+
 	copy(bad, valid)
 	bad[len(bad) - 1] = 2 // boolean must be 0 or 1
 	_, err = output_validate(bad)

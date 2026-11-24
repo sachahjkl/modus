@@ -39,16 +39,18 @@ pipeline      = logical_or { "|>" stage }
 stage         = name | name "(" [ arguments ] ")"
 logical_or    = logical_and { "||" logical_and }
 logical_and   = comparison { "&&" comparison }
-comparison    = with_expr [ ("=" | "!=" | "<" | "<=" | ">" | ">=") with_expr ]
+comparison    = coalesce [ ("=" | "!=" | "<" | "<=" | ">" | ">=") coalesce ]
+coalesce      = with_expr [ "??" coalesce ]
 with_expr     = sum { "with" sum }
 sum           = term { ("+" | "-" | "++") term }
 term          = factor { ("*" | "/" | "%") factor }
 factor        = ("-" | "!") factor
               | "if" pipeline "then" pipeline "else" pipeline
               | "let" binding { "," binding } "in" pipeline
+              | "match" pipeline "{" match_arm { "," match_arm } [ "," ] "}"
               | postfix
 postfix       = primary { "." field_name }
-primary       = integer
+primary       = integer [ unit_name ]
               | "true" | "false"
               | text
               | hash
@@ -58,14 +60,21 @@ primary       = integer
               | name
               | "(" [ param { "," param } ] ")" "=>" pipeline
               | "(" pipeline ")"
+              | record_comp
               | record_lit
               | "[" [ pipeline { "," pipeline } [ "," ] ] "]"
-param         = name | record_pat
+param         = name [ ":" kind_annot ] [ "=" pipeline ] | record_pat
+kind_annot    = kind_name | "Integer" "[" unit_name "]"
 binding       = (name | record_pat) "=" pipeline
 record_pat    = [ name "@" ] "{" [ pat_field { "," pat_field } [ "," ] ] [ "..." [ "," ] ] "}"
-pat_field     = name [ "=" pipeline ]
+pat_field     = name [ ":" kind_annot ] [ "=" pipeline ]
 record_lit    = "{" [ field_init { "," field_init } [ "," ] ] "}"
-field_init    = name "=" pipeline
+field_init    = field_path "=" pipeline | name
+field_path    = name { "." name }
+record_comp   = "{" "for" (name | record_pat) "in" pipeline [ "if" pipeline ] ":" coalesce "=" pipeline "}"
+match_arm     = match_pat [ "if" pipeline ] "=>" pipeline
+match_pat     = "_" | name | literal | "." name | match_rec_pat
+match_rec_pat = [ name "@" ] "{" [ name [ "=" match_pat ] { "," name [ "=" match_pat ] } [ "," ] ] [ "..." [ "," ] ] "}"
 arguments     = argument { "," argument }
 argument      = [ name "=" ] (pipeline | "_")
               | condition
@@ -83,7 +92,7 @@ Trailing commas inside `{ ... }` and `[ ... ]` and multi-line layouts apply in m
 ### Names, reserved words, and comments
 
 - **Names** start with an ASCII letter or `_`, followed by ASCII letters, digits, or `_`. Dotted names (`monitor.count`, `r.value`) select exports, services, record fields, or record streams.
-- **Reserved words of Lex.** Nine words cannot name a variable, binding, parameter, field, or named argument: `_`, `let`, `in`, `with`, `if`, `then`, `else`, `true`, and `false`. Longer names that contain `_`, such as `sum_values`, stay valid names.
+- **Reserved words of Lex.** Ten words cannot name a variable, binding, parameter, field, or named argument: `_`, `let`, `in`, `with`, `if`, `then`, `else`, `true`, `false`, and `match`. Longer names that contain `_`, such as `sum_values`, stay valid names.
 - **Line comments.** `//` outside a text starts a comment that runs to the end of the line. The scanner skips comments before parsing and before pipe rewriting, so `|>` or `(` inside a comment has no effect. Lex has no block comment.
 
 ### Values and their kinds
@@ -113,12 +122,18 @@ Every value of Lex carries one explicit kind (`lex_evaluator.Kind`).
 
 ### Integers with units
 
-Exports and record descriptions attach explicit integer units from `src/library/modus/contract/value_kinds` to integer parameters and fields:
+An integer literal followed on the same line by one of the nine `value_kinds.Integer_Unit` names carries that unit inside the value (`64 MiB`, `2048 pages`, `120 ms`):
 
 - **Size units:** `bytes`, `KiB`, `MiB`, `pages` (4096 bytes), `blocks`.
 - **Time units:** `ns`, `us`, `ms`, `s`.
 
-The console draws unit-annotated record fields with their unit (`memory  256 MiB`, `time  120 ms`) and places the unit once in table column headers (`resident (pages)`, `time (ms)`). The palette displays the unit beside the input field so the principal types the quantity in the declared unit.
+Unit arithmetic enforces exact overflow-checked integer conversions with zero silent truncation:
+
+- `+`, `-`, `=`, `!=`, `<`, `<=`, `>`, `>=` accept identical units or compatible units in the same exact family (byte sizes: `bytes`, `KiB`, `pages`, `MiB`; durations: `ns`, `us`, `ms`, `s`), converting to the finer unit (`1 MiB + 512 KiB` gives `1536 KiB`, `1 s - 250 ms` gives `750 ms`). `blocks` is compatible only with `blocks`. Incompatible units (`64 MiB + 1`, `1 MiB + 1 ms`, `1 pages + 1 blocks`) refuse with `Unit_Mismatch`.
+- `*` accepts `(unit * scalar)` and `(scalar * unit)` preserving the unit, and refuses `(unit * unit)`.
+- `/` accepts `(unit / scalar)` preserving the unit and `(unit / compatible_unit)` producing a dimensionless `Integer`, and refuses `(scalar / unit)`.
+- `%` accepts `(unit % scalar)` and `(unit % compatible_unit)` in the finer unit, and refuses `(scalar % unit)`.
+- Unary `-` preserves the unit. String interpolation (`"${64 MiB}"`) and console output append the unit text. Export, console command, and plan borders convert compatible units exactly (refusing non-exact or incompatible units) while continuing to accept plain dimensionless integers. Canonical declaration output encodes unit integers under `Value_Tag.Integer_Unit`.
 
 ### Operators, `with`, `let`, and `if`
 
@@ -139,10 +154,23 @@ The console draws unit-annotated record fields with their unit (`memory  256 MiB
     area_fn({ w = width })
   ```
   Bindings can reference earlier or later bindings in the same `let`. Record destructuring is strict by default (extra fields are refused unless `...` appears), forces only referenced fields on lazy records, and evaluates default expressions only when the field is absent.
-- **Record composition (`with`, `extend`, `merge_deep`):**
-  - `base with override` is strictly override-only in both modes: every field of `override` must already exist in `base`'s shape (checked eagerly without forcing field values), catching typos immediately.
+- **Record composition (`with`, `extend`, `merge_deep`), punning, and comprehensions:**
+  - `base with override` is strictly override-only in both modes: every field of `override` must already exist in `base`'s shape (checked eagerly without forcing field values), catching typos immediately. The right-hand record literal of `with` accepts nested dotted paths (`plan with { values.display.font = .spleen, values.net.port = 8080 }`), checking every intermediate path segment strictly, keeping sibling fields and leaf overrides lazy, and preserving `Plan_Value` and `Project_Value` tags. Dotted field paths outside `with` and overlapping paths in one literal are refused.
+  - Record literals and `with` overrides support field shorthand punning: `{ host, port, src = here() }` is shorthand for `{ host = host, port = port, src = here() }`.
+  - `{ for pat in list [if cond]: key = val }` builds a canonical sorted record in one pass with lazy values in mode `declaration`, supporting variable and record destructuring patterns and refusing non-list iterables, non-text or invalid field names, and duplicate keys.
   - `extend(a, b)` performs shallow lazy field addition and override without forcing field values.
   - `merge_deep(a, b)` performs recursive lazy merging of nested records (depth- and step-bounded).
+- **Pattern matching (`match`):**
+  ```
+  match cfg {
+    { mode = .Verify, net = { port = p }, ... } if p > 1024 => p,
+    { mode = .Fast, ... } => 80,
+    _ => 8080,
+  }
+  ```
+  `match` matches literals (including negative integers and unit literals), enum members, nested record patterns (with optional `r @` and `...`), variable bindings, `_` wildcards, and optional `Boolean` guards. Uninspected record fields stay lazy, arms in tail position keep O(1) tail-call optimization, and an unmatched value refuses with `No_Matching_Arm`.
+- **Safe field fallback (`??`):** `cfg.net.port ?? fallback.port ?? 8080` is right-associative and introduces no `null` value. The right-hand side evaluates lazily only when a field along the left selection chain is absent. Non-record bases, non-record intermediates, non-field-access left operands, and runtime errors inside present fields are refused rather than masked.
+- **Optional parameter kind annotations and defaults:** Function parameters (`(src: Tree_Ref, size: Integer[MiB], opt: Enum = .Speed) => ...`) and record destructuring fields (`({ src: Tree_Ref, opt: Enum = .Speed }) => ...`) accept optional `: Kind` (with `[Unit]` on `Integer`) and `= default_expr`. Annotated parameters are checked eagerly at call and destructuring borders (`Integer[Unit]` requires a compatible exact unit and refuses bare dimensionless integers), and omitted positional or named parameters with defaults evaluate their default expression cleanly.
 - **Call on a record literal:** `name { ... }` is exact syntax sugar for `name({ ... })`. Both `plan { ... }` and `project { ... }` use this form.
 - **Named arguments:** `grow(r, by = 2)` passes arguments by parameter name. Once a named argument appears, every remaining argument in that call must be named. Optional enum parameters can be left out (`settings.set(font = .spleen)`).
 
@@ -169,13 +197,24 @@ a |> f(by = _)  // rewrites to: f(by = a)
 
 ### Built-in pure standard functions
 
-Eleven pure functions are built into the evaluator (`lex_evaluator`), collision-free with console commands, so they work identically in mode `console` and mode `declaration`:
+Twenty-six pure functions are built into the evaluator (`lex_evaluator`), collision-free with console commands, so they work identically in mode `console` and mode `declaration`:
 
 ```
 map([1, 2, 3], (x) => x * 2)                                // [2, 4, 6]
 filter([1, 2, 3, 4], (x) => x % 2 = 0)                      // [2, 4]
 [1, 2, 3, 4] |> fold(0, (acc, x) => acc + x)                // 10
 zip([10, 20], [1, 2]) |> map(({ first, second }) => first + second) // [11, 22]
+len("café")                                                 // 4 (UTF-8 code points)
+at([10, 20, 30], 1)                                         // 20
+slice([10, 20, 30, 40], 1, 3)                               // [20, 30]
+any([1, 2, 3], (x) => x > 2)                                // true (short-circuit)
+all([2, 4, 6], (x) => x % 2 = 0)                            // true (short-circuit)
+flat_map([1, 2], (x) => [x, x * 10])                        // [1, 10, 2, 20]
+unique([1, 2, 1, 3])                                        // [1, 2, 3]
+sort_by(["c", "a", "b"], (s) => s)                          // ["a", "b", "c"]
+from_entries([{ name = "a", value = 1 }])                   // { a = 1 }
+split("a,b,c", ",") |> join_text("-")                       // "a-b-c"
+replace_text("foo bar foo", "foo", "baz")                   // "baz bar baz"
 fields({ b = 2, a = 1 })                                    // ["a", "b"] (non-forcing)
 has({ a = 1 }, "a")                                         // true (non-forcing)
 extend({ a = 1 }, { b = 2 })                                // { a = 1, b = 2 } (lazy)
@@ -188,6 +227,17 @@ trace("resolved port", port)
 - `filter(list, predicate)` keeps items where the 1-parameter `Boolean` predicate returns `true`.
 - `fold(list, init, fn)` runs an iterative left fold `fn(acc, item)` in O(1) stack space.
 - `zip(left, right)` pairs elements as `{ first = left[i], second = right[i] }` up to the shorter length.
+- `len(x)` returns the item count of a `List`, or the UTF-8 Unicode codepoint count of a `Text` (distinct from console `length`, which counts UTF-8 bytes).
+- `at(list, index)` returns the 0-based element, refusing negative, out-of-bounds, or unit indices.
+- `slice(list, start, end)` returns the zero-copy sub-list `[start, end)`, refusing negative, inverted, out-of-bounds, or unit indices.
+- `any(list, pred)` and `all(list, pred)` short-circuit over a flat VM frame and require `Boolean` predicate results.
+- `flat_map(list, fn)` maps each item to a `List` and flattens the results in one pass.
+- `unique(list)` deduplicates scalar values in first-seen order with step-charged equality.
+- `sort_by(list, key_fn)` performs a stable ascending merge sort over `Integer` (unit-compatible) or `Text` keys.
+- `from_entries(list)` builds one sorted `Record` from `[{ name = Text, value = any }, ...]`, keeping values lazy in mode `declaration` and refusing duplicate or non-identifier names.
+- `split(text, sep)` splits `Text` by non-empty `sep`; `join_text(list, sep)` joins a `List` of `Text` with `sep`.
+- `starts_with(text, prefix)`, `ends_with(text, suffix)`, and `contains(text, needle)` test substring matches on `Text`.
+- `replace_text(text, old, new)` replaces every non-overlapping occurrence of non-empty `old` with `new` (named `replace_text` to stay distinct from console command `replace(module, by)`).
 - `fields(rec)` returns the record's field names in canonical ascending UTF-8 order without forcing field values.
 - `values(rec)` forces and returns the record's field values in canonical ascending UTF-8 key order.
 - `has(rec, name)` checks whether `name` exists in `rec`'s shape without forcing any field.
@@ -423,7 +473,8 @@ error: Rectangle has no field widht; its fields are x, y, width, height
 | `Literal_No_Type` / `Member_No_Type` | `{ a = 1 }` or `.french` alone on a console line | Untyped literal or enum member has no typed receiver | Pass it to a typed parameter or compose it with `record with { ... }` |
 | `Member_Unknown` | `settings.set(font = .comic)` | Member name is not in the parameter's enum | Choose one of the enum members listed in the error |
 | `Argument_Unknown` / `Argument_Twice` / `Argument_Missing` | `grow(r, r, by = 2)` | Named argument unknown, passed both positionally and by name, or missing | Match parameter names from the hint line; place named arguments last |
-| `Type_Error` (`Operator_Kinds`, `With_Kinds`, `Condition_Not_Boolean`, `Not_A_Function`, `Not_A_List`, `Value_At_Border`) | `if 1 then 2 else 3` or `area([1, 2])` | Wrong value kind for operator, condition, function call, or export border | Use booleans in `if` / `filter`; keep `Function` and `List` values inside Lex expressions |
+| `Type_Error` (`Operator_Kinds`, `With_Kinds`, `Condition_Not_Boolean`, `Not_A_Function`, `Not_A_List`, `Value_At_Border`, `Unit_Mismatch`, `Parameter_Kind`, `Index_Out_Of_Bounds`, `Duplicate_Field`, `Field_Name_Invalid`, `Empty_Separator`) | `if 1 then 2 else 3`, `64 MiB + 1`, or `split("a", "")` | Wrong value kind, incompatible or non-exact unit, out-of-bounds index, duplicate dynamic key, or empty separator | Match operand kinds, compatible exact units, valid bounds, and non-empty separators |
+| `No_Matching_Arm` | `match 5 { 1 => 10, 2 => 20 }` | No arm pattern and guard of `match` matched the scrutinee | Add a matching arm or a trailing wildcard arm `_ => ...` |
 | `Division_By_Zero` / `Overflow` | `10 / 0` or `9223372036854775807 + 1` | Zero divisor or signed 64-bit arithmetic overflow | Guard divisors with `if d = 0` and keep arithmetic within signed 64-bit bounds |
 | `Import_Path_Refused` / `Import_Not_Found` | `import("../other.lex")` or `import("missing.lex")` | Path escapes tree, lacks `.lex` suffix, or is absent from the input bundle | Use a relative path inside the tree ending in `.lex` and include it in the project tree |
 | `Pool_Exhausted` (`Calls_Full`, `Lists_Full`, `With_Pairs_Full`, `Imports_Full`) | Too many calls, list items, `with` pairs, or imported files in one evaluation | Fixed zero-allocation workspace pool filled | Reduce collection size or split the declaration |

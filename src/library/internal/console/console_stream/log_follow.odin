@@ -654,7 +654,11 @@ log_follow_lower :: proc "contextless" (
 	     .Nesting_Too_Deep, .Thin_Arrow,
 	     .Escape_Not_Valid, .Interpolation_Close_Missing,
 	     .Pattern_Field_Missing, .Pattern_Close_Missing,
-	     .Pattern_Field_Twice, .Pattern_Rest_Not_Last, .Pattern_At_Missing_Brace:
+	     .Pattern_Field_Twice, .Pattern_Rest_Not_Last, .Pattern_At_Missing_Brace,
+	     .Literal_Path_Conflict, .Comp_Bind_Missing, .Comp_In_Missing,
+	     .Comp_Colon_Missing, .Comp_Equal_Missing, .Match_Open_Missing, .Match_Close_Missing,
+	     .Match_Arrow_Missing, .Match_Pattern_Expected, .Match_Duplicate_Bind, .Match_Empty,
+	     .Param_Kind_Unknown, .Param_Unit_Not_Valid:
 	}
 
 	desc_buf: [FOLLOW_ROW_DESCRIPTION_CAPACITY]u8

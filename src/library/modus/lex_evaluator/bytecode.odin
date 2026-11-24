@@ -3,6 +3,7 @@
 package lex_evaluator
 
 import "modus:contract/blake3"
+import "modus:contract/value_kinds"
 import "modus:lex_parser"
 
 // Fixed-width 32-bit VM instruction:
@@ -54,11 +55,19 @@ Opcode :: enum u8 {
 	Call_Builtin,      // R[A] = builtin B on args R[A+1 .. A+C]
 	Call_Site,         // R[A] = execute call_sites[Bx] (host commands, named args, console forms)
 	Ret,               // return R[A]
-	// Records, destructuring, lists & string interpolation
+	// Records, destructuring, lists, comprehensions, matching & string interpolation
 	Make_Record,       // R[A] = Lazy_Record(record_descs[Bx]); Console forces fields in source order
 	Get_Field,         // R[A] = R[B].field_syms[C] (or Extra_Arg if C == 255)
-	With,              // R[A] = R[B] with R[C] (strictly override-only)
+	Try_Get_Field,     // R[A] = try R[B].field_syms[C_or_extra], R[A+1] = Bool(found); refuses non-record R[B]
+	With,              // R[A] = R[B] with R[C] (strictly override-only; handles nested path patches)
+	Make_Rec_Comp,     // R[A] = record comprehension over list R[A] using comp_descs[Bx]
 	Destructure,       // destructure R[A] using pattern_descs[Bx] into frame.let_slots
+	Set_Let_Val,       // frame.let_slots[Bx] = forced_thunk(R[A])
+	Match_Eq,          // R[A] = Bool(match_literal_eq(R[B], R[C])) (never refuses on kind/unit mismatch)
+	Check_Rec_Shape,   // R[A+1] = Bool(R[A] matches record shape pat_descs[Bx])
+	Match_Bind_Field,  // frame.let_slots[pf.let_slot] = lazy_thunk(R[A], pf.sym) for pat_fields[Bx]
+	Match_Fail,        // refuse with No_Matching_Arm at node_idx
+	Refuse_Eval,       // refuse with Refusal(B) at node_idx (e.g. Literal_Path_Outside_With, Coalesce_Not_Field_Access)
 	List_Begin,        // push list scratch mark
 	List_Push,         // push R[A] onto list scratch (validates Console item kind)
 	List_End,          // R[A] = finalized List from scratch mark
@@ -77,16 +86,31 @@ Opcode :: enum u8 {
 
 // Fast built-in function identifiers for OP_CALL_BUILTIN.
 Builtin_Id :: enum u8 {
-	None       = 0,
-	Map        = 1,
-	Filter     = 2,
-	Fold       = 3,
-	Zip        = 4,
-	Fields     = 5,
-	Values     = 6,
-	Has        = 7,
-	Extend     = 8,
-	Merge_Deep = 9,
+	None         = 0,
+	Map          = 1,
+	Filter       = 2,
+	Fold         = 3,
+	Zip          = 4,
+	Fields       = 5,
+	Values       = 6,
+	Has          = 7,
+	Extend       = 8,
+	Merge_Deep   = 9,
+	From_Entries = 10,
+	Len          = 11,
+	At           = 12,
+	Slice        = 13,
+	Any          = 14,
+	All          = 15,
+	Flat_Map     = 16,
+	Unique       = 17,
+	Sort_By      = 18,
+	Split        = 19,
+	Join_Text    = 20,
+	Starts_With  = 21,
+	Ends_With    = 22,
+	Contains     = 23,
+	Replace_Text = 24,
 }
 
 // Instruction encode/decode helpers.
@@ -145,8 +169,16 @@ OPCODES_IN_ORDER := [len(Opcode)]Opcode {
 	.Ret,
 	.Make_Record,
 	.Get_Field,
+	.Try_Get_Field,
 	.With,
+	.Make_Rec_Comp,
 	.Destructure,
+	.Set_Let_Val,
+	.Match_Eq,
+	.Check_Rec_Shape,
+	.Match_Bind_Field,
+	.Match_Fail,
+	.Refuse_Eval,
 	.List_Begin,
 	.List_Push,
 	.List_End,
@@ -172,6 +204,21 @@ BUILTINS_IN_ORDER := [len(Builtin_Id)]Builtin_Id {
 	.Has,
 	.Extend,
 	.Merge_Deep,
+	.From_Entries,
+	.Len,
+	.At,
+	.Slice,
+	.Any,
+	.All,
+	.Flat_Map,
+	.Unique,
+	.Sort_By,
+	.Split,
+	.Join_Text,
+	.Starts_With,
+	.Ends_With,
+	.Contains,
+	.Replace_Text,
 }
 
 inst_op :: #force_inline proc "contextless" (inst: Instruction) -> (Opcode, bool) {
@@ -225,11 +272,26 @@ Const_Kind :: enum u8 {
 
 Const_Entry :: struct {
 	kind:     Const_Kind,
-	pad:      [3]u8,
+	unit:     value_kinds.Integer_Unit, // For .Integer: optional typed unit.
+	pad:      u8,
 	offset:   u32, // For Text: source byte offset. For Sym/Member: u32(Sym_Id).
 	length:   u32, // For Text: byte length. For Member: u32(node_idx).
 	integer:  i64,
 	hash:     blake3.Hash,
+}
+
+// Per-parameter metadata stored on Proto for call-border kind/unit checking,
+// default filling, and inspection by manual/palette/callers.
+Function_Param_Meta :: struct {
+	name_sym:      lex_parser.Sym_Id,
+	kind_annot:    lex_parser.Param_Kind_Annot,
+	has_default:   bool,
+	is_pattern:    bool,
+	pad:           u8,
+	unit:          value_kinds.Integer_Unit,
+	pad2:          u16,
+	default_proto: u32,
+	node_idx:      lex_parser.Node_Index,
 }
 
 // How a child Proto captures one lexical variable from its enclosing Proto.
@@ -252,13 +314,14 @@ Proto :: struct {
 	code_len:         u32,
 	max_regs:         u16,
 	param_count:      u16,
+	required_params:  u16,
 	let_slot_count:   u16,
 	boxed_param_mask: u16, // Bit i set => parameter i is captured by an inner closure/thunk.
 	upval_start:      u32,
 	upval_count:      u16,
 	flags:            u16,
-	// Parameter names (for named calls to Lex functions) and source spans.
-	param_syms:       [lex_parser.ARGUMENT_CAPACITY]lex_parser.Sym_Id,
+	// Parameter names, kind/unit annotations, defaults, and source spans.
+	params:           [lex_parser.ARGUMENT_CAPACITY]Function_Param_Meta,
 	node_idx:         lex_parser.Node_Index,
 	fn_open_off:      u32,
 	fn_arrow_end:     u32,
@@ -283,6 +346,7 @@ Record_Desc :: struct {
 	nodes_start:      u32, // Field AST Node_Index in canonical shape order.
 	source_order_off: u32, // Permutation 0..F-1 mapping source index -> canonical field index.
 	literal_node:     lex_parser.Node_Index,
+	has_paths:        bool, // True when one or more field keys are dotted `with` paths.
 }
 
 // How a Call_Site resolves its callee.
@@ -327,12 +391,14 @@ Call_Site_Desc :: struct {
 	pad:             u16,
 }
 
-// Compiled record destructuring pattern (`{ a, b = 10, ... }` or `r @ { a, b }`).
+// Compiled record destructuring or match record pattern field.
 Pattern_Field_Desc :: struct {
 	sym:           lex_parser.Sym_Id,
 	let_slot:      u16,
 	has_default:   bool,
-	pad:           u8,
+	kind_annot:    lex_parser.Param_Kind_Annot,
+	unit:          value_kinds.Integer_Unit,
+	pad:           u16,
 	default_proto: u32, // Relative proto_id in chunk when has_default == true.
 	node_idx:      lex_parser.Node_Index,
 }
@@ -345,6 +411,16 @@ Pattern_Desc :: struct {
 	field_count:  u16,
 	pad:          u16,
 	node_idx:     lex_parser.Node_Index,
+}
+
+// Compiled record comprehension descriptor (`{ for pat in iter [if cond]: key = val }`).
+Comp_Desc :: struct {
+	has_cond:   bool,
+	pad:        [3]u8,
+	cond_proto: u32, // Relative proto_id in chunk when has_cond == true.
+	key_proto:  u32, // Relative proto_id in chunk.
+	val_proto:  u32, // Relative proto_id in chunk.
+	node_idx:   lex_parser.Node_Index,
 }
 
 // Compiled bytecode chunk for one source file / console line.
@@ -366,4 +442,6 @@ Chunk :: struct {
 	field_sym_count: u32,
 	pat_desc_start:  u32,
 	pat_desc_count:  u32,
+	comp_desc_start: u32,
+	comp_desc_count: u32,
 }

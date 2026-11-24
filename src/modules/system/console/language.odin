@@ -2,6 +2,7 @@ package console
 
 import "modus:contract/errors"
 import module "modus:contract/module"
+import "modus:contract/value_kinds"
 import "modus:console_condition"
 import "modus:console_language"
 import "internal:console/console_stream"
@@ -683,7 +684,64 @@ evaluation_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Rec
 		fail("a record pattern needs a record, not ", kind_names[record.left_kind])
 	case .Pattern_Extra_Field:
 		fail("the record has an extra field ", record.field, " that the pattern does not list; add \"...\" to allow extra fields")
+	case .Unit_Mismatch:
+		switch {
+		case record.left_unit.kind != .None && record.right_unit.kind != .None:
+			fail("unit", value_kinds.integer_unit_text(record.left_unit), " does not match", value_kinds.integer_unit_text(record.right_unit))
+		case record.left_unit.kind != .None:
+			fail("this operation takes a number with no unit, not", value_kinds.integer_unit_text(record.left_unit))
+		case record.right_unit.kind != .None:
+			fail("this operation takes", value_kinds.integer_unit_text(record.right_unit), ", not a number with no unit")
+		case:
+			fail("units do not match")
+		}
+	case .Literal_Path_Outside_With:
+		fail("a dotted field path belongs only on the right of \"with\"")
+	case .Duplicate_Field:
+		fail("the record already has a field named ", record.field)
+	case .Field_Name_Invalid:
+		if record.field != "" {
+			fail("the text \"", record.field, "\" is not a field name")
+		} else {
+			fail("a field name must be a Text, not ", kind_names[record.left_kind])
+		}
+	case .No_Matching_Arm:
+		fail("no arm of match matched the value")
+	case .Coalesce_Not_Field_Access:
+		fail("\"??\" needs a field selection on its left, as record.field ?? fallback")
+	case .Index_Out_Of_Bounds:
+		fail(record.command, ": index ", record.left, " is outside the list length ", record.right)
+	case .Parameter_Kind:
+		pname := record.field != "" ? record.field : scratch_text(i64(record.parameter))
+		fail("parameter ", pname, " takes ", param_annot_name(record.expected_annot), ", not ", kind_names[record.left_kind])
+	case .Empty_Separator:
+		fail(record.command, ": the separator text is empty")
 	}
+}
+
+param_annot_name :: proc "contextless" (annot: lex_parser.Param_Kind_Annot) -> string {
+	switch annot {
+	case .None:       return "any value"
+	case .Integer:    return "Integer"
+	case .Boolean:    return "Boolean"
+	case .Text:       return "Text"
+	case .Hash:       return "Hash"
+	case .List:       return "List"
+	case .Record:     return "Record"
+	case .Function:   return "Function"
+	case .Enum:       return "Enum"
+	case .Module_Ref: return "Module_Ref"
+	case .Tree_Ref:   return "Tree_Ref"
+	case .Recipe_Ref: return "Recipe_Ref"
+	case .Follow_Ref: return "Follow_Ref"
+	case .Store_Ref:  return "Store_Ref"
+	case .Plan:       return "Plan"
+	case .Project:    return "Project"
+	case .Handle:     return "Handle"
+	case .Table:      return "Table"
+	case .Bytes:      return "Bytes"
+	}
+	return "value"
 }
 
 // arguments_text gives a count of arguments with its noun: "1 argument",
@@ -844,6 +902,32 @@ text_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Record) {
 		fail("\"...\" must be the last item of a record pattern")
 	case .Pattern_At_Missing_Brace:
 		fail("\"@\" in a pattern must be followed by \"{ ... }\"")
+	case .Literal_Path_Conflict:
+		fail("two field paths in one record literal overlap")
+	case .Comp_Bind_Missing:
+		fail("a binding name or record pattern is missing after \"for\"")
+	case .Comp_In_Missing:
+		fail("\"in\" is missing in a record comprehension")
+	case .Comp_Colon_Missing:
+		fail("\":\" is missing in a record comprehension")
+	case .Comp_Equal_Missing:
+		fail("\"=\" is missing between the key and value of a record comprehension")
+	case .Match_Open_Missing:
+		fail("\"{\" is missing after the value of match")
+	case .Match_Close_Missing:
+		fail("\",\" or \"}\" is missing in match")
+	case .Match_Arrow_Missing:
+		fail("\"=>\" is missing after a pattern of match")
+	case .Match_Pattern_Expected:
+		fail("a pattern is missing in match")
+	case .Match_Duplicate_Bind:
+		fail("a name is bound twice in one arm of match")
+	case .Match_Empty:
+		fail("match needs at least one arm")
+	case .Param_Kind_Unknown:
+		fail("unknown parameter kind after \":\"")
+	case .Param_Unit_Not_Valid:
+		fail("unknown unit name in Integer[...] parameter kind")
 	case .Unexpected, .None, .Fact_Name_Missing, .Condition_Head_Refused:
 		// A Fact_Name or a Condition node holds the last two, and the
 		// console reads them itself.
@@ -1089,6 +1173,21 @@ command_unknown_fail :: proc "contextless" (name: string) -> Value {
 		lex_evaluator.MERGE_DEEP_NAME,
 		lex_evaluator.ASSERT_NAME,
 		lex_evaluator.TRACE_NAME,
+		lex_evaluator.FROM_ENTRIES_NAME,
+		lex_evaluator.LEN_NAME,
+		lex_evaluator.AT_NAME,
+		lex_evaluator.SLICE_NAME,
+		lex_evaluator.ANY_NAME,
+		lex_evaluator.ALL_NAME,
+		lex_evaluator.FLAT_MAP_NAME,
+		lex_evaluator.UNIQUE_NAME,
+		lex_evaluator.SORT_BY_NAME,
+		lex_evaluator.SPLIT_NAME,
+		lex_evaluator.JOIN_TEXT_NAME,
+		lex_evaluator.STARTS_WITH_NAME,
+		lex_evaluator.ENDS_WITH_NAME,
+		lex_evaluator.CONTAINS_NAME,
+		lex_evaluator.REPLACE_TEXT_NAME,
 	}) {
 		console_language.nearest_name_offer(&nearest, builtin_name)
 	}
@@ -1253,6 +1352,29 @@ call_run :: proc "contextless" (name: string, arguments: []Value) -> Value {
 		}
 		if !argument_accepted(found, index, argument^) {
 			return argument_refusal(name, found, index, argument^)
+		}
+		if kind == .Integer {
+			expected_unit := found.parameter_units[index]
+			if expected_unit.kind == .None && found.run == nil && found.record == 0 {
+				if u, uok := value_kinds.integer_unit_of_detail(found.function.parameter_details[index]); uok {
+					expected_unit = u
+				}
+			}
+			if argument.integer_unit.kind != .None || expected_unit.kind != .None {
+				converted, ustatus := lex_evaluator.convert_integer_unit(argument.integer, argument.integer_unit, expected_unit, true)
+				switch ustatus {
+				case .Ok:
+					argument.integer = converted
+					argument.integer_unit = expected_unit
+				case .Overflow:
+					return fail(name, ": argument ", i64(index + 1), " does not fit in an Integer when converted to", value_kinds.integer_unit_text(expected_unit))
+				case .Incompatible, .Non_Exact:
+					if expected_unit.kind == .None {
+						return fail(name, ": argument ", i64(index + 1), " takes a number with no unit, not", value_kinds.integer_unit_text(argument.integer_unit))
+					}
+					return fail(name, ": argument ", i64(index + 1), " takes", value_kinds.integer_unit_text(expected_unit), ", not", value_kinds.integer_unit_text(argument.integer_unit))
+				}
+			}
 		}
 		// The range of an Integer: the console refuses a value out of it
 		// before the call; the export checks it again at its border.

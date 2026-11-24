@@ -271,6 +271,7 @@ Decl_Layout :: struct {
 	max_shape_idx_slots: int,
 	max_pat_descs:       int,
 	max_pat_fields:      int,
+	max_comp_descs:      int,
 	max_regs:            int,
 	max_frames:       int,
 	max_thunks:       int,
@@ -318,6 +319,7 @@ compute_layout :: proc "contextless" (pools: Declaration_Pools) -> Decl_Layout {
 		max_shape_idx_slots = hash_table.slice_index_groups_for_entries(max(1024, n)) * hash_table.GROUP_WIDTH,
 		max_pat_descs       = max(128, n / 32),
 		max_pat_fields      = max(512, n / 8),
+		max_comp_descs      = max(64, n / 64),
 		max_regs            = max(4096, EVALUATION_DEPTH_LIMIT * 4),
 		max_frames       = EVALUATION_DEPTH_LIMIT + 16,
 		max_thunks       = n * 2,
@@ -381,6 +383,7 @@ declaration_workspace_bytes :: proc "contextless" (pools: Declaration_Pools) -> 
 	at = align_up(at, l.max_shape_idx_slots * size_of(u32))
 	at = align_up(at, l.max_pat_descs * size_of(Pattern_Desc))
 	at = align_up(at, l.max_pat_fields * size_of(Pattern_Field_Desc))
+	at = align_up(at, l.max_comp_descs * size_of(Comp_Desc))
 	// Compile scratch
 	at = align_up(at, l.max_let_protos * size_of(Compile_Local))
 	at = align_up(at, l.max_let_descs * size_of(Compile_Let_Scope))
@@ -466,6 +469,7 @@ declaration_workspace_carve :: proc "contextless" (ws: ^Declaration_Workspace, m
 		shape_idx_refs     = carve_slice(u32, base, &at, l.max_shape_idx_slots),
 		pat_descs          = carve_slice(Pattern_Desc, base, &at, l.max_pat_descs),
 		pat_fields         = carve_slice(Pattern_Field_Desc, base, &at, l.max_pat_fields),
+		comp_descs         = carve_slice(Comp_Desc, base, &at, l.max_comp_descs),
 		interner           = interner,
 		compile_scratch   = {
 			locals     = carve_slice(Compile_Local, base, &at, l.max_let_protos),
@@ -709,7 +713,7 @@ serialize_value_into :: proc "contextless" (ws: ^Declaration_Workspace, writer: 
 	}
 	switch value.kind {
 	case .Integer:
-		declaration_eval.output_write_integer(writer, value_integer(value))
+		declaration_eval.output_write_integer_unit(writer, value_integer(value), value_unit(value))
 		return .None
 	case .Boolean:
 		declaration_eval.output_write_boolean(writer, value_boolean(value))
@@ -851,7 +855,7 @@ parse_refusal_to_failure_kind :: proc "contextless" (r: lex_parser.Refusal) -> d
 		return .Depth_Bound_Reached
 	case .Nodes_Full:
 		return .Pool_Exhausted
-	case .Text_Too_Long, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing, .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice, .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing, .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name, .Parameter_Name_Missing, .Parameter_Twice, .Too_Many_Parameters, .List_Close_Missing, .Hash_Not_Valid, .If_Then_Missing, .If_Else_Missing, .Thin_Arrow, .Pipe_No_Left, .Pipe_Line_End, .Pipe_Not_A_Call, .Lone_Bar, .Placeholder_Not_Whole, .Placeholder_Twice, .Placeholder_Nested, .Placeholder_Without_Pipe, .Escape_Not_Valid, .Interpolation_Close_Missing, .Pattern_Field_Missing, .Pattern_Close_Missing, .Pattern_Field_Twice, .Pattern_Rest_Not_Last, .Pattern_At_Missing_Brace:
+	case .Text_Too_Long, .Line_Ends_Too_Soon, .Unexpected, .Number_Too_Large, .Text_Without_End_Quote, .Close_Parenthesis_Missing, .Comma_Or_Close_Missing, .Too_Many_Arguments, .Fact_Name_Missing, .Condition_Head_Refused, .Field_Name_Missing, .Literal_Close_Missing, .Literal_Name_Missing, .Literal_Equal_Missing, .Literal_Field_Twice, .Named_Argument_Twice, .Positional_After_Named, .Let_Name_Missing, .Let_Equal_Missing, .Let_In_Missing, .Let_Name_Twice, .Word_As_Name, .Parameter_Name_Missing, .Parameter_Twice, .Too_Many_Parameters, .List_Close_Missing, .Hash_Not_Valid, .If_Then_Missing, .If_Else_Missing, .Thin_Arrow, .Pipe_No_Left, .Pipe_Line_End, .Pipe_Not_A_Call, .Lone_Bar, .Placeholder_Not_Whole, .Placeholder_Twice, .Placeholder_Nested, .Placeholder_Without_Pipe, .Escape_Not_Valid, .Interpolation_Close_Missing, .Pattern_Field_Missing, .Pattern_Close_Missing, .Pattern_Field_Twice, .Pattern_Rest_Not_Last, .Pattern_At_Missing_Brace, .Literal_Path_Conflict, .Comp_Bind_Missing, .Comp_In_Missing, .Comp_Colon_Missing, .Comp_Equal_Missing, .Match_Open_Missing, .Match_Close_Missing, .Match_Arrow_Missing, .Match_Pattern_Expected, .Match_Duplicate_Bind, .Match_Empty, .Param_Kind_Unknown, .Param_Unit_Not_Valid:
 		return .Parse_Error
 	}
 	return .Parse_Error
@@ -892,7 +896,12 @@ decl_result_from_refusal :: proc "contextless" (ws: ^Declaration_Workspace) -> D
 			for i in 0 ..< ws.binding_count {
 				console_language.nearest_name_offer(&nearest, ws.bindings[i].name)
 			}
-			for std_name in ([?]string{MAP_NAME, FILTER_NAME, FOLD_NAME, ZIP_NAME, FIELDS_NAME, VALUES_NAME, HAS_NAME, EXTEND_NAME, MERGE_DEEP_NAME, ASSERT_NAME, TRACE_NAME, "module", "recipe", "plan", "project", "import", "declaration", "here", "follow", "store"}) {
+			for std_name in ([?]string{
+				MAP_NAME, FILTER_NAME, FOLD_NAME, ZIP_NAME, FIELDS_NAME, VALUES_NAME, HAS_NAME, EXTEND_NAME, MERGE_DEEP_NAME, ASSERT_NAME, TRACE_NAME,
+				FROM_ENTRIES_NAME, LEN_NAME, AT_NAME, SLICE_NAME, ANY_NAME, ALL_NAME, FLAT_MAP_NAME, UNIQUE_NAME, SORT_BY_NAME,
+				SPLIT_NAME, JOIN_TEXT_NAME, STARTS_WITH_NAME, ENDS_WITH_NAME, CONTAINS_NAME, REPLACE_TEXT_NAME,
+				"module", "recipe", "plan", "project", "import", "declaration", "here", "follow", "store",
+			}) {
 				console_language.nearest_name_offer(&nearest, std_name)
 			}
 			out.suggestion_count = nearest.count
@@ -926,11 +935,15 @@ decl_result_from_refusal :: proc "contextless" (ws: ^Declaration_Workspace) -> D
 	case .Field_Unknown, .Literal_Field_Unknown, .Pattern_Extra_Field:
 		kind = .Field_Unknown
 		detail = r.field
-	case .Operator_Kinds, .Negate_Kind, .With_Kinds, .With_Records_Differ, .Not_A_Function, .Function_Arguments, .Not_A_List, .Condition_Not_Boolean, .Argument_Unknown, .Argument_Twice, .Argument_Missing, .Literal_No_Type, .Literal_Field_Missing, .Literal_Field_Kind, .Literal_Field_Range, .Member_No_Type, .Member_Unknown, .Value_At_Border, .List_Item_Kind, .Interpolation_Kind, .Pattern_Not_A_Record:
+	case .Operator_Kinds, .Negate_Kind, .With_Kinds, .With_Records_Differ, .Not_A_Function, .Function_Arguments, .Not_A_List, .Condition_Not_Boolean, .Argument_Unknown, .Argument_Twice, .Argument_Missing, .Literal_No_Type, .Literal_Field_Missing, .Literal_Field_Kind, .Literal_Field_Range, .Member_No_Type, .Member_Unknown, .Value_At_Border, .List_Item_Kind, .Interpolation_Kind, .Pattern_Not_A_Record, .Unit_Mismatch, .Duplicate_Field, .Field_Name_Invalid, .Index_Out_Of_Bounds, .Parameter_Kind, .Empty_Separator:
 		kind = .Type_Error
 		if len(detail) == 0 {
 			detail = r.field
 		}
+	case .No_Matching_Arm:
+		kind = .No_Matching_Arm
+	case .Literal_Path_Outside_With, .Coalesce_Not_Field_Access:
+		kind = .Parse_Error
 	case .Calls_Full, .Lists_Full, .With_Pairs_Full, .Imports_Full:
 		kind = .Pool_Exhausted
 		if ws.exhausted == .None {
@@ -1120,7 +1133,8 @@ decl_host_command_find :: proc "contextless" (data: rawptr, name: string) -> (si
 				cproto := &ws.evaluation.protos[int(cchunk.proto_start) + int(cl.proto_id)]
 				signature = {parameter_count = int(cproto.param_count), untyped = true}
 				for p in 0 ..< signature.parameter_count {
-					signature.names[p] = lex_parser.sym_text(&ws.evaluation.interner, cproto.param_syms[p])
+					signature.names[p] = lex_parser.sym_text(&ws.evaluation.interner, cproto.params[p].name_sym)
+					signature.optional[p] = cproto.params[p].has_default
 				}
 				return signature, true
 			}
@@ -1364,7 +1378,7 @@ decl_host_call_run :: proc "contextless" (data: rawptr, name: string, arguments:
 		cl := ws.evaluation.closures[int(fn_val.data)]
 		cchunk := &ws.evaluation.chunks[cl.chunk_id]
 		cproto := &ws.evaluation.protos[int(cchunk.proto_start) + int(cl.proto_id)]
-		if len(arguments) != int(cproto.param_count) {
+		if !fn_arity_accepts_positional(cproto, len(arguments)) {
 			decl_host_fail(ws, .Type_Error, name, {})
 			return {}, false
 		}
@@ -1377,7 +1391,12 @@ decl_host_call_run :: proc "contextless" (data: rawptr, name: string, arguments:
 			}
 			vm_args[i] = v
 		}
-		res := vm_exec_proto(&ws.evaluation, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, vm_args[:len(arguments)], NO_THUNK, lex_parser.NO_NODE) or_return
+		prepared: [lex_parser.ARGUMENT_CAPACITY]Value
+		pcount := int(cproto.param_count)
+		if !vm_prepare_fn_args(&ws.evaluation, cl, cproto, vm_args[:len(arguments)], nil, prepared[:pcount], 0, lex_parser.NO_NODE, name) {
+			return {}, false
+		}
+		res := vm_exec_proto(&ws.evaluation, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, prepared[:pcount], NO_THUNK, lex_parser.NO_NODE) or_return
 		return value_to_host(&ws.evaluation, res), true
 	}
 

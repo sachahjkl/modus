@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "modus:console_condition"
+import "modus:contract/value_kinds"
 import "modus:hash_table"
 
 @(private = "file")
@@ -97,8 +98,26 @@ node_form_write :: proc(builder: ^strings.Builder, tree: ^Syntax_Tree, index: No
 		return
 	}
 	switch node.kind {
-	case .Integer, .Text, .Member, .Parameter, .Hash, .Boolean, .Placeholder:
+	case .Integer, .Text, .Member, .Parameter, .Hash, .Boolean, .Placeholder, .Match_Pat_Wild, .Match_Pat_Bind:
 		strings.write_string(builder, node_text(tree, index))
+	case .Record_Comp:
+		strings.write_string(builder, "comp{")
+		children_write(builder, tree, node_children(tree, index), "; ")
+		strings.write_string(builder, "}")
+	case .Match:
+		strings.write_string(builder, "match(")
+		children_write(builder, tree, node_children(tree, index), "; ")
+		strings.write_string(builder, ")")
+	case .Match_Arm:
+		strings.write_string(builder, "arm(")
+		children_write(builder, tree, node_children(tree, index), "; ")
+		strings.write_string(builder, ")")
+	case .Match_Pat_Field:
+		strings.write_string(builder, node_text(tree, index))
+		if sub := node_child(tree, index); sub != NO_NODE {
+			strings.write_string(builder, " = ")
+			node_form_write(builder, tree, sub)
+		}
 	case .Logical_Not:
 		strings.write_string(builder, "!(")
 		node_form_write(builder, tree, node_child(tree, index))
@@ -683,7 +702,7 @@ parse_refusals_of_the_forms :: proc(t: ^testing.T) {
 		{"{= 1}", .Literal_Name_Missing, 2, "#{!Literal_Name_Missing}"},
 		{"{1}", .Literal_Name_Missing, 2, "#{!Literal_Name_Missing}"},
 		{"{a = 1,}", .Literal_Name_Missing, 8, "#{a = 1, !Literal_Name_Missing}"},
-		{"{a}", .Literal_Equal_Missing, 3, "#{!Literal_Equal_Missing}"},
+		{"{a.b}", .Literal_Equal_Missing, 5, "#{!Literal_Equal_Missing}"},
 		{"{a 1}", .Literal_Equal_Missing, 4, "#{!Literal_Equal_Missing}"},
 		{"{a == 1}", .Literal_Equal_Missing, 4, "#{!Literal_Equal_Missing}"},
 		{"{a = 1", .Literal_Close_Missing, 7, "#{a = 1, !Literal_Close_Missing}"},
@@ -1228,4 +1247,126 @@ lex_v2_l4_parser_forms_and_refusals :: proc(t: ^testing.T) {
 		parse_console(src, {}, bufs, tree)
 		testing.expectf(t, tree.refusal.refusal == .None, "%q: unexpected refusal %v", src, tree.refusal.refusal)
 	}
+}
+
+@(test)
+lex_v3_grammar_parse_and_refusals :: proc(t: ^testing.T) {
+	Bad_Case :: struct {
+		text:    string,
+		refusal: Refusal,
+	}
+	bad_cases := [?]Bad_Case {
+		{`{ a.b = 1, a.b = 2 }`, .Literal_Field_Twice},
+		{`{ a = { b = 1 }, a.b = 2 }`, .Literal_Path_Conflict},
+		{`{ a.b = 1, a = { b = 2 } }`, .Literal_Path_Conflict},
+		{`{ a.b.c = 1, a.b = 2 }`, .Literal_Path_Conflict},
+		{`{ a..b = 1 }`, .Literal_Name_Missing},
+		{`{ a. = 1 }`, .Literal_Name_Missing},
+		{`{ a.let = 1 }`, .Word_As_Name},
+		{`{ for 123 in xs: "a" = 1 }`, .Comp_Bind_Missing},
+		{`{ for x xs: "a" = 1 }`, .Comp_In_Missing},
+		{`{ for x in xs "a" = 1 }`, .Comp_Colon_Missing},
+		{`{ for x in xs: "a" 1 }`, .Comp_Equal_Missing},
+		{`match x 1 => 2`, .Match_Open_Missing},
+		{`match x {}`, .Match_Empty},
+		{`match x { 1 2 }`, .Match_Arrow_Missing},
+		{`match x { 1 => 2 3 => 4 }`, .Match_Close_Missing},
+		{`match x { [1] => 2 }`, .Match_Pattern_Expected},
+		{`match x { { a = y, b = y } => y }`, .Match_Duplicate_Bind},
+		{`match x { r @ { r } => r }`, .Match_Duplicate_Bind},
+		{`(x: UnknownKind) => x`, .Param_Kind_Unknown},
+		{`(x: Integer[bogus]) => x`, .Param_Unit_Not_Valid},
+		{`(x: Text[MiB]) => x`, .Param_Unit_Not_Valid},
+		{`(x: Integer[MiB 1]) => x`, .Param_Unit_Not_Valid},
+		{`({ x: BadKind }) => x`, .Param_Kind_Unknown},
+	}
+	bufs := new(Console_Tree_Buffers, context.temp_allocator)
+	tree := new(Syntax_Tree, context.temp_allocator)
+	for bc in bad_cases {
+		parse_console(bc.text, {}, bufs, tree)
+		testing.expectf(t, tree.refusal.refusal == bc.refusal, "%q: got %v, want %v", bc.text, tree.refusal.refusal, bc.refusal)
+	}
+
+	ok_cases := [?]string {
+		`{ host, port, src }`,
+		`{ host, port = 8080 }`,
+		`plan with { display.font = .spleen, net.port = 8080 }`,
+		`64 MiB + 2048 pages`,
+		`120 ms`,
+		`{ for x in xs: x = x }`,
+		`{ for { name, val } in xs if val > 0: name = val }`,
+		`match x { -1 => "neg", 0 => "zero", .Verify => "v", { mode = .Verify, port = p, ... } if p > 0 => p, r @ { a } => a, _ => 0 }`,
+		`cfg.port ?? 8080`,
+		`cfg.net.port ?? fallback.port ?? 8080`,
+		`(src: Tree_Ref, size: Integer[MiB], opt: Enum = .Speed) => size`,
+		`({ src: Tree_Ref, opt: Enum = .Speed, ... }) => src`,
+	}
+	for src in ok_cases {
+		parse_console(src, {}, bufs, tree)
+		testing.expectf(t, tree.refusal.refusal == .None, "%q: unexpected refusal %v", src, tree.refusal.refusal)
+	}
+
+	// Verify unit literals parse exact Integer_Unit in Ast_Node.aux without crossing newlines.
+	parse_declaration("1\ns", console_tree_storage(bufs), tree)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.Unexpected)
+
+	parse_console("64 MiB", {}, bufs, tree)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
+	testing.expect_value(t, node_integer(tree, tree.root), i64(64))
+	u := node_integer_unit(tree, tree.root)
+	testing.expect_value(t, u.kind, value_kinds.Value_Kind.Size)
+	testing.expect_value(t, u.unit, u8(value_kinds.Size_Unit.Mebibytes))
+
+	// Match arm duplicate-binding detection works past 64 bindings both without
+	// parser.dup (console tree-scan tier) and with parser.dup (declaration hash tier).
+	ok_arm_b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&ok_arm_b, "match x { { ")
+	for i in 0 ..< 70 {
+		if i > 0 {
+			strings.write_string(&ok_arm_b, ", ")
+		}
+		fmt.sbprintf(&ok_arm_b, "f%d = v%d", i, i)
+	}
+	strings.write_string(&ok_arm_b, " } => v69 }")
+	ok_arm := strings.to_string(ok_arm_b)
+
+	dup_arm_b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&dup_arm_b, "match x { { ")
+	for i in 0 ..< 70 {
+		if i > 0 {
+			strings.write_string(&dup_arm_b, ", ")
+		}
+		fmt.sbprintf(&dup_arm_b, "f%d = v%d", i, i)
+	}
+	strings.write_string(&dup_arm_b, ", f70 = v68 } => v68 }")
+	dup_arm := strings.to_string(dup_arm_b)
+
+	// Console storage (no dup hash table -> promotes past 16 to exact tree scan).
+	parse_console(ok_arm, {}, bufs, tree)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
+	parse_console(dup_arm, {}, bufs, tree)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.Match_Duplicate_Bind)
+
+	// Declaration storage with String_Interner + dup table (promotes past 16 to O(1) hash).
+	ibytes := make([]u8, 16 * 1024, context.temp_allocator)
+	ispans := make([]Sym_Span, 512, context.temp_allocator)
+	ictrls := make([]u8, 1024, context.temp_allocator)
+	irefs := make([]u32, 1024, context.temp_allocator)
+	interner, iok := interner_init(ictrls, irefs, ispans, ibytes, 11)
+	testing.expect(t, iok)
+	dup_ctrls := make([]u8, 1024, context.temp_allocator)
+	dup_refs := make([]u32, 1024, context.temp_allocator)
+	dup_keys := make([]u64, 512, context.temp_allocator)
+	dup_nodes := make([]Node_Index, 512, context.temp_allocator)
+	decl_storage := console_tree_storage(bufs)
+	decl_storage.interner = &interner
+	decl_storage.dup_controls = dup_ctrls
+	decl_storage.dup_refs = dup_refs
+	decl_storage.dup_keys = dup_keys
+	decl_storage.dup_nodes = dup_nodes
+
+	parse_declaration(ok_arm, decl_storage, tree)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
+	parse_declaration(dup_arm, decl_storage, tree)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.Match_Duplicate_Bind)
 }

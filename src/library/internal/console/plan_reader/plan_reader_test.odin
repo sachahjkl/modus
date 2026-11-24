@@ -251,6 +251,57 @@ a_plan_is_refused_at_its_border :: proc(t: ^testing.T) {
 	testing.expect(t, short.refusal.problem == .Too_Many_Rows && short.refusal.integer == 2)
 }
 
+// Typed unit literals and nested `with` overrides at the plan border:
+// compatible units convert exactly (4 MiB -> 1024 pages, 2 ms -> 2000 us,
+// 2 s -> 2000 ms, 8 blocks -> 8 blocks), while incompatible, non-exact, or
+// unit-on-dimensionless values are refused.
+@(test)
+a_plan_converts_and_checks_units :: proc(t: ^testing.T) {
+	image := fake_image_make(t)
+	ok_run := read_text(image, `plan { values = { display = { budget_pages = 4 MiB, budget_processor = 2 ms, store_blocks = 8 blocks, magnifier_eighths = 16 }, root = { budget_growth_period_ms = 2 s } } } with { values.display.magnifier_eighths = 24 }`)
+	testing.expectf(t, ok_run.evaluated && ok_run.refusal.problem == .None, "plan unit read failed: eval=%v prob=%v (%v)", ok_run.evaluated, ok_run.refusal.problem, ok_run.evaluation.refusal.refusal)
+	testing.expect_value(t, ok_run.count, 5)
+
+	found_pages, found_us, found_blocks, found_ms, found_mag := false, false, false, false, false
+	for &row in ok_run.rows[:ok_run.count] {
+		name_len := 0
+		for name_len < len(row.name) && row.name[name_len] != 0 {
+			name_len += 1
+		}
+		name := string(row.name[:name_len])
+		switch name {
+		case "display.budget_pages":
+			testing.expect_value(t, row.value_word, i64(1024))
+			found_pages = true
+		case "display.budget_processor":
+			testing.expect_value(t, row.value_word, i64(2000))
+			found_us = true
+		case "display.store_blocks":
+			testing.expect_value(t, row.value_word, i64(8))
+			found_blocks = true
+		case "root.budget_growth_period_ms":
+			testing.expect_value(t, row.value_word, i64(2000))
+			found_ms = true
+		case "display.magnifier_eighths":
+			testing.expect_value(t, row.value_word, i64(24))
+			found_mag = true
+		}
+	}
+	testing.expect(t, found_pages && found_us && found_blocks && found_ms && found_mag)
+
+	// Refusals: non-exact bytes->pages, time->pages, unit on dimensionless field, blocks->pages.
+	bad_cases := [?]string {
+		`plan { values = { display = { budget_pages = 100 bytes } } }`,
+		`plan { values = { display = { budget_pages = 5 ms } } }`,
+		`plan { values = { display = { budget_pages = 4 blocks } } }`,
+		`plan { values = { display = { magnifier_eighths = 16 MiB } } }`,
+	}
+	for text in bad_cases {
+		bad := read_text(image, text)
+		testing.expectf(t, bad.evaluated && bad.refusal.problem == .Unit_Mismatch, "%q: got eval=%v prob=%v", text, bad.evaluated, bad.refusal.problem)
+	}
+}
+
 // A plan becomes its rows: a role by its hash, a store with its rights,
 // each value typed by its owner, at the ends of each range and bound, a
 // lock apart from a default; the rows pass the border of plans.

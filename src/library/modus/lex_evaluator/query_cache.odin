@@ -426,7 +426,14 @@ hash_value_stream :: proc "contextless" (ws: ^Declaration_Workspace, h: ^blake3.
 	}
 	switch value.kind {
 	case .Integer:
-		hasher_put_u8(h, u8(declaration_eval.Value_Tag.Integer))
+		u := value_unit(value)
+		if u.kind != .None {
+			hasher_put_u8(h, u8(declaration_eval.Value_Tag.Integer_Unit))
+			hasher_put_u8(h, u8(u.kind))
+			hasher_put_u8(h, u.unit)
+		} else {
+			hasher_put_u8(h, u8(declaration_eval.Value_Tag.Integer))
+		}
 		hasher_put_u64(h, u64(value_integer(value)))
 		return true, false
 	case .Boolean:
