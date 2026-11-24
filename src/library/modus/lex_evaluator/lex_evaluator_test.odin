@@ -136,6 +136,11 @@ fake_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []Ho
 	case "pair":
 		return {kind = .Integer, integer = arguments[0].integer * 10 + arguments[1].integer}, true
 	case "set":
+		// Match console call_run: every optional parameter slot (including
+		// trailing omitted ones) must be passed as .None, so len == 2.
+		if len(arguments) != 2 {
+			return {}, false
+		}
 		// Each value is an Enum of the enum of its parameter, or no value.
 		given :: proc "contextless" (value: Host_Value, enum_index: u32) -> i64 {
 			if value.kind != .Enum || value.detail != enum_index {
@@ -143,14 +148,7 @@ fake_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []Ho
 			}
 			return value.integer
 		}
-		layout, font := Host_Value{}, Host_Value{}
-		if len(arguments) > 0 {
-			layout = arguments[0]
-		}
-		if len(arguments) > 1 {
-			font = arguments[1]
-		}
-		return {kind = .Integer, integer = given(layout, 1) * 10 + given(font, 2)}, true
+		return {kind = .Integer, integer = given(arguments[0], 1) * 10 + given(arguments[1], 2)}, true
 	}
 	return {kind = .Integer, integer = i64(fake.log_count)}, true
 }

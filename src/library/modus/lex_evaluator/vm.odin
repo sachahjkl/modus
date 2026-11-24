@@ -3734,16 +3734,18 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 	}
 
 	// Step 2: Check missing named parameters & Lex function arity BEFORE any arg runs.
-	if !site.has_refused_arg {
-		if site.has_named {
-			for p in 0 ..< param_count {
-				optional := sig.optional[p] || (sig.optional_last && p == param_count - 1)
-				if !given[p] && !optional {
-					refuse(eval, {refusal = .Argument_Missing, chunk_id = frame.chunk_id, node = site.node_idx, command = name, field = sig.names[p]})
-					return false
-				}
+	missing_required := false
+	for p in 0 ..< param_count {
+		optional := sig.optional[p] || (sig.optional_last && p == param_count - 1)
+		if !given[p] && !optional {
+			if site.has_named && !site.has_refused_arg {
+				refuse(eval, {refusal = .Argument_Missing, chunk_id = frame.chunk_id, node = site.node_idx, command = name, field = sig.names[p]})
+				return false
 			}
+			missing_required = true
 		}
+	}
+	if !site.has_refused_arg {
 		if callee == .Builtin && given_count != param_count {
 			refuse(eval, {refusal = .Function_Arguments, chunk_id = frame.chunk_id, node = site.node_idx, command = name, left = i64(given_count), right = i64(param_count)})
 			return false
@@ -3930,7 +3932,15 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 			refuse(eval, {refusal = .Host_Refused, chunk_id = frame.chunk_id, node = site.node_idx})
 			return false
 		}
-		res_hv, rok := eval.host.call_run(eval.host.data, name, host_args[:arg_total])
+		// Pass the full parameter count (less an omitted optional_last slot)
+		// when all required parameters are present so trailing optional
+		// parameters reach the host as .None (Presence.Absent).
+		passed := arg_total
+		if site.has_named || !missing_required {
+			optional_tail := sig.optional_last && param_count > 0 && !given[param_count - 1] ? 1 : 0
+			passed = max(passed, param_count - optional_tail)
+		}
+		res_hv, rok := eval.host.call_run(eval.host.data, name, host_args[:passed])
 		if refused(eval) {
 			return false
 		}
