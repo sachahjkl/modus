@@ -1150,16 +1150,25 @@ project {
 // && / || / ! / ++ precedence, and record destructuring patterns.
 @(test)
 lex_v2_l4_parser_forms_and_refusals :: proc(t: ^testing.T) {
-	// Escapes decoder edge cases.
+	// Escapes decoder edge cases (control characters refused per text_encoding).
 	buf: [64]u8
-	w, _, ok := decode_text_escapes(`a\nb\rc\td\\e\"f\$g\u{41}\u{1F600}`, buf[:])
+	w, _, ok := decode_text_escapes(`a\\b\"c\$d\u{41}\u{1F600}`, buf[:])
 	testing.expect(t, ok)
-	testing.expect_value(t, string(buf[:w]), "a\nb\rc\td\\e\"f$gA😀")
+	testing.expect_value(t, string(buf[:w]), "a\\b\"c$dA😀")
 
 	bad_escapes := [?]string{
 		`\q`,
+		`\n`,
+		`\r`,
+		`\t`,
 		`\`,
 		`\u{}`,
+		`\u{0}`,
+		`\u{0A}`,
+		`\u{1F}`,
+		`\u{7F}`,
+		`\u{80}`,
+		`\u{9F}`,
 		`\u{1234567}`,
 		`\u{D800}`,
 		`\u{DFFF}`,
@@ -1179,6 +1188,12 @@ lex_v2_l4_parser_forms_and_refusals :: proc(t: ^testing.T) {
 	}
 	bad_cases := [?]Refusal_Case {
 		{`"bad \q"`, .Escape_Not_Valid},
+		{`"ctl \n"`, .Escape_Not_Valid},
+		{`"ctl \r"`, .Escape_Not_Valid},
+		{`"ctl \t"`, .Escape_Not_Valid},
+		{`"ctl \u{0}"`, .Escape_Not_Valid},
+		{`"ctl \u{7F}"`, .Escape_Not_Valid},
+		{`"ctl \u{9F}"`, .Escape_Not_Valid},
 		{`"surrogate \u{D800}"`, .Escape_Not_Valid},
 		{`"too high \u{110000}"`, .Escape_Not_Valid},
 		{`"interp ${1 + 2"`, .Interpolation_Close_Missing},
@@ -1200,7 +1215,7 @@ lex_v2_l4_parser_forms_and_refusals :: proc(t: ^testing.T) {
 
 	// Accepted forms & precedence.
 	ok_cases := [?]string {
-		`"hello\nworld"`,
+		`"hello \"world\" \\ \$1 \u{41}"`,
 		`"a ${1 + 2} b ${"nested"} c"`,
 		`!true && false || 1 = 1`,
 		`[1, 2] ++ [3, 4] = [1, 2, 3, 4]`,

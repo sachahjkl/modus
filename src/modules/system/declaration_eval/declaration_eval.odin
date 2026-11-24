@@ -74,12 +74,35 @@ evaluate :: proc "c" (
 	output: system.Lent({.Read, .Write}),
 	error: ^errors.Error_Record,
 ) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if source == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, ARGUMENT_SOURCE, 0, SOURCE_BYTES_MOST)
+	}
+	if field_path == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, ARGUMENT_FIELD_PATH, 0, FIELD_PATH_BYTES_MOST)
+	}
+	if bundle == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, ARGUMENT_BUNDLE, 0, 0)
+	}
 	source_count := intrinsics.volatile_load(&source.count)
-	if source_count == 0 {
+	source_bytes := intrinsics.volatile_load(&source.bytes)
+	if source_count == 0 || source_bytes == nil {
 		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, ARGUMENT_SOURCE, 0, SOURCE_BYTES_MOST)
 	}
 	if source_count > SOURCE_BYTES_MOST {
 		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, ARGUMENT_SOURCE, i64(source_count), SOURCE_BYTES_MOST)
+	}
+	path_count := intrinsics.volatile_load(&field_path.count)
+	path_bytes := intrinsics.volatile_load(&field_path.bytes)
+	if path_count > FIELD_PATH_BYTES_MOST {
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, ARGUMENT_FIELD_PATH, i64(path_count), FIELD_PATH_BYTES_MOST)
+	}
+	if path_count > 0 && path_bytes == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, ARGUMENT_FIELD_PATH, i64(path_count), FIELD_PATH_BYTES_MOST)
+	}
+	bundle_count := intrinsics.volatile_load(&bundle.count)
+	bundle_bytes := intrinsics.volatile_load(&bundle.bytes)
+	if bundle_count > 0 && bundle_bytes == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Empty, .Bytes, ARGUMENT_BUNDLE, i64(bundle_count), 0)
 	}
 	amounts, budget_status := system.budget_read()
 	if budget_status != .Ok {
@@ -97,20 +120,15 @@ evaluate :: proc "c" (
 	if source_status != .Ok {
 		return refusal_give(error, arena_refusal)
 	}
-	intrinsics.mem_copy_non_overlapping(source_address, source.bytes, int(source_count))
+	intrinsics.mem_copy_non_overlapping(source_address, source_bytes, int(source_count))
 	source_text := string(([^]u8)(source_address)[:source_count])
 
-	path_count := intrinsics.volatile_load(&field_path.count)
-	if path_count > FIELD_PATH_BYTES_MOST {
-		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, ARGUMENT_FIELD_PATH, i64(path_count), FIELD_PATH_BYTES_MOST)
-	}
 	if path_count > 0 {
-		intrinsics.mem_copy_non_overlapping(&field_path_copy[0], field_path.bytes, int(path_count))
+		intrinsics.mem_copy_non_overlapping(&field_path_copy[0], path_bytes, int(path_count))
 	}
 	path_text := string(field_path_copy[:path_count])
 
 	// Copy bundle into the arena (bounded only by process memory budget, no 256 KiB cap).
-	bundle_count := intrinsics.volatile_load(&bundle.count)
 	bundle_view = nil
 	config := lex_evaluator.Declaration_Config{}
 	if bundle_count > 0 {
@@ -118,7 +136,7 @@ evaluate :: proc "c" (
 		if bundle_status != .Ok {
 			return refusal_give(error, arena_refusal)
 		}
-		intrinsics.mem_copy_non_overlapping(bundle_address, bundle.bytes, int(bundle_count))
+		intrinsics.mem_copy_non_overlapping(bundle_address, bundle_bytes, int(bundle_count))
 		bundle_view = ([^]u8)(bundle_address)[:bundle_count]
 		if refusal := contract.bundle_validate(bundle_view); refusal != .None {
 			return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, ARGUMENT_BUNDLE, 0, 0, i64(refusal))

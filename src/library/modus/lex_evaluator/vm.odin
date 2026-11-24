@@ -807,7 +807,7 @@ shape_lookup_sym :: proc "contextless" (eval: ^Evaluation, shape_id: u32, sym: l
 lazy_record_base_shape :: proc "contextless" (eval: ^Evaluation, v: Value) -> (shape_id: u32, ok: bool) {
 	cur := v
 	for _ in 0 ..< 8 {
-		#partial switch cur.kind {
+		switch cur.kind {
 		case .Record_Literal:
 			idx := int(cur.data)
 			if idx < 0 || idx >= eval.record_count {
@@ -826,7 +826,9 @@ lazy_record_base_shape :: proc "contextless" (eval: ^Evaluation, v: Value) -> (s
 				return 0, false
 			}
 			cur = eval.tagged_records[idx]
-		case:
+		case .None, .Integer, .Text, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input,
+		     .Enum, .Member, .Function, .List, .Hash, .Boolean, .Module_Ref, .Recipe_Ref,
+		     .Follow_Ref, .Store_Ref, .Tree_Ref:
 			return 0, false
 		}
 	}
@@ -838,7 +840,7 @@ lazy_record_base_shape :: proc "contextless" (eval: ^Evaluation, v: Value) -> (s
 lazy_record_import_owner :: proc "contextless" (eval: ^Evaluation, v: Value) -> int {
 	cur := v
 	for _ in 0 ..< 64 {
-		#partial switch cur.kind {
+		switch cur.kind {
 		case .Record_Literal:
 			idx := int(cur.data)
 			if idx < 0 || idx >= eval.record_count {
@@ -858,7 +860,9 @@ lazy_record_import_owner :: proc "contextless" (eval: ^Evaluation, v: Value) -> 
 				return -1
 			}
 			cur = eval.tagged_records[idx]
-		case:
+		case .None, .Integer, .Text, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input,
+		     .Enum, .Member, .Function, .List, .Hash, .Boolean, .Module_Ref, .Recipe_Ref,
+		     .Follow_Ref, .Store_Ref, .Tree_Ref:
 			return -1
 		}
 	}
@@ -870,7 +874,7 @@ lazy_record_import_owner :: proc "contextless" (eval: ^Evaluation, v: Value) -> 
 lazy_record_lookup_thunk :: proc "contextless" (eval: ^Evaluation, v: Value, sym: lex_parser.Sym_Id) -> (ref: Thunk_Ref, found: bool) {
 	cur := v
 	for _ in 0 ..< 64 {
-		#partial switch cur.kind {
+		switch cur.kind {
 		case .Record_Literal:
 			idx := int(cur.data)
 			if idx < 0 || idx >= eval.record_count {
@@ -904,7 +908,9 @@ lazy_record_lookup_thunk :: proc "contextless" (eval: ^Evaluation, v: Value, sym
 				return NO_THUNK, false
 			}
 			cur = eval.tagged_records[idx]
-		case:
+		case .None, .Integer, .Text, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input,
+		     .Enum, .Member, .Function, .List, .Hash, .Boolean, .Module_Ref, .Recipe_Ref,
+		     .Follow_Ref, .Store_Ref, .Tree_Ref:
 			return NO_THUNK, false
 		}
 	}
@@ -2041,10 +2047,15 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 				if tref == .None {
 					n := lex_parser.node_at(chunk.tree, rn)
 					if n != nil {
-						#partial switch n.kind {
+						switch n.kind {
 						case .Hash: tref = .Hash_Not_Valid
 						case .Let:  tref = .Let_In_Missing
 						case .If:   tref = .If_Then_Missing
+						case .Integer, .Text, .Name, .Call, .Negate, .Binary, .Condition, .Fact_Name,
+						     .Refused, .Field_Names, .Record_Literal, .Literal_Field, .Named_Argument,
+						     .Let_Binding, .Member, .Function, .Parameter, .List_Literal, .Boolean,
+						     .Field_Select, .Pipe, .Placeholder, .Logical_Not, .Text_Interp,
+						     .Pattern_Record, .Pattern_Field:
 						}
 					}
 				}
@@ -2331,24 +2342,42 @@ vm_instantiate_record :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame
 
 @(private)
 vm_compare :: proc "contextless" (eval: ^Evaluation, op: Opcode, left, right: Value, chunk_id: u16, node_idx: lex_parser.Node_Index) -> (bool, bool) {
+	Compare_Op :: enum u8 {
+		Eq,
+		Neq,
+		Lt,
+		Le,
+		Gt,
+		Ge,
+	}
+	cmp_op: Compare_Op
 	parser_op: lex_parser.Operator
-	#partial switch op {
-	case .Eq:  parser_op = .Equal
-	case .Neq: parser_op = .Not_Equal
-	case .Lt:  parser_op = .Less
-	case .Le:  parser_op = .Less_Or_Equal
-	case .Gt:  parser_op = .Greater
-	case .Ge:  parser_op = .Greater_Or_Equal
+	switch op {
+	case .Eq:  cmp_op, parser_op = .Eq,  .Equal
+	case .Neq: cmp_op, parser_op = .Neq, .Not_Equal
+	case .Lt:  cmp_op, parser_op = .Lt,  .Less
+	case .Le:  cmp_op, parser_op = .Le,  .Less_Or_Equal
+	case .Gt:  cmp_op, parser_op = .Gt,  .Greater
+	case .Ge:  cmp_op, parser_op = .Ge,  .Greater_Or_Equal
+	case .Nop, .Move, .Load_None, .Load_Bool, .Load_Int_Imm, .Load_Const,
+	     .Get_Upval, .Get_Let, .Let_Enter, .Neg, .Not, .Add, .Sub, .Mul, .Div, .Rem,
+	     .List_Concat, .Jmp, .Jmp_If_False, .Jmp_If_False_Keep, .Jmp_If_True_Keep,
+	     .Check_Bool, .Closure, .Check_Call, .Call, .Tail_Call, .Call_Builtin,
+	     .Call_Site, .Ret, .Make_Record, .Get_Field, .With, .Destructure,
+	     .List_Begin, .List_Push, .List_End, .Str_Begin, .Str_Push, .Str_End,
+	     .Assert_Fail, .Trace, .Load_Global, .Refuse_Parse, .Extra_Arg:
+		refuse(eval, {refusal = .Host_Refused, chunk_id = chunk_id, node = node_idx})
+		return false, false
 	}
 	if left.kind != right.kind {
 		refuse(eval, {refusal = .Operator_Kinds, chunk_id = chunk_id, node = node_idx, operator = parser_op, left_kind = left.kind, right_kind = right.kind})
 		return false, false
 	}
-	is_order := op != .Eq && op != .Neq
+	is_order := cmp_op != .Eq && cmp_op != .Neq
 	switch left.kind {
 	case .Integer:
 		li, ri := value_integer(left), value_integer(right)
-		#partial switch op {
+		switch cmp_op {
 		case .Eq:  return li == ri, true
 		case .Neq: return li != ri, true
 		case .Lt:  return li < ri, true
@@ -2362,7 +2391,7 @@ vm_compare :: proc "contextless" (eval: ^Evaluation, op: Opcode, left, right: Va
 			return false, false
 		}
 		same := value_boolean(left) == value_boolean(right)
-		return op == .Eq ? same : !same, true
+		return cmp_op == .Eq ? same : !same, true
 	case .Text:
 		lt := value_text(eval, left)
 		rt := value_text(eval, right)
@@ -2371,15 +2400,16 @@ vm_compare :: proc "contextless" (eval: ^Evaluation, op: Opcode, left, right: Va
 		}
 		if is_order {
 			c := str_cmp(lt, rt)
-			#partial switch op {
-			case .Lt: return c < 0, true
-			case .Le: return c <= 0, true
-			case .Gt: return c > 0, true
-			case .Ge: return c >= 0, true
+			switch cmp_op {
+			case .Lt:  return c < 0, true
+			case .Le:  return c <= 0, true
+			case .Gt:  return c > 0, true
+			case .Ge:  return c >= 0, true
+			case .Eq, .Neq:
 			}
 		}
 		same := lt == rt
-		return op == .Eq ? same : !same, true
+		return cmp_op == .Eq ? same : !same, true
 	case .Hash, .Module_Ref, .Tree_Ref:
 		if is_order {
 			refuse(eval, {refusal = .Operator_Kinds, chunk_id = chunk_id, node = node_idx, operator = parser_op, left_kind = left.kind, right_kind = right.kind})

@@ -4,6 +4,7 @@ package lex_evaluator
 import "core:mem"
 import "core:strings"
 import "core:testing"
+import "modus:contract/declaration_eval"
 
 @(private = "file")
 l4_workspace :: proc(scale: uint = 1) -> ^Declaration_Workspace {
@@ -22,9 +23,16 @@ l4_string_escapes_and_interpolation :: proc(t: ^testing.T) {
 	ws := l4_workspace()
 	cfg := Declaration_Config{stack_bytes = 2 * 1024 * 1024}
 
-	// Refusals first: bad escapes, surrogate, out-of-range, uninterpolatable kinds.
+	// Refusals first: bad escapes, control chars, surrogate, out-of-range, unclosed interp.
 	bad_parse := [?]string{
 		`"bad \x"`,
+		`"ctl \n"`,
+		`"ctl \r"`,
+		`"ctl \t"`,
+		`"ctl \u{0}"`,
+		`"ctl \u{1F}"`,
+		`"ctl \u{7F}"`,
+		`"ctl \u{9F}"`,
 		`"surrogate \u{D800}"`,
 		`"high \u{110000}"`,
 		`"unclosed ${1 + 2"`,
@@ -45,18 +53,44 @@ l4_string_escapes_and_interpolation :: proc(t: ^testing.T) {
 		testing.expectf(t, !res.ok && res.failure_kind == .Type_Error, "%q: got ok=%v fail=%v", src, res.ok, res.failure_kind)
 	}
 
-	// Escapes and interpolation successes.
-	res := declaration_evaluate(ws, `"line1\nline2\t\"quoted\"\\\$done\u{41}\u{1F600}"`, "", cfg)
+	// Escapes and interpolation successes — round-tripped through
+	// declaration_evaluate_to_buffer + declaration_eval.output_validate!
+	out_buf := make([]u8, 4096, context.temp_allocator)
+	esc_src := `"a \"quoted\" \\ \$done \u{41}\u{1F600}"`
+	res := declaration_evaluate(ws, esc_src, "", cfg)
 	testing.expect(t, res.ok && res.value.kind == .Text)
-	testing.expect_value(t, value_text(&ws.evaluation, res.value), "line1\nline2\t\"quoted\"\\$doneA😀")
+	testing.expect_value(t, value_text(&ws.evaluation, res.value), "a \"quoted\" \\ $done A😀")
+	w1, ok1 := declaration_evaluate_to_buffer(ws, esc_src, "", cfg, out_buf)
+	testing.expect(t, ok1 && w1 > 0)
+	_, ref1 := declaration_eval.output_validate(out_buf[:w1])
+	testing.expect_value(t, ref1, declaration_eval.Output_Refusal.None)
 
-	res = declaration_evaluate(ws, `let name = "modus", ver = 2, ok = true, m = .Verify in "sys=${name} v${ver} ok=${ok} mode=${m}"`, "", cfg)
+	interp_src := `let name = "modus", ver = 2, ok = true, m = .Verify in "sys=${name} v${ver} ok=${ok} mode=${m}"`
+	res = declaration_evaluate(ws, interp_src, "", cfg)
 	testing.expect(t, res.ok && res.value.kind == .Text)
 	testing.expect_value(t, value_text(&ws.evaluation, res.value), "sys=modus v2 ok=true mode=Verify")
+	w2, ok2 := declaration_evaluate_to_buffer(ws, interp_src, "", cfg, out_buf)
+	testing.expect(t, ok2 && w2 > 0)
+	_, ref2 := declaration_eval.output_validate(out_buf[:w2])
+	testing.expect_value(t, ref2, declaration_eval.Output_Refusal.None)
 
 	// Nested interpolation with escaped quotes inside inner string.
-	res = declaration_evaluate(ws, `let x = 7 in "outer(${"inner=${x * 2}"})"`, "", cfg)
-	testing.expect(t, res.ok && value_text(&ws.evaluation, res.value) == "outer(inner=14)")
+	nested_src := `let x = 7 in "outer(${"inner=\"${x * 2}\""})"`
+	res = declaration_evaluate(ws, nested_src, "", cfg)
+	testing.expect(t, res.ok && value_text(&ws.evaluation, res.value) == `outer(inner="14")`)
+	w3, ok3 := declaration_evaluate_to_buffer(ws, nested_src, "", cfg, out_buf)
+	testing.expect(t, ok3 && w3 > 0)
+	_, ref3 := declaration_eval.output_validate(out_buf[:w3])
+	testing.expect_value(t, ref3, declaration_eval.Output_Refusal.None)
+
+	// Assert refusal buffer with escapes validates cleanly on the wire.
+	assert_src := `assert(false, "bad \"arg\" \u{2192} fix", 1)`
+	w4, ok4 := declaration_evaluate_to_buffer(ws, assert_src, "", cfg, out_buf)
+	testing.expect(t, ok4 && w4 > 0)
+	hdr4, ref4 := declaration_eval.output_validate(out_buf[:w4])
+	testing.expect_value(t, ref4, declaration_eval.Output_Refusal.None)
+	testing.expect_value(t, hdr4.status, declaration_eval.Output_Status.Refused)
+	testing.expect_value(t, hdr4.failure_kind, declaration_eval.Failure_Kind.Assertion_Failed)
 }
 
 // Boolean operators &&, ||, ! (short-circuit and strict Boolean typing) and

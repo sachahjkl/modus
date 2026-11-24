@@ -119,7 +119,7 @@ vm_str_interp_end :: proc "contextless" (eval: ^Evaluation, chunk_id: u16, node_
 
 	for piece in pieces {
 		seg: string
-		#partial switch piece.kind {
+		switch piece.kind {
 		case .Text:
 			seg = value_text(eval, piece)
 		case .Integer:
@@ -134,7 +134,9 @@ vm_str_interp_end :: proc "contextless" (eval: ^Evaluation, chunk_id: u16, node_
 			seg = console_language.hash_format(h, &hash_buf)
 		case .Member:
 			seg = member_name_of(eval, piece)
-		case:
+		case .None, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum,
+		     .Function, .List, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref,
+		     .Plan_Value, .Project_Value, .Tree_Ref:
 			return refuse(eval, {refusal = .Interpolation_Kind, chunk_id = chunk_id, node = node_idx, left_kind = piece.kind})
 		}
 		if len(seg) > len(eval.text_arena) - cur {

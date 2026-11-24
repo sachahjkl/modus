@@ -314,3 +314,100 @@ query_cache_new_transitive_import_and_bounded_eviction :: proc(t: ^testing.T) {
 		expect_cached_matches_uncached(t, cache, ws, `{ v = k * 3 }`, "v", bcfg, "eviction stress")
 	}
 }
+
+@(test)
+query_cache_lazy_trace_distinct_roots_budget_and_partial_dep_failure :: proc(t: ^testing.T) {
+	ws := qc_test_workspace(context.temp_allocator)
+	cache := qc_test_cache(context.temp_allocator)
+	buf := make([]u8, 64 * 1024, context.temp_allocator)
+
+	// 1. Lazy record field containing `trace(...)` forced only during
+	//    `serialize_value_into` MUST opt out of L2 caching on every run!
+	lazy_trace_src := `{ a = trace("lazy_ping", 42), b = 1 }`
+	for run in 0 ..< 3 {
+		tlog: Trace_Log
+		prof: Evaluation_Profile
+		cfg := Declaration_Config{trace_log = &tlog, profile = &prof}
+		w, ok := query_cache_evaluate_to_buffer(cache, ws, lazy_trace_src, "", cfg, buf)
+		testing.expectf(t, ok && w > 0, "lazy trace run %d failed", run)
+		testing.expect_value(t, prof.cache_l2_hits, u64(0))
+		testing.expect_value(t, prof.cache_l2_misses, u64(1))
+		testing.expect_value(t, tlog.count, 1)
+		testing.expect_value(t, tlog.entries[0].message, "lazy_ping")
+	}
+
+	// 2. Two distinct root sources sharing the same field_path and config
+	//    occupy distinct L2 slots and both hit on repeat (zero thrashing).
+	root_a := `{ out = 10 }`
+	root_b := `{ out = 20 }`
+	prof: Evaluation_Profile
+	cfg := Declaration_Config{profile = &prof}
+	expect_cached_matches_uncached(t, cache, ws, root_a, "out", cfg, "root_a cold")
+	expect_cached_matches_uncached(t, cache, ws, root_b, "out", cfg, "root_b cold")
+	prof = {}
+	out_a := expect_cached_matches_uncached(t, cache, ws, root_a, "out", cfg, "root_a warm")
+	out_b := expect_cached_matches_uncached(t, cache, ws, root_b, "out", cfg, "root_b warm")
+	testing.expect_value(t, prof.cache_l2_hits, u64(2))
+	testing.expect_value(t, prof.cache_l2_misses, u64(0))
+	_, ra, _ := declaration_eval.output_read_header(out_a)
+	_, _ = declaration_eval.output_read_tag(&ra)
+	va, _ := declaration_eval.output_read_i64(&ra)
+	testing.expect_value(t, va, i64(10))
+	_, rb, _ := declaration_eval.output_read_header(out_b)
+	_, _ = declaration_eval.output_read_tag(&rb)
+	vb, _ := declaration_eval.output_read_i64(&rb)
+	testing.expect_value(t, vb, i64(20))
+
+	// 3. Tight budget after wide-budget hit MUST NOT hit the wide-budget entry;
+	//    it must run and refuse with Step_Bound_Reached!
+	loop_src := `{ out = let f = (n) => if n = 0 then 0 else f(n - 1) in f(200) }`
+	wide_prof: Evaluation_Profile
+	wide_cfg := Declaration_Config{budget = 100_000, profile = &wide_prof}
+	expect_cached_matches_uncached(t, cache, ws, loop_src, "out", wide_cfg, "wide budget")
+	testing.expect_value(t, wide_prof.cache_l2_misses, u64(1))
+
+	tight_prof: Evaluation_Profile
+	tight_cfg := Declaration_Config{budget = 25, profile = &tight_prof}
+	wt, okt := query_cache_evaluate_to_buffer(cache, ws, loop_src, "out", tight_cfg, buf)
+	testing.expect(t, okt && wt > 0)
+	testing.expect_value(t, tight_prof.cache_l2_hits, u64(0))
+	testing.expect_value(t, tight_prof.cache_l2_misses, u64(1))
+	ht, _, rt_ref := declaration_eval.output_read_header(buf[:wt])
+	testing.expect_value(t, rt_ref, declaration_eval.Output_Refusal.None)
+	testing.expect_value(t, ht.status, declaration_eval.Output_Status.Refused)
+	testing.expect_value(t, ht.failure_kind, declaration_eval.Failure_Kind.Step_Bound_Reached)
+
+	// 4. Partial dep-validation failure followed by a failing miss MUST NOT
+	//    leave dep 0 mutated on a stale entry.
+	files := make(map[string]string, 8, context.temp_allocator)
+	files["d0.lex"] = `{ v = 10 }`
+	files["d1.lex"] = `{ v = 20 }`
+	pair_root := `{ out = import("d0.lex").v + import("d1.lex").v }`
+	pprof: Evaluation_Profile
+	pcfg := Declaration_Config{loader = {data = &files, load_path = qc_map_load}, profile = &pprof}
+	expect_cached_matches_uncached(t, cache, ws, pair_root, "out", pcfg, "pair cold")
+
+	// d0 passes early cutoff (same v=10), d1 fails (division by zero), so
+	// validation fails and the subsequent miss returns a refusal.
+	files["d0.lex"] = `let k = 5 in { v = k * 2 }`
+	files["d1.lex"] = `{ v = 1 / 0 }`
+	pprof = {}
+	wf, okf := query_cache_evaluate_to_buffer(cache, ws, pair_root, "out", pcfg, buf)
+	testing.expect(t, okf && wf > 0)
+	testing.expect_value(t, pprof.cache_l2_hits, u64(0))
+	hf, _, _ := declaration_eval.output_read_header(buf[:wf])
+	testing.expect_value(t, hf.status, declaration_eval.Output_Status.Refused)
+
+	// Restore d1 to its original content while changing d0 to v=100: because
+	// the stale entry was invalidated (and d0's hash was never prematurely
+	// committed), the next query MUST miss and compute 120!
+	files["d0.lex"] = `let k = 50 in { v = k * 2 }`
+	files["d1.lex"] = `{ v = 20 }`
+	pprof = {}
+	out_pair := expect_cached_matches_uncached(t, cache, ws, pair_root, "out", pcfg, "pair after failed miss")
+	testing.expect_value(t, pprof.cache_l2_misses, u64(1))
+	_, rp, _ := declaration_eval.output_read_header(out_pair)
+	_, _ = declaration_eval.output_read_tag(&rp)
+	vp, _ := declaration_eval.output_read_i64(&rp)
+	testing.expect_value(t, vp, i64(120))
+}

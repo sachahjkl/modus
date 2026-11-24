@@ -28,6 +28,7 @@ package lex_parser
 import "modus:console_condition"
 import "modus:console_language"
 import module "modus:contract/module"
+import "modus:contract/text_encoding"
 import "modus:hash_table"
 import "modus:line_editor"
 
@@ -237,7 +238,7 @@ Refusal :: enum u8 {
 	Placeholder_Twice           = 38, // Two "_" placeholders in one piped call.
 	Placeholder_Nested          = 39, // "_" inside a call nested in a piped call.
 	Placeholder_Without_Pipe    = 40, // "_" as a call argument with no preceding "|>".
-	Escape_Not_Valid            = 41, // Unknown backslash escape or out-of-range/surrogate \u{...}.
+	Escape_Not_Valid            = 41, // Unknown backslash escape or control/surrogate/out-of-range \u{...}.
 	Interpolation_Close_Missing = 42, // Missing "}" closing a "${...}" string interpolation.
 	Pattern_Field_Missing       = 43, // Missing field name inside a destructuring pattern "{ ... }".
 	Pattern_Close_Missing       = 44, // Missing "}" closing a destructuring pattern.
@@ -1066,7 +1067,8 @@ named_ahead :: proc "contextless" (parser: ^Parser) -> bool {
 
 // decode_text_escapes validates and decodes backslash escape sequences inside
 // a raw string body (without surrounding quotes). Supported escapes:
-//   \\  \"  \n  \r  \t  \$  \u{XXXXXX} (1..6 hex digits; refuses surrogates
+//   \\  \"  \$  \u{XXXXXX} (1..6 hex digits; refuses control characters,
+//   surrogates, and values above 0x10FFFF per src/md/data/text_encoding.md).
 //   0xD800..0xDFFF and values > 0x10FFFF).
 // When `out` is nil, validates and computes `written` without writing bytes.
 decode_text_escapes :: proc "contextless" (raw: string, out: []u8) -> (written: int, bad_offset: int, ok: bool) {
@@ -1100,33 +1102,6 @@ decode_text_escapes :: proc "contextless" (raw: string, out: []u8) -> (written: 
 			}
 			w += 1
 			i += 2
-		case 'n':
-			if out != nil {
-				if w >= len(out) {
-					return w, esc_pos, false
-				}
-				out[w] = '\n'
-			}
-			w += 1
-			i += 2
-		case 'r':
-			if out != nil {
-				if w >= len(out) {
-					return w, esc_pos, false
-				}
-				out[w] = '\r'
-			}
-			w += 1
-			i += 2
-		case 't':
-			if out != nil {
-				if w >= len(out) {
-					return w, esc_pos, false
-				}
-				out[w] = '\t'
-			}
-			w += 1
-			i += 2
 		case 'u':
 			if i + 2 >= len(raw) || raw[i + 2] != '{' {
 				return w, esc_pos, false
@@ -1157,7 +1132,7 @@ decode_text_escapes :: proc "contextless" (raw: string, out: []u8) -> (written: 
 			if digits == 0 || j >= len(raw) || raw[j] != '}' {
 				return w, esc_pos, false
 			}
-			if cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
+			if cp > 0x10FFFF || !text_encoding.character_in_text(rune(cp)) {
 				return w, esc_pos, false
 			}
 			// Encode Unicode scalar value to UTF-8.

@@ -223,35 +223,21 @@ emit_jmp :: proc "contextless" (c: ^Compiler, op: Opcode, a: u8, node_idx: lex_p
 
 @(private)
 patch_jmp :: proc "contextless" (c: ^Compiler, jmp_pos: u32, node_idx: lex_parser.Node_Index) {
+	_ = node_idx
 	if c.failed {
 		return
 	}
 	target := u32(c.eval.code_count)
 	delta := i64(target) - i64(jmp_pos) - 1
-	if delta >= i64(min(i16)) && delta <= i64(max(i16)) {
-		old := c.eval.code[jmp_pos]
-		op, _ := inst_op(old)
-		c.eval.code[jmp_pos] = inst_asbx(op, inst_a(old), i16(delta))
-		return
-	}
-	// Rare wide jump (> 32767 instructions): shift branch forward by 1 word and
-	// prefix with Extra_Arg holding target relative to proto code_start.
-	if c.eval.code_count >= len(c.eval.code) || c.eval.code_count >= len(c.eval.code_nodes) {
+	if delta < i64(min(i16)) || delta > i64(max(i16)) {
+		// Never relocate already-emitted code (would invalidate earlier jump
+		// offsets); refuse jumps exceeding the 16-bit signed displacement cleanly.
 		compiler_fail_pool(c)
 		return
 	}
-	for i := c.eval.code_count; i > int(jmp_pos) + 1; i -= 1 {
-		c.eval.code[i] = c.eval.code[i - 1]
-		c.eval.code_nodes[i] = c.eval.code_nodes[i - 1]
-	}
-	c.eval.code_count += 1
 	old := c.eval.code[jmp_pos]
 	op, _ := inst_op(old)
-	new_target := u32(c.eval.code_count)
-	c.eval.code[jmp_pos] = inst_ax(.Extra_Arg, new_target)
-	c.eval.code_nodes[jmp_pos] = node_idx
-	c.eval.code[jmp_pos + 1] = inst_asbx(op, inst_a(old), 0)
-	c.eval.code_nodes[jmp_pos + 1] = node_idx
+	c.eval.code[jmp_pos] = inst_asbx(op, inst_a(old), i16(delta))
 }
 
 @(private)
@@ -1289,13 +1275,16 @@ compile_call :: proc "contextless" (c: ^Compiler, call_idx: lex_parser.Node_Inde
 			has_refused = true
 			continue
 		}
-		#partial switch an.kind {
+		switch an.kind {
 		case .Named_Argument:
 			has_named = true
 		case .Condition, .Fact_Name, .Field_Names:
 			has_special = true
 		case .Refused:
 			has_refused = true
+		case .Integer, .Text, .Name, .Call, .Negate, .Binary, .Record_Literal, .Literal_Field,
+		     .Let, .Let_Binding, .Member, .Function, .Parameter, .List_Literal, .Hash, .Boolean,
+		     .If, .Field_Select, .Pipe, .Placeholder, .Logical_Not, .Text_Interp, .Pattern_Record, .Pattern_Field:
 		}
 	}
 
@@ -1399,7 +1388,7 @@ compile_call :: proc "contextless" (c: ^Compiler, call_idx: lex_parser.Node_Inde
 		if an == nil || an.kind == .Refused {
 			sarg.kind = .Refused
 		} else {
-			#partial switch an.kind {
+			switch an.kind {
 			case .Condition:
 				sarg.kind = .Condition
 			case .Fact_Name:
@@ -1412,7 +1401,11 @@ compile_call :: proc "contextless" (c: ^Compiler, call_idx: lex_parser.Node_Inde
 				val_idx := arg_named_placeholder[i] ? piped_lhs : lex_parser.node_child(c.tree, an_idx)
 				sarg.val_node = val_idx
 				compile_call_arg_expr(c, &sarg, val_idx, parent_ls)
-			case:
+			case .Refused:
+				sarg.kind = .Refused
+			case .Integer, .Text, .Name, .Call, .Negate, .Binary, .Record_Literal, .Literal_Field,
+			     .Let, .Let_Binding, .Member, .Function, .Parameter, .List_Literal, .Hash, .Boolean,
+			     .If, .Field_Select, .Pipe, .Placeholder, .Logical_Not, .Text_Interp, .Pattern_Record, .Pattern_Field:
 				compile_call_arg_expr(c, &sarg, an_idx, parent_ls)
 			}
 		}

@@ -105,10 +105,12 @@ L2_Dep :: struct {
 	whole_accessed:  bool,
 	shape_inspected: bool,
 	has_closure:     bool,
+	pending_advance: bool,
 	path_off:        u32,
 	path_len:        u32,
 	target_hash:     blake3.Hash, // Used when by_hash == true.
 	file_hash:       blake3.Hash, // BLAKE3 of imported source bytes.
+	pending_hash:    blake3.Hash, // Staged during validation; committed only if all deps validate.
 	root_shape_hash: u64,
 	whole_hash:      blake3.Hash,
 	fields_off:      u32,
@@ -568,12 +570,25 @@ hash_value_canonical :: proc "contextless" (ws: ^Declaration_Workspace, value: V
 	return blake3.hasher_finish(&hasher), true, false
 }
 
-// ---- Query key computation (field_path + bindings + here_hash).
+// ---- Query key computation (root_hash + field_path + bounds + bindings + here_hash).
 
 @(private = "file")
-compute_query_key :: proc "contextless" (field_path: string, config: Declaration_Config) -> blake3.Hash {
+compute_query_key :: proc "contextless" (root_hash: blake3.Hash, field_path: string, config: Declaration_Config) -> blake3.Hash {
 	h := blake3.hasher_make_derive_key("modus lex query v2")
+	rh := root_hash
+	blake3.hasher_update(&h, rh[:])
 	hasher_put_str(&h, field_path)
+	// Include effective evaluation bounds so a wider-budget cache entry is
+	// never served to a tighter-budget query that must refuse.
+	eff_budget := config.budget > 0 ? config.budget : EVALUATION_BUDGET_STEPS
+	eff_depth := config.depth_limit > 0 ? config.depth_limit : EVALUATION_DEPTH_LIMIT
+	eff_stack := config.stack_bytes > 0 ? config.stack_bytes : EVALUATION_STACK_BYTES
+	eff_text := config.text_bytes_most > 0 ? config.text_bytes_most : lex_parser.DECLARATION_TEXT_BYTES_MOST
+	hasher_put_u32(&h, eff_budget)
+	hasher_put_u64(&h, u64(eff_depth))
+	hasher_put_u64(&h, u64(eff_stack))
+	hasher_put_u64(&h, u64(eff_text))
+	hasher_put_u64(&h, u64(config.node_limit))
 	hasher_put_u8(&h, config.has_here ? 1 : 0)
 	if config.has_here {
 		hh := config.here_hash
@@ -800,9 +815,15 @@ l2_entry_validate :: proc "contextless" (
 				return false
 			}
 		}
-		// Early cutoff succeeded for this module: advance stored file_hash so
-		// subsequent queries hit the O(1) file-hash fast path.
-		dep.file_hash = cur_hash
+		// Stage early-cutoff hash; committed only after EVERY dep validates.
+		dep.pending_hash = cur_hash
+		dep.pending_advance = true
+	}
+	for &dep in deps {
+		if dep.pending_advance {
+			dep.file_hash = dep.pending_hash
+			dep.pending_advance = false
+		}
 	}
 	return true
 }
@@ -1001,8 +1022,8 @@ query_cache_evaluate_to_buffer :: proc "contextless" (
 	if cache == nil {
 		return declaration_evaluate_to_buffer(ws, source, field_path, config, output)
 	}
-	query_key := compute_query_key(field_path, config)
 	root_hash := blake3.hash(transmute([]u8)source)
+	query_key := compute_query_key(root_hash, field_path, config)
 
 	existing_idx, found := l2_find_entry(cache, query_key)
 	if found {
@@ -1018,6 +1039,9 @@ query_cache_evaluate_to_buffer :: proc "contextless" (
 			}
 			return n, true
 		}
+		// Invalidate stale entry immediately so a failing or traced miss cannot
+		// leave stale dependency state behind.
+		entry.valid = false
 	}
 
 	if config.profile != nil {
@@ -1074,8 +1098,9 @@ query_cache_evaluate_to_buffer :: proc "contextless" (
 		steps_taken  = ws.evaluation.steps,
 	})
 
-	// Opt out of L2 caching when `trace(...)` ran so diagnostics always fire.
-	if !res.traced {
+	// Opt out of L2 caching whenever `trace(...)` ran (including inside lazy
+	// record fields forced during `serialize_value_into`).
+	if !ws.evaluation.traced {
 		// Re-lookup existing_idx in case anything changed (safety).
 		slot_idx := existing_idx
 		if slot_idx >= cache.l2_entry_count || (slot_idx >= 0 && cache.l2_entries[slot_idx].query_key != query_key) {

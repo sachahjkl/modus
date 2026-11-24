@@ -94,7 +94,7 @@ Every value of Lex carries one explicit kind (`lex_evaluator.Kind`).
 |---|---|---|
 | `Integer` | Decimal digits: `0`, `42`, `-7` | Signed 64-bit integer (`-9223372036854775808` to `9223372036854775807`). Overflow on `+`, `-`, `*`, or `/` is refused; no operation wraps. Minimum literal: `-9223372036854775807 - 1`. |
 | `Boolean` | `true`, `false`, or comparison result | Used by `if ... then ... else ...` and `filter`. Integers never coerce to booleans. |
-| `Text` | `"hello\n${name}"` | Valid UTF-8 bytes between double quotes. Supports `\\`, `\"`, `\n`, `\r`, `\t`, `\$`, `\u{XXXXXX}` (rejecting surrogates and values above `0x10FFFF`), and `${expr}` interpolation (formatting `Text`, `Integer`, `Boolean`, `Hash`, and `Member`). |
+| `Text` | `"hello ${name}"` | Valid UTF-8 text between double quotes (per `src/md/data/text_encoding.md`, no control characters). Supports `\\`, `\"`, `\$`, `\u{XXXXXX}` (rejecting control characters, surrogates, and values above `0x10FFFF`), and `${expr}` interpolation (formatting `Text`, `Integer`, `Boolean`, `Hash`, and `Member`). |
 | `Hash` | `blake3:<64 lowercase hex>` | Exact 32-byte BLAKE3 digest. Uppercase hex, wrong length, or invalid hex is refused as `Hash_Not_Valid`. |
 | `Enum` / `Member` | `.french`, `.Verify`, or getter call | A member literal `.name` has no enum until its receiving parameter types it. Numbers are refused where an enum is required. |
 | `Record` / `Record_Literal` | `{ x = 0, width = 10 }` | Untyped until received by a typed parameter or `with`. Unknown fields, missing fields, and wrong field kinds are refused. |
