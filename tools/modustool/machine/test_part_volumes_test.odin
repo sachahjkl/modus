@@ -41,6 +41,13 @@ each_test_part_has_its_boot_volumes :: proc(t: ^testing.T) {
 	for part in test_parts {
 		needed := boot_volumes_of_test([]string{part.name})
 		testing.expectf(t, len(needed) > 0, "the part %s names its volumes: a part with no volume would build none", part.name)
+		fast_needed := boot_volumes_of_test([]string{TEST_FAST_FLAG, part.name})
+		testing.expectf(t, len(fast_needed) == len(needed), "`test --fast %s` builds the same volumes as `test %s`", part.name, part.name)
+		for path, index in needed {
+			if index < len(fast_needed) {
+				testing.expect_value(t, fast_needed[index], path)
+			}
+		}
 	}
 	for row in rows_of_volumes() {
 		testing.expectf(t, len(row.volumes) > 0 && len(row.procedures) > 0, "the row %s has its volumes and its procedures", row.part)

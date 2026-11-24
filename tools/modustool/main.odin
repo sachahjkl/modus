@@ -119,7 +119,7 @@ COMMANDS :: [?]foundation.Command {
 	// ```
 	// nix develop -c modustool build 8
 	// ```
-	{name = "build", about = "the modules, the boot image and the boot program, as " + build.BOOT_PROGRAM + "; one host process for each module, as many at once as the processors, or `build <host_processes>`; a module or a boot volume whose inputs are the same is kept; `build whole`: ignore the build records and build all", run = build.run_build},
+	{name = "build", about = "the modules, the boot image and the boot program, as " + build.BOOT_PROGRAM + "; one host process for each module, as many at once as the processors, or `build <host_processes>`; a module or a boot volume whose inputs are the same is kept; `build whole`: ignore the build records and build all; `build --fast [volume]`: build user modules without full optimization, and build only the named boot volume when given", run = build.run_build},
 	// Builds one module of the table of modules in this process, with the
 	// options of one build.
 	//
@@ -133,7 +133,7 @@ COMMANDS :: [?]foundation.Command {
 	//
 	// The parallel build of `build` runs this command once for each step of a module.
 	// Run it by hand to see the errors of one module alone.
-	{name = "module", about = "module <name> with_checks|without_checks with_debug_information|without_debug_information [compile|convert]: build one module of the table, and its debug object with the debug information, or run one of its two steps alone (the parallel build runs this command for each step)", run = build.run_module},
+	{name = "module", about = "module <name> with_checks|without_checks with_debug_information|without_debug_information speed|none [compile|convert]: build one module of the table, and its debug object with the debug information, or run one of its two steps alone (the parallel build runs this command for each step)", run = build.run_module},
 	// Builds one module from a folder outside the repository: the module
 	// file and its debug object, with the two steps of a module of the
 	// system.
@@ -204,7 +204,7 @@ COMMANDS :: [?]foundation.Command {
 	// The build runs this command once for each boot volume that it must
 	// build, several at once. Run it by hand, after a build, to see the
 	// errors of one volume alone.
-	{name = "volume", about = "volume <name>: build one boot volume, after a build wrote the modules and the boot images (the build runs this command for each volume that it must build)", run = build.run_volume},
+	{name = "volume", about = "volume <name> [speed|none]: build one boot volume, after a build wrote the modules and the boot images (the build runs this command for each volume that it must build)", run = build.run_volume},
 	// Runs the machine tests: it builds, starts each test machine under QEMU,
 	// plays its scenario, and checks its log.
 	//
@@ -236,7 +236,7 @@ COMMANDS :: [?]foundation.Command {
 	// ```
 	// nix develop -c modustool test network
 	// ```
-	{name = "test", about = "build, then run the parts of the machine test, several at once: start each machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test <part>`: one part only; `test <part> from <folder>`: one part on the test inputs of a folder, with no build; `test <part> steps <first> to <last> [of <machine>] [with <first> to <last>]...`: the boot steps, the setup steps and the steps of a range of one machine", run = run_test},
+	{name = "test", about = "build, then run the parts of the machine test, several at once: start each machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test [--fast] <part>`: one part only (with `--fast`, build user modules without full optimization and only the boot volumes of the part); `test <part> from <folder>`: one part on the test inputs of a folder, with no build; `test [--fast] <part> steps <first> to <last> [of <machine>] [with <first> to <last>]...`: the boot steps, the setup steps and the steps of a range of one machine", run = run_test},
 	// Copies the test inputs of the build folder (the files of a whole build
 	// that the machine test reads) into `<folder>/test_inputs`, and writes
 	// the names of the test parts into `<folder>/test_parts.json`: the
@@ -851,6 +851,8 @@ run_test :: proc(args: []string) -> int {
 		fmt.eprintfln("modustool: %s", problem)
 		return foundation.EXIT_USAGE
 	}
+	optimization, part_args := machine.test_arguments_optimization(args)
+	build.build_optimization_mode = optimization
 	// The times of the test are measures: the report never changes the result.
 	test_started := time.tick_now()
 	build_duration: time.Duration
@@ -858,7 +860,7 @@ run_test :: proc(args: []string) -> int {
 	if inputs_given {
 		// A part derivation of the flake: the part on the test inputs of
 		// the whole build, with no build of its own.
-		part, _ := machine.test_part_find(args[0])
+		part, _ := machine.test_part_find(part_args[0])
 		if !machine.test_inputs_take(inputs_folder, part^) {
 			return foundation.EXIT_FAILURE
 		}
@@ -880,9 +882,9 @@ run_test :: proc(args: []string) -> int {
 		return foundation.EXIT_FAILURE
 	}
 	parts := machine.test_parts[:]
-	if len(args) >= 1 {
+	if len(part_args) >= 1 {
 		for part, place in machine.test_parts {
-			if part.name == args[0] {
+			if part.name == part_args[0] {
 				parts = machine.test_parts[place:][:1]
 			}
 		}
@@ -1200,6 +1202,7 @@ run_check :: proc(args: []string) -> int {
 	}
 	// The full check proves the build: it keeps no output of an earlier build.
 	build.build_whole = true
+	build.build_optimization_mode = .Speed
 	if !foundation.run({"odin", "check", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG}) {
 		return foundation.EXIT_FAILURE
 	}

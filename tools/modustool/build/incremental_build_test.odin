@@ -274,28 +274,40 @@ build_record_is_removed_when_an_output_is_missing :: proc(t: ^testing.T) {
 @(test)
 damaged_build_record_is_no_record :: proc(t: ^testing.T) {
 	hash := strings.repeat("ab", 32, context.temp_allocator)
-	good := fmt.tprintf("%s\nkey %s\noutput %s build/modules/console.module\nsource /repository/processes/console/main.odin\nload /repository/resources/fonts/paper_mono.ttf\n", BUILD_RECORD_FIRST_LINE, hash, hash)
+	good := fmt.tprintf("%s\nkey %s\noptimization speed\noutput %s build/modules/console.module\nsource /repository/processes/console/main.odin\nload /repository/resources/fonts/paper_mono.ttf\n", BUILD_RECORD_FIRST_LINE, hash, hash)
 	record, recorded := build_record_parse(good)
 	testing.expect(t, recorded, "the text of a whole record is a record")
 	testing.expect_value(t, record.key[0], 0xab)
+	testing.expect_value(t, record.optimization, Optimization_Mode.Speed)
 	testing.expect_value(t, record.outputs[0].path, "build/modules/console.module")
+
+	good_none := fmt.tprintf("%s\nkey %s\noptimization none\noutput %s build/modules/console.module\nsource /repository/processes/console/main.odin\n", BUILD_RECORD_FIRST_LINE, hash, hash)
+	record_none, recorded_none := build_record_parse(good_none)
+	testing.expect(t, recorded_none, "a record of the unoptimized mode is a record")
+	testing.expect_value(t, record_none.optimization, Optimization_Mode.None)
 
 	damaged := [?]string {
 		"",
 		"\n",
 		"another file\n",
 		BUILD_RECORD_FIRST_LINE,
-		fmt.tprintf("%s\nkey %s\n", BUILD_RECORD_FIRST_LINE, hash), // No output and no source.
-		fmt.tprintf("%s\nkey %s\noutput %s build/a.module\n", BUILD_RECORD_FIRST_LINE, hash, hash), // No source.
-		fmt.tprintf("%s\noutput %s build/a.module\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash), // No key.
-		fmt.tprintf("%s\nkey %s\nkey %s\noutput %s build/a.module\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash, hash, hash), // Two keys.
-		fmt.tprintf("%s\nkey %s\noutput %s build/a.module\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash[:63], hash), // A short key.
-		fmt.tprintf("%s\nkey %sXY\noutput %s build/a.module\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash[:62], hash), // Not hexadecimal.
-		fmt.tprintf("%s\nkey %s\noutput %s\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash, hash), // An output with no path.
-		fmt.tprintf("%s\nkey %s\noutput %s \nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash, hash),
-		fmt.tprintf("%s\nkey %s\noutput build/a.module\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash), // An output with no hash.
-		fmt.tprintf("%s\nkey %s\noutput %s build/a.module\nsource a.odin\nsomething else\n", BUILD_RECORD_FIRST_LINE, hash, hash),
-		fmt.tprintf("%s\nkey %s\noutput %s build/a.module\nsource \n", BUILD_RECORD_FIRST_LINE, hash, hash),
+		fmt.tprintf("build record, form 1\nkey %s\noutput %s build/a.module\nsource a.odin\n", hash, hash), // Form 1 has no optimization line.
+		fmt.tprintf("%s\nkey %s\noptimization speed\n", BUILD_RECORD_FIRST_LINE, hash), // No output and no source.
+		fmt.tprintf("%s\nkey %s\noptimization speed\noutput %s build/a.module\n", BUILD_RECORD_FIRST_LINE, hash, hash), // No source.
+		fmt.tprintf("%s\nkey %s\noutput %s build/a.module\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash, hash), // No optimization line.
+		fmt.tprintf("%s\nkey %s\noptimization speed\noptimization none\noutput %s build/a.module\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash, hash), // Two optimization lines.
+		fmt.tprintf("%s\nkey %s\noptimization fast\noutput %s build/a.module\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash, hash), // Unknown optimization mode.
+		fmt.tprintf("%s\nkey %s\noptimization SPEED\noutput %s build/a.module\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash, hash), // Wrong case.
+		fmt.tprintf("%s\nkey %s\noptimization \noutput %s build/a.module\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash, hash), // Empty optimization mode.
+		fmt.tprintf("%s\noptimization speed\noutput %s build/a.module\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash), // No key.
+		fmt.tprintf("%s\nkey %s\nkey %s\noptimization speed\noutput %s build/a.module\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash, hash, hash), // Two keys.
+		fmt.tprintf("%s\nkey %s\noptimization speed\noutput %s build/a.module\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash[:63], hash), // A short key.
+		fmt.tprintf("%s\nkey %sXY\noptimization speed\noutput %s build/a.module\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash[:62], hash), // Not hexadecimal.
+		fmt.tprintf("%s\nkey %s\noptimization speed\noutput %s\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash, hash), // An output with no path.
+		fmt.tprintf("%s\nkey %s\noptimization speed\noutput %s \nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash, hash),
+		fmt.tprintf("%s\nkey %s\noptimization speed\noutput build/a.module\nsource a.odin\n", BUILD_RECORD_FIRST_LINE, hash), // An output with no hash.
+		fmt.tprintf("%s\nkey %s\noptimization speed\noutput %s build/a.module\nsource a.odin\nsomething else\n", BUILD_RECORD_FIRST_LINE, hash, hash),
+		fmt.tprintf("%s\nkey %s\noptimization speed\noutput %s build/a.module\nsource \n", BUILD_RECORD_FIRST_LINE, hash, hash),
 		good[:len(good) / 2],
 		good[:len(BUILD_RECORD_FIRST_LINE) + 10],
 		"\x00\xff\xfe\x00\x01",

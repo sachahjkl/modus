@@ -1409,7 +1409,7 @@ The machine test is a list of test parts. A test part is one or more machines th
 
 In the check of the flake, each part runs in a part derivation of its own ("The derivations of the check").
 
-`modustool test <part>` runs one part only, for the work on it, and builds only the boot volumes of its row ("The incremental build", "The volumes of a command"). An argument that is not a part is refused before the build: the command prints the parts that it knows and ends with the exit code 2.
+`modustool test <part>` runs one part only, for the work on it, and builds only the boot volumes of its row ("The incremental build", "The volumes of a command"). `modustool test --fast <part>` (with optional `steps ...`) builds user modules in fast iteration mode (`Optimization_Mode.None`) and builds only the boot volumes of `<part>` before running it; `test --fast` requires a part name and refuses `from <folder>`. An argument that is not a part is refused before the build: the command prints the parts that it knows and ends with the exit code 2.
 
 The table is in the tool (`test_parts`, `tools/modustool/machine/test_parts.odin`), and a host test checks each line below against it: a new part is one row there, one line here, and one entry in `tools/modustool/machine/test_part_files.json`, which names the scenario files of the part. The file that holds the run procedure of the part registers it (`test_part_scenario_register`); a host test refuses a part whose run no file of its own registers.
 
@@ -1736,7 +1736,7 @@ A source names an export of an import in a `foreign` block: a name, the paramete
 - **A file of `#load`.** It is in the list of the compiler. No source loads a module file of the build; if one did, the list names that file, and the key of the compile step holds its hash.
 - **The number of an export, and the hash of the import.** They are in the module file only, and the conversion writes them. They are why the conversion holds the whole file of the import, not its description.
 
-**The build key and the build record.** A build key is one BLAKE3 hash over the inputs of its step, each list sorted. After the steps of a module ran, the tool writes two build records: `build/modules/<name>.compile.build_record` (the key of the compile step, the hash of the linked file, the list of the compiler) and `build/modules/<name>.convert.build_record` (the key of the conversion, the hash of the module and of its debug object). The build with no debug information has its own records in its own folder.
+**The build key and the build record.** A build key is one BLAKE3 hash over the inputs of its step, each list sorted. Each build record (`build record, form 2`) stores its `optimization` mode (`speed` or `none`), its build key, the hash of each output and the compiler file list. After the steps of a module ran, the tool writes two build records: `build/modules/<name>.compile.build_record` (the optimization mode, the key of the compile step, the hash of the linked file, the list of the compiler) and `build/modules/<name>.convert.build_record` (the optimization mode, the key of the conversion, the hash of the module and of its debug object). Switching between `--fast` (`none`) and default (`speed`) invalidates mismatched records cleanly (`"the optimization mode changed"`), so outputs of the two modes never mix. The build with no debug information has its own records in its own folder.
 
 **When a module is kept, converted or built.** At the next build the tool hashes each file of the source folders of the repository one time, on several threads, before the first compiler starts. For each module it computes the key of the compile step again, from the files of the recorded list as they are now.
 
@@ -1789,11 +1789,14 @@ The outputs of the record are the files of the volume that a machine or a test r
 
 | Command | The boot volumes that its build builds |
 |---|---|
-| `build`, `test` with no part, `check` | The 19 volumes |
-| `test <part>` | The volumes of its part ("The parts of the machine test") |
+| `build`, `test` with no part, `check` | All 27 volumes |
+| `build [whole] [--fast] <volume>` | Only `<volume>` (for example `build --fast main`, skipping the other 26 volumes) |
+| `test [--fast] <part>` | The volumes of its part ("The parts of the machine test") |
 | `run`, `film`, `fact_waits` | The main volume |
 | `measure`, with each argument but `shortage`, and `screenshots` | The volume `measure`: `screenshots` takes the machine test from the check of the flake, and starts only its measure runs on the host |
 | `measure shortage` | The volume `shortage` |
+
+**Fast iteration mode (`--fast`).** `modustool build --fast [volume]` and `modustool test --fast <part>` run with `Optimization_Mode.None` (`src/md/infrastructure/fast_build.md`). User modules compile with `odin build -o:none -use-single-module -no-thread-local`, run `opt -O1 -S` on the IR before `facts_reached`, and compile objects with `llc -O0`. Kernel modules (`src/modulus`) always compile with `-o:speed` and `llc -O3` so stack frames stay fixed-size for `kernel_stack_check` and within the 16-page kernel stack and 2-page interrupt stacks. The boot program (`src/boot`) always compiles with `-o:speed` so dead `text_rendering` branches are eliminated before `lld-link /nodefaultlib`. `modustool build`, `modustool test <part>`, `modustool check`, `modustool screenshots`, `modustool measure`, `modustool release`, `modustool ship`, and `nix flake check` continue using `Optimization_Mode.Speed` (`-o:speed` and `llc -O3`).
 
 The volumes of the parts are in the table of the parts (`test_parts`, `tools/modustool/machine/test_parts.odin`), and those of the other commands in `command_volumes`, with the procedures that start the machines of each row: a host test reads the sources of the tool and fails when such a procedure names a volume that is not in its row, or is in no row.
 

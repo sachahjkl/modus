@@ -3,6 +3,7 @@ package machine
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "modustool:build"
 
 // The whole test and each part are accepted.
 @(test)
@@ -30,6 +31,53 @@ test_refuses_an_unknown_part :: proc(t: ^testing.T) {
 	testing.expect(t, strings.has_prefix(test_arguments_problem([]string{"netwrok"}), "test does not know the part `netwrok`; the parts: main, tcp, "))
 	_, found := test_part_find("netwrok")
 	testing.expect(t, !found, "a name that is no part finds no row")
+}
+
+// `test --fast <part>` is accepted for each known part (with or without a
+// step range); bare `test --fast`, duplicate `--fast`, `--fast` after the part
+// name, `--fast` with `from`, and unknown parts after `--fast` are refused.
+@(test)
+test_accepts_and_refuses_fast_flag :: proc(t: ^testing.T) {
+	mode, rest := test_arguments_optimization(nil)
+	testing.expect_value(t, mode, build.Optimization_Mode.Speed)
+	testing.expect_value(t, len(rest), 0)
+
+	mode, rest = test_arguments_optimization([]string{"main"})
+	testing.expect_value(t, mode, build.Optimization_Mode.Speed)
+	testing.expect_value(t, len(rest), 1)
+	testing.expect_value(t, rest[0], "main")
+
+	mode, rest = test_arguments_optimization([]string{TEST_FAST_FLAG, "main"})
+	testing.expect_value(t, mode, build.Optimization_Mode.None)
+	testing.expect_value(t, len(rest), 1)
+	testing.expect_value(t, rest[0], "main")
+
+	for part in test_parts {
+		testing.expectf(t, test_arguments_problem([]string{TEST_FAST_FLAG, part.name}) == "", "`test --fast %s` is accepted", part.name)
+	}
+	testing.expect_value(t, test_arguments_problem([]string{TEST_FAST_FLAG, "main", "steps", "1", "to", "2"}), "")
+	range, has_range := test_arguments_give_step_range([]string{TEST_FAST_FLAG, "main", "steps", "3", "to", "4"}, context.temp_allocator)
+	testing.expect(t, has_range, "`test --fast <part> steps` parses the step range")
+	testing.expect_value(t, range.span.first, 3)
+	testing.expect_value(t, range.span.last, 4)
+	_, has_inputs := test_arguments_give_inputs([]string{TEST_FAST_FLAG, "main", "from", "folder"})
+	testing.expect(t, !has_inputs, "`test --fast <part> from` gives no input folder")
+
+	refused := [][]string {
+		{TEST_FAST_FLAG},
+		{TEST_FAST_FLAG, TEST_FAST_FLAG, "main"},
+		{TEST_FAST_FLAG, ""},
+		{TEST_FAST_FLAG, "netwrok"},
+		{TEST_FAST_FLAG, "Main"},
+		{"main", TEST_FAST_FLAG},
+		{TEST_FAST_FLAG, "main", "network"},
+		{TEST_FAST_FLAG, "main", "from", "folder"},
+		{"--slow", "main"},
+	}
+	for arguments in refused {
+		problem := test_arguments_problem(arguments)
+		testing.expectf(t, problem != "", "%v is refused", arguments)
+	}
 }
 
 // No part is in the table two times, each part has its sentence and its

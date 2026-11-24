@@ -7,6 +7,7 @@ import info "modus:contract/boot_info"
 import "core:mem"
 import "core:os"
 import "core:slice"
+import "core:strconv"
 import "core:strings"
 import "core:sys/linux"
 import "core:time"
@@ -199,13 +200,59 @@ library_modules_measure_print :: proc() {
 // kernel again.
 test_build_checks := true
 
+// Optimization_Mode is the optimization setting of one system build
+// (src/md/infrastructure/fast_build.md). Every shipping, check, measure and
+// release build uses Speed; `--fast` uses None for user modules while keeping
+// Speed for kernel modules and the boot program.
+Optimization_Mode :: enum {
+	Speed,
+	None,
+}
+
+build_optimization_mode: Optimization_Mode = .Speed
+
+BUILD_FAST_FLAG :: "--fast"
+
+OPTIMIZATION_MODE_ARGUMENTS := [Optimization_Mode]string {
+	.Speed = "speed",
+	.None  = "none",
+}
+
+optimization_mode_argument :: proc(mode: Optimization_Mode) -> string {
+	names := OPTIMIZATION_MODE_ARGUMENTS
+	return names[mode]
+}
+
+optimization_mode_of_argument :: proc(text: string) -> (mode: Optimization_Mode, ok: bool) {
+	names := OPTIMIZATION_MODE_ARGUMENTS
+	for candidate in Optimization_Mode {
+		if text == names[candidate] {
+			return candidate, true
+		}
+	}
+	return .Speed, false
+}
+
+// module_effective_optimization gives the optimization mode that a module
+// actually compiles with. A kernel module always compiles with Speed: at
+// None, llc -O0 emits dynamic stack alignment and frame-pointer restores that
+// kernel_stack_check refuses, and unoptimized frames risk exceeding the fixed
+// kernel stack and interrupt stacks (src/md/infrastructure/fast_build.md).
+module_effective_optimization :: proc(build: foundation.Module_Build, requested: Optimization_Mode) -> Optimization_Mode {
+	if build.kernel {
+		return .Speed
+	}
+	return requested
+}
+
 // module_compile_command gives the command of the compiler for a module,
-// with each flag of its build: the checks of the kernel, the debug
-// information, the settings of the module. The build key of the module
-// holds this command (incremental_build.odin), so a flag is written here
-// and nowhere else.
-module_compile_command :: proc(build: foundation.Module_Build) -> []string {
+// with each flag of its build: the optimization mode, the checks of the
+// kernel, the debug information, the settings of the module. The build key
+// of the module holds this command (incremental_build.odin), so a flag is
+// written here and nowhere else.
+module_compile_command :: proc(build: foundation.Module_Build, optimization: Optimization_Mode = build_optimization_mode) -> []string {
 	llvm_ir_folder := foundation.join(foundation.module_build_folder, "/", build.name, "/llvm_ir")
+	effective := module_effective_optimization(build, optimization)
 	compile := make([dynamic]string, context.temp_allocator)
 	append(
 		&compile,
@@ -219,7 +266,18 @@ module_compile_command :: proc(build: foundation.Module_Build) -> []string {
 		"-reloc-mode:pic",
 		"-no-entry-point",
 		"-default-to-nil-allocator",
-		"-o:speed",
+	)
+	switch effective {
+	case .Speed:
+		append(&compile, "-o:speed")
+	case .None:
+		// Odin defaults to separate modules under -o:none, whereas module
+		// builds expect one LLVM IR file. -no-thread-local keeps base:runtime
+		// from emitting @thread_local (__tls_get_addr) in unoptimized IR.
+		append(&compile, "-o:none", "-use-single-module", "-no-thread-local")
+	}
+	append(
+		&compile,
 		"-vet",
 		// The file name and the line in a message of a check, not the full path:
 		// the hash of a module does not depend on the folder of the build.
@@ -271,19 +329,42 @@ module_compile_command :: proc(build: foundation.Module_Build) -> []string {
 	return compile[:]
 }
 
+// module_fast_ir_command gives the light opt pass that runs on user-module
+// LLVM IR under Optimization_Mode.None to eliminate dead foreign imports
+// (such as text_rendering calls in bootscreen) and unreached support-package
+// log facts before facts_reached and llc -O0 (src/md/infrastructure/fast_build.md).
+module_fast_ir_command :: proc(build: foundation.Module_Build, optimization: Optimization_Mode = build_optimization_mode) -> []string {
+	if module_effective_optimization(build, optimization) != .None {
+		return nil
+	}
+	folder := foundation.join(foundation.module_build_folder, "/", build.name)
+	input := foundation.join(folder, "/", build.name, ".ll")
+	output := foundation.join(folder, "/", build.name, ".opt.ll")
+	command := make([]string, 6, context.temp_allocator)
+	command[0] = "opt"
+	command[1] = "-O1"
+	command[2] = "-S"
+	command[3] = "-o"
+	command[4] = output
+	command[5] = input
+	return command
+}
+
 // module_object_command gives the command of llc for a module: the LLVM
 // of the Odin compiler (18) makes the object. Each function keeps its
 // frame pointer: the kernel walks them for the stack trace of a fault.
 // The build key of the module holds this command.
-module_object_command :: proc(build: foundation.Module_Build) -> []string {
+module_object_command :: proc(build: foundation.Module_Build, optimization: Optimization_Mode = build_optimization_mode) -> []string {
 	folder := foundation.join(foundation.module_build_folder, "/", build.name)
+	effective := module_effective_optimization(build, optimization)
+	llc_level := effective == .None ? "-O0" : "-O3"
 	llc := make([dynamic]string, context.temp_allocator)
 	// -misched-topdown: with debug instructions in a block, the instruction
 	// scheduler of this LLVM (18) orders some register copies in another
 	// way in its bottom-up direction, so the code differs with and without
 	// debug information. The top-down direction gives the same code for
 	// both (docs/REPRODUCIBLE_BUILD.md, section 8).
-	append(&llc, "llc", "-O3", "-misched-topdown", "--frame-pointer=all", "-relocation-model=pic", "--function-sections", "--data-sections", "-filetype=obj")
+	append(&llc, "llc", llc_level, "-misched-topdown", "--frame-pointer=all", "-relocation-model=pic", "--function-sections", "--data-sections", "-filetype=obj")
 	if build.kernel {
 		// The kernel has no x87, SSE or AVX instruction: the registers of a
 		// process stay live through each kernel entry, and only the switch
@@ -456,6 +537,14 @@ module_compile :: proc(build: foundation.Module_Build) -> bool {
 				fmt.eprintfln("modustool: cannot write the LLVM IR of %s: %v", build.name, err)
 				return false
 			}
+		}
+		if fast_ir := module_fast_ir_command(build); fast_ir != nil {
+			foundation.run(fast_ir) or_return
+			if err := foundation.file_move(fast_ir[4], path); err != nil {
+				fmt.eprintfln("modustool: cannot move the fast LLVM IR of %s: %v", build.name, err)
+				return false
+			}
+			ir = foundation.read_file(path) or_return
 		}
 		// The key of each fact type that the module writes is an immediate
 		// of its code: the typeid that this compiler gives the type
@@ -975,21 +1064,76 @@ build_system :: proc(needed_volumes: []string) -> int {
 	return 0
 }
 
-// run_build is the command `build`: the modules, the boot images, and
-// every boot volume. A module whose inputs are the same is kept, and so is
-// each boot volume (incremental_build.odin, boot_volumes.odin); `build
-// whole` keeps nothing.
-run_build :: proc(args: []string) -> int {
-	// `build [whole] [host_processes]`: a whole build, and the count of module
-	// processes at once.
-	rest := args
-	if len(rest) >= 1 && rest[0] == "whole" {
-		build_whole = true
-		rest = rest[1:]
+// The parsed arguments of `modustool build`.
+Build_Command_Options :: struct {
+	whole:          bool,
+	optimization:   Optimization_Mode,
+	volume_path:    string, // "": every boot volume.
+	host_processes: int,    // 0: default (processor count).
+}
+
+BUILD_COMMAND_USAGE :: "build [whole] [--fast] [volume_name] [host_processes]"
+
+// build_arguments_parse parses the arguments of `modustool build`. It refuses
+// duplicate options, unknown flags, non-positive process counts and unknown
+// volume names before any build starts.
+build_arguments_parse :: proc(args: []string) -> (options: Build_Command_Options, problem: string) {
+	for argument in args {
+		switch {
+		case argument == "whole":
+			if options.whole {
+				return {}, "build: `whole` is written two times; the form: `" + BUILD_COMMAND_USAGE + "`"
+			}
+			options.whole = true
+		case argument == BUILD_FAST_FLAG:
+			if options.optimization == .None {
+				return {}, "build: `--fast` is written two times; the form: `" + BUILD_COMMAND_USAGE + "`"
+			}
+			options.optimization = .None
+		case strings.has_prefix(argument, "-"):
+			return {}, fmt.tprintf("build: unknown option `%s`; the form: `%s`", argument, BUILD_COMMAND_USAGE)
+		case len(argument) > 0 && argument[0] >= '0' && argument[0] <= '9':
+			count, parsed := strconv.parse_int(argument)
+			if !parsed || count < 1 {
+				return {}, fmt.tprintf("build: `%s` is not a count of processes (1 or more)", argument)
+			}
+			if options.host_processes != 0 {
+				return {}, "build: the count of processes is written two times; the form: `" + BUILD_COMMAND_USAGE + "`"
+			}
+			options.host_processes = count
+		case:
+			path, found := boot_volume_path_of_name(argument)
+			if !found {
+				return {}, fmt.tprintf("build: unknown boot volume `%s`; the names: %s", argument, boot_volume_names())
+			}
+			if options.volume_path != "" {
+				return {}, "build: more than one boot volume is named; the form: `" + BUILD_COMMAND_USAGE + "`"
+			}
+			options.volume_path = path
+		}
 	}
-	if len(rest) > 1 || (len(rest) == 1 && !parse_module_build_host_processes(rest[0])) {
-		fmt.eprintln("modustool: build [whole] [host_processes]")
+	return options, ""
+}
+
+// run_build is the command `build`: the modules, the boot images, and
+// every boot volume (or one named boot volume). A module whose inputs are
+// the same is kept, and so is each boot volume (incremental_build.odin,
+// boot_volumes.odin); `build whole` keeps nothing; `build --fast [volume]`
+// compiles user modules in Optimization_Mode.None.
+run_build :: proc(args: []string) -> int {
+	options, problem := build_arguments_parse(args)
+	if problem != "" {
+		fmt.eprintfln("modustool: %s", problem)
 		return foundation.EXIT_USAGE
 	}
-	return build_system(nil)
+	build_whole = options.whole
+	build_optimization_mode = options.optimization
+	if options.host_processes > 0 {
+		module_build_host_processes = options.host_processes
+	}
+	needed: []string = nil
+	if options.volume_path != "" {
+		needed = []string{options.volume_path}
+	}
+	return build_system(needed)
 }
