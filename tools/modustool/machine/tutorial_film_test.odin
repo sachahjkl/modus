@@ -269,6 +269,7 @@ tutorial_film_compose_splices_cards_and_captions_without_overlap :: proc(t: ^tes
 
 	ass := tutorial_ass_generate(timeline, tutorial_chapter_cards[:], tutorial_captions[:])
 	defer delete(ass)
+	testing.expect(t, !strings.contains(ass, "%!("), "generated ASS contains zero fmt formatting errors")
 	for snippet in ([]string{
 		"PlayResX: 1920",
 		"PlayResY: 1080",
@@ -279,6 +280,9 @@ tutorial_film_compose_splices_cards_and_captions_without_overlap :: proc(t: ^tes
 		"modus.systems",
 		"Dialogue: 0,",
 		"Dialogue: 2,",
+		"{\\an7\\pos(",
+		"\\p1}m 0 0 l ",
+		"{\\p0}",
 	}) {
 		testing.expectf(t, strings.contains(ass, snippet), "generated ASS contains `%s`", snippet)
 	}

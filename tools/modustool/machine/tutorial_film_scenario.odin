@@ -14,9 +14,10 @@ package machine
 // (`tree`, `pkg.recipe`, `pkg.output`, `mod`) — zero hand-typed 64-hex hashes.
 //
 // Chapter title cards and lower-third captions are driven directly from the
-// cue timestamps recorded here (tutorial_film_compose.odin). All windows stay
-// within y = 52..780 so the lower-third caption band (y = 856..1036) never
-// overlaps console lines, editor text, grant rows, or db_browser's status bar.
+// cue timestamps recorded here (tutorial_film_compose.odin). At 1.25x UI scale,
+// all windows stay within physical y = 45..805 so the lower-third caption band
+// (y = 856..1036) never overlaps console lines, editor text, grant rows, or
+// db_browser's status bar.
 //
 // Generous reading hold times for the self-contained silent tutorial.
 TUTORIAL_HOLD_EXPLAIN :: 4200
@@ -29,7 +30,7 @@ scenario_tutorial_film := [?]Step {
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Wait, text = "root: settings stopped: itself, done"},
 	{kind = .Front, text = "console"},
-	{kind = .Move, text = "console", to_x = 32, to_y = 56},
+	{kind = .Move, text = "console", to_x = 24, to_y = 44},
 	{kind = .Type, text = "connect(\"recipes\")"},
 	{kind = .Wait, text = "[console]   module     recipes"},
 	{kind = .Type, text = "recipes.configure_cache(\"{cache_server_key}\", \"{cache_signer_key}\")"},
@@ -49,7 +50,7 @@ scenario_tutorial_film := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: surface edit: project.lex", any_order = true},
 	{kind = .Wait, text = "edit: ok, the first picture is presented"},
-	{kind = .Move, text = "edit: project.lex", to_x = 920, to_y = 56},
+	{kind = .Move, text = "edit: project.lex", to_x = 760, to_y = 44},
 	{kind = .Film_Hold, milliseconds = TUTORIAL_HOLD_DETAIL, text = "tutorial.project_lex"},
 	{kind = .Film_Hold, milliseconds = TUTORIAL_HOLD_EXPLAIN, text = "tutorial.project_grants"},
 	{kind = .Front, text = "console"},
@@ -92,6 +93,9 @@ scenario_tutorial_film := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] {db_browser_hash}"},
 	{kind = .Film_Hold, milliseconds = TUTORIAL_HOLD_EXPLAIN, text = "tutorial.deliver"},
+	{kind = .Film_Type, text = "stop(\"recipes\")"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "root: recipes stopped: "},
 
 	// Chapter 4: Sandbox by default (zero store access), explicit store grant,
 	// desktop Grants window, and restart with granted private store.
@@ -102,33 +106,35 @@ scenario_tutorial_film := [?]Step {
 	{kind = .Wait, text = "root: started db_browser from the disk, hash {db_browser_hash}", any_order = true},
 	{kind = .Wait, text = "compositor: surface db_browser", any_order = true},
 	{kind = .Wait, text = "db_browser: no store granted, running in memory"},
-	{kind = .Move, text = "db_browser", to_x = 420, to_y = 52},
+	{kind = .Move, text = "db_browser", to_x = 420, to_y = 36},
+	{kind = .Resize, text = "db_browser", to_x = 1080, to_y = 580},
 	{kind = .Film_Hold, milliseconds = TUTORIAL_HOLD_DETAIL, text = "tutorial.sandboxed"},
 
 	{kind = .Front, text = "console"},
 	{kind = .Film_Type, text = "allow(\"db_browser\", \"store\")"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "has the grant store for principal 0"},
+	{kind = .Film_Type, text = "stop(\"db_browser\")"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "root: db_browser stopped: "},
 	{kind = .Film_Type, text = "start(\"grants\")"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: surface grants", any_order = true},
 	{kind = .Wait, text = "grants: ok"},
-	{kind = .Move, text = "grants", to_x = 960, to_y = 56},
+	{kind = .Move, text = "grants", to_x = 820, to_y = 44},
 	{kind = .Film_Hold, milliseconds = TUTORIAL_HOLD_DETAIL, text = "tutorial.grants_window"},
 
 	{kind = .Front, text = "console"},
 	{kind = .Film_Type, text = "stop(\"grants\")"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "root: grants stopped: "},
-	{kind = .Film_Type, text = "stop(\"db_browser\")"},
-	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "root: db_browser stopped: "},
 	{kind = .Film_Type, text = "start_from_disk(\"db_browser\", \"\")"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "root: started db_browser from the disk, hash {db_browser_hash}, with the grant store: the store disk-db_browser", any_order = true},
 	{kind = .Wait, text = "compositor: surface db_browser", any_order = true},
 	{kind = .Wait, text = "db_browser: opened database of "},
-	{kind = .Move, text = "db_browser", to_x = 420, to_y = 52},
+	{kind = .Move, text = "db_browser", to_x = 420, to_y = 36},
+	{kind = .Resize, text = "db_browser", to_x = 1080, to_y = 580},
 
 	// Chapter 5: Live SQLite GUI — isolated child host, atomic INSERT + SELECT,
 	// and off-thread column header sorting.

@@ -30,14 +30,16 @@ TUTORIAL_FONT_MONO :: "JetBrains Mono ASCII"
 TUTORIAL_ASS_NAME :: "tutorial.ass"
 
 // Safe lower-third caption card bounds on the 1920x1080 canvas.
-// All tutorial windows stay within y = 52..780 (db_browser at y=52, ~728 px
-// total height including title bar; edit and grants at y=56, ~588 px tall;
-// console at y=56, ~500 px tall), leaving y = 856..1036 completely clear.
+// The compositor renders at 1.25x UI scale (1536x864 logical). All tutorial
+// windows stay within physical y = 45..805 (db_browser at logical y=36,
+// resized to 1080x580 -> physical bottom ~805 px; edit and grants at logical
+// y=44, 560 tall -> physical bottom ~790 px; console at logical y=44 ->
+// physical bottom ~660 px), leaving y = 856..1036 completely clear.
 TUTORIAL_CAPTION_LEFT :: 180
 TUTORIAL_CAPTION_TOP :: 856
 TUTORIAL_CAPTION_RIGHT :: 1740
 TUTORIAL_CAPTION_BOTTOM :: 1036
-#assert(TUTORIAL_CAPTION_TOP >= 52 + 28 + 700 + 60)
+#assert(TUTORIAL_CAPTION_TOP >= (36 + 28 + 580) * 5 / 4 + 48)
 #assert(TUTORIAL_CAPTION_BOTTOM <= TUTORIAL_VIDEO_HEIGHT - 32)
 #assert(TUTORIAL_CAPTION_LEFT >= 64 && TUTORIAL_CAPTION_RIGHT <= TUTORIAL_VIDEO_WIDTH - 64)
 
@@ -766,19 +768,19 @@ tutorial_ass_generate :: proc(
 		title_y := kicker_y + 44
 		body_y := title_y + 84
 
-		fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CardKicker,,0,0,0,,{\\an7\\pos(%d,%d)\\1c%s}%s\n",
+		fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CardKicker,,0,0,0,,{{\\an7\\pos(%d,%d)\\1c%s}}%s\n",
 			start_ts, end_ts, card_text_x, kicker_y, accent_ass, tutorial_ass_escape(card.kicker))
-		fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CardTitle,,0,0,0,,{\\an7\\pos(%d,%d)}%s\n",
+		fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CardTitle,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s\n",
 			start_ts, end_ts, card_text_x, title_y, tutorial_ass_escape(card.title))
 
 		for line, line_idx in card.lines {
 			prefix := len(card.lines) > 1 ? "-  " : ""
-			fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CardBody,,0,0,0,,{\\an7\\pos(%d,%d)}%s%s\n",
+			fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CardBody,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s%s\n",
 				start_ts, end_ts, card_text_x, body_y + line_idx * 54, prefix, tutorial_ass_escape(line))
 		}
 		if card.footer != "" {
 			footer_y := TUTORIAL_CARD_BOTTOM - 72
-			fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CardFooter,,0,0,0,,{\\an7\\pos(%d,%d)}%s\n",
+			fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CardFooter,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s\n",
 				start_ts, end_ts, card_text_x, footer_y, tutorial_ass_escape(card.footer))
 		}
 	}
@@ -800,18 +802,18 @@ tutorial_ass_generate :: proc(
 		accent_ass := tutorial_ass_color(tutorial_accent_rgb[cap.accent])
 
 		// Layer 0: rectangular backing box with crisp 1 px border.
-		fmt.sbprintf(&builder, "Dialogue: 0,%s,%s,CapBox,,0,0,0,,{\\an7\\pos(%d,%d)\\bord1\\shad0\\1c%s\\3c%s\\p1}m 0 0 l %d 0 l %d %d l 0 %d{\\p0}\n",
+		fmt.sbprintf(&builder, "Dialogue: 0,%s,%s,CapBox,,0,0,0,,{{\\an7\\pos(%d,%d)\\bord1\\shad0\\1c%s\\3c%s\\p1}}m 0 0 l %d 0 l %d %d l 0 %d{{\\p0}}\n",
 			start_ts, end_ts, TUTORIAL_CAPTION_LEFT, TUTORIAL_CAPTION_TOP, cap_bg, cap_border, cap_w, cap_w, cap_h, cap_h)
 		// Layer 1: rectangular semantic left accent bar.
-		fmt.sbprintf(&builder, "Dialogue: 1,%s,%s,CapBox,,0,0,0,,{\\an7\\pos(%d,%d)\\bord0\\shad0\\1c%s\\p1}m 0 0 l %d 0 l %d %d l 0 %d{\\p0}\n",
+		fmt.sbprintf(&builder, "Dialogue: 1,%s,%s,CapBox,,0,0,0,,{{\\an7\\pos(%d,%d)\\bord0\\shad0\\1c%s\\p1}}m 0 0 l %d 0 l %d %d l 0 %d{{\\p0}}\n",
 			start_ts, end_ts, TUTORIAL_CAPTION_LEFT, TUTORIAL_CAPTION_TOP, accent_ass, bar_w, bar_w, cap_h, cap_h)
 		// Layer 2: kicker, bold heading, and concise explanation.
 		text_x := TUTORIAL_CAPTION_LEFT + 32
-		fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CapKicker,,0,0,0,,{\\an7\\pos(%d,%d)\\1c%s}%s\n",
+		fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CapKicker,,0,0,0,,{{\\an7\\pos(%d,%d)\\1c%s}}%s\n",
 			start_ts, end_ts, text_x, TUTORIAL_CAPTION_TOP + 22, accent_ass, tutorial_ass_escape(cap.kicker))
-		fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CapHeading,,0,0,0,,{\\an7\\pos(%d,%d)}%s\n",
+		fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CapHeading,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s\n",
 			start_ts, end_ts, text_x, TUTORIAL_CAPTION_TOP + 54, tutorial_ass_escape(cap.heading))
-		fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CapBody,,0,0,0,,{\\an7\\pos(%d,%d)}%s\n",
+		fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CapBody,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s\n",
 			start_ts, end_ts, text_x, TUTORIAL_CAPTION_TOP + 100, tutorial_ass_escape(cap.body))
 	}
 
