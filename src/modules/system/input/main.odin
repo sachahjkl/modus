@@ -48,7 +48,7 @@
 // root service names these slots INPUT_GRANT_ too.
 //
 // **What it does not prove.** It works with the PS/2 controller that QEMU
-// emulates, with two keyboard layouts (src/library/internal/input/keyboard_layout);
+// emulates, with two keyboard layouts (src/library/modus/keyboard_layout);
 // AltGr, the right Alt key, gives the third level of the layout of France.
 // It has no USB.
 package input
@@ -58,7 +58,7 @@ import "modus:display"
 import "modus:key_path"
 import "modus:pci"
 import "modus:virtio"
-import "internal:input/keyboard_layout"
+import "modus:keyboard_layout"
 import "internal:input/ps2_controller"
 import "internal:input/tablet"
 import "modus:contract/fixed_addresses"

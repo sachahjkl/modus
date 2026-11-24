@@ -139,6 +139,13 @@ Principal_Removed :: struct {
 	stopped_processes: u64,
 }
 
+// A named session child budget could not be opened when the session unlocked.
+@(log_fact = "root: the session budget of principal {principal} was not opened: status {status}")
+Session_Budget_Open_Failed :: struct {
+	principal: u32,
+	status:    op.Status,
+}
+
 // The boot image agrees with the system description that the boot program
 // verified: the entries that this service checked, and the time of the
 // check.

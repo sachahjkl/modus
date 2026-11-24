@@ -207,7 +207,7 @@ change_end_sentences := [Change_End]string {
 	.Seal_Failed          = "nothing changed: the keys are not sealed again",
 	.Store_Failed         = "nothing changed: the store did not keep the new file",
 	.Store_Unknown        = "the store did not answer: the old or the new one opens",
-	.Principal_Removed    = "the principal and its stores are removed",
+	.Principal_Removed    = "the principal keys are destroyed and removed",
 }
 
 // change_problem says if a file of the form `form` takes the change of the

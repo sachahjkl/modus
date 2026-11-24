@@ -8,9 +8,12 @@ import "modus:contract/enum_word"
 //
 // Before the first destructive step, `unlock` writes `REMOVAL_OBJECT` in its
 // store with step `Marked`, then steps strictly through:
-//   Marked -> Stores_Erased -> File_Deleted -> Pin_Freed -> Complete.
-// A crash or power loss at any point leaves the durable record on disk; the
-// next boot reads it and resumes from the recorded step idempotently.
+//   Marked -> Keys_Erased -> File_Deleted -> Pin_Freed -> Complete.
+// Erasing the versions of the principal file and recovery file cryptographically
+// destroys the principal's key material so all encrypted stores of the principal
+// are permanently unreadable (reclaiming their orphaned blocks on disk is tracked
+// separately). A crash or power loss at any point leaves the durable record on
+// disk; the next boot reads it and resumes from the recorded step idempotently.
 //
 // A slot freed by removal is retired for the remainder of the current run so
 // no stale connection handle can ever alias a newly created principal; after
@@ -32,15 +35,15 @@ REMOVAL_RECORD_SIZE :: 64
 
 // Durable step recorded on disk during principal removal.
 Removal_Step :: enum u8 {
-	Marked        = 1, // Removal authorized and durably recorded before first destructive step.
-	Stores_Erased = 2, // Every encrypted store of the principal has been erased.
-	File_Deleted  = 3, // The principal file object has been removed from unlock's store.
-	Pin_Freed     = 4, // The TPM NV pin holds "free, generation g" (or no TPM pin existed).
+	Marked       = 1, // Removal authorized and durably recorded before first destructive step.
+	Keys_Erased  = 2, // Principal key material and recovery file versions erased (cryptographic erasure of encrypted stores).
+	File_Deleted = 3, // The principal file object has been removed from unlock's store.
+	Pin_Freed    = 4, // The TPM NV pin holds "free, generation g" (or no TPM pin existed).
 }
 
 // Next idempotent action to execute for a durable removal record.
 Removal_Action :: enum u8 {
-	Erase_Stores = 1,
+	Erase_Keys   = 1,
 	Delete_File  = 2,
 	Free_Pin     = 3,
 	Clear_Marker = 4,
@@ -136,8 +139,8 @@ removal_step_advance :: proc "contextless" (current: Removal_Record, next_step: 
 	valid := false
 	switch current.step {
 	case .Marked:
-		valid = next_step == .Stores_Erased
-	case .Stores_Erased:
+		valid = next_step == .Keys_Erased
+	case .Keys_Erased:
 		valid = next_step == .File_Deleted
 	case .File_Deleted:
 		valid = next_step == .Pin_Freed
@@ -157,15 +160,15 @@ removal_step_advance :: proc "contextless" (current: Removal_Record, next_step: 
 removal_next_action :: proc "contextless" (record: Removal_Record, has_tpm_pin: bool) -> Removal_Action {
 	switch record.step {
 	case .Marked:
-		return .Erase_Stores
-	case .Stores_Erased:
+		return .Erase_Keys
+	case .Keys_Erased:
 		return .Delete_File
 	case .File_Deleted:
 		return has_tpm_pin ? .Free_Pin : .Clear_Marker
 	case .Pin_Freed:
 		return .Clear_Marker
 	}
-	return .Erase_Stores
+	return .Erase_Keys
 }
 
 // Tracks principal slots freed by removal during the current boot run so

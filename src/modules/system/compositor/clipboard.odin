@@ -278,3 +278,17 @@ clipboard_client_remove :: proc "contextless" (index: int) {
 		system.log_fact(.Info, Window_Closed_After_Refused_Clipboard_Records{window = window_field(clients[index].title[:]), refused = clients[index].clipboard_refused})
 	}
 }
+
+// clipboard_reset clears all clipboard content, ends any active paste lend,
+// and resets pending clipboard serials at a session boundary.
+clipboard_reset :: proc "contextless" () {
+	clipboard_lend_end()
+	if clipboard_content.memory != 0 {
+		system.close(clipboard_content.memory)
+	}
+	clipboard_content = {}
+	clipboard_serials = {}
+	for &client in clients {
+		client.clipboard = {}
+	}
+}

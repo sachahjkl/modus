@@ -5,6 +5,7 @@ import "core:testing"
 import "modus:contract/byte_order"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
+import "modus:contract/settings"
 import "modus:cryptography_primitives"
 import "modus:tpm2"
 
@@ -301,6 +302,77 @@ unlock_hints_refuse_hostile_bytes_and_bind_to_seal_aad :: proc(t: ^testing.T) {
 	principal_tpm_file_encode(&alt_tpm, &alt_tpm_encoded)
 	testing.expect(t, string(principal_tpm_file_additional_data(&tpm_encoded)) != string(principal_tpm_file_additional_data(&alt_tpm_encoded)), "changing hints must change PRINCIPT seal AAD")
 	testing.expect(t, string(principal_tpm_file_recovery_additional_data(&tpm_encoded)) == string(principal_tpm_file_recovery_additional_data(&alt_tpm_encoded)), "updating hints must keep recovery seal AAD unchanged")
+
+	// Real ChaCha20-Poly1305 AEAD verification: seal PRINCIPL and PRINCIPT with
+	// valid hints, verify open succeeds, flip one valid hint byte (French ->
+	// United_States), verify syntax decode still accepts the altered hints, and
+	// verify AEAD open refuses the tampered file with .Not_Authentic.
+	key_bytes: [KEY_SIZE]u8
+	for i in 0 ..< KEY_SIZE {
+		key_bytes[i] = u8(0x40 + i)
+	}
+	plaintext: [SECRET_KEYS_SIZE]u8
+	for i in 0 ..< SECRET_KEYS_SIZE {
+		plaintext[i] = u8(0xA0 + i)
+	}
+	key_text := string(key_bytes[:])
+	plain_text := string(plaintext[:])
+
+	// PRINCIPL seal + tamper refusal.
+	sealed_file := test_file()
+	sealed_file.hints = valid
+	sealed_encoded: [FILE_SIZE]u8
+	file_encode(&sealed_file, &sealed_encoded)
+	nonce_text := string(sealed_file.nonce[:])
+	aad_text := string(file_additional_data(&sealed_encoded))
+	sealed_out := sealed_file.sealed[:]
+	err: errors.Error_Record
+	outcome, sealed_count := cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &aad_text, &plain_text, &sealed_out, &err)
+	testing.expect(t, outcome == .Succeeded && sealed_count == SEALED_SIZE)
+	file_encode(&sealed_file, &sealed_encoded)
+
+	opened: [SECRET_KEYS_SIZE]u8
+	opened_slice := opened[:]
+	cipher_text := string(sealed_file.sealed[:])
+	aad_check := string(file_additional_data(&sealed_encoded))
+	open_outcome, open_count := cryptography_primitives.open_with_chacha20_poly1305(&key_text, &nonce_text, &aad_check, &cipher_text, &opened_slice, &err)
+	testing.expect(t, open_outcome == .Succeeded && open_count == SECRET_KEYS_SIZE && opened == plaintext)
+
+	tampered := sealed_encoded
+	byte_order.write_u32_little_endian(tampered[OFFSET_UNLOCK_HINTS:], 0, u32(settings.Keyboard_Layout.United_States))
+	tampered_decoded, tampered_kept, tamper_prob := file_decode(tampered[:])
+	testing.expect_value(t, tamper_prob, File_Problem.None)
+	testing.expect_value(t, tampered_decoded.hints.keyboard_layout, settings.Keyboard_Layout.United_States)
+	tampered_aad := string(file_additional_data(&tampered_kept))
+	tampered_cipher := string(tampered_decoded.sealed[:])
+	err = {}
+	tamper_outcome, _ := cryptography_primitives.open_with_chacha20_poly1305(&key_text, &nonce_text, &tampered_aad, &tampered_cipher, &opened_slice, &err)
+	testing.expect_value(t, tamper_outcome, call_outcome.Call_Outcome.Argument_Refused)
+	testing.expect_value(t, err.kind, i64(errors.Kind.Not_Authentic))
+
+	// PRINCIPT seal + tamper refusal (while recovery seal stays valid).
+	sealed_tpm := test_principal_tpm_file()
+	sealed_tpm.hints = valid
+	sealed_tpm_encoded: [PRINCIPAL_TPM_FILE_SIZE]u8
+	principal_tpm_file_encode(&sealed_tpm, &sealed_tpm_encoded)
+	tpm_nonce := string(sealed_tpm.nonce[:])
+	tpm_aad := string(principal_tpm_file_additional_data(&sealed_tpm_encoded))
+	tpm_out := sealed_tpm.sealed[:]
+	err = {}
+	outcome, sealed_count = cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &tpm_nonce, &tpm_aad, &plain_text, &tpm_out, &err)
+	testing.expect(t, outcome == .Succeeded && sealed_count == SEALED_SIZE)
+	principal_tpm_file_encode(&sealed_tpm, &sealed_tpm_encoded)
+
+	tampered_tpm := sealed_tpm_encoded
+	byte_order.write_u32_little_endian(tampered_tpm[OFFSET_UNLOCK_HINTS:], 0, u32(settings.Keyboard_Layout.United_States))
+	tampered_tpm_decoded, tampered_tpm_kept, tpm_tamper_prob := principal_tpm_file_decode(tampered_tpm[:])
+	testing.expect_value(t, tpm_tamper_prob, File_Problem.None)
+	tampered_tpm_aad := string(principal_tpm_file_additional_data(&tampered_tpm_kept))
+	tampered_tpm_cipher := string(tampered_tpm_decoded.sealed[:])
+	err = {}
+	tamper_outcome, _ = cryptography_primitives.open_with_chacha20_poly1305(&key_text, &tpm_nonce, &tampered_tpm_aad, &tampered_tpm_cipher, &opened_slice, &err)
+	testing.expect_value(t, tamper_outcome, call_outcome.Call_Outcome.Argument_Refused)
+	testing.expect_value(t, err.kind, i64(errors.Kind.Not_Authentic))
 }
 
 test_machine_file :: proc() -> (file: Machine_File) {

@@ -62,6 +62,7 @@ session_budget_open :: proc "contextless" (principal: u64) {
 	}
 	own, status := system.budget_read()
 	if status != .Ok {
+		system.log_fact(.Warning, Session_Budget_Open_Failed{principal = u32(principal), status = status})
 		return
 	}
 	named_slots := u64(max(principals.PRINCIPAL_CAPACITY - 1, 1))
@@ -71,10 +72,12 @@ session_budget_open :: proc "contextless" (principal: u64) {
 		threads        = own.threads,
 		processor      = own.processor,
 		log_records    = own.log_records,
-		storage_blocks = max(session_budgets.DEFAULT_MACHINE_RESERVE.storage_blocks + disk_process.STORE_BLOCKS_LIMIT, 65536),
+		storage_blocks = session_budgets.DEFAULT_MACHINE_STORAGE_BLOCKS,
 	}
-	per_session, ok := session_budgets.compute_session_budget(avail, session_budgets.DEFAULT_MACHINE_RESERVE, named_slots)
+	reserve := session_budgets.machine_reserve_for(avail)
+	per_session, ok := session_budgets.compute_session_budget(avail, reserve, named_slots)
 	if !ok {
+		system.log_fact(.Warning, Session_Budget_Open_Failed{principal = u32(principal), status = .No_Budget})
 		return
 	}
 	child, create_status := system.budget_create({
@@ -84,10 +87,47 @@ session_budget_open :: proc "contextless" (principal: u64) {
 		processor   = per_session.processor,
 		log_records = per_session.log_records,
 	})
-	if create_status == .Ok {
-		session_budget_handles[principal] = child
-		_ = session_budgets.ledger_init(&session_block_ledgers[principal], per_session.storage_blocks)
+	if create_status != .Ok {
+		system.log_fact(.Warning, Session_Budget_Open_Failed{principal = u32(principal), status = create_status})
+		return
 	}
+	session_budget_handles[principal] = child
+	_ = session_budgets.ledger_init(&session_block_ledgers[principal], per_session.storage_blocks)
+}
+
+// session_storage_blocks_charge accounts a storage connection's block quota
+// against the named principal's session storage ledger. Unbounded store limits
+// (disk_process.STORE_BLOCKS_LIMIT) are capped to half of the remaining ledger
+// so one store cannot starve other stores in the same session.
+session_storage_blocks_charge :: proc "contextless" (principal: u64, requested: u64) -> (granted: u64, ok: bool) {
+	if principal == principals.MACHINE || principal >= principals.PRINCIPAL_CAPACITY || requested == 0 {
+		return requested, true
+	}
+	ledger := &session_block_ledgers[principal]
+	if ledger.limit == 0 {
+		return requested, true
+	}
+	charge := requested
+	if requested == disk_process.STORE_BLOCKS_LIMIT {
+		remaining := session_budgets.ledger_remaining(ledger)
+		if remaining == 0 {
+			return 0, false
+		}
+		charge = max(u64(1), remaining / 2)
+	}
+	if !session_budgets.ledger_reserve(ledger, charge) {
+		return 0, false
+	}
+	return charge, true
+}
+
+// session_storage_blocks_release returns a disconnected storage connection's
+// charged blocks to the named principal's session storage ledger.
+session_storage_blocks_release :: proc "contextless" (principal: u64, charged: u64) {
+	if principal == principals.MACHINE || principal >= principals.PRINCIPAL_CAPACITY || charged == 0 {
+		return
+	}
+	_ = session_budgets.ledger_release(&session_block_ledgers[principal], charged)
 }
 
 // session_budget_close releases the reserved child budget of a named principal
@@ -434,18 +474,22 @@ budget_of :: proc "contextless" (file: []u8, name: string, principal: u64 = prin
 		system.log_fact(.Warning, Start_Refused_No_Floor{refused_process = module_name_field(name)})
 		return {}, false
 	}
-	own, _ := system.budget_read()
-	reserved := system.start_list_reserved_pages(&start_list_reserves, name)
-	payable := own.pages - min(own.pages, reserved)
+	paying := session_budget_of(principal)
+	holds, _ := system.budget_read(paying)
+	reserved := paying == 0 ? system.start_list_reserved_pages(&start_list_reserves, name) : 0
+	payable := holds.pages - min(holds.pages, reserved)
 	if floor.pages > payable {
-		system.log_fact(.Warning, Start_Refused_Floor{floor = value_kinds.Size_In_Pages(min(floor.pages, u64(max(i64)))), held = value_kinds.Size_In_Pages(min(payable, u64(max(i64)))), refused_process = module_name_field(name), paying_budget = text_field("this service", 24)})
+		holder := paying != 0 ? "the session" : "this service"
+		system.log_fact(.Warning, Start_Refused_Floor{floor = value_kinds.Size_In_Pages(min(floor.pages, u64(max(i64)))), held = value_kinds.Size_In_Pages(min(payable, u64(max(i64)))), refused_process = module_name_field(name), paying_budget = text_field(holder, 24)})
 		return {}, false
 	}
 	size := system.budget_size(floor.pages, largest_budget.pages, growth_factor)
-	if divided, found := system.start_list_reserve_size(&start_list_reserves, name); found {
-		size = max(divided, floor.pages)
-		budget.list_row = true
-		copy(budget.row_name[:len(budget.row_name) - 1], name)
+	if paying == 0 {
+		if divided, found := system.start_list_reserve_size(&start_list_reserves, name); found {
+			size = max(divided, floor.pages)
+			budget.list_row = true
+			copy(budget.row_name[:len(budget.row_name) - 1], name)
+		}
 	}
 	exception_processor, has_exception := processor_of(name)
 	processor := has_exception ? exception_processor : floor.threads * PROCESSOR_OF_A_THREAD
@@ -453,8 +497,8 @@ budget_of :: proc "contextless" (file: []u8, name: string, principal: u64 = prin
 		pages       = min(size, payable),
 		processes   = floor.processes,
 		threads     = floor.threads,
-		processor   = min(processor, own.processor),
-		log_records = log_records_of(name),
+		processor   = min(processor, holds.processor),
+		log_records = min(log_records_of(name), holds.log_records),
 	}
 	budget.floor_pages = floor.pages
 	return budget, true

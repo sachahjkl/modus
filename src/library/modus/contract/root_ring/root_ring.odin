@@ -525,10 +525,11 @@ Root_Command :: enum u32 {
 	// Wide_Grant_Agent_Ask is the ask of an agent through `remote`
 	// (src/md/features/wide_grants.md, "The ask of an agent"): values[0..3]
 	// the key that the client proved in its handshake, values[4] the word of
-	// the scopes, values[5] the duration in milliseconds, values[6] 0. The
-	// principal is the principal of the row of the key. Only the holder of
-	// Remote_Clients sends it. The completion: the serial of the flow in
-	// values[0], as for Wide_Grant_Ask.
+	// the scopes, values[5] the duration in milliseconds, values[6] the
+	// 1-based row number in the client table (1..CLIENT_CAPACITY) bound to
+	// that connection. The root service verifies the row key and grant and
+	// uses the row's principal. Only the holder of Remote_Clients sends it.
+	// The completion: the serial of the flow in values[0], as for Wide_Grant_Ask.
 	Wide_Grant_Agent_Ask = 37,
 	// Wide_Grant_Second_Connection says that a second connection of a key
 	// came while the row of the key held a wide grant: values[0..3] the key,

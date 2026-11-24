@@ -54,6 +54,25 @@ compute_session_budget_refuses_starvation_and_keeps_machine_reserve :: proc(t: ^
 		testing.expect(t, per.processes < machine.processes)
 		testing.expect(t, per.storage_blocks < machine.storage_blocks)
 	}
+
+	// Small-host scaling: 1-CPU, 2-CPU, and 4-CPU machines all reserve a strict
+	// machine floor and open a positive session budget.
+	for cpus in ([?]u64{1, 2, 4}) {
+		small := machine
+		small.processor = cpus * 1_000_000
+		scaled_reserve := machine_reserve_for(small)
+		per, fit := compute_session_budget(small, scaled_reserve, 1)
+		testing.expect(t, fit, "1..4 CPU machine must open a bounded session budget")
+		testing.expect(t, scaled_reserve.processor > 0 && per.processor > 0)
+		testing.expect(t, per.processor + scaled_reserve.processor <= small.processor)
+		testing.expect(t, per.processor < small.processor)
+	}
+
+	// Starvation guard: 0 or 1 unit on any resource is still refused even with scaling.
+	starved := machine
+	starved.processor = 1
+	_, ok = compute_session_budget(starved, machine_reserve_for(starved), 1)
+	testing.expect(t, !ok, "1 unit available must still be refused")
 }
 
 @(test)

@@ -215,11 +215,16 @@ principal_creation_allowed :: proc "contextless" () -> bool {
 }
 
 // principal_pin_free writes the "free, generation g" TPM pin payload at the
-// end of a deliberate principal removal. Returns true when no TPM pin existed,
-// when the pin is already Free, or when the Free pin write succeeded.
-principal_pin_free :: proc "contextless" (slot: u64) -> bool {
-	if !tpm_granted || !pins_writable() {
+// end of a deliberate principal removal. Returns true when no TPM pin existed
+// or when the pin is already Free or newly freed. Fails closed (false) when a
+// TPM pin exists and pins are not writable, or when an Active pin names a
+// different principal identifier.
+principal_pin_free :: proc "contextless" (slot: u64, expected_identifier: principals.Principal_Identifier, had_pin: bool) -> bool {
+	if !tpm_granted || !had_pin {
 		return true
+	}
+	if !pins_writable() {
+		return false
 	}
 	state, count, read_ok := pin_read(.Principal_File, slot)
 	if !read_ok {
@@ -235,6 +240,9 @@ principal_pin_free :: proc "contextless" (slot: u64) -> bool {
 	if current.state == .Free {
 		principal_pin, principal_pin_read = current, true
 		return true
+	}
+	if current.identifier != expected_identifier {
+		return false
 	}
 	freed, free_ref := tpm_attestation.principal_file_pin_free(current)
 	if free_ref != .None {

@@ -189,13 +189,33 @@ client_find_for_pair :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, p
 	return -1
 }
 
-// client_find_holding finds a row for `key` whose grant currently holds for
-// `use`, preferring the row whose session is in front (`not_in_front == 0`).
+// client_count_holding counts how many occupied rows for `key` currently hold
+// a grant for `use`.
+client_count_holding :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, key: [32]u8, use: Client_Use) -> int {
+	if key == ([32]u8{}) {
+		return 0
+	}
+	count := 0
+	for client, place in clients^ {
+		if client.serial == 0 || client.key != key {
+			continue
+		}
+		if client_grant_holds(clients, place, client.serial, use) {
+			count += 1
+		}
+	}
+	return count
+}
+
+// client_find_holding finds the unique row for `key` whose grant currently
+// holds for `use`. Refuses ambiguous lookups (more than one holding row for
+// the same key and use) by returning -1 so no call can silently bind to an
+// unintended principal when two unlocked principals enrolled the same key.
 client_find_holding :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, key: [32]u8, use: Client_Use) -> int {
 	if key == ([32]u8{}) {
 		return -1
 	}
-	fallback := -1
+	matched := -1
 	for client, place in clients^ {
 		if client.serial == 0 || client.key != key {
 			continue
@@ -203,14 +223,12 @@ client_find_holding :: proc "contextless" (clients: ^[CLIENT_CAPACITY]Client, ke
 		if !client_grant_holds(clients, place, client.serial, use) {
 			continue
 		}
-		if client.not_in_front == 0 {
-			return place
+		if matched >= 0 {
+			return -1
 		}
-		if fallback < 0 {
-			fallback = place
-		}
+		matched = place
 	}
-	return fallback
+	return matched
 }
 
 // client_find_any finds any active row for `key` (for refusal diagnostics

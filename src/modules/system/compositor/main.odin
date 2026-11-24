@@ -475,6 +475,23 @@ damage_screen_add :: proc "contextless" (x, y, width, height: int) {
 	}
 }
 
+// session_reset clears all session-scoped compositor state when a named
+// session ends while a machine window remains connected to this display holder.
+session_reset :: proc "contextless" () {
+	clipboard_reset()
+	desktop_notifications_reset()
+	_ = bar.notification_history_clear(&notification_history)
+	tray_widget_close()
+	tray_others_close()
+	window_switcher_cancel()
+	palette_close("")
+	palette_panel.recents = {}
+	palette_panel.recent_count = 0
+	palette_panel.frecency = {}
+	palette_entries_refresh()
+	damage_whole_screen()
+}
+
 // damage_whole_screen records the whole screen: also the pixels past the
 // last logical pixel, which no record covers and the background does.
 damage_whole_screen :: proc "contextless" () {
@@ -1016,6 +1033,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				wide_grant_screen_show(record.values) // wide_grant_screen.odin
 			case .Wide_Grant_Mark:
 				wide_grant_mark_take(record.values)
+			case .Session_Reset:
+				session_reset()
 			case .None, .Start, .Stop, .Appearance_Next, .Screen_Budget_Release, .Wide_Grant_Screen_Answer, .Wide_Grant_Revoke_Pressed:
 				// The border refused None above. The others go from the
 				// compositor to the root service, never to the compositor.

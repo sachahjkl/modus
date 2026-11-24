@@ -79,16 +79,22 @@ client_restore_and_lookup_key_by_principal_and_key :: proc(t: ^testing.T) {
 	testing.expect(t, action == .Take_Row && place == 0)
 	clients[0] = {key = shared, principal_identifier = id_one, principal = 1, serial = 7, uses = client_uses_word({.Calls, .View}), not_in_front = 0}
 
-	// Both rows resolve independently and client_find_holding prefers front (row 0).
+	// Both rows resolve independently by principal. While both principals hold
+	// .Calls for the same public key, client_find_holding refuses ambiguous
+	// .Calls lookup (-1) so no connection silently picks a principal; .View is
+	// unambiguous because only the front session holds .View.
 	testing.expect_value(t, client_find_for_principal(&clients, 0, shared), 2)
 	testing.expect_value(t, client_find_for_principal(&clients, 1, shared), 0)
-	testing.expect_value(t, client_find_holding(&clients, shared, .Calls), 0)
+	testing.expect_value(t, client_count_holding(&clients, shared, .Calls), 2)
+	testing.expect_value(t, client_find_holding(&clients, shared, .Calls), -1)
 	testing.expect_value(t, client_find_holding(&clients, shared, .View), 0)
 
-	// Locking principal 1 leaves principal 0 holding .Calls cleanly.
+	// Locking principal 1 leaves only principal 0 holding .Calls, which now
+	// resolves unambiguously to row 2.
 	clients[0].session_locked = 1
 	testing.expect(t, !client_grant_holds(&clients, 0, 7, .Calls))
 	testing.expect(t, client_grant_holds(&clients, 2, 6, .Calls))
+	testing.expect_value(t, client_count_holding(&clients, shared, .Calls), 1)
 	testing.expect_value(t, client_find_holding(&clients, shared, .Calls), 2)
 	testing.expect_value(t, client_find_holding(&clients, shared, .View), -1) // principal 0 not_in_front == 1
 

@@ -181,7 +181,7 @@ Grid_Fit :: enum u32 {
 }
 
 // The layout of the keyboard: the character that the input service gives
-// for each key, as a code point (src/library/internal/input/keyboard_layout).
+// for each key, as a code point (src/library/modus/keyboard_layout).
 Keyboard_Layout :: enum u32 {
 	United_States = 0, // The layout of the United States: QWERTY.
 	French        = 1, // The layout of France: AZERTY.

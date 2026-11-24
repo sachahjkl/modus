@@ -87,6 +87,18 @@ start_grant_sets := [?]Row {
 	problems, _, _ = joint_processes_problems(bad_joint, "test.odin")
 	testing.expect_value(t, len(problems), 3)
 
+	// Another field in terms naming a System_Part service does not make it callable.
+	non_callable_term := `package root
+joint_process_names := [?]string{"storage"}
+start_grant_sets := [?]Row {
+	{name = "storage", scope = .Machine, grants = {.Serve}},
+	{name = "devices", scope = .Machine, grants = {.System_Part, .Serve}},
+	{name = "caller", scope = .Session, grants = {.Connect}, terms = {note = "devices", callable = {0 = "storage"}}},
+}
+`
+	non_callable_problems, _, _ := joint_processes_problems(non_callable_term, "test.odin")
+	testing.expect_value(t, len(non_callable_problems), 0)
+
 	// Valid table passes: joint Machine services, root-only System_Part service not in any callable list, and Session services.
 	valid := `package root
 joint_process_names := [?]string{"storage", "unlock"}

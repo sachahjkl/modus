@@ -128,6 +128,7 @@ import "modus:disk_process"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:keyboard_layout"
 import "modus:principals"
 import "modus:random"
 import "modus:storage"
@@ -276,6 +277,9 @@ unlock_public_key: [principals.PUBLIC_KEY_SIZE]u8
 // AAD) or captured from the active presentation settings during creation /
 // passphrase-proved reseal.
 unlock_hints: principals.Unlock_Hints
+unlock_hints_loaded: bool
+unlock_dead_key: keyboard_layout.Dead_Key_State
+unlock_alt_graph_held: bool
 // The secret keys that a recovery key, or the current passphrase of a
 // change, opened, until a new passphrase seals them again; erased then.
 // Also the keys of a new principal, while the window shows its recovery
@@ -495,16 +499,23 @@ create :: proc "contextless" () {
 	session_start(&secrets, root_ring.Principal_Key_Origin.New)
 }
 
+// active_settings_layout reads the keyboard layout currently active in the
+// input service's settings page (default United_States).
+active_settings_layout :: proc "contextless" () -> settings.Keyboard_Layout {
+	if display.settings_page == nil {
+		return .United_States
+	}
+	if choice, ok := settings.read(display.settings_page); ok {
+		return choice.keyboard_layout
+	}
+	return .United_States
+}
+
 // unlock_hints_capture reads the active presentation settings page for the
 // keyboard layout in which the passphrase is being typed. Updated into a
 // principal file only at creation or after passphrase proof.
 unlock_hints_capture :: proc "contextless" () -> (hints: principals.Unlock_Hints) {
-	if display.settings_page == nil {
-		return hints
-	}
-	if choice, ok := settings.read(display.settings_page); ok {
-		hints.keyboard_layout = choice.keyboard_layout
-	}
+	hints.keyboard_layout = active_settings_layout()
 	return hints
 }
 
@@ -1849,10 +1860,10 @@ principal_remove_run_steps :: proc "contextless" (start_record: principals.Remov
 	for {
 		action := principals.removal_next_action(current, has_tpm_pin)
 		switch action {
-		case .Erase_Stores:
+		case .Erase_Keys:
 			object_versions_erase(principals.FILE_OBJECT)
 			object_versions_erase(principals.NON_TPM_RECOVERY_OBJECT)
-			next, prob := principals.removal_step_advance(current, .Stores_Erased)
+			next, prob := principals.removal_step_advance(current, .Keys_Erased)
 			if prob != .None || !principal_remove_record_write(next) {
 				system.log_fact(.Info, Principal_Removal_Failed{principal = u64(current.slot), step = u64(current.step)})
 				return false
@@ -1876,7 +1887,7 @@ principal_remove_run_steps :: proc "contextless" (start_record: principals.Remov
 			}
 			current = next
 		case .Free_Pin:
-			if !principal_pin_free(u64(current.slot)) {
+			if !principal_pin_free(u64(current.slot), current.identifier, has_tpm_pin) {
 				system.log_fact(.Info, Principal_Removal_Failed{principal = u64(current.slot), step = u64(current.step)})
 				return false
 			}
@@ -2983,6 +2994,8 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 		name, name_length = file.name, file.name_length
 		identifier = file.identifier
 		unlock_hints = file.hints
+		unlock_hints_loaded = true
+		unlock_dead_key = {}
 		signing_public_key, unlock_public_key = file.signing_public_key, file.unlock_public_key
 	case .Sealed_By_The_Tpm:
 		principal_tpm_file, principal_tpm_file_bytes, problem = principals.principal_tpm_file_decode(bytes)
@@ -2993,6 +3006,8 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 		name, name_length = principal_tpm_file.name, principal_tpm_file.name_length
 		identifier = principal_tpm_file.identifier
 		unlock_hints = principal_tpm_file.hints
+		unlock_hints_loaded = true
+		unlock_dead_key = {}
 		signing_public_key, unlock_public_key = principal_tpm_file.signing_public_key, principal_tpm_file.unlock_public_key
 	case .Unknown:
 		system.log_fact(.Info, Principal_File_Form_Unknown{})
@@ -3346,16 +3361,38 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// gave it to the input of the next frame, and the next turn
 				// draws a frame with it.
 			case .Key:
+				alt_graph_key := event.code == (0x38 | display.KEY_EXTENDED)
+				if alt_graph_key {
+					unlock_alt_graph_held = event.pressed
+				}
 				if !event.pressed {
 					continue
 				}
 				// The open list of the action bar takes its keys first.
 				press := interface.Key_Press{code = event.code, character = event.character, modifiers = event.modifiers}
+				accent_alone: rune
+				// When the principal's saved unlock keyboard layout differs from
+				// the machine's active layout, translate local scan codes through
+				// the principal's layout so passphrases type in the expected layout.
+				if unlock_hints_loaded && event.code != 0 && (event.modifiers & display.MODIFIER_CONTROL) == 0 && unlock_hints.keyboard_layout != active_settings_layout() {
+					held: keyboard_layout.Level_Keys
+					if (event.modifiers & display.MODIFIER_SHIFT) != 0 {
+						held += {.Shift}
+					}
+					if unlock_alt_graph_held {
+						held += {.Alt_Graph}
+					}
+					modifier_key := alt_graph_key || event.code == 0x2A || event.code == 0x36 || event.code == 0x1D || event.code == (0x1D | display.KEY_EXTENDED) || event.code == 0x38
+					accent_alone, press.character = keyboard_layout.key_press(&unlock_dead_key, unlock_hints.keyboard_layout, held, event.code, modifier_key)
+				}
 				outcome := interface.action_bar_key(&bar, press)
 				if outcome.ran {
 					key_run(&window, outcome.run)
 				}
 				if !outcome.taken {
+					if accent_alone != 0 {
+						key_run(&window, interface.Key_Press{character = accent_alone, modifiers = event.modifiers})
+					}
 					key_run(&window, press)
 				}
 			case .None, .Presentation, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Surface_Answer, .Work_Area:
@@ -3376,7 +3413,9 @@ key_run :: proc "contextless" (window: ^display.Window, press: interface.Key_Pre
 	case press.code == display.KEY_ESCAPE:
 		erase(typed[:])
 		typed_count = 0
+		unlock_dead_key = {}
 	case press.character == '\n':
+		unlock_dead_key = {}
 		enter(window)
 	case press.character == 8:
 		// The passphrase is UTF-8: Backspace removes its last

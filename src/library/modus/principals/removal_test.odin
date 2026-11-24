@@ -62,7 +62,7 @@ removal_record_codec_and_transitions_refuse_bad_inputs :: proc(t: ^testing.T) {
 	_, prob = removal_step_advance(valid, .Marked)
 	testing.expect_value(t, prob, Removal_Problem.Bad_Transition)
 
-	s2, p2 := removal_step_advance(valid, .Stores_Erased)
+	s2, p2 := removal_step_advance(valid, .Keys_Erased)
 	testing.expect_value(t, p2, Removal_Problem.None)
 	_, prob = removal_step_advance(s2, .Marked)
 	testing.expect_value(t, prob, Removal_Problem.Bad_Transition)
@@ -109,9 +109,9 @@ create_remove_crash_resume_and_recreate_cycle :: proc(t: ^testing.T) {
 			testing.expect_value(t, dec_prob, Removal_Problem.None)
 			action := removal_next_action(loaded, true)
 			switch action {
-			case .Erase_Stores:
+			case .Erase_Keys:
 				stores_present = false
-				next, adv_prob := removal_step_advance(loaded, .Stores_Erased)
+				next, adv_prob := removal_step_advance(loaded, .Keys_Erased)
 				testing.expect_value(t, adv_prob, Removal_Problem.None)
 				testing.expect_value(t, removal_record_encode(next, &marker_bytes), Removal_Problem.None)
 			case .Delete_File:

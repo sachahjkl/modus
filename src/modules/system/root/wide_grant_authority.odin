@@ -381,21 +381,24 @@ wide_grant_ask :: proc "contextless" (caller: ^Started, record: ring.Record, val
 }
 
 // wide_grant_agent_ask serves Wide_Grant_Agent_Ask: `remote` passes the
-// ask of an agent for the key that its client proved. The principal is the
-// one of the row of the key, whose grant to call still holds: the agent
-// names no principal.
+// ask of an agent for the key that its client proved, together with the
+// 1-based row number in the client table bound to that connection (values[6]).
+// The root service verifies that the row holds that key and a `.Calls` grant
+// and uses the row's principal.
 wide_grant_agent_ask :: proc "contextless" (caller: ^Started, record: ring.Record, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Wide_Grant_Agent_Ask)
-	if record.values[6] != 0 {
-		values^ = root_ring.word_refusal(.Wide_Grant_Agent_Ask, 7, record.values[6], 0)
+	row_number := record.values[6]
+	if row_number == 0 || row_number > remote.CLIENT_CAPACITY {
+		values^ = root_ring.word_refusal(.Wide_Grant_Agent_Ask, 7, row_number, 0)
 		return .Argument_Refused
 	}
 	key := transmute([32]u8)([4]u64{record.values[0], record.values[1], record.values[2], record.values[3]})
-	place := remote.client_find_holding(&client_table.clients, key, .Calls)
-	if place < 0 {
+	place := int(row_number - 1)
+	row := client_table.clients[place]
+	if row.key != key || !remote.client_grant_holds(&client_table.clients, place, row.serial, .Calls) {
 		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Grants, 1)
 	}
-	return wide_grant_ask_open(.Wide_Grant_Agent_Ask, client_table.clients[place].principal, key, record.values[4], record.values[5], values)
+	return wide_grant_ask_open(.Wide_Grant_Agent_Ask, row.principal, key, record.values[4], record.values[5], values)
 }
 
 // wide_grant_second_connection serves Wide_Grant_Second_Connection: a

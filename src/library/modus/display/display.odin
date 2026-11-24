@@ -632,6 +632,10 @@ Control :: enum u32 {
 	// the keys or the pointer of the input service. values[0]: the grant
 	// serial of the mark.
 	Wide_Grant_Revoke_Pressed = 15,
+	// root to compositor: a named session ended while a machine window stays
+	// connected to this display holder. Clear all session-scoped compositor
+	// state (clipboard, notifications, palette query and recents, open menus).
+	Session_Reset             = 16,
 }
 
 // Where the focus goes in the window that Settings_Raise raises. The values

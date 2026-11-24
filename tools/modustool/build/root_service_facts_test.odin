@@ -53,7 +53,7 @@ CLIENT_USES := [?]string{"calls, view and input", "calls and view", "view and in
 @(private = "file")
 UNLOCK_MODES := [?]string{"an unlock", "the creation of a principal", "the machine passphrase that is set", "the machine key that the TPM seals", "a change of the passphrase", "a new recovery key", "the machine key before the start policy", "the proof of a wide grant", "the removal of a principal", "a mode that names no member"}
 @(private = "file")
-CHANGE_ENDS := [?]string{"unlock stopped before the end: the old or the new secret opens", "the passphrase is changed", "the change is cancelled: nothing changed", "the principal and its stores are removed"}
+CHANGE_ENDS := [?]string{"unlock stopped before the end: the old or the new secret opens", "the passphrase is changed", "the change is cancelled: nothing changed", "the principal keys are destroyed and removed"}
 @(private = "file")
 FAILURE_CAUSES := [?]string{"the rescue start policy is absent from the boot image", "the rescue start policy did not start", "the rescue start policy stopped before the machine was usable", "the rescue start policy stopped after the machine was usable", "the rescue start policy sent no Machine_Usable within the hang bound"}
 

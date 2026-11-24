@@ -20,14 +20,29 @@ START_GRANT_SETS_TABLE_NAME :: "start_grant_sets"
 SYSTEM_PART_NAMES_LIST_NAME :: "system_part_names"
 
 // row_callable_contains checks whether the serialized terms string of a row
-// references `target` inside its `callable` array.
+// references `target` inside its `callable` array (ignoring other fields in
+// `terms`).
 @(private = "file")
 row_callable_contains :: proc(terms: string, target: string) -> bool {
 	if terms == "" || target == "" {
 		return false
 	}
+	key_pos := strings.index(terms, "callable")
+	if key_pos < 0 {
+		return false
+	}
+	rest := terms[key_pos + len("callable"):]
+	open_pos := strings.index_byte(rest, '{')
+	if open_pos < 0 {
+		return false
+	}
+	close_pos := strings.index_byte(rest[open_pos + 1:], '}')
+	if close_pos < 0 {
+		return false
+	}
+	callable_body := rest[open_pos + 1:][:close_pos]
 	needle := fmt.tprintf("\"%s\"", target)
-	return strings.contains(terms, needle)
+	return strings.contains(callable_body, needle)
 }
 
 // joint_processes_problems parses a `start_grant_sets.odin` source string and

@@ -1346,10 +1346,13 @@ wide_grant_ask_serve :: proc "contextless" (buffer: []u8, received: int, client:
 	if !ok {
 		return refuse(buffer, .Argument_Refused, error, field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
 	}
+	if client.row < 0 || client.row >= remote.CLIENT_CAPACITY {
+		return refuse(buffer, .Grant_Or_Right_Missing, errors.error_make(.No_Grant, .Grants, 0, 0, 0), field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
+	}
 	key := transmute([4]u64)client.key
 	request_tag += 1
 	tag := request_tag
-	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Wide_Grant_Agent_Ask), tag = tag, values = {0 = key[0], 1 = key[1], 2 = key[2], 3 = key[3], 4 = wide_grants.wide_authorities_to_word(authorities), 5 = duration_ms}}) {
+	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Wide_Grant_Agent_Ask), tag = tag, values = {0 = key[0], 1 = key[1], 2 = key[2], 3 = key[3], 4 = wide_grants.wide_authorities_to_word(authorities), 5 = duration_ms, 6 = u64(client.row + 1)}}) {
 		return refuse(buffer, .Callee_Busy, errors.error_make(.Busy, .Requests, 0, 0, 0), field_names = wide_grants.WIDE_GRANT_ASK_FIELD_NAMES[:])
 	}
 	limit := system.time() + REQUEST_TIME_LIMIT
