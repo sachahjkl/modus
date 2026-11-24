@@ -149,3 +149,38 @@ a_cell_opens_its_own_store_block_only :: proc(t: ^testing.T) {
 	testing.expect(t, opened)
 	testing.expect_value(t, name, "notes")
 }
+
+// reclaim_identifier_check refuses slot 0, out-of-range slots, trailing
+// non-zero words, all-zero identifiers, and any identifier currently unlocked.
+@(test)
+reclaim_identifier_check_refuses_bad_and_unlocked_targets :: proc(t: ^testing.T) {
+	table: Table
+	id_words := [4]u64{0x11, 0x22, 0x33, 0x44}
+	// Slot 0, past capacity, non-zero values[5..6], and zero identifier refused.
+	for bad in ([?][7]u64{
+		{id_words[0], id_words[1], id_words[2], id_words[3], 0, 0, 0},
+		{id_words[0], id_words[1], id_words[2], id_words[3], principals.PRINCIPAL_CAPACITY, 0, 0},
+		{id_words[0], id_words[1], id_words[2], id_words[3], 1, 1, 0},
+		{id_words[0], id_words[1], id_words[2], id_words[3], 1, 0, 1},
+		{0, 0, 0, 0, 1, 0, 0},
+	}) {
+		_, ok := reclaim_identifier_check(&table, bad)
+		testing.expect(t, !ok, "hostile reclaim command must be refused")
+	}
+
+	// Valid when no unlocked slot holds that identifier.
+	valid := [7]u64{id_words[0], id_words[1], id_words[2], id_words[3], 1, 0, 0}
+	id, ok := reclaim_identifier_check(&table, valid)
+	testing.expect(t, ok && !principals.identifier_is_zero(id[:]))
+
+	// Refused while slot 1 is unlocked with the same identifier.
+	_ = keys_of_slot(&table, 0x11, 0x99)
+	unlocked := [7]u64{0x11, 0x12, 0x13, 0x14, 1, 0, 0}
+	_, ok = reclaim_identifier_check(&table, unlocked)
+	testing.expect(t, !ok, "reclaim of an unlocked principal must be refused")
+
+	// Accepted once Principal_Locked erases the slot's keys.
+	_, _ = take(&table, .Principal_Locked, &[7]u64{4 = 1})
+	_, ok = reclaim_identifier_check(&table, unlocked)
+	testing.expect(t, ok, "reclaim after Principal_Locked must be accepted")
+}

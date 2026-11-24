@@ -1318,7 +1318,7 @@ removal_waits :: proc "contextless" () -> bool {
 		return false
 	}
 	for index in 0 ..< store_numbers() {
-		if store_listed(index) && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] && owned_unlocked(index) {
+		if store_listed(index) && !reclaiming_cell(index) && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] && owned_unlocked(index) {
 			return true
 		}
 	}
@@ -1335,7 +1335,7 @@ removal_step :: proc "contextless" () -> bool {
 	}
 	store_index := -1
 	for index in 0 ..< store_numbers() {
-		if store_listed(index) && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] && owned_unlocked(index) {
+		if store_listed(index) && !reclaiming_cell(index) && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] && owned_unlocked(index) {
 			store_index = index
 			break
 		}

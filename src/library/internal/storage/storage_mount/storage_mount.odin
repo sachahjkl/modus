@@ -1462,6 +1462,15 @@ store_page_read :: proc "contextless" (state: ^State, reader: ^Block_Reader, poi
 			valid &&= tag_nonzero
 			continue
 		}
+		if cell.name[0] == format.RECLAIMING_CELL_MARK {
+			// Reclaiming store cell: mark byte followed by 31 zero bytes (name tag scrubbed).
+			for byte in cell.name[1:] {
+				if byte != 0 {
+					valid = false
+				}
+			}
+			continue
+		}
 		ended := false
 		for byte in cell.name {
 			if ended && byte != 0 {
@@ -1513,7 +1522,7 @@ walk_store :: proc "contextless" (state: ^State, reader: ^Block_Reader, store: ^
 		result      = result,
 		store_index = index,
 		named       = named,
-		encrypted   = store.name[0] == format.OWNED_CELL_MARK,
+		encrypted   = format.cell_uses_encrypted_layout(store.name),
 		complete    = true,
 	}
 	roots := [2]format.Pointer{block.tree, block.removals}

@@ -1851,6 +1851,16 @@ principal_remove_record_write :: proc "contextless" (record: principals.Removal_
 	return object_write(principals.REMOVAL_OBJECT, encoded[:]) == .Kept
 }
 
+// principal_stores_reclaim asks the root service to durably mark every
+// encrypted store belonging to the removed principal for keyless reclamation.
+@(private = "file")
+principal_stores_reclaim :: proc "contextless" (slot: u64, id: principals.Principal_Identifier) -> bool {
+	words := transmute([4]u64)id
+	cmd := [7]u64{words[0], words[1], words[2], words[3], slot, 0, 0}
+	completion, answered := root_command(.Principal_Stores_Reclaim, &cmd)
+	return answered && completion.kind == u32(call_outcome.Call_Outcome.Succeeded)
+}
+
 // principal_remove_run_steps drives a durable Removal_Record forward through
 // every remaining idempotent step until the marker object is cleared.
 @(private = "file")
@@ -1881,6 +1891,17 @@ principal_remove_run_steps :: proc "contextless" (start_record: principals.Remov
 				return false
 			}
 			next, prob := principals.removal_step_advance(current, .File_Deleted)
+			if prob != .None || !principal_remove_record_write(next) {
+				system.log_fact(.Info, Principal_Removal_Failed{principal = u64(current.slot), step = u64(current.step)})
+				return false
+			}
+			current = next
+		case .Mark_Stores:
+			if !principal_stores_reclaim(u64(current.slot), current.identifier) {
+				system.log_fact(.Info, Principal_Removal_Failed{principal = u64(current.slot), step = u64(current.step)})
+				return false
+			}
+			next, prob := principals.removal_step_advance(current, .Stores_Marked)
 			if prob != .None || !principal_remove_record_write(next) {
 				system.log_fact(.Info, Principal_Removal_Failed{principal = u64(current.slot), step = u64(current.step)})
 				return false

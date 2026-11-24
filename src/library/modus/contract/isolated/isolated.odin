@@ -239,6 +239,7 @@ Service_Command :: enum u32 {
 	Principal_Identity    = 4, // values[0..3]: the principal identifier of the slot.
 	Principal_Storage_Key = 5, // values[0..3]: the storage key of the principal, after its identity.
 	Principal_Locked      = 6, // The session of the principal ended: the service erases its keys.
+	Principal_Reclaim     = 7, // values[0..3]: removed principal identifier, values[4]: slot. Mark its stores for keyless reclamation and reply on service completions.
 }
 
 // In the call region, `start` is an offset. In a process, it is an address.

@@ -308,6 +308,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_INTERNAL + "/storage/storage_retention",
 	foundation.SOURCE_FOLDER_INTERNAL + "/storage/share_quota",
 	foundation.SOURCE_FOLDER_INTERNAL + "/storage/store_encryption",
+	foundation.SOURCE_FOLDER_INTERNAL + "/storage/store_reclaim",
 	foundation.SOURCE_FOLDER_INTERNAL + "/storage/principal_keys",
 	foundation.SOURCE_FOLDER_PUBLIC + "/principals",
 	foundation.SOURCE_FOLDER_PUBLIC + "/tpm2",

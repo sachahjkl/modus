@@ -298,6 +298,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		answer.outcome = budget_grow_command(item, record, &answer.values) // budget_growth.odin
 	case .Grants_Read:
 		answer.outcome = grants_read_command(item, record, &answer.values)
+	case .Principal_Stores_Reclaim:
+		answer.outcome, answer.held = principal_stores_reclaim(item, record.tag, record.values, &answer.values)
 	}
 	return answer
 }

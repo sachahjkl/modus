@@ -81,9 +81,32 @@ take :: proc "contextless" (table: ^Table, command: isolated.Service_Command, va
 	case .Principal_Locked:
 		erase(table, int(slot))
 		return .Erased, false
-	case .None, .Connect, .Disconnect, .Grant:
+	case .None, .Connect, .Disconnect, .Grant, .Principal_Reclaim:
 	}
 	return .Refused, false
+}
+
+// reclaim_identifier_check validates a Principal_Reclaim command from the root
+// service: slot must name a named principal, values[5..6] must be 0, the
+// 256-bit identifier in values[0..3] must be non-zero, and no slot may hold an
+// active unlocked storage key for that identifier.
+reclaim_identifier_check :: proc "contextless" (table: ^Table, values: [7]u64) -> (identifier: principals.Principal_Identifier, ok: bool) {
+	slot := values[4]
+	if slot == principals.MACHINE || slot >= principals.PRINCIPAL_CAPACITY || values[5] != 0 || values[6] != 0 {
+		return {}, false
+	}
+	words := [4]u64{values[0], values[1], values[2], values[3]}
+	bytes := transmute([32]u8)words
+	if principals.identifier_is_zero(bytes[:]) {
+		return {}, false
+	}
+	id := principals.Principal_Identifier(bytes)
+	for entry in table^ {
+		if entry.key_set && entry.identifier == id {
+			return {}, false
+		}
+	}
+	return id, true
 }
 
 // held gives the keys of a slot whose session runs, or nil.

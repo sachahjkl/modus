@@ -582,6 +582,34 @@ Principal_Keys_Erased :: struct {
 	slot: u64,
 }
 
+// A reclaim request for a principal was refused: bad slot, zero identifier,
+// or the principal is currently unlocked.
+@(log_fact = "storage: the reclaim request for the principal in slot {slot} was refused")
+Principal_Reclaim_Refused :: struct {
+	slot: u64,
+}
+
+// An orphaned encrypted store of a removed principal is marked for keyless
+// block reclamation with its owner metadata scrubbed.
+@(log_fact = "storage: the orphaned store {store} ({blocks}) is marked for reclamation")
+Principal_Store_Marked_Reclaiming :: struct {
+	store:  u64,
+	blocks: value_kinds.Size_In_Blocks,
+}
+
+// All blocks of a reclaiming store are freed and its store table cell is zeroed.
+@(log_fact = "storage: the orphaned store {store} is reclaimed and its cell is free")
+Principal_Store_Reclaimed :: struct {
+	store: u64,
+}
+
+// A reclamation step could not commit (disk full or device error): it will
+// retry after another commit changes the disk.
+@(log_fact = "storage: reclamation of the orphaned store {store} stalled and waits for the next change")
+Principal_Reclaim_Stalled :: struct {
+	store: u64,
+}
+
 // milliseconds_field gives a time in milliseconds as a field with its unit.
 milliseconds_field :: proc "contextless" (milliseconds: u64) -> value_kinds.Time_In_Milliseconds {
 	return value_kinds.Time_In_Milliseconds(milliseconds)

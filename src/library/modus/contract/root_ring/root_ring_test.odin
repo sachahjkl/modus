@@ -114,6 +114,22 @@ debug_start_border_refuses_each_word_it_does_not_take :: proc(t: ^testing.T) {
 	}
 }
 
+// Principal_Stores_Reclaim is accepted only from the grant Principals, and its
+// command and argument names are stable for error formatting.
+@(test)
+principal_stores_reclaim_sender_and_names :: proc(t: ^testing.T) {
+	testing.expect(t, sender_allowed(.Principal_Stores_Reclaim, {.Principals}))
+	testing.expect(t, !sender_allowed(.Principal_Stores_Reclaim, {.Root_Ring}))
+	testing.expect(t, !sender_allowed(.Principal_Stores_Reclaim, {.Root_Ring, .Connect, .Debugger, .Start_Policy}))
+	testing.expect(t, !sender_allowed(.Principal_Stores_Reclaim, {}))
+	decision := dispatch_decide(u32(Root_Command.Principal_Stores_Reclaim), {.Root_Ring}, false)
+	testing.expect_value(t, decision.step, Dispatch_Step.Sender)
+	testing.expect_value(t, decision.outcome, call_outcome.Call_Outcome.Grant_Or_Right_Missing)
+	testing.expect_value(t, root_command_name(i64(Root_Command.Principal_Stores_Reclaim)), "Principal_Stores_Reclaim")
+	testing.expect_value(t, root_argument_name(i64(Root_Command.Principal_Stores_Reclaim), 1), "identifier")
+	testing.expect_value(t, root_argument_name(i64(Root_Command.Principal_Stores_Reclaim), 2), "slot")
+}
+
 // The kind of a record becomes a command at command_of_word only. Each word
 // that names no command is refused first: 0, which is None and which no
 // sender sends, one past the largest member, a word far past it, the

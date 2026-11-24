@@ -1,5 +1,5 @@
 // The retention of the private store of the recipes service
-// (src/md/features/recipes.md, "The retention of the store"). The content-addressed
+// (src/md/features/recipes.md, "The retention and garbage collection of the store"). The content-addressed
 // objects kept by builds, cache fetches, and puts are named by their exact
 // 64 lowercase hexadecimal BLAKE3 hash; one pass removes each of them that
 // nothing names: no realisation of the store, no recipe of the store or of

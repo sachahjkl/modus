@@ -1001,7 +1001,7 @@ repair_object_node :: proc "contextless" (state: ^State, reader: ^Block_Reader, 
 	// A wrong node: the blocks under it are not known, as at the open. It is
 	// kept wrong, so a later step of a release never trusts it.
 	store_page, store_cell := format.store_place(repair.store)
-	encrypted := state.store_pages[store_page].cells[store_cell].name[0] == format.OWNED_CELL_MARK
+	encrypted := format.cell_uses_encrypted_layout(state.store_pages[store_page].cells[store_cell].name)
 	if check_of_block(reader, pointer.block, ([^]u8)(node)[:BLOCK_SIZE]) != pointer.check || !block_tree.node_valid(node, level, base, object.size, encrypted) {
 		repair_wrong_note(state, pointer.block)
 		return true
