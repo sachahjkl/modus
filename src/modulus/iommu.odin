@@ -40,7 +40,7 @@ import "base:intrinsics"
 IOMMU_DEVICE_CAPACITY :: 32
 // The devices whose registers one service can hold and declare memory to:
 // a declaration from a process that holds the registers of more gives
-// No_Slot. A device service holds one.
+// Budget_Or_Capacity_Exhausted. A device service holds one.
 IOMMU_DEVICES_OF_A_SERVICE :: 4
 // The devices that a reserved memory range names, each with a standing
 // domain, whose identifiers follow those of the slots.
@@ -71,7 +71,7 @@ iommu_window_take :: proc "contextless" (region: ^Region) -> bool {
 }
 
 // iommu_windows_wanted says if a declaration of a memory object would need
-// a window and finds none: the one cause of No_Slot that the error record
+// a window and finds none: the one cause of Callee_Busy that the error record
 // of Memory_Physical names by its table. Frame lock.
 iommu_windows_wanted :: proc "contextless" (region_index: u32) -> bool {
 	lock_take(&frame_lock, .Frame)
@@ -1669,7 +1669,7 @@ owned_of :: proc "contextless" (process_index: u32, requester: u32) -> (owned: u
 
 // device_slot gives the slot of the domain of a requester for a process:
 // the slot that the process owns, or a free slot, which the process owns
-// only after its first declaration. Bad_State: another process owns it.
+// only after its first declaration. Wrong_State: another process owns it.
 // The caller holds the frame lock.
 @(private = "file")
 device_slot :: proc "contextless" (requester: u16, process_index: u32) -> (slot: u32, status: Operation_Outcome) {
@@ -2033,7 +2033,7 @@ iommu_bridge_refusal_last: u32
 // bridge_domain_check walks the bus to the functions that share a
 // requester (1 + it) behind a conventional bridge, before the first
 // declaration of its domain: a service that does not hold the registers of
-// each of them gets Bad_State, with one line, as the device that it misses
+// each of them gets Wrong_State, with one line, as the device that it misses
 // would reach what it declares. member_count: the functions of the group.
 // The caller holds the process lock; the walk reads the bus with no lock.
 @(private = "file")

@@ -621,15 +621,15 @@ record_replay_on_unmap :: proc "contextless" (process_index: u32, region_index: 
 // record_replay_map_check enforces mapping isolation while any process is
 // recorded or replayed, before map_region changes anything:
 // - A recorded or replayed process cannot map an active history buffer, device
-//   memory or IOMMU-declared memory (Bad_State).
+//   memory or IOMMU-declared memory (Wrong_State).
 // - A recorded process maps memory that another process holds (a window
 //   surface, a ring) only by itself, after the checks of
 //   record_received_mapping_admit: received is true, and map_region then
 //   gives the mapping to record_received_mapping_locked. A replay holds no
 //   peer, and a map by another process changes the address space at any
-//   instruction: both are refused (Bad_State).
+//   instruction: both are refused (Wrong_State).
 // - Another process cannot gain a writable mapping to a region currently
-//   mapped by a recorded or replayed process (Bad_State).
+//   mapped by a recorded or replayed process (Wrong_State).
 // Called from map_region under process's process lock.
 record_replay_map_check :: proc "contextless" (process_index: u32, region_index: u32, flags: op.Map_Flags, first: u64, count: u64, by_the_process: bool) -> (received: bool, status: Operation_Outcome) {
 	if intrinsics.atomic_load(&record_replay_active_count) == 0 {

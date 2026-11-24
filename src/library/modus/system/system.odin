@@ -1329,12 +1329,12 @@ guest_run :: proc "contextless" (process: Handle, registers: ^op.Guest_Registers
 	if status != .Succeeded {
 		return {}, status
 	}
-	// The kernel writes the kind as a word: a word that names no kind is the
-	// refusal Bad_Operation with the record Bad_Value, never an exit.
+	// The kernel writes the kind as a word: a word that names no kind is
+	// Answer_Unreadable with the record Bad_Value, never an exit.
 	kind, kind_ok := enum_word.member_of_word(op.Guest_Exit_Kind, results[0])
 	if !kind_ok {
 		errors.fail(error, 0, .Bad_Value, .None, 0, i64(results[0]), i64(max(op.Guest_Exit_Kind)))
-		return {}, .Argument_Refused
+		return {}, .Answer_Unreadable
 	}
 	return {kind = kind, a = results[1], b = results[2], c = results[3], next = results[4], code = results[5], information = results[6]}, .Succeeded
 }

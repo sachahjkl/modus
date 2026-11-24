@@ -458,14 +458,16 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	case .Ready:
 		return connection, .Succeeded
 	case .Load_Failed:
+		loaded: module.Load_Error
+		intrinsics.mem_copy_non_overlapping(&loaded, raw_data(connection.region), size_of(module.Load_Error))
 		if load_error != nil {
-			intrinsics.mem_copy_non_overlapping(load_error, raw_data(connection.region), size_of(module.Load_Error))
+			load_error^ = loaded
 		}
-		return connection, .Wrong_State
+		return connection, loaded.stage == u32(module.Load_Stage.Find) ? .Nothing_Has_That_Name : .Argument_Refused
 	case .Refused:
-		return connection, .Wrong_State
+		return connection, .Callee_Unavailable
 	}
-	return connection, .Wrong_State
+	return connection, .Callee_Unavailable
 }
 
 // call_host_start_from_memory starts a call host from in-memory host and
@@ -538,14 +540,16 @@ call_host_start_from_memory :: proc "contextless" (host_file: []u8, module_memor
 	case .Ready:
 		return connection, .Succeeded
 	case .Load_Failed:
+		loaded: module.Load_Error
+		intrinsics.mem_copy_non_overlapping(&loaded, raw_data(connection.region), size_of(module.Load_Error))
 		if load_error != nil {
-			intrinsics.mem_copy_non_overlapping(load_error, raw_data(connection.region), size_of(module.Load_Error))
+			load_error^ = loaded
 		}
-		return connection, .Wrong_State
+		return connection, loaded.stage == u32(module.Load_Stage.Find) ? .Nothing_Has_That_Name : .Argument_Refused
 	case .Refused:
-		return connection, .Wrong_State
+		return connection, .Callee_Unavailable
 	}
-	return connection, .Wrong_State
+	return connection, .Callee_Unavailable
 }
 
 

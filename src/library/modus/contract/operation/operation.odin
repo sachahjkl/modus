@@ -1932,7 +1932,7 @@ Module_Report :: struct {
 // thread uses counts in its budget and in each budget above. A new budget
 // cannot have a limit above the limit of the budget that it came from. With
 // the limit 0 a budget has no time: its threads do not run. With no log
-// records, Log gives No_Budget. The processor limit holds in each period of
+// records, Log gives Budget_Or_Capacity_Exhausted. The processor limit holds in each period of
 // 100 ms, the log records in each second.
 //
 // The kernel gives one budget to the root service: all the free memory and
@@ -2282,26 +2282,26 @@ Thread_Control_Command :: enum u64 {
 	// thread runs no instruction until its count is 0 again: a thread on
 	// another processor left it; a thread in a wait stays in it, and does
 	// not run when it ends. The calling thread itself stops after its kernel
-	// entry. At most THREAD_STOP_COUNT_LIMIT (Bad_State above).
+	// entry. At most THREAD_STOP_COUNT_LIMIT (Budget_Or_Capacity_Exhausted above).
 	// One case returns earlier: when the calling thread is itself held (it
 	// stopped itself earlier in the same entry, or another thread stopped
 	// it), the operation does not wait for a thread on another processor to
 	// leave it, so that two threads that stop each other do not wait for
 	// each other. That thread then leaves its processor at the interrupt
-	// that the stop sent, and a read of its registers gets Bad_State until
+	// that the stop sent, and a read of its registers gets Wrong_State until
 	// it left.
 	Stop                 = 1,
-	// Takes 1 from the stop count -> the count. Bad_State at 0. At 0, a
+	// Takes 1 from the stop count -> the count. Wrong_State at 0. At 0, a
 	// thread whose wait ended runs again. The debugger of the process
 	// takes back only the stops that it made, and the other callers only
-	// the stops that the debugger did not make: Bad_State when the caller
+	// the stops that the debugger did not make: Wrong_State when the caller
 	// has no stop of its own on the thread.
 	Resume               = 2,
 	// Writes a Thread_Registers at the address (size: at least its size) ->
 	// the bytes written.
 	Read_Registers       = 3,
 	// Reads a Thread_Registers at the address (size: at least its size): the
-	// thread continues with these registers. Bad_Operation for values that
+	// thread continues with these registers. Argument_Refused for values that
 	// a thread cannot hold (thread_registers_refusal): nothing changes.
 	Write_Registers      = 4,
 	// Writes the extended state area of the thread at the address (size: at
@@ -2311,7 +2311,7 @@ Thread_Control_Command :: enum u64 {
 	// the 512 bytes of fxsave on a processor with no xsave.
 	Read_Extended_State  = 5,
 	// Reads the extended state area at the address: the thread continues
-	// with it. Bad_Operation for an area that the processor would refuse
+	// with it. Argument_Refused for an area that the processor would refuse
 	// (extended_state_refusal): nothing changes.
 	Write_Extended_State = 6,
 	// Writes the Thread_Schedule of the thread at the address (size: at
@@ -2322,7 +2322,7 @@ Thread_Control_Command :: enum u64 {
 	Read_Schedule        = 7,
 	// Reads a Thread_Schedule at the address: the thread has this weight and
 	// this request from now on, also while it runs. Through 0 or a thread
-	// handle (with Control) the write only lowers: Bad_Operation for a
+	// handle (with Control) the write only lowers: Argument_Refused for a
 	// weight above the weight of the thread or a request above its request,
 	// and nothing changes; 0 keeps a value. The machine handle with Schedule
 	// and Inspect names any thread by its machine number; its write gives
@@ -2337,9 +2337,9 @@ Thread_Control_Command :: enum u64 {
 	// Reads a Thread_Breakpoints at the address: the thread has these
 	// breakpoints from now on, and no other. The thread is held. Only
 	// through the process handle with Debug, from the debugger of the
-	// process (thread_control_needs_the_debugger): Bad_Handle with 0 or a
+	// process (thread_control_needs_the_debugger): Argument_Refused with 0 or a
 	// thread handle.
-	// Bad_Operation for a breakpoint that a thread cannot have
+	// Argument_Refused for a breakpoint that a thread cannot have
 	// (thread_breakpoints_refusal): nothing changes. A reached breakpoint is
 	// a fault of the kind Debug of the thread.
 	Write_Breakpoints    = 10,
@@ -2348,8 +2348,8 @@ Thread_Control_Command :: enum u64 {
 	// bytes copied. The thread is not held. The copy reads only pages that
 	// the process maps, that it can read and that have a frame: no read
 	// gives a frame to a page. It stops before the first page that is not
-	// so, and gives the count before it; Bad_Address when that page holds
-	// the first byte. Device memory is never read.
+	// so, and gives the count before it; Argument_Refused (Bad_Address) when
+	// that page holds the first byte. Device memory is never read.
 	Read_Memory          = 11,
 	// Writes the Thread_Placement of the thread at the address (size: at
 	// least its size) -> the bytes written. Each set holds only processors
@@ -2361,11 +2361,11 @@ Thread_Control_Command :: enum u64 {
 	// set run the thread from now on, also when it runs now: it then
 	// leaves a processor that is not in the set at the end of its stint at
 	// the latest. Through 0 or a thread handle (with Control) the write
-	// only narrows: Bad_Operation for a set with a processor that the set
+	// only narrows: Argument_Refused for a set with a processor that the set
 	// of the thread does not have, and nothing changes; 0 keeps the set.
 	// The machine handle with Schedule and Inspect names any thread by its
 	// machine number; its write gives the set and the limit, and widens
-	// too. Bad_Operation for a set or a limit with no processor that the
+	// too. Argument_Refused for a set or a limit with no processor that the
 	// machine has, and for a set with no processor inside the limit
 	// (thread_placement_after_write): nothing changes.
 	Write_Placement      = 13,
@@ -2377,7 +2377,7 @@ Thread_Control_Command :: enum u64 {
 	// Reads a Process_Schedule at the address: each thread of the process
 	// creates its threads under it from now on (the creations that come
 	// after the write in the order of the kernel). Only the machine handle
-	// with Schedule and Inspect. Bad_Operation for a value above
+	// with Schedule and Inspect. Argument_Refused for a value above
 	// WEIGHT_FULL (process_schedule_after_write): nothing changes.
 	Write_Process_Schedule = 15,
 	// The calling thread counts the four events of Thread_Counters from 0,
@@ -2388,12 +2388,12 @@ Thread_Control_Command :: enum u64 {
 	Start_Counters       = 16,
 	// Writes the Thread_Counters of the calling thread at the address (size:
 	// at least its size) -> the bytes written. The thread goes on counting.
-	// Bad_State when the thread does not count.
+	// Wrong_State when the thread does not count.
 	Read_Counters        = 17,
 	// The calling thread stops counting -> nothing. A thread that does not
-	// count is left as it is. It needs no handle and no right, and gives Ok
-	// on each machine: it only takes a capability away, so a thread whose
-	// right was revoked can still stop.
+	// count is left as it is. It needs no handle and no right, and gives
+	// Succeeded on each machine: it only takes a capability away, so a thread
+	// whose right was revoked can still stop.
 	Stop_Counters        = 18,
 	// Starts recording process inputs of the target process (handle in
 	// `thread` with Debug) into the contiguous memory object named by the
@@ -2416,10 +2416,10 @@ Thread_Control_Command :: enum u64 {
 	// from the budget of the process (wait_room_pages) and gives back the
 	// pages of the room before; the thread ends with its room, whose pages
 	// return to the budget. A size of WORD_WAIT_INLINE or less removes the
-	// room. Bad_Operation for a size above WORD_WAIT_MOST, or a thread or
-	// a number that is not 0; Bad_State when the entry registered words
-	// already; No_Budget when the budget cannot pay the pages: nothing
-	// changes.
+	// room. Argument_Refused for a size above WORD_WAIT_MOST, or a thread or
+	// a number that is not 0; Wrong_State when the entry registered words
+	// already; Budget_Or_Capacity_Exhausted when the budget cannot pay the
+	// pages: nothing changes.
 	Wait_Room            = 22,
 }
 
@@ -2564,7 +2564,7 @@ thread_control_takes_debug_handle :: proc "contextless" (command: Thread_Control
 // use for a breakpoint on itself, and a breakpoint that a process could
 // set on its own threads would let each process put a debug exception at
 // the place where the kernel copies its memory. With 0 or a thread handle
-// the command gives Bad_Handle.
+// the command gives Argument_Refused.
 thread_control_needs_the_debugger :: proc "contextless" (command: Thread_Control_Command) -> bool {
 	return command == .Write_Breakpoints
 }
@@ -3144,7 +3144,7 @@ Memory_Flag :: enum u64 {
 	Frames_Now = 0,
 	// The page frames follow each other in physical memory, each one from the creation, and they do
 	// not move: memory that a device reads and writes (Memory_Physical). The budget pays for no frame
-	// list. It can give No_Memory when the budget can pay: no free run is long enough.
+	// list. It can give Callee_Busy when the budget can pay: no free run is long enough.
 	Contiguous = 1,
 	// The pages are not paid at the creation: the budget pays the frame list only. Memory_Commit pays pages
 	// and makes them usable; a page that is not committed has no frame, and an access to it is a fault.

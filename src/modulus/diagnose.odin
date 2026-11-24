@@ -597,10 +597,10 @@ diagnose :: proc "contextless" (process_index: u32, command: ring.Record, outcom
 	case .Argument_Refused:
 		explained = handles_explain(&record, process, operation, v, check_rights = false)
 		if !explained {
-			explained = address_explain(&record, process, operation, v)
+			explained = value_explain(&record, process, operation, v)
 		}
 		if !explained {
-			explained = value_explain(&record, process, operation, v)
+			explained = address_explain(&record, process, operation, v)
 		}
 	case .Grant_Or_Right_Missing:
 		explained = handles_explain(&record, process, operation, v, check_rights = true)
@@ -646,13 +646,12 @@ diagnose :: proc "contextless" (process_index: u32, command: ring.Record, outcom
 // does not support.
 @(private = "file")
 unsupported_explain :: proc "contextless" (record: ^errors.Error_Record, operation: op.Operation, v: [7]u64) -> bool {
-	#partial switch operation {
-	case .Guest_Run:
+	if operation == .Guest_Run {
 		if !intrinsics.atomic_load(&guest_support.ready) {
 			record_set(record, .Unsupported, .None, 0, u64(op.Operation.Guest_Run), 0, 0)
 			return true
 		}
-	case .Thread_Control:
+	} else if operation == .Thread_Control {
 		if command, command_known := enum_word.member_of_word(op.Thread_Control_Command, v[2]); command_known {
 			if op.thread_control_counts_the_caller(command) && counter_plan.vendor == .None {
 				record_set(record, .Unsupported, .None, 0, u64(op.Operation.Thread_Control), 0, 0)
@@ -1123,6 +1122,9 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 			return false
 		}
 	case .Word_Wait:
+		if v[1] > op.WORD_WAIT_MOST {
+			return false
+		}
 		if !read_range(process, v[0], v[1] * size_of(op.Word)) {
 			record_set(record, .Bad_Address, .Bytes, 1, v[0], v[1] * size_of(op.Word), 0)
 			return true
@@ -1183,7 +1185,7 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 	case .Memory_Commit:
 		// The first range that is not in the object, or not after the one before.
 		pages, found := read_memory_pages(process, v[0])
-		if !found || !read_range(process, v[2], v[3] * size_of(op.Page_Range)) {
+		if !found || v[3] > op.RANGE_TABLE_CAPACITY || !read_range(process, v[2], v[3] * size_of(op.Page_Range)) {
 			return false
 		}
 		end: u64
@@ -1211,7 +1213,7 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 		// a part of a mapping that changes only whole. The mappings of a
 		// guest are not read here: the diagnosis holds the lock of the
 		// caller only.
-		if v[3] != 0 || !read_range(process, v[0], v[1] * size_of(op.Address_Range)) {
+		if v[3] != 0 || v[1] > op.RANGE_TABLE_CAPACITY || !read_range(process, v[0], v[1] * size_of(op.Address_Range)) {
 			return false
 		}
 		for index in 0 ..< v[1] {
@@ -1248,12 +1250,12 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 }
 
 // starter_module_explain names the module record of the starter that a
-// process changed in itself, or mapped or unmapped over (No_Right after the
-// handles are good). The record is read again under the process lock; it
-// names the record only when the range of the call meets it now. A handle
-// that names the caller itself, and an address that the kernel chooses,
-// give Refused: the first needs the handle read again, and the second never
-// meets such a record.
+// process changed in itself, or mapped or unmapped over
+// (Grant_Or_Right_Missing after the handles are good). The record is read
+// again under the process lock; it names the record only when the range of
+// the call meets it now. A handle that names the caller itself, and an
+// address that the kernel chooses, give Refused: the first needs the handle
+// read again, and the second never meets such a record.
 @(private = "file")
 starter_module_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Process, operation: op.Operation, v: [7]u64) -> bool {
 	address, size: u64
@@ -1310,6 +1312,9 @@ starter_module_explain :: proc "contextless" (record: ^errors.Error_Record, proc
 slot_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Process, operation: op.Operation, v: [7]u64, outcome: call_outcome.Call_Outcome) -> bool {
 	if outcome == .Budget_Or_Capacity_Exhausted {
 		mappings, modules, areas := read_own_full(process)
+		// An open choice by design: of the many operations, this diagnosis
+		// names the few whose capacity exhaustion has a specific table to name
+		// here; each other one falls through to the handle table check below.
 		#partial switch operation {
 		case .Word_Wait:
 			// The words of this entry count too: only a list longer than the
@@ -1446,7 +1451,7 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 		return true
 	case .Thread_Control:
 		// The state refusal that Thread_Control recorded on this processor
-		// before it returned Bad_State.
+		// before it returned Wrong_State.
 		operation_facts := &processor_self().operation
 		if state_record, ok := op.thread_control_state_error(
 			operation_facts.thread_state_refusal,

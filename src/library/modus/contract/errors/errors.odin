@@ -85,21 +85,21 @@ Kind :: enum i64 {
 	// A name or a text holds a byte that the call refuses: the storage service for a byte 0 or `/` in a name, or a
 	// name `.` or `..`, the HTTP server for a byte that a name of a page cannot hold.
 	Bad_Address       = 7, // value: the address; limit: the count of bytes; found: 1 when the call writes there.
-	// The kernel gives it with the status `Bad_Address`: the process cannot read, or write, the bytes that an
+	// The kernel gives it with `Argument_Refused`: the process cannot read, or write, the bytes that an
 	// argument names.
 	Handle_Absent     = 8, // value: a number that names no handle of the caller.
 	// With the unit `Lent_Handles`: in an isolated call, the handle did not come through the call ring.
 	Handle_Ended      = 9, // value: the handle; found: an End.
-	// The handle named an object once: it was closed or revoked. The kernel gives it with `Bad_Handle`.
+	// The handle named an object once: it was closed or revoked. The kernel gives it with `Argument_Refused`.
 	Handle_Kind       = 10, // value: the handle; limit: the kind of object that the call needs; found: the kind of its object (op.Object_Kind).
-	// The kernel gives it with `Bad_Handle`: for example a memory handle given to `Process_Start`.
+	// The kernel gives it with `Argument_Refused`: for example a memory handle given to `Process_Start`.
 	Handle_Rights     = 11, // value: the handle; limit: the rights that the call needs; found: the rights of the handle (op.Rights).
-	// The kernel gives it with `No_Right`. Both sets are `op.Rights` as integers.
+	// The kernel gives it with `Grant_Or_Right_Missing`. Both sets are `op.Rights` as integers.
 	Budget            = 12, // value: the handle of the budget; limit: what the call asks; found: what the budget holds.
-	// The kernel gives it with `No_Budget` when the handle has **Read**. The unit names the amount: `Pages`,
+	// The kernel gives it with `Budget_Or_Capacity_Exhausted` when the handle has **Read**. The unit names the amount: `Pages`,
 	// `Processes`, `Threads`, `Processor` or `Log_Records`.
 	Budget_Hidden     = 13, // value: the handle of the budget; limit: what the call asks. The handle has no right Read: the budget is not described.
-	// The kernel gives it with `No_Budget`. The record depends on the call alone, so it tells nothing of a budget
+	// The kernel gives it with `Budget_Or_Capacity_Exhausted`. The record depends on the call alone, so it tells nothing of a budget
 	// that another process shares.
 	Over_Limit        = 14, // value: what the call makes; limit: the limit. Unit Blocks (the storage service): the blocks of the current objects with the change, with no earlier version kept.
 	// The kernel gives it for `Log` above the records of the second (`Log_Records`). The network service gives it
@@ -109,7 +109,7 @@ Kind :: enum i64 {
 	// The unit names the table: `Handles`, `Mappings`, `Threads`, `Modules`, `Interrupts`, `Places`,
 	// `Connections`, `Principals`, `Commit_Blocks`. Another try can pass after a place frees.
 	State             = 16, // value: the handle; found: the op.Process_State of its object, or 0 when the handle has no right Read.
-	// The kernel gives it with `Bad_State`: the process is stopped, or not started yet. A service gives it for a
+	// The kernel gives it with `Wrong_State`: the process is stopped, or not started yet. A service gives it for a
 	// connection or a stream that is not in the state of the command.
 	Absent            = 17, // No object has the name or the number of the argument. found: 0, or the number from 1 of the row of a table argument that names it.
 	// The unit names what is absent: `Objects` or `Trees` (a name of the storage service), `Places`, `Versions`,

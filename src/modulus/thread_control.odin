@@ -574,7 +574,7 @@ thread_schedule_read :: proc "contextless" (thread: ^Thread, target_argument: i6
 // by_machine false: the process of the thread, or the holder of a thread
 // handle, writes. Such a write only lowers: a weight above the weight that
 // the thread has now, or a request above its request, is refused
-// (Bad_Operation, with the part and the value that the thread has), and
+// (Argument_Refused, with the part and the value that the thread has), and
 // nothing changes. 0 keeps the value that the thread has. The weight limit
 // of the record is not read. A process chooses the moment of its writes;
 // with one direction only, no sequence of them gets back what a write
@@ -878,7 +878,7 @@ thread_control_resume :: proc "contextless" (thread: ^Thread, results: ^[7]u64, 
 // processor can be inside an operation that waits for the process lock
 // that the caller holds: no wait for it; Stop already waited for it, so a
 // thread still there is one that another Stop holds now, and the caller
-// gets Bad_State.
+// gets Wrong_State.
 thread_held_off_processor :: proc "contextless" (thread: ^Thread) -> bool {
 	if thread.state == .None || thread.state == .Stopped || intrinsics.atomic_load(&thread.stop_requested) {
 		return false
