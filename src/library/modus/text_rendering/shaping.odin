@@ -327,7 +327,6 @@ is_thai_above_mark :: proc "contextless" (character: rune) -> bool {
 }
 
 // is_sara_am says if a character is SARA AM of Thai or of Lao.
-@(private)
 is_sara_am :: #force_inline proc "contextless" (character: rune) -> bool {
 	return character == SARA_AM_THAI || character == SARA_AM_LAO
 }

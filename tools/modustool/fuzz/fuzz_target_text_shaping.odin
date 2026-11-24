@@ -85,10 +85,12 @@ fuzz_shaping_font_from_input :: proc(face: text_rendering.Face, size: int, witho
 // character, in the order of the text: no mark (which composes, or stays
 // apart with the advance 0, or stands on a dotted circle), no character of
 // a right-to-left class (which reorders the line), no letter that joins
-// (Arabic and its kin), and no format character that draws nothing (an
-// isolate of UAX #9, a joiner). The model of each character holds for such
-// a text only.
-@(private = "file")
+// (Arabic and its kin), no syllable script (India, Khmer, Myanmar, Tibetan,
+// Balinese, Javanese and Sundanese, which the lookup engine shapes into
+// direct font glyphs), no Thai or Lao SARA AM (which splits into NIKHAHIT
+// and SARA AA), and no format character that draws nothing (an isolate of
+// UAX #9, a joiner). The model of each character holds for such a text only.
+@(private = "package")
 fuzz_shaping_plain :: proc(text: []u8) -> bool {
 	for place := 0; place < len(text); {
 		character, length, valid := text_encoding.character_decode(text, place)
@@ -96,12 +98,7 @@ fuzz_shaping_plain :: proc(text: []u8) -> bool {
 		if !valid {
 			continue
 		}
-		if text_rendering.is_mark(character) || text_rendering.joining_type_of(character) != .None || text_rendering.is_invisible_format(character) {
-			return false
-		}
-		// The scripts of India: the engine of the lookups shapes a
-		// syllable into other glyphs than its characters.
-		if character >= 0x0900 && character <= 0x0D7F {
+		if text_rendering.is_mark(character) || text_rendering.joining_type_of(character) != .None || text_rendering.is_invisible_format(character) || text_rendering.is_syllable_script(character) || text_rendering.is_sara_am(character) {
 			return false
 		}
 		#partial switch text_rendering.bidi_class_of(character) {
