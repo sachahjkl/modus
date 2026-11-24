@@ -16,6 +16,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import step_runner "internal:assistant/agent_step"
 import contract "modus:contract/agent_bridge"
 import "modus:contract/blake3"
 import "modus:contract/call_outcome"
@@ -51,6 +52,7 @@ Bridge_Json_Method :: enum u8 {
 	// The ask of a wide grant for the key of the bridge: the trusted display
 	// of the machine shows its screen, and the principal answers there.
 	Ask_Wide_Grant = 7,
+	Eval_Step      = 8,
 }
 
 // Structured typed result returned by Eval_Lex (never scraped terminal text).
@@ -150,6 +152,11 @@ Agent_Bridge :: struct {
 	// read_screen writes no file. An agent never names a path of the host.
 	snapshot_directory:     string,
 	next_snapshot_sequence: u64,
+	// Persistent read-only multi-line Lex step session (cleared per request).
+	step_session:           ^step_runner.Step_Session,
+	step_allocator:         mem.Allocator,
+	// Single-use principal-approved act numbers already consumed on this bridge.
+	consumed_approved_acts: [dynamic]u64,
 }
 
 // bridge_act_log_init initializes a bounded append-only BLAKE3 act log.
@@ -246,9 +253,11 @@ bridge_init :: proc(
 		return false
 	}
 	bridge^ = Agent_Bridge {
-		policy          = policy,
-		transport       = transport,
-		next_request_id = 1,
+		policy                 = policy,
+		transport              = transport,
+		next_request_id        = 1,
+		step_allocator         = allocator,
+		consumed_approved_acts = make([dynamic]u64, 0, 16, allocator),
 	}
 	return bridge_act_log_init(&bridge.act_log, act_capacity, allocator)
 }
@@ -258,6 +267,11 @@ bridge_destroy :: proc(bridge: ^Agent_Bridge) {
 	if bridge == nil {
 		return
 	}
+	if bridge.step_session != nil {
+		free(bridge.step_session, bridge.step_allocator)
+		bridge.step_session = nil
+	}
+	delete(bridge.consumed_approved_acts)
 	bridge_act_log_destroy(&bridge.act_log)
 }
 
@@ -333,7 +347,7 @@ bridge_write_snapshot :: proc(bridge: ^Agent_Bridge, snap: Screen_Snapshot_Resul
 	return joined, ""
 }
 
-@(private = "file")
+@(private)
 bridge_now_ms :: proc(bridge: ^Agent_Bridge) -> u64 {
 	if bridge.clock_ms_proc != nil {
 		return bridge.clock_ms_proc(bridge.clock_user_data)
@@ -368,13 +382,15 @@ bridge_method_from_string :: proc(name: string) -> Bridge_Json_Method {
 		return .Wire_Command
 	case "ask_wide_grant":
 		return .Ask_Wide_Grant
+	case "eval_step":
+		return .Eval_Step
 	}
 	return .None
 }
 
 // JSON formatting helpers.
 
-@(private = "file")
+@(private)
 json_write_escaped_string :: proc(builder: ^strings.Builder, text: string) {
 	strings.write_byte(builder, '"')
 	for index in 0 ..< len(text) {
@@ -405,7 +421,7 @@ json_write_escaped_string :: proc(builder: ^strings.Builder, text: string) {
 	strings.write_byte(builder, '"')
 }
 
-@(private = "file")
+@(private)
 json_write_id :: proc(builder: ^strings.Builder, id_value: json.Value, has_id: bool) {
 	if !has_id {
 		strings.write_string(builder, "null")
@@ -421,7 +437,7 @@ json_write_id :: proc(builder: ^strings.Builder, id_value: json.Value, has_id: b
 	}
 }
 
-@(private = "file")
+@(private)
 json_error_response :: proc(
 	id_value: json.Value,
 	has_id: bool,
@@ -452,7 +468,7 @@ json_error_response :: proc(
 	return strings.to_string(builder)
 }
 
-@(private = "file")
+@(private)
 json_decision_error :: proc(
 	id_value: json.Value,
 	has_id: bool,
@@ -736,6 +752,9 @@ bridge_handle_wire_frame :: proc(
 		}
 		return encode_result(cmd_frame.request_id, .Ended, .Succeeded, .None, act_rec.sequence_number, act_rec.record_hash, nil, response_buffer)
 
+	case .Eval_Step:
+		return encode_result(cmd_frame.request_id, .Ended, contract.bridge_refusal_outcome(.Unknown_Command), .Unknown_Command, 0, {}, nil, response_buffer)
+
 	case .Read_Log_Facts:
 		facts_payload, facts_refusal := contract.decode_read_log_facts_payload(cmd_frame.payload)
 		if facts_refusal != .None {
@@ -860,6 +879,9 @@ bridge_handle_json_line :: proc(
 			return json_error_response(id_value, has_id, .Transport_Error, .Ended, eval_outcome, .None, err_text != "" ? err_text : "remote eval_lex failed", allocator)
 		}
 		return format_eval_lex_json(id_value, has_id, res, allocator)
+
+	case .Eval_Step:
+		return handle_eval_step_json(bridge, id_value, has_id, params, now_ms, allocator)
 
 	case .Read_Screen:
 		format_name, has_format, format_ok := json_get_string(params, "format")

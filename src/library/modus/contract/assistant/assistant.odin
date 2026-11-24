@@ -45,13 +45,23 @@ ACT_NAME_BYTES :: 31
 // What an act asks the bridge for. The values cross the border of an export
 // and of the model reply: 0 names no member.
 Act_Kind :: enum u8 {
-	Eval_Lex = 1, // One line of Lex, which the bridge runs through remote when it is on the read-only list.
+	Eval_Lex       = 1, // One line of Lex, which the bridge runs through remote when it is on the read-only list.
+	Eval_Step      = 2, // 1 to 16 lines of Lex with persistent per-request variables, run in the read-only agent console step runner.
+	Read_Screen    = 3, // Screen capture through the bridge (requires Read_Screen permission and remote Screen use).
+	Read_Log_Facts = 4, // Structured log facts through the bridge (requires Read_Log_Facts permission and remote Calls use).
+	Send_Key       = 5, // Scoped key input through the bridge (requires Send_Input permission and active wide grant naming the window).
+	Send_Pointer   = 6, // Scoped pointer input through the bridge (requires Send_Input permission and active wide grant naming the window).
 }
 
 // The name of each kind in a model reply.
 @(rodata)
 ACT_KIND_NAMES := [Act_Kind]string {
-	.Eval_Lex = "eval_lex",
+	.Eval_Lex       = "eval_lex",
+	.Eval_Step      = "eval_step",
+	.Read_Screen    = "read_screen",
+	.Read_Log_Facts = "read_log_facts",
+	.Send_Key       = "send_key",
+	.Send_Pointer   = "send_pointer",
 }
 
 // Where an act stands. The runner writes the outcome of the bridge; the
@@ -61,7 +71,7 @@ Act_State :: enum u8 {
 	Done                 = 2, // The bridge ran it: the text is its result.
 	Refused              = 3, // The bridge refused it at its border: the text says why.
 	Awaiting_Principal   = 4, // The bridge stopped it with Awaiting_Principal_Approval: the act dialog decides.
-	Allowed_By_Principal = 5, // The principal allowed it on the trusted display. It does not run yet.
+	Allowed_By_Principal = 5, // The principal allowed it on the trusted display; eligible for verified single-use execution under an active wide grant when not gated by principal proof.
 	Refused_By_Principal = 6, // The principal refused it on the trusted display. Nothing runs.
 	Not_Shown            = 7, // The trusted display refused its act dialog for a cause other than Busy, or the window has no connection to it. Nothing runs.
 }
@@ -106,6 +116,16 @@ act_kind_of_word :: proc "contextless" (word: i64) -> (kind: Act_Kind, ok: bool)
 	switch word {
 	case i64(Act_Kind.Eval_Lex):
 		return .Eval_Lex, true
+	case i64(Act_Kind.Eval_Step):
+		return .Eval_Step, true
+	case i64(Act_Kind.Read_Screen):
+		return .Read_Screen, true
+	case i64(Act_Kind.Read_Log_Facts):
+		return .Read_Log_Facts, true
+	case i64(Act_Kind.Send_Key):
+		return .Send_Key, true
+	case i64(Act_Kind.Send_Pointer):
+		return .Send_Pointer, true
 	}
 	return {}, false
 }
@@ -156,17 +176,20 @@ act_state_from_runner :: proc "contextless" (state: Act_State) -> bool {
 }
 
 // act_state_changes says if an act in a state may take a new state: the
-// runner gives one outcome to a proposed act, and the trusted display one
-// decision to an act that waits for it, or the window the final state
-// Not_Shown when the trusted display cannot show it. Each other change is
-// refused.
+// runner gives one outcome to a proposed act, the trusted display gives one
+// decision to an act that waits for it (or the window Not_Shown when the
+// trusted display cannot show it), and an act allowed by the principal may
+// finish as Done or Refused once run through the verified approved-act border.
+// Each other change is refused.
 act_state_changes :: proc "contextless" (from, to: Act_State) -> bool {
 	switch from {
 	case .Proposed:
 		return act_state_from_runner(to)
 	case .Awaiting_Principal:
 		return to == .Allowed_By_Principal || to == .Refused_By_Principal || to == .Not_Shown
-	case .Done, .Refused, .Allowed_By_Principal, .Refused_By_Principal, .Not_Shown:
+	case .Allowed_By_Principal:
+		return to == .Done || to == .Refused
+	case .Done, .Refused, .Refused_By_Principal, .Not_Shown:
 		return false
 	}
 	return false

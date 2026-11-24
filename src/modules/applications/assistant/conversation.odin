@@ -54,6 +54,7 @@ request_keep :: proc "contextless" (text: string) -> bool {
 	if entry == nil {
 		return false
 	}
+	store_mark_dirty()
 	system.log_fact(.Info, Request_Kept{serial = entry.serial, text = value_kinds.text_field(text, FACT_TEXT_BYTES)})
 	return true
 }
@@ -62,6 +63,7 @@ request_keep :: proc "contextless" (text: string) -> bool {
 // running loop.
 request_stop :: proc "contextless" () {
 	if entry := conversation.principal_stop(&talk); entry != nil {
+		store_mark_dirty()
 		system.log_fact(.Info, Loop_Stop_Requested{serial = entry.serial})
 	}
 }
@@ -87,6 +89,7 @@ request_serial_export :: proc "c" (error: ^errors.Error_Record) -> (outcome: cal
 request_text_export :: proc "c" (serial: i64, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	read, count, taken := conversation.request_text(&talk, caller_acts_for_principal(), serial, result^, error)
 	if taken != nil {
+		store_mark_dirty()
 		system.log_fact(.Info, Request_Taken{serial = taken.serial})
 	}
 	return read, count
@@ -107,6 +110,7 @@ request_text_export :: proc "c" (serial: i64, result: ^[]u8, error: ^errors.Erro
 reply_export :: proc "c" (serial: i64, text: ^string, acts: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	ended, result, kept := conversation.reply(&talk, caller_acts_for_principal(), serial, text^, acts, error)
 	if kept != nil {
+		store_mark_dirty()
 		system.log_fact(.Info, Reply_Shown{serial = kept.serial, bytes = u64(kept.text_count), text = value_kinds.text_field(text^, FACT_TEXT_BYTES)})
 	}
 	return ended, result
@@ -121,6 +125,7 @@ reply_export :: proc "c" (serial: i64, text: ^string, acts: i64, error: ^errors.
 reply_refused_export :: proc "c" (serial, kind, unit, argument, value, limit: i64, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) {
 	ended, result, kept := conversation.reply_refused(&talk, caller_acts_for_principal(), serial, kind, unit, argument, value, limit, error)
 	if kept != nil {
+		store_mark_dirty()
 		kind_member, _ := errors.kind_of_word(kept.error.kind)
 		unit_member, _ := errors.unit_of_word(kept.error.unit)
 		system.log_fact(.Info, Reply_Refused_Shown{serial = kept.serial, argument = argument, value = value, limit = limit, kind = value_kinds.text_field(errors.KIND_NAMES[kind_member], FACT_NAME_BYTES), unit = value_kinds.text_field(errors.UNIT_NAMES[unit_member], FACT_NAME_BYTES)})
@@ -132,7 +137,7 @@ reply_refused_export :: proc "c" (serial, kind, unit, argument, value, limit: i6
 //
 // - **serial**: the request.
 // - **kind**: the kind of the act, a word of assistant.Act_Kind: 1 a line of Lex.
-// - **line**: the line of the act, at most 200 bytes.
+// - **line**: the line of the act, at most 4096 bytes.
 // - **service**, **export**: the names of the one call of the line, which the runner parsed: two identifiers of 31
 //   bytes at most, or two empty texts for a line that is no single call. The act dialog shows them.
 //
@@ -145,6 +150,7 @@ reply_refused_export :: proc "c" (serial, kind, unit, argument, value, limit: i6
 act_export :: proc "c" (serial, kind: i64, line: ^string, service: ^string, export: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	ended, result, kept := conversation.act(&talk, caller_acts_for_principal(), serial, kind, line^, service^, export^, error)
 	if kept != nil {
+		store_mark_dirty()
 		system.log_fact(.Info, Act_Proposed{act = kept.act, serial = kept.serial, line = value_kinds.text_field(line^, FACT_TEXT_BYTES)})
 	}
 	return ended, result
@@ -164,6 +170,7 @@ act_export :: proc "c" (serial, kind: i64, line: ^string, service: ^string, expo
 act_result_export :: proc "c" (act, state: i64, text: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	ended, result, kept := conversation.act_result(&talk, caller_acts_for_principal(), act, state, text^, error)
 	if kept != nil {
+		store_mark_dirty()
 		system.log_fact(.Info, Act_Outcome{act = kept.act, state = value_kinds.text_field(STATE_WORDS[kept.state], FACT_NAME_BYTES), text = value_kinds.text_field(text^, FACT_TEXT_BYTES)})
 	}
 	return ended, result
@@ -256,6 +263,18 @@ act_state_export :: proc "c" (act: i64, error: ^errors.Error_Record) -> (outcome
 	return conversation.act_state(&talk, caller_acts_for_principal(), act, error)
 }
 
+// act_line gives the authoritative line stored for an act so approved-act
+// verification binds to the exact text kept by the window.
+//
+// The result is the byte count of the line, or a failure with its call outcome
+// and an error record: `No_Grant` (Grant_Or_Right_Missing); `Absent`
+// (Nothing_Has_That_Name: no act has the number); `Too_Long` (Argument_Refused:
+// the result buffer is smaller than the line).
+@(export, link_name = "act_line")
+act_line_export :: proc "c" (act: i64, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	return conversation.act_line(&talk, caller_acts_for_principal(), act, result^, error)
+}
+
 // stop_requested gives 1 if you pressed Stop or Escape on the running loop of a taken request, and 0 otherwise.
 //
 // The runner polls this export before each step and stops the loop when it reads 1.
@@ -278,6 +297,7 @@ stop_requested_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> 
 loop_end_export :: proc "c" (serial, cause: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	ended, result, kept := conversation.loop_end(&talk, caller_acts_for_principal(), serial, cause, error)
 	if kept != nil {
+		store_mark_dirty()
 		system.log_fact(.Info, Loop_Ended{serial = kept.serial, steps = u64(kept.step), cause = value_kinds.text_field(LOOP_END_WORDS[kept.end_cause], FACT_NAME_BYTES)})
 	}
 	return ended, result
@@ -295,9 +315,15 @@ acts_waiting_step :: proc "contextless" () -> (waiting: bool) {
 	case .Shown:
 		system.log_fact(.Info, Act_Dialog_Shown{act = entry.act, dialog = entry.dialog})
 	case .Not_Shown:
+		store_mark_dirty()
 		system.log_fact(.Info, Act_Dialog_Refused{act = entry.act, cause = value_kinds.text_field(cause, FACT_TEXT_BYTES)})
 	case .Decided:
-		system.log_fact(.Info, Act_Decided{act = entry.act, state = value_kinds.text_field(STATE_WORDS[entry.state], FACT_NAME_BYTES)})
+		store_mark_dirty()
+		if entry.state == .Allowed_By_Principal {
+			system.log_fact(.Info, Act_Allowed{act = entry.act, state = value_kinds.text_field(STATE_WORDS[entry.state], FACT_NAME_BYTES)})
+		} else {
+			system.log_fact(.Info, Act_Decided{act = entry.act, state = value_kinds.text_field(STATE_WORDS[entry.state], FACT_NAME_BYTES)})
+		}
 	}
 	return waiting
 }

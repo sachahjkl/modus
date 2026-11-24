@@ -204,13 +204,14 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// (src/md/features/paint_application.md).
 	{name = "paint", grants = {.Serve, .Store}, terms = {store_blocks = 12000}},
 	// A window and a service: the agent runner on the host calls its
-	// exports through remote, and it asks the trusted display for the act
-	// dialog with the term asks_acts. It acts for nobody: the grant to act
+	// exports through remote, it asks the trusted display for the act
+	// dialog with the term asks_acts, and it keeps its conversation in its
+	// private store across restarts. It acts for nobody: the grant to act
 	// for the principal would open each export of the display that serves
 	// the principal (src/md/features/assistant.md, "The right to ask an
 	// act"). The boot image checks that the holder of Display has the act
 	// dialog.
-	{name = "assistant", grants = {.Serve, .Image, .Connect}, terms = {callable = {0 = "display"}, asks_acts = true}},
+	{name = "assistant", grants = {.Serve, .Image, .Connect, .Store}, terms = {callable = {0 = "display"}, asks_acts = true, store_blocks = 12000}},
 	// A service: the console calls its exports through a connection.
 	{name = "life", grants = {.Serve}},
 	// A service: the console calls its exports through a connection.

@@ -16,7 +16,7 @@ The terms Assistant, Agent runner, Model reply and Act dialog are in [`docs/glos
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "19. A command is a function: no text between processes". The window never parses a text of another process. The request, the reply and the result text are words for a person; they cross as Text fields that the window shows. Each fact that the window acts on is a typed value: a serial, an act number, an act state, the words of an error record.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "20. No ambient access: the other holes to close". The window draws no false system dialog: the act dialog is drawn by the trusted display, and shows names that the trusted display checks, never a word of the model.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "21. Principals: who acts, without users". The principal is the one source of a new grant. No act of the agent, no reply of the model and no call of the runner answers the act dialog.
-- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "2. Sandbox by default". The assistant holds a window, its exports, and a connection to the trusted display with the right to ask an act: no store, no network, no machine, and no grant to act for the principal.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "2. Sandbox by default". The assistant holds a window, its exports, its private store for conversation persistence, and a connection to the trusted display with the right to ask an act: no network, no machine, and no grant to act for the principal.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "24. Every input of a process passes through a channel that can be recorded". A request comes from the keys of the window; a reply and an act come through calls of `remote`, each a record of its connection.
 - The tool uses the Odin standard library only, and no secret is in the repository, in the system, or in a log.
 
@@ -121,7 +121,26 @@ An act that the bridge stops needs a decision of the principal on the trusted di
 
 The act dialog serves a caller with the right to ask an act, and a caller that acts for its principal. The assistant has no grant to act for the principal: with it, its connection to the trusted display would open each export that serves such a caller, `plan_diff_ask` with free text on the face of a plan, `revoke_grant`, `powerbox_ask`, the screen and the notifications. The right is the term `asks_acts` of the start grant set of the assistant. The root service writes it as the amount `plans_recipes.DISPLAY_AMOUNT_ACT_ASKER` of the grant of each connection of such a process to the holder of Display (`role_policy.display_caller_amount`), as it writes `DISPLAY_AMOUNT_PLANS_HOLDER` for the holder of Plans ([declarations.md](declarations.md), "The trusted display of a plan"). The display reads it with `plans_recipes.act_display_caller_allowed`. The amount opens `act_ask`, `act_poll` and `act_cancel` only: `plan_display_caller_allowed` reads the amount of the holder of Plans, a value that differs.
 
-**An allowed act does not run yet.** The bridge never takes an approval from its caller ([agent_bridge.md](agent_bridge.md), "Refused forms"), and the runner is its caller. An allowed act runs only when the approval is bound to that one act and checked by a party that the agent cannot drive: an act record of a wide grant with the proof of the principal ([wide_grants.md](wide_grants.md)), run in an agent console. Until then the window shows "allowed; the act runs when the agent console of a wide grant runs it", and nothing runs. A refused act shows "refused by the principal", and nothing runs.
+**An allowed act runs through a verified binding and never bypasses principal proof.** The bridge never takes a self-issued approval from its caller ([agent_bridge.md](agent_bridge.md), "Refused forms"). When the principal allows an act on the trusted display (`Allowed_By_Principal` read from the trusted window via `act_state`), the bridge accepts an `Approved_Act_Binding` bound to that exact `(act_number, service, export, line_hash)` only while an active, non-expired wide grant holds on the bridge. Before running the act, the bridge classifies `(service, export)` through `classify_lex_sensitive_action` and checks `wide_grants.act_requires_principal_proof`: any sensitive action (`plans.apply`, `plans.apply_poll`, `plans.rollback`, unlock/passphrase dialogs, trusted display grant dialogs, `assistant.*`, disk grant changes, principal management, module replace/debug, wide grant screen/mark) is refused hard with `Principal_Approval_Required` even when `Allowed_By_Principal` is set. Every allowed non-sensitive act is single-use (its `act_number` is marked consumed before execution so replay or line mutation is refused) and appends a BLAKE3 `wide_grants.Act_Record` bound to the grant and act before execution (fail-closed if the audit log is full). The window then records the finished outcome (`Done` or `Refused`) on that act via `act_result`. A refused act shows "refused by the principal", and nothing runs.
+
+### More acts for the assistant
+
+The model reply accepts six closed act kinds (`assistant.Act_Kind`):
+
+- `eval_lex`: one read-only Lex call, or a non-read-only single call stopped for the principal.
+- `eval_step`: 1 to 16 lines of Lex with persistent variable bindings per request, run in the read-only agent console step runner (`agent_code_mode.md`).
+- `read_screen`: reads the screen frame through `agent_bridge` (requires `Read_Screen` permission, remote `Screen` use, and collector audit record).
+- `read_log_facts`: reads structured log facts through `agent_bridge` with optional module/fact filters and record limit (requires `Read_Log_Facts` permission, remote `Calls` use, and collector audit record).
+- `send_key`: sends a key event to a specific `window_id` through `agent_bridge` (requires `Send_Input` permission, active wide grant with `Send_Input` authority targeting `window_id`, and fail-closed collector audit record).
+- `send_pointer`: sends a pointer event to a specific `window_id` through `agent_bridge` (same wide-grant window scope and collector audit requirements).
+
+### The conversation kept in the private store
+
+The assistant holds the grant `Store` so its conversation persists in its private store across restarts of the window:
+
+- **Off-thread I/O.** A dedicated store worker thread owns `storage.Client` and two `system.Arena` buffers. The window thread never calls `storage.*`: it copies a snapshot into the worker staging buffer and wakes the worker via `system.Event`, and receives loaded snapshots back via `system.Event`.
+- **Canonical integrity-checked format.** `internal:assistant/conversation` encodes the conversation with magic `"MODASCV1"`, version `1`, header counters (`entry_count`, `last_serial`, `last_act`, `last_entry`, `payload_bytes`), variable-length entries carrying only used text/line bytes, and a keyed/domain-separated BLAKE3 hash over header and payload (`"modus assistant conversation v1"`).
+- **Strict border and corruption recovery.** On decode, every enum word, flag bit, counter relation, UTF-8/control check, and trailing byte is checked before mutating the conversation. Stale act dialog serials are cleared (`dialog = 0`) on reload. If the stored bytes fail validation or integrity checks, the decoder leaves the conversation empty and the window logs `Store_Corrupt_Recovered` without crashing.
 
 ### The host configuration of the model
 
@@ -150,7 +169,7 @@ The runner keeps the conversation that the model reads: the last 16 requests wit
 - **The window cuts `service.export` from the line.** The window would read a text of another party and act on it (property 19). The runner sends the two names, taken by the parser of the bridge.
 - **An act that asks the trusted display again after a refusal that is not `Busy`.** The refusal stays: the act would ask ten times a second forever, and hold back each act after it.
 - **The act line or the text of the model on the trusted display.** Such words are a claim of the agent; the trusted display shows the asker and two identifiers that it checks.
-- **An allowed act that the runner runs.** It is the self-approval that the bridge refuses: the runner would carry the approval as a claim.
+- **An allowed act run on a self-issued approval claim.** The bridge never trusts an approval flag from its caller: an approved act runs only from the authoritative state and line read from the trusted `assistant` window (`act_state` and `act_line`), under an active wide grant with a single-use binding, a fail-closed BLAKE3 act record, and hard refusal of any action gated by `wide_grants.act_requires_principal_proof`.
 - **The key in a file of the repository, in the command line, or in the log.** A command line is visible to each process of the host; an environment variable of one process is not.
 - **HTTPS through a TLS library of C.** The tool uses the Odin standard library only.
 
@@ -175,4 +194,4 @@ Built too: the agent loop of up to 16 steps of up to 16 acts for one request, wi
 
 Built too: the view of the conversation, which scrolls and keeps its place, with each entry fitted to the view and each frame bounded to the lines of the view, with host tests of its rules (`internal:assistant/conversation_view`); and the budget of the window counted from the sizes of its state at compile time.
 
-Left: an allowed act that runs in an agent console of a wide grant (`ROADMAP.md`); a tool of the model other than `eval_lex`: `read_log_facts`, `read_screen`, `send_key`; the conversation kept in a store of the principal.
+Built too: store-backed persistence of the conversation on a dedicated store thread with canonical `"MODASCV1"` BLAKE3-verified encoding and corruption recovery (`internal:assistant/conversation`, `src/modules/applications/assistant/store_worker.odin`); multi-line Lex steps (`eval_step`) through the read-only agent console step runner (`internal:assistant/agent_step`); verified single-use execution of principal-allowed non-sensitive acts under an active wide grant with hard refusal of `wide_grants.act_requires_principal_proof` actions; and the additional model act kinds `read_screen`, `read_log_facts`, `send_key`, and `send_pointer` through `agent_bridge`.

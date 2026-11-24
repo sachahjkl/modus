@@ -158,13 +158,15 @@ run_assistant :: proc(args: []string) -> int {
 	}
 }
 
-// runner_policy is the policy of the bridge for the runner: the act of a
-// model is a line of Lex, through the uses Calls of the client key.
+// runner_policy is the policy of the bridge for the runner: read-only Lex
+// calls, multi-line read-only steps, structured log facts, and screen reads
+// gated by client key uses. Synthetic input (send_key/send_pointer) and
+// approved non-sensitive acts additionally require an active wide grant.
 runner_policy :: proc(client_key: [32]u8, principal_id: u64) -> contract.Bridge_Client_Policy {
 	return {
 		client_key_public   = client_key,
 		principal_id        = principal_id,
-		permissions_word    = contract.bridge_permissions_to_word({.Eval_Lex}),
+		permissions_word    = contract.bridge_permissions_to_word({.Eval_Lex, .Eval_Step, .Read_Log_Facts, .Read_Screen, .Send_Input}),
 		remote_uses_word    = remote.client_uses_word({.Calls}),
 		collector_available = true,
 	}

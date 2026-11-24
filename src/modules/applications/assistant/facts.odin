@@ -91,10 +91,16 @@ Act_Dialog_Refused :: struct {
 	cause: [96]u8,
 }
 
-// The principal decided an act on the trusted display. Nothing runs: an
-// allowed act runs only in an agent console of a wide grant.
+// The principal refused an act on the trusted display. Nothing ran.
 @(log_fact = "assistant: act {act} is {state}; nothing ran")
 Act_Decided :: struct {
+	act:   u64,
+	state: [32]u8,
+}
+
+// The principal allowed an act once on the trusted display.
+@(log_fact = "assistant: act {act} is {state}")
+Act_Allowed :: struct {
 	act:   u64,
 	state: [32]u8,
 }
@@ -111,4 +117,34 @@ Loop_Ended :: struct {
 	serial: u64,
 	steps:  u64,
 	cause:  [32]u8,
+}
+
+// The store worker restored the persisted conversation at start.
+@(log_fact = "assistant: restored {entries} conversation entries from store")
+Store_Restored :: struct {
+	entries: u64,
+}
+
+// The store worker opened no private store: the conversation lives for this run only.
+@(log_fact = "assistant: no store: conversation not kept")
+Store_Unavailable :: struct {}
+
+// The stored conversation failed border or BLAKE3 integrity verification:
+// the window recovered cleanly with an empty conversation.
+@(log_fact = "assistant: corrupt stored conversation refused ({refusal}); started empty")
+Store_Corrupt_Recovered :: struct {
+	refusal: u64,
+}
+
+// The store worker wrote the conversation snapshot to the private store.
+@(log_fact = "assistant: conversation kept, {bytes} bytes, generation {generation}")
+Store_Saved :: struct {
+	generation: i64,
+	bytes:      u64,
+}
+
+// A write to the private store failed.
+@(log_fact = "assistant: store write failed ({status})")
+Store_Write_Failed :: struct {
+	status: u64,
 }

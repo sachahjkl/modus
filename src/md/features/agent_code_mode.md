@@ -212,7 +212,13 @@ Why this order: each layer gives a working loop; the reach grows only after the 
 
 ## State
 
-The first layer is built: the runner runs up to 16 steps of up to 16 single calls of the read-only list for one request, through the bridge; `manual.modules`, `manual.exports` and `manual.signature` are on the read-only list, and the instructions of the runner name no service; the window shows each step once, folds the results of the older steps, and stops the loop with Stop or Escape through the export `stop_requested`; each end of the loop is a member of `Agent_Loop_End`, which the window shows with `loop_end`. The design of the first layer as built is in [assistant.md](assistant.md), "The agent loop". Left: the layers 2 to 5.
+The first layer and the read-only multi-line step layer are built:
+
+- The runner runs up to 16 steps of up to 16 acts for one request, through the bridge; `manual.modules`, `manual.exports` and `manual.signature` are on the read-only list, and the instructions of the runner name no service; the window shows each step once, folds the results of the older steps, and stops the loop with Stop or Escape through the export `stop_requested`; each end of the loop is a member of `Agent_Loop_End`, which the window shows with `loop_end`.
+- The freestanding read-only multi-line Lex step engine (`src/library/internal/assistant/agent_step`) runs 1 to 16 lines per step (each up to 4096 bytes) using `modus:lex_parser`, `modus:console_language` (`|>` pipes), and `modus:lex_evaluator`, with persistent variable bindings (`name = expr`) across lines and steps within one request (cleared on a new request or reach change), pure read-only table helpers (`count`, `first`, `skip`, `where`, `sort`), a read-only call border enforcing `READ_ONLY_EXPORTS` on every call (including nested and `map`/`filter` calls) that refuses unauthorized exports and mutating built-ins with `No_Grant` and zero dialog, step bounds (16 lines, 64 export calls, 60s monotonic time bound, bounded 64x24 / 16 KiB results), and fail-closed BLAKE3 act records for step, line, and call.
+- `agent_bridge` and `agent_runner` wire `eval_step`, `read_screen`, `read_log_facts`, `send_key`, `send_pointer`, and verified single-use execution of principal-allowed non-sensitive acts under an active wide grant.
+
+Left: the wide-grant agent console running effects on the machine directly (layer 3), screen/input commands inside Lex steps (layer 4), and edit/build/run commands for projects (layer 5).
 
 In the first layer a step is the acts of one model reply, not lines of an agent console. The repeat check compares the acts of two steps and their outcomes, as the model reads them: the acts of a repeat run once more before the loop ends, which costs nothing, because each act of the first layer reads only.
 

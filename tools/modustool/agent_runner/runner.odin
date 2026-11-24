@@ -7,6 +7,7 @@ import "modustool:agent_bridge"
 import "modustool:machine"
 import bridge_contract "modus:contract/agent_bridge"
 import assistant_contract "modus:contract/assistant"
+import "modus:contract/blake3"
 import "modus:contract/cut_mark"
 import "modus:contract/errors"
 import "modus:contract/text_encoding"
@@ -40,6 +41,8 @@ Window_Port :: struct {
 	reply_refused:  proc(user_data: rawptr, serial: i64, record: errors.Error_Record) -> (problem: string, grant_ended: bool),
 	act:            proc(user_data: rawptr, serial: i64, kind: assistant_contract.Act_Kind, line, service, export: string) -> (number: i64, problem: string, grant_ended: bool),
 	act_result:     proc(user_data: rawptr, number: i64, state: assistant_contract.Act_State, text: string) -> (problem: string, grant_ended: bool),
+	act_state:      proc(user_data: rawptr, number: i64) -> (state: assistant_contract.Act_State, problem: string, grant_ended: bool),
+	act_line:       proc(user_data: rawptr, number: i64) -> (line: string, problem: string, grant_ended: bool),
 	act_table:      proc(user_data: rawptr, number: i64, table: Act_Result_Table) -> (problem: string, grant_ended: bool),
 	loop_end:       proc(user_data: rawptr, serial: i64, cause: Agent_Loop_End) -> (problem: string, grant_ended: bool),
 }
@@ -174,14 +177,44 @@ act_names :: proc(line: string) -> (service, export: string) {
 }
 
 // acts_equal reports whether two steps propose the exact same sequence of
-// acts (same count, same kind and line at every index).
+// acts across every kind-specific field.
 acts_equal :: proc(first, second: []Model_Act) -> bool {
 	if len(first) != len(second) {
 		return false
 	}
 	for index in 0 ..< len(first) {
-		if first[index].kind != second[index].kind || first[index].line != second[index].line {
+		a := first[index]
+		b := second[index]
+		if a.kind != b.kind || a.line != b.line {
 			return false
+		}
+		switch a.kind {
+		case .Eval_Lex:
+		case .Eval_Step:
+			if a.step_line_count != b.step_line_count {
+				return false
+			}
+			for i in 0 ..< a.step_line_count {
+				if a.step_lines[i] != b.step_lines[i] {
+					return false
+				}
+			}
+		case .Read_Screen:
+			if a.screen_format != b.screen_format || a.max_width != b.max_width || a.max_height != b.max_height {
+				return false
+			}
+		case .Read_Log_Facts:
+			if a.module_filter != b.module_filter || a.fact_name_filter != b.fact_name_filter || a.max_records != b.max_records {
+				return false
+			}
+		case .Send_Key:
+			if a.window_id != b.window_id || a.key_code != b.key_code || a.key_character != b.key_character || a.key_pressed != b.key_pressed || a.key_modifiers != b.key_modifiers {
+				return false
+			}
+		case .Send_Pointer:
+			if a.window_id != b.window_id || a.pointer_x != b.pointer_x || a.pointer_y != b.pointer_y || a.pointer_buttons != b.pointer_buttons || a.pointer_wheel != b.pointer_wheel {
+				return false
+			}
 		}
 	}
 	return true
@@ -273,6 +306,8 @@ remote_window_port :: proc(client: ^machine.Call_Client) -> Window_Port {
 		reply_refused  = remote_reply_refused,
 		act            = remote_act,
 		act_result     = remote_act_result,
+		act_state      = remote_act_state,
+		act_line       = remote_act_line,
 		act_table      = remote_act_table,
 		loop_end       = remote_loop_end,
 	}
@@ -324,6 +359,27 @@ remote_act_result :: proc(user_data: rawptr, number: i64, state: assistant_contr
 	arguments := [3]machine.Call_Argument{{integer = number}, {integer = i64(state)}, {is_text = true, text = text}}
 	_, call_problem, call_grant := remote_window_call((^machine.Call_Client)(user_data), "act_result", arguments[:])
 	return call_problem, call_grant
+}
+
+@(private = "file")
+remote_act_state :: proc(user_data: rawptr, number: i64) -> (state: assistant_contract.Act_State, problem: string, grant_ended: bool) {
+	arguments := [1]machine.Call_Argument{{integer = number}}
+	result, call_problem, call_grant := remote_window_call((^machine.Call_Client)(user_data), "act_state", arguments[:])
+	if call_problem != "" {
+		return {}, call_problem, call_grant
+	}
+	parsed, ok := assistant_contract.act_state_of_word(result.value)
+	if !ok {
+		return {}, "assistant.act_state gave a word that names no state", false
+	}
+	return parsed, "", false
+}
+
+@(private = "file")
+remote_act_line :: proc(user_data: rawptr, number: i64) -> (line: string, problem: string, grant_ended: bool) {
+	arguments := [1]machine.Call_Argument{{integer = number}}
+	result, call_problem, call_grant := remote_window_call((^machine.Call_Client)(user_data), "act_line", arguments[:])
+	return result.text, call_problem, call_grant
 }
 
 @(private = "file")
@@ -425,6 +481,7 @@ runner_turn :: proc(runner: ^Runner) -> (report: Turn_Report) {
 	}
 	append(&runner.conversation, Turn{role = .Principal, text = strings.clone(request_text)})
 	conversation_bound(runner)
+	agent_bridge.bridge_reset_step_bindings(runner.bridge)
 
 	previous_acts: [assistant_contract.MODEL_ACT_CAPACITY]Model_Act
 	previous_outcomes: [assistant_contract.MODEL_ACT_CAPACITY]string
@@ -500,7 +557,10 @@ runner_turn :: proc(runner: ^Runner) -> (report: Turn_Report) {
 				}
 			}
 
-			service, export := act_names(act.line)
+			service, export := "", ""
+			if act.kind == .Eval_Lex {
+				service, export = act_names(act.line)
+			}
 			act_number: i64
 			if act_number, problem, grant_ended = window.act(window.user_data, serial, act.kind, act.line, service, export); problem != "" {
 				step_window_failed = !grant_ended
@@ -582,23 +642,132 @@ runner_turn :: proc(runner: ^Runner) -> (report: Turn_Report) {
 }
 
 // act_run gives one act to the bridge, as one JSON-RPC line, so it passes
-// each check of the bridge as any agent: the classification of the line,
-// the read-only list, the act record. The answer becomes a state, words
-// for the window, and bounded tool text for the model.
+// each check of the bridge as any agent: permissions, read-only reach, wide
+// grant window scope, and fail-closed act records.
 act_run :: proc(runner: ^Runner, act: Model_Act, model_byte_budget := MODEL_STEP_RESULT_BYTES) -> (report: Act_Report) {
+	act := act
 	runner.next_bridge_request += 1
 	request := strings.builder_make(context.temp_allocator)
-	// The braces of JSON are no format of fmt: the request is written in
-	// parts.
 	strings.write_string(&request, `{"jsonrpc":"2.0","id":`)
 	strings.write_u64(&request, runner.next_bridge_request)
 	strings.write_string(&request, `,"method":"`)
 	strings.write_string(&request, assistant_contract.ACT_KIND_NAMES[act.kind])
-	strings.write_string(&request, `","params":{"line":`)
-	json_string_write(&request, act.line)
+	strings.write_string(&request, `","params":{`)
+	switch act.kind {
+	case .Eval_Lex:
+		strings.write_string(&request, `"line":`)
+		json_string_write(&request, act.line)
+	case .Eval_Step:
+		strings.write_string(&request, `"lines":[`)
+		for line, i in act.step_lines[:act.step_line_count] {
+			if i > 0 {
+				strings.write_byte(&request, ',')
+			}
+			json_string_write(&request, line)
+		}
+		strings.write_byte(&request, ']')
+	case .Read_Screen:
+		fmt_name := act.screen_format != "" ? act.screen_format : "png"
+		strings.write_string(&request, `"format":`)
+		json_string_write(&request, fmt_name)
+		if act.max_width > 0 {
+			fmt.sbprintf(&request, `,"max_width":%d`, act.max_width)
+		}
+		if act.max_height > 0 {
+			fmt.sbprintf(&request, `,"max_height":%d`, act.max_height)
+		}
+	case .Read_Log_Facts:
+		max_rec := act.max_records > 0 ? act.max_records : 64
+		fmt.sbprintf(&request, `"max_records":%d`, max_rec)
+		if act.module_filter != "" {
+			strings.write_string(&request, `,"module":`)
+			json_string_write(&request, act.module_filter)
+		}
+		if act.fact_name_filter != "" {
+			strings.write_string(&request, `,"fact_name":`)
+			json_string_write(&request, act.fact_name_filter)
+		}
+	case .Send_Key:
+		fmt.sbprintf(&request, `"window_id":%d,"code":%d,"character":%d,"pressed":%s,"modifiers":%d`, act.window_id, act.key_code, act.key_character, act.key_pressed ? "true" : "false", act.key_modifiers)
+	case .Send_Pointer:
+		fmt.sbprintf(&request, `"window_id":%d,"x":%d,"y":%d,"buttons":%d,"wheel":%d`, act.window_id, act.pointer_x, act.pointer_y, act.pointer_buttons, act.pointer_wheel)
+	}
 	strings.write_string(&request, "}}")
 	answer := agent_bridge.bridge_handle_json_line(runner.bridge, strings.to_string(request), context.temp_allocator)
 	return bridge_answer_read(answer, model_byte_budget)
+}
+
+// runner_run_approved_act reads the principal's authoritative decision for
+// act_number from the trusted assistant window (act_state), executes it once
+// through bridge_run_approved_act (which requires an active wide grant,
+// writes a fail-closed BLAKE3 Act_Record, and hard-refuses any action gated
+// by wide_grants.act_requires_principal_proof), and records the final Done
+// or Refused outcome back to the window.
+runner_run_approved_act :: proc(runner: ^Runner, act_number: i64, act_line: string, model_byte_budget := MODEL_STEP_RESULT_BYTES) -> (report: Act_Report, problem: string, grant_ended: bool) {
+	window := runner_window(runner)
+	if window.act_state == nil || window.act_line == nil {
+		msg := "window port has no act_state or act_line reader"
+		return {number = act_number, state = .Refused, text = msg, model_text = msg}, msg, false
+	}
+	state, state_problem, state_grant := window.act_state(window.user_data, act_number)
+	if state_problem != "" {
+		return {number = act_number, state = .Refused, text = state_problem, model_text = state_problem, grant_ended = state_grant}, state_problem, state_grant
+	}
+	if state != .Allowed_By_Principal {
+		msg := text_cut(fmt.tprintf("act %d is %v, not Allowed_By_Principal", act_number, state))
+		return {number = act_number, state = .Refused, text = msg, model_text = msg}, "", false
+	}
+	stored_line, line_problem, line_grant := window.act_line(window.user_data, act_number)
+	if line_problem != "" {
+		return {number = act_number, state = .Refused, text = line_problem, model_text = line_problem, grant_ended = line_grant}, line_problem, line_grant
+	}
+	// Build Approved_Act_Binding strictly from the window's authoritative stored
+	// line — never from the caller's act_line parameter — so any substitution
+	// fails bridge_authorize_approved_act with Approval_Mismatch.
+	service, export := act_names(stored_line)
+	binding := bridge_contract.Approved_Act_Binding {
+		act_number      = u64(act_number),
+		principal_state = state,
+		service         = transmute([]u8)service,
+		export          = transmute([]u8)export,
+		line_hash       = blake3.hash(transmute([]u8)stored_line),
+	}
+	eval_res, decision, _, err_text := agent_bridge.bridge_run_approved_act(runner.bridge, binding, act_line, context.temp_allocator)
+	report.number = act_number
+	if decision.state != .Ended || decision.outcome != .Succeeded || err_text != "" {
+		report.state = .Refused
+		refusal_name := bridge_contract.bridge_refusal_name(decision.refusal)
+		msg := err_text != "" ? err_text : fmt.tprintf("%s: approved act refused", refusal_name)
+		report.text = text_cut(msg)
+		report.model_text = text_cut_bound(msg, model_byte_budget)
+		report.grant_ended = bridge_refusal_ends_grant(refusal_name)
+	} else {
+		report.state = .Done
+		summary := approved_lex_result_words(eval_res)
+		report.text = text_cut(summary)
+		report.model_text = text_cut_bound(summary, model_byte_budget)
+	}
+	if res_problem, res_grant := window.act_result(window.user_data, act_number, report.state, report.text); res_problem != "" {
+		return report, res_problem, res_grant
+	}
+	return report, "", false
+}
+
+@(private = "file")
+approved_lex_result_words :: proc(res: agent_bridge.Lex_Eval_Result) -> string {
+	switch res.value_kind {
+	case .None:
+		return "done, no value"
+	case .Integer:
+		return fmt.tprintf("%d", res.integer_value)
+	case .Boolean:
+		return res.bool_value ? "true" : "false"
+	case .Text, .Enum_Member:
+		return res.text_value != "" ? res.text_value : "done"
+	case .Table, .Record:
+		return fmt.tprintf("%d rows of %s", res.total_rows, res.record_name)
+	}
+	return "done"
 }
 
 @(private = "file")
@@ -760,9 +929,54 @@ field_text_cut :: proc(text: string, bound: int) -> string {
 // and rows against total_rows.
 @(private = "file")
 result_words_bounded :: proc(result: json.Object, max_rows, max_columns, soft_byte_limit: int) -> string {
+	builder := strings.builder_make(context.temp_allocator)
+
+	// Screen snapshot result (read_screen).
+	if width, has_w := result["width"].(json.Integer); has_w {
+		height, _ := result["height"].(json.Integer)
+		fmt_name, _ := result["format"].(json.String)
+		byte_count, _ := result["byte_count"].(json.Integer)
+		digest, _ := result["blake3"].(json.String)
+		short_hash := len(digest) > 16 ? string(digest)[:16] : string(digest)
+		fmt.sbprintf(&builder, "screen %dx%d (%s, %d bytes, blake3 %s)", width, height, fmt_name, byte_count, short_hash)
+		return strings.to_string(builder)
+	}
+
+	// Structured log facts result (read_log_facts).
+	if facts, has_facts := result["facts"].(json.Array); has_facts {
+		total, _ := result["count"].(json.Integer)
+		fmt.sbprintf(&builder, "%d log facts", total)
+		shown := min(len(facts), max_rows)
+		for idx in 0 ..< shown {
+			if soft_byte_limit > 0 && strings.builder_len(builder) > soft_byte_limit {
+				break
+			}
+			fobj, fok := facts[idx].(json.Object)
+			if !fok {
+				continue
+			}
+			mod_name, _ := fobj["module"].(json.String)
+			fact_name, _ := fobj["fact_name"].(json.String)
+			seq, _ := fobj["sequence"].(json.Integer)
+			strings.write_string(&builder, idx == 0 ? ": " : "; ")
+			fmt.sbprintf(&builder, "#%d %s.%s", seq, mod_name, fact_name)
+		}
+		if i64(total) > i64(shown) {
+			fmt.sbprintf(&builder, "; %d facts more are not shown", i64(total) - i64(shown))
+		}
+		return strings.to_string(builder)
+	}
+
+	// Scoped synthetic input delivery result (send_key / send_pointer).
+	if delivered, has_del := result["delivered"].(json.Boolean); has_del && delivered {
+		win_id, _ := result["window_id"].(json.Integer)
+		act_seq, _ := result["act_sequence"].(json.Integer)
+		fmt.sbprintf(&builder, "delivered to window %d (act #%d)", win_id, act_seq)
+		return strings.to_string(builder)
+	}
+
 	kind_value, _ := result["value_kind"].(json.String)
 	kind := string(kind_value)
-	builder := strings.builder_make(context.temp_allocator)
 	switch {
 	case kind == bridge_contract.lex_value_kind_name(.Table) || kind == bridge_contract.lex_value_kind_name(.Record):
 		name, _ := result["record_name"].(json.String)

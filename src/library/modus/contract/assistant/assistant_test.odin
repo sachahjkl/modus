@@ -8,7 +8,7 @@ import "core:testing"
 // largest and a negative word are refused; each member passes.
 @(test)
 the_words_of_a_kind_and_a_state_name_a_member :: proc(t: ^testing.T) {
-	for word in ([]i64{0, -1, 2, max(i64), min(i64)}) {
+	for word in ([]i64{0, -1, 7, max(i64), min(i64)}) {
 		_, ok := act_kind_of_word(word)
 		testing.expectf(t, !ok, "the kind word %d", word)
 	}
@@ -34,14 +34,15 @@ the_words_of_a_kind_and_a_state_name_a_member :: proc(t: ^testing.T) {
 		got, ok := agent_loop_end_of_word(i64(cause))
 		testing.expect(t, ok && got == cause)
 	}
-	for name in ([]string{"", "Eval_Lex", "eval_lex ", "evallex", "read_screen"}) {
+	for name in ([]string{"", "Eval_Lex", "eval_lex ", "evallex", "unknown_act"}) {
 		_, ok := act_kind_of_name(name)
 		testing.expectf(t, !ok, "the name %q", name)
 	}
 }
 
 // The runner never writes a decision of the principal, and an act takes one
-// outcome and one decision, in that order, never two.
+// outcome and one decision, in that order; an act allowed by the principal
+// finishes once as Done or Refused after verified execution.
 @(test)
 the_states_of_an_act_change_once_in_their_order :: proc(t: ^testing.T) {
 	testing.expect(t, !act_state_from_runner(.Allowed_By_Principal))
@@ -50,7 +51,9 @@ the_states_of_an_act_change_once_in_their_order :: proc(t: ^testing.T) {
 	testing.expect(t, !act_state_from_runner(.Not_Shown))
 	for from in Act_State {
 		for to in Act_State {
-			allowed := (from == .Proposed && (to == .Done || to == .Refused || to == .Awaiting_Principal)) || (from == .Awaiting_Principal && (to == .Allowed_By_Principal || to == .Refused_By_Principal || to == .Not_Shown))
+			allowed := (from == .Proposed && (to == .Done || to == .Refused || to == .Awaiting_Principal)) ||
+				(from == .Awaiting_Principal && (to == .Allowed_By_Principal || to == .Refused_By_Principal || to == .Not_Shown)) ||
+				(from == .Allowed_By_Principal && (to == .Done || to == .Refused))
 			testing.expectf(t, act_state_changes(from, to) == allowed, "%v to %v", from, to)
 		}
 	}

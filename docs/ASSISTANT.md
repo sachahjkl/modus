@@ -31,7 +31,7 @@ Each entry has a label and words:
 | `act N, refused by the bridge` | The line, and why the bridge refused it |
 | `act N, waiting for the principal` | The line; the act dialog of the trusted display asks you |
 | `act N, refused by the principal` | You refused it: nothing ran |
-| `act N, allowed by the principal` | You allowed it once. It does not run yet: an allowed act runs only in the agent console of a wide grant |
+| `act N, allowed by the principal` | You allowed it once. When a wide grant is active, the runner executes non-sensitive acts once through the verified approved-act border (with a BLAKE3 act record) and updates the entry to done or refused; actions that require fresh principal proof (such as `plans.apply`, `plans.rollback`, unlock, grant dialogs, or debugger/replace) are refused hard |
 | `act N, not shown by the trusted display` | The trusted display refused its act dialog, or the window has no connection to it: nothing ran, and the window does not ask again |
 | `the reply to request N was refused at the border` | The words of the error record of the reply; no act of it runs |
 | `step N, limit reached` | The request took 16 steps; the agent stopped |
@@ -47,7 +47,7 @@ Each entry has a label and words:
 
 **Older steps fold.** The result of an act of an older step, or of an older request, folds to one button, such as "Show 12 rows of Process". Press it to open the result, and "Hide result" to fold it again.
 
-The window keeps 288 entries, room for one whole request of 16 steps of 16 acts; past them the oldest leaves. A request holds 4096 bytes, so you can paste an error or a piece of code. The conversation ends with the window.
+The window keeps 288 entries, room for one whole request of 16 steps of 16 acts; past them the oldest leaves. A request holds 4096 bytes, so you can paste an error or a piece of code. The conversation is kept in the private store of `assistant` off the interface thread in a BLAKE3-verified binary format and restored when the window starts; a damaged store object is refused without crashing and starts empty.
 
 ## 3. The agent runner on the host
 
@@ -79,7 +79,13 @@ The model replies with one JSON object:
 - `text`: 1 byte to 16 KiB; a line end becomes a space.
 - `acts`: 0 to 16 acts; a reply with no act is the final answer.
 - The whole reply holds at most 256 KiB.
-- In each act, `kind` is `eval_lex`; `line` is one call of Lex, `service.export(arguments)` with literal arguments, 1 to 4096 bytes.
+- In each act, `kind` is one of six closed act kinds:
+  - `eval_lex`: `line` is one call of Lex, `service.export(arguments)` with literal arguments, 1 to 4096 bytes.
+  - `eval_step`: `lines` is an array of 1 to 16 read-only Lex lines (each 1 to 4096 bytes) sharing persistent variable names across lines and across steps of one request (cleared on a new request or reach change), supporting `|>` pipes, `where`, `sort`, `first`, `skip`, `count`, `rows`, `column`, `map`, and `filter`, bounded to 64 export calls and 60 seconds per step with fail-closed BLAKE3 act records; any call outside the read-only list is refused with `No_Grant` and zero dialog.
+  - `read_screen`: optional `format` (`png` or `raw_bgrx`), `max_width`, `max_height`; requires `Read_Screen` permission and `View` remote use.
+  - `read_log_facts`: optional `module`, `fact_name`, `max_records` (1 to 256); requires `Read_Log_Facts` permission and `Calls` remote use.
+  - `send_key`: `window_id`, `code`, `pressed` (plus optional `character`, `modifiers`); requires `Send_Input` permission, an active wide grant naming `window_id`, and a fail-closed BLAKE3 act record.
+  - `send_pointer`: `window_id`, `x`, `y` (plus optional `buttons`, `wheel`); same wide-grant window scope and fail-closed act record rules.
 
 Any other form is refused whole, and the window shows its error record:
 
@@ -121,6 +127,7 @@ The runner calls them through `remote`; each refuses a caller that does not act 
 | `assistant.stop_requested(serial)` | 1 when you pressed Stop or Escape on the running request, else 0 |
 | `assistant.loop_end(serial, cause)` | Ends the work on the request with its cause, which the window shows once |
 | `assistant.act_state(act)` | The state of an act: 5 allowed or 6 refused by the principal once you decided, 7 not shown by the trusted display |
+| `assistant.act_line(act)` | The authoritative line stored for an act, used to bind approved execution to the exact text kept by the window |
 
 The runner cannot write the states 5, 6 and 7: `act_result` refuses them with `Bad_Value`.
 

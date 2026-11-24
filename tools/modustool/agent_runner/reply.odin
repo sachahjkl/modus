@@ -3,9 +3,12 @@
 // request of the window through remote and the host agent bridge.
 package agent_runner
 
+import "core:fmt"
 import "core:mem"
+import "core:strconv"
 import "core:strings"
 import "core:unicode/utf8"
+import bridge_contract "modus:contract/agent_bridge"
 import assistant_contract "modus:contract/assistant"
 import "modus:contract/errors"
 
@@ -24,8 +27,25 @@ Reply_Field :: enum i64 {
 }
 
 Model_Act :: struct {
-	kind: assistant_contract.Act_Kind,
-	line: string,
+	kind:             assistant_contract.Act_Kind,
+	line:             string,
+	step_lines:       [bridge_contract.AGENT_STEP_LINE_CAPACITY]string,
+	step_line_count:  int,
+	screen_format:    string,
+	max_width:        u32,
+	max_height:       u32,
+	module_filter:    string,
+	fact_name_filter: string,
+	max_records:      u32,
+	window_id:        u64,
+	key_code:         u32,
+	key_character:    u32,
+	key_pressed:      bool,
+	key_modifiers:    u32,
+	pointer_x:        u32,
+	pointer_y:        u32,
+	pointer_buttons:  u32,
+	pointer_wheel:    i32,
 }
 
 // A model reply that passed the border: its text, one line, and its acts.
@@ -67,15 +87,6 @@ byte_take :: proc(reader: ^Reader, expected: u8) -> bool {
 		return true
 	}
 	return false
-}
-
-@(private = "file")
-byte_next :: proc(reader: ^Reader) -> (character: u8, present: bool) {
-	spaces_skip(reader)
-	if reader.place >= len(reader.text) {
-		return 0, false
-	}
-	return reader.text[reader.place], true
 }
 
 // string_read reads a JSON string at the place, with its escapes: a
@@ -140,6 +151,38 @@ string_read :: proc(reader: ^Reader) -> (text: string, ok: bool) {
 		}
 	}
 	return "", false
+}
+
+@(private = "file")
+int_read :: proc(reader: ^Reader) -> (value: i64, ok: bool) {
+	spaces_skip(reader)
+	start := reader.place
+	if reader.place < len(reader.text) && reader.text[reader.place] == '-' {
+		reader.place += 1
+	}
+	digits_start := reader.place
+	for reader.place < len(reader.text) && reader.text[reader.place] >= '0' && reader.text[reader.place] <= '9' {
+		reader.place += 1
+	}
+	if reader.place == digits_start {
+		return 0, false
+	}
+	parsed, parsed_ok := strconv.parse_i64(reader.text[start:reader.place])
+	return parsed, parsed_ok
+}
+
+@(private = "file")
+bool_read :: proc(reader: ^Reader) -> (value: bool, ok: bool) {
+	spaces_skip(reader)
+	if strings.has_prefix(reader.text[reader.place:], "true") {
+		reader.place += 4
+		return true, true
+	}
+	if strings.has_prefix(reader.text[reader.place:], "false") {
+		reader.place += 5
+		return false, true
+	}
+	return false, false
 }
 
 @(private = "file")
@@ -208,12 +251,8 @@ text_refusal :: proc(text: string, bound: int, field: Reply_Field, act: int) -> 
 
 // model_reply_decode reads a model reply at the one border of the runner:
 // one JSON object with the field "text" and the optional field "acts", an
-// array of 0 to 4 objects with the fields "kind" and "line". Each other
-// form is refused whole with its error record, before any act runs: an
-// unknown, missing, duplicated or mistyped field, text after the object,
-// a reply that is no JSON, a text or a line past its bound or with a
-// control character, a kind that names no member. The argument of the
-// record names the field (Reply_Field); found is the act, from 1, or 0.
+// array of 0 to 16 act objects. Each other form is refused whole with its
+// error record, before any act runs.
 model_reply_decode :: proc(text: string, allocator := context.temp_allocator) -> (reply: Model_Reply, record: errors.Error_Record, ok: bool) {
 	if len(text) > MODEL_REPLY_BYTES {
 		return {}, refuse(.Too_Long, .Bytes, .Reply, i64(len(text)), MODEL_REPLY_BYTES), false
@@ -309,11 +348,48 @@ acts_read :: proc(reader: ^Reader, reply: ^Model_Reply) -> (record: errors.Error
 }
 
 @(private = "file")
+lines_array_read :: proc(reader: ^Reader, act: ^Model_Act, number: int) -> (record: errors.Error_Record, ok: bool) {
+	if !byte_take(reader, '[') {
+		return refuse(.Bad_Value, .Bytes, .Line, i64(reader.place), 0, number), false
+	}
+	if byte_take(reader, ']') {
+		return refuse(.Empty, .Records, .Line, 0, bridge_contract.AGENT_STEP_LINE_CAPACITY, number), false
+	}
+	for {
+		if act.step_line_count >= bridge_contract.AGENT_STEP_LINE_CAPACITY {
+			return refuse(.Too_Long, .Records, .Line, i64(act.step_line_count + 1), bridge_contract.AGENT_STEP_LINE_CAPACITY, number), false
+		}
+		place := reader.place
+		value, value_ok := string_read(reader)
+		if !value_ok {
+			return refuse(.Bad_Value, .Bytes, .Line, i64(place), 0, number), false
+		}
+		if refused_record, refused := text_refusal(value, assistant_contract.ACT_LINE_BYTES, .Line, number); refused {
+			return refused_record, false
+		}
+		act.step_lines[act.step_line_count] = value
+		act.step_line_count += 1
+		if byte_take(reader, ',') {
+			continue
+		}
+		if byte_take(reader, ']') {
+			return {}, true
+		}
+		return refuse(.Bad_Value, .Bytes, .Line, i64(reader.place), 0, number), false
+	}
+}
+
+@(private = "file")
 act_read :: proc(reader: ^Reader, number: int) -> (act: Model_Act, record: errors.Error_Record, ok: bool) {
 	if !byte_take(reader, '{') {
 		return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(reader.place), 0, number), false
 	}
-	has_kind, has_line := false, false
+	has_kind, has_line, has_lines := false, false, false
+	has_format, has_max_w, has_max_h := false, false, false
+	has_module, has_fact_name, has_max_rec := false, false, false
+	has_win, has_code, has_char, has_pressed, has_mods := false, false, false, false, false
+	has_x, has_y, has_buttons, has_wheel := false, false, false, false
+
 	first := true
 	for {
 		if first && byte_take(reader, '}') {
@@ -351,6 +427,165 @@ act_read :: proc(reader: ^Reader, number: int) -> (act: Model_Act, record: error
 				return {}, refused_record, false
 			}
 			act.line = value
+		case "lines":
+			if has_lines {
+				return {}, refuse(.Bad_Value, .Bytes, .Line, i64(name_place), 0, number), false
+			}
+			has_lines = true
+			lines_rec, lines_ok := lines_array_read(reader, &act, number)
+			if !lines_ok {
+				return {}, lines_rec, false
+			}
+		case "format":
+			if has_format {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
+			}
+			has_format = true
+			val, val_ok := string_read(reader)
+			if !val_ok || (val != "png" && val != "raw_bgrx") {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(value_place), 0, number), false
+			}
+			act.screen_format = val
+		case "max_width":
+			if has_max_w {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
+			}
+			has_max_w = true
+			v, vok := int_read(reader)
+			if !vok || v < 0 || v > i64(max(u32)) {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(value_place), 0, number), false
+			}
+			act.max_width = u32(v)
+		case "max_height":
+			if has_max_h {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
+			}
+			has_max_h = true
+			v, vok := int_read(reader)
+			if !vok || v < 0 || v > i64(max(u32)) {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(value_place), 0, number), false
+			}
+			act.max_height = u32(v)
+		case "module":
+			if has_module {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
+			}
+			has_module = true
+			val, val_ok := string_read(reader)
+			if !val_ok || len(val) > bridge_contract.MAX_FILTER_NAME_BYTES {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(value_place), bridge_contract.MAX_FILTER_NAME_BYTES, number), false
+			}
+			act.module_filter = val
+		case "fact_name":
+			if has_fact_name {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
+			}
+			has_fact_name = true
+			val, val_ok := string_read(reader)
+			if !val_ok || len(val) > bridge_contract.MAX_FILTER_NAME_BYTES {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(value_place), bridge_contract.MAX_FILTER_NAME_BYTES, number), false
+			}
+			act.fact_name_filter = val
+		case "max_records":
+			if has_max_rec {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
+			}
+			has_max_rec = true
+			v, vok := int_read(reader)
+			if !vok || v <= 0 || v > bridge_contract.MAX_LOG_FACT_QUERY_LIMIT {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(value_place), bridge_contract.MAX_LOG_FACT_QUERY_LIMIT, number), false
+			}
+			act.max_records = u32(v)
+		case "window_id":
+			if has_win {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
+			}
+			has_win = true
+			v, vok := int_read(reader)
+			if !vok || v <= 0 {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(value_place), 0, number), false
+			}
+			act.window_id = u64(v)
+		case "code":
+			if has_code {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
+			}
+			has_code = true
+			v, vok := int_read(reader)
+			if !vok || v < 0 || v > i64(max(u32)) {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(value_place), 0, number), false
+			}
+			act.key_code = u32(v)
+		case "character":
+			if has_char {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
+			}
+			has_char = true
+			v, vok := int_read(reader)
+			if !vok || v < 0 || v > 0x10FFFF {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(value_place), 0x10FFFF, number), false
+			}
+			act.key_character = u32(v)
+		case "pressed":
+			if has_pressed {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
+			}
+			has_pressed = true
+			b, bok := bool_read(reader)
+			if !bok {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(value_place), 0, number), false
+			}
+			act.key_pressed = b
+		case "modifiers":
+			if has_mods {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
+			}
+			has_mods = true
+			v, vok := int_read(reader)
+			if !vok || v < 0 || v > i64(max(u32)) {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(value_place), 0, number), false
+			}
+			act.key_modifiers = u32(v)
+		case "x":
+			if has_x {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
+			}
+			has_x = true
+			v, vok := int_read(reader)
+			if !vok || v < 0 || v > i64(max(u32)) {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(value_place), 0, number), false
+			}
+			act.pointer_x = u32(v)
+		case "y":
+			if has_y {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
+			}
+			has_y = true
+			v, vok := int_read(reader)
+			if !vok || v < 0 || v > i64(max(u32)) {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(value_place), 0, number), false
+			}
+			act.pointer_y = u32(v)
+		case "buttons":
+			if has_buttons {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
+			}
+			has_buttons = true
+			v, vok := int_read(reader)
+			if !vok || v < 0 || v > i64(max(u32)) {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(value_place), 0, number), false
+			}
+			act.pointer_buttons = u32(v)
+		case "wheel":
+			if has_wheel {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
+			}
+			has_wheel = true
+			v, vok := int_read(reader)
+			if !vok || v < i64(min(i32)) || v > i64(max(i32)) {
+				return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(value_place), 0, number), false
+			}
+			act.pointer_wheel = i32(v)
 		case:
 			return {}, refuse(.Bad_Value, .Bytes, .Acts, i64(name_place), 0, number), false
 		}
@@ -365,8 +600,62 @@ act_read :: proc(reader: ^Reader, number: int) -> (act: Model_Act, record: error
 	if !has_kind {
 		return {}, refuse(.Absent, .Bytes, .Kind, 0, 0, number), false
 	}
-	if !has_line {
-		return {}, refuse(.Absent, .Bytes, .Line, 0, 0, number), false
+
+	// Enforce exact per-kind field schema and build canonical window display line.
+	screen_fields := has_format || has_max_w || has_max_h
+	log_fields := has_module || has_fact_name || has_max_rec
+	key_fields := has_code || has_char || has_pressed || has_mods
+	ptr_fields := has_x || has_y || has_buttons || has_wheel
+
+	switch act.kind {
+	case .Eval_Lex:
+		if has_lines || screen_fields || log_fields || has_win || key_fields || ptr_fields {
+			return {}, refuse(.Bad_Value, .Bytes, .Acts, 0, 0, number), false
+		}
+		if !has_line {
+			return {}, refuse(.Absent, .Bytes, .Line, 0, 0, number), false
+		}
+	case .Eval_Step:
+		if has_line || screen_fields || log_fields || has_win || key_fields || ptr_fields {
+			return {}, refuse(.Bad_Value, .Bytes, .Acts, 0, 0, number), false
+		}
+		if !has_lines || act.step_line_count == 0 {
+			return {}, refuse(.Absent, .Bytes, .Line, 0, 0, number), false
+		}
+		joined := strings.join(act.step_lines[:act.step_line_count], "; ", reader.allocator)
+		act.line = text_cut_bound(joined, assistant_contract.ACT_LINE_BYTES)
+	case .Read_Screen:
+		if has_line || has_lines || log_fields || has_win || key_fields || ptr_fields {
+			return {}, refuse(.Bad_Value, .Bytes, .Acts, 0, 0, number), false
+		}
+		if !has_format {
+			act.screen_format = "png"
+		}
+		act.line = fmt.aprintf("read_screen(format = \"%s\")", act.screen_format, allocator = reader.allocator)
+	case .Read_Log_Facts:
+		if has_line || has_lines || screen_fields || has_win || key_fields || ptr_fields {
+			return {}, refuse(.Bad_Value, .Bytes, .Acts, 0, 0, number), false
+		}
+		if !has_max_rec {
+			act.max_records = 64
+		}
+		act.line = fmt.aprintf("read_log_facts(max_records = %d)", act.max_records, allocator = reader.allocator)
+	case .Send_Key:
+		if has_line || has_lines || screen_fields || log_fields || ptr_fields {
+			return {}, refuse(.Bad_Value, .Bytes, .Acts, 0, 0, number), false
+		}
+		if !has_win || !has_code || !has_pressed {
+			return {}, refuse(.Absent, .Bytes, .Acts, 0, 0, number), false
+		}
+		act.line = fmt.aprintf("send_key(window = %d, code = %d, pressed = %s)", act.window_id, act.key_code, act.key_pressed ? "true" : "false", allocator = reader.allocator)
+	case .Send_Pointer:
+		if has_line || has_lines || screen_fields || log_fields || key_fields {
+			return {}, refuse(.Bad_Value, .Bytes, .Acts, 0, 0, number), false
+		}
+		if !has_win || !has_x || !has_y {
+			return {}, refuse(.Absent, .Bytes, .Acts, 0, 0, number), false
+		}
+		act.line = fmt.aprintf("send_pointer(window = %d, x = %d, y = %d, buttons = %d)", act.window_id, act.pointer_x, act.pointer_y, act.pointer_buttons, allocator = reader.allocator)
 	}
 	return act, {}, true
 }
