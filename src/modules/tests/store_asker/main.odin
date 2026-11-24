@@ -16,6 +16,7 @@ import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
+import "modus:contract/powerbox"
 import "modus:system"
 
 // A connection, a call and a wait: no table of its own.
@@ -36,9 +37,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if outcome != .Succeeded || result <= 0 {
 		wrong("the trusted display opened no store picker; the result", u64(result))
 	}
+	asked_at := system.time()
 	system.log_fact(.Info, Picker_Asked{request = u64(result)})
+	// Wait for the consent arm time on the system clock before signaling that
+	// the picker accepts Enter (matching plan_applier and script_fonts_planner).
+	armed_at := asked_at + powerbox.CONSENT_ARM_MILLISECONDS
+	for system.time() < armed_at {
+		wait := system.wait_begin()
+		system.wait_end(&wait, armed_at)
+	}
+	system.log_fact(.Info, Picker_Armed{request = u64(result)})
 	// The grant holds while this process runs: the scenario stops it.
-	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+	deadline := asked_at + system.TEST_HANG_BOUND_MILLISECONDS
 	for system.time() < deadline {
 		wait := system.wait_begin()
 		system.wait_end(&wait, deadline)

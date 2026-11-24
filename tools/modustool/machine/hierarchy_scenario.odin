@@ -82,8 +82,13 @@ scenario_hierarchy_second := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
+// At LEAF_CAPACITY 11 and BRANCH_CAPACITY 14, 1000 parts of 100 entries plus
+// 6000 scrambled entries need ~23200 blocks (exceeding the 16384-block 64 MiB
+// default disk), so the hierarchy disk is 128 MiB (32768 blocks).
+HIERARCHY_DISK_SIZE :: 128 << 20
+
 hierarchy_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	disk_prepare(TEST_HIERARCHY_DISK, build.DATA_DISK_SIZE, true) or_return
+	disk_prepare(TEST_HIERARCHY_DISK, HIERARCHY_DISK_SIZE, true) or_return
 	machine_test(part, scenario_hierarchy_first[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_HIERARCHY, 1), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_HIERARCHY_DISK}) or_return
 	return machine_test(part, scenario_hierarchy_second[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_HIERARCHY, 2), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_HIERARCHY_DISK})
 }

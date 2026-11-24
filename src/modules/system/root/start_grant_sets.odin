@@ -316,9 +316,12 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// file of a principal after a change of a secret, so an old secret
 	// opens no version (docs/STORAGE.md, "4.8 The erase of versions").
 	{name = "unlock", scope = .Machine, grants = {.Store, .Principals, .Tpm, .Versions_Erase}},
-	// The test of the trees of a store: 100000 empty objects in 1110 trees,
-	// about 9500 nodes, and room for the copies of a commit.
-	{name = "hierarchy", scope = .Session, grants = {.Store}, terms = {store_blocks = 12000}},
+	// The test of the trees of a store: 100000 empty objects in 1110 trees
+	// (at LEAF_CAPACITY 11 and BRANCH_CAPACITY 14, 100 sequential entries take
+	// 19 leaves + 3 branches = 22 blocks per part -> 22000 blocks across 1000
+	// parts, plus 200 top-tree blocks, ~900 scrambled-tree blocks, and commit
+	// headroom).
+	{name = "hierarchy", scope = .Session, grants = {.Store}, terms = {store_blocks = 26000}},
 	// The test of the large objects of a store, written by ranges: a commit
 	// of 1000 blocks spread over an object of 8 GiB holds about 2000
 	// blocks, with its version; the loop of range commits about 4000.

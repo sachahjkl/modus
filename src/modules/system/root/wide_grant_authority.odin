@@ -308,6 +308,10 @@ wide_grant_row_set :: proc "contextless" (principal: u64, key: [32]u8, grant_ser
 	}
 	remote.client_table_write(client_table, place, row)
 	system.word_wake(&client_table.version, system.WAKE_ALL)
+	if new_serial {
+		// End connections opened under the previous serial so a reconnect does not collide on the row.
+		_ = client_connections_end(place)
+	}
 }
 
 // wide_grant_mark_send gives the trusted display the mark of a grant, or

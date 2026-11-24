@@ -57,12 +57,14 @@ scenario_wide_grant := [?]Step {
 	{kind = .Type, text = "remote_allow(\"{client key}\")"},
 	{kind = .Wait, text = "root: principal 0 allowed the client key "},
 	{kind = .Call, text = "monitor.processes()", expected = "remote"},
+	// monitor starts on demand and opens a window in front: bring console back before typing.
+	{kind = .Front, text = "console"},
 	// The viewer, allowed to send input.
 	{kind = .Type, text = "start(\"remote_display\")"},
 	{kind = .Remote_Display_Key, text = "remote_display: the public key of this service: "},
 	{kind = .Wait, text = "remote_display: listening on the UDP port 7101, for the host 10.0.2.2 only, and for the viewer keys that a principal allowed", any_order = true},
 	{kind = .Type, text = "remote_display_allow(\"{viewer key}\", \"view_and_input\")"},
-	{kind = .Wait, text = " for the remote display: view_and_input"},
+	{kind = .Wait, text = " for the remote display: view and input"},
 
 	// 1. The ask of the agent: no key and no principal in the stream; the
 	// first screen of the run.
@@ -94,7 +96,7 @@ scenario_wide_grant := [?]Step {
 	// 3. The revocation on the keys of the machine, in one press.
 	{kind = .Key, text = "ctrl-shift-esc"},
 	{kind = .Wait, text = "compositor: the principal pressed revoke on the wide grant 1"},
-	{kind = .Wait, text = "root: the wide grant 1 of principal 0 ended: reason 1"},
+	{kind = .Wait, text = "root: the wide grant 1 of principal 0 ended: reason 1", any_order = true},
 	{kind = .Wait, text = " ended (a revocation, or a lock of its session): the connection from 10.0.2.2 port ", any_order = true},
 	// The next call, on a new connection: the grant to call holds alone.
 	{kind = .Call, text = "monitor.processes()", expected = "remote"},

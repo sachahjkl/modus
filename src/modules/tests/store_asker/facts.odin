@@ -16,3 +16,9 @@ Wrong :: struct {
 Picker_Asked :: struct {
 	request: u64,
 }
+
+// The arm time of the store picker passed: a key of the principal counts now.
+@(log_fact = "store_asker: the store picker takes the decision of the principal now, request {request}")
+Picker_Armed :: struct {
+	request: u64,
+}

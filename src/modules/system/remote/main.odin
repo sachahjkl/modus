@@ -1561,6 +1561,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true); status != .Succeeded {
 		fail("no ring to the root service")
 	}
+	// Map the wiring ring with Receive_Handles before wide-grant act wirings arrive.
+	system.wiring_ring_open()
 	// The client table, read-only: the root service writes it, and this
 	// process cannot give a key a row.
 	client_table_address, client_table_status := system.memory_map(ctx.handles[remote.GRANT_CLIENT_TABLE], {})

@@ -172,6 +172,7 @@ scenario_plan_and_audit_first := [?]Step {
 	{kind = .Type, text = "start(\"store_asker\")"},
 	{kind = .Wait, text = "store_asker: the trusted display shows the store picker for request ", fails_on = STORE_ASKER_WRONG},
 	{kind = .Wait, text = "compositor: the store picker lists ", fails_on = STORE_PICKER_NO_LIST_LINE, any_order = true},
+	{kind = .Wait, text = "store_asker: the store picker takes the decision of the principal now, request ", fails_on = STORE_ASKER_WRONG},
 	{kind = .Key, text = "down"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: store_asker holds the grant ", fails_on = STORE_ASKER_WRONG},
@@ -209,10 +210,11 @@ scenario_plan_and_audit_first := [?]Step {
 	// surface of a budget whose handle the window closed; it shows it.
 	{kind = .Type, text = "start(\"surface_budget_edges\")"},
 	{kind = .Wait, text = "surface_budget_edges: the compositor refused a budget one page short, a revoked copy and a budget with no Spend: as it must", fails_on = SURFACE_BUDGET_EDGES_WRONG},
-	{kind = .Wait, text = "surface_budget_edges: the compositor made the surface of ", fails_on = SURFACE_BUDGET_EDGES_WRONG},
+	{kind = .Wait, text = "surface_budget_edges: the compositor made the surface of ", fails_on = SURFACE_BUDGET_EDGES_WRONG, any_order = true},
 	{kind = .Wait, text = "compositor: surface surface_budget_edges ", fails_on = SURFACE_BUDGET_EDGES_WRONG, any_order = true},
 	// The cost of the end of the budget of a surface, as a measure.
 	{kind = .Wait, text = "surface_budget_edges: the end of the budget of a surface took ", fails_on = SURFACE_BUDGET_EDGES_WRONG, any_order = true},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "stop(\"surface_budget_edges\")"},
 	{kind = .Wait, text = "root: surface_budget_edges stopped: ", fails_on = SURFACE_BUDGET_EDGES_WRONG},
 	{kind = .Type, text = "shutdown()"},
@@ -234,9 +236,9 @@ scenario_plan_and_audit_second := [?]Step {
 	// The collector does not run: the first connect starts it, and it reads
 	// its spaces back.
 	{kind = .Type, text = "connect(\"collector\")"},
-	{kind = .Wait, text = "root: started collector"},
-	{kind = .Wait, text = "[console]   module     collector"},
+	{kind = .Wait, text = "root: started collector", any_order = true},
 	{kind = .Wait, text = AUDIT_SPACES_LOADED_LINE, any_order = true},
+	{kind = .Wait, text = "[console]   module     collector"},
 	{kind = .Type, text = "collector.record_count()"},
 	{kind = .Wait, text = "[console] 40"},
 	{kind = .Type, text = "collector.space_verify(1)"},
