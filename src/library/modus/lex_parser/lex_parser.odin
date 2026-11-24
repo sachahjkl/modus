@@ -1069,7 +1069,6 @@ named_ahead :: proc "contextless" (parser: ^Parser) -> bool {
 // a raw string body (without surrounding quotes). Supported escapes:
 //   \\  \"  \$  \u{XXXXXX} (1..6 hex digits; refuses control characters,
 //   surrogates, and values above 0x10FFFF per src/md/data/text_encoding.md).
-//   0xD800..0xDFFF and values > 0x10FFFF).
 // When `out` is nil, validates and computes `written` without writing bytes.
 decode_text_escapes :: proc "contextless" (raw: string, out: []u8) -> (written: int, bad_offset: int, ok: bool) {
 	i := 0
