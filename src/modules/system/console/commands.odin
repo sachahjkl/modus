@@ -1119,6 +1119,10 @@ commands_start :: proc "contextless" () {
 	// entry is empty, or named entry of a Tree output such as "module"),
 	// validates its module format, and stores it in module_files under nickname.
 	command("recipes.deliver_module", {.Text, .Text, .Text}, .Text, "deliver a verified built or cached module into module_files", recipes_deliver_module_command)
+	// Runs mark-and-sweep garbage collection over recipes's private store,
+	// removing content-addressed objects not referenced by any live realisation,
+	// recipe, active build, or recent put window.
+	command("recipes.collect_garbage", {}, .Text, "collect unreferenced content-addressed objects in recipes", recipes_collect_garbage_command)
 	debugger_commands_start()
 	tables_start()
 	facts_start() // facts.odin

@@ -8,8 +8,9 @@
 // against the object root hash before writing to Recipes_State.store, and
 // recursively fetches missing children of Tree outputs.
 //
-// Cache_Quic_Client holds ~2.3 MiB of fixed buffers and must live in static
-// memory or a heap/page allocation, never on a stack.
+// Cache_Quic_Client holds ~5.5 MiB of fixed buffers (including 4 pipelined
+// 1 MiB response slots) and must live in static memory or a heap/page
+// allocation, never on a stack.
 package recipes_core
 
 import "modus:contract/blake3"
@@ -21,8 +22,15 @@ import "modus:contract/tree_hash"
 import "modus:quic"
 import "modus:random"
 
-// Plan value: one bidirectional stream per sequential client RPC.
-CACHE_CLIENT_STREAMS :: 1
+// Plan value: bounded window of concurrent 1 MiB Get_Object frames in flight
+// over independent bidirectional QUIC streams (matches the server's
+// CACHE_QUIC_STREAMS_PER_CONNECTION = 4; 4 MiB in flight raises a 50 ms RTT
+// link from 20 MiB/s to 80 MiB/s while keeping client memory under 8 MiB).
+CACHE_PIPELINE_WINDOW :: 4
+
+// Plan value: bidirectional streams held by one client connection (matches
+// CACHE_PIPELINE_WINDOW so all pipelined frame requests run concurrently).
+CACHE_CLIENT_STREAMS :: CACHE_PIPELINE_WINDOW
 
 // Plan value: QUIC idle timeout in milliseconds for the cache client.
 CACHE_CLIENT_IDLE_TIMEOUT_MS :: 30_000
@@ -69,22 +77,66 @@ Cache_Closure_Item :: struct {
 	kind: object_cache.Cache_Object_Kind,
 }
 
+// Per-slot state for one pipelined Get_Object frame request in flight.
+@(private = "file")
+Pipeline_Frame_Slot :: struct {
+	active:          bool,
+	awaiting_open:   bool, // True while waiting for MAX_STREAMS to reopen after a .Busy answer.
+	stream_id:       u64,
+	frame_index:     u64,
+	offset:          u64,
+	req_buf:         [object_cache.FRAME_HEADER_SIZE + object_cache.GET_OBJECT_BODY_SIZE]u8,
+	req_len:         int,
+	sent:            int,
+	recv_len:        int,
+	expected_len:    int,
+	header_parsed:   bool,
+	peer_finished:   bool,
+	busy_count:      int,
+	busy_last_built: u64,
+	busy_expected:   u64,
+}
+
 // Complete zero-allocation state of one QUIC object cache client.
 Cache_Quic_Client :: struct {
-	configured:            bool,
-	connected:             bool,
-	server_public_key:     [object_cache.PUBLIC_KEY_SIZE]u8,
-	cryptography:          ^quic.Cryptography,
-	generator:             ^random.Generator,
-	transport:             Cache_Datagram_Transport,
-	exchange_timeout_us:   u64,
-	last_close_error_code: u64,
-	connection:            quic.Connection,
-	streams:               [CACHE_CLIENT_STREAMS]quic.Stream,
-	request_buf:           [object_cache.FRAME_HEADER_SIZE + object_cache.MAX_REQUEST_BODY_BYTES]u8,
-	response_buf:          [object_cache.FRAME_HEADER_SIZE + object_cache.MAX_RESPONSE_BODY_BYTES]u8,
-	datagram_buf:          [quic.DATAGRAM_LIMIT]u8,
-	closure_queue:         [CACHE_CLOSURE_QUEUE_CAPACITY]Cache_Closure_Item,
+	configured:               bool,
+	connected:                bool,
+	server_public_key:        [object_cache.PUBLIC_KEY_SIZE]u8,
+	cryptography:             ^quic.Cryptography,
+	generator:                ^random.Generator,
+	transport:                Cache_Datagram_Transport,
+	exchange_timeout_us:      u64,
+	pipeline_window:          int, // Bounded 1..CACHE_PIPELINE_WINDOW; defaults to CACHE_PIPELINE_WINDOW.
+	last_close_error_code:    u64,
+	last_fetch_max_in_flight: int, // Peak concurrent Get_Object frames in flight on last fetch.
+	last_fetch_frames:        u64, // Total frames fetched on last fetch.
+	last_fetch_out_of_order:  u64, // Frames completed ahead of an earlier frame index on last fetch.
+	connection:               quic.Connection,
+	streams:                  [CACHE_CLIENT_STREAMS]quic.Stream,
+	request_buf:              [object_cache.FRAME_HEADER_SIZE + object_cache.MAX_REQUEST_BODY_BYTES]u8,
+	response_buf:             [object_cache.FRAME_HEADER_SIZE + object_cache.MAX_RESPONSE_BODY_BYTES]u8,
+	pipeline_response_bufs:   [CACHE_PIPELINE_WINDOW - 1][object_cache.FRAME_HEADER_SIZE + object_cache.MAX_RESPONSE_BODY_BYTES]u8,
+	datagram_buf:             [quic.DATAGRAM_LIMIT]u8,
+	closure_queue:            [CACHE_CLOSURE_QUEUE_CAPACITY]Cache_Closure_Item,
+}
+
+// cache_quic_client_set_pipeline_window sets the number of concurrent frames
+// kept in flight during multi-frame object fetches. Refuses values outside
+// 1..CACHE_PIPELINE_WINDOW without changing the current window.
+cache_quic_client_set_pipeline_window :: proc "contextless" (client: ^Cache_Quic_Client, window: int) -> bool {
+	if client == nil || window < 1 || window > CACHE_PIPELINE_WINDOW {
+		return false
+	}
+	client.pipeline_window = window
+	return true
+}
+
+@(private = "file")
+pipeline_slot_response_buf :: proc "contextless" (client: ^Cache_Quic_Client, slot_idx: int) -> []u8 {
+	if slot_idx == 0 {
+		return client.response_buf[:]
+	}
+	return client.pipeline_response_bufs[slot_idx - 1][:]
 }
 
 // cache_quic_client_init configures client with a pinned server Ed25519 public
@@ -112,7 +164,11 @@ cache_quic_client_init :: proc "contextless" (
 	client.generator = generator
 	client.transport = transport
 	client.exchange_timeout_us = exchange_timeout_us > 0 ? exchange_timeout_us : CACHE_CLIENT_EXCHANGE_TIMEOUT_US
+	client.pipeline_window = CACHE_PIPELINE_WINDOW
 	client.last_close_error_code = 0
+	client.last_fetch_max_in_flight = 0
+	client.last_fetch_frames = 0
+	client.last_fetch_out_of_order = 0
 	return true
 }
 
@@ -370,10 +426,73 @@ cache_quic_client_exchange :: proc "contextless" (
 	return decoded, .None
 }
 
+@(private = "file")
+pipeline_abort_all :: proc "contextless" (client: ^Cache_Quic_Client, slots: []Pipeline_Frame_Slot) {
+	for &st in slots {
+		if !st.active {
+			continue
+		}
+		if !st.awaiting_open {
+			quic.stream_reset(&client.connection, st.stream_id, 1)
+			quic.stream_stop_sending(&client.connection, st.stream_id, 1)
+		}
+		st.active = false
+		st.awaiting_open = false
+	}
+	_ = client_drain_sends(client, client.transport.now_us(client.transport.user_data))
+}
+
+@(private = "file")
+pipeline_open_frame_slot :: proc "contextless" (
+	client: ^Cache_Quic_Client,
+	st: ^Pipeline_Frame_Slot,
+	expected_hash: blake3.Hash,
+	frame_index: u64,
+	preserve_busy: bool,
+) -> bool {
+	stream_id, opened := quic.stream_open(&client.connection)
+	if !opened {
+		return false
+	}
+	offset := frame_index * object_cache.FRAME_PAYLOAD_BYTES
+	req := object_cache.Cache_Request {
+		kind        = .Get_Object,
+		object_hash = expected_hash,
+		object_kind = .Blob,
+		offset      = offset,
+	}
+	req_len, enc_refusal := object_cache.encode_request(&req, st.req_buf[:])
+	if enc_refusal != .None {
+		quic.stream_reset(&client.connection, stream_id, 1)
+		quic.stream_stop_sending(&client.connection, stream_id, 1)
+		return false
+	}
+	busy_count := preserve_busy ? st.busy_count : 0
+	busy_last := preserve_busy ? st.busy_last_built : 0
+	busy_exp := preserve_busy ? st.busy_expected : 0
+	st.active = true
+	st.awaiting_open = false
+	st.stream_id = stream_id
+	st.frame_index = frame_index
+	st.offset = offset
+	st.req_len = req_len
+	st.sent = 0
+	st.recv_len = 0
+	st.expected_len = object_cache.FRAME_HEADER_SIZE
+	st.header_parsed = false
+	st.peer_finished = false
+	st.busy_count = busy_count
+	st.busy_last_built = busy_last
+	st.busy_expected = busy_exp
+	return true
+}
+
 // cache_quic_fetch_object_to_store fetches one content-addressed object over
 // QUIC in aligned 1 MiB frames, verifies every frame with its Bao inclusion
 // proof (or canonical tree_hash for Tree) BEFORE writing it to state.store,
 // enforces the 75% retention guard, and writes under unified <64-hex> name.
+// Multi-frame Blob transfers pipeline up to client.pipeline_window concurrent
+// Get_Object frame requests over independent bidirectional QUIC streams.
 cache_quic_fetch_object_to_store :: proc "contextless" (
 	client: ^Cache_Quic_Client,
 	state: ^Recipes_State,
@@ -383,6 +502,10 @@ cache_quic_fetch_object_to_store :: proc "contextless" (
 	if client == nil || state == nil {
 		return 0, .Cache_Miss
 	}
+	client.last_fetch_max_in_flight = 0
+	client.last_fetch_frames = 0
+	client.last_fetch_out_of_order = 0
+
 	obj_name := pr.blob_object_name(expected_hash)
 	obj_name_text := pr.private_object_name_text(&obj_name)
 
@@ -396,7 +519,8 @@ cache_quic_fetch_object_to_store :: proc "contextless" (
 		}
 	}
 
-	// Fetch frame 0 first (retrying monotonically on .Busy).
+	// Fetch frame 0 first (retrying monotonically on .Busy) to establish
+	// object_size and frame_count before opening the pipelined window.
 	resp0, frame0_refusal := fetch_frame_with_busy(client, expected_hash, kind, 0)
 	if frame0_refusal != .None {
 		return 0, frame0_refusal
@@ -424,6 +548,8 @@ cache_quic_fetch_object_to_store :: proc "contextless" (
 	if room_refusal := retention_make_room(state, object_size); room_refusal != .None {
 		return 0, room_refusal
 	}
+	client.last_fetch_frames = frame_count
+	client.last_fetch_max_in_flight = 1
 	if frame_count == 1 {
 		if pr.private_store_write(&state.store, obj_name_text, resp0.payload) != .Ok {
 			return 0, .Store_Failed
@@ -436,33 +562,258 @@ cache_quic_fetch_object_to_store :: proc "contextless" (
 
 	// Multi-frame Blob: stream all frames into FETCH_STAGING_NAME first so a
 	// crash or mid-transfer fault never leaves partial unverified bytes under
-	// <64-hex>, and rename atomically only after the final frame proves object_size.
+	// <64-hex>, and rename atomically only after all frame_count frames verify.
 	_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
 	if pr.private_store_write_range(&state.store, FETCH_STAGING_NAME, 0, resp0.payload, object_size, false) != .Ok {
 		_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
 		return 0, .Store_Failed
 	}
-	for frame_index in u64(1) ..< frame_count {
-		offset := frame_index * object_cache.FRAME_PAYLOAD_BYTES
-		resp, frame_refusal := fetch_frame_with_busy(client, expected_hash, .Blob, offset)
-		if frame_refusal != .None {
+
+	window := clamp(client.pipeline_window, 1, CACHE_PIPELINE_WINDOW)
+	slots: [CACHE_PIPELINE_WINDOW]Pipeline_Frame_Slot
+	next_frame := u64(1)
+	frames_verified := u64(1)
+	in_flight := 0
+	highest_completed := u64(0)
+	deadline := client.transport.now_us(client.transport.user_data) + client.exchange_timeout_us
+
+	for frames_verified < frame_count {
+		if client.connection.state != .Connected {
+			client.connected = false
+			pipeline_abort_all(client, slots[:])
 			_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
-			return 0, frame_refusal
+			return 0, .Cache_Miss
 		}
-		if resp.status != .Ok || resp.object_kind != .Blob || resp.object_size != object_size || resp.offset != offset {
-			_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
-			return 0, .Malformed_Output
+
+		made_progress := false
+
+		// 1a. Reopen any slot waiting for peer MAX_STREAMS after a .Busy answer.
+		for idx in 0 ..< window {
+			st := &slots[idx]
+			if !st.active || !st.awaiting_open {
+				continue
+			}
+			if pipeline_open_frame_slot(client, st, expected_hash, st.frame_index, true) {
+				made_progress = true
+			}
 		}
-		if object_cache.object_frame_verify(.Blob, expected_hash, object_size, frame_index, resp.proof, resp.payload) != .Trust_By_Hash {
-			_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
-			return 0, .Hash_Mismatch
+
+		// 1b. Fill the bounded pipeline window with Get_Object frame requests.
+		for in_flight < window && next_frame < frame_count {
+			free_idx := -1
+			for idx in 0 ..< window {
+				if !slots[idx].active {
+					free_idx = idx
+					break
+				}
+			}
+			if free_idx < 0 {
+				break
+			}
+			if !pipeline_open_frame_slot(client, &slots[free_idx], expected_hash, next_frame, false) {
+				break
+			}
+			in_flight += 1
+			if in_flight > client.last_fetch_max_in_flight {
+				client.last_fetch_max_in_flight = in_flight
+			}
+			next_frame += 1
+			made_progress = true
 		}
-		is_final := frame_index == frame_count - 1
-		if pr.private_store_write_range(&state.store, FETCH_STAGING_NAME, offset, resp.payload, object_size, is_final) != .Ok {
+
+		// 2. Write all pending request bytes across active streams and flush UDP
+		//    immediately so the full window leaves before waiting for answers.
+		sent_any := false
+		for idx in 0 ..< window {
+			st := &slots[idx]
+			if !st.active || st.awaiting_open || st.sent >= st.req_len {
+				continue
+			}
+			wrote := quic.stream_write(&client.connection, st.stream_id, st.req_buf[st.sent:st.req_len], true)
+			if wrote > 0 {
+				st.sent += wrote
+				sent_any = true
+				made_progress = true
+			}
+		}
+		if sent_any {
+			_ = client_drain_sends(client, client.transport.now_us(client.transport.user_data))
+		}
+
+		// 3. Read response bytes from every active stream and process completions
+		//    immediately in whatever order frames arrive.
+		for idx in 0 ..< window {
+			st := &slots[idx]
+			if !st.active || st.awaiting_open {
+				continue
+			}
+			resp_buf := pipeline_slot_response_buf(client, idx)
+			stream_error := Cache_Client_Error.None
+
+			for !st.peer_finished {
+				if !st.header_parsed {
+					need := object_cache.FRAME_HEADER_SIZE - st.recv_len
+					n, fin, rst := quic.stream_read(&client.connection, st.stream_id, resp_buf[st.recv_len:st.recv_len + need])
+					if rst {
+						stream_error = .Stream_Reset
+						break
+					}
+					if n > 0 {
+						st.recv_len += n
+						made_progress = true
+					}
+					if fin {
+						st.peer_finished = true
+						made_progress = true
+					}
+					if st.recv_len == object_cache.FRAME_HEADER_SIZE {
+						_, _, body_len, hdr_refusal := object_cache.inspect_response_header(resp_buf[:object_cache.FRAME_HEADER_SIZE])
+						if hdr_refusal != .None {
+							stream_error = .Bad_Response
+							break
+						}
+						st.expected_len = object_cache.FRAME_HEADER_SIZE + body_len
+						st.header_parsed = true
+					}
+					if n == 0 {
+						break
+					}
+				} else if st.recv_len < st.expected_len {
+					n, fin, rst := quic.stream_read(&client.connection, st.stream_id, resp_buf[st.recv_len:st.expected_len])
+					if rst {
+						stream_error = .Stream_Reset
+						break
+					}
+					if n > 0 {
+						st.recv_len += n
+						made_progress = true
+					}
+					if fin {
+						st.peer_finished = true
+						made_progress = true
+					}
+					if n == 0 {
+						break
+					}
+				} else {
+					extra: [1]u8
+					n, fin, rst := quic.stream_read(&client.connection, st.stream_id, extra[:])
+					if rst {
+						stream_error = .Stream_Reset
+						break
+					}
+					if n > 0 {
+						stream_error = .Bad_Response
+						break
+					}
+					if fin {
+						st.peer_finished = true
+						made_progress = true
+					}
+					break
+				}
+			}
+
+			if stream_error != .None {
+				pipeline_abort_all(client, slots[:])
+				_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
+				return 0, .Malformed_Output
+			}
+
+			if !st.peer_finished {
+				continue
+			}
+			if !st.header_parsed || st.recv_len != st.expected_len || st.sent != st.req_len {
+				pipeline_abort_all(client, slots[:])
+				_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
+				return 0, .Malformed_Output
+			}
+
+			// Stream finished cleanly: decode and validate the frame response.
+			decoded, dec_refusal := object_cache.decode_response(resp_buf[:st.expected_len])
+			if dec_refusal != .None || decoded.request_kind != .Get_Object {
+				pipeline_abort_all(client, slots[:])
+				_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
+				return 0, .Malformed_Output
+			}
+
+			// Retry monotonic .Busy answers for this frame on a fresh stream.
+			if decoded.status == .Busy {
+				if decoded.frame_count == 0 || st.busy_count >= CACHE_CLIENT_BUSY_LIMIT {
+					pipeline_abort_all(client, slots[:])
+					_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
+					return 0, .Malformed_Output
+				}
+				if st.busy_expected == 0 {
+					st.busy_expected = decoded.frame_count
+				} else if decoded.frame_count != st.busy_expected || decoded.frames_built <= st.busy_last_built {
+					pipeline_abort_all(client, slots[:])
+					_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
+					return 0, .Malformed_Output
+				}
+				st.busy_last_built = decoded.frames_built
+				st.busy_count += 1
+				// Pump ACK so the server releases the finished stream slot and
+				// sends MAX_STREAMS; reopen this frame inside the pipeline loop
+				// without touching any sibling slot's response buffer.
+				_ = client_drain_sends(client, client.transport.now_us(client.transport.user_data))
+				if !pipeline_open_frame_slot(client, st, expected_hash, st.frame_index, true) {
+					st.awaiting_open = true
+				}
+				deadline = client.transport.now_us(client.transport.user_data) + client.exchange_timeout_us
+				made_progress = true
+				continue
+			}
+
+			if decoded.status != .Ok || decoded.object_kind != .Blob || decoded.object_size != object_size || decoded.offset != st.offset {
+				pipeline_abort_all(client, slots[:])
+				_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
+				return 0, .Malformed_Output
+			}
+			if object_cache.object_frame_verify(.Blob, expected_hash, object_size, st.frame_index, decoded.proof, decoded.payload) != .Trust_By_Hash {
+				pipeline_abort_all(client, slots[:])
+				_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
+				return 0, .Hash_Mismatch
+			}
+
+			if st.frame_index < highest_completed {
+				client.last_fetch_out_of_order += 1
+			} else {
+				highest_completed = st.frame_index
+			}
+
+			is_final := frames_verified + 1 == frame_count
+			if pr.private_store_write_range(&state.store, FETCH_STAGING_NAME, st.offset, decoded.payload, object_size, is_final) != .Ok {
+				pipeline_abort_all(client, slots[:])
+				_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
+				return 0, .Store_Failed
+			}
+			frames_verified += 1
+			if st.active {
+				st.active = false
+				in_flight -= 1
+			}
+			deadline = client.transport.now_us(client.transport.user_data) + client.exchange_timeout_us
+			made_progress = true
+		}
+
+		if frames_verified >= frame_count {
+			break
+		}
+		if client.transport.now_us(client.transport.user_data) >= deadline {
+			pipeline_abort_all(client, slots[:])
+			cache_quic_client_close(client)
 			_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
-			return 0, .Store_Failed
+			return 0, .Cache_Miss
+		}
+		if !made_progress {
+			_ = client_step_io(client, deadline)
 		}
 	}
+
+	// Flush final ACKs for completed streams so server frees its slots promptly.
+	_ = client_drain_sends(client, client.transport.now_us(client.transport.user_data))
+
 	// Remove a previously damaged target (already proven non-Whole above)
 	// before atomically renaming the verified staging object into place.
 	if existing_present {

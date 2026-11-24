@@ -9,6 +9,7 @@ import "modus:contract/storage_status"
 import format "modus:contract/store"
 import "modus:contract/value_kinds"
 import "internal:storage/block_counts"
+import "internal:storage/share_quota"
 import block_tree "internal:storage/storage_object"
 import "modus:system"
 
@@ -731,7 +732,8 @@ ranged_pending :: proc "contextless" (ranged: ^Ranged, error: ^errors.Error_Reco
 	if ranged.exists {
 		base = ranged.state.generation
 	}
-	pending, result := pending_take(ranged.named.caller.connection.ring_memory, ranged.named.caller.store.limit, &ranged.named.path, ranged.named.name.key, base, ranged.state.size, error)
+	pending_limit := share_quota.effective_pending_limit(ranged.named.caller.store.share_limit, ranged.named.caller.store.limit)
+	pending, result := pending_take(ranged.named.caller.connection.ring_memory, pending_limit, &ranged.named.path, ranged.named.name.key, base, ranged.state.size, error)
 	if pending == nil {
 		return 0, result
 	}

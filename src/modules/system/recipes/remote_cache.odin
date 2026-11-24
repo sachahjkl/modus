@@ -104,7 +104,7 @@ Remote_Cache_State :: struct {
 	configs:           [REMOTE_CACHE_PRINCIPALS_MOST]Principal_Cache_Config,
 }
 
-// Package-level BSS state so the ~2.3 MiB QUIC client never lives on the stack.
+// Package-level BSS state so the ~5.5 MiB QUIC client never lives on the stack.
 remote_cache: Remote_Cache_State
 
 @(private = "file")

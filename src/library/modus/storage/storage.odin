@@ -644,9 +644,12 @@ Shared :: struct {
 }
 
 // share makes a new connection whose root is the tree of a place, and
-// gives a Client of it. number is for unshare.
-share :: proc "contextless" (client: ^Client, place: Place, read_only: bool, error: ^errors.Error_Record = nil) -> (shared: Client, number: i64, status: storage_status.Status) {
-	arguments := [2]isolated.Argument{{integer = u64(place)}, {integer = read_only ? 1 : 0}}
+// gives a Client of it. number is for unshare. When block_limit > 0 on a
+// writable share, the share gets a block quota of its own (at most the store's
+// limit) that refuses writes past it without thinning parent store versions;
+// 0 inherits the store limit.
+share :: proc "contextless" (client: ^Client, place: Place, read_only: bool, error: ^errors.Error_Record = nil, block_limit: u64 = 0) -> (shared: Client, number: i64, status: storage_status.Status) {
+	arguments := [3]isolated.Argument{{integer = u64(place)}, {integer = read_only ? 1 : 0}, {integer = block_limit}}
 	bytes: []u8
 	_, bytes, status, _ = call(client, "share", arguments[:], error)
 	if status != .Ok {

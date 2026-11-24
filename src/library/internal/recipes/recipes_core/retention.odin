@@ -14,6 +14,40 @@ import "modus:contract/object_cache"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/tree_hash"
 
+// Plan value: default output block limit for a builder whose recipe sets
+// output_block_limit = 0 (16 384 blocks of 4 KiB = 64 MiB, matching
+// OUTPUT_BYTES_MOST).
+DEFAULT_BUILDER_OUTPUT_BLOCK_LIMIT :: u64(16_384)
+
+// Plan value: minimum blocks kept in reserve for the parent recipes store when
+// computing a builder's output share limit (metadata, freeze_tree, realisations)
+// when the store limit exceeds 2 * BUILDER_STORE_RESERVE_MIN_BLOCKS.
+BUILDER_STORE_RESERVE_MIN_BLOCKS :: u64(16)
+
+// Plan value: fraction (1/8) of the parent store kept as headroom below its
+// limit so a builder never drives the parent store into version thinning.
+BUILDER_STORE_RESERVE_DIVISOR :: u64(8)
+
+// builder_output_block_limit computes the block cap for a builder's writable
+// "out" share from the recipe's requested output_block_limit and recipes's
+// store usage and limit. Returns 0 when no headroom remains.
+builder_output_block_limit :: proc "contextless" (recipe_block_limit: u64, store_limit: u64, store_used: u64) -> u64 {
+	if store_limit == 0 || store_used >= store_limit {
+		return 0
+	}
+	headroom := store_limit - store_used
+	reserve: u64 = 0
+	if store_limit > 2 * BUILDER_STORE_RESERVE_MIN_BLOCKS {
+		reserve = max(store_limit / BUILDER_STORE_RESERVE_DIVISOR, BUILDER_STORE_RESERVE_MIN_BLOCKS)
+	}
+	if headroom <= reserve {
+		return 0
+	}
+	available := headroom - reserve
+	desired := recipe_block_limit > 0 ? recipe_block_limit : DEFAULT_BUILDER_OUTPUT_BLOCK_LIMIT
+	return min(desired, available)
+}
+
 // The hashes that one pass can mark: the objects that the realisations and
 // the recipes of the store name, to the leaves of their trees.
 RETENTION_MARKS_MOST :: 16384
@@ -239,14 +273,21 @@ retention_name_key :: proc "contextless" (text: string) -> (key: [RETENTION_NAME
 
 // retention_collect runs one pass over the private store of state: it
 // marks what each realisation object and each recipe object of the store,
-// each recipe of registry and each hash of extra names, then removes each
-// content-addressed object that is not marked. extra holds the objects that put kept
-// in the recent windows, which a recipe may name later, and queue the
-// guest builds that wait or run, whose specs name what they will read.
-retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recipe_Registry, extra: []blake3.Hash, workspace: ^Retention_Workspace, queue: ^Guest_Queue = nil) -> (result: Retention_Result) {
+// each recipe of registry, the active build (state.building), each hash of
+// extra (recent puts), each explicit pin in pins, and each queued/running
+// build of queue names, then removes each content-addressed object that is
+// not marked. Any failure or bound overflow removes nothing.
+retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recipe_Registry, extra: []blake3.Hash, workspace: ^Retention_Workspace, queue: ^Guest_Queue = nil, pins: []blake3.Hash = nil) -> (result: Retention_Result) {
 	workspace.marks = {}
 	workspace.mark_count = 0
 	port := &state.store
+	// An active build on state protects its inputs and guest images.
+	if state.building != nil {
+		if refusal := retention_mark_recipe(workspace, port, state.building); refusal != .None {
+			result.refusal = refusal
+			return result
+		}
+	}
 	// Each build of the queue names its inputs, its kernel and its archive:
 	// a build that waits must find them when it runs. A build of the ring
 	// holds its spec; another build names a recipe of the registry.
@@ -264,6 +305,14 @@ retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recip
 					return result
 				}
 			}
+		}
+	}
+	// Explicit pins (e.g. active outputs or principal-pinned roots) keep their
+	// object and recursive tree closure alive.
+	for hash in pins {
+		if refusal := retention_mark_object(workspace, port, .Unknown, hash, 0); refusal != .None {
+			result.refusal = refusal
+			return result
 		}
 	}
 	// A put names an object of any kind: a tree is walked, so its children

@@ -295,6 +295,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	guest_queue_keeper = {queue = &guest_queue, registry = &service_registry}
 	service_state.retention_keep = recipes_core.guest_queue_keeps
 	service_state.retention_keep_user = &guest_queue_keeper
+	service_state.collect_before_evict = retention_collect_for_room
 	builder_start_init(ctx)
 	c_builder_bind(ctx)
 	remote_cache_bind(ctx)

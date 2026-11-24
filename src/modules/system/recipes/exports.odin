@@ -320,6 +320,10 @@ build_of_hash :: proc "contextless" (recipe_hash: blake3.Hash, checked_mode: pr.
 	policy := remote_cache_prepare_for_principal(caller_principal(), &signer_slot)
 	defer remote_cache_clear_active()
 	export_result = recipes_core.build_registered(&service_state, &service_registry, recipe_hash, checked_mode, &builder_start, policy)
+	// Collect any unreferenced outputs left by a build, replacement, or Verify disagreement.
+	if export_result.outcome == .Built_Locally || export_result.refusal == .Verify_Disagreement || export_result.refusal == .Builder_Failed || export_result.refusal == .Store_Failed {
+		_ = retention_pass()
+	}
 	system.log_fact(.Info, Recipe_Build_Completed{outcome = u64(export_result.outcome), refusal_code = u64(export_result.refusal)})
 	if export_result.refusal != .None {
 		return recipe_refusal_fail(error, export_result.refusal, 1)
@@ -648,6 +652,44 @@ builds :: proc "c" (result: ^[]pr.Recipe_Build_Row, error: ^errors.Error_Record)
 	return .Succeeded, i64(recipes_core.history_rows(&service_registry, result^))
 }
 
+// Result row of collect_garbage: marked live roots, kept content-addressed
+// objects, and removed unreferenced objects. Zero padding.
+Collect_Result :: struct {
+	marked:  i64,
+	kept:    i64,
+	removed: i64,
+}
+#assert(size_of(Collect_Result) == 24)
+
+// collect_garbage runs one mark-and-sweep pass over the private store of
+// recipes, keeping every object referenced by a live realisation, a recipe,
+// an active or queued build, or a recent put window, and removing unreferenced
+// content-addressed objects. Requires Acts_For_Principal.
+@(export, link_name = "collect_garbage")
+collect_garbage :: proc "c" (result: ^[]Collect_Result, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure, ok := caller_check(true, error); !ok {
+		return failure, 0
+	}
+	res := retention_pass()
+	switch res.refusal {
+	case .None:
+	case .Marks_Full:
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Full, .Objects, 0, i64(res.marked), recipes_core.RETENTION_MARKS_MOST)
+	case .Too_Deep:
+		return call_outcome.fail(error, .Data_Damaged, .Too_Long, .Trees, 0, 0, recipes_core.RETENTION_DEPTH_MOST)
+	case .Store_Failed:
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store)
+	}
+	if result != nil && len(result^) > 0 {
+		result[0] = {
+			marked  = i64(res.marked),
+			kept    = i64(res.kept),
+			removed = i64(res.removed),
+		}
+	}
+	return .Succeeded, 1
+}
+
 // realisations gives each realisation of the local store.
 //
 // The value is the count of realisations. A failure gives its outcome and its
@@ -757,6 +799,9 @@ build_c :: proc "c" (source_name: ^string, source: system.Lent({.Read}), source_
 	// The store holds the module now, or the build failed: the memory of
 	// the module of the build ends here.
 	c_build_work_end(&work)
+	if export_result.outcome == .Built_Locally || export_result.refusal != .None {
+		_ = retention_pass()
+	}
 	if export_result.refusal != .None {
 		if work.step != .None {
 			error^ = work.error

@@ -162,8 +162,12 @@ Recipes_State :: struct {
 	// names (a queue of builds). nil: none.
 	registry:            ^Recipe_Registry,
 	building:            ^pr.Recipe_Spec,
-	retention_keep:      proc "contextless" (hash: blake3.Hash, user_data: rawptr) -> bool,
-	retention_keep_user: rawptr,
+	retention_keep:            proc "contextless" (hash: blake3.Hash, user_data: rawptr) -> bool,
+	retention_keep_user:       rawptr,
+	// Optional mark-and-sweep collector invoked by retention_make_room to
+	// reclaim unreferenced <64-hex> objects before evicting live realisations.
+	collect_before_evict:      proc "contextless" (user_data: rawptr) -> int,
+	collect_before_evict_user: rawptr,
 	// Streaming remote object cache hook (QUIC UDP:5010). nil when no remote
 	// cache is active for the current caller's principal. Trusted signers are
 	// always supplied per-call in Substitution_Policy, never globally.
@@ -441,6 +445,16 @@ retention_make_room :: proc "contextless" (state: ^Recipes_State, bytes: u64) ->
 	fits, refusal := retention_fits(state, needed, 0)
 	if refusal != .None || fits {
 		return refusal
+	}
+	// Reclaim unreferenced content-addressed objects first so cached
+	// realisations are evicted only when live outputs still exceed the guard.
+	if state.collect_before_evict != nil {
+		if removed := state.collect_before_evict(state.collect_before_evict_user); removed > 0 {
+			fits, refusal = retention_fits(state, needed, 0)
+			if refusal != .None || fits {
+				return refusal
+			}
+		}
 	}
 	oldest: [RETENTION_BATCH]Retention_Candidate
 	count, removable, scan_refusal := retention_scan(state, oldest[:])

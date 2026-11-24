@@ -926,8 +926,10 @@ Plan :: struct {
 	index_work:   [PLAN_ENTRY_CAPACITY]Index_Work,
 	leaf_work:    [LEAF_WORK_CAPACITY]Leaf_Work,
 	leaf_count:   int,
-	versions_change: i64,
-	thinned:      u64, // Versions that the plan removes.
+	versions_change:     i64,
+	thinned:             u64, // Versions that the plan removes.
+	share_blocks_before: u64, // Blocks of the active limited share before this commit.
+	share_counted:       bool, // True when share_blocks_before was counted within SHARE_USAGE_READ_LIMIT.
 	// Staging of the blocks that the plan writes, other than leaves and
 	// the blocks of the trees of objects.
 	store_block_bytes: Block,
@@ -1158,6 +1160,8 @@ plan_reset :: proc "contextless" (store_index: int) {
 	plan.leaf_count = 0
 	plan.versions_change = 0
 	plan.thinned = 0
+	plan.share_blocks_before = 0
+	plan.share_counted = false
 	plan.store_index = store_index
 	later_count = 0
 	plan.next = root
