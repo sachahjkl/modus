@@ -16,7 +16,7 @@
 // ```
 // isolate("probe")        probe: 8 commands in a sandboxed process
 // count() + count() * 10  21
-// stop_machine(1)         2: the sandbox holds no handle
+// stop_machine(1)         1: the sandbox holds no handle (Call_Outcome.Argument_Refused)
 // peek(0)                 error: the process probe stopped: a fault, page fault
 // count()                 1: a new process
 // spin()                  Escape stops the call
@@ -67,9 +67,9 @@ spin :: proc "c" () -> i64 {
 }
 
 // stop_machine asks the kernel to stop the machine with a handle. The
-// result is the status of the kernel operation.
+// result is the call outcome of the kernel operation.
 //
-// In a sandbox the handle names nothing: the result is 2, "no handle", for each value. The machine never stops
+// In a sandbox the handle names nothing: the result is 1 (`Call_Outcome.Argument_Refused`), for each value. The machine never stops
 // through this export unless the caller loaded the module directly and passes the number of a handle of the
 // machine that it holds.
 @(export, link_name = "stop_machine")

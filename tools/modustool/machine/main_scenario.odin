@@ -713,9 +713,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] 3"},
 	{kind = .Type, text = "checksum(7)"},
 	{kind = .Wait, text = "error: checksum: argument 1 is Text, not Integer"},
-	// The module has no handle: it cannot stop the machine.
+	// The module has no handle: it cannot stop the machine (each call gives Call_Outcome.Argument_Refused = 1).
 	{kind = .Type, text = "stop_machine(1) + stop_machine(2) + stop_machine(3)"},
-	{kind = .Wait, text = "[console] 6"},
+	{kind = .Wait, text = "[console] 3"},
 	// A fault in the module stops its process only. The next call starts a
 	// new process, with new data.
 	{kind = .Type, text = "peek(0)"},
