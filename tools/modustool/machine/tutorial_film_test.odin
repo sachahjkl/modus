@@ -293,15 +293,16 @@ tutorial_film_compose_splices_cards_and_captions_without_overlap :: proc(t: ^tes
 		testing.expect_value(t, len(ppm), len("P6\n192 108\n255\n") + 192 * 108 * 3)
 	}
 
-	// 7. Encoder command shapes: native 1920x1080 30 fps with libass + resources/fonts.
-	mp4_cmd := tutorial_mp4_encode_command("build/films/tutorial/pictures.ffconcat", "build/films/tutorial/tutorial.ass", TUTORIAL_FONTS_FOLDER, "build/films/tutorial.mp4")
+	// 7. Encoder command shapes: native 1920x1080 30 fps with libass + resources/fonts
+	//    and exact `-t` duration clamping the trailing ffconcat repeat.
+	mp4_cmd := tutorial_mp4_encode_command("build/films/tutorial/pictures.ffconcat", "build/films/tutorial/tutorial.ass", TUTORIAL_FONTS_FOLDER, 65_432, "build/films/tutorial.mp4")
 	mp4_joined := strings.join(mp4_cmd, " ", context.temp_allocator)
-	for part in ([]string{"fps=30,scale=1920:1080:flags=neighbor,ass=filename=", "fontsdir=resources/fonts", "-c:v libx264", "-movflags +faststart", "build/films/tutorial.mp4"}) {
+	for part in ([]string{"fps=30,scale=1920:1080:flags=neighbor,ass=filename=", "fontsdir=resources/fonts", "-c:v libx264", "-movflags +faststart", "-t 65.432 build/films/tutorial.mp4"}) {
 		testing.expectf(t, strings.contains(mp4_joined, part), "tutorial MP4 command contains `%s`: %s", part, mp4_joined)
 	}
-	webm_cmd := tutorial_webm_encode_command("build/films/tutorial/pictures.ffconcat", "build/films/tutorial/tutorial.ass", TUTORIAL_FONTS_FOLDER, "42", "build/films/tutorial.webm")
+	webm_cmd := tutorial_webm_encode_command("build/films/tutorial/pictures.ffconcat", "build/films/tutorial/tutorial.ass", TUTORIAL_FONTS_FOLDER, "42", 65_432, "build/films/tutorial.webm")
 	webm_joined := strings.join(webm_cmd, " ", context.temp_allocator)
-	for part in ([]string{"fps=30,scale=1920:1080:flags=neighbor,ass=filename=", "fontsdir=resources/fonts", "-c:v libsvtav1", "-crf 42", "-an", "build/films/tutorial.webm"}) {
+	for part in ([]string{"fps=30,scale=1920:1080:flags=neighbor,ass=filename=", "fontsdir=resources/fonts", "-c:v libsvtav1", "-crf 42", "-an", "-t 65.432 build/films/tutorial.webm"}) {
 		testing.expectf(t, strings.contains(webm_joined, part), "tutorial WebM command contains `%s`: %s", part, webm_joined)
 	}
 }

@@ -819,7 +819,8 @@ tutorial_ass_generate :: proc(
 }
 
 @(private = "file")
-tutorial_encode_command :: proc(list_path, ass_path, fonts_dir, output: string, encoder: []string) -> []string {
+tutorial_encode_command :: proc(list_path, ass_path, fonts_dir: string, total_ms: i64, output: string, encoder: []string) -> []string {
+	clamped_ms := max(total_ms, 0)
 	filter := fmt.tprintf(
 		"fps=%d,scale=%d:%d:flags=neighbor,ass=filename=%s:fontsdir=%s,scale=out_color_matrix=bt709:out_range=tv",
 		FILM_RATE,
@@ -834,20 +835,21 @@ tutorial_encode_command :: proc(list_path, ass_path, fonts_dir, output: string, 
 	append(&command, ..encoder)
 	append(&command, "-pix_fmt", "yuv420p")
 	append(&command, "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv")
+	append(&command, "-t", fmt.tprintf("%d.%03d", clamped_ms / 1000, clamped_ms % 1000))
 	append(&command, output)
 	return command[:]
 }
 
 // tutorial_mp4_encode_command builds the 1920x1080 30 fps H.264 command for tutorial.mp4.
-tutorial_mp4_encode_command :: proc(list_path, ass_path, fonts_dir, output: string) -> []string {
+tutorial_mp4_encode_command :: proc(list_path, ass_path, fonts_dir: string, total_ms: i64, output: string) -> []string {
 	encoder := FILM_MP4_ENCODER
-	return tutorial_encode_command(list_path, ass_path, fonts_dir, output, encoder[:])
+	return tutorial_encode_command(list_path, ass_path, fonts_dir, total_ms, output, encoder[:])
 }
 
 // tutorial_webm_encode_command builds the 1920x1080 30 fps AV1 command for tutorial.webm.
-tutorial_webm_encode_command :: proc(list_path, ass_path, fonts_dir, crf, output: string) -> []string {
+tutorial_webm_encode_command :: proc(list_path, ass_path, fonts_dir, crf: string, total_ms: i64, output: string) -> []string {
 	encoder := [7]string{"-c:v", "libsvtav1", "-preset", "6", "-crf", crf, "-an"}
-	return tutorial_encode_command(list_path, ass_path, fonts_dir, output, encoder[:])
+	return tutorial_encode_command(list_path, ass_path, fonts_dir, total_ms, output, encoder[:])
 }
 
 // tutorial_film_write composes the chaptered 1920x1080 tutorial.mp4 and
@@ -927,7 +929,7 @@ tutorial_film_write :: proc(name: string) -> bool {
 
 	// Encode 1920x1080 30 fps H.264 MP4.
 	output := foundation.join(FILM_FOLDER, "/", name, FILM_MP4_SUFFIX)
-	foundation.run(tutorial_mp4_encode_command(list_path, ass_path, TUTORIAL_FONTS_FOLDER, output)) or_return
+	foundation.run(tutorial_mp4_encode_command(list_path, ass_path, TUTORIAL_FONTS_FOLDER, timeline.total_ms, output)) or_return
 
 	// Encode 1920x1080 30 fps AV1 WebM, stepping up CRF if needed to guarantee
 	// strict compliance with checks.FILM_DOCUMENT_SIZE_LIMIT (4 MiB).
@@ -935,7 +937,7 @@ tutorial_film_write :: proc(name: string) -> bool {
 	webm_ok := false
 	webm_bytes := 0
 	for crf in TUTORIAL_WEBM_CRF_LADDER {
-		foundation.run(tutorial_webm_encode_command(list_path, ass_path, TUTORIAL_FONTS_FOLDER, crf, webm_output)) or_return
+		foundation.run(tutorial_webm_encode_command(list_path, ass_path, TUTORIAL_FONTS_FOLDER, crf, timeline.total_ms, webm_output)) or_return
 		data := foundation.read_file(webm_output) or_return
 		if problem := checks.film_document_problem(data); problem == "" {
 			webm_ok = true
