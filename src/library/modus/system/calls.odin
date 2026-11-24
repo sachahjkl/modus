@@ -460,7 +460,9 @@ call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: 
 	if added != nil && added.no_clock {
 		process_flags += {.No_Clock}
 	}
-	connection.process = process_start(image_find(image, "host"), name, grants, values, {pages = pages, processes = processes, threads = 1, processor = 500_000, log_records = log_records}, mappings[:mapping_count], process_flags = process_flags) or_return
+	// Each process slot of the call host needs at least one thread so a
+	// builder with processes > 1 can start its child call hosts.
+	connection.process = process_start(image_find(image, "host"), name, grants, values, {pages = pages, processes = processes, threads = processes, processor = 500_000, log_records = log_records}, mappings[:mapping_count], process_flags = process_flags) or_return
 	// The first completion says if the call host loaded the module.
 	switch connection_ready_wait(&connection.calls, connection.process) {
 	case .Ready:
@@ -548,7 +550,17 @@ call_host_start_from_memory :: proc "contextless" (host_file: []u8, module_memor
 	if child_no_clock {
 		process_flags += {.No_Clock}
 	}
-	connection.process = process_start(host_file, name, grants, values, {pages = pages, processes = processes, threads = 1, processor = 500_000, log_records = log_records}, mappings[:mapping_count], process_flags = process_flags) or_return
+	// Keep at least half of the parent's processor and log budgets so a
+	// nested call host cannot starve its parent builder while running.
+	child_processor := u64(500_000)
+	child_log_records := log_records
+	if own, read_status := budget_read(); read_status == .Succeeded {
+		if own.processor > 0 {
+			child_processor = min(child_processor, max(u64(1), own.processor / 2))
+		}
+		child_log_records = min(child_log_records, own.log_records / 2)
+	}
+	connection.process = process_start(host_file, name, grants, values, {pages = pages, processes = processes, threads = processes, processor = child_processor, log_records = child_log_records}, mappings[:mapping_count], process_flags = process_flags) or_return
 	switch connection_ready_wait(&connection.calls, connection.process, no_clock = child_no_clock) {
 	case .Ready:
 		return connection, .Succeeded

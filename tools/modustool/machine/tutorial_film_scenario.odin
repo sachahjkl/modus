@@ -42,7 +42,7 @@ scenario_tutorial_film := [?]Step {
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE, text = "tutorial.desktop"},
 
 	// Scene 2: Lex pipes and canonical project tree ingestion.
-	{kind = .Film_Type, text = "modules() |> where(name = \"recipes\") |> count"},
+	{kind = .Film_Type, text = "modules() |> where(name = \"recipes\") |> rows"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] 1"},
@@ -72,7 +72,7 @@ scenario_tutorial_film := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "origin remote_cache signer {cache_signer_key}"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK},
-	{kind = .Film_Type, text = "recipes.deliver_module(\"{db_browser_output}\", \"\", \"db_browser\")"},
+	{kind = .Film_Type, text = "recipes.deliver_module(\"{db_browser_output}\", \"module\", \"db_browser\")"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] {db_browser_hash}"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ, text = "tutorial.cache_pull"},

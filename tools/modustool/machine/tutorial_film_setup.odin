@@ -675,13 +675,23 @@ tutorial_film_prepare :: proc() -> (fixture: ^Tutorial_Film_Fixture, ok: bool) {
 	fixture.cache_server_state = server
 	fixture.cache_server_open = true
 
-	// 5. Seed signed blobs and realisations through the cache server handler.
+	// 5. Seed signed blobs, single-entry module output trees, and Tree
+	// realisations through the cache server handler (every recipe produced by
+	// recipe_spec_of_arguments has output_kind = .Tree with entry "module").
 	_, sqlite_seeded := cache_server.cache_server_seed_object(&fixture.cache_server_state, .Blob, sqlite_bytes, signer_seed)
-	db_out_hash, db_seeded := cache_server.cache_server_seed_object(&fixture.cache_server_state, .Blob, db_browser_bytes, signer_seed)
-	se_out_hash, se_seeded := cache_server.cache_server_seed_object(&fixture.cache_server_state, .Blob, store_explorer_bytes, signer_seed)
-	_, db_real_seeded := cache_server.cache_server_seed_realisation(&fixture.cache_server_state, db_recipe, db_out_hash, .Blob, signer_seed)
-	_, se_real_seeded := cache_server.cache_server_seed_realisation(&fixture.cache_server_state, se_recipe, se_out_hash, .Blob, signer_seed)
-	if !sqlite_seeded || !db_seeded || !se_seeded || !db_real_seeded || !se_real_seeded {
+	db_blob_hash, db_seeded := cache_server.cache_server_seed_object(&fixture.cache_server_state, .Blob, db_browser_bytes, signer_seed)
+	se_blob_hash, se_seeded := cache_server.cache_server_seed_object(&fixture.cache_server_state, .Blob, store_explorer_bytes, signer_seed)
+	db_tree_bytes, db_tree_encoded := tutorial_module_output_tree(db_blob_hash, context.temp_allocator)
+	se_tree_bytes, se_tree_encoded := tutorial_module_output_tree(se_blob_hash, context.temp_allocator)
+	if !db_tree_encoded || !se_tree_encoded {
+		fmt.eprintln("modustool: tutorial: cannot encode canonical module output trees")
+		return nil, false
+	}
+	db_out_hash, db_tree_seeded := cache_server.cache_server_seed_object(&fixture.cache_server_state, .Tree, db_tree_bytes, signer_seed)
+	se_out_hash, se_tree_seeded := cache_server.cache_server_seed_object(&fixture.cache_server_state, .Tree, se_tree_bytes, signer_seed)
+	_, db_real_seeded := cache_server.cache_server_seed_realisation(&fixture.cache_server_state, db_recipe, db_out_hash, .Tree, signer_seed)
+	_, se_real_seeded := cache_server.cache_server_seed_realisation(&fixture.cache_server_state, se_recipe, se_out_hash, .Tree, signer_seed)
+	if !sqlite_seeded || !db_seeded || !se_seeded || !db_tree_seeded || !se_tree_seeded || !db_real_seeded || !se_real_seeded {
 		fmt.eprintln("modustool: tutorial: failed to seed signed objects or realisations into local cache")
 		return nil, false
 	}
@@ -694,17 +704,33 @@ tutorial_film_prepare :: proc() -> (fixture: ^Tutorial_Film_Fixture, ok: bool) {
 	fixture.cache_quic = running
 	fixture.cache_endpoint = running.bound_endpoint
 
-	db_hash_hex := tutorial_hex_of(db_out_hash)
 	fixture.bindings = {
 		cache_server_key  = tutorial_hex_of(running.public_key),
 		cache_signer_key  = tutorial_hex_of(signer_pub),
 		collatz_here      = tutorial_hex_of(collatz_here),
 		db_browser_here   = tutorial_hex_of(db_here),
 		db_browser_recipe = tutorial_hex_of(db_recipe),
-		db_browser_output = strings.clone(db_hash_hex),
-		db_browser_hash   = db_hash_hex,
+		db_browser_output = tutorial_hex_of(db_out_hash),
+		db_browser_hash   = tutorial_hex_of(db_blob_hash),
 	}
 	return fixture, true
+}
+
+// tutorial_module_output_tree encodes a canonical MODTREE2 tree containing one
+// Object entry named "module" pointing to module_hash.
+tutorial_module_output_tree :: proc(module_hash: blake3.Hash, allocator := context.allocator) -> (encoded: []u8, ok: bool) {
+	entry, entry_ref := tree_hash.tree_entry_make(.Object, "module", module_hash)
+	if entry_ref != .None {
+		return nil, false
+	}
+	entries := [1]tree_hash.Tree_Entry{entry}
+	buf := make([]u8, tree_hash.tree_encoded_size(entries[:]), allocator)
+	written, enc_ref := tree_hash.tree_encode(entries[:], buf)
+	if enc_ref != .None {
+		delete(buf, allocator)
+		return nil, false
+	}
+	return buf[:written], true
 }
 
 tutorial_film_teardown :: proc(fixture: ^Tutorial_Film_Fixture) {

@@ -2354,7 +2354,15 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> call_outcome.Call_Out
 	}
 	status: call_outcome.Call_Outcome
 	load_error = {}
-	sandbox.process, status = system.process_start(system.image_find(image, "host"), sandbox.name, grants, random.values_with_seed(&process_generator, values), {pages = 512, processes = 1, threads = 1, processor = 500_000, log_records = SANDBOX_LOG_RECORDS}, mappings[:sandbox.file_count + 1], &prepared)
+	// Computed: isolated call hosts get 512 pages (2 MiB) by default for the
+	// host, module, stack, and call region. declaration_eval carves its
+	// scale-0 declaration workspace (8.5 MiB, ~2075 pages) plus bundle and
+	// output staging from the call-host arena, so it gets 3072 pages (12 MiB).
+	sandbox_pages := u64(512)
+	if sandbox.name == "declaration_eval" {
+		sandbox_pages = 3072
+	}
+	sandbox.process, status = system.process_start(system.image_find(image, "host"), sandbox.name, grants, random.values_with_seed(&process_generator, values), {pages = sandbox_pages, processes = 1, threads = 1, processor = 500_000, log_records = SANDBOX_LOG_RECORDS}, mappings[:sandbox.file_count + 1], &prepared)
 	if status != .Succeeded {
 		return status
 	}

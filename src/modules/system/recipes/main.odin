@@ -34,7 +34,7 @@ SMALL_GUEST_MEMORY_PAGES :: 16_384
 // plans its memory from what the grant holds at the call (c_build_plan,
 // recipes_core.guest_build_plan), so a larger grant runs SQLite or a larger
 // guest and a smaller one refuses it with the pages that it needs.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 17_456, processes = 4, threads = 2}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 17_456, processes = 4, threads = 4}
 #assert(17_456 == C_BUILD_SERVICE_PAGES_KEPT + SMALL_GUEST_MEMORY_PAGES + (GUEST_THREAD_STACK_PAGES - op.THREAD_STACK_PAGES))
 #assert(SMALL_GUEST_MEMORY_PAGES >= TYPICAL_C_BUILD_PAGES)
 #assert(TYPICAL_C_BUILD_PAGES * system.PAGE_SIZE >= 700 * 1024 * C_BUILD_BYTES_FOR_EACH_SOURCE_BYTE + system.CALL_HOST_PAGES * system.PAGE_SIZE)

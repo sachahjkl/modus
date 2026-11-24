@@ -32,7 +32,7 @@ sample_tutorial_bindings :: proc() -> Tutorial_Film_Bindings {
 		db_browser_here   = strings.repeat("4", 64, context.temp_allocator),
 		db_browser_recipe = strings.repeat("5", 64, context.temp_allocator),
 		db_browser_output = strings.repeat("6", 64, context.temp_allocator),
-		db_browser_hash   = strings.repeat("6", 64, context.temp_allocator),
+		db_browser_hash   = strings.repeat("7", 64, context.temp_allocator),
 	}
 }
 
@@ -326,14 +326,20 @@ tutorial_cache_seed_serves_signed_realisation_over_quic :: proc(t: ^testing.T) {
 	_, ok = cache_server.cache_server_seed_object(&server, .Blob, transmute([]u8)string("x"), untrusted_seed)
 	testing.expect(t, !ok, "untrusted signer seed is refused")
 
-	// Seed a blob and a signed realisation, then fetch both over live QUIC.
+	// Seed a blob, its canonical single-entry "module" tree, and a signed Tree
+	// realisation, then fetch the tree closure over live QUIC.
 	blob := transmute([]u8)string("tutorial-db-browser-module-bytes-v1")
-	out_hash, obj_ok := cache_server.cache_server_seed_object(&server, .Blob, blob, signer_seed)
+	blob_hash, obj_ok := cache_server.cache_server_seed_object(&server, .Blob, blob, signer_seed)
 	testing.expect(t, obj_ok)
-	testing.expect_value(t, out_hash, blake3.hash(blob))
+	testing.expect_value(t, blob_hash, blake3.hash(blob))
+
+	tree_bytes, tree_ok := tutorial_module_output_tree(blob_hash, context.temp_allocator)
+	testing.expect(t, tree_ok)
+	out_hash, tree_seed_ok := cache_server.cache_server_seed_object(&server, .Tree, tree_bytes, signer_seed)
+	testing.expect(t, tree_seed_ok)
 
 	recipe_hash := blake3.hash(transmute([]u8)string("tutorial-db-browser-recipe"))
-	_, real_ok := cache_server.cache_server_seed_realisation(&server, recipe_hash, out_hash, .Blob, signer_seed)
+	_, real_ok := cache_server.cache_server_seed_realisation(&server, recipe_hash, out_hash, .Tree, signer_seed)
 	testing.expect(t, real_ok)
 
 	running, q_err := cache_server.cache_quic_start(&server, net.Endpoint{address = net.IP4_Loopback, port = 0}, quic_seed)
@@ -372,7 +378,7 @@ tutorial_cache_seed_serves_signed_realisation_over_quic :: proc(t: ^testing.T) {
 	testing.expect_value(t, rec_err, recipes_core.Cache_Client_Error.None)
 	testing.expect_value(t, real_resp.status, object_cache.Cache_Response_Status.Ok)
 	testing.expect_value(t, real_resp.realisation.output_hash, out_hash)
-	testing.expect_value(t, real_resp.realisation.output_kind, object_cache.Cache_Object_Kind.Blob)
+	testing.expect_value(t, real_resp.realisation.output_kind, object_cache.Cache_Object_Kind.Tree)
 
 	mem_store := new(pr.Memory_Private_Store)
 	defer free(mem_store)
@@ -380,9 +386,13 @@ tutorial_cache_seed_serves_signed_realisation_over_quic :: proc(t: ^testing.T) {
 	defer free(recipes_state)
 	recipes_core.state_init(recipes_state, pr.memory_private_store_port(mem_store))
 
-	fetched_size, fetch_ref := recipes_core.cache_quic_fetch_object_to_store(client, recipes_state, out_hash, .Blob)
+	fetched_size, fetch_ref := recipes_core.cache_quic_fetch_closure_to_store(client, recipes_state, out_hash, .Tree)
 	testing.expect_value(t, fetch_ref, pr.Recipe_Refusal.None)
-	testing.expect_value(t, fetched_size, u64(len(blob)))
+	testing.expect_value(t, fetched_size, u64(len(tree_bytes)))
+	blob_name := pr.blob_object_name(blob_hash)
+	blob_size, blob_sz_st := pr.private_store_size(&recipes_state.store, pr.private_object_name_text(&blob_name))
+	testing.expect_value(t, blob_sz_st, pr.Private_Store_Status.Ok)
+	testing.expect_value(t, blob_size, u64(len(blob)))
 }
 
 // When SQLITE_SOURCE is provided by the development shell, tutorial_build_sqlite_module
