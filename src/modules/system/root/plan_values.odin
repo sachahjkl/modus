@@ -224,7 +224,7 @@ plan_values_image_load :: proc "contextless" () {
 		return
 	}
 	if entry.size > plan_values.SET_SIZE {
-		system.log_fact(.Warning, Plan_Values_Refused{set_problem = text_field(plan_values.SET_PROBLEM_NAMES[.Too_Short], 24)})
+		system.log_fact(.Warning, Plan_Values_Refused{set_problem = text_field(plan_values.SET_PROBLEM_NAMES[.Too_Large], 24)})
 		return
 	}
 	bytes := image[entry.offset:][:entry.size]

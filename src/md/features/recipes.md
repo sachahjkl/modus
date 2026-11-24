@@ -74,7 +74,7 @@ No network, no root ring, no boot image, no window, no other grant: none has a s
 
 - **change its inputs**: the input store reads only, and the storage service refuses each change with `No_Grant`;
 - **write outside its store "out"**: the share of `build/out` has no name above its root;
-- **read the clock or cycle counter**: `op.TIME_ADDRESS` is unmapped (page fault), `rdtsc`/`rdtscp` trap with `#GP` through `CR4.TSD`, kernel entry returns 0 in `rax`, wall-clock deadlines do not run, and `No_Clock` inherits to every child process;
+- **read the clock or cycle counter**: `op.TIME_ADDRESS` is unmapped (page fault), `rdtsc`/`rdtscp` trap with `#GP` through `CR4.TSD`, kernel entry returns 0 in `rax`, `Budget_Read` returns 0 for elapsed processor time, wall-clock deadlines do not run, and `No_Clock` inherits to every child process;
 - **reach the network or the root service**: it holds no handle of either;
 - **run past the bound**: the service ends the call host, refuses the build with `Builder_Timed_Out`, and keeps nothing;
 - **fail, or stop**: a negative result, a refusal of the call, or a process that stops is `Builder_Failed`, and nothing is kept;

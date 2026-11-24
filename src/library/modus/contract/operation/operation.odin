@@ -3246,8 +3246,9 @@ map_write_combining_refused :: proc "contextless" (flags: Map_Flags, device_regi
 // cycle counter readable).
 Process_Flag :: enum u64 {
 	// Omits the time page mapping, sets CR4.TSD so rdtsc and rdtscp fault with
-	// #GP, zeroes the kernel entry return value in rax, disables wall-clock
-	// deadlines, and inherits to every child process (src/md/features/recipes.md).
+	// #GP, zeroes the kernel entry return value in rax and Budget_Read elapsed
+	// processor time, disables wall-clock deadlines, and inherits to every
+	// child process (src/md/features/recipes.md).
 	No_Clock = 0,
 }
 Process_Flags :: bit_set[Process_Flag;u64]

@@ -978,7 +978,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		results[2] = amounts.threads
 		results[3] = amounts.processor
 		results[4] = amounts.log_records
-		results[5] = microseconds(budgets[slot.object].spent_total)
+		// A Process_Flag.No_Clock process cannot read elapsed CPU time.
+		results[5] = process.no_clock ? 0 : microseconds(budgets[slot.object].spent_total)
 		results[6] = budgets[slot.object].refused
 		return .Succeeded
 
