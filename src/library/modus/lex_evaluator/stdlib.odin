@@ -272,15 +272,7 @@ vm_destructure :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, src_v
 				bound_tref = def_tref
 			} else {
 				fname := lex_parser.sym_text(&eval.interner, pf.sym)
-				rec := Refusal_Record{
-					refusal   = .Field_Unknown,
-					chunk_id  = frame.chunk_id,
-					node      = pf.node_idx,
-					field     = fname,
-					left_kind = src_val.kind,
-				}
-				suggest_shape_fields(eval, shape_id, fname, &rec)
-				refuse(eval, rec)
+				refuse_field_unknown_with_suggestions(eval, shape_id, frame.chunk_id, pf.node_idx, fname, src_val.kind)
 				return false
 			}
 			if pf.kind_annot != .None {

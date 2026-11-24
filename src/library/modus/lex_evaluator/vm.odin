@@ -76,6 +76,7 @@ Frame_Kind :: enum u8 {
 	Flat_Map          = 8,
 	Sort_By           = 9,
 	Rec_Comp          = 10,
+	Call_Site         = 11,
 }
 
 // One frame on the arena-backed VM frame stack.
@@ -284,6 +285,7 @@ Evaluation :: struct {
 	depth_limit:           int,
 	stack_bytes:           uint,
 	stack_deepest:         uint,
+	stack_base:            uintptr,
 	refusal:               Refusal_Record,
 	profile:               ^Evaluation_Profile,
 	trace_log:             ^Trace_Log,
@@ -473,10 +475,66 @@ refused :: #force_inline proc "contextless" (eval: ^Evaluation) -> bool {
 	return eval.refusal.refusal != .None
 }
 
+// Compact refusal input without the diagnostic frame trace or suggestion arrays
+// so cold refusal call sites do not inflate VM stack frames under -o:none.
 @(private)
-refuse :: proc "contextless" (eval: ^Evaluation, record: Refusal_Record) -> (Value, bool) {
+Refusal_Input :: struct {
+	refusal:        Refusal,
+	place:          lex_parser.Place,
+	span_start:     u32,
+	span_end:       u32,
+	node:           lex_parser.Node_Index,
+	chunk_id:       u16,
+	operator:       lex_parser.Operator,
+	left_kind:      Kind,
+	right_kind:     Kind,
+	left_unit:      value_kinds.Integer_Unit,
+	right_unit:     value_kinds.Integer_Unit,
+	expected_annot: lex_parser.Param_Kind_Annot,
+	left:           i64,
+	right:          i64,
+	text_refusal:   lex_parser.Refusal,
+	command:        string,
+	steps:          u32,
+	parameter:      int,
+	field:          string,
+	field_item:     module.Field,
+	file:           []u8,
+	detail:         u32,
+	other_file:     []u8,
+	other_detail:   u32,
+}
+
+@(private)
+refuse :: #force_no_inline proc "contextless" (eval: ^Evaluation, record: Refusal_Input) -> (Value, bool) {
 	if !refused(eval) {
-		r := record
+		r := &eval.refusal
+		r^ = {
+			refusal        = record.refusal,
+			place          = record.place,
+			span_start     = record.span_start,
+			span_end       = record.span_end,
+			node           = record.node,
+			chunk_id       = record.chunk_id,
+			operator       = record.operator,
+			left_kind      = record.left_kind,
+			right_kind     = record.right_kind,
+			left_unit      = record.left_unit,
+			right_unit     = record.right_unit,
+			expected_annot = record.expected_annot,
+			left           = record.left,
+			right          = record.right,
+			text_refusal   = record.text_refusal,
+			command        = record.command,
+			steps          = record.steps,
+			parameter      = record.parameter,
+			field          = record.field,
+			field_item     = record.field_item,
+			file           = record.file,
+			detail         = record.detail,
+			other_file     = record.other_file,
+			other_detail   = record.other_detail,
+		}
 		if r.node != lex_parser.NO_NODE {
 			tree: ^lex_parser.Syntax_Tree
 			if int(r.chunk_id) < eval.chunk_count && eval.chunks[r.chunk_id].tree != nil {
@@ -513,16 +571,29 @@ refuse :: proc "contextless" (eval: ^Evaluation, record: Refusal_Record) -> (Val
 			fc += 1
 		}
 		r.frame_count = fc
-		eval.refusal = r
 	}
 	return {}, false
 }
 
 @(private)
+refuse_field_unknown_with_suggestions :: #force_no_inline proc "contextless" (eval: ^Evaluation, shape_id: u32, chunk_id: u16, node: lex_parser.Node_Index, field: string, left_kind: Kind) -> (Value, bool) {
+	if !refused(eval) {
+		refuse(eval, {refusal = .Field_Unknown, chunk_id = chunk_id, node = node, field = field, left_kind = left_kind})
+		suggest_shape_fields(eval, shape_id, field, &eval.refusal)
+	}
+	return {}, false
+}
+
+@(private)
+refuse_budget :: #force_no_inline proc "contextless" (eval: ^Evaluation, chunk_id: u16, node_idx: lex_parser.Node_Index) -> bool {
+	refuse(eval, {refusal = .Budget_Exceeded, chunk_id = chunk_id, node = node_idx, steps = eval.budget})
+	return false
+}
+
+@(private)
 charge_steps :: #force_inline proc "contextless" (eval: ^Evaluation, count: u32, chunk_id: u16, node_idx: lex_parser.Node_Index) -> bool {
 	if u64(eval.steps) + u64(count) > u64(eval.budget) {
-		refuse(eval, {refusal = .Budget_Exceeded, chunk_id = chunk_id, node = node_idx, steps = eval.budget})
-		return false
+		return refuse_budget(eval, chunk_id, node_idx)
 	}
 	eval.steps += count
 	if eval.profile != nil {
@@ -587,6 +658,12 @@ list_items_add_host :: proc "contextless" (eval: ^Evaluation, values: []Host_Val
 value_to_host :: proc "contextless" (eval: ^Evaluation, v: Value) -> Host_Value {
 	switch v.kind {
 	case .None:
+		if v.flags == 1 {
+			idx := int(v.data)
+			if idx >= 0 && idx < eval.host_obj_count {
+				return {kind = .None, condition = eval.host_objs[idx].condition, vm_value = v}
+			}
+		}
 		return {}
 	case .Integer:
 		return {kind = .Integer, integer = value_integer(v), integer_unit = value_unit(v), vm_value = v}
@@ -1305,6 +1382,19 @@ vm_exec_proto :: proc "contextless" (
 	return_thunk: Thunk_Ref,
 	call_node: lex_parser.Node_Index,
 ) -> (Value, bool) {
+	stack_marker: u8
+	sp := uintptr(&stack_marker)
+	if eval.stack_base == 0 {
+		eval.stack_base = sp
+	} else {
+		real_stack := eval.stack_base > sp ? uint(eval.stack_base - sp) : uint(sp - eval.stack_base)
+		if real_stack > eval.stack_bytes {
+			return refuse(eval, {refusal = .Stack_Exceeded, chunk_id = chunk_id, node = call_node, left = i64(real_stack), right = i64(eval.stack_bytes)})
+		}
+		if real_stack > eval.stack_deepest {
+			eval.stack_deepest = real_stack
+		}
+	}
 	target_depth := eval.frame_count
 	if !push_bytecode_frame(eval, chunk_id, proto_id, env_off, env_len, args, 0, return_thunk, call_node) {
 		return {}, false
@@ -1992,13 +2082,13 @@ vm_run :: proc "contextless" (eval: ^Evaluation, target_depth: int) -> bool {
 				return false
 			}
 			fname := lex_parser.sym_text(&eval.interner, sym)
-			rec := Refusal_Record{refusal = .Field_Unknown, chunk_id = frame.chunk_id, node = node_idx, field = fname, left_kind = base.kind}
 			if is_lazy_record(base.kind) {
 				if sid, sok := lazy_record_base_shape(eval, base); sok {
-					suggest_shape_fields(eval, sid, fname, &rec)
+					refuse_field_unknown_with_suggestions(eval, sid, frame.chunk_id, node_idx, fname, base.kind)
+					return false
 				}
 			}
-			refuse(eval, rec)
+			refuse(eval, {refusal = .Field_Unknown, chunk_id = frame.chunk_id, node = node_idx, field = fname, left_kind = base.kind})
 			return false
 
 		case .Try_Get_Field:
@@ -2709,6 +2799,9 @@ vm_step_continuation :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame,
 				return push_bytecode_frame(eval, kcl.chunk_id, kcl.proto_id, kcl.upval_off, kcl.upval_len, one_arg[:], 0, NO_THUNK, frame.cont_node)
 			}
 		}
+
+	case .Call_Site:
+		return vm_step_call_site(eval, frame, target_depth)
 	}
 	return true
 }
@@ -2942,9 +3035,7 @@ vm_with :: proc "contextless" (eval: ^Evaluation, left, right: Value, chunk_id: 
 		for sym in rfields {
 			if _, exists := shape_lookup_sym(eval, left_shape_id, sym); !exists {
 				fname := lex_parser.sym_text(&eval.interner, sym)
-				rec := Refusal_Record{refusal = .Field_Unknown, chunk_id = chunk_id, node = node_idx, field = fname, left_kind = left.kind}
-				suggest_shape_fields(eval, left_shape_id, fname, &rec)
-				return refuse(eval, rec)
+				return refuse_field_unknown_with_suggestions(eval, left_shape_id, chunk_id, node_idx, fname, left.kind)
 			}
 		}
 		patch_rec := lazy_record_compact(eval, right, chunk_id, node_idx) or_return
@@ -3289,9 +3380,7 @@ vm_with_nested_group :: proc "contextless" (
 				sym = s
 			}
 			if _, exists := shape_lookup_sym(eval, base_shape_id, sym); !exists {
-				rec := Refusal_Record{refusal = .Field_Unknown, chunk_id = chunk_id, node = patch_nodes[i], field = rem, left_kind = base.kind}
-				suggest_shape_fields(eval, base_shape_id, rem, &rec)
-				return refuse(eval, rec)
+				return refuse_field_unknown_with_suggestions(eval, base_shape_id, chunk_id, patch_nodes[i], rem, base.kind)
 			}
 			eval.shape_fields[foff + li] = sym
 			eval.record_thunk_refs[roff + li] = patch_thunks[i]
@@ -3314,9 +3403,7 @@ vm_with_nested_group :: proc "contextless" (
 			}
 			sub_tref, found := lazy_record_lookup_thunk(eval, base, seg_sym)
 			if !found {
-				rec := Refusal_Record{refusal = .Field_Unknown, chunk_id = chunk_id, node = patch_nodes[i], field = seg, left_kind = base.kind}
-				suggest_shape_fields(eval, base_shape_id, seg, &rec)
-				return refuse(eval, rec)
+				return refuse_field_unknown_with_suggestions(eval, base_shape_id, chunk_id, patch_nodes[i], seg, base.kind)
 			}
 			sub_val, fok := vm_force_thunk(eval, sub_tref, chunk_id, patch_nodes[i])
 			if !fok {
@@ -3547,26 +3634,25 @@ node_text_in_chunk :: proc "contextless" (eval: ^Evaluation, chunk_id: u16, node
 }
 
 @(private)
-vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, site_rel: u32, dst_reg: u8) -> bool {
-	chunk := &eval.chunks[frame.chunk_id]
-	site := eval.call_sites[int(chunk.site_start) + int(site_rel)]
-	name := lex_parser.sym_text(&eval.interner, site.name_sym)
+Call_Site_Callee_Kind :: enum u8 {
+	Host     = 0,
+	Function = 1,
+	Builtin  = 2,
+}
 
-	Callee_Kind :: enum u8 {
-		Host     = 0,
-		Function = 1,
-		Builtin  = 2,
-	}
-	callee := Callee_Kind.Host
-	builtin_id := Builtin_Id.None
-	fn_val: Value
-	sig: Command_Signature
-
+@(private)
+call_site_resolve_callee :: #force_no_inline proc "contextless" (
+	eval: ^Evaluation,
+	chunk_id: u16,
+	site: Call_Site_Desc,
+	name: string,
+	fn_val: Value,
+) -> (callee: Call_Site_Callee_Kind, builtin_id: Builtin_Id, sig: Command_Signature, ok: bool) {
+	callee = .Host
 	if site.callee_kind == .Reg {
-		fn_val = eval.reg_stack[int(frame.reg_base) + int(site.callee_reg)]
 		if fn_val.kind != .Function {
-			refuse(eval, {refusal = .Not_A_Function, chunk_id = frame.chunk_id, node = site.node_idx, command = name, left_kind = fn_val.kind})
-			return false
+			refuse(eval, {refusal = .Not_A_Function, chunk_id = chunk_id, node = site.node_idx, command = name, left_kind = fn_val.kind})
+			return {}, {}, {}, false
 		}
 		callee = .Function
 		cl := eval.closures[int(fn_val.data)]
@@ -3675,22 +3761,105 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 		sig.names[0], sig.names[1], sig.names[2] = "text", "old", "new"
 	} else {
 		if eval.host.command_find == nil {
-			refuse(eval, {refusal = .Host_Refused, chunk_id = frame.chunk_id, node = site.node_idx})
-			return false
+			refuse(eval, {refusal = .Host_Refused, chunk_id = chunk_id, node = site.node_idx})
+			return {}, {}, {}, false
 		}
 		found: bool
 		sig, found = eval.host.command_find(eval.host.data, name)
 		if refused(eval) {
-			return false
+			return {}, {}, {}, false
 		}
 		if !found {
-			refuse(eval, {refusal = .Host_Refused, chunk_id = frame.chunk_id, node = site.node_idx})
-			return false
+			refuse(eval, {refusal = .Host_Refused, chunk_id = chunk_id, node = site.node_idx})
+			return {}, {}, {}, false
 		}
 		if eval.mode == .Declaration && sig.has_effect {
-			refuse(eval, {refusal = .Effect_Refused, chunk_id = frame.chunk_id, node = site.node_idx, command = name})
-			return false
+			refuse(eval, {refusal = .Effect_Refused, chunk_id = chunk_id, node = site.node_idx, command = name})
+			return {}, {}, {}, false
 		}
+	}
+	return callee, builtin_id, sig, true
+}
+
+@(private)
+call_site_border_check :: #force_no_inline proc "contextless" (
+	eval: ^Evaluation,
+	chunk_id: u16,
+	site: Call_Site_Desc,
+	name: string,
+	fn_val: Value,
+	param_count: int,
+	sarg: Call_Site_Arg,
+	slot: int,
+	val_vm: Value,
+) -> (out_vm: Value, ok: bool) {
+	if val_vm.kind == .Function || val_vm.kind == .List {
+		refuse(eval, {refusal = .Value_At_Border, chunk_id = chunk_id, node = sarg.node_idx, command = name, parameter = slot + 1, left_kind = val_vm.kind})
+		return {}, false
+	}
+	if val_vm.kind == .Record_Literal {
+		_, _, sig, sok := call_site_resolve_callee(eval, chunk_id, site, name, fn_val)
+		if !sok {
+			return {}, false
+		}
+		if slot >= param_count || sig.kinds[slot] != .Record || sig.files[slot] == nil {
+			rk := slot < param_count ? sig.kinds[slot] : Kind.None
+			refuse(eval, {refusal = .Literal_No_Type, chunk_id = chunk_id, node = sarg.val_node, command = name, parameter = slot + 1, right_kind = rk})
+			return {}, false
+		}
+		typed_hv, tok := literal_type_to_record(eval, val_vm, sig.files[slot], sig.details[slot], nil)
+		if !tok {
+			return {}, false
+		}
+		converted, cok := host_to_value(eval, typed_hv)
+		if !cok {
+			refuse(eval, {refusal = .Calls_Full, chunk_id = chunk_id, node = sarg.val_node})
+			return {}, false
+		}
+		return converted, true
+	}
+	if val_vm.kind == .Member {
+		_, _, sig, sok := call_site_resolve_callee(eval, chunk_id, site, name, fn_val)
+		if !sok {
+			return {}, false
+		}
+		if slot >= param_count || sig.kinds[slot] != .Enum || sig.files[slot] == nil {
+			rk := slot < param_count ? sig.kinds[slot] : Kind.None
+			refuse(eval, {refusal = .Member_No_Type, chunk_id = chunk_id, node = sarg.val_node, command = name, parameter = slot + 1, right_kind = rk})
+			return {}, false
+		}
+		mname := member_name_of(eval, val_vm)
+		mval, mok := enum_member_value(sig.files[slot], sig.details[slot], mname)
+		if !mok {
+			refuse(eval, {refusal = .Member_Unknown, chunk_id = chunk_id, node = sarg.val_node, command = name, parameter = slot + 1, field = mname, file = sig.files[slot], detail = sig.details[slot]})
+			return {}, false
+		}
+		typed_hv := Host_Value{kind = .Enum, integer = mval, file = sig.files[slot], detail = sig.details[slot]}
+		converted, cok := host_to_value(eval, typed_hv)
+		if !cok {
+			refuse(eval, {refusal = .Calls_Full, chunk_id = chunk_id, node = sarg.val_node})
+			return {}, false
+		}
+		return converted, true
+	}
+	return val_vm, true
+}
+
+// vm_exec_call_site validates a call site and pushes a flat .Call_Site
+// continuation frame so argument evaluation uses zero C-stack recursion.
+@(private)
+vm_exec_call_site :: #force_no_inline proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, site_rel: u32, dst_reg: u8) -> bool {
+	chunk := &eval.chunks[frame.chunk_id]
+	site := eval.call_sites[int(chunk.site_start) + int(site_rel)]
+	name := lex_parser.sym_text(&eval.interner, site.name_sym)
+
+	fn_val: Value
+	if site.callee_kind == .Reg {
+		fn_val = eval.reg_stack[int(frame.reg_base) + int(site.callee_reg)]
+	}
+	callee, builtin_id, sig, rok := call_site_resolve_callee(eval, frame.chunk_id, site, name, fn_val)
+	if !rok {
+		return false
 	}
 
 	param_count := clamp(sig.parameter_count, 0, lex_parser.ARGUMENT_CAPACITY)
@@ -3699,6 +3868,7 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 	// Step 1: Map each argument to its parameter slot (before evaluating any arg).
 	arg_slots: [lex_parser.ARGUMENT_CAPACITY + 2]int
 	given: [lex_parser.ARGUMENT_CAPACITY]bool
+	given_mask: u16 = 0
 	given_count := 0
 	for sarg, i in args {
 		arg_slots[i] = -1
@@ -3728,6 +3898,7 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 		}
 		if slot >= 0 && slot < param_count {
 			given[slot] = true
+			given_mask |= u16(1) << uint(slot)
 		}
 		arg_slots[i] = slot
 		given_count += 1
@@ -3797,32 +3968,141 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 		}
 	}
 
-	// Step 4: Evaluate each argument in exact source order!
-	host_args: [lex_parser.ARGUMENT_CAPACITY]Host_Value
-	vm_args: [lex_parser.ARGUMENT_CAPACITY]Value
-	arg_total := 0
-	for sarg, i in args {
+	// Step 4: Push a flat .Call_Site continuation frame on eval.frames.
+	if eval.frame_count >= eval.depth_limit {
+		refuse(eval, {refusal = .Depth_Exceeded, chunk_id = frame.chunk_id, node = site.node_idx, left = i64(eval.frame_count), right = i64(eval.depth_limit)})
+		return false
+	}
+	if eval.frame_count >= len(eval.frames) {
+		refuse(eval, {refusal = .Calls_Full, chunk_id = frame.chunk_id, node = site.node_idx})
+		return false
+	}
+	used_bytes := uint(eval.frame_count + 1) * uint(size_of(VM_Frame) + 64)
+	if used_bytes > eval.stack_bytes {
+		refuse(eval, {refusal = .Stack_Exceeded, chunk_id = frame.chunk_id, node = site.node_idx, left = i64(used_bytes), right = i64(eval.stack_bytes)})
+		return false
+	}
+	if used_bytes > eval.stack_deepest {
+		eval.stack_deepest = used_bytes
+	}
+	cs_reg_base := eval.reg_top
+	need_regs := u32(lex_parser.ARGUMENT_CAPACITY + 1)
+	if int(cs_reg_base) + int(need_regs) > len(eval.reg_stack) {
+		refuse(eval, {refusal = .Calls_Full, chunk_id = frame.chunk_id, node = site.node_idx})
+		return false
+	}
+	for k in 0 ..< int(need_regs) {
+		eval.reg_stack[int(cs_reg_base) + k] = {}
+	}
+	cs_flags := u8(callee)
+	if missing_required {
+		cs_flags |= 0x80
+	}
+	if sig.untyped {
+		cs_flags |= 0x40
+	}
+	if sig.optional_last {
+		cs_flags |= 0x20
+	}
+	cs_frame := VM_Frame{
+		kind          = .Call_Site,
+		dst_reg       = dst_reg,
+		chunk_id      = frame.chunk_id,
+		proto_id      = site_rel,
+		ip            = u32(eval.frame_count - 1),
+		reg_base      = cs_reg_base,
+		let_base      = eval.let_slot_top,
+		env_off       = u32(builtin_id),
+		env_len       = given_mask,
+		cont_phase    = 0,
+		cont_flags    = cs_flags,
+		return_thunk  = NO_THUNK,
+		cont_list_off = u32(param_count),
+		cont_count    = u32(site.arg_count),
+		cont_index    = 0,
+		cont_out_off  = 0,
+		cont_fn       = fn_val,
+		cont_node     = site.node_idx,
+	}
+	for i in 0 ..< min(len(args), lex_parser.ARGUMENT_CAPACITY) {
+		cs_frame.boxed_params[i] = Thunk_Ref(u32(i32(arg_slots[i])))
+	}
+	eval.frames[eval.frame_count] = cs_frame
+	eval.frame_count += 1
+	eval.reg_top = cs_reg_base + need_regs
+	return true
+}
+
+@(private)
+vm_step_call_site :: #force_no_inline proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, target_depth: int) -> bool {
+	_ = target_depth
+	chunk := &eval.chunks[frame.chunk_id]
+	site := eval.call_sites[int(chunk.site_start) + int(frame.proto_id)]
+	name := lex_parser.sym_text(&eval.interner, site.name_sym)
+	args := eval.site_args[int(site.args_start):int(site.args_start) + int(site.arg_count)]
+	callee := Call_Site_Callee_Kind(frame.cont_flags & 0x03)
+	missing_required := (frame.cont_flags & 0x80) != 0
+	untyped := (frame.cont_flags & 0x40) != 0
+	optional_last := (frame.cont_flags & 0x20) != 0
+	param_count := int(frame.cont_list_off)
+
+	// Returning from an evaluated .Expr argument sub-proto.
+	if frame.cont_phase == 1 {
+		i := int(frame.cont_index)
+		sarg := args[i]
+		slot := int(i32(u32(frame.boxed_params[i])))
+		val_vm := eval.reg_stack[int(frame.reg_base) + lex_parser.ARGUMENT_CAPACITY]
+		if !untyped {
+			checked_vm, cok := call_site_border_check(eval, frame.chunk_id, site, name, frame.cont_fn, param_count, sarg, slot, val_vm)
+			if !cok {
+				return false
+			}
+			val_vm = checked_vm
+		}
+		eval.reg_stack[int(frame.reg_base) + slot] = val_vm
+		if u32(slot + 1) > frame.cont_out_off {
+			frame.cont_out_off = u32(slot + 1)
+		}
+		frame.cont_index += 1
+		frame.cont_phase = 0
+	}
+
+	// Evaluate remaining arguments in exact source order.
+	for frame.cont_index < frame.cont_count {
+		i := int(frame.cont_index)
+		sarg := args[i]
 		if sarg.kind == .Refused {
 			tref := chunk.tree != nil ? lex_parser.node_refusal(chunk.tree, sarg.node_idx) : .Unexpected
 			refuse(eval, {refusal = .Text, text_refusal = tref, chunk_id = frame.chunk_id, node = sarg.node_idx})
 			return false
 		}
-		slot := arg_slots[i]
+		slot := i < lex_parser.ARGUMENT_CAPACITY ? int(i32(u32(frame.boxed_params[i]))) : -1
 		if slot < 0 || slot >= lex_parser.ARGUMENT_CAPACITY {
 			refuse(eval, {refusal = .Text, text_refusal = .Too_Many_Arguments, chunk_id = frame.chunk_id, node = sarg.node_idx})
 			return false
 		}
-
 		val_vm: Value
-		val_hv: Host_Value
 		switch sarg.kind {
 		case .Refused:
+		case .Expr:
+			parent_frame := &eval.frames[frame.ip]
+			eoff, elen, eok := capture_upvals(eval, parent_frame, frame.chunk_id, sarg.proto_id, sarg.val_node)
+			if !eok {
+				return false
+			}
+			frame.cont_phase = 1
+			return push_bytecode_frame(eval, frame.chunk_id, sarg.proto_id, eoff, elen, nil, u8(lex_parser.ARGUMENT_CAPACITY), NO_THUNK, sarg.val_node)
 		case .Condition:
 			if eval.host.condition_value == nil {
 				refuse(eval, {refusal = .Host_Refused, chunk_id = frame.chunk_id, node = sarg.node_idx})
 				return false
 			}
-			chv, cok := eval.host.condition_value(eval.host.data, eval, name, host_args[:arg_total], sarg.node_idx)
+			prev_count := int(frame.cont_out_off)
+			prev_args: [lex_parser.ARGUMENT_CAPACITY]Host_Value
+			for p in 0 ..< prev_count {
+				prev_args[p] = value_to_host(eval, eval.reg_stack[int(frame.reg_base) + p])
+			}
+			chv, cok := eval.host.condition_value(eval.host.data, eval, name, prev_args[:prev_count], sarg.node_idx)
 			if refused(eval) {
 				return false
 			}
@@ -3830,8 +4110,12 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 				refuse(eval, {refusal = .Host_Refused, chunk_id = frame.chunk_id, node = sarg.node_idx})
 				return false
 			}
-			val_hv = chv
-			val_vm, _ = host_to_value(eval, chv)
+			v, vok := host_to_value(eval, chv)
+			if !vok {
+				refuse(eval, {refusal = .Calls_Full, chunk_id = frame.chunk_id, node = sarg.node_idx})
+				return false
+			}
+			val_vm = v
 		case .Fact_Name:
 			if eval.host.fact_name_value == nil {
 				refuse(eval, {refusal = .Host_Refused, chunk_id = frame.chunk_id, node = sarg.node_idx})
@@ -3845,81 +4129,72 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 				refuse(eval, {refusal = .Host_Refused, chunk_id = frame.chunk_id, node = sarg.node_idx})
 				return false
 			}
-			val_hv = fhv
-			val_vm, _ = host_to_value(eval, fhv)
+			v, vok := host_to_value(eval, fhv)
+			if !vok {
+				refuse(eval, {refusal = .Calls_Full, chunk_id = frame.chunk_id, node = sarg.node_idx})
+				return false
+			}
+			val_vm = v
 		case .Field_Names:
 			if chunk.tree != nil && lex_parser.node_refusal(chunk.tree, sarg.node_idx) == .Field_Name_Missing {
 				refuse(eval, {refusal = .Text, text_refusal = .Field_Name_Missing, chunk_id = frame.chunk_id, node = sarg.node_idx, command = name})
 				return false
 			}
 			ft := node_text_in_chunk(eval, frame.chunk_id, sarg.node_idx)
-			val_hv = {kind = .Text, text = ft}
-			val_vm, _ = host_to_value(eval, val_hv)
-		case .Expr:
-			eoff, elen, eok := capture_upvals(eval, frame, frame.chunk_id, sarg.proto_id, sarg.val_node)
-			if !eok {
-				return false
-			}
-			v, vok := vm_exec_proto(eval, frame.chunk_id, sarg.proto_id, eoff, elen, nil, NO_THUNK, sarg.val_node)
+			v, vok := host_to_value(eval, {kind = .Text, text = ft})
 			if !vok {
+				refuse(eval, {refusal = .Calls_Full, chunk_id = frame.chunk_id, node = sarg.node_idx})
 				return false
 			}
 			val_vm = v
-			val_hv = value_to_host(eval, v)
 		}
-
-		// Type-check host border arguments.
-		if !sig.untyped {
-			if val_vm.kind == .Function || val_vm.kind == .List {
-				refuse(eval, {refusal = .Value_At_Border, chunk_id = frame.chunk_id, node = sarg.node_idx, command = name, parameter = slot + 1, left_kind = val_vm.kind})
+		if !untyped {
+			checked_vm, cok := call_site_border_check(eval, frame.chunk_id, site, name, frame.cont_fn, param_count, sarg, slot, val_vm)
+			if !cok {
 				return false
 			}
-			if val_vm.kind == .Record_Literal {
-				if slot >= param_count || sig.kinds[slot] != .Record || sig.files[slot] == nil {
-					rk := slot < param_count ? sig.kinds[slot] : Kind.None
-					refuse(eval, {refusal = .Literal_No_Type, chunk_id = frame.chunk_id, node = sarg.val_node, command = name, parameter = slot + 1, right_kind = rk})
-					return false
-				}
-				typed_hv, tok := literal_type_to_record(eval, val_vm, sig.files[slot], sig.details[slot], nil)
-				if !tok {
-					return false
-				}
-				val_hv = typed_hv
-				val_vm, _ = host_to_value(eval, typed_hv)
-			} else if val_vm.kind == .Member {
-				if slot >= param_count || sig.kinds[slot] != .Enum || sig.files[slot] == nil {
-					rk := slot < param_count ? sig.kinds[slot] : Kind.None
-					refuse(eval, {refusal = .Member_No_Type, chunk_id = frame.chunk_id, node = sarg.val_node, command = name, parameter = slot + 1, right_kind = rk})
-					return false
-				}
-				mname := member_name_of(eval, val_vm)
-				mval, mok := enum_member_value(sig.files[slot], sig.details[slot], mname)
-				if !mok {
-					refuse(eval, {refusal = .Member_Unknown, chunk_id = frame.chunk_id, node = sarg.val_node, command = name, parameter = slot + 1, field = mname, file = sig.files[slot], detail = sig.details[slot]})
-					return false
-				}
-				val_hv = {kind = .Enum, integer = mval, file = sig.files[slot], detail = sig.details[slot]}
-				val_vm, _ = host_to_value(eval, val_hv)
-			}
+			val_vm = checked_vm
 		}
-
-		host_args[slot] = val_hv
-		vm_args[slot] = val_vm
-		if slot + 1 > arg_total {
-			arg_total = slot + 1
+		eval.reg_stack[int(frame.reg_base) + slot] = val_vm
+		if u32(slot + 1) > frame.cont_out_off {
+			frame.cont_out_off = u32(slot + 1)
 		}
+		frame.cont_index += 1
 	}
 
-	// Step 5: Invoke callee.
+	// Step 5: All arguments evaluated. Copy out, pop the .Call_Site frame, and invoke callee.
+	dst_reg := frame.dst_reg
+	chunk_id := frame.chunk_id
+	builtin_id := Builtin_Id(frame.env_off)
+	given_mask := frame.env_len
+	arg_total := int(frame.cont_out_off)
+	fn_val := frame.cont_fn
+	cs_reg_base := frame.reg_base
+	cs_let_base := frame.let_base
+	vm_args: [lex_parser.ARGUMENT_CAPACITY]Value
+	copy_count := max(param_count, arg_total)
+	for p in 0 ..< copy_count {
+		vm_args[p] = eval.reg_stack[int(cs_reg_base) + p]
+	}
+
+	eval.frame_count -= 1
+	eval.reg_top = cs_reg_base
+	eval.let_slot_top = cs_let_base
+	caller := &eval.frames[eval.frame_count - 1]
+
 	switch callee {
 	case .Builtin:
-		return vm_exec_builtin(eval, frame, builtin_id, vm_args[:param_count], dst_reg, site.node_idx)
+		return vm_exec_builtin(eval, caller, builtin_id, vm_args[:param_count], dst_reg, site.node_idx)
 	case .Function:
 		cl := eval.closures[int(fn_val.data)]
 		cchunk := &eval.chunks[cl.chunk_id]
 		cproto := &eval.protos[int(cchunk.proto_start) + int(cl.proto_id)]
+		given: [lex_parser.ARGUMENT_CAPACITY]bool
+		for p in 0 ..< param_count {
+			given[p] = (given_mask & (u16(1) << uint(p))) != 0
+		}
 		prepared: [lex_parser.ARGUMENT_CAPACITY]Value
-		if !vm_prepare_fn_args(eval, cl, cproto, vm_args[:param_count], given[:param_count], prepared[:param_count], frame.chunk_id, site.node_idx, name) {
+		if !vm_prepare_fn_args(eval, cl, cproto, vm_args[:param_count], given[:param_count], prepared[:param_count], chunk_id, site.node_idx, name) {
 			return false
 		}
 		eval.call_count += 1
@@ -3929,7 +4204,7 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 		return push_bytecode_frame(eval, cl.chunk_id, cl.proto_id, cl.upval_off, cl.upval_len, prepared[:param_count], dst_reg, NO_THUNK, site.node_idx)
 	case .Host:
 		if eval.host.call_run == nil {
-			refuse(eval, {refusal = .Host_Refused, chunk_id = frame.chunk_id, node = site.node_idx})
+			refuse(eval, {refusal = .Host_Refused, chunk_id = chunk_id, node = site.node_idx})
 			return false
 		}
 		// Pass the full parameter count (less an omitted optional_last slot)
@@ -3937,23 +4212,28 @@ vm_exec_call_site :: proc "contextless" (eval: ^Evaluation, frame: ^VM_Frame, si
 		// parameters reach the host as .None (Presence.Absent).
 		passed := arg_total
 		if site.has_named || !missing_required {
-			optional_tail := sig.optional_last && param_count > 0 && !given[param_count - 1] ? 1 : 0
+			last_given := param_count > 0 && (given_mask & (u16(1) << uint(param_count - 1))) != 0
+			optional_tail := optional_last && param_count > 0 && !last_given ? 1 : 0
 			passed = max(passed, param_count - optional_tail)
+		}
+		host_args: [lex_parser.ARGUMENT_CAPACITY]Host_Value
+		for p in 0 ..< passed {
+			host_args[p] = value_to_host(eval, vm_args[p])
 		}
 		res_hv, rok := eval.host.call_run(eval.host.data, name, host_args[:passed])
 		if refused(eval) {
 			return false
 		}
 		if !rok {
-			refuse(eval, {refusal = .Host_Refused, chunk_id = frame.chunk_id, node = site.node_idx})
+			refuse(eval, {refusal = .Host_Refused, chunk_id = chunk_id, node = site.node_idx})
 			return false
 		}
 		res_vm, vok := host_to_value(eval, res_hv)
 		if !vok {
-			refuse(eval, {refusal = .Calls_Full, chunk_id = frame.chunk_id, node = site.node_idx})
+			refuse(eval, {refusal = .Calls_Full, chunk_id = chunk_id, node = site.node_idx})
 			return false
 		}
-		eval.reg_stack[int(frame.reg_base) + int(dst_reg)] = res_vm
+		eval.reg_stack[int(caller.reg_base) + int(dst_reg)] = res_vm
 		return true
 	}
 	return false

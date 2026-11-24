@@ -870,7 +870,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "console: the deepest line so far took"},
 	{kind = .Wait, text = "[console] 64"},
 	{kind = .Type, text = "let f = (n) => f(n) in f(1)"},
-	{kind = .Wait, text = "[console] error: the line nests deeper than the stack of the evaluator holds: 524288 bytes"},
+	{kind = .Wait, text = "[console] error: the line needs more than 33554432 steps of the evaluator: it stopped at column 16"},
 	{kind = .Type, text = "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1"},
 	{kind = .Wait, text = "[console] 100"},
 	// The picture of the colors of Lex: from a clean view, one short line

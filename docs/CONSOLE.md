@@ -515,12 +515,12 @@ A line that fails has one result: its error. The first error ends the line: the 
 | The lists of a line past 4096 items, list variables included | `error: the lists of the line hold more than 4096 items in all`, with an error record `Over_Limit` |
 | A list past the bound of a variable | `error: a variable keeps a list of 4096 items at most, the items of its nested lists included; this one has 4097 or more`, with an error record `Over_Limit` |
 | `map` on another value than a list | `error: map: argument 1 is Integer, not a list` |
-| A recursion, or a line nested deeper than the stack of the evaluator | `error: the line nests deeper than the stack of the evaluator holds: 524288 bytes; it stopped at column 16` |
+| A line nested deeper than the stack of the evaluator | `error: the line nests deeper than the stack of the evaluator holds: 524288 bytes; it stopped at column 16` |
 | A `_` that is no whole argument of the call on the right of `\|>` | `error: \|>: _ is a whole argument of f, not a part of an expression` |
 | Two `_` in one call | `error: \|>: f has two _; the value on the left takes one place` |
 | A `_` in a call nested in the call on the right | `error: \|>: _ names an argument of f, not of g inside it` |
 | A `_` with no `\|>` before its call | `error: _ is a place of the call on the right of \|>; this call has no \|> before it` |
-| A line past the evaluation budget, which no line of the console reaches | `error: the line needs more than 1048576 steps of the evaluator: it stopped at column 12`, with an error record `Over_Limit` |
+| A tail recursion or a line past the evaluation budget | `error: the line needs more than 33554432 steps of the evaluator: it stopped at column 16`, with an error record `Over_Limit` |
 
 An overflow has an error record of the kind `Over_Limit`: `value` is the left value, `found` the right value, and `limit` the largest integer.
 
