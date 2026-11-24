@@ -160,7 +160,7 @@ span_total :: proc "c" (span: ^Span, error: ^errors.Error_Record) -> (outcome: c
 }
 
 // spoil tries to write in a memory object that the caller lent to read. The
-// result is the status of the kernel: 7 is "no right".
+// result is the call outcome of the kernel: 4 is Grant_Or_Right_Missing.
 //
 // The handle has the right Read only, as the description says, so the kernel refuses the map with Write. The
 // result 0 means that the lent handle had more rights than its description.

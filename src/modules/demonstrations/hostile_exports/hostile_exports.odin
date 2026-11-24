@@ -87,8 +87,8 @@ keep :: proc "c" (memory: system.Lent({.Read}), error: ^errors.Error_Record) -> 
 	return total(memory, error)
 }
 
-// kept uses the handle that keep remembered. The result is the status of
-// the kernel: 2 is "no handle", because a lent handle ends with its call.
+// kept uses the handle that keep remembered. The result is the call outcome of
+// the kernel: 1 is Argument_Refused, because a lent handle ends with its call.
 @(export, link_name = "kept")
 kept :: proc "c" () -> i64 {
 	bytes, status := bytes_of(held, {})

@@ -900,14 +900,14 @@ scenario := [?]Step {
 	// A handle in a field of a record.
 	{kind = .Type, text = "span_total(Span(b, 96, 10))"},
 	{kind = .Wait, text = "[console] 30"},
-	// The description of spoil asks Read: the module cannot write. 7: no right.
+	// The description of spoil asks Read: the module cannot write. 4: Grant_Or_Right_Missing.
 	{kind = .Type, text = "spoil(b)"},
-	{kind = .Wait, text = "[console] 7"},
-	// A lent handle ends with its call. 2: no handle.
+	{kind = .Wait, text = "[console] 4"},
+	// A lent handle ends with its call. 1: Argument_Refused.
 	{kind = .Type, text = "keep(b)"},
 	{kind = .Wait, text = "[console] 12288"},
 	{kind = .Type, text = "kept()"},
-	{kind = .Wait, text = "[console] 2"},
+	{kind = .Wait, text = "[console] 1"},
 	{kind = .Type, text = "area(Span(b, 0, 1))"},
 	{kind = .Wait, text = "[console] error: area: argument 1 is Rectangle, not Span"},
 	{kind = .Type, text = "b"},
