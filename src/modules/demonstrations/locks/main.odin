@@ -57,17 +57,13 @@ import "modus:contract/ring"
 import "modus:random"
 import "modus:system"
 
-// Four lockers of 1024 pages, then three at a time of the stress case:
-// 7745 pages. And the glyph memory of the copy of the text rendering of
-// the drawing module, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 7745 + 354 = 8099.
-// With the pages of the case of the wait room: a room of the most words
-// (op.wait_room_pages, 512 pages), its list and its words (160 pages);
-// the two processes of the case of the untouched page, with 2 threads and
-// 1024 pages each (untouched_page.odin); and the mapping of the measure of
-// an unmap, 4096 pages and its frame list (wait_room.odin).
-// 8099 + 672 + 2048 + 4097 = 14916.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 14916, processes = 10, threads = 24, window_width = WIDTH, window_height = HEIGHT}
+// The window presents before starting the lockers and checks. Four lockers
+// of 1024 pages (4096 pages), the glyph memory of the drawing module (354
+// pages) and overhead take 5120 working pages; the sequential check cases
+// (wait room 672 pages, unmap mapping 4097 pages, untouched page 2048 pages,
+// churn processes 1536 pages) run after ready and fit inside twice the
+// floor.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 5120, processes = 10, threads = 24, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(1024, 16384)

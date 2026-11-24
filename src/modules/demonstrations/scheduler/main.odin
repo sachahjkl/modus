@@ -126,16 +126,12 @@ import "modus:system"
 // Threads: 12 spinners, two threads that wake each other, one that sleeps,
 // a changer, a thread that starts threads; later, with its first thread,
 // the 15 threads of the four processes of the shares, or 8 spinners of its
-// own. Processes: itself and those four. The tool counts its module, a
-// stack and a thread area for each of the 24 threads, and its window. The
-// working memory: 512 for each of the four processes of the shares, its
-// own tables, and the rest of the 5632 pages that it had before the tool
-// counted: 3659 pages, of which the start budgets (MODULE_START_BUDGETS)
-// are 4 x 512 for the processes of the shares and 80 for the blockers of
-// the placement case: 1531 pages. And the glyph memory of the copy of the
-// text rendering of the drawing module, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 1531 + 354 = 1885.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1885, processes = 5, threads = 24, window_width = WIDTH, window_height = HEIGHT}
+// own. Processes: itself and those four. The tool counts its module, the 24
+// threads, its window at the largest scale and its start budgets
+// (MODULE_START_BUDGETS). The working memory holds the glyph memory of the
+// drawing module (354 pages) and page tables (measured peak at ready 2518
+// pages).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 448, processes = 5, threads = 24, window_width = WIDTH, window_height = HEIGHT}
 
 // Pages per share child process (modules, stack, context, page tables) and
 // pages for the placement blockers child (16 pages per thread).

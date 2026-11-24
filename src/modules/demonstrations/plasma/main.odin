@@ -24,11 +24,11 @@ import "modus:trigonometry"
 
 WIDTH :: 320
 HEIGHT :: 200
-// The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (125 pages): its module, its
-// stack and its tables. The tool counts the window at the largest scale
-// (docs/MODULE_CONTRACT.md, "The floor of a module").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1923, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, the stack and the window at the largest scale
+// (docs/MODULE_CONTRACT.md, "The floor of a module"). Plasma draws no text;
+// 64 working pages hold page tables and display rings (measured peak at
+// ready 452 pages).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 64, window_width = WIDTH, window_height = HEIGHT}
 FRAME_INTERVAL :: 33
 
 sine: [256]i32 // One period, from -127 to 127: the index is the angle in 256ths of a turn.

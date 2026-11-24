@@ -53,21 +53,15 @@ LEAST_HEIGHT :: 420
 LARGEST_WIDTH :: 1536
 LARGEST_HEIGHT :: 864
 
-// The tool counts the two pictures of the window at its largest size. A
-// resize holds the old surface and the new one together until the
-// compositor shows the new one, so the working memory holds a second
-// surface at the largest size: 1536 x 864 logical pixels at the largest
-// scale, cut on each axis to the reference screen as the tool counts it
-// (src/md/features/desktop_to_browser.md, "The budgets"), are 1920 x 1080
-// pixels, 4 bytes each, two pictures: 4050 pages. It also holds the least
-// budget of 2048 pages less a window of 480 x 320 (300 pages): 1748 pages
-// for its stack, its tables and the glyphs that it draws itself. And the
-// glyph memory of the copy of the text rendering of the drawing module:
-// 354 pages (display.TEXT_MEMORY_PAGES). 4050 + 1748 + 354 = 6152.
-// The worker thread of the notification has a stack of 64 pages, 48 more
-// than the tool counts for a thread. 6152 + 48 = 6200. The tool reads the
-// literal; the check below ties it to these parts.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6200, processes = 1, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
+// The tool counts the module, the thread stacks and the two pictures of the
+// window at its largest size (4050 pages, cut on each axis to the reference
+// screen as the tool counts it). The working memory of the floor holds the
+// glyph memory of both copies of text rendering (2 x 354 = 708 pages), the
+// worker stack past the default stack (48 pages) and 268 pages for tables
+// and mappings: 1024 pages. During a resize after ready, the second surface
+// (4050 pages) draws from the growth factor of the budget. The tool reads
+// the literal; the checks below tie it to these parts.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1024, processes = 1, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}
 
 // The rule of the tool (scale_factor.window_surface_largest), from the same
 // constants: a constant cannot call the procedure. The cut holds because
@@ -78,7 +72,8 @@ MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6200, processes = 1
 WINDOW_SCREEN_WIDTH :: min((u64(LARGEST_WIDTH) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.WIDTH))
 WINDOW_SCREEN_HEIGHT :: min((u64(LARGEST_HEIGHT) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.HEIGHT))
 SECOND_SURFACE_PAGES :: (2 * WINDOW_SCREEN_WIDTH * WINDOW_SCREEN_HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-#assert(MODULE_BUDGET.working_memory_pages == SECOND_SURFACE_PAGES + 1748 + display.TEXT_MEMORY_PAGES + 48)
+#assert(MODULE_BUDGET.working_memory_pages == 268 + 2 * display.TEXT_MEMORY_PAGES + 48)
+#assert(2 * (SECOND_SURFACE_PAGES + MODULE_BUDGET.working_memory_pages) >= 2 * SECOND_SURFACE_PAGES + 2 * display.TEXT_MEMORY_PAGES + 48)
 
 MARGIN :: graphics.MARGIN
 GAP :: graphics.GAP

@@ -106,11 +106,11 @@ WIDTH :: 640
 #assert(WIDTH == STAGE_WIDTH)
 HEIGHT :: 488
 #assert(HEIGHT == STAGE_HEIGHT + BAND_HEIGHT)
-// The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (610 pages): its module, its
-// stack, its tables and its glyph memory. The tool counts the window at
-// the largest scale (docs/MODULE_CONTRACT.md, "The floor of a module").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1438, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, the stack and the window at the largest scale
+// (docs/MODULE_CONTRACT.md, "The floor of a module"). The working memory
+// holds the glyph memory of the drawing module (354 pages) and page tables
+// (measured peak at ready 1523 pages).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 384, window_width = WIDTH, window_height = HEIGHT}
 
 // The sizes of a cell that the key z gives, the largest first.
 @(rodata)

@@ -20,11 +20,12 @@ import "modus:system"
 // The pages of the arena that holds the grants that processes hold.
 TABLE_PAGES :: 512
 
-// Working memory budget for the freestanding powerbox service process: the
-// grants (TABLE_PAGES), the stores of the picker and their index, which
-// grow from the rest (512 pages: about 10 000 stores), and its data.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1280, processes = 1, threads = 1}
-#assert(MODULE_BUDGET.working_memory_pages == TABLE_PAGES + 512 + 256)
+// Working memory floor for the freestanding powerbox service process: the
+// grants arena (TABLE_PAGES) and service rings/mappings (256 pages;
+// measured peak at ready 760 pages). Picker store arenas grow after ready
+// from the growth factor of the budget.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 768, processes = 1, threads = 1}
+#assert(MODULE_BUDGET.working_memory_pages == TABLE_PAGES + 256)
 
 // Status record returned by the status() export required by Role.Powerbox.
 Powerbox_Status :: struct {

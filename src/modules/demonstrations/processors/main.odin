@@ -46,12 +46,10 @@ import "modus:contract/value_kinds"
 import "modus:system"
 import "base:intrinsics"
 
-// The working memory: the rest of the pages that the root service gave it
-// by its name, once the tool counts its module, its threads and its
-// window: 1112 pages. And the glyph memory of the copy of the text
-// rendering of the drawing module, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 1112 + 354 = 1466.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1466, processes = 1, threads = 9, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, the nine threads and the window at the largest
+// scale. The working memory holds the glyph memory of the drawing module
+// (354 pages) and page tables.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512, processes = 1, threads = 9, window_width = WIDTH, window_height = HEIGHT}
 
 PICTURE_WIDTH :: 448
 PICTURE_HEIGHT :: 320

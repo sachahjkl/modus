@@ -673,10 +673,14 @@ table_blocks_held: u64
 
 // state_memory_bind makes the memory of a form of the state from the
 // budget of the service, binds it, then ends the memory before it.
+// In-memory block tables (.Tables) are an inline capacity bounded by
+// STATE_PAGES_OF_16_GIB (the floor share); a disk whose tables exceed it
+// falls through to .Count_Tree so mount stays within the floor before
+// system.ready and leaves the growth factor for commit pools.
 state_memory_bind :: proc "contextless" (binder: ^storage_mount.Memory_Binder, blocks: u64, form: storage_mount.Count_Form, cache_pages: u64) -> bool {
 	layout, ok := storage_mount.state_layout(blocks, min(blocks, HASH_ROOTS_MOST), form, cache_pages)
 	pages := (layout.bytes + BLOCK_SIZE - 1) / BLOCK_SIZE
-	if !ok || pages > op.MEMORY_PAGE_LIMIT {
+	if !ok || pages > op.MEMORY_PAGE_LIMIT || (form == .Tables && pages > STATE_PAGES_OF_16_GIB) {
 		return false
 	}
 	memory, status := system.memory_create(pages)

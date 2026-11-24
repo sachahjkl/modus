@@ -43,11 +43,10 @@ import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:system"
 
-// Itself and one process that only receives: 1372 pages. And the glyph
-// memory of the copy of the text rendering of the drawing module, which
-// draws its text: 354 pages (display.TEXT_MEMORY_PAGES). 1372 + 354 =
-// 1726.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1726, processes = 2, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// The tool counts the module, the thread and the window at the largest
+// scale. The working memory holds the glyph memory of the drawing module
+// (354 pages), page tables and the dummy receiving process.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512, processes = 2, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)

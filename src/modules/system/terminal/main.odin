@@ -101,28 +101,19 @@ import "modus:system"
 import terminal "modus:terminal"
 import "base:intrinsics"
 
-// The lines that it keeps, and the surface of its window at start: their
-// size follows the columns and the rows that its starter gives and the
-// scale, so the tool cannot count them, and the working memory holds one
-// surface at the largest size. The lines take 3840 pages. A surface holds
-// two pictures; one of the reference screen takes 4050 pages. That is the
-// surface of a window as large as the logical screen at each scale, the
-// largest scale 2 included: 960 x 540 logical pixels at 2 are the 1920 x
-// 1080 pixels of the screen. During a resize after ready the window holds
-// two surfaces until the compositor answers, which draws from the growth
-// factor of the budget. A rescale holds one surface at a time. 3840 + 4050
-// = 7890 (checked under the type Line). A window larger than the logical
-// screen of a scale (a drag past the left edge of the screen, or a window
-// that the principal sized at a smaller scale) does not fit:
-// display.surface_resize declines the resize with a line, and a rescale
-// declines the scale, so the window keeps its frame until a scale that it
-// fits. The cells of the largest grid are in the module: the tool counts
-// them. And the glyph memory of its two copies of the text rendering, the
-// one of the drawing module, which draws its cells, and its own, which
-// draws a cell again to tell where its glyph comes from
-// (display.cell_fallback_of): each reserves its memory at its first glyph,
-// 2 x 354 pages (display.TEXT_MEMORY_PAGES) = 708 pages. 7890 + 708 = 8598.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8598, processes = 1, threads = 2}
+// The lines that it keeps, and the initial surface of its window at start:
+// their size follows the columns and the rows that its starter gives and the
+// scale, so the tool cannot count them. The lines take 3840 pages, the
+// initial surface up to 1800 pages (measured peak 5405 pages), and the glyph
+// memory of both copies of the text rendering takes 2 x 354 pages
+// (display.TEXT_MEMORY_PAGES) = 708 pages. 3840 + 1800 + 708 = 6348
+// (checked under the type Line). A resize to the reference screen (two
+// surfaces of 4050 pages at once) happens after ready and fits inside twice
+// the floor. A window larger than the logical screen of a scale does not
+// fit: display.surface_resize declines the resize with a line, and a rescale
+// declines the scale. The cells of the largest grid are in the module: the
+// tool counts them.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 6348, processes = 1, threads = 2}
 
 COLUMNS_LIMIT :: terminal.COLUMNS_LIMIT
 ROWS_LIMIT :: terminal.ROWS_LIMIT
@@ -353,12 +344,15 @@ Line :: struct {
 	length:    u32, // Bytes of UTF-8.
 }
 
-// The working memory of the floor holds the lines, one surface of the
-// reference screen and both glyph caches. A resize holds a second surface
-// after ready and draws it from the growth factor of the budget.
+// The working memory of the floor holds the lines, the initial window
+// surface and both glyph caches; twice the working memory holds the lines,
+// two full surfaces of the reference screen during a resize and both glyph
+// caches.
 LINES_PAGES :: (LINE_CAPACITY * size_of(Line) + RUN_CAPACITY * size_of(Run) + BYTE_CAPACITY + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+INITIAL_SURFACE_PAGES :: 1800
 SCREEN_SURFACE_PAGES :: (display.PICTURE_COUNT * reference_screen.WIDTH * reference_screen.HEIGHT * size_of(graphics.Color) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-#assert(LINES_PAGES + SCREEN_SURFACE_PAGES + 2 * display.TEXT_MEMORY_PAGES <= MODULE_BUDGET.working_memory_pages)
+#assert(LINES_PAGES + INITIAL_SURFACE_PAGES + 2 * display.TEXT_MEMORY_PAGES <= MODULE_BUDGET.working_memory_pages)
+#assert(2 * MODULE_BUDGET.working_memory_pages >= LINES_PAGES + 2 * SCREEN_SURFACE_PAGES + 2 * display.TEXT_MEMORY_PAGES)
 
 lines: [^]Line
 runs: [^]Run

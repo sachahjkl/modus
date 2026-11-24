@@ -102,13 +102,11 @@ import "modus:system"
 // service, remote.SERVICE_CONNECTIONS), which the root service makes and
 // pays: up to 4 page tables and directories each, 512 pages; the glyph
 // memory of the copy of the text rendering of the drawing module, which
-// draws its text: 354 pages (display.TEXT_MEMORY_PAGES); and a first share
-// for the tables of the mesh, its objects by hash and its exchanged stores:
-// 2048 pages. Those tables grow past it as far as the budget that the
-// starter gives pays (mesh.odin), so the share is no bound. And the end of
-// its record output of the acts of a wide grant: 4 pages. 6912 + 512 + 354
-// + 2048 + 4 = 9830, under the least largest budget of a process.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 9830, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// draws its text: 354 pages (display.TEXT_MEMORY_PAGES); and the end of
+// its record output of the acts of a wide grant: 4 pages. Mesh tables
+// (mesh.odin) grow after ready from the growth factor of the budget.
+// 6912 + 512 + 354 + 4 = 7782 (measured peak at ready 10219 pages).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7782, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
 
 foreign _ {
 	@(require_results)

@@ -140,8 +140,8 @@ import "base:intrinsics"
 // - the mapping of the surfaces of the first windows at start: a surface
 //   at the largest size (bar.SURFACE_SCREEN_SIDE_FLOOR, 4096 x 4096 screen
 //   pixels, 128 MiB for two pictures) takes at most 65 page tables of 2 MiB
-//   and 2 page directories, 67 pages. INITIAL_WINDOW_SURFACES (16) such
-//   surfaces take 1072 pages; further windows and resize mappings draw from
+//   and 2 page directories, 67 pages. INITIAL_WINDOW_SURFACES (4) such
+//   surfaces take 268 pages; further windows and resize mappings draw from
 //   the growth factor of the budget;
 // - the glyph memory of its two copies of the text rendering, its own
 //   (its bar, its menus, its titles) and the one of the drawing module:
@@ -153,20 +153,20 @@ import "base:intrinsics"
 // - the end of its record output of the acts of a wide grant: 4 pages;
 // - the stack of the worker of the role store (display_choices.odin),
 //   interface.BACKGROUND_STACK_PAGES.
-// 130 + 128 + 3 + 2 + 2031 + 1072 + 708 + 10 + 4 + 64 = 4152.
+// 130 + 128 + 3 + 2 + 2031 + 268 + 708 + 10 + 4 + 64 = 3348.
 // Page tables are paid as windows map, so a desktop with more windows draws
 // from the growth factor of the budget. A screen whose frame and background
 // the budget cannot pay is named on one line, and the compositor stops
 // (entry). Four threads: the interface, the ranking of the palette, the
 // reading of a plan difference (powerbox_dialog.odin), whose work is in
 // proportion to the difference, and the worker of the role store.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4152, processes = 1, threads = 4, screen_pictures = 2}
-INITIAL_WINDOW_SURFACES :: 16
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3348, processes = 1, threads = 4, screen_pictures = 2}
+INITIAL_WINDOW_SURFACES :: 4
 #assert(MODULE_BUDGET.working_memory_pages == 130 + 128 + 3 + 2 + 2031 + INITIAL_WINDOW_SURFACES * 67 + 708 + COMPOSITOR_WAIT_ROOM_PAGES + 4 + interface.BACKGROUND_STACK_PAGES)
 // The request on the machine of the machine tests, whose screen is the
-// reference screen: 4152 working pages, 2 x 2025 pages of the frame and
+// reference screen: 3348 working pages, 2 x 2025 pages of the frame and
 // the background, and the code, the data and the stacks that the tool
-// counts, under a bound of 8192 pages: 16394 pages, under the largest
+// counts, under a bound of 8192 pages: 15590 pages, under the largest
 // budget of that machine (50 000 pages), so its size on a test machine is
 // twice its floor.
 MODULE_PAGES_BOUND :: 8192

@@ -1475,10 +1475,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 #assert(PORT_FIRST + ENDPOINT_CAPACITY <= TCP_PORT_FIRST && TCP_PORT_FIRST + ENDPOINT_CAPACITY * datagram.PORT_BLOCK <= 65536)
 #assert(SEND_HEADER_COPIED <= datagram.DATAGRAM_LEAST && SEND_HEADER_COPIED <= datagram.SEGMENT_LEAST)
 
-// Measure pending: the 2048 pages of the least budget in which it ran
-// before its floor was counted. The first machine pass with the check of
-// the floors (the check boot-test of the flake) writes the peak of its
-// budget at its first state of work; modustool floors measured on the log
-// of that pass gives the working memory that replaces this number
-// (src/md/features/module_budget_request.md, "The first state of work").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2048}
+// Measured at ready: 425 pages total (counted floor 328 pages, 97 working
+// pages for the frame ring, region and control ring). 256 working pages
+// hold the initial rings and endpoint mappings with headroom.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256}
