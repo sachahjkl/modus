@@ -173,6 +173,21 @@ BROWSER_MACHINE_TYPED_COMMAND :: "help()"
 BROWSER_MACHINE_ANSWER_PREFIX :: "[console] "
 BROWSER_MACHINE_ANSWER_TEXT :: " rows of Command"
 
+// The interactive part of a start of the console image in Node on COM2:
+// once dom_terminal writes its first prompt edit record on COM2, the host
+// types the Lex command on COM2 and verifies the exact answer line in the
+// COM2 JSON updates (src/md/features/console_renderers.md, "The console image").
+BROWSER_MACHINE_CONSOLE_TYPED_COMMAND :: "1 MiB + 512 KiB"
+BROWSER_MACHINE_CONSOLE_EXPECTED_ANSWER :: "1536 KiB"
+
+// Subcommands of "modustool browser-machine".
+Browser_Machine_Command :: enum u8 {
+	Build        = 0,
+	Boot         = 1,
+	Console      = 2,
+	Console_Boot = 3,
+}
+
 // One file of the page of a browser machine. The site writes the same
 // files (site_browser_machine.odin).
 Browser_Machine_Page_File :: struct {
@@ -745,6 +760,10 @@ browser_machine_host_tests_run :: proc() -> bool {
 // its terminal. The site publishes both the desktop and console pages.
 BROWSER_MACHINE_CONSOLE_PAGE_TEXT :: #load("browser_machine/browser_machine_console.html", string)
 
+// The Node boot test of the console image on COM2, run by
+// "modustool browser-machine console-boot".
+BROWSER_MACHINE_CONSOLE_BOOT_TEXT :: #load("browser_machine/browser_machine_console_boot.js", string)
+
 @(private = "file")
 browser_machine_boot_image_copy :: proc(source: string) -> bool {
 	bytes, read_error := os.read_entire_file(source, context.temp_allocator)
@@ -1102,28 +1121,185 @@ browser_machine_framebuffer_line_parse :: proc(line: string) -> (lit: u64, pixel
 	return lit, pixels, true
 }
 
+// browser_machine_command_parse parses the arguments of
+// "modustool browser-machine" into a closed Browser_Machine_Command enum.
+browser_machine_command_parse :: proc(args: []string) -> (command: Browser_Machine_Command, image_arg: string, ok: bool) {
+	if len(args) == 0 {
+		return .Build, "", true
+	}
+	if len(args) > 2 {
+		return .Build, "", false
+	}
+	switch args[0] {
+	case "boot":
+		if len(args) == 2 {
+			if args[1] == "" {
+				return .Build, "", false
+			}
+			return .Boot, args[1], true
+		}
+		return .Boot, "", true
+	case "console":
+		if len(args) != 1 {
+			return .Build, "", false
+		}
+		return .Console, "", true
+	case "console-boot":
+		if len(args) == 2 {
+			if args[1] == "" {
+				return .Build, "", false
+			}
+			return .Console_Boot, args[1], true
+		}
+		return .Console_Boot, "", true
+	}
+	return .Build, "", false
+}
+
+// browser_machine_console_boot_output_check validates the structured stdout of
+// browser_machine_console_boot.js: kernel mark, root service stage, no trap,
+// dom_terminal ready stage on COM2, typed command, and exact expected answer.
+browser_machine_console_boot_output_check :: proc(output: string, expected_command: string, expected_answer: string) -> (problem: string) {
+	mark_seen, root_seen, ready_seen, typed_seen, answer_seen := false, false, false, false, false
+	machine_line := ""
+	typed_prefix := strings.concatenate({"typed: ", expected_command, " "}, context.temp_allocator)
+	lines := output
+	for line in strings.split_lines_iterator(&lines) {
+		if strings.has_prefix(line, "serial: ") {
+			serial := line[len("serial: "):]
+			mark_seen ||= serial == BROWSER_MACHINE_KERNEL_MARK
+			root_seen ||= strings.has_prefix(serial, BROWSER_MACHINE_ROOT_STAGE_LINE)
+		} else if strings.has_prefix(line, "stage: ready ") {
+			ready_seen = true
+		} else if strings.has_prefix(line, typed_prefix) {
+			typed_seen = true
+		} else if strings.has_prefix(line, "answer: ") {
+			answer_seen ||= strings.contains(line[len("answer: "):], expected_answer)
+		} else if strings.has_prefix(line, "machine: ") {
+			machine_line = line
+		}
+	}
+	if strings.has_prefix(machine_line, "machine: trapped") {
+		return "the console image in node ended with a trap of WebAssembly"
+	}
+	if !mark_seen {
+		return fmt.tprintf("the console image in node wrote no line %q", BROWSER_MACHINE_KERNEL_MARK)
+	}
+	if !root_seen {
+		return fmt.tprintf("the console image in node wrote no line starting with %q", BROWSER_MACHINE_ROOT_STAGE_LINE)
+	}
+	if !ready_seen {
+		return "the console image in node never reached dom_terminal ready on COM2"
+	}
+	if !typed_seen {
+		return fmt.tprintf("the console image in node never typed %q on COM2", expected_command)
+	}
+	if !answer_seen {
+		return fmt.tprintf("the console image in node wrote no COM2 answer holding %q for %q", expected_answer, expected_command)
+	}
+	return ""
+}
+
+// browser_machine_console_boot starts console.image on modulus_kernel.wasm in
+// Node with no framebuffer, waits for dom_terminal readiness on COM2 under
+// HANG_BOUND, sends BROWSER_MACHINE_CONSOLE_TYPED_COMMAND on COM2, and checks
+// BROWSER_MACHINE_CONSOLE_EXPECTED_ANSWER in the COM2 JSON updates.
+browser_machine_console_boot :: proc(console_image: string) -> bool {
+	if major := browser_machine_node_major(); major < BROWSER_MACHINE_NODE_MAJOR_VERSION {
+		fmt.eprintfln("modustool: browser-machine console-boot needs node %d or later on the path; found %d (0: none)", BROWSER_MACHINE_NODE_MAJOR_VERSION, major)
+		return false
+	}
+	if !browser_machine_host_tests_run() {
+		return false
+	}
+	image_bytes, read_error := os.read_entire_file(console_image, context.temp_allocator)
+	if read_error != nil {
+		fmt.eprintfln("modustool: cannot read %s: %v", console_image, read_error)
+		return false
+	}
+	trust_hash_hex, _ := browser_machine_trust_hash_hex(image_bytes)
+	bound := fmt.tprintf("%d", i64(foundation.HANG_BOUND / time.Millisecond))
+	started := time.tick_now()
+	state, output, error_output, error := os.process_exec({command = {
+		"node",
+		"--input-type=module",
+		"--eval",
+		BROWSER_MACHINE_CONSOLE_BOOT_TEXT,
+		BROWSER_MACHINE_HOST_PATH,
+		BROWSER_MACHINE_KERNEL_PATH,
+		console_image,
+		bound,
+		BROWSER_MACHINE_CONSOLE_TYPED_COMMAND,
+		BROWSER_MACHINE_CONSOLE_EXPECTED_ANSWER,
+		trust_hash_hex,
+	}}, context.temp_allocator)
+	if error != nil {
+		fmt.eprintfln("modustool: cannot start node: %v", error)
+		return false
+	}
+	lines := string(output)
+	machine_line, answered_line := "", ""
+	for line in strings.split_lines_iterator(&lines) {
+		if strings.has_prefix(line, "serial: ") {
+			fmt.println(line[len("serial: "):])
+		} else if strings.has_prefix(line, "stage: ") {
+			fmt.printfln("modustool: measure: the console image in node: the stage %s", line[len("stage: "):])
+		} else if strings.has_prefix(line, "typed: ") {
+			fmt.printfln("modustool: the host typed %s on COM2", line[len("typed: "):])
+		} else if strings.has_prefix(line, "answered: ") {
+			answered_line = line
+		} else if strings.has_prefix(line, "machine: ") {
+			machine_line = line
+		}
+	}
+	fmt.printfln("modustool: measure: the console image in node: %.1f s, %s", time.duration_seconds(time.tick_since(started)), machine_line)
+	if answered_line != "" {
+		fmt.printfln("modustool: measure: the console image in node: COM2 answered %s %s", BROWSER_MACHINE_CONSOLE_TYPED_COMMAND, answered_line[len("answered: "):])
+	}
+	if !state.success {
+		fmt.eprintfln("modustool: console-boot node failed (code %d): %s", state.exit_code, strings.trim_space(string(error_output)))
+		return false
+	}
+	if problem := browser_machine_console_boot_output_check(string(output), BROWSER_MACHINE_CONSOLE_TYPED_COMMAND, BROWSER_MACHINE_CONSOLE_EXPECTED_ANSWER); problem != "" {
+		fmt.eprintfln("modustool: %s", problem)
+		return false
+	}
+	foundation.test_passed_print("the console image starts in node on COM2 and answers %s with %s", BROWSER_MACHINE_CONSOLE_TYPED_COMMAND, BROWSER_MACHINE_CONSOLE_EXPECTED_ANSWER)
+	return true
+}
+
 // run_browser_machine is the command browser-machine.
 run_browser_machine :: proc(args: []string) -> int {
-	boot := len(args) >= 1 && args[0] == "boot"
-	console := len(args) == 1 && args[0] == "console"
-	if len(args) > 2 || (len(args) >= 1 && !boot && !console) {
-		fmt.eprintln("modustool: browser-machine takes no argument, boot [<boot image>], or console")
+	command, image_arg, ok := browser_machine_command_parse(args)
+	if !ok {
+		fmt.eprintln("modustool: browser-machine takes no argument, boot [<boot image>], console, or console-boot [<console image>]")
 		return foundation.EXIT_USAGE
 	}
 	if !browser_machine_build() {
 		return foundation.EXIT_FAILURE
 	}
-	if console {
-		return browser_machine_console_write() ? 0 : foundation.EXIT_FAILURE
-	}
-	if !boot {
+	switch command {
+	case .Build:
 		return 0
+	case .Console:
+		return browser_machine_console_write() ? 0 : foundation.EXIT_FAILURE
+	case .Boot:
+		// The boot image of the page: the one that the command names, else the
+		// one of the build that browser_machine_build copied, else none.
+		if image_arg != "" && !browser_machine_boot_image_copy(image_arg) {
+			return foundation.EXIT_FAILURE
+		}
+		boot_image := os.is_file(BROWSER_MACHINE_BOOT_IMAGE_PATH) ? BROWSER_MACHINE_BOOT_IMAGE_PATH : ""
+		return browser_machine_boot(boot_image) ? 0 : foundation.EXIT_FAILURE
+	case .Console_Boot:
+		console_image := image_arg
+		if console_image == "" {
+			if !browser_machine_console_write() {
+				return foundation.EXIT_FAILURE
+			}
+			console_image = BROWSER_MACHINE_CONSOLE_IMAGE_PATH
+		}
+		return browser_machine_console_boot(console_image) ? 0 : foundation.EXIT_FAILURE
 	}
-	// The boot image of the page: the one that the command names, else the
-	// one of the build that browser_machine_build copied, else none.
-	if len(args) == 2 && !browser_machine_boot_image_copy(args[1]) {
-		return foundation.EXIT_FAILURE
-	}
-	boot_image := os.is_file(BROWSER_MACHINE_BOOT_IMAGE_PATH) ? BROWSER_MACHINE_BOOT_IMAGE_PATH : ""
-	return browser_machine_boot(boot_image) ? 0 : foundation.EXIT_FAILURE
+	return foundation.EXIT_FAILURE
 }
