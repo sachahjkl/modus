@@ -35,8 +35,8 @@ HELP_PROJECTS_INSTALL :: "projects.install(\"db_browser\") ingests the project s
 HELP_ALLOW :: "allow(\"visitor\", \"store\") grants the named disk process access to its private store from its next start. Only store can be granted from the console."
 HELP_REVOKE :: "revoke(\"notes\", \"store\") ends one held grant on a running process immediately and returns how many holdings closed. Future calls on closed handles report that the grant was revoked."
 HELP_PLANS_DIFFERENCE :: "plans.difference(rows, summary) compares a proposed plan against the principal's active plan without applying any change. It returns the difference table and appends the summary row."
-HELP_PLANS_APPLY :: "plans.apply(plan_name, rows, expected) opens the plan difference dialog on the trusted display and returns a ticket. Call plans.apply_poll(ticket) to commit after the principal accepts."
-HELP_PLANS_ROLLBACK :: "plans.rollback() opens the trusted display dialog to restore the previous plan generation and returns a ticket. Call plans.rollback_poll(ticket) to commit after the principal accepts."
+HELP_PLANS_APPLY :: "plans.apply(\"evening\", plan { locks = { settings = { appearance = .dark } } }) validates the plan, opens the trusted display consent dialog, waits for your decision, and returns the committed generation row. Pass an optional third Plan_Expected record when pinning the current plan hash."
+HELP_PLANS_ROLLBACK :: "plans.rollback() opens the trusted display consent dialog to restore the previous plan generation, waits for your decision, and returns the generation row. Pass a generation number such as plans.rollback(2) to select a specific generation."
 
 @(rodata)
 HELP_TOPICS := [?]Help_Topic {

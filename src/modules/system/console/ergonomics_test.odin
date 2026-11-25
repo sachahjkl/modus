@@ -43,6 +43,9 @@ ergonomics_reset_state :: proc() {
 	command("allow", {.Text, .Text}, .None, "give a disk process a grant, by nickname", allow)
 	command("revoke", {.Text, .Text}, .Integer, "end a grant of a process that runs", revoke)
 	command("projects.install", {.Text, .Text}, .Record, "ingest, build, verify, and deliver a project module into module_files", projects_install_command, optional_last = true)
+	command("plans.apply", {.Text, .None, .Record}, .Table, "apply a plan after trusted display consent and return the committed generation", plans_apply_command, optional_last = true)
+	command("plans.rollback", {.Integer}, .Table, "roll back to the previous or numbered plan generation after trusted display consent", plans_rollback_command, optional_last = true)
+	plans_commands_attach_types()
 }
 
 @(private = "file")
@@ -291,4 +294,66 @@ help_and_describe_completion_has_no_duplicate_candidates :: proc(t: ^testing.T) 
 		}
 		testing.expectf(t, seen_start && seen_projects_install && seen_let && seen_plans_apply, "%s completion must include both commands and Lex/service topics", owner)
 	}
+}
+
+@(test)
+plans_apply_and_rollback_validate_arguments_and_help_text :: proc(t: ^testing.T) {
+	sync.mutex_lock(&ergonomics_test_lock)
+	defer sync.mutex_unlock(&ergonomics_test_lock)
+	ergonomics_reset_state()
+
+	// Help guides document the 1-step forms without apply_poll / rollback_poll.
+	apply_help := call_run("help", []Value{{kind = .Text, text = "plans.apply"}})
+	testing.expect(t, !failed && apply_help.kind == .Text)
+	testing.expect(t, !strings.contains(apply_help.text, "apply_poll"))
+
+	ergonomics_clear_line()
+	rb_help := call_run("help", []Value{{kind = .Text, text = "plans.rollback"}})
+	testing.expect(t, !failed && rb_help.kind == .Text)
+	testing.expect(t, !strings.contains(rb_help.text, "rollback_poll"))
+
+	// plans.apply: 0, 1, or 4 arguments are refused cleanly (2 or 3 allowed).
+	ergonomics_clear_line()
+	_ = call_run("plans.apply", []Value{{kind = .Text, text = "evening"}})
+	testing.expect(t, failed)
+	testing.expect(t, strings.contains(ergonomics_failure_text(), "2 or 3 arguments, not 1"))
+
+	// plans.apply: empty name refused before connecting plans.
+	ergonomics_clear_line()
+	_ = call_run("plans.apply", []Value{{kind = .Text, text = ""}, {kind = .Integer, integer = 1}})
+	testing.expect(t, failed)
+	testing.expect(t, strings.contains(ergonomics_failure_text(), "plan name is empty"))
+
+	// plans.apply: overlong name (> PLAN_DISPLAY_NAME_BYTES) refused before connecting plans.
+	ergonomics_clear_line()
+	long_name := "a_plan_name_that_is_longer_than_forty_eight_bytes_limit"
+	_ = call_run("plans.apply", []Value{{kind = .Text, text = long_name}, {kind = .Integer, integer = 1}})
+	testing.expect(t, failed)
+	testing.expect(t, strings.contains(ergonomics_failure_text(), "at most 48 bytes"))
+
+	// plans.apply: non-plan / non-table 2nd argument refused before connecting plans.
+	ergonomics_clear_line()
+	_ = call_run("plans.apply", []Value{{kind = .Text, text = "evening"}, {kind = .Integer, integer = 7}})
+	testing.expect(t, failed)
+	testing.expect(t, strings.contains(ergonomics_failure_text(), "must be a plan or a Table of Plan_Entry_Row"))
+
+	// plans.rollback: generation < 1 refused before connecting plans.
+	for bad_gen in ([?]i64{0, -1, min(i64)}) {
+		ergonomics_clear_line()
+		_ = call_run("plans.rollback", []Value{{kind = .Integer, integer = bad_gen}})
+		testing.expect(t, failed)
+		testing.expect(t, strings.contains(ergonomics_failure_text(), "must be at least 1"))
+	}
+
+	// plans.rollback: 2 arguments refused cleanly (0 or 1 allowed).
+	ergonomics_clear_line()
+	_ = call_run("plans.rollback", []Value{{kind = .Integer, integer = 1}, {kind = .Integer, integer = 2}})
+	testing.expect(t, failed)
+	testing.expect(t, strings.contains(ergonomics_failure_text(), "0 or 1 arguments, not 2"))
+
+	// Built-in frontends own plans.apply and plans.rollback with run != nil.
+	apply_cmd := command_find("plans.apply")
+	rb_cmd := command_find("plans.rollback")
+	testing.expect(t, apply_cmd != nil && apply_cmd.run != nil && apply_cmd.optional_last)
+	testing.expect(t, rb_cmd != nil && rb_cmd.run != nil && rb_cmd.optional_last)
 }

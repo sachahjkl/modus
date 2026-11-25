@@ -114,6 +114,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **Acts of an agent that ask each time.** A scope set to ask each time makes each act of the agent wait for the principal in a grant dialog, as the stop of a process or the change of a store. [Design](src/md/features/wide_grants.md)
 - **The screen, the keys and the pointer in the lines of an agent.** An agent sees a frame of the screen, types and points in the windows that the principal picked, and waits for the next frame of a window, each as a line of a step. [Design](src/md/features/agent_code_mode.md)
 - **An agent edits, builds and runs a project.** An agent reads a source of a project, replaces a text in it, builds an output, runs it and reads its log, in a loop of steps, within the stores and the processes that the principal picked. [Design](src/md/features/agent_code_mode.md)
+- **Timed ordinary grants.** Allow ordinary `allow` and powerbox grants to carry an expiration duration so temporary access to a store, network host, or device ends automatically.
+- **Per-grant service budgets.** Enforce optional quotas inside owning services (storage byte limits per store share, network byte quotas, and agent operation counts) without placing data-plane accounting in the kernel.
 
 ## Maybe
 

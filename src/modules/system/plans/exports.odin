@@ -330,6 +330,32 @@ rollback :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Cal
 	return .Succeeded, i64(min(ticket, u64(max(i64))))
 }
 
+// rollback_to shows on the trusted display the difference between the current
+// plan of the principal of the caller and the named generation, and keeps the
+// rollback until the principal decides. It commits nothing until rollback_poll
+// sees an accepted decision.
+//
+// - **generation**: the target applied plan generation number, at least 1.
+//
+// The value is the ticket of the rollback, the serial of the dialog.
+@(export, link_name = "rollback_to")
+rollback_to :: proc "c" (generation: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	principal, failure, allowed := caller_principal(error)
+	if !allowed {
+		return failure, 0
+	}
+	if generation < 1 {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Versions, 1, generation, max(i64), i64(pr.Plan_Refusal.Unknown_Generation))
+	}
+	ticket, refusal := plans_core.rollback_request(&service_state, &service_display, principal, &export_difference, &export_lists, u64(generation), true)
+	if refusal != .None {
+		system.log_fact(.Warning, Plan_Command_Refused{principal = principal, refusal_code = u64(refusal)})
+		return plan_refusal_fail(error, refusal)
+	}
+	system.log_fact(.Info, Plan_Rollback_Asked{ticket = ticket, principal = principal})
+	return .Succeeded, i64(min(ticket, u64(max(i64))))
+}
+
 // rollback_poll reads the decision of the principal on the rollback of a
 // ticket. While the dialog shows, it gives 0 and changes nothing. When the
 // principal accepted, it makes the generation that the dialog showed the

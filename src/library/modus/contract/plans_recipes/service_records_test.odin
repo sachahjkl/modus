@@ -211,7 +211,7 @@ difference_summary_and_rows_carry_the_consent :: proc(t: ^testing.T) {
 	difference := test_difference()
 	testing.expect_value(t, plan_diff_compute(nil, &proposed, &difference), Plan_Refusal.None)
 	summary := plan_difference_summary_of(&difference)
-	consent, consent_ok := plan_consent_of_word(u64(summary.consent_word))
+	consent, consent_ok := plan_consent_of_word(u64(summary.consent))
 	testing.expect(t, consent_ok)
 	testing.expect_value(t, consent, Plan_Consent.Needed)
 	testing.expect_value(t, summary.change_count, i64(1))
@@ -228,7 +228,7 @@ difference_summary_and_rows_carry_the_consent :: proc(t: ^testing.T) {
 	plan_of_rows(2, narrower[:], &next)
 	testing.expect_value(t, plan_diff_compute(&proposed, &next, &difference), Plan_Refusal.None)
 	summary = plan_difference_summary_of(&difference)
-	testing.expect_value(t, summary.consent_word, i64(Plan_Consent.Not_Needed))
+	testing.expect_value(t, summary.consent, Plan_Consent.Not_Needed)
 	testing.expect_value(t, summary.removed_grants, i64(1))
 }
 
@@ -250,9 +250,9 @@ closed_sets_of_the_rows_refuse_unknown_words :: proc(t: ^testing.T) {
 @(test)
 generation_rows_stand_against_the_current_generation :: proc(t: ^testing.T) {
 	record := Applied_Plan_Record{plan_hash = blake3.Hash(row_hash(1)), generation = 2, principal = 1}
-	testing.expect_value(t, plan_generation_row_of(&record, 2).standing_word, i64(Generation_Standing.Current))
-	testing.expect_value(t, plan_generation_row_of(&record, 3).standing_word, i64(Generation_Standing.Earlier))
-	testing.expect_value(t, plan_generation_row_of(&record, 1).standing_word, i64(Generation_Standing.Later))
+	testing.expect_value(t, plan_generation_row_of(&record, 2).standing, Generation_Standing.Current)
+	testing.expect_value(t, plan_generation_row_of(&record, 3).standing, Generation_Standing.Earlier)
+	testing.expect_value(t, plan_generation_row_of(&record, 1).standing, Generation_Standing.Later)
 	record.generation = max(u64)
 	testing.expect_value(t, plan_generation_row_of(&record, 1).generation, max(i64))
 }
@@ -271,7 +271,7 @@ rollback_of_one_generation_has_no_previous :: proc(t: ^testing.T) {
 @(private = "file")
 input_row :: proc(name: string, kind: object_cache.Cache_Object_Kind, tag: u8) -> (row: Recipe_Input_Row) {
 	copy(row.name[:], name)
-	row.kind_word = i64(kind)
+	row.kind = Recipe_Object_Kind_Word(kind)
 	row.hash = row_hash(tag)
 	return row
 }
@@ -279,20 +279,18 @@ input_row :: proc(name: string, kind: object_cache.Cache_Object_Kind, tag: u8) -
 @(test)
 recipe_spec_of_parts_refuses_each_damaged_part :: proc(t: ^testing.T) {
 	spec: Recipe_Spec
-	head := Recipe_Head{output_kind_word = i64(object_cache.Cache_Object_Kind.Tree), builder_hash = row_hash(9)}
+	head := Recipe_Head{output_kind = Recipe_Object_Kind_Word(object_cache.Cache_Object_Kind.Tree), builder_hash = row_hash(9)}
 	inputs := [2]Recipe_Input_Row{input_row("src", .Tree, 1), input_row("lib", .Blob, 2)}
 
 	refusal, _ := recipe_spec_of_parts(nil, inputs[:], nil, &spec)
 	testing.expect_value(t, refusal, Recipe_Refusal.Buffer_Too_Small)
 
-	for field in 0 ..< 3 {
+	for field in 0 ..< 2 {
 		bad := head
 		switch field {
 		case 0:
-			bad.output_kind_word = -1
-		case 1:
 			bad.source_date_unix = -1
-		case 2:
+		case 1:
 			bad.output_block_limit = min(i64)
 		}
 		refusal, _ = recipe_spec_of_parts(&bad, inputs[:], nil, &spec)
@@ -300,10 +298,12 @@ recipe_spec_of_parts_refuses_each_damaged_part :: proc(t: ^testing.T) {
 		testing.expect(t, spec.input_count == 0 && spec.builder_hash == {}, "a refused recipe leaves no spec")
 	}
 
-	unknown_output := head
-	unknown_output.output_kind_word = 3
-	refusal, _ = recipe_spec_of_parts(&unknown_output, inputs[:], nil, &spec)
-	testing.expect_value(t, refusal, Recipe_Refusal.Bad_Output_Kind)
+	for bad_kind in ([?]Recipe_Object_Kind_Word{0, 3, max(Recipe_Object_Kind_Word)}) {
+		unknown_output := head
+		unknown_output.output_kind = bad_kind
+		refusal, _ = recipe_spec_of_parts(&unknown_output, inputs[:], nil, &spec)
+		testing.expect_value(t, refusal, Recipe_Refusal.Bad_Output_Kind)
+	}
 
 	zero_builder := head
 	zero_builder.builder_hash = {}
@@ -328,13 +328,13 @@ recipe_spec_of_parts_refuses_each_damaged_part :: proc(t: ^testing.T) {
 	testing.expect_value(t, bad_index, u32(1))
 
 	damaged = inputs
-	damaged[1].kind_word = -2
+	damaged[1].kind = max(Recipe_Object_Kind_Word)
 	refusal, bad_index = recipe_spec_of_parts(&head, damaged[:], nil, &spec)
 	testing.expect_value(t, refusal, Recipe_Refusal.Bad_Input_Kind)
 	testing.expect_value(t, bad_index, u32(1))
 
 	damaged = inputs
-	damaged[1].kind_word = 7
+	damaged[1].kind = 7
 	refusal, _ = recipe_spec_of_parts(&head, damaged[:], nil, &spec)
 	testing.expect_value(t, refusal, Recipe_Refusal.Bad_Input_Kind)
 
@@ -356,7 +356,7 @@ recipe_spec_of_parts_refuses_each_damaged_part :: proc(t: ^testing.T) {
 
 @(test)
 recipe_from_parts_hashes_as_its_spec_whatever_the_order :: proc(t: ^testing.T) {
-	head := Recipe_Head{output_kind_word = i64(object_cache.Cache_Object_Kind.Tree), builder_hash = row_hash(9)}
+	head := Recipe_Head{output_kind = Recipe_Object_Kind_Word(object_cache.Cache_Object_Kind.Tree), builder_hash = row_hash(9)}
 	inputs := [2]Recipe_Input_Row{input_row("src", .Tree, 1), input_row("lib", .Blob, 2)}
 	swapped := [2]Recipe_Input_Row{inputs[1], inputs[0]}
 	first, second: Recipe_Spec
@@ -371,7 +371,7 @@ recipe_from_parts_hashes_as_its_spec_whatever_the_order :: proc(t: ^testing.T) {
 
 @(private = "file")
 inputs_tree_sandbox :: proc(inputs: []Recipe_Input_Row) -> (sandbox: Builder_Sandbox_Spec, refusal: Recipe_Refusal) {
-	head := Recipe_Head{output_kind_word = i64(object_cache.Cache_Object_Kind.Tree), builder_hash = value_kinds.Hash_Field(inputs_tree_builder_hash())}
+	head := Recipe_Head{output_kind = Recipe_Object_Kind_Word(object_cache.Cache_Object_Kind.Tree), builder_hash = value_kinds.Hash_Field(inputs_tree_builder_hash())}
 	spec: Recipe_Spec
 	refusal, _ = recipe_spec_of_parts(&head, inputs, nil, &spec)
 	if refusal != .None {

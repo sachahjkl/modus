@@ -12,8 +12,8 @@ package plans_recipes
 import "modus:contract/blake3"
 import "modus:contract/chosen_values"
 import "modus:contract/declaration_eval"
-import "modus:contract/enum_word"
 import "modus:contract/object_cache"
+import "modus:contract/plans_recipes_status"
 import "modus:contract/tree_hash"
 import "modus:contract/value_kinds"
 
@@ -62,13 +62,13 @@ PLAN_ROW_TEXT_BYTES :: 40
 PLAN_TEXT_ROWS_MOST :: (PLAN_VALUE_TEXT_BYTES + PLAN_ROW_TEXT_BYTES - 1) / PLAN_ROW_TEXT_BYTES
 #assert(len(Plan_Entry_Row{}.name) == MAX_ENTRY_NAME_BYTES)
 
-// Whether an apply of a difference needs the consent of the principal on the
-// trusted display.
-Plan_Consent :: enum u64 {
-	None       = 0,
-	Not_Needed = 1,
-	Needed     = 2,
-}
+// Re-exported closed status enums and borders from plans_recipes_status.
+Plan_Consent :: plans_recipes_status.Plan_Consent
+Plan_Consent_Word :: plans_recipes_status.Plan_Consent_Word
+Generation_Standing :: plans_recipes_status.Generation_Standing
+Generation_Standing_Word :: plans_recipes_status.Generation_Standing_Word
+plan_consent_of_word :: plans_recipes_status.plan_consent_of_word
+generation_standing_of_word :: plans_recipes_status.generation_standing_of_word
 
 // One row of a difference, as plans.difference gives it.
 Plan_Diff_Row :: struct {
@@ -110,7 +110,7 @@ Plan_Difference_Summary :: struct {
 	changed_values:     i64,
 	added_grants:       i64,
 	removed_grants:     i64,
-	consent_word:       i64,
+	consent:            plans_recipes_status.Plan_Consent,
 	current_plan_hash:  value_kinds.Hash_Field,
 	proposed_plan_hash: value_kinds.Hash_Field,
 }
@@ -123,22 +123,12 @@ Plan_Expected :: struct {
 	current_plan_hash: value_kinds.Hash_Field,
 }
 
-// Where a generation stands against the current generation of its principal.
-// A rollback leaves the later generations: the next apply writes the
-// generation after the highest one.
-Generation_Standing :: enum u64 {
-	None    = 0,
-	Current = 1,
-	Earlier = 2,
-	Later   = 3,
-}
-
 // One generation of the applied plans of a principal, as plans.generations,
 // plans.apply and plans.rollback give it.
 Plan_Generation_Row :: struct {
 	generation:         i64,
 	timestamp_ms:       i64,
-	standing_word:      i64,
+	standing:           plans_recipes_status.Generation_Standing,
 	plan_hash:          value_kinds.Hash_Field,
 	previous_plan_hash: value_kinds.Hash_Field,
 }
@@ -148,7 +138,7 @@ Plan_Generation_Row :: struct {
 // The head of a recipe that recipes.register takes, beside its input table
 // and its argument bytes.
 Recipe_Head :: struct {
-	output_kind_word:   i64,
+	output_kind:        plans_recipes_status.Recipe_Object_Kind_Word,
 	source_date_unix:   i64,
 	output_block_limit: i64,
 	builder_hash:       value_kinds.Hash_Field,
@@ -158,9 +148,9 @@ Recipe_Head :: struct {
 
 // One input of a recipe, as a row of the table that recipes.register takes.
 Recipe_Input_Row :: struct {
-	kind_word: i64,
-	hash:      value_kinds.Hash_Field,
-	name:      [64]u8,
+	kind: plans_recipes_status.Recipe_Object_Kind_Word,
+	hash: value_kinds.Hash_Field,
+	name: [64]u8,
 }
 
 #assert(size_of(Recipe_Input_Row) == 104)
@@ -172,20 +162,20 @@ Recipe_Reference :: struct {
 
 // One build, as recipes.build and recipes.builds give it.
 Recipe_Build_Row :: struct {
-	outcome_word:     i64,
-	refusal_word:     i64,
-	output_kind_word: i64,
-	mode_word:        i64,
-	recipe_hash:      value_kinds.Hash_Field,
-	output_hash:      value_kinds.Hash_Field,
+	outcome:     plans_recipes_status.Recipe_Build_Outcome_Word,
+	refusal:     plans_recipes_status.Recipe_Refusal_Word,
+	output_kind: plans_recipes_status.Recipe_Object_Kind_Word,
+	mode:        plans_recipes_status.Build_Mode_Word,
+	recipe_hash: value_kinds.Hash_Field,
+	output_hash: value_kinds.Hash_Field,
 }
 
 #assert(size_of(Recipe_Build_Row) == 96)
 
 // One realisation of the cache of the recipes service.
 Realisation_Row :: struct {
-	origin_word:       i64,
-	output_kind_word:  i64,
+	origin:            plans_recipes_status.Provenance_Origin_Word,
+	output_kind:       plans_recipes_status.Recipe_Object_Kind_Word,
 	recipe_hash:       value_kinds.Hash_Field,
 	output_hash:       value_kinds.Hash_Field,
 	signer_public_key: value_kinds.Hash_Field,
@@ -402,29 +392,10 @@ plan_difference_summary_of :: proc "contextless" (difference: ^Plan_Difference) 
 		changed_values     = i64(difference.changed_values),
 		added_grants       = i64(difference.added_grants_count),
 		removed_grants     = i64(difference.removed_grants_count),
-		consent_word       = i64(consent),
+		consent            = consent,
 		current_plan_hash  = value_kinds.Hash_Field(difference.current_plan_hash),
 		proposed_plan_hash = value_kinds.Hash_Field(difference.proposed_plan_hash),
 	}
-}
-
-// plan_consent_of_word is the border of the consent word of a summary.
-plan_consent_of_word :: proc "contextless" (word: u64) -> (consent: Plan_Consent, ok: bool) {
-	member := enum_word.member_of_word(Plan_Consent, word) or_return
-	if member == .None {
-		return .None, false
-	}
-	return member, true
-}
-
-// generation_standing_of_word is the border of the standing word of a
-// generation row.
-generation_standing_of_word :: proc "contextless" (word: u64) -> (standing: Generation_Standing, ok: bool) {
-	member := enum_word.member_of_word(Generation_Standing, word) or_return
-	if member == .None {
-		return .None, false
-	}
-	return member, true
 }
 
 // plan_generation_row_of gives the row of one applied generation against the
@@ -439,7 +410,7 @@ plan_generation_row_of :: proc "contextless" (record: ^Applied_Plan_Record, curr
 	return {
 		generation         = i64(min(record.generation, u64(max(i64)))),
 		timestamp_ms       = i64(min(record.timestamp_ms, u64(max(i64)))),
-		standing_word      = i64(standing),
+		standing           = standing,
 		plan_hash          = value_kinds.Hash_Field(record.plan_hash),
 		previous_plan_hash = value_kinds.Hash_Field(record.previous_plan_hash),
 	}
@@ -453,7 +424,7 @@ recipe_spec_of_parts :: proc "contextless" (head: ^Recipe_Head, rows: []Recipe_I
 		return .Buffer_Too_Small, 0
 	}
 	out^ = {}
-	if head.output_kind_word < 0 || head.source_date_unix < 0 || head.output_block_limit < 0 {
+	if head.source_date_unix < 0 || head.output_block_limit < 0 {
 		return .Bad_Head_Value, 0
 	}
 	if len(rows) > MAX_RECIPE_INPUTS {
@@ -463,7 +434,7 @@ recipe_spec_of_parts :: proc "contextless" (head: ^Recipe_Head, rows: []Recipe_I
 		return .Arguments_Too_Large, 0
 	}
 	out.builder_hash = blake3.Hash(head.builder_hash)
-	output_kind, output_kind_ok := object_cache.cache_object_kind_of_word(u64(head.output_kind_word))
+	output_kind, output_kind_ok := object_cache.cache_object_kind_of_word(u64(head.output_kind))
 	if !output_kind_ok {
 		out^ = {}
 		return .Bad_Output_Kind, 0
@@ -478,8 +449,8 @@ recipe_spec_of_parts :: proc "contextless" (head: ^Recipe_Head, rows: []Recipe_I
 			out^ = {}
 			return .Invalid_Input_Name, u32(index)
 		}
-		input_kind, input_kind_ok := object_cache.cache_object_kind_of_word(u64(row.kind_word))
-		if row.kind_word < 0 || !input_kind_ok {
+		input_kind, input_kind_ok := object_cache.cache_object_kind_of_word(u64(row.kind))
+		if !input_kind_ok {
 			out^ = {}
 			return .Bad_Input_Kind, u32(index)
 		}
@@ -502,12 +473,12 @@ recipe_spec_of_parts :: proc "contextless" (head: ^Recipe_Head, rows: []Recipe_I
 // recipe_build_row_of gives the row of one build result.
 recipe_build_row_of :: proc "contextless" (result: ^Recipe_Build_Result, mode: Build_Mode) -> Recipe_Build_Row {
 	return {
-		outcome_word     = i64(result.outcome),
-		refusal_word     = i64(result.refusal),
-		output_kind_word = i64(result.output_kind),
-		mode_word        = i64(mode),
-		recipe_hash      = value_kinds.Hash_Field(result.recipe_hash),
-		output_hash      = value_kinds.Hash_Field(result.output_hash),
+		outcome     = Recipe_Build_Outcome_Word(result.outcome),
+		refusal     = Recipe_Refusal_Word(result.refusal),
+		output_kind = Recipe_Object_Kind_Word(result.output_kind),
+		mode        = Build_Mode_Word(mode),
+		recipe_hash = value_kinds.Hash_Field(result.recipe_hash),
+		output_hash = value_kinds.Hash_Field(result.output_hash),
 	}
 }
 
@@ -577,8 +548,8 @@ inputs_tree_build :: proc "contextless" (sandbox: ^Builder_Sandbox_Spec, output:
 // realisation_row_of gives the row of one realisation and its origin word.
 realisation_row_of :: proc "contextless" (record: ^object_cache.Realisation_Record, origin_word: u64) -> Realisation_Row {
 	return {
-		origin_word       = i64(origin_word),
-		output_kind_word  = i64(record.output_kind),
+		origin            = Provenance_Origin_Word(origin_word),
+		output_kind       = Recipe_Object_Kind_Word(record.output_kind),
 		recipe_hash       = value_kinds.Hash_Field(record.recipe_hash),
 		output_hash       = value_kinds.Hash_Field(record.output_hash),
 		signer_public_key = value_kinds.Hash_Field(record.signer_public_key),

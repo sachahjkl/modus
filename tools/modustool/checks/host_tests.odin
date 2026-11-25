@@ -367,6 +367,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_PUBLIC + "/system",
 	foundation.SOURCE_FOLDER_PUBLIC + "/twins",
 	foundation.SOURCE_FOLDER_INTERNAL + "/kernel_events/kernel_events_rounds",
+	foundation.SOURCE_FOLDER_CONTRACT + "/plans_recipes_status",
 	foundation.SOURCE_FOLDER_CONTRACT + "/tpm_service",
 	foundation.SOURCE_FOLDER_PUBLIC + "/storage",
 	foundation.SOURCE_FOLDER_INTERNAL + "/compositor/bar",
