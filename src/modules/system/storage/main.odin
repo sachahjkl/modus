@@ -157,12 +157,21 @@ connection_store :: proc "contextless" (ring_memory: system.Handle, steps: int) 
 	return {}, false, false
 }
 
-// caller_of gives the caller of the export that runs. A share whose maker
-// lost its grant, or left, ends here.
-caller_of :: proc "contextless" () -> (caller: Caller) {
+// caller_of fills caller with the caller of the export that runs. A share
+// whose maker lost its grant, or left, ends here. Written through a pointer
+// so Caller (over 8 KiB) is never copied or scalarized by value.
+caller_of :: proc "contextless" (caller: ^Caller) {
+	caller.connection = nil
+	caller.store = {}
+	caller.acts_for_principal = false
+	caller.principal = 0
+	caller.read_only = false
+	caller.erases_versions = false
+	caller.recounts = false
+	caller.depth = 0
 	connection := system.service_caller()
 	if connection == nil {
-		return {}
+		return
 	}
 	caller.connection = connection
 	item := share_of(connection)
@@ -177,19 +186,18 @@ caller_of :: proc "contextless" () -> (caller: Caller) {
 		// A share never has it: the field stays false below.
 		caller.erases_versions = connection.grant & isolated.CALLER_ERASES_VERSIONS != 0
 		caller.recounts = connection.grant & isolated.CALLER_RECOUNTS != 0
-		return caller
+		return
 	}
 	store, _, found := connection_store(item.maker, 0)
 	if !found || store.limit == 0 {
 		share_end(item)
 		caller.connection = nil
-		return caller
+		return
 	}
 	caller.store = {name = store.name, limit = store.limit, share_limit = item.block_limit}
 	caller.read_only = item.read_only
 	caller.depth = item.depth
-	caller.path = item.path
-	return caller
+	copy(caller.path[:item.depth], item.path[:item.depth])
 }
 
 // reaches_whole_store says if the root of the connection of a caller is the
@@ -232,21 +240,25 @@ path_names :: proc "contextless" (path: ^Path) -> []Entry_Name {
 	return path.names[:path.depth]
 }
 
-// place_path gives the path of a place of the caller. It refuses a number
-// that is not a place of this connection.
-place_path :: proc "contextless" (caller: ^Caller, place: i64, error: ^errors.Error_Record, argument: i64) -> (path: Path, ok: bool) {
+// place_path fills path with the path of a place of the caller. It refuses
+// a number that is not a place of this connection. Written through a
+// pointer so Path (over 8 KiB) is never returned by value.
+place_path :: proc "contextless" (caller: ^Caller, place: i64, path: ^Path, error: ^errors.Error_Record, argument: i64) -> bool {
+	path.store = {}
+	path.own = false
+	path.depth = 0
 	if place == 0 {
 		path.store = caller.store
 		path.own = true
 		path.depth = caller.depth
 		copy(path.names[:], caller.path[:caller.depth])
-		return path, true
+		return true
 	}
 	index := int(place & 0xFFFF_FFFF) - 1
 	generation := u32(u64(place) >> 32)
 	if place < 0 || index < 0 || index >= PLACE_CAPACITY || places[index].holder == 0 || places[index].holder != caller.connection.ring_memory || places[index].generation != generation {
 		refuse(error, .Argument_Refused, .Absent, .Places, argument, place)
-		return {}, false
+		return false
 	}
 	item := &places[index]
 	name := system.name_of(item.store[:])
@@ -258,13 +270,13 @@ place_path :: proc "contextless" (caller: ^Caller, place: i64, error: ^errors.Er
 		store_index := store_find(name)
 		if store_index < 0 {
 			refuse(error, .Argument_Refused, .Absent, .Places, argument, place)
-			return {}, false
+			return false
 		}
 		path.store = {name = name, limit = store_cell(store_index).limit}
 	}
 	path.depth = item.depth
 	copy(path.names[:], item.path[:path.depth])
-	return path, true
+	return true
 }
 
 // may_name_store says if a caller may open a place on a store that is not
@@ -358,32 +370,32 @@ Named :: struct {
 	name:   Kept_Name,
 }
 
-named_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_Record, place_argument: i64, change: bool) -> (named: Named, result: call_outcome.Call_Outcome) {
+named_of :: proc "contextless" (place: i64, name: string, named: ^Named, error: ^errors.Error_Record, place_argument: i64, change: bool) -> call_outcome.Call_Outcome {
 	if refused, refusal := disk_unopened_refusal(error); refused {
-		return named, refusal
+		return refusal
 	}
-	named.caller = caller_of()
+	caller_of(&named.caller)
 	if change {
 		if refused, refusal := change_refusal(&named.caller, error); refused {
-			return named, refusal
+			return refusal
 		}
 	} else if named.caller.connection == nil {
-		return named, refuse(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
+		return refuse(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
-	ok: bool
-	if named.path, ok = place_path(&named.caller, place, error, place_argument); !ok {
-		return named, .Argument_Refused
+	if !place_path(&named.caller, place, &named.path, error, place_argument) {
+		return .Argument_Refused
 	}
 	if named.path.own && named.path.store.limit == 0 {
-		return named, refuse(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
+		return refuse(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
 	if change && !named.path.own {
-		return named, refuse(error, .Grant_Or_Right_Missing, .No_Grant, .Store, place_argument)
+		return refuse(error, .Grant_Or_Right_Missing, .No_Grant, .Store, place_argument)
 	}
+	ok: bool
 	if named.name, ok = name_keep(name, error, place_argument + 1); !ok {
-		return named, .Argument_Refused
+		return .Argument_Refused
 	}
-	return named, .Succeeded
+	return .Succeeded
 }
 
 // ---------------------------------------------------------------------
@@ -403,8 +415,8 @@ named_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_R
 // - `Damaged` (Data_Damaged, unit Stores: a node of a tree of the store has a wrong check; unit Counts: the counts of the store are not trusted after a fault of the service).
 @(export, link_name = "write")
 write :: proc "c" (place: i64, name: ^string, data: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	named, refused := named_of(place, name^, error, 1, true)
-	if refused != .Succeeded {
+	named: Named
+	if refused := named_of(place, name^, &named, error, 1, true); refused != .Succeeded {
 		return refused, 0
 	}
 	value, outcome = object_change(named.caller.store, path_names(&named.path), named.name, .Write, transmute([]u8)data^, {}, reaches_whole_store(&named.caller), error, 2)
@@ -422,8 +434,8 @@ write :: proc "c" (place: i64, name: ^string, data: ^string, error: ^errors.Erro
 // - `Damaged` (Data_Damaged: a block of the object or a node of a tree of the store has a wrong check: the service does not give its bytes).
 @(export, link_name = "read")
 read_export :: proc "c" (place: i64, name: ^string, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	ranged, refused := ranged_of(place, name^, error, false)
-	if refused != .Succeeded {
+	ranged: Ranged
+	if refused := ranged_of(place, name^, &ranged, error, false); refused != .Succeeded {
 		return refused, 0
 	}
 	size := ranged_size(&ranged)
@@ -441,8 +453,8 @@ read_export :: proc "c" (place: i64, name: ^string, result: ^[]u8, error: ^error
 // - those of [read](storage.read), but `Device` and `Damaged` for a block of the object: size reads the tree only.
 @(export, link_name = "size")
 size :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	ranged, refused := ranged_of(place, name^, error, false)
-	if refused != .Succeeded {
+	ranged: Ranged
+	if refused := ranged_of(place, name^, &ranged, error, false); refused != .Succeeded {
 		return refused, 0
 	}
 	return .Succeeded, i64(ranged_size(&ranged))
@@ -455,8 +467,8 @@ size :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> (ou
 // - those of [write](storage.write), and `Absent` (Nothing_Has_That_Name, the tree has no entry with this name).
 @(export, link_name = "remove")
 remove :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	named, refused := named_of(place, name^, error, 1, true)
-	if refused != .Succeeded {
+	named: Named
+	if refused := named_of(place, name^, &named, error, 1, true); refused != .Succeeded {
 		return refused, 0
 	}
 	value, outcome = entry_remove(named.caller.store, path_names(&named.path), named.name, error)
@@ -482,12 +494,13 @@ Add_Row_Export :: struct {
 // - `Exists` (Name_Already_Taken, a name exists, or two rows have one name: found is the row).
 @(export, link_name = "add")
 add :: proc "c" (place: i64, rows: ^system.Table_To_Read(Add_Row_Export), names: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	caller := caller_of()
+	caller: Caller
+	caller_of(&caller)
 	if refused, result := change_refusal(&caller, error); refused {
 		return result, 0
 	}
-	path, ok := place_path(&caller, place, error, 1)
-	if !ok {
+	path: Path
+	if !place_path(&caller, place, &path, error, 1) {
 		return .Argument_Refused, 0
 	}
 	if !path.own {
@@ -512,8 +525,8 @@ add :: proc "c" (place: i64, rows: ^system.Table_To_Read(Add_Row_Export), names:
 // - `Device`.
 @(export, link_name = "open")
 open :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	named, refused := named_of(place, name^, error, 1, false)
-	if refused != .Succeeded {
+	named: Named
+	if refused := named_of(place, name^, &named, error, 1, false); refused != .Succeeded {
 		return refused, 0
 	}
 	if named.path.depth >= NESTING_LIMIT {
@@ -549,11 +562,13 @@ open :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> (ou
 // - `Absent` (Argument_Refused, unit Places).
 @(export, link_name = "close")
 close :: proc "c" (place: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	caller := caller_of()
+	caller: Caller
+	caller_of(&caller)
 	if caller.connection == nil || place == 0 {
 		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Places, 1, place)
 	}
-	if _, ok := place_path(&caller, place, error, 1); !ok {
+	ignored: Path
+	if !place_path(&caller, place, &ignored, error, 1) {
 		return .Argument_Refused, 0
 	}
 	item := &places[int(place & 0xFFFF_FFFF) - 1]
@@ -585,12 +600,13 @@ list :: proc "c" (place: i64, after: ^string, rows: ^system.Table_To_Append(List
 	if refused, result := disk_unopened_refusal(error); refused {
 		return result, 0
 	}
-	caller := caller_of()
+	caller: Caller
+	caller_of(&caller)
 	if caller.connection == nil || caller.store.limit == 0 {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
-	path, ok := place_path(&caller, place, error, 1)
-	if !ok {
+	path: Path
+	if !place_path(&caller, place, &path, error, 1) {
 		return .Argument_Refused, 0
 	}
 	cursor: Entry_Name
@@ -658,12 +674,12 @@ list :: proc "c" (place: i64, after: ^string, rows: ^system.Table_To_Append(List
 // - `Bad_Value` (Argument_Refused, unit Trees: `to_place` is inside the tree that moves).
 @(export, link_name = "rename")
 rename :: proc "c" (place: i64, name: ^string, to_place: i64, to_name: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	named, refused := named_of(place, name^, error, 1, true)
-	if refused != .Succeeded {
+	named: Named
+	if refused := named_of(place, name^, &named, error, 1, true); refused != .Succeeded {
 		return refused, 0
 	}
-	to_path, ok := place_path(&named.caller, to_place, error, 3)
-	if !ok {
+	to_path: Path
+	if !place_path(&named.caller, to_place, &to_path, error, 3) {
 		return .Argument_Refused, 0
 	}
 	if !to_path.own {
@@ -698,7 +714,8 @@ share :: proc "c" (place: i64, read_only: i64, block_limit: i64, result: ^[]Shar
 	if refused, refusal := disk_unopened_refusal(error); refused {
 		return refusal, 0
 	}
-	caller := caller_of()
+	caller: Caller
+	caller_of(&caller)
 	if caller.connection == nil || caller.store.limit == 0 {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
@@ -717,8 +734,8 @@ share :: proc "c" (place: i64, read_only: i64, block_limit: i64, result: ^[]Shar
 	case .Exceeds_Store_Limit:
 		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Blocks, 3, block_limit, i64(caller.store.limit))
 	}
-	path, ok := place_path(&caller, place, error, 1)
-	if !ok {
+	path: Path
+	if !place_path(&caller, place, &path, error, 1) {
 		return .Argument_Refused, 0
 	}
 	if !path.own {
@@ -809,7 +826,8 @@ share_end :: proc "contextless" (item: ^Share) {
 // - `Absent` (Nothing_Has_That_Name, unit Connections: no share of this connection has this number).
 @(export, link_name = "unshare")
 unshare :: proc "c" (number: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	caller := caller_of()
+	caller: Caller
+	caller_of(&caller)
 	if caller.connection == nil || number < 1 || number > SHARE_CAPACITY {
 		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Connections, 1, number)
 	}
@@ -838,7 +856,8 @@ USAGE_NOT_COUNTED :: answers.USAGE_NOT_COUNTED
 // usage gives the counts of the store of the caller, in one row. Through a share of a tree, it gives the counts of that tree only: the objects, the trees and the versions under it, and its blocks (the nodes of its trees, the blocks of the current state of each object, the index and the leaves of their versions), with the limit of the store and no removal; a tree that needs more reads to count than SHARE_USAGE_READ_LIMIT, or that has a wrong block, gives USAGE_NOT_COUNTED in objects, trees, versions and blocks. A share never sees a count of the whole store: it would tell the holder what the rest of the store holds.
 @(export, link_name = "usage")
 usage :: proc "c" (result: ^[]Usage) -> i64 {
-	caller := caller_of()
+	caller: Caller
+	caller_of(&caller)
 	row: Usage
 	if caller.connection != nil && !disk_opened {
 		// A disk that went silent before the open: no count is known.
@@ -881,7 +900,8 @@ stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> (outcome: cal
 	if refused, refusal := disk_unopened_refusal(error); refused {
 		return refusal, 0
 	}
-	caller := caller_of()
+	caller: Caller
+	caller_of(&caller)
 	if !caller.acts_for_principal {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
@@ -943,7 +963,8 @@ recount :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call
 	if refused, refusal := disk_unopened_refusal(error); refused {
 		return refusal, 0
 	}
-	caller := caller_of()
+	caller: Caller
+	caller_of(&caller)
 	if !caller.recounts {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Count_Recount)
 	}
@@ -965,7 +986,8 @@ open_store :: proc "c" (store: ^string, error: ^errors.Error_Record) -> (outcome
 	if refused, refusal := disk_unopened_refusal(error); refused {
 		return refusal, 0
 	}
-	caller := caller_of()
+	caller: Caller
+	caller_of(&caller)
 	if caller.connection == nil {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
@@ -1018,8 +1040,8 @@ Byte_Range :: struct {
 // - `Device`.
 @(export, link_name = "versions")
 versions :: proc "c" (place: i64, name: ^string, result: ^[]Version, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	named, refused := named_of(place, name^, error, 1, false)
-	if refused != .Succeeded {
+	named: Named
+	if refused := named_of(place, name^, &named, error, 1, false); refused != .Succeeded {
 		return refused, 0
 	}
 	store_index, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
@@ -1050,8 +1072,8 @@ versions :: proc "c" (place: i64, name: ^string, result: ^[]Version, error: ^err
 // - `Damaged` (Data_Damaged, a block of this version has a wrong check).
 @(export, link_name = "version")
 version :: proc "c" (place: i64, name: ^string, generation: i64, offset: i64, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	named, refused := named_of(place, name^, error, 1, false)
-	if refused != .Succeeded {
+	named: Named
+	if refused := named_of(place, name^, &named, error, 1, false); refused != .Succeeded {
 		return refused, 0
 	}
 	store_index, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
@@ -1083,8 +1105,8 @@ version :: proc "c" (place: i64, name: ^string, generation: i64, offset: i64, re
 // - those of version, and those of write.
 @(export, link_name = "restore")
 restore :: proc "c" (place: i64, name: ^string, generation: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	named, refused := named_of(place, name^, error, 1, false)
-	if refused != .Succeeded {
+	named: Named
+	if refused := named_of(place, name^, &named, error, 1, false); refused != .Succeeded {
 		return refused, 0
 	}
 	if named.caller.read_only {
@@ -1115,8 +1137,8 @@ restore :: proc "c" (place: i64, name: ^string, generation: i64, error: ^errors.
 // - new_name is argument 3.
 @(export, link_name = "clone")
 clone :: proc "c" (place: i64, name: ^string, new_name: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	named, refused := named_of(place, name^, error, 1, false)
-	if refused != .Succeeded {
+	named: Named
+	if refused := named_of(place, name^, &named, error, 1, false); refused != .Succeeded {
 		return refused, 0
 	}
 	if named.caller.read_only {
@@ -1145,8 +1167,8 @@ clone :: proc "c" (place: i64, name: ^string, new_name: ^string, error: ^errors.
 // - first and second are arguments 3 and 4.
 @(export, link_name = "compare")
 compare :: proc "c" (place: i64, name: ^string, first: i64, second: i64, result: ^[]Byte_Range, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	named, refused := named_of(place, name^, error, 1, false)
-	if refused != .Succeeded {
+	named: Named
+	if refused := named_of(place, name^, &named, error, 1, false); refused != .Succeeded {
 		return refused, 0
 	}
 	store_index, object, located := object_locate(named.path.store.name, path_names(&named.path), named.name, error, 2)
@@ -1263,8 +1285,8 @@ Erase_Measure :: struct {
 // - `Damaged` (Data_Damaged, unit Stores or Counts, as for write).
 @(export, link_name = "erase_versions")
 erase_versions :: proc "c" (place: i64, name: ^string, result: ^[]Erase_Measure, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	named, refused := named_of(place, name^, error, 1, true)
-	if refused != .Succeeded {
+	named: Named
+	if refused := named_of(place, name^, &named, error, 1, true); refused != .Succeeded {
 		return refused, 0
 	}
 	// A share is lent for the bytes of one tree, and ends no history.
