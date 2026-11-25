@@ -121,6 +121,9 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "palette_no_provider.png", group = .Desktop, guide = "docs/DESIGN.md", caption = "The palette after the console lost its grant palette: the count says that it has no commands, and shutdown is not found."},
 	{file = "pointers_system.png", group = .Desktop, guide = "docs/POINTERS.md", caption = "The pointer pictures: each shape of the pointer theme of the system, in the dark form and in the light form at 24 and 48 pixels, with the lines of its hot spot."},
 	{file = "pointer_text.png", group = .Desktop, guide = "docs/POINTERS.md", caption = "The pointer over the text of the console takes the shape of a text cursor."},
+	{file = "assistant_reply.png", group = .Desktop, guide = "docs/ASSISTANT.md", caption = "The assistant runs a read-only call through its grant, shows the table of processes from monitor, and prints its reply."},
+	{file = "assistant_act_dialog.png", group = .Desktop, guide = "docs/ASSISTANT.md", caption = "A write action from the assistant opens the trusted act dialog of the compositor so the principal decides with Allow once or Refuse."},
+	{file = "assistant_refused.png", group = .Desktop, guide = "docs/ASSISTANT.md", caption = "The assistant records a refused action without running it, and refuses a malformed reply at the border before any action runs."},
 
 	// The console and the terminal.
 	{file = "console.png", group = .Console, guide = "docs/CONSOLE.md", caption = "The console at the start of the machine, with the window of life that one of its lines started."},
@@ -203,6 +206,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "scroll_bar.png", group = .Interface, guide = "docs/DESIGN.md", caption = "The scroll bar of the console with the pointer over its arrow button: the bar is lit, and the button is blue."},
 	{file = "interface_damage.png", group = .Interface, guide = "docs/INTERFACE.md", caption = "The damage of a frame of the interface package: an outline shows the rectangle that the frame draws again."},
 	{file = "interface_font.png", group = .Interface, guide = "docs/FONTS.md", caption = "The interface font, B612 Regular and Bold: proportional, with its pairs, at three positions in a pixel, and digits of one advance."},
+	{file = "interface_font_script_fonts.png", group = .Interface, guide = "docs/FONTS.md", caption = "The interface font with the script font set installed: Hebrew, Arabic, Thai, Devanagari, ideographs and emoji drawn through the fallback chain."},
 	{file = "font_vector.png", group = .Interface, guide = "docs/FONTS.md", caption = "The text of the system is a vector font with subpixel bands: Paper Mono by default, changed to Spleen 8x16 and back while every window runs."},
 	{file = "font_spleen.png", group = .Interface, guide = "docs/FONTS.md", caption = "The setting of the font on Spleen 8x16: every window draws its text again in the bitmap font."},
 	{file = "font_without_grid_fit.png", group = .Interface, guide = "docs/FONTS.md", caption = "The setting of the grid fit turned off: the vector font drawn from its second glyph cache."},
