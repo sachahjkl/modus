@@ -117,6 +117,9 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **Timed ordinary grants.** Allow ordinary `allow` and powerbox grants to carry an expiration duration so temporary access to a store, network host, or device ends automatically.
 - **Per-grant service budgets.** Enforce optional quotas inside owning services (storage byte limits per store share, network byte quotas, and agent operation counts) without placing data-plane accounting in the kernel.
 - **FIDO2 and smartcard hardware keys.** An isolated hardware-key device service speaks CTAP2/FIDO2 and smartcard (PIV, OpenPGP) protocols so a principal can prove unlock, approve wide grants, sign realisations, and authenticate in a browser without exposing private keys to the system.
+- **Signed plans from an enrolled authority key.** Principal 0 can enroll an organization signing key once at provisioning so fleet administration tools apply signed plans remotely within scoped fields without local keyboard consent on each machine.
+- **Remote TPM attestation of active plan and roles.** A machine produces a signed TPM quote covering boot measurements, the active plan hash, and the running role holders so an external fleet controller verifies machine state cryptographically.
+- **Machine-level grant and signer policy locks.** The plan of principal 0 can lock allowed object-cache signer keys and cap the grants a session can approve, so administrative policies enforce module provenance and network bounds through the existing plan mechanism.
 
 ## Maybe
 
