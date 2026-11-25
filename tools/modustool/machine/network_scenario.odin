@@ -24,7 +24,8 @@ scenario_network := [?]Step {
 	// the wait the sentence.
 	{kind = .Fact, process = "frame", fact = "frame_service.Device_Ready_Link_Up", condition = "hardware_address = \"52:54:00:12:34:56\"", any_order = true},
 	{kind = .Wait, text = "frame: ok, the hardware address 52:54:00:12:34:56, the link is up", any_order = true},
-	{kind = .Wait, text = "root: started network"},
+	// root logs "started network" concurrently with network logging its ready line.
+	{kind = .Wait, text = "root: started network", any_order = true},
 	{kind = .Wait, text = "network: ok, the hardware address 52:54:00:12:34:56, the link is up", any_order = true},
 	// The hostile OFFER of the peer (peer_dhcp.odin), then the address.
 	{kind = .Wait, text = "network: refused a DHCP reply (a router outside): nothing changed", any_order = true},
