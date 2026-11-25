@@ -25,7 +25,7 @@ This guide is Part 2 of the hands-on `modus` course (following `docs/COURSE.md`)
 
 `compile_c(name, source)` compiles a freestanding C source string directly inside `modus` using the boot image's `c_compiler` and `assemble` modules, validates the resulting `.module` binary, spawns a zero-grant isolated child process, and binds its exports to a plain variable name:
 
-```
+```lex
 a = compile_c("adder", "long add(long x, long y) { return x + y; }")
 help(a)
 a.add(19, 23)
@@ -44,7 +44,7 @@ What happens step by step:
 
 When a program grows past one expression, create a dedicated project store and iterate with `edit`, `build`, and `run`:
 
-```
+```lex
 projects.new("hello")
 edit("hello", "hello.c")
 ```
@@ -57,7 +57,7 @@ long main(void) { return 42; }
 
 When you pause typing, `edit` commits the updated source file to the `"hello"` store as a new copy-on-write generation automatically. Switch back to the console and build and run it:
 
-```
+```lex
 build("hello", "hello.c")
 run("hello")
 build("hello", "hello.c")
@@ -75,7 +75,7 @@ What each step demonstrates:
 
 For multi-file projects, explicit builder versions, and cacheable builds shared across machines, describe the project in `project.lex` using pure Lex (`docs/LEX.md`). Open a project's declaration in the editor with `edit("calc", "project.lex")`:
 
-```
+```lex
 let
   default_build = {
     source    = here(),
@@ -114,7 +114,7 @@ Every piece has one explicit role:
 
 Once a project has `project.lex`, the console connects to `recipes` and drives content-addressed ingestion, sandboxed building, and provenance inspection through typed records:
 
-```
+```lex
 tree = "calc" |> recipes.ingest_tree
 tree
 pkg = "calc" |> recipes.build_project("build_only")
@@ -136,7 +136,7 @@ The `recipes` service supports per-principal Ed25519 publisher keys and signed Q
 
 ### Inspecting your publisher public key
 
-```
+```lex
 recipes.publisher_key()
 ```
 
@@ -144,7 +144,7 @@ recipes.publisher_key()
 
 ### Publishing a signed closure over QUIC
 
-```
+```lex
 pub = pkg.recipe |> recipes.publish
 pub
 ```
@@ -160,7 +160,7 @@ pub
 
 With the realisation published on the QUIC cache server, run `"verify"` mode:
 
-```
+```lex
 verified = "calc" |> recipes.build_project("verify")
 verified
 recipes.status()
@@ -176,7 +176,7 @@ recipes.collect_garbage()
 
 Deliver a verified output tree entry (`"module"`) into `module_files` and run it directly in a zero-grant call host:
 
-```
+```lex
 mod = pkg.output |> recipes.deliver_module("module", "calc")
 run("calc")
 ```
@@ -186,7 +186,7 @@ run("calc")
 
 For everyday workflows, one command combines ingestion, evaluation, cache pull or local build, provenance check, format validation, and delivery:
 
-```
+```lex
 projects.install("calc", "prefer_cache")
 ```
 
@@ -196,7 +196,7 @@ projects.install("calc", "prefer_cache")
 
 Every project file edited in `edit` is stored in a copy-on-write store where each pause appends an immutable, timestamped generation:
 
-```
+```lex
 edit("hello", "hello.c")
 ```
 
