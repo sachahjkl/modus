@@ -340,16 +340,15 @@ range_all_frameless :: proc "contextless" (region: ^Region, first: u64, count: u
 
 // region_prefault_range allocates and zeroes frames for every frameless
 // committed page in [first, first + count) of a non-contiguous region,
-// taking aligned 2 MiB runs when available and permitted by quota, zeroing
-// outside frame_lock, and counting fallbacks.
+// taking aligned 1 GiB or 2 MiB runs when available and permitted by quota,
+// zeroing outside frame_lock, and counting fallbacks.
 //
-// Holding region_lock across the frameless check, the frame_lock run take +
-// reserved_pages update (preserving Region -> Frame lock order), zeroing,
-// and slot installation prevents any concurrent fault or decommit from
-// racing on the range and double-subtracting reserved_pages.
-//
-// 1 GiB run prefaulting waits for bounded resumable zeroing steps across
-// yields so no kernel section zeroes 1 GiB with interrupts off.
+// For 1 GiB runs, zeroing runs in bounded ZERO_SLICE_BYTES (2 MiB) chunks via
+// frame_runs.Zero_Run_Progress with region_lock and frame_lock released and an
+// interrupt_window() opened between slices so no kernel section holds
+// interrupts off across 1 GiB. Each 2 MiB slice installs its slots as soon as
+// it is zeroed, and once all 512 slices complete intact, slot 0 promotes to
+// SLOT_RUN_1G.
 region_prefault_range :: proc "contextless" (region: ^Region, first: u64, count: u64) {
 	if region.contiguous || count == 0 {
 		return
@@ -358,7 +357,116 @@ region_prefault_range :: proc "contextless" (region: ^Region, first: u64, count:
 	region_lock := &region_locks[region_index]
 	end := first + count
 	for offset := first; offset < end; {
-		wanted := frame_runs_arch_enabled() ? frame_runs.best_run_for_range(offset, end - offset, false) : .Pages_4K
+		wanted := frame_runs_arch_enabled() ? frame_runs.best_run_for_range(offset, end - offset, frame_runs_table.supports_1g) : .Pages_4K
+		if wanted == .Run_1G {
+			lock_take(region_lock, .Region)
+			if range_all_frameless(region, offset, frame_runs.RUN_1G_PAGES) {
+				lock_take(&frame_lock, .Frame)
+				b := region.budget
+				phys, ok := frames_take_run_1g_held(b, budgets[b].quota_pages)
+				if ok {
+					reserved_pages -= frame_runs.RUN_1G_PAGES
+				} else {
+					frame_runs.note_fallback(&frame_runs_table, .Run_1G)
+				}
+				lock_free(&frame_lock, .Frame)
+				if ok {
+					progress, init_refusal := frame_runs.zero_run_init(phys, frame_runs.RUN_1G_PAGES * PAGE_SIZE, frame_runs.ZERO_SLICE_BYTES)
+					if init_refusal == .None {
+						// Clear SLOT_COMMITTED on unzeroed uncommitted slots while
+						// region_lock is released between slices so concurrent faults
+						// or decommits never double-subtract reserved_pages.
+						if region.uncommitted {
+							for k in u64(0) ..< frame_runs.RUN_1G_PAGES {
+								slot := region_slot(region, offset + k)
+								intrinsics.atomic_store(slot, intrinsics.atomic_load(slot) &~ SLOT_COMMITTED)
+							}
+						}
+						lock_free(region_lock, .Region)
+
+						slice_offset := offset
+						all_slices_installed := true
+						for !frame_runs.zero_run_is_done(&progress) {
+							slice_phys, slice_bytes, next_refusal := frame_runs.zero_run_next_slice(&progress)
+							if next_refusal != .None {
+								break
+							}
+							slice_pages := slice_bytes / PAGE_SIZE
+							frames_zero(slice_phys, slice_pages)
+
+							lock_take(region_lock, .Region)
+							slice_clear := true
+							for k in u64(0) ..< slice_pages {
+								if intrinsics.atomic_load(region_slot(region, slice_offset + k)) & PAGE_ADDRESS != 0 {
+									slice_clear = false
+									break
+								}
+							}
+							if slice_clear {
+								for k in u64(0) ..< slice_pages {
+									slot := region_slot(region, slice_offset + k)
+									state := intrinsics.atomic_load(slot) & (SLOT_STATE &~ SLOT_RUN_MASK)
+									if region.uncommitted {
+										state |= SLOT_COMMITTED
+									}
+									if k == 0 {
+										state |= SLOT_RUN_2M
+									}
+									intrinsics.atomic_store(slot, (slice_phys + k * PAGE_SIZE) | state)
+								}
+								intrinsics.atomic_add(&region.present, slice_pages)
+							} else {
+								all_slices_installed = false
+								lock_take(&frame_lock, .Frame)
+								frames_free_held(slice_phys, slice_pages)
+								reserved_pages += slice_pages
+								lock_free(&frame_lock, .Frame)
+							}
+							lock_free(region_lock, .Region)
+
+							_ = frame_runs.zero_run_commit_slice(&progress, slice_bytes)
+							slice_offset += slice_pages
+							if !frame_runs.zero_run_is_done(&progress) {
+								frame_runs.zero_run_note_yield(&progress)
+								interrupt_window()
+							}
+						}
+
+						if all_slices_installed {
+							lock_take(region_lock, .Region)
+							all_intact := true
+							for sub in u64(0) ..< 512 {
+								head := intrinsics.atomic_load(region_slot(region, offset + sub * frame_runs.RUN_2M_PAGES))
+								if head & PAGE_ADDRESS != phys + sub * frame_runs.ZERO_SLICE_BYTES || head & SLOT_RUN_2M == 0 {
+									all_intact = false
+									break
+								}
+							}
+							if all_intact {
+								for sub in u64(0) ..< 512 {
+									slot := region_slot(region, offset + sub * frame_runs.RUN_2M_PAGES)
+									val := intrinsics.atomic_load(slot) &~ SLOT_RUN_2M
+									if sub == 0 {
+										val |= SLOT_RUN_1G
+									}
+									intrinsics.atomic_store(slot, val)
+								}
+							}
+							lock_free(region_lock, .Region)
+						}
+						offset += frame_runs.RUN_1G_PAGES
+						continue
+					}
+					lock_take(&frame_lock, .Frame)
+					frames_free_held(phys, frame_runs.RUN_1G_PAGES)
+					reserved_pages += frame_runs.RUN_1G_PAGES
+					frame_runs.note_fallback(&frame_runs_table, .Run_1G)
+					lock_free(&frame_lock, .Frame)
+				}
+			}
+			lock_free(region_lock, .Region)
+			wanted = .Run_2M
+		}
 		if wanted == .Run_2M {
 			lock_take(region_lock, .Region)
 			if range_all_frameless(region, offset, frame_runs.RUN_2M_PAGES) {
