@@ -649,8 +649,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: cannot connect to math: root.Connect: the argument name names none of the services that run"},
 	{kind = .Type, text = "math.gcd(84, 36)"},
 	{kind = .Wait, text = "[console] error: cannot connect to math: root.Connect: the argument name names none of the services that run", fails_on = "no room for the service"},
+	{kind = .Type, text = "where(help(), name = \"math.gcd\")"},
+	{kind = .Wait, text = "[console] 0 rows of Command", fails_on = "cannot connect"},
 	{kind = .Type, text = "describe(\"math.gcd\")"},
-	{kind = .Wait, text = "[console] error: describe: no command and no word of Lex has the name math.gcd"},
+	{kind = .Wait, text = "[console] math.gcd(first: Integer, second: Integer) -> Integer", fails_on = "cannot connect"},
 	// The arguments are forced before the call connects: a refused argument
 	// connects nothing.
 	{kind = .Type, text = "math.gcd(1 / 0, 2)"},
