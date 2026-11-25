@@ -345,6 +345,32 @@ for (const name of ["root::Boot_Image_Agrees", "root::Image_Checked_At_Load"]) {
     const emptyRes = await bridge.streamBlob(emptyHash, { objectSize: 0, onFrame: () => {} });
     expect(emptyRes.status === host.BrowserCacheStatus.Ok && emptyRes.totalBytes === 0 && emptyRes.frameCount === 1, "0-byte blob streams cleanly");
   }
+
+  // 10. Regression checks: 32-bit wraparound frameBytes and oversized X-Modus-Frame-Proof header.
+  {
+    const wrapFrameBytes = 3 * (2 ** 32) * 1024;
+    expect(host.objectFrameCount(LARGE_SIZE, wrapFrameBytes) === 0, "32-bit wraparound frameBytes refused by objectFrameCount");
+    expect(host.objectFrameCount(LARGE_SIZE, host.OBJECT_FRAME_PAYLOAD_BYTES * 2) === 0, "frameBytes > 1 MiB refused by objectFrameCount");
+
+    const hugeHexProof = "aa".repeat(host.OBJECT_MAX_PROOF_DEPTH * host.OBJECT_PROOF_ENTRY_SIZE + 1);
+    const bridge = new host.ObjectCacheBridge({
+      baseUrl: "https://cache.example",
+      fetchProcedure: makeMockServer({
+        overrideResponse: (url) => url.includes("/blobs/")
+          ? new Response(makeStreamBody(makeVirtualFrame(0, FRAME_SIZE)), {
+              status: 206,
+              headers: {
+                "content-length": String(FRAME_SIZE),
+                "content-range": "bytes 0-" + (FRAME_SIZE - 1) + "/" + LARGE_SIZE,
+                "x-modus-frame-proof": hugeHexProof,
+              },
+            })
+          : null,
+      }),
+    });
+    const res = await bridge.fetchBlobFrame(tree.rootHex, { objectSize: LARGE_SIZE, frameIndex: 0 });
+    expect(res.status === host.BrowserCacheStatus.Invalid_Request && res.bytes === null, "oversized X-Modus-Frame-Proof header refused before hex parse");
+  }
 }
 
 if (failures.length) {

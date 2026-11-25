@@ -653,9 +653,9 @@ export function blake3HashesEqual(a, b) {
 }
 
 function validFrameBytes(frameBytes) {
-  if (!Number.isSafeInteger(frameBytes) || frameBytes < BLAKE3_CHUNK_SIZE || frameBytes % BLAKE3_CHUNK_SIZE !== 0) return false;
+  if (!Number.isSafeInteger(frameBytes) || frameBytes < BLAKE3_CHUNK_SIZE || frameBytes > OBJECT_FRAME_PAYLOAD_BYTES || frameBytes % BLAKE3_CHUNK_SIZE !== 0) return false;
   const chunks = frameBytes / BLAKE3_CHUNK_SIZE;
-  return (chunks & (chunks - 1)) === 0;
+  return chunks > 0 && (chunks & (chunks - 1)) === 0;
 }
 
 // Bao frame tree math matching src/library/modus/contract/object_cache/object_frames.odin.
@@ -1043,7 +1043,11 @@ export class ObjectCacheBridge {
     } else if (frameProof === null) {
       const headerProof = response.headers?.get?.("x-modus-frame-proof");
       if (typeof headerProof === "string") {
-        frameProof = parseHexBytes(headerProof.trim());
+        const trimmedProof = headerProof.trim();
+        if (trimmedProof.length > OBJECT_MAX_PROOF_DEPTH * OBJECT_PROOF_ENTRY_SIZE * 2) {
+          return { status: BrowserCacheStatus.Invalid_Request, bytes: null };
+        }
+        frameProof = parseHexBytes(trimmedProof);
         if (!frameProof) return { status: BrowserCacheStatus.Invalid_Request, bytes: null };
       } else {
         const fetched = await this.fetchFrameProof(hash, objectSize, frameIndex, frameBytes);
