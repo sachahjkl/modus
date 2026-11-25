@@ -4,7 +4,7 @@
 
 A module is the one format of compiled code in the system: a file of position-independent machine code that exports functions and is named by the hash of its bytes.
 
-A library, a process, a service, a command and the kernel are all modules of one format, where other systems have executables, shared objects and kernel modules. Its identity is the BLAKE3 hash of the whole file, and each import names a module by that hash. Example: `load("calendar")` in the console calls the exports of `calendar` directly; `isolate("calendar")` starts it in a call host. A module is not a package of a source language: the packages of `src/library` are compiled into modules and have no hash of their own.
+A library, a process, a service, a command and the kernel are all modules of one format, where other systems have executables, shared objects and kernel modules. Its identity is the BLAKE3 hash of the whole file, and each import names a module by that hash. Example: `c = load("calendar")` calls `calendar` exports directly under `c.`; `c = isolate("calendar")` starts it in a call host. A module is not a package of a source language: packages of `src/library` compile into modules and have no hash of their own.
 
 The design: `docs/MODULE_CONTRACT.md`, "1. The module file".
 
@@ -728,7 +728,7 @@ Do not use: global symbol, extern, public label.
 
 A module from memory is a module whose file the console copies from a memory object and runs in a call host, with no file of the boot image.
 
-The command is `isolate_memory(name, memory, size)`. The console checks the copy with `module.validate`, writes its BLAKE3 hash on the log, and gives the call host the copy as its one file, so such a module takes no import. Its exports become commands, as after `isolate`. A module that the assembler wrote is one. It is not a disk process: no store holds it, and the root service does not start it.
+The command is `a = isolate_memory(name, memory, size)`. The console checks the copy with `module.validate`, writes its BLAKE3 hash on the log, and gives the call host the copy as its one file, so such a module takes no import. Its exports become commands under `a.<name>`, as after `a = isolate(...)`. A module that the assembler wrote is one. It is not a disk process: no store holds it, and the root service does not start it.
 
 The design: `src/md/features/assembler.md`, "The machine step: a module from the memory of the console".
 

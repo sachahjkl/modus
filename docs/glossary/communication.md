@@ -478,7 +478,7 @@ Do not use: struct type, schema, class.
 
 A call host is the process that loads one module and executes the isolated calls of its exports (`src/modules/system/host`).
 
-The caller starts one call host for each module. The call host has no handle but its call ring, its call region, its budget and the log. It checks the file of the module, loads it, and answers a first completion: `Succeeded`, or the outcome of a failed load with its load error. A call has no time limit: the caller ends it by closing the process handle, and the next call starts a new call host. Example: `isolate("sample")` in the console.
+The caller starts one call host for each module. The call host has no handle but its call ring, its call region, its budget and the log. It checks the file of the module, loads it, and answers a first completion: `Succeeded`, or the outcome of a failed load with its load error. A call has no time limit: the caller ends it by closing the process handle, and the next call starts a new call host. Example: `s = isolate("sample")` in the console.
 
 The design: `docs/MODULE_CONTRACT.md`, "The isolated call, as implemented".
 

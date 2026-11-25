@@ -65,7 +65,7 @@ comment    = "//" { a byte that is no line end }      (between two tokens: no to
 - **A name** starts with a letter or `_`, and goes on with letters, digits, `_` and `.`: `monitor.count` and `r.value` are one name each. `let`, `in`, `with` and `_` alone are words of Lex, never names: a variable, a field, a binding or a named argument with one of them is refused.
 - **An integer** is decimal digits. It has 64 bits with a sign. A number that is larger than 9223372036854775807 is an error of the line. A result of `+`, `-`, `*` or `/` that does not fit is an error of the line too: no result wraps. The checks are `number_value`, `integer_add`, `integer_subtract`, `integer_multiply`, `integer_negate` and `integer_divide` of `src/library/modus/console_language`. The least integer has no literal: write `-9223372036854775807 - 1`.
 - **A text** is the bytes between two quotes. It supports `\\`, `\"`, `\n`, `\r`, `\t`, `\$`, `\u{XXXXXX}` escapes, and `${expr}` interpolation.
-- **A comment** is `//` outside a text, to the end of the line: `area(r) // the area of r`. It adds nothing to the line, and a line of only a comment does nothing. `//` inside a text is a part of the text, and `a / / b` is two divisions, an error. Lex has no block comment.
+- **A comment** is `//` outside a text, to the end of the line: `s.area(r) // the area of r`. It adds nothing to the line, and a line of only a comment does nothing. `//` inside a text is a part of the text, and `a / / b` is two divisions, an error. Lex has no block comment.
 - **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them; `+` on two tables of equal record descriptions gives the rows of the left one, then the rows of the right one, and refuses two tables of different records. A division by zero is an error. So is the one division whose result does not fit: the least integer `/` `-1`. Its remainder fits: the least integer `%` `-1` is 0. The pipe operator `|>` has the lowest priority ("The pipe operator", below).
 
 Examples:
@@ -109,9 +109,9 @@ Each value has one kind. The kinds are those of the module contract (`MODULE_CON
 error: settings.set: Font has no member .comic; its members are .vector, .spleen
 ```
 
-A parameter of the kind `Bytes` takes a `Text` value as its argument, or the `Bytes` of a memory object that `bytes(memory, first, count)` read: `assemble(bytes(t, 0, n), f)` gives the text that `compile` wrote to the assembler. A built-in command can have a parameter of the kind `Value`, which takes a value of any kind; the command checks it itself (the third parameter of `where`).
+A parameter of the kind `Bytes` takes a `Text` value as its argument, or the `Bytes` of a memory object that `bytes(memory, first, count)` read: `as.assemble(bytes(t, 0, n), f)` gives the text that `cc.compile` wrote to the assembler. A built-in command can have a parameter of the kind `Value`, which takes a value of any kind; the command checks it itself (the third parameter of `where`).
 
-A command gives a result and never prints. A command that does something and has nothing to give has no result: `start`, `stop`, `clear`. `help()` shows this in each signature: a command with `->` gives a value of that kind, and a command with no `->` gives nothing. A last parameter that a call may leave out is in brackets, `start(Text, [Value])` or `help([Text]) -> Table`, and the names of fields of `columns` are `Field...`: `columns(Table, Field...) -> Table`. The section "Results and their drawers" has the result of each built-in command.
+A command gives a result and never prints. A command that does something and has nothing to give has no result: `start`, `stop`, `clear`. `help()` shows this in each signature: a command with `->` gives a value of that kind, and a command with no `->` gives nothing. A last parameter that a call may leave out is in brackets, `start(Text, [Value])` or `help([Value]) -> Table`, and the names of fields of `columns` are `Field...`: `columns(Table, Field...) -> Table`. The section "Results and their drawers" has the result of each built-in command.
 
 ### Calls
 
@@ -120,16 +120,16 @@ A call is `name(argument, ...)`, with at most 12 arguments: the arguments of an 
 **Where a command comes from.** A name can be called when the command table of the console has it. A command comes from one of three places:
 
 - **The console itself**: the built-in commands. They exist before any module is loaded.
-- **A module of the boot image**, after `load("sample")` or `isolate("sample")`: each export becomes a command with the name of the export, and each record of the description of the module becomes a command that makes a record from its fields. A log fact type is no command: `facts(...)` reads it from the log. A module from memory, after `isolate_memory(name, memory, size)`, adds its commands the same way.
-- **A service that runs**, after `connect("monitor")`: each export becomes a command named `service.export`, as `monitor.count`.
+- **A bound module handle**, after `m = load("math")`, `s = isolate("sample")`, or `a = isolate_memory("adder", memory, size)`: each export and each non-fact record constructor becomes a command under `<binding>.<name>`, as `s.readings` and `s.Rectangle`. Calling `load`, `isolate`, or `isolate_memory` without binding it to a top-level variable is refused before any module loads or spawns. Multiple independent handles to the same module can coexist (`a = isolate("tally")`, `b = isolate("tally")`). `help(s)` lists only the commands of `s`; `unload(s)` or reassigning `s` removes them and releases the module or stops its call host.
+- **A service that runs**, after `connect("monitor")` (which adds `monitor.<export>`) or bound `mon = connect("monitor")` (which adds `mon.<export>` under a handle that `help(mon)` inspects and `unload(mon)` removes).
 
 When two commands have one name, the command added last runs.
 
 **The check before the call.** The console checks the count of the arguments and the kind of each one against the description of the parameters, before the call. A record or a table argument must have a description equal to the description of the parameter: equal records of two modules agree. A wrong argument is refused with its number and the two types, and the call does not run:
 
 ```
-> sum_values(columns(t, sensor, value))
-error: sum_values: argument 1 is Table(Reading, Read), not Table(Reading)
+> s.sum_values(columns(t, sensor, value))
+error: s.sum_values: argument 1 is Table(Reading, Read), not Table(Reading)
 ```
 
 Here `columns` made a table of another record, with fewer fields, so the export of `sample`, which reads the whole record, refuses it.
@@ -141,8 +141,9 @@ Here `columns` made a table of another record, with fewer fields, so the export 
 `name = expression` keeps a value under a name for the lines after it. `let name = expression`, with no `in` after the value, is the same line. A name alone gives the value back; `name.field` gives one field of a record variable.
 
 ```
-> t = readings(4)
-> sum_values(where(t, sensor = 2))
+> s = isolate("sample")
+> t = s.readings(4)
+> s.sum_values(where(t, sensor = 2))
 210
 > r = row(t, 1)
 > r.value
@@ -167,19 +168,19 @@ A record is a group of named fields, as a module describes it. The command with 
 
 **A record literal** writes a record by its fields, in any order: `{x = 0, y = 0, width = 3, height = 4}`. It has no type of its own: the parameter that receives it gives it one, a Record parameter of an export. A field that the record does not have, a field that the literal does not give, a field given twice, and a value of another kind than its field are refused, each with the field. The names are checked when the call starts, before its arguments run; the values when they are known, before the call runs. A field has no default: a literal gives each field. A literal that nothing receives, as the value of a line or of a variable, is refused: it has no type.
 
-**A named argument** gives a parameter by its name: `grow(r, by = 2)`. The names are those of the description of an export, or the fields of a command that makes a record; a command of the console has none. After a named argument, each argument is named. A name that names no parameter, a parameter given twice, and a parameter that the call does not give are refused, but an optional parameter: an Integer, a Handle, an Enum or a Text that its export lets a call leave out, as each setting of `settings.set(font = .spleen)`. The console gives such a parameter the Presence word `Absent` and the value 0, and gives a parameter that the line names `Given` and its value (`MODULE_CONTRACT.md`, "Optional parameters and the settings of a parameter"). Inside `where`, `=` stays the operator of a condition.
+**A named argument** gives a parameter by its name: `s.grow(r, by = 2)`. The names are those of the description of an export, or the fields of a command that makes a record; a command of the console has none. After a named argument, each argument is named. A name that names no parameter, a parameter given twice, and a parameter that the call does not give are refused, but an optional parameter: an Integer, a Handle, an Enum or a Text that its export lets a call leave out, as each setting of `settings.set(font = .spleen)`. The console gives such a parameter the Presence word `Absent` and the value 0, and gives a parameter that the line names `Given` and its value (`MODULE_CONTRACT.md`, "Optional parameters and the settings of a parameter"). Inside `where`, `=` stays the operator of a condition.
 
 **`with`** gives a record with some of its fields changed: `r with {width = 10}`. On its right, a record literal of fields of that record, or a record of the same description. It composes two records only, and has the lowest priority but `|>`.
 
-**`let`** names values for one expression: `let s = {x = 0, y = 0, width = 6, height = 7} in area(s) + area(s)`. A binding can name another binding, also a later one, and an inner `let` hides an outer one. The console computes each binding once, from the left, also a binding that the body does not read, then the body. A binding that needs its own value is refused. `s.width` reads a field of a binding.
+**`let`** names values for one expression: `let box = {x = 0, y = 0, width = 6, height = 7} in s.area(box) + s.area(box)`. A binding can name another binding, also a later one, and an inner `let` hides an outer one. The console computes each binding once, from the left, also a binding that the body does not read, then the body. A binding that needs its own value is refused. `box.width` reads a field of a binding.
 
 ```
-> area({x = 0, y = 0, width = 11, height = 3})
+> s.area({x = 0, y = 0, width = 11, height = 3})
 33
-> area(r with {width = 10})
+> s.area(r with {width = 10})
 40
-> grow(r, by = 2)
-> let s = {x = 0, y = 0, width = 6, height = 7} in area(s) + area(s)
+> s.grow(r, by = 2)
+> let box = {x = 0, y = 0, width = 6, height = 7} in s.area(box) + s.area(box)
 84
 ```
 
@@ -212,7 +213,7 @@ A plan is one line of the console, 200 bytes at most (4096 after the merge of `w
 **A function** is `(name, …) => expression`: its parameters, at most 12, then its body. A `(` starts a function when `=>` follows its `)`; else it holds an expression. The body runs to the `,` or the `)` around the function. A `let` names a function, and a call by that name runs its body with the arguments in the place of the parameters:
 
 ```
-> let double = (x) => x * 2 in area({x = 0, y = 0, width = double(3), height = 4})
+> let double = (x) => x * 2 in s.area({x = 0, y = 0, width = double(3), height = 4})
 24
 > (x) => x + 1
 (x) => x + 1
@@ -228,7 +229,7 @@ A plan is one line of the console, 200 bytes at most (4096 after the merge of `w
 ```
 > map([1, 2, 3], (x) => x * 2)
 [2, 4, 6]
-> [1, 2] |> map((w) => area({x = 0, y = 0, width = w, height = 5}))
+> [1, 2] |> map((w) => s.area({x = 0, y = 0, width = w, height = 5}))
 [5, 10]
 ```
 
@@ -639,12 +640,12 @@ When the export has a table of error details and wrote more than one detail, one
 | `locks()` | Table of `Lock` | One row for each kind of kernel lock: `lock`, `waits`, `takes` |
 | `work(process)` | Table of `Service_Work` | One row for each connection of this console to a service: `service`, `state`, `pages` and `pages_limit` of its work budget, `processor` and `step_debt` in microseconds. No service charges a work budget yet, so each row is `unaccounted`, with no numbers. Another process than this console is refused: the root service does not report its connections yet (`src/md/features/work_accounting.md`) |
 | `modules()` | Table of `Module` | One row for each module of the boot image: `name`, `size` in bytes, `hash_head` |
-| `load(name)`, `isolate(name)`, `connect(name)` | Record `Loaded` | `module`, `commands`, `call` (`direct`, `isolated` or `service`), `hash_head` |
-| `isolate_memory(name, memory, size)` | Record `Loaded` | A module from memory: the console copies `size` bytes of the memory object, checks them as a module file, and isolates them, with the call `isolated` (`MODULE_CONTRACT.md`, "The assembler") |
+| `m = load(name)`, `s = isolate(name)`, `connect(name)` / `mon = connect(name)` | Record `Loaded` | `binding`, `module`, `commands`, `call` (`direct`, `isolated` or `service`), `hash_head`. `load` and `isolate` must be bound to a variable and register exports and records under `<binding>.<name>` |
+| `a = isolate_memory(name, memory, size)` | Record `Loaded` | A module from memory bound to `a`: the console copies `size` bytes of the memory object, checks them as a module file, and isolates them under `a.<name>`, with the call `isolated` (`MODULE_CONTRACT.md`, "The assembler") |
 | `build(project, file)` | Text | The C source `file` of the store of the project, built by `recipes.build_c` and put in the store `module_files` under the name of the project: `<project>: module <the 64 hexadecimal digits of its hash>`. The same source again is substituted with no compile. A C error builds nothing: the error of `recipes.build_c` names its argument `source`, the byte and its offset |
 | `run(project)`, `run(project, grant)` | Integer | The module of the project from the store `module_files`, isolated in a call host with no grant: the result of the export `main` of that module. A module whose hash is not the hash that the last `build` of the project in this console gave is refused: build it again. An empty name of a grant, and a grant that the project does not declare, are refused before any call host starts |
-| `unload(name)` | Record `Unloaded` | `module`, `commands`, `memory`: what became of the memory of the module |
-| `loaded()` | Table of `Loaded_Module` | The modules and the services whose exports are commands, and the imports of the modules: `module`, `call`, `imported_by`, `in_place_of`, `hash_head` |
+| `unload(handle)` | Record `Unloaded` | `binding`, `module`, `commands`, `memory`: removes only the commands of that bound handle, clears its variable, and releases the module or stops its call host |
+| `loaded()` | Table of `Loaded_Module` | The bound module handles, connected services, and module imports: `binding`, `module`, `call`, `imported_by`, `in_place_of`, `hash_head` |
 | `start(name)`, `start(name, list)`, `start(name, hash)`, `stop(name)` | none | Starts a boot-image module (with an optional wiring `Table` that `wire` gives) or a disk process from `module_files` (with a 64-digit hash `Text`, or with no second argument when its hash is pinned in the disk grant table). When a boot-image module declares a record output, `start` keeps the handle of the process while it runs, for its typed names ("Streams") |
 | `projects.install(name)`, `projects.install(name, mode)` | Record `Project_Install` | Connects `recipes` when needed, ingests the project store, evaluates and builds `project.lex` in `mode` (`prefer_cache`, `build_only`, `cache_only`, or `verify`; default `prefer_cache`), verifies and delivers the module into `module_files` under `name`, and returns `outcome`, `origin`, `signer`, `recipe`, `output`, and `module` |
 | `wire(from, to)` | Table of `Wiring` | One row of a wiring list: `writer`, `output`, `reader`, `input`, `condition`, and the terms `field`, `comparison`, `value_kind`, `integer`, `text` ("Streams") |

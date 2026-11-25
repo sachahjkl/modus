@@ -166,7 +166,8 @@ site_console_commands_of_the_repository :: proc(t: ^testing.T) {
 		testing.expectf(t, command.about != "", "the command %s has no help", command.name)
 		signatures[command.name] = foundation.console_signature(command)
 	}
-	testing.expect_value(t, signatures["help"], "help([Text]) -> Table")
+	testing.expect_value(t, signatures["help"], "help([Value]) -> Table")
+	testing.expect_value(t, signatures["unload"], "unload(Record) -> Record")
 	testing.expect_value(t, signatures["repeat"], "repeat(Text, Integer) -> Text")
 	testing.expect_value(t, signatures["where"], "where(Table, Condition) -> Table")
 	testing.expect_value(t, signatures["facts"], "facts(Table, Fact_Type) -> Table")

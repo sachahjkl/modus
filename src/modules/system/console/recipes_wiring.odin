@@ -708,18 +708,11 @@ recipes_build_project_inner :: proc "contextless" (project: string, mode: pr.Bui
 	}
 
 	// 3. Evaluate outputs.default inside a zero-grant declaration_eval call host.
-	if command_find("evaluate") != nil {
-		unload_args := [1]Value{{kind = .Text, text = "declaration_eval"}}
-		_ = call_run("unload", unload_args[:])
-	}
-	iso_args := [1]Value{{kind = .Text, text = "declaration_eval"}}
-	if r := isolate_module(iso_args[:]); r.kind == .None || failed {
+	_, eval_handle := add_module_internal("declaration_eval", true, "__declaration_eval")
+	if eval_handle == 0 || failed {
 		return
 	}
-	defer {
-		unload_args := [1]Value{{kind = .Text, text = "declaration_eval"}}
-		_ = call_run("unload", unload_args[:])
-	}
+	defer unload_handle_id(eval_handle)
 
 	eval_args := [4]Value{
 		{kind = .Text, text = project_lex},
@@ -727,7 +720,7 @@ recipes_build_project_inner :: proc "contextless" (project: string, mode: pr.Bui
 		{kind = .Bytes, record = recipes_bundle_buf[:bundle_len]},
 		{},
 	}
-	eval_len_val, eval_mem, eval_ok := program_call_with_room("evaluate", eval_args[:], 3, RECIPES_EVAL_OUTPUT_FIRST_PAGES, RECIPES_EVAL_OUTPUT_BYTES_MOST)
+	eval_len_val, eval_mem, eval_ok := program_call_with_room("__declaration_eval.evaluate", eval_args[:], 3, RECIPES_EVAL_OUTPUT_FIRST_PAGES, RECIPES_EVAL_OUTPUT_BYTES_MOST)
 	if !eval_ok {
 		return
 	}

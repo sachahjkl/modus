@@ -269,29 +269,20 @@ run_program :: proc "contextless" (arguments: []Value) -> Value {
 	if build := program_build_find(project); build != nil && build.digits != digits {
 		return fail("run: the module of ", project, " in the store module_files has the hash ", string(digits[:]), ", not the hash ", string(build.digits[:]), " that its build gave: build it again")
 	}
-	// The module of the run before goes: a run after a build calls the new
-	// module.
-	for &item in loaded[:loaded_count] {
-		if item.name == project {
-			unload_arguments := [1]Value{{kind = .Text, text = project}}
-			_ = call_run("unload", unload_arguments[:])
-			if failed {
-				return {}
-			}
-			break
-		}
-	}
-	isolate_arguments := [3]Value{{kind = .Text, text = project}, {kind = .Handle, integer = i64(module_memory)}, size}
-	_ = isolate_from_memory(isolate_arguments[:])
-	if failed {
+	// Isolate the built module under an internal handle for this run and
+	// unload it when run completes.
+	_, run_handle := isolate_from_memory_internal(project, module_memory, size.integer, "__run")
+	if run_handle == 0 || failed {
 		return {}
 	}
+	defer unload_handle_id(run_handle)
 	// The export main of the module of this project: another module that
 	// the console loaded can have an export main too.
 	main_command: ^Command
 	for &command in commands[:command_count] {
-		if command.name == "main" && command.sandbox != 0 && !sandboxes[command.sandbox - 1].service && sandboxes[command.sandbox - 1].name == project {
+		if command.handle_id == run_handle && command.name == "__run.main" {
 			main_command = &command
+			break
 		}
 	}
 	if main_command == nil || main_command.parameter_count != 0 {
