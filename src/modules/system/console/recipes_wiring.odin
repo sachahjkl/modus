@@ -2,9 +2,9 @@
 // provenance queries, and module delivery into module_files
 // (src/md/features/recipes.md and src/md/features/application_projects.md).
 //
-// Exposes only dotted service commands (recipes.ingest_tree,
-// recipes.build_project, recipes.provenance, recipes.deliver_module); no bare
-// install command exists.
+// Exposes dotted service commands (recipes.ingest_tree, recipes.build_project,
+// recipes.provenance, recipes.deliver_module, recipes.collect_garbage, and the
+// one-step projects.install).
 package console
 
 import "base:intrinsics"
@@ -632,6 +632,181 @@ recipes_collect_lex_entries :: proc "contextless" (
 	return true
 }
 
+// recipes_ensure_connected connects the console to the recipes service when it
+// is not connected yet, so one-step commands such as projects.install work
+// directly from a fresh console.
+@(private = "file")
+recipes_ensure_connected :: proc "contextless" () -> bool {
+	if service_connected("recipes") {
+		return true
+	}
+	connect_args := [1]Value{{kind = .Text, text = "recipes"}}
+	_ = connect_service(connect_args[:])
+	if failed {
+		return false
+	}
+	if !service_connected("recipes") {
+		_ = fail("projects.install: the recipes service is not connected")
+		return false
+	}
+	return true
+}
+
+// recipes_build_project_inner evaluates project.lex (with pre-ingested
+// here_hash) through the zero-grant declaration_eval call host, registers the
+// evaluation with recipes, and runs recipes.build_stored in the requested mode.
+@(private = "file")
+recipes_build_project_inner :: proc "contextless" (project: string, mode: pr.Build_Mode, here_hash: blake3.Hash) -> (outcome_label: string, recipe_hash: blake3.Hash, recipe_hex: [64]u8, output_hex: [64]u8, ok: bool) {
+	// 2. Read project.lex and all .lex imports from the project store (root and nested).
+	client, sandbox, borrowed := recipes_storage_borrow()
+	if !borrowed {
+		return
+	}
+	root_place, open_status := storage.open_store(&client, project)
+	recipes_storage_sync(&client, sandbox)
+	if open_status != .Ok {
+		_ = fail("recipes.build_project: cannot open store ", project)
+		return
+	}
+	defer {
+		_ = storage.close_tree(&client, root_place)
+		recipes_storage_sync(&client, sandbox)
+	}
+
+	lex_used := 0
+	project_lex, has_project := recipes_read_small_store_file(&client, sandbox, root_place, "project.lex", recipes_lex_arena[:], &lex_used)
+	if !has_project {
+		if !failed {
+			_ = fail("recipes.build_project: store ", project, " has no project.lex")
+		}
+		return
+	}
+
+	bundle_count := 0
+	has_catalog := false
+	if !recipes_collect_lex_entries(&client, sandbox, root_place, "", 0, &bundle_count, &lex_used, &has_catalog) {
+		return
+	}
+
+	if !has_catalog {
+		catalog_text, cat_ok := recipes_catalog_generate(recipes_catalog_buf[:])
+		if !cat_ok {
+			return
+		}
+		recipes_bundle_entries[bundle_count] = {
+			kind    = .File_Path,
+			path    = "catalog.lex",
+			content = catalog_text,
+		}
+		bundle_count += 1
+	}
+
+	bundle_len, bundle_ref := declaration_eval.bundle_write(recipes_bundle_buf[:], recipes_bundle_entries[:bundle_count], has_here = true, here_hash = here_hash)
+	if bundle_ref != .None {
+		_ = fail("recipes.build_project: cannot encode declaration_eval bundle")
+		return
+	}
+
+	// 3. Evaluate outputs.default inside a zero-grant declaration_eval call host.
+	if command_find("evaluate") != nil {
+		unload_args := [1]Value{{kind = .Text, text = "declaration_eval"}}
+		_ = call_run("unload", unload_args[:])
+	}
+	iso_args := [1]Value{{kind = .Text, text = "declaration_eval"}}
+	if r := isolate_module(iso_args[:]); r.kind == .None || failed {
+		return
+	}
+	defer {
+		unload_args := [1]Value{{kind = .Text, text = "declaration_eval"}}
+		_ = call_run("unload", unload_args[:])
+	}
+
+	eval_args := [4]Value{
+		{kind = .Text, text = project_lex},
+		{kind = .Text, text = "outputs.default"},
+		{kind = .Bytes, record = recipes_bundle_buf[:bundle_len]},
+		{},
+	}
+	eval_len_val, eval_mem, eval_ok := program_call_with_room("evaluate", eval_args[:], 3, RECIPES_EVAL_OUTPUT_FIRST_PAGES, RECIPES_EVAL_OUTPUT_BYTES_MOST)
+	if !eval_ok {
+		return
+	}
+	defer system.close(eval_mem)
+	if eval_len_val.integer <= 0 || u64(eval_len_val.integer) > RECIPES_EVAL_OUTPUT_BYTES_MOST {
+		_ = fail("recipes.build_project: declaration_eval returned an out-of-range byte count")
+		return
+	}
+
+	eval_addr, map_status := system.memory_map(eval_mem, {})
+	if map_status != .Succeeded {
+		_ = fail("recipes.build_project: cannot map declaration_eval output")
+		return
+	}
+	defer system.memory_unmap(eval_addr)
+	eval_bytes := ([^]u8)(eval_addr)[:eval_len_val.integer]
+	header, _, hdr_ref := declaration_eval.output_read_header(eval_bytes)
+	if hdr_ref != .None {
+		_ = fail("recipes.build_project: declaration_eval output header is damaged")
+		return
+	}
+	if header.status != .Ok {
+		_ = fail("recipes.build_project: project.lex evaluation refused at line ", i64(header.line), ", column ", i64(header.column))
+		return
+	}
+
+	// 4. Register the evaluated recipe with recipes and build it.
+	reg_args := [1]Value{{kind = .Bytes, record = eval_bytes}}
+	reg_table_val := call_run("recipes.register_evaluation", reg_args[:])
+	if failed {
+		return
+	}
+	reg_table, has_reg := table_of(reg_table_val)
+	if !has_reg || reg_table.rows < 1 || len(reg_table_val.record) < size_of(pr.Recipe_Reference) {
+		_ = fail("recipes.register_evaluation: did not return a recipe hash")
+		return
+	}
+	ref := (^pr.Recipe_Reference)(raw_data(table_row(reg_table, reg_table_val, 0)))^
+	recipe_hash = blake3.Hash(ref.recipe_hash)
+	disk_process.hash_write(&recipe_hex, recipe_hash)
+
+	build_args := [2]Value{
+		{kind = .Text, text = string(recipe_hex[:])},
+		{kind = .Integer, integer = i64(mode)},
+	}
+	build_table_val := call_run("recipes.build_stored", build_args[:])
+	if failed {
+		return
+	}
+	build_table, has_build := table_of(build_table_val)
+	if !has_build || build_table.rows < 1 || len(build_table_val.record) < size_of(pr.Recipe_Build_Row) {
+		_ = fail("recipes.build_stored: did not return a build result row")
+		return
+	}
+	row := (^pr.Recipe_Build_Row)(raw_data(table_row(build_table, build_table_val, 0)))^
+	if row.outcome_word < 0 {
+		_ = fail("recipes.build_project: recipes.build_stored returned an unknown build outcome")
+		return
+	}
+	build_outcome, outcome_ok := pr.recipe_build_outcome_of_word(u64(row.outcome_word))
+	if !outcome_ok {
+		_ = fail("recipes.build_project: recipes.build_stored returned an unknown build outcome")
+		return
+	}
+	switch build_outcome {
+	case .Built_Locally:
+		outcome_label = "built"
+	case .From_Cache:
+		outcome_label = "cached"
+	case .Building:
+		outcome_label = "building"
+	case .Refused, .None:
+		_ = fail("recipes.build_project: build was refused")
+		return
+	}
+	disk_process.hash_write(&output_hex, blake3.Hash(row.output_hash))
+	return outcome_label, recipe_hash, recipe_hex, output_hex, true
+}
+
 // recipes_build_project_command evaluates a project's project.lex (with here()
 // ingested into recipes's object store) through the isolated zero-grant
 // declaration_eval call host, registers the evaluation with recipes, and runs
@@ -650,142 +825,10 @@ recipes_build_project_command :: proc "contextless" (arguments: []Value) -> Valu
 	if !ingested {
 		return {}
 	}
-
-	// 2. Read project.lex and all .lex imports from the project store (root and nested).
-	client, sandbox, borrowed := recipes_storage_borrow()
-	if !borrowed {
+	outcome_label, _, recipe_hex, out_hex, built := recipes_build_project_inner(project, mode, here_hash)
+	if !built {
 		return {}
 	}
-	root_place, open_status := storage.open_store(&client, project)
-	recipes_storage_sync(&client, sandbox)
-	if open_status != .Ok {
-		return fail("recipes.build_project: cannot open store ", project)
-	}
-	defer {
-		_ = storage.close_tree(&client, root_place)
-		recipes_storage_sync(&client, sandbox)
-	}
-
-	lex_used := 0
-	project_lex, has_project := recipes_read_small_store_file(&client, sandbox, root_place, "project.lex", recipes_lex_arena[:], &lex_used)
-	if !has_project {
-		return failed ? {} : fail("recipes.build_project: store ", project, " has no project.lex")
-	}
-
-	bundle_count := 0
-	has_catalog := false
-	if !recipes_collect_lex_entries(&client, sandbox, root_place, "", 0, &bundle_count, &lex_used, &has_catalog) {
-		return {}
-	}
-
-	if !has_catalog {
-		catalog_text, cat_ok := recipes_catalog_generate(recipes_catalog_buf[:])
-		if !cat_ok {
-			return {}
-		}
-		recipes_bundle_entries[bundle_count] = {
-			kind    = .File_Path,
-			path    = "catalog.lex",
-			content = catalog_text,
-		}
-		bundle_count += 1
-	}
-
-	bundle_len, bundle_ref := declaration_eval.bundle_write(recipes_bundle_buf[:], recipes_bundle_entries[:bundle_count], has_here = true, here_hash = here_hash)
-	if bundle_ref != .None {
-		return fail("recipes.build_project: cannot encode declaration_eval bundle")
-	}
-
-	// 3. Evaluate outputs.default inside a zero-grant declaration_eval call host.
-	if command_find("evaluate") != nil {
-		unload_args := [1]Value{{kind = .Text, text = "declaration_eval"}}
-		_ = call_run("unload", unload_args[:])
-	}
-	iso_args := [1]Value{{kind = .Text, text = "declaration_eval"}}
-	if r := isolate_module(iso_args[:]); r.kind == .None || failed {
-		return {}
-	}
-	defer {
-		unload_args := [1]Value{{kind = .Text, text = "declaration_eval"}}
-		_ = call_run("unload", unload_args[:])
-	}
-
-	eval_args := [4]Value{
-		{kind = .Text, text = project_lex},
-		{kind = .Text, text = "outputs.default"},
-		{kind = .Bytes, record = recipes_bundle_buf[:bundle_len]},
-		{},
-	}
-	eval_len_val, eval_mem, eval_ok := program_call_with_room("evaluate", eval_args[:], 3, RECIPES_EVAL_OUTPUT_FIRST_PAGES, RECIPES_EVAL_OUTPUT_BYTES_MOST)
-	if !eval_ok {
-		return {}
-	}
-	defer system.close(eval_mem)
-	if eval_len_val.integer <= 0 || u64(eval_len_val.integer) > RECIPES_EVAL_OUTPUT_BYTES_MOST {
-		return fail("recipes.build_project: declaration_eval returned an out-of-range byte count")
-	}
-
-	eval_addr, map_status := system.memory_map(eval_mem, {})
-	if map_status != .Succeeded {
-		return fail("recipes.build_project: cannot map declaration_eval output")
-	}
-	defer system.memory_unmap(eval_addr)
-	eval_bytes := ([^]u8)(eval_addr)[:eval_len_val.integer]
-	header, _, hdr_ref := declaration_eval.output_read_header(eval_bytes)
-	if hdr_ref != .None {
-		return fail("recipes.build_project: declaration_eval output header is damaged")
-	}
-	if header.status != .Ok {
-		return fail("recipes.build_project: project.lex evaluation refused at line ", i64(header.line), ", column ", i64(header.column))
-	}
-
-	// 4. Register the evaluated recipe with recipes and build it.
-	reg_args := [1]Value{{kind = .Bytes, record = eval_bytes}}
-	reg_table_val := call_run("recipes.register_evaluation", reg_args[:])
-	if failed {
-		return {}
-	}
-	reg_table, has_reg := table_of(reg_table_val)
-	if !has_reg || reg_table.rows < 1 || len(reg_table_val.record) < size_of(pr.Recipe_Reference) {
-		return fail("recipes.register_evaluation: did not return a recipe hash")
-	}
-	ref := (^pr.Recipe_Reference)(raw_data(table_row(reg_table, reg_table_val, 0)))^
-	recipe_hex_buf: [64]u8
-	disk_process.hash_write(&recipe_hex_buf, blake3.Hash(ref.recipe_hash))
-
-	build_args := [2]Value{
-		{kind = .Text, text = string(recipe_hex_buf[:])},
-		{kind = .Integer, integer = i64(mode)},
-	}
-	build_table_val := call_run("recipes.build_stored", build_args[:])
-	if failed {
-		return {}
-	}
-	build_table, has_build := table_of(build_table_val)
-	if !has_build || build_table.rows < 1 || len(build_table_val.record) < size_of(pr.Recipe_Build_Row) {
-		return fail("recipes.build_stored: did not return a build result row")
-	}
-	row := (^pr.Recipe_Build_Row)(raw_data(table_row(build_table, build_table_val, 0)))^
-	if row.outcome_word < 0 {
-		return fail("recipes.build_project: recipes.build_stored returned an unknown build outcome")
-	}
-	build_outcome, outcome_ok := pr.recipe_build_outcome_of_word(u64(row.outcome_word))
-	if !outcome_ok {
-		return fail("recipes.build_project: recipes.build_stored returned an unknown build outcome")
-	}
-	outcome_label: string
-	switch build_outcome {
-	case .Built_Locally:
-		outcome_label = "built"
-	case .From_Cache:
-		outcome_label = "cached"
-	case .Building:
-		outcome_label = "building"
-	case .Refused, .None:
-		return fail("recipes.build_project: build was refused")
-	}
-	out_hex_buf: [64]u8
-	disk_process.hash_write(&out_hex_buf, blake3.Hash(row.output_hash))
 	columns := [3]Column{text_column("outcome", 16), text_column("recipe", 65), text_column("output", 65)}
 	res_table, made := made_table("Project_Build", columns[:])
 	if !made {
@@ -793,27 +836,23 @@ recipes_build_project_command :: proc "contextless" (arguments: []Value) -> Valu
 	}
 	res_row := made_row(&res_table)
 	made_text(&res_table, res_row, 0, outcome_label)
-	made_text(&res_table, res_row, 1, string(recipe_hex_buf[:]))
-	made_text(&res_table, res_row, 2, string(out_hex_buf[:]))
+	made_text(&res_table, res_row, 1, string(recipe_hex[:]))
+	made_text(&res_table, res_row, 2, string(out_hex[:]))
 	return made_record(&res_table, "recipes.build_project")
 }
 
-// recipes_provenance_command queries recipes.realisations() for the named
-// 64-hex recipe hash and returns a Provenance record with origin, output,
-// and signer fields.
-recipes_provenance_command :: proc "contextless" (arguments: []Value) -> Value {
-	hex_arg := arguments[0].text
-	target_hash, hash_ok := pr.hash_of_hexadecimal(transmute([]u8)hex_arg)
-	if !hash_ok {
-		return fail("recipes.provenance: expected 64 lowercase hexadecimal digits for the recipe hash")
-	}
+// recipes_provenance_lookup queries recipes.realisations() for target_hash and
+// writes origin_label, output_hex, and signer_hex into caller-owned stack storage.
+@(private = "file")
+recipes_provenance_lookup :: proc "contextless" (caller: string, target_hash: blake3.Hash) -> (origin_label: string, out_hex: [64]u8, signer_hex: [64]u8, ok: bool) {
 	table_val := call_run("recipes.realisations", nil)
 	if failed {
-		return {}
+		return
 	}
 	table, has_table := table_of(table_val)
 	if !has_table {
-		return fail("recipes.provenance: recipes.realisations did not return a table")
+		_ = fail(caller, ": recipes.realisations did not return a table")
+		return
 	}
 	for index in 0 ..< table.rows {
 		raw := table_row(table, table_val, index)
@@ -825,36 +864,126 @@ recipes_provenance_command :: proc "contextless" (arguments: []Value) -> Value {
 			continue
 		}
 		if row.origin_word < 0 {
-			return fail("recipes.provenance: realisation row carries an unknown origin")
+			_ = fail(caller, ": realisation row carries an unknown origin")
+			return
 		}
 		origin, origin_ok := pr.provenance_origin_of_word(u64(row.origin_word))
 		if !origin_ok {
-			return fail("recipes.provenance: realisation row carries an unknown origin")
+			_ = fail(caller, ": realisation row carries an unknown origin")
+			return
 		}
-		origin_label: string
 		switch origin {
 		case .Local_Build:
 			origin_label = "local_build"
 		case .Remote_Cache:
 			origin_label = "remote_cache"
 		case .None:
-			return fail("recipes.provenance: realisation row carries origin None")
+			_ = fail(caller, ": realisation row carries origin None")
+			return
 		}
-		out_hex, signer_hex: [64]u8
 		disk_process.hash_write(&out_hex, blake3.Hash(row.output_hash))
 		disk_process.hash_write(&signer_hex, blake3.Hash(row.signer_public_key))
-		columns := [3]Column{text_column("origin", 16), text_column("output", 65), text_column("signer", 65)}
-		res_table, made := made_table("Provenance", columns[:])
-		if !made {
-			return fail("recipes.provenance: the line has no room for the description of its result")
-		}
-		res_row := made_row(&res_table)
-		made_text(&res_table, res_row, 0, origin_label)
-		made_text(&res_table, res_row, 1, string(out_hex[:]))
-		made_text(&res_table, res_row, 2, string(signer_hex[:]))
-		return made_record(&res_table, "recipes.provenance")
+		return origin_label, out_hex, signer_hex, true
 	}
-	return fail("recipes.provenance: no realisation exists for recipe ", hex_arg)
+	hash_hex: [64]u8
+	disk_process.hash_write(&hash_hex, target_hash)
+	_ = fail(caller, ": no realisation exists for recipe ", string(hash_hex[:]))
+	return
+}
+
+// recipes_provenance_command queries recipes.realisations() for the named
+// 64-hex recipe hash and returns a Provenance record with origin, output,
+// and signer fields.
+recipes_provenance_command :: proc "contextless" (arguments: []Value) -> Value {
+	hex_arg := arguments[0].text
+	target_hash, hash_ok := pr.hash_of_hexadecimal(transmute([]u8)hex_arg)
+	if !hash_ok {
+		return fail("recipes.provenance: expected 64 lowercase hexadecimal digits for the recipe hash")
+	}
+	origin_label, out_hex, signer_hex, ok := recipes_provenance_lookup("recipes.provenance", target_hash)
+	if !ok {
+		return {}
+	}
+	columns := [3]Column{text_column("origin", 16), text_column("output", 65), text_column("signer", 65)}
+	res_table, made := made_table("Provenance", columns[:])
+	if !made {
+		return fail("recipes.provenance: the line has no room for the description of its result")
+	}
+	res_row := made_row(&res_table)
+	made_text(&res_table, res_row, 0, origin_label)
+	made_text(&res_table, res_row, 1, string(out_hex[:]))
+	made_text(&res_table, res_row, 2, string(signer_hex[:]))
+	return made_record(&res_table, "recipes.provenance")
+}
+
+// projects_install_command connects recipes when needed, ingests project_name,
+// evaluates and builds project.lex in mode (default prefer_cache), validates
+// and delivers the resulting module into module_files under project_name, and
+// returns a typed Project_Install record with outcome, origin, signer, recipe,
+// output, and module fields.
+projects_install_command :: proc "contextless" (arguments: []Value) -> Value {
+	project_name := arguments[0].text
+	if refusal := disk_process.nickname_refusal(project_name, len(project_name), 1, .Make); refusal.kind != 0 {
+		return fail("projects.install: \"", project_name, "\" cannot be used as a project module nickname")
+	}
+	mode_text := len(arguments) > 1 ? arguments[1].text : ""
+	mode, mode_ok := recipes_build_mode_of_text(mode_text)
+	if !mode_ok {
+		return fail("projects.install: unknown build mode \"", mode_text, "\"; use prefer_cache, build_only, cache_only, or verify")
+	}
+	if !recipes_ensure_connected() {
+		return {}
+	}
+	here_hash, ingested := recipes_ingest_store(project_name)
+	if !ingested {
+		return {}
+	}
+	outcome_label, recipe_hash, recipe_hex, output_hex, built := recipes_build_project_inner(project_name, mode, here_hash)
+	if !built {
+		return {}
+	}
+	if outcome_label == "building" {
+		return fail("projects.install: build of \"", project_name, "\" is still running and has no completed output yet")
+	}
+	deliver_args := [3]Value{
+		{kind = .Text, text = string(output_hex[:])},
+		{kind = .Text, text = "module"},
+		{kind = .Text, text = project_name},
+	}
+	delivered := recipes_deliver_module_command(deliver_args[:])
+	if failed || delivered.kind != .Text || len(delivered.text) != disk_process.HASH_DIGITS {
+		if !failed {
+			return fail("projects.install: module delivery did not return a 64-digit module hash")
+		}
+		return {}
+	}
+	module_hex: [64]u8
+	copy(module_hex[:], delivered.text)
+
+	origin_label, _, signer_hex, prov_ok := recipes_provenance_lookup("projects.install", recipe_hash)
+	if !prov_ok {
+		return {}
+	}
+	columns := [6]Column{
+		text_column("outcome", 16),
+		text_column("origin", 16),
+		text_column("signer", 65),
+		text_column("recipe", 65),
+		text_column("output", 65),
+		text_column("module", 65),
+	}
+	res_table, made := made_table("Project_Install", columns[:])
+	if !made {
+		return fail("projects.install: the line has no room for the description of its result")
+	}
+	res_row := made_row(&res_table)
+	made_text(&res_table, res_row, 0, outcome_label)
+	made_text(&res_table, res_row, 1, origin_label)
+	made_text(&res_table, res_row, 2, string(signer_hex[:]))
+	made_text(&res_table, res_row, 3, string(recipe_hex[:]))
+	made_text(&res_table, res_row, 4, string(output_hex[:]))
+	made_text(&res_table, res_row, 5, string(module_hex[:]))
+	return made_record(&res_table, "projects.install")
 }
 
 // recipes_deliver_module_command reads a verified output module from recipes

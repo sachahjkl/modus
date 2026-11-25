@@ -24,11 +24,14 @@ The store is the store of the principal whose session the asker belongs to. Its 
 
 ### The command names the hash
 
-The principal types the name and the hash:
+The principal types the name and the hash with either `start` or `start_from_disk`:
 
 ```
+start("visitor", "5f0c…64 hexadecimal digits…")
 start_from_disk("visitor", "5f0c…64 hexadecimal digits…")
 ```
+
+When the nickname is not a boot-image module and already has a pinned row in the principal's disk grant table, `start("visitor")` sends `Start_From_Disk` with an empty hash so the root service verifies the bytes against the pinned hash. Both forms send the same `Start_From_Disk` record to the root service.
 
 The name finds the entry. The hash is the identity: the root service starts the bytes only when their BLAKE3 hash is the hash of the command. The hash comes from the party that built the file (the tool prints it), on a path that does not pass through the storage service.
 
@@ -175,7 +178,7 @@ The principal gives a disk process a grant with a command. The rules of the tabl
 - The root service computes the hash of the bytes before a start. It compares the hash with the row of the nickname: a row with another hash refuses the start before any read, with the two hashes in the sentence.
 - A nickname with no row gets no grant. So a file under it gains nothing, and the root service does not refuse it.
 
-`start_from_disk(nickname, "")` takes the hash from the row of the nickname. The hash is still the identity: the bytes are checked against it, and the log writes it.
+`start(nickname)` (when `nickname` is not a boot-image module) and `start_from_disk(nickname, "")` take the hash from the row of the nickname. The hash is still the identity: the bytes are checked against it, and the log writes it. If no row pins the hash, `start(nickname)` refuses and names `start(nickname, "<hash>")`.
 
 One file can have two nicknames. Each nickname has its own row, its own grants and its own store: a grant names the file and the nickname together.
 

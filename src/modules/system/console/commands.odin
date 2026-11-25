@@ -247,7 +247,9 @@ commands_start :: proc "contextless" () {
 	// help after the name is the text that help() gives in its row.
 
 	// Gives one row for each command that the console can call now: its
-	// name, its signature, and its help.
+	// name, its signature, and its help. When given one name, delegates to
+	// `describe(name)` and returns the help text for that command or word of
+	// Lex.
 	//
 	// The table grows with each `load`, `isolate` and `connect`, and
 	// shrinks with each `unload`: it is the command table of this moment,
@@ -255,18 +257,16 @@ commands_start :: proc "contextless" () {
 	// description of the export gives one, and `Value` when it takes any
 	// kind; the result follows `->`, and a command with no `->` gives
 	// nothing. A help longer than its field ends with the cut mark:
-	// `describe(name)` gives it whole.
-	//
-	// `help` takes no argument: `describe(name)` gives the help on one
-	// name, and `help("let")` says so.
+	// `help(name)` or `describe(name)` gives it whole.
 	//
 	// ```
 	// > where(help(), name = "repeat")
 	// name    signature                      about
 	// repeat  repeat(Text, Integer) -> Text  a text, several times
 	// 1 row of Command
+	// > help("let")
 	// ```
-	command("help", {}, .Table, "the commands, one row each", help)
+	command("help", {.Text}, .Table, "the commands, or the help on one name", help, optional_last = true)
 	// Gives the help on one name, as a `Text`: a command gives its
 	// signature and its whole help; a word of Lex (`let`, `in`, `with`,
 	// `|>`, `_`, `=>`, `function`, `[`, `list`, `if`) or a name of the
@@ -481,39 +481,37 @@ commands_start :: proc "contextless" () {
 	// exports no command; no room for its commands.
 	command("connect", {.Text}, .Record, "call the exports of a service that runs", connect_service)
 	// Asks the root service to start a process from a module of the boot
-	// image. It gives nothing.
+	// image, or from a disk process in `module_files`. It gives nothing.
 	//
-	// - `name`: the name of the module, which becomes the name of the
-	//   process.
+	// - `name`: the name of a boot-image module, or the nickname of a disk
+	//   process in `module_files`.
+	// - `list_or_hash`: optional second argument. A `Table` of `Wiring` (as
+	//   `wire(from, to)` gives it and `+` joins it) wires a boot-image module
+	//   before its first instruction. A `Text` (64 lowercase hexadecimal
+	//   digits, or `""` for the hash pinned in the disk grant table) starts
+	//   a disk process from `module_files` with hash verification.
 	//
-	// The root service gives the process the grants of its name, and only
-	// those (the reference page of the grants lists them). `processes()`
-	// then has its row.
+	// With one argument, a boot-image module starts with the grants of its
+	// name; any other valid disk nickname starts from `module_files` using
+	// the hash pinned in the principal's disk grant table.
 	//
-	// - `list`: a wiring list, which the call may leave out: a `Table` of
-	//   `Wiring`, as `wire(from, to)` gives it and `+` joins it. Each row
-	//   names the module at one end; the root service makes each wiring
-	//   before the first instruction of the process, so its first record
-	//   reaches each reader.
-	//
-	// When the module declares a record output, the console keeps the
-	// handle of the process while it runs, and a line reads each record
+	// When a boot-image module declares a record output, the console keeps
+	// the handle of the process while it runs, and a line reads each record
 	// output by its typed name: `output_counter.counts` (docs/CONSOLE.md,
 	// "Streams").
 	//
 	// ```
+	// > start("notes")
+	// > start("db_browser", "5f0c...")
 	// > start("output_count_reader", wire(where(output_counter.counts, status = 404), output_count_reader.counts))
 	// ```
 	//
 	// Errors: the error record of the root service when it refuses (no
-	// module has the name, the process runs already, no slot is free, a
-	// row of the list, a record input of the count One wired twice), and
-	// "the root service did not answer" after 3 seconds; a list that is no
-	// Table of Wiring, a row that names no end of the module or names it
-	// twice, an end that does not run, a list past its 32 rows or its 16
-	// lent handles; the console keeps the handles of 8 started processes
-	// with a record output at most.
-	command("start", {.Text, .Table}, .None, "start a process, by module name, with a wiring list or none", start_process, optional_last = true)
+	// module has the name, the process runs already, no slot is free, no
+	// disk grant row pins the hash, hash mismatch, or a row of the wiring
+	// list); a second argument that is neither a `Table` of `Wiring` nor a
+	// hash `Text`.
+	command("start", {.Text, .None}, .None, "start a boot-image module or a disk process, with a wiring list or a hash", start_process, optional_last = true)
 	// Starts the editor `edit` on a text object of a store of the principal
 	// of this console. It gives nothing.
 	//
@@ -1124,12 +1122,24 @@ commands_start :: proc "contextless" () {
 	// removing content-addressed objects not referenced by any live realisation,
 	// recipe, active build, or recent put window.
 	command("recipes.collect_garbage", {}, .Text, "collect unreferenced content-addressed objects in recipes", recipes_collect_garbage_command)
+	// Connects to recipes when needed, ingests the project store, evaluates and
+	// builds its project.lex default output, validates and delivers the module
+	// into module_files under project_name, and returns a Project_Install record
+	// with outcome, origin, signer, recipe, output, and module fields.
+	//
+	// - `project_name`: store name of the project and nickname in module_files.
+	// - `mode`: optional build mode (`prefer_cache`, `build_only`, `cache_only`,
+	//   or `verify`; defaults to `prefer_cache`).
+	command("projects.install", {.Text, .Text}, .Record, "ingest, build, verify, and deliver a project module into module_files", projects_install_command, optional_last = true)
 	debugger_commands_start()
 	tables_start()
 	facts_start() // facts.odin
 }
 
 help :: proc "contextless" (arguments: []Value) -> Value {
+	if len(arguments) == 1 {
+		return describe(arguments)
+	}
 	columns := [3]Column{text_column("name", 48), text_column("signature", 104), text_column("about", 104)}
 	table, made := made_table("Command", columns[:])
 	if !made {
@@ -3056,13 +3066,34 @@ start_process :: proc "contextless" (arguments: []Value) -> Value {
 	// its connection again.
 	line_records_try_again()
 	name := arguments[0].text
+	if len(arguments) == 2 {
+		switch arguments[1].kind {
+		case .Table:
+			// The ring holds a name of 31 bytes: request refuses a longer one,
+			// as a cut name can be the name of another process.
+			if len(name) >= len(system.Name) {
+				return request(.Start, name)
+			}
+			return start_with_list(name, arguments[1])
+		case .Text:
+			return start_from_disk_run("start", name, arguments[1].text, unified_no_hash = false)
+		case .None, .Integer, .Record, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+			return fail("start: argument 2 must be a wiring Table or a hash Text, not ", type_text(arguments[1].file, arguments[1].kind, arguments[1].detail))
+		}
+	}
 	// The ring holds a name of 31 bytes: request refuses a longer one, as
 	// a cut name can be the name of another process.
 	if len(name) >= len(system.Name) {
 		return request(.Start, name)
 	}
-	if len(arguments) == 2 {
-		return start_with_list(name, arguments[1])
+	// Boot-image names and disk-process nicknames are disjoint in root.
+	// When no boot-image module has the name, try Start_From_Disk with an
+	// empty hash so root verifies the hash pinned in the principal's disk
+	// grant table.
+	if _, _, in_boot_image := image_module_file(name); !in_boot_image {
+		if disk_problem, _ := disk_process.name_problem(name); disk_problem == .None {
+			return start_from_disk_run("start", name, "", unified_no_hash = true)
+		}
 	}
 	// The console asks for the process handle: it names the process as
 	// the end Started of a wiring, and its record outputs by their typed
@@ -3149,29 +3180,32 @@ START_FROM_DISK_ANSWER_LIMIT :: 2 * disk_process.LOAD_DEADLINE_MILLISECONDS
 // record of the root ring holds a name of 23 bytes and a hash of 32, and a
 // cut name can be the name of another process.
 start_from_disk :: proc "contextless" (arguments: []Value) -> Value {
-	name := arguments[0].text
+	return start_from_disk_run("start_from_disk", arguments[0].text, arguments[1].text, unified_no_hash = false)
+}
+
+start_from_disk_run :: proc "contextless" (command_name: string, name: string, hash_text: string, unified_no_hash: bool) -> Value {
 	problem, offset := disk_process.name_problem(name)
 	switch problem {
 	case .None:
 	case .Empty:
-		return fail("start_from_disk: the name is empty; it must have 1 to ", u64(disk_process.NAME_LIMIT), " bytes")
+		return fail(command_name, ": the name is empty; it must have 1 to ", u64(disk_process.NAME_LIMIT), " bytes")
 	case .Too_Long:
-		return fail("start_from_disk: the name has ", u64(len(name)), " bytes; the name of a disk process has at most ", u64(disk_process.NAME_LIMIT))
+		return fail(command_name, ": the name has ", u64(len(name)), " bytes; the name of a disk process has at most ", u64(disk_process.NAME_LIMIT))
 	case .Bad_Byte:
-		return fail("start_from_disk: the byte ", u64(offset), " of the name cannot be in the name of an entry of a tree")
+		return fail(command_name, ": the byte ", u64(offset), " of the name cannot be in the name of an entry of a tree")
 	case .Store_Name:
-		return fail("start_from_disk: \"", name, "\" is the name of the store of the module files, and no name of a process")
+		return fail(command_name, ": \"", name, "\" is the name of the store of the module files, and no name of a process")
 	case .Table_Name:
-		return fail("start_from_disk: \"", name, "\" is the name of the object of the disk grant table, and no name of a process")
+		return fail(command_name, ": \"", name, "\" is the name of the object of the disk grant table, and no name of a process")
 	}
 	// An empty hash: the root service takes the hash of the row of the
 	// nickname in the disk grant table.
 	hash: [disk_process.HASH_SIZE]u8
-	if arguments[1].text != "" {
+	if hash_text != "" {
 		parsed: bool
-		hash, parsed = disk_process.hash_parse(arguments[1].text)
+		hash, parsed = disk_process.hash_parse(hash_text)
 		if !parsed {
-			return fail("start_from_disk: the hash must be ", u64(disk_process.HASH_DIGITS), " hexadecimal digits, or empty for the hash of the row of the nickname; the argument has ", u64(len(arguments[1].text)), " bytes, or a byte that is no digit")
+			return fail(command_name, ": the hash must be ", u64(disk_process.HASH_DIGITS), " hexadecimal digits, or empty for the hash of the row of the nickname; the argument has ", u64(len(hash_text)), " bytes, or a byte that is no digit")
 		}
 	}
 	hash_values := transmute([4]u64)hash
@@ -3183,7 +3217,7 @@ start_from_disk :: proc "contextless" (arguments: []Value) -> Value {
 	if record.kind == u32(call_outcome.Call_Outcome.Succeeded) {
 		return {}
 	}
-	return start_from_disk_refusal(name, record)
+	return start_from_disk_refusal_for(command_name, name, record, unified_no_hash)
 }
 
 // disk_request sends one command of the disk processes to the root service,
@@ -3691,41 +3725,51 @@ change_result :: proc "contextless" (end_value: u64, problem_value: u64) -> Valu
 // of a process of the system. The record stays the record of the root
 // service.
 start_from_disk_refusal :: proc "contextless" (name: string, completion: ring.Record) -> Value {
+	return start_from_disk_refusal_for("start_from_disk", name, completion, unified_no_hash = false)
+}
+
+start_from_disk_refusal_for :: proc "contextless" (command_name: string, name: string, completion: ring.Record, unified_no_hash: bool) -> Value {
 	error := errors.completion_record(completion.values)
 	already := failed
 	result: Value
 	kind, kind_ok := errors.kind_of_word(error.kind)
 	if !kind_ok {
 		// fail_root says that the word names no kind.
-		return fail_root("start_from_disk: ", completion)
+		return fail_root(scratch_text(command_name, ": "), completion)
 	}
 	// An open choice: the few kinds of this command get a sentence of their
 	// own, and each other kind of the large set gets the general sentence.
 	#partial switch kind {
 	case .Not_Authentic:
 		head := transmute([8]u8)u64(error.value)
-		result = fail("start_from_disk: the bytes of \"", name, "\" in the store module_files do not have the hash asked: their hash starts with ", system.Hash{head[:]}, ". The root service started nothing")
+		result = fail(command_name, ": the bytes of \"", name, "\" in the store module_files do not have the hash asked: their hash starts with ", system.Hash{head[:]}, ". The root service started nothing")
 	case .Absent:
 		if errors.Unit(error.unit) == .Grants {
-			result = fail("start_from_disk: the nickname \"", name, "\" has no row in the disk grant table: name the hash of its file")
+			if unified_no_hash {
+				result = fail(command_name, ": no boot-image module has the name \"", name, "\", and no disk grant row pins its hash; pass the 64-digit hash with start(\"", name, "\", \"<hash>\")")
+			} else {
+				result = fail(command_name, ": the nickname \"", name, "\" has no row in the disk grant table: name the hash of its file")
+			}
+		} else if unified_no_hash {
+			result = fail(command_name, ": no boot-image module and no object in module_files has the name \"", name, "\"")
 		} else {
-			result = fail("start_from_disk: the store module_files has no object \"", name, "\"")
+			result = fail(command_name, ": the store module_files has no object \"", name, "\"")
 		}
 	case .Exists:
 		if errors.Unit(error.unit) == .Grants {
 			head := transmute([8]u8)u64(error.value)
-			result = fail("start_from_disk: the nickname \"", name, "\" names the file whose hash starts with ", system.Hash{head[:]}, ": nickname_move points it to another file. The root service started nothing")
+			result = fail(command_name, ": the nickname \"", name, "\" names the file whose hash starts with ", system.Hash{head[:]}, ": nickname_move points it to another file. The root service started nothing")
 		} else {
-			result = fail("start_from_disk: a module of the boot image has the name \"", name, "\": start() starts that module, and a disk process takes another name")
+			result = fail(command_name, ": a module of the boot image has the name \"", name, "\": start() starts that module, and a disk process takes another name")
 		}
 	case .Reserved:
-		result = fail("start_from_disk: the root service gives the name \"", name, "\" a grant, or keeps it for the system: a disk process takes no grant by its name")
+		result = fail(command_name, ": the root service gives the name \"", name, "\" a grant, or keeps it for the system: a disk process takes no grant by its name")
 	case .Busy:
-		result = fail("start_from_disk: another load from the disk runs: try again after it")
+		result = fail(command_name, ": another load from the disk runs: try again after it")
 	case .Malformed:
-		result = fail("start_from_disk: the loader refused the file of \"", name, "\": it is no module, or an import of it is not in the boot image. The log has the load error")
+		result = fail(command_name, ": the loader refused the file of \"", name, "\": it is no module, or an import of it is not in the boot image. The log has the load error")
 	case:
-		return fail_root("start_from_disk: ", completion)
+		return fail_root(scratch_text(command_name, ": "), completion)
 	}
 	if !already {
 		argument_names := [2]string{"name", "hash"}

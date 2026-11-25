@@ -352,6 +352,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.LIBRARY_MODULE_SOURCES + "drawing",
 	foundation.DEMONSTRATION_MODULE_SOURCES + "sample",
 	foundation.DEMONSTRATION_MODULE_SOURCES + "browser",
+	foundation.SYSTEM_MODULE_SOURCES + "console",
 	foundation.SYSTEM_MODULE_SOURCES + "monitor",
 	foundation.SYSTEM_MODULE_SOURCES + "settings",
 	foundation.SYSTEM_MODULE_SOURCES + "manual",

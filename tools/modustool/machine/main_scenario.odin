@@ -858,7 +858,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "describe(\"lte\")"},
 	{kind = .Wait, text = "[console] error: describe: no command and no word of Lex has the name lte; did you mean let"},
 	{kind = .Type, text = "help(\"let\")"},
-	{kind = .Wait, text = "[console] error: help takes no argument: use describe(\"let\") for the help on one name"},
+	{kind = .Wait, text = "[console] let binds names for one expression"},
 	// The hint of a function written with "->".
 	{kind = .Type, text = "map(numbers, n -> n * n)"},
 	{kind = .Wait, text = "[console] error: \"->\" is no operator: a function is written (n) => n * n"},
@@ -2287,7 +2287,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "rows(compositor.screen()) - rows(where(compositor.screen(), frames_on_the_shown_page = 0))"},
 	{kind = .Wait, text = "[console] 0"},
 	{kind = .Type, text = "start(\"nothing\")"},
-	{kind = .Wait, text = "[console] error: root.Start: the argument name names none of the modules"},
+	{kind = .Wait, text = "[console] error: start: no boot-image module has the name \"nothing\", and no disk grant row pins its hash; pass the 64-digit hash with start(\"nothing\", \"<hash>\")"},
 	{kind = .Type, text = "stop(\"compositor\")"},
 	{kind = .Wait, text = "[console] error: root.Stop: the argument name names a process of the system: it starts at boot, or it is a device service, and the call does not act on it"},
 	{kind = .Type, text = "revoke(\"nobody\", \"log\")"},

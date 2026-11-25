@@ -504,5 +504,8 @@ error: Rectangle has no field widht; its fields are x, y, width, height
 | Roll back to the previous or numbered applied plan | `plans.rollback()`, `plans.rollback(4)` |
 | Read a project from the current source tree | `kernel = declaration(here())` |
 | Build default or named project output with verification | `recipes.build(kernel)`, `recipes.build(kernel.tools, substitution = { mode = .Verify })` |
+| Install a project module into `module_files` in one step | `projects.install("db_browser")`, `projects.install("db_browser", "verify")` |
+| Start a boot-image module or installed disk process | `start("notes")`, `start("db_browser", "<hash>")`, `start("db_browser")` |
+| Show all commands or help on one name | `help()`, `help("start")`, `help("let")` |
 | Update pinned declaration inputs in `pins.lex` | `projects.update(kernel)`, `projects.update(kernel, inputs.gt)` |
 | Enter and leave the console of a project | `projects.enter(kernel)`, then `exit()` |

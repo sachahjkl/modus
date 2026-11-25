@@ -1244,11 +1244,10 @@ command_find_connecting :: proc "contextless" (name: string) -> ^Command {
 }
 
 // argument_count_fail fails a call with a count of arguments that its
-// command does not take. help takes none: the help on one name is
-// describe(name), so help(name) names that command.
-argument_count_fail :: proc "contextless" (name: string, found: ^Command, count: int, topic := "let") -> Value {
-	if name == "help" && count == 1 {
-		return fail("help takes no argument: use describe(\"", topic, "\") for the help on one name, a command or a word of Lex")
+// command does not take.
+argument_count_fail :: proc "contextless" (name: string, found: ^Command, count: int) -> Value {
+	if found.optional_last {
+		return fail(name, " takes ", i64(found.parameter_count - 1), " or ", i64(found.parameter_count), " arguments, not ", i64(count))
 	}
 	return fail(name, " takes ", i64(found.parameter_count), " arguments, not ", i64(count))
 }
@@ -1336,10 +1335,9 @@ call_run :: proc "contextless" (name: string, arguments: []Value) -> Value {
 	}
 	count := len(arguments)
 	// A command whose last parameter may be left out takes one argument
-	// less: start(name) and start(name, list).
+	// less: start(name) and start(name, list_or_hash), help() and help(name).
 	if count != found.parameter_count && !(found.optional_last && count == found.parameter_count - 1) {
-		topic := count == 1 && arguments[0].kind == .Text ? arguments[0].text : "let"
-		return argument_count_fail(name, found, count, topic)
+		return argument_count_fail(name, found, count)
 	}
 	for kind, index in found.parameters[:count] {
 		argument := &arguments[index]

@@ -650,6 +650,15 @@ names_collect :: proc "contextless" (table: ^Candidate_Table, place: line_editor
 			for &item, index in loaded[:loaded_count] {
 				candidate_add(table, item.name, .Module, index)
 			}
+		case "help", "describe":
+			for &item, index in commands[:command_count] {
+				candidate_add(table, item.name, .Command, index)
+			}
+			for &topic, index in HELP_TOPICS {
+				if command_find(topic.name) == nil {
+					candidate_add(table, topic.name, .Command, command_count + index)
+				}
+			}
 		}
 	}
 }
