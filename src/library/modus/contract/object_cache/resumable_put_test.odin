@@ -53,7 +53,7 @@ resumable_put_refusal_border_refuses_unknown_words :: proc(t: ^testing.T) {
 		testing.expect(t, ok)
 		testing.expect_value(t, got, member)
 	}
-	for bad in ([?]u64{11, 255, max(u64)}) {
+	for bad in ([?]u64{12, 255, max(u64)}) {
 		_, ok := resumable_put_refusal_of_word(bad)
 		testing.expectf(t, !ok, "word %d must not map to Resumable_Put_Refusal", bad)
 	}
@@ -137,8 +137,9 @@ resumable_put_multiframe_out_of_order_resume_and_refusals :: proc(t: ^testing.T)
 	off, ok := resumable_put_resume_offset(&session)
 	testing.expect(t, ok && off == FRAME_BYTES)
 
-	// Duplicate frame 0 -> Frame_Conflict without mutating session.
+	// Duplicate frame 0 -> Frame_Conflict immediately (even with nil proof/frame) without mutating session.
 	snap_after_0 := session
+	testing.expect_value(t, resumable_put_accept_frame(&session, 0, nil, nil), Resumable_Put_Refusal.Frame_Conflict)
 	testing.expect_value(t, resumable_put_accept_frame(&session, 0, p0, blob[:FRAME_BYTES]), Resumable_Put_Refusal.Frame_Conflict)
 	testing.expect_value(t, session, snap_after_0)
 
@@ -147,7 +148,8 @@ resumable_put_multiframe_out_of_order_resume_and_refusals :: proc(t: ^testing.T)
 	testing.expect_value(t, resumable_put_accept_frame(&session, 2, p2, blob[2 * FRAME_BYTES:3 * FRAME_BYTES]), Resumable_Put_Refusal.None)
 	off, ok = resumable_put_resume_offset(&session)
 	testing.expect(t, ok && off == FRAME_BYTES)
-	// Duplicate out-of-order frame 2 -> Frame_Conflict.
+	// Duplicate out-of-order frame 2 -> Frame_Conflict before proof verification.
+	testing.expect_value(t, resumable_put_accept_frame(&session, 2, nil, nil), Resumable_Put_Refusal.Frame_Conflict)
 	testing.expect_value(t, resumable_put_accept_frame(&session, 2, p2, blob[2 * FRAME_BYTES:3 * FRAME_BYTES]), Resumable_Put_Refusal.Frame_Conflict)
 
 	// Accept frame 1 -> contiguous frontier jumps past both 1 and 2 to 3 * FRAME_BYTES!
@@ -158,11 +160,17 @@ resumable_put_multiframe_out_of_order_resume_and_refusals :: proc(t: ^testing.T)
 
 	// Accept frame 3 and final short frame 4 -> session completes!
 	p3 := proof_for_frame(t, 5, 3, outboard, proof_buf[:])
-	p4 := proof_for_frame(t, 5, 4, outboard, proof_buf[:])
 	testing.expect_value(t, resumable_put_accept_frame(&session, 3, p3, blob[3 * FRAME_BYTES:4 * FRAME_BYTES]), Resumable_Put_Refusal.None)
 	testing.expect(t, !resumable_put_is_complete(&session))
+	p4 := proof_for_frame(t, 5, 4, outboard, proof_buf[:])
 	testing.expect_value(t, resumable_put_accept_frame(&session, 4, p4, blob[4 * FRAME_BYTES:]), Resumable_Put_Refusal.None)
 	testing.expect(t, resumable_put_is_complete(&session))
 	off, ok = resumable_put_resume_offset(&session)
 	testing.expect(t, ok && off == u64(total_size))
+
+	// Frame past sliding bitmap window is refused with Window_Exceeded before Bao verify.
+	large_session: Resumable_Put_Session
+	big_size := (RESUMABLE_PUT_WINDOW_FRAMES + 2) * FRAME_BYTES
+	testing.expect_value(t, resumable_put_init_with(&large_session, .Blob, root, big_size, FRAME_BYTES), Resumable_Put_Refusal.None)
+	testing.expect_value(t, resumable_put_accept_frame(&large_session, RESUMABLE_PUT_WINDOW_FRAMES, nil, nil), Resumable_Put_Refusal.Window_Exceeded)
 }

@@ -421,6 +421,28 @@ cache_closure_import :: proc(
 	if hdr_ref != .None {
 		return {}, fmt.tprintf("%s has an invalid closure header (%v)", in_path, hdr_ref)
 	}
+	if len(trusted_signers) > 0 && !header.has_realisation {
+		return {}, fmt.tprintf("%s has no signed realisation, refused by trusted signer policy", in_path)
+	}
+
+	Staged_Import_Object :: struct {
+		temp_path:      string,
+		final_path:     string,
+		already_exists: bool,
+	}
+
+	staged := make([dynamic]Staged_Import_Object)
+	committed := false
+	defer {
+		for item in staged {
+			if !committed && item.temp_path != "" {
+				_ = os.remove(item.temp_path)
+			}
+			delete(item.temp_path)
+			delete(item.final_path)
+		}
+		delete(staged)
+	}
 
 	cursor := i64(object_cache.CLOSURE_STREAM_HEADER_SIZE)
 	seen_in_stream := make(map[blake3.Hash]object_cache.Cache_Object_Kind)
@@ -433,6 +455,34 @@ cache_closure_import :: proc(
 	last_kind: object_cache.Cache_Object_Kind
 	objects_imported: u64 = 0
 	objects_existing: u64 = 0
+
+	stage_buffer_object :: proc(
+		server: ^Cache_Server,
+		obj_hex_text: string,
+		final_path: string,
+		payload: []u8,
+		staged: ^[dynamic]Staged_Import_Object,
+	) -> string {
+		already_exists := os.exists(final_path)
+		seq := sync.atomic_add(&server.temp_sequence, 1)
+		temp_path := fmt.aprintf("%s/%s/%s.%d.tmp", server.root_directory, store_directory_name(.Temp), obj_hex_text, seq)
+		temp_file, create_err := os.create(temp_path)
+		if create_err != nil {
+			delete(temp_path)
+			return fmt.tprintf("cannot create staging file for %s: %v", obj_hex_text, create_err)
+		}
+		if (len(payload) > 0 && !file_write_all(temp_file, payload)) || !file_sync_and_close(temp_file) {
+			_ = os.remove(temp_path)
+			delete(temp_path)
+			return fmt.tprintf("cannot write staged object %s", obj_hex_text)
+		}
+		append(staged, Staged_Import_Object{
+			temp_path      = temp_path,
+			final_path     = strings.clone(final_path),
+			already_exists = already_exists,
+		})
+		return ""
+	}
 
 	for record_index in u64(0) ..< header.object_count {
 		rec_buf: [object_cache.CLOSURE_RECORD_HEADER_SIZE]u8
@@ -452,6 +502,10 @@ cache_closure_import :: proc(
 			return {}, "invalid object hash in closure stream"
 		}
 
+		if prev_kind, dup := seen_in_stream[rec.hash]; dup && prev_kind != rec.kind {
+			return {}, fmt.tprintf("object %s appears in stream with conflicting kinds", obj_hex_text)
+		}
+
 		switch rec.kind {
 		case .Tree:
 			tree_buf := make([]u8, int(rec.size), context.allocator)
@@ -463,8 +517,9 @@ cache_closure_import :: proc(
 			if ver_ref := object_cache.closure_record_verify(&rec, tree_buf); ver_ref != .None {
 				return {}, fmt.tprintf("tree %s verification failed (%v)", obj_hex_text, ver_ref)
 			}
-			// Verify bottom-up closure integrity: every child hash must already be
-			// verified earlier in this stream or present in the destination store.
+			// Verify bottom-up closure integrity and child kind discipline: every
+			// child hash must already be verified earlier in this stream (with
+			// matching Blob/Tree kind) or present in the destination store.
 			count := tree_hash.tree_entry_count(tree_buf)
 			offset := tree_hash.HEADER_SIZE
 			for _ in 0 ..< count {
@@ -473,20 +528,22 @@ cache_closure_import :: proc(
 					return {}, fmt.tprintf("tree %s contains an unreadable entry", obj_hex_text)
 				}
 				offset = next_offset
-				_, in_stream := seen_in_stream[entry.hash]
-				if !in_stream && !cache_server_has(&server, entry.hash) {
+				expected_child_kind: object_cache.Cache_Object_Kind = entry.kind == .Object ? .Blob : .Tree
+				seen_kind, in_stream := seen_in_stream[entry.hash]
+				if in_stream {
+					if seen_kind != expected_child_kind {
+						child_hex := hash_to_hex(entry.hash)
+						return {}, fmt.tprintf("tree %s child %s kind mismatch", obj_hex_text, string(child_hex[:]))
+					}
+				} else if !cache_server_has(&server, entry.hash) {
 					child_hex := hash_to_hex(entry.hash)
 					return {}, fmt.tprintf("tree %s references missing child %s (not in stream or store)", obj_hex_text, string(child_hex[:]))
 				}
 			}
-			written, added := store_write_atomic(&server, .Objects, obj_hex_text, tree_buf)
-			if !written {
-				return {}, fmt.tprintf("cannot store verified tree %s", obj_hex_text)
-			}
-			if added {
-				objects_imported += 1
-			} else {
-				objects_existing += 1
+			if _, already_staged := seen_in_stream[rec.hash]; !already_staged {
+				if stage_err := stage_buffer_object(&server, obj_hex_text, final_path, tree_buf, &staged); stage_err != "" {
+					return {}, stage_err
+				}
 			}
 
 		case .Blob:
@@ -499,22 +556,19 @@ cache_closure_import :: proc(
 				if ver_ref := object_cache.closure_record_verify(&rec, payload); ver_ref != .None {
 					return {}, fmt.tprintf("blob %s verification failed (%v)", obj_hex_text, ver_ref)
 				}
-				written, added := store_write_atomic(&server, .Objects, obj_hex_text, payload)
-				if !written {
-					return {}, fmt.tprintf("cannot store verified blob %s", obj_hex_text)
-				}
-				if added {
-					objects_imported += 1
-				} else {
-					objects_existing += 1
+				if _, already_staged := seen_in_stream[rec.hash]; !already_staged {
+					if stage_err := stage_buffer_object(&server, obj_hex_text, final_path, payload, &staged); stage_err != "" {
+						return {}, stage_err
+					}
 				}
 			} else {
 				// Stream large (> 1 MiB) blobs through tmp/ while verifying BLAKE3 incrementally.
 				already_exists := os.exists(final_path)
 				seq := sync.atomic_add(&server.temp_sequence, 1)
-				temp_path := fmt.tprintf("%s/%s/%s.%d.tmp", server.root_directory, store_directory_name(.Temp), obj_hex_text, seq)
+				temp_path := fmt.aprintf("%s/%s/%s.%d.tmp", server.root_directory, store_directory_name(.Temp), obj_hex_text, seq)
 				temp_file, create_err := os.create(temp_path)
 				if create_err != nil {
+					delete(temp_path)
 					return {}, fmt.tprintf("cannot create staging file for blob %s: %v", obj_hex_text, create_err)
 				}
 				hasher := blake3.hasher_make()
@@ -524,6 +578,7 @@ cache_closure_import :: proc(
 					if !file_read_exact_at(in_file, chunk_buf[:want], cursor) {
 						_ = os.close(temp_file)
 						_ = os.remove(temp_path)
+						delete(temp_path)
 						return {}, fmt.tprintf("%s truncated inside blob %s", in_path, obj_hex_text)
 					}
 					cursor += i64(want)
@@ -532,22 +587,30 @@ cache_closure_import :: proc(
 					if !file_write_all(temp_file, chunk_buf[:want]) {
 						_ = os.close(temp_file)
 						_ = os.remove(temp_path)
+						delete(temp_path)
 						return {}, fmt.tprintf("cannot stage blob %s", obj_hex_text)
 					}
 				}
 				if blake3.hasher_finish(&hasher) != rec.hash {
 					_ = os.close(temp_file)
 					_ = os.remove(temp_path)
+					delete(temp_path)
 					return {}, fmt.tprintf("blob %s verification failed (Hash_Mismatch)", obj_hex_text)
 				}
-				if !file_sync_and_close(temp_file) || !file_rename_durable(temp_path, final_path) {
+				if !file_sync_and_close(temp_file) {
 					_ = os.remove(temp_path)
-					return {}, fmt.tprintf("cannot commit verified blob %s", obj_hex_text)
+					delete(temp_path)
+					return {}, fmt.tprintf("cannot sync staged blob %s", obj_hex_text)
 				}
-				if already_exists {
-					objects_existing += 1
+				if _, already_staged := seen_in_stream[rec.hash]; !already_staged {
+					append(&staged, Staged_Import_Object{
+						temp_path      = temp_path,
+						final_path     = strings.clone(final_path),
+						already_exists = already_exists,
+					})
 				} else {
-					objects_imported += 1
+					_ = os.remove(temp_path)
+					delete(temp_path)
 				}
 			}
 		}
@@ -580,12 +643,28 @@ cache_closure_import :: proc(
 		realisation_rec = decoded_real
 	}
 
-	// Refuse any trailing garbage past the end of the closure stream before committing realisation.
+	// Refuse any trailing garbage past the end of the closure stream before committing any object.
 	trailing_probe: [1]u8
 	extra_n, _ := os.read_at(in_file, trailing_probe[:], cursor)
 	if extra_n > 0 {
 		return {}, fmt.tprintf("%s contains trailing bytes past the closure stream", in_path)
 	}
+
+	// All objects, root-last discipline, realisation signature/signer, and EOF verified:
+	// atomically move staged objects into objects/ and then commit the realisation.
+	for &item in staged {
+		if !file_rename_durable(item.temp_path, item.final_path) {
+			return {}, fmt.tprintf("cannot commit staged object %s", item.final_path)
+		}
+		delete(item.temp_path)
+		item.temp_path = ""
+		if item.already_exists {
+			objects_existing += 1
+		} else {
+			objects_imported += 1
+		}
+	}
+	committed = true
 
 	if header.has_realisation {
 		recipe_hex := hash_to_hex(realisation_rec.recipe_hash)

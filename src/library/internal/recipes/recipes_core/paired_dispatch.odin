@@ -227,10 +227,11 @@ peer_serves_builder :: proc "contextless" (role: Paired_Peer_Role) -> bool {
 
 @(private = "file")
 outcome_is_link_drop :: proc "contextless" (outcome: call_outcome.Call_Outcome) -> bool {
-	if outcome == .Callee_Unavailable {
+	checked, _ := call_outcome.outcome_of_word(u64(outcome))
+	if checked == .Callee_Unavailable {
 		return true
 	}
-	return call_outcome.EFFECT_GROUP_OF[outcome] == .Change_In_Doubt
+	return call_outcome.EFFECT_GROUP_OF[checked] == .Change_In_Doubt
 }
 
 @(private = "file")
