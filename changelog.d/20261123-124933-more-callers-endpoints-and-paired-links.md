@@ -1,3 +1,0 @@
-type: Changed
-
-**More clients for each service and for the network**: each service takes 48 callers at once (was 8), of which the clients of other machines take at most 32, and at most half of the connections of the root service, so a local console or window always connects; a connection of `remote` to a service ends when the last client of its key leaves or after 60 s with no call; the network service 96 endpoints, `remote` reaches 8 paired machines at once (was 2), 32 clients of `remote` and 8 viewers of `remote_display` connect at one time with no wait, and the QUIC server keeps the budgets of 1024 source ranges, with a prefix length that its limits set, in place of 64; a new range still connects when the table is full.

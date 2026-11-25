@@ -1,3 +1,0 @@
-type: Changed
-
-**The tile Appearance of the Control Center sets the next appearance**: a press goes auto, dark, light. With no window of settings open, the root service starts settings for one pass that keeps and writes the next appearance; with the window open, the press raises it with the focus on the appearance in force. Only the window that the root service started as settings takes the press; a second start of settings raises the window that runs, so two windows of settings never write the settings at once; and while a pass of settings runs, the press is refused and a start of the window waits until the pass ends.

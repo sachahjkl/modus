@@ -1,0 +1,159 @@
+measure record 1
+time 2026-11-25 14:51 UTC
+release 0.97.0
+commit 099ab9ba5307717c415361d2e97186cbcd1c8c09
+tree clean
+host AMD Ryzen 7 5800X 8-Core Processor, 16 logical processors; QEMU with KVM
+checks 16426
+number Kernel entries in one second, with 1, 2 and 4 processes that each take the locks of their own objects
+log build/test_output_measure.txt
+line 196
+matching 1
+machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
+text [locks] locks: kernel entries in one second, each locker on its own objects: 1 locker 4464640, 2 lockers 8304000, 4 lockers 15725866
+number Reads of the time in one second from the time page, with no kernel entry
+log build/test_output_measure_time_page.txt
+line 197
+matching 1
+machine The machine of `modustool measure time_page`: a measure run, only the desktop and the process `time_page` run
+text [time_page] time_page: the time page: 1466071493 reads in one second, 0 kernel entries for one million reads
+number Wakes in one second of two threads that wake each other on a busy machine, under the strategy EEVDF
+log build/test_output_scheduler_1.txt
+line 226
+matching 1
+machine The machine of `modustool measure scheduler`: a measure run, only the desktop and the process `scheduler` run
+text [scheduler] scheduler: EEVDF: two threads that wake each other, a spinner on each processor: 139959 wakes in one second (56292 stints ended on the processor of the waker, 86 by an interrupt, 429 moves); a thread that sleeps 2 ms among 8 spinners: late by 960 us in the middle, 2302 us at worst
+number One glyph of the vector font, from its outline and from the glyph cache
+log build/test_output.txt
+line 12776
+matching 1
+machine The main machine of `modustool test`, while the other processes of the test run
+text [vector_glyphs] vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 3058 ns, scale 2 8147 ns, scale 3 15541 ns; from the private glyph cache: 435 ns; Spleen 8x16: 28 ns
+number The handles and the mappings of the root service in the main test, after the stop of the asker of the record outputs
+log build/test_output.txt
+line 8721
+matching 1
+machine The main machine of `modustool test`, while the other processes of the test run
+text [root] root: the tables of this service after the stop of output_wiring: 146 handles, 56 of them prepared parts, and 49 mappings, of 1024 each
+number A full frame of the compositor at 1920 x 1080, with the windows of the main test
+log build/test_output.txt
+line 13368
+matching 26
+machine The main machine of `modustool test`, while the other processes of the test run
+text [compositor] compositor: a full frame of 1920x1080 with 9 windows in 4617 us
+number A clear and a present of a frame of 1920 x 1080 on the processor
+log build/test_output_measure.txt
+line 299
+matching 1
+machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
+text [processor_frame] processor_frame: measure: a clear and a present of 1920x1080: least 278.1 us, median 301.5 us, 3316 frames in one second at the median, over 21 frames
+number A full frame of the compositor at 1920 x 1080 with 4 windows, on the processor
+log build/test_output_measure.txt
+line 300
+matching 1
+machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
+text [processor_frame] processor_frame: measure: a full frame of the compositor at 1920x1080 with 4 windows: least 1249.6 us, median 1596.3 us, 626 frames in one second at the median, over 21 frames
+number A frame of the compositor at 1920 x 1080 in its damage, on the processor
+log build/test_output_measure.txt
+line 301
+matching 1
+machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
+text [processor_frame] processor_frame: measure: a frame of the compositor at 1920x1080 with 4 windows in its damage of 2 rectangles, 122432 pixels: least 97.1 us, median 119.4 us, 8371 frames in one second at the median, over 21 frames
+number The execution of a draw table of a desktop at 1920 x 1080, on the processor
+log build/test_output_measure.txt
+line 302
+matching 1
+machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
+text [processor_frame] processor_frame: measure: the execution of a draw table of 1920x1080 with 339 records: 38 opaque rectangles and gradients, 120 texts in the font of the cells, 144 in the interface font, 12 opaque pictures, 25 rectangles and pictures with alpha: least 2585.2 us, median 2611.2 us, 382 frames in one second at the median, over 21 frames
+number The time of a frame of the compositor, from the first record that it reads to the flip
+log build/test_output_measure.txt
+line 297
+matching 2
+machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
+text [compositor] compositor: measure: the time of a frame, from the first record that the compositor reads to the flip: least 76.7 us, median 140.4 us, over 64 frames
+number The time of a key to the screen, through the console
+log build/test_output_measure.txt
+line 298
+matching 2
+machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
+text [compositor] compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it: least 4977.7 us, median 14921.8 us, over 26 keys
+number The start of a window, from Process_Start to its first frame
+log build/test_output_measure.txt
+line 193
+matching 1
+machine The machine of `modustool measure`: a measure run, only the desktop and the process that measures run
+text [compositor] compositor: measure: the start of the window locks, from Process_Start to its first frame: 22222.7 us
+number Blocks read in one second from a virtio disk, through the block service in user space
+log build/test_output_measure_disk.txt
+line 202
+matching 1
+machine The machine of `modustool measure disk`: a measure run, only the desktop and the process `disk` run
+text [disk] disk: read, 1 block in each request, 32 in flight: 392704 blocks in one second, kernel entries for 100 requests: 8 of this process, 15 of the block service, 0 errors
+number 1000 commits of a process to its private store, one commit for each step
+log build/test_output_persist_1.txt
+line 202
+matching 1
+machine The first machine of the test of persistence of `modustool test`, on a new data disk
+text [persistence_check] persistence_check: count 1000, stopped: 1000 commits in 14850 ms
+number The header and the checksum of one UDP datagram, in the process that sends it
+log build/test_output_network.txt
+line 223
+matching 1
+machine The network machine of `modustool test`: the remote is the peer of the tool, on the loopback of the host
+text [net] net: the header and the checksum of a datagram of 1472 bytes: 375 ns, in this process (no offload)
+number The round trip of one UDP datagram
+log build/test_output_network.txt
+line 224
+matching 1
+machine The network machine of `modustool test`: the remote is the peer of the tool, on the loopback of the host
+text [net] net: the round trip of one datagram of 64 bytes: 44 us at least, 94 us in the middle, over 1000
+number UDP datagrams in one second, with 64 in flight
+log build/test_output_network.txt
+line 226
+matching 1
+machine The network machine of `modustool test`: the remote is the peer of the tool, on the loopback of the host
+text [net] net: a burst with 64 datagrams in flight: 102378 datagrams in one second, sent and answered, 0 lost
+number TCP: 1 MiB that the process `fetch` receives from a server of the host
+log build/test_output_tcp_real.txt
+line 268
+matching 1
+machine The machine of `modustool test` with QEMU user networking: the remote is the TCP of the host, through libslirp
+text [fetch] fetch: GET /large: 1048576 bytes, fnv1a64 e7867887f2822325 as expected, 36.69 MB/s
+number TCP: 1 MiB that the process `fetch` sends to a server of the host
+log build/test_output_tcp_real.txt
+line 269
+matching 1
+machine The machine of `modustool test` with QEMU user networking: the remote is the TCP of the host, through libslirp
+text [fetch] fetch: POST /sink, 1 MiB: the remote got the same hash, 16.89 MB/s
+number ChaCha20-Poly1305: the seal of one QUIC datagram of 1200 bytes, through the module `cryptography`
+log build/test_output_cryptography.txt
+line 193
+matching 1
+machine The machine of `modustool test crypto`
+text [cryptography_vectors] cryptography_vectors: seal ChaCha20-Poly1305: 3961 ns for 1200 bytes, 302 MB/s
+number The same bytes after a second build
+log build/reproducible_build.txt
+line 1
+matching 1
+machine Written by `modustool check`, after it built every module and the boot program a second time and compared the bytes
+text 180 modules, their LLVM IR, their objects and their debug objects, 1 pointer theme files, and the boot program and its object are the same bytes after a second build
+number The log records of the main machine up to the end of its start
+log build/log_measures.txt
+line 1
+matching 1
+machine Written by `modustool test`, after the main machine, from its serial log and the module files of the build
+text modustool: measure: the records of the log of build/test_output.txt: 13 up to "kernel: ok", 130 up to "root: the machine is usable"
+number The module files of the root service and of the compositor
+log build/log_measures.txt
+line 2
+matching 1
+machine Written by `modustool test`, after the main machine, from its serial log and the module files of the build
+text modustool: measure: the module files: root 1338401 bytes, 860160 bytes of code; compositor 853531 bytes, 651264 bytes of code
+boot kernel: boot: firmware: 897877 us
+boot kernel: boot: boot program: load the kernel, the boot image: 91860 us
+boot kernel: boot: boot program: page tables, memory map, jump: 58079 us
+boot kernel: boot: kernel: page frames, kernel page table: 646342 us
+boot kernel: boot: kernel: first processor, timer: 35777 us
+boot kernel: boot: kernel: other processors: 35204 us
+boot kernel: boot: kernel: root service: 1685 us
+end

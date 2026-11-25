@@ -1,3 +1,0 @@
-type: Changed
-
-**Every character that a font of the system has draws**: the em dash, the curly quotes, the ellipsis, the arrows, ≠, ≤, ≥, ∞, ș, ț, ł, č, œ, Vietnamese, the whole Greek and Cyrillic blocks and the currency signs now draw their glyph in each window and in the terminal, in place of the replacement box. The fonts of the boot image hold each character of their sources, 975 KB in place of 282 KB; a letter that B612 lacks takes the proportional Noto Sans in a label and keeps the cell of Paper Mono in the terminal. Armenian, Hebrew, Arabic, Thai, CJK and emoji still draw the box: no font of the system has them.

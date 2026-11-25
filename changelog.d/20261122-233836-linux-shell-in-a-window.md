@@ -1,3 +1,0 @@
-type: Added
-
-**A Linux shell in a window**: `linux` in the start menu boots the Linux kernel of its private store in a guest and gives its serial console in a terminal window: the lines of Linux are the lines of the terminal, each key goes to the shell of the guest, an idle guest waits for a key with no processor use, and `poweroff` in the guest ends the process. The machine test boots the bzImage of Nixpkgs with a busybox to its shell in about 20 s. The guest machine now takes input on its serial port, answers the debug registers and the one-shot mode of its timer, and runs Linux with `printk.time=0` and with no jitter entropy source; the guest builder and `linux` share the code that maps the memory of a guest (`modus:guest_regions`).

@@ -1,3 +1,0 @@
-type: Added
-
-**Lex v3 language features.** Both console and declaration modes now support nested path overrides in `with`, record field punning, typed unit literals (`bytes`, `KiB`, `MiB`, `pages`, `blocks`, `ns`, `us`, `ms`, `s`) with exact unit algebra and border conversion, `from_entries` and `{ for ... }` record comprehensions, pattern matching (`match`), safe field fallback (`??`), fifteen pure `List` and `Text` functions (`len`, `at`, `slice`, `any`, `all`, `flat_map`, `unique`, `sort_by`, `split`, `join_text`, `starts_with`, `ends_with`, `contains`, `replace_text`, `from_entries`), and optional parameter kind annotations and defaults.

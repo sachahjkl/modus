@@ -1,3 +1,0 @@
-type: Added
-
-**Lex v2 engine, language ergonomics, and incremental evaluation cache.** Lex now compiles through a 16-byte SoA AST with native `|>` parsing into a flat 32-bit register bytecode VM with 16-byte values, 24-byte union thunks, O(1) tail-call optimization, UTF-8 sorted record shapes with per-shape hash indices, unbounded budget-governed declaration bundles, string escapes and `${...}` interpolation, `&&`/`||`/`!`/`++`, strict record destructuring, pure built-in functions (`fold`, `zip`, `fields`, `values`, `has`, `extend`, `merge_deep`, `assert`, `trace`), byte-span/force-stack/nearest-name diagnostics, and a caller-owned two-layer incremental evaluation cache.

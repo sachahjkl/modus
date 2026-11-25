@@ -1,3 +1,0 @@
-type: Added
-
-**The act dialog of the trusted display**: an act of an agent that the bridge stops shows "TRUSTED ACT" with the asker, read from the connection, and the act as `service.export`, never a word of the agent. The focus starts on Refuse, so Enter refuses; Tab moves the focus only after the arm time and starts it again, so Tab then Enter at once never allows. The decision goes to the asker only, and the dialog closes with a refusal when the asker exits or withdraws the act. `compositor.act_ask`, `compositor.act_poll` and `compositor.act_cancel` serve a process with the right to ask an act, which opens no other export of the trusted display.

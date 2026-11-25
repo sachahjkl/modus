@@ -1,3 +1,0 @@
-type: Added
-
-**The plan of principal 0 at the start proved across a restart.** The machine test `persist` applies a plan of principal 0 that names another holder of the role Settings, accepts its difference on the trusted display, and restarts the machine: the stored plan holds before the start policy, so the row `settings` of the start list starts that holder from the first start. Before it, a stale expected plan, a difference that the principal refuses, a holder that the image lacks and a holder that does not fill the contract are each refused with no generation committed; a disk with no plan ends the wait at the answer of `plans`, never at the hang bound.

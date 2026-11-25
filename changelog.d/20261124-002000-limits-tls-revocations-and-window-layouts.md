@@ -1,3 +1,0 @@
-type: Changed
-
-**Higher bounds for TLS handshakes, grant revocations, assistant act lines, and box-tree layouts for assistant and manual.** TLS 1.3 over TCP reassembles multi-record handshakes up to 65535 bytes without a stack copy, signed grant revocation lists grow past 64 inline entries up to 65535 serials with fail-closed scratch verification, `text_model` records slower-tier growth past its 32 KiB inline buffer, assistant act lines accept up to 4096 bytes matching the console line editor, and the `assistant` and `manual` windows lay out through `modus:layout` with dark and light element tokens.
