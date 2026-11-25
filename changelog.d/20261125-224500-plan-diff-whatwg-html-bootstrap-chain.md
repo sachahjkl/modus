@@ -1,0 +1,3 @@
+type: Added
+
+**Multi-line plan grant diff, WHATWG HTML extension, and bootstrap chain verification contracts.** Added three freestanding zero-allocation contracts under `modus:contract`: `plan_diff` for canonical multi-line plan grant diffs and trusted-display consent gating, `html_extensions` for WHATWG quirks classification, inert `<template>` / `<select>` / `<frameset>` / foreign-content modes, SVG/MathML case adjustment, escaped script scanning, and binary-searched named entities, and `bootstrap_chain` for acyclic seed-to-Odin and C self-host recipe DAG validation and constant-time host equivalence checks.
