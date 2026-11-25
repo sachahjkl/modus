@@ -106,7 +106,7 @@ reply_frame_encode :: proc "contextless" (
 	byte_order.write_u32_little_endian(dst, 0, REPLY_FRAME_MAGIC)
 	byte_order.write_u32_little_endian(dst, 4, header.seqno)
 	byte_order.write_u32_little_endian(dst, 8, u32(header.command_type))
-	byte_order.write_u32_little_endian(dst, 12, transmute(u32)i32(header.vk_result))
+	byte_order.write_u32_little_endian(dst, 12, u32(i32(header.vk_result)))
 	byte_order.write_u32_little_endian(dst, 16, u32(len(payload)))
 	byte_order.write_u32_little_endian(dst, 20, 0) // reserved
 	if len(payload) > 0 {
@@ -138,7 +138,7 @@ reply_frame_decode :: proc "contextless" (
 	if !cmd_ok {
 		return {}, .Unknown_Command_Type
 	}
-	vk_res, res_ok := vulkan_result_of_word(transmute(i32)byte_order.read_u32_little_endian(src, 12))
+	vk_res, res_ok := vulkan_result_of_word(i32(byte_order.read_u32_little_endian(src, 12)))
 	if !res_ok {
 		return {}, .Unknown_Vk_Result
 	}
