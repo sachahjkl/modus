@@ -1727,6 +1727,8 @@ palette_commands_add :: proc "contextless" () {
 		{"replace", {"module", "by"}},
 		{"debug", {"process", ""}},
 		{"describe", {"name", ""}},
+		{"help", {"name", ""}},
+		{"projects.install", {"project", "mode"}},
 		{"manual_page", {"name", ""}},
 		{"strategy", {"name", ""}},
 		{"buffer", {"count", ""}},

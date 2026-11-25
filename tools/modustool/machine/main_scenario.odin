@@ -858,7 +858,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "describe(\"lte\")"},
 	{kind = .Wait, text = "[console] error: describe: no command and no word of Lex has the name lte; did you mean let"},
 	{kind = .Type, text = "help(\"let\")"},
-	{kind = .Wait, text = "[console] error: help takes no argument: use describe(\"let\") for the help on one name"},
+	{kind = .Wait, text = "[console] let binds names for one expression"},
 	// The hint of a function written with "->".
 	{kind = .Type, text = "map(numbers, n -> n * n)"},
 	{kind = .Wait, text = "[console] error: \"->\" is no operator: a function is written (n) => n * n"},

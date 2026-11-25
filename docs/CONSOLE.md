@@ -111,7 +111,7 @@ error: settings.set: Font has no member .comic; its members are .vector, .spleen
 
 A parameter of the kind `Bytes` takes a `Text` value as its argument, or the `Bytes` of a memory object that `bytes(memory, first, count)` read: `assemble(bytes(t, 0, n), f)` gives the text that `compile` wrote to the assembler. A built-in command can have a parameter of the kind `Value`, which takes a value of any kind; the command checks it itself (the third parameter of `where`).
 
-A command gives a result and never prints. A command that does something and has nothing to give has no result: `start`, `stop`, `clear`. `help()` shows this in each signature: a command with `->` gives a value of that kind, and a command with no `->` gives nothing. A last parameter that a call may leave out is in brackets, `start(Text, [Table])`, and the names of fields of `columns` are `Field...`: `columns(Table, Field...) -> Table`. The section "Results and their drawers" has the result of each built-in command.
+A command gives a result and never prints. A command that does something and has nothing to give has no result: `start`, `stop`, `clear`. `help()` shows this in each signature: a command with `->` gives a value of that kind, and a command with no `->` gives nothing. A last parameter that a call may leave out is in brackets, `start(Text, [Value])` or `help([Text]) -> Table`, and the names of fields of `columns` are `Field...`: `columns(Table, Field...) -> Table`. The section "Results and their drawers" has the result of each built-in command.
 
 ### Calls
 
@@ -482,7 +482,7 @@ A line that fails has one result: its error. The first error ends the line: the 
 | `\|>` with no value on its left: at the start of the line, after `(`, `,` or `=` | `error: \|> has no value on its left: write a value, then \|> and a call` |
 | The line ends after `\|>` | `error: the line ends after \|>: a call or the name of a command comes after it` |
 | After `\|>`: an integer, a text, `(`, another `\|>`, or more after the call | `error: \|> takes a call or the name of a command on its right, not "12"` |
-| A command after `\|>` that takes no argument | `error: help takes no argument, and \|> gives it the value on its left` |
+| A command after `\|>` that takes no argument | `error: processes takes no argument, and \|> gives it the value on its left` |
 | A command after `\|>` with 12 arguments in its parentheses | `error: f has 12 arguments already, and \|> gives it one more: a call takes at most 12` |
 | A `\|` alone | `error: "\|" is no operator: the pipe operator is "\|>"` |
 | A field that the records do not have | `error: where: the records ... have no field x; their fields are ...` |
@@ -615,8 +615,8 @@ When the export has a table of error details and wrote more than one detail, one
 
 | Command | Result | What it gives |
 |---|---|---|
-| `help()` | Table of `Command` | One row for each command: `name`, `signature`, `about` |
-| `describe(name)` | Text | The help on one name: the signature and the whole help of a command, or a short guide with an example to a word of Lex ("Help on one name") |
+| `help()`, `help(name)` | Table of `Command` or Text | With no argument: one row for each command (`name`, `signature`, `about`). With one `Text` name: delegates to `describe(name)` ("Help on one name") |
+| `describe(name)` | Text | The help on one name: the signature and the whole help of a command (including boot-image service exports before `connect`), or a short guide with an example to a word of Lex ("Help on one name") |
 | `processes()` | Table of `Process` | The export `monitor.processes()` ("The built-in commands and the services"). A disk process has its nickname as its `name` and the hash of its file in `hash`: `columns(where(processes(), name = "visitor"), name, hash)` |
 | `debug(process)`, `detach()` | Table | One row: the exports `debugger.attach()` and `debugger.detach()` ("The commands of the debugger") |
 | `threads()`, `hold(thread)`, `resume(thread)`, `continue_all()`, `step(thread)`, `step_line(thread)`, `step_over(thread)` | Table of `Thread_Row` | The threads of the debugged process: `thread`, `state`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
@@ -641,7 +641,8 @@ When the export has a table of error details and wrote more than one detail, one
 | `run(project)`, `run(project, grant)` | Integer | The module of the project from the store `module_files`, isolated in a call host with no grant: the result of the export `main` of that module. A module whose hash is not the hash that the last `build` of the project in this console gave is refused: build it again. An empty name of a grant, and a grant that the project does not declare, are refused before any call host starts |
 | `unload(name)` | Record `Unloaded` | `module`, `commands`, `memory`: what became of the memory of the module |
 | `loaded()` | Table of `Loaded_Module` | The modules and the services whose exports are commands, and the imports of the modules: `module`, `call`, `imported_by`, `in_place_of`, `hash_head` |
-| `start(name)`, `start(name, list)`, `stop(name)` | none | `start` takes a wiring list that `wire` gives, or none. When the module declares a record output, `start` keeps the handle of the process while it runs, for its typed names ("Streams") |
+| `start(name)`, `start(name, list)`, `start(name, hash)`, `stop(name)` | none | Starts a boot-image module (with an optional wiring `Table` that `wire` gives) or a disk process from `module_files` (with a 64-digit hash `Text`, or with no second argument when its hash is pinned in the disk grant table). When a boot-image module declares a record output, `start` keeps the handle of the process while it runs, for its typed names ("Streams") |
+| `projects.install(name)`, `projects.install(name, mode)` | Record `Project_Install` | Connects `recipes` when needed, ingests the project store, evaluates and builds `project.lex` in `mode` (`prefer_cache`, `build_only`, `cache_only`, or `verify`; default `prefer_cache`), verifies and delivers the module into `module_files` under `name`, and returns `outcome`, `origin`, `signer`, `recipe`, `output`, and `module` |
 | `wire(from, to)` | Table of `Wiring` | One row of a wiring list: `writer`, `output`, `reader`, `input`, `condition`, and the terms `field`, `comparison`, `value_kind`, `integer`, `text` ("Streams") |
 | `stream_counts(stream)` | Record `Writer_Counts` | `written`, `discarded`, `refused`, `held`, `rings_past_gap`, as the writer published them at its last write before the read, after the first compartment of the ring ("Streams") |
 | `record_outputs(module)` | Table of `Record_Output` | One row for each record output of a module of the boot image: `output`, `record` (`any record` for a generic one), `about` |
@@ -738,11 +739,11 @@ A fact that a service holds is an export of that service, and the console calls 
 
 ### Help on one name
 
-`help()` is the table of the commands, and takes no argument: `help("let")` fails with `error: help takes no argument: use describe("let") for the help on one name, a command or a word of Lex`. `describe(name)` gives a text about one name:
+`help()` with no argument returns the table of the commands. `help(name)` delegates directly to `describe(name)` and returns a `Text` about one name:
 
-- A command: its signature and its whole help.
+- A command (including boot-image service exports such as `plans.apply` before `connect`): its signature and its whole help.
 - A word of Lex or a name of the evaluation: `let`, `in`, `with`, `|>`, `_`, `=>`, `function`, `[`, `list`, `if`, `map`, `filter`: a short guide with an example.
-- `where` and `connect`: both.
+- Key system commands (`where`, `connect`, `start`, `start_from_disk`, `isolate`, `load`, `projects.install`, `allow`, `revoke`, `plans.difference`, `plans.apply`, `plans.rollback`): both signature/help and a plain-English guide.
 - Any other name fails with the names near it: `error: describe: no command and no word of Lex has the name lte; did you mean let?`.
 
 ```
