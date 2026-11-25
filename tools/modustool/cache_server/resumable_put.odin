@@ -26,7 +26,7 @@ import "modus:contract/object_cache"
 //   [72..584] received_bitmap ([64]u64 LE)
 @(private = "file")
 RESUMABLE_STATE_MAGIC :: [8]u8{'M', 'O', 'D', 'R', 'P', 'U', 'T', '1'}
-@(private = "file")
+@(private)
 RESUMABLE_STATE_SIZE :: 72 + object_cache.RESUMABLE_PUT_BITMAP_WORDS * 8
 
 #assert(RESUMABLE_STATE_SIZE == 584)
@@ -40,7 +40,7 @@ Resumable_Upload_Handle :: struct {
 	state_path: string,
 }
 
-@(private = "file")
+@(private)
 encode_resumable_state :: proc(session: ^object_cache.Resumable_Put_Session, out: ^[RESUMABLE_STATE_SIZE]u8) {
 	magic := RESUMABLE_STATE_MAGIC
 	copy(out[0:8], magic[:])
@@ -57,7 +57,7 @@ encode_resumable_state :: proc(session: ^object_cache.Resumable_Put_Session, out
 	}
 }
 
-@(private = "file")
+@(private)
 decode_resumable_state :: proc(
 	raw: []u8,
 	expected_kind: object_cache.Cache_Object_Kind,
@@ -101,19 +101,39 @@ decode_resumable_state :: proc(
 		session^ = {}
 		return false
 	}
+	remaining := session.frame_count - contiguous
+	bitmap_popcount: u64 = 0
+	for idx in 0 ..< object_cache.RESUMABLE_PUT_BITMAP_WORDS {
+		word := byte_order.read_u64_little_endian(raw, 72 + idx * 8)
+		session.received_bitmap[idx] = word
+		for bit in u64(0) ..< 64 {
+			if (word & (u64(1) << bit)) == 0 {
+				continue
+			}
+			rel := u64(idx) * 64 + bit
+			// Bit 0 must be 0 whenever contiguous < frame_count (otherwise frontier
+			// would have advanced), and no bit may lie at or past frame_count - contiguous.
+			if (contiguous < session.frame_count && rel == 0) || rel >= remaining {
+				session^ = {}
+				return false
+			}
+			bitmap_popcount += 1
+		}
+	}
+	if bitmap_popcount != received - contiguous {
+		session^ = {}
+		return false
+	}
 	session.contiguous_frames = contiguous
 	session.received_count = received
-	for idx in 0 ..< object_cache.RESUMABLE_PUT_BITMAP_WORDS {
-		session.received_bitmap[idx] = byte_order.read_u64_little_endian(raw, 72 + idx * 8)
-	}
 	return true
 }
 
 @(private = "file")
-save_resumable_state :: proc(handle: ^Resumable_Upload_Handle) -> bool {
+save_resumable_state :: proc(state_path: string, session: ^object_cache.Resumable_Put_Session) -> bool {
 	buf: [RESUMABLE_STATE_SIZE]u8
-	encode_resumable_state(&handle.session, &buf)
-	tmp_state := strings.concatenate({handle.state_path, ".tmp"}, context.temp_allocator)
+	encode_resumable_state(session, &buf)
+	tmp_state := strings.concatenate({state_path, ".tmp"}, context.temp_allocator)
 	file, err := os.create(tmp_state)
 	if err != nil {
 		return false
@@ -122,7 +142,7 @@ save_resumable_state :: proc(handle: ^Resumable_Upload_Handle) -> bool {
 		_ = os.remove(tmp_state)
 		return false
 	}
-	if !file_rename_durable(tmp_state, handle.state_path) {
+	if !file_rename_durable(tmp_state, state_path) {
 		_ = os.remove(tmp_state)
 		return false
 	}
@@ -178,7 +198,7 @@ resumable_upload_open :: proc(
 			delete(state_path, allocator)
 			return {}, .Bad_Session, false
 		}
-		if !file_sync_and_close(part_file) || !save_resumable_state(&handle) {
+		if !file_sync_and_close(part_file) || !save_resumable_state(handle.state_path, &handle.session) {
 			_ = os.remove(part_path)
 			_ = os.remove(state_path)
 			delete(part_path, allocator)
@@ -248,10 +268,12 @@ resumable_upload_write_frame :: proc(
 		return .Bad_Session, false
 	}
 
-	handle.session = candidate
-	if !save_resumable_state(handle) {
+	// Persist state from &candidate before updating handle.session so a state
+	// save failure never leaves in-memory state ahead of durable storage.
+	if !save_resumable_state(handle.state_path, &candidate) {
 		return .Bad_Session, false
 	}
+	handle.session = candidate
 
 	if !object_cache.resumable_put_is_complete(&handle.session) {
 		return .None, false
@@ -324,6 +346,28 @@ resumable_upload_write_frame :: proc(
 		if !file_sync_and_close(ob_file) || !file_rename_durable(outboard_tmp, outboard_final) {
 			_ = os.remove(outboard_tmp)
 			return .Bad_Session, false
+		}
+	} else {
+		// Single-frame object (including 0-byte blobs): re-verify exact on-disk
+		// .part size and content hash before renaming into objects/.
+		verify_file, vopen_err := os.open(handle.part_path)
+		if vopen_err != nil {
+			return .Bad_Session, false
+		}
+		actual_size, size_err := os.file_size(verify_file)
+		if size_err != nil || actual_size != i64(handle.session.object_size) {
+			_ = os.close(verify_file)
+			return .Hash_Mismatch, false
+		}
+		raw := make([]u8, int(handle.session.object_size), context.allocator)
+		defer delete(raw)
+		read_ok := handle.session.object_size == 0 || file_read_exact_at(verify_file, raw, 0)
+		_ = os.close(verify_file)
+		if !read_ok {
+			return .Hash_Mismatch, false
+		}
+		if object_cache.verify_object_content(handle.session.object_kind, handle.session.object_hash, raw) != .Trust_By_Hash {
+			return .Hash_Mismatch, false
 		}
 	}
 

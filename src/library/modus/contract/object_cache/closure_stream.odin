@@ -357,6 +357,9 @@ closure_stream_verify_buffer :: proc "contextless" (
 	if hdr_ref != .None {
 		return {}, {}, hdr_ref
 	}
+	if len(trusted_signers) > 0 && !hdr.has_realisation {
+		return {}, {}, .Untrusted_Signer
+	}
 	cursor := CLOSURE_STREAM_HEADER_SIZE
 	last_hash: blake3.Hash
 	last_kind: Cache_Object_Kind

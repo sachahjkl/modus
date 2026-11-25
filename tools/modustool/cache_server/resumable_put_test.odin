@@ -93,7 +93,8 @@ resumable_upload_interrupt_resume_refusal_and_commit :: proc(t: ^testing.T) {
 	testing.expect_value(t, resume_off, u64(2 * object_cache.FRAME_PAYLOAD_BYTES))
 
 	// Re-sending already-verified frame 0 is refused with Frame_Conflict.
-	dup_ref, dup_done := resumable_upload_write_frame(&h2, 0, p0, blob[:object_cache.FRAME_PAYLOAD_BYTES])
+	p0_again := host_frame_proof(t, 3, 0, outboard, proof_buf[:])
+	dup_ref, dup_done := resumable_upload_write_frame(&h2, 0, p0_again, blob[:object_cache.FRAME_PAYLOAD_BYTES])
 	testing.expect_value(t, dup_ref, object_cache.Resumable_Put_Refusal.Frame_Conflict)
 	testing.expect(t, !dup_done)
 
@@ -122,4 +123,67 @@ resumable_upload_interrupt_resume_refusal_and_commit :: proc(t: ^testing.T) {
 
 	ob_path, ob_ok := store_path_for_hex(server.root_directory, .Outboards, string(hex[:]), context.temp_allocator)
 	testing.expect(t, ob_ok && os.exists(ob_path))
+}
+
+@(test)
+resumable_upload_rejects_corrupt_bitmap_state_and_commits_single_frame_and_empty :: proc(t: ^testing.T) {
+	dir := make_temp_store_dir(t)
+	defer {
+		os.remove_all(dir)
+		delete(dir)
+	}
+	server, opened := cache_server_open(dir, nil)
+	testing.expect(t, opened)
+	defer cache_server_destroy(&server)
+
+	// Corrupt bitmap states must be refused by decode_resumable_state.
+	fake_hash := blake3.hash(transmute([]u8)string("bitmap-invariant-test"))
+	total_size := u64(3 * object_cache.FRAME_PAYLOAD_BYTES)
+	base: object_cache.Resumable_Put_Session
+	testing.expect_value(t, object_cache.resumable_put_init(&base, .Blob, fake_hash, total_size), object_cache.Resumable_Put_Refusal.None)
+
+	raw: [RESUMABLE_STATE_SIZE]u8
+	decoded: object_cache.Resumable_Put_Session
+
+	// 1. Bit 0 set while contiguous < frame_count -> refused.
+	bad_bit0 := base
+	bad_bit0.received_count = 1
+	bad_bit0.received_bitmap[0] = 1
+	encode_resumable_state(&bad_bit0, &raw)
+	testing.expect(t, !decode_resumable_state(raw[:], .Blob, fake_hash, total_size, &decoded))
+
+	// 2. Bit set past frame_count - contiguous -> refused.
+	bad_past := base
+	bad_past.received_count = 1
+	bad_past.received_bitmap[0] = u64(1) << 3
+	encode_resumable_state(&bad_past, &raw)
+	testing.expect(t, !decode_resumable_state(raw[:], .Blob, fake_hash, total_size, &decoded))
+
+	// 3. Popcount mismatch (received_count disagrees with bitmap bits) -> refused.
+	bad_pop := base
+	bad_pop.received_count = 2
+	bad_pop.received_bitmap[0] = u64(1) << 1
+	encode_resumable_state(&bad_pop, &raw)
+	testing.expect(t, !decode_resumable_state(raw[:], .Blob, fake_hash, total_size, &decoded))
+
+	// 4. Valid 0-byte blob upload verifies on-disk .part and commits cleanly.
+	empty_hash := blake3.hash(nil)
+	h_empty, ref_e, ok_e := resumable_upload_open(&server, .Blob, empty_hash, 0)
+	testing.expect(t, ok_e && ref_e == .None)
+	defer resumable_upload_close(&h_empty)
+	wref_e, done_e := resumable_upload_write_frame(&h_empty, 0, nil, nil)
+	testing.expect_value(t, wref_e, object_cache.Resumable_Put_Refusal.None)
+	testing.expect(t, done_e)
+	testing.expect(t, cache_server_has(&server, empty_hash))
+
+	// 5. Valid single-frame small blob commits cleanly.
+	small := transmute([]u8)string("single-frame-resumable-object")
+	small_hash := blake3.hash(small)
+	h_small, ref_s, ok_s := resumable_upload_open(&server, .Blob, small_hash, u64(len(small)))
+	testing.expect(t, ok_s && ref_s == .None)
+	defer resumable_upload_close(&h_small)
+	wref_s, done_s := resumable_upload_write_frame(&h_small, 0, nil, small)
+	testing.expect_value(t, wref_s, object_cache.Resumable_Put_Refusal.None)
+	testing.expect(t, done_s)
+	testing.expect(t, cache_server_has(&server, small_hash))
 }

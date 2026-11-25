@@ -187,19 +187,46 @@ closure_cli_streams_multiframe_blob_and_refuses_tamper_untrusted_and_bad_args ::
 	testing.expect_value(t, exp_prob, "")
 	testing.expect_value(t, exp_stats.object_count, u64(1))
 
-	// 1. Untrusted signer refused and writes no realisation.
+	// 1. Untrusted signer refused and writes neither objects nor realisation.
 	_, prob_untrusted := cache_closure_import(dst_dir, big_path, [][object_cache.PUBLIC_KEY_SIZE]u8{other_pub})
 	testing.expect(t, prob_untrusted != "")
+	{
+		dst_untrusted_server, u_open := cache_server_open(dst_dir, nil)
+		testing.expect(t, u_open)
+		defer cache_server_destroy(&dst_untrusted_server)
+		testing.expect(t, !cache_server_has(&dst_untrusted_server, big_hash), "untrusted signer must not pollute objects/")
+		testing.expect(t, !cache_server_has(&dst_untrusted_server, recipe_hash))
+	}
 
-	// 2. Tampered byte in >1 MiB blob payload refused before committing object.
+	// 2. Stripping has_realisation while --signer is required is refused and leaves objects/ untouched.
+	raw, read_err := os.read_entire_file(big_path, context.allocator)
+	defer delete(raw)
+	testing.expect_value(t, read_err, nil)
+
+	stripped := make([]u8, len(raw) - object_cache.REALISATION_WIRE_SIZE)
+	defer delete(stripped)
+	copy(stripped, raw[:len(stripped)])
+	stripped[12] = 0
+	stripped[13] = 0
+	stripped[14] = 0
+	stripped[15] = 0
+	stripped_path := fmt.tprintf("%s/stripped.modclos", usb_dir)
+	testing.expect_value(t, os.write_entire_file(stripped_path, stripped), nil)
+	_, prob_stripped := cache_closure_import(dst_dir, stripped_path, [][object_cache.PUBLIC_KEY_SIZE]u8{pub})
+	testing.expect(t, prob_stripped != "")
+	{
+		dst_strip_server, s_open := cache_server_open(dst_dir, nil)
+		testing.expect(t, s_open)
+		defer cache_server_destroy(&dst_strip_server)
+		testing.expect(t, !cache_server_has(&dst_strip_server, big_hash), "stripped unsigned bundle with --signer must not write objects/")
+	}
+
+	// 3. Tampered byte in >1 MiB blob payload refused before committing object.
 	dst_bad_dir := make_temp_store_dir(t)
 	defer {
 		os.remove_all(dst_bad_dir)
 		delete(dst_bad_dir)
 	}
-	raw, read_err := os.read_entire_file(big_path, context.allocator)
-	defer delete(raw)
-	testing.expect_value(t, read_err, nil)
 
 	tampered := make([]u8, len(raw))
 	defer delete(tampered)
@@ -216,7 +243,7 @@ closure_cli_streams_multiframe_blob_and_refuses_tamper_untrusted_and_bad_args ::
 	testing.expect(t, !cache_server_has(&dst_bad_server, big_hash), "tampered blob must never be committed to objects/")
 	testing.expect(t, !cache_server_has(&dst_bad_server, recipe_hash), "realisation must never be committed after tamper")
 
-	// 3. Trailing byte appended to valid closure stream refused.
+	// 4. Trailing byte appended to valid closure stream refused and leaves objects/ untouched.
 	trailing := make([]u8, len(raw) + 1)
 	defer delete(trailing)
 	copy(trailing, raw)
@@ -225,6 +252,7 @@ closure_cli_streams_multiframe_blob_and_refuses_tamper_untrusted_and_bad_args ::
 	testing.expect_value(t, os.write_entire_file(trailing_path, trailing), nil)
 	_, prob_trailing := cache_closure_import(dst_bad_dir, trailing_path, [][object_cache.PUBLIC_KEY_SIZE]u8{pub})
 	testing.expect(t, prob_trailing != "")
+	testing.expect(t, !cache_server_has(&dst_bad_server, big_hash), "trailing garbage stream must not pollute objects/")
 
 	// 4. Valid import succeeds into clean dst_dir and preserves exact >1 MiB bytes.
 	dst_ok_dir := make_temp_store_dir(t)

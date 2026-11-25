@@ -31,6 +31,7 @@ Resumable_Put_Refusal :: enum u8 {
 	Hash_Mismatch      = 8,
 	Frame_Conflict     = 9,
 	Already_Complete   = 10,
+	Window_Exceeded    = 11,
 }
 
 // Pure zero-allocation state of one resumable Bao-verified object upload.
@@ -173,6 +174,18 @@ resumable_put_accept_frame :: proc "contextless" (
 	if frame_index >= session.frame_count {
 		return .Frame_Out_Of_Range
 	}
+	// Refuse duplicate or out-of-window frames before running Bao verification.
+	if frame_index < session.contiguous_frames {
+		return .Frame_Conflict
+	}
+	rel_index := frame_index - session.contiguous_frames
+	if rel_index >= RESUMABLE_PUT_WINDOW_FRAMES {
+		return .Window_Exceeded
+	}
+	if bitmap_bit_is_set(&session.received_bitmap, rel_index) {
+		return .Frame_Conflict
+	}
+
 	expected_len, len_ok := frame_length_with(session.object_size, frame_index, session.frame_bytes)
 	if !len_ok || u64(len(frame)) != expected_len {
 		return .Bad_Frame_Length
@@ -182,7 +195,7 @@ resumable_put_accept_frame :: proc "contextless" (
 		return .Bad_Proof
 	}
 
-	// Verify Bao proof & frame digest before consulting or mutating session state.
+	// Verify Bao proof & frame digest before mutating session state.
 	decision := frame_verify_with(
 		session.object_kind,
 		session.object_hash,
@@ -198,18 +211,6 @@ resumable_put_accept_frame :: proc "contextless" (
 		return .Hash_Mismatch
 	case .Refuse_Malformed, .Trust_By_Signer, .Refuse_Untrusted_Signer, .Refuse_Bad_Signature:
 		return .Bad_Proof
-	}
-
-	// Refuse duplicate frames (already below frontier or already set in window).
-	if frame_index < session.contiguous_frames {
-		return .Frame_Conflict
-	}
-	rel_index := frame_index - session.contiguous_frames
-	if rel_index >= RESUMABLE_PUT_WINDOW_FRAMES {
-		return .Frame_Out_Of_Range
-	}
-	if bitmap_bit_is_set(&session.received_bitmap, rel_index) {
-		return .Frame_Conflict
 	}
 
 	bitmap_bit_set(&session.received_bitmap, rel_index)

@@ -275,6 +275,16 @@ closure_stream_roundtrip_blob_nested_tree_signed_realisation_and_tamper_refusals
 	_, _, vref = closure_stream_verify_buffer(stream[:len(stream) - 1], trusted[:], closure_test_verify_ed25519)
 	testing.expect_value(t, vref, Closure_Stream_Refusal.Truncated)
 
+	// Stripping has_realisation while trusted_signers is non-empty is refused with Untrusted_Signer.
+	stripped := make([dynamic]u8, context.temp_allocator)
+	append_bytes(&stripped, stream[:len(stream) - REALISATION_WIRE_SIZE])
+	stripped[12] = 0
+	stripped[13] = 0
+	stripped[14] = 0
+	stripped[15] = 0
+	_, _, vref = closure_stream_verify_buffer(stripped[:], trusted[:], closure_test_verify_ed25519)
+	testing.expect_value(t, vref, Closure_Stream_Refusal.Untrusted_Signer)
+
 	// Trailing garbage byte refused.
 	trailing := make([dynamic]u8, context.temp_allocator)
 	append_bytes(&trailing, stream[:])
