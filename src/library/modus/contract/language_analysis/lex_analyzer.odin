@@ -228,6 +228,10 @@ lex_analyze_into_snapshot :: proc "contextless" (ws: ^Lex_Analyzer_Workspace, so
 	if ws == nil {
 		return 0, .Bad_Request
 	}
+	// MODLAEF1 stores byte offsets as u32; refuse inputs whose offsets would truncate.
+	if len(source) > int(max(u32)) {
+		return 0, .Bad_Size
+	}
 	ws.diagnostic_count = 0
 	ws.token_count = 0
 	ws.completion_count = 0
@@ -420,8 +424,10 @@ lex_analyze_into_snapshot :: proc "contextless" (ws: ^Lex_Analyzer_Workspace, so
 				if !push_token(ws, u32(start), u32(pos - start), .Keyword) {
 					return 0, .Capacity_Exceeded
 				}
-				if sig, summary, has_hover := builtin_hover_info(word); has_hover && ws.hover_count < len(ws.hovers) {
-					_ = push_hover(ws, u32(start), u32(pos), sig, summary)
+				if sig, summary, has_hover := builtin_hover_info(word); has_hover {
+					if !push_hover(ws, u32(start), u32(pos), sig, summary) {
+						return 0, .Capacity_Exceeded
+					}
 				}
 				continue
 			}
@@ -433,20 +439,25 @@ lex_analyze_into_snapshot :: proc "contextless" (ws: ^Lex_Analyzer_Workspace, so
 				if !push_token(ws, u32(start), u32(pos - start), .Binding) {
 					return 0, .Capacity_Exceeded
 				}
-				if ws.binding_count < len(ws.bindings) {
-					p_off, p_len, p_ok := pool_append(ws, word)
-					if !p_ok {
-						return 0, .Capacity_Exceeded
-					}
-					ws.bindings[ws.binding_count] = {
-						name_start = u32(start),
-						name_end   = u32(pos),
-						pool_off   = p_off,
-						pool_len   = p_len,
-					}
-					ws.binding_count += 1
-					_ = push_completion(ws, .Binding, word, "Local let binding")
-					_ = push_hover(ws, u32(start), u32(pos), word, "Local let binding")
+				if ws.binding_count >= len(ws.bindings) {
+					return 0, .Capacity_Exceeded
+				}
+				p_off, p_len, p_ok := pool_append(ws, word)
+				if !p_ok {
+					return 0, .Capacity_Exceeded
+				}
+				ws.bindings[ws.binding_count] = {
+					name_start = u32(start),
+					name_end   = u32(pos),
+					pool_off   = p_off,
+					pool_len   = p_len,
+				}
+				ws.binding_count += 1
+				if !push_completion(ws, .Binding, word, "Local let binding") {
+					return 0, .Capacity_Exceeded
+				}
+				if !push_hover(ws, u32(start), u32(pos), word, "Local let binding") {
+					return 0, .Capacity_Exceeded
 				}
 				continue
 			}
@@ -456,18 +467,21 @@ lex_analyze_into_snapshot :: proc "contextless" (ws: ^Lex_Analyzer_Workspace, so
 				return 0, .Capacity_Exceeded
 			}
 			if bound, found := binding_find(ws, source, word); found {
-				if ws.definition_count < len(ws.definitions) {
-					ws.definitions[ws.definition_count] = {
-						use_start    = u32(start),
-						use_end      = u32(pos),
-						target_start = bound.name_start,
-						target_end   = bound.name_end,
-						name_offset  = bound.pool_off,
-						name_bytes   = bound.pool_len,
-					}
-					ws.definition_count += 1
+				if ws.definition_count >= len(ws.definitions) {
+					return 0, .Capacity_Exceeded
 				}
-				_ = push_hover(ws, u32(start), u32(pos), word, "Reference to local let binding")
+				ws.definitions[ws.definition_count] = {
+					use_start    = u32(start),
+					use_end      = u32(pos),
+					target_start = bound.name_start,
+					target_end   = bound.name_end,
+					name_offset  = bound.pool_off,
+					name_bytes   = bound.pool_len,
+				}
+				ws.definition_count += 1
+				if !push_hover(ws, u32(start), u32(pos), word, "Reference to local let binding") {
+					return 0, .Capacity_Exceeded
+				}
 			}
 			continue
 		}

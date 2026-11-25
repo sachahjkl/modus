@@ -35,7 +35,7 @@ decode_sleb128_i64_test :: proc(data: []u8) -> (value: i64, consumed: int, ok: b
 			if shift < 64 && (b & 0x40) != 0 {
 				bits |= ~u64(0) << shift
 			}
-			return transmute(i64)bits, i + 1, true
+			return i64(bits), i + 1, true
 		}
 	}
 	return 0, 0, false
@@ -90,7 +90,7 @@ wasm_tier_leb128_edge_values_and_short_buffer_refusal :: proc(t: ^testing.T) {
 		}
 	}
 
-	u64_edges := [?]u64{0, 1, 127, 128, max(u32), u64(max(u32)) + 1, max(u64)}
+	u64_edges := [?]u64{0, 1, 127, 128, u64(max(u32)), u64(max(u32)) + 1, max(u64)}
 	for v in u64_edges {
 		buf: [WASM_LEB128_MAX_U64_BYTES]u8
 		n, ref := wasm_encode_uleb128_u64(v, buf[:])
@@ -108,7 +108,7 @@ wasm_tier_leb128_edge_values_and_short_buffer_refusal :: proc(t: ^testing.T) {
 		testing.expect(t, ok && used == n && decoded == i64(v))
 	}
 
-	i64_edges := [?]i64{0, 1, -1, 63, 64, -64, -65, 127, 128, -128, -129, min(i32), max(i32), min(i64), max(i64)}
+	i64_edges := [?]i64{0, 1, -1, 63, 64, -64, -65, 127, 128, -128, -129, i64(min(i32)), i64(max(i32)), min(i64), max(i64)}
 	for v in i64_edges {
 		buf: [WASM_LEB128_MAX_I64_BYTES]u8
 		n, ref := wasm_encode_sleb128_i64(v, buf[:])
@@ -246,6 +246,67 @@ wasm_tier_compile_full_block_valid_header_sections_and_exact_bound :: proc(t: ^t
 	corrupt := out
 	corrupt[0] = 0xFF
 	testing.expect(t, wasm_module_verify_structure(corrupt[:written]) == .Malformed_Wasm_Module)
+}
+
+@(private = "file")
+bytes_contain_sequence :: proc(haystack: []u8, needle: []u8) -> bool {
+	if len(needle) == 0 || len(needle) > len(haystack) {
+		return false
+	}
+	for i in 0 ..= len(haystack) - len(needle) {
+		matched := true
+		for j in 0 ..< len(needle) {
+			if haystack[i + j] != needle[j] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+@(test)
+wasm_tier_guest_memory_accesses_emit_bounds_and_wrap_checks :: proc(t: ^testing.T) {
+	ops := [2]Wasm_Block_Op{
+		{kind = .Load_Guest_U64, dst = 1, src = 2, guest_offset = 16},
+		{kind = .Store_Guest_U64, dst = 2, src = 1, guest_offset = 24},
+	}
+	spec := Wasm_Block_Spec{
+		start_physical = 0x30_0000,
+		memory         = {limits_kind = .Unshared_Min_Only, min_pages = 32},
+		ops            = ops[:],
+	}
+	out: [1024]u8
+	written, ref := wasm_compile_block(spec, out[:])
+	testing.expect(t, ref == .None && written > 16)
+	testing.expect(t, wasm_module_verify_structure(out[:written]) == .None)
+
+	// Type section must encode (param i32 i32 i64) (result i32).
+	expected_type := [?]u8{0x01, 0x08, 0x01, 0x60, 0x03, 0x7F, 0x7F, 0x7E, 0x01, 0x7F}
+	for i in 0 ..< len(expected_type) {
+		testing.expect(t, out[8 + i] == expected_type[i])
+	}
+
+	// Emitted code must contain:
+	//  - u64 overflow check (local.get 3; i64.lt_u)
+	//  - guest_mem_size check (local.get 2; i64.gt_u)
+	//  - 32-bit wrap check against guest_mem_base (local.get 1; i32.lt_u)
+	//  - 32-bit upper wrap check against -8 (i32.const -8; i32.gt_u)
+	//  - bailout return sequence (if empty; i32.const -1; return; end)
+	seq_u64_wrap := [?]u8{0x20, 0x03, 0x53}
+	seq_size_cmp := [?]u8{0x20, 0x02, 0x55}
+	seq_base_wrap := [?]u8{0x20, 0x01, 0x49}
+	seq_top_wrap := [?]u8{0x41, 0x78, 0x4B}
+	seq_bailout := [?]u8{0x04, 0x40, 0x41, 0x7F, 0x0F, 0x0B}
+
+	testing.expect(t, bytes_contain_sequence(out[:written], seq_u64_wrap[:]))
+	testing.expect(t, bytes_contain_sequence(out[:written], seq_size_cmp[:]))
+	testing.expect(t, bytes_contain_sequence(out[:written], seq_base_wrap[:]))
+	testing.expect(t, bytes_contain_sequence(out[:written], seq_top_wrap[:]))
+	testing.expect(t, bytes_contain_sequence(out[:written], seq_bailout[:]))
 }
 
 @(test)
