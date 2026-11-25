@@ -1,5 +1,5 @@
 // Counted module memory floor calculation including per-copy text glyph cache
-// memory (src/md/features/module_budget_request.md,
+// memory (src/md/features/module_budget_request.md and
 // src/md/features/text_rendering.md).
 //
 // Replaces hand-written working_memory_pages estimates with an overflow-safe

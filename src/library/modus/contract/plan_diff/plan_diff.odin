@@ -1,5 +1,5 @@
 // Shared contract for multi-line declaration plan grant sets and
-// trusted-display grant diffs (src/md/features/declarations.md,
+// trusted-display grant diffs (src/md/features/declarations.md and
 // src/md/features/powerbox.md).
 //
 // Pure freestanding contract package: no kernel calls, no host imports, and

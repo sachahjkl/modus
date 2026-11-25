@@ -1,6 +1,6 @@
 // Multi-vCPU Linux guest ACPI MADT (Local APIC) builder and store-backed guest
 // image & grant descriptor contract
-// (src/md/features/guest.md, src/md/features/linux_shell.md,
+// (src/md/features/guest.md; src/md/features/linux_shell.md;
 // src/md/features/foreign_systems.md).
 //
 // Pure freestanding contract: zero kernel calls, zero host imports, and zero

@@ -1,5 +1,5 @@
 // Shared contract for seed-to-Odin and C compiler self-hosting bootstrap
-// recipe graphs (src/md/features/bootstrap.md, src/md/features/c_compiler.md).
+// recipe graphs (src/md/features/bootstrap.md and src/md/features/c_compiler.md).
 //
 // Pure freestanding contract package: no kernel calls, no host imports, and
 // no dynamic allocation. Validates acyclic stage DAGs, hex0 seed size audit

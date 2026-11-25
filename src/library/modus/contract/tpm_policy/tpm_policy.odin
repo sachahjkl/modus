@@ -1,6 +1,6 @@
 // TPM storage hierarchy authorization seal, publisher-signed TPM2_PolicyAuthorize
 // envelopes across PCR 7 changes, and monotonic NV floor policy verification
-// (src/md/features/tpm_sealed_machine_key.md, src/md/features/rollback_floors.md).
+// (src/md/features/tpm_sealed_machine_key.md and src/md/features/rollback_floors.md).
 //
 // This is a contract package: it imports base and contract packages only,
 // calls no kernel operation, and allocates no memory.

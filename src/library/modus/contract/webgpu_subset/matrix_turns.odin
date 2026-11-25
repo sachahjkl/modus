@@ -1,5 +1,5 @@
 // Turns-based 3D rotation, perspective, and camera transform helpers extending
-// webgpu_subset.Matrix_4x4 (src/md/features/gpu_access.md,
+// webgpu_subset.Matrix_4x4 (src/md/features/gpu_access.md and
 // src/md/data/angles_in_turns.md).
 //
 // All angles are in turns (1.0 is a full circle, 0.25 is a right angle).

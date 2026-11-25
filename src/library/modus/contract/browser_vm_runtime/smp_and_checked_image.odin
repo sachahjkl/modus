@@ -1,6 +1,5 @@
 // Multi-worker SharedArrayBuffer SMP coordination and Checked boot-image file
-// wait gate (src/md/features/browser_machine.md, "Several processors as
-// workers", "The boot image of the page").
+// wait gate (src/md/features/browser_machine.md).
 //
 // Two freestanding zero-allocation contracts:
 //   1. Browser_Smp_Table: tracks 1..MAX_BROWSER_CPUS worker CPU slots,

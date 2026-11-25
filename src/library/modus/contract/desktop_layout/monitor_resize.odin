@@ -1,5 +1,5 @@
 // Resizable monitor window layout and double-buffered surface page budget
-// calculator (src/md/features/desktop_to_browser.md, src/md/features/box_layout.md).
+// calculator (src/md/features/desktop_to_browser.md and src/md/features/box_layout.md).
 //
 // Validates that a requested monitor window (width, height) at a given scale
 // fits inside the stated double-buffered surface page budget and computes

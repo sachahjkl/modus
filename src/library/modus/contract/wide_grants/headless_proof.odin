@@ -1,7 +1,5 @@
 // Headless wide-grant proof signed by a principal's host authority key and
-// session-lock wide-grant termination helper
-// (src/md/features/wide_grants.md, "A machine with no person at the keyboard"
-// and "When the session locks").
+// session-lock wide-grant termination helper (src/md/features/wide_grants.md).
 //
 // Contract package: imports base and contract packages only, calls no kernel
 // operation, and allocates no memory. Signature verification crosses an

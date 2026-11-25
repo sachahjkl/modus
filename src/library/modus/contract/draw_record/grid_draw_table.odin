@@ -1,5 +1,4 @@
-// Terminal grid to draw-record converter (src/md/features/console_renderers.md,
-// "Variant B: grid_terminal" and "The subtle points").
+// Terminal grid to draw-record converter (src/md/features/console_renderers.md).
 //
 // Emits canonical Draw_Record background fill spans (coalescing adjacent cells
 // sharing the same non-transparent background color) and Draw_Text glyph runs

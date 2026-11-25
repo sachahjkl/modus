@@ -1,5 +1,5 @@
 // Role start ranks and context-ring restart groups
-// (src/md/features/supervision.md, "Start ranks" and "Restart groups").
+// (src/md/features/supervision.md).
 //
 // Validates that a role start-rank table is acyclic and that every role depends
 // only on holders at strictly lower ranks. Computes the exact transitive

@@ -1,5 +1,5 @@
 // Display class protocol and mode/scale selection contract
-// (src/md/features/device_services.md, src/md/features/desktop_to_browser.md).
+// (src/md/features/device_services.md and src/md/features/desktop_to_browser.md).
 //
 // Pure freestanding validation and mode/scale selection for display class
 // device services and the compositor. Every procedure is contextless, performs

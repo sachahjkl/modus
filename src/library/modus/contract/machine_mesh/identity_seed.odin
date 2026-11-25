@@ -1,6 +1,5 @@
 // Machine identity seed derivation, TPM quote qualifying data, and monotonic
-// machine-list revocation preparation (src/md/features/several_machines.md,
-// "Machine identity" and "A principal across machines").
+// machine-list revocation preparation (src/md/features/several_machines.md).
 //
 // Each machine derives its Ed25519 identity seed from its TPM-sealed machine
 // key through domain-separated BLAKE3 key derivation, binds its identity public
@@ -15,12 +14,12 @@ import "modus:contract/enum_word"
 
 // Format property: domain separation context string for deriving a machine's
 // Ed25519 identity seed from its TPM-sealed machine key
-// (src/md/features/several_machines.md, "Machine identity").
+// (src/md/features/several_machines.md).
 MACHINE_IDENTITY_SEED_DOMAIN :: "modus machine identity key"
 
 // Format property: domain separation context string for binding a machine's
 // identity public key and freshness nonce into TPM quote qualifying data
-// (src/md/features/several_machines.md, "Machine identity").
+// (src/md/features/several_machines.md).
 MACHINE_IDENTITY_QUOTE_DOMAIN :: "modus machine identity quote v1"
 
 // Format property: 256-bit freshness nonce matching blake3.HASH_SIZE.

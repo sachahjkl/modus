@@ -1,6 +1,6 @@
 // Sibling-isolated processor-time budgets, per-client service work accounting,
 // bounded lowest-step-debt scheduling, and process work report rows
-// (src/md/features/work_accounting.md, src/md/features/log_side_channels.md).
+// (src/md/features/work_accounting.md and src/md/features/log_side_channels.md).
 //
 // Extends `modus:contract/work_budget` without duplicating the package:
 // freestanding, zero kernel calls, zero host imports, and zero heap allocation.

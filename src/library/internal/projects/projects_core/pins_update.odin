@@ -1,6 +1,5 @@
 // Deterministic single-line pins.lex updates and scoped projects.enter
-// validation (src/md/features/declarations.md, "Where the pins live" and
-// "The console of a project").
+// validation (src/md/features/declarations.md).
 //
 // `pins_lex_update_entry` rewrites exactly one named input pin in canonical
 // sorted Lex form so a review sees one changed line per moved input while all
