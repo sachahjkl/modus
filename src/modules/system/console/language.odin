@@ -438,6 +438,7 @@ run_line :: proc "contextless" (text: string) {
 	}
 	line_binding_target = ""
 	line_records_show()
+	bound_handle := assigned && line_loaded_handle != 0
 	if !failed && assigned {
 		assign(name, value)
 	}
@@ -445,7 +446,7 @@ run_line :: proc "contextless" (text: string) {
 		unload_handle_id(line_loaded_handle, clear_variable = false)
 		line_loaded_handle = 0
 	}
-	line_value = assigned ? Value{} : value
+	line_value = assigned && !bound_handle ? Value{} : value
 	// A Stream is drawn one row at a time as each record comes, until its
 	// end or Escape: its draw reads it, and can fail.
 	// A record input has no record to draw: stream_draw says so.
@@ -459,7 +460,9 @@ run_line :: proc "contextless" (text: string) {
 		failure_draw()
 		return
 	}
-	if !assigned && !typed {
+	// Binding a module handle draws its Loaded summary immediately so the
+	// principal sees module, command count, mode, and hash without a second line.
+	if (!assigned || bound_handle) && !typed {
 		value_draw(value)
 	}
 }

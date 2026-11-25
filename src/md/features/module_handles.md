@@ -31,7 +31,7 @@ Each bound module load, isolated call host, or bound service alias receives a mo
 - `Loaded` stores `handle_id`, `binding` (up to `VARIABLE_NAME_SIZE`), `name` (module name), `file`, `place`, `sandbox`, and `service_alias`.
 - `Command` stores `handle_id`. `commands_add(file, prefix, sandbox, base, handle_id)` registers both exports and record constructors strictly under `<prefix>.<name>` tagged with `handle_id`, never adding unprefixed global names for a bound handle, and never overwriting a built-in command (`run != nil`).
 - `Variable` stores `module_handle: u64`, linking the variable slot to its owned `Loaded` handle.
-- The returned `Loaded` record includes `binding`, `module`, `commands`, `call`, and `hash_head`. `loaded()` includes the `binding` column.
+- The returned `Loaded` record includes `binding`, `module`, `commands`, `call`, and `hash_head`, and `run_line` draws that summary immediately upon binding so the principal sees confirmation without typing a second line. `loaded()` includes the `binding` column.
 - The same module can be loaded or isolated several times under distinct bindings (`a = isolate("tally")`, `b = isolate("tally")`), each with its own `handle_id` and sandbox.
 
 ### Atomic reassignment, `unload(s)`, and `names` compaction

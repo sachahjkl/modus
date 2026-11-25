@@ -393,7 +393,6 @@ scenario := [?]Step {
 	// Escape leaves the form, and nothing runs.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "c = load(\"cryptography\")"},
-	{kind = .Type, text = "c"},
 	{kind = .Wait, text = "[console]   module     cryptography"},
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
@@ -590,7 +589,6 @@ scenario := [?]Step {
 	// a fact, which fails the step. The console must still be the provider:
 	// a refresh is a part of the provider.
 	{kind = .Type, text = "h = load(\"hostile_exports\")"},
-	{kind = .Type, text = "h"},
 	{kind = .Wait, text = "[console]   module     hostile_exports"},
 	{kind = .Wait, text = "[console]   commands   6"},
 	{kind = .Wait, text = "[console]   call       direct"},
@@ -668,7 +666,6 @@ scenario := [?]Step {
 	{kind = .Type, text = "gcd(84, 36)"},
 	{kind = .Wait, text = "error: no command has the name gcd"},
 	{kind = .Type, text = "m = load(\"math\")"},
-	{kind = .Type, text = "m"},
 	{kind = .Wait, text = "[console]   module     math"},
 	{kind = .Type, text = "m.gcd(84, 36) + m.power(2, 10)"},
 	{kind = .Wait, text = "[console] 1036"},
@@ -700,8 +697,7 @@ scenario := [?]Step {
 	// arguments go through a ring. The description is the same.
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "p = isolate(\"probe\")"},
-	{kind = .Wait, text = "[probe] host: ready, 8 exports"},
-	{kind = .Type, text = "p"},
+	{kind = .Wait, text = "[probe] host: ready, 8 exports", any_order = true},
 	{kind = .Wait, text = "[console]   module     probe"},
 	{kind = .Wait, text = "[console]   commands   8"},
 	{kind = .Wait, text = "[console]   call       isolated"},
@@ -777,14 +773,12 @@ scenario := [?]Step {
 	// with the rights of the description, for the time of the call.
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "s = isolate(\"sample\")"},
-	{kind = .Type, text = "s"},
 	{kind = .Wait, text = "[console]   module     sample"},
 	{kind = .Wait, text = "[console]   commands   12"},
 	{kind = .Wait, text = "[console]   call       isolated"},
 	// The exports that are wrong on purpose are in a module of their own,
 	// which no service holds.
 	{kind = .Type, text = "h = isolate(\"hostile_exports\")"},
-	{kind = .Type, text = "h"},
 	{kind = .Wait, text = "[console]   module     hostile_exports"},
 	{kind = .Wait, text = "[console]   commands   6"},
 	{kind = .Wait, text = "[console]   call       isolated"},
@@ -990,8 +984,7 @@ scenario := [?]Step {
 	// the assembler refuses names its line and its column on the log.
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "as = isolate(\"assemble\")"},
-	{kind = .Wait, text = "[assemble] host: ready, 2 exports"},
-	{kind = .Type, text = "as"},
+	{kind = .Wait, text = "[assemble] host: ready, 2 exports", any_order = true},
 	{kind = .Wait, text = "[console]   module     assemble"},
 	{kind = .Wait, text = "[console]   call       isolated"},
 	{kind = .Type, text = "f = buffer(4)"},
@@ -1005,7 +998,6 @@ scenario := [?]Step {
 	// module: two processes, in either order.
 	{kind = .Wait, text = "[adder] host: ready, 1 exports", any_order = true},
 	{kind = .Wait, text = "console: adder is a module from memory: "},
-	{kind = .Type, text = "ad"},
 	{kind = .Wait, text = "[console]   module     adder"},
 	{kind = .Wait, text = "[console]   call       isolated"},
 	{kind = .Type, text = "ad.add(2, 3)"},
@@ -1024,8 +1016,7 @@ scenario := [?]Step {
 	// a second compile is refused. ca.add(-7, 2)
 	// proves that an export that gives an int extends its sign.
 	{kind = .Type, text = "cc = isolate(\"c_compiler\")"},
-	{kind = .Wait, text = "[c_compiler] host: ready, 2 exports"},
-	{kind = .Type, text = "cc"},
+	{kind = .Wait, text = "[c_compiler] host: ready, 2 exports", any_order = true},
 	{kind = .Wait, text = "[console]   module     c_compiler"},
 	{kind = .Type, text = "t = buffer(1)"},
 	{kind = .Type, text = "cc.compile(\"\", t)"},
@@ -1060,12 +1051,10 @@ scenario := [?]Step {
 	{kind = .Type, text = "release(f)"},
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "s = load(\"sample\")"},
-	{kind = .Type, text = "s"},
 	{kind = .Wait, text = "[console]   module     sample"},
 	{kind = .Wait, text = "[console]   commands   12"},
 	{kind = .Wait, text = "[console]   call       direct"},
 	{kind = .Type, text = "h = load(\"hostile_exports\")"},
-	{kind = .Type, text = "h"},
 	{kind = .Wait, text = "[console]   module     hostile_exports"},
 	{kind = .Wait, text = "[console]   commands   6"},
 	{kind = .Wait, text = "[console]   call       direct"},
@@ -1595,7 +1584,6 @@ scenario := [?]Step {
 	{kind = .Type, text = "tally.add(5, \"from the console, to the service\")"},
 	{kind = .Wait, text = "[console] 5"},
 	{kind = .Type, text = "td = load(\"tally\")"},
-	{kind = .Type, text = "td"},
 	{kind = .Wait, text = "[console]   module     tally"},
 	{kind = .Wait, text = "[console]   commands   5"},
 	{kind = .Wait, text = "[console]   call       direct"},
@@ -1609,7 +1597,6 @@ scenario := [?]Step {
 	// Multiple isolated instances of the same module coexist independently
 	// alongside the direct handle and the running service.
 	{kind = .Type, text = "ti1 = isolate(\"tally\")"},
-	{kind = .Type, text = "ti1"},
 	{kind = .Wait, text = "[console]   module     tally"},
 	{kind = .Wait, text = "[console]   commands   5"},
 	{kind = .Wait, text = "[console]   call       isolated"},
@@ -1770,7 +1757,6 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: cannot load lonely"},
 	{kind = .Wait, text = "..., and the load source has no file with its hash"},
 	{kind = .Type, text = "ag = load(\"agenda\")"},
-	{kind = .Type, text = "ag"},
 	{kind = .Wait, text = "[console]   module     agenda"},
 	{kind = .Wait, text = "[console]   commands   3"},
 	{kind = .Wait, text = "[console]   call       direct"},
@@ -1781,7 +1767,6 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] 393"},
 	// Each module one time: calendar is in the console as the import of agenda.
 	{kind = .Type, text = "cal = load(\"calendar\")"},
-	{kind = .Type, text = "cal"},
 	{kind = .Wait, text = "[console]   module     calendar"},
 	{kind = .Wait, text = "[console]   commands   1"},
 	{kind = .Wait, text = "[console]   call       direct"},
@@ -1805,7 +1790,6 @@ scenario := [?]Step {
 	{kind = .Wait, text = "root: refused the replacement of calendar by lonely: the signature of its row does not verify under the signing key of the system"},
 	{kind = .Wait, text = "[console] error: the root service refused the replacement of calendar by lonely: its signature does not verify"},
 	{kind = .Type, text = "ag = load(\"agenda\")"},
-	{kind = .Type, text = "ag"},
 	{kind = .Wait, text = "[console]   module     agenda"},
 	{kind = .Wait, text = "[console]   commands   3"},
 	{kind = .Type, text = "ag.year_days(2000) + ag.month_days(2, 2000)"},
@@ -1834,7 +1818,6 @@ scenario := [?]Step {
 	{kind = .Type, text = "replacements()"},
 	{kind = .Wait, text = "calendar  calendar_fixed  "},
 	{kind = .Type, text = "ag = load(\"agenda\")"},
-	{kind = .Type, text = "ag"},
 	{kind = .Wait, text = "[console]   module     agenda"},
 	{kind = .Wait, text = "[console]   commands   3"},
 	{kind = .Wait, text = "[console]   call       direct"},
@@ -1866,7 +1849,6 @@ scenario := [?]Step {
 	// calendar_fixed, not calendar.
 	{kind = .Type, text = "unload(ag)"},
 	{kind = .Type, text = "ag = isolate(\"agenda\")"},
-	{kind = .Type, text = "ag"},
 	{kind = .Wait, text = "[console]   module     agenda"},
 	{kind = .Wait, text = "[console]   commands   3"},
 	{kind = .Wait, text = "[console]   call       isolated"},
@@ -2345,7 +2327,6 @@ scenario := [?]Step {
 	// An export that refuses: the console writes the sentence of its error
 	// record from the description of the export.
 	{kind = .Type, text = "tl = load(\"tally\")"},
-	{kind = .Type, text = "tl"},
 	{kind = .Wait, text = "[console]   module     tally"},
 	{kind = .Wait, text = "[console]   commands   5"},
 	{kind = .Wait, text = "[console]   call       direct"},
@@ -2374,7 +2355,6 @@ scenario := [?]Step {
 	// (After the check of the log: these lines do not push the boot
 	// records out of the log.)
 	{kind = .Type, text = "sd = load(\"sample\")"},
-	{kind = .Type, text = "sd"},
 	{kind = .Wait, text = "[console]   module     sample"},
 	{kind = .Wait, text = "[console]   commands   12"},
 	{kind = .Wait, text = "[console]   call       direct"},
@@ -2400,7 +2380,6 @@ scenario := [?]Step {
 	// A table goes into an isolated call: the rows go into the call
 	// region, and the rows of a Change table come back.
 	{kind = .Type, text = "si = isolate(\"sample\")"},
-	{kind = .Type, text = "si"},
 	{kind = .Wait, text = "[console]   module     sample"},
 	{kind = .Wait, text = "[console]   commands   12"},
 	{kind = .Wait, text = "[console]   call       isolated"},
