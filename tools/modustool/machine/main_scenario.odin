@@ -1613,9 +1613,9 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] 7"},
 	{kind = .Type, text = "tally.last()"},
 	{kind = .Wait, text = "[console] from the console, to the service"},
-	// help(handle) lists only that handle's commands.
+	// help(handle) lists only that handle's commands (5 exports + 1 record constructor).
 	{kind = .Type, text = "help(ti1)"},
-	{kind = .Wait, text = "[console] 5 rows of Command"},
+	{kind = .Wait, text = "[console] 6 rows of Command"},
 	{kind = .Shot, text = "roles"},
 	// Unloading ti1 leaves ti2 working; reassigning ti2 auto-unloads ti2.
 	{kind = .Type, text = "unload(ti1)"},
