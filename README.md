@@ -205,6 +205,7 @@ The guides below give the details. `docs/DEMONSTRATIONS.md` says what the test s
 |---|---|
 | `docs/PROPERTIES.md` | The 25 properties that the system is built on: each rule, what it forbids, what it costs, and its state |
 | `docs/COURSE.md` | Practical course on modus: why it exists, daily Lex console commands, the five ways to run code, declarative plans with trusted consent, record streams, and the full application lifecycle |
+| `docs/COURSE_BUILDING.md` | Practical course part 2 on modus: sandboxed `compile_c`, iterative projects, reproducible `project.lex` recipes, in-OS QUIC cache publishing, verification, and versioned builds |
 | `docs/ARCHITECTURE.md` | The systems of the kernel and of user space, what each owns and how they connect; then the inside of the kernel: its locks, the virtual memory of a process, the extended state, the return to a process, kernel events |
 | `docs/MODULE_CONTRACT.md` | The module format, the loader, the call form (direct, isolated, from the host), the types, the context of a process, and the errors that diagnose |
 | `docs/TOOLS.md` | The developer tools, and what each one reads |
