@@ -432,7 +432,7 @@ peer_cache_answers_arp_and_forwards_udp_bidirectionally :: proc(t: ^testing.T) {
 			relayed = true
 			break
 		}
-		time.sleep(2 * time.Millisecond)
+		time.sleep(CONDITION_POLL_PERIOD)
 	}
 	testing.expect(t, relayed, "peer_cache relayed UDP reply back to machine")
 	testing.expect_value(t, peer.cache.to_machine, 1)
