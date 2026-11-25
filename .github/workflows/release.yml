@@ -35,8 +35,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       # Nix goes on past a failed test part, and the list names each one
-      # with its first failed step.
-      - run: nix flake check --keep-going
+      # with its first failed step. Bound concurrent jobs to 2 so a 4-vCPU
+      # runner does not starve while running QEMU machine tests.
+      - run: nix flake check --keep-going --max-jobs 2
       - if: failure()
         run: nix develop -c modustool failed_parts
 
