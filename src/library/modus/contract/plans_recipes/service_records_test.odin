@@ -669,3 +669,25 @@ text_field_length_refuses_a_hidden_tail :: proc(t: ^testing.T) {
 	_, ok = text_field_length(field[:])
 	testing.expect(t, !ok)
 }
+
+@(test)
+publish_row_layout_has_zero_padding_and_exact_offsets :: proc(t: ^testing.T) {
+	testing.expect_value(t, size_of(Publish_Row), 120)
+	testing.expect_value(t, int(offset_of(Publish_Row, recipe_hash)), 0)
+	testing.expect_value(t, int(offset_of(Publish_Row, output_hash)), 32)
+	testing.expect_value(t, int(offset_of(Publish_Row, signer_public_key)), 64)
+	testing.expect_value(t, int(offset_of(Publish_Row, objects_uploaded)), 96)
+	testing.expect_value(t, int(offset_of(Publish_Row, objects_skipped)), 104)
+	testing.expect_value(t, int(offset_of(Publish_Row, bytes_uploaded)), 112)
+	row := Publish_Row {
+		recipe_hash       = row_hash(1),
+		output_hash       = row_hash(2),
+		signer_public_key = row_hash(3),
+		objects_uploaded  = 5,
+		objects_skipped   = 2,
+		bytes_uploaded    = 1_234_567,
+	}
+	testing.expect_value(t, row.objects_uploaded, u64(5))
+	testing.expect_value(t, row.objects_skipped, u64(2))
+	testing.expect_value(t, row.bytes_uploaded, u64(1_234_567))
+}

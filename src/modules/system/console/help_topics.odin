@@ -32,6 +32,9 @@ HELP_START_FROM_DISK :: "start_from_disk(\"name\", \"<hash>\") starts a module s
 HELP_ISOLATE :: "s = isolate(\"sample\") loads a boot-image module in a separate zero-grant call host and registers its exports and record constructors as s.<name>. Use help(s) to list its commands and unload(s) or reassigning s to stop it."
 HELP_LOAD :: "m = load(\"math\") maps a boot-image module into the console process for direct calls and registers its exports and record constructors as m.<name>. Use s = isolate(\"sample\") for any module that does not need the console's handles."
 HELP_PROJECTS_INSTALL :: "projects.install(\"db_browser\") ingests the project store, builds or fetches its project.lex output, verifies and delivers the module into module_files, and returns its provenance and module hash. Pass an optional build mode (prefer_cache, build_only, cache_only, or verify) as the second argument."
+HELP_RECIPES_PUBLISHER_KEY :: "recipes.publisher_key() connects recipes when needed and returns the principal's 64-hex Ed25519 cache publisher public key. If none is stored yet, recipes generates and persists a seed in its private store and returns only the public key."
+HELP_RECIPES_CONFIGURE_PUBLISHER :: "recipes.configure_publisher(\"<64-hex-seed>\") sets the principal's Ed25519 cache publisher key inside recipes from a non-zero 64-hex seed and returns only the 64-hex public key."
+HELP_RECIPES_PUBLISH :: "recipes.publish(\"<64-hex-recipe-hash>\") verifies and uploads the recipe's full output closure bottom-up over QUIC, then uploads its signed realisation to the principal's configured object cache, returning a Publish_Result record."
 HELP_ALLOW :: "allow(\"visitor\", \"store\") grants the named disk process access to its private store from its next start. Only store can be granted from the console."
 HELP_REVOKE :: "revoke(\"notes\", \"store\") ends one held grant on a running process immediately and returns how many holdings closed. Future calls on closed handles report that the grant was revoked."
 HELP_PLANS_DIFFERENCE :: "plans.difference(rows, summary) compares a proposed plan against the principal's active plan without applying any change. It returns the difference table and appends the summary row."
@@ -59,6 +62,9 @@ HELP_TOPICS := [?]Help_Topic {
 	{"isolate", HELP_ISOLATE},
 	{"load", HELP_LOAD},
 	{"projects.install", HELP_PROJECTS_INSTALL},
+	{"recipes.publisher_key", HELP_RECIPES_PUBLISHER_KEY},
+	{"recipes.configure_publisher", HELP_RECIPES_CONFIGURE_PUBLISHER},
+	{"recipes.publish", HELP_RECIPES_PUBLISH},
 	{"allow", HELP_ALLOW},
 	{"revoke", HELP_REVOKE},
 	{"plans.difference", HELP_PLANS_DIFFERENCE},

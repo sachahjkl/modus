@@ -183,3 +183,13 @@ Remote_Cache_Configured :: struct {
 	port:       u64,
 	server_key: value_kinds.Hash_Field,
 }
+
+// A local realisation and its output closure were published to the QUIC object cache.
+@(log_fact = "recipes: published recipe {recipe_hash} (output {output_hash}, {objects_uploaded} uploaded, {objects_skipped} skipped, {bytes_uploaded} bytes)")
+Remote_Cache_Published :: struct {
+	recipe_hash:      value_kinds.Hash_Field,
+	output_hash:      value_kinds.Hash_Field,
+	objects_uploaded: u64,
+	objects_skipped:  u64,
+	bytes_uploaded:   u64,
+}

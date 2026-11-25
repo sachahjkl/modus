@@ -1029,10 +1029,70 @@ Recipes_Collect_Row :: struct {
 }
 #assert(size_of(Recipes_Collect_Row) == 24)
 
+// recipes_ensure_connected_sandbox connects the console to the recipes service
+// when needed and returns its 1-based sandbox number and boot-image module file.
+// Matches an existing recipes sandbox even when process == 0 (after a service
+// restart) so call_isolated reconnects it transparently through sandbox_start.
+@(private = "file")
+recipes_ensure_connected_sandbox :: proc "contextless" (caller: string) -> (sandbox_number: int, recipes_file: []u8, ok: bool) {
+	for &item, index in sandboxes {
+		if item.service && item.name == "recipes" {
+			sandbox_number = index + 1
+			break
+		}
+	}
+	if sandbox_number == 0 {
+		connect_args := [1]Value{{kind = .Text, text = "recipes"}}
+		_ = connect_service(connect_args[:])
+		if failed {
+			return 0, nil, false
+		}
+		for &item, index in sandboxes {
+			if item.service && item.name == "recipes" {
+				sandbox_number = index + 1
+				break
+			}
+		}
+	}
+	if sandbox_number == 0 {
+		_ = fail(caller, ": the recipes service is not connected")
+		return 0, nil, false
+	}
+	file, _, has_file := image_module_file("recipes")
+	if !has_file {
+		_ = fail(caller, ": the boot image has no module recipes")
+		return 0, nil, false
+	}
+	return sandbox_number, file, true
+}
+
+// recipes_export_command builds a temporary Command descriptor for invoking one
+// export of the connected recipes service directly through call_isolated without
+// recursing into a built-in frontend of the same name.
+@(private = "file")
+recipes_export_command :: proc "contextless" (sandbox_number: int, recipes_file: []u8, export_name: string, display_name: string) -> (cmd: Command, ok: bool) {
+	export_index := module.export_find(recipes_file, export_name)
+	if export_index == 0 || !export_command_make(&cmd, recipes_file, export_index) {
+		_ = fail(display_name, ": the recipes service does not export ", export_name)
+		return {}, false
+	}
+	cmd.name = display_name
+	cmd.sandbox = sandbox_number
+	return cmd, true
+}
+
 // recipes_collect_garbage_command runs mark-and-sweep garbage collection over
 // recipes's private store and reports marked, kept, and removed counts.
 recipes_collect_garbage_command :: proc "contextless" (_: []Value) -> Value {
-	row_table := call_run("recipes.collect_garbage", nil)
+	sandbox_number, recipes_file, connected := recipes_ensure_connected_sandbox("recipes.collect_garbage")
+	if !connected {
+		return {}
+	}
+	cmd, cmd_ok := recipes_export_command(sandbox_number, recipes_file, "collect_garbage", "recipes.collect_garbage")
+	if !cmd_ok {
+		return {}
+	}
+	row_table := call_isolated(&cmd, nil)
 	if failed {
 		return {}
 	}
@@ -1046,4 +1106,100 @@ recipes_collect_garbage_command :: proc "contextless" (_: []Value) -> Value {
 	}
 	row := (^Recipes_Collect_Row)(raw_data(raw))^
 	return {kind = .Text, text = scratch_text("marked ", row.marked, " kept ", row.kept, " removed ", row.removed)}
+}
+
+// recipes_publisher_key_command connects recipes when needed and returns the
+// caller principal's 64-hex Ed25519 cache publisher public key.
+recipes_publisher_key_command :: proc "contextless" (_: []Value) -> Value {
+	sandbox_number, recipes_file, connected := recipes_ensure_connected_sandbox("recipes.publisher_key")
+	if !connected {
+		return {}
+	}
+	cmd, cmd_ok := recipes_export_command(sandbox_number, recipes_file, "publisher_key", "recipes.publisher_key")
+	if !cmd_ok {
+		return {}
+	}
+	return call_isolated(&cmd, nil)
+}
+
+// recipes_configure_publisher_command validates a 64-hex non-zero Ed25519 seed,
+// connects recipes when needed, stores the publisher key inside recipes, and
+// returns only the 64-hex public key.
+recipes_configure_publisher_command :: proc "contextless" (arguments: []Value) -> Value {
+	seed_hex := arguments[0].text
+	seed, seed_ok := pr.hash_of_hexadecimal(transmute([]u8)seed_hex)
+	defer intrinsics.mem_zero_volatile(&seed[0], len(seed))
+	if !seed_ok || object_cache.hash_is_zero(seed) {
+		return fail("recipes.configure_publisher: argument 1 must be 64 non-zero lowercase hexadecimal digits")
+	}
+	sandbox_number, recipes_file, connected := recipes_ensure_connected_sandbox("recipes.configure_publisher")
+	if !connected {
+		return {}
+	}
+	cmd, cmd_ok := recipes_export_command(sandbox_number, recipes_file, "configure_publisher", "recipes.configure_publisher")
+	if !cmd_ok {
+		return {}
+	}
+	args := [1]Value{{kind = .Text, text = seed_hex}}
+	return call_isolated(&cmd, args[:])
+}
+
+// recipes_publish_command validates a 64-hex recipe hash, connects recipes when
+// needed, publishes the recipe's verified output closure and signed realisation
+// to the caller principal's QUIC cache, and returns a typed Publish_Result record.
+recipes_publish_command :: proc "contextless" (arguments: []Value) -> Value {
+	recipe_hex_arg := arguments[0].text
+	recipe_hash, hash_ok := pr.hash_of_hexadecimal(transmute([]u8)recipe_hex_arg)
+	if !hash_ok || object_cache.hash_is_zero(recipe_hash) {
+		return fail("recipes.publish: argument 1 must be 64 non-zero lowercase hexadecimal digits")
+	}
+	sandbox_number, recipes_file, connected := recipes_ensure_connected_sandbox("recipes.publish")
+	if !connected {
+		return {}
+	}
+	cmd, cmd_ok := recipes_export_command(sandbox_number, recipes_file, "publish", "recipes.publish")
+	if !cmd_ok {
+		return {}
+	}
+	args := [1]Value{{kind = .Text, text = recipe_hex_arg}}
+	row_table := call_isolated(&cmd, args[:])
+	if failed {
+		return {}
+	}
+	table, has_table := table_of(row_table)
+	if !has_table || table.rows < 1 {
+		return fail("recipes.publish: did not return a publish summary row")
+	}
+	raw := table_row(table, row_table, 0)
+	if len(raw) < size_of(pr.Publish_Row) {
+		return fail("recipes.publish: publish summary row is truncated")
+	}
+	row := (^pr.Publish_Row)(raw_data(raw))^
+	recipe_hex: [64]u8
+	output_hex: [64]u8
+	signer_hex: [64]u8
+	disk_process.hash_write(&recipe_hex, blake3.Hash(row.recipe_hash))
+	disk_process.hash_write(&output_hex, blake3.Hash(row.output_hash))
+	disk_process.hash_write(&signer_hex, blake3.Hash(row.signer_public_key))
+
+	columns := [6]Column{
+		text_column("recipe", 65),
+		text_column("output", 65),
+		text_column("signer", 65),
+		integer_column("objects_uploaded"),
+		integer_column("objects_skipped"),
+		integer_column("bytes_uploaded"),
+	}
+	res_table, made := made_table("Publish_Result", columns[:])
+	if !made {
+		return fail("recipes.publish: the line has no room for the description of its result")
+	}
+	res_row := made_row(&res_table)
+	made_text(&res_table, res_row, 0, string(recipe_hex[:]))
+	made_text(&res_table, res_row, 1, string(output_hex[:]))
+	made_text(&res_table, res_row, 2, string(signer_hex[:]))
+	made_integer(&res_table, res_row, 3, i64(min(row.objects_uploaded, u64(max(i64)))))
+	made_integer(&res_table, res_row, 4, i64(min(row.objects_skipped, u64(max(i64)))))
+	made_integer(&res_table, res_row, 5, i64(min(row.bytes_uploaded, u64(max(i64)))))
+	return made_record(&res_table, "recipes.publish")
 }

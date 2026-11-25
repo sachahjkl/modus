@@ -328,6 +328,9 @@ Three separated services hold least authority (`src/library/modus/contract/plans
   - Substitution mode is passed as a named argument: `recipes.build(kernel, substitution = { mode = .Verify })`. Modes are `.Prefer_Cache`, `.Build_Only`, `.Cache_Only`, and `.Verify` (builds locally and verifies byte-for-byte equality with a signed cache realisation).
   - Sandboxed builders receive read-only inputs, an empty output store, a frozen date, a deterministic seed equal to `recipe_hash`, zero network access, and no root ring.
   - `recipes.provenance(target)` reports whether an output came from a local build or a signed cache realisation and names its signer.
+  - `recipes.publisher_key()` returns the caller principal's 64-hex Ed25519 cache publisher public key (generating and persisting a private seed inside `recipes` when absent, without ever exposing the seed).
+  - `recipes.configure_publisher(seed_hex)` sets the caller principal's Ed25519 cache publisher key from a 64-hex non-zero seed inside `recipes` and returns only the 64-hex public key.
+  - `recipes.publish(recipe_hash)` verifies and uploads a locally realised recipe's output closure bottom-up over QUIC and then uploads its signed `Realisation_Record` to the caller principal's configured object cache, returning a `Publish_Result` record (`recipe`, `output`, `signer`, `objects_uploaded`, `objects_skipped`, `bytes_uploaded`).
 - **Projects (`projects` service):**
   - `projects.inputs(p)` lists each pinned input with its tree hash and source provenance.
   - `projects.update(p)` (or `projects.update(p, inputs.gt)`) runs each input's source resolver with a network grant restricted to that source's host and writes a new version of `pins.lex`.
