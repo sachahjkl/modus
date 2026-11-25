@@ -1,0 +1,3 @@
+type: Added
+
+**TPM policy authorization, hardware security keys, and principals disk-row rules.** Added the freestanding contracts `modus:contract/tpm_policy` (storage hierarchy authorization seals and publisher-signed `TPM2_PolicyAuthorize` envelopes across PCR 7 changes with monotonic NV floor checks), `modus:contract/hardware_keys` (CTAP2/FIDO2, PIV, and OpenPGP challenge/assertion verification with purpose binding and UP/UV enforcement), and `modus:contract/principals_rules` (deterministic validation, canonical sorting, and BLAKE3 digesting of `Disk_Rows_Set` snapshots), with intent in `src/md/features/hardware_keys.md`.
