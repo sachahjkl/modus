@@ -234,7 +234,6 @@ film_runs :: proc(picture_times: []time.Duration) -> []Film_Run {
 
 // film_slot_microseconds gives the time of the start of a slot in
 // microseconds, the unit of the list of the encoder, rounded to the nearest.
-@(private = "file")
 film_slot_microseconds :: proc(slot: int) -> i64 {
 	return (i64(slot) * 1_000_000 + FILM_RATE / 2) / FILM_RATE
 }
@@ -758,6 +757,9 @@ FILM_STILL_DIVISOR :: 4
 // log, removes the pictures, and copies the WebM file to the repository
 // when a news entry names the film.
 film_write :: proc(name: string) -> bool {
+	if name == "tutorial" {
+		return tutorial_film_write(name)
+	}
 	folder := foundation.join(FILM_FOLDER, "/", name)
 	paths, listed := foundation.files_with_suffix(folder, FILM_PICTURE_SUFFIX)
 	if !listed || len(paths) == 0 {

@@ -28,7 +28,6 @@ sample_tutorial_bindings :: proc() -> Tutorial_Film_Bindings {
 	return {
 		cache_server_key  = strings.repeat("1", 64, context.temp_allocator),
 		cache_signer_key  = strings.repeat("2", 64, context.temp_allocator),
-		collatz_here      = strings.repeat("3", 64, context.temp_allocator),
 		db_browser_here   = strings.repeat("4", 64, context.temp_allocator),
 		db_browser_recipe = strings.repeat("5", 64, context.temp_allocator),
 		db_browser_output = strings.repeat("6", 64, context.temp_allocator),
@@ -37,7 +36,8 @@ sample_tutorial_bindings :: proc() -> Tutorial_Film_Bindings {
 }
 
 // Placeholder expansion refuses missing required bindings, expands every
-// tutorial placeholder cleanly, and produces only keystrokes supported by
+// tutorial placeholder cleanly, ensures zero raw 64-hex placeholders are typed
+// on camera (Film_Type), and produces only keystrokes supported by
 // key_names_of_a_text.
 @(test)
 tutorial_film_expands_placeholders_and_refuses_missing_bindings :: proc(t: ^testing.T) {
@@ -50,9 +50,24 @@ tutorial_film_expands_placeholders_and_refuses_missing_bindings :: proc(t: ^test
 	testing.expect(t, !ok, "empty cache_server_key binding is refused")
 
 	incomplete2 := sample_tutorial_bindings()
-	incomplete2.db_browser_recipe = ""
+	incomplete2.db_browser_output = ""
 	_, ok = tutorial_film_expand_steps(scenario_tutorial_film[:], incomplete2)
-	testing.expect(t, !ok, "empty db_browser_recipe binding is refused")
+	testing.expect(t, !ok, "empty db_browser_output binding is refused")
+
+	// No on-camera Film_Type step may type a raw hash placeholder or mention collatz,
+	// and no console variable assignment may be followed immediately by a [console]
+	// value wait without first evaluating a non-assignment expression (assignments
+	// draw nothing in src/modules/system/console/language.odin).
+	last_typed_was_assignment := false
+	for step, index in scenario_tutorial_film {
+		testing.expectf(t, !strings.contains(step.text, "collatz"), "step %d must not reference collatz: %s", index + 1, step.text)
+		if step.kind == .Film_Type {
+			testing.expectf(t, !strings.contains_rune(step.text, '{'), "on-camera Film_Type step %d must use Lex variables, not raw hash placeholders: %s", index + 1, step.text)
+			last_typed_was_assignment = strings.contains(step.text, " = ")
+		} else if step.kind == .Wait && strings.has_prefix(step.text, "[console] ") && !strings.has_prefix(step.text, "[console] > ") {
+			testing.expectf(t, !last_typed_was_assignment, "step %d waits for drawn console output %q directly after a variable assignment", index + 1, step.text)
+		}
+	}
 
 	// Complete bindings expand cleanly with zero leftover placeholders.
 	bindings := sample_tutorial_bindings()
@@ -73,18 +88,12 @@ tutorial_film_expands_placeholders_and_refuses_missing_bindings :: proc(t: ^test
 	}
 }
 
-// The real outside project folders hash deterministically under MODTREE2 and
-// their project.lex outputs.default recipes evaluate cleanly against a
-// generated catalog.lex.
+// The real db_browser project folder hashes deterministically under MODTREE2
+// and its Lex v3 project.lex (with let, here(), typed units, with, recipe, and
+// store) evaluates cleanly against a generated catalog.lex.
 @(test)
 tutorial_project_trees_hash_and_evaluate_recipes_deterministically :: proc(t: ^testing.T) {
 	defer free_all(context.temp_allocator)
-
-	collatz_objs, collatz_trees, collatz_here, collatz_ok := tutorial_read_project_tree(TUTORIAL_COLLATZ_DIR)
-	if !testing.expect(t, collatz_ok, "collatz project tree reads and hashes") {
-		return
-	}
-	defer tutorial_free_project_tree(collatz_objs, collatz_trees)
 
 	db_objs, db_trees, db_here, db_ok := tutorial_read_project_tree(TUTORIAL_DB_BROWSER_DIR)
 	if !testing.expect(t, db_ok, "db_browser project tree reads and hashes") {
@@ -92,13 +101,6 @@ tutorial_project_trees_hash_and_evaluate_recipes_deterministically :: proc(t: ^t
 	}
 	defer tutorial_free_project_tree(db_objs, db_trees)
 	testing.expect(t, len(db_trees) >= 1, "db_browser includes nested core/ subtree")
-
-	se_objs, se_trees, se_here, se_ok := tutorial_read_project_tree(TUTORIAL_STORE_EXPLORER_DIR)
-	if !testing.expect(t, se_ok, "store_explorer project tree reads and hashes") {
-		return
-	}
-	defer tutorial_free_project_tree(se_objs, se_trees)
-	testing.expect(t, collatz_here != db_here && db_here != se_here, "distinct projects have distinct here() hashes")
 
 	// Build a deterministic catalog.lex with the four required builder modules.
 	catalog_modules := [?]build.Module_Hash{
@@ -112,19 +114,211 @@ tutorial_project_trees_hash_and_evaluate_recipes_deterministically :: proc(t: ^t
 
 	db_lex, db_lex_err := os.read_entire_file(TUTORIAL_DB_BROWSER_DIR + "/project.lex", context.temp_allocator)
 	testing.expect(t, db_lex_err == nil)
-	se_lex, se_lex_err := os.read_entire_file(TUTORIAL_STORE_EXPLORER_DIR + "/project.lex", context.temp_allocator)
-	testing.expect(t, se_lex_err == nil)
+	db_lex_text := string(db_lex)
+	for token in ([]string{"project {", "here()", "with {", "MiB", "recipe(", "store(\"db_browser\""}) {
+		testing.expectf(t, strings.contains(db_lex_text, token), "db_browser/project.lex demonstrates `%s`", token)
+	}
 
-	db_recipe_1, r1_ok := tutorial_evaluate_project_recipe(string(db_lex), db_here, catalog_lex)
-	db_recipe_2, r2_ok := tutorial_evaluate_project_recipe(string(db_lex), db_here, catalog_lex)
-	se_recipe, r3_ok := tutorial_evaluate_project_recipe(string(se_lex), se_here, catalog_lex)
-	testing.expect(t, r1_ok && r2_ok && r3_ok, "db_browser and store_explorer outputs.default evaluate to recipes")
+	db_recipe_1, r1_ok := tutorial_evaluate_project_recipe(db_lex_text, db_here, catalog_lex)
+	db_recipe_2, r2_ok := tutorial_evaluate_project_recipe(db_lex_text, db_here, catalog_lex)
+	testing.expect(t, r1_ok && r2_ok, "db_browser outputs.default evaluates to a recipe")
 	testing.expect_value(t, db_recipe_1, db_recipe_2)
-	testing.expect(t, db_recipe_1 != se_recipe, "distinct projects evaluate to distinct recipe hashes")
 
 	// Malformed project.lex is refused cleanly.
 	_, bad_ok := tutorial_evaluate_project_recipe("project { outputs = { default = 42 } }", db_here, catalog_lex)
 	testing.expect(t, !bad_ok, "non-recipe outputs.default is refused")
+}
+
+// Chapter cards and lower-third captions align with scenario_tutorial_film
+// cues, splice into pictures.ffconcat without overlap, generate valid 1080p
+// ASS subtitles and PPM cards, and refuse malformed cue files or missing cues.
+@(test)
+tutorial_film_compose_splices_cards_and_captions_without_overlap :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+
+	// 1. Cue parser refusals and valid parsing.
+	for bad in ([]string{
+		"not_a_time foo\n",
+		"1.2 foo\n",
+		"-1.000 foo\n",
+		"1.000 BadName\n",
+		"2.000 a\n1.500 b\n",
+		"1.000 dup\n2.000 dup\n",
+	}) {
+		_, parsed := tutorial_cues_parse(bad)
+		testing.expectf(t, !parsed, "malformed cues %q are refused", bad)
+	}
+
+	// 2. Collect every cue declared in scenario_tutorial_film in scenario order
+	//    and assign synthetic monotonically increasing timestamps.
+	scenario_cues := make([dynamic]Film_Cue, context.temp_allocator)
+	cue_time := time.Duration(0)
+	for step in scenario_tutorial_film {
+		if step.kind == .Film_Hold && step.text != "" {
+			append(&scenario_cues, Film_Cue{since_start = cue_time, name = step.text})
+			cue_time += 4 * time.Second
+		}
+	}
+	cue_text := film_cue_text(scenario_cues[:])
+	parsed_cues, parsed_ok := tutorial_cues_parse(cue_text)
+	if !testing.expect(t, parsed_ok, "scenario cues round-trip cleanly") {
+		return
+	}
+	defer tutorial_cues_free(parsed_cues)
+	testing.expect_value(t, len(parsed_cues), len(scenario_cues))
+
+	// 3. Build synthetic runs spanning past the last cue (with multi-slot runs
+	//    so chapter card splices exercise mid-run splitting).
+	raw_total_s := int(cue_time / time.Second) + 4
+	pic_names := make([]string, raw_total_s, context.temp_allocator)
+	pic_times := make([]time.Duration, raw_total_s, context.temp_allocator)
+	for i in 0 ..< raw_total_s {
+		pic_times[i] = time.Duration(i) * time.Second
+		pic_names[i] = fmt.tprintf("%010d.ppm", i * 1_000_000)
+	}
+	runs := film_runs(pic_times)
+	raw_total_us := film_slot_microseconds(film_slot_count(runs))
+
+	// Refusals: empty runs, missing cue in cues slice.
+	_, bad_runs := tutorial_timeline_build(nil, nil, parsed_cues, tutorial_chapter_cards[:], tutorial_captions[:])
+	testing.expect(t, !bad_runs, "empty runs are refused")
+	_, missing_cue := tutorial_timeline_build(pic_names, runs, parsed_cues[:1], tutorial_chapter_cards[:], tutorial_captions[:])
+	testing.expect(t, !missing_cue, "missing required cue is refused")
+
+	// 4. Compose full 7-chapter timeline and verify exact duration conservation
+	//    and strict non-overlap between every card and every caption.
+	timeline, ok := tutorial_timeline_build(pic_names, runs, parsed_cues, tutorial_chapter_cards[:], tutorial_captions[:])
+	if !testing.expect(t, ok, "full 7-chapter tutorial timeline builds cleanly") {
+		return
+	}
+	defer tutorial_timeline_free(&timeline)
+	testing.expect_value(t, len(timeline.card_spans), len(tutorial_chapter_cards))
+	testing.expect_value(t, len(timeline.caption_spans), len(tutorial_captions))
+
+	expected_cards_us: i64 = 0
+	for card in tutorial_chapter_cards {
+		expected_cards_us += card.duration_ms * 1000
+	}
+	actual_total_us: i64 = 0
+	for entry in timeline.entries {
+		testing.expect(t, entry.duration_us > 0, "every spliced ffconcat entry has positive duration")
+		actual_total_us += entry.duration_us
+	}
+	testing.expect_value(t, actual_total_us, raw_total_us + expected_cards_us)
+
+	// No two cards overlap, no two captions overlap, and no caption overlaps any card.
+	for i in 0 ..< len(timeline.card_spans) {
+		a := timeline.card_spans[i]
+		testing.expect(t, a.end_ms > a.start_ms, "card span has positive duration")
+		if i > 0 {
+			testing.expect(t, a.start_ms >= timeline.card_spans[i - 1].end_ms, "cards are ordered without overlap")
+		}
+		for cap in timeline.caption_spans {
+			overlaps := cap.start_ms < a.end_ms && cap.end_ms > a.start_ms
+			testing.expectf(t, !overlaps, "caption %d [%d..%d] must not overlap card %d [%d..%d]", cap.caption_index, cap.start_ms, cap.end_ms, a.card_index, a.start_ms, a.end_ms)
+		}
+	}
+	for i in 1 ..< len(timeline.caption_spans) {
+		testing.expect(t, timeline.caption_spans[i].start_ms >= timeline.caption_spans[i - 1].end_ms, "captions are ordered without overlap")
+	}
+
+	// Every chapter card spliced before a cue starts a caption at that exact cue
+	// (no uncaptioned gap right after a chapter card).
+	for card in tutorial_chapter_cards {
+		if card.anchor != .Before_Cue {
+			continue
+		}
+		has_caption := false
+		for cap in tutorial_captions {
+			if cap.cue_name == card.cue_name {
+				has_caption = true
+				break
+			}
+		}
+		testing.expectf(t, has_caption, "chapter card %s cue `%s` has an immediate caption", card.id, card.cue_name)
+	}
+
+	// ffconcat output repeats the final file line without a duration so FFmpeg's
+	// concat demuxer honors the final Chapter 7 card's 4.0 s duration.
+	ffconcat := tutorial_ffconcat_text(timeline.entries)
+	testing.expect(t, strings.has_suffix(ffconcat, "file 'card_ch7.ppm'\nduration 4.000000\nfile 'card_ch7.ppm'\n"), "ffconcat repeats final card file line after its 4.0 s duration")
+
+	// 5. ASS formatting helpers, ASCII-only glyph coverage for B612 ASCII, and generated script.
+	testing.expect_value(t, tutorial_ass_color({0x12, 0x34, 0x56}, 0x10), "&H10563412")
+	testing.expect_value(t, tutorial_ass_timestamp(0), "0:00:00.00")
+	testing.expect_value(t, tutorial_ass_timestamp(65_439), "0:01:05.43")
+	testing.expect_value(t, tutorial_ass_escape("a {b}\nc"), "a \\{b\\}\\Nc")
+
+	is_printable_ascii :: proc(s: string) -> bool {
+		for b in transmute([]u8)s {
+			if b < 0x20 || b > 0x7E {
+				return false
+			}
+		}
+		return true
+	}
+	for card in tutorial_chapter_cards {
+		testing.expectf(t, is_printable_ascii(card.kicker) && is_printable_ascii(card.title) && is_printable_ascii(card.footer), "card %s uses printable ASCII for B612 ASCII font coverage", card.id)
+		for line in card.lines {
+			testing.expectf(t, is_printable_ascii(line), "card %s line uses printable ASCII: %s", card.id, line)
+		}
+	}
+	for cap in tutorial_captions {
+		testing.expectf(t, is_printable_ascii(cap.kicker) && is_printable_ascii(cap.heading) && is_printable_ascii(cap.body), "caption %s uses printable ASCII for B612 ASCII font coverage", cap.cue_name)
+	}
+
+	ass := tutorial_ass_generate(timeline, tutorial_chapter_cards[:], tutorial_captions[:])
+	defer delete(ass)
+	testing.expect(t, !strings.contains(ass, "%!("), "generated ASS contains zero fmt formatting errors")
+	for snippet in ([]string{
+		"PlayResX: 1920",
+		"PlayResY: 1080",
+		TUTORIAL_FONT_BOLD,
+		TUTORIAL_FONT_REGULAR,
+		TUTORIAL_FONT_MONO,
+		"Building a sandboxed SQLite GUI app on modus",
+		"modus.systems",
+		"Dialogue: 0,",
+		"Dialogue: 2,",
+		"{\\an7\\pos(",
+		"\\p1}m 0 0 l ",
+		"{\\p0}",
+	}) {
+		testing.expectf(t, strings.contains(ass, snippet), "generated ASS contains `%s`", snippet)
+	}
+
+	// 6. Card PPM encoder refusals and valid P6 output.
+	_, bad_ppm := tutorial_card_ppm_encode(32, 32, .System)
+	testing.expect(t, !bad_ppm, "undersized card PPM is refused")
+	ppm, ppm_ok := tutorial_card_ppm_encode(192, 108, .Grant)
+	if testing.expect(t, ppm_ok, "card PPM encodes cleanly") {
+		defer delete(ppm)
+		testing.expect(t, strings.has_prefix(string(ppm), "P6\n192 108\n255\n"), "card PPM starts with P6 header")
+		testing.expect_value(t, len(ppm), len("P6\n192 108\n255\n") + 192 * 108 * 3)
+	}
+
+	// 7. Encoder command shapes: native 1920x1080 30 fps with libass + resources/fonts,
+	//    both CPU and NVENC backends, and exact `-t` duration clamping the trailing ffconcat repeat.
+	mp4_cmd := tutorial_mp4_encode_command("build/films/tutorial/pictures.ffconcat", "build/films/tutorial/tutorial.ass", TUTORIAL_FONTS_FOLDER, 65_432, "build/films/tutorial.mp4")
+	mp4_joined := strings.join(mp4_cmd, " ", context.temp_allocator)
+	for part in ([]string{"fps=30,scale=1920:1080:flags=neighbor,ass=filename=", "fontsdir=resources/fonts", "-c:v libx264", "-movflags +faststart", "-t 65.432 build/films/tutorial.mp4"}) {
+		testing.expectf(t, strings.contains(mp4_joined, part), "tutorial CPU MP4 command contains `%s`: %s", part, mp4_joined)
+	}
+	mp4_nvenc_cmd := tutorial_mp4_encode_command("build/films/tutorial/pictures.ffconcat", "build/films/tutorial/tutorial.ass", TUTORIAL_FONTS_FOLDER, 65_432, "build/films/tutorial.mp4", .Nvenc)
+	mp4_nvenc_joined := strings.join(mp4_nvenc_cmd, " ", context.temp_allocator)
+	for part in ([]string{"-c:v h264_nvenc", "-preset p4", "-cq 19", "-movflags +faststart", "-t 65.432 build/films/tutorial.mp4"}) {
+		testing.expectf(t, strings.contains(mp4_nvenc_joined, part), "tutorial NVENC MP4 command contains `%s`: %s", part, mp4_nvenc_joined)
+	}
+	webm_cmd := tutorial_webm_encode_command("build/films/tutorial/pictures.ffconcat", "build/films/tutorial/tutorial.ass", TUTORIAL_FONTS_FOLDER, 42, 65_432, "build/films/tutorial.webm")
+	webm_joined := strings.join(webm_cmd, " ", context.temp_allocator)
+	for part in ([]string{"fps=30,scale=1920:1080:flags=neighbor,ass=filename=", "fontsdir=resources/fonts", "-c:v libsvtav1", "-crf 42", "-an", "-t 65.432 build/films/tutorial.webm"}) {
+		testing.expectf(t, strings.contains(webm_joined, part), "tutorial CPU WebM command contains `%s`: %s", part, webm_joined)
+	}
+	webm_nvenc_cmd := tutorial_webm_encode_command("build/films/tutorial/pictures.ffconcat", "build/films/tutorial/tutorial.ass", TUTORIAL_FONTS_FOLDER, 46, 65_432, "build/films/tutorial.webm", .Nvenc)
+	webm_nvenc_joined := strings.join(webm_nvenc_cmd, " ", context.temp_allocator)
+	for part in ([]string{"-c:v av1_nvenc", "-preset p4", "-cq 46", "-an", "-t 65.432 build/films/tutorial.webm"}) {
+		testing.expectf(t, strings.contains(webm_nvenc_joined, part), "tutorial NVENC WebM command contains `%s`: %s", part, webm_nvenc_joined)
+	}
 }
 
 // peer_cache answers ARP for 10.0.2.100, builds checksum-valid UDP frames from

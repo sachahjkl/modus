@@ -786,11 +786,21 @@ recipes_build_project_command :: proc "contextless" (arguments: []Value) -> Valu
 	}
 	out_hex_buf: [64]u8
 	disk_process.hash_write(&out_hex_buf, blake3.Hash(row.output_hash))
-	return {kind = .Text, text = scratch_text(outcome_label, ": recipe ", string(recipe_hex_buf[:]), " output ", string(out_hex_buf[:]))}
+	columns := [3]Column{text_column("outcome", 16), text_column("recipe", 65), text_column("output", 65)}
+	res_table, made := made_table("Project_Build", columns[:])
+	if !made {
+		return fail("recipes.build_project: the line has no room for the description of its result")
+	}
+	res_row := made_row(&res_table)
+	made_text(&res_table, res_row, 0, outcome_label)
+	made_text(&res_table, res_row, 1, string(recipe_hex_buf[:]))
+	made_text(&res_table, res_row, 2, string(out_hex_buf[:]))
+	return made_record(&res_table, "recipes.build_project")
 }
 
 // recipes_provenance_command queries recipes.realisations() for the named
-// 64-hex recipe hash and formats its origin, output hash, and signer key.
+// 64-hex recipe hash and returns a Provenance record with origin, output,
+// and signer fields.
 recipes_provenance_command :: proc "contextless" (arguments: []Value) -> Value {
 	hex_arg := arguments[0].text
 	target_hash, hash_ok := pr.hash_of_hexadecimal(transmute([]u8)hex_arg)
@@ -833,7 +843,16 @@ recipes_provenance_command :: proc "contextless" (arguments: []Value) -> Value {
 		out_hex, signer_hex: [64]u8
 		disk_process.hash_write(&out_hex, blake3.Hash(row.output_hash))
 		disk_process.hash_write(&signer_hex, blake3.Hash(row.signer_public_key))
-		return {kind = .Text, text = scratch_text("recipe ", hex_arg, " output ", string(out_hex[:]), " origin ", origin_label, " signer ", string(signer_hex[:]))}
+		columns := [3]Column{text_column("origin", 16), text_column("output", 65), text_column("signer", 65)}
+		res_table, made := made_table("Provenance", columns[:])
+		if !made {
+			return fail("recipes.provenance: the line has no room for the description of its result")
+		}
+		res_row := made_row(&res_table)
+		made_text(&res_table, res_row, 0, origin_label)
+		made_text(&res_table, res_row, 1, string(out_hex[:]))
+		made_text(&res_table, res_row, 2, string(signer_hex[:]))
+		return made_record(&res_table, "recipes.provenance")
 	}
 	return fail("recipes.provenance: no realisation exists for recipe ", hex_arg)
 }

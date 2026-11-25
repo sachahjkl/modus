@@ -1,12 +1,13 @@
 // Preparation and teardown of the deterministic data disk and local signed
-// QUIC object cache for `modustool film tutorial` (docs/TOOLS.md, "The film").
+// QUIC object cache for `modustool film tutorial`
+// (src/md/infrastructure/tutorial_film.md; docs/TOOLS.md, "The film").
 //
-// Builds real outside modules (sqlite.module, db_browser.module,
-// store_explorer.module), seeds an initial 4 KiB-page SQLite main.db by
-// executing sqlite.module in memory, writes a multi-store STORAGE7 data disk
-// (collatz, db_browser, store_explorer, disk-db_browser), starts an ephemeral
-// host QUIC cache-serve on 127.0.0.1:0 with deterministic Ed25519 keys, and
-// expands scenario_tutorial_film placeholders with the computed 64-hex hashes.
+// Builds real outside modules (sqlite.module, db_browser.module), seeds an
+// initial 4 KiB-page SQLite main.db by executing sqlite.module in memory,
+// writes a STORAGE7 data disk (db_browser source store and disk-db_browser
+// private store), starts an ephemeral host QUIC cache-serve on 127.0.0.1:0
+// with deterministic Ed25519 keys, and expands scenario_tutorial_film
+// placeholders with the computed 64-hex hashes.
 package machine
 
 import "core:fmt"
@@ -29,9 +30,7 @@ import "modustool:build"
 import "modustool:cache_server"
 import "modustool:foundation"
 
-TUTORIAL_COLLATZ_DIR :: "src/outside/projects/collatz"
 TUTORIAL_DB_BROWSER_DIR :: "src/outside/projects/db_browser"
-TUTORIAL_STORE_EXPLORER_DIR :: "src/outside/projects/store_explorer"
 TUTORIAL_C_PROGRAMS_DIR :: "src/outside/c_programs"
 TUTORIAL_SQLITE_RECIPE :: "src/outside/c_programs/recipes/sqlite.recipe"
 
@@ -52,7 +51,6 @@ tutorial_ed25519_seed :: proc(base: u8) -> (seed: [32]u8) {
 Tutorial_Film_Bindings :: struct {
 	cache_server_key:  string,
 	cache_signer_key:  string,
-	collatz_here:      string,
 	db_browser_here:   string,
 	db_browser_recipe: string,
 	db_browser_output: string,
@@ -87,7 +85,6 @@ tutorial_film_expand_text :: proc(text: string, bindings: Tutorial_Film_Bindings
 	pairs := [?][2]string{
 		{"{cache_server_key}", bindings.cache_server_key},
 		{"{cache_signer_key}", bindings.cache_signer_key},
-		{"{collatz_here}", bindings.collatz_here},
 		{"{db_browser_here}", bindings.db_browser_here},
 		{"{db_browser_recipe}", bindings.db_browser_recipe},
 		{"{db_browser_output}", bindings.db_browser_output},
@@ -598,7 +595,7 @@ tutorial_film_prepare :: proc() -> (fixture: ^Tutorial_Film_Fixture, ok: bool) {
 		fixture = nil
 	}
 
-	// 1. Build sqlite.module, seed initial main.db, and build db_browser + store_explorer.
+	// 1. Build sqlite.module, seed initial main.db, and build db_browser.
 	sqlite_bytes := tutorial_build_sqlite_module(work_dir) or_return
 	defer delete(sqlite_bytes)
 	main_db_bytes := tutorial_build_initial_main_db(sqlite_bytes) or_return
@@ -606,8 +603,6 @@ tutorial_film_prepare :: proc() -> (fixture: ^Tutorial_Film_Fixture, ok: bool) {
 	db_browser_bytes := tutorial_build_outside_module(TUTORIAL_DB_BROWSER_DIR, "db_browser", work_dir) or_return
 	fixture.db_browser_bytes = db_browser_bytes
 	fixture.fact_outside_modules[0] = {hash = blake3.hash(db_browser_bytes), file = db_browser_bytes}
-	store_explorer_bytes := tutorial_build_outside_module(TUTORIAL_STORE_EXPLORER_DIR, "store_explorer", work_dir) or_return
-	defer delete(store_explorer_bytes)
 
 	host_bytes, host_ok := foundation.read_file(foundation.module_path("host"))
 	if !host_ok {
@@ -619,26 +614,17 @@ tutorial_film_prepare :: proc() -> (fixture: ^Tutorial_Film_Fixture, ok: bool) {
 	}
 	catalog_lex := string(catalog_bytes)
 
-	// 2. Read project trees and compute canonical here() + recipe hashes.
-	collatz_objs, collatz_trees, collatz_here := tutorial_read_project_tree(TUTORIAL_COLLATZ_DIR) or_return
-	defer tutorial_free_project_tree(collatz_objs, collatz_trees)
+	// 2. Read the db_browser project tree and compute canonical here() + recipe hashes.
 	db_objs, db_trees, db_here := tutorial_read_project_tree(TUTORIAL_DB_BROWSER_DIR) or_return
 	defer tutorial_free_project_tree(db_objs, db_trees)
-	se_objs, se_trees, se_here := tutorial_read_project_tree(TUTORIAL_STORE_EXPLORER_DIR) or_return
-	defer tutorial_free_project_tree(se_objs, se_trees)
 
 	db_project_lex, db_lex_err := os.read_entire_file(TUTORIAL_DB_BROWSER_DIR + "/project.lex", context.temp_allocator)
 	if db_lex_err != nil {
 		return nil, false
 	}
-	se_project_lex, se_lex_err := os.read_entire_file(TUTORIAL_STORE_EXPLORER_DIR + "/project.lex", context.temp_allocator)
-	if se_lex_err != nil {
-		return nil, false
-	}
 	db_recipe := tutorial_evaluate_project_recipe(string(db_project_lex), db_here, catalog_lex) or_return
-	se_recipe := tutorial_evaluate_project_recipe(string(se_project_lex), se_here, catalog_lex) or_return
 
-	// 3. Write the multi-store STORAGE7 tutorial data disk.
+	// 3. Write the STORAGE7 tutorial data disk (db_browser source + private store).
 	fixture.data_disk_path = fmt.aprintf("%s/tutorial_data_disk.img", work_dir)
 	disk_db_objects := [?]build.Module_File{
 		{name = "host.module", bytes = host_bytes},
@@ -646,9 +632,7 @@ tutorial_film_prepare :: proc() -> (fixture: ^Tutorial_Film_Fixture, ok: bool) {
 		{name = "sqlite.module", bytes = sqlite_bytes},
 	}
 	stores := [?]build.Data_Disk_Store{
-		{name = "collatz", limit = 1024, objects = collatz_objs, trees = collatz_trees},
 		{name = "db_browser", limit = 2048, objects = db_objs, trees = db_trees},
-		{name = "store_explorer", limit = 2048, objects = se_objs, trees = se_trees},
 		{name = "disk-db_browser", limit = disk_process.PRIVATE_STORE_BLOCKS_LIMIT, objects = disk_db_objects[:]},
 	}
 	if !build.data_disk_write_stores(fixture.data_disk_path, stores[:], build.DATA_DISK_SIZE) {
@@ -675,23 +659,19 @@ tutorial_film_prepare :: proc() -> (fixture: ^Tutorial_Film_Fixture, ok: bool) {
 	fixture.cache_server_state = server
 	fixture.cache_server_open = true
 
-	// 5. Seed signed blobs, single-entry module output trees, and Tree
-	// realisations through the cache server handler (every recipe produced by
+	// 5. Seed signed blobs, the single-entry module output tree, and the Tree
+	// realisation through the cache server handler (every recipe produced by
 	// recipe_spec_of_arguments has output_kind = .Tree with entry "module").
 	_, sqlite_seeded := cache_server.cache_server_seed_object(&fixture.cache_server_state, .Blob, sqlite_bytes, signer_seed)
 	db_blob_hash, db_seeded := cache_server.cache_server_seed_object(&fixture.cache_server_state, .Blob, db_browser_bytes, signer_seed)
-	se_blob_hash, se_seeded := cache_server.cache_server_seed_object(&fixture.cache_server_state, .Blob, store_explorer_bytes, signer_seed)
 	db_tree_bytes, db_tree_encoded := tutorial_module_output_tree(db_blob_hash, context.temp_allocator)
-	se_tree_bytes, se_tree_encoded := tutorial_module_output_tree(se_blob_hash, context.temp_allocator)
-	if !db_tree_encoded || !se_tree_encoded {
-		fmt.eprintln("modustool: tutorial: cannot encode canonical module output trees")
+	if !db_tree_encoded {
+		fmt.eprintln("modustool: tutorial: cannot encode canonical module output tree")
 		return nil, false
 	}
 	db_out_hash, db_tree_seeded := cache_server.cache_server_seed_object(&fixture.cache_server_state, .Tree, db_tree_bytes, signer_seed)
-	se_out_hash, se_tree_seeded := cache_server.cache_server_seed_object(&fixture.cache_server_state, .Tree, se_tree_bytes, signer_seed)
 	_, db_real_seeded := cache_server.cache_server_seed_realisation(&fixture.cache_server_state, db_recipe, db_out_hash, .Tree, signer_seed)
-	_, se_real_seeded := cache_server.cache_server_seed_realisation(&fixture.cache_server_state, se_recipe, se_out_hash, .Tree, signer_seed)
-	if !sqlite_seeded || !db_seeded || !se_seeded || !db_tree_seeded || !se_tree_seeded || !db_real_seeded || !se_real_seeded {
+	if !sqlite_seeded || !db_seeded || !db_tree_seeded || !db_real_seeded {
 		fmt.eprintln("modustool: tutorial: failed to seed signed objects or realisations into local cache")
 		return nil, false
 	}
@@ -707,7 +687,6 @@ tutorial_film_prepare :: proc() -> (fixture: ^Tutorial_Film_Fixture, ok: bool) {
 	fixture.bindings = {
 		cache_server_key  = tutorial_hex_of(running.public_key),
 		cache_signer_key  = tutorial_hex_of(signer_pub),
-		collatz_here      = tutorial_hex_of(collatz_here),
 		db_browser_here   = tutorial_hex_of(db_here),
 		db_browser_recipe = tutorial_hex_of(db_recipe),
 		db_browser_output = tutorial_hex_of(db_out_hash),
@@ -747,7 +726,6 @@ tutorial_film_teardown :: proc(fixture: ^Tutorial_Film_Fixture) {
 	}
 	delete(fixture.bindings.cache_server_key)
 	delete(fixture.bindings.cache_signer_key)
-	delete(fixture.bindings.collatz_here)
 	delete(fixture.bindings.db_browser_here)
 	delete(fixture.bindings.db_browser_recipe)
 	delete(fixture.bindings.db_browser_output)
