@@ -44,6 +44,14 @@ HEADLESS_PROOF_WIRE_BYTES :: 4 + 32 + 8 + HEADLESS_PROOF_KEY_BYTES + 8 + HEADLES
 // without heap allocation.
 HEADLESS_NONCE_CACHE_CAPACITY :: 64
 
+// Plan value: maximum age of a headless proof in milliseconds (5 minutes),
+// bounding the replay window even after nonce cache eviction.
+HEADLESS_PROOF_MAX_AGE_MS :: u64(300_000)
+
+// Plan value: maximum allowed forward clock skew of a headless proof in
+// milliseconds (30 seconds) so future-dated proofs cannot evade cache eviction.
+HEADLESS_PROOF_MAX_FUTURE_SKEW_MS :: u64(30_000)
+
 // Plan value: fixed table capacity of active wide grants tracked across
 // principals for session-lock termination.
 ACTIVE_WIDE_GRANT_TABLE_CAPACITY :: 16
@@ -74,6 +82,10 @@ Headless_Proof_Refusal :: enum u8 {
 	Duplicate_Grant_Serial = 20,
 	Zero_Grant_Serial      = 21,
 	Clock_Went_Back        = 22,
+	Zero_Issued_At         = 23,
+	Proof_Expired          = 24,
+	Proof_From_Future      = 25,
+	Timestamp_Overflow     = 26,
 }
 
 // Ed25519 signature verifier callback supplied by the caller at the border.
@@ -112,11 +124,16 @@ Headless_Verified_Grant :: struct {
 	host_key_hash: blake3.Hash,
 }
 
-// Fixed-capacity ring cache of recently accepted headless proof nonces.
+// Fixed-capacity ring cache of recently accepted headless proof nonces and
+// their issued_at timestamps. When the ring wraps past capacity, evicted_floor_ms
+// advances to the highest evicted issued_at_ms so evicted nonces cannot replay
+// even within the freshness window.
 Headless_Nonce_Cache :: struct {
-	count:     u32,
-	next_slot: u32,
-	nonces:    [HEADLESS_NONCE_CACHE_CAPACITY][HEADLESS_PROOF_NONCE_BYTES]u8,
+	count:            u32,
+	next_slot:        u32,
+	evicted_floor_ms: u64,
+	nonces:           [HEADLESS_NONCE_CACHE_CAPACITY][HEADLESS_PROOF_NONCE_BYTES]u8,
+	issued_at_ms:     [HEADLESS_NONCE_CACHE_CAPACITY]u64,
 }
 
 // One tracked wide grant slot used by session-lock termination.
@@ -143,27 +160,59 @@ headless_proof_refusal_from_word :: proc "contextless" (word: u64) -> (refusal: 
 	return enum_word.member_of_word(Headless_Proof_Refusal, word)
 }
 
+// headless_is_zero_bytes reports whether every byte in slice is zero.
+@(private = "file")
+headless_is_zero_bytes :: proc "contextless" (bytes: []u8) -> bool {
+	acc: u8 = 0
+	for value in bytes {
+		acc |= value
+	}
+	return acc == 0
+}
+
+// headless_constant_time_equal compares two equal-length byte slices without
+// early exit on mismatch.
+@(private = "file", optimization_mode = "none")
+headless_constant_time_equal :: proc "contextless" (left, right: []u8) -> bool {
+	if len(left) != len(right) {
+		return false
+	}
+	diff: u8 = 0
+	for index in 0 ..< len(left) {
+		diff |= left[index] ~ right[index]
+	}
+	return diff == 0
+}
+
 @(private = "file")
 nonce_cache_contains :: proc "contextless" (cache: ^Headless_Nonce_Cache, nonce: [HEADLESS_PROOF_NONCE_BYTES]u8) -> bool {
 	if cache == nil {
 		return false
 	}
+	local_nonce := nonce
 	limit := min(int(cache.count), HEADLESS_NONCE_CACHE_CAPACITY)
+	matched := false
 	for index in 0 ..< limit {
-		if cache.nonces[index] == nonce {
-			return true
+		if headless_constant_time_equal(cache.nonces[index][:], local_nonce[:]) {
+			matched = true
 		}
 	}
-	return false
+	return matched
 }
 
 @(private = "file")
-nonce_cache_record :: proc "contextless" (cache: ^Headless_Nonce_Cache, nonce: [HEADLESS_PROOF_NONCE_BYTES]u8) {
+nonce_cache_record :: proc "contextless" (cache: ^Headless_Nonce_Cache, nonce: [HEADLESS_PROOF_NONCE_BYTES]u8, issued_at_ms: u64) {
 	if cache == nil {
 		return
 	}
 	slot := int(cache.next_slot % HEADLESS_NONCE_CACHE_CAPACITY)
+	if cache.count >= HEADLESS_NONCE_CACHE_CAPACITY {
+		if cache.issued_at_ms[slot] > cache.evicted_floor_ms {
+			cache.evicted_floor_ms = cache.issued_at_ms[slot]
+		}
+	}
 	cache.nonces[slot] = nonce
+	cache.issued_at_ms[slot] = issued_at_ms
 	cache.next_slot = (cache.next_slot + 1) % HEADLESS_NONCE_CACHE_CAPACITY
 	if cache.count < HEADLESS_NONCE_CACHE_CAPACITY {
 		cache.count += 1
@@ -271,16 +320,19 @@ headless_proof_decode :: proc "contextless" (bytes: []u8) -> (proof: Headless_Wi
 }
 
 // headless_wide_grant_proof_verify validates every field of a headless proof,
-// verifies its Ed25519 signature over the canonical signing bytes against
-// expected_host_public_key, and records the nonce in nonce_cache on success.
-// Any refusal leaves nonce_cache unchanged.
+// enforces freshness against now_ms and max_age_ms, verifies its Ed25519
+// signature over the canonical signing bytes against expected_host_public_key,
+// and records the nonce in nonce_cache on success. Any refusal leaves
+// nonce_cache unchanged.
 headless_wide_grant_proof_verify :: proc "contextless" (
 	proof: ^Headless_Wide_Grant_Proof,
 	expected_machine_id: [32]u8,
 	expected_principal_id: u64,
 	expected_host_public_key: [HEADLESS_PROOF_KEY_BYTES]u8,
+	now_ms: u64,
 	nonce_cache: ^Headless_Nonce_Cache,
 	verify_fn: Headless_Signature_Verify,
+	max_age_ms: u64 = HEADLESS_PROOF_MAX_AGE_MS,
 ) -> (verified: Headless_Verified_Grant, refusal: Headless_Proof_Refusal) {
 	if proof == nil {
 		return {}, .Nil_Input
@@ -291,23 +343,24 @@ headless_wide_grant_proof_verify :: proc "contextless" (
 	if proof.version != HEADLESS_PROOF_VERSION {
 		return {}, .Bad_Version
 	}
-	if expected_machine_id == ([32]u8{}) || proof.machine_id == ([32]u8{}) {
+	exp_machine := expected_machine_id
+	if headless_is_zero_bytes(exp_machine[:]) || headless_is_zero_bytes(proof.machine_id[:]) {
 		return {}, .Zero_Machine_Id
 	}
-	if proof.machine_id != expected_machine_id {
+	if !headless_constant_time_equal(proof.machine_id[:], exp_machine[:]) {
 		return {}, .Machine_Id_Mismatch
 	}
 	if proof.principal_id != expected_principal_id {
 		return {}, .Principal_Mismatch
 	}
-	if proof.client_key == ([HEADLESS_PROOF_KEY_BYTES]u8{}) {
+	if headless_is_zero_bytes(proof.client_key[:]) {
 		return {}, .Zero_Client_Key
 	}
 	authorities, auth_ok := wide_authorities_from_word(proof.authorities_word)
 	if !auth_ok || (.Send_Input in authorities && .View_Screen not_in authorities) {
 		return {}, .Bad_Authorities
 	}
-	if proof.nonce == ([HEADLESS_PROOF_NONCE_BYTES]u8{}) {
+	if headless_is_zero_bytes(proof.nonce[:]) {
 		return {}, .Zero_Nonce
 	}
 	if proof.duration_ms == 0 {
@@ -316,14 +369,40 @@ headless_wide_grant_proof_verify :: proc "contextless" (
 	if proof.duration_ms > MAX_WIDE_GRANT_DURATION_MS {
 		return {}, .Duration_Past_Bound
 	}
-	if expected_host_public_key == ([HEADLESS_PROOF_KEY_BYTES]u8{}) || proof.host_public_key == ([HEADLESS_PROOF_KEY_BYTES]u8{}) {
+	if proof.issued_at_ms == 0 {
+		return {}, .Zero_Issued_At
+	}
+	if proof.issued_at_ms > max(u64) - proof.duration_ms {
+		return {}, .Timestamp_Overflow
+	}
+	if now_ms == 0 {
+		return {}, .Proof_Expired
+	}
+	if proof.issued_at_ms > now_ms {
+		if proof.issued_at_ms - now_ms > HEADLESS_PROOF_MAX_FUTURE_SKEW_MS {
+			return {}, .Proof_From_Future
+		}
+	} else {
+		effective_max_age := min(max_age_ms, HEADLESS_PROOF_MAX_AGE_MS)
+		if effective_max_age == 0 || now_ms - proof.issued_at_ms > effective_max_age {
+			return {}, .Proof_Expired
+		}
+		if now_ms >= proof.issued_at_ms + proof.duration_ms {
+			return {}, .Proof_Expired
+		}
+	}
+	exp_host := expected_host_public_key
+	if headless_is_zero_bytes(exp_host[:]) || headless_is_zero_bytes(proof.host_public_key[:]) {
 		return {}, .Zero_Host_Key
 	}
-	if proof.host_public_key != expected_host_public_key {
+	if !headless_constant_time_equal(proof.host_public_key[:], exp_host[:]) {
 		return {}, .Host_Key_Mismatch
 	}
-	if proof.signature == ([HEADLESS_PROOF_SIGNATURE_BYTES]u8{}) {
+	if headless_is_zero_bytes(proof.signature[:]) {
 		return {}, .Zero_Signature
+	}
+	if nonce_cache != nil && nonce_cache.evicted_floor_ms > 0 && proof.issued_at_ms <= nonce_cache.evicted_floor_ms {
+		return {}, .Proof_Expired
 	}
 	if nonce_cache_contains(nonce_cache, proof.nonce) {
 		return {}, .Replayed_Nonce
@@ -338,8 +417,7 @@ headless_wide_grant_proof_verify :: proc "contextless" (
 		return {}, .Signature_Refused
 	}
 
-	nonce_cache_record(nonce_cache, proof.nonce)
-	local_host_key := expected_host_public_key
+	nonce_cache_record(nonce_cache, proof.nonce, proof.issued_at_ms)
 	verified = Headless_Verified_Grant {
 		machine_id    = proof.machine_id,
 		principal_id  = proof.principal_id,
@@ -349,13 +427,14 @@ headless_wide_grant_proof_verify :: proc "contextless" (
 		issued_at_ms  = proof.issued_at_ms,
 		origin        = .Local_Host_Key,
 		kind          = .Host_Key_Signed,
-		host_key_hash = blake3.hash(local_host_key[:]),
+		host_key_hash = blake3.hash(exp_host[:]),
 	}
 	return verified, .None
 }
 
 // wide_grant_session_register adds one active wide grant to the session table
-// tracked for session-lock termination. Any refusal leaves table unchanged.
+// tracked for session-lock termination. Inactive or revoked slots are reclaimed
+// cleanly; any refusal leaves table unchanged.
 wide_grant_session_register :: proc "contextless" (
 	table: ^Wide_Grant_Session_Table,
 	grant_serial: u64,
@@ -381,10 +460,13 @@ wide_grant_session_register :: proc "contextless" (
 	if duration_ms > MAX_WIDE_GRANT_DURATION_MS {
 		return .Duration_Past_Bound
 	}
+	if started_at_ms > max(u64) - duration_ms {
+		return .Timestamp_Overflow
+	}
 
 	free_slot := -1
 	for &slot, index in table.grants {
-		if slot.grant_serial == 0 {
+		if slot.grant_serial == 0 || slot.state != .Active {
 			if free_slot < 0 {
 				free_slot = index
 			}
@@ -398,27 +480,35 @@ wide_grant_session_register :: proc "contextless" (
 		return .Grant_Table_Full
 	}
 
-	ends_at := max(u64)
-	if started_at_ms <= max(u64) - duration_ms {
-		ends_at = started_at_ms + duration_ms
-	}
 	table.grants[free_slot] = Active_Wide_Grant_Slot {
 		grant_serial  = grant_serial,
 		principal_id  = principal_id,
 		state         = .Active,
 		authorities   = parsed,
 		started_at_ms = started_at_ms,
-		ends_at_ms    = ends_at,
+		ends_at_ms    = started_at_ms + duration_ms,
 	}
-	table.count += 1
+	table.count = u32(wide_grant_session_total_active(table))
 	return .None
 }
 
+@(private = "file")
+wide_grant_session_total_active :: proc "contextless" (table: ^Wide_Grant_Session_Table) -> int {
+	active := 0
+	for slot in table.grants {
+		if slot.grant_serial != 0 && slot.state == .Active {
+			active += 1
+		}
+	}
+	return active
+}
+
 // wide_grant_session_lock_end transitions every Active wide grant belonging to
-// principal_id to Revoked with Revocation_Reason.Session_Locked and writes one
-// collector Act_Stream_Record per terminated grant into out_end_records. Active
-// grants of other principals remain untouched. Any refusal leaves both table
-// and out_end_records untouched.
+// principal_id to Revoked with Revocation_Reason.Session_Locked, writes one
+// collector Act_Stream_Record per terminated grant into out_end_records, and
+// reclaims each terminated slot so subsequent grants can reuse the table.
+// Active grants of other principals remain untouched. Any refusal leaves both
+// table and out_end_records untouched.
 wide_grant_session_lock_end :: proc "contextless" (
 	table: ^Wide_Grant_Session_Table,
 	principal_id: u64,
@@ -448,9 +538,6 @@ wide_grant_session_lock_end :: proc "contextless" (
 		if slot.grant_serial == 0 || slot.state != .Active || slot.principal_id != principal_id {
 			continue
 		}
-		slot.state = .Revoked
-		slot.revocation_reason = .Session_Locked
-		slot.ended_at_ms = lock_timestamp_ms
 		out_end_records[written] = Act_Stream_Record {
 			grant_serial     = slot.grant_serial,
 			principal_id     = slot.principal_id,
@@ -461,8 +548,10 @@ wide_grant_session_lock_end :: proc "contextless" (
 			detail_word_0    = u64(Revocation_Reason.Session_Locked),
 			detail_word_1    = 0,
 		}
+		slot = {}
 		written += 1
 	}
+	table.count = u32(wide_grant_session_total_active(table))
 
 	return written, .None
 }

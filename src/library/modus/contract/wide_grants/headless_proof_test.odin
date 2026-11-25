@@ -117,7 +117,7 @@ test_headless_proof_wire_roundtrip_and_refusals :: proc(t: ^testing.T) {
 
 	// Verify decoded proof with real Ed25519 callback.
 	cache: Headless_Nonce_Cache
-	verified, verify_refusal := headless_wide_grant_proof_verify(&decoded, machine_id, 2, host_pub, &cache, test_ed25519_verify)
+	verified, verify_refusal := headless_wide_grant_proof_verify(&decoded, machine_id, 2, host_pub, 6000, &cache, test_ed25519_verify)
 	testing.expect_value(t, verify_refusal, Headless_Proof_Refusal.None)
 	testing.expect_value(t, verified.origin, Proof_Origin.Local_Host_Key)
 	testing.expect_value(t, verified.kind, Proof_Kind.Host_Key_Signed)
@@ -126,7 +126,7 @@ test_headless_proof_wire_roundtrip_and_refusals :: proc(t: ^testing.T) {
 	testing.expect_value(t, verified.host_key_hash, blake3.hash(host_pub[:]))
 
 	// Replaying the same proof is refused.
-	_, replay_refusal := headless_wide_grant_proof_verify(&decoded, machine_id, 2, host_pub, &cache, test_ed25519_verify)
+	_, replay_refusal := headless_wide_grant_proof_verify(&decoded, machine_id, 2, host_pub, 6001, &cache, test_ed25519_verify)
 	testing.expect_value(t, replay_refusal, Headless_Proof_Refusal.Replayed_Nonce)
 }
 
@@ -150,20 +150,21 @@ test_headless_proof_verify_refuses_every_forgery_and_edge :: proc(t: ^testing.T)
 		DEFAULT_WIDE_GRANT_DURATION_MS,
 		9000,
 	)
+	now_ms := u64(10_000)
 	cache: Headless_Nonce_Cache
 
 	// Nil proof and nil verifier refused.
-	_, r := headless_wide_grant_proof_verify(nil, machine_id, 1, host_pub, &cache, test_ed25519_verify)
+	_, r := headless_wide_grant_proof_verify(nil, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 	testing.expect_value(t, r, Headless_Proof_Refusal.Nil_Input)
 
-	_, r = headless_wide_grant_proof_verify(&base, machine_id, 1, host_pub, &cache, nil)
+	_, r = headless_wide_grant_proof_verify(&base, machine_id, 1, host_pub, now_ms, &cache, nil)
 	testing.expect_value(t, r, Headless_Proof_Refusal.Missing_Verifier)
 
 	// Bad version refused.
 	{
 		bad := base
 		bad.version = 0
-		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Bad_Version)
 	}
 
@@ -171,21 +172,21 @@ test_headless_proof_verify_refuses_every_forgery_and_edge :: proc(t: ^testing.T)
 	{
 		bad := base
 		bad.machine_id = {}
-		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Zero_Machine_Id)
 
-		_, r = headless_wide_grant_proof_verify(&base, other_machine, 1, host_pub, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&base, other_machine, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Machine_Id_Mismatch)
 	}
 
 	// Principal mismatch and zero client key refused.
 	{
-		_, r = headless_wide_grant_proof_verify(&base, machine_id, 2, host_pub, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&base, machine_id, 2, host_pub, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Principal_Mismatch)
 
 		bad := base
 		bad.client_key = {}
-		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Zero_Client_Key)
 	}
 
@@ -193,15 +194,15 @@ test_headless_proof_verify_refuses_every_forgery_and_edge :: proc(t: ^testing.T)
 	{
 		bad := base
 		bad.authorities_word = 0
-		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Bad_Authorities)
 
 		bad.authorities_word = u64(1) << 12
-		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Bad_Authorities)
 
 		bad.authorities_word = wide_authorities_to_word({.Send_Input})
-		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Bad_Authorities)
 	}
 
@@ -209,23 +210,50 @@ test_headless_proof_verify_refuses_every_forgery_and_edge :: proc(t: ^testing.T)
 	{
 		bad := base
 		bad.nonce = {}
-		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Zero_Nonce)
 
 		bad = base
 		bad.duration_ms = 0
-		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Duration_Zero)
 
 		bad = base
 		bad.duration_ms = MAX_WIDE_GRANT_DURATION_MS + 1
-		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Duration_Past_Bound)
+	}
+
+	// Zero issued_at_ms, overflow, stale/expired proof, and future-skew proof refused.
+	{
+		bad := base
+		bad.issued_at_ms = 0
+		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
+		testing.expect_value(t, r, Headless_Proof_Refusal.Zero_Issued_At)
+
+		bad = base
+		bad.issued_at_ms = max(u64) - 10
+		_, r = headless_wide_grant_proof_verify(&bad, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
+		testing.expect_value(t, r, Headless_Proof_Refusal.Timestamp_Overflow)
+
+		// Proof older than HEADLESS_PROOF_MAX_AGE_MS refused.
+		_, r = headless_wide_grant_proof_verify(&base, machine_id, 1, host_pub, base.issued_at_ms + HEADLESS_PROOF_MAX_AGE_MS + 1, &cache, test_ed25519_verify)
+		testing.expect_value(t, r, Headless_Proof_Refusal.Proof_Expired)
+
+		// Proof whose own short duration elapsed is refused even inside max_age_ms.
+		short_proof, _ := test_sign_headless_proof(t, seed, machine_id, 1, client_key, {.View_Screen}, nonce, 500, 9000)
+		_, r = headless_wide_grant_proof_verify(&short_proof, machine_id, 1, host_pub, 9500, &cache, test_ed25519_verify)
+		testing.expect_value(t, r, Headless_Proof_Refusal.Proof_Expired)
+
+		// Proof issued further ahead than HEADLESS_PROOF_MAX_FUTURE_SKEW_MS refused.
+		future_proof, _ := test_sign_headless_proof(t, seed, machine_id, 1, client_key, {.View_Screen}, nonce, DEFAULT_WIDE_GRANT_DURATION_MS, now_ms + HEADLESS_PROOF_MAX_FUTURE_SKEW_MS + 1)
+		_, r = headless_wide_grant_proof_verify(&future_proof, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
+		testing.expect_value(t, r, Headless_Proof_Refusal.Proof_From_Future)
 	}
 
 	// Zero host key, mismatched host key, zero signature, tampered field, and wrong signer refused.
 	{
-		_, r = headless_wide_grant_proof_verify(&base, machine_id, 1, {}, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&base, machine_id, 1, {}, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Zero_Host_Key)
 
 		wrong_proof, wrong_pub := test_sign_headless_proof(
@@ -239,24 +267,24 @@ test_headless_proof_verify_refuses_every_forgery_and_edge :: proc(t: ^testing.T)
 			DEFAULT_WIDE_GRANT_DURATION_MS,
 			9000,
 		)
-		_, r = headless_wide_grant_proof_verify(&wrong_proof, machine_id, 1, host_pub, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&wrong_proof, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Host_Key_Mismatch)
 
 		// Copy wrong_proof's signature onto base (host_pub matches, signature fails).
 		forged := base
 		forged.signature = wrong_proof.signature
-		_, r = headless_wide_grant_proof_verify(&forged, machine_id, 1, host_pub, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&forged, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Signature_Refused)
 
 		// Single-bit mutation of issued_at_ms breaks signature without caching nonce.
 		tampered := base
 		tampered.issued_at_ms += 1
-		_, r = headless_wide_grant_proof_verify(&tampered, machine_id, 1, host_pub, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&tampered, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Signature_Refused)
 
 		zero_sig := base
 		zero_sig.signature = {}
-		_, r = headless_wide_grant_proof_verify(&zero_sig, machine_id, 1, host_pub, &cache, test_ed25519_verify)
+		_, r = headless_wide_grant_proof_verify(&zero_sig, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 		testing.expect_value(t, r, Headless_Proof_Refusal.Zero_Signature)
 
 		// Verify wrong_pub is distinct and cache stayed untouched by all refusals above.
@@ -265,20 +293,34 @@ test_headless_proof_verify_refuses_every_forgery_and_edge :: proc(t: ^testing.T)
 	}
 
 	// Original valid proof still succeeds after all refused attempts.
-	_, ok_r := headless_wide_grant_proof_verify(&base, machine_id, 1, host_pub, &cache, test_ed25519_verify)
+	_, ok_r := headless_wide_grant_proof_verify(&base, machine_id, 1, host_pub, now_ms, &cache, test_ed25519_verify)
 	testing.expect_value(t, ok_r, Headless_Proof_Refusal.None)
 	testing.expect_value(t, cache.count, u32(1))
+
+	// Evicting base's nonce past HEADLESS_NONCE_CACHE_CAPACITY still refuses replaying base.
+	for index in u64(0) ..< u64(HEADLESS_NONCE_CACHE_CAPACITY + 2) {
+		fresh_nonce := nonce
+		fresh_nonce[0] ~= u8(index + 1)
+		fresh_nonce[1] = u8((index + 1) >> 8)
+		ts := now_ms + index + 1
+		fresh, _ := test_sign_headless_proof(t, seed, machine_id, 1, client_key, {.View_Screen}, fresh_nonce, DEFAULT_WIDE_GRANT_DURATION_MS, ts)
+		_, fresh_r := headless_wide_grant_proof_verify(&fresh, machine_id, 1, host_pub, ts, &cache, test_ed25519_verify)
+		testing.expect_value(t, fresh_r, Headless_Proof_Refusal.None)
+	}
+	_, evicted_replay_r := headless_wide_grant_proof_verify(&base, machine_id, 1, host_pub, now_ms + 100, &cache, test_ed25519_verify)
+	testing.expect_value(t, evicted_replay_r, Headless_Proof_Refusal.Proof_Expired)
 }
 
 @(test)
 test_session_lock_terminates_principal_grants_and_emits_end_records :: proc(t: ^testing.T) {
 	table: Wide_Grant_Session_Table
 
-	// Refusal checks on registration.
+	// Refusal checks on registration (including started_at_ms + duration_ms overflow).
 	testing.expect_value(t, wide_grant_session_register(&table, 0, 1, {.View_Screen}, 100, 1000), Headless_Proof_Refusal.Zero_Grant_Serial)
 	testing.expect_value(t, wide_grant_session_register(&table, 10, 1, {.Send_Input}, 100, 1000), Headless_Proof_Refusal.Bad_Authorities)
 	testing.expect_value(t, wide_grant_session_register(&table, 10, 1, {.View_Screen}, 100, 0), Headless_Proof_Refusal.Duration_Zero)
 	testing.expect_value(t, wide_grant_session_register(&table, 10, 1, {.View_Screen}, 100, MAX_WIDE_GRANT_DURATION_MS + 1), Headless_Proof_Refusal.Duration_Past_Bound)
+	testing.expect_value(t, wide_grant_session_register(&table, 10, 1, {.View_Screen}, max(u64) - 500, 1000), Headless_Proof_Refusal.Timestamp_Overflow)
 
 	// Register two grants for principal 1 and one grant for principal 2.
 	testing.expect_value(t, wide_grant_session_register(&table, 101, 1, {.View_Screen}, 1000, DEFAULT_WIDE_GRANT_DURATION_MS), Headless_Proof_Refusal.None)
@@ -316,6 +358,7 @@ test_session_lock_terminates_principal_grants_and_emits_end_records :: proc(t: ^
 		testing.expect_value(t, ended, 2)
 		testing.expect_value(t, wide_grant_session_active_count(&table, 1), 0)
 		testing.expect_value(t, wide_grant_session_active_count(&table, 2), 1)
+		testing.expect_value(t, table.count, u32(1))
 
 		for index in 0 ..< ended {
 			producer, kind, valid_r := act_stream_record_validate(&records[index])
@@ -336,5 +379,22 @@ test_session_lock_terminates_principal_grants_and_emits_end_records :: proc(t: ^
 		ended, r := wide_grant_session_lock_end(&table, 1, 6000, records[:])
 		testing.expect_value(t, r, Headless_Proof_Refusal.None)
 		testing.expect_value(t, ended, 0)
+	}
+
+	// Repeated register+lock cycles past ACTIVE_WIDE_GRANT_TABLE_CAPACITY reclaim slots cleanly.
+	{
+		records: [1]Act_Stream_Record
+		for cycle in u64(0) ..< u64(ACTIVE_WIDE_GRANT_TABLE_CAPACITY * 2 + 3) {
+			serial := u64(1000) + cycle
+			start_ts := u64(10_000) + cycle * 10
+			testing.expect_value(t, wide_grant_session_register(&table, serial, 1, {.View_Screen}, start_ts, DEFAULT_WIDE_GRANT_DURATION_MS), Headless_Proof_Refusal.None)
+			ended, lock_r := wide_grant_session_lock_end(&table, 1, start_ts + 5, records[:])
+			testing.expect_value(t, lock_r, Headless_Proof_Refusal.None)
+			testing.expect_value(t, ended, 1)
+			testing.expect_value(t, records[0].grant_serial, serial)
+		}
+		testing.expect_value(t, wide_grant_session_active_count(&table, 1), 0)
+		testing.expect_value(t, wide_grant_session_active_count(&table, 2), 1)
+		testing.expect_value(t, table.count, u32(1))
 	}
 }
