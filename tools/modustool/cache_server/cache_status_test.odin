@@ -735,4 +735,5 @@ status_answers_the_page_the_record_and_the_style_sheet :: proc(t: ^testing.T) {
 	testing.expect_value(t, answer_line(style), "HTTP/1.1 200 OK")
 	testing.expect(t, strings.contains(answer_body(style), strings.concatenate({"url(\"", DEFAULT_SITE_ADDRESS, "/fonts/"}, context.temp_allocator)))
 	testing.expect(t, !strings.contains(answer_body(style), "url(\"fonts/"))
+	testing.expect(t, strings.contains(answer_body(style), ".section-cache .bar-sections ul { flex-direction: row;"))
 }

@@ -675,6 +675,13 @@ figcaption { padding-top: 8px; font-size: 14px; }
   .bar-sections ul { flex-direction: column; gap: 4px; }
   .bar-sections a { display: block; padding: 4px 8px; line-height: 24px; border-bottom: 0; border-left: 2px solid transparent; }
   .bar-sections a[aria-current="page"] { border-left-color: var(--line); }
+  /* The object cache host has no script and three short links directly in
+     .bar-inner (no .bar-menu drawer): keep them in one horizontal row on
+     narrow screens so they never stack vertically beside the mark. */
+  .section-cache .bar-inner { flex-wrap: wrap; gap: 6px 16px; padding: 6px 16px; }
+  .section-cache .bar-sections ul { flex-direction: row; flex-wrap: wrap; gap: 8px; }
+  .section-cache .bar-sections a { display: inline-block; padding: 0 8px; line-height: 24px; border-left: 0; border-bottom: 2px solid transparent; }
+  .section-cache .bar-sections a[aria-current="page"] { border-left-color: transparent; border-bottom-color: var(--line); }
   .search { margin-left: 0; }
   .search input { width: 100%; height: 32px; }
   .search-panel { position: static; width: auto; max-width: none; margin-top: 4px; }
