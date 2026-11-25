@@ -283,6 +283,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.TOOL_SOURCE_FOLDER + "/fuzz",
 	foundation.TOOL_SOURCE_FOLDER + "/similarity",
 	foundation.TOOL_SOURCE_FOLDER + "/cache_server",
+	foundation.TOOL_SOURCE_FOLDER + "/lex_cli",
 	foundation.TOOL_SOURCE_FOLDER + "/agent_bridge",
 	foundation.TOOL_SOURCE_FOLDER + "/agent_runner",
 	foundation.TOOL_SOURCE_FOLDER + "/foundation",
@@ -542,4 +543,9 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/serial_ring",
 	foundation.SOURCE_FOLDER_CONTRACT + "/console_prompt",
 	foundation.SOURCE_FOLDER_CONTRACT + "/desktop_shell",
+	foundation.SOURCE_FOLDER_PUBLIC + "/lex_tools",
+	foundation.SOURCE_FOLDER_CONTRACT + "/program_tree",
+	foundation.SOURCE_FOLDER_CONTRACT + "/grant_policy",
+	foundation.SOURCE_FOLDER_INTERNAL + "/root/grant_expiry",
+	foundation.SOURCE_FOLDER_CONTRACT + "/attestation",
 }

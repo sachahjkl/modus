@@ -53,6 +53,7 @@ import "modustool:similarity"
 import "modustool:machine"
 import "modustool:site"
 import "modustool:cache_server"
+import "modustool:lex_cli"
 import "modustool:agent_bridge"
 import "modustool:agent_runner"
 
@@ -744,6 +745,15 @@ COMMANDS :: [?]foundation.Command {
 	// nix develop -c modustool cache-get cache.modus.systems:5010 test-recipe
 	// ```
 	{name = "cache-get", about = "cache-get <host:port> blob <hash> [<output file>] | realisation <recipe hash> --signer <public key file> | release <boot image> [--signer <file>] | test-recipe [--signer <file>]: take from an object cache and refuse what does not verify", run = cache_server.run_cache_get},
+	// Exports a verified MODTREE2 closure and optional signed realisation into
+	// a deterministic MODCLOS1 offline stream file for air-gapped USB transfer.
+	{name = "cache-export", about = "cache-export --dir <cache dir> <root tree hash> --out <stream file> [--realisation <recipe hash> --signer <public key file>]: export a verified closure and optional signed realisation as an offline MODCLOS1 stream", run = cache_server.run_cache_export},
+	// Imports a MODCLOS1 offline stream file into a local object cache,
+	// verifying every BLAKE3 hash and optional Ed25519 realisation signature.
+	{name = "cache-import", about = "cache-import --dir <cache dir> <stream file> [--signer <public key file>]: verify and import an offline MODCLOS1 closure stream into a local object cache", run = cache_server.run_cache_import},
+	// Formats and statically lints Lex declaration files using freestanding
+	// `modus:lex_tools` (src/md/features/lex_tools.md).
+	{name = "lex", about = "lex fmt [--check] <file>... | lex lint <file>...: format or statically lint Lex declaration files", run = lex_cli.run_lex_cli},
 	// Serves the typed host agent bridge over line-delimited JSON-RPC 2.0 on
 	// standard input and output, enforcing client-key permissions, remote key
 	// uses, active wide-grant window scopes, append-only BLAKE3 act recording,
@@ -776,7 +786,7 @@ main :: proc() {
 	}
 	// Commands that operate on external directories or unpacked SDKs can run
 	// outside a repository checkout.
-	outside_repo_ok := os.args[1] == "module-build" || os.args[1] == "cache-serve" || os.args[1] == "cache-put" || os.args[1] == "cache-get" || os.args[1] == "sdk-verify" || os.args[1] == "sdk-convert" || os.args[1] == "agent-bridge" || os.args[1] == "assistant"
+	outside_repo_ok := os.args[1] == "module-build" || os.args[1] == "cache-serve" || os.args[1] == "cache-put" || os.args[1] == "cache-get" || os.args[1] == "cache-export" || os.args[1] == "cache-import" || os.args[1] == "lex" || os.args[1] == "sdk-verify" || os.args[1] == "sdk-convert" || os.args[1] == "agent-bridge" || os.args[1] == "assistant"
 	if !outside_repo_ok && !os.exists(foundation.ROOT_MARK) {
 		fmt.eprintln("modustool: start it from the root of the repository")
 		os.exit(foundation.EXIT_USAGE)
