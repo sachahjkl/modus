@@ -721,3 +721,30 @@ recipes_publish_console_commands_validate_inputs_and_help_topics :: proc(t: ^tes
 	_ = call_run("recipes.publish", nil)
 	testing.expect(t, failed)
 }
+
+@(test)
+project_install_record_fits_record_size_limit :: proc(t: ^testing.T) {
+	sync.mutex_lock(&ergonomics_test_lock)
+	defer sync.mutex_unlock(&ergonomics_test_lock)
+	ergonomics_reset_state()
+
+	columns := [6]Column{
+		text_column("outcome", 16),
+		text_column("origin", 16),
+		{name = "signer", type = .Bytes, detail = 32, kind = .Hash},
+		text_column("recipe", 65),
+		{name = "output", type = .Bytes, detail = 32, kind = .Hash},
+		text_column("module", 65),
+	}
+	res_table, made := made_table("Project_Install", columns[:])
+	testing.expect(t, made, "Project_Install record must fit inside module.RECORD_SIZE_LIMIT")
+	testing.expect_value(t, res_table.size, 226)
+	row := made_row(&res_table)
+	testing.expect(t, row != nil)
+	made_text(&res_table, row, 0, "from_cache")
+	made_text(&res_table, row, 1, "local_build")
+	made_text(&res_table, row, 3, strings.repeat("a", 64, context.temp_allocator))
+	made_text(&res_table, row, 5, strings.repeat("b", 64, context.temp_allocator))
+	rec := made_record(&res_table, "projects.install")
+	testing.expect(t, !failed && rec.kind == .Record)
+}

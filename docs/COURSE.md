@@ -8,7 +8,7 @@ This guide is a hands-on course for `modus`: what its core properties are, how t
 
 **For whom.** A reader learning `modus` for the first time, and a developer building or operating applications on it.
 
-**Read before.** Nothing is required first. Follow-up references: `docs/PROPERTIES.md`, `docs/CONSOLE.md`, `docs/LEX.md`, `docs/STORAGE.md`, and `docs/TOOLS.md`.
+**Read before.** Nothing is required first. Continue with **Part 2** in `docs/COURSE_BUILDING.md` (prototyping with `compile_c`, iterative `projects.new`/`edit`/`build`/`run`, reproducible `project.lex` recipes, and in-OS QUIC cache publishing with `recipes.publish`). Follow-up references: `docs/PROPERTIES.md`, `docs/CONSOLE.md`, `docs/LEX.md`, `docs/STORAGE.md`, and `docs/TOOLS.md`.
 
 **The map of this course.**
 

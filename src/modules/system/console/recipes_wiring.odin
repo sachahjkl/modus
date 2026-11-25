@@ -949,12 +949,18 @@ projects_install_command :: proc "contextless" (arguments: []Value) -> Value {
 	if !prov_ok {
 		return {}
 	}
+	signer_bytes, _ := pr.hash_of_hexadecimal(signer_hex[:])
+	output_bytes, _ := pr.hash_of_hexadecimal(output_hex[:])
+	// Keep the Project_Install record within module.RECORD_SIZE_LIMIT (256 bytes):
+	// outcome (16) + origin (16) + signer (32 Hash) + recipe (65 Text) +
+	// output (32 Hash) + module (65 Text) = 226 bytes. recipe and module stay
+	// Text so callers can pipe inst.recipe or pass inst.module to start_from_disk.
 	columns := [6]Column{
 		text_column("outcome", 16),
 		text_column("origin", 16),
-		text_column("signer", 65),
+		{name = "signer", type = .Bytes, detail = blake3.HASH_SIZE, kind = .Hash},
 		text_column("recipe", 65),
-		text_column("output", 65),
+		{name = "output", type = .Bytes, detail = blake3.HASH_SIZE, kind = .Hash},
 		text_column("module", 65),
 	}
 	res_table, made := made_table("Project_Install", columns[:])
@@ -964,9 +970,11 @@ projects_install_command :: proc "contextless" (arguments: []Value) -> Value {
 	res_row := made_row(&res_table)
 	made_text(&res_table, res_row, 0, outcome_label)
 	made_text(&res_table, res_row, 1, origin_label)
-	made_text(&res_table, res_row, 2, string(signer_hex[:]))
+	if res_row != nil {
+		copy(res_row[res_table.columns[2].offset:][:blake3.HASH_SIZE], signer_bytes[:])
+		copy(res_row[res_table.columns[4].offset:][:blake3.HASH_SIZE], output_bytes[:])
+	}
 	made_text(&res_table, res_row, 3, string(recipe_hex[:]))
-	made_text(&res_table, res_row, 4, string(output_hex[:]))
 	made_text(&res_table, res_row, 5, string(module_hex[:]))
 	return made_record(&res_table, "projects.install")
 }

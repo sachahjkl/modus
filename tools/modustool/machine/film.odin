@@ -587,7 +587,7 @@ Film :: struct {
 	needs_cache_peer: bool, // Starts a local signed QUIC cache-serve forwarded at 10.0.2.100:5010.
 }
 
-FILM_NAMES :: "terminal | palette | heron | boot | desktop | console | program | monitor | tutorial | course"
+FILM_NAMES :: "terminal | palette | heron | boot | desktop | console | program | monitor | tutorial | course | course_building"
 TEST_OUTPUT_FILM_TERMINAL :: foundation.BUILD_FOLDER + "/test_output_film_terminal.txt"
 TEST_OUTPUT_FILM_PALETTE :: foundation.BUILD_FOLDER + "/test_output_film_palette.txt"
 TEST_OUTPUT_FILM_HERON :: foundation.BUILD_FOLDER + "/test_output_film_heron.txt"
@@ -598,6 +598,7 @@ TEST_OUTPUT_FILM_PROGRAM :: foundation.BUILD_FOLDER + "/test_output_film_program
 TEST_OUTPUT_FILM_MONITOR :: foundation.BUILD_FOLDER + "/test_output_film_monitor.txt"
 TEST_OUTPUT_FILM_TUTORIAL :: foundation.BUILD_FOLDER + "/test_output_film_tutorial.txt"
 TEST_OUTPUT_FILM_COURSE :: foundation.BUILD_FOLDER + "/test_output_film_course.txt"
+TEST_OUTPUT_FILM_COURSE_BUILDING :: foundation.BUILD_FOLDER + "/test_output_film_course_building.txt"
 
 // film_of_name gives the film with a name. The name of a film is the text
 // of the step Film_Start of its scenario.
@@ -632,6 +633,14 @@ film_of_name :: proc(name: string) -> (film: Film, found: bool) {
 			name   = "course",
 			steps  = scenario_course_film[:],
 			output = TEST_OUTPUT_FILM_COURSE,
+		}, true
+	case "course_building":
+		return Film{
+			name             = "course_building",
+			steps            = scenario_course_building_film[:],
+			output           = TEST_OUTPUT_FILM_COURSE_BUILDING,
+			needs_data_disk  = true,
+			needs_cache_peer = true,
 		}, true
 	}
 	return {}, false
@@ -720,12 +729,29 @@ run_film :: proc(args: []string) -> int {
 	}
 	steps := film.steps
 	tutorial_fixture: ^Tutorial_Film_Fixture
+	course_building_fixture: ^Course_Building_Fixture
 	expanded_steps: []Step
 	defer tutorial_film_teardown(tutorial_fixture)
+	defer course_building_film_teardown(course_building_fixture)
 	defer if len(expanded_steps) > 0 {
 		tutorial_film_steps_free(expanded_steps)
 	}
-	if film.needs_data_disk || film.needs_cache_peer {
+	if film.name == "course_building" {
+		prepared, ok := course_building_film_prepare()
+		if !ok {
+			return foundation.EXIT_FAILURE
+		}
+		course_building_fixture = prepared
+		expanded, expanded_ok := course_building_film_expand_steps(film.steps, course_building_fixture.bindings)
+		if !expanded_ok {
+			fmt.eprintln("modustool: the course_building film: failed to expand scenario placeholders")
+			return foundation.EXIT_FAILURE
+		}
+		expanded_steps = expanded
+		steps = expanded_steps
+		options.data_disk = course_building_fixture.data_disk_path
+		options.cache_endpoint = course_building_fixture.cache_endpoint
+	} else if film.needs_data_disk || film.needs_cache_peer {
 		prepared, ok := tutorial_film_prepare()
 		if !ok {
 			return foundation.EXIT_FAILURE
@@ -769,6 +795,9 @@ film_write :: proc(name: string) -> bool {
 	}
 	if name == "course" {
 		return course_film_write(name)
+	}
+	if name == "course_building" {
+		return course_building_film_write(name)
 	}
 	folder := foundation.join(FILM_FOLDER, "/", name)
 	paths, listed := foundation.files_with_suffix(folder, FILM_PICTURE_SUFFIX)
