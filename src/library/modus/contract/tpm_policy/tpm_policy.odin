@@ -6,6 +6,7 @@
 // calls no kernel operation, and allocates no memory.
 package tpm_policy
 
+import "base:intrinsics"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/enum_word"
@@ -193,12 +194,10 @@ storage_auth_seal_fields_check :: proc "contextless" (seal: ^Storage_Hierarchy_A
 	if seal.persistent_storage_handle == 0 {
 		return .Zero_Persistent_Handle
 	}
-	policy := seal.policy_digest
-	if is_zero_bytes(policy[:]) {
+	if is_zero_bytes(seal.policy_digest[:]) {
 		return .Zero_Policy_Digest
 	}
-	auth := seal.auth_value
-	if is_zero_bytes(auth[:]) {
+	if is_zero_bytes(seal.auth_value[:]) {
 		return .Zero_Auth_Value
 	}
 	return .None
@@ -213,6 +212,7 @@ storage_auth_seal_compute_tag :: proc "contextless" (
 		return {}, check
 	}
 	body: [STORAGE_AUTH_SEAL_WIRE_SIZE - blake3.HASH_SIZE]u8
+	defer intrinsics.mem_zero_volatile(&body[0], len(body))
 	storage_auth_seal_write_body(seal, body[:])
 	return blake3.derive_key(STORAGE_AUTH_SEAL_DOMAIN, body[:]), .None
 }
@@ -284,6 +284,7 @@ storage_auth_seal_decode :: proc "contextless" (
 	copy(decoded.integrity_tag[:], wire[offset:][:blake3.HASH_SIZE])
 
 	if check := storage_auth_seal_verify(&decoded); check != .None {
+		intrinsics.mem_zero_volatile(&decoded.auth_value[0], len(decoded.auth_value))
 		return {}, check
 	}
 	return decoded, .None

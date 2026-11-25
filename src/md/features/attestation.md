@@ -44,7 +44,7 @@ The root service helper `root_role_holders_measure` walks `role_contract.Role`, 
 - `nonce` (32-byte fresh verifier challenge).
 - `signer_public_key` (32-byte Ed25519 attestation key) and `signature` (64-byte Ed25519 signature).
 
-Wire encoding (`attestation_encode` and `attestation_decode`) uses a fixed 272-byte little-endian format prefixed by the 8-byte magic `"MODATT01"`. Signing covers `"modus tpm attestation v1"` concatenated with the 208-byte unsigned wire prefix (magic through `signer_public_key`). `attestation_verify` refuses missing verifiers, wrong versions, zero fields (except `active_plan_hash` when `expected_plan_hash` is also zero), constant-time mismatches against expected nonce, boot hash, plan hash, and roles digest, and bad signatures.
+Wire encoding (`attestation_encode` and `attestation_decode`) uses a fixed 272-byte little-endian format prefixed by the 8-byte magic `"MODATT01"`. Signing covers `"modus tpm attestation v1"` concatenated with the 208-byte unsigned wire prefix (magic through `signer_public_key`). `attestation_verify` refuses missing verifiers, wrong versions, zero fields (except `active_plan_hash` when `expected_plan_hash` is also zero), constant-time mismatches against the expected trusted signer key, nonce, boot hash, plan hash, and roles digest, and bad signatures.
 
 ### 3. Signed plans from an enrolled authority key
 

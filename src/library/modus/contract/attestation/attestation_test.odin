@@ -263,42 +263,50 @@ attestation_wire_and_verify_refusals :: proc(t: ^testing.T) {
 	_, ref_res := attestation_decode(bad_res[:])
 	testing.expect_value(t, ref_res, Attestation_Refusal.Nonzero_Reserved)
 
+	trusted_signer := valid.signer_public_key
+
 	// Verifier refuses nil callback.
-	testing.expect_value(t, attestation_verify(&valid, nonce, boot, plan, roles, nil), Attestation_Refusal.Missing_Verifier)
+	testing.expect_value(t, attestation_verify(&valid, trusted_signer, nonce, boot, plan, roles, nil), Attestation_Refusal.Missing_Verifier)
 
 	// Verifier refuses zero expected or payload mandatory fields.
 	zero_hash: blake3.Hash
-	testing.expect_value(t, attestation_verify(&valid, zero_hash, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Zero_Nonce)
-	testing.expect_value(t, attestation_verify(&valid, nonce, zero_hash, plan, roles, ed25519_verify_callback), Attestation_Refusal.Zero_Boot_Hash)
-	testing.expect_value(t, attestation_verify(&valid, nonce, boot, plan, zero_hash, ed25519_verify_callback), Attestation_Refusal.Zero_Roles_Digest)
+	zero_signer: [ATTESTATION_PUBLIC_KEY_SIZE]u8
+	testing.expect_value(t, attestation_verify(&valid, zero_signer, nonce, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Zero_Signer_Key)
+	testing.expect_value(t, attestation_verify(&valid, trusted_signer, zero_hash, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Zero_Nonce)
+	testing.expect_value(t, attestation_verify(&valid, trusted_signer, nonce, zero_hash, plan, roles, ed25519_verify_callback), Attestation_Refusal.Zero_Boot_Hash)
+	testing.expect_value(t, attestation_verify(&valid, trusted_signer, nonce, boot, plan, zero_hash, ed25519_verify_callback), Attestation_Refusal.Zero_Roles_Digest)
 
 	no_pcr := valid
 	no_pcr.pcr_digest = {}
-	testing.expect_value(t, attestation_verify(&no_pcr, nonce, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Zero_Pcr_Digest)
+	testing.expect_value(t, attestation_verify(&no_pcr, trusted_signer, nonce, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Zero_Pcr_Digest)
 
 	no_signer := valid
 	no_signer.signer_public_key = {}
-	testing.expect_value(t, attestation_verify(&no_signer, nonce, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Zero_Signer_Key)
+	testing.expect_value(t, attestation_verify(&no_signer, trusted_signer, nonce, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Zero_Signer_Key)
 
 	no_sig := valid
 	no_sig.signature = {}
-	testing.expect_value(t, attestation_verify(&no_sig, nonce, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Zero_Signature)
+	testing.expect_value(t, attestation_verify(&no_sig, trusted_signer, nonce, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Zero_Signature)
+
+	// Self-signed quote produced by an untrusted attacker keypair is refused.
+	untrusted_self_signed := make_signed_attestation(99, boot, pcr, plan, roles, nonce)
+	testing.expect_value(t, attestation_verify(&untrusted_self_signed, trusted_signer, nonce, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Signer_Key_Mismatch)
 
 	// Verifier refuses field mismatches.
 	other := test_hash(99)
-	testing.expect_value(t, attestation_verify(&valid, other, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Nonce_Mismatch)
-	testing.expect_value(t, attestation_verify(&valid, nonce, other, plan, roles, ed25519_verify_callback), Attestation_Refusal.Boot_Hash_Mismatch)
-	testing.expect_value(t, attestation_verify(&valid, nonce, boot, other, roles, ed25519_verify_callback), Attestation_Refusal.Plan_Hash_Mismatch)
-	testing.expect_value(t, attestation_verify(&valid, nonce, boot, plan, other, ed25519_verify_callback), Attestation_Refusal.Roles_Digest_Mismatch)
+	testing.expect_value(t, attestation_verify(&valid, trusted_signer, other, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Nonce_Mismatch)
+	testing.expect_value(t, attestation_verify(&valid, trusted_signer, nonce, other, plan, roles, ed25519_verify_callback), Attestation_Refusal.Boot_Hash_Mismatch)
+	testing.expect_value(t, attestation_verify(&valid, trusted_signer, nonce, boot, other, roles, ed25519_verify_callback), Attestation_Refusal.Plan_Hash_Mismatch)
+	testing.expect_value(t, attestation_verify(&valid, trusted_signer, nonce, boot, plan, other, ed25519_verify_callback), Attestation_Refusal.Roles_Digest_Mismatch)
 
 	// Tampered PCR digest or tampered signature fails signature verification.
 	tampered_pcr := valid
 	tampered_pcr.pcr_digest[0] ~= 0xFF
-	testing.expect_value(t, attestation_verify(&tampered_pcr, nonce, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Bad_Signature)
+	testing.expect_value(t, attestation_verify(&tampered_pcr, trusted_signer, nonce, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Bad_Signature)
 
 	tampered_sig := valid
 	tampered_sig.signature[0] ~= 0x01
-	testing.expect_value(t, attestation_verify(&tampered_sig, nonce, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Bad_Signature)
+	testing.expect_value(t, attestation_verify(&tampered_sig, trusted_signer, nonce, boot, plan, roles, ed25519_verify_callback), Attestation_Refusal.Bad_Signature)
 
 	// Border word check for Attestation_Refusal.
 	_, ok_max := attestation_refusal_from_word(u64(max(Attestation_Refusal)))
@@ -330,13 +338,13 @@ attestation_round_trip_and_verify_succeed :: proc(t: ^testing.T) {
 	decoded, dec_ref := attestation_decode(wire[:])
 	testing.expect_value(t, dec_ref, Attestation_Refusal.None)
 	testing.expect_value(t, decoded, payload)
-	testing.expect_value(t, attestation_verify(&decoded, nonce, boot, plan, roles_digest, ed25519_verify_callback), Attestation_Refusal.None)
+	testing.expect_value(t, attestation_verify(&decoded, payload.signer_public_key, nonce, boot, plan, roles_digest, ed25519_verify_callback), Attestation_Refusal.None)
 
 	// A machine with no stored plan carries zero active_plan_hash and verifies when expected_plan_hash is also zero.
 	no_plan_hash: blake3.Hash
 	no_plan_payload := make_signed_attestation(8, boot, pcr, no_plan_hash, roles_digest, nonce)
-	testing.expect_value(t, attestation_verify(&no_plan_payload, nonce, boot, no_plan_hash, roles_digest, ed25519_verify_callback), Attestation_Refusal.None)
-	testing.expect_value(t, attestation_verify(&no_plan_payload, nonce, boot, plan, roles_digest, ed25519_verify_callback), Attestation_Refusal.Plan_Hash_Mismatch)
+	testing.expect_value(t, attestation_verify(&no_plan_payload, no_plan_payload.signer_public_key, nonce, boot, no_plan_hash, roles_digest, ed25519_verify_callback), Attestation_Refusal.None)
+	testing.expect_value(t, attestation_verify(&no_plan_payload, no_plan_payload.signer_public_key, nonce, boot, plan, roles_digest, ed25519_verify_callback), Attestation_Refusal.Plan_Hash_Mismatch)
 }
 
 // ============================================================================

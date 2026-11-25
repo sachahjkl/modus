@@ -57,6 +57,7 @@ Attestation_Refusal :: enum u8 {
 	Roles_Digest_Mismatch = 14,
 	Missing_Verifier      = 15,
 	Bad_Signature         = 16,
+	Signer_Key_Mismatch   = 17,
 }
 
 // attestation_refusal_from_word converts a transport word into an
@@ -229,10 +230,12 @@ attestation_decode :: proc "contextless" (wire: []u8) -> (payload: Attestation_P
 	return decoded, .None
 }
 
-// attestation_verify checks payload integrity, expected nonce, boot hash,
-// active plan hash, active role-holder digest, and Ed25519 signature.
+// attestation_verify checks payload integrity, trusted signer key, expected
+// nonce, boot hash, active plan hash, active role-holder digest, and Ed25519
+// signature.
 attestation_verify :: proc "contextless" (
 	payload: ^Attestation_Payload,
+	expected_signer_key: [ATTESTATION_PUBLIC_KEY_SIZE]u8,
 	expected_nonce: [ATTESTATION_NONCE_SIZE]u8,
 	expected_boot_hash: blake3.Hash,
 	expected_plan_hash: blake3.Hash,
@@ -250,6 +253,10 @@ attestation_verify :: proc "contextless" (
 	if is_zero_bytes(sig[:]) {
 		return .Zero_Signature
 	}
+	exp_signer := expected_signer_key
+	if is_zero_bytes(exp_signer[:]) {
+		return .Zero_Signer_Key
+	}
 	exp_nonce := expected_nonce
 	if is_zero_bytes(exp_nonce[:]) {
 		return .Zero_Nonce
@@ -264,6 +271,9 @@ attestation_verify :: proc "contextless" (
 	}
 	exp_plan := expected_plan_hash
 
+	if !constant_time_equal(payload.signer_public_key[:], exp_signer[:]) {
+		return .Signer_Key_Mismatch
+	}
 	if !constant_time_equal(payload.nonce[:], exp_nonce[:]) {
 		return .Nonce_Mismatch
 	}
@@ -282,7 +292,7 @@ attestation_verify :: proc "contextless" (
 	if build_refusal != .None {
 		return build_refusal
 	}
-	if !verify_sig(payload.signer_public_key, signing_buf[:written], payload.signature, user) {
+	if !verify_sig(expected_signer_key, signing_buf[:written], payload.signature, user) {
 		return .Bad_Signature
 	}
 	return .None
