@@ -138,40 +138,42 @@ origin_process_table_strict_isolation :: proc(t: ^testing.T) {
 
 @(test)
 history_stack_navigation_and_form_encoding :: proc(t: ^testing.T) {
-	stack := history_init()
-	_, ref := history_back(&stack)
+	stack := new(History_Stack)
+	defer free(stack)
+	stack^ = history_init()
+	_, ref := history_back(stack)
 	testing.expect_value(t, ref, Origin_Browser_Refusal.No_Back_Entry)
-	_, ref = history_forward(&stack)
+	_, ref = history_forward(stack)
 	testing.expect_value(t, ref, Origin_Browser_Refusal.No_Forward_Entry)
 
 	// Malformed URL refused without mutating history.
-	_, nav_ref := history_navigate(&stack, "javascript:void(0)")
+	_, nav_ref := history_navigate(stack, "javascript:void(0)")
 	testing.expect_value(t, nav_ref, Origin_Browser_Refusal.Unsupported_Scheme)
 	testing.expect_value(t, stack.count, u16(0))
 
 	// Navigate 3 pages, go back, navigate new branch (truncates forward history).
-	_, nav_ref = history_navigate(&stack, "https://one.example/")
+	_, nav_ref = history_navigate(stack, "https://one.example/")
 	testing.expect_value(t, nav_ref, Origin_Browser_Refusal.None)
-	_, nav_ref = history_navigate(&stack, "https://two.example/a")
+	_, nav_ref = history_navigate(stack, "https://two.example/a")
 	testing.expect_value(t, nav_ref, Origin_Browser_Refusal.None)
-	_, nav_ref = history_navigate(&stack, "https://three.example/b")
+	_, nav_ref = history_navigate(stack, "https://three.example/b")
 	testing.expect_value(t, nav_ref, Origin_Browser_Refusal.None)
 
-	prev, back_ref := history_back(&stack)
+	prev, back_ref := history_back(stack)
 	testing.expect_value(t, back_ref, Origin_Browser_Refusal.None)
 	testing.expect_value(t, history_entry_url(prev), "https://two.example/a")
 
-	fwd, fwd_ref := history_forward(&stack)
+	fwd, fwd_ref := history_forward(stack)
 	testing.expect_value(t, fwd_ref, Origin_Browser_Refusal.None)
 	testing.expect_value(t, history_entry_url(fwd), "https://three.example/b")
 
-	_, _ = history_back(&stack)
-	_, nav_ref = history_navigate(&stack, "https://four.example/c")
+	_, _ = history_back(stack)
+	_, nav_ref = history_navigate(stack, "https://four.example/c")
 	testing.expect_value(t, nav_ref, Origin_Browser_Refusal.None)
-	_, fwd_ref = history_forward(&stack)
+	_, fwd_ref = history_forward(stack)
 	testing.expect_value(t, fwd_ref, Origin_Browser_Refusal.No_Forward_Entry)
 
-	cur, has_cur := history_current(&stack)
+	cur, has_cur := history_current(stack)
 	testing.expect_value(t, has_cur, true)
 	testing.expect_value(t, history_entry_url(cur), "https://four.example/c")
 
@@ -190,4 +192,102 @@ history_stack_navigation_and_form_encoding :: proc(t: ^testing.T) {
 	testing.expect_value(t, enc_ref, Origin_Browser_Refusal.Buffer_Too_Small)
 	testing.expect_value(t, n, 0)
 	testing.expect_value(t, tiny[0], u8('X'))
+}
+
+@(test)
+zero_init_history_and_corrupt_count_refusal :: proc(t: ^testing.T) {
+	// Zero-initialized History_Stack{} must land cleanly at entries[0] with count == 1.
+	zero_stack := new(History_Stack)
+	defer free(zero_stack)
+	_, ref := history_navigate(zero_stack, "https://first.example/")
+	testing.expect_value(t, ref, Origin_Browser_Refusal.None)
+	testing.expect_value(t, zero_stack.count, u16(1))
+	testing.expect_value(t, zero_stack.current_index, i32(0))
+	cur, ok := history_current(zero_stack)
+	testing.expect_value(t, ok, true)
+	testing.expect_value(t, history_entry_url(cur), "https://first.example/")
+
+	// Corrupt count past HISTORY_CAPACITY is refused without mutation.
+	corrupt := new(History_Stack)
+	defer free(corrupt)
+	corrupt.count = HISTORY_CAPACITY + 1
+	_, cref := history_navigate(corrupt, "https://second.example/")
+	testing.expect_value(t, cref, Origin_Browser_Refusal.Table_Full)
+	testing.expect_value(t, corrupt.count, u16(HISTORY_CAPACITY + 1))
+}
+
+@(test)
+ipv6_rfc4291_refusals_and_rfc5952_canonical_equivalence :: proc(t: ^testing.T) {
+	bad_ipv6_urls := [?]string{
+		"https://[::::]/",
+		"https://[:::]/",
+		"https://[...]/",
+		"https://[1.2.3.4]/",
+		"https://[::1::2]/",
+		"https://[1:2:3:4:5:6:7]/",
+		"https://[1:2:3:4:5:6:7:8:9]/",
+		"https://[1:2:3:4:5:6:7:8::]/",
+		"https://[12345::1]/",
+		"https://[:1]/",
+		"https://[1:]/",
+		"https://[::g]/",
+	}
+	for u in bad_ipv6_urls {
+		_, ref := origin_parse_url(u)
+		testing.expect_value(t, ref, Origin_Browser_Refusal.Bad_Host_Byte)
+	}
+
+	// RFC 5952 canonicalization: expanded loopback == compressed loopback.
+	a, r1 := origin_parse_url("https://[::1]:443/a")
+	b, r2 := origin_parse_url("https://[0000:0000:0000:0000:0000:0000:0000:0001]/b")
+	testing.expect_value(t, r1, Origin_Browser_Refusal.None)
+	testing.expect_value(t, r2, Origin_Browser_Refusal.None)
+	testing.expect_value(t, origin_host(&a), "[::1]")
+	testing.expect_value(t, origin_host(&b), "[::1]")
+	testing.expect_value(t, origin_equal(&a, &b), true)
+
+	// Unspecified all-zeros address compresses to `[::]`.
+	unspec, r3 := origin_parse_url("http://[0:0:0:0:0:0:0:0]/")
+	testing.expect_value(t, r3, Origin_Browser_Refusal.None)
+	testing.expect_value(t, origin_host(&unspec), "[::]")
+
+	// Leftmost longest run wins tie, uppercase folds to lowercase, leading zeros stripped.
+	tie, r4 := origin_parse_url("https://[2001:0DB8:0000:0000:0001:0000:0000:0001]/")
+	testing.expect_value(t, r4, Origin_Browser_Refusal.None)
+	testing.expect_value(t, origin_host(&tie), "[2001:db8::1:0:0:1]")
+
+	// Single zero group is never compressed to `::` (RFC 5952 section 4.2.2).
+	single_zero, r5 := origin_parse_url("https://[2001:db8:0:1:1:1:1:1]/")
+	testing.expect_value(t, r5, Origin_Browser_Refusal.None)
+	testing.expect_value(t, origin_host(&single_zero), "[2001:db8:0:1:1:1:1:1]")
+}
+
+@(test)
+origin_table_max_pid_and_non_canonical_host_refusals :: proc(t: ^testing.T) {
+	// Refuse max(u64) process ID wraparound to sentinel 0.
+	table: Origin_Process_Table
+	table.next_process_id = max(u64)
+	orig, _ := origin_parse_url("https://wrap.example/")
+	pid, reused, ref := origin_table_acquire(&table, orig)
+	testing.expect_value(t, ref, Origin_Browser_Refusal.Table_Full)
+	testing.expect_value(t, pid, u64(0))
+	testing.expect_value(t, reused, false)
+	testing.expect_value(t, table.next_process_id, max(u64))
+
+	// Refuse hand-constructed non-canonical hosts (uppercase DNS or non-canonical IPv6).
+	fresh: Origin_Process_Table
+	bad_dns := Web_Origin{scheme = .Https, port = 443, host_len = 7}
+	copy(bad_dns.host[:7], "Bad.COM")
+	_, _, ref = origin_table_acquire(&fresh, bad_dns)
+	testing.expect_value(t, ref, Origin_Browser_Refusal.Bad_Host_Byte)
+
+	bad_v6 := Web_Origin{scheme = .Https, port = 443, host_len = 6}
+	copy(bad_v6.host[:6], "[::::]")
+	_, _, ref = origin_table_acquire(&fresh, bad_v6)
+	testing.expect_value(t, ref, Origin_Browser_Refusal.Bad_Host_Byte)
+
+	non_canon_v6 := Web_Origin{scheme = .Https, port = 443, host_len = 17}
+	copy(non_canon_v6.host[:17], "[0:0:0:0:0:0:0:1]")
+	_, _, ref = origin_table_acquire(&fresh, non_canon_v6)
+	testing.expect_value(t, ref, Origin_Browser_Refusal.Bad_Host_Byte)
 }

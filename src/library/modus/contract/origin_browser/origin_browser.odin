@@ -233,48 +233,29 @@ origin_parse_url :: proc "contextless" (raw_url: string) -> (origin: Web_Origin,
 	}
 
 	out := Web_Origin{
-		scheme   = scheme,
-		host_len = u16(len(host_raw)),
-		port     = default_port,
+		scheme = scheme,
+		port   = default_port,
 	}
 
 	if host_raw[0] == '[' {
-		// Validate bracketed IPv6 hex/colon/dot characters and lowercase.
-		for i in 0 ..< len(host_raw) {
-			b := host_raw[i]
-			if i == 0 || i == len(host_raw) - 1 {
-				out.host[i] = b
-				continue
-			}
-			low := ascii_lower(b)
-			valid := (low >= '0' && low <= '9') || (low >= 'a' && low <= 'f') || low == ':' || low == '.'
-			if !valid {
-				return {}, .Bad_Host_Byte
-			}
-			out.host[i] = low
-		}
-	} else {
-		// Validate DNS/IPv4 host characters (no leading/trailing/double dot).
-		if host_raw[0] == '.' || host_raw[len(host_raw) - 1] == '.' || host_raw[0] == '-' || host_raw[len(host_raw) - 1] == '-' {
+		// Strict RFC 4291 IPv6 literal parser + RFC 5952 canonical lowercase
+		// compressed output so `[::1]` and `[0:0:0:0:0:0:0:1]` normalize identically.
+		inner := host_raw[1:len(host_raw) - 1]
+		groups, ipv6_ok := parse_ipv6_groups(inner)
+		if !ipv6_ok {
 			return {}, .Bad_Host_Byte
 		}
-		prev_dot := false
-		for i in 0 ..< len(host_raw) {
-			low := ascii_lower(host_raw[i])
-			valid := (low >= 'a' && low <= 'z') || (low >= '0' && low <= '9') || low == '-' || low == '.'
-			if !valid {
-				return {}, .Bad_Host_Byte
-			}
-			if low == '.' {
-				if prev_dot {
-					return {}, .Bad_Host_Byte
-				}
-				prev_dot = true
-			} else {
-				prev_dot = false
-			}
-			out.host[i] = low
+		written, fmt_ok := format_ipv6_canonical(groups, out.host[:])
+		if !fmt_ok {
+			return {}, .Host_Too_Long
 		}
+		out.host_len = u16(written)
+	} else {
+		// Validate DNS/IPv4 host characters (no leading/trailing/double dot).
+		if !normalize_dns_host(host_raw, out.host[:]) {
+			return {}, .Bad_Host_Byte
+		}
+		out.host_len = u16(len(host_raw))
 	}
 
 	if has_port {
@@ -324,11 +305,14 @@ origin_table_acquire :: proc "contextless" (
 	if origin.host_len == 0 || int(origin.host_len) > ORIGIN_HOST_MAX_BYTES {
 		return 0, false, .Missing_Host
 	}
-	if origin.port == 0 {
+	local_origin := origin
+	if !origin_host_is_canonical(string(local_origin.host[:local_origin.host_len])) {
+		return 0, false, .Bad_Host_Byte
+	}
+	if local_origin.port == 0 {
 		return 0, false, .Bad_Port
 	}
 
-	local_origin := origin
 	free_slot := -1
 	for i in 0 ..< ORIGIN_PROCESS_CAPACITY {
 		if table.slots[i].active {
@@ -340,6 +324,9 @@ origin_table_acquire :: proc "contextless" (
 		}
 	}
 	if free_slot < 0 {
+		return 0, false, .Table_Full
+	}
+	if table.next_process_id == max(u64) {
 		return 0, false, .Table_Full
 	}
 
@@ -411,14 +398,26 @@ history_navigate :: proc "contextless" (
 	if stack == nil {
 		return {}, .Null_State
 	}
+	if int(stack.count) > HISTORY_CAPACITY {
+		return {}, .Table_Full
+	}
 	parsed, err := origin_parse_url(raw_url)
 	if err != .None {
 		return {}, err
 	}
 
-	next_pos := int(stack.current_index) + 1
-	if next_pos < 0 {
+	next_pos: int
+	if stack.count == 0 {
+		// Zero-initialized History_Stack{} starts cleanly at slot 0.
 		next_pos = 0
+	} else {
+		next_pos = int(stack.current_index) + 1
+		if next_pos < 0 {
+			next_pos = 0
+		}
+		if next_pos > int(stack.count) {
+			next_pos = int(stack.count)
+		}
 	}
 	if next_pos >= HISTORY_CAPACITY {
 		// Evict oldest entry to stay within bounded HISTORY_CAPACITY.
@@ -524,6 +523,275 @@ ascii_has_prefix_fold :: proc "contextless" (s, prefix: string) -> bool {
 	for i in 0 ..< len(prefix) {
 		if ascii_lower(s[i]) != ascii_lower(prefix[i]) {
 			return false
+		}
+	}
+	return true
+}
+
+@(private = "file")
+hex_digit_value :: proc "contextless" (b: u8) -> (val: u16, ok: bool) {
+	switch b {
+	case '0' ..= '9':
+		return u16(b - '0'), true
+	case 'a' ..= 'f':
+		return u16(b - 'a' + 10), true
+	case 'A' ..= 'F':
+		return u16(b - 'A' + 10), true
+	}
+	return 0, false
+}
+
+// parse_ipv6_groups parses a pure RFC 4291 hex IPv6 address (without brackets)
+// into 8 x u16 groups, enforcing at most one `::`, 1..4 hex digits per group,
+// and exact group count (refusing `[::::]`, `[...]`, `[1.2.3.4]`, `[::1::2]`).
+@(private = "file")
+parse_ipv6_groups :: proc "contextless" (inner: string) -> (groups: [8]u16, ok: bool) {
+	if len(inner) < 2 {
+		return {}, false
+	}
+	left: [8]u16
+	right: [8]u16
+	left_count := 0
+	right_count := 0
+	saw_double_colon := false
+
+	i := 0
+	if inner[0] == ':' {
+		if inner[1] != ':' {
+			return {}, false
+		}
+		saw_double_colon = true
+		i = 2
+		if i == len(inner) {
+			return {}, true
+		}
+	}
+
+	for i < len(inner) {
+		// Parse one 1..4 hex-digit group.
+		g_start := i
+		val: u16 = 0
+		digits := 0
+		for i < len(inner) && inner[i] != ':' {
+			d, d_ok := hex_digit_value(inner[i])
+			if !d_ok || digits >= 4 {
+				return {}, false
+			}
+			val = (val << 4) | d
+			digits += 1
+			i += 1
+		}
+		if i == g_start || digits == 0 {
+			return {}, false
+		}
+		if !saw_double_colon {
+			if left_count >= 8 {
+				return {}, false
+			}
+			left[left_count] = val
+			left_count += 1
+		} else {
+			if right_count >= 8 {
+				return {}, false
+			}
+			right[right_count] = val
+			right_count += 1
+		}
+
+		if i == len(inner) {
+			break
+		}
+		// Must be ':' separator or '::' compression marker.
+		if inner[i] != ':' {
+			return {}, false
+		}
+		if i + 1 >= len(inner) {
+			// Trailing single ':' is malformed.
+			return {}, false
+		}
+		if inner[i + 1] == ':' {
+			if saw_double_colon {
+				return {}, false
+			}
+			saw_double_colon = true
+			i += 2
+			if i == len(inner) {
+				break
+			}
+			if inner[i] == ':' {
+				// Triple ':::' is malformed.
+				return {}, false
+			}
+		} else {
+			i += 1
+		}
+	}
+
+	if saw_double_colon {
+		// RFC 4291: `::` must compress at least one zero group.
+		if left_count + right_count >= 8 {
+			return {}, false
+		}
+		for k in 0 ..< left_count {
+			groups[k] = left[k]
+		}
+		offset := 8 - right_count
+		for k in 0 ..< right_count {
+			groups[offset + k] = right[k]
+		}
+		return groups, true
+	}
+
+	if left_count != 8 {
+		return {}, false
+	}
+	return left, true
+}
+
+// format_ipv6_canonical emits RFC 5952 canonical lowercase compressed `[ipv6]`
+// form into `out` (compressing the leftmost longest run of >= 2 zero groups).
+@(private = "file")
+format_ipv6_canonical :: proc "contextless" (groups: [8]u16, out: []u8) -> (written: int, ok: bool) {
+	// Find leftmost longest run of consecutive zero groups of length >= 2.
+	best_start := -1
+	best_len := 0
+	run_start := -1
+	run_len := 0
+	for i in 0 ..< 8 {
+		if groups[i] == 0 {
+			if run_start < 0 {
+				run_start = i
+				run_len = 1
+			} else {
+				run_len += 1
+			}
+			if run_len > best_len {
+				best_start = run_start
+				best_len = run_len
+			}
+		} else {
+			run_start = -1
+			run_len = 0
+		}
+	}
+	if best_len < 2 {
+		best_start = -1
+		best_len = 0
+	}
+
+	// Maximum canonical bracketed IPv6 length is `[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]` (41 bytes).
+	if len(out) < 41 {
+		return 0, false
+	}
+
+	hex := "0123456789abcdef"
+	pos := 0
+	out[pos] = '['
+	pos += 1
+
+	i := 0
+	for i < 8 {
+		if best_len >= 2 && i == best_start {
+			out[pos] = ':'
+			out[pos + 1] = ':'
+			pos += 2
+			i += best_len
+			continue
+		}
+		if i > 0 && !(best_len >= 2 && i == best_start + best_len) {
+			out[pos] = ':'
+			pos += 1
+		}
+		g := groups[i]
+		if g == 0 {
+			out[pos] = '0'
+			pos += 1
+		} else {
+			started := false
+			for shift := u32(12); ; shift -= 4 {
+				nib := (g >> shift) & 0xF
+				if nib != 0 || started {
+					out[pos] = hex[nib]
+					pos += 1
+					started = true
+				}
+				if shift == 0 {
+					break
+				}
+			}
+		}
+		i += 1
+	}
+
+	out[pos] = ']'
+	pos += 1
+	return pos, true
+}
+
+@(private = "file")
+normalize_dns_host :: proc "contextless" (host_raw: string, out: []u8) -> bool {
+	if len(host_raw) == 0 || len(host_raw) > len(out) {
+		return false
+	}
+	if host_raw[0] == '.' || host_raw[len(host_raw) - 1] == '.' || host_raw[0] == '-' || host_raw[len(host_raw) - 1] == '-' {
+		return false
+	}
+	prev_dot := false
+	for i in 0 ..< len(host_raw) {
+		low := ascii_lower(host_raw[i])
+		valid := (low >= 'a' && low <= 'z') || (low >= '0' && low <= '9') || low == '-' || low == '.'
+		if !valid {
+			return false
+		}
+		if low == '.' {
+			if prev_dot {
+				return false
+			}
+			prev_dot = true
+		} else {
+			prev_dot = false
+		}
+		out[i] = low
+	}
+	return true
+}
+
+// origin_host_is_canonical verifies that a caller-supplied Web_Origin host is
+// already in canonical lowercase DNS or RFC 5952 bracketed IPv6 form.
+@(private = "file")
+origin_host_is_canonical :: proc "contextless" (host: string) -> bool {
+	if len(host) == 0 || len(host) > ORIGIN_HOST_MAX_BYTES {
+		return false
+	}
+	if host[0] == '[' {
+		if len(host) < 4 || host[len(host) - 1] != ']' {
+			return false
+		}
+		groups, ok := parse_ipv6_groups(host[1:len(host) - 1])
+		if !ok {
+			return false
+		}
+		canon_buf: [64]u8
+		n, fmt_ok := format_ipv6_canonical(groups, canon_buf[:])
+		return fmt_ok && string(canon_buf[:n]) == host
+	}
+	if host[0] == '.' || host[len(host) - 1] == '.' || host[0] == '-' || host[len(host) - 1] == '-' {
+		return false
+	}
+	prev_dot := false
+	for i in 0 ..< len(host) {
+		b := host[i]
+		valid := (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '-' || b == '.'
+		if !valid {
+			return false
+		}
+		if b == '.' {
+			if prev_dot {
+				return false
+			}
+			prev_dot = true
+		} else {
+			prev_dot = false
 		}
 	}
 	return true
