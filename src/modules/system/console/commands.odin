@@ -63,7 +63,7 @@ import "base:intrinsics"
 // `first`, `rows` and `row` read only the description of the records, so
 // they work on each table of each service. Example:
 //
-// ```
+// ```lex
 // > columns(where(manual.running(), module = "calendar_fixed"), process, slot, module, replaces)
 // ```
 //
@@ -278,7 +278,7 @@ commands_start :: proc "contextless" () {
 	// nothing. A help longer than its field ends with the cut mark:
 	// `help(name)` or `describe(name)` gives it whole.
 	//
-	// ```
+	// ```lex
 	// > where(help(), name = "repeat")
 	// name    signature                      about
 	// repeat  repeat(Text, Integer) -> Text  a text, several times
@@ -296,7 +296,7 @@ commands_start :: proc "contextless" () {
 	// - `name`: the name of a command, as `help()` gives it, or a word
 	//   of Lex.
 	//
-	// ```
+	// ```lex
 	// > describe("let")
 	// > describe("where")
 	// ```
@@ -316,7 +316,7 @@ commands_start :: proc "contextless" () {
 	// and the hash of the file of a disk process, whose name is its
 	// nickname.
 	//
-	// ```
+	// ```lex
 	// > columns(where(processes(), state = "waiting"), slot, name, threads)
 	// > columns(where(processes(), name = "visitor"), name, hash)
 	// ```
@@ -377,7 +377,7 @@ commands_start :: proc "contextless" () {
 	// console: load only a module that the console trusts, and `isolate`
 	// the others.
 	//
-	// ```
+	// ```lex
 	// > s = load("sample")
 	// Loaded
 	//   binding    s
@@ -419,7 +419,7 @@ commands_start :: proc "contextless" () {
 	// - `memory`: the memory object that holds the file from its first byte.
 	// - `size`: the bytes of the file, 1 to 4 MiB.
 	//
-	// ```
+	// ```lex
 	// > f = buffer(4)
 	// > n = as.assemble("export add(a: Integer, b: Integer) -> Integer; add: mov %rdi, %rax; add %rsi, %rax; ret", f)
 	// > a = isolate_memory("adder", f, n)
@@ -444,7 +444,7 @@ commands_start :: proc "contextless" () {
 	// the module, the count of the commands removed, and what became of its
 	// memory.
 	//
-	// ```
+	// ```lex
 	// > unload(s)
 	// Unloaded
 	//   binding   s
@@ -464,7 +464,7 @@ commands_start :: proc "contextless" () {
 	// loader gave another module in its place, the module that the import
 	// names; the head of its hash.
 	//
-	// ```
+	// ```lex
 	// > where(loaded(), in_place_of = "calendar")
 	// ```
 	command("loaded", {}, .Table, "the modules and the services whose exports are commands", list_loaded)
@@ -482,7 +482,7 @@ commands_start :: proc "contextless" () {
 	// result is the `Record` of `load`, with the call `service`; a service
 	// that is connected already gives it again.
 	//
-	// ```
+	// ```lex
 	// > connect("settings")
 	// Loaded
 	//   module     settings
@@ -514,7 +514,7 @@ commands_start :: proc "contextless" () {
 	// output by its typed name: `output_counter.counts` (docs/CONSOLE.md,
 	// "Streams").
 	//
-	// ```
+	// ```lex
 	// > start("notes")
 	// > start("db_browser", "5f0c...")
 	// > start("output_count_reader", wire(where(output_counter.counts, status = 404), output_count_reader.counts))
@@ -534,7 +534,7 @@ commands_start :: proc "contextless" () {
 	// - `name`: the name or `/`-separated path of the text object in that
 	//   store, 1 to 256 bytes.
 	//
-	// ```
+	// ```lex
 	// > edit("notes", "today.txt")
 	// ```
 	//
@@ -558,7 +558,7 @@ commands_start :: proc "contextless" () {
 	// nickname in the disk grant table only, whatever its name
 	// (docs/MODULE_CONTRACT.md, "A module from a disk").
 	//
-	// ```
+	// ```lex
 	// > start_from_disk("visitor", "5f0c...")
 	// > start_from_disk("visitor", "")
 	// ```
@@ -581,7 +581,7 @@ commands_start :: proc "contextless" () {
 	//   the store of the nickname, which follows the nickname to its next
 	//   file.
 	//
-	// ```
+	// ```lex
 	// > allow("visitor", "store")
 	// ```
 	//
@@ -605,7 +605,7 @@ commands_start :: proc "contextless" () {
 	// - `key`: the Ed25519 public key of the client, 64 hexadecimal
 	//   digits. `modustool run` prints the key of its peer.
 	//
-	// ```
+	// ```lex
 	// > remote_allow("6a1f...")
 	// ```
 	//
@@ -629,7 +629,7 @@ commands_start :: proc "contextless" () {
 	// - `key`: the Ed25519 public key of the viewer, 64 hexadecimal digits.
 	// - `use`: `view`, or `view_and_input`.
 	//
-	// ```
+	// ```lex
 	// > remote_display_allow("6a1f...", "view")
 	// ```
 	//
@@ -652,7 +652,7 @@ commands_start :: proc "contextless" () {
 	//
 	// - `key`: the key, as `remote_allow` took it.
 	//
-	// ```
+	// ```lex
 	// > remote_disallow("6a1f...")
 	// 4 connections to services ended
 	// ```
@@ -672,7 +672,7 @@ commands_start :: proc "contextless" () {
 	// - `scopes`: `view`, or `view_and_input`.
 	// - `minutes`: the longest duration that the screen offers, 1 to 1440.
 	//
-	// ```
+	// ```lex
 	// > agent_allow("6a1f...", "view_and_input", 60)
 	// 1
 	// ```
@@ -690,7 +690,7 @@ commands_start :: proc "contextless" () {
 	//
 	// - `key`: the key, as `agent_allow` took it.
 	//
-	// ```
+	// ```lex
 	// > agent_disallow("6a1f...")
 	// ```
 	//
@@ -702,7 +702,7 @@ commands_start :: proc "contextless" () {
 	// principal is locked), and its uses: `calls` (of `remote`), `view` and
 	// `view and input` (of `remote_display`), or both.
 	//
-	// ```
+	// ```lex
 	// > remote_clients()
 	// key                                                               principal  state      uses
 	// 6a1f...                                                                   0  holds      calls
@@ -730,7 +730,7 @@ commands_start :: proc "contextless" () {
 	//   global setting takes `persist` or `forget`; the default is
 	//   `persist`.
 	//
-	// ```
+	// ```lex
 	// > disk_persistence("visitor", "forget")
 	// ```
 	//
@@ -757,7 +757,7 @@ commands_start :: proc "contextless" () {
 	// `lost`; the number and the name of the principal that the process
 	// runs for.
 	//
-	// ```
+	// ```lex
 	// > grants("notes")
 	// process  grant  state  principal  principal_name
 	// notes    log    held           0  machine
@@ -821,7 +821,7 @@ commands_start :: proc "contextless" () {
 	// - `hash`: the BLAKE3 hash of the file, 64 hexadecimal digits, or
 	//   empty for the hash of the row of the nickname.
 	//
-	// ```
+	// ```lex
 	// > start_policy_choose("tiny", "5f0c...")
 	// ```
 	//
@@ -884,7 +884,7 @@ commands_start :: proc "contextless" () {
 	// and `creating` (created in the window of unlock). An empty measure:
 	// the system was not measured.
 	//
-	// ```
+	// ```lex
 	// > principals()
 	// number  name     state    public_key_head  measure_head
 	//      0  machine  machine
@@ -1049,7 +1049,7 @@ commands_start :: proc "contextless" () {
 	// takes a table of these records, and `settings.languages()` gives each
 	// one with its canonical tag.
 	//
-	// ```
+	// ```lex
 	// > language("fr-CA")
 	// > language("ar-EG-u-nu-latn")
 	// > settings.set_languages([language("fr-CA"), language("en")])
@@ -1074,7 +1074,7 @@ commands_start :: proc "contextless" () {
 	// `unaccounted` and no numbers, because the service paid the work
 	// itself.
 	//
-	// ```
+	// ```lex
 	// > work("console")
 	// ```
 	//
@@ -1104,7 +1104,7 @@ commands_start :: proc "contextless" () {
 	// substituted: no compile runs. A C error builds nothing, and the log
 	// names the byte of the source (src/md/features/program_loop.md).
 	//
-	// ```
+	// ```lex
 	// > build("hello", "hello.c")
 	// hello: module 3f1c…
 	// ```
@@ -1113,7 +1113,7 @@ commands_start :: proc "contextless" () {
 	// module_files, isolates it in a call host with no grant, and calls its
 	// export main. A grant that the project does not declare is refused.
 	//
-	// ```
+	// ```lex
 	// > run("hello")
 	// 42
 	// ```
@@ -1155,7 +1155,7 @@ commands_start :: proc "contextless" () {
 	// - `rows`: a `plan { ... }` value or a `Table` of `Plan_Entry_Row`.
 	// - `expected`: optional `Plan_Expected` record; defaults to `{}` when omitted.
 	//
-	// ```
+	// ```lex
 	// > plans.apply("evening", plan { locks = { settings = { appearance = .dark } } })
 	// ```
 	command("plans.apply", {.Text, .None, .Record}, .Table, "apply a plan after trusted display consent and return the committed generation", plans_apply_command, optional_last = true)
@@ -1166,7 +1166,7 @@ commands_start :: proc "contextless" () {
 	// - `generation`: optional generation number (at least 1); rolls back to
 	//   the immediately preceding generation when omitted.
 	//
-	// ```
+	// ```lex
 	// > plans.rollback()
 	// > plans.rollback(2)
 	// ```

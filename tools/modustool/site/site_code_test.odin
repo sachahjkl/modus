@@ -375,3 +375,152 @@ site_style_sheet_scroll_bars :: proc(t: ^testing.T) {
 	// Each size of the variables is a number of the table.
 	testing.expect_value(t, SITE_SCROLL_THUMB_LEAST, graphics.SCROLL_BAR_GRIP_THUMB_LEAST + 1)
 }
+
+@(private = "file")
+LEX_SAMPLE :: "// Lex sample < with > & \"quotes\" and café\nlet\n  size = 64 MiB + 512 KiB,\n  delay = 120 ms,\n  hash = blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef,\n  f = (src: Tree_Ref, limit: Integer[MiB], opt: Enum = .Prefer_Cache) =>\n    if true && !false then src.path ?? \"evening\" else \"day\",\n  m = match cfg {\n    { mode = .Verify, port = p, ... } if p >= 1024 => p,\n    _ => 80,\n  },\n  rec = { for x in xs: x = x },\n  fields = { store = \"ok\" },\n  proj = project {\n    outputs = { default = recipe(catalog.odin, { src = here() }) },\n    console = { stores = [store(\"kernel\", .Read, .Write)] },\n  },\nin\n  plan { locks = { settings = { appearance = .dark } } }\n  |> plans.apply(\"evening\", _)\n  |> log.records\n"
+
+// Lex syntax highlighting colors every token kind with Site_Code_Class and
+// preserves every byte of source verbatim.
+@(test)
+site_code_lex_of_each_token :: proc(t: ^testing.T) {
+	b := strings.builder_make(context.temp_allocator)
+	testing.expect(t, site_code_lex(&b, LEX_SAMPLE))
+	html := strings.to_string(b)
+	testing.expect_value(t, plain_of(html), LEX_SAMPLE)
+
+	expect := [?]string {
+		"<span class=\"c-c\">// Lex sample &lt; with &gt; &amp; &quot;quotes&quot; and café</span>",
+		"<span class=\"c-k\">let</span>",
+		"<span class=\"c-n\">size</span> <span class=\"c-p\">=</span> <span class=\"c-l\">64</span> <span class=\"c-t\">MiB</span> <span class=\"c-p\">+</span> <span class=\"c-l\">512</span> <span class=\"c-t\">KiB</span>",
+		"<span class=\"c-n\">delay</span> <span class=\"c-p\">=</span> <span class=\"c-l\">120</span> <span class=\"c-t\">ms</span>",
+		"<span class=\"c-l\">blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef</span>",
+		"src<span class=\"c-p\">:</span> <span class=\"c-t\">Tree_Ref</span>",
+		"limit<span class=\"c-p\">:</span> <span class=\"c-t\">Integer</span><span class=\"c-p\">[</span><span class=\"c-t\">MiB</span><span class=\"c-p\">],</span>",
+		"opt<span class=\"c-p\">:</span> <span class=\"c-t\">Enum</span> <span class=\"c-p\">=</span> <span class=\"c-l\">.Prefer_Cache</span>",
+		"<span class=\"c-k\">if</span> <span class=\"c-l\">true</span> <span class=\"c-p\">&amp;&amp; !</span><span class=\"c-l\">false</span> <span class=\"c-k\">then</span> src<span class=\"c-p\">.</span>path <span class=\"c-p\">??</span> <span class=\"c-l\">&quot;evening&quot;</span> <span class=\"c-k\">else</span> <span class=\"c-l\">&quot;day&quot;</span>",
+		"<span class=\"c-k\">match</span> cfg",
+		"<span class=\"c-n\">mode</span> <span class=\"c-p\">=</span> <span class=\"c-l\">.Verify</span>",
+		"_ =&gt;</span> <span class=\"c-l\">80</span>",
+		"<span class=\"c-k\">for</span> <span class=\"c-n\">x</span> <span class=\"c-k\">in</span> xs",
+		// `store` as a record field key before '=' is a Name, not a Keyword.
+		"<span class=\"c-n\">store</span> <span class=\"c-p\">=</span> <span class=\"c-l\">&quot;ok&quot;</span>",
+		"<span class=\"c-k\">project</span> <span class=\"c-p\">{</span>",
+		"<span class=\"c-k\">recipe</span><span class=\"c-p\">(</span>",
+		"<span class=\"c-n\">here</span><span class=\"c-p\">() }) },</span>",
+		"<span class=\"c-k\">store</span><span class=\"c-p\">(</span><span class=\"c-l\">&quot;kernel&quot;</span><span class=\"c-p\">,</span> <span class=\"c-l\">.Read</span><span class=\"c-p\">,</span> <span class=\"c-l\">.Write</span><span class=\"c-p\">)] },",
+		"<span class=\"c-k\">in\n  plan</span> <span class=\"c-p\">{</span>",
+		"<span class=\"c-n\">appearance</span> <span class=\"c-p\">=</span> <span class=\"c-l\">.dark</span>",
+		"|&gt;</span> plans<span class=\"c-p\">.</span><span class=\"c-n\">apply</span><span class=\"c-p\">(</span>",
+		"|&gt;</span> log<span class=\"c-p\">.</span><span class=\"c-n\">records</span>",
+	}
+	for part in expect {
+		testing.expectf(t, strings.contains(html, part), "colored Lex has no %q:\n%s", part, html)
+	}
+}
+
+// Edge cases: empty input, unclosed strings, postfix field selection vs enum
+// members, newline-separated unit names, logical keywords, unknown bytes,
+// console transcripts, and site_render_fence integration.
+@(test)
+site_code_lex_edges_and_transcripts :: proc(t: ^testing.T) {
+	edges := [?]string {
+		"",
+		"   \n\t\r\n",
+		"\"unclosed string < & >",
+		"\"escaped \\\" quote still open",
+		"1 MiB + 1 ms // mismatch example",
+		"1\ns",
+		"(r with { a = 1 }).a",
+		"and or not with if then else",
+		"Table Record Integer Text Boolean Hash Enum Unit Stream Process Memory Grant Reading",
+		"a $ b ~ c ` d",
+		"> 6 * 7\n42\n> settings.set(font = .comic)\nerror: settings.set: Font has no member .comic\n",
+		"> t = s.readings(4)\n> t |> where(sensor = 2) |> s.sum_values\n30\n",
+	}
+	for src in edges {
+		b := strings.builder_make(context.temp_allocator)
+		testing.expectf(t, site_code_lex(&b, src), "site_code_lex refused %q", src)
+		html := strings.to_string(b)
+		testing.expectf(t, plain_of(html) == src, "byte mismatch for %q:\ngot  %q\nhtml %s", src, plain_of(html), html)
+	}
+
+	// Postfix `.a` after `)` is field selection (`.` punctuation + plain `a`), not `.Literal`.
+	b_field := strings.builder_make(context.temp_allocator)
+	site_code_lex(&b_field, "(r with { a = 1 }).a")
+	html_field := strings.to_string(b_field)
+	testing.expectf(t, strings.contains(html_field, "<span class=\"c-p\">}).</span>a"), "postfix field miscolored:\n%s", html_field)
+	testing.expect(t, !strings.contains(html_field, "<span class=\"c-l\">.a</span>"))
+
+	// Unit name after a newline is NOT colored as a unit.
+	b_nl := strings.builder_make(context.temp_allocator)
+	site_code_lex(&b_nl, "1\ns")
+	html_nl := strings.to_string(b_nl)
+	testing.expect(t, !strings.contains(html_nl, "<span class=\"c-t\">s</span>"), html_nl)
+
+	// Transcript colors '> ' prompt lines as Lex while keeping output/error lines plain.
+	b_tr := strings.builder_make(context.temp_allocator)
+	transcript := "> settings.set(font = .comic)\nerror: settings.set: <bad> & \"quoted\"\n"
+	site_code_lex(&b_tr, transcript)
+	html_tr := strings.to_string(b_tr)
+	testing.expect(t, strings.contains(html_tr, "<span class=\"c-p\">&gt;</span> settings<span class=\"c-p\">.</span><span class=\"c-n\">set</span>"), html_tr)
+	testing.expect(t, strings.contains(html_tr, "\nerror: settings.set: &lt;bad&gt; &amp; &quot;quoted&quot;\n"), html_tr)
+
+	// Fence rendering in site_render_fence colors ```lex in guides and comments
+	// without incrementing code_blocks_not_colored.
+	site := test_site()
+	r := site_renderer_make(&site, "docs/guides/TEST/index.html", "docs/TEST.md")
+	site_render_markdown(&r, "```lex\n1 MiB + 512 KiB\n```\n")
+	fhtml := strings.to_string(r.builder)
+	testing.expect(t, strings.contains(fhtml, "<pre><code><span class=\"c-l\">1</span> <span class=\"c-t\">MiB</span> <span class=\"c-p\">+</span> <span class=\"c-l\">512</span> <span class=\"c-t\">KiB</span>\n</code></pre>"), fhtml)
+	testing.expect_value(t, site.code_blocks_not_colored, 0)
+
+	// Comment fence marked ```lex (as in console/commands.odin) renders as Lex, not Odin.
+	rc := site_renderer_make(&site, "docs/reference/console/index.html", "src/modules/system/console/commands.odin")
+	rc.comment = true
+	site_render_markdown(&rc, "```lex\n> columns(where(manual.running(), module = \"calendar_fixed\"), process)\n```\n")
+	chtml := strings.to_string(rc.builder)
+	testing.expect(t, strings.contains(chtml, "<span class=\"c-n\">columns</span>"), chtml)
+	testing.expect_value(t, site.code_blocks_not_colored, 0)
+}
+
+// Every ```lex fenced block in docs/LEX.md, docs/COURSE.md, and docs/CONSOLE.md
+// colors cleanly and round-trips byte for byte.
+@(test)
+site_code_lex_of_the_guides :: proc(t: ^testing.T) {
+	files := [?]string{"docs/LEX.md", "docs/COURSE.md", "docs/CONSOLE.md"}
+	total_blocks := 0
+	for path in files {
+		text, ok := foundation.read_text_file_quiet(path)
+		testing.expectf(t, ok, "cannot read %s", path)
+		if !ok {
+			continue
+		}
+		lines := strings.split_lines(text, context.temp_allocator)
+		for i := 0; i < len(lines); i += 1 {
+			if strings.trim_space(lines[i]) != "```lex" {
+				continue
+			}
+			indent := strings.index(lines[i], "```")
+			code := strings.builder_make(context.temp_allocator)
+			j := i + 1
+			for j < len(lines) && strings.trim_space(lines[j]) != "```" {
+				line := lines[j]
+				if indent > 0 && len(line) >= indent && strings.trim_space(line[:indent]) == "" {
+					line = line[indent:]
+				}
+				strings.write_string(&code, line)
+				strings.write_byte(&code, '\n')
+				j += 1
+			}
+			src := strings.to_string(code)
+			out := strings.builder_make(context.temp_allocator)
+			testing.expectf(t, site_code_lex(&out, src), "%s:%d: site_code_lex failed", path, i + 1)
+			html := strings.to_string(out)
+			testing.expectf(t, plain_of(html) == src, "%s:%d: byte mismatch", path, i + 1)
+			testing.expectf(t, strings.contains(html, "<span class=\"c-"), "%s:%d: block produced no highlight spans", path, i + 1)
+			total_blocks += 1
+			i = j
+		}
+	}
+	testing.expectf(t, total_blocks >= 50, "expected >= 50 ```lex blocks across LEX/COURSE/CONSOLE guides, found %d", total_blocks)
+}

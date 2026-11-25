@@ -92,7 +92,7 @@ facts_start :: proc "contextless" () {
 	// A row of another description of the same fact name is left out. The
 	// fields are names of the table: `where` takes them.
 	//
-	// ```
+	// ```lex
 	// > log.records(0) |> facts(log_reader.Fact_Probe) |> where(probe_number = 7)
 	// ```
 	//

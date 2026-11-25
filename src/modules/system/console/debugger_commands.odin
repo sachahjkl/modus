@@ -160,7 +160,7 @@ debugger_commands_start :: proc "contextless" () {
 	// refused. The grant is `debug` in `grants("console")`, and
 	// `revoke("console", "debug")` ends it.
 	//
-	// ```
+	// ```lex
 	// > debug("clock")
 	// ```
 	//
@@ -216,7 +216,7 @@ debugger_commands_start :: proc "contextless" () {
 	//   (`debug_target::rounds`) needs no held thread.
 	// - `path`: a name, then steps: `.field`, `[number]`, `^`.
 	//
-	// ```
+	// ```lex
 	// > value(0, 0, "pair.next^.first")
 	// ```
 	command("value", {.Integer, .Integer, .Text}, .Table, "a variable or a global, by a path: debugger.value()", debug_value)
@@ -291,7 +291,7 @@ debugger_commands_start :: proc "contextless" () {
 	//
 	// - `process`: the nickname of the disk process.
 	//
-	// ```
+	// ```lex
 	// > stop_report("visitor")
 	// ```
 	command("stop_report", {.Text}, .Table, "the frames of a disk process that faulted, named: debugger.stop_report()", debug_stop_report)
@@ -309,7 +309,7 @@ debugger_commands_start :: proc "contextless" () {
 	// The root service starts the module for the console, as `start`
 	// does, under the rule of `debug`.
 	//
-	// ```
+	// ```lex
 	// > record("clock")
 	// ```
 	command("record", {.Text}, .Table, "start a process recorded from its first instruction: debugger.record()", debug_record)
@@ -317,7 +317,7 @@ debugger_commands_start :: proc "contextless" () {
 	// into an input history, and gives the row of the record. The kernel
 	// records only a process that did not run yet: `record` starts one.
 	//
-	// ```
+	// ```lex
 	// > record_start()
 	// ```
 	command("record_start", {}, .Table, "record the inputs of the debugged process: debugger.record_start()", debug_record_start)
@@ -331,7 +331,7 @@ debugger_commands_start :: proc "contextless" () {
 	// values, or stops at the first difference, whose input point is in
 	// the row. A replay sends nothing to any process.
 	//
-	// ```
+	// ```lex
 	// > replay_start()
 	// ```
 	command("replay_start", {}, .Table, "run the recorded module again from its history: debugger.replay_start()", debug_replay_start)
@@ -352,7 +352,7 @@ debugger_commands_start :: proc "contextless" () {
 	//
 	// - `points`: the input points to go back, from 1.
 	//
-	// ```
+	// ```lex
 	// > replay_step_back(1)
 	// ```
 	command("replay_step_back", {.Integer}, .Table, "the checkpoint and the points of a step back: debugger.replay_step_back()", debug_replay_step_back)
@@ -369,7 +369,7 @@ debugger_commands_start :: proc "contextless" () {
 	//   console has no hexadecimal number (`4206608` is `0x403010`).
 	// - `size`: 1 to 4096 bytes.
 	//
-	// ```
+	// ```lex
 	// > watch_back(4206608, 8)
 	// ```
 	command("watch_back", {.Integer, .Integer}, .Table, "the last input that wrote some bytes: debugger.watch_back()", debug_watch_back, {{}, value_kinds.size_in(.Bytes)})
