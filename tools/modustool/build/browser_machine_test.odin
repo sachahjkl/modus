@@ -598,12 +598,80 @@ browser_machine_host_object_cache_matches_the_contract :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, strings.contains(text, fmt.tprintf("export const BROWSER_CACHE_OBJECT_LIMIT = %d;", object_cache.BROWSER_CACHE_OBJECT_LIMIT)))
 	testing.expect(t, strings.contains(text, fmt.tprintf("export const REALISATION_WIRE_SIZE = %d;", object_cache.REALISATION_WIRE_SIZE)))
+	testing.expect(t, strings.contains(text, fmt.tprintf("export const OBJECT_FRAME_PAYLOAD_BYTES = %d;", object_cache.FRAME_PAYLOAD_BYTES)))
+	testing.expect(t, strings.contains(text, fmt.tprintf("export const OBJECT_CHUNKS_PER_FRAME = %d;", object_cache.CHUNKS_PER_FRAME)))
+	testing.expect(t, strings.contains(text, fmt.tprintf("export const OBJECT_MAX_PROOF_DEPTH = %d;", object_cache.MAX_PROOF_DEPTH)))
+	testing.expect(t, strings.contains(text, fmt.tprintf("export const OBJECT_PROOF_ENTRY_SIZE = %d;", object_cache.PROOF_ENTRY_SIZE)))
+	testing.expect(t, strings.contains(text, fmt.tprintf("export const OBJECT_OUTBOARD_ENTRY_SIZE = %d;", object_cache.OUTBOARD_ENTRY_SIZE)))
 	testing.expect(t, strings.contains(text, "this.baseUrl + \"" + object_cache.BROWSER_CACHE_BLOB_PREFIX + "\" + hash"))
 	testing.expect(t, strings.contains(text, "this.baseUrl + \"" + object_cache.BROWSER_CACHE_REALISATION_PREFIX + "\" + hash"))
-	for part in ([?]string{"credentials: \"omit\"", "redirect: \"error\"", "referrerPolicy: \"no-referrer\"", "const BROWSER_CACHE_HASH = /^[0-9a-f]{64}$/;", "if (url.protocol !== \"https:\" && url.protocol !== \"http:\") return \"\";", "if (url.username || url.password || url.search || url.hash) return \"\";", "if (size > limit) {"}) {
+	for part in ([?]string{"credentials: \"omit\"", "redirect: \"error\"", "referrerPolicy: \"no-referrer\"", "const BROWSER_CACHE_HASH = /^[0-9a-f]{64}$/;", "if (url.protocol !== \"https:\" && url.protocol !== \"http:\") return \"\";", "if (url.username || url.password || url.search || url.hash) return \"\";", "if (size > limit) {", "outboardUrlOf(hash)", "async fetchBlobFrame(", "async streamBlob(", "export function objectFrameVerify("}) {
 		testing.expectf(t, strings.contains(text, part), "the host holds no %q", part)
 	}
 	testing.expect(t, strings.contains(text, "this.objectCache = new ObjectCacheBridge({ baseUrl: cacheBaseUrl });"))
+}
+
+// CLI dispatch for modustool browser-machine parses every valid subcommand and
+// refuses unknown verbs, empty image arguments, and extra arguments.
+@(test)
+browser_machine_command_parse_checks_each_form :: proc(t: ^testing.T) {
+	// Refusals first.
+	for bad in ([][]string{{"unknown"}, {"boot", ""}, {"console", "extra"}, {"console-boot", ""}, {"boot", "a", "b"}, {"console-boot", "a", "b"}}) {
+		_, _, ok := browser_machine_command_parse(bad)
+		testing.expectf(t, !ok, "expected %v to be refused", bad)
+	}
+	cmd, img, ok := browser_machine_command_parse(nil)
+	testing.expect(t, ok && cmd == .Build && img == "")
+	cmd, img, ok = browser_machine_command_parse({"boot"})
+	testing.expect(t, ok && cmd == .Boot && img == "")
+	cmd, img, ok = browser_machine_command_parse({"boot", "build/boot.image"})
+	testing.expect(t, ok && cmd == .Boot && img == "build/boot.image")
+	cmd, img, ok = browser_machine_command_parse({"console"})
+	testing.expect(t, ok && cmd == .Console && img == "")
+	cmd, img, ok = browser_machine_command_parse({"console-boot"})
+	testing.expect(t, ok && cmd == .Console_Boot && img == "")
+	cmd, img, ok = browser_machine_command_parse({"console-boot", "build/browser_machine/console.image"})
+	testing.expect(t, ok && cmd == .Console_Boot && img == "build/browser_machine/console.image")
+}
+
+// The COM2 Node console-boot script and its output checker require the kernel
+// mark, root stage, dom_terminal ready stage, typed Lex command, exact COM2
+// answer, and zero WebAssembly traps.
+@(test)
+browser_machine_console_boot_script_and_output_check :: proc(t: ^testing.T) {
+	script := BROWSER_MACHINE_CONSOLE_BOOT_TEXT
+	for required in ([?]string{
+		"new host.BootStageTracker({",
+		"desktop: false,",
+		"new host.DomTerminalAccumulator()",
+		"framebufferWidth: 0,",
+		"framebufferHeight: 0,",
+		"machine.consolePort.type(command + \"\\r\")",
+		"collector.feed(line)",
+		"collector.hasLineContaining(expectedAnswer)",
+		"if (machine.state === host.MachineState.Trapped)",
+		"process.exit(0);",
+	}) {
+		testing.expectf(t, strings.contains(script, required), "console-boot script lacks %q", required)
+	}
+	// Refusals on incomplete or trapped output.
+	testing.expect(t, browser_machine_console_boot_output_check("", "1 MiB + 512 KiB", "1536 KiB") != "")
+	trapped := "serial: kernel: ok\nserial: kernel: boot: kernel: root service: 10 us\nstage: ready at 1.0 s\ntyped: 1 MiB + 512 KiB at 1.0 s\nanswer: 1536 KiB\nmachine: trapped null trap\n"
+	testing.expect(t, browser_machine_console_boot_output_check(trapped, "1 MiB + 512 KiB", "1536 KiB") != "")
+	no_mark := "serial: kernel: boot: kernel: root service: 10 us\nstage: ready at 1.0 s\ntyped: 1 MiB + 512 KiB at 1.0 s\nanswer: 1536 KiB\nmachine: running null \n"
+	testing.expect(t, browser_machine_console_boot_output_check(no_mark, "1 MiB + 512 KiB", "1536 KiB") != "")
+	no_root := "serial: kernel: ok\nstage: ready at 1.0 s\ntyped: 1 MiB + 512 KiB at 1.0 s\nanswer: 1536 KiB\nmachine: running null \n"
+	testing.expect(t, browser_machine_console_boot_output_check(no_root, "1 MiB + 512 KiB", "1536 KiB") != "")
+	no_ready := "serial: kernel: ok\nserial: kernel: boot: kernel: root service: 10 us\ntyped: 1 MiB + 512 KiB at 1.0 s\nanswer: 1536 KiB\nmachine: running null \n"
+	testing.expect(t, browser_machine_console_boot_output_check(no_ready, "1 MiB + 512 KiB", "1536 KiB") != "")
+	no_typed := "serial: kernel: ok\nserial: kernel: boot: kernel: root service: 10 us\nstage: ready at 1.0 s\nanswer: 1536 KiB\nmachine: running null \n"
+	testing.expect(t, browser_machine_console_boot_output_check(no_typed, "1 MiB + 512 KiB", "1536 KiB") != "")
+	wrong_answer := "serial: kernel: ok\nserial: kernel: boot: kernel: root service: 10 us\nstage: ready at 1.0 s\ntyped: 1 MiB + 512 KiB at 1.0 s\nanswer: 1024 KiB\nmachine: running null \n"
+	testing.expect(t, browser_machine_console_boot_output_check(wrong_answer, "1 MiB + 512 KiB", "1536 KiB") != "")
+
+	// Valid complete output passes cleanly.
+	valid := "serial: kernel: ok\nserial: kernel: boot: kernel: root service: 10 us\nstage: ready at 2.1 s\ntyped: 1 MiB + 512 KiB at 2.1 s\nanswered: at 2.2 s\nanswer: 1536 KiB\nmachine: running null \n"
+	testing.expect_value(t, browser_machine_console_boot_output_check(valid, "1 MiB + 512 KiB", "1536 KiB"), "")
 }
 
 // A base image of the test with every module of the module table and the

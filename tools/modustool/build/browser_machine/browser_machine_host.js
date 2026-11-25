@@ -467,8 +467,414 @@ Object.freeze(BrowserCacheStatus);
 // BROWSER_CACHE_OBJECT_LIMIT and REALISATION_WIRE_SIZE of the contract.
 export const BROWSER_CACHE_OBJECT_LIMIT = 16777216;
 export const REALISATION_WIRE_SIZE = 164;
+// The format bounds of verified 1 MiB Bao frame streaming (object_frames.odin
+// of modus:contract/object_cache). A host test of the tool compares each one.
+export const OBJECT_FRAME_PAYLOAD_BYTES = 1048576;
+export const OBJECT_CHUNKS_PER_FRAME = 1024;
+export const OBJECT_MAX_PROOF_DEPTH = 32;
+export const OBJECT_PROOF_ENTRY_SIZE = 32;
+export const OBJECT_OUTBOARD_ENTRY_SIZE = 64;
+export const BROWSER_CACHE_OUTBOARD_PREFIX = "/outboards/";
+// Peak payload buffer kept in memory while streaming a blob past 16 MiB:
+// strictly one verified 1 MiB frame (OBJECT_FRAME_PAYLOAD_BYTES).
+export const BROWSER_CACHE_STREAM_BUFFER_LIMIT = OBJECT_FRAME_PAYLOAD_BYTES;
 const BROWSER_CACHE_HASH = /^[0-9a-f]{64}$/;
 const BROWSER_CACHE_ZERO_HASH = "0".repeat(64);
+const OBJECT_MAX_FRAME_COUNT = 2 ** OBJECT_MAX_PROOF_DEPTH;
+
+// Pure BLAKE3 primitives matching src/library/modus/contract/blake3/blake3.odin
+// for verified streaming of 1 MiB Bao frames in JavaScript without holding
+// blobs past 16 MiB whole in memory.
+const BLAKE3_CHUNK_SIZE = 1024;
+const BLAKE3_BLOCK_SIZE = 64;
+const BLAKE3_HASH_SIZE = 32;
+const BLAKE3_FLAG_CHUNK_START = 1;
+const BLAKE3_FLAG_CHUNK_END = 2;
+const BLAKE3_FLAG_PARENT = 4;
+const BLAKE3_FLAG_ROOT = 8;
+const BLAKE3_IV = Uint32Array.of(
+  0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+  0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+);
+const BLAKE3_MSG_PERM = [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8];
+
+const rotr32 = (value, count) => ((value >>> count) | (value << (32 - count))) >>> 0;
+
+function blake3Mix(state, a, b, c, d, x, y) {
+  state[a] = (state[a] + state[b] + x) >>> 0;
+  state[d] = rotr32(state[d] ^ state[a], 16);
+  state[c] = (state[c] + state[d]) >>> 0;
+  state[b] = rotr32(state[b] ^ state[c], 12);
+  state[a] = (state[a] + state[b] + y) >>> 0;
+  state[d] = rotr32(state[d] ^ state[a], 8);
+  state[c] = (state[c] + state[d]) >>> 0;
+  state[b] = rotr32(state[b] ^ state[c], 7);
+}
+
+function blake3Compress(cv, block, counter, blockLength, flags) {
+  const state = new Uint32Array(16);
+  for (let i = 0; i < 8; i += 1) state[i] = cv[i];
+  state[8] = BLAKE3_IV[0];
+  state[9] = BLAKE3_IV[1];
+  state[10] = BLAKE3_IV[2];
+  state[11] = BLAKE3_IV[3];
+  state[12] = Number(counter & 0xffffffffn) >>> 0;
+  state[13] = Number((counter >> 32n) & 0xffffffffn) >>> 0;
+  state[14] = blockLength >>> 0;
+  state[15] = flags >>> 0;
+  let message = Uint32Array.from(block);
+  for (let round = 0; round < 7; round += 1) {
+    blake3Mix(state, 0, 4, 8, 12, message[0], message[1]);
+    blake3Mix(state, 1, 5, 9, 13, message[2], message[3]);
+    blake3Mix(state, 2, 6, 10, 14, message[4], message[5]);
+    blake3Mix(state, 3, 7, 11, 15, message[6], message[7]);
+    blake3Mix(state, 0, 5, 10, 15, message[8], message[9]);
+    blake3Mix(state, 1, 6, 11, 12, message[10], message[11]);
+    blake3Mix(state, 2, 7, 8, 13, message[12], message[13]);
+    blake3Mix(state, 3, 4, 9, 14, message[14], message[15]);
+    if (round < 6) {
+      const next = new Uint32Array(16);
+      for (let i = 0; i < 16; i += 1) next[i] = message[BLAKE3_MSG_PERM[i]];
+      message = next;
+    }
+  }
+  const half = new Uint32Array(8);
+  for (let i = 0; i < 8; i += 1) half[i] = (state[i] ^ state[i + 8]) >>> 0;
+  return half;
+}
+
+function blake3ReadBlockWords(bytes, offset, size) {
+  const padded = new Uint8Array(BLAKE3_BLOCK_SIZE);
+  if (size > 0) padded.set(bytes.subarray(offset, offset + size), 0);
+  const words = new Uint32Array(16);
+  for (let i = 0; i < 16; i += 1) {
+    const at = i * 4;
+    words[i] = (padded[at] | (padded[at + 1] << 8) | (padded[at + 2] << 16) | (padded[at + 3] << 24)) >>> 0;
+  }
+  return words;
+}
+
+function blake3ParentBlock(left, right) {
+  const block = new Uint32Array(16);
+  for (let i = 0; i < 8; i += 1) {
+    block[i] = left[i];
+    block[i + 8] = right[i];
+  }
+  return block;
+}
+
+function blake3ChunkValue(chunk, chunkCounter, lastFlags) {
+  let value = Uint32Array.from(BLAKE3_IV);
+  let offset = 0;
+  let flags = BLAKE3_FLAG_CHUNK_START;
+  for (;;) {
+    const size = Math.min(chunk.byteLength - offset, BLAKE3_BLOCK_SIZE);
+    const block = blake3ReadBlockWords(chunk, offset, size);
+    offset += size;
+    if (offset >= chunk.byteLength) flags |= BLAKE3_FLAG_CHUNK_END | lastFlags;
+    value = blake3Compress(value, block, chunkCounter, size, flags);
+    if (offset >= chunk.byteLength) return value;
+    flags = 0;
+  }
+}
+
+function blake3LeftSize(size) {
+  const chunks = Math.floor((size - 1) / BLAKE3_CHUNK_SIZE);
+  let power = 1;
+  while (power * 2 <= chunks) power *= 2;
+  return power * BLAKE3_CHUNK_SIZE;
+}
+
+export function blake3ChainingValueToBytes(cv) {
+  const out = new Uint8Array(BLAKE3_HASH_SIZE);
+  for (let i = 0; i < 8; i += 1) {
+    const word = cv[i] >>> 0;
+    out[i * 4] = word & 0xff;
+    out[i * 4 + 1] = (word >>> 8) & 0xff;
+    out[i * 4 + 2] = (word >>> 16) & 0xff;
+    out[i * 4 + 3] = (word >>> 24) & 0xff;
+  }
+  return out;
+}
+
+export function blake3ChainingValueFromBytes(bytes) {
+  const cv = new Uint32Array(8);
+  for (let i = 0; i < 8; i += 1) {
+    const at = i * 4;
+    cv[i] = (bytes[at] | (bytes[at + 1] << 8) | (bytes[at + 2] << 16) | (bytes[at + 3] << 24)) >>> 0;
+  }
+  return cv;
+}
+
+export function blake3ParentChainingValue(left, right) {
+  return blake3Compress(BLAKE3_IV, blake3ParentBlock(left, right), 0n, BLAKE3_BLOCK_SIZE, BLAKE3_FLAG_PARENT);
+}
+
+export function blake3RootOfChildren(left, right) {
+  return blake3ChainingValueToBytes(
+    blake3Compress(BLAKE3_IV, blake3ParentBlock(left, right), 0n, BLAKE3_BLOCK_SIZE, BLAKE3_FLAG_PARENT | BLAKE3_FLAG_ROOT),
+  );
+}
+
+export function blake3SubtreeChainingValue(input, chunkCounter = 0n) {
+  const counter = BigInt(chunkCounter);
+  if (input.byteLength <= BLAKE3_CHUNK_SIZE) return blake3ChunkValue(input, counter, 0);
+  const left = blake3LeftSize(input.byteLength);
+  const leftCv = blake3SubtreeChainingValue(input.subarray(0, left), counter);
+  const rightCv = blake3SubtreeChainingValue(input.subarray(left), counter + BigInt(left / BLAKE3_CHUNK_SIZE));
+  return blake3ParentChainingValue(leftCv, rightCv);
+}
+
+export function blake3Hash(input) {
+  if (input.byteLength <= BLAKE3_CHUNK_SIZE) return blake3ChainingValueToBytes(blake3ChunkValue(input, 0n, BLAKE3_FLAG_ROOT));
+  const left = blake3LeftSize(input.byteLength);
+  return blake3RootOfChildren(
+    blake3SubtreeChainingValue(input.subarray(0, left), 0n),
+    blake3SubtreeChainingValue(input.subarray(left), BigInt(left / BLAKE3_CHUNK_SIZE)),
+  );
+}
+
+export function blake3HashHex(hash) {
+  let text = "";
+  for (let i = 0; i < hash.byteLength; i += 1) text += hash[i].toString(16).padStart(2, "0");
+  return text;
+}
+
+export function blake3HashFromHex(hex) {
+  if (typeof hex !== "string" || !BROWSER_CACHE_HASH.test(hex)) return null;
+  return Uint8Array.from(hex.match(/../g), (pair) => parseInt(pair, 16));
+}
+
+export function blake3HashesEqual(a, b) {
+  if (!a || !b || a.byteLength !== BLAKE3_HASH_SIZE || b.byteLength !== BLAKE3_HASH_SIZE) return false;
+  let diff = 0;
+  for (let i = 0; i < BLAKE3_HASH_SIZE; i += 1) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+function validFrameBytes(frameBytes) {
+  if (!Number.isSafeInteger(frameBytes) || frameBytes < BLAKE3_CHUNK_SIZE || frameBytes % BLAKE3_CHUNK_SIZE !== 0) return false;
+  const chunks = frameBytes / BLAKE3_CHUNK_SIZE;
+  return (chunks & (chunks - 1)) === 0;
+}
+
+// Bao frame tree math matching src/library/modus/contract/object_cache/object_frames.odin.
+export function objectFrameCount(objectSize, frameBytes = OBJECT_FRAME_PAYLOAD_BYTES) {
+  if (!Number.isSafeInteger(objectSize) || objectSize < 0 || !validFrameBytes(frameBytes)) return 0;
+  const count = objectSize === 0 ? 1 : Math.ceil(objectSize / frameBytes);
+  return count <= OBJECT_MAX_FRAME_COUNT ? count : 0;
+}
+
+export function objectFrameLength(objectSize, frameIndex, frameBytes = OBJECT_FRAME_PAYLOAD_BYTES) {
+  const count = objectFrameCount(objectSize, frameBytes);
+  if (count === 0 || !Number.isSafeInteger(frameIndex) || frameIndex < 0 || frameIndex >= count) return -1;
+  if (frameIndex < count - 1) return frameBytes;
+  return objectSize - frameIndex * frameBytes;
+}
+
+export function objectLeftFrames(frames) {
+  let power = 1;
+  while (power * 2 < frames) power *= 2;
+  return power;
+}
+
+export function objectFramePath(frameCount, frameIndex) {
+  if (!Number.isSafeInteger(frameCount) || frameCount <= 0 || frameCount > OBJECT_MAX_FRAME_COUNT) return null;
+  if (!Number.isSafeInteger(frameIndex) || frameIndex < 0 || frameIndex >= frameCount) return null;
+  const parentIndex = [];
+  const inLeft = [];
+  let first = 0;
+  let size = frameCount;
+  let index = 0;
+  while (size > 1) {
+    const left = objectLeftFrames(size);
+    parentIndex.push(index);
+    if (frameIndex < first + left) {
+      inLeft.push(true);
+      index += 1;
+      size = left;
+    } else {
+      inLeft.push(false);
+      index += left;
+      first += left;
+      size -= left;
+    }
+  }
+  return { depth: parentIndex.length, parentIndex, inLeft };
+}
+
+export function objectFrameParentIndex(frameCount, firstFrame, frames) {
+  let low = 0;
+  let size = frameCount;
+  let index = 0;
+  while (size > 1) {
+    if (low === firstFrame && size === frames) return index;
+    const left = objectLeftFrames(size);
+    if (firstFrame < low + left) {
+      index += 1;
+      size = left;
+    } else {
+      index += left;
+      low += left;
+      size -= left;
+    }
+  }
+  return -1;
+}
+
+// Streaming Bao frame-tree builder matching Frame_Tree_Builder in object_frames.odin.
+// Calls readFrame(frameIndex, length) one frame at a time so multi-MiB blobs
+// never allocate more than one frame in memory.
+export function objectFrameTreeBuild({ objectSize, readFrame, frameBytes = OBJECT_FRAME_PAYLOAD_BYTES }) {
+  const frameCount = objectFrameCount(objectSize, frameBytes);
+  if (frameCount === 0 || typeof readFrame !== "function") throw new Error("invalid objectSize or frameBytes for frame tree");
+  const outboard = new Uint8Array((frameCount - 1) * OBJECT_OUTBOARD_ENTRY_SIZE);
+  if (frameCount === 1) {
+    const frame = readFrame(0, objectSize);
+    if (!(frame instanceof Uint8Array) || frame.byteLength !== objectSize) throw new Error("frame 0 length mismatch");
+    const root = blake3Hash(frame);
+    return { root, rootHex: blake3HashHex(root), outboard, frameCount };
+  }
+  const chunksPerFrame = BigInt(frameBytes / BLAKE3_CHUNK_SIZE);
+  const stack = [];
+  let root = null;
+  const joinTop = () => {
+    const right = stack.pop();
+    const left = stack.pop();
+    const first = left.first;
+    const frames = left.frames + right.frames;
+    const parentIdx = objectFrameParentIndex(frameCount, first, frames);
+    if (parentIdx < 0) throw new Error("invalid frame parent index");
+    const entryOffset = parentIdx * OBJECT_OUTBOARD_ENTRY_SIZE;
+    outboard.set(blake3ChainingValueToBytes(left.cv), entryOffset);
+    outboard.set(blake3ChainingValueToBytes(right.cv), entryOffset + BLAKE3_HASH_SIZE);
+    if (first === 0 && frames === frameCount) {
+      root = blake3RootOfChildren(left.cv, right.cv);
+      return;
+    }
+    stack.push({ cv: blake3ParentChainingValue(left.cv, right.cv), first, frames });
+  };
+  for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+    const length = objectFrameLength(objectSize, frameIndex, frameBytes);
+    const frame = readFrame(frameIndex, length);
+    if (!(frame instanceof Uint8Array) || frame.byteLength !== length) throw new Error("frame length mismatch at " + frameIndex);
+    const cv = blake3SubtreeChainingValue(frame, BigInt(frameIndex) * chunksPerFrame);
+    stack.push({ cv, first: frameIndex, frames: 1 });
+    while (stack.length >= 2 && stack[stack.length - 1].frames === stack[stack.length - 2].frames) joinTop();
+  }
+  while (stack.length >= 2) joinTop();
+  if (!root || stack.length !== 0) throw new Error("incomplete frame tree");
+  return { root, rootHex: blake3HashHex(root), outboard, frameCount };
+}
+
+export function objectProofFromOutboard(outboard, objectSize, frameIndex, frameBytes = OBJECT_FRAME_PAYLOAD_BYTES) {
+  const frameCount = objectFrameCount(objectSize, frameBytes);
+  const path = objectFramePath(frameCount, frameIndex);
+  if (!path || !(outboard instanceof Uint8Array)) return null;
+  if (outboard.byteLength !== (frameCount - 1) * OBJECT_OUTBOARD_ENTRY_SIZE) return null;
+  const proof = new Uint8Array(path.depth * OBJECT_PROOF_ENTRY_SIZE);
+  for (let level = 0; level < path.depth; level += 1) {
+    const entryOffset = path.parentIndex[level] * OBJECT_OUTBOARD_ENTRY_SIZE;
+    const siblingOffset = path.inLeft[level] ? entryOffset + BLAKE3_HASH_SIZE : entryOffset;
+    proof.set(outboard.subarray(siblingOffset, siblingOffset + BLAKE3_HASH_SIZE), level * OBJECT_PROOF_ENTRY_SIZE);
+  }
+  return proof;
+}
+
+// Verifies one frame against the whole-blob BLAKE3 hash using its Bao sibling
+// proof, matching object_frame_verify in object_frames.odin.
+export function objectFrameVerify({ expectedHash, objectSize, frameIndex, proof, frame, frameBytes = OBJECT_FRAME_PAYLOAD_BYTES }) {
+  const hashBytes = typeof expectedHash === "string" ? blake3HashFromHex(expectedHash) : expectedHash;
+  if (!(hashBytes instanceof Uint8Array) || hashBytes.byteLength !== BLAKE3_HASH_SIZE) return BrowserCacheStatus.Invalid_Request;
+  let allZero = true;
+  for (let i = 0; i < BLAKE3_HASH_SIZE; i += 1) if (hashBytes[i] !== 0) { allZero = false; break; }
+  if (allZero) return BrowserCacheStatus.Invalid_Request;
+  const frameCount = objectFrameCount(objectSize, frameBytes);
+  const expectedLength = objectFrameLength(objectSize, frameIndex, frameBytes);
+  if (frameCount === 0 || expectedLength < 0 || !(frame instanceof Uint8Array) || frame.byteLength !== expectedLength) {
+    return BrowserCacheStatus.Invalid_Request;
+  }
+  const path = objectFramePath(frameCount, frameIndex);
+  if (!path || !(proof instanceof Uint8Array) || proof.byteLength !== path.depth * OBJECT_PROOF_ENTRY_SIZE) {
+    return BrowserCacheStatus.Invalid_Request;
+  }
+  if (frameCount === 1) {
+    return blake3HashesEqual(blake3Hash(frame), hashBytes) ? BrowserCacheStatus.Ok : BrowserCacheStatus.Hash_Mismatch;
+  }
+  const chunksPerFrame = BigInt(frameBytes / BLAKE3_CHUNK_SIZE);
+  let value = blake3SubtreeChainingValue(frame, BigInt(frameIndex) * chunksPerFrame);
+  for (let level = path.depth - 1; level >= 1; level -= 1) {
+    const sibling = blake3ChainingValueFromBytes(proof.subarray(level * OBJECT_PROOF_ENTRY_SIZE, (level + 1) * OBJECT_PROOF_ENTRY_SIZE));
+    value = path.inLeft[level] ? blake3ParentChainingValue(value, sibling) : blake3ParentChainingValue(sibling, value);
+  }
+  const topSibling = blake3ChainingValueFromBytes(proof.subarray(0, OBJECT_PROOF_ENTRY_SIZE));
+  const root = path.inLeft[0] ? blake3RootOfChildren(value, topSibling) : blake3RootOfChildren(topSibling, value);
+  return blake3HashesEqual(root, hashBytes) ? BrowserCacheStatus.Ok : BrowserCacheStatus.Hash_Mismatch;
+}
+
+// Strict parser for HTTP Content-Range: bytes <start>-<end>/<total>.
+export function parseContentRange(header) {
+  if (typeof header !== "string") return null;
+  const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(header.trim());
+  if (!match) return null;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  const total = Number(match[3]);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || !Number.isSafeInteger(total)) return null;
+  if (start < 0 || end < start || total <= end) return null;
+  return { start, end, total };
+}
+
+function parseHexBytes(text) {
+  if (typeof text !== "string" || text.length % 2 !== 0 || (text.length > 0 && !/^[0-9a-f]+$/.test(text))) return null;
+  if (text.length === 0) return new Uint8Array(0);
+  return Uint8Array.from(text.match(/../g), (pair) => parseInt(pair, 16));
+}
+
+async function readResponseExact(response, expectedBytes) {
+  const rawLength = response.headers?.get?.("content-length");
+  if (typeof rawLength === "string" && rawLength.trim() !== "") {
+    if (!/^\d+$/.test(rawLength.trim())) {
+      response.body?.cancel?.().catch?.(() => {});
+      return { status: BrowserCacheStatus.Transport_Error, bytes: null };
+    }
+    const declared = Number(rawLength.trim());
+    if (!Number.isSafeInteger(declared) || declared > expectedBytes) {
+      response.body?.cancel?.().catch?.(() => {});
+      return { status: BrowserCacheStatus.Too_Large, bytes: null };
+    }
+    if (declared < expectedBytes) {
+      response.body?.cancel?.().catch?.(() => {});
+      return { status: BrowserCacheStatus.Transport_Error, bytes: null };
+    }
+  }
+  const out = new Uint8Array(expectedBytes);
+  let offset = 0;
+  try {
+    if (response.body && typeof response.body.getReader === "function") {
+      const reader = response.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (offset + value.byteLength > expectedBytes) {
+          reader.cancel().catch(() => {});
+          return { status: BrowserCacheStatus.Too_Large, bytes: null };
+        }
+        out.set(value, offset);
+        offset += value.byteLength;
+      }
+    } else {
+      const raw = new Uint8Array(await response.arrayBuffer());
+      if (raw.byteLength > expectedBytes) return { status: BrowserCacheStatus.Too_Large, bytes: null };
+      out.set(raw, 0);
+      offset = raw.byteLength;
+    }
+  } catch {
+    return { status: BrowserCacheStatus.Transport_Error, bytes: null };
+  }
+  if (offset !== expectedBytes) return { status: BrowserCacheStatus.Transport_Error, bytes: null };
+  return { status: BrowserCacheStatus.Ok, bytes: out };
+}
 
 // cacheBaseUrlCheck gives the base address of an object cache, or "" when
 // text names none that the page may fetch: only http: and https:, with no
@@ -510,6 +916,185 @@ export class ObjectCacheBridge {
     if (kind === BrowserCacheObjectKind.Blob) return this.baseUrl + "/blobs/" + hash;
     if (kind === BrowserCacheObjectKind.Realisation) return this.baseUrl + "/realisations/" + hash;
     return "";
+  }
+  // outboardUrlOf gives the address of the Bao outboard of a multi-frame blob,
+  // or "" for a request that names no blob.
+  outboardUrlOf(hash) {
+    if (!this.configured || typeof hash !== "string" || !BROWSER_CACHE_HASH.test(hash) || hash === BROWSER_CACHE_ZERO_HASH) return "";
+    return this.baseUrl + BROWSER_CACHE_OUTBOARD_PREFIX + hash;
+  }
+  // fetchOutboardParent fetches one 64-byte parent entry at parentIndex from
+  // /outboards/<hash> using HTTP Range so even large outboards never buffer
+  // whole in memory.
+  async fetchOutboardParent(hash, parentIndex, outboardBytes) {
+    const url = this.outboardUrlOf(hash);
+    if (!url || !Number.isSafeInteger(parentIndex) || parentIndex < 0 || !Number.isSafeInteger(outboardBytes) || outboardBytes < OBJECT_OUTBOARD_ENTRY_SIZE) {
+      return { status: BrowserCacheStatus.Invalid_Request, entry: null };
+    }
+    const start = parentIndex * OBJECT_OUTBOARD_ENTRY_SIZE;
+    const end = start + OBJECT_OUTBOARD_ENTRY_SIZE - 1;
+    if (end >= outboardBytes) return { status: BrowserCacheStatus.Invalid_Request, entry: null };
+    let response;
+    try {
+      response = await this.fetchProcedure(url, {
+        method: "GET",
+        mode: "cors",
+        credentials: "omit",
+        redirect: "error",
+        referrerPolicy: "no-referrer",
+        headers: { Range: "bytes=" + start + "-" + end },
+      });
+    } catch {
+      return { status: BrowserCacheStatus.Transport_Error, entry: null };
+    }
+    if (response.status === 404) return { status: BrowserCacheStatus.Absent, entry: null };
+    if (response.status === 416) return { status: BrowserCacheStatus.Invalid_Request, entry: null };
+    if (response.status === 206) {
+      const range = parseContentRange(response.headers?.get?.("content-range"));
+      if (!range || range.start !== start || range.end !== end || range.total !== outboardBytes) {
+        response.body?.cancel?.().catch?.(() => {});
+        return { status: BrowserCacheStatus.Invalid_Request, entry: null };
+      }
+    } else if (!(response.status === 200 && outboardBytes === OBJECT_OUTBOARD_ENTRY_SIZE && start === 0)) {
+      response.body?.cancel?.().catch?.(() => {});
+      return { status: response.status === 200 ? BrowserCacheStatus.Too_Large : BrowserCacheStatus.Transport_Error, entry: null };
+    }
+    const body = await readResponseExact(response, OBJECT_OUTBOARD_ENTRY_SIZE);
+    if (body.status !== BrowserCacheStatus.Ok) return { status: body.status, entry: null };
+    return { status: BrowserCacheStatus.Ok, entry: body.bytes };
+  }
+  // fetchFrameProof gathers the <= 32 sibling chaining values along the Bao
+  // path of frameIndex from /outboards/<hash>.
+  async fetchFrameProof(hash, objectSize, frameIndex, frameBytes = OBJECT_FRAME_PAYLOAD_BYTES) {
+    const frameCount = objectFrameCount(objectSize, frameBytes);
+    const path = objectFramePath(frameCount, frameIndex);
+    if (!path) return { status: BrowserCacheStatus.Invalid_Request, proof: null };
+    if (path.depth === 0) return { status: BrowserCacheStatus.Ok, proof: new Uint8Array(0) };
+    const outboardBytes = (frameCount - 1) * OBJECT_OUTBOARD_ENTRY_SIZE;
+    const proof = new Uint8Array(path.depth * OBJECT_PROOF_ENTRY_SIZE);
+    for (let level = 0; level < path.depth; level += 1) {
+      const result = await this.fetchOutboardParent(hash, path.parentIndex[level], outboardBytes);
+      if (result.status !== BrowserCacheStatus.Ok) return { status: result.status, proof: null };
+      const sibling = path.inLeft[level]
+        ? result.entry.subarray(BLAKE3_HASH_SIZE, OBJECT_OUTBOARD_ENTRY_SIZE)
+        : result.entry.subarray(0, BLAKE3_HASH_SIZE);
+      proof.set(sibling, level * OBJECT_PROOF_ENTRY_SIZE);
+    }
+    return { status: BrowserCacheStatus.Ok, proof };
+  }
+  // fetchBlobFrame fetches one aligned 1 MiB frame of a blob of any size
+  // (including past BROWSER_CACHE_OBJECT_LIMIT = 16 MiB) using HTTP Range and
+  // verifies it against hash with its Bao proof before returning the bytes.
+  // Never buffers more than one frame (<= frameBytes) in memory.
+  async fetchBlobFrame(hash, { objectSize, frameIndex, proof = null, frameBytes = OBJECT_FRAME_PAYLOAD_BYTES } = {}) {
+    if (!this.configured) return { status: BrowserCacheStatus.Not_Configured, bytes: null };
+    const url = this.urlOf(BrowserCacheObjectKind.Blob, hash);
+    if (!url || !validFrameBytes(frameBytes) || frameBytes > OBJECT_FRAME_PAYLOAD_BYTES) {
+      return { status: BrowserCacheStatus.Invalid_Request, bytes: null };
+    }
+    const frameCount = objectFrameCount(objectSize, frameBytes);
+    const length = objectFrameLength(objectSize, frameIndex, frameBytes);
+    if (frameCount === 0 || length < 0) return { status: BrowserCacheStatus.Invalid_Request, bytes: null };
+    const start = frameIndex * frameBytes;
+    const headers = length > 0 ? { Range: "bytes=" + start + "-" + (start + length - 1) } : {};
+    let response;
+    try {
+      response = await this.fetchProcedure(url, {
+        method: "GET",
+        mode: "cors",
+        credentials: "omit",
+        redirect: "error",
+        referrerPolicy: "no-referrer",
+        headers,
+      });
+    } catch {
+      return { status: BrowserCacheStatus.Transport_Error, bytes: null };
+    }
+    if (response.status === 404) return { status: BrowserCacheStatus.Absent, bytes: null };
+    if (response.status === 416) return { status: BrowserCacheStatus.Invalid_Request, bytes: null };
+    if (length === 0) {
+      if (response.status !== 200) {
+        response.body?.cancel?.().catch?.(() => {});
+        return { status: BrowserCacheStatus.Transport_Error, bytes: null };
+      }
+    } else if (response.status === 206) {
+      const range = parseContentRange(response.headers?.get?.("content-range"));
+      if (!range || range.start !== start || range.end !== start + length - 1 || range.total !== objectSize) {
+        response.body?.cancel?.().catch?.(() => {});
+        return { status: BrowserCacheStatus.Invalid_Request, bytes: null };
+      }
+    } else if (response.status === 200) {
+      // Refuse 200 OK on multi-frame blobs so a server ignoring Range cannot
+      // force buffering a blob past one frame / past 16 MiB.
+      if (frameCount > 1) {
+        response.body?.cancel?.().catch?.(() => {});
+        return { status: BrowserCacheStatus.Too_Large, bytes: null };
+      }
+    } else {
+      response.body?.cancel?.().catch?.(() => {});
+      return { status: BrowserCacheStatus.Transport_Error, bytes: null };
+    }
+    const body = await readResponseExact(response, length);
+    if (body.status !== BrowserCacheStatus.Ok) return { status: body.status, bytes: null };
+
+    let frameProof = proof;
+    if (frameCount === 1) {
+      if (frameProof === null) frameProof = new Uint8Array(0);
+    } else if (frameProof === null) {
+      const headerProof = response.headers?.get?.("x-modus-frame-proof");
+      if (typeof headerProof === "string") {
+        frameProof = parseHexBytes(headerProof.trim());
+        if (!frameProof) return { status: BrowserCacheStatus.Invalid_Request, bytes: null };
+      } else {
+        const fetched = await this.fetchFrameProof(hash, objectSize, frameIndex, frameBytes);
+        if (fetched.status !== BrowserCacheStatus.Ok) return { status: fetched.status, bytes: null };
+        frameProof = fetched.proof;
+      }
+    }
+    const verified = objectFrameVerify({ expectedHash: hash, objectSize, frameIndex, proof: frameProof, frame: body.bytes, frameBytes });
+    if (verified !== BrowserCacheStatus.Ok) return { status: verified, bytes: null };
+    return { status: BrowserCacheStatus.Ok, bytes: body.bytes, frameIndex, frameCount, objectSize, offset: start };
+  }
+  // streamBlob streams a blob of any size one verified 1 MiB frame at a time
+  // into onFrame(bytes, info). Never holds more than one frame in JS memory.
+  async streamBlob(hash, { objectSize = null, frameBytes = OBJECT_FRAME_PAYLOAD_BYTES, onFrame, proofForFrame = null } = {}) {
+    if (!this.configured) return { status: BrowserCacheStatus.Not_Configured, totalBytes: 0, frameCount: 0 };
+    if (typeof onFrame !== "function" || !validFrameBytes(frameBytes) || frameBytes > OBJECT_FRAME_PAYLOAD_BYTES) {
+      return { status: BrowserCacheStatus.Invalid_Request, totalBytes: 0, frameCount: 0 };
+    }
+    const url = this.urlOf(BrowserCacheObjectKind.Blob, hash);
+    if (!url) return { status: BrowserCacheStatus.Invalid_Request, totalBytes: 0, frameCount: 0 };
+    let size = objectSize;
+    if (size === null) {
+      let head;
+      try {
+        head = await this.fetchProcedure(url, { method: "HEAD", mode: "cors", credentials: "omit", redirect: "error", referrerPolicy: "no-referrer" });
+      } catch {
+        return { status: BrowserCacheStatus.Transport_Error, totalBytes: 0, frameCount: 0 };
+      }
+      if (head.status === 404) return { status: BrowserCacheStatus.Absent, totalBytes: 0, frameCount: 0 };
+      if (!head.ok) return { status: BrowserCacheStatus.Transport_Error, totalBytes: 0, frameCount: 0 };
+      const rawHeadLength = head.headers?.get?.("content-length");
+      if (typeof rawHeadLength !== "string" || !/^\d+$/.test(rawHeadLength.trim())) {
+        return { status: BrowserCacheStatus.Invalid_Request, totalBytes: 0, frameCount: 0 };
+      }
+      const parsed = Number(rawHeadLength.trim());
+      if (!Number.isSafeInteger(parsed) || parsed < 0) return { status: BrowserCacheStatus.Invalid_Request, totalBytes: 0, frameCount: 0 };
+      size = parsed;
+    }
+    const frameCount = objectFrameCount(size, frameBytes);
+    if (frameCount === 0) return { status: BrowserCacheStatus.Invalid_Request, totalBytes: 0, frameCount: 0 };
+    let totalBytes = 0;
+    for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+      const explicitProof = typeof proofForFrame === "function" ? await proofForFrame(frameIndex) : null;
+      const frame = await this.fetchBlobFrame(hash, { objectSize: size, frameIndex, proof: explicitProof, frameBytes });
+      if (frame.status !== BrowserCacheStatus.Ok) {
+        return { status: frame.status, failedFrame: frameIndex, totalBytes, frameCount, objectSize: size };
+      }
+      await onFrame(frame.bytes, { frameIndex, frameCount, offset: frame.offset, objectSize: size });
+      totalBytes += frame.bytes.byteLength;
+    }
+    return { status: BrowserCacheStatus.Ok, totalBytes, frameCount, objectSize: size };
   }
   // fetchObject gives { status, bytes }: bytes only with Ok, and never
   // more than the bound of the kind. Ok says only that the server answered:
@@ -648,6 +1233,56 @@ export class BootStageTracker {
   // the start of a console image.
   consoleLine(line) {
     if (!this.desktop && line.startsWith('{"t":"edit"')) this.enter(BootStage.Ready);
+  }
+}
+
+// DomTerminalAccumulator assembles logical output lines from the JSON records
+// written by dom_terminal on COM2 (src/md/features/console_renderers.md,
+// "Variant C: dom_terminal"): styled runs of one line arrive as separate
+// {"t":"out","s":"..."} records until {"nl":true} terminates the line.
+export class DomTerminalAccumulator {
+  constructor() {
+    this.lines = [];
+    this.current = "";
+    this.ready = false;
+  }
+  clear() {
+    this.lines = [];
+    this.current = "";
+  }
+  feed(line) {
+    if (typeof line !== "string") return false;
+    let record;
+    try { record = JSON.parse(line); } catch { return false; }
+    if (!record || typeof record !== "object" || typeof record.t !== "string") return false;
+    switch (record.t) {
+      case "clr":
+        this.clear();
+        return true;
+      case "edit":
+        this.ready = true;
+        return true;
+      case "out":
+        if (typeof record.s === "string") this.current += record.s;
+        if (record.nl === true) {
+          this.lines.push(this.current);
+          this.current = "";
+        }
+        return true;
+      default:
+        return false;
+    }
+  }
+  hasLineContaining(needle) {
+    return this.lastMatchingLine(needle) !== "";
+  }
+  lastMatchingLine(needle) {
+    if (typeof needle !== "string" || needle.length === 0) return "";
+    if (this.current.includes(needle)) return this.current;
+    for (let i = this.lines.length - 1; i >= 0; i -= 1) {
+      if (this.lines[i].includes(needle)) return this.lines[i];
+    }
+    return "";
   }
 }
 
