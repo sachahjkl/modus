@@ -252,15 +252,13 @@ cache_page_html :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snapsh
 	// The endpoint, the protocol and the use.
 	write(&b, "<section class=\"card accent-kernel\" aria-labelledby=\"endpoint\">\n<h2 id=\"endpoint\">Endpoint</h2>\n<dl class=\"symbol-facts\">\n<dt>Address</dt><dd><code>")
 	escape(&b, page.endpoint)
-	write(&b, "</code></dd>\n<dt>Protocol</dt><dd>The cache protocol as binary frames over TCP: a request starts with <code>MOCQ</code>, an answer with <code>MOCR</code>. An object of any size travels in frames of 1 MiB, each checked against the BLAKE3 hash of the whole object (<a href=\"")
+	write(&b, "</code></dd>\n<dt>Protocol</dt><dd>The cache protocol as binary frames over TCP and QUIC (UDP): a request starts with <code>MOCQ</code>, an answer with <code>MOCR</code>. An object of any size travels in frames of 1 MiB, each checked against the BLAKE3 hash of the whole object (<a href=\"")
 	escape(&b, cache_page_site_link(site_address, site.site_page_file(site.SITE_GLOSSARY_FOLDER + "/" + CACHE_PAGE_GLOSSARY_GROUP), CACHE_PAGE_GLOSSARY_TERM))
 	write(&b, "\">object cache</a>)</dd>\n</dl>\n")
 	write(&b, "<p>A plan names this host in its substitution policy:</p>\n<pre><code>substitution = {\n  sources = [\"")
 	escape(&b, page.endpoint)
 	write(&b, "\"],\n  signers = [keys.publisher], // a key from its publisher\n  mode = .Prefer_Cache,\n}</code></pre>\n")
-	write(&b, "<p>No machine of modus reads an object cache over the network yet: the cache protocol over QUIC is on the <a href=\"")
-	escape(&b, cache_page_site_link(site_address, site.site_section_page(.Roadmap)))
-	write(&b, "\">roadmap</a>. An object cache of your own runs with the tool of modus:</p>\n")
+	write(&b, "<p>A machine of modus reads an object cache over QUIC on the same port. An object cache of your own runs with the tool of modus:</p>\n")
 	write(&b, "<pre><code>modustool cache-serve --dir &lt;folder&gt; --listen 0.0.0.0:5010 --authorized-key &lt;public key file&gt; --status-listen 127.0.0.1:5011</code></pre>\n</section>\n")
 
 	// The store now.
@@ -380,7 +378,7 @@ cache_status_json :: proc(server: ^Cache_Server, page: Cache_Page_Settings, snap
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "{\n  \"endpoint\": ")
 	json_text(&b, page.endpoint)
-	strings.write_string(&b, ",\n  \"protocol\": \"MOCQ/MOCR frames over TCP\",\n  \"signer_keys\": [")
+	strings.write_string(&b, ",\n  \"protocol\": \"MOCQ/MOCR frames over TCP and QUIC\",\n  \"signer_keys\": [")
 	for key, index in server.authorized_signers {
 		if index > 0 {
 			strings.write_string(&b, ", ")
