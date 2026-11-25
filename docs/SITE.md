@@ -1464,7 +1464,7 @@ A source comment is Markdown in a small part, written by the renderer of the gui
 | Paragraphs, joined lines, an empty line `//` between two | Yes | |
 | Bold, italics, code spans | Yes | A code span takes the path of the code spans of the guides: a row of a reference table, a file, a declaration, a fragment of Odin. A comment names no folder around its spans |
 | Lists `- ` and `1. `, nested by two spaces | Yes | A line right after an item continues it, as the comment wraps where its width ends. An item of a comment has no id |
-| A fence with `odin` or no language | Colored as Odin | The comment is in an Odin source. A fence of another language is plain |
+| A fence with `odin`, `lex`, or no language | Colored as Odin or Lex | A comment is in an Odin source, so an unmarked fence is Odin, a fence marked `lex` is Lex, and any other language stays plain |
 | Lines that start with a space, outside a list | A block of code, not colored | The form that the documentation of a module keeps; these lines are often words aligned in columns |
 | Links `[text](target)` | Yes, to a place of the site (see "The links of a comment") | |
 | Headings, tables, quotes, lines of HTML, pictures | No: words of a paragraph | A comment sits under the heading of its symbol, in a page or in a cell of a table: a heading would break "On this page", and a table does not fit a cell |
@@ -1711,17 +1711,18 @@ For each picture the tests check that no two boxes overlap (a node lies inside i
 
 The code on a page is colored by the tool, with no library of another project. The code is `tools/modustool/site/site_code.odin`; its host tests are `site_code_test.odin`. The colors of the classes are the table of the colors of code of the system (`src/library/modus/graphics/code_colors.odin`, `docs/DESIGN.md`, section 4), which the terminal of the system reads too: a type has one color on the site and in the console.
 
-The tool colors the code when it writes the pages: static markup, no script, no request, nothing new in the Content-Security-Policy. Not Shiki: it is a library of Node, and the automation of the repository is commands of the Odin tool, with no script of another language. Odin is read by the tokenizer of the compiler itself (`core:odin/tokenizer`), not by a grammar of regular expressions: a token is what the compiler sees.
+The tool colors the code when it writes the pages: static markup, no script, no request, nothing new in the Content-Security-Policy. Not Shiki: it is a library of Node, and the automation of the repository is commands of the Odin tool, with no script of another language. Odin is read by the tokenizer of the compiler itself (`core:odin/tokenizer`), and Lex is read by the scanner of the language (`src/library/modus/console_language`) and the unit and kind tables of the parser (`src/library/modus/lex_parser`), not by a grammar of regular expressions: a token is what the language sees.
 
-- `site_code_odin` writes each token in a `<span class="c-<class>">`, and each byte between two tokens (spaces, line feeds) as it is: the text of the output with its tags removed and its escapes undone is the source, byte for byte. The tokenizer gives the comments as tokens. Two tokens of one class with only spaces between share one span.
-- A text that the tokenizer refuses (an illegal character, a string or a comment with no end) is written plain, and `modustool site` prints "N code blocks not colored, the first: <place>". A fragment that is not a declaration is still tokens and is colored: the tokenizer does not parse.
+- `site_code_odin` and `site_code_lex` write each token in a `<span class="c-<class>">`, and each byte between two tokens (spaces, line feeds) as it is: the text of the output with its tags removed and its escapes undone is the source, byte for byte. Both give the comments as tokens. Two tokens of one class with only spaces between share one span.
+- A text that the Odin tokenizer refuses (an illegal character, a string or a comment with no end) is written plain, and `modustool site` prints "N code blocks not colored, the first: <place>". A fragment that is not a declaration is still tokens and is colored: the tokenizer does not parse.
+- `site_code_lex` maps Lex tokens onto the same classes: keywords (`let`, `in`, `if`, `then`, `else`, `match`, `with`, `for`, `and`, `or`, `not`, `plan`, `project`, `recipe`, `store`) to `c-k`; Lex kind names, contract types, and unit suffixes after a number on the same line (`bytes`, `KiB`, `MiB`, `GiB`, `pages`, `blocks`, `ns`, `us`, `ms`, `s`, `min`, `h`, `d`) to `c-t`; numbers, strings, booleans, `blake3:...` hashes, and dotted enum choices (`.dark`, `.vector`, `.Read`) to `c-l`; function/command calls, piped stages, record field keys, named arguments, and bindings before `=` to `c-n`; line comments `// ...` to `c-c`; and operators, punctuation, and `_` to `c-p`. For console transcripts whose first non-empty line starts with `> `, prompt lines color `>` in `c-p` and the command after it as Lex while leaving output and error lines plain.
 
 | Class | What | Accent of the design rules | Dark: shade, contrast on the block of code `0x1C2633` | Light: shade, contrast on the block of code `0xD6DBE0` |
 |---|---|---|---|---|
-| `c-k` | A keyword of the tokenizer | Kernel | 115 %, `0x64AAF2`, 6.24 | 55 %, `0x285583`, 5.55 |
-| `c-t` | A built-in type; a name with a capital in the place of a type; a reference to a card, in a block of code | Firmware | 115 %, `0x9E8FCB`, 5.27 | 60 %, `0x554A75`, 5.75 |
-| `c-l` | A number, a string, a rune, `true`, `false`, `nil`, a name in capitals, `.Member`, a member of an enum body | Memory | 100 %, `0x38C0B0`, 6.79 | 50 %, `0x1B5F57`, 5.34 |
-| `c-n` | A name before `::`: the name at its declaration | Process | 100 %, `0x58D878`, 8.37 | 45 %, `0x276035`, 5.36 |
+| `c-k` | A keyword of Odin or Lex | Kernel | 115 %, `0x64AAF2`, 6.24 | 55 %, `0x285583`, 5.55 |
+| `c-t` | A built-in type, a Lex kind or unit suffix, a name with a capital in the place of a type, or a reference to a card in a block of code | Firmware | 115 %, `0x9E8FCB`, 5.27 | 60 %, `0x554A75`, 5.75 |
+| `c-l` | A number, a string, a rune, `true`, `false`, `nil`, a `blake3:` hash, a name in capitals, `.Member`, a member of an enum body | Memory | 100 %, `0x38C0B0`, 6.79 | 50 %, `0x1B5F57`, 5.34 |
+| `c-n` | A name at its declaration (`::`), a Lex binding, record field, named argument, or call name | Process | 100 %, `0x58D878`, 8.37 | 45 %, `0x276035`, 5.36 |
 | `c-d` | `#` and the name after it, `@` and the first name of its attribute, a file tag | Machine | 115 %, `0xD785BB`, 5.79 | 55 %, `0x723D60`, 5.90 |
 | `c-c` | A comment | Dim | 125 %, `0x9CA6B2`, 6.19 | 60 %, `0x4A525B`, 5.69 |
 | `c-p` | An operator or punctuation: the quiet class | Dim | 140 %, `0xB0B8C1`, 7.62 | 50 %, `0x3D444C`, 7.08 |
@@ -1734,14 +1735,14 @@ The rule for the names of types, from the tokens only:
 - a built-in type (`u64`, `bool`, `string`, `rawptr`, ...) is `c-t`;
 - another name with a capital is `c-t` only in the place of a type: after `:` (not `::`), `^`, `]`, `->` or `distinct`, or after `qualifier.` in that place. Elsewhere (`size_of(Pair)`, `in Kinds`) it stays plain: the tool does not guess.
 
-Where it applies: only a block that the tool knows to be Odin.
+Where it applies: only a block that the tool knows to be Odin or Lex.
 
 - The declaration of each type on the page of the types, with each type of the contract inside it as a reference: this closes "the declaration has no references inside it".
 - The signatures of the kernel operations, of the exports and of the commands of the console: they are built from their parts, so each part takes its class with no tokenizer: the name `c-n`, the punctuation and the arrow `c-p`, each type a reference. The parameters of an operation are words of a comment, and stay plain.
-- The fenced blocks of the guides marked `odin`. A block with no language stays plain: the language is not guessed.
+- The fenced blocks of the guides marked `odin` or `lex`. A block with no language stays plain: the language is not guessed.
 - A code span of a text that is a fragment of Odin by the test of "The declarations of the sources": a span is short, and the test refuses each form of a command, a path and a log, so a span is colored only when it can be nothing but code.
 
-The fenced blocks of `docs/*.md` have no language, `mermaid`, `odin` or `byte-layout`. No block is marked `asm`, `sh`, `console`, `nix` or `yaml`, so the tool has no other lexer: a lexer for a language that no block names is code with no use. A mermaid block is a diagram (see "The diagrams"). A block of Odin is colored.
+The fenced blocks of `docs/*.md` have no language, `mermaid`, `odin`, `lex` or `byte-layout`. No block is marked `asm`, `sh`, `console`, `nix` or `yaml`, so the tool has no other lexer: a lexer for a language that no block names is code with no use. A mermaid block is a diagram (see "The diagrams"). A block of Odin or Lex is colored.
 
 The size: the declarations of the page of the types are 963 lines, 53 KB of text, about 7 900 tokens; their spans and references add about 100 KB to that page (estimated, not measured). The guide of the module contract grows by about 1.5 KB; the other guides do not change.
 

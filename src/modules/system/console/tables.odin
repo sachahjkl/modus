@@ -173,7 +173,7 @@ tables_start :: proc "contextless" () {
 	//
 	// The result has the record of the table.
 	//
-	// ```
+	// ```lex
 	// > columns(where(manual.running(), module = "calendar_fixed"), process, slot, module, replaces)
 	// > log.records(0) |> where(level = Warning) |> where(process = "storage")
 	// ```
@@ -189,7 +189,7 @@ tables_start :: proc "contextless" () {
 	// line reads no record that it does not keep (docs/CONSOLE.md,
 	// "Streams").
 	//
-	// ```
+	// ```lex
 	// > output_counter.counts |> where(status = 404) |> first(3)
 	// ```
 	command("where", {.Table, .None}, .Table, "the rows of a table or a stream whose field passes a condition: where(t, block = 12)", table_where, forms = {.Expression, .Condition})
@@ -203,7 +203,7 @@ tables_start :: proc "contextless" () {
 	// Rows with one value keep their order, so two sorts give an order by
 	// two fields. The result has the record of the table.
 	//
-	// ```
+	// ```lex
 	// > sort(columns(manual.handles("Write"), module, name, rights), "name")
 	// ```
 	command("sort", {.Table, .Text}, .Table, "the rows of a table in the order of a field", table_sort)
@@ -218,7 +218,7 @@ tables_start :: proc "contextless" () {
 	// fields. Its name is `<left>_<right>`. The console writes its
 	// description in the format of the module contract.
 	//
-	// ```
+	// ```lex
 	// > join(columns(manual.running(), process, hash), columns(manual.modules(), hash, name, code, exports), "hash")
 	// ```
 	//
@@ -238,7 +238,7 @@ tables_start :: proc "contextless" () {
 	// whole record. On a Stream, it gives a Stream whose rows hold those
 	// fields; its conditions still read the whole record.
 	//
-	// ```
+	// ```lex
 	// > columns(manual.importers("calendar_fixed"), module, name, replacement, import_slots)
 	// > output_counter.counts |> columns(status) |> first(2)
 	// ```
@@ -283,7 +283,7 @@ tables_start :: proc "contextless" () {
 	// its stop, a revocation. Escape stops the wait, and the line fails
 	// with the count of the rows that came.
 	//
-	// ```
+	// ```lex
 	// > table(output_counter.counts |> where(status = 404))
 	// ```
 	//
@@ -297,7 +297,7 @@ tables_start :: proc "contextless" () {
 	//
 	// - `module`: the name of a module of the boot image.
 	//
-	// ```
+	// ```lex
 	// > record_outputs("output_counter")
 	// output  record   about
 	// counts  Counted  One record each time the writer counts, while a reader is wired.
@@ -320,7 +320,7 @@ tables_start :: proc "contextless" () {
 	// then it reads the counts and closes the record stream. Escape stops
 	// the wait.
 	//
-	// ```
+	// ```lex
 	// > stream_counts(output_counter.counts)
 	// Writer_Counts
 	//   written    12
@@ -342,7 +342,7 @@ tables_start :: proc "contextless" () {
 	// `output`, `reader`, `input`, the text of the `condition`, and its
 	// terms (`field`, `comparison`, `value_kind`, `integer`, `text`).
 	//
-	// ```
+	// ```lex
 	// > wire(where(output_counter.counts, status = 404), output_count_reader.counts)
 	// ```
 	//

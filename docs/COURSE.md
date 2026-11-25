@@ -41,7 +41,7 @@ The console is a normal user-space process (`docs/CONSOLE.md`). Every command is
 
 Call `help()` with no arguments to list every available command as a typed `Command` table, or call `help("name")` (equivalently `describe("name")`) to read the exact signature, description, and usage guide of one command or Lex word:
 
-```
+```lex
 help("where")
 help("start")
 help("plans.apply")
@@ -51,7 +51,7 @@ help("plans.apply")
 
 Start `monitor` (or call `processes()` directly when `monitor` runs) to inspect live processes as a typed `Table` of `Process` records:
 
-```
+```lex
 processes() |> where(threads > 1) |> columns(name, slot, resident) |> sort("resident")
 ```
 
@@ -73,7 +73,7 @@ Useful companions on any `Table`:
 
 `memory()` returns a typed `Memory` record whose fields carry exact size units (`MiB` for total and free RAM, `pages` for used, reserved, and budget counts):
 
-```
+```lex
 m = memory()
 m.free
 ```
@@ -84,7 +84,7 @@ Assigning `name = expr` stores the typed value in a console variable for later l
 
 Lex attaches size units (`bytes`, `KiB`, `MiB`, `pages`, `blocks`) and time units (`ns`, `us`, `ms`, `s`) directly to integers (`docs/LEX.md`, "Integers with units"):
 
-```
+```lex
 1 MiB + 512 KiB
 1 s - 250 ms
 ```
@@ -93,7 +93,7 @@ Compatible units convert exactly to the finer unit (`1536 KiB`, `750 ms`). Incom
 
 Pure functional tools (`let ... in`, `filter`, `map`, `fold`, `match`, `??`, and placeholder `_`) work identically in the console and in declarative `.lex` files:
 
-```
+```lex
 let double = (x) => x * 2 in [1, 2, 3, 4] |> filter((x) => x > 2) |> map(double)
 ```
 
@@ -107,7 +107,7 @@ let double = (x) => x * 2 in [1, 2, 3, 4] |> filter((x) => x > 2) |> map(double)
 
 Every setting uses a closed enum written with a leading dot instead of raw strings or numbers. For example, the `Font` enum of `settings` has two members: `.vector` (smooth outline font) and `.spleen` (pixel bitmap font). The `Appearance` enum has three members: `.auto`, `.dark`, and `.light`.
 
-```
+```lex
 settings.set(keyboard_layout = .french)
 settings.set(font = .comic)
 ```
@@ -122,7 +122,7 @@ While typing in the console, fuzzy completion ranks matching commands, services,
 
 To follow live warnings as structured records:
 
-```
+```lex
 log.follow |> where(level = Warning)
 ```
 
@@ -154,7 +154,7 @@ Calling `isolate("sample")` or `load("math")` without assigning it to a variable
 
 Bind `sample` to a handle `s`, inspect its exports with `help(s)` or `help("s.readings")`, and pipe a typed table across the sandbox border:
 
-```
+```lex
 s = isolate("sample")
 help(s)
 help("s.readings")
@@ -178,7 +178,7 @@ What happens step by step:
 
 `connect("monitor")` attaches to a long-lived background service under its service prefix (`monitor.*`), and you can also bind it to an explicit handle (`mon = connect("monitor")`):
 
-```
+```lex
 connect("monitor")
 monitor.served()
 monitor.processes() |> first(5)
@@ -194,7 +194,7 @@ In `modus`, desired defaults (`values`), locked settings (`locks`), role holders
 
 Try a misspelled `Appearance` member first (`.neon` is not one of `.auto`, `.dark`, `.light`):
 
-```
+```lex
 plans.apply("evening", plan { locks = { settings = { appearance = .neon } } })
 ```
 
@@ -204,13 +204,13 @@ The console validates every value against its owner's exported contract (`settin
 
 Now apply a valid plan in one step (no separate `connect("plans")` or poll step required; an optional third argument `{ current_plan_hash = blake3:... }` can assert a specific prior plan):
 
-```
+```lex
 plans.apply("evening", plan { locks = { settings = { appearance = .dark } } }) |> columns(generation, standing)
 ```
 
 You can combine defaults (`values`) and locks (`locks`) in one plan:
 
-```
+```lex
 plans.apply("home", plan { values = { browser = { home = "modus://guide" }, monitor = { sample_interval = 1000 } }, locks = { settings = { appearance = .dark } } })
 ```
 
@@ -225,7 +225,7 @@ What happens internally and on screen:
 
 Once you accept the dialog, `plans.apply` commits generation `1` atomically into the `plans` private store and returns its `Plan_Generation_Row` table directly (showing `standing: Current` as a typed enum). Inspect all stored generations at any time:
 
-```
+```lex
 plans.generations() |> columns(generation, timestamp_ms, standing)
 ```
 
@@ -233,7 +233,7 @@ Omit `|> columns(...)` whenever you also want the full `plan_hash` and `previous
 
 To revert to the previous generation (or pass a specific generation number such as `plans.rollback(1)`):
 
-```
+```lex
 plans.rollback()
 ```
 
@@ -247,7 +247,7 @@ Background services publish structured events as **record outputs** (`server.req
 
 Connect to a running service and read its typed stream:
 
-```
+```lex
 connect("server")
 server.requests |> where(status >= 500) |> first(5)
 ```
@@ -268,7 +268,7 @@ Five short forms expand into validated wiring tables passed to `start(module, wi
 
 Example audited launch and hash-chain verification:
 
-```
+```lex
 start("server", audit(server) + audited(wire(shop.orders, server.orders)))
 start("server", keep(server.requests |> where(status >= 500), 2048))
 collector.verify(server.log)
@@ -284,7 +284,7 @@ Building and running an outside application such as `db_browser` (a sandboxed SQ
 
 `edit("db_browser", "project.lex")` opens the project declaration directly from its store:
 
-```
+```lex
 let
   default_build = {
     source = here(),
@@ -316,7 +316,7 @@ in
 
 For daily use, one command runs the full verified build, cache pull, provenance check, and delivery pipeline:
 
-```
+```lex
 projects.install("db_browser")
 ```
 
@@ -335,13 +335,13 @@ When you want to inspect or script each stage explicitly, the four underlying `r
 
 Launch the delivered module by its verified hash (or by name once pinned in your disk grant table):
 
-```
+```lex
 start("db_browser", mod)
 ```
 
 Because `db_browser` starts with zero ambient grants, it cannot open any disk store and runs in memory only. Grant its one private store explicitly, inspect active grants in the console or the desktop `grants` window, and restart:
 
-```
+```lex
 allow("db_browser", "store")
 stop("db_browser")
 start("grants")
@@ -351,7 +351,7 @@ start("db_browser")
 
 You can also inspect any running process's grants from the console as a filterable `Grant` table:
 
-```
+```lex
 grants("notes") |> where(state = "held")
 ```
 

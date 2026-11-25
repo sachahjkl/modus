@@ -327,10 +327,13 @@ site_render_fence :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 		return index + 1
 	}
 	strings.write_string(b, "<pre><code>")
-	// Only a block that its document marks as Odin is colored: the language
-	// of a block with no mark is not guessed. A fence of a comment is in an
-	// Odin source, so its block is Odin unless it names another language.
-	if (language == "odin" || renderer.comment && language == "") && renderer.site != nil {
+	// Only a block that its document marks as Odin or Lex is colored: the
+	// language of a block with no mark is not guessed. A fence of a comment
+	// is in an Odin source, so its block is Odin unless it names another language.
+	if language == "lex" && renderer.site != nil {
+		place := fmt.tprintf("%s:%d", site_renderer_place(renderer), start + first_line_number)
+		strings.write_string(b, site_code_lex_block_html(renderer.site, strings.to_string(code_text), place))
+	} else if (language == "odin" || renderer.comment && language == "") && renderer.site != nil {
 		place := fmt.tprintf("%s:%d", site_renderer_place(renderer), start + first_line_number)
 		strings.write_string(b, site_code_block_html(renderer.site, strings.to_string(code_text), "", place))
 	} else {

@@ -70,7 +70,7 @@ comment    = "//" { a byte that is no line end }      (between two tokens: no to
 
 Examples:
 
-```
+```lex
 > 6 * 7
 42
 > "abc" + "def"
@@ -100,7 +100,7 @@ Each value has one kind. The kinds are those of the module contract (`MODULE_CON
 
 **A member** of an enum is a name after a dot: `.french`. It has no enum of its own: the parameter that receives it, an Enum parameter of an export, gives it one, as a Record parameter types a record literal ("Records"). A line names a member, never its number: the console writes the value that the module file gives to that member. A name that the enum does not have, and a member where the parameter is no Enum, are refused at the place of the member, before any argument of the call runs. A member that nothing receives, as the value of a line or of a variable, is refused. An export that gives an Enum, a getter as `settings.font()`, gives a value of the kind `Enum`, which a variable keeps and an Enum parameter of the same enum takes:
 
-```
+```lex
 > settings.set(keyboard_layout = .french)
 1
 > settings.keyboard_layout()
@@ -127,7 +127,7 @@ When two commands have one name, the command added last runs.
 
 **The check before the call.** The console checks the count of the arguments and the kind of each one against the description of the parameters, before the call. A record or a table argument must have a description equal to the description of the parameter: equal records of two modules agree. A wrong argument is refused with its number and the two types, and the call does not run:
 
-```
+```lex
 > s.sum_values(columns(t, sensor, value))
 error: s.sum_values: argument 1 is Table(Reading, Read), not Table(Reading)
 ```
@@ -140,7 +140,7 @@ Here `columns` made a table of another record, with fewer fields, so the export 
 
 `name = expression` keeps a value under a name for the lines after it. `let name = expression`, with no `in` after the value, is the same line. A name alone gives the value back; `name.field` gives one field of a record variable.
 
-```
+```lex
 > s = isolate("sample")
 > t = s.readings(4)
 > s.sum_values(where(t, sensor = 2))
@@ -174,7 +174,7 @@ A record is a group of named fields, as a module describes it. The command with 
 
 **`let`** names values for one expression: `let box = {x = 0, y = 0, width = 6, height = 7} in s.area(box) + s.area(box)`. A binding can name another binding, also a later one, and an inner `let` hides an outer one. The console computes each binding once, from the left, also a binding that the body does not read, then the body. A binding that needs its own value is refused. `box.width` reads a field of a binding.
 
-```
+```lex
 > s.area({x = 0, y = 0, width = 11, height = 3})
 33
 > s.area(r with {width = 10})
@@ -195,7 +195,7 @@ A record is a group of named fields, as a module describes it. The command with 
 | `values` | `{ browser = { home = "modus://guide" } }` | A default of the plan for a value of an owner |
 | `locks` | `{ settings = { appearance = .dark } }` | A lock of the plan over the choice of the principal |
 
-```
+```lex
 plans.apply("evening", plan { locks = { settings = { appearance = .dark } } })
 plans.apply("home", plan { values = { browser = { home = "modus://guide" }, monitor = { sample_interval = 1000 } } })
 plans.rollback()
@@ -212,7 +212,7 @@ A plan is one line of the console, 200 bytes at most (4096 after the merge of `w
 
 **A function** is `(name, …) => expression`: its parameters, at most 12, then its body. A `(` starts a function when `=>` follows its `)`; else it holds an expression. The body runs to the `,` or the `)` around the function. A `let` names a function, and a call by that name runs its body with the arguments in the place of the parameters:
 
-```
+```lex
 > let double = (x) => x * 2 in s.area({x = 0, y = 0, width = double(3), height = 4})
 24
 > (x) => x + 1
@@ -226,7 +226,7 @@ A plan is one line of the console, 200 bytes at most (4096 after the merge of `w
 
 **A list** is `[a, b, …]`: its items in order, of any kinds. **`map(list, function)`** calls the function on each item from the first, and gives the list of the results. `map` is a name of Lex, not a command: it takes a list and a function of one parameter, and it comes before an export named `map` of a loaded module. A list holds no Stream, no Record_Input and no item with no value. A literal or a member in a list stays untyped until a parameter receives it, as a literal does ("Records").
 
-```
+```lex
 > map([1, 2, 3], (x) => x * 2)
 [2, 4, 6]
 > [1, 2] |> map((w) => s.area({x = 0, y = 0, width = w, height = 5}))
@@ -237,7 +237,7 @@ A plan is one line of the console, 200 bytes at most (4096 after the merge of `w
 
 **A variable keeps a list.** The line copies the items into the memory of the variable, and a later line reads them as a list of its own:
 
-```
+```lex
 > x = [1, 2, 3]
 > map(x, (n) => n * n)
 [1, 4, 9]
@@ -275,7 +275,7 @@ The tables of one line share 1 MiB (`TABLE_ARENA`). The console draws a table wi
 
 The argument of `where` after the table is a condition: a field of the record of the table, an operator and a value. The parser reads it as a condition, not as an expression, so the field is a name of the record, never a variable.
 
-```
+```lex
 > where(processes(), name = "console")
 > where(compositor.windows(), pictures_drawn_again != 0)
 > log.records(0) |> where(level = Warning)
@@ -293,7 +293,7 @@ A status takes `=` and `!=` only: the numbers of the members are no order of wei
 
 **What is refused before a row is read.** No field before the operator (`where(t, = 3)`), a field with no operator (`where(t, level)`), a `!` alone, `==`, no value after the operator, a field that the record does not have (the error lists the fields), a value of another kind than the field, a negative value for an unsigned field, a value that the bytes of the field cannot hold, a text, a number or a name of no member after the operator of a status (the error lists the members), an order on a Text or a status, and a hash. A table argument that is no table is refused with its kind (`where(5, a = 1)`). When the console knows the record of the table before the run, in a line with `|>`, it refuses these before any call, and the kind and the range of a value that is one literal too: the result of an export, the table of `facts(...)`, and the table of a `where`, `sort`, `first` or `skip` after one of them. The reading and the checks are the support package `src/library/modus/console_condition`, whose host tests give each refused input.
 
-```
+```lex
 > log.records(0) |> where(levle = Warning)
 error: where: the records Record have no field levle; their fields are number, time, process, slot, level, form, lost, continues, runs, text
 > log.records(0) |> where(level = warning)
@@ -310,7 +310,7 @@ error: where: the field level holds a member of Log_Level, and a member is a nam
 
 `facts(table, package.Type)` gives the facts of one fact type ([log fact](glossary/running_code.md)) among the rows of `log.records`: one row for each fact, with the number, the time, the process and the level of its record, then each field of the fact type, in the order of its record.
 
-```
+```lex
 > connect("log")
 > log.records(0) |> facts(log_reader.Fact_Probe)
 > log.records(0) |> facts(log_reader.Fact_Probe) |> where(probe_number = 7)
@@ -328,7 +328,7 @@ Errors: a name that names no fact type; a fact type with a field named as a colu
 
 A record output of a process is a value of the line: its [typed name](glossary/communication.md), `owner.output`, gives a [record stream](glossary/communication.md) of the kind `Stream`, as `Stream(Counted)`. The owner is a process that the console started with `start`, or a service that it connected with `connect`. The console reads the record outputs and their record descriptions in the module file of the owner, so the completion list offers the record outputs after `owner.`, and the fields of a condition after a typed name are checked before the line runs.
 
-```
+```lex
 > start("output_counter")
 > record_outputs("output_counter")
 output  record   about
@@ -353,7 +353,7 @@ serial  status
 
 `first` and `table` keep the rows only. Each other command that takes a table refuses a `Stream`, before any call, and so does a variable:
 
-```
+```lex
 > sort(output_counter.counts, "serial")
 error: sort takes a Table; a Stream has no end: first(s, n) or table(s) makes one
 > kept = output_counter.counts
@@ -368,7 +368,7 @@ error: output_counter declares no record output or record input missing; its rec
 
 **The fields that a row shows.** `columns(stream, a, b)` gives a `Stream` whose rows hold those fields; its conditions still read the whole record.
 
-```
+```lex
 > output_counter.counts |> columns(status) |> first(2)
 status
    404
@@ -380,7 +380,7 @@ status
 
 **The records of a service.** A service that the console connected to gives its record outputs by the same typed names. `server` writes the access record of each request into `requests`:
 
-```
+```lex
 > connect("server")
 > server.requests |> where(status = 404) |> first(5)
 ```
@@ -389,7 +389,7 @@ The rows come from the next request on: the console draws "joined after N record
 
 **A record input, and a wiring list.** A typed name also names a record input: `output_count_reader.counts` is a value of the kind `Record_Input`, which only `wire` takes. A typed name may name a module that does not run yet: its module file in the boot image gives its record outputs and its record inputs, for the list of its own start. `wire(from, to)` gives a `Table` of one `Wiring`: `writer`, `output`, `reader`, `input`, the `condition` as a text, and its terms. `+` joins two of them, and `start(module, list)` starts the module with the wirings of the list, made before its first instruction:
 
-```
+```lex
 > start("output_count_reader", wire(where(output_counter.counts, status = 404), output_count_reader.counts))
 ```
 
@@ -401,7 +401,7 @@ The rows come from the next request on: the console draws "joined after N record
 
 **The log of a module, and the whole log as it comes.** Each process has the record output `log`, which only the list of its own start wires: its first record is then in the ring. `log.follow` is a record output of the log service: the records of the principal of the console, from the next one on.
 
-```
+```lex
 > start("server", wire(server.log, collector.sources))
 > log.follow |> where(level = Warning)
 > log.follow |> where(process = "storage") |> first(5)
@@ -411,7 +411,7 @@ The module `collector` declares no record input `sources` yet, so the first line
 
 **A generic record input or output.** `merge.sources` is a generic record input: `wire` takes it with no check of the record, and the root service checks the record of each wiring against the one that the first fixed. `merge.merged` writes the record that a list of a `start` of this console fixed for `merge`; with none, the line fails and says so:
 
-```
+```lex
 > start("merge", wire(where(output_counter.counts, status = 404), merge.sources))
 > merge.merged |> first(2)
 ```
@@ -420,7 +420,7 @@ The module `collector` declares no record input `sources` yet, so the first line
 
 A line composes by calls in calls. The console evaluates each argument before its call, from left to right, and the innermost call runs first. Each step takes a typed value and gives one:
 
-```
+```lex
 > connect("manual")
 > columns(where(manual.running(), module = "calendar_fixed"), process, slot, module, replaces)
 > join(columns(manual.running(), process, hash), columns(manual.modules(), hash, name, code, exports), "hash")
@@ -431,7 +431,7 @@ The first line lists the processes that run a module, keeps the rows of one modu
 
 **The built-in commands compose too.** A built-in command that lists things gives a table, so a line filters, sorts and counts it as it does the table of an export:
 
-```
+```lex
 > where(grants("notes"), state = "held")
 > sort(where(processes(), state = "waiting"), "name")
 > rows(where(help(), name = "repeat"))
@@ -442,7 +442,7 @@ The first line lists the processes that run a module, keeps the rows of one modu
 
 `a |> f(b, c)` is `f(a, b, c)`: the value on the left of `|>` is the first argument of the call on its right. `a |> f` is `f(a)`, and `a |> f()` too. So a line reads in the order in which its calls run:
 
-```
+```lex
 > processes() |> where(name = "server")
 > processes() |> where(name = "server") |> columns(name, slot)
 > rows(help() |> first(3)) |> text
@@ -549,7 +549,7 @@ One drawer exists for each kind of result. A drawer knows no command: it reads t
 | Bytes | Rows of 16 bytes: the place of the first byte of the row in 8 hexadecimal digits, the bytes in hexadecimal, their characters (a byte that is no character is `.`). The last line is the count of bytes |
 | An error | "The drawer of an error", below |
 
-```
+```lex
 > where(grants("notes"), state = "held")
 process  grant  state  principal  principal_name
 notes    log    held           0  machine
@@ -596,7 +596,7 @@ The name of a field, the head of a column with its unit, and a line about the re
 
 The first line is `error: ` and the sentence. When a call gave an error record (`MODULE_CONTRACT.md`, section 8), the lines after it give the record as values, so a reader sees what the sentence was made from:
 
-```
+```lex
 > add(1, "a note of forty bytes, four more than 36")
 error: add: the argument note has 40 bytes; it can have at most 36 bytes
   outcome    Argument_Refused
@@ -703,7 +703,7 @@ A `hash_head` is the head of a BLAKE3 hash: its first 8 bytes, as 16 hexadecimal
 
 While a line calls an export, the console shows under the line the log records that the called process writes, so the effect of a call is visible where the call was typed.
 
-```
+```lex
 > server.put("hello.txt", "kept in the store of server")
   server
     server: the page /hello.txt is in the store: 27 bytes
@@ -751,7 +751,7 @@ A fact that a service holds is an export of that service, and the console calls 
 - Key system commands (`where`, `connect`, `start`, `start_from_disk`, `isolate`, `load`, `projects.install`, `allow`, `revoke`, `plans.difference`, `plans.apply`, `plans.rollback`): both signature/help and a plain-English guide.
 - Any other name fails with the names near it: `error: describe: no command and no word of Lex has the name lte; did you mean let?`.
 
-```
+```lex
 > describe("let")
 let binds names for one expression: let a = 2, b = a * 3 in a + b gives 8. ...
 ```

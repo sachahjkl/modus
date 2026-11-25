@@ -25,7 +25,7 @@
 // `name = expression`. A value is an Integer, a Text, a Record, a Handle, a
 // Table or Bytes. Examples of lines:
 //
-// ```
+// ```lex
 // help()
 // x = 6 * 7
 // load("math")

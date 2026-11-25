@@ -144,7 +144,7 @@ Unit arithmetic enforces exact overflow-checked integer conversions with zero si
 - **List concatenation:** `++` concatenates two `List` values (`[1, 2] ++ [3, 4]` gives `[1, 2, 3, 4]`) and refuses non-list operands.
 - **Conditionals:** `if condition then first else second` forces `condition`, refuses any non-`Boolean` result (`Condition_Not_Boolean`), and forces only the chosen branch.
 - **Bindings and record destructuring (`let ... in ...`, function parameters):**
-  ```
+  ```lex
   let
     width = 6,
     { host, port = 8080, ... } = config,
@@ -161,7 +161,7 @@ Unit arithmetic enforces exact overflow-checked integer conversions with zero si
   - `extend(a, b)` performs shallow lazy field addition and override without forcing field values.
   - `merge_deep(a, b)` performs recursive lazy merging of nested records (depth- and step-bounded).
 - **Pattern matching (`match`):**
-  ```
+  ```lex
   match cfg {
     { mode = .Verify, net = { port = p }, ... } if p > 1024 => p,
     { mode = .Fast, ... } => 80,
@@ -180,7 +180,7 @@ Unit arithmetic enforces exact overflow-checked integer conversions with zero si
 
 The pipe operator `|>` passes the value on its left into the call on its right. It has the lowest precedence and binds left to right.
 
-```
+```lex
 a |> f          // rewrites to: f(a)
 a |> f()        // rewrites to: f(a)
 a |> f(b, c)    // rewrites to: f(a, b, c)
@@ -199,7 +199,7 @@ a |> f(by = _)  // rewrites to: f(by = a)
 
 Twenty-six pure functions are built into the evaluator (`lex_evaluator`), collision-free with console commands, so they work identically in mode `console` and mode `declaration`:
 
-```
+```lex
 map([1, 2, 3], (x) => x * 2)                                // [2, 4, 6]
 filter([1, 2, 3, 4], (x) => x % 2 = 0)                      // [2, 4]
 [1, 2, 3, 4] |> fold(0, (acc, x) => acc + x)                // 10
@@ -285,7 +285,7 @@ Declarations describe a whole system, session, or project as one lazy value in a
 
 A project tree contains `project.lex`, `pins.lex`, and its source files. Its content-addressed tree hash covers both `.lex` files, so any machine with the same tree hash evaluates identical hashes.
 
-```
+```lex
 // project.lex
 project {
   source = here(),
@@ -307,7 +307,7 @@ project {
 
 `pins.lex` lives beside `project.lex` and holds one canonical sorted record literal of resolved hashes. Only `projects.update` writes it; hand-edited hashes still verify against every fetched tree hash.
 
-```
+```lex
 // pins.lex (written by projects.update)
 {
   gt = { tree = blake3:1111111111111111111111111111111111111111111111111111111111111111, source = blake3:2222222222222222222222222222222222222222222222222222222222222222, ref = "41" },
@@ -355,7 +355,7 @@ Four short forms expand purely into validated wiring lists (`src/library/interna
 
 Composing an audited server start:
 
-```
+```lex
 start("server", audit(server) + audited(wire(shop.orders, server.orders)))
 start("server", keep(server.requests |> where(status >= 500), 2048))
 merge(alpha.requests, beta.requests) |> where(status >= 500) |> first(10)

@@ -10,7 +10,9 @@ package site
 import "core:fmt"
 import "core:odin/tokenizer"
 import "core:strings"
+import "modus:console_language"
 import "modus:graphics"
+import "modus:lex_parser"
 import "modustool:foundation"
 import "modustool:build"
 
@@ -392,4 +394,435 @@ site_code_span :: proc(b: ^strings.Builder, class: Site_Code_Class, text: string
 	fmt.sbprintf(b, "<span class=\"c-%s\">", site_code_classes[class].name)
 	foundation.html_escape(b, text)
 	strings.write_string(b, "</span>")
+}
+
+// ---- Static Lex syntax highlighting (docs/SITE.md, "The colors of the code").
+//
+// Reads Lex source with the canonical scanner (modus:console_language) and
+// parser unit/kind tables (modus:lex_parser). Preserves every byte of source
+// verbatim and never rejects partial expressions, error examples, or console
+// transcripts whose prompt lines start with "> ".
+
+Site_Lex_Token_Kind :: enum u8 {
+	Comment,
+	Name,
+	Number,
+	Text,
+	Hash,
+	Member,
+	Operator,
+	Unknown,
+}
+
+Site_Lex_Token :: struct {
+	kind:  Site_Lex_Token_Kind,
+	start: int,
+	end:   int,
+}
+
+@(private = "file")
+site_lex_token_before :: proc(tokens: []Site_Lex_Token, index: int) -> int {
+	for other := index - 1; other >= 0; other -= 1 {
+		if tokens[other].kind != .Comment {
+			return other
+		}
+	}
+	return -1
+}
+
+@(private = "file")
+site_lex_token_after :: proc(tokens: []Site_Lex_Token, index: int) -> int {
+	for other := index + 1; other < len(tokens); other += 1 {
+		if tokens[other].kind != .Comment {
+			return other
+		}
+	}
+	return -1
+}
+
+@(private = "file")
+site_lex_is_unit_name :: proc(name: string) -> bool {
+	if _, ok := lex_parser.integer_unit_of_name(name); ok {
+		return true
+	}
+	switch name {
+	case "GiB", "min", "h", "d":
+		return true
+	}
+	return false
+}
+
+@(private = "file")
+site_lex_is_control_keyword :: proc(name: string) -> bool {
+	switch name {
+	case "let", "in", "if", "then", "else", "match", "with", "for", "and", "or", "not":
+		return true
+	}
+	return false
+}
+
+@(private = "file")
+site_lex_is_form_keyword :: proc(name: string) -> bool {
+	switch name {
+	case "plan", "project", "recipe", "store":
+		return true
+	}
+	return false
+}
+
+@(private = "file")
+site_lex_is_type_name :: proc(name: string) -> bool {
+	if _, ok := lex_parser.param_kind_of_name(name); ok {
+		return true
+	}
+	switch name {
+	case "Unit", "Stream", "Value", "Process", "Memory", "Grant", "Reading", "Rectangle", "Command", "Loaded", "Wiring", "Log_Level":
+		return true
+	}
+	return false
+}
+
+@(private = "file")
+site_lex_is_dot :: proc(source: string, tok: Site_Lex_Token) -> bool {
+	return tok.kind == .Operator && tok.end - tok.start == 1 && source[tok.start] == '.'
+}
+
+@(private = "file")
+site_lex_is_single_equal :: proc(source: string, tokens: []Site_Lex_Token, index: int) -> bool {
+	if index < 0 || index >= len(tokens) {
+		return false
+	}
+	tok := tokens[index]
+	if tok.kind != .Operator || tok.end - tok.start != 1 || source[tok.start] != '=' {
+		return false
+	}
+	if index + 1 < len(tokens) {
+		nxt := tokens[index + 1]
+		if nxt.kind == .Operator && nxt.start == tok.end && nxt.end - nxt.start == 1 && source[nxt.start] == '=' {
+			return false
+		}
+	}
+	return true
+}
+
+// site_code_lex_tokens scans a Lex source with console_language.token_next,
+// emitting comments explicitly and splitting dotted names into name segments
+// and '.' punctuation tokens while keeping every byte span exact.
+site_code_lex_tokens :: proc(source: string) -> []Site_Lex_Token {
+	tokens := make([dynamic]Site_Lex_Token, context.temp_allocator)
+	position := 0
+	for position < len(source) {
+		tok := console_language.token_next(source, position, true)
+		// Emit any "// ..." line comments inside source[position:tok.start].
+		gap_pos := position
+		for gap_pos < tok.start {
+			if console_language.comment_starts(source, gap_pos) {
+				cend := console_language.comment_end(source, gap_pos)
+				append(&tokens, Site_Lex_Token{kind = .Comment, start = gap_pos, end = cend})
+				gap_pos = cend
+			} else {
+				gap_pos += 1
+			}
+		}
+		if tok.kind == .None {
+			break
+		}
+		switch tok.kind {
+		case .None:
+			break
+		case .Name:
+			// Split dotted names ("settings.set", "values.display.font") into
+			// segments and '.' tokens so calls and field paths highlight cleanly.
+			seg_start := tok.start
+			for i := tok.start; i < tok.end; i += 1 {
+				if source[i] == '.' {
+					if i > seg_start {
+						append(&tokens, Site_Lex_Token{kind = .Name, start = seg_start, end = i})
+					}
+					append(&tokens, Site_Lex_Token{kind = .Operator, start = i, end = i + 1})
+					seg_start = i + 1
+				}
+			}
+			if seg_start < tok.end {
+				append(&tokens, Site_Lex_Token{kind = .Name, start = seg_start, end = tok.end})
+			}
+		case .Number:
+			append(&tokens, Site_Lex_Token{kind = .Number, start = tok.start, end = tok.end})
+		case .Text, .Text_Unfinished:
+			append(&tokens, Site_Lex_Token{kind = .Text, start = tok.start, end = tok.end})
+		case .Hash:
+			append(&tokens, Site_Lex_Token{kind = .Hash, start = tok.start, end = tok.end})
+		case .Member:
+			// ".field" glued directly after ')', ']', '}', or a Name is postfix
+			// field selection, not a standalone enum member literal.
+			is_field_select := false
+			if len(tokens) > 0 {
+				prev := tokens[len(tokens) - 1]
+				if prev.end == tok.start {
+					if prev.kind == .Name {
+						is_field_select = true
+					} else if prev.kind == .Operator && prev.end - prev.start == 1 {
+						ch := source[prev.start]
+						is_field_select = ch == ')' || ch == ']' || ch == '}'
+					}
+				}
+			}
+			if is_field_select {
+				append(&tokens, Site_Lex_Token{kind = .Operator, start = tok.start, end = tok.start + 1})
+				if tok.start + 1 < tok.end {
+					append(&tokens, Site_Lex_Token{kind = .Name, start = tok.start + 1, end = tok.end})
+				}
+			} else {
+				append(&tokens, Site_Lex_Token{kind = .Member, start = tok.start, end = tok.end})
+			}
+		case .Operator, .Arrow, .Pipe, .Function_Arrow:
+			append(&tokens, Site_Lex_Token{kind = .Operator, start = tok.start, end = tok.end})
+		case .Unknown:
+			append(&tokens, Site_Lex_Token{kind = .Unknown, start = tok.start, end = tok.end})
+		}
+		if tok.end <= position {
+			break
+		}
+		position = tok.end
+	}
+	return tokens[:]
+}
+
+// site_code_lex_classes assigns each Lex token a Site_Code_Class.
+site_code_lex_classes :: proc(source: string, tokens: []Site_Lex_Token) -> []Site_Code_Class {
+	classes := make([]Site_Code_Class, len(tokens), context.temp_allocator)
+	for tok, index in tokens {
+		switch tok.kind {
+		case .Comment:
+			classes[index] = .Comment
+		case .Number, .Text, .Hash, .Member:
+			classes[index] = .Literal
+		case .Operator:
+			classes[index] = .Punctuation
+		case .Unknown:
+			classes[index] = .None
+		case .Name:
+			name := source[tok.start:tok.end]
+			prev := site_lex_token_before(tokens, index)
+			next := site_lex_token_after(tokens, index)
+			after_dot := prev >= 0 && site_lex_is_dot(source, tokens[prev])
+			before_dot := next >= 0 && site_lex_is_dot(source, tokens[next])
+			before_paren := next >= 0 && tokens[next].kind == .Operator && source[tokens[next].start:tokens[next].end] == "("
+			before_eq := site_lex_is_single_equal(source, tokens, next)
+
+			// 1. Placeholder / wildcard '_' -> quiet punctuation.
+			if name == "_" {
+				classes[index] = .Punctuation
+				continue
+			}
+			// 2. Boolean literals.
+			if name == "true" || name == "false" {
+				classes[index] = .Literal
+				continue
+			}
+			// 3. Unit suffix directly after a number on the same line.
+			if prev >= 0 && tokens[prev].kind == .Number && site_lex_is_unit_name(name) && strings.index_byte(source[tokens[prev].end:tok.start], '\n') < 0 {
+				classes[index] = .Type
+				continue
+			}
+			// 4. Unit inside `Integer[Unit]`.
+			if prev >= 0 && tokens[prev].kind == .Operator && source[tokens[prev].start:tokens[prev].end] == "[" && site_lex_is_unit_name(name) {
+				prev2 := site_lex_token_before(tokens, prev)
+				if prev2 >= 0 && tokens[prev2].kind == .Name && source[tokens[prev2].start:tokens[prev2].end] == "Integer" {
+					classes[index] = .Type
+					continue
+				}
+			}
+			// 5. Control keywords (`let`, `in`, `if`, `then`, `else`, `match`, `with`, `for`, `and`, `or`, `not`).
+			if !after_dot && site_lex_is_control_keyword(name) {
+				classes[index] = .Keyword
+				continue
+			}
+			// 6. Declaration form keywords (`plan`, `project`, `recipe`, `store`),
+			// except when used as a record field key (`store = ...`) or after '.'.
+			if !after_dot && !before_eq && site_lex_is_form_keyword(name) {
+				classes[index] = .Keyword
+				continue
+			}
+			// 7. Type names: after ':', inside known Lex/contract type set, or
+			// capitalized type after '.' (such as `log_reader.Fact_Probe`) when not a call.
+			if prev >= 0 && tokens[prev].kind == .Operator && source[tokens[prev].start:tokens[prev].end] == ":" && build.name_is_capital(name) {
+				classes[index] = .Type
+				continue
+			}
+			if !before_eq && site_lex_is_type_name(name) {
+				classes[index] = .Type
+				continue
+			}
+			if after_dot && !before_paren && !before_eq && build.name_is_capital(name) {
+				classes[index] = .Type
+				continue
+			}
+			// 8. Function / command call name before '('.
+			if before_paren {
+				classes[index] = .Name
+				continue
+			}
+			// 9. Bare piped command stage (`|> f` or `|> s.sum_values`).
+			if !before_dot {
+				chain_head := index
+				for {
+					p := site_lex_token_before(tokens, chain_head)
+					if p < 0 || !site_lex_is_dot(source, tokens[p]) {
+						break
+					}
+					q := site_lex_token_before(tokens, p)
+					if q < 0 || tokens[q].kind != .Name {
+						break
+					}
+					chain_head = q
+				}
+				before_chain := site_lex_token_before(tokens, chain_head)
+				if before_chain >= 0 && tokens[before_chain].kind == .Operator && source[tokens[before_chain].start:tokens[before_chain].end] == "|>" {
+					classes[index] = .Name
+					continue
+				}
+			}
+			// 10. Binding name, record field key, or named argument before '='.
+			if before_eq {
+				chain_head := index
+				for {
+					p := site_lex_token_before(tokens, chain_head)
+					if p < 0 || !site_lex_is_dot(source, tokens[p]) {
+						break
+					}
+					q := site_lex_token_before(tokens, p)
+					if q < 0 || tokens[q].kind != .Name {
+						break
+					}
+					chain_head = q
+				}
+				lhs_prev := site_lex_token_before(tokens, chain_head)
+				is_binding := lhs_prev < 0
+				if !is_binding {
+					if strings.index_byte(source[tokens[lhs_prev].end:tokens[chain_head].start], '\n') >= 0 {
+						is_binding = true
+					} else if tokens[lhs_prev].kind == .Name && source[tokens[lhs_prev].start:tokens[lhs_prev].end] == "let" {
+						is_binding = true
+					} else if tokens[lhs_prev].kind == .Operator {
+						op := source[tokens[lhs_prev].start:tokens[lhs_prev].end]
+						is_binding = op == "{" || op == "(" || op == ","
+					}
+				}
+				if is_binding {
+					classes[index] = .Name
+					continue
+				}
+			}
+			// 11. As-pattern binding (`r @ { ... }`) or comprehension binder (`for x in`).
+			if next >= 0 && tokens[next].kind == .Operator && source[tokens[next].start:tokens[next].end] == "@" {
+				classes[index] = .Name
+				continue
+			}
+			if prev >= 0 && tokens[prev].kind == .Name && source[tokens[prev].start:tokens[prev].end] == "for" &&
+			   next >= 0 && tokens[next].kind == .Name && source[tokens[next].start:tokens[next].end] == "in" {
+				classes[index] = .Name
+				continue
+			}
+		}
+	}
+	return classes
+}
+
+@(private = "file")
+site_code_lex_fragment :: proc(b: ^strings.Builder, source: string) {
+	tokens := site_code_lex_tokens(source)
+	classes := site_code_lex_classes(source, tokens)
+	position := 0
+	open := Site_Code_Class.None
+	close_span :: proc(b: ^strings.Builder, open: ^Site_Code_Class) {
+		if open^ != .None {
+			strings.write_string(b, "</span>")
+			open^ = .None
+		}
+	}
+	for tok, index in tokens {
+		gap := source[position:tok.start]
+		class := classes[index]
+		if open != .None && (class != open || strings.trim_space(gap) != "") {
+			close_span(b, &open)
+		}
+		foundation.html_escape(b, gap)
+		bytes := source[tok.start:tok.end]
+		switch class {
+		case .None, .Reference:
+			close_span(b, &open)
+			foundation.html_escape(b, bytes)
+		case .Keyword, .Type, .Literal, .Name, .Directive, .Comment, .Punctuation:
+			if open != class {
+				close_span(b, &open)
+				fmt.sbprintf(b, "<span class=\"c-%s\">", site_code_classes[class].name)
+				open = class
+			}
+			foundation.html_escape(b, bytes)
+		}
+		position = tok.end
+	}
+	close_span(b, &open)
+	foundation.html_escape(b, source[position:])
+}
+
+@(private = "file")
+site_code_lex_is_transcript :: proc(source: string) -> bool {
+	rest := source
+	for len(rest) > 0 {
+		nl := strings.index_byte(rest, '\n')
+		line := nl < 0 ? rest : rest[:nl]
+		if strings.trim_space(line) != "" {
+			return strings.has_prefix(line, "> ")
+		}
+		if nl < 0 {
+			break
+		}
+		rest = rest[nl + 1:]
+	}
+	return false
+}
+
+// site_code_lex writes Lex source (or a console transcript whose prompt lines
+// start with "> ") with static Site_Code_Class spans. Every byte of source is
+// preserved verbatim.
+site_code_lex :: proc(b: ^strings.Builder, source: string) -> bool {
+	if !site_code_lex_is_transcript(source) {
+		site_code_lex_fragment(b, source)
+		return true
+	}
+	rest := source
+	for len(rest) > 0 {
+		nl := strings.index_byte(rest, '\n')
+		line := nl < 0 ? rest : rest[:nl]
+		if strings.has_prefix(line, "> ") {
+			site_code_span(b, .Punctuation, ">")
+			strings.write_byte(b, ' ')
+			site_code_lex_fragment(b, line[2:])
+		} else {
+			foundation.html_escape(b, line)
+		}
+		if nl < 0 {
+			break
+		}
+		strings.write_byte(b, '\n')
+		rest = rest[nl + 1:]
+	}
+	return true
+}
+
+// site_code_lex_block_html gives a Lex fenced block as colored static HTML.
+site_code_lex_block_html :: proc(site: ^Site, source, place: string) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	if site_code_lex(&b, source) {
+		return strings.to_string(b)
+	}
+	site.code_blocks_not_colored += 1
+	if site.first_code_block_not_colored == "" {
+		site.first_code_block_not_colored = place
+	}
+	plain := strings.builder_make(context.temp_allocator)
+	foundation.html_escape(&plain, source)
+	return strings.to_string(plain)
 }
