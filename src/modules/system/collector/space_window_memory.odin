@@ -55,6 +55,9 @@ space_memory_reserve :: proc "contextless" () -> (port: wide_grants.Space_Memory
 	if flags_made != .Succeeded || places_made != .Succeeded || index_made != .Succeeded {
 		return {}, 0
 	}
+	flags.exact_commits = true
+	places.exact_commits = true
+	index.exact_commits = true
 	used, pushed := system.arena_push(&flags, u64(windows), 1)
 	if pushed != .Succeeded {
 		return {}, 0

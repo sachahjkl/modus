@@ -53,6 +53,9 @@ link_tables_ensure :: proc "contextless" (count: int) -> bool {
 			if status != .Succeeded {
 				return false
 			}
+			// Exact commits keep each of the six small tables to the pages its
+			// links need instead of committing ARENA_GROWTH_STEP_FIRST_PAGES each.
+			made.exact_commits = true
 			arena^ = made
 		}
 		tables.made = true

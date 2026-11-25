@@ -686,6 +686,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 
+	// The start is done: signal readiness before the loop handles exports or wirings.
+	system.ready()
+
 	for {
 		wait := system.wait_begin(&collector_wait.set)
 		now_ms := system.time()

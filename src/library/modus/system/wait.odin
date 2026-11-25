@@ -203,6 +203,10 @@ wait_set_grow :: proc "contextless" (growing: ^Growing_Wait_Set, count: int) -> 
 			_ = arena_end(&words)
 			return false
 		}
+		// Exact commits keep both small tables to the pages the wait needs
+		// instead of committing ARENA_GROWTH_STEP_FIRST_PAGES each.
+		words.exact_commits = true
+		parts.exact_commits = true
 		growing.words, growing.parts, growing.made = words, parts, true
 	}
 	added := wanted - held

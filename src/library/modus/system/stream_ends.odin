@@ -190,6 +190,10 @@ stream_ends_grow :: proc "contextless" () -> bool {
 			_ = arena_end(&ends)
 			return false
 		}
+		// Exact commits keep both small tables to the pages their ends need
+		// instead of committing ARENA_GROWTH_STEP_FIRST_PAGES each.
+		ends.exact_commits = true
+		tags.exact_commits = true
 		table.ends, table.tags, table.made = ends, tags, true
 	}
 	end_place, end_status := arena_push(&table.ends, size_of(Stream_End), align_of(Stream_End))
