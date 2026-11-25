@@ -8,6 +8,7 @@ import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/ring"
+import "modus:lex_parser"
 import "modus:line_editor"
 
 // Console tests share package globals (commands, scratch, failure); serialize
@@ -28,18 +29,28 @@ ergonomics_failure_text :: proc() -> string {
 @(private = "file")
 ergonomics_reset_state :: proc() {
 	command_count = 0
+	names_count = 0
+	loaded_count = 0
+	next_module_handle_id = 1
+	line_binding_target = ""
+	line_loaded_handle = 0
+	for &variable in variables {
+		variable = {}
+	}
 	scratch_count = 0
 	table_used = 0
 	failed = false
 	failure_reset()
 	// Register the commands tested without requiring live kernel handles.
-	command("help", {.Text}, .Table, "the commands, or the help on one name", help, optional_last = true)
+	command("help", {.None}, .Table, "the commands, the help on one name, or the commands of a module handle", help, optional_last = true)
 	command("describe", {.Text}, .Text, "the help on one name: a command or a word of Lex", describe)
 	command("start", {.Text, .None}, .None, "start a boot-image module or a disk process, with a wiring list or a hash", start_process, optional_last = true)
 	command("start_from_disk", {.Text, .Text}, .None, "start a module of the store module_files, by nickname and hash", start_from_disk)
 	command("connect", {.Text}, .Record, "call the exports of a service that runs", connect_service)
-	command("isolate", {.Text}, .Record, "load a module in a sandboxed process", isolate_module)
-	command("load", {.Text}, .Record, "load a module here: direct calls", load_module)
+	command("isolate", {.Text}, .Record, "load a module in a sandboxed process and return a bound handle", isolate_module)
+	command("load", {.Text}, .Record, "load a module here for direct calls and return a bound handle", load_module)
+	command("isolate_memory", {.Text, .Handle, .Integer}, .Record, "load a module from memory in a sandboxed process and return a bound handle", isolate_from_memory)
+	command("unload", {.Record}, .Record, "remove a bound module handle that load, isolate, isolate_memory, or connect returned", unload_module)
 	command("allow", {.Text, .Text}, .None, "give a disk process a grant, by nickname", allow)
 	command("revoke", {.Text, .Text}, .Integer, "end a grant of a process that runs", revoke)
 	command("projects.install", {.Text, .Text}, .Record, "ingest, build, verify, and deliver a project module into module_files", projects_install_command, optional_last = true)
@@ -356,4 +367,255 @@ plans_apply_and_rollback_validate_arguments_and_help_text :: proc(t: ^testing.T)
 	rb_cmd := command_find("plans.rollback")
 	testing.expect(t, apply_cmd != nil && apply_cmd.run != nil && apply_cmd.optional_last)
 	testing.expect(t, rb_cmd != nil && rb_cmd.run != nil && rb_cmd.optional_last)
+}
+
+@(private = "file")
+synth_record_storage: [8][512]u8
+@(private = "file")
+synth_file_storage: [8][4096]u8
+
+@(private = "file")
+register_synthetic_handle :: proc(slot_idx: int, binding: string, mod_name: string, export_names: []string, record_name_str: string, shared_file: []u8) -> (handle_id: u64, rec: Value) {
+	handle_id = next_module_handle_id
+	next_module_handle_id += 1
+	entry := &loaded[loaded_count]
+	entry^ = {
+		name      = mod_name,
+		file      = shared_file,
+		place     = -1,
+		sandbox   = 0,
+		handle_id = handle_id,
+	}
+	entry.binding_count = copy(entry.binding[:], binding)
+	loaded_count += 1
+
+	for exp in export_names {
+		cname := copy(names[names_count:], binding)
+		names_count += cname
+		names[names_count] = '.'
+		names_count += 1
+		ename := copy(names[names_count:], exp)
+		names_count += ename
+		full := string(names[names_count - cname - 1 - ename : names_count])
+		commands[command_count] = {
+			name      = full,
+			about     = "synthetic export",
+			result    = .Integer,
+			file      = shared_file,
+			handle_id = handle_id,
+		}
+		command_count += 1
+	}
+	if len(record_name_str) > 0 {
+		cname := copy(names[names_count:], binding)
+		names_count += cname
+		names[names_count] = '.'
+		names_count += 1
+		rname := copy(names[names_count:], record_name_str)
+		names_count += rname
+		full := string(names[names_count - cname - 1 - rname : names_count])
+		commands[command_count] = {
+			name      = full,
+			about     = "make a record from its fields",
+			result    = .Record,
+			file      = shared_file,
+			record    = 1,
+			handle_id = handle_id,
+		}
+		command_count += 1
+	}
+
+	hash: [32]u8
+	raw_rec := loaded_record(binding, mod_name, len(export_names), "isolated", hash)
+	// Persist record bytes and schema outside transient table_memory, just as
+	// assign() copies them into a Variable's own memory object.
+	rec_len := copy(synth_record_storage[slot_idx][:], raw_rec.record)
+	file_len := copy(synth_file_storage[slot_idx][:], raw_rec.file)
+	rec = raw_rec
+	rec.record = synth_record_storage[slot_idx][:rec_len]
+	rec.file = synth_file_storage[slot_idx][:file_len]
+	variables[slot_idx] = {
+		value         = rec,
+		module_handle = handle_id,
+	}
+	variables[slot_idx].name_count = copy(variables[slot_idx].name[:], binding)
+	return handle_id, rec
+}
+
+@(test)
+module_handle_precheck_refuses_bare_and_nested_calls :: proc(t: ^testing.T) {
+	sync.mutex_lock(&ergonomics_test_lock)
+	defer sync.mutex_unlock(&ergonomics_test_lock)
+	ergonomics_reset_state()
+
+	refused_cases := [?]struct {
+		line:     string,
+		contains: string,
+	}{
+		{`isolate("sample")`, `sample = isolate("sample")`},
+		{`load("math")`, `math = load("math")`},
+		{`isolate_memory("adder", h, 1)`, `adder = isolate_memory("adder", memory, size)`},
+		{`1 + isolate("sample")`, `sample = isolate("sample")`},
+		{`x = 1 + isolate("sample")`, `sample = isolate("sample")`},
+		{`a = isolate_memory("a", isolate("sample"), 1)`, `sample = isolate("sample")`},
+		{`s = isolate("sample") |> help`, `sample = isolate("sample")`},
+		{`let s = isolate("sample") in 1`, `sample = isolate("sample")`},
+		{`isolate("help")`, `m = isolate("help")`},
+	}
+	for tc in refused_cases {
+		ergonomics_clear_line()
+		lex_parser.parse_console(tc.line, {form_of = parameter_form_of}, &line_tree_buffers, &line_tree)
+		assigned := len(line_tree.assigned_name) > 0
+		ok := handle_call_precheck(&line_tree, assigned)
+		testing.expectf(t, !ok && failed, "precheck must refuse %q before evaluation", tc.line)
+		testing.expectf(t, strings.contains(ergonomics_failure_text(), tc.contains), "refusal for %q must contain %q, got %q", tc.line, tc.contains, ergonomics_failure_text())
+	}
+
+	accepted_cases := [?]string{
+		`s = isolate("sample")`,
+		`m = load("math")`,
+		`a = isolate_memory("adder", h, 1)`,
+		`let s = isolate("sample")`,
+		`connect("monitor")`,
+		`mon = connect("monitor")`,
+	}
+	for line in accepted_cases {
+		ergonomics_clear_line()
+		lex_parser.parse_console(line, {form_of = parameter_form_of}, &line_tree_buffers, &line_tree)
+		assigned := len(line_tree.assigned_name) > 0
+		ok := handle_call_precheck(&line_tree, assigned)
+		testing.expectf(t, ok && !failed, "precheck must accept %q, got %q", line, ergonomics_failure_text())
+	}
+}
+
+@(test)
+module_handle_binding_checks_refuse_builtin_and_full_variables :: proc(t: ^testing.T) {
+	sync.mutex_lock(&ergonomics_test_lock)
+	defer sync.mutex_unlock(&ergonomics_test_lock)
+	ergonomics_reset_state()
+
+	// Refuses binding over built-in commands before spawning anything.
+	for builtin in ([?]string{"help", "start", "unload", "isolate"}) {
+		ergonomics_clear_line()
+		line_binding_target = builtin
+		_, ok := handle_binding_check("isolate", "sample")
+		testing.expectf(t, !ok && failed, "binding over built-in %q must be refused", builtin)
+		testing.expect(t, strings.contains(ergonomics_failure_text(), "built-in command"))
+	}
+
+	// Refuses binding when all VARIABLE_CAPACITY slots are occupied by other names.
+	for i in 0 ..< VARIABLE_CAPACITY {
+		variables[i].name_count = 3
+		variables[i].name[0] = 'v'
+		variables[i].name[1] = u8('0' + (i / 10))
+		variables[i].name[2] = u8('0' + (i % 10))
+	}
+	ergonomics_clear_line()
+	line_binding_target = "fresh_name"
+	_, ok_full := handle_binding_check("isolate", "sample")
+	testing.expect(t, !ok_full && failed, "full variable table must refuse a new binding before spawning")
+	testing.expect(t, strings.contains(ergonomics_failure_text(), "variables"))
+
+	// Reassigning an already-existing variable slot is allowed even when full.
+	ergonomics_clear_line()
+	line_binding_target = "v00"
+	binding, ok_reuse := handle_binding_check("isolate", "sample")
+	testing.expect(t, ok_reuse && !failed && binding == "v00")
+}
+
+@(test)
+module_handle_isolation_compaction_help_unload_and_reassignment :: proc(t: ^testing.T) {
+	sync.mutex_lock(&ergonomics_test_lock)
+	defer sync.mutex_unlock(&ergonomics_test_lock)
+	ergonomics_reset_state()
+	defer ergonomics_reset_state()
+
+	@(static) shared_file: [4]u8 = {1, 2, 3, 4}
+	@(static) copied_buf: [256]u8
+	h1, rec_a := register_synthetic_handle(0, "a", "tally", []string{"add", "count"}, "State", shared_file[:])
+	h2, _ := register_synthetic_handle(1, "b", "tally", []string{"add", "count"}, "State", shared_file[:])
+	testing.expect(t, h1 != 0 && h2 != 0 && h1 != h2)
+	testing.expect(t, command_find("a.add") != nil && command_find("a.count") != nil && command_find("a.State") != nil)
+	testing.expect(t, command_find("b.add") != nil && command_find("b.count") != nil && command_find("b.State") != nil)
+	testing.expect(t, command_find("add") == nil && command_find("State") == nil, "no unprefixed global commands may exist")
+
+	// help(a) returns only a's commands (3 rows: a.add, a.count, a.State).
+	ergonomics_clear_line()
+	help_a := call_run("help", []Value{rec_a})
+	testing.expect(t, !failed && help_a.kind == .Table)
+	tbl_a, ok_a := table_of(help_a)
+	testing.expect(t, ok_a && tbl_a.rows == 3)
+
+	// help("a.add") describes a.add cleanly.
+	ergonomics_clear_line()
+	help_a_add := call_run("help", []Value{{kind = .Text, text = "a.add"}})
+	testing.expect(t, !failed && help_a_add.kind == .Text && strings.contains(help_a_add.text, "a.add"))
+
+	// Non-handle Record is refused by both help and unload.
+	ergonomics_clear_line()
+	bad_cols := [1]Column{integer_column("value")}
+	bad_tbl, _ := made_table("Other_Rec", bad_cols[:])
+	_ = made_row(&bad_tbl)
+	bad_rec := made_record(&bad_tbl, "test")
+	_ = call_run("help", []Value{bad_rec})
+	testing.expect(t, failed && strings.contains(ergonomics_failure_text(), "not a module handle"))
+	ergonomics_clear_line()
+	_ = call_run("unload", []Value{bad_rec})
+	testing.expect(t, failed && strings.contains(ergonomics_failure_text(), "not a module handle"))
+
+	// A non-owning copy variable (module_handle == 0) is refused by unload and help.
+	copy_len := copy(copied_buf[:], rec_a.record)
+	copied_rec := rec_a
+	copied_rec.record = copied_buf[:copy_len]
+	variables[2] = {value = copied_rec, module_handle = 0}
+	variables[2].name_count = copy(variables[2].name[:], "old_a")
+	ergonomics_clear_line()
+	_ = call_run("unload", []Value{variables[2].value})
+	testing.expect(t, failed && strings.contains(ergonomics_failure_text(), "already unloaded"))
+	ergonomics_clear_line()
+	_ = call_run("help", []Value{variables[2].value})
+	testing.expect(t, failed && strings.contains(ergonomics_failure_text(), "already unloaded"))
+	variables[2] = {}
+
+	// unload(a) removes ONLY a's commands, leaves b's commands intact, clears variable a, and compacts names[].
+	names_before := names_count
+	ergonomics_clear_line()
+	unloaded_a := call_run("unload", []Value{rec_a})
+	testing.expect(t, !failed && unloaded_a.kind == .Record)
+	testing.expect(t, command_find("a.add") == nil && command_find("a.count") == nil && command_find("a.State") == nil)
+	testing.expect(t, command_find("b.add") != nil && command_find("b.count") != nil && command_find("b.State") != nil)
+	testing.expect(t, variables[0].name_count == 0 && variables[0].module_handle == 0)
+	testing.expect(t, names_count < names_before)
+	testing.expect_value(t, names_count, len("b.add") + len("b.count") + len("b.State"))
+
+	// Re-unloading the same handle is refused.
+	ergonomics_clear_line()
+	_ = call_run("unload", []Value{rec_a})
+	testing.expect(t, failed && strings.contains(ergonomics_failure_text(), "already unloaded"))
+
+	// Failed assignment to b preserves b's handle and commands.
+	ergonomics_clear_line()
+	assign("b", Value{kind = .None})
+	testing.expect(t, failed)
+	testing.expect(t, variables[1].module_handle == h2 && command_find("b.add") != nil)
+
+	// Reassigning b = 42 atomically unloads h2 and clears b's commands.
+	ergonomics_clear_line()
+	assign("b", Value{kind = .Integer, integer = 42})
+	testing.expect(t, !failed)
+	testing.expect(t, variables[1].module_handle == 0 && variables[1].value.kind == .Integer && variables[1].value.integer == 42)
+	testing.expect(t, command_find("b.add") == nil && loaded_count == 0 && names_count == 0)
+
+	// Repeated add + unload cycles compact names[] with zero leak.
+	for cycle in 0 ..< 40 {
+		_ = cycle
+		ergonomics_clear_line()
+		hid, _ := register_synthetic_handle(3, "long_handle_name", "sample", []string{"alpha_export", "beta_export", "gamma_export"}, "Sample_Rec", shared_file[:])
+		testing.expect(t, hid != 0 && names_count > 0)
+		unload_handle_id(hid, clear_variable = true)
+		testing.expect_value(t, names_count, 0)
+		testing.expect_value(t, loaded_count, 0)
+	}
+	// Built-in commands stored in .rodata survive every compaction untouched.
+	testing.expect(t, command_find("help") != nil && command_find("unload") != nil)
 }

@@ -39,7 +39,7 @@ console_name_role :: proc "contextless" (data: rawptr, name: string) -> console_
 		}
 	}
 	for &module_loaded in loaded[:loaded_count] {
-		if module_loaded.name == name {
+		if binding_name(&module_loaded) == name || module_loaded.name == name {
 			return .Module
 		}
 	}

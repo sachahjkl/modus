@@ -6,8 +6,8 @@ package machine
 // Teaches why modus exists and how to use it daily:
 //  1. Typed Console & Lex v3: processes() table pipeline, memory() Record,
 //     exact unit arithmetic + pure Lex filter/map, and typed enum refusal.
-//  2. Running Code & Built-In Help: isolate("sample"), help("readings"),
-//     readings(4) |> where(sensor = 2) |> sum_values, plus connect("monitor").
+//  2. Running Code & Built-In Help: s = isolate("sample"), help("s.readings"),
+//     s.readings(4) |> where(sensor = 2) |> s.sum_values, plus connect("monitor").
 //  3. Declarative plan { ... } & Trusted Consent: schema typo refusal before
 //     dialog, one-step plans.apply("evening", ...) holding 5.6 s on the live
 //     trusted display consent dialog, Tab+Enter accept returning standing
@@ -71,26 +71,29 @@ scenario_course_film := [?]Step {
 	{kind = .Wait, text = "[console] error: "},
 	{kind = .Film_Hold, milliseconds = COURSE_HOLD_TEACH, text = "course.l1_enum_refusal"},
 
-	// Lesson 2: The 5 Ways to Run Code & Shorthand Invoking.
+	// Lesson 2: The 5 Ways to Run Code & Bound Module Handles.
 	{kind = .Type, text = "clear()"},
 	{kind = .Wait, text = "[console] > clear()"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT, text = "course.l2_start"},
-	{kind = .Film_Type, text = "isolate(\"sample\")"},
+	{kind = .Film_Type, text = "s = isolate(\"sample\")"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "[console] > s = isolate(\"sample\")"},
+	{kind = .Film_Type, text = "s"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console]   call       isolated"},
 	{kind = .Film_Hold, milliseconds = COURSE_HOLD_TEACH},
 
-	{kind = .Film_Type, text = "help(\"readings\")"},
+	{kind = .Film_Type, text = "help(\"s.readings\")"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] gives a table of "},
 	{kind = .Film_Hold, milliseconds = COURSE_HOLD_TEACH, text = "course.l2_help"},
 
-	{kind = .Film_Type, text = "t = readings(4)"},
+	{kind = .Film_Type, text = "t = s.readings(4)"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "[console] > t = readings(4)"},
-	{kind = .Film_Type, text = "t |> where(sensor = 2) |> sum_values"},
+	{kind = .Wait, text = "[console] > t = s.readings(4)"},
+	{kind = .Film_Type, text = "t |> where(sensor = 2) |> s.sum_values"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] 30"},
@@ -105,7 +108,7 @@ scenario_course_film := [?]Step {
 	{kind = .Wait, text = "[console]   calls"},
 	{kind = .Film_Hold, milliseconds = COURSE_HOLD_TEACH, text = "course.l2_connect"},
 
-	{kind = .Type, text = "unload(\"sample\")"},
+	{kind = .Type, text = "unload(s)"},
 	{kind = .Wait, text = "[console]   module    sample"},
 
 	// Lesson 3: Declarative plan { ... } & Trusted Display Consent.

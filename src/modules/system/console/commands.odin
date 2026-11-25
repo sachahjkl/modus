@@ -106,6 +106,8 @@ Command :: struct {
 	// A command whose last parameter a call may leave out: start(name) and
 	// start(name, list).
 	optional_last: bool,
+	// Non-zero when owned by a bound module handle (Loaded.handle_id).
+	handle_id: u64,
 }
 
 // The places of the table of error details that the console gives to an
@@ -168,19 +170,35 @@ sandbox_free :: proc "contextless" () -> (sandbox: ^Sandbox, number: int) {
 image_memory: system.Handle
 
 COMMAND_CAPACITY :: 512
-LOADED_CAPACITY :: 8
+// Inline capacity: allows up to 8 live bound handles plus atomic rebinds and
+// internal helper call hosts (declaration_eval, c_compiler, assemble).
+LOADED_CAPACITY :: 16
 
-// A module that the console loaded.
+// A module or bound service handle that the console loaded.
 Loaded :: struct {
-	hash:    [32]u8,
-	name:    string, // In the boot image; for a module from memory, in its sandbox, which unload sets to zero.
-	file:    []u8, // In the boot image.
-	place:   int, // A direct load: the place of the module in `space`.
-	sandbox: int, // Not 0: the module is in sandboxes[sandbox - 1].
+	handle_id:     u64, // Monotonic unique handle identifier (from next_module_handle_id).
+	binding:       [VARIABLE_NAME_SIZE]u8,
+	binding_count: int,
+	hash:          [32]u8,
+	name:          string, // In the boot image; for a module from memory, in its sandbox, which unload sets to zero.
+	file:          []u8, // In the boot image.
+	place:         int, // A direct load: the place of the module in `space`.
+	sandbox:       int, // Not 0: the module is in sandboxes[sandbox - 1].
+	service_alias: bool, // True for `s = connect("svc")`: shares the service sandbox without owning it exclusively.
 }
 
 loaded: [LOADED_CAPACITY]Loaded
 loaded_count: int
+next_module_handle_id: u64 = 1
+
+// Bound variable name for a top-level `x = isolate/load/isolate_memory/connect/compile_c(...)`
+// call on the current line, and the handle_id created during that line.
+line_binding_target: string
+line_loaded_handle: u64
+
+binding_name :: proc "contextless" (item: ^Loaded) -> string {
+	return string(item.binding[:clamp(item.binding_count, 0, VARIABLE_NAME_SIZE)])
+}
 
 // The modules that load put in the console, with their imports. The load
 // source is the boot image: what the root service granted.
@@ -208,8 +226,9 @@ requests_memory: system.Handle
 request_count: u32 // The tag of the last command to the root service.
 abandoned_connects: system.Abandoned_Connects
 
-// The names of the commands of services: "process.export".
+// The names of the commands of services and bound module handles: "prefix.export".
 names: [16384]u8
+names_scratch: [len(names)]u8
 names_count: int
 
 // units: what the Integer of each parameter counts, in the order of the
@@ -265,8 +284,9 @@ commands_start :: proc "contextless" () {
 	// repeat  repeat(Text, Integer) -> Text  a text, several times
 	// 1 row of Command
 	// > help("let")
+	// > help(s)
 	// ```
-	command("help", {.Text}, .Table, "the commands, or the help on one name", help, optional_last = true)
+	command("help", {.None}, .Table, "the commands, the commands of a module handle, or the help on one name", help, optional_last = true)
 	// Gives the help on one name, as a `Text`: a command gives its
 	// signature and its whole help; a word of Lex (`let`, `in`, `with`,
 	// `|>`, `_`, `=>`, `function`, `[`, `list`, `if`) or a name of the
@@ -358,22 +378,23 @@ commands_start :: proc "contextless" () {
 	// the others.
 	//
 	// ```
-	// > load("sample")
+	// > s = load("sample")
 	// Loaded
+	//   binding    s
 	//   module     sample
 	//   commands   12
 	//   call       direct
 	//   hash_head  <the first 8 bytes of its hash>
 	// ```
 	//
-	// Errors: no module has the name; the module is loaded already; it
-	// exports no command (`start` runs a process); no room for its commands
-	// (512 commands, 8 modules); the hash differs from the boot image; the
-	// loader refuses the file, with the stage and the reason.
-	command("load", {.Text}, .Record, "load a module here: direct calls", load_module)
+	// Errors: bare or nested call with no variable binding; binding over a
+	// built-in command; no module has the name; it exports no command (`start`
+	// runs a process); no room for its commands or names; the hash differs
+	// from the boot image; the loader refuses the file.
+	command("load", {.Text}, .Record, "load a module here under a bound handle: direct calls", load_module)
 	// Loads a module of the boot image into a new sandboxed process, a call
-	// host, and makes each of its exports a command: a call is an isolated
-	// call through a call ring.
+	// host, and binds its exports and record constructors under `<binding>.<name>`:
+	// a call is an isolated call through a call ring.
 	//
 	// - `name`: the name of a module of the boot image.
 	//
@@ -381,66 +402,59 @@ commands_start :: proc "contextless" () {
 	// the files of the module and of its imports, read-only: no other
 	// handle. A fault of the module stops the call host, not the console:
 	// the error of the line has the stop report, with the instruction and
-	// the frames. Escape during a call stops the call host. The arguments
-	// and the results go through the call region, so a table result is
-	// limited by its size. The result is the `Record` of `load`, with the
-	// call `isolated`.
+	// the frames. Escape during a call stops the call host. Multiple
+	// independent instances of one module can run under distinct bindings
+	// (`a = isolate("tally")`, `b = isolate("tally")`).
 	//
-	// Errors: as `load`; also "no room for a sandboxed process" when 8
+	// Errors: as `load`; also "no room for a sandboxed process" when all
 	// sandboxes run, and "cannot start a sandboxed process" when the budget
 	// of the console cannot pay for it.
-	command("isolate", {.Text}, .Record, "load a module in a sandboxed process", isolate_module)
+	command("isolate", {.Text}, .Record, "load a module in a sandboxed process under a bound handle", isolate_module)
 	// Loads a module file that a memory object holds into a new call host,
-	// and makes each of its exports a command, as `isolate` does for a
-	// module of the boot image. The module that `assemble` wrote is such a
-	// file.
+	// and binds its exports and record constructors under `<binding>.<name>`,
+	// as `isolate` does for a module of the boot image.
 	//
 	// - `name`: the name of the module in the console: 1 to 31 ASCII
 	//   letters, digits and `_`, with no digit first.
 	// - `memory`: the memory object that holds the file from its first byte.
 	// - `size`: the bytes of the file, 1 to 4 MiB.
 	//
-	// The console copies the bytes into a memory object of its own, checks
-	// the copy with `module.validate`, and computes its hash; the log has
-	// the hash. A later write into `memory` changes nothing. The call host
-	// receives the copy as its one file: a module from memory takes no
-	// import. The result is the `Record` of `load`, with the call
-	// `isolated`.
-	//
 	// ```
 	// > f = buffer(4)
-	// > n = assemble("export add(a: Integer, b: Integer) -> Integer; add: mov %rdi, %rax; add %rsi, %rax; ret", f)
-	// > isolate_memory("adder", f, n)
+	// > n = as.assemble("export add(a: Integer, b: Integer) -> Integer; add: mov %rdi, %rax; add %rsi, %rax; ret", f)
+	// > a = isolate_memory("adder", f, n)
 	// ```
 	//
-	// Errors: the name is no name; a size of 0 or past the object or past
-	// 4 MiB; the handle names no memory object; the bytes are no module
-	// file; the module imports a module; a module with the name or the same
-	// bytes is loaded; it exports no command; no room for a sandbox or for
-	// its commands.
-	command("isolate_memory", {.Text, .Handle, .Integer}, .Record, "isolate the module file of a memory object", isolate_from_memory)
-	// Removes a module that `load` or `isolate` added: its commands leave
-	// the command table.
+	// Errors: bare or nested call; the name is no name; a size of 0 or past
+	// the object or past 4 MiB; the handle names no memory object; the bytes
+	// are no module file; the module imports a module; it exports no command;
+	// no room for a sandbox or for its commands.
+	command("isolate_memory", {.Text, .Handle, .Integer}, .Record, "isolate the module file of a memory object under a bound handle", isolate_from_memory)
+	// Removes a bound module handle that `load`, `isolate`, `isolate_memory`,
+	// or bound `connect` added: its `<binding>.*` commands leave the command
+	// table, its variable slot is cleared, and command names are compacted.
 	//
-	// - `name`: the name of the module, as `load` or `isolate` took it.
+	// - `handle`: the `Loaded` record bound by `s = isolate(...)`, `m = load(...)`,
+	//   `a = isolate_memory(...)`, or `mon = connect(...)`.
 	//
 	// After `isolate`, the call host stops: the console closes its handles,
 	// and the kernel stops a process that no handle names. After `load`, the
 	// module leaves the memory of the console, unless another loaded module
-	// imports it: one copy serves both. The result is a `Record`: the
-	// module, the count of the commands removed, and what became of its
+	// imports it: one copy serves both. The result is a `Record`: the binding,
+	// the module, the count of the commands removed, and what became of its
 	// memory.
 	//
 	// ```
-	// > unload("sample")
+	// > unload(s)
 	// Unloaded
+	//   binding   s
 	//   module    sample
 	//   commands  12
-	//   memory    left the console
+	//   memory    its sandboxed process stopped
 	// ```
 	//
-	// Error: "load and isolate added no module with the name ...".
-	command("unload", {.Text}, .Record, "remove a module that load or isolate added", unload_module)
+	// Error: non-handle record or handle already unloaded.
+	command("unload", {.Record}, .Record, "remove a bound module handle that load, isolate, or connect added", unload_module)
 	// Gives one row for each module and each service whose exports are
 	// commands of the console, and one row for each import of such a
 	// module.
@@ -1162,8 +1176,23 @@ commands_start :: proc "contextless" () {
 }
 
 help :: proc "contextless" (arguments: []Value) -> Value {
+	filter_handle: u64 = 0
 	if len(arguments) == 1 {
-		return describe(arguments)
+		switch arguments[0].kind {
+		case .Text:
+			return describe(arguments)
+		case .Record:
+			item, _, is_loaded := loaded_entry_of_record(arguments[0])
+			if !is_loaded {
+				return fail("help: argument 1 is not a module handle; pass a module handle variable, a command name in quotes, or no argument")
+			}
+			if item == nil {
+				return fail("help: that module handle is already unloaded")
+			}
+			filter_handle = item.handle_id
+		case .None, .Integer, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
+			return fail("help: argument 1 must be a command name Text or a module handle Record, not ", type_text(arguments[0].file, arguments[0].kind, arguments[0].detail))
+		}
 	}
 	columns := [3]Column{text_column("name", 48), text_column("signature", 104), text_column("about", 104)}
 	table, made := made_table("Command", columns[:])
@@ -1171,6 +1200,9 @@ help :: proc "contextless" (arguments: []Value) -> Value {
 		return fail("help: the line has no room for the description")
 	}
 	for &item in commands[:command_count] {
+		if filter_handle != 0 && item.handle_id != filter_handle {
+			continue
+		}
 		row := made_row(&table)
 		buffer: [240]u8
 		writer := system.Writer {
@@ -1382,101 +1414,188 @@ list_modules :: proc "contextless" (arguments: []Value) -> Value {
 	return made_value(&table, "modules")
 }
 
-// loaded_record gives the result of load, isolate and connect: the module,
-// the count of its commands, how a call runs, and the head of its hash.
-loaded_record :: proc "contextless" (name: string, callable: int, how: string, hash: [32]u8) -> Value {
-	columns := [4]Column{text_column("module", 32), integer_column("commands"), text_column("call", 8), text_column("hash_head", 16)}
+// loaded_record gives the result of load, isolate, isolate_memory and connect:
+// the binding, the module, the count of its commands, how a call runs, and the
+// head of its hash.
+loaded_record :: proc "contextless" (binding: string, name: string, callable: int, how: string, hash: [32]u8) -> Value {
+	columns := [5]Column{text_column("binding", 32), text_column("module", 32), integer_column("commands"), text_column("call", 8), text_column("hash_head", 16)}
 	table, made := made_table("Loaded", columns[:])
 	if !made {
 		return fail(name, ": the line has no room for the description of its result")
 	}
 	row := made_row(&table)
 	head: [16]u8
-	made_text(&table, row, 0, name)
-	made_integer(&table, row, 1, i64(callable))
-	made_text(&table, row, 2, how)
-	made_text(&table, row, 3, hash_head_text(&head, hash))
+	made_text(&table, row, 0, binding)
+	made_text(&table, row, 1, name)
+	made_integer(&table, row, 2, i64(callable))
+	made_text(&table, row, 3, how)
+	made_text(&table, row, 4, hash_head_text(&head, hash))
 	return made_record(&table, name)
 }
 
 // list_loaded gives the modules and the services whose exports are
-// commands, and the imports of the modules: the module that each import
-// names, and the module that the loader gave in its place.
+// commands, and the imports of the modules: the binding, the module, how a
+// call runs, the module that each import names, and the module that the loader
+// gave in its place.
 list_loaded :: proc "contextless" (arguments: []Value) -> Value {
-	columns := [5]Column{text_column("module", 32), text_column("call", 8), text_column("imported_by", 32), text_column("in_place_of", 32), text_column("hash_head", 16)}
+	columns := [6]Column{text_column("binding", 32), text_column("module", 32), text_column("call", 8), text_column("imported_by", 32), text_column("in_place_of", 32), text_column("hash_head", 16)}
 	table, made := made_table("Loaded_Module", columns[:])
 	if !made {
 		return fail("loaded: the line has no room for the description")
 	}
-	loaded_row :: proc "contextless" (table: ^Made_Table, name: string, how: string, imported_by: string, in_place_of: string, hash: [32]u8) {
+	loaded_row :: proc "contextless" (table: ^Made_Table, binding: string, name: string, how: string, imported_by: string, in_place_of: string, hash: [32]u8) {
 		row := made_row(table)
 		head: [16]u8
-		made_text(table, row, 0, name)
-		made_text(table, row, 1, how)
-		made_text(table, row, 2, imported_by)
-		made_text(table, row, 3, in_place_of)
-		made_text(table, row, 4, hash_head_text(&head, hash))
+		made_text(table, row, 0, binding)
+		made_text(table, row, 1, name)
+		made_text(table, row, 2, how)
+		made_text(table, row, 3, imported_by)
+		made_text(table, row, 4, in_place_of)
+		made_text(table, row, 5, hash_head_text(&head, hash))
 	}
 	for &item in loaded[:loaded_count] {
+		bname := binding_name(&item)
+		if item.service_alias {
+			loaded_row(&table, bname, item.name, "service", "", "", item.hash)
+			continue
+		}
 		if item.sandbox != 0 {
-			loaded_row(&table, item.name, "isolated", "", "", item.hash)
+			loaded_row(&table, bname, item.name, "isolated", "", "", item.hash)
 			sandbox := &sandboxes[item.sandbox - 1]
 			for file in sandbox.files[1:max(sandbox.file_count, 1)] {
-				loaded_row(&table, system.name_of(file.name[:]), "isolated", item.name, "", file.hash)
+				loaded_row(&table, bname, system.name_of(file.name[:]), "isolated", item.name, "", file.hash)
 			}
 			continue
 		}
-		loaded_row(&table, item.name, "direct", "", "", item.hash)
+		loaded_row(&table, bname, item.name, "direct", "", "", item.hash)
 		placed := &space.modules[item.place]
 		for number in 0 ..< int(placed.import_count) {
 			record, _ := module.record(placed.file, .Imports, u32(number + 1), module.Import)
 			used := &space.modules[placed.import_places[number]]
-			loaded_row(&table, module_name_of(used.hash), "direct", item.name, used.hash != record.hash ? module_name_of(record.hash) : "", used.hash)
+			loaded_row(&table, bname, module_name_of(used.hash), "direct", item.name, used.hash != record.hash ? module_name_of(record.hash) : "", used.hash)
 		}
 	}
 	for &sandbox in sandboxes {
 		if sandbox.service && !sandbox.quiet {
-			loaded_row(&table, sandbox.name, "service", "", "", sandbox.hash)
+			has_bare := false
+			for &entry in commands[:command_count] {
+				if entry.handle_id == 0 && entry.run == nil && entry.sandbox != 0 && &sandboxes[entry.sandbox - 1] == &sandbox {
+					has_bare = true
+					break
+				}
+			}
+			if has_bare {
+				loaded_row(&table, sandbox.name, sandbox.name, "service", "", "", sandbox.hash)
+			}
 		}
 	}
 	return made_value(&table, "loaded")
 }
 
-// load_module loads a module in the console: a call of its exports is a
-// direct call. The module has the memory and the handles of the console.
+// handle_binding_check validates that a handle-producing command is bound to a
+// valid top-level variable name that does not collide with a built-in command
+// and has a variable slot available before spawning any process or mapping.
+handle_binding_check :: proc "contextless" (command_name: string, module_hint: string) -> (binding: string, ok: bool) {
+	if line_binding_target == "" {
+		hint := module_hint != "" ? module_hint : "m"
+		_ = fail(command_name, " returns a module handle; bind it at the top level: ", hint, " = ", command_name, "(\"", hint, "\")")
+		return "", false
+	}
+	binding = line_binding_target
+	if len(binding) > VARIABLE_NAME_SIZE {
+		_ = fail("the name of a variable has ", i64(VARIABLE_NAME_SIZE), " bytes at most; this one has ", i64(len(binding)))
+		return "", false
+	}
+	if existing := command_find(binding); existing != nil && existing.run != nil {
+		_ = fail(command_name, ": cannot bind \"", binding, "\" because it is a built-in command")
+		return "", false
+	}
+	if !variable_slot_available(binding) {
+		_ = fail("the console keeps ", i64(VARIABLE_CAPACITY), " variables: give a new value to one of them")
+		return "", false
+	}
+	return binding, true
+}
+
+// names_needed_for computes the bytes commands_add needs in names[:] when
+// registering file under prefix (exports and, for bound handles, records).
+names_needed_for :: proc "contextless" (file: []u8, prefix: string, prefix_records: bool) -> int {
+	if prefix == "" {
+		return 0
+	}
+	total := 0
+	if prefix_records {
+		for index in 1 ..< module.count(file, .Records) {
+			described, ok := module.record_type(file, index)
+			if !ok || described.field_count > ARGUMENT_CAPACITY || module.record_is_fact(file, index) {
+				continue
+			}
+			total += len(prefix) + 1 + int(described.name_count)
+		}
+	}
+	head, _ := module.header(file)
+	for index in 1 ..< module.count(file, .Exports) {
+		if index == head.entry_export {
+			continue
+		}
+		function, ok := module.function(file, index)
+		if !ok || !callable_by_console(file, function) {
+			continue
+		}
+		total += len(prefix) + 1 + int(function.name_count)
+	}
+	return total
+}
+
+// load_module loads a module in the console under a bound handle: a call of
+// its exports is a direct call. The module has the memory and the handles of
+// the console.
 load_module :: proc "contextless" (arguments: []Value) -> Value {
 	return add_module(arguments[0].text, false)
 }
 
-// isolate_module loads a module in a call host: a call of its exports is an
-// isolated call. The module has no handle and no memory of the console.
+// isolate_module loads a module in a call host under a bound handle: a call of
+// its exports is an isolated call. The module has no handle and no memory of
+// the console.
 isolate_module :: proc "contextless" (arguments: []Value) -> Value {
 	return add_module(arguments[0].text, true)
 }
 
-// add_module makes each export of a module of the boot image a command: the
-// description of the export in the module gives its name, its types and its
-// help. The description is the same for a direct call and an isolated call.
+// add_module validates the bound variable target and delegates to
+// add_module_internal, recording line_loaded_handle for atomic assignment.
 add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
+	binding, ok := handle_binding_check(isolate ? "isolate" : "load", name)
+	if !ok {
+		return {}
+	}
+	line_binding_target = ""
+	val, hid := add_module_internal(name, isolate, binding)
+	if !failed {
+		line_loaded_handle = hid
+	}
+	return val
+}
+
+// add_module_internal loads or isolates a boot-image module under prefix
+// `binding` with a fresh unique handle_id and returns its Loaded record and
+// handle_id. Multiple instances of one module are allowed under distinct
+// bindings.
+add_module_internal :: proc "contextless" (name: string, isolate: bool, binding: string) -> (Value, u64) {
 	for &entry in system.image_entries(image) {
 		if system.name_of(entry.name[:]) != name || entry.offset > u64(len(image)) || entry.size > u64(len(image)) - entry.offset {
 			continue
 		}
 		file := image[entry.offset:][:entry.size]
 		if blake3.hash(file) != entry.hash || module.validate(file) != .None {
-			return fail("the module ", name, " does not have the hash that the boot image names")
-		}
-		for &item in loaded[:loaded_count] {
-			if item.hash == entry.hash {
-				return fail("the module ", name, " is loaded; unload(\"", name, "\") removes it")
-			}
+			return fail("the module ", name, " does not have the hash that the boot image names"), 0
 		}
 		callable := callable_count(file)
 		if callable == 0 {
-			return fail("the module ", name, " exports no command; start(\"", name, "\") starts a process")
+			return fail("the module ", name, " exports no command; start(\"", name, "\") starts a process"), 0
 		}
-		if loaded_count == LOADED_CAPACITY || command_count + callable + record_command_count(file) > COMMAND_CAPACITY {
-			return fail("no room for the commands of ", name)
+		needed_names := names_needed_for(file, binding, true)
+		if loaded_count == LOADED_CAPACITY || command_count + callable + record_command_count(file) > COMMAND_CAPACITY || len(names) - names_count < needed_names {
+			return fail("no room for the commands of ", name), 0
 		}
 		base: u64
 		number := 0
@@ -1485,7 +1604,7 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 			sandbox: ^Sandbox
 			sandbox, number = sandbox_free()
 			if sandbox == nil {
-				return fail("no room for a sandboxed process")
+				return fail("no room for a sandboxed process"), 0
 			}
 			sandbox^ = {
 				name = system.name_of(entry.name[:]),
@@ -1494,9 +1613,9 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 				sandbox^ = {}
 				if load_error.stage != u32(module.Load_Stage.None) {
 					load_details.count = 0 // A call host gives no details of its load.
-					return fail_load("cannot isolate ", name)
+					return fail_load("cannot isolate ", name), 0
 				}
-				return fail("cannot start a sandboxed process for ", name)
+				return fail("cannot start a sandboxed process for ", name), 0
 			}
 		} else {
 			// The loader reads the replacement table of this time: the
@@ -1505,32 +1624,54 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 			ok: bool
 			load_details = {records = &load_detail_records[0], count = 0, capacity = ERROR_DETAILS_CAPACITY}
 			if place, ok = system.module_space_load(&space, file, &load_error, &load_details); !ok {
-				return fail_load("cannot load ", name)
+				return fail_load("cannot load ", name), 0
 			}
 			base = space.modules[place].base
 		}
-		loaded[loaded_count] = {hash = entry.hash, name = system.name_of(entry.name[:]), file = file, place = place, sandbox = number}
+		handle_id := next_module_handle_id
+		next_module_handle_id += 1
+		slot := &loaded[loaded_count]
+		slot^ = {
+			handle_id = handle_id,
+			hash      = entry.hash,
+			name      = system.name_of(entry.name[:]),
+			file      = file,
+			place     = place,
+			sandbox   = number,
+		}
+		slot.binding_count = copy(slot.binding[:], binding)
 		loaded_count += 1
-		commands_add(file, "", number, base)
-		return loaded_record(system.name_of(entry.name[:]), callable, isolate ? "isolated" : "direct", entry.hash)
+		bname := binding_name(slot)
+		commands_add(file, bname, number, base, handle_id)
+		return loaded_record(bname, slot.name, callable, isolate ? "isolated" : "direct", entry.hash), handle_id
 	}
-	return fail("no module has the name ", name)
+	return fail("no module has the name ", name), 0
 }
 
 // The bytes of a module file that isolate_memory takes: the bound of a
 // module file of the store module_files, which a call host maps whole.
 MEMORY_MODULE_BYTES_MOST :: disk_process.FILE_BYTES_LIMIT
 
-// isolate_from_memory makes each export of a module file that a memory
-// object holds a command, as isolate does for a module of the boot image
-// (src/md/features/assembler.md, "The machine step: a module from the memory of the console").
-// The console copies the bytes into an object of its own first: the caller
-// keeps its object and can write it again, and the descriptions that the
-// commands read must not change under them.
+// isolate_from_memory isolates a module file from a memory object under the
+// bound variable name on the current line.
 isolate_from_memory :: proc "contextless" (arguments: []Value) -> Value {
 	name := arguments[0].text
-	memory := system.Handle(arguments[1].integer)
-	size := arguments[2].integer
+	binding, ok := handle_binding_check("isolate_memory", name)
+	if !ok {
+		return {}
+	}
+	line_binding_target = ""
+	val, hid := isolate_from_memory_internal(name, system.Handle(arguments[1].integer), arguments[2].integer, binding)
+	if !failed {
+		line_loaded_handle = hid
+	}
+	return val
+}
+
+// isolate_from_memory_internal copies a module file from memory, validates it,
+// starts its zero-grant call host, and binds its exports and record
+// constructors under `binding` with a fresh handle_id.
+isolate_from_memory_internal :: proc "contextless" (name: string, memory: system.Handle, size: i64, binding: string) -> (Value, u64) {
 	name_valid := len(name) >= 1 && len(name) < info.IMAGE_NAME_SIZE
 	for index in 0 ..< len(name) {
 		character := name[index]
@@ -1541,48 +1682,43 @@ isolate_from_memory :: proc "contextless" (arguments: []Value) -> Value {
 		}
 	}
 	if !name_valid {
-		return fail("isolate_memory: \"", name, "\" is no name of a module: 1 to ", i64(info.IMAGE_NAME_SIZE - 1), " ASCII letters, digits and _, with no digit first")
+		return fail("isolate_memory: \"", name, "\" is no name of a module: 1 to ", i64(info.IMAGE_NAME_SIZE - 1), " ASCII letters, digits and _, with no digit first"), 0
 	}
 	if size < 1 || size > MEMORY_MODULE_BYTES_MOST {
-		return fail("isolate_memory: the size is ", size, " bytes; a module file has 1 to ", i64(MEMORY_MODULE_BYTES_MOST))
+		return fail("isolate_memory: the size is ", size, " bytes; a module file has 1 to ", i64(MEMORY_MODULE_BYTES_MOST)), 0
 	}
 	kind, _, _ := system.handle_state(memory)
 	if kind != .Memory {
-		return fail("isolate_memory: the handle names no memory object")
+		return fail("isolate_memory: the handle names no memory object"), 0
 	}
 	// A refused handle has no pages, so it has no byte.
 	pages, _ := system.memory_size(memory)
 	if u64(size) > pages * system.PAGE_SIZE {
-		return fail("isolate_memory: the memory object has ", pages * system.PAGE_SIZE, " bytes; it does not hold ", size)
-	}
-	for &item in loaded[:loaded_count] {
-		if item.name == name {
-			return fail("the module ", name, " is loaded; unload(\"", name, "\") removes it")
-		}
+		return fail("isolate_memory: the memory object has ", pages * system.PAGE_SIZE, " bytes; it does not hold ", size), 0
 	}
 	if loaded_count == LOADED_CAPACITY {
-		return fail("no room for the commands of ", name)
+		return fail("no room for the commands of ", name), 0
 	}
 	sandbox, number := sandbox_free()
 	if sandbox == nil {
-		return fail("no room for a sandboxed process")
+		return fail("no room for a sandboxed process"), 0
 	}
 
 	copy_pages := (u64(size) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	copy_memory, create_status := system.memory_create(copy_pages)
 	if create_status != .Succeeded {
-		return fail("isolate_memory: the budget of the console cannot pay for ", copy_pages, " pages")
+		return fail("isolate_memory: the budget of the console cannot pay for ", copy_pages, " pages"), 0
 	}
 	copy_address, copy_status := system.memory_map(copy_memory)
 	if copy_status != .Succeeded {
 		system.close(copy_memory)
-		return fail("isolate_memory: the console cannot map its copy")
+		return fail("isolate_memory: the console cannot map its copy"), 0
 	}
 	source_address, source_status := system.memory_map(memory, {})
 	if source_status != .Succeeded {
 		system.memory_unmap(copy_address)
 		system.close(copy_memory)
-		return fail("the console cannot map the memory object")
+		return fail("the console cannot map the memory object"), 0
 	}
 	intrinsics.mem_copy_non_overlapping(copy_address, source_address, int(size))
 	system.memory_unmap(source_address)
@@ -1594,27 +1730,22 @@ isolate_from_memory :: proc "contextless" (arguments: []Value) -> Value {
 
 	if error := module.validate(file); error != .None {
 		copy_end(copy_address, copy_memory)
-		return fail("isolate_memory: the bytes are no module file: module.validate refuses them with the error ", u64(error))
+		return fail("isolate_memory: the bytes are no module file: module.validate refuses them with the error ", u64(error)), 0
 	}
 	if module.count(file, .Imports) > 1 {
 		copy_end(copy_address, copy_memory)
-		return fail("isolate_memory: the module imports another module; a module from memory takes no import")
+		return fail("isolate_memory: the module imports another module; a module from memory takes no import"), 0
 	}
 	hash := blake3.hash(file)
-	for &item in loaded[:loaded_count] {
-		if item.hash == hash {
-			copy_end(copy_address, copy_memory)
-			return fail("the module ", item.name, " has the same bytes and is loaded; unload(\"", item.name, "\") removes it")
-		}
-	}
 	callable := callable_count(file)
 	if callable == 0 {
 		copy_end(copy_address, copy_memory)
-		return fail("isolate_memory: the module ", name, " exports no command")
+		return fail("isolate_memory: the module ", name, " exports no command"), 0
 	}
-	if command_count + callable + int(module.count(file, .Records)) > COMMAND_CAPACITY {
+	needed_names := names_needed_for(file, binding, true)
+	if command_count + callable + record_command_count(file) > COMMAND_CAPACITY || len(names) - names_count < needed_names {
 		copy_end(copy_address, copy_memory)
-		return fail("no room for the commands of ", name)
+		return fail("no room for the commands of ", name), 0
 	}
 
 	sandbox^ = {module_memory = copy_memory, module_address = copy_address}
@@ -1627,79 +1758,221 @@ isolate_from_memory :: proc "contextless" (arguments: []Value) -> Value {
 		copy_end(copy_address, copy_memory)
 		if load_error.stage != u32(module.Load_Stage.None) {
 			load_details.count = 0 // A call host gives no details of its load.
-			return fail_load("cannot isolate ", name)
+			return fail_load("cannot isolate ", name), 0
 		}
-		return fail("cannot start a sandboxed process for ", name)
+		return fail("cannot start a sandboxed process for ", name), 0
 	}
-	loaded[loaded_count] = {hash = hash, name = sandbox.name, file = file, place = -1, sandbox = number}
+	handle_id := next_module_handle_id
+	next_module_handle_id += 1
+	slot := &loaded[loaded_count]
+	slot^ = {
+		handle_id = handle_id,
+		hash      = hash,
+		name      = sandbox.name,
+		file      = file,
+		place     = -1,
+		sandbox   = number,
+	}
+	slot.binding_count = copy(slot.binding[:], binding)
 	loaded_count += 1
-	commands_add(file, "", number, 0)
+	bname := binding_name(slot)
+	commands_add(file, bname, number, 0, handle_id)
 	system.log_fact(.Info, Module_From_Memory{size = value_kinds.Size_In_Bytes(size), module_hash = value_kinds.Hash_Field(hash), module_name = value_kinds.module_name_field(sandbox.name)})
-	return loaded_record(sandbox.name, callable, "isolated", hash)
+	return loaded_record(bname, sandbox.name, callable, "isolated", hash), handle_id
 }
 
-// unload_module removes a module that load or isolate added: its commands
-// leave the console. A direct load leaves the memory of the console. A call
-// host stops: the kernel stops a process that no handle names.
-unload_module :: proc "contextless" (arguments: []Value) -> Value {
-	name := arguments[0].text
-	for &item, index in loaded[:loaded_count] {
-		if item.name != name {
+// names_compact rebuilds names[:names_count] from all surviving commands whose
+// name slice points into names[:], reclaiming bytes freed by unload so
+// repeated load/unload cycles never exhaust the buffer.
+names_compact :: proc "contextless" () {
+	base := uintptr(raw_data(names[:]))
+	end := base + uintptr(len(names))
+	written := 0
+	for &entry in commands[:command_count] {
+		ptr := uintptr(raw_data(entry.name))
+		if len(entry.name) > 0 && ptr >= base && ptr < end {
+			copy(names_scratch[written:], entry.name)
+			written += len(entry.name)
+		}
+	}
+	copy(names[:written], names_scratch[:written])
+	cursor := 0
+	for &entry in commands[:command_count] {
+		ptr := uintptr(raw_data(entry.name))
+		if len(entry.name) > 0 && ptr >= base && ptr < end {
+			length := len(entry.name)
+			entry.name = string(names[cursor:cursor + length])
+			cursor += length
+		}
+	}
+	names_count = written
+}
+
+// loaded_entry_of_record checks whether val is a Loaded module-handle Record
+// and looks up its live entry in loaded[:loaded_count].
+loaded_entry_of_record :: proc "contextless" (val: Value) -> (item: ^Loaded, index: int, is_loaded_record: bool) {
+	if val.kind != .Record || len(val.file) == 0 {
+		return nil, -1, false
+	}
+	if record_name(val.file, val.detail) != "Loaded" {
+		return nil, -1, false
+	}
+	bval, has_binding := field_value(val, "binding")
+	mval, has_module := field_value(val, "module")
+	if !has_binding || bval.kind != .Text || len(bval.text) == 0 || !has_module || mval.kind != .Text {
+		return nil, -1, false
+	}
+	// If val comes directly from a Variable slot, resolve strictly by that
+	// slot's module_handle so a non-owning or stale copy (`old = s`) is never
+	// mistaken for a newer handle bound to the same name.
+	if len(val.record) > 0 {
+		for &variable in variables {
+			if variable.name_count > 0 && variable.value.kind == .Record && len(variable.value.record) > 0 && raw_data(variable.value.record) == raw_data(val.record) {
+				if variable.module_handle == 0 {
+					return nil, -1, true
+				}
+				for &entry, i in loaded[:loaded_count] {
+					if entry.handle_id == variable.module_handle {
+						return &entry, i, true
+					}
+				}
+				return nil, -1, true
+			}
+		}
+	}
+	for &entry, i in loaded[:loaded_count] {
+		if binding_name(&entry) == bval.text && entry.name == mval.text {
+			return &entry, i, true
+		}
+	}
+	return nil, -1, true
+}
+
+// unload_entry_at removes loaded[index], removes only commands owning its
+// handle_id, compacts names[:], releases its sandbox or module-space slot, and
+// optionally clears the owning Variable slot.
+unload_entry_at :: proc "contextless" (index: int, clear_variable: bool) -> (binding_buf: [VARIABLE_NAME_SIZE]u8, binding_len: int, mod_buf: [info.IMAGE_NAME_SIZE]u8, mod_len: int, removed: int, memory: string, ok: bool) {
+	item := loaded[index]
+	binding_len = copy(binding_buf[:], binding_name(&item))
+	mod_len = copy(mod_buf[:], item.name)
+	kept := 0
+	for &entry in commands[:command_count] {
+		if entry.handle_id == item.handle_id {
+			if entry.record == 0 {
+				removed += 1
+			}
 			continue
 		}
-		kept, removed := 0, 0
-		for &entry in commands[:command_count] {
-			module_command := entry.run == nil && raw_data(entry.file) == raw_data(item.file) && entry.sandbox == item.sandbox
-			if !module_command {
-				commands[kept] = entry
-				kept += 1
-			} else if entry.record != 0 {
-				removed -= 1 // The count that the console prints is the count of exports.
-			}
-		}
-		removed += command_count - kept
-		command_count = kept
-		memory := "left the console"
-		if item.sandbox != 0 {
-			sandbox := &sandboxes[item.sandbox - 1]
-			sandbox_end(sandbox)
-			system.ring_close(&sandbox.ring)
-			system.memory_unmap(raw_data(sandbox.region))
-			system.close(sandbox.ring_memory)
-			system.close(sandbox.region_memory)
-			system.close(sandbox.files_memory)
-			if sandbox.module_memory != 0 {
-				system.memory_unmap(sandbox.module_address)
-				system.close(sandbox.module_memory)
-			}
-			sandbox^ = {}
-			memory = "its sandboxed process stopped"
-		} else {
-			// A module that another module imports stays: one copy for all.
-			// An import that no other module uses leaves with the module.
-			if !system.module_space_release(&space, item.place, &load_error) {
-				return fail_load("cannot remove ", item.name)
-			}
-			if space.modules[item.place].users != 0 {
-				memory = "stays: another module imports it"
-			}
-		}
-		columns := [3]Column{text_column("module", 32), integer_column("commands"), text_column("memory", 40)}
-		table, made := made_table("Unloaded", columns[:])
-		row := made_row(&table)
-		// The argument, not item.name: the name of a module from memory is
-		// a view of its sandbox, which is all zero bytes now.
-		made_text(&table, row, 0, name)
-		made_integer(&table, row, 1, i64(removed))
-		made_text(&table, row, 2, memory)
-		loaded[index] = loaded[loaded_count - 1]
-		loaded_count -= 1
-		if !made {
-			return fail(name, ": the line has no room for the description of its result")
-		}
-		return made_record(&table, "unload")
+		commands[kept] = entry
+		kept += 1
 	}
-	return fail("load and isolate added no module with the name ", name)
+	command_count = kept
+	names_compact()
+
+	memory = "left the console"
+	if item.service_alias {
+		// Disconnect the underlying service sandbox only when no other handle
+		// or bare service command references it.
+		still_used := false
+		for &other, oi in loaded[:loaded_count] {
+			if oi != index && other.sandbox == item.sandbox {
+				still_used = true
+				break
+			}
+		}
+		if !still_used {
+			for &entry in commands[:command_count] {
+				if entry.sandbox == item.sandbox {
+					still_used = true
+					break
+				}
+			}
+		}
+		if !still_used && item.sandbox != 0 {
+			sandbox := &sandboxes[item.sandbox - 1]
+			service_disconnect(sandbox)
+			sandbox^ = {}
+			memory = "disconnected service"
+		} else {
+			memory = "removed handle alias"
+		}
+	} else if item.sandbox != 0 {
+		sandbox := &sandboxes[item.sandbox - 1]
+		sandbox_end(sandbox)
+		system.ring_close(&sandbox.ring)
+		system.memory_unmap(raw_data(sandbox.region))
+		system.close(sandbox.ring_memory)
+		system.close(sandbox.region_memory)
+		system.close(sandbox.files_memory)
+		if sandbox.module_memory != 0 {
+			system.memory_unmap(sandbox.module_address)
+			system.close(sandbox.module_memory)
+		}
+		sandbox^ = {}
+		memory = "its sandboxed process stopped"
+	} else if item.place >= 0 {
+		// A module that another module imports stays: one copy for all.
+		// An import that no other module uses leaves with the module.
+		if !system.module_space_release(&space, item.place, &load_error) {
+			_ = fail_load("cannot remove ", string(mod_buf[:mod_len]))
+			return
+		}
+		if space.modules[item.place].users != 0 {
+			memory = "stays: another module imports it"
+		}
+	}
+	if clear_variable {
+		for &variable in variables {
+			if variable.module_handle == item.handle_id {
+				variable_memory_end(&variable)
+				variable.name_count = 0
+				variable.module_handle = 0
+			}
+		}
+	}
+	loaded[index] = loaded[loaded_count - 1]
+	loaded_count -= 1
+	return binding_buf, binding_len, mod_buf, mod_len, removed, memory, true
+}
+
+// unload_handle_id unloads the live handle matching handle_id if present.
+unload_handle_id :: proc "contextless" (handle_id: u64, clear_variable := false) {
+	if handle_id == 0 {
+		return
+	}
+	for &item, index in loaded[:loaded_count] {
+		if item.handle_id == handle_id {
+			_, _, _, _, _, _, _ = unload_entry_at(index, clear_variable)
+			return
+		}
+	}
+}
+
+// unload_module removes a bound module handle that load, isolate,
+// isolate_memory, or bound connect added.
+unload_module :: proc "contextless" (arguments: []Value) -> Value {
+	item, index, is_loaded := loaded_entry_of_record(arguments[0])
+	if !is_loaded {
+		return fail("unload: argument 1 is not a module handle; pass a variable bound by load, isolate, isolate_memory, or connect")
+	}
+	if item == nil {
+		return fail("unload: that module handle is already unloaded")
+	}
+	binding_buf, binding_len, mod_buf, mod_len, removed, memory, ok := unload_entry_at(index, clear_variable = true)
+	if !ok {
+		return {}
+	}
+	columns := [4]Column{text_column("binding", 32), text_column("module", 32), integer_column("commands"), text_column("memory", 40)}
+	table, made := made_table("Unloaded", columns[:])
+	if !made {
+		return fail(string(mod_buf[:mod_len]), ": the line has no room for the description of its result")
+	}
+	row := made_row(&table)
+	made_text(&table, row, 0, string(binding_buf[:binding_len]))
+	made_text(&table, row, 1, string(mod_buf[:mod_len]))
+	made_integer(&table, row, 2, i64(removed))
+	made_text(&table, row, 3, memory)
+	return made_record(&table, "unload")
 }
 
 // callable_count gives the count of exports of a module that the console
@@ -1729,11 +2002,12 @@ record_command_count :: proc "contextless" (file: []u8) -> int {
 
 // commands_add makes each callable export of a module a command. The
 // description of the export gives its name, its types and its help.
-// Each record of the module is a command too, with the name of the record:
-// it makes a Record value from one argument for each field.
-//   prefix:  "", or the name of a service: the command is "service.export".
-//   sandbox: 0 for a direct call at base, or the number of the sandbox.
-commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, base: u64) {
+// Each record of the module is a command too: under "<prefix>.<Record>" for a
+// bound module handle (handle_id != 0), so no unprefixed global name leaks.
+//   prefix:    the name of a service or bound handle: the command is "prefix.export".
+//   sandbox:   0 for a direct call at base, or the number of the sandbox.
+//   handle_id: 0 for bare service connections, non-zero for bound handles.
+commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, base: u64, handle_id: u64 = 0) {
 	head, _ := module.header(file)
 	for index in 1 ..< module.count(file, .Records) {
 		described, ok := module.record_type(file, index)
@@ -1742,15 +2016,17 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 		if !ok || described.field_count > ARGUMENT_CAPACITY || module.record_is_fact(file, index) {
 			continue
 		}
+		raw_name := module.string_at(file, described.name_offset, described.name_count)
 		item := &commands[command_count]
 		item^ = {
-			name            = module.string_at(file, described.name_offset, described.name_count),
+			name            = raw_name,
 			about           = "make a record from its fields",
 			parameter_count = int(described.field_count),
 			result          = .Record,
 			file            = file,
 			record          = index,
 			sandbox         = sandbox, // The owner of the command. A record has no call.
+			handle_id       = handle_id,
 		}
 		item.function.result_detail = index
 		// record_type refused a field of no type; the border reads each
@@ -1772,6 +2048,17 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 		if !fields_known {
 			continue
 		}
+		if prefix != "" && handle_id != 0 {
+			if len(prefix) + 1 + len(raw_name) > len(names) - names_count {
+				continue
+			}
+			candidate := system.format(names[names_count:], prefix, ".", raw_name)
+			if existing := command_find(candidate); existing != nil && existing.run != nil {
+				continue
+			}
+			item.name = candidate
+			names_count += len(item.name)
+		}
 		command_count += 1
 	}
 	for index in 1 ..< module.count(file, .Exports) {
@@ -1783,7 +2070,11 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 		if !export_command_make(item, file, index) {
 			continue
 		}
+		item.handle_id = handle_id
 		if prefix != "" {
+			if len(prefix) + 1 + len(item.name) > len(names) - names_count {
+				continue
+			}
 			candidate := system.format(names[names_count:], prefix, ".", item.name)
 			// Keep a built-in human frontend command (such as plans.apply or
 			// plans.rollback) in charge of its service.export name when the
@@ -1852,11 +2143,23 @@ export_command_make :: proc "contextless" (item: ^Command, file: []u8, index: u3
 }
 
 // connect_service makes a connection to a service that runs, and makes each
-// export of the service a command: "service.export". The root service
-// decides if the console can call the service. It names the file of the
-// process by its hash: the console reads the descriptions there.
+// export of the service a command: "service.export" for a bare call, or
+// "<binding>.export" tagged with a unique handle_id when bound to a variable
+// (`mon = connect("monitor")`). The root service decides if the console can
+// call the service. It names the file of the process by its hash: the console
+// reads the descriptions there.
 connect_service :: proc "contextless" (arguments: []Value) -> Value {
 	name := arguments[0].text
+	bound := line_binding_target != ""
+	binding := ""
+	if bound {
+		ok: bool
+		binding, ok = handle_binding_check("connect", name)
+		if !ok {
+			return {}
+		}
+		line_binding_target = ""
+	}
 	line_records_try_again()
 	sandbox: ^Sandbox
 	number := 0
@@ -1864,11 +2167,52 @@ connect_service :: proc "contextless" (arguments: []Value) -> Value {
 		if !item.service || item.name != name {
 			continue
 		}
-		// The commands of the service exist already: the answer is the
-		// record of the connection, again.
+		// Already connected with commands.
 		if !item.quiet {
 			if entry := system.image_entry_of(image, item.hash); entry != nil {
-				return loaded_record(item.name, callable_count(image[entry.offset:][:entry.size]), "service", item.hash)
+				file := image[entry.offset:][:entry.size]
+				callable := callable_count(file)
+				if !bound {
+					// If it was connected only via a bound alias earlier, ensure
+					// bare `service.*` commands exist now.
+					has_bare := false
+					for &cmd in commands[:command_count] {
+						if cmd.handle_id == 0 && cmd.run == nil && cmd.sandbox == index + 1 {
+							has_bare = true
+							break
+						}
+					}
+					if !has_bare {
+						needed := names_needed_for(file, item.name, false)
+						if command_count + callable + record_command_count(file) > COMMAND_CAPACITY || len(names) - names_count < needed {
+							return fail("the service ", name, ": no room for its commands")
+						}
+						commands_add(file, item.name, index + 1, 0, 0)
+					}
+					return loaded_record(item.name, item.name, callable, "service", item.hash)
+				}
+				needed := names_needed_for(file, binding, true)
+				if loaded_count == LOADED_CAPACITY || command_count + callable + record_command_count(file) > COMMAND_CAPACITY || len(names) - names_count < needed {
+					return fail("the service ", name, ": no room for its commands")
+				}
+				handle_id := next_module_handle_id
+				next_module_handle_id += 1
+				slot := &loaded[loaded_count]
+				slot^ = {
+					handle_id     = handle_id,
+					hash          = entry.hash,
+					name          = item.name,
+					file          = file,
+					place         = -1,
+					sandbox       = index + 1,
+					service_alias = true,
+				}
+				slot.binding_count = copy(slot.binding[:], binding)
+				loaded_count += 1
+				bname := binding_name(slot)
+				commands_add(file, bname, index + 1, 0, handle_id)
+				line_loaded_handle = handle_id
+				return loaded_record(bname, item.name, callable, "service", item.hash)
 			}
 			return fail("the boot image has no file with the hash of the process ", name)
 		}
@@ -1909,15 +2253,37 @@ connect_service :: proc "contextless" (arguments: []Value) -> Value {
 			break
 		}
 		callable := callable_count(file)
-		if callable == 0 || command_count + callable + record_command_count(file) > COMMAND_CAPACITY || len(names) - names_count < callable * 64 {
+		prefix := bound ? binding : system.name_of(entry.name[:])
+		needed := names_needed_for(file, prefix, bound)
+		if callable == 0 || (bound && loaded_count == LOADED_CAPACITY) || command_count + callable + record_command_count(file) > COMMAND_CAPACITY || len(names) - names_count < needed {
 			service_disconnect(sandbox)
 			sandbox^ = {}
 			return fail("the service ", name, callable == 0 ? " exports no command" : ": no room for its commands")
 		}
 		sandbox.name = system.name_of(entry.name[:]) // The text of the line does not stay.
 		sandbox.quiet = false
-		commands_add(file, sandbox.name, number, 0)
-		return loaded_record(sandbox.name, callable, "service", entry.hash)
+		if bound {
+			handle_id := next_module_handle_id
+			next_module_handle_id += 1
+			slot := &loaded[loaded_count]
+			slot^ = {
+				handle_id     = handle_id,
+				hash          = entry.hash,
+				name          = sandbox.name,
+				file          = file,
+				place         = -1,
+				sandbox       = number,
+				service_alias = true,
+			}
+			slot.binding_count = copy(slot.binding[:], binding)
+			loaded_count += 1
+			bname := binding_name(slot)
+			commands_add(file, bname, number, 0, handle_id)
+			line_loaded_handle = handle_id
+			return loaded_record(bname, sandbox.name, callable, "service", entry.hash)
+		}
+		commands_add(file, sandbox.name, number, 0, 0)
+		return loaded_record(sandbox.name, sandbox.name, callable, "service", entry.hash)
 	}
 	service_disconnect(sandbox)
 	sandbox^ = {}

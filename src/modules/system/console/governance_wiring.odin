@@ -114,39 +114,40 @@ tree_hash_command :: proc "contextless" (arguments: []Value) -> Value {
 }
 
 // compile_c_command compiles C source text inside modus in one step:
-// ensures c_compiler (chibicc) and assemble call hosts are running, compiles
-// C -> x86-64 assembly -> validated .modus module, and isolates it under name
-// so its exports become immediately callable Lex commands.
+// isolates c_compiler (chibicc) and assemble under internal handles, compiles
+// C -> x86-64 assembly -> validated .modus module, and isolates the result
+// under the bound variable name (or mod_name when called bare).
 compile_c_command :: proc "contextless" (arguments: []Value) -> Value {
 	mod_name := arguments[0]
 	c_source := arguments[1]
 	if len(mod_name.text) == 0 || len(c_source.text) == 0 {
 		return fail("compile_c: expected a module name and C source text")
 	}
+	bound := line_binding_target != ""
+	binding := mod_name.text
+	if bound {
+		ok: bool
+		binding, ok = handle_binding_check("compile_c", mod_name.text)
+		if !ok {
+			return {}
+		}
+		line_binding_target = ""
+	}
 	// Each c_compiler call host compiles one C source cleanly; isolate fresh
-	// and unload after compile so compile_c can be invoked repeatedly.
-	if command_find("compile") != nil {
-		unload_cc := [1]Value{{kind = .Text, text = "c_compiler"}}
-		_ = call_run("unload", unload_cc[:])
+	// under an internal handle and unload after compile so compile_c can run
+	// repeatedly without adding global commands.
+	_, cc_handle := add_module_internal("c_compiler", true, "__cc")
+	if cc_handle == 0 || failed {
+		return {}
 	}
-	{
-		iso_cc := [1]Value{{kind = .Text, text = "c_compiler"}}
-		r := isolate_module(iso_cc[:])
-		if r.kind == .None {
-			return {}
-		}
+	defer unload_handle_id(cc_handle)
+
+	_, as_handle := add_module_internal("assemble", true, "__as")
+	if as_handle == 0 || failed {
+		return {}
 	}
-	defer {
-		unload_cc := [1]Value{{kind = .Text, text = "c_compiler"}}
-		_ = call_run("unload", unload_cc[:])
-	}
-	if command_find("assemble") == nil {
-		iso_as := [1]Value{{kind = .Text, text = "assemble"}}
-		r := isolate_module(iso_as[:])
-		if r.kind == .None {
-			return {}
-		}
-	}
+	defer unload_handle_id(as_handle)
+
 	buf_pages := [1]Value{{kind = .Integer, integer = 16}}
 	asm_buf := call_run("buffer", buf_pages[:])
 	if asm_buf.kind != .Handle {
@@ -160,7 +161,7 @@ compile_c_command :: proc "contextless" (arguments: []Value) -> Value {
 	defer system.close(system.Handle(mod_buf.integer))
 
 	cc_args := [2]Value{c_source, asm_buf}
-	asm_len := call_run("compile", cc_args[:])
+	asm_len := call_run("__cc.compile", cc_args[:])
 	if asm_len.kind != .Integer || asm_len.integer <= 0 {
 		return {}
 	}
@@ -170,10 +171,13 @@ compile_c_command :: proc "contextless" (arguments: []Value) -> Value {
 		return {}
 	}
 	as_args := [2]Value{asm_bytes, mod_buf}
-	mod_len := call_run("assemble", as_args[:])
+	mod_len := call_run("__as.assemble", as_args[:])
 	if mod_len.kind != .Integer || mod_len.integer <= 0 {
 		return {}
 	}
-	iso_args := [3]Value{mod_name, mod_buf, mod_len}
-	return isolate_from_memory(iso_args[:])
+	result, handle_id := isolate_from_memory_internal(mod_name.text, system.Handle(mod_buf.integer), mod_len.integer, binding)
+	if handle_id != 0 && bound {
+		line_loaded_handle = handle_id
+	}
+	return result
 }

@@ -646,10 +646,6 @@ names_collect :: proc "contextless" (table: ^Candidate_Table, place: line_editor
 			for &name, index in completion.process_names[:completion.process_count] {
 				candidate_add(table, system.name_of(name[:]), .Process, index)
 			}
-		case "unload":
-			for &item, index in loaded[:loaded_count] {
-				candidate_add(table, item.name, .Module, index)
-			}
 		case "help", "describe":
 			for &item, index in commands[:command_count] {
 				candidate_add(table, item.name, .Command, index)
@@ -1033,6 +1029,13 @@ signature_write :: proc "contextless" (writer: ^system.Writer, item: ^Command, m
 
 // owner_name gives the name of the module or of the service of an export.
 owner_name :: proc "contextless" (item: ^Command) -> string {
+	if item.handle_id != 0 {
+		for &module_loaded in loaded[:loaded_count] {
+			if module_loaded.handle_id == item.handle_id {
+				return module_loaded.name
+			}
+		}
+	}
 	if item.sandbox >= 1 && item.sandbox <= SANDBOX_CAPACITY {
 		return sandboxes[item.sandbox - 1].name
 	}

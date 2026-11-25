@@ -249,6 +249,8 @@ Variable :: struct {
 	// body of a function too, and copies it once.
 	list_line:       u64,
 	list_line_first: int,
+	// Non-zero when this variable owns a live bound module handle in loaded[].
+	module_handle:   u64,
 }
 
 variables: [VARIABLE_CAPACITY]Variable
@@ -310,12 +312,86 @@ parameter_form_of :: proc "contextless" (data: rawptr, command_name: string, ind
 	return found.parameter_forms[index]
 }
 
+// variable_slot_available reports whether `name` can be assigned without
+// exceeding VARIABLE_CAPACITY (either updating an existing variable or using
+// a free slot).
+variable_slot_available :: proc "contextless" (name: string) -> bool {
+	for &variable in variables {
+		if variable.name_count == 0 || string(variable.name[:variable.name_count]) == name {
+			return true
+		}
+	}
+	return false
+}
+
+// handle_call_requires_binding names the commands that always return a bound
+// module handle and cannot be called bare or nested inside another expression.
+handle_call_requires_binding :: proc "contextless" (callee: string) -> bool {
+	return callee == "isolate" || callee == "load" || callee == "isolate_memory"
+}
+
+// handle_call_precheck statically refuses bare or nested calls to isolate,
+// load, or isolate_memory before evaluation begins, so no module is mapped
+// or sandbox spawned for an unbound call.
+handle_call_precheck :: proc "contextless" (tree: ^lex_parser.Syntax_Tree, assigned: bool) -> bool {
+	if tree.refusal.refusal != .None {
+		return true
+	}
+	for i in 0 ..< tree.node_count {
+		node := tree.nodes[i]
+		if node.kind != .Call {
+			continue
+		}
+		idx := lex_parser.Node_Index(i)
+		callee := lex_parser.node_text(tree, idx)
+		if !handle_call_requires_binding(callee) {
+			continue
+		}
+		if assigned && idx == tree.root {
+			continue
+		}
+		mod_lit := ""
+		if node.aux > 0 && int(node.a) < len(tree.extra_children) {
+			first_arg := tree.extra_children[node.a]
+			if arg_node := lex_parser.node_at(tree, first_arg); arg_node != nil && arg_node.kind == .Text {
+				raw := lex_parser.node_text(tree, first_arg)
+				if len(raw) >= 2 && raw[0] == '"' && raw[len(raw) - 1] == '"' {
+					mod_lit = raw[1:len(raw) - 1]
+				}
+			}
+		}
+		hint := "m"
+		if len(mod_lit) > 0 && lex_parser.name_valid(mod_lit) {
+			if existing := command_find(mod_lit); existing == nil || existing.run == nil {
+				hint = mod_lit
+			}
+		}
+		if callee == "isolate_memory" {
+			if len(mod_lit) > 0 {
+				fail(callee, " returns a module handle; bind it with ", hint, " = ", callee, "(\"", mod_lit, "\", memory, size)")
+			} else {
+				fail(callee, " returns a module handle; bind it with ", hint, " = ", callee, "(name, memory, size)")
+			}
+		} else {
+			if len(mod_lit) > 0 {
+				fail(callee, " returns a module handle; bind it with ", hint, " = ", callee, "(\"", mod_lit, "\")")
+			} else {
+				fail(callee, " returns a module handle; bind it with ", hint, " = ", callee, "(name)")
+			}
+		}
+		return false
+	}
+	return true
+}
+
 // run_line runs one line: it evaluates the expression, shows the log
 // records of what the line called, then draws the one result of the line:
 // its failure, or the value of an expression. A line that keeps its value
 // in a variable draws nothing.
 run_line :: proc "contextless" (text: string) {
 	failed, scratch_count, table_used, line_conditions.count, line_stream_count = false, 0, 0, 0, 0
+	line_binding_target = ""
+	line_loaded_handle = 0
 	line_serial += 1
 	failure_reset()
 	line_records_start()
@@ -331,11 +407,26 @@ run_line :: proc "contextless" (text: string) {
 		lex_parser.parse_console(source, {form_of = parameter_form_of}, &line_tree_buffers, &line_tree)
 		name = line_tree.assigned_name
 		assigned = len(name) > 0
-		value = line_evaluate()
+		if handle_call_precheck(&line_tree, assigned) {
+			if assigned {
+				if root := lex_parser.node_at(&line_tree, line_tree.root); root != nil && root.kind == .Call {
+					callee := lex_parser.node_text(&line_tree, line_tree.root)
+					if handle_call_requires_binding(callee) || callee == "connect" || callee == "compile_c" {
+						line_binding_target = name
+					}
+				}
+			}
+			value = line_evaluate()
+		}
 	}
+	line_binding_target = ""
 	line_records_show()
 	if !failed && assigned {
 		assign(name, value)
+	}
+	if failed && line_loaded_handle != 0 {
+		unload_handle_id(line_loaded_handle, clear_variable = false)
+		line_loaded_handle = 0
 	}
 	line_value = assigned ? Value{} : value
 	// A Stream is drawn one row at a time as each record comes, until its
@@ -357,27 +448,40 @@ run_line :: proc "contextless" (text: string) {
 }
 
 assign :: proc "contextless" (name: string, value: Value) {
+	new_handle := line_loaded_handle
+	line_loaded_handle = 0
+	cleanup_new := proc "contextless" (handle_id: u64) {
+		if handle_id != 0 {
+			unload_handle_id(handle_id, clear_variable = false)
+		}
+	}
 	if value.kind == .None {
+		cleanup_new(new_handle)
 		fail("the expression has no value")
 		return
 	}
 	if value.kind == .Bytes {
+		cleanup_new(new_handle)
 		fail("a variable keeps no Bytes value")
 		return
 	}
 	if value.kind == .Stream {
+		cleanup_new(new_handle)
 		fail(console_stream.VARIABLE_REFUSAL)
 		return
 	}
 	if value.kind == .Record_Input {
+		cleanup_new(new_handle)
 		fail("a variable keeps no Record_Input: a typed name lives in its line, where wire(from, to) names it")
 		return
 	}
 	if value.kind == .Function {
+		cleanup_new(new_handle)
 		fail(FUNCTION_VARIABLE_REFUSAL)
 		return
 	}
 	if len(name) > VARIABLE_NAME_SIZE {
+		cleanup_new(new_handle)
 		fail("the name of a variable has ", i64(VARIABLE_NAME_SIZE), " bytes at most; this one has ", i64(len(name)))
 		return
 	}
@@ -385,10 +489,12 @@ assign :: proc "contextless" (name: string, value: Value) {
 	// leaves the old value.
 	if value.kind == .List {
 		if !list_keep(value) {
+			cleanup_new(new_handle)
 			return
 		}
 	}
 	if in_table_memory(value.file) && len(value.file) > DESCRIPTION_SIZE {
+		cleanup_new(new_handle)
 		fail("the description of the records has ", i64(len(value.file)), " bytes, more than the ", i64(DESCRIPTION_SIZE), " of a description that join or columns makes")
 		return
 	}
@@ -403,6 +509,7 @@ assign :: proc "contextless" (name: string, value: Value) {
 		}
 	}
 	if slot == nil {
+		cleanup_new(new_handle)
 		fail("the console keeps ", i64(VARIABLE_CAPACITY), " variables: give a new value to one of them")
 		return
 	}
@@ -439,15 +546,18 @@ assign :: proc "contextless" (name: string, value: Value) {
 		}
 		if status != .Succeeded {
 			// The old value stays: the new one is refused whole.
+			cleanup_new(new_handle)
 			fail("the budget of the console cannot pay the ", i64(value_end + description_bytes), " bytes of the value of ", name)
 			return
 		}
 		memory, memory_bytes = created, ([^]u8)(address)[:pages * system.PAGE_SIZE]
 	}
+	old_handle := slot.module_handle
 	variable_memory_end(slot)
 	slot.name_count = copy(slot.name[:], name)
 	slot.value = value
 	slot.memory, slot.memory_bytes = memory, memory_bytes
+	slot.module_handle = new_handle
 	switch value.kind {
 	case .List:
 		list_keeping_commit(slot)
@@ -464,6 +574,11 @@ assign :: proc "contextless" (name: string, value: Value) {
 		bytes := memory_bytes[value_end:][:description_bytes]
 		copy(bytes, value.file)
 		slot.value.file = bytes
+	}
+	// Atomic reassignment: unload the old handle only after the new value is
+	// committed into slot.
+	if old_handle != 0 && old_handle != new_handle {
+		unload_handle_id(old_handle, clear_variable = false)
 	}
 }
 
@@ -1393,7 +1508,7 @@ call_run :: proc "contextless" (name: string, arguments: []Value) -> Value {
 				return fail(name, ": the argument ", found.parameter_names[index], " has ", i64(len(argument.text)), " bytes, outside its bound of ", setting.least, " to ", setting.most, " bytes")
 			}
 		}
-		if kind == .Record {
+		if kind == .Record && found.run == nil {
 			// A copy: the export can write in its record, and a call
 			// writes the handles of the receiver in it.
 			bytes := scratch_bytes(len(argument.record))

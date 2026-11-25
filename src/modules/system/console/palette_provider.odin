@@ -378,7 +378,7 @@ Palette_Getters :: struct {
 palette_getter_value :: proc "contextless" (refresh: ^Palette_Getters, item: ^Command, getter: u32, enum_type: module.Enum_Type) -> (value: i64, ok: bool) {
 	found: ^Command
 	for &command in commands[:command_count] {
-		if command.run == nil && command.record == 0 && command.export == getter && raw_data(command.file) == raw_data(item.file) {
+		if command.run == nil && command.record == 0 && command.export == getter && command.handle_id == item.handle_id && raw_data(command.file) == raw_data(item.file) {
 			found = &command
 		}
 	}
@@ -549,7 +549,7 @@ palette_integer_getter_value :: proc "contextless" (refresh: ^Palette_Getters, i
 	}
 	found: ^Command
 	for &command in commands[:command_count] {
-		if command.run == nil && command.record == 0 && command.export != 0 && command.parameter_count == 0 && command.result == .Integer && raw_data(command.file) == raw_data(item.file) {
+		if command.run == nil && command.record == 0 && command.export != 0 && command.parameter_count == 0 && command.result == .Integer && command.handle_id == item.handle_id && raw_data(command.file) == raw_data(item.file) {
 			if fn, fn_ok := module.function(command.file, command.export); fn_ok && module.string_at(command.file, fn.name_offset, fn.name_count) == parameter_name {
 				found = &command
 			}
@@ -621,7 +621,7 @@ palette_choices_call :: proc "contextless" (item: ^Command, choices_export: u32,
 	}
 	found: ^Command
 	for &command in commands[:command_count] {
-		if command.run == nil && command.record == 0 && command.export == choices_export && raw_data(command.file) == raw_data(item.file) {
+		if command.run == nil && command.record == 0 && command.export == choices_export && command.handle_id == item.handle_id && raw_data(command.file) == raw_data(item.file) {
 			found = &command
 		}
 	}
@@ -1723,11 +1723,11 @@ palette_commands_add :: proc "contextless" () {
 		{"connect", {"name", ""}},
 		{"load", {"name", ""}},
 		{"isolate", {"name", ""}},
-		{"unload", {"name", ""}},
+		{"unload", {"handle", ""}},
 		{"replace", {"module", "by"}},
 		{"debug", {"process", ""}},
 		{"describe", {"name", ""}},
-		{"help", {"name", ""}},
+		{"help", {"topic_or_handle", ""}},
 		{"projects.install", {"project", "mode"}},
 		{"manual_page", {"name", ""}},
 		{"strategy", {"name", ""}},
