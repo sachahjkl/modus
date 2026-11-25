@@ -454,6 +454,12 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 	if len(store.name) == 0 || store.limit == 0 {
 		return -1, refuse(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
+	if group_batch.store_count > 0 {
+		existing := store_find(store.name)
+		if (existing < 0 && create) || (existing >= 0 && group_batch_has_store(existing)) {
+			group_flush()
+		}
+	}
 	if broken {
 		return -1, refuse(error, .Callee_Unavailable, .Device, .None, 0, 0, 0, 1)
 	}
@@ -508,9 +514,6 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 	}
 	if !create {
 		return -1, refuse(error, .Nothing_Has_That_Name, .Absent, .Objects, 2)
-	}
-	if group_batch.store_count > 0 {
-		group_flush()
 	}
 	// A store of a named principal is made only with its keys: a locked
 	// principal makes none, and no store of its name in clear.
@@ -573,6 +576,12 @@ path_refusal :: proc "contextless" (refusal: Open_Refusal, error: ^errors.Error_
 
 // plan_refusal gives the error of a plan that plan_refused refuses.
 plan_refusal :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
+	plan_trees_failure_take()
+	if group_call_allowed && group_batch.store_count > 0 && !plan.tree_damaged && !plan.device && !plan.count_fault && !plan.count_overflow && (plan.full || plan.capacity_reached) {
+		plan_drop()
+		group_call_retry_solo = true
+		return 0, .Callee_Busy
+	}
 	value, outcome = plan_commit_refused(error)
 	plan_drop()
 	return

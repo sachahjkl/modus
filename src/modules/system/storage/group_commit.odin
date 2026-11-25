@@ -24,7 +24,7 @@ import "modus:system"
 
 Group_Participant :: struct {
 	connection:        ^system.Connection,
-	command_kind:      u32,
+	command:           ring.Record,
 	completion:        ring.Record,
 	pending:           ^Pending_Object,
 	has_range_measure: bool,
@@ -92,6 +92,11 @@ group_export_is_groupable :: proc "contextless" (kind: u32) -> bool {
 // staged in group_batch (used by Count_Tree free-block search).
 group_block_taken :: proc "contextless" (number: u64) -> bool {
 	return gc_batch.batch_block_taken(&group_batch, number)
+}
+
+// group_batch_has_store reports whether store_index is staged in group_batch.
+group_batch_has_store :: proc "contextless" (store_index: int) -> bool {
+	return gc_batch.batch_has_store(&group_batch, store_index)
 }
 
 // group_flush_if_conflict flushes any active group batch when the incoming
@@ -256,13 +261,47 @@ group_fail_all :: proc "contextless" (outcome: call_outcome.Call_Outcome, err: e
 			pending_drop(p.pending)
 		}
 		if p.connection != nil {
-			completion := isolated.answer_completion(p.completion.tag, p.command_kind, 0, u64(outcome), err)
+			completion := isolated.answer_completion(p.completion.tag, p.command.kind, 0, u64(outcome), err)
 			_ = system.send(&p.connection.calls.completions, completion)
 		}
 		p^ = {}
 	}
 	gc_batch.batch_abort(&group_batch, group_free_block_cb, nil)
 	group_last_staged_slot = -1
+}
+
+// group_replay_solo aborts the staged batch (freeing staged blocks while
+// keeping any pending range objects intact) and executes each saved command
+// individually on the solo path so grouping never introduces a capacity or
+// out-of-space refusal.
+@(private = "file")
+group_replay_solo :: proc "contextless" () {
+	count := group_batch.store_count
+	saved_connections: [gc_batch.STORE_CAPACITY]^system.Connection
+	saved_commands: [gc_batch.STORE_CAPACITY]ring.Record
+	for i in 0 ..< count {
+		saved_connections[i] = group_participants[i].connection
+		saved_commands[i] = group_participants[i].command
+		group_participants[i] = {}
+	}
+	gc_batch.batch_abort(&group_batch, group_free_block_cb, nil)
+	group_last_staged_slot = -1
+	group_flush_active = false
+
+	prev_allowed := group_call_allowed
+	group_call_allowed = false
+	group_call_staged = false
+	group_call_retry_solo = false
+	defer group_call_allowed = prev_allowed
+
+	for i in 0 ..< count {
+		conn := saved_connections[i]
+		if conn == nil {
+			continue
+		}
+		completion := system.connection_call_execute(&service, conn, saved_commands[i])
+		_ = system.send(&conn.calls.completions, completion)
+	}
 }
 
 // group_flush commits all stores currently staged in `group_batch` with one
@@ -297,6 +336,10 @@ group_flush :: proc "contextless" () {
 	flush_err: errors.Error_Record
 	if plan.capacity_reached {
 		plan_drop()
+		if group_batch.store_count > 1 {
+			group_replay_solo()
+			return
+		}
 		_ = refuse(&flush_err, .Budget_Or_Capacity_Exhausted, .Full, .Commit_Blocks, 0, 0, i64(plan.capacity_limit))
 		group_fail_all(.Budget_Or_Capacity_Exhausted, flush_err)
 		return
@@ -315,6 +358,10 @@ group_flush :: proc "contextless" () {
 		page_index := group_batch.page_indices[p]
 		if plan.write_count >= len(plan.writes) || plan.taken_count >= len(plan.taken) {
 			plan_drop()
+			if group_batch.store_count > 1 {
+				group_replay_solo()
+				return
+			}
 			_ = refuse(&flush_err, .Budget_Or_Capacity_Exhausted, .Full, .Commit_Blocks, 0, 0, i64(len(plan.writes)))
 			group_fail_all(.Budget_Or_Capacity_Exhausted, flush_err)
 			return
@@ -322,6 +369,10 @@ group_flush :: proc "contextless" () {
 		number := allocate()
 		if number == 0 {
 			plan_drop()
+			if group_batch.store_count > 1 {
+				group_replay_solo()
+				return
+			}
 			_ = refuse(&flush_err, .Budget_Or_Capacity_Exhausted, .Full)
 			group_fail_all(.Budget_Or_Capacity_Exhausted, flush_err)
 			return
@@ -344,6 +395,10 @@ group_flush :: proc "contextless" () {
 		plan_drop()
 		if busy, result := repair_refusal(&flush_err); busy {
 			group_fail_all(result, flush_err)
+			return
+		}
+		if refusal == .Budget_Or_Capacity_Exhausted && group_batch.store_count > 1 {
+			group_replay_solo()
 			return
 		}
 		group_fail_all(refusal, flush_err)
@@ -446,22 +501,22 @@ group_flush :: proc "contextless" () {
 	group_last_staged_slot = -1
 }
 
-// queued_commands_count returns the total number of commands currently waiting
-// across all client connections and share connections.
+// active_queued_connections returns how many distinct client or share
+// connections currently have at least one command queued.
 @(private = "file")
-queued_commands_count :: proc "contextless" () -> int {
-	total := 0
+active_queued_connections :: proc "contextless" () -> int {
+	active := 0
 	for &connection in service.connections {
-		if connection.calls.head != nil {
-			total += int(ring.count(&connection.calls.commands))
+		if connection.calls.head != nil && ring.count(&connection.calls.commands) > 0 {
+			active += 1
 		}
 	}
 	for &item in shares {
-		if item.connection.calls.head != nil {
-			total += int(ring.count(&item.connection.calls.commands))
+		if item.connection.calls.head != nil && ring.count(&item.connection.calls.commands) > 0 {
+			active += 1
 		}
 	}
-	return total
+	return active
 }
 
 @(private = "file")
@@ -493,7 +548,7 @@ storage_serve_one :: proc "contextless" (connection: ^system.Connection, command
 		group_call_staged = false
 		p := &group_participants[group_last_staged_slot]
 		p.connection = connection
-		p.command_kind = command.kind
+		p.command = command
 		p.completion = completion
 		if group_batch.store_count >= gc_batch.STORE_CAPACITY {
 			group_flush()
@@ -507,15 +562,15 @@ storage_serve_one :: proc "contextless" (connection: ^system.Connection, command
 // storage_serve_pass handles root service control messages and then dispatches
 // all currently queued client and share commands in round-robin sweeps,
 // grouping concurrent distinct-store commits automatically with zero delay on
-// single-command passes.
+// single-connection passes.
 storage_serve_pass :: proc "contextless" () -> (calls: int) {
 	system.service_control_run(&service)
 	for _ in 0 ..< ring.CAPACITY {
-		queued := queued_commands_count()
-		if queued == 0 {
+		active := active_queued_connections()
+		if active == 0 {
 			break
 		}
-		allow_group := queued >= 2
+		allow_group := active >= 2
 		sweep_calls := 0
 		for &connection in service.connections {
 			if connection.calls.head == nil {

@@ -208,9 +208,10 @@ service_control_run :: proc "contextless" (service: ^Service) {
 // returns its completion record without pushing it to the client ring yet, so
 // a service doing group commit can hold completions until the batch is durable.
 connection_call_execute :: proc "contextless" (service: ^Service, connection: ^Connection, command: ring.Record) -> ring.Record {
+	previous := serving
 	serving = connection
 	completion := export_serve(service.file, op.PROCESS_BASE, connection.region, connection.ring_memory, command, false)
-	serving = nil
+	serving = previous
 	service.calls += 1
 	return completion
 }
