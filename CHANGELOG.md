@@ -6,6 +6,15 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.99.0] - 2026-11-25 21:30
+
+### Added
+
+- **Live Web Console and Web Desktop on the site.** Added a Try section (`try/index.html`) linked from the navigation bar and home page, polished both browser machine pages (`browser_machine_console.html` and `browser_machine.html`), included `sample` in the browser machine images, and wired `modustool site` and `.github/workflows/site.yml` to publish the WebAssembly kernel and both boot images with their trust files.
+- **Static Lex syntax highlighting on the documentation site.** Fenced `lex` code blocks and console transcripts across the Lex, Course, and Console guides now render with static `modus` syntax colors using the Lex scanner and parser tables, with zero client-side scripts.
+- **In-modus QUIC cache publishing**: `recipes` exports `publisher_key`, `configure_publisher`, and `publish` (wired in the console as `recipes.publisher_key`, `recipes.configure_publisher`, and `recipes.publish`) to keep a per-principal Ed25519 publisher seed inside `recipes`, stream verified output closures bottom-up over QUIC UDP:5010, and publish signed realisations without exposing private key material.
+- **Modus Practical Course — Part 2 (building, Lex recipes, and QUIC cache publishing)**: added the six-lesson written guide (`docs/COURSE_BUILDING.md`) and live 1080p course film (`modustool film course_building`) covering `compile_c`, iterative `projects.new`/`edit`/`build`/`run`, declarative `project.lex` recipes, content-addressed sandboxed builds, in-OS QUIC cache publishing and verification, module delivery, `projects.install`, and copy-on-write source history.
+
 ## [0.98.0] - 2026-11-25 16:08
 
 ### Added
@@ -1972,6 +1981,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.99.0]: https://github.com/sachahjkl/modus/releases/tag/v0.99.0
 [0.98.0]: https://github.com/sachahjkl/modus/releases/tag/v0.98.0
 [0.97.0]: https://github.com/sachahjkl/modus/releases/tag/v0.97.0
 [0.96.0]: https://github.com/sachahjkl/modus/releases/tag/v0.96.0
