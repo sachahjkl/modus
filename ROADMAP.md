@@ -116,6 +116,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **An agent edits, builds and runs a project.** An agent reads a source of a project, replaces a text in it, builds an output, runs it and reads its log, in a loop of steps, within the stores and the processes that the principal picked. [Design](src/md/features/agent_code_mode.md)
 - **Timed ordinary grants.** Allow ordinary `allow` and powerbox grants to carry an expiration duration so temporary access to a store, network host, or device ends automatically.
 - **Per-grant service budgets.** Enforce optional quotas inside owning services (storage byte limits per store share, network byte quotas, and agent operation counts) without placing data-plane accounting in the kernel.
+- **FIDO2 and smartcard hardware keys.** An isolated hardware-key device service speaks CTAP2/FIDO2 and smartcard (PIV, OpenPGP) protocols so a principal can prove unlock, approve wide grants, sign realisations, and authenticate in a browser without exposing private keys to the system.
 
 ## Maybe
 
