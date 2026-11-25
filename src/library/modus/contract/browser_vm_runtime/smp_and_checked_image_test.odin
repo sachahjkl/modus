@@ -117,6 +117,21 @@ browser_smp_transitions_ipis_and_tlb_shootdown :: proc(t: ^testing.T) {
 	testing.expect(t, tbl.slots[1].last_tlb_generation == 2 && tbl.slots[2].last_tlb_generation == 2)
 	_, ack_late := browser_smp_ack_tlb_shootdown(&tbl, 2, 2)
 	testing.expect(t, ack_late == .No_Active_Shootdown)
+
+	// Regression: halting a targeted CPU during an active shootdown satisfies
+	// its target bit and completes the shootdown once all targets have acked or halted.
+	gen3, sd_ref3 := browser_smp_begin_tlb_shootdown(&tbl, 0, 0x3000, 0xC000)
+	testing.expect(t, sd_ref3 == .None && gen3 == 3 && !browser_smp_shootdown_complete(&tbl))
+	// Halt CPU 1 while shootdown targets CPUs 1 and 2 -> CPU 1 auto-acked, still waiting on CPU 2.
+	testing.expect(t, browser_smp_transition_cpu(&tbl, 1, .Halted) == .None)
+	testing.expect(t, (tbl.shootdown.ack_mask & (u32(1) << 1)) != 0)
+	testing.expect(t, tbl.slots[1].ipi_pending == {})
+	testing.expect(t, !browser_smp_shootdown_complete(&tbl))
+	// Halt CPU 2 (last remaining target) -> shootdown completes cleanly with no deadlock.
+	testing.expect(t, browser_smp_transition_cpu(&tbl, 2, .Halted) == .None)
+	testing.expect(t, browser_smp_shootdown_complete(&tbl))
+	testing.expect(t, tbl.slots[2].ipi_pending == {})
+	testing.expect(t, tbl.slots[2].last_tlb_generation == 3)
 }
 
 @(test)

@@ -183,4 +183,18 @@ in
 	hdr_bad, val_bad := snapshot_validate(out[:written_bad])
 	testing.expect_value(t, val_bad, Analysis_Refusal.None)
 	testing.expect_value(t, hdr_bad.diagnostics_count, u32(3))
+
+	// Exceeding workspace definitions/hovers capacity returns Capacity_Exceeded consistently.
+	b := strings.builder_make()
+	defer strings.builder_destroy(&b)
+	strings.write_string(&b, "let x = 1 in [")
+	for i in 0 ..< LEX_ANALYZE_DEFINITIONS_LIMIT + 2 {
+		if i > 0 {
+			strings.write_string(&b, ", ")
+		}
+		strings.write_string(&b, "x")
+	}
+	strings.write_string(&b, "]")
+	_, overflow_ref := lex_analyze_into_snapshot(ws, strings.to_string(b), 14, out)
+	testing.expect_value(t, overflow_ref, Analysis_Refusal.Capacity_Exceeded)
 }

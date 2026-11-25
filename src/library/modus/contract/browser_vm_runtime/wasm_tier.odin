@@ -8,7 +8,9 @@
 // Calling convention of the exported `run_block` function:
 //   (param $regs_base i32)       -- byte offset of the 16 x86-64 GPRs ([16]u64)
 //   (param $guest_mem_base i32)  -- byte offset of guest linear memory base
-//   (result i32)                 -- 0 on normal fallthrough, >0 on conditional exit
+//   (param $guest_mem_size i64)  -- guest physical memory size in bytes
+//   (result i32)                 -- 0 on fallthrough, >0 on conditional exit,
+//                                   -1 on out-of-bounds guest memory access
 //
 // Two-pass emission measures exact section lengths before writing into `out`,
 // so any refusal leaves `out` untouched.
@@ -53,6 +55,15 @@ WASM_TIER_TRACKER_SLOT_BITS :: 8
 // Normal fallthrough return value of a compiled block (`run_block` result).
 WASM_EXIT_FALLTHROUGH :: i32(0)
 
+// Dedicated bailout return value emitted when a guest memory load/store wraps
+// 64-bit or 32-bit address arithmetic or exceeds `guest_mem_size`. Negative so
+// it can never collide with fallthrough (0) or caller conditional exits (>0).
+WASM_EXIT_MEMORY_OUT_OF_BOUNDS :: i32(-1)
+
+// Format property: highest 8-byte-aligned start offset inside a 32-bit linear
+// memory that allows an 8-byte access without wrapping past 4 GiB.
+WASM_MAX_U64_GUEST_ADDR :: i64(0xFFFF_FFF8)
+
 // Format property: WebAssembly 1.0 section identifiers in canonical wire order.
 @(private = "file")
 WASM_SECTION_TYPE :: u8(1)
@@ -70,6 +81,8 @@ WASM_SECTION_CODE :: u8(10)
 WASM_TYPE_FUNC :: u8(0x60)
 @(private = "file")
 WASM_VALTYPE_I32 :: u8(0x7F)
+@(private = "file")
+WASM_VALTYPE_I64 :: u8(0x7E)
 @(private = "file")
 WASM_BLOCKTYPE_EMPTY :: u8(0x40)
 @(private = "file")
@@ -90,6 +103,8 @@ WASM_OP_RETURN :: u8(0x0F)
 @(private = "file")
 WASM_OP_LOCAL_GET :: u8(0x20)
 @(private = "file")
+WASM_OP_LOCAL_TEE :: u8(0x22)
+@(private = "file")
 WASM_OP_I64_LOAD :: u8(0x29)
 @(private = "file")
 WASM_OP_I64_STORE :: u8(0x37)
@@ -98,13 +113,23 @@ WASM_OP_I32_CONST :: u8(0x41)
 @(private = "file")
 WASM_OP_I64_CONST :: u8(0x42)
 @(private = "file")
+WASM_OP_I32_LT_U :: u8(0x49)
+@(private = "file")
+WASM_OP_I32_GT_U :: u8(0x4B)
+@(private = "file")
 WASM_OP_I64_EQZ :: u8(0x50)
 @(private = "file")
 WASM_OP_I64_EQ :: u8(0x51)
 @(private = "file")
 WASM_OP_I64_NE :: u8(0x52)
 @(private = "file")
+WASM_OP_I64_LT_U :: u8(0x53)
+@(private = "file")
+WASM_OP_I64_GT_U :: u8(0x55)
+@(private = "file")
 WASM_OP_I32_ADD :: u8(0x6A)
+@(private = "file")
+WASM_OP_I32_OR :: u8(0x72)
 @(private = "file")
 WASM_OP_I64_ADD :: u8(0x7C)
 @(private = "file")
@@ -117,6 +142,20 @@ WASM_OP_I64_OR :: u8(0x84)
 WASM_OP_I64_XOR :: u8(0x85)
 @(private = "file")
 WASM_OP_I32_WRAP_I64 :: u8(0xA7)
+
+// Local slot indices inside `run_block`.
+@(private = "file")
+WASM_LOCAL_REGS_BASE :: u32(0)
+@(private = "file")
+WASM_LOCAL_GUEST_MEM_BASE :: u32(1)
+@(private = "file")
+WASM_LOCAL_GUEST_MEM_SIZE :: u32(2)
+@(private = "file")
+WASM_LOCAL_ADDR_REG_VAL :: u32(3)
+@(private = "file")
+WASM_LOCAL_EFF_ADDR :: u32(4)
+@(private = "file")
+WASM_LOCAL_LINEAR_ADDR :: u32(5)
 
 // Closed set of refusals returned by the compiled WebAssembly tier.
 Wasm_Tier_Refusal :: enum u8 {
@@ -581,7 +620,7 @@ wasm_block_spec_validate :: proc "contextless" (spec: Wasm_Block_Spec) -> Wasm_T
 @(private = "file")
 emit_load_reg :: proc "contextless" (w: ^Wasm_Writer, reg: u8) {
 	writer_byte(w, WASM_OP_LOCAL_GET)
-	writer_uleb_u32(w, 0) // local 0: regs_base
+	writer_uleb_u32(w, WASM_LOCAL_REGS_BASE)
 	writer_byte(w, WASM_OP_I64_LOAD)
 	writer_uleb_u32(w, 3) // 8-byte aligned register file
 	writer_uleb_u32(w, u32(reg) * 8)
@@ -590,7 +629,7 @@ emit_load_reg :: proc "contextless" (w: ^Wasm_Writer, reg: u8) {
 @(private = "file")
 emit_store_reg_prefix :: proc "contextless" (w: ^Wasm_Writer) {
 	writer_byte(w, WASM_OP_LOCAL_GET)
-	writer_uleb_u32(w, 0) // local 0: regs_base
+	writer_uleb_u32(w, WASM_LOCAL_REGS_BASE)
 }
 
 @(private = "file")
@@ -600,14 +639,72 @@ emit_store_reg_suffix :: proc "contextless" (w: ^Wasm_Writer, reg: u8) {
 	writer_uleb_u32(w, u32(reg) * 8)
 }
 
+// emit_checked_guest_address validates an 8-byte guest memory access at
+// `reg[addr_reg] + guest_offset` against both 64-bit overflow, the 4 GiB
+// linear-memory ceiling, `guest_mem_size`, and 32-bit base+offset wraparound.
+// Any out-of-bounds or wrapping address returns WASM_EXIT_MEMORY_OUT_OF_BOUNDS
+// immediately; otherwise the validated Wasm linear address is left in
+// WASM_LOCAL_LINEAR_ADDR with an empty operand stack.
 @(private = "file")
-emit_guest_address :: proc "contextless" (w: ^Wasm_Writer, addr_reg: u8) {
-	// Effective address in Wasm linear memory: guest_mem_base + i32.wrap_i64(reg[addr_reg]).
-	writer_byte(w, WASM_OP_LOCAL_GET)
-	writer_uleb_u32(w, 1) // local 1: guest_mem_base
+emit_checked_guest_address :: proc "contextless" (w: ^Wasm_Writer, addr_reg: u8, guest_offset: u32) {
+	// eff_addr = reg[addr_reg] + u64(guest_offset)
 	emit_load_reg(w, addr_reg)
+	writer_byte(w, WASM_OP_LOCAL_TEE)
+	writer_uleb_u32(w, WASM_LOCAL_ADDR_REG_VAL)
+	writer_byte(w, WASM_OP_I64_CONST)
+	writer_sleb_i64(w, i64(guest_offset))
+	writer_byte(w, WASM_OP_I64_ADD)
+	writer_byte(w, WASM_OP_LOCAL_TEE)
+	writer_uleb_u32(w, WASM_LOCAL_EFF_ADDR)
+
+	// c1: eff_addr <u addr_reg_val (u64 addition wrapped)
+	writer_byte(w, WASM_OP_LOCAL_GET)
+	writer_uleb_u32(w, WASM_LOCAL_ADDR_REG_VAL)
+	writer_byte(w, WASM_OP_I64_LT_U)
+
+	// c2: eff_addr >u 0xFFFF_FFF8 (upper 32 bits non-zero or eff_addr + 8 wraps 4 GiB / u64)
+	writer_byte(w, WASM_OP_LOCAL_GET)
+	writer_uleb_u32(w, WASM_LOCAL_EFF_ADDR)
+	writer_byte(w, WASM_OP_I64_CONST)
+	writer_sleb_i64(w, WASM_MAX_U64_GUEST_ADDR)
+	writer_byte(w, WASM_OP_I64_GT_U)
+	writer_byte(w, WASM_OP_I32_OR)
+
+	// c3: (eff_addr + 8) >u guest_mem_size
+	writer_byte(w, WASM_OP_LOCAL_GET)
+	writer_uleb_u32(w, WASM_LOCAL_EFF_ADDR)
+	writer_byte(w, WASM_OP_I64_CONST)
+	writer_sleb_i64(w, 8)
+	writer_byte(w, WASM_OP_I64_ADD)
+	writer_byte(w, WASM_OP_LOCAL_GET)
+	writer_uleb_u32(w, WASM_LOCAL_GUEST_MEM_SIZE)
+	writer_byte(w, WASM_OP_I64_GT_U)
+	writer_byte(w, WASM_OP_I32_OR)
+	emit_conditional_exit_tail(w, WASM_EXIT_MEMORY_OUT_OF_BOUNDS)
+
+	// linear_addr = guest_mem_base + i32.wrap_i64(eff_addr)
+	writer_byte(w, WASM_OP_LOCAL_GET)
+	writer_uleb_u32(w, WASM_LOCAL_GUEST_MEM_BASE)
+	writer_byte(w, WASM_OP_LOCAL_GET)
+	writer_uleb_u32(w, WASM_LOCAL_EFF_ADDR)
 	writer_byte(w, WASM_OP_I32_WRAP_I64)
 	writer_byte(w, WASM_OP_I32_ADD)
+	writer_byte(w, WASM_OP_LOCAL_TEE)
+	writer_uleb_u32(w, WASM_LOCAL_LINEAR_ADDR)
+
+	// c4: linear_addr <u guest_mem_base (32-bit wrap below guest_mem_base into host memory)
+	writer_byte(w, WASM_OP_LOCAL_GET)
+	writer_uleb_u32(w, WASM_LOCAL_GUEST_MEM_BASE)
+	writer_byte(w, WASM_OP_I32_LT_U)
+
+	// c5: linear_addr >u 0xFFFF_FFF8 (8-byte access wraps 32-bit linear memory)
+	writer_byte(w, WASM_OP_LOCAL_GET)
+	writer_uleb_u32(w, WASM_LOCAL_LINEAR_ADDR)
+	writer_byte(w, WASM_OP_I32_CONST)
+	writer_sleb_i32(w, i32(-8))
+	writer_byte(w, WASM_OP_I32_GT_U)
+	writer_byte(w, WASM_OP_I32_OR)
+	emit_conditional_exit_tail(w, WASM_EXIT_MEMORY_OUT_OF_BOUNDS)
 }
 
 @(private = "file")
@@ -622,8 +719,12 @@ emit_conditional_exit_tail :: proc "contextless" (w: ^Wasm_Writer, exit_status: 
 
 @(private = "file")
 emit_function_body_contents :: proc "contextless" (w: ^Wasm_Writer, ops: []Wasm_Block_Op) {
-	// Zero extra locals: params 0 (regs_base) and 1 (guest_mem_base) suffice.
-	writer_uleb_u32(w, 0)
+	// Scratch locals: 2 i64 locals (addr_reg_val, eff_addr) and 1 i32 local (linear_addr).
+	writer_uleb_u32(w, 2)
+	writer_uleb_u32(w, 2)
+	writer_byte(w, WASM_VALTYPE_I64)
+	writer_uleb_u32(w, 1)
+	writer_byte(w, WASM_VALTYPE_I32)
 	for op in ops {
 		switch op.kind {
 		case .Mov_Imm64:
@@ -673,19 +774,23 @@ emit_function_body_contents :: proc "contextless" (w: ^Wasm_Writer, ops: []Wasm_
 			writer_byte(w, WASM_OP_I64_ADD)
 			emit_store_reg_suffix(w, op.dst)
 		case .Load_Guest_U64:
+			emit_checked_guest_address(w, op.src, op.guest_offset)
 			emit_store_reg_prefix(w)
-			emit_guest_address(w, op.src)
+			writer_byte(w, WASM_OP_LOCAL_GET)
+			writer_uleb_u32(w, WASM_LOCAL_LINEAR_ADDR)
 			writer_byte(w, WASM_OP_I64_LOAD)
 			// Guest x86-64 memory operands may be unaligned, so use align=0 (2^0 = 1).
 			writer_uleb_u32(w, 0)
-			writer_uleb_u32(w, op.guest_offset)
+			writer_uleb_u32(w, 0)
 			emit_store_reg_suffix(w, op.dst)
 		case .Store_Guest_U64:
-			emit_guest_address(w, op.dst)
+			emit_checked_guest_address(w, op.dst, op.guest_offset)
+			writer_byte(w, WASM_OP_LOCAL_GET)
+			writer_uleb_u32(w, WASM_LOCAL_LINEAR_ADDR)
 			emit_load_reg(w, op.src)
 			writer_byte(w, WASM_OP_I64_STORE)
 			writer_uleb_u32(w, 0)
-			writer_uleb_u32(w, op.guest_offset)
+			writer_uleb_u32(w, 0)
 		case .Exit_If_Zero:
 			emit_load_reg(w, op.src)
 			writer_byte(w, WASM_OP_I64_EQZ)
@@ -739,11 +844,11 @@ emit_module :: proc "contextless" (w: ^Wasm_Writer, spec: Wasm_Block_Spec) {
 	header := WASM_BINARY_HEADER
 	writer_bytes(w, header[:])
 
-	// Section 1: Type section — 1 type: (i32, i32) -> i32.
-	type_payload := [7]u8{
+	// Section 1: Type section — 1 type: (i32, i32, i64) -> i32.
+	type_payload := [8]u8{
 		0x01, // count = 1
 		WASM_TYPE_FUNC,
-		0x02, WASM_VALTYPE_I32, WASM_VALTYPE_I32,
+		0x03, WASM_VALTYPE_I32, WASM_VALTYPE_I32, WASM_VALTYPE_I64,
 		0x01, WASM_VALTYPE_I32,
 	}
 	writer_byte(w, WASM_SECTION_TYPE)

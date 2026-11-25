@@ -194,6 +194,19 @@ browser_smp_transition_cpu :: proc "contextless" (
 		return .Invalid_Cpu_Transition
 	}
 	slot.state = validated_next
+	if validated_next == .Halted {
+		// A halted worker will never run again or ack a pending shootdown, so
+		// satisfy its target bit now to prevent permanent shootdown deadlock.
+		bit := u32(1) << cpu_id
+		slot.ipi_pending -= {.Tlb_Shootdown}
+		if table.shootdown.active && (table.shootdown.target_mask & bit) != 0 {
+			table.shootdown.ack_mask |= bit
+			slot.last_tlb_generation = table.shootdown.generation
+			if table.shootdown.ack_mask == table.shootdown.target_mask {
+				table.shootdown.active = false
+			}
+		}
+	}
 	return .None
 }
 
