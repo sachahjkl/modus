@@ -93,6 +93,9 @@ the_facts_of_the_storage_service_write_the_lines_of_before :: proc(t: ^testing.T
 		facts_expect_line(t, render(t, file, "Root_Place_Drops_Writes", {{"commits", commits}}), line_of_before("storage: the disk did not keep the root of ", commits, " commits in a row: a place of the root drops its writes; the service makes no change until its next start, and its objects can still be read"))
 	}
 	facts_expect_line(t, render(t, file, "Versions_Dropped_At_Commit", {{"generation", most}, {"dropped", u64(0)}, {"store", store}}), line_of_before("storage: the commit of generation ", most, " dropped ", u64(0), " version indexes or leaves with a wrong check in the store ", store, ": those versions are lost, the objects stay"))
+	for count in counts {
+		facts_expect_line(t, render(t, file, "Group_Commit_Batch", {{"generation", count}, {"stores", count}, {"blocks", most}}), line_of_before("storage: group commit of generation ", count, ": ", count, " stores, ", most, " blocks"))
+	}
 
 	// The shares: the number of a share is an i64 of the export, from 1.
 	shares := [2]i64{1, max(i64)}

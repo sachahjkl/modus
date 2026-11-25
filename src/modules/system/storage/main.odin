@@ -385,6 +385,7 @@ named_of :: proc "contextless" (place: i64, name: string, named: ^Named, error: 
 	if !place_path(&named.caller, place, &named.path, error, place_argument) {
 		return .Argument_Refused
 	}
+	group_flush_if_conflict(named.path.store.name)
 	if named.path.own && named.path.store.limit == 0 {
 		return refuse(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
@@ -503,6 +504,7 @@ add :: proc "c" (place: i64, rows: ^system.Table_To_Read(Add_Row_Export), names:
 	if !place_path(&caller, place, &path, error, 1) {
 		return .Argument_Refused, 0
 	}
+	group_flush_if_conflict(path.store.name)
 	if !path.own {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store, 1)
 	}
@@ -738,6 +740,7 @@ share :: proc "c" (place: i64, read_only: i64, block_limit: i64, result: ^[]Shar
 	if !place_path(&caller, place, &path, error, 1) {
 		return .Argument_Refused, 0
 	}
+	group_flush_if_conflict(path.store.name)
 	if !path.own {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store, 1)
 	}
@@ -889,7 +892,7 @@ usage :: proc "c" (result: ^[]Usage) -> i64 {
 	return 1
 }
 
-// stores gives the generation of the disk, its blocks in use, and the commits, the commits that a read back refused, the commits whose root write or read back failed on the device (not taken: the next open decides), the blocks written (those of refused commits too) and the blocks read back with the time of those reads since the start of the service (a measure of the cost of the read back of each commit), then the stores that the caller may name, one line for each, with its objects, its trees, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. Only a caller that acts for a principal sees them: the stores of that principal. The result is the count of bytes of the text, or a failure with its call outcome and an error record.
+// stores gives the generation of the disk, its blocks in use, and the commits, the commits that a read back refused, the commits whose root write or read back failed on the device (not taken: the next open decides), the blocks written (those of refused commits too), the blocks read back with the time of those reads, the grouped commits and their member changes, and the block requests sent for transferred blocks since the start of the service, then the stores that the caller may name, one line for each, with its objects, its trees, its versions, its blocks (a shared block counted one time), the blocks that two names share, its limit, the count of connections that hold its grant now, and its damage. Only a caller that acts for a principal sees them: the stores of that principal. The result is the count of bytes of the text, or a failure with its call outcome and an error record.
 //
 // **Error kinds**
 //
@@ -906,7 +909,7 @@ stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> (outcome: cal
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	writer := system.Writer{buffer = result^}
-	parts := [?]system.Part{"generation ", root.generation, ", ", blocks_in_use(), " of ", root.disk_blocks, " blocks in use, ", commits, " commits, ", commits_refused, " commits refused, ", commits_undecided, " commits for the next open to decide, ", blocks_written, " blocks written and ", blocks_read_back, " blocks read back in ", read_back_nanoseconds / 1000, " microseconds since the start"}
+	parts := [?]system.Part{"generation ", root.generation, ", ", blocks_in_use(), " of ", root.disk_blocks, " blocks in use, ", commits, " commits, ", commits_refused, " commits refused, ", commits_undecided, " commits for the next open to decide, ", blocks_written, " blocks written and ", blocks_read_back, " blocks read back in ", read_back_nanoseconds / 1000, " microseconds, ", group_commit_batches, " grouped commits (", group_commit_members, " changes), ", block_requests_sent, " block requests for ", blocks_transferred, " blocks since the start"}
 	for part in parts {
 		system.write_part(&writer, part)
 	}
@@ -1339,16 +1342,6 @@ compare_span :: proc "contextless" (result: []Byte_Range, ranges: ^i64, open_fir
 
 service: system.Service
 
-// shares_serve executes the calls that wait on the shares.
-shares_serve :: proc "contextless" () -> (calls: int) {
-	for &item in shares {
-		if item.connection.calls.head != nil {
-			calls += system.connection_serve(&service, &item.connection)
-		}
-	}
-	return calls
-}
-
 // The entry of the storage service: it attaches to the block service of the data disk, opens the disk, then
 // serves the calls of its connections for the life of the machine.
 //
@@ -1409,6 +1402,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Error, No_Service_Ring{})
 		system.stop(.Refused)
 	}
+	group_exports_init(service.file)
 	service.disconnected = connection_ended
 	service.principal_keys = storage_principal_keys // principal_keys.odin
 	service.principal_reclaim = storage_principal_reclaim // reclaim.odin
@@ -1479,8 +1473,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if system.plan_values_changed(&ctx.values, &retention_plan_copy) {
 			retention_rule_read(ctx)
 		}
-		calls := system.service_run(&service)
-		calls += shares_serve()
+		calls := storage_serve_pass()
 		if calls > 0 {
 			repair_call_came()
 		}
@@ -1530,6 +1523,7 @@ disk_open :: proc "contextless" () {
 	if disk_silent {
 		return
 	}
+	max_blocks_per_request = info.values[1] == 0 ? 1 : min(info.values[1], REGION_BLOCKS)
 	start := system.time()
 	mounted := mount(info.values[0])
 	elapsed := system.time() - start

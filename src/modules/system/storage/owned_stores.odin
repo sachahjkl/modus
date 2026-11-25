@@ -1,6 +1,7 @@
 package storage_service
 
 import "base:intrinsics"
+import gc_batch "internal:storage/group_commit"
 import principal_keys "internal:storage/principal_keys"
 import "internal:storage/storage_mount"
 import "modus:contract/errors"
@@ -413,6 +414,13 @@ erase_transient_buffers :: proc "contextless" () {
 	intrinsics.mem_zero_volatile(&removal_values, size_of(removal_values))
 	intrinsics.mem_zero_volatile(&plan_fixed.release_lists, size_of(plan_fixed.release_lists))
 	intrinsics.mem_zero_volatile(&plan_fixed.step_list, size_of(plan_fixed.step_list))
+	gc_batch.batch_erase_all(&group_batch)
+	intrinsics.mem_zero_volatile(&stage_writes_scratch, size_of(stage_writes_scratch))
+	intrinsics.mem_zero_volatile(&stage_deltas_scratch, size_of(stage_deltas_scratch))
+	intrinsics.mem_zero_volatile(&stage_later_scratch, size_of(stage_later_scratch))
+	intrinsics.mem_zero_volatile(&stage_hash_before, size_of(stage_hash_before))
+	intrinsics.mem_zero_volatile(&stage_hash_entry, size_of(stage_hash_entry))
+	intrinsics.mem_zero_volatile(&stage_hash_gone, size_of(stage_hash_gone))
 	if region != nil {
 		intrinsics.mem_zero_volatile(region, REGION_BLOCKS * BLOCK_SIZE)
 	}

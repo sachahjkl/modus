@@ -133,11 +133,13 @@ service_command_of_record :: proc "contextless" (command: ring.Record) -> (servi
 	return read, read != .None
 }
 
-// service_run adds and removes the connections that the root service
-// names, then executes the calls that wait. It gives the count of calls.
-service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
+// service_control_run processes pending commands on the root service ring
+// (Connect, Grant, Principal_Keys, Principal_Reclaim, Disconnect). A service
+// that dispatches client calls itself (such as storage group commit) calls
+// this before each pass so control updates never run mid-batch.
+service_control_run :: proc "contextless" (service: ^Service) {
 	if service.names.head == nil {
-		return 0
+		return
 	}
 	for _ in 0 ..< ring.CAPACITY {
 		// The ring of the root service can carry the storage key of a
@@ -200,6 +202,26 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 			}
 		}
 	}
+}
+
+// connection_call_execute executes one already-received call on connection and
+// returns its completion record without pushing it to the client ring yet, so
+// a service doing group commit can hold completions until the batch is durable.
+connection_call_execute :: proc "contextless" (service: ^Service, connection: ^Connection, command: ring.Record) -> ring.Record {
+	serving = connection
+	completion := export_serve(service.file, op.PROCESS_BASE, connection.region, connection.ring_memory, command, false)
+	serving = nil
+	service.calls += 1
+	return completion
+}
+
+// service_run adds and removes the connections that the root service
+// names, then executes the calls that wait. It gives the count of calls.
+service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
+	if service.names.head == nil {
+		return 0
+	}
+	service_control_run(service)
 	for &connection in service.connections {
 		if connection.calls.head == nil {
 			continue
@@ -209,13 +231,10 @@ service_run :: proc "contextless" (service: ^Service) -> (calls: int) {
 			if !has_command {
 				break
 			}
-			serving = &connection
-			send(&connection.calls.completions, export_serve(service.file, op.PROCESS_BASE, connection.region, connection.ring_memory, command, false))
-			serving = nil
+			send(&connection.calls.completions, connection_call_execute(service, &connection, command))
 			calls += 1
 		}
 	}
-	service.calls += u64(calls)
 	return calls
 }
 

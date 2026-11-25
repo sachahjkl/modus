@@ -509,6 +509,9 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 	if !create {
 		return -1, refuse(error, .Nothing_Has_That_Name, .Absent, .Objects, 2)
 	}
+	if group_batch.store_count > 0 {
+		group_flush()
+	}
 	// A store of a named principal is made only with its keys: a locked
 	// principal makes none, and no store of its name in clear.
 	slot := owned_slot(store.name)
@@ -653,6 +656,13 @@ commit_at_limit :: proc "contextless" (store: Store_Of, error: ^errors.Error_Rec
 	generation, committed := plan_commit(error)
 	if committed != .Succeeded {
 		return 0, committed
+	}
+	if group_call_staged {
+		if generation > 0 && at_limit != 0 && group_last_staged_slot >= 0 {
+			group_batch.stores[group_last_staged_slot].at_limit_thinned = at_limit
+			group_batch.stores[group_last_staged_slot].store_limit = store.limit
+		}
+		return generation, .Succeeded
 	}
 	if generation > 0 && at_limit != 0 && !limit_reached[plan.store_index] {
 		// One line for each store and each start of the service: the later

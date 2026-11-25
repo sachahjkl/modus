@@ -310,6 +310,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_INTERNAL + "/storage/store_encryption",
 	foundation.SOURCE_FOLDER_INTERNAL + "/storage/store_reclaim",
 	foundation.SOURCE_FOLDER_INTERNAL + "/storage/principal_keys",
+	foundation.SOURCE_FOLDER_INTERNAL + "/storage/block_runs",
+	foundation.SOURCE_FOLDER_INTERNAL + "/storage/group_commit",
 	foundation.SOURCE_FOLDER_PUBLIC + "/principals",
 	foundation.SOURCE_FOLDER_PUBLIC + "/tpm2",
 	foundation.SOURCE_FOLDER_INTERNAL + "/boot_program/firmware_memory_map",

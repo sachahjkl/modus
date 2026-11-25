@@ -869,11 +869,28 @@ commit :: proc "c" (place: i64, name: ^string, result: ^[]Commit_Measure, error:
 	generation, changed := object_change(ranged.named.caller.store, path_names(&ranged.named.path), ranged.named.name, .Ranges, nil, {}, reaches_whole_store(&ranged.named.caller), error, 2, pending, &measure)
 	plan_tables_fixed()
 	pool_rewind(pool, mark)
+	if group_call_retry_solo {
+		return changed, 0
+	}
 	if changed != .Succeeded {
 		if storage_status.commit_refusal_drops_pending(changed) {
 			pending_drop(pending)
 		}
 		return changed, 0
+	}
+	if group_call_staged && group_last_staged_slot >= 0 {
+		measure.generation = generation
+		measure.written = i64(group_batch.stores[group_last_staged_slot].write_count)
+		p := &group_participants[group_last_staged_slot]
+		p.pending = pending
+		p.has_range_measure = true
+		p.range_measure = measure
+		p.range_start = start
+		p.range_name = ranged.named.name
+		if len(result) > 0 {
+			p.range_result = &result[0]
+		}
+		return .Succeeded, 1
 	}
 	pending_drop(pending)
 	measure.generation = generation
