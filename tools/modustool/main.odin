@@ -754,6 +754,9 @@ COMMANDS :: [?]foundation.Command {
 	// Formats and statically lints Lex declaration files using freestanding
 	// `modus:lex_tools` (src/md/features/lex_tools.md).
 	{name = "lex", about = "lex fmt [--check] <file>... | lex lint <file>...: format or statically lint Lex declaration files", run = lex_cli.run_lex_cli},
+	// Diagnoses a recorded process input history on the host
+	// (src/md/features/record_and_replay.md).
+	{name = "replay", about = "replay <part> <process>: diagnose a recorded process input history on the host", run = machine.run_replay_cli},
 	// Serves the typed host agent bridge over line-delimited JSON-RPC 2.0 on
 	// standard input and output, enforcing client-key permissions, remote key
 	// uses, active wide-grant window scopes, append-only BLAKE3 act recording,
