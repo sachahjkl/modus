@@ -78,33 +78,33 @@ course_lesson1_code := [13]string {
 course_lesson2_blocks := [3]Tutorial_Slide_Block {
 	{
 		heading = "Apps and Background Services",
-		body    = "`start(\"name\")` launches a built-in app or pinned disk app with\nits declared grants. `connect(\"service\")` attaches to a running\nbackground service and prefixes its calls as `service.fn()`.",
+		body    = "`start(\"name\")` launches a built-in app or pinned disk app with\nits declared grants. `connect(\"service\")` (or `mon = connect(...)`)\nattaches to a running background service under its prefix.",
 	},
 	{
-		heading = "Isolated Libraries (Zero Handles)",
-		body    = "`s = isolate(\"mod\")` spawns a disposable child process with zero\nkernel handles and binds its exports under `s.<name>`.\nA fault stops only that child; the console keeps running.",
+		heading = "Bound Isolated Handles (Zero Grants)",
+		body    = "`s = isolate(\"mod\")` spawns a zero-handle child under `s.<name>`.\nBare `isolate` refuses before spawning so nothing shadows global\ncommands; two handles (`a`, `b`) of one module run side by side.",
 	},
 	{
-		heading = "In-Process Loading and Built-In Help",
-		body    = "`m = load(\"mod\")` maps a trusted module directly into the console\nunder `m.<name>`. Call `help(s)` to list a handle's commands or\n`help(\"s.name\")` for one export's signature and usage.",
+		heading = "In-Process Loading, Help, and Unload",
+		body    = "`m = load(\"mod\")` maps a trusted module in-process under `m.*`.\nCall `help(s)` to list `s`'s exports, `help(\"s.readings\")` for one\nsignature, and `unload(s)` (or reassign `s`) to close that child.",
 	},
 }
 
 @(private = "file", rodata)
 course_lesson2_code := [13]string {
 	"s = isolate(\"sample\")",
-	"// loads built-in demo library \"sample\"",
-	"// in a zero-grant child under s.*",
+	"// binds demo library \"sample\" to s.*",
+	"// bare isolate(\"sample\") refuses early",
 	"",
-	"help(\"s.readings\")",
-	"// prints signature & help of s.readings",
-	"// exported by the handle s",
+	"help(\"s.readings\") // or help(s)",
+	"// prints signature & docs of s.readings",
 	"",
 	"t = s.readings(4)",
 	"t |> where(sensor = 2) |> s.sum_values",
 	"=> 30 // 4 demo sensor rows -> sum value",
 	"",
 	"connect(\"monitor\") // adds monitor.*",
+	"unload(s)          // closes handle s",
 }
 
 @(private = "file", rodata)
@@ -210,11 +210,11 @@ course_lesson5_code := [13]string {
 course_recap_blocks := [3]Tutorial_Slide_Block {
 	{
 		heading = "Typed Commands and Built-In Help",
-		body    = "Pipe `Table` and `Record` values with `|>`, compute exact `MiB`\nand `ms` units, and rely on closed `.enum` schema checks.\nRun `help(\"name\")` for any built-in, service, or isolated call.",
+		body    = "Pipe `Table` and `Record` values with `|>`, compute exact `MiB`\nand `ms` units, and rely on closed `.enum` schema checks.\nRun `help(s)` or `help(\"name\")` for any handle or command.",
 	},
 	{
-		heading = "Explicit Isolation, Plans, and Grants",
-		body    = "Choose `start`, `connect`, `isolate`, or `load` by authority.\nSystem changes flow through `plan { ... }` consent dialogs,\nand `grants` inspects or revokes live handles at any time.",
+		heading = "Bound Handles, Plans, and Grants",
+		body    = "Bind sandboxes with `s = isolate(...)` and unload via `unload(s)`.\nSystem changes flow through `plan { ... }` consent dialogs,\nand `grants` inspects or revokes live handles at any time.",
 	},
 	{
 		heading = "Versioned Storage and Full Guide",
@@ -393,15 +393,15 @@ course_captions := [17]Tutorial_Caption {
 	{
 		cue_name = "course.l2_start",
 		accent   = .Process,
-		kicker   = "LESSON 2  |  ZERO-GRANT ISOLATION",
-		heading  = "`s = isolate(\"sample\")` loads the demo library under a bound handle",
-		body     = "`sample` is a built-in demonstration library module with 12 typed table and record exports.\nBinding `s = isolate(\"sample\")` walls it off in a zero-grant child (`call: isolated`) under `s.*`.",
+		kicker   = "LESSON 2  |  BOUND ISOLATED HANDLES",
+		heading  = "`s = isolate(\"sample\")` binds a zero-grant child under `s.*`",
+		body     = "Bare `isolate(\"sample\")` refuses before spawning so no library ever pollutes or shadows global commands.\nBinding `s` keeps all 12 exports of `sample` under `s.*` and lets multiple isolated instances coexist.",
 	},
 	{
 		cue_name = "course.l2_help",
 		accent   = .Process,
-		kicker   = "LESSON 2  |  BUILT-IN COMMAND HELP",
-		heading  = "`help(\"s.readings\")` shows the signature and description of an export",
+		kicker   = "LESSON 2  |  BUILT-IN HANDLE HELP",
+		heading  = "`help(\"s.readings\")` prints one export; `help(s)` lists all exports of `s`",
 		body     = "Every export and record constructor of `s` stays scoped under `s.<name>`, keeping the global namespace clean.\n`help(\"s.readings\")` confirms it takes `count: Integer` and returns a `Table(Reading)` of demo sensor rows.",
 	},
 	{
@@ -414,9 +414,9 @@ course_captions := [17]Tutorial_Caption {
 	{
 		cue_name = "course.l2_connect",
 		accent   = .Process,
-		kicker   = "LESSON 2  |  CONNECTING TO SERVICES",
-		heading  = "`connect(\"monitor\")` attaches to a running background service",
-		body     = "Connected services keep their namespace prefix: `monitor.served()` returns a live `Served` record (`calls`, `pictures`).\nUse `start(\"name\")` for apps, `connect(\"svc\")` for services, `s = isolate(\"mod\")` for sandboxes, and `m = load(\"mod\")` in-process.",
+		kicker   = "LESSON 2  |  SERVICES & UNLOADING HANDLES",
+		heading  = "`connect(\"monitor\")` attaches to a service; `unload(s)` closes handle `s`",
+		body     = "Connected services use `monitor.served()` (or an explicit handle `mon = connect(\"monitor\")`).\nCalling `unload(s)` or reassigning `s` stops only `s`'s sandboxed child process and reclaims its command names.",
 	},
 	{
 		cue_name = "course.l3_start",

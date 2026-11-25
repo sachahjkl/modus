@@ -14,8 +14,8 @@ package machine
 //     Current directly, and plans.generations().
 //  4. Zero Ambient Authority & Desktop Grants: grants("notes") |> where(state
 //     = "held") and the live desktop grants window with Revoke buttons.
-//  5. Automatic Copy-on-Write Versions: notes auto-commit with zero Save
-//     button, Ctrl+H version list, Down read-only preview, and Enter restore.
+//  5. Automatic Copy-on-Write Versions: notes auto-commit on pause,
+//     Ctrl+H version list, Down read-only preview, and Enter restore.
 //
 // Generous teaching hold times so a viewer reads both the on-screen output
 // and the two-line lower-third caption without pausing.
@@ -77,9 +77,6 @@ scenario_course_film := [?]Step {
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT, text = "course.l2_start"},
 	{kind = .Film_Type, text = "s = isolate(\"sample\")"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
-	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "[console] > s = isolate(\"sample\")"},
-	{kind = .Film_Type, text = "s"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console]   call       isolated"},
 	{kind = .Film_Hold, milliseconds = COURSE_HOLD_TEACH},

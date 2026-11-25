@@ -37,7 +37,8 @@ course_film_scenario_keys_cues_and_teaching_rules :: proc(t: ^testing.T) {
 				eq := strings.index(step.text, " = ")
 				paren := strings.index_byte(step.text, '(')
 				pipe := strings.index(step.text, "|>")
-				last_typed_was_assignment = !strings.has_prefix(step.text, "let ") && eq > 0 && (paren < 0 || eq < paren) && (pipe < 0 || eq < pipe)
+				is_handle_binding := eq > 0 && (strings.has_prefix(step.text[eq + 3:], "isolate(") || strings.has_prefix(step.text[eq + 3:], "load(") || strings.has_prefix(step.text[eq + 3:], "connect("))
+				last_typed_was_assignment = !strings.has_prefix(step.text, "let ") && !is_handle_binding && eq > 0 && (paren < 0 || eq < paren) && (pipe < 0 || eq < pipe)
 			}
 		} else if step.kind == .Wait && strings.has_prefix(step.text, "[console] ") && !strings.has_prefix(step.text, "[console] > ") {
 			testing.expectf(t, !last_typed_was_assignment, "step %d waits for drawn console output %q directly after a variable assignment", index + 1, step.text)
