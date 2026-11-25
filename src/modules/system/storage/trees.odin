@@ -454,6 +454,12 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 	if len(store.name) == 0 || store.limit == 0 {
 		return -1, refuse(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
+	if group_batch.store_count > 0 {
+		existing := store_find(store.name)
+		if (existing < 0 && create) || (existing >= 0 && group_batch_has_store(existing)) {
+			group_flush()
+		}
+	}
 	if broken {
 		return -1, refuse(error, .Callee_Unavailable, .Device, .None, 0, 0, 0, 1)
 	}
@@ -570,6 +576,12 @@ path_refusal :: proc "contextless" (refusal: Open_Refusal, error: ^errors.Error_
 
 // plan_refusal gives the error of a plan that plan_refused refuses.
 plan_refusal :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, outcome: call_outcome.Call_Outcome) {
+	plan_trees_failure_take()
+	if group_call_allowed && group_batch.store_count > 0 && !plan.tree_damaged && !plan.device && !plan.count_fault && !plan.count_overflow && (plan.full || plan.capacity_reached) {
+		plan_drop()
+		group_call_retry_solo = true
+		return 0, .Callee_Busy
+	}
 	value, outcome = plan_commit_refused(error)
 	plan_drop()
 	return
@@ -653,6 +665,13 @@ commit_at_limit :: proc "contextless" (store: Store_Of, error: ^errors.Error_Rec
 	generation, committed := plan_commit(error)
 	if committed != .Succeeded {
 		return 0, committed
+	}
+	if group_call_staged {
+		if generation > 0 && at_limit != 0 && group_last_staged_slot >= 0 {
+			group_batch.stores[group_last_staged_slot].at_limit_thinned = at_limit
+			group_batch.stores[group_last_staged_slot].store_limit = store.limit
+		}
+		return generation, .Succeeded
 	}
 	if generation > 0 && at_limit != 0 && !limit_reached[plan.store_index] {
 		// One line for each store and each start of the service: the later

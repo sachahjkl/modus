@@ -113,6 +113,14 @@ Versions_Dropped_At_Commit :: struct {
 	store:      [40]u8,
 }
 
+// A group commit wrote changes from several stores under one root.
+@(log_fact = "storage: group commit of generation {generation}: {stores} stores, {blocks} blocks")
+Group_Commit_Batch :: struct {
+	generation: u64,
+	stores:     u64,
+	blocks:     u64,
+}
+
 // A connection made a share of its store, or of a tree of it.
 @(log_fact = "storage: a share of the store {store}, the share {share}")
 Share_Made :: struct {

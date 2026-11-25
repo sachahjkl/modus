@@ -9,6 +9,8 @@ import op "modus:contract/operation"
 import "modus:contract/ring"
 import format "modus:contract/store"
 import "internal:storage/block_counts"
+import "internal:storage/block_runs"
+import gc_batch "internal:storage/group_commit"
 import "internal:storage/storage_mount"
 import "internal:storage/storage_release"
 import block_tree "internal:storage/storage_object"
@@ -68,6 +70,10 @@ commits_undecided: u64 // The commits whose root write, or its read back, failed
 roots_refused_in_a_row: u64 // The roots that their read back found with other bytes since the last root that read back whole.
 blocks_read_back: u64 // The blocks, the roots and the zeros that a read back read.
 read_back_nanoseconds: u64 // The time of those reads: a measure of the cost of the read back.
+group_commit_batches: u64 // Group commits that committed two or more stores in one root flip.
+group_commit_members: u64 // Total store changes committed inside multi-store group batches.
+block_requests_sent: u64 // Coalesced Read/Write commands submitted to the block service.
+blocks_transferred: u64 // Total blocks moved across coalesced Read/Write commands.
 
 // The block service.
 blocks: ring.Ring
@@ -75,6 +81,7 @@ region: [^]u8
 disk_tag: u32
 disk_errors: u64
 disk_size: u64 // The blocks of the disk that the service uses.
+max_blocks_per_request: u64 = 1 // Reported by block.Command.Info (values[1]), clamped to [1, REGION_BLOCKS].
 broken: bool // The write of a root or its read back failed, or a place of the root dropped ROOT_REFUSAL_LIMIT roots in a row: the service makes no change until its next start.
 
 // The block service, with the right Read: its stop is an event of this
@@ -229,7 +236,7 @@ allocate :: proc "contextless" () -> u64 {
 		// A page of the tally of a recount whose write runs is not free: the
 		// leaves after the commit still read it.
 		in_plan :: proc "contextless" (data: rawptr, number: u64) -> bool {
-			return delta_of(number) > 0 || storage_mount.recount_holds_block(&opened, number)
+			return delta_of(number) > 0 || group_block_taken(number) || storage_mount.recount_holds_block(&opened, number)
 		}
 		number := block_counts.free_search(&opened.counts, next_free, in_plan, nil)
 		if number != 0 {
@@ -261,79 +268,89 @@ allocate :: proc "contextless" () -> u64 {
 }
 
 // A request to the block service: one block, to or from one slot of the region.
-Request :: struct {
-	number: u64,
-	slot:   u64,
-}
+Request :: block_runs.Request
 
-// transfer reads or writes blocks: all are in flight at the same time. A
-// silent disk refuses at once. A wait for a completion ends when the block
-// service stops, or after a stall of system.ANSWER_BOUND_MILLISECONDS: the
-// disk is then silent, and the transfer fails.
+// transfer reads or writes blocks, coalescing contiguous disk block and region
+// slot runs into multi-block commands up to max_blocks_per_request. A silent
+// disk refuses at once. A wait for a completion ends when the block service
+// stops, or after a stall of system.ANSWER_BOUND_MILLISECONDS: the disk is
+// then silent, and the transfer fails.
 transfer :: proc "contextless" (command: block.Command, requests: []Request) -> bool {
+	if len(requests) == 0 {
+		return true
+	}
 	if disk_silent {
 		disk_errors += 1
 		return false
 	}
-	first := disk_tag
-	defer disk_tag = first + u32(len(requests))
-	sent := 0
-	done := 0
-	good := true
-	// A stall bound: each completion is progress, and moves the deadline.
-	deadline := system.answer_deadline(system.time())
-	for done < len(requests) {
-		wait := system.wait_begin() // The stop of the block service is an event.
-		for sent < len(requests) {
-			request := requests[sent]
-			record := ring.Record{kind = u32(command), tag = first + u32(sent), values = {0 = request.number, 1 = 1, 2 = request.slot * BLOCK_SIZE}}
-			if !ring.push(&blocks.commands, record) {
-				break
-			}
-			sent += 1
-		}
-		system.wake_reader(&blocks.commands)
-		completed := false
-		for {
-			completion, ok := system.receive(&blocks.completions)
-			if !ok {
-				break
-			}
-			done += 1
-			completed = true
-			if disk_answer_absent(completion) {
-				disk_silence_note(.No_Answer)
-				return false
-			}
-			if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
-				if good {
-					// The first refusal of this batch goes on the log, with the
-					// values of its error record.
-					error := errors.completion_record(completion.values)
-					system.log_fact(.Error, Block_Request_Refused(errors.error_record_fact_fields(error)))
+	runs_buf: [REGION_BLOCKS]block_runs.Run
+	for offset := 0; offset < len(requests); offset += REGION_BLOCKS {
+		part := requests[offset:min(offset + REGION_BLOCKS, len(requests))]
+		run_count := block_runs.coalesce_block_runs(part, max_blocks_per_request, runs_buf[:])
+		runs := runs_buf[:run_count]
+		first := disk_tag
+		disk_tag = first + u32(run_count)
+		block_requests_sent += u64(run_count)
+		blocks_transferred += u64(len(part))
+		sent := 0
+		done := 0
+		good := true
+		// A stall bound: each completion is progress, and moves the deadline.
+		deadline := system.answer_deadline(system.time())
+		for done < run_count {
+			wait := system.wait_begin() // The stop of the block service is an event.
+			for sent < run_count {
+				run := runs[sent]
+				record := ring.Record{kind = u32(command), tag = first + u32(sent), values = {0 = run.first_block, 1 = run.count, 2 = run.first_slot * BLOCK_SIZE}}
+				if !ring.push(&blocks.commands, record) {
+					break
 				}
-				good = false
+				sent += 1
+			}
+			system.wake_reader(&blocks.commands)
+			completed := false
+			for {
+				completion, ok := system.receive(&blocks.completions)
+				if !ok {
+					break
+				}
+				done += 1
+				completed = true
+				if disk_answer_absent(completion) {
+					disk_silence_note(.No_Answer)
+					return false
+				}
+				if completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+					if good {
+						// The first refusal of this batch goes on the log, with the
+						// values of its error record.
+						error := errors.completion_record(completion.values)
+						system.log_fact(.Error, Block_Request_Refused(errors.error_record_fact_fields(error)))
+					}
+					good = false
+				}
+			}
+			if done < run_count {
+				if completed {
+					deadline = system.answer_deadline(system.time())
+				} else if !disk_wait_goes_on(deadline) {
+					return false
+				}
+				system.wait_records(&wait, &blocks.completions)
+				if sent < run_count {
+					system.wait_room(&wait, &blocks.commands)
+				}
+				if !system.wait_spin(&wait) {
+					system.wait_end(&wait, deadline)
+				}
 			}
 		}
-		if done < len(requests) {
-			if completed {
-				deadline = system.answer_deadline(system.time())
-			} else if !disk_wait_goes_on(deadline) {
-				return false
-			}
-			system.wait_records(&wait, &blocks.completions)
-			if sent < len(requests) {
-				system.wait_room(&wait, &blocks.commands)
-			}
-			if !system.wait_spin(&wait) {
-				system.wait_end(&wait, deadline)
-			}
+		if !good {
+			disk_errors += 1
+			return false
 		}
 	}
-	if !good {
-		disk_errors += 1
-	}
-	return good
+	return true
 }
 
 // command sends one command with no data and waits for its completion. On
@@ -1347,11 +1364,16 @@ outside_block :: proc "contextless" (number: u64) -> bool {
 }
 
 // owner_after gives the owner of a block that the plan counts, after the
-// commit: the owner that delta_add_outside gave it, or the store of the
-// plan.
+// commit: the owner that delta_add_outside gave it, the per-store owner from
+// group_batch during a group flush, or the store of the solo plan.
 owner_after :: proc "contextless" (number: u64) -> u16 {
 	if place, found := outside_find(number); found {
 		return plan.outside_owners[place]
+	}
+	if group_flush_active {
+		if owner, found := gc_batch.batch_owner_of(&group_batch, number); found {
+			return owner
+		}
 	}
 	return u16(plan.store_index + 1)
 }
@@ -2669,11 +2691,51 @@ cache_later :: proc "contextless" (pointer: Pointer, bytes: ^Block) {
 	}
 }
 
+// sort_writes_ascending orders planned writes by disk block number ascending
+// using iterative heapsort (O(N log N) worst case, zero allocation) so both
+// plan_write_with_root and commit_blocks_read_back coalesce contiguous extents.
+@(private = "file")
+sort_writes_ascending :: proc "contextless" (writes: []Write) {
+	n := len(writes)
+	if n < 2 {
+		return
+	}
+	sift_down :: proc "contextless" (a: []Write, start, end: int) {
+		root := start
+		for {
+			child := 2 * root + 1
+			if child >= end {
+				return
+			}
+			swap := root
+			if a[swap].number < a[child].number {
+				swap = child
+			}
+			if child + 1 < end && a[swap].number < a[child + 1].number {
+				swap = child + 1
+			}
+			if swap == root {
+				return
+			}
+			a[root], a[swap] = a[swap], a[root]
+			root = swap
+		}
+	}
+	for start := (n - 2) / 2; start >= 0; start -= 1 {
+		sift_down(writes, start, n)
+	}
+	for end := n - 1; end > 0; end -= 1 {
+		writes[0], writes[end] = writes[end], writes[0]
+		sift_down(writes, 0, end)
+	}
+}
+
 // plan_write_with_root writes the blocks of the plan, REGION_BLOCKS at a
 // time, reads them back, then writes the root of the plan in the other
 // place and reads it back. The outcome is Succeeded, or the call outcome of
 // the refusal with its error record; the plan is then dropped.
 plan_write_with_root :: proc "contextless" (error: ^errors.Error_Record) -> (place: u64, outcome: call_outcome.Call_Outcome) {
+	sort_writes_ascending(plan.writes[:plan.write_count])
 	// The blocks, REGION_BLOCKS at a time, then the root. Each one is on the
 	// disk before the next step.
 	for first := 0; first < plan.write_count; first += REGION_BLOCKS {
@@ -2802,6 +2864,10 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, 
 	}
 	if plan.capacity_reached {
 		plan_drop()
+		if group_call_allowed && group_batch.store_count > 0 {
+			group_call_retry_solo = true
+			return 0, .Callee_Busy
+		}
 		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Full, .Commit_Blocks, 0, 0, i64(plan.capacity_limit))
 	}
 	if plan.count_overflow {
@@ -2810,6 +2876,10 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, 
 	}
 	if plan.full {
 		plan_drop()
+		if group_call_allowed && group_batch.store_count > 0 {
+			group_call_retry_solo = true
+			return 0, .Callee_Busy
+		}
 		return call_outcome.fail_with_value_first(error, .Budget_Or_Capacity_Exhausted, .Full) // The disk: no number, because the free blocks are a fact of all the stores.
 	}
 	entry := plan_cell()
@@ -2817,6 +2887,19 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> (value: i64, 
 		entry^ = {}
 	} else {
 		entry.used = u64(i64(entry.used) + plan.used_change)
+	}
+	if group_call_allowed && !plan.reclaiming && !plan.cell_freed {
+		staged, retry_solo, stage_outcome := group_stage_current_plan(error)
+		if retry_solo {
+			group_call_retry_solo = true
+			return 0, .Callee_Busy
+		}
+		if stage_outcome != .Succeeded {
+			return 0, stage_outcome
+		}
+		if staged {
+			return i64(root.generation + 1), .Succeeded
+		}
 	}
 	// The page of the store table, with the count of its cell final.
 	if !plan_page_write() {
@@ -3009,6 +3092,7 @@ root_again :: proc "contextless" () -> Read {
 // Flush or a read failed.
 freed_blocks_zero :: proc "contextless" () -> (zeroed: u64, not_zeroed: u64, ok: bool) {
 	intrinsics.mem_zero(region, REGION_BLOCKS * BLOCK_SIZE)
+	numbers: [REGION_BLOCKS]u64
 	requests: [REGION_BLOCKS]Request
 	count := 0
 	for place in plan.delta_places[:plan.delta_count] {
@@ -3017,10 +3101,14 @@ freed_blocks_zero :: proc "contextless" () -> (zeroed: u64, not_zeroed: u64, ok:
 			continue
 		}
 		cache_forget(number)
-		requests[count] = {number = number, slot = u64(count)}
+		numbers[count] = number
 		count += 1
 		if count < REGION_BLOCKS {
 			continue
+		}
+		block_runs.sort_u64_ascending(numbers[:count])
+		for idx in 0 ..< count {
+			requests[idx] = {number = numbers[idx], slot = u64(idx)}
 		}
 		if !transfer(.Write, requests[:count]) {
 			return 0, 0, false
@@ -3029,6 +3117,10 @@ freed_blocks_zero :: proc "contextless" () -> (zeroed: u64, not_zeroed: u64, ok:
 		count = 0
 	}
 	if count > 0 {
+		block_runs.sort_u64_ascending(numbers[:count])
+		for idx in 0 ..< count {
+			requests[idx] = {number = numbers[idx], slot = u64(idx)}
+		}
 		if !transfer(.Write, requests[:count]) {
 			return 0, 0, false
 		}
@@ -3044,18 +3136,28 @@ freed_blocks_zero :: proc "contextless" () -> (zeroed: u64, not_zeroed: u64, ok:
 		if !freed_block(number) {
 			continue
 		}
-		requests[count] = {number = number, slot = u64(count)}
+		numbers[count] = number
 		count += 1
 		if count < REGION_BLOCKS {
 			continue
+		}
+		block_runs.sort_u64_ascending(numbers[:count])
+		for idx in 0 ..< count {
+			requests[idx] = {number = numbers[idx], slot = u64(idx)}
 		}
 		if !zeros_read_back(requests[:count], &zeroed, &not_zeroed) {
 			return zeroed, not_zeroed, false
 		}
 		count = 0
 	}
-	if count > 0 && !zeros_read_back(requests[:count], &zeroed, &not_zeroed) {
-		return zeroed, not_zeroed, false
+	if count > 0 {
+		block_runs.sort_u64_ascending(numbers[:count])
+		for idx in 0 ..< count {
+			requests[idx] = {number = numbers[idx], slot = u64(idx)}
+		}
+		if !zeros_read_back(requests[:count], &zeroed, &not_zeroed) {
+			return zeroed, not_zeroed, false
+		}
 	}
 	return zeroed, not_zeroed, true
 }
