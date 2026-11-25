@@ -385,6 +385,9 @@ test_inputs_take :: proc(folder: string, part: Test_Part) -> bool {
 // checks_passed_write writes the count of the checks that passed in this
 // process.
 checks_passed_write :: proc(count: int) -> bool {
+	if !foundation.make_folder(foundation.BUILD_FOLDER) {
+		return false
+	}
 	if write_error := os.write_entire_file(CHECKS_PASSED_FILE, fmt.tprintf("%d\n", count)); write_error != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", CHECKS_PASSED_FILE, write_error)
 		return false

@@ -1,0 +1,3 @@
+type: Changed
+
+**Fast-first static checks and split cached Nix check derivations.** `modustool check` now runs all fast static checks before host tests, fuzzing, and the second build, and adds composable sub-modes (`static`, `host_tests`, `fuzz <shard> <total>`, `reproducible`). `flake.nix` splits `modus-host-checks` into narrow, independently cached derivations (`modus-static-checks`, `modus-system-host-tests`, `modus-tool-host-tests`, four `modus-fuzz-*` shards, `modus-reproducible-build`, and `modus-scenario-waits`) so documentation, site, and film edits fail fast and skip unrelated fuzzing and rebuilds.

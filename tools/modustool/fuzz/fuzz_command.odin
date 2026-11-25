@@ -311,13 +311,25 @@ fuzz_finding_keep :: proc(binary: string, target: ^Fuzz_Target, outcome: Fuzz_Ch
 	return path, true
 }
 
+// The tool packages that compile into the instrumented fuzz child: hashing
+// only these packages keeps the check seed identical on the host and in the
+// narrow Nix fuzz derivations, independent of site, machine, checks, and docs.
+FUZZ_SEED_TOOL_FOLDERS :: [?]string {
+	foundation.TOOL_SOURCE_FOLDER + "/foundation",
+	foundation.TOOL_SOURCE_FOLDER + "/resources",
+	foundation.TOOL_SOURCE_FOLDER + "/build",
+	foundation.TOOL_SOURCE_FOLDER + "/fuzz",
+	foundation.TOOL_SOURCE_FOLDER + "/fuzz_runner",
+}
+
 // fuzz_sources_seed gives the seed of `modustool check`: the BLAKE3 hash of
-// the paths and the bytes of each source of the tool, of the source
-// library and of the kernel parts, the inputs of the child. The same
+// the paths and the bytes of each source of the fuzz runner packages, of the
+// source library and of the kernel parts, the inputs of the child. The same
 // sources run the same inputs; a change of the code under test explores
 // other ones.
 fuzz_sources_seed :: proc() -> u64 {
-	return fuzz_sources_seed_of_folders(foundation.TOOL_SOURCE_FOLDER, foundation.SOURCE_FOLDER_LIBRARY, foundation.SOURCE_FOLDER_KERNEL)
+	tool_folders := FUZZ_SEED_TOOL_FOLDERS
+	return fuzz_sources_seed_of_tool_folders(tool_folders[:], foundation.SOURCE_FOLDER_LIBRARY, foundation.SOURCE_FOLDER_KERNEL)
 }
 
 // fuzz_sources_seed_of_folders gives the seed of the sources under three
@@ -325,8 +337,17 @@ fuzz_sources_seed :: proc() -> u64 {
 // folder under the folder of the tool, and a seed that skips one would
 // run the same inputs after a change of its code.
 fuzz_sources_seed_of_folders :: proc(tool_folder, library_folder, kernel_folder: string) -> u64 {
+	tool_folders := [1]string{tool_folder}
+	return fuzz_sources_seed_of_tool_folders(tool_folders[:], library_folder, kernel_folder)
+}
+
+// fuzz_sources_seed_of_tool_folders hashes each .odin file under tool_folders,
+// library_folder, and each subfolder of kernel_folder.
+fuzz_sources_seed_of_tool_folders :: proc(tool_folders: []string, library_folder, kernel_folder: string) -> u64 {
 	paths := make([dynamic]string, context.temp_allocator)
-	fuzz_sources_list(tool_folder, &paths)
+	for folder in tool_folders {
+		fuzz_sources_list(folder, &paths)
+	}
 	fuzz_sources_list(library_folder, &paths)
 	// The kernel parts are the folders under the kernel; the files of the
 	// kernel itself are no input of the child.
@@ -443,18 +464,46 @@ fuzz_check_children_run :: proc(binary: string, runs: []Fuzz_Check_Child, seed: 
 	}
 }
 
+// fuzz_shard_targets selects the 1-based strided slice of targets for shard
+// out of total (index % total == shard - 1), preserving order so heavy targets
+// spread evenly across shards. Refuses shard < 1, total < 1, or shard > total.
+fuzz_shard_targets :: proc(targets: []Fuzz_Target, shard, total: int, allocator := context.temp_allocator) -> (selected: []Fuzz_Target, ok: bool) {
+	if total < 1 || shard < 1 || shard > total {
+		return nil, false
+	}
+	chosen := make([dynamic]Fuzz_Target, allocator)
+	for target, index in targets {
+		if index % total == shard - 1 {
+			append(&chosen, target)
+		}
+	}
+	return chosen[:], true
+}
+
 // fuzz_check is the part of `modustool check`: the form of the corpus, then
 // for each target its corpus and a fixed count of new executions in the
-// instrumented child, with the seed of the sources. The children of
-// several targets run at once; the check prints their output and their
-// verdicts in the order of the targets, and minimizes a finding only after
-// each child ended, so the report does not depend on which child ended
-// first.
+// instrumented child, with the seed of the sources.
 fuzz_check :: proc() -> bool {
-	if !fuzz_corpus_check() {
+	return fuzz_check_shard(1, 1)
+}
+
+// fuzz_check_shard runs one deterministic strided shard (1-based shard in
+// 1..total) of the fuzz targets of `modustool check`. Shard 1 validates the
+// corpus directory once so parallel shards do not duplicate corpus checks.
+fuzz_check_shard :: proc(shard, total: int) -> bool {
+	all_targets := fuzz_targets()
+	targets, shard_ok := fuzz_shard_targets(all_targets, shard, total)
+	if !shard_ok {
+		fmt.eprintfln("modustool: fuzz shard %d of %d is out of range (shard must be in 1..total)", shard, total)
 		return false
 	}
-	targets := fuzz_targets()
+	if shard == 1 && !fuzz_corpus_check() {
+		return false
+	}
+	if len(targets) == 0 {
+		fmt.printfln("modustool: measure: the fuzz targets of the check shard %d/%d (0 targets): 0.0 s on the clock", shard, total)
+		return true
+	}
 	if !fuzz_instrumented_build(fuzz_packages_of(targets)) {
 		return false
 	}
@@ -491,7 +540,11 @@ fuzz_check :: proc() -> bool {
 		}
 		foundation.test_passed_print("the fuzz target %s ran its %d corpus inputs and %d new executions with no fuzz finding; %d of %d edges reached", run.target.name, outcome.corpus_inputs, run.executions, outcome.edges_reached, outcome.edges)
 	}
-	fmt.printfln("modustool: measure: the fuzz targets of the check (%d targets): %.1f s on the clock, at most %d at once", len(runs), time.duration_seconds(whole), at_once)
+	if total == 1 {
+		fmt.printfln("modustool: measure: the fuzz targets of the check (%d targets): %.1f s on the clock, at most %d at once", len(runs), time.duration_seconds(whole), at_once)
+	} else {
+		fmt.printfln("modustool: measure: the fuzz targets of the check shard %d/%d (%d targets): %.1f s on the clock, at most %d at once", shard, total, len(runs), time.duration_seconds(whole), at_once)
+	}
 	return all_passed
 }
 

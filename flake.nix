@@ -406,6 +406,32 @@
     # The whole tool: the check, the release shell and the package run it.
     modustoolBinary = toolBinaryOf "modustool" toolSources;
 
+    # Minimal binaries for narrow Nix check derivations: each compiles only the
+    # tool packages it imports, so edits to unrelated packages (site, machine,
+    # cache_server, docs, news, ROADMAP.md) never rebuild or invalidate them.
+    narrowToolBinaryOf = name: targetPackage: binaryName: fileset:
+      pkgs.stdenvNoCC.mkDerivation {
+        inherit name;
+        src = inputs.nixpkgs.lib.fileset.toSource {
+          root = ./.;
+          inherit fileset;
+        };
+        nativeBuildInputs = [odin pkgs.nasm];
+        buildPhase = ''
+          export HOME=$TMPDIR
+          odin build ${targetPackage} -vet -collection:modus=src/library/modus -collection:internal=src/library/internal -collection:modulus=src/modulus -collection:modustool=tools/modustool -custom-attribute:log_fact,enum_getters,member_texts,parameter_ranges,parameter_choices,parameter_instances -show-timings -out:${binaryName}
+        '';
+        installPhase = ''
+          install -D ${binaryName} $out/bin/${binaryName}
+        '';
+      };
+
+    fuzzToolSources = inputs.nixpkgs.lib.fileset.unions ([(sourcesOfOdin ./tools/modustool/foundation) (sourcesOfOdin ./tools/modustool/resources) (sourcesOfOdin ./tools/modustool/build) ./tools/modustool/build/browser_machine (sourcesOfOdin ./tools/modustool/fuzz) (sourcesOfOdin ./tools/modustool/fuzz_runner) (sourcesOfOdin ./src/library) (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "asm") ./src/runtime) ./resources/fonts/commit_mono.ttf ./resources/fonts/b612.ttf ./resources/fonts/b612_bold.ttf ./resources/fonts/paper_mono.ttf ./resources/fonts/paper_mono_semibold.ttf ./resources/fonts/noto_sans.ttf] ++ map sourcesOfOdin kernelParts);
+    fuzzToolBinary = narrowToolBinaryOf "modustool-fuzz-runner" "tools/modustool/fuzz_runner" "modustool-fuzz-runner" fuzzToolSources;
+
+    reproToolSources = inputs.nixpkgs.lib.fileset.unions ([(sourcesOfOdin ./tools/modustool/foundation) (sourcesOfOdin ./tools/modustool/resources) (sourcesOfOdin ./tools/modustool/build) ./tools/modustool/build/browser_machine (sourcesOfOdin ./tools/modustool/checks) (sourcesOfOdin ./tools/modustool/repro_runner) (sourcesOfOdin ./src/library) (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "asm") ./src/runtime)] ++ map sourcesOfOdin kernelParts);
+    reproToolBinary = narrowToolBinaryOf "modustool-repro-runner" "tools/modustool/repro_runner" "modustool-repro-runner" reproToolSources;
+
     # The files of the scenario of each test part, by their names in the
     # folder of the machine test (tools/modustool/machine/test_part_files.json).
     # A file that no part names is of the core of the tool.
@@ -537,15 +563,66 @@
     # a new source.
     screenshotNames = builtins.filter (name: inputs.nixpkgs.lib.hasSuffix ".png" name) (builtins.attrNames (builtins.readDir ./docs/screenshots));
 
-    # modustool check with no machine: the host code passes -vet and its
-    # tests, the fuzz targets, the checks of the sources, and a second build
-    # that gives the same bytes. The check of the README needs the names of
-    # its pictures (screenshotNames).
-    hostChecks = pkgs.stdenvNoCC.mkDerivation ({
-        name = "modus-host-checks";
+    # Fast static checks (~5 s): odin check -vet, imports, wasm64p32 kernel
+    # check, rule checks, and every source and document check. Runs as its own
+    # derivation so syntax, rule, and document faults fail in seconds.
+    staticChecks = pkgs.stdenvNoCC.mkDerivation {
+      name = "modus-static-checks";
+      src = lib.fileset.toSource {
+        root = ./.;
+        fileset = checkFiles;
+      };
+      inherit screenshotNames;
+      nativeBuildInputs = [odin modustoolBinary];
+      buildPhase = ''
+        export HOME=$TMPDIR
+        mkdir -p build docs/screenshots
+        for name in $screenshotNames; do
+          echo iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg== | base64 -d > "docs/screenshots/$name"
+        done
+        modustool check static
+      '';
+      installPhase = ''
+        mkdir -p $out/logs
+        cp build/checks_passed.txt $out/logs/
+      '';
+    };
+
+    # System host unit tests (all src/* folders of HOST_TEST_FOLDERS): narrow
+    # inputs exclude docs, news, ROADMAP, CHANGELOG, README, AGENTS, and
+    # unrelated tool packages.
+    systemUnitTests = pkgs.stdenvNoCC.mkDerivation ({
+        name = "modus-system-host-tests";
         src = lib.fileset.toSource {
           root = ./.;
-          fileset = checkFiles;
+          fileset = lib.fileset.difference (lib.fileset.unions [./src ./resources]) ./src/md;
+        };
+        nativeBuildInputs = buildTools ++ [reproToolBinary];
+        buildPhase = ''
+          export HOME=$TMPDIR
+          mkdir -p build
+          touch flake.nix
+          modustool-repro-runner host-tests-system
+        '';
+        installPhase = ''
+          mkdir -p $out/logs
+          cp build/checks_passed.txt $out/logs/
+        '';
+      }
+      // firmware
+      // vectorFontSources
+      // scriptFontSources
+      // outsideSources
+      // cProgramSources);
+
+    # Tool host unit tests (tools/modustool/* folders and browser machine Node
+    # tests): keeps the repository files that site, news, roadmap, and build
+    # tests read, excluding CHANGELOG.md, changelog.d, and AGENTS.md.
+    toolUnitTests = pkgs.stdenvNoCC.mkDerivation ({
+        name = "modus-tool-host-tests";
+        src = lib.fileset.toSource {
+          root = ./.;
+          fileset = lib.fileset.difference checkFiles (lib.fileset.unions [./CHANGELOG.md ./changelog.d ./AGENTS.md]);
         };
         inherit screenshotNames;
         nativeBuildInputs = buildTools ++ [modustoolBinary browserMachineHost];
@@ -555,20 +632,117 @@
           for name in $screenshotNames; do
             echo iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg== | base64 -d > "docs/screenshots/$name"
           done
-          modustool check without_machines
+          modustool check host_tests tool
         '';
-        # The record of the second build and the count of the checks.
+        installPhase = ''
+          mkdir -p $out/logs
+          cp build/checks_passed.txt $out/logs/
+        '';
+      }
+      // firmware
+      // vectorFontSources
+      // scriptFontSources
+      // outsideSources
+      // cProgramSources);
+
+    # Sharded fuzzing (4 balanced strided shards): narrow inputs include only
+    # the fuzz runner sources, library/kernel-part sources, font fixtures, and
+    # fuzzing corpus, so edits to site, cache_server, machine scenarios, docs,
+    # news, ROADMAP, or src/modules never invalidate the fuzz shards.
+    fuzzShardCount = 4;
+    fuzzCheckSrc = lib.fileset.toSource {
+      root = ./.;
+      fileset = lib.fileset.unions [fuzzToolSources ./tools/modustool/fuzz/fuzzing_corpus];
+    };
+    fuzzChecks = map (shard:
+      pkgs.stdenvNoCC.mkDerivation {
+        name = "modus-fuzz-${toString shard}";
+        src = fuzzCheckSrc;
+        nativeBuildInputs = [odin llvm pkgs.llvmPackages.lld pkgs.llvmPackages_18.clang pkgs.nasm pkgs.coreutils fuzzToolBinary];
+        buildPhase = ''
+          export HOME=$TMPDIR
+          mkdir -p build
+          touch flake.nix
+          modustool-fuzz-runner check-fuzz ${toString shard} ${toString fuzzShardCount}
+        '';
+        installPhase = ''
+          mkdir -p $out/logs
+          cp build/checks_passed.txt $out/logs/
+        '';
+      })
+    [1 2 3 4];
+
+    # Reproducible second build and debug-object check: runs on partSources
+    # alone (src + resources without src/md or host tests), so edits to site,
+    # cache_server, machine scenarios, docs, news, or ROADMAP never trigger a
+    # second full optimized build.
+    reproducibleCheck = pkgs.stdenvNoCC.mkDerivation ({
+        name = "modus-reproducible-build";
+        src = partSources;
+        nativeBuildInputs = buildTools ++ [reproToolBinary];
+        buildPhase = ''
+          export HOME=$TMPDIR
+          mkdir -p build
+          touch flake.nix
+          modustool-repro-runner reproducible-build
+        '';
         installPhase = ''
           mkdir -p $out/logs
           cp build/*.txt $out/logs/
         '';
       }
       // firmware
-      # The source fonts: a test of the tool reads the feature "zero" of Paper Mono in them.
-      // vectorFontSources
       // scriptFontSources
-      // outsideSources
-      // cProgramSources);
+      // outsideSources);
+
+    # Scenario fact-wait check against the built module catalog in testInputs
+    # without triggering another build.
+    scenarioWaitsCheck = pkgs.stdenvNoCC.mkDerivation {
+      name = "modus-scenario-waits";
+      src = lib.fileset.toSource {
+        root = ./.;
+        fileset = lib.fileset.unions [(sourcesOfOdin ./tools/modustool) (sourcesOfOdin ./src/modules) (sourcesOfOdin ./src/library)];
+      };
+      nativeBuildInputs = [modustoolBinary];
+      buildPhase = ''
+        export HOME=$TMPDIR
+        touch flake.nix
+        modustool fact_waits from ${testInputs}
+      '';
+      installPhase = ''
+        mkdir -p $out/logs
+        cp build/checks_passed.txt $out/logs/
+      '';
+    };
+
+    # Join of all host check sub-derivations into the single logs/ layout that
+    # bootTest, test_join, screenshots, part_cache, and failed_parts expect.
+    hostCheckParts = [staticChecks systemUnitTests toolUnitTests reproducibleCheck scenarioWaitsCheck] ++ fuzzChecks;
+    hostChecks = pkgs.stdenvNoCC.mkDerivation {
+      name = "modus-host-checks";
+      dontUnpack = true;
+      buildPhase = ''
+        mkdir -p $out/logs
+        total=0
+        for part in ${lib.concatMapStringsSep " " toString hostCheckParts}; do
+          count=$(cat "$part/logs/checks_passed.txt")
+          total=$((total + count))
+          for file in "$part"/logs/*.txt; do
+            name=$(basename "$file")
+            if [ "$name" = "checks_passed.txt" ]; then
+              continue
+            fi
+            if [ -e "$out/logs/$name" ]; then
+              echo "duplicate host check log: $name" >&2
+              exit 1
+            fi
+            cp "$file" "$out/logs/$name"
+          done
+        done
+        printf '%d\n' "$total" > "$out/logs/checks_passed.txt"
+      '';
+      dontInstall = true;
+    };
 
     # The join of the host checks and of every test part, in the layout that
     # `modustool screenshots` reads: logs/ and screenshots/. The tool refuses
@@ -608,6 +782,7 @@
 
     checks.${system} = {
       pre-commit = preCommitCheck;
+      static = staticChecks;
       boot-test = bootTest;
     };
 
