@@ -18,7 +18,7 @@ replay_engine_refuses_bad_words_ordering_and_corrupt_buffers :: proc(t: ^testing
 	testing.expect(t, !bad_sb_ok, "zero Replay_Step_Back_Kind word is refused")
 
 	index := new(Replay_History_Index, context.temp_allocator)
-	replay_history_init(index, {1, 2, 3})
+	replay_history_init(index, [32]u8{0 = 1, 1 = 2, 2 = 3})
 
 	// Empty history refuses step-back and checkpoint lookups.
 	_, _, cp_ref := replay_find_checkpoint_before(index, 10)
@@ -54,7 +54,7 @@ replay_engine_step_back_watch_back_and_rdrand_divergence :: proc(t: ^testing.T) 
 	defer free_all(context.temp_allocator)
 
 	index := new(Replay_History_Index, context.temp_allocator)
-	replay_history_init(index, {0xAA, 0xBB, 0xCC})
+	replay_history_init(index, [32]u8{0 = 0xAA, 1 = 0xBB, 2 = 0xCC})
 
 	// Record two checkpoints and five ordered input points including a branch-count
 	// interrupt point, a memory write, and a planted rdrand point.

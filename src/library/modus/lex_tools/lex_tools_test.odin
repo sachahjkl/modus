@@ -192,8 +192,8 @@ format_multiline_declarations_and_comments :: proc(t: ^testing.T) {
 	format_expect(t, let_in, let_out)
 
 	// String escapes and `${...}` interpolations stay untouched.
-	interp := `let name = "world" in "hello \"${name}\"\n"`
-	format_expect(t, interp, interp + "\n")
+	INTERP :: `let name = "world" in "hello \"${name}\"\n"`
+	format_expect(t, INTERP, INTERP + "\n")
 }
 
 @(test)

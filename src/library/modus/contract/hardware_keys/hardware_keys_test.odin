@@ -5,7 +5,7 @@ import "base:runtime"
 import "core:testing"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
-import ed25519 "modus:cryptography/ed25519"
+import ed25519 "core:crypto/ed25519"
 
 @(private = "file")
 test_challenge_bytes :: proc(seed: u8) -> [HARDWARE_KEY_CHALLENGE_SIZE]u8 {

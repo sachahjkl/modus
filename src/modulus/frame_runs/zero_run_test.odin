@@ -121,8 +121,8 @@ zero_run_one_gib_512_slices_resume_and_abort :: proc(t: ^testing.T) {
 		testing.expect_value(t, addr, expected_addr)
 		testing.expect_value(t, sz, ZERO_SLICE_BYTES)
 
-		// Simulate an interruption before commit on step 17: re-querying must
-		// yield the exact same slice so resume is idempotent.
+		// Simulate an interruption before commit midway through the run: re-querying
+		// must yield the exact same slice so resume is idempotent.
 		if step == 17 {
 			zero_run_note_yield(&p)
 			addr_again, sz_again, nr_again := zero_run_next_slice(&p)

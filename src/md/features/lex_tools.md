@@ -38,7 +38,7 @@ The linter runs two complementary passes over caller-owned buffers and reports s
 
 ### Host CLI (`tools/modustool/lex_cli/`)
 
-`modustool lex fmt [--check] <file>...` formats one or more `.lex` files in place (or exits with status 1 if any file differs under `--check`). `modustool lex lint <file>...` prints `path:line:column: severity: kind: message` diagnostics and exits with status 1 when any diagnostic is reported. See [`docs/LEX.md`](../../docs/LEX.md), "9. Formatting and linting (`modustool lex`)".
+`modustool lex fmt [--check] <file>...` formats one or more `.lex` files in place (or exits with status 1 if any file differs under `--check`). `modustool lex lint <file>...` prints `path:line:column: severity: kind: message` diagnostics and exits with status 1 when any diagnostic is reported. See [`docs/LEX.md`](../../../docs/LEX.md), "9. Formatting and linting (`modustool lex`)".
 
 ## Refused forms
 

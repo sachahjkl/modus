@@ -4,7 +4,7 @@ package wide_grants
 import "base:runtime"
 import "core:testing"
 import "modus:contract/blake3"
-import ed25519 "modus:cryptography/ed25519"
+import ed25519 "core:crypto/ed25519"
 
 @(private = "file")
 test_headless_hash :: proc(label: string) -> blake3.Hash {

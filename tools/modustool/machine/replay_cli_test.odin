@@ -41,7 +41,7 @@ replay_diagnose_history_detects_clean_and_diverged_runs :: proc(t: ^testing.T) {
 
 	// Build a clean two-point history with one checkpoint.
 	clean_idx := new(replay_engine.Replay_History_Index, context.temp_allocator)
-	replay_engine.replay_history_init(clean_idx, {7, 8, 9})
+	replay_engine.replay_history_init(clean_idx, [32]u8{0 = 7, 1 = 8, 2 = 9})
 	testing.expect_value(t, replay_engine.replay_history_add_checkpoint(clean_idx, {point_number = 1, retired_conditional_branches = 10, rip = 0x1000, rsp = 0x8000, source_line = 5}), replay_engine.Replay_Refusal.None)
 	testing.expect_value(t, replay_engine.replay_history_add_point(clean_idx, {point_number = 1, kind = u32(replay_engine.Replay_Input_Kind.Syscall_Return), source_line = 5, retired_conditional_branches = 10, rip = 0x1000, rsp = 0x8000, rax = 11}), replay_engine.Replay_Refusal.None)
 	testing.expect_value(t, replay_engine.replay_history_add_point(clean_idx, {point_number = 2, kind = u32(replay_engine.Replay_Input_Kind.Interrupt_At_Branch_Count), source_line = 6, retired_conditional_branches = 42, rip = 0x1020, rsp = 0x8000, rax = 22}), replay_engine.Replay_Refusal.None)

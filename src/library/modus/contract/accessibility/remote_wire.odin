@@ -253,11 +253,11 @@ remote_tree_encode :: proc "contextless" (
 			text_cursor += int(val_count)
 		}
 		byte_order.write_u32_little_endian(out, offset + 0, node.element)
-		byte_order.write_u32_little_endian(out, offset + 4, transmute(u32)node.parent)
-		byte_order.write_u32_little_endian(out, offset + 8, transmute(u32)node.box.left)
-		byte_order.write_u32_little_endian(out, offset + 12, transmute(u32)node.box.top)
-		byte_order.write_u32_little_endian(out, offset + 16, transmute(u32)node.box.right)
-		byte_order.write_u32_little_endian(out, offset + 20, transmute(u32)node.box.bottom)
+		byte_order.write_u32_little_endian(out, offset + 4, u32(node.parent))
+		byte_order.write_u32_little_endian(out, offset + 8, u32(node.box.left))
+		byte_order.write_u32_little_endian(out, offset + 12, u32(node.box.top))
+		byte_order.write_u32_little_endian(out, offset + 16, u32(node.box.right))
+		byte_order.write_u32_little_endian(out, offset + 20, u32(node.box.bottom))
 		out[offset + 24] = u8(node.role)
 		out[offset + 25] = u8(node.live)
 		out[offset + 26] = u8(node.toggle)
@@ -361,15 +361,15 @@ remote_tree_decode :: proc "contextless" (
 		}
 		decoded.nodes[index] = Semantic_Node {
 			element           = byte_order.read_u32_little_endian(wire, offset + 0),
-			parent            = transmute(i32)byte_order.read_u32_little_endian(wire, offset + 4),
+			parent            = i32(byte_order.read_u32_little_endian(wire, offset + 4)),
 			first_child       = -1,
 			next_sibling      = -1,
 			record_index      = i32(index),
 			box               = Semantic_Box {
-				left   = transmute(i32)byte_order.read_u32_little_endian(wire, offset + 8),
-				top    = transmute(i32)byte_order.read_u32_little_endian(wire, offset + 12),
-				right  = transmute(i32)byte_order.read_u32_little_endian(wire, offset + 16),
-				bottom = transmute(i32)byte_order.read_u32_little_endian(wire, offset + 20),
+				left   = i32(byte_order.read_u32_little_endian(wire, offset + 8)),
+				top    = i32(byte_order.read_u32_little_endian(wire, offset + 12)),
+				right  = i32(byte_order.read_u32_little_endian(wire, offset + 16)),
+				bottom = i32(byte_order.read_u32_little_endian(wire, offset + 20)),
 			},
 			role              = role,
 			live              = live,

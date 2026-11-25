@@ -86,8 +86,9 @@ machine_identity_quote_qualifying_data :: proc "contextless" (
 	if bytes_all_zero(nonce_copy[:]) {
 		return {}, .Zero_Nonce
 	}
+	pub_copy := identity_public_key
 	payload: [PUBLIC_KEY_SIZE + MACHINE_IDENTITY_QUOTE_NONCE_SIZE]u8
-	copy(payload[0:PUBLIC_KEY_SIZE], identity_public_key[:])
+	copy(payload[0:PUBLIC_KEY_SIZE], pub_copy[:])
 	copy(payload[PUBLIC_KEY_SIZE:], nonce_copy[:])
 	return blake3.derive_key(MACHINE_IDENTITY_QUOTE_DOMAIN, payload[:]), .None
 }

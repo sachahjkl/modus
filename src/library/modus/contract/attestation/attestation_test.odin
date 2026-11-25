@@ -6,7 +6,7 @@ import "core:testing"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/role_contract"
-import ed25519 "modus:cryptography/ed25519"
+import ed25519 "core:crypto/ed25519"
 
 @(private = "file")
 test_hash :: proc(seed: u8) -> blake3.Hash {

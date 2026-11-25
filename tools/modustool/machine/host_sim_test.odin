@@ -34,6 +34,7 @@ sim_client_handler :: proc(sim: ^Host_Sim, self_id: int, msg: Host_Sim_Message) 
 
 @(private = "file")
 sim_recipes_handler :: proc(sim: ^Host_Sim, self_id: int, msg: Host_Sim_Message) -> Host_Sim_Status {
+	msg := msg
 	trace := (^Sim_Flow_Trace)(sim.services[self_id].user_data)
 	switch msg.kind {
 	case 1: // Build request from client -> forward read to storage.
@@ -48,6 +49,7 @@ sim_recipes_handler :: proc(sim: ^Host_Sim, self_id: int, msg: Host_Sim_Message)
 
 @(private = "file")
 sim_storage_handler :: proc(sim: ^Host_Sim, self_id: int, msg: Host_Sim_Message) -> Host_Sim_Status {
+	msg := msg
 	trace := (^Sim_Flow_Trace)(sim.services[self_id].user_data)
 	status, _ := host_sim_send(sim, trace.storage_to_recipes, 3, msg.tag, {}, msg.payload[:msg.payload_len])
 	return status

@@ -558,4 +558,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/plan_diff",
 	foundation.SOURCE_FOLDER_CONTRACT + "/html_extensions",
 	foundation.SOURCE_FOLDER_CONTRACT + "/bootstrap_chain",
+	foundation.SOURCE_FOLDER_CONTRACT + "/use_shaping",
+	foundation.SOURCE_FOLDER_CONTRACT + "/origin_browser",
+	foundation.SOURCE_FOLDER_CONTRACT + "/network_library",
 }
