@@ -101,20 +101,22 @@ BROWSER_MACHINE_PAGE_MODULES := [?]string {
 	"heron",
 	"manual",
 	"disk",
-	// The demonstration pair of the default start list.
+	// The demonstration pair of the default start list and sample library.
 	"wired_reader",
 	"wired_writer",
+	"sample",
 }
 
 // The modules of the console image of the page
 // (src/md/features/console_renderers.md, "The console image"): the core
-// services of the root service, the console with its compilers, and
-// dom_terminal as its terminal on the second serial port, whose lines the
-// page draws with its document. No compositor, no drawing module, no
-// window and no font: the root service finds no compositor in the image
-// and gives the role Terminal to dom_terminal. block is the device service of the data disk of the
-// private store of the console; devices, principals and disk_processes
-// are the delegated services that the root service starts at each boot.
+// services of the root service, the console with its compilers and the
+// sample demonstration module, and dom_terminal as its terminal on the second
+// serial port, whose lines the page draws with its document. No compositor,
+// no drawing module, no window and no font: the root service finds no
+// compositor in the image and gives the role Terminal to dom_terminal. block
+// is the device service of the data disk of the private store of the console;
+// devices, principals and disk_processes are the delegated services that the
+// root service starts at each boot.
 @(rodata)
 BROWSER_MACHINE_CONSOLE_MODULES := [?]string {
 	"root",
@@ -123,6 +125,7 @@ BROWSER_MACHINE_CONSOLE_MODULES := [?]string {
 	"wiring",
 	"dom_terminal",
 	"console",
+	"sample",
 	"c_compiler",
 	"assemble",
 	"storage",
@@ -179,6 +182,7 @@ Browser_Machine_Page_File :: struct {
 
 BROWSER_MACHINE_PAGE_FILES :: [?]Browser_Machine_Page_File {
 	{"browser_machine.html", #load("browser_machine/browser_machine.html", string)},
+	{BROWSER_MACHINE_CONSOLE_PAGE_FILE, #load("browser_machine/browser_machine_console.html", string)},
 	{"browser_machine_page.js", #load("browser_machine/browser_machine_page.js", string)},
 	{"browser_machine_worker.js", #load("browser_machine/browser_machine_worker.js", string)},
 	{BROWSER_MACHINE_HOST_FILE, #load("browser_machine/browser_machine_host.js", string)},
@@ -738,7 +742,7 @@ browser_machine_host_tests_run :: proc() -> bool {
 }
 
 // The console page: the host of the page with the second serial port as
-// its terminal. The site publishes the desktop page only.
+// its terminal. The site publishes both the desktop and console pages.
 BROWSER_MACHINE_CONSOLE_PAGE_TEXT :: #load("browser_machine/browser_machine_console.html", string)
 
 @(private = "file")

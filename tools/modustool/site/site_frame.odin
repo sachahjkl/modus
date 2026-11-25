@@ -39,6 +39,7 @@ SITE_NUMBERS_FOLDER :: SITE_REFERENCE_FOLDER + "/numbers"
 SITE_LICENSES_FOLDER :: SITE_REFERENCE_FOLDER + "/licenses"
 // The folders of the sections that are not docs: the table of the search
 // kinds names them too.
+SITE_TRY_FOLDER :: "try"
 SITE_STATUS_FOLDER :: "status"
 SITE_NEWS_FOLDER :: "news"
 SITE_RELEASES_FOLDER :: "releases"
@@ -55,6 +56,7 @@ SITE_MENU_OPEN :: "<details class=\"bar-menu\">\n<summary class=\"bar-menu-butto
 // of the docs: the bar names the docs, and their pages are under its folder.
 Site_Section :: enum {
 	Home,
+	Try,
 	Docs,
 	Guides,
 	Reference,
@@ -67,6 +69,7 @@ Site_Section :: enum {
 
 site_section_titles := [Site_Section]string {
 	.Home      = "Home",
+	.Try       = "Try",
 	.Docs      = "Docs",
 	.Guides    = "Guides",
 	.Reference = "Reference",
@@ -80,6 +83,7 @@ site_section_titles := [Site_Section]string {
 // The folder of the page of each section; "" is the root of the site.
 site_section_folders := [Site_Section]string {
 	.Home      = "",
+	.Try       = SITE_TRY_FOLDER,
 	.Docs      = SITE_DOCS_FOLDER,
 	.Guides    = SITE_GUIDE_FOLDER,
 	.Reference = SITE_REFERENCE_FOLDER,
@@ -96,6 +100,7 @@ site_section_folders := [Site_Section]string {
 // system works.
 site_section_parents := [Site_Section]Site_Section {
 	.Home      = .Home,
+	.Try       = .Home,
 	.Docs      = .Home,
 	.Guides    = .Docs,
 	.Reference = .Docs,
@@ -719,6 +724,8 @@ site_build :: proc(address: string, commands: []foundation.Command) -> bool {
 	// The gallery after the guides, whose titles its captions link to, and
 	// before the home, which links to it.
 	site_gallery_add(&site)
+	// The Try section before the home so the home hero links to it.
+	site_try_add(&site)
 	// The home of the docs before the home: the doors of the home name the
 	// sections that exist. Its text needs the index of the search, so it is
 	// written after the index (site_docs_home_fill).

@@ -60,7 +60,7 @@ A page named by a folder (`news/`) is the `index.html` of that folder (see "The 
 | `docs/reference/module-graph/` | See "The module graph" |
 | `docs/reference/types/` | See "The types" |
 
-Each page has the bar (the heron and the name at the left, then the sections: three buttons, Docs, Gallery and News, and the project menu, whose panel holds Status, Releases and Roadmap, see "The buttons and the menu of the bar"; a section appears when its page exists; on a guide or a page of the reference, Docs is the current one), breadcrumbs on each page below the home (Home / Docs / Guides / <guide>; Home / Docs / Reference / <page>; Home / Docs / Reference / Modules / <module>; Home / Status), and a foot that first names the maker ("modus · by Froment Software": the name of the system in the font of the name of the mark, the mark of the maker at 16 pixels, `resources/site/froment_software.png`, and its name as a link to its site, on one line), then names the commit, the release and the time of the build, and the files that the page comes from, as links to the repository at that commit. A reference table names the files that it is read from.
+Each page has the bar (the heron and the name at the left, then the sections: three buttons, Try, Docs and Gallery, and the project menu, whose panel holds News, Status, Releases and Roadmap, see "The buttons and the menu of the bar"; a section appears when its page exists; on a guide or a page of the reference, Docs is the current one), breadcrumbs on each page below the home (Home / Try; Home / Docs / Guides / <guide>; Home / Docs / Reference / <page>; Home / Docs / Reference / Modules / <module>; Home / Status), and a foot that first names the maker ("modus · by Froment Software": the name of the system in the font of the name of the mark, the mark of the maker at 16 pixels, `resources/site/froment_software.png`, and its name as a link to its site, on one line), then names the commit, the release and the time of the build, and the files that the page comes from, as links to the repository at that commit. A reference table names the files that it is read from.
 
 The tool reads the commit from the files of git (`.git`, `HEAD`, the reference, `packed-refs`), with no host process. When it cannot, the foot says so and the links to files of the repository go to `master`.
 
@@ -80,7 +80,7 @@ An address names a folder, not a file: `/docs/reference/licenses/`, not `license
 
 ### The sections
 
-The bar names the six sections under the home (`site_section_parents`): Docs, Gallery and News as buttons, and Status, Releases and Roadmap as the lines of the project menu (see "The buttons and the menu of the bar"). Releases and Roadmap stand side by side in the menu: the work that is done, then the work that is planned. The guides and the reference are the two parts of the docs: their pages are under `docs/`, their breadcrumbs pass through the docs home, and the bar marks Docs on each of their pages. The word of the section and of its page is "Docs" (`glossary/project.md`): "Documentation" is already the term for the text that a module carries. "Guides" and "Reference" stay the names of the two parts.
+The bar names the seven sections under the home (`site_section_parents`): Try, Docs and Gallery as buttons, and News, Status, Releases and Roadmap as the lines of the project menu (see "The buttons and the menu of the bar"). Try (`try/`) presents the live Web Console (`browser_machine_console.html`) and Web Desktop (`browser_machine.html`) running on the WebAssembly kernel. Releases and Roadmap stand side by side in the menu: the work that is done, then the work that is planned. The guides and the reference are the two parts of the docs: their pages are under `docs/`, their breadcrumbs pass through the docs home, and the bar marks Docs on each of their pages. The word of the section and of its page is "Docs" (`glossary/project.md`): "Documentation" is already the term for the text that a module carries. "Guides" and "Reference" stay the names of the two parts.
 
 The status page stays at `status/`, a section of its own, in the project menu of the bar: it reports the state of the properties, not how the system works. The planned work is on the page of the roadmap. The tree of the reference still lists it, as before.
 
@@ -884,16 +884,16 @@ On a narrow screen, the sections of the bar are in a menu.
 
 ### The buttons and the menu of the bar
 
-Six sections do not fit the one line of the bar near 720 pixels, so three of them are in one menu. The code is `tools/modustool/site/site_bar.odin`; its host tests are `site_bar_test.odin`; the intent is `src/md/features/site_bar.md`.
+Seven sections do not fit the one line of the bar near 720 pixels, so four of them are in one menu. The code is `tools/modustool/site/site_bar.odin`; its host tests are `site_bar_test.odin`; the intent is `src/md/features/site_bar.md`.
 
-The bar is one line of 41 pixels, and the parts under it are placed by that height ("The polish of the browser's parts"). Six sections stand under the home. The bar names them all:
+The bar is one line of 41 pixels, and the parts under it are placed by that height ("The polish of the browser's parts"). Seven sections stand under the home. The bar names them all:
 
 | Part | Sections | Table |
 |---|---|---|
-| Buttons | Docs, Gallery, News | `site_bar_buttons` |
-| The project menu (`glossary/project.md`): a button "Project" and a panel under it | Status, Releases, Roadmap | `site_project_menu_sections` |
+| Buttons | Try, Docs, Gallery | `site_bar_buttons` |
+| The project menu (`glossary/project.md`): a button "Project" and a panel under it | News, Status, Releases, Roadmap | `site_project_menu_sections` |
 
-**The rule that decides what is a button.** A button is what a first reader looks for: what the system is and how it works (Docs), what it looks like (Gallery), what is new (News). The project menu holds the pages that report how the project goes: what is built and what is missing, what each release brought, what is planned. The pictures are one click from each page; the roadmap is two clicks. The word of the button is the name of the group "Project" of the glossary. A section under the home is in one of the two tables: a host test fails for a section in neither or in both.
+**The rule that decides what is a button.** A button is what a first reader looks for: try the system in the browser (Try), read what it is and how it works (Docs), see what it looks like (Gallery). The project menu holds the pages that report how the project goes: what is new, what is built and what is missing, what each release brought, what is planned. Try and the pictures are one click from each page; the roadmap is two clicks. The word of the button is the name of the group "Project" of the glossary. A section under the home is in one of the two tables: a host test fails for a section in neither or in both.
 
 **The width.** The numbers are those of the style sheet; a text is counted at about 8 pixels a character, at 16 pixels in the fonts of the common systems.
 
@@ -903,11 +903,11 @@ The bar is one line of 41 pixels, and the parts under it are placed by that heig
 | The heron (24), its gap (8), the name (66) | 98 |
 | The gap before the sections, the gap before the search field | 48 |
 | The search field | 224 |
-| Docs, Gallery, News: the text and 16 of padding each (48, 72, 48), and 8 after each | 192 |
+| Try, Docs, Gallery: the text and 16 of padding each (40, 48, 72), and 8 after each | 184 |
 | Project: the text (56), 16 of padding, 12 for its mark | 84 |
-| The whole bar | 678 |
+| The whole bar | 670 |
 
-A window of 720 pixels with a scroll bar of 17 pixels has 703. The host test `site_bar_fits_one_line_at_720_pixels` computes the bar at 9 pixels a character: 700. With a button for each of the six sections the bar needs 826 pixels at 8 pixels a character: it breaks into two lines up to that width.
+A window of 720 pixels with a scroll bar of 17 pixels has 703. The host test `site_bar_fits_one_line_at_720_pixels` computes the bar at 9 pixels a character: 691. With a button for each of the seven sections the bar breaks into two lines near 720 pixels.
 
 **The menu works with no script.**
 

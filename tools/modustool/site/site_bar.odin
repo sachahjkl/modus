@@ -11,14 +11,14 @@ import "core:fmt"
 import "core:strings"
 
 // The sections that are buttons of the bar, in their order. They are what
-// a first reader looks for: what the system is and how it works, what it
-// looks like, what is new.
-site_bar_buttons := [?]Site_Section{.Docs, .Gallery, .News}
+// a first reader looks for: try the system in the browser, read what it is
+// and how it works, see what it looks like.
+site_bar_buttons := [?]Site_Section{.Try, .Docs, .Gallery}
 
 // The sections that are the lines of the menu of the bar, in their order.
-// They report how the project goes: what is built and what is missing,
-// what each release brought, what is planned.
-site_project_menu_sections := [?]Site_Section{.Status, .Releases, .Roadmap}
+// They report how the project goes: what is new, what is built and what is
+// missing, what each release brought, what is planned.
+site_project_menu_sections := [?]Site_Section{.News, .Status, .Releases, .Roadmap}
 
 // The word of the button of the menu: the name of the group of the
 // glossary that holds the words of these three pages.

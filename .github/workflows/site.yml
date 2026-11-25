@@ -36,6 +36,10 @@ jobs:
       # The boot image gives the tiles of the home, the sizes of the module
       # pages and the column "in the boot image" of the licenses.
       - run: nix develop -c modustool build
+      # Build the WebAssembly kernel and both browser machine images (desktop
+      # boot.image and minimal console.image with their trust hashes) so the
+      # site publishes both live machines under /try/.
+      - run: nix develop -c modustool browser-machine console
       - run: nix develop -c modustool site
       - uses: actions/upload-pages-artifact@v5.0.0
         with:

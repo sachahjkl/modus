@@ -3,33 +3,39 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>modus console</title>
+<title>modus web console</title>
 <style>
   /* The colors of the Modus palette: each tone and each kind of code is a
      class, so a change of theme colors every line again. */
-  :root { color-scheme: dark; --bg: #14171d; --surface: #1c2029; --edge: #2b313e; --text: #e6ebf2; --dim: #7c8a99; --strong: #ffffff;
-    --good: #58d878; --warning: #e0a040; --bad: #f06060; --accent: #64aaf2; --number: #38c0b0;
+  :root { color-scheme: dark; --bg: #0f1115; --surface: #161a20; --track: #1e232c; --edge: #2d3440; --text: #e6ebf2; --dim: #8a95a5; --strong: #ffffff;
+    --good: #58d878; --warning: #e0a040; --bad: #f06060; --accent: #5fa8ff; --number: #38c0b0;
+    --hover: #254a75; --active: #3c76bb;
     --code-name: #58d878; --code-type: #9e8fcb; --code-literal: #38c0b0; --code-punctuation: #b0b8c1; --code-comment: #9ca6b2;
-    --chosen: rgba(100, 170, 242, 0.16); --shadow: 0 12px 32px rgba(0, 0, 0, 0.45); }
-  [data-theme="light"] { color-scheme: light; --bg: #f6f7f9; --surface: #ffffff; --edge: #dde1e7; --text: #181c22; --dim: #4a525b; --strong: #000000;
+    --chosen: rgba(95, 168, 255, 0.16); }
+  [data-theme="light"] { color-scheme: light; --bg: #f6f7f9; --surface: #ffffff; --track: #eaedf2; --edge: #c7ced8; --text: #181c22; --dim: #4a525b; --strong: #000000;
     --good: #327c45; --warning: #906729; --bad: #ba4a4a; --accent: #3c76bb; --number: #247c71;
+    --hover: #254a75; --active: #3c76bb;
     --code-name: #276035; --code-type: #554a75; --code-literal: #1b5f57; --code-punctuation: #3d444c; --code-comment: #4a525b;
-    --chosen: rgba(60, 118, 187, 0.12); --shadow: 0 12px 32px rgba(24, 28, 34, 0.16); }
+    --chosen: rgba(60, 118, 187, 0.12); }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; }
   body { display: flex; flex-direction: column; }
-  header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--surface); border-bottom: 1px solid var(--edge); font-size: 12px; }
-  #badge { font-weight: 700; color: var(--accent); }
-  #state { display: flex; align-items: center; gap: 6px; color: var(--dim); margin-right: auto; }
-  #dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warning); }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 8px 14px; background: var(--surface); border-bottom: 1px solid var(--edge); font-size: 12px; }
+  .nav-link { display: inline-block; padding: 2px 8px; color: var(--text); background: var(--track); text-decoration: none; border-bottom: 2px solid transparent; }
+  .nav-link:hover, .nav-link:focus-visible { background: var(--hover); color: #ffffff; outline: none; }
+  .nav-link:active { background: var(--active); color: #ffffff; }
+  #badge { font-weight: 700; border-bottom-color: var(--accent); }
+  #state { display: flex; align-items: center; gap: 6px; color: var(--dim); margin-right: auto; min-width: 0; }
+  #dot { width: 8px; height: 8px; flex: 0 0 8px; background: var(--warning); }
   #dot.running { background: var(--good); }
   #dot.stopped { background: var(--bad); }
-  button { font: inherit; font-size: 12px; color: var(--text); background: transparent; border: 1px solid var(--edge); border-radius: 4px; padding: 3px 10px; cursor: pointer; }
-  button:hover, button:focus-visible { border-color: var(--accent); outline: none; }
+  button { font: inherit; font-size: 12px; color: var(--text); background: var(--track); border: 1px solid var(--edge); padding: 2px 10px; cursor: pointer; }
+  button:hover, button:focus-visible { background: var(--hover); color: #ffffff; border-color: var(--accent); outline: none; }
+  button:active { background: var(--active); color: #ffffff; }
   #output { flex: 1; overflow-y: auto; padding: 12px 14px 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .line { min-height: 1.45em; }
   #status-bar { display: flex; align-items: center; gap: 10px; padding: 4px 14px; font-size: 12px; color: var(--dim); border-top: 1px solid var(--edge); }
-  #status-track { flex: 0 0 160px; height: 4px; border-radius: 2px; background: var(--edge); overflow: hidden; }
+  #status-track { flex: 0 0 160px; height: 4px; background: var(--edge); overflow: hidden; }
   #status-fill { height: 100%; width: 0; background: var(--accent); transition: width 120ms linear; }
   #prompt-area { position: relative; padding: 8px 14px 6px; background: var(--surface); border-top: 1px solid var(--edge); }
   #prompt-bar { white-space: pre; overflow-x: auto; min-height: 1.45em; outline: none; cursor: text; }
@@ -39,15 +45,16 @@
   @media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
   #hint-bar { min-height: 1.45em; font-size: 12px; color: var(--dim); white-space: pre-wrap; }
   .mark { color: var(--accent); font-weight: 700; }
-  #completion-popup { position: absolute; bottom: 100%; margin-bottom: 6px; min-width: 260px; max-width: min(640px, calc(100vw - 16px)); padding: 4px 0; background: var(--surface); border: 1px solid var(--edge); border-radius: 6px; box-shadow: var(--shadow); }
+  #completion-popup { position: absolute; bottom: 100%; margin-bottom: 6px; min-width: 260px; max-width: min(640px, calc(100vw - 16px)); padding: 4px 0; background: var(--surface); border: 1px solid var(--accent); }
   .item { display: flex; gap: 10px; align-items: baseline; padding: 2px 10px; white-space: pre; cursor: pointer; }
   .item:hover { background: var(--chosen); }
   .item.chosen { background: var(--chosen); box-shadow: inset 2px 0 var(--accent); }
-  .icon { min-width: 7ch; padding: 0 5px; font-size: 10px; text-align: center; color: var(--dim); border: 1px solid var(--edge); border-radius: 3px; }
+  .icon { min-width: 7ch; padding: 0 5px; font-size: 10px; text-align: center; color: var(--dim); border: 1px solid var(--edge); }
   .detail { overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
   .matched { color: var(--accent); font-weight: 700; }
   #list-count { margin-top: 4px; padding: 2px 10px 0; font-size: 11px; text-align: right; color: var(--dim); border-top: 1px solid var(--edge); }
-  #chips { display: flex; gap: 8px; padding: 0 14px 8px; background: var(--surface); }
+  #chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 4px 14px 10px; background: var(--surface); font-size: 12px; color: var(--dim); }
+  #chips .chips-label { color: var(--dim); }
   [hidden] { display: none !important; }
   .t-dim { color: var(--dim); } .t-strong { color: var(--strong); font-weight: 700; } .t-good { color: var(--good); } .t-warning { color: var(--warning); }
   .t-bad { color: var(--bad); } .t-accent { color: var(--accent); } .t-number { color: var(--number); }
@@ -57,7 +64,9 @@
 </head>
 <body>
 <header>
-  <span id="badge">modus</span>
+  <a id="badge" class="nav-link" href="./">modus</a>
+  <a class="nav-link" href="./try/">Try</a>
+  <a class="nav-link" href="./browser_machine.html">Web Desktop</a>
   <span id="state"><span id="dot"></span><span id="state-text">loading</span></span>
   <button id="theme" type="button">Light</button>
   <button id="clear" type="button">Clear</button>
@@ -69,7 +78,7 @@
   <div id="prompt-bar" tabindex="0" role="textbox" aria-label="modus console"></div>
   <div id="hint-bar"></div>
 </div>
-<div id="chips" hidden></div>
+<div id="chips" hidden><span class="chips-label">Try:</span></div>
 <script type="module">
 // The page draws the lines that dom_terminal writes on COM2, one JSON
 // object for each line (src/md/features/console_renderers.md, "Variant C:
@@ -85,7 +94,7 @@ const HEX_COLOR = /^#[0-9a-f]{6}$/;
 const TONES = new Set(["default", "dim", "strong", "good", "warning", "bad", "accent", "number"]);
 const CODE_KINDS = new Set(["function", "module", "type", "parameter", "variable", "number", "text", "text_unfinished", "operator", "arrow", "words", "unknown"]);
 const ICONS = new Set(["command", "export", "record", "service", "module", "process", "variable", "history_line"]);
-const STARTERS = ["help()", "processes()", "log.follow()"];
+const STARTERS = ["help()", "processes()", "s = isolate(\"sample\")", "s.readings(4)"];
 const THEME_KEY = "modus-console-theme";
 const element = (id) => document.getElementById(id);
 const output = element("output"), promptBar = element("prompt-bar"), hintBar = element("hint-bar"), popup = element("completion-popup"), chips = element("chips");
@@ -330,7 +339,7 @@ function send(text) { worker.postMessage({ kind: "console_type", text }); }
 
 const NAMED_KEYS = { ArrowUp: "\x1b[A", ArrowDown: "\x1b[B", ArrowRight: "\x1b[C", ArrowLeft: "\x1b[D", Home: "\x1b[H", End: "\x1b[F", Delete: "\x1b[3~", PageUp: "\x1b[5~", PageDown: "\x1b[6~", Enter: "\r", Backspace: "\x7f", Escape: "\x1b" };
 document.addEventListener("keydown", (event) => {
-  if (event.target instanceof HTMLButtonElement && (event.key === "Enter" || event.key === " ")) return;
+  if ((event.target instanceof HTMLButtonElement || event.target instanceof HTMLAnchorElement) && (event.key === "Enter" || event.key === " ")) return;
   // Cmd and Alt stay with the browser; Ctrl+C with a selection copies it,
   // and Ctrl+V comes as a paste.
   if (event.metaKey || event.altKey) return;
