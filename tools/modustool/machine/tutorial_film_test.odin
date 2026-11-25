@@ -629,3 +629,55 @@ tutorial_sqlite_build_and_initial_main_db_seed :: proc(t: ^testing.T) {
 	testing.expect(t, len(main_db) >= 8192 && len(main_db) % 4096 == 0, "seeded main.db is aligned to 4 KiB pages")
 	testing.expect_value(t, string(main_db[:16]), "SQLite format 3\x00")
 }
+
+// Rich ASS inline formatting renders **bold** spans, switches `code` into
+// JetBrains Mono ASCII with token-level syntax coloring, restores base style,
+// and escapes braces, backslashes, and newlines safely outside ASS tags.
+@(test)
+tutorial_ass_format_rich_and_code_panel_tokens :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+
+	rich := tutorial_ass_format_rich(
+		"**Key rule:** `settings.set(font = .vector)` or `plan { name = \"ok\" }` plus `1 MiB |> sum`\nline 2",
+		TUTORIAL_FONT_REGULAR,
+		22,
+		TUTORIAL_TEXT_BODY,
+		TUTORIAL_TEXT_PRIMARY,
+	)
+	testing.expect(t, !strings.contains(rich, "%!("), "rich ASS output contains no fmt formatting errors")
+	for expected in ([]string{
+		fmt.tprintf("{{\\fn%s\\fs22\\1c%s}}Key rule:", TUTORIAL_FONT_BOLD, tutorial_ass_tag_color(TUTORIAL_TEXT_PRIMARY)),
+		fmt.tprintf("{{\\fn%s\\fs22\\1c%s}}", TUTORIAL_FONT_REGULAR, tutorial_ass_tag_color(TUTORIAL_TEXT_BODY)),
+		fmt.tprintf("{{\\fn%s\\fs21}}", TUTORIAL_FONT_MONO),
+		fmt.tprintf("{{\\1c%s}}settings", tutorial_ass_tag_color(TUTORIAL_SYN_IDENT)),
+		fmt.tprintf("{{\\1c%s}}.vector", tutorial_ass_tag_color(TUTORIAL_SYN_ENUM)),
+		fmt.tprintf("{{\\1c%s}}\"ok\"", tutorial_ass_tag_color(TUTORIAL_SYN_STRING)),
+		fmt.tprintf("{{\\1c%s}}1 MiB", tutorial_ass_tag_color(TUTORIAL_SYN_NUMBER)),
+		fmt.tprintf("{{\\1c%s}}|>", tutorial_ass_tag_color(TUTORIAL_SYN_OPERATOR)),
+		"\\{",
+		"\\}",
+		"\\Nline 2",
+	}) {
+		testing.expectf(t, strings.contains(rich, expected), "rich ASS output contains `%s`, got: %s", expected, rich)
+	}
+	// Dotted service/field names must stay ident blue, not enum gold.
+	testing.expect(t, !strings.contains(rich, fmt.tprintf("{{\\1c%s}}.set", tutorial_ass_tag_color(TUTORIAL_SYN_ENUM))), "settings.set must not color .set as an enum")
+
+	// Backslashes inside code and prose are safely escaped.
+	escaped := tutorial_ass_format_rich("path `a\\b` and {raw}", TUTORIAL_FONT_REGULAR, 22, TUTORIAL_TEXT_BODY)
+	testing.expect(t, strings.contains(escaped, "\\\\"), "backslash inside code is escaped")
+	testing.expect(t, strings.contains(escaped, "\\{raw\\}"), "braces in prose are escaped")
+
+	// Code panel lines distinguish // comments, => results, and inline // annotations.
+	comment_line := tutorial_ass_format_code_line("  // plain note")
+	testing.expect(t, strings.has_prefix(comment_line, "  "), "indentation preserved")
+	testing.expect(t, strings.contains(comment_line, tutorial_ass_tag_color(TUTORIAL_SYN_COMMENT)), "comment line uses comment color")
+
+	result_line := tutorial_ass_format_code_line("=> 1536 KiB // exact conversion")
+	testing.expect(t, strings.contains(result_line, tutorial_ass_tag_color(TUTORIAL_SYN_RESULT)), "result line uses result green")
+	testing.expect(t, strings.contains(result_line, tutorial_ass_tag_color(TUTORIAL_SYN_COMMENT)), "trailing comment on result line uses comment color")
+
+	annotated := tutorial_ass_format_code_line("t = readings(4) // 4 demo rows")
+	testing.expect(t, strings.contains(annotated, tutorial_ass_tag_color(TUTORIAL_SYN_IDENT)), "code part highlights identifiers")
+	testing.expect(t, strings.contains(annotated, tutorial_ass_tag_color(TUTORIAL_SYN_COMMENT)), "trailing comment uses comment color")
+}

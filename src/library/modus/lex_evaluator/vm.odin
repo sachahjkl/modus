@@ -3839,7 +3839,7 @@ call_site_border_check :: #force_no_inline proc "contextless" (
 			refuse(eval, {refusal = .Literal_No_Type, chunk_id = chunk_id, node = sarg.val_node, command = name, parameter = slot + 1, right_kind = rk})
 			return {}, false
 		}
-		typed_hv, tok := literal_type_to_record(eval, val_vm, sig.files[slot], sig.details[slot], nil)
+		typed_hv, tok := literal_type_to_record(eval, val_vm, sig.files[slot], sig.details[slot], nil, sig.empty_record_zeroed[slot])
 		if !tok {
 			return {}, false
 		}
@@ -3982,7 +3982,7 @@ vm_exec_call_site :: #force_no_inline proc "contextless" (eval: ^Evaluation, fra
 					refuse(eval, {refusal = .Literal_No_Type, chunk_id = frame.chunk_id, node = sarg.val_node, command = name, parameter = slot + 1, right_kind = rk})
 					return false
 				}
-				if !literal_desc_check_names(eval, frame.chunk_id, sarg.record_desc, sig.files[slot], sig.details[slot]) {
+				if !literal_desc_check_names(eval, frame.chunk_id, sarg.record_desc, sig.files[slot], sig.details[slot], sig.empty_record_zeroed[slot]) {
 					return false
 				}
 			} else if sarg.is_member {
@@ -4308,13 +4308,16 @@ record_field_find :: proc "contextless" (file: []u8, described: module.Record, n
 }
 
 @(private)
-literal_desc_check_names :: proc "contextless" (eval: ^Evaluation, chunk_id: u16, desc_rel: u32, file: []u8, detail: u32) -> bool {
+literal_desc_check_names :: proc "contextless" (eval: ^Evaluation, chunk_id: u16, desc_rel: u32, file: []u8, detail: u32, allow_empty := false) -> bool {
 	described, ok := module.record_type(file, detail)
 	if !ok {
 		return false
 	}
 	chunk := &eval.chunks[chunk_id]
 	desc := eval.rec_descs[int(chunk.rec_desc_start) + int(desc_rel)]
+	if desc.field_count == 0 && allow_empty {
+		return true
+	}
 	shape := &eval.shapes[desc.shape_id]
 	fields := eval.shape_fields[int(shape.fields_off):int(shape.fields_off) + int(shape.field_count)]
 	// Check each literal field in source order.
@@ -4344,7 +4347,7 @@ literal_desc_check_names :: proc "contextless" (eval: ^Evaluation, chunk_id: u16
 }
 
 @(private)
-literal_type_to_record :: proc "contextless" (eval: ^Evaluation, lit_val: Value, file: []u8, detail: u32, base_bytes: []u8) -> (Host_Value, bool) {
+literal_type_to_record :: proc "contextless" (eval: ^Evaluation, lit_val: Value, file: []u8, detail: u32, base_bytes: []u8, allow_empty := false) -> (Host_Value, bool) {
 	described, ok := module.record_type(file, detail)
 	if !ok {
 		return {}, false
@@ -4364,7 +4367,7 @@ literal_type_to_record :: proc "contextless" (eval: ^Evaluation, lit_val: Value,
 			return {}, false
 		}
 	}
-	if base_bytes == nil {
+	if base_bytes == nil && !(desc.field_count == 0 && allow_empty) {
 		for i in u32(0) ..< described.field_count {
 			item := module.field(file, described, i) or_continue
 			fname := module.string_at(file, item.name_offset, item.name_count)
@@ -4391,6 +4394,10 @@ literal_type_to_record :: proc "contextless" (eval: ^Evaluation, lit_val: Value,
 	}
 	if base_bytes != nil {
 		copy(bytes, base_bytes)
+	} else if desc.field_count == 0 && allow_empty {
+		for &b in bytes {
+			b = 0
+		}
 	}
 
 	// Write each field in source order, checking kind and range.
@@ -4449,7 +4456,18 @@ literal_type_to_record :: proc "contextless" (eval: ^Evaluation, lit_val: Value,
 			for bi in u32(0) ..< 4 {
 				bytes[item.offset + bi] = u8(h >> (8 * bi))
 			}
-		case .None, .Record, .Table, .Bytes, .Enum:
+		case .Bytes:
+			if item.detail != 32 || fval.kind != .Hash || int(item.offset) + 32 > len(bytes) {
+				refuse(eval, {refusal = .Literal_Field_Kind, chunk_id = rec.chunk_id, node = fnode, field = fname, field_item = item, left_kind = fval.kind, file = file, detail = detail})
+				return {}, false
+			}
+			hash_bytes, hok := hash_of(eval, fval)
+			if !hok {
+				refuse(eval, {refusal = .Literal_Field_Kind, chunk_id = rec.chunk_id, node = fnode, field = fname, field_item = item, left_kind = fval.kind, file = file, detail = detail})
+				return {}, false
+			}
+			copy(bytes[int(item.offset):int(item.offset) + 32], hash_bytes[:])
+		case .None, .Record, .Table, .Enum:
 			refuse(eval, {refusal = .Literal_Field_Kind, chunk_id = rec.chunk_id, node = fnode, field = fname, field_item = item, left_kind = fval.kind, file = file, detail = detail})
 			return {}, false
 		}
