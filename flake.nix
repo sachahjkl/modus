@@ -586,6 +586,13 @@
         mkdir -p $out/logs
         cp build/checks_passed.txt $out/logs/
       '';
+      passthru = {
+        inherit systemUnitTests toolUnitTests reproducibleCheck;
+        fuzz1 = builtins.elemAt fuzzChecks 0;
+        fuzz2 = builtins.elemAt fuzzChecks 1;
+        fuzz3 = builtins.elemAt fuzzChecks 2;
+        fuzz4 = builtins.elemAt fuzzChecks 3;
+      };
     };
 
     # System host unit tests (all src/* folders of HOST_TEST_FOLDERS): narrow
@@ -616,13 +623,13 @@
       // cProgramSources);
 
     # Tool host unit tests (tools/modustool/* folders and browser machine Node
-    # tests): keeps the repository files that site, news, roadmap, and build
-    # tests read, excluding CHANGELOG.md, changelog.d, and AGENTS.md.
+    # tests): keeps the repository files that site, news, roadmap, source-path,
+    # and build tests read, excluding changelog.d.
     toolUnitTests = pkgs.stdenvNoCC.mkDerivation ({
         name = "modus-tool-host-tests";
         src = lib.fileset.toSource {
           root = ./.;
-          fileset = lib.fileset.difference checkFiles (lib.fileset.unions [./CHANGELOG.md ./changelog.d ./AGENTS.md]);
+          fileset = lib.fileset.difference checkFiles ./changelog.d;
         };
         inherit screenshotNames;
         nativeBuildInputs = buildTools ++ [modustoolBinary browserMachineHost];
@@ -655,34 +662,45 @@
       fileset = lib.fileset.unions [fuzzToolSources ./tools/modustool/fuzz/fuzzing_corpus];
     };
     fuzzChecks = map (shard:
-      pkgs.stdenvNoCC.mkDerivation {
-        name = "modus-fuzz-${toString shard}";
-        src = fuzzCheckSrc;
-        nativeBuildInputs = [odin llvm pkgs.llvmPackages.lld pkgs.llvmPackages_18.clang pkgs.nasm pkgs.coreutils fuzzToolBinary];
-        buildPhase = ''
-          export HOME=$TMPDIR
-          mkdir -p build
-          touch flake.nix
-          modustool-fuzz-runner check-fuzz ${toString shard} ${toString fuzzShardCount}
-        '';
-        installPhase = ''
-          mkdir -p $out/logs
-          cp build/checks_passed.txt $out/logs/
-        '';
-      })
+      pkgs.stdenvNoCC.mkDerivation ({
+          name = "modus-fuzz-${toString shard}";
+          src = fuzzCheckSrc;
+          nativeBuildInputs = [odin llvm pkgs.llvmPackages.lld pkgs.llvmPackages_18.clang pkgs.nasm pkgs.coreutils fuzzToolBinary];
+          buildPhase = ''
+            export HOME=$TMPDIR
+            mkdir -p build
+            touch flake.nix
+            modustool-fuzz-runner check-fuzz ${toString shard} ${toString fuzzShardCount}
+          '';
+          installPhase = ''
+            mkdir -p $out/logs
+            cp build/checks_passed.txt $out/logs/
+          '';
+        }
+        // scriptFontSources))
     [1 2 3 4];
 
-    # Reproducible second build and debug-object check: runs on partSources
-    # alone (src + resources without src/md or host tests), so edits to site,
-    # cache_server, machine scenarios, docs, news, or ROADMAP never trigger a
-    # second full optimized build.
+    # Reproducible second build and debug-object check: runs on src, resources
+    # (without src/md or host tests), and Markdown docs needed by
+    # build_manual_pages, so edits to site, cache_server, machine scenarios,
+    # news, ROADMAP, CHANGELOG, or tests never trigger a second optimized build.
+    reproducibleCheckSrc = lib.fileset.toSource {
+      root = ./.;
+      fileset = lib.fileset.unions [
+        (lib.fileset.difference (lib.fileset.unions [./src ./resources]) (lib.fileset.unions [./src/md (lib.fileset.fileFilter isTestFile ./src)]))
+        (lib.fileset.fileFilter (file: file.hasExt "md") ./docs)
+      ];
+    };
     reproducibleCheck = pkgs.stdenvNoCC.mkDerivation ({
         name = "modus-reproducible-build";
-        src = partSources;
+        src = reproducibleCheckSrc;
         nativeBuildInputs = buildTools ++ [reproToolBinary];
         buildPhase = ''
           export HOME=$TMPDIR
-          mkdir -p build
+          # library_imports_check walks tools/ during build_system; staticChecks
+          # checks every real tool source, so an empty tools/modustool keeps
+          # this derivation independent of tool edits.
+          mkdir -p build tools/modustool
           touch flake.nix
           modustool-repro-runner reproducible-build
         '';

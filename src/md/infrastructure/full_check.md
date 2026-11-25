@@ -44,7 +44,7 @@ The machine test takes most of the time of a full check: 12 to 25 minutes on a h
    - `systemUnitTests` (`modus-system-host-tests`): `modustool-repro-runner host-tests-system` on `src/` and `resources/` alone (without `src/md`, docs, news, roadmap, or tool packages).
    - `toolUnitTests` (`modus-tool-host-tests`): `modustool check host_tests tool` (`tools/modustool/*` folders and browser machine Node tests).
    - `fuzzChecks` (`modus-fuzz-1`..`modus-fuzz-4`): four strided shards (`index % 4 == shard - 1`) built and run through the narrow `modustool-fuzz-runner` entrypoint so unrelated tool packages and documents never invalidate fuzzing.
-   - `reproducibleCheck` (`modus-reproducible-build`): `modustool-repro-runner reproducible-build` on `partSources` alone (whole build of the main volume, debug object check, and reproducible second build).
+   - `reproducibleCheck` (`modus-reproducible-build`): `modustool-repro-runner reproducible-build` on `src/`, `resources/` (without `src/md` or host tests), and Markdown files under `docs/` for `manual_pages` (whole build of the main volume, debug object check, and reproducible second build).
    - `scenarioWaitsCheck` (`modus-scenario-waits`): `modustool fact_waits from <testInputs>` against the pre-built module catalog.
    `hostChecks` merges their `logs/*.txt` and sums `checks_passed.txt`, keeping the interface expected by `boot-test`, `test_join`, `screenshots`, `part_cache`, and `failed_parts`.
 7. `boot-test`: `modustool test_join` joins the outputs of `hostChecks` and of each part derivation in the layout that `screenshots` reads.

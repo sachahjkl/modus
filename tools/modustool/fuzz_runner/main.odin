@@ -6,7 +6,6 @@ package fuzz_runner
 
 import "core:fmt"
 import "core:os"
-import "core:strconv"
 import "core:sync"
 import "modustool:foundation"
 import "modustool:fuzz"
@@ -27,10 +26,9 @@ main :: proc() {
 			fmt.eprintln("modustool-fuzz-runner: check-fuzz <shard> <total>")
 			os.exit(foundation.EXIT_USAGE)
 		}
-		shard, shard_ok := strconv.parse_int(os.args[2], 10)
-		total, total_ok := strconv.parse_int(os.args[3], 10)
-		if !shard_ok || !total_ok || total < 1 || shard < 1 || shard > total {
-			fmt.eprintln("modustool-fuzz-runner: check-fuzz <shard> <total>: shard must be in 1..total")
+		shard, total, bounds_ok := fuzz.fuzz_parse_shard_args(os.args[2], os.args[3])
+		if !bounds_ok {
+			fmt.eprintln("modustool-fuzz-runner: check-fuzz <shard> <total>: shard and total must be positive integers with shard in 1..total")
 			os.exit(foundation.EXIT_USAGE)
 		}
 		if !fuzz.fuzz_check_shard(shard, total) {

@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strconv"
 import "core:strings"
 import "core:time"
 import "modus:contract/blake3"
@@ -373,8 +374,17 @@ fuzz_sources_seed_of_tool_folders :: proc(tool_folders: []string, library_folder
 	return fuzz_word_read(hash[:], 0, 8, false)
 }
 
-// fuzz_sources_list adds each .odin file of a folder and of its folders,
-// to any depth.
+// fuzz_source_is_test reports whether a file name is a host test source
+// (*_test.odin or *_test_<arch>.odin), matching sourcesOfOdin in flake.nix so
+// host and Nix fuzz seeds stay identical and test edits do not churn seeds.
+@(private = "file")
+fuzz_source_is_test :: proc(name: string) -> bool {
+	stem := strings.trim_suffix(name, ".odin")
+	return strings.has_suffix(stem, "_test") || strings.contains(stem, "_test_")
+}
+
+// fuzz_sources_list adds each non-test .odin file of a folder and of its
+// subfolders, to any depth.
 fuzz_sources_list :: proc(folder: string, paths: ^[dynamic]string) {
 	entries, error := os.read_all_directory_by_path(folder, context.temp_allocator)
 	if error != nil {
@@ -383,7 +393,7 @@ fuzz_sources_list :: proc(folder: string, paths: ^[dynamic]string) {
 	for entry in entries {
 		if entry.type == .Directory {
 			fuzz_sources_list(entry.fullpath, paths)
-		} else if entry.type == .Regular && strings.has_suffix(entry.name, ".odin") {
+		} else if entry.type == .Regular && strings.has_suffix(entry.name, ".odin") && !fuzz_source_is_test(entry.name) {
 			append(paths, strings.concatenate({folder, "/", entry.name}, context.temp_allocator))
 		}
 	}
@@ -462,6 +472,34 @@ fuzz_check_children_run :: proc(binary: string, runs: []Fuzz_Check_Child, seed: 
 			time.sleep(FUZZ_POLL_INTERVAL)
 		}
 	}
+}
+
+@(private = "file")
+fuzz_parse_positive_decimal :: proc(text: string) -> (value: int, ok: bool) {
+	if len(text) == 0 || strings.contains_any(text, " \t\n\r+-_") {
+		return 0, false
+	}
+	for b in transmute([]u8)text {
+		if b < '0' || b > '9' {
+			return 0, false
+		}
+	}
+	parsed, parsed_ok := strconv.parse_int(text, 10)
+	if !parsed_ok || parsed < 1 {
+		return 0, false
+	}
+	return parsed, true
+}
+
+// fuzz_parse_shard_args validates strict ASCII positive-decimal shard bounds
+// (1 <= shard <= total), refusing signs, underscores, spaces, 0, and non-digits.
+fuzz_parse_shard_args :: proc(shard_text, total_text: string) -> (shard, total: int, ok: bool) {
+	s, s_ok := fuzz_parse_positive_decimal(shard_text)
+	t, t_ok := fuzz_parse_positive_decimal(total_text)
+	if !s_ok || !t_ok || s > t {
+		return 0, 0, false
+	}
+	return s, t, true
 }
 
 // fuzz_shard_targets selects the 1-based strided slice of targets for shard

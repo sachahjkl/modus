@@ -50,6 +50,9 @@ fuzz_sources_seed_reads_the_tool_to_any_depth :: proc(t: ^testing.T) {
 
 	seed_file_write(root, "tool/package/nested/notes.txt", "another text\n")
 	testing.expect_value(t, seed_of_tree(root), first)
+	seed_file_write(root, "tool/package/nested/deep_test.odin", "package nested\n")
+	seed_file_write(root, "tool/package/nested/deep_test_amd64.odin", "package nested\n")
+	testing.expect_value(t, seed_of_tree(root), first)
 	seed_file_write(root, "kernel/kernel.odin", "package kernel\n\nchanged :: 1\n")
 	testing.expect_value(t, seed_of_tree(root), first)
 
@@ -201,4 +204,12 @@ fuzz_shard_targets_partitions_deterministically :: proc(t: ^testing.T) {
 	beyond, beyond_ok := fuzz_shard_targets(all, len(all) + 1, len(all) + 1)
 	testing.expect(t, beyond_ok)
 	testing.expect_value(t, len(beyond), 0)
+
+	// Strict positive-decimal parsing for fuzz_runner CLI matches check fuzz.
+	for bad_text in ([][2]string{{"0", "4"}, {"1", "0"}, {"5", "4"}, {"+1", "4"}, {"1_0", "10"}, {"-1", "4"}, {" 1", "4"}, {"a", "4"}, {"1", "b"}, {"", "4"}}) {
+		_, _, parsed_ok := fuzz_parse_shard_args(bad_text[0], bad_text[1])
+		testing.expectf(t, !parsed_ok, "shard args %q %q must be refused", bad_text[0], bad_text[1])
+	}
+	shard, total, good_ok := fuzz_parse_shard_args("2", "4")
+	testing.expect(t, good_ok && shard == 2 && total == 4)
 }

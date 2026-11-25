@@ -47,12 +47,20 @@ reproducible_build_run :: proc() -> int {
 
 main :: proc() {
 	_ = os.unset_env("NIX_LDFLAGS")
-	if len(os.args) != 2 {
-		fmt.eprintln("modustool-repro-runner: host-tests-system | reproducible-build")
+	if len(os.args) < 2 {
+		fmt.eprintln("modustool-repro-runner: host-tests-system | reproducible-build | module ... | volume ...")
 		os.exit(foundation.EXIT_USAGE)
 	}
 	switch os.args[1] {
+	case "module":
+		os.exit(build.run_module(os.args[2:]))
+	case "volume":
+		os.exit(build.run_volume(os.args[2:]))
 	case "host-tests-system":
+		if len(os.args) != 2 {
+			fmt.eprintln("modustool-repro-runner: host-tests-system takes no argument")
+			os.exit(foundation.EXIT_USAGE)
+		}
 		if !checks.host_tests_run(checks.host_test_folders_for_scope(.System)) {
 			os.exit(foundation.EXIT_FAILURE)
 		}
@@ -61,6 +69,10 @@ main :: proc() {
 		}
 		os.exit(0)
 	case "reproducible-build":
+		if len(os.args) != 2 {
+			fmt.eprintln("modustool-repro-runner: reproducible-build takes no argument")
+			os.exit(foundation.EXIT_USAGE)
+		}
 		os.exit(reproducible_build_run())
 	}
 	fmt.eprintfln("modustool-repro-runner: unknown command %s", os.args[1])
