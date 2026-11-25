@@ -581,14 +581,17 @@ Ranged :: struct {
 	pending:     ^Pending_Object,
 }
 
-// ranged_of finds the object of a call on ranges. A name with no entry is
-// an object of no byte, when the caller has pending changes for it or makes
-// a change.
-ranged_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_Record, change: bool) -> (ranged: Ranged, result: call_outcome.Call_Outcome) {
+// ranged_of finds the object of a call on ranges and writes it into ranged.
+// A name with no entry is an object of no byte, when the caller has pending
+// changes for it or makes a change. Written through a pointer so Ranged
+// (over 17 KiB) is never copied or scalarized by value.
+ranged_of :: proc "contextless" (place: i64, name: string, ranged: ^Ranged, error: ^errors.Error_Record, change: bool) -> call_outcome.Call_Outcome {
 	ranged.store_index = -1
-	ranged.named, result = named_of(place, name, error, 1, change)
-	if result != .Succeeded {
-		return ranged, result
+	ranged.state = {}
+	ranged.exists = false
+	ranged.pending = nil
+	if result := named_of(place, name, &ranged.named, error, 1, change); result != .Succeeded {
+		return result
 	}
 	if ranged.named.caller.connection != nil {
 		ranged.pending = pending_find(ranged.named.caller.connection.ring_memory, &ranged.named.path, ranged.named.name.key)
@@ -598,7 +601,7 @@ ranged_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_
 		ranged.store_index = store_index
 		ranged.state = current_state(&value)
 		ranged.exists = true
-		return ranged, .Succeeded
+		return .Succeeded
 	}
 	if located == .Nothing_Has_That_Name && (change || ranged.pending != nil) {
 		// A name that is a tree is refused: the lookup of the name as an
@@ -606,21 +609,21 @@ ranged_of :: proc "contextless" (place: i64, name: string, error: ^errors.Error_
 		if found_store := store_find(ranged.named.path.store.name); found_store >= 0 {
 			ranged.store_index = found_store
 			if entry, outcome := entry_of(found_store, path_names(&ranged.named.path), ranged.named.name.key); outcome == .Found && entry.kind != u64(format.Entry_Kind.Object) {
-				return ranged, refuse(error, .Nothing_Has_That_Name, .Absent, .Objects, 2)
+				return refuse(error, .Nothing_Has_That_Name, .Absent, .Objects, 2)
 			} else if outcome == .Wrong || outcome == .Device {
-				return ranged, lookup_refusal(outcome, error, 2)
+				return lookup_refusal(outcome, error, 2)
 			} else if outcome == .Absent && len(path_names(&ranged.named.path)) != 0 {
 				// The tree of the place: it must exist for a new object.
 				if _, tree_outcome := tree_of(found_store, path_names(&ranged.named.path)); tree_outcome == .Absent {
-					return ranged, refuse(error, .Nothing_Has_That_Name, .Absent, .Places, 1)
+					return refuse(error, .Nothing_Has_That_Name, .Absent, .Places, 1)
 				} else if tree_outcome != .Found {
-					return ranged, lookup_refusal(tree_outcome, error, 1)
+					return lookup_refusal(tree_outcome, error, 1)
 				}
 			}
 		}
-		return ranged, .Succeeded
+		return .Succeeded
 	}
-	return ranged, located
+	return located
 }
 
 // ranged_size gives the size of the object as the caller sees it.
@@ -752,8 +755,8 @@ ranged_pending :: proc "contextless" (ranged: ^Ranged, error: ^errors.Error_Reco
 // The error kinds: those of read; Out_Of_Range (offset is past the end: limit the size).
 @(export, link_name = "read_range")
 read_range :: proc "c" (place: i64, name: ^string, offset: i64, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	ranged, refused := ranged_of(place, name^, error, false)
-	if refused != .Succeeded {
+	ranged: Ranged
+	if refused := ranged_of(place, name^, &ranged, error, false); refused != .Succeeded {
 		return refused, 0
 	}
 	size := ranged_size(&ranged)
@@ -769,8 +772,8 @@ read_range :: proc "c" (place: i64, name: ^string, offset: i64, result: ^[]u8, e
 // The error kinds: No_Grant (Grant_Or_Right_Missing; Grant_Or_Right_Missing, unit Changes: the connection reads only); Absent (Nothing_Has_That_Name: the place; Nothing_Has_That_Name, unit Objects: the name is a tree); the errors of a name (Argument_Refused); Bad_Value (Argument_Refused: offset is negative); Too_Long (Argument_Refused: the object would pass 4 TiB); Over_Limit (Budget_Or_Capacity_Exhausted, unit Pending: the pending blocks of the connection would pass the limit of blocks of its store: commit first); Full (Budget_Or_Capacity_Exhausted, kind Budget, unit Pages: the memory of the service holds no more pending blocks: commit first); Damaged (Data_Damaged: a block that the range changes in part has a wrong check); Device (Callee_Unavailable).
 @(export, link_name = "write_range")
 write_range :: proc "c" (place: i64, name: ^string, offset: i64, data: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	ranged, refused := ranged_of(place, name^, error, true)
-	if refused != .Succeeded {
+	ranged: Ranged
+	if refused := ranged_of(place, name^, &ranged, error, true); refused != .Succeeded {
 		return refused, 0
 	}
 	count := u64(len(data^))
@@ -808,8 +811,8 @@ write_range :: proc "c" (place: i64, name: ^string, offset: i64, data: ^string, 
 // The error kinds: those of write_range.
 @(export, link_name = "set_size")
 set_size :: proc "c" (place: i64, name: ^string, size: value_kinds.Size_In_Bytes, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	ranged, refused := ranged_of(place, name^, error, true)
-	if refused != .Succeeded {
+	ranged: Ranged
+	if refused := ranged_of(place, name^, &ranged, error, true); refused != .Succeeded {
 		return refused, 0
 	}
 	if size < 0 {
@@ -848,8 +851,8 @@ set_size :: proc "c" (place: i64, name: ^string, size: value_kinds.Size_In_Bytes
 // The error kinds: those of write; Absent (unit Pending: the object has no pending change on this connection; found 1: another change of the object came first since the first pending change, and the pending changes are dropped); Damaged (Data_Damaged: the state before is damaged; the pending changes stay on the connection).
 @(export, link_name = "commit")
 commit :: proc "c" (place: i64, name: ^string, result: ^[]Commit_Measure, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	ranged, refused := ranged_of(place, name^, error, true)
-	if refused != .Succeeded && refused != .Nothing_Has_That_Name {
+	ranged: Ranged
+	if refused := ranged_of(place, name^, &ranged, error, true); refused != .Succeeded && refused != .Nothing_Has_That_Name {
 		return refused, 0
 	}
 	pending := ranged.pending
@@ -888,9 +891,9 @@ commit :: proc "c" (place: i64, name: ^string, result: ^[]Commit_Measure, error:
 // The error kinds: those of a name (Argument_Refused); Absent (Argument_Refused, Nothing_Has_That_Name: the place); Absent (Nothing_Has_That_Name, unit Pending: the object has no pending change on this connection).
 @(export, link_name = "drop_pending")
 drop_pending :: proc "c" (place: i64, name: ^string, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	ranged, refused := ranged_of(place, name^, error, false)
+	ranged: Ranged
 	// An object that has no commit yet can still have pending changes.
-	if refused != .Succeeded && refused != .Nothing_Has_That_Name {
+	if refused := ranged_of(place, name^, &ranged, error, false); refused != .Succeeded && refused != .Nothing_Has_That_Name {
 		return refused, 0
 	}
 	if ranged.pending == nil {

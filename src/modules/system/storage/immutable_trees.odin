@@ -337,16 +337,17 @@ parse_hex_hash_argument :: proc "contextless" (given: string, error: ^errors.Err
 // - `Full`, `Device`, `Damaged`.
 @(export, link_name = "freeze_tree")
 freeze_tree :: proc "c" (place: i64, target_place: i64, result: ^[]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	caller := caller_of()
+	caller: Caller
+	caller_of(&caller)
 	if refused, refusal := change_refusal(&caller, error); refused {
 		return refusal, 0
 	}
-	source_path, source_ok := place_path(&caller, place, error, 1)
-	if !source_ok {
+	source_path: Path
+	if !place_path(&caller, place, &source_path, error, 1) {
 		return .Argument_Refused, 0
 	}
-	target_path, target_ok := place_path(&caller, target_place, error, 2)
-	if !target_ok {
+	target_path: Path
+	if !place_path(&caller, target_place, &target_path, error, 2) {
 		return .Argument_Refused, 0
 	}
 	if !target_path.own {
@@ -421,12 +422,13 @@ tree_read :: proc "c" (place: i64, hash_hex: ^string, result: ^[]u8, error: ^err
 	if refused, refusal := disk_unopened_refusal(error); refused {
 		return refusal, 0
 	}
-	caller := caller_of()
+	caller: Caller
+	caller_of(&caller)
 	if caller.connection == nil {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
-	target_path, ok := place_path(&caller, place, error, 1)
-	if !ok {
+	target_path: Path
+	if !place_path(&caller, place, &target_path, error, 1) {
 		return .Argument_Refused, 0
 	}
 	if target_path.own && target_path.store.limit == 0 {
@@ -469,12 +471,13 @@ tree_entry :: proc "c" (place: i64, hash_hex: ^string, name: ^string, result: ^[
 	if refused, refusal := disk_unopened_refusal(error); refused {
 		return refusal, 0
 	}
-	caller := caller_of()
+	caller: Caller
+	caller_of(&caller)
 	if caller.connection == nil {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
-	target_path, ok := place_path(&caller, place, error, 1)
-	if !ok {
+	target_path: Path
+	if !place_path(&caller, place, &target_path, error, 1) {
 		return .Argument_Refused, 0
 	}
 	if target_path.own && target_path.store.limit == 0 {
@@ -575,15 +578,16 @@ gc_delete_object :: proc "contextless" (user_data: rawptr, hash: blake3.Hash) ->
 // - `Device`.
 @(export, link_name = "collect_garbage")
 collect_garbage :: proc "c" (place: i64, roots: ^system.Table_To_Read(Garbage_Root_Row), result: ^[]Garbage_Measure, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	caller := caller_of()
+	caller: Caller
+	caller_of(&caller)
 	if refused, refusal := change_refusal(&caller, error); refused {
 		return refusal, 0
 	}
 	if share_of(caller.connection) != nil {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Changes)
 	}
-	target_path, ok := place_path(&caller, place, error, 1)
-	if !ok {
+	target_path: Path
+	if !place_path(&caller, place, &target_path, error, 1) {
 		return .Argument_Refused, 0
 	}
 	if !target_path.own {
