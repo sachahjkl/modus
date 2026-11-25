@@ -903,12 +903,12 @@ scenario := [?]Step {
 	{kind = .Type, text = "s.span_total(s.Span(b, 96, 10))"},
 	{kind = .Wait, text = "[console] 30"},
 	// The description of spoil asks Read: the module cannot write. 4: Grant_Or_Right_Missing.
-	{kind = .Type, text = "h.spoil(b)"},
+	{kind = .Type, text = "s.spoil(b)"},
 	{kind = .Wait, text = "[console] 4"},
 	// A lent handle ends with its call. 1: Argument_Refused.
-	{kind = .Type, text = "s.keep(b)"},
+	{kind = .Type, text = "h.keep(b)"},
 	{kind = .Wait, text = "[console] 12288"},
-	{kind = .Type, text = "s.kept()"},
+	{kind = .Type, text = "h.kept()"},
 	{kind = .Wait, text = "[console] 1"},
 	{kind = .Type, text = "s.area(s.Span(b, 0, 1))"},
 	{kind = .Wait, text = "[console] error: s.area: argument 1 is Rectangle, not Span"},
@@ -1059,7 +1059,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   commands   6"},
 	{kind = .Wait, text = "[console]   call       direct"},
 	{kind = .Type, text = "g = s.grow(r, 5)"},
-	{kind = .Type, text = "g.width * g.height + s.keep(b) + s.kept()"},
+	{kind = .Type, text = "g.width * g.height + h.keep(b) + h.kept()"},
 	{kind = .Wait, text = "[console] 12848"},
 	// An export that fails gives its error record, not a bare negative
 	// number: with no earlier hold in this process, look has no mapping.
