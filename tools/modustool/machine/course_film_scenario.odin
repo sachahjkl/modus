@@ -6,11 +6,12 @@ package machine
 // Teaches why modus exists and how to use it daily:
 //  1. Typed Console & Lex v3: processes() table pipeline, memory() Record,
 //     exact unit arithmetic + pure Lex filter/map, and typed enum refusal.
-//  2. The 5 Ways to Run Code & Shorthand Invoking: isolate("sample") with
+//  2. Running Code & Built-In Help: isolate("sample"), help("readings"),
 //     readings(4) |> where(sensor = 2) |> sum_values, plus connect("monitor").
 //  3. Declarative plan { ... } & Trusted Consent: schema typo refusal before
-//     dialog, plans.apply("evening", ...) holding 5.5 s on the live trusted
-//     display consent dialog, Tab+Enter accept, plans.apply_poll, generations.
+//     dialog, one-step plans.apply("evening", ...) holding 5.6 s on the live
+//     trusted display consent dialog, Tab+Enter accept returning standing
+//     Current directly, and plans.generations().
 //  4. Zero Ambient Authority & Desktop Grants: grants("notes") |> where(state
 //     = "held") and the live desktop grants window with Revoke buttons.
 //  5. Automatic Copy-on-Write Versions: notes auto-commit with zero Save
