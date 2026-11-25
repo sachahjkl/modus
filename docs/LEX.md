@@ -512,3 +512,18 @@ error: Rectangle has no field widht; its fields are x, y, width, height
 | Show all commands or help on one name | `help()`, `help("start")`, `help("let")` |
 | Update pinned declaration inputs in `pins.lex` | `projects.update(kernel)`, `projects.update(kernel, inputs.gt)` |
 | Enter and leave the console of a project | `projects.enter(kernel)`, then `exit()` |
+
+## 9. Formatting and linting (`modustool lex`)
+
+`modustool` includes a canonical formatter and a static linter backed by the freestanding `modus:lex_tools` package (`src/md/features/lex_tools.md`).
+
+```
+nix develop -c modustool lex fmt project.lex pins.lex
+nix develop -c modustool lex fmt --check project.lex
+nix develop -c modustool lex lint project.lex
+```
+
+- **`modustool lex fmt [--check] <file>...`:** Formats each `.lex` file in place with 2-space indentation, canonical spacing around operators and delimiters, preserved record field order, preserved comments and string literals (including escapes and `${...}` interpolations), and one trailing newline. Formatting is strictly idempotent (`format(format(x)) == format(x)`). With `--check`, the command modifies no file and exits with status 1 if any file differs from its canonical form.
+- **`modustool lex lint <file>...`:** Checks each file without evaluating effects and prints `path:line:column: severity: kind: message` diagnostics, exiting with status 1 when any diagnostic is found. Checked conditions:
+  - **Errors:** malformed tokens (unterminated strings, unrecognized bytes, malformed `blake3:...` hashes), parse errors, duplicate record fields, and empty or non-callable `|>` targets.
+  - **Warnings:** empty or comment-only files, unused `let` bindings, shadowed `let` bindings, redundant parentheses (`((expr))` or single-atom `(atom)`), empty records (`{}`), and empty lists (`[]`).
