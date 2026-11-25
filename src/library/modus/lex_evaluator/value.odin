@@ -364,15 +364,16 @@ Refusal_Record :: struct {
 
 // Command signature reported by the host before arguments run.
 Command_Signature :: struct {
-	has_effect:      bool,
-	parameter_count: int,
-	optional_last:   bool,
-	optional:        [lex_parser.ARGUMENT_CAPACITY]bool,
-	names:           [lex_parser.ARGUMENT_CAPACITY]string,
-	kinds:           [lex_parser.ARGUMENT_CAPACITY]Kind,
-	files:           [lex_parser.ARGUMENT_CAPACITY][]u8,
-	details:         [lex_parser.ARGUMENT_CAPACITY]u32,
-	untyped:         bool,
+	has_effect:          bool,
+	parameter_count:     int,
+	optional_last:       bool,
+	optional:            [lex_parser.ARGUMENT_CAPACITY]bool,
+	empty_record_zeroed: [lex_parser.ARGUMENT_CAPACITY]bool,
+	names:               [lex_parser.ARGUMENT_CAPACITY]string,
+	kinds:               [lex_parser.ARGUMENT_CAPACITY]Kind,
+	files:               [lex_parser.ARGUMENT_CAPACITY][]u8,
+	details:             [lex_parser.ARGUMENT_CAPACITY]u32,
+	untyped:             bool,
 }
 
 // Host callbacks for console mode and declaration loader hooks.

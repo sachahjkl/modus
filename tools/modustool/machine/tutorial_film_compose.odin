@@ -49,17 +49,47 @@ TUTORIAL_CARD_TOP :: 240
 TUTORIAL_CARD_RIGHT :: 1740
 TUTORIAL_CARD_BOTTOM :: 840
 
+// Two-panel teaching slide geometry on the 1920x1080 canvas.
+TUTORIAL_SLIDE_MARGIN_X :: 120
+TUTORIAL_SLIDE_RIGHT_X :: TUTORIAL_VIDEO_WIDTH - TUTORIAL_SLIDE_MARGIN_X // 1800
+TUTORIAL_SLIDE_PILL_TOP :: 72
+TUTORIAL_SLIDE_PILL_HEIGHT :: 38
+TUTORIAL_SLIDE_PANEL_TOP :: 264
+TUTORIAL_SLIDE_PANEL_BOTTOM :: 868
+TUTORIAL_SLIDE_LEFT_RIGHT :: 940
+TUTORIAL_SLIDE_RIGHT_LEFT :: 980
+TUTORIAL_SLIDE_CALLOUT_TOP :: 892
+TUTORIAL_SLIDE_CALLOUT_BOTTOM :: 978
+#assert(TUTORIAL_SLIDE_LEFT_RIGHT - TUTORIAL_SLIDE_MARGIN_X == TUTORIAL_SLIDE_RIGHT_X - TUTORIAL_SLIDE_RIGHT_LEFT)
+#assert(TUTORIAL_SLIDE_CALLOUT_BOTTOM <= TUTORIAL_VIDEO_HEIGHT - 80)
+
 // Modus dark palette colors matching docs/DESIGN.md.
 Tutorial_Rgb :: struct {
 	r, g, b: u8,
 }
 
-TUTORIAL_BG_CANVAS :: Tutorial_Rgb{17, 21, 27} // #11151B
+TUTORIAL_BG_CANVAS :: Tutorial_Rgb{14, 19, 26} // #0E131A
 TUTORIAL_BG_CARD :: Tutorial_Rgb{22, 27, 34} // #161B22
+TUTORIAL_BG_LEFT_PANEL :: Tutorial_Rgb{22, 30, 42} // #161E2A
+TUTORIAL_BG_RIGHT_PANEL :: Tutorial_Rgb{10, 14, 20} // #0A0E14
 TUTORIAL_BORDER_CARD :: Tutorial_Rgb{48, 54, 61} // #30363D
+TUTORIAL_BORDER_PANEL :: Tutorial_Rgb{43, 54, 71} // #2B3647
+TUTORIAL_DIVIDER_PANEL :: Tutorial_Rgb{34, 44, 59} // #222C3B
 TUTORIAL_TEXT_PRIMARY :: Tutorial_Rgb{240, 246, 252} // #F0F6FC
+TUTORIAL_TEXT_SUBTITLE :: Tutorial_Rgb{208, 215, 222} // #D0D7DE
 TUTORIAL_TEXT_BODY :: Tutorial_Rgb{201, 209, 217} // #C9D1D9
 TUTORIAL_TEXT_DIM :: Tutorial_Rgb{139, 148, 158} // #8B949E
+
+// Syntax highlighting palette for inline `code` and right-hand code panels.
+TUTORIAL_SYN_ENUM :: Tutorial_Rgb{242, 204, 96} // #F2CC60 — .vector, .spleen, .dark
+TUTORIAL_SYN_STRING :: Tutorial_Rgb{126, 231, 135} // #7EE787 — "notes", "evening"
+TUTORIAL_SYN_OPERATOR :: Tutorial_Rgb{255, 123, 114} // #FF7B72 — |>, =>, =, +, >
+TUTORIAL_SYN_NUMBER :: Tutorial_Rgb{210, 168, 255} // #D2A8FF — 1 MiB, 512 KiB, 4
+TUTORIAL_SYN_IDENT :: Tutorial_Rgb{121, 192, 255} // #79C0FF — processes, settings.set
+TUTORIAL_SYN_PUNCT :: Tutorial_Rgb{230, 237, 243} // #E6EDF3 — (), {}, [], ,
+TUTORIAL_SYN_COMMENT :: Tutorial_Rgb{159, 176, 196} // #9FB0C4 — // plain-English notes
+TUTORIAL_SYN_RESULT :: Tutorial_Rgb{63, 185, 80} // #3FB950 — => result lines
+TUTORIAL_CODE_ACCENT :: Tutorial_Rgb{57, 197, 207} // #39C5CF — right code panel bar
 
 Tutorial_Accent :: enum u8 {
 	System  = 0, // #58A6FF — Lex, declarations, recipes
@@ -77,9 +107,9 @@ tutorial_accent_rgb := [Tutorial_Accent]Tutorial_Rgb {
 }
 
 // Bounded AV1 quality step-up ladder (CRF for libsvtav1, CQ for av1_nvenc)
-// guaranteeing tutorial.webm fits <= 4 MiB.
+// guaranteeing WebM outputs fit <= 4 MiB.
 @(rodata)
-TUTORIAL_WEBM_CRF_LADDER := [4]int{42, 46, 50, 54}
+TUTORIAL_WEBM_CRF_LADDER := [5]int{42, 46, 50, 54, 58}
 
 Tutorial_Card_Anchor :: enum u8 {
 	Start_Of_Film = 0,
@@ -87,16 +117,30 @@ Tutorial_Card_Anchor :: enum u8 {
 	End_Of_Film   = 2,
 }
 
+// One teaching block on the left panel of a two-panel slide.
+Tutorial_Slide_Block :: struct {
+	heading: string,
+	body:    string,
+}
+
 Tutorial_Chapter_Card :: struct {
-	id:          string,
-	anchor:      Tutorial_Card_Anchor,
-	cue_name:    string,
-	duration_ms: i64,
-	accent:      Tutorial_Accent,
-	kicker:      string,
-	title:       string,
-	lines:       []string,
-	footer:      string,
+	id:            string,
+	anchor:        Tutorial_Card_Anchor,
+	cue_name:      string,
+	duration_ms:   i64,
+	accent:        Tutorial_Accent,
+	kicker:        string,
+	title:         string,
+	lines:         []string,
+	footer:        string,
+	// Two-panel teaching slide fields (used when two_panel is true).
+	two_panel:     bool,
+	subtitle:      string,
+	left_heading:  string,
+	left_blocks:   []Tutorial_Slide_Block,
+	right_heading: string,
+	right_lines:   []string,
+	callout:       string,
 }
 
 Tutorial_Caption :: struct {
@@ -412,24 +456,265 @@ tutorial_ass_timestamp :: proc(ms: i64) -> string {
 	return fmt.tprintf("%d:%02d:%02d.%02d", hours, mins, secs, cs)
 }
 
+// tutorial_ass_tag_color formats an RGB color for inline ASS \1c override tags (&HBBGGRR&).
+tutorial_ass_tag_color :: proc(color: Tutorial_Rgb) -> string {
+	return fmt.tprintf("&H%02X%02X%02X&", color.b, color.g, color.r)
+}
+
+@(private = "file")
+ass_write_escaped_byte :: proc(builder: ^strings.Builder, ch: u8) {
+	switch ch {
+	case '\\':
+		strings.write_string(builder, "\\\\")
+	case '{':
+		strings.write_string(builder, "\\{")
+	case '}':
+		strings.write_string(builder, "\\}")
+	case '\n':
+		strings.write_string(builder, "\\N")
+	case:
+		strings.write_byte(builder, ch)
+	}
+}
+
+@(private = "file")
+ass_write_escaped_string :: proc(builder: ^strings.Builder, text: string) {
+	for i in 0 ..< len(text) {
+		ass_write_escaped_byte(builder, text[i])
+	}
+}
+
+@(private = "file")
+ass_is_ident_start :: proc(ch: u8) -> bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'
+}
+
+@(private = "file")
+ass_is_ident_char :: proc(ch: u8) -> bool {
+	return ass_is_ident_start(ch) || (ch >= '0' && ch <= '9')
+}
+
+@(private = "file")
+ass_is_digit :: proc(ch: u8) -> bool {
+	return ch >= '0' && ch <= '9'
+}
+
+@(private = "file")
+ass_is_unit_word :: proc(word: string) -> bool {
+	switch word {
+	case "B", "bytes", "KiB", "MiB", "GiB", "pages", "blocks", "ns", "us", "ms", "s":
+		return true
+	}
+	return false
+}
+
+// tutorial_ass_append_code_tokens writes syntax-colored ASS spans for Lex/console
+// code using the modus dark syntax palette. Every literal \, {, }, and newline is
+// escaped safely outside ASS override tags.
+tutorial_ass_append_code_tokens :: proc(builder: ^strings.Builder, code: string) {
+	has_color := false
+	cur_color: Tutorial_Rgb
+	set_color :: proc(builder: ^strings.Builder, has_color: ^bool, cur_color: ^Tutorial_Rgb, color: Tutorial_Rgb) {
+		if !has_color^ || cur_color^ != color {
+			fmt.sbprintf(builder, "{{\\1c%s}}", tutorial_ass_tag_color(color))
+			has_color^ = true
+			cur_color^ = color
+		}
+	}
+
+	i := 0
+	for i < len(code) {
+		ch := code[i]
+		if ch == ' ' || ch == '\t' {
+			strings.write_byte(builder, ch)
+			i += 1
+			continue
+		}
+		if ch == '\n' {
+			strings.write_string(builder, "\\N")
+			i += 1
+			continue
+		}
+		// String literal: "..."
+		if ch == '"' {
+			start := i
+			i += 1
+			for i < len(code) {
+				if code[i] == '\\' && i + 1 < len(code) {
+					i += 2
+					continue
+				}
+				if code[i] == '"' {
+					i += 1
+					break
+				}
+				i += 1
+			}
+			set_color(builder, &has_color, &cur_color, TUTORIAL_SYN_STRING)
+			ass_write_escaped_string(builder, code[start:i])
+			continue
+		}
+		// Enum choice: .member (not preceded by an identifier or closing bracket)
+		prev_is_expr := i > 0 && (ass_is_ident_char(code[i - 1]) || code[i - 1] == ')' || code[i - 1] == ']')
+		if ch == '.' && !prev_is_expr && i + 1 < len(code) && ass_is_ident_start(code[i + 1]) {
+			start := i
+			i += 2
+			for i < len(code) && ass_is_ident_char(code[i]) {
+				i += 1
+			}
+			set_color(builder, &has_color, &cur_color, TUTORIAL_SYN_ENUM)
+			ass_write_escaped_string(builder, code[start:i])
+			continue
+		}
+		// Numeric quantity with optional space + unit (e.g. 1 MiB, 512 KiB, 4).
+		if ass_is_digit(ch) {
+			start := i
+			i += 1
+			for i < len(code) && (ass_is_digit(code[i]) || code[i] == '.') {
+				i += 1
+			}
+			// Absorb an immediately following unit word (e.g. " MiB", " KiB", " ms").
+			if i + 1 < len(code) && code[i] == ' ' && ass_is_ident_start(code[i + 1]) {
+				u_start := i + 1
+				u_end := u_start
+				for u_end < len(code) && ass_is_ident_char(code[u_end]) {
+					u_end += 1
+				}
+				if ass_is_unit_word(code[u_start:u_end]) {
+					i = u_end
+				}
+			}
+			set_color(builder, &has_color, &cur_color, TUTORIAL_SYN_NUMBER)
+			ass_write_escaped_string(builder, code[start:i])
+			continue
+		}
+		// Multi-character operators: |>, =>, >=, <=, !=, ??, ->
+		if i + 1 < len(code) {
+			two := code[i:i + 2]
+			if two == "|>" || two == "=>" || two == ">=" || two == "<=" || two == "!=" || two == "??" || two == "->" {
+				set_color(builder, &has_color, &cur_color, TUTORIAL_SYN_OPERATOR)
+				ass_write_escaped_string(builder, two)
+				i += 2
+				continue
+			}
+		}
+		// Single-character operators
+		if ch == '=' || ch == '+' || ch == '>' || ch == '<' || ch == '*' || ch == '|' {
+			set_color(builder, &has_color, &cur_color, TUTORIAL_SYN_OPERATOR)
+			ass_write_escaped_byte(builder, ch)
+			i += 1
+			continue
+		}
+		// Identifiers (and dotted paths such as settings.set or plans.apply).
+		if ass_is_ident_start(ch) {
+			start := i
+			i += 1
+			for i < len(code) && ass_is_ident_char(code[i]) {
+				i += 1
+			}
+			set_color(builder, &has_color, &cur_color, TUTORIAL_SYN_IDENT)
+			ass_write_escaped_string(builder, code[start:i])
+			continue
+		}
+		// Punctuation and any remaining characters.
+		set_color(builder, &has_color, &cur_color, TUTORIAL_SYN_PUNCT)
+		ass_write_escaped_byte(builder, ch)
+		i += 1
+	}
+}
+
+// tutorial_ass_format_rich converts lightweight inline markup into safe ASS
+// override tags:
+//   - **emphasis** renders in B612 ASCII Bold using bold_color
+//   - `code` renders in JetBrains Mono ASCII with token-level syntax colors
+// All literal \, {, }, and newlines are escaped outside ASS tags, and the base
+// font, size, and color are restored cleanly after each span.
+tutorial_ass_format_rich :: proc(
+	text: string,
+	base_font: string,
+	base_size: int,
+	base_color: Tutorial_Rgb,
+	bold_color: Tutorial_Rgb = TUTORIAL_TEXT_PRIMARY,
+) -> string {
+	builder := strings.builder_make(context.temp_allocator)
+	base_tag := fmt.tprintf("{{\\fn%s\\fs%d\\1c%s}}", base_font, base_size, tutorial_ass_tag_color(base_color))
+	bold_tag := fmt.tprintf("{{\\fn%s\\fs%d\\1c%s}}", TUTORIAL_FONT_BOLD, base_size, tutorial_ass_tag_color(bold_color))
+	code_size := max(base_size - 1, 16)
+	code_tag := fmt.tprintf("{{\\fn%s\\fs%d}}", TUTORIAL_FONT_MONO, code_size)
+
+	i := 0
+	for i < len(text) {
+		// Bold span: **...**
+		if i + 1 < len(text) && text[i] == '*' && text[i + 1] == '*' {
+			close_rel := strings.index(text[i + 2:], "**")
+			if close_rel > 0 {
+				inner := text[i + 2:i + 2 + close_rel]
+				strings.write_string(&builder, bold_tag)
+				ass_write_escaped_string(&builder, inner)
+				strings.write_string(&builder, base_tag)
+				i = i + 2 + close_rel + 2
+				continue
+			}
+		}
+		// Inline syntax-colored code span: `...`
+		if text[i] == '`' {
+			close_rel := strings.index_byte(text[i + 1:], '`')
+			if close_rel > 0 {
+				inner := text[i + 1:i + 1 + close_rel]
+				strings.write_string(&builder, code_tag)
+				tutorial_ass_append_code_tokens(&builder, inner)
+				strings.write_string(&builder, base_tag)
+				i = i + 1 + close_rel + 1
+				continue
+			}
+		}
+		ass_write_escaped_byte(&builder, text[i])
+		i += 1
+	}
+	return strings.to_string(builder)
+}
+
+// tutorial_ass_format_code_line formats one line of a right-hand JetBrains Mono
+// code panel: leading `//` lines use muted comment color, leading `=>` lines
+// show results in bright green (with optional trailing `//` comment), and code
+// lines get full token-level syntax coloring plus optional trailing `//` note.
+tutorial_ass_format_code_line :: proc(line: string) -> string {
+	builder := strings.builder_make(context.temp_allocator)
+	trimmed := strings.trim_left(line, " \t")
+	indent := line[:len(line) - len(trimmed)]
+	strings.write_string(&builder, indent)
+
+	if strings.has_prefix(trimmed, "//") {
+		fmt.sbprintf(&builder, "{{\\1c%s}}", tutorial_ass_tag_color(TUTORIAL_SYN_COMMENT))
+		ass_write_escaped_string(&builder, trimmed)
+		return strings.to_string(builder)
+	}
+	if strings.has_prefix(trimmed, "=>") {
+		if comment_at := strings.index(trimmed, " //"); comment_at >= 0 {
+			fmt.sbprintf(&builder, "{{\\1c%s}}", tutorial_ass_tag_color(TUTORIAL_SYN_RESULT))
+			ass_write_escaped_string(&builder, trimmed[:comment_at])
+			fmt.sbprintf(&builder, "{{\\1c%s}}", tutorial_ass_tag_color(TUTORIAL_SYN_COMMENT))
+			ass_write_escaped_string(&builder, trimmed[comment_at:])
+		} else {
+			fmt.sbprintf(&builder, "{{\\1c%s}}", tutorial_ass_tag_color(TUTORIAL_SYN_RESULT))
+			ass_write_escaped_string(&builder, trimmed)
+		}
+		return strings.to_string(builder)
+	}
+	if comment_at := strings.index(trimmed, " //"); comment_at >= 0 {
+		tutorial_ass_append_code_tokens(&builder, trimmed[:comment_at])
+		fmt.sbprintf(&builder, "{{\\1c%s}}", tutorial_ass_tag_color(TUTORIAL_SYN_COMMENT))
+		ass_write_escaped_string(&builder, trimmed[comment_at:])
+	} else {
+		tutorial_ass_append_code_tokens(&builder, trimmed)
+	}
+	return strings.to_string(builder)
+}
+
 // tutorial_ass_escape escapes ASS control characters and converts newlines to \N.
 tutorial_ass_escape :: proc(text: string) -> string {
 	builder := strings.builder_make(context.temp_allocator)
-	for index in 0 ..< len(text) {
-		ch := text[index]
-		switch ch {
-		case '\\':
-			strings.write_string(&builder, "\\\\")
-		case '{':
-			strings.write_string(&builder, "\\{")
-		case '}':
-			strings.write_string(&builder, "\\}")
-		case '\n':
-			strings.write_string(&builder, "\\N")
-		case:
-			strings.write_byte(&builder, ch)
-		}
-	}
+	ass_write_escaped_string(&builder, text)
 	return strings.to_string(builder)
 }
 
@@ -492,6 +777,131 @@ tutorial_card_ppm_encode :: proc(width, height: int, accent: Tutorial_Accent, al
 		}
 	}
 	return out, true
+}
+
+@(private = "file")
+tutorial_rgb_blend :: proc(base, tint: Tutorial_Rgb, tint_percent: int) -> Tutorial_Rgb {
+	keep := 100 - tint_percent
+	return {
+		r = u8((int(base.r) * keep + int(tint.r) * tint_percent) / 100),
+		g = u8((int(base.g) * keep + int(tint.g) * tint_percent) / 100),
+		b = u8((int(base.b) * keep + int(tint.b) * tint_percent) / 100),
+	}
+}
+
+@(private = "file")
+ppm_fill_rect :: proc(pixels: []u8, width, height, x0, y0, x1, y1: int, color: Tutorial_Rgb) {
+	cx0 := clamp(x0, 0, width)
+	cx1 := clamp(x1, 0, width)
+	cy0 := clamp(y0, 0, height)
+	cy1 := clamp(y1, 0, height)
+	for y in cy0 ..< cy1 {
+		row := pixels[y * width * 3:][:width * 3]
+		for x in cx0 ..< cx1 {
+			at := x * 3
+			row[at] = color.r
+			row[at + 1] = color.g
+			row[at + 2] = color.b
+		}
+	}
+}
+
+@(private = "file")
+ppm_stroke_rect :: proc(pixels: []u8, width, height, x0, y0, x1, y1: int, color: Tutorial_Rgb) {
+	if x1 <= x0 || y1 <= y0 {
+		return
+	}
+	ppm_fill_rect(pixels, width, height, x0, y0, x1, y0 + 1, color)
+	ppm_fill_rect(pixels, width, height, x0, y1 - 1, x1, y1, color)
+	ppm_fill_rect(pixels, width, height, x0, y0, x0 + 1, y1, color)
+	ppm_fill_rect(pixels, width, height, x1 - 1, y0, x1, y1, color)
+}
+
+// tutorial_card_ppm_encode_slide writes a 1920x1080 binary P6 PPM background
+// for a two-panel teaching slide: colored kicker pill, left explanation panel
+// with top accent bar and block markers, right dark code panel with semantic
+// cyan top bar, and bottom accent-tinted key-rule callout strip.
+tutorial_card_ppm_encode_slide :: proc(width, height: int, card: Tutorial_Chapter_Card, allocator := context.allocator) -> (bytes: []u8, ok: bool) {
+	if width < 64 || height < 64 {
+		return nil, false
+	}
+	header := fmt.tprintf("P6\n%d %d\n255\n", width, height)
+	total := len(header) + width * height * 3
+	out := make([]u8, total, allocator)
+	copy(out[:len(header)], header)
+	pixels := out[len(header):]
+
+	sx :: proc(v, w: int) -> int { return v * w / TUTORIAL_VIDEO_WIDTH }
+	sy :: proc(v, h: int) -> int { return v * h / TUTORIAL_VIDEO_HEIGHT }
+
+	accent := tutorial_accent_rgb[card.accent]
+	pill_fill := tutorial_rgb_blend(TUTORIAL_BG_CANVAS, accent, 18)
+	pill_border := tutorial_rgb_blend(TUTORIAL_BG_CANVAS, accent, 65)
+	callout_fill := tutorial_rgb_blend(TUTORIAL_BG_CANVAS, accent, 13)
+	callout_border := tutorial_rgb_blend(TUTORIAL_BG_CANVAS, accent, 42)
+
+	// 1. Deep dark canvas background.
+	ppm_fill_rect(pixels, width, height, 0, 0, width, height, TUTORIAL_BG_CANVAS)
+
+	// 2. Kicker badge pill.
+	pill_w := clamp(len(card.kicker) * 14 + 44, 180, 620)
+	px0 := sx(TUTORIAL_SLIDE_MARGIN_X, width)
+	py0 := sy(TUTORIAL_SLIDE_PILL_TOP, height)
+	px1 := sx(TUTORIAL_SLIDE_MARGIN_X + pill_w, width)
+	py1 := sy(TUTORIAL_SLIDE_PILL_TOP + TUTORIAL_SLIDE_PILL_HEIGHT, height)
+	ppm_fill_rect(pixels, width, height, px0, py0, px1, py1, pill_fill)
+	ppm_stroke_rect(pixels, width, height, px0, py0, px1, py1, pill_border)
+
+	// 3. Left explanation panel ("HOW IT WORKS & WHY").
+	lx0 := sx(TUTORIAL_SLIDE_MARGIN_X, width)
+	ly0 := sy(TUTORIAL_SLIDE_PANEL_TOP, height)
+	lx1 := sx(TUTORIAL_SLIDE_LEFT_RIGHT, width)
+	ly1 := sy(TUTORIAL_SLIDE_PANEL_BOTTOM, height)
+	top_bar := max(sy(4, height), 2)
+	ppm_fill_rect(pixels, width, height, lx0, ly0, lx1, ly1, TUTORIAL_BG_LEFT_PANEL)
+	ppm_stroke_rect(pixels, width, height, lx0, ly0, lx1, ly1, TUTORIAL_BORDER_PANEL)
+	ppm_fill_rect(pixels, width, height, lx0, ly0, lx1, ly0 + top_bar, accent)
+	// Header divider line and per-block vertical accent markers.
+	div_y := sy(TUTORIAL_SLIDE_PANEL_TOP + 58, height)
+	ppm_fill_rect(pixels, width, height, sx(TUTORIAL_SLIDE_MARGIN_X + 32, width), div_y, sx(TUTORIAL_SLIDE_LEFT_RIGHT - 32, width), div_y + 1, TUTORIAL_DIVIDER_PANEL)
+	for block_idx in 0 ..< min(len(card.left_blocks), 3) {
+		by := sy(TUTORIAL_SLIDE_PANEL_TOP + 84 + block_idx * 172, height)
+		bh := max(sy(26, height), 2)
+		bx0 := sx(TUTORIAL_SLIDE_MARGIN_X + 32, width)
+		bx1 := bx0 + max(sx(4, width), 2)
+		ppm_fill_rect(pixels, width, height, bx0, by, bx1, by + bh, accent)
+	}
+
+	// 4. Right syntax-highlighted code panel ("HOW TO USE IT").
+	rx0 := sx(TUTORIAL_SLIDE_RIGHT_LEFT, width)
+	ry0 := sy(TUTORIAL_SLIDE_PANEL_TOP, height)
+	rx1 := sx(TUTORIAL_SLIDE_RIGHT_X, width)
+	ry1 := sy(TUTORIAL_SLIDE_PANEL_BOTTOM, height)
+	ppm_fill_rect(pixels, width, height, rx0, ry0, rx1, ry1, TUTORIAL_BG_RIGHT_PANEL)
+	ppm_stroke_rect(pixels, width, height, rx0, ry0, rx1, ry1, TUTORIAL_BORDER_PANEL)
+	ppm_fill_rect(pixels, width, height, rx0, ry0, rx1, ry0 + top_bar, TUTORIAL_CODE_ACCENT)
+	ppm_fill_rect(pixels, width, height, sx(TUTORIAL_SLIDE_RIGHT_LEFT + 32, width), div_y, sx(TUTORIAL_SLIDE_RIGHT_X - 32, width), div_y + 1, TUTORIAL_DIVIDER_PANEL)
+
+	// 5. Bottom key-rule callout strip.
+	cx0 := sx(TUTORIAL_SLIDE_MARGIN_X, width)
+	cy0 := sy(TUTORIAL_SLIDE_CALLOUT_TOP, height)
+	cx1 := sx(TUTORIAL_SLIDE_RIGHT_X, width)
+	cy1 := sy(TUTORIAL_SLIDE_CALLOUT_BOTTOM, height)
+	stripe_w := max(sx(6, width), 2)
+	ppm_fill_rect(pixels, width, height, cx0, cy0, cx1, cy1, callout_fill)
+	ppm_stroke_rect(pixels, width, height, cx0, cy0, cx1, cy1, callout_border)
+	ppm_fill_rect(pixels, width, height, cx0, cy0, cx0 + stripe_w, cy1, accent)
+
+	return out, true
+}
+
+// tutorial_card_ppm_encode_card dispatches to the two-panel teaching slide
+// renderer when card.two_panel is true, or the single-card renderer otherwise.
+tutorial_card_ppm_encode_card :: proc(width, height: int, card: Tutorial_Chapter_Card, allocator := context.allocator) -> (bytes: []u8, ok: bool) {
+	if card.two_panel {
+		return tutorial_card_ppm_encode_slide(width, height, card, allocator)
+	}
+	return tutorial_card_ppm_encode(width, height, card.accent, allocator)
 }
 
 @(private = "file")
@@ -749,25 +1159,89 @@ tutorial_ass_generate :: proc(
 	fmt.sbprintf(&builder, "Style: CardTitle,%s,50,%s,%s,%s,%s,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_BOLD, primary_col, primary_col, transparent, transparent)
 	fmt.sbprintf(&builder, "Style: CardBody,%s,28,%s,%s,%s,%s,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_REGULAR, body_col, body_col, transparent, transparent)
 	fmt.sbprintf(&builder, "Style: CardFooter,%s,22,%s,%s,%s,%s,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_MONO, dim_col, dim_col, transparent, transparent)
+	fmt.sbprintf(&builder, "Style: SlideKicker,%s,19,%s,%s,%s,%s,0,0,0,0,100,100,1.4,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_BOLD, primary_col, primary_col, transparent, transparent)
+	fmt.sbprintf(&builder, "Style: SlideTitle,%s,48,%s,%s,%s,%s,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_BOLD, primary_col, primary_col, transparent, transparent)
+	fmt.sbprintf(&builder, "Style: SlideSubtitle,%s,24,%s,%s,%s,%s,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_REGULAR, tutorial_ass_color(TUTORIAL_TEXT_SUBTITLE), primary_col, transparent, transparent)
+	fmt.sbprintf(&builder, "Style: SlidePanelHead,%s,19,%s,%s,%s,%s,0,0,0,0,100,100,1.4,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_BOLD, primary_col, primary_col, transparent, transparent)
+	fmt.sbprintf(&builder, "Style: SlideBlockHead,%s,23,%s,%s,%s,%s,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_BOLD, primary_col, primary_col, transparent, transparent)
+	fmt.sbprintf(&builder, "Style: SlideBlockBody,%s,21,%s,%s,%s,%s,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_REGULAR, body_col, body_col, transparent, transparent)
+	fmt.sbprintf(&builder, "Style: SlideCode,%s,21,%s,%s,%s,%s,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_MONO, primary_col, primary_col, transparent, transparent)
+	fmt.sbprintf(&builder, "Style: SlideCallout,%s,22,%s,%s,%s,%s,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_REGULAR, body_col, body_col, transparent, transparent)
+	fmt.sbprintf(&builder, "Style: SlideFooter,%s,18,%s,%s,%s,%s,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_MONO, dim_col, dim_col, transparent, transparent)
 	fmt.sbprintf(&builder, "Style: CapBox,%s,20,%s,%s,%s,%s,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_REGULAR, primary_col, primary_col, transparent, transparent)
 	fmt.sbprintf(&builder, "Style: CapKicker,%s,19,%s,%s,%s,%s,0,0,0,0,100,100,1.2,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_BOLD, primary_col, primary_col, transparent, transparent)
-	fmt.sbprintf(&builder, "Style: CapHeading,%s,28,%s,%s,%s,%s,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_BOLD, primary_col, primary_col, transparent, transparent)
-	fmt.sbprintf(&builder, "Style: CapBody,%s,23,%s,%s,%s,%s,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n\n", TUTORIAL_FONT_REGULAR, body_col, body_col, transparent, transparent)
+	fmt.sbprintf(&builder, "Style: CapHeading,%s,27,%s,%s,%s,%s,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n", TUTORIAL_FONT_BOLD, primary_col, primary_col, transparent, transparent)
+	fmt.sbprintf(&builder, "Style: CapBody,%s,22,%s,%s,%s,%s,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n\n", TUTORIAL_FONT_REGULAR, body_col, body_col, transparent, transparent)
 
 	fmt.sbprintf(&builder, "[Events]\n")
 	fmt.sbprintf(&builder, "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
 
-	// Chapter title cards (drawn onto their dedicated dark .ppm card frames).
+	// Chapter title cards & two-panel teaching slides.
 	card_text_x := TUTORIAL_CARD_LEFT + 64
+	code_accent_ass := tutorial_ass_tag_color(TUTORIAL_CODE_ACCENT)
 	for span in timeline.card_spans {
 		card := cards[span.card_index]
 		start_ts := tutorial_ass_timestamp(span.start_ms)
 		end_ts := tutorial_ass_timestamp(span.end_ms)
-		accent_ass := tutorial_ass_color(tutorial_accent_rgb[card.accent])
+		accent_rgb := tutorial_accent_rgb[card.accent]
+		accent_ass := tutorial_ass_tag_color(accent_rgb)
 
-		kicker_y := len(card.lines) > 1 ? TUTORIAL_CARD_TOP + 64 : TUTORIAL_CARD_TOP + 150
-		title_y := kicker_y + 44
-		body_y := title_y + 84
+		if card.two_panel {
+			// Header zone: kicker pill, bold title, plain-English subtitle.
+			fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,SlideKicker,,0,0,0,,{{\\an7\\pos(%d,%d)\\1c%s}}%s\n",
+				start_ts, end_ts, TUTORIAL_SLIDE_MARGIN_X + 20, TUTORIAL_SLIDE_PILL_TOP + 8, accent_ass, tutorial_ass_escape(card.kicker))
+			fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,SlideTitle,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s\n",
+				start_ts, end_ts, TUTORIAL_SLIDE_MARGIN_X, 126, tutorial_ass_escape(card.title))
+			if card.subtitle != "" {
+				fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,SlideSubtitle,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s\n",
+					start_ts, end_ts, TUTORIAL_SLIDE_MARGIN_X, 194,
+					tutorial_ass_format_rich(card.subtitle, TUTORIAL_FONT_REGULAR, 24, TUTORIAL_TEXT_SUBTITLE, TUTORIAL_TEXT_PRIMARY))
+			}
+
+			// Left panel: section heading + 3 spaced teaching blocks.
+			left_x := TUTORIAL_SLIDE_MARGIN_X + 32
+			fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,SlidePanelHead,,0,0,0,,{{\\an7\\pos(%d,%d)\\1c%s}}%s\n",
+				start_ts, end_ts, left_x, TUTORIAL_SLIDE_PANEL_TOP + 22, accent_ass, tutorial_ass_escape(card.left_heading))
+			for block, block_idx in card.left_blocks {
+				by := TUTORIAL_SLIDE_PANEL_TOP + 82 + block_idx * 172
+				fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,SlideBlockHead,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s\n",
+					start_ts, end_ts, left_x + 18, by, tutorial_ass_escape(block.heading))
+				fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,SlideBlockBody,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s\n",
+					start_ts, end_ts, left_x + 18, by + 34,
+					tutorial_ass_format_rich(block.body, TUTORIAL_FONT_REGULAR, 21, TUTORIAL_TEXT_BODY, TUTORIAL_TEXT_PRIMARY))
+			}
+
+			// Right panel: section heading + syntax-highlighted JetBrains Mono code lines.
+			right_x := TUTORIAL_SLIDE_RIGHT_LEFT + 32
+			fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,SlidePanelHead,,0,0,0,,{{\\an7\\pos(%d,%d)\\1c%s}}%s\n",
+				start_ts, end_ts, right_x, TUTORIAL_SLIDE_PANEL_TOP + 22, code_accent_ass, tutorial_ass_escape(card.right_heading))
+			code_y := TUTORIAL_SLIDE_PANEL_TOP + 82
+			for line in card.right_lines {
+				if line == "" {
+					code_y += 16
+					continue
+				}
+				fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,SlideCode,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s\n",
+					start_ts, end_ts, right_x, code_y, tutorial_ass_format_code_line(line))
+				code_y += 32
+			}
+
+			// Bottom callout strip & subtle footer.
+			if card.callout != "" {
+				fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,SlideCallout,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s\n",
+					start_ts, end_ts, TUTORIAL_SLIDE_MARGIN_X + 34, TUTORIAL_SLIDE_CALLOUT_TOP + 29,
+					tutorial_ass_format_rich(card.callout, TUTORIAL_FONT_REGULAR, 22, TUTORIAL_TEXT_SUBTITLE, accent_rgb))
+			}
+			if card.footer != "" {
+				fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,SlideFooter,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s\n",
+					start_ts, end_ts, TUTORIAL_SLIDE_MARGIN_X, TUTORIAL_SLIDE_CALLOUT_BOTTOM + 24, tutorial_ass_escape(card.footer))
+			}
+			continue
+		}
+
+		kicker_y := len(card.lines) > 1 ? TUTORIAL_CARD_TOP + 56 : TUTORIAL_CARD_TOP + 150
+		title_y := kicker_y + 42
+		body_y := title_y + 82
 
 		fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CardKicker,,0,0,0,,{{\\an7\\pos(%d,%d)\\1c%s}}%s\n",
 			start_ts, end_ts, card_text_x, kicker_y, accent_ass, tutorial_ass_escape(card.kicker))
@@ -777,10 +1251,11 @@ tutorial_ass_generate :: proc(
 		for line, line_idx in card.lines {
 			prefix := len(card.lines) > 1 ? "-  " : ""
 			fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CardBody,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s%s\n",
-				start_ts, end_ts, card_text_x, body_y + line_idx * 54, prefix, tutorial_ass_escape(line))
+				start_ts, end_ts, card_text_x, body_y + line_idx * 54, prefix,
+				tutorial_ass_format_rich(line, TUTORIAL_FONT_REGULAR, 28, TUTORIAL_TEXT_BODY, TUTORIAL_TEXT_PRIMARY))
 		}
 		if card.footer != "" {
-			footer_y := TUTORIAL_CARD_BOTTOM - 72
+			footer_y := TUTORIAL_CARD_BOTTOM - 68
 			fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CardFooter,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s\n",
 				start_ts, end_ts, card_text_x, footer_y, tutorial_ass_escape(card.footer))
 		}
@@ -800,7 +1275,8 @@ tutorial_ass_generate :: proc(
 		cap := captions[span.caption_index]
 		start_ts := tutorial_ass_timestamp(span.start_ms)
 		end_ts := tutorial_ass_timestamp(span.end_ms)
-		accent_ass := tutorial_ass_color(tutorial_accent_rgb[cap.accent])
+		accent_rgb := tutorial_accent_rgb[cap.accent]
+		accent_ass := tutorial_ass_tag_color(accent_rgb)
 
 		// Layer 0: rectangular backing box with crisp 1 px border.
 		fmt.sbprintf(&builder, "Dialogue: 0,%s,%s,CapBox,,0,0,0,,{{\\an7\\pos(%d,%d)\\bord1\\shad0\\1c%s\\3c%s\\p1}}m 0 0 l %d 0 l %d %d l 0 %d{{\\p0}}\n",
@@ -808,14 +1284,16 @@ tutorial_ass_generate :: proc(
 		// Layer 1: rectangular semantic left accent bar.
 		fmt.sbprintf(&builder, "Dialogue: 1,%s,%s,CapBox,,0,0,0,,{{\\an7\\pos(%d,%d)\\bord0\\shad0\\1c%s\\p1}}m 0 0 l %d 0 l %d %d l 0 %d{{\\p0}}\n",
 			start_ts, end_ts, TUTORIAL_CAPTION_LEFT, TUTORIAL_CAPTION_TOP, accent_ass, bar_w, bar_w, cap_h, cap_h)
-		// Layer 2: kicker, bold heading, and concise explanation.
+		// Layer 2: kicker, rich heading, and rich two-line explanation.
 		text_x := TUTORIAL_CAPTION_LEFT + 32
 		fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CapKicker,,0,0,0,,{{\\an7\\pos(%d,%d)\\1c%s}}%s\n",
-			start_ts, end_ts, text_x, TUTORIAL_CAPTION_TOP + 22, accent_ass, tutorial_ass_escape(cap.kicker))
+			start_ts, end_ts, text_x, TUTORIAL_CAPTION_TOP + 16, accent_ass, tutorial_ass_escape(cap.kicker))
 		fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CapHeading,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s\n",
-			start_ts, end_ts, text_x, TUTORIAL_CAPTION_TOP + 54, tutorial_ass_escape(cap.heading))
+			start_ts, end_ts, text_x, TUTORIAL_CAPTION_TOP + 44,
+			tutorial_ass_format_rich(cap.heading, TUTORIAL_FONT_BOLD, 27, TUTORIAL_TEXT_PRIMARY, accent_rgb))
 		fmt.sbprintf(&builder, "Dialogue: 2,%s,%s,CapBody,,0,0,0,,{{\\an7\\pos(%d,%d)}}%s\n",
-			start_ts, end_ts, text_x, TUTORIAL_CAPTION_TOP + 100, tutorial_ass_escape(cap.body))
+			start_ts, end_ts, text_x, TUTORIAL_CAPTION_TOP + 86,
+			tutorial_ass_format_rich(cap.body, TUTORIAL_FONT_REGULAR, 22, TUTORIAL_TEXT_BODY, TUTORIAL_TEXT_PRIMARY))
 	}
 
 	return strings.to_string(builder)
@@ -853,12 +1331,17 @@ tutorial_webm_encode_command :: proc(list_path, ass_path, fonts_dir: string, crf
 	return tutorial_encode_command(list_path, ass_path, fonts_dir, total_ms, output, film_webm_encoder_args(backend, crf))
 }
 
-// tutorial_film_write composes the chaptered 1920x1080 tutorial.mp4 and
-// tutorial.webm (strictly <= FILM_DOCUMENT_SIZE_LIMIT, 4 MiB) from captured
-// pictures and build/films/tutorial.cues, copies the MP4 and stills to the
-// development log, removes the raw picture folder, and copies tutorial.webm
-// to docs/films/tutorial.webm when a news entry names it.
+// tutorial_film_write composes the chaptered 1920x1080 tutorial film.
 tutorial_film_write :: proc(name: string) -> bool {
+	return chaptered_film_write(name, tutorial_chapter_cards[:], tutorial_captions[:])
+}
+
+// chaptered_film_write composes a chaptered 1920x1080 MP4 and WebM (strictly
+// <= FILM_DOCUMENT_SIZE_LIMIT, 4 MiB) from captured pictures and
+// build/films/<name>.cues, copies the MP4 and stills to the development log,
+// removes the raw picture folder, and copies the WebM to docs/films/<name>.webm
+// when a news entry names it.
+chaptered_film_write :: proc(name: string, cards: []Tutorial_Chapter_Card, captions: []Tutorial_Caption) -> bool {
 	folder := foundation.join(FILM_FOLDER, "/", name)
 	paths, listed := foundation.files_with_suffix(folder, FILM_PICTURE_SUFFIX)
 	if !listed || len(paths) == 0 {
@@ -891,18 +1374,18 @@ tutorial_film_write :: proc(name: string) -> bool {
 	}
 	defer tutorial_cues_free(cues)
 
-	timeline, timeline_ok := tutorial_timeline_build(names, runs, cues, tutorial_chapter_cards[:], tutorial_captions[:])
+	timeline, timeline_ok := tutorial_timeline_build(names, runs, cues, cards, captions)
 	if !timeline_ok {
-		fmt.eprintfln("modustool: tutorial timeline composition failed: cue file %s does not match chapter cards and captions", cue_path)
+		fmt.eprintfln("modustool: %s timeline composition failed: cue file %s does not match chapter cards and captions", name, cue_path)
 		return false
 	}
 	defer tutorial_timeline_free(&timeline)
 
 	// Write chapter title card .ppm frames into the picture folder.
-	for card in tutorial_chapter_cards {
-		ppm, ppm_ok := tutorial_card_ppm_encode(TUTORIAL_VIDEO_WIDTH, TUTORIAL_VIDEO_HEIGHT, card.accent)
+	for card in cards {
+		ppm, ppm_ok := tutorial_card_ppm_encode_card(TUTORIAL_VIDEO_WIDTH, TUTORIAL_VIDEO_HEIGHT, card)
 		if !ppm_ok {
-			fmt.eprintfln("modustool: cannot render tutorial card %s", card.id)
+			fmt.eprintfln("modustool: cannot render %s card %s", name, card.id)
 			return false
 		}
 		card_path := foundation.join(folder, "/", card.id, FILM_PICTURE_SUFFIX)
@@ -921,7 +1404,7 @@ tutorial_film_write :: proc(name: string) -> bool {
 	}
 
 	ass_path := foundation.join(folder, "/", TUTORIAL_ASS_NAME)
-	ass_text := tutorial_ass_generate(timeline, tutorial_chapter_cards[:], tutorial_captions[:])
+	ass_text := tutorial_ass_generate(timeline, cards, captions)
 	defer delete(ass_text)
 	if write_err := os.write_entire_file(ass_path, ass_text); write_err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", ass_path, write_err)

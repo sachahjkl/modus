@@ -13,6 +13,7 @@ package console
 
 import "modus:contract/blake3"
 import "modus:contract/isolated"
+import "modus:contract/module"
 import pr "modus:contract/plans_recipes"
 import "modus:lex_evaluator"
 import "internal:console/plan_reader"
@@ -119,6 +120,21 @@ plan_rows_of_argument :: proc "contextless" (found: ^Command, index: int, argume
 	copy(bytes, plan_rows_bytes[:count * size_of(pr.Plan_Entry_Row)])
 	argument^ = {kind = .Table, record = bytes, file = found.file, detail = detail}
 	return true
+}
+
+// plan_expected_layout_matches says whether a record parameter has the exact
+// binary layout of plans_recipes.Plan_Expected (a single 32-byte hash field
+// current_plan_hash whose zero value means no current applied plan yet).
+plan_expected_layout_matches :: proc "contextless" (file: []u8, detail: u32) -> bool {
+	described, ok := module.record_type(file, detail)
+	if !ok || described.size != size_of(pr.Plan_Expected) || described.field_count != 1 {
+		return false
+	}
+	field, field_ok := module.field(file, described, 0)
+	if !field_ok || field.type != u8(module.Type.Bytes) || field.detail != 32 || field.offset != 0 {
+		return false
+	}
+	return module.string_at(file, field.name_offset, field.name_count) == "current_plan_hash"
 }
 
 // console_image_of_plans gives the reader the boot image of the console.

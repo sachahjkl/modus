@@ -975,6 +975,7 @@ host_command_find :: proc "contextless" (data: rawptr, name: string) -> (signatu
 		// record of a parameter so record literals like `{}` type-check.
 		if item.parameters[index] == .Record && item.file != nil && item.function.parameter_details[index] != 0 && item.record == 0 {
 			signature.files[index], signature.details[index] = item.file, item.function.parameter_details[index]
+			signature.empty_record_zeroed[index] = plan_expected_layout_matches(item.file, item.function.parameter_details[index])
 		}
 		// An Enum parameter: its enum names the members that a line gives
 		// it, and an optional one may be left out.

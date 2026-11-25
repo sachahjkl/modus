@@ -587,7 +587,7 @@ Film :: struct {
 	needs_cache_peer: bool, // Starts a local signed QUIC cache-serve forwarded at 10.0.2.100:5010.
 }
 
-FILM_NAMES :: "terminal | palette | heron | boot | desktop | console | program | monitor | tutorial"
+FILM_NAMES :: "terminal | palette | heron | boot | desktop | console | program | monitor | tutorial | course"
 TEST_OUTPUT_FILM_TERMINAL :: foundation.BUILD_FOLDER + "/test_output_film_terminal.txt"
 TEST_OUTPUT_FILM_PALETTE :: foundation.BUILD_FOLDER + "/test_output_film_palette.txt"
 TEST_OUTPUT_FILM_HERON :: foundation.BUILD_FOLDER + "/test_output_film_heron.txt"
@@ -597,6 +597,7 @@ TEST_OUTPUT_FILM_CONSOLE :: foundation.BUILD_FOLDER + "/test_output_film_console
 TEST_OUTPUT_FILM_PROGRAM :: foundation.BUILD_FOLDER + "/test_output_film_program.txt"
 TEST_OUTPUT_FILM_MONITOR :: foundation.BUILD_FOLDER + "/test_output_film_monitor.txt"
 TEST_OUTPUT_FILM_TUTORIAL :: foundation.BUILD_FOLDER + "/test_output_film_tutorial.txt"
+TEST_OUTPUT_FILM_COURSE :: foundation.BUILD_FOLDER + "/test_output_film_course.txt"
 
 // film_of_name gives the film with a name. The name of a film is the text
 // of the step Film_Start of its scenario.
@@ -625,6 +626,12 @@ film_of_name :: proc(name: string) -> (film: Film, found: bool) {
 			output           = TEST_OUTPUT_FILM_TUTORIAL,
 			needs_data_disk  = true,
 			needs_cache_peer = true,
+		}, true
+	case "course":
+		return Film{
+			name   = "course",
+			steps  = scenario_course_film[:],
+			output = TEST_OUTPUT_FILM_COURSE,
 		}, true
 	}
 	return {}, false
@@ -759,6 +766,9 @@ FILM_STILL_DIVISOR :: 4
 film_write :: proc(name: string) -> bool {
 	if name == "tutorial" {
 		return tutorial_film_write(name)
+	}
+	if name == "course" {
+		return course_film_write(name)
 	}
 	folder := foundation.join(FILM_FOLDER, "/", name)
 	paths, listed := foundation.files_with_suffix(folder, FILM_PICTURE_SUFFIX)

@@ -1288,3 +1288,131 @@ evaluation_runs_chained_and_nested_conditions :: proc(t: ^testing.T) {
 	testing.expect_value(t, bad_div.evaluation.refusal.refusal, Refusal.Division_By_Zero)
 	testing.expect_value(t, bad_div.evaluation.chunk_count, 1)
 }
+
+// A record parameter with empty_record_zeroed accepts `{}` as zeroed bytes and
+// accepts a 32-byte Hash value for a 32-byte Bytes (Hash_Field) field, while
+// still refusing unknown fields and non-Hash values.
+@(test)
+evaluation_empty_record_zeroed_and_hash_field_literal :: proc(t: ^testing.T) {
+	fields := [1]module_file_writer.Field_Description{
+		{name = "current_plan_hash", type = .Bytes, detail = 32, offset = 0, kind = .Hash},
+	}
+	records := [1]module_file_writer.Record_Description{
+		{name = "Plan_Expected", size = 32, fields = fields[:]},
+	}
+	buf: [1024]u8
+	sz, ref := module_file_writer.write({records = records[:]}, buf[:])
+	testing.expect_value(t, ref.refusal, module_file_writer.Refusal.None)
+	rec_file := buf[:sz]
+
+	Host_Data :: struct {
+		file:          []u8,
+		allow_empty:   bool,
+		memory:        [128]u8,
+		memory_used:   int,
+		captured:      [32]u8,
+		captured_size: int,
+	}
+
+	run_case :: proc(line: string, file: []u8, allow_empty: bool) -> (ok: bool, refusal: Refusal, captured: [32]u8, captured_size: int) {
+		hd := Host_Data{file = file, allow_empty = allow_empty}
+		host := Evaluation_Host{
+			data = &hd,
+			command_find = proc "contextless" (data: rawptr, name: string) -> (sig: Command_Signature, found: bool) {
+				h := (^Host_Data)(data)
+				if name != "expect" {
+					return {}, false
+				}
+				sig.has_effect = true
+				sig.parameter_count = 1
+				sig.names[0], sig.kinds[0], sig.files[0], sig.details[0] = "expected", .Record, h.file, 1
+				sig.empty_record_zeroed[0] = h.allow_empty
+				return sig, true
+			},
+			record_memory = proc "contextless" (data: rawptr, size: int) -> ([]u8, bool) {
+				h := (^Host_Data)(data)
+				if h.memory_used + size > len(h.memory) {
+					return nil, false
+				}
+				slice := h.memory[h.memory_used:][:size]
+				// Fill with non-zero bytes to prove literal_type_to_record zeroes `{}`.
+				for &b in slice {
+					b = 0xAA
+				}
+				h.memory_used += size
+				return slice, true
+			},
+			call_run = proc "contextless" (data: rawptr, name: string, arguments: []Host_Value) -> (Host_Value, bool) {
+				h := (^Host_Data)(data)
+				if len(arguments) == 1 && len(arguments[0].record) == 32 {
+					copy(h.captured[:], arguments[0].record)
+					h.captured_size = 32
+				}
+				return {kind = .Integer, integer = 1}, true
+			},
+		}
+		buffers := new(lex_parser.Console_Tree_Buffers, context.temp_allocator)
+		eval_buffers := new(Console_Eval_Buffers, context.temp_allocator)
+		tree := new(lex_parser.Syntax_Tree, context.temp_allocator)
+		eval := new(Evaluation, context.temp_allocator)
+		lex_parser.parse_console(line, {}, buffers, tree)
+		evaluation_start(eval, tree, .Console, host, eval_buffers, EVALUATION_BUDGET_STEPS, TEST_STACK_BYTES, EVALUATION_DEPTH_LIMIT)
+		_, eval_ok := line_force(eval)
+		return eval_ok, eval.refusal.refusal, hd.captured, hd.captured_size
+	}
+
+	// 1. Empty `{}` accepted as 32 zero bytes even from non-zero host memory when allow_empty is true.
+	ok, refusal, got, got_sz := run_case("expect({})", rec_file, true)
+	testing.expect(t, ok)
+	testing.expect_value(t, got_sz, 32)
+	for b in got {
+		testing.expect_value(t, b, u8(0))
+	}
+
+	// 2. Empty `{}` refused when allow_empty is false.
+	ok, refusal, _, _ = run_case("expect({})", rec_file, false)
+	testing.expect(t, !ok)
+	testing.expect_value(t, refusal, Refusal.Literal_Field_Missing)
+
+	// 3. Explicit blake3 hash literal populates all 32 bytes.
+	ok, refusal, got, got_sz = run_case("expect({current_plan_hash = blake3:0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20})", rec_file, true)
+	testing.expect(t, ok)
+	testing.expect_value(t, got_sz, 32)
+	testing.expect_value(t, got[0], u8(0x01))
+	testing.expect_value(t, got[31], u8(0x20))
+
+	// 4. Second blake3 hash in a line resolves its non-zero pool index via hash_of.
+	ok, refusal, got, got_sz = run_case(
+		"let a = blake3:1111111111111111111111111111111111111111111111111111111111111111, b = blake3:2222222222222222222222222222222222222222222222222222222222222222 in expect({current_plan_hash = b})",
+		rec_file,
+		true,
+	)
+	testing.expect(t, ok)
+	testing.expect_value(t, got_sz, 32)
+	for b in got {
+		testing.expect_value(t, b, u8(0x22))
+	}
+
+	// 5. Unknown field and non-Hash value are refused.
+	ok, refusal, _, _ = run_case("expect({wrong = 1})", rec_file, true)
+	testing.expect(t, !ok)
+	testing.expect_value(t, refusal, Refusal.Literal_Field_Unknown)
+
+	ok, refusal, _, _ = run_case("expect({current_plan_hash = 42})", rec_file, true)
+	testing.expect(t, !ok)
+	testing.expect_value(t, refusal, Refusal.Literal_Field_Kind)
+
+	// 6. Non-32-byte .Bytes field refuses a blake3 hash literal.
+	short_fields := [1]module_file_writer.Field_Description{
+		{name = "short_bytes", type = .Bytes, detail = 16, offset = 0, kind = .Hash},
+	}
+	short_records := [1]module_file_writer.Record_Description{
+		{name = "Short_Bytes", size = 16, fields = short_fields[:]},
+	}
+	short_buf: [1024]u8
+	short_sz, short_ref := module_file_writer.write({records = short_records[:]}, short_buf[:])
+	testing.expect_value(t, short_ref.refusal, module_file_writer.Refusal.None)
+	ok, refusal, _, _ = run_case("expect({short_bytes = blake3:1111111111111111111111111111111111111111111111111111111111111111})", short_buf[:short_sz], false)
+	testing.expect(t, !ok)
+	testing.expect_value(t, refusal, Refusal.Literal_Field_Kind)
+}
