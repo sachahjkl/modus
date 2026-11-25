@@ -136,38 +136,47 @@ One compiled module format (`.module`) serves desktop apps, background services,
 |---|---|---|---|
 | `start("name")` | Launch a built-in app or a pinned disk app from `module_files` | Separate process; built-in apps receive their declared grant set; disk apps verify their pinned BLAKE3 hash and start with only their allowed grants | `start("notes")`, `start("grants")`, `start("db_browser")` |
 | `start("name", hash)` / `start_from_disk("name", hash)` | Launch a disk app in `module_files` against an explicit 64-digit BLAKE3 hash | Separate disk process; refuses immediately if stored bytes do not match `hash`; starts with zero ambient grants | `start("db_browser", mod)` or `start_from_disk("db_browser", mod)` |
-| `connect("service")` | Attach the console to a running (or on-demand) background service | Service runs in its own address space; commands keep the `service.` prefix | `connect("monitor")`, `connect("plans")`, `connect("recipes")` |
-| `isolate("module")` | Spawn a disposable zero-grant child process for a library module and add its exports directly to your prompt | Separate child process with zero kernel handles; a fault stops only that child; commands use shorthand names | `isolate("sample")` then `help("readings")` |
-| `load("module")` | Map a trusted library module directly into the console's own memory | Runs in-process with the console's memory and handles (no crash wall); for trusted tools and profiling | `load("sample")` |
+| `connect("service")` / `mon = connect("service")` | Attach the console to a running (or on-demand) background service | Service runs in its own address space; commands use `service.*` or the bound handle prefix `mon.*` | `connect("monitor")` or `mon = connect("monitor")` |
+| `s = isolate("module")` | Spawn a disposable zero-grant child process for a library module and bind its exports to variable `s` | Separate child process with zero kernel handles; a fault stops only that child; all exports stay scoped under `s.*` | `s = isolate("sample")` then `help(s)` |
+| `m = load("module")` | Map a trusted library module directly into the console's own memory and bind its exports to `m` | Runs in-process with the console's memory and handles (no crash wall); exports stay scoped under `m.*` | `m = load("math")` then `m.gcd(84, 36)` |
+
+### Why library modules require a bound handle (`s = isolate(...)`)
+
+Calling `isolate("sample")` or `load("math")` without assigning it to a variable is refused **before** any process spawns or memory maps (`src/md/features/module_handles.md`). Binding every library module to a plain identifier variable gives three concrete guarantees:
+
+- **Zero global namespace pollution.** Every export and record constructor lives strictly under `<binding>.<name>` (`s.readings`, `s.sum_values`), so one library can never silently shadow another library or a built-in command.
+- **Multiple independent instances.** You can isolate the same module twice at the same time (`a = isolate("tally")` and `b = isolate("tally")`), and each handle runs its own separate child process and state (`a.add(5, "first")` and `b.total()` stay independent).
+- **Clean lifetime ownership.** Passing the handle to `unload(s)` — or reassigning `s` to a new value (`s = 42` or `s = isolate("other")`) — stops only that exact child process and reclaims its command names. If a reassignment fails on the right-hand side, the previous handle remains intact.
 
 ### Inspecting and calling an isolated library (`sample`)
 
 `sample` is a built-in demonstration library module that exports 12 typed record and table functions, including `readings(count)` (which generates `count` example sensor rows with fields `sensor`, `time`, `value`, `minimum`, and `maximum`) and `sum_values(table)` (which sums the `value` column of a `Reading` table).
 
-When you call `isolate("sample")`, the console spawns a zero-grant child process for `sample.module` and imports its exports directly into your prompt without a service prefix. You can inspect any imported command immediately with `help("readings")`:
+Bind `sample` to a handle `s`, inspect its exports with `help(s)` or `help("s.readings")`, and pipe a typed table across the sandbox border:
 
 ```
-isolate("sample")
-help("readings")
-t = readings(4)
-t |> where(sensor = 2) |> sum_values
+s = isolate("sample")
+help(s)
+help("s.readings")
+t = s.readings(4)
+t |> where(sensor = 2) |> s.sum_values
+unload(s)
 ```
 
 What happens step by step:
 
-1. `isolate("sample")` starts the zero-grant child process and prints `Loaded` (`call: isolated`).
-2. `help("readings")` prints the exact signature (`readings(count: Integer) -> Table(Reading)`) and description exported by `sample`.
-3. `t = readings(4)` runs inside the isolated child process and returns 4 demo `Reading` rows (`sensor` 0..3, values `10, 20, 30, 40`) across the call ring.
+1. `s = isolate("sample")` starts the zero-grant child process and binds its `Loaded` handle record to `s` (`binding: s`, `module: sample`, `call: isolated`).
+2. `help(s)` lists only the commands owned by handle `s`; `help("s.readings")` prints the exact signature (`s.readings(count: Integer) -> Table(Reading)`) and description of `s.readings`.
+3. `t = s.readings(4)` runs inside the isolated child process and returns 4 demo `Reading` rows (`sensor` 0..3, values `10, 20, 30, 40`) across the call ring.
 4. `where(sensor = 2)` filters the table in the console to the single row whose `sensor` is `2` (`value = 30`).
-5. `sum_values` sends the filtered `Table(Reading)` back to the isolated child and returns `30`.
-6. If you pass a mismatched table shape (`t |> columns(sensor, value) |> sum_values`), the console refuses before crossing the border because the projected table does not match `Table(Reading)`.
+5. `s.sum_values` sends the filtered `Table(Reading)` back to `s`'s isolated child and returns `30`.
+6. If you pass a mismatched table shape (`t |> columns(sensor, value) |> s.sum_values`), the console refuses before crossing the border because the projected table does not match `Table(Reading)`.
 7. If an isolated module faults, only that disposable child stops; the console reports the stop reason and keeps running.
-
-Call `unload("sample")` when finished to stop the disposable child and remove its commands.
+8. `unload(s)` stops `s`'s disposable child process, removes `s.*` commands, and clears the variable `s`.
 
 ### Calling a connected service
 
-Unlike `isolate`, `connect("monitor")` attaches to a long-lived background service and keeps its namespace prefix (`monitor.*`):
+`connect("monitor")` attaches to a long-lived background service under its service prefix (`monitor.*`), and you can also bind it to an explicit handle (`mon = connect("monitor")`):
 
 ```
 connect("monitor")
