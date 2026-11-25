@@ -2287,7 +2287,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "rows(compositor.screen()) - rows(where(compositor.screen(), frames_on_the_shown_page = 0))"},
 	{kind = .Wait, text = "[console] 0"},
 	{kind = .Type, text = "start(\"nothing\")"},
-	{kind = .Wait, text = "[console] error: root.Start: the argument name names none of the modules"},
+	{kind = .Wait, text = "[console] error: start: no boot-image module has the name \"nothing\", and no disk grant row pins its hash; pass the 64-digit hash with start(\"nothing\", \"<hash>\")"},
 	{kind = .Type, text = "stop(\"compositor\")"},
 	{kind = .Wait, text = "[console] error: root.Stop: the argument name names a process of the system: it starts at boot, or it is a device service, and the call does not act on it"},
 	{kind = .Type, text = "revoke(\"nobody\", \"log\")"},

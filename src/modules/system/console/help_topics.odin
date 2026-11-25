@@ -34,9 +34,9 @@ HELP_LOAD :: "load(\"sample\") maps a boot-image module into the console process
 HELP_PROJECTS_INSTALL :: "projects.install(\"db_browser\") ingests the project store, builds or fetches its project.lex output, verifies and delivers the module into module_files, and returns its provenance and module hash. Pass an optional build mode (prefer_cache, build_only, cache_only, or verify) as the second argument."
 HELP_ALLOW :: "allow(\"visitor\", \"store\") grants the named disk process access to its private store from its next start. Only store can be granted from the console."
 HELP_REVOKE :: "revoke(\"notes\", \"store\") ends one held grant on a running process immediately and returns how many holdings closed. Future calls on closed handles report that the grant was revoked."
-HELP_PLANS_DIFFERENCE :: "plans.difference(rows, summary, result) compares a proposed plan against the principal's active plan without applying any change. It returns the change count and writes the summary and difference rows."
-HELP_PLANS_APPLY :: "plans.apply(plan_name, rows, expected) opens the plan difference dialog on the trusted display and returns a ticket. Call plans.apply_poll(ticket, result) to commit after the principal accepts."
-HELP_PLANS_ROLLBACK :: "plans.rollback() opens the trusted display dialog to restore the previous plan generation and returns a ticket. Call plans.rollback_poll(ticket, result) to commit after the principal accepts."
+HELP_PLANS_DIFFERENCE :: "plans.difference(rows, summary) compares a proposed plan against the principal's active plan without applying any change. It returns the difference table and appends the summary row."
+HELP_PLANS_APPLY :: "plans.apply(plan_name, rows, expected) opens the plan difference dialog on the trusted display and returns a ticket. Call plans.apply_poll(ticket) to commit after the principal accepts."
+HELP_PLANS_ROLLBACK :: "plans.rollback() opens the trusted display dialog to restore the previous plan generation and returns a ticket. Call plans.rollback_poll(ticket) to commit after the principal accepts."
 
 @(rodata)
 HELP_TOPICS := [?]Help_Topic {

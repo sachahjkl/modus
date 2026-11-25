@@ -53,7 +53,7 @@ The compiler inserts the left value at the `_` argument index (or index 0 when a
 - **Several placeholders (`_1`, `_2`) or two `_` in one call.** One value on the left fills one place; a second place is a `let`.
 - **`_` in a nested call or inside an expression.** The place of the value then hides in the depth of the call ("Why `_` names a place of the call on the right only").
 - **A separate string-rewrite pass before the parser.** Rewriting `a |> f(b)` into a scratch buffer before lexing destroyed source byte offsets for diagnostics and added a second tokenizer pass over the input.
-- **A check during the run only.** The left part would run before a fault of the right part: `processes() |> help` would connect to `monitor` and then fail.
+- **A check during the run only.** The left part would run before a fault of the right part: `processes() |> shutdown` would connect to `monitor` and then fail.
 - **A check of each kind before the run.** A built-in command makes the description of its table when it runs; a check before the run would need a second description of each one. The call checks it then, after the left part ran, with the sentence of the nested form.
 
 ## Subtle points

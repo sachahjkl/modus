@@ -4,7 +4,11 @@ package console
 import "core:strings"
 import "core:sync"
 import "core:testing"
+import "modus:contract/call_outcome"
+import "modus:contract/errors"
 import pr "modus:contract/plans_recipes"
+import "modus:contract/ring"
+import "modus:line_editor"
 
 // Console tests share package globals (commands, scratch, failure); serialize
 // them so parallel odin test runners never race.
@@ -81,6 +85,7 @@ help_accepts_zero_or_one_text_argument_and_refuses_bad_calls :: proc(t: ^testing
 		args := [1]Value{{kind = .Text, text = topic}}
 		val := call_run("help", args[:])
 		testing.expectf(t, !failed && val.kind == .Text && len(val.text) > 0, "help(%q) must return help text", topic)
+		testing.expectf(t, !strings.contains(val.text, ", result)"), "help(%q) must not list output buffer result as a console argument", topic)
 	}
 
 	// Unknown topic fails with nearest-name suggestion.
@@ -184,4 +189,106 @@ projects_install_validates_nickname_and_build_mode :: proc(t: ^testing.T) {
 	three := [3]Value{{kind = .Text, text = "a"}, {kind = .Text, text = "verify"}, {kind = .Text, text = "extra"}}
 	_ = call_run("projects.install", three[:])
 	testing.expect(t, failed)
+}
+
+@(test)
+start_from_disk_refusal_formats_unified_and_explicit_errors :: proc(t: ^testing.T) {
+	sync.mutex_lock(&ergonomics_test_lock)
+	defer sync.mutex_unlock(&ergonomics_test_lock)
+	ergonomics_reset_state()
+
+	make_completion :: proc(outcome: call_outcome.Call_Outcome, err: errors.Error_Record) -> ring.Record {
+		return ring.Record{
+			kind   = u32(outcome),
+			values = errors.completion_values(err),
+		}
+	}
+
+	// Unified 1-arg start("nothing"): absent grant row gives actionable hash hint.
+	ergonomics_clear_line()
+	absent_grant := make_completion(.Argument_Refused, errors.Error_Record{
+		kind = i64(errors.Kind.Absent),
+		unit = i64(errors.Unit.Grants),
+	})
+	_ = start_from_disk_refusal_for("start", "nothing", absent_grant, unified_no_hash = true)
+	testing.expect(t, failed)
+	testing.expect_value(
+		t,
+		ergonomics_failure_text(),
+		`start: no boot-image module has the name "nothing", and no disk grant row pins its hash; pass the 64-digit hash with start("nothing", "<hash>")`,
+	)
+	testing.expect_value(t, string(failure.operation[:failure.operation_count]), "root.Start_From_Disk")
+
+	// Unified 1-arg start("nothing"): absent store object names both boot image and module_files.
+	ergonomics_clear_line()
+	absent_obj := make_completion(.Argument_Refused, errors.Error_Record{
+		kind = i64(errors.Kind.Absent),
+		unit = i64(errors.Unit.Objects),
+	})
+	_ = start_from_disk_refusal_for("start", "nothing", absent_obj, unified_no_hash = true)
+	testing.expect(t, failed)
+	testing.expect_value(
+		t,
+		ergonomics_failure_text(),
+		`start: no boot-image module and no object in module_files has the name "nothing"`,
+	)
+
+	// Explicit start_from_disk("visitor", ""): absent grant row keeps explicit refusal.
+	ergonomics_clear_line()
+	_ = start_from_disk_refusal_for("start_from_disk", "visitor", absent_grant, unified_no_hash = false)
+	testing.expect(t, failed)
+	testing.expect_value(
+		t,
+		ergonomics_failure_text(),
+		`start_from_disk: the nickname "visitor" has no row in the disk grant table: name the hash of its file`,
+	)
+
+	// Hash mismatch reports Not_Authentic and states nothing started.
+	ergonomics_clear_line()
+	bad_hash := make_completion(.Argument_Refused, errors.Error_Record{
+		kind  = i64(errors.Kind.Not_Authentic),
+		value = 0x0123456789abcdef,
+	})
+	_ = start_from_disk_refusal_for("start", "visitor", bad_hash, unified_no_hash = false)
+	testing.expect(t, failed)
+	testing.expect(t, strings.contains(ergonomics_failure_text(), `the bytes of "visitor" in the store module_files do not have the hash asked`))
+	testing.expect(t, strings.contains(ergonomics_failure_text(), "The root service started nothing"))
+}
+
+@(test)
+help_and_describe_completion_has_no_duplicate_candidates :: proc(t: ^testing.T) {
+	sync.mutex_lock(&ergonomics_test_lock)
+	defer sync.mutex_unlock(&ergonomics_test_lock)
+	ergonomics_reset_state()
+
+	owners := [2]string{"help", "describe"}
+	for owner in owners {
+		table: Candidate_Table
+		names_collect(&table, line_editor.Completion_Context{place = .Quoted, owner = owner})
+		testing.expectf(t, table.count > 0, "%s completion must collect candidates", owner)
+
+		seen_start := false
+		seen_projects_install := false
+		seen_let := false
+		seen_plans_apply := false
+		for i in 0 ..< table.count {
+			name := table.items[i].name
+			if name == "start" {
+				seen_start = true
+			}
+			if name == "projects.install" {
+				seen_projects_install = true
+			}
+			if name == "let" {
+				seen_let = true
+			}
+			if name == "plans.apply" {
+				seen_plans_apply = true
+			}
+			for j in i + 1 ..< table.count {
+				testing.expectf(t, name != table.items[j].name, "%s completion must not duplicate candidate %q", owner, name)
+			}
+		}
+		testing.expectf(t, seen_start && seen_projects_install && seen_let && seen_plans_apply, "%s completion must include both commands and Lex/service topics", owner)
+	}
 }

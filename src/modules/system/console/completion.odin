@@ -655,7 +655,9 @@ names_collect :: proc "contextless" (table: ^Candidate_Table, place: line_editor
 				candidate_add(table, item.name, .Command, index)
 			}
 			for &topic, index in HELP_TOPICS {
-				candidate_add(table, topic.name, .Command, command_count + index)
+				if command_find(topic.name) == nil {
+					candidate_add(table, topic.name, .Command, command_count + index)
+				}
 			}
 		}
 	}
