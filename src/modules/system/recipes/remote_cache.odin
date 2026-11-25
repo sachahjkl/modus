@@ -70,10 +70,14 @@ REMOTE_CACHE_SEND_SLOT_WAIT_MS :: system.ANSWER_BOUND_MILLISECONDS
 REMOTE_CACHE_PRINCIPALS_MOST :: recipes_core.PUT_PRINCIPALS_MOST
 
 Principal_Cache_Config :: struct {
-	used:       bool,
-	principal:  u64,
-	server_key: [object_cache.PUBLIC_KEY_SIZE]u8,
-	signer_key: [object_cache.PUBLIC_KEY_SIZE]u8,
+	used:             bool,
+	has_cache:        bool,
+	has_publisher:    bool,
+	principal:        u64,
+	server_key:       [object_cache.PUBLIC_KEY_SIZE]u8,
+	signer_key:       [object_cache.PUBLIC_KEY_SIZE]u8,
+	publisher_seed:   [32]u8,
+	publisher_public: [object_cache.PUBLIC_KEY_SIZE]u8,
 }
 
 Pending_Recv_Completion :: struct {
@@ -83,6 +87,7 @@ Pending_Recv_Completion :: struct {
 }
 
 Remote_Cache_State :: struct {
+	generator_ready:   bool,
 	net_ready:         bool,
 	datagrams:         ring.Ring,
 	region:            [^]u8,
@@ -281,6 +286,113 @@ remote_cache_ed25519_verify :: proc "contextless" (
 }
 
 @(private = "file")
+remote_cache_ed25519_sign :: proc "contextless" (
+	message: []u8,
+	out_signature: ^[object_cache.SIGNATURE_SIZE]u8,
+	user: rawptr,
+) -> bool {
+	if out_signature == nil || user == nil {
+		return false
+	}
+	seed := (^[32]u8)(user)
+	secret_str := string(seed[:])
+	msg_str := string(message)
+	sig_slice := out_signature[:]
+	err: errors.Error_Record
+	outcome, written := ed25519_sign(&secret_str, &msg_str, &sig_slice, &err)
+	return outcome == .Succeeded && written == object_cache.SIGNATURE_SIZE
+}
+
+@(private = "file")
+remote_cache_derive_public :: proc "contextless" (seed: ^[32]u8) -> (pub: [object_cache.PUBLIC_KEY_SIZE]u8, ok: bool) {
+	if seed == nil || object_cache.hash_is_zero(seed^) {
+		return {}, false
+	}
+	secret_str := string(seed[:])
+	pub_slice := pub[:]
+	err: errors.Error_Record
+	outcome, written := ed25519_public_key(&secret_str, &pub_slice, &err)
+	if outcome != .Succeeded || written != object_cache.PUBLIC_KEY_SIZE || object_cache.hash_is_zero(pub) {
+		return {}, false
+	}
+	return pub, true
+}
+
+@(private = "file")
+remote_cache_hex_write :: proc "contextless" (dst: ^[64]u8, bytes: [32]u8) {
+	hex := "0123456789abcdef"
+	for value, index in bytes {
+		dst[2 * index] = hex[value >> 4]
+		dst[2 * index + 1] = hex[value & 0x0f]
+	}
+}
+
+// publisher_key_object_name returns "publisher_key_<principal>": never 64 hex
+// digits (so read_output and retention_collect never touch it) and never
+// prefixed with "realisation_" (so retention_make_room never evicts it).
+@(private = "file")
+publisher_key_object_name :: proc "contextless" (principal: u64) -> (name: pr.Private_Object_Name) {
+	pr.private_object_name_append(&name, "publisher_key_")
+	pr.private_object_name_append_decimal(&name, principal)
+	return name
+}
+
+@(private = "file")
+remote_cache_load_publisher_from_store :: proc "contextless" (principal: u64, cfg: ^Principal_Cache_Config) -> bool {
+	if cfg == nil || service_state.store.read == nil {
+		return false
+	}
+	name := publisher_key_object_name(principal)
+	seed_buf: [32]u8
+	defer intrinsics.mem_zero_volatile(&seed_buf[0], len(seed_buf))
+	bytes, status := pr.private_store_read(&service_state.store, pr.private_object_name_text(&name), seed_buf[:])
+	if status != .Ok || len(bytes) != len(seed_buf) || object_cache.hash_is_zero(seed_buf) {
+		return false
+	}
+	pub, pub_ok := remote_cache_derive_public(&seed_buf)
+	if !pub_ok {
+		return false
+	}
+	cfg.used = true
+	cfg.principal = principal
+	cfg.has_publisher = true
+	cfg.publisher_seed = seed_buf
+	cfg.publisher_public = pub
+	return true
+}
+
+@(private = "file")
+remote_cache_persist_publisher_to_store :: proc "contextless" (principal: u64, seed: ^[32]u8) -> bool {
+	if service_state.store.write == nil {
+		return true
+	}
+	name := publisher_key_object_name(principal)
+	return pr.private_store_write(&service_state.store, pr.private_object_name_text(&name), seed[:]) == .Ok
+}
+
+@(private = "file")
+remote_cache_ensure_client :: proc "contextless" (server_key: [object_cache.PUBLIC_KEY_SIZE]u8) -> bool {
+	if !remote_cache.client.configured || remote_cache.client.server_public_key != server_key {
+		recipes_core.cache_quic_client_close(&remote_cache.client)
+		transport := recipes_core.Cache_Datagram_Transport {
+			send   = remote_cache_transport_send,
+			recv   = remote_cache_transport_recv,
+			now_us = remote_cache_transport_now_us,
+		}
+		if !recipes_core.cache_quic_client_init(
+			&remote_cache.client,
+			server_key,
+			&remote_cache.cryptography,
+			&remote_cache.generator,
+			transport,
+		) {
+			return false
+		}
+	}
+	return true
+}
+
+@(private = "file")
 remote_cache_config_find :: proc "contextless" (principal: u64, create: bool) -> ^Principal_Cache_Config {
 	for &cfg in remote_cache.configs {
 		if cfg.used && cfg.principal == principal {
@@ -313,25 +425,11 @@ remote_cache_prepare_for_principal :: proc "contextless" (
 		return {}
 	}
 	cfg := remote_cache_config_find(principal, false)
-	if cfg == nil {
+	if cfg == nil || !cfg.has_cache {
 		return {}
 	}
-	if !remote_cache.client.configured || remote_cache.client.server_public_key != cfg.server_key {
-		recipes_core.cache_quic_client_close(&remote_cache.client)
-		transport := recipes_core.Cache_Datagram_Transport {
-			send   = remote_cache_transport_send,
-			recv   = remote_cache_transport_recv,
-			now_us = remote_cache_transport_now_us,
-		}
-		if !recipes_core.cache_quic_client_init(
-			&remote_cache.client,
-			cfg.server_key,
-			&remote_cache.cryptography,
-			&remote_cache.generator,
-			transport,
-		) {
-			return {}
-		}
+	if !remote_cache_ensure_client(cfg.server_key) {
+		return {}
 	}
 	remote_cache.fetch_ctx = {
 		client           = &remote_cache.client,
@@ -371,6 +469,7 @@ remote_cache_bind :: proc "contextless" (ctx: ^system.Context) {
 	if !random.generator_from_context(&remote_cache.generator, ctx) {
 		return
 	}
+	remote_cache.generator_ready = true
 	ring_handle := ctx.handles[datagram.GRANT_RING]
 	region_handle := ctx.handles[datagram.GRANT_REGION]
 	if ring_handle == 0 || region_handle == 0 {
@@ -454,10 +553,18 @@ configure_cache :: proc "c" (
 	if signer_count != 64 {
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 2, i64(signer_count), 64)
 	}
+	server_ptr := intrinsics.volatile_load(&server_public_key_hex.bytes)
+	if server_ptr == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+	}
+	signer_ptr := intrinsics.volatile_load(&trusted_signer_hex.bytes)
+	if signer_ptr == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 2)
+	}
 	server_digits: [64]u8
 	signer_digits: [64]u8
-	intrinsics.mem_copy_non_overlapping(&server_digits[0], server_public_key_hex.bytes, 64)
-	intrinsics.mem_copy_non_overlapping(&signer_digits[0], trusted_signer_hex.bytes, 64)
+	intrinsics.mem_copy_non_overlapping(&server_digits[0], server_ptr, 64)
+	intrinsics.mem_copy_non_overlapping(&signer_digits[0], signer_ptr, 64)
 
 	server_key, server_ok := pr.hash_of_hexadecimal(server_digits[:])
 	if !server_ok || object_cache.hash_is_zero(server_key) {
@@ -474,9 +581,211 @@ configure_cache :: proc "c" (
 		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Objects, 0, REMOTE_CACHE_PRINCIPALS_MOST, REMOTE_CACHE_PRINCIPALS_MOST)
 	}
 	cfg.used = true
+	cfg.has_cache = true
 	cfg.principal = principal
 	cfg.server_key = server_key
 	cfg.signer_key = signer_key
 	system.log_fact(.Info, Remote_Cache_Configured{port = u64(remote_cache.remote_port), server_key = value_kinds.Hash_Field(server_key)})
+	return .Succeeded, 1
+}
+
+// publisher_key returns the caller principal's 64-hex Ed25519 cache publisher
+// public key. Loads a persisted seed from recipes's private store when present
+// or generates and persists a fresh 32-byte seed; never exposes the seed.
+@(export, link_name = "publisher_key")
+publisher_key :: proc "c" (
+	result: ^[]u8,
+	error: ^errors.Error_Record,
+) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure, ok := caller_check(true, error); !ok {
+		return failure, 0
+	}
+	if result == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+	}
+	if len(result^) < 64 {
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, 1, i64(len(result^)), 64)
+	}
+	principal := caller_principal()
+	cfg := remote_cache_config_find(principal, true)
+	if cfg == nil {
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Objects, 0, REMOTE_CACHE_PRINCIPALS_MOST, REMOTE_CACHE_PRINCIPALS_MOST)
+	}
+	if !cfg.has_publisher {
+		if !remote_cache_load_publisher_from_store(principal, cfg) {
+			if !remote_cache.generator_ready {
+				return call_outcome.fail(error, .Wrong_State, .State, .Requests)
+			}
+			seed: [32]u8
+			defer intrinsics.mem_zero_volatile(&seed[0], len(seed))
+			if !random.fill_for_a_key(&remote_cache.generator, seed[:], random.seed_strength(&remote_cache.generator), error) {
+				return .Wrong_State, 0
+			}
+			pub, pub_ok := remote_cache_derive_public(&seed)
+			if !pub_ok {
+				return call_outcome.fail(error, .Wrong_State, .Refused, .Requests)
+			}
+			if !remote_cache_persist_publisher_to_store(principal, &seed) {
+				return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store)
+			}
+			cfg.used = true
+			cfg.principal = principal
+			cfg.has_publisher = true
+			cfg.publisher_seed = seed
+			cfg.publisher_public = pub
+		}
+	}
+	digits: [64]u8
+	remote_cache_hex_write(&digits, cfg.publisher_public)
+	copy(result^[:64], digits[:])
+	return .Succeeded, 64
+}
+
+// configure_publisher configures the caller principal's Ed25519 cache publisher
+// key from a 64-hex non-zero seed, persists it in recipes's private store,
+// zeroes temporary seed buffers, and returns only the 64-hex public key.
+@(export, link_name = "configure_publisher")
+configure_publisher :: proc "c" (
+	seed_hex: ^system.Bytes_To_Read,
+	result: ^[]u8,
+	error: ^errors.Error_Record,
+) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure, ok := caller_check(true, error); !ok {
+		return failure, 0
+	}
+	if seed_hex == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+	}
+	if result == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 2)
+	}
+	if len(result^) < 64 {
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Bytes, 2, i64(len(result^)), 64)
+	}
+	seed_count := intrinsics.volatile_load(&seed_hex.count)
+	if seed_count != 64 {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 1, i64(seed_count), 64)
+	}
+	seed_ptr := intrinsics.volatile_load(&seed_hex.bytes)
+	if seed_ptr == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+	}
+	seed_digits: [64]u8
+	defer intrinsics.mem_zero_volatile(&seed_digits[0], len(seed_digits))
+	intrinsics.mem_copy_non_overlapping(&seed_digits[0], seed_ptr, 64)
+
+	seed, seed_ok := pr.hash_of_hexadecimal(seed_digits[:])
+	defer intrinsics.mem_zero_volatile(&seed[0], len(seed))
+	if !seed_ok || object_cache.hash_is_zero(seed) {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1)
+	}
+	pub, pub_ok := remote_cache_derive_public(&seed)
+	if !pub_ok {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1)
+	}
+	principal := caller_principal()
+	cfg := remote_cache_config_find(principal, true)
+	if cfg == nil {
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Objects, 0, REMOTE_CACHE_PRINCIPALS_MOST, REMOTE_CACHE_PRINCIPALS_MOST)
+	}
+	if !remote_cache_persist_publisher_to_store(principal, &seed) {
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store)
+	}
+	cfg.used = true
+	cfg.principal = principal
+	cfg.has_publisher = true
+	cfg.publisher_seed = seed
+	cfg.publisher_public = pub
+
+	digits: [64]u8
+	remote_cache_hex_write(&digits, pub)
+	copy(result^[:64], digits[:])
+	return .Succeeded, 64
+}
+
+// publish uploads a locally realised recipe's output closure bottom-up and its
+// signed Realisation_Record to the caller principal's configured QUIC object
+// cache, returning one Publish_Row summary.
+@(export, link_name = "publish")
+publish :: proc "c" (
+	recipe_hash_hex: ^system.Bytes_To_Read,
+	result: ^[]pr.Publish_Row,
+	error: ^errors.Error_Record,
+) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if failure, ok := caller_check(true, error); !ok {
+		return failure, 0
+	}
+	if !remote_cache.net_ready {
+		return call_outcome.fail(error, .Operation_Unsupported, .No_Grant, .Connection)
+	}
+	if recipe_hash_hex == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+	}
+	if result == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 2)
+	}
+	if len(result^) < 1 {
+		return call_outcome.fail(error, .Argument_Refused, .Too_Small, .Records, 2, i64(len(result^)), 1)
+	}
+	hash_count := intrinsics.volatile_load(&recipe_hash_hex.count)
+	if hash_count != 64 {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 1, i64(hash_count), 64)
+	}
+	hash_ptr := intrinsics.volatile_load(&recipe_hash_hex.bytes)
+	if hash_ptr == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 1)
+	}
+	hash_digits: [64]u8
+	intrinsics.mem_copy_non_overlapping(&hash_digits[0], hash_ptr, 64)
+	recipe_hash, hash_ok := pr.hash_of_hexadecimal(hash_digits[:])
+	if !hash_ok || object_cache.hash_is_zero(recipe_hash) {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1)
+	}
+
+	principal := caller_principal()
+	cfg := remote_cache_config_find(principal, false)
+	if cfg == nil || !cfg.has_cache {
+		return call_outcome.fail(error, .Wrong_State, .State, .Requests)
+	}
+	if !cfg.has_publisher {
+		if !remote_cache_load_publisher_from_store(principal, cfg) {
+			return call_outcome.fail(error, .Wrong_State, .State, .Requests)
+		}
+	}
+	if !remote_cache_ensure_client(cfg.server_key) {
+		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .Connection)
+	}
+
+	stats, pub_refusal, server_status, client_err := recipes_core.cache_quic_publish_realisation(
+		&remote_cache.client,
+		&service_state,
+		recipe_hash,
+		cfg.publisher_public,
+		remote_cache_ed25519_sign,
+		&cfg.publisher_seed,
+	)
+	if pub_refusal != .None || client_err != .None || server_status != .Ok {
+		refusal := pub_refusal != .None ? pub_refusal : pr.Recipe_Refusal.Malformed_Output
+		if error != nil {
+			error^ = recipes_core.recipe_refusal_record(refusal, 1, 0)
+		}
+		return recipes_core.recipe_refusal_outcome(refusal), 0
+	}
+
+	system.log_fact(.Info, Remote_Cache_Published{
+		recipe_hash      = value_kinds.Hash_Field(stats.recipe_hash),
+		output_hash      = value_kinds.Hash_Field(stats.output_hash),
+		objects_uploaded = stats.objects_uploaded,
+		objects_skipped  = stats.objects_skipped,
+		bytes_uploaded   = stats.bytes_uploaded,
+	})
+	result[0] = {
+		recipe_hash       = value_kinds.Hash_Field(stats.recipe_hash),
+		output_hash       = value_kinds.Hash_Field(stats.output_hash),
+		signer_public_key = value_kinds.Hash_Field(stats.signer_public_key),
+		objects_uploaded  = stats.objects_uploaded,
+		objects_skipped   = stats.objects_skipped,
+		bytes_uploaded    = stats.bytes_uploaded,
+	}
 	return .Succeeded, 1
 }

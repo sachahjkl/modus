@@ -360,7 +360,7 @@ find_local_object :: proc "contextless" (state: ^Recipes_State, hash: blake3.Has
 	return nil
 }
 
-@(private = "file")
+@(private)
 find_local_realisation :: proc "contextless" (state: ^Recipes_State, recipe_hash: blake3.Hash) -> ^Local_Realisation_Slot {
 	for &slot in state.realisations {
 		if slot.active && slot.record.recipe_hash == recipe_hash {

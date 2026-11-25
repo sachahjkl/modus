@@ -1405,3 +1405,382 @@ quic_cache_malformed_header_without_fin_does_not_wedge_slot :: proc(t: ^testing.
 	testing.expect_value(t, get_err, recipes_core.Cache_Client_Error.None)
 	testing.expect_value(t, get_resp.status, object_cache.Cache_Response_Status.Not_Found)
 }
+
+@(private = "file")
+Publish_Sign_Recorder :: struct {
+	priv:            ^ed25519.Private_Key,
+	fail_all:        bool,
+	corrupt_sig:     bool,
+	order_hashes:    [32]blake3.Hash,
+	order_is_real:   [32]bool,
+	order_count:     int,
+}
+
+@(private = "file")
+host_publish_sign :: proc "contextless" (
+	message: []u8,
+	out_signature: ^[object_cache.SIGNATURE_SIZE]u8,
+	user: rawptr,
+) -> bool {
+	context = runtime.default_context()
+	rec := (^Publish_Sign_Recorder)(user)
+	if rec == nil || rec.priv == nil || rec.fail_all {
+		return false
+	}
+	if rec.order_count < len(rec.order_hashes) {
+		put_domain := object_cache.PUT_OBJECT_SIGNING_DOMAIN
+		real_domain := object_cache.REALISATION_SIGNING_DOMAIN
+		if len(message) == object_cache.PUT_OBJECT_SIGNING_BYTES_SIZE && string(message[:len(put_domain)]) == put_domain {
+			// Put_Object signing bytes: [0..19] domain, [19] 0x00, [20] kind, [21..24] reserved, [24..56] object_hash
+			copy(rec.order_hashes[rec.order_count][:], message[24:][:blake3.HASH_SIZE])
+			rec.order_is_real[rec.order_count] = false
+			rec.order_count += 1
+		} else if len(message) == object_cache.REALISATION_SIGNING_BYTES_SIZE && string(message[:len(real_domain)]) == real_domain {
+			// Realisation signing bytes: [0..20] domain, [20] 0x00, [21] kind, [22..24] reserved, [24..56] recipe_hash
+			copy(rec.order_hashes[rec.order_count][:], message[24:][:blake3.HASH_SIZE])
+			rec.order_is_real[rec.order_count] = true
+			rec.order_count += 1
+		}
+	}
+	ed25519.sign(rec.priv, message, out_signature[:])
+	if rec.corrupt_sig {
+		out_signature[0] ~= 0xFF
+	}
+	return true
+}
+
+@(private = "file")
+publish_test_builder_invoke :: proc "contextless" (
+	_: ^pr.Builder_Sandbox_Spec,
+	staging: []u8,
+	user_data: rawptr,
+) -> (payload: []u8, ok: bool) {
+	src := (^[]u8)(user_data)^
+	if len(src) > len(staging) {
+		return nil, false
+	}
+	copy(staging[:len(src)], src)
+	return staging[:len(src)], true
+}
+
+// End-to-end QUIC publish + fetch + .Verify + .Cache_Only test:
+// - builds a nested Tree closure containing a >1 MiB multi-frame Blob and small Blobs;
+// - publishes from recipes_core via cache_quic_publish_realisation (recalling
+//   realisation_<hash> directly from private store);
+// - asserts strict bottom-up upload order (all child blobs -> sub tree -> root tree -> Put_Realisation last);
+// - re-publishes and asserts all objects are skipped via Already_Present;
+// - fetches from a fresh Recipes_State in Cache_Only mode over QUIC;
+// - verifies reproducibility in Verify mode (matching -> verify_agreements = 1,
+//   disagreeing -> Verify_Disagreement + verify_disagreements = 1).
+@(test)
+quic_cache_publish_closure_bottom_up_multiframe_verify_and_cache_only :: proc(t: ^testing.T) {
+	dir := make_temp_store_dir(t)
+	defer {
+		os.remove_all(dir)
+		delete(dir)
+	}
+
+	pub_priv, pub_key, _ := make_test_ed25519_key(0x61)
+	_, _, quic_seed := make_test_ed25519_key(0x62)
+
+	server, opened := cache_server_open(dir, [][32]u8{pub_key})
+	testing.expect(t, opened)
+	defer cache_server_destroy(&server)
+
+	running, err_text := cache_quic_start(&server, net.Endpoint{address = net.IP4_Loopback, port = 0}, quic_seed)
+	testing.expect_value(t, err_text, "")
+	testing.expect(t, running != nil)
+	defer cache_quic_stop(running)
+
+	crypto_table := cache_quic_cryptography()
+	generator: random.Generator
+	udp: Host_Udp_Transport
+	client, made := make_host_quic_client(running.bound_endpoint, running.public_key, &crypto_table, &generator, &udp)
+	testing.expect(t, made)
+	defer {
+		recipes_core.cache_quic_client_close(client)
+		free(client)
+		net.close(udp.socket)
+	}
+
+	// Populate publisher's local Recipes_State private store with:
+	//   root_tree -> { "module": root_mod_blob, "sub": sub_tree }
+	//   sub_tree  -> { "big.bin": large_blob (>1 MiB), "small.txt": small_blob }
+	pub_mem := new(pr.Memory_Private_Store)
+	defer free(pub_mem)
+	large_backing := make([]u8, 4 * 1024 * 1024)
+	defer delete(large_backing)
+	pub_mem.large_bytes = large_backing
+
+	pub_state := new(recipes_core.Recipes_State)
+	defer free(pub_state)
+	recipes_core.state_init(pub_state, pr.memory_private_store_port(pub_mem))
+
+	small_blob := transmute([]u8)string("small-nested-leaf-v1")
+	small_hash := blake3.hash(small_blob)
+	large_size := int(object_cache.FRAME_PAYLOAD_BYTES) + 45_678
+	large_blob := make([]u8, large_size)
+	defer delete(large_blob)
+	for i in 0 ..< large_size {
+		large_blob[i] = u8((i * 73 + 9) & 0xFF)
+	}
+	large_hash := blake3.hash(large_blob)
+	root_mod_blob := transmute([]u8)string("compiled-module-payload-v1")
+	root_mod_hash := blake3.hash(root_mod_blob)
+
+	// Write blobs into publisher private store.
+	sn := pr.blob_object_name(small_hash)
+	testing.expect_value(t, pr.private_store_write(&pub_state.store, pr.private_object_name_text(&sn), small_blob), pr.Private_Store_Status.Ok)
+	ln := pr.blob_object_name(large_hash)
+	testing.expect_value(t, pr.private_store_write(&pub_state.store, pr.private_object_name_text(&ln), large_blob), pr.Private_Store_Status.Ok)
+	rn := pr.blob_object_name(root_mod_hash)
+	testing.expect_value(t, pr.private_store_write(&pub_state.store, pr.private_object_name_text(&rn), root_mod_blob), pr.Private_Store_Status.Ok)
+
+	// Encode sub_tree and root_tree.
+	se1, _ := tree_hash.tree_entry_make(.Object, "big.bin", large_hash)
+	se2, _ := tree_hash.tree_entry_make(.Object, "small.txt", small_hash)
+	sub_buf: [512]u8
+	sub_len, sub_enc_ref := tree_hash.tree_encode([]tree_hash.Tree_Entry{se1, se2}, sub_buf[:])
+	testing.expect_value(t, sub_enc_ref, tree_hash.Tree_Refusal.None)
+	sub_bytes := sub_buf[:sub_len]
+	sub_hash, sub_h_ref := tree_hash.tree_hash(sub_bytes)
+	testing.expect_value(t, sub_h_ref, tree_hash.Tree_Refusal.None)
+	subn := pr.blob_object_name(sub_hash)
+	testing.expect_value(t, pr.private_store_write(&pub_state.store, pr.private_object_name_text(&subn), sub_bytes), pr.Private_Store_Status.Ok)
+
+	re1, _ := tree_hash.tree_entry_make(.Object, "module", root_mod_hash)
+	re2, _ := tree_hash.tree_entry_make(.Tree, "sub", sub_hash)
+	root_buf: [512]u8
+	root_len, root_enc_ref := tree_hash.tree_encode([]tree_hash.Tree_Entry{re1, re2}, root_buf[:])
+	testing.expect_value(t, root_enc_ref, tree_hash.Tree_Refusal.None)
+	root_bytes := root_buf[:root_len]
+	root_hash, root_h_ref := tree_hash.tree_hash(root_bytes)
+	testing.expect_value(t, root_h_ref, tree_hash.Tree_Refusal.None)
+	rootn := pr.blob_object_name(root_hash)
+	testing.expect_value(t, pr.private_store_write(&pub_state.store, pr.private_object_name_text(&rootn), root_bytes), pr.Private_Store_Status.Ok)
+
+	// Write realisation_<recipe_hash> ONLY in private store (not in pub_state.realisations index)
+	// to verify publish recalls realisations persisted across restarts.
+	spec := pr.Recipe_Spec {
+		builder_hash       = blake3.hash(transmute([]u8)string("publish-test-builder-v1")),
+		output_kind        = .Tree,
+		source_date_unix   = 1_700_000_001,
+		output_block_limit = 1024,
+	}
+	recipe_hash, r_ref := pr.recipe_hash(&spec)
+	testing.expect_value(t, r_ref, pr.Recipe_Refusal.None)
+
+	local_real := object_cache.Realisation_Record {
+		recipe_hash = recipe_hash,
+		output_hash = root_hash,
+		output_kind = .Tree,
+	}
+	real_obj_buf: [pr.REALISATION_OBJECT_HEAD_SIZE]u8
+	real_obj_len, real_enc_ref := pr.encode_realisation_object(&local_real, u64(recipes_core.Provenance_Origin.Local_Build), u64(root_len), real_obj_buf[:])
+	testing.expect_value(t, real_enc_ref, pr.Recipe_Refusal.None)
+	real_obj_name := pr.realisation_object_name(recipe_hash)
+	testing.expect_value(t, pr.private_store_write(&pub_state.store, pr.private_object_name_text(&real_obj_name), real_obj_buf[:real_obj_len]), pr.Private_Store_Status.Ok)
+
+	// 1. Publish over QUIC and verify bottom-up ordering + exact counts.
+	recorder := Publish_Sign_Recorder{priv = &pub_priv}
+	stats, pub_ref, pub_st, pub_err := recipes_core.cache_quic_publish_realisation(
+		client,
+		pub_state,
+		recipe_hash,
+		pub_key,
+		host_publish_sign,
+		&recorder,
+	)
+	testing.expect_value(t, pub_err, recipes_core.Cache_Client_Error.None)
+	testing.expect_value(t, pub_st, object_cache.Cache_Response_Status.Ok)
+	testing.expect_value(t, pub_ref, pr.Recipe_Refusal.None)
+	testing.expect_value(t, stats.recipe_hash, recipe_hash)
+	testing.expect_value(t, stats.output_hash, root_hash)
+	testing.expect_value(t, stats.signer_public_key, pub_key)
+	testing.expect_value(t, stats.objects_uploaded, u64(5))
+	testing.expect_value(t, stats.objects_skipped, u64(0))
+	expected_bytes := u64(len(small_blob) + len(large_blob) + len(root_mod_blob) + len(sub_bytes) + len(root_bytes))
+	testing.expect_value(t, stats.bytes_uploaded, expected_bytes)
+
+	// Assert strict bottom-up ordering: 5 objects + 1 realisation = 6 signatures.
+	testing.expect_value(t, recorder.order_count, 6)
+	pos_of :: proc(rec: ^Publish_Sign_Recorder, target: blake3.Hash, is_real: bool) -> int {
+		for i in 0 ..< rec.order_count {
+			if rec.order_hashes[i] == target && rec.order_is_real[i] == is_real {
+				return i
+			}
+		}
+		return -1
+	}
+	pos_small := pos_of(&recorder, small_hash, false)
+	pos_large := pos_of(&recorder, large_hash, false)
+	pos_sub := pos_of(&recorder, sub_hash, false)
+	pos_mod := pos_of(&recorder, root_mod_hash, false)
+	pos_root := pos_of(&recorder, root_hash, false)
+	pos_real := pos_of(&recorder, recipe_hash, true)
+	testing.expect(t, pos_small >= 0 && pos_large >= 0 && pos_sub >= 0 && pos_mod >= 0 && pos_root >= 0 && pos_real == 5)
+	testing.expect(t, pos_small < pos_sub && pos_large < pos_sub, "sub tree children must upload before sub tree")
+	testing.expect(t, pos_sub < pos_root && pos_mod < pos_root, "root tree children must upload before root tree")
+	testing.expect(t, pos_root < pos_real, "root tree must upload before Put_Realisation")
+
+	// 2. Re-publish: all 5 objects return Already_Present -> objects_skipped == 5, bytes_uploaded == 0.
+	stats2, pub_ref2, pub_st2, pub_err2 := recipes_core.cache_quic_publish_realisation(
+		client,
+		pub_state,
+		recipe_hash,
+		pub_key,
+		host_publish_sign,
+		&recorder,
+	)
+	testing.expect_value(t, pub_err2, recipes_core.Cache_Client_Error.None)
+	testing.expect_value(t, pub_st2, object_cache.Cache_Response_Status.Ok)
+	testing.expect_value(t, pub_ref2, pr.Recipe_Refusal.None)
+	testing.expect_value(t, stats2.objects_uploaded, u64(0))
+	testing.expect_value(t, stats2.objects_skipped, u64(5))
+	testing.expect_value(t, stats2.bytes_uploaded, u64(0))
+
+	// 3. Fresh consumer fetches over QUIC in Cache_Only mode -> full nested closure restored.
+	consumer_mem := new(pr.Memory_Private_Store)
+	defer free(consumer_mem)
+	consumer_backing := make([]u8, 4 * 1024 * 1024)
+	defer delete(consumer_backing)
+	consumer_mem.large_bytes = consumer_backing
+
+	consumer_state := new(recipes_core.Recipes_State)
+	defer free(consumer_state)
+	recipes_core.state_init(consumer_state, pr.memory_private_store_port(consumer_mem))
+
+	fetch_ctx := recipes_core.Cache_Quic_Fetch_Context {
+		client           = client,
+		verify_signature = host_ed25519_verify,
+	}
+	consumer_state.remote_cache_fetch = recipes_core.cache_quic_fetch_realisation
+	consumer_state.remote_cache_user = &fetch_ctx
+
+	signers := [1][object_cache.PUBLIC_KEY_SIZE]u8{pub_key}
+	policy := object_cache.Substitution_Policy{mode = .Cache_Only, trusted_signers = signers[:]}
+
+	res_cache_only := recipes_core.build_recipe(consumer_state, &spec, .Cache_Only, policy, nil, nil, host_ed25519_verify, nil)
+	testing.expect_value(t, res_cache_only.outcome, pr.Recipe_Build_Outcome.From_Cache)
+	testing.expect_value(t, res_cache_only.refusal, pr.Recipe_Refusal.None)
+	testing.expect_value(t, res_cache_only.output_hash, root_hash)
+	testing.expect_value(t, consumer_state.counters.cache_hits_remote, u64(1))
+	testing.expect_value(t, recipes_core.stored_output_check(consumer_state, large_hash, .Blob, u64(large_size)), recipes_core.Stored_Output.Whole)
+
+	// 4. Verify mode on publisher's already-local state: skips local cache, fetches
+	//    remote QUIC cache, rebuilds locally, and confirms reproducibility.
+	pub_state.remote_cache_fetch = recipes_core.cache_quic_fetch_realisation
+	pub_state.remote_cache_user = &fetch_ctx
+	matching_payload := root_bytes
+	verify_policy := object_cache.Substitution_Policy{mode = .Verify, trusted_signers = signers[:]}
+	res_verify := recipes_core.build_recipe(pub_state, &spec, .Verify, verify_policy, nil, publish_test_builder_invoke, host_ed25519_verify, nil, &matching_payload)
+	testing.expect_value(t, res_verify.outcome, pr.Recipe_Build_Outcome.Built_Locally)
+	testing.expect_value(t, res_verify.refusal, pr.Recipe_Refusal.None)
+	testing.expect(t, res_verify.verified_reproducible, "Verify mode must confirm remote cache match")
+	testing.expect_value(t, pub_state.counters.verify_agreements, u64(1))
+
+	// 5. Verify mode with a different local output -> Refused(Verify_Disagreement).
+	other_blob := transmute([]u8)string("different-module-bytes")
+	oe1, _ := tree_hash.tree_entry_make(.Object, "module", blake3.hash(other_blob))
+	other_buf: [256]u8
+	other_len, _ := tree_hash.tree_encode([]tree_hash.Tree_Entry{oe1}, other_buf[:])
+	disagree_payload := other_buf[:other_len]
+	res_disagree := recipes_core.build_recipe(pub_state, &spec, .Verify, verify_policy, nil, publish_test_builder_invoke, host_ed25519_verify, nil, &disagree_payload)
+	testing.expect_value(t, res_disagree.outcome, pr.Recipe_Build_Outcome.Refused)
+	testing.expect_value(t, res_disagree.refusal, pr.Recipe_Refusal.Verify_Disagreement)
+	testing.expect_value(t, pub_state.counters.verify_disagreements, u64(1))
+}
+
+// Adversarial QUIC publish refusals: unauthorized publisher key, bad signature,
+// tampered leaf blob, and missing child blob must each be refused cleanly and
+// leave zero realisation on the server.
+@(test)
+quic_cache_publish_refuses_unauthorized_bad_sig_tampered_and_missing_child :: proc(t: ^testing.T) {
+	dir := make_temp_store_dir(t)
+	defer {
+		os.remove_all(dir)
+		delete(dir)
+	}
+
+	_, auth_pub, _ := make_test_ed25519_key(0x71)
+	unauth_priv, unauth_pub, _ := make_test_ed25519_key(0x72)
+	auth_priv, _, _ := make_test_ed25519_key(0x71)
+	_, _, quic_seed := make_test_ed25519_key(0x73)
+
+	server, opened := cache_server_open(dir, [][32]u8{auth_pub})
+	testing.expect(t, opened)
+	defer cache_server_destroy(&server)
+
+	running, err_text := cache_quic_start(&server, net.Endpoint{address = net.IP4_Loopback, port = 0}, quic_seed)
+	testing.expect_value(t, err_text, "")
+	testing.expect(t, running != nil)
+	defer cache_quic_stop(running)
+
+	crypto_table := cache_quic_cryptography()
+	generator: random.Generator
+	udp: Host_Udp_Transport
+	client, made := make_host_quic_client(running.bound_endpoint, running.public_key, &crypto_table, &generator, &udp)
+	testing.expect(t, made)
+	defer {
+		recipes_core.cache_quic_client_close(client)
+		free(client)
+		net.close(udp.socket)
+	}
+
+	pub_mem := new(pr.Memory_Private_Store)
+	defer free(pub_mem)
+	pub_state := new(recipes_core.Recipes_State)
+	defer free(pub_state)
+	recipes_core.state_init(pub_state, pr.memory_private_store_port(pub_mem))
+
+	leaf := transmute([]u8)string("adversarial-leaf")
+	leaf_hash := blake3.hash(leaf)
+	ln := pr.blob_object_name(leaf_hash)
+	testing.expect_value(t, pr.private_store_write(&pub_state.store, pr.private_object_name_text(&ln), leaf), pr.Private_Store_Status.Ok)
+
+	e1, _ := tree_hash.tree_entry_make(.Object, "module", leaf_hash)
+	tree_buf: [256]u8
+	t_len, _ := tree_hash.tree_encode([]tree_hash.Tree_Entry{e1}, tree_buf[:])
+	t_hash, _ := tree_hash.tree_hash(tree_buf[:t_len])
+	tn := pr.blob_object_name(t_hash)
+	testing.expect_value(t, pr.private_store_write(&pub_state.store, pr.private_object_name_text(&tn), tree_buf[:t_len]), pr.Private_Store_Status.Ok)
+
+	recipe_hash := blake3.hash(transmute([]u8)string("adversarial-recipe"))
+	real_rec := object_cache.Realisation_Record{recipe_hash = recipe_hash, output_hash = t_hash, output_kind = .Tree}
+	real_buf: [pr.REALISATION_OBJECT_HEAD_SIZE]u8
+	real_len, _ := pr.encode_realisation_object(&real_rec, u64(recipes_core.Provenance_Origin.Local_Build), u64(t_len), real_buf[:])
+	real_name := pr.realisation_object_name(recipe_hash)
+	testing.expect_value(t, pr.private_store_write(&pub_state.store, pr.private_object_name_text(&real_name), real_buf[:real_len]), pr.Private_Store_Status.Ok)
+
+	// 1. Unauthorized key -> server refuses with Unauthorized -> Untrusted_Realisation.
+	unauth_rec := Publish_Sign_Recorder{priv = &unauth_priv}
+	_, ref1, st1, err1 := recipes_core.cache_quic_publish_realisation(client, pub_state, recipe_hash, unauth_pub, host_publish_sign, &unauth_rec)
+	testing.expect_value(t, err1, recipes_core.Cache_Client_Error.None)
+	testing.expect_value(t, st1, object_cache.Cache_Response_Status.Unauthorized)
+	testing.expect_value(t, ref1, pr.Recipe_Refusal.Untrusted_Realisation)
+
+	// 2. Corrupted signature with authorized key -> Bad_Signature.
+	bad_sig_rec := Publish_Sign_Recorder{priv = &auth_priv, corrupt_sig = true}
+	_, ref2, st2, err2 := recipes_core.cache_quic_publish_realisation(client, pub_state, recipe_hash, auth_pub, host_publish_sign, &bad_sig_rec)
+	testing.expect_value(t, err2, recipes_core.Cache_Client_Error.None)
+	testing.expect_value(t, st2, object_cache.Cache_Response_Status.Bad_Signature)
+	testing.expect_value(t, ref2, pr.Recipe_Refusal.Bad_Signature)
+
+	// 3. Tampered leaf blob in local store -> Hash_Mismatch before uploading parent tree or realisation.
+	tampered := transmute([]u8)string("tampered-leaf-!!")
+	testing.expect_value(t, pr.private_store_write(&pub_state.store, pr.private_object_name_text(&ln), tampered), pr.Private_Store_Status.Ok)
+	auth_rec := Publish_Sign_Recorder{priv = &auth_priv}
+	_, ref3, _, _ := recipes_core.cache_quic_publish_realisation(client, pub_state, recipe_hash, auth_pub, host_publish_sign, &auth_rec)
+	testing.expect_value(t, ref3, pr.Recipe_Refusal.Hash_Mismatch)
+
+	// 4. Missing leaf blob in local store -> Cache_Miss.
+	testing.expect_value(t, pr.private_store_remove(&pub_state.store, pr.private_object_name_text(&ln)), pr.Private_Store_Status.Ok)
+	_, ref4, _, _ := recipes_core.cache_quic_publish_realisation(client, pub_state, recipe_hash, auth_pub, host_publish_sign, &auth_rec)
+	testing.expect_value(t, ref4, pr.Recipe_Refusal.Cache_Miss)
+
+	// Confirm the server still holds no realisation for recipe_hash.
+	get_real := object_cache.Cache_Request{kind = .Get_Realisation, recipe_hash = recipe_hash}
+	resp, gerr := recipes_core.cache_quic_client_exchange(client, &get_real)
+	testing.expect_value(t, gerr, recipes_core.Cache_Client_Error.None)
+	testing.expect_value(t, resp.status, object_cache.Cache_Response_Status.Not_Found)
+}

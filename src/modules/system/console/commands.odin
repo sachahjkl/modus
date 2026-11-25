@@ -1138,6 +1138,15 @@ commands_start :: proc "contextless" () {
 	// removing content-addressed objects not referenced by any live realisation,
 	// recipe, active build, or recent put window.
 	command("recipes.collect_garbage", {}, .Text, "collect unreferenced content-addressed objects in recipes", recipes_collect_garbage_command)
+	// Returns the caller principal's 64-hex Ed25519 cache publisher public key
+	// (generating and persisting a fresh seed inside recipes when absent).
+	command("recipes.publisher_key", {}, .Text, "return the principal's Ed25519 cache publisher public key", recipes_publisher_key_command)
+	// Configures the caller principal's Ed25519 cache publisher key from a
+	// 64-hex non-zero seed inside recipes and returns only the 64-hex public key.
+	command("recipes.configure_publisher", {.Text}, .Text, "configure the principal's Ed25519 cache publisher key from a 64-hex seed", recipes_configure_publisher_command)
+	// Uploads a locally realised recipe's output closure bottom-up and its
+	// signed Realisation_Record to the principal's configured QUIC object cache.
+	command("recipes.publish", {.Text}, .Record, "publish a locally realised recipe and its closure to the QUIC cache", recipes_publish_command)
 	// Connects to recipes when needed, ingests the project store, evaluates and
 	// builds its project.lex default output, validates and delivers the module
 	// into module_files under project_name, and returns a Project_Install record

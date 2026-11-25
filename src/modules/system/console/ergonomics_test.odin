@@ -56,6 +56,9 @@ ergonomics_reset_state :: proc() {
 	command("allow", {.Text, .Text}, .None, "give a disk process a grant, by nickname", allow)
 	command("revoke", {.Text, .Text}, .Integer, "end a grant of a process that runs", revoke)
 	command("projects.install", {.Text, .Text}, .Record, "ingest, build, verify, and deliver a project module into module_files", projects_install_command, optional_last = true)
+	command("recipes.publisher_key", {}, .Text, "return the principal's Ed25519 cache publisher public key", recipes_publisher_key_command)
+	command("recipes.configure_publisher", {.Text}, .Text, "configure the principal's Ed25519 cache publisher key from a 64-hex seed", recipes_configure_publisher_command)
+	command("recipes.publish", {.Text}, .Record, "publish a locally realised recipe and its closure to the QUIC cache", recipes_publish_command)
 	command("plans.apply", {.Text, .None, .Record}, .Table, "apply a plan after trusted display consent and return the committed generation", plans_apply_command, optional_last = true)
 	command("plans.rollback", {.Integer}, .Table, "roll back to the previous or numbered plan generation after trusted display consent", plans_rollback_command, optional_last = true)
 	plans_commands_attach_types()
@@ -665,4 +668,56 @@ module_handle_isolation_compaction_help_unload_and_reassignment :: proc(t: ^test
 	}
 	// Built-in commands stored in .rodata survive every compaction untouched.
 	testing.expect(t, command_find("help") != nil && command_find("unload") != nil)
+}
+
+@(test)
+recipes_publish_console_commands_validate_inputs_and_help_topics :: proc(t: ^testing.T) {
+	sync.mutex_lock(&ergonomics_test_lock)
+	defer sync.mutex_unlock(&ergonomics_test_lock)
+	ergonomics_reset_state()
+	defer ergonomics_reset_state()
+
+	// All three publishing commands are registered as built-ins with exact signatures.
+	pk := command_find("recipes.publisher_key")
+	cp := command_find("recipes.configure_publisher")
+	pb := command_find("recipes.publish")
+	testing.expect(t, pk != nil && pk.run != nil && pk.parameter_count == 0 && pk.result == .Text)
+	testing.expect(t, cp != nil && cp.run != nil && cp.parameter_count == 1 && cp.parameters[0] == .Text && cp.result == .Text)
+	testing.expect(t, pb != nil && pb.run != nil && pb.parameter_count == 1 && pb.parameters[0] == .Text && pb.result == .Record)
+
+	// Help topics exist and return descriptive Text for each command.
+	for name in ([?]string{"recipes.publisher_key", "recipes.configure_publisher", "recipes.publish"}) {
+		ergonomics_clear_line()
+		h := call_run("help", []Value{{kind = .Text, text = name}})
+		testing.expectf(t, !failed && h.kind == .Text && strings.contains(h.text, name), "help(%q) must succeed", name)
+	}
+
+	// Argument validation refuses empty, short, uppercase, non-hex, and all-zero 64-hex values
+	// upfront before attempting any service connection.
+	zero_hex := "0000000000000000000000000000000000000000000000000000000000000000"
+	upper_hex := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	non_hex := "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+	short_hex := "deadbeef"
+	for bad in ([?]string{"", short_hex, upper_hex, non_hex, zero_hex}) {
+		ergonomics_clear_line()
+		_ = call_run("recipes.configure_publisher", []Value{{kind = .Text, text = bad}})
+		testing.expectf(t, failed, "recipes.configure_publisher(%q) must be refused", bad)
+		testing.expect(t, strings.contains(ergonomics_failure_text(), "64 non-zero lowercase hexadecimal digits"))
+
+		ergonomics_clear_line()
+		_ = call_run("recipes.publish", []Value{{kind = .Text, text = bad}})
+		testing.expectf(t, failed, "recipes.publish(%q) must be refused", bad)
+		testing.expect(t, strings.contains(ergonomics_failure_text(), "64 non-zero lowercase hexadecimal digits"))
+	}
+
+	// Wrong argument counts are refused cleanly.
+	ergonomics_clear_line()
+	_ = call_run("recipes.publisher_key", []Value{{kind = .Text, text = "extra"}})
+	testing.expect(t, failed)
+	ergonomics_clear_line()
+	_ = call_run("recipes.configure_publisher", nil)
+	testing.expect(t, failed)
+	ergonomics_clear_line()
+	_ = call_run("recipes.publish", nil)
+	testing.expect(t, failed)
 }

@@ -184,6 +184,22 @@ Realisation_Row :: struct {
 #assert(size_of(Realisation_Row) == 112)
 #assert(object_cache.PUBLIC_KEY_SIZE == value_kinds.HASH_FIELD_BYTES)
 
+// Summary row returned by recipes.publish after uploading a recipe's output
+// closure bottom-up and its signed Realisation_Record to the QUIC cache.
+Publish_Row :: struct {
+	recipe_hash:       value_kinds.Hash_Field,
+	output_hash:       value_kinds.Hash_Field,
+	signer_public_key: value_kinds.Hash_Field,
+	objects_uploaded:  u64,
+	objects_skipped:   u64,
+	bytes_uploaded:    u64,
+}
+
+#assert(size_of(Publish_Row) == 120)
+#assert(offset_of(Publish_Row, objects_uploaded) == 96)
+#assert(offset_of(Publish_Row, objects_skipped) == 104)
+#assert(offset_of(Publish_Row, bytes_uploaded) == 112)
+
 // One pin of a project, as projects.pins gives it.
 Pin_Row :: struct {
 	tree_hash:          value_kinds.Hash_Field,

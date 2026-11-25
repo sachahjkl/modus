@@ -45,6 +45,28 @@ CACHE_CLIENT_BUSY_LIMIT :: 4096
 // build output tree closure fits without premature refusal.
 CACHE_CLOSURE_QUEUE_CAPACITY :: builder.MAX_INPUT_OBJECTS
 
+// Format/contract bound: matches builder maximum nested tree depth (32).
+CACHE_PUBLISH_DEPTH_MOST :: 32
+
+// Signing callback supplied by the caller (e.g. recipes service Ed25519 sign)
+// so private key material never crosses into recipes_core.
+Cache_Sign_Proc :: #type proc "contextless" (
+	message: []u8,
+	out_signature: ^[object_cache.SIGNATURE_SIZE]u8,
+	user: rawptr,
+) -> bool
+
+// Measured outcome of one cache_quic_publish_realisation upload.
+Cache_Publish_Stats :: struct {
+	recipe_hash:       blake3.Hash,
+	output_hash:       blake3.Hash,
+	output_kind:       object_cache.Cache_Object_Kind,
+	signer_public_key: [object_cache.PUBLIC_KEY_SIZE]u8,
+	objects_uploaded:  u64,
+	objects_skipped:   u64,
+	bytes_uploaded:    u64,
+}
+
 // Staging object name used during multi-frame QUIC downloads so partial
 // unverified bytes never land under the final <64-hex> content name.
 FETCH_STAGING_NAME :: "fetch_staging"
@@ -904,16 +926,19 @@ cache_quic_fetch_closure_to_store :: proc "contextless" (
 			root_size = obj_size
 		}
 		if item.kind == .Tree {
-			// The verified single-frame MODTREE2 bytes are still in client.response_buf
-			// inside the last Get_Object response; decode directly from client.response_buf.
-			decoded, dec_ref := object_cache.decode_response(client.response_buf[:object_cache.FRAME_HEADER_SIZE + object_cache.GET_OBJECT_RESPONSE_HEADER_SIZE + int(obj_size)])
-			if dec_ref != .None {
-				return 0, .Malformed_Output
+			// Read the verified MODTREE2 bytes from state.store rather than assuming
+			// client.response_buf holds a Get_Object frame: when item.hash was
+			// already present locally (for example during Verify mode after a local
+			// build), cache_quic_fetch_object_to_store returns early without issuing
+			// a Get_Object exchange.
+			tree_bytes, read_ref := store_read_and_validate_tree(state, item.hash, client.pipeline_response_bufs[1][:object_cache.MAX_TREE_PAYLOAD_BYTES])
+			if read_ref != .None {
+				return 0, read_ref
 			}
-			entry_count := tree_hash.tree_entry_count(decoded.payload)
+			entry_count := tree_hash.tree_entry_count(tree_bytes)
 			offset := tree_hash.HEADER_SIZE
 			for _ in 0 ..< entry_count {
-				entry, next_offset, entry_ok := tree_hash.tree_entry_next(decoded.payload, offset)
+				entry, next_offset, entry_ok := tree_hash.tree_entry_next(tree_bytes, offset)
 				if !entry_ok {
 					return 0, .Malformed_Output
 				}
@@ -1024,16 +1049,17 @@ cache_quic_fetch_realisation :: proc "contextless" (
 	return true, .None
 }
 
-// cache_quic_put_object uploads data over QUIC using Put_Object + aligned 1 MiB
-// Put_Object_Frame requests.
-cache_quic_put_object :: proc "contextless" (
+// cache_quic_put_object_checked uploads data over QUIC using Put_Object +
+// aligned 1 MiB Put_Object_Frame requests and reports whether the server
+// answered Already_Present (skipped = true) or accepted fresh frames.
+cache_quic_put_object_checked :: proc "contextless" (
 	client: ^Cache_Quic_Client,
 	kind: object_cache.Cache_Object_Kind,
 	object_hash: blake3.Hash,
 	data: []u8,
 	uploader_public_key: [object_cache.PUBLIC_KEY_SIZE]u8,
 	uploader_signature: [object_cache.SIGNATURE_SIZE]u8,
-) -> (status: object_cache.Cache_Response_Status, err: Cache_Client_Error) {
+) -> (status: object_cache.Cache_Response_Status, skipped: bool, err: Cache_Client_Error) {
 	head := object_cache.Cache_Request {
 		kind                = .Put_Object,
 		object_hash         = object_hash,
@@ -1044,23 +1070,26 @@ cache_quic_put_object :: proc "contextless" (
 	}
 	head_resp, head_err := cache_quic_client_exchange(client, &head)
 	if head_err != .None {
-		return {}, head_err
+		return {}, false, head_err
 	}
 	if head_resp.status != .Ok {
-		return head_resp.status, .None
+		return head_resp.status, false, .None
 	}
 	if head_resp.put_state == .Already_Present {
-		return .Ok, .None
+		return .Ok, true, .None
+	}
+	if head_resp.put_state != .Accept_Frames || head_resp.offset != 0 {
+		return .Refused, false, .Bad_Response
 	}
 	frame_count, count_ok := object_cache.object_frame_count(u64(len(data)))
 	if !count_ok {
-		return .Refused, .Bad_Request
+		return .Refused, false, .Bad_Request
 	}
 	for frame_index in u64(0) ..< frame_count {
 		offset := frame_index * object_cache.FRAME_PAYLOAD_BYTES
 		frame_len, len_ok := object_cache.object_frame_length(u64(len(data)), frame_index)
 		if !len_ok {
-			return .Refused, .Bad_Request
+			return .Refused, false, .Bad_Request
 		}
 		frame_req := object_cache.Cache_Request {
 			kind        = .Put_Object_Frame,
@@ -1070,13 +1099,589 @@ cache_quic_put_object :: proc "contextless" (
 		}
 		frame_resp, frame_err := cache_quic_client_exchange(client, &frame_req)
 		if frame_err != .None {
-			return {}, frame_err
+			return {}, false, frame_err
 		}
 		if frame_resp.status != .Ok {
-			return frame_resp.status, .None
+			return frame_resp.status, false, .None
 		}
 	}
-	return .Ok, .None
+	return .Ok, false, .None
+}
+
+// cache_quic_put_object uploads data over QUIC using Put_Object + aligned 1 MiB
+// Put_Object_Frame requests.
+cache_quic_put_object :: proc "contextless" (
+	client: ^Cache_Quic_Client,
+	kind: object_cache.Cache_Object_Kind,
+	object_hash: blake3.Hash,
+	data: []u8,
+	uploader_public_key: [object_cache.PUBLIC_KEY_SIZE]u8,
+	uploader_signature: [object_cache.SIGNATURE_SIZE]u8,
+) -> (status: object_cache.Cache_Response_Status, err: Cache_Client_Error) {
+	status, _, err = cache_quic_put_object_checked(client, kind, object_hash, data, uploader_public_key, uploader_signature)
+	return status, err
+}
+
+// cache_quic_put_realisation sends a signed Realisation_Record over QUIC.
+// Refuses zero hashes, zero signer keys, or unknown object kinds before sending.
+cache_quic_put_realisation :: proc "contextless" (
+	client: ^Cache_Quic_Client,
+	record: object_cache.Realisation_Record,
+) -> (status: object_cache.Cache_Response_Status, err: Cache_Client_Error) {
+	if client == nil || !client.configured {
+		return {}, .Not_Configured
+	}
+	if object_cache.hash_is_zero(record.recipe_hash) ||
+	   object_cache.hash_is_zero(record.output_hash) ||
+	   object_cache.hash_is_zero(record.signer_public_key) {
+		return {}, .Bad_Request
+	}
+	if _, kind_ok := object_cache.cache_object_kind_of_word(u64(record.output_kind)); !kind_ok {
+		return {}, .Bad_Request
+	}
+	req := object_cache.Cache_Request {
+		kind        = .Put_Realisation,
+		realisation = record,
+	}
+	resp, exch_err := cache_quic_client_exchange(client, &req)
+	if exch_err != .None {
+		return {}, exch_err
+	}
+	return resp.status, .None
+}
+
+@(private = "file")
+publish_refusal_of_server_status :: proc "contextless" (status: object_cache.Cache_Response_Status) -> pr.Recipe_Refusal {
+	switch status {
+	case .Ok:
+		return .None
+	case .Unauthorized:
+		return .Untrusted_Realisation
+	case .Bad_Signature:
+		return .Bad_Signature
+	case .Bad_Hash:
+		return .Hash_Mismatch
+	case .Too_Large:
+		return .Store_Full
+	case .Not_Found:
+		return .Cache_Miss
+	case .Out_Of_Range, .Busy, .Refused:
+		return .Malformed_Output
+	}
+	return .Malformed_Output
+}
+
+@(private = "file")
+publish_refusal_of_client_err :: proc "contextless" (err: Cache_Client_Error) -> pr.Recipe_Refusal {
+	switch err {
+	case .None:
+		return .None
+	case .Bad_Server_Key:
+		return .Untrusted_Realisation
+	case .Bad_Response, .Stream_Reset, .Bad_Request:
+		return .Malformed_Output
+	case .Not_Configured, .Start_Failed, .Handshake_Fail, .Timed_Out, .Disconnected:
+		return .Cache_Miss
+	}
+	return .Cache_Miss
+}
+
+// store_read_range_exact reads exactly len(dst) bytes from name starting at
+// start_offset across multiple storage read_range calls.
+@(private = "file")
+store_read_range_exact :: proc "contextless" (state: ^Recipes_State, name: string, start_offset: u64, dst: []u8) -> Stored_Output {
+	got := 0
+	for got < len(dst) {
+		piece, status := pr.private_store_read_range(&state.store, name, start_offset + u64(got), dst[got:])
+		switch status {
+		case .Ok:
+		case .Absent:
+			return start_offset == 0 && got == 0 ? .Absent : .Damaged
+		case .Too_Large, .Failed:
+			return .Damaged
+		}
+		if len(piece) == 0 {
+			return .Damaged
+		}
+		got += len(piece)
+	}
+	return .Whole
+}
+
+// store_read_and_validate_tree reads a MODTREE2 object from state.store into
+// dst, verifies its canonical format and tree_hash against expected_hash, and
+// returns the verified slice.
+@(private = "file")
+store_read_and_validate_tree :: proc "contextless" (
+	state: ^Recipes_State,
+	expected_hash: blake3.Hash,
+	dst: []u8,
+) -> (bytes: []u8, refusal: pr.Recipe_Refusal) {
+	name := pr.blob_object_name(expected_hash)
+	name_text := pr.private_object_name_text(&name)
+	object_size, sz_status := pr.private_store_size(&state.store, name_text)
+	switch sz_status {
+	case .Ok:
+	case .Absent:
+		return nil, .Cache_Miss
+	case .Too_Large, .Failed:
+		return nil, .Store_Failed
+	}
+	if object_size > u64(object_cache.MAX_TREE_PAYLOAD_BYTES) || object_size > u64(len(dst)) {
+		return nil, .Malformed_Output
+	}
+	read_outcome := store_read_range_exact(state, name_text, 0, dst[:object_size])
+	switch read_outcome {
+	case .Whole:
+	case .Absent:
+		return nil, .Cache_Miss
+	case .Damaged:
+		return nil, .Store_Damaged
+	}
+	if extra, extra_status := pr.private_store_read_range(&state.store, name_text, object_size, state.store_piece[:1]); extra_status != .Ok || len(extra) != 0 {
+		return nil, .Store_Damaged
+	}
+	tree_bytes := dst[:object_size]
+	if _, val_ref := tree_hash.tree_validate(tree_bytes); val_ref != .None {
+		return nil, .Malformed_Output
+	}
+	recomputed, hash_refusal := tree_hash.tree_hash(tree_bytes)
+	if hash_refusal != .None {
+		return nil, .Malformed_Output
+	}
+	if recomputed != expected_hash {
+		return nil, .Hash_Mismatch
+	}
+	return tree_bytes, .None
+}
+
+// cache_quic_put_store_object verifies one Blob or Tree stored in state.store
+// against object_hash, signs Put_Object via sign_proc, and streams it to the
+// QUIC cache using client.pipeline_response_bufs[0] as the 1 MiB frame buffer.
+@(private = "file")
+cache_quic_put_store_object :: proc "contextless" (
+	client: ^Cache_Quic_Client,
+	state: ^Recipes_State,
+	object_hash: blake3.Hash,
+	kind: object_cache.Cache_Object_Kind,
+	uploader_public_key: [object_cache.PUBLIC_KEY_SIZE]u8,
+	sign_proc: Cache_Sign_Proc,
+	sign_user: rawptr,
+	stats: ^Cache_Publish_Stats,
+) -> (refusal: pr.Recipe_Refusal, server_status: object_cache.Cache_Response_Status, client_err: Cache_Client_Error) {
+	frame_buf := client.pipeline_response_bufs[0][:]
+	switch kind {
+	case .Tree:
+		tree_bytes, read_ref := store_read_and_validate_tree(state, object_hash, frame_buf[:object_cache.MAX_TREE_PAYLOAD_BYTES])
+		if read_ref != .None {
+			return read_ref, {}, .None
+		}
+		sign_bytes, sign_ok := object_cache.put_object_signing_bytes(.Tree, object_hash, u64(len(tree_bytes)), uploader_public_key)
+		if !sign_ok {
+			return .Malformed_Output, {}, .None
+		}
+		sig: [object_cache.SIGNATURE_SIZE]u8
+		if !sign_proc(sign_bytes[:], &sig, sign_user) {
+			return .Bad_Signature, {}, .None
+		}
+		st, skipped, err := cache_quic_put_object_checked(client, .Tree, object_hash, tree_bytes, uploader_public_key, sig)
+		if err != .None {
+			return publish_refusal_of_client_err(err), st, err
+		}
+		if st != .Ok {
+			return publish_refusal_of_server_status(st), st, .None
+		}
+		if skipped {
+			stats.objects_skipped += 1
+		} else {
+			stats.objects_uploaded += 1
+			stats.bytes_uploaded += u64(len(tree_bytes))
+		}
+		return .None, .Ok, .None
+
+	case .Blob:
+		name := pr.blob_object_name(object_hash)
+		name_text := pr.private_object_name_text(&name)
+		object_size, sz_status := pr.private_store_size(&state.store, name_text)
+		switch sz_status {
+		case .Ok:
+		case .Absent:
+			return .Cache_Miss, {}, .None
+		case .Too_Large, .Failed:
+			return .Store_Failed, {}, .None
+		}
+		if object_size > OUTPUT_BYTES_MOST {
+			return .Malformed_Output, {}, .None
+		}
+		// Stream Pass 1: verify exact length and BLAKE3 digest before signing.
+		switch stored_output_check(state, object_hash, .Blob, object_size) {
+		case .Whole:
+		case .Absent:
+			return .Cache_Miss, {}, .None
+		case .Damaged:
+			return .Hash_Mismatch, {}, .None
+		}
+		sign_bytes, sign_ok := object_cache.put_object_signing_bytes(.Blob, object_hash, object_size, uploader_public_key)
+		if !sign_ok {
+			return .Malformed_Output, {}, .None
+		}
+		sig: [object_cache.SIGNATURE_SIZE]u8
+		if !sign_proc(sign_bytes[:], &sig, sign_user) {
+			return .Bad_Signature, {}, .None
+		}
+		head := object_cache.Cache_Request {
+			kind                = .Put_Object,
+			object_hash         = object_hash,
+			object_kind         = .Blob,
+			object_size         = object_size,
+			uploader_public_key = uploader_public_key,
+			uploader_signature  = sig,
+		}
+		head_resp, head_err := cache_quic_client_exchange(client, &head)
+		if head_err != .None {
+			return publish_refusal_of_client_err(head_err), {}, head_err
+		}
+		if head_resp.status != .Ok {
+			return publish_refusal_of_server_status(head_resp.status), head_resp.status, .None
+		}
+		if head_resp.put_state == .Already_Present {
+			stats.objects_skipped += 1
+			return .None, .Ok, .None
+		}
+		if head_resp.put_state != .Accept_Frames || head_resp.offset != 0 {
+			return .Malformed_Output, .Refused, .Bad_Response
+		}
+		frame_count, count_ok := object_cache.object_frame_count(object_size)
+		if !count_ok {
+			return .Malformed_Output, {}, .Bad_Request
+		}
+		// Stream Pass 2: read aligned 1 MiB frames from store into frame_buf
+		// (pipeline_response_bufs[0], untouched by cache_quic_client_exchange).
+		for frame_index in u64(0) ..< frame_count {
+			offset := frame_index * object_cache.FRAME_PAYLOAD_BYTES
+			frame_len, len_ok := object_cache.object_frame_length(object_size, frame_index)
+			if !len_ok || frame_len > u64(len(frame_buf)) {
+				return .Malformed_Output, {}, .Bad_Request
+			}
+			if frame_len > 0 {
+				read_outcome := store_read_range_exact(state, name_text, offset, frame_buf[:frame_len])
+				if read_outcome != .Whole {
+					return read_outcome == .Absent ? .Cache_Miss : .Store_Damaged, {}, .None
+				}
+			}
+			frame_req := object_cache.Cache_Request {
+				kind        = .Put_Object_Frame,
+				object_hash = object_hash,
+				offset      = offset,
+				payload     = frame_buf[:frame_len],
+			}
+			frame_resp, frame_err := cache_quic_client_exchange(client, &frame_req)
+			if frame_err != .None {
+				return publish_refusal_of_client_err(frame_err), {}, frame_err
+			}
+			if frame_resp.status != .Ok {
+				return publish_refusal_of_server_status(frame_resp.status), frame_resp.status, .None
+			}
+		}
+		stats.objects_uploaded += 1
+		stats.bytes_uploaded += object_size
+		return .None, .Ok, .None
+	}
+	return .Bad_Output_Kind, {}, .Bad_Request
+}
+
+@(private = "file")
+Publish_Stack_Frame :: struct {
+	hash:        blake3.Hash,
+	entry_index: int,
+	entry_count: int,
+	byte_offset: int,
+}
+
+@(private = "file")
+closure_queue_contains :: proc "contextless" (items: []Cache_Closure_Item, hash: blake3.Hash, kind: object_cache.Cache_Object_Kind) -> bool {
+	for item in items {
+		if item.hash == hash && item.kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// cache_quic_put_closure_from_store uploads root_hash and its entire content
+// closure from state.store bottom-up over QUIC: every child Blob and child Tree
+// is verified and uploaded before its parent Tree. Enforces bounded depth
+// (CACHE_PUBLISH_DEPTH_MOST) and object count (CACHE_CLOSURE_QUEUE_CAPACITY),
+// refusing cycles, missing children, tampered objects, signing failure, or any
+// server/transport refusal without uploading dependent parents.
+cache_quic_put_closure_from_store :: proc "contextless" (
+	client: ^Cache_Quic_Client,
+	state: ^Recipes_State,
+	root_hash: blake3.Hash,
+	root_kind: object_cache.Cache_Object_Kind,
+	uploader_public_key: [object_cache.PUBLIC_KEY_SIZE]u8,
+	sign_proc: Cache_Sign_Proc,
+	sign_user: rawptr,
+	stats: ^Cache_Publish_Stats,
+) -> (refusal: pr.Recipe_Refusal, server_status: object_cache.Cache_Response_Status, client_err: Cache_Client_Error) {
+	if client == nil || !client.configured {
+		return .Cache_Miss, {}, .Not_Configured
+	}
+	if state == nil || stats == nil || sign_proc == nil {
+		return .Buffer_Too_Small, {}, .Bad_Request
+	}
+	if object_cache.hash_is_zero(root_hash) || object_cache.hash_is_zero(uploader_public_key) {
+		return .Malformed_Output, {}, .Bad_Request
+	}
+	checked_kind, kind_ok := object_cache.cache_object_kind_of_word(u64(root_kind))
+	if !kind_ok {
+		return .Bad_Output_Kind, {}, .Bad_Request
+	}
+	if checked_kind == .Blob {
+		return cache_quic_put_store_object(client, state, root_hash, .Blob, uploader_public_key, sign_proc, sign_user, stats)
+	}
+
+	// Iterative post-order DFS over the MODTREE2 DAG using pipeline_response_bufs[1]
+	// for the active tree node bytes and closure_queue[:uploaded_count] as the
+	// uploaded deduplication set.
+	tree_scratch := client.pipeline_response_bufs[1][:object_cache.MAX_TREE_PAYLOAD_BYTES]
+	root_bytes, root_ref := store_read_and_validate_tree(state, root_hash, tree_scratch)
+	if root_ref != .None {
+		return root_ref, {}, .None
+	}
+	loaded_hash := root_hash
+	loaded_len := len(root_bytes)
+
+	stack: [CACHE_PUBLISH_DEPTH_MOST]Publish_Stack_Frame
+	stack[0] = {
+		hash        = root_hash,
+		entry_index = 0,
+		entry_count = tree_hash.tree_entry_count(root_bytes),
+		byte_offset = tree_hash.HEADER_SIZE,
+	}
+	depth := 1
+	uploaded_count := 0
+
+	for depth > 0 {
+		frame := &stack[depth - 1]
+		if frame.entry_index < frame.entry_count {
+			if loaded_hash != frame.hash {
+				reloaded, reload_ref := store_read_and_validate_tree(state, frame.hash, tree_scratch)
+				if reload_ref != .None {
+					return reload_ref, {}, .None
+				}
+				loaded_hash = frame.hash
+				loaded_len = len(reloaded)
+			}
+			entry, next_offset, entry_ok := tree_hash.tree_entry_next(tree_scratch[:loaded_len], frame.byte_offset)
+			if !entry_ok {
+				return .Malformed_Output, {}, .None
+			}
+			frame.entry_index += 1
+			frame.byte_offset = next_offset
+
+			child_kind := object_cache.Cache_Object_Kind.Blob
+			switch entry.kind {
+			case .Object:
+				child_kind = .Blob
+			case .Tree, .Part:
+				child_kind = .Tree
+			}
+			if closure_queue_contains(client.closure_queue[:uploaded_count], entry.hash, child_kind) {
+				continue
+			}
+
+			switch child_kind {
+			case .Blob:
+				if uploaded_count >= len(client.closure_queue) {
+					return .Malformed_Output, {}, .None
+				}
+				put_ref, put_st, put_err := cache_quic_put_store_object(
+					client,
+					state,
+					entry.hash,
+					.Blob,
+					uploader_public_key,
+					sign_proc,
+					sign_user,
+					stats,
+				)
+				if put_ref != .None || put_err != .None || put_st != .Ok {
+					return put_ref, put_st, put_err
+				}
+				client.closure_queue[uploaded_count] = {hash = entry.hash, kind = .Blob}
+				uploaded_count += 1
+
+			case .Tree:
+				// Refuse cycles back to any ancestor currently on the active DFS stack.
+				for ancestor in stack[:depth] {
+					if ancestor.hash == entry.hash {
+						return .Malformed_Output, {}, .None
+					}
+				}
+				if depth >= CACHE_PUBLISH_DEPTH_MOST {
+					return .Malformed_Output, {}, .None
+				}
+				child_bytes, child_ref := store_read_and_validate_tree(state, entry.hash, tree_scratch)
+				if child_ref != .None {
+					return child_ref, {}, .None
+				}
+				loaded_hash = entry.hash
+				loaded_len = len(child_bytes)
+				stack[depth] = {
+					hash        = entry.hash,
+					entry_index = 0,
+					entry_count = tree_hash.tree_entry_count(child_bytes),
+					byte_offset = tree_hash.HEADER_SIZE,
+				}
+				depth += 1
+			}
+			continue
+		}
+
+		// All children of frame.hash are now present on the server; upload this tree.
+		if uploaded_count >= len(client.closure_queue) {
+			return .Malformed_Output, {}, .None
+		}
+		tree_hash_to_put := frame.hash
+		put_ref, put_st, put_err := cache_quic_put_store_object(
+			client,
+			state,
+			tree_hash_to_put,
+			.Tree,
+			uploader_public_key,
+			sign_proc,
+			sign_user,
+			stats,
+		)
+		if put_ref != .None || put_err != .None || put_st != .Ok {
+			return put_ref, put_st, put_err
+		}
+		client.closure_queue[uploaded_count] = {hash = tree_hash_to_put, kind = .Tree}
+		uploaded_count += 1
+		depth -= 1
+	}
+
+	return .None, .Ok, .None
+}
+
+// load_realisation_for_publish resolves recipe_hash from state.realisations or
+// falls back to reading realisation_<hash> from state.store.
+@(private = "file")
+load_realisation_for_publish :: proc "contextless" (
+	state: ^Recipes_State,
+	recipe_hash: blake3.Hash,
+) -> (record: object_cache.Realisation_Record, refusal: pr.Recipe_Refusal) {
+	if slot := find_local_realisation(state, recipe_hash); slot != nil {
+		return slot.record, .None
+	}
+	name := pr.realisation_object_name(recipe_hash)
+	bytes, status := pr.private_store_read(&state.store, pr.private_object_name_text(&name), state.store_head[:])
+	switch status {
+	case .Ok:
+	case .Absent:
+		return {}, .Unknown_Recipe
+	case .Failed:
+		return {}, .Store_Failed
+	case .Too_Large:
+		return {}, .Store_Damaged
+	}
+	origin_word: u64
+	decoded, orig_tree, _, ref_tree := pr.decode_realisation_object(bytes, recipe_hash, .Tree)
+	if ref_tree == .None {
+		record = decoded
+		origin_word = orig_tree
+	} else {
+		decoded_blob, orig_blob, _, ref_blob := pr.decode_realisation_object(bytes, recipe_hash, .Blob)
+		if ref_blob != .None {
+			return {}, .Store_Damaged
+		}
+		record = decoded_blob
+		origin_word = orig_blob
+	}
+	if origin_word != u64(Provenance_Origin.Local_Build) && origin_word != u64(Provenance_Origin.Remote_Cache) {
+		return {}, .Store_Damaged
+	}
+	return record, .None
+}
+
+// cache_quic_publish_realisation publishes a locally realised recipe to the
+// QUIC object cache: resolves the local realisation (index or private store),
+// uploads its full output closure bottom-up first, then signs and uploads
+// Put_Realisation last so the server never exposes a dangling realisation.
+cache_quic_publish_realisation :: proc "contextless" (
+	client: ^Cache_Quic_Client,
+	state: ^Recipes_State,
+	recipe_hash: blake3.Hash,
+	uploader_public_key: [object_cache.PUBLIC_KEY_SIZE]u8,
+	sign_proc: Cache_Sign_Proc,
+	sign_user: rawptr,
+) -> (stats: Cache_Publish_Stats, refusal: pr.Recipe_Refusal, server_status: object_cache.Cache_Response_Status, client_err: Cache_Client_Error) {
+	if client == nil || !client.configured {
+		return {}, .Cache_Miss, {}, .Not_Configured
+	}
+	if state == nil || sign_proc == nil {
+		return {}, .Buffer_Too_Small, {}, .Bad_Request
+	}
+	if object_cache.hash_is_zero(recipe_hash) || object_cache.hash_is_zero(uploader_public_key) {
+		return {}, .Malformed_Output, {}, .Bad_Request
+	}
+	local_record, load_ref := load_realisation_for_publish(state, recipe_hash)
+	if load_ref != .None {
+		return {}, load_ref, {}, .None
+	}
+	if object_cache.hash_is_zero(local_record.output_hash) {
+		return {}, .Store_Damaged, {}, .None
+	}
+	checked_kind, kind_ok := object_cache.cache_object_kind_of_word(u64(local_record.output_kind))
+	if !kind_ok {
+		return {}, .Store_Damaged, {}, .None
+	}
+
+	stats = {
+		recipe_hash       = recipe_hash,
+		output_hash       = local_record.output_hash,
+		output_kind       = checked_kind,
+		signer_public_key = uploader_public_key,
+	}
+
+	// Step 1: upload full output closure bottom-up before publishing the realisation.
+	closure_ref, closure_st, closure_err := cache_quic_put_closure_from_store(
+		client,
+		state,
+		local_record.output_hash,
+		checked_kind,
+		uploader_public_key,
+		sign_proc,
+		sign_user,
+		&stats,
+	)
+	if closure_ref != .None || closure_err != .None || closure_st != .Ok {
+		return stats, closure_ref, closure_st, closure_err
+	}
+
+	// Step 2: sign and upload Put_Realisation only after the root output is stored.
+	pub_record := object_cache.Realisation_Record {
+		recipe_hash       = recipe_hash,
+		output_hash       = local_record.output_hash,
+		output_kind       = checked_kind,
+		signer_public_key = uploader_public_key,
+	}
+	sign_bytes, sign_ok := object_cache.realisation_signing_bytes(&pub_record)
+	if !sign_ok {
+		return stats, .Malformed_Output, {}, .None
+	}
+	if !sign_proc(sign_bytes[:], &pub_record.signature, sign_user) {
+		return stats, .Bad_Signature, {}, .None
+	}
+	real_st, real_err := cache_quic_put_realisation(client, pub_record)
+	if real_err != .None {
+		return stats, publish_refusal_of_client_err(real_err), real_st, real_err
+	}
+	if real_st != .Ok {
+		return stats, publish_refusal_of_server_status(real_st), real_st, .None
+	}
+	return stats, .None, .Ok, .None
 }
 
 // cache_quic_get_references queries Get_References over QUIC and copies up to
