@@ -655,6 +655,15 @@ start_handles_of_the_start_grant_set_give :: proc "contextless" (work: ^Start_Wo
 	}
 }
 
+// measure_run_value_give marks the context of a process when the boot image
+// holds the resource `measure_run`, so the same module binary measures rates
+// in a measure run and checks counts in a test.
+measure_run_value_give :: proc "contextless" (values: ^system.Context_Values) {
+	if system.image_resource_find(image, system.MEASURE_RUN_RESOURCE) != nil {
+		system.value_put(values, op.CONTEXT_VALUE_MEASURE_RUN, 1)
+	}
+}
+
 // start_pages_give maps the pages that each process reads, and those of its
 // start grant set: the date page and its fresh bytes page, the debug image, the disk
 // process page, and for a process with a surface the settings page and the
@@ -663,11 +672,7 @@ start_pages_give :: proc "contextless" (work: ^Start_Work) {
 	grants := work.start_grant_set.grants
 	date_page_give(work.mappings[:], &work.mapping_count, &work.values)
 	fresh_bytes_page_give(work.slot, work.mappings[:], &work.mapping_count, &work.values)
-	// Each process: whether the machine runs for a measure. The boot image
-	// says it, so the modules of a measure run are the modules of a test.
-	if system.image_resource_find(image, system.MEASURE_RUN_RESOURCE) != nil {
-		system.value_put(&work.values, op.CONTEXT_VALUE_MEASURE_RUN, 1)
-	}
+	measure_run_value_give(&work.values)
 	if .Debug_Image in grants {
 		debug_image_give(work.mappings[:], &work.mapping_count, &work.values)
 	}

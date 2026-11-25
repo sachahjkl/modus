@@ -1207,6 +1207,7 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> ca
 	text_settings_give(mappings[:], &mapping_count, &values, .Machine)
 	date_page_give(mappings[:], &mapping_count, &values)
 	fresh_bytes_page_give(served, mappings[:], &mapping_count, &values)
+	measure_run_value_give(&values)
 	// Set the start grant set before display_role_store_give so grant_for
 	// sees the Store grant when opening the role store connection.
 	served.start_grant_set = start_grant_set
@@ -2279,6 +2280,7 @@ window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, r
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values, .Presentation, view)
 	fresh_bytes_page_give(view, mappings[:], &mapping_count, &values)
+	measure_run_value_give(&values)
 	if context_refused(terminal_name, &context_grants, &values) {
 		fresh_bytes_forget(view)
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
