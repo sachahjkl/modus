@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The bar is the way from each page to each section of the site. The site has six sections under the home: the docs, the status, the news, the releases, the roadmap and the gallery. The bar names them all, on one line.
+The bar is the way from each page to each section of the site. The site has seven sections under the home: Try, Docs, Gallery, News, Status, Releases and Roadmap. The bar names them all, on one line.
 
 What the bar looks like and how the menu behaves is in [`docs/SITE.md`](../../../docs/SITE.md), "The buttons and the menu of the bar".
 
@@ -23,9 +23,9 @@ A button is its text and 16 pixels of padding, and 8 pixels stand between two bu
 
 ## The chosen form
 
-**Three buttons: Docs, Gallery, News. One menu, Project: Status, Releases, Roadmap.**
+**Three buttons: Try, Docs, Gallery. One menu, Project: News, Status, Releases, Roadmap.**
 
-- The rule that decides: a button is what a first reader looks for. What is the system and how does it work (Docs), what does it look like (Gallery), what is new (News). The menu holds the pages that report how the project goes: what is built and what is missing, what each release brought, what is planned. A reader who follows the project opens it; a first reader does not need it.
+- The rule that decides: a button is what a first reader looks for. Try the system in the browser (Try), read what it is and how it works (Docs), see what it looks like (Gallery). The menu holds the pages that report how the project goes: what is new, what is built and what is missing, what each release brought, what is planned. A reader who follows the project opens it; a first reader does not need it.
 - The word of the menu is "Project", the name of the group of the glossary that holds the words of these pages.
 - The releases and the roadmap are side by side in the menu: the work that is done, then the work that is planned.
 

@@ -496,12 +496,15 @@ browser_machine_host_puts_the_console_on_com2 :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(worker, "machine.consolePort.type(message.text)"))
 	testing.expect(t, strings.contains(worker, "bootImageUrl + \"" + BROWSER_MACHINE_TRUST_SUFFIX + "\""))
 	testing.expect(t, strings.contains(worker, "trustDescriptionHash,"))
-	// The site publishes the desktop page only: the console page needs its
-	// own image, which the site does not write.
+	// The site publishes both the desktop page and the console page.
 	files := BROWSER_MACHINE_PAGE_FILES
+	has_console_page := false
 	for file in files {
-		testing.expect(t, file.name != BROWSER_MACHINE_CONSOLE_PAGE_FILE)
+		has_console_page ||= file.name == BROWSER_MACHINE_CONSOLE_PAGE_FILE
 	}
+	testing.expect(t, has_console_page, "BROWSER_MACHINE_PAGE_FILES must include the console page")
+	testing.expect(t, strings.contains(page, `s = isolate(\"sample\")`))
+	testing.expect(t, strings.contains(page, `href="./try/"`))
 }
 
 // The console page draws with its document only: no canvas, no grid of

@@ -23,7 +23,7 @@ bar_test_page :: proc(section: Site_Section) -> Site_Page {
 }
 
 @(private = "file")
-bar_test_all_sections := [?]Site_Section{.Docs, .Guides, .Reference, .Status, .News, .Releases, .Roadmap, .Gallery}
+bar_test_all_sections := [?]Site_Section{.Try, .Docs, .Guides, .Reference, .Status, .News, .Releases, .Roadmap, .Gallery}
 
 // Each section under the home is in the bar one time: as a button, or as a
 // line of the menu. The other sections are in neither. The count of the
@@ -38,11 +38,11 @@ site_bar_names_each_section_under_the_home_one_time :: proc(t: ^testing.T) {
 		testing.expect_value(t, site_section_in_bar(section), is_button || in_group)
 	}
 	testing.expect_value(t, len(site_bar_buttons), 3)
-	testing.expect_value(t, len(site_project_menu_sections), 3)
-	// The pictures are one click away, and the roadmap is in the menu
-	// beside the releases.
-	testing.expect(t, site_section_is_bar_button(.Docs) && site_section_is_bar_button(.Gallery) && site_section_is_bar_button(.News))
-	testing.expect(t, site_section_in_project_menu(.Status) && site_section_in_project_menu(.Releases) && site_section_in_project_menu(.Roadmap))
+	testing.expect_value(t, len(site_project_menu_sections), 4)
+	// Try, Docs and Gallery are one click away; News, Status, Releases and
+	// Roadmap are in the Project menu.
+	testing.expect(t, site_section_is_bar_button(.Try) && site_section_is_bar_button(.Docs) && site_section_is_bar_button(.Gallery))
+	testing.expect(t, site_section_in_project_menu(.News) && site_section_in_project_menu(.Status) && site_section_in_project_menu(.Releases) && site_section_in_project_menu(.Roadmap))
 }
 
 // The navigation of the bar on a page of a section that is a button: the
@@ -52,10 +52,11 @@ site_bar_on_a_page_of_a_button :: proc(t: ^testing.T) {
 	site := bar_test_site(bar_test_all_sections[:])
 	html := site_bar_sections_html(&site, bar_test_page(.Gallery))
 	expected := "<nav class=\"bar-sections\" aria-label=\"Sections\">\n<ul>\n" +
+		"<li><a href=\"../try/index.html\">Try</a></li>\n" +
 		"<li><a href=\"../docs/index.html\">Docs</a></li>\n" +
 		"<li><a href=\"../gallery/index.html\" aria-current=\"page\">Gallery</a></li>\n" +
-		"<li><a href=\"../news/index.html\">News</a></li>\n" +
 		"<li><details class=\"project-menu\">\n<summary class=\"project-menu-button\">Project</summary>\n<div class=\"project-menu-panel\">\n" +
+		"<a href=\"../news/index.html\">News</a>\n" +
 		"<a href=\"../status/index.html\">Status</a>\n" +
 		"<a href=\"../releases/index.html\">Releases</a>\n" +
 		"<a href=\"../roadmap/index.html\">Roadmap</a>\n" +
@@ -108,10 +109,10 @@ site_bar_marks_the_current_section :: proc(t: ^testing.T) {
 // its sections does.
 @(test)
 site_bar_names_only_the_pages_that_exist :: proc(t: ^testing.T) {
-	buttons_only := bar_test_site({.Docs, .News})
+	buttons_only := bar_test_site({.Try, .Docs})
 	html := site_bar_sections_html(&buttons_only, bar_test_page(.Docs))
 	testing.expect(t, !strings.contains(html, "<details") && !strings.contains(html, SITE_PROJECT_MENU_NAME))
-	testing.expect(t, strings.contains(html, ">Docs</a>") && strings.contains(html, ">News</a>") && !strings.contains(html, ">Gallery</a>"))
+	testing.expect(t, strings.contains(html, ">Try</a>") && strings.contains(html, ">Docs</a>") && !strings.contains(html, ">Gallery</a>"))
 	one_line := bar_test_site({.Docs, .Releases})
 	html = site_bar_sections_html(&one_line, bar_test_page(.Releases))
 	testing.expect_value(t, strings.count(html, SITE_PROJECT_MENU_OPEN_CURRENT), 1)
