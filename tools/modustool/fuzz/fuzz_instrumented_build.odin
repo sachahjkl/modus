@@ -5,7 +5,6 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "modustool:foundation"
-import "modustool:build"
 
 // The instrumented child (src/md/infrastructure/fuzzing.md, "Edge counters
 // from the LLVM of the build"). The build of a module already passes
@@ -28,6 +27,9 @@ import "modustool:build"
 FUZZ_INSTRUMENTED_FOLDER :: FUZZING_BUILD_FOLDER + "/instrumented"
 FUZZ_INSTRUMENTED_NAME :: "modustool_instrumented"
 FUZZ_INSTRUMENTED_BINARY :: FUZZ_INSTRUMENTED_FOLDER + "/" + FUZZ_INSTRUMENTED_NAME
+// Minimal entrypoint compiled for instrumented fuzz children so instrumentation
+// skips unrelated tool packages (site, machine, checks, cache_server).
+FUZZ_RUNNER_FOLDER :: foundation.TOOL_SOURCE_FOLDER + "/fuzz_runner"
 
 // The options of the pass, as `-fsanitize=fuzzer-no-link` of clang gives
 // them: each block and each critical edge, an 8-bit counter with no call,
@@ -234,9 +236,9 @@ fuzz_instrumented_build :: proc(packages: []string) -> bool {
 	if !foundation.reset_folder(FUZZ_INSTRUMENTED_FOLDER) || !foundation.make_folder(FUZZ_INSTRUMENTED_FOLDER + "/objects") {
 		return false
 	}
-	// The child is a build of the sources of its parent, at a place of its
-	// own: it never compiles itself (tool_build.odin).
-	compile := []string{"odin", "build", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG, build.TOOL_NEVER_BUILDS_ITSELF_FLAG, "-print-linker-flags", "-keep-temp-files", "-out:" + FUZZ_INSTRUMENTED_BINARY}
+	// The child compiles the minimal fuzz_runner entrypoint so unrelated tool
+	// packages (site, cache_server, machine, checks) are not compiled or linked.
+	compile := []string{"odin", "build", FUZZ_RUNNER_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG, "-print-linker-flags", "-keep-temp-files", "-out:" + FUZZ_INSTRUMENTED_BINARY}
 	state, standard_output, standard_error, error := os.process_exec({command = compile}, context.temp_allocator)
 	if error != nil || !state.success {
 		fmt.eprintfln("modustool: the compile of the instrumented child failed: %v\n%s", error, string(standard_error))

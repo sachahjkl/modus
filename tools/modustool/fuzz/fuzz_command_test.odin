@@ -50,6 +50,9 @@ fuzz_sources_seed_reads_the_tool_to_any_depth :: proc(t: ^testing.T) {
 
 	seed_file_write(root, "tool/package/nested/notes.txt", "another text\n")
 	testing.expect_value(t, seed_of_tree(root), first)
+	seed_file_write(root, "tool/package/nested/deep_test.odin", "package nested\n")
+	seed_file_write(root, "tool/package/nested/deep_test_amd64.odin", "package nested\n")
+	testing.expect_value(t, seed_of_tree(root), first)
 	seed_file_write(root, "kernel/kernel.odin", "package kernel\n\nchanged :: 1\n")
 	testing.expect_value(t, seed_of_tree(root), first)
 
@@ -155,4 +158,58 @@ fuzz_check_children_run_gives_each_target_its_own_verdict :: proc(t: ^testing.T)
 	for run in runs {
 		testing.expectf(t, !run.started, "the child of %s did not start", run.target.name)
 	}
+}
+
+// fuzz_shard_targets refuses out-of-range shard bounds and partitions targets
+// in strided order (index % total == shard - 1) with no overlap and no gap.
+@(test)
+fuzz_shard_targets_partitions_deterministically :: proc(t: ^testing.T) {
+	all := fuzz_targets()
+	testing.expect(t, len(all) >= 4, "fuzz target table holds at least four targets")
+
+	// Refusal cases first: 0, negative, and shard > total.
+	for bad in ([][2]int{{0, 4}, {1, 0}, {0, 0}, {-1, 4}, {1, -4}, {5, 4}, {2, 1}}) {
+		selected, ok := fuzz_shard_targets(all, bad[0], bad[1])
+		testing.expectf(t, !ok && len(selected) == 0, "shard %d/%d must be refused", bad[0], bad[1])
+	}
+
+	// Single shard returns every target in order.
+	whole, whole_ok := fuzz_shard_targets(all, 1, 1)
+	testing.expect(t, whole_ok)
+	testing.expect_value(t, len(whole), len(all))
+	for target, index in whole {
+		testing.expect_value(t, target.name, all[index].name)
+	}
+
+	// Four shards cover every target exactly once in strided order.
+	seen := make(map[string]int, context.temp_allocator)
+	sum := 0
+	for shard in 1 ..= 4 {
+		slice, ok := fuzz_shard_targets(all, shard, 4)
+		testing.expectf(t, ok, "shard %d/4 succeeds", shard)
+		sum += len(slice)
+		expected_pos := shard - 1
+		for target in slice {
+			testing.expect_value(t, target.name, all[expected_pos].name)
+			seen[target.name] += 1
+			expected_pos += 4
+		}
+	}
+	testing.expect_value(t, sum, len(all))
+	for target in all {
+		testing.expect_value(t, seen[target.name], 1)
+	}
+
+	// Valid shard past len(all) returns an empty slice cleanly.
+	beyond, beyond_ok := fuzz_shard_targets(all, len(all) + 1, len(all) + 1)
+	testing.expect(t, beyond_ok)
+	testing.expect_value(t, len(beyond), 0)
+
+	// Strict positive-decimal parsing for fuzz_runner CLI matches check fuzz.
+	for bad_text in ([][2]string{{"0", "4"}, {"1", "0"}, {"5", "4"}, {"+1", "4"}, {"1_0", "10"}, {"-1", "4"}, {" 1", "4"}, {"a", "4"}, {"1", "b"}, {"", "4"}}) {
+		_, _, parsed_ok := fuzz_parse_shard_args(bad_text[0], bad_text[1])
+		testing.expectf(t, !parsed_ok, "shard args %q %q must be refused", bad_text[0], bad_text[1])
+	}
+	shard, total, good_ok := fuzz_parse_shard_args("2", "4")
+	testing.expect(t, good_ok && shard == 2 && total == 4)
 }

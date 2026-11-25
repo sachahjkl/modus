@@ -157,7 +157,7 @@ whole_test_procedures := [?]string{"run_test"}
 // not ready, the comparison of the machine test, and the release volume,
 // which only the release command builds and no machine starts.
 @(private = "file")
-procedures_that_start_no_machine := [?]string{"boot_volumes", "test_part_volumes_of", "main_boot_volume_build", "machine_command", "machine_test", "release_boot_volume", "run_check"}
+procedures_that_start_no_machine := [?]string{"boot_volumes", "test_part_volumes_of", "main_boot_volume_build", "machine_command", "machine_test", "release_boot_volume", "run_check", "reproducible_build_run"}
 
 // One volume constant in the body of one procedure of the tool.
 @(private = "file")

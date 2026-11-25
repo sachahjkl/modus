@@ -259,7 +259,7 @@ COMMANDS :: [?]foundation.Command {
 	// a fact wait that no template renders fails here, before any machine
 	// (src/md/infrastructure/scenario_fault_loop.md). `check` and `test`
 	// run the same check after their build.
-	{name = "fact_waits", about = "build the modules, then check that each fact wait of the scenarios is the start of a sentence that a fact template of the build renders, with no machine", run = run_fact_waits},
+	{name = "fact_waits", about = "build the modules, then check that each fact wait of the scenarios is the start of a sentence that a fact template of the build renders, with no machine; `fact_waits from <folder>`: run against the built modules in <folder> with no build", run = run_fact_waits},
 	// After a build of the check of the flake with --keep-going: the host
 	// checks and each part whose output is not in the store, with its first
 	// failed step and its whole build log in build/failed_parts/.
@@ -655,23 +655,30 @@ COMMANDS :: [?]foundation.Command {
 	{name = "module-hashes", about = "write <file> | compare <file>: record the hash of each module of " + foundation.MODULE_BUILD_FOLDER + ", or compare the build with such a record: print each module whose hash differs, and fail if one does", run = build.run_module_hashes},
 	// Runs every check of the work tree, and writes no file of the
 	// repository: the count of its checks goes to build/checks_passed.txt.
-	// The full check of a batch is `nix flake check`, which runs this
-	// command, with `screenshots`.
+	// The full check of a batch is `nix flake check`, which runs its
+	// sub-modes in separate cached derivations, with `screenshots`.
 	//
-	// In order: `odin check -vet` of the tool, each package of the contract
-	// alone, the host tests of each folder (several at once, each with its
-	// log in `build/host_tests/`), the origin of the cryptography,
-	// the mark, the pictures of the README, the fixed addresses, the bounds
-	// of the tests, the rule on comments, the form of the glossary, the
-	// file index of the intent, the source paths in the documents, the
-	// changelog, the news and the roadmap. Then the whole machine test
-	// (`test`), the test of the debug objects against the linked files of
-	// the build, and a second build that must give the same bytes.
+	// Fast static checks run first so syntax, import, rule, and document
+	// faults fail in seconds before host tests, fuzzing, or a second build:
+	// `odin check -vet` of the tool, library imports, `odin check` of the
+	// kernel for `freestanding_wasm64p32`, rule checks, cryptography origin,
+	// mark, README pictures, fixed addresses, test bounds, text cuts, cut
+	// line marks, comments, glossary, intent index, source paths, changelog,
+	// news, roadmap, byte layouts, and reuse list. Then the host tests, the
+	// fuzz targets, the machine test (unless omitted), the debug object
+	// check, and the reproducible second build.
 	//
-	// - `without_machines` (optional): no machine test; a whole build of the
-	//   main volume before the second build. The check of the flake runs
-	//   this form, and each test part in a derivation of its own.
-	{name = "check", about = "odin check -vet and odin test of the host code, the fuzz targets (their corpus and a fixed count of new executions), the checks of the sources (among them the rule on comments and the form of the glossary), changelog check, news check, roadmap check, then test; `check without_machines`: no machine test", run = run_check},
+	// - `without_machines`: no machine test; builds the main volume, checks
+	//   fact waits and debug objects, and runs the reproducible second build.
+	// - `static`: only the fast static checks above.
+	// - `host_tests [system | tool]`: only the host unit tests (all folders,
+	//   system folders under `src/`, or tool folders plus the browser machine
+	//   host tests).
+	// - `fuzz <shard> <total>`: only the 1-based strided slice of fuzz
+	//   targets (`index % total == shard - 1`).
+	// - `reproducible`: whole build of the main volume, fact waits check,
+	//   debug object check, and reproducible second build.
+	{name = "check", about = "fast static checks first (odin check -vet, imports, wasm64p32 kernel check, rule checks, source and document checks), then host tests, fuzz targets, machine test, debug objects, and reproducible second build; sub-modes: `check without_machines | static | host_tests [system | tool] | fuzz <shard> <total> | reproducible`", run = run_check},
 	// Fuzzes the readers of the system on the host: the module file, the
 	// debug object, the storage format, QUIC and TLS, TCP and HTTP
 	// (docs/TOOLS.md, "The fuzzing").
@@ -979,9 +986,36 @@ run_failed_parts :: proc(args: []string) -> int {
 
 // run_fact_waits is the command `fact_waits` (scenario_waits_check.odin):
 // the module files of the main volume are the catalog of the check.
+// `fact_waits from <folder>` links `<folder>/modules` into `build/modules` so
+// the check runs against pre-built test inputs without rebuilding.
 run_fact_waits :: proc(args: []string) -> int {
+	if len(args) == 2 && args[0] == "from" && args[1] != "" {
+		modules_source := foundation.join(args[1], "/modules")
+		if !os.is_dir(modules_source) {
+			fmt.eprintfln("modustool: %s has no modules folder", args[1])
+			return foundation.EXIT_FAILURE
+		}
+		if os.exists(foundation.MODULE_BUILD_FOLDER) {
+			fmt.eprintfln("modustool: %s exists: fact_waits from runs with no prior build", foundation.MODULE_BUILD_FOLDER)
+			return foundation.EXIT_FAILURE
+		}
+		if !foundation.make_folder(foundation.BUILD_FOLDER) {
+			return foundation.EXIT_FAILURE
+		}
+		if link_err := os.symlink(modules_source, foundation.MODULE_BUILD_FOLDER); link_err != nil {
+			fmt.eprintfln("modustool: cannot link %s to %s: %v", foundation.MODULE_BUILD_FOLDER, modules_source, link_err)
+			return foundation.EXIT_FAILURE
+		}
+		if !checks.scenario_waits_check() {
+			return foundation.EXIT_FAILURE
+		}
+		if !machine.checks_passed_write(sync.atomic_load(&foundation.test_passed_count)) {
+			return foundation.EXIT_FAILURE
+		}
+		return 0
+	}
 	if len(args) != 0 {
-		fmt.eprintln("modustool: fact_waits takes no argument")
+		fmt.eprintln("modustool: fact_waits [from <folder>]")
 		return foundation.EXIT_USAGE
 	}
 	if code := build.build_system(build.boot_volumes_of_command("fact_waits")); code != 0 {
@@ -1214,128 +1248,175 @@ run_measure :: proc(args: []string) -> int {
 	return 0
 }
 
+// run_check_static runs every fast static check so syntax, import, rule, and
+// document faults fail in seconds before host tests, fuzzing, or a second build.
+run_check_static :: proc() -> bool {
+	if !foundation.run({"odin", "check", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG}) {
+		return false
+	}
+	// The kernel and the contract packages import no support package. The
+	// compiler does not refuse such an import: the library is one.
+	if !build.library_imports_check() {
+		return false
+	}
+	// The kernel of a browser machine is the source of the kernel of x86-64
+	// with other arch files, and no build of the image compiles it: this
+	// check keeps it compiling (src/md/features/browser_machine.md).
+	if !foundation.run({"odin", "check", foundation.SOURCE_FOLDER_KERNEL, "-target:freestanding_wasm64p32", "-no-entry-point", "-default-to-nil-allocator", "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG}) {
+		return false
+	}
+	// The count of the kernel operations is the count that the properties
+	// state, no source of the system calls an allocator, each binding of an
+	// export that can fail gives the call outcome and forces its read, and
+	// no family of integer constants is a closed set of choices; only the
+	// loader and the root service name the field image_checks of a load source.
+	if !checks.operation_count_check() || !checks.allocator_check() || !checks.outcome_binding_check() || !checks.choice_constant_check() || !checks.processor_random_check() || !checks.image_checks_field_check() || !checks.global_initializer_check() || !checks.display_text_check() || !checks.service_deadline_check() || !checks.joint_processes_check() {
+		return false
+	}
+	if !checks.cryptography_origin_check() {
+		return false
+	}
+	if !resources.logo_check() {
+		return false
+	}
+	if !site.readme_pictures_check() {
+		return false
+	}
+	if !checks.fixed_addresses_check() {
+		return false
+	}
+	if !checks.test_bound_check() {
+		return false
+	}
+	if !checks.text_cut_check() {
+		return false
+	}
+	if !checks.cut_line_mark_check() {
+		return false
+	}
+	if !checks.comment_rule_check() {
+		return false
+	}
+	if !build.glossary_check() {
+		return false
+	}
+	if !checks.intent_index_check() {
+		return false
+	}
+	if !checks.source_paths_check() {
+		return false
+	}
+	if !checks.changelog_check() {
+		return false
+	}
+	if !checks.news_check() {
+		return false
+	}
+	if !checks.roadmap_check() {
+		return false
+	}
+	if !site.byte_layouts_check() {
+		return false
+	}
+	if !checks.reuse_list_check() {
+		return false
+	}
+	return true
+}
+
+// run_check_host_tests runs the host unit tests for scope (all, system, or tool).
+run_check_host_tests :: proc(scope: checks.Host_Tests_Scope) -> bool {
+	if scope == .All || scope == .Tool {
+		// The stage tracker of the host of the browser machine, in Node: the
+		// stages that a page shows come from it.
+		if !build.browser_machine_host_tests_run() {
+			return false
+		}
+	}
+	folders := checks.host_test_folders_for_scope(scope)
+	return checks.host_tests_run(folders)
+}
+
 run_check :: proc(args: []string) -> int {
-	// The check of the flake runs each test part in a derivation of its own
-	// (src/md/infrastructure/full_check.md, "The derivations of the check").
-	without_machines := len(args) == 1 && args[0] == "without_machines"
-	if len(args) != 0 && !without_machines {
-		fmt.eprintln("modustool: check takes no argument, or `without_machines`")
+	parsed, problem := checks.check_arguments_parse(args)
+	if problem != "" {
+		fmt.eprintfln("modustool: %s", problem)
 		return foundation.EXIT_USAGE
 	}
 	// The full check proves the build: it keeps no output of an earlier build.
 	build.build_whole = true
 	build.build_optimization_mode = .Speed
 	build.build_cache_folder_set("")
-	if !foundation.run({"odin", "check", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG}) {
-		return foundation.EXIT_FAILURE
-	}
-	// The kernel and the contract packages import no support package. The
-	// compiler does not refuse such an import: the library is one.
-	if !build.library_imports_check() {
-		return foundation.EXIT_FAILURE
-	}
-	// The kernel of a browser machine is the source of the kernel of x86-64
-	// with other arch files, and no build of the image compiles it: this
-	// check keeps it compiling (src/md/features/browser_machine.md).
-	if !foundation.run({"odin", "check", foundation.SOURCE_FOLDER_KERNEL, "-target:freestanding_wasm64p32", "-no-entry-point", "-default-to-nil-allocator", "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG}) {
-		return foundation.EXIT_FAILURE
-	}
-	// The count of the kernel operations is the count that the properties
-	// state, no source of the system calls an allocator, each binding of an
-	// export that can fail gives the call outcome and forces its read, and
-	// no family of integer constants is a
-	// closed set of choices; only the loader and the root service name the
-	// field image_checks of a load source.
-	if !checks.operation_count_check() || !checks.allocator_check() || !checks.outcome_binding_check() || !checks.choice_constant_check() || !checks.processor_random_check() || !checks.image_checks_field_check() || !checks.display_text_check() || !checks.service_deadline_check() || !checks.joint_processes_check() {
-		return foundation.EXIT_FAILURE
-	}
-	// The stage tracker of the host of the browser machine, in Node: the
-	// stages that a page shows come from it.
-	if !build.browser_machine_host_tests_run() {
-		return foundation.EXIT_FAILURE
-	}
-	host_test_folders := checks.HOST_TEST_FOLDERS
-	if !checks.host_tests_run(host_test_folders[:]) {
-		return foundation.EXIT_FAILURE
-	}
-	// The fuzz targets: their corpus, then a fixed count of new executions
-	// with the seed of the sources (src/md/infrastructure/fuzzing.md).
-	if !fuzz.fuzz_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !checks.cryptography_origin_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !resources.logo_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !site.readme_pictures_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !checks.fixed_addresses_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !checks.test_bound_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !checks.text_cut_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !checks.cut_line_mark_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !checks.comment_rule_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !build.glossary_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !checks.intent_index_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !checks.source_paths_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !checks.changelog_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !checks.news_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !checks.roadmap_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !site.byte_layouts_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if !checks.reuse_list_check() {
-		return foundation.EXIT_FAILURE
-	}
-	if without_machines {
-		// The second build compares its bytes with a first whole build:
-		// the modules and the main volume, whose boot program it compares.
+
+	switch parsed.mode {
+	case .Static:
+		if !run_check_static() {
+			return foundation.EXIT_FAILURE
+		}
+	case .Host_Tests:
+		if !run_check_host_tests(parsed.host_tests_scope) {
+			return foundation.EXIT_FAILURE
+		}
+	case .Fuzz:
+		if !fuzz.fuzz_check_shard(parsed.fuzz_shard, parsed.fuzz_total) {
+			return foundation.EXIT_FAILURE
+		}
+	case .Reproducible:
 		if code := build.build_system([]string{build.BOOT_VOLUME}); code != 0 {
 			return code
 		}
-		// The waits of the scenarios against the module files of this
-		// build: the check of the flake runs no machine in this form.
 		if !checks.scenario_waits_check() {
 			return foundation.EXIT_FAILURE
 		}
-	} else if run_test(nil) != 0 {
-		return foundation.EXIT_FAILURE
+		if !checks.test_debug_objects() {
+			return foundation.EXIT_FAILURE
+		}
+		if !build.outputs_same_after_second_build() {
+			return foundation.EXIT_FAILURE
+		}
+	case .Without_Machines:
+		if !run_check_static() {
+			return foundation.EXIT_FAILURE
+		}
+		if !run_check_host_tests(.All) {
+			return foundation.EXIT_FAILURE
+		}
+		if !fuzz.fuzz_check() {
+			return foundation.EXIT_FAILURE
+		}
+		if code := build.build_system([]string{build.BOOT_VOLUME}); code != 0 {
+			return code
+		}
+		if !checks.scenario_waits_check() {
+			return foundation.EXIT_FAILURE
+		}
+		if !checks.test_debug_objects() {
+			return foundation.EXIT_FAILURE
+		}
+		if !build.outputs_same_after_second_build() {
+			return foundation.EXIT_FAILURE
+		}
+	case .All:
+		if !run_check_static() {
+			return foundation.EXIT_FAILURE
+		}
+		if !run_check_host_tests(.All) {
+			return foundation.EXIT_FAILURE
+		}
+		if !fuzz.fuzz_check() {
+			return foundation.EXIT_FAILURE
+		}
+		if run_test(nil) != 0 {
+			return foundation.EXIT_FAILURE
+		}
+		if !checks.test_debug_objects() {
+			return foundation.EXIT_FAILURE
+		}
+		if !build.outputs_same_after_second_build() {
+			return foundation.EXIT_FAILURE
+		}
 	}
-	// The debug objects against the linked files: the linked files name the
-	// compiler in the store, so only a build holds them, and no test part
-	// of the flake reads them.
-	if !machine.test_debug_objects() {
-		return foundation.EXIT_FAILURE
-	}
-	if !build.outputs_same_after_second_build() {
-		return foundation.EXIT_FAILURE
-	}
-	// `screenshots` reads the count from the output of the check of the
-	// flake, for its measure record.
+	// `screenshots` and the flake check join read the count from this file.
 	if !machine.checks_passed_write(sync.atomic_load(&foundation.test_passed_count)) {
 		return foundation.EXIT_FAILURE
 	}

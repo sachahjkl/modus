@@ -234,6 +234,29 @@ host_tests_run :: proc(folders: []string) -> bool {
 	return passed
 }
 
+// host_test_folders_for_scope returns the folders of HOST_TEST_FOLDERS that
+// belong to scope, preserving heaviest-first order.
+host_test_folders_for_scope :: proc(scope: Host_Tests_Scope, allocator := context.temp_allocator) -> []string {
+	all := HOST_TEST_FOLDERS
+	selected := make([dynamic]string, allocator)
+	for folder in all {
+		is_tool := foundation.source_folder_is_of_the_tool(folder)
+		switch scope {
+		case .All:
+			append(&selected, folder)
+		case .System:
+			if !is_tool {
+				append(&selected, folder)
+			}
+		case .Tool:
+			if is_tool {
+				append(&selected, folder)
+			}
+		}
+	}
+	return selected[:]
+}
+
 // The heaviest folders of HOST_TEST_FOLDERS, from the longest: a compile
 // of the tool and the tests that run the longest. They lead the list.
 HOST_TEST_HEAVIEST_FOLDERS :: [?]string {
