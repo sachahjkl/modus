@@ -372,7 +372,6 @@ lint_check_redundant_paren :: proc "contextless" (
 	depth := 1
 	inner_tokens := 0
 	first_inner := console_language.Token{kind = .None}
-	second_inner := console_language.Token{kind = .None}
 	first_was_open_paren := false
 	first_paren_matched_at_end := false
 	close_tok := console_language.Token{kind = .None}
@@ -383,18 +382,7 @@ lint_check_redundant_paren :: proc "contextless" (
 			return
 		}
 		t_text := source[t.start:t.end]
-		if depth == 1 && inner_tokens == 0 {
-			first_inner = t
-			if t.kind == .Operator && t_text == "(" {
-				first_was_open_paren = true
-			}
-		} else if depth == 1 && inner_tokens == 1 {
-			second_inner = t
-		}
-
-		if t.kind == .Operator && t_text == "(" {
-			depth += 1
-		} else if t.kind == .Operator && t_text == ")" {
+		if t.kind == .Operator && t_text == ")" {
 			depth -= 1
 			if depth == 0 {
 				close_tok = t
@@ -408,8 +396,22 @@ lint_check_redundant_paren :: proc "contextless" (
 					first_paren_matched_at_end = true
 				}
 			}
+			if depth == 1 {
+				inner_tokens += 1
+			}
+			p = t.end
+			continue
 		}
-		if depth == 1 {
+
+		if depth == 1 && inner_tokens == 0 {
+			first_inner = t
+			if t.kind == .Operator && t_text == "(" {
+				first_was_open_paren = true
+			}
+		}
+		if t.kind == .Operator && t_text == "(" {
+			depth += 1
+		} else if depth == 1 {
 			inner_tokens += 1
 		}
 		p = t.end
@@ -433,7 +435,7 @@ lint_check_redundant_paren :: proc "contextless" (
 	}
 
 	// Case 2: Single atomic value `(x)`, `(42)`, `("hi")`, `(true)`, `(.dark)`, `(blake3:...)`.
-	if inner_tokens == 1 && second_inner.kind == .None {
+	if inner_tokens == 1 {
 		switch first_inner.kind {
 		case .Number, .Text, .Hash, .Member:
 			lint_emit(sink, {

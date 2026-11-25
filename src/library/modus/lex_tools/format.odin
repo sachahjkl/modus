@@ -516,6 +516,9 @@ fmt_next_item :: proc "contextless" (source: string, pos: int) -> (item: Fmt_Ite
 
 // fmt_inspect_block scans ahead from just after `{`, `[`, or `(` to its
 // matching closer to decide emptiness and multi-line layout deterministically.
+// `has_break` reports a newline or comment at top level of this block (`depth == 1`
+// or immediately before its matching closer), so a nested multi-line record inside
+// a single-line call `f("a", plan { ... })` does not break the outer `)` on pass 2.
 @(private = "file")
 fmt_inspect_block :: proc "contextless" (
 	source: string,
@@ -528,6 +531,7 @@ fmt_inspect_block :: proc "contextless" (
 	item_count := 0
 	has_comment := false
 	has_newline := false
+	top_break := false
 	// Width estimate depends strictly on token lengths and canonical spacing
 	// (never on input whitespace), preserving idempotency across passes.
 	est_width := 2
@@ -544,10 +548,16 @@ fmt_inspect_block :: proc "contextless" (
 		case .Comment:
 			has_comment = true
 			has_newline = true
+			if depth == 1 {
+				top_break = true
+			}
 			item_count += 1
 		case .Open_Brace, .Open_Bracket, .Open_Paren:
 			if it.newlines_before > 0 {
 				has_newline = true
+				if depth == 1 {
+					top_break = true
+				}
 			}
 			depth += 1
 			if depth > FORMAT_DEPTH_LIMIT {
@@ -567,14 +577,20 @@ fmt_inspect_block :: proc "contextless" (
 				if item_count == 0 {
 					return true, false, false, .None
 				}
+				if it.newlines_before > 0 {
+					top_break = true
+				}
 				explicit_break := has_comment || has_newline
-				return false, explicit_break || est_width > max_width, explicit_break, .None
+				return false, explicit_break || est_width > max_width, top_break, .None
 			}
 			item_count += 1
 			est_width += 2
 		case .Name, .Number, .Text, .Hash, .Member, .Operator, .Comma, .Colon:
 			if it.newlines_before > 0 {
 				has_newline = true
+				if depth == 1 {
+					top_break = true
+				}
 			}
 			item_count += 1
 			est_width += (it.end - it.start) + 1
