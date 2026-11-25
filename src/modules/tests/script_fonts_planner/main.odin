@@ -163,7 +163,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if poll_status != .Succeeded || generation <= 0 {
 		wrong_call("plans.apply_poll did not commit the accepted plan", poll_status, error)
 	}
-	if generation_row.generation != generation || generation_row.standing_word != i64(pr.Generation_Standing.Current) {
+	if generation_row.generation != generation || generation_row.standing != .Current {
 		wrong("the row of the applied generation does not name it as the current one; its generation", u64(generation_row.generation))
 	}
 	system.log_fact(.Info, Plan_Accepted{generation = u64(generation), hash = value_kinds.Hash_Field(hash)})

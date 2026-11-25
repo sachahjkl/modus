@@ -50,11 +50,11 @@ a_registered_recipe_builds_once_then_comes_from_the_cache :: proc(t: ^testing.T)
 
 	rows: [MAX_BUILD_HISTORY]pr.Recipe_Build_Row
 	testing.expect_value(t, history_rows(registry, rows[:]), 3)
-	testing.expect_value(t, rows[0].outcome_word, i64(pr.Recipe_Build_Outcome.Built_Locally))
-	testing.expect_value(t, rows[2].mode_word, i64(pr.Build_Mode.Cache_Only))
+	testing.expect_value(t, rows[0].outcome, pr.Recipe_Build_Outcome_Word(pr.Recipe_Build_Outcome.Built_Locally))
+	testing.expect_value(t, rows[2].mode, pr.Build_Mode_Word(pr.Build_Mode.Cache_Only))
 	realisations: [4]pr.Realisation_Row
 	testing.expect_value(t, realisation_rows(state, realisations[:]), 1)
-	testing.expect_value(t, realisations[0].origin_word, i64(Provenance_Origin.Local_Build))
+	testing.expect_value(t, realisations[0].origin, pr.Provenance_Origin_Word(Provenance_Origin.Local_Build))
 	testing.expect_value(t, realisation_rows(state, nil), 1)
 }
 

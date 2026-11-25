@@ -235,9 +235,9 @@ a_store_that_refuses_the_realisation_records_nothing :: proc(t: ^testing.T) {
 
 @(test)
 a_corrupt_recipe_is_refused_before_any_build :: proc(t: ^testing.T) {
-	head := pr.Recipe_Head{output_kind_word = i64(object_cache.Cache_Object_Kind.Tree)}
+	head := pr.Recipe_Head{output_kind = pr.Recipe_Object_Kind_Word(object_cache.Cache_Object_Kind.Tree)}
 	head.builder_hash = value_kinds.Hash_Field(pr.inputs_tree_builder_hash())
-	rows := [2]pr.Recipe_Input_Row{{kind_word = i64(object_cache.Cache_Object_Kind.Tree)}, {kind_word = i64(object_cache.Cache_Object_Kind.Tree)}}
+	rows := [2]pr.Recipe_Input_Row{{kind = pr.Recipe_Object_Kind_Word(object_cache.Cache_Object_Kind.Tree)}, {kind = pr.Recipe_Object_Kind_Word(object_cache.Cache_Object_Kind.Tree)}}
 	rows[0].hash = value_kinds.Hash_Field(store_test_hash(1))
 	rows[1].hash = value_kinds.Hash_Field(store_test_hash(2))
 	copy(rows[0].name[:], "src")
@@ -250,10 +250,10 @@ a_corrupt_recipe_is_refused_before_any_build :: proc(t: ^testing.T) {
 	zero, _ := pr.recipe_spec_of_parts(&head, rows[:], nil, &spec)
 	testing.expect_value(t, zero, pr.Recipe_Refusal.Zero_Input_Hash)
 	rows[1].hash = value_kinds.Hash_Field(store_test_hash(2))
-	rows[1].kind_word = 3
+	rows[1].kind = 3
 	kind, _ := pr.recipe_spec_of_parts(&head, rows[:], nil, &spec)
 	testing.expect_value(t, kind, pr.Recipe_Refusal.Bad_Input_Kind)
-	rows[1].kind_word = i64(object_cache.Cache_Object_Kind.Tree)
+	rows[1].kind = pr.Recipe_Object_Kind_Word(object_cache.Cache_Object_Kind.Tree)
 	no_builder := head
 	no_builder.builder_hash = {}
 	builder, _ := pr.recipe_spec_of_parts(&no_builder, rows[:], nil, &spec)

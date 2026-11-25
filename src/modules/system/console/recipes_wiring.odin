@@ -783,11 +783,7 @@ recipes_build_project_inner :: proc "contextless" (project: string, mode: pr.Bui
 		return
 	}
 	row := (^pr.Recipe_Build_Row)(raw_data(table_row(build_table, build_table_val, 0)))^
-	if row.outcome_word < 0 {
-		_ = fail("recipes.build_project: recipes.build_stored returned an unknown build outcome")
-		return
-	}
-	build_outcome, outcome_ok := pr.recipe_build_outcome_of_word(u64(row.outcome_word))
+	build_outcome, outcome_ok := pr.recipe_build_outcome_of_word(u64(row.outcome))
 	if !outcome_ok {
 		_ = fail("recipes.build_project: recipes.build_stored returned an unknown build outcome")
 		return
@@ -863,11 +859,7 @@ recipes_provenance_lookup :: proc "contextless" (caller: string, target_hash: bl
 		if blake3.Hash(row.recipe_hash) != target_hash {
 			continue
 		}
-		if row.origin_word < 0 {
-			_ = fail(caller, ": realisation row carries an unknown origin")
-			return
-		}
-		origin, origin_ok := pr.provenance_origin_of_word(u64(row.origin_word))
+		origin, origin_ok := pr.provenance_origin_of_word(u64(row.origin))
 		if !origin_ok {
 			_ = fail(caller, ": realisation row carries an unknown origin")
 			return

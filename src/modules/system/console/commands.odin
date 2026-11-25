@@ -1131,6 +1131,31 @@ commands_start :: proc "contextless" () {
 	// - `mode`: optional build mode (`prefer_cache`, `build_only`, `cache_only`,
 	//   or `verify`; defaults to `prefer_cache`).
 	command("projects.install", {.Text, .Text}, .Record, "ingest, build, verify, and deliver a project module into module_files", projects_install_command, optional_last = true)
+	// Validates a plan, connects to the plans service when needed, shows the
+	// plan difference on the trusted display, waits for the principal's
+	// decision, and returns the committed generation row.
+	//
+	// - `plan_name`: name shown in the trusted display dialog, 1 to 48 bytes.
+	// - `rows`: a `plan { ... }` value or a `Table` of `Plan_Entry_Row`.
+	// - `expected`: optional `Plan_Expected` record; defaults to `{}` when omitted.
+	//
+	// ```
+	// > plans.apply("evening", plan { locks = { settings = { appearance = .dark } } })
+	// ```
+	command("plans.apply", {.Text, .None, .Record}, .Table, "apply a plan after trusted display consent and return the committed generation", plans_apply_command, optional_last = true)
+	// Connects to the plans service when needed, shows the rollback difference
+	// on the trusted display, waits for the principal's decision, and returns
+	// the newly current generation row.
+	//
+	// - `generation`: optional generation number (at least 1); rolls back to
+	//   the immediately preceding generation when omitted.
+	//
+	// ```
+	// > plans.rollback()
+	// > plans.rollback(2)
+	// ```
+	command("plans.rollback", {.Integer}, .Table, "roll back to the previous or numbered plan generation after trusted display consent", plans_rollback_command, optional_last = true)
+	plans_commands_attach_types()
 	debugger_commands_start()
 	tables_start()
 	facts_start() // facts.odin
@@ -1759,7 +1784,14 @@ commands_add :: proc "contextless" (file: []u8, prefix: string, sandbox: int, ba
 			continue
 		}
 		if prefix != "" {
-			item.name = system.format(names[names_count:], prefix, ".", item.name)
+			candidate := system.format(names[names_count:], prefix, ".", item.name)
+			// Keep a built-in human frontend command (such as plans.apply or
+			// plans.rollback) in charge of its service.export name when the
+			// service connects.
+			if existing := command_find(candidate); existing != nil && existing.run != nil {
+				continue
+			}
+			item.name = candidate
 			names_count += len(item.name)
 		}
 		if sandbox != 0 {

@@ -4,6 +4,7 @@ import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import op "modus:contract/operation"
+import "modus:contract/plans_recipes_status"
 import "modus:contract/pointer_pictures"
 import "modus:contract/storage_status"
 import "modus:contract/value_kinds"
@@ -90,31 +91,45 @@ CONTRACT_ENUM_SIZES := [value_kinds.Contract_Enum]u32 {
 	.Load_Difference = size_of(Difference),
 	.Storage_Status  = size_of(storage_status.Status),
 	.Call_Outcome    = size_of(call_outcome.Call_Outcome),
-	.Pointer_Part    = size_of(pointer_pictures.Part),
-	.Pointer_Field   = size_of(pointer_pictures.Field),
-	.Pointer_Problem = size_of(pointer_pictures.Problem_Kind),
+	.Pointer_Part         = size_of(pointer_pictures.Part),
+	.Pointer_Field        = size_of(pointer_pictures.Field),
+	.Pointer_Problem      = size_of(pointer_pictures.Problem_Kind),
+	.Generation_Standing  = size_of(plans_recipes_status.Generation_Standing),
+	.Plan_Consent         = size_of(plans_recipes_status.Plan_Consent),
+	.Recipe_Object_Kind   = size_of(plans_recipes_status.Recipe_Object_Kind),
+	.Recipe_Build_Outcome = size_of(plans_recipes_status.Recipe_Build_Outcome),
+	.Build_Mode           = size_of(plans_recipes_status.Build_Mode),
+	.Provenance_Origin    = size_of(plans_recipes_status.Provenance_Origin),
+	.Recipe_Refusal       = size_of(plans_recipes_status.Recipe_Refusal),
 }
 
 // The bytes of the word type of each contract enum
 // (value_kinds.Contract_Enum_Type.word_name): 0 for an enum with none.
 @(rodata)
 CONTRACT_ENUM_WORD_SIZES := [value_kinds.Contract_Enum]u32 {
-	.None            = 0,
-	.Log_Level       = 0,
-	.Log_Record_Form = size_of(op.Log_Record_Form_Word),
-	.Stop_Cause      = size_of(op.Stop_Cause_Word),
-	.Stop_Outcome    = size_of(op.Stop_Outcome_Word),
-	.Error_Kind      = size_of(errors.Kind_Word),
-	.Error_Unit      = size_of(errors.Unit_Word),
-	.Object_Kind     = size_of(op.Object_Kind_Word),
-	.Load_Stage      = size_of(Load_Stage_Word),
-	.Module_Error    = size_of(Error_Word),
-	.Load_Difference = size_of(Difference_Word),
-	.Storage_Status  = size_of(storage_status.Status_Word),
-	.Call_Outcome    = size_of(call_outcome.Call_Outcome_Word),
-	.Pointer_Part    = size_of(pointer_pictures.Part_Word),
-	.Pointer_Field   = size_of(pointer_pictures.Field_Word),
-	.Pointer_Problem = size_of(pointer_pictures.Problem_Kind_Word),
+	.None                 = 0,
+	.Log_Level            = 0,
+	.Log_Record_Form      = size_of(op.Log_Record_Form_Word),
+	.Stop_Cause           = size_of(op.Stop_Cause_Word),
+	.Stop_Outcome         = size_of(op.Stop_Outcome_Word),
+	.Error_Kind           = size_of(errors.Kind_Word),
+	.Error_Unit           = size_of(errors.Unit_Word),
+	.Object_Kind          = size_of(op.Object_Kind_Word),
+	.Load_Stage           = size_of(Load_Stage_Word),
+	.Module_Error         = size_of(Error_Word),
+	.Load_Difference      = size_of(Difference_Word),
+	.Storage_Status       = size_of(storage_status.Status_Word),
+	.Call_Outcome         = size_of(call_outcome.Call_Outcome_Word),
+	.Pointer_Part         = size_of(pointer_pictures.Part_Word),
+	.Pointer_Field        = size_of(pointer_pictures.Field_Word),
+	.Pointer_Problem      = size_of(pointer_pictures.Problem_Kind_Word),
+	.Generation_Standing  = size_of(plans_recipes_status.Generation_Standing_Word),
+	.Plan_Consent         = size_of(plans_recipes_status.Plan_Consent_Word),
+	.Recipe_Object_Kind   = size_of(plans_recipes_status.Recipe_Object_Kind_Word),
+	.Recipe_Build_Outcome = size_of(plans_recipes_status.Recipe_Build_Outcome_Word),
+	.Build_Mode           = size_of(plans_recipes_status.Build_Mode_Word),
+	.Provenance_Origin    = size_of(plans_recipes_status.Provenance_Origin_Word),
+	.Recipe_Refusal       = size_of(plans_recipes_status.Recipe_Refusal_Word),
 }
 
 // contract_enum_member_count gives the count of the members of a contract
@@ -155,6 +170,20 @@ contract_enum_member_count :: proc "contextless" (which: value_kinds.Contract_En
 		return u64(max(pointer_pictures.Field)) + 1
 	case .Pointer_Problem:
 		return u64(max(pointer_pictures.Problem_Kind)) + 1
+	case .Generation_Standing:
+		return u64(max(plans_recipes_status.Generation_Standing)) + 1
+	case .Plan_Consent:
+		return u64(max(plans_recipes_status.Plan_Consent)) + 1
+	case .Recipe_Object_Kind:
+		return u64(max(plans_recipes_status.Recipe_Object_Kind)) + 1
+	case .Recipe_Build_Outcome:
+		return u64(max(plans_recipes_status.Recipe_Build_Outcome)) + 1
+	case .Build_Mode:
+		return u64(max(plans_recipes_status.Build_Mode)) + 1
+	case .Provenance_Origin:
+		return u64(max(plans_recipes_status.Provenance_Origin)) + 1
+	case .Recipe_Refusal:
+		return u64(max(plans_recipes_status.Recipe_Refusal)) + 1
 	}
 	return 0
 }
@@ -215,6 +244,27 @@ contract_enum_member_name :: proc "contextless" (which: value_kinds.Contract_Enu
 	case .Pointer_Problem:
 		member := enum_word.member_of_word(pointer_pictures.Problem_Kind, word) or_return
 		return pointer_pictures.PROBLEM_KIND_NAMES[member], true
+	case .Generation_Standing:
+		member := enum_word.member_of_word(plans_recipes_status.Generation_Standing, word) or_return
+		return plans_recipes_status.GENERATION_STANDING_NAMES[member], true
+	case .Plan_Consent:
+		member := enum_word.member_of_word(plans_recipes_status.Plan_Consent, word) or_return
+		return plans_recipes_status.PLAN_CONSENT_NAMES[member], true
+	case .Recipe_Object_Kind:
+		member := enum_word.member_of_word(plans_recipes_status.Recipe_Object_Kind, word) or_return
+		return plans_recipes_status.RECIPE_OBJECT_KIND_NAMES[member], true
+	case .Recipe_Build_Outcome:
+		member := enum_word.member_of_word(plans_recipes_status.Recipe_Build_Outcome, word) or_return
+		return plans_recipes_status.RECIPE_BUILD_OUTCOME_NAMES[member], true
+	case .Build_Mode:
+		member := enum_word.member_of_word(plans_recipes_status.Build_Mode, word) or_return
+		return plans_recipes_status.BUILD_MODE_NAMES[member], true
+	case .Provenance_Origin:
+		member := enum_word.member_of_word(plans_recipes_status.Provenance_Origin, word) or_return
+		return plans_recipes_status.PROVENANCE_ORIGIN_NAMES[member], true
+	case .Recipe_Refusal:
+		member := enum_word.member_of_word(plans_recipes_status.Recipe_Refusal, word) or_return
+		return plans_recipes_status.RECIPE_REFUSAL_NAMES[member], true
 	}
 	return "", false
 }
@@ -238,7 +288,7 @@ contract_enum_member_words :: proc "contextless" (which: value_kinds.Contract_En
 	case .Stop_Outcome:
 		outcome := enum_word.member_of_word(op.Stop_Outcome, word) or_return
 		return op.STOP_OUTCOME_TEXTS[outcome], true
-	case .None, .Log_Level, .Log_Record_Form, .Error_Kind, .Error_Unit, .Object_Kind, .Load_Stage, .Module_Error, .Load_Difference, .Storage_Status, .Call_Outcome, .Pointer_Part, .Pointer_Field, .Pointer_Problem:
+	case .None, .Log_Level, .Log_Record_Form, .Error_Kind, .Error_Unit, .Object_Kind, .Load_Stage, .Module_Error, .Load_Difference, .Storage_Status, .Call_Outcome, .Pointer_Part, .Pointer_Field, .Pointer_Problem, .Generation_Standing, .Plan_Consent, .Recipe_Object_Kind, .Recipe_Build_Outcome, .Build_Mode, .Provenance_Origin, .Recipe_Refusal:
 		return contract_enum_member_name(which, word)
 	}
 	return "", false

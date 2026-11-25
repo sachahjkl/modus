@@ -173,6 +173,8 @@ site_console_commands_of_the_repository :: proc(t: ^testing.T) {
 	testing.expect_value(t, signatures["columns"], "columns(Table, Field...) -> Table")
 	testing.expect_value(t, signatures["start"], "start(Text, [Value])")
 	testing.expect_value(t, signatures["projects.install"], "projects.install(Text, [Text]) -> Record")
+	testing.expect_value(t, signatures["plans.apply"], "plans.apply(Text, Value, [Record]) -> Table")
+	testing.expect_value(t, signatures["plans.rollback"], "plans.rollback([Integer]) -> Table")
 	testing.expect_value(t, signatures["wire"], "wire(Stream, Record_Input) -> Table")
 	// Each built-in command has its documentation above its line: the help
 	// alone is one line, too short for a reader of the site.

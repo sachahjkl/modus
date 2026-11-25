@@ -119,7 +119,7 @@ input_row_find :: proc "contextless" (
 		if string(row.name[:name_len]) != name {
 			continue
 		}
-		kind, kind_ok := object_cache.cache_object_kind_of_word(u64(row.kind_word))
+		kind, kind_ok := object_cache.cache_object_kind_of_word(u64(row.kind))
 		if !kind_ok || kind != expected_kind {
 			return {}, false
 		}

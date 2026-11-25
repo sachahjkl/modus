@@ -495,9 +495,16 @@ Contract_Enum :: enum u8 {
 	Load_Difference = 10, // module.Difference: what differs between an export and its replacement.
 	Storage_Status  = 11, // storage_status.Status: the result of a call of a client of the storage service.
 	Call_Outcome    = 12, // call_outcome.Call_Outcome: how a call ended (src/md/api/call_outcome.md).
-	Pointer_Part    = 13, // pointer_pictures.Part: the part of a pointer theme file where a check found a problem.
-	Pointer_Field   = 14, // pointer_pictures.Field: the field of a pointer theme file that holds the bad value.
-	Pointer_Problem = 15, // pointer_pictures.Problem_Kind: the rule that a pointer theme file breaks.
+	Pointer_Part         = 13, // pointer_pictures.Part: the part of a pointer theme file where a check found a problem.
+	Pointer_Field        = 14, // pointer_pictures.Field: the field of a pointer theme file that holds the bad value.
+	Pointer_Problem      = 15, // pointer_pictures.Problem_Kind: the rule that a pointer theme file breaks.
+	Generation_Standing  = 16, // plans_recipes_status.Generation_Standing: where a plan generation stands against the current one.
+	Plan_Consent         = 17, // plans_recipes_status.Plan_Consent: whether a plan difference needs consent on the trusted display.
+	Recipe_Object_Kind   = 18, // plans_recipes_status.Recipe_Object_Kind: whether a recipe input or output is a Blob or a Tree.
+	Recipe_Build_Outcome = 19, // plans_recipes_status.Recipe_Build_Outcome: how a recipe build ended.
+	Build_Mode           = 20, // plans_recipes_status.Build_Mode: substitution policy mode of a recipe build.
+	Provenance_Origin    = 21, // plans_recipes_status.Provenance_Origin: whether a realisation came from a local build or remote cache.
+	Recipe_Refusal       = 22, // plans_recipes_status.Recipe_Refusal: why a recipe or build was refused.
 }
 
 // contract_enum_of_word is the border of the byte of a contract enum in a
@@ -538,9 +545,16 @@ CONTRACT_ENUM_TYPES := [Contract_Enum]Contract_Enum_Type {
 	.Load_Difference = {package_name = "module", name = "Difference", word_name = "Difference_Word"},
 	.Storage_Status  = {package_name = "storage_status", name = "Status", word_name = "Status_Word"},
 	.Call_Outcome    = {package_name = "call_outcome", name = "Call_Outcome", word_name = "Call_Outcome_Word"},
-	.Pointer_Part    = {package_name = "pointer_pictures", name = "Part", word_name = "Part_Word"},
-	.Pointer_Field   = {package_name = "pointer_pictures", name = "Field", word_name = "Field_Word"},
-	.Pointer_Problem = {package_name = "pointer_pictures", name = "Problem_Kind", word_name = "Problem_Kind_Word"},
+	.Pointer_Part         = {package_name = "pointer_pictures", name = "Part", word_name = "Part_Word"},
+	.Pointer_Field        = {package_name = "pointer_pictures", name = "Field", word_name = "Field_Word"},
+	.Pointer_Problem      = {package_name = "pointer_pictures", name = "Problem_Kind", word_name = "Problem_Kind_Word"},
+	.Generation_Standing  = {package_name = "plans_recipes_status", name = "Generation_Standing", word_name = "Generation_Standing_Word"},
+	.Plan_Consent         = {package_name = "plans_recipes_status", name = "Plan_Consent", word_name = "Plan_Consent_Word"},
+	.Recipe_Object_Kind   = {package_name = "plans_recipes_status", name = "Recipe_Object_Kind", word_name = "Recipe_Object_Kind_Word"},
+	.Recipe_Build_Outcome = {package_name = "plans_recipes_status", name = "Recipe_Build_Outcome", word_name = "Recipe_Build_Outcome_Word"},
+	.Build_Mode           = {package_name = "plans_recipes_status", name = "Build_Mode", word_name = "Build_Mode_Word"},
+	.Provenance_Origin    = {package_name = "plans_recipes_status", name = "Provenance_Origin", word_name = "Provenance_Origin_Word"},
+	.Recipe_Refusal       = {package_name = "plans_recipes_status", name = "Recipe_Refusal", word_name = "Recipe_Refusal_Word"},
 }
 
 // The types that a field of a record takes to state its field kind, in

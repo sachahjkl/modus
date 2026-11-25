@@ -195,9 +195,13 @@ A record is a group of named fields, as a module describes it. The command with 
 | `locks` | `{ settings = { appearance = .dark } }` | A lock of the plan over the choice of the principal |
 
 ```
-plans.apply("evening", plan { locks = { settings = { appearance = .dark } } }, {})
-plans.apply("home", plan { values = { browser = { home = "modus://guide" }, monitor = { sample_interval = 1000 } } }, {})
+plans.apply("evening", plan { locks = { settings = { appearance = .dark } } })
+plans.apply("home", plan { values = { browser = { home = "modus://guide" }, monitor = { sample_interval = 1000 } } })
+plans.rollback()
+plans.rollback(2)
 ```
+
+In the console, `plans.apply` and `plans.rollback` connect to `plans` automatically, validate the plan before opening any dialog, wait on the background command thread until the principal decides on the trusted display (Escape stops the wait), and return the committed `Plan_Generation_Row` table (with `standing` as a `Generation_Standing` status: `Current`, `Earlier`, or `Later`). `plans.apply` also accepts an optional third `Plan_Expected` argument (such as `{}` or `{ current_plan_hash = blake3:… }`) when pinning the current plan hash.
 
 The console types each value by the description of its owner before the call: a member, as `.dark`, names a member of the enum of the setter of the owner; a number is in the range of its parameter; a text is in its bound, UTF-8, with no control byte. An owner is a module of the image, the name of a role (its holder: the one that the plan gives, else the default one), or `root`, the core. A plan-only value, which no setter takes, is a parameter of the export `plan_only` of its owner. Each refusal names what is wrong: "display.bar_edge has no member .botom: its members are .top, .bottom, .left, .right", "display.notification_show_milliseconds is 10, outside its range 1000 to 60000".
 

@@ -1,0 +1,3 @@
+type: Changed
+
+**One-step `plans.apply` / `plans.rollback` and named status columns in plans and recipes tables.** `plans.apply("name", plan { ... })` and `plans.rollback([n])` in the console now auto-connect to `plans`, validate the plan up front, wait for trusted display consent on the background command thread (with Escape cancellation), and return the committed `Plan_Generation_Row` directly without manual `apply_poll` / `rollback_poll` calls or a mandatory `{}` third argument. Status fields in `plans` and `recipes` records (`standing`, `consent`, `output_kind`, `kind`, `outcome`, `refusal`, `mode`, `origin`) now use contract enums so tables display names such as `Current`, `Earlier`, `Built_Locally`, and `Tree` instead of raw integers.

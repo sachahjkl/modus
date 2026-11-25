@@ -321,8 +321,8 @@ Three separated services hold least authority (`src/library/modus/contract/plans
 
 - **Plans (`plans` service):**
   - `plans.difference(p)` forces plan `p` in a sandboxed evaluator and asks the root service for the grant, role, module, and store difference against the current applied plan.
-  - `plans.apply(p)` displays that root-computed difference on the trusted display (`Show_Plan_Difference`). After whole-plan consent, the root service checks that the current plan has not changed, checks module closure in `module_files`, writes applied plan `N + 1` into `applied_plans` (104-byte wire record), and commits the current-plan pointer atomically.
-  - `plans.rollback()` shows the difference back to the previous applied plan generation on the trusted display and gives a ticket; `plans.rollback_poll(ticket)` selects that generation, without writing a new record, once the principal accepts. `plans.rollback(n)` selects generation `n`.
+  - `plans.apply(name, p)` (with an optional third `Plan_Expected` argument, defaulting to `{}`) validates plan `p` up front, displays the root-computed difference on the trusted display (`Show_Plan_Difference`), waits on the console command thread for whole-plan consent, commits generation `N + 1`, and returns the committed `Plan_Generation_Row` table (`standing = Current`).
+  - `plans.rollback()` and `plans.rollback(n)` display the difference back to the previous or numbered generation on the trusted display, wait for principal consent, select that generation without writing a new record, and return the `Plan_Generation_Row` table. Programmatic clients call the two-step service exports `apply`/`apply_poll` and `rollback`/`rollback_to`/`rollback_poll`.
 - **Recipes (`recipes` service):**
   - `recipes.build(target)` realises `outputs.default` (or a named output such as `recipes.build(kernel.tools)`).
   - Substitution mode is passed as a named argument: `recipes.build(kernel, substitution = { mode = .Verify })`. Modes are `.Prefer_Cache`, `.Build_Only`, `.Cache_Only`, and `.Verify` (builds locally and verifies byte-for-byte equality with a signed cache realisation).

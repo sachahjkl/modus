@@ -404,7 +404,7 @@ builder_run :: proc "contextless" (sandbox: ^pr.Builder_Sandbox_Spec, file: []u8
 
 	for index in 0 ..< int(sandbox.input_count) {
 		input := &sandbox.inputs[index]
-		builder_rows[index] = {kind_word = i64(input.kind), hash = value_kinds.Hash_Field(input.hash)}
+		builder_rows[index] = {kind = pr.Recipe_Object_Kind_Word(input.kind), hash = value_kinds.Hash_Field(input.hash)}
 		copy(builder_rows[index].name[:], input.name_bytes[:input.name_length])
 	}
 	arguments := [2]isolated.Argument {

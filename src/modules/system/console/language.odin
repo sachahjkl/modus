@@ -970,9 +970,10 @@ host_command_find :: proc "contextless" (data: rawptr, name: string) -> (signatu
 	for index in 0 ..< signature.parameter_count {
 		signature.names[index] = item.parameter_names[index]
 		signature.kinds[index] = item.parameters[index]
-		// An export describes the record of a parameter; a command of the
-		// console and a command that makes a record take no record.
-		if item.parameters[index] == .Record && item.run == nil && item.record == 0 {
+		// An export (or a built-in frontend with an attached record description,
+		// such as plans.apply's optional expected Plan_Expected) describes the
+		// record of a parameter so record literals like `{}` type-check.
+		if item.parameters[index] == .Record && item.file != nil && item.function.parameter_details[index] != 0 && item.record == 0 {
 			signature.files[index], signature.details[index] = item.file, item.function.parameter_details[index]
 		}
 		// An Enum parameter: its enum names the members that a line gives
@@ -1301,8 +1302,9 @@ argument_accepted :: proc "contextless" (found: ^Command, index: int, argument: 
 	}
 	// A Record agrees when the two descriptions are equal: a record of one
 	// module is a record of another module with the same fields. A command
-	// of the console (run) takes a Table of any record.
-	if kind == .Record || kind == .Table && found.run == nil {
+	// of the console (run) takes a Table of any record, and checks a Record
+	// description when one is attached to the parameter.
+	if (kind == .Record && found.file != nil && found.function.parameter_details[index] != 0) || (kind == .Table && found.run == nil) {
 		return module.records_equal(found.file, found.function.parameter_details[index], argument.file, argument.detail)
 	}
 	return true

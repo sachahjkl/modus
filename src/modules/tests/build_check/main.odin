@@ -69,13 +69,13 @@ arguments_of :: proc "contextless" (buffer: []u8, act: string, text: string) -> 
 @(private = "file")
 register :: proc "contextless" (builder: blake3.Hash, act: string, input: blake3.Hash) -> blake3.Hash {
 	head := pr.Recipe_Head {
-		output_kind_word = i64(object_cache.Cache_Object_Kind.Tree),
-		builder_hash     = value_kinds.Hash_Field(builder),
+		output_kind  = pr.Recipe_Object_Kind_Word(object_cache.Cache_Object_Kind.Tree),
+		builder_hash = value_kinds.Hash_Field(builder),
 	}
 	rows: [1]pr.Recipe_Input_Row
 	row_count := 0
 	if input != {} {
-		rows[0] = {kind_word = i64(object_cache.Cache_Object_Kind.Tree), hash = value_kinds.Hash_Field(input)}
+		rows[0] = {kind = pr.Recipe_Object_Kind_Word(object_cache.Cache_Object_Kind.Tree), hash = value_kinds.Hash_Field(input)}
 		copy(rows[0].name[:], "made")
 		row_count = 1
 	}
@@ -206,23 +206,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	//    back. A second build takes the realisation with no start.
 	made := register(probe_hash, "make", {})
 	row, refusal := build(made, .Build_Only)
-	if refusal != .None || row.outcome_word != i64(pr.Recipe_Build_Outcome.Built_Locally) {
+	if refusal != .None || row.outcome != pr.Recipe_Build_Outcome_Word(pr.Recipe_Build_Outcome.Built_Locally) {
 		wrong("the act make was not built; the refusal", u64(refusal))
 	}
-	system.log_fact(.Info, Built{outcome = u64(row.outcome_word), output_head = head_of(row.output_hash)}, "a builder made an output")
+	system.log_fact(.Info, Built{outcome = u64(row.outcome), output_head = head_of(row.output_hash)}, "a builder made an output")
 	again, again_refusal := build(made, .Prefer_Cache)
-	if again_refusal != .None || again.outcome_word != i64(pr.Recipe_Build_Outcome.From_Cache) || again.output_hash != row.output_hash {
-		wrong("the second build of make did not take its realisation; the outcome", u64(again.outcome_word))
+	if again_refusal != .None || again.outcome != pr.Recipe_Build_Outcome_Word(pr.Recipe_Build_Outcome.From_Cache) || again.output_hash != row.output_hash {
+		wrong("the second build of make did not take its realisation; the outcome", u64(again.outcome))
 	}
-	system.log_fact(.Info, Built{outcome = u64(again.outcome_word), output_head = head_of(again.output_hash)}, "the second build took the realisation")
+	system.log_fact(.Info, Built{outcome = u64(again.outcome), output_head = head_of(again.output_hash)}, "the second build took the realisation")
 
 	// 3. The output of 2 is the input of a build.
 	copied := register(probe_hash, "copy", blake3.Hash(row.output_hash))
 	copy_row, copy_refusal := build(copied, .Build_Only)
-	if copy_refusal != .None || copy_row.outcome_word != i64(pr.Recipe_Build_Outcome.Built_Locally) || copy_row.output_hash == row.output_hash {
+	if copy_refusal != .None || copy_row.outcome != pr.Recipe_Build_Outcome_Word(pr.Recipe_Build_Outcome.Built_Locally) || copy_row.output_hash == row.output_hash {
 		wrong("the act copy was not built from its input; the refusal", u64(copy_refusal))
 	}
-	system.log_fact(.Info, Built{outcome = u64(copy_row.outcome_word), output_head = head_of(copy_row.output_hash)}, "the output of a build was the input of the next")
+	system.log_fact(.Info, Built{outcome = u64(copy_row.outcome), output_head = head_of(copy_row.output_hash)}, "the output of a build was the input of the next")
 	if count := realisation_count(); count != 2 {
 		wrong("recipes does not keep the two realisations; the count", u64(count))
 	}
