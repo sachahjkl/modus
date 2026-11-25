@@ -1091,11 +1091,13 @@ commands_start :: proc "contextless" () {
 	// - `name`: entry name inside the tree.
 	// - `content`: text bytes hashed as the file leaf.
 	command("tree_hash", {.Text, .Text}, .Text, "canonical BLAKE3 hash of an immutable tree entry", tree_hash_command)
-	// Compiles C source text in one step via c_compiler and assemble, then isolates the resulting module under name.
+	// Compiles C source text in one step via c_compiler and assemble, then
+	// isolates the resulting module under a bound variable handle
+	// (`a = compile_c("adder", source)`).
 	//
 	// - `name`: name of the new isolated module in the console.
-	// - `source`: C source code whose exported functions become callable commands.
-	command("compile_c", {.Text, .Text}, .Record, "compile C source into an isolated module and load its exports", compile_c_command)
+	// - `source`: C source code whose exported functions become `<binding>.<fn>` commands.
+	command("compile_c", {.Text, .Text}, .Record, "compile C source into an isolated module and return a bound handle", compile_c_command)
 	// Builds the C source `file` of the store of a project with the native C
 	// builder (recipes.build_c), and puts the module in the store
 	// module_files under the name of the project. An unchanged source is
@@ -1502,6 +1504,10 @@ handle_binding_check :: proc "contextless" (command_name: string, module_hint: s
 		return "", false
 	}
 	binding = line_binding_target
+	if !lex_parser.name_valid(binding) {
+		_ = fail(command_name, ": \"", binding, "\" is not a plain variable name; bind to a single identifier")
+		return "", false
+	}
 	if len(binding) > VARIABLE_NAME_SIZE {
 		_ = fail("the name of a variable has ", i64(VARIABLE_NAME_SIZE), " bytes at most; this one has ", i64(len(binding)))
 		return "", false
@@ -1822,9 +1828,9 @@ loaded_entry_of_record :: proc "contextless" (val: Value) -> (item: ^Loaded, ind
 	if !has_binding || bval.kind != .Text || len(bval.text) == 0 || !has_module || mval.kind != .Text {
 		return nil, -1, false
 	}
-	// If val comes directly from a Variable slot, resolve strictly by that
-	// slot's module_handle so a non-owning or stale copy (`old = s`) is never
-	// mistaken for a newer handle bound to the same name.
+	// Resolve strictly through the owning Variable slot's module_handle so
+	// neither a non-owning copy (`old = s`) nor a mutated record (`old with { ... }`)
+	// can ever alias or unload another handle bound to the same name.
 	if len(val.record) > 0 {
 		for &variable in variables {
 			if variable.name_count > 0 && variable.value.kind == .Record && len(variable.value.record) > 0 && raw_data(variable.value.record) == raw_data(val.record) {
@@ -1838,11 +1844,6 @@ loaded_entry_of_record :: proc "contextless" (val: Value) -> (item: ^Loaded, ind
 				}
 				return nil, -1, true
 			}
-		}
-	}
-	for &entry, i in loaded[:loaded_count] {
-		if binding_name(&entry) == bval.text && entry.name == mval.text {
-			return &entry, i, true
 		}
 	}
 	return nil, -1, true

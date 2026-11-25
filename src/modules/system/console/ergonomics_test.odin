@@ -10,6 +10,7 @@ import pr "modus:contract/plans_recipes"
 import "modus:contract/ring"
 import "modus:lex_parser"
 import "modus:line_editor"
+import "modus:system"
 
 // Console tests share package globals (commands, scratch, failure); serialize
 // them so parallel odin test runners never race.
@@ -50,6 +51,7 @@ ergonomics_reset_state :: proc() {
 	command("isolate", {.Text}, .Record, "load a module in a sandboxed process and return a bound handle", isolate_module)
 	command("load", {.Text}, .Record, "load a module here for direct calls and return a bound handle", load_module)
 	command("isolate_memory", {.Text, .Handle, .Integer}, .Record, "load a module from memory in a sandboxed process and return a bound handle", isolate_from_memory)
+	command("compile_c", {.Text, .Text}, .Record, "compile C source into an isolated module and return a bound handle", compile_c_command)
 	command("unload", {.Record}, .Record, "remove a bound module handle that load, isolate, isolate_memory, or connect returned", unload_module)
 	command("allow", {.Text, .Text}, .None, "give a disk process a grant, by nickname", allow)
 	command("revoke", {.Text, .Text}, .Integer, "end a grant of a process that runs", revoke)
@@ -455,12 +457,16 @@ module_handle_precheck_refuses_bare_and_nested_calls :: proc(t: ^testing.T) {
 		{`isolate("sample")`, `sample = isolate("sample")`},
 		{`load("math")`, `math = load("math")`},
 		{`isolate_memory("adder", h, 1)`, `adder = isolate_memory("adder", memory, size)`},
+		{`compile_c("adder", "int f() { return 1; }")`, `adder = compile_c("adder", source)`},
 		{`1 + isolate("sample")`, `sample = isolate("sample")`},
 		{`x = 1 + isolate("sample")`, `sample = isolate("sample")`},
 		{`a = isolate_memory("a", isolate("sample"), 1)`, `sample = isolate("sample")`},
 		{`s = isolate("sample") |> help`, `sample = isolate("sample")`},
 		{`let s = isolate("sample") in 1`, `sample = isolate("sample")`},
 		{`isolate("help")`, `m = isolate("help")`},
+		{`a.b = isolate("sample")`, `not a plain variable name`},
+		{`a.b = load("math")`, `not a plain variable name`},
+		{`a.b = compile_c("adder", "int f() { return 1; }")`, `not a plain variable name`},
 	}
 	for tc in refused_cases {
 		ergonomics_clear_line()
@@ -475,6 +481,7 @@ module_handle_precheck_refuses_bare_and_nested_calls :: proc(t: ^testing.T) {
 		`s = isolate("sample")`,
 		`m = load("math")`,
 		`a = isolate_memory("adder", h, 1)`,
+		`c = compile_c("adder", "int f() { return 1; }")`,
 		`let s = isolate("sample")`,
 		`connect("monitor")`,
 		`mon = connect("monitor")`,
@@ -486,6 +493,27 @@ module_handle_precheck_refuses_bare_and_nested_calls :: proc(t: ^testing.T) {
 		ok := handle_call_precheck(&line_tree, assigned)
 		testing.expectf(t, ok && !failed, "precheck must accept %q, got %q", line, ergonomics_failure_text())
 	}
+
+	// Command Palette prepends a valid, non-colliding binding for handle-returning commands.
+	palette_cases := [?]struct {
+		cmd:      string,
+		arg0:     string,
+		expected: string,
+	}{
+		{"isolate", "sample", "sample = "},
+		{"load", "math", "math = "},
+		{"isolate", "help", "m = "},
+		{"load", "foo.bar", "m = "},
+		{"compile_c", "adder", "adder = "},
+		{"isolate", "", "m = "},
+		{"start", "notes", ""},
+	}
+	for pc in palette_cases {
+		buf: [64]u8
+		w := system.Writer{buffer = buf[:]}
+		palette_handle_prefix_write(&w, pc.cmd, pc.arg0)
+		testing.expect_value(t, string(buf[:w.count]), pc.expected)
+	}
 }
 
 @(test)
@@ -493,6 +521,15 @@ module_handle_binding_checks_refuse_builtin_and_full_variables :: proc(t: ^testi
 	sync.mutex_lock(&ergonomics_test_lock)
 	defer sync.mutex_unlock(&ergonomics_test_lock)
 	ergonomics_reset_state()
+
+	// Refuses dotted or invalid binding names before spawning anything.
+	for bad_target in ([?]string{"a.b", "1bad", "let", "a-b"}) {
+		ergonomics_clear_line()
+		line_binding_target = bad_target
+		_, ok := handle_binding_check("isolate", "sample")
+		testing.expectf(t, !ok && failed, "binding target %q must be refused", bad_target)
+		testing.expect(t, strings.contains(ergonomics_failure_text(), "not a plain variable name"))
+	}
 
 	// Refuses binding over built-in commands before spawning anything.
 	for builtin in ([?]string{"help", "start", "unload", "isolate"}) {
@@ -576,6 +613,16 @@ module_handle_isolation_compaction_help_unload_and_reassignment :: proc(t: ^test
 	_ = call_run("help", []Value{variables[2].value})
 	testing.expect(t, failed && strings.contains(ergonomics_failure_text(), "already unloaded"))
 	variables[2] = {}
+
+	// A detached/mutated copy (as `old with {commands = 12}` creates in scratch)
+	// matches no owning Variable slot and must never unload the live handle `a`.
+	ergonomics_clear_line()
+	_ = call_run("unload", []Value{copied_rec})
+	testing.expect(t, failed && strings.contains(ergonomics_failure_text(), "already unloaded"))
+	testing.expect(t, command_find("a.add") != nil, "detached copy must never unload live handle a")
+	ergonomics_clear_line()
+	_ = call_run("help", []Value{copied_rec})
+	testing.expect(t, failed && strings.contains(ergonomics_failure_text(), "already unloaded"))
 
 	// unload(a) removes ONLY a's commands, leaves b's commands intact, clears variable a, and compacts names[].
 	names_before := names_count

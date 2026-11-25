@@ -104,7 +104,7 @@ Do not use: splash screen, boot log, POST screen.
 
 The console is a normal process that calls commands, functions with typed parameters and a typed result, in Lex.
 
-The console replaces the shell: a command is an export of a module, so its arguments and its result are typed values. It evaluates Lex in the evaluation mode `console`. The console has a terminal and no surface, and acts for the principal of its session. Examples: `grants("notes")` shows the grants of a process; `load("calendar")` loads a module into the console and calls its exports directly. The console is not a TTY and not a shell: it starts no process by a path, passes no text between processes, and has no pipe.
+The console replaces the shell: a command is an export of a module, so its arguments and result are typed values. It evaluates Lex in mode `console`, has a terminal and no surface, and acts for its session's principal. Examples: `grants("notes")` shows a process's grants; `c = load("calendar")` binds a handle and calls its exports directly as `c.<name>`. The console is not a TTY and not a shell: it starts no process by path, passes no text between processes, and has no pipe.
 
 The design: `docs/CONSOLE.md`, "Lex".
 

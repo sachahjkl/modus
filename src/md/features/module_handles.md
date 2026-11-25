@@ -20,9 +20,9 @@ The user guide is [`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "1. The keys".
 
 Right after `lex_parser.parse_console`, `run_line` runs `handle_call_precheck` over the syntax tree before invoking `line_evaluate`:
 
-- Any `.Call` to `isolate`, `load`, or `isolate_memory` that is not the root of a top-level assignment (`name = ...`) fails immediately before any evaluation, spawning no process and mapping no memory. The refusal names the concrete binding form (for example `isolate returns a module handle; bind it with sample = isolate("sample")`).
-- Inside `add_module` and `isolate_from_memory` (and bound `connect`), a binding check verifies that the target variable name is not a built-in command (`help`, `start`, `where`, ...), fits `VARIABLE_NAME_SIZE`, and has either an existing variable slot or a free slot in `variables` before creating a sandbox or loading into `space`.
-- `compile_c` uses the bound variable name when assigned (`m = compile_c("adder", src)`), or registers under the module name when called bare.
+- Any `.Call` to `isolate`, `load`, `isolate_memory`, or `compile_c` that is not the root of a top-level assignment to a plain identifier (`name = ...`) fails immediately before any evaluation, spawning no process and mapping no memory. The refusal names the concrete binding form (for example `isolate returns a module handle; bind it with sample = isolate("sample")`).
+- Inside `add_module`, `isolate_from_memory`, `compile_c`, and bound `connect`, `handle_binding_check` verifies that the target variable name is a plain valid identifier (`lex_parser.name_valid`, refusing dotted targets such as `a.b`), is not a built-in command (`help`, `start`, `where`, ...), fits `VARIABLE_NAME_SIZE`, and has either an existing variable slot or a free slot in `variables` before creating a sandbox or loading into `space`.
+- The Desktop Command Palette prepends `<hint> = ` (`palette_handle_prefix_write`) when running or opening handle-returning commands (`load`, `isolate`, `isolate_memory`, `compile_c`) so palette actions satisfy the same bound-handle rule.
 
 ### Unique handle ownership (`handle_id`)
 

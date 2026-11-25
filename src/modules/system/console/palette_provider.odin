@@ -1302,6 +1302,17 @@ palette_line_run :: proc "contextless" (tag: u32, text: string) {
 	line = typed_before
 }
 
+// palette_handle_prefix_write writes "<hint> = " before handle-returning
+// commands (load, isolate, isolate_memory, compile_c) so Command Palette runs
+// and edits satisfy the console's bound-handle precheck.
+palette_handle_prefix_write :: proc "contextless" (writer: ^system.Writer, command_name: string, first_text_arg: string) {
+	if !handle_call_requires_binding(command_name) {
+		return
+	}
+	system.write_part(writer, module_handle_hint(first_text_arg))
+	system.write_part(writer, " = ")
+}
+
 // palette_choice takes one choice of the compositor.
 palette_choice :: proc "contextless" (record: ring.Record) {
 	mode, mode_ok := enum_word.member_of_word(palette_table.Choose_Mode, record.values[3])
@@ -1325,8 +1336,6 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 	}
 	text: [LINE_CAPACITY]u8
 	writer := system.Writer{buffer = text[:]}
-	system.write_part(&writer, name)
-	system.write_part(&writer, "(")
 	if mode == .Run_With_Arguments {
 		// Each value has the kind of its parameter, and each parameter
 		// has a value: the console checks them as it checks a line.
@@ -1340,6 +1349,13 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 			count -= 1
 		}
 		fits := count <= palette_table.PARAMETER_CAPACITY && palette_arguments_tag == record.tag && palette_arguments_bad != record.tag && palette_arguments.in_progress == {} && record.values[4] == u64(count) && count > 0
+		first_text := ""
+		if fits && 0 in palette_arguments.given && palette_arguments.values[0].kind == .Text {
+			first_text = string(palette_arguments.values[0].text[:palette_arguments.values[0].length])
+		}
+		palette_handle_prefix_write(&writer, name, first_text)
+		system.write_part(&writer, name)
+		system.write_part(&writer, "(")
 		// A Text of the palette and a line of the console are UTF-8. A text
 		// that a line cannot hold (an invalid sequence, which the
 		// compositor already refuses, or a quote) is refused in words,
@@ -1400,7 +1416,9 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 		palette_line_run(record.tag, string(text[:writer.count]))
 		return
 	}
-	system.write_part(&writer, ")")
+	palette_handle_prefix_write(&writer, name, "")
+	system.write_part(&writer, name)
+	system.write_part(&writer, "()")
 	if mode == .Edit || found.parameter_count > 0 {
 		// The input writes the arguments: the caret is between the
 		// parentheses.

@@ -116,23 +116,18 @@ tree_hash_command :: proc "contextless" (arguments: []Value) -> Value {
 // compile_c_command compiles C source text inside modus in one step:
 // isolates c_compiler (chibicc) and assemble under internal handles, compiles
 // C -> x86-64 assembly -> validated .modus module, and isolates the result
-// under the bound variable name (or mod_name when called bare).
+// under the bound variable name (`a = compile_c("adder", source)`).
 compile_c_command :: proc "contextless" (arguments: []Value) -> Value {
 	mod_name := arguments[0]
 	c_source := arguments[1]
 	if len(mod_name.text) == 0 || len(c_source.text) == 0 {
 		return fail("compile_c: expected a module name and C source text")
 	}
-	bound := line_binding_target != ""
-	binding := mod_name.text
-	if bound {
-		ok: bool
-		binding, ok = handle_binding_check("compile_c", mod_name.text)
-		if !ok {
-			return {}
-		}
-		line_binding_target = ""
+	binding, ok := handle_binding_check("compile_c", mod_name.text)
+	if !ok {
+		return {}
 	}
+	line_binding_target = ""
 	// Each c_compiler call host compiles one C source cleanly; isolate fresh
 	// under an internal handle and unload after compile so compile_c can run
 	// repeatedly without adding global commands.
@@ -176,7 +171,7 @@ compile_c_command :: proc "contextless" (arguments: []Value) -> Value {
 		return {}
 	}
 	result, handle_id := isolate_from_memory_internal(mod_name.text, system.Handle(mod_buf.integer), mod_len.integer, binding)
-	if handle_id != 0 && bound {
+	if handle_id != 0 {
 		line_loaded_handle = handle_id
 	}
 	return result

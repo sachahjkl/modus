@@ -65,7 +65,7 @@ comment    = "//" { a byte that is no line end }      (between two tokens: no to
 - **A name** starts with a letter or `_`, and goes on with letters, digits, `_` and `.`: `monitor.count` and `r.value` are one name each. `let`, `in`, `with` and `_` alone are words of Lex, never names: a variable, a field, a binding or a named argument with one of them is refused.
 - **An integer** is decimal digits. It has 64 bits with a sign. A number that is larger than 9223372036854775807 is an error of the line. A result of `+`, `-`, `*` or `/` that does not fit is an error of the line too: no result wraps. The checks are `number_value`, `integer_add`, `integer_subtract`, `integer_multiply`, `integer_negate` and `integer_divide` of `src/library/modus/console_language`. The least integer has no literal: write `-9223372036854775807 - 1`.
 - **A text** is the bytes between two quotes. It supports `\\`, `\"`, `\n`, `\r`, `\t`, `\$`, `\u{XXXXXX}` escapes, and `${expr}` interpolation.
-- **A comment** is `//` outside a text, to the end of the line: `area(r) // the area of r`. It adds nothing to the line, and a line of only a comment does nothing. `//` inside a text is a part of the text, and `a / / b` is two divisions, an error. Lex has no block comment.
+- **A comment** is `//` outside a text, to the end of the line: `s.area(r) // the area of r`. It adds nothing to the line, and a line of only a comment does nothing. `//` inside a text is a part of the text, and `a / / b` is two divisions, an error. Lex has no block comment.
 - **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them; `+` on two tables of equal record descriptions gives the rows of the left one, then the rows of the right one, and refuses two tables of different records. A division by zero is an error. So is the one division whose result does not fit: the least integer `/` `-1`. Its remainder fits: the least integer `%` `-1` is 0. The pipe operator `|>` has the lowest priority ("The pipe operator", below).
 
 Examples:
@@ -109,7 +109,7 @@ Each value has one kind. The kinds are those of the module contract (`MODULE_CON
 error: settings.set: Font has no member .comic; its members are .vector, .spleen
 ```
 
-A parameter of the kind `Bytes` takes a `Text` value as its argument, or the `Bytes` of a memory object that `bytes(memory, first, count)` read: `assemble(bytes(t, 0, n), f)` gives the text that `compile` wrote to the assembler. A built-in command can have a parameter of the kind `Value`, which takes a value of any kind; the command checks it itself (the third parameter of `where`).
+A parameter of the kind `Bytes` takes a `Text` value as its argument, or the `Bytes` of a memory object that `bytes(memory, first, count)` read: `as.assemble(bytes(t, 0, n), f)` gives the text that `cc.compile` wrote to the assembler. A built-in command can have a parameter of the kind `Value`, which takes a value of any kind; the command checks it itself (the third parameter of `where`).
 
 A command gives a result and never prints. A command that does something and has nothing to give has no result: `start`, `stop`, `clear`. `help()` shows this in each signature: a command with `->` gives a value of that kind, and a command with no `->` gives nothing. A last parameter that a call may leave out is in brackets, `start(Text, [Value])` or `help([Value]) -> Table`, and the names of fields of `columns` are `Field...`: `columns(Table, Field...) -> Table`. The section "Results and their drawers" has the result of each built-in command.
 
@@ -128,8 +128,8 @@ When two commands have one name, the command added last runs.
 **The check before the call.** The console checks the count of the arguments and the kind of each one against the description of the parameters, before the call. A record or a table argument must have a description equal to the description of the parameter: equal records of two modules agree. A wrong argument is refused with its number and the two types, and the call does not run:
 
 ```
-> sum_values(columns(t, sensor, value))
-error: sum_values: argument 1 is Table(Reading, Read), not Table(Reading)
+> s.sum_values(columns(t, sensor, value))
+error: s.sum_values: argument 1 is Table(Reading, Read), not Table(Reading)
 ```
 
 Here `columns` made a table of another record, with fewer fields, so the export of `sample`, which reads the whole record, refuses it.
@@ -141,8 +141,9 @@ Here `columns` made a table of another record, with fewer fields, so the export 
 `name = expression` keeps a value under a name for the lines after it. `let name = expression`, with no `in` after the value, is the same line. A name alone gives the value back; `name.field` gives one field of a record variable.
 
 ```
-> t = readings(4)
-> sum_values(where(t, sensor = 2))
+> s = isolate("sample")
+> t = s.readings(4)
+> s.sum_values(where(t, sensor = 2))
 210
 > r = row(t, 1)
 > r.value
@@ -167,19 +168,19 @@ A record is a group of named fields, as a module describes it. The command with 
 
 **A record literal** writes a record by its fields, in any order: `{x = 0, y = 0, width = 3, height = 4}`. It has no type of its own: the parameter that receives it gives it one, a Record parameter of an export. A field that the record does not have, a field that the literal does not give, a field given twice, and a value of another kind than its field are refused, each with the field. The names are checked when the call starts, before its arguments run; the values when they are known, before the call runs. A field has no default: a literal gives each field. A literal that nothing receives, as the value of a line or of a variable, is refused: it has no type.
 
-**A named argument** gives a parameter by its name: `grow(r, by = 2)`. The names are those of the description of an export, or the fields of a command that makes a record; a command of the console has none. After a named argument, each argument is named. A name that names no parameter, a parameter given twice, and a parameter that the call does not give are refused, but an optional parameter: an Integer, a Handle, an Enum or a Text that its export lets a call leave out, as each setting of `settings.set(font = .spleen)`. The console gives such a parameter the Presence word `Absent` and the value 0, and gives a parameter that the line names `Given` and its value (`MODULE_CONTRACT.md`, "Optional parameters and the settings of a parameter"). Inside `where`, `=` stays the operator of a condition.
+**A named argument** gives a parameter by its name: `s.grow(r, by = 2)`. The names are those of the description of an export, or the fields of a command that makes a record; a command of the console has none. After a named argument, each argument is named. A name that names no parameter, a parameter given twice, and a parameter that the call does not give are refused, but an optional parameter: an Integer, a Handle, an Enum or a Text that its export lets a call leave out, as each setting of `settings.set(font = .spleen)`. The console gives such a parameter the Presence word `Absent` and the value 0, and gives a parameter that the line names `Given` and its value (`MODULE_CONTRACT.md`, "Optional parameters and the settings of a parameter"). Inside `where`, `=` stays the operator of a condition.
 
 **`with`** gives a record with some of its fields changed: `r with {width = 10}`. On its right, a record literal of fields of that record, or a record of the same description. It composes two records only, and has the lowest priority but `|>`.
 
-**`let`** names values for one expression: `let s = {x = 0, y = 0, width = 6, height = 7} in area(s) + area(s)`. A binding can name another binding, also a later one, and an inner `let` hides an outer one. The console computes each binding once, from the left, also a binding that the body does not read, then the body. A binding that needs its own value is refused. `s.width` reads a field of a binding.
+**`let`** names values for one expression: `let box = {x = 0, y = 0, width = 6, height = 7} in s.area(box) + s.area(box)`. A binding can name another binding, also a later one, and an inner `let` hides an outer one. The console computes each binding once, from the left, also a binding that the body does not read, then the body. A binding that needs its own value is refused. `box.width` reads a field of a binding.
 
 ```
-> area({x = 0, y = 0, width = 11, height = 3})
+> s.area({x = 0, y = 0, width = 11, height = 3})
 33
-> area(r with {width = 10})
+> s.area(r with {width = 10})
 40
-> grow(r, by = 2)
-> let s = {x = 0, y = 0, width = 6, height = 7} in area(s) + area(s)
+> s.grow(r, by = 2)
+> let box = {x = 0, y = 0, width = 6, height = 7} in s.area(box) + s.area(box)
 84
 ```
 
@@ -212,7 +213,7 @@ A plan is one line of the console, 200 bytes at most (4096 after the merge of `w
 **A function** is `(name, …) => expression`: its parameters, at most 12, then its body. A `(` starts a function when `=>` follows its `)`; else it holds an expression. The body runs to the `,` or the `)` around the function. A `let` names a function, and a call by that name runs its body with the arguments in the place of the parameters:
 
 ```
-> let double = (x) => x * 2 in area({x = 0, y = 0, width = double(3), height = 4})
+> let double = (x) => x * 2 in s.area({x = 0, y = 0, width = double(3), height = 4})
 24
 > (x) => x + 1
 (x) => x + 1
@@ -228,7 +229,7 @@ A plan is one line of the console, 200 bytes at most (4096 after the merge of `w
 ```
 > map([1, 2, 3], (x) => x * 2)
 [2, 4, 6]
-> [1, 2] |> map((w) => area({x = 0, y = 0, width = w, height = 5}))
+> [1, 2] |> map((w) => s.area({x = 0, y = 0, width = w, height = 5}))
 [5, 10]
 ```
 

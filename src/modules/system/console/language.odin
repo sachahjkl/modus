@@ -327,12 +327,23 @@ variable_slot_available :: proc "contextless" (name: string) -> bool {
 // handle_call_requires_binding names the commands that always return a bound
 // module handle and cannot be called bare or nested inside another expression.
 handle_call_requires_binding :: proc "contextless" (callee: string) -> bool {
-	return callee == "isolate" || callee == "load" || callee == "isolate_memory"
+	return callee == "isolate" || callee == "load" || callee == "isolate_memory" || callee == "compile_c"
 }
 
-// handle_call_precheck statically refuses bare or nested calls to isolate,
-// load, or isolate_memory before evaluation begins, so no module is mapped
-// or sandbox spawned for an unbound call.
+// module_handle_hint chooses a clean, non-colliding binding variable name for
+// a module name (used in static precheck messages and Command Palette lines).
+module_handle_hint :: proc "contextless" (mod_name: string) -> string {
+	if len(mod_name) > 0 && lex_parser.name_valid(mod_name) {
+		if existing := command_find(mod_name); existing == nil || existing.run == nil {
+			return mod_name
+		}
+	}
+	return "m"
+}
+
+// handle_call_precheck statically refuses bare, nested, or dotted-target calls
+// to isolate, load, isolate_memory, or compile_c before evaluation begins, so
+// no module is mapped or sandbox spawned for an unbound or unreachable call.
 handle_call_precheck :: proc "contextless" (tree: ^lex_parser.Syntax_Tree, assigned: bool) -> bool {
 	if tree.refusal.refusal != .None {
 		return true
@@ -347,9 +358,6 @@ handle_call_precheck :: proc "contextless" (tree: ^lex_parser.Syntax_Tree, assig
 		if !handle_call_requires_binding(callee) {
 			continue
 		}
-		if assigned && idx == tree.root {
-			continue
-		}
 		mod_lit := ""
 		if node.aux > 0 && int(node.a) < len(tree.extra_children) {
 			first_arg := tree.extra_children[node.a]
@@ -360,19 +368,28 @@ handle_call_precheck :: proc "contextless" (tree: ^lex_parser.Syntax_Tree, assig
 				}
 			}
 		}
-		hint := "m"
-		if len(mod_lit) > 0 && lex_parser.name_valid(mod_lit) {
-			if existing := command_find(mod_lit); existing == nil || existing.run == nil {
-				hint = mod_lit
+		hint := module_handle_hint(mod_lit)
+		if assigned && idx == tree.root {
+			if !lex_parser.name_valid(tree.assigned_name) {
+				fail(callee, ": \"", tree.assigned_name, "\" is not a plain variable name; bind to a single identifier such as ", hint, " = ", callee, "(...)")
+				return false
 			}
+			continue
 		}
-		if callee == "isolate_memory" {
+		switch callee {
+		case "isolate_memory":
 			if len(mod_lit) > 0 {
 				fail(callee, " returns a module handle; bind it with ", hint, " = ", callee, "(\"", mod_lit, "\", memory, size)")
 			} else {
 				fail(callee, " returns a module handle; bind it with ", hint, " = ", callee, "(name, memory, size)")
 			}
-		} else {
+		case "compile_c":
+			if len(mod_lit) > 0 {
+				fail(callee, " returns a module handle; bind it with ", hint, " = ", callee, "(\"", mod_lit, "\", source)")
+			} else {
+				fail(callee, " returns a module handle; bind it with ", hint, " = ", callee, "(name, source)")
+			}
+		case:
 			if len(mod_lit) > 0 {
 				fail(callee, " returns a module handle; bind it with ", hint, " = ", callee, "(\"", mod_lit, "\")")
 			} else {
