@@ -23,8 +23,10 @@ site_try_page_structure_and_links :: proc(t: ^testing.T) {
 	testing.expect(t, len(page.description) > 0 && len(page.description) <= SITE_DESCRIPTION_LIMIT)
 	testing.expect(t, strings.contains(page.body, "../browser_machine_console.html"))
 	testing.expect(t, strings.contains(page.body, "../browser_machine.html"))
-	testing.expect(t, strings.contains(page.body, `s = isolate("sample")`))
-	testing.expect(t, strings.contains(page.body, `s.readings(4)`))
+	testing.expect(t, strings.contains(page.body, `class="c-`))
+	testing.expect(t, strings.contains(page.body, `isolate`))
+	testing.expect(t, strings.contains(page.body, `sample`))
+	testing.expect(t, strings.contains(page.body, `readings`))
 
 	files := build.BROWSER_MACHINE_PAGE_FILES
 	for file in files {

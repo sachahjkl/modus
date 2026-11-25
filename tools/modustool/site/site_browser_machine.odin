@@ -28,7 +28,7 @@ site_try_add :: proc(site: ^Site) {
 	strings.write_string(&b, "<p>Boots the minimal console image (<code>console.image</code>, about 5 MiB) with <code>dom_terminal</code> directly in the document, with no desktop overhead.</p>\n")
 	fmt.sbprintf(&b, "<ul class=\"doors\"><li><a href=\"%s\">Open Web Console</a></li></ul>\n", console_link)
 	strings.write_string(&b, "<p>Starter commands:</p>\n")
-	strings.write_string(&b, "<pre><code>help()\nprocesses()\ns = isolate(\"sample\")\ns.readings(4)</code></pre>\n")
+	fmt.sbprintf(&b, "<pre><code>%s</code></pre>\n", site_code_lex_block_html(site, "help()\nprocesses()\ns = isolate(\"sample\")\ns.readings(4)", path))
 	strings.write_string(&b, "</section>\n")
 
 	// Card 2: Web Desktop.
