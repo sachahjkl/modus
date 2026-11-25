@@ -69,6 +69,14 @@ module_floor_glyph_pages :: proc "contextless" (
 	return own_pages, drawing_pages, .None
 }
 
+@(private = "file")
+floor_checked_add_u64 :: proc "contextless" (left, right: u64) -> (sum: u64, ok: bool) {
+	if left > max(u64) - right {
+		return 0, false
+	}
+	return left + right, true
+}
+
 // module_floor_total_pages computes the overflow-safe total floor in 4 KiB
 // pages from all counted components. Refuses zero load_pages, u64 overflow,
 // or a sum above MODULE_FLOOR_MAX_PAGES.
@@ -78,19 +86,19 @@ module_floor_total_pages :: proc "contextless" (parts: Module_Floor_Components) 
 	}
 	sum := parts.load_pages
 	ok: bool
-	sum, ok = checked_add_u64(sum, parts.start_object_pages)
+	sum, ok = floor_checked_add_u64(sum, parts.start_object_pages)
 	if !ok {
 		return 0, .Overflow
 	}
-	sum, ok = checked_add_u64(sum, parts.own_text_glyph_pages)
+	sum, ok = floor_checked_add_u64(sum, parts.own_text_glyph_pages)
 	if !ok {
 		return 0, .Overflow
 	}
-	sum, ok = checked_add_u64(sum, parts.drawing_text_glyph_pages)
+	sum, ok = floor_checked_add_u64(sum, parts.drawing_text_glyph_pages)
 	if !ok {
 		return 0, .Overflow
 	}
-	sum, ok = checked_add_u64(sum, parts.child_floor_pages)
+	sum, ok = floor_checked_add_u64(sum, parts.child_floor_pages)
 	if !ok {
 		return 0, .Overflow
 	}
