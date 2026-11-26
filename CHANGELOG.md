@@ -6,6 +6,12 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.109.0] - 2026-11-26 21:42
+
+### Added
+
+- **Native Doom (`doomgeneric`) application module.** Run classic Doom directly on `modus` from the start menu or console (`start("doom")`) with a 640 x 400 window, SSE2 palette-to-BGRA32 blitting, 35 Hz frame pacing, 56 KiB chunked WAD loading from the private store, opt-in pointer lock for relative mouse turning, and optional 48 kHz stereo DMX sound effects.
+
 ## [0.108.0] - 2026-11-26 21:21
 
 ### Added
@@ -2083,6 +2089,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.109.0]: https://github.com/sachahjkl/modus/releases/tag/v0.109.0
 [0.108.0]: https://github.com/sachahjkl/modus/releases/tag/v0.108.0
 [0.107.0]: https://github.com/sachahjkl/modus/releases/tag/v0.107.0
 [0.106.0]: https://github.com/sachahjkl/modus/releases/tag/v0.106.0
