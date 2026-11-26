@@ -46,15 +46,15 @@ a_step_range_refuses_what_names_no_steps :: proc(t: ^testing.T) {
 
 @(test)
 the_arguments_of_test_take_a_step_range_after_a_part :: proc(t: ^testing.T) {
-	testing.expect_value(t, test_arguments_problem({"main", "steps", "1270", "to", "1280"}), "")
-	testing.expect(t, test_arguments_problem({"main", "steps", "1280", "to", "1270"}) != "", "a reversed range is refused before the build")
+	testing.expect_value(t, test_arguments_problem({"main_console_and_desktop", "steps", "1270", "to", "1280"}), "")
+	testing.expect(t, test_arguments_problem({"main_console_and_desktop", "steps", "1280", "to", "1270"}) != "", "a reversed range is refused before the build")
 	testing.expect(t, test_arguments_problem({"no_such_part", "steps", "1", "to", "2"}) != "", "a range of a part that does not exist is refused")
-	testing.expect(t, test_arguments_problem({"main", "steps"}) != "", "a range with no numbers is refused")
-	range, given := test_arguments_give_step_range({"main", "steps", "3", "to", "4"}, context.temp_allocator)
+	testing.expect(t, test_arguments_problem({"main_console_and_desktop", "steps"}) != "", "a range with no numbers is refused")
+	range, given := test_arguments_give_step_range({"main_console_and_desktop", "steps", "3", "to", "4"}, context.temp_allocator)
 	testing.expect(t, given && range.span == Step_Span{3, 4}, "the range is given")
-	_, from_given := test_arguments_give_step_range({"main", "from", "folder"}, context.temp_allocator)
+	_, from_given := test_arguments_give_step_range({"main_console_and_desktop", "from", "folder"}, context.temp_allocator)
 	testing.expect(t, !from_given, "a folder of test inputs is no range")
-	_, inputs_given := test_arguments_give_inputs({"main", "steps", "1", "to", "2"})
+	_, inputs_given := test_arguments_give_inputs({"main_console_and_desktop", "steps", "1", "to", "2"})
 	testing.expect(t, !inputs_given, "a range of three words is no folder of test inputs")
 }
 

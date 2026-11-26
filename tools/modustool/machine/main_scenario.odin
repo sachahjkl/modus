@@ -1,5 +1,6 @@
 package machine
 
+import "core:fmt"
 import op "modus:contract/operation"
 import "modustool:build"
 import "modustool:checks"
@@ -10,8 +11,79 @@ import "modustool:checks"
 // step outlasts that bound (a host test of the tool checks it).
 BUILDER_HANG_STEP_SECONDS :: 300
 
-main_tests_run :: proc(part: ^Test_Part_Run) -> bool {
-	return machine_test(part, scenario[:], {volume = build.BOOT_VOLUME, output = checks.TEST_OUTPUT, exit_status = build.MACHINE_STOP_OK})
+// main_shard_tests_run resolves shard_name against scenario, materializes its
+// self-contained step slice (skipping the boot prelude when restoring a QMP
+// usable-boot snapshot), and runs its machine test.
+@(private = "file")
+main_shard_tests_run :: proc(part: ^Test_Part_Run, shard_name, output_path, volume_path: string) -> bool {
+	shards, refusal := main_scenario_shards(scenario[:], context.allocator)
+	if refusal != .None {
+		fmt.eprintfln("modustool: test failed: cannot partition main scenario (%v)", refusal)
+		return false
+	}
+	defer delete(shards)
+	shard, found := main_shard_find(shards, shard_name)
+	if !found {
+		fmt.eprintfln("modustool: test failed: unknown main scenario shard %s", shard_name)
+		return false
+	}
+	include_prelude := part.snapshot_folder == ""
+	steps, mat_ref := main_shard_runnable_steps(scenario[:], shard, include_prelude, context.allocator)
+	if mat_ref != .None {
+		fmt.eprintfln("modustool: test failed: cannot materialize main scenario shard %s (%v)", shard_name, mat_ref)
+		return false
+	}
+	defer delete(steps)
+	return machine_test(
+		part,
+		steps,
+		{
+			volume                  = volume_path,
+			output                  = output_path,
+			exit_status             = build.MACHINE_STOP_OK,
+			snapshot_restore_folder = part.snapshot_folder,
+		},
+	)
+}
+
+main_console_and_desktop_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return main_shard_tests_run(part, "console_and_desktop", checks.TEST_OUTPUT, build.BOOT_VOLUME)
+}
+
+main_palette_provider_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return main_shard_tests_run(part, "palette_provider", checks.TEST_OUTPUT_MAIN_PALETTE_PROVIDER, build.BOOT_VOLUME)
+}
+
+main_console_calls_and_compiler_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return main_shard_tests_run(part, "console_calls_and_compiler", checks.TEST_OUTPUT_MAIN_CONSOLE_CALLS_AND_COMPILER, build.BOOT_VOLUME)
+}
+
+main_demos_and_concurrency_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return main_shard_tests_run(part, "demos_and_concurrency", checks.TEST_OUTPUT_MAIN_DEMOS_AND_CONCURRENCY, build.BOOT_VOLUME)
+}
+
+main_memory_and_services_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return main_shard_tests_run(part, "memory_and_services", checks.TEST_OUTPUT_MAIN_MEMORY_AND_SERVICES, build.BOOT_VOLUME)
+}
+
+main_manual_and_imports_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return main_shard_tests_run(part, "manual_and_imports", checks.TEST_OUTPUT_MAIN_MANUAL_AND_IMPORTS, build.BOOT_VOLUME)
+}
+
+main_log_and_streams_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return main_shard_tests_run(part, "log_and_streams", checks.TEST_OUTPUT_MAIN_LOG_AND_STREAMS, build.BOOT_VOLUME)
+}
+
+main_tables_terminal_and_storage_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return main_shard_tests_run(part, "tables_terminal_and_storage", checks.TEST_OUTPUT_MAIN_TABLES_TERMINAL_AND_STORAGE, build.BOOT_VOLUME)
+}
+
+main_notes_editor_inspect_and_ui_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return main_shard_tests_run(part, "notes_editor_inspect_and_ui", checks.TEST_OUTPUT_MAIN_NOTES_EDITOR_INSPECT_AND_UI, build.BOOT_VOLUME)
+}
+
+main_settings_editor_and_builders_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return main_shard_tests_run(part, "settings_editor_and_builders", checks.TEST_OUTPUT_MAIN_SETTINGS_EDITOR_AND_BUILDERS, build.BOOT_VOLUME)
 }
 
 // The line of `errors` that is longer than the text of one log record by
@@ -3552,9 +3624,18 @@ scenario := [?]Step {
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
 }
 
-// A binary of the tool runs the test part main only when it holds this file
-// (test_parts.odin, test_part_scenario_register).
+// A binary of the tool runs the main shard test parts only when it holds this
+// file (test_parts.odin, test_part_scenario_register).
 @(init)
 main_test_part_register :: proc "contextless" () {
-	test_part_scenario_register("main", main_tests_run)
+	test_part_scenario_register("main_console_and_desktop", main_console_and_desktop_tests_run)
+	test_part_scenario_register("main_palette_provider", main_palette_provider_tests_run)
+	test_part_scenario_register("main_console_calls_and_compiler", main_console_calls_and_compiler_tests_run)
+	test_part_scenario_register("main_demos_and_concurrency", main_demos_and_concurrency_tests_run)
+	test_part_scenario_register("main_memory_and_services", main_memory_and_services_tests_run)
+	test_part_scenario_register("main_manual_and_imports", main_manual_and_imports_tests_run)
+	test_part_scenario_register("main_log_and_streams", main_log_and_streams_tests_run)
+	test_part_scenario_register("main_tables_terminal_and_storage", main_tables_terminal_and_storage_tests_run)
+	test_part_scenario_register("main_notes_editor_inspect_and_ui", main_notes_editor_inspect_and_ui_tests_run)
+	test_part_scenario_register("main_settings_editor_and_builders", main_settings_editor_and_builders_tests_run)
 }

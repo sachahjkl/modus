@@ -16,7 +16,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The console line that never ran under a loaded host.** Once, in a full check on a loaded host, the console of the part `debugger` took the keys of a line and never ran it, while the machine stayed idle with a line of the serial port waiting; the part passes alone each time. The cause is found from the whole log of the next such failure, so a line that a principal types always runs.
 - **Live machine record and replay of the console, a window, and `rdrand`.** Record the console, a window process, and a planted `rdrand` module on a test machine and replay each to completion or divergence through `modustool replay`. [Design](src/md/features/record_and_replay.md)
 - **Live verification on a second display holder and a 4 GiB `pdpe1gb` machine.** Run the display-contract scenario on a second display holder and run the resumable 1 GiB zeroing path on a 4 GiB `pdpe1gb` QEMU test, then remove `Large_Pages`. [Design](src/md/features/roles_and_contracts.md)
-- **Wire QMP boot snapshots and the 10-shard `main` split into `flake.nix`.** Enable the saved usable-boot QMP snapshot restore and 10 parallel `main` shard derivations in the flake check matrix. [Design](src/md/infrastructure/fast_build.md)
 
 ## Later
 

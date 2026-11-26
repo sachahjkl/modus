@@ -191,7 +191,12 @@ MACHINE_VIDEO_MEMORY_MIB :: 16
 // console_log: when non-empty (only when test_output is ""), starts a
 // desktop-free console machine with -display none, -vga none, no tablet,
 // COM1 written to console_log, and COM2 attached to stdio with signal=off.
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_screen := false, without_ps2_controller := false, entropy_device_silent := false, no_network_device := false, data_disk_without_ioevent := false, without_pit := false, shared_variables := "", serial_input := "", tablet: Machine_Tablet = .None, gpu_scanout := false, console_log := "") -> (command: []string, ok: bool) {
+// qcow2_drives: when true, opens the boot volume read-only and attaches
+// qcow2 images for OVMF variables, data disk, and scratch disk so QEMU
+// internal QMP snapshots (`savevm` / `loadvm`) succeed.
+// serial_append: when true with test_output, appends COM1 output after the
+// seeded boot log of a restored QMP snapshot.
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_screen := false, without_ps2_controller := false, entropy_device_silent := false, no_network_device := false, data_disk_without_ioevent := false, without_pit := false, shared_variables := "", serial_input := "", tablet: Machine_Tablet = .None, gpu_scanout := false, console_log := "", qcow2_drives := false, qcow2_variables := "", qcow2_scratch := "", serial_append := false) -> (command: []string, ok: bool) {
 	if console_log != "" && test_output != "" {
 		fmt.eprintln("modustool: console_log and test_output cannot both be set")
 		return nil, false
@@ -211,7 +216,13 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	// its files beside its log: machines that run at the same time share no
 	// file that QEMU writes.
 	scratch_disk := test_output != "" ? machine_file(test_output, SCRATCH_DISK_SUFFIX) : SCRATCH_DISK
-	if !disk_prepare(scratch_disk, SCRATCH_DISK_SIZE, true) {
+	if qcow2_drives {
+		if qcow2_variables == "" || qcow2_scratch == "" {
+			fmt.eprintln("modustool: qcow2_drives requires qcow2_variables and qcow2_scratch paths")
+			return nil, false
+		}
+		scratch_disk = qcow2_scratch
+	} else if !disk_prepare(scratch_disk, SCRATCH_DISK_SIZE, true) {
 		return nil, false
 	}
 	code_variable, variables_variable, variables_copy, variables_suffix := firmware_files(firmware)
@@ -233,16 +244,20 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	// The firmware writes its variables, so it gets a private copy. The
 	// machines of a part that share a store copy it once: the first one
 	// writes there what the next one reads.
-	if shared_variables != "" {
-		variables_copy = shared_variables
-	}
-	if shared_variables == "" || !os.exists(shared_variables) {
-		if err := os.copy_file(variables_copy, firmware_variables); err != nil {
-			fmt.eprintfln("modustool: cannot copy %s: %v", firmware_variables, err)
-			return nil, false
+	if qcow2_drives {
+		variables_copy = qcow2_variables
+	} else {
+		if shared_variables != "" {
+			variables_copy = shared_variables
 		}
-		if !foundation.run({"chmod", "u+w", variables_copy}) {
-			return nil, false
+		if shared_variables == "" || !os.exists(shared_variables) {
+			if err := os.copy_file(variables_copy, firmware_variables); err != nil {
+				fmt.eprintfln("modustool: cannot copy %s: %v", firmware_variables, err)
+				return nil, false
+			}
+			if !foundation.run({"chmod", "u+w", variables_copy}) {
+				return nil, false
+			}
 		}
 	}
 	listener_port := forward.listener != nil ? forward.listener.port : 0
@@ -328,22 +343,23 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 	if !no_network_device {
 		append(&list, "-device", fmt.tprintf("virtio-net-pci,netdev=network,disable-legacy=on,mac=%s,addr=0x%x%s", MACHINE_HARDWARE, pci.NETWORK_DEVICE, virtio_iommu))
 	}
+	drive_format := qcow2_drives ? "qcow2" : "raw"
+	boot_drive_spec := qcow2_drives ? "if=none,id=boot,format=raw,readonly=on,file=" : "if=none,id=boot,format=raw,snapshot=on,file="
 	append(
 		&list,
 		"-drive",
 		strings.concatenate({"if=pflash,format=raw,readonly=on,file=", firmware_code}, context.temp_allocator),
 		"-drive",
-		strings.concatenate({"if=pflash,format=raw,file=", variables_copy}, context.temp_allocator),
+		strings.concatenate({"if=pflash,format=", drive_format, ",file=", variables_copy}, context.temp_allocator),
 		"-drive",
 		// Several machines boot one volume at the same time, and QEMU takes
 		// a lock for writing on each image that it opens for writing: the
 		// second machine would not start. With snapshot=on QEMU opens the
 		// volume to read only, with a shared lock, and keeps each write of
-		// the machine in a temporary file of its own. No process of the
-		// system writes its boot volume (the block service serves the data
-		// disk and the disk of the measures), and the firmware is not ours:
-		// a write that it makes stays private, and no machine reads one.
-		strings.concatenate({"if=none,id=boot,format=raw,snapshot=on,file=", volume}, context.temp_allocator),
+		// the machine in a temporary file of its own. With qcow2_drives for
+		// QMP snapshots, the boot volume stays read-only so savevm/loadvm
+		// snapshot only the writable qcow2 images.
+		strings.concatenate({boot_drive_spec, volume}, context.temp_allocator),
 		"-device",
 		// The boot volume is the first boot option of the firmware: with no
 		// bootindex, the order of its options follows its own enumeration,
@@ -352,11 +368,11 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// interface only, so that it too goes through the unit.
 		iommu != .None ? "virtio-blk-pci,drive=boot,bootindex=0,disable-legacy=on,iommu_platform=on" : "virtio-blk-pci,drive=boot,bootindex=0",
 		"-drive",
-		strings.concatenate({"if=none,id=data,format=raw,file=", data_disk}, context.temp_allocator),
+		strings.concatenate({"if=none,id=data,format=", drive_format, ",file=", data_disk}, context.temp_allocator),
 		"-device",
 		fmt.tprintf("virtio-blk-pci,drive=data,disable-legacy=on,addr=0x%x%s%s", pci.DATA_DISK_DEVICE, data_disk_without_ioevent ? ",ioeventfd=off" : "", virtio_iommu),
 		"-drive",
-		strings.concatenate({"if=none,id=scratch,format=raw,file=", scratch_disk}, context.temp_allocator),
+		strings.concatenate({"if=none,id=scratch,format=", drive_format, ",file=", scratch_disk}, context.temp_allocator),
 	)
 	switch iommu {
 	case .Intel:
@@ -481,6 +497,8 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// the FIFO beside it its input: each reader of the log is the same.
 		if serial_input != "" {
 			append(&list, "-chardev", strings.concatenate({"file,id=serial0,path=", test_output, ",input-path=", serial_input}, context.temp_allocator), "-serial", "chardev:serial0")
+		} else if serial_append {
+			append(&list, "-chardev", strings.concatenate({"file,id=serial0,path=", test_output, ",append=on"}, context.temp_allocator), "-serial", "chardev:serial0")
 		} else {
 			append(&list, "-serial", strings.concatenate({"file:", test_output}, context.temp_allocator))
 		}

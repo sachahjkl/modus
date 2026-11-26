@@ -30,8 +30,10 @@ font_outlines_mapping: system.Mapping
 // The pass of the next start of `settings`: start() gives it in the value
 // VALUE_PASS. Window for each start that opens its window.
 settings_pass: settings.Pass
-// The process of the last pass that this service started, by its serial:
-// a slot of the table is used again, a serial is not. 0: none.
+// The process of the last pass that this service started, by its kernel
+// (slot, serial) pair: a serial starts at 1 for each fresh slot, so both
+// slot and serial are required to name one process uniquely. 0: none.
+settings_pass_process_slot: u64
 settings_pass_process_serial: u64
 settings_pass_running_pass: settings.Pass
 
@@ -154,6 +156,7 @@ settings_pass_start :: proc "contextless" (pass: settings.Pass, principal: u64, 
 	place: ^Started
 	outcome = start(role_holder_name(.Settings), principal, place = &place, refusal = refusal)
 	if outcome == .Succeeded && place != nil {
+		settings_pass_process_slot = place.process_slot
 		settings_pass_process_serial = place.process_serial
 		settings_pass_running_pass = pass
 	}
@@ -176,7 +179,8 @@ settings_running :: proc "contextless" () -> (item: ^Started, pass: settings.Pas
 		if candidate.process == 0 || candidate.is_terminal || !is_role_holder(system.name_of(candidate.name[:]), .Settings) {
 			continue
 		}
-		if settings_pass_process_serial != 0 && candidate.process_serial == settings_pass_process_serial {
+		if settings_pass_process_slot != 0 && settings_pass_process_serial != 0 &&
+		   candidate.process_slot == settings_pass_process_slot && candidate.process_serial == settings_pass_process_serial {
 			return &candidate, settings_pass_running_pass
 		}
 		item, pass = &candidate, .Window

@@ -53,6 +53,7 @@ Test_Part_Run :: struct {
 	times:              Test_Times,
 	step_range:         Step_Range, // `test <part> steps ...`: the machine and the steps that run (step_range.odin).
 	skip_shots:         bool, // `test --no-shots`: skip QMP screendump capture steps during iteration runs.
+	snapshot_folder:    string, // Optional usable-boot QMP snapshot folder restored before running a main shard.
 	started:            bool, // A worker took the part: after a failure, the parts that no worker took did not start.
 	passed:             bool,
 	duration:           time.Duration, // A measure: from the start of its first machine to the end of its last one.
@@ -62,7 +63,16 @@ Test_Part_Run :: struct {
 // parts first, so that the last part to end starts early. The time of each
 // part is in build/test_times.txt.
 test_parts := [?]Test_Part {
-	{name = "main", does = "The main machine: the desktop, the console, the processes and the developer tools", procedures = {"main_tests_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "main_console_and_desktop", does = "Main shard: console language, UTF-8 fallback glyphs, desktop windows, and palette search", procedures = {"main_console_and_desktop_tests_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "main_palette_provider", does = "Main shard: fault isolation, palette confirmation, console palette commands, settings, and revocation", procedures = {"main_palette_provider_tests_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "main_console_calls_and_compiler", does = "Main shard: console diagnostics, direct and isolated calls, pipes, revocation, assembler, and C compiler", procedures = {"main_console_calls_and_compiler_tests_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "main_demos_and_concurrency", does = "Main shard: remote allow, demonstrations, IPC rings, threads, locks, budgets, clock, and scheduler", procedures = {"main_demos_and_concurrency_tests_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "main_memory_and_services", does = "Main shard: virtual memory, boot display, paging, frame runs, and multi-role services", procedures = {"main_memory_and_services_tests_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "main_manual_and_imports", does = "Main shard: manual pages and Markdown checks, library imports, and loader refusals", procedures = {"main_manual_and_imports_tests_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "main_log_and_streams", does = "Main shard: log scopes and facts, record outputs, merge and filter streams, and root refusals", procedures = {"main_log_and_streams_tests_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "main_tables_terminal_and_storage", does = "Main shard: table call parameters, terminal scroll and flood, block device, and storage service", procedures = {"main_tables_terminal_and_storage_tests_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "main_notes_editor_inspect_and_ui", does = "Main shard: notes versions, editor undo, diagnostic errors, inspect, interface elements, fonts, and pointers", procedures = {"main_notes_editor_inspect_and_ui_tests_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "main_settings_editor_and_builders", does = "Main shard: live settings, scale and appearance, tables conformance, line editor, and sandboxed builders", procedures = {"main_settings_editor_and_builders_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "tcp", does = "The two machines of TCP", procedures = {"tcp_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "assistant", does = "The machine of the assistant: a request and its reply with an act that reads, a grant-adding act that the bridge stops and the principal refuses in the act dialog, and a malformed model reply that the border of the agent runner refuses with its error record", procedures = {"assistant_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	{name = "random", does = "The three machines of the randomness: the first has the entropy device (`virtio-rng-pci`), the other two have none", procedures = {"random_tests_run"}, volumes = {build.BOOT_VOLUME}},
@@ -199,9 +209,11 @@ test_part_names :: proc() -> string {
 	return strings.join(names, ", ", context.temp_allocator)
 }
 
-// The word of `test <part> from <folder>`: one part on the test inputs of a
-// folder, with no build (test_derivations.odin).
+// The word of `test <part> from <folder> [snapshot <dir>]`: one part on the
+// test inputs of a folder, with no build, optionally restoring a captured
+// usable-boot QMP snapshot (test_derivations.odin, qmp_snapshot.odin).
 TEST_FROM_WORD :: "from"
+TEST_SNAPSHOT_WORD :: "snapshot"
 
 // The flag of `test --fast <part>`: build user modules in fast iteration mode
 // (Optimization_Mode.None) and build only the boot volumes and modules of the
@@ -216,11 +228,16 @@ TEST_NO_SHOTS_FLAG :: "--no-shots"
 // The flag of `test --cache <dir>`: opt into the shared host module cache.
 TEST_CACHE_FLAG :: build.BUILD_CACHE_FLAG
 
+// The flag of `test --snapshot <dir> <part>`: restore a captured usable-boot
+// QMP snapshot folder for a main shard part during local iteration.
+TEST_SNAPSHOT_FLAG :: "--snapshot"
+
 // Parsed arguments of `modustool test`.
 Test_Command_Options :: struct {
 	optimization:    build.Optimization_Mode,
 	skip_shots:      bool,
 	cache_folder:    string,
+	snapshot_folder: string,
 	part_name:       string,
 	inputs_folder:   string,
 	has_inputs:      bool,
@@ -228,10 +245,11 @@ Test_Command_Options :: struct {
 	step_range_args: []string,
 }
 
-// test_arguments_leading_flags parses leading `--fast`, `--no-shots`, and
-// `--cache <dir>` flags in any order before the optional part name.
+// test_arguments_leading_flags parses leading `--fast`, `--no-shots`,
+// `--cache <dir>`, and `--snapshot <dir>` flags in any order before the
+// optional part name.
 @(private = "file")
-test_arguments_leading_flags :: proc(args: []string) -> (optimization: build.Optimization_Mode, skip_shots: bool, cache_folder: string, rest: []string, problem: string) {
+test_arguments_leading_flags :: proc(args: []string) -> (optimization: build.Optimization_Mode, skip_shots: bool, cache_folder: string, snapshot_folder: string, rest: []string, problem: string) {
 	optimization = .Speed
 	index := 0
 	for index < len(args) {
@@ -239,38 +257,47 @@ test_arguments_leading_flags :: proc(args: []string) -> (optimization: build.Opt
 		switch {
 		case argument == TEST_FAST_FLAG:
 			if optimization == .None {
-				return .Speed, false, "", nil, fmt.tprintf("test: %s is written two times", TEST_FAST_FLAG)
+				return .Speed, false, "", "", nil, fmt.tprintf("test: %s is written two times", TEST_FAST_FLAG)
 			}
 			optimization = .None
 			index += 1
 		case argument == TEST_NO_SHOTS_FLAG:
 			if skip_shots {
-				return .Speed, false, "", nil, fmt.tprintf("test: %s is written two times", TEST_NO_SHOTS_FLAG)
+				return .Speed, false, "", "", nil, fmt.tprintf("test: %s is written two times", TEST_NO_SHOTS_FLAG)
 			}
 			skip_shots = true
 			index += 1
 		case argument == TEST_CACHE_FLAG:
 			if cache_folder != "" {
-				return .Speed, false, "", nil, fmt.tprintf("test: %s is written two times", TEST_CACHE_FLAG)
+				return .Speed, false, "", "", nil, fmt.tprintf("test: %s is written two times", TEST_CACHE_FLAG)
 			}
 			if index + 1 >= len(args) || args[index + 1] == "" || strings.has_prefix(args[index + 1], "-") {
-				return .Speed, false, "", nil, fmt.tprintf("test: %s requires a folder path", TEST_CACHE_FLAG)
+				return .Speed, false, "", "", nil, fmt.tprintf("test: %s requires a folder path", TEST_CACHE_FLAG)
 			}
 			cache_folder = args[index + 1]
 			index += 2
+		case argument == TEST_SNAPSHOT_FLAG:
+			if snapshot_folder != "" {
+				return .Speed, false, "", "", nil, fmt.tprintf("test: %s is written two times", TEST_SNAPSHOT_FLAG)
+			}
+			if index + 1 >= len(args) || args[index + 1] == "" || strings.has_prefix(args[index + 1], "-") {
+				return .Speed, false, "", "", nil, fmt.tprintf("test: %s requires a folder path", TEST_SNAPSHOT_FLAG)
+			}
+			snapshot_folder = args[index + 1]
+			index += 2
 		case strings.has_prefix(argument, "-"):
-			return .Speed, false, "", nil, fmt.tprintf("test: unknown option `%s`; the flags: `%s`, `%s`, `%s <dir>`", argument, TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG, TEST_CACHE_FLAG)
+			return .Speed, false, "", "", nil, fmt.tprintf("test: unknown option `%s`; the flags: `%s`, `%s`, `%s <dir>`, `%s <dir>`", argument, TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG, TEST_CACHE_FLAG, TEST_SNAPSHOT_FLAG)
 		case:
-			return optimization, skip_shots, cache_folder, args[index:], ""
+			return optimization, skip_shots, cache_folder, snapshot_folder, args[index:], ""
 		}
 	}
-	return optimization, skip_shots, cache_folder, args[index:], ""
+	return optimization, skip_shots, cache_folder, snapshot_folder, args[index:], ""
 }
 
 // test_arguments_optimization separates leading flags from the remaining
 // arguments of `modustool test` and returns the requested optimization mode.
 test_arguments_optimization :: proc(args: []string) -> (optimization: build.Optimization_Mode, rest: []string) {
-	opt, _, _, tail, problem := test_arguments_leading_flags(args)
+	opt, _, _, _, tail, problem := test_arguments_leading_flags(args)
 	if problem != "" {
 		return .Speed, args
 	}
@@ -279,13 +306,14 @@ test_arguments_optimization :: proc(args: []string) -> (optimization: build.Opti
 
 // test_arguments_parse parses and validates all arguments of `modustool test`.
 test_arguments_parse :: proc(args: []string) -> (options: Test_Command_Options, problem: string) {
-	optimization, skip_shots, cache_folder, rest, flag_problem := test_arguments_leading_flags(args)
+	optimization, skip_shots, cache_folder, snapshot_folder, rest, flag_problem := test_arguments_leading_flags(args)
 	if flag_problem != "" {
 		return {}, flag_problem
 	}
 	options.optimization = optimization
 	options.skip_shots = skip_shots
 	options.cache_folder = cache_folder
+	options.snapshot_folder = snapshot_folder
 	if optimization == .None && len(rest) == 0 {
 		return {}, fmt.tprintf("test %s requires a test part: `test %s <part>`; the parts: %s", TEST_FAST_FLAG, TEST_FAST_FLAG, test_part_names())
 	}
@@ -298,6 +326,9 @@ test_arguments_parse :: proc(args: []string) -> (options: Test_Command_Options, 
 		}
 		if cache_folder != "" {
 			return {}, fmt.tprintf("test %s cannot be used with `%s <folder>`: a part on given test inputs runs no build", TEST_CACHE_FLAG, TEST_FROM_WORD)
+		}
+		if snapshot_folder != "" {
+			return {}, fmt.tprintf("test %s cannot be used with `%s <folder>`: use `test <part> %s <folder> %s <snapshot>`", TEST_SNAPSHOT_FLAG, TEST_FROM_WORD, TEST_FROM_WORD, TEST_SNAPSHOT_WORD)
 		}
 	}
 	if len(rest) == 0 {
@@ -314,16 +345,19 @@ test_arguments_parse :: proc(args: []string) -> (options: Test_Command_Options, 
 		options.part_name = rest[0]
 		return options, ""
 	}
-	if found && optimization == .Speed && !skip_shots && cache_folder == "" && len(rest) == 3 && rest[1] == TEST_FROM_WORD && rest[2] != "" {
+	if found && optimization == .Speed && !skip_shots && cache_folder == "" && snapshot_folder == "" && rest[1] == TEST_FROM_WORD && ((len(rest) == 3 && rest[2] != "") || (len(rest) == 5 && rest[2] != "" && rest[3] == TEST_SNAPSHOT_WORD && rest[4] != "")) {
 		options.part_name = rest[0]
 		options.inputs_folder = rest[2]
 		options.has_inputs = true
+		if len(rest) == 5 {
+			options.snapshot_folder = rest[4]
+		}
 		return options, ""
 	}
 	if found && len(rest) >= 2 && rest[1] == TEST_STEPS_WORD {
 		_, range_problem := step_range_parse(rest[2:], context.temp_allocator)
 		if range_problem != "" {
-			return {}, fmt.tprintf("test %s %s: %s; the form: `test [%s] [%s] [%s <dir>] <part> %s <first> %s <last> [%s <machine>] [%s <first> %s <last>]...`", rest[0], TEST_STEPS_WORD, range_problem, TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG, TEST_CACHE_FLAG, TEST_STEPS_WORD, TEST_TO_WORD, TEST_OF_WORD, TEST_WITH_WORD, TEST_TO_WORD)
+			return {}, fmt.tprintf("test %s %s: %s; the form: `test [%s] [%s] [%s <dir>] [%s <dir>] <part> %s <first> %s <last> [%s <machine>] [%s <first> %s <last>]...`", rest[0], TEST_STEPS_WORD, range_problem, TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG, TEST_CACHE_FLAG, TEST_SNAPSHOT_FLAG, TEST_STEPS_WORD, TEST_TO_WORD, TEST_OF_WORD, TEST_WITH_WORD, TEST_TO_WORD)
 		}
 		options.part_name = rest[0]
 		options.has_step_range = true
@@ -331,7 +365,7 @@ test_arguments_parse :: proc(args: []string) -> (options: Test_Command_Options, 
 		return options, ""
 	}
 	given := strings.join(args, " ", context.temp_allocator)
-	return {}, fmt.tprintf("test does not know the part `%s`; the parts: %s; with no argument, the whole test; `test [%s] [%s] [%s <dir>] <part>`: one part for iteration; `test <part> %s <folder>`: one part on the test inputs of a folder, with no build; `test [%s] [%s] <part> %s <first> %s <last>`: some steps of one machine of a part", given, test_part_names(), TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG, TEST_CACHE_FLAG, TEST_FROM_WORD, TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG, TEST_STEPS_WORD, TEST_TO_WORD)
+	return {}, fmt.tprintf("test does not know the part `%s`; the parts: %s; with no argument, the whole test; `test [%s] [%s] [%s <dir>] [%s <dir>] <part>`: one part for iteration; `test <part> %s <folder> [%s <snapshot>]`: one part on the test inputs of a folder, with no build; `test [%s] [%s] <part> %s <first> %s <last>`: some steps of one machine of a part", given, test_part_names(), TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG, TEST_CACHE_FLAG, TEST_SNAPSHOT_FLAG, TEST_FROM_WORD, TEST_SNAPSHOT_WORD, TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG, TEST_STEPS_WORD, TEST_TO_WORD)
 }
 
 // test_arguments_problem gives the refusal of the arguments of `test`, or
@@ -594,7 +628,7 @@ Test_Parts_Pool :: struct {
 // starts; the parts that run end. It prints the time of each part as a
 // measure. start prepares a part before its first machine: its new data
 // disk. The caller frees the runs, which have the order of the parts.
-test_parts_run :: proc(parts: []Test_Part, at_once: int, start: proc(part: ^Test_Part_Run) -> bool = test_part_run_start, step_range: Step_Range = {}, skip_shots := false) -> (runs: []Test_Part_Run, passed: bool) {
+test_parts_run :: proc(parts: []Test_Part, at_once: int, start: proc(part: ^Test_Part_Run) -> bool = test_part_run_start, step_range: Step_Range = {}, skip_shots := false, snapshot_folder := "") -> (runs: []Test_Part_Run, passed: bool) {
 	pool := Test_Parts_Pool {
 		parts = parts,
 		runs  = make([]Test_Part_Run, len(parts)),
@@ -604,6 +638,7 @@ test_parts_run :: proc(parts: []Test_Part, at_once: int, start: proc(part: ^Test
 		pool.runs[place] = test_part_run_make(part.name)
 		pool.runs[place].step_range = step_range
 		pool.runs[place].skip_shots = skip_shots
+		pool.runs[place].snapshot_folder = snapshot_folder
 	}
 	if at_once <= 1 {
 		test_parts_worker(&pool)

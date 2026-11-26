@@ -3,9 +3,13 @@
 package machine
 
 import "core:fmt"
+import "core:os"
+import "core:strconv"
 import "core:strings"
 import "modus:contract/blake3"
 import "modus:disk_process"
+import "modustool:build"
+import "modustool:foundation"
 
 // Format property: upper bound on QEMU snapshot tag length keeping tags safe
 // for QMP and HMP command lines.
@@ -15,7 +19,21 @@ QMP_SNAPSHOT_TAG_MAX_BYTES :: 64
 // deterministic usable-boot snapshot tags and filenames.
 QMP_SNAPSHOT_HASH_PREFIX_HEX :: 16
 
-// Closed border refusal set for QMP snapshot naming, commands, and replies.
+// Files stored inside a captured usable-boot QMP snapshot folder.
+QMP_SNAPSHOT_META_FILE :: "snapshot.meta"
+QMP_SNAPSHOT_BOOT_LOG_FILE :: "boot_log.txt"
+QMP_SNAPSHOT_VARS_FILE :: "ovmf_vars.qcow2"
+QMP_SNAPSHOT_DATA_FILE :: "data_disk.qcow2"
+QMP_SNAPSHOT_SCRATCH_FILE :: "scratch_disk.qcow2"
+QMP_SNAPSHOT_META_HEADER :: "modus qmp snapshot 1"
+
+// Suffixes of per-machine writable qcow2 copies staged when restoring a
+// snapshot inside a test part.
+QMP_SNAPSHOT_STAGE_VARS_SUFFIX :: "_snap_ovmf_vars.qcow2"
+QMP_SNAPSHOT_STAGE_DATA_SUFFIX :: "_snap_data.qcow2"
+QMP_SNAPSHOT_STAGE_SCRATCH_SUFFIX :: "_snap_scratch.qcow2"
+
+// Closed border refusal set for QMP snapshot naming, commands, metadata, and replies.
 Qmp_Snapshot_Refusal :: enum u8 {
 	None,
 	Empty_Tag,
@@ -27,6 +45,18 @@ Qmp_Snapshot_Refusal :: enum u8 {
 	Qmp_Error,
 	Socket_Not_Open,
 	Command_Failed,
+	Malformed_Meta,
+	Missing_File,
+	Boot_Hash_Mismatch,
+}
+
+// Metadata recorded alongside a captured usable-boot QMP snapshot so each
+// restoring derivation verifies boot-image identity and restores clock offset.
+Qmp_Snapshot_Meta :: struct {
+	tag:              string,
+	boot_hash:        string,
+	guest_clock_unix: i64,
+	prelude_steps:    int,
 }
 
 // Parsed QMP line reply for snapshot control and query-status commands.
@@ -257,4 +287,313 @@ qmp_snapshot_restore :: proc(qmp: ^Qmp, tag: string) -> Qmp_Snapshot_Refusal {
 		return .Command_Failed
 	}
 	return .None
+}
+
+// qmp_snapshot_save_paused pauses the guest and saves a usable-boot VM
+// snapshot under tag without resuming execution, so the caller can quit QEMU
+// immediately with zero guest instructions after the snapshot point.
+qmp_snapshot_save_paused :: proc(qmp: ^Qmp, tag: string) -> Qmp_Snapshot_Refusal {
+	if qmp == nil || !qmp.open || qmp.ended {
+		return .Socket_Not_Open
+	}
+	save_cmd, tag_ref := qmp_savevm_command(tag)
+	if tag_ref != .None {
+		return tag_ref
+	}
+	if _, ok := qmp_command(qmp, qmp_stop_command(), print_failure = false); !ok {
+		return .Command_Failed
+	}
+	save_reply, save_ok := qmp_command(qmp, save_cmd, print_failure = false)
+	if !save_ok {
+		return .Command_Failed
+	}
+	if qmp_snapshot_hmp_has_error(save_reply) {
+		return .Qmp_Error
+	}
+	return .None
+}
+
+// qmp_snapshot_hex_valid reports whether text is a lowercase hex string of
+// exact length disk_process.HASH_DIGITS (64 hex digits for BLAKE3).
+@(private = "file")
+qmp_snapshot_hex_valid :: proc(text: string) -> bool {
+	if len(text) != disk_process.HASH_DIGITS {
+		return false
+	}
+	for b in transmute([]u8)text {
+		is_digit := b >= '0' && b <= '9'
+		is_hex := b >= 'a' && b <= 'f'
+		if !is_digit && !is_hex {
+			return false
+		}
+	}
+	return true
+}
+
+// qmp_snapshot_meta_format encodes Qmp_Snapshot_Meta into its canonical
+// plain-text form.
+qmp_snapshot_meta_format :: proc(meta: Qmp_Snapshot_Meta, allocator := context.allocator) -> (text: string, refusal: Qmp_Snapshot_Refusal) {
+	if tag_ref := qmp_snapshot_tag_validate(meta.tag); tag_ref != .None {
+		return "", tag_ref
+	}
+	if !qmp_snapshot_hex_valid(meta.boot_hash) || meta.guest_clock_unix <= 0 || meta.prelude_steps <= 0 {
+		return "", .Malformed_Meta
+	}
+	return fmt.aprintf(
+		"%s\ntag %s\nboot_hash %s\nguest_clock_unix %d\nprelude_steps %d\n",
+		QMP_SNAPSHOT_META_HEADER,
+		meta.tag,
+		meta.boot_hash,
+		meta.guest_clock_unix,
+		meta.prelude_steps,
+		allocator = allocator,
+	), .None
+}
+
+// qmp_snapshot_meta_parse parses and validates a snapshot.meta text file.
+qmp_snapshot_meta_parse :: proc(text: string) -> (meta: Qmp_Snapshot_Meta, refusal: Qmp_Snapshot_Refusal) {
+	lines := strings.split_lines(strings.trim_right(text, "\r\n"), context.temp_allocator)
+	if len(lines) < 5 || lines[0] != QMP_SNAPSHOT_META_HEADER {
+		return {}, .Malformed_Meta
+	}
+	seen_tag, seen_hash, seen_clock, seen_steps := false, false, false, false
+	for line in lines[1:] {
+		space := strings.index_byte(line, ' ')
+		if space <= 0 || space + 1 >= len(line) {
+			return {}, .Malformed_Meta
+		}
+		key := line[:space]
+		value := line[space + 1:]
+		switch key {
+		case "tag":
+			if seen_tag || qmp_snapshot_tag_validate(value) != .None {
+				return {}, .Malformed_Meta
+			}
+			meta.tag = value
+			seen_tag = true
+		case "boot_hash":
+			if seen_hash || !qmp_snapshot_hex_valid(value) {
+				return {}, .Malformed_Meta
+			}
+			meta.boot_hash = value
+			seen_hash = true
+		case "guest_clock_unix":
+			parsed, ok := strconv.parse_i64(value, 10)
+			if seen_clock || !ok || parsed <= 0 {
+				return {}, .Malformed_Meta
+			}
+			meta.guest_clock_unix = parsed
+			seen_clock = true
+		case "prelude_steps":
+			parsed, ok := strconv.parse_int(value, 10)
+			if seen_steps || !ok || parsed <= 0 {
+				return {}, .Malformed_Meta
+			}
+			meta.prelude_steps = parsed
+			seen_steps = true
+		case:
+			return {}, .Malformed_Meta
+		}
+	}
+	if !seen_tag || !seen_hash || !seen_clock || !seen_steps {
+		return {}, .Malformed_Meta
+	}
+	return meta, .None
+}
+
+// qmp_snapshot_boot_hash_of_file computes the BLAKE3 hash and 64-digit hex
+// text of a boot image file.
+qmp_snapshot_boot_hash_of_file :: proc(path: string, allocator := context.allocator) -> (hash: blake3.Hash, hex: string, ok: bool) {
+	bytes, read_err := os.read_entire_file(path, context.allocator)
+	if read_err != nil || len(bytes) == 0 {
+		delete(bytes)
+		return {}, "", false
+	}
+	defer delete(bytes)
+	hash = blake3.hash(bytes)
+	digits: [disk_process.HASH_DIGITS]u8
+	disk_process.hash_write(&digits, hash)
+	return hash, strings.clone(string(digits[:]), allocator), true
+}
+
+// qmp_snapshot_folder_validate verifies that folder holds every file of a
+// captured usable-boot snapshot and that its boot_hash matches expected_hex.
+qmp_snapshot_folder_validate :: proc(folder: string, expected_boot_hash_hex: string) -> (meta: Qmp_Snapshot_Meta, refusal: Qmp_Snapshot_Refusal, problem: string) {
+	if folder == "" {
+		return {}, .Empty_Folder, "the snapshot folder path is empty"
+	}
+	required_files := [5]string {
+		QMP_SNAPSHOT_META_FILE,
+		QMP_SNAPSHOT_BOOT_LOG_FILE,
+		QMP_SNAPSHOT_VARS_FILE,
+		QMP_SNAPSHOT_DATA_FILE,
+		QMP_SNAPSHOT_SCRATCH_FILE,
+	}
+	clean_folder := strings.trim_right(folder, "/")
+	for file_name in required_files {
+		full_path := foundation.join(clean_folder, "/", file_name)
+		if !os.exists(full_path) {
+			return {}, .Missing_File, fmt.tprintf("the snapshot folder %s lacks %s", folder, file_name)
+		}
+	}
+	meta_path := foundation.join(clean_folder, "/", QMP_SNAPSHOT_META_FILE)
+	meta_bytes, read_err := os.read_entire_file(meta_path, context.temp_allocator)
+	if read_err != nil {
+		return {}, .Missing_File, fmt.tprintf("cannot read %s: %v", meta_path, read_err)
+	}
+	parsed, parse_ref := qmp_snapshot_meta_parse(string(meta_bytes))
+	if parse_ref != .None {
+		return {}, parse_ref, fmt.tprintf("the snapshot metadata %s is malformed", meta_path)
+	}
+	if expected_boot_hash_hex != "" && parsed.boot_hash != expected_boot_hash_hex {
+		return {}, .Boot_Hash_Mismatch, fmt.tprintf("the snapshot %s has boot hash %s, not the current boot image hash %s", folder, parsed.boot_hash, expected_boot_hash_hex)
+	}
+	return parsed, .None, ""
+}
+
+// qmp_snapshot_prepare_qcow2 creates fresh writable qcow2 images for OVMF
+// variables, the data disk, and the scratch disk using qemu-img.
+qmp_snapshot_prepare_qcow2 :: proc(ovmf_vars_src, vars_qcow2, data_qcow2, scratch_qcow2: string) -> bool {
+	if !foundation.run({"qemu-img", "convert", "-f", "raw", "-O", "qcow2", ovmf_vars_src, vars_qcow2}) {
+		return false
+	}
+	if !foundation.run({"qemu-img", "create", "-f", "qcow2", data_qcow2, fmt.tprintf("%d", build.DATA_DISK_SIZE)}) {
+		return false
+	}
+	if !foundation.run({"qemu-img", "create", "-f", "qcow2", scratch_qcow2, fmt.tprintf("%d", SCRATCH_DISK_SIZE)}) {
+		return false
+	}
+	return true
+}
+
+// qmp_snapshot_copy_writable copies source to target and makes target
+// user-writable (store paths in Nix sandboxes are read-only).
+@(private = "file")
+qmp_snapshot_copy_writable :: proc(target, source: string) -> bool {
+	_ = os.remove(target)
+	if copy_err := os.copy_file(target, source); copy_err != nil {
+		fmt.eprintfln("modustool: cannot copy %s to %s: %v", source, target, copy_err)
+		return false
+	}
+	if mode_err := os.change_mode(target, os.perm(0o644)); mode_err != nil {
+		fmt.eprintfln("modustool: cannot make %s writable: %v", target, mode_err)
+		return false
+	}
+	return true
+}
+
+// qmp_snapshot_stage_from_folder validates snapshot_folder against
+// expected_boot_hash_hex, copies writable qcow2 images to vars_dst, data_dst,
+// and scratch_dst, and seeds output_log_dst from boot_log.txt.
+qmp_snapshot_stage_from_folder :: proc(snapshot_folder, expected_boot_hash_hex, vars_dst, data_dst, scratch_dst, output_log_dst: string) -> (meta: Qmp_Snapshot_Meta, ok: bool) {
+	parsed, _, problem := qmp_snapshot_folder_validate(snapshot_folder, expected_boot_hash_hex)
+	if problem != "" {
+		fmt.eprintfln("modustool: test failed: %s", problem)
+		return {}, false
+	}
+	clean_folder := strings.trim_right(snapshot_folder, "/")
+	qmp_snapshot_copy_writable(vars_dst, foundation.join(clean_folder, "/", QMP_SNAPSHOT_VARS_FILE)) or_return
+	qmp_snapshot_copy_writable(data_dst, foundation.join(clean_folder, "/", QMP_SNAPSHOT_DATA_FILE)) or_return
+	qmp_snapshot_copy_writable(scratch_dst, foundation.join(clean_folder, "/", QMP_SNAPSHOT_SCRATCH_FILE)) or_return
+	qmp_snapshot_copy_writable(output_log_dst, foundation.join(clean_folder, "/", QMP_SNAPSHOT_BOOT_LOG_FILE)) or_return
+	return parsed, true
+}
+
+// boot_snapshot_capture boots build.BOOT_VOLUME through MAIN_BOOT_PRELUDE,
+// pauses the guest at MAIN_SHARD_PRELUDE_END, saves a QMP internal snapshot
+// across the writable qcow2 drives, and writes the snapshot folder to
+// target_folder. When inputs_folder is non-empty, takes test inputs from it
+// with no prior build (used by the Nix bootSnapshot derivation).
+boot_snapshot_capture :: proc(target_folder: string, inputs_folder: string) -> bool {
+	if target_folder == "" {
+		fmt.eprintln("modustool: boot-snapshot requires a target folder path")
+		return false
+	}
+	if os.exists(target_folder) {
+		fmt.eprintfln("modustool: %s exists: boot-snapshot writes to a new folder", target_folder)
+		return false
+	}
+	if inputs_folder != "" {
+		synthetic_part := Test_Part {
+			name    = "boot_snapshot",
+			volumes = {build.BOOT_VOLUME},
+		}
+		if !test_inputs_take(inputs_folder, synthetic_part) {
+			return false
+		}
+	}
+	boot_hash, boot_hash_hex, hash_ok := qmp_snapshot_boot_hash_of_file(build.BOOT_IMAGE, context.allocator)
+	if !hash_ok {
+		fmt.eprintfln("modustool: boot-snapshot cannot hash %s", build.BOOT_IMAGE)
+		return false
+	}
+	defer delete(boot_hash_hex)
+	tag, tag_ref := qmp_snapshot_tag_for_boot_image(boot_hash, allocator = context.allocator)
+	if tag_ref != .None {
+		fmt.eprintfln("modustool: boot-snapshot refused tag generation (%v)", tag_ref)
+		return false
+	}
+	defer delete(tag)
+
+	if !foundation.make_folder(target_folder) {
+		return false
+	}
+	clean_target := strings.trim_right(target_folder, "/")
+	vars_qcow2 := foundation.join(clean_target, "/", QMP_SNAPSHOT_VARS_FILE)
+	data_qcow2 := foundation.join(clean_target, "/", QMP_SNAPSHOT_DATA_FILE)
+	scratch_qcow2 := foundation.join(clean_target, "/", QMP_SNAPSHOT_SCRATCH_FILE)
+	boot_log_dst := foundation.join(clean_target, "/", QMP_SNAPSHOT_BOOT_LOG_FILE)
+	meta_dst := foundation.join(clean_target, "/", QMP_SNAPSHOT_META_FILE)
+
+	ovmf_vars_src := os.get_env("OVMF_VARS", context.temp_allocator)
+	if ovmf_vars_src == "" {
+		fmt.eprintln("modustool: OVMF_VARS is not set. Use the development shell: nix develop")
+		return false
+	}
+	if !qmp_snapshot_prepare_qcow2(ovmf_vars_src, vars_qcow2, data_qcow2, scratch_qcow2) {
+		return false
+	}
+
+	part_run := test_part_run_make("boot_snapshot")
+	defer test_part_run_free(&part_run)
+	capture_log := foundation.BUILD_FOLDER + "/test_output_boot_snapshot.txt"
+	guest_clock_unix: i64 = 0
+	prelude := MAIN_BOOT_PRELUDE
+	passed := machine_test(
+		&part_run,
+		prelude[:],
+		{
+			volume                       = build.BOOT_VOLUME,
+			output                       = capture_log,
+			exit_status                  = QEMU_QUIT_STATUS,
+			snapshot_capture_tag         = tag,
+			snapshot_capture_vars        = vars_qcow2,
+			snapshot_capture_data        = data_qcow2,
+			snapshot_capture_scratch     = scratch_qcow2,
+			snapshot_capture_guest_clock = &guest_clock_unix,
+		},
+	)
+	if !passed {
+		return false
+	}
+	if !qmp_snapshot_copy_writable(boot_log_dst, capture_log) {
+		return false
+	}
+	meta := Qmp_Snapshot_Meta {
+		tag              = tag,
+		boot_hash        = boot_hash_hex,
+		guest_clock_unix = guest_clock_unix,
+		prelude_steps    = len(prelude),
+	}
+	meta_text, meta_ref := qmp_snapshot_meta_format(meta, context.temp_allocator)
+	if meta_ref != .None {
+		fmt.eprintfln("modustool: boot-snapshot produced invalid metadata (%v)", meta_ref)
+		return false
+	}
+	if write_err := os.write_entire_file(meta_dst, transmute([]u8)meta_text); write_err != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", meta_dst, write_err)
+		return false
+	}
+	fmt.printfln("modustool: captured usable-boot QMP snapshot %s in %s (%d prelude steps)", tag, target_folder, len(prelude))
+	return true
 }

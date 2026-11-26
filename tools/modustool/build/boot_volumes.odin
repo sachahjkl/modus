@@ -904,6 +904,7 @@ command_volumes := [?]Volumes_Of_Part {
 	{part = OPERATION_REPLAY_COMMAND, procedures = {"operation_sequences_replay"}, volumes = {BOOT_VOLUME_OPERATION_SEQUENCES}},
 	{part = OPERATION_FUZZING_COMMAND, procedures = {"operation_fuzzing_run"}, volumes = {BOOT_VOLUME_OPERATION_FUZZING}},
 	{part = OPERATION_REGRESSION_COMMAND, procedures = {"operation_regression_add"}, volumes = {BOOT_VOLUME_OPERATION_SEQUENCES}},
+	{part = "boot-snapshot", procedures = {"boot_snapshot_capture"}, volumes = {BOOT_VOLUME}},
 }
 
 // boot_volumes_of_command gives the volumes that a command of

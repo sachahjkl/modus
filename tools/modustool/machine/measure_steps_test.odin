@@ -26,7 +26,7 @@ measure_record_required_numbers_are_waited_for :: proc(t: ^testing.T) {
 		waited := false
 		for path in measure.files {
 			switch path {
-			case checks.TEST_OUTPUT:
+			case checks.TEST_OUTPUT, checks.TEST_OUTPUT_MAIN_NOTES_EDITOR_INSPECT_AND_UI:
 				waited ||= waits(scenario[:], measure.pattern)
 			case checks.TEST_OUTPUT_MEASURE:
 				waited ||= waits(scenario_measure[:], measure.pattern)

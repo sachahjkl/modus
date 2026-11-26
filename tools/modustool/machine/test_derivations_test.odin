@@ -70,14 +70,14 @@ checks_passed_of_text_refuses_what_is_no_count :: proc(t: ^testing.T) {
 // other form is refused.
 @(test)
 test_join_argument_refuses_each_other_form :: proc(t: ^testing.T) {
-	for argument in ([]string{"", "main", "=x", "main=", "=", "netwrok=x", "Main=x", "main x"}) {
+	for argument in ([]string{"", "main_console_and_desktop", "=x", "main_console_and_desktop=", "=", "netwrok=x", "Main=x", "main_console_and_desktop x"}) {
 		_, problem := test_join_argument_read(argument)
 		testing.expectf(t, problem != "", "%q is refused", argument)
 	}
-	joined, problem := test_join_argument_read("main=/nix/store/a-machine-test-main")
+	joined, problem := test_join_argument_read("main_console_and_desktop=/nix/store/a-machine-test-main_console_and_desktop")
 	testing.expect_value(t, problem, "")
-	testing.expect_value(t, joined.part, "main")
-	testing.expect_value(t, joined.folder, "/nix/store/a-machine-test-main")
+	testing.expect_value(t, joined.part, "main_console_and_desktop")
+	testing.expect_value(t, joined.folder, "/nix/store/a-machine-test-main_console_and_desktop")
 	with_equals, equals_problem := test_join_argument_read("tcp=folder=x")
 	testing.expect_value(t, equals_problem, "")
 	testing.expect_value(t, with_equals.folder, "folder=x")
@@ -118,20 +118,25 @@ test_parts_names_text_is_the_table :: proc(t: ^testing.T) {
 	testing.expect_value(t, test_parts_names_text(nil), "[]\n")
 }
 
-// The form `test <part> from <folder>`: a part of the table, the word, and
-// a folder. Each other form is refused.
+// The form `test <part> from <folder> [snapshot <dir>]`: a part of the table,
+// the word, a folder, and an optional snapshot folder. Each other form is refused.
 @(test)
 test_from_a_folder_of_test_inputs :: proc(t: ^testing.T) {
-	for arguments in ([][]string{{"main", "from"}, {"main", "from", ""}, {"main", "to", "x"}, {"netwrok", "from", "x"}, {"main", "from", "x", "y"}, {"from", "main", "x"}}) {
+	for arguments in ([][]string{{"main_console_and_desktop", "from"}, {"main_console_and_desktop", "from", ""}, {"main_console_and_desktop", "to", "x"}, {"netwrok", "from", "x"}, {"main_console_and_desktop", "from", "x", "y"}, {"from", "main_console_and_desktop", "x"}}) {
 		testing.expectf(t, test_arguments_problem(arguments) != "", "%v is refused", arguments)
 	}
-	_, given_for_one := test_arguments_give_inputs([]string{"main"})
+	_, given_for_one := test_arguments_give_inputs([]string{"main_console_and_desktop"})
 	testing.expect(t, !given_for_one, "one part alone names no folder")
-	arguments := []string{"main", TEST_FROM_WORD, "/nix/store/a-modus-test-inputs"}
+	arguments := []string{"main_console_and_desktop", TEST_FROM_WORD, "/nix/store/a-modus-test-inputs"}
 	testing.expect_value(t, test_arguments_problem(arguments), "")
 	folder, given := test_arguments_give_inputs(arguments)
 	testing.expect(t, given, "a part from a folder names it")
 	testing.expect_value(t, folder, "/nix/store/a-modus-test-inputs")
+	with_snap := []string{"main_console_and_desktop", TEST_FROM_WORD, "/nix/store/a-modus-test-inputs", TEST_SNAPSHOT_WORD, "/nix/store/a-modus-boot-snapshot"}
+	testing.expect_value(t, test_arguments_problem(with_snap), "")
+	snap_folder, snap_given := test_arguments_give_inputs(with_snap)
+	testing.expect(t, snap_given, "a part from a folder with snapshot names its input folder")
+	testing.expect_value(t, snap_folder, "/nix/store/a-modus-test-inputs")
 }
 
 // The file of the times of a part takes the name of its part in the join;

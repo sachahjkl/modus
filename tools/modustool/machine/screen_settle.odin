@@ -49,6 +49,22 @@ processes_that_serve_the_reads := [?]string{"remote", "monitor"}
 // window has the title of the process that writes in it.
 PROCESS_THAT_DRAWS_FOR_ANOTHER :: "terminal"
 
+// Processes in `processes_that_draw_without_end` that write to a terminal
+// window rather than drawing their own surface. Each live instance owns one
+// `terminal` process that stays active while its writer runs.
+@(rodata)
+endless_terminal_writers := [?]string{"flood"}
+
+@(private = "file")
+is_endless_terminal_writer :: proc(name: string) -> bool {
+	for writer in endless_terminal_writers {
+		if writer == name {
+			return true
+		}
+	}
+	return false
+}
+
 // left_out_of_calls says if the condition by calls leaves out a window
 // with this title.
 left_out_of_calls :: proc(title: string) -> bool {
@@ -135,26 +151,47 @@ screen_settle_problem :: proc(before: []Settle_Process, windows: []Settle_Window
 	}
 	// A terminal draws the window of another process: the window has the
 	// title of that process, so the loop above read the process that
-	// writes, not the one that draws. Each terminal is in a wait too, and
-	// did not run between the two reads.
+	// writes, not the one that draws. Each terminal whose writer does not
+	// draw without end must be in a wait and not run between the two reads.
+	allowed_busy_terminals := 0
+	for process in after {
+		if process.state != "stopped" && is_endless_terminal_writer(process.name) {
+			allowed_busy_terminals += 1
+		}
+	}
+	busy_terminals := 0
+	first_terminal_problem := ""
 	for process in after {
 		if process.name != PROCESS_THAT_DRAWS_FOR_ANOTHER || process.state == "stopped" {
 			continue
 		}
+		problem := ""
 		if process.state != "waiting" {
-			return fmt.tprintf("a process %s is %s, not in a wait: it can still draw the window of its process", process.name, process.state)
+			problem = fmt.tprintf("a process %s is %s, not in a wait: it can still draw the window of its process", process.name, process.state)
+		} else {
+			for earlier in before {
+				if earlier.slot != process.slot || earlier.name != process.name {
+					continue
+				}
+				if earlier.state != "waiting" {
+					problem = fmt.tprintf("a process %s was %s, not in a wait: it can still draw the window of its process", process.name, earlier.state)
+					break
+				}
+				if earlier.entries != process.entries {
+					problem = fmt.tprintf("a process %s entered the kernel %d times between two reads: it ran", process.name, process.entries - earlier.entries)
+					break
+				}
+			}
 		}
-		for earlier in before {
-			if earlier.slot != process.slot || earlier.name != process.name {
-				continue
-			}
-			if earlier.state != "waiting" {
-				return fmt.tprintf("a process %s was %s, not in a wait: it can still draw the window of its process", process.name, earlier.state)
-			}
-			if earlier.entries != process.entries {
-				return fmt.tprintf("a process %s entered the kernel %d times between two reads: it ran", process.name, process.entries - earlier.entries)
+		if problem != "" {
+			busy_terminals += 1
+			if first_terminal_problem == "" {
+				first_terminal_problem = problem
 			}
 		}
+	}
+	if busy_terminals > allowed_busy_terminals {
+		return first_terminal_problem
 	}
 	return ""
 }

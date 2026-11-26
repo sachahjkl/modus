@@ -198,3 +198,49 @@ main_scenario_shards_cover_every_step_once :: proc(t: ^testing.T) {
 	_, unknown_found := main_shard_find(shards, "no_such_shard")
 	testing.expect(t, !unknown_found, "main_shard_find refuses unknown shard name")
 }
+
+@(test)
+main_boot_prelude_and_self_contained_shards_validate :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+
+	shards, refusal := main_scenario_shards(scenario[:], context.temp_allocator)
+	testing.expect_value(t, refusal, Main_Shard_Refusal.None)
+	if !testing.expect_value(t, len(shards), MAIN_SHARD_COUNT) {
+		return
+	}
+
+	// MAIN_BOOT_PRELUDE in core must match scenario[:prelude_end] step-for-step.
+	prelude := MAIN_BOOT_PRELUDE
+	testing.expect_value(t, len(prelude), shards[0].prelude_end)
+	for step, index in prelude {
+		if index < shards[0].prelude_end {
+			testing.expectf(t, step == scenario[index], "MAIN_BOOT_PRELUDE[%d] matches scenario[%d]", index, index)
+		}
+	}
+
+	// Each shard maps to a registered test_parts row, claims distinct shots,
+	// and has no missing remote key both with and without prelude.
+	seen_shots := make(map[string]string, allocator = context.temp_allocator)
+	for spec, index in main_shard_specs {
+		part, found := test_part_find(spec.part_name)
+		testing.expectf(t, found && part.run != nil, "shard part %s is registered in test_parts", spec.part_name)
+		shard := shards[index]
+		for include_prelude in ([2]bool{true, false}) {
+			steps, mat_ref := main_shard_runnable_steps(scenario[:], shard, include_prelude, context.temp_allocator)
+			testing.expect_value(t, mat_ref, Main_Shard_Refusal.None)
+			testing.expect_value(t, remote_key_problem(steps), "")
+			if !include_prelude {
+				for step in steps {
+					if step.kind == .Shot {
+						if prev, dup := seen_shots[step.text]; dup {
+							testing.expectf(t, false, "duplicate shot %q across shards %s and %s", step.text, prev, spec.part_name)
+						} else {
+							seen_shots[step.text] = spec.part_name
+						}
+					}
+				}
+			}
+		}
+	}
+	testing.expect(t, len(seen_shots) > 50, "the 10 main shards cover all screenshots of main_scenario")
+}

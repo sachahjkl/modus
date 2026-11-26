@@ -261,7 +261,7 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Out
 	// Read_Only_Trees always needs storage (even without a data disk); a
 	// process with Store alone starts without storage handles on a diskless
 	// machine so storage.open returns false instead of refusing the launch
-	// (src/md/features/missing_hardware.md, src/md/features/objects_by_hash.md).
+	// (src/md/features/missing_hardware.md; src/md/features/objects_by_hash.md).
 	if (.Read_Only_Trees in grants || (.Store in grants && (.Data_Disk in machine_parts || work.store_override != ""))) && .Root_Ring not_in grants {
 		if outcome := storage_start(work.refusal); outcome != .Succeeded {
 			return needed_service_failed(work.refusal)

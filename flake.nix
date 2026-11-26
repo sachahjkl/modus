@@ -499,6 +499,11 @@
       toolBinaryOf "modustool-part-${part}" (inputs.nixpkgs.lib.fileset.unions ([toolCoreSources] ++ partFilesOf names)))
     testPartFiles;
 
+    # Core-only tool binary for capturing the usable-boot QMP VM snapshot:
+    # contains MAIN_BOOT_PRELUDE and no scenario files, so editing any scenario
+    # file never invalidates the cached usable-boot snapshot derivation.
+    bootSnapshotToolBinary = toolBinaryOf "modustool-boot-snapshot" toolCoreSources;
+
     # The check `boot-test` is the join of several derivations, so that Nix
     # runs again only what a change reaches: a whole build that gives the
     # test inputs, the test inputs named by the hash of their bytes, one
@@ -568,13 +573,39 @@
       fileset = lib.fileset.difference (lib.fileset.unions [./src ./resources]) (lib.fileset.unions [./src/md (lib.fileset.fileFilter isTestFile ./src)]);
     };
 
+    # Usable-boot QMP VM snapshot captured once per testInputs build and
+    # restored by each of the 10 parallel main_* shard derivations so they skip
+    # repeated UEFI/kernel/compositor cold boots (src/md/infrastructure/fast_build.md).
+    bootSnapshot = pkgs.stdenvNoCC.mkDerivation ({
+        name = "modus-boot-snapshot";
+        src = partSources;
+        nativeBuildInputs = buildTools ++ [bootSnapshotToolBinary];
+        requiredSystemFeatures = ["kvm"];
+        buildPhase = ''
+          export HOME=$TMPDIR
+          touch flake.nix
+          modustool boot-snapshot $out from ${testInputs}
+        '';
+        dontInstall = true;
+      }
+      // firmware
+      // outsideSources);
+
     # One derivation for each test part: the part alone, on the test inputs,
-    # with no build, with the binary of the tool of that part. The tool needs
-    # the mark of the root of the repository, flake.nix, which the part does
-    # not read: an empty file stands for it, so a change of the flake file
-    # runs no part again. A part that the manifest of the scenario files
-    # does not name stops the evaluation here, with its name.
-    machineTestPart = part:
+    # with no build, with the binary of the tool of that part. Each of the 10
+    # main_* shards restores the captured usable-boot QMP snapshot from
+    # bootSnapshot. The tool needs the mark of the root of the repository,
+    # flake.nix, which the part does not read: an empty file stands for it, so
+    # a change of the flake file runs no part again. A part that the manifest
+    # of the scenario files does not name stops the evaluation here, with its
+    # name.
+    machineTestPart = part: let
+      usesBootSnapshot = lib.hasPrefix "main_" part;
+      testArgs =
+        if usesBootSnapshot
+        then "${part} from ${testInputs} snapshot ${bootSnapshot}"
+        else "${part} from ${testInputs}";
+    in
       pkgs.stdenvNoCC.mkDerivation ({
           name = "machine-test-${part}";
           src = partSources;
@@ -587,7 +618,7 @@
           buildPhase = ''
             export HOME=$TMPDIR
             touch flake.nix
-            modustool test ${part} from ${testInputs}
+            modustool test ${testArgs}
           '';
           # The logs of the machines, the times of the part, the count of
           # its checks, and its pictures.
@@ -834,6 +865,8 @@
         # `modustool part_cache` compares these without a whole build.
         partToolDerivations = lib.mapAttrs (_: binary: binary.drvPath) partToolBinaries;
         systemBuildDerivation = systemBuild.drvPath;
+        bootSnapshotDerivation = bootSnapshot.drvPath;
+        bootSnapshotOutput = bootSnapshot.outPath;
         # `modustool failed_parts` lists the host checks beside the parts.
         hostChecksOutput = hostChecks.outPath;
         hostChecksDerivation = hostChecks.drvPath;

@@ -67,7 +67,7 @@ sample_evaluation :: proc(prefix: string) -> Flake_Check_Evaluation {
 	if prefix == "built" {
 		members[0].derivation = SAMPLE_HOST_CHECKS_DERIVATION
 		for &member in members {
-			if member.name == "main" {
+			if member.name == "main_console_and_desktop" {
 				member.derivation = SAMPLE_MAIN_DERIVATION
 			}
 		}
@@ -80,7 +80,7 @@ sample_evaluation :: proc(prefix: string) -> Flake_Check_Evaluation {
 @(private = "file")
 sample_reader := Check_Store_Reader {
 	output_valid = proc(path: string) -> bool {
-		return strings.has_prefix(path, "/nix/store/built-machine-test-") && !strings.has_suffix(path, "-machine-test-main")
+		return strings.has_prefix(path, "/nix/store/built-machine-test-") && !strings.has_suffix(path, "-machine-test-main_console_and_desktop")
 	},
 	build_log = proc(derivation: string) -> (log: string, ok: bool) {
 		switch derivation {
@@ -122,12 +122,12 @@ the_list_of_the_built_evaluation_names_both_failures :: proc(t: ^testing.T) {
 	testing.expect_value(t, list.counts[.Passed], parts - 1)
 	testing.expect_value(t, len(list.lines), 3)
 	testing.expect_value(t, list.lines[0], "modustool: host_checks failed: modustool: odin failed (code 1); its whole log: build/failed_parts/host_checks.log")
-	testing.expect_value(t, list.lines[1], "modustool: main failed: modustool: test failed: step 291: the machine did not print \"console: the palette marks .spleen for settings.set font\" within 2m0s; the machine test_output; its whole log: build/failed_parts/main.log")
+	testing.expect_value(t, list.lines[1], "modustool: main_console_and_desktop failed: modustool: test failed: step 291: the machine did not print \"console: the palette marks .spleen for settings.set font\" within 2m0s; the machine test_output; its whole log: build/failed_parts/main_console_and_desktop.log")
 	testing.expect_value(t, list.lines[2], fmt.tprintf("modustool: the check of the flake: 2 failed, 0 did not run, %d passed (the host checks and %d parts)", parts - 1, parts))
 	testing.expect_value(t, len(list.logs), 2)
 	if len(list.logs) == 2 {
 		testing.expect_value(t, list.logs[0], Failed_Log{path = "build/failed_parts/host_checks.log", log = SAMPLE_HOST_CHECKS_LOG})
-		testing.expect_value(t, list.logs[1], Failed_Log{path = "build/failed_parts/main.log", log = SAMPLE_MAIN_LOG})
+		testing.expect_value(t, list.logs[1], Failed_Log{path = "build/failed_parts/main_console_and_desktop.log", log = SAMPLE_MAIN_LOG})
 	}
 }
 
@@ -162,7 +162,7 @@ the_evaluation_of_the_check_is_read_whole :: proc(t: ^testing.T) {
 		testing.expect_value(t, evaluation.members[0], Check_Derivation{name = FAILED_PARTS_HOST_CHECKS, derivation = "/nix/store/h-modus-host-checks.drv", output = "/nix/store/h-modus-host-checks"})
 		testing.expect_value(t, evaluation.members[1].name, test_parts[0].name)
 	}
-	_, lacks_ok := flake_check_evaluation_of_json(build_answer("main"))
+	_, lacks_ok := flake_check_evaluation_of_json(build_answer("main_console_and_desktop"))
 	testing.expect(t, !lacks_ok, "an answer that lacks a part is refused")
 	for refused in ([]string{"", "[]", "{}", `{"check": "x"}`, "not json"}) {
 		_, refused_ok := flake_check_evaluation_of_json(refused)

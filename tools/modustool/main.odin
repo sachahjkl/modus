@@ -237,7 +237,12 @@ COMMANDS :: [?]foundation.Command {
 	// ```
 	// nix develop -c modustool test network
 	// ```
-	{name = "test", about = "build, then run the parts of the machine test, several at once: start each machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test [--fast] [--no-shots] [--cache <dir>] <part>`: one part only (`--fast`: user modules without full optimization and only the modules and boot volumes of the part; `--no-shots`: skip QMP screenshot capture steps; `--cache <dir>` or `MODUS_BUILD_CACHE`: opt-in shared host module cache); `test <part> from <folder>`: one part on the test inputs of a folder, with no build; `test [--fast] [--no-shots] <part> steps <first> to <last> [of <machine>] [with <first> to <last>]...`: the boot steps, the setup steps and the steps of a range of one machine", run = run_test},
+	{name = "test", about = "build, then run the parts of the machine test, several at once: start each machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test [--fast] [--no-shots] [--cache <dir>] [--snapshot <dir>] <part>`: one part only (`--fast`: user modules without full optimization and only the modules and boot volumes of the part; `--no-shots`: skip QMP screenshot capture steps; `--cache <dir>` or `MODUS_BUILD_CACHE`: opt-in shared host module cache; `--snapshot <dir>`: restore a captured usable-boot QMP snapshot); `test <part> from <folder> [snapshot <dir>]`: one part on the test inputs of a folder, with no build; `test [--fast] [--no-shots] <part> steps <first> to <last> [of <machine>] [with <first> to <last>]...`: the boot steps, the setup steps and the steps of a range of one machine", run = run_test},
+	// Captures a reusable usable-boot QMP VM snapshot for the main boot volume
+	// after the shared boot prelude finishes, so the 10 parallel main shard
+	// derivations restore the booted VM instead of cold-booting ten times
+	// (src/md/infrastructure/fast_build.md).
+	{name = "boot-snapshot", about = "boot-snapshot <target folder> [from <test inputs folder>]: capture a usable-boot QMP VM snapshot of the main boot volume after the shared boot prelude", run = run_boot_snapshot},
 	// Copies the test inputs of the build folder (the files of a whole build
 	// that the machine test reads) into `<folder>/test_inputs`, and writes
 	// the names of the test parts into `<folder>/test_parts.json`: the
@@ -943,7 +948,7 @@ run_test :: proc(args: []string) -> int {
 	step_range, range_given := machine.test_arguments_give_step_range(args)
 	defer delete(step_range.setup)
 	defer delete(step_range.machine)
-	runs, passed := machine.test_parts_run(parts, at_once, step_range = step_range, skip_shots = options.skip_shots)
+	runs, passed := machine.test_parts_run(parts, at_once, step_range = step_range, skip_shots = options.skip_shots, snapshot_folder = options.snapshot_folder)
 	defer {
 		for &part_run in runs {
 			machine.test_part_run_free(&part_run)
@@ -974,6 +979,22 @@ run_test_inputs :: proc(args: []string) -> int {
 		return foundation.EXIT_USAGE
 	}
 	return machine.test_inputs_write(args[0]) ? 0 : foundation.EXIT_FAILURE
+}
+
+// run_boot_snapshot is the command `boot-snapshot <target> [from <inputs>]`
+// (qmp_snapshot.odin).
+run_boot_snapshot :: proc(args: []string) -> int {
+	if len(args) == 1 && args[0] != "" {
+		if code := build.build_system(build.boot_volumes_of_command("boot-snapshot")); code != 0 {
+			return code
+		}
+		return machine.boot_snapshot_capture(args[0], "") ? 0 : foundation.EXIT_FAILURE
+	}
+	if len(args) == 3 && args[0] != "" && args[1] == machine.TEST_FROM_WORD && args[2] != "" {
+		return machine.boot_snapshot_capture(args[0], args[2]) ? 0 : foundation.EXIT_FAILURE
+	}
+	fmt.eprintln("modustool: boot-snapshot <target folder> [from <test inputs folder>]")
+	return foundation.EXIT_USAGE
 }
 
 // run_test_join is the command `test_join` (test_derivations.odin).

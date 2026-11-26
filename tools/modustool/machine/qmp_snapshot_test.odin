@@ -1,9 +1,12 @@
 // Host unit tests for QMP usable-boot machine snapshots (qmp_snapshot.odin).
 package machine
 
+import "core:fmt"
+import "core:os"
 import "core:strings"
 import "core:testing"
 import "modus:contract/blake3"
+import "modustool:foundation"
 
 @(test)
 qmp_snapshot_refuses_bad_tags_hashes_and_sockets :: proc(t: ^testing.T) {
@@ -111,4 +114,74 @@ qmp_snapshot_commands_and_replies_round_trip :: proc(t: ^testing.T) {
 	greeting := qmp_snapshot_reply_parse("{\"QMP\":{\"version\":{}}}")
 	testing.expect_value(t, greeting.kind, Qmp_Reply_Kind.Greeting)
 	testing.expect_value(t, greeting.refusal, Qmp_Snapshot_Refusal.None)
+}
+
+@(test)
+qmp_snapshot_meta_and_folder_validation :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+
+	// Closed socket refusal for save_paused.
+	closed_qmp: Qmp
+	testing.expect_value(t, qmp_snapshot_save_paused(nil, "usable_boot"), Qmp_Snapshot_Refusal.Socket_Not_Open)
+	testing.expect_value(t, qmp_snapshot_save_paused(&closed_qmp, "usable_boot"), Qmp_Snapshot_Refusal.Socket_Not_Open)
+
+	// Malformed metadata strings are refused before any machine starts.
+	zero_hex := strings.repeat("0", 64, context.temp_allocator)
+	hash_hex := strings.repeat("a", 64, context.temp_allocator)
+	for bad_meta in ([]string {
+		"",
+		fmt.tprintf("wrong header\ntag a\nboot_hash %s\nguest_clock_unix 1\nprelude_steps 1\n", zero_hex),
+		fmt.tprintf("%s\ntag bad tag\nboot_hash %s\nguest_clock_unix 10\nprelude_steps 5\n", QMP_SNAPSHOT_META_HEADER, hash_hex),
+		fmt.tprintf("%s\ntag ok\nboot_hash short\nguest_clock_unix 10\nprelude_steps 5\n", QMP_SNAPSHOT_META_HEADER),
+		fmt.tprintf("%s\ntag ok\nboot_hash %s\nguest_clock_unix 0\nprelude_steps 5\n", QMP_SNAPSHOT_META_HEADER, hash_hex),
+		fmt.tprintf("%s\ntag ok\nboot_hash %s\nguest_clock_unix 10\nprelude_steps 0\n", QMP_SNAPSHOT_META_HEADER, hash_hex),
+		fmt.tprintf("%s\ntag ok\nboot_hash %s\nguest_clock_unix 10\nprelude_steps 5\nunknown 1\n", QMP_SNAPSHOT_META_HEADER, hash_hex),
+	}) {
+		_, ref := qmp_snapshot_meta_parse(bad_meta)
+		testing.expect_value(t, ref, Qmp_Snapshot_Refusal.Malformed_Meta)
+	}
+
+	// Valid metadata round-trips cleanly.
+	sample := Qmp_Snapshot_Meta {
+		tag              = "usable_boot-0123456789abcdef",
+		boot_hash        = hash_hex,
+		guest_clock_unix = 1795000000,
+		prelude_steps    = len(MAIN_BOOT_PRELUDE),
+	}
+	encoded, fmt_ref := qmp_snapshot_meta_format(sample, context.temp_allocator)
+	testing.expect_value(t, fmt_ref, Qmp_Snapshot_Refusal.None)
+	parsed, parse_ref := qmp_snapshot_meta_parse(encoded)
+	testing.expect_value(t, parse_ref, Qmp_Snapshot_Refusal.None)
+	testing.expect_value(t, parsed.tag, sample.tag)
+	testing.expect_value(t, parsed.boot_hash, sample.boot_hash)
+	testing.expect_value(t, parsed.guest_clock_unix, sample.guest_clock_unix)
+	testing.expect_value(t, parsed.prelude_steps, sample.prelude_steps)
+
+	// Folder validation refuses empty path, missing files, and hash mismatches.
+	_, empty_ref, _ := qmp_snapshot_folder_validate("", hash_hex)
+	testing.expect_value(t, empty_ref, Qmp_Snapshot_Refusal.Empty_Folder)
+
+	test_dir := foundation.BUILD_FOLDER + "/qmp_snapshot_validate_test"
+	_ = os.remove_all(test_dir)
+	defer {
+		_ = os.remove_all(test_dir)
+	}
+	testing.expect(t, foundation.make_folder(test_dir))
+	_, missing_ref, _ := qmp_snapshot_folder_validate(test_dir, hash_hex)
+	testing.expect_value(t, missing_ref, Qmp_Snapshot_Refusal.Missing_File)
+
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/%s", test_dir, QMP_SNAPSHOT_META_FILE), transmute([]u8)encoded) == nil)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/%s", test_dir, QMP_SNAPSHOT_BOOT_LOG_FILE), transmute([]u8)string("boot program: ok\n")) == nil)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/%s", test_dir, QMP_SNAPSHOT_VARS_FILE), transmute([]u8)string("v")) == nil)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/%s", test_dir, QMP_SNAPSHOT_DATA_FILE), transmute([]u8)string("d")) == nil)
+	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/%s", test_dir, QMP_SNAPSHOT_SCRATCH_FILE), transmute([]u8)string("s")) == nil)
+
+	wrong_hash := strings.repeat("b", 64, context.temp_allocator)
+	_, mismatch_ref, _ := qmp_snapshot_folder_validate(test_dir, wrong_hash)
+	testing.expect_value(t, mismatch_ref, Qmp_Snapshot_Refusal.Boot_Hash_Mismatch)
+
+	valid_meta, valid_ref, valid_problem := qmp_snapshot_folder_validate(test_dir, hash_hex)
+	testing.expect_value(t, valid_ref, Qmp_Snapshot_Refusal.None)
+	testing.expect_value(t, valid_problem, "")
+	testing.expect_value(t, valid_meta.tag, sample.tag)
 }

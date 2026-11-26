@@ -49,6 +49,46 @@ screen_settle_problem_leaves_windows_out :: proc(t: ^testing.T) {
 	testing.expect(t, draws_without_end("life") && !draws_without_end("notes") && left_out_of_calls("remote") && !draws_without_end("remote"))
 }
 
+// One active terminal owned by a live endless terminal writer (`flood`) does
+// not block settling, while an extra active terminal or an active terminal
+// without a live endless writer still blocks settling.
+@(test)
+screen_settle_problem_accounts_for_endless_terminal_writer :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	windows := []Settle_Window{{title = "console", presents = 10}, {title = "flood", presents = 50, waits = true}}
+	before_one_busy := []Settle_Process {
+		{slot = 3, name = "console", state = "waiting", entries = 100},
+		{slot = 4, name = "terminal", state = "waiting", entries = 200},
+		{slot = 5, name = "flood", state = "ready", entries = 300},
+		{slot = 6, name = "terminal", state = "ready", entries = 400},
+	}
+	after_one_busy := []Settle_Process {
+		{slot = 3, name = "console", state = "waiting", entries = 100},
+		{slot = 4, name = "terminal", state = "waiting", entries = 200},
+		{slot = 5, name = "flood", state = "ready", entries = 350},
+		{slot = 6, name = "terminal", state = "ready", entries = 420},
+	}
+	testing.expect_value(t, screen_settle_problem(before_one_busy, windows, false, after_one_busy), "")
+
+	// If console's terminal is also running, two busy terminals exceed one live flood.
+	after_two_busy := []Settle_Process {
+		{slot = 3, name = "console", state = "waiting", entries = 100},
+		{slot = 4, name = "terminal", state = "waiting", entries = 205},
+		{slot = 5, name = "flood", state = "ready", entries = 350},
+		{slot = 6, name = "terminal", state = "ready", entries = 420},
+	}
+	testing.expect(t, strings.contains(screen_settle_problem(before_one_busy, windows, false, after_two_busy), "a process terminal"))
+
+	// Once flood is stopped, no busy terminal is allowed.
+	after_flood_stopped := []Settle_Process {
+		{slot = 3, name = "console", state = "waiting", entries = 100},
+		{slot = 4, name = "terminal", state = "waiting", entries = 200},
+		{slot = 5, name = "flood", state = "stopped", entries = 350},
+		{slot = 6, name = "terminal", state = "ready", entries = 420},
+	}
+	testing.expect(t, strings.contains(screen_settle_problem(before_one_busy, windows, false, after_flood_stopped), "a process terminal is ready"))
+}
+
 // The rectangle of a window comes from the line of its surface, and from
 // the line of its last move when it moved after.
 @(test)

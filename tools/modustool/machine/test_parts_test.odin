@@ -20,7 +20,7 @@ test_accepts_each_known_part :: proc(t: ^testing.T) {
 // name with a letter more or less, or in capitals, is no part.
 @(test)
 test_refuses_an_unknown_part :: proc(t: ^testing.T) {
-	refused := [][]string{{"netwrok"}, {""}, {"main", "network"}, {"trusted_boot", "tpm"}, {"principals", "tpm"}, {"tcp", "tpm"}, {"Main"}, {"mai"}, {"mainn"}, {"main "}}
+	refused := [][]string{{"netwrok"}, {""}, {"main"}, {"main_console_and_desktop", "network"}, {"trusted_boot", "tpm"}, {"principals", "tpm"}, {"tcp", "tpm"}, {"Main_console_and_desktop"}, {"mai"}, {"mainn"}, {"main_console_and_desktop "}}
 	for arguments in refused {
 		problem := test_arguments_problem(arguments)
 		testing.expectf(t, problem != "", "%v is refused", arguments)
@@ -28,7 +28,7 @@ test_refuses_an_unknown_part :: proc(t: ^testing.T) {
 			testing.expectf(t, strings.contains(problem, part.name), "the refusal of %v names the part %s", arguments, part.name)
 		}
 	}
-	testing.expect(t, strings.has_prefix(test_arguments_problem([]string{"netwrok"}), "test does not know the part `netwrok`; the parts: main, tcp, "))
+	testing.expect(t, strings.has_prefix(test_arguments_problem([]string{"netwrok"}), "test does not know the part `netwrok`; the parts: main_console_and_desktop, "))
 	_, found := test_part_find("netwrok")
 	testing.expect(t, !found, "a name that is no part finds no row")
 }
@@ -42,37 +42,37 @@ test_accepts_and_refuses_fast_flag :: proc(t: ^testing.T) {
 	testing.expect_value(t, mode, build.Optimization_Mode.Speed)
 	testing.expect_value(t, len(rest), 0)
 
-	mode, rest = test_arguments_optimization([]string{"main"})
+	mode, rest = test_arguments_optimization([]string{"main_console_and_desktop"})
 	testing.expect_value(t, mode, build.Optimization_Mode.Speed)
 	testing.expect_value(t, len(rest), 1)
-	testing.expect_value(t, rest[0], "main")
+	testing.expect_value(t, rest[0], "main_console_and_desktop")
 
-	mode, rest = test_arguments_optimization([]string{TEST_FAST_FLAG, "main"})
+	mode, rest = test_arguments_optimization([]string{TEST_FAST_FLAG, "main_console_and_desktop"})
 	testing.expect_value(t, mode, build.Optimization_Mode.None)
 	testing.expect_value(t, len(rest), 1)
-	testing.expect_value(t, rest[0], "main")
+	testing.expect_value(t, rest[0], "main_console_and_desktop")
 
 	for part in test_parts {
 		testing.expectf(t, test_arguments_problem([]string{TEST_FAST_FLAG, part.name}) == "", "`test --fast %s` is accepted", part.name)
 	}
-	testing.expect_value(t, test_arguments_problem([]string{TEST_FAST_FLAG, "main", "steps", "1", "to", "2"}), "")
-	range, has_range := test_arguments_give_step_range([]string{TEST_FAST_FLAG, "main", "steps", "3", "to", "4"}, context.temp_allocator)
+	testing.expect_value(t, test_arguments_problem([]string{TEST_FAST_FLAG, "main_console_and_desktop", "steps", "1", "to", "2"}), "")
+	range, has_range := test_arguments_give_step_range([]string{TEST_FAST_FLAG, "main_console_and_desktop", "steps", "3", "to", "4"}, context.temp_allocator)
 	testing.expect(t, has_range, "`test --fast <part> steps` parses the step range")
 	testing.expect_value(t, range.span.first, 3)
 	testing.expect_value(t, range.span.last, 4)
-	_, has_inputs := test_arguments_give_inputs([]string{TEST_FAST_FLAG, "main", "from", "folder"})
+	_, has_inputs := test_arguments_give_inputs([]string{TEST_FAST_FLAG, "main_console_and_desktop", "from", "folder"})
 	testing.expect(t, !has_inputs, "`test --fast <part> from` gives no input folder")
 
 	refused := [][]string {
 		{TEST_FAST_FLAG},
-		{TEST_FAST_FLAG, TEST_FAST_FLAG, "main"},
+		{TEST_FAST_FLAG, TEST_FAST_FLAG, "main_console_and_desktop"},
 		{TEST_FAST_FLAG, ""},
 		{TEST_FAST_FLAG, "netwrok"},
 		{TEST_FAST_FLAG, "Main"},
-		{"main", TEST_FAST_FLAG},
-		{TEST_FAST_FLAG, "main", "network"},
-		{TEST_FAST_FLAG, "main", "from", "folder"},
-		{"--slow", "main"},
+		{"main_console_and_desktop", TEST_FAST_FLAG},
+		{TEST_FAST_FLAG, "main_console_and_desktop", "network"},
+		{TEST_FAST_FLAG, "main_console_and_desktop", "from", "folder"},
+		{"--slow", "main_console_and_desktop"},
 	}
 	for arguments in refused {
 		problem := test_arguments_problem(arguments)
@@ -80,24 +80,33 @@ test_accepts_and_refuses_fast_flag :: proc(t: ^testing.T) {
 	}
 }
 
-// `test --no-shots` and `test --cache <dir>` combine in any order with `--fast`
-// and step ranges, and refuse duplicates, missing cache paths, and `from`.
+// `test --no-shots`, `test --cache <dir>`, and `test --snapshot <dir>` combine
+// in any order with `--fast` and step ranges, and refuse duplicates, missing
+// paths, and flag conflicts with `from`.
 @(test)
 test_accepts_and_refuses_no_shots_and_cache_flags :: proc(t: ^testing.T) {
 	// Refusals first.
 	refused := [][]string {
-		{TEST_NO_SHOTS_FLAG, TEST_NO_SHOTS_FLAG, "main"},
-		{TEST_NO_SHOTS_FLAG, "main", TEST_FROM_WORD, "folder"},
+		{TEST_NO_SHOTS_FLAG, TEST_NO_SHOTS_FLAG, "main_console_and_desktop"},
+		{TEST_NO_SHOTS_FLAG, "main_console_and_desktop", TEST_FROM_WORD, "folder"},
 		{TEST_CACHE_FLAG},
 		{TEST_CACHE_FLAG, ""},
-		{TEST_CACHE_FLAG, TEST_NO_SHOTS_FLAG, "main"},
-		{TEST_CACHE_FLAG, TEST_FAST_FLAG, "main"},
-		{TEST_CACHE_FLAG, "/tmp/c", TEST_CACHE_FLAG, "/tmp/d", "main"},
-		{TEST_CACHE_FLAG, "/tmp/c", "main", TEST_FROM_WORD, "folder"},
+		{TEST_CACHE_FLAG, TEST_NO_SHOTS_FLAG, "main_console_and_desktop"},
+		{TEST_CACHE_FLAG, TEST_FAST_FLAG, "main_console_and_desktop"},
+		{TEST_CACHE_FLAG, "/tmp/c", TEST_CACHE_FLAG, "/tmp/d", "main_console_and_desktop"},
+		{TEST_CACHE_FLAG, "/tmp/c", "main_console_and_desktop", TEST_FROM_WORD, "folder"},
+		{TEST_SNAPSHOT_FLAG},
+		{TEST_SNAPSHOT_FLAG, ""},
+		{TEST_SNAPSHOT_FLAG, TEST_FAST_FLAG, "main_console_and_desktop"},
+		{TEST_SNAPSHOT_FLAG, "/tmp/s1", TEST_SNAPSHOT_FLAG, "/tmp/s2", "main_console_and_desktop"},
+		{TEST_SNAPSHOT_FLAG, "/tmp/s1", "main_console_and_desktop", TEST_FROM_WORD, "folder"},
+		{"main_console_and_desktop", TEST_FROM_WORD, "folder", TEST_SNAPSHOT_WORD},
+		{"main_console_and_desktop", TEST_FROM_WORD, "folder", TEST_SNAPSHOT_WORD, ""},
+		{"main_console_and_desktop", TEST_FROM_WORD, "folder", "other", "/tmp/s1"},
 		{TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG},
 		{TEST_FAST_FLAG, TEST_CACHE_FLAG, "/tmp/c"},
-		{"main", TEST_NO_SHOTS_FLAG},
-		{"--unknown", "main"},
+		{"main_console_and_desktop", TEST_NO_SHOTS_FLAG},
+		{"--unknown", "main_console_and_desktop"},
 	}
 	for arguments in refused {
 		problem := test_arguments_problem(arguments)
@@ -111,12 +120,19 @@ test_accepts_and_refuses_no_shots_and_cache_flags :: proc(t: ^testing.T) {
 	testing.expect(t, opts.skip_shots, "`test --no-shots` skips shots")
 	testing.expect_value(t, opts.part_name, "")
 
-	opts, problem = test_arguments_parse([]string{TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG, TEST_CACHE_FLAG, "/tmp/cache", "main"})
+	opts, problem = test_arguments_parse([]string{TEST_FAST_FLAG, TEST_NO_SHOTS_FLAG, TEST_CACHE_FLAG, "/tmp/cache", TEST_SNAPSHOT_FLAG, "/tmp/snap", "main_console_and_desktop"})
 	testing.expect_value(t, problem, "")
 	testing.expect_value(t, opts.optimization, build.Optimization_Mode.None)
 	testing.expect(t, opts.skip_shots, "`--no-shots` sets skip_shots")
 	testing.expect_value(t, opts.cache_folder, "/tmp/cache")
-	testing.expect_value(t, opts.part_name, "main")
+	testing.expect_value(t, opts.snapshot_folder, "/tmp/snap")
+	testing.expect_value(t, opts.part_name, "main_console_and_desktop")
+
+	opts, problem = test_arguments_parse([]string{"main_console_and_desktop", TEST_FROM_WORD, "/nix/store/inputs", TEST_SNAPSHOT_WORD, "/nix/store/snap"})
+	testing.expect_value(t, problem, "")
+	testing.expect(t, opts.has_inputs)
+	testing.expect_value(t, opts.inputs_folder, "/nix/store/inputs")
+	testing.expect_value(t, opts.snapshot_folder, "/nix/store/snap")
 
 	opts, problem = test_arguments_parse([]string{TEST_NO_SHOTS_FLAG, TEST_CACHE_FLAG, "/tmp/cache", TEST_FAST_FLAG, "tcp", "steps", "1", "to", "2"})
 	testing.expect_value(t, problem, "")
@@ -127,8 +143,8 @@ test_accepts_and_refuses_no_shots_and_cache_flags :: proc(t: ^testing.T) {
 	testing.expect(t, opts.has_step_range)
 
 	// Per-part fast module filtering classification.
-	filter_main, extras_main := test_part_fast_filter("main")
-	testing.expect(t, filter_main && len(extras_main) == 0, "main uses filtered fast build with no extras")
+	filter_main, extras_main := test_part_fast_filter("main_console_and_desktop")
+	testing.expect(t, filter_main && len(extras_main) == 0, "main shard uses filtered fast build with no extras")
 	filter_disk, extras_disk := test_part_fast_filter("disk_processes")
 	testing.expect(t, filter_disk && len(extras_disk) == 3, "disk_processes adds its three disk modules")
 	filter_sp, extras_sp := test_part_fast_filter("start_policy")

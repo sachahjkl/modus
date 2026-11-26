@@ -1259,6 +1259,20 @@ Machine_Options :: struct {
 	// at 10.0.2.100:5010 through the peer (peer_cache.odin). Port 0: inactive.
 	cache_endpoint: net.Endpoint,
 	tablet: Machine_Tablet, // The virtio tablet of the machine (tablet_scenario.odin).
+	// Usable-boot QMP snapshot capture options (qmp_snapshot.odin): when
+	// snapshot_capture_tag is non-empty, runs the prelude on qcow2 drives,
+	// pauses and saves the VM snapshot under that tag, records the guest clock
+	// at save time, and quits QEMU cleanly.
+	snapshot_capture_tag:         string,
+	snapshot_capture_vars:        string,
+	snapshot_capture_data:        string,
+	snapshot_capture_scratch:     string,
+	snapshot_capture_guest_clock: ^i64,
+	// Usable-boot QMP snapshot restore folder: when non-empty, validates the
+	// snapshot against build.BOOT_IMAGE, stages writable qcow2 copies, seeds
+	// the serial log, starts QEMU paused, restores the VM snapshot over QMP,
+	// and runs the scenario from the post-prelude state.
+	snapshot_restore_folder:      string,
 }
 
 // machine_test runs a scenario on a machine of a part. It passes when each
@@ -1345,6 +1359,42 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	}
 	defer listener_stop(&listener)
 	clock := machine_clock_of(time.time_to_unix(time.now()))
+	use_qcow2 := false
+	qcow2_vars := ""
+	qcow2_scratch := ""
+	serial_append := false
+	start_paused := options.paused
+	restore_meta: Qmp_Snapshot_Meta
+	restoring_snapshot := options.snapshot_restore_folder != ""
+	capturing_snapshot := options.snapshot_capture_tag != ""
+	if restoring_snapshot && capturing_snapshot {
+		fmt.eprintln("modustool: test failed: snapshot_restore_folder and snapshot_capture_tag cannot both be set")
+		return false
+	}
+	if restoring_snapshot {
+		_, boot_hash_hex, hash_ok := qmp_snapshot_boot_hash_of_file(build.BOOT_IMAGE, context.allocator)
+		if !hash_ok {
+			fmt.eprintfln("modustool: test failed: cannot hash %s before snapshot restore", build.BOOT_IMAGE)
+			return false
+		}
+		defer delete(boot_hash_hex)
+		qcow2_vars = machine_file(output, QMP_SNAPSHOT_STAGE_VARS_SUFFIX)
+		data_disk = machine_file(output, QMP_SNAPSHOT_STAGE_DATA_SUFFIX)
+		qcow2_scratch = machine_file(output, QMP_SNAPSHOT_STAGE_SCRATCH_SUFFIX)
+		staged_ok: bool
+		restore_meta, staged_ok = qmp_snapshot_stage_from_folder(options.snapshot_restore_folder, boot_hash_hex, qcow2_vars, data_disk, qcow2_scratch, output)
+		if !staged_ok {
+			return false
+		}
+		use_qcow2 = true
+		serial_append = true
+		start_paused = true
+	} else if capturing_snapshot {
+		use_qcow2 = true
+		qcow2_vars = options.snapshot_capture_vars
+		data_disk = options.snapshot_capture_data
+		qcow2_scratch = options.snapshot_capture_scratch
+	}
 	// The disk of the measures holds no data that a process keeps, the last
 	// picture of the screen is in its PNG file, and the copy of the variable
 	// store is of this machine only: they would fill the build folder, one
@@ -1352,6 +1402,11 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	defer {
 		_ = os.remove(machine_file(output, SCRATCH_DISK_SUFFIX))
 		_ = os.remove(machine_file(output, SCREEN_DUMP_SUFFIX))
+		if restoring_snapshot {
+			_ = os.remove(machine_file(output, QMP_SNAPSHOT_STAGE_VARS_SUFFIX))
+			_ = os.remove(machine_file(output, QMP_SNAPSHOT_STAGE_DATA_SUFFIX))
+			_ = os.remove(machine_file(output, QMP_SNAPSHOT_STAGE_SCRATCH_SUFFIX))
+		}
 		for suffix in ([]string{FIRMWARE_VARIABLES_SUFFIX, FIRMWARE_TPM_VARIABLES_SUFFIX, FIRMWARE_FULL_VARIABLES_SUFFIX}) {
 			_ = os.remove(machine_file(output, suffix))
 		}
@@ -1372,11 +1427,13 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	qmp: Qmp
 	qmp_opened := false
 	for try := 1; ; try += 1 {
-		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, options.paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_screen, options.without_ps2_controller, options.entropy_device_silent, options.no_network_device, options.data_disk_without_ioevent, options.without_pit, options.firmware_variables, serial_input_path, options.tablet, options.gpu_scanout)
+		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, start_paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_screen, options.without_ps2_controller, options.entropy_device_silent, options.no_network_device, options.data_disk_without_ioevent, options.without_pit, options.firmware_variables, serial_input_path, options.tablet, options.gpu_scanout, "", use_qcow2, qcow2_vars, qcow2_scratch, serial_append)
 		if !ok {
 			return false
 		}
-		_ = os.remove(output)
+		if !serial_append {
+			_ = os.remove(output)
+		}
 		_ = os.remove(qmp_socket_of(output))
 		_ = os.remove(film_qmp_socket_of(output))
 		_ = os.remove(film_vnc_socket_of(output))
@@ -1450,7 +1507,35 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		machine.range_places = selection.places
 		machine.range_selection = selection
 	}
+	if restoring_snapshot && qmp_opened {
+		restore_ref := qmp_snapshot_restore(&machine.qmp, restore_meta.tag)
+		if restore_ref != .None {
+			fmt.eprintfln("modustool: test failed: cannot restore usable-boot QMP snapshot %s (%v)", restore_meta.tag, restore_ref)
+			qmp_opened = false
+		} else {
+			machine.started_at = time.tick_now()
+			machine.started_unix = time.time_to_unix(time.now())
+			machine.clock_offset_seconds = restore_meta.guest_clock_unix - machine.started_unix
+			seeded_log := log_read(&machine)
+			machine.seen = len(seeded_log)
+			machine.failure_scanned = len(seeded_log)
+			fmt.printfln("modustool: restored usable-boot QMP snapshot %s from %s", restore_meta.tag, options.snapshot_restore_folder)
+		}
+	}
 	passed := qmp_opened && scenario_run(&machine, selected)
+	if passed && capturing_snapshot {
+		guest_clock_now := machine.started_unix + machine.clock_offset_seconds + i64(time.duration_seconds(time.tick_since(machine.started_at)))
+		save_ref := qmp_snapshot_save_paused(&machine.qmp, options.snapshot_capture_tag)
+		if save_ref != .None {
+			fmt.eprintfln("modustool: test failed: cannot save usable-boot QMP snapshot %s (%v)", options.snapshot_capture_tag, save_ref)
+			passed = false
+		} else {
+			if options.snapshot_capture_guest_clock != nil {
+				options.snapshot_capture_guest_clock^ = guest_clock_now
+			}
+			_, _ = qmp_command(&machine.qmp, "{\"execute\":\"quit\"}", print_failure = false)
+		}
+	}
 	// A floor that a process passed before its first state of work fails
 	// each machine test, whatever its scenario checks (floor_check.odin).
 	if passed {
