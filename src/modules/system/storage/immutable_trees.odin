@@ -555,6 +555,9 @@ gc_read_object :: proc "contextless" (reader: ^module_gc.Object_Reader, hash: bl
 @(private = "file")
 gc_delete_object :: proc "contextless" (user_data: rawptr, hash: blake3.Hash) -> bool {
 	ctx := (^GC_Context)(user_data)
+	if ctx.store_index >= 0 && storage_object_is_pinned(u32(ctx.store_index), hash) {
+		return false
+	}
 	kept := kept_name_of_hex(immutable_tree.hash_to_hex(hash))
 	remove_err: errors.Error_Record
 	_, removed := entry_remove(ctx.target_path.store, path_names(ctx.target_path), kept, &remove_err)
@@ -655,6 +658,10 @@ collect_garbage :: proc "c" (place: i64, roots: ^system.Table_To_Read(Garbage_Ro
 			name_text := format.name_of(&key)
 			parsed_hash, is_hex := immutable_tree.hex_to_hash(transmute([]u8)name_text)
 			if !is_hex {
+				continue
+			}
+			// Durably pinned objects in this store are protected from collection.
+			if storage_object_is_pinned(u32(store_index), parsed_hash) {
 				continue
 			}
 			if stored_count >= GC_CANDIDATE_CAPACITY {

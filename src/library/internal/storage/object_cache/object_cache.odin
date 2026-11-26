@@ -694,6 +694,41 @@ reclaim_principal_pins :: proc "contextless" (table: ^Pin_Table, principal_id: u
 	return removed_entries, removed_pins
 }
 
+// pins_list_scoped copies active durable pin records owned by principal_id
+// into out. Always filters strictly to principal_id; when filter_store is true,
+// also filters strictly to store_index so a non-principal process sees only
+// pins of its own store. Always returns the true total matching entry count.
+pins_list_scoped :: proc "contextless" (
+	table: ^Pin_Table,
+	principal_id: u64,
+	filter_store: bool,
+	store_index: u32,
+	out: []Pin_Info,
+) -> (written: int, total: int) {
+	if table == nil {
+		return 0, 0
+	}
+	for &entry in table.entries {
+		if !entry.occupied || entry.principal_id != principal_id {
+			continue
+		}
+		if filter_store && entry.store_index != store_index {
+			continue
+		}
+		if written < len(out) {
+			out[written] = {
+				principal_id = entry.principal_id,
+				store_index  = entry.store_index,
+				pin_count    = entry.pin_count,
+				hash         = entry.hash,
+			}
+			written += 1
+		}
+		total += 1
+	}
+	return written, total
+}
+
 // pins_list copies active durable pin records into out. When filter_principal
 // is true, only pins owned by principal_id are included. Always returns the
 // true total matching entry count alongside written.

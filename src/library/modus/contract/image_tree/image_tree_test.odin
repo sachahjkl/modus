@@ -384,8 +384,9 @@ empty_tree_zero_byte_objects_subtrees_ambiguity_and_hash_pins :: proc(t: ^testin
 	testing.expect_value(t, zero_res.image_entry_index, u32(3))
 	testing.expect_value(t, zero_res.hash, h_zero)
 
-	// 5. Subtree grant isolation: granting only "pointer_themes" resolves "posy"
-	//    and refuses "fonts/noto_sans_hebrew" and "empty_marker".
+	// 5. Subtree grant isolation: granting only "pointer_themes" resolves both
+	//    relative "posy" and qualified "pointer_themes/posy", returns Is_Subtree
+	//    for "pointer_themes", and refuses "fonts/noto_sans_hebrew" and "empty_marker".
 	pt_node, pt_lp, _ := subtree_resolve(manifest, "pointer_themes")
 	testing.expect_value(t, pt_lp, Lookup_Problem.None)
 	pt_grants := [1]Subtree_Grant{{tree_name = "pointer_themes", root_node = pt_node}}
@@ -395,6 +396,15 @@ empty_tree_zero_byte_objects_subtrees_ambiguity_and_hash_pins :: proc(t: ^testin
 	testing.expect_value(t, posy_m, 1)
 	testing.expect_value(t, posy_res.image_entry_index, u32(0))
 	testing.expect_value(t, posy_res.size, u64(4096))
+
+	qual_res, qual_m, qual_lp, _ := lookup_in_grants(manifest, pt_grants[:], "pointer_themes/posy", true, h_posy, nil)
+	testing.expect_value(t, qual_lp, Lookup_Problem.None)
+	testing.expect_value(t, qual_m, 1)
+	testing.expect_value(t, qual_res.image_entry_index, u32(0))
+	testing.expect_value(t, qual_res.size, u64(4096))
+
+	_, _, pt_self_lp, _ := lookup_in_grants(manifest, pt_grants[:], "pointer_themes", false, {}, nil)
+	testing.expect_value(t, pt_self_lp, Lookup_Problem.Is_Subtree)
 
 	_, _, escaped_lp, _ := lookup_in_grants(manifest, pt_grants[:], "fonts/noto_sans_hebrew", false, {}, nil)
 	testing.expect_value(t, escaped_lp, Lookup_Problem.Not_Found)
@@ -442,6 +452,13 @@ empty_tree_zero_byte_objects_subtrees_ambiguity_and_hash_pins :: proc(t: ^testin
 	_, m2_pin, lp2_pin, _ := lookup_in_grants(manifest, two_grants[:], "common", true, h_shared_a, amb_buf_4[:])
 	testing.expect_value(t, lp2_pin, Lookup_Problem.Ambiguous)
 	testing.expect_value(t, m2_pin, 2)
+
+	// Disambiguating with the grant's tree_name prefix selects that single tree.
+	disamb_res, disamb_m, disamb_lp, _ := lookup_in_grants(manifest, two_grants[:], "tree_b/common", true, h_shared_b, amb_buf_4[:])
+	testing.expect_value(t, disamb_lp, Lookup_Problem.None)
+	testing.expect_value(t, disamb_m, 1)
+	testing.expect_value(t, disamb_res.image_entry_index, u32(5))
+	testing.expect_value(t, disamb_res.size, u64(32))
 
 	// 3 ambiguous trees into a 2-slot buffer: writes first 2 and reports total 3.
 	three_grants := [3]Subtree_Grant {

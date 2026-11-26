@@ -863,6 +863,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// (principals_delegation.odin).
 	principals_service_boot()
 	machine_parts_page_create()
+	// Start storage before the start policy whenever the boot image holds it,
+	// so every consumer can map read-only image-tree objects immediately even
+	// on machines without a data disk (src/md/features/objects_by_hash.md).
+	_ = storage_start()
 	start_policy_begin()
 	for {
 		root_loop_pass()
@@ -1658,12 +1662,14 @@ debug_refusing_grant :: proc "contextless" (caller: ^Started, target: ^Started) 
 // - Screen_Capture: the copy of the screen and the input of the desktop,
 //   which show and drive each window of the principal in front;
 // - Plans: the roles page, which names the holders of the roles of the
-//   machine.
+//   machine;
+// - Read_Only_Trees: read-only image-tree subtrees granted to one process on
+//   its storage connection.
 // Each other grant reaches one thing that each of its holders reaches: the
 // machine by its rights, the boot image, the debug image, the replacement
 // table, the settings page, the date page, the records of the log, the
 // commands of the root ring.
-GRANTS_OF_ONE_PROCESS :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Sound_Device, .Network, .Connect, .Principals, .Tpm, .Debugger, .System_Part, .Versions_Erase, .Remote_Clients, .Start_Policy, .Screen_Capture, .Plans}
+GRANTS_OF_ONE_PROCESS :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Sound_Device, .Network, .Connect, .Principals, .Tpm, .Debugger, .System_Part, .Versions_Erase, .Remote_Clients, .Start_Policy, .Screen_Capture, .Plans, .Read_Only_Trees}
 
 // debug gives the debugger service the handle of the process with a name,
 // with the right Debug and no other, on behalf of one of its callers:
@@ -2408,7 +2414,8 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 		}
 		// A service on demand that does not start: the party that the
 		// connection needs failed (needed_service_failed).
-		if started_outcome := start(name, principal = service_principal, refusal = refusal); started_outcome != .Succeeded {
+		started_outcome := is_role_holder(name, .Storage) ? storage_start(refusal) : start(name, principal = service_principal, refusal = refusal)
+		if started_outcome != .Succeeded {
 			return nil, nil, 0, 0, needed_service_failed(refusal)
 		}
 	}
@@ -2447,10 +2454,20 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 	if !isolated.connection_place_open(client.place != 0, count, used, used_for_client_rows, CONNECTION_CAPACITY, remote.ROOT_PLACES_FOR_CLIENT_ROWS) {
 		return nil, nil, 0, 0, root_ring.refuse(refusal, .Callee_Busy, kind, .Full, .Connections, 0, i64(count), isolated.SERVICE_CONNECTION_CAPACITY)
 	}
-	// The service ring keeps room for one Disconnect for each connection:
-	// this service never waits for a service that does not read its ring.
+	is_storage_service := is_role_holder(system.name_of(service.name[:]), .Storage)
+	tree_grant_count := 0
+	if is_storage_service && !caller.from_disk && !history && client.place == 0 && store_override == "" && .Read_Only_Trees in caller.start_grant_set.grants {
+		for tree_path in caller.start_grant_set.read_only_trees {
+			if len(tree_path) > 0 {
+				tree_grant_count += 1
+			}
+		}
+	}
+	// The service ring keeps room for one Disconnect for each connection, plus
+	// Connect and any connection-level read-only tree grants: this service
+	// never waits for a service that does not read its ring.
 	names := &service.service.commands
-	if ring.capacity(names) - ring.count(names) < u32(count) + 2 {
+	if ring.capacity(names) - ring.count(names) < u32(count) + 2 + u32(tree_grant_count) {
 		return nil, nil, 0, 0, root_ring.refuse(refusal, .Callee_Busy, kind, .Busy, .Requests)
 	}
 	// The storage service names the store of a connection by the name that
@@ -2544,6 +2561,16 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 		system.close(ring_memory)
 		system.close(region_memory)
 		return nil, nil, 0, 0, root_ring.refuse(refusal, .Callee_Busy, kind, .Busy, .Requests)
+	}
+	if tree_grant_count > 0 {
+		for tree_path in caller.start_grant_set.read_only_trees {
+			if len(tree_path) == 0 {
+				continue
+			}
+			if packed, pack_ok := isolated.tree_grant_pack(tree_path); pack_ok {
+				_ = system.send(&service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Tree_Grant), values = {0 = u64(in_service_ring), 1 = packed[0], 2 = packed[1], 3 = packed[2], 4 = packed[3], 5 = packed[4], 6 = packed[5]}})
+			}
+		}
 	}
 	// An amount is a store for the storage service only: for the log
 	// service, it names the process of the caller.

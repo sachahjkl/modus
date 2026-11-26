@@ -228,6 +228,7 @@ a_start_grant_set_whose_handles_meet_is_refused :: proc(t: ^testing.T) {
 		slot: int,
 	} {
 		{{.Clock, .Store}, GRANT_STORAGE_RING},
+		{{.Clock, .Read_Only_Trees}, GRANT_STORAGE_RING},
 		{{.Clock, .Data_Disk}, GRANT_DEVICE_RING},
 		{{.Terminal, .Network_Device}, GRANT_TERMINAL_RING},
 		{{.Terminal, .Sound_Device}, GRANT_TERMINAL_RING},
@@ -247,6 +248,9 @@ a_start_grant_set_whose_handles_meet_is_refused :: proc(t: ^testing.T) {
 		{.Root_Ring, .Inspect, .Stop, .Image, .Terminal, .Store, .Acts_For_Principal, .Replacements, .Replace, .History_Store, .Debug_Image, .Palette},
 		{.Connect, .Network, .Acts_For_Principal, .Remote_Clients},
 		{.Data_Disk, .Scratch_Disk, .Network_Device},
+		{.Serve, .Image, .Data_Disk},
+		{.Read_Only_Trees},
+		{.Store, .Read_Only_Trees},
 		{},
 	}
 	for start_grant_set in apart {

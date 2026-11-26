@@ -1,12 +1,70 @@
-// Read-only mapped-object cache and durable pin-accounting state owned by the
-// storage service (src/md/features/objects_by_hash.md).
+// Read-only boot-image tree serving, split object cache, durable pin exports,
+// and principal-lock/reclaim eviction for the storage service
+// (src/md/features/objects_by_hash.md).
 package storage_service
 
+import "base:intrinsics"
 import object_cache "internal:storage/object_cache"
 import "modus:contract/blake3"
+import info "modus:contract/boot_info"
+import "modus:contract/call_outcome"
+import "modus:contract/errors"
+import "modus:contract/image_tree"
+import "modus:contract/isolated"
+import "modus:contract/storage_object"
+import format "modus:contract/store"
+import "modus:system"
+
+// Plan value: maximum read-only image-tree subtrees attached to one storage
+// connection, matching root.READ_ONLY_TREE_LIMIT.
+CONNECTION_TREE_GRANT_LIMIT :: 4
+
+// Format property: maximum byte length of a serialized Map_Object_Request
+// (60-byte header + OBJECT_PATH_LIMIT path bytes).
+MAP_REQUEST_BUFFER_SIZE :: storage_object.MAP_OBJECT_REQUEST_HEADER_SIZE + format.OBJECT_PATH_LIMIT
+
+// Plan value: static wire scratch for one call-region Ambiguity_Table reply
+// (fits inside half of the 64 KiB isolated call region).
+AMBIGUITY_WIRE_BUFFER_SIZE :: 32768
+
+// Format property: exact maximum byte length of a List_Pins_Answer
+// (24-byte header + LIST_PINS_LIMIT * 48-byte pin records).
+LIST_PINS_WIRE_BUFFER_SIZE :: storage_object.LIST_PINS_HEADER_SIZE + storage_object.LIST_PINS_LIMIT * storage_object.PIN_RECORD_SIZE
+
+// Connection-level read-only image-tree subtree grants configured by root via
+// Service_Command.Tree_Grant. Never consumes SHARE_CAPACITY.
+Connection_Tree_Grants :: struct {
+	count:     int,
+	paths:     [CONNECTION_TREE_GRANT_LIMIT][isolated.TREE_GRANT_PATH_STORAGE]u8,
+	path_lens: [CONNECTION_TREE_GRANT_LIMIT]int,
+	nodes:     [CONNECTION_TREE_GRANT_LIMIT]u32,
+}
 
 storage_object_cache: object_cache.Cache
 storage_object_pins: object_cache.Pin_Table
+
+// Validated read-only boot-image view owned by storage (never given to clients).
+storage_image_memory: system.Handle
+storage_image: []u8
+storage_image_tree: []u8
+storage_image_tree_header: image_tree.Header
+storage_image_file_check: info.File_Check = .Root_Service_At_Load
+
+// Per-resource lazy BLAKE3 verification flags for File_Check.Root_Service_At_Load.
+// Format property: bounded by system.IMAGE_CHECK_CAPACITY.
+image_resource_verified: [system.IMAGE_CHECK_CAPACITY]bool
+
+// Parallel table indexed identically to service.connections.
+connection_tree_grants: [isolated.SERVICE_CONNECTION_CAPACITY]Connection_Tree_Grants
+
+// Static scratch buffers so large wire structures never live on the stack.
+map_request_scratch: [MAP_REQUEST_BUFFER_SIZE]u8
+ambiguity_wire_scratch: [AMBIGUITY_WIRE_BUFFER_SIZE]u8
+ambiguity_matches_scratch: [storage_object.AMBIGUITY_RECORD_LIMIT]image_tree.Ambiguity_Match
+ambiguity_entries_scratch: [storage_object.AMBIGUITY_RECORD_LIMIT]storage_object.Ambiguity_Entry
+list_pins_info_scratch: [storage_object.LIST_PINS_LIMIT]object_cache.Pin_Info
+list_pins_records_scratch: [storage_object.LIST_PINS_LIMIT]storage_object.Pin_Record
+list_pins_wire_scratch: [LIST_PINS_WIRE_BUFFER_SIZE]u8
 
 // storage_object_cache_init initializes the split read-only object cache and
 // durable pin table with plan defaults.
@@ -19,4 +77,625 @@ storage_object_cache_init :: proc "contextless" () {
 // (store_index, hash), blocking collect_garbage and erase_versions.
 storage_object_is_pinned :: proc "contextless" (store_index: u32, hash: blake3.Hash) -> bool {
 	return object_cache.is_pinned(&storage_object_pins, store_index, hash)
+}
+
+// storage_object_store_has_pins reports whether any durable pin exists in
+// store_index, allowing erase_versions to skip version hashing on unpinned stores.
+storage_object_store_has_pins :: proc "contextless" (store_index: u32) -> bool {
+	if storage_object_pins.entry_count == 0 {
+		return false
+	}
+	for &entry in storage_object_pins.entries {
+		if entry.occupied && entry.store_index == store_index && entry.pin_count > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// storage_object_holdings_query reads kernel Handle_State.holdings and converts
+// the 0-based count of external holdings into object_cache's 1-based total
+// holding count (1 means only storage holds the handle).
+storage_object_holdings_query :: proc "contextless" (memory_handle: u64, _: rawptr) -> (holdings: u64, ok: bool) {
+	if memory_handle == 0 {
+		return 0, false
+	}
+	return system.handle_holdings(system.Handle(memory_handle)) + 1, true
+}
+
+// storage_image_tree_init maps the read-only boot image, verifies and validates
+// the canonical IMGTREE1 manifest against the boot-image resource table, and
+// sets readiness.image_tree_ready before storage touches any data disk.
+storage_image_tree_init :: proc "contextless" (ctx: ^system.Context) {
+	image_handle := ctx.handles[system.GRANT_IMAGE]
+	image_size := ctx.values[system.GRANT_VALUE_IMAGE_SIZE]
+	if image_handle == 0 || image_size == 0 {
+		system.log_fact(.Warning, Image_Tree_Unavailable{problem = u64(image_tree.Problem.Truncated)})
+		return
+	}
+	// Fail closed to on-demand BLAKE3 hashing unless root explicitly reports
+	// Boot_Program verification.
+	file_check, fc_ok := info.file_check_of_word(ctx.values[system.GRANT_VALUE_IMAGE_FILE_CHECK])
+	if !fc_ok || file_check == .None {
+		file_check = .Root_Service_At_Load
+	}
+	storage_image_file_check = file_check
+
+	address, map_status := system.memory_map(image_handle, {})
+	if map_status != .Succeeded || address == nil {
+		system.log_fact(.Warning, Image_Tree_Unavailable{problem = u64(image_tree.Problem.Truncated)})
+		return
+	}
+	storage_image_memory = image_handle
+	storage_image = ([^]u8)(address)[:image_size]
+
+	manifest_entry := system.image_resource_find(storage_image, image_tree.RESOURCE_NAME)
+	if manifest_entry == nil || manifest_entry.offset > image_size || manifest_entry.size > image_size - manifest_entry.offset {
+		system.log_fact(.Warning, Image_Tree_Unavailable{problem = u64(image_tree.Problem.Truncated)})
+		return
+	}
+	manifest_bytes := storage_image[manifest_entry.offset:][:manifest_entry.size]
+	if storage_image_file_check != .Boot_Program {
+		if blake3.hash(manifest_bytes) != manifest_entry.hash {
+			system.log_fact(.Warning, Image_Tree_Unavailable{problem = u64(image_tree.Problem.Resource_Mismatch)})
+			return
+		}
+	}
+	resources := system.image_resources(storage_image)
+	header, problem := image_tree.validate_against_resources(manifest_bytes, resources)
+	if problem != .None {
+		system.log_fact(.Warning, Image_Tree_Unavailable{problem = u64(problem)})
+		return
+	}
+	storage_image_tree = manifest_bytes
+	storage_image_tree_header = header
+	readiness.image_tree_ready = true
+	system.log_fact(.Info, Image_Tree_Ready{nodes = u64(header.node_count), entries = u64(header.entry_count)})
+}
+
+// connection_index_of finds the index of ring_memory in service.connections, or -1.
+@(private = "file")
+connection_index_of :: proc "contextless" (svc: ^system.Service, ring_memory: system.Handle) -> int {
+	if ring_memory == 0 {
+		return -1
+	}
+	for &conn, index in svc.connections {
+		if conn.calls.head != nil && conn.ring_memory == ring_memory {
+			return index
+		}
+	}
+	return -1
+}
+
+// storage_tree_grant handles Service_Command.Tree_Grant from root, attaching
+// one validated read-only image-tree subtree root to the named connection.
+storage_tree_grant :: proc "contextless" (svc: ^system.Service, ring_memory: system.Handle, values: ^[7]u64) {
+	conn_index := connection_index_of(svc, ring_memory)
+	if conn_index < 0 || !readiness.image_tree_ready {
+		return
+	}
+	path_buf: [isolated.TREE_GRANT_PATH_STORAGE]u8
+	path_len := isolated.tree_grant_unpack(values, &path_buf)
+	if path_len == 0 {
+		return
+	}
+	path := string(path_buf[:path_len])
+	node_index, problem, _ := image_tree.subtree_resolve(storage_image_tree, path)
+	if problem != .None {
+		return
+	}
+	grants := &connection_tree_grants[conn_index]
+	for existing in 0 ..< grants.count {
+		if grants.nodes[existing] == node_index {
+			return
+		}
+	}
+	if grants.count >= CONNECTION_TREE_GRANT_LIMIT {
+		return
+	}
+	slot := grants.count
+	grants.paths[slot] = path_buf
+	grants.path_lens[slot] = path_len
+	grants.nodes[slot] = node_index
+	grants.count += 1
+}
+
+// connection_tree_grants_clear removes all read-only image-tree subtree grants
+// attached to ring_memory when its connection disconnects.
+connection_tree_grants_clear :: proc "contextless" (ring_memory: system.Handle) {
+	conn_index := connection_index_of(&service, ring_memory)
+	if conn_index >= 0 {
+		connection_tree_grants[conn_index] = {}
+	}
+}
+
+// caller_tree_grants fills out with the active read-only image-tree subtree
+// grants for caller. Shares never inherit image-tree grants.
+@(private = "file")
+caller_tree_grants :: proc "contextless" (caller: ^Caller, out: ^[CONNECTION_TREE_GRANT_LIMIT]image_tree.Subtree_Grant) -> []image_tree.Subtree_Grant {
+	if caller.connection == nil || share_of(caller.connection) != nil {
+		return nil
+	}
+	conn_index := connection_index_of(&service, caller.connection.ring_memory)
+	if conn_index < 0 {
+		return nil
+	}
+	grants := &connection_tree_grants[conn_index]
+	for i in 0 ..< grants.count {
+		out[i] = {
+			tree_name = string(grants.paths[i][:grants.path_lens[i]]),
+			root_node = grants.nodes[i],
+		}
+	}
+	return out[:grants.count]
+}
+
+// storage_object_purge_entry volatile-zeroes (when writable), revokes every
+// derived reader handle/mapping, and closes one evicted private cache entry.
+@(private = "file")
+storage_object_purge_entry :: proc "contextless" (entry: object_cache.Evicted_Entry) {
+	if entry.memory_handle == 0 {
+		return
+	}
+	handle := system.Handle(entry.memory_handle)
+	// Revoke all reader handles and mappings immediately so no reader observes
+	// locked or reclaimed plaintext.
+	_, _ = system.handle_revoke(handle)
+	// If storage holds write rights on a private cache object, volatile-zero
+	// every page before releasing the handle.
+	if addr, map_status := system.memory_map(handle, {.Write}); map_status == .Succeeded && addr != nil {
+		intrinsics.mem_zero_volatile(addr, int(entry.pages * object_cache.PAGE_SIZE))
+		system.memory_unmap(addr)
+	}
+	system.close(handle)
+}
+
+// storage_object_purge_principal revokes and frees every cached private object
+// owned by principal_id, and optionally removes all durable pins of that
+// principal (on Principal_Reclaim). Public_System entries are never touched.
+storage_object_purge_principal :: proc "contextless" (principal_id: u64, clear_pins: bool) {
+	batch: [16]object_cache.Evicted_Entry
+	for {
+		written, remaining := object_cache.reclaim_principal(&storage_object_cache, principal_id, batch[:])
+		for i in 0 ..< written {
+			storage_object_purge_entry(batch[i])
+		}
+		if remaining == 0 || written == 0 {
+			break
+		}
+	}
+	if clear_pins {
+		_, _ = object_cache.reclaim_principal_pins(&storage_object_pins, principal_id)
+	}
+}
+
+// storage_object_purge_store revokes and frees every cached private object
+// belonging to store_index when that store enters or leaves reclamation.
+storage_object_purge_store :: proc "contextless" (store_index: u32) {
+	batch: [16]object_cache.Evicted_Entry
+	for {
+		written, remaining := object_cache.reclaim_store(&storage_object_cache, store_index, batch[:])
+		for i in 0 ..< written {
+			storage_object_purge_entry(batch[i])
+		}
+		if remaining == 0 || written == 0 {
+			break
+		}
+	}
+}
+
+// image_object_cached_handle returns a cached read-only kernel memory handle
+// for one resolved image-tree object, copying bytes once on first demand into
+// a freshly created Memory object paid from storage's machine-object budget and
+// stripping Write and Execute rights from storage's retained handle.
+// Never hands out image_memory directly.
+@(private = "file")
+image_object_cached_handle :: proc "contextless" (resolved: image_tree.Resolved_Object) -> (handle: system.Handle, result: storage_object.Map_Object_Result) {
+	if existing, _, hit := object_cache.lookup_public(&storage_object_cache, resolved.hash); hit {
+		return system.Handle(existing.memory_handle), .Mapped
+	}
+
+	resources := system.image_resources(storage_image)
+	if u64(resolved.image_entry_index) >= u64(len(resources)) {
+		return 0, .Damaged
+	}
+	resource := &resources[resolved.image_entry_index]
+	if resource.offset > u64(len(storage_image)) || resource.size > u64(len(storage_image)) - resource.offset || resource.size != resolved.size {
+		return 0, .Damaged
+	}
+	resource_bytes := storage_image[resource.offset:][:resource.size]
+
+	// Under Root_Service_At_Load, verify BLAKE3 on first demand before copying
+	// into a shared read-only memory object.
+	if storage_image_file_check != .Boot_Program {
+		idx := int(resolved.image_entry_index)
+		already_checked := idx < len(image_resource_verified) && image_resource_verified[idx]
+		if !already_checked {
+			if blake3.hash(resource_bytes) != resolved.hash {
+				system.log_fact(.Warning, Image_Object_Hash_Failed{index = u64(resolved.image_entry_index)})
+				return 0, .Damaged
+			}
+			if idx < len(image_resource_verified) {
+				image_resource_verified[idx] = true
+			}
+		}
+	}
+
+	pages, pages_ok := object_cache.pages_for_bytes(resolved.size)
+	if !pages_ok {
+		return 0, .Quota_Full
+	}
+
+	rw_handle, create_status := system.memory_create(pages)
+	if create_status != .Succeeded {
+		return 0, .Quota_Full
+	}
+	rw_addr, map_status := system.memory_map(rw_handle, {.Write})
+	if map_status != .Succeeded || rw_addr == nil {
+		system.close(rw_handle)
+		return 0, .Quota_Full
+	}
+	total_bytes := int(pages * object_cache.PAGE_SIZE)
+	dst := ([^]u8)(rw_addr)[:total_bytes]
+	if len(resource_bytes) > 0 {
+		intrinsics.mem_copy_non_overlapping(raw_data(dst), raw_data(resource_bytes), len(resource_bytes))
+	}
+	if total_bytes > len(resource_bytes) {
+		intrinsics.mem_zero(raw_data(dst[len(resource_bytes):]), total_bytes - len(resource_bytes))
+	}
+	system.memory_unmap(rw_addr)
+
+	// Strip Write and Execute from storage's retained handle; keep Give and Read
+	// so storage can grant Read-only handles to every future caller.
+	ro_handle, ro_status := system.give(0, rw_handle, {.Give, .Read})
+	system.close(rw_handle)
+	if ro_status != .Succeeded || ro_handle == 0 {
+		return 0, .Quota_Full
+	}
+
+	_, insert_res := object_cache.insert_public(&storage_object_cache, resolved.hash, u64(ro_handle), resolved.size, pages)
+	switch insert_res {
+	case .Inserted:
+		return ro_handle, .Mapped
+	case .Already_Present:
+		system.close(ro_handle)
+		if existing, _, hit := object_cache.lookup_public(&storage_object_cache, resolved.hash); hit {
+			return system.Handle(existing.memory_handle), .Mapped
+		}
+		return 0, .Quota_Full
+	case .Quota_Exceeded, .Table_Full, .Invalid_Argument:
+		system.close(ro_handle)
+		return 0, .Quota_Full
+	}
+	system.close(ro_handle)
+	return 0, .Quota_Full
+}
+
+@(private = "file")
+append_remaining :: proc "contextless" (out: ^system.Bytes_To_Append) -> int {
+	if out == nil || out.bytes == nil || out.count >= out.capacity {
+		return 0
+	}
+	return int(min(out.capacity - out.count, u64(max(int))))
+}
+
+@(private = "file")
+map_object_answer_write :: proc "contextless" (out: ^system.Bytes_To_Append, ans: storage_object.Map_Object_Answer) {
+	if append_remaining(out) < storage_object.MAP_OBJECT_ANSWER_SIZE {
+		return
+	}
+	encoded: [storage_object.MAP_OBJECT_ANSWER_SIZE]u8
+	written, problem := storage_object.map_object_answer_encode(ans, encoded[:])
+	if problem == .None && written > 0 {
+		_ = system.bytes_append(out, encoded[:written])
+	}
+}
+
+@(private = "file")
+map_object_fail :: proc "contextless" (
+	answer_out: ^system.Bytes_To_Append,
+	error: ^errors.Error_Record,
+	ans: storage_object.Map_Object_Answer,
+	unit: errors.Unit = .Objects,
+	argument: i64 = 1,
+	found: i64 = 0,
+) -> (call_outcome.Call_Outcome, i64) {
+	map_object_answer_write(answer_out, ans)
+	outcome, kind := storage_object.map_object_result_outcome(ans.result)
+	return refuse(error, outcome, kind, unit, argument, 0, 0, found), 0
+}
+
+// map_object resolves an exact '/' object path across the caller's granted
+// read-only image-tree subtrees, enforces optional hash pinning and ambiguity
+// refusal, caches a copy-once read-only Memory object on first demand, and
+// grants the caller a Read-only handle returned as value.
+//
+// Works independently of the data disk lifecycle (serves image-tree objects
+// even when the disk is absent, unusable, or silent).
+@(export, link_name = "map_object")
+map_object :: proc "c" (
+	request: ^system.Bytes_To_Read,
+	answer: ^system.Bytes_To_Append,
+	ambiguity: ^system.Bytes_To_Append,
+	error: ^errors.Error_Record,
+) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	caller: Caller
+	caller_of(&caller)
+	if caller.connection == nil {
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
+	}
+	if request == nil || request.bytes == nil || request.count == 0 || request.count > u64(len(map_request_scratch)) {
+		req_count := request != nil ? i64(request.count) : 0
+		return refuse(error, .Argument_Refused, .Bad_Value, .Bytes, 1, req_count, len(map_request_scratch)), 0
+	}
+	req_bytes := request.bytes[:request.count]
+	// Copy request out of the shared call region once before validating.
+	copy(map_request_scratch[:len(req_bytes)], req_bytes)
+	req, req_problem := storage_object.map_object_request_decode(map_request_scratch[:len(req_bytes)])
+	if req_problem != .None {
+		if req_problem == .Invalid_Path && len(req_bytes) >= storage_object.MAP_OBJECT_REQUEST_HEADER_SIZE {
+			path_bytes := map_request_scratch[storage_object.MAP_OBJECT_REQUEST_HEADER_SIZE:len(req_bytes)]
+			_, p_problem, _, _ := format.object_path_validate(string(path_bytes))
+			if p_problem != .None {
+				return map_object_fail(answer, error, {result = .Path_Refused, path_problem = p_problem}, .Bytes, 1)
+			}
+		}
+		return refuse(error, .Argument_Refused, .Bad_Value, .Bytes, 1), 0
+	}
+
+	if !readiness.image_tree_ready {
+		return map_object_fail(answer, error, {result = .Unavailable}, .Objects, 1)
+	}
+
+	grants_buf: [CONNECTION_TREE_GRANT_LIMIT]image_tree.Subtree_Grant
+	grants := caller_tree_grants(&caller, &grants_buf)
+	if len(grants) == 0 {
+		return map_object_fail(answer, error, {result = .Not_Found}, .Objects, 1)
+	}
+
+	amb_cap := min(int(req.ambiguity_capacity), storage_object.AMBIGUITY_RECORD_LIMIT)
+	resolved, match_count, lookup_problem, path_problem := image_tree.lookup_in_grants(
+		storage_image_tree,
+		grants,
+		req.path,
+		req.has_expected_hash,
+		req.expected_hash,
+		ambiguity_matches_scratch[:amb_cap],
+	)
+
+	switch lookup_problem {
+	case .None:
+		// Verify answer buffer capacity BEFORE granting any kernel handle so a
+		// too-small answer buffer never leaks a granted handle.
+		ans_rem := append_remaining(answer)
+		if ans_rem < storage_object.MAP_OBJECT_ANSWER_SIZE {
+			return refuse(error, .Argument_Refused, .Too_Small, .Bytes, 2, i64(ans_rem), storage_object.MAP_OBJECT_ANSWER_SIZE), 0
+		}
+		ro_handle, cache_result := image_object_cached_handle(resolved)
+		if cache_result != .Mapped {
+			unit := cache_result == .Quota_Full ? errors.Unit.Pages : errors.Unit.Objects
+			return map_object_fail(answer, error, {result = cache_result}, unit, 1)
+		}
+		given, give_status := system.give(caller.connection.ring_memory, ro_handle, {.Read})
+		if give_status != .Succeeded || given == 0 {
+			return map_object_fail(answer, error, {result = .Quota_Full}, .Pages, 1)
+		}
+		map_object_answer_write(answer, {
+			result = .Mapped,
+			size   = resolved.size,
+			hash   = resolved.hash,
+		})
+		return .Succeeded, i64(given)
+	case .Not_Found, .Is_Subtree:
+		return map_object_fail(answer, error, {result = .Not_Found}, .Objects, 1)
+	case .Ambiguous:
+		record_count := min(amb_cap, match_count)
+		for i in 0 ..< record_count {
+			m := ambiguity_matches_scratch[i]
+			ambiguity_entries_scratch[i] = {
+				grant_index = u32(m.grant_index),
+				tree_name   = m.tree_name,
+				path        = req.path,
+				size        = m.size,
+				hash        = m.hash,
+			}
+		}
+		amb_rem := min(append_remaining(ambiguity), len(ambiguity_wire_scratch))
+		if amb_rem >= storage_object.AMBIGUITY_TABLE_HEADER_SIZE {
+			// Fit only as many ambiguity entries as the caller's remaining
+			// append buffer holds while keeping total_matches accurate so the
+			// encoded table never truncates on bytes_append.
+			running_bytes := storage_object.AMBIGUITY_TABLE_HEADER_SIZE
+			fit_count := 0
+			for i in 0 ..< record_count {
+				e := ambiguity_entries_scratch[i]
+				entry_bytes := storage_object.AMBIGUITY_ENTRY_HEADER_SIZE + len(e.tree_name) + len(e.path)
+				if running_bytes + entry_bytes > amb_rem {
+					break
+				}
+				running_bytes += entry_bytes
+				fit_count += 1
+			}
+			amb_written, amb_problem := storage_object.ambiguity_table_encode(
+				u32(match_count),
+				ambiguity_entries_scratch[:fit_count],
+				ambiguity_wire_scratch[:amb_rem],
+			)
+			if amb_problem == .None && amb_written > 0 {
+				_ = system.bytes_append(ambiguity, ambiguity_wire_scratch[:amb_written])
+			}
+		}
+		return map_object_fail(answer, error, {result = .Ambiguous, ambiguity_total = u32(match_count)}, .Objects, 1, i64(match_count))
+	case .Hash_Mismatch:
+		return map_object_fail(answer, error, {
+			result = .Hash_Mismatch,
+			size   = resolved.size,
+			hash   = resolved.hash,
+		}, .Objects, 1)
+	case .Bad_Path:
+		return map_object_fail(answer, error, {result = .Path_Refused, path_problem = path_problem}, .Bytes, 1)
+	case .Manifest_Invalid, .Bad_Grant:
+		return map_object_fail(answer, error, {result = .Damaged}, .Objects, 1)
+	}
+	return map_object_fail(answer, error, {result = .Damaged}, .Objects, 1)
+}
+
+// pin_store_authorized checks whether caller may add or remove a durable pin
+// on store_index: caller's own store, or (with Acts_For_Principal) a store
+// belonging to caller's principal.
+@(private = "file")
+pin_store_authorized :: proc "contextless" (caller: ^Caller, store_index: u32) -> bool {
+	own_index := store_find(caller.store.name)
+	if own_index >= 0 && u32(own_index) == store_index {
+		return true
+	}
+	if !caller.acts_for_principal {
+		return false
+	}
+	idx := int(store_index)
+	if idx < 0 || idx >= store_numbers() || !store_listed(idx) {
+		return false
+	}
+	if caller.principal == 0 {
+		return !format.cell_uses_encrypted_layout(store_cell(idx).name)
+	}
+	if !owned_cell(idx) {
+		return false
+	}
+	keys := principal_keys_held(caller.principal)
+	if keys == nil {
+		return false
+	}
+	sb: format.Store_Block
+	if read_single_tagged(store_cell(idx).store, (^Block)(&sb), idx, 0) != .Good {
+		return false
+	}
+	return sb.owner == keys.identifier
+}
+
+// pin_object records one durable pin on (store_index, hash) for the caller's
+// principal so collect_garbage and erase_versions cannot reclaim it.
+@(export, link_name = "pin_object")
+pin_object :: proc "c" (request: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if refused, refusal := disk_unopened_refusal(error); refused {
+		return refusal, 0
+	}
+	caller: Caller
+	caller_of(&caller)
+	if caller.connection == nil || caller.read_only || share_of(caller.connection) != nil || caller.store.limit == 0 {
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
+	}
+	if request == nil || request.bytes == nil || request.count != storage_object.PIN_REQUEST_SIZE {
+		req_count := request != nil ? i64(request.count) : 0
+		return refuse(error, .Argument_Refused, .Bad_Value, .Bytes, 1, req_count, storage_object.PIN_REQUEST_SIZE), 0
+	}
+	req_bytes := request.bytes[:request.count]
+	copied: [storage_object.PIN_REQUEST_SIZE]u8
+	copy(copied[:], req_bytes)
+	req, problem := storage_object.pin_request_decode(copied[:])
+	if problem != .None {
+		return refuse(error, .Argument_Refused, .Bad_Value, .Bytes, 1), 0
+	}
+	if !pin_store_authorized(&caller, req.store_index) {
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store, 1)
+	}
+	new_count, pin_res := object_cache.pin_add(&storage_object_pins, caller.principal, req.store_index, req.hash)
+	switch pin_res {
+	case .Ok:
+		return .Succeeded, i64(new_count)
+	case .Quota_Exceeded, .Table_Full, .Count_Limit:
+		return refuse(error, .Budget_Or_Capacity_Exhausted, .Full, .Objects, 1), 0
+	case .Not_Found:
+		return refuse(error, .Nothing_Has_That_Name, .Absent, .Objects, 1), 0
+	case .Invalid_Argument:
+		return refuse(error, .Argument_Refused, .Bad_Value, .Objects, 1), 0
+	}
+	return refuse(error, .Argument_Refused, .Bad_Value, .Objects, 1), 0
+}
+
+// unpin_object decrements one durable pin on (store_index, hash) for the
+// caller's principal, freeing the entry when its count reaches zero.
+@(export, link_name = "unpin_object")
+unpin_object :: proc "c" (request: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if refused, refusal := disk_unopened_refusal(error); refused {
+		return refusal, 0
+	}
+	caller: Caller
+	caller_of(&caller)
+	if caller.connection == nil || caller.read_only || share_of(caller.connection) != nil || caller.store.limit == 0 {
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
+	}
+	if request == nil || request.bytes == nil || request.count != storage_object.UNPIN_REQUEST_SIZE {
+		req_count := request != nil ? i64(request.count) : 0
+		return refuse(error, .Argument_Refused, .Bad_Value, .Bytes, 1, req_count, storage_object.UNPIN_REQUEST_SIZE), 0
+	}
+	req_bytes := request.bytes[:request.count]
+	copied: [storage_object.UNPIN_REQUEST_SIZE]u8
+	copy(copied[:], req_bytes)
+	req, problem := storage_object.unpin_request_decode(copied[:])
+	if problem != .None {
+		return refuse(error, .Argument_Refused, .Bad_Value, .Bytes, 1), 0
+	}
+	if !pin_store_authorized(&caller, req.store_index) {
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store, 1)
+	}
+	remaining, pin_res := object_cache.pin_remove(&storage_object_pins, caller.principal, req.store_index, req.hash)
+	switch pin_res {
+	case .Ok:
+		return .Succeeded, i64(remaining)
+	case .Not_Found:
+		return refuse(error, .Nothing_Has_That_Name, .Absent, .Objects, 1), 0
+	case .Quota_Exceeded, .Table_Full, .Count_Limit:
+		return refuse(error, .Budget_Or_Capacity_Exhausted, .Full, .Objects, 1), 0
+	case .Invalid_Argument:
+		return refuse(error, .Argument_Refused, .Bad_Value, .Objects, 1), 0
+	}
+	return refuse(error, .Argument_Refused, .Bad_Value, .Objects, 1), 0
+}
+
+// list_pins writes a canonical List_Pins_Answer scoped strictly to the caller's
+// principal (and to the caller's own store when !acts_for_principal), bounding
+// encoded records to the caller's remaining append buffer capacity while
+// returning the true total count of matching durable pins.
+@(export, link_name = "list_pins")
+list_pins :: proc "c" (answer: ^system.Bytes_To_Append, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	caller: Caller
+	caller_of(&caller)
+	if caller.connection == nil || share_of(caller.connection) != nil || (caller.store.limit == 0 && !caller.acts_for_principal) {
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
+	}
+	ans_rem := min(append_remaining(answer), len(list_pins_wire_scratch))
+	if ans_rem < storage_object.LIST_PINS_HEADER_SIZE {
+		return refuse(error, .Argument_Refused, .Too_Small, .Bytes, 1, i64(ans_rem), storage_object.LIST_PINS_HEADER_SIZE), 0
+	}
+	max_fit := min(storage_object.LIST_PINS_LIMIT, (ans_rem - storage_object.LIST_PINS_HEADER_SIZE) / storage_object.PIN_RECORD_SIZE)
+
+	written := 0
+	total := 0
+	if caller.acts_for_principal {
+		// Always filter to caller.principal (including principal 0): a caller
+		// acting for one principal never sees durable pins of another principal.
+		written, total = object_cache.pins_list_scoped(&storage_object_pins, caller.principal, false, 0, list_pins_info_scratch[:max_fit])
+	} else {
+		// Without Acts_For_Principal, restrict strictly to the caller's own store.
+		own_index := disk_opened ? store_find(caller.store.name) : -1
+		if own_index >= 0 {
+			written, total = object_cache.pins_list_scoped(&storage_object_pins, caller.principal, true, u32(own_index), list_pins_info_scratch[:max_fit])
+		}
+	}
+	for i in 0 ..< written {
+		info_row := list_pins_info_scratch[i]
+		list_pins_records_scratch[i] = {
+			principal_id = info_row.principal_id,
+			store_index  = info_row.store_index,
+			pin_count    = info_row.pin_count,
+			hash         = info_row.hash,
+		}
+	}
+	encoded_len, enc_problem := storage_object.list_pins_answer_encode(u32(total), list_pins_records_scratch[:written], list_pins_wire_scratch[:ans_rem])
+	if enc_problem != .None {
+		return refuse(error, .Budget_Or_Capacity_Exhausted, .Full, .Records), 0
+	}
+	_ = system.bytes_append(answer, list_pins_wire_scratch[:encoded_len])
+	return .Succeeded, i64(total)
 }

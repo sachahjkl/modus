@@ -204,9 +204,11 @@ Built:
 - Boot-image `image_tree` (`IMGTREE1`) manifest packing and resource-table cross-checking across main, release, console, and trimmed browser-machine boot images in `tools/modustool/build` (`image_tree_pack.odin`, with host tests).
 - Split read-only mapped-object cache (`Public_System` and `Private_Principal` pools, non-crashing `holdings == 1` eviction, principal lock/reclaim purge) and durable pin-accounting engine in `internal:storage/object_cache` (with host tests).
 - Storage read-only object wire contract (`Map_Object_Request`, `Map_Object_Answer`, bounded call-region `Ambiguity_Table`, `Pin_Request`, `Unpin_Request`, `List_Pins_Answer`) in `modus:contract/storage_object` (with host tests).
+- Early `storage_start` path in `root` (after `machine_parts_page_create` and before `start_policy_begin`, with no `Display` ring, no `text_settings_give`, `.Image` + `GRANT_VALUE_IMAGE_FILE_CHECK`, and optional `.Data_Disk` so diskless machines still serve the image tree), `start_grant.Grant.Read_Only_Trees`, `Service_Command.Tree_Grant`, and `storage` floor accounting in `tools/modustool/build/start_lists.odin`.
+- Decoupled `storage` startup (validates `IMGTREE1` before opening the data disk; serves image-tree calls when the disk is absent, unusable, or silent), live `map_object`, `pin_object`, `unpin_object`, and `list_pins` exports (copy-once read-only `Memory_Create` with `.Write`/`.Execute` stripped, lazy BLAKE3 verification under `Root_Service_At_Load`, `Principal_Locked`/`Principal_Reclaim` cache eviction and pin cleanup, and `collect_garbage`/`erase_versions` pin protection), and client wrappers in `modus:storage` (`objects.odin`).
+- First live consumer migration: `pointers` maps `pointer_themes/posy` and `pointer_themes/system` through `storage.map_object` using `Read_Only_Trees` and drops its `.Image` grant.
 
 Left:
 
-- Including `storage` in `start_list_floor_names` and dedicated `storage_start` path in `root`, connection-level read-only tree grants, and removing `resources.odin`, fixed-range delivery, and `Image` data lookups (`docs/ARCHITECTURE.md`, "U2b. Resources of the boot image"; [script_fonts.md](script_fonts.md); [glyphs_on_demand.md](glyphs_on_demand.md)).
-- Wiring the `storage` read-only object mapping and durable pin exports, machine-object budget pool, per-principal private pool, and `Principal_Locked`/`Principal_Reclaim` cache scrubbing into the live storage service.
-- Updating `compositor`, `unlock`, `manual`, and graphical clients to read objects through `storage`.
+- Removing `resources.odin`, fixed-range delivery, and `Image` data lookups (`docs/ARCHITECTURE.md`, "U2b. Resources of the boot image"; [script_fonts.md](script_fonts.md); [glyphs_on_demand.md](glyphs_on_demand.md)).
+- Updating `compositor`, `unlock`, `manual`, `text_settings`, and remaining graphical clients to read objects through `storage`, and wiring disk-backed private objects into `map_object`'s `Private_Principal` pool.

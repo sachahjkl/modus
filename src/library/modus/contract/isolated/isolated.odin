@@ -240,6 +240,38 @@ Service_Command :: enum u32 {
 	Principal_Storage_Key = 5, // values[0..3]: the storage key of the principal, after its identity.
 	Principal_Locked      = 6, // The session of the principal ended: the service erases its keys.
 	Principal_Reclaim     = 7, // values[0..3]: removed principal identifier, values[4]: slot. Mark its stores for keyless reclamation and reply on service completions.
+	Tree_Grant            = 8, // Storage only: values[0] is the call ring handle; values[1..6] hold a 48-byte NUL-padded read-only image subtree path (max 47 bytes).
+}
+
+// Format property: bytes carried in values[1..6] of Service_Command.Tree_Grant
+// (6 * 8 = 48 bytes, with the last byte always NUL so a path has at most 47 bytes).
+TREE_GRANT_PATH_STORAGE :: 48
+TREE_GRANT_PATH_LIMIT :: TREE_GRANT_PATH_STORAGE - 1
+
+// tree_grant_pack packs a read-only image subtree path into values[1..6] of a
+// Service_Command.Tree_Grant record. Returns false if path is empty or longer
+// than TREE_GRANT_PATH_LIMIT bytes.
+tree_grant_pack :: proc "contextless" (path: string) -> (words: [6]u64, ok: bool) {
+	if len(path) == 0 || len(path) > TREE_GRANT_PATH_LIMIT {
+		return {}, false
+	}
+	bytes: [TREE_GRANT_PATH_STORAGE]u8
+	copy(bytes[:len(path)], path)
+	return transmute([6]u64)bytes, true
+}
+
+// tree_grant_unpack reads the NUL-terminated subtree path from values[1..6] of
+// a Service_Command.Tree_Grant record into out and returns its length.
+tree_grant_unpack :: proc "contextless" (values: ^[7]u64, out: ^[TREE_GRANT_PATH_STORAGE]u8) -> int {
+	words := [6]u64{values[1], values[2], values[3], values[4], values[5], values[6]}
+	out^ = transmute([TREE_GRANT_PATH_STORAGE]u8)words
+	out[TREE_GRANT_PATH_LIMIT] = 0
+	for index in 0 ..< TREE_GRANT_PATH_STORAGE {
+		if out[index] == 0 {
+			return index
+		}
+	}
+	return TREE_GRANT_PATH_LIMIT
 }
 
 // In the call region, `start` is an offset. In a process, it is an address.

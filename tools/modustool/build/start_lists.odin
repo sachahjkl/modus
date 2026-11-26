@@ -513,6 +513,14 @@ start_list_floor_names :: proc(rows: []Start_List_Row, system_parts: []string, i
 	}
 	add(&names, "root")
 	add(&names, foundation.START_POLICY_MODULE)
+	// The root service starts storage before the start policy whenever the
+	// image holds it, so its floor is always part of the machine floor sum.
+	for name in image_modules {
+		if name == "storage" {
+			add(&names, "storage")
+			break
+		}
+	}
 	for part in system_parts {
 		renderer := false
 		for item in START_LIST_CONSOLE_RENDERERS {

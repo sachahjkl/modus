@@ -622,3 +622,29 @@ Principal_Reclaim_Stalled :: struct {
 milliseconds_field :: proc "contextless" (milliseconds: u64) -> value_kinds.Time_In_Milliseconds {
 	return value_kinds.Time_In_Milliseconds(milliseconds)
 }
+
+// The canonical boot-image tree manifest is validated and ready to serve
+// read-only object mappings.
+@(log_fact = "storage: image tree ready: {nodes} trees, {entries} entries")
+Image_Tree_Ready :: struct {
+	nodes:   u64,
+	entries: u64,
+}
+
+// The boot image or its image-tree manifest is absent or invalid.
+@(log_fact = "storage: image tree is unavailable (problem {problem})")
+Image_Tree_Unavailable :: struct {
+	problem: u64,
+}
+
+// The machine has no data disk; storage serves read-only image-tree objects
+// and refuses disk-store calls.
+@(log_fact = "storage: no data disk; serving read-only image tree only")
+Disk_Absent_Image_Tree_Serving :: struct {}
+
+// A boot-image object failed on-demand BLAKE3 verification under
+// File_Check.Root_Service_At_Load and was refused.
+@(log_fact = "storage: image object {index} failed hash check: refused")
+Image_Object_Hash_Failed :: struct {
+	index: u64,
+}

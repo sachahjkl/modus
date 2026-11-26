@@ -73,6 +73,7 @@ reclaim_cache_evict_store :: proc "contextless" (store_index: int) {
 	owned_checked[store_index] = 0
 	owned_min_generation[store_index] = 0
 	storage_mount.hash_index_clear_store(&opened, store_index)
+	storage_object_purge_store(u32(store_index))
 }
 
 // storage_principal_reclaim handles Service_Command.Principal_Reclaim from
@@ -86,6 +87,9 @@ storage_principal_reclaim :: proc "contextless" (svc: ^system.Service, tag: u32,
 		_ = system.send(&svc.names.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Argument_Refused), tag = tag})
 		return
 	}
+	// Evict all cached private objects and release all durable pins owned by
+	// this removed principal immediately so GC can reclaim its blocks.
+	storage_object_purge_principal(values[4], clear_pins = true)
 	if broken || disk_size == 0 || disk_silent {
 		_ = system.send(&svc.names.completions, ring.Record{kind = u32(call_outcome.Call_Outcome.Callee_Unavailable), tag = tag})
 		return

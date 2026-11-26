@@ -29,6 +29,7 @@ storage_principal_keys :: proc "contextless" (_: ^system.Service, command: isola
 		system.log_fact(.Info, Principal_Keys_Taken{slot = slot})
 	case .Erased:
 		owned_checks_clear(slot)
+		storage_object_purge_principal(slot, clear_pins = false)
 		system.log_fact(.Info, Principal_Keys_Erased{slot = slot})
 	}
 }

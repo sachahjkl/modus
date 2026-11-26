@@ -110,6 +110,24 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 		budget_unbounded     = budget_unbounded,
 	}
 	defer start_handles_close(&work)
+	// The storage service always starts through storage_start (no Display ring,
+	// no text_settings_give, optional Data_Disk). Refuse external callers and
+	// route internal starts through storage_start.
+	if is_role_holder(name, .Storage) {
+		if asker != nil || hold != .None || principal != principals.MACHINE {
+			return start_refuse(&work, .Grant_Or_Right_Missing, .Reserved, .None, 1)
+		}
+		outcome := storage_start(work.refusal)
+		if outcome == .Succeeded && place != nil {
+			for &item in started {
+				if item.process != 0 && item.service.head != nil && is_role_holder(system.name_of(item.name[:]), .Storage) {
+					place^ = &item
+					break
+				}
+			}
+		}
+		return outcome
+	}
 	// The holder of Settings is the one writer of the settings page: each
 	// start of it, by any caller, is decided here (text_settings.odin).
 	if is_role_holder(name, .Settings) && settings_start_decide(principal, .Other) != .Start {
@@ -238,23 +256,15 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Out
 			return needed_service_failed(work.refusal)
 		}
 	}
-	// A process with a store (and no Root_Ring to connect itself): the
-	// storage service starts first when the machine has a data disk, or when
-	// the caller asked for a named store. On a machine with no data disk, a
-	// regular process starts without storage handles so storage.open returns
-	// false instead of refusing the launch (src/md/features/missing_hardware.md).
-	if .Store in grants && .Root_Ring not_in grants && (.Data_Disk in machine_parts || work.store_override != "") {
-		running := false
-		for &item in started {
-			if item.process != 0 && item.service.head != nil && is_role_holder(system.name_of(item.name[:]), .Storage) {
-				running = true
-			}
-		}
-		if !running {
-			// The record of that start is the record of this one.
-			if outcome := start(role_holder_name(.Storage), refusal = work.refusal); outcome != .Succeeded {
-				return needed_service_failed(work.refusal)
-			}
+	// A process with a store or read-only image trees (and no Root_Ring to
+	// connect itself): the storage service starts first. A process with
+	// Read_Only_Trees always needs storage (even without a data disk); a
+	// process with Store alone starts without storage handles on a diskless
+	// machine so storage.open returns false instead of refusing the launch
+	// (src/md/features/missing_hardware.md, src/md/features/objects_by_hash.md).
+	if (.Read_Only_Trees in grants || (.Store in grants && (.Data_Disk in machine_parts || work.store_override != ""))) && .Root_Ring not_in grants {
+		if outcome := storage_start(work.refusal); outcome != .Succeeded {
+			return needed_service_failed(work.refusal)
 		}
 	}
 	// A client of a block service: the service of its disk starts first.
@@ -476,13 +486,18 @@ start_values_of_the_name :: proc "contextless" (work: ^Start_Work) {
 	}
 }
 
-// start_store_give connects the process to its private store, in its
-// context: the call ring, the call region, the storage service with the
-// right Read, and its file. A process with Root_Ring connects to the
-// storage service itself.
+// start_store_give connects the process to the storage service in its context:
+// the call ring, the call region, the storage service with the right Read, and
+// its file. A process with Read_Only_Trees receives a connection even on a
+// diskless machine; a process with Root_Ring connects itself.
 start_store_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outcome {
 	grants := work.start_grant_set.grants
-	if .Store not_in grants || .Root_Ring in grants || (.Data_Disk not_in machine_parts && work.store_override == "") {
+	if .Root_Ring in grants {
+		return .Succeeded
+	}
+	wants_trees := .Read_Only_Trees in grants
+	wants_store := .Store in grants && (.Data_Disk in machine_parts || work.store_override != "")
+	if !wants_trees && !wants_store {
 		return .Succeeded
 	}
 	storage_service: ^Started
@@ -868,4 +883,90 @@ start_finish :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outc
 	}
 	started_log(work.name, work.principal, false)
 	return .Succeeded
+}
+
+// storage_start starts the storage service early (before the start policy) or
+// on demand without a Display ring and without text_settings_give. It gives
+// storage the read-only boot image, the boot File_Check mode, its service ring
+// and file, and the optional block driver handles when Data_Disk is present on
+// the machine (src/md/features/objects_by_hash.md).
+storage_start :: proc "contextless" (refusal: ^[7]u64 = nil) -> call_outcome.Call_Outcome {
+	name := role_holder_name(.Storage)
+	for &item in started {
+		if item.process != 0 && item.service.head != nil && is_role_holder(system.name_of(item.name[:]), .Storage) {
+			return .Succeeded
+		}
+	}
+	own_refusal: [7]u64
+	work := Start_Work {
+		name      = name,
+		principal = principals.MACHINE,
+		refusal   = refusal != nil ? refusal : &own_refusal,
+	}
+	defer start_handles_close(&work)
+	handles_room_make(start_handles_needed())
+	for &item in system.image_entries(image) {
+		if system.name_of(item.name[:]) == name && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
+			if !image_entry_give(&item) {
+				return start_refuse(&work, .Data_Damaged, .Damaged, .Modules, 1)
+			}
+			work.file = image[item.offset:][:item.size]
+			work.entry = &item
+			break
+		}
+	}
+	if len(work.file) == 0 {
+		return start_refuse(&work, .Nothing_Has_That_Name, .Absent, .Modules, 1)
+	}
+	work.start_grant_set = start_grant_set_of(role_policy.grant_row_name_of_module(&role_holder_names, name))
+	if slot, twice := system.start_grant_set_slot_taken_twice(work.start_grant_set.grants); twice {
+		grant_slot_refused(name, slot)
+		return start_refuse(&work, .Data_Damaged, .Damaged, .Records, 0, i64(slot))
+	}
+	// Start the block driver only when the machine has a data disk; on a
+	// diskless machine storage starts with no block handles and serves the
+	// read-only image tree.
+	if .Data_Disk in work.start_grant_set.grants && .Data_Disk in machine_parts {
+		driver_status: call_outcome.Call_Outcome
+		work.driver, work.device_ring, driver_status = driver_start(pci.Place{device = pci.DATA_DISK_DEVICE}, DRIVER_BLOCK)
+		if driver_status != .Succeeded {
+			start_abandon(&work)
+			return start_kernel_refused(&work, driver_status)
+		}
+	}
+	if outcome := start_place_take(&work); outcome != .Succeeded {
+		start_abandon(&work)
+		return outcome
+	}
+	if work.device_ring != 0 {
+		start_grant_put(&work, .Device_Ring, {work.device_ring, {.Read, .Write}})
+	}
+	if work.driver != nil && work.driver.process != 0 {
+		start_grant_put(&work, .Device_Service, {work.driver.process, {.Read}})
+	}
+	start_grant_put(&work, .Log, log_grant(work.start_grant_set))
+	if .Image in work.start_grant_set.grants {
+		start_grant_put(&work, .Image, {image_memory, {.Read}})
+		system.value_put(&work.values, system.GRANT_VALUE_IMAGE_SIZE, u64(len(image)))
+		system.value_put(&work.values, system.GRANT_VALUE_IMAGE_FILE_CHECK, u64(trust_file_check))
+	}
+	date_page_give(work.mappings[:], &work.mapping_count, &work.values)
+	fresh_bytes_page_give(work.slot, work.mappings[:], &work.mapping_count, &work.values)
+	measure_run_value_give(&work.values)
+	plan_values_page_give(work.slot, work.name, work.mappings[:], &work.mapping_count, &work.values)
+	if outcome := start_service_give(&work); outcome != .Succeeded {
+		start_abandon(&work)
+		return outcome
+	}
+	if work.mappings_full {
+		start_abandon(&work)
+		return start_refuse(&work, .Budget_Or_Capacity_Exhausted, .Full, .Records, 0, 0, START_MAPPING_LIMIT)
+	}
+	if outcome := start_process_load(&work); outcome != .Succeeded {
+		start_abandon(&work)
+		return outcome
+	}
+	start_wiring_keep(&work)
+	wide_grant_process_started(work.slot)
+	return start_finish(&work)
 }

@@ -306,6 +306,7 @@ may_name_store :: proc "contextless" (caller: ^Caller, store_name: string) -> bo
 // connection whose ring has the same handle starts with none of them.
 connection_ended :: proc "contextless" (_: ^system.Service, connection: ^system.Connection) {
 	holder := connection.ring_memory
+	connection_tree_grants_clear(holder)
 	pending_drop_of(holder)
 	for &item in places {
 		if item.holder == holder {
@@ -643,12 +644,17 @@ list :: proc "c" (place: i64, after: ^string, rows: ^system.Table_To_Append(List
 		return lookup_refusal(lookup, error, 1), 0
 	}
 	work := tree.Work{pool = &reading_pool, source = &node_source, shape = tree.TREE_SHAPE, root = root_node}
+	initial_rows := rows.count
+	initial_names := names.count
 	written: i64
 	for rows.count < rows.capacity {
 		key: Entry_Name
 		value: Entry
 		if !tree.first_from(&work, cursor[:], from_after, key[:], entry_bytes(&value)) {
 			if reading_pool.failure != .None {
+				// Restore counts so the client does not receive partial rows on refusal.
+				rows.count = initial_rows
+				names.count = initial_names
 				return lookup_refusal(reading_outcome(store_index), error, 1), 0
 			}
 			break
@@ -1406,61 +1412,103 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service.disconnected = connection_ended
 	service.principal_keys = storage_principal_keys // principal_keys.odin
 	service.principal_reclaim = storage_principal_reclaim // reclaim.odin
+	service.tree_grant = storage_tree_grant // object_cache_wiring.odin
+	// Initialize the read-only object cache, durable pin table, and boot-image
+	// tree manifest BEFORE opening any data disk so image-tree objects serve
+	// immediately even on diskless machines or with an unusable disk.
+	storage_object_cache_init()
+	storage_image_tree_init(ctx)
 	ring_memory := ctx.handles[block.GRANT_RING]
-	status: call_outcome.Call_Outcome
-	if blocks, status = system.ring_open(ring_memory); status != .Succeeded {
-		system.log_fact(.Error, No_Block_Ring{})
-		system.stop(.Failed)
-	}
-	block_service = ctx.handles[block.GRANT_SERVICE]
-	if kind, rights, _ := system.handle_state(block_service); kind != .Process || .Read not_in rights {
-		system.log_fact(.Error, No_Block_Service_Handle{})
-		system.stop(.Failed)
-	}
-	memory, memory_status := system.memory_create(REGION_BLOCKS, 0, {.Contiguous}) // The device reads and writes it.
-	address, map_status := system.memory_map(memory, {.Write})
-	if memory_status != .Succeeded || map_status != .Succeeded {
-		system.log_fact(.Error, No_Data_Region{})
-		system.stop(.Failed)
-	}
-	region = ([^]u8)(address)
-	// The block service maps the ring when it starts.
-	given: system.Handle
-	give_status := call_outcome.Call_Outcome.Argument_Refused
-	for attempt := 0; attempt < 2000 && give_status != .Succeeded; attempt += 1 {
-		if given, give_status = system.give(ring_memory, memory, {.Read, .Write}); give_status != .Succeeded {
-			system.sleep(system.time() + 1)
-		}
-	}
-	// A block service that stopped before it mapped the ring: the disk is
-	// silent, as at a stop during a wait.
-	if give_status != .Succeeded {
-		if state, _, _ := system.process_state(block_service); system.answer_wait_of(system.time(), system.WAIT_FOREVER, state) == .Stopped {
-			disk_silence_note(.Block_Service_Stopped)
-		}
-	}
-	// A silent disk wrote its own line: the block service stopped before it
-	// served, or did not answer. The service then does not stop: a stop
-	// would make the root service start it again for the next process with
-	// a store, with a new block service, a reset of a device that still
-	// holds a request, a new wait and new lines; and the device can still
-	// write the data region, which a stop would free. It serves on, and
-	// refuses each call with Device (disk_unopened_refusal).
-	if give_status != .Succeeded || command(.Attach, {0 = u64(given)}).kind != u32(call_outcome.Call_Outcome.Succeeded) {
-		if !disk_silent {
-			system.log_fact(.Error, Data_Region_Refused{})
+	if ring_memory == 0 {
+		// No data disk on this machine: readiness.disk_state stays .Absent.
+		if !readiness.image_tree_ready {
+			system.log_fact(.Error, No_Block_Ring{})
 			system.stop(.Failed)
 		}
-	}
-	if !disk_silent {
+		system.log_fact(.Info, Disk_Absent_Image_Tree_Serving{})
+	} else {
+		// Advance to .Opening as soon as a block ring handle is present so any
+		// early setup failure transitions cleanly into .Unusable or .Silent.
 		disk_state_advance(.Begin_Open)
-		disk_open()
+		status: call_outcome.Call_Outcome
+		if blocks, status = system.ring_open(ring_memory); status != .Succeeded {
+			system.log_fact(.Error, No_Block_Ring{})
+			if !readiness.image_tree_ready {
+				system.stop(.Failed)
+			}
+			disk_state_advance(.Open_Unusable)
+			broken = true
+		} else {
+			block_service = ctx.handles[block.GRANT_SERVICE]
+			if kind, rights, _ := system.handle_state(block_service); kind != .Process || .Read not_in rights {
+				system.log_fact(.Error, No_Block_Service_Handle{})
+				if !readiness.image_tree_ready {
+					system.stop(.Failed)
+				}
+				disk_state_advance(.Open_Unusable)
+				broken = true
+			} else {
+				memory, memory_status := system.memory_create(REGION_BLOCKS, 0, {.Contiguous}) // The device reads and writes it.
+				address: rawptr
+				map_status := call_outcome.Call_Outcome.Argument_Refused
+				if memory_status == .Succeeded {
+					address, map_status = system.memory_map(memory, {.Write})
+				}
+				if memory_status != .Succeeded || map_status != .Succeeded {
+					if memory_status == .Succeeded && memory != 0 {
+						system.close(memory)
+					}
+					system.log_fact(.Error, No_Data_Region{})
+					if !readiness.image_tree_ready {
+						system.stop(.Failed)
+					}
+					disk_state_advance(.Open_Unusable)
+					broken = true
+				} else {
+					region = ([^]u8)(address)
+					// The block service maps the ring when it starts.
+					given: system.Handle
+					give_status := call_outcome.Call_Outcome.Argument_Refused
+					for attempt := 0; attempt < 2000 && give_status != .Succeeded; attempt += 1 {
+						if given, give_status = system.give(ring_memory, memory, {.Read, .Write}); give_status != .Succeeded {
+							system.sleep(system.time() + 1)
+						}
+					}
+					// A block service that stopped before it mapped the ring: the disk is
+					// silent, as at a stop during a wait.
+					if give_status != .Succeeded {
+						if state, _, _ := system.process_state(block_service); system.answer_wait_of(system.time(), system.WAIT_FOREVER, state) == .Stopped {
+							disk_silence_note(.Block_Service_Stopped)
+						}
+					}
+					// A silent disk wrote its own line: the block service stopped before it
+					// served, or did not answer. The service then does not stop: it serves
+					// image-tree calls and refuses disk-store calls via disk_unopened_refusal.
+					attach_ok := give_status == .Succeeded && command(.Attach, {0 = u64(given)}).kind == u32(call_outcome.Call_Outcome.Succeeded)
+					if !attach_ok {
+						if !disk_silent {
+							system.memory_unmap(address)
+							system.close(memory)
+							region = nil
+							system.log_fact(.Error, Data_Region_Refused{})
+							if !readiness.image_tree_ready {
+								system.stop(.Failed)
+							}
+							disk_state_advance(.Open_Unusable)
+							broken = true
+						}
+					} else if !disk_silent {
+						disk_open()
+					}
+				}
+			}
+		}
 	}
 	// A removal that waits runs when no call waits, and a step of a repair
 	// after each round of calls; a run of a recount starts when no call and
 	// no removal waits; a service that makes no change runs none, and waits.
 	for {
-		if broken || !removal_waits() && !reclaim_waits() && !repair_waits() && !recount_waits() {
+		if !disk_opened || broken || !removal_waits() && !reclaim_waits() && !repair_waits() && !recount_waits() {
 			wait: system.Wait
 			system.service_wait(&wait, &service)
 			for &item in shares {
@@ -1475,18 +1523,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			retention_rule_read(ctx)
 		}
 		calls := storage_serve_pass()
-		if calls > 0 {
-			repair_call_came()
-		}
-		// A step of a repair runs after each round of calls, so a service
-		// that is never idle still ends its repair; a removal or orphaned
-		// store reclamation runs when no call waits, and a run of a recount
-		// when none of those wait either.
-		if repair_waits() {
-			repair_step()
-		} else if calls == 0 {
-			if !removal_step() && !reclaim_step() && recount_waits() {
+		if disk_opened && !broken {
+			if calls > 0 {
+				repair_call_came()
+			}
+			// A step of a repair runs after each round of calls, so a service
+			// that is never idle still ends its repair; a removal or orphaned
+			// store reclamation runs when no call waits, and a run of a recount
+			// when none of those wait either.
+			if repair_waits() {
 				repair_step()
+			} else if calls == 0 {
+				if !removal_step() && !reclaim_step() && recount_waits() {
+					repair_step()
+				}
 			}
 		}
 	}
@@ -1535,18 +1585,34 @@ disk_open :: proc "contextless" () {
 	case mounted.failed && mounted.no_memory:
 		disk_state_advance(.Open_Unusable)
 		// The open said why: No_Table_Memory.
+		if readiness.image_tree_ready {
+			broken = true
+			return
+		}
 		system.stop(.Failed)
 	case mounted.failed && mounted.older_format:
 		disk_state_advance(.Open_Unusable)
 		system.log_fact(.Error, Disk_Of_An_Older_Format{})
+		if readiness.image_tree_ready {
+			broken = true
+			return
+		}
 		system.stop(.Failed)
 	case mounted.failed && mounted.larger_than_capacity:
 		disk_state_advance(.Open_Unusable)
 		system.log_fact(.Error, Root_Larger_Than_Tables{used_blocks = blocks_field(table_blocks_held)})
+		if readiness.image_tree_ready {
+			broken = true
+			return
+		}
 		system.stop(.Failed)
 	case mounted.failed:
 		disk_state_advance(.Open_Unusable)
 		system.log_fact(.Error, No_Valid_Root{})
+		if readiness.image_tree_ready {
+			broken = true
+			return
+		}
 		system.stop(.Failed)
 	case mounted.needs_format:
 		if mounted.first_cut {

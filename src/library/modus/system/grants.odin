@@ -150,6 +150,10 @@ GRANT_VALUE_STORAGE_FILE_SIZE :: 3
 // The value 4 of a per-principal service (`module_files`, `collector`): the
 // principal of its store (modus:disk_process; modus:contract/wide_grants).
 GRANT_VALUE_SERVICE_PRINCIPAL :: 4
+// The value 4 of the storage service: the boot File_Check mode
+// (modus:contract/boot_info.File_Check), so storage verifies boot-image object
+// hashes on first demand when the boot program did not hash the image files.
+GRANT_VALUE_IMAGE_FILE_CHECK :: 4
 // The value 4 of a terminal: its columns.
 GRANT_VALUE_TERMINAL_COLUMNS :: 4
 // The values 5 to 8 of the collector: the authority key of the wide grants

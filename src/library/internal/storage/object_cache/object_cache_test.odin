@@ -447,3 +447,51 @@ durable_pin_accounting_and_gc_protection :: proc(t: ^testing.T) {
 	testing.expect(t, !is_pinned(&pins, 9, h3))
 	testing.expect(t, is_pinned(&pins, 7, h2)) // principal 1 unaffected
 }
+
+// Scoped pin listing enforces strict principal and store isolation: principal 0
+// never observes named principals' pins, and a non-principal caller observes
+// only pins of its own store, never another store of its principal.
+@(test)
+pins_list_scoped_isolates_principals_and_stores :: proc(t: ^testing.T) {
+	pins: Pin_Table
+	pin_table_init(&pins, 8)
+
+	h_p0_s1 := test_hash(31)
+	h_p0_s2 := test_hash(32)
+	h_p1_s3 := test_hash(33)
+	h_p1_s4 := test_hash(34)
+
+	_, r1 := pin_add(&pins, 0, 1, h_p0_s1)
+	_, r2 := pin_add(&pins, 0, 2, h_p0_s2)
+	_, r3 := pin_add(&pins, 1, 3, h_p1_s3)
+	_, r4 := pin_add(&pins, 1, 4, h_p1_s4)
+	testing.expect(t, r1 == .Ok && r2 == .Ok && r3 == .Ok && r4 == .Ok)
+
+	out: [8]Pin_Info
+	// Principal 0 acting for principal 0 sees only principal 0's 2 stores, never principal 1.
+	w0, t0 := pins_list_scoped(&pins, 0, false, 0, out[:])
+	testing.expect_value(t, w0, 2)
+	testing.expect_value(t, t0, 2)
+	for i in 0 ..< w0 {
+		testing.expect_value(t, out[i].principal_id, u64(0))
+	}
+
+	// Non-principal caller of principal 0 in store 1 sees ONLY store 1 (never store 2).
+	w0_s1, t0_s1 := pins_list_scoped(&pins, 0, true, 1, out[:])
+	testing.expect_value(t, w0_s1, 1)
+	testing.expect_value(t, t0_s1, 1)
+	testing.expect_value(t, out[0].store_index, u32(1))
+	testing.expect_value(t, out[0].hash, h_p0_s1)
+
+	// Non-principal caller of principal 1 in store 3 sees ONLY store 3 (never store 4 or principal 0).
+	w1_s3, t1_s3 := pins_list_scoped(&pins, 1, true, 3, out[:])
+	testing.expect_value(t, w1_s3, 1)
+	testing.expect_value(t, t1_s3, 1)
+	testing.expect_value(t, out[0].principal_id, u64(1))
+	testing.expect_value(t, out[0].store_index, u32(3))
+
+	// Bounded output (len == 0) still reports exact total matching count.
+	w_zero, t_zero := pins_list_scoped(&pins, 1, false, 0, out[:0])
+	testing.expect_value(t, w_zero, 0)
+	testing.expect_value(t, t_zero, 2)
+}

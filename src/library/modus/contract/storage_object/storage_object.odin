@@ -9,7 +9,7 @@
 //
 // This is a contract package: it imports base and contract packages only,
 // calls no kernel operation, and allocates no memory.
-package storage_object
+package storage_object_contract
 
 import "modus:contract/blake3"
 import "modus:contract/byte_order"

@@ -356,6 +356,9 @@ call_answer :: proc "contextless" (client: ^Client, sent: ^Sent_Call, arguments:
 		// of the service, or Answer_Unreadable for a word that names none.
 		answer, ended, record := isolated.answer_of_completion(completion)
 		if ended != .Succeeded {
+			// Copy back any Append buffers written before refusal (for example
+			// Map_Object_Answer and Ambiguity_Table on map_object refusal).
+			_, _ = isolated.tables_return(client.file, sent.function, arguments, client.region, sent.offset)
 			if error != nil {
 				error^ = record
 			}

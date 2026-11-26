@@ -37,10 +37,16 @@ Start_Grant_Set :: struct {
 // place that no row uses.
 CALLABLE_LIMIT :: 10
 
+// The read-only image-tree subtrees granted to a process on its storage
+// connection: inline capacity sized for consumers needing up to four subtrees
+// (for example pointer themes, fonts, and documentation trees).
+READ_ONLY_TREE_LIMIT :: 4
+
 // The parts of a start grant set that are not start grants. Zero is the start grant set of a
 // process that needs none of them.
 Start_Grant_Set_Terms :: struct {
 	callable:         [CALLABLE_LIMIT]string, // With the grant Connect: the services that it can connect to.
+	read_only_trees:  [READ_ONLY_TREE_LIMIT]string, // With the grant Read_Only_Trees: read-only image-tree subtrees granted on its storage connection.
 	store_blocks:     u64, // With the grant Store: the blocks of its private store. 0: STORE_BLOCKS_DEFAULT.
 	log_gives:        bool, // The log with the right Give: it gives the log to the processes that it starts.
 	store_gives:      bool, // With the grant Store: the storage service with the right Give: it gives it to the processes that it starts with a share of its store.
@@ -159,8 +165,9 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	{name = "clock", scope = .Session, grants = {.Connect, .Image}, terms = {callable = {0 = "compositor"}}},
 	// It shows what the kernel refuses.
 	{name = "rights", scope = .Session, grants = {.Inspect, .Image}},
-	// It reads the pointer themes in the resource table of the boot image.
-	{name = "pointers", scope = .Session, grants = {.Image}},
+	// It maps the pointer themes from the read-only image tree through the
+	// storage service without holding a handle to the whole boot image.
+	{name = "pointers", scope = .Session, grants = {.Read_Only_Trees}, terms = {read_only_trees = {0 = "pointer_themes"}}},
 	// It serves records(): the whole log to a caller that acts for the
 	// principal, its own records to each other caller. The boot image is
 	// the catalog in which its window finds the module file of a log fact,
@@ -273,10 +280,11 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// The client of the test of the IOMMU: its device service on the disk
 	// of the measures is the test device service iommu_device.
 	{name = "iommu", scope = .Session, grants = {.Scratch_Disk}},
-	// It is the one client of the block service of the data disk, and it
-	// serves a private store to each caller with the grant Store. It starts
-	// at the first connection to it.
-	{name = "storage", scope = .Machine, grants = {.Serve, .Data_Disk}, terms = {on_demand = true}},
+	// It serves read-only boot-image objects from the canonical image tree
+	// and is the one client of the block service of the data disk, serving
+	// a private store to each caller with the grant Store. The root service
+	// starts it early before the start policy, with or without a data disk.
+	{name = "storage", scope = .Machine, grants = {.Serve, .Image, .Data_Disk}, terms = {on_demand = true}},
 	// The holder of the role Plans: the generations of the plan of each
 	// principal in its private store, the boot image and a connection to the
 	// trusted display for the difference that the principal sees, and the

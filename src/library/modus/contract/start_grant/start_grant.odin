@@ -69,6 +69,7 @@ Grant :: enum i64 {
 	Recount            = 34, // Ask the storage service for a recount of the count tree of its disk (isolated.CALLER_RECOUNTS), which refuses each change while it walks each store: the console of the person (docs/STORAGE.md, "3.5 The count tree").
 	Grants_Manage      = 35, // A root ring restricted to reading and revoking active process grants, active wide grants, and remembered disk grants (Disallow only) of the caller's own principal session (src/md/features/grants_window.md).
 	Open_Editor        = 36, // A root ring restricted to launching `edit` on an object of a store belonging to the caller's own principal session (Root_Command.Start_Edit; src/md/features/store_explorer.md).
+	Read_Only_Trees    = 37, // A connection to the storage service with connection-level read-only image-tree subtree grants and no private store unless Store is also granted (src/md/features/objects_by_hash.md).
 }
 
 // The name of each start grant, as the log of the root service and the
@@ -112,6 +113,7 @@ GRANT_NAMES := [Grant]string {
 	.Recount            = "Recount",
 	.Grants_Manage      = "Grants_Manage",
 	.Open_Editor        = "Open_Editor",
+	.Read_Only_Trees    = "Read_Only_Trees",
 }
 
 // grant_name gives the name of the start grant with a number, and says if

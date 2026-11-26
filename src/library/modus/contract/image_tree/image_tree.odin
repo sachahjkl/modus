@@ -208,6 +208,7 @@ Ambiguity_Match :: struct {
 	grant_index:       int,
 	tree_name:         string,
 	image_entry_index: u32,
+	size:              u64,
 	hash:              blake3.Hash,
 }
 
@@ -983,6 +984,19 @@ lookup_in_grants :: proc "contextless" (
 
 	for grant, grant_index in grants {
 		entry, kind, found := resolve_from_node(manifest, header, pool_start, grant.root_node, path)
+		if !found && grant.root_node != ROOT_NODE && len(grant.tree_name) > 0 {
+			// Accept a path qualified by this grant's own subtree prefix
+			// (for example "pointer_themes/posy" against a "pointer_themes"
+			// grant) without letting the lookup escape the granted subtree.
+			if path == grant.tree_name {
+				saw_subtree = true
+				continue
+			}
+			prefix_len := len(grant.tree_name)
+			if len(path) > prefix_len + 1 && path[:prefix_len] == grant.tree_name && path[prefix_len] == '/' {
+				entry, kind, found = resolve_from_node(manifest, header, pool_start, grant.root_node, path[prefix_len + 1:])
+			}
+		}
 		if !found {
 			continue
 		}
@@ -995,6 +1009,7 @@ lookup_in_grants :: proc "contextless" (
 					grant_index       = grant_index,
 					tree_name         = grant.tree_name,
 					image_entry_index = entry.target_index,
+					size              = entry.size,
 					hash              = entry.hash,
 				}
 			}

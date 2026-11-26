@@ -1,6 +1,6 @@
 #+build !freestanding
 #+build !modus
-package storage_object
+package storage_object_contract
 
 import "core:testing"
 import "modus:contract/blake3"

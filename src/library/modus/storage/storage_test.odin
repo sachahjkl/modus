@@ -112,3 +112,18 @@ a_late_answer_clears_the_late_call_once :: proc(t: ^testing.T) {
 	testing.expect(t, !late_answer_is(&client, 7))
 	testing.expect(t, !client.gone)
 }
+
+// Handle words returned by map_object are validated at the border: zero,
+// negative values, and values past u32 are refused; valid handle numbers pass.
+@(test)
+map_object_handle_border_refuses_out_of_range_words :: proc(t: ^testing.T) {
+	refused := [?]i64{min(i64), -1, 0, i64(max(u32)) + 1, max(i64)}
+	for word in refused {
+		h, ok := map_object_handle_of_word(word)
+		testing.expectf(t, !ok && h == 0, "word %d must be refused as a handle", word)
+	}
+	for word in ([?]i64{1, 42, i64(max(u32))}) {
+		h, ok := map_object_handle_of_word(word)
+		testing.expectf(t, ok && h == system.Handle(word), "word %d must map to its handle", word)
+	}
+}

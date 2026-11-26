@@ -29,6 +29,9 @@ import "modus:system"
 
 // The boot record, read once: about 2.5 KiB, kept out of the stack.
 trust_boot_report: op.Boot_Report
+// The accepted File_Check mode of the boot image, passed to storage so it
+// verifies boot-image object hashes on first demand under Root_Service_At_Load.
+trust_file_check: info.File_Check
 // The entries of the boot image whose bytes have the hash of their entry:
 // every entry after the check at the start, or each one at its first use.
 // The loads of this service (load_source) and resource_mapping read it.
@@ -104,6 +107,7 @@ trust_check :: proc "contextless" () {
 	if decision != .Accepted {
 		fail(info.trust_decision_sentences[decision], .Wrong_State)
 	}
+	trust_file_check = file_check
 	description, _, found := system_description.trust_resources(image)
 	if !found {
 		fail("the boot image has no system description", .Wrong_State)

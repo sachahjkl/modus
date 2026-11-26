@@ -3,10 +3,11 @@
 // each of its forms (the light form on a light track), its hot spot marked,
 // its frames, and the theme with its license and its attribution.
 //
-// The process has the boot image, read-only. It finds the pointer theme
-// files in the resource table, checks the hash of each one against its
-// entry (the identity of a file is the hash of its content), validates it
-// with the validation of the compositor,
+// The process holds a read-only storage grant for the `pointer_themes` image
+// subtree, without holding a handle to the whole boot image. It maps each
+// pointer theme file through `storage.map_object`, checks the hash of each one
+// against the hash returned by storage (the identity of a file is the hash of
+// its content), validates it with the validation of the compositor,
 // and shows one theme at a time: a button for each theme, the theme of the
 // system first, changes the theme. The window
 // is built with the interface package; the pointer pictures are drawn into
@@ -25,9 +26,10 @@
 //
 // **Grants**, as the root service gives them:
 //
-// - **Image**: the boot image, read-only, for the resource table and the
-//   bytes of each theme. With no image it writes "pointers: no boot image"
-//   and stops with `Failed`.
+// - **Read_Only_Trees** (`pointer_themes`): a connection to the storage
+//   service with read-only access to the `pointer_themes` image subtree. With
+//   no storage connection it writes "pointers: no boot image" and stops with
+//   `Failed`.
 //
 // **What a reader sees**: the tiles of one theme; a button for each theme
 // changes the theme, and a press writes "pointers: the theme NAME is
@@ -48,6 +50,7 @@ import "modus:contract/value_kinds"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:storage"
 import "modus:system"
 
 // The glyph memory of its own copy of the text rendering (354 pages,
@@ -71,15 +74,28 @@ PICTURE_TOP :: 56 // The pictures, in a tile, under two lines of the name and a 
 NAME_LIMIT :: (TILE_WIDTH - 16) / 8 // The characters of a line of a tile.
 THEME_CAPACITY :: 4
 
-// A theme file of the boot image that the process checked.
+// A theme file mapped read-only from storage that the process checked.
 Theme :: struct {
 	resource:   string,
+	mapped:     storage.Mapped_Object,
 	file:       []u8,
 	hash:       [32]u8,
 	valid:      bool,
 	problem:    [256]u8, // The sentence of the problem when it is not valid.
 	problem_count: int,
 	check_time: u64, // Nanoseconds: the hash and the validation.
+}
+
+// Exact image-tree paths mapped through storage, in compositor preference order.
+Theme_Target :: struct {
+	resource: string, // Display and log label matching pointer_pictures.RESOURCE_PREFERENCE.
+	path:     string, // Exact '/' object path in the granted pointer_themes subtree.
+}
+
+@(rodata)
+THEME_TARGETS := [?]Theme_Target {
+	{resource = pointer_pictures.RESOURCE_OF_THE_OWNER, path = "pointer_themes/posy"},
+	{resource = pointer_pictures.RESOURCE_OF_THE_SYSTEM, path = "pointer_themes/system"},
 }
 
 themes: [THEME_CAPACITY]Theme
@@ -350,50 +366,52 @@ frame_draw :: proc "contextless" (window: ^display.Window) -> u64 {
 	return system.nanoseconds() - start
 }
 
-// The entry of pointers: it checks each pointer theme of the boot image,
-// then shows them until the principal closes the window.
+// The entry of pointers: it checks each pointer theme mapped read-only through
+// the storage service, then shows them until the principal closes the window.
 //
-// It maps the boot image, read-only, and takes the themes in the order in
-// which the compositor prefers them. For each theme it computes the hash,
-// compares it with the entry of the resource, validates the file with the
-// validation of the compositor, and writes one line on the log. With no
-// theme it stops with `Failed`; with no window it stops with `Failed`.
-// Then it draws, and draws again after each event that changes the window.
+// It opens its storage connection (Read_Only_Trees for `pointer_themes`) and
+// maps the themes in the order in which the compositor prefers them. For each
+// theme it computes the hash, compares it with the hash returned by storage,
+// validates the file with the validation of the compositor, and writes one
+// line on the log. With no theme it stops with `Failed`; with no window it
+// stops with `Failed`. Then it draws, and draws again after each event that
+// changes the window.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	image_handle := ctx.handles[system.GRANT_IMAGE]
-	image_size := ctx.values[system.GRANT_VALUE_IMAGE_SIZE]
-	address, status := system.memory_map(image_handle, {}) // Read only.
-	if status != .Succeeded || image_size == 0 {
+	client, storage_ok := storage.open(ctx)
+	if !storage_ok {
 		system.log_fact(.Info, No_Boot_Image{})
 		system.stop(.Failed)
 	}
-	image := ([^]u8)(address)[:image_size]
 	// The themes, in the order in which the compositor prefers them.
-	for name in pointer_pictures.RESOURCE_PREFERENCE {
-		entry := system.image_resource_find(image, name)
-		if entry == nil || theme_count == THEME_CAPACITY {
+	for target in THEME_TARGETS {
+		if theme_count == THEME_CAPACITY {
+			break
+		}
+		mapped, _, map_status, _ := storage.map_object(&client, target.path)
+		if map_status != .Ok {
 			continue
 		}
 		theme := &themes[theme_count]
 		theme_count += 1
-		theme.resource = name
-		theme.file = image[entry.offset:][:entry.size]
+		theme.resource = target.resource
+		theme.mapped = mapped
+		theme.file = mapped.bytes
 		start := system.nanoseconds()
 		theme.hash = blake3.hash(theme.file)
 		problem := pointer_pictures.validate(theme.file)
 		theme.check_time = system.nanoseconds() - start
-		theme.valid = theme.hash == entry.hash && problem.kind == .None
-		if theme.hash != entry.hash {
+		theme.valid = theme.hash == mapped.hash && problem.kind == .None
+		if theme.hash != mapped.hash {
 			theme.problem_count = copy(theme.problem[:], "the bytes do not have the hash of the entry of the resource")
 		} else if problem.kind != .None {
 			theme.problem_count = len(pointer_pictures.sentence(problem, theme.problem[:]))
 		}
 		if theme.valid {
 			head := pointer_pictures.header(theme.file)
-			system.log_fact(.Info, Theme_Valid{shapes = u64(head.shape_count), pictures = u64(head.picture_count), file_size = value_kinds.Size_In_Bytes(entry.size), check = value_kinds.Time_In_Microseconds(theme.check_time / 1000), theme = resource_field(name), theme_name = theme_text_field(pointer_pictures.text_of(head.theme_name[:])), license = theme_text_field(pointer_pictures.text_of(head.license[:]))})
+			system.log_fact(.Info, Theme_Valid{shapes = u64(head.shape_count), pictures = u64(head.picture_count), file_size = value_kinds.Size_In_Bytes(mapped.size), check = value_kinds.Time_In_Microseconds(theme.check_time / 1000), theme = resource_field(target.resource), theme_name = theme_text_field(pointer_pictures.text_of(head.theme_name[:])), license = theme_text_field(pointer_pictures.text_of(head.license[:]))})
 		} else {
-			theme_not_valid_log(name, theme.hash != entry.hash, problem)
+			theme_not_valid_log(target.resource, theme.hash != mapped.hash, problem)
 		}
 	}
 	if theme_count == 0 {

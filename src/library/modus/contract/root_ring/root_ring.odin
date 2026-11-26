@@ -1161,7 +1161,7 @@ start_grant_set_handles :: proc "contextless" (start_grant_set: bit_set[start_gr
 	if .Clock in start_grant_set {
 		handles += {.Date_Page, .Date_Ports}
 	}
-	if .Store in start_grant_set && .Root_Ring not_in start_grant_set {
+	if (.Store in start_grant_set || .Read_Only_Trees in start_grant_set) && .Root_Ring not_in start_grant_set {
 		handles += {.Storage_Ring, .Storage_Region, .Storage_Service}
 	}
 	if .Replacements in start_grant_set {

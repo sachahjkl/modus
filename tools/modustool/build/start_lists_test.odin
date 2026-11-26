@@ -455,6 +455,17 @@ the_floors_of_the_least_machine_hold_each_start_of_the_root_service :: proc(t: ^
 	// processes and no renderer are counted before it.
 	_, problem := start_list_floors(names, nil, 0, 0)
 	testing.expect(t, strings.contains(problem, "root has no table Floor"), problem)
+	// When storage is in the boot image, root starts it before the start policy
+	// so start_list_floor_names includes storage in the floor sum.
+	image_with_storage := []string{"root", "input", "compositor", "wiring", "devices", "serial_terminal", "grid_terminal", "clock", "start_policy", "storage"}
+	names_with_storage := start_list_floor_names(rows, parts, image_with_storage)
+	expected_with_storage := []string{"root", foundation.START_POLICY_MODULE, "storage", "input", "compositor", "wiring", "devices", "clock"}
+	testing.expect_value(t, len(names_with_storage), len(expected_with_storage))
+	for name, index in expected_with_storage {
+		if index < len(names_with_storage) {
+			testing.expect_value(t, names_with_storage[index], name)
+		}
+	}
 }
 
 // The division keeps the floors of the starts that are no row, which come

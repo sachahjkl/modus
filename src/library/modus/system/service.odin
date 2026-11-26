@@ -77,6 +77,9 @@ Service :: struct {
 	// service (Storage only): marks orphaned stores of a removed principal for
 	// keyless block reclamation and sends a completion on service.names.completions.
 	principal_reclaim: proc "contextless" (service: ^Service, tag: u32, values: ^[7]u64),
+	// tree_grant, when set, attaches one read-only image-tree subtree grant
+	// from the root service to a connection (Storage only).
+	tree_grant: proc "contextless" (service: ^Service, ring_memory: Handle, values: ^[7]u64),
 }
 
 // The service ring and the call ring of each caller, two words each, take
@@ -186,6 +189,12 @@ service_control_run :: proc "contextless" (service: ^Service) {
 				continue
 			}
 			service.principal_reclaim(service, command.tag, &command.values)
+		case .Tree_Grant:
+			if service.tree_grant == nil {
+				log(.Warning, "service: the root service sent a read-only tree grant to a service that takes none: it is refused")
+				continue
+			}
+			service.tree_grant(service, ring_memory, &command.values)
 		case .Disconnect:
 			for &connection in service.connections {
 				if connection.calls.head != nil && connection.ring_memory == ring_memory {

@@ -1064,6 +1064,28 @@ versions_erase :: proc "contextless" (store: Store_Of, path: []Entry_Name, name:
 		plan_drop()
 		return {}, .Succeeded
 	}
+	// Refuse to erase versions of an object whose current state or any stored
+	// version holds a durable pin in this store.
+	if storage_object_is_pinned(u32(store_index), blake3.Hash(plan.entries[index].before.hash)) {
+		plan_drop()
+		return {}, refuse(error, .Wrong_State, .State, .Objects, 2)
+	}
+	if storage_object_store_has_pins(u32(store_index)) {
+		v_index := index_load(index)
+		for position in 0 ..< int(v_index.index.leaf_count) {
+			v_leaf := leaf_load(index, position)
+			if v_leaf == nil {
+				break
+			}
+			for v_entry in v_leaf.leaf.entries[:v_leaf.leaf.count] {
+				v_hash, v_outcome := block_tree.state_hash(&object_source, {root = v_entry.root, size = v_entry.size, data_check = v_entry.data_check}, &object_hash_room)
+				if v_outcome == .Good && storage_object_is_pinned(u32(store_index), blake3.Hash(v_hash)) {
+					plan_drop()
+					return {}, refuse(error, .Wrong_State, .State, .Objects, 2)
+				}
+			}
+		}
+	}
 	versions_release(index)
 	ended := -plan.versions_change
 	plan_finish()
