@@ -583,6 +583,19 @@ syntax_scan_segment :: proc "contextless" (
 	return carry
 }
 
+// Plan value: maximum wrapped rows walked backward when highlighting a wrapped
+// continuation row over its enclosing logical line.
+SYNTAX_WRAP_LOOKBACK_ROWS :: 32
+
+// Plan value: lookahead past a wrapped row end so tokens split at the wrap
+// boundary (such as a function name followed by `(` or a Lex unit) classify
+// identically to an unwrapped line.
+SYNTAX_WRAP_LOOKAHEAD_BYTES :: 128
+
+// Plan value: maximum logical line span scanned on the stack during a frame
+// before falling back to single-row classification.
+SYNTAX_LOGICAL_LINE_LIMIT :: 2048
+
 // syntax_highlight_row classifies each byte of one visible display row into
 // graphics.Code_Class using its precomputed start carry. Returns the carry
 // after the row.
@@ -594,6 +607,64 @@ syntax_highlight_row :: proc "contextless" (
 	out_classes: []graphics.Code_Class,
 ) -> Syntax_Carry {
 	return syntax_scan_segment(lang, row_bytes, start_carry, is_line_start, out_classes)
+}
+
+// syntax_highlight_layout_row classifies one visible display row of `layout`,
+// scanning its enclosing logical line slice when the row is wrapped so tokens
+// split across wrap boundaries (blake3 hashes, comments, directives, strings,
+// identifiers, numbers) keep uniform syntax colors across every visual row.
+syntax_highlight_layout_row :: proc "contextless" (
+	lang: Syntax_Language,
+	states: ^Syntax_States,
+	layout: ^Layout,
+	text: ^Text,
+	row: int,
+	out_classes: []graphics.Code_Class,
+) {
+	if lang == .Plain || states == nil || layout == nil || text == nil || row < 0 || row >= layout.row_count {
+		return
+	}
+	row_start := int(layout.rows[row].start)
+	row_end := row_bytes_end(layout, text, row)
+	row_len := min(row_end - row_start, len(out_classes))
+	if row_len <= 0 {
+		return
+	}
+
+	first_row := row
+	for first_row > 0 && !row_first_of_line(layout, first_row) && (row - first_row) < SYNTAX_WRAP_LOOKBACK_ROWS {
+		first_row -= 1
+	}
+	line_start := int(layout.rows[first_row].start)
+	total_len := text_length(text)
+	scan_end := row_end
+	lookahead_limit := min(total_len, row_end + SYNTAX_WRAP_LOOKAHEAD_BYTES)
+	for scan_end < lookahead_limit && byte_at(text, scan_end) != LINE_END {
+		scan_end += 1
+	}
+	span_len := scan_end - line_start
+	if span_len > 0 && span_len <= SYNTAX_LOGICAL_LINE_LIMIT {
+		line_buf: [SYNTAX_LOGICAL_LINE_LIMIT]u8
+		line_classes: [SYNTAX_LOGICAL_LINE_LIMIT]graphics.Code_Class
+		for i in 0 ..< span_len {
+			line_buf[i] = byte_at(text, line_start + i)
+		}
+		_ = syntax_scan_segment(lang, line_buf[:span_len], syntax_row_carry(states, first_row), row_first_of_line(layout, first_row), line_classes[:span_len])
+		rel := row_start - line_start
+		for i in 0 ..< row_len {
+			out_classes[i] = line_classes[rel + i]
+		}
+		return
+	}
+
+	// Pathological single logical line exceeding SYNTAX_LOGICAL_LINE_LIMIT:
+	// highlight just the visible display row using its precomputed row carry.
+	row_buf: [SYNTAX_LOGICAL_LINE_LIMIT]u8
+	take := min(row_len, SYNTAX_LOGICAL_LINE_LIMIT)
+	for i in 0 ..< take {
+		row_buf[i] = byte_at(text, row_start + i)
+	}
+	_ = syntax_scan_segment(lang, row_buf[:take], syntax_row_carry(states, row), row_first_of_line(layout, row), out_classes[:take])
 }
 
 // syntax_compute computes the starting Syntax_Carry for every display row in

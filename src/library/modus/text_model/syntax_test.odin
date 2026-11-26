@@ -134,3 +134,48 @@ syntax_row_carry_refuses_out_of_range_and_plain :: proc(t: ^testing.T) {
 		testing.expect_value(t, c, graphics.Code_Class.None)
 	}
 }
+
+@(test)
+syntax_wrapped_tokens_keep_color_across_rows :: proc(t: ^testing.T) {
+	text := new(Text)
+	defer free(text)
+	layout := new(Layout)
+	defer free(layout)
+	states := new(Syntax_States)
+	defer free(states)
+
+	src := "let h = blake3:0123456789abcdef\n// long wrapped comment text here\n"
+	text_insert(text, transmute([]u8)src)
+	// Wrap at 20 columns so both `blake3:0123456789abcdef` and the `//` comment split across two rows.
+	layout_compute(layout, text, 20, .Character)
+	testing.expect(t, syntax_compute(states, layout, text, .Lex))
+	testing.expect(t, layout.row_count >= 4)
+
+	// Row 1 is the wrapped tail of `blake3:0123456789abcdef` (`456789abcdef`): every byte must stay .Literal.
+	testing.expect(t, !row_first_of_line(layout, 1))
+	cls_row1: [64]graphics.Code_Class
+	r1_len := row_bytes_end(layout, text, 1) - int(layout.rows[1].start)
+	testing.expect(t, r1_len > 0)
+	syntax_highlight_layout_row(.Lex, states, layout, text, 1, cls_row1[:r1_len])
+	for i in 0 ..< r1_len {
+		testing.expect_value(t, cls_row1[i], graphics.Code_Class.Literal)
+	}
+
+	// Row 3 is the wrapped tail of `// long wrapped comment text here`: every byte must stay .Comment.
+	testing.expect(t, !row_first_of_line(layout, 3))
+	cls_row3: [64]graphics.Code_Class
+	r3_len := row_bytes_end(layout, text, 3) - int(layout.rows[3].start)
+	testing.expect(t, r3_len > 0)
+	syntax_highlight_layout_row(.Lex, states, layout, text, 3, cls_row3[:r3_len])
+	for i in 0 ..< r3_len {
+		testing.expect_value(t, cls_row3[i], graphics.Code_Class.Comment)
+	}
+
+	// Out-of-range row refuses cleanly without modifying out_classes.
+	cls_bad: [4]graphics.Code_Class
+	syntax_highlight_layout_row(.Lex, states, layout, text, -1, cls_bad[:])
+	syntax_highlight_layout_row(.Lex, states, layout, text, 999, cls_bad[:])
+	for c in cls_bad {
+		testing.expect_value(t, c, graphics.Code_Class.None)
+	}
+}

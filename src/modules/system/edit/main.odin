@@ -165,13 +165,18 @@ window_problem_texts := [Window_Problem]string {
 // The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
 // action bar"). A procedure, not a global array: an item is made by a
 // call, and a freestanding process runs no call before its entry.
-bar_items :: proc "contextless" () -> [4]interface.Action_Bar_Item {
-	return {
-		interface.action_bar_item("Find", 3, "Ctrl", "F"),
-		interface.action_bar_item("Undo", 2, "Ctrl", "Z"),
-		interface.action_bar_item("Redo", 1, "Ctrl", "Y"),
-		interface.action_bar_item("Versions", 0, "Ctrl", "H"),
+bar_items :: proc "contextless" () -> (items: [5]interface.Action_Bar_Item, count: int) {
+	items[0] = interface.action_bar_item("Find", 4, "Ctrl", "F")
+	count = 1
+	if syntax_language == .Lex {
+		items[count] = interface.action_bar_item("Format", 3, "Ctrl", "Shift", "F")
+		count += 1
 	}
+	items[count] = interface.action_bar_item("Undo", 2, "Ctrl", "Z")
+	items[count + 1] = interface.action_bar_item("Redo", 1, "Ctrl", "Y")
+	items[count + 2] = interface.action_bar_item("Versions", 0, "Ctrl", "H")
+	count += 3
+	return
 }
 bar: interface.Action_Bar_State
 
@@ -1028,17 +1033,12 @@ row_draw :: proc "contextless" (table: ^interface.Draw_Table, row: int, y: int, 
 		left := text_left + text_model.column_of(&layout, &text, row, end) * graphics.CELL_WIDTH
 		interface.draw_rectangle(table, left, y, graphics.CELL_WIDTH, graphics.CELL_HEIGHT, tokens.surface_chosen)
 	}
-	// Pre-classify only this visible display row (<= ROW_BUFFER_SIZE bytes)
-	// using the precomputed per-row carry state: strictly O(visible cells).
-	raw_row: [ROW_BUFFER_SIZE]u8
+	// Classify this visible display row over its enclosing logical line span
+	// so tokens split across wrap boundaries keep their syntax colors.
 	row_classes: [ROW_BUFFER_SIZE]graphics.Code_Class
 	row_len := min(end - start, ROW_BUFFER_SIZE)
 	if syntax_language != .Plain && row_len > 0 {
-		for idx in 0 ..< row_len {
-			raw_row[idx] = text_model.byte_at(&text, start + idx)
-		}
-		carry := text_model.syntax_row_carry(&syntax, row)
-		_ = text_model.syntax_highlight_row(syntax_language, raw_row[:row_len], carry, text_model.row_first_of_line(&layout, row), row_classes[:row_len])
+		text_model.syntax_highlight_layout_row(syntax_language, &syntax, &layout, &text, row, row_classes[:row_len])
 	}
 	buffer: [ROW_BUFFER_SIZE]u8
 	count, column, run_column := 0, 0, 0
@@ -1429,8 +1429,8 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	position_area := area_of(boxes.status_position)
 	interface.draw_text(table, position_area.x, position_area.y, position, tokens.text_dim)
 
-	items := bar_items()
-	bar_result := interface.action_bar(&frame, area_of(boxes.action_bar), items[:], &bar, {})
+	items, item_count := bar_items()
+	bar_result := interface.action_bar(&frame, area_of(boxes.action_bar), items[:item_count], &bar, {})
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	return bar_result
 }
