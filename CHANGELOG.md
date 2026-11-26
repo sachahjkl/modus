@@ -6,6 +6,13 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.106.0] - 2026-11-26 20:19
+
+### Fixed
+
+- **Session-only settings changes without a data disk.** On a machine with no data disk (such as the browser desktop), changing settings in the `settings` window or toggling appearance from the Control Center now updates the live desktop for the running session instead of refusing every edit.
+- **Terminal and notes window layout after resize.** Resizing the `console` terminal or `notes` window now recalculates grid dimensions, line wrapping, and bottom chrome once `Surface_Answer` installs the new surface size, instead of laying out at the previous window dimensions.
+
 ## [0.105.0] - 2026-11-26 19:56
 
 ### Added
@@ -2064,6 +2071,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.106.0]: https://github.com/sachahjkl/modus/releases/tag/v0.106.0
 [0.105.0]: https://github.com/sachahjkl/modus/releases/tag/v0.105.0
 [0.104.0]: https://github.com/sachahjkl/modus/releases/tag/v0.104.0
 [0.103.0]: https://github.com/sachahjkl/modus/releases/tag/v0.103.0
