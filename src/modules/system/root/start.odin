@@ -234,8 +234,11 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Out
 		}
 	}
 	// A process with a store (and no Root_Ring to connect itself): the
-	// storage service starts first.
-	if .Store in grants && .Root_Ring not_in grants {
+	// storage service starts first when the machine has a data disk, or when
+	// the caller asked for a named store. On a machine with no data disk, a
+	// regular process starts without storage handles so storage.open returns
+	// false instead of refusing the launch (src/md/features/missing_hardware.md).
+	if .Store in grants && .Root_Ring not_in grants && (.Data_Disk in machine_parts || work.store_override != "") {
 		running := false
 		for &item in started {
 			if item.process != 0 && item.service.head != nil && is_role_holder(system.name_of(item.name[:]), .Storage) {
@@ -459,7 +462,7 @@ start_values_of_the_name :: proc "contextless" (work: ^Start_Work) {
 // storage service itself.
 start_store_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outcome {
 	grants := work.start_grant_set.grants
-	if .Store not_in grants || .Root_Ring in grants {
+	if .Store not_in grants || .Root_Ring in grants || (.Data_Disk not_in machine_parts && work.store_override == "") {
 		return .Succeeded
 	}
 	storage_service: ^Started

@@ -6,6 +6,7 @@ import "modus:contract/ring"
 import "modus:contract/scale_factor"
 import "core:fmt"
 import "core:math/bits"
+import "core:mem/virtual"
 import "core:odin/ast"
 import "core:strings"
 import "modustool:foundation"
@@ -290,6 +291,8 @@ floor_children_of :: proc(build: foundation.Module_Build) -> (floors: []module.F
 
 // The start grant sets of the root service, read once for the floors.
 @(private = "file")
+floor_grant_rows_arena: virtual.Arena
+@(private = "file")
 floor_grant_rows: []foundation.Start_Grant_Set_Row
 @(private = "file")
 floor_grant_rows_read: bool
@@ -440,6 +443,16 @@ call_sends_wire :: proc(call: ^ast.Call_Expr, params: []Root_Command_Param) -> b
 // file cannot be read.
 floor_wiring_derived :: proc(name: string, module_folder: string, sources: []Fact_Source) -> (derived: bool, ok: bool) {
 	if !floor_grant_rows_read {
+		// Keep the cached rows in their own arena so callers can clear
+		// context.temp_allocator between modules without dangling references
+		// or tracking-allocator warnings in unit tests.
+		if virtual.arena_init_growing(&floor_grant_rows_arena) != nil {
+			fmt.eprintln("modustool: no memory for the start grant sets of the floors")
+			return false, false
+		}
+		saved_temp := context.temp_allocator
+		context.temp_allocator = virtual.arena_allocator(&floor_grant_rows_arena)
+		defer context.temp_allocator = saved_temp
 		text := foundation.read_text_file(foundation.ROOT_START_GRANT_SETS_FILE) or_return
 		rows, _, problem := start_grant_sets_read(text)
 		if problem != "" {

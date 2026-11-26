@@ -5,6 +5,7 @@ import "modus:contract/blake3"
 import debug_object "modus:contract/debug_object"
 import "core:fmt"
 import "core:mem"
+import "core:mem/virtual"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -1270,6 +1271,15 @@ text_until_zero :: proc(bytes: []u8, offset: u64) -> string {
 // of the table, in the form of a boot image, each one named after its
 // module. It prints its size: the boot program reads it at each start.
 debug_image_write :: proc(module_filter: []bool = nil) -> bool {
+	// Release all read debug objects and the encoded debug image back to the OS once written.
+	arena: virtual.Arena
+	if virtual.arena_init_growing(&arena) != nil {
+		fmt.eprintln("modustool: no memory to build the debug image")
+		return false
+	}
+	defer virtual.arena_destroy(&arena)
+	context.temp_allocator = virtual.arena_allocator(&arena)
+
 	files := make([dynamic]Image_File, context.temp_allocator)
 	procedures, rows, types, globals, variables, ranges := 0, 0, 0, 0, 0, 0
 	for build, index in foundation.module_builds {

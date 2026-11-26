@@ -5,6 +5,7 @@ import module "modus:contract/module"
 import "core:fmt"
 import info "modus:contract/boot_info"
 import "core:mem"
+import "core:mem/virtual"
 import "core:os"
 import "core:slice"
 import "core:strconv"
@@ -787,6 +788,16 @@ module_convert :: proc(build: foundation.Module_Build) -> bool {
 // module. This image has no system description: each boot
 // volume gets a copy with its own (system_description.odin).
 build_boot_image :: proc(path: string, without: string, resource_files: []resources.Resource_File) -> bool {
+	// Release each boot image's module reads and encoded buffer back to the OS
+	// when the image is written so building all nine images stays bounded.
+	arena: virtual.Arena
+	if virtual.arena_init_growing(&arena) != nil {
+		fmt.eprintfln("modustool: no memory to build %s", path)
+		return false
+	}
+	defer virtual.arena_destroy(&arena)
+	context.temp_allocator = virtual.arena_allocator(&arena)
+
 	files := make([dynamic]Image_File, context.temp_allocator)
 	for build in foundation.module_builds {
 		in_this_image := foundation.module_in_boot_image(build) && build.name != without || foundation.module_in_a_boot_image(build) && build.only_in_image == path
@@ -920,7 +931,12 @@ test_descriptions :: proc() -> bool {
 		.Bytes   = "Bytes",
 		.Enum    = "Enum",
 	}
+	defer free_all(context.temp_allocator)
 	for build in foundation.module_builds {
+		// Each module reads its binary, its imports, and the parsed syntax trees
+		// of its sources into context.temp_allocator; clearing between modules
+		// keeps peak memory bounded across the full module set.
+		free_all(context.temp_allocator)
 		file := foundation.read_file(foundation.module_path(build.name)) or_return
 		described := describe_package(build.source) or_return
 		sources := module_sources(build) or_return

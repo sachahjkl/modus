@@ -1,6 +1,7 @@
 package build
 
 import "core:fmt"
+import "core:mem/virtual"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -430,6 +431,13 @@ module_cache_restore :: proc(build: foundation.Module_Build) -> bool {
 	if !build_cache_active() {
 		return false
 	}
+	arena: virtual.Arena
+	if virtual.arena_init_growing(&arena) != nil {
+		return false
+	}
+	defer virtual.arena_destroy(&arena)
+	context.temp_allocator = virtual.arena_allocator(&arena)
+
 	steps, ok := module_steps_of(build)
 	if !ok {
 		return false
@@ -443,6 +451,13 @@ module_cache_store :: proc(build: foundation.Module_Build, step: Module_Step) ->
 	if !build_cache_active() {
 		return false
 	}
+	arena: virtual.Arena
+	if virtual.arena_init_growing(&arena) != nil {
+		return false
+	}
+	defer virtual.arena_destroy(&arena)
+	context.temp_allocator = virtual.arena_allocator(&arena)
+
 	steps, ok := module_steps_of(build)
 	if !ok {
 		return false

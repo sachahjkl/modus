@@ -7,6 +7,7 @@
 package build
 
 import "core:fmt"
+import "core:mem/virtual"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -54,6 +55,15 @@ Manual_Module_File :: struct {
 // build_manual_pages writes the resource of the link pages from the module
 // files of the boot image and the documents and sources of the repository.
 build_manual_pages :: proc(module_filter: []bool = nil) -> (resource: resources.Resource_File, ok: bool) {
+	// Release the module binaries and encoded manual pages back to the OS once written.
+	arena: virtual.Arena
+	if virtual.arena_init_growing(&arena) != nil {
+		fmt.eprintln("modustool: no memory to build the manual link pages")
+		return {}, false
+	}
+	defer virtual.arena_destroy(&arena)
+	context.temp_allocator = virtual.arena_allocator(&arena)
+
 	modules := make([dynamic]Manual_Module_File, context.temp_allocator)
 	for build, index in foundation.module_builds {
 		if foundation.module_in_boot_image(build) && module_filter_allows(module_filter, index) {

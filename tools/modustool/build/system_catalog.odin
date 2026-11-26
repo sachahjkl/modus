@@ -8,6 +8,7 @@
 package build
 
 import "core:fmt"
+import "core:mem/virtual"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -211,6 +212,14 @@ system_catalog_release_of_boot_image :: proc(boot_image: []u8, release_number: s
 // system_catalogs_write writes build/catalog.lex and
 // build/catalog_release.lex from the built boot image.
 system_catalogs_write :: proc() -> bool {
+	arena: virtual.Arena
+	if virtual.arena_init_growing(&arena) != nil {
+		fmt.eprintln("modustool: no memory to write the system catalogs")
+		return false
+	}
+	defer virtual.arena_destroy(&arena)
+	context.temp_allocator = virtual.arena_allocator(&arena)
+
 	boot_image := foundation.read_file(BOOT_IMAGE) or_return
 	catalog_text, catalog_problem := system_catalog_of_image(boot_image, release.RELEASE_NUMBER, .Boot_Image)
 	if catalog_problem != "" {

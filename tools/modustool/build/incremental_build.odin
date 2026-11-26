@@ -3,6 +3,7 @@ package build
 import "modus:contract/blake3"
 import module "modus:contract/module"
 import "core:fmt"
+import "core:mem/virtual"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -1254,6 +1255,16 @@ module_step_of_build :: proc(build: foundation.Module_Build) -> (step: Module_St
 // of the compiler, or with an input that changed during the build, no
 // record of the conversion stays: the next build runs a step again.
 module_records_write :: proc(build: foundation.Module_Build, step: Module_Step) -> bool {
+	// Release hashed output files (.ll, .o, .elf, .module, .debug) back to the
+	// OS after each module's record is written so cold builds stay bounded.
+	arena: virtual.Arena
+	if virtual.arena_init_growing(&arena) != nil {
+		fmt.eprintfln("modustool: no memory to write the build records of %s", build.name)
+		return false
+	}
+	defer virtual.arena_destroy(&arena)
+	context.temp_allocator = virtual.arena_allocator(&arena)
+
 	compile_record_path := module_compile_record_path(build.name)
 	convert_record_path := module_convert_record_path(build.name)
 	steps, readable := module_steps_of(build)
