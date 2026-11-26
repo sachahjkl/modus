@@ -239,9 +239,11 @@ tutorial_film_compose_splices_cards_and_captions_without_overlap :: proc(t: ^tes
 	}
 
 	// ffconcat output repeats the final file line without a duration so FFmpeg's
-	// concat demuxer honors the final Chapter 7 card's 4.0 s duration.
+	// concat demuxer honors the final Chapter 7 card's full duration.
 	ffconcat := tutorial_ffconcat_text(timeline.entries)
-	testing.expect(t, strings.has_suffix(ffconcat, "file 'card_ch7.ppm'\nduration 4.000000\nfile 'card_ch7.ppm'\n"), "ffconcat repeats final card file line after its 4.0 s duration")
+	last_card_ms := tutorial_chapter_cards[len(tutorial_chapter_cards) - 1].duration_ms
+	expected_tail := fmt.tprintf("file 'card_ch7.ppm'\nduration %d.%06d\nfile 'card_ch7.ppm'\n", last_card_ms / 1000, (last_card_ms % 1000) * 1000)
+	testing.expect(t, strings.has_suffix(ffconcat, expected_tail), "ffconcat repeats final card file line after its full duration")
 
 	// 5. ASS formatting helpers, ASCII-only glyph coverage for B612 ASCII, and generated script.
 	testing.expect_value(t, tutorial_ass_color({0x12, 0x34, 0x56}, 0x10), "&H10563412")

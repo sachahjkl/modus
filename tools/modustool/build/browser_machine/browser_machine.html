@@ -1,57 +1,47 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>modus web desktop</title>
-<style>
-:root { color-scheme: dark light; --bg: #0f1115; --surface: #161a20; --track: #1e232c; --line: #2d3440; --text: #e6ebf2; --dim: #9aa5b4; --accent: #5fa8ff; --hover: #254a75; --active: #3c76bb; }
-@media (prefers-color-scheme: light) {
-  :root { --bg: #f6f7f9; --surface: #ffffff; --track: #eaedf2; --line: #c7ced8; --text: #181c22; --dim: #4a525b; --accent: #3c76bb; --hover: #254a75; --active: #3c76bb; }
-}
-* { box-sizing: border-box; }
-html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-header { background: var(--surface); border-bottom: 1px solid var(--line); }
-.bar { max-width: 1312px; margin: 0 auto; padding: 8px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
-.bar-links { display: flex; align-items: center; gap: 8px; }
-.bar-links a { display: inline-block; padding: 2px 10px; font: 600 13px/22px ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; color: var(--text); background: var(--track); text-decoration: none; border-bottom: 2px solid transparent; }
-.bar-links a.brand { border-bottom-color: var(--accent); }
-.bar-links a:hover, .bar-links a:focus-visible { background: var(--hover); color: #ffffff; outline: none; }
-.bar-links a:active { background: var(--active); color: #ffffff; }
-h1 { margin: 0; font-size: 14px; font-weight: 600; font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; }
-#machine-status { color: var(--dim); font: 13px/1.4 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; flex: 1 1 200px; min-width: 0; }
-button { font: 600 13px/22px ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; color: var(--text); background: var(--track); border: 1px solid var(--line); border-bottom: 2px solid var(--accent); padding: 2px 14px; cursor: pointer; }
-button:hover, button:focus-visible { background: var(--hover); color: #ffffff; border-color: var(--accent); outline: none; }
-button:active { background: var(--active); color: #ffffff; }
-button:disabled { opacity: 0.5; cursor: default; background: var(--track); color: var(--dim); border-color: var(--line); }
-main { max-width: 1312px; margin: 0 auto; padding: 12px 16px 24px; display: grid; gap: 12px; }
-canvas { display: block; width: 100%; max-width: 1280px; aspect-ratio: 1280 / 800; background: #000000; border: 1px solid var(--line); outline: none; }
-canvas:focus { border-color: var(--accent); }
-details { background: var(--surface); border: 1px solid var(--line); }
-summary { padding: 6px 10px; font: 12px/1.4 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; color: var(--dim); cursor: pointer; user-select: none; }
-pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--line); font: 12px/1.45 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; overflow-y: auto; max-height: 280px; }
-</style>
+<title>Web Desktop - modus</title>
+<meta name="description" content="Run the full modus desktop directly in the browser on the WebAssembly kernel.">
+<link rel="icon" href="./favicon.ico" sizes="32x32">
+<link rel="stylesheet" href="./browser_machine.css">
 </head>
-<body>
-<header>
-  <div class="bar">
-    <nav class="bar-links" aria-label="Site">
-      <a class="brand" href="./">modus</a>
-      <a href="./try/">Try</a>
-      <a href="./browser_machine_console.html">Web Console</a>
+<body class="page-desktop">
+<header class="site-bar">
+  <div class="site-bar-inner">
+    <a class="brand-link" href="./"><span class="brand-mark" aria-hidden="true"></span>modus</a>
+    <nav class="site-nav" aria-label="Site">
+      <a class="nav-link" href="./try/">Try</a>
+      <a class="nav-link" href="./browser_machine_console.html">Web Console</a>
+      <a class="nav-link" href="./browser_machine.html" aria-current="page">Web Desktop</a>
     </nav>
-    <h1>Web Desktop</h1>
-    <div id="machine-status" role="status"></div>
-    <button id="start" type="button">Start</button>
+    <div class="bar-status" role="status">
+      <span id="dot" class="status-dot idle"></span>
+      <span id="machine-status" class="bar-status-text">ready</span>
+    </div>
+    <div class="bar-actions">
+      <button id="theme" class="control-button" type="button">Light</button>
+      <button id="start" class="control-button primary" type="button">Start</button>
+    </div>
   </div>
 </header>
-<main>
-  <canvas id="screen" width="1280" height="800" tabindex="0" aria-label="The screen of the machine"></canvas>
-  <details open>
+<main class="workspace">
+  <section class="machine-window" aria-label="modus desktop">
+    <div class="window-titlebar">
+      <span class="window-title">desktop</span>
+      <span class="window-meta">boot.image &middot; 1280 &times; 800</span>
+    </div>
+    <div class="stage-frame">
+      <canvas id="screen" width="1280" height="800" tabindex="0" aria-label="The screen of the machine"></canvas>
+    </div>
+  </section>
+  <details class="serial-panel">
     <summary>Serial log (COM1)</summary>
     <pre id="serial-output" aria-label="The serial port"></pre>
   </details>
 </main>
-<script type="module" src="browser_machine_page.js"></script>
+<script type="module" src="./browser_machine_page.js"></script>
 </body>
 </html>

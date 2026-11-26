@@ -3,370 +3,50 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>modus web console</title>
-<style>
-  /* The colors of the Modus palette: each tone and each kind of code is a
-     class, so a change of theme colors every line again. */
-  :root { color-scheme: dark; --bg: #0f1115; --surface: #161a20; --track: #1e232c; --edge: #2d3440; --text: #e6ebf2; --dim: #8a95a5; --strong: #ffffff;
-    --good: #58d878; --warning: #e0a040; --bad: #f06060; --accent: #5fa8ff; --number: #38c0b0;
-    --hover: #254a75; --active: #3c76bb;
-    --code-name: #58d878; --code-type: #9e8fcb; --code-literal: #38c0b0; --code-punctuation: #b0b8c1; --code-comment: #9ca6b2;
-    --chosen: rgba(95, 168, 255, 0.16); }
-  [data-theme="light"] { color-scheme: light; --bg: #f6f7f9; --surface: #ffffff; --track: #eaedf2; --edge: #c7ced8; --text: #181c22; --dim: #4a525b; --strong: #000000;
-    --good: #327c45; --warning: #906729; --bad: #ba4a4a; --accent: #3c76bb; --number: #247c71;
-    --hover: #254a75; --active: #3c76bb;
-    --code-name: #276035; --code-type: #554a75; --code-literal: #1b5f57; --code-punctuation: #3d444c; --code-comment: #4a525b;
-    --chosen: rgba(60, 118, 187, 0.12); }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; }
-  body { display: flex; flex-direction: column; }
-  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 8px 14px; background: var(--surface); border-bottom: 1px solid var(--edge); font-size: 12px; }
-  .nav-link { display: inline-block; padding: 2px 8px; color: var(--text); background: var(--track); text-decoration: none; border-bottom: 2px solid transparent; }
-  .nav-link:hover, .nav-link:focus-visible { background: var(--hover); color: #ffffff; outline: none; }
-  .nav-link:active { background: var(--active); color: #ffffff; }
-  #badge { font-weight: 700; border-bottom-color: var(--accent); }
-  #state { display: flex; align-items: center; gap: 6px; color: var(--dim); margin-right: auto; min-width: 0; }
-  #dot { width: 8px; height: 8px; flex: 0 0 8px; background: var(--warning); }
-  #dot.running { background: var(--good); }
-  #dot.stopped { background: var(--bad); }
-  button { font: inherit; font-size: 12px; color: var(--text); background: var(--track); border: 1px solid var(--edge); padding: 2px 10px; cursor: pointer; }
-  button:hover, button:focus-visible { background: var(--hover); color: #ffffff; border-color: var(--accent); outline: none; }
-  button:active { background: var(--active); color: #ffffff; }
-  #output { flex: 1; overflow-y: auto; padding: 12px 14px 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .line { min-height: 1.45em; }
-  #status-bar { display: flex; align-items: center; gap: 10px; padding: 4px 14px; font-size: 12px; color: var(--dim); border-top: 1px solid var(--edge); }
-  #status-track { flex: 0 0 160px; height: 4px; background: var(--edge); overflow: hidden; }
-  #status-fill { height: 100%; width: 0; background: var(--accent); transition: width 120ms linear; }
-  #prompt-area { position: relative; padding: 8px 14px 6px; background: var(--surface); border-top: 1px solid var(--edge); }
-  #prompt-bar { white-space: pre; overflow-x: auto; min-height: 1.45em; outline: none; cursor: text; }
-  .caret { display: inline-block; width: 0; height: 1.2em; margin-right: -2px; vertical-align: text-bottom; border-left: 2px solid var(--accent); animation: blink 1.1s steps(1) infinite; }
-  #prompt-bar:not(:focus) .caret { animation: none; opacity: 0.4; }
-  @keyframes blink { 50% { opacity: 0; } }
-  @media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
-  #hint-bar { min-height: 1.45em; font-size: 12px; color: var(--dim); white-space: pre-wrap; }
-  .mark { color: var(--accent); font-weight: 700; }
-  #completion-popup { position: absolute; bottom: 100%; margin-bottom: 6px; min-width: 260px; max-width: min(640px, calc(100vw - 16px)); padding: 4px 0; background: var(--surface); border: 1px solid var(--accent); }
-  .item { display: flex; gap: 10px; align-items: baseline; padding: 2px 10px; white-space: pre; cursor: pointer; }
-  .item:hover { background: var(--chosen); }
-  .item.chosen { background: var(--chosen); box-shadow: inset 2px 0 var(--accent); }
-  .icon { min-width: 7ch; padding: 0 5px; font-size: 10px; text-align: center; color: var(--dim); border: 1px solid var(--edge); }
-  .detail { overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
-  .matched { color: var(--accent); font-weight: 700; }
-  #list-count { margin-top: 4px; padding: 2px 10px 0; font-size: 11px; text-align: right; color: var(--dim); border-top: 1px solid var(--edge); }
-  #chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 4px 14px 10px; background: var(--surface); font-size: 12px; color: var(--dim); }
-  #chips .chips-label { color: var(--dim); }
-  [hidden] { display: none !important; }
-  .t-dim { color: var(--dim); } .t-strong { color: var(--strong); font-weight: 700; } .t-good { color: var(--good); } .t-warning { color: var(--warning); }
-  .t-bad { color: var(--bad); } .t-accent { color: var(--accent); } .t-number { color: var(--number); }
-  .c-function { color: var(--code-name); } .c-type { color: var(--code-type); } .c-number, .c-text, .c-text_unfinished { color: var(--code-literal); }
-  .c-operator, .c-arrow { color: var(--code-punctuation); } .c-words, .c-unknown { color: var(--code-comment); }
-</style>
+<title>Web Console - modus</title>
+<meta name="description" content="Run the modus console directly in the browser on the WebAssembly kernel.">
+<link rel="icon" href="./favicon.ico" sizes="32x32">
+<link rel="stylesheet" href="./browser_machine.css">
 </head>
-<body>
-<header>
-  <a id="badge" class="nav-link" href="./">modus</a>
-  <a class="nav-link" href="./try/">Try</a>
-  <a class="nav-link" href="./browser_machine.html">Web Desktop</a>
-  <span id="state"><span id="dot"></span><span id="state-text">loading</span></span>
-  <button id="theme" type="button">Light</button>
-  <button id="clear" type="button">Clear</button>
+<body class="page-console">
+<header class="site-bar">
+  <div class="site-bar-inner">
+    <a class="brand-link" href="./"><span class="brand-mark" aria-hidden="true"></span>modus</a>
+    <nav class="site-nav" aria-label="Site">
+      <a class="nav-link" href="./try/">Try</a>
+      <a class="nav-link" href="./browser_machine_console.html" aria-current="page">Web Console</a>
+      <a class="nav-link" href="./browser_machine.html">Web Desktop</a>
+    </nav>
+    <div id="state" class="bar-status" role="status">
+      <span id="dot" class="status-dot"></span>
+      <span id="state-text" class="bar-status-text">loading</span>
+    </div>
+    <div class="bar-actions">
+      <button id="theme" class="control-button" type="button">Light</button>
+      <button id="clear" class="control-button" type="button">Clear</button>
+    </div>
+  </div>
 </header>
-<main id="output" aria-live="polite" aria-label="output"></main>
-<div id="status-bar" hidden><span id="status-text"></span><span id="status-track"><span id="status-fill"></span></span><span id="status-count"></span></div>
-<div id="prompt-area">
-  <div id="completion-popup" role="listbox" hidden></div>
-  <div id="prompt-bar" tabindex="0" role="textbox" aria-label="modus console"></div>
-  <div id="hint-bar"></div>
+<div class="workspace">
+  <section class="machine-window" aria-label="modus console">
+    <div class="window-titlebar">
+      <span class="window-title">console</span>
+      <span class="window-meta">console.image &middot; WebAssembly</span>
+    </div>
+    <main id="output" aria-live="polite" aria-label="output"></main>
+    <div id="status-bar" hidden>
+      <span id="status-text"></span>
+      <span id="status-track"><span id="status-fill"></span></span>
+      <span id="status-count"></span>
+    </div>
+    <div id="prompt-area">
+      <div id="completion-popup" role="listbox" hidden></div>
+      <div id="prompt-bar" tabindex="0" role="textbox" aria-label="modus console"></div>
+      <div id="hint-bar"></div>
+    </div>
+    <div id="chips" hidden><span class="chips-label">Try:</span></div>
+  </section>
 </div>
-<div id="chips" hidden><span class="chips-label">Try:</span></div>
-<script type="module">
-// The page draws the lines that dom_terminal writes on COM2, one JSON
-// object for each line (src/md/features/console_renderers.md, "Variant C:
-// dom_terminal"). Each place in a text is a place in Array.from(text).
-// The machine runs in the worker of the browser machine, never on the
-// thread of this document (src/md/features/browser_machine.md, "The page
-// and its host"): the lines come in one message for each slice of the
-// worker, and the text that the reader types goes back as one message.
-const OUTPUT_LINE_LIMIT = 4000;
-const LINE_SPAN_LIMIT = 256;
-const LIST_ROW_LIMIT = 8;
-const HEX_COLOR = /^#[0-9a-f]{6}$/;
-const TONES = new Set(["default", "dim", "strong", "good", "warning", "bad", "accent", "number"]);
-const CODE_KINDS = new Set(["function", "module", "type", "parameter", "variable", "number", "text", "text_unfinished", "operator", "arrow", "words", "unknown"]);
-const ICONS = new Set(["command", "export", "record", "service", "module", "process", "variable", "history_line"]);
-const STARTERS = ["help()", "processes()", "s = isolate(\"sample\")", "s.readings(4)"];
-const THEME_KEY = "modus-console-theme";
-const element = (id) => document.getElementById(id);
-const output = element("output"), promptBar = element("prompt-bar"), hintBar = element("hint-bar"), popup = element("completion-popup"), chips = element("chips");
-
-function clampIndex(value, limit) {
-  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(Math.trunc(value), limit)) : 0;
-}
-function validColor(value) {
-  return typeof value === "string" && HEX_COLOR.test(value) ? value : "";
-}
-function span(text, className) {
-  const node = document.createElement("span");
-  node.textContent = text;
-  if (className) node.className = className;
-  return node;
-}
-function sanitizeRuns(runs, limit) {
-  if (!Array.isArray(runs)) return [];
-  const clean = [];
-  for (const entry of runs.slice(0, 64)) {
-    if (!Array.isArray(entry) || entry.length < 3 || !CODE_KINDS.has(entry[2])) continue;
-    const start = clampIndex(entry[0], limit), end = clampIndex(entry[1], limit);
-    if (start < end) clean.push([start, end, entry[2]]);
-  }
-  return clean;
-}
-function kindAt(runs, place) {
-  for (const [start, end, kind] of runs) if (place >= start && place < end) return "c-" + kind;
-  return "";
-}
-// appendParts appends characters from..to of chars, one span for each run
-// of characters with the same class.
-function appendParts(parent, chars, from, to, classOf) {
-  if (from >= to) return;
-  let start = from;
-  for (let place = from + 1; place <= to; place++) {
-    if (place === to || classOf(place) !== classOf(start)) {
-      parent.append(span(chars.slice(start, place).join(""), classOf(start)));
-      start = place;
-    }
-  }
-}
-
-function themeSet(theme) {
-  document.documentElement.dataset.theme = theme;
-  element("theme").textContent = theme === "dark" ? "Light" : "Dark";
-  try { localStorage.setItem(THEME_KEY, theme); } catch {}
-}
-let savedTheme = "dark";
-try { savedTheme = localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark"; } catch {}
-themeSet(savedTheme);
-element("theme").addEventListener("click", () => themeSet(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
-
-let openLine = null;
-function clearOutput() { output.replaceChildren(); openLine = null; }
-element("clear").addEventListener("click", clearOutput);
-
-let listChosen = -1;
-const records = {
-  out(record) {
-    if (typeof record.s !== "string") return;
-    if (!openLine || openLine.childElementCount >= LINE_SPAN_LIMIT) {
-      openLine = document.createElement("div");
-      openLine.className = "line";
-      output.append(openLine);
-      while (output.childElementCount > OUTPUT_LINE_LIMIT) output.firstElementChild.remove();
-    }
-    const classes = [];
-    if (TONES.has(record.tone)) classes.push("t-" + record.tone);
-    if (CODE_KINDS.has(record.code)) classes.push("c-" + record.code);
-    const node = span(record.s, classes.join(" "));
-    const color = validColor(record.fg);
-    if (color) node.style.color = color;
-    if (record.rev === true) { node.style.backgroundColor = color || "var(--text)"; node.style.color = "var(--bg)"; }
-    openLine.append(node);
-    if (record.nl === true) openLine = null;
-  },
-  clr: clearOutput,
-  edit(record) {
-    if (typeof record.text !== "string") return;
-    const chars = Array.from(record.text), runs = sanitizeRuns(record.runs, chars.length);
-    const classOf = (place) => kindAt(runs, place);
-    promptBar.replaceChildren();
-    if (typeof record.cur !== "number" || !Number.isFinite(record.cur)) appendParts(promptBar, chars, 0, chars.length, classOf);
-    else {
-      const cursor = clampIndex(record.cur, chars.length);
-      appendParts(promptBar, chars, 0, cursor, classOf);
-      promptBar.append(span("", "caret"));
-      appendParts(promptBar, chars, cursor, chars.length, classOf);
-    }
-    chips.hidden = !/^>\s*$/.test(record.text);
-  },
-  hint(record) {
-    if (typeof record.text !== "string") return;
-    const chars = Array.from(record.text);
-    const start = clampIndex(record.ms, chars.length);
-    const end = clampIndex(start + clampIndex(record.ml, chars.length), chars.length);
-    hintBar.replaceChildren();
-    appendParts(hintBar, chars, 0, chars.length, (place) => (place >= start && place < end ? "mark" : ""));
-  },
-  status(record) {
-    const total = typeof record.tot === "number" && Number.isFinite(record.tot) ? Math.max(0, Math.trunc(record.tot)) : 0;
-    element("status-bar").hidden = !(total > 0);
-    if (!(total > 0)) return;
-    const value = typeof record.v === "number" && Number.isFinite(record.v) ? Math.max(0, Math.trunc(record.v)) : 0;
-    element("status-text").textContent = typeof record.text === "string" ? record.text : "";
-    element("status-fill").style.width = Math.min(100, (100 * value) / total) + "%";
-    element("status-count").textContent = value + " / " + total;
-  },
-  list(record) {
-    popup.replaceChildren();
-    const rawItems = Array.isArray(record.items) ? record.items.slice(0, LIST_ROW_LIMIT) : [];
-    const items = rawItems.filter((item) => item && typeof item === "object" && typeof item.name === "string" && typeof item.detail === "string");
-    popup.hidden = items.length === 0;
-    const chosen = typeof record.chosen === "number" && Number.isFinite(record.chosen) ? Math.trunc(record.chosen) : -1;
-    listChosen = chosen >= 0 && chosen < items.length ? chosen : -1;
-    if (popup.hidden) return;
-    items.forEach((item, index) => {
-      const row = document.createElement("div");
-      row.className = "item" + (index === listChosen ? " chosen" : "");
-      row.setAttribute("role", "option");
-      if (ICONS.has(item.icon)) row.append(span(item.icon.replace("_", " "), "icon"));
-      const chars = Array.from(item.name + item.detail), nameLength = Array.from(item.name).length;
-      const runs = sanitizeRuns(item.runs, chars.length);
-      const matched = new Set(Array.isArray(item.match) ? item.match.map((p) => clampIndex(p, nameLength)) : []);
-      const name = span("", "name"), detail = span("", "detail");
-      appendParts(name, chars, 0, nameLength, (place) => (matched.has(place) ? "matched" : kindAt(runs, place)));
-      appendParts(detail, chars, nameLength, chars.length, (place) => kindAt(runs, place));
-      row.append(name, detail);
-      // The console moves its choice by the arrows and takes it by Tab: a
-      // click sends the keys that choose its row.
-      row.addEventListener("mousedown", (event) => {
-        event.preventDefault();
-        const step = index - listChosen;
-        send((step > 0 ? "\x1b[B" : "\x1b[A").repeat(Math.abs(step)) + "\t");
-        promptBar.focus();
-      });
-      popup.append(row);
-    });
-    const total = typeof record.total === "number" && Number.isFinite(record.total) ? Math.max(0, Math.trunc(record.total)) : items.length;
-    const first = typeof record.first === "number" && Number.isFinite(record.first) ? Math.max(0, Math.trunc(record.first)) : 0;
-    if (total > items.length) {
-      const count = document.createElement("div");
-      count.id = "list-count";
-      count.textContent = first + 1 + "–" + (first + items.length) + " / " + total;
-      popup.append(count);
-    }
-    // The list starts at the column of the name, inside the window.
-    const startColumn = clampIndex(record.start, 256);
-    const probe = span("0".repeat(10));
-    promptBar.append(probe);
-    const columnWidth = probe.getBoundingClientRect().width / 10;
-    probe.remove();
-    const left = 14 + startColumn * columnWidth - promptBar.scrollLeft;
-    popup.style.left = Math.max(8, Math.min(left, window.innerWidth - popup.offsetWidth - 8)) + "px";
-  },
-};
-
-for (const command of STARTERS) {
-  const chip = document.createElement("button");
-  chip.type = "button";
-  chip.textContent = command;
-  chip.addEventListener("click", () => { send(command + "\r"); promptBar.focus(); });
-  chips.append(chip);
-}
-
-// The states of the machine that the worker names (MachineState of the
-// host of the browser machine); any other word shows as stopped.
-const STATES = new Set(["created", "running", "stopped", "trapped"]);
-function stateSet(text) {
-  element("state-text").textContent = text;
-  element("dot").className = text === "running" ? "running" : text === "starting" || text === "loading" ? "" : "stopped";
-}
-
-// consoleLine draws one line of COM2. The worker passes the lines of the
-// system as they are, so each check of a line is here.
-function consoleLine(line) {
-  if (typeof line !== "string") return;
-  let record;
-  try { record = JSON.parse(line); } catch { return; }
-  if (!record || typeof record !== "object" || typeof record.t !== "string") return;
-  if (!Object.hasOwn(records, record.t)) return;
-  try { records[record.t](record); } catch {}
-}
-
-const worker = new Worker("./browser_machine_worker.js", { type: "module" });
-let running = false;
-// The stage of the start, which the header shows until the prompt
-// (src/md/features/browser_machine.md, "The boot stages of the page"); the
-// worker names each one with its sentence.
-let stage = "download";
-let stageSentence = "";
-let stageStarted = performance.now();
-let stageDetail = "";
-function stageShow() {
-  if (stage === "ready" || !stageSentence) return;
-  element("state-text").textContent = stageSentence + stageDetail + " (" + ((performance.now() - stageStarted) / 1000).toFixed(0) + " s)";
-}
-const stageTimer = setInterval(stageShow, 500);
-worker.onmessage = (event) => {
-  const message = event.data;
-  if (!message || typeof message !== "object") return;
-  switch (message.kind) {
-    case "stage": {
-      if (typeof message.stage !== "string") return;
-      if (message.stage !== stage) { stage = message.stage; stageStarted = performance.now(); }
-      if (typeof message.sentence === "string") stageSentence = message.sentence;
-      const loaded = Number(message.loaded) || 0, total = Number(message.total) || 0;
-      stageDetail = stage === "download" && loaded ? ": " + (loaded / 1048576).toFixed(1) + (total ? " of " + (total / 1048576).toFixed(1) : "") + " MiB" : "";
-      if (stage === "ready") { clearInterval(stageTimer); if (running) stateSet("running"); }
-      else stageShow();
-      return;
-    }
-    case "console": {
-      if (!Array.isArray(message.lines)) return;
-      // Output follows the end only when the reader is at the end.
-      const atEnd = output.scrollHeight - output.scrollTop - output.clientHeight < 40;
-      for (const line of message.lines) consoleLine(line);
-      if (atEnd) output.scrollTop = output.scrollHeight;
-      return;
-    }
-    // COM1 is the log of the kernel: the console of the developer shows it.
-    case "serial":
-      if (Array.isArray(message.lines)) for (const line of message.lines) console.log(String(line));
-      return;
-    case "state": {
-      const state = STATES.has(message.state) ? message.state : "stopped";
-      if (state === "running" && !running) { running = true; promptBar.focus(); }
-      if (state !== "running" && typeof message.trap === "string") console.error(message.trap);
-      // While the machine starts, the header keeps the stage.
-      if (state === "running" && stage !== "ready") return;
-      if (state !== "running") clearInterval(stageTimer);
-      stateSet(state);
-      return;
-    }
-  }
-};
-worker.onerror = (event) => { console.error(event.message); stateSet("stopped"); };
-// send gives text to COM2 as a terminal sends it: UTF-8 and VT100 keys,
-// which dom_terminal decodes.
-function send(text) { worker.postMessage({ kind: "console_type", text }); }
-
-const NAMED_KEYS = { ArrowUp: "\x1b[A", ArrowDown: "\x1b[B", ArrowRight: "\x1b[C", ArrowLeft: "\x1b[D", Home: "\x1b[H", End: "\x1b[F", Delete: "\x1b[3~", PageUp: "\x1b[5~", PageDown: "\x1b[6~", Enter: "\r", Backspace: "\x7f", Escape: "\x1b" };
-document.addEventListener("keydown", (event) => {
-  if ((event.target instanceof HTMLButtonElement || event.target instanceof HTMLAnchorElement) && (event.key === "Enter" || event.key === " ")) return;
-  // Cmd and Alt stay with the browser; Ctrl+C with a selection copies it,
-  // and Ctrl+V comes as a paste.
-  if (event.metaKey || event.altKey) return;
-  const letter = event.key.length === 1 ? event.key.toLowerCase() : "";
-  if (event.ctrlKey && ((letter === "c" && String(getSelection())) || letter === "v")) return;
-  let sequence = event.key === "Tab" ? (event.shiftKey ? "\x1b[Z" : "\t") : NAMED_KEYS[event.key];
-  if (!sequence && event.ctrlKey && letter >= "a" && letter <= "z") sequence = String.fromCharCode(letter.charCodeAt(0) - 96);
-  else if (!sequence && !event.ctrlKey && event.key.length >= 1 && Array.from(event.key).length === 1) sequence = event.key;
-  if (!sequence) return;
-  event.preventDefault();
-  send(sequence);
-});
-document.addEventListener("paste", (event) => {
-  const text = event.clipboardData?.getData("text/plain");
-  if (!text) return;
-  event.preventDefault();
-  send(text.replace(/\r\n?|\n/g, "\r"));
-});
-promptBar.addEventListener("mousedown", () => promptBar.focus());
-
-stateSet("starting");
-// ?cache=<address> names an object cache; the host refuses any address
-// that is not one it may fetch.
-worker.postMessage({
-  kind: "start", kernelUrl: "./modulus_kernel.wasm", bootImageUrl: "./console.image", memoryMebibytes: 512, width: 0, height: 0,
-  cacheBaseUrl: new URLSearchParams(location.search).get("cache") ?? "",
-});
-</script>
+<script type="module" src="./browser_machine_console_page.js"></script>
 </body>
 </html>

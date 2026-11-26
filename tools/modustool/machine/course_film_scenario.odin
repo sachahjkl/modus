@@ -19,8 +19,8 @@ package machine
 //
 // Generous teaching hold times so a viewer reads both the on-screen output
 // and the two-line lower-third caption without pausing.
-COURSE_HOLD_TEACH :: 5200
-COURSE_HOLD_DIALOG :: 5600
+COURSE_HOLD_TEACH :: 9500
+COURSE_HOLD_DIALOG :: 10000
 
 @(rodata)
 scenario_course_film := [?]Step {
@@ -42,31 +42,32 @@ scenario_course_film := [?]Step {
 	{kind = .Film_Start, text = "course"},
 
 	// Lesson 1: Typed Console & Lex v3.
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT, text = "course.l1_start"},
+	{kind = .Film_Hold, milliseconds = COURSE_HOLD_BEFORE_ENTER, text = "course.l1_start"},
 	{kind = .Film_Type, text = "processes() |> where(threads > 1) |> columns(name, slot, resident) |> sort(\"resident\")"},
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Film_Hold, milliseconds = COURSE_HOLD_BEFORE_ENTER},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = " of Process"},
 	{kind = .Film_Hold, milliseconds = COURSE_HOLD_TEACH},
 
 	{kind = .Film_Type, text = "memory()"},
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Film_Hold, milliseconds = COURSE_HOLD_BEFORE_ENTER},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console]   interrupts"},
 	{kind = .Film_Hold, milliseconds = COURSE_HOLD_TEACH, text = "course.l1_memory"},
 
 	{kind = .Film_Type, text = "1 MiB + 512 KiB"},
+	{kind = .Film_Hold, milliseconds = COURSE_HOLD_BEFORE_ENTER},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] 1536 KiB"},
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK},
+	{kind = .Film_Hold, milliseconds = COURSE_HOLD_RESULT},
 	{kind = .Film_Type, text = "let double = (x) => x * 2 in [1, 2, 3, 4] |> filter((x) => x > 2) |> map(double)"},
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Film_Hold, milliseconds = COURSE_HOLD_BEFORE_ENTER},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] [6, 8]"},
 	{kind = .Film_Hold, milliseconds = COURSE_HOLD_TEACH, text = "course.l1_units"},
 
 	{kind = .Film_Type, text = "settings.set(font = .comic)"},
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Film_Hold, milliseconds = COURSE_HOLD_BEFORE_ENTER},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] error: "},
 	{kind = .Film_Hold, milliseconds = COURSE_HOLD_TEACH, text = "course.l1_enum_refusal"},
@@ -74,33 +75,35 @@ scenario_course_film := [?]Step {
 	// Lesson 2: The 5 Ways to Run Code & Bound Module Handles.
 	{kind = .Type, text = "clear()"},
 	{kind = .Wait, text = "[console] > clear()"},
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT, text = "course.l2_start"},
+	{kind = .Film_Hold, milliseconds = COURSE_HOLD_BEFORE_ENTER, text = "course.l2_start"},
 	{kind = .Film_Type, text = "s = isolate(\"sample\")"},
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Film_Hold, milliseconds = COURSE_HOLD_BEFORE_ENTER},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console]   call       isolated"},
 	{kind = .Film_Hold, milliseconds = COURSE_HOLD_TEACH},
 
 	{kind = .Film_Type, text = "help(\"s.readings\")"},
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Film_Hold, milliseconds = COURSE_HOLD_BEFORE_ENTER},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] gives a table of "},
 	{kind = .Film_Hold, milliseconds = COURSE_HOLD_TEACH, text = "course.l2_help"},
 
 	{kind = .Film_Type, text = "t = s.readings(4)"},
+	{kind = .Film_Hold, milliseconds = COURSE_HOLD_BEFORE_ENTER},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] > t = s.readings(4)"},
 	{kind = .Film_Type, text = "t |> where(sensor = 2) |> s.sum_values"},
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Film_Hold, milliseconds = COURSE_HOLD_BEFORE_ENTER},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] 30"},
 	{kind = .Film_Hold, milliseconds = COURSE_HOLD_TEACH, text = "course.l2_shorthand"},
 
 	{kind = .Film_Type, text = "connect(\"monitor\")"},
+	{kind = .Film_Hold, milliseconds = COURSE_HOLD_BEFORE_ENTER},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console]   module     monitor"},
 	{kind = .Film_Type, text = "monitor.served()"},
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Film_Hold, milliseconds = COURSE_HOLD_BEFORE_ENTER},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console]   calls"},
 	{kind = .Film_Hold, milliseconds = COURSE_HOLD_TEACH, text = "course.l2_connect"},

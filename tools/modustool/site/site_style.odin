@@ -592,6 +592,13 @@ a.declaration-link { color: inherit; text-decoration-thickness: 1px; text-underl
 .lead { font-size: 18px; line-height: 28px; max-width: 60ch; }
 .doors { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .doors a { display: inline-block; padding: 4px 16px; background: var(--track); text-decoration: none; border-bottom: 2px solid var(--line); }
+.home-actions { margin: 0 0 12px; }
+.home-actions a.door-primary { font-weight: 700; }
+.home-actions a.door-download { font-family: var(--mono); font-size: 14px; font-weight: 700; border-bottom-color: var(--match); }
+.home-secondary ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; font-family: var(--mono); font-size: 13px; line-height: 24px; }
+.home-secondary li { margin: 0; }
+.home-secondary a { color: var(--dim); text-decoration: none; border-bottom: 1px solid transparent; }
+.home-secondary a:hover, .home-secondary a:focus-visible { color: var(--text); border-bottom-color: var(--line); background: none; }
 figure { min-width: 0; margin: 0; padding: 8px; background: var(--card-bottom); border: 1px solid var(--track); }
 figure.wide { grid-column: 1 / -1; }
 figure a { display: block; }

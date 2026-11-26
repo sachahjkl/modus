@@ -109,7 +109,7 @@ tutorial_accent_rgb := [Tutorial_Accent]Tutorial_Rgb {
 // Bounded AV1 quality step-up ladder (CRF for libsvtav1, CQ for av1_nvenc)
 // guaranteeing WebM outputs fit <= 4 MiB.
 @(rodata)
-TUTORIAL_WEBM_CRF_LADDER := [5]int{42, 46, 50, 54, 58}
+TUTORIAL_WEBM_CRF_LADDER := [7]int{42, 46, 50, 54, 58, 61, 63}
 
 Tutorial_Card_Anchor :: enum u8 {
 	Start_Of_Film = 0,
@@ -200,7 +200,7 @@ tutorial_chapter_cards := [7]Tutorial_Chapter_Card {
 	{
 		id          = "card_ch1",
 		anchor      = .Start_Of_Film,
-		duration_ms = 3500,
+		duration_ms = 7500,
 		accent      = .System,
 		kicker      = "MODUS DEVELOPER TUTORIAL",
 		title       = "Building a sandboxed SQLite GUI app on modus",
@@ -211,17 +211,17 @@ tutorial_chapter_cards := [7]Tutorial_Chapter_Card {
 		id          = "card_ch2",
 		anchor      = .Before_Cue,
 		cue_name    = "tutorial.project_start",
-		duration_ms = 2800,
+		duration_ms = 6500,
 		accent      = .System,
 		kicker      = "CHAPTER 1",
-		title       = "Project Declaration (project.lex)",
+		title       = "Source Code & Project Declaration",
 		lines       = tutorial_ch2_lines[:],
 	},
 	{
 		id          = "card_ch3",
 		anchor      = .Before_Cue,
 		cue_name    = "tutorial.cache_start",
-		duration_ms = 2800,
+		duration_ms = 6500,
 		accent      = .System,
 		kicker      = "CHAPTER 2",
 		title       = "Signed Cache & Recipes",
@@ -231,7 +231,7 @@ tutorial_chapter_cards := [7]Tutorial_Chapter_Card {
 		id          = "card_ch4",
 		anchor      = .Before_Cue,
 		cue_name    = "tutorial.sandbox_start",
-		duration_ms = 2800,
+		duration_ms = 6500,
 		accent      = .Grant,
 		kicker      = "CHAPTER 3",
 		title       = "Sandbox by Default & Grants",
@@ -241,7 +241,7 @@ tutorial_chapter_cards := [7]Tutorial_Chapter_Card {
 		id          = "card_ch5",
 		anchor      = .Before_Cue,
 		cue_name    = "tutorial.sqlite_open",
-		duration_ms = 2800,
+		duration_ms = 6500,
 		accent      = .Process,
 		kicker      = "CHAPTER 4",
 		title       = "Live SQLite GUI",
@@ -251,7 +251,7 @@ tutorial_chapter_cards := [7]Tutorial_Chapter_Card {
 		id          = "card_ch6",
 		anchor      = .Before_Cue,
 		cue_name    = "tutorial.versions_start",
-		duration_ms = 2800,
+		duration_ms = 6500,
 		accent      = .Version,
 		kicker      = "CHAPTER 5",
 		title       = "Automatic CoW Versions",
@@ -260,7 +260,7 @@ tutorial_chapter_cards := [7]Tutorial_Chapter_Card {
 	{
 		id          = "card_ch7",
 		anchor      = .End_Of_Film,
-		duration_ms = 4000,
+		duration_ms = 9000,
 		accent      = .Process,
 		kicker      = "RECAP",
 		title       = "modus",
@@ -282,9 +282,9 @@ tutorial_captions := [15]Tutorial_Caption {
 	{
 		cue_name = "tutorial.project_start",
 		accent   = .System,
-		kicker   = "01 / PROJECT DECLARATION",
-		heading  = "Opening db_browser/project.lex in the modus editor",
-		body     = "edit(\"db_browser\", \"project.lex\") opens the project declaration directly from its store.",
+		kicker   = "01 / SOURCE & PROJECT DECLARATION",
+		heading  = "Opening db_browser/main.odin and db_browser/project.lex in edit",
+		body     = "First inspect the Odin source of db_browser, then its pure Lex project.lex declaration stored beside it.",
 	},
 	{
 		cue_name = "tutorial.project_lex",
@@ -1417,7 +1417,9 @@ chaptered_film_write :: proc(name: string, cards: []Tutorial_Chapter_Card, capti
 	foundation.run(tutorial_mp4_encode_command(list_path, ass_path, TUTORIAL_FONTS_FOLDER, timeline.total_ms, output, mp4_backend)) or_return
 
 	// Encode 1920x1080 30 fps AV1 WebM, stepping up quality if needed to guarantee
-	// strict compliance with checks.FILM_DOCUMENT_SIZE_LIMIT (4 MiB).
+	// strict compliance with checks.FILM_DOCUMENT_SIZE_LIMIT (4 MiB). When NVENC
+	// cannot fit a long screen recording under 4 MiB, fall back to libsvtav1
+	// which achieves higher compression on sharp UI frames.
 	webm_backend := film_detect_webm_backend()
 	webm_output := foundation.join(FILM_FOLDER, "/", name, FILM_WEBM_SUFFIX)
 	webm_ok := false
@@ -1429,6 +1431,18 @@ chaptered_film_write :: proc(name: string, cards: []Tutorial_Chapter_Card, capti
 			webm_ok = true
 			webm_bytes = len(data)
 			break
+		}
+	}
+	if !webm_ok && webm_backend == .Nvenc {
+		webm_backend = .Cpu
+		for crf in ([4]int{50, 54, 58, 62}) {
+			foundation.run(tutorial_webm_encode_command(list_path, ass_path, TUTORIAL_FONTS_FOLDER, crf, timeline.total_ms, webm_output, .Cpu)) or_return
+			data := foundation.read_file(webm_output) or_return
+			if problem := checks.film_document_problem(data); problem == "" {
+				webm_ok = true
+				webm_bytes = len(data)
+				break
+			}
 		}
 	}
 	if !webm_ok {

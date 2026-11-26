@@ -7,13 +7,56 @@
 // "The boot stages of the page").
 // The stage that ends the start: the first frame of the compositor.
 const STAGE_READY = "ready";
+const THEME_KEY = "modus-console-theme";
 
 const screen = document.getElementById("screen");
 const status = document.getElementById("machine-status");
+const statusDot = document.getElementById("dot");
 const serial = document.getElementById("serial-output");
 const startButton = document.getElementById("start");
+const themeButton = document.getElementById("theme");
 const context = screen.getContext("2d", { alpha: false });
 const image = context.createImageData(screen.width, screen.height);
+
+function themeSet(theme) {
+  document.documentElement.dataset.theme = theme;
+  if (themeButton) themeButton.textContent = theme === "dark" ? "Light" : "Dark";
+  try { localStorage.setItem(THEME_KEY, theme); } catch {}
+}
+let savedTheme = "dark";
+try { savedTheme = localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark"; } catch {}
+themeSet(savedTheme);
+if (themeButton) {
+  themeButton.addEventListener("click", () => themeSet(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+}
+
+function dotSet(kind) {
+  if (statusDot) statusDot.className = "status-dot" + (kind ? " " + kind : "");
+}
+
+function drawBackdrop() {
+  context.fillStyle = "#0b1018";
+  context.fillRect(0, 0, screen.width, screen.height);
+  context.fillStyle = "#18212d";
+  for (let y = 12; y < screen.height; y += 24) {
+    for (let x = 12; x < screen.width; x += 24) {
+      context.fillRect(x, y, 2, 2);
+    }
+  }
+}
+
+function drawIdle() {
+  drawBackdrop();
+  context.fillStyle = "#4a9cf0";
+  context.fillRect(64, 68, 4, 24);
+  context.fillStyle = "#dce4ec";
+  context.font = "700 22px ui-monospace, Menlo, Consolas, monospace";
+  context.textBaseline = "top";
+  context.fillText("modus web desktop", 80, 68);
+  context.fillStyle = "#7c8a99";
+  context.font = "16px ui-monospace, Menlo, Consolas, monospace";
+  context.fillText("Press Start to boot the WebAssembly machine in this tab.", 64, 112);
+}
 
 let worker = null;
 let frameAsked = false;
@@ -44,8 +87,7 @@ function present(buffer) {
 // canvas at 18 px.
 const STAGE_LINE_STEP = 32;
 function stagesDraw() {
-  context.fillStyle = "#0f1115";
-  context.fillRect(0, 0, screen.width, screen.height);
+  drawBackdrop();
   context.font = "18px ui-monospace, Menlo, Consolas, monospace";
   context.textBaseline = "top";
   let y = 64;
@@ -54,15 +96,15 @@ function stagesDraw() {
     context.fillText(text, 64, y);
     y += STAGE_LINE_STEP;
   };
-  line("modus: the machine starts", "#e6ebf2");
+  line("modus: the machine starts", "#dce4ec");
   y += STAGE_LINE_STEP / 2;
-  for (const done of stagesDone) line("done  " + done.sentence + " (" + done.seconds.toFixed(1) + " s)", "#9aa5b4");
+  for (const done of stagesDone) line("done  " + done.sentence + " (" + done.seconds.toFixed(1) + " s)", "#7c8a99");
   if (stage) {
     let text = "now   " + stageSentence + " (" + ((performance.now() - stageStarted) / 1000).toFixed(0) + " s)";
     if (stage === "download" && downloaded.loaded) {
       text += ": " + (downloaded.loaded / 1048576).toFixed(1) + (downloaded.total ? " of " + (downloaded.total / 1048576).toFixed(1) : "") + " MiB";
     }
-    line(text, "#5fa8ff");
+    line(text, "#4a9cf0");
   }
   if (machineState && machineState !== "running" && machineState !== "created") line("the machine is " + machineState, "#f06060");
 }
@@ -108,6 +150,8 @@ function onWorkerMessage(event) {
       return;
     case "state":
       machineState = message.state;
+      if (message.state === "running" && stage === STAGE_READY) dotSet("running");
+      else if (message.state !== "running" && message.state !== "created") dotSet("stopped");
       if (stage === STAGE_READY || message.state !== "running") {
         status.textContent = message.state + (message.stopCode !== null && message.stopCode !== undefined ? " (code " + message.stopCode + ")" : "") + (message.trap ? ": " + message.trap : "");
       }
@@ -118,8 +162,13 @@ function onWorkerMessage(event) {
 startButton.addEventListener("click", () => {
   if (worker) return;
   startButton.disabled = true;
+  dotSet("");
   worker = new Worker("browser_machine_worker.js", { type: "module" });
   worker.onmessage = onWorkerMessage;
+  worker.onerror = (event) => {
+    dotSet("stopped");
+    status.textContent = "stopped: " + event.message;
+  };
   worker.postMessage({
     kind: "start",
     kernelUrl: "modulus_kernel.wasm",
@@ -149,4 +198,5 @@ for (const kind of ["pointerdown", "pointerup"]) {
   });
 }
 
-status.textContent = self.crossOriginIsolated ? "ready: shared memory" : "ready: one processor, no shared memory";
+drawIdle();
+status.textContent = self.crossOriginIsolated ? "ready: shared memory" : "ready: one processor";

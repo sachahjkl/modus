@@ -940,17 +940,41 @@ site_home_head :: proc(site: ^Site, b: ^strings.Builder) {
 	site_plain(b, site_heron_description(site.readme.mark_description))
 	strings.write_string(b, "\"></picture></div>\n<div>\n<h1>" + SITE_MARK_NAME_HTML + "</h1>\n<p class=\"lead\">")
 	site_inline(b, site.readme.tagline)
-	strings.write_string(b, "</p>\n<ul class=\"doors\">\n")
-	// A door for each section under the home: the home has the room for
-	// each one, with no menu.
+	strings.write_string(b, "</p>\n")
+	// Primary actions: Try, Download v<release> (direct image when published,
+	// else #download), and Docs. Keeping at most three primary buttons avoids
+	// an overflowing horizontal ribbon on the hero.
+	home := site_section_page(.Home)
+	strings.write_string(b, "<ul class=\"doors home-actions\">\n")
+	if site_page_exists(site, site_section_page(.Try)) {
+		fmt.sbprintf(b, "<li><a class=\"door-primary\" href=\"%s\">Try in browser</a></li>\n", site_page_link(site, home, site_section_page(.Try)))
+	}
+	if site.release != "" {
+		if site.release_public_key != "" {
+			tag := strings.concatenate({"v", site.release}, context.temp_allocator)
+			image_name := build.release_image_file_name(site.release)
+			fmt.sbprintf(b, "<li><a class=\"door-download\" href=\"%s/releases/download/%s/%s\">Download v%s</a></li>\n", checks.REPOSITORY_ADDRESS, tag, image_name, site.release)
+		} else {
+			fmt.sbprintf(b, "<li><a class=\"door-download\" href=\"#download\">Download v%s</a></li>\n", site.release)
+		}
+	}
+	if site_page_exists(site, site_section_page(.Docs)) {
+		fmt.sbprintf(b, "<li><a href=\"%s\">Docs</a></li>\n", site_page_link(site, home, site_section_page(.Docs)))
+	}
+	strings.write_string(b, "</ul>\n")
+	// Secondary sections in one quiet inline navigation row below the actions.
+	strings.write_string(b, "<nav class=\"home-secondary\" aria-label=\"More sections\">\n<ul>\n")
 	for section in Site_Section {
-		if !site_section_under_home(section) || !site_page_exists(site, site_section_page(section)) {
+		if section == .Try || section == .Docs || !site_section_under_home(section) || !site_page_exists(site, site_section_page(section)) {
 			continue
 		}
-		fmt.sbprintf(b, "<li><a href=\"%s\">%s</a></li>\n", site_page_link(site, site_section_page(.Home), site_section_page(section)), site_section_titles[section])
+		fmt.sbprintf(b, "<li><a href=\"%s\">%s</a></li>\n", site_page_link(site, home, site_section_page(section)), site_section_titles[section])
 	}
-	fmt.sbprintf(b, "<li><a href=\"%s\">The repository</a></li>\n", checks.REPOSITORY_ADDRESS)
-	strings.write_string(b, "</ul>\n</div>\n</header>\n")
+	if site.release != "" && site.release_public_key != "" {
+		strings.write_string(b, "<li><a href=\"#download\">Verify</a></li>\n")
+	}
+	fmt.sbprintf(b, "<li><a href=\"%s\">Repository</a></li>\n", checks.REPOSITORY_ADDRESS)
+	strings.write_string(b, "</ul>\n</nav>\n</div>\n</header>\n")
 }
 
 // site_home_explanation writes the rest of the lead of README.md, after the

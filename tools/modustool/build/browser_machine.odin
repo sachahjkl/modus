@@ -198,6 +198,8 @@ Browser_Machine_Page_File :: struct {
 BROWSER_MACHINE_PAGE_FILES :: [?]Browser_Machine_Page_File {
 	{"browser_machine.html", #load("browser_machine/browser_machine.html", string)},
 	{BROWSER_MACHINE_CONSOLE_PAGE_FILE, #load("browser_machine/browser_machine_console.html", string)},
+	{"browser_machine.css", #load("browser_machine/browser_machine.css", string)},
+	{"browser_machine_console_page.js", #load("browser_machine/browser_machine_console_page.js", string)},
 	{"browser_machine_page.js", #load("browser_machine/browser_machine_page.js", string)},
 	{"browser_machine_worker.js", #load("browser_machine/browser_machine_worker.js", string)},
 	{BROWSER_MACHINE_HOST_FILE, #load("browser_machine/browser_machine_host.js", string)},

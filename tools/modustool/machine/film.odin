@@ -48,8 +48,10 @@ FILM_QMP_SOCKET_SUFFIX :: ".film.qmp"
 // The typing of a film: the middle period between two keys, and the most
 // that one period differs from it. A seeded generator draws each period, so
 // the typing does not look mechanical and two runs type at the same times.
-FILM_KEY_PERIOD_MILLISECONDS :: 70
-FILM_KEY_VARIATION_MILLISECONDS :: 25
+// Kept at a readable human typing speed (~8.5 keys/s) so viewers can read
+// commands and source code as they are typed without pausing.
+FILM_KEY_PERIOD_MILLISECONDS :: 115
+FILM_KEY_VARIATION_MILLISECONDS :: 30
 FILM_TYPING_SEED :: 0x6D6F647573
 
 // The holds of a film, in milliseconds: how long a state stays on the

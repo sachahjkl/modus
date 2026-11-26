@@ -319,7 +319,10 @@ browser_machine_page_files_name_each_other :: proc(t: ^testing.T) {
 		return ""
 	}
 	testing.expect(t, strings.has_prefix(text_of(files[:], "browser_machine.html"), "<!doctype html>"))
-	testing.expect(t, strings.contains(text_of(files[:], "browser_machine.html"), "src=\"browser_machine_page.js\""))
+	testing.expect(t, strings.contains(text_of(files[:], "browser_machine.html"), "src=\"./browser_machine_page.js\""))
+	testing.expect(t, strings.contains(text_of(files[:], "browser_machine.html"), "href=\"./browser_machine.css\""))
+	testing.expect(t, strings.contains(text_of(files[:], BROWSER_MACHINE_CONSOLE_PAGE_FILE), "src=\"./browser_machine_console_page.js\""))
+	testing.expect(t, strings.contains(text_of(files[:], BROWSER_MACHINE_CONSOLE_PAGE_FILE), "href=\"./browser_machine.css\""))
 	testing.expect(t, strings.contains(text_of(files[:], "browser_machine_page.js"), "new Worker(\"browser_machine_worker.js\""))
 	testing.expect(t, strings.contains(text_of(files[:], "browser_machine_page.js"), "\"" + BROWSER_MACHINE_KERNEL_FILE + "\""))
 	testing.expect(t, strings.contains(text_of(files[:], "browser_machine_page.js"), "\"" + BROWSER_MACHINE_BOOT_IMAGE_FILE + "\""))
@@ -465,29 +468,34 @@ browser_machine_host_puts_the_console_on_com2 :: proc(t: ^testing.T) {
 	testing.expect(t, terminal_records.SERIAL_PORT_FIRST + terminal_records.SERIAL_PORT_COUNT <= 0x3F8 || terminal_records.SERIAL_PORT_FIRST >= 0x3F8 + terminal_records.SERIAL_PORT_COUNT)
 	page := BROWSER_MACHINE_CONSOLE_PAGE_TEXT
 	testing.expect(t, strings.has_prefix(page, "<!doctype html>"))
-	// The document runs no machine: it starts the worker of the browser
-	// machine with the kernel and the console image, and never imports the
-	// host.
-	testing.expect(t, strings.contains(page, "new Worker(\"./browser_machine_worker.js\", { type: \"module\" })"))
-	testing.expect(t, !strings.contains(page, BROWSER_MACHINE_HOST_FILE))
-	testing.expect(t, !strings.contains(page, "new BrowserMachine"))
-	testing.expect(t, !strings.contains(page, "runSlice"))
-	testing.expect(t, strings.contains(page, "kernelUrl: \"./" + BROWSER_MACHINE_KERNEL_FILE + "\""))
-	testing.expect(t, strings.contains(page, "bootImageUrl: \"./" + BROWSER_MACHINE_CONSOLE_IMAGE_FILE + "\""))
-	testing.expect(t, strings.contains(page, "memoryMebibytes: 512"))
-	testing.expect(t, strings.contains(page, "case \"console\": {"))
-	testing.expect(t, strings.contains(page, "JSON.parse(line)"))
-	testing.expect(t, strings.contains(page, "worker.postMessage({ kind: \"console_type\", text })"))
-	testing.expect(t, !strings.contains(page, "machine.serial.input"))
-	// The worker sends the lines of COM2 in batches, types the text of the
-	// page on COM2, and gives the trust of the image to the host.
+	script := ""
 	worker := ""
 	page_files := BROWSER_MACHINE_PAGE_FILES
 	for file in page_files {
+		if file.name == "browser_machine_console_page.js" {
+			script = file.text
+		}
 		if file.name == "browser_machine_worker.js" {
 			worker = file.text
 		}
 	}
+	// The document runs no machine: its external module script starts the
+	// worker of the browser machine with the kernel and the console image,
+	// and never imports the host.
+	testing.expect(t, strings.contains(page, "<script type=\"module\" src=\"./browser_machine_console_page.js\"></script>"))
+	testing.expect(t, strings.contains(script, "new Worker(\"./browser_machine_worker.js\", { type: \"module\" })"))
+	testing.expect(t, !strings.contains(script, BROWSER_MACHINE_HOST_FILE))
+	testing.expect(t, !strings.contains(script, "new BrowserMachine"))
+	testing.expect(t, !strings.contains(script, "runSlice"))
+	testing.expect(t, strings.contains(script, "kernelUrl: \"./" + BROWSER_MACHINE_KERNEL_FILE + "\""))
+	testing.expect(t, strings.contains(script, "bootImageUrl: \"./" + BROWSER_MACHINE_CONSOLE_IMAGE_FILE + "\""))
+	testing.expect(t, strings.contains(script, "memoryMebibytes: 512"))
+	testing.expect(t, strings.contains(script, "case \"console\": {"))
+	testing.expect(t, strings.contains(script, "JSON.parse(line)"))
+	testing.expect(t, strings.contains(script, "worker.postMessage({ kind: \"console_type\", text })"))
+	testing.expect(t, !strings.contains(script, "machine.serial.input"))
+	// The worker sends the lines of COM2 in batches, types the text of the
+	// page on COM2, and gives the trust of the image to the host.
 	testing.expect(t, strings.contains(worker, "onConsoleLine: (line) => {\n      pendingConsoleLines.push(line);"))
 	// The worker gives the sentence of each stage: no document imports the host.
 	testing.expect(t, strings.contains(worker, "sentence: BOOT_STAGE_SENTENCES[stage]"))
@@ -503,30 +511,46 @@ browser_machine_host_puts_the_console_on_com2 :: proc(t: ^testing.T) {
 		has_console_page ||= file.name == BROWSER_MACHINE_CONSOLE_PAGE_FILE
 	}
 	testing.expect(t, has_console_page, "BROWSER_MACHINE_PAGE_FILES must include the console page")
-	testing.expect(t, strings.contains(page, `s = isolate(\"sample\")`))
+	testing.expect(t, strings.contains(script, `s = isolate(\"sample\")`))
 	testing.expect(t, strings.contains(page, `href="./try/"`))
 }
 
-// The console page draws with its document only: no canvas, no grid of
-// cells, no library and no address outside its folder. It reads each kind
-// of line that dom_protocol writes, colors each tone by its class, keeps a
-// bound on its output, and keeps copy and paste with the browser.
+// The console page draws with its own HTML, CSS, and JS files only: no
+// canvas, no grid of cells, no library, no external host address, and no
+// inline <style> or inline <script> (obeys the site's strict CSP). It reads
+// each kind of line that dom_protocol writes, colors each tone by its class,
+// keeps a bound on its output, and keeps copy and paste with the browser.
 @(test)
 browser_machine_console_page_draws_the_dom_protocol :: proc(t: ^testing.T) {
 	page := BROWSER_MACHINE_CONSOLE_PAGE_TEXT
-	for refused in ([?]string{"<canvas", "getContext", "xterm", "http://", "https://", "<link", "innerHTML"}) {
+	css := ""
+	script := ""
+	page_files := BROWSER_MACHINE_PAGE_FILES
+	for file in page_files {
+		if file.name == "browser_machine.css" {
+			css = file.text
+		}
+		if file.name == "browser_machine_console_page.js" {
+			script = file.text
+		}
+	}
+	for refused in ([?]string{"<canvas", "getContext", "xterm", "http://", "https://", "innerHTML", "<style", " style="}) {
 		testing.expectf(t, !strings.contains(page, refused), "the console page holds %q", refused)
+		testing.expectf(t, !strings.contains(script, refused), "the console script holds %q", refused)
 	}
 	for kind in ([?]string{"  out(record) {", "  clr: ", "  edit(record) {", "  hint(record) {", "  status(record) {", "  list(record) {"}) {
-		testing.expectf(t, strings.contains(page, kind), "the console page reads no line %q", kind)
+		testing.expectf(t, strings.contains(script, kind), "the console script reads no line %q", kind)
 	}
 	for tone in terminal_records.Tone {
 		if tone != .Default {
-			testing.expectf(t, strings.contains(page, strings.concatenate({".t-", dom_protocol.tone_name(tone), " {"}, context.temp_allocator)), "the console page has no class for the tone %v", tone)
+			testing.expectf(t, strings.contains(css, strings.concatenate({".t-", dom_protocol.tone_name(tone), " {"}, context.temp_allocator)), "the console stylesheet has no class for the tone %v", tone)
 		}
 	}
-	for part in ([?]string{"id=\"output\"", "id=\"prompt-bar\"", "id=\"hint-bar\"", "id=\"status-bar\"", "id=\"completion-popup\"", "data-theme", "OUTPUT_LINE_LIMIT = 4000", "addEventListener(\"paste\"", "getSelection()"}) {
+	for part in ([?]string{"id=\"output\"", "id=\"prompt-bar\"", "id=\"hint-bar\"", "id=\"status-bar\"", "id=\"completion-popup\"", "data-theme"}) {
 		testing.expectf(t, strings.contains(page, part), "the console page holds no %q", part)
+	}
+	for part in ([?]string{"OUTPUT_LINE_LIMIT = 4000", "addEventListener(\"paste\"", "getSelection()"}) {
+		testing.expectf(t, strings.contains(script, part), "the console script holds no %q", part)
 	}
 	// The borders of a line of the system: bounds, closed sets of names, a
 	// color of six digits only, a record kind of the page's own table, and
@@ -543,10 +567,10 @@ browser_machine_console_page_draws_the_dom_protocol :: proc(t: ^testing.T) {
 		"node.style.backgroundColor = color || \"var(--text)\";",
 	}
 	for part in borders {
-		testing.expectf(t, strings.contains(page, part), "the console page holds no %q", part)
+		testing.expectf(t, strings.contains(script, part), "the console script holds no %q", part)
 	}
 	testing.expect_value(t, strings.count(page, "<script"), 1)
-	testing.expect(t, !strings.contains(page, "<script src"))
+	testing.expect(t, strings.contains(page, "<script type=\"module\" src=\"./browser_machine_console_page.js\"></script>"))
 }
 
 // The trust beside a signed image of the page is the BLAKE3 hash of its

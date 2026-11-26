@@ -19,8 +19,16 @@ import "modustool:build"
 import "modustool:cache_server"
 import "modustool:foundation"
 
-// Source of the `"calc"` project compiled natively inside modus in Lessons 3-6.
-COURSE_BUILDING_CALC_MAIN_C :: "long main(void) { return 84; }\n"
+// Multi-line C source of the `"calc"` project opened live in `edit` during
+// Lesson 3 and compiled natively inside modus in Lessons 4-6 (returns 84).
+COURSE_BUILDING_CALC_MAIN_C :: `long double_sum(long a, long b) {
+  return (a + b) * 2;
+}
+
+long main(void) {
+  return double_sum(19, 23);
+}
+`
 
 // Declarative Lex project file shown live in `edit("calc", "project.lex")`
 // during Lesson 3 and evaluated in Lessons 4-6.

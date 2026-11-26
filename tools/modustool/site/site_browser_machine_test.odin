@@ -71,14 +71,11 @@ site_browser_machine_copy_artifacts_precedence_and_absence :: proc(t: ^testing.T
 	boot_img := strings.concatenate({root, "/boot.image"}, context.temp_allocator)
 
 	// 1. Nothing built yet: succeeds with 0 copied artifacts.
-	orig_cwd, _ := os.get_working_directory(context.temp_allocator)
-	site_work := strings.concatenate({root, "/work"}, context.temp_allocator)
-	_ = os.make_directory_all(site_work)
-	_ = os.set_working_directory(site_work)
-	defer _ = os.set_working_directory(orig_cwd)
+	site_work := strings.concatenate({root, "/site_out"}, context.temp_allocator)
 
-	_ = foundation.reset_folder(SITE_FOLDER)
+	_ = foundation.reset_folder(site_work)
 	s0 := test_site()
+	s0.output_folder = site_work
 	copied0, ok0 := site_browser_machine_copy_artifacts(&s0, bm_dir, release_img, boot_img)
 	testing.expect(t, ok0 && copied0 == 0)
 	testing.expect_value(t, s0.files[build.BROWSER_MACHINE_KERNEL_FILE], 0)
@@ -91,8 +88,9 @@ site_browser_machine_copy_artifacts_precedence_and_absence :: proc(t: ^testing.T
 	_ = os.write_entire_file(release_img, transmute([]u8)string("release-img-bytes"))
 	_ = os.write_entire_file(boot_img, transmute([]u8)string("full-boot"))
 
-	_ = foundation.reset_folder(SITE_FOLDER)
+	_ = foundation.reset_folder(site_work)
 	s1 := test_site()
+	s1.output_folder = site_work
 	copied1, ok1 := site_browser_machine_copy_artifacts(&s1, bm_dir, release_img, boot_img)
 	testing.expect(t, ok1 && copied1 == 3)
 	testing.expect_value(t, s1.files[build.BROWSER_MACHINE_KERNEL_FILE], len("wasm-bytes"))
@@ -103,10 +101,48 @@ site_browser_machine_copy_artifacts_precedence_and_absence :: proc(t: ^testing.T
 	// 3. Dedicated bm/boot.image wins over boot_release.image when present.
 	_ = os.write_entire_file(strings.concatenate({bm_dir, "/", build.BROWSER_MACHINE_BOOT_IMAGE_FILE}, context.temp_allocator), transmute([]u8)string("bm-desktop-clean-image"))
 	_ = os.write_entire_file(strings.concatenate({bm_dir, "/", build.BROWSER_MACHINE_BOOT_IMAGE_FILE, build.BROWSER_MACHINE_TRUST_SUFFIX}, context.temp_allocator), transmute([]u8)string("fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\n"))
-	_ = foundation.reset_folder(SITE_FOLDER)
+	_ = foundation.reset_folder(site_work)
 	s2 := test_site()
+	s2.output_folder = site_work
 	copied2, ok2 := site_browser_machine_copy_artifacts(&s2, bm_dir, release_img, boot_img)
 	testing.expect(t, ok2 && copied2 == 3)
 	testing.expect_value(t, s2.files[build.BROWSER_MACHINE_BOOT_IMAGE_FILE], len("bm-desktop-clean-image"))
 	testing.expect_value(t, s2.files[build.BROWSER_MACHINE_BOOT_IMAGE_FILE + build.BROWSER_MACHINE_TRUST_SUFFIX], 65)
+}
+
+// Every HTML page of the browser machine obeys the site's Content-Security-Policy
+// (`style-src 'self'; script-src 'self' 'wasm-unsafe-eval'`): no inline <style>,
+// no style="..." attribute, and every <script> loads an external file via src=.
+@(test)
+site_browser_machine_pages_have_no_inline_style_or_script :: proc(t: ^testing.T) {
+	files := build.BROWSER_MACHINE_PAGE_FILES
+	html_count := 0
+	for file in files {
+		if !strings.has_suffix(file.name, ".html") {
+			continue
+		}
+		html_count += 1
+		lower := strings.to_lower(file.text, context.temp_allocator)
+		testing.expectf(t, !strings.contains(lower, "<style"), "%s contains an inline <style> block", file.name)
+		testing.expectf(t, !strings.contains(lower, " style="), "%s contains an inline style= attribute", file.name)
+		testing.expectf(t, strings.contains(file.text, `href="./browser_machine.css"`), "%s does not link external browser_machine.css", file.name)
+
+		rest := lower
+		for {
+			pos := strings.index(rest, "<script")
+			if pos < 0 {
+				break
+			}
+			after := rest[pos:]
+			close := strings.index_byte(after, '>')
+			testing.expectf(t, close > 0, "%s has an unclosed <script tag", file.name)
+			if close <= 0 {
+				break
+			}
+			tag := after[:close]
+			testing.expectf(t, strings.contains(tag, "src="), "%s contains an inline <script> without src=", file.name)
+			rest = after[close + 1:]
+		}
+	}
+	testing.expect_value(t, html_count, 2)
 }

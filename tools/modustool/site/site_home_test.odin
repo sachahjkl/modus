@@ -441,8 +441,14 @@ site_home_heron_press :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(site_mark_animation_rules(), "." + SITE_MARK_CONTROL_CLASS + " { cursor: pointer; }"))
 
 	site := test_site()
+	site.release = "0.100.2"
+	site.release_public_key = "testkey"
 	head := strings.builder_make(context.temp_allocator)
 	site_home_head(&site, &head)
-	testing.expect(t, strings.contains(strings.to_string(head), "<header class=\"home-head\">\n<div class=\"" + SITE_MARK_BOX_CLASS + "\"><picture>"))
-	testing.expect(t, strings.contains(strings.to_string(head), "\"></picture></div>\n<div>\n<h1>"))
+	head_html := strings.to_string(head)
+	testing.expect(t, strings.contains(head_html, "<header class=\"home-head\">\n<div class=\"" + SITE_MARK_BOX_CLASS + "\"><picture>"))
+	testing.expect(t, strings.contains(head_html, "\"></picture></div>\n<div>\n<h1>"))
+	testing.expect(t, strings.contains(head_html, "Download v0.100.2"))
+	testing.expect(t, strings.contains(head_html, "/releases/download/v0.100.2/"))
+	testing.expect(t, strings.contains(head_html, "<nav class=\"home-secondary\""))
 }

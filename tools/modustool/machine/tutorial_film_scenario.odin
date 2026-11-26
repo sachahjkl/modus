@@ -20,8 +20,9 @@ package machine
 // db_browser's status bar.
 //
 // Generous reading hold times for the self-contained silent tutorial.
-TUTORIAL_HOLD_EXPLAIN :: 4200
-TUTORIAL_HOLD_DETAIL :: 4800
+TUTORIAL_HOLD_EXPLAIN :: 8500
+TUTORIAL_HOLD_DETAIL :: 9500
+TUTORIAL_HOLD_BEFORE_ENTER :: 1600
 
 @(rodata)
 scenario_tutorial_film := [?]Step {
@@ -41,12 +42,24 @@ scenario_tutorial_film := [?]Step {
 
 	// Chapter 1: Intro title card (spliced at 0.000) + clean modus desktop & Lex console.
 	{kind = .Film_Start, text = "tutorial"},
-	{kind = .Film_Hold, milliseconds = 3200, text = "tutorial.intro"},
+	{kind = .Film_Hold, milliseconds = 6000, text = "tutorial.intro"},
 
-	// Chapter 2: Open db_browser/project.lex on screen in the modus editor.
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT, text = "tutorial.project_start"},
+	// Chapter 2: Open db_browser/main.odin source code, then db_browser/project.lex.
+	{kind = .Film_Hold, milliseconds = TUTORIAL_HOLD_BEFORE_ENTER, text = "tutorial.project_start"},
+	{kind = .Film_Type, text = "edit(\"db_browser\", \"main.odin\")"},
+	{kind = .Film_Hold, milliseconds = TUTORIAL_HOLD_BEFORE_ENTER},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: surface edit: main.odin", any_order = true},
+	{kind = .Wait, text = "edit: ok, the first picture is presented"},
+	{kind = .Move, text = "edit: main.odin", to_x = 760, to_y = 44},
+	{kind = .Film_Hold, milliseconds = TUTORIAL_HOLD_DETAIL},
+	{kind = .Front, text = "console"},
+	{kind = .Film_Type, text = "stop(\"edit\")"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "root: edit stopped: "},
+
 	{kind = .Film_Type, text = "edit(\"db_browser\", \"project.lex\")"},
-	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
+	{kind = .Film_Hold, milliseconds = TUTORIAL_HOLD_BEFORE_ENTER},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: surface edit: project.lex", any_order = true},
 	{kind = .Wait, text = "edit: ok, the first picture is presented"},

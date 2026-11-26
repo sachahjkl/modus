@@ -1,0 +1,3 @@
+type: Fixed
+
+**Browser machine pages, home download bar, course film pacing, and Nix-sandbox test fixes.** Extracted inline styles and scripts from `browser_machine_console.html` and `browser_machine.html` into external `browser_machine.css` and `browser_machine_console_page.js` files matching the Modus palette and window chrome; added the release version and direct download button to the home hero while collapsing secondary links into one quiet row; slowed typing and hold pacing across the `course`, `course_building`, and `tutorial` films and added live multi-line source editing, rebuild, and inspection steps; and fixed two Nix-sandbox test build faults in `course_building_film_scenario.odin` and `lex_tools_test.odin`.

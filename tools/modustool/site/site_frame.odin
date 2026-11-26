@@ -176,8 +176,9 @@ Site_Guide :: struct {
 }
 
 Site :: struct {
-	address:      string,
-	author:       string, // The holder of the line "Copyright" of LICENSE, or "".
+	address:       string,
+	output_folder: string, // Directory where site_write_file writes; defaults to SITE_FOLDER.
+	author:        string, // The holder of the line "Copyright" of LICENSE, or "".
 	commit:       string, // "" when the tool cannot read it.
 	release:      string,
 	release_public_key: string, // The public key of the release signing key in base64url, or "" when the repository holds none (site_download.odin).
@@ -508,7 +509,8 @@ SITE_MAKER_PICTURE :: "froment_software.png"
 
 // site_write_file writes one file of the site, and records it.
 site_write_file :: proc(site: ^Site, path: string, data: []u8) -> bool {
-	target := strings.concatenate({SITE_FOLDER, "/", path}, context.temp_allocator)
+	folder_root := site.output_folder != "" ? site.output_folder : SITE_FOLDER
+	target := strings.concatenate({folder_root, "/", path}, context.temp_allocator)
 	if folder := strings.last_index_byte(target, '/'); folder > 0 {
 		foundation.make_folder(target[:folder]) or_return
 	}

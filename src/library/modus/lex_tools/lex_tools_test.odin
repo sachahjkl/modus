@@ -198,10 +198,36 @@ format_multiline_declarations_and_comments :: proc(t: ^testing.T) {
 
 @(test)
 format_idempotent_across_guide_snippets :: proc(t: ^testing.T) {
-	// Verify every non-transcript ```lex block in docs/LEX.md and docs/COURSE.md
-	// formats without error and is strictly idempotent.
-	guide_paths := [?]string{"docs/LEX.md", "docs/COURSE.md"}
+	// Always verify representative Lex snippets from docs/LEX.md and
+	// docs/COURSE.md (so src/-only Nix sandboxes without docs/ still test
+	// formatter idempotence), plus every non-transcript ```lex block from
+	// disk when the guides are present.
+	builtin_snippets := [?]string{
+		"1 MiB + 512 KiB",
+		"let x = 1, y = x + 2 in y * 3",
+		`let name = "world" in "hello ${name}"`,
+		"project { source = here(), outputs = { default = catalog.c.module(\"main.c\") } }",
+		"plans.apply(\"home\", plan { modules = { console = hash(\"0000000000000000000000000000000000000000000000000000000000000000\") } })",
+		"\"calc\" |> recipes.build_project(\"build_only\")",
+		"let f = (a, b) => a + b in f(19, 23)",
+	}
 	blocks_checked := 0
+	for src in builtin_snippets {
+		out1 := make([]u8, max(len(src) * 4 + 256, 4096))
+		out2 := make([]u8, len(out1))
+		n1, err1 := lex_format(src, out1)
+		testing.expect_value(t, err1, Format_Error.None)
+		if err1 == .None {
+			n2, err2 := lex_format(string(out1[:n1]), out2)
+			testing.expect_value(t, err2, Format_Error.None)
+			testing.expect_value(t, string(out2[:n2]), string(out1[:n1]))
+			blocks_checked += 1
+		}
+		delete(out1)
+		delete(out2)
+	}
+
+	guide_paths := [?]string{"docs/LEX.md", "docs/COURSE.md"}
 
 	for path in guide_paths {
 		data, err := os.read_entire_file(path, context.allocator)
