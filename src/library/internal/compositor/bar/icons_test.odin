@@ -40,6 +40,7 @@ a_name_gets_the_icon_of_its_kind :: proc(t: ^testing.T) {
 	testing.expect_value(t, icon_of("debugger_window"), Icon.Debugger)
 	testing.expect_value(t, icon_of("paint"), Icon.Picture)
 	testing.expect_value(t, icon_of("disk"), Icon.Disk)
+	testing.expect_value(t, icon_of("files"), Icon.Disk)
 	testing.expect_value(t, icon_of("kernel_events"), Icon.Console)
 	testing.expect_value(t, icon_of(""), Icon.Window)
 	testing.expect_value(t, icon_of("consol"), Icon.Window)

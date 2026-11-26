@@ -124,7 +124,7 @@ fuzz_root_ring_start_grant_set_of :: proc(word: u64) -> (start_grant_set: bit_se
 // written here too.
 @(private = "file")
 fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, start_grant_set: bit_set[start_grant.Grant], listed: bool) -> bool {
-	if start_grant_set & {.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy, .Plans, .Screen_Capture, .Grants_Manage} == {} {
+	if start_grant_set & {.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy, .Plans, .Screen_Capture, .Grants_Manage, .Open_Editor} == {} {
 		return false
 	}
 	switch command {
@@ -150,7 +150,9 @@ fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, start_grant
 		return .Root_Ring in start_grant_set || .Start_Policy in start_grant_set
 	case .Grants, .Revoke, .Disk_Grant, .Wide_Grant_End, .Grants_Read:
 		return .Root_Ring in start_grant_set || .Grants_Manage in start_grant_set
-	case .Replace, .Connect_History, .Principal_Create, .Principal_Lock, .Principals, .Palette_Provide, .Start_From_Disk, .Nickname_Move, .Machine_Passphrase, .Disk_Grant_Persistence, .Machine_Seal, .Principal_Change, .Remote_Client, .Start_Policy_Choice, .Start_Edit, .Wide_Grant_Ask:
+	case .Start_Edit:
+		return .Root_Ring in start_grant_set || .Open_Editor in start_grant_set
+	case .Replace, .Connect_History, .Principal_Create, .Principal_Lock, .Principals, .Palette_Provide, .Start_From_Disk, .Nickname_Move, .Machine_Passphrase, .Disk_Grant_Persistence, .Machine_Seal, .Principal_Change, .Remote_Client, .Start_Policy_Choice, .Wide_Grant_Ask:
 		return .Root_Ring in start_grant_set
 	}
 	return false

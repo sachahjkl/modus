@@ -428,8 +428,8 @@ Root_Command :: enum u32 {
 	// values[5]: the byte length of the object path, 1 to
 	// EDIT_TARGET_PATH_LIMIT.
 	// values[6]: 0.
-	// The caller must have the start grant Root_Ring and act for its
-	// principal (Acts_For_Principal); the store must belong to the
+	// The caller must have the start grant Root_Ring or Open_Editor and act for
+	// its principal (Acts_For_Principal); the store must belong to the
 	// principal of the caller.
 	Start_Edit = 30,
 	// Debug_Start starts a process of the boot image held before its first
@@ -1000,6 +1000,9 @@ Root_Command_Sender :: enum u8 {
 	// A process with Root_Ring or Grants_Manage: the Grants window reads and
 	// revokes grants of its own principal session without broader authority.
 	Root_Ring_Or_Grants_Manage,
+	// A process with Root_Ring or Open_Editor: the Files browser launches
+	// `edit` on an object of its principal's stores without broader authority.
+	Root_Ring_Or_Open_Editor,
 }
 
 // The sender of each command. The table is whole: a new command does not
@@ -1038,7 +1041,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Machine_Usable         = .Start_Policy,
 	.Start_Policy_Choice    = .Root_Ring,
 	.Wire                   = .Root_Ring_Or_Start_Policy,
-	.Start_Edit             = .Root_Ring,
+	.Start_Edit             = .Root_Ring_Or_Open_Editor,
 	.Debug_Start            = .Debugger,
 	.Plan_Roles             = .Plans,
 	.Screen_Budget          = .Screen_Capture,
@@ -1057,7 +1060,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 // The start grants that give a process a root ring. A process with none of
 // them has no root ring, so it sends no command: a disk process, whose
 // grants a command gives, and which no command gives one of these.
-ROOT_RING_GRANTS :: bit_set[start_grant.Grant]{.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy, .Plans, .Screen_Capture, .Grants_Manage}
+ROOT_RING_GRANTS :: bit_set[start_grant.Grant]{.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy, .Plans, .Screen_Capture, .Grants_Manage, .Open_Editor}
 
 // root_ring_given says if a process with these start grants receives a
 // root ring at its start.
@@ -1187,6 +1190,8 @@ sender_allowed :: proc "contextless" (command: Root_Command, start_grant_set: bi
 		return .Remote_Clients in start_grant_set
 	case .Root_Ring_Or_Grants_Manage:
 		return .Root_Ring in start_grant_set || .Grants_Manage in start_grant_set
+	case .Root_Ring_Or_Open_Editor:
+		return .Root_Ring in start_grant_set || .Open_Editor in start_grant_set
 	}
 	return false
 }

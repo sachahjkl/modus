@@ -8,6 +8,8 @@ package bar
 @(rodata)
 names := [?]string {
 	"assistant",
+	"code",
+	"files",
 	"grants",
 	"notes",
 	"boot",
@@ -71,6 +73,8 @@ names := [?]string {
 @(rodata)
 name_icons := [?]Icon {
 	.Window,
+	.Document,
+	.Disk,
 	.Grant,
 	.Document,
 	.Monitor,
@@ -131,5 +135,5 @@ name_icons := [?]Icon {
 }
 #assert(len(name_icons) == len(names))
 
-APPLICATION_COUNT :: 3 // The applications: the first names.
+APPLICATION_COUNT :: 5 // The applications: the first names.
 TOOL_COUNT :: 12 // The tools: the names after the applications.

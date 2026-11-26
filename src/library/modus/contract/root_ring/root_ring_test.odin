@@ -219,6 +219,8 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 			return false
 		case .Root_Ring_Or_Grants_Manage:
 			return grant == .Root_Ring || grant == .Grants_Manage
+		case .Root_Ring_Or_Open_Editor:
+			return grant == .Root_Ring || grant == .Open_Editor
 		}
 		return false
 	}
@@ -258,6 +260,24 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 	testing.expect(t, !sender_allowed(.Wide_Grant_Ask, {.Grants_Manage}))
 	testing.expect(t, !sender_allowed(.Principal_Lock, {.Grants_Manage}))
 	testing.expect(t, !sender_allowed(.Grants_Read, {.Connect}))
+	// Open_Editor sends only Start_Edit (plus universal Disconnect/Budget_Grow) and refuses every other root command.
+	testing.expect(t, sender_allowed(.Start_Edit, {.Open_Editor}))
+	testing.expect(t, sender_allowed(.Disconnect, {.Open_Editor}))
+	testing.expect(t, sender_allowed(.Budget_Grow, {.Open_Editor}))
+	testing.expect(t, !sender_allowed(.Start, {.Open_Editor}))
+	testing.expect(t, !sender_allowed(.Stop, {.Open_Editor}))
+	testing.expect(t, !sender_allowed(.Connect, {.Open_Editor}))
+	testing.expect(t, !sender_allowed(.Revoke, {.Open_Editor}))
+	testing.expect(t, !sender_allowed(.Replace, {.Open_Editor}))
+	testing.expect(t, !sender_allowed(.Wide_Grant_Ask, {.Open_Editor}))
+	testing.expect(t, !sender_allowed(.Principal_Lock, {.Open_Editor}))
+	testing.expect(t, !sender_allowed(.Grants_Read, {.Open_Editor}))
+	testing.expect(t, !sender_allowed(.Start_Edit, {.Connect}))
+	testing.expect(t, !sender_allowed(.Start_Edit, {.Grants_Manage}))
+	for command in Root_Command {
+		want_open_editor := command == .Start_Edit || command == .Disconnect || command == .Budget_Grow
+		testing.expectf(t, sender_allowed(command, {.Open_Editor}) == want_open_editor, "Open_Editor on %v: got %v, want %v", command, sender_allowed(command, {.Open_Editor}), want_open_editor)
+	}
 	// Grants_Read border checks: invalid kind, non-zero index for Wide_Grant, non-zero trailing words.
 	for bad_kind in ([?]u64{0, u64(max(Grants_Read_Kind)) + 1, max(u64)}) {
 		_, _, place, ok := grants_read_words_of_values({0 = bad_kind})

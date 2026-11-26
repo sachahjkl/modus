@@ -228,6 +228,14 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// grants of the caller's own principal session (never Allow, Start, Stop,
 	// Replace, or Acts_For_Principal).
 	{name = "grants", scope = .Session, grants = {.Grants_Manage}},
+	// The desktop Store and Object Browser (src/md/features/store_explorer.md):
+	// - **Store**: its private store in the storage service.
+	// - **Acts_For_Principal**: lists and opens the stores of its principal
+	//   session in the storage service.
+	// - **Open_Editor**: a root ring restricted to Root_Command.Start_Edit so
+	//   Ctrl+E launches `edit` directly on a selected object without holding
+	//   Root_Ring.
+	{name = "files", scope = .Session, grants = {.Store, .Acts_For_Principal, .Open_Editor}, terms = {store_blocks = 4500}},
 	// A service: the console calls its exports through a connection.
 	{name = "life", scope = .Session, grants = {.Serve}},
 	// A service: the console calls its exports through a connection.
@@ -300,6 +308,9 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// of a note of 32 KiB holds 8 blocks of data and their nodes, and the
 	// store keeps each version for 10 minutes before the thinning.
 	{name = "notes", scope = .Session, grants = {.Store}, terms = {store_blocks = 4500}},
+	// The content-addressed binary AST codebase (`codebase.ast`) and its
+	// versions live in its private store.
+	{name = "code", scope = .Session, grants = {.Store}, terms = {store_blocks = 4500}},
 	// The test of persistence: its note, its count and their versions live
 	// in its private store: the versions of a run of 1000 commits of the
 	// count (4 blocks each), then thinning at the limit.

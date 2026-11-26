@@ -43,7 +43,7 @@ icon_of :: proc "contextless" (name: string) -> Icon {
 		return .Console
 	case "boot", "monitor", "budget", "crowd", "limits", "processors", "scheduler", "tally", "threads", "workers":
 		return .Monitor
-	case "log", "edit", "agenda", "interface_font", "notes", "tables":
+	case "log", "edit", "code", "agenda", "interface_font", "notes", "tables":
 		return .Document
 	case "manual", "hall_of_fame":
 		return .Manual
@@ -51,7 +51,7 @@ icon_of :: proc "contextless" (name: string) -> Icon {
 		return .Settings
 	case "clock":
 		return .Clock
-	case "pages", "address_space", "disk", "imports":
+	case "pages", "address_space", "disk", "files", "imports":
 		return .Disk
 	case "remote", "remote_display", "network", "flow", "net", "quic_echo", "rings", "server":
 		return .Network
