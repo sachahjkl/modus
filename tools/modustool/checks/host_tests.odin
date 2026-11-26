@@ -361,6 +361,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SYSTEM_MODULE_SOURCES + "manual",
 	foundation.APPLICATION_MODULE_SOURCES + "assistant",
 	foundation.APPLICATION_MODULE_SOURCES + "grants",
+	foundation.APPLICATION_MODULE_SOURCES + "doom",
 	foundation.SYSTEM_MODULE_SOURCES + "collector",
 	foundation.SYSTEM_MODULE_SOURCES + "guest_builder",
 	foundation.SYSTEM_MODULE_SOURCES + "linux",

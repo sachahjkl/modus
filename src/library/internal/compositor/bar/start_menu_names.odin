@@ -9,6 +9,7 @@ package bar
 names := [?]string {
 	"assistant",
 	"code",
+	"doom",
 	"files",
 	"grants",
 	"notes",
@@ -74,6 +75,7 @@ names := [?]string {
 name_icons := [?]Icon {
 	.Window,
 	.Document,
+	.Window,
 	.Disk,
 	.Grant,
 	.Document,
@@ -135,5 +137,5 @@ name_icons := [?]Icon {
 }
 #assert(len(name_icons) == len(names))
 
-APPLICATION_COUNT :: 5 // The applications: the first names.
+APPLICATION_COUNT :: 6 // The applications: the first names.
 TOOL_COUNT :: 12 // The tools: the names after the applications.

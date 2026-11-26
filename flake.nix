@@ -264,6 +264,53 @@
       '';
     };
 
+    # doomgeneric, the Doom engine of the module doom: its source at one
+    # commit, the patches of the system, and the freestanding libc and system
+    # shims beside it, as one folder of the store. The tool compiles each .c
+    # file at the top of the folder; DOOMGENERIC_SOURCE names it
+    # (src/md/features/doom.md; src/md/infrastructure/outside_source.md).
+    doomgenericSource = pkgs.stdenvNoCC.mkDerivation {
+      name = "doomgeneric-source";
+      src = pkgs.fetchFromGitHub {
+        owner = "ozkl";
+        repo = "doomgeneric";
+        rev = "e257a09527062bfb986b6e5e0780839b6cbd5b71";
+        hash = "sha256-A25lWVT5YBFXmMB1EP91ntLvOW9UkeN9vUwopKpJHY4=";
+      };
+      patches = map (name: ./src/outside/doomgeneric/patches + "/${name}") (builtins.attrNames (builtins.readDir ./src/outside/doomgeneric/patches));
+      dontConfigure = true;
+      dontBuild = true;
+      installPhase = ''
+        runHook preInstall
+        mkdir -p $out/libc/include/sys
+        # Copy headers and portable core engine sources only. Platform backends
+        # (doomgeneric_*.c, i_sdl*, i_allegro*, w_file_posix/win32) and the four
+        # replaced files (doomgeneric.c, i_video.c, i_input.c, w_file_stdc.c)
+        # are omitted in favour of src/outside/doomgeneric/system/*.c.
+        cp doomgeneric/*.h $out/
+        for src in \
+          dummy.c am_map.c doomdef.c doomstat.c dstrings.c d_event.c d_items.c \
+          d_iwad.c d_loop.c d_main.c d_mode.c d_net.c f_finale.c f_wipe.c \
+          g_game.c hu_lib.c hu_stuff.c info.c i_cdmus.c i_endoom.c i_joystick.c \
+          i_scale.c i_sound.c i_system.c i_timer.c memio.c m_argv.c m_bbox.c \
+          m_cheat.c m_config.c m_controls.c m_fixed.c m_menu.c m_misc.c \
+          m_random.c p_ceilng.c p_doors.c p_enemy.c p_floor.c p_inter.c \
+          p_lights.c p_map.c p_maputl.c p_mobj.c p_plats.c p_pspr.c p_saveg.c \
+          p_setup.c p_sight.c p_spec.c p_switch.c p_telept.c p_tick.c p_user.c \
+          r_bsp.c r_data.c r_draw.c r_main.c r_plane.c r_segs.c r_sky.c \
+          r_things.c sha1.c sounds.c statdump.c st_lib.c st_stuff.c s_sound.c \
+          tables.c v_video.c wi_stuff.c w_checksum.c w_file.c w_main.c w_wad.c \
+          z_zone.c; do
+          cp "doomgeneric/$src" $out/
+        done
+        cp ${./src/outside/doomgeneric/system}/*.c $out/
+        cp ${./src/outside/doomgeneric/libc}/*.c $out/
+        cp ${./src/outside/doomgeneric/libc/include}/*.h $out/libc/include/
+        cp ${./src/outside/doomgeneric/libc/include/sys}/*.h $out/libc/include/sys/
+        runHook postInstall
+      '';
+    };
+
     # The guest image of the process linux (src/md/features/linux_shell.md):
     # the bzImage of Nixpkgs and a static busybox, of which the tool makes an
     # initial archive. The host test of the boot protocol loads the kernel,
@@ -274,6 +321,7 @@
       MODUS_LINUX_KERNEL_IMAGE = "${pkgs.linux}/bzImage";
       MODUS_LINUX_GUEST_BUSYBOX = "${pkgs.pkgsStatic.busybox}/bin/busybox";
       MODUS_LINUX_GUEST_MODULES = "${linuxGuestModules}";
+      MODUS_FREEDOOM_WAD = "${pkgs.freedoom}/share/games/doom/freedoom1.wad";
     };
 
     # The kernel of Nixpkgs builds the virtio transport, its ring, the
@@ -295,6 +343,7 @@
     # shell and the check set them.
     outsideSources = {
       CHIBICC_SOURCE = "${chibiccSource}";
+      DOOMGENERIC_SOURCE = "${doomgenericSource}";
     };
 
     # The C programs of others that the host test of src/outside/c_programs

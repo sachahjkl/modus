@@ -107,6 +107,8 @@ Step_Kind :: enum {
 	Type, // Press the keys of text, then Enter. When the console is in front, the tool then waits for the echo of the line on the log (console_echo.odin).
 	Keys, // Press the keys of text, with no Enter.
 	Key, // Press one key: text is its QEMU name.
+	Key_Down, // Press and hold one key without releasing: text is its QEMU name (qmp_key_state_command).
+	Key_Up, // Release one previously held key: text is its QEMU name (qmp_key_state_command).
 	// Write the character text on the serial line of the machine again and
 	// again until the log has `expected` after the last Wait, with the
 	// bound of the first wait: a key that the firmware holds while the
@@ -1833,6 +1835,16 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 		case .Key:
 			if !keys_send(machine, []string{step.text}, fmt.tprintf("the key %s", step.text)) {
 				fmt.eprintfln("modustool: test failed: step %d: the machine did not take the key %s", index + 1, step.text)
+				return false
+			}
+		case .Key_Down:
+			if !key_state_send(machine, step.text, true) {
+				fmt.eprintfln("modustool: test failed: step %d: the machine did not take key down %s", index + 1, step.text)
+				return false
+			}
+		case .Key_Up:
+			if !key_state_send(machine, step.text, false) {
+				fmt.eprintfln("modustool: test failed: step %d: the machine did not take key up %s", index + 1, step.text)
 				return false
 			}
 		case .Key_Until:

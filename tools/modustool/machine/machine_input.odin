@@ -149,6 +149,42 @@ keys_send :: proc(machine: ^Machine, names: []string, what: string) -> bool {
 	return false
 }
 
+// key_state_send sends one key press or release transition via QMP
+// qmp_key_state_command without the matching opposite event, for holding a key
+// down across multiple game frames.
+key_state_send :: proc(machine: ^Machine, name: string, down: bool) -> bool {
+	before: i64
+	counted := false
+	if machine.confirm {
+		before, _, counted = key_records_read(machine)
+	}
+	input_room_wait(machine, key_device_bytes(name)) or_return
+	machine_command_send(machine, qmp_key_state_command(name, down)) or_return
+	if !counted {
+		return input_read_wait(machine)
+	}
+	wanted := before + 1
+	received := before
+	for start := time.tick_now(); time.tick_since(start) < foundation.HANG_BOUND; {
+		now, refused, read := key_records_read(machine)
+		if !read {
+			return input_read_wait(machine)
+		}
+		if refused > 0 {
+			fmt.eprintfln("modustool: test failed: the compositor lost %d key records during key state change for %s", refused, name)
+			return false
+		}
+		received = now
+		if received >= wanted {
+			machine.device_bytes = 0
+			return true
+		}
+		time.sleep(CONDITION_POLL_PERIOD)
+	}
+	fmt.eprintfln("modustool: test failed: the compositor did not receive key state change for %s within %v", name, foundation.HANG_BOUND)
+	return false
+}
+
 // pointer_packet_send sends one command that makes one packet of the
 // virtual mouse: a move or a change of a button.
 pointer_packet_send :: proc(machine: ^Machine, command: string) -> bool {

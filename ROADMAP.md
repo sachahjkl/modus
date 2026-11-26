@@ -4,8 +4,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
-- **Native Doom (`doomgeneric`) on modus.** Run native Doom in a 640x400 window with SSE2 palette conversion, 35 Hz frame pacing, 56 KiB chunked WAD reads, optional sound, and relative pointer lock. [Design](src/md/features/doom.md)
-
 ## Next
 
 - **One way to read an object through the storage service.** Replace boot-image resources, numbered context values, fixed delivery ranges, and the `Image` data grant with a read-only image tree served first by `storage` with no disk, mapped by name in granted trees with optional explicit counted hash pins and one plan-bounded map cache for disk objects. [Design](src/md/features/objects_by_hash.md)

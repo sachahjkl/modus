@@ -25,7 +25,7 @@ import "modustool:foundation"
 // process is never in a wait for long, and its window never stays the
 // same, so the condition of a picture leaves its window out.
 @(rodata)
-processes_that_draw_without_end := [?]string{"life", "plasma", "threads", "workers", "rings", "processors", "limits", "flood"}
+processes_that_draw_without_end := [?]string{"life", "plasma", "threads", "workers", "rings", "processors", "limits", "flood", "doom"}
 
 // draws_without_end says if a window with this title is left out of the
 // condition of a picture.

@@ -1,0 +1,128 @@
+--- a/doomgeneric/doomfeatures.h
++++ b/doomgeneric/doomfeatures.h
+@@ -33,7 +33,7 @@
+ 
+ // Enables sound output
+ 
+-//#undef FEATURE_SOUND
++#define FEATURE_SOUND 1
+ 
+ #endif /* #ifndef DOOM_FEATURES_H */
+ 
+--- a/doomgeneric/i_sound.c
++++ b/doomgeneric/i_sound.c
+@@ -18,10 +18,6 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ 
+-#if defined(FEATURE_SOUND) && !defined(__DJGPP__)
+-#include <SDL_mixer.h>
+-#endif
+-
+ #include "config.h"
+ #include "doomfeatures.h"
+ #include "doomtype.h"
+@@ -36,7 +32,7 @@
+ 
+ // Sound sample rate to use for digital output (Hz)
+ 
+-int snd_samplerate = 44100;
++int snd_samplerate = 48000;
+ 
+ // Maximum number of bytes to dedicate to allocated sound effects.
+ // (Default: 64MB)
+@@ -394,9 +390,6 @@
+ 
+ void I_BindSoundVariables(void)
+ {
+-    extern int use_libsamplerate;
+-    extern float libsamplerate_scale;
+-
+     M_BindVariable("snd_musicdevice",   &snd_musicdevice);
+     M_BindVariable("snd_sfxdevice",     &snd_sfxdevice);
+     M_BindVariable("snd_sbport",        &snd_sbport);
+@@ -408,11 +401,6 @@
+     M_BindVariable("snd_samplerate",    &snd_samplerate);
+     M_BindVariable("snd_cachesize",     &snd_cachesize);
+ 
+-#ifdef FEATURE_SOUND
+-    M_BindVariable("use_libsamplerate",   &use_libsamplerate);
+-    M_BindVariable("libsamplerate_scale", &libsamplerate_scale);
+-#endif
+-
+     // Before SDL_mixer version 1.2.11, MIDI music caused the game
+     // to crash when it looped.  If this is an old SDL_mixer version,
+     // disable MIDI.
+--- a/doomgeneric/i_system.c
++++ b/doomgeneric/i_system.c
+@@ -55,7 +55,7 @@
+ #include <CoreFoundation/CFUserNotification.h>
+ #endif
+ 
+-#define DEFAULT_RAM 6 /* MiB */
++#define DEFAULT_RAM 8 /* MiB */
+ #define MIN_RAM     6  /* MiB */
+ 
+ 
+@@ -257,11 +257,7 @@
+         entry = entry->next;
+     }
+ 
+-#if ORIGCODE
+-    SDL_Quit();
+-
+     exit(0);
+-#endif
+ }
+ 
+ #if !defined(_WIN32) && !defined(__MACOSX__) && !defined(__DJGPP__)
+@@ -456,7 +452,7 @@
+ 
+ #else
+     {
+-        ZenityErrorBox(msgbuf);
++        (void)msgbuf;
+     }
+ #endif
+ 
+--- a/doomgeneric/r_plane.c
++++ b/doomgeneric/r_plane.c
+@@ -42,14 +42,14 @@
+ //
+ 
+ // Here comes the obnoxious "visplane".
+-#define MAXVISPLANES	128
++#define MAXVISPLANES	1024
+ visplane_t		visplanes[MAXVISPLANES];
+ visplane_t*		lastvisplane;
+ visplane_t*		floorplane;
+ visplane_t*		ceilingplane;
+ 
+ // ?
+-#define MAXOPENINGS	SCREENWIDTH*64
++#define MAXOPENINGS	SCREENWIDTH*256
+ short			openings[MAXOPENINGS];
+ short*			lastopening;
+ 
+--- a/doomgeneric/r_defs.h
++++ b/doomgeneric/r_defs.h
+@@ -48,7 +48,7 @@
+ #define SIL_TOP			2
+ #define SIL_BOTH		3
+ 
+-#define MAXDRAWSEGS		256
++#define MAXDRAWSEGS		2048
+ 
+ 
+ 
+--- a/doomgeneric/r_things.h
++++ b/doomgeneric/r_things.h
+@@ -22,7 +22,7 @@
+ 
+ 
+ 
+-#define MAXVISSPRITES  	128
++#define MAXVISSPRITES  	1024
+ 
+ extern vissprite_t	vissprites[MAXVISSPRITES];
+ extern vissprite_t*	vissprite_p;

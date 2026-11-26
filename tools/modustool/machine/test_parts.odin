@@ -176,6 +176,7 @@ test_parts := [?]Test_Part {
 	},
 	{name = "shortage", does = "The machine of the shortage of frames", procedures = {"shortage_tests_run"}, volumes = {build.BOOT_VOLUME_SHORTAGE}},
 	{name = "operation_sequences", does = "The machine of the operation sequences, with the kernel that ships and one processor: the tool writes the seed sequences in the mailbox of `operation_fuzzing` through the memory file of the machine, and checks each answer against the statuses of the reference, the forms of the operations and the budget of the sequence (\"The operation sequences\")", procedures = {"operation_sequences_tests_run"}, volumes = {build.BOOT_VOLUME_OPERATION_SEQUENCES}},
+	{name = "doom", does = "The machine of native Doom (`doomgeneric`): its data disk holds `freedoom1.wad` in the private store `doom`, QEMU runs with a virtio sound device, `doom` renders its title screen, enters E1M1, responds to held movement and fire keys with distinct frames, acquires pointer lock on surface click, and releases pointer lock on Super", procedures = {"doom_tests_run"}, volumes = {build.BOOT_VOLUME}},
 }
 
 // test_part_find gives the row of a part by its name.

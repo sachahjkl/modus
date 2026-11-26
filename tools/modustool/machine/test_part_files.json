@@ -42,5 +42,6 @@
   "fails": ["fails_scenario.odin"],
   "start_policy": ["start_policy_scenario.odin", "start_policy_from_disk_scenario.odin"],
   "shortage": [],
-  "operation_sequences": []
+  "operation_sequences": [],
+  "doom": ["doom_scenario.odin"]
 }

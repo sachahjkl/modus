@@ -73,12 +73,12 @@ QEMU machine tests use `qmp_key_state_command` in `tools/modustool/machine/qmp.o
 
 ## State
 
-Built (OS prerequisites):
+Built:
 - Window right-click routing with empty-desktop, bar, overlay, and window-frame guards.
 - Opt-in `Command.Pointer_Lock`, summing `Event_Kind.Pointer_Delta` coalescing, and `Event_Kind.Pointer_Lock_Changed`.
 - Compositor pointer-lock state machine, `Pointer locked (Super)` bar mark, `Super` and `Ctrl+Shift+Escape` release, and game shortcut bypass.
 - Browser machine optional pointer lock, optional `.Sound_Device` silent launch on soundless machines, and `qmp_key_state_command` for held keys.
+- Native `doom` application module (`src/modules/applications/doom/` + `src/outside/doomgeneric/`): pinned `doomgeneric` C engine with limit-removing patch, freestanding thin libc, zero-copy memory-mapped WAD loaded at startup via 56 KiB `storage.read_range` chunks, SSE2 `#simd[4]u32` palette-to-BGRA32 blitter with byte-identical scalar twin, 35 Hz frame pacing, WASD/arrow/mouse pointer-lock input, optional 48 kHz stereo DMX SFX mixing over `timed_stream`, and `doom` QEMU machine test scenario.
 
 Left:
-- The native `doomgeneric` module (Odin shell, freestanding C sources, SSE2 palette blit, 35 Hz pacing, 56 KiB WAD streaming, and optional sound playback).
-- QEMU and browser machine verification of the Doom module.
+- Live QEMU and browser machine execution verification of the Doom module.

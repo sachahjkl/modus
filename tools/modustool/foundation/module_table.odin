@@ -172,6 +172,14 @@ CHIBICC :: Outside_Source {
 	variable = "CHIBICC_SOURCE",
 }
 
+// doomgeneric, the Doom engine of the module doom
+// (src/md/features/doom.md).
+DOOMGENERIC :: Outside_Source {
+	work     = "doomgeneric",
+	folder   = SOURCE_FOLDER_OUTSIDE + "/doomgeneric",
+	variable = "DOOMGENERIC_SOURCE",
+}
+
 // outside_sources lists each outside source of the module table once: the
 // reuse list names each one.
 outside_sources :: proc(allocator := context.temp_allocator) -> []Outside_Source {
@@ -349,6 +357,7 @@ module_builds := [?]Module_Build {
 	{name = "assistant", source = APPLICATION_MODULE_SOURCES + "assistant", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "grants", source = APPLICATION_MODULE_SOURCES + "grants", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "files", source = APPLICATION_MODULE_SOURCES + "files", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "doom", source = APPLICATION_MODULE_SOURCES + "doom", entry = true, imports = {TEXT_RENDERING_MODULE}, image = true, c_source = DOOMGENERIC},
 	{name = "persistence_check", source = TEST_MODULE_SOURCES + "persistence_check", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "browser", source = DEMONSTRATION_MODULE_SOURCES + "browser", entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "edit", source = SYSTEM_MODULE_SOURCES + "edit", category = .System_Tool, entry = true, imports = {DRAWING_MODULE, TEXT_RENDERING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},

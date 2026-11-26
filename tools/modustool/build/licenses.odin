@@ -42,4 +42,5 @@ spdx_names := [?][2]string {
 	{"CC BY 4.0", "CC-BY-4.0"},
 	{"CC BY 3.0", "CC-BY-3.0"},
 	{"CC0", "CC0-1.0"},
+	{"GNU GENERAL PUBLIC LICENSE", "GPL-2.0-or-later"},
 }

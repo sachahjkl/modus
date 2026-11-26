@@ -236,6 +236,12 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	//   Ctrl+E launches `edit` directly on a selected object without holding
 	//   Root_Ring.
 	{name = "files", scope = .Session, grants = {.Store, .Acts_For_Principal, .Open_Editor}, terms = {store_blocks = 4500}},
+	// Native Doom (`doomgeneric`, src/md/features/doom.md):
+	// - **Store**: its private store holds the WAD file (up to ~29 MiB for
+	//   Freedoom Phase 1) and savegames.
+	// - **Sound_Device**: optional 48 kHz stereo timed stream for DMX sound
+	//   effects; the process runs silent on machines without a sound device.
+	{name = "doom", scope = .Session, grants = {.Store, .Sound_Device}, terms = {store_blocks = 12000}},
 	// A service: the console calls its exports through a connection.
 	{name = "life", scope = .Session, grants = {.Serve}},
 	// A service: the console calls its exports through a connection.
