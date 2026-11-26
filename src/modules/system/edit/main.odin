@@ -177,6 +177,8 @@ bar: interface.Action_Bar_State
 
 text: text_model.Text
 layout: text_model.Layout // Computed after each change of the text, never in a frame.
+syntax: text_model.Syntax_States // Precomputed per-row carry state, never in a frame.
+syntax_language: text_model.Syntax_Language
 walk: text_model.Version_Walk
 search: text_model.Search
 waiting_kind: text_model.Change_Kind // The kind of the changes that wait for a commit.
@@ -226,12 +228,14 @@ pointer_dragging: bool // The left button went down in the text, and is still do
 // a commit past it, and the editor says that the text is full.
 TEXT_RESERVE_PAGES :: 4096 // The bytes of the text: 16 MiB.
 ROWS_RESERVE_PAGES :: 4096 // The display rows: 2 Mi rows of 8 bytes.
+SYNTAX_RESERVE_PAGES :: 512 // Per-row syntax carry bytes: 2 Mi rows of 1 byte.
 MATCHES_RESERVE_PAGES :: 2048 // The places of the matches of a search: 2 Mi.
 // A text from the store, its clean copy, a selection to copy and a paste.
 TRANSFER_RESERVE_PAGES :: 8192
 
 text_arena: system.Arena
 rows_arena: system.Arena
+syntax_arena: system.Arena
 matches_arena: system.Arena
 transfer_arena: system.Arena
 version_rows: [VERSION_ROWS_CAPACITY]storage.Version
@@ -243,10 +247,12 @@ version_generations: [VERSION_ROWS_CAPACITY]i64
 arenas_start :: proc "contextless" () {
 	text_arena, _ = system.arena_create(TEXT_RESERVE_PAGES)
 	rows_arena, _ = system.arena_create(ROWS_RESERVE_PAGES)
+	syntax_arena, _ = system.arena_create(SYNTAX_RESERVE_PAGES)
 	matches_arena, _ = system.arena_create(MATCHES_RESERVE_PAGES)
 	transfer_arena, _ = system.arena_create(TRANSFER_RESERVE_PAGES)
 	text_model.text_init_buffer(&text, nil, system.arena_grow, &text_arena)
 	text_model.layout_init_buffer(&layout, nil, system.arena_grow, &rows_arena)
+	text_model.syntax_init_buffer(&syntax, nil, system.arena_grow, &syntax_arena)
 	text_model.search_init_buffer(&search, nil, system.arena_grow, &matches_arena)
 }
 
@@ -316,6 +322,7 @@ target_read :: proc "contextless" (ctx: ^system.Context) -> string {
 	copy(target_path_bytes[:len(path)], path)
 	target_path_length = len(path)
 	target_has_custom = true
+	syntax_language = text_model.syntax_language_of_path(path)
 	writer := system.Writer{buffer = target_title_bytes[:]}
 	system.write_part(&writer, "edit: ")
 	room := len(target_title_bytes) - writer.count
@@ -482,9 +489,10 @@ scroll_to_caret :: proc "contextless" () {
 	top_row = clamp(top_row, 0, max(layout.row_count - visible_rows, 0))
 }
 
-// layout_refresh computes the rows of the text after it changed.
+// layout_refresh computes the rows and per-row syntax carry of the text after it changed.
 layout_refresh :: proc "contextless" () {
 	text_model.layout_compute(&layout, &text, ROW_COLUMNS, .Character)
+	text_model.syntax_compute(&syntax, &layout, &text, syntax_language)
 	scroll_to_caret()
 }
 
@@ -745,8 +753,12 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 			scroll_to_caret()
 			selection_log()
 		case 'f', 'F':
-			group_commit()
-			text_model.search_open(&search, &text)
+			if shift && syntax_language == .Lex {
+				format_lex_document()
+			} else {
+				group_commit()
+				text_model.search_open(&search, &text)
+			}
 		case 'z', 'Z':
 			undo()
 		case 'y', 'Y':
@@ -792,6 +804,41 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 		if press.character != 0 {
 			insert_typed(press.character)
 		}
+	}
+}
+
+// format_lex_document formats the open Lex document canonically in place
+// using transfer_arena and commits the formatted result atomically.
+format_lex_document :: proc "contextless" () {
+	length := text_model.text_length(&text)
+	if length <= 0 {
+		return
+	}
+	src_room := transfer_bytes(0, length)
+	if src_room == nil {
+		problem_shown = .Full
+		return
+	}
+	defer system.arena_reset(&transfer_arena)
+	for i in 0 ..< length {
+		src_room[i] = text_model.byte_at(&text, i)
+	}
+	out_cap := max(length * 2 + 256, 4096)
+	out_room := transfer_bytes(length, out_cap)
+	if out_room == nil {
+		problem_shown = .Full
+		return
+	}
+	written, fmt_err := edit_format_lex_buffer(string(src_room[:length]), out_room)
+	if fmt_err != .None {
+		return
+	}
+	group_commit()
+	if text_model.text_replace_whole(&text, out_room[:written]) == .None {
+		change_end(.Insert)
+		group_commit()
+	} else {
+		problem_shown = .Full
 	}
 }
 
@@ -981,9 +1028,22 @@ row_draw :: proc "contextless" (table: ^interface.Draw_Table, row: int, y: int, 
 		left := text_left + text_model.column_of(&layout, &text, row, end) * graphics.CELL_WIDTH
 		interface.draw_rectangle(table, left, y, graphics.CELL_WIDTH, graphics.CELL_HEIGHT, tokens.surface_chosen)
 	}
+	// Pre-classify only this visible display row (<= ROW_BUFFER_SIZE bytes)
+	// using the precomputed per-row carry state: strictly O(visible cells).
+	raw_row: [ROW_BUFFER_SIZE]u8
+	row_classes: [ROW_BUFFER_SIZE]graphics.Code_Class
+	row_len := min(end - start, ROW_BUFFER_SIZE)
+	if syntax_language != .Plain && row_len > 0 {
+		for idx in 0 ..< row_len {
+			raw_row[idx] = text_model.byte_at(&text, start + idx)
+		}
+		carry := text_model.syntax_row_carry(&syntax, row)
+		_ = text_model.syntax_highlight_row(syntax_language, raw_row[:row_len], carry, text_model.row_first_of_line(&layout, row), row_classes[:row_len])
+	}
 	buffer: [ROW_BUFFER_SIZE]u8
 	count, column, run_column := 0, 0, 0
 	run_style := Run_Style.Normal
+	run_class := graphics.Code_Class.None
 	match_cursor := match_first
 	place := start
 	for place < end {
@@ -1001,12 +1061,19 @@ row_draw :: proc "contextless" (table: ^interface.Draw_Table, row: int, y: int, 
 				}
 			}
 		}
-		if style != run_style && count > 0 {
-			run_draw(table, run_column, y, string(buffer[:count]), run_style)
+		code_class := graphics.Code_Class.None
+		if style == .Normal && syntax_language != .Plain {
+			rel := place - start
+			if rel >= 0 && rel < row_len {
+				code_class = row_classes[rel]
+			}
+		}
+		if (style != run_style || code_class != run_class) && count > 0 {
+			run_draw(table, run_column, y, string(buffer[:count]), run_style, run_class)
 			count = 0
 		}
 		if count == 0 {
-			run_column, run_style = column, style
+			run_column, run_style, run_class = column, style, code_class
 		}
 		value := text_model.byte_at(&text, place)
 		if value == text_model.TAB {
@@ -1028,15 +1095,15 @@ row_draw :: proc "contextless" (table: ^interface.Draw_Table, row: int, y: int, 
 		}
 	}
 	if count > 0 {
-		run_draw(table, run_column, y, string(buffer[:count]), run_style)
+		run_draw(table, run_column, y, string(buffer[:count]), run_style, run_class)
 	}
 }
 
-run_draw :: proc "contextless" (table: ^interface.Draw_Table, column: int, y: int, run: string, style: Run_Style) {
+run_draw :: proc "contextless" (table: ^interface.Draw_Table, column: int, y: int, run: string, style: Run_Style, code_class: graphics.Code_Class) {
 	color: graphics.Color
 	switch style {
 	case .Normal:
-		color = tokens.text
+		color = code_class == .None ? tokens.text : graphics.code_class_color(code_class, graphics.appearance)
 	case .Selected:
 		color = tokens.text_on_chosen
 	case .Match:

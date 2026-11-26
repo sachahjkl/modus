@@ -248,7 +248,11 @@ worker.onmessage = (event) => {
     case "state": {
       const state = STATES.has(message.state) ? message.state : "stopped";
       if (state === "running" && !running) { running = true; promptBar.focus(); }
-      if (state !== "running" && typeof message.trap === "string") console.error(message.trap);
+      if (state !== "running" && typeof message.trap === "string" && message.trap) {
+        console.error(message.trap);
+        records.out({ s: message.trap, tone: "bad", nl: true });
+        output.scrollTop = output.scrollHeight;
+      }
       // While the machine starts, the header keeps the stage.
       if (state === "running" && stage !== "ready") return;
       if (state !== "running") clearInterval(stageTimer);
@@ -257,7 +261,13 @@ worker.onmessage = (event) => {
     }
   }
 };
-worker.onerror = (event) => { console.error(event.message); stateSet("stopped"); };
+worker.onerror = (event) => {
+  const detail = event && event.message ? String(event.message) : "the worker stopped";
+  console.error(detail);
+  records.out({ s: detail, tone: "bad", nl: true });
+  output.scrollTop = output.scrollHeight;
+  stateSet("stopped");
+};
 // send gives text to COM2 as a terminal sends it: UTF-8 and VT100 keys,
 // which dom_terminal decodes.
 function send(text) { worker.postMessage({ kind: "console_type", text }); }
