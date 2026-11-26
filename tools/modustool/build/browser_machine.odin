@@ -91,6 +91,8 @@ BROWSER_MACHINE_PAGE_MODULES := [?]string {
 	"monitor",
 	"edit",
 	"notes",
+	"files",
+	"code",
 	"browser",
 	"inspect",
 	"clock",
@@ -101,7 +103,8 @@ BROWSER_MACHINE_PAGE_MODULES := [?]string {
 	"heron",
 	"manual",
 	"disk",
-	// The demonstration pair of the default start list and sample library.
+	// The call host, demonstration pair of the default start list, and sample library.
+	"host",
 	"wired_reader",
 	"wired_writer",
 	"sample",
@@ -125,6 +128,7 @@ BROWSER_MACHINE_CONSOLE_MODULES := [?]string {
 	"wiring",
 	"dom_terminal",
 	"console",
+	"host",
 	"sample",
 	"c_compiler",
 	"assemble",

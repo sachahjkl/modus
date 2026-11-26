@@ -1268,8 +1268,68 @@ bound_call :: proc "contextless" (service: string, export: string, arguments: []
 	return call_isolated(found, arguments)
 }
 
+@(rodata)
+process_state_names := [op.Process_State]string {
+	.None    = "",
+	.Created = "created",
+	.Ready   = "ready",
+	.Waiting = "waiting",
+	.Stopped = "stopped",
+}
+
+// processes_of_monitor calls monitor.processes() when the monitor service is in
+// the boot image, and inspects the kernel directly on headless console images
+// where the GUI monitor module is not present.
 processes_of_monitor :: proc "contextless" (arguments: []Value) -> Value {
-	return bound_call("monitor", "processes", arguments)
+	if system.image_find(image, "monitor") != nil {
+		return bound_call("monitor", "processes", arguments)
+	}
+	report, ok := system_report()
+	if !ok {
+		return {}
+	}
+	columns := [11]Column{
+		integer_column("slot"),
+		text_column("name", 32),
+		text_column("state", 8),
+		text_column("cause", 40),
+		text_column("outcome", 24),
+		integer_column("resident"),
+		integer_column("mapped"),
+		integer_column("handles"),
+		integer_column("threads"),
+		integer_column("time"),
+		integer_column("entries"),
+	}
+	table, made := made_table("Process", columns[:])
+	if !made {
+		return fail("processes: the line has no room for the description")
+	}
+	for slot in 1 ..< report.process_slots {
+		process: op.Process_Report
+		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); status != .Succeeded || process.state == .None {
+			continue
+		}
+		row := made_row(&table)
+		made_integer(&table, row, 0, i64(slot))
+		made_text(&table, row, 1, system.name_of(process.name[:]))
+		if process.state <= max(op.Process_State) {
+			made_text(&table, row, 2, process_state_names[process.state])
+		}
+		if _, cause, outcome, known := op.stop_of_words(u64(process.state), u64(process.stop_cause), u64(process.stop_outcome)); known && cause != .None {
+			made_text(&table, row, 3, op.STOP_CAUSE_TEXTS[cause])
+			if outcome != .None {
+				made_text(&table, row, 4, op.STOP_OUTCOME_TEXTS[outcome])
+			}
+		}
+		made_integer(&table, row, 5, i64(process.present_pages))
+		made_integer(&table, row, 6, i64(process.mapped_pages))
+		made_integer(&table, row, 7, i64(process.handle_count))
+		made_integer(&table, row, 8, i64(process.thread_count))
+		made_integer(&table, row, 9, i64(process.run_time))
+		made_integer(&table, row, 10, i64(process.entries))
+	}
+	return made_value(&table, "processes")
 }
 
 system_report :: proc "contextless" () -> (report: op.System_Report, ok: bool) {

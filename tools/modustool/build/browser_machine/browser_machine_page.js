@@ -69,15 +69,13 @@ let stageStarted = 0;
 let downloaded = { loaded: 0, total: 0 };
 let machineState = "";
 
-// The framebuffer is blue first; ImageData is red first, with alpha.
+// The framebuffer is BGRA (little-endian 0xAARRGGBB); ImageData is RGBA (0xAABBGGRR).
+const image32 = new Uint32Array(image.data.buffer);
 function present(buffer) {
-  const source = new Uint8Array(buffer);
-  const target = image.data;
-  for (let index = 0; index < target.length; index += 4) {
-    target[index] = source[index + 2];
-    target[index + 1] = source[index + 1];
-    target[index + 2] = source[index];
-    target[index + 3] = 255;
+  const source32 = new Uint32Array(buffer);
+  for (let index = 0; index < image32.length; index += 1) {
+    const pixel = source32[index];
+    image32[index] = 0xff000000 | ((pixel & 0xff) << 16) | (pixel & 0x00ff00) | ((pixel >> 16) & 0xff);
   }
   context.putImageData(image, 0, 0);
 }
@@ -143,10 +141,17 @@ function onWorkerMessage(event) {
       return;
     case "stage":
       stageTake(message);
+      if (stage === STAGE_READY) {
+        screen.classList.add("ready");
+        if (machineState === "running") {
+          dotSet("running");
+          status.textContent = "running";
+        }
+      }
       return;
     case "frame":
       frameAsked = false;
-      present(message.pixels);
+      if (!message.unchanged && message.pixels) present(message.pixels);
       return;
     case "state":
       machineState = message.state;
@@ -189,12 +194,59 @@ for (const kind of ["keydown", "keyup"]) {
   });
 }
 
+// Map absolute canvas coordinates onto relative PS/2 packets so the guest
+// desktop cursor stays aligned 1:1 with the browser pointer at every scale.
+let guestPointerX = Math.floor(screen.width / 2);
+let guestPointerY = Math.floor(screen.height / 2);
+let guestPointerButtons = 0;
+let pointerSynced = false;
+
+function canvasPointer(event) {
+  const rect = screen.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  const x = Math.max(0, Math.min(screen.width - 1, Math.round(((event.clientX - rect.left) * screen.width) / rect.width)));
+  const y = Math.max(0, Math.min(screen.height - 1, Math.round(((event.clientY - rect.top) * screen.height) / rect.height)));
+  return { x, y };
+}
+
+function sendPointerAt(event, forceButtons) {
+  if (!worker || stage !== STAGE_READY) return;
+  const point = canvasPointer(event);
+  if (!point) return;
+  const buttons = event.buttons;
+  if (!pointerSynced) {
+    // Drive the compositor pointer to the top-left clamp (0, 0) once on entry,
+    // then move directly to the exact canvas pixel.
+    worker.postMessage({ kind: "pointer", deltaX: -screen.width, deltaY: -screen.height, buttons: 0 });
+    guestPointerX = 0;
+    guestPointerY = 0;
+    guestPointerButtons = 0;
+    pointerSynced = true;
+  }
+  const deltaX = point.x - guestPointerX;
+  const deltaY = point.y - guestPointerY;
+  if (deltaX !== 0 || deltaY !== 0 || buttons !== guestPointerButtons || forceButtons) {
+    worker.postMessage({ kind: "pointer", deltaX, deltaY, buttons });
+    guestPointerX = point.x;
+    guestPointerY = point.y;
+    guestPointerButtons = buttons;
+  }
+}
+
+screen.addEventListener("pointerenter", (event) => {
+  pointerSynced = false;
+  sendPointerAt(event, false);
+});
+screen.addEventListener("pointerleave", () => {
+  pointerSynced = false;
+});
 screen.addEventListener("pointermove", (event) => {
-  if (worker) worker.postMessage({ kind: "pointer", deltaX: event.movementX, deltaY: event.movementY, buttons: event.buttons });
+  sendPointerAt(event, false);
 });
 for (const kind of ["pointerdown", "pointerup"]) {
   screen.addEventListener(kind, (event) => {
-    if (worker) worker.postMessage({ kind: "pointer", deltaX: 0, deltaY: 0, buttons: event.buttons });
+    if (kind === "pointerdown") screen.focus();
+    sendPointerAt(event, true);
   });
 }
 

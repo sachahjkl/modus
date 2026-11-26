@@ -291,14 +291,22 @@ export class Ps2Controller {
   }
   // A move of the pointer in pixels, y down as in the document, and the
   // buttons as MouseEvent.buttons gives them (bit 0 left, 1 right, 2 middle).
+  // Moves larger than one 8-bit signed step are split into bounded packets so
+  // absolute-to-relative synchronization reaches any pixel of the screen.
   pointer(deltaX, deltaY, buttons) {
-    const x = Math.max(-255, Math.min(255, Math.round(deltaX)));
-    const y = Math.max(-255, Math.min(255, Math.round(-deltaY)));
+    let remX = Math.max(-4096, Math.min(4096, Math.round(deltaX)));
+    let remY = Math.max(-4096, Math.min(4096, Math.round(-deltaY)));
     const left = buttons & 1, right = (buttons >> 1) & 1, middle = (buttons >> 2) & 1;
-    const head = left | (right << 1) | (middle << 2) | 0x08 | (x < 0 ? 0x10 : 0) | (y < 0 ? 0x20 : 0);
-    this.push(head, true);
-    this.push(x & 0xff, true);
-    this.push(y & 0xff, true);
+    do {
+      const x = Math.max(-127, Math.min(127, remX));
+      const y = Math.max(-127, Math.min(127, remY));
+      remX -= x;
+      remY -= y;
+      const head = left | (right << 1) | (middle << 2) | 0x08 | (x < 0 ? 0x10 : 0) | (y < 0 ? 0x20 : 0);
+      this.push(head, true);
+      this.push(x & 0xff, true);
+      this.push(y & 0xff, true);
+    } while (remX !== 0 || remY !== 0);
   }
 }
 

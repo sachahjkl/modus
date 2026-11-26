@@ -26,6 +26,7 @@ QEMU_CONSOLE_MODULES := [?]string {
 	"wiring",
 	"serial_terminal",
 	"console",
+	"host",
 	"c_compiler",
 	"assemble",
 	"storage",

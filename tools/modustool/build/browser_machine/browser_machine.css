@@ -587,6 +587,10 @@ body.page-desktop {
   cursor: default;
 }
 
+#screen.ready {
+  cursor: none;
+}
+
 #screen:focus {
   outline: 2px solid var(--line);
   outline-offset: -2px;

@@ -25,6 +25,10 @@ const idleWait = (boundNanoseconds) => {
 let machine = null;
 let pendingLines = [];
 let pendingConsoleLines = [];
+let lastPostedState = null;
+let lastPostedStopCode = null;
+let lastPostedTrap = null;
+let lastFrame32 = null;
 
 // A slice ends with a yield to the event loop of the worker, through a
 // message: a timer of 0 ms is clamped to 4 ms after a few calls.
@@ -42,12 +46,18 @@ function postState() {
     self.postMessage({ kind: "console", lines: pendingConsoleLines });
     pendingConsoleLines = [];
   }
-  self.postMessage({
-    kind: "state",
-    state: machine.state,
-    stopCode: machine.stopCode,
-    trap: machine.trap ? String(machine.trap.stack || machine.trap) : null,
-  });
+  const trap = machine.trap ? String(machine.trap.stack || machine.trap) : null;
+  if (machine.state !== lastPostedState || machine.stopCode !== lastPostedStopCode || trap !== lastPostedTrap) {
+    lastPostedState = machine.state;
+    lastPostedStopCode = machine.stopCode;
+    lastPostedTrap = trap;
+    self.postMessage({
+      kind: "state",
+      state: machine.state,
+      stopCode: machine.stopCode,
+      trap,
+    });
+  }
 }
 
 function loop() {
@@ -160,8 +170,26 @@ self.onmessage = (event) => {
       return;
     case "frame": {
       // A copy, not a view: the memory of the machine is not transferable.
+      // Skip allocating and transferring a 4 MiB copy when the framebuffer is unchanged.
       const pixels = machine && machine.framebufferPixels();
       if (!pixels) return;
+      const src32 = new Uint32Array(pixels.buffer, pixels.byteOffset, pixels.byteLength >> 2);
+      if (lastFrame32 && lastFrame32.length === src32.length) {
+        let changed = false;
+        for (let i = 0; i < src32.length; i += 1) {
+          if (src32[i] !== lastFrame32[i]) {
+            changed = true;
+            break;
+          }
+        }
+        if (!changed) {
+          self.postMessage({ kind: "frame", unchanged: true });
+          return;
+        }
+      } else {
+        lastFrame32 = new Uint32Array(src32.length);
+      }
+      lastFrame32.set(src32);
       const copy = pixels.slice();
       self.postMessage({ kind: "frame", pixels: copy.buffer }, [copy.buffer]);
       return;
