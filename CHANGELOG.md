@@ -6,6 +6,12 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.108.0] - 2026-11-26 21:21
+
+### Added
+
+- **Odin core target on modus for outside modules.** Outside modules can declare `target: modus` in `module.txt` to compile with `base:runtime` and the `core:` packages (`core:sys/modus`, `core:fmt`, `core:mem/virtual`, `core:time`, `core:sync`, `core:thread`, and `core:os`) while keeping zero ambient authority and freestanding system modules.
+
 ## [0.107.0] - 2026-11-26 20:55
 
 ### Added
@@ -2077,6 +2083,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.108.0]: https://github.com/sachahjkl/modus/releases/tag/v0.108.0
 [0.107.0]: https://github.com/sachahjkl/modus/releases/tag/v0.107.0
 [0.106.0]: https://github.com/sachahjkl/modus/releases/tag/v0.106.0
 [0.105.0]: https://github.com/sachahjkl/modus/releases/tag/v0.105.0
