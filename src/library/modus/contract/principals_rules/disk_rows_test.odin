@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package principals_rules
 
 import "core:testing"

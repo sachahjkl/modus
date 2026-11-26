@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package fresh_bytes
 
 import op "modus:contract/operation"

@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package vnc_rdp_gateway
 
 import "core:testing"

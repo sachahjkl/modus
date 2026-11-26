@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package unicode_latin
 
 import "core:testing"

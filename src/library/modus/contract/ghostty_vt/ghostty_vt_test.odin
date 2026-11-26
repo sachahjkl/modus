@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package ghostty_vt
 
 import "core:testing"

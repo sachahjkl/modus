@@ -27,6 +27,7 @@
   "ranges": ["ranges_scenario.odin"],
   "quic-real": ["quic_real.odin"],
   "outside_module": [],
+  "odin_core": ["odin_core_scenario.odin"],
   "host_modules": [],
   "iommu_amd": ["iommu_scenario.odin"],
   "iommu": ["iommu_scenario.odin"],

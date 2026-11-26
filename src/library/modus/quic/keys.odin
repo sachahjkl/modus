@@ -422,7 +422,7 @@ secret_erase :: proc "contextless" (data: rawptr, count: int) {
 	erase_secret_bytes(data, count)
 }
 
-when ODIN_OS == .Freestanding {
+when ODIN_OS == .Freestanding || ODIN_OS == .Modus {
 	foreign _ {
 		// The procedure of the runtime of a module of the system that writes `count` zero bytes at
 		// `destination`. `secret_erase` is its one caller.

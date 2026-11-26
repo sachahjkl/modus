@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package remote_display
 
 import "core:math/rand"

@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 // A server with several connections on the host: one Server of 16 records,
 // clients with their own remote addresses, and a network in memory with a
 // delay of 5 ms and a fake clock. The tests feed the server what a network

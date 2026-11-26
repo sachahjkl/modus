@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 // Host unit tests for debugger step-back, branch-count interrupt points,
 // planted rdrand divergence detection, and binary history codec.
 package replay_engine

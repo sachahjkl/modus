@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package terminal_records
 
 import op "modus:contract/operation"

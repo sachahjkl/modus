@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 // The memory of the spaces on the heap of a host, for the host tests of the
 // collector: a machine commits it from the budget of the collector
 // (src/modules/system/collector/space_window_memory.odin). No build of the

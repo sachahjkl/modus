@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package tpm_policy
 
 import "base:runtime"

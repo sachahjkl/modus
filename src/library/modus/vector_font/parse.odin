@@ -25,7 +25,7 @@ package vector_font
 // no reader of CFF and refuses such a font (src/md/features/text_rendering.md,
 // "Where the written shaping lives"). The one define of the written part
 // chooses both.
-CFF_COMPILED_IN :: #config(WRITTEN_SHAPING_COMPILED_IN, ODIN_OS != .Freestanding)
+CFF_COMPILED_IN :: #config(WRITTEN_SHAPING_COMPILED_IN, ODIN_OS != .Freestanding && ODIN_OS != .Modus)
 
 Font_Problem :: enum u8 {
 	None, // No problem.

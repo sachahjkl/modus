@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package wasm_runtime
 
 import "core:testing"

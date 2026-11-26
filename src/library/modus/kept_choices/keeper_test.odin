@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package kept_choices
 
 import "core:fmt"

@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package replacement_list
 
 import "core:testing"

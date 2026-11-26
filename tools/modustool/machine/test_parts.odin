@@ -129,6 +129,7 @@ test_parts := [?]Test_Part {
 	// No machine starts: the part needs the built modules, which the build
 	// of a volume gives.
 	{name = "outside_module", does = "No machine: the build of the examples of a module outside the sources, as a developer types it", procedures = {"outside_module_tests_run", "outside_module_examples_check"}, volumes = {build.BOOT_VOLUME}, starts_no_machine = true},
+	{name = "odin_core", does = "The machine of the Odin core target on modus: builds `core_probe` and `core_probe_panic` with `target: modus`, verifies zero ambient authority and store refusal without a grant, runs `core:fmt`, heap and temporary allocators, `core:mem/virtual`, `core:time`, `core:sync`, `core:thread`, and `core:os` private store I/O across a 64 KiB boundary with the `store` grant, and verifies panic logging and `stop_report` frame resolution on `core_probe_panic`", procedures = {"odin_core_tests_run"}, volumes = {build.BOOT_VOLUME}},
 	// The debug objects are checked against the linked files, which only a
 	// build holds: `check` runs that test after its build.
 	{name = "host_modules", does = "No machine: the loader and the descriptions of the exports of the build, on the host", procedures = {"host_modules_tests_run", "test_modules", "test_descriptions", "module_facts", "module_facts_of_sources"}, volumes = {build.BOOT_VOLUME}, reads = {.Module_File, .Module_Source_List, .Reached_Fact_List}, starts_no_machine = true},

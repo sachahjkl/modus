@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package software_machine
 
 import "core:slice"

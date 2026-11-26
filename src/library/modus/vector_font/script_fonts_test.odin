@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package vector_font
 
 import "core:fmt"

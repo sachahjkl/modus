@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package desktop_layout
 
 import "core:testing"

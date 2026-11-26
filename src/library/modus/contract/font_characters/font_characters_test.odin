@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package font_characters
 
 import "core:testing"

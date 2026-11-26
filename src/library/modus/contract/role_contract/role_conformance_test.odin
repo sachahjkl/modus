@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package role_contract
 
 import "core:testing"

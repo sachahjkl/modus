@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package machine_wire
 
 import "base:runtime"

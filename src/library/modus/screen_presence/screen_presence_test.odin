@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package screen_presence
 
 import "core:testing"

@@ -15,7 +15,7 @@ import "modus:vector_font"
 // script font set and the reader of CFF. The library module text_rendering
 // compiles it, and so does each host build; a module of the system calls
 // that module for each line that is not simple.
-WRITTEN_SHAPING_COMPILED_IN :: #config(WRITTEN_SHAPING_COMPILED_IN, ODIN_OS != .Freestanding)
+WRITTEN_SHAPING_COMPILED_IN :: #config(WRITTEN_SHAPING_COMPILED_IN, ODIN_OS != .Freestanding && ODIN_OS != .Modus)
 
 // The calls of the library module give a call outcome; a build with the
 // written part compiled in makes none of them.

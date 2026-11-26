@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package kind_icons
 
 import "modus:contract/value_kinds"

@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package tree_hash
 
 import "core:fmt"

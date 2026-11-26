@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package rich_toolkit
 
 import "core:testing"

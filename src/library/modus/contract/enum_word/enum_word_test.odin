@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package enum_word
 
 import "core:testing"

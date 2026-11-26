@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package operation
 
 import info "modus:contract/boot_info"

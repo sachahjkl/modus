@@ -145,7 +145,7 @@ Stream_End_Table :: struct {
 @(private = "package")
 stream_end_table: Stream_End_Table
 
-when ODIN_OS != .Freestanding {
+when ODIN_OS != .Freestanding && ODIN_OS != .Modus {
 	// A host test gives the memory of the table and the places that its
 	// budget pays: the seam then grows the table in it with no kernel.
 	@(private = "package")
@@ -162,7 +162,7 @@ when ODIN_OS != .Freestanding {
 @(private = "package")
 stream_ends_grow :: proc "contextless" () -> bool {
 	table := &stream_end_table
-	when ODIN_OS != .Freestanding {
+	when ODIN_OS != .Freestanding && ODIN_OS != .Modus {
 		if stream_ends_host_seam_active {
 			if table.count >= stream_ends_host_paid || table.count >= len(stream_ends_host_backing) || table.count >= len(closed_tags_host_backing) {
 				return false
@@ -249,7 +249,7 @@ wiring_ring: ring.Ring
 @(private = "file")
 wiring_ring_memory: Handle
 
-when ODIN_OS != .Freestanding {
+when ODIN_OS != .Freestanding && ODIN_OS != .Modus {
 	// Host tests enable this seam to drive the output_write loop against
 	// host-allocated rings without calling kernel map/unmap/close or reading
 	// the thread record.
@@ -289,7 +289,7 @@ wiring_ring_ready :: proc "contextless" () -> bool {
 	if wiring_ring.head != nil {
 		return true
 	}
-	when ODIN_OS != .Freestanding {
+	when ODIN_OS != .Freestanding && ODIN_OS != .Modus {
 		if stream_ends_host_seam_active {
 			return false
 		}
@@ -498,7 +498,7 @@ handle_through :: proc "contextless" (handle: op.Handle, needed: Rights) -> bool
 // stream_end_close unmaps and closes what an end holds, and frees it.
 @(private = "file")
 stream_end_close :: proc "contextless" (end: ^Stream_End) {
-	when ODIN_OS != .Freestanding {
+	when ODIN_OS != .Freestanding && ODIN_OS != .Modus {
 		if stream_ends_host_seam_active {
 			end^ = {}
 			return
@@ -997,7 +997,7 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 		// reader that reads, or reads all and waits, between the decision
 		// and the wait ends the wait at once.
 		waiting: Wait
-		when ODIN_OS != .Freestanding {
+		when ODIN_OS != .Freestanding && ODIN_OS != .Modus {
 			if !stream_ends_host_seam_active {
 				waiting = wait_begin()
 			}
@@ -1191,7 +1191,7 @@ writer_end_close_with_record :: proc "contextless" (state: ^Output_State, end: ^
 		// The read is loaded before the push: a reader that reads after
 		// a refused push changes it, and the wait ends at once.
 		waiting: Wait
-		when ODIN_OS != .Freestanding {
+		when ODIN_OS != .Freestanding && ODIN_OS != .Modus {
 			if !stream_ends_host_seam_active {
 				waiting = wait_begin()
 			}

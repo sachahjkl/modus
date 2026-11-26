@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package lz4
 
 import "core:fmt"

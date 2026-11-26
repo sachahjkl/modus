@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package browser_vm_runtime
 
 import "core:testing"

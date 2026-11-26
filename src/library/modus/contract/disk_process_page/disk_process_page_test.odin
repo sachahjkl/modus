@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package disk_process_page
 
 import op "modus:contract/operation"

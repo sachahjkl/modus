@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package sentence
 
 import module "modus:contract/module"

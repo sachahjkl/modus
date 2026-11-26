@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package calendar
 
 import "core:testing"

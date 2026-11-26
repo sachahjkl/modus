@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 // The cost of the table of neighbors when it is full: a find of an address
 // that it does not hold, the worst find, and a learn that replaces the
 // oldest entry while requests wait for other addresses. It prints the least

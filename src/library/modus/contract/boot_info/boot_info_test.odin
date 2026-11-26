@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package boot_info
 
 import "core:testing"

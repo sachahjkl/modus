@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package ast_codebase
 
 import "core:strings"

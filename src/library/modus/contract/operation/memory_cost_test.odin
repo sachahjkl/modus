@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package operation
 
 import "core:testing"

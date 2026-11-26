@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package blur_filter
 
 import "core:testing"

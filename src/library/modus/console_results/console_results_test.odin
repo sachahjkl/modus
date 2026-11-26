@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package console_results
 
 import "modus:contract/errors"

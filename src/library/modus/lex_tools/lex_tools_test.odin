@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package lex_tools
 
 import "core:os"

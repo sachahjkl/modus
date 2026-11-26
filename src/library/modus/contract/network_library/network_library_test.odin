@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package network_library
 
 import "core:testing"

@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package graphics
 
 import "core:math"

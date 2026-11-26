@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package scale_factor
 
 import "core:testing"

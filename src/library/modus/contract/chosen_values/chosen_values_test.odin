@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package chosen_values
 
 import "core:testing"

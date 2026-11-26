@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package tls_tcp
 
 import "core:testing"

@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package agent_bridge
 
 import "core:testing"

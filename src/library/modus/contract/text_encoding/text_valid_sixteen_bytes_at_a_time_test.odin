@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package text_encoding
 
 import "core:fmt"

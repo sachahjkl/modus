@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package tpm2
 
 import info "modus:contract/boot_info"

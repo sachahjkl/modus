@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package store_history
 
 import "core:fmt"

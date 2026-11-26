@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package wiring_service
 
 import "core:testing"

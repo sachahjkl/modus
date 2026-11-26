@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package program_tree
 
 import "core:strings"

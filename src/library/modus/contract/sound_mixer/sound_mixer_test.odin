@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package sound_mixer
 
 import "core:testing"

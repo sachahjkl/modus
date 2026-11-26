@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 // Retry on the host: the packet of RFC 9001, appendix A.4, byte for byte; a
 // client through a Retry; the tokens that must not open; the Retries that a
 // client must refuse; the budgets of the work of a server; the answers of

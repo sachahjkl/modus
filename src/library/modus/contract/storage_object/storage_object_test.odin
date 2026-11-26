@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package storage_object
 
 import "core:testing"

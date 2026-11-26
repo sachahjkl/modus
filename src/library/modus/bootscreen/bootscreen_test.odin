@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package bootscreen
 
 import "core:fmt"

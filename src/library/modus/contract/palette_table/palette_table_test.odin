@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package palette_table
 
 import "base:intrinsics"

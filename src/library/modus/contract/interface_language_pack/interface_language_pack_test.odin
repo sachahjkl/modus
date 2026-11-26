@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 // Adversarial host tests for modus:contract/interface_language_pack:
 // BCP 47 / CLDR tags & aliases, compiled W3C MF2 message tables, and
 // content-addressed language / script-font pack manifests.

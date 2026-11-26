@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package call_outcome
 
 import "modus:contract/errors"

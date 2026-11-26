@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package entropy_service
 
 import "core:testing"

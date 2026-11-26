@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package image_card
 
 import info "modus:contract/boot_info"

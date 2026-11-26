@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package debug_object
 
 import "core:testing"

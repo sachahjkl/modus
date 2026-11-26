@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 // The code of the exports of the module cryptography on the host: what a
 // caller sees, with hostile arguments and with bytes that another thread
 // changes during the call.

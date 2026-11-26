@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package venus_vulkan
 
 import "core:testing"

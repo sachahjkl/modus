@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package system_description
 
 import "modus:contract/blake3"

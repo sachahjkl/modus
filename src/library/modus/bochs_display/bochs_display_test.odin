@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package bochs_display
 
 import "core:testing"

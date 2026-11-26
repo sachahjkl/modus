@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package video_codec
 
 import "core:testing"

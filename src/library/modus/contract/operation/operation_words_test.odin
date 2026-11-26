@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package operation
 
 import "modus:contract/enum_word"

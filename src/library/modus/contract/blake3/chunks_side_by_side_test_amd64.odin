@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package blake3
 
 import "core:fmt"

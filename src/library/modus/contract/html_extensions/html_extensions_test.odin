@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package html_extensions
 
 import "core:testing"

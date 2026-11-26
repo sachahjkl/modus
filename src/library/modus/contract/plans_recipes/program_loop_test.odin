@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package plans_recipes
 
 import "core:testing"

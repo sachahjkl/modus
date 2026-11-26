@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 // Several streams in one connection, on the host: the echo of each stream,
 // the limit of streams that moves when a stream ends, flow control of the
 // connection, the resets, and the frames of a hostile peer that name

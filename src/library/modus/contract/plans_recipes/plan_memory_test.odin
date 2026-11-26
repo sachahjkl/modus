@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package plans_recipes
 
 // The memory of the plans of the tests: a plan of count entries with room

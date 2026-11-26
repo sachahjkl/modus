@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package ssh_client
 
 import "core:testing"

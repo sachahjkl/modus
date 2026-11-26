@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package twins
 
 import "core:testing"

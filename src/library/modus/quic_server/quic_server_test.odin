@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package quic_server
 
 import "core:testing"

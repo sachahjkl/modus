@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package block
 
 import "modus:contract/call_outcome"

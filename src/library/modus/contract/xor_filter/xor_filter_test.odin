@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package xor_filter
 
 import "core:fmt"

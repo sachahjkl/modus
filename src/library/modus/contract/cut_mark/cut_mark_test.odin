@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package cut_mark
 
 import "core:testing"

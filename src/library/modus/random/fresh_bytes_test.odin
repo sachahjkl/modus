@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package random
 
 import "modus:contract/errors"

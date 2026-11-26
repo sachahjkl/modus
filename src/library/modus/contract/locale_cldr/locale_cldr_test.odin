@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package locale_cldr
 
 import "core:testing"

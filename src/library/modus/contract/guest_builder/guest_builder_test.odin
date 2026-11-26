@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package guest_builder
 
 import "core:slice"

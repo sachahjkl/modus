@@ -1,4 +1,4 @@
-#+build freestanding
+#+build freestanding, modus
 package compatibility_crypto
 
 // The module links src/runtime/memory.asm, which gives this symbol.

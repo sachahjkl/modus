@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package origin_browser
 
 import "core:fmt"

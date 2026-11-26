@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package vectors
 
 import "core:testing"

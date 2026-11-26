@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package image_decode
 
 import "core:fmt"

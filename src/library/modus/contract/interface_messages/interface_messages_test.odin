@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package interface_messages
 
 import "core:strings"

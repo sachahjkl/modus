@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 // Adversarial host tests for modus:contract/language_analysis (MODLAEF1).
 package language_analysis
 

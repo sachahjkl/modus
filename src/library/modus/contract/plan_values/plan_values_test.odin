@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package plan_values
 
 import "core:testing"

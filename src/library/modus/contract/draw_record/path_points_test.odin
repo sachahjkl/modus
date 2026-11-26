@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package draw_record
 
 import "core:math"

@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package line_editor
 
 import "core:fmt"

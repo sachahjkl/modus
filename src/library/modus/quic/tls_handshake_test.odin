@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 // TLS 1.3 for QUIC on the host: the key schedule against the trace "Simple
 // 1-RTT Handshake" of RFC 8448 (section 3: X25519, SHA-256), a whole
 // handshake of a client against a server in memory, and hostile messages:

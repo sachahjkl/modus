@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package hardware_keys
 
 import "base:runtime"

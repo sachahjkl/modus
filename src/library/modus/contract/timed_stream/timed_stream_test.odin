@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package timed_stream
 
 import "core:testing"

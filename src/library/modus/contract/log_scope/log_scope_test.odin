@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package log_scope
 
 import "modus:contract/isolated"

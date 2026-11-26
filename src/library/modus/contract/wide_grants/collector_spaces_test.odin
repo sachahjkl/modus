@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package wide_grants
 
 import "core:testing"

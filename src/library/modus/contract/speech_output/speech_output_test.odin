@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package speech_output
 
 import "core:testing"

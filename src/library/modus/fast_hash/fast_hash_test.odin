@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package fast_hash
 
 import "core:fmt"

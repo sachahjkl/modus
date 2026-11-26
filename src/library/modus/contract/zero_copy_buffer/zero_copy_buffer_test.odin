@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package zero_copy_buffer
 
 import "core:testing"

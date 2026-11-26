@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package declaration_eval
 
 import "core:fmt"

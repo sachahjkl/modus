@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package font_outlines
 
 import "core:strings"

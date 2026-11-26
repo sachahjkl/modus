@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package text_rendering
 
 import "core:os"

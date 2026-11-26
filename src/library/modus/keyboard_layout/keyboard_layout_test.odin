@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package keyboard_layout
 
 import "core:strings"

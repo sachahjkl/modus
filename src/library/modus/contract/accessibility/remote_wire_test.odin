@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package accessibility
 
 import "core:testing"

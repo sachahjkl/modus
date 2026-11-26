@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package grant_policy
 
 import "core:testing"

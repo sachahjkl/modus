@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package pci_topology
 
 import "core:testing"

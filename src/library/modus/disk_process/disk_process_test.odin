@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package disk_process
 
 import "core:testing"

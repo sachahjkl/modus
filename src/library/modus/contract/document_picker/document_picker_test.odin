@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package document_picker
 
 import "core:fmt"

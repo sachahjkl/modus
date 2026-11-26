@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package display
 
 import "modus:contract/ring"

@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package serial_ring
 
 import "core:testing"

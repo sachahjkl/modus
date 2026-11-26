@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 // The published test vectors of each primitive that the system took from
 // Odin's core:crypto (docs/CRYPTOGRAPHY.md), on the host. The same code runs
 // in the module `cryptography` on the machine (modustool test crypto).

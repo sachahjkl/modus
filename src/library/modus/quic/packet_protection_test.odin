@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 // The packet protection of QUIC version 1 on the host, against RFC 9001,
 // appendix A, and RFC 9000, appendix A, with hostile datagrams. The library
 // calls the procedures of the support package `cryptography_primitives`, which

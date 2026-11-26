@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package bootstrap_chain
 
 import "core:testing"

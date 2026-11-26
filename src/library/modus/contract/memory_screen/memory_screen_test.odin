@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package memory_screen
 
 import "core:testing"

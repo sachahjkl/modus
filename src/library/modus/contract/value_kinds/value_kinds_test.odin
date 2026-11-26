@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package value_kinds
 
 import "base:intrinsics"

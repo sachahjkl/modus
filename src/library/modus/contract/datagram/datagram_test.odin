@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package datagram
 
 import "core:testing"

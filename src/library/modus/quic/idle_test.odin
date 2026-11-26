@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 // The idle timeout when the peer goes silent: the bound holds whatever the
 // probes of this side. Each test cuts the channel of the endpoints in both
 // ways, and drives the fake clock of the endpoints.

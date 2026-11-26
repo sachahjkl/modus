@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package tpm_attestation
 
 // The host tests of the pin payloads, of their rules, and of the announce

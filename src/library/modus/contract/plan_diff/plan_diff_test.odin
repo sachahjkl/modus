@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package plan_diff
 
 import "core:fmt"

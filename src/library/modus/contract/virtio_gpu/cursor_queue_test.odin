@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package virtio_gpu
 
 import "core:testing"

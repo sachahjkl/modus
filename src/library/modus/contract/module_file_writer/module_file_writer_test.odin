@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package module_file_writer
 
 import module "modus:contract/module"

@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package ime_cjk
 
 import "core:testing"

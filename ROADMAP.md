@@ -4,7 +4,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
-- **Odin core target on modus for outside modules.** Outside modules declare `target: modus` to compile against `base:runtime` and `core:` on modus while system sources remain freestanding. [Design](src/md/infrastructure/odin_core_target.md)
 - **Native Doom (`doomgeneric`) on modus.** Run native Doom in a 640x400 window with SSE2 palette conversion, 35 Hz frame pacing, 56 KiB chunked WAD reads, optional sound, and relative pointer lock. [Design](src/md/features/doom.md)
 
 ## Next

@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package modus_chacha20
 
 import "core:encoding/hex"

@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package reference_screen
 
 import "core:testing"

@@ -47,15 +47,15 @@
     odin = (pkgs.odin.override {llvmPackages_18 = pkgs.llvmPackages_18 // {inherit llvm;};}).overrideAttrs (_: {
       version = odinRelease;
       src = pkgs.fetchFromGitHub {
-        # The fork of this system: the release above and the option
-        # `-debug-info:same-code`, a kind of debug information that never
-        # changes the code (docs/REPRODUCIBLE_BUILD.md, section 8). With
-        # no such option the fork is the release. The branch is
-        # `odin-modus-same-code`; the commit is pinned.
+        # The fork of this system: the release above, the option
+        # `-debug-info:same-code` (docs/REPRODUCIBLE_BUILD.md, section 8), and
+        # `-target:modus_amd64` with `base:runtime` and `core:` support for
+        # outside modules (src/md/infrastructure/odin_core_target.md). The
+        # branch is `odin-modus-target`; the commit is pinned.
         owner = "sachahjkl";
         repo = "Odin";
-        rev = "81382db6047ac43a2d397046fa45f253aa628f7c";
-        hash = "sha256-zIwSlShXOefc55xmDXY8aYBCRegVdrRIOuMzXQCClKw=";
+        rev = "f756232d0a4ce93c5d550f48858d39ce4fbf9a93";
+        hash = "sha256-BXgtKInXplXvK/asvhi2SeL16GhiRWpnB2pzXzvexdg=";
       };
       # No patch file: the changes are commits of the fork. The patches of
       # Nixpkgs are for raylib and for Darwin, which this system does not use.

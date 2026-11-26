@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package webgpu_subset
 
 import "core:fmt"

@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package lex_evaluator
 
 import "core:fmt"

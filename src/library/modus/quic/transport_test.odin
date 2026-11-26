@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 // The transport of QUIC on the host: two connections in memory, a client
 // and a server, joined by a channel that the test controls (loss, reorder,
 // duplicates, delay) and a fake clock. Each run is the same: the channel

@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package fixed_addresses
 
 import op "modus:contract/operation"

@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package layout_measure
 
 import "core:testing"

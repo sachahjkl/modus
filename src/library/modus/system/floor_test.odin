@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package system
 
 import module "modus:contract/module"

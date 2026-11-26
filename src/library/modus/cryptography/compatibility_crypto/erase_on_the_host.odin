@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package compatibility_crypto
 
 // The tests on the host link the host form of src/runtime/memory.asm. The path

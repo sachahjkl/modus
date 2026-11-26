@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 // The cost of the work of new connections on the host, for the budgets of
 // SERVER_LIMITS_DEFAULT: one Retry (8 random bytes, the token, the packet
 // with its tag), one token check, one check of an authentic Initial. It

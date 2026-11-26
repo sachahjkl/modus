@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package desktop_shell
 
 import "core:testing"

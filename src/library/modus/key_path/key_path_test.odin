@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package key_path
 
 import "modus:contract/ring"

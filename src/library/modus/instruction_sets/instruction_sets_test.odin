@@ -1,4 +1,5 @@
 #+build !freestanding
+#+build !modus
 package instruction_sets
 
 import "core:testing"
