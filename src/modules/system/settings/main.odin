@@ -216,6 +216,13 @@ kept_plan: plan_values.Owner_Values
 // The copy of the plan values page that kept_plan points into.
 kept_plan_copy: system.Plan_Values_Copy
 
+// What a keep attempt did with a change.
+Keep_Result :: enum u8 {
+	Kept_In_Store,   // Written to the private store and updated in memory.
+	Kept_In_Session, // No private store: updated in memory for the running session only.
+	Refused,         // The private store refused the read or write.
+}
+
 // What the read of the kept record found.
 Kept_Load :: enum u8 {
 	Nothing_Kept, // No record: the principal chose nothing.
@@ -229,9 +236,17 @@ Kept_Load :: enum u8 {
 // of each pass: a change goes on the record that the store holds, so it
 // never loses a choice that this process does not know.
 kept_load :: proc "contextless" () -> Kept_Load {
-	// With no store the defaults of the plan still hold.
+	// With no store the defaults of the plan hold, overlaid with any
+	// session choices already written to the live settings page.
 	kept_choice, kept_zone_offset_minutes, kept_layers = settings.choice_of_kept({}, nil, false, kept_plan)
 	if !has_store {
+		kept_record_readable = true
+		if page != nil && intrinsics.atomic_load_explicit(&page.change_count, .Acquire) > 0 {
+			if current, ok := settings.read(page); ok {
+				changes := settings.kept_changes_of(kept_choice, kept_zone_offset_minutes, current, current.zone_offset_minutes, {})
+				_ = kept_write(changes.changes[:changes.count], changes.languages_changed, current.languages)
+			}
+		}
 		return .No_Store
 	}
 	error: errors.Error_Record
@@ -264,30 +279,33 @@ kept_load :: proc "contextless" () -> Kept_Load {
 	return load
 }
 
-// keep writes what changed from the kept settings to the private store: the
-// record of the chosen values (one object, one commit) and the language
-// list (its own object). A value that changed, or that the act names,
-// becomes a choice. It
-// gives false, with a log line, when the store refuses; with no store
-// (No_Store at the start), it gives false at once, and the kept settings
-// stay as they were.
-keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32, given: settings.Given) -> bool {
+// keep writes what changed from the kept settings to the private store when
+// present, or updates the in-memory session record when the machine has no
+// data disk. A value that changed, or that the act names, becomes a choice.
+// When an open store refuses, it gives .Refused with a log line and the kept
+// settings stay as they were.
+keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32, given: settings.Given) -> Keep_Result {
 	if !has_store {
-		return false
+		changes := settings.kept_changes_of(kept_choice, kept_zone_offset_minutes, choice, zone_offset_minutes, given)
+		if !kept_write(changes.changes[:changes.count], changes.languages_changed, choice.languages) {
+			return .Refused
+		}
+		return .Kept_In_Session
 	}
 	// The store did not give the record at the last read: it is read again,
 	// and while the store does not give it, a write would replace choices
 	// that this process does not know.
 	if kept_record_unread && kept_load() == .Read_Refused {
 		system.log_fact(.Warning, Kept_Record_Unread{})
-		return false
+		return .Refused
 	}
 	changes := settings.kept_changes_of(kept_choice, kept_zone_offset_minutes, choice, zone_offset_minutes, given)
-	return kept_write(changes.changes[:changes.count], changes.languages_changed, choice.languages)
+	return kept_write(changes.changes[:changes.count], changes.languages_changed, choice.languages) ? .Kept_In_Store : .Refused
 }
 
 // kept_write writes changes of the record of chosen values, and the
-// language list when write_languages. A record that this release cannot
+// language list when write_languages. When has_store is false, it updates the
+// in-memory record without calling storage. A record that this release cannot
 // read gives way to a new one: the principal acted.
 kept_write :: proc "contextless" (changes: []chosen_values.Change, write_languages: bool, languages: settings.Language_List) -> bool {
 	error: errors.Error_Record
@@ -302,9 +320,11 @@ kept_write :: proc "contextless" (changes: []chosen_values.Change, write_languag
 			system.log_fact(.Warning, Kept_Record_Refused{problem = value_kinds.text_field(chosen_values.RECORD_PROBLEM_NAMES[problem], PROBLEM_FIELD_BYTES)})
 			return false
 		}
-		if _, status := storage.write(&store, storage.ROOT, settings.KEPT_OBJECT_NAME, written_bytes[:written], &error); status != .Ok {
-			system.log_fact(.Warning, Store_Refused(errors.error_record_fact_fields(error)))
-			return false
+		if has_store {
+			if _, status := storage.write(&store, storage.ROOT, settings.KEPT_OBJECT_NAME, written_bytes[:written], &error); status != .Ok {
+				system.log_fact(.Warning, Store_Refused(errors.error_record_fact_fields(error)))
+				return false
+			}
 		}
 		copy(kept_record_bytes[:], written_bytes[:written])
 		kept_record_length = written
@@ -313,9 +333,11 @@ kept_write :: proc "contextless" (changes: []chosen_values.Change, write_languag
 	if write_languages {
 		list := languages
 		list_bytes := transmute([size_of(settings.Language_List)]u8)list
-		if _, status := storage.write(&store, storage.ROOT, settings.KEPT_LANGUAGES_OBJECT_NAME, list_bytes[:], &error); status != .Ok {
-			system.log_fact(.Warning, Store_Refused(errors.error_record_fact_fields(error)))
-			return false
+		if has_store {
+			if _, status := storage.write(&store, storage.ROOT, settings.KEPT_LANGUAGES_OBJECT_NAME, list_bytes[:], &error); status != .Ok {
+				system.log_fact(.Warning, Store_Refused(errors.error_record_fact_fields(error)))
+				return false
+			}
 		}
 		kept_languages_bytes = list_bytes
 		kept_languages_found = true
@@ -404,24 +426,30 @@ Change_Decision :: struct {
 	kept:       bool, // The change holds: the caller reports success.
 }
 
-// change_decision decides a change from what it changes and from the keep:
-// a change that changes nothing writes nothing and holds; a change that the
-// store kept goes to the page; a change that the store refused leaves the
-// page as it was and fails. A change is written to the private store
-// first, then to the page (src/md/features/settings_window.md, "One writer,
-// the store first"): the page never shows a value that the next boot loses.
-change_decision :: proc "contextless" (changes_nothing, kept: bool) -> Change_Decision {
+// change_decision decides a change from what it changes and from the keep
+// result: a change that changes nothing writes nothing and holds; a change
+// kept in the store or in the running session goes to the page; a change that
+// an open store refused leaves the page as it was and fails
+// (src/md/features/settings_window.md, "One writer, the store first when present").
+change_decision :: proc "contextless" (changes_nothing: bool, result: Keep_Result) -> Change_Decision {
 	if changes_nothing {
 		return {write_page = false, kept = true}
 	}
-	return {write_page = kept, kept = kept}
+	switch result {
+	case .Kept_In_Store, .Kept_In_Session:
+		return {write_page = true, kept = true}
+	case .Refused:
+		return {write_page = false, kept = false}
+	}
+	return {write_page = false, kept = false}
 }
 
 // change keeps the values, the zone and the language list in the private
-// store, then writes them on the page and wakes the compositor and the
-// process `date`. A change that the store refuses changes nothing on the
-// page: it writes its fact, and gives false (change_decision). A change that
-// a lock of the plan holds changes nothing, and gives false too.
+// store when present (or in memory for the running session without a store),
+// then writes them on the page and wakes the compositor and the process
+// `date`. A change that an open store refuses changes nothing on the page: it
+// writes its fact, and gives false (change_decision). A change that a lock of
+// the plan holds changes nothing, and gives false too.
 change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32, given: settings.Given = {}) -> bool {
 	current, current_ok := page_choice()
 	zone := settings.zone_offset_minutes_valid(zone_offset_minutes)
@@ -430,7 +458,7 @@ change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32,
 	// An act that names a default keeps a choice, with no change of a value.
 	changes_nothing := values_same && languages_same && current.zone_offset_minutes == zone && !settings.given_not_chosen(given, kept_layers)
 	if changes_nothing {
-		return change_decision(true, true).kept
+		return change_decision(true, .Kept_In_Store).kept
 	}
 	// A lock of the plan holds over every door: a call, a press in the
 	// window, the next appearance. A change that meets one changes nothing.
@@ -439,22 +467,22 @@ change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32,
 		system.log_fact(.Warning, Change_Locked{setting = value_kinds.text_field(name, LOCKED_NAME_FIELD_BYTES)})
 		return false
 	}
-	kept := keep(choice, zone, given)
-	decision := change_decision(false, kept)
+	keep_result := keep(choice, zone, given)
+	decision := change_decision(false, keep_result)
 	if !decision.write_page {
 		system.log_fact(.Warning, Change_Not_Kept{})
 		return decision.kept
 	}
 	if !values_same {
-		system.log_fact(.Info, Values_Changed{font = value_field(choice, .Font), subpixel_order = value_field(choice, .Subpixel_Order), pointer_theme = value_field(choice, .Pointer_Theme), grid_fit = value_field(choice, .Grid_Fit), keyboard_layout = value_field(choice, .Keyboard_Layout), appearance = value_field(choice, .Appearance), scale = value_field(choice, .Scale), store = store_field(kept)})
+		system.log_fact(.Info, Values_Changed{font = value_field(choice, .Font), subpixel_order = value_field(choice, .Subpixel_Order), pointer_theme = value_field(choice, .Pointer_Theme), grid_fit = value_field(choice, .Grid_Fit), keyboard_layout = value_field(choice, .Keyboard_Layout), appearance = value_field(choice, .Appearance), scale = value_field(choice, .Scale), store = store_field(keep_result)})
 	}
 	if current.zone_offset_minutes != zone {
 		zone_buffer: [settings.ZONE_TEXT_SIZE]u8
-		system.log_fact(.Info, Zone_Changed{zone = value_kinds.text_field(settings.zone_text(zone_buffer[:], zone), ZONE_FIELD_BYTES), store = store_field(kept)})
+		system.log_fact(.Info, Zone_Changed{zone = value_kinds.text_field(settings.zone_text(zone_buffer[:], zone), ZONE_FIELD_BYTES), store = store_field(keep_result)})
 	}
 	if !languages_same {
 		languages_buffer: [LANGUAGES_FIELD_BYTES]u8
-		system.log_fact(.Info, Languages_Changed{languages = value_kinds.text_field(languages_text(choice.languages, languages_buffer[:LANGUAGES_FIELD_BYTES - 1]), LANGUAGES_FIELD_BYTES), store = store_field(kept)})
+		system.log_fact(.Info, Languages_Changed{languages = value_kinds.text_field(languages_text(choice.languages, languages_buffer[:LANGUAGES_FIELD_BYTES - 1]), LANGUAGES_FIELD_BYTES), store = store_field(keep_result)})
 	}
 	page_write(choice, zone)
 	return decision.kept
@@ -828,14 +856,12 @@ languages_get :: proc "c" (result: ^[]Language_Row) -> i64 {
 }
 
 // reset_and_write makes chosen values absent, then writes the settings that
-// the defaults give on the page: the store first, then the page.
+// the defaults give on the page: the store first when present, or in memory
+// for the running session without a store.
 reset_and_write :: proc "contextless" (changes: []chosen_values.Change, languages: bool) -> bool {
-	if !has_store {
-		return false
-	}
 	// As keep: a record that the store did not give is read again, and no
 	// reset is written over choices that this process does not know.
-	if kept_record_unread && kept_load() == .Read_Refused {
+	if has_store && kept_record_unread && kept_load() == .Read_Refused {
 		system.log_fact(.Warning, Kept_Record_Unread{})
 		return false
 	}
@@ -843,11 +869,13 @@ reset_and_write :: proc "contextless" (changes: []chosen_values.Change, language
 		return false
 	}
 	if languages {
-		error: errors.Error_Record
-		// No object is no choice already: the reset holds.
-		if _, status := storage.remove(&store, storage.ROOT, settings.KEPT_LANGUAGES_OBJECT_NAME, &error); status != .Ok && status != .Absent {
-			system.log_fact(.Warning, Store_Refused(errors.error_record_fact_fields(error)))
-			return false
+		if has_store {
+			error: errors.Error_Record
+			// No object is no choice already: the reset holds.
+			if _, status := storage.remove(&store, storage.ROOT, settings.KEPT_LANGUAGES_OBJECT_NAME, &error); status != .Ok && status != .Absent {
+				system.log_fact(.Warning, Store_Refused(errors.error_record_fact_fields(error)))
+				return false
+			}
 		}
 		kept_languages_found = false
 		record, _ := chosen_values.read_record(kept_record_bytes[:kept_record_length])
@@ -979,7 +1007,7 @@ repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> (outcome: call_o
 	for number in 0 ..< count {
 		choice.font = fonts[number % 2]
 		choice.subpixel_order = orders[number % 3]
-		if !keep(choice, choice.zone_offset_minutes, {}) {
+		if keep(choice, choice.zone_offset_minutes, {}) != .Kept_In_Store {
 			// The store kept the records before this one; the page did
 			// not change.
 			if number > 0 {
@@ -1011,7 +1039,8 @@ appearance_next_pass :: proc "contextless" () -> ! {
 	given: settings.Given
 	given.values[.Appearance] = true
 	kept := change(choice, choice.zone_offset_minutes, given)
-	system.log_fact(.Info, Appearance_Next_Kept{before = value_kinds.text_field(settings.value_name_of(.Appearance, u32(before)), VALUE_NAME_FIELD_BYTES), after = value_field(choice, .Appearance), store = store_field(kept)})
+	result := kept ? (has_store ? Keep_Result.Kept_In_Store : .Kept_In_Session) : .Refused
+	system.log_fact(.Info, Appearance_Next_Kept{before = value_kinds.text_field(settings.value_name_of(.Appearance, u32(before)), VALUE_NAME_FIELD_BYTES), after = value_field(choice, .Appearance), store = store_field(result)})
 	system.stop(kept ? .Done : .Failed)
 }
 

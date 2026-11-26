@@ -275,10 +275,33 @@ settings_stop_labels_are_the_percents :: proc(t: ^testing.T) {
 
 @(test)
 settings_change_goes_to_the_page_only_when_kept :: proc(t: ^testing.T) {
-	testing.expect_value(t, change_decision(false, false), Change_Decision{write_page = false, kept = false})
-	testing.expect_value(t, change_decision(false, true), Change_Decision{write_page = true, kept = true})
-	testing.expect_value(t, change_decision(true, false), Change_Decision{write_page = false, kept = true})
-	testing.expect_value(t, change_decision(true, true), Change_Decision{write_page = false, kept = true})
+	testing.expect_value(t, change_decision(false, .Refused), Change_Decision{write_page = false, kept = false})
+	testing.expect_value(t, change_decision(false, .Kept_In_Store), Change_Decision{write_page = true, kept = true})
+	testing.expect_value(t, change_decision(false, .Kept_In_Session), Change_Decision{write_page = true, kept = true})
+	testing.expect_value(t, change_decision(true, .Refused), Change_Decision{write_page = false, kept = true})
+	testing.expect_value(t, change_decision(true, .Kept_In_Store), Change_Decision{write_page = false, kept = true})
+	testing.expect_value(t, change_decision(true, .Kept_In_Session), Change_Decision{write_page = false, kept = true})
+}
+
+@(test)
+settings_keep_without_store_updates_session_state :: proc(t: ^testing.T) {
+	has_store = false
+	page = nil
+	kept_plan = {}
+	kept_record_length = 0
+	kept_record_readable = false
+	kept_languages_found = false
+	testing.expect_value(t, kept_load(), Kept_Load.No_Store)
+	next := kept_choice
+	next.appearance = .Light
+	next.scale = .Twelve_Eighths
+	given: settings.Given
+	given.values[.Appearance] = true
+	given.values[.Scale] = true
+	testing.expect_value(t, keep(next, 60, given), Keep_Result.Kept_In_Session)
+	testing.expect_value(t, kept_choice.appearance, settings.Appearance.Light)
+	testing.expect_value(t, kept_choice.scale, scale_factor.Scale.Twelve_Eighths)
+	testing.expect_value(t, kept_zone_offset_minutes, i32(60))
 }
 
 @(test)

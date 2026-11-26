@@ -185,8 +185,9 @@ ZONE_FIELD_BYTES :: 8
 
 // The words of what the store did with a change.
 STORE_KEPT_WORDS :: "kept in the store"
+STORE_SESSION_WORDS :: "session only: no store"
 STORE_REFUSED_WORDS :: "NOT kept: the store refused"
-#assert(len(STORE_REFUSED_WORDS) < STORE_WORDS_FIELD_BYTES && len(STORE_KEPT_WORDS) < STORE_WORDS_FIELD_BYTES)
+#assert(len(STORE_REFUSED_WORDS) < STORE_WORDS_FIELD_BYTES && len(STORE_KEPT_WORDS) < STORE_WORDS_FIELD_BYTES && len(STORE_SESSION_WORDS) < STORE_WORDS_FIELD_BYTES)
 
 // A change of the values of a setting, and what the store did with it.
 @(log_fact = "settings: font {font}, subpixel order {subpixel_order}, pointer theme {pointer_theme}, grid fit {grid_fit}, keyboard layout {keyboard_layout}, appearance {appearance}, scale {scale}; {store}")
@@ -250,8 +251,8 @@ Values_Drawn :: struct {
 
 // The context names no private store that this process can open: the
 // root service gave none, or the storage service is not a valid module.
-// Each change is then refused: a change is kept in the store first.
-@(log_fact = "settings: no private store: each change is refused")
+// Changes apply to the running session only and are not kept past restart.
+@(log_fact = "settings: no private store: changes hold for this session only")
 No_Store :: struct {}
 
 // A change that the private store did not keep: the page keeps the values
@@ -340,6 +341,14 @@ value_field :: proc "contextless" (choice: settings.Choice, setting: settings.Se
 }
 
 // store_field gives the Text field of what the store did with a change.
-store_field :: proc "contextless" (kept: bool) -> [STORE_WORDS_FIELD_BYTES]u8 {
-	return value_kinds.text_field(kept ? STORE_KEPT_WORDS : STORE_REFUSED_WORDS, STORE_WORDS_FIELD_BYTES)
+store_field :: proc "contextless" (result: Keep_Result) -> [STORE_WORDS_FIELD_BYTES]u8 {
+	switch result {
+	case .Kept_In_Store:
+		return value_kinds.text_field(STORE_KEPT_WORDS, STORE_WORDS_FIELD_BYTES)
+	case .Kept_In_Session:
+		return value_kinds.text_field(STORE_SESSION_WORDS, STORE_WORDS_FIELD_BYTES)
+	case .Refused:
+		return value_kinds.text_field(STORE_REFUSED_WORDS, STORE_WORDS_FIELD_BYTES)
+	}
+	return value_kinds.text_field(STORE_REFUSED_WORDS, STORE_WORDS_FIELD_BYTES)
 }
