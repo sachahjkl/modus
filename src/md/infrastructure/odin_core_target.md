@@ -50,7 +50,7 @@ The build tool keeps one unified path for repository checkouts (`modustool modul
 
 ## The forms that were refused
 
-- **A POSIX shim layer.** A compatibility layer with file descriptors, `errno`, signals, and global paths recreates the ambient authority and text interfaces that `modus` removes ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "3. No \"everything is a file\"" and "16. Removed concepts").
+- **A POSIX shim layer.** A compatibility layer with file descriptors, `errno`, signals, and global paths recreates the ambient authority and text interfaces that `modus` removes ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "8. No global, mutable, shared file system" and "16. Removed concepts").
 - **Ambient filesystem paths, `argv`, or environment variables.** Inherited text settings and global paths break explicit capability passing. Any future opt-in wrapper for ported programs stays separate and undecided (`ROADMAP.md`, "Maybe").
 - **ELF TLS segments (`PT_TLS` / `SHF_TLS`).** Supporting dynamic TLS relocations adds loader complexity and breaks the fixed module contract. Fixed `[256]T` tables match `op.THREAD_CAPACITY` with constant-time indexing and zero dynamic relocations.
 - **Allowing `src/` kernel or system modules to import `core:`.** System services and the kernel must remain freestanding, deterministic, and free of hidden heap allocation.
