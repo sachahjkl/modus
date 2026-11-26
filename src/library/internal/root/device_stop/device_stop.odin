@@ -6,6 +6,37 @@
 // closing its queue memory.
 package device_stop
 
+import "modus:contract/call_outcome"
+
+// What the root service does when a process with the start grant Sound_Device
+// starts (src/md/features/missing_hardware.md): a second process is refused
+// while another holds the device, a soundless machine starts the process with
+// no sound handles, and a machine with a sound device starts the sound service.
+Sound_Device_Start_Action :: enum u8 {
+	Start_Driver,
+	Start_Without_Sound,
+	Refuse_Busy,
+}
+
+// sound_device_start_decide chooses the start action for a process with the
+// grant Sound_Device. A busy sound device refuses a second holder first.
+sound_device_start_decide :: proc "contextless" (device_busy, sound_device_present: bool) -> Sound_Device_Start_Action {
+	if device_busy {
+		return .Refuse_Busy
+	}
+	if !sound_device_present {
+		return .Start_Without_Sound
+	}
+	return .Start_Driver
+}
+
+// sound_device_driver_status_allows_silent reports whether a driver_start
+// outcome means the sound device is absent so the client can start without
+// sound handles. Every other refusal stops the start.
+sound_device_driver_status_allows_silent :: proc "contextless" (status: call_outcome.Call_Outcome) -> bool {
+	return status == .Nothing_Has_That_Name
+}
+
 // Stop_Actions names what the root service does when it stops a started
 // process: disable_bus_master_before_stop runs before stop_process.
 Stop_Actions :: struct {

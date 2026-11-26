@@ -68,8 +68,9 @@ powerbox_prompt_open :: proc "contextless" (kind: powerbox.Request_Item_Kind, pr
 	if len(process_name) == 0 || len(resource_text) == 0 {
 		return 0
 	}
-	// The dialog takes the keys: the card of the switcher closes.
+	// The dialog takes the keys: the card of the switcher closes and pointer lock ends.
 	window_switcher_cancel() // window_switcher.odin
+	pointer_lock_release(.Focus_Lost)
 	id := powerbox_next_id
 	powerbox_next_id += 1
 	powerbox_prompt = {
@@ -350,6 +351,7 @@ plan_difference_show :: proc "contextless" (plan_name: string, memory: system.Ha
 	plan_reading.added_bytes, plan_reading.removed_bytes = int(added_bytes), int(removed_bytes)
 	plan_reading.read = {}
 	plan_reading_stage_set(.Requested)
+	pointer_lock_release(.Focus_Lost)
 	window_switcher_cancel() // window_switcher.odin: the dialog takes the keys.
 	dialog_asker_bind(caller)
 	damage_whole_screen()
@@ -394,6 +396,7 @@ act_dialog_show :: proc "contextless" (asker: ^system.Connection, caller: bar.Pl
 	}
 	system.log_fact(.Info, Act_Shown{asker = value_kinds.text_field(asker_name, PLAN_NAME_FIELD_BYTES), act = value_kinds.text_field(act, PLAN_NAME_FIELD_BYTES)})
 	window_switcher_cancel() // window_switcher.odin: the dialog takes the keys.
+	pointer_lock_release(.Focus_Lost)
 	dialog_asker_bind(asker)
 	damage_whole_screen()
 	return
@@ -540,6 +543,7 @@ powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, mod
 	}
 	ctrl_shift := u32(display.MODIFIER_CONTROL | display.MODIFIER_SHIFT)
 	if wide_grant_display.active && code == display.KEY_ESCAPE && (modifiers & ctrl_shift) == ctrl_shift {
+		pointer_lock_release_by_key(display.KEY_ESCAPE)
 		return wide_grant_revoke_press() // wide_grant_screen.odin
 	}
 	if wide_grant_screen_key(code, pressed) {

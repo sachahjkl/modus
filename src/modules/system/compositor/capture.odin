@@ -130,7 +130,7 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		return
 	}
 	switch command {
-	case .None, .Surface_Create, .Present, .Pointer_Shape, .Act_Names, .Picture_Due, .Resizable, .Surface_Resize, .Surface_Rescale, .Surface_Release, .Surface_Declined, .Resize_Declined, .Copy, .Copy_Declined, .Paste_Taken:
+	case .None, .Surface_Create, .Present, .Pointer_Shape, .Act_Names, .Picture_Due, .Resizable, .Surface_Resize, .Surface_Rescale, .Surface_Release, .Surface_Declined, .Resize_Declined, .Copy, .Copy_Declined, .Paste_Taken, .Pointer_Lock:
 		// The loop gives this procedure the commands of the two faces only.
 	case .Capture_Size_Ask:
 		send(client, .Capture_Size, {0 = u64(screen.width), 1 = u64(screen.height)})
@@ -222,6 +222,7 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 				return
 			}
 			send(&clients[order[order_count - 1]], .Key, {0 = code, 1 = u64(character), 2 = pressed, 3 = modifiers})
+		case pointer_lock_key(u32(code), pressed != 0, u32(modifiers), {0 = code, 1 = u64(character), 2 = pressed, 3 = modifiers}):
 		case palette_key(u32(code), character, pressed != 0, u32(modifiers)):
 		case clipboard_key(character, u32(modifiers), pressed != 0):
 		case order_count > 0:
@@ -262,7 +263,7 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		before_x, before_y := pointer_x, pointer_y
 		// A viewer sees the pixels of the screen: its place goes to the
 		// logical pixel of the desktop that holds it.
-		pointer_moved(logical_pixel_of(int(x)) - pointer_x, logical_pixel_of(int(y)) - pointer_y, u32(buttons), wheel)
+		pointer_moved_absolute(logical_pixel_of(int(x)), logical_pixel_of(int(y)), u32(buttons), wheel)
 		if pointer_x != before_x || pointer_y != before_y {
 			// Other viewers saw a move they did not initiate; the sender
 			// knows its own move.

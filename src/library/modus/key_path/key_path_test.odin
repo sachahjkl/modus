@@ -504,3 +504,75 @@ a_loss_period_begins_one_time_and_gives_its_count :: proc(t: ^testing.T) {
 	testing.expect_value(t, count, 1)
 	testing.expect_value(t, period.lost, 6)
 }
+
+// Relative pointer deltas coalesce by summing dx and dy when the ring is full,
+// clamp at +/-POINTER_DELTA_LIMIT, fold into button and wheel events without
+// dropping motion, and drop cleanly when pointer lock ends.
+@(test)
+pointer_deltas_sum_when_coalesced_and_fold_into_buttons :: proc(t: ^testing.T) {
+	DELTA_KIND :: u32(14)
+	delta_record :: proc(dx, dy: i64, buttons: u64, wheel: i64 = 0) -> ring.Record {
+		return {kind = DELTA_KIND, values = {0 = u64(dx), 1 = u64(dy), 2 = buttons, 3 = u64(wheel)}}
+	}
+
+	// Clamping edges of pointer_delta_add.
+	testing.expect_value(t, pointer_delta_add(POINTER_DELTA_LIMIT, 1), i64(POINTER_DELTA_LIMIT))
+	testing.expect_value(t, pointer_delta_add(-POINTER_DELTA_LIMIT, -1), i64(-POINTER_DELTA_LIMIT))
+	testing.expect_value(t, pointer_delta_add(max(i64), max(i64)), i64(POINTER_DELTA_LIMIT))
+	testing.expect_value(t, pointer_delta_add(min(i64), min(i64)), i64(-POINTER_DELTA_LIMIT))
+
+	memory := new(Ring_Memory)
+	defer free(memory)
+	opened := window_ring(memory)
+	target := &opened.completions
+	storage := make([]ring.Record, WINDOW_QUEUE_CAPACITY)
+	defer delete(storage)
+	queue := Window_Queue{records = storage}
+	read: [dynamic]ring.Record
+	defer delete(read)
+
+	// Fill the ring with 32 keys so subsequent deltas wait in the queue.
+	for number in 0 ..< 32 {
+		window_queue_put(&queue, target, key_record(number), .Key)
+	}
+	// Three relative moves coalesce into their exact sum (+25, -15).
+	window_queue_put_pointer_delta(&queue, target, delta_record(10, -5, 0), 0)
+	window_queue_put_pointer_delta(&queue, target, delta_record(20, -12, 0), 0)
+	window_queue_put_pointer_delta(&queue, target, delta_record(-5, 2, 0), 0)
+	testing.expect(t, queue.move_waits)
+	testing.expect_value(t, queue.count, 0)
+	testing.expect_value(t, queue.moves_merged, 2)
+	testing.expect_value(t, i64(queue.move.values[POINTER_RECORD_X]), i64(25))
+	testing.expect_value(t, i64(queue.move.values[POINTER_RECORD_Y]), i64(-15))
+
+	// A button press folds the pending (+25, -15) delta with (+3, +4) -> (+28, -11).
+	window_queue_put_pointer_delta(&queue, target, delta_record(3, 4, 1), 1)
+	testing.expect(t, !queue.move_waits)
+	testing.expect_value(t, queue.count, 1)
+
+	// Two wheel records merge both notches and deltas.
+	window_queue_put_pointer_delta(&queue, target, delta_record(4, -2, 1, 1), 1, 1)
+	window_queue_put_pointer_delta(&queue, target, delta_record(-1, 6, 1, 2), 1, 2)
+	testing.expect_value(t, queue.count, 2)
+
+	// Pending delta after ordered records can be dropped on lock release.
+	window_queue_put_pointer_delta(&queue, target, delta_record(7, 8, 1), 1)
+	testing.expect(t, queue.move_waits)
+	window_queue_drop_pending_move(&queue, DELTA_KIND)
+	testing.expect(t, !queue.move_waits)
+
+	for round := 0; window_queue_waits(&queue) && round < 100; round += 1 {
+		read_some(target, 8, &read)
+		window_queue_send_waiting(&queue, target)
+	}
+	read_some(target, 64, &read)
+	testing.expect_value(t, len(read), 34)
+	if len(read) == 34 {
+		testing.expect_value(t, i64(read[32].values[POINTER_RECORD_X]), i64(28))
+		testing.expect_value(t, i64(read[32].values[POINTER_RECORD_Y]), i64(-11))
+		testing.expect_value(t, read[32].values[POINTER_RECORD_BUTTONS], u64(1))
+		testing.expect_value(t, i64(read[33].values[POINTER_RECORD_X]), i64(3))
+		testing.expect_value(t, i64(read[33].values[POINTER_RECORD_Y]), i64(4))
+		testing.expect_value(t, i64(read[33].values[POINTER_RECORD_WHEEL]), i64(3))
+	}
+}

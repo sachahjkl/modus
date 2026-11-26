@@ -139,6 +139,17 @@ key_event_write :: proc(builder: ^strings.Builder, key: string, down: bool, firs
 	strings.write_string(builder, "}}}")
 }
 
+// qmp_key_state_command gives the command that presses or releases one key
+// without the matching opposite event, for tests that hold a key down.
+qmp_key_state_command :: proc(key: string, down: bool) -> string {
+	builder := strings.builder_make(context.temp_allocator)
+	strings.write_string(&builder, "{\"execute\":\"input-send-event\",\"arguments\":{\"events\":[")
+	first := true
+	key_event_write(&builder, key, down, &first)
+	strings.write_string(&builder, "]}}")
+	return strings.to_string(builder)
+}
+
 // qmp_key_events_command gives the command that presses and releases each
 // name of a list, in order, with no time between two events: for a name of
 // several keys, each key goes down in order, then each goes up in the

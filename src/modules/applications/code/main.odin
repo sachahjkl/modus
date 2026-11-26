@@ -942,7 +942,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				interface.draw_whole_window_next(&window_memory.drawing)
 			case .Copy_Asked:
 				display.copy_decline(&window)
-			case .None, .Pasted, .Go_To, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Work_Area:
+			case .None, .Pasted, .Go_To, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Work_Area, .Pointer_Delta, .Pointer_Lock_Changed:
 			}
 		}
 	}

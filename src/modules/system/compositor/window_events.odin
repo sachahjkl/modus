@@ -96,20 +96,23 @@ window_event_send :: proc "contextless" (client: ^Client, kind: display.Event_Ki
 	}
 	class: key_path.Record_Class
 	switch kind {
-	case .Pointer:
+	case .Pointer, .Pointer_Delta:
 		class = .Pointer
 	case .Key:
 		class = .Key
-	case .None, .Presentation, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Surface_Answer, .Work_Area:
+	case .None, .Presentation, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Surface_Answer, .Work_Area, .Pointer_Lock_Changed:
 		// The other events wait in order behind the keys; None is never
 		// sent, and the reader refuses it.
 		class = .Other
 	}
 	refused_before := queue.refused[class]
 	result: key_path.Put_Result
-	if class == .Pointer {
+	switch kind {
+	case .Pointer:
 		result = key_path.window_queue_put_pointer(queue, target, record, record.values[2], i64(record.values[3]))
-	} else {
+	case .Pointer_Delta:
+		result = key_path.window_queue_put_pointer_delta(queue, target, record, record.values[2], i64(record.values[3]))
+	case .None, .Key, .Presentation, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Surface_Answer, .Work_Area, .Pointer_Lock_Changed:
 		result = key_path.window_queue_put(queue, target, record, class)
 	}
 	if result.wrote {

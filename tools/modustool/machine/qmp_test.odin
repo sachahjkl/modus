@@ -42,6 +42,16 @@ key_events_command_of_a_key_with_shift_and_enter :: proc(t: ^testing.T) {
 	testing.expect_value(t, qmp_key_events_command(nil), EVENTS_START + EVENTS_END)
 }
 
+// A single key state command emits one press or one release and escapes
+// special JSON characters in the key name.
+@(test)
+key_state_command_emits_press_release_and_escaping :: proc(t: ^testing.T) {
+	testing.expect_value(t, qmp_key_state_command("up", true), EVENTS_START + KEY_DOWN + "up" + KEY_END + EVENTS_END)
+	testing.expect_value(t, qmp_key_state_command("up", false), EVENTS_START + KEY_UP + "up" + KEY_END + EVENTS_END)
+	testing.expect_value(t, qmp_key_state_command("", true), EVENTS_START + KEY_DOWN + "" + KEY_END + EVENTS_END)
+	testing.expect_value(t, qmp_key_state_command("a\"b\\c\n", true), EVENTS_START + KEY_DOWN + "a\\\"b\\\\c\\u000a" + KEY_END + EVENTS_END)
+}
+
 // The other commands, as QEMU takes them.
 @(test)
 commands_of_the_pointer_the_picture_and_the_monitor :: proc(t: ^testing.T) {

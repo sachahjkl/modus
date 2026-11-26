@@ -265,6 +265,13 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 // pointer and the time now, and damages the old and the new rectangle when
 // the picture or its place changed.
 pointer_update :: proc "contextless" (now: u64) {
+	if pointer_lock_is_active() {
+		if pointer_drawn_valid {
+			damage_screen_add(pointer_drawn.left, pointer_drawn.top, pointer_drawn.right - pointer_drawn.left, pointer_drawn.bottom - pointer_drawn.top)
+			pointer_drawn_valid = false
+		}
+		return
+	}
 	shape := pointer_shape_under()
 	chosen := pointer_chosen
 	if pointer_theme != nil && (shape != pointer_shape || !pointer_drawn_valid || (chosen.next_frame != 0 && now >= chosen.next_frame)) {
@@ -319,6 +326,9 @@ pointer_shape_request :: proc "contextless" (client: ^Client, record: ring.Recor
 // pointer_draw draws the pointer in one damage rectangle: the canvas is the
 // part of the frame in it.
 pointer_draw :: proc "contextless" (canvas: graphics.Canvas, origin_x, origin_y: int) {
+	if pointer_lock_is_active() {
+		return
+	}
 	if pointer_theme == nil {
 		screen_x, screen_y := pointer_screen_place()
 		for row, y in pointer_arrow_without_theme {

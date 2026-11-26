@@ -821,3 +821,112 @@ the_pages_of_the_copies_agree_with_the_screen_of_memory :: proc(t: ^testing.T) {
 		testing.expectf(t, capture_budget_pages(size[0], size[1]) + op.memory_cost(mirror) == memory_screen.service_copies_pages(u64(size[0]), u64(size[1])), "%v", size)
 	}
 }
+
+// Pointer lock command and event borders refuse unknown enum words,
+// out-of-range deltas, unknown button bits, impossible acquire reasons, and
+// non-zero reserved words, returning zero events; valid records round-trip.
+@(test)
+pointer_lock_and_delta_borders_refuse_edges_and_round_trip :: proc(t: ^testing.T) {
+	// Unknown Pointer_Lock_Mode words and non-zero reserved values are refused.
+	for word in ([?]u64{u64(max(Pointer_Lock_Mode)) + 1, u64(max(u32)), max(u64)}) {
+		mode, ok := pointer_lock_mode_of_word(word)
+		testing.expectf(t, !ok && mode == .Release, "Pointer_Lock_Mode word %d was accepted", word)
+		_, cmd_ok := pointer_lock_command_of_values({0 = word})
+		testing.expectf(t, !cmd_ok, "Pointer_Lock command word %d was accepted", word)
+	}
+	for slot in 1 ..< 7 {
+		values: [7]u64
+		values[0] = u64(Pointer_Lock_Mode.Acquire)
+		values[slot] = 1
+		_, ok := pointer_lock_command_of_values(values)
+		testing.expectf(t, !ok, "Pointer_Lock non-zero slot %d was accepted", slot)
+	}
+	for mode in Pointer_Lock_Mode {
+		got, ok := pointer_lock_command_of_values({0 = u64(mode)})
+		testing.expect(t, ok && got == mode)
+	}
+
+	// Unknown Pointer_Lock_Reason words are refused.
+	for word in ([?]u64{u64(max(Pointer_Lock_Reason)) + 1, u64(max(u32)), max(u64)}) {
+		reason, ok := pointer_lock_reason_of_word(word)
+		testing.expectf(t, !ok && reason == .Window_Request, "Pointer_Lock_Reason word %d was accepted", word)
+	}
+
+	// Pointer_Delta refuses out-of-range dx/dy, unknown buttons, and non-zero reserved words.
+	refused_deltas := [?][7]u64{
+		{0 = transmute(u64)i64(POINTER_DELTA_LIMIT + 1)},
+		{0 = transmute(u64)i64(-POINTER_DELTA_LIMIT - 1)},
+		{1 = transmute(u64)i64(POINTER_DELTA_LIMIT + 1)},
+		{1 = transmute(u64)i64(-POINTER_DELTA_LIMIT - 1)},
+		{0 = transmute(u64)i64(max(i64))},
+		{0 = transmute(u64)i64(min(i64))},
+		{2 = u64(BUTTON_LEFT | BUTTON_RIGHT) + 1},
+		{2 = max(u64)},
+		{4 = 1},
+		{5 = 1},
+		{6 = max(u64)},
+	}
+	for values in refused_deltas {
+		event, ok := event_of_record({kind = u32(Event_Kind.Pointer_Delta), values = values})
+		testing.expectf(t, !ok && event == {}, "Pointer_Delta %v was accepted", values)
+	}
+	// Valid Pointer_Delta edges round-trip, with wheel clamped.
+	delta_rec := ring.Record {
+		kind   = u32(Event_Kind.Pointer_Delta),
+		values = {
+			0 = transmute(u64)i64(-POINTER_DELTA_LIMIT),
+			1 = transmute(u64)i64(POINTER_DELTA_LIMIT),
+			2 = u64(BUTTON_LEFT | BUTTON_RIGHT),
+			3 = transmute(u64)i64(key_path.WHEEL_NOTCHES_LIMIT + 10),
+		},
+	}
+	delta_ev, delta_ok := event_of_record(delta_rec)
+	testing.expect(t, delta_ok)
+	testing.expect_value(t, delta_ev, Event{kind = .Pointer_Delta, dx = -POINTER_DELTA_LIMIT, dy = POINTER_DELTA_LIMIT, buttons = BUTTON_LEFT | BUTTON_RIGHT, wheel = key_path.WHEEL_NOTCHES_LIMIT})
+
+	// Pointer_Lock_Changed refuses unknown mode/reason, impossible Acquire+non-Window_Request, and non-zero reserved words.
+	refused_changes := [?][7]u64{
+		{0 = 2, 1 = 0},
+		{0 = 0, 1 = 4},
+		{0 = u64(Pointer_Lock_Mode.Acquire), 1 = u64(Pointer_Lock_Reason.Super_Key)},
+		{0 = u64(Pointer_Lock_Mode.Acquire), 1 = u64(Pointer_Lock_Reason.Focus_Lost)},
+		{0 = u64(Pointer_Lock_Mode.Acquire), 1 = u64(Pointer_Lock_Reason.Refused)},
+		{0 = u64(Pointer_Lock_Mode.Release), 1 = u64(Pointer_Lock_Reason.Super_Key), 2 = 1},
+		{0 = u64(Pointer_Lock_Mode.Acquire), 1 = u64(Pointer_Lock_Reason.Window_Request), 6 = 1},
+	}
+	for values in refused_changes {
+		event, ok := event_of_record({kind = u32(Event_Kind.Pointer_Lock_Changed), values = values})
+		testing.expectf(t, !ok && event == {}, "Pointer_Lock_Changed %v was accepted", values)
+	}
+	acq_ev, acq_ok := event_of_record({kind = u32(Event_Kind.Pointer_Lock_Changed), values = {0 = u64(Pointer_Lock_Mode.Acquire), 1 = u64(Pointer_Lock_Reason.Window_Request)}})
+	testing.expect(t, acq_ok)
+	testing.expect_value(t, acq_ev, Event{kind = .Pointer_Lock_Changed, pointer_locked = true, pointer_lock_reason = .Window_Request})
+	for reason in Pointer_Lock_Reason {
+		rel_ev, rel_ok := event_of_record({kind = u32(Event_Kind.Pointer_Lock_Changed), values = {0 = u64(Pointer_Lock_Mode.Release), 1 = u64(reason)}})
+		testing.expect(t, rel_ok)
+		testing.expect_value(t, rel_ev, Event{kind = .Pointer_Lock_Changed, pointer_locked = false, pointer_lock_reason = reason})
+	}
+}
+
+// pointer_lock_set writes Command.Pointer_Lock on the command ring and returns
+// false without mutating window state when the ring is full.
+@(test)
+pointer_lock_set_encodes_command_and_handles_full_ring :: proc(t: ^testing.T) {
+	ring_memory := make([]u8, ring.PAGE_COUNT * ring.PAGE_SIZE)
+	defer delete(ring_memory)
+	window := resizable_window_of_test(ring_memory)
+	testing.expect(t, !pointer_locked(&window))
+
+	testing.expect(t, pointer_lock_set(&window, true))
+	testing.expect(t, pointer_lock_set(&window, false))
+	rec1, ok1 := ring.pop(&window.ring.commands)
+	rec2, ok2 := ring.pop(&window.ring.commands)
+	testing.expect(t, ok1 && rec1.kind == u32(Command.Pointer_Lock) && rec1.values == {0 = u64(Pointer_Lock_Mode.Acquire)})
+	testing.expect(t, ok2 && rec2.kind == u32(Command.Pointer_Lock) && rec2.values == {0 = u64(Pointer_Lock_Mode.Release)})
+
+	// Full ring returns false and leaves window unchanged.
+	for ring.push(&window.ring.commands, ring.Record{kind = u32(Command.Picture_Due)}) {}
+	before := window
+	testing.expect(t, !pointer_lock_set(&window, true))
+	testing.expect_value(t, window, before)
+}

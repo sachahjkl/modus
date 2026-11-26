@@ -861,7 +861,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 			case .Presentation, .Surface_Answer:
 				interface.draw_whole_window_next(&window_memory.drawing)
-			case .None, .Copy_Asked, .Pasted, .Go_To, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Work_Area:
+			case .None, .Copy_Asked, .Pasted, .Go_To, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Work_Area, .Pointer_Delta, .Pointer_Lock_Changed:
 			}
 		}
 	}

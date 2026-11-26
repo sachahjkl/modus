@@ -81,6 +81,17 @@ Pointer_Packet :: struct {
 // inside an int.
 WHEEL_NOTCHES_LIMIT :: 1 << 16
 
+// The largest magnitude of a relative pointer delta in one Pointer_Delta
+// record (Format property: fits in i32 with headroom so summing two coalesced
+// deltas never overflows i32 or i64).
+POINTER_DELTA_LIMIT :: 1 << 20
+
+// pointer_delta_add sums two relative pointer deltas, clamped to
+// [-POINTER_DELTA_LIMIT, POINTER_DELTA_LIMIT].
+pointer_delta_add :: proc "contextless" (first, second: i64) -> i64 {
+	return clamp(clamp(first, -POINTER_DELTA_LIMIT, POINTER_DELTA_LIMIT) + clamp(second, -POINTER_DELTA_LIMIT, POINTER_DELTA_LIMIT), -POINTER_DELTA_LIMIT, POINTER_DELTA_LIMIT)
+}
+
 // wheel_notches_add adds two counts of notches, cut to WHEEL_NOTCHES_LIMIT.
 wheel_notches_add :: proc "contextless" (first, second: i64) -> i64 {
 	return clamp(clamp(first, -WHEEL_NOTCHES_LIMIT, WHEEL_NOTCHES_LIMIT) + clamp(second, -WHEEL_NOTCHES_LIMIT, WHEEL_NOTCHES_LIMIT), -WHEEL_NOTCHES_LIMIT, WHEEL_NOTCHES_LIMIT)
@@ -356,6 +367,82 @@ window_queue_put_pointer :: proc "contextless" (queue: ^Window_Queue, target: ^r
 	queue.move = record
 	queue.move_waits = true
 	return result
+}
+
+// window_queue_put_pointer_delta queues a relative pointer delta record for a
+// pointer-locked window. Unlike absolute Pointer moves (which replace),
+// coalesced Pointer_Delta moves sum dx and dy so no relative motion is lost
+// when the ring is full. A button change or wheel notch folds any pending
+// delta of the same kind into the ordered record before queuing it.
+window_queue_put_pointer_delta :: proc "contextless" (queue: ^Window_Queue, target: ^ring.Queue, record: ring.Record, buttons: u64, wheel: i64 = 0) -> (result: Put_Result) {
+	merged_record := record
+	dx := clamp(i64(record.values[POINTER_RECORD_X]), -POINTER_DELTA_LIMIT, POINTER_DELTA_LIMIT)
+	dy := clamp(i64(record.values[POINTER_RECORD_Y]), -POINTER_DELTA_LIMIT, POINTER_DELTA_LIMIT)
+	merged_record.values[POINTER_RECORD_X] = u64(dx)
+	merged_record.values[POINTER_RECORD_Y] = u64(dy)
+	if buttons != queue.buttons || wheel != 0 {
+		button_changed := buttons != queue.buttons
+		queue.buttons = buttons
+		result.wrote = window_queue_send_waiting(queue, target)
+		if queue.move_waits {
+			if queue.move.kind == merged_record.kind {
+				dx = pointer_delta_add(i64(queue.move.values[POINTER_RECORD_X]), dx)
+				dy = pointer_delta_add(i64(queue.move.values[POINTER_RECORD_Y]), dy)
+				merged_record.values[POINTER_RECORD_X] = u64(dx)
+				merged_record.values[POINTER_RECORD_Y] = u64(dy)
+			}
+			queue.move_waits = false
+			queue.moves_merged += 1
+		}
+		if !button_changed && queue.count > 0 {
+			newest := (queue.first + queue.count - 1) % window_queue_capacity(queue)
+			waiting := &queue.records[newest]
+			if !place_is_key(queue, newest) && waiting.kind == merged_record.kind && waiting.values[POINTER_RECORD_BUTTONS] == buttons && waiting.values[POINTER_RECORD_WHEEL] != 0 {
+				notches := wheel_notches_add(i64(waiting.values[POINTER_RECORD_WHEEL]), wheel)
+				sum_dx := pointer_delta_add(i64(waiting.values[POINTER_RECORD_X]), dx)
+				sum_dy := pointer_delta_add(i64(waiting.values[POINTER_RECORD_Y]), dy)
+				waiting^ = merged_record
+				waiting.values[POINTER_RECORD_X] = u64(sum_dx)
+				waiting.values[POINTER_RECORD_Y] = u64(sum_dy)
+				waiting.values[POINTER_RECORD_WHEEL] = u64(notches)
+				queue.wheel_records_merged += 1
+				return result
+			}
+		}
+		put := window_queue_put(queue, target, merged_record, .Pointer)
+		result.wrote = result.wrote || put.wrote
+		result.loss_began = put.loss_began
+		return result
+	}
+	result.wrote = window_queue_send_waiting(queue, target)
+	if !window_queue_waits(queue) && ring.push(target, merged_record) {
+		queue.delivered += 1
+		result.wrote = true
+		return result
+	}
+	if queue.move_waits && queue.move.kind == merged_record.kind && queue.move.values[POINTER_RECORD_BUTTONS] == buttons {
+		sum_dx := pointer_delta_add(i64(queue.move.values[POINTER_RECORD_X]), dx)
+		sum_dy := pointer_delta_add(i64(queue.move.values[POINTER_RECORD_Y]), dy)
+		queue.move.values[POINTER_RECORD_X] = u64(sum_dx)
+		queue.move.values[POINTER_RECORD_Y] = u64(sum_dy)
+		queue.moves_merged += 1
+		return result
+	}
+	if queue.move_waits {
+		queue.moves_merged += 1
+	}
+	queue.move = merged_record
+	queue.move_waits = true
+	return result
+}
+
+// window_queue_drop_pending_move drops a coalesced waiting move of the given
+// record kind so stale relative deltas never arrive after pointer lock ends.
+window_queue_drop_pending_move :: proc "contextless" (queue: ^Window_Queue, kind: u32) {
+	if queue.move_waits && queue.move.kind == kind {
+		queue.move_waits = false
+		queue.move = {}
+	}
 }
 
 // window_queue_loss_ended says if the loss period of a window ends now: a

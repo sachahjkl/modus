@@ -5,6 +5,7 @@ package root
 // and one context whose handles each take their own slot.
 
 import "base:intrinsics"
+import "internal:root/device_stop"
 import "internal:root/role_policy"
 import info "modus:contract/boot_info"
 import "modus:contract/call_outcome"
@@ -266,15 +267,30 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Out
 	} else if .Sound_Device in grants {
 		// One process plays at a time: a second one finds the sound service
 		// of the device started, and does not start (src/md/features/timed_stream.md,
-		// "One process at a time").
+		// "One process at a time"). On a machine with no sound device, the
+		// process starts without sound handles (src/md/features/missing_hardware.md).
 		place := pci.Place{device = pci.SOUND_DEVICE}
+		sound_busy := false
 		for &item in started {
 			if item.process != 0 && item.is_driver && item.device == place {
-				system.log_fact(.Warning, Start_Refused_Sound_Device_Busy{refused_process = module_name_field(name)})
-				return start_refuse(work, .Callee_Busy, .Busy, .Processes, 1, 1, 1)
+				sound_busy = true
+				break
 			}
 		}
-		work.driver, work.device_ring, status = driver_start(place, DRIVER_SOUND)
+		switch device_stop.sound_device_start_decide(sound_busy, .Sound_Device in machine_parts) {
+		case .Refuse_Busy:
+			system.log_fact(.Warning, Start_Refused_Sound_Device_Busy{refused_process = module_name_field(name)})
+			return start_refuse(work, .Callee_Busy, .Busy, .Processes, 1, 1, 1)
+		case .Start_Without_Sound:
+			system.log_fact(.Info, Start_Without_Sound_Device{started_process = module_name_field(name)})
+			status = .Succeeded
+		case .Start_Driver:
+			work.driver, work.device_ring, status = driver_start(place, DRIVER_SOUND)
+			if device_stop.sound_device_driver_status_allows_silent(status) {
+				system.log_fact(.Info, Start_Without_Sound_Device{started_process = module_name_field(name)})
+				status = .Succeeded
+			}
+		}
 	}
 	switch status {
 	case .Succeeded:

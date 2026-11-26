@@ -859,6 +859,7 @@ desktop_workspace_select :: proc "contextless" (index: u8) -> bool {
 	if refusal != .None {
 		return false
 	}
+	pointer_lock_release(.Focus_Lost)
 	if focused_id > 0 {
 		target := int(focused_id - 1)
 		for position in 0 ..< order_count {

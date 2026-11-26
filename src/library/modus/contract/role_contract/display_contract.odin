@@ -17,11 +17,13 @@ import "modus:contract/palette_table"
 // of each setting), and the event Presentation in place of Settings_Changed.
 // 5: both changes together, the merge of two forms of 3 that each took the
 // next number.
-DISPLAY_CONTRACT_VERSION :: u32(5)
+// 6: opt-in relative pointer lock on the window ring (Command.Pointer_Lock,
+// Event_Kind.Pointer_Delta, and Event_Kind.Pointer_Lock_Changed).
+DISPLAY_CONTRACT_VERSION :: u32(6)
 
 // Closed counts of the Display ring protocols, matching the compositor faces.
-DISPLAY_WINDOW_COMMAND_COUNT :: u32(20)
-DISPLAY_WINDOW_EVENT_COUNT :: u32(13)
+DISPLAY_WINDOW_COMMAND_COUNT :: u32(23)
+DISPLAY_WINDOW_EVENT_COUNT :: u32(15)
 DISPLAY_CONTROL_COMMAND_COUNT :: u32(7)
 DISPLAY_CONTROL_EVENT_COUNT :: u32(2)
 DISPLAY_INPUT_COMMAND_COUNT :: u32(2)

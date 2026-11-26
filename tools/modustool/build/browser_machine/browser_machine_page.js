@@ -21,6 +21,7 @@ const status = document.getElementById("machine-status");
 const statusDot = document.getElementById("dot");
 const serial = document.getElementById("serial-output");
 const startButton = document.getElementById("start");
+const pointerLockButton = document.getElementById("pointer-lock");
 const fullscreenButton = document.getElementById("fullscreen");
 const themeButton = document.getElementById("theme");
 const context = screen.getContext("2d", { alpha: false });
@@ -28,7 +29,12 @@ let guestPointerX = Math.floor(screen.width / 2);
 let guestPointerY = Math.floor(screen.height / 2);
 let guestPointerButtons = 0;
 let pointerSynced = false;
+let pointerLocked = false;
 let pendingPointerEvent = null;
+let pendingLockedDeltaX = 0;
+let pendingLockedDeltaY = 0;
+let pendingLockedButtons = 0;
+let pendingLockedDirty = false;
 let lastRequestedWidth = screen.width;
 let lastRequestedHeight = screen.height;
 let lastSeenStageWidth = screen.width;
@@ -152,7 +158,9 @@ function stagesDraw() {
 function animationFrame() {
   if (stage !== STAGE_READY) stagesDraw();
   else if (worker) {
-    if (pendingPointerEvent) {
+    if (pointerLocked) {
+      flushLockedPointer(false);
+    } else if (pendingPointerEvent) {
       const event = pendingPointerEvent;
       pendingPointerEvent = null;
       sendPointerAt(event, false);
@@ -195,6 +203,7 @@ function onWorkerMessage(event) {
       stageTake(message);
       if (stage === STAGE_READY) {
         screen.classList.add("ready");
+        if (pointerLockButton) pointerLockButton.disabled = false;
         if (machineState === "running") {
           dotSet("running");
           status.textContent = "running";
@@ -354,22 +363,101 @@ function sendPointerAt(event, forceButtons) {
   }
 }
 
+function updatePointerLockLabel() {
+  if (!pointerLockButton) return;
+  pointerLockButton.textContent = pointerLocked ? "Pointer locked" : "Lock pointer";
+}
+
+if (pointerLockButton) {
+  pointerLockButton.addEventListener("click", () => {
+    if (!worker || stage !== STAGE_READY) return;
+    if (document.pointerLockElement === screen) {
+      if (document.exitPointerLock) document.exitPointerLock();
+    } else if (screen.requestPointerLock) {
+      screen.focus();
+      try {
+        const result = screen.requestPointerLock();
+        if (result && typeof result.catch === "function") result.catch(() => {});
+      } catch {}
+    }
+  });
+}
+
+document.addEventListener("pointerlockchange", () => {
+  const wasLocked = pointerLocked;
+  pointerLocked = document.pointerLockElement === screen;
+  pendingPointerEvent = null;
+  pendingLockedDeltaX = 0;
+  pendingLockedDeltaY = 0;
+  pendingLockedButtons = 0;
+  pendingLockedDirty = false;
+  if (!pointerLocked) {
+    pointerSynced = false;
+    if (wasLocked && worker && stage === STAGE_READY && guestPointerButtons !== 0) {
+      worker.postMessage({ kind: "pointer", deltaX: 0, deltaY: 0, buttons: 0 });
+      guestPointerButtons = 0;
+    }
+  }
+  updatePointerLockLabel();
+});
+
+document.addEventListener("pointerlockerror", () => {
+  pointerLocked = document.pointerLockElement === screen;
+  updatePointerLockLabel();
+});
+
+function flushLockedPointer(forceButtons) {
+  if (!worker || stage !== STAGE_READY || !pointerLocked) return;
+  const deltaX = Math.trunc(pendingLockedDeltaX);
+  const deltaY = Math.trunc(pendingLockedDeltaY);
+  const buttons = pendingLockedButtons;
+  pendingLockedDeltaX -= deltaX;
+  pendingLockedDeltaY -= deltaY;
+  const dirty = pendingLockedDirty;
+  pendingLockedDirty = false;
+  if (deltaX !== 0 || deltaY !== 0 || buttons !== guestPointerButtons || (forceButtons && dirty)) {
+    worker.postMessage({ kind: "pointer", deltaX, deltaY, buttons });
+    guestPointerButtons = buttons;
+  }
+}
+
+screen.addEventListener("contextmenu", (event) => {
+  if (worker) event.preventDefault();
+});
+
 screen.addEventListener("pointerenter", (event) => {
+  if (pointerLocked) return;
   pendingPointerEvent = null;
   pointerSynced = false;
   sendPointerAt(event, false);
 });
 screen.addEventListener("pointerleave", () => {
+  if (pointerLocked) return;
   pendingPointerEvent = null;
   pointerSynced = false;
 });
 screen.addEventListener("pointermove", (event) => {
+  if (pointerLocked) {
+    pendingLockedDeltaX += event.movementX || 0;
+    pendingLockedDeltaY += event.movementY || 0;
+    pendingLockedButtons = event.buttons;
+    pendingLockedDirty = true;
+    return;
+  }
   // Coalesce high-frequency moves to one packet per animation frame so the PS/2
   // controller and software CPU never lag behind 120-240 Hz mouse reports.
   pendingPointerEvent = event;
 });
 for (const kind of ["pointerdown", "pointerup"]) {
   screen.addEventListener(kind, (event) => {
+    if (pointerLocked) {
+      pendingLockedDeltaX += event.movementX || 0;
+      pendingLockedDeltaY += event.movementY || 0;
+      pendingLockedButtons = event.buttons;
+      pendingLockedDirty = true;
+      flushLockedPointer(true);
+      return;
+    }
     pendingPointerEvent = null;
     if (kind === "pointerdown") screen.focus();
     sendPointerAt(event, true);

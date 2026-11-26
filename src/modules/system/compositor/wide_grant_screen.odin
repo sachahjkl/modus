@@ -86,6 +86,7 @@ wide_grant_screen_waiting_open :: proc "contextless" () {
 // minimized and none marked local.
 @(private = "file")
 wide_grant_screen_open_now :: proc "contextless" (show: wide_grants.Screen_Show) {
+	pointer_lock_release(.Focus_Lost)
 	window_switcher_cancel() // window_switcher.odin
 	windows: [wide_grants.SCREEN_WINDOWS_MOST]u64
 	count := 0

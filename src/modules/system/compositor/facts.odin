@@ -187,6 +187,18 @@ Pointer_Shape_Refused :: struct {
 	window: value_kinds.Module_Name_Field,
 }
 
+// A focused window acquired relative pointer lock.
+@(log_fact = "compositor: pointer lock acquired by {window}")
+Pointer_Lock_Acquired :: struct {
+	window: value_kinds.Module_Name_Field,
+}
+
+// Relative pointer lock ended for a window.
+@(log_fact = "compositor: pointer lock released for {window}")
+Pointer_Lock_Released :: struct {
+	window: value_kinds.Module_Name_Field,
+}
+
 // The palette placed a named element, or moved it: its rectangle in
 // pixels of the screen. The palette is a panel of the compositor, not a
 // window, so the compositor writes these facts, as interface.Element_Placed

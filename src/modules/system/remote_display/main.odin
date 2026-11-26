@@ -1026,7 +1026,7 @@ capture_events :: proc "contextless" () {
 			continue
 		}
 		switch kind {
-		case .None, .Key, .Pointer, .Presentation, .Go_To, .Resized, .Copy_Asked, .Pasted, .Surface_Answer, .Work_Area:
+		case .None, .Key, .Pointer, .Presentation, .Go_To, .Resized, .Copy_Asked, .Pasted, .Surface_Answer, .Work_Area, .Pointer_Delta, .Pointer_Lock_Changed:
 			// The events of a window: this process has no surface.
 		case .Capture_Size:
 			capture_size_event(record.values[0], record.values[1], record.values[2])

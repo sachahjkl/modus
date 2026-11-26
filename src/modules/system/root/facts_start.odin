@@ -272,6 +272,13 @@ Start_Refused_Sound_Device_Busy :: struct {
 	refused_process: value_kinds.Module_Name_Field,
 }
 
+// A process with Sound_Device started on a machine that lacks a sound device:
+// no sound service starts and the sound handles are omitted from its context.
+@(log_fact = "root: {started_process}: no sound device: the process starts with no sound")
+Start_Without_Sound_Device :: struct {
+	started_process: value_kinds.Module_Name_Field,
+}
+
 // A renderer of the terminal refused: the holder of Terminal is not the
 // module of the renderer that the image chose.
 @(log_fact = "root: cannot start {refused_process} as the terminal of the console: it is not the renderer that the boot image chose; it gets no serial port and no screen")

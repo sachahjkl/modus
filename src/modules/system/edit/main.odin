@@ -1521,7 +1521,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Presentation, .Surface_Answer:
 				// A new appearance or a new surface: each pixel changes.
 				interface.draw_whole_window_next(&window_memory.drawing)
-			case .None, .Go_To, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Work_Area:
+			case .None, .Go_To, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Work_Area, .Pointer_Delta, .Pointer_Lock_Changed:
 			// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

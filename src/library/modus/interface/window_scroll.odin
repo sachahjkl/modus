@@ -165,7 +165,7 @@ window_scroll_event :: proc "contextless" (drawing: ^Window_Drawing, window: ^di
 		if scrolls && event.pressed && (event.code == display.KEY_PAGE_UP || event.code == display.KEY_PAGE_DOWN) {
 			show_due = input_add(&drawing.input, event)
 		}
-	case .None, .Presentation, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Surface_Answer, .Work_Area:
+	case .None, .Presentation, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Surface_Answer, .Work_Area, .Pointer_Delta, .Pointer_Lock_Changed:
 		// The window layer reads no other event here: a new surface is
 		// drawn whole by its serial (window_frame_begin_at).
 	}

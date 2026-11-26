@@ -194,6 +194,58 @@ Command :: enum u32 {
 	// answers with the event Capture_Size: the new size, or with values[2]
 	// the cause of its refusal. values: width, height.
 	Screen_Size_Set  = 22,
+	// Opt-in relative pointer lock for the focused window
+	// (src/md/features/doom.md). values[0]: Pointer_Lock_Mode (0 Release,
+	// 1 Acquire); values[1..6] must be 0. Any other word is refused. Only the
+	// focused window can acquire lock; the compositor hides the desktop
+	// pointer, sends coalesced relative motion via Event_Kind.Pointer_Delta,
+	// and notifies lock state changes via Event_Kind.Pointer_Lock_Changed.
+	Pointer_Lock     = 23,
+}
+
+// Whether a window asks to release or acquire pointer lock (Command.Pointer_Lock).
+// A word of a record becomes a member at pointer_lock_mode_of_word only.
+Pointer_Lock_Mode :: enum u64 {
+	Release = 0, // Release pointer lock if held.
+	Acquire = 1, // Acquire pointer lock while this window has focus.
+}
+
+// Why pointer lock changed for a window (Event_Kind.Pointer_Lock_Changed).
+// A word of a record becomes a member at pointer_lock_reason_of_word only.
+Pointer_Lock_Reason :: enum u64 {
+	Window_Request = 0, // The window asked to acquire or release lock.
+	Super_Key      = 1, // The principal pressed Super to exit lock.
+	Focus_Lost     = 2, // Focus moved to another window, dialog, or menu, or this window minimized.
+	Refused        = 3, // The window asked to acquire lock without focus or while a modal was open.
+}
+
+// The largest magnitude of a relative pointer delta in one Pointer_Delta event
+// (Format property: fits in i32 and matches key_path.POINTER_DELTA_LIMIT).
+POINTER_DELTA_LIMIT :: key_path.POINTER_DELTA_LIMIT
+
+// pointer_lock_mode_of_word is the border of values[0] of Command.Pointer_Lock
+// and Event_Kind.Pointer_Lock_Changed: refuses any word that names no member.
+pointer_lock_mode_of_word :: proc "contextless" (word: u64) -> (mode: Pointer_Lock_Mode, ok: bool) {
+	return enum_word.member_of_word(Pointer_Lock_Mode, word)
+}
+
+// pointer_lock_reason_of_word is the border of values[1] of
+// Event_Kind.Pointer_Lock_Changed: refuses any word that names no member.
+pointer_lock_reason_of_word :: proc "contextless" (word: u64) -> (reason: Pointer_Lock_Reason, ok: bool) {
+	return enum_word.member_of_word(Pointer_Lock_Reason, word)
+}
+
+// pointer_lock_command_of_values validates the whole payload of
+// Command.Pointer_Lock: values[0] names a Pointer_Lock_Mode and values[1..6]
+// are zero.
+pointer_lock_command_of_values :: proc "contextless" (values: [7]u64) -> (mode: Pointer_Lock_Mode, ok: bool) {
+	mode = pointer_lock_mode_of_word(values[0]) or_return
+	for index in 1 ..< len(values) {
+		if values[index] != 0 {
+			return .Release, false
+		}
+	}
+	return mode, true
 }
 
 // The place of the capture flag in the values of Client_Add.
@@ -566,7 +618,19 @@ Event_Kind :: enum u32 {
 	// gave, and gives the client a copy with Read. values: that copy, as the
 	// client names it, or 0 when the compositor refused the budget. A window
 	// refuses it.
-	Capture_Opened     = 13,
+	Capture_Opened       = 13,
+	// Relative pointer motion while this window holds pointer lock.
+	// values[0]: dx (signed i64 within [-POINTER_DELTA_LIMIT, POINTER_DELTA_LIMIT]).
+	// values[1]: dy (signed i64 within [-POINTER_DELTA_LIMIT, POINTER_DELTA_LIMIT]).
+	// values[2]: buttons (BUTTON_LEFT | BUTTON_RIGHT bitmask).
+	// values[3]: wheel notches (signed, clamped to WHEEL_NOTCHES_LIMIT).
+	// values[4..6]: 0.
+	Pointer_Delta        = 14,
+	// Notification that pointer lock state changed for this window.
+	// values[0]: Pointer_Lock_Mode (0 Release / unlocked, 1 Acquire / locked).
+	// values[1]: Pointer_Lock_Reason (Acquire allows Window_Request only).
+	// values[2..6]: 0.
+	Pointer_Lock_Changed = 15,
 }
 
 // The largest width and height of a work area, in logical pixels: a place
@@ -830,6 +894,9 @@ Event :: struct {
 	surface_answer: Surface_Answer_Kind, // Surface_Answer: the answer.
 	surface_serial: u64, // Surface_Answer: the serial that it names.
 	surface_memory: system.Handle, // Surface_Answer of a surface made (surface_answer_gives_surface): the copy for this process; else 0.
+	dx, dy:         i32, // Pointer_Delta: relative pointer motion in logical pixels, signed.
+	pointer_locked: bool, // Pointer_Lock_Changed: true when lock is active, false when released or refused.
+	pointer_lock_reason: Pointer_Lock_Reason, // Pointer_Lock_Changed: why lock changed.
 }
 
 // One window of a process: its ring to the compositor and its surface.
@@ -889,6 +956,7 @@ Window :: struct {
 	picture_started:    u64, // Nanoseconds: the start of the picture that is drawn now.
 	picture_count:      u64, // The pictures presented.
 	picture_time:       u64, // Nanoseconds: the sum of the times of the pictures.
+	pointer_locked:     bool, // True while the compositor confirmed pointer lock for this window.
 }
 
 PICTURES_MEASURED :: 10 // The pictures after which a measure run writes its last line.
@@ -1351,6 +1419,21 @@ pointer_shape_set :: proc "contextless" (window: ^Window, shape: pointer_picture
 	system.send(&window.ring.commands, ring.Record{kind = u32(Command.Pointer_Shape), values = {0 = u64(shape)}})
 }
 
+// pointer_lock_set asks the compositor to acquire or release relative pointer
+// lock for this window. It returns false when the command ring is full and
+// nothing was sent. The compositor confirms or refuses the transition via
+// Event_Kind.Pointer_Lock_Changed.
+pointer_lock_set :: proc "contextless" (window: ^Window, locked: bool) -> bool {
+	mode := locked ? Pointer_Lock_Mode.Acquire : Pointer_Lock_Mode.Release
+	return system.send(&window.ring.commands, ring.Record{kind = u32(Command.Pointer_Lock), values = {0 = u64(mode)}})
+}
+
+// pointer_locked reports whether the compositor confirmed pointer lock for
+// this window.
+pointer_locked :: proc "contextless" (window: ^Window) -> bool {
+	return window.pointer_locked
+}
+
 // canvas_free says if the process can draw in window.canvas. The compositor
 // reads the other picture only after it took the last Present: until then,
 // it can still read this one. A process that must never wait asks it
@@ -1557,6 +1640,9 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 		if read.kind == .Work_Area && work_area_take(window, read.width, read.height) {
 			system.log_fact(.Info, Window_Taken{width = u64(read.width), height = u64(read.height), window = window_fact_title(window)})
 		}
+		if read.kind == .Pointer_Lock_Changed {
+			window.pointer_locked = read.pointer_locked
+		}
 		return read, true
 	}
 }
@@ -1675,6 +1761,36 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 		// The records of the capture face: the service of the remote
 		// display reads them itself, and a window takes none.
 		return {}, false
+	case .Pointer_Delta:
+		dx := i64(record.values[key_path.POINTER_RECORD_X])
+		dy := i64(record.values[key_path.POINTER_RECORD_Y])
+		buttons := record.values[key_path.POINTER_RECORD_BUTTONS]
+		if dx < -POINTER_DELTA_LIMIT || dx > POINTER_DELTA_LIMIT || dy < -POINTER_DELTA_LIMIT || dy > POINTER_DELTA_LIMIT {
+			return {}, false
+		}
+		if buttons & ~u64(BUTTON_LEFT | BUTTON_RIGHT) != 0 {
+			return {}, false
+		}
+		if record.values[4] != 0 || record.values[5] != 0 || record.values[6] != 0 {
+			return {}, false
+		}
+		event.dx = i32(dx)
+		event.dy = i32(dy)
+		event.buttons = u32(buttons)
+		event.wheel = int(clamp(i64(record.values[key_path.POINTER_RECORD_WHEEL]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
+	case .Pointer_Lock_Changed:
+		mode, mode_ok := pointer_lock_mode_of_word(record.values[0])
+		reason, reason_ok := pointer_lock_reason_of_word(record.values[1])
+		if !mode_ok || !reason_ok || (mode == .Acquire && reason != .Window_Request) {
+			return {}, false
+		}
+		for index in 2 ..< len(record.values) {
+			if record.values[index] != 0 {
+				return {}, false
+			}
+		}
+		event.pointer_locked = mode == .Acquire
+		event.pointer_lock_reason = reason
 	}
 	return event, true
 }

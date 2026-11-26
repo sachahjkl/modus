@@ -2,6 +2,22 @@
 package device_stop
 
 import "core:testing"
+import "modus:contract/call_outcome"
+
+// Sound_Device start decision: busy refuses first even if absence is reported,
+// absent device starts without sound handles, present idle device starts the
+// driver, and only Nothing_Has_That_Name permits a silent start after driver_start.
+@(test)
+sound_device_start_decision_handles_busy_absent_and_present :: proc(t: ^testing.T) {
+	testing.expect_value(t, sound_device_start_decide(true, true), Sound_Device_Start_Action.Refuse_Busy)
+	testing.expect_value(t, sound_device_start_decide(true, false), Sound_Device_Start_Action.Refuse_Busy)
+	testing.expect_value(t, sound_device_start_decide(false, false), Sound_Device_Start_Action.Start_Without_Sound)
+	testing.expect_value(t, sound_device_start_decide(false, true), Sound_Device_Start_Action.Start_Driver)
+
+	for outcome in call_outcome.Call_Outcome {
+		testing.expect_value(t, sound_device_driver_status_allows_silent(outcome), outcome == .Nothing_Has_That_Name)
+	}
+}
 
 // Stopping a slot with no live process does nothing and leaves state untouched.
 @(test)

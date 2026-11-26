@@ -466,6 +466,7 @@ damage_screen_add :: proc "contextless" (x, y, width, height: int) {
 // session_reset clears all session-scoped compositor state when a named
 // session ends while a machine window remains connected to this display holder.
 session_reset :: proc "contextless" () {
+	pointer_lock_release(.Focus_Lost)
 	clipboard_reset()
 	desktop_notifications_reset()
 	_ = bar.notification_history_clear(&notification_history)
@@ -1047,12 +1048,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				key_records += 1
 				character := display.key_character_of(record.values[1])
 				switch {
+				case powerbox_and_wide_grant_key(u32(record.values[0]), record.values[2] != 0, u32(record.values[3])):
+					// Trusted powerbox modal or Ctrl+Shift+Escape wide-grant revocation always takes priority.
+					window_switcher_cancel()
+				case pointer_lock_key(u32(record.values[0]), record.values[2] != 0, u32(record.values[3]), record.values):
+					// Pointer-locked window: Super or Ctrl+Shift+Escape releases lock; other keys bypass desktop shortcuts.
 				case window_switcher_key(u32(record.values[0]), record.values[2] != 0, u32(record.values[3])):
 					// Alt+Tab, and each key while its card is open: the card
 					// holds the keys until the release of Alt, and does not
 					// open over a dialog or a menu (window_switcher.odin).
-				case powerbox_and_wide_grant_key(u32(record.values[0]), record.values[2] != 0, u32(record.values[3])):
-					// Trusted powerbox modal or Ctrl+Shift+Escape wide-grant revocation took the key.
 				case desktop_context_menu_key(u32(record.values[0]), character, record.values[2] != 0):
 					// The context menu of the desktop took the key.
 				case record.values[2] != 0 && u32(record.values[0]) == display.KEY_ESCAPE && capture_popover_escape():
@@ -1109,7 +1113,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				wheel := int(clamp(i64(record.values[3]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
 				buttons_masked := u32(record.values[2] & u64(display.BUTTON_LEFT | display.BUTTON_RIGHT))
 				before_x, before_y := pointer_x, pointer_y
-				pointer_moved(int(target_x) - pointer_x, int(target_y) - pointer_y, buttons_masked, wheel)
+				pointer_moved_absolute(int(target_x), int(target_y), buttons_masked, wheel)
 				if pointer_x != before_x || pointer_y != before_y {
 					capture_note_machine_pointer_move()
 				}
@@ -1239,6 +1243,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					clipboard_answer_take(index, .Paste_Taken, record)
 				case .Capture_Size_Ask, .Capture_Open, .Capture_Taken, .Capture_Close, .Capture_Viewers, .Remote_Key, .Remote_Pointer, .Screen_Size_Set:
 					capture_command(index, command, record) // capture.odin
+				case .Pointer_Lock:
+					pointer_lock_command(index, record) // pointer_lock.odin
 				}
 			}
 			// The process can wait until this loop took its last picture
@@ -1483,6 +1489,7 @@ window_leave :: proc "contextless" (index: int) {
 			resizing = -1
 		}
 		keyboard_window_gone(index) // keyboard_desktop.odin
+		pointer_lock_window_closed(index) // pointer_lock.odin
 		damage_window(client)
 		damage_focus()
 		surface_memory_end(&client.pictures, &client.pictures_memory) // window_resize.odin
@@ -1606,6 +1613,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	} else {
 		client.x, client.y = bar.new_window_place(bar.CASCADE_X, bar.CASCADE_Y, frame, client.height, desktop_width, desktop_height)
 	}
+	pointer_lock_release(.Focus_Lost)
 	pointer_leaves_front()
 	damage_focus()
 	order[order_count] = index
@@ -1642,6 +1650,7 @@ lower :: proc "contextless" (position: int) {
 	if position == order_count - 1 {
 		// The window in front leaves it, also when it is the only one: a
 		// minimized window then gets no pointer event and no key.
+		pointer_lock_release(.Focus_Lost)
 		pointer_leaves_front()
 		damage_focus()
 	}
@@ -1659,6 +1668,7 @@ raise :: proc "contextless" (position: int) {
 	if position == order_count - 1 {
 		return
 	}
+	pointer_lock_release(.Focus_Lost)
 	pointer_leaves_front()
 	damage_focus()
 	damage_window(&clients[index])
@@ -1672,6 +1682,22 @@ inside :: proc "contextless" (x, y, left, top, width, height: int) -> bool {
 	return x >= left && y >= top && x < left + width && y < top + height
 }
 
+// pointer_moved_absolute handles an absolute pointer coordinate (tablet or
+// remote viewer). While pointer lock is active, it advances the tracked
+// reference position so each event reports only the incremental delta.
+pointer_moved_absolute :: proc "contextless" (target_x, target_y: int, new_buttons: u32, wheel: int) {
+	clamped_x := clamp(target_x, 0, desktop_width - 1)
+	clamped_y := clamp(target_y, 0, desktop_height - 1)
+	delta_x := clamped_x - pointer_x
+	delta_y := clamped_y - pointer_y
+	if pointer_lock_is_active() {
+		pointer_x, pointer_y = clamped_x, clamped_y
+		pointer_lock_deliver_delta(delta_x, delta_y, new_buttons, wheel)
+		return
+	}
+	pointer_moved(delta_x, delta_y, new_buttons, wheel)
+}
+
 // pointer_moved takes one pointer record of the input service: a move, the
 // buttons, and the notches of the wheel. The wheel goes where the pointer
 // goes: to the palette while it is open, else to the process of the window
@@ -1679,6 +1705,10 @@ inside :: proc "contextless" (x, y, left, top, width, height: int) -> bool {
 // notch: the input goes only to the process that has the focus, so no
 // process reads input that the principal gave to another one.
 pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, wheel: int) {
+	if pointer_lock_is_active() {
+		pointer_lock_deliver_delta(motion_x, motion_y, new_buttons, wheel)
+		return
+	}
 	close_before := close_button_under_pointer()
 	// The pointer moves in logical pixels of the desktop: one unit of a move
 	// of the mouse is one logical pixel, so a press acts at a place of the
@@ -1768,14 +1798,39 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		bar_button_hovered = hovered
 		damage_menu()
 	}
-	if right_pressed && menu_open == .None && !bar.inside_bar(bar_layout, pointer_y) {
-		desktop_context_menu_open(pointer_x, pointer_y)
-		return
-	}
-	// The right button on a plate: the menu of the acts on its window
-	// (desktop_features.odin).
-	if right_pressed && menu_open == .None && bar.inside_bar(bar_layout, pointer_y) && desktop_taskbar_menu_open(pointer_x, pointer_y) {
-		return
+	if right_pressed {
+		position := window_position_at(pointer_x, pointer_y)
+		on_window_surface := false
+		if position >= 0 {
+			_, _, on_window_surface = surface_point(&clients[order[position]], pointer_x, pointer_y)
+		}
+		overlay_open := menu_open != .None || tray_state.open != .None || capture_viewer_popover.open
+		switch bar.right_click_decide(false, overlay_open, bar.inside_bar(bar_layout, pointer_y), position, on_window_surface) {
+		case .Open_Desktop_Menu:
+			desktop_context_menu_open(pointer_x, pointer_y)
+			return
+		case .Deliver_To_Window_Surface:
+			if desktop_context_menu.open {
+				desktop_context_menu_damage()
+				desktop_context_menu.open = false
+			}
+			raise(position)
+		case .Raise_Window_Frame:
+			if desktop_context_menu.open {
+				desktop_context_menu_damage()
+				desktop_context_menu.open = false
+			}
+			raise(position)
+			return
+		case .Bar_Or_Overlay:
+			// Right-clicking a taskbar plate opens its window action menu;
+			// empty bar space or any open overlay never leaks to a window.
+			if !overlay_open && bar.inside_bar(bar_layout, pointer_y) {
+				_ = desktop_taskbar_menu_open(pointer_x, pointer_y)
+			}
+			return
+		case .Deliver_To_Locked_Window:
+		}
 	}
 	// The context menu of the desktop takes the pointer while it is open: a
 	// line under the pointer is chosen, a press on it acts, a press outside
@@ -1872,8 +1927,10 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		client := &clients[order[order_count - 1]]
 		// One event more when the pointer leaves the surface: the process
 		// then draws at rest what the pointer was over (a scroll bar).
+		// Held drags only continue outside the surface when the press started
+		// over the surface, so bar/frame/overlay clicks never leak here.
 		x, y, on_surface := surface_point(client, pointer_x, pointer_y)
-		over := held || on_surface
+		over := on_surface || (held && client.pointer_over)
 		if over || client.pointer_over {
 			// The notches go only with a pointer over the surface: not
 			// while a held button sends the pointer from outside it, and
@@ -1881,7 +1938,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			notches := on_surface ? wheel : 0
 			send(client, .Pointer, {0 = u64(i64(x)), 1 = u64(i64(y)), 2 = u64(buttons), 3 = u64(i64(notches))})
 		}
-		client.pointer_over = over
+		client.pointer_over = on_surface || (buttons != 0 && client.pointer_over)
 	}
 }
 
@@ -2621,6 +2678,9 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	}
 	if assistive_left := assistive_marks_records(table, tray_right); assistive_left < tray_right {
 		tray_right = assistive_left - TRAY_BADGE_GAP
+	}
+	if lock_left := pointer_lock_mark_records(table, tray_right); lock_left < tray_right {
+		tray_right = lock_left - TRAY_BADGE_GAP
 	}
 	desktop_taskbar_and_tray_records(table, tray_right) // desktop_features.odin
 	bar_focus_records(table) // keyboard_desktop.odin: after each item of the bar, so none covers the outline.
