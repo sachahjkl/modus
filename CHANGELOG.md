@@ -6,6 +6,12 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.103.0] - 2026-11-26 15:41
+
+### Changed
+
+- **Clean `/console/` and `/desktop/` URLs and faster Web Desktop rendering.** The Web Console and Web Desktop now live at `/console/` and `/desktop/` instead of `.html` filenames. The WebAssembly worker now yields immediately on kernel idle with instant wake on input, coalesces high-frequency pointer moves without saturating PS/2 packets, and transfers only worker-converted dirty rectangles (`frame_seq` + damage bounds in `MODVRES1`) instead of scanning and swapping the full framebuffer on the UI thread.
+
 ## [0.102.0] - 2026-11-26 14:42
 
 ### Added
@@ -2042,6 +2048,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.103.0]: https://github.com/sachahjkl/modus/releases/tag/v0.103.0
 [0.102.0]: https://github.com/sachahjkl/modus/releases/tag/v0.102.0
 [0.101.1]: https://github.com/sachahjkl/modus/releases/tag/v0.101.1
 [0.101.0]: https://github.com/sachahjkl/modus/releases/tag/v0.101.0
