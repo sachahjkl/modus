@@ -6,6 +6,16 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.105.0] - 2026-11-26 19:56
+
+### Added
+
+- **Unbounded budget rows up to the safety ceiling.** Plans now accept `budget_pages = .unbounded`, `console` accepts `start(name, "unbounded")`, and the desktop start menu supports Shift+Enter / Shift+Space for processes of unknown memory need, reserving floor and default size at start and permitting unreserved `Budget_Grow` growth up to the machine safety ceiling (one quarter by default) while charging named principals against their session budget.
+
+### Fixed
+
+- **Fix `settings` scrolling, enable Web Desktop mouse wheel, and speed up the browser software processor.** `settings` now moves the scroll position to follow keyboard focus only when focus actually changes instead of snapping back on every pointer or wheel scroll, Web Desktop enables PS/2 IntelliMouse wheel scrolling, and `software_machine` uses a larger O(1)-flushed TLB (2048 entries), a larger decoded block cache (4096 blocks of up to 32 instructions), and epoch-based code-frame verification to eliminate per-entry byte comparisons in hot loops.
+
 ## [0.104.0] - 2026-11-26 18:23
 
 ### Fixed
@@ -2054,6 +2064,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.105.0]: https://github.com/sachahjkl/modus/releases/tag/v0.105.0
 [0.104.0]: https://github.com/sachahjkl/modus/releases/tag/v0.104.0
 [0.103.0]: https://github.com/sachahjkl/modus/releases/tag/v0.103.0
 [0.102.0]: https://github.com/sachahjkl/modus/releases/tag/v0.102.0
