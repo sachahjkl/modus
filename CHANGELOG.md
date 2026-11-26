@@ -6,6 +6,12 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.101.1] - 2026-11-26 12:37
+
+### Fixed
+
+- **Wrapped-token syntax highlighting and `Format` action-bar item in `edit`**: highlighting a wrapped display row now scans its enclosing logical line span (`text_model.syntax_highlight_layout_row`) so multi-character tokens (`blake3:` hashes, comments, directives, strings, identifiers, and numbers) keep uniform colors across line wraps, and `.lex`/`.recipe` files display the `Format` (`Ctrl+Shift+F`) item in the bottom action bar.
+
 ## [0.101.0] - 2026-11-26 11:05
 
 ### Added
@@ -2030,6 +2036,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.101.1]: https://github.com/sachahjkl/modus/releases/tag/v0.101.1
 [0.101.0]: https://github.com/sachahjkl/modus/releases/tag/v0.101.0
 [0.100.2]: https://github.com/sachahjkl/modus/releases/tag/v0.100.2
 [0.100.1]: https://github.com/sachahjkl/modus/releases/tag/v0.100.1
