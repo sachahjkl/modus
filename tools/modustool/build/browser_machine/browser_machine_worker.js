@@ -6,20 +6,18 @@
 // the keys and the
 // pointer of the page to the PS/2 controller, and the text of the console
 // page to COM2.
-import { BOOT_STAGE_SENTENCES, BootStage, BootStageTracker, BrowserMachine, LoopResult, MachineState, trustDescriptionHashParse } from "./browser_machine_host.js";
+import { BOOT_STAGE_SENTENCES, BootStage, BootStageTracker, BrowserMachine, LoopResult, MachineState, ProcessorIdle, trustDescriptionHashParse } from "./browser_machine_host.js";
 
 // The time of one slice of the loop before the worker reads its messages.
 const SLICE_NANOSECONDS = 8000000;
 
 const clockNanoseconds = () => BigInt(Math.round((performance.timeOrigin + performance.now()) * 1e6));
 
-// With shared memory, the idle wait sleeps in Atomics.wait until the
-// deadline of the timer. With none (a page with no cross-origin isolation),
-// it returns at once: the kernel then waits for the deadline in its idle
-// loop, and the messages of the page wait for the next run of a thread.
-const idleWord = typeof SharedArrayBuffer === "function" && self.crossOriginIsolated ? new Int32Array(new SharedArrayBuffer(4)) : null;
+// Yield out of the kernel on idle instead of blocking the worker thread in
+// Atomics.wait or spinning in WASM: input and frame messages wake the loop
+// immediately with near-zero CPU when the guest is idle.
 const idleWait = (boundNanoseconds) => {
-  if (idleWord) Atomics.wait(idleWord, 0, 0, Number(boundNanoseconds) / 1e6);
+  throw new ProcessorIdle(boundNanoseconds);
 };
 
 let machine = null;
@@ -28,12 +26,28 @@ let pendingConsoleLines = [];
 let lastPostedState = null;
 let lastPostedStopCode = null;
 let lastPostedTrap = null;
-let lastFrame32 = null;
+let loopQueued = false;
+let idleTimer = 0;
 
 // A slice ends with a yield to the event loop of the worker, through a
 // message: a timer of 0 ms is clamped to 4 ms after a few calls.
 const yieldChannel = new MessageChannel();
-yieldChannel.port1.onmessage = () => loop();
+yieldChannel.port1.onmessage = () => {
+  loopQueued = false;
+  loop();
+};
+
+function wakeLoop() {
+  if (!machine || machine.state !== MachineState.Running) return;
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = 0;
+  }
+  if (!loopQueued) {
+    loopQueued = true;
+    yieldChannel.port2.postMessage(null);
+  }
+}
 
 // The lines of a slice go in one message for each port: a message for
 // each line would cost the page more than the line.
@@ -61,14 +75,25 @@ function postState() {
 }
 
 function loop() {
-  if (machine.state !== MachineState.Running) {
-    postState();
+  if (!machine || machine.state !== MachineState.Running) {
+    if (machine) postState();
     return;
   }
   const result = machine.runSlice(SLICE_NANOSECONDS);
   postState();
-  if (result === LoopResult.Idle) setTimeout(loop, 1);
-  else yieldChannel.port2.postMessage(null);
+  if (machine.state !== MachineState.Running) return;
+  if (result === LoopResult.Idle) {
+    const delayMs = Math.max(1, Math.min(8, Math.ceil(Number(machine.lastIdleBound) / 1e6) || 4));
+    if (!idleTimer && !loopQueued) {
+      idleTimer = setTimeout(() => {
+        idleTimer = 0;
+        loop();
+      }, delayMs);
+    }
+  } else if (!loopQueued) {
+    loopQueued = true;
+    yieldChannel.port2.postMessage(null);
+  }
 }
 
 // trustOf reads <image>.trust, the hash of the system description of a
@@ -160,45 +185,40 @@ self.onmessage = (event) => {
       start(message).catch((error) => self.postMessage({ kind: "state", state: MachineState.Trapped, trap: String(error.stack || error) }));
       return;
     case "key":
-      if (machine) machine.keyboard.key(message.code, message.pressed);
+      if (machine) {
+        machine.keyboard.key(message.code, message.pressed);
+        wakeLoop();
+      }
       return;
     case "pointer":
-      if (machine) machine.keyboard.pointer(message.deltaX, message.deltaY, message.buttons);
+      if (machine) {
+        machine.keyboard.pointer(message.deltaX, message.deltaY, message.buttons);
+        wakeLoop();
+      }
       return;
     case "resize":
-      if (machine) machine.requestResize(message.width, message.height);
+      if (machine) {
+        machine.requestResize(message.width, message.height);
+        wakeLoop();
+      }
       return;
     case "console_type":
-      if (machine && typeof message.text === "string") machine.consolePort.type(message.text);
+      if (machine && typeof message.text === "string") {
+        machine.consolePort.type(message.text);
+        wakeLoop();
+      }
       return;
     case "frame": {
-      // A copy, not a view: the memory of the machine is not transferable.
-      // Skip allocating and transferring a copy when the framebuffer is unchanged.
       if (!machine) return;
-      if (machine.syncFramebufferSize()) lastFrame32 = null;
-      const pixels = machine.framebufferPixels();
-      if (!pixels) return;
-      const src32 = new Uint32Array(pixels.buffer, pixels.byteOffset, pixels.byteLength >> 2);
-      if (lastFrame32 && lastFrame32.length === src32.length) {
-        let changed = false;
-        for (let i = 0; i < src32.length; i += 1) {
-          if (src32[i] !== lastFrame32[i]) {
-            changed = true;
-            break;
-          }
-        }
-        if (!changed) {
-          self.postMessage({ kind: "frame", unchanged: true });
-          return;
-        }
-      } else {
-        lastFrame32 = new Uint32Array(src32.length);
+      const patch = machine.readFramePatch();
+      if (!patch) return;
+      if (patch.unchanged) {
+        self.postMessage({ kind: "frame", unchanged: true });
+        return;
       }
-      lastFrame32.set(src32);
-      const copy = pixels.slice();
       self.postMessage(
-        { kind: "frame", pixels: copy.buffer, width: machine.framebufferWidth, height: machine.framebufferHeight },
-        [copy.buffer],
+        { kind: "frame", rgba: patch.rgba, x: patch.x, y: patch.y, w: patch.w, h: patch.h, width: patch.width, height: patch.height },
+        [patch.rgba],
       );
       return;
     }

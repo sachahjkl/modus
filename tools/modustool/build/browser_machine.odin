@@ -33,10 +33,11 @@ BROWSER_MACHINE_HOST_PATH :: BROWSER_MACHINE_FOLDER + "/" + BROWSER_MACHINE_HOST
 // The boot image of the page before its signature: the input of the signed
 // write of the system description.
 BROWSER_MACHINE_UNSIGNED_IMAGE_PATH :: BROWSER_MACHINE_FOLDER + "/boot_unsigned.image"
-// The console page and its boot image, beside the desktop page: the
-// console image has its own name, so the two pages share the kernel and
-// the host and never overwrite the image of the other.
-BROWSER_MACHINE_CONSOLE_PAGE_FILE :: "browser_machine_console.html"
+// The browser machine pages live at clean folder URLs (`/desktop/` and
+// `/console/`), while their shared assets (CSS, JS, WebAssembly kernel, and
+// boot images) stay at the root folder.
+BROWSER_MACHINE_DESKTOP_PAGE_FILE :: "desktop/index.html"
+BROWSER_MACHINE_CONSOLE_PAGE_FILE :: "console/index.html"
 BROWSER_MACHINE_CONSOLE_IMAGE_FILE :: "console.image"
 BROWSER_MACHINE_CONSOLE_IMAGE_PATH :: BROWSER_MACHINE_FOLDER + "/" + BROWSER_MACHINE_CONSOLE_IMAGE_FILE
 BROWSER_MACHINE_CONSOLE_UNSIGNED_IMAGE_PATH :: BROWSER_MACHINE_FOLDER + "/console_unsigned.image"
@@ -200,7 +201,7 @@ Browser_Machine_Page_File :: struct {
 }
 
 BROWSER_MACHINE_PAGE_FILES :: [?]Browser_Machine_Page_File {
-	{"browser_machine.html", #load("browser_machine/browser_machine.html", string)},
+	{BROWSER_MACHINE_DESKTOP_PAGE_FILE, #load("browser_machine/browser_machine.html", string)},
 	{BROWSER_MACHINE_CONSOLE_PAGE_FILE, #load("browser_machine/browser_machine_console.html", string)},
 	{"browser_machine.css", #load("browser_machine/browser_machine.css", string)},
 	{"browser_machine_console_page.js", #load("browser_machine/browser_machine_console_page.js", string)},
@@ -509,6 +510,9 @@ browser_machine_build :: proc() -> bool {
 	files := BROWSER_MACHINE_PAGE_FILES
 	for file in files {
 		path := strings.concatenate({BROWSER_MACHINE_FOLDER, "/", file.name}, context.temp_allocator)
+		if slash := strings.last_index_byte(path, '/'); slash > 0 {
+			foundation.make_folder(path[:slash]) or_return
+		}
 		if error := os.write_entire_file(path, transmute([]u8)file.text); error != nil {
 			fmt.eprintfln("modustool: cannot write %s: %v", path, error)
 			return false
@@ -717,6 +721,9 @@ browser_machine_console_write :: proc() -> bool {
 		return false
 	}
 	path := strings.concatenate({BROWSER_MACHINE_FOLDER, "/", BROWSER_MACHINE_CONSOLE_PAGE_FILE}, context.temp_allocator)
+	if slash := strings.last_index_byte(path, '/'); slash > 0 {
+		foundation.make_folder(path[:slash]) or_return
+	}
 	if error := os.write_entire_file(path, transmute([]u8)BROWSER_MACHINE_CONSOLE_PAGE_TEXT); error != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", path, error)
 		return false

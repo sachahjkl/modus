@@ -205,7 +205,7 @@ function consoleLine(line) {
   try { records[record.t](record); } catch {}
 }
 
-const worker = new Worker("./browser_machine_worker.js", { type: "module" });
+const worker = new Worker("../browser_machine_worker.js", { type: "module" });
 let running = false;
 // The stage of the start, which the header shows until the prompt
 // (src/md/features/browser_machine.md, "The boot stages of the page"); the

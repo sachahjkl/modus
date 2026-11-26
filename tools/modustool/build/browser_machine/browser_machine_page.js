@@ -24,12 +24,11 @@ const startButton = document.getElementById("start");
 const fullscreenButton = document.getElementById("fullscreen");
 const themeButton = document.getElementById("theme");
 const context = screen.getContext("2d", { alpha: false });
-let image = context.createImageData(screen.width, screen.height);
-let image32 = new Uint32Array(image.data.buffer);
 let guestPointerX = Math.floor(screen.width / 2);
 let guestPointerY = Math.floor(screen.height / 2);
 let guestPointerButtons = 0;
 let pointerSynced = false;
+let pendingPointerEvent = null;
 let lastRequestedWidth = screen.width;
 let lastRequestedHeight = screen.height;
 let lastSeenStageWidth = screen.width;
@@ -44,8 +43,6 @@ function applyCanvasSize(width, height) {
   if (screen.width === width && screen.height === height) return;
   screen.width = width;
   screen.height = height;
-  image = context.createImageData(width, height);
-  image32 = new Uint32Array(image.data.buffer);
   updateScreenMeta(width, height);
   pointerSynced = false;
 }
@@ -113,15 +110,13 @@ let stageStarted = 0;
 let downloaded = { loaded: 0, total: 0 };
 let machineState = "";
 
-// The framebuffer is BGRA (little-endian 0xAARRGGBB); ImageData is RGBA (0xAABBGGRR).
-function present(buffer) {
-  const source32 = new Uint32Array(buffer);
-  if (source32.length !== image32.length) return;
-  for (let index = 0; index < image32.length; index += 1) {
-    const pixel = source32[index];
-    image32[index] = 0xff000000 | ((pixel & 0xff) << 16) | (pixel & 0x00ff00) | ((pixel >> 16) & 0xff);
-  }
-  context.putImageData(image, 0, 0);
+// The worker performs BGRA -> RGBA conversion over only the damaged rectangle
+// so the document thread uploads the patch directly with zero per-pixel loops.
+function presentPatch(rgbaBuffer, x, y, w, h) {
+  if (!rgbaBuffer || w <= 0 || h <= 0) return;
+  const bytes = new Uint8ClampedArray(rgbaBuffer);
+  if (bytes.byteLength !== w * h * 4) return;
+  context.putImageData(new ImageData(bytes, w, h), x, y);
 }
 
 // The panel of the stages: one line for each stage, at a fixed step, so no
@@ -157,6 +152,11 @@ function stagesDraw() {
 function animationFrame() {
   if (stage !== STAGE_READY) stagesDraw();
   else if (worker) {
+    if (pendingPointerEvent) {
+      const event = pendingPointerEvent;
+      pendingPointerEvent = null;
+      sendPointerAt(event, false);
+    }
     const stageSize = measureStageSize();
     if (stageSize.width !== lastSeenStageWidth || stageSize.height !== lastSeenStageHeight) {
       lastSeenStageWidth = stageSize.width;
@@ -204,11 +204,11 @@ function onWorkerMessage(event) {
       return;
     case "frame":
       frameAsked = false;
-      if (!message.unchanged && message.pixels) {
+      if (!message.unchanged && message.rgba) {
         if (message.width && message.height && (message.width !== screen.width || message.height !== screen.height)) {
           applyCanvasSize(message.width, message.height);
         }
-        present(message.pixels);
+        presentPatch(message.rgba, message.x, message.y, message.w, message.h);
       }
       return;
     case "state":
@@ -265,7 +265,7 @@ startButton.addEventListener("click", () => {
   lastRequestedHeight = screen.height;
   startButton.disabled = true;
   dotSet("");
-  worker = new Worker("browser_machine_worker.js", { type: "module" });
+  worker = new Worker("../browser_machine_worker.js", { type: "module" });
   worker.onmessage = onWorkerMessage;
   worker.onerror = (event) => {
     dotSet("stopped");
@@ -273,8 +273,8 @@ startButton.addEventListener("click", () => {
   };
   worker.postMessage({
     kind: "start",
-    kernelUrl: "modulus_kernel.wasm",
-    bootImageUrl: "boot.image",
+    kernelUrl: "./modulus_kernel.wasm",
+    bootImageUrl: "./boot.image",
     memoryMebibytes: 512,
     width: screen.width,
     height: screen.height,
@@ -355,17 +355,22 @@ function sendPointerAt(event, forceButtons) {
 }
 
 screen.addEventListener("pointerenter", (event) => {
+  pendingPointerEvent = null;
   pointerSynced = false;
   sendPointerAt(event, false);
 });
 screen.addEventListener("pointerleave", () => {
+  pendingPointerEvent = null;
   pointerSynced = false;
 });
 screen.addEventListener("pointermove", (event) => {
-  sendPointerAt(event, false);
+  // Coalesce high-frequency moves to one packet per animation frame so the PS/2
+  // controller and software CPU never lag behind 120-240 Hz mouse reports.
+  pendingPointerEvent = event;
 });
 for (const kind of ["pointerdown", "pointerup"]) {
   screen.addEventListener(kind, (event) => {
+    pendingPointerEvent = null;
     if (kind === "pointerdown") screen.focus();
     sendPointerAt(event, true);
   });

@@ -11,12 +11,12 @@ import "core:strings"
 import "modustool:build"
 
 // site_try_add adds the Try section page (`try/index.html`) presenting both
-// live WebAssembly machines: the fast Web Console (`browser_machine_console.html`)
-// and the full Web Desktop (`browser_machine.html`).
+// live WebAssembly machines: the fast Web Console (`/console/`)
+// and the full Web Desktop (`/desktop/`).
 site_try_add :: proc(site: ^Site) {
 	path := site_section_page(.Try)
-	console_link := site_relative(path, build.BROWSER_MACHINE_CONSOLE_PAGE_FILE)
-	desktop_link := site_relative(path, "browser_machine.html")
+	console_link := site_page_link(site, path, build.BROWSER_MACHINE_CONSOLE_PAGE_FILE)
+	desktop_link := site_page_link(site, path, build.BROWSER_MACHINE_DESKTOP_PAGE_FILE)
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "<h1>Try modus in the browser</h1>\n")
 	strings.write_string(&b, "<p>Run unmodified x86-64 modus modules on the WebAssembly kernel locally in a Web Worker. Nothing is installed and nothing runs on a server.</p>\n")
@@ -34,7 +34,7 @@ site_try_add :: proc(site: ^Site) {
 	// Card 2: Web Desktop.
 	strings.write_string(&b, "<section class=\"card accent-process\" aria-labelledby=\"try-desktop\">\n")
 	strings.write_string(&b, "<h2 id=\"try-desktop\">Web Desktop</h2>\n")
-	strings.write_string(&b, "<p>Boots the full graphical desktop (<code>boot.image</code>) with the compositor, vector fonts, console, and applications on a 1280 x 800 canvas.</p>\n")
+	strings.write_string(&b, "<p>Boots the full graphical desktop (<code>boot.image</code>) with the compositor, vector fonts, console, and applications on a live-resizing viewport with fullscreen support.</p>\n")
 	fmt.sbprintf(&b, "<ul class=\"doors\"><li><a href=\"%s\">Open Web Desktop</a></li></ul>\n", desktop_link)
 	strings.write_string(&b, "<p>Press <code>Start</code> on the desktop page to boot. Modules are hashed on first use; boot stages appear on the canvas and in the COM1 serial log.</p>\n")
 	strings.write_string(&b, "</section>\n")

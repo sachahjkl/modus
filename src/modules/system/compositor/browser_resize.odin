@@ -15,6 +15,9 @@ browser_resize_page: ^info.Browser_Resize_Page
 browser_resize_last_seq: u32
 browser_resize_pending_seq: u32
 browser_resize_ack_seq: u32
+browser_resize_frame_seq: u32
+browser_resize_dirty: Rectangle
+browser_resize_has_dirty: bool
 
 // browser_resize_open attaches the trailing MODVRES1 control page when present
 // on a single-page browser machine framebuffer. On QEMU and real hardware no
@@ -139,15 +142,65 @@ browser_resize_poll :: proc "contextless" () -> bool {
 	return true
 }
 
-// browser_resize_ack_after_frame publishes the active dimensions and release
-// sequence once draw() has painted the full resized desktop into screen.pixels.
-browser_resize_ack_after_frame :: proc "contextless" () {
-	page := browser_resize_page
-	if page == nil || browser_resize_pending_seq == browser_resize_ack_seq {
+// browser_resize_note_damage records the tight bounding box of the areas
+// drawn in the current frame so the browser worker can copy and convert only
+// the damaged pixels instead of the entire framebuffer.
+browser_resize_note_damage :: proc "contextless" (areas: []Rectangle) {
+	if browser_resize_page == nil {
 		return
 	}
-	page.ack_width = u32(screen.width)
-	page.ack_height = u32(screen.height)
-	intrinsics.atomic_store_explicit(&page.ack_seq, browser_resize_pending_seq, .Release)
-	browser_resize_ack_seq = browser_resize_pending_seq
+	if len(areas) == 0 {
+		browser_resize_has_dirty = false
+		return
+	}
+	box := areas[0]
+	for area in areas[1:] {
+		box.left = min(box.left, area.left)
+		box.top = min(box.top, area.top)
+		box.right = max(box.right, area.right)
+		box.bottom = max(box.bottom, area.bottom)
+	}
+	box.left = max(box.left, 0)
+	box.top = max(box.top, 0)
+	box.right = min(box.right, screen.width)
+	box.bottom = min(box.bottom, screen.height)
+	browser_resize_dirty = box
+	browser_resize_has_dirty = box.left < box.right && box.top < box.bottom
+}
+
+// browser_resize_ack_after_frame publishes the painted damage bounds, monotonic
+// frame sequence, and active resize dimensions once draw() finishes writing to
+// screen.pixels.
+browser_resize_ack_after_frame :: proc "contextless" () {
+	page := browser_resize_page
+	if page == nil {
+		return
+	}
+	resized := browser_resize_pending_seq != browser_resize_ack_seq
+	if resized {
+		page.dirty_x = 0
+		page.dirty_y = 0
+		page.dirty_w = u32(screen.width)
+		page.dirty_h = u32(screen.height)
+		page.ack_width = u32(screen.width)
+		page.ack_height = u32(screen.height)
+		intrinsics.atomic_store_explicit(&page.ack_seq, browser_resize_pending_seq, .Release)
+		browser_resize_ack_seq = browser_resize_pending_seq
+	} else if browser_resize_has_dirty {
+		page.dirty_x = u32(browser_resize_dirty.left)
+		page.dirty_y = u32(browser_resize_dirty.top)
+		page.dirty_w = u32(browser_resize_dirty.right - browser_resize_dirty.left)
+		page.dirty_h = u32(browser_resize_dirty.bottom - browser_resize_dirty.top)
+	} else {
+		page.dirty_x = 0
+		page.dirty_y = 0
+		page.dirty_w = u32(screen.width)
+		page.dirty_h = u32(screen.height)
+	}
+	browser_resize_has_dirty = false
+	browser_resize_frame_seq += 1
+	if browser_resize_frame_seq == 0 {
+		browser_resize_frame_seq = 1
+	}
+	intrinsics.atomic_store_explicit(&page.frame_seq, browser_resize_frame_seq, .Release)
 }

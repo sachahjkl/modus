@@ -1941,6 +1941,7 @@ draw :: proc "contextless" (now: u64) {
 	capture_before_frame() // capture.odin: before the frame takes its areas.
 	screen_build(now, display.interface_font_of())
 	draw_areas(damage[:damage_count])
+	browser_resize_note_damage(damage[:damage_count])
 	// The frame is on the screen: the copy and the page flip are done.
 	quality_frame_flipped() // quality_measures.odin
 	// The windows that this frame read a picture of.

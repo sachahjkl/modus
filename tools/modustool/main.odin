@@ -602,7 +602,7 @@ COMMANDS :: [?]foundation.Command {
 	// - `<boot image>` (optional, after `boot`): the boot image to start, in
 	//   place of the one of the build.
 	// - `console`: then write the console page,
-	//   `browser_machine_console.html`, and its boot image, `console.image`,
+	//   `console/index.html`, and its boot image, `console.image`,
 	//   from the boot image of the build: the console with `dom_terminal`
 	//   on the second serial port, and no compositor, drawing module or font.
 	//

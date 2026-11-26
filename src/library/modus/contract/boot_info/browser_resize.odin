@@ -30,9 +30,14 @@ Browser_Resize_Page :: struct {
 	ack_width:  u32, // 28: Active compositor width after full redraw.
 	ack_height: u32, // 32: Active compositor height after full redraw.
 	ack_seq:    u32, // 36: Sequence written with .Release after screen.pixels is painted.
+	frame_seq:  u32, // 40: Monotonic frame counter written with .Release after every draw().
+	dirty_x:    u32, // 44: Left X of the bounding box painted in this frame.
+	dirty_y:    u32, // 48: Top Y of the bounding box painted in this frame.
+	dirty_w:    u32, // 52: Width of the bounding box painted in this frame.
+	dirty_h:    u32, // 56: Height of the bounding box painted in this frame.
 }
 
-#assert(size_of(Browser_Resize_Page) == 40)
+#assert(size_of(Browser_Resize_Page) == 64)
 #assert(offset_of(Browser_Resize_Page, magic) == 0)
 #assert(offset_of(Browser_Resize_Page, max_width) == 8)
 #assert(offset_of(Browser_Resize_Page, max_height) == 12)
@@ -42,3 +47,8 @@ Browser_Resize_Page :: struct {
 #assert(offset_of(Browser_Resize_Page, ack_width) == 28)
 #assert(offset_of(Browser_Resize_Page, ack_height) == 32)
 #assert(offset_of(Browser_Resize_Page, ack_seq) == 36)
+#assert(offset_of(Browser_Resize_Page, frame_seq) == 40)
+#assert(offset_of(Browser_Resize_Page, dirty_x) == 44)
+#assert(offset_of(Browser_Resize_Page, dirty_y) == 48)
+#assert(offset_of(Browser_Resize_Page, dirty_w) == 52)
+#assert(offset_of(Browser_Resize_Page, dirty_h) == 56)

@@ -21,8 +21,8 @@ site_try_page_structure_and_links :: proc(t: ^testing.T) {
 	testing.expect_value(t, page.section, Site_Section.Try)
 	testing.expect(t, page.is_index)
 	testing.expect(t, len(page.description) > 0 && len(page.description) <= SITE_DESCRIPTION_LIMIT)
-	testing.expect(t, strings.contains(page.body, "../browser_machine_console.html"))
-	testing.expect(t, strings.contains(page.body, "../browser_machine.html"))
+	testing.expect(t, strings.contains(page.body, "../console/"))
+	testing.expect(t, strings.contains(page.body, "../desktop/"))
 	testing.expect(t, strings.contains(page.body, `class="c-`))
 	testing.expect(t, strings.contains(page.body, `isolate`))
 	testing.expect(t, strings.contains(page.body, `sample`))
@@ -125,7 +125,7 @@ site_browser_machine_pages_have_no_inline_style_or_script :: proc(t: ^testing.T)
 		lower := strings.to_lower(file.text, context.temp_allocator)
 		testing.expectf(t, !strings.contains(lower, "<style"), "%s contains an inline <style> block", file.name)
 		testing.expectf(t, !strings.contains(lower, " style="), "%s contains an inline style= attribute", file.name)
-		testing.expectf(t, strings.contains(file.text, `href="./browser_machine.css"`), "%s does not link external browser_machine.css", file.name)
+		testing.expectf(t, strings.contains(file.text, `href="../browser_machine.css"`), "%s does not link external browser_machine.css", file.name)
 
 		rest := lower
 		for {

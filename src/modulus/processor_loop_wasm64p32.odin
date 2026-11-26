@@ -97,6 +97,11 @@ processor_stop :: proc "c" () -> ! {
 	page_processor_stop()
 }
 
+@(private = "file")
+idle_reenter_schedule :: proc "c" () -> ! {
+	schedule()
+}
+
 // The idle wait sleeps on the word of this processor until the deadline
 // of its timer, at most one tick, in the place of sti and hlt, and returns
 // after it delivered at least one interrupt, as hlt returns after one. A
@@ -121,7 +126,17 @@ idle_wait :: proc "c" () {
 		when intrinsics.has_target_feature("atomics") {
 			_ = intrinsics.wasm_memory_atomic_wait32(word, 0, i64(bound))
 		} else {
+			// Prepare a clean re-entry into schedule() so a browser worker can
+			// unwind out of page_idle_wait without spinning or blocking its
+			// event loop. If page_idle_wait returns synchronously (e.g. Node),
+			// restore the idle state and continue waiting.
+			cpu := processor_self()
+			intrinsics.atomic_store(&cpu.idle, false)
+			processor_loop_entry = idle_reenter_schedule
+			processor_loop_next = .Call_Entry
 			page_idle_wait(i64(bound))
+			processor_loop_next = .None
+			intrinsics.atomic_store(&cpu.idle, true)
 		}
 	}
 }

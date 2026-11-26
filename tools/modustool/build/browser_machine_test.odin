@@ -325,14 +325,14 @@ browser_machine_page_files_name_each_other :: proc(t: ^testing.T) {
 		}
 		return ""
 	}
-	testing.expect(t, strings.has_prefix(text_of(files[:], "browser_machine.html"), "<!doctype html>"))
-	testing.expect(t, strings.contains(text_of(files[:], "browser_machine.html"), "src=\"./browser_machine_page.js\""))
-	testing.expect(t, strings.contains(text_of(files[:], "browser_machine.html"), "href=\"./browser_machine.css\""))
-	testing.expect(t, strings.contains(text_of(files[:], BROWSER_MACHINE_CONSOLE_PAGE_FILE), "src=\"./browser_machine_console_page.js\""))
-	testing.expect(t, strings.contains(text_of(files[:], BROWSER_MACHINE_CONSOLE_PAGE_FILE), "href=\"./browser_machine.css\""))
-	testing.expect(t, strings.contains(text_of(files[:], "browser_machine_page.js"), "new Worker(\"browser_machine_worker.js\""))
-	testing.expect(t, strings.contains(text_of(files[:], "browser_machine_page.js"), "\"" + BROWSER_MACHINE_KERNEL_FILE + "\""))
-	testing.expect(t, strings.contains(text_of(files[:], "browser_machine_page.js"), "\"" + BROWSER_MACHINE_BOOT_IMAGE_FILE + "\""))
+	testing.expect(t, strings.has_prefix(text_of(files[:], BROWSER_MACHINE_DESKTOP_PAGE_FILE), "<!doctype html>"))
+	testing.expect(t, strings.contains(text_of(files[:], BROWSER_MACHINE_DESKTOP_PAGE_FILE), "src=\"../browser_machine_page.js\""))
+	testing.expect(t, strings.contains(text_of(files[:], BROWSER_MACHINE_DESKTOP_PAGE_FILE), "href=\"../browser_machine.css\""))
+	testing.expect(t, strings.contains(text_of(files[:], BROWSER_MACHINE_CONSOLE_PAGE_FILE), "src=\"../browser_machine_console_page.js\""))
+	testing.expect(t, strings.contains(text_of(files[:], BROWSER_MACHINE_CONSOLE_PAGE_FILE), "href=\"../browser_machine.css\""))
+	testing.expect(t, strings.contains(text_of(files[:], "browser_machine_page.js"), "new Worker(\"../browser_machine_worker.js\""))
+	testing.expect(t, strings.contains(text_of(files[:], "browser_machine_page.js"), "\"" + "./" + BROWSER_MACHINE_KERNEL_FILE + "\""))
+	testing.expect(t, strings.contains(text_of(files[:], "browser_machine_page.js"), "\"" + "./" + BROWSER_MACHINE_BOOT_IMAGE_FILE + "\""))
 	testing.expect(t, strings.contains(text_of(files[:], "browser_machine_worker.js"), "from \"./" + BROWSER_MACHINE_HOST_FILE + "\""))
 	for file in files {
 		testing.expectf(t, len(file.text) > 0, "%s is empty", file.name)
@@ -489,8 +489,8 @@ browser_machine_host_puts_the_console_on_com2 :: proc(t: ^testing.T) {
 	// The document runs no machine: its external module script starts the
 	// worker of the browser machine with the kernel and the console image,
 	// and never imports the host.
-	testing.expect(t, strings.contains(page, "<script type=\"module\" src=\"./browser_machine_console_page.js\"></script>"))
-	testing.expect(t, strings.contains(script, "new Worker(\"./browser_machine_worker.js\", { type: \"module\" })"))
+	testing.expect(t, strings.contains(page, "<script type=\"module\" src=\"../browser_machine_console_page.js\"></script>"))
+	testing.expect(t, strings.contains(script, "new Worker(\"../browser_machine_worker.js\", { type: \"module\" })"))
 	testing.expect(t, !strings.contains(script, BROWSER_MACHINE_HOST_FILE))
 	testing.expect(t, !strings.contains(script, "new BrowserMachine"))
 	testing.expect(t, !strings.contains(script, "runSlice"))
@@ -519,7 +519,7 @@ browser_machine_host_puts_the_console_on_com2 :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, has_console_page, "BROWSER_MACHINE_PAGE_FILES must include the console page")
 	testing.expect(t, strings.contains(script, `s = isolate(\"sample\")`))
-	testing.expect(t, strings.contains(page, `href="./try/"`))
+	testing.expect(t, strings.contains(page, `href="../try/"`))
 }
 
 // The console page draws with its own HTML, CSS, and JS files only: no
@@ -577,7 +577,7 @@ browser_machine_console_page_draws_the_dom_protocol :: proc(t: ^testing.T) {
 		testing.expectf(t, strings.contains(script, part), "the console script holds no %q", part)
 	}
 	testing.expect_value(t, strings.count(page, "<script"), 1)
-	testing.expect(t, strings.contains(page, "<script type=\"module\" src=\"./browser_machine_console_page.js\"></script>"))
+	testing.expect(t, strings.contains(page, "<script type=\"module\" src=\"../browser_machine_console_page.js\"></script>"))
 }
 
 // The trust beside a signed image of the page is the BLAKE3 hash of its

@@ -419,6 +419,34 @@ for (const name of ["root::Boot_Image_Agrees", "root::Image_Checked_At_Load"]) {
   expect(machine.framebufferWidth === 1440 && machine.framebufferHeight === 900, "framebuffer dimensions updated from ack");
   expect(machine.framebufferPixels().byteLength === 1440 * 900 * 4, "framebufferPixels view reflects resized dimensions");
   expect(!machine.syncFramebufferSize(), "repeated syncFramebufferSize is false until next ack");
+
+  // Dirty-rect + frame_seq O(1) unchanged check + worker-side BGRA -> RGBA conversion.
+  const fb32 = new Uint32Array(memory.buffer, layout.framebuffer, 1440 * 900);
+  fb32[10 * 1440 + 20] = 0x00112233; // BGRA: B=0x33, G=0x22, R=0x11 -> RGBA little-endian 0xff332211.
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.dirty_x, 20, true);
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.dirty_y, 10, true);
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.dirty_w, 4, true);
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.dirty_h, 2, true);
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.frame_seq, 1, true);
+  const firstPatch = machine.readFramePatch();
+  expect(!firstPatch.unchanged && firstPatch.w === 1440 && firstPatch.h === 900, "first frame after boot/resize sends full frame");
+  const unchangedPatch = machine.readFramePatch();
+  expect(unchangedPatch.unchanged === true, "same frame_seq skips framebuffer scan in O(1)");
+
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.frame_seq, 2, true);
+  const dirtyPatch = machine.readFramePatch();
+  expect(!dirtyPatch.unchanged && dirtyPatch.x === 20 && dirtyPatch.y === 10 && dirtyPatch.w === 4 && dirtyPatch.h === 2, "single-step frame_seq sends tight dirty rect");
+  const dirty32 = new Uint32Array(dirtyPatch.rgba);
+  expect(dirty32[0] === 0xff332211, "worker-side BGRA -> RGBA swap matches expected pixel");
+
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.frame_seq, 5, true);
+  const multiPatch = machine.readFramePatch();
+  expect(!multiPatch.unchanged && multiPatch.x === 0 && multiPatch.y === 0 && multiPatch.w === 1440 && multiPatch.h === 900, "skipped frames fall back cleanly to full frame");
+
+  // PS/2 mouse queue never truncates a 3-byte packet when full.
+  const ps2 = new host.Ps2Controller();
+  for (let i = 0; i < 120; i += 1) ps2.pointer(5, 5, 0);
+  expect(ps2.queue.length % 3 === 0 && ps2.queue.length <= 256, "PS/2 mouse queue stays 3-byte aligned under flood");
 }
 
 if (failures.length) {

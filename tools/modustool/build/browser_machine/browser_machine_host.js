@@ -83,8 +83,13 @@ export const BROWSER_RESIZE_OFFSETS = {
   ack_width: 28,
   ack_height: 32,
   ack_seq: 36,
+  frame_seq: 40,
+  dirty_x: 44,
+  dirty_y: 48,
+  dirty_w: 52,
+  dirty_h: 56,
 };
-export const BROWSER_RESIZE_PAGE_SIZE = 40;
+export const BROWSER_RESIZE_PAGE_SIZE = 64;
 const BROWSER_RESIZE_MIN_MEMORY_BYTES = 64 * 1024 * 1024;
 
 // The words of Memory_Kind and of Pixel_Format.
@@ -95,8 +100,9 @@ export const PixelFormat = Object.freeze({ None: 0, Blue_Green_Red_X: 1, Red_Gre
 export const LoopResult = Object.freeze({ Idle: 0, Kernel_Returned: 1, Budget_Refused: 2, Slice_Ended: 3 });
 
 // The instructions of one call of the loop: STEP_BUDGET_LIMIT of the kernel
-// is 1 000 000. A smaller slice gives the page its events sooner.
-export const STEP_BUDGET = 100000n;
+// is 1 000 000. A smaller slice keeps the 8 ms worker slice accurate so input
+// and frame messages never wait behind a long slice.
+export const STEP_BUDGET = 25000n;
 
 export const PAGE_SIZE = 4096;
 const WEBASSEMBLY_PAGE_SIZE = 65536;
@@ -321,6 +327,8 @@ export class Ps2Controller {
     let remY = Math.max(-4096, Math.min(4096, Math.round(-deltaY)));
     const left = buttons & 1, right = (buttons >> 1) & 1, middle = (buttons >> 2) & 1;
     do {
+      // Never split a 3-byte PS/2 mouse packet when the queue is full.
+      if (this.queue.length + 3 > PS2_QUEUE_LIMIT) break;
       const x = Math.max(-127, Math.min(127, remX));
       const y = Math.max(-127, Math.min(127, remY));
       remX -= x;
@@ -413,6 +421,12 @@ export class MachineClock {
 // machine (browser_machine.md, "The subtle points").
 export class ProcessorLoopUnwind extends Error {}
 export class ProcessorStop extends Error {}
+export class ProcessorIdle extends Error {
+  constructor(boundNanoseconds) {
+    super("idle");
+    this.boundNanoseconds = boundNanoseconds;
+  }
+}
 
 const alignUp = (value, alignment) => Math.ceil(value / alignment) * alignment;
 
@@ -1358,6 +1372,8 @@ export class BrowserMachine {
     this.requestedHeight = framebufferHeight;
     this.resizeSeq = 0;
     this.resizeAckSeq = 0;
+    this.lastFrameSeq = 0;
+    this.lastIdleBound = 0n;
     const clockBase = clockNanoseconds();
     this.clockNanoseconds = () => clockNanoseconds() - clockBase;
     this.idleWait = idleWait;
@@ -1462,6 +1478,11 @@ export class BrowserMachine {
         this.instance.exports.__stack_pointer.value = this.stackTop;
         return LoopResult.Kernel_Returned;
       }
+      if (error instanceof ProcessorIdle) {
+        this.instance.exports.__stack_pointer.value = this.stackTop;
+        this.lastIdleBound = error.boundNanoseconds;
+        return LoopResult.Idle;
+      }
       if (error instanceof ProcessorStop) {
         this.state = MachineState.Stopped;
       } else {
@@ -1537,6 +1558,54 @@ export class BrowserMachine {
       return true;
     }
     return false;
+  }
+
+  // readFramePatch returns { unchanged: true } in O(1) when frame_seq has not
+  // advanced, or converts only the damaged rectangle (BGRA -> RGBA) into a
+  // transferable ArrayBuffer so the browser UI thread never loops over pixels.
+  readFramePatch() {
+    if (!this.memory || !this.framebufferWidth || !this.framebufferHeight) return null;
+    const resized = this.syncFramebufferSize();
+    const width = this.framebufferWidth;
+    const height = this.framebufferHeight;
+    let x = 0;
+    let y = 0;
+    let w = width;
+    let h = height;
+    if (this.layout && this.layout.framebufferResizeControl) {
+      const view = new DataView(this.memory.buffer);
+      const base = this.layout.framebufferResizeControl;
+      const frameSeq = view.getUint32(base + BROWSER_RESIZE_OFFSETS.frame_seq, true);
+      if (!resized && frameSeq !== 0 && frameSeq === this.lastFrameSeq) {
+        return { unchanged: true };
+      }
+      const nextExpected = ((this.lastFrameSeq + 1) >>> 0) || 1;
+      if (!resized && this.lastFrameSeq !== 0 && frameSeq === nextExpected) {
+        const dx = view.getUint32(base + BROWSER_RESIZE_OFFSETS.dirty_x, true);
+        const dy = view.getUint32(base + BROWSER_RESIZE_OFFSETS.dirty_y, true);
+        const dw = view.getUint32(base + BROWSER_RESIZE_OFFSETS.dirty_w, true);
+        const dh = view.getUint32(base + BROWSER_RESIZE_OFFSETS.dirty_h, true);
+        if (dw > 0 && dh > 0 && dx + dw <= width && dy + dh <= height) {
+          x = dx;
+          y = dy;
+          w = dw;
+          h = dh;
+        }
+      }
+      this.lastFrameSeq = frameSeq;
+    }
+    const rgba32 = new Uint32Array(w * h);
+    const src32 = new Uint32Array(this.memory.buffer, this.layout.framebuffer, width * height);
+    let dst = 0;
+    for (let row = 0; row < h; row += 1) {
+      let src = (y + row) * width + x;
+      const end = src + w;
+      for (; src < end; src += 1) {
+        const pixel = src32[src];
+        rgba32[dst++] = 0xff000000 | ((pixel & 0xff) << 16) | (pixel & 0x00ff00) | ((pixel >> 16) & 0xff);
+      }
+    }
+    return { unchanged: false, rgba: rgba32.buffer, x, y, w, h, width, height };
   }
 
   // The pixels of the framebuffer, blue first: a view of the memory.
