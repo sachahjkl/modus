@@ -71,10 +71,11 @@ Wiring_Request :: struct {
 	target:           ^Started, // Revoke_Asker: process whose wirings are revoked.
 	child:            ^Started, // Start_Commit: newly started child.
 	batch_id:         u32, // Prepare/Commit batch identifier.
-	start_name:       system.Name,
-	start_principal:  u64,
-	start_answer:     root_ring.Start_Answer,
-	for_start_policy:   bool,
+	start_name:             system.Name,
+	start_principal:        u64,
+	start_answer:           root_ring.Start_Answer,
+	start_budget_unbounded: bool,
+	for_start_policy:       bool,
 	counted_restart:    ^start_policy_rules.Name_Count,
 	start_reply_handle: u64,
 	deadline:           u64,
@@ -692,7 +693,7 @@ wire_begin :: proc "contextless" (asker: ^Started, record: ring.Record, values: 
 
 // start_with_wiring_begin starts an asynchronous Prepare_Start_Wiring for
 // a Start with Start_Wiring_List.In_The_List_Page.
-start_with_wiring_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, principal: u64, start_answer: root_ring.Start_Answer, for_start_policy: bool, counted: ^start_policy_rules.Name_Count, values: ^[7]u64) -> (outcome: call_outcome.Call_Outcome, held: bool) {
+start_with_wiring_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, principal: u64, start_answer: root_ring.Start_Answer, for_start_policy: bool, counted: ^start_policy_rules.Name_Count, values: ^[7]u64, budget_unbounded := false) -> (outcome: call_outcome.Call_Outcome, held: bool) {
 	command := root_ring.Root_Command.Start
 	if wiring_request.stage != .Idle {
 		lent_handles_close(asker)
@@ -745,18 +746,19 @@ start_with_wiring_begin :: proc "contextless" (asker: ^Started, tag: u32, name: 
 	packed_name: system.Name
 	copy(packed_name[:len(packed_name) - 1], name)
 	wiring_request = {
-		stage            = .Start_Prepare,
-		command          = .Prepare_Start_Wiring,
-		root_command     = command,
-		tag              = tag,
-		service_tag      = stag,
-		asker            = asker,
-		start_name       = packed_name,
-		start_principal  = principal,
-		start_answer     = start_answer,
-		for_start_policy = for_start_policy,
-		counted_restart  = counted,
-		deadline         = system.time() + WIRING_REQUEST_BOUND_MILLISECONDS,
+		stage                  = .Start_Prepare,
+		command                = .Prepare_Start_Wiring,
+		root_command           = command,
+		tag                    = tag,
+		service_tag            = stag,
+		asker                  = asker,
+		start_name             = packed_name,
+		start_principal        = principal,
+		start_answer           = start_answer,
+		start_budget_unbounded = budget_unbounded,
+		for_start_policy       = for_start_policy,
+		counted_restart        = counted,
+		deadline               = system.time() + WIRING_REQUEST_BOUND_MILLISECONDS,
 	}
 	return .Succeeded, true
 }
@@ -1051,7 +1053,7 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 			started_place: ^Started
 			start_refusal: [7]u64
 			name := system.name_of(wiring_request.start_name[:])
-			started := start(name, wiring_request.start_principal, wiring_request.asker, &premade, &started_place, &start_refusal)
+			started := start(name, wiring_request.start_principal, wiring_request.asker, &premade, &started_place, &start_refusal, budget_unbounded = wiring_request.start_budget_unbounded)
 			close_prepared_child_handles(core_child_ends[:end_count], premade.log_ring, premade.log_end_words)
 			if started != .Succeeded || started_place == nil {
 				abort_cmd := ws.Command{kind = .Abort_Start_Wiring, batch_id = resp.batch_id}

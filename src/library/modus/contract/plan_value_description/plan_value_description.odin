@@ -40,40 +40,44 @@ DESCRIBING_EXPORTS := [2]string{"set", "plan_only"}
 
 // The description of one value of an owner.
 Described :: struct {
-	file:         []u8, // The module whose description it is; empty for a field of the core.
-	type:         module.Type,
-	enum_type:    module.Enum_Type,
-	integer_unit: value_kinds.Integer_Unit,
-	has_range:    bool,
-	least:        i64,
-	most:         i64,
+	file:            []u8, // The module whose description it is; empty for a field of the core.
+	type:            module.Type,
+	enum_type:       module.Enum_Type,
+	integer_unit:    value_kinds.Integer_Unit,
+	has_range:       bool,
+	least:           i64,
+	most:            i64,
+	allow_unbounded: bool, // True only for budget_pages: accepts a count or the marker "unbounded".
 }
 
 // Why a value is refused at the border of a plan.
 Problem :: enum u8 {
-	None              = 0,
-	Owner_Unknown     = 1, // An owner that is no module of the image and no role with a holder.
-	Owner_Is_A_Holder = 2, // A module that holds a role: the plan names its values by the role (role).
-	Field_Unknown     = 3, // A field that its owner does not describe (file, root).
-	Field_Type        = 4, // A parameter that is no Integer, Enum or Text: a plan gives it no value.
-	Value_Kind        = 5, // A value of another kind than its parameter (expected).
-	Member_Unknown    = 6, // A word that names no member of the enum of the parameter (file, enum_type).
-	Out_Of_Range      = 7, // A number outside the range of its parameter (integer, least, most).
-	Text_Past_Bound   = 8, // A text outside the bound of its parameter, or past PLAN_VALUE_TEXT_BYTES (integer: its bytes, least, most).
-	Text_Not_Plain    = 9, // A text that is not UTF-8, or holds a control byte.
+	None                        = 0,
+	Owner_Unknown               = 1, // An owner that is no module of the image and no role with a holder.
+	Owner_Is_A_Holder           = 2, // A module that holds a role: the plan names its values by the role (role).
+	Field_Unknown               = 3, // A field that its owner does not describe (file, root).
+	Field_Type                  = 4, // A parameter that is no Integer, Enum or Text: a plan gives it no value.
+	Value_Kind                  = 5, // A value of another kind than its parameter (expected).
+	Member_Unknown              = 6, // A word that names no member of the enum of the parameter (file, enum_type).
+	Out_Of_Range                = 7, // A number outside the range of its parameter (integer, least, most).
+	Text_Past_Bound             = 8, // A text outside the bound of its parameter, or past PLAN_VALUE_TEXT_BYTES (integer: its bytes, least, most).
+	Text_Not_Plain              = 9, // A text that is not UTF-8, or holds a control byte.
+	Budget_Size_Conflict        = 10, // One owner gives both budget_pages (count or unbounded) and budget_share_parts.
+	Budget_Reserve_Over_Ceiling = 11, // One owner gives budget_growth_reserve_pages without or above budget_ceiling_pages.
 }
 
 // A refusal of one value: its problem and what it names.
 Refusal :: struct {
-	problem:   Problem,
-	integer:   i64,
-	least:     i64,
-	most:      i64,
-	expected:  module.Type,
-	file:      []u8,
-	enum_type: module.Enum_Type,
-	root:      bool, // With Field_Unknown: the owner is the core.
-	role:      role_contract.Role, // With Owner_Is_A_Holder: the role that the module holds.
+	problem:         Problem,
+	integer:         i64,
+	least:           i64,
+	most:            i64,
+	expected:        module.Type,
+	file:            []u8,
+	enum_type:       module.Enum_Type,
+	root:            bool, // With Field_Unknown: the owner is the core.
+	role:            role_contract.Role, // With Owner_Is_A_Holder: the role that the module holds.
+	allow_unbounded: bool, // With Value_Kind or Member_Unknown: budget_pages takes a number or .unbounded.
 }
 
 // owner_file gives the module file that describes an owner: the module that
@@ -164,8 +168,18 @@ describe :: proc "contextless" (image: Image, holders: ^Role_Holders, owner, fie
 	}
 	// Plan-only fields that the core reads for each owner: store_blocks and
 	// the budget policy fields of root_plan_values.OWNER_FIELDS.
+	// Only budget_pages accepts the unbounded marker; ceiling, reserve, and
+	// share fields require explicit numbers so no row makes an unbounded
+	// reservation or removes the safety ceiling.
 	if range, found := root_plan_values.field_range_of(owner, field); found {
-		return {type = .Integer, integer_unit = root_field_unit(field), has_range = true, least = i64(range.least), most = i64(range.most)}, {}
+		return {
+			type            = .Integer,
+			integer_unit    = root_field_unit(field),
+			has_range       = true,
+			least           = i64(range.least),
+			most            = i64(range.most),
+			allow_unbounded = field == root_plan_values.BUDGET_PAGES_FIELD,
+		}, {}
 	}
 	for export_name in DESCRIBING_EXPORTS {
 		export_index, function, found := export_of_name(file, export_name)
@@ -248,9 +262,16 @@ word_check :: proc "contextless" (described: Described, word: u64) -> (refusal: 
 }
 
 // text_check checks a text of a value against its description: its bound,
-// at most PLAN_VALUE_TEXT_BYTES, and plain UTF-8. An Integer and an Enum
-// take no text.
+// at most PLAN_VALUE_TEXT_BYTES, and plain UTF-8. For budget_pages
+// (allow_unbounded), accepts only the exact text "unbounded"; every other
+// Integer and Enum takes no text.
 text_check :: proc "contextless" (described: Described, text: string) -> (refusal: Refusal) {
+	if described.type == .Integer && described.allow_unbounded {
+		if text == root_plan_values.BUDGET_PAGES_UNBOUNDED_TEXT {
+			return {}
+		}
+		return {problem = .Value_Kind, expected = .Integer, allow_unbounded = true}
+	}
 	#partial switch described.type {
 	case .Text:
 	case .Integer, .Enum:
@@ -355,6 +376,49 @@ entries_check :: proc "contextless" (image: Image, plan: ^pr.Plan_Spec) -> (refu
 		}
 		if refusal.problem != .None {
 			return refusal, entry_index
+		}
+	}
+	// Cross-field budget row rules per owner: refuse budget_pages (count or
+	// unbounded) combined with budget_share_parts, and refuse a growth reserve
+	// with no ceiling or above its ceiling.
+	for entry_index in u32(0) ..< plan.entry_count {
+		entry := &plan.entries[entry_index]
+		if entry.kind_word != u64(pr.Plan_Entry_Kind.Value) {
+			continue
+		}
+		owner, field, parts_ok := pr.plan_value_parts(entry)
+		if !parts_ok {
+			continue
+		}
+		if field == root_plan_values.BUDGET_SHARE_PARTS_FIELD {
+			for other_index in u32(0) ..< plan.entry_count {
+				other := &plan.entries[other_index]
+				if other.kind_word != u64(pr.Plan_Entry_Kind.Value) {
+					continue
+				}
+				other_owner, other_field, other_ok := pr.plan_value_parts(other)
+				if other_ok && other_owner == owner && other_field == root_plan_values.BUDGET_PAGES_FIELD {
+					return {problem = .Budget_Size_Conflict}, entry_index
+				}
+			}
+		} else if field == root_plan_values.BUDGET_GROWTH_RESERVE_PAGES_FIELD {
+			found_ceiling := false
+			ceiling_word: u64
+			for other_index in u32(0) ..< plan.entry_count {
+				other := &plan.entries[other_index]
+				if other.kind_word != u64(pr.Plan_Entry_Kind.Value) {
+					continue
+				}
+				other_owner, other_field, other_ok := pr.plan_value_parts(other)
+				if other_ok && other_owner == owner && other_field == root_plan_values.BUDGET_CEILING_PAGES_FIELD {
+					found_ceiling = true
+					ceiling_word = other.value_word
+					break
+				}
+			}
+			if !found_ceiling || entry.value_word > ceiling_word {
+				return {problem = .Budget_Reserve_Over_Ceiling, integer = i64(entry.value_word), most = i64(ceiling_word)}, entry_index
+			}
 		}
 	}
 	return {}, 0

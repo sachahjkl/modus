@@ -6,6 +6,7 @@ package compositor
 
 import "internal:compositor/bar"
 import "modus:contract/ring"
+import "modus:contract/root_ring"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
@@ -231,7 +232,7 @@ windows_menu_rows_build :: proc "contextless" () {
 // key or a press on its button, and the menu stays open so the principal
 // sees the grant go; a press elsewhere on that row does nothing. It
 // reports whether the menu stays open.
-menu_choice_do :: proc "contextless" (from_keys: bool) -> bool {
+menu_choice_do :: proc "contextless" (from_keys: bool, unbounded := false) -> bool {
 	if menu_open == .Windows {
 		rows := windows_menu_rows[:windows_menu_row_count]
 		switch bar.windows_menu_act(rows, menu_line, from_keys || menu_on_revoke) {
@@ -252,7 +253,8 @@ menu_choice_do :: proc "contextless" (from_keys: bool) -> bool {
 	}
 	if menu_open == .Start && menu_line >= 0 && menu_line < bar.shown_count(bar_layout) {
 		packed := system.name_pack(bar.names[menu_line])
-		system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
+		budget_option := unbounded ? root_ring.Start_Budget_Option.Unbounded : root_ring.Start_Budget_Option.Default
+		system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(budget_option)}})
 	}
 	if menu_open == .Windows && menu_line >= 0 && menu_line < windows_menu_row_count {
 		index := window_of_line(windows_menu_rows[menu_line].window)

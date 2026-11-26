@@ -474,3 +474,107 @@ the_rows_of_a_plan_are_typed_at_the_border_of_plans :: proc(t: ^testing.T) {
 		testing.expectf(t, found.problem == item.problem && index == 1, "%s.%s gives %v at %d, not %v", item.owner, item.field, found.problem, index, item.problem)
 	}
 }
+
+// Unbounded budget rows at both plan borders (plan_reader and plans
+// entries_check): refusals first (bad member, string instead of member,
+// unbounded on ceiling/reserve/disk class, unbounded + share_parts conflict,
+// reserve without ceiling, bad raw text in entries_check), then valid
+// unbounded rows with and without a lower ceiling.
+@(test)
+unbounded_budget_rows_are_checked_at_both_plan_borders :: proc(t: ^testing.T) {
+	image := fake_image_make(t)
+	described_image := description.Image{user = image, module_of_name = fake_of_name, module_of_hash = fake_of_hash}
+
+	Refusal_Case :: struct {
+		text:     string,
+		problem:  Problem,
+		sentence: string,
+	}
+	refusals := [?]Refusal_Case {
+		{`plan { values = { display = { budget_pages = .infinite } } }`, .Member_Unknown, "display.budget_pages has no member .infinite: write a number or .unbounded"},
+		{`plan { values = { display = { budget_pages = "unbounded" } } }`, .Value_Kind, "display.budget_pages takes a number or .unbounded"},
+		{`plan { values = { display = { budget_pages = 0 } } }`, .Out_Of_Range, ""},
+		{`plan { values = { display = { budget_pages = 1073741825 } } }`, .Out_Of_Range, ""},
+		{`plan { values = { display = { budget_ceiling_pages = .unbounded } } }`, .Value_Kind, "display.budget_ceiling_pages takes a number"},
+		{`plan { values = { display = { budget_growth_reserve_pages = .unbounded } } }`, .Value_Kind, "display.budget_growth_reserve_pages takes a number"},
+		{`plan { values = { display = { budget_share_parts = .unbounded } } }`, .Value_Kind, "display.budget_share_parts takes a number"},
+		{`plan { values = { display = { budget_screen_pages = .unbounded } } }`, .Value_Kind, "display.budget_screen_pages takes a number"},
+		{`plan { values = { root = { disk_processes_pages = .unbounded } } }`, .Value_Kind, "root.disk_processes_pages takes a number"},
+		{`plan { values = { display = { budget_pages = .unbounded, budget_share_parts = 128 } } }`, .Budget_Size_Conflict, "display cannot set both budget_pages and budget_share_parts"},
+		{`plan { values = { display = { budget_pages = .unbounded } }, locks = { display = { budget_share_parts = 128 } } }`, .Budget_Size_Conflict, "display cannot set both budget_pages and budget_share_parts"},
+		{`plan { values = { display = { budget_pages = .unbounded, budget_growth_reserve_pages = 1024 } } }`, .Budget_Reserve_Over_Ceiling, "display.budget_growth_reserve_pages requires budget_ceiling_pages on the same owner"},
+		{`plan { values = { display = { budget_pages = .unbounded, budget_ceiling_pages = 1024, budget_growth_reserve_pages = 1025 } } }`, .Budget_Reserve_Over_Ceiling, "display.budget_growth_reserve_pages is 1025, above budget_ceiling_pages 1024"},
+	}
+	for item in refusals {
+		run := read_text(image, item.text)
+		if !testing.expectf(t, run.evaluated, "%q is not evaluated: %v", item.text, run.evaluation.refusal) {
+			continue
+		}
+		testing.expectf(t, run.refusal.problem == item.problem, "%q gave %v, not %v", item.text, run.refusal.problem, item.problem)
+		testing.expectf(t, run.count == 0, "%q gave %d rows", item.text, run.count)
+		// Clear the scratch output rows before formatting the refusal to prove
+		// Refusal.name and Refusal.field never alias reader.rows.
+		run.rows = {}
+		if item.sentence != "" {
+			testing.expect_value(t, sentence_of(run.refusal), item.sentence)
+		}
+	}
+
+	// Exact integer bounds of budget_pages: 1 and BUDGET_PAGES_MOST (1 << 30) pass.
+	ok_bounds := read_text(image, `plan { values = { display = { budget_pages = 1 }, browser = { budget_pages = 1073741824 } } }`)
+	testing.expectf(t, ok_bounds.evaluated && ok_bounds.refusal.problem == .None && ok_bounds.count == 2, "budget_pages bounds failed: eval=%v prob=%v count=%d", ok_bounds.evaluated, ok_bounds.refusal.problem, ok_bounds.count)
+
+	// Valid unbounded row with no ceiling, and unbounded row with a lower ceiling.
+	ok_unb := read_text(image, `plan { values = { display = { budget_pages = .unbounded }, browser = { budget_pages = .unbounded, budget_ceiling_pages = 8192 } } }`)
+	testing.expectf(t, ok_unb.evaluated && ok_unb.refusal.problem == .None && ok_unb.count == 3, "unbounded plan failed: eval=%v prob=%v count=%d", ok_unb.evaluated, ok_unb.refusal.problem, ok_unb.count)
+	plan := new(pr.Plan_Spec, context.temp_allocator)
+	plan^ = plan_with_room(TEST_ROWS)
+	plan_refusal, bad_row := pr.plan_of_rows(0, ok_unb.rows[:ok_unb.count], plan)
+	testing.expectf(t, plan_refusal == .None, "plan_of_rows refused: %v at %d", plan_refusal, bad_row)
+	desc_refusal, desc_idx := description.entries_check(described_image, plan)
+	testing.expectf(t, desc_refusal.problem == .None, "entries_check refused: %v at %d", desc_refusal.problem, desc_idx)
+
+	// entries_check directly refuses non-"unbounded" text on budget_pages,
+	// text "unbounded" on budget_ceiling_pages, and cross-field conflicts,
+	// and accepts budget_growth_reserve_pages == budget_ceiling_pages while
+	// refusing budget_ceiling_pages + 1.
+	bad_text := plan_with_room(TEST_ROWS)
+	pr.plan_copy(&bad_text, plan)
+	bad_text.entries[0], _ = pr.plan_entry_make_text_value("display", "budget_pages", "UNBOUNDED", .Plan_Default)
+	r_txt, i_txt := description.entries_check(described_image, &bad_text)
+	testing.expect(t, r_txt.problem == .Value_Kind && i_txt == 0)
+
+	bad_ceil := plan_with_room(TEST_ROWS)
+	pr.plan_copy(&bad_ceil, plan)
+	bad_ceil.entries[0], _ = pr.plan_entry_make_text_value("display", "budget_ceiling_pages", "unbounded", .Plan_Default)
+	r_ceil, i_ceil := description.entries_check(described_image, &bad_ceil)
+	testing.expect(t, r_ceil.problem == .Value_Kind && i_ceil == 0)
+
+	bad_conflict := plan_with_room(TEST_ROWS)
+	pr.plan_copy(&bad_conflict, plan)
+	bad_conflict.entries[bad_conflict.entry_count], _ = pr.plan_entry_make_value("display", "budget_share_parts", 128, .Plan_Default)
+	bad_conflict.entry_count += 1
+	r_conf, _ := description.entries_check(described_image, &bad_conflict)
+	testing.expect(t, r_conf.problem == .Budget_Size_Conflict)
+
+	bad_res := plan_with_room(TEST_ROWS)
+	pr.plan_copy(&bad_res, plan)
+	bad_res.entries[bad_res.entry_count], _ = pr.plan_entry_make_value("display", "budget_growth_reserve_pages", 512, .Plan_Default)
+	bad_res.entry_count += 1
+	r_res, _ := description.entries_check(described_image, &bad_res)
+	testing.expect(t, r_res.problem == .Budget_Reserve_Over_Ceiling)
+
+	eq_res := plan_with_room(TEST_ROWS)
+	pr.plan_copy(&eq_res, plan)
+	eq_res.entries[eq_res.entry_count], _ = pr.plan_entry_make_value("browser", "budget_growth_reserve_pages", 8192, .Plan_Default)
+	eq_res.entry_count += 1
+	r_eq, _ := description.entries_check(described_image, &eq_res)
+	testing.expect(t, r_eq.problem == .None)
+
+	over_res := plan_with_room(TEST_ROWS)
+	pr.plan_copy(&over_res, plan)
+	over_res.entries[over_res.entry_count], _ = pr.plan_entry_make_value("browser", "budget_growth_reserve_pages", 8193, .Plan_Default)
+	over_res.entry_count += 1
+	r_over, _ := description.entries_check(described_image, &over_res)
+	testing.expect(t, r_over.problem == .Budget_Reserve_Over_Ceiling)
+}

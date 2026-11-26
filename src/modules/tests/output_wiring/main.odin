@@ -695,8 +695,9 @@ start_case :: proc "contextless" () {
 	answer_word := u64(max(root_ring.Start_Answer)) + 1
 	status, answer = root_call(.Start, {packed[0], packed[1], packed[2], packed[3], 0, answer_word, 0})
 	refused("an answer word that names nothing", before, status, answer, .Argument_Refused, root_ring.word_refusal(.Start, 3, answer_word, u64(max(root_ring.Start_Answer))))
-	status, answer = root_call(.Start, {packed[0], packed[1], packed[2], packed[3], 0, 0, 1})
-	refused("a reserved word", before, status, answer, .Argument_Refused, root_ring.word_refusal(.Start, 4, 1, 0))
+	budget_word := u64(max(root_ring.Start_Budget_Option)) + 1
+	status, answer = root_call(.Start, {packed[0], packed[1], packed[2], packed[3], 0, 0, budget_word})
+	refused("a budget option word that names nothing", before, status, answer, .Argument_Refused, root_ring.word_refusal(.Start, 4, budget_word, u64(max(root_ring.Start_Budget_Option))))
 
 	// The record output log: only the starter of a process wires it, in
 	// the list of its Start, once, to a reader that holds the writer. A

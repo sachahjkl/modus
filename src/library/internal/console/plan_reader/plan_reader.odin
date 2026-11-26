@@ -62,28 +62,31 @@ Problem :: enum u8 {
 	Too_Many_Rows       = 19, // More rows than the rows given, which the region of one call bounds (integer: the rows given).
 	Name_Not_Valid      = 20, // A name of an owner, a field or a store that a plan cannot hold (name, field).
 	Field_Type          = 21, // A parameter that is no Integer, Enum or Text: a plan gives it no value (name, field).
-	Owner_Is_A_Holder   = 22, // A module that holds a role: its values are named by the role (name, role).
-	Unit_Mismatch       = 23, // A number with an incompatible or non-exact unit for its parameter (name, field, given_unit, expected_unit).
+	Owner_Is_A_Holder           = 22, // A module that holds a role: its values are named by the role (name, role).
+	Unit_Mismatch               = 23, // A number with an incompatible or non-exact unit for its parameter (name, field, given_unit, expected_unit).
+	Budget_Size_Conflict        = 24, // One owner gives both budget_pages (count or .unbounded) and budget_share_parts.
+	Budget_Reserve_Over_Ceiling = 25, // One owner gives budget_growth_reserve_pages without or above budget_ceiling_pages.
 }
 
 // A refusal: its problem and what it names.
 Refusal :: struct {
-	problem:       Problem,
-	name:          string, // The field of the plan, the role, the store or the owner.
-	field:         string, // The field of the owner.
-	member:        string, // A member or a right that is refused.
-	integer:       i64,
-	least:         i64,
-	most:          i64,
-	expected:      module.Type, // With Value_Kind: the type of the parameter.
-	given_unit:    value_kinds.Integer_Unit,
-	expected_unit: value_kinds.Integer_Unit,
+	problem:         Problem,
+	name:            string, // The field of the plan, the role, the store or the owner.
+	field:           string, // The field of the owner.
+	member:          string, // A member or a right that is refused.
+	integer:         i64,
+	least:           i64,
+	most:            i64,
+	expected:        module.Type, // With Value_Kind: the type of the parameter.
+	given_unit:      value_kinds.Integer_Unit,
+	expected_unit:   value_kinds.Integer_Unit,
 	// With Field_Unknown and Member_Unknown: the description that names what
 	// the owner has.
-	file:          []u8,
-	enum_type:     module.Enum_Type,
-	root:          bool, // With Field_Unknown: the owner is the core.
-	role:          role_contract.Role, // With Owner_Is_A_Holder: the role that the module holds.
+	file:            []u8,
+	enum_type:       module.Enum_Type,
+	root:            bool, // With Field_Unknown: the owner is the core.
+	role:            role_contract.Role, // With Owner_Is_A_Holder: the role that the module holds.
+	allow_unbounded: bool, // With Value_Kind or Member_Unknown: budget_pages takes a number or .unbounded.
 }
 
 // The description of one value of an owner.
@@ -144,7 +147,107 @@ read :: proc "contextless" (evaluation: ^lex_evaluator.Evaluation, plan_host: le
 			return 0, refusal
 		}
 	}
+	if refusal = budget_rows_check(&reader, plan, names[:name_count]); refusal.problem != .None {
+		return 0, refusal
+	}
 	return reader.count, {}
+}
+
+// stable_owner_name resolves an owner string back to the evaluation-backed
+// slice from `plan` so Refusal.name never points into the caller's scratch
+// rows buffer.
+@(private = "file")
+stable_owner_name :: proc "contextless" (reader: ^Reader, plan: lex_evaluator.Value, plan_fields: []string, target: string) -> string {
+	for layer_field in ([2]string{VALUES_FIELD, LOCKS_FIELD}) {
+		if !has_field(plan_fields, layer_field) {
+			continue
+		}
+		owners, ok := field_of(reader, plan, layer_field)
+		if !ok {
+			continue
+		}
+		owner_names: [lex_evaluator.DECLARATION_RECORD_FIELDS_LIMIT]string
+		owner_count, owners_ok := record_names(reader, owners, &owner_names)
+		if !owners_ok {
+			continue
+		}
+		for candidate in owner_names[:owner_count] {
+			if candidate == target {
+				return candidate
+			}
+		}
+	}
+	return ""
+}
+
+// budget_rows_check enforces per-owner cross-field budget policy rules across
+// values and locks: budget_pages (count or .unbounded) and budget_share_parts
+// never appear together, and budget_growth_reserve_pages requires a
+// budget_ceiling_pages at least as large. Refusal strings come from the
+// evaluation and contract constants, never from `reader.rows`.
+@(private = "file")
+budget_rows_check :: proc "contextless" (reader: ^Reader, plan: lex_evaluator.Value, plan_fields: []string) -> (refusal: Refusal) {
+	row_parts :: proc "contextless" (row: ^pr.Plan_Entry_Row) -> (owner, field: string, ok: bool) {
+		if row.kind_word != i64(pr.Plan_Entry_Kind.Value) {
+			return "", "", false
+		}
+		length := 0
+		for length < len(row.name) && row.name[length] != 0 {
+			length += 1
+		}
+		full := string(row.name[:length])
+		dot := -1
+		for idx in 0 ..< len(full) {
+			if full[idx] == '.' {
+				dot = idx
+				break
+			}
+		}
+		if dot <= 0 || dot + 1 >= len(full) {
+			return "", "", false
+		}
+		return full[:dot], full[dot + 1:], true
+	}
+	for index in 0 ..< reader.count {
+		owner, field, ok := row_parts(&reader.rows[index])
+		if !ok {
+			continue
+		}
+		if field == root_plan_values.BUDGET_SHARE_PARTS_FIELD {
+			for other in 0 ..< reader.count {
+				other_owner, other_field, other_ok := row_parts(&reader.rows[other])
+				if other_ok && other_owner == owner && other_field == root_plan_values.BUDGET_PAGES_FIELD {
+					return {
+						problem = .Budget_Size_Conflict,
+						name    = stable_owner_name(reader, plan, plan_fields, owner),
+						field   = root_plan_values.BUDGET_SHARE_PARTS_FIELD,
+					}
+				}
+			}
+		} else if field == root_plan_values.BUDGET_GROWTH_RESERVE_PAGES_FIELD {
+			found_ceiling := false
+			ceiling_word: i64
+			for other in 0 ..< reader.count {
+				other_owner, other_field, other_ok := row_parts(&reader.rows[other])
+				if other_ok && other_owner == owner && other_field == root_plan_values.BUDGET_CEILING_PAGES_FIELD {
+					found_ceiling = true
+					ceiling_word = reader.rows[other].value_word
+					break
+				}
+			}
+			reserve_word := reader.rows[index].value_word
+			if !found_ceiling || reserve_word > ceiling_word {
+				return {
+					problem = .Budget_Reserve_Over_Ceiling,
+					name    = stable_owner_name(reader, plan, plan_fields, owner),
+					field   = root_plan_values.BUDGET_GROWTH_RESERVE_PAGES_FIELD,
+					integer = reserve_word,
+					most    = ceiling_word,
+				}
+			}
+		}
+	}
+	return {}
 }
 
 @(private = "file")
@@ -327,8 +430,17 @@ value_entry :: proc "contextless" (reader: ^Reader, owner, field: string, value:
 	made: bool
 	#partial switch described.type {
 	case .Integer:
+		if described.allow_unbounded && value.kind == .Member {
+			member_name := lex_evaluator.member_name_of(reader.evaluation, value)
+			if member_name != root_plan_values.BUDGET_PAGES_UNBOUNDED_TEXT {
+				at.problem, at.member, at.allow_unbounded = .Member_Unknown, member_name, true
+				return {}, at
+			}
+			entry, made = pr.plan_entry_make_text_value(owner, field, root_plan_values.BUDGET_PAGES_UNBOUNDED_TEXT, layer)
+			break
+		}
 		if value.kind != .Integer {
-			at.problem, at.expected = .Value_Kind, .Integer
+			at.problem, at.expected, at.allow_unbounded = .Value_Kind, .Integer, described.allow_unbounded
 			return {}, at
 		}
 		iv := lex_evaluator.value_integer(value)
@@ -386,7 +498,7 @@ value_entry :: proc "contextless" (reader: ^Reader, owner, field: string, value:
 // refusal_of_description gives the refusal of the reader of a refusal of
 // the description of a value.
 refusal_of_description :: proc "contextless" (from: description.Refusal, owner, field: string) -> (refusal: Refusal) {
-	refusal = {name = owner, field = field, integer = from.integer, least = from.least, most = from.most, expected = from.expected, file = from.file, enum_type = from.enum_type, root = from.root, role = from.role}
+	refusal = {name = owner, field = field, integer = from.integer, least = from.least, most = from.most, expected = from.expected, file = from.file, enum_type = from.enum_type, root = from.root, role = from.role, allow_unbounded = from.allow_unbounded}
 	switch from.problem {
 	case .None:
 		refusal.problem = .None
@@ -408,6 +520,10 @@ refusal_of_description :: proc "contextless" (from: description.Refusal, owner, 
 		refusal.problem = .Text_Past_Bound
 	case .Text_Not_Plain:
 		refusal.problem = .Text_Not_Plain
+	case .Budget_Size_Conflict:
+		refusal.problem = .Budget_Size_Conflict
+	case .Budget_Reserve_Over_Ceiling:
+		refusal.problem = .Budget_Reserve_Over_Ceiling
 	}
 	return refusal
 }
@@ -490,20 +606,24 @@ refusal_write :: proc "contextless" (writer: ^sentence.Writer, refusal: Refusal)
 		case .Text:
 			part(writer, " takes a text, in quotes")
 		case:
-			part(writer, " takes a number")
+			part(writer, refusal.allow_unbounded ? " takes a number or .unbounded" : " takes a number")
 		}
 	case .Member_Unknown:
 		owner_field(writer, refusal)
 		part(writer, " has no member .")
 		part(writer, refusal.member)
-		part(writer, ": its members are")
-		for number in 0 ..< refusal.enum_type.member_count {
-			member, ok := module.enum_member(refusal.file, refusal.enum_type, number)
-			if !ok {
-				continue
+		if refusal.allow_unbounded {
+			part(writer, ": write a number or .unbounded")
+		} else {
+			part(writer, ": its members are")
+			for number in 0 ..< refusal.enum_type.member_count {
+				member, ok := module.enum_member(refusal.file, refusal.enum_type, number)
+				if !ok {
+					continue
+				}
+				part(writer, number == 0 ? " ." : ", .")
+				part(writer, module.string_at(refusal.file, member.name_offset, member.name_count))
 			}
-			part(writer, number == 0 ? " ." : ", .")
-			part(writer, module.string_at(refusal.file, member.name_offset, member.name_count))
 		}
 	case .Out_Of_Range:
 		owner_field(writer, refusal)
@@ -553,6 +673,19 @@ refusal_write :: proc "contextless" (writer: ^sentence.Writer, refusal: Refusal)
 			part(writer, value_kinds.integer_unit_text(refusal.expected_unit))
 			part(writer, ", not")
 			part(writer, value_kinds.integer_unit_text(refusal.given_unit))
+		}
+	case .Budget_Size_Conflict:
+		part(writer, refusal.name)
+		part(writer, " cannot set both budget_pages and budget_share_parts")
+	case .Budget_Reserve_Over_Ceiling:
+		owner_field(writer, refusal)
+		if refusal.most == 0 {
+			part(writer, " requires budget_ceiling_pages on the same owner")
+		} else {
+			part(writer, " is ")
+			part(writer, refusal.integer)
+			part(writer, ", above budget_ceiling_pages ")
+			part(writer, refusal.most)
 		}
 	}
 }

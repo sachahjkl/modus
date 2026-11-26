@@ -62,9 +62,10 @@ Root_Command :: enum u32 {
 	// values[5]: a Start_Answer. With Process_Handle, values[0] of
 	// the completion is a handle of the process with the right Read, which
 	// a Wire names; values[1..6] are the rings of the rows whose reader is
-	// the sender, in the order of the rows. values[6] is 0, or, from a start
-	// policy for the holder of Display on a machine with no screen, the size
-	// of a screen of memory (screen_of_memory_word).
+	// the sender, in the order of the rows. values[6] is a Start_Budget_Option
+	// (Default or Unbounded) for callers without Start_Policy, or, from a
+	// start policy for the holder of Display on a machine with no screen, the
+	// size of a screen of memory (screen_of_memory_word), else 0.
 	Start      = 1,
 	// Stop the process with this name. The compositor and the terminal are
 	// refused with `Reserved`; a name that runs no process with `Absent`.
@@ -863,6 +864,30 @@ Start_Answer :: enum u64 {
 // start_answer_of_word is the border of values[5] of a Start.
 start_answer_of_word :: proc "contextless" (word: u64) -> (answer: Start_Answer, ok: bool) {
 	return enum_word.member_of_word(Start_Answer, word)
+}
+
+// values[6] of a Start (for callers without Start_Policy) and values[4] of
+// display.Control.Start: whether the process starts as an unbounded growth
+// row (reserving floor and default size at start, with Budget_Grow allowed
+// up to the machine's safety ceiling or a lower plan ceiling).
+Start_Budget_Option :: enum u64 {
+	Default   = 0, // Use the plan row, or default size with no growth.
+	Unbounded = 1, // Reserve floor and default size; allow growth up to the safety ceiling.
+}
+
+// start_budget_option_of_word is the border of Start_Budget_Option.
+start_budget_option_of_word :: proc "contextless" (word: u64) -> (option: Start_Budget_Option, ok: bool) {
+	return enum_word.member_of_word(Start_Budget_Option, word)
+}
+
+// desktop_start_budget_option_of_values is the border of values[4..6] of
+// display.Control.Start: values[4] must name a Start_Budget_Option and
+// values[5..6] must be 0.
+desktop_start_budget_option_of_values :: proc "contextless" (values: [7]u64) -> (option: Start_Budget_Option, ok: bool) {
+	if values[5] != 0 || values[6] != 0 {
+		return .Default, false
+	}
+	return start_budget_option_of_word(values[4])
 }
 
 // screen_of_memory_word gives values[6] of the Start of the holder of

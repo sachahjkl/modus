@@ -83,11 +83,11 @@ module_budget_policy_enforces_borders_and_conflicts :: proc(t: ^testing.T) {
 	// Out-of-range values are refused at each edge.
 	for bad_pages in ([?]u64{0, BUDGET_PAGES_MOST + 1, max(u64)}) {
 		pol, _, _ := module_budget_policy_of(values_of({{name = BUDGET_PAGES_FIELD, kind = .Choose, value = bad_pages}}, nil))
-		testing.expectf(t, !pol.has_pages, "bad pages %d accepted", bad_pages)
+		testing.expectf(t, pol.size_kind == .Default, "bad pages %d accepted", bad_pages)
 	}
 	for bad_share in ([?]u64{0, BUDGET_SHARE_PARTS_MOST + 1, max(u64)}) {
 		pol, _, _ := module_budget_policy_of(values_of({{name = BUDGET_SHARE_PARTS_FIELD, kind = .Choose, value = bad_share}}, nil))
-		testing.expectf(t, !pol.has_share_parts, "bad share %d accepted", bad_share)
+		testing.expectf(t, pol.size_kind == .Default, "bad share %d accepted", bad_share)
 	}
 	for bad_proc in ([?]u64{0, BUDGET_PROCESSOR_LEAST - 1, BUDGET_PROCESSOR_MOST + 1, max(u64)}) {
 		pol, _, _ := module_budget_policy_of(values_of({{name = BUDGET_PROCESSOR_FIELD, kind = .Choose, value = bad_proc}}, nil))
@@ -103,7 +103,7 @@ module_budget_policy_enforces_borders_and_conflicts :: proc(t: ^testing.T) {
 		{name = BUDGET_PAGES_FIELD, kind = .Choose, value = 4096},
 		{name = BUDGET_SHARE_PARTS_FIELD, kind = .Choose, value = 128},
 	}, nil))
-	testing.expect(t, both_conflict && !both.has_pages && !both.has_share_parts)
+	testing.expect(t, both_conflict && both.size_kind == .Default && both.pages == 0 && both.share_parts == 0)
 
 	// Growth reserve with no ceiling, or above ceiling, is dropped.
 	no_ceil, _, no_ceil_over := module_budget_policy_of(values_of({
@@ -126,7 +126,7 @@ module_budget_policy_enforces_borders_and_conflicts :: proc(t: ^testing.T) {
 		{name = BUDGET_SCREEN_PAGES_FIELD, kind = .Choose, value = 512},
 	}, nil))
 	testing.expect(t, !valid_conflict && !valid_over)
-	testing.expect(t, valid.has_share_parts && valid.share_parts == 256)
+	testing.expect(t, valid.size_kind == .Share_Parts && valid.share_parts == 256)
 	testing.expect(t, valid.has_ceiling && valid.ceiling_pages == 8192)
 	testing.expect(t, valid.has_growth_reserve && valid.growth_reserve_pages == 8192)
 	testing.expect(t, valid.has_processor && valid.processor == 1_500_000)
@@ -144,4 +144,134 @@ module_budget_policy_enforces_borders_and_conflicts :: proc(t: ^testing.T) {
 	testing.expect(t, !other_has_growth)
 	range, other_has_ceiling := field_range_of("console", BUDGET_CEILING_PAGES_FIELD)
 	testing.expect(t, other_has_ceiling && range.least == BUDGET_PAGES_LEAST && range.most == BUDGET_PAGES_MOST)
+}
+
+// Unbounded rows and safety ceiling enforcement: edges and refusals come first
+// (non-"unbounded" text, unbounded combined with share_parts, unbounded on
+// ceiling/reserve/disk class, reserve without ceiling, zero safety ceiling,
+// ceiling above machine share capped), then valid unbounded rows and start
+// options.
+@(test)
+unbounded_row_and_safety_ceiling_edges :: proc(t: ^testing.T) {
+	// Any text other than exact "unbounded" on budget_pages is refused.
+	for bad_text in ([?]string{"", "Unbounded", "UNBOUNDED", "unbounded ", " unbounded", "infinite", "all", "0"}) {
+		pol, _, _ := module_budget_policy_of(values_of({{name = BUDGET_PAGES_FIELD, kind = .Choose_Text, text = bad_text}}, nil))
+		testing.expectf(t, pol.size_kind == .Default, "bad budget_pages text %q accepted", bad_text)
+	}
+
+	// Text "unbounded" on ceiling, growth_reserve, or disk_processes_pages is refused:
+	// no form can remove the safety ceiling or make an unbounded reservation.
+	ceil_txt, _, _ := module_budget_policy_of(values_of({{name = BUDGET_CEILING_PAGES_FIELD, kind = .Choose_Text, text = BUDGET_PAGES_UNBOUNDED_TEXT}}, nil))
+	testing.expect(t, !ceil_txt.has_ceiling && ceil_txt.ceiling_pages == 0)
+	res_txt, _, _ := module_budget_policy_of(values_of({{name = BUDGET_GROWTH_RESERVE_PAGES_FIELD, kind = .Choose_Text, text = BUDGET_PAGES_UNBOUNDED_TEXT}}, nil))
+	testing.expect(t, !res_txt.has_growth_reserve && res_txt.growth_reserve_pages == 0)
+	disk_txt, _ := root_plan_of(values_of({{name = DISK_PROCESSES_PAGES_FIELD, kind = .Choose_Text, text = BUDGET_PAGES_UNBOUNDED_TEXT}}, nil))
+	testing.expect(t, disk_txt.disk_processes_pages == 0)
+
+	// Unbounded + share_parts conflicts: both are dropped so neither holds.
+	unb_share, unb_conflict, _ := module_budget_policy_of(values_of({
+		{name = BUDGET_PAGES_FIELD, kind = .Choose_Text, text = BUDGET_PAGES_UNBOUNDED_TEXT},
+		{name = BUDGET_SHARE_PARTS_FIELD, kind = .Choose, value = 128},
+	}, nil))
+	testing.expect(t, unb_conflict && unb_share.size_kind == .Default && unb_share.share_parts == 0)
+
+	// Unbounded + growth_reserve without explicit ceiling drops the reserve.
+	unb_res, _, unb_res_over := module_budget_policy_of(values_of({
+		{name = BUDGET_PAGES_FIELD, kind = .Choose_Text, text = BUDGET_PAGES_UNBOUNDED_TEXT},
+		{name = BUDGET_GROWTH_RESERVE_PAGES_FIELD, kind = .Choose, value = 1024},
+	}, nil))
+	testing.expect(t, unb_res.size_kind == .Unbounded && unb_res_over && !unb_res.has_growth_reserve)
+
+	// Lock-over-default precedence across Word and Text on budget_pages.
+	lock_unb, _, _ := module_budget_policy_of(
+		values_of({{name = BUDGET_PAGES_FIELD, kind = .Choose, value = 4096}}, {{name = BUDGET_PAGES_FIELD, kind = .Choose_Text, text = BUDGET_PAGES_UNBOUNDED_TEXT}}),
+	)
+	testing.expect(t, lock_unb.size_kind == .Unbounded && lock_unb.pages == 0)
+	lock_num, _, _ := module_budget_policy_of(
+		values_of({{name = BUDGET_PAGES_FIELD, kind = .Choose_Text, text = BUDGET_PAGES_UNBOUNDED_TEXT}}, {{name = BUDGET_PAGES_FIELD, kind = .Choose, value = 4096}}),
+	)
+	testing.expect(t, lock_num.size_kind == .Pages && lock_num.pages == 4096)
+
+	// Unbounded row gives has_size == false from planned_pages_of, so start
+	// reserves floor and default size identically to no row.
+	unb, c0, o0 := module_budget_policy_of(values_of({{name = BUDGET_PAGES_FIELD, kind = .Choose_Text, text = BUDGET_PAGES_UNBOUNDED_TEXT}}, nil))
+	testing.expect(t, !c0 && !o0 && unb.size_kind == .Unbounded)
+	start_pages, has_size := planned_pages_of(unb, 200_000)
+	testing.expect(t, !has_size && start_pages == 0)
+
+	// effective_growth_of: zero safety ceiling refuses all growth.
+	c_zero, r_zero, cap_zero := effective_growth_of(unb, 0, true)
+	testing.expect(t, c_zero == 0 && r_zero == 0 && !cap_zero)
+
+	// Default policy with no start option gets no growth.
+	c_def, r_def, cap_def := effective_growth_of({}, 50_000, false)
+	testing.expect(t, c_def == 0 && r_def == 0 && !cap_def)
+
+	// Unbounded row with no explicit ceiling uses safety ceiling (machine share).
+	c_unb, r_unb, cap_unb := effective_growth_of(unb, 50_000, false)
+	testing.expect(t, c_unb == 50_000 && r_unb == 0 && !cap_unb)
+
+	// Unbounded row can lower its ceiling below the machine share.
+	unb_low, _, _ := module_budget_policy_of(values_of({
+		{name = BUDGET_PAGES_FIELD, kind = .Choose_Text, text = BUDGET_PAGES_UNBOUNDED_TEXT},
+		{name = BUDGET_CEILING_PAGES_FIELD, kind = .Choose, value = 16_384},
+	}, nil))
+	c_low, r_low, cap_low := effective_growth_of(unb_low, 50_000, false)
+	testing.expect(t, c_low == 16_384 && r_low == 0 && !cap_low)
+
+	// Unbounded row at exact safety ceiling is not capped; +1 and max are capped.
+	unb_eq, _, _ := module_budget_policy_of(values_of({
+		{name = BUDGET_PAGES_FIELD, kind = .Choose_Text, text = BUDGET_PAGES_UNBOUNDED_TEXT},
+		{name = BUDGET_CEILING_PAGES_FIELD, kind = .Choose, value = 50_000},
+	}, nil))
+	c_eq, _, cap_eq := effective_growth_of(unb_eq, 50_000, false)
+	testing.expect(t, c_eq == 50_000 && !cap_eq)
+
+	for high in ([?]u64{50_001, BUDGET_PAGES_MOST}) {
+		unb_high, _, _ := module_budget_policy_of(values_of({
+			{name = BUDGET_PAGES_FIELD, kind = .Choose_Text, text = BUDGET_PAGES_UNBOUNDED_TEXT},
+			{name = BUDGET_CEILING_PAGES_FIELD, kind = .Choose, value = high},
+			{name = BUDGET_GROWTH_RESERVE_PAGES_FIELD, kind = .Choose, value = high},
+		}, nil))
+		c_hi, r_hi, cap_hi := effective_growth_of(unb_high, 50_000, false)
+		testing.expectf(t, c_hi == 50_000 && r_hi == 50_000 && cap_hi, "high ceiling %d not capped", high)
+	}
+
+	// Bounded row with ceiling above machine share is also capped at machine share.
+	bounded_high, _, _ := module_budget_policy_of(values_of({
+		{name = BUDGET_PAGES_FIELD, kind = .Choose, value = 4096},
+		{name = BUDGET_CEILING_PAGES_FIELD, kind = .Choose, value = 90_000},
+		{name = BUDGET_GROWTH_RESERVE_PAGES_FIELD, kind = .Choose, value = 60_000},
+	}, nil))
+	c_bh, r_bh, cap_bh := effective_growth_of(bounded_high, 50_000, false)
+	testing.expect(t, c_bh == 50_000 && r_bh == 50_000 && cap_bh)
+
+	// Start option (start_unbounded = true) enables growth up to safety ceiling
+	// when no plan ceiling exists, and never raises above a lower plan ceiling.
+	c_opt, r_opt, cap_opt := effective_growth_of({}, 50_000, true)
+	testing.expect(t, c_opt == 50_000 && r_opt == 0 && !cap_opt)
+	c_opt_low, _, cap_opt_low := effective_growth_of(unb_low, 50_000, true)
+	testing.expect(t, c_opt_low == 16_384 && !cap_opt_low)
+
+	// Extreme safety_ceiling_pages edges (1 and max(u64)) and a synthetic
+	// policy with has_ceiling = true and ceiling_pages = 0 (fails closed to 0).
+	c_one, r_one, cap_one := effective_growth_of(unb, 1, false)
+	testing.expect(t, c_one == 1 && r_one == 0 && !cap_one)
+	c_one_cap, _, cap_one_hi := effective_growth_of(unb_low, 1, false)
+	testing.expect(t, c_one_cap == 1 && cap_one_hi)
+
+	c_max, r_max, cap_max := effective_growth_of(unb, max(u64), false)
+	testing.expect(t, c_max == max(u64) && r_max == 0 && !cap_max)
+	c_max_low, _, cap_max_low := effective_growth_of(unb_low, max(u64), false)
+	testing.expect(t, c_max_low == 16_384 && !cap_max_low)
+
+	zero_ceil_policy := Module_Budget_Policy{
+		size_kind            = .Unbounded,
+		has_ceiling          = true,
+		ceiling_pages        = 0,
+		has_growth_reserve   = true,
+		growth_reserve_pages = 512,
+	}
+	c_zceil, r_zceil, cap_zceil := effective_growth_of(zero_ceil_policy, 50_000, true)
+	testing.expect(t, c_zceil == 0 && r_zceil == 0 && !cap_zceil)
 }

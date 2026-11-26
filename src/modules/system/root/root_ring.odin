@@ -416,10 +416,19 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 	command := root_ring.Root_Command.Start
 	list, list_ok := root_ring.start_wiring_list_of_word(record.values[4])
 	answer, answer_ok := root_ring.start_answer_of_word(record.values[5])
-	// The size of a screen of memory: only from a start policy, only for
-	// the holder of Display, and only on a machine with no screen
-	// (src/md/features/screen_of_memory.md).
-	memory_width, memory_height, memory_ok := start_policy_rules.screen_of_memory_of_start(record.values[6], .Start_Policy in item.start_grant_set.grants, name, !no_screen_at_the_start)
+	from_start_policy := .Start_Policy in item.start_grant_set.grants
+	// values[6]: for a start policy, the size of a screen of memory on a
+	// machine with no screen (src/md/features/screen_of_memory.md); for every
+	// other caller, Start_Budget_Option (Default or Unbounded).
+	memory_width, memory_height: u32
+	memory_ok := true
+	budget_option := root_ring.Start_Budget_Option.Default
+	budget_ok := true
+	if from_start_policy {
+		memory_width, memory_height, memory_ok = start_policy_rules.screen_of_memory_of_start(record.values[6], true, name, !no_screen_at_the_start)
+	} else {
+		budget_option, budget_ok = root_ring.start_budget_option_of_word(record.values[6])
+	}
 	refusal: [7]u64
 	switch {
 	case !list_ok:
@@ -428,6 +437,8 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 		refusal = root_ring.word_refusal(command, 3, record.values[5], u64(max(root_ring.Start_Answer)))
 	case !memory_ok:
 		refusal = root_ring.word_refusal(command, 4, record.values[6], 0)
+	case !budget_ok:
+		refusal = root_ring.word_refusal(command, 4, record.values[6], u64(max(root_ring.Start_Budget_Option)))
 	}
 	if refusal != ([7]u64{}) {
 		// A refused Start keeps none of the handles that its list lent.
@@ -435,9 +446,10 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 		values^ = refusal
 		return .Argument_Refused
 	}
-	if .Start_Policy in item.start_grant_set.grants {
+	if from_start_policy {
 		return start_policy_start(item, record.tag, name, list, values, held, {memory_width, memory_height})
 	}
+	unbounded := budget_option == .Unbounded
 	// A process that a process starts belongs to the session of the
 	// process that asks, and the asker of its start is that process.
 	started_place: ^Started
@@ -445,14 +457,14 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 	case .None:
 		// The refusal of this start, or of a start that it made first,
 		// writes its outcome and its record.
-		outcome := start(name, item.principal, item, nil, &started_place, values)
+		outcome := start(name, item.principal, item, nil, &started_place, values, budget_unbounded = unbounded)
 		if outcome == .Succeeded && answer == .Process_Handle && started_place != nil {
 			values[0], _ = start_process_handle_give(item, started_place)
 		}
 		return outcome
 	case .In_The_List_Page:
 	}
-	outcome, is_held := start_with_wiring_begin(item, record.tag, name, item.principal, answer, false, nil, values)
+	outcome, is_held := start_with_wiring_begin(item, record.tag, name, item.principal, answer, false, nil, values, budget_unbounded = unbounded)
 	held^ = is_held
 	return outcome
 }

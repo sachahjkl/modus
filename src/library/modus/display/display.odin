@@ -585,7 +585,7 @@ Control :: enum u32 {
 	// CLIENT_CAPTURE for a process with the start grant Screen_Capture.
 	Client_Add    = 1,
 	Client_Remove = 2, // root to compositor. values: the same handle
-	Start         = 3, // compositor to root. values: name (4 values)
+	Start         = 3, // compositor to root. values[0..3]: name (4 values), values[4]: root_ring.Start_Budget_Option (0 Default, 1 Unbounded), values[5..6]: 0
 	Stop          = 4, // compositor to root. values: the handle of the client
 	// root to compositor: a process is the palette provider. values: the
 	// handle of its ring, then the handle of its entry table, read-only

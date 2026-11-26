@@ -388,6 +388,10 @@ Started :: struct {
 	budget_pages:    u64,
 	// The floor of its start (start_floor_of); 0: a start that noted none.
 	floor_pages:     u64,
+	// True when the process was started with Start_Budget_Option.Unbounded:
+	// reserves floor and default size at start, and allows Budget_Grow up to
+	// the machine's safety ceiling (or a lower plan ceiling).
+	budget_unbounded: bool,
 	// The ready ring of the process: open from its start to its first
 	// state of work or its stop (budgets.odin, ready_ring_serve).
 	ready:           system.Ready_Ring,
@@ -1472,13 +1476,20 @@ control_ring_serve :: proc "contextless" () {
 			system.log_fact(.Warning, Compositor_Record_Not_Taken{record_kind = u64(record.kind)})
 		case .Start:
 			// The desktop starts a process in the session that runs.
+			// values[4] carries Start_Budget_Option; values[5..6] must be 0.
+			budget_option, budget_ok := root_ring.desktop_start_budget_option_of_values(record.values)
+			if !budget_ok {
+				system.log_fact(.Warning, Compositor_Record_Not_Taken{record_kind = u64(record.kind)})
+				continue
+			}
+			unbounded := budget_option == .Unbounded
 			name := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
 			// The name of the role, or of the module that holds it, reaches
 			// the holder of Settings in force.
 			if resolved, has_holder := role_target_resolve_strict(system.name_of(name[:])); has_holder && is_role_holder(resolved, .Settings) {
-				settings_window_start(desktop_principal()) // text_settings.odin: waits for a pass that runs
+				settings_window_start(desktop_principal(), unbounded) // text_settings.odin: waits for a pass that runs
 			} else {
-				start(system.name_of(name[:]), desktop_principal())
+				start(system.name_of(name[:]), desktop_principal(), budget_unbounded = unbounded)
 			}
 		case .Stop:
 			for &item in started {

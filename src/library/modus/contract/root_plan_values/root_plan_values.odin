@@ -48,6 +48,11 @@ BUDGET_PROCESSOR_FIELD :: "budget_processor"
 BUDGET_LOG_RECORDS_FIELD :: "budget_log_records"
 BUDGET_SCREEN_PAGES_FIELD :: "budget_screen_pages"
 
+// The text value of `budget_pages` that marks an unbounded growth row:
+// reserves floor and default size at start, and allows Budget_Grow up to
+// the machine's safety ceiling (or a lower row ceiling).
+BUDGET_PAGES_UNBOUNDED_TEXT :: "unbounded"
+
 // The share: the largest budget of one process is the budget of the machine
 // over this count. Stated once in module/format.odin; 1 gives one process
 // the whole machine, 64 a sixty-fourth, default 4 (a quarter).
@@ -191,14 +196,23 @@ ROOT_PLAN_DEFAULTS :: Root_Plan {
 	memory_screen_most_height  = memory_screen.MAX_HEIGHT,
 }
 
+// How a plan row states the starting pages of a process.
+// A closed set so fixed pages, share parts, and unbounded are mutually
+// exclusive in one field instead of independent booleans.
+Budget_Size_Kind :: enum u8 {
+	Default     = 0, // No size row: reserves default_growth_factor * floor (rounded up to 512 pages).
+	Pages       = 1, // Fixed page count in `pages`.
+	Share_Parts = 2, // Fraction `share_parts / BUDGET_SHARE_PARTS_WHOLE` of machine pages at start.
+	Unbounded   = 3, // Reserves floor and default size; growth row up to safety ceiling (or lower row ceiling).
+}
+
 // The budget policy row of one module or role owner, read from its plan
-// values. Each field has an explicit presence flag so 0 (for example
+// values. Each optional field has an explicit presence flag so 0 (for example
 // budget_log_records = 0) stays distinct from absent.
 Module_Budget_Policy :: struct {
+	size_kind:            Budget_Size_Kind,
 	pages:                u64,
-	has_pages:            bool,
 	share_parts:          u64,
-	has_share_parts:      bool,
 	ceiling_pages:        u64,
 	has_ceiling:          bool,
 	growth_reserve_pages: u64,
@@ -330,23 +344,46 @@ root_plan_of :: proc "contextless" (values: plan_values.Owner_Values) -> (plan: 
 	return plan, false
 }
 
+@(private = "file")
+unbounded_text_valid :: proc "contextless" (text: string) -> bool {
+	return text == BUDGET_PAGES_UNBOUNDED_TEXT
+}
+
+// budget_pages_in_force reads BUDGET_PAGES_FIELD with lock-over-default
+// precedence across both integer counts (Word) and the unbounded marker
+// (Text == BUDGET_PAGES_UNBOUNDED_TEXT). Any out-of-range word or other text
+// holds as no value of its layer.
+@(private = "file")
+budget_pages_in_force :: proc "contextless" (values: plan_values.Owner_Values) -> (kind: Budget_Size_Kind, pages: u64) {
+	for record in ([2]chosen_values.Record{values.locks, values.defaults}) {
+		if word, found := chosen_values.find(record, BUDGET_PAGES_FIELD); found && pages_valid(word) {
+			return .Pages, word
+		}
+		if text, found := chosen_values.find_text(record, BUDGET_PAGES_FIELD); found && unbounded_text_valid(text) {
+			return .Unbounded, 0
+		}
+	}
+	return .Default, 0
+}
+
 // module_budget_policy_of reads the budget policy row of one module or role
-// owner from its plan values. A row may give budget_pages or
-// budget_share_parts, never both: when both pass their borders, size_conflict
-// is true and neither holds. A growth reserve requires a ceiling at least as
-// large: otherwise reserve_over_ceiling is true and the reserve is cleared.
+// owner from its plan values. A row may give budget_pages (a count or
+// "unbounded") or budget_share_parts, never both: when both pass their
+// borders, size_conflict is true and neither holds. A growth reserve requires
+// a ceiling at least as large: otherwise reserve_over_ceiling is true and the
+// reserve is cleared.
 module_budget_policy_of :: proc "contextless" (values: plan_values.Owner_Values) -> (policy: Module_Budget_Policy, size_conflict: bool, reserve_over_ceiling: bool) {
 	empty: chosen_values.Record
-	if word, _, found := plan_values.value_in_force(BUDGET_PAGES_FIELD, empty, values, pages_valid); found {
-		policy.pages, policy.has_pages = word, true
-	}
-	if word, _, found := plan_values.value_in_force(BUDGET_SHARE_PARTS_FIELD, empty, values, share_parts_valid); found {
-		policy.share_parts, policy.has_share_parts = word, true
-	}
-	if policy.has_pages && policy.has_share_parts {
-		policy.pages, policy.has_pages = 0, false
-		policy.share_parts, policy.has_share_parts = 0, false
+	pages_kind, pages_word := budget_pages_in_force(values)
+	share_word, _, has_share := plan_values.value_in_force(BUDGET_SHARE_PARTS_FIELD, empty, values, share_parts_valid)
+	if pages_kind != .Default && has_share {
 		size_conflict = true
+	} else if pages_kind != .Default {
+		policy.size_kind = pages_kind
+		policy.pages = pages_word
+	} else if has_share {
+		policy.size_kind = .Share_Parts
+		policy.share_parts = share_word
 	}
 	if word, _, found := plan_values.value_in_force(BUDGET_CEILING_PAGES_FIELD, empty, values, pages_valid); found {
 		policy.ceiling_pages, policy.has_ceiling = word, true
@@ -370,18 +407,54 @@ module_budget_policy_of :: proc "contextless" (values: plan_values.Owner_Values)
 	return policy, size_conflict, reserve_over_ceiling
 }
 
-// planned_pages_of computes the planned page count of a budget policy row
-// against the pages of the machine at start. has_size is false when the row
-// gives neither pages nor share parts.
+// planned_pages_of computes the planned starting page count of a budget
+// policy row against the pages of the machine at start. has_size is false for
+// Default and Unbounded rows: an unbounded row reserves floor and default
+// size at start, identical to no row, leaving start_list_sizes unchanged.
 planned_pages_of :: proc "contextless" (policy: Module_Budget_Policy, machine_pages: u64) -> (pages: u64, has_size: bool) {
-	if policy.has_pages {
+	switch policy.size_kind {
+	case .Default, .Unbounded:
+		return 0, false
+	case .Pages:
 		return policy.pages, true
-	}
-	if policy.has_share_parts {
+	case .Share_Parts:
 		scaled := (u128(machine_pages) * u128(policy.share_parts)) / u128(BUDGET_SHARE_PARTS_WHOLE)
 		return u64(min(scaled, u128(max(u64)))), true
 	}
 	return 0, false
+}
+
+// effective_growth_of resolves the effective growth ceiling and growth
+// reserve of a process from its plan row, the machine's safety ceiling (one
+// share of the machine from principal 0's plan, a quarter by default), and
+// whether the process was started with the unbounded start option.
+//
+// An unbounded row or unbounded start allows growth up to safety_ceiling_pages.
+// A plan row can lower its ceiling below safety_ceiling_pages; nothing raises
+// it past safety_ceiling_pages (ceiling_capped is true when policy.ceiling_pages
+// exceeds safety_ceiling_pages). When safety_ceiling_pages is 0, no growth is
+// allowed. Growth reserve never exceeds the effective ceiling.
+effective_growth_of :: proc "contextless" (policy: Module_Budget_Policy, safety_ceiling_pages: u64, start_unbounded := false) -> (ceiling_pages: u64, growth_reserve_pages: u64, ceiling_capped: bool) {
+	if safety_ceiling_pages == 0 {
+		return 0, 0, false
+	}
+	unbounded := policy.size_kind == .Unbounded || start_unbounded
+	if policy.has_ceiling {
+		if policy.ceiling_pages > safety_ceiling_pages {
+			ceiling_pages = safety_ceiling_pages
+			ceiling_capped = true
+		} else {
+			ceiling_pages = policy.ceiling_pages
+		}
+	} else if unbounded {
+		ceiling_pages = safety_ceiling_pages
+	} else {
+		return 0, 0, false
+	}
+	if policy.has_growth_reserve {
+		growth_reserve_pages = min(policy.growth_reserve_pages, ceiling_pages)
+	}
+	return ceiling_pages, growth_reserve_pages, ceiling_capped
 }
 
 // store_blocks_of gives the quota of a store from the values of its owner,

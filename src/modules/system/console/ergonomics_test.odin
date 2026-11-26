@@ -160,6 +160,21 @@ unified_start_refuses_bad_second_argument_and_bad_disk_inputs :: proc(t: ^testin
 	_ = call_run("start", three_args[:])
 	testing.expect(t, failed)
 	testing.expect(t, strings.contains(ergonomics_failure_text(), "1 or 2 arguments, not 3"))
+
+	// Start budget option parser accepts exact "unbounded" and refuses all other strings.
+	for bad_opt in ([?]string{"", "Unbounded", "UNBOUNDED", "unbounded ", " unbounded", "default", "bounded", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}) {
+		opt, matched := start_budget_option_of_text(bad_opt)
+		testing.expectf(t, !matched && opt == .Default, "bad start budget option %q matched", bad_opt)
+	}
+	unb_opt, unb_matched := start_budget_option_of_text("unbounded")
+	testing.expect(t, unb_matched && unb_opt == .Unbounded)
+
+	// start("notes", "unbounded") reaches the root start path (not disk hash validation).
+	ergonomics_clear_line()
+	unb_args := [2]Value{{kind = .Text, text = "notes"}, {kind = .Text, text = "unbounded"}}
+	_ = call_run("start", unb_args[:])
+	testing.expect(t, failed)
+	testing.expect(t, !strings.contains(ergonomics_failure_text(), "64 hexadecimal digits"))
 }
 
 @(test)

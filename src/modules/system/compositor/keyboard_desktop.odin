@@ -359,7 +359,7 @@ bar_key :: proc "contextless" (code: u32, character: rune, shift: bool) -> bool 
 		bar_menu_step(code == display.KEY_DOWN)
 	case code == display.KEY_ENTER || character == ' ':
 		keyboard_kept_key = code
-		bar_item_act()
+		bar_item_act(shift)
 	}
 	return true
 }
@@ -403,12 +403,12 @@ bar_menu_step :: proc "contextless" (forward: bool) {
 // its first line chosen, a plate brings its group to the front, the viewer
 // mark opens the list of the viewers. An act that reaches a window gives
 // it the focus of the keys.
-bar_item_act :: proc "contextless" () {
+bar_item_act :: proc "contextless" (unbounded := false) {
 	if menu_open != .None {
 		if menu_line < 0 && menu_action == .None {
 			return
 		}
-		if menu_choice_do(true) { // start_menu.odin
+		if menu_choice_do(true, unbounded) { // start_menu.odin
 			return // A grant was revoked: the menu and the focus of the keys stay.
 		}
 		bar_focus = {}

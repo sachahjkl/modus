@@ -3,6 +3,7 @@ package budget_growth
 
 import "core:strings"
 import "core:testing"
+import "modus:contract/root_plan_values"
 
 // Refusals and edge cases come first: no row refused before reading pool or
 // rate limit; 0 and > ceiling refused; rate limit enforced on both growth
@@ -210,4 +211,81 @@ table_lifecycle_take_release_drain_and_stop :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, !line_allowed(&bound, 1999))
 	testing.expect(t, line_allowed(&bound, 2000))
+}
+
+// Unbounded row integration with Budget_Grow: grows up to the machine's
+// safety ceiling (or lower row ceiling), never past the safety ceiling,
+// and growth pages remain unreserved (pool exhaustion returns No_Pages).
+@(test)
+unbounded_row_growth_meets_safety_ceiling_and_stays_unreserved :: proc(t: ^testing.T) {
+	SAFETY_CEILING :: u64(50_000)
+
+	// 1. Unbounded row with no explicit ceiling grows up to safety ceiling,
+	// refused at safety ceiling + 1, and refused when pool is short.
+	unb_policy := root_plan_values.Module_Budget_Policy{size_kind = .Unbounded}
+	ceil, res, capped := root_plan_values.effective_growth_of(unb_policy, SAFETY_CEILING)
+	testing.expect(t, ceil == SAFETY_CEILING && res == 0 && !capped)
+
+	// Pool short: growth is not reserved, so No_Pages is returned (never reserves).
+	r_short, _, _, c_short := decide({
+		ceiling_pages        = ceil,
+		growth_reserve_pages = res,
+		paid_pages           = 2048,
+		asked_pages          = 4096,
+		rate_slot_available  = true,
+		period_ms            = 1000,
+		available_pages      = 4095,
+	})
+	testing.expect(t, r_short == .No_Pages && c_short)
+
+	// Exact hit of safety ceiling succeeds; one page past fails Over_Ceiling.
+	r_fit, f_res, f_pool, _ := decide({
+		ceiling_pages        = ceil,
+		growth_reserve_pages = res,
+		paid_pages           = 2048,
+		asked_pages          = SAFETY_CEILING - 2048,
+		rate_slot_available  = true,
+		period_ms            = 1000,
+		available_pages      = 100_000,
+	})
+	testing.expect(t, r_fit == .None && f_res == 0 && f_pool == SAFETY_CEILING - 2048)
+
+	r_past, _, _, c_past := decide({
+		ceiling_pages        = ceil,
+		growth_reserve_pages = res,
+		paid_pages           = SAFETY_CEILING,
+		asked_pages          = 1,
+		rate_slot_available  = true,
+		period_ms            = 1000,
+		available_pages      = 100_000,
+	})
+	testing.expect(t, r_past == .Over_Ceiling && c_past)
+
+	// 2. Unbounded row with lower ceiling stops at the lower ceiling.
+	lower_policy := root_plan_values.Module_Budget_Policy{size_kind = .Unbounded, has_ceiling = true, ceiling_pages = 16_384}
+	low_ceil, _, low_capped := root_plan_values.effective_growth_of(lower_policy, SAFETY_CEILING)
+	testing.expect(t, low_ceil == 16_384 && !low_capped)
+	r_low_past, _, _, _ := decide({
+		ceiling_pages       = low_ceil,
+		paid_pages          = 16_384,
+		asked_pages         = 1,
+		rate_slot_available = true,
+		period_ms           = 1000,
+		available_pages     = 100_000,
+	})
+	testing.expect(t, r_low_past == .Over_Ceiling)
+
+	// 3. Unbounded row attempting ceiling > safety ceiling is capped at safety ceiling.
+	bypass_policy := root_plan_values.Module_Budget_Policy{size_kind = .Unbounded, has_ceiling = true, ceiling_pages = 200_000}
+	cap_ceil, _, was_capped := root_plan_values.effective_growth_of(bypass_policy, SAFETY_CEILING)
+	testing.expect(t, cap_ceil == SAFETY_CEILING && was_capped)
+	r_bypass, _, _, _ := decide({
+		ceiling_pages       = cap_ceil,
+		paid_pages          = SAFETY_CEILING,
+		asked_pages         = 1,
+		rate_slot_available = true,
+		period_ms           = 1000,
+		available_pages     = 200_000,
+	})
+	testing.expect(t, r_bypass == .Over_Ceiling)
 }

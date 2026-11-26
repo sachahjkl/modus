@@ -163,9 +163,9 @@ settings_pass_start :: proc "contextless" (pass: settings.Pass, principal: u64, 
 // settings_window_start takes Control.Start of `settings` from the desktop:
 // the one start of the window that waits for a pass that runs, so that a
 // press of the principal is not lost.
-settings_window_start :: proc "contextless" (principal: u64) {
-	if settings_start_decide(principal, .Desktop) == .Start {
-		start(role_holder_name(.Settings), principal)
+settings_window_start :: proc "contextless" (principal: u64, budget_unbounded := false) {
+	if settings_start_decide(principal, .Desktop, budget_unbounded) == .Start {
+		start(role_holder_name(.Settings), principal, budget_unbounded = budget_unbounded)
 	}
 }
 
@@ -188,6 +188,7 @@ settings_running :: proc "contextless" () -> (item: ^Started, pass: settings.Pas
 // when the pass stops (settings_start_due_step), in the session that asked.
 settings_start_due: bool
 settings_start_due_principal: u64
+settings_start_due_budget_unbounded: bool
 
 // Who asks a start of `settings`: the desktop, whose start of the window
 // waits for a pass that runs, or another caller (a connection to the
@@ -213,7 +214,7 @@ Settings_Start_Decision :: enum u8 {
 // the window of the desktop due until the pass stops, or refuses; each with
 // its fact. start() calls it for each caller; a caller that decides first
 // gets Start again from start(), since Start does nothing.
-settings_start_decide :: proc "contextless" (principal: u64, asker: Settings_Asker) -> Settings_Start_Decision {
+settings_start_decide :: proc "contextless" (principal: u64, asker: Settings_Asker, budget_unbounded := false) -> Settings_Start_Decision {
 	item, pass := settings_running()
 	switch settings.start_answer(settings_pass, item != nil, pass) {
 	case .Start:
@@ -231,7 +232,9 @@ settings_start_decide :: proc "contextless" (principal: u64, asker: Settings_Ask
 	case .Wait_For_Pass:
 		switch asker {
 		case .Desktop:
-			settings_start_due, settings_start_due_principal = true, principal
+			settings_start_due = true
+			settings_start_due_principal = principal
+			settings_start_due_budget_unbounded = budget_unbounded
 			system.log_fact(.Info, Settings_Start_Waits_For_Pass{})
 			return .Waits
 		case .Other:
@@ -266,7 +269,9 @@ settings_start_due_step :: proc "contextless" () {
 		return
 	}
 	settings_start_due = false
-	if outcome := start(role_holder_name(.Settings), settings_start_due_principal); outcome != .Succeeded {
+	due_unbounded := settings_start_due_budget_unbounded
+	settings_start_due_budget_unbounded = false
+	if outcome := start(role_holder_name(.Settings), settings_start_due_principal, budget_unbounded = due_unbounded); outcome != .Succeeded {
 		system.log_fact(.Warning, Settings_Due_Start_Failed{outcome = outcome})
 	}
 }

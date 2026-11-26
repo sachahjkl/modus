@@ -9,6 +9,7 @@ package root
 import "internal:root/budget_growth"
 import "modus:contract/call_outcome"
 import "modus:contract/ring"
+import "modus:contract/root_plan_values"
 import "modus:contract/root_ring"
 import "modus:contract/value_kinds"
 import "modus:system"
@@ -49,25 +50,30 @@ budget_grow_command :: proc "contextless" (item: ^Started, record: ring.Record, 
 }
 
 // growth_reserves_reserved_for_others sums the unspent growth reserves of
-// every other running process of the boot image and every unstarted row of
-// the start list, so one process never draws from another process's growth
-// reserve before or after Machine_Usable.
+// every other running process that shares the same paying budget (`paying`)
+// and, when paying == 0 (the root service's own budget), every unstarted row
+// of the start list, so one process never draws from another process's growth
+// reserve or mixes reserves across isolated session budgets.
 @(private = "file")
-growth_reserves_reserved_for_others :: proc "contextless" (caller: ^Started) -> (reserved: u64) {
+growth_reserves_reserved_for_others :: proc "contextless" (caller: ^Started, paying: system.Handle) -> (reserved: u64) {
 	caller_name := system.name_of(caller.name[:])
 	for &other in started {
-		if other.process == 0 || &other == caller || other.from_disk {
+		if other.process == 0 || &other == caller || other.from_disk || session_budget_of(other.principal) != paying {
 			continue
 		}
 		policy, _, _ := module_budget_policy_for(system.name_of(other.name[:]))
-		if !policy.has_growth_reserve || policy.growth_reserve_pages == 0 {
+		_, reserve_pages, _ := root_plan_values.effective_growth_of(policy, largest_budget.pages, other.budget_unbounded)
+		if reserve_pages == 0 {
 			continue
 		}
 		_, _, used := budget_growth.held_by(&budget_growth_table, u64(other.process))
-		if policy.growth_reserve_pages > used {
-			left := policy.growth_reserve_pages - used
+		if reserve_pages > used {
+			left := reserve_pages - used
 			reserved = reserved > max(u64) - left ? max(u64) : reserved + left
 		}
+	}
+	if paying != 0 {
+		return reserved
 	}
 	for &row in start_list_reserves.rows[:start_list_reserves.count] {
 		row_name := system.name_of(row.name[:])
@@ -75,10 +81,11 @@ growth_reserves_reserved_for_others :: proc "contextless" (caller: ^Started) -> 
 			continue
 		}
 		policy, _, _ := module_budget_policy_for(row_name)
-		if !policy.has_growth_reserve || policy.growth_reserve_pages == 0 {
+		_, reserve_pages, _ := root_plan_values.effective_growth_of(policy, largest_budget.pages, false)
+		if reserve_pages == 0 {
 			continue
 		}
-		reserved = reserved > max(u64) - policy.growth_reserve_pages ? max(u64) : reserved + policy.growth_reserve_pages
+		reserved = reserved > max(u64) - reserve_pages ? max(u64) : reserved + reserve_pages
 	}
 	return reserved
 }
@@ -97,12 +104,7 @@ budget_grow_request :: proc "contextless" (item: ^Started, asked_pages: u64, val
 	growth_reserve_pages: u64
 	if !item.from_disk {
 		policy, _, _ := module_budget_policy_for(name)
-		if policy.has_ceiling {
-			ceiling_pages = policy.ceiling_pages
-		}
-		if policy.has_growth_reserve {
-			growth_reserve_pages = policy.growth_reserve_pages
-		}
+		ceiling_pages, growth_reserve_pages, _ = root_plan_values.effective_growth_of(policy, largest_budget.pages, item.budget_unbounded)
 	}
 
 	// Refuse at border before touching starter pages when no growth row exists.
@@ -115,11 +117,14 @@ budget_grow_request :: proc "contextless" (item: ^Started, asked_pages: u64, val
 
 	held_count, extra_pages, reserve_used := budget_growth.held_by(&budget_growth_table, owner)
 	last_at, has_last := budget_growth.last_decision(&budget_growth_table, owner)
-	own, _ := system.budget_read()
-	reserved_start := start_list_reserved_all()
-	reserved_other := growth_reserves_reserved_for_others(item)
+	// Named-principal processes draw growth pages from their session budget so
+	// they respect the machine reserve held back when the session unlocked.
+	paying := session_budget_of(item.principal)
+	holds, _ := system.budget_read(paying)
+	reserved_start := paying == 0 ? start_list_reserved_all() : 0
+	reserved_other := growth_reserves_reserved_for_others(item, paying)
 	reserved_total := reserved_start > max(u64) - reserved_other ? max(u64) : reserved_start + reserved_other
-	available := own.pages > reserved_total ? own.pages - reserved_total : 0
+	available := holds.pages > reserved_total ? holds.pages - reserved_total : 0
 
 	paid := item.budget_pages > max(u64) - extra_pages ? max(u64) : item.budget_pages + extra_pages
 	facts := budget_growth.Grow_Facts {
@@ -147,7 +152,7 @@ budget_grow_request :: proc "contextless" (item: ^Started, asked_pages: u64, val
 	growth: u64
 	if refusal == .None {
 		status: call_outcome.Call_Outcome
-		extra_budget, status = system.budget_create({pages = asked_pages})
+		extra_budget, status = system.budget_create({pages = asked_pages}, from = paying)
 		if status != .Succeeded {
 			extra_budget = 0
 			refusal = .No_Pages

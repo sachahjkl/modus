@@ -79,8 +79,9 @@ Start_Work :: struct {
 	// Where a refusal writes its error record: the completion of the
 	// command that asked for the start, or a record of the start alone. A
 	// start that this one starts first writes there too.
-	refusal:        ^[7]u64,
-	hold:           Start_Hold,
+	refusal:          ^[7]u64,
+	hold:             Start_Hold,
+	budget_unbounded: bool,
 }
 
 // start starts a process of the boot image that shows a surface or has a
@@ -90,8 +91,10 @@ Start_Work :: struct {
 // not nil, receives the place of the process; refusal, when not nil,
 // receives the error record of a refusal, which the step that refuses
 // writes with the outcome; hold keeps the process before its first
-// instruction for a debugger.
-start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, asker: ^Started = nil, premade_wiring: ^Premade_Start_Wiring = nil, place: ^^Started = nil, refusal: ^[7]u64 = nil, store_override: string = "", store_limit_override: u64 = 0, edit_target_page: system.Handle = 0, hold: Start_Hold = .None) -> call_outcome.Call_Outcome {
+// instruction for a debugger; budget_unbounded enables growth up to the
+// machine's safety ceiling (or a lower plan ceiling) without changing the
+// starting reservation.
+start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, asker: ^Started = nil, premade_wiring: ^Premade_Start_Wiring = nil, place: ^^Started = nil, refusal: ^[7]u64 = nil, store_override: string = "", store_limit_override: u64 = 0, edit_target_page: system.Handle = 0, hold: Start_Hold = .None, budget_unbounded := false) -> call_outcome.Call_Outcome {
 	own_refusal: [7]u64
 	work := Start_Work {
 		name                 = name,
@@ -103,6 +106,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 		edit_target_page     = edit_target_page,
 		refusal              = refusal != nil ? refusal : &own_refusal,
 		hold                 = hold,
+		budget_unbounded     = budget_unbounded,
 	}
 	defer start_handles_close(&work)
 	// The holder of Settings is the one writer of the settings page: each
@@ -785,6 +789,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> call_outcome.Cal
 	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, seeded_values, process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, from_budget = session_budget_of(work.principal), wiring = &work.wiring, held_entry = held_entry, ready = &work.slot.ready)
 	if status == .Succeeded {
 		start_budget_note(work.slot, start_budget)
+		work.slot.budget_unbounded = work.budget_unbounded
 		// A process with a window of its own: the compositor ties the time
 		// to the ring of the window that Client_Add gave.
 		if .Terminal not_in work.start_grant_set.grants && work.slot.client != 0 {

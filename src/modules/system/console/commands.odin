@@ -16,6 +16,7 @@ import "modus:contract/wide_grants"
 import "modus:disk_process"
 import "modus:principals"
 import "modus:random"
+import "modus:contract/root_plan_values"
 import "modus:contract/root_ring"
 import "modus:contract/enum_word"
 import "modus:lex_parser"
@@ -516,6 +517,7 @@ commands_start :: proc "contextless" () {
 	//
 	// ```lex
 	// > start("notes")
+	// > start("notes", "unbounded")
 	// > start("db_browser", "5f0c...")
 	// > start("output_count_reader", wire(where(output_counter.counts, status = 404), output_count_reader.counts))
 	// ```
@@ -523,9 +525,9 @@ commands_start :: proc "contextless" () {
 	// Errors: the error record of the root service when it refuses (no
 	// module has the name, the process runs already, no slot is free, no
 	// disk grant row pins the hash, hash mismatch, or a row of the wiring
-	// list); a second argument that is neither a `Table` of `Wiring` nor a
-	// hash `Text`.
-	command("start", {.Text, .None}, .None, "start a boot-image module or a disk process, with a wiring list or a hash", start_process, optional_last = true)
+	// list); a second argument that is neither a `Table` of `Wiring`,
+	// `"unbounded"`, nor a hash `Text`.
+	command("start", {.Text, .None}, .None, "start a boot-image module or a disk process, with \"unbounded\", a wiring list, or a hash", start_process, optional_last = true)
 	// Starts the editor `edit` on a text object of a store of the principal
 	// of this console. It gives nothing.
 	//
@@ -3529,11 +3531,22 @@ list_replacements :: proc "contextless" (arguments: []Value) -> Value {
 	return made_value(&table, "replacements")
 }
 
+// start_budget_option_of_text parses an explicit start budget option text
+// passed to start(name, option). Only exact "unbounded" matches; every other
+// text (such as a 64-digit disk process hash) returns matched = false.
+start_budget_option_of_text :: proc "contextless" (text: string) -> (option: root_ring.Start_Budget_Option, matched: bool) {
+	if text == root_plan_values.BUDGET_PAGES_UNBOUNDED_TEXT {
+		return .Unbounded, true
+	}
+	return .Default, false
+}
+
 start_process :: proc "contextless" (arguments: []Value) -> Value {
 	// The log service can be the process that starts: the console tries
 	// its connection again.
 	line_records_try_again()
 	name := arguments[0].text
+	budget_option := root_ring.Start_Budget_Option.Default
 	if len(arguments) == 2 {
 		switch arguments[1].kind {
 		case .Table:
@@ -3544,9 +3557,13 @@ start_process :: proc "contextless" (arguments: []Value) -> Value {
 			}
 			return start_with_list(name, arguments[1])
 		case .Text:
-			return start_from_disk_run("start", name, arguments[1].text, unified_no_hash = false)
+			if parsed, is_option := start_budget_option_of_text(arguments[1].text); is_option {
+				budget_option = parsed
+			} else {
+				return start_from_disk_run("start", name, arguments[1].text, unified_no_hash = false)
+			}
 		case .None, .Integer, .Record, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
-			return fail("start: argument 2 must be a wiring Table or a hash Text, not ", type_text(arguments[1].file, arguments[1].kind, arguments[1].detail))
+			return fail("start: argument 2 must be a wiring Table or a hash Text, or \"unbounded\", not ", type_text(arguments[1].file, arguments[1].kind, arguments[1].detail))
 		}
 	}
 	// The ring holds a name of 31 bytes: request refuses a longer one, as
@@ -3555,19 +3572,21 @@ start_process :: proc "contextless" (arguments: []Value) -> Value {
 		return request(.Start, name)
 	}
 	// Boot-image names and disk-process nicknames are disjoint in root.
-	// When no boot-image module has the name, try Start_From_Disk with an
-	// empty hash so root verifies the hash pinned in the principal's disk
-	// grant table.
-	if _, _, in_boot_image := image_module_file(name); !in_boot_image {
-		if disk_problem, _ := disk_process.name_problem(name); disk_problem == .None {
-			return start_from_disk_run("start", name, "", unified_no_hash = true)
+	// When no boot-image module has the name (and no unbounded option was
+	// passed), try Start_From_Disk with an empty hash so root verifies the
+	// hash pinned in the principal's disk grant table.
+	if budget_option == .Default {
+		if _, _, in_boot_image := image_module_file(name); !in_boot_image {
+			if disk_problem, _ := disk_process.name_problem(name); disk_problem == .None {
+				return start_from_disk_run("start", name, "", unified_no_hash = true)
+			}
 		}
 	}
 	// The console asks for the process handle: it names the process as
 	// the end Started of a wiring, and its record outputs by their typed
 	// names (streams.odin).
 	packed := system.name_pack(name)
-	completion, answered := disk_request(.Start, {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(root_ring.Start_Wiring_List.None), 5 = u64(root_ring.Start_Answer.Process_Handle)})
+	completion, answered := disk_request(.Start, {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(root_ring.Start_Wiring_List.None), 5 = u64(root_ring.Start_Answer.Process_Handle), 6 = u64(budget_option)})
 	if !answered {
 		return fail_no_answer()
 	}

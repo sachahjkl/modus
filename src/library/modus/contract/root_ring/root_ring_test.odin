@@ -25,6 +25,38 @@ start_answer_of_word_refuses_a_word_that_names_no_member :: proc(t: ^testing.T) 
 	}
 }
 
+// values[6] of a Start (non-Start_Policy) and values[4] of display.Control.Start:
+// one past the last member, screen-of-memory words, and the largest word name
+// nothing; each member comes back from its word, last.
+@(test)
+start_budget_option_of_word_refuses_unknown_words :: proc(t: ^testing.T) {
+	for word in ([?]u64{u64(max(Start_Budget_Option)) + 1, screen_of_memory_word(1920, 1080), max(u64)}) {
+		_, ok := start_budget_option_of_word(word)
+		testing.expectf(t, !ok, "the budget option word %d of a Start is taken", word)
+	}
+	for member in Start_Budget_Option {
+		read, ok := start_budget_option_of_word(u64(member))
+		testing.expect(t, ok && read == member)
+	}
+
+	// display.Control.Start border: refuses bad values[4] and any non-zero
+	// values[5] or values[6], even when values[4] is valid.
+	for bad_opt in ([?]u64{u64(max(Start_Budget_Option)) + 1, max(u64)}) {
+		_, ok := desktop_start_budget_option_of_values({4 = bad_opt})
+		testing.expectf(t, !ok, "desktop start accepted bad option %d", bad_opt)
+	}
+	for member in Start_Budget_Option {
+		for bad_extra in ([?]u64{1, max(u64)}) {
+			_, ok5 := desktop_start_budget_option_of_values({4 = u64(member), 5 = bad_extra})
+			testing.expectf(t, !ok5, "desktop start accepted non-zero values[5]=%d", bad_extra)
+			_, ok6 := desktop_start_budget_option_of_values({4 = u64(member), 6 = bad_extra})
+			testing.expectf(t, !ok6, "desktop start accepted non-zero values[6]=%d", bad_extra)
+		}
+		read, ok := desktop_start_budget_option_of_values({4 = u64(member)})
+		testing.expect(t, ok && read == member)
+	}
+}
+
 // values[0] of a Wire and values[4] of a Start: None of a Wire, one past
 // the last member and the largest word name nothing; each member comes
 // back from its word, last.
