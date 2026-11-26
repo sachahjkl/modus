@@ -291,7 +291,7 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	record.handles[op.ROOT_MACHINE] = handle_insert(process, {kind = .Machine, rights = RIGHTS_MACHINE})
 	framebuffer := boot.framebuffer
 	if format, format_ok := info.pixel_format_of_word(framebuffer.format); format_ok && format != .None {
-		pages := (u64(framebuffer.pixels_per_line) * u64(framebuffer.height) * 4 + PAGE_SIZE - 1) / PAGE_SIZE
+		pages := framebuffer_device_pages(framebuffer, boot.direct_map_size)
 		// The pixels of the firmware: a Display_Memory over the same pages
 		// must keep their cache type.
 		framebuffer_region := region_device(framebuffer.address, pages, cache_types_counted = true)

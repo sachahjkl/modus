@@ -23,6 +23,7 @@
     </div>
     <div class="bar-actions">
       <button id="theme" class="control-button" type="button">Light</button>
+      <button id="fullscreen" class="control-button" type="button">Fullscreen</button>
       <button id="start" class="control-button primary" type="button">Start</button>
     </div>
   </div>
@@ -31,9 +32,9 @@
   <section class="machine-window" aria-label="modus desktop">
     <div class="window-titlebar">
       <span class="window-title">desktop</span>
-      <span class="window-meta">boot.image &middot; 1280 &times; 800</span>
+      <span id="screen-meta" class="window-meta">boot.image &middot; 1280 &times; 800</span>
     </div>
-    <div class="stage-frame">
+    <div id="stage-frame" class="stage-frame">
       <canvas id="screen" width="1280" height="800" tabindex="0" aria-label="The screen of the machine"></canvas>
     </div>
   </section>

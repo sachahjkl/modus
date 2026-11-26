@@ -8,15 +8,59 @@
 // The stage that ends the start: the first frame of the compositor.
 const STAGE_READY = "ready";
 const THEME_KEY = "modus-console-theme";
+const VIEWPORT_MIN_WIDTH = 640;
+const VIEWPORT_MIN_HEIGHT = 400;
+const VIEWPORT_MAX_WIDTH = 1920;
+const VIEWPORT_MAX_HEIGHT = 1200;
+const RESIZE_DEBOUNCE_MS = 120;
 
+const stageFrame = document.getElementById("stage-frame");
 const screen = document.getElementById("screen");
+const screenMeta = document.getElementById("screen-meta");
 const status = document.getElementById("machine-status");
 const statusDot = document.getElementById("dot");
 const serial = document.getElementById("serial-output");
 const startButton = document.getElementById("start");
+const fullscreenButton = document.getElementById("fullscreen");
 const themeButton = document.getElementById("theme");
 const context = screen.getContext("2d", { alpha: false });
-const image = context.createImageData(screen.width, screen.height);
+let image = context.createImageData(screen.width, screen.height);
+let image32 = new Uint32Array(image.data.buffer);
+let guestPointerX = Math.floor(screen.width / 2);
+let guestPointerY = Math.floor(screen.height / 2);
+let guestPointerButtons = 0;
+let pointerSynced = false;
+let lastRequestedWidth = screen.width;
+let lastRequestedHeight = screen.height;
+let lastSeenStageWidth = screen.width;
+let lastSeenStageHeight = screen.height;
+let resizeTimer = 0;
+
+function updateScreenMeta(width, height) {
+  if (screenMeta) screenMeta.textContent = "boot.image · " + width + " × " + height;
+}
+
+function applyCanvasSize(width, height) {
+  if (screen.width === width && screen.height === height) return;
+  screen.width = width;
+  screen.height = height;
+  image = context.createImageData(width, height);
+  image32 = new Uint32Array(image.data.buffer);
+  updateScreenMeta(width, height);
+  pointerSynced = false;
+}
+
+function measureStageSize() {
+  if (!stageFrame) return { width: screen.width, height: screen.height };
+  const rect = stageFrame.getBoundingClientRect();
+  const rawW = Math.floor(rect.width) & ~1;
+  const rawH = Math.floor(rect.height) & ~1;
+  if (rawW <= 0 || rawH <= 0) return { width: screen.width, height: screen.height };
+  return {
+    width: Math.max(VIEWPORT_MIN_WIDTH, Math.min(VIEWPORT_MAX_WIDTH, rawW)),
+    height: Math.max(VIEWPORT_MIN_HEIGHT, Math.min(VIEWPORT_MAX_HEIGHT, rawH)),
+  };
+}
 
 function themeSet(theme) {
   document.documentElement.dataset.theme = theme;
@@ -70,9 +114,9 @@ let downloaded = { loaded: 0, total: 0 };
 let machineState = "";
 
 // The framebuffer is BGRA (little-endian 0xAARRGGBB); ImageData is RGBA (0xAABBGGRR).
-const image32 = new Uint32Array(image.data.buffer);
 function present(buffer) {
   const source32 = new Uint32Array(buffer);
+  if (source32.length !== image32.length) return;
   for (let index = 0; index < image32.length; index += 1) {
     const pixel = source32[index];
     image32[index] = 0xff000000 | ((pixel & 0xff) << 16) | (pixel & 0x00ff00) | ((pixel >> 16) & 0xff);
@@ -112,9 +156,17 @@ function stagesDraw() {
 // canvas shows the stages.
 function animationFrame() {
   if (stage !== STAGE_READY) stagesDraw();
-  else if (worker && !frameAsked) {
-    frameAsked = true;
-    worker.postMessage({ kind: "frame" });
+  else if (worker) {
+    const stageSize = measureStageSize();
+    if (stageSize.width !== lastSeenStageWidth || stageSize.height !== lastSeenStageHeight) {
+      lastSeenStageWidth = stageSize.width;
+      lastSeenStageHeight = stageSize.height;
+      requestStageResize(false);
+    }
+    if (!frameAsked) {
+      frameAsked = true;
+      worker.postMessage({ kind: "frame" });
+    }
   }
   requestAnimationFrame(animationFrame);
 }
@@ -147,11 +199,17 @@ function onWorkerMessage(event) {
           dotSet("running");
           status.textContent = "running";
         }
+        requestStageResize(true);
       }
       return;
     case "frame":
       frameAsked = false;
-      if (!message.unchanged && message.pixels) present(message.pixels);
+      if (!message.unchanged && message.pixels) {
+        if (message.width && message.height && (message.width !== screen.width || message.height !== screen.height)) {
+          applyCanvasSize(message.width, message.height);
+        }
+        present(message.pixels);
+      }
       return;
     case "state":
       machineState = message.state;
@@ -164,8 +222,47 @@ function onWorkerMessage(event) {
   }
 }
 
+function sendResize(width, height) {
+  if (!worker || stage !== STAGE_READY) return;
+  if (width === lastRequestedWidth && height === lastRequestedHeight) return;
+  lastRequestedWidth = width;
+  lastRequestedHeight = height;
+  worker.postMessage({ kind: "resize", width, height });
+}
+
+function requestStageResize(immediate = false) {
+  const size = measureStageSize();
+  lastSeenStageWidth = size.width;
+  lastSeenStageHeight = size.height;
+  if (!worker) {
+    applyCanvasSize(size.width, size.height);
+    lastRequestedWidth = screen.width;
+    lastRequestedHeight = screen.height;
+    drawIdle();
+    return;
+  }
+  if (stage !== STAGE_READY) return;
+  if (resizeTimer) {
+    clearTimeout(resizeTimer);
+    resizeTimer = 0;
+  }
+  if (immediate) {
+    sendResize(size.width, size.height);
+    return;
+  }
+  resizeTimer = setTimeout(() => {
+    resizeTimer = 0;
+    const settled = measureStageSize();
+    sendResize(settled.width, settled.height);
+  }, RESIZE_DEBOUNCE_MS);
+}
+
 startButton.addEventListener("click", () => {
   if (worker) return;
+  const bootSize = measureStageSize();
+  applyCanvasSize(bootSize.width, bootSize.height);
+  lastRequestedWidth = screen.width;
+  lastRequestedHeight = screen.height;
   startButton.disabled = true;
   dotSet("");
   worker = new Worker("browser_machine_worker.js", { type: "module" });
@@ -186,6 +283,35 @@ startButton.addEventListener("click", () => {
   requestAnimationFrame(animationFrame);
 });
 
+if (fullscreenButton && stageFrame) {
+  const updateFullscreenLabel = () => {
+    fullscreenButton.textContent = document.fullscreenElement === stageFrame ? "Exit fullscreen" : "Fullscreen";
+  };
+  fullscreenButton.addEventListener("click", () => {
+    if (document.fullscreenElement === stageFrame) {
+      document.exitFullscreen().catch(() => {});
+    } else if (stageFrame.requestFullscreen) {
+      stageFrame.requestFullscreen().then(() => screen.focus()).catch(() => {});
+    }
+  });
+  document.addEventListener("fullscreenchange", () => {
+    updateFullscreenLabel();
+    requestStageResize(true);
+    if (document.fullscreenElement === stageFrame) screen.focus();
+  });
+}
+
+let stageResizeObserver = null;
+if (stageFrame && typeof ResizeObserver === "function") {
+  stageResizeObserver = new ResizeObserver(() => requestStageResize(false));
+  stageResizeObserver.observe(stageFrame);
+}
+window.addEventListener("resize", () => requestStageResize(false));
+const serialPanel = document.querySelector(".serial-panel");
+if (serialPanel) {
+  serialPanel.addEventListener("toggle", () => requestStageResize(true));
+}
+
 for (const kind of ["keydown", "keyup"]) {
   screen.addEventListener(kind, (event) => {
     if (!worker) return;
@@ -196,11 +322,6 @@ for (const kind of ["keydown", "keyup"]) {
 
 // Map absolute canvas coordinates onto relative PS/2 packets so the guest
 // desktop cursor stays aligned 1:1 with the browser pointer at every scale.
-let guestPointerX = Math.floor(screen.width / 2);
-let guestPointerY = Math.floor(screen.height / 2);
-let guestPointerButtons = 0;
-let pointerSynced = false;
-
 function canvasPointer(event) {
   const rect = screen.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return null;
@@ -250,5 +371,12 @@ for (const kind of ["pointerdown", "pointerup"]) {
   });
 }
 
+const initialSize = measureStageSize();
+applyCanvasSize(initialSize.width, initialSize.height);
+lastRequestedWidth = screen.width;
+lastRequestedHeight = screen.height;
+lastSeenStageWidth = screen.width;
+lastSeenStageHeight = screen.height;
+updateScreenMeta(screen.width, screen.height);
 drawIdle();
 status.textContent = self.crossOriginIsolated ? "ready: shared memory" : "ready: one processor";

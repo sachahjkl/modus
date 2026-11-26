@@ -107,9 +107,10 @@ body.page-console {
 }
 
 body.page-desktop {
-  min-height: 100dvh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 ::selection {
@@ -303,11 +304,18 @@ body.page-desktop {
   flex-direction: column;
 }
 
+.page-desktop .site-bar-inner {
+  max-width: none;
+}
+
 .page-desktop .workspace {
   flex: 1 1 auto;
+  min-height: 0;
+  max-width: none;
+  padding: 10px 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .machine-window {
@@ -318,7 +326,8 @@ body.page-desktop {
   box-shadow: 4px 4px 0 var(--shadow);
 }
 
-.page-console .machine-window {
+.page-console .machine-window,
+.page-desktop .machine-window {
   flex: 1 1 auto;
   min-height: 0;
 }
@@ -570,6 +579,9 @@ body.page-desktop {
 
 /* Desktop page */
 .stage-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
   background: #0b1018;
   display: flex;
   justify-content: center;
@@ -577,11 +589,18 @@ body.page-desktop {
   padding: 0;
 }
 
+.stage-frame:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  background: #0b1018;
+}
+
 #screen {
   display: block;
-  width: 100%;
-  max-width: 1280px;
-  aspect-ratio: 1280 / 800;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
   background: #0b1018;
   outline: none;
   cursor: default;

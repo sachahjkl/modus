@@ -373,8 +373,56 @@ for (const name of ["root::Boot_Image_Agrees", "root::Image_Checked_At_Load"]) {
   }
 }
 
+// Live viewport resize control page layout, clamping, wake packet, and ack sync.
+{
+  const smallLayout = host.physicalLayout({ kernelBytes: 65536, bootImageSize: 4096, framebufferWidth: 800, framebufferHeight: 600, memoryBytes: 16 * 1024 * 1024 });
+  expect(smallLayout.framebufferResizeControl === 0, "small-memory layout skips live resize control page");
+
+  const consoleLayout = host.physicalLayout({ kernelBytes: 65536, bootImageSize: 4096, framebufferWidth: 0, framebufferHeight: 0, memoryBytes: 128 * 1024 * 1024 });
+  expect(consoleLayout.framebufferResizeControl === 0, "console layout with no framebuffer skips live resize control page");
+
+  const layout = host.physicalLayout({ kernelBytes: 65536, bootImageSize: 4096, framebufferWidth: 1000, framebufferHeight: 640, memoryBytes: 64 * 1024 * 1024 });
+  expect(layout.framebufferResizeControl === layout.framebuffer + host.BROWSER_RESIZE_MAX_BYTES, "live resize control page sits at framebuffer + BROWSER_RESIZE_MAX_BYTES");
+  expect(layout.framebufferBytes === host.BROWSER_RESIZE_MAX_BYTES + host.PAGE_SIZE, "framebuffer backing holds max viewport plus 1 control page");
+
+  const memory = { buffer: new ArrayBuffer(layout.total) };
+  host.writeBootRecord(memory, layout, { bootImageSize: 4096, framebufferWidth: 1000, framebufferHeight: 640, startNanoseconds: 0n });
+  const view = new DataView(memory.buffer);
+  const base = layout.framebufferResizeControl;
+  expect(view.getBigUint64(base + host.BROWSER_RESIZE_OFFSETS.magic, true) === host.BROWSER_RESIZE_MAGIC, "MODVRES1 magic written");
+  expect(view.getUint32(base + host.BROWSER_RESIZE_OFFSETS.max_width, true) === host.BROWSER_RESIZE_MAX_WIDTH, "max_width written");
+  expect(view.getUint32(base + host.BROWSER_RESIZE_OFFSETS.max_height, true) === host.BROWSER_RESIZE_MAX_HEIGHT, "max_height written");
+  expect(view.getUint32(base + host.BROWSER_RESIZE_OFFSETS.ack_width, true) === 1000, "initial ack_width matches boot width");
+  expect(view.getUint32(base + host.BROWSER_RESIZE_OFFSETS.ack_height, true) === 640, "initial ack_height matches boot height");
+
+  const machine = new host.BrowserMachine({
+    kernelModule: null,
+    framebufferWidth: 1000,
+    framebufferHeight: 640,
+    clockNanoseconds: () => 0n,
+    idleWait: () => {},
+  });
+  machine.memory = memory;
+  machine.layout = layout;
+  expect(!machine.requestResize(1000, 640), "no-op resize returns false");
+  expect(machine.requestResize(9999, 100), "out-of-range resize clamps and publishes");
+  expect(view.getUint32(base + host.BROWSER_RESIZE_OFFSETS.req_width, true) === host.BROWSER_RESIZE_MAX_WIDTH, "req_width clamped to max");
+  expect(view.getUint32(base + host.BROWSER_RESIZE_OFFSETS.req_height, true) === host.BROWSER_RESIZE_MIN_HEIGHT, "req_height clamped to min");
+  expect(view.getUint32(base + host.BROWSER_RESIZE_OFFSETS.req_seq, true) === 1, "req_seq incremented to 1");
+  expect(machine.keyboard.queue.length >= 3, "zero-delta PS/2 pointer wake packet queued");
+  expect(!machine.syncFramebufferSize(), "syncFramebufferSize stays false before compositor ack");
+
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.ack_width, 1440, true);
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.ack_height, 900, true);
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.ack_seq, 1, true);
+  expect(machine.syncFramebufferSize(), "syncFramebufferSize returns true when ack_seq advances");
+  expect(machine.framebufferWidth === 1440 && machine.framebufferHeight === 900, "framebuffer dimensions updated from ack");
+  expect(machine.framebufferPixels().byteLength === 1440 * 900 * 4, "framebufferPixels view reflects resized dimensions");
+  expect(!machine.syncFramebufferSize(), "repeated syncFramebufferSize is false until next ack");
+}
+
 if (failures.length) {
   for (const failure of failures) console.log("failed: " + failure);
   process.exit(1);
 }
-console.log("passed: stage tracker, dom_terminal accumulator, BLAKE3 vectors, and >16 MiB Bao frame streaming");
+console.log("passed: stage tracker, dom_terminal accumulator, BLAKE3 vectors, >16 MiB Bao frame streaming, and live viewport resize");

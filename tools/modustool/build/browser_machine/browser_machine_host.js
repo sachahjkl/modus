@@ -64,6 +64,29 @@ export const MEMORY_RANGE_OFFSETS = { start: 0, page_count: 8, kind: 16, reserve
 export const MEMORY_RANGE_SIZE = 24;
 export const BOOT_INFO_MAGIC = 0x4F464E49544F4F42n; // The bytes "BOOTINFO".
 
+// Live viewport resize control page (src/library/modus/contract/boot_info/browser_resize.odin).
+// A host test of the tool compares each constant and offset with the contract.
+export const BROWSER_RESIZE_MAX_WIDTH = 1920;
+export const BROWSER_RESIZE_MAX_HEIGHT = 1200;
+export const BROWSER_RESIZE_MIN_WIDTH = 640;
+export const BROWSER_RESIZE_MIN_HEIGHT = 400;
+export const BROWSER_RESIZE_MAX_BYTES = BROWSER_RESIZE_MAX_WIDTH * BROWSER_RESIZE_MAX_HEIGHT * 4;
+export const BROWSER_RESIZE_TOTAL_PAGES = BROWSER_RESIZE_MAX_BYTES / 4096 + 1;
+export const BROWSER_RESIZE_MAGIC = 0x3153455256444f4dn; // The bytes "MODVRES1".
+export const BROWSER_RESIZE_OFFSETS = {
+  magic: 0,
+  max_width: 8,
+  max_height: 12,
+  req_width: 16,
+  req_height: 20,
+  req_seq: 24,
+  ack_width: 28,
+  ack_height: 32,
+  ack_seq: 36,
+};
+export const BROWSER_RESIZE_PAGE_SIZE = 40;
+const BROWSER_RESIZE_MIN_MEMORY_BYTES = 64 * 1024 * 1024;
+
 // The words of Memory_Kind and of Pixel_Format.
 export const MemoryKind = Object.freeze({ Reserved: 0, Free: 1, Boot: 2 });
 export const PixelFormat = Object.freeze({ None: 0, Blue_Green_Red_X: 1, Red_Green_Blue_X: 2 });
@@ -403,11 +426,15 @@ export function physicalLayout({ kernelBytes, bootImageSize, framebufferWidth, f
   const bootImage = memoryMap + PAGE_SIZE;
   const bootEnd = bootImage + alignUp(bootImageSize, PAGE_SIZE);
   const framebuffer = bootEnd;
-  const framebufferBytes = alignUp(framebufferWidth * framebufferHeight * 4, PAGE_SIZE);
+  const liveResize = framebufferWidth > 0 && framebufferHeight > 0 && memoryBytes >= BROWSER_RESIZE_MIN_MEMORY_BYTES;
+  const framebufferBytes = liveResize
+    ? Math.max(alignUp(framebufferWidth * framebufferHeight * 4, PAGE_SIZE), BROWSER_RESIZE_MAX_BYTES) + PAGE_SIZE
+    : alignUp(framebufferWidth * framebufferHeight * 4, PAGE_SIZE);
+  const framebufferResizeControl = liveResize ? framebuffer + BROWSER_RESIZE_MAX_BYTES : 0;
   const free = framebuffer + framebufferBytes;
   const total = alignUp(memoryBytes, WEBASSEMBLY_PAGE_SIZE);
   if (free + 16 * PAGE_SIZE > total) throw new Error("a memory of " + total + " bytes holds no free range after " + free + " bytes");
-  return { kernelEnd, record, memoryMap, bootImage, bootEnd, framebuffer, framebufferBytes, free, total };
+  return { kernelEnd, record, memoryMap, bootImage, bootEnd, framebuffer, framebufferBytes, framebufferResizeControl, free, total };
 }
 
 // writeBootRecord writes the boot record and its memory map: what the
@@ -442,6 +469,19 @@ export function writeBootRecord(memory, layout, { bootImageSize, framebufferWidt
     u32(framebuffer + FRAMEBUFFER_OFFSETS.height, framebufferHeight);
     u32(framebuffer + FRAMEBUFFER_OFFSETS.pixels_per_line, framebufferWidth);
     u32(framebuffer + FRAMEBUFFER_OFFSETS.format, PixelFormat.Blue_Green_Red_X);
+    if (layout.framebufferResizeControl) {
+      const control = layout.framebufferResizeControl;
+      new Uint8Array(memory.buffer, control, PAGE_SIZE).fill(0);
+      u64(control + BROWSER_RESIZE_OFFSETS.magic, BROWSER_RESIZE_MAGIC);
+      u32(control + BROWSER_RESIZE_OFFSETS.max_width, BROWSER_RESIZE_MAX_WIDTH);
+      u32(control + BROWSER_RESIZE_OFFSETS.max_height, BROWSER_RESIZE_MAX_HEIGHT);
+      u32(control + BROWSER_RESIZE_OFFSETS.req_width, framebufferWidth);
+      u32(control + BROWSER_RESIZE_OFFSETS.req_height, framebufferHeight);
+      u32(control + BROWSER_RESIZE_OFFSETS.req_seq, 0);
+      u32(control + BROWSER_RESIZE_OFFSETS.ack_width, framebufferWidth);
+      u32(control + BROWSER_RESIZE_OFFSETS.ack_height, framebufferHeight);
+      u32(control + BROWSER_RESIZE_OFFSETS.ack_seq, 0);
+    }
   }
   u64(field("cycles_start"), startNanoseconds);
   u64(field("cycles_loaded"), startNanoseconds);
@@ -1314,6 +1354,10 @@ export class BrowserMachine {
     this.memoryMebibytes = memoryMebibytes;
     this.framebufferWidth = framebufferWidth;
     this.framebufferHeight = framebufferHeight;
+    this.requestedWidth = framebufferWidth;
+    this.requestedHeight = framebufferHeight;
+    this.resizeSeq = 0;
+    this.resizeAckSeq = 0;
     const clockBase = clockNanoseconds();
     this.clockNanoseconds = () => clockNanoseconds() - clockBase;
     this.idleWait = idleWait;
@@ -1447,6 +1491,52 @@ export class BrowserMachine {
       if (result === LoopResult.Idle) break;
     }
     return result;
+  }
+
+  // requestResize publishes new viewport dimensions into the trailing MODVRES1
+  // control page and nudges PS/2 input so the compositor wakes immediately.
+  requestResize(width, height) {
+    if (!this.memory || !this.layout || !this.layout.framebufferResizeControl) return false;
+    const clampedW = Math.max(BROWSER_RESIZE_MIN_WIDTH, Math.min(BROWSER_RESIZE_MAX_WIDTH, Math.floor(Number(width) || 0) & ~1));
+    const clampedH = Math.max(BROWSER_RESIZE_MIN_HEIGHT, Math.min(BROWSER_RESIZE_MAX_HEIGHT, Math.floor(Number(height) || 0) & ~1));
+    if (clampedW === this.requestedWidth && clampedH === this.requestedHeight) return false;
+    this.requestedWidth = clampedW;
+    this.requestedHeight = clampedH;
+    const view = new DataView(this.memory.buffer);
+    const base = this.layout.framebufferResizeControl;
+    this.resizeSeq = (this.resizeSeq + 1) >>> 0;
+    if (this.resizeSeq === 0) this.resizeSeq = 1;
+    view.setUint32(base + BROWSER_RESIZE_OFFSETS.req_width, clampedW, true);
+    view.setUint32(base + BROWSER_RESIZE_OFFSETS.req_height, clampedH, true);
+    view.setUint32(base + BROWSER_RESIZE_OFFSETS.req_seq, this.resizeSeq, true);
+    // Wake input -> compositor immediately instead of waiting for the 1 s bar tick.
+    this.keyboard.pointer(0, 0, 0);
+    return true;
+  }
+
+  // syncFramebufferSize updates active dimensions once the compositor has
+  // repainted screen.pixels and published ack_seq with .Release.
+  syncFramebufferSize() {
+    if (!this.memory || !this.layout || !this.layout.framebufferResizeControl) return false;
+    const view = new DataView(this.memory.buffer);
+    const base = this.layout.framebufferResizeControl;
+    const ackSeq = view.getUint32(base + BROWSER_RESIZE_OFFSETS.ack_seq, true);
+    if (ackSeq === this.resizeAckSeq) return false;
+    const ackW = view.getUint32(base + BROWSER_RESIZE_OFFSETS.ack_width, true);
+    const ackH = view.getUint32(base + BROWSER_RESIZE_OFFSETS.ack_height, true);
+    this.resizeAckSeq = ackSeq;
+    if (
+      ackW >= BROWSER_RESIZE_MIN_WIDTH &&
+      ackW <= BROWSER_RESIZE_MAX_WIDTH &&
+      ackH >= BROWSER_RESIZE_MIN_HEIGHT &&
+      ackH <= BROWSER_RESIZE_MAX_HEIGHT &&
+      (ackW !== this.framebufferWidth || ackH !== this.framebufferHeight)
+    ) {
+      this.framebufferWidth = ackW;
+      this.framebufferHeight = ackH;
+      return true;
+    }
+    return false;
   }
 
   // The pixels of the framebuffer, blue first: a view of the memory.

@@ -778,6 +778,7 @@ screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
 		system.log_fact(.Info, Two_Screen_Pages{})
 	} else {
 		display_registers = nil
+		browser_resize_open(framebuffer_pages)
 		system.log_fact(.Info, One_Screen_Page{})
 	}
 }
@@ -1267,8 +1268,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				wide_grant_counts_tick(now) // wide_grant_screen.odin
 			}
 		}
+		if browser_resize_poll() {
+			next_frame = 0
+		}
 		if damage_count > 0 && now >= next_frame {
 			draw(now)
+			browser_resize_ack_after_frame()
 			next_frame = now + FRAME_INTERVAL
 			frames += 1
 			if frames == 1 {

@@ -165,13 +165,18 @@ self.onmessage = (event) => {
     case "pointer":
       if (machine) machine.keyboard.pointer(message.deltaX, message.deltaY, message.buttons);
       return;
+    case "resize":
+      if (machine) machine.requestResize(message.width, message.height);
+      return;
     case "console_type":
       if (machine && typeof message.text === "string") machine.consolePort.type(message.text);
       return;
     case "frame": {
       // A copy, not a view: the memory of the machine is not transferable.
-      // Skip allocating and transferring a 4 MiB copy when the framebuffer is unchanged.
-      const pixels = machine && machine.framebufferPixels();
+      // Skip allocating and transferring a copy when the framebuffer is unchanged.
+      if (!machine) return;
+      if (machine.syncFramebufferSize()) lastFrame32 = null;
+      const pixels = machine.framebufferPixels();
       if (!pixels) return;
       const src32 = new Uint32Array(pixels.buffer, pixels.byteOffset, pixels.byteLength >> 2);
       if (lastFrame32 && lastFrame32.length === src32.length) {
@@ -191,7 +196,10 @@ self.onmessage = (event) => {
       }
       lastFrame32.set(src32);
       const copy = pixels.slice();
-      self.postMessage({ kind: "frame", pixels: copy.buffer }, [copy.buffer]);
+      self.postMessage(
+        { kind: "frame", pixels: copy.buffer, width: machine.framebufferWidth, height: machine.framebufferHeight },
+        [copy.buffer],
+      );
       return;
     }
   }

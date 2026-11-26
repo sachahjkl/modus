@@ -1,5 +1,6 @@
 package kernel
 
+import info "modus:contract/boot_info"
 import "modulus:frame_runs"
 
 // Architecture-specific frame-run support on x86-64
@@ -29,4 +30,11 @@ frame_runs_arch_enabled :: proc "contextless" () -> bool {
 // under the frame lock.
 frame_runs_report_counts :: proc "contextless" (table: ^frame_runs.Table) -> (free_2m, free_1g, fallback_2m, fallback_1g: u64) {
 	return table.free_runs_2m, table.supports_1g ? table.free_runs_1g : 0, table.fallback_2m, table.fallback_1g
+}
+
+// framebuffer_device_pages gives the page count of the firmware framebuffer on
+// x86-64 hardware and QEMU.
+framebuffer_device_pages :: proc "contextless" (fb: info.Framebuffer, direct_map_size: u64) -> u64 {
+	_ = direct_map_size
+	return (u64(fb.pixels_per_line) * u64(fb.height) * 4 + PAGE_SIZE - 1) / PAGE_SIZE
 }
