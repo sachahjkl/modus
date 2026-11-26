@@ -147,6 +147,7 @@ release_test_volume_write :: proc(volume, signed_by: string, files: []Image_File
 	replacement_rows: string = "replacement rows"
 	all_files := make([dynamic]Image_File, context.temp_allocator)
 	append(&all_files, ..files)
+	_ = image_tree_append_to_files(&all_files, RELEASE_TEST_MODULE_COUNT)
 	append(&all_files, Image_File{name = replacement_list.RESOURCE_NAME, file = transmute([]u8)replacement_rows})
 	append(&all_files, Image_File{name = system_description.RESOURCE_DESCRIPTION, file = description[:]})
 	append(&all_files, Image_File{name = system_description.RESOURCE_SIGNATURE, file = signature[:]})

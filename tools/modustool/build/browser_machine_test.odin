@@ -9,6 +9,7 @@ import "core:strings"
 import "core:testing"
 import "modus:contract/blake3"
 import info "modus:contract/boot_info"
+import "modus:contract/image_tree"
 import "modus:contract/object_cache"
 import "modus:contract/pointer_pictures"
 import "internal:dom_terminal/dom_protocol"
@@ -419,7 +420,7 @@ browser_machine_page_image_keeps_the_modules_of_the_page :: proc(t: ^testing.T) 
 			testing.expect_value(t, string(files[index].file), name)
 		}
 	}
-	kept_resources := []string{"start_list", "rescue_list", "pointers"}
+	kept_resources := []string{"start_list", "rescue_list", "pointers", image_tree.RESOURCE_NAME}
 	testing.expect_value(t, len(files), len(all) + len(kept_resources))
 	for name, index in kept_resources {
 		if len(all) + index < len(files) {
@@ -770,8 +771,8 @@ browser_machine_console_image_holds_the_console_and_no_desktop :: proc(t: ^testi
 		testing.expectf(t, listed || imported, "the console image holds %s, which no module of the list imports", name)
 	}
 	resources := files[module_count:]
-	testing.expect_value(t, len(resources), 2)
-	for resource, index in resources {
+	testing.expect_value(t, len(resources), 3)
+	for resource, index in resources[:2] {
 		testing.expect_value(t, resource.name, index == 0 ? start_list.START_LIST_RESOURCE : start_list.RESCUE_LIST_RESOURCE)
 		list: start_list.List
 		place := make([]start_list.Wiring_Row, start_list.list_wiring_count(resource.file), context.temp_allocator)
@@ -783,17 +784,21 @@ browser_machine_console_image_holds_the_console_and_no_desktop :: proc(t: ^testi
 		testing.expect_value(t, row.needs, start_list.Machine_Parts{})
 		testing.expect_value(t, row.usable_mark, start_list.Usable_Mark.Needed)
 	}
+	testing.expect_value(t, resources[2].name, image_tree.RESOURCE_NAME)
 	image := boot_image_encode(files, module_count)
 	modules, image_resources, valid := info.image_tables(image)
 	testing.expect(t, valid)
 	testing.expect_value(t, len(modules), module_count)
-	testing.expect_value(t, len(image_resources), 2)
+	testing.expect_value(t, len(image_resources), 3)
+	testing.expect_value(t, boot_image_verify_image_tree(image), "")
 
-	// The desktop image of the same base keeps its fonts and its pointers.
+	// The desktop image of the same base keeps its fonts, its pointers, and a
+	// matching canonical image_tree manifest.
 	desktop, desktop_count, desktop_problem := browser_machine_page_image_files(console_image_base(), .Desktop)
 	testing.expect_value(t, desktop_problem, "")
 	testing.expect(t, desktop_count > module_count)
-	testing.expect_value(t, len(desktop) - desktop_count, 4)
+	testing.expect_value(t, len(desktop) - desktop_count, 5)
+	testing.expect_value(t, boot_image_verify_image_tree(boot_image_encode(desktop, desktop_count)), "")
 }
 
 // A base with no dom_terminal, or with no console, gives no console

@@ -201,10 +201,12 @@ Built:
 - Strict object path parser and validator in `modus:contract/store` (`object_path.odin`, with host tests).
 - Canonical read-only image-tree binary format, encoder, validator, subtree grant lookup, ambiguity collector, and hash-pin check in `modus:contract/image_tree` (with host tests).
 - Decoupled `Disk_State` (`Absent`, `Opening`, `Opened`, `Silent`, `Unusable`) and `Service_Readiness` state-transition foundation in `internal:storage/service_state` (with host tests), wired into `storage`.
+- Boot-image `image_tree` (`IMGTREE1`) manifest packing and resource-table cross-checking across main, release, console, and trimmed browser-machine boot images in `tools/modustool/build` (`image_tree_pack.odin`, with host tests).
+- Split read-only mapped-object cache (`Public_System` and `Private_Principal` pools, non-crashing `holdings == 1` eviction, principal lock/reclaim purge) and durable pin-accounting engine in `internal:storage/object_cache` (with host tests).
+- Storage read-only object wire contract (`Map_Object_Request`, `Map_Object_Answer`, bounded call-region `Ambiguity_Table`, `Pin_Request`, `Unpin_Request`, `List_Pins_Answer`) in `modus:contract/storage_object` (with host tests).
 
 Left:
 
-- Packing the `image_tree` manifest in `modustool` and including `storage` in `start_list_floor_names`.
-- Dedicated `storage_start` path in `root`, connection-level read-only tree grants, and removing `resources.odin`, fixed-range delivery, and `Image` data lookups (`docs/ARCHITECTURE.md`, "U2b. Resources of the boot image"; [script_fonts.md](script_fonts.md); [glyphs_on_demand.md](glyphs_on_demand.md)).
-- `storage` read-only object mapping export, machine-object budget pool, per-principal private pool, durable pin exports, and `Principal_Locked`/`Principal_Reclaim` cache scrubbing.
+- Including `storage` in `start_list_floor_names` and dedicated `storage_start` path in `root`, connection-level read-only tree grants, and removing `resources.odin`, fixed-range delivery, and `Image` data lookups (`docs/ARCHITECTURE.md`, "U2b. Resources of the boot image"; [script_fonts.md](script_fonts.md); [glyphs_on_demand.md](glyphs_on_demand.md)).
+- Wiring the `storage` read-only object mapping and durable pin exports, machine-object budget pool, per-principal private pool, and `Principal_Locked`/`Principal_Reclaim` cache scrubbing into the live storage service.
 - Updating `compositor`, `unlock`, `manual`, and graphical clients to read objects through `storage`.

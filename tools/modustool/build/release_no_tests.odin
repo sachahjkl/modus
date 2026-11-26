@@ -7,6 +7,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import info "modus:contract/boot_info"
+import "modus:contract/image_tree"
 import "modus:contract/plan_values"
 import "modus:contract/release"
 import "modus:contract/system_description"
@@ -173,8 +174,9 @@ release_boot_image_of :: proc(build_image: []u8) -> (image: []u8, problem: strin
 	module_count := len(files)
 	for &entry in image_resources {
 		name := system_description.name_of(&entry.name)
-		// The test plan file belongs only to test boot images.
-		if name == plan_values.TEST_IMAGE_PLAN_RESOURCE {
+		// The test plan file belongs only to test boot images, and image_tree
+		// is rebuilt below to match the derived resource table.
+		if name == plan_values.TEST_IMAGE_PLAN_RESOURCE || name == image_tree.RESOURCE_NAME {
 			continue
 		}
 		bytes, inside := info.image_entry_bytes(build_image, &entry)
@@ -183,7 +185,14 @@ release_boot_image_of :: proc(build_image: []u8) -> (image: []u8, problem: strin
 		}
 		append(&files, Image_File{name = name, file = bytes})
 	}
-	return boot_image_encode(files[:], module_count), ""
+	if tree_problem := image_tree_append_to_files(&files, module_count); tree_problem != "" {
+		return nil, tree_problem
+	}
+	encoded := boot_image_encode(files[:], module_count)
+	if verify_problem := boot_image_verify_image_tree(encoded); verify_problem != "" {
+		return nil, verify_problem
+	}
+	return encoded, ""
 }
 
 // release_boot_image_write_direct is a `--fast` iteration path that encodes
@@ -211,7 +220,15 @@ release_boot_image_write_direct :: proc(resource_files: []resources.Resource_Fil
 	for resource in lists {
 		append(&files, Image_File{name = resource.name, file = foundation.read_file(resource.path) or_return})
 	}
+	if tree_problem := image_tree_append_to_files(&files, module_count); tree_problem != "" {
+		fmt.eprintfln("modustool: release: %s", tree_problem)
+		return false
+	}
 	image := boot_image_encode(files[:], module_count)
+	if verify_problem := boot_image_verify_image_tree(image); verify_problem != "" {
+		fmt.eprintfln("modustool: release: %s", verify_problem)
+		return false
+	}
 	if error := os.write_entire_file(BOOT_IMAGE_RELEASE, image); error != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", BOOT_IMAGE_RELEASE, error)
 		return false

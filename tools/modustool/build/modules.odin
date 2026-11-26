@@ -876,7 +876,15 @@ build_boot_image :: proc(path: string, without: string, resource_files: []resour
 	for resource in lists {
 		append(&files, Image_File{name = resource.name, file = foundation.read_file(resource.path) or_return})
 	}
+	if tree_problem := image_tree_append_to_files(&files, module_count); tree_problem != "" {
+		fmt.eprintfln("modustool: %s: %s", path, tree_problem)
+		return false
+	}
 	image := boot_image_encode(files[:], module_count)
+	if verify_problem := boot_image_verify_image_tree(image); verify_problem != "" {
+		fmt.eprintfln("modustool: %s: %s", path, verify_problem)
+		return false
+	}
 	if err := os.write_entire_file(path, image); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", path, err)
 		return false

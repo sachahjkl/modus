@@ -104,6 +104,9 @@ qemu_console_image_files :: proc(base: []u8, allocator := context.temp_allocator
 		return nil, 0, list_problem
 	}
 	append(&list, ..lists[:])
+	if tree_problem := image_tree_append_to_files(&list, module_count, allocator); tree_problem != "" {
+		return nil, 0, tree_problem
+	}
 	return list[:], module_count, ""
 }
 
@@ -182,7 +185,15 @@ qemu_console_boot_image_write_direct :: proc() -> bool {
 		return false
 	}
 	append(&list, ..lists[:])
+	if tree_problem := image_tree_append_to_files(&list, module_count, context.temp_allocator); tree_problem != "" {
+		fmt.eprintfln("modustool: console image: %s", tree_problem)
+		return false
+	}
 	image := boot_image_encode(list[:], module_count)
+	if verify_problem := boot_image_verify_image_tree(image); verify_problem != "" {
+		fmt.eprintfln("modustool: console image: %s", verify_problem)
+		return false
+	}
 	if err := os.write_entire_file(BOOT_IMAGE_CONSOLE, image); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", BOOT_IMAGE_CONSOLE, err)
 		return false

@@ -12,6 +12,7 @@ import "core:strings"
 import "core:time"
 import "modus:contract/blake3"
 import info "modus:contract/boot_info"
+import "modus:contract/image_tree"
 import op "modus:contract/operation"
 import "modus:contract/pointer_pictures"
 import "modus:contract/replacement_list"
@@ -630,7 +631,7 @@ browser_machine_page_image_files :: proc(base: []u8, image := Browser_Machine_Im
 		}
 		for &entry in resources {
 			name := system_description.name_of(&entry.name)
-			if name == system_description.RESOURCE_DESCRIPTION || name == system_description.RESOURCE_SIGNATURE || name == replacement_list.RESOURCE_NAME {
+			if name == system_description.RESOURCE_DESCRIPTION || name == system_description.RESOURCE_SIGNATURE || name == replacement_list.RESOURCE_NAME || name == image_tree.RESOURCE_NAME {
 				continue
 			}
 			is_theme := false
@@ -663,6 +664,9 @@ browser_machine_page_image_files :: proc(base: []u8, image := Browser_Machine_Im
 		if !found {
 			return nil, 0, fmt.tprintf("it holds no module %s", name)
 		}
+	}
+	if tree_problem := image_tree_append_to_files(&list, module_count, allocator); tree_problem != "" {
+		return nil, 0, tree_problem
 	}
 	return list[:], module_count, ""
 }

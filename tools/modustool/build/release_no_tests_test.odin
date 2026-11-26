@@ -3,6 +3,7 @@ package build
 
 import "core:testing"
 import info "modus:contract/boot_info"
+import "modus:contract/image_tree"
 import "modus:contract/plan_values"
 import "modus:contract/root_plan_values"
 import "modus:contract/system_description"
@@ -87,14 +88,16 @@ the_release_image_drops_each_test_module :: proc(t: ^testing.T) {
 	image, problem := release_boot_image_of(build_image)
 	testing.expect_value(t, problem, "")
 	modules, image_resources, valid := info.image_tables(image)
-	testing.expect(t, valid && len(modules) == 2 && len(image_resources) == 1)
-	if len(modules) == 2 && len(image_resources) == 1 {
+	testing.expect(t, valid && len(modules) == 2 && len(image_resources) == 2)
+	if len(modules) == 2 && len(image_resources) == 2 {
 		testing.expect_value(t, system_description.name_of(&modules[0].name), ROOT_SERVICE_MODULE)
 		testing.expect_value(t, system_description.name_of(&modules[1].name), "console")
 		testing.expect_value(t, system_description.name_of(&image_resources[0].name), "fonts")
+		testing.expect_value(t, system_description.name_of(&image_resources[1].name), image_tree.RESOURCE_NAME)
 		bytes, inside := info.image_entry_bytes(image, &modules[1])
 		testing.expect(t, inside && string(bytes) == console_text)
 	}
+	testing.expect_value(t, boot_image_verify_image_tree(image), "")
 	testing.expect_value(t, release_test_module_problem(image, "the release"), "")
 	// An image with no test module: the same entries.
 	again, again_problem := release_boot_image_of(image)
@@ -231,9 +234,11 @@ test_plan_values_encoded_and_stripped_from_release :: proc(t: ^testing.T) {
 	release_image, problem := release_boot_image_of(build_image)
 	testing.expect_value(t, problem, "")
 	_, rel_resources, valid := info.image_tables(release_image)
-	testing.expect(t, valid && len(rel_resources) == 1)
-	if len(rel_resources) == 1 {
+	testing.expect(t, valid && len(rel_resources) == 2)
+	if len(rel_resources) == 2 {
 		testing.expect_value(t, system_description.name_of(&rel_resources[0].name), "fonts")
+		testing.expect_value(t, system_description.name_of(&rel_resources[1].name), image_tree.RESOURCE_NAME)
 	}
+	testing.expect_value(t, boot_image_verify_image_tree(release_image), "")
 	testing.expect_value(t, release_test_module_problem(release_image, "release"), "")
 }

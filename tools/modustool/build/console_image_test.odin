@@ -4,6 +4,7 @@ package build
 import "core:fmt"
 import "core:testing"
 import info "modus:contract/boot_info"
+import "modus:contract/image_tree"
 import "modus:contract/start_list"
 import "modus:contract/system_description"
 import "modustool:foundation"
@@ -72,10 +73,11 @@ qemu_console_image_holds_serial_terminal_and_no_desktop :: proc(t: ^testing.T) {
 		testing.expectf(t, listed || imported, "module %s is listed or imported by QEMU_CONSOLE_MODULES", name)
 	}
 
-	// Only start_list and rescue_list resources (no fonts, no pointers).
+	// Only start_list, rescue_list, and the canonical empty image_tree manifest
+	// (no fonts, no pointers).
 	resources := files[module_count:]
-	testing.expect_value(t, len(resources), 2)
-	for resource, index in resources {
+	testing.expect_value(t, len(resources), 3)
+	for resource, index in resources[:2] {
 		testing.expect_value(t, resource.name, index == 0 ? start_list.START_LIST_RESOURCE : start_list.RESCUE_LIST_RESOURCE)
 		list: start_list.List
 		place := make([]start_list.Wiring_Row, start_list.list_wiring_count(resource.file), context.temp_allocator)
@@ -87,16 +89,19 @@ qemu_console_image_holds_serial_terminal_and_no_desktop :: proc(t: ^testing.T) {
 		testing.expect_value(t, row.needs, start_list.Machine_Parts{})
 		testing.expect_value(t, row.usable_mark, start_list.Usable_Mark.Needed)
 	}
+	testing.expect_value(t, resources[2].name, image_tree.RESOURCE_NAME)
 
-	// Encoded image parses back cleanly.
+	// Encoded image parses back cleanly and passes image_tree cross-check.
 	image, encode_problem := qemu_console_boot_image_of(base)
 	testing.expect_value(t, encode_problem, "")
 	modules, image_resources, valid := info.image_tables(image)
 	testing.expect(t, valid)
 	testing.expect_value(t, len(modules), module_count)
-	testing.expect_value(t, len(image_resources), 2)
+	testing.expect_value(t, len(image_resources), 3)
 	testing.expect_value(t, system_description.name_of(&image_resources[0].name), start_list.START_LIST_RESOURCE)
 	testing.expect_value(t, system_description.name_of(&image_resources[1].name), start_list.RESCUE_LIST_RESOURCE)
+	testing.expect_value(t, system_description.name_of(&image_resources[2].name), image_tree.RESOURCE_NAME)
+	testing.expect_value(t, boot_image_verify_image_tree(image), "")
 }
 
 // Bad images, missing required modules, and duplicate modules are refused.

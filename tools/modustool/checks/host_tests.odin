@@ -563,5 +563,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/network_library",
 	foundation.SOURCE_FOLDER_CONTRACT + "/store",
 	foundation.SOURCE_FOLDER_CONTRACT + "/image_tree",
+	foundation.SOURCE_FOLDER_CONTRACT + "/storage_object",
 	foundation.SOURCE_FOLDER_INTERNAL + "/storage/service_state",
+	foundation.SOURCE_FOLDER_INTERNAL + "/storage/object_cache",
 }
