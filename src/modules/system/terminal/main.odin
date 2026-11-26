@@ -270,6 +270,22 @@ layout_for_size :: proc "contextless" (surface_width, surface_height: int) {
 	list_scroll_identity = interface.identity("the scroll bar of the completion list")
 }
 
+// terminal_apply_surface_size updates the grid dimensions and chrome layout
+// once Surface_Answer has installed the new logical surface size on the window.
+terminal_apply_surface_size :: proc "contextless" (surface_width, surface_height: int) -> (resized: bool) {
+	if surface_width <= 0 || surface_height <= 0 || (surface_width == width && surface_height == height) {
+		return false
+	}
+	cw, ch := chrome_size()
+	new_columns, new_rows, resize_err := grid_resize.grid_dimensions_from_window(surface_width, surface_height, cw, ch, CELL_WIDTH, CELL_HEIGHT, grid.bounds)
+	if resize_err == .None && grid_resize.grid_resize_cells(&grid, new_columns, new_rows) == .None {
+		columns = grid.columns
+		rows = grid.rows
+	}
+	layout_for_size(surface_width, surface_height)
+	return true
+}
+
 layout :: proc "contextless" () {
 	chrome_w, chrome_h := chrome_size()
 	layout_for_size(chrome_w + columns * CELL_WIDTH, chrome_h + rows * CELL_HEIGHT)
@@ -1692,33 +1708,26 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			// An answer of a surface request: the window may hold a new
 			// surface, whose pictures hold nothing yet (display, scale.odin).
+			// Apply grid and chrome layout here once window.width and
+			// window.height reflect the accepted surface size.
 			if event.kind == .Surface_Answer {
+				if terminal_apply_surface_size(window.width, window.height) && process != 0 {
+					_ = system.send(&source.completions, ring.Record{kind = u32(terminal.Input.Resized), values = {0 = u64(columns), 1 = u64(rows)}})
+				}
 				interface.draw_whole_window_next(&drawing)
 				dirty = true
 				continue
 			}
-			// A window resize: compute new grid dimensions, resize the surface
-			// and cell buffer atomically, update layout, and notify the client.
+			// A window resize: validate grid dimensions and request the new
+			// surface; grid and layout update when Surface_Answer installs it.
 			if event.kind == .Resized {
 				cw, ch := chrome_size()
-				new_columns, new_rows, resize_err := grid_resize.grid_dimensions_from_window(event.width, event.height, cw, ch, CELL_WIDTH, CELL_HEIGHT, grid.bounds)
+				_, _, resize_err := grid_resize.grid_dimensions_from_window(event.width, event.height, cw, ch, CELL_WIDTH, CELL_HEIGHT, grid.bounds)
 				if resize_err != .None {
 					_ = display.resize_decline(&window)
 					continue
 				}
-				if display.surface_resize(&window, event.width, event.height) != .Succeeded {
-					continue
-				}
-				if grid_resize.grid_resize_cells(&grid, new_columns, new_rows) == .None {
-					columns = grid.columns
-					rows = grid.rows
-					layout_for_size(window.width, window.height)
-					if process != 0 {
-						_ = system.send(&source.completions, ring.Record{kind = u32(terminal.Input.Resized), values = {0 = u64(columns), 1 = u64(rows)}})
-					}
-				}
-				interface.draw_whole_window_next(&drawing)
-				dirty = true
+				_ = display.surface_resize(&window, event.width, event.height)
 				continue
 			}
 			// The pointer goes to the scroll bars and to the action bar, and

@@ -89,3 +89,29 @@ terminal_layout_non_overlap_across_grid_bounds_modes_and_scales :: proc(t: ^test
 		}
 	}
 }
+
+@(test)
+terminal_apply_surface_size_updates_grid_and_chrome :: proc(t: ^testing.T) {
+	measure = false
+	columns = 80
+	rows = 24
+	cw, ch := chrome_size()
+	layout_for_size(cw + columns * CELL_WIDTH, ch + rows * CELL_HEIGHT)
+	_ = grid_resize.grid_init(&grid, ([^]Cell)(&view.cells[0][0])[:ROWS_LIMIT * COLUMNS_LIMIT], COLUMNS_LIMIT, columns, rows, grid_resize.TERMINAL_WINDOW_BOUNDS)
+	old_width, old_height := width, height
+
+	testing.expect(t, !terminal_apply_surface_size(0, 400))
+	testing.expect(t, !terminal_apply_surface_size(old_width, old_height))
+
+	// Shrink width and grow height, matching a mixed resize drag.
+	new_width := old_width - 80
+	new_height := old_height + 120
+	testing.expect(t, terminal_apply_surface_size(new_width, new_height))
+	testing.expect_value(t, width, new_width)
+	testing.expect_value(t, height, new_height)
+	testing.expect(t, columns < 80)
+	testing.expect(t, rows > 24)
+	testing.expect_value(t, terminal_places.bottom_bar.y + terminal_places.bottom_bar.height, new_height)
+	testing.expect_value(t, terminal_places.bottom_bar.width, new_width)
+	testing.expect(t, hint_y > old_height)
+}

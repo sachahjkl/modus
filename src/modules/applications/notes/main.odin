@@ -1351,17 +1351,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Pasted:
 				paste_event(&window, event)
 			case .Resized:
-				// The rows follow the width of the window: computed once at
-				// the resize, not in each frame.
+				// The rows follow the width of the window: updated on
+				// Surface_Answer once window.width holds the new surface size.
 				if display.surface_resize(&window, event.width, event.height) == .Succeeded {
 					interface.draw_whole_window_next(&window_memory.drawing)
-					if width_columns := columns_of_width(window.width); width_columns != columns {
-						columns = width_columns
-						layout_refresh()
-					}
 				}
 			case .Presentation, .Surface_Answer:
 				interface.draw_whole_window_next(&window_memory.drawing)
+				if width_columns := columns_of_width(window.width); width_columns != columns {
+					columns = width_columns
+					layout_refresh()
+				}
 			case .None, .Go_To, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Work_Area:
 			// next_event never gives None, and this window does nothing for the other events.
 			}
