@@ -76,6 +76,9 @@ wide_grant_mark_clear_due: bool // A clear of the mark that the control ring did
 // The collector of a principal whose session locked while its grant ends:
 // it stops when the end settled, after its record of the end.
 wide_grant_collector_stop_after_end: ^Started
+// The named principal slot whose storage keys stay held until the held
+// collector writes the end record and stops. Zero means none.
+wide_grant_storage_lock_after_end: u64
 
 // wide_grant_authority_start generates a fresh authority key from
 // process_generator, refusing weak entropy (below Processor) and refusing an
@@ -197,6 +200,7 @@ wide_grant_process_released :: proc "contextless" (item: ^Started) {
 		}
 		if wide_grant_collector_stop_after_end == item {
 			wide_grant_collector_stop_after_end = nil
+			wide_grant_deferred_storage_lock_flush()
 		}
 		collector_link_close(&link)
 	}
@@ -272,6 +276,50 @@ wide_grant_collector_held_at_lock :: proc "contextless" (item: ^Started) -> bool
 	}
 	wide_grant_collector_stop_after_end = item
 	return true
+}
+
+// wide_grant_defer_storage_lock keeps the storage keys of a locked named
+// principal in the storage service until its held collector writes the end
+// record and stops.
+wide_grant_defer_storage_lock :: proc "contextless" (principal: u64) -> bool {
+	if principal == principals.MACHINE || principal >= principals.PRINCIPAL_CAPACITY {
+		return false
+	}
+	if wide_grant_collector_stop_after_end == nil || wide_grant_collector_stop_after_end.principal != principal {
+		return false
+	}
+	wide_grant_storage_lock_after_end = principal
+	return true
+}
+
+// wide_grant_deferred_storage_lock_flush sends the deferred storage erase once
+// the held collector has settled or stopped.
+@(private = "file")
+wide_grant_deferred_storage_lock_flush :: proc "contextless" () {
+	principal := wide_grant_storage_lock_after_end
+	if principal == principals.MACHINE || principal >= principals.PRINCIPAL_CAPACITY {
+		wide_grant_storage_lock_after_end = 0
+		return
+	}
+	wide_grant_storage_lock_after_end = 0
+	if principal_records[principal].state == .Locked {
+		storage_principal_locked(principal)
+	}
+}
+
+// wide_grant_deferred_storage_lock_force stops any lingering held collector
+// and sends the deferred storage erase before a new storage key is installed
+// for that slot.
+wide_grant_deferred_storage_lock_force :: proc "contextless" (principal: u64) {
+	if principal == principals.MACHINE || wide_grant_storage_lock_after_end != principal {
+		return
+	}
+	if wide_grant_collector_stop_after_end != nil && wide_grant_collector_stop_after_end.principal == principal {
+		started_process_stop(wide_grant_collector_stop_after_end)
+		wide_grant_collector_stop_after_end = nil
+	}
+	wide_grant_storage_lock_after_end = 0
+	storage_principal_locked(principal)
 }
 
 // wide_grant_row_of gives the place of the row of (principal, key) in
@@ -672,6 +720,7 @@ wide_grant_end_work :: proc "contextless" () {
 			started_process_stop(wide_grant_collector_stop_after_end)
 			wide_grant_collector_stop_after_end = nil
 		}
+		wide_grant_deferred_storage_lock_flush()
 	}
 }
 

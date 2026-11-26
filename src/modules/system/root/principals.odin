@@ -401,6 +401,18 @@ principal_storage_key :: proc "contextless" (values: ^[7]u64, completion: ^[7]u6
 		completion^ = decision.refusal
 		return decision.outcome
 	}
+	if wide_grant_storage_lock_after_end == number {
+		// Validate the command first so a refused call mutates nothing; only
+		// then stop any held collector and erase the prior lock's keys before
+		// re-checking erase state and room for the new key records.
+		wide_grant_deferred_storage_lock_force(number)
+		ring_free = ring.capacity(&holder.service.commands) - ring.count(&holder.service.commands)
+		decision = principal_unlock_flow.storage_key_check(&storage_key_flow, values^, record_state, identifier_zero, holder != nil, ring_free)
+		if !decision.send {
+			completion^ = decision.refusal
+			return decision.outcome
+		}
+	}
 	// The identity first: a key with no identity before it is refused by
 	// the storage service, and an identity with no key opens nothing. The
 	// storage service erases the slot of each record that it takes; the copy
@@ -507,7 +519,10 @@ principal_stores_reclaim :: proc "contextless" (asker: ^Started, tag: u32, value
 	if holder == nil {
 		return root_ring.refuse(completion, .Callee_Unavailable, kind, .Absent, .Services), false
 	}
-	if ring.capacity(&holder.service.commands) - ring.count(&holder.service.commands) < 2 {
+	// Stop any held collector and flush a deferred storage erase for this slot
+	// before checking ring room and sending Principal_Locked + Principal_Reclaim.
+	wide_grant_deferred_storage_lock_force(number)
+	if storage_key_flow.erase_owed[number] || ring.capacity(&holder.service.commands) - ring.count(&holder.service.commands) < 2 {
 		return root_ring.refuse(completion, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1), false
 	}
 	reclaim_service_tag += 1
@@ -620,6 +635,12 @@ principal_unlock_checked :: proc "contextless" (values: ^[7]u64, completion: ^[7
 		completion^ = precheck.refusal
 		return precheck.outcome
 	}
+	// Never let a held collector or un-erased storage keys from a prior lock
+	// cross into a new session.
+	wide_grant_deferred_storage_lock_force(number)
+	if number < principals.PRINCIPAL_CAPACITY && storage_key_flow.erase_owed[number] {
+		return root_ring.refuse(completion, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1)
+	}
 	if outcome := principal_key_take(number, values, completion); outcome != .Succeeded {
 		return outcome
 	}
@@ -669,7 +690,9 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> call_outcome.Call_
 	session_change(number, .Locked)
 	seat_change(.Session_Locked, number)
 	session_budget_close(number)
-	storage_principal_locked(number)
+	if !wide_grant_defer_storage_lock(number) {
+		storage_principal_locked(number)
+	}
 	// A call from another machine acts for no principal whose session is
 	// locked: the connections of its client keys end.
 	remote_clients_session_changed(number, true)

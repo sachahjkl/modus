@@ -1428,7 +1428,6 @@ root_loop_pass :: proc "contextless" () {
 	// After reap: a storage service that stopped ended its connections.
 	disk_load_step(&wait)
 	persisted_tables_step()
-	storage_erase_step(&wait) // principals.odin
 	storage_reclaim_step(&wait) // principals.odin
 	network_answers(&wait)
 	wiring_request_step(&wait)
@@ -1436,6 +1435,9 @@ root_loop_pass :: proc "contextless" () {
 	principals_answers(&wait)
 	powerbox_answers(&wait) // powerbox_picker.odin
 	wide_grant_deadline := wide_grant_pass(&wait) // wide_grant_authority.odin
+	// After wide_grant_pass: a settled lock-end flush can owe a storage key
+	// erase that must register wait_room in this same pass.
+	storage_erase_step(&wait) // principals.odin
 	system.wait_records(&wait, &control.completions)
 	for &item in started {
 		if item.process != 0 && item.requests.head != nil {
