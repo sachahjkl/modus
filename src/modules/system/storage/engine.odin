@@ -11,6 +11,7 @@ import format "modus:contract/store"
 import "internal:storage/block_counts"
 import "internal:storage/block_runs"
 import gc_batch "internal:storage/group_commit"
+import "internal:storage/service_state"
 import "internal:storage/storage_mount"
 import "internal:storage/storage_release"
 import block_tree "internal:storage/storage_object"
@@ -101,6 +102,10 @@ Disk_Silence :: enum {
 	No_Completion, // No completion came for system.ANSWER_BOUND_MILLISECONDS while a request waited.
 }
 
+// Decoupled service readiness: image-tree availability stays independent of
+// the data disk lifecycle (internal:storage/service_state).
+readiness: service_state.Service_Readiness
+
 // The disk does not answer: the service never reads the block ring again,
 // so a late completion is never taken for the answer of a later request,
 // and each call that needs a block is refused at once with Device. It makes
@@ -111,15 +116,22 @@ disk_silent: bool
 // went silent before it leaves this false, and each call is refused.
 disk_opened: bool
 
-// disk_unopened_refusal refuses a call while the disk went silent before
-// the open was done: the service knows no store, so it can answer no
-// call with a fact of the disk. It gives Device, as a read of a silent disk
-// does after the open.
+// disk_state_advance applies a Disk_Event to readiness.disk_state and keeps
+// disk_opened synchronized with .Opened.
+disk_state_advance :: proc "contextless" (event: service_state.Disk_Event) {
+	readiness.disk_state, _ = service_state.disk_state_transition(readiness.disk_state, event)
+	disk_opened = service_state.disk_store_available(readiness)
+}
+
+// disk_unopened_refusal refuses a disk-store call whenever the disk is not in
+// .Opened: the service knows no store, so it can answer no call with a fact of
+// the disk. It gives Device, as a read of a silent disk does after the open.
 disk_unopened_refusal :: proc "contextless" (error: ^errors.Error_Record) -> (refused: bool, result: call_outcome.Call_Outcome) {
-	if disk_opened {
+	outcome, kind, not_ready := service_state.disk_call_refusal(readiness.disk_state)
+	if !not_ready {
 		return false, .Succeeded
 	}
-	return true, refuse(error, .Callee_Unavailable, .Device, .None, 0, 0, 0, 1)
+	return true, refuse(error, outcome, kind, .None, 0, 0, 0, 1)
 }
 
 // disk_silence_note makes the disk silent, with its line, once. It closes
@@ -130,6 +142,7 @@ disk_silence_note :: proc "contextless" (cause: Disk_Silence) {
 		return
 	}
 	disk_silent = true
+	disk_state_advance(.Went_Silent)
 	broken = true
 	disk_errors += 1
 	system.close(block_service)

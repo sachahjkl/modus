@@ -1453,6 +1453,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	if !disk_silent {
+		disk_state_advance(.Begin_Open)
 		disk_open()
 	}
 	// A removal that waits runs when no call waits, and a step of a repair
@@ -1532,15 +1533,19 @@ disk_open :: proc "contextless" () {
 	}
 	switch {
 	case mounted.failed && mounted.no_memory:
+		disk_state_advance(.Open_Unusable)
 		// The open said why: No_Table_Memory.
 		system.stop(.Failed)
 	case mounted.failed && mounted.older_format:
+		disk_state_advance(.Open_Unusable)
 		system.log_fact(.Error, Disk_Of_An_Older_Format{})
 		system.stop(.Failed)
 	case mounted.failed && mounted.larger_than_capacity:
+		disk_state_advance(.Open_Unusable)
 		system.log_fact(.Error, Root_Larger_Than_Tables{used_blocks = blocks_field(table_blocks_held)})
 		system.stop(.Failed)
 	case mounted.failed:
+		disk_state_advance(.Open_Unusable)
 		system.log_fact(.Error, No_Valid_Root{})
 		system.stop(.Failed)
 	case mounted.needs_format:
@@ -1593,5 +1598,5 @@ disk_open :: proc "contextless" () {
 			system.log_fact(.Info, Trees_Wait_To_Be_Freed{trees = mounted.removing})
 		}
 	}
-	disk_opened = true
+	disk_state_advance(.Open_Succeeded)
 }
