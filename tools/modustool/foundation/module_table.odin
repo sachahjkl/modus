@@ -7,6 +7,38 @@ package foundation
 import "core:fmt"
 import module "modus:contract/module"
 
+// Module_Target selects the Odin compiler target and runtime environment of a
+// module (src/md/infrastructure/odin_core_target.md). Every module of the
+// system uses Freestanding (the zero value); outside modules can select Modus
+// to compile against base:runtime and core: on modus.
+Module_Target :: enum u8 {
+	Freestanding = 0, // -target:freestanding_amd64_sysv, -no-entry-point, -default-to-nil-allocator.
+	Modus        = 1, // -target:modus_amd64, -no-crt, base:runtime and core: on modus.
+}
+
+MODULE_TARGET_WORDS := [Module_Target]string {
+	.Freestanding = "freestanding",
+	.Modus        = "modus",
+}
+
+// module_target_word gives the module.txt value for a Module_Target.
+module_target_word :: proc(target: Module_Target) -> string {
+	words := MODULE_TARGET_WORDS
+	return words[target]
+}
+
+// module_target_of_word converts the text of a `target:` line in module.txt
+// into a Module_Target at one border, refusing any word that names no member.
+module_target_of_word :: proc(word: string) -> (target: Module_Target, ok: bool) {
+	words := MODULE_TARGET_WORDS
+	for candidate in Module_Target {
+		if word == words[candidate] {
+			return candidate, true
+		}
+	}
+	return .Freestanding, false
+}
+
 // The modules of the project, each one after its imports.
 //   source:  the folder of the Odin package, and of its .asm files.
 // The exports of a module and their descriptions come from the source
@@ -41,6 +73,9 @@ Module_Build :: struct {
 	// module is one shared copy at each address, and takes one place in the
 	// table of prepared modules of a starter, not one for each importer.
 	library: bool,
+	// The compiler target for this module: Freestanding for every system module;
+	// outside modules can choose Modus in module.txt.
+	target:  Module_Target,
 	// A module that a disk holds: it is built as each module with an
 	// entry, with the system library, and no boot image gets its file
 	// (disk_processes.odin).

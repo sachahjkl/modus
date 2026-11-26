@@ -611,6 +611,12 @@ source_of_the_repository :: proc(path: string) -> (relative: string, ok: bool) {
 	if outside_source_folder != "" && strings.has_prefix(path, foundation.join(outside_source_folder, "/")) {
 		return path, true
 	}
+	// Compiler-owned base/ and core/ sources never enter repository source
+	// lists, even if the compiler root sits under a directory whose name
+	// matches a repository folder.
+	if compiler_source_library_of_path(path, odin_root()) != .None {
+		return "", false
+	}
 	folders := INPUT_FOLDERS
 	for folder in folders {
 		place := strings.last_index(path, foundation.join("/", folder, "/"))

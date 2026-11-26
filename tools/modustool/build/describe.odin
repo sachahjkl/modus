@@ -81,6 +81,58 @@ import "modustool:foundation"
 // Another type is an error: the tool does not guess a description.
 
 ENTRY_NAME :: "entry"
+MAIN_NAME :: "main"
+
+// file_has_main_procedure tells whether file declares a package-scope constant
+// procedure named `main`, which target modus invokes from
+// base:runtime/entry_modus.odin.
+file_has_main_procedure :: proc(file: ^ast.File) -> bool {
+	for statement in file.decls {
+		declaration, is_value := statement.derived.(^ast.Value_Decl)
+		if !is_value || declaration.is_mutable || len(declaration.names) != 1 || len(declaration.values) != 1 {
+			continue
+		}
+		identifier, is_ident := declaration.names[0].derived.(^ast.Ident)
+		if !is_ident || identifier.name != MAIN_NAME {
+			continue
+		}
+		if _, is_proc := declaration.values[0].derived.(^ast.Proc_Lit); is_proc {
+			return true
+		}
+	}
+	return false
+}
+
+// module_description_apply_target adjusts a described package for its
+// Module_Target (src/md/infrastructure/odin_core_target.md). For a non-library
+// Modus module, base:runtime/entry_modus.odin exports `entry` and invokes the
+// package's `main :: proc()`: this verifies `main`, refuses a colliding manual
+// `@(export) entry`, and appends the synthesized `entry` export description so
+// the linker version script, convert, and the Floor table preserve it.
+module_description_apply_target :: proc(description: ^Module_Description, target: Module_Target, library: bool, has_main: bool) -> (problem: string) {
+	switch target {
+	case .Freestanding:
+		return ""
+	case .Modus:
+		if library {
+			return ""
+		}
+		if description_has_entry(description^) {
+			return "target modus provides `entry` through base:runtime; define `main :: proc()` instead of exporting `entry`"
+		}
+		if !has_main {
+			return "target modus requires a `main` procedure; define `main :: proc()` or set `library: yes`"
+		}
+		exports := make([]Export_Description, len(description.exports) + 1, context.temp_allocator)
+		copy(exports, description.exports)
+		exports[len(description.exports)] = Export_Description {
+			name = ENTRY_NAME,
+		}
+		description.exports = exports
+		return ""
+	}
+	return ""
+}
 
 // describe_package gives the description of the Odin package in a folder:
 // the documentation of the module, and the descriptions of its exports. The
@@ -89,6 +141,13 @@ ENTRY_NAME :: "entry"
 // The documentation of the module is the comment before the word `package`,
 // in the first file that has one.
 describe_package :: proc(folder: string) -> (description: Module_Description, ok: bool) {
+	return describe_package_for_target(folder, .Freestanding, false)
+}
+
+// describe_package_for_target describes an Odin package for a specific
+// Module_Target and library mode. For non-library Modus modules it synthesizes
+// the runtime-provided `entry` export description.
+describe_package_for_target :: proc(folder: string, target: Module_Target, library := false) -> (description: Module_Description, ok: bool) {
 	list := make([dynamic]Export_Description, context.temp_allocator)
 	state: Describe_State
 	state.records = make([dynamic]Record_Description, context.temp_allocator)
@@ -98,6 +157,7 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 	// the stated budget can name a constant of another file.
 	integer_constants := make(map[string]u64, context.temp_allocator)
 	resizable_calls := make([dynamic]Resizable_Call, context.temp_allocator)
+	has_main := false
 	// The structs of all the files first: an export of one file can use a
 	// struct of another file.
 	for path in foundation.files_with_suffix(folder, ".odin") or_return {
@@ -106,6 +166,7 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 		}
 		source := foundation.read_file(path) or_return
 		file := parse_source(path, string(source), &state) or_return
+		has_main ||= file_has_main_procedure(file)
 		budget_request_read(file, &description.budget) or_return
 		integer_constants_read(file, &integer_constants)
 		resizable_calls_read(file, &resizable_calls)
@@ -147,6 +208,10 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 		return {}, false
 	}
 	description.exports = list[:]
+	if target_problem := module_description_apply_target(&description, target, library, has_main); target_problem != "" {
+		fmt.eprintfln("modustool: describe %s: %s", folder, target_problem)
+		return {}, false
+	}
 	return description, true
 }
 

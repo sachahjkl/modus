@@ -40,6 +40,18 @@ MODULE_NAME_BYTES_MOST :: info.IMAGE_NAME_SIZE - 1
 
 MODULE_BUILD_USAGE :: "modustool: module-build <folder of the module> [--system <folder of the system>] [--out <folder of the outputs>]"
 
+// Module_Target is the closed enum of compiler targets for a module
+// (src/md/infrastructure/odin_core_target.md).
+Module_Target :: foundation.Module_Target
+
+// Compiler_Source_Library names which compiler-owned source tree holds a file:
+// base: or core:. Any other path, including vendor:, is None.
+Compiler_Source_Library :: enum u8 {
+	None = 0,
+	Base = 1,
+	Core = 2,
+}
+
 // What a module build file says: the fields of a row of the module table
 // that a developer chooses.
 Module_Build_File :: struct {
@@ -47,6 +59,7 @@ Module_Build_File :: struct {
 	imports: []string, // Names of modules of the system, in the order of the import table.
 	defines: []string, // Settings of the compiler: NAME=value.
 	library: bool, // The module is a library module.
+	target:  Module_Target, // Compiler target: Freestanding (default) or Modus.
 }
 
 // module_name_is_valid tells whether a text is a name of a module: lower
@@ -76,12 +89,14 @@ module_build_file_parse :: proc(text: string) -> (file: Module_Build_File, probl
 		Imports,
 		Defines,
 		Library,
+		Target,
 	}
 	key_names := [Key]string {
 		.Name    = "name",
 		.Imports = "imports",
 		.Defines = "defines",
 		.Library = "library",
+		.Target  = "target",
 	}
 	seen: [Key]bool
 	rest := text
@@ -106,7 +121,7 @@ module_build_file_parse :: proc(text: string) -> (file: Module_Build_File, probl
 			}
 		}
 		if !known {
-			return {}, fmt.tprintf("line %d: the key %s is not known: the keys are name, imports, defines and library", line_number, written_key)
+			return {}, fmt.tprintf("line %d: the key %s is not known: the keys are name, imports, defines, library and target", line_number, written_key)
 		}
 		if seen[key] {
 			return {}, fmt.tprintf("line %d: the key %s is written two times", line_number, written_key)
@@ -147,6 +162,12 @@ module_build_file_parse :: proc(text: string) -> (file: Module_Build_File, probl
 			case:
 				return {}, fmt.tprintf("line %d: the value of library is yes or no, not %s", line_number, value)
 			}
+		case .Target:
+			parsed_target, target_ok := foundation.module_target_of_word(value)
+			if !target_ok {
+				return {}, fmt.tprintf("line %d: the value of target is freestanding or modus, not %s", line_number, value)
+			}
+			file.target = parsed_target
 		}
 	}
 	if !seen[.Name] {
@@ -167,21 +188,54 @@ outside_source_path :: proc(path, outside_folder: string) -> (recorded: string, 
 	return path[strings.last_index_byte(outside_folder, '/') + 1:], true
 }
 
+// compiler_source_library_of_path classifies whether path belongs to the
+// compiler-owned base/ or core/ source tree. When compiler_folder is empty,
+// it checks the flake installation layout (/share/base/ and /share/core/).
+// Other directories under compiler_folder, such as vendor/, return None.
+compiler_source_library_of_path :: proc(path, compiler_folder: string) -> Compiler_Source_Library {
+	if compiler_folder != "" {
+		if strings.has_prefix(path, foundation.join(compiler_folder, "/base/")) {
+			return .Base
+		}
+		if strings.has_prefix(path, foundation.join(compiler_folder, "/core/")) {
+			return .Core
+		}
+		return .None
+	}
+	if strings.contains(path, "/share/base/") {
+		return .Base
+	}
+	if strings.contains(path, "/share/core/") {
+		return .Core
+	}
+	return .None
+}
+
 // outside_module_source_has_a_place tells whether a source that the
 // compiler read for an outside module is in one of the three places of
 // such a source: the folder of the module or a folder under it, the
-// source library of the system, the libraries of the compiler. Each path
-// is absolute. compiler_folder is "" when the compiler did not say where
-// its libraries are: the layout of the installation of the flake then
-// names them.
-outside_module_source_has_a_place :: proc(path, module_folder, library_folder, compiler_folder: string) -> bool {
+// source library of the system, or the compiler-owned base/ and core/
+// libraries. Each path is absolute. compiler_folder is "" when the compiler
+// did not say where its libraries are: the layout of the installation of
+// the flake then names them.
+outside_module_source_has_a_place :: proc(path, module_folder, library_folder, compiler_folder: string, target: Module_Target = .Freestanding) -> bool {
 	if strings.has_prefix(path, foundation.join(module_folder, "/")) || strings.has_prefix(path, foundation.join(library_folder, "/")) {
 		return true
 	}
-	if compiler_folder != "" {
-		return strings.has_prefix(path, foundation.join(compiler_folder, "/"))
+	switch compiler_source_library_of_path(path, compiler_folder) {
+	case .None:
+		return false
+	case .Base:
+		return true
+	case .Core:
+		switch target {
+		case .Freestanding:
+			return true
+		case .Modus:
+			return true
+		}
 	}
-	return strings.contains(path, "/share/base/") || strings.contains(path, "/share/core/")
+	return false
 }
 
 // outside_module_sources_hold reads the list that the compiler wrote for
@@ -215,7 +269,7 @@ outside_module_sources_hold :: proc(build: foundation.Module_Build) -> bool {
 		if !strings.has_prefix(path, "/") {
 			path = foundation.join(root, "/", path)
 		}
-		if outside_module_source_has_a_place(path, build.source, library_by_link, compiler_folder) || outside_module_source_has_a_place(path, build.source, library_by_name, compiler_folder) {
+		if outside_module_source_has_a_place(path, build.source, library_by_link, compiler_folder, build.target) || outside_module_source_has_a_place(path, build.source, library_by_name, compiler_folder, build.target) {
 			continue
 		}
 		fmt.eprintfln("modustool: module-build: %s: the source %s is refused: a source of a module is in the folder of the module (%s) or under it, in the source library %s (%s), or in the libraries of the compiler. Remove the import that names its package", build.name, path, build.source, foundation.SOURCE_LIBRARY_NAME, foundation.SOURCE_FOLDER_PUBLIC)
@@ -232,7 +286,7 @@ outside_module_build :: proc(folder, out: string) -> bool {
 	build_file_path := foundation.join(folder, "/", MODULE_BUILD_FILE_NAME)
 	text, read_error := os.read_entire_file(build_file_path, context.temp_allocator)
 	if read_error != nil {
-		fmt.eprintfln("modustool: module-build: cannot read %s: %v. The folder of a module holds a file %s with the line `name: <name of the module>`, and the lines imports, defines and library when the module needs them", build_file_path, read_error, MODULE_BUILD_FILE_NAME)
+		fmt.eprintfln("modustool: module-build: cannot read %s: %v. The folder of a module holds a file %s with the line `name: <name of the module>`, and the lines imports, defines, library and target when the module needs them", build_file_path, read_error, MODULE_BUILD_FILE_NAME)
 		return false
 	}
 	described, problem := module_build_file_parse(string(text))
@@ -266,6 +320,7 @@ outside_module_build :: proc(folder, out: string) -> bool {
 		defines = described.defines,
 		image   = true,
 		library = described.library,
+		target  = described.target,
 	}
 	foundation.module_build_folder = out
 	foundation.module_import_folder = foundation.MODULE_BUILD_FOLDER

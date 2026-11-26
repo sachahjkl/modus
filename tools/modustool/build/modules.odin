@@ -297,36 +297,69 @@ module_effective_optimization :: proc(build: foundation.Module_Build, requested:
 	return requested
 }
 
-// module_compile_command gives the command of the compiler for a module,
-// with each flag of its build: the optimization mode, the checks of the
-// kernel, the debug information, the settings of the module. The build key
-// of the module holds this command (incremental_build.odin), so a flag is
-// written here and nowhere else.
-module_compile_command :: proc(build: foundation.Module_Build, optimization: Optimization_Mode = build_optimization_mode) -> []string {
-	llvm_ir_folder := foundation.join(foundation.module_build_folder, "/", build.name, "/llvm_ir")
-	effective := module_effective_optimization(build, optimization)
+// Odin_Compile_Options holds the inputs that vary between a repository build
+// and an SDK outside-module build. Both paths call odin_module_compile_command
+// so compiler target flags live in one place
+// (src/md/infrastructure/odin_core_target.md).
+Odin_Compile_Options :: struct {
+	source:                   string,
+	target:                   Module_Target,
+	library:                  bool,
+	optimization:             Optimization_Mode,
+	dependency_file:          string,
+	public_library_folder:    string,
+	llvm_ir_folder:           string,
+	include_internal_library: bool,
+	with_debug_info:          bool,
+	defines:                  []string,
+}
+
+// odin_module_compile_command builds the Odin compiler argument list for one
+// module compile. Repository builds and SDK builds both call this procedure so
+// Freestanding and Modus target flags stay identical across both paths.
+odin_module_compile_command :: proc(options: Odin_Compile_Options) -> [dynamic]string {
 	compile := make([dynamic]string, context.temp_allocator)
-	append(
-		&compile,
-		"odin",
-		"build",
-		build.source,
-		"-target:freestanding_amd64_sysv",
-		// LLVM IR, then llc: Odin has no option that keeps the frame pointers
-		// (rule 8 of docs/MODULE_CONTRACT.md); llc has one.
-		"-build-mode:llvm-ir",
-		"-reloc-mode:pic",
-		"-no-entry-point",
-		"-default-to-nil-allocator",
-	)
-	switch effective {
+	append(&compile, "odin", "build", options.source)
+	switch options.target {
+	case .Freestanding:
+		append(
+			&compile,
+			"-target:freestanding_amd64_sysv",
+			// LLVM IR, then llc: Odin has no option that keeps the frame pointers
+			// (docs/MODULE_CONTRACT.md, section 4); llc has one.
+			"-build-mode:llvm-ir",
+			"-reloc-mode:pic",
+			"-no-entry-point",
+			"-default-to-nil-allocator",
+		)
+	case .Modus:
+		append(
+			&compile,
+			"-target:modus_amd64",
+			"-build-mode:llvm-ir",
+			"-reloc-mode:pic",
+			// No host C runtime: base:runtime/procs.odin omits memcpy/memmove/memset
+			// on modus so src/runtime/memory.asm supplies them without collision.
+			"-no-crt",
+		)
+		// Library modules have no main() and no runtime-provided entry export.
+		if options.library {
+			append(&compile, "-no-entry-point")
+		}
+	}
+	switch options.optimization {
 	case .Speed:
 		append(&compile, "-o:speed")
 	case .None:
 		// Odin defaults to separate modules under -o:none, whereas module
-		// builds expect one LLVM IR file. -no-thread-local keeps base:runtime
-		// from emitting @thread_local (__tls_get_addr) in unoptimized IR.
-		append(&compile, "-o:none", "-use-single-module", "-no-thread-local")
+		// builds expect one LLVM IR file. For Freestanding, -no-thread-local
+		// keeps dead base:runtime globals from emitting __tls_get_addr in
+		// unoptimized IR. For Modus, omit -no-thread-local so any unported
+		// @(thread_local) fails module conversion instead of sharing a global.
+		append(&compile, "-o:none", "-use-single-module")
+		if options.target == .Freestanding {
+			append(&compile, "-no-thread-local")
+		}
 	}
 	append(
 		&compile,
@@ -337,17 +370,17 @@ module_compile_command :: proc(build: foundation.Module_Build, optimization: Opt
 		// The compiler writes the list of the files that it read: the inputs
 		// of the next build of this module.
 		"-export-dependencies:json",
-		foundation.join("-export-dependencies-file:", module_dependency_file(build.name)),
+		foundation.join("-export-dependencies-file:", options.dependency_file),
 		// The public source library, which ships in the SDK.
-		foundation.SOURCE_LIBRARY_FLAG,
+		foundation.join("-collection:", foundation.SOURCE_LIBRARY_NAME, "=", options.public_library_folder),
 		// The attribute of a fact type, which the compiler ignores
 		// (src/md/features/log_facts.md).
 		foundation.CUSTOM_ATTRIBUTES_FLAG,
-		foundation.join("-out:", llvm_ir_folder),
+		foundation.join("-out:", options.llvm_ir_folder),
 	)
 	// Internal parts belong to modules of the system only: the compiler
 	// refuses internal: in the kernel and in an outside module.
-	if !build.kernel && outside_source_folder == "" {
+	if options.include_internal_library {
 		append(&compile, foundation.INTERNAL_LIBRARY_FLAG)
 	}
 	// The line program of DWARF, for the line table of the debug object.
@@ -358,12 +391,35 @@ module_compile_command :: proc(build: foundation.Module_Build, optimization: Opt
 	// makes the same module as a build with none. A plain
 	// `-debug` adds aids for a debugger that are instructions, and it sets
 	// a constant that a source can read.
-	if debug_information {
+	if options.with_debug_info {
 		append(&compile, "-debug-info:same-code")
 	}
-	for define in build.defines {
+	for define in options.defines {
 		append(&compile, strings.concatenate({"-define:", define}, context.temp_allocator))
 	}
+	return compile
+}
+
+// module_compile_command gives the command of the compiler for a module,
+// with each flag of its build: the optimization mode, the checks of the
+// kernel, the debug information, the settings of the module. The build key
+// of the module holds this command (incremental_build.odin), so a flag is
+// written here and nowhere else.
+module_compile_command :: proc(build: foundation.Module_Build, optimization: Optimization_Mode = build_optimization_mode) -> []string {
+	llvm_ir_folder := foundation.join(foundation.module_build_folder, "/", build.name, "/llvm_ir")
+	effective := module_effective_optimization(build, optimization)
+	compile := odin_module_compile_command({
+		source                   = build.source,
+		target                   = build.kernel ? .Freestanding : build.target,
+		library                  = build.library,
+		optimization             = effective,
+		dependency_file          = module_dependency_file(build.name),
+		public_library_folder    = foundation.SOURCE_FOLDER_PUBLIC,
+		llvm_ir_folder           = llvm_ir_folder,
+		include_internal_library = !build.kernel && outside_source_folder == "",
+		with_debug_info          = debug_information,
+		defines                  = build.defines,
+	})
 	if build.kernel {
 		// The kernel parts: no other module gets this source library, so
 		// the compiler refuses a kernel part in a module.
@@ -561,6 +617,10 @@ build_module :: proc(build: foundation.Module_Build) -> bool {
 // defined. So the linked file is the same for every file of an import,
 // and the build key of this step holds none (incremental_build.odin).
 module_compile :: proc(build: foundation.Module_Build) -> bool {
+	if build.kernel && build.target != .Freestanding {
+		fmt.eprintfln("modustool: %s: a kernel module compiles only with target freestanding", build.name)
+		return false
+	}
 	folder := foundation.join(foundation.module_build_folder, "/", build.name)
 	objects := foundation.join(folder, "/objects")
 	foundation.reset_folder(objects) or_return
@@ -664,7 +724,7 @@ module_compile :: proc(build: foundation.Module_Build) -> bool {
 		foundation.run(command) or_return
 	}
 
-	description := describe_package(build.source) or_return
+	description := describe_package_for_target(build.source, build.target, build.library) or_return
 	export_names := make([dynamic]string, context.temp_allocator)
 	for export in description.exports {
 		append(&export_names, export.name)
@@ -723,7 +783,7 @@ module_objects_link :: proc(folder: string, objects: string, export_names: []str
 // It is the one step that reads the file of an import: for its hash, and
 // for the number of each export that an import slot names. It runs no compiler.
 module_convert :: proc(build: foundation.Module_Build) -> bool {
-	description := describe_package(build.source) or_return
+	description := describe_package_for_target(build.source, build.target, build.library) or_return
 	// The category of the row, from the row itself and never from its name:
 	// a module from outside the repository can have the name of a module of
 	// the system, and its folder is in no module group, so it states none.

@@ -1149,32 +1149,18 @@ sdk_build_outside_odin :: proc(abs_sdk, abs_source, build_file_path, output_path
 
 	// Compile purely against `-collection:modus=<sdk>/library/modus`.
 	// Never pass `-collection:internal` or `-collection:modulus`.
-	compile_cmd := make([dynamic]string, context.temp_allocator)
-	append(
-		&compile_cmd,
-		"odin",
-		"build",
-		abs_source,
-		"-target:freestanding_amd64_sysv",
-		"-build-mode:llvm-ir",
-		"-reloc-mode:pic",
-		"-no-entry-point",
-		"-default-to-nil-allocator",
-		"-o:speed",
-		"-vet",
-		"-source-code-locations:filename",
-		"-export-dependencies:json",
-		foundation.join("-export-dependencies-file:", dependency_file),
-		foundation.join("-collection:", foundation.SOURCE_LIBRARY_NAME, "=", sdk_public_dir),
-		foundation.CUSTOM_ATTRIBUTES_FLAG,
-		foundation.join("-out:", llvm_ir_dir),
-	)
-	if with_debug_info {
-		append(&compile_cmd, "-debug-info:same-code")
-	}
-	for define in described.defines {
-		append(&compile_cmd, foundation.join("-define:", define))
-	}
+	compile_cmd := odin_module_compile_command({
+		source                   = abs_source,
+		target                   = described.target,
+		library                  = described.library,
+		optimization             = .Speed,
+		dependency_file          = dependency_file,
+		public_library_folder    = sdk_public_dir,
+		llvm_ir_folder           = llvm_ir_dir,
+		include_internal_library = false,
+		with_debug_info          = with_debug_info,
+		defines                  = described.defines,
+	})
 	compile_state, _, compile_stderr, compile_err := os.process_exec({command = compile_cmd[:]}, context.temp_allocator)
 	if compile_err != nil || !compile_state.exited || !compile_state.success {
 		return fmt.tprintf("odin compile failed for `%s`: %s", described.name, strings.trim_space(string(compile_stderr)))
@@ -1191,8 +1177,13 @@ sdk_build_outside_odin :: proc(abs_sdk, abs_source, build_file_path, output_path
 	source_prefix := foundation.join(abs_source, "/")
 	sdk_public_prefix := foundation.join(sdk_public_dir, "/")
 	for dep_path in dep_files {
-		if !outside_module_source_has_a_place(dep_path, abs_source, sdk_public_dir, compiler_folder) {
+		if !outside_module_source_has_a_place(dep_path, abs_source, sdk_public_dir, compiler_folder, described.target) {
 			return fmt.tprintf("outside module `%s` referenced forbidden source `%s` outside module folder, SDK public library, and compiler libraries", described.name, dep_path)
+		}
+		// Compiler-owned base/ and core/ files belong to the Odin toolchain
+		// and are skipped before namespace and log-fact inspection.
+		if compiler_source_library_of_path(dep_path, compiler_folder) != .None {
+			continue
 		}
 		if strings.contains(dep_path, "/" + foundation.INTERNAL_LIBRARY_NAME + "/") || strings.contains(dep_path, "/" + foundation.KERNEL_LIBRARY_NAME + "/") {
 			return fmt.tprintf("outside module `%s` referenced forbidden namespace in `%s`", described.name, dep_path)
@@ -1278,11 +1269,11 @@ sdk_build_outside_odin :: proc(abs_sdk, abs_source, build_file_path, output_path
 	foundation.source_library_public_folder = sdk_public_dir
 	defer foundation.source_library_public_folder = previous_public_folder
 
-	description, described_ok := describe_package(abs_source)
+	description, described_ok := describe_package_for_target(abs_source, described.target, described.library)
 	if !described_ok {
 		return fmt.tprintf("failed to describe exports of outside module `%s`", described.name)
 	}
-	if all_facts, facts_ok := facts_of_sources(fact_sources[:]); facts_ok {
+	if all_facts, facts_ok := facts_of_sources(fact_sources[:], compiler_folder); facts_ok {
 		reached, reach_problem := facts_reached(ir_text, all_facts, abs_source)
 		if reach_problem != "" {
 			return fmt.tprintf("log facts of `%s`: %s", described.name, reach_problem)

@@ -4,6 +4,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
+- **Odin core target on modus for outside modules.** Outside modules declare `target: modus` to compile against `base:runtime` and `core:` on modus while system sources remain freestanding. [Design](src/md/infrastructure/odin_core_target.md)
+
 ## Next
 
 - **One way to read an object through the storage service.** Replace boot-image resources, numbered context values, fixed delivery ranges, and the `Image` data grant with a read-only image tree served first by `storage` with no disk, mapped by name in granted trees with optional explicit counted hash pins and one plan-bounded map cache for disk objects. [Design](src/md/features/objects_by_hash.md)

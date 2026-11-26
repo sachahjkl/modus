@@ -96,15 +96,20 @@ fact_fail :: proc(path: string, line: int, format: string, args: ..any) -> bool 
 
 // facts_of_sources gives the fact types that the calls of system.log_fact
 // in sources write, each one time, in the order of their first call. A
-// type of a folder that sources do not hold is read from the disk. ok is
-// false at the first refusal, which it prints.
-facts_of_sources :: proc(sources: []Fact_Source) -> (facts: []Fact_Description, ok: bool) {
+// type of a folder that sources do not hold is read from the disk. Compiler-
+// owned base/ and core/ files are skipped. ok is false at the first refusal,
+// which it prints.
+facts_of_sources :: proc(sources: []Fact_Source, compiler_folder := "") -> (facts: []Fact_Description, ok: bool) {
 	context.allocator = context.temp_allocator
+	active_compiler := compiler_folder != "" ? compiler_folder : odin_root()
 	extraction: Fact_Extraction
 	extraction.given = make(map[string][dynamic]Fact_Source)
 	extraction.packages = make(map[string]^Fact_Package)
 	extraction.facts = make([dynamic]Fact_Description)
 	for item in sources {
+		if compiler_source_library_of_path(item.path, active_compiler) != .None {
+			continue
+		}
 		folder := filepath.dir(item.path)
 		if folder not_in extraction.given {
 			extraction.given[folder] = make([dynamic]Fact_Source)
@@ -112,6 +117,9 @@ facts_of_sources :: proc(sources: []Fact_Source) -> (facts: []Fact_Description, 
 		append(&extraction.given[folder], item)
 	}
 	for item in sources {
+		if compiler_source_library_of_path(item.path, active_compiler) != .None {
+			continue
+		}
 		if strings.has_suffix(item.path, "_test.odin") || !strings.contains(item.source, foundation.LOG_FACT_ATTRIBUTE_NAME) {
 			continue
 		}
