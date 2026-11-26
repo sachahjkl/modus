@@ -6,6 +6,12 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.104.0] - 2026-11-26 18:23
+
+### Fixed
+
+- **Open desktop applications without a data disk and bound host module test memory.** On a machine without a data disk (such as Web Desktop or a virtual machine booted from the boot image alone), desktop applications that carry a store grant (`settings`, `monitor`, `edit`, `files`, `paint`, `notes`, `code`, `browser`, `assistant`) now open without a store instead of failing to launch, and the `host_modules` test clears temporary allocations between modules so it stays within CI memory limits.
+
 ## [0.103.0] - 2026-11-26 15:41
 
 ### Changed
@@ -2048,6 +2054,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.104.0]: https://github.com/sachahjkl/modus/releases/tag/v0.104.0
 [0.103.0]: https://github.com/sachahjkl/modus/releases/tag/v0.103.0
 [0.102.0]: https://github.com/sachahjkl/modus/releases/tag/v0.102.0
 [0.101.1]: https://github.com/sachahjkl/modus/releases/tag/v0.101.1
