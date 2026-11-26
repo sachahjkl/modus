@@ -14,7 +14,7 @@ BLOCKS_ALIAS_ADDRESS :: u64(0x50_0000)
 BLOCKS_DATA_ADDRESS :: u64(0x60_0000)
 BLOCKS_UNMAPPED_ADDRESS :: u64(0x61_0000)
 BLOCKS_STACK_TOP :: u64(0x70_1000)
-BLOCKS_CODE_PAGE_CAPACITY :: 17
+BLOCKS_CODE_PAGE_CAPACITY :: 80
 
 // Two machines with the same memory: one runs with a cache of decoded
 // blocks, the other without. Each run of both must leave the same state
@@ -31,7 +31,7 @@ Blocks_Twin :: struct {
 
 blocks_twin_create :: proc(code_pages: int) -> ^Blocks_Twin {
 	twin := new(Blocks_Twin)
-	twin.machine = test_machine_create(1024 * 1024)
+	twin.machine = test_machine_create(2 * 1024 * 1024)
 	m := &twin.machine
 	for page in 0 ..< code_pages {
 		frame := test_alloc_frame(m)
@@ -229,50 +229,65 @@ blocks_a_write_of_the_running_block_into_its_own_frame_ends_the_block :: proc(t:
 // BLOCK_CACHE_CAPACITY blocks, whatever the count of the places that run.
 @(test)
 blocks_a_block_replaces_the_block_of_its_slot_at_the_bound :: proc(t: ^testing.T) {
-	twin := blocks_twin_create(16 + 1)
+	// Enough 4 KiB pages of 2-byte `inc eax` instructions to exceed BLOCK_CACHE_CAPACITY blocks.
+	BLOCKS_PER_PAGE :: int(PAGE_SIZE) / (2 * BLOCK_INSTRUCTION_CAPACITY)
+	PAGES :: (BLOCK_CACHE_CAPACITY / BLOCKS_PER_PAGE) + 8
+	twin := blocks_twin_create(PAGES + 1)
 	defer blocks_twin_destroy(twin)
-	frame := twin.code_frames[0]
+	first_page, second_page := 0, 0
 	first_offset, second_offset := u64(0), u64(0)
+	first_phys, second_phys := u64(0), u64(0)
 	search: for a in u64(0) ..< 64 {
-		for b in a + 2 ..< PAGE_SIZE - 2 {
-			if block_slot(frame + a * 2) == block_slot(frame + b) && b % 2 == 0 {
-				first_offset, second_offset = a * 2, b
-				break search
+		p1 := twin.code_frames[0] + a * 2
+		s1 := block_slot(p1)
+		for page in 0 ..< min(PAGES, 8) {
+			for b := u64(0); b < PAGE_SIZE - 4; b += 2 {
+				p2 := twin.code_frames[page] + b
+				if p2 == p1 {
+					continue
+				}
+				if block_slot(p2) == s1 {
+					first_page, first_offset, first_phys = 0, a * 2, p1
+					second_page, second_offset, second_phys = page, b, p2
+					break search
+				}
 			}
 		}
 	}
-	testing.expect(t, second_offset != 0, "two places of one page with one slot")
-	blocks_twin_write(twin, frame + first_offset, {0xFF, 0xC0, 0x0F, 0x05}) // inc eax; syscall
-	blocks_twin_write(twin, frame + second_offset, {0xFF, 0xC8, 0x0F, 0x05}) // dec eax; syscall
-	blocks_twin_start(twin, BLOCKS_CODE_ADDRESS + first_offset)
+	testing.expect(t, second_phys != 0, "two places with one slot")
+	blocks_twin_write(twin, first_phys, {0xFF, 0xC0, 0x0F, 0x05}) // inc eax; syscall
+	blocks_twin_write(twin, second_phys, {0xFF, 0xC8, 0x0F, 0x05}) // dec eax; syscall
+	first_va := BLOCKS_CODE_ADDRESS + u64(first_page) * PAGE_SIZE + first_offset
+	second_va := BLOCKS_CODE_ADDRESS + u64(second_page) * PAGE_SIZE + second_offset
+	blocks_twin_start(twin, first_va)
 	blocks_twin_run(t, twin, 10)
-	blocks_twin_start(twin, BLOCKS_CODE_ADDRESS + second_offset)
+	blocks_twin_start(twin, second_va)
 	blocks_twin_run(t, twin, 10)
 	testing.expect_value(t, twin.cache.counts.replaced, u64(1))
-	testing.expect(t, block_cache_find(twin.cache, frame + first_offset) == nil)
-	testing.expect(t, block_cache_find(twin.cache, frame + second_offset) != nil)
-	blocks_twin_start(twin, BLOCKS_CODE_ADDRESS + first_offset)
+	testing.expect(t, block_cache_find(twin.cache, first_phys) == nil)
+	testing.expect(t, block_cache_find(twin.cache, second_phys) != nil)
+	blocks_twin_start(twin, first_va)
 	blocks_twin_run(t, twin, 10)
 	testing.expect_value(t, twin.cache.counts.replaced, u64(2))
 	testing.expect_value(t, twin.cache.counts.records, u64(3))
 
-	// Sixteen pages of inc eax are 2048 blocks of 16 instructions, twice
-	// the capacity, then a system call: two runs give the steps one by
-	// one, and the cache never holds more blocks than its capacity.
+	// PAGES pages of inc eax produce more blocks than BLOCK_CACHE_CAPACITY,
+	// then a system call: two runs give the steps one by one, and the cache
+	// never holds more blocks than its capacity.
 	twin.cache^ = {}
 	increments := make([]u8, int(PAGE_SIZE))
 	defer delete(increments)
 	for index := 0; index < len(increments); index += 2 {
 		increments[index], increments[index + 1] = 0xFF, 0xC0
 	}
-	for page in 0 ..< 16 {
+	for page in 0 ..< PAGES {
 		blocks_twin_write(twin, twin.code_frames[page], increments)
 	}
-	blocks_twin_write(twin, twin.code_frames[16], {0x0F, 0x05})
+	blocks_twin_write(twin, twin.code_frames[PAGES], {0x0F, 0x05})
 	for _ in 0 ..< 2 {
 		blocks_twin_start(twin, BLOCKS_CODE_ADDRESS)
-		testing.expect_value(t, blocks_twin_run(t, twin, 40_000), Step_Outcome.Syscall)
-		testing.expect_value(t, twin.with.registers[int(General_Register.Rax)], u64(16 * 2048))
+		testing.expect_value(t, blocks_twin_run(t, twin, u64(PAGES * 2048 + 16)), Step_Outcome.Syscall)
+		testing.expect_value(t, twin.with.registers[int(General_Register.Rax)], u64(PAGES * 2048))
 	}
 	valid := 0
 	for block in twin.cache.blocks {
@@ -282,7 +297,7 @@ blocks_a_block_replaces_the_block_of_its_slot_at_the_bound :: proc(t: ^testing.T
 		}
 	}
 	testing.expect(t, valid <= BLOCK_CACHE_CAPACITY)
-	testing.expect(t, twin.cache.counts.replaced > 0, "2048 blocks replace blocks in a cache of 1024")
+	testing.expect(t, twin.cache.counts.replaced > 0, "more than BLOCK_CACHE_CAPACITY blocks trigger replacements")
 }
 
 // An instruction that crosses the end of a page ends the block before it,
@@ -614,7 +629,9 @@ blocks_a_block_stops_at_its_byte_capacity :: proc(t: ^testing.T) {
 	// of 4 and a system call.
 	EXACT_OFFSET :: u64(0)
 	place := twin.code_frames[0] + EXACT_OFFSET
-	for _ in 0 ..< 8 {
+	// Sixteen 15-byte instructions (240) + 8-byte + 4-byte = 252 (BLOCK_BYTE_CAPACITY),
+	// followed by one more 4-byte addition that starts the next block.
+	for _ in 0 ..< 16 {
 		blocks_twin_write(twin, place, BLOCKS_LONGEST_ADD[:])
 		place += 15
 	}
@@ -622,12 +639,14 @@ blocks_a_block_stops_at_its_byte_capacity :: proc(t: ^testing.T) {
 	place += 8
 	blocks_twin_write(twin, place, BLOCKS_FOUR_BYTE_ADD[:])
 	place += 4
+	blocks_twin_write(twin, place, BLOCKS_FOUR_BYTE_ADD[:])
+	place += 4
 	blocks_twin_write(twin, place, {0x0F, 0x05})
-	// Nine instructions of 15 bytes are 135: the ninth starts the next
-	// block.
+	// Seventeen instructions of 15 bytes are 255 (> 252): the seventeenth starts
+	// the next block at byte 240.
 	PAST_OFFSET :: u64(0x200)
 	place = twin.code_frames[0] + PAST_OFFSET
-	for _ in 0 ..< 9 {
+	for _ in 0 ..< 17 {
 		blocks_twin_write(twin, place, BLOCKS_LONGEST_ADD[:])
 		place += 15
 	}
@@ -640,8 +659,8 @@ blocks_a_block_stops_at_its_byte_capacity :: proc(t: ^testing.T) {
 			instruction_count: u8,
 			next_offset:       u64,
 		} {
-			{EXACT_OFFSET, 10, BLOCK_BYTE_CAPACITY, 9, BLOCK_BYTE_CAPACITY},
-			{PAST_OFFSET, 9, 120, 8, 120},
+			{EXACT_OFFSET, 19, BLOCK_BYTE_CAPACITY, 18, BLOCK_BYTE_CAPACITY},
+			{PAST_OFFSET, 17, 240, 16, 240},
 		}) {
 		for _ in 0 ..< 2 {
 			blocks_twin_start(twin, BLOCKS_CODE_ADDRESS + test_case.offset)

@@ -14,23 +14,32 @@ package software_machine
 import "base:intrinsics"
 
 // The blocks of one processor. A power of two: the slot of a block is bits
-// of the hash of its key.
-BLOCK_CACHE_CAPACITY :: 1024
-BLOCK_CACHE_SLOT_BITS :: 10
+// of the hash of its key. 4096 blocks hold the hot loops of compositor,
+// drawing, text_rendering, input, and an active desktop application without
+// evicting each other on every context switch.
+BLOCK_CACHE_CAPACITY :: 4096
+BLOCK_CACHE_SLOT_BITS :: 12
 #assert(1 << BLOCK_CACHE_SLOT_BITS == BLOCK_CACHE_CAPACITY)
 
 // The most instructions of one block: a run with no taken branch is at
 // most this long, which bounds the time before a block sees a change that
 // another processor wrote.
-BLOCK_INSTRUCTION_CAPACITY :: 16
+BLOCK_INSTRUCTION_CAPACITY :: 32
 
-// The most bytes of one block: the compare at each entry reads them.
-BLOCK_BYTE_CAPACITY :: 128
-#assert(BLOCK_BYTE_CAPACITY <= int(max(u8)))
+// The most bytes of one block: 252 leaves 253 representable in u8 for
+// out-of-bounds validation tests while covering up to 32 decoded instructions.
+BLOCK_BYTE_CAPACITY :: 252
+#assert(BLOCK_BYTE_CAPACITY < int(max(u8)))
+
+// Number of 4 KiB physical frames tracked in the code-frame bitmap (512 MiB).
+// Writes to frames past this range fall back to byte comparison on entry.
+CODE_FRAME_TRACKED :: 131072
+CODE_FRAME_WORDS :: CODE_FRAME_TRACKED / 64
 
 // One decoded block, keyed by the physical address of its first byte.
 Decoded_Block :: struct {
 	start_physical:    u64,
+	verified_epoch:    u64,
 	valid:             bool,
 	instruction_count: u8,
 	byte_count:        u8,
@@ -50,8 +59,40 @@ Block_Cache_Counts :: struct {
 // The cache of the decoded blocks of one processor. Its zero value is an
 // empty cache.
 Block_Cache :: struct {
-	blocks: [BLOCK_CACHE_CAPACITY]Decoded_Block,
-	counts: Block_Cache_Counts,
+	blocks:               [BLOCK_CACHE_CAPACITY]Decoded_Block,
+	counts:               Block_Cache_Counts,
+	// Epoch incremented whenever a write, port access, or TLB flush can modify
+	// a tracked code frame. When trust_write_tracking is false (default, for
+	// host tests that mutate physical_memory directly between processor_run
+	// calls), processor_run also advances code_epoch at entry. When true (set
+	// by the single-processor browser kernel where all RAM mutations go through
+	// the MMU, ports, or TLB flushes), blocks stay verified across syscalls.
+	code_epoch:           u64,
+	trust_write_tracking: bool,
+	code_frame_bits:      [CODE_FRAME_WORDS]u64,
+}
+
+// block_cache_bump_epoch forces blocks to re-verify their bytes once on their
+// next entry (used at processor_run entry, on port access, on writes to a
+// frame that holds cached code blocks, and on kernel page/RAM mutations).
+block_cache_bump_epoch :: #force_inline proc "contextless" (cache: ^Block_Cache) {
+	cache.code_epoch += 1
+	if cache.code_epoch == 0 {
+		cache.code_epoch = 1
+	}
+}
+
+// block_cache_note_frame_write advances the code epoch only when a write lands
+// in a tracked physical frame that currently has at least one cached code block.
+block_cache_note_frame_write :: #force_inline proc "contextless" (cache: ^Block_Cache, frame_physical: u64) {
+	frame_index := frame_physical >> 12
+	if frame_index < CODE_FRAME_TRACKED {
+		if (cache.code_frame_bits[frame_index >> 6] & (u64(1) << (frame_index & 63))) != 0 {
+			block_cache_bump_epoch(cache)
+		}
+	} else {
+		block_cache_bump_epoch(cache)
+	}
 }
 
 // block_slot is the slot of the block that starts at a physical address.
@@ -109,7 +150,12 @@ block_step :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, 
 	}
 	cache := cpu.blocks
 	if block := block_cache_find(cache, translated.physical_address); block != nil {
-		if block_bytes_equal(block, physical_memory) {
+		frame_index := translated.physical_address >> 12
+		fast_verified := cache.code_epoch != 0 && block.verified_epoch == cache.code_epoch && frame_index < CODE_FRAME_TRACKED
+		if fast_verified || block_bytes_equal(block, physical_memory) {
+			if !fast_verified && frame_index < CODE_FRAME_TRACKED {
+				block.verified_epoch = cache.code_epoch
+			}
 			cache.counts.entries += 1
 			return block_run(cpu, physical_memory, block, step_allowance)
 		}
@@ -202,12 +248,20 @@ block_record :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8
 			break
 		}
 	}
+	wrote_code_frame := cpu.tlb.code_frame_written
 	cpu.tlb.code_frame_active = false
 	if record.instruction_count > 0 {
 		cache := cpu.blocks
 		slot := &cache.blocks[block_slot(start_physical)]
 		if slot.valid && slot.start_physical != start_physical {
 			cache.counts.replaced += 1
+		}
+		frame_index := start_physical >> 12
+		if frame_index < CODE_FRAME_TRACKED {
+			cache.code_frame_bits[frame_index >> 6] |= u64(1) << (frame_index & 63)
+			if !wrote_code_frame {
+				record.verified_epoch = cache.code_epoch
+			}
 		}
 		record.valid = true
 		slot^ = record

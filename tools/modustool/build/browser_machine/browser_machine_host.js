@@ -100,9 +100,9 @@ export const PixelFormat = Object.freeze({ None: 0, Blue_Green_Red_X: 1, Red_Gre
 export const LoopResult = Object.freeze({ Idle: 0, Kernel_Returned: 1, Budget_Refused: 2, Slice_Ended: 3 });
 
 // The instructions of one call of the loop: STEP_BUDGET_LIMIT of the kernel
-// is 1 000 000. A smaller slice keeps the 8 ms worker slice accurate so input
-// and frame messages never wait behind a long slice.
-export const STEP_BUDGET = 25000n;
+// is 1 000 000. 100 000 instructions reduces JS/WASM boundary overhead while
+// staying within the 8 ms worker slice so input and frame reads stay snappy.
+export const STEP_BUDGET = 100000n;
 
 export const PAGE_SIZE = 4096;
 const WEBASSEMBLY_PAGE_SIZE = 65536;
@@ -224,6 +224,11 @@ export class Ps2Controller {
     this.queue = []; // Of {byte, mouse}.
     this.configuration = PS2_DEFAULT_CONFIGURATION;
     this.dataTarget = Ps2DataTarget.Keyboard;
+    this.mouseWheel = false;
+    this.mouseLastCommand = 0;
+    this.mouseRateHistory = [];
+    this.mouseButtons = 0;
+    this.mouseReporting = true;
   }
   push(byte, mouse) {
     if (this.queue.length >= PS2_QUEUE_LIMIT) this.queue.shift();
@@ -258,7 +263,22 @@ export class Ps2Controller {
     switch (target) {
       case Ps2DataTarget.Configuration: this.configuration = value; this.signalHead(); return;
       case Ps2DataTarget.KeyboardArgument: this.push(PS2_ACKNOWLEDGE, false); return;
-      case Ps2DataTarget.MouseArgument: this.push(PS2_ACKNOWLEDGE, true); return;
+      case Ps2DataTarget.MouseArgument:
+        this.push(PS2_ACKNOWLEDGE, true);
+        if (this.mouseLastCommand === 0xf3) {
+          this.mouseRateHistory.push(value & 0xff);
+          if (this.mouseRateHistory.length > 3) this.mouseRateHistory.shift();
+          if (
+            this.mouseRateHistory.length === 3 &&
+            this.mouseRateHistory[0] === 200 &&
+            this.mouseRateHistory[1] === 100 &&
+            this.mouseRateHistory[2] === 80
+          ) {
+            this.mouseWheel = true;
+          }
+        }
+        this.mouseLastCommand = 0;
+        return;
       case Ps2DataTarget.Mouse: this.mouseCommand(value); return;
       case Ps2DataTarget.Keyboard: this.keyboardCommand(value); return;
     }
@@ -269,7 +289,11 @@ export class Ps2Controller {
       case 0x60: this.dataTarget = Ps2DataTarget.Configuration; return;
       case 0xaa: this.push(0x55, false); return; // The self test of the controller.
       case 0xa9: case 0xab: this.push(0x00, false); return; // The test of a port.
-      case 0xd4: this.dataTarget = Ps2DataTarget.Mouse; return;
+      case 0xd4:
+        // On real 8042 hardware, every mouse byte (including an argument to
+        // 0xF3/0xE8) is prefixed by controller command 0xD4.
+        this.dataTarget = this.mouseLastCommand !== 0 ? Ps2DataTarget.MouseArgument : Ps2DataTarget.Mouse;
+        return;
       default: return; // Enable and disable change nothing that the page plays.
     }
   }
@@ -286,13 +310,45 @@ export class Ps2Controller {
   }
   mouseCommand(value) {
     switch (value) {
-      case 0xff: this.push(PS2_ACKNOWLEDGE, true); this.push(PS2_SELF_TEST_PASSED, true); this.push(0x00, true); return;
-      case 0xf2: this.push(PS2_ACKNOWLEDGE, true); this.push(0x00, true); return;
-      case 0xf3: case 0xe8:
+      case 0xff:
+        this.mouseWheel = false;
+        this.mouseLastCommand = 0;
+        this.mouseRateHistory = [];
+        this.mouseReporting = false;
         this.push(PS2_ACKNOWLEDGE, true);
-        this.dataTarget = Ps2DataTarget.MouseArgument;
+        this.push(PS2_SELF_TEST_PASSED, true);
+        this.push(0x00, true);
         return;
-      default: this.push(PS2_ACKNOWLEDGE, true); return;
+      case 0xf6:
+        this.mouseWheel = false;
+        this.mouseLastCommand = 0;
+        this.mouseRateHistory = [];
+        this.mouseReporting = false;
+        this.push(PS2_ACKNOWLEDGE, true);
+        return;
+      case 0xf5:
+        this.mouseLastCommand = 0;
+        this.mouseReporting = false;
+        this.push(PS2_ACKNOWLEDGE, true);
+        return;
+      case 0xf4:
+        this.mouseLastCommand = 0;
+        this.mouseReporting = true;
+        this.push(PS2_ACKNOWLEDGE, true);
+        return;
+      case 0xf2:
+        this.mouseLastCommand = 0;
+        this.push(PS2_ACKNOWLEDGE, true);
+        this.push(this.mouseWheel ? 0x03 : 0x00, true);
+        return;
+      case 0xf3: case 0xe8:
+        this.mouseLastCommand = value;
+        this.push(PS2_ACKNOWLEDGE, true);
+        return;
+      default:
+        this.mouseLastCommand = 0;
+        this.push(PS2_ACKNOWLEDGE, true);
+        return;
     }
   }
   // A key of the document, by KeyboardEvent.code. A code with no byte of
@@ -322,22 +378,34 @@ export class Ps2Controller {
   // buttons as MouseEvent.buttons gives them (bit 0 left, 1 right, 2 middle).
   // Moves larger than one 8-bit signed step are split into bounded packets so
   // absolute-to-relative synchronization reaches any pixel of the screen.
-  pointer(deltaX, deltaY, buttons) {
+  pointer(deltaX, deltaY, buttons, wheel = 0) {
+    this.mouseButtons = buttons;
+    if (!this.mouseReporting) return;
     let remX = Math.max(-4096, Math.min(4096, Math.round(deltaX)));
     let remY = Math.max(-4096, Math.min(4096, Math.round(-deltaY)));
+    let remZ = this.mouseWheel ? Math.max(-64, Math.min(64, Math.round(wheel))) : 0;
     const left = buttons & 1, right = (buttons >> 1) & 1, middle = (buttons >> 2) & 1;
+    const packetSize = this.mouseWheel ? 4 : 3;
     do {
-      // Never split a 3-byte PS/2 mouse packet when the queue is full.
-      if (this.queue.length + 3 > PS2_QUEUE_LIMIT) break;
+      // Never split a PS/2 mouse packet when the queue is full.
+      if (this.queue.length + packetSize > PS2_QUEUE_LIMIT) break;
       const x = Math.max(-127, Math.min(127, remX));
       const y = Math.max(-127, Math.min(127, remY));
+      const z = Math.max(-7, Math.min(7, remZ));
       remX -= x;
       remY -= y;
+      remZ -= z;
       const head = left | (right << 1) | (middle << 2) | 0x08 | (x < 0 ? 0x10 : 0) | (y < 0 ? 0x20 : 0);
       this.push(head, true);
       this.push(x & 0xff, true);
       this.push(y & 0xff, true);
-    } while (remX !== 0 || remY !== 0);
+      if (this.mouseWheel) this.push(z & 0xff, true);
+    } while (remX !== 0 || remY !== 0 || remZ !== 0);
+  }
+  wheel(notches) {
+    if (!this.mouseWheel || !this.mouseReporting) return;
+    const count = Math.round(notches);
+    if (count !== 0) this.pointer(0, 0, this.mouseButtons, count);
   }
 }
 
@@ -416,17 +484,19 @@ export class MachineClock {
   }
 }
 
-// The throws of the two imports that do not return. The loop driver
-// catches them; any other error is a trap of WebAssembly, which ends the
-// machine (browser_machine.md, "The subtle points").
-export class ProcessorLoopUnwind extends Error {}
-export class ProcessorStop extends Error {}
-export class ProcessorIdle extends Error {
+// The throws of the control-flow imports that do not return. They intentionally
+// do NOT extend Error so V8 skips capturing a stack trace on every syscall and
+// idle yield (tens of thousands of times per second). Any other thrown value is
+// treated as a WebAssembly trap (browser_machine.md, "The subtle points").
+export class ProcessorLoopUnwind {}
+export class ProcessorStop {}
+export class ProcessorIdle {
   constructor(boundNanoseconds) {
-    super("idle");
     this.boundNanoseconds = boundNanoseconds;
   }
 }
+const UNWIND_SIGNAL = new ProcessorLoopUnwind();
+const STOP_SIGNAL = new ProcessorStop();
 
 const alignUp = (value, alignment) => Math.ceil(value / alignment) * alignment;
 
@@ -1398,8 +1468,8 @@ export class BrowserMachine {
         page_clock_nanoseconds: () => machine.clockNanoseconds(),
         page_port_write_8: (port, value) => machine.portWrite(port, value),
         page_port_read_8: (port) => machine.portRead(port),
-        page_processor_loop_unwind: () => { throw new ProcessorLoopUnwind(); },
-        page_processor_stop: () => { throw new ProcessorStop(); },
+        page_processor_loop_unwind: () => { throw UNWIND_SIGNAL; },
+        page_processor_stop: () => { throw STOP_SIGNAL; },
         page_idle_wait: (boundNanoseconds) => machine.idleWait(boundNanoseconds),
         page_interrupt_lines_take: () => machine.interruptLinesTake(),
       },
@@ -1419,7 +1489,7 @@ export class BrowserMachine {
     else if (this.consolePort.holds(port)) this.consolePort.write(port, value);
     else if (port === Port.Ps2Data || port === Port.Ps2Command) this.keyboard.write(port, value);
     else if (port === Port.ClockIndex) this.clock.write(port, value);
-    else if (port === Port.DebugExit) { this.stopCode = value; throw new ProcessorStop(); }
+    else if (port === Port.DebugExit) { this.stopCode = value; throw STOP_SIGNAL; }
     else this.unknownPorts.set(port, (this.unknownPorts.get(port) ?? 0) + 1);
   }
 

@@ -62,7 +62,9 @@ PAGE_FAULT_RESERVED :: u64(1) << 3
 PAGE_FAULT_INSTRUCTION :: u64(1) << 4
 
 // Direct-mapped software TLB capacity (power of two).
-TLB_ENTRY_COUNT :: 256
+// 2048 entries cover an 8 MiB working set across compositor, window surfaces,
+// and vector font caches without 4-level page-table walks on every frame.
+TLB_ENTRY_COUNT :: 2048
 TLB_INDEX_MASK :: u64(TLB_ENTRY_COUNT - 1)
 
 // Kind of memory access checked during address translation.
@@ -93,6 +95,7 @@ Tlb_Entry :: struct {
 	virtual_page:    u64,
 	physical_page:   u64,
 	page_table_root: u64,
+	generation:      u32,
 	valid:           bool,
 	writable:        bool,
 	user_accessible: bool,
@@ -104,6 +107,7 @@ Tlb_Entry :: struct {
 // Direct-mapped per-processor software TLB.
 Software_Tlb :: struct {
 	entries:                [TLB_ENTRY_COUNT]Tlb_Entry,
+	generation:             u32,
 	has_large_page_entries: bool,
 	hits:                   u64,
 	misses:                 u64,
@@ -120,14 +124,22 @@ Software_Tlb :: struct {
 	code_frame:             u64,
 	code_frame_active:      bool,
 	code_frame_written:     bool,
+	// Active block cache for O(1) self-modifying-code epoch invalidation on
+	// writes to any frame that holds cached decoded blocks.
+	code_blocks:            ^Block_Cache,
 }
 
 // code_frame_write_note marks a write of this processor into the frame of
-// the decoded block that runs.
+// the decoded block that runs, and advances the block cache epoch if any
+// cached decoded block lives in that physical frame.
 @(private = "file")
 code_frame_write_note :: #force_inline proc "contextless" (tlb: ^Software_Tlb, physical_address: u64) {
-	if tlb.code_frame_active && physical_address & ~PAGE_OFFSET_MASK == tlb.code_frame {
+	frame := physical_address & ~PAGE_OFFSET_MASK
+	if tlb.code_frame_active && frame == tlb.code_frame {
 		tlb.code_frame_written = true
+	}
+	if tlb.code_blocks != nil {
+		block_cache_note_frame_write(tlb.code_blocks, frame)
 	}
 }
 
@@ -155,13 +167,16 @@ is_canonical_virtual_address :: #force_inline proc "contextless" (virtual_addres
 }
 
 // tlb_flush_all invalidates every entry in the software TLB (CR3 reload or
-// full shoot-down).
+// full shoot-down) in O(1) by advancing the TLB generation.
 tlb_flush_all :: proc "contextless" (tlb: ^Software_Tlb) {
 	if tlb == nil {
 		return
 	}
-	for &entry in tlb.entries {
-		entry.valid = false
+	tlb.generation += 1
+	if tlb.generation == 0 {
+		for &entry in tlb.entries {
+			entry.valid = false
+		}
 	}
 	tlb.has_large_page_entries = false
 	tlb.fetch_page.valid = false
@@ -179,7 +194,7 @@ tlb_flush_page :: proc "contextless" (tlb: ^Software_Tlb, virtual_address: u64) 
 	tlb.fetch_page.valid = false
 	target_page := virtual_address & ~PAGE_OFFSET_MASK
 	slot := (target_page >> 12) & TLB_INDEX_MASK
-	if tlb.entries[slot].valid && tlb.entries[slot].virtual_page == target_page {
+	if tlb.entries[slot].valid && tlb.entries[slot].generation == tlb.generation && tlb.entries[slot].virtual_page == target_page {
 		tlb.entries[slot].valid = false
 	}
 	if !tlb.has_large_page_entries {
@@ -188,7 +203,7 @@ tlb_flush_page :: proc "contextless" (tlb: ^Software_Tlb, virtual_address: u64) 
 	target_large_page := virtual_address & ~LARGE_PAGE_OFFSET_MASK
 	any_large_remaining := false
 	for &entry in tlb.entries {
-		if !entry.valid || !entry.large_page {
+		if !entry.valid || entry.generation != tlb.generation || !entry.large_page {
 			continue
 		}
 		if (entry.virtual_page & ~LARGE_PAGE_OFFSET_MASK) == target_large_page {
@@ -276,7 +291,7 @@ translate_virtual_address_internal :: proc "contextless" (
 	if commit_side_effects && tlb != nil {
 		slot := (virtual_page >> 12) & TLB_INDEX_MASK
 		cached := &tlb.entries[slot]
-		if cached.valid && cached.page_table_root == page_table_root && cached.virtual_page == virtual_page {
+		if cached.valid && cached.generation == tlb.generation && cached.page_table_root == page_table_root && cached.virtual_page == virtual_page {
 			privilege_ok := privilege == .Supervisor || cached.user_accessible
 			access_ok := true
 			switch access {
@@ -457,6 +472,7 @@ translate_virtual_address_internal :: proc "contextless" (
 				virtual_page    = virtual_page,
 				physical_page   = resolved_frame,
 				page_table_root = page_table_root,
+				generation      = tlb.generation,
 				valid           = true,
 				writable        = effective_writable,
 				user_accessible = effective_user,

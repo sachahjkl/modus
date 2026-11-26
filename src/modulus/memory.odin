@@ -131,6 +131,7 @@ frames_allocate :: proc "contextless" (count: u64) -> u64 {
 // processor uses them, and the frame lock need not be held.
 frames_zero :: proc "contextless" (first: u64, count: u64) {
 	if first != 0 {
+		software_code_frames_invalidate(first, count)
 		intrinsics.mem_zero(direct(first, u8), int(count * PAGE_SIZE))
 	}
 }

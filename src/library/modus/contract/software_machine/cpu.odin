@@ -2389,8 +2389,11 @@ instruction_execute_opcode :: proc "contextless" (cpu: ^Processor_State, physica
 			cpu.ports.write(port, port_width, u32(value))
 		}
 		// A device model can write the memory at a port access, so the
-		// block ends here: the next entry compares its bytes again.
+		// block ends here and cached blocks must re-verify on next entry.
 		cpu.tlb.code_frame_written = true
+		if cpu.blocks != nil {
+			block_cache_bump_epoch(cpu.blocks)
+		}
 		cpu.rip = cursor.current_rip
 		cpu.steps_executed += 1
 		return .Running
@@ -2784,6 +2787,14 @@ processor_run :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u
 	if max_steps == 0 {
 		cpu.outcome = .Step_Budget_Exhausted
 		return .Step_Budget_Exhausted
+	}
+	// Advance the block verification epoch once per processor_run so external
+	// writes between calls are always detected, while hot loops inside the
+	// slice skip per-entry byte comparisons unless a code frame is written.
+	cpu.tlb.code_blocks = cpu.blocks
+	defer cpu.tlb.code_blocks = nil
+	if cpu.blocks != nil && (!cpu.blocks.trust_write_tracking || cpu.blocks.code_epoch == 0) {
+		block_cache_bump_epoch(cpu.blocks)
 	}
 	// Each instruction that runs counts at least one step, so the count of
 	// the calls is a second bound that never binds before the budget.

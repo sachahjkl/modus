@@ -447,6 +447,38 @@ for (const name of ["root::Boot_Image_Agrees", "root::Image_Checked_At_Load"]) {
   const ps2 = new host.Ps2Controller();
   for (let i = 0; i < 120; i += 1) ps2.pointer(5, 5, 0);
   expect(ps2.queue.length % 3 === 0 && ps2.queue.length <= 256, "PS/2 mouse queue stays 3-byte aligned under flood");
+
+  // IntelliMouse handshake (sample rates 200, 100, 80 -> Get Device ID 0x03)
+  // pauses reporting during reset/defaults until 0xF4, ignores interleaved
+  // keyboard writes, enables 4-byte wheel packets, and stays 4-byte aligned.
+  const ps2Wheel = new host.Ps2Controller();
+  ps2Wheel.write(host.Port.Ps2Command, 0xd4);
+  ps2Wheel.write(host.Port.Ps2Data, 0xf6); // Set Defaults pauses reporting
+  ps2Wheel.queue = [];
+  ps2Wheel.pointer(10, 10, 0);
+  expect(ps2Wheel.queue.length === 0, "mouse reporting stays paused between 0xF6 and 0xF4");
+  for (const rate of [200, 100, 80]) {
+    ps2Wheel.write(host.Port.Ps2Command, 0xd4);
+    ps2Wheel.write(host.Port.Ps2Data, 0xf3);
+    // Interleaved keyboard command must not hijack pending mouse sample rate.
+    ps2Wheel.write(host.Port.Ps2Data, 0xf4);
+    ps2Wheel.write(host.Port.Ps2Command, 0xd4);
+    ps2Wheel.write(host.Port.Ps2Data, rate);
+  }
+  ps2Wheel.queue = [];
+  ps2Wheel.write(host.Port.Ps2Command, 0xd4);
+  ps2Wheel.write(host.Port.Ps2Data, 0xf2);
+  const ack = ps2Wheel.read(host.Port.Ps2Data);
+  const devId = ps2Wheel.read(host.Port.Ps2Data);
+  expect(ack === 0xfa && devId === 0x03, "IntelliMouse sequence enables device id 0x03");
+  ps2Wheel.write(host.Port.Ps2Command, 0xd4);
+  ps2Wheel.write(host.Port.Ps2Data, 0xf4); // Enable Data Reporting
+  ps2Wheel.queue = [];
+  ps2Wheel.wheel(2);
+  expect(ps2Wheel.queue.length === 4 && ps2Wheel.queue[3].byte === 2, "IntelliMouse wheel emits 4-byte packet with Z delta");
+  ps2Wheel.queue = [];
+  for (let i = 0; i < 120; i += 1) ps2Wheel.pointer(5, 5, 0, 1);
+  expect(ps2Wheel.queue.length % 4 === 0 && ps2Wheel.queue.length <= 256, "PS/2 IntelliMouse queue stays 4-byte aligned under flood");
 }
 
 if (failures.length) {

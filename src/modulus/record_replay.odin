@@ -477,6 +477,7 @@ point_copies_setup :: proc "contextless" (target_index: u32, rec: ^Process_Recor
 			if copy_initial {
 				source_frame := region_frame(region, source_page, false)
 				if source_frame != 0 {
+					software_code_frames_invalidate(copy_frame, 1)
 					intrinsics.mem_copy_non_overlapping(direct(copy_frame, u8), direct(source_frame, u8), PAGE_SIZE)
 				}
 			}
@@ -827,6 +828,7 @@ point_copies_install_locked :: proc "contextless" (process_index: u32, rec: ^Pro
 			break
 		}
 		if source_frame := region_frame(region, source_page, false); source_frame != 0 {
+			software_code_frames_invalidate(copy_frame, 1)
 			intrinsics.mem_copy_non_overlapping(direct(copy_frame, u8), direct(source_frame, u8), PAGE_SIZE)
 		}
 		if entry^ & PAGE_PRESENT == 0 {
@@ -1548,6 +1550,7 @@ record_refresh_point_copies_locked :: proc "contextless" (cpu: ^Processor, proce
 		if !input_history.history_writer_append(&rec.writer, .Page_Delta, thread.frame.rip, thread.frame.rsp, cpu.page_delta_scratch[:written]) {
 			return false
 		}
+		software_code_frames_invalidate(pc.copy_frame, 1)
 		intrinsics.mem_copy_non_overlapping(direct(pc.copy_frame, u8), &cpu.page_snapshot_scratch[0], PAGE_SIZE)
 	}
 	return true
@@ -1616,6 +1619,7 @@ replay_page_delta_apply_locked :: proc "contextless" (process_index: u32, payloa
 	if target_frame == 0 {
 		return false
 	}
+	software_code_frames_invalidate(target_frame, 1)
 	return input_history.page_delta_apply(payload, direct(target_frame, [PAGE_SIZE]u8))
 }
 

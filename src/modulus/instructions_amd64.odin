@@ -54,6 +54,10 @@ port_write_8 :: #force_inline proc "contextless" (port: u16, value: u8) {
 	_, _ = port_write_8_in_registers(port, value)
 }
 
+// On x86-64 hardware there is no software block cache to invalidate.
+software_code_frames_invalidate :: #force_inline proc "contextless" (first_frame: u64, count: u64) {
+}
+
 port_read_8_in_registers :: asm(port: u16, before: u8) -> (port_after: u16, value: u8) [
 	port -> port_after = %dx,
 	before -> value    = %al,

@@ -194,8 +194,12 @@ control_register_3_read :: #force_inline proc "contextless" () -> u64 {
 }
 
 // A new page table empties the translation cache of the software
-// processor, as a write of cr3 empties the TLB.
+// processor, as a write of cr3 empties the TLB. A reload of the same cr3
+// is a shootdown after a mapping change, so cached blocks re-verify once.
 control_register_3_write :: #force_inline proc "contextless" (value: u64) {
+	if value == software_processor.cr3 {
+		software.block_cache_bump_epoch(&software_processor_blocks)
+	}
 	software.processor_set_cr3(&software_processor, value)
 }
 
@@ -208,7 +212,16 @@ control_register_4_write :: #force_inline proc "contextless" (value: u64) {
 }
 
 page_flush :: #force_inline proc "contextless" (address: u64) {
+	software.block_cache_bump_epoch(&software_processor_blocks)
 	software.processor_invlpg(&software_processor, address)
+}
+
+// Notify the software block cache whenever the kernel mutates physical frames
+// directly (frame zeroing on reuse or replay direct-map writes).
+software_code_frames_invalidate :: #force_inline proc "contextless" (first_frame: u64, count: u64) {
+	for i in u64(0) ..< count {
+		software.block_cache_note_frame_write(&software_processor_blocks, first_frame + i * PAGE_SIZE)
+	}
 }
 
 // The linear memory has no cache that a reader of memory misses: each
@@ -272,6 +285,7 @@ user_copy_to_process :: proc "contextless" (process_destination: u64, source: ra
 	if !process_memory.copy_to_process(linear_memory(), software_processor.cr3, process_destination, ([^]u8)(source)[:count]) {
 		intrinsics.trap()
 	}
+	software.block_cache_bump_epoch(&software_processor_blocks)
 }
 
 WEBASSEMBLY_PAGE_SIZE :: u64(65536)

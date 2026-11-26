@@ -1829,6 +1829,7 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 	// A refused page shows the defaults: a press writes a whole page again.
 	choice, _ := settings.read(page)
 	values := settings.values_of(choice)
+	focus_before := window_memory.drawing.state.focus
 	frame := interface.window_frame_start(&window_memory, window)
 	// graphics holds only members of the appearance: the tokens of the
 	// standard contrast are the colors that the window drew with before.
@@ -1901,13 +1902,14 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 			scrolled := interface.scroll_bar(&frame, area_of(tree, boxes.scroll_bar), interface.identity("settings scroll bar"), .Vertical, {total = boxes.content_height, visible = view.height, first = boxes.scroll}, {line = interface.TABLE_LINE}, "settings", view)
 			view_scroll = scrolled.first
 			outcome.draw_again = scrolled.changed
-			// The element with the focus comes into the view: Tab reaches
-			// an element past an edge of the view, and the principal sees it.
-			if focus_area.height > 0 && focus_area.y < view.y {
+			// Bring the focused element into view only when keyboard focus
+			// actually moved, never fighting pointer or wheel scrolling.
+			focus_moved := window_memory.drawing.state.focus != focus_before
+			if focus_moved && focus_area.height > 0 && focus_area.y < view.y {
 				view_scroll = max(view_scroll - (view.y - focus_area.y) - int(tokens.gap), 0)
 				outcome.draw_again = true
 				system.log_fact(.Info, View_Follows_Focus{first = u64(view_scroll)})
-			} else if focus_area.height > 0 && focus_area.y + focus_area.height > view.y + view.height {
+			} else if focus_moved && focus_area.height > 0 && focus_area.y + focus_area.height > view.y + view.height {
 				view_scroll += focus_area.y + focus_area.height - view.y - view.height + int(tokens.gap)
 				outcome.draw_again = true
 				system.log_fact(.Info, View_Follows_Focus{first = u64(view_scroll)})

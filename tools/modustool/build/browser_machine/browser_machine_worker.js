@@ -16,8 +16,10 @@ const clockNanoseconds = () => BigInt(Math.round((performance.timeOrigin + perfo
 // Yield out of the kernel on idle instead of blocking the worker thread in
 // Atomics.wait or spinning in WASM: input and frame messages wake the loop
 // immediately with near-zero CPU when the guest is idle.
+const idleSignal = new ProcessorIdle(0n);
 const idleWait = (boundNanoseconds) => {
-  throw new ProcessorIdle(boundNanoseconds);
+  idleSignal.boundNanoseconds = boundNanoseconds;
+  throw idleSignal;
 };
 
 let machine = null;
@@ -193,6 +195,12 @@ self.onmessage = (event) => {
     case "pointer":
       if (machine) {
         machine.keyboard.pointer(message.deltaX, message.deltaY, message.buttons);
+        wakeLoop();
+      }
+      return;
+    case "wheel":
+      if (machine) {
+        machine.keyboard.wheel(message.notches);
         wakeLoop();
       }
       return;

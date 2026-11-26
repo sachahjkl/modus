@@ -376,6 +376,28 @@ for (const kind of ["pointerdown", "pointerup"]) {
   });
 }
 
+// Translate wheel and trackpad gestures into integer IntelliMouse wheel notches.
+let wheelPixelRemainder = 0;
+const WHEEL_PIXELS_PER_NOTCH = 40;
+screen.addEventListener("wheel", (event) => {
+  if (!worker || stage !== STAGE_READY) return;
+  event.preventDefault();
+  let notches = 0;
+  if (event.deltaMode === 1) {
+    notches = Math.trunc(event.deltaY);
+    if (notches === 0 && event.deltaY !== 0) notches = event.deltaY > 0 ? 1 : -1;
+  } else if (event.deltaMode === 2) {
+    notches = event.deltaY > 0 ? 3 : event.deltaY < 0 ? -3 : 0;
+  } else {
+    wheelPixelRemainder += event.deltaY;
+    notches = Math.trunc(wheelPixelRemainder / WHEEL_PIXELS_PER_NOTCH);
+    wheelPixelRemainder -= notches * WHEEL_PIXELS_PER_NOTCH;
+  }
+  if (notches !== 0) {
+    worker.postMessage({ kind: "wheel", notches });
+  }
+}, { passive: false });
+
 const initialSize = measureStageSize();
 applyCanvasSize(initialSize.width, initialSize.height);
 lastRequestedWidth = screen.width;
