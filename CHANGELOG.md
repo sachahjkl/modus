@@ -6,6 +6,12 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.102.0] - 2026-11-26 14:42
+
+### Added
+
+- **Live viewport resize and fullscreen for the Web Desktop.** The Web Desktop now boots at the live browser stage size, resizes the Modus desktop, bar, and open windows without rebooting when the browser window or fullscreen state changes (`640×400` to `1920×1200`), and includes a Fullscreen button.
+
 ## [0.101.1] - 2026-11-26 12:37
 
 ### Fixed
@@ -2036,6 +2042,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.102.0]: https://github.com/sachahjkl/modus/releases/tag/v0.102.0
 [0.101.1]: https://github.com/sachahjkl/modus/releases/tag/v0.101.1
 [0.101.0]: https://github.com/sachahjkl/modus/releases/tag/v0.101.0
 [0.100.2]: https://github.com/sachahjkl/modus/releases/tag/v0.100.2
