@@ -6,6 +6,18 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.101.0] - 2026-11-26 11:05
+
+### Added
+
+- **Syntax highlighting and Lex formatting in `edit`, plus visible browser console errors.** Added O(visible-row) syntax highlighting for `.c`/`.h`, `.lex`/`.recipe`, and `.odin` files in `modus:text_model` and `edit` using the Modus code color palette in both dark and light appearances, wired `Ctrl+Shift+F` canonical Lex formatting in `edit`, and rendered worker trap errors directly inside the Web Console output view.
+- **Built-in `files` desktop store and object browser**: `files` is now included in the boot image and Start Menu with syntax-highlighted text inspection (`.c`, `.h`, `.lex`, `.recipe`, and `.odin`), 16-byte hex inspection, BLAKE3 hashes, copy-on-write version preview and restore, and direct `Ctrl+E` launch into `edit` under the least-privilege `Open_Editor` start grant.
+- **Content-addressed AST codebase and structural code editor**: added the freestanding `modus:ast_codebase` library (`MODAST1` canonical binary AST serialization, alpha-normalized BLAKE3 definition hashing with O(1) name-table renames, Dion-style projected structural editing with typed `?` holes, and C/Lex lowering) and the native `code` desktop editor application.
+
+### Fixed
+
+- **Web Console `isolate("sample")` and `processes()`, and Web Desktop cursor alignment and frame throughput**: included the `host` call-host module in the console and browser desktop images (alongside `files` and `code` in Web Desktop), enabled `processes()` to inspect running processes directly on headless console images without `monitor`, aligned the Web Desktop cursor 1:1 with canvas coordinates via chunked PS/2 homing, and skipped redundant worker state and unchanged-frame copies.
+
 ## [0.100.2] - 2026-11-26 08:24
 
 ### Fixed
@@ -2018,6 +2030,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.101.0]: https://github.com/sachahjkl/modus/releases/tag/v0.101.0
 [0.100.2]: https://github.com/sachahjkl/modus/releases/tag/v0.100.2
 [0.100.1]: https://github.com/sachahjkl/modus/releases/tag/v0.100.1
 [0.100.0]: https://github.com/sachahjkl/modus/releases/tag/v0.100.0

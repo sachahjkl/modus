@@ -7,4 +7,4 @@
 // check` fails when it is not the newest release of CHANGELOG.md.
 package release
 
-RELEASE_NUMBER :: "0.100.2"
+RELEASE_NUMBER :: "0.101.0"
