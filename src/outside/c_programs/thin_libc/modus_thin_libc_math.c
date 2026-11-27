@@ -21,6 +21,16 @@
 //   is preserved.
 #include "modus_thin_libc.h"
 
+#ifdef __chibicc__
+#define __builtin_memcpy memcpy
+#define __builtin_inf() modus_double_inf()
+#define __builtin_nan(tag) modus_double_nan()
+#define __builtin_isinf(x) modus_isinf((x))
+#define __builtin_fabs(x) fabs((x))
+#define __builtin_signbit(x) modus_signbit((x))
+#define __builtin_clzll(x) modus_clzll((x))
+#endif
+
 // A fused multiply-add rounds once where the algorithms below count on two
 // roundings, or on none: each product and each sum stays on its own.
 #pragma STDC FP_CONTRACT OFF
@@ -373,6 +383,23 @@ static unsigned long long bits_of_words(const unsigned long long words[5], int p
   return low | high;
 }
 
+// Multiply two 64-bit unsigned integers into a 128-bit product (high, low)
+// using portable 32-bit halves so chibicc needs no 128-bit integer extension.
+static void mul_u64_wide(unsigned long long a, unsigned long long b, unsigned long long *high_out,
+                         unsigned long long *low_out) {
+  unsigned long long a_lo = a & 0xffffffffULL;
+  unsigned long long a_hi = a >> 32;
+  unsigned long long b_lo = b & 0xffffffffULL;
+  unsigned long long b_hi = b >> 32;
+  unsigned long long p0 = a_lo * b_lo;
+  unsigned long long p1 = a_lo * b_hi;
+  unsigned long long p2 = a_hi * b_lo;
+  unsigned long long p3 = a_hi * b_hi;
+  unsigned long long mid = (p0 >> 32) + (p1 & 0xffffffffULL) + (p2 & 0xffffffffULL);
+  *low_out = (p0 & 0xffffffffULL) | (mid << 32);
+  *high_out = p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32);
+}
+
 // Payne and Hanek: x * 2/pi with the bits of 2/pi that reach the last two
 // bits of the integer part and the first 128 bits of the fraction. Earlier
 // bits give a multiple of 4; later bits are below 2^-138.
@@ -384,31 +411,42 @@ static int reduce_large_angle(double magnitude, Double_Double *reduced) {
   unsigned long long product[5];
   unsigned long long carry = 0;
   for (int index = 0; index < 4; index++) {
-    unsigned __int128 partial = (unsigned __int128)m * TWO_OVER_PI_WORDS[first_word + 3 - index] + carry;
-    product[index] = (unsigned long long)partial;
-    carry = (unsigned long long)(partial >> 64);
+    unsigned long long prod_hi = 0;
+    unsigned long long prod_lo = 0;
+    mul_u64_wide(m, TWO_OVER_PI_WORDS[first_word + 3 - index], &prod_hi, &prod_lo);
+    unsigned long long sum_lo = prod_lo + carry;
+    unsigned long long sum_carry = sum_lo < prod_lo ? 1ULL : 0ULL;
+    product[index] = sum_lo;
+    carry = prod_hi + sum_carry;
   }
   product[4] = carry;
   int point = 256 + 64 * first_word - e; // The binary point of the product.
   int quadrant = (int)(bits_of_words(product, point) & 3);
-  unsigned __int128 fraction =
-      ((unsigned __int128)bits_of_words(product, point - 64) << 64) | bits_of_words(product, point - 128);
-  int negative = (int)(fraction >> 127);
+  unsigned long long frac_hi = bits_of_words(product, point - 64);
+  unsigned long long frac_lo = bits_of_words(product, point - 128);
+  int negative = (int)(frac_hi >> 63);
   if (negative) {
     // A fraction past one half becomes a negative one of the next quadrant.
     quadrant += 1;
-    fraction = (unsigned __int128)0 - fraction;
+    frac_lo = 0ULL - frac_lo;
+    frac_hi = 0ULL - frac_hi - (frac_lo != 0 ? 1ULL : 0ULL);
   }
-  if (fraction == 0) {
+  if (frac_hi == 0 && frac_lo == 0) {
     *reduced = (Double_Double){0.0, 0.0};
     return quadrant & 3;
   }
-  unsigned long long fraction_high = (unsigned long long)(fraction >> 64);
-  int leading_zeros =
-      fraction_high != 0 ? __builtin_clzll(fraction_high) : 64 + __builtin_clzll((unsigned long long)fraction);
-  fraction <<= leading_zeros;
-  double high = ldexp((double)(unsigned long long)(fraction >> 75), -53 - leading_zeros);
-  double low = ldexp((double)((unsigned long long)(fraction >> 22) & 0x001fffffffffffffULL), -106 - leading_zeros);
+  int leading_zeros = frac_hi != 0 ? __builtin_clzll(frac_hi) : 64 + __builtin_clzll(frac_lo);
+  if (leading_zeros >= 64) {
+    frac_hi = frac_lo << (leading_zeros - 64);
+    frac_lo = 0;
+  } else if (leading_zeros > 0) {
+    frac_hi = (frac_hi << leading_zeros) | (frac_lo >> (64 - leading_zeros));
+    frac_lo = frac_lo << leading_zeros;
+  }
+  unsigned long long top53 = frac_hi >> 11;
+  unsigned long long next53 = ((frac_hi & 0x7ffULL) << 42) | (frac_lo >> 22);
+  double high = ldexp((double)top53, -53 - leading_zeros);
+  double low = ldexp((double)next53, -106 - leading_zeros);
   Double_Double angle =
       double_double_multiply(sum_exact_ordered(high, low), (Double_Double){HALF_PI_HIGH, HALF_PI_LOW});
   if (negative) {

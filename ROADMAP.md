@@ -7,7 +7,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 ## Next
 
 - **One way to read an object through the storage service.** Replace boot-image resources, numbered context values, fixed delivery ranges, and the `Image` data grant with a read-only image tree served first by `storage` with no disk, mapped by name in granted trees with optional explicit counted hash pins and one plan-bounded map cache for disk objects. [Design](src/md/features/objects_by_hash.md)
-- **Tier 2 seed-to-Odin guest bootstrap and `chibicc`-compiled C libraries.** Compile upstream `sqlite`, `lua`, and `zstd` using `chibicc` itself instead of host clang, and execute the full Tier 2 `hex0` → `M2-Planet` → `mes` → `tcc` → `gcc` → `LLVM 18` → `Odin` chain inside `guest_builder` from pinned upstream source archives to reproduce the host Odin compiler hash. [Design](src/md/features/bootstrap.md)
+- **Tier 2 guest bootstrap stages 3 to 8 (`M2-Planet` to `Odin`).** Execute the remaining Tier 2 stages (`M2-Planet` → `mes` → `tcc` → `gcc` → `LLVM 18` → `Odin`) inside `guest_builder` once pinned upstream source archives and multi-hour guest build budgets are provisioned, building on the verified `hex0` → `catm` seed stages and `chibicc`-compiled `lua`, `zstd`, and `sqlite` modules. [Design](src/md/features/bootstrap.md)
 - **The native viewer of the remote display.** A principal sees and drives the desktop of a machine from a program of its own on Linux, macOS and Windows that uses gui_toolkit, with the key that it allowed, in place of the peer of the tool. [Design](src/md/features/remote_display.md)
 
 ## Later

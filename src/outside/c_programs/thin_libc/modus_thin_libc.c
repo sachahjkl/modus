@@ -817,13 +817,29 @@ static int text_starts_with_word(const char *text, const char *word) {
 
 // A hexadecimal number keeps its first 64 bits and a flag for the bits after
 // them, then rounds to 53 bits, ties to even.
+#ifdef __chibicc__
+static int modus_internal_clzll(unsigned long long value) {
+  int count = 0;
+  unsigned long long bit = 1ULL << 63;
+  while (bit != 0 && (value & bit) == 0) {
+    count++;
+    bit >>= 1;
+  }
+  return count;
+}
+#endif
+
 static unsigned long long hexadecimal_double_bits(unsigned long long mantissa, int sticky, long exponent, int negative,
                                                   int *range_error) {
   unsigned long long sign = negative ? 1ULL << 63 : 0;
   *range_error = 0;
   if (mantissa == 0)
     return sign;
+#ifdef __chibicc__
+  int leading = modus_internal_clzll(mantissa);
+#else
   int leading = __builtin_clzll(mantissa);
+#endif
   mantissa <<= leading;
   exponent -= leading;
   // The value is the mantissa times 2^exponent, with the top bit of the mantissa set.
@@ -1043,7 +1059,45 @@ void qsort(void *base, size_t count, size_t size, int (*compare)(const void *, c
   }
 }
 
+#ifdef __chibicc__
+_Noreturn void abort(void) {
+  asm("ud2");
+  for (;;) {
+  }
+}
+#else
 _Noreturn void abort(void) { __builtin_trap(); }
+#endif
+
+// ---- Portable IEEE-754 helpers -------------------------------------------------
+
+double modus_double_inf(void) { return double_of_bits(0x7ff0000000000000ULL); }
+double modus_double_nan(void) { return double_of_bits(0x7ff8000000000000ULL); }
+
+int modus_isnan(double value) {
+  unsigned long long bits = bits_of_double(value) & ~(1ULL << 63);
+  return bits > 0x7ff0000000000000ULL;
+}
+
+int modus_isinf(double value) {
+  unsigned long long bits = bits_of_double(value) & ~(1ULL << 63);
+  return bits == 0x7ff0000000000000ULL;
+}
+
+int modus_isfinite(double value) {
+  unsigned long long bits = bits_of_double(value) & ~(1ULL << 63);
+  return bits < 0x7ff0000000000000ULL;
+}
+
+int modus_signbit(double value) { return (int)(bits_of_double(value) >> 63); }
+
+int modus_clzll(unsigned long long value) {
+#ifdef __chibicc__
+  return modus_internal_clzll(value);
+#else
+  return __builtin_clzll(value);
+#endif
+}
 
 // ---- Floating point functions --------------------------------------------------
 
@@ -1070,13 +1124,16 @@ double ceil(double value) {
   return (value > 0 && whole != value) ? whole + 1.0 : whole;
 }
 
+#ifndef __chibicc__
 // The instruction itself: the compiler turns __builtin_sqrt of a function
-// named sqrt into a call of that same function.
+// named sqrt into a call of that same function. Under chibicc,
+// modus_thin_libc_chibicc.s supplies the same sqrtsd instruction.
 double sqrt(double value) {
   double root;
   __asm__("sqrtsd %1, %0" : "=x"(root) : "x"(value));
   return root;
 }
+#endif
 
 double frexp(double value, int *exponent) {
   unsigned long long bits = bits_of_double(value);
@@ -1101,7 +1158,7 @@ double ldexp(double value, int exponent) {
   while (exponent > 1023) {
     value *= 0x1p1023;
     exponent -= 1023;
-    if (exponent > 1023 && __builtin_isinf(value))
+    if (exponent > 1023 && modus_isinf(value))
       return value;
   }
   while (exponent < -1022) {
@@ -1125,9 +1182,9 @@ double ldexp(double value, int exponent) {
 // The exact remainder: each step subtracts a multiple of the denominator that
 // is a power of two, which is exact in binary.
 double fmod(double numerator, double denominator) {
-  if (numerator != numerator || denominator != denominator || denominator == 0.0 || __builtin_isinf(numerator))
-    return __builtin_nan("");
-  if (__builtin_isinf(denominator))
+  if (numerator != numerator || denominator != denominator || denominator == 0.0 || modus_isinf(numerator))
+    return modus_double_nan();
+  if (modus_isinf(denominator))
     return numerator;
   double remainder = fabs(numerator);
   double divisor = fabs(denominator);
@@ -1822,9 +1879,11 @@ void clearerr(FILE *stream) {
 
 // ---- Non-local jumps ----------------------------------------------------------------
 
+#ifndef __chibicc__
 // setjmp keeps the registers that a call keeps, the stack pointer of the
 // caller and its return address; longjmp puts them back and returns the value
-// from setjmp, 1 in place of 0, as C asks.
+// from setjmp, 1 in place of 0, as C asks. Under chibicc,
+// modus_thin_libc_chibicc.s supplies the same routines.
 __asm__(".text\n"
         ".globl setjmp\n"
         ".hidden setjmp\n"
@@ -1861,6 +1920,7 @@ __asm__(".text\n"
         "  mov 48(%rdi), %rsp\n"
         "  jmp *56(%rdi)\n"
         ".size longjmp, .-longjmp\n");
+#endif
 
 // ---- Time and locale --------------------------------------------------------------------
 

@@ -154,6 +154,16 @@ double acos(double value);
 double atan(double value);
 double atan2(double y, double x);
 
+// Portable IEEE-754 classification and bit helpers used by chibicc where
+// GCC/Clang compiler builtins are absent.
+double modus_double_inf(void);
+double modus_double_nan(void);
+int modus_isnan(double value);
+int modus_isinf(double value);
+int modus_isfinite(double value);
+int modus_signbit(double value);
+int modus_clzll(unsigned long long value);
+
 // ---- Formatted output and memory streams ------------------------------------
 
 typedef enum Modus_Stream_Mode {
@@ -228,7 +238,11 @@ int printf(const char *restrict format, ...);
 // rbx, rbp, r12, r13, r14, r15, the stack pointer after the return, and the
 // return address: the registers that the System V AMD64 call keeps.
 typedef unsigned long jmp_buf[8];
+#ifdef __GNUC__
 __attribute__((returns_twice)) int setjmp(jmp_buf environment);
+#else
+int setjmp(jmp_buf environment);
+#endif
 MODUS_THIN_LIBC_NORETURN void longjmp(jmp_buf environment, int value);
 #define _setjmp setjmp
 #define _longjmp longjmp

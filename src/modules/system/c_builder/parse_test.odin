@@ -75,9 +75,9 @@ input_row_find_checks_name_kind_and_nonzero_hash :: proc(t: ^testing.T) {
 	h1 := blake3.hash(transmute([]u8)string("compiler"))
 	h2 := blake3.hash(transmute([]u8)string("source"))
 	rows := [3]pr.Recipe_Input_Row {
-		{kind_word = i64(object_cache.Cache_Object_Kind.Blob), hash = value_kinds.Hash_Field(h1)},
-		{kind_word = i64(object_cache.Cache_Object_Kind.Tree), hash = value_kinds.Hash_Field(h2)},
-		{kind_word = i64(object_cache.Cache_Object_Kind.Blob), hash = {}},
+		{kind = pr.Recipe_Object_Kind_Word(object_cache.Cache_Object_Kind.Blob), hash = value_kinds.Hash_Field(h1)},
+		{kind = pr.Recipe_Object_Kind_Word(object_cache.Cache_Object_Kind.Tree), hash = value_kinds.Hash_Field(h2)},
+		{kind = pr.Recipe_Object_Kind_Word(object_cache.Cache_Object_Kind.Blob), hash = {}},
 	}
 	copy(rows[0].name[:], "compiler")
 	copy(rows[1].name[:], "source")
@@ -96,4 +96,90 @@ input_row_find_checks_name_kind_and_nonzero_hash :: proc(t: ^testing.T) {
 	testing.expect(t, ok1 && got1 == h1)
 	got2, ok2 := input_row_find(rows[:], "source", .Tree)
 	testing.expect(t, ok2 && got2 == h2)
+}
+
+@(private = "file")
+Test_Field :: struct {
+	name:    string,
+	is_list: bool,
+	text:    string,
+	items:   []string,
+}
+
+@(private = "file")
+encode_multi_record :: proc(buf: []u8, fields: []Test_Field) -> []u8 {
+	w := declaration_eval.Output_Writer{buffer = buf}
+	declaration_eval.output_write_u8(&w, u8(declaration_eval.Value_Tag.Record))
+	declaration_eval.output_write_u32(&w, u32(len(fields)))
+	for field in fields {
+		declaration_eval.output_write_string(&w, field.name)
+		if field.is_list {
+			declaration_eval.output_write_u8(&w, u8(declaration_eval.Value_Tag.List))
+			declaration_eval.output_write_u32(&w, u32(len(field.items)))
+			for item in field.items {
+				declaration_eval.output_write_text(&w, item)
+			}
+		} else {
+			declaration_eval.output_write_text(&w, field.text)
+		}
+	}
+	return buf[:w.written]
+}
+
+@(test)
+arguments_parse_multi_unit_refusals_and_valid :: proc(t: ^testing.T) {
+	buf: [2048]u8
+	parsed: Build_Arguments
+
+	// Refusals: mixing path and units; empty units; duplicate unit; traversal in headers; exports with path; non-list units.
+	mixed := encode_multi_record(buf[:], {
+		{name = "path", text = "a.c"},
+		{name = "units", is_list = true, items = {"a.c", "b.c"}},
+	})
+	testing.expect(t, !arguments_parse(mixed, &parsed), "mixing path and units must be refused")
+
+	empty_units := encode_multi_record(buf[:], {
+		{name = "units", is_list = true, items = {}},
+	})
+	testing.expect(t, !arguments_parse(empty_units, &parsed), "empty units must be refused")
+
+	wrong_tag_units := encode_multi_record(buf[:], {
+		{name = "units", text = "chibicc/parse.c"},
+	})
+	testing.expect(t, !arguments_parse(wrong_tag_units, &parsed), "non-list units must be refused")
+
+	dup_units := encode_multi_record(buf[:], {
+		{name = "units", is_list = true, items = {"chibicc/parse.c", "chibicc/parse.c"}},
+	})
+	testing.expect(t, !arguments_parse(dup_units, &parsed), "duplicate unit paths must be refused")
+
+	bad_header := encode_multi_record(buf[:], {
+		{name = "headers", is_list = true, items = {"../escape.h"}},
+		{name = "units", is_list = true, items = {"chibicc/parse.c"}},
+	})
+	testing.expect(t, !arguments_parse(bad_header, &parsed), "parent traversal in headers must be refused")
+
+	path_with_exports := encode_multi_record(buf[:], {
+		{name = "exports", text = "main"},
+		{name = "path", text = "a.c"},
+	})
+	testing.expect(t, !arguments_parse(path_with_exports, &parsed), "exports in single-unit mode must be refused")
+
+	// Valid multi-unit record in canonical sorted field order (chibicc self-host shape).
+	valid := encode_multi_record(buf[:], {
+		{name = "assembly", is_list = true, items = {"chibicc/self_host/jump.s"}},
+		{name = "exports", text = "compile_record_at"},
+		{name = "headers", is_list = true, items = {"chibicc/chibicc.h", "libc/include/stdio.h"}},
+		{name = "units", is_list = true, items = {"chibicc/codegen.c", "chibicc/compile.c", "chibicc/parse.c"}},
+	})
+	testing.expect(t, arguments_parse(valid, &parsed), "valid multi-unit record must parse")
+	testing.expect_value(t, parsed.mode, Build_Mode.Multi_Unit)
+	testing.expect_value(t, parsed.unit_count, 3)
+	testing.expect_value(t, parsed.units[0], "chibicc/codegen.c")
+	testing.expect_value(t, parsed.units[2], "chibicc/parse.c")
+	testing.expect_value(t, parsed.assembly_count, 1)
+	testing.expect_value(t, parsed.assembly[0], "chibicc/self_host/jump.s")
+	testing.expect_value(t, parsed.header_count, 2)
+	testing.expect_value(t, parsed.headers[1], "libc/include/stdio.h")
+	testing.expect_value(t, parsed.exports, "compile_record_at")
 }

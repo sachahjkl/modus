@@ -26,7 +26,7 @@ import writer "modus:contract/module_file_writer"
 import "modustool:foundation"
 
 C_SELF_HOST_FOLDER :: foundation.BUILD_FOLDER + "/c_self_host"
-C_SELF_HOST_USAGE :: "modustool: c-self-host"
+C_SELF_HOST_USAGE :: "modustool: c-self-host [--libraries]"
 
 // The export of the compiler in each stage: compile_record_at of compile.c,
 // which takes the address of the record of the call.
@@ -129,13 +129,13 @@ C_Self_Host_Report :: struct {
 }
 
 // The arena of one compile: the Memory_Provider of the thin libc pushes on it.
-@(private = "file")
+@(private)
 C_Arena :: struct {
 	memory: []u8,
 	used:   u64,
 }
 
-@(private = "file")
+@(private)
 c_arena_provide :: proc "c" (provider_context: rawptr, size: u64, alignment: u64) -> rawptr {
 	arena := (^C_Arena)(provider_context)
 	if alignment == 0 || alignment & (alignment - 1) != 0 {
@@ -503,9 +503,12 @@ c_self_host_program_pack :: proc(program: C_Program, allocator := context.temp_a
 	return list[:], true
 }
 
-// run_c_self_host is the command `modustool c-self-host`.
+// run_c_self_host is the command `modustool c-self-host [--libraries]`.
 run_c_self_host :: proc(args: []string) -> int {
-	if len(args) != 0 {
+	build_libraries := false
+	if len(args) == 1 && args[0] == "--libraries" {
+		build_libraries = true
+	} else if len(args) != 0 {
 		fmt.eprintln(C_SELF_HOST_USAGE)
 		return 2
 	}
@@ -532,5 +535,29 @@ run_c_self_host :: proc(args: []string) -> int {
 		return 1
 	}
 	fmt.println("c-self-host: blake3(stage 1) == blake3(stage 2)")
+	if build_libraries {
+		stage_one_path := foundation.join(C_SELF_HOST_FOLDER, "/stage_one/chibicc.modus")
+		stage_one, read_err := os.read_entire_file(stage_one_path, context.allocator)
+		if read_err != nil {
+			fmt.eprintfln("c-self-host: cannot read %s: %v", stage_one_path, read_err)
+			return 1
+		}
+		defer delete(stage_one)
+		for prog in ([3]C_World_Program{.Lua, .Zstd, .Sqlite}) {
+			spec := C_WORLD_PROGRAM_SPECS[prog]
+			mod_bytes, lib_rep, lib_ok := c_world_build_recipe_with_chibicc(stage_one, prog)
+			if !lib_ok {
+				fmt.eprintfln("c-self-host: chibicc failed on %s (%s): %s", spec.name, lib_rep.failing_unit, lib_rep.diagnostic)
+				return 1
+			}
+			defer delete(mod_bytes)
+			out_path := foundation.join(C_SELF_HOST_FOLDER, "/", spec.name, ".modus")
+			if w_err := os.write_entire_file(out_path, mod_bytes); w_err != nil {
+				fmt.eprintfln("c-self-host: cannot write %s: %v", out_path, w_err)
+				return 1
+			}
+			fmt.printfln("c-self-host: chibicc built %s: %d units, %d bytes, BLAKE3 %s", spec.name, lib_rep.unit_count, lib_rep.module_size, hash_as_hexadecimal(lib_rep.module_hash))
+		}
+	}
 	return 0
 }

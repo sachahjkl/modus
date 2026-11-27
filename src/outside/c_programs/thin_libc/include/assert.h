@@ -4,6 +4,9 @@
 #undef assert
 #ifdef NDEBUG
 #define assert(condition) ((void)0)
+#elif defined(__chibicc__)
+void abort(void);
+#define assert(condition) ((condition) ? (void)0 : abort())
 #else
 #define assert(condition) ((condition) ? (void)0 : __builtin_trap())
 #endif

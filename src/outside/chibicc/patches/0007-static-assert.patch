@@ -1,0 +1,74 @@
+--- a/tokenize.c
++++ b/tokenize.c
+@@ -169,7 +169,7 @@
+       "unsigned", "const", "volatile", "auto", "register", "restrict",
+       "__restrict", "__restrict__", "_Noreturn", "float", "double",
+       "typeof", "asm", "_Thread_local", "__thread", "_Atomic",
+-      "__attribute__",
++      "__attribute__", "_Static_assert",
+     };
+ 
+     for (int i = 0; i < sizeof(kw) / sizeof(*kw); i++)
+--- a/parse.c
++++ b/parse.c
+@@ -1760,6 +1760,24 @@
+   return expr_stmt(rest, tok);
+ }
+ 
++// modus: C11 _Static_assert(constant-expression, string-literal) in file,
++// block, or struct scope (used by zstd and SQLite).
++static Token *parse_static_assert(Token *tok) {
++  Token *start = tok;
++  tok = skip(tok->next, "(");
++  int64_t val = const_expr(&tok, tok);
++  if (consume(&tok, tok, ",")) {
++    if (tok->kind != TK_STR)
++      error_tok(tok, "expected string literal");
++    tok = tok->next;
++  }
++  tok = skip(tok, ")");
++  tok = skip(tok, ";");
++  if (!val)
++    error_tok(start, "static assertion failed");
++  return tok;
++}
++
+ // compound-stmt = (typedef | declaration | stmt)* "}"
+ static Node *compound_stmt(Token **rest, Token *tok) {
+   Node *node = new_node(ND_BLOCK, tok);
+@@ -1769,6 +1787,11 @@
+   enter_scope();
+ 
+   while (!equal(tok, "}")) {
++    if (equal(tok, "_Static_assert")) {
++      tok = parse_static_assert(tok);
++      continue;
++    }
++
+     if (is_typename(tok) && !equal(tok->next, ":")) {
+       VarAttr attr = {};
+       Type *basety = declspec(&tok, tok, &attr);
+@@ -2548,6 +2571,11 @@
+   int idx = 0;
+ 
+   while (!equal(tok, "}")) {
++    if (equal(tok, "_Static_assert")) {
++      tok = parse_static_assert(tok);
++      continue;
++    }
++
+     VarAttr attr = {};
+     Type *basety = declspec(&tok, tok, &attr);
+     bool first = true;
+@@ -3340,6 +3368,11 @@
+   globals = NULL;
+ 
+   while (tok->kind != TK_EOF) {
++    if (equal(tok, "_Static_assert")) {
++      tok = parse_static_assert(tok);
++      continue;
++    }
++
+     VarAttr attr = {};
+     Type *basety = declspec(&tok, tok, &attr);
+ 

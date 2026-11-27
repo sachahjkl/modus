@@ -5,9 +5,17 @@
 #include "modus_thin_libc.h"
 
 void *memcpy(void *restrict destination, const void *restrict source, size_t count) {
+#ifdef __chibicc__
+  unsigned char *to = destination;
+  const unsigned char *from = source;
+  for (size_t index = 0; index < count; index++)
+    to[index] = from[index];
+  return destination;
+#else
   void *at = destination;
   __asm__ volatile("rep movsb" : "+D"(at), "+S"(source), "+c"(count) : : "memory");
   return destination;
+#endif
 }
 
 void *memmove(void *destination, const void *source, size_t count) {
@@ -17,17 +25,30 @@ void *memmove(void *destination, const void *source, size_t count) {
     return destination;
   if (to < from || to >= from + count)
     return memcpy(destination, source, count);
+#ifdef __chibicc__
+  for (size_t index = count; index > 0; index--)
+    to[index - 1] = from[index - 1];
+  return destination;
+#else
   // The ranges overlap with the destination above: copy from the end.
   to += count - 1;
   from += count - 1;
   __asm__ volatile("std\n\trep movsb\n\tcld" : "+D"(to), "+S"(from), "+c"(count) : : "memory");
   return destination;
+#endif
 }
 
 void *memset(void *destination, int value, size_t count) {
+#ifdef __chibicc__
+  unsigned char *to = destination;
+  for (size_t index = 0; index < count; index++)
+    to[index] = (unsigned char)value;
+  return destination;
+#else
   void *at = destination;
   __asm__ volatile("rep stosb" : "+D"(at), "+c"(count) : "a"(value) : "memory");
   return destination;
+#endif
 }
 
 int memcmp(const void *left, const void *right, size_t count) {

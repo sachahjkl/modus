@@ -41,7 +41,18 @@ BUILDER_PAGES_KEPT :: 512
 // BSS scratch for reading canonical tree nodes and arguments without using the stack.
 tree_buffer: [tree_hash.MAX_ENCODED_TREE_BYTES]u8
 copied_arguments: [pr.MAX_RECIPE_ARG_BYTES]u8
+parsed_arguments: Build_Arguments
 child_load_error: module.Load_Error
+
+// Plan value: initial joined assembly buffer size for multi-unit C builds (8 MiB,
+// covering chibicc's ~4.5 MiB assembly text without reallocation).
+MULTI_UNIT_JOINED_ASM_INITIAL_BYTES :: u64(8 * 1024 * 1024)
+
+// Plan value: initial packed header buffer size for multi-unit C builds (1 MiB).
+MULTI_UNIT_HEADERS_INITIAL_BYTES :: u64(1 * 1024 * 1024)
+
+// Format property: 8-byte little-endian header of one compile_unit program_files record.
+PROGRAM_FILE_RECORD_HEAD_BYTES :: u64(8)
 
 @(private = "file")
 HEX_DIGITS :: "0123456789abcdef"
@@ -296,6 +307,144 @@ call_child_sized :: proc "contextless" (
 	return 0, 0, fail_outcome(error, .Callee_Unavailable, .Refused, .Modules)
 }
 
+// growable_memory_append appends chunk into a page-backed memory object,
+// doubling the backing memory object when capacity is exceeded up to limit.
+@(private = "file")
+growable_memory_append :: proc "contextless" (
+	mem_handle: ^system.Handle,
+	mapped: ^rawptr,
+	capacity: ^u64,
+	used: ^u64,
+	chunk: []u8,
+	limit: u64,
+	error: ^errors.Error_Record,
+) -> call_outcome.Call_Outcome {
+	if len(chunk) == 0 {
+		return .Succeeded
+	}
+	add := u64(len(chunk))
+	if add > limit || used^ > limit - add {
+		return fail_outcome(error, .Budget_Or_Capacity_Exhausted, .Too_Long, .Bytes, 0, i64(min(used^ + add, 1 << 62)), i64(limit))
+	}
+	needed := used^ + add
+	if needed > capacity^ {
+		new_cap := capacity^ == 0 ? system.PAGE_SIZE : capacity^
+		for new_cap < needed {
+			if new_cap >= limit / 2 {
+				new_cap = limit
+				break
+			}
+			new_cap *= 2
+		}
+		pages := (new_cap + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+		new_handle, create_status := system.memory_create(pages)
+		if create_status != .Succeeded {
+			return fail_outcome(error, system.own_operation_outcome(create_status), .Refused, .Kernel_Status, 0, 0, 0, i64(create_status))
+		}
+		new_mapped, map_status := system.memory_map(new_handle, {.Write})
+		if map_status != .Succeeded {
+			system.close(new_handle)
+			return fail_outcome(error, system.own_operation_outcome(map_status), .Refused, .Kernel_Status, 0, 0, 0, i64(map_status))
+		}
+		if used^ > 0 && mapped^ != nil {
+			intrinsics.mem_copy_non_overlapping(new_mapped, mapped^, int(used^))
+		}
+		if mapped^ != nil {
+			system.memory_unmap(mapped^)
+		}
+		if mem_handle^ != 0 {
+			system.close(mem_handle^)
+		}
+		mem_handle^ = new_handle
+		mapped^ = new_mapped
+		capacity^ = pages * system.PAGE_SIZE
+	}
+	dst := ([^]u8)(mapped^)
+	intrinsics.mem_copy_non_overlapping(&dst[used^], raw_data(chunk), len(chunk))
+	used^ = needed
+	return .Succeeded
+}
+
+// pack_headers_to_memory resolves every header path in input_store and packs
+// them into c_compiler.compile_unit's program_files binary wire format:
+// [u32 name_len LE][u32 content_len LE][name bytes][content bytes]...
+@(private = "file")
+pack_headers_to_memory :: proc "contextless" (
+	input_store: ^storage.Client,
+	source_tree_hash: blake3.Hash,
+	header_paths: []string,
+	error: ^errors.Error_Record,
+) -> (mem_handle: system.Handle, mapped: rawptr, used: u64, outcome: call_outcome.Call_Outcome) {
+	cap_bytes := u64(0)
+	if len(header_paths) == 0 {
+		pages := u64(1)
+		h, st := system.memory_create(pages)
+		if st != .Succeeded {
+			return 0, nil, 0, fail_outcome(error, system.own_operation_outcome(st), .Refused, .Kernel_Status, 0, 0, 0, i64(st))
+		}
+		m, mst := system.memory_map(h, {.Write})
+		if mst != .Succeeded {
+			system.close(h)
+			return 0, nil, 0, fail_outcome(error, system.own_operation_outcome(mst), .Refused, .Kernel_Status, 0, 0, 0, i64(mst))
+		}
+		return h, m, 0, .Succeeded
+	}
+	init_pages := (MULTI_UNIT_HEADERS_INITIAL_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	h, st := system.memory_create(init_pages)
+	if st == .Succeeded {
+		m, mst := system.memory_map(h, {.Write})
+		if mst == .Succeeded {
+			mem_handle = h
+			mapped = m
+			cap_bytes = init_pages * system.PAGE_SIZE
+		} else {
+			system.close(h)
+		}
+	}
+
+	for path in header_paths {
+		file_hash, res_out := resolve_source_in_tree(input_store, source_tree_hash, path, error)
+		if res_out != .Succeeded {
+			if mapped != nil {system.memory_unmap(mapped)}
+			if mem_handle != 0 {system.close(mem_handle)}
+			return 0, nil, 0, res_out
+		}
+		blob_mem, blob_addr, blob_bytes, blob_out := read_blob_to_memory(input_store, file_hash, pr.C_SOURCE_BYTES_LIMIT, error)
+		if blob_out != .Succeeded {
+			if mapped != nil {system.memory_unmap(mapped)}
+			if mem_handle != 0 {system.close(mem_handle)}
+			return 0, nil, 0, blob_out
+		}
+		head: [PROGRAM_FILE_RECORD_HEAD_BYTES]u8
+		name_len := u32(len(path))
+		content_len := u32(len(blob_bytes))
+		head[0] = u8(name_len)
+		head[1] = u8(name_len >> 8)
+		head[2] = u8(name_len >> 16)
+		head[3] = u8(name_len >> 24)
+		head[4] = u8(content_len)
+		head[5] = u8(content_len >> 8)
+		head[6] = u8(content_len >> 16)
+		head[7] = u8(content_len >> 24)
+
+		app_out := growable_memory_append(&mem_handle, &mapped, &cap_bytes, &used, head[:], pr.C_TEXT_BYTES_LIMIT, error)
+		if app_out == .Succeeded {
+			app_out = growable_memory_append(&mem_handle, &mapped, &cap_bytes, &used, transmute([]u8)path, pr.C_TEXT_BYTES_LIMIT, error)
+		}
+		if app_out == .Succeeded {
+			app_out = growable_memory_append(&mem_handle, &mapped, &cap_bytes, &used, blob_bytes, pr.C_TEXT_BYTES_LIMIT, error)
+		}
+		system.memory_unmap(blob_addr)
+		system.close(blob_mem)
+		if app_out != .Succeeded {
+			if mapped != nil {system.memory_unmap(mapped)}
+			if mem_handle != 0 {system.close(mem_handle)}
+			return 0, nil, 0, app_out
+		}
+	}
+	return mem_handle, mapped, used, .Succeeded
+}
+
 // build is the export of the modus:contract/builder contract.
 @(export, link_name = "build")
 build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
@@ -315,8 +464,7 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 	if arg_count > 0 {
 		intrinsics.mem_copy_non_overlapping(&copied_arguments[0], arguments.bytes, int(arg_count))
 	}
-	path, has_path := argument_path(copied_arguments[:arg_count])
-	if !has_path {
+	if !arguments_parse(copied_arguments[:arg_count], &parsed_arguments) {
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2)
 	}
 
@@ -335,14 +483,7 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store, 0)
 	}
 
-	// 1. Resolve and verify the C source file inside the verified source tree.
-	source_file_hash, resolve_out := resolve_source_in_tree(&input_store, source_tree_hash, path, error)
-	if resolve_out != .Succeeded {
-		log_builder_failure(1, error)
-		return resolve_out, 0
-	}
-
-	// 2. Load and verify host, c_compiler, assemble, and the C source file.
+	// Load and verify host, c_compiler, and assemble once for the build.
 	host_mem, host_addr, host_bytes, host_out := read_blob_to_memory(&input_store, host_hash, pr.C_MODULE_BYTES_LIMIT, error)
 	if host_out != .Succeeded {
 		return host_out, 0
@@ -370,56 +511,206 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 		system.close(assembler_mem)
 	}
 
-	source_mem, source_addr, source_bytes, src_out := read_blob_to_memory(&input_store, source_file_hash, pr.C_SOURCE_BYTES_LIMIT, error)
-	if src_out != .Succeeded {
-		return src_out, 0
-	}
-	defer {
-		system.memory_unmap(source_addr)
-		system.close(source_mem)
-	}
-
 	seed_values := child_seed_values(ctx)
 
-	// 3. Compile C source -> assembly text in a zero-grant child call host.
-	compile_args := [2]isolated.Argument{{table = {records = source_bytes, count = u64(len(source_bytes)), memory_handle = u64(source_mem)}}, {}}
-	text_first := max(u64(len(source_bytes)) * C_TEXT_BYTES_FOR_EACH_SOURCE_BYTE, C_TEXT_FIRST_BYTES_LEAST)
-	text_size, text_mem, compile_out := call_child_sized(
-		host_bytes,
-		compiler_mem,
-		compiler_bytes,
-		"c_compiler",
-		"compile",
-		compile_args[:],
-		1,
-		text_first,
-		pr.C_TEXT_BYTES_LIMIT,
-		seed_values,
-		error,
-	)
-	if compile_out != .Succeeded {
-		log_builder_failure(2, error)
-		return compile_out, 0
-	}
-	defer system.close(text_mem)
+	text_mem: system.Handle
+	text_addr: rawptr
+	text_bytes: []u8
+	label_path: string
 
-	text_pages, _ := system.memory_size(text_mem)
-	if refusal := pr.c_build_written_refusal(text_size, i64(min(text_pages * system.PAGE_SIZE, pr.C_TEXT_BYTES_LIMIT))); refusal.kind != 0 {
-		if error != nil {
-			error^ = refusal
+	switch parsed_arguments.mode {
+	case .None:
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2)
+
+	case .Single_Unit:
+		label_path = parsed_arguments.single_path
+		source_file_hash, resolve_out := resolve_source_in_tree(&input_store, source_tree_hash, label_path, error)
+		if resolve_out != .Succeeded {
+			log_builder_failure(1, error)
+			return resolve_out, 0
 		}
-		return .Callee_Unavailable, 0
-	}
-	text_addr, text_map_status := system.memory_map(text_mem, {})
-	if text_map_status != .Succeeded {
-		return call_outcome.fail(error, system.own_operation_outcome(text_map_status), .Refused, .Kernel_Status, 0, 0, 0, i64(text_map_status))
-	}
-	defer system.memory_unmap(text_addr)
-	text_bytes := ([^]u8)(text_addr)[:text_size]
+		source_mem, source_addr, source_bytes, src_out := read_blob_to_memory(&input_store, source_file_hash, pr.C_SOURCE_BYTES_LIMIT, error)
+		if src_out != .Succeeded {
+			return src_out, 0
+		}
+		defer {
+			system.memory_unmap(source_addr)
+			system.close(source_mem)
+		}
 
-	// 4. Assemble assembly text -> modus module in a zero-grant child call host.
+		compile_args := [2]isolated.Argument{{table = {records = source_bytes, count = u64(len(source_bytes)), memory_handle = u64(source_mem)}}, {}}
+		text_first := max(u64(len(source_bytes)) * C_TEXT_BYTES_FOR_EACH_SOURCE_BYTE, C_TEXT_FIRST_BYTES_LEAST)
+		text_size, out_mem, compile_out := call_child_sized(
+			host_bytes,
+			compiler_mem,
+			compiler_bytes,
+			"c_compiler",
+			"compile",
+			compile_args[:],
+			1,
+			text_first,
+			pr.C_TEXT_BYTES_LIMIT,
+			seed_values,
+			error,
+		)
+		if compile_out != .Succeeded {
+			log_builder_failure(2, error)
+			return compile_out, 0
+		}
+		text_mem = out_mem
+		text_pages, _ := system.memory_size(text_mem)
+		if refusal := pr.c_build_written_refusal(text_size, i64(min(text_pages * system.PAGE_SIZE, pr.C_TEXT_BYTES_LIMIT))); refusal.kind != 0 {
+			system.close(text_mem)
+			if error != nil {
+				error^ = refusal
+			}
+			return .Callee_Unavailable, 0
+		}
+		mapped, map_status := system.memory_map(text_mem, {})
+		if map_status != .Succeeded {
+			system.close(text_mem)
+			return call_outcome.fail(error, system.own_operation_outcome(map_status), .Refused, .Kernel_Status, 0, 0, 0, i64(map_status))
+		}
+		text_addr = mapped
+		text_bytes = ([^]u8)(text_addr)[:text_size]
+
+	case .Multi_Unit:
+		label_path = parsed_arguments.units[0]
+		headers_mem, headers_addr, headers_used, hdr_out := pack_headers_to_memory(
+			&input_store,
+			source_tree_hash,
+			parsed_arguments.headers[:parsed_arguments.header_count],
+			error,
+		)
+		if hdr_out != .Succeeded {
+			log_builder_failure(1, error)
+			return hdr_out, 0
+		}
+		defer {
+			system.memory_unmap(headers_addr)
+			system.close(headers_mem)
+		}
+		headers_slice := ([^]u8)(headers_addr)[:headers_used]
+
+		joined_cap := u64(0)
+		joined_used := u64(0)
+		init_asm_pages := (MULTI_UNIT_JOINED_ASM_INITIAL_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+		if h, st := system.memory_create(init_asm_pages); st == .Succeeded {
+			if m, mst := system.memory_map(h, {.Write}); mst == .Succeeded {
+				text_mem = h
+				text_addr = m
+				joined_cap = init_asm_pages * system.PAGE_SIZE
+			} else {
+				system.close(h)
+			}
+		}
+
+		for unit_path in parsed_arguments.units[:parsed_arguments.unit_count] {
+			unit_hash, res_out := resolve_source_in_tree(&input_store, source_tree_hash, unit_path, error)
+			if res_out != .Succeeded {
+				if text_addr != nil {system.memory_unmap(text_addr)}
+				if text_mem != 0 {system.close(text_mem)}
+				log_builder_failure(1, error)
+				return res_out, 0
+			}
+			unit_mem, unit_addr, unit_bytes, blob_out := read_blob_to_memory(&input_store, unit_hash, pr.C_SOURCE_BYTES_LIMIT, error)
+			if blob_out != .Succeeded {
+				if text_addr != nil {system.memory_unmap(text_addr)}
+				if text_mem != 0 {system.close(text_mem)}
+				log_builder_failure(1, error)
+				return blob_out, 0
+			}
+			unit_args := [5]isolated.Argument {
+				{text = transmute([]u8)unit_path},
+				{table = {records = unit_bytes, count = u64(len(unit_bytes)), memory_handle = u64(unit_mem)}},
+				{table = {records = headers_slice, count = u64(len(headers_slice)), memory_handle = u64(headers_mem)}},
+				{text = transmute([]u8)parsed_arguments.exports},
+				{},
+			}
+			unit_first := max(u64(len(unit_bytes)) * C_TEXT_BYTES_FOR_EACH_SOURCE_BYTE, C_TEXT_FIRST_BYTES_LEAST)
+			unit_asm_size, unit_asm_mem, comp_out := call_child_sized(
+				host_bytes,
+				compiler_mem,
+				compiler_bytes,
+				"c_compiler",
+				"compile_unit",
+				unit_args[:],
+				4,
+				unit_first,
+				pr.C_TEXT_BYTES_LIMIT,
+				seed_values,
+				error,
+			)
+			system.memory_unmap(unit_addr)
+			system.close(unit_mem)
+			if comp_out != .Succeeded {
+				if text_addr != nil {system.memory_unmap(text_addr)}
+				if text_mem != 0 {system.close(text_mem)}
+				log_builder_failure(2, error)
+				return comp_out, 0
+			}
+			unit_asm_pages, _ := system.memory_size(unit_asm_mem)
+			if refusal := pr.c_build_written_refusal(unit_asm_size, i64(min(unit_asm_pages * system.PAGE_SIZE, pr.C_TEXT_BYTES_LIMIT))); refusal.kind != 0 {
+				system.close(unit_asm_mem)
+				if text_addr != nil {system.memory_unmap(text_addr)}
+				if text_mem != 0 {system.close(text_mem)}
+				if error != nil {error^ = refusal}
+				return .Callee_Unavailable, 0
+			}
+			unit_asm_addr, unit_map_st := system.memory_map(unit_asm_mem, {})
+			if unit_map_st != .Succeeded {
+				system.close(unit_asm_mem)
+				if text_addr != nil {system.memory_unmap(text_addr)}
+				if text_mem != 0 {system.close(text_mem)}
+				return call_outcome.fail(error, system.own_operation_outcome(unit_map_st), .Refused, .Kernel_Status, 0, 0, 0, i64(unit_map_st))
+			}
+			app_out := growable_memory_append(&text_mem, &text_addr, &joined_cap, &joined_used, ([^]u8)(unit_asm_addr)[:unit_asm_size], pr.C_TEXT_BYTES_LIMIT, error)
+			system.memory_unmap(unit_asm_addr)
+			system.close(unit_asm_mem)
+			if app_out != .Succeeded {
+				if text_addr != nil {system.memory_unmap(text_addr)}
+				if text_mem != 0 {system.close(text_mem)}
+				log_builder_failure(2, error)
+				return app_out, 0
+			}
+		}
+
+		for asm_path in parsed_arguments.assembly[:parsed_arguments.assembly_count] {
+			asm_hash, res_out := resolve_source_in_tree(&input_store, source_tree_hash, asm_path, error)
+			if res_out != .Succeeded {
+				if text_addr != nil {system.memory_unmap(text_addr)}
+				if text_mem != 0 {system.close(text_mem)}
+				log_builder_failure(1, error)
+				return res_out, 0
+			}
+			asm_mem, asm_addr, asm_bytes, blob_out := read_blob_to_memory(&input_store, asm_hash, pr.C_SOURCE_BYTES_LIMIT, error)
+			if blob_out != .Succeeded {
+				if text_addr != nil {system.memory_unmap(text_addr)}
+				if text_mem != 0 {system.close(text_mem)}
+				log_builder_failure(1, error)
+				return blob_out, 0
+			}
+			app_out := growable_memory_append(&text_mem, &text_addr, &joined_cap, &joined_used, asm_bytes, pr.C_TEXT_BYTES_LIMIT, error)
+			system.memory_unmap(asm_addr)
+			system.close(asm_mem)
+			if app_out != .Succeeded {
+				if text_addr != nil {system.memory_unmap(text_addr)}
+				if text_mem != 0 {system.close(text_mem)}
+				log_builder_failure(2, error)
+				return app_out, 0
+			}
+		}
+		text_bytes = ([^]u8)(text_addr)[:joined_used]
+	}
+
+	defer {
+		if text_addr != nil {system.memory_unmap(text_addr)}
+		if text_mem != 0 {system.close(text_mem)}
+	}
+
+	// Assemble assembly text -> modus module in a zero-grant child call host.
 	assemble_args := [2]isolated.Argument{{table = {records = text_bytes, count = u64(len(text_bytes)), memory_handle = u64(text_mem)}}, {}}
-	module_first := u64(text_size) / 4 + C_MODULE_FIRST_BYTES_MORE
+	module_first := u64(len(text_bytes)) / 4 + C_MODULE_FIRST_BYTES_MORE
 	module_size, module_mem, assemble_out := call_child_sized(
 		host_bytes,
 		assembler_mem,
@@ -460,7 +751,7 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 		return .Callee_Unavailable, 0
 	}
 
-	// 5. Write validated module into the empty output store under "module".
+	// Write validated module into the empty output store under "module".
 	if !write_output_blob(&output_store, "module", module_bytes, error) {
 		if error != nil && error.kind == 0 {
 			_, _ = call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store)
@@ -469,6 +760,6 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 		return .Callee_Unavailable, 0
 	}
 
-	system.log_fact(.Info, C_Module_Built{size = value_kinds.Size_In_Bytes(len(module_bytes))}, path)
+	system.log_fact(.Info, C_Module_Built{size = value_kinds.Size_In_Bytes(len(module_bytes))}, label_path)
 	return .Succeeded, 1
 }

@@ -1,0 +1,35 @@
+--- a/preprocess.c
++++ b/preprocess.c
+@@ -774,19 +774,26 @@
+     return NULL;
+ 
+   // Read until the end of the file.
++  int depth = 1;
+   while (tok->kind != TK_EOF) {
+     if (!is_hash(tok)) {
+       tok = tok->next;
+       continue;
+     }
+ 
+-    if (equal(tok->next, "endif") && tok->next->next->kind == TK_EOF)
+-      return macro;
+-
+-    if (equal(tok, "if") || equal(tok, "ifdef") || equal(tok, "ifndef"))
+-      tok = skip_cond_incl(tok->next);
+-    else
++    if (equal(tok->next, "if") || equal(tok->next, "ifdef") || equal(tok->next, "ifndef")) {
++      depth++;
++      tok = tok->next->next;
++    } else if (equal(tok->next, "endif")) {
++      depth--;
++      if (depth == 0)
++        return tok->next->next->kind == TK_EOF ? macro : NULL;
++      tok = tok->next->next;
++    } else if (depth == 1 && (equal(tok->next, "else") || equal(tok->next, "elif"))) {
++      return NULL;
++    } else {
+       tok = tok->next;
++    }
+   }
+   return NULL;
+ }

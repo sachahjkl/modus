@@ -14,52 +14,184 @@ MAX_SOURCE_PATH_SEGMENTS :: 32
 // Format property: maximum path length in bytes.
 MAX_SOURCE_PATH_BYTES :: 1024
 
-// argument_path reads the required text field "path" from the canonical
-// declaration_eval argument record and verifies that every slash-separated
-// segment is a valid tree entry name (no empty segment, no leading or trailing
-// slash, no "." or "..").
-argument_path :: proc "contextless" (arguments: []u8) -> (path: string, ok: bool) {
+// Plan value: maximum C translation units in one multi-unit c_builder recipe
+// (covers chibicc's 14 units and C libraries such as Lua and zstd).
+MAX_BUILD_UNITS :: 64
+
+// Plan value: maximum assembly support units in one multi-unit c_builder recipe.
+MAX_BUILD_ASSEMBLY :: 16
+
+// Plan value: maximum header files packed into one multi-unit c_builder recipe.
+MAX_BUILD_HEADERS :: 256
+
+// Closed set of build modes accepted by c_builder.
+Build_Mode :: enum u8 {
+	None        = 0,
+	Single_Unit = 1,
+	Multi_Unit  = 2,
+}
+
+// Parsed arguments of one c_builder invocation (single-file or multi-unit).
+Build_Arguments :: struct {
+	mode:           Build_Mode,
+	single_path:    string,
+	units:          [MAX_BUILD_UNITS]string,
+	unit_count:     int,
+	assembly:       [MAX_BUILD_ASSEMBLY]string,
+	assembly_count: int,
+	headers:        [MAX_BUILD_HEADERS]string,
+	header_count:   int,
+	exports:        string,
+}
+
+// parse_path_list_value reads a canonical declaration_eval List of Text paths
+// into out, validating every path and refusing non-Text items, duplicates, or overflow.
+@(private = "file")
+parse_path_list_value :: proc "contextless" (reader: ^declaration_eval.Output_Reader, out: []string) -> (count: int, ok: bool) {
+	item_count, count_refusal := declaration_eval.output_read_u32(reader)
+	if count_refusal != .None || int(item_count) > len(out) {
+		return 0, false
+	}
+	for _ in 0 ..< item_count {
+		item_tag, tag_refusal := declaration_eval.output_read_tag(reader)
+		if tag_refusal != .None || item_tag != .Text {
+			return 0, false
+		}
+		item, text_refusal := declaration_eval.output_read_string(reader)
+		if text_refusal != .None || !source_path_valid(item) {
+			return 0, false
+		}
+		for prev in out[:count] {
+			if prev == item {
+				return 0, false
+			}
+		}
+		out[count] = item
+		count += 1
+	}
+	return count, true
+}
+
+// arguments_parse reads the canonical declaration_eval argument record for
+// either single-file mode (`path`: Text) or multi-unit mode (`units`: List of Text,
+// optional `assembly`: List of Text, optional `headers`: List of Text, optional
+// `exports`: Text). Refuses mixing modes, duplicate fields, bad paths, or trailing bytes.
+arguments_parse :: proc "contextless" (arguments: []u8, out: ^Build_Arguments) -> bool {
+	if out == nil {
+		return false
+	}
+	out^ = {}
 	reader := declaration_eval.Output_Reader{bytes = arguments}
 	tag, tag_refusal := declaration_eval.output_read_tag(&reader)
 	if tag_refusal != .None || tag != .Record {
-		return "", false
+		return false
 	}
 	count, count_refusal := declaration_eval.output_read_u32(&reader)
 	if count_refusal != .None {
-		return "", false
+		return false
 	}
 	found_path := false
+	found_units := false
+	found_assembly := false
+	found_headers := false
+	found_exports := false
+
 	for _ in 0 ..< count {
 		field, field_refusal := declaration_eval.output_read_string(&reader)
 		if field_refusal != .None {
-			return "", false
+			return false
 		}
 		start := reader.offset
 		value_tag, value_refusal := declaration_eval.output_read_tag(&reader)
 		if value_refusal != .None {
-			return "", false
+			return false
 		}
-		if field == "path" {
+		switch field {
+		case "path":
 			if found_path || value_tag != .Text {
-				return "", false
+				return false
 			}
 			value, text_refusal := declaration_eval.output_read_string(&reader)
 			if text_refusal != .None || !source_path_valid(value) {
-				return "", false
+				return false
 			}
-			path = value
+			out.single_path = value
 			found_path = true
-			continue
-		}
-		reader.offset = start
-		if declaration_eval.output_skip_value(&reader, 1) != .None {
-			return "", false
+		case "units":
+			if found_units || value_tag != .List {
+				return false
+			}
+			n, list_ok := parse_path_list_value(&reader, out.units[:])
+			if !list_ok || n == 0 {
+				return false
+			}
+			out.unit_count = n
+			found_units = true
+		case "assembly":
+			if found_assembly || value_tag != .List {
+				return false
+			}
+			n, list_ok := parse_path_list_value(&reader, out.assembly[:])
+			if !list_ok {
+				return false
+			}
+			out.assembly_count = n
+			found_assembly = true
+		case "headers":
+			if found_headers || value_tag != .List {
+				return false
+			}
+			n, list_ok := parse_path_list_value(&reader, out.headers[:])
+			if !list_ok {
+				return false
+			}
+			out.header_count = n
+			found_headers = true
+		case "exports":
+			if found_exports || value_tag != .Text {
+				return false
+			}
+			value, text_refusal := declaration_eval.output_read_string(&reader)
+			if text_refusal != .None {
+				return false
+			}
+			out.exports = value
+			found_exports = true
+		case:
+			reader.offset = start
+			if declaration_eval.output_skip_value(&reader, 1) != .None {
+				return false
+			}
 		}
 	}
-	if !found_path || reader.offset != len(arguments) {
+	if reader.offset != len(arguments) {
+		return false
+	}
+	if found_path && found_units {
+		return false
+	}
+	if found_path {
+		if found_assembly || found_headers || found_exports {
+			return false
+		}
+		out.mode = .Single_Unit
+		return true
+	}
+	if found_units {
+		out.mode = .Multi_Unit
+		return true
+	}
+	return false
+}
+
+// argument_path reads the required text field "path" from a single-unit
+// declaration_eval argument record.
+argument_path :: proc "contextless" (arguments: []u8) -> (path: string, ok: bool) {
+	parsed: Build_Arguments
+	if !arguments_parse(arguments, &parsed) || parsed.mode != .Single_Unit {
 		return "", false
 	}
-	return path, true
+	return parsed.single_path, true
 }
 
 // source_path_valid validates a relative forward-slash path inside a source tree.

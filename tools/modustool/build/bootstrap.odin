@@ -1167,8 +1167,9 @@ bootstrap_chain_seed_guest_bootstrap :: proc(allocator := context.temp_allocator
 	guest_root_hash := bootstrap_deterministic_digest("guest:minimal-rootfs-v1")
 	guest_builder_module_hash := bootstrap_deterministic_digest("module:guest-builder-v1")
 
-	// Minimal auditable hex0 seed payload (well under 512 bytes).
-	hex0_seed_bytes := transmute([]u8)string("hex0-x86_64-auditable-bootstrap-seed:modus:v1")
+	// Auditable 262-byte x86-64 Linux ELF hex0 bootstrap seed assembled from
+	// TIER2_HEX0_X86_64_SOURCE (tier2_guest_bootstrap.odin).
+	hex0_seed_bytes, _ := tier2_hex0_assemble_reference(TIER2_HEX0_X86_64_SOURCE, allocator)
 	hex0_hash := blake3.hash(hex0_seed_bytes)
 
 	Stage_Descriptor :: struct {

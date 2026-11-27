@@ -41,9 +41,83 @@ void thin_libc_files_set(const Readable_File *files, size_t count) {
   table_file_count = count;
 }
 
+// Normalize `.`, `..`, and duplicate `/` segments inside an in-memory lookup
+// key so relative includes such as `../common/zstd_internal.h` resolve against
+// the flat table of program files without touching any host filesystem.
+static const char *normalize_table_path(const char *name, char *buffer, size_t capacity) {
+  if (!name || capacity == 0)
+    return name;
+  // Fast path: return unchanged when no `.`, `..`, or `//` appears.
+  bool needs_norm = false;
+  for (const char *p = name; *p; p++) {
+    if (p[0] == '/' && p[1] == '/') {
+      needs_norm = true;
+      break;
+    }
+    if (p[0] == '.' && (p == name || p[-1] == '/') && (p[1] == '\0' || p[1] == '/' || (p[1] == '.' && (p[2] == '\0' || p[2] == '/')))) {
+      needs_norm = true;
+      break;
+    }
+  }
+  if (!needs_norm)
+    return name;
+
+  // Format property: 64 path segments exceeds any C source tree depth.
+  size_t seg_starts[64];
+  size_t seg_lens[64];
+  size_t seg_count = 0;
+  bool leading_slash = (name[0] == '/');
+  size_t pos = 0;
+  while (name[pos]) {
+    while (name[pos] == '/')
+      pos++;
+    if (!name[pos])
+      break;
+    size_t start = pos;
+    while (name[pos] && name[pos] != '/')
+      pos++;
+    size_t len = pos - start;
+    if (len == 1 && name[start] == '.')
+      continue;
+    if (len == 2 && name[start] == '.' && name[start + 1] == '.') {
+      if (seg_count > 0)
+        seg_count--;
+      continue;
+    }
+    if (seg_count >= 64)
+      return name;
+    seg_starts[seg_count] = start;
+    seg_lens[seg_count] = len;
+    seg_count++;
+  }
+
+  size_t out = 0;
+  if (leading_slash) {
+    if (out + 1 >= capacity)
+      return name;
+    buffer[out++] = '/';
+  }
+  for (size_t i = 0; i < seg_count; i++) {
+    if (i > 0) {
+      if (out + 1 >= capacity)
+        return name;
+      buffer[out++] = '/';
+    }
+    if (out + seg_lens[i] >= capacity)
+      return name;
+    memcpy(buffer + out, name + seg_starts[i], seg_lens[i]);
+    out += seg_lens[i];
+  }
+  buffer[out] = '\0';
+  return buffer;
+}
+
 const Readable_File *thin_libc_file_find(const char *name) {
+  // Format property: 1024 bytes covers every normalized relative include path.
+  char normalized[1024];
+  const char *key = normalize_table_path(name, normalized, sizeof(normalized));
   for (size_t index = 0; index < table_file_count; index++)
-    if (strcmp(table_files[index].name, name) == 0)
+    if (strcmp(table_files[index].name, key) == 0)
       return &table_files[index];
   return NULL;
 }

@@ -1221,15 +1221,16 @@ modustool self-host [--staging-dir <folder>] [--verify-chains]
 `modustool c-self-host` verifies that the C compiler builds itself through the assembler of modus: `chibicc` built by clang compiles the sources of `chibicc`, and two stages built by `chibicc` have one BLAKE3 hash. The design is in `src/md/features/bootstrap.md`, "The self-hosting of the C compiler"; the code is `tools/modustool/build/c_self_host.odin`. It runs in a shell of the flake: it reads the outside source of `chibicc` through the variable `CHIBICC_SOURCE`, and runs clang, nasm and ld.lld.
 
 ```
-modustool c-self-host
+modustool c-self-host [--libraries]
 ```
 
 1. Stage 0: the tool compiles the C files of the outside source with the flags of a module, links them with the copies and the fills of `src/runtime/memory.asm`, and converts the link into a module with the one export `compile_record_at`, in `build/c_self_host/stage_zero`.
 2. Stage 0 compiles each C source of the folder and of its folder `self_host`, each in a fresh copy of the module, and writes each text in `build/c_self_host/stage_zero/texts`. The texts and `self_host/jump.s` are one text of the assembler, whose module is `build/c_self_host/stage_one/chibicc.modus`.
 3. Stage 1 compiles the same sources into `build/c_self_host/stage_one/texts`, and the assembler writes `build/c_self_host/stage_two/chibicc.modus`.
 4. The tool prints the sources, says whether stage 1 gave the text of stage 0 for each, prints the size and the BLAKE3 hash of the two modules, and fails when they differ, with the first byte where they differ. A refusal of a stage prints the diagnostic of `chibicc`; a refusal of the assembler prints the line, the column, the sentence and the line of the text.
+5. When `--libraries` is passed, the tool also compiles upstream `lua`, `zstd`, and `sqlite` from `LUA_SOURCE`, `ZSTD_SOURCE`, and `SQLITE_SOURCE` using Stage 1 `chibicc` and the native assembler of modus, writing validated `.modus` modules into `build/c_self_host/libraries`.
 
-The host test `chibicc_builds_itself_to_the_same_bytes` runs the same chain in a temporary folder.
+The host tests `chibicc_builds_itself_to_the_same_bytes` and `chibicc_compiles_upstream_c_libraries_and_refuses_bad_inputs` run these chains in a temporary folder.
 
 ## The catalog declaration of the build
 
