@@ -125,8 +125,13 @@ import "base:intrinsics"
 // plus its present list page (1 page), allocated before ready.
 GPU_SCANOUT_PAGES :: 2026
 #assert(GPU_SCANOUT_PAGES == (u64(reference_screen.WIDTH) * u64(reference_screen.HEIGHT) * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE + 1)
-// The virtual GPU scanout framebuffer and present list allocated before ready.
-MODULE_START_OBJECTS :: [?]system.Start_Object{GPU_SCANOUT_PAGES}
+// Each private glyph cache (compositor's own text_rendering and the imported
+// drawing module), allocated before ready at the first drawn glyph.
+GLYPH_CACHE_PAGES :: 354
+#assert(GLYPH_CACHE_PAGES == display.TEXT_MEMORY_PAGES)
+// The virtual GPU scanout framebuffer, present list, and two private glyph
+// caches allocated before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{GPU_SCANOUT_PAGES, GLYPH_CACHE_PAGES, GLYPH_CACHE_PAGES}
 
 // The frame and the background are two screen pictures (screen_pictures),
 // which the root service pays at the size of the screen of the machine.
