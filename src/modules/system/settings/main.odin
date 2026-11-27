@@ -95,11 +95,10 @@ import "modus:system"
 // size, in logical pixels (src/md/features/settings_window.md). Each place
 // in it comes from its layout tree (settings_layout), from the size that
 // the window has now. Literals, so that the tool reads the window of the
-// budget. The least width holds the widest value button in a card; the
-// least height holds a title of a section, two lines and the action bar,
-// and the scroll bar moves the rest.
-WIDTH :: 560
-HEIGHT :: 688
+// Opens at 784x624 (multiples of 8 for exact pixel scaling at every eighth) so
+// the sidebar + content split shows at once.
+WIDTH :: 784
+HEIGHT :: 624
 LEAST_WIDTH :: 400
 LEAST_HEIGHT :: 320
 LARGEST_WIDTH :: 1024
@@ -113,18 +112,78 @@ MODULE_BUDGET :: system.Stated_Budget{threads = 2, window_width = LARGEST_WIDTH,
 // holder of the display leaves at each scale, with its title.
 #assert(LEAST_HEIGHT + 40 <= scale_factor.WORK_AREA_LEAST_HEIGHT)
 
-// The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
-// action bar"): the keys of the focus of the interface package.
-// A procedure, not a global array: an item is made by a call, and a
-// freestanding process runs no call before its entry.
-bar_items :: proc "contextless" () -> [3]interface.Action_Bar_Item {
-	return {
-		interface.action_bar_item("Next button", 3, "Tab"),
-		interface.action_bar_item("Button before", 2, "Shift", "Tab"),
-		interface.action_bar_item("Choose value", 3, "Enter"),
-	}
+// Plan value: layout metrics for the settings sidebar, narrow tab bar,
+// segmented controls, and slim bottom status footer.
+SIDEBAR_MIN_WIDTH :: 580 // Below this width, navigation collapses to a compact top tab bar.
+SIDEBAR_WIDTH :: 176
+SIDEBAR_SEARCH_HEIGHT :: 26
+SIDEBAR_ROW_HEIGHT :: 28
+COMPACT_NAV_HEIGHT :: 30
+STATUS_FOOTER_HEIGHT :: 24
+STATUS_RIGHT_CLEARANCE :: 22 // 11 px resize grip + 2 px border + 9 px margin.
+SEGMENTED_HEIGHT :: 28
+
+// Closed set of navigation categories in the settings sidebar / compact tab bar.
+Nav_Category :: enum u8 {
+	All,
+	Display,
+	Pointer,
+	Keyboard,
+	Region_And_Language,
+	Modules,
 }
-bar: interface.Action_Bar_State
+
+@(rodata)
+nav_categories := [len(Nav_Category)]Nav_Category{.All, .Display, .Pointer, .Keyboard, .Region_And_Language, .Modules}
+
+@(rodata)
+nav_category_labels := [Nav_Category]string {
+	.All                 = "All",
+	.Display             = "Display",
+	.Pointer             = "Pointer",
+	.Keyboard            = "Keyboard",
+	.Region_And_Language = "Region",
+	.Modules             = "Modules",
+}
+
+@(rodata)
+nav_sidebar_labels := [Nav_Category]string {
+	.All                 = "All settings",
+	.Display             = "Display",
+	.Pointer             = "Pointer",
+	.Keyboard            = "Keyboard",
+	.Region_And_Language = "Region & language",
+	.Modules             = "Modules",
+}
+
+// Closed set of actions in the settings right-click menu and Ctrl+K palette.
+Settings_Menu_Action :: enum u32 {
+	None             = 0,
+	Cat_All          = 1,
+	Cat_Display      = 2,
+	Cat_Pointer      = 3,
+	Cat_Keyboard     = 4,
+	Cat_Region       = 5,
+	Cat_Modules      = 6,
+	Clear_Search     = 7,
+	Appearance_Auto  = 8,
+	Appearance_Dark  = 9,
+	Appearance_Light = 10,
+	Font_Vector      = 11,
+	Font_Spleen      = 12,
+	Scale_100        = 13,
+	Scale_125        = 14,
+	Scale_150        = 15,
+	Scale_200        = 16,
+	Open_Palette     = 17,
+}
+
+nav_category: Nav_Category = .All
+search_buf: [32]u8 // Plan value: covers multi-word setting filter queries.
+search_len: int
+settings_ctx_menu: interface.Context_Menu_State
+settings_palette: interface.Command_Palette_State
+palette_pill_area: interface.Area
 
 // The display texts of the members whose name is not the word that a
 // principal reads (src/md/features/enum_parameters.md, "The display text of
@@ -1378,12 +1437,11 @@ frame_texts_of :: proc "contextless" (texts: ^Frame_Texts, choice: settings.Choi
 // The number of each line of the list of the languages is one digit.
 #assert(settings.LANGUAGE_LIST_CAPACITY <= 9)
 
-// The boxes of one setting that is a row of values. NO_BOX: the frame has
-// no such element.
+// The boxes of one setting that is a segmented control or track.
 Setting_Boxes :: struct {
 	title:       layout.Box_Index,
 	explanation: layout.Box_Index,
-	values:      [settings.VALUE_NAME_CAPACITY]layout.Box_Index, // NO_BOX: the scale, which has a track.
+	control:     layout.Box_Index, // Segmented control box (NO_BOX for .Scale, which uses scale_track).
 }
 
 // The boxes of a line of the list of the languages.
@@ -1396,6 +1454,9 @@ Language_Boxes :: struct {
 // The boxes of the window that the draw reads after the solve. NO_BOX: the
 // frame has no such element.
 Settings_Boxes :: struct {
+	has_sidebar:           bool,
+	sidebar:               layout.Box_Index, // Left navigation sidebar when width >= SIDEBAR_MIN_WIDTH.
+	compact_nav:           layout.Box_Index, // Top tab bar when width < SIDEBAR_MIN_WIDTH.
 	view:                  layout.Box_Index, // The part of the window that scrolls.
 	scroll_bar:            layout.Box_Index, // NO_BOX: the content fits the view.
 	store_note:            layout.Box_Index, // NO_BOX: the store keeps the choices.
@@ -1414,7 +1475,7 @@ Settings_Boxes :: struct {
 	add_title:             layout.Box_Index,
 	add_buttons:           [len(common_languages)]layout.Box_Index,
 	discovered_cards:      [DISCOVERED_MODULE_CAPACITY]Discovered_Card_Boxes,
-	action_bar:            layout.Box_Index,
+	footer:                layout.Box_Index,
 	content_height:        int, // The height of the content of the view, which the scroll bar moves.
 	scroll:                int, // The first line of the content in the view, which the solver clamped.
 }
@@ -1538,6 +1599,46 @@ LANGUAGE_REMOVE :: "Remove"
 LANGUAGE_ADD :: "Add"
 STORE_NOTE :: "Not kept: no store. The choices last until the next start."
 
+// section_matches_filter reports whether a core section should be shown for the
+// active navigation category and live search query.
+section_matches_filter :: proc "contextless" (section: Section, cat: Nav_Category, query: string) -> bool {
+	if query == "" {
+		switch cat {
+		case .All:
+			return true
+		case .Display:
+			return section == .Display
+		case .Pointer:
+			return section == .Pointer
+		case .Keyboard:
+			return section == .Keyboard
+		case .Region_And_Language:
+			return section == .Region_And_Language
+		case .Modules:
+			return false
+		}
+	}
+	if interface.find_without_case(section_titles[section], query) >= 0 {
+		return true
+	}
+	for setting in settings_of_section(section) {
+		if interface.find_without_case(setting_texts[setting].title, query) >= 0 || interface.find_without_case(setting_texts[setting].explanation, query) >= 0 {
+			return true
+		}
+		for place in 0 ..< int(settings.descriptions[setting].value_count) {
+			if interface.find_without_case(setting_texts[setting].value_labels[place], query) >= 0 {
+				return true
+			}
+		}
+	}
+	if section == .Region_And_Language {
+		if interface.find_without_case(ZONE_TITLE, query) >= 0 || interface.find_without_case(LANGUAGES_TITLE, query) >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // section_add adds the card of a section: the room of its title, then
 // each setting, then the room under the last one.
 section_add :: proc "contextless" (builder: ^Layout_Builder, boxes: ^Settings_Boxes, table: ^interface.Draw_Table, texts: ^Frame_Texts, section: Section, room: int, tokens: layout.Element_Tokens) {
@@ -1552,21 +1653,17 @@ section_add :: proc "contextless" (builder: ^Layout_Builder, boxes: ^Settings_Bo
 			// The track of the stops, each with its percent; a stop too
 			// narrow for three digits leaves the scale in force beside a
 			// track of bare stops.
-			builder_open(builder, {size = {.X = layout.fill(), .Y = layout.px(BUTTON_HEIGHT)}, child_axis = .X, gap = i32(gap)})
+			builder_open(builder, {size = {.X = layout.fill(), .Y = layout.px(SEGMENTED_HEIGHT)}, child_axis = .X, gap = i32(gap)})
 			if scale_stop_width(room) < interface.text_measured_width(table, interface.FONT_INTERFACE, SCALE_STOP_SAMPLE) + 2 * SCALE_STOP_LABEL_PADDING {
-				boxes.scale_value = builder_add(builder, fixed_box(interface.text_measured_width(table, interface.FONT_INTERFACE_BOLD, SCALE_LABEL_SAMPLE), BUTTON_HEIGHT))
+				boxes.scale_value = builder_add(builder, fixed_box(interface.text_measured_width(table, interface.FONT_INTERFACE_BOLD, SCALE_LABEL_SAMPLE), SEGMENTED_HEIGHT))
 			}
-			boxes.scale_track = builder_add(builder, line_box(BUTTON_HEIGHT))
+			boxes.scale_track = builder_add(builder, line_box(SEGMENTED_HEIGHT))
 			builder_close(builder)
 			if texts.declined_notice != "" {
 				boxes.scale_declined = builder_add(builder, line_box(interface.caption_height(table, texts.declined_notice, room)))
 			}
 		} else {
-			flow := flow_begin(builder, room, gap)
-			for place in 0 ..< int(settings.descriptions[setting].value_count) {
-				setting_boxes.values[place] = flow_add(&flow, button_width(table, setting_texts[setting].value_labels[place], VALUE_BUTTON_WIDTH))
-			}
-			flow_end(&flow)
+			setting_boxes.control = builder_add(builder, line_box(SEGMENTED_HEIGHT))
 		}
 		builder_close(builder)
 	}
@@ -1607,38 +1704,53 @@ section_add :: proc "contextless" (builder: ^Layout_Builder, boxes: ^Settings_Bo
 	builder_close(builder)
 }
 
-// settings_tree_build builds the tree of the window at a size: the view
-// that scrolls, with the sections in one column or two, the scroll bar
-// beside it when with_scroll_bar, and the action bar at the foot.
-settings_tree_build :: proc "contextless" (table: ^interface.Draw_Table, texts: ^Frame_Texts, width, height, scroll: int, with_scroll_bar: bool, tokens: layout.Element_Tokens, discovered: ^Discovered_Set = nil) -> (boxes: Settings_Boxes, ok: bool) {
+// settings_tree_build builds the tree of the window at a size: the left
+// sidebar (or compact top tab bar on narrow windows), the scrollable view of
+// cards, the scroll bar when needed, and the slim status footer.
+settings_tree_build :: proc "contextless" (table: ^interface.Draw_Table, texts: ^Frame_Texts, width, height, scroll: int, with_scroll_bar: bool, tokens: layout.Element_Tokens, discovered: ^Discovered_Set = nil, cat: Nav_Category = .All, query := "") -> (boxes: Settings_Boxes, ok: bool) {
 	tree := &layout_tree
 	if layout.tree_begin(tree, i32(width), i32(height), {child_axis = .Y}) != .Done {
 		return {}, false
 	}
 	builder := Layout_Builder{tree = tree}
 	gap := int(tokens.gap)
-	view_width := width - (with_scroll_bar ? interface.SCROLL_BAR_THICKNESS : 0)
-	columns := width >= TWO_COLUMNS_WIDTH ? 2 : 1
-	column_width := (view_width - 2 * gap - (columns - 1) * gap) / columns
-	room := column_width - 2 * int(tokens.margin)
+	boxes.has_sidebar = width >= SIDEBAR_MIN_WIDTH
+	if !boxes.has_sidebar {
+		boxes.compact_nav = builder_add(&builder, line_box(COMPACT_NAV_HEIGHT))
+	}
+	content_total_w := width - (boxes.has_sidebar ? SIDEBAR_WIDTH : 0)
+	view_width := content_total_w - (with_scroll_bar ? interface.SCROLL_BAR_THICKNESS : 0)
+	// Two columns when showing All sections with plenty of room past the sidebar.
+	columns := (cat == .All && query == "" && content_total_w >= TWO_COLUMNS_WIDTH) ? 2 : 1
+	column_width := max((view_width - 2 * gap - (columns - 1) * gap) / columns, 1)
+	room := max(column_width - 2 * int(tokens.margin), 1)
 	builder_open(&builder, {size = {.X = layout.fill(), .Y = layout.fill()}, child_axis = .X})
+	if boxes.has_sidebar {
+		boxes.sidebar = builder_add(&builder, {size = {.X = layout.px(SIDEBAR_WIDTH), .Y = layout.fill()}})
+	}
 	boxes.view = builder_open(&builder, {size = {.X = layout.fill(), .Y = layout.fill()}, child_axis = .Y, overflow = {.X = .Clip, .Y = .Scroll}, scroll = {.X = 0, .Y = i32(clamp(scroll, 0, layout.LENGTH_LIMIT))}})
 	builder_open(&builder, {size = {.X = layout.fill(), .Y = layout.children_sum()}, child_axis = .Y, padding = {.X = i32(gap), .Y = i32(gap)}, gap = i32(gap)})
 	if !has_store {
-		boxes.store_note = builder_add(&builder, line_box(interface.caption_height(table, STORE_NOTE, view_width - 2 * gap)))
+		boxes.store_note = builder_add(&builder, line_box(interface.caption_height(table, STORE_NOTE, max(view_width - 2 * gap, 1))))
 	}
 	builder_open(&builder, {size = {.X = layout.fill(), .Y = layout.children_sum()}, child_axis = .X, gap = i32(gap)})
+	show_modules := (cat == .All || cat == .Modules)
 	for column in 0 ..< columns {
 		builder_open(&builder, {size = {.X = layout.px(i32(column_width)), .Y = layout.children_sum()}, child_axis = .Y, gap = i32(gap)})
 		for section in Section {
-			// One column holds each section; two hold the display at the
-			// left and the other sections at the right.
+			if !section_matches_filter(section, cat, query) {
+				continue
+			}
+			// One column holds each section; two hold Display at the left and the others at the right.
 			if columns == 1 || (section == .Display) == (column == 0) {
 				section_add(&builder, &boxes, table, texts, section, room, tokens)
 			}
 		}
-		if discovered != nil {
+		if discovered != nil && (show_modules || query != "") {
 			for mod_idx in 0 ..< min(discovered.module_count, DISCOVERED_MODULE_CAPACITY) {
+				if query != "" && interface.find_without_case(discovered_module_title(&discovered.modules[mod_idx]), query) < 0 {
+					continue
+				}
 				if columns == 1 || (mod_idx % 2 == 0) == (column == 0) {
 					discovered_section_add(&builder, &boxes.discovered_cards[mod_idx], table, &discovered.modules[mod_idx], room, tokens)
 				}
@@ -1653,7 +1765,7 @@ settings_tree_build :: proc "contextless" (table: ^interface.Draw_Table, texts: 
 		boxes.scroll_bar = builder_add(&builder, {size = {.X = layout.px(interface.SCROLL_BAR_THICKNESS), .Y = layout.fill()}})
 	}
 	builder_close(&builder)
-	boxes.action_bar = builder_add(&builder, line_box(interface.ACTION_BAR_ROW_HEIGHT))
+	boxes.footer = builder_add(&builder, line_box(STATUS_FOOTER_HEIGHT))
 	if builder.status != .Done || layout.solve(tree) != .Done {
 		return {}, false
 	}
@@ -1666,19 +1778,17 @@ settings_tree_build :: proc "contextless" (table: ^interface.Draw_Table, texts: 
 // settings_layout builds and solves the layout tree of the window at a
 // size, with the first line of the content that the view shows. A content
 // taller than the view gets the scroll bar: the tree is built again with
-// the bar, whose width can wrap more lines. ok false: the size is outside
-// the range of a tree, or the tree refused a box; the frame draws no
-// section.
-settings_layout :: proc "contextless" (table: ^interface.Draw_Table, texts: ^Frame_Texts, width, height, scroll: int, tokens: layout.Element_Tokens, discovered: ^Discovered_Set = nil) -> (boxes: Settings_Boxes, ok: bool) {
+// the bar, whose width can wrap more lines.
+settings_layout :: proc "contextless" (table: ^interface.Draw_Table, texts: ^Frame_Texts, width, height, scroll: int, tokens: layout.Element_Tokens, discovered: ^Discovered_Set = nil, cat: Nav_Category = .All, query := "") -> (boxes: Settings_Boxes, ok: bool) {
 	if width <= 0 || height <= 0 || width > layout.LENGTH_LIMIT || height > layout.LENGTH_LIMIT {
 		return {}, false
 	}
-	boxes, ok = settings_tree_build(table, texts, width, height, 0, false, tokens, discovered)
+	boxes, ok = settings_tree_build(table, texts, width, height, 0, false, tokens, discovered, cat, query)
 	if !ok {
 		return {}, false
 	}
 	if boxes.content_height > int(area_of(&layout_tree, boxes.view).height) {
-		boxes, ok = settings_tree_build(table, texts, width, height, scroll, true, tokens, discovered)
+		boxes, ok = settings_tree_build(table, texts, width, height, scroll, true, tokens, discovered, cat, query)
 	}
 	return boxes, ok
 }
@@ -1687,23 +1797,28 @@ settings_layout :: proc "contextless" (table: ^interface.Draw_Table, texts: ^Fra
 // move it, and the focus brings the element that has it into the view.
 view_scroll: int
 
-// value_button draws a button of a value: marked when it is the value in
-// force. The marked button of a setting names its act, so the palette goes
-// to it (docs/INTERFACE.md, "4.2 Act names").
-value_button :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, setting: settings.Setting, place: int, in_use: bool) -> interface.Element_Result {
-	builder: interface.Text_Builder
-	interface.text_put(&builder, settings.descriptions[setting].name)
-	interface.text_put(&builder, " ")
-	interface.text_put(&builder, settings.descriptions[setting].value_names[place])
-	element := interface.identity(interface.text_of(&builder))
-	result := interface.button(frame, area, element, setting_texts[setting].value_labels[place], in_use)
-	if in_use {
-		act: interface.Text_Builder
-		interface.text_put(&act, "settings.set:")
-		interface.text_put(&act, settings.descriptions[setting].name)
-		interface.element_act_name(frame, element, interface.text_of(&act))
+// setting_segmented draws an enum setting as a connected segmented control
+// while keeping its act name so the Super palette can focus it directly.
+setting_segmented :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, setting: settings.Setting, values: [settings.Setting]u32, locked: bool) -> (result: interface.Element_Result, chosen_place: int) {
+	count := int(settings.descriptions[setting].value_count)
+	current_place := 0
+	for place in 0 ..< count {
+		if values[setting] == settings.word_of_value(setting, place) {
+			current_place = place
+			break
+		}
 	}
-	return result
+	chosen_place = current_place
+	builder: interface.Text_Builder
+	interface.text_put(&builder, "setting ")
+	interface.text_put(&builder, settings.descriptions[setting].name)
+	element := interface.identity(interface.text_of(&builder))
+	result = interface.segmented_control(frame, area, element, setting_texts[setting].value_labels[:count], &chosen_place, locked)
+	act: interface.Text_Builder
+	interface.text_put(&act, "settings.set:")
+	interface.text_put(&act, settings.descriptions[setting].name)
+	interface.element_act_name(frame, element, interface.text_of(&act))
+	return
 }
 
 // scale_stop_width gives the width of one stop of a track of a width.
@@ -1712,12 +1827,8 @@ scale_stop_width :: proc "contextless" (track_width: int) -> int {
 	return (track_width - (stops - 1) * SCALE_STOP_GAP) / stops
 }
 
-// scale_track_draw draws the track of the scale: one stop for each member
-// of the enum, from 100 % to 200 %, each with its percent when
-// labels_inside. The stop in force is filled, with its label in the colour
-// of a chosen value; the focus is the outline alone, on a stop that keeps
-// its fill, so a stop with the focus never looks chosen. A press on a stop,
-// or Enter with the focus on it, sets the scale.
+// scale_track_draw draws the machined track of the scale: one stop for each
+// member of the enum, from 100 % to 200 %, with hover and active gradient fills.
 scale_track_draw :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, choice: settings.Choice, labels_inside: bool, focus_area: ^interface.Area) {
 	stop_width := scale_stop_width(area.width)
 	for member, place in scale_factor.Scale {
@@ -1728,18 +1839,29 @@ scale_track_draw :: proc "contextless" (frame: ^interface.Frame, area: interface
 		result := interface.element_interact(frame, element, stop, .Button)
 		interface.element_name(frame, stop, label)
 		in_use := member == choice.scale
-		color := in_use ? graphics.Color(graphics.colors.chosen) : graphics.Color(graphics.colors.track)
 		states := accessibility.Element_States{.Focusable}
 		if result.focused {
 			states += {.Focused}
 		}
 		interface.draw_element_push(frame.table, stop, u32(element), .Button, {toggle = in_use ? .True : .False, states = states, actions = {.Press, .Focus}, name = label})
-		interface.draw_rectangle(frame.table, stop.x, stop.y, stop.width, stop.height, color, u32(element))
+		if in_use {
+			interface.draw_vertical_gradient(frame.table, stop.x, stop.y, stop.width, stop.height, graphics.shade(graphics.colors.chosen, 112), graphics.shade(graphics.colors.chosen, 88), u32(element))
+			if stop.width > 2 {
+				interface.draw_rectangle(frame.table, stop.x + 1, stop.y + 1, stop.width - 2, 1, graphics.shade(graphics.colors.chosen, 140), u32(element))
+			}
+		} else if result.under_pointer {
+			interface.draw_rectangle(frame.table, stop.x, stop.y, stop.width, stop.height, graphics.shade(graphics.colors.title, 62), u32(element))
+			interface.draw_outline(frame.table, stop.x, stop.y, stop.width, stop.height, 1, graphics.colors.title, u32(element))
+		} else {
+			interface.draw_vertical_gradient(frame.table, stop.x, stop.y, stop.width, stop.height, graphics.shade(graphics.colors.track, 108), graphics.shade(graphics.colors.track, 92), u32(element))
+			interface.draw_outline(frame.table, stop.x, stop.y, stop.width, stop.height, 1, graphics.colors.not_usable, u32(element))
+		}
 		if labels_inside {
 			short := SCALE_STOP_LABELS[place]
 			font := in_use ? interface.FONT_INTERFACE_BOLD : interface.FONT_INTERFACE
 			label_x := stop.x + max((stop.width - interface.text_measured_width(frame.table, font, short)) / 2, 0)
-			interface.draw_text(frame.table, label_x, label_y, short, in_use ? graphics.COLOR_WHITE : graphics.colors.text, font, u32(element))
+			col := (in_use || result.under_pointer) ? graphics.COLOR_WHITE : graphics.colors.text
+			interface.draw_text(frame.table, label_x, label_y, short, col, font, u32(element))
 		}
 		if result.focused {
 			interface.draw_focus_ring(frame.table, stop, u32(element))
@@ -1845,36 +1967,314 @@ region_draw :: proc "contextless" (frame: ^interface.Frame, boxes: ^Settings_Box
 	}
 }
 
+// settings_ctx_menu_open opens the compact right-click menu for settings.
+settings_ctx_menu_open :: proc "contextless" (x, y, w, h: int, has_modules: bool) {
+	interface.command_palette_close(&settings_palette)
+	items: [8]interface.Context_Menu_Item
+	n := 0
+	items[n] = {id = u32(Settings_Menu_Action.Cat_All), label = "All settings", disabled = nav_category == .All && search_len == 0}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Cat_Display), label = "Display", disabled = nav_category == .Display}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Cat_Pointer), label = "Pointer", disabled = nav_category == .Pointer}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Cat_Keyboard), label = "Keyboard", disabled = nav_category == .Keyboard}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Cat_Region), label = "Region & language", disabled = nav_category == .Region_And_Language}; n += 1
+	if has_modules {
+		items[n] = {id = u32(Settings_Menu_Action.Cat_Modules), label = "Modules", disabled = nav_category == .Modules}; n += 1
+	}
+	if search_len > 0 {
+		items[n] = {id = u32(Settings_Menu_Action.Clear_Search), label = "Clear search", separator_before = true}; n += 1
+	}
+	items[n] = {id = u32(Settings_Menu_Action.Open_Palette), label = "Command palette", shortcut = "Ctrl+K", separator_before = true}; n += 1
+	interface.context_menu_open_compact(&settings_ctx_menu, x, y, w, h, items[:n])
+}
+
+// settings_palette_open opens the Ctrl+K fuzzy command palette for settings.
+settings_palette_open :: proc "contextless" (h: int, has_modules: bool) {
+	interface.context_menu_close(&settings_ctx_menu)
+	items: [16]interface.Command_Palette_Item
+	n := 0
+	items[n] = {id = u32(Settings_Menu_Action.Cat_All), label = "Show all sections", category = "Navigate"}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Cat_Display), label = "Display", category = "Navigate"}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Cat_Pointer), label = "Pointer", category = "Navigate"}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Cat_Keyboard), label = "Keyboard", category = "Navigate"}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Cat_Region), label = "Region & language", category = "Navigate"}; n += 1
+	if has_modules {
+		items[n] = {id = u32(Settings_Menu_Action.Cat_Modules), label = "Modules", category = "Navigate"}; n += 1
+	}
+	items[n] = {id = u32(Settings_Menu_Action.Appearance_Auto), label = "Appearance: Auto", category = "Display"}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Appearance_Dark), label = "Appearance: Dark", category = "Display"}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Appearance_Light), label = "Appearance: Light", category = "Display"}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Font_Vector), label = "Font: Vector", category = "Display"}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Font_Spleen), label = "Font: Spleen 8x16", category = "Display"}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Scale_100), label = "Scale: 100 %", category = "Display"}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Scale_125), label = "Scale: 125 %", category = "Display"}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Scale_150), label = "Scale: 150 %", category = "Display"}; n += 1
+	items[n] = {id = u32(Settings_Menu_Action.Scale_200), label = "Scale: 200 %", category = "Display"}; n += 1
+	if search_len > 0 {
+		items[n] = {id = u32(Settings_Menu_Action.Clear_Search), label = "Clear search filter", category = "Search"}; n += 1
+	}
+	interface.command_palette_open(&settings_palette, "Settings commands", items[:n], h)
+}
+
+settings_apply_quick_value :: proc "contextless" (choice: settings.Choice, setting: settings.Setting, place: int) {
+	if changed, ok, _ := with_value(choice, setting, place); ok {
+		given: settings.Given
+		given.values[setting] = true
+		change(changed, choice.zone_offset_minutes, given)
+	}
+}
+
+settings_menu_action_run :: proc "contextless" (action_word: u32, choice: settings.Choice, h: int, has_modules: bool) -> bool {
+	action, ok := enum_word.member_of_word(Settings_Menu_Action, u64(action_word))
+	if !ok {
+		return false
+	}
+	switch action {
+	case .None:
+		return false
+	case .Cat_All:
+		nav_category = .All
+		search_len = 0
+		view_scroll = 0
+		return true
+	case .Cat_Display:
+		nav_category = .Display
+		view_scroll = 0
+		return true
+	case .Cat_Pointer:
+		nav_category = .Pointer
+		view_scroll = 0
+		return true
+	case .Cat_Keyboard:
+		nav_category = .Keyboard
+		view_scroll = 0
+		return true
+	case .Cat_Region:
+		nav_category = .Region_And_Language
+		view_scroll = 0
+		return true
+	case .Cat_Modules:
+		nav_category = .Modules
+		view_scroll = 0
+		return true
+	case .Clear_Search:
+		search_len = 0
+		view_scroll = 0
+		return true
+	case .Appearance_Auto:
+		settings_apply_quick_value(choice, .Appearance, 0)
+		return true
+	case .Appearance_Dark:
+		settings_apply_quick_value(choice, .Appearance, 1)
+		return true
+	case .Appearance_Light:
+		settings_apply_quick_value(choice, .Appearance, 2)
+		return true
+	case .Font_Vector:
+		settings_apply_quick_value(choice, .Font, 0)
+		return true
+	case .Font_Spleen:
+		settings_apply_quick_value(choice, .Font, 1)
+		return true
+	case .Scale_100:
+		settings_apply_quick_value(choice, .Scale, 0)
+		return true
+	case .Scale_125:
+		settings_apply_quick_value(choice, .Scale, 2)
+		return true
+	case .Scale_150:
+		settings_apply_quick_value(choice, .Scale, 4)
+		return true
+	case .Scale_200:
+		settings_apply_quick_value(choice, .Scale, 8)
+		return true
+	case .Open_Palette:
+		settings_palette_open(h, has_modules)
+		return true
+	}
+	return false
+}
+
+// sidebar_draw renders the left navigation rail: title, live search box,
+// and single-tab-stop WAI-ARIA category list.
+sidebar_draw :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, has_modules: bool) -> bool {
+	table := frame.table
+	interface.draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.card_bottom)
+	interface.draw_rectangle(table, area.x + area.width - 1, area.y, 1, area.height, graphics.colors.track)
+	pad := 10
+	inner_w := max(area.width - 2 * pad - 1, 1)
+	y := area.y + 12
+	interface.draw_text(table, area.x + pad, y, "SETTINGS", graphics.colors.kernel, interface.FONT_INTERFACE_BOLD)
+	y += interface.LINE + 10
+	search_area := interface.Area{area.x + pad, y, inner_w, SIDEBAR_SEARCH_HEIGHT}
+	sr := interface.text_input(frame, search_area, interface.identity("settings search"), search_buf[:], &search_len, "Search...", name = "Search settings")
+	changed := sr.changed
+	if sr.changed {
+		view_scroll = 0
+	}
+	y += SIDEBAR_SEARCH_HEIGHT + 12
+
+	cat_count := has_modules ? len(Nav_Category) : len(Nav_Category) - 1
+	nav_area := interface.Area{area.x + 6, y, max(area.width - 13, 1), cat_count * (SIDEBAR_ROW_HEIGHT + 2)}
+	nav_id := interface.identity("settings nav")
+	nav_res := interface.element_interact(frame, nav_id, nav_area, .List)
+	if nav_res.focused {
+		for &key in frame.input.keys[:frame.input.key_count] {
+			if key.taken {
+				continue
+			}
+			switch key.code {
+			case display.KEY_UP:
+				idx := (int(nav_category) + cat_count - 1) % cat_count
+				nav_category = nav_categories[idx]
+				view_scroll = 0
+				changed = true
+				key.taken = true
+			case display.KEY_DOWN:
+				idx := (int(nav_category) + 1) % cat_count
+				nav_category = nav_categories[idx]
+				view_scroll = 0
+				changed = true
+				key.taken = true
+			}
+		}
+	}
+	for i in 0 ..< cat_count {
+		cat := nav_categories[i]
+		row_area := interface.Area{nav_area.x, y + i * (SIDEBAR_ROW_HEIGHT + 2), nav_area.width, SIDEBAR_ROW_HEIGHT}
+		interface.element_name(frame, row_area, nav_sidebar_labels[cat])
+		hovered := frame.input.pointer_known && interface.area_contains(row_area, frame.input.pointer_x, frame.input.pointer_y)
+		if hovered && frame.input.pressed {
+			nav_category = cat
+			view_scroll = 0
+			changed = true
+		}
+		is_active := nav_category == cat
+		if is_active {
+			interface.draw_rectangle(table, row_area.x, row_area.y, row_area.width, row_area.height, graphics.colors.track)
+			interface.draw_rectangle(table, row_area.x, row_area.y + 4, 3, row_area.height - 8, graphics.colors.title)
+		} else if hovered {
+			interface.draw_rectangle(table, row_area.x, row_area.y, row_area.width, row_area.height, graphics.colors.card_top)
+		}
+		font := is_active ? interface.FONT_INTERFACE_BOLD : interface.FONT_INTERFACE
+		shown := interface.text_fit(table, font, nav_sidebar_labels[cat], max(row_area.width - 18, 0))
+		col := is_active ? graphics.colors.text_strong : (hovered ? graphics.colors.text : graphics.colors.dim)
+		interface.draw_text(table, row_area.x + 12, row_area.y + (row_area.height - interface.LINE) / 2, shown, col, font)
+	}
+	if nav_res.focused {
+		interface.draw_focus_ring(table, nav_area, u32(nav_id))
+	}
+	return changed
+}
+
 // Draw_Outcome says what a frame asks of the next one.
 Draw_Outcome :: struct {
-	bar:        interface.Action_Bar_Result,
-	draw_again: bool, // The view moved: the scroll bar, the wheel, or the focus out of the view.
+	draw_again: bool, // The view or navigation moved and needs an immediate redraw.
 }
 
 // draw builds the window from its layout tree at the size of the window
-// now: the sections, the scroll bar when the content is taller than the
-// window, and the action bar.
+// now: sidebar/tab navigation, sections, scroll bar, slim status footer,
+// right-click context menu, and Ctrl+K command palette.
 draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 	// A refused page shows the defaults: a press writes a whole page again.
 	choice, _ := settings.read(page)
 	values := settings.values_of(choice)
 	focus_before := window_memory.drawing.state.focus
 	frame := interface.window_frame_start(&window_memory, window)
-	// graphics holds only members of the appearance: the tokens of the
-	// standard contrast are the colors that the window drew with before.
 	tokens, _ := layout.tokens_for(graphics.appearance, .Standard)
 	width, height := window.width, window.height
+	discovered_snapshot := discovered_ui_sync()
+	has_modules := discovered_snapshot.module_count > 0
+	if !has_modules && nav_category == .Modules {
+		nav_category = .All
+	}
+	outcome: Draw_Outcome
+
+	// Handle Ctrl+K / Ctrl+Shift+P toggle and open overlay keys before widgets.
+	for &key in frame.input.keys[:frame.input.key_count] {
+		if key.taken {
+			continue
+		}
+		if interface.is_command_palette_shortcut(key.code, key.character, key.modifiers) {
+			key.taken = true
+			if settings_palette.open {
+				interface.command_palette_close(&settings_palette)
+			} else {
+				settings_palette_open(height, has_modules)
+			}
+			continue
+		}
+		if settings_palette.open {
+			consumed, act := interface.command_palette_handle_key(&settings_palette, key.code, key.character, true, key.modifiers, height)
+			if consumed {
+				key.taken = true
+			}
+			if act != 0 && settings_menu_action_run(act, choice, height, has_modules) {
+				outcome.draw_again = true
+			}
+			continue
+		}
+		if settings_ctx_menu.open {
+			consumed, act := interface.context_menu_handle_key(&settings_ctx_menu, key.code, key.character, true, key.modifiers)
+			if consumed {
+				key.taken = true
+			}
+			if act != 0 && settings_menu_action_run(act, choice, height, has_modules) {
+				outcome.draw_again = true
+			}
+		}
+	}
+
+	// Right-click opens compact settings context menu; open overlays take pointer first.
+	if frame.input.right_pressed {
+		frame.input.right_pressed = false
+		settings_ctx_menu_open(frame.input.right_press_x, frame.input.right_press_y, width, height, has_modules)
+	}
+	if settings_palette.open {
+		res := interface.command_palette_pointer(&settings_palette, frame.input.pointer_x, frame.input.pointer_y, frame.input.pressed, frame.input.wheel, width, height)
+		if res.triggered && settings_menu_action_run(res.triggered_id, choice, height, has_modules) {
+			outcome.draw_again = true
+		}
+		frame.input.pressed = false
+		frame.input.released = false
+		frame.input.wheel = 0
+	} else if settings_ctx_menu.open {
+		res := interface.context_menu_pointer(&settings_ctx_menu, frame.input.pointer_x, frame.input.pointer_y, frame.input.pressed)
+		if res.triggered && settings_menu_action_run(res.triggered_id, choice, height, has_modules) {
+			outcome.draw_again = true
+		}
+		frame.input.pressed = false
+		frame.input.released = false
+		frame.input.wheel = 0
+	}
+
 	interface.background(&frame, {0, 0, width, height})
-	interface.action_bar_input_take(&frame, &bar)
 	texts: Frame_Texts
 	frame_texts_of(&texts, choice, display.windows_that_declined_the_scale())
-	discovered_snapshot := discovered_ui_sync()
-	boxes, laid_out := settings_layout(frame.table, &texts, width, height, view_scroll, tokens, discovered_snapshot)
+	query := string(search_buf[:search_len])
+	boxes, laid_out := settings_layout(frame.table, &texts, width, height, view_scroll, tokens, discovered_snapshot, nav_category, query)
 	tree := &layout_tree
-	bar_area := interface.Area{0, height - interface.ACTION_BAR_ROW_HEIGHT, width, interface.ACTION_BAR_ROW_HEIGHT}
-	outcome: Draw_Outcome
+	footer_area := interface.Area{0, height - STATUS_FOOTER_HEIGHT, width, STATUS_FOOTER_HEIGHT}
 	if laid_out {
-		bar_area = area_of(tree, boxes.action_bar)
+		footer_area = area_of(tree, boxes.footer)
+		if boxes.has_sidebar {
+			if sidebar_draw(&frame, area_of(tree, boxes.sidebar), has_modules) {
+				outcome.draw_again = true
+			}
+		} else {
+			cat_count := has_modules ? len(Nav_Category) : len(Nav_Category) - 1
+			tab_labels: [len(Nav_Category)]string
+			for i in 0 ..< cat_count {
+				tab_labels[i] = nav_category_labels[nav_categories[i]]
+			}
+			active_idx := int(nav_category)
+			tab_res := interface.tab_bar(&frame, area_of(tree, boxes.compact_nav), interface.identity("settings tabs"), tab_labels[:cat_count], &active_idx)
+			if tab_res.changed {
+				nav_category = nav_categories[clamp(active_idx, 0, cat_count - 1)]
+				view_scroll = 0
+				outcome.draw_again = true
+			}
+		}
+
 		view := area_of(tree, boxes.view)
 		focus_area: interface.Area
 		interface.draw_clip_push(frame.table, view.x, view.y, view.width, view.height)
@@ -1883,10 +2283,14 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 			interface.draw_caption(&frame, note.x, note.y, note.width, STORE_NOTE)
 		}
 		for section in Section {
+			if boxes.cards[section] == layout.NO_BOX {
+				continue
+			}
 			interface.card(&frame, area_of(tree, boxes.cards[section]), section_titles[section], "", graphics.colors.kernel)
 			for setting in settings_of_section(section) {
 				setting_boxes := &boxes.setting_boxes[setting]
-				setting_header_draw(&frame, area_of(tree, setting_boxes.title), area_of(tree, setting_boxes.explanation), setting_texts[setting].title, setting_texts[setting].explanation, tokens, settings.setting_locked(kept_plan, setting))
+				locked := settings.setting_locked(kept_plan, setting)
+				setting_header_draw(&frame, area_of(tree, setting_boxes.title), area_of(tree, setting_boxes.explanation), setting_texts[setting].title, setting_texts[setting].explanation, tokens, locked)
 				if setting == .Scale {
 					if boxes.scale_value != layout.NO_BOX {
 						in_force := int(choice.scale) - int(min(scale_factor.Scale))
@@ -1899,18 +2303,14 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 					}
 					continue
 				}
-				for place in 0 ..< int(settings.descriptions[setting].value_count) {
-					if setting_boxes.values[place] == layout.NO_BOX {
-						continue
+				if setting_boxes.control != layout.NO_BOX {
+					ctrl_area := area_of(tree, setting_boxes.control)
+					seg_res, chosen_place := setting_segmented(&frame, ctrl_area, setting, values, locked)
+					if seg_res.focused {
+						focus_area = ctrl_area
 					}
-					area := area_of(tree, setting_boxes.values[place])
-					in_use := values[setting] == settings.word_of_value(setting, place)
-					result := value_button(&frame, area, setting, place, in_use)
-					if result.focused {
-						focus_area = area
-					}
-					if result.activated && !in_use {
-						if changed, changed_ok, _ := with_value(choice, setting, place); changed_ok {
+					if seg_res.changed {
+						if changed, changed_ok, _ := with_value(choice, setting, chosen_place); changed_ok {
 							given: settings.Given
 							given.values[setting] = true
 							change(changed, choice.zone_offset_minutes, given)
@@ -1923,14 +2323,18 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 			}
 		}
 		for mod_idx in 0 ..< min(discovered_snapshot.module_count, DISCOVERED_MODULE_CAPACITY) {
-			discovered_card_draw(&frame, mod_idx, &discovered_snapshot.modules[mod_idx], &boxes.discovered_cards[mod_idx], tokens, &focus_area)
+			if boxes.discovered_cards[mod_idx].card != layout.NO_BOX {
+				discovered_card_draw(&frame, mod_idx, &discovered_snapshot.modules[mod_idx], &boxes.discovered_cards[mod_idx], tokens, &focus_area)
+			}
 		}
 		interface.draw_clip_pop(frame.table)
 		view_scroll = 0
 		if boxes.scroll_bar != layout.NO_BOX {
 			scrolled := interface.scroll_bar(&frame, area_of(tree, boxes.scroll_bar), interface.identity("settings scroll bar"), .Vertical, {total = boxes.content_height, visible = view.height, first = boxes.scroll}, {line = interface.TABLE_LINE}, "settings", view)
 			view_scroll = scrolled.first
-			outcome.draw_again = scrolled.changed
+			if scrolled.changed {
+				outcome.draw_again = true
+			}
 			// Bring the focused element into view only when keyboard focus
 			// actually moved, never fighting pointer or wheel scrolling.
 			focus_moved := window_memory.drawing.state.focus != focus_before
@@ -1945,8 +2349,39 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 			}
 		}
 	}
-	items := bar_items()
-	outcome.bar = interface.action_bar(&frame, bar_area, items[:], &bar)
+
+	// Slim bottom status footer: store persistence badge on left, interactive Ctrl+K pill on right.
+	interface.draw_rectangle(frame.table, footer_area.x, footer_area.y, footer_area.width, footer_area.height, graphics.colors.card_bottom)
+	interface.draw_rectangle(frame.table, footer_area.x, footer_area.y, footer_area.width, 1, graphics.colors.track)
+	badge_text := has_store ? "Kept in private store" : "Session only"
+	badge_accent := has_store ? graphics.colors.process : graphics.colors.warning
+	badge_w := min(interface.text_measured_width(frame.table, interface.FONT_CAPTION, badge_text) + 16, max(footer_area.width - 100, 0))
+	if badge_w > 24 {
+		interface.badge(&frame, {footer_area.x + 8, footer_area.y + 3, badge_w, 18}, badge_text, badge_accent)
+	}
+	pill_label := "Ctrl+K"
+	pill_w := interface.text_measured_width(frame.table, interface.FONT_CAPTION, pill_label) + 14
+	palette_pill_area = {footer_area.x + footer_area.width - STATUS_RIGHT_CLEARANCE - pill_w, footer_area.y + 3, pill_w, 18}
+	if palette_pill_area.x > footer_area.x + badge_w + 16 {
+		hot := !settings_ctx_menu.open && !settings_palette.open && frame.input.pointer_known && interface.area_contains(palette_pill_area, frame.input.pointer_x, frame.input.pointer_y)
+		if hot && frame.input.pressed {
+			settings_palette_open(height, has_modules)
+			outcome.draw_again = true
+		}
+		interface.draw_rectangle(frame.table, palette_pill_area.x, palette_pill_area.y, palette_pill_area.width, palette_pill_area.height, hot ? graphics.shade(graphics.colors.track, 128) : graphics.colors.track)
+		interface.draw_outline(frame.table, palette_pill_area.x, palette_pill_area.y, palette_pill_area.width, palette_pill_area.height, 1, hot ? graphics.colors.title : graphics.colors.not_usable)
+		cap_y := palette_pill_area.y + (palette_pill_area.height - interface.line_height(interface.FONT_CAPTION)) / 2
+		interface.draw_text(frame.table, palette_pill_area.x + 7, cap_y, pill_label, hot ? graphics.colors.text_strong : graphics.colors.dim, interface.FONT_CAPTION)
+	}
+
+	// Draw floating overlays last above all content.
+	if settings_ctx_menu.open {
+		interface.context_menu_draw(frame.table, &settings_ctx_menu)
+	}
+	if settings_palette.open {
+		interface.command_palette_draw(frame.table, &settings_palette, width, height)
+	}
+
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	if frame.table.full && !table_full_logged {
 		table_full_logged = true
@@ -1964,15 +2399,10 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 // more unless the focus is past the view again.
 DRAWS_AGAIN_MOST :: 3
 
-// draw_with_bar draws a frame and, when a press on an item of the action
-// bar ran its key, a second frame that takes the key, as a typed key: the
-// focus moves, or the button with the focus is pressed. A frame whose view
-// moved draws the next frame at once, at most DRAWS_AGAIN_MOST times.
+// draw_with_bar draws a frame and redraws immediately when navigation,
+// scrolling, or focus-following moved the view.
 draw_with_bar :: proc "contextless" (window: ^display.Window) {
 	outcome := draw(window)
-	if outcome.bar.ran && interface.input_key_add(&window_memory.drawing.input, outcome.bar.run) {
-		outcome = draw(window)
-	}
 	for _ in 0 ..< DRAWS_AGAIN_MOST {
 		if !outcome.draw_again {
 			break

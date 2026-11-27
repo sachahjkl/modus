@@ -107,14 +107,22 @@ settings_layout_fits_each_size :: proc(t: ^testing.T) {
 					return
 				}
 				tree := &layout_tree
-				bar := area_of(tree, boxes.action_bar)
-				testing.expectf(t, bar == interface.Area{0, height - interface.ACTION_BAR_ROW_HEIGHT, width, interface.ACTION_BAR_ROW_HEIGHT}, "at %dx%d the action bar is %v", width, height, bar)
+				footer := area_of(tree, boxes.footer)
+				testing.expectf(t, footer == interface.Area{0, height - STATUS_FOOTER_HEIGHT, width, STATUS_FOOTER_HEIGHT}, "at %dx%d the footer is %v", width, height, footer)
+				testing.expect(t, boxes.has_sidebar == (width >= SIDEBAR_MIN_WIDTH))
+				if boxes.has_sidebar {
+					sb := area_of(tree, boxes.sidebar)
+					testing.expectf(t, sb.x == 0 && sb.width == SIDEBAR_WIDTH, "at %dx%d sidebar is %v", width, height, sb)
+				} else {
+					nav := area_of(tree, boxes.compact_nav)
+					testing.expectf(t, nav.x == 0 && nav.y == 0 && nav.width == width && nav.height == COMPACT_NAV_HEIGHT, "at %dx%d compact nav is %v", width, height, nav)
+				}
 				view := area_of(tree, boxes.view)
 				if boxes.content_height > view.height {
 					testing.expectf(t, boxes.scroll_bar != layout.NO_BOX, "at %dx%d the content of %d lines has no scroll bar in a view of %d", width, height, boxes.content_height, view.height)
 				}
-				buttons: [64]interface.Area
-				button_count := 0
+				controls: [64]interface.Area
+				control_count := 0
 				for section in Section {
 					card := area_of(tree, boxes.cards[section])
 					testing.expectf(t, card.x >= view.x && card.x + card.width <= view.x + view.width, "at %dx%d the card %v is out of the view", width, height, section)
@@ -125,27 +133,23 @@ settings_layout_fits_each_size :: proc(t: ^testing.T) {
 					}
 					content := card_content(card)
 					for setting in settings_of_section(section) {
-						for place in 0 ..< int(settings.descriptions[setting].value_count) {
-							index := boxes.setting_boxes[setting].values[place]
-							if setting == .Scale {
-								testing.expect(t, index == layout.NO_BOX)
-								continue
-							}
-							area := area_of(tree, index)
-							label := setting_texts[setting].value_labels[place]
-							testing.expectf(t, area_inside(area, content), "at %dx%d the button %s %v is out of the card %v", width, height, label, area, content)
-							testing.expectf(t, area.width >= button_width(&table, label), "at %dx%d the button %s is cut", width, height, label)
-							buttons[button_count] = area
-							button_count += 1
+						index := boxes.setting_boxes[setting].control
+						if setting == .Scale {
+							testing.expect(t, index == layout.NO_BOX)
+							continue
 						}
+						area := area_of(tree, index)
+						testing.expectf(t, area_inside(area, content), "at %dx%d the control %v %v is out of the card %v", width, height, setting, area, content)
+						controls[control_count] = area
+						control_count += 1
 					}
 				}
 				for index in 0 ..< len(common_languages) {
 					if texts.can_add[index] {
 						area := area_of(tree, boxes.add_buttons[index])
 						testing.expectf(t, area_inside(area, card_content(area_of(tree, boxes.cards[.Region_And_Language]))), "at %dx%d the language %s is out of its card", width, height, common_languages[index].name)
-						buttons[button_count] = area
-						button_count += 1
+						controls[control_count] = area
+						control_count += 1
 					}
 				}
 				track := area_of(tree, boxes.scale_track)
@@ -157,9 +161,9 @@ settings_layout_fits_each_size :: proc(t: ^testing.T) {
 						testing.expectf(t, scale_stop_width(track.width) >= interface.text_measured_width(&table, interface.FONT_INTERFACE, label) + 2 * SCALE_STOP_LABEL_PADDING, "at %dx%d the label %s is cut in its stop", width, height, label)
 					}
 				}
-				for first in 0 ..< button_count {
-					for second in first + 1 ..< button_count {
-						testing.expectf(t, areas_apart(buttons[first], buttons[second]), "at %dx%d two buttons overlap: %v and %v", width, height, buttons[first], buttons[second])
+				for first in 0 ..< control_count {
+					for second in first + 1 ..< control_count {
+						testing.expectf(t, areas_apart(controls[first], controls[second]), "at %dx%d two controls overlap: %v and %v", width, height, controls[first], controls[second])
 					}
 				}
 				if t.error_count > 0 {

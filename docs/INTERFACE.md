@@ -388,7 +388,6 @@ if result.ran {
 | `manual` | 10 | The list: the keys that move the text, which the scroll bar moves too, go first |
 | `notes` | 5 with the list of the notes; 4 with the versions; 2 for the question of a deletion | The list: the moves between the notes have the lowest priority |
 | `persistence_check` | 5 | Wrap |
-| `settings` | Tab, Shift+Tab, Enter | All in one row |
 | `unlock` | Enter, and Escape in the modes that clear | At the right of a fact of the mode |
 | `tally`, `rings` | Space; a and 1-6 | At the right of the counts, of what the pointer does |
 | `paint` | Ctrl+Z, Ctrl+Shift+Z, Ctrl+O, C | At the right of the status line |

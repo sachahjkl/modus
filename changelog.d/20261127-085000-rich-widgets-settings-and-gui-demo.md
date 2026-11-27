@@ -1,0 +1,3 @@
+type: Changed
+
+**Rich desktop widget library, redesigned settings window, and interactive GUI showcase.** `modus:interface` now provides styled button variants (`Primary`, `Secondary`, `Ghost`, `Danger`, `Sidebar_Row`) with hover/pressed/disabled feedback, `toggle_switch`, `segmented_control`, `tab_bar`, draggable `slider`, `badge`, and drag-and-drop `reorder_list`. `settings` is redesigned with a collapsible navigation sidebar, live search filter, segmented controls, right-click menu, `Ctrl+K` command palette, and slim status footer; `interface_elements` is upgraded into a resizable multi-tab interactive GUI showcase.

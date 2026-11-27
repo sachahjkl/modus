@@ -2938,10 +2938,10 @@ scenario := [?]Step {
 	{kind = .Wait, text = "interface_elements: one whole frame, built and drawn (the least of 20): the font of the cells "},
 	{kind = .Wait, text = "interface_elements: ok, the whole frame drawn in "},
 	{kind = .Key, text = "tab"},
+	{kind = .Key, text = "tab"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "interface_elements: the button was pressed 1 times"},
-	{kind = .Key, text = "tab"},
-	{kind = .Key, text = "down"},
+	{kind = .Click_Element, text = "interface_elements", element = "list"},
 	{kind = .Wait, text = "interface_elements: the list chooses clock"},
 	{kind = .Key, text = "tab"},
 	{kind = .Keys, text = "hello"},
@@ -2984,9 +2984,7 @@ scenario := [?]Step {
 	{kind = .Click_Element, text = "interface_elements", element = "Element before"},
 	{kind = .Click_Element, text = "interface_elements", element = "Line before"},
 	{kind = .Wait, text = "interface_elements: the list chooses boot"},
-	{kind = .Key, text = "tab"},
-	{kind = .Key, text = "tab"},
-	{kind = .Key, text = "ret"},
+	{kind = .Click_Element, text = "interface_elements", element = "Show the damage"},
 	{kind = .Wait, text = "interface_elements: the damage is shown"},
 	{kind = .Shot, text = "interface_damage"},
 	// The wheel over the list moves its view by three lines, and the
@@ -3347,20 +3345,20 @@ scenario := [?]Step {
 	{kind = .Call, text = "settings.set(scale = .eleven_eighths)", expected = "1"},
 	{kind = .Wait, text = "display: monitor: the surface of 715x880 at 11 eighths", any_order = true, fails_on = "the holder of the display refused the surface"},
 	{kind = .Wait, text = "display: rings: the surface of 990x743 at 11 eighths", any_order = true, fails_on = "the holder of the display refused the surface"},
-	{kind = .Wait, text = "display: settings: the surface of 770x946 at 11 eighths", any_order = true, fails_on = "the holder of the display refused the surface"},
+	{kind = .Wait, text = "display: settings: the surface of 1078x858 at 11 eighths", any_order = true, fails_on = "the holder of the display refused the surface"},
 	{kind = .Wait, text = "compositor: window monitor shows a surface of 715x880 at 11 eighths", any_order = true},
 	{kind = .Wait, text = "compositor: window rings shows a surface of 990x743 at 11 eighths", any_order = true},
-	{kind = .Wait, text = "compositor: window settings shows a surface of 770x946 at 11 eighths", any_order = true},
+	{kind = .Wait, text = "compositor: window settings shows a surface of 1078x858 at 11 eighths", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.375; "},
 	{kind = .Wait, text = " windows shows a surface at 11 eighths", fails_on = "the holder of the display refused the surface"},
 	{kind = .Shot, text = "desktop_at_1_375"},
 	{kind = .Call, text = "settings.set(scale = .ten_eighths)", expected = "1"},
 	{kind = .Wait, text = "display: monitor: the surface of 650x800 at 10 eighths", any_order = true, fails_on = "the holder of the display refused the surface"},
 	{kind = .Wait, text = "display: rings: the surface of 900x675 at 10 eighths", any_order = true, fails_on = "the holder of the display refused the surface"},
-	{kind = .Wait, text = "display: settings: the surface of 700x860 at 10 eighths", any_order = true, fails_on = "the holder of the display refused the surface"},
+	{kind = .Wait, text = "display: settings: the surface of 980x780 at 10 eighths", any_order = true, fails_on = "the holder of the display refused the surface"},
 	{kind = .Wait, text = "compositor: window monitor shows a surface of 650x800 at 10 eighths", any_order = true},
 	{kind = .Wait, text = "compositor: window rings shows a surface of 900x675 at 10 eighths", any_order = true},
-	{kind = .Wait, text = "compositor: window settings shows a surface of 700x860 at 10 eighths", any_order = true},
+	{kind = .Wait, text = "compositor: window settings shows a surface of 980x780 at 10 eighths", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; "},
 	{kind = .Wait, text = " windows shows a surface at 10 eighths", fails_on = "the holder of the display refused the surface"},
 	// The whole range with the windows open: 1, where a logical pixel is a
@@ -3419,29 +3417,29 @@ scenario := [?]Step {
 	{kind = .Call, text = "settings.set(scale = .sixteen_eighths)", expected = "1"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 2; "},
 	{kind = .Wait, text = " windows shows a surface at 16 eighths", fails_on = "declined the scale"},
-	// A fixed window whose layout is larger than its view: interface_elements
-	// lays out at 816 x 560, past the room under its frame at 2. The
+	// A fixed window whose layout is larger than its view: interface_font
+	// lays out at 800 x 760, past the room under its frame at 2. The
 	// compositor clamps its surface, display takes the clamp, and the window
 	// layer scrolls the layout in the view. PageDown, which no element takes
 	// with no focus, moves the view by a page. Alt+Tab gives the keys back to
 	// the console.
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
-	{kind = .Keys, text = "interface_elements"},
-	{kind = .Wait, text = " for \"interface_elements\": interface_elements (module)"},
+	{kind = .Keys, text = "interface_font"},
+	{kind = .Wait, text = " for \"interface_font\": interface_font (module)"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "compositor: the palette starts interface_elements"},
+	{kind = .Wait, text = "compositor: the palette starts interface_font"},
 	// The compositor writes the new size at the release; the window writes
 	// that its layout scrolls at its first frame after it: the system fixes
 	// no order between the two.
-	{kind = .Wait, text = "compositor: window interface_elements resized from 816x560 to 816x", any_order = true, fails_on = "no surface of"},
-	{kind = .Wait, text = "interface: interface_elements: the layout of 816x560 scrolls in a view of 816x"},
+	{kind = .Wait, text = "compositor: window interface_font resized from 800x760 to 800x", any_order = true, fails_on = "no surface of"},
+	{kind = .Wait, text = "interface: interface_font: the layout of 800x760 scrolls in a view of 800x"},
 	{kind = .Key, text = "pgdn"},
-	{kind = .Wait, text = "interface: interface_elements: the keys move the view to "},
+	{kind = .Wait, text = "interface: interface_font: the keys move the view to "},
 	{kind = .Key, text = "alt-tab"},
 	{kind = .Wait, text = "compositor: the window switcher brought console to the front"},
-	{kind = .Type, text = "stop(\"interface_elements\")"},
-	{kind = .Wait, text = "root: interface_elements stopped"},
+	{kind = .Type, text = "stop(\"interface_font\")"},
+	{kind = .Wait, text = "root: interface_font stopped"},
 	{kind = .Type, text = "stop(\"settings\")"},
 	{kind = .Wait, text = "root: settings stopped"},
 	{kind = .Key, text = "meta_l"},
@@ -3450,13 +3448,15 @@ scenario := [?]Step {
 	{kind = .Wait, text = " for \"settings\": settings (module)"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette starts settings"},
-	{kind = .Wait, text = "compositor: window settings asked to draw at 560x482"},
-	{kind = .Wait, text = "compositor: window settings resized from 560x688 to 560x482", fails_on = "no surface of"},
+	{kind = .Wait, text = "compositor: window settings asked to draw at 784x482"},
+	{kind = .Wait, text = "compositor: window settings resized from 784x624 to 784x482", fails_on = "no surface of"},
 	{kind = .Key, text = "shift-tab"},
 	{kind = .Wait, text = "settings: the focus moves the view to the line "},
 	// Back to 1.25 with the keys of the window: Tab past the last control
-	// comes back to the first, the stop 100 %; two more reach 125 %, and
-	// Enter presses it. The view moves back up to show it.
+	// wraps through the sidebar search and nav to the first scale stop 100 %;
+	// two more reach 125 %, and Enter presses it. The view moves back up.
+	{kind = .Key, text = "tab"},
+	{kind = .Key, text = "tab"},
 	{kind = .Key, text = "tab"},
 	{kind = .Wait, text = "settings: the focus moves the view to the line "},
 	{kind = .Key, text = "tab"},
@@ -3466,7 +3466,7 @@ scenario := [?]Step {
 	// The work area grows: settings gets back the size that it wants, which
 	// the clamp at 2 cut, after it shows its surface at 1.25. It can come
 	// before or after the last window shows its surface.
-	{kind = .Wait, text = "compositor: window settings resized from 560x482 to 560x688", any_order = true, fails_on = "no surface of"},
+	{kind = .Wait, text = "compositor: window settings resized from 784x482 to 784x624", any_order = true, fails_on = "no surface of"},
 	{kind = .Wait, text = " windows shows a surface at 10 eighths", fails_on = "declined the scale"},
 	{kind = .Close, text = "settings"},
 	{kind = .Wait, text = "root: settings stopped"},
