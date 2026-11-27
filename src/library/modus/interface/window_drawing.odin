@@ -70,9 +70,10 @@ Window_Drawing :: struct {
 	scroll_logged:      bool, // The line that the window scrolls is on the log, since it last fitted.
 	// The places of the pointer and of the press in the view, while the
 	// input of a frame holds them in the coordinates of the layout.
-	view_pointer_x, view_pointer_y: int,
-	view_press_x, view_press_y:     int,
-	input_moved:                    bool,
+	view_pointer_x, view_pointer_y:         int,
+	view_press_x, view_press_y:             int,
+	view_right_press_x, view_right_press_y: int,
+	input_moved:                            bool,
 	// The events that a process reads itself (window_scroll_event): the
 	// buttons of the last pointer event, and that the drag of the buttons
 	// held started in the layout; and that the scroll needs a frame

@@ -11,23 +11,44 @@ package interface
 import "modus:display"
 import "modus:graphics"
 
+// Plan value: caps a single context menu to 32 entries without heap allocation.
 CONTEXT_MENU_MAX_ITEMS :: 32
+// Plan value: caps live fuzzy filter queries in filterable context menus.
 CONTEXT_MENU_MAX_FILTER :: 32
+// Plan value: width of a filterable desktop context menu holding label + shortcut in Spleen 8x16.
 CONTEXT_MENU_WIDTH :: 264
-CONTEXT_MENU_ROW_HEIGHT :: 24
-CONTEXT_MENU_HEADER_HEIGHT :: 36 // The filter field and its margins, with the line under them.
-CONTEXT_MENU_FOOT :: 6 // Under the last row, so that its plate does not touch the border.
-CONTEXT_MENU_FIELD_MARGIN :: 6 // Around the filter field, inside the card.
-CONTEXT_MENU_ROW_INSET :: 3 // From the border of the card to the plate of a chosen row.
-CONTEXT_MENU_TEXT_X :: 12 // From the left of the card to a label.
-CONTEXT_MENU_SHORTCUT_GAP :: 16 // The least room between a label and its shortcut.
-CONTEXT_MENU_SCREEN_MARGIN :: 4 // The menu stays this far inside the screen.
+// Plan value: width of a compact right-click menu; holds "Snap right" + "Ctrl+Shift+Right" (224 px) in Spleen 8x16 within 232 px label room.
+CONTEXT_MENU_COMPACT_WIDTH :: 256
+// Plan value: row height (16 px text + 5 px vertical padding each side) for crisp pointer targets.
+CONTEXT_MENU_ROW_HEIGHT :: 26
+// Plan value: height of the filter field, its margins, and the hairline under it.
+CONTEXT_MENU_HEADER_HEIGHT :: 36
+// Plan value: top inset for compact right-click menus without a filter field.
+CONTEXT_MENU_COMPACT_HEAD :: 6
+// Plan value: vertical space for a 1 px divider between groups.
+CONTEXT_MENU_SEPARATOR_HEIGHT :: 7
+// Plan value: bottom inset under the last row so its plate does not touch the border.
+CONTEXT_MENU_FOOT :: 6
+// Plan value: margin around the filter field inside the card.
+CONTEXT_MENU_FIELD_MARGIN :: 6
+// Plan value: horizontal inset from the card border to the highlight plate of a chosen row.
+CONTEXT_MENU_ROW_INSET :: 4
+// Plan value: horizontal inset from the left of the card to a label.
+CONTEXT_MENU_TEXT_X :: 12
+// Plan value: least horizontal room between a label and its shortcut.
+CONTEXT_MENU_SHORTCUT_GAP :: 16
+// Plan value: margin keeping a menu inside the screen or window edges.
+CONTEXT_MENU_SCREEN_MARGIN :: 4
+// Plan value: sharp drop shadow offset under floating menus (docs/DESIGN.md, "3. Surfaces").
+CONTEXT_MENU_SHADOW_OFFSET :: 3
 
 Context_Menu_Item :: struct {
-	id:       u32,
-	label:    string,
-	shortcut: string, // A dim text at the right of the row: the keys that do the same act. Empty: none.
-	disabled: bool,
+	id:               u32,
+	label:            string,
+	shortcut:         string, // A dim text at the right of the row: the keys that do the same act. Empty: none.
+	disabled:         bool,
+	danger:           bool, // Draws destructive actions (Close, Delete) in the failure/coral accent.
+	separator_before: bool, // Draws a 1 px horizontal divider above this row when not the first visible row.
 }
 
 Context_Menu_Match :: struct {
@@ -38,7 +59,9 @@ Context_Menu_Match :: struct {
 
 Context_Menu_State :: struct {
 	open:        bool,
+	compact:     bool, // True for crisp right-click menus without a search header.
 	x, y:        int,
+	width:       int,
 	items:       [CONTEXT_MENU_MAX_ITEMS]Context_Menu_Item,
 	item_count:  int,
 	filter:      [CONTEXT_MENU_MAX_FILTER]u8,
@@ -125,19 +148,63 @@ context_menu_refilter :: proc "contextless" (m: ^Context_Menu_State) {
 	}
 }
 
+@(private = "file")
+context_menu_header_height :: proc "contextless" (m: ^Context_Menu_State) -> int {
+	if m != nil && m.compact {
+		return CONTEXT_MENU_COMPACT_HEAD
+	}
+	return CONTEXT_MENU_HEADER_HEIGHT
+}
+
+@(private = "file")
+context_menu_card_width :: proc "contextless" (m: ^Context_Menu_State) -> int {
+	if m != nil && m.width > 0 {
+		return m.width
+	}
+	return (m != nil && m.compact) ? CONTEXT_MENU_COMPACT_WIDTH : CONTEXT_MENU_WIDTH
+}
+
+@(private = "file")
+context_menu_row_has_separator :: proc "contextless" (m: ^Context_Menu_State, row: int) -> bool {
+	if m == nil || row <= 0 || row >= m.match_count || m.filter_len > 0 {
+		return false
+	}
+	return m.items[m.matches[row].item_index].separator_before
+}
+
 // context_menu_height gives the height of the card for its rows now: a
 // filter that matches nothing keeps one row for the words "No match".
 context_menu_height :: proc "contextless" (m: ^Context_Menu_State) -> int {
 	rows := m == nil ? 1 : max(1, m.match_count)
-	return CONTEXT_MENU_HEADER_HEIGHT + rows * CONTEXT_MENU_ROW_HEIGHT + CONTEXT_MENU_FOOT
+	seps := 0
+	if m != nil {
+		for row in 1 ..< m.match_count {
+			if context_menu_row_has_separator(m, row) {
+				seps += 1
+			}
+		}
+	}
+	return context_menu_header_height(m) + rows * CONTEXT_MENU_ROW_HEIGHT + seps * CONTEXT_MENU_SEPARATOR_HEIGHT + CONTEXT_MENU_FOOT
 }
 
 // context_menu_open opens a filterable context menu clamped to screen bounds.
 context_menu_open :: proc "contextless" (m: ^Context_Menu_State, x, y, screen_w, screen_h: int, items: []Context_Menu_Item) {
+	context_menu_open_mode(m, x, y, screen_w, screen_h, items, false)
+}
+
+// context_menu_open_compact opens a sleek right-click menu without a search
+// field at the top, suited for app and titlebar action menus.
+context_menu_open_compact :: proc "contextless" (m: ^Context_Menu_State, x, y, screen_w, screen_h: int, items: []Context_Menu_Item) {
+	context_menu_open_mode(m, x, y, screen_w, screen_h, items, true)
+}
+
+@(private = "file")
+context_menu_open_mode :: proc "contextless" (m: ^Context_Menu_State, x, y, screen_w, screen_h: int, items: []Context_Menu_Item, compact: bool) {
 	if m == nil {
 		return
 	}
-	m^ = {open = true}
+	w := compact ? CONTEXT_MENU_COMPACT_WIDTH : CONTEXT_MENU_WIDTH
+	m^ = {open = true, compact = compact, width = w}
 	n := min(len(items), CONTEXT_MENU_MAX_ITEMS)
 	for i in 0 ..< n {
 		m.items[i] = items[i]
@@ -146,7 +213,7 @@ context_menu_open :: proc "contextless" (m: ^Context_Menu_State, x, y, screen_w,
 	context_menu_refilter(m)
 	// The height with every item: a filter only shrinks the card from its foot.
 	h := context_menu_height(m)
-	m.x = clamp(x, CONTEXT_MENU_SCREEN_MARGIN, max(CONTEXT_MENU_SCREEN_MARGIN, screen_w - CONTEXT_MENU_WIDTH - CONTEXT_MENU_SCREEN_MARGIN))
+	m.x = clamp(x, CONTEXT_MENU_SCREEN_MARGIN, max(CONTEXT_MENU_SCREEN_MARGIN, screen_w - w - CONTEXT_MENU_SCREEN_MARGIN))
 	m.y = clamp(y, CONTEXT_MENU_SCREEN_MARGIN, max(CONTEXT_MENU_SCREEN_MARGIN, screen_h - h - CONTEXT_MENU_SCREEN_MARGIN))
 }
 
@@ -162,7 +229,8 @@ context_menu_contains :: proc "contextless" (m: ^Context_Menu_State, point_x, po
 	if m == nil || !m.open {
 		return false
 	}
-	return point_x >= m.x && point_x < m.x + CONTEXT_MENU_WIDTH && point_y >= m.y && point_y < m.y + context_menu_height(m)
+	w := context_menu_card_width(m)
+	return point_x >= m.x && point_x < m.x + w && point_y >= m.y && point_y < m.y + context_menu_height(m)
 }
 
 // context_menu_row_rect gives the place of a row of the matches: the draw
@@ -172,7 +240,17 @@ context_menu_row_rect :: proc "contextless" (m: ^Context_Menu_State, row: int) -
 	if m == nil || row < 0 || row >= m.match_count {
 		return 0, 0, 0, 0, false
 	}
-	return m.x + CONTEXT_MENU_ROW_INSET, m.y + CONTEXT_MENU_HEADER_HEIGHT + row * CONTEXT_MENU_ROW_HEIGHT, CONTEXT_MENU_WIDTH - 2 * CONTEXT_MENU_ROW_INSET, CONTEXT_MENU_ROW_HEIGHT, true
+	y_pos := m.y + context_menu_header_height(m)
+	for r in 0 ..= row {
+		if context_menu_row_has_separator(m, r) {
+			y_pos += CONTEXT_MENU_SEPARATOR_HEIGHT
+		}
+		if r < row {
+			y_pos += CONTEXT_MENU_ROW_HEIGHT
+		}
+	}
+	w := context_menu_card_width(m)
+	return m.x + CONTEXT_MENU_ROW_INSET, y_pos, w - 2 * CONTEXT_MENU_ROW_INSET, CONTEXT_MENU_ROW_HEIGHT, true
 }
 
 // context_menu_row_at gives the row of the matches at a point, or -1: on
@@ -188,6 +266,14 @@ context_menu_row_at :: proc "contextless" (m: ^Context_Menu_State, point_x, poin
 		}
 	}
 	return -1
+}
+
+// context_menu_row_enabled reports whether match row is valid and clickable.
+context_menu_row_enabled :: proc "contextless" (m: ^Context_Menu_State, row: int) -> bool {
+	if m == nil || !m.open || row < 0 || row >= m.match_count {
+		return false
+	}
+	return !m.items[m.matches[row].item_index].disabled
 }
 
 // context_menu_pointer takes a pointer event while the menu is open: the
@@ -229,7 +315,7 @@ context_menu_pointer :: proc "contextless" (m: ^Context_Menu_State, point_x, poi
 
 // context_menu_handle_key processes typing (live filter), Backspace, Up/Down,
 // Enter (select & close), and Escape (cancel) while the menu is open.
-context_menu_handle_key :: proc "contextless" (m: ^Context_Menu_State, code: u32, character: rune, pressed: bool) -> (consumed: bool, triggered_id: u32) {
+context_menu_handle_key :: proc "contextless" (m: ^Context_Menu_State, code: u32, character: rune, pressed: bool, modifiers: u32 = 0) -> (consumed: bool, triggered_id: u32) {
 	if m == nil || !m.open || !pressed {
 		return false, 0
 	}
@@ -265,7 +351,8 @@ context_menu_handle_key :: proc "contextless" (m: ^Context_Menu_State, code: u32
 		}
 		return true, 0
 	}
-	if character >= 0x20 && character < 0x7F && m.filter_len < CONTEXT_MENU_MAX_FILTER {
+	no_cmd_mod := modifiers & (display.MODIFIER_CONTROL | display.MODIFIER_ALT) == 0
+	if !m.compact && no_cmd_mod && character >= 0x20 && character < 0x7F && m.filter_len < CONTEXT_MENU_MAX_FILTER {
 		m.filter[m.filter_len] = u8(character)
 		m.filter_len += 1
 		context_menu_refilter(m)
@@ -274,56 +361,74 @@ context_menu_handle_key :: proc "contextless" (m: ^Context_Menu_State, code: u32
 	return true, 0
 }
 
-// context_menu_draw draws the menu as a card of the desktop: a vertical
-// gradient with a line of light under its top border, the filter field with
-// its caret and the line of the focus, a line under the field, then the
-// matching rows. The chosen row is a plate in a gradient of the chosen blue
-// with its own line of light; a matched character has a line of 2 pixels
-// under it, as in the palette; a shortcut is dim at the right of its row.
+// context_menu_draw draws the menu as a floating card with a sharp drop shadow,
+// crisp edge outline, optional filter field, optional group dividers, and danger
+// styling for destructive items.
 context_menu_draw :: proc "contextless" (table: ^Draw_Table, m: ^Context_Menu_State) {
 	if table == nil || m == nil || !m.open {
 		return
 	}
+	card_w := context_menu_card_width(m)
 	total_h := context_menu_height(m)
-	draw_vertical_gradient(table, m.x, m.y, CONTEXT_MENU_WIDTH, total_h, graphics.colors.card_top, graphics.colors.card_bottom)
-	draw_outline(table, m.x, m.y, CONTEXT_MENU_WIDTH, total_h, 1, graphics.colors.title)
-	draw_rectangle(table, m.x + 1, m.y + 1, CONTEXT_MENU_WIDTH - 2, 1, graphics.shade(graphics.colors.card_top, 135))
+	// Sharp drop shadow (docs/DESIGN.md, "3. Surfaces").
+	draw_rectangle(table, m.x + CONTEXT_MENU_SHADOW_OFFSET, m.y + CONTEXT_MENU_SHADOW_OFFSET, card_w, total_h, graphics.colors.shadow)
+	draw_vertical_gradient(table, m.x, m.y, card_w, total_h, graphics.colors.card_top, graphics.colors.card_bottom)
+	draw_outline(table, m.x, m.y, card_w, total_h, 1, graphics.colors.edge)
+	draw_rectangle(table, m.x + 1, m.y + 1, card_w - 2, 1, graphics.shade(graphics.colors.card_top, 130))
 
-	// The filter field has the focus while the menu is open: the line of
-	// the focus is always drawn, with the caret at the end of the filter.
-	field_frame := Frame{table = table}
-	field := Area{m.x + CONTEXT_MENU_FIELD_MARGIN, m.y + CONTEXT_MENU_FIELD_MARGIN, CONTEXT_MENU_WIDTH - 2 * CONTEXT_MENU_FIELD_MARGIN, CONTEXT_MENU_HEADER_HEIGHT - 2 * CONTEXT_MENU_FIELD_MARGIN - 1}
-	filter_text := string(m.filter[:m.filter_len])
-	text_input_line(&field_frame, field, filter_text, len(filter_text), 0, "Type to filter", name = "filter")
-	draw_rectangle(table, m.x + 1, m.y + CONTEXT_MENU_HEADER_HEIGHT - 1, CONTEXT_MENU_WIDTH - 2, 1, graphics.colors.track)
+	if !m.compact {
+		// The filter field has the focus while the menu is open: the line of
+		// the focus is always drawn, with the caret at the end of the filter.
+		field_frame := Frame{table = table}
+		field := Area{m.x + CONTEXT_MENU_FIELD_MARGIN, m.y + CONTEXT_MENU_FIELD_MARGIN, card_w - 2 * CONTEXT_MENU_FIELD_MARGIN, CONTEXT_MENU_HEADER_HEIGHT - 2 * CONTEXT_MENU_FIELD_MARGIN - 1}
+		filter_text := string(m.filter[:m.filter_len])
+		text_input_line(&field_frame, field, filter_text, len(filter_text), 0, "Type to filter", name = "filter")
+		draw_rectangle(table, m.x + 1, m.y + CONTEXT_MENU_HEADER_HEIGHT - 1, card_w - 2, 1, graphics.colors.track)
+	}
 
 	if m.match_count == 0 {
-		draw_text(table, m.x + CONTEXT_MENU_TEXT_X, m.y + CONTEXT_MENU_HEADER_HEIGHT + 4, "No match", graphics.colors.dim, FONT_INTERFACE)
+		draw_text(table, m.x + CONTEXT_MENU_TEXT_X, m.y + context_menu_header_height(m) + 4, "No match", graphics.colors.dim, FONT_INTERFACE)
 		return
 	}
 	for row in 0 ..< m.match_count {
 		match := m.matches[row]
 		item := m.items[match.item_index]
 		row_x, row_y, row_width, row_height, _ := context_menu_row_rect(m, row)
-		chosen := row == m.selected
-		if chosen {
-			draw_vertical_gradient(table, row_x, row_y, row_width, row_height, graphics.colors.chosen, graphics.shade(graphics.colors.chosen, 86))
-			draw_rectangle(table, row_x + 1, row_y, row_width - 2, 1, graphics.shade(graphics.colors.chosen, 140))
+		if context_menu_row_has_separator(m, row) {
+			sep_y := row_y - CONTEXT_MENU_SEPARATOR_HEIGHT / 2 - 1
+			draw_rectangle(table, m.x + 8, sep_y, card_w - 16, 1, graphics.colors.track)
 		}
-		label_color := item.disabled ? graphics.colors.dim : (chosen ? graphics.COLOR_WHITE : graphics.colors.text)
+		chosen := row == m.selected && !item.disabled
+		if chosen {
+			plate_col := item.danger ? graphics.colors.stop_process : graphics.colors.chosen
+			draw_vertical_gradient(table, row_x, row_y, row_width, row_height, plate_col, graphics.shade(plate_col, 86))
+			draw_rectangle(table, row_x + 1, row_y, row_width - 2, 1, graphics.shade(plate_col, 136))
+		}
+		label_color: graphics.Color
+		switch {
+		case item.disabled:
+			label_color = graphics.colors.dim
+		case chosen:
+			label_color = graphics.COLOR_WHITE
+		case item.danger:
+			label_color = graphics.colors.failed
+		case:
+			label_color = graphics.colors.text
+		}
 		label_x := m.x + CONTEXT_MENU_TEXT_X
-		label_room := m.x + CONTEXT_MENU_WIDTH - CONTEXT_MENU_TEXT_X - label_x
+		label_room := m.x + card_w - CONTEXT_MENU_TEXT_X - label_x
+		text_y := row_y + (row_height - LINE) / 2
 		// The shortcut takes its room first, the label the rest; a shortcut
 		// that leaves the label no room is not drawn.
 		if item.shortcut != "" {
 			shortcut_width := text_measured_width(table, FONT_INTERFACE, item.shortcut)
 			if shortcut_width + CONTEXT_MENU_SHORTCUT_GAP < label_room {
-				draw_text_right(table, m.x + CONTEXT_MENU_WIDTH - CONTEXT_MENU_TEXT_X, row_y + 4, item.shortcut, chosen ? graphics.COLOR_WHITE : graphics.colors.dim, FONT_INTERFACE)
+				draw_text_right(table, m.x + card_w - CONTEXT_MENU_TEXT_X, text_y, item.shortcut, chosen ? graphics.COLOR_WHITE : graphics.colors.dim, FONT_INTERFACE)
 				label_room -= shortcut_width + CONTEXT_MENU_SHORTCUT_GAP
 			}
 		}
 		label := text_fit(table, FONT_INTERFACE, item.label, label_room)
-		draw_text(table, label_x, row_y + 4, label, label_color, FONT_INTERFACE)
+		draw_text(table, label_x, text_y, label, label_color, FONT_INTERFACE)
 		if m.filter_len == 0 || match.match_mask == 0 {
 			continue
 		}
@@ -335,7 +440,7 @@ context_menu_draw :: proc "contextless" (table: ^Draw_Table, m: ^Context_Menu_St
 			}
 			start_x := text_measured_width(table, FONT_INTERFACE, label[:run.start])
 			end_x := text_measured_width(table, FONT_INTERFACE, label[:run.end])
-			draw_rectangle(table, label_x + start_x, row_y + 20, end_x - start_x, 2, chosen ? graphics.COLOR_WHITE : graphics.colors.kernel)
+			draw_rectangle(table, label_x + start_x, text_y + LINE, end_x - start_x, 2, chosen ? graphics.COLOR_WHITE : graphics.colors.kernel)
 		}
 	}
 }

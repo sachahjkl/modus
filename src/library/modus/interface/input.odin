@@ -68,7 +68,11 @@ Input :: struct {
 	// Where the left button went down last. A frame can hold a press and
 	// moves after it: the pointer is then at the end of the moves, and a
 	// drag needs the place where it began.
-	press_x, press_y:     int,
+	press_x, press_y:           int,
+	// Right mouse button state for per-window context menus.
+	right_pressed, right_released: bool,
+	right_held:                    bool,
+	right_press_x, right_press_y:  int,
 	// The notches of the wheel in this frame, signed
 	// (display.WHEEL_TOWARD_THE_END). The first view under the pointer
 	// takes them (scroll_bar), and sets this to 0: no other view moves.
@@ -99,6 +103,13 @@ input_add :: proc "contextless" (input: ^Input, event: display.Event) -> bool {
 		input.pressed ||= held && !input.button_held
 		input.released ||= !held && input.button_held
 		input.button_held = held
+		r_held := event.buttons & display.BUTTON_RIGHT != 0
+		if r_held && !input.right_held {
+			input.right_press_x, input.right_press_y = event.x, event.y
+		}
+		input.right_pressed ||= r_held && !input.right_held
+		input.right_released ||= !r_held && input.right_held
+		input.right_held = r_held
 		// Each event cuts its notches to key_path.WHEEL_NOTCHES_LIMIT, so
 		// the sum of a frame stays far inside an int.
 		input.wheel += event.wheel
@@ -125,6 +136,8 @@ input_has_room :: proc "contextless" (input: ^Input) -> bool {
 input_clear :: proc "contextless" (input: ^Input) {
 	input.pressed = false
 	input.released = false
+	input.right_pressed = false
+	input.right_released = false
 	input.wheel = 0
 	input.key_count = 0
 }

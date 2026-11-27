@@ -105,7 +105,7 @@ Right_Click_Action :: enum u8 {
 	Deliver_To_Locked_Window, // Pointer lock is active; deliver relative/button event to locked window.
 	Open_Desktop_Menu, // Empty desktop background; open desktop context menu.
 	Deliver_To_Window_Surface, // Over a window client surface; raise and deliver right button to that window.
-	Raise_Window_Frame, // Over a window title bar or border; raise without sending out-of-surface coordinates.
+	Raise_Window_Frame, // Over a window title bar or border; raise and open the window action menu.
 	Bar_Or_Overlay, // Inside the bar or while a menu, tray widget, or popover overlay is open.
 }
 

@@ -48,9 +48,9 @@
 // System_Part only: it receives only the handles above.
 //
 // **What a reader sees**: a window with the name of the process, its
-// lines, a status bar that the process fills, the
-// [action bar](term:action-bar) of Page Up and Page Down at the right of
-// its last line, and on the log:
+// lines, a status bar that shows line positions or process progress with
+// interactive `Follow` and `Ctrl+Shift+P` pills, a right-click context menu,
+// a `Ctrl+Shift+P` command palette, and on the log:
 //
 // - "terminal: ok, console writes in a ring of N records";
 // - "terminal: the first key goes to console";
@@ -1322,9 +1322,12 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	frame := interface.window_frame_begin(&drawing, window)
 	table := frame.table
 	interface_text_font_tell(table)
-	// While the list of the action bar is open, a press is the bar's: the
-	// scroll bars under the list do not take it.
-	interface.action_bar_input_take(&frame, &bar)
+	// Suppress underlying scroll bar input while a context menu or command palette is open.
+	if term_ctx_menu.open || term_palette.open {
+		frame.input.pressed = false
+		frame.input.released = false
+		frame.input.wheel = 0
+	}
 
 	if measure {
 		// The head: the rates, and the graph of the lines in one second.
@@ -1347,13 +1350,12 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 	// The text: only the rows of the window, as one text grid.
 	interface.draw_text_grid(table, TEXT_X, text_y, view_grid())
 
-	// The status of the process: a text, and a value of a total. With the
-	// rates it has its own line. If not, it takes the place of the line count.
-	// The line of the keys is the band of the action bar, from edge to
-	// edge, under each text of the line: with no rates the status shares
-	// it, and the line at the top of the band is the line over the status.
+	// The status band spans edge to edge across the bottom of the window.
+	// With measure rates enabled, the process status sits on its own row above
+	// the line-position row; otherwise the status shares the bottom band.
 	bar_y := hint_y - 4
-	interface.draw_rectangle(table, 0, bar_y, width, interface.ACTION_BAR_ROW_HEIGHT, graphics.colors.card_bottom)
+	bar_h := max(height - bar_y, interface.ACTION_BAR_ROW_HEIGHT)
+	interface.draw_rectangle(table, 0, bar_y, width, bar_h, graphics.colors.card_bottom)
 	interface.draw_rectangle(table, 0, status_y - 4, width, 1, graphics.colors.track)
 	if measure {
 		interface.draw_rectangle(table, 0, bar_y, width, 1, graphics.colors.track)
@@ -1406,11 +1408,38 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		}
 		hint_left = x
 	}
-	// The keys: the action bar, at the right of the text of the line. Its
-	// items stand from the right edge, so they keep their places while the
-	// numbers at the left change. The bar is drawn last, below.
-	bar_left := hint_left + 2 * CELL_WIDTH
-	bar_area := interface.Area{bar_left, bar_y, max(width - MARGIN - bar_left, 0), interface.ACTION_BAR_ROW_HEIGHT}
+	// Status bar interactive pills at the right, leaving clearance for the
+	// bottom-right window resize grip so nothing ever clips or overlaps it.
+	STATUS_RIGHT_CLEARANCE :: 22 // Plan value: 11 px resize grip + 2 px border + 9 px margin.
+	PILL_HEIGHT :: 18 // Plan value: 14 px caption text + 2 px top/bottom padding inside the 24 px status band.
+	pill_y := bar_y + (bar_h - PILL_HEIGHT) / 2
+	right_cursor := width - STATUS_RIGHT_CLEARANCE
+	palette_pill_area = {}
+	follow_pill_area = {}
+	palette_label := "Ctrl+Shift+P"
+	palette_pill_w := interface.text_measured_width(table, interface.FONT_CAPTION, palette_label) + 14
+	if right_cursor - palette_pill_w > hint_left + 12 {
+		palette_pill_area = {right_cursor - palette_pill_w, pill_y, palette_pill_w, PILL_HEIGHT}
+		right_cursor = palette_pill_area.x - 6
+		hot := !term_ctx_menu.open && !term_palette.open && frame.input.pointer_known && interface.area_contains(palette_pill_area, frame.input.pointer_x, frame.input.pointer_y)
+		pill_bg := hot ? graphics.shade(graphics.colors.track, 128) : graphics.colors.track
+		interface.draw_rectangle(table, palette_pill_area.x, palette_pill_area.y, palette_pill_area.width, palette_pill_area.height, pill_bg)
+		interface.draw_outline(table, palette_pill_area.x, palette_pill_area.y, palette_pill_area.width, palette_pill_area.height, 1, hot ? graphics.colors.title : graphics.colors.not_usable)
+		cap_y := palette_pill_area.y + (PILL_HEIGHT - interface.line_height(interface.FONT_CAPTION)) / 2
+		interface.draw_text(table, palette_pill_area.x + 7, cap_y, palette_label, hot ? graphics.colors.text_strong : graphics.colors.dim, interface.FONT_CAPTION)
+	}
+	if !follow {
+		follow_label := "Follow"
+		follow_pill_w := interface.text_measured_width(table, interface.FONT_CAPTION, follow_label) + 14
+		if right_cursor - follow_pill_w > hint_left + 12 {
+			follow_pill_area = {right_cursor - follow_pill_w, pill_y, follow_pill_w, PILL_HEIGHT}
+			hot := !term_ctx_menu.open && !term_palette.open && frame.input.pointer_known && interface.area_contains(follow_pill_area, frame.input.pointer_x, frame.input.pointer_y)
+			pill_bg := hot ? graphics.shade(graphics.colors.chosen, 118) : graphics.colors.chosen
+			interface.draw_rectangle(table, follow_pill_area.x, follow_pill_area.y, follow_pill_area.width, follow_pill_area.height, pill_bg)
+			cap_y := follow_pill_area.y + (PILL_HEIGHT - interface.line_height(interface.FONT_CAPTION)) / 2
+			interface.draw_text(table, follow_pill_area.x + 7, cap_y, follow_label, graphics.COLOR_WHITE, interface.FONT_CAPTION)
+		}
+	}
 	// The border of the completion list, one pixel outside its cells. It
 	// comes last, so that the records before keep their places in the
 	// table when the list opens or closes: the damage stays small.
@@ -1474,26 +1503,115 @@ draw :: proc "contextless" (window: ^display.Window, follow: bool) {
 		first_line = min(view.top - view.oldest, kept - shown_lines)
 	}
 	scroll_result = interface.scroll_bar(&frame, scroll_area, scroll_identity, .Vertical, {total = int(max(kept, 1)), visible = int(max(shown_lines, 1)), first = int(first_line)}, {page = rows - 1}, "scroll bar", text_view_area)
-	// The action bar, after each other element: its list opens over the
-	// lines and the scroll bar.
-	items := bar_items()
-	bar_result = interface.action_bar(&frame, bar_area, items[:], &bar, {alignment = .Right})
+	// Draw floating context menu and command palette last so they sit above
+	// the terminal grid, completion list, and scroll bars.
+	if term_ctx_menu.open {
+		interface.context_menu_draw(table, &term_ctx_menu)
+	}
+	if term_palette.open {
+		interface.command_palette_draw(table, &term_palette, width, height)
+	}
 	interface.window_frame_end(&drawing, &frame, window)
 	if table.full {
 		system.log_fact(.Info, Draw_Table_Full{})
 	}
 }
 
-// The keys of the terminal, in its action bar (docs/INTERFACE.md, "4.4
-// The action bar"). Each other key goes to the process, which names its
-// own keys.
-// A procedure, not a global array: an item is made by a call, and a
-// freestanding process runs no call before its entry.
-bar_items :: proc "contextless" () -> [2]interface.Action_Bar_Item {
-	return {interface.action_bar_item("Lines before", 1, "Page Up"), interface.action_bar_item("Lines after", 1, "Page Down")}
+// Closed set of actions in the terminal right-click menu and command palette.
+Terminal_Action :: enum u32 {
+	None            = 0,
+	Jump_To_Bottom  = 1,
+	Scroll_To_Top   = 2,
+	Page_Up         = 3,
+	Page_Down       = 4,
+	Line_Up         = 5,
+	Line_Down       = 6,
+	Open_Palette    = 7,
 }
-bar: interface.Action_Bar_State
-bar_result: interface.Action_Bar_Result // What the action bar of the last frame ran.
+
+Status_Pill_Hover :: enum u8 {
+	None,
+	Palette,
+	Follow,
+}
+
+term_ctx_menu: interface.Context_Menu_State
+term_palette: interface.Command_Palette_State
+palette_pill_area: interface.Area
+follow_pill_area: interface.Area
+status_pill_hovered: Status_Pill_Hover
+term_left_held: bool
+
+terminal_clear_scroll_drag :: proc "contextless" () {
+	drawing.state.pressed = 0
+	drawing.state.scroll_bar_part = .None
+	drawing.state.scroll_bar_repeat_at = 0
+}
+
+terminal_context_menu_open :: proc "contextless" (x, y: int) {
+	interface.command_palette_close(&term_palette)
+	terminal_clear_scroll_drag()
+	kept := view.count - view.oldest
+	items := [5]interface.Context_Menu_Item{
+		{id = u32(Terminal_Action.Jump_To_Bottom), label = "Jump to bottom", disabled = request.follow},
+		{id = u32(Terminal_Action.Scroll_To_Top), label = "Scroll to top", disabled = kept <= u64(rows)},
+		{id = u32(Terminal_Action.Page_Up), label = "Page up", shortcut = "PgUp"},
+		{id = u32(Terminal_Action.Page_Down), label = "Page down", shortcut = "PgDn"},
+		{id = u32(Terminal_Action.Open_Palette), label = "Command palette", shortcut = "Ctrl+Shift+P", separator_before = true},
+	}
+	interface.context_menu_open_compact(&term_ctx_menu, x, y, width, height, items[:])
+}
+
+terminal_palette_open :: proc "contextless" () {
+	interface.context_menu_close(&term_ctx_menu)
+	terminal_clear_scroll_drag()
+	kept := view.count - view.oldest
+	items := [6]interface.Command_Palette_Item{
+		{id = u32(Terminal_Action.Jump_To_Bottom), label = "Jump to bottom", category = "View", disabled = request.follow},
+		{id = u32(Terminal_Action.Scroll_To_Top), label = "Scroll to top", category = "View", disabled = kept <= u64(rows)},
+		{id = u32(Terminal_Action.Page_Up), label = "Page up", category = "View", shortcut = "PgUp"},
+		{id = u32(Terminal_Action.Page_Down), label = "Page down", category = "View", shortcut = "PgDn"},
+		{id = u32(Terminal_Action.Line_Up), label = "Scroll up one line", category = "View"},
+		{id = u32(Terminal_Action.Line_Down), label = "Scroll down one line", category = "View"},
+	}
+	interface.command_palette_open(&term_palette, "Terminal commands", items[:], height)
+}
+
+terminal_action_run :: proc "contextless" (action_word: u32) -> bool {
+	action, ok := enum_word.member_of_word(Terminal_Action, u64(action_word))
+	if !ok {
+		return false
+	}
+	switch action {
+	case .None:
+		return false
+	case .Jump_To_Bottom:
+		request.follow = true
+		return true
+	case .Scroll_To_Top:
+		if view.count - view.oldest > u64(rows) {
+			request.follow = false
+			request.top = view.oldest
+		}
+		return true
+	case .Page_Up:
+		view_move(-i64(rows - 1))
+		return true
+	case .Page_Down:
+		view_move(i64(rows - 1))
+		return true
+	case .Line_Up:
+		view_move(-1)
+		return true
+	case .Line_Down:
+		view_move(1)
+		return true
+	case .Open_Palette:
+		terminal_palette_open()
+		return true
+	}
+	return false
+}
 
 // page_move gives the lines that a key moves the view: a page less one
 // line for Page Up and Page Down, 0 for another key.
@@ -1724,6 +1842,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// Apply grid and chrome layout here once window.width and
 			// window.height reflect the accepted surface size.
 			if event.kind == .Surface_Answer {
+				interface.context_menu_close(&term_ctx_menu)
 				if terminal_apply_surface_size(window.width, window.height) && process != 0 {
 					_ = system.send(&source.completions, ring.Record{kind = u32(terminal.Input.Resized), values = {0 = u64(columns), 1 = u64(rows)}})
 				}
@@ -1743,13 +1862,88 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				_ = display.surface_resize(&window, event.width, event.height)
 				continue
 			}
-			// The pointer goes to the scroll bars and to the action bar, and
-			// to no other part of the window: a frame is built only when
-			// the pointer is on one of them, holds it, leaves it lit, turns
-			// the wheel over the view of a scroll bar, or the list of the
-			// action bar is open.
+			// Pointer routing: right-click context menu, open command palette,
+			// interactive status bar pills, and scroll bars. Per-event button
+			// edges prevent a sticky frame-level pressed flag from leaking
+			// across multiple pointer events in one batch.
 			if event.kind == .Pointer {
-				if interface.window_scroll_frame_take(&drawing) || interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area, scroll_identity, text_view_area) || interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, list_scroll_area, list_scroll_identity, list_view_area) || interface.action_bar_wants_frame(&bar, &drawing.input) {
+				left_held := event.buttons & display.BUTTON_LEFT != 0
+				left_pressed := left_held && !term_left_held
+				term_left_held = left_held
+				// Right-click inside the terminal surface opens its context menu.
+				if drawing.input.right_pressed {
+					drawing.input.right_pressed = false
+					if event.x != interface.WINDOW_POINTER_AWAY {
+						terminal_context_menu_open(event.x, event.y)
+						drawing.input.wheel -= event.wheel
+						dirty = true
+						pointer_shape_follow(&window)
+						continue
+					}
+				}
+				// Open overlays (command palette or context menu) consume pointer events first.
+				if term_palette.open {
+					res := interface.command_palette_pointer(&term_palette, event.x, event.y, left_pressed, event.wheel, width, height)
+					if res.triggered {
+						_ = terminal_action_run(res.triggered_id)
+					}
+					if res.changed || res.consumed {
+						dirty = true
+					}
+					if left_pressed {
+						drawing.input.pressed = false
+					}
+					drawing.input.wheel -= event.wheel
+					pointer_shape_follow(&window)
+					continue
+				}
+				if term_ctx_menu.open {
+					res := interface.context_menu_pointer(&term_ctx_menu, event.x, event.y, left_pressed)
+					if res.triggered {
+						_ = terminal_action_run(res.triggered_id)
+					}
+					if res.changed || res.consumed {
+						dirty = true
+					}
+					if res.consumed || res.changed {
+						if left_pressed {
+							drawing.input.pressed = false
+						}
+						drawing.input.wheel -= event.wheel
+						pointer_shape_follow(&window)
+						continue
+					}
+					// Menu stays open (pointer move/wheel outside): do not scroll underneath.
+					drawing.input.wheel -= event.wheel
+					pointer_shape_follow(&window)
+					continue
+				}
+				// Status bar interactive pills (Ctrl+Shift+P and Follow).
+				hovered_pill := Status_Pill_Hover.None
+				if interface.area_contains(palette_pill_area, event.x, event.y) {
+					hovered_pill = .Palette
+				} else if interface.area_contains(follow_pill_area, event.x, event.y) {
+					hovered_pill = .Follow
+				}
+				if left_pressed && hovered_pill != .None {
+					drawing.input.pressed = false
+					drawing.input.wheel -= event.wheel
+					switch hovered_pill {
+					case .None:
+					case .Palette:
+						terminal_palette_open()
+					case .Follow:
+						request.follow = true
+					}
+					dirty = true
+					pointer_shape_follow(&window)
+					continue
+				}
+				if hovered_pill != status_pill_hovered {
+					status_pill_hovered = hovered_pill
+					dirty = true
+				}
+				if interface.window_scroll_frame_take(&drawing) || interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, scroll_area, scroll_identity, text_view_area) || interface.scroll_bar_wants_frame(&drawing.state, &drawing.input, list_scroll_area, list_scroll_identity, list_view_area) {
 					dirty = true
 				} else {
 					// A notch over no view moves nothing: it must not wait
@@ -1775,13 +1969,34 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				continue
 			}
 			dirty = true
-			// The open list of the action bar takes its keys first.
-			outcome := interface.action_bar_key(&bar, {code = event.code, character = event.character, modifiers = event.modifiers})
-			if outcome.ran {
-				view_move(page_move(outcome.run.code))
-			}
-			if outcome.taken {
+			// Ctrl+Shift+P toggles the terminal command palette (bare Ctrl+K stays
+			// free for shell line editing).
+			if interface.is_command_palette_shift_shortcut(event.code, event.character, event.modifiers) {
+				if term_palette.open {
+					interface.command_palette_close(&term_palette)
+				} else {
+					terminal_palette_open()
+				}
 				continue
+			}
+			// Open command palette or context menu takes keys first.
+			if term_palette.open {
+				consumed, triggered := interface.command_palette_handle_key(&term_palette, event.code, event.character, true, event.modifiers, height)
+				if triggered != 0 {
+					_ = terminal_action_run(triggered)
+				}
+				if consumed {
+					continue
+				}
+			}
+			if term_ctx_menu.open {
+				consumed, triggered := interface.context_menu_handle_key(&term_ctx_menu, event.code, event.character, true, event.modifiers)
+				if triggered != 0 {
+					_ = terminal_action_run(triggered)
+				}
+				if consumed {
+					continue
+				}
 			}
 			move := page_move(event.code)
 			switch event.code {
@@ -1850,6 +2065,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if picture_waits {
 			continue
 		}
+		// Keep terminal grid and chrome synchronized with the active surface size
+		// BEFORE view_take() fills view.cells so resized rows/columns render in
+		// the same frame and the hosted process receives terminal.Input.Resized.
+		if window.width > 0 && window.height > 0 && (window.width != width || window.height != height) {
+			interface.context_menu_close(&term_ctx_menu)
+			if terminal_apply_surface_size(window.width, window.height) && process != 0 {
+				_ = system.send(&source.completions, ring.Record{kind = u32(terminal.Input.Resized), values = {0 = u64(columns), 1 = u64(rows)}})
+			}
+			interface.draw_whole_window_next(&drawing)
+			dirty = true
+		}
 		current := intrinsics.atomic_load(&activity)
 		sample_due := measure && now - sample_time >= SAMPLE_TIME
 		if !sample_due && !dirty && current == drawn {
@@ -1913,12 +2139,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if !drawing.drawn {
 				draw_refused_backoff = true
 			}
-		}
-		// A press on an item of the action bar runs its key, as the key
-		// does: the next picture shows the moved view.
-		if bar_result.ran {
-			view_move(page_move(bar_result.run.code))
-			dirty = true
 		}
 		// The scroll bar moved the view: the next picture shows the lines
 		// from its first unit. The log has one line for a press that moved
@@ -2038,7 +2258,7 @@ pointer_shape_follow :: proc "contextless" (window: ^display.Window) {
 	held := drawing.state.pressed
 	over := held == scroll_identity || held == list_scroll_identity
 	if !over && input.pointer_known {
-		over = interface.area_contains(scroll_area, input.pointer_x, input.pointer_y) || interface.area_contains(list_scroll_area, input.pointer_x, input.pointer_y)
+		over = term_ctx_menu.open || term_palette.open || input.pointer_y >= hint_y - 4 || interface.area_contains(scroll_area, input.pointer_x, input.pointer_y) || interface.area_contains(list_scroll_area, input.pointer_x, input.pointer_y)
 	}
 	if over == pointer_shape_is_arrow {
 		return

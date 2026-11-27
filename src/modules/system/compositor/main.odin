@@ -1035,7 +1035,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					// Alt+Tab, and each key while its card is open: the card
 					// holds the keys until the release of Alt, and does not
 					// open over a dialog or a menu (window_switcher.odin).
-				case desktop_context_menu_key(u32(record.values[0]), character, record.values[2] != 0):
+				case desktop_context_menu_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
 					// The context menu of the desktop took the key.
 				case record.values[2] != 0 && u32(record.values[0]) == display.KEY_ESCAPE && capture_popover_escape():
 					// Local Escape closed the bar viewer list popover.
@@ -1782,6 +1782,13 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		damage_menu()
 	}
 	if right_pressed {
+		// Right-clicking directly on an open compositor context menu dismisses
+		// it without leaking the right-click to a window underneath.
+		if desktop_context_menu.open && interface.context_menu_contains(&desktop_context_menu, pointer_x, pointer_y) {
+			desktop_context_menu_damage()
+			desktop_context_menu.open = false
+			return
+		}
 		position := window_position_at(pointer_x, pointer_y)
 		on_window_surface := false
 		if position >= 0 {
@@ -1803,9 +1810,15 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 				desktop_context_menu_damage()
 				desktop_context_menu.open = false
 			}
+			client_index := order[position]
 			raise(position)
+			desktop_window_menu_open(client_index, pointer_x, pointer_y)
 			return
 		case .Bar_Or_Overlay:
+			if desktop_context_menu.open {
+				desktop_context_menu_damage()
+				desktop_context_menu.open = false
+			}
 			// Right-clicking a taskbar plate opens its window action menu;
 			// empty bar space or any open overlay never leaks to a window.
 			if !overlay_open && bar.inside_bar(bar_layout, pointer_y) {

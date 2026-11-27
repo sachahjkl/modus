@@ -15,7 +15,7 @@ The action bar is one element of the interface package for that line. Each item 
 - **One fact once on a screen.** The bar does not say "keys", and an item does not repeat a button or a title of the window.
 - **The keys stay the first path.** A window that the bar hides must still take each key. The bar is a reminder and a second path, never the only one.
 - **A machine test presses an item by its name** ([test_pointer.md](../infrastructure/test_pointer.md)).
-- **Two kinds of window.** Some processes give every event to the interface package (`window_events`). Others read the keys from the events themselves and give the package only the pointer (`manual`, the terminal). The bar must serve both.
+- **Two kinds of window.** Some processes give every event to the interface package (`window_events`). Others read the keys from the events themselves and give the package only the pointer (`manual`, `notes`, `edit`). The bar must serve both.
 
 ## The chosen form
 
@@ -74,12 +74,12 @@ The action bar is one element of the interface package for that line. Each item 
 
 - **The key of a press is synthetic.** A face of one character gives the character with the code 0. A process that compares a key code with a letter does not see it: compare the character.
 - **The list must fit above the bar.** The bar gives the list the room from its top to the top of the window (`Action_Bar_Options.top`). Rows that do not fit are not shown, and `Action_Bar_Result.list_rows_not_shown` counts them; a host test checks the count.
-- **An element line for each change of a rectangle.** An item whose place changes at each frame writes a line at each frame. A bar has a fixed area. The terminal puts its bar at the right of a line whose text changes: its items stand from the right edge (`Action_Bar_Options.alignment = .Right`), so they do not move while the text at the left changes.
+- **An element line for each change of a rectangle.** An item whose place changes at each frame writes a line at each frame. A bar has a fixed area. A window that puts its bar at the right of a line whose text changes stands its items from the right edge (`Action_Bar_Options.alignment = .Right`), so they do not move while the text at the left changes.
 - **A press on an item of a window that types.** In the debugger window the letters type in the debug place field while it has the focus. A press on an item takes the focus from the field first, so `h` holds the thread.
 - **The frame after a press.** A process that draws only after a change builds the frame that runs the key. `action_bar_wants_frame` says when a pointer event needs a frame: over the bar, the list open, a held press, or a bar lit in the last frame.
 
 ## State
 
-Built: the element, its layout as a pure procedure, the list with its keys and its pointer, wrap, the host tests (the fit, the overflow at several widths, the order of priority, the place of the list, the keys of the list), and the bar of each window that listed its keys: `manual`, the terminal, `settings`, `notes`, the debugger window, `unlock`, `interface_elements`, `tally`, `rings`, `paint`. The machine scenario takes a picture of `interface_elements` with all its items, opens the list of the debugger window, and runs `detach` from the list.
+Built: the element, its layout as a pure procedure, the list with its keys and its pointer, wrap, the host tests (the fit, the overflow at several widths, the order of priority, the place of the list, the keys of the list), and the bar of each window that listed its keys: `manual`, `settings`, `notes`, the debugger window, `unlock`, `interface_elements`, `tally`, `rings`, `paint`. The terminal moved to a resize-safe status bar with interactive pills, a right-click context menu, and a `Ctrl+Shift+P` command palette ([command_palette_and_context_menus.md](command_palette_and_context_menus.md)). The machine scenario takes a picture of `interface_elements` with all its items, opens the list of the debugger window, and runs `detach` from the list.
 
 Left: the band of keys of the palette, which the compositor draws with its own panel; a window whose surface can change its width, which no process of the system has.

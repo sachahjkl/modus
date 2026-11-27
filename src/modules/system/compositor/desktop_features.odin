@@ -36,10 +36,13 @@ Desktop_Context_Action :: enum u32 {
 	Snap_Left   = 8,
 	Snap_Right  = 9,
 	Maximize    = 10,
-	// The menu of a plate of the bar: the acts on its window.
-	Window_Front    = 11,
-	Window_Minimize = 12,
-	Window_Close    = 13,
+	// The menu of a plate or titlebar: the acts on its window.
+	Window_Front      = 11,
+	Window_Minimize   = 12,
+	Window_Close      = 13,
+	Window_Maximize   = 14,
+	Window_Snap_Left  = 15,
+	Window_Snap_Right = 16,
 }
 
 desktop_workspaces: desktop_layout.Workspace_Manager
@@ -281,11 +284,13 @@ desktop_context_menu_open :: proc "contextless" (x, y: int) {
 	damage_whole_screen()
 }
 
-// desktop_context_menu_damage records the card of the open context menu,
-// with the room of every item, so a filter that shrinks it leaves no row.
+// desktop_context_menu_damage records the card of the open context menu
+// including its shadow and any group separators, so closing or filtering leaves
+// no stale pixels.
 desktop_context_menu_damage :: proc "contextless" () {
-	height := interface.CONTEXT_MENU_HEADER_HEIGHT + max(1, desktop_context_menu.item_count) * interface.CONTEXT_MENU_ROW_HEIGHT + interface.CONTEXT_MENU_FOOT
-	damage_add(desktop_context_menu.x, desktop_context_menu.y, interface.CONTEXT_MENU_WIDTH, height)
+	height := interface.CONTEXT_MENU_HEADER_HEIGHT + max(1, desktop_context_menu.item_count) * (interface.CONTEXT_MENU_ROW_HEIGHT + interface.CONTEXT_MENU_SEPARATOR_HEIGHT) + interface.CONTEXT_MENU_FOOT + interface.CONTEXT_MENU_SHADOW_OFFSET
+	width := max(desktop_context_menu.width, interface.CONTEXT_MENU_WIDTH) + interface.CONTEXT_MENU_SHADOW_OFFSET
+	damage_add(desktop_context_menu.x, desktop_context_menu.y, width, height)
 }
 
 // desktop_context_menu_pointer gives the pointer to the open context menu.
@@ -304,11 +309,11 @@ desktop_context_menu_pointer :: proc "contextless" (x, y: int, pressed: bool) ->
 	return result.consumed
 }
 
-desktop_context_menu_key :: proc "contextless" (code: u32, character: rune, pressed: bool) -> bool {
+desktop_context_menu_key :: proc "contextless" (code: u32, character: rune, pressed: bool, modifiers: u32) -> bool {
 	if !desktop_context_menu.open {
 		return false
 	}
-	consumed, act_id := interface.context_menu_handle_key(&desktop_context_menu, code, character, pressed)
+	consumed, act_id := interface.context_menu_handle_key(&desktop_context_menu, code, character, pressed, modifiers)
 	if !consumed {
 		return false
 	}
@@ -369,6 +374,39 @@ desktop_context_action :: proc "contextless" (act_id: u32) {
 		case .Window_Close:
 			if index, window_there := taskbar_menu_window_take(); window_there {
 				system.send(&control.completions, ring.Record{kind = u32(display.Control.Stop), values = {0 = u64(clients[index].ring_memory)}})
+			}
+		case .Window_Maximize:
+			if index, window_there := taskbar_menu_window_take(); window_there {
+				clients[index].minimized = false
+				for position in 0 ..< order_count {
+					if order[position] == index {
+						raise(position)
+						break
+					}
+				}
+				_ = desktop_toggle_maximize(&clients[index])
+			}
+		case .Window_Snap_Left:
+			if index, window_there := taskbar_menu_window_take(); window_there {
+				clients[index].minimized = false
+				for position in 0 ..< order_count {
+					if order[position] == index {
+						raise(position)
+						break
+					}
+				}
+				_ = desktop_snap_window(&clients[index], .Left_Half)
+			}
+		case .Window_Snap_Right:
+			if index, window_there := taskbar_menu_window_take(); window_there {
+				clients[index].minimized = false
+				for position in 0 ..< order_count {
+					if order[position] == index {
+						raise(position)
+						break
+					}
+				}
+				_ = desktop_snap_window(&clients[index], .Right_Half)
 			}
 		}
 		damage_whole_screen()
@@ -599,16 +637,40 @@ desktop_taskbar_menu_open :: proc "contextless" (x, y: int) -> bool {
 		return false
 	}
 	window_switcher_cancel() // window_switcher.odin: a menu takes the keys.
+	tray_widget_close()
 	taskbar_menu_window = order[last_used]
 	client := &clients[taskbar_menu_window]
-	items := [3]interface.Context_Menu_Item {
+	items := [4]interface.Context_Menu_Item {
 		{id = u32(Desktop_Context_Action.Window_Front), label = client.minimized ? "Restore" : "Bring to front", disabled = window_in_front(taskbar_menu_window)},
+		{id = u32(Desktop_Context_Action.Window_Maximize), label = client.maximized ? "Restore size" : "Maximize", shortcut = "Ctrl+Shift+Up", disabled = !client.resizable && !client.maximized},
 		{id = u32(Desktop_Context_Action.Window_Minimize), label = "Minimize", disabled = client.minimized},
-		{id = u32(Desktop_Context_Action.Window_Close), label = "Close"},
+		{id = u32(Desktop_Context_Action.Window_Close), label = "Close", danger = true, separator_before = true},
 	}
-	interface.context_menu_open(&desktop_context_menu, x, y, desktop_width, desktop_work_bottom(), items[:])
+	open_y := bar_layout.edge == .Top ? max(y, desktop_work_top()) : y
+	interface.context_menu_open_compact(&desktop_context_menu, x, open_y, desktop_width, desktop_work_bottom(), items[:])
 	damage_whole_screen()
 	return true
+}
+
+// desktop_window_menu_open opens the compact window action menu on a right
+// click over a window's titlebar or frame.
+desktop_window_menu_open :: proc "contextless" (client_index, x, y: int) {
+	if !desktop_features_ready || client_index < 0 || client_index >= len(clients) || !clients[client_index].created {
+		return
+	}
+	window_switcher_cancel()
+	tray_widget_close()
+	taskbar_menu_window = client_index
+	client := &clients[client_index]
+	items := [5]interface.Context_Menu_Item {
+		{id = u32(Desktop_Context_Action.Window_Maximize), label = client.maximized ? "Restore" : "Maximize", shortcut = "Ctrl+Shift+Up", disabled = !client.resizable && !client.maximized},
+		{id = u32(Desktop_Context_Action.Window_Minimize), label = "Minimize"},
+		{id = u32(Desktop_Context_Action.Window_Snap_Left), label = "Snap left", shortcut = "Ctrl+Shift+Left", separator_before = true},
+		{id = u32(Desktop_Context_Action.Window_Snap_Right), label = "Snap right", shortcut = "Ctrl+Shift+Right"},
+		{id = u32(Desktop_Context_Action.Window_Close), label = "Close", danger = true, separator_before = true},
+	}
+	interface.context_menu_open_compact(&desktop_context_menu, x, max(y, desktop_work_top()), desktop_width, desktop_work_bottom(), items[:])
+	damage_whole_screen()
 }
 
 // taskbar_menu_window_take gives the window of the menu of a plate, if it
@@ -873,14 +935,11 @@ desktop_workspace_select :: proc "contextless" (index: u8) -> bool {
 	return true
 }
 
-// desktop_snap_front_window gives the window in front the frame of a zone
-// of the work area. The zone Maximized toggles the maximized state, so the
-// button of the title bar, the menu and Ctrl+Shift+Up take one path.
-desktop_snap_front_window :: proc "contextless" (zone: desktop_layout.Snap_Zone) -> bool {
-	if !desktop_features_ready || order_count == 0 {
+// desktop_snap_window gives client the frame of a zone of the work area.
+desktop_snap_window :: proc "contextless" (client: ^Client, zone: desktop_layout.Snap_Zone) -> bool {
+	if !desktop_features_ready || client == nil {
 		return false
 	}
-	client := &clients[order[order_count - 1]]
 	if zone == .Maximized {
 		return desktop_toggle_maximize(client)
 	}
@@ -900,6 +959,16 @@ desktop_snap_front_window :: proc "contextless" (zone: desktop_layout.Snap_Zone)
 	}
 	window_frame_take(client, x, y, outer_width, outer_height)
 	return true
+}
+
+// desktop_snap_front_window gives the window in front the frame of a zone
+// of the work area. The zone Maximized toggles the maximized state, so the
+// button of the title bar, the menu and Ctrl+Shift+Up take one path.
+desktop_snap_front_window :: proc "contextless" (zone: desktop_layout.Snap_Zone) -> bool {
+	if !desktop_features_ready || order_count == 0 {
+		return false
+	}
+	return desktop_snap_window(&clients[order[order_count - 1]], zone)
 }
 
 // desktop_zone_frame gives the frame of a zone of the work area: its place

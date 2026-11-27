@@ -225,9 +225,11 @@ window_scroll_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^di
 	input := &drawing.input
 	drawing.view_pointer_x, drawing.view_pointer_y = input.pointer_x, input.pointer_y
 	drawing.view_press_x, drawing.view_press_y = input.press_x, input.press_y
+	drawing.view_right_press_x, drawing.view_right_press_y = input.right_press_x, input.right_press_y
 	drawing.input_moved = true
 	press_in_layout, pointer_in_layout: bool
 	input.press_x, input.press_y, press_in_layout = layout_point_of_view(view, drawing.scroll_x, drawing.scroll_y, view_width, view_height, input.press_x, input.press_y)
+	input.right_press_x, input.right_press_y, _ = layout_point_of_view(view, drawing.scroll_x, drawing.scroll_y, view_width, view_height, input.right_press_x, input.right_press_y)
 	input.pointer_x, input.pointer_y, pointer_in_layout = layout_point_of_view(view, drawing.scroll_x, drawing.scroll_y, view_width, view_height, input.pointer_x, input.pointer_y)
 	// A drag that a press in the layout started stays in the layout over a
 	// bar: the element that holds it follows the pointer.
@@ -247,6 +249,7 @@ window_input_unshift :: proc "contextless" (drawing: ^Window_Drawing) {
 	input := &drawing.input
 	input.pointer_x, input.pointer_y = drawing.view_pointer_x, drawing.view_pointer_y
 	input.press_x, input.press_y = drawing.view_press_x, drawing.view_press_y
+	input.right_press_x, input.right_press_y = drawing.view_right_press_x, drawing.view_right_press_y
 	drawing.input_moved = false
 }
 

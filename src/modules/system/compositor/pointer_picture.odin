@@ -237,8 +237,14 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 	if menu_open != .None && (menu_line >= 0 || menu_action != .None) {
 		return .Pointing_Hand
 	}
-	if interface.context_menu_row_at(&desktop_context_menu, pointer_x, pointer_y) >= 0 {
-		return .Pointing_Hand
+	if interface.context_menu_contains(&desktop_context_menu, pointer_x, pointer_y) {
+		if row := interface.context_menu_row_at(&desktop_context_menu, pointer_x, pointer_y); row >= 0 {
+			return interface.context_menu_row_enabled(&desktop_context_menu, row) ? .Pointing_Hand : .Arrow
+		}
+		if !desktop_context_menu.compact && pointer_y < desktop_context_menu.y + interface.CONTEXT_MENU_HEADER_HEIGHT {
+			return .Text
+		}
+		return .Arrow
 	}
 	if bar.button_at(bar_layout, pointer_x, pointer_y) != .None {
 		return .Pointing_Hand
