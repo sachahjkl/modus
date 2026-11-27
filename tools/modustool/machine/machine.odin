@@ -596,6 +596,8 @@ Machine :: struct {
 	started_at:  time.Tick, // When QEMU started: the first Wait says how long the boot took.
 	started_unix: i64, // When QEMU started, in seconds since 1970: no date that the machine prints is before it.
 	clock_offset_seconds: i64, // The seconds that the real-time clock of the machine is ahead of the clock of the host (machine_clock.odin).
+	last_date_unix: i64, // Last guest UTC date observed in a .Date step (0 if none), used to anchor snapshot guest clock without startup drift.
+	last_date_at:   time.Tick, // Host tick when last_date_unix was observed.
 	times:       Machine_Step_Times, // The times of the step that runs (test_times.odin).
 	wait_share:  Host_Share_Sample, // The counters of the host at the start of the step Wait that runs (host_share.odin).
 	wait_started: time.Tick, // When that step began.
@@ -1375,7 +1377,6 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		forward.listener = &listener
 	}
 	defer listener_stop(&listener)
-	clock := machine_clock_of(time.time_to_unix(time.now()))
 	use_qcow2 := false
 	qcow2_vars := ""
 	qcow2_scratch := ""
@@ -1443,7 +1444,9 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	monitor_read, monitor_write: ^os.File
 	qmp: Qmp
 	qmp_opened := false
+	clock: Machine_Clock
 	for try := 1; ; try += 1 {
+		clock = machine_clock_of(time.time_to_unix(time.now()))
 		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, start_paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_screen, options.without_ps2_controller, options.entropy_device_silent, options.no_network_device, options.data_disk_without_ioevent, options.without_pit, options.firmware_variables, serial_input_path, options.tablet, options.gpu_scanout, "", use_qcow2, qcow2_vars, qcow2_scratch, serial_append, options.memory_mib)
 		if !ok {
 			return false
@@ -1543,6 +1546,9 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	passed := qmp_opened && scenario_run(&machine, selected)
 	if passed && capturing_snapshot {
 		guest_clock_now := machine.started_unix + machine.clock_offset_seconds + i64(time.duration_seconds(time.tick_since(machine.started_at)))
+		if machine.last_date_unix > 0 {
+			guest_clock_now = machine.last_date_unix + i64(time.duration_seconds(time.tick_since(machine.last_date_at)))
+		}
 		save_ref := qmp_snapshot_save_paused(&machine.qmp, options.snapshot_capture_tag)
 		if save_ref != .None {
 			fmt.eprintfln("modustool: test failed: cannot save usable-boot QMP snapshot %s (%v)", options.snapshot_capture_tag, save_ref)
@@ -1865,6 +1871,8 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				return false
 			}
 			date_check(index, value, step.text, machine.started_unix, machine.clock_offset_seconds) or_return
+			machine.last_date_unix = value
+			machine.last_date_at = time.tick_now()
 		case .Screen_Size:
 			if !log_wait(machine, step.text, step.any_order) {
 				fmt.eprintfln("modustool: test failed: step %d: the machine did not print \"%s\"", index + 1, step.text)
