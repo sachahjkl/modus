@@ -368,42 +368,12 @@ draw_focus_ring :: proc "contextless" (table: ^Draw_Table, area: Area, element: 
 	draw_outline(table, ring.x, ring.y, ring.width, ring.height, FOCUS_RING_WIDTH, graphics.colors.text_strong, element)
 }
 
-// button draws a button with a label: the track, blue when it has the focus
-// or the pointer is over it. Enter or Space with the focus, or a press and a
-// release of the pointer on it, activate it. Its label is its element name
-// (element_name).
+// button draws a secondary button with machined surface depth, hover, pressed,
+// selected/open, and focus ring feedback (rich_widgets.odin). Enter or Space
+// with the focus, or a press and a release of the pointer on it, activate it.
+// Its label is its element name (element_name).
 button :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, label: string, open := false, toggle: accessibility.Toggle_State = .None) -> Element_Result {
-	result := element_interact(frame, element, area, .Button)
-	element_name(frame, area, label)
-	color := graphics.Color(graphics.colors.track)
-	switch {
-	case open || result.focused && result.under_pointer:
-		color = graphics.colors.chosen
-	case result.focused || result.under_pointer:
-		color = graphics.shade(graphics.colors.title, 60)
-	}
-	shown := text_fit(frame.table, FONT_INTERFACE, label, area.width - 16)
-	states := accessibility.Element_States{.Focusable}
-	if result.focused {
-		states += {.Focused}
-	}
-	effective_toggle := toggle != .None ? toggle : (open ? accessibility.Toggle_State.True : accessibility.Toggle_State.None)
-	draw_element_push(frame.table, area, u32(element), .Button, {
-		toggle  = effective_toggle,
-		states  = states,
-		actions = {.Press, .Focus},
-		name    = shown != label ? label : "",
-	})
-	defer draw_element_pop(frame.table)
-	draw_rectangle(frame.table, area.x, area.y, area.width, area.height, color, u32(element))
-	draw_text(frame.table, area.x + 8, area.y + (area.height - LINE) / 2, shown, color == graphics.colors.track ? graphics.colors.text : graphics.COLOR_WHITE, FONT_INTERFACE, u32(element))
-	// The focus has its own mark, the outline outside the button: a button
-	// that is open, or the value in use, is blue already, and the blue of
-	// the focus alone does not show where the focus is.
-	if result.focused {
-		draw_focus_ring(frame.table, area, u32(element))
-	}
-	return result
+	return button_styled(frame, area, element, label, .Secondary, open = open, toggle = toggle)
 }
 
 // The lines of a list whose names are measured in one call; the lines past

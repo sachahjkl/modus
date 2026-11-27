@@ -77,7 +77,7 @@ the_outline_of_a_button_with_the_focus :: proc(t: ^testing.T) {
 		fill_place := -1
 		for record, index in table.records[:table.record_count] {
 			view := record_view(record)
-			if view.read && view.kind == .Rectangle && view.x == AREA.x && view.y == AREA.y && view.width == AREA.width && view.height == AREA.height {
+			if view.read && (view.kind == .Rectangle || view.kind == .Gradient) && view.x == AREA.x && view.y == AREA.y && view.width == AREA.width && view.height == AREA.height {
 				fill_place = index
 				break
 			}
