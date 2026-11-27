@@ -12,9 +12,11 @@ package recipes_service
 
 import "base:intrinsics"
 import "internal:recipes/recipes_core"
+import "modus:contract/blake3"
 import "modus:contract/call_outcome"
 import "modus:contract/datagram"
 import "modus:contract/errors"
+import "modus:contract/hardware_keys"
 import "modus:contract/object_cache"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/ring"
@@ -266,6 +268,35 @@ remote_cache_transport_recv :: proc "contextless" (buffer: []u8, deadline_us: u6
 		}
 		_ = system.wait_end(&wait, deadline_ms)
 	}
+}
+
+// Live hardware-key verification gate for realisation signing.
+realisation_hardware_key_gate: recipes_core.Realisation_Key_Gate
+
+// remote_cache_issue_realisation_challenge issues a single-use challenge on
+// realisation_hardware_key_gate requiring User_Present and User_Verified.
+remote_cache_issue_realisation_challenge :: proc "contextless" (
+	output_hash: blake3.Hash,
+	nonce: [hardware_keys.HARDWARE_KEY_CHALLENGE_SIZE]u8,
+	scope_out: ^[recipes_core.REALISATION_SCOPE_BYTES]u8,
+) -> (challenge: hardware_keys.Hardware_Key_Challenge, refusal: hardware_keys.Hardware_Key_Refusal) {
+	return recipes_core.realisation_key_challenge_issue(&realisation_hardware_key_gate, output_hash, nonce, scope_out)
+}
+
+// remote_cache_verify_realisation_hardware_key consumes the pending single-use
+// challenge and verifies a canonical hardware-key assertion bound to
+// output_hash under .Sign_Realisation using the imported cryptography module's
+// Ed25519 verifier.
+remote_cache_verify_realisation_hardware_key :: proc "contextless" (
+	output_hash: blake3.Hash,
+	wire_assertion: []u8,
+) -> hardware_keys.Hardware_Key_Refusal {
+	return recipes_core.realisation_hardware_key_verify(
+		&realisation_hardware_key_gate,
+		output_hash,
+		wire_assertion,
+		remote_cache_ed25519_verify,
+	)
 }
 
 @(private = "file")

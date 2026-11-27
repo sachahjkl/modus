@@ -181,7 +181,13 @@ ring_write :: proc "contextless" (ring: ^Ring, commands: []u8) -> (seqno: u32, p
 	copy(buffer[offset:offset + first], commands[:first])
 	copy(buffer[:len(commands) - first], commands[first:])
 	ring.tail += u32(len(commands))
+	// Full fence before publishing tail flushes Write_Combining store buffers
+	// so command bytes are globally visible before tail advances; full fence
+	// after storing tail closes the Store-Load Dekker race before reading
+	// RING_STATUS_OFFSET for vkNotifyRingMESA.
+	intrinsics.atomic_thread_fence(.Seq_Cst)
 	intrinsics.atomic_store_explicit(control_word(ring.shared, RING_TAIL_OFFSET), ring.tail, .Release)
+	intrinsics.atomic_thread_fence(.Seq_Cst)
 	return ring.tail, .None
 }
 

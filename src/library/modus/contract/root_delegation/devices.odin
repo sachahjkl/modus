@@ -41,7 +41,7 @@ DEVICES_BIND_SPEC_OFFSET :: 256
 #assert(size_of(Pci_Discovered_Device) <= DEVICES_BIND_SPEC_OFFSET)
 #assert(size_of(Device_Grant_Spec) <= DEVICES_BIND_PLACE_BYTES - DEVICES_BIND_SPEC_OFFSET)
 
-// PCI vendor and device identifiers for VirtIO 1.0 modern devices and TPM 2.0.
+// PCI vendor and device identifiers for VirtIO 1.0 modern devices, NVMe, and TPM 2.0.
 PCI_VENDOR_VIRTIO :: u16(0x1AF4)
 PCI_DEVICE_VIRTIO_NETWORK :: u16(0x1041)
 PCI_DEVICE_VIRTIO_BLOCK :: u16(0x1042)
@@ -49,6 +49,8 @@ PCI_DEVICE_VIRTIO_ENTROPY :: u16(0x1044)
 PCI_DEVICE_VIRTIO_GPU :: u16(0x1050)
 PCI_DEVICE_VIRTIO_INPUT :: u16(0x1052)
 PCI_DEVICE_VIRTIO_SOUND :: u16(0x1059)
+PCI_VENDOR_QEMU_NVME :: u16(0x1B36)
+PCI_DEVICE_QEMU_NVME :: u16(0x0010)
 PCI_VENDOR_INFINEON_TPM :: u16(0x15D1)
 PCI_DEVICE_TPM_SLB9670 :: u16(0x001B)
 
@@ -402,10 +404,11 @@ device_identity_table_add :: proc "contextless" (table: ^Device_Identity_Table, 
 }
 
 // device_identity_table_default returns the built-in PCI identity table for
-// the supported VirtIO 1.0 devices and TPM 2.0.
+// the supported VirtIO 1.0 devices, QEMU NVMe, and TPM 2.0.
 device_identity_table_default :: proc "contextless" () -> (table: Device_Identity_Table) {
-	defaults := [7]Device_Identity_Entry {
+	defaults := [8]Device_Identity_Entry {
 		{pci_vendor_id = PCI_VENDOR_VIRTIO, pci_device_id = PCI_DEVICE_VIRTIO_BLOCK, role = .Block_Device, required_bar_count = 1, needs_iommu = true, needs_interrupt = true},
+		{pci_vendor_id = PCI_VENDOR_QEMU_NVME, pci_device_id = PCI_DEVICE_QEMU_NVME, role = .Block_Device, required_bar_count = 1, needs_iommu = true, needs_interrupt = true},
 		{pci_vendor_id = PCI_VENDOR_VIRTIO, pci_device_id = PCI_DEVICE_VIRTIO_NETWORK, role = .Network_Device, required_bar_count = 1, needs_iommu = true, needs_interrupt = true},
 		{pci_vendor_id = PCI_VENDOR_VIRTIO, pci_device_id = PCI_DEVICE_VIRTIO_SOUND, role = .Sound_Device, required_bar_count = 1, needs_iommu = true, needs_interrupt = true},
 		{pci_vendor_id = PCI_VENDOR_VIRTIO, pci_device_id = PCI_DEVICE_VIRTIO_ENTROPY, role = .Entropy_Device, required_bar_count = 1, needs_iommu = true, needs_interrupt = true},

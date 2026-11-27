@@ -338,6 +338,38 @@ common_place :: proc "contextless" (configuration: []u8) -> (bar: u8, place: u32
 	return 0, 0, false
 }
 
+// shared_memory_place gives the BAR, 64-bit byte offset, and 64-bit byte
+// length of the first virtio shared memory capability matching region_id.
+// Walks all capabilities using the 2-byte PCI capability header and checks
+// 64-bit end overflow before returning found.
+shared_memory_place :: proc "contextless" (configuration: []u8, region_id: u8) -> (bar: u8, place: u64, length: u64, found: bool) {
+	if len(configuration) < pci.CONFIGURATION_SIZE {
+		return 0, 0, 0, false
+	}
+	offset := u32(configuration[pci.OFFSET_CAPABILITIES]) &~ 3
+	for _ in 0 ..< 48 {
+		if offset < 0x40 || offset > pci.CONFIGURATION_SIZE - 2 {
+			break
+		}
+		if configuration[offset] == CAPABILITY_VIRTIO &&
+			offset <= pci.CONFIGURATION_SIZE - SHARED_MEMORY_CAPABILITY_LENGTH &&
+			configuration[offset + 2] >= SHARED_MEMORY_CAPABILITY_LENGTH &&
+			configuration[offset + 3] == CAPABILITY_SHARED_MEMORY &&
+			configuration[offset + 5] == region_id {
+			cap_bar := configuration[offset + 4]
+			cap_place := u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 8]))) |
+				(u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 16]))) << 32)
+			cap_length := u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 12]))) |
+				(u64(intrinsics.unaligned_load((^u32)(&configuration[offset + 20]))) << 32)
+			if cap_bar < pci.BAR_COUNT && cap_length > 0 && cap_place <= max(u64) - cap_length {
+				return cap_bar, cap_place, cap_length, true
+			}
+		}
+		offset = u32(configuration[offset + 1]) &~ 3
+	}
+	return 0, 0, 0, false
+}
+
 // status_write writes the device status.
 status_write :: proc "contextless" (device: ^Device, value: u8) {
 	intrinsics.volatile_store((^u8)(device.common + COMMON_STATUS), value)

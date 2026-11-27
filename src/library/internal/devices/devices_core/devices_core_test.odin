@@ -2,6 +2,7 @@
 package devices_core
 
 import "core:testing"
+import "modus:contract/pci_topology"
 import rd "modus:contract/root_delegation"
 
 @(private = "file")
@@ -187,4 +188,117 @@ bind_device_refuses_a_record_that_the_command_does_not_name :: proc(t: ^testing.
 	testing.expect_value(t, refusal, Devices_Bind_Refusal.None)
 	testing.expect_value(t, spec.location, blk.location)
 	testing.expect_value(t, state.counters.active_bindings, u64(1))
+}
+
+@(test)
+pci_topology_ecam_ivmd_and_forged_irq_enforcement :: proc(t: ^testing.T) {
+	state: Devices_State
+	state_init(&state)
+
+	// Unaligned ECAM base and inverted bus range are refused.
+	testing.expect(t, !register_root_bus(&state, 0, 0, 15, 0xB000_0001))
+	testing.expect(t, !register_root_bus(&state, 0, 16, 8, 0xB000_0000))
+	testing.expect(t, !register_root_bus(&state, 0, 0, 15, 0))
+
+	// Register valid segment 0 ECAM window [0..15] and number a PCIe bridge.
+	testing.expect(t, register_root_bus(&state, 0, 0, 15, 0xB000_0000))
+	// Overlapping root bus range in same segment is refused.
+	testing.expect(t, !register_root_bus(&state, 0, 8, 20, 0xC000_0000))
+	// Disjoint second root bus segment succeeds.
+	testing.expect(t, register_root_bus(&state, 1, 0, 7, 0xD000_0000))
+
+	sec_bus, bridge_ok := number_bridge(&state, 0, 0, 0x1C, 0)
+	testing.expect(t, bridge_ok && sec_bus == 1)
+
+	// Install shared multi-device IVMD reserved DMA range covering bus 0..1.
+	testing.expect(t, register_ivmd(&state, 0xFE50_0000, 0xFE51_0000, 0x0000, 0x01FF, true))
+	testing.expect(t, !register_ivmd(&state, 0xFE51_0000, 0xFE50_0000, 0x0000, 0x01FF, true))
+
+	// A QEMU NVMe controller whose BAR collides with the IVMD range is refused.
+	nvme_collision := rd.Pci_Discovered_Device{
+		location         = {bus = sec_bus, device = 0, function = 0},
+		pci_vendor_id    = rd.PCI_VENDOR_QEMU_NVME,
+		pci_device_id    = rd.PCI_DEVICE_QEMU_NVME,
+		bars             = {0 = {base_address = 0xFE50_4000, page_count = 4}},
+		bar_count        = 1,
+		interrupt_vector = 0x50,
+		has_interrupt    = true,
+	}
+	_, ivmd_ref, _ := scan_and_bind(&state, &nvme_collision, 12)
+	testing.expect_value(t, ivmd_ref, Devices_Bind_Refusal.Reserved_Dma_Collision)
+
+	// A device outside the configured ECAM bus range [0..15] is refused.
+	nvme_oob := nvme_collision
+	nvme_oob.location.bus = 16
+	nvme_oob.bars[0].base_address = 0xFE60_0000
+	_, ecam_ref, _ := scan_and_bind(&state, &nvme_oob, 12)
+	testing.expect_value(t, ecam_ref, Devices_Bind_Refusal.Ecam_Page_Conflict)
+
+	// Valid QEMU NVMe device behind the bridge binds with exact 4 KiB ECAM page
+	// and installs its AMD-Vi IRTE entry for forged-IRQ verification.
+	nvme_ok := nvme_collision
+	nvme_ok.bars[0].base_address = 0xFE60_0000
+	spec, ok_ref, _ := scan_and_bind(&state, &nvme_ok, 12)
+	testing.expect_value(t, ok_ref, Devices_Bind_Refusal.None)
+	testing.expect_value(t, spec.role, rd.Device_Class_Role.Block_Device)
+
+	binding, found := find_binding(&state, nvme_ok.location)
+	testing.expect(t, found)
+	expected_ecam, ecam_err := pci_topology.ecam_function_page_address(state.ecam_region, sec_bus, 0, 0)
+	testing.expect_value(t, ecam_err, pci_topology.Ecam_Refusal.None)
+	testing.expect_value(t, binding.ecam_function_page, expected_ecam)
+
+	// Legitimate IRQ is allowed; forged source BDF or wrong vector is refused.
+	testing.expect_value(t, verify_device_interrupt(&state, nvme_ok.location, 0x50), pci_topology.Iommu_Decision.Allow)
+	testing.expect_value(t, verify_device_interrupt(&state, nvme_ok.location, 0x51), pci_topology.Iommu_Decision.Refuse_Forged_Irq)
+	testing.expect_value(t, verify_device_interrupt(&state, {bus = 0, device = 1, function = 0}, 0x50), pci_topology.Iommu_Decision.Refuse_Forged_Irq)
+	testing.expect_value(t, check_device_dma(&state, nvme_ok.location, 0xFE50_0000, 4096), pci_topology.Iommu_Decision.Refuse_Reserved)
+	testing.expect_value(t, check_device_dma(&state, nvme_ok.location, 0xFE60_0000, 4096), pci_topology.Iommu_Decision.Allow)
+}
+
+@(test)
+amd_iommu_irte_refuses_bad_vectors_exhaustion_and_unbinds_on_release :: proc(t: ^testing.T) {
+	state: Devices_State
+	state_init(&state)
+
+	blk := make_virtio_device(0, 0x10, 0, rd.PCI_DEVICE_VIRTIO_BLOCK, 0xFE00_0000)
+
+	// Interrupt vectors below 32 or above 255 are refused with Irte_Bind_Failed.
+	low_vec := blk
+	low_vec.interrupt_vector = 31
+	_, low_ref, _ := scan_and_bind(&state, &low_vec, 1)
+	testing.expect_value(t, low_ref, Devices_Bind_Refusal.Irte_Bind_Failed)
+	testing.expect_value(t, state.counters.active_bindings, u64(0))
+	testing.expect_value(t, state.iommu.irte_count, 0)
+
+	high_vec := blk
+	high_vec.interrupt_vector = 256
+	_, high_ref, _ := scan_and_bind(&state, &high_vec, 1)
+	testing.expect_value(t, high_ref, Devices_Bind_Refusal.Irte_Bind_Failed)
+	testing.expect_value(t, state.counters.active_bindings, u64(0))
+	testing.expect_value(t, state.iommu.irte_count, 0)
+
+	// Repeated bind and release cycles beyond MAX_IOMMU_IRTE never leak IRTE slots,
+	// and released devices fail forged-IRQ checks.
+	for cycle in 0 ..< pci_topology.MAX_IOMMU_IRTE + 5 {
+		_, ref, _ := scan_and_bind(&state, &blk, u32(10 + cycle))
+		testing.expect_value(t, ref, Devices_Bind_Refusal.None)
+		testing.expect_value(t, state.iommu.irte_count, 1)
+		testing.expect_value(t, verify_device_interrupt(&state, blk.location, u8(blk.interrupt_vector)), pci_topology.Iommu_Decision.Allow)
+		if cycle % 2 == 0 {
+			testing.expect(t, release_device(&state, blk.location))
+		} else {
+			testing.expect_value(t, release_service(&state, u32(10 + cycle)), u32(1))
+		}
+		testing.expect_value(t, state.iommu.irte_count, 0)
+		testing.expect_value(t, verify_device_interrupt(&state, blk.location, u8(blk.interrupt_vector)), pci_topology.Iommu_Decision.Refuse_Forged_Irq)
+	}
+
+	// Exhausting the IRTE table causes bind refusal with zero binding leak.
+	for i in 0 ..< pci_topology.MAX_IOMMU_IRTE {
+		testing.expect(t, pci_topology.amd_iommu_bind_irq(&state.iommu, u16(0x0200 + i), u8(0x40 + (i % 100)), 0))
+	}
+	_, full_ref, _ := scan_and_bind(&state, &blk, 99)
+	testing.expect_value(t, full_ref, Devices_Bind_Refusal.Irte_Bind_Failed)
+	testing.expect_value(t, state.counters.active_bindings, u64(0))
 }

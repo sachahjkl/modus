@@ -85,13 +85,14 @@ Style_Cache :: struct {
 }
 
 Origin_State :: struct {
-	used:    bool,
-	origin:  html_css.Document_Origin,
-	uses:    u64, // The requests served: a full table gives the state used least to a new origin.
-	storage: [STORAGE_SLOT_CAPACITY]Key_Value,
-	cookies: [COOKIE_SLOT_CAPACITY]Key_Value,
-	forms:   [FORM_MEMORY_CAPACITY]Form_Memory,
-	style:   Style_Cache,
+	used:       bool,
+	process_id: u64,
+	origin:     html_css.Document_Origin,
+	uses:       u64, // The requests served: a full table gives the state used least to a new origin.
+	storage:    [STORAGE_SLOT_CAPACITY]Key_Value,
+	cookies:    [COOKIE_SLOT_CAPACITY]Key_Value,
+	forms:      [FORM_MEMORY_CAPACITY]Form_Memory,
+	style:      Style_Cache,
 }
 
 origin_states: [ORIGIN_STATE_CAPACITY]Origin_State
@@ -455,9 +456,18 @@ origin_state_find :: proc "contextless" (origin: ^html_css.Document_Origin, crea
 			chosen = &state
 		}
 	}
+	if chosen.used {
+		browser_origin_release_slot(chosen.process_id)
+	}
 	chosen^ = {}
 	chosen.used = true
 	chosen.origin = origin^
+	pid, acq_ref := browser_origin_acquire_slot(origin)
+	if origin.scheme != .Modus && (acq_ref != .None || pid == 0) {
+		chosen^ = {}
+		return nil
+	}
+	chosen.process_id = pid
 	return chosen
 }
 
@@ -574,7 +584,23 @@ origin_worker_serve :: proc "contextless" (request_bytes: []u8, source: []u8, re
 	reads := request.kind == .Storage_Read || request.kind == .Forms_Restore || request.kind == .Cookie_Header
 	state := origin_state_find(&request.owner, !reads)
 	reply.status = .Nothing_Kept
+	if state == nil && !reads {
+		reply.status = .Refused_Other_Origin
+		if request.kind == .Render {
+			refused := Origin_Render_Tree{status = .Refused_Other_Origin, origin = request.requester}
+			return origin_render_tree_encode(&refused, reply_bytes)
+		}
+		return origin_reply_encode(&reply, reply_bytes)
+	}
 	if state != nil {
+		if browser_origin_enforce(state.process_id, &request.requester) != .None {
+			reply.status = .Refused_Other_Origin
+			if request.kind == .Render {
+				refused := Origin_Render_Tree{status = .Refused_Other_Origin, origin = request.requester}
+				return origin_render_tree_encode(&refused, reply_bytes)
+			}
+			return origin_reply_encode(&reply, reply_bytes)
+		}
 		state.uses += 1
 	}
 	switch request.kind {

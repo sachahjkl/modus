@@ -42,11 +42,11 @@ RESPONSE_COPY_BYTES :: virtio_gpu.RESP_DISPLAY_INFO_SIZE
 MAX_CAPSETS_PROBED :: u32(16)
 DEVICE_ANSWER_BOUND_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
 
-// The one Venus context of the service and its command ring blob.
+// The one Venus context of the service and its command ring + reply stream blob.
 VENUS_CONTEXT_ID :: u32(1)
 VENUS_CONTEXT_NAME :: "modus-venus"
 VENUS_RING_BUFFER_BYTES :: u32(64 * 1024)
-VENUS_RING_BLOB_BYTES :: (u64(venus_vulkan.RING_BUFFER_OFFSET) + u64(VENUS_RING_BUFFER_BYTES) + system.PAGE_SIZE - 1) / system.PAGE_SIZE * system.PAGE_SIZE
+VENUS_RING_BLOB_BYTES :: VENUS_COMBINED_BLOB_BYTES
 MAX_VENUS_SUBMIT_BYTES :: REQUEST_BUFFER_BYTES - virtio_gpu.SUBMIT_3D_HEADER_SIZE
 #assert(virtio_gpu.CTRL_HEADER_SIZE + venus_vulkan.VENUS_CAPSET_BYTES <= RESPONSE_COPY_BYTES)
 #assert(virtio_gpu.RESP_MAP_INFO_SIZE <= RESPONSE_COPY_BYTES)
@@ -84,14 +84,19 @@ venus_available: bool
 venus_max_version: u32
 venus_max_size: u32
 
-// The Venus context: 0 when the device carries no Venus. The ring blob is a
-// host blob attached to the context; its mapping into a process waits for the
-// device mapping of the kernel, so the service reports its cache type only.
+// The Venus context: 0 when the device carries no Venus. When the device
+// exposes a host-visible shared memory BAR, the service maps it with kernel
+// Write_Combining (when reported) and drives live Venus ring submissions.
 venus_support: virtio_gpu.Venus_Support
 venus_capset: venus_vulkan.Venus_Capset
 venus_context_id: u32
 venus_ring_resource_id: u32
 venus_ring_cache: virtio_gpu.Map_Cache
+venus_ring_runtime: Venus_Ring_Runtime
+venus_shm_bar_handle: system.Handle
+venus_shm_offset: u64
+venus_shm_length: u64
+venus_shm_mapped: rawptr
 
 // Currently attached 2D scanout framebuffer, and its mapping in this
 // service: the service reads the present list of its last page.
@@ -359,6 +364,52 @@ venus_ring_start :: proc "contextless" () {
 		return
 	}
 	venus_ring_cache = map_info.cache
+
+	// Map the host-visible shared memory BAR with Write_Combining when reported
+	// and register the live Venus command ring via vkCreateRingMESA.
+	if venus_shm_bar_handle == 0 || venus_shm_length < VENUS_RING_BLOB_BYTES {
+		return
+	}
+	map_flags, cache_ok := venus_map_flags_for_cache(venus_ring_cache)
+	if !cache_ok {
+		return
+	}
+	shm_pages, shm_size_status := system.memory_size(venus_shm_bar_handle)
+	if shm_size_status != .Succeeded || !venus_shm_window_valid(venus_shm_offset, VENUS_RING_BLOB_BYTES, shm_pages * system.PAGE_SIZE) {
+		return
+	}
+	mapped_addr, shm_map_status := system.memory_map(venus_shm_bar_handle, map_flags)
+	if shm_map_status != .Succeeded {
+		return
+	}
+	blob_slice := ([^]u8)(uintptr(mapped_addr) + uintptr(venus_shm_offset))[:VENUS_RING_BLOB_BYTES]
+	create_cmd: [VENUS_CONTROL_CMD_MAX_BYTES]u8
+	create_len, init_prob := venus_runtime_init(
+		&venus_ring_runtime,
+		blob_slice,
+		resource_id,
+		venus_ring_cache,
+		VENUS_RING_BUFFER_BYTES,
+		create_cmd[:],
+	)
+	if init_prob != .None {
+		system.memory_unmap(mapped_addr)
+		venus_ring_runtime = {}
+		return
+	}
+	header_written, header_prob := virtio_gpu.submit_3d_header_encode(venus_context_id, create_len, request_buffer[:REQUEST_BUFFER_BYTES])
+	if header_prob != .None {
+		system.memory_unmap(mapped_addr)
+		venus_ring_runtime = {}
+		return
+	}
+	intrinsics.mem_copy_non_overlapping(&request_buffer[header_written], &create_cmd[0], create_len)
+	if _, ok := control_nodata("SUBMIT_3D", header_written + create_len); !ok {
+		system.memory_unmap(mapped_addr)
+		venus_ring_runtime = {}
+		return
+	}
+	venus_shm_mapped = mapped_addr
 }
 
 // venus_submit sends a client Venus stream to the context with Submit_3D.
@@ -410,9 +461,29 @@ venus_submit :: proc "contextless" (command: ring.Record) -> (status: virtio_gpu
 	system.memory_unmap(address)
 
 	// A client sends rendering and resource commands only: the ring and the
-	// reply stream of the context belong to this service.
-	if _, stream_problem := venus_vulkan.stream_validate_client(payload); stream_problem != .None {
+	// reply stream of the context belong to this service. When the live Venus
+	// ring is mapped, write directly into it and notify via SUBMIT_3D only
+	// when the host renderer is idle; otherwise submit directly via SUBMIT_3D.
+	notify_cmd: [VENUS_CONTROL_CMD_MAX_BYTES]u8
+	ring_res, _, notify_len, stream_problem := venus_runtime_submit_client(&venus_ring_runtime, payload, notify_cmd[:])
+	switch ring_res {
+	case .Refused_Client_Stream:
 		return .Bad_Command, errors.ring_fail(SUBMIT, .Bad_Value, .None, 1, i64(stream_problem))
+	case .Refused_Ring_Fatal:
+		return .Device_Error, errors.ring_fail(SUBMIT, .Device, .None, 0, i64(stream_problem))
+	case .Submitted:
+		return .Ok, {0 = length}
+	case .Submitted_Needs_Notify:
+		hdr_written, hdr_problem := virtio_gpu.submit_3d_header_encode(venus_context_id, notify_len, request_buffer[:REQUEST_BUFFER_BYTES])
+		if hdr_problem != .None {
+			return .Device_Error, errors.ring_fail(SUBMIT, .Device, .None, 0, i64(hdr_problem))
+		}
+		intrinsics.mem_copy_non_overlapping(&request_buffer[hdr_written], &notify_cmd[0], notify_len)
+		if _, ok := control_nodata("SUBMIT_3D", hdr_written + notify_len); !ok {
+			return .Device_Error, errors.ring_fail(SUBMIT, .Device, .None, 0)
+		}
+		return .Ok, {0 = length}
+	case .Fallback_To_Submit_3d:
 	}
 	header_written, header_problem := virtio_gpu.submit_3d_header_encode(venus_context_id, int(length), request_buffer[:REQUEST_BUFFER_BYTES])
 	if header_problem != .None {
@@ -809,6 +880,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	found: bool
 	if device, found = virtio.find(ctx, configuration); !found {
 		fail("the device has no virtio registers in the memory that it received")
+	}
+	if shm_bar, shm_off, shm_len, shm_found := virtio.shared_memory_place(configuration, VIRTIO_GPU_SHM_ID_HOST_VISIBLE); shm_found {
+		venus_shm_bar_handle = ctx.handles[pci.GRANT_BAR + int(shm_bar)]
+		venus_shm_offset = shm_off
+		venus_shm_length = shm_len
 	}
 	start_device(ctx.handles[pci.GRANT_QUEUES])
 

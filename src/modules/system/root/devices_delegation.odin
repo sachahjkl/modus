@@ -22,6 +22,7 @@ package root
 // device.
 
 import "base:intrinsics"
+import "modus:contract/pci_topology"
 import "modus:contract/ring"
 import rd "modus:contract/root_delegation"
 import op "modus:contract/operation"
@@ -68,6 +69,8 @@ devices_next_tag: u32 = 1
 
 classified_devices: [CLASSIFIED_DEVICE_CAPACITY]Classified_Device
 classified_device_count: int
+// Live PCI topology state recorded during bus_classify_pass.
+bus_topology: pci_topology.Topology_State
 // The devices service answered for each device of the bus. false: no
 // device service starts.
 bus_classified: bool
@@ -245,7 +248,12 @@ devices_lookup :: proc "contextless" (vendor_id, device_id: u16) -> (entry: rd.D
 // service did not answer for one of them.
 @(private = "file")
 bus_classify_pass :: proc "contextless" () -> (looked_up: int, ok: bool) {
+	// Format property: conventional Q35/PC ECAM base address used when recording
+	// the primary root bus segment in bus_topology.
+	DEFAULT_ROOT_ECAM_BASE :: u64(0xB000_0000)
 	classified_device_count = 0
+	pci_topology.topology_init(&bus_topology)
+	_ = pci_topology.topology_add_root_bus(&bus_topology, 0, 0, 255, DEFAULT_ROOT_ECAM_BASE)
 	buses_seen: [PCI_BUS_COUNT]bool
 	buses: [PCI_BUS_COUNT]u32
 	bus_count := 1
@@ -285,6 +293,8 @@ bus_classify_pass :: proc "contextless" () -> (looked_up: int, ok: bool) {
 					classified_device_count += 1
 				case 1:
 					secondary := pci.read_32(place, pci.OFFSET_BUS_NUMBERS) >> 8 & 0xFF
+					// Record discovered PCIe-to-PCI bridge in live topology state.
+					_, _ = pci_topology.topology_number_bridge(&bus_topology, 0, u8(bus), u8(device), u8(function))
 					// A secondary bus at or below its own bus is a fault of the
 					// numbers of the firmware: a walk would not end.
 					if secondary > bus && !buses_seen[secondary] {

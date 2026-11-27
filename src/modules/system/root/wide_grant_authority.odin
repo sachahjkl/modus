@@ -56,8 +56,9 @@ Collector_Link :: struct {
 }
 collector_links: [principals.PRINCIPAL_CAPACITY]Collector_Link
 
-// The one flow of the machine.
+// The one flow of the machine and its per-principal hardware-key approval table.
 wide_grant_flow_state: wide_grant_flow.Flow
+wide_grant_hardware_keys: wide_grant_flow.Wide_Grant_Hardware_Keys
 #assert(wide_grant_flow.KEY_RECORDS_MOST >= remote.CLIENT_CAPACITY)
 #assert(wide_grant_flow.PRINCIPALS_MOST >= principals.PRINCIPAL_CAPACITY)
 

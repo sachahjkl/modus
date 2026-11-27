@@ -3,8 +3,12 @@
 //   - gui_toolkit modus style palette & spacing tokens matching docs/DESIGN.md
 package rich_toolkit
 
-MAX_OUTSIDE_MODULES :: 32
-MAX_IMPORTS_PER_MODULE :: 8
+// Plan value: one root module plus up to 64 transitive outside-module imports
+// matching the per-process module table capacity.
+MAX_OUTSIDE_MODULES :: 65
+// Plan value: maximum direct outside-module imports per module matching the
+// per-process module table capacity.
+MAX_IMPORTS_PER_MODULE :: 64
 
 Modus_Style_Tokens :: struct {
 	background_rgba:    u32,

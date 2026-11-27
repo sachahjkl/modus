@@ -84,6 +84,7 @@ INITIAL_ARCHIVE_OBJECT :: "initial_archive"
 OUTPUT_BYTES_AT_ONCE :: 512
 
 machine: guest_os.Linux_Machine
+smp_runtime: Guest_Smp_Runtime
 console: guest_os.Console_Line // The lines of hvc0, the shell: the window shows them.
 kernel_log: guest_os.Console_Line // The lines of the serial port, the log of the kernel: the log of the system takes them.
 guest_memory_pages: u64
@@ -393,6 +394,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Info, Kernel_Refused{refusal = u64(boot_refusal)})
 		refuse("The guest did not start: the object kernel of the store linux is not a kernel that the boot protocol of Linux loads.")
 	}
+	// Validate the store-backed image descriptor and build the budget-capped
+	// ACPI MADT table before clearing the staged kernel copy.
+	smp_thread_budget := u64(1) + own.threads
+	if smp_refusal := guest_smp_prepare(&smp_runtime, guest_memory, KERNEL_OBJECT, kernel, INITIAL_ARCHIVE_OBJECT, archive, {}, smp_thread_budget, registers); smp_refusal != .None {
+		system.log_fact(.Info, Kernel_Refused{refusal = u64(smp_refusal)})
+		refuse("The guest did not start: the guest image or SMP topology did not pass validation.")
+	}
 	// The copy of the image leaves the memory of the guest.
 	for &value in ram[staging:] {
 		value = 0
@@ -414,8 +422,31 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	terminal.status(&output, "Linux starts", 0, 1)
 	for {
 		input_forward()
+		vcpu_idx, has_ready := guest_smp_select_next(&smp_runtime)
+		if !has_ready {
+			if !guest_smp_has_live_vcpu(&smp_runtime) {
+				system.log_fact(.Info, Guest_Halted{exits = exits, own_page_writes = machine.own_page_writes})
+				if started {
+					terminal.line(&output, {text = "Linux halted. The guest ended.", style = {tone = u8(terminal.Tone.Good)}})
+				} else {
+					terminal.line(&output, {text = "Linux halted before its shell started. The log of the system holds the messages of the kernel.", style = {tone = u8(terminal.Tone.Bad)}})
+				}
+				_ = system.process_stop(guest)
+				system.stop(.Done)
+			}
+			// All live vCPUs are waiting for input or timer: wake the active waiting vCPU.
+			if wait_idx, has_waiting := guest_smp_first_waiting(&smp_runtime); has_waiting {
+				guest_wait(&smp_runtime.vcpus[wait_idx].registers)
+			} else {
+				guest_wait(&smp_runtime.vcpus[0].registers)
+			}
+			_ = guest_smp_wake_waiting(&smp_runtime)
+			continue
+		}
+		vcpu := &smp_runtime.vcpus[vcpu_idx]
+		vcpu.state = .Running
 		run_error: errors.Error_Record
-		exit, run_status := system.guest_run(guest, &registers, &run_error)
+		exit, run_status := system.guest_run(guest, &vcpu.registers, &run_error)
 		if run_status == .Operation_Unsupported && run_error.kind == i64(errors.Kind.Unsupported) {
 			system.log_fact(.Info, Guests_Unsupported{})
 			refuse("The guest did not start: the processors of this machine have no virtualization support that modus uses.")
@@ -425,38 +456,51 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		if exit.kind != .Interrupted {
 			exits += 1
+			vcpu.exits += 1
 		}
 		runs += 1
+		vcpu.runs += 1
 		if runs & (runs - 1) == 0 {
-			system.log_fact(.Debug, Guest_Progress{runs = runs, exits = exits, exit_kind = u64(exit.kind), exit_code = value_kinds.Hexadecimal_Sixteen_Digits(exit.code), address = value_kinds.Hexadecimal_Sixteen_Digits(registers.rip)})
+			system.log_fact(.Debug, Guest_Progress{runs = runs, exits = exits, exit_kind = u64(exit.kind), exit_code = value_kinds.Hexadecimal_Sixteen_Digits(exit.code), address = value_kinds.Hexadecimal_Sixteen_Digits(vcpu.registers.rip)})
 		}
 		machine_exit := guest_os.Machine_Exit{kind = exit.kind, a = exit.a, b = exit.b, c = exit.c, next = exit.next, code = exit.code, information = exit.information}
-		step := guest_os.linux_machine_handle_exit(&machine, &registers, machine_exit)
+		step := guest_os.linux_machine_handle_exit(&machine, &vcpu.registers, machine_exit)
 		console_drain()
 		switch step {
 		case .Continue:
+			vcpu.state = .Ready
 		case .Not_Handled:
-			if !unclaimed_port_answer(&registers, exit) {
-				guest_failed(registers, exit.code)
+			if !unclaimed_port_answer(&vcpu.registers, exit) {
+				vcpu.state = .Failed
+				guest_failed(vcpu.registers, exit.code)
 			}
+			vcpu.state = .Ready
 		case .Waiting:
-			guest_wait(&registers)
+			vcpu.state = .Waiting
+			if !guest_smp_has_other_runnable(&smp_runtime, vcpu_idx) {
+				guest_wait(&vcpu.registers)
+				_ = guest_smp_wake_waiting(&smp_runtime)
+			}
 		case .Halted:
-			system.log_fact(.Info, Guest_Halted{exits = exits, own_page_writes = machine.own_page_writes})
-			if started {
-				terminal.line(&output, {text = "Linux halted. The guest ended.", style = {tone = u8(terminal.Tone.Good)}})
-			} else {
-				// The shell never wrote on hvc0: the log of the kernel, on
-				// the serial port, says why.
-				terminal.line(&output, {text = "Linux halted before its shell started. The log of the system holds the messages of the kernel.", style = {tone = u8(terminal.Tone.Bad)}})
+			vcpu.state = .Halted
+			if !guest_smp_has_live_vcpu(&smp_runtime) {
+				system.log_fact(.Info, Guest_Halted{exits = exits, own_page_writes = machine.own_page_writes})
+				if started {
+					terminal.line(&output, {text = "Linux halted. The guest ended.", style = {tone = u8(terminal.Tone.Good)}})
+				} else {
+					// The shell never wrote on hvc0: the log of the kernel, on
+					// the serial port, says why.
+					terminal.line(&output, {text = "Linux halted before its shell started. The log of the system holds the messages of the kernel.", style = {tone = u8(terminal.Tone.Bad)}})
+				}
+				_ = system.process_stop(guest)
+				system.stop(.Done)
 			}
-			_ = system.process_stop(guest)
-			system.stop(.Done)
 		case .Failed:
+			vcpu.state = .Failed
 			if machine.failure == .Writes_Own_Page {
-				system.log_fact(.Error, Guest_Writes_Own_Page{address = value_kinds.Hexadecimal_Sixteen_Digits(registers.rip), page = value_kinds.Hexadecimal_Sixteen_Digits(exit.a)})
+				system.log_fact(.Error, Guest_Writes_Own_Page{address = value_kinds.Hexadecimal_Sixteen_Digits(vcpu.registers.rip), page = value_kinds.Hexadecimal_Sixteen_Digits(exit.a)})
 			}
-			guest_failed(registers, exit.code)
+			guest_failed(vcpu.registers, exit.code)
 		}
 	}
 }

@@ -95,4 +95,9 @@ USB adds one level. The device service of the xHCI controller owns the controlle
 
 ## State
 
-Partially built. The device services of today are of the boot image, at fixed places, for virtio and for the fixed devices of the test machine. The freestanding NVMe 1.4+ queue pair, doorbell offset, and Admin/I/O command contract (`modus:contract/nvme`) is built with host tests; the NVMe device service process and PCI identity dispatch remain. The order of this work is in [desktop_to_browser.md](desktop_to_browser.md), phase G.
+Partially built. The device services of today are of the boot image, at fixed places, for virtio, NVMe, and the fixed devices of the test machine. Built:
+
+- `src/library/modus/contract/pci_topology` wired into `src/library/internal/devices/devices_core` and `src/modules/system/root/devices_delegation.odin` for live PCI multi-root-bus and bridge topology tracking, per-function 4 KiB ECAM page calculation and disjointness checks, AMD-Vi IVMD reserved DMA refusal, and AMD-Vi IRTE forged-IRQ verification.
+- `src/library/modus/contract/nvme` wired into `src/modules/system/block` (`nvme_runtime.odin`) with PCI NVMe class detection (`01:08:02`), QEMU NVMe default identity (`0x1B36:0x0010`), Admin Controller/Namespace bring-up, I/O queue pair management, PRP1/PRP2 DMA list construction, and live block-ring serving over the `block` class protocol alongside VirtIO block.
+
+Left: third-party device services from the store `module_files` behind per-device principal grants, firmware blobs by hash, and xHCI/USB class device services. The order of this work is in [desktop_to_browser.md](desktop_to_browser.md), phase G.

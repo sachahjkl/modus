@@ -398,8 +398,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if configuration_status != .Succeeded {
 		fail("no configuration of the device")
 	}
+	configuration := ([^]u8)(configuration_address)[:pci.CONFIGURATION_SIZE]
+	if pci_is_nvme_controller(configuration) {
+		nvme_device_entry(ctx)
+	}
 	found: bool
-	if device, found = virtio.find(ctx, ([^]u8)(configuration_address)[:pci.CONFIGURATION_SIZE]); !found {
+	if device, found = virtio.find(ctx, configuration); !found {
 		fail("the device has no virtio registers in the memory that it received")
 	}
 	start(ctx.handles[pci.GRANT_QUEUES])

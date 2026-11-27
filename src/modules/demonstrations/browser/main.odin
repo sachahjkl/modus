@@ -35,6 +35,7 @@ package browser
 
 import "modus:contract/draw_record"
 import "modus:contract/html_css"
+import "modus:contract/origin_browser"
 import "modus:contract/value_kinds"
 import "modus:display"
 import "modus:graphics"
@@ -238,6 +239,16 @@ page_load :: proc "contextless" (text: string, history_push: bool) -> bool {
 		system.log_fact(.Info, Address_Refused{}, ADDRESS_PROBLEM_SENTENCES[problem], text)
 		return false
 	}
+	canonical: [ADDRESS_CAPACITY + 8]u8
+	canonical_writer := Source_Writer{bytes = canonical[:]}
+	address_write(&canonical_writer, &address)
+	canonical_text := writer_text(&canonical_writer)
+	if address.scheme == .Http || address.scheme == .Https {
+		if _, web_ref := browser_web_url_check(canonical_text); web_ref != .None {
+			status_set(true, "refused: the web address did not pass origin validation")
+			return false
+		}
+	}
 	// The values typed in the page shown stay with its origin.
 	if history_count > 0 {
 		page_forms_keep(.Forms_Save)
@@ -251,10 +262,9 @@ page_load :: proc "contextless" (text: string, history_push: bool) -> bool {
 	if !history_push {
 		page_forms_keep(.Forms_Restore)
 	}
-	canonical: [ADDRESS_CAPACITY + 8]u8
-	canonical_writer := Source_Writer{bytes = canonical[:]}
-	address_write(&canonical_writer, &current)
-	canonical_text := writer_text(&canonical_writer)
+	if history_push && (current.scheme == .Http || current.scheme == .Https) {
+		_, _ = browser_web_history_record(canonical_text)
+	}
 	address_field_count = copy(address_field[:], canonical_text)
 	if history_push {
 		if history_count > 0 {
@@ -308,27 +318,35 @@ link_follow :: proc "contextless" (anchor: u32) {
 	}
 }
 
-// form_send writes the fields of a form into the query of its action and
-// loads that address.
+// form_send writes the fields of a form into the query of its action using
+// origin_browser.form_encode_urlencoded and loads that address.
 form_send :: proc "contextless" (form: u32) {
 	action, _ := html_css_attribute(form, "action")
 	target: [ADDRESS_CAPACITY + 8]u8
 	writer := Source_Writer{bytes = target[:]}
 	address_resolve(&writer, &current, action)
 	put(&writer, "?")
+	form_pairs: [FORM_FIELD_CAPACITY]origin_browser.Form_Field
 	fields := 0
 	for &field in form_fields[:form_field_count] {
 		if field.form != form {
 			continue
 		}
-		if fields > 0 {
-			put(&writer, "&")
+		if fields < len(form_pairs) {
+			form_pairs[fields] = {
+				name  = string(field.name[:field.name_count]),
+				value = string(field.text[:field.count]),
+			}
+			fields += 1
 		}
-		put_query_encoded(&writer, string(field.name[:field.name_count]))
-		put(&writer, "=")
-		put_query_encoded(&writer, string(field.text[:field.count]))
-		fields += 1
 	}
+	encoded: [ADDRESS_CAPACITY]u8
+	encoded_len, encode_ref := browser_form_encode_fields(form_pairs[:fields], encoded[:])
+	if encode_ref != .None {
+		status_set(true, "refused: the values of the form are longer than an address holds")
+		return
+	}
+	put(&writer, string(encoded[:encoded_len]))
 	if writer.full {
 		status_set(true, "refused: the values of the form are longer than an address holds")
 		return
@@ -433,6 +451,7 @@ draw :: proc "contextless" (window: ^display.Window) -> (act: Act) {
 	frame := interface.window_frame_start(&window_memory, window)
 	table := frame.table
 	tokens, _ = box_layout.tokens_for(graphics.appearance, .Standard)
+	current_style_tokens = browser_style_tokens(graphics.appearance, false)
 	interface.background(&frame, {0, 0, window.width, window.height})
 	input := frame.input
 	box_layout.states_frame_begin(&box_states, {pointer_x = i32(clamp(input.pointer_x, int(min(i32)), int(max(i32)))), pointer_y = i32(clamp(input.pointer_y, int(min(i32)), int(max(i32)))), pointer_present = input.pointer_known, primary_down = input.button_held, primary_pressed = input.pressed, primary_released = input.released, primary_press_count = input.pressed ? 1 : 0})

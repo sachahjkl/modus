@@ -19,6 +19,7 @@ package disk_processes_core
 import "modus:contract/blake3"
 import "modus:contract/errors"
 import "modus:contract/object_cache"
+import "modus:contract/rich_toolkit"
 import rd "modus:contract/root_delegation"
 import "modus:disk_process"
 
@@ -178,11 +179,17 @@ Machine :: struct {
 	after:             [LIST_NAME_SIZE]u8, // The name of the last entry that the list gave: the next page starts after it.
 	after_length:      int,
 	pages:             int,
-	kept_count:        int,
-	kept_hashes:       [rd.LOAD_IMPORT_CAPACITY]blake3.Hash,
-	walk_importer:     int, // The importer and the level of the imports that imports_walk notes now.
-	walk_level:        int,
-	cache_frame_count: u64,
+	kept_count:            int,
+	kept_hashes:           [rd.LOAD_IMPORT_CAPACITY]blake3.Hash,
+	walk_importer:         int, // The importer and the level of the imports that imports_walk notes now.
+	walk_level:            int,
+	import_graph:          rich_toolkit.Import_Graph,
+	walk_deps:             [rich_toolkit.MAX_IMPORTS_PER_MODULE][32]u8,
+	walk_dep_count:        int,
+	import_graph_overflow: bool,
+	resolved_order:        [rich_toolkit.MAX_OUTSIDE_MODULES]int,
+	resolved_count:        int,
+	cache_frame_count:     u64,
 	cache_next_frame:  u64,
 	cache_frame0_len:  u64,
 	store_offset:      u64,
@@ -207,11 +214,31 @@ nickname :: proc "contextless" (machine: ^Machine) -> string {
 // it.
 want_import :: proc "contextless" (machine: ^Machine, hash: blake3.Hash) {
 	want_hash(machine, hash)
+	effective := hash
 	for item in machine.request.replacements[:machine.request.replacement_count] {
 		if item.from == hash {
 			want_hash(machine, item.to)
+			effective = item.to
 		}
 	}
+	if !machine.environment.image_holds(effective) {
+		walk_dep_record(machine, effective)
+	}
+}
+
+@(private = "file")
+walk_dep_record :: proc "contextless" (machine: ^Machine, hash: blake3.Hash) {
+	for idx in 0 ..< machine.walk_dep_count {
+		if machine.walk_deps[idx] == hash {
+			return
+		}
+	}
+	if machine.walk_dep_count >= rich_toolkit.MAX_IMPORTS_PER_MODULE {
+		machine.import_graph_overflow = true
+		return
+	}
+	machine.walk_deps[machine.walk_dep_count] = hash
+	machine.walk_dep_count += 1
 }
 
 @(private = "file")
@@ -236,10 +263,16 @@ replaced :: proc "contextless" (machine: ^Machine, hash: blake3.Hash) -> bool {
 }
 
 @(private = "file")
-walk :: proc "contextless" (machine: ^Machine, file: []u8, importer: int, level: int) {
+walk :: proc "contextless" (machine: ^Machine, file: []u8, importer: int, level: int, node_hash: blake3.Hash) {
 	machine.walk_importer = importer
 	machine.walk_level = level
+	machine.walk_dep_count = 0
 	machine.environment.imports_walk(file, machine)
+	if !machine.import_graph_overflow {
+		if rich_toolkit.graph_add(&machine.import_graph, node_hash, machine.walk_deps[:machine.walk_dep_count]) != .None {
+			machine.import_graph_overflow = true
+		}
+	}
 }
 
 @(private = "file")
@@ -631,7 +664,7 @@ bytes_answer :: proc "contextless" (machine: ^Machine, text: []u8) -> Action {
 		// event, and the core checks its hash before Continue. The script
 		// font set is no module and imports nothing.
 		if machine.kind == .Module {
-			walk(machine, machine.lent, -1, 1)
+			walk(machine, machine.lent, -1, 1, machine.request.module_hash)
 		}
 		machine.stage = .Module_Reported
 		return send(machine, .Module_Filled, true)
@@ -657,7 +690,7 @@ candidate_complete :: proc "contextless" (machine: ^Machine) -> Action {
 		name_put(&machine.report.importer_name, &machine.report.importer_name_length, disk_process.scan_entry_name(&machine.scan, item.importer))
 	}
 	if !replaced(machine, hash) {
-		walk(machine, machine.lent, machine.reading, item.level + 1)
+		walk(machine, machine.lent, machine.reading, item.level + 1, hash)
 	}
 	return send(machine, .Import_Found, true)
 }
@@ -735,9 +768,27 @@ read_next :: proc "contextless" (machine: ^Machine) -> Action {
 	return {kind = .Ask_Size, name = disk_process.scan_entry_name(&machine.scan, index)}
 }
 
-// ready ends the load with Start_From_Bytes.
+// ready validates the transitive outside-module import DAG with rich_toolkit
+// (refusing cyclic import graphs and import graph overflow) and ends the load
+// with Start_From_Bytes.
 @(private = "file")
 ready :: proc "contextless" (machine: ^Machine) -> Action {
+	if machine.kind == .Module {
+		if machine.import_graph_overflow {
+			machine.report = {}
+			return refuse(machine, .Import_Bounds)
+		}
+		if machine.import_graph.count > 0 {
+			resolved_count, graph_ref := rich_toolkit.graph_resolve_order(&machine.import_graph, machine.request.module_hash, machine.resolved_order[:])
+			if graph_ref == .Cycle_Detected || graph_ref == .Graph_Full {
+				machine.report = {}
+				return refuse(machine, .Import_Bounds)
+			}
+			if graph_ref == .None {
+				machine.resolved_count = resolved_count
+			}
+		}
+	}
 	machine.report = {}
 	start := &machine.report.start
 	start.principal = machine.request.principal

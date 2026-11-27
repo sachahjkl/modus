@@ -51,6 +51,9 @@ Signing covers `"modus hardware key assertion v1"` concatenated with the canonic
 
 ## State
 
-Built: the freestanding contract package `modus:contract/hardware_keys` (`Hardware_Key_Protocol`, `Hardware_Key_Purpose`, `Hardware_Key_Flags`, `Hardware_Key_Challenge`, `Hardware_Key_Assertion`, canonical encode/decode, and assertion verification with adversarial unit tests).
+Built:
 
-Left: the USB HID / CCID hardware-key device service module, enrollment in `unlock`, and integration with `recipes` and `wide_grants`.
+- The freestanding contract package `modus:contract/hardware_keys` (`Hardware_Key_Protocol`, `Hardware_Key_Purpose`, `Hardware_Key_Flags`, `Hardware_Key_Challenge`, `Hardware_Key_Assertion`, canonical encode/decode, and assertion verification with adversarial unit tests).
+- Live runtime verification borders wired to `modus:contract/hardware_keys` in `src/library/internal/unlock/hardware_key_runtime` and `src/modules/system/unlock/hardware_key.odin` (`.Unlock` with Ed25519 verification, UP+UV, and single-use challenges), `src/library/internal/root/wide_grant_flow/hardware_key_approval.odin` (`.Approve_Wide_Grant`), `src/library/internal/recipes/recipes_core/hardware_key_signing.odin` (`.Sign_Realisation`), and `src/modules/demonstrations/browser/runtime_contracts.odin` (`.Browser_WebAuthn` bound strictly to the active isolated origin).
+
+Left: the USB HID / CCID hardware-key device service module over an xHCI controller.
