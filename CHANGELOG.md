@@ -6,6 +6,17 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.111.0] - 2026-11-27 02:15
+
+### Added
+
+- **Live machine record and replay of the console, a window, and `rdrand`.** Test part `record_replay` records and replays a window process (`hall_of_fame`), a test-only planted `rdrand` module (`replay_rdrand_probe`) to its exact argument divergence, and the real `console` module with a typed line, exporting each kernel input history from guest memory and verifying it through `modustool replay`.
+- **Second display holder and resumable 1 GiB `pdpe1gb` runs.** The kernel now commits aligned 1 GiB `Frames_Now` ranges across bounded 2 MiB zeroing slices that yield through the scheduler with locks released and reclaim unfinished tails on thread stop, verified by the 4 GiB `gigabyte_pages` test part; and `root` grants replacement `Role.Display` holders the Display role grant row, verified live by the barless second display holder `panel_display` in the `roles_display` test part.
+
+### Changed
+
+- **The working memory leaves each module.** Every module whose start memory fits counted parts, `MODULE_START_OBJECTS`, `MODULE_START_BUDGETS`, or `wiring_pages` now states zero working memory and drops all `Measure pending` entries, leaving only eight modules with large post-ready allocations on `working_memory_pages`.
+
 ## [0.110.0] - 2026-11-27 00:01
 
 ### Added
@@ -2104,6 +2115,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.111.0]: https://github.com/sachahjkl/modus/releases/tag/v0.111.0
 [0.110.0]: https://github.com/sachahjkl/modus/releases/tag/v0.110.0
 [0.109.0]: https://github.com/sachahjkl/modus/releases/tag/v0.109.0
 [0.108.0]: https://github.com/sachahjkl/modus/releases/tag/v0.108.0
