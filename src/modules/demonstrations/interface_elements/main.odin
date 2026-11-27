@@ -94,6 +94,7 @@ palette_pill_area: interface.Area
 frames: u64
 moved: bool // The measure of a frame where everything moved.
 last_damage: interface.Damage
+slider_edit: interface.Slider_Edit_State
 window_w := WIDTH
 window_h := HEIGHT
 
@@ -301,16 +302,9 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64, w, h: int) ->
 		density_labels := [3]string{"Compact", "Balanced", "Spacious"}
 		_ = interface.segmented_control(frame, interface.column_take(&col, 26), interface.identity("density"), density_labels[:], &density_choice)
 
-		// Row 4: Interactive draggable slider + live value readout.
+		// Row 4: Interactive slider with wheel stepping, double-click reset, scrubbable & clickable numeric value.
 		sl_row := interface.column_take(&col, 24)
-		sl_cells: [2]interface.Area
-		sl_sizes := [2]interface.Size{interface.share(), interface.characters(6)}
-		interface.row_split(sl_row, sl_sizes[:], sl_cells[:], 8)
-		_ = interface.slider(frame, sl_cells[0], interface.identity("fill slider"), &slider_value, 0, 100, 5, name = "Fill level")
-		sl_buf: interface.Text_Builder
-		interface.text_put_number(&sl_buf, u64(slider_value))
-		interface.text_put(&sl_buf, " %")
-		interface.cell_text(frame, sl_cells[1], interface.text_of(&sl_buf), graphics.colors.text, .Right)
+		_ = interface.slider_with_value(frame, sl_row, interface.identity("fill slider"), &slider_value, &slider_edit, 0, 100, step = 5, suffix = " %", value_width = 68, name = "Fill level", default_value = 65)
 
 		// Row 5: List with choice (wheel & keyboard).
 		interface.cell_text(frame, interface.column_take(&col, 16), "List with choice", graphics.colors.dim, .Left, interface.FONT_INTERFACE)

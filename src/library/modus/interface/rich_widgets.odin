@@ -38,6 +38,24 @@ SEGMENTED_MAX_ITEMS :: 8
 SLIDER_TRACK_HEIGHT :: 6
 SLIDER_THUMB_WIDTH :: 12
 SLIDER_THUMB_HEIGHT :: 18
+// Plan value: max ASCII bytes for an inline signed 64-bit integer edit field.
+SLIDER_EDIT_CAPACITY :: 24
+// Plan value: horizontal drag pixels before a press on a slider value box starts scrubbing.
+SLIDER_SCRUB_THRESHOLD :: 3
+// Plan value: horizontal drag pixels per step while scrubbing a slider value box.
+SLIDER_SCRUB_PIXELS_PER_STEP :: 4
+
+// Persistent inline-edit and drag-scrub state owned by the caller for slider_with_value.
+Slider_Edit_State :: struct {
+	editing:      bool,
+	replace_next: bool, // True immediately after entering edit mode: first digit replaces all.
+	pressing:     bool,
+	scrubbing:    bool,
+	press_x:      int,
+	scrub_start:  int,
+	buf:          [SLIDER_EDIT_CAPACITY]u8,
+	count:        int,
+}
 
 // Plan value: row height and drag threshold for reorder_list.
 REORDER_ROW_HEIGHT :: 30
@@ -331,6 +349,12 @@ segmented_control :: proc "contextless" (frame: ^Frame, area: Area, element: Ele
 			case display.KEY_RIGHT:
 				chosen^ = (chosen^ + 1) % count
 				key.taken = true
+			case display.KEY_HOME:
+				chosen^ = 0
+				key.taken = true
+			case display.KEY_END:
+				chosen^ = count - 1
+				key.taken = true
 			}
 		}
 	}
@@ -430,8 +454,19 @@ tab_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Ident
 			case display.KEY_RIGHT:
 				active^ = (active^ + 1) % count
 				key.taken = true
+			case display.KEY_HOME:
+				active^ = 0
+				key.taken = true
+			case display.KEY_END:
+				active^ = count - 1
+				key.taken = true
 			}
 		}
+	}
+	if result.under_pointer && frame.input.wheel != 0 {
+		delta := frame.input.wheel > 0 ? 1 : -1
+		active^ = clamp(active^ + delta, 0, count - 1)
+		frame.input.wheel = 0
 	}
 
 	table := frame.table
@@ -496,8 +531,9 @@ tab_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Ident
 }
 
 // slider draws an interactive horizontal slider supporting pointer click,
-// continuous pointer drag, and keyboard Left/Right/Home/End stepping.
-slider :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, value: ^int, min_val, max_val: int, step := 1, disabled := false, name := "slider") -> (result: Element_Result) {
+// continuous pointer drag, mouse wheel stepping, double-click reset to
+// default_value, and keyboard Left/Right/Up/Down/Shift-fine/Page/Home/End.
+slider :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, value: ^int, min_val, max_val: int, step := 1, disabled := false, name := "slider", default_value: Maybe(int) = nil) -> (result: Element_Result) {
 	if value == nil || max_val <= min_val || area.width < SLIDER_THUMB_WIDTH || area.height <= 0 {
 		return
 	}
@@ -508,28 +544,54 @@ slider :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identi
 	if !disabled {
 		result = element_interact(frame, element, area, .List)
 	}
-	dragging := !disabled && frame.state.pressed == element && frame.input.button_held
+	reset_now := false
+	if !disabled && result.double_clicked {
+		if def, has_def := default_value.?; has_def {
+			value^ = clamp(def, min_val, max_val)
+			frame.state.pressed = 0
+			reset_now = true
+		}
+	}
+	dragging := !disabled && !reset_now && frame.state.pressed == element && frame.input.button_held
 	track_left := area.x + SLIDER_THUMB_WIDTH / 2
 	track_w := max(area.width - SLIDER_THUMB_WIDTH, 1)
 	span := max_val - min_val
 
-	if !disabled && (dragging || (result.under_pointer && frame.input.pressed)) && frame.input.pointer_known {
+	if !disabled && !reset_now && (dragging || (result.under_pointer && frame.input.pressed)) && frame.input.pointer_known {
 		rel := clamp(frame.input.pointer_x - track_left, 0, track_w)
 		raw := min_val + int((i64(rel) * i64(span) + i64(track_w / 2)) / i64(track_w))
 		snapped := min_val + ((raw - min_val + eff_step / 2) / eff_step) * eff_step
 		value^ = clamp(snapped, min_val, max_val)
 	}
+	// Wheel over slider adjusts by eff_step per notch (wheel up increases) and
+	// consumes the wheel so parent scroll containers stay still.
+	if !disabled && result.under_pointer && frame.input.wheel != 0 {
+		notches := -frame.input.wheel // WHEEL_TOWARD_THE_END (down) is +1; up increases value.
+		step_delta := i64(notches) * i64(eff_step)
+		next := clamp(i64(value^) + step_delta, i64(min_val), i64(max_val))
+		value^ = int(next)
+		frame.input.wheel = 0
+	}
 	if result.focused && !disabled {
+		coarse := max(eff_step * 4, 1)
 		for &key in frame.input.keys[:frame.input.key_count] {
 			if key.taken {
 				continue
 			}
+			fine := key.modifiers & display.MODIFIER_SHIFT != 0
+			delta_step := fine ? 1 : eff_step
 			switch key.code {
-			case display.KEY_LEFT:
-				value^ = clamp(value^ - eff_step, min_val, max_val)
+			case display.KEY_LEFT, display.KEY_DOWN:
+				value^ = clamp(value^ - delta_step, min_val, max_val)
 				key.taken = true
-			case display.KEY_RIGHT:
-				value^ = clamp(value^ + eff_step, min_val, max_val)
+			case display.KEY_RIGHT, display.KEY_UP:
+				value^ = clamp(value^ + delta_step, min_val, max_val)
+				key.taken = true
+			case display.KEY_PAGE_UP:
+				value^ = clamp(value^ + coarse, min_val, max_val)
+				key.taken = true
+			case display.KEY_PAGE_DOWN:
+				value^ = clamp(value^ - coarse, min_val, max_val)
 				key.taken = true
 			case display.KEY_HOME:
 				value^ = min_val
@@ -584,6 +646,263 @@ slider :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identi
 
 	if result.focused {
 		draw_focus_ring(table, area, el)
+	}
+	return
+}
+
+@(private)
+slider_format_signed :: proc "contextless" (buf: []u8, value: int) -> int {
+	n := 0
+	v := i64(value)
+	if v < 0 && n < len(buf) {
+		buf[n] = '-'
+		n += 1
+		v = -v
+	}
+	tmp: [24]u8
+	digits := 0
+	if v == 0 {
+		tmp[0] = '0'
+		digits = 1
+	} else {
+		for v > 0 && digits < len(tmp) {
+			tmp[digits] = u8('0' + v % 10)
+			v /= 10
+			digits += 1
+		}
+	}
+	for i := digits - 1; i >= 0 && n < len(buf); i -= 1 {
+		buf[n] = tmp[i]
+		n += 1
+	}
+	return n
+}
+
+@(private)
+slider_parse_signed :: proc "contextless" (bytes: []u8) -> (val: int, ok: bool) {
+	if len(bytes) == 0 {
+		return 0, false
+	}
+	i := 0
+	neg := false
+	if bytes[0] == '-' {
+		neg = true
+		i = 1
+	} else if bytes[0] == '+' {
+		i = 1
+	}
+	if i >= len(bytes) {
+		return 0, false
+	}
+	acc: i64 = 0
+	for ; i < len(bytes); i += 1 {
+		c := bytes[i]
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		if acc > (max(i64) - 9) / 10 {
+			acc = max(i64) / 2
+		} else {
+			acc = acc * 10 + i64(c - '0')
+		}
+	}
+	return int(neg ? -acc : acc), true
+}
+
+// slider_with_value draws a horizontal slider paired with an interactive
+// numeric readout box at its right edge. The readout supports mouse-wheel
+// stepping, horizontal drag scrubbing, and click-to-type exact integer entry
+// (first digit replaces the current number; Enter or blur commits and clamps;
+// Escape cancels).
+slider_with_value :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, value: ^int, edit: ^Slider_Edit_State, min_val, max_val: int, step := 1, suffix := "", value_width := 68, disabled := false, name := "slider", default_value: Maybe(int) = nil) -> (result: Element_Result) {
+	if value == nil || edit == nil || max_val <= min_val || area.width <= 0 || area.height <= 0 {
+		return
+	}
+	eff_step := max(step, 1)
+	value^ = clamp(value^, min_val, max_val)
+	before := value^
+
+	box_w := clamp(value_width, 40, max(area.width / 2, 40))
+	gap := 8
+	track_w := max(area.width - box_w - gap, 0)
+	track_area := Area{area.x, area.y, track_w, area.height}
+	box_area := Area{area.x + track_w + gap, area.y, max(area.width - track_w - gap, 0), area.height}
+
+	if track_area.width >= SLIDER_THUMB_WIDTH {
+		sl_res := slider(frame, track_area, element, value, min_val, max_val, eff_step, disabled, name, default_value)
+		result.under_pointer ||= sl_res.under_pointer
+		result.focused ||= sl_res.focused
+		result.double_clicked ||= sl_res.double_clicked
+		if sl_res.changed && edit.editing {
+			edit.editing = false
+		}
+	}
+
+	val_el := identity_in(element, "value")
+	box_res: Element_Result
+	if !disabled && box_area.width > 0 {
+		box_res = element_interact(frame, val_el, box_area, .Text_Input)
+	}
+	result.under_pointer ||= box_res.under_pointer
+	result.focused ||= box_res.focused
+
+	// Wheel over value box adjusts the value directly and consumes the wheel.
+	if !disabled && box_res.under_pointer && frame.input.wheel != 0 {
+		notches := -frame.input.wheel
+		value^ = int(clamp(i64(value^) + i64(notches) * i64(eff_step), i64(min_val), i64(max_val)))
+		frame.input.wheel = 0
+		if edit.editing {
+			edit.count = slider_format_signed(edit.buf[:], value^)
+			edit.replace_next = true
+		}
+	}
+
+	// Pointer press/scrub/click-to-edit on the numeric readout box.
+	if !disabled && !edit.editing {
+		if box_res.under_pointer && frame.input.pressed && frame.input.pointer_known {
+			edit.pressing = true
+			edit.scrubbing = false
+			edit.press_x = frame.input.pointer_x
+			edit.scrub_start = value^
+		} else if edit.pressing && frame.input.button_held && frame.input.pointer_known {
+			dx := frame.input.pointer_x - edit.press_x
+			abs_dx := dx < 0 ? -dx : dx
+			if abs_dx >= SLIDER_SCRUB_THRESHOLD {
+				edit.scrubbing = true
+			}
+			if edit.scrubbing {
+				steps := dx / SLIDER_SCRUB_PIXELS_PER_STEP
+				value^ = int(clamp(i64(edit.scrub_start) + i64(steps) * i64(eff_step), i64(min_val), i64(max_val)))
+			}
+		} else if edit.pressing && !frame.input.button_held {
+			if !edit.scrubbing && box_res.under_pointer {
+				edit.editing = true
+				edit.replace_next = true
+				edit.count = slider_format_signed(edit.buf[:], value^)
+				frame.state.focus = val_el
+			}
+			edit.pressing = false
+			edit.scrubbing = false
+		}
+	}
+
+	// Inline numeric editing mode: Enter or blur commits & clamps; Escape cancels.
+	if !disabled && edit.editing {
+		commit := false
+		cancel := false
+		if frame.state.focus != val_el {
+			commit = true
+		} else {
+			for &key in frame.input.keys[:frame.input.key_count] {
+				if key.taken {
+					continue
+				}
+				switch {
+				case key.code == display.KEY_ENTER:
+					key.taken = true
+					commit = true
+				case key.code == display.KEY_ESCAPE:
+					key.taken = true
+					cancel = true
+				case key.code == display.KEY_BACKSPACE:
+					key.taken = true
+					if edit.replace_next {
+						edit.count = 0
+						edit.replace_next = false
+					} else if edit.count > 0 {
+						edit.count -= 1
+					}
+				case key.code == display.KEY_UP:
+					key.taken = true
+					value^ = clamp(value^ + eff_step, min_val, max_val)
+					edit.count = slider_format_signed(edit.buf[:], value^)
+					edit.replace_next = true
+				case key.code == display.KEY_DOWN:
+					key.taken = true
+					value^ = clamp(value^ - eff_step, min_val, max_val)
+					edit.count = slider_format_signed(edit.buf[:], value^)
+					edit.replace_next = true
+				case key.character >= '0' && key.character <= '9':
+					key.taken = true
+					if edit.replace_next {
+						edit.count = 0
+						edit.replace_next = false
+					}
+					if edit.count < SLIDER_EDIT_CAPACITY {
+						edit.buf[edit.count] = u8(key.character)
+						edit.count += 1
+					}
+				case key.character == '-' && min_val < 0:
+					key.taken = true
+					if edit.replace_next {
+						edit.count = 0
+						edit.replace_next = false
+					}
+					if edit.count == 0 && edit.count < SLIDER_EDIT_CAPACITY {
+						edit.buf[0] = '-'
+						edit.count = 1
+					}
+				}
+			}
+		}
+		if cancel {
+			edit.editing = false
+			edit.replace_next = false
+		} else if commit {
+			if parsed, ok := slider_parse_signed(edit.buf[:edit.count]); ok {
+				value^ = clamp(parsed, min_val, max_val)
+			}
+			edit.editing = false
+			edit.replace_next = false
+			result.activated = true
+		}
+	}
+
+	result.changed = value^ != before
+
+	// Draw the interactive numeric value box.
+	if box_area.width > 0 {
+		table := frame.table
+		el := u32(val_el)
+		y := box_area.y + (box_area.height - LINE) / 2
+		switch {
+		case edit.editing:
+			draw_rectangle(table, box_area.x, box_area.y, box_area.width, box_area.height, graphics.colors.track, el)
+			draw_rectangle(table, box_area.x, box_area.y + box_area.height - 2, box_area.width, 2, graphics.colors.title, el)
+			typed := string(edit.buf[:clamp(edit.count, 0, SLIDER_EDIT_CAPACITY)])
+			if edit.replace_next && len(typed) > 0 {
+				sel_w := min(len(typed) * graphics.CELL_WIDTH, max(box_area.width - 10, 0))
+				draw_rectangle(table, box_area.x + 5, y, sel_w, LINE, graphics.colors.chosen, el)
+			}
+			after := draw_text(table, box_area.x + 5, y, text_fit(table, {}, typed, max(box_area.width - 12, 0)), graphics.colors.text_strong, {}, el)
+			draw_rectangle(table, min(after + 1, box_area.x + box_area.width - 4), y, 2, LINE, graphics.colors.title, el)
+		case edit.scrubbing:
+			draw_rectangle(table, box_area.x, box_area.y, box_area.width, box_area.height, graphics.colors.track, el)
+			draw_outline(table, box_area.x, box_area.y, box_area.width, box_area.height, 1, graphics.colors.title, el)
+			val_buf: Text_Builder
+			num_tmp: [SLIDER_EDIT_CAPACITY]u8
+			num_len := slider_format_signed(num_tmp[:], value^)
+			text_put(&val_buf, string(num_tmp[:num_len]))
+			if suffix != "" {
+				text_put(&val_buf, suffix)
+			}
+			draw_text_right(table, box_area.x + box_area.width - 6, y, text_fit(table, {}, text_of(&val_buf), max(box_area.width - 12, 0)), graphics.colors.text_strong, {}, el)
+		case:
+			hovered := !disabled && box_res.under_pointer
+			draw_rectangle(table, box_area.x, box_area.y, box_area.width, box_area.height, hovered ? graphics.colors.track : graphics.colors.recess, el)
+			draw_outline(table, box_area.x, box_area.y, box_area.width, box_area.height, 1, hovered ? graphics.colors.title : graphics.colors.track, el)
+			val_buf: Text_Builder
+			num_tmp: [SLIDER_EDIT_CAPACITY]u8
+			num_len := slider_format_signed(num_tmp[:], value^)
+			text_put(&val_buf, string(num_tmp[:num_len]))
+			if suffix != "" {
+				text_put(&val_buf, suffix)
+			}
+			draw_text_right(table, box_area.x + box_area.width - 6, y, text_fit(table, {}, text_of(&val_buf), max(box_area.width - 12, 0)), disabled ? graphics.colors.dim : (hovered ? graphics.colors.text_strong : graphics.colors.text), {}, el)
+		}
+		if box_res.focused && !edit.editing {
+			draw_focus_ring(table, box_area, el)
+		}
 	}
 	return
 }

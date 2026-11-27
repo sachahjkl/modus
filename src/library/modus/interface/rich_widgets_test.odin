@@ -172,3 +172,220 @@ reorder_list_drag_drop_and_keyboard :: proc(t: ^testing.T) {
 	testing.expect(t, !reorder_list_move_entry(order[:], 0, 9))
 	testing.expect(t, !reorder_list_move_entry(order[:], 1, 1))
 }
+
+@(test)
+slider_wheel_fine_step_and_double_click_reset :: proc(t: ^testing.T) {
+	records: [256]Draw_Record
+	text_buf: [2048]u8
+	table := Draw_Table{records = records[:], text = text_buf[:]}
+	state: Interface_State
+	input: Input
+
+	val := 50
+	area := Area{0, 0, 200, 24}
+
+	// Wheel up (-1) increases by step (5) and consumes wheel.
+	_ = input_add(&input, {kind = .Pointer, x = 80, y = 12, wheel = -display.WHEEL_TOWARD_THE_END})
+	frame := frame_begin(&table, &state, &input, 100)
+	res := slider(&frame, area, identity("slw"), &val, 0, 100, step = 5, default_value = 65)
+	frame_end(&frame)
+	testing.expect(t, res.changed && val == 55 && input.wheel == 0)
+
+	// Wheel down (+2) decreases by 10.
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Pointer, x = 80, y = 12, wheel = 2 * display.WHEEL_TOWARD_THE_END})
+	frame = frame_begin(&table, &state, &input, 200)
+	res = slider(&frame, area, identity("slw"), &val, 0, 100, step = 5, default_value = 65)
+	frame_end(&frame)
+	testing.expect(t, res.changed && val == 45 && input.wheel == 0)
+
+	// Focus slider then Shift+Right adjusts by fine step (1), Page_Up by coarse (20).
+	state.focus = identity("slw")
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Key, code = display.KEY_RIGHT, modifiers = display.MODIFIER_SHIFT, pressed = true})
+	frame = frame_begin(&table, &state, &input, 300)
+	res = slider(&frame, area, identity("slw"), &val, 0, 100, step = 5, default_value = 65)
+	frame_end(&frame)
+	testing.expect(t, res.changed && val == 46)
+
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Key, code = display.KEY_PAGE_UP, pressed = true})
+	frame = frame_begin(&table, &state, &input, 350)
+	res = slider(&frame, area, identity("slw"), &val, 0, 100, step = 5, default_value = 65)
+	frame_end(&frame)
+	testing.expect(t, res.changed && val == 66)
+
+	// Double-click at x = 20 within DOUBLE_CLICK_MILLISECONDS resets to default_value (65).
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Pointer, x = 20, y = 12, buttons = display.BUTTON_LEFT})
+	frame = frame_begin(&table, &state, &input, 500)
+	_ = slider(&frame, area, identity("slw"), &val, 0, 100, step = 5, default_value = 65)
+	frame_end(&frame)
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Pointer, x = 20, y = 12, buttons = 0})
+	frame = frame_begin(&table, &state, &input, 550)
+	_ = slider(&frame, area, identity("slw"), &val, 0, 100, step = 5, default_value = 65)
+	frame_end(&frame)
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Pointer, x = 20, y = 12, buttons = display.BUTTON_LEFT})
+	frame = frame_begin(&table, &state, &input, 650)
+	res = slider(&frame, area, identity("slw"), &val, 0, 100, step = 5, default_value = 65)
+	frame_end(&frame)
+	testing.expect(t, res.double_clicked && val == 65)
+}
+
+@(test)
+slider_with_value_inline_edit_and_scrub :: proc(t: ^testing.T) {
+	records: [256]Draw_Record
+	text_buf: [2048]u8
+	table := Draw_Table{records = records[:], text = text_buf[:]}
+	state: Interface_State
+	input: Input
+
+	val := 50
+	edit: Slider_Edit_State
+	area := Area{0, 0, 260, 24}
+	box_x := 220 // inside the right-side 68 px value box.
+
+	// Click & release value box enters inline edit mode with replace_next set.
+	_ = input_add(&input, {kind = .Pointer, x = box_x, y = 12, buttons = display.BUTTON_LEFT})
+	frame := frame_begin(&table, &state, &input, 100)
+	_ = slider_with_value(&frame, area, identity("sv"), &val, &edit, 0, 100, step = 5, suffix = " %", default_value = 65)
+	frame_end(&frame)
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Pointer, x = box_x, y = 12, buttons = 0})
+	frame = frame_begin(&table, &state, &input, 120)
+	_ = slider_with_value(&frame, area, identity("sv"), &val, &edit, 0, 100, step = 5, suffix = " %", default_value = 65)
+	frame_end(&frame)
+	testing.expect(t, edit.editing && edit.replace_next)
+
+	// Typing "84" + Enter replaces "50", commits 84, and exits edit mode.
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Key, character = '8', pressed = true})
+	_ = input_add(&input, {kind = .Key, character = '4', pressed = true})
+	_ = input_add(&input, {kind = .Key, code = display.KEY_ENTER, pressed = true})
+	frame = frame_begin(&table, &state, &input, 200)
+	res := slider_with_value(&frame, area, identity("sv"), &val, &edit, 0, 100, step = 5, suffix = " %", default_value = 65)
+	frame_end(&frame)
+	testing.expect(t, res.changed && !edit.editing && val == 84)
+
+	// Re-enter edit, type "999", Escape cancels without mutating value.
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Pointer, x = box_x, y = 12, buttons = display.BUTTON_LEFT})
+	frame = frame_begin(&table, &state, &input, 800)
+	_ = slider_with_value(&frame, area, identity("sv"), &val, &edit, 0, 100, step = 5, suffix = " %")
+	frame_end(&frame)
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Pointer, x = box_x, y = 12, buttons = 0})
+	frame = frame_begin(&table, &state, &input, 820)
+	_ = slider_with_value(&frame, area, identity("sv"), &val, &edit, 0, 100, step = 5, suffix = " %")
+	frame_end(&frame)
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Key, character = '9', pressed = true})
+	_ = input_add(&input, {kind = .Key, code = display.KEY_ESCAPE, pressed = true})
+	frame = frame_begin(&table, &state, &input, 860)
+	_ = slider_with_value(&frame, area, identity("sv"), &val, &edit, 0, 100, step = 5, suffix = " %")
+	frame_end(&frame)
+	testing.expect(t, !edit.editing && val == 84)
+
+	// Drag horizontally left on value box scrubs value down by steps.
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Pointer, x = box_x, y = 12, buttons = display.BUTTON_LEFT})
+	frame = frame_begin(&table, &state, &input, 1400)
+	_ = slider_with_value(&frame, area, identity("sv"), &val, &edit, 0, 100, step = 5, suffix = " %")
+	frame_end(&frame)
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Pointer, x = box_x - 16, y = 12, buttons = display.BUTTON_LEFT})
+	frame = frame_begin(&table, &state, &input, 1420)
+	res = slider_with_value(&frame, area, identity("sv"), &val, &edit, 0, 100, step = 5, suffix = " %")
+	frame_end(&frame)
+	testing.expect(t, edit.scrubbing && res.changed && val == 64)
+}
+
+@(test)
+tab_bar_wheel_and_home_end :: proc(t: ^testing.T) {
+	records: [256]Draw_Record
+	text_buf: [2048]u8
+	table := Draw_Table{records = records[:], text = text_buf[:]}
+	state: Interface_State
+	input: Input
+
+	tabs := [?]string{"One", "Two", "Three"}
+	active := 0
+	area := Area{0, 0, 300, 28}
+
+	// Wheel down advances tab and consumes wheel.
+	_ = input_add(&input, {kind = .Pointer, x = 40, y = 14, wheel = display.WHEEL_TOWARD_THE_END})
+	frame := frame_begin(&table, &state, &input)
+	res := tab_bar(&frame, area, identity("tbw"), tabs[:], &active)
+	frame_end(&frame)
+	testing.expect(t, res.changed && active == 1 && input.wheel == 0)
+
+	// End key jumps to last tab, Home jumps to first.
+	state.focus = identity("tbw")
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Key, code = display.KEY_END, pressed = true})
+	frame = frame_begin(&table, &state, &input)
+	res = tab_bar(&frame, area, identity("tbw"), tabs[:], &active)
+	frame_end(&frame)
+	testing.expect(t, res.changed && active == 2)
+
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Key, code = display.KEY_HOME, pressed = true})
+	frame = frame_begin(&table, &state, &input)
+	res = tab_bar(&frame, area, identity("tbw"), tabs[:], &active)
+	frame_end(&frame)
+	testing.expect(t, res.changed && active == 0)
+}
+
+@(test)
+text_input_rich_caret_selection_and_word_edit :: proc(t: ^testing.T) {
+	records: [256]Draw_Record
+	text_buf: [2048]u8
+	table := Draw_Table{records = records[:], text = text_buf[:]}
+	state: Interface_State
+	input: Input
+
+	buf: [64]u8
+	copy(buf[:], "hello world")
+	count := 11
+	area := Area{0, 0, 240, 26}
+	el := identity("ti_rich")
+	state.focus = el
+
+	// Ctrl+Left jumps before "world", then typing "my " inserts mid-line.
+	_ = input_add(&input, {kind = .Key, code = display.KEY_LEFT, modifiers = display.MODIFIER_CONTROL, pressed = true})
+	_ = input_add(&input, {kind = .Key, character = 'm', pressed = true})
+	_ = input_add(&input, {kind = .Key, character = 'y', pressed = true})
+	_ = input_add(&input, {kind = .Key, character = ' ', pressed = true})
+	frame := frame_begin(&table, &state, &input, 100)
+	res := text_input(&frame, area, el, buf[:], &count)
+	frame_end(&frame)
+	testing.expect(t, res.changed && string(buf[:count]) == "hello my world")
+
+	// Shift+Ctrl+Right selects "world", Delete removes it.
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Key, code = display.KEY_RIGHT, modifiers = display.MODIFIER_CONTROL | display.MODIFIER_SHIFT, pressed = true})
+	_ = input_add(&input, {kind = .Key, code = display.KEY_DELETE, pressed = true})
+	frame = frame_begin(&table, &state, &input, 200)
+	res = text_input(&frame, area, el, buf[:], &count)
+	frame_end(&frame)
+	testing.expect(t, res.changed && string(buf[:count]) == "hello my ")
+
+	// Ctrl+Backspace removes "my ".
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Key, code = display.KEY_BACKSPACE, modifiers = display.MODIFIER_CONTROL, pressed = true})
+	frame = frame_begin(&table, &state, &input, 300)
+	res = text_input(&frame, area, el, buf[:], &count)
+	frame_end(&frame)
+	testing.expect(t, res.changed && string(buf[:count]) == "hello ")
+
+	// Ctrl+A selects all, typing '!' replaces entire line.
+	input_clear(&input)
+	_ = input_add(&input, {kind = .Key, character = 'a', modifiers = display.MODIFIER_CONTROL, pressed = true})
+	_ = input_add(&input, {kind = .Key, character = '!', pressed = true})
+	frame = frame_begin(&table, &state, &input, 400)
+	res = text_input(&frame, area, el, buf[:], &count)
+	frame_end(&frame)
+	testing.expect(t, res.changed && string(buf[:count]) == "!")
+}

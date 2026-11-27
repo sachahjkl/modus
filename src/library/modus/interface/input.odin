@@ -142,6 +142,11 @@ input_clear :: proc "contextless" (input: ^Input) {
 	input.key_count = 0
 }
 
+// Plan value: standard desktop multi-click interval in milliseconds.
+DOUBLE_CLICK_MILLISECONDS :: u64(400)
+// Plan value: maximum logical pixel drift between successive clicks of a multi-click.
+DOUBLE_CLICK_SLOP :: 4
+
 // What the package keeps between frames, in the memory of the process.
 Interface_State :: struct {
 	focus:         Element_Identity, // The element that takes the keys.
@@ -164,12 +169,24 @@ Interface_State :: struct {
 	scroll_bar_grab:      int, // A held thumb: the pixels from the start of the thumb to the pointer, along the bar.
 	scroll_bar_repeat_at: u64, // A held arrow button: the time of its next step, in milliseconds of the clock of the system. 0: no step is due.
 	scroll_bar_lit:       Element_Identity, // The scroll bar that the last frame drew lit, or 0.
+	// Multi-click tracking for double-click reset/word-select and triple-click select-all.
+	last_click_time:    u64,
+	last_click_x:       int,
+	last_click_y:       int,
+	last_click_element: Element_Identity,
+	click_count:        u8,
+	// Transient caret and selection state for the currently focused text_input
+	// (only one text_input holds focus at a time, so callers keep no extra struct).
+	text_edit_element: Element_Identity,
+	text_caret:        int,
+	text_anchor:       int,
+	text_dragging:     bool,
 	// The act names of the last frame (element_act_name): go to finds its
 	// element here, and the window layer sends their set to the compositor.
 	act_names:      [display.ACT_NAME_SET_CAPACITY]Act_Name,
 	act_name_count: int, // The entries of `act_names` in use.
 }
-#assert(size_of(Interface_State) == 1208)
+#assert(size_of(Interface_State) == 1280)
 
 // interface_state_set_focus_overflow attaches a caller-supplied backing slice
 // and optional growth callback for frames with more than FOCUS_ORDER_CAPACITY
@@ -356,10 +373,12 @@ frame_end :: proc "contextless" (frame: ^Frame) {
 
 // What the input did to one element in one frame.
 Element_Result :: struct {
-	activated:     bool, // Pressed and released on it, or Enter or Space with the focus.
-	focused:       bool, // It has the focus.
-	under_pointer: bool, // The pointer is over it.
-	changed:       bool, // A text input: the text changed. A list: the choice changed.
+	activated:      bool, // Pressed and released on it, or Enter or Space with the focus.
+	focused:        bool, // It has the focus.
+	under_pointer:  bool, // The pointer is over it.
+	changed:        bool, // A text input: the text changed. A list: the choice changed.
+	double_clicked: bool, // Second rapid left press on this element within DOUBLE_CLICK_MILLISECONDS.
+	triple_clicked: bool, // Third rapid left press on this element within DOUBLE_CLICK_MILLISECONDS.
 }
 
 // The kinds of elements that take input. The kind says which keys activate it.
@@ -423,6 +442,27 @@ element_interact :: proc "contextless" (frame: ^Frame, element: Element_Identity
 		result.under_pointer = true
 		frame.under_pointer = element
 		if input.pressed {
+			dx := input.pointer_x - state.last_click_x
+			if dx < 0 {
+				dx = -dx
+			}
+			dy := input.pointer_y - state.last_click_y
+			if dy < 0 {
+				dy = -dy
+			}
+			same_place := state.last_click_element == element && dx <= DOUBLE_CLICK_SLOP && dy <= DOUBLE_CLICK_SLOP
+			within_time := frame.time == 0 || (frame.time >= state.last_click_time && frame.time - state.last_click_time <= DOUBLE_CLICK_MILLISECONDS)
+			if same_place && within_time && state.click_count > 0 {
+				state.click_count = state.click_count >= 3 ? 1 : state.click_count + 1
+			} else {
+				state.click_count = 1
+			}
+			state.last_click_time = frame.time
+			state.last_click_x = input.pointer_x
+			state.last_click_y = input.pointer_y
+			state.last_click_element = element
+			result.double_clicked = state.click_count == 2
+			result.triple_clicked = state.click_count == 3
 			state.pressed = element
 			state.focus = element
 		}

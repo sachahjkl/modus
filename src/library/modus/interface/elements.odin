@@ -514,60 +514,352 @@ list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Elem
 	return result
 }
 
-// text_input draws a field of one line: the text in white and, with the
-// focus, a caret; the placeholder in the dim color when it is empty. With
-// the focus, a character adds to the text and Backspace removes the last
-// one; Enter activates it, in the order of the keys of the frame: the keys
-// after Enter are not taken. The text is in the memory of the caller. Its
-// placeholder, when it has one, is its element name (element_name).
+@(private)
+text_is_word_byte :: proc "contextless" (b: u8) -> bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_' || b >= 0x80
+}
+
+@(private)
+text_utf8_prev :: proc "contextless" (buf: []u8, pos: int) -> int {
+	p := clamp(pos, 0, len(buf))
+	if p == 0 {
+		return 0
+	}
+	return text_encoding.complete_characters(buf[:p - 1])
+}
+
+@(private)
+text_utf8_next :: proc "contextless" (buf: []u8, pos: int) -> int {
+	p := clamp(pos, 0, len(buf))
+	if p >= len(buf) {
+		return len(buf)
+	}
+	_, length, _ := text_encoding.character_decode(buf, p)
+	return min(p + max(length, 1), len(buf))
+}
+
+@(private)
+text_word_prev :: proc "contextless" (buf: []u8, pos: int) -> int {
+	p := clamp(pos, 0, len(buf))
+	for p > 0 {
+		prev := text_utf8_prev(buf, p)
+		if text_is_word_byte(buf[prev]) {
+			break
+		}
+		p = prev
+	}
+	for p > 0 {
+		prev := text_utf8_prev(buf, p)
+		if !text_is_word_byte(buf[prev]) {
+			break
+		}
+		p = prev
+	}
+	return p
+}
+
+@(private)
+text_word_next :: proc "contextless" (buf: []u8, pos: int) -> int {
+	p := clamp(pos, 0, len(buf))
+	for p < len(buf) && text_is_word_byte(buf[p]) {
+		p = text_utf8_next(buf, p)
+	}
+	for p < len(buf) && !text_is_word_byte(buf[p]) {
+		p = text_utf8_next(buf, p)
+	}
+	return p
+}
+
+@(private)
+text_word_bounds :: proc "contextless" (buf: []u8, pos: int) -> (start, end: int) {
+	p := clamp(pos, 0, len(buf))
+	if len(buf) == 0 {
+		return 0, 0
+	}
+	probe := p < len(buf) ? p : text_utf8_prev(buf, p)
+	want_word := text_is_word_byte(buf[probe])
+	start = probe
+	for start > 0 {
+		prev := text_utf8_prev(buf, start)
+		if text_is_word_byte(buf[prev]) != want_word {
+			break
+		}
+		start = prev
+	}
+	end = text_utf8_next(buf, probe)
+	for end < len(buf) && text_is_word_byte(buf[end]) == want_word {
+		end = text_utf8_next(buf, end)
+	}
+	return
+}
+
+@(private)
+text_byte_of_char :: proc "contextless" (buf: []u8, char_index: int) -> int {
+	p := 0
+	for _ in 0 ..< max(char_index, 0) {
+		if p >= len(buf) {
+			break
+		}
+		_, length, _ := text_encoding.character_decode(buf, p)
+		p += max(length, 1)
+	}
+	return min(p, len(buf))
+}
+
+@(private)
+text_delete_range :: proc "contextless" (buf: []u8, count: ^int, a, b: int) {
+	lo := clamp(min(a, b), 0, count^)
+	hi := clamp(max(a, b), lo, count^)
+	if hi <= lo {
+		return
+	}
+	removed := hi - lo
+	for i := hi; i < count^; i += 1 {
+		buf[i - removed] = buf[i]
+	}
+	count^ -= removed
+}
+
+@(private)
+text_insert_at :: proc "contextless" (buf: []u8, count: ^int, pos: int, data: []u8) -> (new_pos: int, ok: bool) {
+	p := clamp(pos, 0, count^)
+	if len(data) == 0 {
+		return p, true
+	}
+	if count^ + len(data) > len(buf) {
+		return p, false
+	}
+	for i := count^ - 1; i >= p; i -= 1 {
+		buf[i + len(data)] = buf[i]
+	}
+	for i in 0 ..< len(data) {
+		buf[p + i] = data[i]
+	}
+	count^ += len(data)
+	return p + len(data), true
+}
+
+// text_input draws a single-line editable field with caret navigation
+// (Left/Right/Home/End, Ctrl+Left/Right word jump), selection (Shift+arrows,
+// Ctrl+A, click-drag, double-click word, triple-click all), Backspace/Delete
+// (and Ctrl+Backspace/Delete word erase), Ctrl+U, and selection-aware
+// clipboard copy/paste. Enter activates the field in key order; keys after
+// Enter are left untouched.
 text_input :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, text: []u8, count: ^int, placeholder := "", name := "", protected := false) -> Element_Result {
 	result := element_interact(frame, element, area, .Text_Input)
 	if placeholder != "" {
 		element_name(frame, area, placeholder)
 	}
+	count^ = clamp(count^, 0, len(text))
+	keep := max(area.width - 16 - 3, 0) / graphics.CELL_WIDTH
+	state := frame.state
+
+	// Synchronize or initialize transient caret and selection for the focused field.
 	if result.focused {
+		if state.text_edit_element != element {
+			state.text_edit_element = element
+			state.text_caret = count^
+			state.text_anchor = count^
+			state.text_dragging = false
+		}
+		state.text_caret = text_encoding.complete_characters(text[:clamp(state.text_caret, 0, count^)])
+		state.text_anchor = text_encoding.complete_characters(text[:clamp(state.text_anchor, 0, count^)])
+
+		// Pointer caret placement, drag selection, double-click word, triple-click all.
+		cur_chars := text_encoding.character_count(text[:count^])
+		caret_chars := text_encoding.character_count(text[:state.text_caret])
+		view_first := cur_chars > keep && caret_chars > keep ? caret_chars - keep : 0
+		if frame.input.pointer_known {
+			rel_px := frame.input.pointer_x - (area.x + 8)
+			hit_col := clamp((rel_px + graphics.CELL_WIDTH / 2) / graphics.CELL_WIDTH, 0, max(cur_chars - view_first, 0))
+			hit_byte := text_byte_of_char(text[:count^], view_first + hit_col)
+			if result.triple_clicked {
+				state.text_anchor = 0
+				state.text_caret = count^
+				state.text_dragging = false
+			} else if result.double_clicked {
+				state.text_anchor, state.text_caret = text_word_bounds(text[:count^], hit_byte)
+				state.text_dragging = false
+			} else if result.under_pointer && frame.input.pressed {
+				state.text_caret = hit_byte
+				if frame.input.button_held {
+					state.text_anchor = hit_byte
+					state.text_dragging = true
+				}
+			} else if state.text_dragging && frame.input.button_held {
+				state.text_caret = hit_byte
+			}
+		}
+		if !frame.input.button_held {
+			state.text_dragging = false
+		}
+
 		keys: for &key in frame.input.keys[:frame.input.key_count] {
 			if key.taken {
 				continue
 			}
+			ctrl := key.modifiers & display.MODIFIER_CONTROL != 0
+			shift := key.modifiers & display.MODIFIER_SHIFT != 0
+			alt := key.modifiers & display.MODIFIER_ALT != 0
+			sel_lo := min(state.text_anchor, state.text_caret)
+			sel_hi := max(state.text_anchor, state.text_caret)
+			has_sel := sel_hi > sel_lo
 			switch {
 			case key.code == display.KEY_ENTER:
 				// The keys after Enter stay for what Enter starts.
 				key.taken = true
 				result.activated = true
 				break keys
-			case key.code == display.KEY_BACKSPACE:
-				// The text is UTF-8: Backspace removes its last whole
-				// character.
+			case ctrl && !alt && (key.character == 'a' || key.character == 'A' || key.character == 0x01):
 				key.taken = true
-				if count^ > 0 {
-					count^ = text_encoding.complete_characters(text[:count^ - 1])
+				state.text_anchor = 0
+				state.text_caret = count^
+			case ctrl && !alt && (key.character == 'u' || key.character == 'U' || key.character == 0x15):
+				key.taken = true
+				if has_sel {
+					text_delete_range(text, count, sel_lo, sel_hi)
+					state.text_caret = sel_lo
+					state.text_anchor = sel_lo
+					result.changed = true
+				} else if state.text_caret > 0 {
+					text_delete_range(text, count, 0, state.text_caret)
+					state.text_caret = 0
+					state.text_anchor = 0
 					result.changed = true
 				}
-			case text_encoding.character_in_text(key.character):
+			case key.code == display.KEY_ESCAPE && has_sel:
 				key.taken = true
-				// A character whose bytes do not fit is not typed.
-				if length := text_encoding.character_encode(key.character, text[count^:]); length > 0 {
-					count^ += length
+				state.text_anchor = state.text_caret
+			case key.code == display.KEY_LEFT:
+				key.taken = true
+				if ctrl {
+					state.text_caret = text_word_prev(text[:count^], state.text_caret)
+				} else if has_sel && !shift {
+					state.text_caret = sel_lo
+				} else {
+					state.text_caret = text_utf8_prev(text[:count^], state.text_caret)
+				}
+				if !shift {
+					state.text_anchor = state.text_caret
+				}
+			case key.code == display.KEY_RIGHT:
+				key.taken = true
+				if ctrl {
+					state.text_caret = text_word_next(text[:count^], state.text_caret)
+				} else if has_sel && !shift {
+					state.text_caret = sel_hi
+				} else {
+					state.text_caret = text_utf8_next(text[:count^], state.text_caret)
+				}
+				if !shift {
+					state.text_anchor = state.text_caret
+				}
+			case key.code == display.KEY_HOME:
+				key.taken = true
+				state.text_caret = 0
+				if !shift {
+					state.text_anchor = 0
+				}
+			case key.code == display.KEY_END:
+				key.taken = true
+				state.text_caret = count^
+				if !shift {
+					state.text_anchor = count^
+				}
+			case key.code == display.KEY_BACKSPACE:
+				key.taken = true
+				if has_sel {
+					text_delete_range(text, count, sel_lo, sel_hi)
+					state.text_caret = sel_lo
+					state.text_anchor = sel_lo
 					result.changed = true
+				} else if state.text_caret > 0 {
+					target := ctrl ? text_word_prev(text[:count^], state.text_caret) : text_utf8_prev(text[:count^], state.text_caret)
+					text_delete_range(text, count, target, state.text_caret)
+					state.text_caret = target
+					state.text_anchor = target
+					result.changed = true
+				}
+			case key.code == display.KEY_DELETE:
+				key.taken = true
+				if has_sel {
+					text_delete_range(text, count, sel_lo, sel_hi)
+					state.text_caret = sel_lo
+					state.text_anchor = sel_lo
+					result.changed = true
+				} else if state.text_caret < count^ {
+					target := ctrl ? text_word_next(text[:count^], state.text_caret) : text_utf8_next(text[:count^], state.text_caret)
+					text_delete_range(text, count, state.text_caret, target)
+					state.text_anchor = state.text_caret
+					result.changed = true
+				}
+			case !ctrl && !alt && text_encoding.character_in_text(key.character):
+				key.taken = true
+				encoded: [4]u8
+				if length := text_encoding.character_encode(key.character, encoded[:]); length > 0 {
+					removed := has_sel ? (sel_hi - sel_lo) : 0
+					if count^ - removed + length <= len(text) {
+						if has_sel {
+							text_delete_range(text, count, sel_lo, sel_hi)
+							state.text_caret = sel_lo
+						}
+						if next_pos, ok := text_insert_at(text, count, state.text_caret, encoded[:length]); ok {
+							state.text_caret = next_pos
+							state.text_anchor = next_pos
+							result.changed = true
+						}
+					}
 				}
 			}
 		}
-		// The clipboard of the principal (src/md/features/clipboard.md):
-		// a copy takes the whole text, and a paste goes at its end. The
-		// paste is copied after the text, then checked: a refused paste
-		// leaves the text as it was.
+		// Clipboard (src/md/features/clipboard.md): copy takes the active
+		// selection (or the whole text when empty); paste replaces any active
+		// selection and inserts at the caret.
+		sel_lo := min(state.text_anchor, state.text_caret)
+		sel_hi := max(state.text_anchor, state.text_caret)
 		if frame.input.copy_asked && !frame.copy_given {
-			frame.copied, frame.copy_given = text[:count^], true
+			if !protected && sel_hi > sel_lo {
+				frame.copied, frame.copy_given = text[sel_lo:sel_hi], true
+			} else {
+				frame.copied, frame.copy_given = text[:count^], true
+			}
 		}
 		if frame.input.paste.kind == .Pasted && !frame.paste_taken && frame.input.paste_window != nil {
 			frame.paste_taken = true
-			if pasted, problem := display.paste_read(frame.input.paste_window, frame.input.paste, text[count^:]); problem == .None {
-				count^ += pasted
-				result.changed = true
+			if sel_hi == sel_lo && state.text_caret == count^ {
+				if pasted, problem := display.paste_read(frame.input.paste_window, frame.input.paste, text[count^:]); problem == .None {
+					count^ += pasted
+					state.text_caret = count^
+					state.text_anchor = count^
+					result.changed = true
+				}
+			} else {
+				// Inline capacity: fast stack buffer for mid-line or selection-replacing paste.
+				paste_buf: [1024]u8
+				if pasted, problem := display.paste_read(frame.input.paste_window, frame.input.paste, paste_buf[:]); problem == .None {
+					removed := sel_hi - sel_lo
+					if count^ - removed + pasted <= len(text) {
+						if removed > 0 {
+							text_delete_range(text, count, sel_lo, sel_hi)
+							state.text_caret = sel_lo
+						}
+						if next_pos, ok := text_insert_at(text, count, state.text_caret, paste_buf[:pasted]); ok {
+							state.text_caret = next_pos
+							state.text_anchor = next_pos
+							result.changed = true
+						}
+					}
+				}
 			}
 		}
 	}
+
+	caret_byte := result.focused ? clamp(state.text_caret, 0, count^) : count^
+	anchor_byte := result.focused ? clamp(state.text_anchor, 0, count^) : caret_byte
+	sel_lo := min(anchor_byte, caret_byte)
+	sel_hi := max(anchor_byte, caret_byte)
+	caret_char := text_encoding.character_count(text[:caret_byte])
+
 	table := frame.table
 	states := accessibility.Element_States{.Focusable}
 	if result.focused {
@@ -584,24 +876,31 @@ text_input :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Id
 		placeholder = placeholder,
 		value_text  = protected ? "" : string(text[:count^]),
 		has_caret   = !protected,
-		caret       = protected ? 0 : u64(text_encoding.character_count(text[:count^])),
+		caret       = protected ? 0 : u64(caret_char),
 	})
 	defer draw_element_pop(table)
 	draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.track, u32(element))
 	draw_rectangle(table, area.x, area.y + area.height - 2, area.width, 2, result.focused ? graphics.colors.title : graphics.colors.not_usable, u32(element))
 	y := area.y + (area.height - LINE) / 2
-	// The typed text is a value, in the font of the cells: its end shows,
-	// with room for the caret, so it never passes the field.
-	visible := string(text[:count^])
-	keep := max(area.width - 16 - 3, 0) / graphics.CELL_WIDTH
-	// The last keep characters: skip whole characters from the start.
-	for text_encoding.character_count(transmute([]u8)visible) > keep {
-		_, length, _ := text_encoding.character_decode(transmute([]u8)visible, 0)
-		visible = visible[max(length, 1):]
+
+	total_chars := text_encoding.character_count(text[:count^])
+	first_char := total_chars > keep && caret_char > keep ? caret_char - keep : 0
+	shown_end := min(first_char + keep, total_chars)
+	first_byte := text_byte_of_char(text[:count^], first_char)
+	end_byte := text_byte_of_char(text[:count^], shown_end)
+	visible := string(text[first_byte:end_byte])
+
+	if result.focused && sel_hi > sel_lo {
+		vis_sel_lo := clamp(text_encoding.character_count(text[:sel_lo]), first_char, shown_end)
+		vis_sel_hi := clamp(text_encoding.character_count(text[:sel_hi]), vis_sel_lo, shown_end)
+		if vis_sel_hi > vis_sel_lo {
+			draw_rectangle(table, area.x + 8 + (vis_sel_lo - first_char) * graphics.CELL_WIDTH, y, (vis_sel_hi - vis_sel_lo) * graphics.CELL_WIDTH, LINE, graphics.colors.chosen, u32(element))
+		}
 	}
 	after := draw_text(table, area.x + 8, y, visible, graphics.colors.text_strong, {}, u32(element))
 	if result.focused {
-		draw_rectangle(table, after + 1, y, 2, LINE, graphics.colors.title, u32(element))
+		caret_x := area.x + 8 + clamp(caret_char - first_char, 0, max(keep, 0)) * graphics.CELL_WIDTH
+		draw_rectangle(table, caret_x + 1, y, 2, LINE, graphics.colors.title, u32(element))
 	}
 	if count^ == 0 && placeholder != "" {
 		draw_text(table, after + 8, y, text_fit(table, FONT_INTERFACE, placeholder, area.x + area.width - 8 - (after + 8)), graphics.colors.dim, FONT_INTERFACE, u32(element))

@@ -81,6 +81,7 @@ linux_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		// The echo of the command is the line "... # echo modus-guest-ok":
 		// only the output of the command starts with the word.
 		append(&steps, Step{kind = .Wait, text = "linux: shell: modus-guest-ok", fails_on = "linux: the guest stopped with the failure "})
+		append(&steps, Step{kind = .Shot, text = "linux_guest"})
 		// A resize of the window reaches the shell as SIGWINCH: a program in
 		// the foreground of hvc0 waits for it, and prints the size that hvc0
 		// then has. The tool cannot know the rows and the columns of the
