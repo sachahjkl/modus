@@ -688,11 +688,13 @@ draw :: proc "contextless" (window: ^display.Window) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service, _ := system.service_open(ctx)
 	display_port_bind(ctx)
-	store_start(ctx)
+	// Open the display first so startup font mapping finishes and detaches the
+	// shared storage ring before the store worker thread opens it.
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "assistant")
 	if !ok {
 		system.stop(.Failed)
 	}
+	store_start(ctx)
 	draw(&window)
 	system.log_fact(.Info, Running{})
 	for {
