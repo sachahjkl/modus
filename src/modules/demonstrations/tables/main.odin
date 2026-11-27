@@ -48,26 +48,27 @@ import "modus:contract/value_kinds"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:layout"
 import "modus:random"
 import "modus:system"
 
-HAND_PICTURE_PAGES :: 688
-#assert(HAND_PICTURE_PAGES == (WIDTH * HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
 LARGE_TABLE_PAGES :: 640
 #assert(LARGE_TABLE_PAGES == (LARGE_COUNT * size_of(Reading) + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
 CALL_HOST_BUDGET_PAGES :: 512
 #assert(CALL_HOST_BUDGET_PAGES == system.CALL_HOST_PAGES)
-// The hand-drawn window picture and the 65536-reading table allocated before
-// ready.
-MODULE_START_OBJECTS :: [?]system.Start_Object{HAND_PICTURE_PAGES, LARGE_TABLE_PAGES}
+// The 65536-reading table allocated before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{LARGE_TABLE_PAGES}
 // The two call hosts (sample and hostile_exports) started before ready.
 MODULE_START_BUDGETS :: [?]system.Start_Budget{CALL_HOST_BUDGET_PAGES, CALL_HOST_BUDGET_PAGES}
 // Itself and two call hosts; the tool counts the module, its threads, its
 // window at the largest scale, its start objects and its child budgets.
 MODULE_BUDGET :: system.Stated_Budget{processes = 3, threads = 3, window_width = WIDTH, window_height = HEIGHT}
 
-// The picture of the window, in its logical pixels (interface.Hand_Picture).
-hand_picture: interface.Hand_Picture
+// Plan value: draw table record and text capacities, sized for the three cards,
+// all case rows, and long error sentences with headroom.
+window_memory: interface.Window_Memory(1024, 16384)
+// The layout tree of one frame (modus:layout). Lives in module memory, never on stack.
+tables_layout_tree: layout.Box_Tree
 
 // The records of sample, as this process declares them: the layout is the
 // description (a process in C declares the same struct).
@@ -525,116 +526,171 @@ measure :: proc "contextless" () {
 }
 sink: i64
 
+// Plan value: nominal logical dimensions of the tables demonstration window.
 WIDTH :: 1000
 HEIGHT :: 704
-LINE :: 20 // A row of a card: a line of text and 4 pixels. The cases are many.
-TEXT_LINE :: graphics.LINE_HEIGHT // One more line of a text that has several.
-CARD_X :: 16
-CARD_WIDTH :: WIDTH - 2 * CARD_X
-CARD_HEAD :: 48 // The title of a card, and the room under its last row.
-NAME_X :: 40 // The column of the names, in a card.
-ANSWER_X :: 312 // The first column of the answers.
-COLUMN_WIDTH :: 220
-// The box of an answer of the first card: its column, after its mark.
-ANSWER_ROOM :: COLUMN_WIDTH - 16 - 8
-// The answer of a hostile case starts after the longest name, "the same
-// rows in a lent memory object" (36 characters after its mark), and has
-// the rest of the card.
-HOSTILE_ANSWER_X :: NAME_X + 16 + 38 * graphics.CELL_WIDTH
-HOSTILE_ANSWER_ROOM :: CARD_X + CARD_WIDTH - 16 - HOSTILE_ANSWER_X
+// Plan value: height of one case row (16 px text plus 4 px spacing).
+LINE :: 20
+// Plan value: card header (40 px title) plus bottom padding (8 px).
+CARD_HEAD :: graphics.TITLE + graphics.GAP
+// Plan value: status mark square size and horizontal advance before the text.
+MARK_SIZE :: 8
+MARK_OFFSET :: 16
+// Plan value: fixed widths and minimum widths of the three cards' columns inside
+// their content area (936 px at nominal width).
+CASES_NAME_COLUMN :: 276
+CASES_ANSWER_COLUMN_LEAST :: 160
+// Fits the 16 px mark plus the longest hostile case name (36 cells) plus padding.
+HOSTILE_NAME_COLUMN :: MARK_OFFSET + 38 * graphics.CELL_WIDTH + graphics.GAP
+HOSTILE_ANSWER_COLUMN_LEAST :: 160
+MEASURES_NAME_COLUMN :: 296
+MEASURES_VALUE_COLUMN_LEAST :: 120
+// Computed: height of the measures card (header plus column row and four ways).
 MEASURES_HEIGHT :: CARD_HEAD + 5 * LINE
-#assert(ANSWER_X + 2 * COLUMN_WIDTH + 16 + ANSWER_ROOM <= CARD_X + CARD_WIDTH - 16)
 
-// text_lines draws a text in a box of `room` pixels, on the lines that it
-// needs (the rule of interface.text_wrap_line), and gives their count. This
-// window draws with src/library/modus/graphics: the rule is the one of
-// the interface package, the pixels are its own.
-text_lines :: proc "contextless" (canvas: graphics.Canvas, x, y, room: int, text: string, color: graphics.Color) -> (count: int) {
-	rest := text
-	for len(rest) > 0 {
-		line: string
-		line, rest = interface.text_wrap_line(nil, {}, rest, room)
-		graphics.text(canvas, x, y + count * TEXT_LINE, line, color)
-		count += 1
+CASES_COLUMN_COUNT :: 1 + len(Way)
+HOSTILE_COLUMN_COUNT :: 2
+MEASURES_COLUMN_COUNT :: 1 + len(SIZES)
+
+Tables_Places :: struct {
+	cases_card:       interface.Area,
+	hostile_card:     interface.Area,
+	measures_card:    interface.Area,
+	cases_content:    interface.Area,
+	hostile_content:  interface.Area,
+	measures_content: interface.Area,
+	cases_columns:    [CASES_COLUMN_COUNT]layout.Table_Column_Place,
+	hostile_columns:  [HOSTILE_COLUMN_COUNT]layout.Table_Column_Place,
+	measures_columns: [MEASURES_COLUMN_COUNT]layout.Table_Column_Place,
+}
+
+@(private = "file")
+area_of :: proc "contextless" (tree: ^layout.Box_Tree, index: layout.Box_Index) -> interface.Area {
+	box := layout.box_of(tree, index)
+	if box == nil {
+		return {}
 	}
-	return count
+	return {int(box.rect.x), int(box.rect.y), int(box.rect.width), int(box.rect.height)}
+}
+
+@(private = "file")
+card_content_of :: proc "contextless" (area: interface.Area) -> interface.Area {
+	return {
+		x      = area.x + graphics.MARGIN,
+		y      = area.y + graphics.TITLE,
+		width  = max(area.width - 2 * graphics.MARGIN, 0),
+		height = max(area.height - graphics.TITLE - graphics.GAP, 0),
+	}
+}
+
+// tables_layout computes the three stacked cards and their column places with
+// modus:layout.
+tables_layout :: proc "contextless" (tree: ^layout.Box_Tree, width, height, cases_height, hostile_height: int) -> (places: Tables_Places, ok: bool) {
+	if tree == nil || width <= 0 || height <= 0 || width > layout.LENGTH_LIMIT || height > layout.LENGTH_LIMIT || cases_height < 0 || cases_height > layout.LENGTH_LIMIT || hostile_height < 0 || hostile_height > layout.LENGTH_LIMIT {
+		return {}, false
+	}
+	margin := i32(graphics.MARGIN)
+	if layout.tree_begin(tree, i32(width), i32(height), {child_axis = .Y, padding = {.X = margin, .Y = margin}, gap = margin}) != .Done {
+		return {}, false
+	}
+	cases_box, s0 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(i32(cases_height))}})
+	_, s1 := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.fill()}, child_axis = .Y, overflow = {.X = .Visible, .Y = .Clip}})
+	hostile_box, s2 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(i32(hostile_height), 0)}})
+	sc0 := layout.box_close(tree)
+	measures_box, s3 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.px(MEASURES_HEIGHT)}})
+	if s0 != .Done || s1 != .Done || s2 != .Done || sc0 != .Done || s3 != .Done || layout.solve(tree) != .Done {
+		return {}, false
+	}
+
+	places.cases_card = area_of(tree, cases_box)
+	places.hostile_card = area_of(tree, hostile_box)
+	places.measures_card = area_of(tree, measures_box)
+	places.cases_content = card_content_of(places.cases_card)
+	places.hostile_content = card_content_of(places.hostile_card)
+	places.measures_content = card_content_of(places.measures_card)
+
+	cases_spec := [CASES_COLUMN_COUNT]layout.Table_Column {
+		{width = CASES_NAME_COLUMN},
+		{weight = 1, least = CASES_ANSWER_COLUMN_LEAST},
+		{weight = 1, least = CASES_ANSWER_COLUMN_LEAST},
+		{weight = 1, least = CASES_ANSWER_COLUMN_LEAST},
+	}
+	cases_rect := layout.Rect{i32(places.cases_content.x), i32(places.cases_content.y), i32(places.cases_content.width), i32(places.cases_content.height)}
+	if layout.table_columns(cases_spec[:], places.cases_columns[:], cases_rect, 0) != .Done {
+		return {}, false
+	}
+
+	hostile_spec := [HOSTILE_COLUMN_COUNT]layout.Table_Column {
+		{width = HOSTILE_NAME_COLUMN},
+		{weight = 1, least = HOSTILE_ANSWER_COLUMN_LEAST},
+	}
+	hostile_rect := layout.Rect{i32(places.hostile_content.x), i32(places.hostile_content.y), i32(places.hostile_content.width), i32(places.hostile_content.height)}
+	if layout.table_columns(hostile_spec[:], places.hostile_columns[:], hostile_rect, 0) != .Done {
+		return {}, false
+	}
+
+	measures_spec := [MEASURES_COLUMN_COUNT]layout.Table_Column {
+		{width = MEASURES_NAME_COLUMN},
+		{weight = 1, least = MEASURES_VALUE_COLUMN_LEAST},
+		{weight = 1, least = MEASURES_VALUE_COLUMN_LEAST},
+		{weight = 1, least = MEASURES_VALUE_COLUMN_LEAST},
+	}
+	measures_rect := layout.Rect{i32(places.measures_content.x), i32(places.measures_content.y), i32(places.measures_content.width), i32(places.measures_content.height)}
+	if layout.table_columns(measures_spec[:], places.measures_columns[:], measures_rect, 0) != .Done {
+		return {}, false
+	}
+
+	return places, true
 }
 
 // line_count gives the lines of a text in a box, at least one.
-line_count :: proc "contextless" (text: string, room: int) -> int {
-	return max(interface.text_wrapped_line_count(nil, {}, text, room), 1)
+line_count :: proc "contextless" (table: ^interface.Draw_Table, text: string, room: int) -> int {
+	return max(interface.text_wrapped_line_count(table, {}, text, room), 1)
 }
 
 // row_height gives the height of a row whose longest text has `lines` lines.
 row_height :: proc "contextless" (lines: int) -> int {
-	return LINE + (lines - 1) * TEXT_LINE
+	return LINE + (lines - 1) * interface.line_height({})
 }
 
 // case_row_lines gives the lines of the row of a case: its longest answer.
-case_row_lines :: proc "contextless" (item: ^Case) -> (lines: int) {
+case_row_lines :: proc "contextless" (table: ^interface.Draw_Table, item: ^Case, answer_room: int) -> (lines: int) {
 	lines = 1
 	for way in Way {
-		lines = max(lines, line_count(answer_text(&item.answers[way]), ANSWER_ROOM))
+		lines = max(lines, line_count(table, answer_text(&item.answers[way]), answer_room))
 	}
 	return lines
 }
 
-card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption: string, accent: graphics.Color) {
-	graphics.block(canvas, x, y, width, height, graphics.colors.card_top, graphics.colors.card_bottom)
-	graphics.outline(canvas, x, y, width, height, 1, graphics.mix(graphics.colors.card_bottom, accent, 72))
-	graphics.fill(canvas, x, y, 4, height, accent)
-	graphics.text(canvas, x + 16, y + 12, title, accent)
-	graphics.text(canvas, x + width - 16 - graphics.text_width(caption), y + 12, caption, graphics.colors.dim)
-}
+draw :: proc "contextless" (window: ^display.Window) {
+	frame := interface.window_frame_start(&window_memory, window)
+	table := frame.table
+	width, height := window.width, window.height
+	interface.background(&frame, {0, 0, width, height})
 
-// mark draws the square of an answer: the color of a process when it is
-// the expected answer, the color "failed" when it is not.
-mark :: proc "contextless" (canvas: graphics.Canvas, x, y: int, right: bool) {
-	graphics.fill(canvas, x, y + 4, 8, 8, right ? graphics.colors.process : graphics.colors.failed)
-}
+	// Match the column widths that tables_layout assigns so wrapped row heights
+	// agree with the drawn boxes.
+	content_width := max(width - 4 * graphics.MARGIN, 0)
+	answer_column_width := max((content_width - CASES_NAME_COLUMN) / len(Way), CASES_ANSWER_COLUMN_LEAST)
+	answer_room := max(answer_column_width - MARK_OFFSET - graphics.GAP, graphics.CELL_WIDTH)
+	hostile_answer_room := max(content_width - HOSTILE_NAME_COLUMN, HOSTILE_ANSWER_COLUMN_LEAST)
 
-draw :: proc "contextless" (canvas: graphics.Canvas) {
-	graphics.clear(canvas, graphics.colors.background)
-	for y := 12; y < HEIGHT; y += 24 {
-		for x := 12; x < WIDTH; x += 24 {
-			graphics.fill(canvas, x, y, 2, 2, graphics.colors.point)
-		}
-	}
 	// The cases: one row for each, one column for each way. An answer has
 	// the box of its column, and a row the height of its longest answer:
 	// the card is as high as its rows.
-	y := 16
-	height := CARD_HEAD + LINE
+	cases_height := CARD_HEAD + LINE
 	for &item in cases[:case_count] {
-		height += row_height(case_row_lines(&item))
+		cases_height += row_height(case_row_lines(table, &item, answer_room))
 	}
-	card(canvas, CARD_X, y, CARD_WIDTH, height, "one description, three ways to call", "module sample, the same arguments", graphics.colors.kernel)
-	y += 40
-	graphics.text(canvas, NAME_X, y, "export  table", graphics.colors.dim)
-	for way in Way {
-		graphics.text(canvas, ANSWER_X + int(way) * COLUMN_WIDTH, y, way_names[way], graphics.colors.dim)
-	}
-	y += LINE
-	for &item in cases[:case_count] {
-		graphics.text(canvas, NAME_X, y, item.name, graphics.colors.text)
-		for way in Way {
-			answer := &item.answers[way]
-			x := ANSWER_X + int(way) * COLUMN_WIDTH
-			mark(canvas, x, y, answer.right)
-			text_lines(canvas, x + 16, y, ANSWER_ROOM, answer_text(answer), answer.right ? graphics.colors.text : graphics.colors.failed)
-		}
-		y += row_height(case_row_lines(&item))
-	}
+
 	// The hostile cases, with their answers: the sentence of an error
 	// record, whole. The card of the measures is at the bottom of the
 	// window, and this card has the room between the two: it shows the
 	// cases that fit, and counts the others on its last line.
-	y = 16 + height + 16
-	measures_y := HEIGHT - 16 - MEASURES_HEIGHT
-	room := measures_y - 16 - y - CARD_HEAD
+	room := max(height - 4 * graphics.MARGIN - cases_height - MEASURES_HEIGHT - CARD_HEAD, 0)
 	shown, rows_height := 0, 0
 	for &item in hostile[:hostile_count] {
-		next := row_height(line_count(answer_text(&item.answer), HOSTILE_ANSWER_ROOM))
+		next := row_height(line_count(table, answer_text(&item.answer), hostile_answer_room))
 		kept := shown == hostile_count - 1 ? 0 : LINE // The line of the count, when a case is left.
 		if rows_height + next > room - kept {
 			break
@@ -643,36 +699,67 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 		shown += 1
 	}
 	hostile_height := CARD_HEAD + rows_height + (shown < hostile_count ? LINE : 0)
-	card(canvas, CARD_X, y, CARD_WIDTH, hostile_height, "a hostile caller, through the call host", "isolated.decode, export_serve", graphics.colors.failed)
-	row := y + 40
-	for &item in hostile[:shown] {
-		mark(canvas, NAME_X, row, item.answer.right)
-		graphics.text(canvas, NAME_X + 16, row, item.name, graphics.colors.text)
-		row += row_height(text_lines(canvas, HOSTILE_ANSWER_X, row, HOSTILE_ANSWER_ROOM, answer_text(&item.answer), item.answer.right ? graphics.colors.text : graphics.colors.failed))
-	}
-	if shown < hostile_count {
-		rest_buffer: [64]u8
-		graphics.text(canvas, NAME_X, row, system.format(rest_buffer[:], "and ", u64(hostile_count - shown), " cases more: the window has no line for them"), graphics.colors.dim)
-	}
-	// The measures.
-	y = measures_y
-	card(canvas, CARD_X, y, CARD_WIDTH, MEASURES_HEIGHT, "nanoseconds for one call of sum_values", "rows of 40 bytes, the least of several runs", graphics.colors.memory)
-	row = y + 40
-	graphics.text(canvas, NAME_X, row, "the way", graphics.colors.dim)
-	sizes := SIZES
-	buffer: [24]u8
-	for size, column in sizes {
-		graphics.text(canvas, ANSWER_X + 16 + column * 160, row, system.format(buffer[:], u64(size), " rows"), graphics.colors.dim)
-	}
-	row += LINE
-	for way in Measure_Way {
-		graphics.text(canvas, NAME_X, row, measure_names[way], graphics.colors.text)
-		for column in 0 ..< 3 {
-			value := measures[way][column]
-			graphics.text(canvas, ANSWER_X + 16 + column * 160, row, value == 0 ? "does not fit" : system.format(buffer[:], value), value == 0 ? graphics.colors.dim : graphics.colors.text)
+
+	if places, layout_ok := tables_layout(&tables_layout_tree, width, height, cases_height, hostile_height); layout_ok {
+		// Card 1: one description, three ways to call.
+		cases_inside := interface.card(&frame, places.cases_card, "one description, three ways to call", "module sample, the same arguments", graphics.colors.kernel)
+		y := cases_inside.y
+		interface.draw_text(table, int(places.cases_columns[0].x), y, "export  table", graphics.colors.dim, interface.FONT_INTERFACE)
+		for way in Way {
+			interface.draw_text(table, int(places.cases_columns[1 + int(way)].x), y, way_names[way], graphics.colors.dim, interface.FONT_INTERFACE)
+		}
+		y += LINE
+		for &item in cases[:case_count] {
+			interface.draw_text(table, int(places.cases_columns[0].x), y, item.name, graphics.colors.text)
+			for way in Way {
+				answer := &item.answers[way]
+				col := places.cases_columns[1 + int(way)]
+				x := int(col.x)
+				col_room := max(int(col.width) - MARK_OFFSET - graphics.GAP, graphics.CELL_WIDTH)
+				interface.mark(&frame, x, y + 4, MARK_SIZE, answer.right ? graphics.colors.process : graphics.colors.failed)
+				interface.draw_text_wrapped(table, x + MARK_OFFSET, y, col_room, answer_text(answer), answer.right ? graphics.colors.text : graphics.colors.failed)
+			}
+			y += row_height(case_row_lines(table, &item, answer_room))
+		}
+
+		// Card 2: a hostile caller, through the call host.
+		hostile_inside := interface.card(&frame, places.hostile_card, "a hostile caller, through the call host", "isolated.decode, export_serve", graphics.colors.failed)
+		row := hostile_inside.y
+		hostile_x := int(places.hostile_columns[0].x)
+		hostile_ans_x := int(places.hostile_columns[1].x)
+		hostile_ans_room := max(int(places.hostile_columns[1].width), graphics.CELL_WIDTH)
+		for &item in hostile[:shown] {
+			interface.mark(&frame, hostile_x, row + 4, MARK_SIZE, item.answer.right ? graphics.colors.process : graphics.colors.failed)
+			interface.draw_text(table, hostile_x + MARK_OFFSET, row, item.name, graphics.colors.text)
+			lines := max(interface.draw_text_wrapped(table, hostile_ans_x, row, hostile_ans_room, answer_text(&item.answer), item.answer.right ? graphics.colors.text : graphics.colors.failed), 1)
+			row += row_height(lines)
+		}
+		if shown < hostile_count {
+			rest_buffer: [64]u8
+			interface.draw_text(table, hostile_x, row, system.format(rest_buffer[:], "and ", u64(hostile_count - shown), " cases more: the window has no line for them"), graphics.colors.dim, interface.FONT_INTERFACE)
+		}
+
+		// Card 3: nanoseconds for one call of sum_values.
+		measures_inside := interface.card(&frame, places.measures_card, "nanoseconds for one call of sum_values", "rows of 40 bytes, the least of several runs", graphics.colors.memory)
+		row = measures_inside.y
+		interface.draw_text(table, int(places.measures_columns[0].x), row, "the way", graphics.colors.dim, interface.FONT_INTERFACE)
+		sizes := SIZES
+		buffer: [24]u8
+		for size, column in sizes {
+			interface.draw_text(table, int(places.measures_columns[1 + column].x), row, system.format(buffer[:], u64(size), " rows"), graphics.colors.dim, interface.FONT_INTERFACE)
 		}
 		row += LINE
+		for way in Measure_Way {
+			interface.draw_text(table, int(places.measures_columns[0].x), row, measure_names[way], graphics.colors.text, interface.FONT_INTERFACE)
+			for column in 0 ..< len(SIZES) {
+				value := measures[way][column]
+				interface.draw_text(table, int(places.measures_columns[1 + column].x), row, value == 0 ? "does not fit" : system.format(buffer[:], value), value == 0 ? graphics.colors.dim : graphics.colors.text)
+			}
+			row += LINE
+		}
 	}
+
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }
 
 // The random generator of this process: it gives the seed of each call
@@ -695,7 +782,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Refused)
 	}
 	window, opened := display.open(ctx, WIDTH, HEIGHT, "tables")
-	if !opened || interface.hand_picture_open(&hand_picture, &window) != .Succeeded {
+	if !opened {
 		system.stop(.Failed)
 	}
 	image_memory = ctx.handles[system.GRANT_IMAGE]
@@ -780,13 +867,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	for {
-		// The canvas is the picture that the compositor does not read,
-		// after it took the picture before: the whole canvas is drawn.
-		if display.canvas_wait(&window) {
-			draw(hand_picture.canvas)
-			interface.hand_picture_show(&hand_picture, &window)
+		draw(&window)
+		deadline: u64 = system.WAIT_FOREVER
+		if wake, due := interface.window_scroll_bar_wake(&window_memory.drawing); due {
+			deadline = wake
 		}
-		display.wait(&window)
-		_ = interface.hand_picture_events(&hand_picture, &window)
+		display.wait(&window, deadline)
+		interface.window_events(&window_memory.drawing, &window)
 	}
 }

@@ -106,19 +106,15 @@ WIDTH :: 944
 TOP_LINES :: 4
 HEIGHT :: 568
 #assert(HEIGHT == 2 * MARGIN + (TOP_LINES + ROWS) * LINE)
-// The logical picture in which the window draws by hand before its first frame.
-HAND_PICTURE_PAGES :: 524
-#assert(HAND_PICTURE_PAGES == (WIDTH * HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
-// The hand-drawn window picture allocated before ready.
-MODULE_START_OBJECTS :: [?]system.Start_Object{HAND_PICTURE_PAGES}
-// The tool counts the module, its stack, its window at the largest scale and
-// the hand picture in MODULE_START_OBJECTS.
+// The tool counts the module, its stack, and its window at the largest scale.
 MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 
-// The picture of the window, in its logical pixels: the window draws its
-// rows by hand, and the drawing module puts the picture on the screen at
-// the scale (interface.Hand_Picture).
-hand_picture: interface.Hand_Picture
+// Inline capacity: 1024 draw records and 16 KiB of text hold the counts line,
+// two lines of process cards, the legend, 30 wrapped record rows with typed
+// value runs, and scroll bars without filling the table.
+WINDOW_RECORDS_CAPACITY :: 1024
+WINDOW_TEXT_CAPACITY :: 16384
+window_memory: interface.Window_Memory(WINDOW_RECORDS_CAPACITY, WINDOW_TEXT_CAPACITY)
 
 // level_color gives the color of a level in the appearance in force: a
 // record of a process that runs as it must, in the color of a process; a
@@ -515,33 +511,23 @@ join :: proc "contextless" (joined: ^Joined, group: Group) {
 
 // group_lines gives the lines of a group: the most of the lines of its
 // text and of the name of its process, each in its box.
-group_lines :: proc "contextless" (joined: ^Joined, group: Group) -> int {
+group_lines :: proc "contextless" (table: ^interface.Draw_Table, joined: ^Joined, group: Group) -> int {
 	record := record_shown(group.first)
-	text_lines := interface.text_wrapped_line_count(nil, {}, string(joined.bytes[joined.from:joined.count]), places.text_room)
-	name_lines := interface.text_wrapped_line_count(nil, {}, system.name_of(record.name[:]), places.name_room)
+	text_lines := interface.text_wrapped_line_count(table, {}, string(joined.bytes[joined.from:joined.count]), places.text_room)
+	name_lines := interface.text_wrapped_line_count(table, {}, system.name_of(record.name[:]), places.name_room)
 	return max(text_lines, name_lines, 1)
-}
-
-// lines_draw draws a text in a box, on the lines that it needs.
-lines_draw :: proc "contextless" (canvas: graphics.Canvas, x, y, room: int, text: string, color: graphics.Color) {
-	rest := text
-	for line_y := y; len(rest) > 0; line_y += LINE {
-		line: string
-		line, rest = interface.text_wrap_line(nil, {}, rest, room)
-		graphics.text(canvas, x, line_y, line, color)
-	}
 }
 
 // joined_text_draw draws the text of a group in its box: each line of the
 // text, each value run in the color of its kind and the rest in plain. A
 // run that a break of a line cuts has its color on both lines.
-joined_text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, joined: ^Joined, plain: graphics.Color) {
+joined_text_draw :: proc "contextless" (table: ^interface.Draw_Table, x, y: int, joined: ^Joined, plain: graphics.Color) {
 	text := string(joined.bytes[:joined.count])
 	rest := text[joined.from:]
 	for line_y := y; len(rest) > 0; line_y += LINE {
 		line_start := len(text) - len(rest)
 		line: string
-		line, rest = interface.text_wrap_line(nil, {}, rest, places.text_room)
+		line, rest = interface.text_wrap_line(table, {}, rest, places.text_room)
 		line_end := line_start + len(line)
 		at := line_start
 		left := x
@@ -550,11 +536,15 @@ joined_text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, join
 			if start >= end {
 				continue
 			}
-			left = graphics.text(canvas, left, line_y, text[at:start], plain)
-			left = graphics.text(canvas, left, line_y, text[start:end], graphics.value_kind_color(run.kind, graphics.appearance, plain))
+			if start > at {
+				left = interface.draw_text(table, left, line_y, text[at:start], plain)
+			}
+			left = interface.draw_text(table, left, line_y, text[start:end], graphics.value_kind_color(run.kind, graphics.appearance, plain))
 			at = end
 		}
-		graphics.text(canvas, left, line_y, text[at:line_end], plain)
+		if at < line_end {
+			interface.draw_text(table, left, line_y, text[at:line_end], plain)
+		}
 	}
 }
 
@@ -599,44 +589,45 @@ card_width :: proc "contextless" (name: string, count: u64) -> int {
 	for rest := count / 10; rest != 0; rest /= 10 {
 		digits += 1
 	}
-	return graphics.text_width(name) + 8 + digits * graphics.text_width("0") + 12
+	return interface.text_width({}, name) + 8 + digits * interface.text_width({}, "0") + 12
 }
 
 // card_draw draws the card of a count at its place: a band, its name, and
 // the count.
-card_draw :: proc "contextless" (canvas: graphics.Canvas, x, y, width: int, name: string, count: u64) {
-	graphics.fill(canvas, x - 4, y, width - 8, LINE, element_tokens.surface_card)
-	after := graphics.text(canvas, x, y, name, element_tokens.text)
-	graphics.unsigned(canvas, after + 8, y, count, element_tokens.text)
+card_draw :: proc "contextless" (table: ^interface.Draw_Table, x, y, width: int, name: string, count: u64) {
+	interface.draw_rectangle(table, x - 4, y, width - 8, LINE, element_tokens.surface_card)
+	after := interface.draw_text(table, x, y, name, element_tokens.text)
+	interface.draw_unsigned(table, after + 8, y, count, element_tokens.text)
 }
 
 // draw draws the whole window: the counts, the processes, the legend of the
 // value kinds, and the last records, each in the place that the layout
 // tree gave. A text drops the start that repeats its process
 // (`repeated_start`).
-draw :: proc "contextless" (canvas: graphics.Canvas) {
+draw :: proc "contextless" (frame: ^interface.Frame, width, height: int) {
 	// graphics holds only members of the appearance: the tokens of the
 	// standard contrast are the colors that the window drew with before.
 	element_tokens, _ = layout.tokens_for(graphics.appearance, .Standard)
-	// The size of the picture now. A size that the tree refuses keeps the
+	// The size of the window now. A size that the tree refuses keeps the
 	// places before.
-	if laid_out, laid_out_ok := log_layout(canvas.width, canvas.height); laid_out_ok {
+	if laid_out, laid_out_ok := log_layout(width, height); laid_out_ok {
 		places = laid_out
 	}
-	graphics.clear(canvas, element_tokens.surface_background)
+	interface.background(frame, {0, 0, width, height})
+	table := frame.table
 	// The log is a ring of the kernel: its title in the color of the kernel.
 	counts := places.counts
-	graphics.fill(canvas, counts.x, counts.y - 4, counts.width, 2, graphics.colors.kernel)
-	x := graphics.text(canvas, counts.x, counts.y, "the log  ", graphics.colors.kernel)
-	x = graphics.unsigned(canvas, x, counts.y, row_count, element_tokens.text)
-	x = graphics.text(canvas, x, counts.y, " read, ", element_tokens.text_dim)
+	interface.draw_rectangle(table, counts.x, counts.y - 4, counts.width, 2, graphics.colors.kernel)
+	x := interface.draw_text(table, counts.x, counts.y, "the log  ", graphics.colors.kernel)
+	x = interface.draw_unsigned(table, x, counts.y, row_count, element_tokens.text)
+	x = interface.draw_text(table, x, counts.y, " read, ", element_tokens.text_dim)
 	// Records gone before the start are a fact of the boot, not a fault
 	// of this reader: only the count lost since is in the color of a
 	// failure (src/md/features/log_window_losses.md).
-	x = graphics.unsigned(canvas, x, counts.y, gone_before_start, element_tokens.text)
-	x = graphics.text(canvas, x, counts.y, " gone before its start, ", element_tokens.text_dim)
-	x = graphics.unsigned(canvas, x, counts.y, lost, lost == 0 ? element_tokens.text : element_tokens.failed)
-	x = graphics.text(canvas, x, counts.y, " lost since    ", element_tokens.text_dim)
+	x = interface.draw_unsigned(table, x, counts.y, gone_before_start, element_tokens.text)
+	x = interface.draw_text(table, x, counts.y, " gone before its start, ", element_tokens.text_dim)
+	x = interface.draw_unsigned(table, x, counts.y, lost, lost == 0 ? element_tokens.text : element_tokens.failed)
+	x = interface.draw_text(table, x, counts.y, " lost since    ", element_tokens.text_dim)
 	for count, level in level_counts {
 		names := [system.Log_Level]string {
 			.Info    = "info ",
@@ -644,9 +635,9 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 			.Warning = "warning ",
 			.Error   = "error ",
 		}
-		graphics.fill(canvas, x, counts.y + 4, 8, 8, level_color(level))
-		x = graphics.text(canvas, x + 12, counts.y, names[level], element_tokens.text_dim)
-		x = graphics.unsigned(canvas, x, counts.y, count, element_tokens.text) + 16
+		interface.draw_rectangle(table, x, counts.y + 4, 8, 8, level_color(level))
+		x = interface.draw_text(table, x + 12, counts.y, names[level], element_tokens.text_dim)
+		x = interface.draw_unsigned(table, x, counts.y, count, element_tokens.text) + 16
 	}
 
 	// The processes, with the count of records of each one, on the lines
@@ -654,9 +645,9 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	// not fit there counts with the others, in the last card, so no card
 	// covers the heads of the columns.
 	cards := places.processes
-	cards_left := cards.x + graphics.text_width("processes ")
+	cards_left := cards.x + interface.text_width({}, "processes ")
 	cards_right := cards.x + cards.width
-	graphics.text(canvas, cards.x, cards.y, "processes ", element_tokens.text_dim)
+	interface.draw_text(table, cards.x, cards.y, "processes ", element_tokens.text_dim)
 	others_width := card_width("others", max(u64))
 	x = cards_left
 	y := cards.y
@@ -664,9 +655,9 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	others := other_processes
 	for &counted, index in process_counts[:process_count] {
 		name := system.name_of(counted.name[:])
-		width := card_width(name, counted.count)
+		card_w := card_width(name, counted.count)
 		card_x, card_y := x, y
-		if card_x + width > cards_right {
+		if card_x + card_w > cards_right {
 			card_x = cards_left
 			card_y += LINE
 		}
@@ -676,14 +667,14 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 		if card_y == last_line_y && (index < process_count - 1 || other_processes > 0) {
 			room -= others_width
 		}
-		if card_y > last_line_y || card_x + width > room {
+		if card_y > last_line_y || card_x + card_w > room {
 			for &rest in process_counts[index:process_count] {
 				others += rest.count
 			}
 			break
 		}
-		card_draw(canvas, card_x, card_y, width, name, counted.count)
-		x, y = card_x + width, card_y
+		card_draw(table, card_x, card_y, card_w, name, counted.count)
+		x, y = card_x + card_w, card_y
 	}
 	if others > 0 {
 		// The room is kept on the last line: the card fits there, or on
@@ -692,16 +683,16 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 			x = cards_left
 			y += LINE
 		}
-		card_draw(canvas, x, y, card_width("others", others), "others", others)
+		card_draw(table, x, y, card_width("others", others), "others", others)
 	}
 
 	columns := &places.columns
 	heads := places.heads
-	graphics.text(canvas, int(columns[.Time].x), heads.y, "time (s)", element_tokens.text_dim)
-	graphics.text(canvas, int(columns[.Process].x), heads.y, "process", element_tokens.text_dim)
-	x = graphics.text(canvas, int(columns[.Text].x), heads.y, "text   ", element_tokens.text_dim)
+	interface.draw_text(table, int(columns[.Time].x), heads.y, "time (s)", element_tokens.text_dim)
+	interface.draw_text(table, int(columns[.Process].x), heads.y, "process", element_tokens.text_dim)
+	x = interface.draw_text(table, int(columns[.Text].x), heads.y, "text   ", element_tokens.text_dim)
 	for kind, index in legend_kinds {
-		x = graphics.text(canvas, x, heads.y, legend_names[index], graphics.value_kind_color(kind, graphics.appearance)) + 16
+		x = interface.draw_text(table, x, heads.y, legend_names[index], graphics.value_kind_color(kind, graphics.appearance)) + 16
 	}
 	// The texts of the records that the window holds: a record whose text
 	// continues is one text with the records after it.
@@ -715,7 +706,7 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 			group.count += 1
 		}
 		join(joined, group)
-		group.lines = group_lines(joined, group)
+		group.lines = group_lines(table, joined, group)
 		groups[group_count] = group
 		group_count += 1
 		place += group.count
@@ -732,21 +723,23 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	y = records.y
 	for group, index in groups[first_group:group_count] {
 		record := record_shown(group.first)
-		height := group.lines * LINE
+		row_height := group.lines * LINE
 		// Every second row on a band of the top of a card, as a table of
 		// the rules (docs/DESIGN.md, "10. Elements").
 		if index % 2 == 1 {
-			graphics.fill(canvas, records.x - 4, y, records.width + 8, height, element_tokens.surface_card)
+			interface.draw_rectangle(table, records.x - 4, y, records.width + 8, row_height, element_tokens.surface_card)
 		}
-		graphics.fill(canvas, records.x - 4, y, 3, height, level_color(record.level))
+		interface.draw_rectangle(table, records.x - 4, y, 3, row_height, level_color(record.level))
 		milliseconds := record.time / 1000
-		x = graphics.unsigned(canvas, int(columns[.Time].x) + 4, y, milliseconds / 1000, element_tokens.text_dim, 4)
-		x = graphics.text(canvas, x, y, ".", element_tokens.text_dim)
-		graphics.unsigned(canvas, x, y, milliseconds % 1000, element_tokens.text_dim, 3)
-		lines_draw(canvas, int(columns[.Process].x), y, places.name_room, system.name_of(record.name[:]), record.process == 0 ? element_tokens.text : graphics.colors.series[record.process % graphics.SERIES_COLOR_COUNT])
+		time_text: interface.Text_Builder
+		interface.text_put_number(&time_text, milliseconds / 1000, 4)
+		interface.text_put(&time_text, ".")
+		interface.text_put_number(&time_text, milliseconds % 1000, 3)
+		interface.draw_text(table, int(columns[.Time].x) + 4, y, interface.text_of(&time_text), element_tokens.text_dim)
+		interface.draw_text_wrapped(table, int(columns[.Process].x), y, places.name_room, system.name_of(record.name[:]), record.process == 0 ? element_tokens.text : graphics.colors.series[record.process % graphics.SERIES_COLOR_COUNT])
 		join(joined, group)
-		joined_text_draw(canvas, int(columns[.Text].x), y, joined, record.level == .Error ? element_tokens.failed : element_tokens.text)
-		y += height
+		joined_text_draw(table, int(columns[.Text].x), y, joined, record.level == .Error ? element_tokens.failed : element_tokens.text)
+		y += row_height
 	}
 }
 
@@ -776,9 +769,6 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "log")
 	if !ok {
-		system.stop(.Failed)
-	}
-	if interface.hand_picture_open(&hand_picture, &window) != .Succeeded {
 		system.stop(.Failed)
 	}
 	reader, status := system.log_open(ctx.handles[system.GRANT_LOG_RECORDS])
@@ -841,27 +831,26 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// the record that a full ring refused at it, and a gap where the
 		// kernel wrote over records first (follow.odin).
 		follow_pump()
-		for event in interface.window_next_event(&hand_picture.drawing, &window) {
-			// A new appearance or a new font: each pixel of the window
-			// changes, with no new record.
-			if event.kind == .Presentation {
+		for event in interface.window_next_event(&window_memory.drawing, &window) {
+			// A new appearance, font, or scaled surface: each pixel of the
+			// window changes, with no new record.
+			if event.kind == .Presentation || event.kind == .Surface_Answer {
 				picture_owed = true
 			}
 		}
 		// The scroll of a window that does not fit the work area: its bars,
 		// the wheel and the page keys need a picture.
-		if interface.window_scroll_frame_take(&hand_picture.drawing) {
+		if interface.window_scroll_frame_take(&window_memory.drawing) {
 			picture_owed = true
 		}
 		// This service never waits for the compositor: while the
 		// compositor did not take the last picture, the window owes its
 		// picture, and the wait below ends when the compositor has read.
-		// The whole canvas is drawn: it is the other picture of the
-		// surface.
 		if picture_owed && display.canvas_free(&window) {
-			draw(hand_picture.canvas)
-			interface.hand_picture_show(&hand_picture, &window)
-			picture_owed = false
+			frame := interface.window_frame_start(&window_memory, &window)
+			draw(&frame, window.width, window.height)
+			interface.window_frame_end(&window_memory.drawing, &frame, &window)
+			picture_owed = window_memory.drawing.late
 		}
 		if !logged {
 			logged = true

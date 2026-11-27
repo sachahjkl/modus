@@ -28,6 +28,10 @@ import "modus:contract/output"
 import "modus:contract/value_kinds"
 import "modus:system"
 
+// Computed: page-table headroom for 27+ concurrently mapped large wiring rings
+// during revoked_case before the process exits.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 8}
+
 // One probe: its serial in the record output, and a mark of it.
 Probe :: struct {
 	serial: u64,

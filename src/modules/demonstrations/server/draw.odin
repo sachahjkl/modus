@@ -9,16 +9,18 @@ import "modus:contract/value_kinds"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:layout"
 import "modus:network"
 import "modus:system"
 import "modus:tcp"
 import "modus:web"
 
+// Plan value: nominal logical dimensions of the server dashboard window.
 WIDTH :: 976
 HEIGHT :: 680
 
-// The colors of the concepts (src/library/modus/graphics/rules.odin, docs/DESIGN.md
-// section 4) that this window uses for TCP:
+// The colors of the concepts (src/library/modus/graphics/rules.odin, docs/DESIGN.md)
+// that this window uses for TCP:
 //   boot program  a connection that starts: the handshake.
 //   process       a connection that runs.
 //   kernel        the end of a connection: the FIN states and TIME-WAIT.
@@ -26,53 +28,131 @@ HEIGHT :: 680
 //   machine       the remote machines and the link.
 //   not usable    a connection that ended.
 
-CARD_TITLE :: graphics.TITLE
-CARD_MARGIN :: graphics.MARGIN
+// Plan value: height of one table row in logical pixels.
 LINE :: 24
 
-// bar draws the full part of a bar: 120 % of its color at the top, 78 % at the bottom.
-bar :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, color: graphics.Color) {
-	graphics.block(canvas, x, y, width, height, graphics.shade(color, 120), graphics.shade(color, 78))
+// Plan value: height of the top row of cards, fitting the six lines of MEASURES.
+TOP_HEIGHT :: 168
+// Plan value: fixed widths of the left and middle top cards; MEASURES fills the rest.
+LISTEN_CARD_WIDTH :: 256
+ANSWERS_CARD_WIDTH :: 232
+// Plan value: fixed width of the connections table card; REQUESTS fills the rest.
+CONNECTIONS_CARD_WIDTH :: 536
+
+// Plan value: value column offset in LISTEN and MEASURES; "new connections" has 15 characters.
+LISTEN_VALUE_COLUMN :: 120
+MEASURES_VALUE_COLUMN :: 136
+
+// Plan value: width of the congestion window bar representing 64 KiB.
+WINDOW_BAR :: 56
+// Plan value: maximum connection rows shown in the CONNECTIONS card at nominal height.
+CONNECTION_ROWS_LIMIT :: 17
+
+// Plan value: column counts of the two bottom tables.
+CONNECTION_COLUMN_COUNT :: 6
+REQUEST_COLUMN_COUNT :: 5
+
+// Plan value: draw table record and text capacities, sized for all five cards
+// and their maximum visible rows with headroom.
+window_memory: interface.Window_Memory(1024, 16384)
+// The layout tree of one frame (modus:layout). Lives in module memory, never on stack.
+server_layout_tree: layout.Box_Tree
+window_drawn_logged: bool
+
+Server_Places :: struct {
+	listen:              interface.Area,
+	answers:             interface.Area,
+	measures:            interface.Area,
+	connections:         interface.Area,
+	requests:            interface.Area,
+	connections_content: interface.Area,
+	requests_content:    interface.Area,
+	connection_columns:  [CONNECTION_COLUMN_COUNT]layout.Table_Column_Place,
+	request_columns:     [REQUEST_COLUMN_COUNT]layout.Table_Column_Place,
 }
 
-// large_number draws the one number of a card at the large text size
-// (docs/DESIGN.md, "5. Text"). Its line is LARGE_NUMBER_HEIGHT high, an
-// even size: the caption under it starts there.
-large_number :: proc "contextless" (canvas: graphics.Canvas, x, y: int, characters: string, color: graphics.Color) {
-	graphics.text_sized(canvas, x, y, characters, color, interface.font_text_size(interface.FONT_LARGE))
-}
-LARGE_NUMBER_HEIGHT :: graphics.TEXT_LARGE
-
-// caption draws a caption in the dim color at the caption size: the label
-// under the number of a card, or the caption of a card.
-caption :: proc "contextless" (canvas: graphics.Canvas, x, y: int, characters: string) {
-	graphics.text_sized(canvas, x, y, characters, graphics.colors.dim, interface.font_text_size(interface.FONT_CAPTION_CELLS))
+@(private = "file")
+area_of :: proc "contextless" (tree: ^layout.Box_Tree, index: layout.Box_Index) -> interface.Area {
+	box := layout.box_of(tree, index)
+	if box == nil {
+		return {}
+	}
+	return {int(box.rect.x), int(box.rect.y), int(box.rect.width), int(box.rect.height)}
 }
 
-// card draws the frame of one subject and gives the canvas of its content.
-// Its caption is at the caption size, on the baseline of its title.
-card :: proc "contextless" (canvas: graphics.Canvas, x, y, width, height: int, title, caption_text: string, accent: graphics.Color) -> graphics.Canvas {
-	graphics.block(canvas, x, y, width, height, graphics.shade(accent, 28), graphics.shade(accent, 14))
-	graphics.block(canvas, x + 1, y + 1, width - 2, height - 2, graphics.colors.card_top, graphics.colors.card_bottom)
-	title_top := y + 12
-	graphics.block(canvas, x + CARD_MARGIN, title_top, 4, 16, graphics.shade(accent, 130), accent)
-	after := graphics.text(canvas, x + CARD_MARGIN + 12, title_top, title, accent)
-	caption(canvas, after + 2 * graphics.GAP, interface.text_top_on_baseline(nil, {}, title_top, interface.FONT_CAPTION_CELLS), caption_text)
-	return graphics.view(canvas, x + CARD_MARGIN, y + CARD_TITLE, width - 2 * CARD_MARGIN, height - CARD_TITLE - graphics.GAP)
+@(private = "file")
+card_content_of :: proc "contextless" (area: interface.Area) -> interface.Area {
+	return {
+		x      = area.x + graphics.MARGIN,
+		y      = area.y + graphics.TITLE,
+		width  = max(area.width - 2 * graphics.MARGIN, 0),
+		height = max(area.height - graphics.TITLE - graphics.GAP, 0),
+	}
 }
 
-// right draws a text that ends at x.
-right :: proc "contextless" (canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color) {
-	graphics.text(canvas, x - graphics.text_width(text), y, text, color)
-}
+// server_layout computes the five dashboard cards and the column places of the
+// CONNECTIONS and REQUESTS tables with modus:layout.
+server_layout :: proc "contextless" (tree: ^layout.Box_Tree, width, height: int) -> (places: Server_Places, ok: bool) {
+	if tree == nil || width <= 0 || height <= 0 || width > layout.LENGTH_LIMIT || height > layout.LENGTH_LIMIT {
+		return {}, false
+	}
+	gap := i32(graphics.GAP)
+	if layout.tree_begin(tree, i32(width), i32(height), {child_axis = .Y, padding = {.X = gap, .Y = gap}, gap = gap}) != .Done {
+		return {}, false
+	}
+	_, s0 := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.px(TOP_HEIGHT)}, child_axis = .X, gap = gap})
+	listen_box, s1 := layout.box_add(tree, {size = {.X = layout.px(LISTEN_CARD_WIDTH), .Y = layout.fill()}})
+	answers_box, s2 := layout.box_add(tree, {size = {.X = layout.px(ANSWERS_CARD_WIDTH), .Y = layout.fill()}})
+	measures_box, s3 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.fill()}})
+	sc0 := layout.box_close(tree)
 
-// fact draws "name   value" on one line of a card.
-// A name and its value. The value starts at value_column: one character of
-// 8 pixels after the longest name of its card.
-fact :: proc "contextless" (canvas: graphics.Canvas, y: int, name: string, value: string, color: Maybe(graphics.Color) = nil, value_column := 120) {
-	graphics.text(canvas, 0, y, name, graphics.colors.dim)
-	value_color := color.? or_else graphics.colors.text
-	graphics.text(canvas, value_column, y, value, value == "" ? graphics.colors.dim : value_color)
+	_, s4 := layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.fill()}, child_axis = .X, gap = gap})
+	connections_box, s5 := layout.box_add(tree, {size = {.X = layout.px(CONNECTIONS_CARD_WIDTH), .Y = layout.fill()}})
+	requests_box, s6 := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.fill()}})
+	sc1 := layout.box_close(tree)
+
+	if s0 != .Done || s1 != .Done || s2 != .Done || s3 != .Done || sc0 != .Done || s4 != .Done || s5 != .Done || s6 != .Done || sc1 != .Done || layout.solve(tree) != .Done {
+		return {}, false
+	}
+
+	places.listen = area_of(tree, listen_box)
+	places.answers = area_of(tree, answers_box)
+	places.measures = area_of(tree, measures_box)
+	places.connections = area_of(tree, connections_box)
+	places.requests = area_of(tree, requests_box)
+	places.connections_content = card_content_of(places.connections)
+	places.requests_content = card_content_of(places.requests)
+
+	// Plan value: column widths of CONNECTIONS (total 504 px at nominal width).
+	// remote takes remaining width; state, in, out, srtt, and cwnd keep fixed rooms.
+	conn_spec := [CONNECTION_COLUMN_COUNT]layout.Table_Column {
+		{weight = 1, least = 120}, // remote
+		{width = 96}, // state ("SYN-RECEIVED" is 12 cells)
+		{width = 72}, // in (right-aligned)
+		{width = 80}, // out (right-aligned)
+		{width = 72}, // srtt (right-aligned)
+		{width = WINDOW_BAR + graphics.GAP}, // cwnd bar with leading gap
+	}
+	conn_rect := layout.Rect{i32(places.connections_content.x), i32(places.connections_content.y), i32(places.connections_content.width), i32(places.connections_content.height)}
+	if layout.table_columns(conn_spec[:], places.connection_columns[:], conn_rect, 0) != .Done {
+		return {}, false
+	}
+
+	// Plan value: column widths of REQUESTS (total 384 px at nominal width).
+	// method fits "OPTIONS" plus one cell; target fills remaining space and wraps.
+	req_spec := [REQUEST_COLUMN_COUNT]layout.Table_Column {
+		{width = 8 * graphics.CELL_WIDTH}, // method
+		{weight = 1, least = 8 * graphics.CELL_WIDTH}, // target
+		{width = 48}, // status ("status" header + 3-digit code)
+		{width = 56}, // bytes (right-aligned)
+		{width = 80}, // time (right-aligned)
+	}
+	req_rect := layout.Rect{i32(places.requests_content.x), i32(places.requests_content.y), i32(places.requests_content.width), i32(places.requests_content.height)}
+	if layout.table_columns(req_spec[:], places.request_columns[:], req_rect, 0) != .Done {
+		return {}, false
+	}
+
+	return places, true
 }
 
 size_text :: proc "contextless" (buffer: []u8, bytes: u64) -> string {
@@ -125,38 +205,9 @@ state_color :: proc "contextless" (state: tcp.State) -> graphics.Color {
 	return graphics.colors.kernel
 }
 
-// The columns of the table of connections (a card 536 pixels wide).
-COLUMN_STATE :: 120
-// "new connections", the longest name of MEASURES, has 15 characters.
-MEASURES_VALUE_COLUMN :: 136
-COLUMN_IN :: 288 // Right edges.
-COLUMN_OUT :: 368
-COLUMN_RTT :: 440
-COLUMN_WINDOW :: 448 // A bar of WINDOW_BAR pixels for 64 KiB.
-WINDOW_BAR :: 56
-
-// The columns of the table of the last requests (a card 416 pixels wide).
-// The target starts one character after the longest name of a method
-// ("OPTIONS", 7 characters), and its box ends one character before the
-// status: a target wider than the box goes on more lines
-// (docs/INTERFACE.md, "The text in a box").
-ACCESS_TARGET :: 8 * graphics.CELL_WIDTH
-ACCESS_STATUS :: 208
-ACCESS_TARGET_ROOM :: ACCESS_STATUS - graphics.CELL_WIDTH - ACCESS_TARGET
-ACCESS_BYTES :: 304 // Right edges.
-ACCESS_TIME :: 384
-#assert(ACCESS_TIME <= 416 - 2 * CARD_MARGIN)
-
-// The cards of the top row, as high as the six lines of MEASURES; the two
-// tables under them.
-TOP_HEIGHT :: 168
-TABLES_Y :: 8 + TOP_HEIGHT + 8
-TABLES_HEIGHT :: HEIGHT - TABLES_Y - 8
-
-connection_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, connection: ^tcp.Connection, how: string, band: bool) {
-	if band {
-		graphics.fill(canvas, -8, y - 4, canvas.width + 16, LINE, graphics.colors.track)
-	}
+connection_row_draw :: proc "contextless" (frame: ^interface.Frame, inside: interface.Area, cols: [CONNECTION_COLUMN_COUNT]layout.Table_Column_Place, y: int, connection: ^tcp.Connection, how: string, row_index: int) {
+	table := frame.table
+	interface.table_band(frame, {inside.x - graphics.GAP, y - 4, inside.width + 2 * graphics.GAP, LINE}, row_index)
 	ended := how != ""
 	text_color := graphics.Color(ended ? graphics.colors.dim : graphics.colors.text)
 	buffer: [48]u8
@@ -164,22 +215,19 @@ connection_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, conn
 	network.address_write(&writer, connection.remote_address)
 	system.write_bytes(&writer, {':'})
 	system.write_unsigned(&writer, u64(connection.remote_port))
-	graphics.text(canvas, 0, y, system.written(&writer), ended ? graphics.colors.dim : graphics.colors.machine)
+	interface.draw_text(table, int(cols[0].x), y, system.written(&writer), ended ? graphics.colors.dim : graphics.colors.machine)
 	if ended {
-		graphics.text(canvas, COLUMN_STATE, y, how, how == "reset" || how == "timed out" || how == "aborted" ? graphics.colors.failed : graphics.colors.not_usable)
+		interface.draw_text(table, int(cols[1].x), y, how, how == "reset" || how == "timed out" || how == "aborted" ? graphics.colors.failed : graphics.colors.not_usable)
 	} else {
-		graphics.text(canvas, COLUMN_STATE, y, state_names[connection.state], state_color(connection.state))
+		interface.draw_text(table, int(cols[1].x), y, state_names[connection.state], state_color(connection.state))
 	}
-	right(canvas, COLUMN_IN, y, size_text(buffer[:], connection.bytes_received), text_color)
-	right(canvas, COLUMN_OUT, y, size_text(buffer[:], connection.bytes_sent), text_color)
-	right(canvas, COLUMN_RTT, y, connection.rtt_samples == 0 ? "-" : time_text(buffer[:], connection.smoothed_rtt), text_color)
+	interface.draw_text_right(table, int(cols[2].x + cols[2].width), y, size_text(buffer[:], connection.bytes_received), text_color)
+	interface.draw_text_right(table, int(cols[3].x + cols[3].width), y, size_text(buffer[:], connection.bytes_sent), text_color)
+	interface.draw_text_right(table, int(cols[4].x + cols[4].width), y, connection.rtt_samples == 0 ? "-" : time_text(buffer[:], connection.smoothed_rtt), text_color)
 	// The congestion window: its width is its size, against the window limit of 64 KiB.
-	graphics.fill(canvas, COLUMN_WINDOW, y + 4, WINDOW_BAR, 8, graphics.colors.track)
-	window := min(u64(connection.congestion_window), u64(tcp.WINDOW_LIMIT))
-	filled := int(window * WINDOW_BAR / tcp.WINDOW_LIMIT)
-	if filled > 0 {
-		bar(canvas, COLUMN_WINDOW, y + 4, filled, 8, ended ? graphics.colors.not_usable : graphics.colors.memory)
-	}
+	bar_width := min(WINDOW_BAR, max(int(cols[5].width) - graphics.GAP, 0))
+	window_bytes := min(u64(connection.congestion_window), u64(tcp.WINDOW_LIMIT))
+	interface.bar(frame, {int(cols[5].x) + graphics.GAP, y + 4, bar_width, 8}, window_bytes, u64(tcp.WINDOW_LIMIT), ended ? graphics.colors.not_usable : graphics.colors.memory)
 }
 
 status_color :: proc "contextless" (status: int) -> graphics.Color {
@@ -199,177 +247,168 @@ access_target :: proc "contextless" (record: ^Access_Row) -> string {
 
 // access_row_height gives the height of the row of a request: a line of the
 // table, and one line of text more for each more line of its target.
-access_row_height :: proc "contextless" (record: ^Access_Row) -> int {
-	lines := max(interface.text_wrapped_line_count(nil, {}, access_target(record), ACCESS_TARGET_ROOM), 1)
-	return LINE + (lines - 1) * graphics.LINE_HEIGHT
+access_row_height :: proc "contextless" (table: ^interface.Draw_Table, record: ^Access_Row, target_room: int) -> int {
+	lines := max(interface.text_wrapped_line_count(table, {}, access_target(record), target_room), 1)
+	return LINE + (lines - 1) * interface.line_height({})
 }
 
 // access_row_draw draws the row of a request. The target is whole, on the
-// lines that it needs in its column (the rule of interface.text_wrap_line;
-// the window draws with src/library/modus/graphics).
-access_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, record: ^Access_Row, band: bool) {
-	if band {
-		graphics.fill(canvas, -8, y - 4, canvas.width + 16, access_row_height(record), graphics.colors.track)
-	}
+// lines that it needs in its column.
+access_row_draw :: proc "contextless" (frame: ^interface.Frame, inside: interface.Area, cols: [REQUEST_COLUMN_COUNT]layout.Table_Column_Place, y: int, record: ^Access_Row, target_room: int, row_height: int, row_index: int) {
+	table := frame.table
+	interface.table_band(frame, {inside.x - graphics.GAP, y - 4, inside.width + 2 * graphics.GAP, row_height}, row_index)
 	buffer: [32]u8
 	method := web.request_method_name(record.method)
-	graphics.text(canvas, 0, y, method == "" ? "-" : method, graphics.colors.dim)
-	rest := access_target(record)
-	for line_y := y; len(rest) > 0; line_y += graphics.LINE_HEIGHT {
-		line: string
-		line, rest = interface.text_wrap_line(nil, {}, rest, ACCESS_TARGET_ROOM)
-		graphics.text(canvas, ACCESS_TARGET, line_y, line, graphics.colors.text)
-	}
-	graphics.text(canvas, ACCESS_STATUS, y, system.format(buffer[:], u64(record.status)), status_color(record.status))
-	right(canvas, ACCESS_BYTES, y, size_text(buffer[:], record.bytes), graphics.colors.text)
-	right(canvas, ACCESS_TIME, y, time_text(buffer[:], max(record.time, 1)), graphics.colors.machine)
-}
-
-// The picture of the window, in its logical pixels: the window draws by
-// hand, and the drawing module puts the picture on the screen at the scale
-// (interface.Hand_Picture). picture_open makes it after the window.
-hand_picture: interface.Hand_Picture
-
-picture_open :: proc "contextless" (window: ^display.Window) -> bool {
-	return interface.hand_picture_open(&hand_picture, window) == .Succeeded
+	interface.draw_text(table, int(cols[0].x), y, method == "" ? "-" : method, graphics.colors.dim)
+	interface.draw_text_wrapped(table, int(cols[1].x), y, target_room, access_target(record), graphics.colors.text)
+	interface.draw_text(table, int(cols[2].x) + graphics.GAP, y, system.format(buffer[:], u64(record.status)), status_color(record.status))
+	interface.draw_text_right(table, int(cols[3].x + cols[3].width), y, size_text(buffer[:], record.bytes), graphics.colors.text)
+	interface.draw_text_right(table, int(cols[4].x + cols[4].width), y, time_text(buffer[:], max(record.time, 1)), graphics.colors.machine)
 }
 
 draw :: proc "contextless" (window: ^display.Window) {
 	started := system.nanoseconds()
-	canvas := hand_picture.canvas
-	graphics.clear(canvas, graphics.colors.background)
-	for y := 12; y < HEIGHT; y += graphics.POINT_STEP {
-		for x := 12; x < WIDTH; x += graphics.POINT_STEP {
-			graphics.fill(canvas, x, y, graphics.POINT_SIZE, graphics.POINT_SIZE, graphics.colors.point)
-		}
-	}
-	buffer: [64]u8
-	other: [64]u8
-	open := tcp_open_count()
+	frame := interface.window_frame_start(&window_memory, window)
+	table := frame.table
+	width, height := window.width, window.height
+	interface.background(&frame, {0, 0, width, height})
 
-	// The listen grant and the table.
-	inside := card(canvas, 8, 8, 256, TOP_HEIGHT, "LISTEN", "tcp.Table", graphics.colors.process)
-	large_number(inside, 0, 0, system.format(buffer[:], u64(open)), graphics.colors.process)
-	caption(inside, 0, LARGE_NUMBER_HEIGHT, open == 1 ? "connection" : "connections")
-	fact(inside, 56, "port", system.format(buffer[:], u64(listen_port), ", any host"))
-	fact(inside, 76, "most at once", system.format(buffer[:], u64(most_open), " of ", u64(CAPACITY)))
-	fact(inside, 96, "accepted", system.format(buffer[:], accepted, ", ", aborted_count, " ended"))
+	places, layout_ok := server_layout(&server_layout_tree, width, height)
+	if layout_ok {
+		buffer: [64]u8
+		other: [64]u8
+		open := tcp_open_count()
 
-	// The answers by class of status.
-	inside = card(canvas, 272, 8, 232, TOP_HEIGHT, "ANSWERS", "web.Request", graphics.colors.memory)
-	large_number(inside, 0, 0, system.format(buffer[:], requests_answered), graphics.colors.memory)
-	caption(inside, 0, LARGE_NUMBER_HEIGHT, "requests")
-	total := max(requests_answered, 1)
-	classes := [3]int{2, 4, 5}
-	names := [3]string{"2xx", "4xx", "5xx"}
-	colors := [3]graphics.Color{graphics.colors.process, graphics.colors.boot_program, graphics.colors.failed}
-	for class, row in classes {
-		y := 56 + row * 20
-		graphics.text(inside, 0, y, names[row], graphics.colors.dim)
-		graphics.fill(inside, 40, y + 4, 96, 8, graphics.colors.track)
-		filled := int(status_classes[class] * 96 / total)
-		if filled > 0 {
-			bar(inside, 40, y + 4, filled, 8, colors[row])
-		}
-		graphics.text(inside, 144, y, system.format(buffer[:], status_classes[class]), graphics.colors.text)
-	}
+		// The listen grant and the table.
+		inside := interface.card(&frame, places.listen, "LISTEN", "tcp.Table", graphics.colors.process)
+		interface.large_number(&frame, inside.x, inside.y, system.format(buffer[:], u64(open)), graphics.colors.process)
+		interface.draw_caption(&frame, inside.x, inside.y + interface.line_height(interface.FONT_LARGE), inside.width, open == 1 ? "connection" : "connections")
+		interface.label_value_line(&frame, {inside.x, inside.y + 56, inside.width, 20}, "port", system.format(buffer[:], u64(listen_port), ", any host"), nil, LISTEN_VALUE_COLUMN)
+		interface.label_value_line(&frame, {inside.x, inside.y + 76, inside.width, 20}, "most at once", system.format(buffer[:], u64(most_open), " of ", u64(CAPACITY)), nil, LISTEN_VALUE_COLUMN)
+		interface.label_value_line(&frame, {inside.x, inside.y + 96, inside.width, 20}, "accepted", system.format(buffer[:], accepted, ", ", aborted_count, " ended"), nil, LISTEN_VALUE_COLUMN)
 
-	// The measures, with the cycle counter.
-	inside = card(canvas, 512, 8, 456, TOP_HEIGHT, "MEASURES", "system.nanoseconds", graphics.colors.machine)
-	fact(inside, 0, "handshake", handshake_last == 0 ? "" : system.format(buffer[:], time_text(other[:], handshake_last), ", least ", handshake_least, " us"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
-	fact(inside, 20, "one connection", best_keep_alive_rate == 0 ? "" : system.format(buffer[:], best_keep_alive_rate, " requests in 1 s, the best"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
-	fact(inside, 40, "new connections", best_new_connection_rate == 0 ? "" : system.format(buffer[:], best_new_connection_rate, " requests in 1 s, the best"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
-	fact(inside, 60, "one second", best_second_requests == 0 ? "" : system.format(buffer[:], best_second_requests, " requests at most"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
-	fact(inside, 80, "one draw", draw_time == 0 ? "" : time_text(buffer[:], draw_time), graphics.colors.text, MEASURES_VALUE_COLUMN)
-	fact(inside, 100, "ISN secret", system.format(buffer[:], "modus:random, ", process_generator.served, " B"), graphics.colors.text, MEASURES_VALUE_COLUMN)
+		// The answers by class of status.
+		inside = interface.card(&frame, places.answers, "ANSWERS", "web.Request", graphics.colors.memory)
+		interface.large_number(&frame, inside.x, inside.y, system.format(buffer[:], requests_answered), graphics.colors.memory)
+		interface.draw_caption(&frame, inside.x, inside.y + interface.line_height(interface.FONT_LARGE), inside.width, "requests")
+		total := max(requests_answered, 1)
+		classes := [3]int{2, 4, 5}
+		names := [3]string{"2xx", "4xx", "5xx"}
+		colors := [3]graphics.Color{graphics.colors.process, graphics.colors.boot_program, graphics.colors.failed}
+		for class, row in classes {
+			y := inside.y + 56 + row * 20
+			interface.draw_text(table, inside.x, y, names[row], graphics.colors.dim, interface.FONT_INTERFACE)
+			interface.bar(&frame, {inside.x + 40, y + 4, 96, 8}, status_classes[class], total, colors[row])
+			interface.draw_text(table, inside.x + 144, y, system.format(buffer[:], status_classes[class]), graphics.colors.text)
+		}
 
-	// The connection table, live, then the connections that ended.
-	inside = card(canvas, 8, TABLES_Y, 536, TABLES_HEIGHT, "CONNECTIONS", "tcp.Connection", graphics.colors.process)
-	graphics.text(inside, 0, 0, "remote", graphics.colors.dim)
-	graphics.text(inside, COLUMN_STATE, 0, "state", graphics.colors.dim)
-	right(inside, COLUMN_IN, 0, "in", graphics.colors.dim)
-	right(inside, COLUMN_OUT, 0, "out", graphics.colors.dim)
-	right(inside, COLUMN_RTT, 0, "srtt", graphics.colors.dim)
-	graphics.text(inside, COLUMN_WINDOW, 0, "cwnd", graphics.colors.dim)
-	graphics.fill(inside, 0, 20, inside.width, 1, graphics.colors.track)
-	y := 28
-	rows := 0
-	ROWS :: 17
-	for &connection in connections {
-		if connection.state == .Closed || rows == ROWS {
-			continue
-		}
-		connection_row_draw(inside, y, &connection, "", rows % 2 == 1)
-		y += LINE
-		rows += 1
-	}
-	if rows == 0 {
-		graphics.text(inside, 0, y, "no connection: the table waits for a SYN", graphics.colors.dim)
-		y += LINE
-		rows += 1
-	}
-	for back in 1 ..= CONNECTION_HISTORY {
-		if rows == ROWS {
-			break
-		}
-		item := &ended_connections[(ended_connection_next - back + CONNECTION_HISTORY) % CONNECTION_HISTORY]
-		if !item.known {
-			break
-		}
-		// A connection in TIME-WAIT is in the history already: its live row shows it.
-		waits := false
+		// The measures, with the cycle counter.
+		inside = interface.card(&frame, places.measures, "MEASURES", "system.nanoseconds", graphics.colors.machine)
+		interface.label_value_line(&frame, {inside.x, inside.y + 0, inside.width, 20}, "handshake", handshake_last == 0 ? "" : system.format(buffer[:], time_text(other[:], handshake_last), ", least ", handshake_least, " us"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
+		interface.label_value_line(&frame, {inside.x, inside.y + 20, inside.width, 20}, "one connection", best_keep_alive_rate == 0 ? "" : system.format(buffer[:], best_keep_alive_rate, " requests in 1 s, the best"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
+		interface.label_value_line(&frame, {inside.x, inside.y + 40, inside.width, 20}, "new connections", best_new_connection_rate == 0 ? "" : system.format(buffer[:], best_new_connection_rate, " requests in 1 s, the best"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
+		interface.label_value_line(&frame, {inside.x, inside.y + 60, inside.width, 20}, "one second", best_second_requests == 0 ? "" : system.format(buffer[:], best_second_requests, " requests at most"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
+		interface.label_value_line(&frame, {inside.x, inside.y + 80, inside.width, 20}, "one draw", draw_time == 0 ? "" : time_text(buffer[:], draw_time), graphics.colors.text, MEASURES_VALUE_COLUMN)
+		interface.label_value_line(&frame, {inside.x, inside.y + 100, inside.width, 20}, "ISN secret", system.format(buffer[:], "modus:random, ", process_generator.served, " B"), graphics.colors.text, MEASURES_VALUE_COLUMN)
+
+		// The connection table, live, then the connections that ended.
+		inside = interface.card(&frame, places.connections, "CONNECTIONS", "tcp.Connection", graphics.colors.process)
+		conn_cols := places.connection_columns
+		interface.draw_text(table, int(conn_cols[0].x), inside.y, "remote", graphics.colors.dim, interface.FONT_INTERFACE)
+		interface.draw_text(table, int(conn_cols[1].x), inside.y, "state", graphics.colors.dim, interface.FONT_INTERFACE)
+		interface.draw_text_right(table, int(conn_cols[2].x + conn_cols[2].width), inside.y, "in", graphics.colors.dim, interface.FONT_INTERFACE)
+		interface.draw_text_right(table, int(conn_cols[3].x + conn_cols[3].width), inside.y, "out", graphics.colors.dim, interface.FONT_INTERFACE)
+		interface.draw_text_right(table, int(conn_cols[4].x + conn_cols[4].width), inside.y, "srtt", graphics.colors.dim, interface.FONT_INTERFACE)
+		interface.draw_text(table, int(conn_cols[5].x) + graphics.GAP, inside.y, "cwnd", graphics.colors.dim, interface.FONT_INTERFACE)
+		interface.draw_rectangle(table, inside.x, inside.y + 20, inside.width, 1, graphics.colors.track)
+		y := inside.y + 28
+		rows := 0
 		for &connection in connections {
-			if connection.state == .Time_Wait && connection.remote_address == item.record.remote_address && connection.remote_port == item.record.remote_port {
-				waits = true
+			if connection.state == .Closed || rows == CONNECTION_ROWS_LIMIT || y - 4 + LINE > inside.y + inside.height {
+				continue
 			}
+			connection_row_draw(&frame, inside, conn_cols, y, &connection, "", rows)
+			y += LINE
+			rows += 1
 		}
-		if waits {
-			continue
+		if rows == 0 {
+			interface.draw_text(table, inside.x, y, "no connection: the table waits for a SYN", graphics.colors.dim, interface.FONT_INTERFACE)
+			y += LINE
+			rows += 1
 		}
-		how := item.how
-		switch {
-		case how == "reset by the remote":
-			how = "reset"
-		case how == "closed, the remote first":
-			how = "closed by it"
-		case how == "closed, this server first":
-			how = "closed by us"
-		case len(how) >= 7 && how[:7] == "aborted":
-			how = "aborted"
+		for back in 1 ..= CONNECTION_HISTORY {
+			if rows == CONNECTION_ROWS_LIMIT || y - 4 + LINE > inside.y + inside.height {
+				break
+			}
+			item := &ended_connections[(ended_connection_next - back + CONNECTION_HISTORY) % CONNECTION_HISTORY]
+			if !item.known {
+				break
+			}
+			// A connection in TIME-WAIT is in the history already: its live row shows it.
+			waits := false
+			for &connection in connections {
+				if connection.state == .Time_Wait && connection.remote_address == item.record.remote_address && connection.remote_port == item.record.remote_port {
+					waits = true
+				}
+			}
+			if waits {
+				continue
+			}
+			how := item.how
+			switch {
+			case how == "reset by the remote":
+				how = "reset"
+			case how == "closed, the remote first":
+				how = "closed by it"
+			case how == "closed, this server first":
+				how = "closed by us"
+			case len(how) >= 7 && how[:7] == "aborted":
+				how = "aborted"
+			}
+			connection_row_draw(&frame, inside, conn_cols, y, &item.record, how, rows)
+			y += LINE
+			rows += 1
 		}
-		connection_row_draw(inside, y, &item.record, how, rows % 2 == 1)
-		y += LINE
-		rows += 1
+
+		// The last requests, the newest first.
+		inside = interface.card(&frame, places.requests, "REQUESTS", "Access_Record", graphics.colors.memory)
+		req_cols := places.request_columns
+		target_room := max(int(req_cols[1].width) - graphics.CELL_WIDTH, graphics.CELL_WIDTH)
+		interface.draw_text(table, int(req_cols[0].x), inside.y, "method", graphics.colors.dim, interface.FONT_INTERFACE)
+		interface.draw_text(table, int(req_cols[1].x), inside.y, "target", graphics.colors.dim, interface.FONT_INTERFACE)
+		interface.draw_text(table, int(req_cols[2].x), inside.y, "status", graphics.colors.dim, interface.FONT_INTERFACE)
+		interface.draw_text_right(table, int(req_cols[3].x + req_cols[3].width), inside.y, "bytes", graphics.colors.dim, interface.FONT_INTERFACE)
+		interface.draw_text_right(table, int(req_cols[4].x + req_cols[4].width), inside.y, "time", graphics.colors.dim, interface.FONT_INTERFACE)
+		interface.draw_rectangle(table, inside.x, inside.y + 20, inside.width, 1, graphics.colors.track)
+		y = inside.y + 28
+		shown := 0
+		// The table is a view of the newest requests: it shows the rows that
+		// fit whole in the card, and the log has each request.
+		for back in 1 ..= ACCESS_HISTORY {
+			record := &access_records[(access_next - back + ACCESS_HISTORY) % ACCESS_HISTORY]
+			if record.status == 0 {
+				break
+			}
+			row_h := access_row_height(table, record, target_room)
+			if y - 4 + row_h > inside.y + inside.height {
+				break
+			}
+			access_row_draw(&frame, inside, req_cols, y, record, target_room, row_h, shown)
+			y += row_h
+			shown += 1
+		}
+		if shown == 0 {
+			interface.draw_text(table, inside.x, y, "no request yet", graphics.colors.dim, interface.FONT_INTERFACE)
+		}
 	}
 
-	// The last requests, the newest first.
-	inside = card(canvas, 552, TABLES_Y, 416, TABLES_HEIGHT, "REQUESTS", "Access_Record", graphics.colors.memory)
-	graphics.text(inside, 0, 0, "method", graphics.colors.dim)
-	graphics.text(inside, ACCESS_TARGET, 0, "target", graphics.colors.dim)
-	graphics.text(inside, ACCESS_STATUS - 8, 0, "status", graphics.colors.dim)
-	right(inside, ACCESS_BYTES, 0, "bytes", graphics.colors.dim)
-	right(inside, ACCESS_TIME, 0, "time", graphics.colors.dim)
-	graphics.fill(inside, 0, 20, inside.width, 1, graphics.colors.track)
-	y = 28
-	shown := 0
-	// The table is a view of the newest requests: it shows the rows that
-	// fit whole in the card, and the log has each request.
-	for back in 1 ..= ACCESS_HISTORY {
-		record := &access_records[(access_next - back + ACCESS_HISTORY) % ACCESS_HISTORY]
-		if record.status == 0 || y - 4 + access_row_height(record) > inside.height {
-			break
-		}
-		access_row_draw(inside, y, record, shown % 2 == 1)
-		y += access_row_height(record)
-		shown += 1
-	}
-	if shown == 0 {
-		graphics.text(inside, 0, y, "no request yet", graphics.colors.dim)
-	}
-	interface.hand_picture_show(&hand_picture, window)
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	microseconds_taken := (system.nanoseconds() - started) / 1000
-	if draw_time == 0 {
+	if !window_drawn_logged && !window_memory.drawing.late {
+		window_drawn_logged = true
 		system.log_fact(.Info, Window_Drawn{drawing = value_kinds.Time_In_Microseconds(microseconds_taken)})
 	}
-	draw_time = microseconds_taken
+	if !window_memory.drawing.late {
+		draw_time = microseconds_taken
+	}
 }

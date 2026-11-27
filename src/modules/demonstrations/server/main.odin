@@ -63,12 +63,8 @@ import "modus:random"
 import "modus:system"
 import "modus:tcp"
 
-// The logical picture in which the window draws by hand before its first frame.
-HAND_PICTURE_PAGES :: 649
-#assert(HAND_PICTURE_PAGES == (WIDTH * HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
-// The hand-drawn window picture and TCP connection buffer pool allocated
-// before ready.
-MODULE_START_OBJECTS :: [?]system.Start_Object{HAND_PICTURE_PAGES, BUFFER_PAGES}
+// The TCP connection buffer pool allocated before ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{BUFFER_PAGES}
 // The tool counts the module, its stack, its window at the largest scale and
 // the start objects in MODULE_START_OBJECTS.
 MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
@@ -480,7 +476,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	date_page = date.page_of(ctx)
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "server")
-	if !ok || !picture_open(&window) {
+	if !ok {
 		system.stop(.Failed)
 	}
 	start_time = system.time()
@@ -580,15 +576,16 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if count > 0 || service.calls != calls_before {
 			changed = true
 		}
-		// The scroll of a window that does not fit the work area shows the
-		// picture again at once.
-		_ = interface.hand_picture_events(&hand_picture, &window)
+		// Presentation, rescale, scroll, and late-frame recovery trigger a redraw.
+		if interface.window_events(&window_memory.drawing, &window) {
+			changed = true
+		}
 		now := system.time()
 		// This service never waits for the compositor: while the
 		// compositor did not take the last picture, the picture waits,
 		// and the wait below ends when the compositor has read.
 		picture_waits := false
-		if changed && now - last_draw >= 100 {
+		if changed && (last_draw == 0 || now - last_draw >= 100) {
 			if display.canvas_free(&window) {
 				draw(&window)
 				last_draw = now
@@ -604,6 +601,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		display.wait_events(&wait, &window)
 		system.service_wait(&wait, &service)
 		limit := changed && !picture_waits ? last_draw + 100 : system.WAIT_FOREVER
+		if wake, due := interface.window_scroll_bar_wake(&window_memory.drawing); due {
+			limit = min(limit, wake)
+		}
 		if deadline != max(u64) {
 			limit = min(limit, deadline / 1000 + 1)
 		}
