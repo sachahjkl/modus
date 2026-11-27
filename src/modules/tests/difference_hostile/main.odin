@@ -37,6 +37,7 @@ REVOKED_OBJECT_PAGES :: 9
 // Page tables for mapping the boot image plus the display call connection
 // opened before exit.
 BOOT_IMAGE_AND_CONNECTION_PAGES :: 32
+// Boot image page tables, display call connection, and the revoked difference object.
 MODULE_START_OBJECTS :: [?]system.Start_Object{BOOT_IMAGE_AND_CONNECTION_PAGES, REVOKED_OBJECT_PAGES}
 
 // The decisions that plan_diff_poll gives (plans_recipes.Plan_Display_Decision).

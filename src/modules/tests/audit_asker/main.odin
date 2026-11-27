@@ -62,6 +62,7 @@ SPACE_BOUND_RECORDS :: 32
 // Page tables for mapping the boot image plus the display call connection and
 // wiring list page mapped before system.ready().
 BOOT_IMAGE_AND_CONNECTION_PAGES :: 32
+// Boot image page tables, display connection, and wiring list page mapped before ready.
 MODULE_START_OBJECTS :: [?]system.Start_Object{BOOT_IMAGE_AND_CONNECTION_PAGES}
 
 requests: ring.Ring
