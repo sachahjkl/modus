@@ -27,16 +27,16 @@ Machine_Clock :: struct {
 }
 
 // machine_clock_of gives the clock of a test machine that starts at the
-// time host_unix of the host, in seconds since 1970. QEMU reads the clock of
-// the host again when it starts, a moment later: DATE_TOLERANCE_SECONDS
-// covers that moment.
+// time host_unix of the host, in seconds since 1970. Using clock=vm ties the
+// guest CMOS RTC to QEMU's virtual clock so a restored QMP snapshot resumes
+// at its saved guest time without jumping forward on the next periodic RTC read.
 machine_clock_of :: proc(host_unix: i64) -> Machine_Clock {
 	day_start := host_unix - host_unix %% 86_400
 	base := day_start + MACHINE_CLOCK_HOUR * 3_600
 	at := time.unix(base, 0)
 	year, month, day := time.date(at)
 	hour, minute, second := time.clock(at)
-	argument := fmt.tprintf("base=%04d-%02d-%02dT%02d:%02d:%02d", year, int(month), day, hour, minute, second)
+	argument := fmt.tprintf("base=%04d-%02d-%02dT%02d:%02d:%02d,clock=vm", year, int(month), day, hour, minute, second)
 	return {argument = argument, offset_seconds = base - host_unix}
 }
 
