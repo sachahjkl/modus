@@ -607,6 +607,17 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// The holder of Settings that the plan of that test names: it writes
 	// its line and stops, and needs no grant.
 	{name = "settings_stand_in", scope = .Session},
+	// The barless second holder of Display that the roles_display test plan
+	// names: when holding Role.Display it inherits the Display role grant row
+	// (Serve, System_Part), and needs no grant of its own.
+	{name = "panel_display", scope = .Machine},
+	// The planner of the roles_display test: connects to Plans and acts for
+	// principal 0 to apply a plan selecting panel_display for Role.Display.
+	{name = "display_role_planner", scope = .Session, grants = {.Connect, .Image, .Acts_For_Principal}, terms = {callable = {0 = "plans"}}},
+	// The probe of the 4 GiB pdpe1gb test: reads System_Report and its own
+	// Process_Mapping_Report through Inspect to verify 1 GiB entries and
+	// zero-allocation demotion.
+	{name = "pdpe1gb_probe", scope = .Session, grants = {.Inspect}},
 	// The writer of the test of the record output log: its end comes in
 	// its context before its first instruction, and it needs no grant. Its
 	// log budget holds 0 records (budgets.odin).

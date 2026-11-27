@@ -1140,7 +1140,7 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> ca
 	}
 	display_picker_grants_put(&context_grants) // powerbox_picker.odin
 	display_name := role_holder_name(.Display)
-	start_grant_set := start_grant_set_of(display_name)
+	start_grant_set := start_grant_set_of(role_policy.grant_row_name_of_module(&role_holder_names, display_name))
 	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set))
 	root_plan_read() // plan_values.odin
 	values: system.Context_Values

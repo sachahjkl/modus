@@ -79,6 +79,7 @@ Region :: struct {
 	wx: memory_wx.Counts, // Live writable, executable, and switching mappings of this object across all processes. Frame lock.
 	uncommitted: bool, // Made Uncommitted: a page is paid when it is committed (the bit SLOT_COMMITTED of its slot).
 	large_pages: bool, // Made Large_Pages: contiguous, aligned on 2 MiB, a whole number of large pages.
+	zeroing_active: bool, // A thread holds a resumable 1 GiB Frames_Now continuation on this object. Region lock.
 	committed:  u64, // Uncommitted: the committed pages. Region lock and frame lock to change it.
 	marked_pages: u64, // The pages whose slot has a mark of protection (Memory_Protect of a part). Region lock; read atomically.
 	serial:     u64, // A number that no other memory object has had: a slot of the table serves many objects in time.
@@ -389,6 +390,31 @@ Thread :: struct #align (64) {
 	// bumped on creation, Thread_Control writes, or stop, plus the processor
 	// (1 + index, 0 for none) that last saved this thread's extended state.
 	extended_switch: extended_switch.Thread_State,
+	// Resumable 1 GiB Frames_Now commit continuation parked across schedule()
+	// yields (src/md/features/frames_of_a_process.md). Owned exclusively by
+	// this thread while running and aborted in thread_finish on stop.
+	commit_continuation: Commit_Continuation,
+}
+
+// Kind of resumable 1 GiB Frames_Now commit continuation parked on a thread.
+Commit_Continuation_Kind :: enum u8 {
+	None        = 0,
+	Run_1G      = 1, // Zeroing one aligned 1 GiB physical run in 2 MiB slices via frame_runs.Zero_Run_Progress.
+	Fallback_2M = 2, // Zeroing 512 x 2 MiB slices (2 MiB runs or 4 KiB pages) with uncommitted pages pre-reserved.
+}
+
+// Per-thread state for a resumable 1 GiB Frames_Now Memory_Commit that yields
+// across schedule() between 2 MiB slices without holding locks across interrupts.
+Commit_Continuation :: struct {
+	kind:                   Commit_Continuation_Kind,
+	region:                 u32,   // Holds one region reference while kind != .None.
+	pure_wait:              bool,  // Original enter() pure_wait flag for remaining loop.
+	command:                ring.Record, // Popped Memory_Commit command (tag, recording, events).
+	started_cycles:         u64,   // Non-zero when OBSERVED_OPERATION wanted an event.
+	changed_total:          u64,   // Pages committed by this call (completion.values[0]).
+	zero_progress:          frame_runs.Zero_Run_Progress, // Active when kind == .Run_1G.
+	fallback_slice_index:   u32,   // Next 2 MiB slice (0..512) when kind == .Fallback_2M.
+	fallback_reserved_left: u64,   // Pre-reserved pages not yet installed into region slots (Fallback_2M).
 }
 
 #assert(offset_of(Thread, placed) < 64)
@@ -2218,6 +2244,7 @@ thread_finish :: proc "contextless" (index: u32, serial: u32) {
 	}
 	thread.finished = true
 	extended_switch.thread_mark_modified(&thread.extended_switch)
+	commit_continuation_abort(thread)
 	wait_unregister(thread)
 	process_index := thread.process
 	process := &processes[process_index]

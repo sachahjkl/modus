@@ -52,5 +52,7 @@
   "start_policy": ["start_policy_scenario.odin", "start_policy_from_disk_scenario.odin"],
   "shortage": [],
   "operation_sequences": [],
-  "doom": ["doom_scenario.odin"]
+  "doom": ["doom_scenario.odin"],
+  "roles_display": ["roles_display_scenario.odin"],
+  "gigabyte_pages": ["pdpe1gb_scenario.odin"]
 }

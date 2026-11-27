@@ -9,8 +9,8 @@ import "core:testing"
 import "modustool:foundation"
 
 @(private = "file")
-role_holder_module_file :: proc(t: ^testing.T, holder: string) -> (file: []u8, ok: bool) {
-	folder := foundation.join(foundation.SYSTEM_MODULE_SOURCES, holder)
+role_holder_module_file_in :: proc(t: ^testing.T, base_folder: string, holder: string) -> (file: []u8, ok: bool) {
+	folder := foundation.join(base_folder, holder)
 	description, described := describe_package(folder)
 	if !testing.expectf(t, described, "describe_package failed for default role holder %s (%s)", holder, folder) {
 		return nil, false
@@ -100,6 +100,11 @@ role_holder_module_file :: proc(t: ^testing.T, holder: string) -> (file: []u8, o
 }
 
 @(private = "file")
+role_holder_module_file :: proc(t: ^testing.T, holder: string) -> (file: []u8, ok: bool) {
+	return role_holder_module_file_in(t, foundation.SYSTEM_MODULE_SOURCES, holder)
+}
+
+@(private = "file")
 role_contract_declaration_for :: proc(contract: role_contract.Role_Contract, hash: role_contract.Contract_Hash) -> (hashes: [1]role_contract.Contract_Hash, ring_faces: [8]role_contract.Required_Ring_Face, ring_count: int) {
 	hashes[0] = hash
 	for &face in contract.faces {
@@ -183,4 +188,30 @@ every_default_boot_image_role_holder_fills_its_role_contract :: proc(t: ^testing
 	// All 21 roles with a default boot-image holder must be checked (23 roles
 	// minus Assistive and Speech which have no default holder yet).
 	testing.expect_value(t, checked_holders, 21)
+}
+
+// The barless second Display holder panel_display must fill the canonical
+// Display role contract so root accepts it as a replacement holder in a plan.
+@(test)
+second_display_holder_panel_display_fills_display_contract :: proc(t: ^testing.T) {
+	file, built := role_holder_module_file_in(t, foundation.TEST_MODULE_SOURCES, "panel_display")
+	if !built {
+		return
+	}
+	contract, known := rd.role_contract_by_role(.Display)
+	testing.expect(t, known, "Display role contract must be present")
+	hash, hashed := rd.role_contract_hash_by_role(.Display)
+	testing.expect(t, hashed, "Display role contract hash must compute")
+	hashes, ring_faces, ring_count := role_contract_declaration_for(contract, hash)
+	result := role_contract.module_fills_contract(file, {contract_hashes = hashes[:], ring_faces = ring_faces[:ring_count]}, contract)
+	testing.expectf(
+		t,
+		result.refusal == .None,
+		"panel_display failed Display contract check: refusal=%v difference=%v face=%d export=%d param=%d",
+		result.refusal,
+		result.difference,
+		result.face_index,
+		result.export_index,
+		result.parameter,
+	)
 }

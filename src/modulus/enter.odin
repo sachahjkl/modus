@@ -30,6 +30,48 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 	thread.in_enter = true
 	wait_begin(thread)
 	pure_wait := ring.empty(&thread.ring.commands)
+	enter_commands_loop(cpu, index, pure_wait)
+}
+
+// enter_command_finish records the operation event, error record, and history
+// entry of one completed command and pushes its completion record. Returns
+// false when the thread was requested to stop.
+enter_command_finish :: proc "contextless" (cpu: ^Processor, index: u32, command: ring.Record, started: u64, outcome: call_outcome.Call_Outcome, values: [7]u64) -> bool {
+	thread := &threads[index]
+	if started != 0 {
+		// The operation can have stopped this thread or its process: its
+		// slot keeps its process and its number until its processor
+		// leaves it (schedule), so the record names it.
+		event_record(cpu, .Operation, thread.process, thread.number, u64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS), cycles_now() - started, u64(outcome))
+	}
+	// The operation can end the thread: self-stopping commands already
+	// recorded their completion before process_stop ended the history.
+	if intrinsics.atomic_load(&thread.stop_requested) {
+		return false
+	}
+	completion := ring.Record{tag = command.tag, kind = u32(outcome), values = values}
+	if outcome != .Succeeded {
+		// The error record: the values of a failed operation, and the
+		// table of error details that the command names (diagnose.odin).
+		completion.values = transmute([7]u64)diagnose_command(thread.process, command, outcome)
+	}
+	if intrinsics.atomic_load(&thread.record_mode) == .Recording {
+		record_kernel_completion(cpu, thread, command, outcome, completion.values)
+	}
+	// The room was checked before the run, and only the reader changes
+	// the read counter: the push fails only after a thread of the
+	// process wrote a false count into this ring, and the loss is then
+	// the process's alone.
+	_ = ring.push(&thread.ring.completions, completion)
+	return true
+}
+
+// enter_commands_loop executes pending commands of thread.ring.commands and
+// finishes the wait phase. Shared by enter() and commit_continuation_complete()
+// when a resumable 1 GiB commit yields across schedule() and finishes on a
+// later stint.
+enter_commands_loop :: proc "contextless" (cpu: ^Processor, index: u32, pure_wait: bool) {
+	thread := &threads[index]
 	for _ in 0 ..< ring.CAPACITY {
 		if ring.empty(&thread.ring.commands) {
 			break
@@ -48,7 +90,6 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		if !ok {
 			break
 		}
-		completion := ring.Record{tag = command.tag}
 		// The event point of an operation (events.odin): with no rule of
 		// this kind, one branch on a word of this processor; with a rule for
 		// another process only, one more load and branch. No read of the
@@ -57,32 +98,18 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		if event_wanted(cpu, OBSERVED_OPERATION, .Operation, thread.process) {
 			started = cycles_now()
 		}
-		outcome := command_run(index, command, &completion.values)
-		if started != 0 {
-			// The operation can have stopped this thread or its process: its
-			// slot keeps its process and its number until its processor
-			// leaves it (schedule), so the record names it.
-			event_record(cpu, .Operation, thread.process, thread.number, u64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS), cycles_now() - started, u64(outcome))
+		values: [7]u64
+		outcome: call_outcome.Call_Outcome
+		handled := false
+		if command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS == u32(op.Operation.Memory_Commit) {
+			handled, outcome, values[0] = commit_continuation_try_begin(cpu, index, command, pure_wait, started)
 		}
-		// The operation can end the thread: self-stopping commands already
-		// recorded their completion before process_stop ended the history.
-		if intrinsics.atomic_load(&thread.stop_requested) {
+		if !handled {
+			outcome = command_run(index, command, &values)
+		}
+		if !enter_command_finish(cpu, index, command, started, outcome, values) {
 			return
 		}
-		completion.kind = u32(outcome)
-		if outcome != .Succeeded {
-			// The error record: the values of a failed operation, and the
-			// table of error details that the command names (diagnose.odin).
-			completion.values = transmute([7]u64)diagnose_command(thread.process, command, outcome)
-		}
-		if intrinsics.atomic_load(&thread.record_mode) == .Recording {
-			record_kernel_completion(cpu, thread, command, outcome, completion.values)
-		}
-		// The room was checked before the run, and only the reader changes
-		// the read counter: the push fails only after a thread of the
-		// process wrote a false count into this ring, and the loss is then
-		// the process's alone.
-		_ = ring.push(&thread.ring.completions, completion)
 	}
 	// A word that changed before the wait: the thread reads it again.
 	wait_end(thread, thread.frame.rdi)

@@ -233,13 +233,16 @@ test_parts_at_once_follows_the_memory :: proc(t: ^testing.T) {
 // it, and no other row does.
 @(test)
 test_parts_declare_their_memory :: proc(t: ^testing.T) {
+	expected_largest: u64
 	for part in test_parts {
 		says_no_machine := strings.has_prefix(part.does, "No machine")
 		testing.expectf(t, part.starts_no_machine == says_no_machine, "the part %s starts no machine in its row only when its sentence says so", part.name)
-		testing.expect_value(t, test_part_memory_mib(part), says_no_machine ? 0 : u64(MACHINE_MEMORY_MIB))
+		expected_mib := says_no_machine ? u64(0) : (part.memory_mib != 0 ? part.memory_mib : u64(MACHINE_MEMORY_MIB))
+		testing.expect_value(t, test_part_memory_mib(part), expected_mib)
+		expected_largest = max(expected_largest, expected_mib)
 	}
 	testing.expect_value(t, test_parts_largest_memory_mib(nil), 0)
-	testing.expect_value(t, test_parts_largest_memory_mib(test_parts[:]), u64(MACHINE_MEMORY_MIB))
+	testing.expect_value(t, test_parts_largest_memory_mib(test_parts[:]), expected_largest)
 }
 
 // The parts that run at once share no data disk, and a run keeps the

@@ -600,10 +600,12 @@ schedule :: proc "contextless" () -> ! {
 	}
 	for {
 		// A recorded thread that waits for its writers to leave the
-		// processors left this one: the interrupts that wait come now, with
+		// processors, or a thread that yielded between bounded 2 MiB zeroing
+		// slices, left this one: the interrupts that wait come now, with
 		// no thread and no lock held, as in the idle wait.
-		if cpu.record_leave_retry {
+		if cpu.record_leave_retry || cpu.continuation_yield {
 			cpu.record_leave_retry = false
+			cpu.continuation_yield = false
 			interrupt_window()
 		}
 		// A thread that a queue receives after this read is seen below.
@@ -712,7 +714,6 @@ run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 		cpu.preempt_from = 0
 	}
 	process := &processes[thread.process]
-	ports_switch(cpu, intrinsics.atomic_load(&process.has_ports) ? thread.process : 0)
 	if cpu.table != process.table {
 		// The store comes before the load of the table: an unmap that does
 		// not see it cleared its entries before this load.
@@ -725,6 +726,13 @@ run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 		cpu.record_thread = cpu.current
 		cpu.record_serial = thread.serial
 		model_specific_register_write(MSR_KERNEL_GS_BASE, thread.record)
+	}
+	// Resume a parked 1 GiB zeroing continuation on this CPU's fresh kernel
+	// stack before returning to user mode. Yields back through schedule() if
+	// more 2 MiB slices remain; otherwise completes the entry and falls
+	// through to resume the thread in user mode.
+	if thread.commit_continuation.kind != .None {
+		commit_continuation_resume(cpu, thread)
 	}
 	if thread.record_wait_pending {
 		record_wait_wake_completion(cpu, thread)
@@ -741,6 +749,10 @@ run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 		cpu.record_leave_retry = true
 		schedule_on_a_fresh_stack(cpu)
 	}
+	// Switch the TSS I/O bitmap after continuation resume so any batched
+	// commands that closed or received port handles are reflected before
+	// returning to user mode.
+	ports_switch(cpu, intrinsics.atomic_load(&process.has_ports) ? thread.process : 0)
 	mode := intrinsics.atomic_load(&thread.record_mode)
 	want_tsd := mode != .None || thread.no_clock
 	want_cpuid := mode != .None

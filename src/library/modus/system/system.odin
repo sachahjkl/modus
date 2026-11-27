@@ -544,9 +544,9 @@ memory_unmap :: proc "contextless" (address: rawptr, process: Handle = 0, error:
 // ranges := [1]op.Page_Range{{first = 0, page_count = 4}}
 // changed, status := system.memory_commit(memory, ranges[:])
 // ```
-memory_commit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, budget: Handle = 0, error: ^errors.Error_Record = nil) -> (changed: u64, status: call_outcome.Call_Outcome) {
+memory_commit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, budget: Handle = 0, error: ^errors.Error_Record = nil, flags: op.Commit_Flags = {}) -> (changed: u64, status: call_outcome.Call_Outcome) {
 	results: [7]u64
-	results, status = call_with_error(error, .Memory_Commit, u64(memory), u64(budget == 0 ? own_budget() : budget), u64(uintptr(raw_data(ranges))), u64(len(ranges)), 0)
+	results, status = call_with_error(error, .Memory_Commit, u64(memory), u64(budget == 0 ? own_budget() : budget), u64(uintptr(raw_data(ranges))), u64(len(ranges)), transmute(u64)flags)
 	return results[0], status
 }
 

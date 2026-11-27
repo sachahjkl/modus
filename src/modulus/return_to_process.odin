@@ -143,6 +143,9 @@ return_refused_by_the_processor :: proc "contextless" (frame: ^Frame) -> ! {
 // are dead: run and resume never return. So a chain of refusals in a row
 // uses the stack of one schedule and one run, whatever its length.
 schedule_on_a_fresh_stack :: proc "contextless" (cpu: ^Processor) -> ! {
+	when KERNEL_EDGE_COUNTERS {
+		edge_counting_set(false)
+	}
 	stack_switch(cpu.stack_top, rawptr(schedule_from_the_top))
 }
 

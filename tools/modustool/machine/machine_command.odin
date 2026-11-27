@@ -73,6 +73,8 @@ Processor_Model :: enum {
 	// No leaf 0x15 of CPUID and none above: the processor states no
 	// frequency of its cycle counter, on every host (`test no_pit`).
 	Without_Frequency_Leaves,
+	// Explicitly enables 1 GiB paging support (`pdpe1gb`) for the 4 GiB run test.
+	With_Pdpe1gb,
 }
 
 @(rodata)
@@ -82,6 +84,7 @@ processor_models := [Processor_Model]string {
 	.Without_Avx              = "max,-avx",
 	.Without_Xsave            = "max,-xsave",
 	.Without_Frequency_Leaves = "max,level=0x14",
+	.With_Pdpe1gb             = "max,+pdpe1gb",
 }
 
 // machine_command gives the one QEMU command line of the project: the first
@@ -196,7 +199,7 @@ MACHINE_VIDEO_MEMORY_MIB :: 16
 // internal QMP snapshots (`savevm` / `loadvm`) succeed.
 // serial_append: when true with test_output, appends COM1 output after the
 // seeded boot log of a restored QMP snapshot.
-machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_screen := false, without_ps2_controller := false, entropy_device_silent := false, no_network_device := false, data_disk_without_ioevent := false, without_pit := false, shared_variables := "", serial_input := "", tablet: Machine_Tablet = .None, gpu_scanout := false, console_log := "", qcow2_drives := false, qcow2_variables := "", qcow2_scratch := "", serial_append := false) -> (command: []string, ok: bool) {
+machine_command :: proc(volume: string, test_output: string, data_disk: string, peer: ^Peer, forward: Forward = {}, processor: Processor_Model = .Maximum, firmware: Machine_Firmware = .Usual, vnc := false, paused := false, iommu: Machine_Iommu = .None, entropy_device := false, tpm_device := false, clock_argument := "base=utc", memory_file := "", sound_output := "", without_screen := false, without_ps2_controller := false, entropy_device_silent := false, no_network_device := false, data_disk_without_ioevent := false, without_pit := false, shared_variables := "", serial_input := "", tablet: Machine_Tablet = .None, gpu_scanout := false, console_log := "", qcow2_drives := false, qcow2_variables := "", qcow2_scratch := "", serial_append := false, memory_mib := 0) -> (command: []string, ok: bool) {
 	if console_log != "" && test_output != "" {
 		fmt.eprintln("modustool: console_log and test_output cannot both be set")
 		return nil, false
@@ -273,6 +276,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		peer_machine_socket_lent_close(peer)
 		return nil, false
 	}
+	effective_memory_mib := memory_mib > 0 ? memory_mib : MACHINE_MEMORY_MIB
 	list := make([dynamic]string, context.temp_allocator)
 	append(
 		&list,
@@ -292,7 +296,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		// The main test keeps about 30 windows open, each with two
 		// pictures, and then starts a process that maps 164 MiB.
 		"-m",
-		fmt.tprintf("%d", MACHINE_MEMORY_MIB),
+		fmt.tprintf("%d", effective_memory_mib),
 		"-smp",
 		fmt.tprintf("%d", memory_file != "" ? 1 : MACHINE_PROCESSOR_COUNT),
 		"-device",

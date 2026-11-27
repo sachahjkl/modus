@@ -4,6 +4,7 @@ import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
 import "base:intrinsics"
 import "modus:contract/errors"
+import "modulus:frame_runs"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
@@ -416,6 +417,18 @@ read_commit_needed :: proc "contextless" (process: ^Process, handle: u64, ranges
 	if !region.uncommitted {
 		return
 	}
+	if count == 1 && process_records[at].mode == .None {
+		range: op.Page_Range
+		if read_user(process, ranges_address, &range, size_of(range)) && range.first == 0 && range.page_count == frame_runs.RUN_1G_PAGES && !region.contiguous && region.page_count == frame_runs.RUN_1G_PAGES {
+			lock_take(&region_locks[slot.object], .Region)
+			needed = frame_runs.RUN_1G_PAGES - region.committed
+			lock_take(&frame_lock, .Frame)
+			pages = budgets[region.budget].amounts.pages
+			lock_free(&frame_lock, .Frame)
+			lock_free(&region_locks[slot.object], .Region)
+			return needed, pages, true
+		}
+	}
 	walked: u64
 	for index in 0 ..< min(count, op.RANGE_TABLE_CAPACITY) {
 		range: op.Page_Range
@@ -493,6 +506,27 @@ read_memory_info :: proc "contextless" (process: ^Process, handle: u64) -> (unco
 	uncached = regions[slot.object].uncached
 	lock_free(&frame_lock, .Frame)
 	return uncommitted, uncached, true
+}
+
+// read_memory_is_resumable_1g reports whether process is unrecorded and handle
+// names a non-contiguous 1 GiB memory object eligible for resumable Frames_Now
+// commits. Locks, in their order: the process lock, the frame lock.
+@(private = "file")
+read_memory_is_resumable_1g :: proc "contextless" (process: ^Process, handle: u64) -> bool {
+	at, taken := caller_lock(process)
+	defer process_unlock(at, taken)
+	if process_records[at].mode != .None {
+		return false
+	}
+	slot, ok := find(process, handle, .Memory, {})
+	if !ok {
+		return false
+	}
+	lock_take(&frame_lock, .Frame)
+	region := &regions[slot.object]
+	eligible := !region.contiguous && region.page_count == frame_runs.RUN_1G_PAGES
+	lock_free(&frame_lock, .Frame)
+	return eligible
 }
 
 // read_module_problem checks whether a Module_Record fails because no record
@@ -1596,9 +1630,18 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 			record_set(record, .Bad_Value, .None, 5, v[4], 0, 0)
 			return true
 		}
-		if pages := read_table_pages(process, v[2], v[3], size_of(op.Page_Range), offset_of(op.Page_Range, page_count)); pages > op.RANGE_TABLE_PAGE_LIMIT {
-			record_set(record, .Too_Long, .Pages, 3, pages, op.RANGE_TABLE_PAGE_LIMIT, 0)
-			return true
+		is_resumable_1g := false
+		if transmute(op.Commit_Flags)v[4] == {.Frames_Now} && v[3] == 1 && read_memory_is_resumable_1g(process, v[0]) {
+			single: op.Page_Range
+			if read_user(process, v[2], &single, size_of(single)) && single.first == 0 && single.page_count == frame_runs.RUN_1G_PAGES {
+				is_resumable_1g = true
+			}
+		}
+		if !is_resumable_1g {
+			if pages := read_table_pages(process, v[2], v[3], size_of(op.Page_Range), offset_of(op.Page_Range, page_count)); pages > op.RANGE_TABLE_PAGE_LIMIT {
+				record_set(record, .Too_Long, .Pages, 3, pages, op.RANGE_TABLE_PAGE_LIMIT, 0)
+				return true
+			}
 		}
 		if uncommitted, _, info_ok := read_memory_info(process, v[0]); info_ok && !uncommitted {
 			record_set(record, .Bad_Value, .None, 1, v[0], 0, 0) // The memory object was not made Uncommitted.

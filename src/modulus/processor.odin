@@ -141,6 +141,10 @@ Processor :: struct {
 	// while a shared writer ran: the next pass of schedule opens one
 	// interrupt window first (schedule.odin). Only this processor writes it.
 	record_leave_retry: bool,
+	// A thread yielded between bounded 2 MiB slices of a 1 GiB zeroing
+	// continuation: schedule opens one interrupt window with no thread and no
+	// lock held before picking the next thread. Only this processor writes it.
+	continuation_yield: bool,
 	// The kinds of kernel events that the event table has rules for: bit n
 	// for the Event_Kind n; 0 with no table (events.odin). Each event point
 	// reads it first. It is in the first line of the record, which each

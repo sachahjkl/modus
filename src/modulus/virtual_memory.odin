@@ -1,10 +1,12 @@
 package kernel
 
 import "modulus:budget_peak"
+import "modus:contract/call_outcome"
 import "base:intrinsics"
 import "modulus:frame_runs"
 import "modulus:memory_wx"
 import op "modus:contract/operation"
+import "modus:contract/ring"
 import "modulus:mapping_order"
 import "modulus:word_table"
 
@@ -415,6 +417,10 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 	region_lock := &region_locks[region_index]
 	if !decommit {
 		lock_take(region_lock, .Region)
+		if region.zeroing_active {
+			lock_free(region_lock, .Region)
+			return 0, .Callee_Busy
+		}
 		needed: u64
 		for range in ranges {
 			for page in range.first ..< range.first + range.page_count {
@@ -468,6 +474,9 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 	}
 	lock_take(region_lock, .Region)
 	defer lock_free(region_lock, .Region)
+	if region.zeroing_active {
+		return 0, .Callee_Busy
+	}
 	self := processor_self()
 	for range in ranges {
 		if mapping != nil {
@@ -520,6 +529,349 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 	budget_peak.give_back(&budgets[region.budget].amounts.pages, changed)
 	region.committed -= changed
 	return changed, .Succeeded
+}
+
+// commit_continuation_slices_total is the fixed number of 2 MiB slices in one
+// aligned 1 GiB run (format property: 1 GiB / 2 MiB = 512).
+COMMIT_CONTINUATION_SLICES_TOTAL :: u32(frame_runs.RUN_1G_PAGES / frame_runs.RUN_2M_PAGES)
+
+// commit_continuation_try_begin checks whether command is a valid aligned
+// 1 GiB Frames_Now Memory_Commit on an uncommitted 1 GiB object. If not, it
+// returns handled = false so the standard command_run path handles it (and
+// produces any refusal/error record unchanged). Otherwise it pays the pages,
+// takes a 1 GiB run (when pdpe1gb and quota permit) or enters the 512-slice
+// fallback path, releases all locks, and runs the first 2 MiB slice before
+// yielding through schedule().
+commit_continuation_try_begin :: proc "contextless" (cpu: ^Processor, index: u32, command: ring.Record, pure_wait: bool, started_cycles: u64) -> (handled: bool, outcome: call_outcome.Call_Outcome, changed: u64) {
+	thread := &threads[index]
+	if intrinsics.atomic_load(&thread.record_mode) != .None {
+		return false, .Succeeded, 0
+	}
+	process_index := thread.process
+	process := &processes[process_index]
+	v := command.values
+	frames_now_only := op.Commit_Flags{.Frames_Now}
+	if v[3] != 1 || v[4] != transmute(u64)frames_now_only {
+		return false, .Succeeded, 0
+	}
+	taken := process_lock(process_index)
+	memory, mem_status := handle_find(process, v[0], .Memory, {.Write})
+	if mem_status != .Succeeded {
+		process_unlock(process_index, taken)
+		return false, .Succeeded, 0
+	}
+	budget, budget_status := handle_find(process, v[1], .Budget)
+	if budget_status != .Succeeded || budget.rights & {.Commit, .Spend} == {} || budget.object != intrinsics.atomic_load(&regions[memory.object].budget) {
+		process_unlock(process_index, taken)
+		return false, .Succeeded, 0
+	}
+	if !user_range(process, v[2], size_of(op.Page_Range), false) {
+		process_unlock(process_index, taken)
+		return false, .Succeeded, 0
+	}
+	range: op.Page_Range
+	user_copy_from_process(&range, v[2], size_of(op.Page_Range))
+	region_index := memory.object
+	region := &regions[region_index]
+	if range.first != 0 || range.page_count != frame_runs.RUN_1G_PAGES || !region.uncommitted || region.contiguous || region.page_count != frame_runs.RUN_1G_PAGES {
+		process_unlock(process_index, taken)
+		return false, .Succeeded, 0
+	}
+	region_lock := &region_locks[region_index]
+	lock_take(region_lock, .Region)
+	if region.zeroing_active {
+		lock_free(region_lock, .Region)
+		process_unlock(process_index, taken)
+		cpu.operation = {}
+		return true, .Callee_Busy, 0
+	}
+	lock_take(&frame_lock, .Frame)
+	needed := frame_runs.RUN_1G_PAGES - region.committed
+	payer := &budgets[region.budget]
+	if !payer.live || payer.amounts.pages < needed {
+		lock_free(&frame_lock, .Frame)
+		lock_free(region_lock, .Region)
+		process_unlock(process_index, taken)
+		cpu.operation = {}
+		return true, .Budget_Or_Capacity_Exhausted, 0
+	}
+	if needed == 0 && region.present == frame_runs.RUN_1G_PAGES {
+		lock_free(&frame_lock, .Frame)
+		lock_free(region_lock, .Region)
+		for &mapping in process.mappings {
+			if mapping.page_count != 0 && mapping.region == region_index && !mapping.large {
+				mapping_install_present_range(process, &mapping, region, 0, mapping.page_count)
+			}
+		}
+		process_unlock(process_index, taken)
+		return true, .Succeeded, 0
+	}
+	started_1g := false
+	if frame_runs_arch_enabled() && frame_runs_table.supports_1g && region.committed == 0 && region.present == 0 {
+		phys, ok := frames_take_run_1g_held(region.budget, payer.quota_pages)
+		if ok {
+			progress, refusal := frame_runs.zero_run_init(phys, frame_runs.RUN_1G_PAGES * PAGE_SIZE)
+			if refusal != .None {
+				frames_free_held(phys, frame_runs.RUN_1G_PAGES)
+				frame_runs.note_fallback(&frame_runs_table, .Run_1G)
+			} else {
+				budget_pages_spend(payer, frame_runs.RUN_1G_PAGES)
+				region.zeroing_active = true
+				intrinsics.atomic_add(&region.references, 1)
+				thread.commit_continuation = {
+					kind           = .Run_1G,
+					region         = region_index,
+					pure_wait      = pure_wait,
+					command        = command,
+					started_cycles = started_cycles,
+					changed_total  = frame_runs.RUN_1G_PAGES,
+					zero_progress  = progress,
+				}
+				started_1g = true
+			}
+		} else {
+			frame_runs.note_fallback(&frame_runs_table, .Run_1G)
+		}
+	}
+	if !started_1g {
+		budget_pages_spend(payer, needed)
+		reserved_pages += needed
+		region.zeroing_active = true
+		intrinsics.atomic_add(&region.references, 1)
+		thread.commit_continuation = {
+			kind                   = .Fallback_2M,
+			region                 = region_index,
+			pure_wait              = pure_wait,
+			command                = command,
+			started_cycles         = started_cycles,
+			changed_total          = needed,
+			fallback_slice_index   = 0,
+			fallback_reserved_left = needed,
+		}
+	}
+	lock_free(&frame_lock, .Frame)
+	lock_free(region_lock, .Region)
+	process_unlock(process_index, taken)
+	// Run the first 2 MiB slice with no locks held; yields via schedule() until
+	// all 512 slices complete.
+	if commit_continuation_step(cpu, thread) {
+		changed_total := thread.commit_continuation.changed_total
+		commit_continuation_install_and_release(thread)
+		return true, .Succeeded, changed_total
+	}
+	return true, .Succeeded, 0
+}
+
+// commit_continuation_step executes one bounded 2 MiB slice of a thread's
+// active 1 GiB Frames_Now continuation with no process lock held, installs
+// that slice's committed slots under region_lock, and yields across schedule()
+// when more slices remain. Returns true only when the final slice completes.
+@(private = "file")
+commit_continuation_step :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> bool {
+	cont := &thread.commit_continuation
+	region := &regions[cont.region]
+	region_lock := &region_locks[cont.region]
+	switch cont.kind {
+	case .None:
+		return true
+	case .Run_1G:
+		slice_phys, slice_bytes, refusal := frame_runs.zero_run_next_slice(&cont.zero_progress)
+		if refusal != .None {
+			lock_take(region_lock, .Region)
+			region.zeroing_active = false
+			lock_free(region_lock, .Region)
+			return true
+		}
+		slice_index := u64(cont.zero_progress.slices_done)
+		// Zero this 2 MiB slice with no lock held so other CPUs are never
+		// blocked on process_lock, region_lock, or frame_lock.
+		frames_zero(slice_phys, slice_bytes / PAGE_SIZE)
+		_ = frame_runs.zero_run_commit_slice(&cont.zero_progress, slice_bytes)
+		done := frame_runs.zero_run_is_done(&cont.zero_progress)
+		lock_take(region_lock, .Region)
+		base_page := slice_index * frame_runs.RUN_2M_PAGES
+		for k in u64(0) ..< frame_runs.RUN_2M_PAGES {
+			slot := region_slot(region, base_page + k)
+			state := (intrinsics.atomic_load(slot) & (SLOT_STATE &~ SLOT_RUN_MASK)) | SLOT_COMMITTED
+			intrinsics.atomic_store(slot, (slice_phys + k * PAGE_SIZE) | state)
+		}
+		region.committed += frame_runs.RUN_2M_PAGES
+		intrinsics.atomic_add(&region.present, frame_runs.RUN_2M_PAGES)
+		if done {
+			// Mark slot 0 with SLOT_RUN_1G only after all 512 slices are zeroed
+			// and installed so an aborted run never advertises a 1 GiB entry.
+			if intrinsics.atomic_load(&region.marked_pages) == 0 {
+				slot0 := region_slot(region, 0)
+				intrinsics.atomic_store(slot0, intrinsics.atomic_load(slot0) | SLOT_RUN_1G)
+			}
+			region.zeroing_active = false
+		}
+		lock_free(region_lock, .Region)
+		if !done {
+			frame_runs.zero_run_note_yield(&cont.zero_progress)
+			cpu.continuation_yield = true
+			schedule_on_a_fresh_stack(cpu)
+		}
+		return true
+	case .Fallback_2M:
+		if cont.fallback_slice_index >= COMMIT_CONTINUATION_SLICES_TOTAL {
+			lock_take(region_lock, .Region)
+			region.zeroing_active = false
+			lock_free(region_lock, .Region)
+			return true
+		}
+		offset := u64(cont.fallback_slice_index) * frame_runs.RUN_2M_PAGES
+		lock_take(region_lock, .Region)
+		uncommitted_in_slice: u64
+		all_frameless := true
+		for k in u64(0) ..< frame_runs.RUN_2M_PAGES {
+			val := intrinsics.atomic_load(region_slot(region, offset + k))
+			if val & SLOT_COMMITTED == 0 {
+				uncommitted_in_slice += 1
+			}
+			if val & PAGE_ADDRESS != 0 {
+				all_frameless = false
+			}
+		}
+		took_2m := false
+		phys_2m: u64
+		if uncommitted_in_slice == frame_runs.RUN_2M_PAGES && all_frameless && frame_runs_arch_enabled() {
+			lock_take(&frame_lock, .Frame)
+			b := region.budget
+			phys_2m, took_2m = frames_take_run_2m_held(b, budgets[b].quota_pages)
+			if took_2m {
+				reserved_pages -= frame_runs.RUN_2M_PAGES
+			} else {
+				frame_runs.note_fallback(&frame_runs_table, .Run_2M)
+			}
+			lock_free(&frame_lock, .Frame)
+		}
+		cont.fallback_slice_index += 1
+		done := cont.fallback_slice_index >= COMMIT_CONTINUATION_SLICES_TOTAL
+		if took_2m {
+			lock_free(region_lock, .Region)
+			frames_zero(phys_2m, frame_runs.RUN_2M_PAGES)
+			lock_take(region_lock, .Region)
+			for k in u64(0) ..< frame_runs.RUN_2M_PAGES {
+				slot := region_slot(region, offset + k)
+				state := (intrinsics.atomic_load(slot) & (SLOT_STATE &~ SLOT_RUN_MASK)) | SLOT_COMMITTED
+				if k == 0 {
+					state |= SLOT_RUN_2M
+				}
+				intrinsics.atomic_store(slot, (phys_2m + k * PAGE_SIZE) | state)
+			}
+			region.committed += frame_runs.RUN_2M_PAGES
+			intrinsics.atomic_add(&region.present, frame_runs.RUN_2M_PAGES)
+			cont.fallback_reserved_left -= frame_runs.RUN_2M_PAGES
+			if done {
+				region.zeroing_active = false
+			}
+			lock_free(region_lock, .Region)
+		} else {
+			for k in u64(0) ..< frame_runs.RUN_2M_PAGES {
+				slot := region_slot(region, offset + k)
+				val := intrinsics.atomic_load(slot)
+				if val & SLOT_COMMITTED == 0 {
+					intrinsics.atomic_store(slot, val | SLOT_COMMITTED)
+				}
+			}
+			region.committed += uncommitted_in_slice
+			cont.fallback_reserved_left -= uncommitted_in_slice
+			lock_free(region_lock, .Region)
+			for k in u64(0) ..< frame_runs.RUN_2M_PAGES {
+				region_frame(region, offset + k, true)
+			}
+			if done {
+				lock_take(region_lock, .Region)
+				region.zeroing_active = false
+				lock_free(region_lock, .Region)
+			}
+		}
+		if !done {
+			cpu.continuation_yield = true
+			schedule_on_a_fresh_stack(cpu)
+		}
+		return true
+	}
+	return true
+}
+
+// commit_continuation_install_and_release installs entries into any existing
+// mappings of the continuation's region in thread.process and drops the
+// continuation's region reference. Caller holds no lock.
+@(private = "file")
+commit_continuation_install_and_release :: proc "contextless" (thread: ^Thread) {
+	region_index := thread.commit_continuation.region
+	thread.commit_continuation = {}
+	process_index := thread.process
+	process := &processes[process_index]
+	taken := process_lock(process_index)
+	for &mapping in process.mappings {
+		if mapping.page_count != 0 && mapping.region == region_index && !mapping.large {
+			mapping_install_present_range(process, &mapping, &regions[region_index], 0, mapping.page_count)
+		}
+	}
+	process_unlock(process_index, taken)
+	region_release(region_index)
+}
+
+// commit_continuation_resume is called from run() when a thread with an active
+// 1 GiB zeroing continuation is scheduled back onto a CPU. It drives the next
+// 2 MiB slice, yields again if slices remain, or finishes the kernel entry and
+// returns to run() when the thread can resume user mode.
+commit_continuation_resume :: proc "contextless" (cpu: ^Processor, thread: ^Thread) {
+	if intrinsics.atomic_load(&thread.stop_requested) {
+		schedule_on_a_fresh_stack(cpu)
+	}
+	if !commit_continuation_step(cpu, thread) {
+		return
+	}
+	cont := thread.commit_continuation
+	commit_continuation_install_and_release(thread)
+	index := thread_index(thread)
+	if enter_command_finish(cpu, index, cont.command, cont.started_cycles, .Succeeded, {0 = cont.changed_total}) {
+		enter_commands_loop(cpu, index, cont.pure_wait)
+	}
+	if intrinsics.atomic_load(&thread.stop_requested) || intrinsics.atomic_load(&thread.state) != .Ready || intrinsics.atomic_load(&thread.control_stops) != 0 || cpu.slice_left == 0 {
+		schedule_on_a_fresh_stack(cpu)
+	}
+}
+
+// commit_continuation_abort aborts a parked 1 GiB zeroing continuation when
+// its thread ends (thread_finish, under control_lock with no process, region,
+// or frame lock held), freeing any unzeroed physical tail or pre-reserved
+// pages back to the frame table and budget and releasing the region reference.
+commit_continuation_abort :: proc "contextless" (thread: ^Thread) {
+	if thread.commit_continuation.kind == .None {
+		return
+	}
+	cont := thread.commit_continuation
+	thread.commit_continuation = {}
+	region := &regions[cont.region]
+	// Hold the region lock across the frame and budget refund so no concurrent
+	// commit observes zeroing_active cleared before tail pages return.
+	lock_take(&region_locks[cont.region], .Region)
+	switch cont.kind {
+	case .None:
+	case .Run_1G:
+		tail_phys, tail_pages := frame_runs.zero_run_abort_remaining(&cont.zero_progress)
+		if tail_pages != 0 {
+			lock_take(&frame_lock, .Frame)
+			frames_free_held(tail_phys, tail_pages)
+			budget_peak.give_back(&budgets[region.budget].amounts.pages, tail_pages)
+			lock_free(&frame_lock, .Frame)
+		}
+	case .Fallback_2M:
+		if cont.fallback_reserved_left != 0 {
+			lock_take(&frame_lock, .Frame)
+			reserved_pages -= cont.fallback_reserved_left
+			budget_peak.give_back(&budgets[region.budget].amounts.pages, cont.fallback_reserved_left)
+			lock_free(&frame_lock, .Frame)
+		}
+	}
+	region.zeroing_active = false
+	lock_free(&region_locks[cont.region], .Region)
+	region_release(cont.region)
 }
 
 // waiters_on_frames_wake wakes each thread of a process that has a word

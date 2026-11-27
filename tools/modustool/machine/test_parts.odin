@@ -38,6 +38,8 @@ Test_Part :: struct {
 	// The part starts no QEMU: it holds no memory of a machine, and the
 	// bound by memory does not count it (test_part_memory_mib).
 	starts_no_machine: bool,
+	// Optional machine memory in MiB when a part overrides MACHINE_MEMORY_MIB.
+	memory_mib:        u64,
 }
 
 // What one run of a part keeps across its machines. Two parts that run at
@@ -187,6 +189,8 @@ test_parts := [?]Test_Part {
 	{name = "shortage", does = "The machine of the shortage of frames", procedures = {"shortage_tests_run"}, volumes = {build.BOOT_VOLUME_SHORTAGE}},
 	{name = "operation_sequences", does = "The machine of the operation sequences, with the kernel that ships and one processor: the tool writes the seed sequences in the mailbox of `operation_fuzzing` through the memory file of the machine, and checks each answer against the statuses of the reference, the forms of the operations and the budget of the sequence (\"The operation sequences\")", procedures = {"operation_sequences_tests_run"}, volumes = {build.BOOT_VOLUME_OPERATION_SEQUENCES}},
 	{name = "doom", does = "The machine of native Doom (`doomgeneric`): its data disk holds `freedoom1.wad` in the private store `doom`, QEMU runs with a virtio sound device, `doom` renders its title screen, enters E1M1, responds to held movement and fire keys with distinct frames, acquires pointer lock on surface click, and releases pointer lock on Super", procedures = {"doom_tests_run"}, volumes = {build.BOOT_VOLUME}},
+	{name = "roles_display", does = "The two machines of a second Display role holder: applies a plan naming `panel_display` as holder of `Role.Display`, reboots on the same disk without starting `compositor`, verifies barless 1920x1080 work areas and live Presents for `console` and `clock`, verifies `display` exports, cycles focus with Alt+Tab, and stops `clock` cleanly", procedures = {"roles_display_tests_run"}, volumes = {build.BOOT_VOLUME_PLAN_AND_AUDIT}},
+	{name = "gigabyte_pages", does = "The 4 GiB `pdpe1gb` machine: verifies refusal edges, resumable 1 GiB `Frames_Now` zeroing across `schedule()`, 1 GiB PDPT leaf mapping (`entries_1g == 1`), zeroed bytes across 2 MiB slice offsets, zero-allocation partial `Memory_Protect` demotion (`0/511/512`), data integrity, and clean 1 GiB run reclamation", procedures = {"pdpe1gb_tests_run"}, volumes = {build.BOOT_VOLUME_PLAN_AND_AUDIT}, memory_mib = 4096},
 }
 
 // test_part_find gives the row of a part by its name.
@@ -509,7 +513,10 @@ HOST_MEMORY_MARGIN_MIB :: 4096
 // machine at a time, each with the -m of machine_command, or none for a
 // part that starts no QEMU.
 test_part_memory_mib :: proc(part: Test_Part) -> u64 {
-	return part.starts_no_machine ? 0 : u64(MACHINE_MEMORY_MIB)
+	if part.starts_no_machine {
+		return 0
+	}
+	return part.memory_mib != 0 ? part.memory_mib : u64(MACHINE_MEMORY_MIB)
 }
 
 // test_parts_largest_memory_mib gives the memory of the largest part of a

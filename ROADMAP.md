@@ -14,7 +14,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The native viewer of the remote display.** A principal sees and drives the desktop of a machine from a program of its own on Linux, macOS and Windows that uses gui_toolkit, with the key that it allowed, in place of the peer of the tool. [Design](src/md/features/remote_display.md)
 - **The console line that never ran under a loaded host.** Once, in a full check on a loaded host, the console of the part `debugger` took the keys of a line and never ran it, while the machine stayed idle with a line of the serial port waiting; the part passes alone each time. The cause is found from the whole log of the next such failure, so a line that a principal types always runs.
 - **Live machine record and replay of the console, a window, and `rdrand`.** Record the console, a window process, and a planted `rdrand` module on a test machine and replay each to completion or divergence through `modustool replay`. [Design](src/md/features/record_and_replay.md)
-- **Live verification on a second display holder and a 4 GiB `pdpe1gb` machine.** Run the display-contract scenario on a second display holder and run the resumable 1 GiB zeroing path on a 4 GiB `pdpe1gb` QEMU test, then remove `Large_Pages`. [Design](src/md/features/roles_and_contracts.md)
+- **Remove `Large_Pages` after Odin fork sync.** Remove `Memory_Flag.Large_Pages` and migrate its remaining callers onto aligned `Frames_Now` runs alongside the pinned Odin fork ABI update. [Design](src/md/features/frames_of_a_process.md)
 
 ## Later
 

@@ -1268,6 +1268,8 @@ Machine_Options :: struct {
 	snapshot_capture_data:        string,
 	snapshot_capture_scratch:     string,
 	snapshot_capture_guest_clock: ^i64,
+	// Optional RAM size override in MiB (0 uses MACHINE_MEMORY_MIB).
+	memory_mib:                   int,
 	// Usable-boot QMP snapshot restore folder: when non-empty, validates the
 	// snapshot against build.BOOT_IMAGE, stages writable qcow2 copies, seeds
 	// the serial log, starts QEMU paused, restores the VM snapshot over QMP,
@@ -1427,7 +1429,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	qmp: Qmp
 	qmp_opened := false
 	for try := 1; ; try += 1 {
-		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, start_paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_screen, options.without_ps2_controller, options.entropy_device_silent, options.no_network_device, options.data_disk_without_ioevent, options.without_pit, options.firmware_variables, serial_input_path, options.tablet, options.gpu_scanout, "", use_qcow2, qcow2_vars, qcow2_scratch, serial_append)
+		command, ok := machine_command(volume, output, data_disk, &peer, forward, options.processor, firmware, options.vnc, start_paused, options.iommu, options.entropy_device, tpm_device, clock.argument, options.memory_file, options.sound_device ? machine_file(output, SOUND_OUTPUT_SUFFIX) : "", options.without_screen, options.without_ps2_controller, options.entropy_device_silent, options.no_network_device, options.data_disk_without_ioevent, options.without_pit, options.firmware_variables, serial_input_path, options.tablet, options.gpu_scanout, "", use_qcow2, qcow2_vars, qcow2_scratch, serial_append, options.memory_mib)
 		if !ok {
 			return false
 		}
