@@ -196,6 +196,11 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 		}
 		return isolated.caller_grant_make(limit, caller.principal, false) | isolated.CALLER_READS_ONLY
 	}
+	// Writable connection for disk_processes to persist an already-verified
+	// script font set fetched from the object cache into the machine store.
+	if caller == &disk_script_fonts_writer {
+		return isolated.caller_grant_make(font_outlines.SCRIPT_FONTS_STORE_BLOCKS, caller.principal, false)
+	}
 	// The connection of this service for the disk grant table of a
 	// principal, an object of the store of the module files of that
 	// principal (persisted_grant_table.odin).
@@ -1405,6 +1410,11 @@ root_loop_pass :: proc "contextless" () {
 	unlock_for_a_locked_principal()
 	// After reap: a storage service that stopped ended its connections.
 	disk_load_step(&wait)
+	// After disk_load_step: an ended load or Cancelled return lets the next
+	// script font step (cache fallback, resolved manifest, or disk cache
+	// write) start immediately in the same pass while disk_processes_ring is
+	// already registered in wait.
+	script_fonts_step()
 	persisted_tables_step()
 	storage_reclaim_step(&wait) // principals.odin
 	network_answers(&wait)

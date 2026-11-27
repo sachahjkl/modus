@@ -37,14 +37,21 @@ MODULE_BYTES_LIMIT :: 64 << 20
 
 // What a load reads (Load_Request.kind). Zero is refused at the border.
 Load_Kind :: enum u8 {
-	None         = 0,
+	None               = 0,
 	// The module file of a disk process, from the store module_files, with
 	// the import scan, then Ready.
-	Module       = 1,
+	Module             = 1,
 	// The script font set (modus:contract/font_outlines), from its store
 	// of the machine: one object, with no scan. The core ends the load
 	// after Module_Filled, once it checked the bytes, and keeps them.
-	Script_Fonts = 2,
+	Script_Fonts       = 2,
+	// The script font set (or its Script_Font_Pack_Manifest) fetched by its
+	// BLAKE3 hash from a configured QUIC object cache over UDP (pinned
+	// cache_server_key). The core checks the full BLAKE3 hash after loan end.
+	Script_Fonts_Cache = 3,
+	// Persist an already-verified script font set (lent read-only from root)
+	// into the machine's script_fonts store on the local data disk.
+	Script_Fonts_Store = 4,
 }
 
 // load_kind_of_word gives the kind of a word, refusing None and each word
@@ -62,7 +69,7 @@ load_bytes_limit :: proc "contextless" (kind: Load_Kind) -> u64 {
 		return 0
 	case .Module:
 		return MODULE_BYTES_LIMIT
-	case .Script_Fonts:
+	case .Script_Fonts, .Script_Fonts_Cache, .Script_Fonts_Store:
 		return font_outlines.SCRIPT_FONTS_BYTES_LIMIT
 	}
 	return 0
@@ -164,6 +171,13 @@ Disk_Load_Refusal :: enum u32 {
 	Import_Too_Many_Bytes     = 14, // received_bytes (given), left_bytes, file_name.
 	Import_Missing            = 15, // hash, scan_reads, entries_left_out, importer_name.
 	Import_Bounds             = 16,
+	Cache_Not_Configured      = 17, // The datagram endpoint did not open or has no cache grant.
+	Cache_Bad_Server_Key      = 18, // The object cache TLS handshake failed server key pinning.
+	Cache_Network_Failed      = 19, // The object cache handshake, stream, or network transfer failed or timed out.
+	Cache_Not_Found           = 20, // The object cache does not hold the requested BLAKE3 hash.
+	Cache_Bad_Response        = 21, // The object cache sent a malformed, truncated, or out-of-contract frame.
+	Cache_Hash_Mismatch       = 22, // A frame from the object cache failed Bao inclusion proof verification.
+	Store_Write_Failed        = 23, // Persisting the verified script font set to the local store failed.
 }
 
 // What the core asks the service to load. The core writes it before Load.
@@ -177,6 +191,8 @@ Load_Request :: struct {
 	storage_module_length: u8,
 	replacement_count:     u32,
 	replacements:          [LOAD_REPLACEMENT_CAPACITY]module.Replacement,
+	cache_server_key:      [32]u8, // Pinned Ed25519 public key of the QUIC object cache (Script_Fonts_Cache only).
+	store_byte_count:      u64, // Exact verified byte count to persist (Script_Fonts_Store only).
 }
 
 // The request of a start from bytes: what the service read and kept. The
@@ -283,44 +299,89 @@ packed_name :: proc "contextless" (bytes: ^[NICKNAME_CAPACITY]u8, length: u8) ->
 	return string(bytes[:length]), true
 }
 
+// packed_empty says if a nickname field has zero length and all zero bytes.
+@(private = "file")
+packed_empty :: proc "contextless" (bytes: ^[NICKNAME_CAPACITY]u8, length: u8) -> bool {
+	if length != 0 {
+		return false
+	}
+	for value in bytes {
+		if value != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // load_request_check reads a Load_Request at the border of the service.
-// It refuses a request of no kind, one that names no nickname, no hash, no
-// storage module, or more replacements than the table holds.
+// It refuses a request of no kind, one that names no nickname, no hash,
+// missing or unexpected storage module, cache key, store size, or more
+// replacements than the table holds.
 load_request_check :: proc "contextless" (request: ^Load_Request) -> (kind: Load_Kind, nickname: string, storage_module: string, ok: bool) {
 	kind = load_kind_of_word(request.kind) or_return
 	nickname = packed_name(&request.nickname, request.nickname_length) or_return
-	storage_module = packed_name(&request.storage_module, request.storage_module_length) or_return
 	if request.module_hash == (blake3.Hash{}) || request.replacement_count > LOAD_REPLACEMENT_CAPACITY {
 		return .None, "", "", false
+	}
+	switch kind {
+	case .None:
+		return .None, "", "", false
+	case .Module, .Script_Fonts:
+		storage_module = packed_name(&request.storage_module, request.storage_module_length) or_return
+		if request.cache_server_key != {} || request.store_byte_count != 0 {
+			return .None, "", "", false
+		}
+	case .Script_Fonts_Cache:
+		if !packed_empty(&request.storage_module, request.storage_module_length) {
+			return .None, "", "", false
+		}
+		if request.cache_server_key == {} || request.store_byte_count != 0 || request.replacement_count != 0 {
+			return .None, "", "", false
+		}
+	case .Script_Fonts_Store:
+		storage_module = packed_name(&request.storage_module, request.storage_module_length) or_return
+		if request.cache_server_key != {} || request.replacement_count != 0 {
+			return .None, "", "", false
+		}
+		if request.store_byte_count == 0 || request.store_byte_count > load_bytes_limit(.Script_Fonts_Store) {
+			return .None, "", "", false
+		}
 	}
 	return kind, nickname, storage_module, true
 }
 
 // refusal_allowed_at says if the service can end a load with a refusal at
-// a step: a refusal of the module file before its check, a refusal of the
-// scan after it.
+// a step for a load kind: a refusal of the module file before its check,
+// a refusal of the scan after it, a cache refusal only on Script_Fonts_Cache,
+// and a store write refusal only on Script_Fonts_Store.
 @(private = "file")
-refusal_allowed_at :: proc "contextless" (step: Disk_Load_Step, refusal: Disk_Load_Refusal) -> bool {
+refusal_allowed_at :: proc "contextless" (kind: Load_Kind, step: Disk_Load_Step, refusal: Disk_Load_Refusal) -> bool {
 	switch refusal {
 	case .None:
 		return false
 	case .Call_Not_Taken, .Storage_Stopped, .Read_Refused, .Answer_Not_Allowed:
-		return step != .Idle
-	case .Not_Mapped, .Object_Empty, .Object_Too_Large:
-		return step == .Module_Asked
+		return step != .Idle && kind != .Script_Fonts_Cache
+	case .Not_Mapped:
+		return step == .Module_Asked || (kind == .Script_Fonts_Store && step == .Module_Lent)
+	case .Object_Empty, .Object_Too_Large:
+		return step == .Module_Asked && kind != .Script_Fonts_Store
 	case .No_Object:
 		// The object can leave the store during its read, and the list of
 		// the root tree can find no tree.
-		return step == .Module_Asked || step == .Module_Lent || step == .Scan
+		return kind != .Script_Fonts_Cache && kind != .Script_Fonts_Store && (step == .Module_Asked || step == .Module_Lent || step == .Scan)
 	case .No_Byte_At, .Too_Many_Bytes:
-		return step == .Module_Lent
+		return step == .Module_Lent && (kind == .Module || kind == .Script_Fonts)
 	case .Import_Bounds:
 		// The imports of the module file, or of a file that the scan kept.
-		return step == .Module_Checked || step == .Scan
+		return kind == .Module && (step == .Module_Checked || step == .Scan)
 	case .Import_Entry_Name_Outside, .Import_Entry_Kind_Unknown, .Import_Missing:
-		return step == .Scan
+		return kind == .Module && step == .Scan
 	case .Import_No_Byte_At, .Import_Too_Many_Bytes:
-		return step == .Candidate_Lent
+		return kind == .Module && step == .Candidate_Lent
+	case .Cache_Not_Configured, .Cache_Bad_Server_Key, .Cache_Network_Failed, .Cache_Not_Found, .Cache_Bad_Response, .Cache_Hash_Mismatch:
+		return kind == .Script_Fonts_Cache && (step == .Module_Asked || step == .Module_Lent)
+	case .Store_Write_Failed:
+		return kind == .Script_Fonts_Store && step == .Module_Lent
 	}
 	return false
 }
@@ -362,6 +423,9 @@ event_report_check :: proc "contextless" (kind: Load_Kind, step: Disk_Load_Step,
 		if !known || report.byte_count == 0 || report.byte_count > limit {
 			return false
 		}
+		if kind == .Script_Fonts_Store {
+			return false
+		}
 		if place == .Candidate && kind != .Module {
 			return false
 		}
@@ -375,20 +439,23 @@ event_report_check :: proc "contextless" (kind: Load_Kind, step: Disk_Load_Step,
 		}
 		return false
 	case .Module_Filled:
-		return step == .Module_Lent
+		return step == .Module_Lent && kind != .Script_Fonts_Store
 	case .Scan_Started:
-		return step == .Module_Checked && report.import_count >= 1 && report.import_count <= LOAD_IMPORT_CAPACITY
+		return kind == .Module && step == .Module_Checked && report.import_count >= 1 && report.import_count <= LOAD_IMPORT_CAPACITY
 	case .Import_Found:
-		return step == .Candidate_Lent && kept_count < LOAD_IMPORT_CAPACITY && name_length_valid(&report.file_name, report.file_name_length, 1) && name_length_valid(&report.importer_name, report.importer_name_length, 0)
+		return kind == .Module && step == .Candidate_Lent && kept_count < LOAD_IMPORT_CAPACITY && name_length_valid(&report.file_name, report.file_name_length, 1) && name_length_valid(&report.importer_name, report.importer_name_length, 0)
 	case .Candidate_Dropped:
-		return step == .Candidate_Lent
+		return kind == .Module && step == .Candidate_Lent
 	case .Ready:
-		return step == .Module_Checked || step == .Scan
+		if kind == .Script_Fonts_Store {
+			return step == .Module_Lent
+		}
+		return kind == .Module && (step == .Module_Checked || step == .Scan)
 	case .Refused:
 		refusal, known := enum_word.member_of_word(Disk_Load_Refusal, u64(report.refusal))
 		// Each name is bounded for each cause: a length past its field is
 		// refused before any line reads it.
-		if !known || !refusal_allowed_at(step, refusal) || report.entries_left_out > 1 || report.damaged > 1 {
+		if !known || !refusal_allowed_at(kind, step, refusal) || report.entries_left_out > 1 || report.damaged > 1 {
 			return false
 		}
 		if !name_length_valid(&report.file_name, report.file_name_length, 0) || !name_length_valid(&report.importer_name, report.importer_name_length, 0) {

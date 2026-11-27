@@ -186,7 +186,7 @@ run :: proc(machine: ^Machine, store: ^Store, request: ^rd.Load_Request, lend_sh
 	action := load_begin(machine, request)
 	for _ in 0 ..< 100_000 {
 		switch action.kind {
-		case .Wait_Command:
+		case .Wait_Command, .Ask_Cache_Frame, .Ask_Store_Set_Size, .Ask_Store_Write_Range, .Ask_Store_Commit:
 			return result
 		case .Ask_Size, .Ask_Read, .Ask_List:
 			answer := store_answer(store, action)

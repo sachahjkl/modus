@@ -334,20 +334,24 @@ a_start_from_bytes_names_the_load_of_the_core :: proc(t: ^testing.T) {
 	testing.expect_value(t, check(&request, nil), Start_From_Bytes_Refusal.None)
 }
 
-// A step where each refusal can come, for the test of its names.
+// A step and kind where each refusal can come, for the test of its names.
 @(private = "file")
-step_of_refusal :: proc(refusal: Disk_Load_Refusal) -> Disk_Load_Step {
+step_and_kind_of_refusal :: proc(refusal: Disk_Load_Refusal) -> (kind: Load_Kind, step: Disk_Load_Step) {
 	switch refusal {
 	case .None, .Not_Mapped, .No_Object, .Object_Empty, .Object_Too_Large, .Call_Not_Taken, .Storage_Stopped, .Read_Refused, .Answer_Not_Allowed:
-		return .Module_Asked
+		return .Module, .Module_Asked
 	case .No_Byte_At, .Too_Many_Bytes:
-		return .Module_Lent
+		return .Module, .Module_Lent
 	case .Import_Bounds, .Import_Entry_Name_Outside, .Import_Entry_Kind_Unknown, .Import_Missing:
-		return .Scan
+		return .Module, .Scan
 	case .Import_No_Byte_At, .Import_Too_Many_Bytes:
-		return .Candidate_Lent
+		return .Module, .Candidate_Lent
+	case .Cache_Not_Configured, .Cache_Bad_Server_Key, .Cache_Network_Failed, .Cache_Not_Found, .Cache_Bad_Response, .Cache_Hash_Mismatch:
+		return .Script_Fonts_Cache, .Module_Asked
+	case .Store_Write_Failed:
+		return .Script_Fonts_Store, .Module_Lent
 	}
-	return .Idle
+	return .None, .Idle
 }
 
 // For each refusal, at the step where it can come, a file name or an
@@ -360,24 +364,24 @@ each_refusal_bounds_both_of_its_names :: proc(t: ^testing.T) {
 		if refusal == .None {
 			continue
 		}
-		step := step_of_refusal(refusal)
+		kind, step := step_and_kind_of_refusal(refusal)
 		valid := Event_Report{refusal = u32(refusal), hash = hash_of_tag(4), file_name_length = 1, importer_name_length = LOAD_FILE_NAME_CAPACITY}
 		valid.file_name[0] = 'f'
 		for index in 0 ..< LOAD_FILE_NAME_CAPACITY {
 			valid.importer_name[index] = 'i'
 		}
-		testing.expectf(t, event_report_check(.Module, step, .Refused, &valid, 0, 0), "the refusal %v with valid names is refused", refusal)
+		testing.expectf(t, event_report_check(kind, step, .Refused, &valid, 0, 0), "the refusal %v with valid names is refused", refusal)
 		for length in ([?]u32{LOAD_FILE_NAME_CAPACITY + 1, max(u32)}) {
 			long_file := valid
 			long_file.file_name_length = length
-			testing.expectf(t, !event_report_check(.Module, step, .Refused, &long_file, 0, 0), "the refusal %v takes a file name of %d bytes", refusal, length)
+			testing.expectf(t, !event_report_check(kind, step, .Refused, &long_file, 0, 0), "the refusal %v takes a file name of %d bytes", refusal, length)
 			long_importer := valid
 			long_importer.importer_name_length = length
-			testing.expectf(t, !event_report_check(.Module, step, .Refused, &long_importer, 0, 0), "the refusal %v takes an importer name of %d bytes", refusal, length)
+			testing.expectf(t, !event_report_check(kind, step, .Refused, &long_importer, 0, 0), "the refusal %v takes an importer name of %d bytes", refusal, length)
 		}
 		trailing := valid
 		trailing.file_name[LOAD_FILE_NAME_CAPACITY - 1] = 'x'
-		testing.expectf(t, !event_report_check(.Module, step, .Refused, &trailing, 0, 0), "the refusal %v takes a byte after the file name", refusal)
+		testing.expectf(t, !event_report_check(kind, step, .Refused, &trailing, 0, 0), "the refusal %v takes a byte after the file name", refusal)
 	}
 }
 // The kind of a load: None, and each word past the members, are refused at
@@ -418,5 +422,94 @@ the_kind_of_a_load_bounds_its_file :: proc(t: ^testing.T) {
 	candidate := Event_Report{place = u32(File_Place.Candidate), byte_count = 1}
 	candidate.file_name_length = u32(copy(candidate.file_name[:], "entry"))
 	testing.expect(t, !event_report_check(.Script_Fonts, .Scan, .Memory_Wanted, &candidate, 0, 0))
+	testing.expect(t, !event_report_check(.Script_Fonts_Cache, .Scan, .Memory_Wanted, &candidate, 0, 0))
 	testing.expect(t, event_report_check(.Module, .Scan, .Memory_Wanted, &candidate, 0, 0))
+}
+
+// Script_Fonts_Cache and Script_Fonts_Store enforce strict border fields on
+// Load_Request and strict event/refusal matrices.
+@(test)
+script_fonts_cache_and_store_borders_refuse_bad_fields :: proc(t: ^testing.T) {
+	// Script_Fonts_Cache requires non-zero cache_server_key, empty storage_module,
+	// zero store_byte_count, and zero replacements.
+	cache_req := Load_Request{
+		kind             = u8(Load_Kind.Script_Fonts_Cache),
+		principal        = 0,
+		module_hash      = hash_of_tag(7),
+		cache_server_key = hash_of_tag(9),
+	}
+	copy(cache_req.nickname[:], "script_fonts")
+	cache_req.nickname_length = u8(len("script_fonts"))
+
+	// Zero cache_server_key refused.
+	bad := cache_req
+	bad.cache_server_key = {}
+	_, _, _, ok := load_request_check(&bad)
+	testing.expect(t, !ok)
+
+	// Non-empty storage_module refused on cache fetch.
+	bad = cache_req
+	bad.storage_module_length = u8(copy(bad.storage_module[:], "storage"))
+	_, _, _, ok = load_request_check(&bad)
+	testing.expect(t, !ok)
+
+	// Trailing storage_module byte refused on cache fetch.
+	bad = cache_req
+	bad.storage_module[0] = 'x'
+	_, _, _, ok = load_request_check(&bad)
+	testing.expect(t, !ok)
+
+	// Non-zero store_byte_count or replacements refused on cache fetch.
+	bad = cache_req
+	bad.store_byte_count = 1
+	_, _, _, ok = load_request_check(&bad)
+	testing.expect(t, !ok)
+	bad = cache_req
+	bad.replacement_count = 1
+	_, _, _, ok = load_request_check(&bad)
+	testing.expect(t, !ok)
+
+	// Valid cache request accepted.
+	kind, nick, stor, valid_ok := load_request_check(&cache_req)
+	testing.expect(t, valid_ok && kind == .Script_Fonts_Cache && nick == "script_fonts" && stor == "")
+
+	// Cache refusals accepted only on Script_Fonts_Cache, refused on Module.
+	cache_ref := Event_Report{refusal = u32(Disk_Load_Refusal.Cache_Hash_Mismatch)}
+	testing.expect(t, event_report_check(.Script_Fonts_Cache, .Module_Asked, .Refused, &cache_ref, 0, 0))
+	testing.expect(t, event_report_check(.Script_Fonts_Cache, .Module_Lent, .Refused, &cache_ref, 0, 0))
+	testing.expect(t, !event_report_check(.Module, .Module_Asked, .Refused, &cache_ref, 0, 0))
+	testing.expect(t, !event_report_check(.Script_Fonts, .Module_Asked, .Refused, &cache_ref, 0, 0))
+
+	// Script_Fonts_Store requires storage_module, zero cache_server_key, and
+	// store_byte_count in 1..SCRIPT_FONTS_BYTES_LIMIT.
+	store_req := valid_load_request()
+	store_req.kind = u8(Load_Kind.Script_Fonts_Store)
+	store_req.store_byte_count = 0
+	_, _, _, ok = load_request_check(&store_req)
+	testing.expect(t, !ok)
+
+	store_req.store_byte_count = load_bytes_limit(.Script_Fonts_Store) + 1
+	_, _, _, ok = load_request_check(&store_req)
+	testing.expect(t, !ok)
+
+	store_req.store_byte_count = load_bytes_limit(.Script_Fonts_Store)
+	store_req.cache_server_key = hash_of_tag(2)
+	_, _, _, ok = load_request_check(&store_req)
+	testing.expect(t, !ok)
+
+	store_req.cache_server_key = {}
+	kind, _, _, ok = load_request_check(&store_req)
+	testing.expect(t, ok && kind == .Script_Fonts_Store)
+
+	// Script_Fonts_Store accepts Ready and Store_Write_Failed at Module_Lent only,
+	// never Memory_Wanted or Module_Filled.
+	empty_rep: Event_Report
+	testing.expect(t, event_report_check(.Script_Fonts_Store, .Module_Lent, .Ready, &empty_rep, 0, 0))
+	testing.expect(t, !event_report_check(.Script_Fonts_Store, .Module_Asked, .Ready, &empty_rep, 0, 0))
+	testing.expect(t, !event_report_check(.Script_Fonts_Store, .Module_Lent, .Module_Filled, &empty_rep, 0, 0))
+	mem_rep := Event_Report{place = u32(File_Place.Module), byte_count = 64}
+	testing.expect(t, !event_report_check(.Script_Fonts_Store, .Module_Asked, .Memory_Wanted, &mem_rep, 0, 0))
+	store_ref := Event_Report{refusal = u32(Disk_Load_Refusal.Store_Write_Failed)}
+	testing.expect(t, event_report_check(.Script_Fonts_Store, .Module_Lent, .Refused, &store_ref, 0, 0))
+	testing.expect(t, !event_report_check(.Module, .Module_Lent, .Refused, &store_ref, 0, 0))
 }

@@ -297,6 +297,7 @@ root_plan_read :: proc "contextless" () {
 	root_plan_in_force = plan
 	_ = budget_share_take(root_plan_in_force.budget_share)
 	_ = growth_factor_take(root_plan_in_force.default_growth_factor)
+	script_fonts_plan_values_changed()
 	system.log_fact(.Info, Root_Plan_Values_Read{budget_share = plan.budget_share, start_width = u64(plan.memory_screen_start_width), start_height = u64(plan.memory_screen_start_height), most_width = u64(plan.memory_screen_most_width), most_height = u64(plan.memory_screen_most_height), sizes_refused = sizes_refused ? 1 : 0})
 }
 

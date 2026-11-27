@@ -1153,4 +1153,13 @@ the_script_font_facts_of_the_root_service_write_their_lines :: proc(t: ^testing.
 			expect(t, render(t, file, "Script_Fonts_Refused_Too_Large", {{"object_bytes", size}, {"set_bytes_limit", limit}}), line_of_before("root: refused the script font set: the object has ", size, " bytes, and a script font set has at most ", limit))
 		}
 	}
+	expect(t, render(t, file, "Script_Fonts_Manifest_Named_By_Plan", {{"hash", hash}}), line_of_before("root: the plan of principal 0 names the script font manifest ", sentence.Hash{hash[:]}))
+	expect(t, render(t, file, "Script_Fonts_Cache_Fallback", {{"hash", hash}}), line_of_before("root: the data disk lacks the script font set ", sentence.Hash{hash[:]}, ": fetching it from the configured object cache"))
+	expect(t, render(t, file, "Script_Fonts_Fetching", {{"hash", hash}}), line_of_before("root: fetches the script font set ", sentence.Hash{hash[:]}, " from the object cache"))
+	expect(t, render(t, file, "Script_Fonts_Manifest_Resolved", {{"manifest_hash", hash}, {"set_hash", hash}, {"set_size", u64(4096)}, {"scripts", u64(4)}}), line_of_before("root: the script font manifest ", sentence.Hash{hash[:]}, " names the script font set ", sentence.Hash{hash[:]}, " (", sentence.Size{4096, .Bytes}, ", ", u64(4), " scripts)"))
+	expect(t, render(t, file, "Script_Fonts_Refused_Manifest", {{"refusal", u64(2)}, {"decode_refusal", u64(3)}}), line_of_before("root: the script font manifest is refused: refusal ", u64(2), ", decode ", u64(3), ": ", none, " until the next start"))
+	expect(t, render(t, file, "Script_Fonts_Refused_Manifest_Size", {{"got_size", u64(100)}, {"expected_size", u64(200)}}), line_of_before("root: the script font set has ", sentence.Size{100, .Bytes}, ", and its manifest names ", sentence.Size{200, .Bytes}, ": ", none, " until the next start"))
+	expect(t, render(t, file, "Script_Fonts_Cache_Refused", {{"refusal", u64(19)}}), line_of_before("root: the object cache did not provide the script font set: refusal ", u64(19), ": ", none, " until the next start"))
+	expect(t, render(t, file, "Script_Fonts_Cached_On_Disk", {{"hash", hash}, {"set_size", u64(4096)}}), line_of_before("root: cached the script font set ", sentence.Hash{hash[:]}, " (", sentence.Size{4096, .Bytes}, ") on the data disk"))
+	expect(t, render(t, file, "Script_Fonts_Not_Cached_On_Disk", {{"outcome", u64(call_outcome.Call_Outcome.Callee_Unavailable)}}), line_of_before("root: the fetched script font set stays in memory: writing it to the data disk did not finish (Callee_Unavailable)"))
 }

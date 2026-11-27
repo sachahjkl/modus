@@ -36,6 +36,18 @@ MEMORY_SCREEN_START_WIDTH_FIELD :: "memory_screen_start_width"
 MEMORY_SCREEN_START_HEIGHT_FIELD :: "memory_screen_start_height"
 MEMORY_SCREEN_MOST_WIDTH_FIELD :: "memory_screen_most_width"
 MEMORY_SCREEN_MOST_HEIGHT_FIELD :: "memory_screen_most_height"
+SCRIPT_FONTS_CACHE_KEY_FIELD :: "script_fonts_cache_key"
+SCRIPT_FONTS_MANIFEST_HASH_FIELD :: "script_fonts_manifest_hash"
+
+// Format property: 32-byte keys and BLAKE3 hashes encoded as 64 lowercase hexadecimal digits.
+HEX_DIGITS_SIZE :: 64
+
+// Text fields of the owner `root`.
+@(rodata)
+ROOT_TEXT_FIELDS := [2]string {
+	SCRIPT_FONTS_CACHE_KEY_FIELD,
+	SCRIPT_FONTS_MANIFEST_HASH_FIELD,
+}
 
 // The plan-only fields that any module or role owner (other than `root`)
 // accepts: its store quota and its budget policy row.
@@ -165,24 +177,76 @@ field_range_of :: proc "contextless" (owner, field: string) -> (range: Field_Ran
 	return {}, false
 }
 
+// root_text_field_is says if field is one of the 64-hex text fields of the owner `root`.
+root_text_field_is :: proc "contextless" (field: string) -> bool {
+	for item in ROOT_TEXT_FIELDS {
+		if item == field {
+			return true
+		}
+	}
+	return false
+}
+
+// hex_key_parse parses 64 lowercase hexadecimal digits into a non-zero 32-byte
+// key or hash. Refuses any other length, uppercase or non-hex byte, and all-zero.
+hex_key_parse :: proc "contextless" (text: string) -> (key: [32]u8, ok: bool) {
+	if len(text) != HEX_DIGITS_SIZE {
+		return {}, false
+	}
+	non_zero := u8(0)
+	for index in 0 ..< 32 {
+		hi := hex_nibble(text[index * 2]) or_return
+		lo := hex_nibble(text[index * 2 + 1]) or_return
+		value := (hi << 4) | lo
+		key[index] = value
+		non_zero |= value
+	}
+	if non_zero == 0 {
+		return {}, false
+	}
+	return key, true
+}
+
+// hex_key_valid reports whether text is a valid non-zero 64-character lowercase
+// hexadecimal key or hash.
+hex_key_valid :: proc "contextless" (text: string) -> bool {
+	_, ok := hex_key_parse(text)
+	return ok
+}
+
+@(private = "file")
+hex_nibble :: proc "contextless" (ch: u8) -> (nibble: u8, ok: bool) {
+	switch ch {
+	case '0' ..= '9':
+		return ch - '0', true
+	case 'a' ..= 'f':
+		return ch - 'a' + 10, true
+	}
+	return 0, false
+}
+
 // The values in force of the owner `root`, each with the layer that gives
 // it. A zero disk_processes_* field means the contract default holds.
 Root_Plan :: struct {
-	budget_share:               u64,
-	default_growth_factor:      u64,
-	budget_growth_period_ms:    u64,
-	disk_processes_pages:       u64,
-	disk_processes_processes:   u64,
-	disk_processes_threads:     u64,
-	disk_processes_processor:   u64,
-	memory_screen_start_width:  u32,
-	memory_screen_start_height: u32,
-	memory_screen_most_width:   u32,
-	memory_screen_most_height:  u32,
-	budget_share_layer:         chosen_values.Layer,
-	growth_factor_layer:        chosen_values.Layer,
-	growth_period_layer:        chosen_values.Layer,
-	memory_screen_layer:        chosen_values.Layer, // The layer of the four sizes: they hold together.
+	budget_share:                     u64,
+	default_growth_factor:            u64,
+	budget_growth_period_ms:          u64,
+	disk_processes_pages:             u64,
+	disk_processes_processes:         u64,
+	disk_processes_threads:           u64,
+	disk_processes_processor:         u64,
+	memory_screen_start_width:        u32,
+	memory_screen_start_height:       u32,
+	memory_screen_most_width:         u32,
+	memory_screen_most_height:        u32,
+	script_fonts_cache_key:           [32]u8,
+	script_fonts_manifest_hash:       [32]u8,
+	budget_share_layer:               chosen_values.Layer,
+	growth_factor_layer:              chosen_values.Layer,
+	growth_period_layer:              chosen_values.Layer,
+	memory_screen_layer:              chosen_values.Layer, // The layer of the four sizes: they hold together.
+	script_fonts_cache_key_layer:     chosen_values.Layer,
+	script_fonts_manifest_hash_layer: chosen_values.Layer,
 }
 
 // The defaults of the contract: what holds when the plan gives nothing.
@@ -332,6 +396,16 @@ root_plan_of :: proc "contextless" (values: plan_values.Owner_Values) -> (plan: 
 		if word, layer, found := plan_values.value_in_force(size.field, empty, values, size.border); found {
 			size.place^ = u32(word)
 			plan.memory_screen_layer = max(plan.memory_screen_layer, layer)
+		}
+	}
+	if text, layer, found := plan_values.text_in_force(SCRIPT_FONTS_CACHE_KEY_FIELD, empty, values, hex_key_valid); found {
+		if key, ok := hex_key_parse(text); ok {
+			plan.script_fonts_cache_key, plan.script_fonts_cache_key_layer = key, layer
+		}
+	}
+	if text, layer, found := plan_values.text_in_force(SCRIPT_FONTS_MANIFEST_HASH_FIELD, empty, values, hex_key_valid); found {
+		if digest, ok := hex_key_parse(text); ok {
+			plan.script_fonts_manifest_hash, plan.script_fonts_manifest_hash_layer = digest, layer
 		}
 	}
 	if plan.memory_screen_start_width > plan.memory_screen_most_width || plan.memory_screen_start_height > plan.memory_screen_most_height {

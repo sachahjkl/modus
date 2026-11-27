@@ -705,6 +705,9 @@ names_write :: proc "contextless" (writer: ^sentence.Writer, refusal: Refusal) {
 		for item in root_plan_values.ROOT_FIELDS {
 			put(writer, &first, item.name)
 		}
+		for name in root_plan_values.ROOT_TEXT_FIELDS {
+			put(writer, &first, name)
+		}
 		return
 	}
 	for export_name in description.DESCRIBING_EXPORTS {

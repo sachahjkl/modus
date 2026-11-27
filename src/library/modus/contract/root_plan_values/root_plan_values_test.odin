@@ -328,3 +328,47 @@ module_budget_policy_merge_precedence_and_edges :: proc(t: ^testing.T) {
 	testing.expect(t, !merged_low.has_growth_reserve && merged_low.growth_reserve_pages == 0)
 	testing.expect(t, merged_low.size_kind == .Pages && merged_low.pages == 16_384)
 }
+
+// script_fonts_cache_key and script_fonts_manifest_hash enforce strict
+// 64-lowercase-hex non-zero parsing and lock-over-default precedence.
+@(test)
+script_fonts_cache_key_and_manifest_hash_borders :: proc(t: ^testing.T) {
+	bad_keys := [?]string{
+		"",
+		"a",
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde",   // 63 chars
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0", // 65 chars
+		"0000000000000000000000000000000000000000000000000000000000000000",  // all zero
+		"ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef0123456789",  // uppercase
+		"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",  // non-hex
+	}
+	for bad in bad_keys {
+		_, ok := hex_key_parse(bad)
+		testing.expectf(t, !ok, "bad hex key %q accepted", bad)
+		plan, _ := root_plan_of(values_of({
+			{name = SCRIPT_FONTS_CACHE_KEY_FIELD, kind = .Choose_Text, text = bad},
+			{name = SCRIPT_FONTS_MANIFEST_HASH_FIELD, kind = .Choose_Text, text = bad},
+		}, nil))
+		testing.expect(t, plan.script_fonts_cache_key == {} && plan.script_fonts_cache_key_layer == .Contract_Default)
+		testing.expect(t, plan.script_fonts_manifest_hash == {} && plan.script_fonts_manifest_hash_layer == .Contract_Default)
+	}
+
+	key_a := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	key_b := "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	parsed_a, ok_a := hex_key_parse(key_a)
+	parsed_b, ok_b := hex_key_parse(key_b)
+	testing.expect(t, ok_a && ok_b && parsed_a[0] == 0x01 && parsed_a[31] == 0xef && parsed_b[0] == 0xfe)
+
+	plan, refused := root_plan_of(values_of({
+		{name = SCRIPT_FONTS_CACHE_KEY_FIELD, kind = .Choose_Text, text = key_a},
+		{name = SCRIPT_FONTS_MANIFEST_HASH_FIELD, kind = .Choose_Text, text = key_a},
+	}, {
+		{name = SCRIPT_FONTS_CACHE_KEY_FIELD, kind = .Choose_Text, text = key_b},
+	}))
+	testing.expect(t, !refused)
+	testing.expect(t, plan.script_fonts_cache_key == parsed_b && plan.script_fonts_cache_key_layer == .Locked)
+	testing.expect(t, plan.script_fonts_manifest_hash == parsed_a && plan.script_fonts_manifest_hash_layer == .Plan_Default)
+	testing.expect(t, root_text_field_is(SCRIPT_FONTS_CACHE_KEY_FIELD))
+	testing.expect(t, root_text_field_is(SCRIPT_FONTS_MANIFEST_HASH_FIELD))
+	testing.expect(t, !root_text_field_is(BUDGET_SHARE_FIELD))
+}

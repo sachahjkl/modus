@@ -216,7 +216,9 @@ a_plan_is_refused_at_its_border :: proc(t: ^testing.T) {
 		{"plan { values = { display = { bar_edge = .top } }, locks = { display = { bar_edge = .bottom } } }", .Default_And_Lock, "display.bar_edge is in the plan twice: a value is a default in values, or a lock in locks, once"},
 		{"plan { values = { root = { budget_share = 0 } } }", .Out_Of_Range, "root.budget_share is 0, outside its range 1 to 64"},
 		{"plan { values = { root = { budget_share = 65 } } }", .Out_Of_Range, ""},
-		{"plan { values = { root = { quota = 2 } } }", .Field_Unknown, "the owner root has no value quota: its values are budget_share, default_growth_factor, budget_growth_period_ms, disk_processes_pages, disk_processes_processes, disk_processes_threads, disk_processes_processor, memory_screen_start_width, memory_screen_start_height, memory_screen_most_width, memory_screen_most_height"},
+		{"plan { values = { root = { quota = 2 } } }", .Field_Unknown, "the owner root has no value quota: its values are budget_share, default_growth_factor, budget_growth_period_ms, disk_processes_pages, disk_processes_processes, disk_processes_threads, disk_processes_processor, memory_screen_start_width, memory_screen_start_height, memory_screen_most_width, memory_screen_most_height, script_fonts_cache_key, script_fonts_manifest_hash"},
+		{"plan { values = { root = { script_fonts_cache_key = \"abcd\" } } }", .Text_Past_Bound, "root.script_fonts_cache_key has 4 bytes, outside its bound of 64 to 64 bytes"},
+		{"plan { values = { root = { script_fonts_manifest_hash = 4 } } }", .Value_Kind, "root.script_fonts_manifest_hash takes a text, in quotes"},
 		// The core has no store, and an owner that does not exist has none.
 		{"plan { values = { root = { store_blocks = 4 } } }", .Field_Unknown, ""},
 		{"plan { values = { nowhere = { store_blocks = 4 } } }", .Owner_Unknown, ""},

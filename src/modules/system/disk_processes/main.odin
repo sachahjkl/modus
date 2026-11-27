@@ -115,11 +115,12 @@ lent_release :: proc "contextless" () {
 	}
 }
 
-// load_release gives back what the load holds: the lent memory and the
-// storage connection.
+// load_release gives back what the load holds: the lent memory, the
+// storage connection, and any per-load QUIC object-cache endpoint.
 @(private = "file")
 load_release :: proc "contextless" () {
 	lent_release()
+	cache_fetch_release()
 	if client_open {
 		if client.calls.head != nil {
 			system.ring_close(&client.calls)
@@ -159,14 +160,14 @@ perform :: proc "contextless" (first: dpc.Action) {
 		switch action.kind {
 		case .Wait_Command:
 			return
-		case .Ask_Size, .Ask_Read, .Ask_List:
+		case .Ask_Size, .Ask_Read, .Ask_List, .Ask_Store_Set_Size, .Ask_Store_Write_Range, .Ask_Store_Commit:
 			arguments = {}
 			arguments[0].integer = u64(storage.ROOT)
 			arguments[1].text = transmute([]u8)action.name
 			argument_count = 2
 			export := "size"
 			switch action.kind {
-			case .Wait_Command, .Send_Event, .Ask_Size:
+			case .Wait_Command, .Send_Event, .Ask_Cache_Frame, .Ask_Size:
 			case .Ask_Read:
 				export = "read_range"
 				arguments[2].integer = action.offset
@@ -179,15 +180,37 @@ perform :: proc "contextless" (first: dpc.Action) {
 				arguments[2].table = {records = ([^]u8)(&list_rows)[:size_of(list_rows)], count = 0}
 				arguments[3].table = {records = list_names[:], count = 0}
 				argument_count = 4
+			case .Ask_Store_Set_Size:
+				export = "set_size"
+				arguments[2].integer = action.size
+				argument_count = 3
+			case .Ask_Store_Write_Range:
+				export = "write_range"
+				arguments[2].integer = action.offset
+				arguments[3].text = action.data
+				argument_count = 4
+			case .Ask_Store_Commit:
+				export = "commit"
+				argument_count = 2
 			}
 			call_status: storage_status.Status
 			sent, call_status = storage.call_send(&client, export, arguments[:argument_count])
 			if call_status != .Ok {
-				action = dpc.call_failed(&machine, .Call_Not_Taken)
+				action = dpc.call_failed(&machine, machine.kind == .Script_Fonts_Store ? .Store_Write_Failed : .Call_Not_Taken)
 				continue
 			}
 			call_waiting = true
 			return
+		case .Ask_Cache_Frame:
+			answer := cache_fetch_frame(machine.request.module_hash, action.offset)
+			if cache_core_has_command() {
+				// Core sent a command (e.g. Cancel) while we were waiting on
+				// UDP: return immediately so the main loop processes it before
+				// any event is emitted.
+				return
+			}
+			action = dpc.cache_frame_answered(&machine, &answer)
+			continue
 		case .Send_Event:
 			if action.release_lent {
 				lent_release()
@@ -269,6 +292,62 @@ handle_command :: proc "contextless" (command: ring.Record) {
 		load_tag = command.tag
 		intrinsics.mem_copy_non_overlapping(&copied_request, &region[rd.LOAD_REQUEST_OFFSET], size_of(rd.Load_Request))
 		action := dpc.load_begin(&machine, &copied_request)
+		if machine.kind == .Script_Fonts_Cache && action.kind == .Ask_Cache_Frame {
+			valid := handle_proof(command.values[0], .Memory, {.Read, .Write}) && handle_proof(command.values[1], .Memory, {.Read, .Write})
+			if !valid || !cache_fetch_open(system.Handle(command.values[0]), system.Handle(command.values[1]), copied_request.cache_server_key) {
+				if !cache_fetch.net_open {
+					for index in 0 ..< 2 {
+						word := command.values[index]
+						if handle_proof(word, .Memory, {}) {
+							system.close(system.Handle(word))
+						}
+					}
+				}
+				if cache_core_has_command() {
+					return
+				}
+				action = dpc.call_failed(&machine, .Cache_Not_Configured)
+			}
+			perform(action)
+			return
+		}
+		if machine.kind == .Script_Fonts_Store && action.kind == .Wait_Command {
+			valid := handle_proof(command.values[0], .Process, {.Read}) && handle_proof(command.values[1], .Memory, {.Read, .Write}) && handle_proof(command.values[2], .Memory, {.Read, .Write}) && handle_proof(command.values[3], .Memory, {.Read})
+			if valid {
+				storage_module := string(copied_request.storage_module[:copied_request.storage_module_length])
+				file := system.image_find(image, storage_module)
+				if module.validate(file) == .None {
+					client, client_open = storage.open_handles(system.Handle(command.values[1]), system.Handle(command.values[2]), system.Handle(command.values[0]), file)
+				}
+			}
+			if client_open {
+				lent_memory = system.Handle(command.values[3])
+				pages, size_status := system.memory_size(lent_memory)
+				address: rawptr
+				map_status := size_status
+				if size_status == .Succeeded {
+					// Read-only mapping: root never lends write access to verified script fonts.
+					address, map_status = system.memory_map(lent_memory, {})
+				}
+				if map_status == .Succeeded {
+					lent_address = address
+					action = dpc.store_memory_given(&machine, ([^]u8)(address)[:pages * system.PAGE_SIZE])
+				} else {
+					action = dpc.call_failed(&machine, .Not_Mapped)
+				}
+			} else {
+				for index in 0 ..< 4 {
+					word := command.values[index]
+					kind := index == 0 ? op.Object_Kind.Process : op.Object_Kind.Memory
+					if handle_proof(word, kind, {}) {
+						system.close(system.Handle(word))
+					}
+				}
+				action = dpc.call_failed(&machine, .Not_Mapped)
+			}
+			perform(action)
+			return
+		}
 		valid := handle_proof(command.values[0], .Process, {.Read}) && handle_proof(command.values[1], .Memory, {.Read, .Write}) && handle_proof(command.values[2], .Memory, {.Read, .Write})
 		if action.kind == .Ask_Size && valid {
 			storage_module := string(copied_request.storage_module[:copied_request.storage_module_length])
@@ -312,7 +391,11 @@ handle_command :: proc "contextless" (command: ring.Record) {
 			return
 		}
 		lent_address = address
-		perform(dpc.memory_lent(&machine, ([^]u8)(address)[:pages * system.PAGE_SIZE]))
+		if machine.stage == .Cache_Memory {
+			perform(dpc.cache_memory_lent(&machine, ([^]u8)(address)[:pages * system.PAGE_SIZE], cache_frame0_payload()))
+		} else {
+			perform(dpc.memory_lent(&machine, ([^]u8)(address)[:pages * system.PAGE_SIZE]))
+		}
 	case .Continue:
 		perform(dpc.continue_given(&machine))
 	case .Cancel:
@@ -358,6 +441,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	image = ([^]u8)(image_address)[:image_size]
 
 	dpc.machine_init(&machine, {image_holds = image_holds, imports_walk = imports_walk})
+	cache_fetch_crypto_init(ctx)
 	system.log_fact(.Info, Service_Ready{})
 
 	// The start is done: the first state of work of the process

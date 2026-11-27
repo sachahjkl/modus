@@ -156,6 +156,9 @@ describe :: proc "contextless" (image: Image, holders: ^Role_Holders, owner, fie
 		if range, found := root_plan_values.field_range_of(owner, field); found {
 			return {type = .Integer, integer_unit = root_field_unit(field), has_range = true, least = i64(range.least), most = i64(range.most)}, {}
 		}
+		if root_plan_values.root_text_field_is(field) {
+			return {type = .Text, has_range = true, least = root_plan_values.HEX_DIGITS_SIZE, most = root_plan_values.HEX_DIGITS_SIZE}, {}
+		}
 		// The core has no store or per-module budget row.
 		return {}, {problem = .Field_Unknown, root = true}
 	}

@@ -98,7 +98,7 @@ endpoint_of :: proc "contextless" (name: string) -> datagram.Grant {
 		return {port = 80, tcp = true, listen = true}
 	case "fetch", "module_files":
 		return {address = 0x0A000264, port = 80, tcp = true}
-	case "recipes":
+	case "recipes", "disk_processes":
 		return {address = 0x0A000264, port = object_cache.DEFAULT_QUIC_PORT}
 	case "quic_echo":
 		return {port = QUIC_ECHO_PORT, listen = true}
@@ -207,7 +207,7 @@ endpoint_open :: proc "contextless" (slot: ^Started, name: string, refusal: ^[7]
 
 // endpoint_close ends the endpoint of a process that stopped.
 endpoint_close :: proc "contextless" (item: ^Started) {
-	if item.endpoint != 0 && item.network_service != nil && item.network_service.process != 0 {
+	if item.endpoint != 0 && item.network_service != nil && item.network_service.process != 0 && item.network_service.network.head != nil {
 		system.send(&item.network_service.network.commands, ring.Record{kind = u32(datagram.Control.Endpoint_Remove), values = {0 = u64(item.endpoint)}})
 	}
 	item.endpoint, item.network_service = 0, nil
@@ -248,6 +248,9 @@ network_end :: proc "contextless" (item: ^Started) {
 		if other.network_service == item {
 			other.network_service, other.endpoint = nil, 0
 		}
+	}
+	if disk_cache_caller.network_service == item {
+		disk_cache_caller.network_service, disk_cache_caller.endpoint = nil, 0
 	}
 	system.ring_close(&item.network)
 	system.close(item.network_memory)

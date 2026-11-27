@@ -18,6 +18,7 @@ package disk_processes_core
 
 import "modus:contract/blake3"
 import "modus:contract/errors"
+import "modus:contract/object_cache"
 import rd "modus:contract/root_delegation"
 import "modus:disk_process"
 
@@ -26,6 +27,10 @@ import "modus:disk_process"
 #assert(disk_process.NAME_LIMIT <= rd.LOAD_FILE_NAME_CAPACITY)
 #assert(disk_process.SCAN_READ_LIMIT == rd.LOAD_CANDIDATE_LOAN_LIMIT)
 #assert(disk_process.SCAN_ENTRY_CAPACITY == rd.LOAD_SCAN_ENTRY_CAPACITY)
+
+// Format property: matches storage.WHOLE_PIECE_BYTES (32 KiB per write_range
+// call inside one 64 KiB storage call region).
+STORE_WRITE_CHUNK_BYTES :: 32 * 1024
 
 // One page of the list of the root tree: its rows, and the bytes of their
 // names.
@@ -51,7 +56,34 @@ Stage :: enum u8 {
 	Candidate_Memory, // Memory_Lent for that entry.
 	Candidate_Bytes, // The next bytes of that entry.
 	Candidate_Reported, // Continue after Import_Found or Candidate_Dropped.
+	Cache_Frame0, // Waiting for frame 0 from the QUIC object cache.
+	Cache_Memory, // Memory_Lent for the cached script font object.
+	Cache_Frame, // Waiting for frame 1..N-1 from the QUIC object cache.
+	Store_Memory, // Waiting for the shell to map the read-only verified set.
+	Store_Set_Size, // Waiting for storage set_size during Script_Fonts_Store.
+	Store_Write_Range, // Waiting for storage write_range during Script_Fonts_Store.
+	Store_Commit, // Waiting for storage commit during Script_Fonts_Store.
 	Ended, // Ready or Refused was sent: the next command is Load or Cancel.
+}
+
+// Outcome of one QUIC object-cache Get_Object frame exchange.
+Cache_Answer_Kind :: enum u8 {
+	Ok,
+	Not_Configured,
+	Bad_Server_Key,
+	Network_Failed,
+	Not_Found,
+	Bad_Response,
+}
+
+// One answer from the QUIC object cache for a Get_Object frame request.
+Cache_Frame_Answer :: struct {
+	kind:        Cache_Answer_Kind,
+	object_kind: object_cache.Cache_Object_Kind,
+	object_size: u64,
+	offset:      u64,
+	proof:       []u8,
+	payload:     []u8,
 }
 
 // What the storage service answered to one call, as the shell reads it.
@@ -95,6 +127,10 @@ Action_Kind :: enum u8 {
 	Ask_Size, // Call size with name.
 	Ask_Read, // Call read_range with name from offset.
 	Ask_List, // Call list after name.
+	Ask_Cache_Frame, // Fetch one 1 MiB Blob frame from the QUIC object cache at offset.
+	Ask_Store_Set_Size, // Call storage set_size with name and size.
+	Ask_Store_Write_Range, // Call storage write_range with name, offset, and data.
+	Ask_Store_Commit, // Call storage commit with name.
 	Send_Event, // Write report, send event, then wait for the next command.
 }
 
@@ -102,6 +138,8 @@ Action :: struct {
 	kind:         Action_Kind,
 	name:         string,
 	offset:       u64,
+	size:         u64,
+	data:         []u8,
 	event:        rd.Disk_Load_Event,
 	// The shell gives back the lent memory before it sends the event: the
 	// core revokes the loan when it takes the event.
@@ -144,6 +182,10 @@ Machine :: struct {
 	kept_hashes:       [rd.LOAD_IMPORT_CAPACITY]blake3.Hash,
 	walk_importer:     int, // The importer and the level of the imports that imports_walk notes now.
 	walk_level:        int,
+	cache_frame_count: u64,
+	cache_next_frame:  u64,
+	cache_frame0_len:  u64,
+	store_offset:      u64,
 	report:            rd.Event_Report,
 	counters:          Counters,
 }
@@ -260,8 +302,132 @@ load_begin :: proc "contextless" (machine: ^Machine, request: ^rd.Load_Request) 
 	}
 	machine.kind = kind
 	machine.counters.loads += 1
-	machine.stage = .Module_Size
-	return {kind = .Ask_Size, name = nickname(machine)}
+	switch kind {
+	case .None:
+		return command_refused(machine)
+	case .Module, .Script_Fonts:
+		machine.stage = .Module_Size
+		return {kind = .Ask_Size, name = nickname(machine)}
+	case .Script_Fonts_Cache:
+		machine.stage = .Cache_Frame0
+		return {kind = .Ask_Cache_Frame, name = nickname(machine), offset = 0}
+	case .Script_Fonts_Store:
+		machine.stage = .Store_Memory
+		return {kind = .Wait_Command}
+	}
+	return command_refused(machine)
+}
+
+// store_memory_given attaches the read-only lent memory of a verified script
+// font set for Script_Fonts_Store and begins the atomic storage write sequence.
+store_memory_given :: proc "contextless" (machine: ^Machine, bytes: []u8) -> Action {
+	if machine.stage != .Store_Memory || u64(len(bytes)) < machine.request.store_byte_count || machine.request.store_byte_count == 0 {
+		return command_refused(machine)
+	}
+	machine.lent = bytes[:machine.request.store_byte_count]
+	machine.module_byte_count = machine.request.store_byte_count
+	machine.store_offset = 0
+	machine.stage = .Store_Set_Size
+	return {kind = .Ask_Store_Set_Size, name = nickname(machine), size = machine.request.store_byte_count}
+}
+
+// cache_memory_lent receives the core's lent memory after frame 0 was verified
+// during Script_Fonts_Cache, copies frame0_payload into bytes[0:len(frame0)],
+// and either completes a single-frame fetch or requests frame 1.
+cache_memory_lent :: proc "contextless" (machine: ^Machine, bytes: []u8, frame0_payload: []u8) -> Action {
+	if machine.stage != .Cache_Memory || u64(len(bytes)) < machine.module_byte_count || u64(len(frame0_payload)) != machine.cache_frame0_len || machine.cache_frame0_len > machine.module_byte_count {
+		return command_refused(machine)
+	}
+	machine.lent = bytes[:machine.module_byte_count]
+	copy(machine.lent[:machine.cache_frame0_len], frame0_payload)
+	if machine.cache_frame_count <= 1 {
+		machine.stage = .Module_Reported
+		return send(machine, .Module_Filled, true)
+	}
+	machine.cache_next_frame = 1
+	machine.stage = .Cache_Frame
+	return {kind = .Ask_Cache_Frame, name = nickname(machine), offset = object_cache.FRAME_PAYLOAD_BYTES}
+}
+
+@(private = "file")
+cache_answer_refusal :: proc "contextless" (kind: Cache_Answer_Kind) -> rd.Disk_Load_Refusal {
+	switch kind {
+	case .Ok:
+		return .None
+	case .Not_Configured:
+		return .Cache_Not_Configured
+	case .Bad_Server_Key:
+		return .Cache_Bad_Server_Key
+	case .Network_Failed:
+		return .Cache_Network_Failed
+	case .Not_Found:
+		return .Cache_Not_Found
+	case .Bad_Response:
+		return .Cache_Bad_Response
+	}
+	return .Cache_Bad_Response
+}
+
+// cache_frame_answered processes one QUIC Get_Object frame response during
+// Script_Fonts_Cache, enforcing size bounds and Bao inclusion proof verification
+// on every frame before requesting memory or copying into lent memory.
+cache_frame_answered :: proc "contextless" (machine: ^Machine, answer: ^Cache_Frame_Answer) -> Action {
+	machine.report = {}
+	if machine.kind != .Script_Fonts_Cache || (machine.stage != .Cache_Frame0 && machine.stage != .Cache_Frame) {
+		return refuse(machine, .Cache_Bad_Response)
+	}
+	if answer.kind != .Ok {
+		return refuse(machine, cache_answer_refusal(answer.kind))
+	}
+	if answer.object_kind != .Blob {
+		return refuse(machine, .Cache_Bad_Response)
+	}
+	if machine.stage == .Cache_Frame0 {
+		if answer.offset != 0 {
+			return refuse(machine, .Cache_Bad_Response)
+		}
+		if answer.object_size == 0 {
+			return refuse(machine, .Object_Empty)
+		}
+		if answer.object_size > rd.load_bytes_limit(.Script_Fonts_Cache) {
+			machine.report.byte_count = answer.object_size
+			return refuse(machine, .Object_Too_Large)
+		}
+		frame_count, count_ok := object_cache.object_frame_count(answer.object_size)
+		if !count_ok || frame_count == 0 {
+			return refuse(machine, .Cache_Bad_Response)
+		}
+		if object_cache.object_frame_verify(.Blob, machine.request.module_hash, answer.object_size, 0, answer.proof, answer.payload) != .Trust_By_Hash {
+			return refuse(machine, .Cache_Hash_Mismatch)
+		}
+		machine.module_byte_count = answer.object_size
+		machine.cache_frame_count = frame_count
+		machine.cache_frame0_len = u64(len(answer.payload))
+		machine.cache_next_frame = 0
+		machine.report.place = u32(rd.File_Place.Module)
+		machine.report.byte_count = answer.object_size
+		machine.stage = .Cache_Memory
+		return send(machine, .Memory_Wanted)
+	}
+
+	// Subsequent frames (1 ..< cache_frame_count).
+	expected_offset := machine.cache_next_frame * object_cache.FRAME_PAYLOAD_BYTES
+	if answer.object_size != machine.module_byte_count || answer.offset != expected_offset {
+		return refuse(machine, .Cache_Bad_Response)
+	}
+	if object_cache.object_frame_verify(.Blob, machine.request.module_hash, machine.module_byte_count, machine.cache_next_frame, answer.proof, answer.payload) != .Trust_By_Hash {
+		return refuse(machine, .Cache_Hash_Mismatch)
+	}
+	if expected_offset > u64(len(machine.lent)) || u64(len(answer.payload)) > u64(len(machine.lent)) - expected_offset {
+		return refuse(machine, .Cache_Bad_Response)
+	}
+	copy(machine.lent[expected_offset:][:len(answer.payload)], answer.payload)
+	machine.cache_next_frame += 1
+	if machine.cache_next_frame >= machine.cache_frame_count {
+		machine.stage = .Module_Reported
+		return send(machine, .Module_Filled, true)
+	}
+	return {kind = .Ask_Cache_Frame, name = nickname(machine), offset = machine.cache_next_frame * object_cache.FRAME_PAYLOAD_BYTES}
 }
 
 // cancel takes the command Cancel: the load ends with no event.
@@ -323,6 +489,27 @@ continue_given :: proc "contextless" (machine: ^Machine) -> Action {
 // the last action.
 storage_answered :: proc "contextless" (machine: ^Machine, answer: ^Storage_Answer) -> Action {
 	machine.report = {}
+	if machine.stage == .Store_Set_Size || machine.stage == .Store_Write_Range || machine.stage == .Store_Commit {
+		if answer.kind != .Value || answer.value < 0 {
+			return refuse(machine, .Store_Write_Failed)
+		}
+		#partial switch machine.stage {
+		case .Store_Set_Size:
+			machine.stage = .Store_Write_Range
+			return store_write_next(machine)
+		case .Store_Write_Range:
+			chunk := min(u64(STORE_WRITE_CHUNK_BYTES), machine.module_byte_count - machine.store_offset)
+			machine.store_offset += chunk
+			if machine.store_offset < machine.module_byte_count {
+				return store_write_next(machine)
+			}
+			machine.stage = .Store_Commit
+			return {kind = .Ask_Store_Commit, name = nickname(machine)}
+		case .Store_Commit:
+			machine.stage = .Ended
+			return send(machine, .Ready, true)
+		}
+	}
 	candidate := machine.stage == .Candidate_Size || machine.stage == .Candidate_Bytes
 	switch answer.kind {
 	case .Value:
@@ -360,6 +547,18 @@ storage_answered :: proc "contextless" (machine: ^Machine, answer: ^Storage_Answ
 	}
 	// An answer that no call of the load asked for.
 	return refuse(machine, .Answer_Not_Allowed)
+}
+
+@(private = "file")
+store_write_next :: proc "contextless" (machine: ^Machine) -> Action {
+	remaining := machine.module_byte_count - machine.store_offset
+	chunk := min(u64(STORE_WRITE_CHUNK_BYTES), remaining)
+	return {
+		kind   = .Ask_Store_Write_Range,
+		name   = nickname(machine),
+		offset = machine.store_offset,
+		data   = machine.lent[machine.store_offset:][:chunk],
+	}
 }
 
 @(private = "file")

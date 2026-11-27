@@ -1,11 +1,15 @@
 package machine
 
 import "core:fmt"
+import "core:net"
 import "core:os"
+import "core:strings"
 import "modus:contract/blake3"
 import "modus:contract/fixed_addresses"
 import "modus:contract/font_outlines"
+import ilp "modus:contract/interface_language_pack"
 import "modustool:build"
+import "modustool:cache_server"
 import "modustool:foundation"
 import "modus:text_rendering"
 import "modustool:resources"
@@ -191,7 +195,167 @@ script_fonts_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	outlines := script_fonts_read_owned(resources.FONT_OUTLINES_OUTPUT) or_return
 	defer delete(outlines)
 	script_fonts_planned_run(part, digits, outlines, false) or_return
-	return script_fonts_planned_run(part, digits, outlines[:len(outlines) - SCRIPT_FONTS_CUT_BYTES], true)
+	script_fonts_planned_run(part, digits, outlines[:len(outlines) - SCRIPT_FONTS_CUT_BYTES], true) or_return
+	return script_fonts_cache_fetch_run(part, set, hash, digits)
+}
+
+// Deterministic test-only Ed25519 seed for the ephemeral local QUIC cache
+// bound to 127.0.0.1:0 during script_fonts_cache_fetch_run.
+@(private = "file")
+script_fonts_cache_seed :: proc() -> (seed: [32]u8) {
+	for i in 0 ..< 32 {
+		seed[i] = 0x57 + u8(i * 17 + 3)
+	}
+	return seed
+}
+
+// script_fonts_cache_fetch_run proves live QUIC object-cache fetch wiring for
+// script fonts on a machine whose local data disk holds no script_fonts object:
+//   - starts an ephemeral local host QUIC object cache seeded with the 21-font
+//     script_fonts.bin blob and a MODSFP01 Script_Font_Pack_Manifest pointing
+//     every script entry to it;
+//   - Machine 8 (empty data disk): principal 0 applies a plan setting
+//     root.script_fonts_cache_key and root.script_fonts_manifest_hash;
+//   - Machine 9 (same data disk, still without script_fonts on disk, with
+//     cache_endpoint wired): root fetches the MODSFP01 manifest over QUIC via
+//     disk_processes, verifies its BLAKE3 hash, resolves the target set hash,
+//     fetches the 21-font set over QUIC with Bao frame proofs, verifies its
+//     BLAKE3 hash and font_outlines form, maps it read-only, caches it on the
+//     local data disk, and interface_font renders Hebrew, Arabic, Thai,
+//     Devanagari, ideographs, emoji, and geometric shapes with zero
+//     replacement glyphs.
+script_fonts_cache_fetch_run :: proc(part: ^Test_Part_Run, set: []u8, set_hash: blake3.Hash, set_digits: string) -> bool {
+	owned: [dynamic]string
+	defer script_fonts_free_owned(&owned)
+
+	work_dir := fmt.aprintf("%s/script_fonts_cache_%d", foundation.BUILD_FOLDER, os.get_pid())
+	defer {
+		_ = os.remove_all(work_dir)
+		delete(work_dir)
+	}
+	if !foundation.reset_folder(work_dir) {
+		fmt.eprintfln("modustool: script_fonts_cache_fetch_run: cannot prepare %s", work_dir)
+		return false
+	}
+
+	// Build a valid MODSFP01 Script_Font_Pack_Manifest mapping every extra
+	// script to the single deduplicated script font set hash and exact size.
+	manifest: ilp.Script_Font_Pack_Manifest
+	manifest.unicode_version = 16
+	scripts := [?]ilp.Script_Code{.Hebrew, .Arabic, .Devanagari, .Thai, .Han_Cjk, .Emoji, .Symbols}
+	manifest.entry_count = u32(len(scripts))
+	for sc, index in scripts {
+		manifest.entries[index] = {
+			script      = sc,
+			object_hash = set_hash,
+			byte_size   = u64(len(set)),
+		}
+	}
+	manifest_buf: [ilp.PACK_MANIFEST_HEADER_SIZE + ilp.SCRIPT_FONT_ENTRY_LIMIT * ilp.SCRIPT_FONT_ENTRY_SIZE]u8
+	manifest_written, manifest_refusal := ilp.script_font_manifest_encode(&manifest, manifest_buf[:])
+	if manifest_refusal != .None {
+		fmt.eprintfln("modustool: script_fonts_cache_fetch_run: manifest encode failed: %v", manifest_refusal)
+		return false
+	}
+	manifest_bytes := manifest_buf[:manifest_written]
+	manifest_hash := blake3.hash(manifest_bytes)
+	manifest_digits := script_fonts_owned(&owned, "%s", resources.hash_digits(manifest_hash))
+
+	cache_dir := foundation.join(work_dir, "/cache")
+	server, opened := cache_server.cache_server_open(cache_dir, nil)
+	if !opened {
+		fmt.eprintln("modustool: script_fonts_cache_fetch_run: cannot open local cache server")
+		return false
+	}
+	defer cache_server.cache_server_destroy(&server)
+
+	if ok, _ := cache_server.store_write_atomic(&server, .Objects, set_digits, set); !ok {
+		fmt.eprintln("modustool: script_fonts_cache_fetch_run: cannot seed script font set in cache")
+		return false
+	}
+	if ok, _ := cache_server.store_write_atomic(&server, .Objects, manifest_digits, manifest_bytes); !ok {
+		fmt.eprintln("modustool: script_fonts_cache_fetch_run: cannot seed script font manifest in cache")
+		return false
+	}
+
+	running, quic_err := cache_server.cache_quic_start(&server, net.Endpoint{address = net.IP4_Loopback, port = 0}, script_fonts_cache_seed())
+	if quic_err != "" || running == nil {
+		fmt.eprintfln("modustool: script_fonts_cache_fetch_run: cannot start local QUIC cache: %s", quic_err)
+		return false
+	}
+	defer cache_server.cache_quic_stop(running)
+
+	server_key_digits := script_fonts_owned(&owned, "%s", resources.hash_digits(running.public_key))
+	cache_disk := script_fonts_owned(&owned, "%s/script_fonts_cache_disk.img", work_dir)
+	if !disk_prepare(cache_disk, SCRIPT_FONTS_DISK_SIZE, false) {
+		fmt.eprintln("modustool: script_fonts_cache_fetch_run: cannot prepare empty data disk")
+		return false
+	}
+
+	// 8. Fresh data disk with no script_fonts store: principal 0 applies the
+	// plan configuring root.script_fonts_cache_key and
+	// root.script_fonts_manifest_hash.
+	apply_line := strings.concatenate({
+		`plans.apply("script fonts cache", plan { values = { root = { script_fonts_cache_key = "`,
+		server_key_digits,
+		`", script_fonts_manifest_hash = "`,
+		manifest_digits,
+		`" } } })`,
+	})
+	append(&owned, apply_line)
+	configure := [?]Step {
+		{kind = .Wait, text = "storage: ok, a new disk: generation ", any_order = true},
+		{kind = .Wait, text = "root: the data disk holds no script font set ", any_order = true},
+		{kind = .Wait, text = "display: console" + WINDOW_TAKEN},
+		{kind = .Front, text = "console"},
+		{kind = .Type, text = apply_line},
+		{kind = .Wait, text = "compositor: the difference of the plan script fonts cache shows: "},
+		{kind = .Key, text = "tab"},
+		{kind = .Key_Again_Until, text = "ret", expected = "compositor: the difference of the plan script fonts cache is accepted", fails_on = "compositor: the difference of the plan script fonts cache is refused"},
+		{kind = .Wait, text = "plans: applied generation 1 for principal 0", any_order = true},
+		{kind = .Wait, text = " of Plan_Generation_Row"},
+		{kind = .Front, text = "console"},
+		{kind = .Type, text = "shutdown()"},
+		{kind = .Wait, text = "kernel: the machine stops with code 0"},
+	}
+	machine_test(part, configure[:], {
+		volume      = build.BOOT_VOLUME,
+		output      = self_test_file(TEST_OUTPUT_SCRIPT_FONTS, 8),
+		exit_status = build.MACHINE_STOP_OK,
+		data_disk   = cache_disk,
+	}) or_return
+
+	// 9. Same data disk (still no script_fonts object on disk), now with the
+	// local QUIC object cache attached: root fetches the manifest, resolves it,
+	// fetches the 21-font set, verifies BLAKE3, maps it read-only, caches it on
+	// disk, and interface_font renders all scripts without replacement glyphs.
+	fetched := [?]Step {
+		{kind = .Wait, text = "storage: ok, generation ", any_order = true},
+		{kind = .Wait, text = script_fonts_owned(&owned, "root: the plan of principal 0 names the script font manifest %s", manifest_digits), any_order = true},
+		{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
+		{kind = .Wait, text = script_fonts_owned(&owned, "root: fetches the script font set %s from the object cache", manifest_digits), fails_on = "root: the object cache did not provide the script font set"},
+		{kind = .Wait, text = script_fonts_owned(&owned, "root: the script font manifest %s names the script font set %s (", manifest_digits, set_digits), fails_on = "root: the script font manifest is refused"},
+		{kind = .Wait, text = script_fonts_owned(&owned, "root: fetches the script font set %s from the object cache", set_digits), fails_on = "root: the object cache did not provide the script font set"},
+		{kind = .Wait, text = "21 fonts) is checked: each process that starts from now maps it, read-only", fails_on = "root: the script font set was not read"},
+		{kind = .Wait, text = script_fonts_owned(&owned, "root: cached the script font set %s (", set_digits), fails_on = "root: the fetched script font set stays in memory"},
+		{kind = .Launch, text = "interface_font"},
+		{kind = .Wait, text = "interface_font: 2 characters that no font of the chain has draw the replacement glyph: as it must", fails_on = "interface_font: the fallback chain of the interface is wrong: "},
+		{kind = .Wait, text = "interface_font: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs, an emoji and a geometric shape draws ", fails_on = "interface_font: the script font set is mapped, and the character "},
+		{kind = .Wait, text = script_fonts_owned(&owned, "interface_font: the library module text_rendering shaped the line and holds the %d fonts of the set", card(text_rendering.SCRIPT_FONTS)), fails_on = "interface_font: WRONG: the font "},
+		{kind = .Wait, text = "interface_font: ok, ", any_order = true},
+		{kind = .Front, text = "console"},
+		{kind = .Type, text = "shutdown()"},
+		{kind = .Wait, text = "kernel: the machine stops with code 0"},
+	}
+	machine_test(part, fetched[:], {
+		volume         = build.BOOT_VOLUME,
+		output         = self_test_file(TEST_OUTPUT_SCRIPT_FONTS, 9),
+		exit_status    = build.MACHINE_STOP_OK,
+		data_disk      = cache_disk,
+		cache_endpoint = running.bound_endpoint,
+	}) or_return
+	foundation.test_passed_print("root fetched script font manifest %s and script font set %s over QUIC from the object cache, verified BLAKE3, mapped it read-only, cached it on disk, and interface_font drew all scripts with no replacement glyph", manifest_digits, set_digits)
+	return true
 }
 
 // The bytes that script_fonts_cut_planner cuts from the font outlines

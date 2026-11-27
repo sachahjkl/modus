@@ -36,7 +36,12 @@ foreign _ {
 
 WIDTH :: 320
 HEIGHT :: 48
-// The tool counts the module, its load, its stacks and its window at the largest scale.
+// Glyph cache memory reserved on the first frame before Ready (matches display.TEXT_MEMORY_PAGES).
+GLYPH_MEMORY_PAGES :: 354
+#assert(GLYPH_MEMORY_PAGES == display.TEXT_MEMORY_PAGES)
+// The glyph cache memory object allocated on the first frame before Ready.
+MODULE_START_OBJECTS :: [?]system.Start_Object{GLYPH_MEMORY_PAGES}
+// The tool counts the module, its load, its stacks, its glyph memory and its window at the largest scale.
 MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT}
 // The title that the process asks for. The compositor does not take it.
 TITLE_ASKED :: "console"

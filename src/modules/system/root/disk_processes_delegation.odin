@@ -107,15 +107,22 @@ Disk_Load :: struct {
 	// The handles of this service that the service holds copies of: the
 	// storage service, the call ring and the call region of the
 	// connection. Their copies are revoked at the end of the load.
-	storage_handles:  [3]system.Handle,
+	storage_handles:     [3]system.Handle,
+	// The datagram ring and region handles lent to disk_processes for one
+	// QUIC object-cache fetch (Script_Fonts_Cache only).
+	cache_handles:       [2]system.Handle,
+	cache_endpoint_open: bool,
+	// Read-only copy of script_fonts_memory lent to disk_processes for one
+	// local store write (Script_Fonts_Store only).
+	store_read_handle:   system.Handle,
 	// The load of the start policy that principal 0 chose: no process
 	// asked for it, and its end starts it, or the rescue
 	// (start_policy_choice.odin).
-	for_start_policy: bool,
+	for_start_policy:    bool,
 	// What the load reads: a module file, or the script font set, which no
 	// process asked for either, and which this service keeps
 	// (script_fonts.odin).
-	kind:             rd.Load_Kind,
+	kind:                rd.Load_Kind,
 }
 
 disk_load: Disk_Load
@@ -126,12 +133,14 @@ disk_load: Disk_Load
 // honest service never meets a revoked page; past the bound it stops the
 // service.
 Disk_Load_Return :: struct {
-	pending:         bool,
-	service_tag:     u32,
-	files:           [2]Lent_File,
-	storage_handles: [3]system.Handle,
-	deadline:        u64,
-	stray_events:    int, // The events of that load that crossed Cancel: one at most.
+	pending:           bool,
+	service_tag:       u32,
+	files:             [2]Lent_File,
+	storage_handles:   [3]system.Handle,
+	cache_handles:     [2]system.Handle,
+	store_read_handle: system.Handle,
+	deadline:          u64,
+	stray_events:      int, // The events of that load that crossed Cancel: one at most.
 }
 
 disk_load_return: Disk_Load_Return
@@ -147,6 +156,12 @@ disk_load_report: rd.Event_Report
 // the store, and grant_for gives it the limit of that store, the flag that
 // it reads only, and no grant to act for a principal.
 disk_reader: Started
+// Caller record for persisting verified script fonts into the machine's
+// script_fonts store (grant_for gives write access to script_fonts only).
+disk_script_fonts_writer: Started
+// Caller record for the per-load QUIC object-cache datagram endpoint lent to
+// disk_processes during Script_Fonts_Cache fetches.
+disk_cache_caller: Started
 
 // Why disk_load_begin did not start a load.
 Disk_Load_Begin_Failure :: enum u8 {
@@ -313,6 +328,36 @@ storage_handles_release :: proc "contextless" (handles: ^[3]system.Handle) {
 	}
 }
 
+// cache_handles_release ends the copies of the datagram endpoint handles lent
+// to disk_processes for one QUIC object-cache fetch, then closes them.
+@(private = "file")
+cache_handles_release :: proc "contextless" (handles: ^[2]system.Handle) {
+	for &handle in handles {
+		if handle == 0 {
+			continue
+		}
+		if disk_processes_process != nil {
+			system.handle_revoke(handle, disk_processes_process.process)
+		}
+		system.close(handle)
+		handle = 0
+	}
+}
+
+// store_read_handle_release ends the read-only copy of script_fonts_memory
+// lent to disk_processes for one local store write, then closes the copy.
+@(private = "file")
+store_read_handle_release :: proc "contextless" (handle: ^system.Handle) {
+	if handle^ == 0 {
+		return
+	}
+	if disk_processes_process != nil {
+		system.handle_revoke(handle^, disk_processes_process.process)
+	}
+	system.close(handle^)
+	handle^ = 0
+}
+
 // disk_load_return_end ends the loans of an ended load: after Cancelled,
 // after the stop of the service, or past the bound.
 disk_load_return_end :: proc "contextless" () {
@@ -324,6 +369,8 @@ disk_load_return_end :: proc "contextless" () {
 		lent_file_free(&file)
 	}
 	storage_handles_release(&returned.storage_handles)
+	cache_handles_release(&returned.cache_handles)
+	store_read_handle_release(&returned.store_read_handle)
 	returned^ = {}
 }
 
@@ -422,6 +469,166 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 		for_start_policy = for_start_policy,
 		storage_handles  = sources,
 		kind             = kind,
+	}
+	return .None, .Succeeded
+}
+
+// disk_load_cache_begin starts one QUIC object-cache fetch of a script font
+// object (or Script_Font_Pack_Manifest) through disk_processes using a fresh
+// datagram endpoint pinned to cache_server_key.
+disk_load_cache_begin :: proc "contextless" (name: string, hash: [disk_process.HASH_SIZE]u8, cache_server_key: [32]u8, refusal: ^[7]u64) -> (failure: Disk_Load_Begin_Failure, outcome: call_outcome.Call_Outcome) {
+	command := u32(root_ring.Root_Command.Start_From_Disk)
+	if !disk_processes_service_start() {
+		return .No_Service, root_ring.refuse(refusal, .Callee_Unavailable, command, .Refused, .Services)
+	}
+	service_process := disk_processes_process
+	disk_cache_caller = {}
+	copy(disk_cache_caller.name[:len(disk_cache_caller.name) - 1], "disk_processes")
+	ring_memory, region_memory, opened := endpoint_open(&disk_cache_caller, "disk_processes", refusal)
+	if opened != .Succeeded {
+		return .No_Connection, opened
+	}
+	sources := [2]system.Handle{ring_memory, region_memory}
+	given: [2]system.Handle
+	given_count := 0
+	status := call_outcome.Call_Outcome.Succeeded
+	for source, index in sources {
+		given[index], status = give_through_service_ring(service_process.process, disk_processes_ring_memory, source, {.Read, .Write}, &service_process.service_ring_ready)
+		if status != .Succeeded {
+			break
+		}
+		given_count += 1
+	}
+	sent_refused := false
+	service_tag := disk_processes_next_tag
+	disk_processes_next_tag = disk_processes_next_tag == max(u32) ? 1 : disk_processes_next_tag + 1
+	if status == .Succeeded {
+		disk_load_request = {}
+		disk_load_request.kind = u8(rd.Load_Kind.Script_Fonts_Cache)
+		disk_load_request.principal = 0
+		disk_load_request.module_hash = hash
+		disk_load_request.nickname_length = u8(copy(disk_load_request.nickname[:], name))
+		disk_load_request.cache_server_key = cache_server_key
+		intrinsics.mem_copy_non_overlapping(&disk_processes_region[rd.LOAD_REQUEST_OFFSET], &disk_load_request, size_of(rd.Load_Request))
+		if !system.send(&disk_processes_ring.commands, ring.Record{kind = u32(rd.Disk_Load_Command.Load), tag = service_tag, values = {0 = u64(given[0]), 1 = u64(given[1])}}) {
+			status = .Callee_Busy
+			sent_refused = true
+		}
+	}
+	if status != .Succeeded {
+		for source in sources[:given_count] {
+			system.handle_revoke(source, service_process.process)
+		}
+		for handle in sources {
+			if handle != 0 {
+				system.close(handle)
+			}
+		}
+		endpoint_close(&disk_cache_caller)
+		if status == .Callee_Busy && sent_refused {
+			return .Not_Given, root_ring.refuse(refusal, .Callee_Busy, command, .Busy, .Requests)
+		}
+		return .Not_Given, kernel_refused(refusal, command, status)
+	}
+	name_bytes: [disk_process.NAME_LIMIT]u8
+	name_length := copy(name_bytes[:], name)
+	disk_load = {
+		step                = .Module_Asked,
+		service_tag         = service_tag,
+		name                = name_bytes,
+		name_length         = name_length,
+		hash                = hash,
+		deadline            = system.time() + SCRIPT_FONTS_LOAD_DEADLINE_MILLISECONDS,
+		cache_handles       = sources,
+		cache_endpoint_open = true,
+		kind                = .Script_Fonts_Cache,
+	}
+	return .None, .Succeeded
+}
+
+// disk_load_store_begin starts one asynchronous write of an already-verified
+// script font set (lent read-only) into the machine's script_fonts store via
+// disk_processes.
+disk_load_store_begin :: proc "contextless" (name: string, hash: [disk_process.HASH_SIZE]u8, memory: system.Handle, size: u64, refusal: ^[7]u64) -> (failure: Disk_Load_Begin_Failure, outcome: call_outcome.Call_Outcome) {
+	command := u32(root_ring.Root_Command.Start_From_Disk)
+	if !disk_processes_service_start() {
+		return .No_Service, root_ring.refuse(refusal, .Callee_Unavailable, command, .Refused, .Services)
+	}
+	service_process := disk_processes_process
+	disk_script_fonts_writer = {}
+	copy(disk_script_fonts_writer.name[:len(disk_script_fonts_writer.name) - 1], font_outlines.SCRIPT_FONTS_STORE_NAME)
+	disk_script_fonts_writer.principal = 0
+	storage_name := role_holder_name(.Storage)
+	connection, storage_service, ring_memory, region_memory, opened := connection_open(&disk_script_fonts_writer, storage_name, refusal, command)
+	if opened != .Succeeded {
+		return .No_Connection, opened
+	}
+	storage_copy, status := system.give(0, storage_service.process, {.Read, .Give})
+	store_read_copy: system.Handle
+	if status == .Succeeded {
+		// Copy root's verified memory handle with Read + Give so revoking the
+		// copy from disk_processes never touches script_fonts_memory itself.
+		store_read_copy, status = system.give(0, memory, {.Read, .Give})
+	}
+	sources := [4]system.Handle{storage_copy, ring_memory, region_memory, store_read_copy}
+	rights := [4]system.Rights{{.Read}, {.Read, .Write}, {.Read, .Write}, {.Read}}
+	given: [4]system.Handle
+	given_count := 0
+	for source, index in sources {
+		if status != .Succeeded {
+			break
+		}
+		given[index], status = give_through_service_ring(service_process.process, disk_processes_ring_memory, source, rights[index], &service_process.service_ring_ready)
+		if status != .Succeeded {
+			break
+		}
+		given_count += 1
+	}
+	sent_refused := false
+	service_tag := disk_processes_next_tag
+	disk_processes_next_tag = disk_processes_next_tag == max(u32) ? 1 : disk_processes_next_tag + 1
+	if status == .Succeeded {
+		disk_load_request = {}
+		disk_load_request.kind = u8(rd.Load_Kind.Script_Fonts_Store)
+		disk_load_request.principal = 0
+		disk_load_request.module_hash = hash
+		disk_load_request.nickname_length = u8(copy(disk_load_request.nickname[:], name))
+		disk_load_request.storage_module_length = u8(copy(disk_load_request.storage_module[:], storage_name))
+		disk_load_request.store_byte_count = size
+		intrinsics.mem_copy_non_overlapping(&disk_processes_region[rd.LOAD_REQUEST_OFFSET], &disk_load_request, size_of(rd.Load_Request))
+		if !system.send(&disk_processes_ring.commands, ring.Record{kind = u32(rd.Disk_Load_Command.Load), tag = service_tag, values = {0 = u64(given[0]), 1 = u64(given[1]), 2 = u64(given[2]), 3 = u64(given[3])}}) {
+			status = .Callee_Busy
+			sent_refused = true
+		}
+	}
+	if status != .Succeeded {
+		for source in sources[:given_count] {
+			system.handle_revoke(source, service_process.process)
+		}
+		for handle in sources {
+			if handle != 0 {
+				system.close(handle)
+			}
+		}
+		disconnect(connection)
+		if status == .Callee_Busy && sent_refused {
+			return .Not_Given, root_ring.refuse(refusal, .Callee_Busy, command, .Busy, .Requests)
+		}
+		return .Not_Given, kernel_refused(refusal, command, status)
+	}
+	name_bytes: [disk_process.NAME_LIMIT]u8
+	name_length := copy(name_bytes[:], name)
+	disk_load = {
+		step              = .Module_Lent,
+		service_tag       = service_tag,
+		name              = name_bytes,
+		name_length       = name_length,
+		hash              = hash,
+		connection        = connection,
+		deadline          = system.time() + SCRIPT_FONTS_LOAD_DEADLINE_MILLISECONDS,
+		storage_handles   = {storage_copy, ring_memory, region_memory},
+		store_read_handle = store_read_copy,
+		kind              = .Script_Fonts_Store,
 	}
 	return .None, .Succeeded
 }
@@ -548,8 +755,17 @@ disk_load_end :: proc "contextless" (outcome: call_outcome.Call_Outcome, values:
 	if disk_processes_service_alive() && load.service_tag != 0 {
 		if disk_load_command(.Cancel) {
 			returned := &disk_load_return
-			returned^ = {pending = true, service_tag = load.service_tag, storage_handles = load.storage_handles, deadline = system.time() + DISK_LOAD_CANCEL_BOUND_MILLISECONDS}
+			returned^ = {
+				pending           = true,
+				service_tag       = load.service_tag,
+				storage_handles   = load.storage_handles,
+				cache_handles     = load.cache_handles,
+				store_read_handle = load.store_read_handle,
+				deadline          = system.time() + DISK_LOAD_CANCEL_BOUND_MILLISECONDS,
+			}
 			load.storage_handles = {}
+			load.cache_handles = {}
+			load.store_read_handle = 0
 			switch load.step {
 			case .Module_Lent:
 				returned.files[0] = load.module
@@ -566,6 +782,8 @@ disk_load_end :: proc "contextless" (outcome: call_outcome.Call_Outcome, values:
 		}
 	}
 	storage_handles_release(&load.storage_handles)
+	cache_handles_release(&load.cache_handles)
+	store_read_handle_release(&load.store_read_handle)
 	lent_file_free(&load.module)
 	lent_file_free(&load.candidate)
 	for &file in load.kept {
@@ -573,6 +791,9 @@ disk_load_end :: proc "contextless" (outcome: call_outcome.Call_Outcome, values:
 	}
 	if load.connection != nil {
 		disconnect(load.connection)
+	}
+	if load.cache_endpoint_open {
+		endpoint_close(&disk_cache_caller)
 	}
 	if load.asker != nil && load.asker.process != 0 && load.asker.requests.head != nil {
 		system.send(&load.asker.requests.completions, ring.Record{kind = u32(outcome), tag = load.tag, values = values})
@@ -584,8 +805,8 @@ disk_load_end :: proc "contextless" (outcome: call_outcome.Call_Outcome, values:
 	if for_start_policy {
 		start_policy_chosen_load_ended(outcome)
 	}
-	if kind == .Script_Fonts {
-		script_fonts_load_ended(outcome)
+	if kind == .Script_Fonts || kind == .Script_Fonts_Cache || kind == .Script_Fonts_Store {
+		script_fonts_load_ended(kind, outcome)
 	}
 	return values
 }
@@ -666,15 +887,19 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 		disk_load_end(.Callee_Unavailable, disk_load_refused_values())
 		return
 	}
-	if load.connection == nil {
+	if load.kind != .Script_Fonts_Cache && load.connection == nil {
 		system.log_fact(.Warning, Disk_Load_Refused_Storage_Stopped{refused_process = disk_load_name_field()})
+		disk_load_end(.Callee_Unavailable, disk_load_refused_values())
+		return
+	}
+	if load.kind == .Script_Fonts_Cache && load.cache_endpoint_open && disk_cache_caller.network_service == nil {
 		disk_load_end(.Callee_Unavailable, disk_load_refused_values())
 		return
 	}
 	if system.time() >= load.deadline {
 		// The bound of this load: the deadline of the set is 16 times that
 		// of a module file.
-		bound := u64(load.kind == .Script_Fonts ? SCRIPT_FONTS_LOAD_DEADLINE_MILLISECONDS : disk_process.LOAD_DEADLINE_MILLISECONDS)
+		bound := u64((load.kind == .Script_Fonts || load.kind == .Script_Fonts_Cache || load.kind == .Script_Fonts_Store) ? SCRIPT_FONTS_LOAD_DEADLINE_MILLISECONDS : disk_process.LOAD_DEADLINE_MILLISECONDS)
 		system.log_fact(.Warning, Disk_Load_Refused_No_Answer{bound = value_kinds.Time_In_Milliseconds(bound), refused_process = disk_load_name_field()})
 		disk_load_end(.Callee_Unavailable, errors.ring_fail(u32(root_ring.Root_Command.Start_From_Disk), .No_Answer, .Milliseconds, 0, 0, i64(bound)))
 		return
@@ -745,13 +970,16 @@ disk_load_event :: proc "contextless" (record: ring.Record) {
 		if found != load.hash {
 			head := transmute([4]u64)found
 			system.log_fact(.Warning, Disk_Load_Refused_Hash_Differs{found_hash = value_kinds.Hash_Field(found), hash = value_kinds.Hash_Field(load.hash), refused_process = disk_load_name_field()})
+			if load.kind == .Script_Fonts {
+				script_fonts_disk_hash_differs()
+			}
 			disk_load_end(.Argument_Refused, errors.ring_fail(kind, .Not_Authentic, .None, 2, i64(head[0])))
 			return
 		}
-		// The script font set starts nothing: this service keeps its
-		// bytes, and the load ends here, cleanly.
-		if load.kind == .Script_Fonts {
-			script_fonts_take(&load.module)
+		// The script font set (or manifest) starts nothing: this service keeps
+		// its bytes, and the load ends here, cleanly.
+		if load.kind == .Script_Fonts || load.kind == .Script_Fonts_Cache {
+			script_fonts_take(&load.module, load.kind == .Script_Fonts_Cache)
 			disk_processes_starts = 0
 			disk_load_end(.Succeeded, {})
 			return
@@ -795,6 +1023,12 @@ disk_load_event :: proc "contextless" (record: ring.Record) {
 		lent_file_free(&load.candidate)
 		disk_load_continue(.Scan)
 	case .Ready:
+		if load.kind == .Script_Fonts_Store {
+			script_fonts_store_finished(true, .Succeeded)
+			disk_processes_starts = 0
+			disk_load_end(.Succeeded, {})
+			return
+		}
 		// Start_From_Bytes: the request names what this service checked.
 		if rd.start_from_bytes_check(&report.start, load.principal, string(load.name[:load.name_length]), load.hash, load.module.size, load.kept_hashes[:load.kept_count]) != .None {
 			disk_load_service_fault()
@@ -859,7 +1093,7 @@ disk_load_refused :: proc "contextless" (report: ^rd.Event_Report) {
 	case .Object_Too_Large:
 		size := report.byte_count
 		limit := rd.load_bytes_limit(disk_load.kind)
-		if disk_load.kind == .Script_Fonts {
+		if disk_load.kind == .Script_Fonts || disk_load.kind == .Script_Fonts_Cache {
 			system.log_fact(.Warning, Script_Fonts_Refused_Too_Large{object_bytes = size, set_bytes_limit = limit})
 		} else {
 			system.log_fact(.Warning, Disk_Load_Refused_Object_Too_Large{object_bytes = size, file_bytes_limit = limit, refused_process = name})
@@ -901,5 +1135,17 @@ disk_load_refused :: proc "contextless" (report: ^rd.Event_Report) {
 	case .Import_Bounds:
 		system.log_fact(.Warning, Disk_Load_Refused_Import_Bounds{wanted_capacity = u64(disk_process.SCAN_WANTED_CAPACITY), depth_limit = u64(disk_process.SCAN_DEPTH_LIMIT), refused_process = name})
 		disk_load_end(.Budget_Or_Capacity_Exhausted, disk_load_import_refused(.Full))
+	case .Cache_Not_Configured, .Cache_Bad_Server_Key, .Cache_Network_Failed, .Cache_Not_Found, .Cache_Bad_Response, .Cache_Hash_Mismatch:
+		script_fonts_cache_refused(refusal)
+		cache_outcome := call_outcome.Call_Outcome.Callee_Unavailable
+		if refusal == .Cache_Not_Found {
+			cache_outcome = .Nothing_Has_That_Name
+		} else if refusal == .Cache_Bad_Response || refusal == .Cache_Hash_Mismatch {
+			cache_outcome = .Data_Damaged
+		}
+		disk_load_end(cache_outcome, disk_load_refused_values())
+	case .Store_Write_Failed:
+		script_fonts_store_finished(false, .Callee_Unavailable)
+		disk_load_end(.Callee_Unavailable, disk_load_refused_values())
 	}
 }
