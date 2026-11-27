@@ -6,6 +6,17 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.112.0] - 2026-11-27 03:50
+
+### Added
+
+- **Live QEMU `chibicc` self-hosting and C library execution.** The `bootstrap` machine test executes the full 14-unit `chibicc` Stage 0 → Stage 1 → Stage 2 self-hosting chain live on modus via `c_compiler.compile_unit`, `assemble.assemble_program`, and `system.module_space_load`, reproducing the exact host `modustool c-self-host` BLAKE3 hash, and loads and validates freestanding `sqlite` (3.54.1), `lua` (5.4.7), and `zstd` (1.5.7) modules live on modus against host module and compressed-frame BLAKE3 hashes.
+- **Live object-cache fetch wiring for script fonts in `root`.** When the local data disk lacks the script font set (or holds another hash, or no data disk is present) and principal 0 configured `root.script_fonts_cache_key`, the root service fetches the named set or `Script_Font_Pack_Manifest` (`MODSFP01`) over QUIC through `disk_processes`, verifies every Bao frame and the full BLAKE3 hash and `font_outlines` form on its own mapping, maps it read-only, and persists it to the local `script_fonts` store.
+
+### Changed
+
+- **The last eight modules move their post-ready memory off working_memory_pages.** Every module in `src/modules/` now omits hand-written working memory from its floor; shipped post-ready budgets live in the signed `default_plan_values` boot-image plan (`browser`, `clock`, `debugger`, `doom`, `guest_builder`, `linux`, `paint`, and `recipes`) and test budgets in `test_plan_values` (`pdpe1gb_probe`), layered beneath principal 0's live plan.
+
 ## [0.111.0] - 2026-11-27 02:15
 
 ### Added
@@ -2115,6 +2126,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.112.0]: https://github.com/sachahjkl/modus/releases/tag/v0.112.0
 [0.111.0]: https://github.com/sachahjkl/modus/releases/tag/v0.111.0
 [0.110.0]: https://github.com/sachahjkl/modus/releases/tag/v0.110.0
 [0.109.0]: https://github.com/sachahjkl/modus/releases/tag/v0.109.0
