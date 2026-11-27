@@ -1952,6 +1952,45 @@ interface_faces_opened :: proc "contextless" () -> bool {
 	return text_rendering.face_opened(.Interface) && text_rendering.face_opened(.Interface_Bold)
 }
 
+// text_settings_load_bytes loads the settings page from ctx and opens the
+// supplied read-only font slices without touching storage. When force_reload
+// is true, it clears prior font state first so callers (such as
+// drawing_fonts_set) can replace or clear outlines cleanly, even on hosts
+// without a mapped settings page.
+text_settings_load_bytes :: proc "contextless" (ctx: ^system.Context, boot_bytes: []u8, scripts_bytes: []u8 = nil, force_reload := false) -> (problems: Text_Settings_Problems, loaded: bool) {
+	if !text_state_started {
+		graphics.text_state_start()
+		text_state_started = true
+	}
+	mapped := fixed_addresses.ranges_mapped(&ctx.values)
+	if settings_page == nil {
+		switch {
+		case .Presentation_Page in mapped:
+			settings_page = (^settings.Page)(uintptr(settings.PRESENTATION_PAGE_ADDRESS))
+			settings_page_is_presentation = true
+		case .Settings_Page in mapped:
+			settings_page = (^settings.Page)(uintptr(settings.PAGE_ADDRESS))
+		case:
+			if !force_reload {
+				return {}, false
+			}
+		}
+	}
+	if force_reload {
+		text_rendering.state = {}
+		graphics.text_faces_use(.None, .None)
+	}
+	if !text_rendering.state.opened && len(boot_bytes) > 0 {
+		problems.outlines, problems.fonts_missing = fallback_load_from_bytes(boot_bytes, scripts_bytes)
+	}
+	if settings_page != nil {
+		_ = text_settings_apply()
+	} else if text_rendering.state.opened {
+		graphics.text_faces_use(.Cells, .Cells_Bold)
+	}
+	return problems, true
+}
+
 // interface_font_open says if this process draws its elements in the
 // interface font: the faces of the outlines that text_settings_open
 // opened. ok is false with no outlines, with no line on the log (the line
@@ -1959,7 +1998,8 @@ interface_faces_opened :: proc "contextless" () -> bool {
 // font, with a line: the process then draws its text with the font of the
 // cells.
 interface_font_open :: proc "contextless" (ctx: ^system.Context) -> (font: Interface_Font, ok: bool) {
-	if .Font_Outlines not_in fixed_addresses.ranges_mapped(&ctx.values) || !text_rendering.state.opened {
+	_ = ctx
+	if !text_rendering.state.opened {
 		return {}, false
 	}
 	if !interface_faces_opened() {

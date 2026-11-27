@@ -1,29 +1,24 @@
 // The font outlines (src/md/features/glyphs_on_demand.md, "Layer 0: the
 // outlines, shared and read-only"): the font files of the system in one
-// resource of the boot image,
-// RESOURCE_NAME. The modus tool writes it from the subsets of
-// resources/fonts. The root service checks its hash once, and maps it
-// read-only at ADDRESS in each process that gets the glyph caches. A
-// process draws from it the glyphs past the glyph caches into its private
-// glyph cache.
+// image-tree object, RESOURCE_NAME, served read-only by the storage service at
+// FONT_OUTLINES_OBJECT_PATH. The modus tool writes it from the subsets of
+// resources/fonts. Each process maps it through storage.map_object and draws
+// glyphs past the glyph caches into its private glyph cache.
 //
 //   Header        HEADER_SIZE bytes, at 0
 //   Font_Record   RECORD_SIZE bytes x font_count, at RECORDS_OFFSET
 //   font files    each at its offset, inside file_size
 //
-// A process validates the header and the records once (validate_at): no
-// process writes the resource, as no process writes a glyph cache
-// (docs/FONTS.md, "Who can write a cache"). The parser of
-// src/library/modus/vector_font checks each read of a font file against
-// its bytes.
+// A process validates the header and the records once (validate): no process
+// writes the object (docs/FONTS.md, "Who can write a cache"). The parser of
+// src/library/modus/vector_font checks each read of a font file against its
+// bytes.
 //
 // See [font outlines](term:font-outlines).
 package font_outlines
 
 import "base:intrinsics"
 import "modus:contract/blake3"
-import "modus:contract/fixed_addresses"
-import op "modus:contract/operation"
 
 MAGIC :: u64(0x53454E494C54554F) // The bytes "OUTLINES".
 VERSION :: 1 // The version of the format. A reader refuses another.
@@ -50,7 +45,8 @@ FONT_LIMIT :: 255
 // A room for the records of any resource that the format allows.
 Record_Room :: [FONT_LIMIT]Font_Record
 RESOURCE_NAME :: "font_outlines" // The name of the resource in the boot image.
-ADDRESS :: fixed_addresses.FONT_OUTLINES_ADDRESS // Where a process maps it, read-only.
+FONT_OUTLINES_OBJECT_PATH :: "fonts/font_outlines" // Exact storage object path under the "fonts" tree grant.
+SCRIPT_FONTS_OBJECT_PATH :: "fonts/script_fonts" // Exact storage object path for the verified script font set under the "fonts" tree grant.
 
 // A run of code points with no gap.
 Character_Range :: struct {
@@ -303,40 +299,12 @@ validate :: proc "contextless" (bytes: []u8, room: []Font_Record) -> (outlines: 
 	return outlines, {}
 }
 
-// validate_at checks the resource that a starter mapped at an address: the
-// size of its header, inside the span of the range, then the whole
-// resource.
-validate_at :: proc "contextless" (address: uintptr, span: u64, room: []Font_Record) -> (outlines: Outlines, problem: Problem) {
-	if address == 0 || address % 8 != 0 {
-		return {}, {kind = .Too_Short, value = u64(address)}
-	}
-	size := (^Header)(address).file_size
-	if size < HEADER_SIZE || size > span {
-		return {}, {kind = .Bad_Size, value = size, limit = span}
-	}
-	return validate(([^]u8)(address)[:size], room)
-}
-
-// open validates the resource that the starter of a process mapped at
-// ADDRESS: Not_Mapped when the bit of its range is clear, and nothing is
-// read.
-open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, room: []Font_Record) -> (outlines: Outlines, problem: Problem) {
-	if .Font_Outlines not_in fixed_addresses.ranges_mapped(values) {
-		return {}, {kind = .Not_Mapped}
-	}
-	place := fixed_addresses.range_of(.Font_Outlines)
-	return validate_at(uintptr(place.address), place.span, room)
-}
-
-// The script font set (src/md/features/script_fonts.md): one data object
-// in the format of the font outlines, past the boot image, mapped at the
-// fixed range Script_Fonts.
-SCRIPT_FONTS_ADDRESS :: fixed_addresses.SCRIPT_FONTS_ADDRESS
-
-// Where a machine holds the set: the object SCRIPT_FONTS_OBJECT_NAME of the
-// private store SCRIPT_FONTS_STORE_NAME of the machine (principal 0). The
-// root service reads it once at each start, through the delegated service
-// disk_processes, and never writes it.
+// Where a machine holds the script font set (src/md/features/script_fonts.md):
+// the object SCRIPT_FONTS_OBJECT_NAME of the private store
+// SCRIPT_FONTS_STORE_NAME of the machine (principal 0). The root service reads
+// it once at each start, through the delegated service disk_processes, checks
+// it, and publishes a read-only handle to the storage service at
+// SCRIPT_FONTS_OBJECT_PATH.
 SCRIPT_FONTS_STORE_NAME :: "script_fonts"
 SCRIPT_FONTS_OBJECT_NAME :: "script_fonts"
 
@@ -377,18 +345,6 @@ script_fonts_check :: proc "contextless" (bytes: []u8, named: [32]u8, room: []Fo
 		}
 	}
 	return outlines, {}
-}
-
-// script_fonts_open validates the script font set that the starter of a
-// process mapped at SCRIPT_FONTS_ADDRESS, as open does for the font
-// outlines: Not_Mapped when the bit of its range is clear. The root service
-// checked the hash of the set once, where it entered.
-script_fonts_open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, room: []Font_Record) -> (outlines: Outlines, problem: Problem) {
-	if .Script_Fonts not_in fixed_addresses.ranges_mapped(values) {
-		return {}, {kind = .Not_Mapped}
-	}
-	place := fixed_addresses.range_of(.Script_Fonts)
-	return validate_at(uintptr(place.address), place.span, room)
 }
 
 // font_bytes gives the font file of a record of a valid resource, from the

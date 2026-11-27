@@ -82,7 +82,9 @@ foreign _ {
 	draw_table_band :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), area: ^Area, index: i64, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 	@(require_results)
 	draw_bar :: proc "c" (drawn: ^system.Table_To_Append(draw_record.Draw_Record), bar: ^Bar_Value, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
-	// The two exports of the drawing module.
+	// The exports of the drawing module.
+	@(require_results)
+	drawing_fonts_set :: proc "c" (boot: ^system.Bytes_To_Read, scripts: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 	@(require_results)
 	damage_of_draw_table_20 :: proc "c" (before: ^system.Table_To_Read(draw_record.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Damage_Rectangle, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 	@(require_results)
@@ -421,6 +423,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(.Failed)
 	}
+	// Hand the mapped font slices to the drawing module so its text rendering
+	// matches the package compiled into this process.
+	boot_bytes := display.mapped_font_outlines_bytes()
+	scripts_bytes := display.mapped_script_fonts_bytes()
+	boot_arg := system.Bytes_To_Read{bytes = raw_data(boot_bytes), count = u64(len(boot_bytes)), capacity = u64(len(boot_bytes))}
+	scripts_arg := system.Bytes_To_Read{bytes = raw_data(scripts_bytes), count = u64(len(scripts_bytes)), capacity = u64(len(scripts_bytes))}
+	fonts_error: errors.Error_Record
+	_, _ = drawing_fonts_set(&boot_arg, &scripts_arg, &fonts_error)
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Succeeded {
 		image := ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 		shown.module_code = code_bytes(system.image_find(image, "interface_module"))

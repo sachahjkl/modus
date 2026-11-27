@@ -359,15 +359,13 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	// The storage service runs before a slot is chosen: a start of it
 	// takes the first free slot.
 	storage_service: ^Started
-	if .Store in disk_grants {
-		for &item in started {
-			if item.process != 0 && item.service.head != nil && is_role_holder(system.name_of(item.name[:]), .Storage) {
-				storage_service = &item
-			}
+	for &item in started {
+		if item.process != 0 && item.service.head != nil && is_role_holder(system.name_of(item.name[:]), .Storage) {
+			storage_service = &item
 		}
-		if storage_service == nil {
-			return root_ring.refuse(refusal, .Callee_Unavailable, kind, .Refused, .Services)
-		}
+	}
+	if .Store in disk_grants && storage_service == nil {
+		return root_ring.refuse(refusal, .Callee_Unavailable, kind, .Refused, .Services)
 	}
 	slot: ^Started
 	for &item in started {
@@ -437,31 +435,40 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 		system.close(store_ring)
 		system.close(store_region)
 	}
-	if .Store in disk_grants {
+	wants_disk_store := .Store in disk_grants
+	fonts_only := !wants_disk_store && storage_service != nil && slot.client != 0
+	if wants_disk_store || fonts_only {
 		store_outcome: call_outcome.Call_Outcome
-		_, _, store_ring, store_region, store_outcome = connection_open(slot, role_holder_name(.Storage), refusal, kind)
+		open_refusal: [7]u64
+		_, _, store_ring, store_region, store_outcome = connection_open(slot, role_holder_name(.Storage), fonts_only ? &open_refusal : refusal, kind, fonts_only = fonts_only)
 		if store_outcome != .Succeeded {
-			release(slot) // The compositor forgets the ring.
-			return store_outcome
-		}
-		system.grant_put(&context_grants, system.GRANT_STORAGE_RING, {store_ring, {.Read, .Write}})
-		system.grant_put(&context_grants, system.GRANT_STORAGE_REGION, {store_region, {.Read, .Write}})
-		system.grant_put(&context_grants, system.GRANT_STORAGE_SERVICE, {storage_service.process, {.Read}})
-		for &item in system.image_entries(image) {
-			if is_role_holder(system.name_of(item.name[:]), .Storage) && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
-				mapping, given := image_entry_mapping(&item, storage.FILE_ADDRESS)
-				if !given {
-					// The file of the storage service does not have the hash
-					// of its entry (image_entry_mapping names it on the log):
-					// the disk process would read a file that nothing
-					// checked, so it does not start, and its slot and its
-					// ring are freed as for any abandoned start.
-					release(slot)
-					return root_ring.refuse(refusal, .Data_Damaged, kind, .Damaged, .Modules)
+			if !fonts_only {
+				release(slot) // The compositor forgets the ring.
+				return store_outcome
+			}
+		} else {
+			system.grant_put(&context_grants, system.GRANT_STORAGE_RING, {store_ring, {.Read, .Write}})
+			system.grant_put(&context_grants, system.GRANT_STORAGE_REGION, {store_region, {.Read, .Write}})
+			system.grant_put(&context_grants, system.GRANT_STORAGE_SERVICE, {storage_service.process, {.Read}})
+			if fonts_only {
+				system.value_put(&values, system.GRANT_VALUE_STORAGE_FONTS_ONLY, 1)
+			}
+			for &item in system.image_entries(image) {
+				if is_role_holder(system.name_of(item.name[:]), .Storage) && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
+					mapping, given := image_entry_mapping(&item, storage.FILE_ADDRESS)
+					if !given {
+						// The file of the storage service does not have the hash
+						// of its entry (image_entry_mapping names it on the log):
+						// the disk process would read a file that nothing
+						// checked, so it does not start, and its slot and its
+						// ring are freed as for any abandoned start.
+						release(slot)
+						return root_ring.refuse(refusal, .Data_Damaged, kind, .Damaged, .Modules)
+					}
+					system.value_put(&values, system.GRANT_VALUE_STORAGE_FILE_SIZE, item.size)
+					mappings[mapping_count] = mapping
+					mapping_count += 1
 				}
-				system.value_put(&values, system.GRANT_VALUE_STORAGE_FILE_SIZE, item.size)
-				mappings[mapping_count] = mapping
-				mapping_count += 1
 			}
 		}
 	}

@@ -144,7 +144,7 @@ Do not use: glyph id (for this), glyph number, character offset.
 
 The font outlines are one resource of the boot image that holds the font files of the system, from which each process draws each glyph of its text.
 
-The resource is `font_outlines` (`src/library/modus/contract/font_outlines`): a header, one record for each font with the BLAKE3 hash of its file, then the font files of the faces. The root service checks its hash once and maps it read-only at the fixed range `Font_Outlines` in each process with a surface, each terminal and the compositor. A process validates its header once. The font outlines are not a glyph cache: they hold outlines, not drawn words.
+The object is `fonts/font_outlines` (`src/library/modus/contract/font_outlines`): a header, one record for each font with the BLAKE3 hash of its file, then the font files of the faces. The storage service serves it read-only from a shared memory object through `storage.map_object` to each process with the `fonts` tree grant (each process with a surface, each terminal and the compositor). A process maps it at startup and validates its header once. The font outlines are not a glyph cache: they hold outlines, not drawn words.
 
 The design: `src/md/features/text_rendering.md`.
 

@@ -97,6 +97,7 @@
 package isolated
 
 import "modus:contract/call_outcome"
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/fixed_addresses"
 import module "modus:contract/module"
@@ -241,6 +242,21 @@ Service_Command :: enum u32 {
 	Principal_Locked      = 6, // The session of the principal ended: the service erases its keys.
 	Principal_Reclaim     = 7, // values[0..3]: removed principal identifier, values[4]: slot. Mark its stores for keyless reclamation and reply on service completions.
 	Tree_Grant            = 8, // Storage only: values[0] is the call ring handle; values[1..6] hold a 48-byte NUL-padded read-only image subtree path (max 47 bytes).
+	Publish_Public_Object = 9, // Storage only: values[0] is a read-only Give+Read memory handle; values[1] is the exact byte size; values[2..5] hold the 32-byte BLAKE3 hash; values[6] holds a Public_Object_Kind word.
+}
+
+// Closed set of verified public objects that the root service can publish to
+// the storage service through Service_Command.Publish_Public_Object.
+Public_Object_Kind :: enum u8 {
+	None         = 0, // Not a published object: refused at the border.
+	Script_Fonts = 1, // Verified script font set served at "fonts/script_fonts" under the "fonts" tree grant.
+}
+
+// public_object_kind_of_word converts a transport word into a Public_Object_Kind
+// member, refusing None and any word that names no member.
+public_object_kind_of_word :: proc "contextless" (word: u64) -> (kind: Public_Object_Kind, ok: bool) {
+	read := enum_word.member_of_word(Public_Object_Kind, word) or_return
+	return read, read != .None
 }
 
 // Reserved call-ring command kind sent by a client to voluntarily close its

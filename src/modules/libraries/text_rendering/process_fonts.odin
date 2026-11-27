@@ -3,7 +3,6 @@ package text_rendering_module
 import "base:intrinsics"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
-import "modus:contract/fixed_addresses"
 import "modus:contract/font_outlines"
 import "modus:system"
 import "modus:text_rendering"
@@ -35,66 +34,44 @@ process_fonts_stage: Process_Fonts_Stage
 // each is opened in turn, and no record is kept past its open.
 @(private)
 process_records_room: font_outlines.Record_Room
-// The starter mapped a script font set, and its fonts were opened.
+// A script font set was given and opened.
 @(private)
 process_scripts_mapped: bool
-
-// The place of a resource of fonts in the process: where its starter
-// mapped it, the span of its range, and whether it mapped it.
+// The mapped font slices registered by process_fonts_open, exposed through
+// process_fonts_places so sibling library modules in the same process reuse
+// them without extra storage calls or fixed addresses.
 @(private)
-Resource_Place :: struct {
-	range:  fixed_addresses.Address_Range,
-	mapped: bool,
-}
+process_stored_places: text_rendering.Process_Font_Places
 
-when ODIN_OS == .Freestanding {
-	// process_places gives the fixed ranges of the font outlines and of the
-	// script font set of the calling process.
-	@(private)
-	process_places :: proc "contextless" () -> (boot, scripts: Resource_Place) {
-		mapped := fixed_addresses.ranges_mapped(&system.context_record().values)
-		boot_range := fixed_addresses.range_of(.Font_Outlines)
-		set_range := fixed_addresses.range_of(.Script_Fonts)
-		boot = {range = boot_range, mapped = .Font_Outlines in mapped}
-		scripts = {range = set_range, mapped = .Script_Fonts in mapped}
-		return
-	}
-} else {
-	// A host test gives the places of its resources, as a starter maps them,
-	// so the export runs the path of a process.
-	@(private)
-	process_places_of_test: [2]Resource_Place
-	@(private)
-	process_places :: proc "contextless" () -> (boot, scripts: Resource_Place) {
-		return process_places_of_test[0], process_places_of_test[1]
-	}
-}
-
-// process_fonts_open_at opens the fonts of the process into the state of
-// this copy: the font outlines, then the script font set when its starter
-// mapped one. One room holds the records of each in turn, so the fonts of
-// the boot image are opened before the room takes the records of the set:
-// an open reads the records that its validation copied. A record of the
-// set named as a font of the boot image is not read: the set opens the
+// process_fonts_open_bytes opens the fonts of the process into the state of
+// this copy from the caller's read-only mapped slices: the font outlines, then
+// the optional script font set. One room holds the records of each in turn, so
+// the fonts of the boot image are opened before the room takes the records of
+// the set: an open reads the records that its validation copied. A record of
+// the set named as a font of the boot image is not read: the set opens the
 // fonts of the script font set only.
 @(private)
-process_fonts_open_at :: proc "contextless" (boot, scripts: Resource_Place) {
-	if !boot.mapped {
+process_fonts_open_bytes :: proc "contextless" (boot_bytes, scripts_bytes: []u8) {
+	if len(boot_bytes) == 0 {
 		return
 	}
-	outlines, problem := font_outlines.validate_at(uintptr(boot.range.address), boot.range.span, process_records_room[:])
+	outlines, problem := font_outlines.validate(boot_bytes, process_records_room[:])
 	if problem.kind != .None {
 		return
 	}
 	_ = text_rendering.open(&outlines)
-	if !scripts.mapped {
+	process_stored_places.boot_address = u64(uintptr(raw_data(boot_bytes)))
+	process_stored_places.boot_size = u64(len(boot_bytes))
+	if len(scripts_bytes) == 0 {
 		return
 	}
-	set, set_problem := font_outlines.validate_at(uintptr(scripts.range.address), scripts.range.span, process_records_room[:])
+	set, set_problem := font_outlines.validate(scripts_bytes, process_records_room[:])
 	if set_problem.kind != .None {
 		return
 	}
 	_ = text_rendering.script_fonts_open(&set)
+	process_stored_places.scripts_address = u64(uintptr(raw_data(scripts_bytes)))
+	process_stored_places.scripts_size = u64(len(scripts_bytes))
 	process_scripts_mapped = true
 }
 
@@ -157,21 +134,52 @@ process_text :: proc "contextless" (text: ^system.Bytes_To_Read, argument: i64, 
 	return text.bytes[:count], .Succeeded
 }
 
-// process_fonts_open opens the fonts of the calling process for the written part, once: the font outlines that its starter mapped, and the script font set when the starter mapped one, with the caches of the walk of their tables. It appends one record for each font of the script font set when the starter mapped a set: Open (its measures and its glyph count), Missing, or Refused (its tables of GSUB and GPOS pass the bound of their read). A second call opens nothing and appends the same records; a call while another thread of the process opens them waits for the end of that open, whose reads are bounded. The result is the count of records of the full answer, or -1 with an error record: a table over 2^40 records (argument 1, Too_Long).
+// process_fonts_open opens the fonts of the calling process for the written part, once, from the caller's read-only mapped font outlines and optional script font set, with the caches of the walk of their tables. It records both slices in per-process state for process_fonts_places and appends one record for each font of the script font set when a valid set was given: Open (its measures and its glyph count), Missing, or Refused (its tables of GSUB and GPOS pass the bound of their read). A second call opens nothing and appends the same records; a call while another thread of the process opens them waits for the end of that open, whose reads are bounded. The result is the count of records of the full answer, or a call outcome with an error record: a nil descriptor or non-empty descriptor with a nil pointer (Bad_Address), or a table over 2^40 bytes or records (arguments 1, 2 or 3, Too_Long).
 @(export, link_name = "process_fonts_open")
-process_fonts_open :: proc "c" (held: ^system.Table_To_Append(text_rendering.Held_Font), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	capacity, held_count := held.capacity, held.count
-	if capacity > TABLE_LIMIT || held_count > TABLE_LIMIT {
-		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 1, i64(min(max(capacity, held_count), TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
+process_fonts_open :: proc "c" (boot: ^system.Bytes_To_Read, scripts: ^system.Bytes_To_Read, held: ^system.Table_To_Append(text_rendering.Held_Font), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if boot == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .Bytes, 1)
 	}
+	if scripts == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .Bytes, 2)
+	}
+	if held == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .Records, 3)
+	}
+	boot_count := intrinsics.volatile_load(&boot.count)
+	boot_ptr := intrinsics.volatile_load(&boot.bytes)
+	if boot_count > TABLE_LIMIT {
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(min(boot_count, TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
+	}
+	if boot_count > 0 && boot_ptr == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .Bytes, 1)
+	}
+	scripts_count := intrinsics.volatile_load(&scripts.count)
+	scripts_ptr := intrinsics.volatile_load(&scripts.bytes)
+	if scripts_count > TABLE_LIMIT {
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 2, i64(min(scripts_count, TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
+	}
+	if scripts_count > 0 && scripts_ptr == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .Bytes, 2)
+	}
+	capacity := intrinsics.volatile_load(&held.capacity)
+	held_count := intrinsics.volatile_load(&held.count)
+	held_records := intrinsics.volatile_load(&held.records)
+	if capacity > TABLE_LIMIT || held_count > TABLE_LIMIT {
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 3, i64(min(max(capacity, held_count), TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
+	}
+	if capacity > 0 && held_records == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .Records, 3)
+	}
+	boot_bytes := boot_count > 0 ? boot_ptr[:boot_count] : nil
+	scripts_bytes := scripts_count > 0 ? scripts_ptr[:scripts_count] : nil
 	// One thread opens; a thread that comes during the open waits for its
 	// end, as the open is bounded by the reads of each font.
 	for stage := intrinsics.atomic_load_explicit(&process_fonts_stage, .Acquire); stage != .Open; stage = intrinsics.atomic_load_explicit(&process_fonts_stage, .Acquire) {
 		switch stage {
 		case .Closed:
 			if _, opening := intrinsics.atomic_compare_exchange_strong_explicit(&process_fonts_stage, .Closed, .Opening, .Acquire, .Acquire); opening {
-				boot, scripts := process_places()
-				process_fonts_open_at(boot, scripts)
+				process_fonts_open_bytes(boot_bytes, scripts_bytes)
 				intrinsics.atomic_store_explicit(&process_fonts_stage, .Open, .Release)
 			}
 		case .Opening:
@@ -183,13 +191,40 @@ process_fonts_open :: proc "c" (held: ^system.Table_To_Append(text_rendering.Hel
 	if process_scripts_mapped {
 		for font in text_rendering.SCRIPT_FONTS {
 			if held_count + found < capacity {
-				held.records[held_count + found] = text_rendering.held_font_of(font)
+				held_records[held_count + found] = text_rendering.held_font_of(font)
 			}
 			found += 1
 		}
 	}
-	held.count = held_count + found
-	return .Succeeded, i64(held.count)
+	new_count := held_count + found
+	intrinsics.volatile_store(&held.count, new_count)
+	return .Succeeded, i64(new_count)
+}
+
+// process_fonts_places appends one Process_Font_Places record with the mapped font outlines and script font set addresses registered by process_fonts_open in this process, or appends nothing before process_fonts_open completes. The result is the count of records of the full answer, or a call outcome with an error record: a nil descriptor or positive capacity with nil records (argument 1, Bad_Address), or a table over 2^40 records (argument 1, Too_Long).
+@(export, link_name = "process_fonts_places")
+process_fonts_places :: proc "c" (places: ^system.Table_To_Append(text_rendering.Process_Font_Places), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if places == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .Records, 1)
+	}
+	capacity := intrinsics.volatile_load(&places.capacity)
+	count := intrinsics.volatile_load(&places.count)
+	places_records := intrinsics.volatile_load(&places.records)
+	if capacity > TABLE_LIMIT || count > TABLE_LIMIT {
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 1, i64(min(max(capacity, count), TABLE_LIMIT + 1)), i64(TABLE_LIMIT))
+	}
+	if capacity > 0 && places_records == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .Records, 1)
+	}
+	if intrinsics.atomic_load_explicit(&process_fonts_stage, .Acquire) != .Open || process_stored_places.boot_address == 0 || process_stored_places.boot_size == 0 {
+		return .Succeeded, i64(count)
+	}
+	if count < capacity {
+		places_records[count] = process_stored_places
+	}
+	new_count := count + 1
+	intrinsics.volatile_store(&places.count, new_count)
+	return .Succeeded, i64(new_count)
 }
 
 // line_shape appends the placed glyphs of a UTF-8 text of one line in a face at a text size, over the fonts of the calling process, the written part whole: the marks, Arabic, Thai, the scripts of India and the order of a line of mixed direction. The placed glyphs are those of shape_text. The result is the count of placed glyphs of the full answer (larger than the capacity: it did not fit), or a call outcome with an error record: a face that is not 1 to 5 (argument 1), a size under 256 or over 16384 (argument 2), a text of more than 65536 bytes (argument 3), a table over 2^40 records (argument 4), or fonts of the process that are not open or lack the first font of the face (Absent). Nothing is written on a refusal.

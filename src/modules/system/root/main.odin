@@ -2293,13 +2293,57 @@ window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, r
 	columns, rows, measure := start_grant_set_terminal(&writer.start_grant_set)
 	handles := terminal.Terminal_Handles{display = display_memory, ring = ring_memory, text = text_memory, writer = writer.process, log = log_grant(start_grant_set)}
 	terminal.context_of(&context_grants, &values, handles, system.name_pack(system.name_of(writer.name[:])), columns, rows, measure)
-	// The settings page, font outlines, and fresh bytes page.
-	mappings: [3]system.Mapping
+	// The settings page, fresh bytes page, and storage file (fonts-only connection).
+	mappings: [4]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values, .Presentation, view)
 	fresh_bytes_page_give(view, mappings[:], &mapping_count, &values)
 	measure_run_value_give(&values)
+	// Attach a short-lived fonts-only storage connection so the terminal maps
+	// "fonts/font_outlines" and "fonts/script_fonts" at startup and closes the
+	// connection immediately via CALL_CLOSE.
+	view.start_grant_set = start_grant_set
+	view.principal = writer.principal
+	copy(view.name[:len(view.name) - 1], terminal_name)
+	store_conn: ^Connection
+	store_ring, store_region: system.Handle
+	defer if store_ring != 0 {
+		system.close(store_ring)
+		system.close(store_region)
+	}
+	if image_has_module(role_holder_name(.Storage)) && storage_start() == .Succeeded {
+		open_refusal: [7]u64
+		storage_service: ^Started
+		opened: call_outcome.Call_Outcome
+		store_conn, storage_service, store_ring, store_region, opened = connection_open(view, role_holder_name(.Storage), &open_refusal, u32(root_ring.Root_Command.Start), fonts_only = true)
+		if opened == .Succeeded {
+			file_mapped := false
+			for &item in system.image_entries(image) {
+				if is_role_holder(system.name_of(item.name[:]), .Storage) && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset && mapping_count < len(mappings) {
+					if mapping, given := image_entry_mapping(&item, storage.FILE_ADDRESS); given {
+						mappings[mapping_count] = mapping
+						mapping_count += 1
+						system.value_put(&values, system.GRANT_VALUE_STORAGE_FILE_SIZE, item.size)
+						system.value_put(&values, system.GRANT_VALUE_STORAGE_FONTS_ONLY, 1)
+						file_mapped = true
+					}
+					break
+				}
+			}
+			if file_mapped {
+				system.grant_put(&context_grants, system.GRANT_STORAGE_RING, {store_ring, {.Read, .Write}})
+				system.grant_put(&context_grants, system.GRANT_STORAGE_REGION, {store_region, {.Read, .Write}})
+				system.grant_put(&context_grants, system.GRANT_STORAGE_SERVICE, {storage_service.process, {.Read}})
+			} else {
+				disconnect(store_conn)
+				store_conn = nil
+			}
+		}
+	}
 	if context_refused(terminal_name, &context_grants, &values) {
+		if store_conn != nil {
+			disconnect(store_conn)
+		}
 		fresh_bytes_forget(view)
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
 		return .Wrong_State
@@ -2309,12 +2353,18 @@ window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, r
 	load_error: module.Load_Error
 	terminal_budget, terminal_budget_ok := budget_of(image_file_checked(terminal_name), terminal_name)
 	if !terminal_budget_ok {
+		if store_conn != nil {
+			disconnect(store_conn)
+		}
 		fresh_bytes_forget(view)
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
 		return .Budget_Or_Capacity_Exhausted
 	}
 	process, status := system.process_start(image_file_checked(terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), terminal_budget.amounts, mappings[:mapping_count], &prepared, load_source(), &load_error, ready = &view.ready)
 	if status != .Succeeded {
+		if store_conn != nil {
+			disconnect(store_conn)
+		}
 		fresh_bytes_forget(view)
 		if load_error.stage != u32(module.Load_Stage.None) {
 			system.log_fact(.Warning, Terminal_Load_Refused{})
@@ -2325,10 +2375,7 @@ window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, r
 	}
 	start_budget_note(view, terminal_budget)
 	view.process, view.client, view.writer, view.is_terminal = process, client, writer, true
-	view.start_grant_set = start_grant_set
-	view.principal = writer.principal // The lock stops the terminal of a process of the session with it.
 	session_table_record_slot(view)
-	copy(view.name[:len(view.name) - 1], terminal_name)
 	return .Succeeded
 }
 
@@ -2385,32 +2432,59 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 	return .Succeeded
 }
 
+// tree_grant_list_add appends tree_path to out if not already present.
+@(private = "file")
+tree_grant_list_add :: proc "contextless" (out: ^[READ_ONLY_TREE_LIMIT]string, count: ^int, tree_path: string) {
+	if len(tree_path) == 0 || count^ >= len(out) {
+		return
+	}
+	for i in 0 ..< count^ {
+		if out[i] == tree_path {
+			return
+		}
+	}
+	out[count^] = tree_path
+	count^ += 1
+}
+
+// caller_needs_fonts_tree reports whether caller receives the read-only
+// "fonts" tree grant on its storage connection. Root internal proxies,
+// headless services, storage itself, start_policy, date, and console renderers
+// do not.
+@(private = "file")
+caller_needs_fonts_tree :: proc "contextless" (caller: ^Started) -> bool {
+	if caller == &disk_reader || caller == &disk_script_fonts_writer || persisted_table_keeper_is(caller) || caller == &debug_store_reader || caller == &picker_store_lister {
+		return false
+	}
+	if caller.from_disk {
+		return true
+	}
+	name := system.name_of(caller.name[:])
+	if is_role_holder(name, .Display) || name == "terminal" {
+		return true
+	}
+	return name_is_a_font_consumer(name)
+}
+
 // connection_read_only_trees collects the read-only image-tree subtrees that
 // root attaches to caller's storage connection via Service_Command.Tree_Grant.
 // The holder of Display receives `pointer_themes` regardless of which module
-// fills the role.
+// fills the role, and every process that renders or inspects fonts receives
+// `fonts`.
 connection_read_only_trees :: proc "contextless" (caller: ^Started, out: ^[READ_ONLY_TREE_LIMIT]string) -> []string {
 	count := 0
-	if .Read_Only_Trees in caller.start_grant_set.grants {
-		for tree_path in caller.start_grant_set.read_only_trees {
-			if len(tree_path) > 0 && count < len(out) {
-				out[count] = tree_path
-				count += 1
+	if !caller.from_disk {
+		if .Read_Only_Trees in caller.start_grant_set.grants {
+			for tree_path in caller.start_grant_set.read_only_trees {
+				tree_grant_list_add(out, &count, tree_path)
 			}
+		}
+		if is_role_holder(system.name_of(caller.name[:]), .Display) {
+			tree_grant_list_add(out, &count, "pointer_themes")
 		}
 	}
-	if is_role_holder(system.name_of(caller.name[:]), .Display) {
-		has_pointer_themes := false
-		for i in 0 ..< count {
-			if out[i] == "pointer_themes" {
-				has_pointer_themes = true
-				break
-			}
-		}
-		if !has_pointer_themes && count < len(out) {
-			out[count] = "pointer_themes"
-			count += 1
-		}
+	if caller_needs_fonts_tree(caller) {
+		tree_grant_list_add(out, &count, "fonts")
 	}
 	return out[:count]
 }
@@ -2420,7 +2494,7 @@ connection_read_only_trees :: proc "contextless" (caller: ^Started, out: ^[READ_
 // It gives the call ring and the call region: give them to the caller,
 // then close them. A refusal writes its record in refusal, with the
 // command kind as its operation.
-connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: ^[7]u64, kind: u32, history := false, client: Client_Grant = {}, store_override: string = "", store_limit_override: u64 = 0) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, outcome: call_outcome.Call_Outcome) {
+connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: ^[7]u64, kind: u32, history := false, client: Client_Grant = {}, store_override: string = "", store_limit_override: u64 = 0, fonts_only := false) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, outcome: call_outcome.Call_Outcome) {
 	// Session-scope services run per principal (with that principal's own
 	// encrypted store); machine-scope services accept named-principal callers
 	// only when they appear in the closed joint_process_names list.
@@ -2460,6 +2534,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 	used := 0
 	if is_role_holder(system.name_of(service.name[:]), .Storage) {
 		storage_completions_drain(service)
+		script_fonts_publish_to_storage()
 	}
 	used_for_client_rows := 0
 	for &connection in connections {
@@ -2491,8 +2566,13 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 	is_storage_service := is_role_holder(system.name_of(service.name[:]), .Storage)
 	tree_grants_buf: [READ_ONLY_TREE_LIMIT]string
 	tree_grants: []string
-	if is_storage_service && !caller.from_disk && !history && client.place == 0 && store_override == "" {
-		tree_grants = connection_read_only_trees(caller, &tree_grants_buf)
+	if is_storage_service && !history && client.place == 0 {
+		if fonts_only {
+			tree_grants_buf[0] = "fonts"
+			tree_grants = tree_grants_buf[:1]
+		} else {
+			tree_grants = connection_read_only_trees(caller, &tree_grants_buf)
+		}
 	}
 	tree_grant_count := len(tree_grants)
 	// The service ring keeps room for one Disconnect for each connection, plus
@@ -2510,7 +2590,10 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 	// fit is refused before anything is made: a cut name can be the name of
 	// another store.
 	store_name: system.Name
-	if is_role_holder(system.name_of(service.name[:]), .Storage) {
+	if is_storage_service && fonts_only {
+		// Fonts-only connections carry no store name so storage refuses all
+		// store-scoped exports even if the caller bypasses client checks.
+	} else if is_storage_service {
 		if store_override != "" {
 			if len(store_override) >= len(store_name) {
 				return nil, nil, 0, 0, root_ring.refuse(refusal, .Argument_Refused, kind, .Too_Long, .Bytes, 1, i64(len(store_override)), i64(len(store_name) - 1))
@@ -2563,6 +2646,10 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 	caller_name := transmute([4]u64)store_name
 	grant: u64
 	switch {
+	case is_storage_service && fonts_only:
+		// Zero blocks, principal 0, no Acts_For_Principal, read-only: the
+		// caller can map only its granted read-only "fonts" subtree.
+		grant = isolated.caller_grant_make(0, principals.MACHINE, false) | isolated.CALLER_READS_ONLY
 	case store_override != "":
 		grant = isolated.caller_grant_make(store_limit_override, caller.principal, false)
 	case history:
@@ -2572,10 +2659,10 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, refusal: 
 	case:
 		grant = grant_for(caller, service)
 	}
-	is_storage := is_role_holder(system.name_of(service.name[:]), .Storage)
-	is_root_proxy := caller == &disk_reader || persisted_table_keeper_is(caller) || caller == &debug_store_reader || caller == &picker_store_lister
+	is_storage := is_storage_service
+	is_root_proxy := caller == &disk_reader || caller == &disk_script_fonts_writer || persisted_table_keeper_is(caller) || caller == &debug_store_reader || caller == &picker_store_lister
 	charged_blocks: u64
-	if is_storage && !is_root_proxy && caller.principal != principals.MACHINE {
+	if is_storage && !fonts_only && !is_root_proxy && caller.principal != principals.MACHINE {
 		requested_blocks := grant & isolated.CALLER_AMOUNT_MASK
 		if requested_blocks != 0 {
 			granted_blocks, charge_ok := session_storage_blocks_charge(caller.principal, requested_blocks)
@@ -2819,6 +2906,9 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	disk_load_forget(item)
 	principal_change_forget(item)
 	storage_reclaim_forget(item)
+	if is_role_holder(system.name_of(item.name[:]), .Storage) {
+		script_fonts_published_serial = 0
+	}
 	if palette_provider == item {
 		palette_provider_end(item, false)
 	}

@@ -59,6 +59,7 @@ import "modus:contract/draw_record"
 import "modus:contract/enum_word"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
+import "modus:contract/font_outlines"
 import "modus:contract/scale_factor"
 import "modus:contract/value_kinds"
 import "modus:contract/venus_vulkan"
@@ -176,6 +177,8 @@ Process_Text :: struct {
 	loaded:               bool, // The text settings and the interface font were looked for.
 	interface_font:       display.Interface_Font, // The two faces of the interface font.
 	interface_font_given: bool, // This copy opened both faces from the font outlines of the process.
+	boot_bytes:           []u8, // Mapped read-only font outlines passed by drawing_fonts_set.
+	scripts_bytes:        []u8, // Mapped read-only script font set passed by drawing_fonts_set.
 }
 
 @(private)
@@ -186,29 +189,85 @@ process_text: Process_Text
 @(private)
 no_context: system.Context
 
+// Scratch room for validating outlines in drawing_fonts_set before mutating
+// process_text or text_rendering.state.
+@(private = "file")
+drawing_fonts_validation_room: font_outlines.Record_Room
+
 // process_text_load loads the text settings and the interface font of the
-// process, one time, then gives the choice of the settings page to the
-// text code of this module: a change of a setting reaches the next draw
-// with no message from the process. It writes no line on the log: the
-// process opened the same outlines when it opened its window, and wrote
-// the lines. One thread of a process at a time runs it (Process_Text).
+// process, one time (or on reload after drawing_fonts_set), then gives the
+// choice of the settings page to the text code of this module: a change of a
+// setting reaches the next draw with no message from the process. It writes
+// no line on the log: the process opened the same outlines when it opened its
+// window, and wrote the lines. One thread of a process at a time runs it
+// (Process_Text).
 @(private)
-process_text_load :: proc "contextless" () {
-	if !process_text.loaded {
+process_text_load :: proc "contextless" (force_reload := false) {
+	if !process_text.loaded || force_reload {
 		context_record := &no_context
 		when ODIN_OS == .Freestanding {
 			context_record = system.context_record()
 		}
-		_, _ = display.text_settings_load(context_record)
+		process_text.interface_font = {}
+		process_text.interface_font_given = false
+		_, _ = display.text_settings_load_bytes(context_record, process_text.boot_bytes, process_text.scripts_bytes, force_reload = force_reload)
 		// The places and the pixels of a text come from the font files
-		// that this copy opened in text_settings_load.
-		if display.interface_faces_opened() {
+		// that this copy opened in text_settings_load_bytes.
+		if len(process_text.boot_bytes) > 0 && display.interface_faces_opened() {
 			process_text.interface_font = display.INTERFACE_FONT
 			process_text.interface_font_given = true
 		}
 		process_text.loaded = true
 	}
 	_ = display.text_settings_apply()
+}
+
+// drawing_fonts_set registers the process's already-mapped read-only font outlines and optional script font set for this copy of the drawing module so subsequent draws render from those outlines without extra storage calls or fixed addresses. It validates both descriptors (nil pointer or non-empty count with nil bytes -> Bad_Address, length over 2^40 -> Too_Long, invalid outlines header -> Bad_Value) before mutating any state, and clears or reloads text state when updated or empty slices are passed.
+@(export, link_name = "drawing_fonts_set")
+drawing_fonts_set :: proc "c" (boot: ^system.Bytes_To_Read, scripts: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if boot == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .Bytes, 1)
+	}
+	if scripts == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .Bytes, 2)
+	}
+	boot_count := intrinsics.volatile_load(&boot.count)
+	boot_ptr := intrinsics.volatile_load(&boot.bytes)
+	if boot_count > TABLE_LIMIT {
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 1, i64(min(boot_count, u64(max(i64)))), i64(TABLE_LIMIT))
+	}
+	if boot_count > 0 && boot_ptr == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .Bytes, 1)
+	}
+	scripts_count := intrinsics.volatile_load(&scripts.count)
+	scripts_ptr := intrinsics.volatile_load(&scripts.bytes)
+	if scripts_count > TABLE_LIMIT {
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 2, i64(min(scripts_count, u64(max(i64)))), i64(TABLE_LIMIT))
+	}
+	if scripts_count > 0 && scripts_ptr == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .Bytes, 2)
+	}
+	boot_slice := boot_count > 0 ? boot_ptr[:boot_count] : nil
+	scripts_slice := scripts_count > 0 ? scripts_ptr[:scripts_count] : nil
+	if len(boot_slice) > 0 {
+		if _, problem := font_outlines.validate(boot_slice, drawing_fonts_validation_room[:]); problem.kind != .None {
+			return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 1, i64(problem.kind))
+		}
+	}
+	if len(scripts_slice) > 0 {
+		if _, problem := font_outlines.validate(scripts_slice, drawing_fonts_validation_room[:]); problem.kind != .None {
+			return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 2, i64(problem.kind))
+		}
+	}
+	changed := raw_data(boot_slice) != raw_data(process_text.boot_bytes) || len(boot_slice) != len(process_text.boot_bytes) ||
+		raw_data(scripts_slice) != raw_data(process_text.scripts_bytes) || len(scripts_slice) != len(process_text.scripts_bytes)
+	if changed {
+		process_text.boot_bytes = boot_slice
+		process_text.scripts_bytes = scripts_slice
+		process_text.loaded = false
+	}
+	process_text_load(force_reload = changed)
+	return .Succeeded, 0
 }
 
 // draw_table_of makes a draw table of the package over a Read table and

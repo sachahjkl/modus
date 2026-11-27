@@ -730,6 +730,99 @@ name_is_a_joint_process :: proc "contextless" (name: string) -> bool {
 	return false
 }
 
+// Closed list of boot-image modules that open fonts through display.open,
+// display.text_settings_open, or storage.map_object on "fonts/...". Headless
+// services and headless tests are excluded so they never hold an unclosed
+// startup storage connection.
+@(rodata)
+font_consumer_names := [?]string{
+	"address_space",
+	"assistant",
+	"boot",
+	"browser",
+	"budget",
+	"clock",
+	"code",
+	"compositor",
+	"crowd",
+	"cryptography_vectors",
+	"debugger_window",
+	"disk",
+	"doom",
+	"edit",
+	"errors",
+	"extended_state",
+	"fault_ring",
+	"fetch",
+	"files",
+	"flow",
+	"frames",
+	"grants",
+	"hall_of_fame",
+	"heron",
+	"imports",
+	"inspect",
+	"interface_elements",
+	"interface_font",
+	"interface_through_module",
+	"kernel_events",
+	"life",
+	"limits",
+	"locks",
+	"log",
+	"manual",
+	"monitor",
+	"net",
+	"notes",
+	"origin",
+	"pages",
+	"paint",
+	"panel_display",
+	"persistence_check",
+	"plasma",
+	"pointers",
+	"processor_frame",
+	"processors",
+	"quic_echo",
+	"randomness",
+	"remote",
+	"return_fault",
+	"rights",
+	"rings",
+	"scheduler",
+	"script_fonts_cut_planner",
+	"script_fonts_planner",
+	"script_fonts_writer",
+	"server",
+	"settings",
+	"tables",
+	"tally",
+	"terminal",
+	"threads",
+	"time_page",
+	"unlock",
+	"vector_glyphs",
+	"workers",
+}
+
+// name_is_a_font_consumer reports whether name opens fonts and needs the
+// read-only "fonts" image-tree grant on its storage connection.
+name_is_a_font_consumer :: proc "contextless" (name: string) -> bool {
+	for consumer in font_consumer_names {
+		if name == consumer {
+			return true
+		}
+	}
+	return false
+}
+
+// name_is_a_headless_font_consumer reports whether name maps "fonts/..."
+// directly at startup without opening a display window and closes its
+// fonts-only storage connection itself.
+name_is_a_headless_font_consumer :: proc "contextless" (name: string) -> bool {
+	return name == "script_fonts_planner" || name == "script_fonts_cut_planner" || name == "script_fonts_writer"
+}
+
 // service_scope_of returns the declared scope of a module in start_grant_sets,
 // defaulting to .Session for any unlisted module.
 service_scope_of :: proc "contextless" (name: string) -> Service_Scope {

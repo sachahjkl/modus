@@ -263,12 +263,14 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Out
 	// connect itself): the storage service starts first. A process with
 	// Read_Only_Trees always needs storage (even without a data disk); a
 	// process with Store alone starts without storage handles on a diskless
-	// machine so storage.open returns false instead of refusing the launch
-	// (src/md/features/missing_hardware.md; src/md/features/objects_by_hash.md).
+	// machine unless it also maps startup fonts (in which case it gets a
+	// fonts-only connection that storage.open refuses as a private store).
 	if (.Read_Only_Trees in grants || (.Store in grants && (.Data_Disk in machine_parts || work.store_override != ""))) && .Root_Ring not_in grants {
 		if outcome := storage_start(work.refusal); outcome != .Succeeded {
 			return needed_service_failed(work.refusal)
 		}
+	} else if start_wants_fonts_storage(work) {
+		_ = storage_start()
 	}
 	// A client of a block service: the service of its disk starts first.
 	status: call_outcome.Call_Outcome
@@ -489,10 +491,54 @@ start_values_of_the_name :: proc "contextless" (work: ^Start_Work) {
 	}
 }
 
+// image_has_module reports whether the boot image holds a module named name.
+image_has_module :: proc "contextless" (name: string) -> bool {
+	for &item in system.image_entries(image) {
+		if system.name_of(item.name[:]) == name && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
+			return true
+		}
+	}
+	return false
+}
+
+// start_gives_window reports whether start_view_give will attach a display
+// ring to work.
+start_gives_window :: proc "contextless" (work: ^Start_Work) -> bool {
+	grants := work.start_grant_set.grants
+	if desktop_absent() || console_renderer != .Desktop_Terminal {
+		return false
+	}
+	if .Terminal in grants || .Start_Policy in grants || unlock_without_window(work.name) || plan_at_start_without_window() || work.hold == .For_Replay {
+		return false
+	}
+	return true
+}
+
+// start_wants_fonts_storage reports whether work receives a short-lived
+// startup storage connection for mapping "fonts/font_outlines" and
+// "fonts/script_fonts". Headless background services and processes without a
+// window (except explicit headless font test modules) are skipped so no
+// storage connection slot leaks.
+start_wants_fonts_storage :: proc "contextless" (work: ^Start_Work) -> bool {
+	grants := work.start_grant_set.grants
+	if .Root_Ring in grants || .Terminal in grants || .Start_Policy in grants || .Clock in grants || work.hold == .For_Replay {
+		return false
+	}
+	if !image_has_module(role_holder_name(.Storage)) {
+		return false
+	}
+	if name_is_a_headless_font_consumer(work.name) {
+		return true
+	}
+	return name_is_a_font_consumer(work.name) && start_gives_window(work)
+}
+
 // start_store_give connects the process to the storage service in its context:
 // the call ring, the call region, the storage service with the right Read, and
 // its file. A process with Read_Only_Trees receives a connection even on a
-// diskless machine; a process with Root_Ring connects itself.
+// diskless machine; a process without Store or Read_Only_Trees that needs
+// startup fonts receives a short-lived fonts-only connection marked with
+// GRANT_VALUE_STORAGE_FONTS_ONLY = 1; a process with Root_Ring connects itself.
 start_store_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_Outcome {
 	grants := work.start_grant_set.grants
 	if .Root_Ring in grants {
@@ -500,13 +546,18 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_
 	}
 	wants_trees := .Read_Only_Trees in grants
 	wants_store := .Store in grants && (.Data_Disk in machine_parts || work.store_override != "")
-	if !wants_trees && !wants_store {
+	fonts_only := !wants_trees && !wants_store && start_wants_fonts_storage(work)
+	if !wants_trees && !wants_store && !fonts_only {
 		return .Succeeded
 	}
 	storage_service: ^Started
 	outcome: call_outcome.Call_Outcome
-	_, storage_service, work.store_ring, work.store_region, outcome = connection_open(work.slot, role_holder_name(.Storage), work.refusal, u32(root_ring.Root_Command.Start), store_override = work.store_override, store_limit_override = work.store_limit_override)
+	open_refusal: [7]u64
+	_, storage_service, work.store_ring, work.store_region, outcome = connection_open(work.slot, role_holder_name(.Storage), fonts_only ? &open_refusal : work.refusal, u32(root_ring.Root_Command.Start), store_override = work.store_override, store_limit_override = work.store_limit_override, fonts_only = fonts_only)
 	if outcome != .Succeeded {
+		if fonts_only {
+			return .Succeeded
+		}
 		return outcome
 	}
 	start_grant_put(work, .Storage_Ring, {work.store_ring, {.Read, .Write}})
@@ -516,6 +567,9 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> call_outcome.Call_
 		service_rights += {.Give}
 	}
 	start_grant_put(work, .Storage_Service, {storage_service.process, service_rights})
+	if fonts_only {
+		system.value_put(&work.values, system.GRANT_VALUE_STORAGE_FONTS_ONLY, 1)
+	}
 	for &item in system.image_entries(image) {
 		if is_role_holder(system.name_of(item.name[:]), .Storage) && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
 			mapping, given := image_entry_mapping(&item, storage.FILE_ADDRESS)
@@ -901,6 +955,7 @@ storage_start :: proc "contextless" (refusal: ^[7]u64 = nil) -> call_outcome.Cal
 	name := role_holder_name(.Storage)
 	for &item in started {
 		if item.process != 0 && item.service.head != nil && is_role_holder(system.name_of(item.name[:]), .Storage) {
+			script_fonts_publish_to_storage()
 			return .Succeeded
 		}
 	}
@@ -975,5 +1030,10 @@ storage_start :: proc "contextless" (refusal: ^[7]u64 = nil) -> call_outcome.Cal
 	}
 	start_wiring_keep(&work)
 	wide_grant_process_started(work.slot)
-	return start_finish(&work)
+	finished := start_finish(&work)
+	if finished == .Succeeded {
+		storage_instance_serial += 1
+		script_fonts_publish_to_storage()
+	}
+	return finished
 }

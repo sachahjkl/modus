@@ -385,7 +385,7 @@ The terms are in `glossary/storage.md`.
 | Range | How the process knows that it is mapped |
 |---|---|
 | The settings page, the date page | Their bits |
-| The font outlines | Its bit; the resource states its size in its header (`font_outlines.open`, bounded by the span of the range) |
+| The font outlines and script fonts | Not a fixed range: mapped read-only at startup through `storage.map_object` (`fonts/font_outlines`, `fonts/script_fonts`) from the granted `fonts` tree |
 | The pointer themes | Not a fixed range: mapped read-only on demand through `storage.map_object` from the granted `pointer_themes` tree |
 | The storage file | The value 3 of the storage service: its size. A value, not a bit: the size is needed |
 | The files of a module | The values 0 to 3 of `modus:contract/isolated` (address, size, the replacements): values, not bits, because the sizes are needed |

@@ -645,15 +645,20 @@ script_fonts_open :: proc "contextless" (outlines: ^font_outlines.Outlines) -> (
 }
 
 // written_part_open asks the library module text_rendering to open the
-// fonts of this process for the written part, after open: the fonts of
-// the boot image, and the script font set when the starter mapped it. It
-// takes the fonts of the set that the module holds into the state, and
-// gives those that the set lacks or that the module refused. In a copy
-// with the written part compiled in it does nothing: script_fonts_open
-// opens the set.
-written_part_open :: proc "contextless" () -> (missing: Outline_Fonts) {
-	missing, _ = held_fonts_open()
+// fonts of this process for the written part, after open: the mapped font
+// outlines and the optional mapped script font set. It takes the fonts of the
+// set that the module holds into the state, and gives those that the set lacks
+// or that the module refused. In a copy with the written part compiled in it
+// does nothing: script_fonts_open opens the set.
+written_part_open :: proc "contextless" (boot_bytes: []u8, scripts_bytes: []u8 = nil) -> (missing: Outline_Fonts) {
+	missing, _ = held_fonts_open(boot_bytes, scripts_bytes)
 	return missing
+}
+
+// written_part_places retrieves the read-only font slices previously
+// registered with this process's text_rendering library module.
+written_part_places :: proc "contextless" () -> (boot_bytes, scripts_bytes: []u8, ok: bool) {
+	return held_fonts_places()
 }
 
 // script_fonts_open_in is script_fonts_open over a set of fonts.

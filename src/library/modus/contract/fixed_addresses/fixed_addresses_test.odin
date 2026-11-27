@@ -30,7 +30,6 @@ no_two_ranges_overlap :: proc(t: ^testing.T) {
 	}
 	named := [?]Named_Address {
 		{.Module_Files, MODULE_FILES_ADDRESS},
-		{.Pointer_Themes, POINTER_THEMES_ADDRESS},
 		{.Settings_Page, SETTINGS_PAGE_ADDRESS},
 		{.Presentation_Page, PRESENTATION_PAGE_ADDRESS},
 		{.Plan_Values_Page, PLAN_VALUES_PAGE_ADDRESS},
@@ -39,11 +38,9 @@ no_two_ranges_overlap :: proc(t: ^testing.T) {
 		{.Module_Tables, MODULE_TABLES_ADDRESS},
 		{.Debug_Image, DEBUG_IMAGE_ADDRESS},
 		{.Disk_Process_Page, DISK_PROCESS_PAGE_ADDRESS},
-		{.Font_Outlines, FONT_OUTLINES_ADDRESS},
 		{.Fresh_Bytes_Page, FRESH_BYTES_PAGE_ADDRESS},
 		{.Start_Policy_Pages, START_POLICY_PAGES_ADDRESS},
 		{.Edit_Target_Page, EDIT_TARGET_PAGE_ADDRESS},
-		{.Script_Fonts, SCRIPT_FONTS_ADDRESS},
 	}
 	for each in named {
 		testing.expectf(t, each.address == range_of(each.range).address, "%v: the named address is the address of its member", each.range)
@@ -82,9 +79,10 @@ the_set_of_the_mapped_ranges :: proc(t: ^testing.T) {
 	}
 }
 
-// The slots of the ranges that left: no member has their values. The
-// slots 5, 9 and 10 held the glyph caches of the boot image.
-free_slots := [4]uint{5, 9, 10, 13}
+// The slots of the ranges that left: no member has their values. Slot 1 held
+// pointer themes, slots 5, 9, 10, and 13 held boot-image glyph caches, and
+// slot 14 held font outlines (slot 18 past Edit_Target_Page held script fonts).
+free_slots := [6]uint{1, 5, 9, 10, 13, 14}
 
 // free_slot_bits gives the bits of the free slots.
 free_slot_bits :: proc() -> (bits: u64) {
@@ -103,7 +101,6 @@ the_members_keep_their_values :: proc(t: ^testing.T) {
 		value: int,
 	} {
 		{.Module_Files, 0},
-		{.Pointer_Themes, 1},
 		{.Settings_Page, 2},
 		{.Presentation_Page, 3},
 		{.Plan_Values_Page, 4},
@@ -112,11 +109,9 @@ the_members_keep_their_values :: proc(t: ^testing.T) {
 		{.Module_Tables, 8},
 		{.Debug_Image, 11},
 		{.Disk_Process_Page, 12},
-		{.Font_Outlines, 14},
 		{.Fresh_Bytes_Page, 15},
 		{.Start_Policy_Pages, 16},
 		{.Edit_Target_Page, 17},
-		{.Script_Fonts, 18},
 	}
 	count := 0
 	for range in Fixed_Range {
@@ -144,7 +139,7 @@ the_border_of_the_fixed_ranges :: proc(t: ^testing.T) {
 		testing.expectf(t, !ok && ranges == {}, "the word %x is refused", word)
 	}
 	for slot in free_slots {
-		for word in ([?]u64{u64(1) << slot, u64(1) << slot | u64(1) << uint(Fixed_Range.Font_Outlines)}) {
+		for word in ([?]u64{u64(1) << slot, u64(1) << slot | u64(1) << uint(Fixed_Range.Date_Page)}) {
 			ranges, ok = fixed_ranges_of_word(word)
 			testing.expectf(t, !ok && ranges == {}, "the word %x is refused", word)
 		}

@@ -88,9 +88,13 @@ Client :: struct {
 }
 
 // open opens the connection that the root service gave in the context of
-// this process. ok is false for a process with no grant of a store, or a
+// this process. ok is false for a process with no grant of a store or
+// explicit read-only trees (including a startup fonts-only connection), or a
 // file of the service that is not a valid module.
 open :: proc "contextless" (ctx: ^system.Context) -> (client: Client, ok: bool) {
+	if ctx.values[system.GRANT_VALUE_STORAGE_FONTS_ONLY] != 0 {
+		return {}, false
+	}
 	return open_of_handles(ctx.handles[GRANT_RING], ctx.handles[GRANT_REGION], ctx.handles[GRANT_SERVICE], ctx.values[VALUE_FILE_SIZE])
 }
 

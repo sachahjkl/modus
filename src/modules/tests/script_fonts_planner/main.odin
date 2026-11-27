@@ -34,6 +34,7 @@ import "modus:contract/powerbox"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/role_contract"
 import "modus:contract/value_kinds"
+import "modus:storage"
 import "modus:system"
 
 NAMES_A_CUT_SET :: #config(SCRIPT_FONTS_PLANNER_NAMES_A_CUT_SET, false)
@@ -105,7 +106,21 @@ decision_wait :: proc "contextless" (ticket: i64, asked_at: u64, generation_row:
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	outlines, problem := font_outlines.open(&ctx.values, outlines_room[:])
+	client, storage_opened := storage.open_of_handles(
+		ctx.handles[storage.GRANT_RING],
+		ctx.handles[storage.GRANT_REGION],
+		ctx.handles[storage.GRANT_SERVICE],
+		ctx.values[storage.VALUE_FILE_SIZE],
+	)
+	if !storage_opened {
+		wrong("the storage connection for font outlines did not open; the file size", ctx.values[storage.VALUE_FILE_SIZE])
+	}
+	mapped, _, outlines_map_status, _ := storage.map_object(&client, font_outlines.FONT_OUTLINES_OBJECT_PATH)
+	storage.close(&client)
+	if outlines_map_status != .Ok {
+		wrong("the font outlines of the boot image did not map from storage; the status", u64(outlines_map_status))
+	}
+	outlines, problem := font_outlines.validate(mapped.bytes, outlines_room[:])
 	if problem.kind != .None {
 		wrong("the font outlines of the boot image do not open; the problem", u64(problem.kind))
 	}

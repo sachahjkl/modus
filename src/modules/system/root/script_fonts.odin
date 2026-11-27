@@ -21,6 +21,8 @@ import "internal:root/role_policy"
 import "modus:contract/blake3"
 import "modus:contract/call_outcome"
 import "modus:contract/font_outlines"
+import "modus:contract/isolated"
+import "modus:contract/ring"
 import rd "modus:contract/root_delegation"
 import "modus:contract/value_kinds"
 import "modus:system"
@@ -48,11 +50,14 @@ script_fonts_expected_size: u64
 // service checks one at a time: any count that the format allows.
 font_records_room: font_outlines.Record_Room
 // The memory of the set, which this service made, checked and keeps, its
-// exact unpadded byte count, and the mapping that each process receives.
+// exact unpadded byte count, the monotonic storage instance serial, and the
+// storage instance serial to which the set was published (re-published on any
+// storage restart without handle-reuse aliasing).
 script_fonts_memory: system.Handle
 script_fonts_bytes: []u8
 script_fonts_size: u64
-script_fonts_mapping: system.Mapping
+storage_instance_serial: u64
+script_fonts_published_serial: u64
 // True after a cache fetch succeeds on a machine with a data disk, until
 // disk_processes finishes persisting the verified bytes to script_fonts.
 script_fonts_store_pending: bool
@@ -170,8 +175,12 @@ script_fonts_plan_values_changed :: proc "contextless" () {
 }
 
 // script_fonts_step advances the non-blocking script font loader state
-// machine once the machine is usable and disk_processes is idle.
+// machine once the machine is usable and disk_processes is idle, and retries
+// any pending publication to the running storage service.
 script_fonts_step :: proc "contextless" () {
+	if script_fonts_stage == .Mapped && storage_instance_serial != 0 && script_fonts_published_serial != storage_instance_serial {
+		script_fonts_publish_to_storage()
+	}
 	has_disk := .Data_Disk in machine_parts
 	has_cache := script_fonts_has_cache_key()
 	action := role_policy.script_fonts_step_decide(
@@ -270,9 +279,9 @@ script_fonts_take :: proc "contextless" (file: ^Lent_File, from_cache: bool) {
 	script_fonts_memory, script_fonts_bytes = file.memory, file.bytes
 	script_fonts_size = file.size
 	file^ = {}
-	pages := u64(len(script_fonts_bytes)) / system.PAGE_SIZE
-	script_fonts_mapping = {memory = script_fonts_memory, address = font_outlines.SCRIPT_FONTS_ADDRESS, first = 0, page_count = pages}
+	script_fonts_published_serial = 0
 	script_fonts_stage = .Mapped
+	script_fonts_publish_to_storage()
 	script_fonts_store_pending = from_cache && (.Data_Disk in machine_parts)
 	system.log_fact(.Info, Script_Fonts_Mapped{hash = value_kinds.Hash_Field(script_fonts_named), set_size = value_kinds.Size_In_Bytes(len(bytes)), fonts = u64(outlines.count)})
 }
@@ -355,18 +364,44 @@ script_fonts_load_ended :: proc "contextless" (kind: rd.Load_Kind, outcome: call
 	}
 }
 
-// script_fonts_give adds the set, read-only, to the mappings of a process
-// that gets the font outlines, and sets the bit of its range.
-script_fonts_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^system.Context_Values) {
-	if script_fonts_stage != .Mapped {
+// script_fonts_publish_to_storage gives the running storage service a read-only
+// (Give+Read) handle to the verified script font set so every process with the
+// "fonts" tree grant maps it at "fonts/script_fonts" through storage.map_object.
+script_fonts_publish_to_storage :: proc "contextless" () {
+	if script_fonts_stage != .Mapped || script_fonts_memory == 0 || script_fonts_size == 0 || storage_instance_serial == 0 || script_fonts_published_serial == storage_instance_serial {
 		return
 	}
-	if count^ + 1 > len(mappings) {
-		mapping_dropped_log("the script font set", len(mappings))
+	service: ^Started
+	for &item in started {
+		if item.process != 0 && item.service.head != nil && is_role_holder(system.name_of(item.name[:]), .Storage) {
+			service = &item
+			break
+		}
+	}
+	if service == nil {
 		return
 	}
-	mappings[count^] = script_fonts_mapping
-	mappings[count^].flags = {}
-	count^ += 1
-	system.range_mapped_put(values, .Script_Fonts)
+	names := &service.service.commands
+	if ring.capacity(names) - ring.count(names) < 2 {
+		return
+	}
+	in_service_memory, status := give_through_service_ring(service.process, service.service_memory, script_fonts_memory, {.Give, .Read}, &service.service_ring_ready)
+	if status != .Succeeded || in_service_memory == 0 {
+		return
+	}
+	hash_words := transmute([4]u64)script_fonts_named
+	if system.send(names, ring.Record{
+		kind   = u32(isolated.Service_Command.Publish_Public_Object),
+		values = {
+			0 = u64(in_service_memory),
+			1 = script_fonts_size,
+			2 = hash_words[0],
+			3 = hash_words[1],
+			4 = hash_words[2],
+			5 = hash_words[3],
+			6 = u64(isolated.Public_Object_Kind.Script_Fonts),
+		},
+	}) {
+		script_fonts_published_serial = storage_instance_serial
+	}
 }

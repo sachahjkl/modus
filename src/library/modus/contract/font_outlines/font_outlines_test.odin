@@ -183,12 +183,12 @@ validate_refuses_a_damaged_resource :: proc(t: ^testing.T) {
 		testing.expectf(t, problem.kind == expected[damage], "%v: %v, expected %v", damage, problem.kind, expected[damage])
 	}
 	copy(bytes, original)
-	_, problem = validate_at(0, 1 << 20, test_room[:])
+	// Unaligned start address is refused.
+	unaligned := make([]u8, len(bytes) + 8)
+	defer delete(unaligned)
+	copy(unaligned[4:], bytes)
+	_, problem = validate(unaligned[4:][:len(bytes)], test_room[:])
 	testing.expect_value(t, problem.kind, Problem_Kind.Too_Short)
-	_, problem = validate_at(uintptr(raw_data(bytes)) + 4, 1 << 20, test_room[:])
-	testing.expect_value(t, problem.kind, Problem_Kind.Too_Short)
-	_, problem = validate_at(uintptr(raw_data(bytes)), u64(len(bytes) - 1), test_room[:])
-	testing.expect_value(t, problem.kind, Problem_Kind.Bad_Size)
 	// The room of the reader: one record is too few for two fonts, with
 	// the room as the limit; two are enough; no room is too few.
 	one: [1]Font_Record
@@ -200,7 +200,7 @@ validate_refuses_a_damaged_resource :: proc(t: ^testing.T) {
 	_, problem = validate(bytes, two[:])
 	testing.expect_value(t, problem.kind, Problem_Kind.None)
 	outlines: Outlines
-	outlines, problem = validate_at(uintptr(raw_data(bytes)), u64(len(bytes)), test_room[:])
+	outlines, problem = validate(bytes, test_room[:])
 	testing.expect_value(t, problem.kind, Problem_Kind.None)
 	testing.expect_value(t, outlines.count, 2)
 	testing.expect_value(t, name_of(&outlines.records[0]), "first")

@@ -3,12 +3,14 @@ package display
 import "modus:contract/call_outcome"
 import "modus:contract/font_outlines"
 import "modus:graphics"
+import "modus:storage"
 import "modus:system"
 import "modus:text_rendering"
 
 // Every glyph drawn by its process (src/md/features/text_rendering.md):
-// the side of a process. The starter maps the font outlines read-only;
-// text_settings_load opens them, and then each spacing and each draw of
+// the side of a process. At startup the process maps "fonts/font_outlines"
+// and optionally "fonts/script_fonts" read-only through storage.map_object;
+// text_settings_load opens them once, and then each spacing and each draw of
 // the process finds its face with no other call. The process draws each
 // glyph itself, into its private glyph cache. A frame starts with
 // text_frame_begin: interface.window_frame_begin and the drawing module
@@ -20,35 +22,104 @@ import "modus:text_rendering"
 @(private)
 outlines_room: font_outlines.Record_Room
 
-// fallback_load opens the font outlines that the starter mapped. The
-// problem is Not_Mapped when the starter gave no outlines: the text of the
-// process is then Spleen. missing names the fonts of the chains that the
-// outlines lack or that the renderer refuses. A library module that
-// measures in the interface font with no window of its own
-// (interface_module) opens them with it too.
-fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_outlines.Problem, missing: text_rendering.Outline_Fonts) {
+// Read-only mapped font objects retained for the lifetime of this process.
+@(private)
+mapped_font_outlines: storage.Mapped_Object
+@(private)
+mapped_script_fonts: storage.Mapped_Object
+@(private)
+mapped_fonts_ready: bool
+
+// mapped_font_outlines_bytes returns the read-only font outlines bytes mapped
+// for this process, or nil when none were mapped.
+mapped_font_outlines_bytes :: proc "contextless" () -> []u8 {
+	return mapped_font_outlines.bytes
+}
+
+// mapped_script_fonts_bytes returns the read-only script font set bytes mapped
+// for this process, or nil when none were mapped.
+mapped_script_fonts_bytes :: proc "contextless" () -> []u8 {
+	return mapped_script_fonts.bytes
+}
+
+// fonts_map_from_storage maps "fonts/font_outlines" and optionally
+// "fonts/script_fonts" through an already-open storage client once at startup,
+// before text_settings_open runs. Processes that open their storage connection
+// before display.open (compositor, settings, pointers, unlock) call this to
+// reuse that connection without opening it twice.
+fonts_map_from_storage :: proc "contextless" (client: ^storage.Client) {
+	if mapped_fonts_ready {
+		return
+	}
+	mapped_fonts_ready = true
+	if client == nil {
+		return
+	}
+	if mapped, _, status, _ := storage.map_object(client, font_outlines.FONT_OUTLINES_OBJECT_PATH); status == .Ok {
+		mapped_font_outlines = mapped
+	}
+	if mapped, _, status, _ := storage.map_object(client, font_outlines.SCRIPT_FONTS_OBJECT_PATH); status == .Ok {
+		mapped_script_fonts = mapped
+	}
+}
+
+// fallback_load_from_bytes validates and opens already-mapped read-only font
+// outlines and optional script font bytes into this copy of text_rendering
+// without touching storage.
+fallback_load_from_bytes :: proc "contextless" (boot_bytes: []u8, scripts_bytes: []u8 = nil) -> (problem: font_outlines.Problem, missing: text_rendering.Outline_Fonts) {
+	if len(boot_bytes) == 0 {
+		return {kind = .Not_Mapped}, {}
+	}
 	outlines: font_outlines.Outlines
-	outlines, problem = font_outlines.open(&ctx.values, outlines_room[:])
+	outlines, problem = font_outlines.validate(boot_bytes, outlines_room[:])
 	if problem.kind != .None {
 		return problem, {}
 	}
 	missing = text_rendering.open(&outlines)
-	// The script font set, when the plan names one and the starter mapped
-	// it: with none, each character of those scripts is the replacement
-	// glyph, and no line says so: a machine with no such set is the usual
-	// case (src/md/features/script_fonts.md).
+	// The script font set, when published by root under the "fonts" tree: with
+	// none, each character of those scripts is the replacement glyph, and no
+	// line says so (src/md/features/script_fonts.md).
 	when text_rendering.WRITTEN_SHAPING_COMPILED_IN {
-		if scripts, script_problem := font_outlines.script_fonts_open(&ctx.values, outlines_room[:]); script_problem.kind == .None {
-			missing += text_rendering.script_fonts_open(&scripts)
+		if len(scripts_bytes) > 0 {
+			if scripts, script_problem := font_outlines.validate(scripts_bytes, outlines_room[:]); script_problem.kind == .None {
+				missing += text_rendering.script_fonts_open(&scripts)
+			}
 		}
 	} else {
 		// The library module opens the fonts of the process for each line
 		// that is not simple, the script font set with them
 		// (src/md/features/text_rendering.md, "Where the written shaping
 		// lives").
-		missing += text_rendering.written_part_open()
+		missing += text_rendering.written_part_open(boot_bytes, scripts_bytes)
 	}
 	return {}, missing
+}
+
+// fallback_load maps the font outlines and optional script font set once at
+// startup through storage.map_object (unless fonts_map_from_storage already
+// mapped them), then validates and opens them. When root opened the storage
+// connection solely for startup fonts (GRANT_VALUE_STORAGE_FONTS_ONLY != 0),
+// this closes the connection immediately via CALL_CLOSE; otherwise it detaches
+// so the process's own storage.open(ctx) reuses the ready connection cleanly.
+fallback_load :: proc "contextless" (ctx: ^system.Context) -> (problem: font_outlines.Problem, missing: text_rendering.Outline_Fonts) {
+	if !mapped_fonts_ready && ctx != nil {
+		if client, opened := storage.open_of_handles(
+			ctx.handles[storage.GRANT_RING],
+			ctx.handles[storage.GRANT_REGION],
+			ctx.handles[storage.GRANT_SERVICE],
+			ctx.values[storage.VALUE_FILE_SIZE],
+		); opened {
+			fonts_map_from_storage(&client)
+			if ctx.values[system.GRANT_VALUE_STORAGE_FONTS_ONLY] != 0 {
+				storage.close(&client)
+			} else {
+				storage.detach(&client)
+			}
+		} else {
+			mapped_fonts_ready = true
+		}
+	}
+	return fallback_load_from_bytes(mapped_font_outlines.bytes, mapped_script_fonts.bytes)
 }
 
 // script_coverage_tell writes, for each script of the fallback chains that

@@ -2,21 +2,19 @@ package root
 
 import "modus:contract/root_ring"
 import "modus:contract/call_outcome"
-import "modus:contract/font_outlines"
 import "modus:contract/ring"
 import "modus:contract/settings"
 import "modus:display"
 import "modus:principals"
 import "modus:system"
 
-// The text of the system and the settings of the system (docs/FONTS.md):
-// this service creates the settings page, checks the hash and the format
-// of the font outlines of the boot image once, and maps the page and the
-// outlines read-only into each process with a surface, into each terminal
-// and into the compositor. Each process draws each glyph of its text from
-// the outlines, into its private glyph cache. The process `settings`
-// receives the page with Write. The boot display that this service draws
-// reads no font file: its text is Spleen at the size of its scale
+// The text settings of the system (docs/FONTS.md): this service creates the
+// settings page and maps the page (or each window's presentation page) into
+// each process with a surface, each terminal, and the compositor. Processes
+// map font outlines and script fonts read-only through storage.map_object
+// under their granted "fonts" tree. The process `settings` receives the
+// settings page with Write. The boot display that this service draws reads no
+// font file: its text is Spleen at the size of its scale
 // (src/md/features/boot_display_scale.md).
 //
 // At the end of the boot this service starts `settings` for its boot pass:
@@ -24,9 +22,6 @@ import "modus:system"
 // compositor sees the change and each window draws again.
 
 settings_memory: system.Handle
-// The font outlines of the boot image: page_count 0 when the image has
-// none, or none that font_outlines.validate accepts.
-font_outlines_mapping: system.Mapping
 // The pass of the next start of `settings`: start() gives it in the value
 // VALUE_PASS. Window for each start that opens its window.
 settings_pass: settings.Pass
@@ -37,15 +32,10 @@ settings_pass_process_slot: u64
 settings_pass_process_serial: u64
 settings_pass_running_pass: settings.Pass
 
-// text_settings_create makes the settings page and finds the font
-// outlines. It writes the initial defaults before any process starts and
-// immediately unmaps its writable mapping so `settings` is the sole writer
-// of the settings page. Font outlines are given only when their format is
-// valid; their hash was checked with the whole image (trust_check): a resource shorter
-// than its header, or whose header states another size than the resource,
-// is not given, so a process that reads the size in the header reads only
-// mapped bytes. With no outlines, each process draws with Spleen 8x16, and
-// the log says why.
+// text_settings_create makes the settings page and reads the default script
+// font hash from the boot image. It writes the initial defaults before any
+// process starts and immediately unmaps its writable mapping so `settings` is
+// the sole writer of the settings page.
 text_settings_create :: proc "contextless" () {
 	status: call_outcome.Call_Outcome
 	settings_memory, status = system.memory_create(1)
@@ -62,18 +52,6 @@ text_settings_create :: proc "contextless" () {
 	// never writes the page again.
 	settings.page_defaults_write((^settings.Page)(address))
 	system.memory_unmap(address)
-	if entry := system.image_resource_find(image, font_outlines.RESOURCE_NAME); entry != nil {
-		if mapping, given := image_entry_mapping(entry, font_outlines.ADDRESS); given {
-			if _, problem := font_outlines.validate(image[entry.offset:][:entry.size], font_records_room[:]); problem.kind == .None {
-				font_outlines_mapping = mapping
-			} else {
-				system.log_fact(.Warning, Font_Outlines_Refused{problem_value = problem.value, problem = text_field(font_outlines.problem_sentences[problem.kind], 80)})
-			}
-		}
-	}
-	if font_outlines_mapping.page_count == 0 {
-		system.log_fact(.Warning, Font_Outlines_Absent{})
-	}
 	script_fonts_name_read()
 }
 
@@ -83,21 +61,17 @@ Text_Settings_Page :: enum u8 {
 	Machine, // The settings page of the machine, read-only: `settings`, the date service and the holder of the display.
 }
 
-// text_settings_give adds the page of the text settings and the font
-// outlines to the mappings of a process that has a surface or a terminal,
-// and sets the bit of each range in its values. A window gets its own
-// presentation page (item is its place); a holder that applies the
-// settings of the machine gets the settings page, read-only. The mapping of
-// the outlines has no flag: the right Read only, for every process, the
-// process `settings` included. Its pages come from the boot image, whose
-// one handle (of this service) has no right Write.
+// text_settings_give adds the page of the text settings to the mappings of a
+// process that has a surface or a terminal, and sets the bit of its range in
+// its values. A window gets its own presentation page (item is its place); a
+// holder that applies the settings of the machine gets the settings page,
+// read-only.
 text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^system.Context_Values, page: Text_Settings_Page, item: ^Started = nil) {
 	if settings_memory == 0 {
 		return
 	}
-	// The page and the outlines.
-	if count^ + 2 > len(mappings) {
-		mapping_dropped_log("the settings page and the font outlines", len(mappings))
+	if count^ + 1 > len(mappings) {
+		mapping_dropped_log("the settings page", len(mappings))
 		return
 	}
 	switch page {
@@ -109,14 +83,6 @@ text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^in
 		mappings[count^] = {memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}
 		count^ += 1
 		system.range_mapped_put(values, .Settings_Page)
-	}
-	if font_outlines_mapping.page_count != 0 {
-		mappings[count^] = font_outlines_mapping
-		mappings[count^].flags = {}
-		count^ += 1
-		system.range_mapped_put(values, .Font_Outlines)
-		// The script font set goes where the font outlines go.
-		script_fonts_give(mappings, count, values)
 	}
 }
 

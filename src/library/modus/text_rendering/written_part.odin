@@ -35,6 +35,19 @@ Held_Standing :: enum u8 {
 	Refused = 3, // Its tables of GSUB and GPOS passed the bound of their read at the open: it draws the replacement glyph.
 }
 
+// Process_Font_Places: the virtual addresses and byte lengths of the
+// process's read-only font outlines and optional script font set, held in the
+// per-process state of the text_rendering library module so sibling library
+// modules (such as interface_module) can open the same mapped bytes without
+// extra storage calls or fixed addresses. Flat integers: a record of an export
+// holds no struct.
+Process_Font_Places :: struct {
+	boot_address:    u64,
+	boot_size:       u64,
+	scripts_address: u64,
+	scripts_size:    u64,
+}
+
 // Held_Font: a font of the script font set that the library module
 // text_rendering opened for its process. The fast part keeps its measures
 // and its glyph count, which place a glyph of it in the frame of a face,
@@ -162,15 +175,22 @@ when WRITTEN_SHAPING_COMPILED_IN {
 	// The written part is compiled in: the fonts of the state are open
 	// whole, so nothing is held.
 	@(private)
-	held_fonts_open :: proc "contextless" () -> (missing: Outline_Fonts, called: bool) {
+	held_fonts_open :: proc "contextless" (boot_bytes, scripts_bytes: []u8) -> (missing: Outline_Fonts, called: bool) {
 		return {}, false
+	}
+
+	@(private)
+	held_fonts_places :: proc "contextless" () -> (boot_bytes, scripts_bytes: []u8, ok: bool) {
+		return nil, nil, false
 	}
 } else {
 	// The declarations name the records of the package: the check of the
 	// declarations of an import reads the layout of a struct by its name.
 	foreign _ {
 		@(require_results, link_name = "process_fonts_open")
-		module_process_fonts_open :: proc "c" (held: ^system.Table_To_Append(Held_Font), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
+		module_process_fonts_open :: proc "c" (boot: ^system.Bytes_To_Read, scripts: ^system.Bytes_To_Read, held: ^system.Table_To_Append(Held_Font), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
+		@(require_results, link_name = "process_fonts_places")
+		module_process_fonts_places :: proc "c" (places: ^system.Table_To_Append(Process_Font_Places), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
 		@(require_results, link_name = "line_shape")
 		module_line_shape :: proc "c" (face: i64, size: i64, text: ^system.Bytes_To_Read, placed: ^system.Table_To_Append(Placed_Glyph), error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) ---
 		@(require_results, link_name = "line_widths")
@@ -186,21 +206,43 @@ when WRITTEN_SHAPING_COMPILED_IN {
 	}
 
 	// held_fonts_open asks the library module to open the fonts of the
-	// process, and takes the fonts of the script font set that it holds
-	// into the set of the state. It gives the fonts of the set that are
-	// missing or refused.
+	// process from its already-mapped read-only slices, and takes the fonts of
+	// the script font set that it holds into the set of the state. It gives
+	// the fonts of the set that are missing or refused.
 	@(private)
-	held_fonts_open :: proc "contextless" () -> (missing: Outline_Fonts, called: bool) {
+	held_fonts_open :: proc "contextless" (boot_bytes, scripts_bytes: []u8) -> (missing: Outline_Fonts, called: bool) {
+		boot_arg := system.Bytes_To_Read{bytes = raw_data(boot_bytes), count = u64(len(boot_bytes)), capacity = u64(len(boot_bytes))}
+		scripts_arg := system.Bytes_To_Read{bytes = raw_data(scripts_bytes), count = u64(len(scripts_bytes)), capacity = u64(len(scripts_bytes))}
 		records: [len(Outline_Font)]Held_Font
 		table := system.Table_To_Append(Held_Font){records = &records[0], capacity = len(records)}
 		error: errors.Error_Record
-		if opened, _ := module_process_fonts_open(&table, &error); opened != .Succeeded {
+		if opened, _ := module_process_fonts_open(&boot_arg, &scripts_arg, &table, &error); opened != .Succeeded {
 			return SCRIPT_FONTS, false
 		}
 		for held in records[:min(int(table.count), len(records))] {
 			missing += held_font_take(held)
 		}
 		return missing, true
+	}
+
+	// held_fonts_places retrieves the read-only font slices previously
+	// registered with this process's text_rendering library module.
+	@(private)
+	held_fonts_places :: proc "contextless" () -> (boot_bytes, scripts_bytes: []u8, ok: bool) {
+		records: [1]Process_Font_Places
+		table := system.Table_To_Append(Process_Font_Places){records = &records[0], capacity = 1}
+		error: errors.Error_Record
+		if outcome, count := module_process_fonts_places(&table, &error); outcome != .Succeeded || count < 1 || table.count < 1 {
+			return nil, nil, false
+		}
+		p := records[0]
+		if p.boot_address != 0 && p.boot_size > 0 {
+			boot_bytes = ([^]u8)(uintptr(p.boot_address))[:p.boot_size]
+		}
+		if p.scripts_address != 0 && p.scripts_size > 0 {
+			scripts_bytes = ([^]u8)(uintptr(p.scripts_address))[:p.scripts_size]
+		}
+		return boot_bytes, scripts_bytes, len(boot_bytes) > 0
 	}
 
 	// The module places the lines of the state of its process only: a set

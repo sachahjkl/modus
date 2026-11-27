@@ -781,16 +781,8 @@ Process_Test_Fonts :: struct {
 	inputs:  [dynamic]font_outlines.Font_Input,
 }
 
-// test_place gives the place of a resource of the test, as a starter maps
-// it: its bytes and a span of their size.
-@(private = "file")
-test_place :: proc(outlines: ^Test_Outlines) -> Resource_Place {
-	return {range = {address = u64(uintptr(raw_data(outlines.bytes))), span = u64(len(outlines.bytes))}, mapped = true}
-}
-
-// process_test_fonts_open gives the export the places of the fonts of the
-// repository and of the script font set of the shell; the first call of
-// process_fonts_open opens them, in one room, as in a process.
+// process_test_fonts_open builds the repository font outlines and script font
+// set for the host tests; process_fonts_open receives their slices directly.
 @(private = "file")
 process_test_fonts_open :: proc(t: ^testing.T, fonts: ^Process_Test_Fonts) -> (scripts_open: bool) {
 	fonts.boot = repository_outlines(t)
@@ -809,12 +801,10 @@ process_test_fonts_open :: proc(t: ^testing.T, fonts: ^Process_Test_Fonts) -> (s
 			}
 		}
 	}
-	process_places_of_test = {test_place(&fonts.boot), {}}
 	if len(fonts.inputs) != card(text_rendering.SCRIPT_FONTS) {
 		return false
 	}
 	fonts.scripts = test_outlines_of(t, fonts.inputs[:])
-	process_places_of_test[1] = test_place(&fonts.scripts)
 	return true
 }
 
@@ -823,7 +813,7 @@ process_test_fonts_close :: proc(fonts: ^Process_Test_Fonts) {
 	text_rendering.state = {}
 	process_fonts_stage = .Closed
 	process_scripts_mapped = false
-	process_places_of_test = {}
+	process_stored_places = {}
 	delete(fonts.boot.words)
 	delete(fonts.scripts.words)
 	for input in fonts.inputs {
@@ -868,16 +858,25 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 	expect_error(t, answer_of(cell_cluster_read(interface, &text, 0, -1, &cluster_table, &marks_table, &error)), error, .State, 0, .Wrong_State)
 	testing.expect(t, points_table.count == 0 && contours_table.count == 0 && cluster_table.count == 0 && marks_table.count == 0)
 
+	// Before the open: process_fonts_places appends nothing.
+	places_buf: [1]text_rendering.Process_Font_Places
+	places_table := system.Table_To_Append(text_rendering.Process_Font_Places){records = &places_buf[0], capacity = 1}
+	testing.expect_value(t, value_of(process_fonts_places(&places_table, &error)), 0)
+	testing.expect_value(t, places_table.count, 0)
+
 	fonts: Process_Test_Fonts
 	scripts_open := process_test_fonts_open(t, &fonts)
 	defer process_test_fonts_close(&fonts)
+
+	boot_arg := bytes_to_read(fonts.boot.bytes)
+	scripts_arg := bytes_to_read(scripts_open ? fonts.scripts.bytes : nil)
 
 	// The records of the fonts of the set: one for each, Open. A second
 	// call gives the same records.
 	held: [len(text_rendering.Outline_Font)]text_rendering.Held_Font
 	for _ in 0 ..< 2 {
 		held_table := system.Table_To_Append(text_rendering.Held_Font){records = &held[0], capacity = len(held)}
-		count := value_of(process_fonts_open(&held_table, &error))
+		count := value_of(process_fonts_open(&boot_arg, &scripts_arg, &held_table, &error))
 		if scripts_open {
 			testing.expect_value(t, count, i64(card(text_rendering.SCRIPT_FONTS)))
 			for record in held[:count] {
@@ -887,12 +886,40 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 			testing.expect_value(t, count, 0)
 		}
 	}
+	// process_fonts_places returns the registered addresses and sizes.
+	places_table.count = 0
+	testing.expect_value(t, value_of(process_fonts_places(&places_table, &error)), 1)
+	testing.expect_value(t, places_buf[0].boot_address, u64(uintptr(raw_data(fonts.boot.bytes))))
+	testing.expect_value(t, places_buf[0].boot_size, u64(len(fonts.boot.bytes)))
+	if scripts_open {
+		testing.expect_value(t, places_buf[0].scripts_address, u64(uintptr(raw_data(fonts.scripts.bytes))))
+		testing.expect_value(t, places_buf[0].scripts_size, u64(len(fonts.scripts.bytes)))
+	}
+	huge_places := system.Table_To_Append(text_rendering.Process_Font_Places){records = &places_buf[0], capacity = TABLE_LIMIT + 1}
+	expect_error(t, answer_of(process_fonts_places(&huge_places, &error)), error, .Too_Long, 1)
+	expect_error(t, answer_of(process_fonts_places(nil, &error)), error, .Bad_Address, 1)
+	null_places := system.Table_To_Append(text_rendering.Process_Font_Places){records = nil, capacity = 1}
+	expect_error(t, answer_of(process_fonts_places(&null_places, &error)), error, .Bad_Address, 1)
+
 	// A table with no room takes no record, and the count of the full
 	// answer still comes.
 	empty_held := system.Table_To_Append(text_rendering.Held_Font){records = &held[0], capacity = 0}
-	testing.expect_value(t, value_of(process_fonts_open(&empty_held, &error)), scripts_open ? i64(card(text_rendering.SCRIPT_FONTS)) : 0)
+	testing.expect_value(t, value_of(process_fonts_open(&boot_arg, &scripts_arg, &empty_held, &error)), scripts_open ? i64(card(text_rendering.SCRIPT_FONTS)) : 0)
+	expect_error(t, answer_of(process_fonts_open(nil, &scripts_arg, &empty_held, &error)), error, .Bad_Address, 1)
+	expect_error(t, answer_of(process_fonts_open(&boot_arg, nil, &empty_held, &error)), error, .Bad_Address, 2)
+	expect_error(t, answer_of(process_fonts_open(&boot_arg, &scripts_arg, nil, &error)), error, .Bad_Address, 3)
+	null_boot := system.Bytes_To_Read{bytes = nil, count = 16}
+	expect_error(t, answer_of(process_fonts_open(&null_boot, &scripts_arg, &empty_held, &error)), error, .Bad_Address, 1)
+	null_scripts := system.Bytes_To_Read{bytes = nil, count = 16}
+	expect_error(t, answer_of(process_fonts_open(&boot_arg, &null_scripts, &empty_held, &error)), error, .Bad_Address, 2)
+	null_held := system.Table_To_Append(text_rendering.Held_Font){records = nil, capacity = 1}
+	expect_error(t, answer_of(process_fonts_open(&boot_arg, &scripts_arg, &null_held, &error)), error, .Bad_Address, 3)
+	huge_boot := system.Bytes_To_Read{bytes = raw_data(fonts.boot.bytes), count = TABLE_LIMIT + 1}
+	expect_error(t, answer_of(process_fonts_open(&huge_boot, &scripts_arg, &empty_held, &error)), error, .Too_Long, 1)
+	huge_scripts := system.Bytes_To_Read{bytes = raw_data(fonts.boot.bytes), count = TABLE_LIMIT + 1}
+	expect_error(t, answer_of(process_fonts_open(&boot_arg, &huge_scripts, &empty_held, &error)), error, .Too_Long, 2)
 	huge_held := system.Table_To_Append(text_rendering.Held_Font){records = &held[0], capacity = TABLE_LIMIT + 1}
-	expect_error(t, answer_of(process_fonts_open(&huge_held, &error)), error, .Too_Long, 1)
+	expect_error(t, answer_of(process_fonts_open(&boot_arg, &scripts_arg, &huge_held, &error)), error, .Too_Long, 3)
 
 	// The refusals of the borders, each with nothing written.
 	expect_error(t, answer_of(line_shape(0, size, &text, &placed_table, &error)), error, .Bad_Value, 1)
@@ -1064,22 +1091,24 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 	if scripts_open {
 		text_rendering.state = {}
 		process_scripts_mapped = false
+		process_stored_places = {}
 		intrinsics.atomic_store(&process_fonts_stage, .Opening)
 		Waiter :: struct {
-			done:    bool,
-			count:   i64,
-			records: [len(text_rendering.Outline_Font)]text_rendering.Held_Font,
+			done:        bool,
+			count:       i64,
+			boot_arg:    system.Bytes_To_Read,
+			scripts_arg: system.Bytes_To_Read,
+			records:     [len(text_rendering.Outline_Font)]text_rendering.Held_Font,
 		}
-		waiter: Waiter
+		waiter := Waiter{boot_arg = boot_arg, scripts_arg = scripts_arg}
 		waiting := thread.create_and_start_with_data(&waiter, proc(data: rawptr) {
 			waiter := (^Waiter)(data)
 			table := system.Table_To_Append(text_rendering.Held_Font){records = &waiter.records[0], capacity = len(waiter.records)}
 			error: errors.Error_Record
-			waiter.count = value_of(process_fonts_open(&table, &error))
+			waiter.count = value_of(process_fonts_open(&waiter.boot_arg, &waiter.scripts_arg, &table, &error))
 			intrinsics.atomic_store(&waiter.done, true)
 		})
-		boot_place, set_place := process_places()
-		process_fonts_open_at(boot_place, set_place)
+		process_fonts_open_bytes(fonts.boot.bytes, fonts.scripts.bytes)
 		intrinsics.atomic_store(&process_fonts_stage, .Open)
 		// The waiter ends once the stage is Open; the time only ends a hang.
 		started := time.tick_now()
@@ -1107,6 +1136,7 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 	text_rendering.state = {}
 	process_fonts_stage = .Closed
 	process_scripts_mapped = false
+	process_stored_places = {}
 	hebrew: []u8
 	for input in fonts.inputs {
 		if input.name == "noto_sans_hebrew" {
@@ -1116,9 +1146,9 @@ the_exports_over_the_fonts_of_the_process :: proc(t: ^testing.T) {
 	hostile_inputs := [2]font_outlines.Font_Input{{"b612", hebrew}, {"noto_sans_hebrew", hebrew}}
 	hostile := test_outlines_of(t, hostile_inputs[:])
 	defer delete(hostile.words)
-	process_places_of_test[1] = test_place(&hostile)
+	hostile_arg := bytes_to_read(hostile.bytes)
 	held_table := system.Table_To_Append(text_rendering.Held_Font){records = &held[0], capacity = len(held)}
-	testing.expect_value(t, value_of(process_fonts_open(&held_table, &error)), i64(card(text_rendering.SCRIPT_FONTS)))
+	testing.expect_value(t, value_of(process_fonts_open(&boot_arg, &hostile_arg, &held_table, &error)), i64(card(text_rendering.SCRIPT_FONTS)))
 	b612 := text_rendering.font_at(&text_rendering.state.font_set, .B612)
 	testing.expectf(t, b612.opened && b612.file.glyph_count == boot_b612_glyphs, "B612 is the font of the outlines: %d glyphs, the outlines hold %d", b612.file.glyph_count, boot_b612_glyphs)
 	testing.expect(t, text_rendering.font_at(&text_rendering.state.font_set, .Noto_Sans_Hebrew).opened, "the set opens its Hebrew font")

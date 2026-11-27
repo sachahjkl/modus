@@ -723,3 +723,20 @@ optional_parameter_before_append_table :: proc(t: ^testing.T) {
 	testing.expect_value(t, missing.needed, u64(48))
 	testing.expect_value(t, missing.free, u64(40))
 }
+
+@(test)
+public_object_kind_border :: proc(t: ^testing.T) {
+	for member in Public_Object_Kind {
+		got, ok := public_object_kind_of_word(u64(member))
+		if member == .None {
+			testing.expect(t, !ok)
+		} else {
+			testing.expect(t, ok)
+			testing.expect_value(t, got, member)
+		}
+	}
+	for bad in ([?]u64{0, u64(max(Public_Object_Kind)) + 1, 255, max(u64)}) {
+		_, ok := public_object_kind_of_word(bad)
+		testing.expectf(t, !ok, "unknown or None Public_Object_Kind word %d must be refused", bad)
+	}
+}

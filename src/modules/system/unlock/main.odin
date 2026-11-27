@@ -3564,6 +3564,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	work = {bytes = ([^]u8)(address), count = 0, capacity = principals.DERIVATION_MEMORY_KIBIBYTES * 1024}
+	display.fonts_map_from_storage(&client)
 	window, opened := display.open(ctx, WIDTH, HEIGHT, "unlock")
 	if !opened {
 		system.stop(.Failed)

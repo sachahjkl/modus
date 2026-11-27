@@ -807,10 +807,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	width := int(ctx.values[VALUE_WIDTH])
 	height := int(ctx.values[VALUE_HEIGHT])
 	date_page = date.page_of(ctx)
-	// Map both pointer theme objects from the granted `pointer_themes` tree
+	// Map pointer themes and startup fonts from the granted read-only trees
 	// before handing the storage connection to the display choices worker.
 	role_store, role_store_open := storage.open_of_handles(ctx.handles[system.GRANT_STORAGE_RING], ctx.handles[system.GRANT_STORAGE_REGION], ctx.handles[system.GRANT_STORAGE_SERVICE], ctx.values[VALUE_STORAGE_FILE_SIZE])
 	pointer_theme_load(&role_store, role_store_open) // pointer_picture.odin
+	if role_store_open {
+		display.fonts_map_from_storage(&role_store)
+	}
 	display_choices_open(ctx, role_store, role_store_open) // display_choices.odin: the role store; its read waits for the first frame.
 	address, status := system.memory_map(ctx.handles[GRANT_FRAMEBUFFER])
 	input_status, control_status: call_outcome.Call_Outcome

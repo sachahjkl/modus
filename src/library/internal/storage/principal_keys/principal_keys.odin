@@ -81,7 +81,7 @@ take :: proc "contextless" (table: ^Table, command: isolated.Service_Command, va
 	case .Principal_Locked:
 		erase(table, int(slot))
 		return .Erased, false
-	case .None, .Connect, .Disconnect, .Grant, .Principal_Reclaim, .Tree_Grant:
+	case .None, .Connect, .Disconnect, .Grant, .Principal_Reclaim, .Tree_Grant, .Publish_Public_Object:
 	}
 	return .Refused, false
 }

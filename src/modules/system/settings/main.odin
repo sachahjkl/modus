@@ -2465,6 +2465,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		_ = kept_load()
 		appearance_next_pass()
 	}
+	if has_store {
+		display.fonts_map_from_storage(&store)
+	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "settings")
 	if !ok {
 		system.stop(.Failed)

@@ -37,7 +37,7 @@ import op "modus:contract/operation"
 // The band of the fixed ranges: one slot of 1 TiB for each range.
 BAND_START :: 0x0000_3000_0000_0000
 SLOT :: 0x0000_0100_0000_0000 // 1 TiB: the addresses of one range.
-SLOT_COUNT :: 19 // The slots of the band: the values 0 to 18 of Fixed_Range, the slots 5, 9, 10 and 13 with no member.
+SLOT_COUNT :: 18 // The slots of the band: values 0 to 17 of Fixed_Range; retired slots 1, 5, 9, 10, 13, and 14 name no member.
 BAND_END :: BAND_START + SLOT_COUNT * SLOT
 // The first address of a mapping that a process places by its own choice.
 OWN_CHOICE_START :: BAND_END
@@ -74,10 +74,6 @@ Fixed_Range :: enum u8 {
 	// call host starts, and states their size in the values of its
 	// context: a call host has no handle to the boot image, so it cannot
 	// look for them.
-	Pointer_Themes = 1, // The pointer themes of the compositor, one after the other (src/modules/system/root).
-	// The root service maps the theme files of the boot image there,
-	// read-only, in the compositor, and gives the address and the size of
-	// each one in the values of its context.
 	Settings_Page = 2, // The settings page (modus:contract/settings).
 	// One page, read-only, that the process `settings` writes: the value
 	// of each setting of the machine. The root service maps it in
@@ -119,10 +115,6 @@ Fixed_Range :: enum u8 {
 	// the hash of each disk process that runs, by its process slot. The
 	// root service maps it in each process that it starts with the right
 	// Inspect of the machine, as the monitor.
-	Font_Outlines = 14, // The font outlines, read-only (modus:contract/font_outlines).
-	// The font files of the system, one resource of the boot image: each
-	// process draws from them each glyph of its text into its private
-	// glyph cache. The root service maps it beside the settings page.
 	Fresh_Bytes_Page = 15, // The fresh bytes page of the process, read-only (modus:contract/fresh_bytes).
 	// The root service writes there, now and then, 32 bytes of its stream
 	// for this process alone, after a read of the entropy device; the
@@ -135,10 +127,6 @@ Fixed_Range :: enum u8 {
 	Edit_Target_Page = 17, // The target store name and object path, read-only, in an editor started with edit(store, name) (modus:contract/root_ring).
 	// One page, read-only, that the root service writes before the editor
 	// starts when a principal opens an object of a store with edit(store, name).
-	Script_Fonts = 18, // The script font set, read-only (modus:contract/font_outlines; src/md/features/script_fonts.md).
-	// The fonts past the boot image, one data object that the plan of the
-	// principal names by its hash: the root service checks it and maps it
-	// beside the font outlines.
 }
 #assert(int(max(Fixed_Range)) < SLOT_COUNT)
 
@@ -184,7 +172,6 @@ range_mapped_add :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, range: 
 
 // The address of each range: the first byte of its slot.
 MODULE_FILES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Module_Files)
-POINTER_THEMES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Pointer_Themes)
 SETTINGS_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Settings_Page)
 PRESENTATION_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Presentation_Page)
 PLAN_VALUES_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Plan_Values_Page)
@@ -193,11 +180,9 @@ STORAGE_FILE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Storage_File)
 MODULE_TABLES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Module_Tables)
 DEBUG_IMAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Debug_Image)
 DISK_PROCESS_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Disk_Process_Page)
-FONT_OUTLINES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Font_Outlines)
 FRESH_BYTES_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Fresh_Bytes_Page)
 START_POLICY_PAGES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Start_Policy_Pages)
 EDIT_TARGET_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Edit_Target_Page)
-SCRIPT_FONTS_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Script_Fonts)
 
 // The addresses of one range.
 Address_Range :: struct {

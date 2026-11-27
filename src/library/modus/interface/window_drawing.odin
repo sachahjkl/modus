@@ -224,12 +224,39 @@ when DRAWING_THROUGH_MODULE {
 	// The declarations name the record of the contract: the check of the
 	// declarations of an import reads the layout of a struct by its name.
 	foreign _ {
+		@(link_name = "drawing_fonts_set")
+		@(require_results)
+		module_drawing_fonts_set :: proc "c" (boot: ^system.Bytes_To_Read, scripts: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 		@(link_name = "damage_of_draw_table_20")
 		@(require_results)
 		module_damage_of_draw_table :: proc "c" (before: ^system.Table_To_Read(draw_record.Draw_Record), before_text: ^system.Bytes_To_Read, now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, result: ^[]Module_Rectangle, error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
 		@(link_name = "execute_draw_table_in_rectangles_20")
 		@(require_results)
 		module_execute_draw_table_in_rectangles :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, picture_memory: ^system.Bytes_To_Read, pixels: ^system.Bytes_To_Change, canvas: ^Module_Canvas_Shape, rectangles: ^system.Table_To_Read(Module_Rectangle), error: ^errors.Error_Record) -> (call_outcome.Call_Outcome, i64) ---
+	}
+
+	// Tracks the last font slice pointers handed to the drawing module so
+	// sync_drawing_module_fonts makes one direct call once fonts are mapped.
+	@(private = "file")
+	module_fonts_boot_ptr: rawptr
+	@(private = "file")
+	module_fonts_scripts_ptr: rawptr
+
+	@(private = "file")
+	sync_drawing_module_fonts :: proc "contextless" () {
+		boot_bytes := display.mapped_font_outlines_bytes()
+		scripts_bytes := display.mapped_script_fonts_bytes()
+		boot_ptr := rawptr(raw_data(boot_bytes))
+		scripts_ptr := rawptr(raw_data(scripts_bytes))
+		if boot_ptr == module_fonts_boot_ptr && scripts_ptr == module_fonts_scripts_ptr {
+			return
+		}
+		module_fonts_boot_ptr = boot_ptr
+		module_fonts_scripts_ptr = scripts_ptr
+		boot_arg := system.Bytes_To_Read{bytes = raw_data(boot_bytes), count = u64(len(boot_bytes)), capacity = u64(len(boot_bytes))}
+		scripts_arg := system.Bytes_To_Read{bytes = raw_data(scripts_bytes), count = u64(len(scripts_bytes)), capacity = u64(len(scripts_bytes))}
+		ignored: errors.Error_Record
+		_, _ = module_drawing_fonts_set(&boot_arg, &scripts_arg, &ignored)
 	}
 
 	// records_to_read gives the table place of the records first ..< first
@@ -278,6 +305,7 @@ when DRAWING_THROUGH_MODULE {
 	// is painted with background before its records. It gives false when
 	// the module refused the call: error has the record.
 	draw_part_through_module :: proc "contextless" (table: ^Draw_Table, first, count: int, picture_memory: []graphics.Color, canvas: graphics.Canvas, rectangles: []Rectangle, fill_background: bool, background: graphics.Color, error: ^errors.Error_Record) -> bool {
+		sync_drawing_module_fonts()
 		records, text_bytes := records_to_read(table, first, count), text_to_read(table)
 		memory_size := u64(len(picture_memory)) * size_of(graphics.Color)
 		memory := system.Bytes_To_Read{bytes = ([^]u8)(raw_data(picture_memory)), count = memory_size, capacity = memory_size}

@@ -167,9 +167,6 @@ Start_Policy_Absent :: struct {}
 @(log_fact = "root: the machine parts page holds no part")
 Machine_Parts_None :: struct {}
 
-@(log_fact = "root: the boot image has no valid font outlines: the text of the system is Spleen 8x16")
-Font_Outlines_Absent :: struct {}
-
 @(log_fact = "root: no TPM service: the system is not measured into a TPM, so no key is sealed to its measure")
 Tpm_Service_Absent_Unmeasured :: struct {}
 

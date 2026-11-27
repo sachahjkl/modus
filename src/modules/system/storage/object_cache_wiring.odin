@@ -5,10 +5,12 @@ package storage_service
 
 import "base:intrinsics"
 import object_cache "internal:storage/object_cache"
+import "internal:storage/service_state"
 import "modus:contract/blake3"
 import info "modus:contract/boot_info"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
+import "modus:contract/font_outlines"
 import "modus:contract/image_tree"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
@@ -71,6 +73,16 @@ storage_image: []u8
 storage_image_tree: []u8
 storage_image_tree_header: image_tree.Header
 storage_image_file_check: info.File_Check = .Root_Service_At_Load
+
+// Verified read-only public memory object published by the root service via
+// Service_Command.Publish_Public_Object (for example the verified script font
+// set served at "fonts/script_fonts" under the "fonts" tree grant).
+Published_Public_Object :: struct {
+	handle: system.Handle,
+	size:   u64,
+	hash:   blake3.Hash,
+}
+published_script_fonts: Published_Public_Object
 
 // Per-resource lazy BLAKE3 verification flags for File_Check.Root_Service_At_Load.
 // Format property: bounded by system.IMAGE_CHECK_CAPACITY.
@@ -222,6 +234,67 @@ storage_tree_grant :: proc "contextless" (svc: ^system.Service, ring_memory: sys
 	grants.path_lens[slot] = path_len
 	grants.nodes[slot] = node_index
 	grants.count += 1
+}
+
+// storage_public_object_publish handles Service_Command.Publish_Public_Object
+// from root, verifying that memory arrived through the service ring with
+// Give+Read rights only (never Write or Execute) and covers the declared size
+// before installing it as the published object for its kind.
+storage_public_object_publish :: proc "contextless" (svc: ^system.Service, memory: system.Handle, values: ^[7]u64) {
+	if memory == 0 {
+		return
+	}
+	handle_kind, rights, through := system.handle_state(memory, svc.names_memory)
+	pages: u64
+	pages_ok := false
+	if through && handle_kind == .Memory {
+		size_status: call_outcome.Call_Outcome
+		pages, size_status = system.memory_size(memory)
+		pages_ok = size_status == .Succeeded
+	}
+	decision := service_state.public_object_publish_decide(
+		u64(memory),
+		u64(published_script_fonts.handle),
+		through,
+		handle_kind,
+		rights,
+		values[6],
+		values[1],
+		pages_ok,
+		pages,
+		object_cache.PAGE_SIZE,
+	)
+	switch decision.action {
+	case .Ignore:
+		return
+	case .Close_Incoming:
+		system.close(memory)
+		return
+	case .Install:
+		hash := transmute(blake3.Hash)[4]u64{values[2], values[3], values[4], values[5]}
+		switch decision.kind {
+		case .None:
+			if memory != published_script_fonts.handle {
+				system.close(memory)
+			}
+		case .Script_Fonts:
+			if decision.close_existing {
+				system.close(published_script_fonts.handle)
+			}
+			published_script_fonts = {handle = memory, size = values[1], hash = hash}
+		}
+	}
+}
+
+// caller_has_tree_grant reports whether grants includes tree_name, and its index.
+@(private = "file")
+caller_has_tree_grant :: proc "contextless" (grants: []image_tree.Subtree_Grant, tree_name: string) -> (grant_index: int, granted: bool) {
+	for g, idx in grants {
+		if g.tree_name == tree_name {
+			return idx, true
+		}
+	}
+	return -1, false
 }
 
 // connection_tree_grants_clear removes all read-only image-tree subtree grants
@@ -797,8 +870,11 @@ map_object :: proc "c" (
 
 	image_matched := image_problem == .None || image_problem == .Hash_Mismatch
 	image_total := image_problem == .Ambiguous ? image_match_count : (image_matched ? 1 : 0)
+	// Verified script font set published by root under the "fonts" tree grant.
+	pub_grant_index, has_fonts_grant := caller_has_tree_grant(grants, "fonts")
+	pub_matched := has_fonts_grant && req.path == font_outlines.SCRIPT_FONTS_OBJECT_PATH && published_script_fonts.handle != 0
 	priv_matched := priv_status == .Found
-	total_matches := image_total + (priv_matched ? 1 : 0)
+	total_matches := image_total + (pub_matched ? 1 : 0) + (priv_matched ? 1 : 0)
 
 	if total_matches == 0 {
 		if (len(grants) > 0 && !readiness.image_tree_ready) || (has_store && priv_status == .Unavailable) {
@@ -808,8 +884,9 @@ map_object :: proc "c" (
 	}
 
 	if total_matches > 1 {
-		// Combine image-tree matches and any private-store match into the
-		// caller-supplied ambiguity table without choosing on the caller's behalf.
+		// Combine image-tree matches, any published public match, and any
+		// private-store match into the caller-supplied ambiguity table without
+		// choosing on the caller's behalf.
 		entry_count := 0
 		if image_problem == .Ambiguous {
 			img_records := min(amb_cap, image_match_count)
@@ -832,6 +909,16 @@ map_object :: proc "c" (
 				path        = req.path,
 				size        = image_resolved.size,
 				hash        = image_resolved.hash,
+			}
+			entry_count += 1
+		}
+		if pub_matched && entry_count < amb_cap {
+			ambiguity_entries_scratch[entry_count] = {
+				grant_index = u32(max(pub_grant_index, 0)),
+				tree_name   = "fonts",
+				path        = req.path,
+				size        = published_script_fonts.size,
+				hash        = published_script_fonts.hash,
 			}
 			entry_count += 1
 		}
@@ -873,7 +960,30 @@ map_object :: proc "c" (
 		return map_object_fail(answer, error, {result = .Ambiguous, ambiguity_total = u32(total_matches)}, .Objects, 1, i64(total_matches))
 	}
 
-	// Single exact match: either image tree or private disk store.
+	// Single exact match: published public object, image tree, or private store.
+	if pub_matched {
+		if req.has_expected_hash && published_script_fonts.hash != req.expected_hash {
+			return map_object_fail(answer, error, {
+				result = .Hash_Mismatch,
+				size   = published_script_fonts.size,
+				hash   = published_script_fonts.hash,
+			}, .Objects, 1)
+		}
+		ans_rem := append_remaining(answer)
+		if ans_rem < storage_object.MAP_OBJECT_ANSWER_SIZE {
+			return refuse(error, .Argument_Refused, .Too_Small, .Bytes, 2, i64(ans_rem), storage_object.MAP_OBJECT_ANSWER_SIZE), 0
+		}
+		given, give_status := system.give(caller.connection.ring_memory, published_script_fonts.handle, {.Read})
+		if give_status != .Succeeded || given == 0 {
+			return map_object_fail(answer, error, {result = .Quota_Full}, .Pages, 1)
+		}
+		map_object_answer_write(answer, {
+			result = .Mapped,
+			size   = published_script_fonts.size,
+			hash   = published_script_fonts.hash,
+		})
+		return .Succeeded, i64(given)
+	}
 	if image_matched {
 		if image_problem == .Hash_Mismatch {
 			return map_object_fail(answer, error, {
@@ -1064,7 +1174,13 @@ unpin_object :: proc "c" (request: ^system.Bytes_To_Read, error: ^errors.Error_R
 list_pins :: proc "c" (answer: ^system.Bytes_To_Append, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	caller: Caller
 	caller_of(&caller)
-	if caller.connection == nil || share_of(caller.connection) != nil || (caller.store.limit == 0 && !caller.acts_for_principal) {
+	if !service_state.caller_may_list_pins(
+		caller.connection != nil,
+		caller.connection != nil && share_of(caller.connection) != nil,
+		caller.acts_for_principal,
+		caller.store.name,
+		caller.store.limit,
+	) {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
 	ans_rem := min(append_remaining(answer), len(list_pins_wire_scratch))

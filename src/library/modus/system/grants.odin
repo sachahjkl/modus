@@ -9,8 +9,8 @@ import "modus:contract/root_ring"
 import "modus:contract/start_grant"
 
 // The context slots of a process that the root service starts: the one
-// table of the handles 0 to 13 and of the values 0 to 8 and 13, whose roles
-// the root service and its process agree on (docs/MODULE_CONTRACT.md,
+// table of the handles 0 to 13 and of the values 0 to 8, 13, 18 and 19, whose
+// roles the root service and its process agree on (docs/MODULE_CONTRACT.md,
 // "6. The context"). The handles from 14 and the other values have the
 // roles that src/library/modus/contract/operation fixes for each process.
 //
@@ -144,10 +144,16 @@ GRANT_VALUE_FILE_ADDRESS :: 1 // A service: where the file of the process is, re
 // The value 2, for a service: the size in bytes of its file at the address
 // of the value 1.
 GRANT_VALUE_FILE_SIZE :: 2
-// The value 18 of a process with the grant Store or Read_Only_Trees: the size
-// in bytes of the file of the storage service, which its client reads (package
-// storage; matches core:sys/modus CONTEXT_VALUE_STORAGE_FILE_SIZE).
+// The value 18 of a process with a storage connection: the size in bytes of
+// the file of the storage service, which its client reads (package storage;
+// matches core:sys/modus CONTEXT_VALUE_STORAGE_FILE_SIZE).
 GRANT_VALUE_STORAGE_FILE_SIZE :: 18
+// The value 19 of a process whose storage connection was opened solely for
+// startup font mapping: 1 means display.fallback_load closes the connection
+// immediately after mapping fonts, and storage.open refuses to treat it as a
+// private store. 0 means the process owns a store or explicit read-only trees
+// and display.fallback_load detaches without closing.
+GRANT_VALUE_STORAGE_FONTS_ONLY :: 19
 // The value 4 of a per-principal service (`module_files`, `collector`): the
 // principal of its store (modus:disk_process; modus:contract/wide_grants).
 GRANT_VALUE_SERVICE_PRINCIPAL :: 4

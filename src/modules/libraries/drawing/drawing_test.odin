@@ -1524,3 +1524,97 @@ element_pushes_in_drawing_module_follow_order_and_draw_nothing :: proc(t: ^testi
 	result := damage_buf[:]
 	testing.expect_value(t, answer_of(damage_of_draw_table_20(&table_a, &text, &table_b, &text, &result, nil)), Answer{.Succeeded, 0})
 }
+
+// drawing_fonts_set border refusals and clean reload/clear transitions:
+// nil descriptors, non-empty count with nil bytes, counts over TABLE_LIMIT,
+// and damaged outlines are refused without mutating process_text or
+// text_rendering.state; valid -> empty -> valid reloads cleanly.
+@(test)
+drawing_fonts_set_border_and_reload :: proc(t: ^testing.T) {
+	sync.mutex_lock(&draw_lock)
+	defer sync.mutex_unlock(&draw_lock)
+
+	saved_process_text := process_text
+	saved_text_state := text_rendering.state
+	saved_cell_face := graphics.text_state.cell_face
+	saved_bold_face := graphics.text_state.bold_face
+	defer {
+		process_text = saved_process_text
+		text_rendering.state = saved_text_state
+		graphics.text_faces_use(saved_cell_face, saved_bold_face)
+	}
+
+	fonts := [4]font_outlines.Font_Input {
+		{"b612", #load("../../../../resources/fonts/b612.ttf")},
+		{"b612_bold", #load("../../../../resources/fonts/b612_bold.ttf")},
+		{"paper_mono", #load("../../../../resources/fonts/paper_mono.ttf")},
+		{"paper_mono_semibold", #load("../../../../resources/fonts/paper_mono_semibold.ttf")},
+	}
+	size := font_outlines.resource_size(fonts[:])
+	words := make([]u64, (size + 7) / 8, runtime.heap_allocator())
+	defer delete(words, runtime.heap_allocator())
+	valid_bytes := ([^]u8)(raw_data(words))[:size]
+	_, written := font_outlines.resource_write(fonts[:], valid_bytes)
+	testing.expect(t, written)
+
+	valid_arg := system.Bytes_To_Read{bytes = raw_data(valid_bytes), count = u64(len(valid_bytes)), capacity = u64(len(valid_bytes))}
+	empty_arg := system.Bytes_To_Read{}
+	refused: errors.Error_Record
+
+	// Start from empty state, then load valid outlines.
+	process_text = {}
+	text_rendering.state = {}
+	testing.expect_value(t, answer_of(drawing_fonts_set(&valid_arg, &empty_arg, &refused)), Answer{.Succeeded, 0})
+	testing.expect(t, process_text.loaded && process_text.interface_font_given && text_rendering.state.opened)
+
+	// Refusals: nil pointers, non-empty count with nil bytes, Too_Long, invalid outlines.
+	// None of them may mutate process_text or text_rendering.state.
+	testing.expect_value(t, answer_of(drawing_fonts_set(nil, &empty_arg, &refused)), Answer{.Argument_Refused, 0})
+	testing.expect_value(t, refused.kind, i64(errors.Kind.Bad_Address))
+	testing.expect_value(t, refused.argument, 1)
+
+	testing.expect_value(t, answer_of(drawing_fonts_set(&empty_arg, nil, &refused)), Answer{.Argument_Refused, 0})
+	testing.expect_value(t, refused.kind, i64(errors.Kind.Bad_Address))
+	testing.expect_value(t, refused.argument, 2)
+
+	null_bytes := system.Bytes_To_Read{bytes = nil, count = 16}
+	testing.expect_value(t, answer_of(drawing_fonts_set(&null_bytes, &empty_arg, &refused)), Answer{.Argument_Refused, 0})
+	testing.expect_value(t, refused.kind, i64(errors.Kind.Bad_Address))
+	testing.expect_value(t, refused.argument, 1)
+
+	testing.expect_value(t, answer_of(drawing_fonts_set(&empty_arg, &null_bytes, &refused)), Answer{.Argument_Refused, 0})
+	testing.expect_value(t, refused.kind, i64(errors.Kind.Bad_Address))
+	testing.expect_value(t, refused.argument, 2)
+
+	too_long := system.Bytes_To_Read{bytes = raw_data(valid_bytes), count = TABLE_LIMIT + 1}
+	testing.expect_value(t, answer_of(drawing_fonts_set(&too_long, &empty_arg, &refused)), Answer{.Argument_Refused, 0})
+	testing.expect_value(t, refused.kind, i64(errors.Kind.Too_Long))
+	testing.expect_value(t, refused.argument, 1)
+
+	testing.expect_value(t, answer_of(drawing_fonts_set(&empty_arg, &too_long, &refused)), Answer{.Argument_Refused, 0})
+	testing.expect_value(t, refused.kind, i64(errors.Kind.Too_Long))
+	testing.expect_value(t, refused.argument, 2)
+
+	bad_outlines := [16]u8{0 = 1, 1 = 2, 2 = 3, 3 = 4}
+	bad_arg := system.Bytes_To_Read{bytes = &bad_outlines[0], count = len(bad_outlines), capacity = len(bad_outlines)}
+	testing.expect_value(t, answer_of(drawing_fonts_set(&bad_arg, &empty_arg, &refused)), Answer{.Argument_Refused, 0})
+	testing.expect_value(t, refused.kind, i64(errors.Kind.Bad_Value))
+	testing.expect_value(t, refused.argument, 1)
+
+	testing.expect_value(t, answer_of(drawing_fonts_set(&valid_arg, &bad_arg, &refused)), Answer{.Argument_Refused, 0})
+	testing.expect_value(t, refused.kind, i64(errors.Kind.Bad_Value))
+	testing.expect_value(t, refused.argument, 2)
+
+	// Valid state stayed intact across all refusals.
+	testing.expect(t, process_text.loaded && process_text.interface_font_given && text_rendering.state.opened)
+	testing.expect_value(t, len(process_text.boot_bytes), len(valid_bytes))
+
+	// Re-setting to empty clears text_rendering.state and interface_font_given.
+	testing.expect_value(t, answer_of(drawing_fonts_set(&empty_arg, &empty_arg, &refused)), Answer{.Succeeded, 0})
+	testing.expect(t, process_text.loaded && !process_text.interface_font_given && !text_rendering.state.opened)
+	testing.expect_value(t, len(process_text.boot_bytes), 0)
+
+	// Re-setting back to valid reopens outlines cleanly.
+	testing.expect_value(t, answer_of(drawing_fonts_set(&valid_arg, &empty_arg, &refused)), Answer{.Succeeded, 0})
+	testing.expect(t, process_text.loaded && process_text.interface_font_given && text_rendering.state.opened)
+}

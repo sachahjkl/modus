@@ -61,6 +61,7 @@ service_caller :: proc "contextless" () -> ^Connection {
 // serve it in a loop (the example above).
 Service :: struct {
 	file:        []u8, // The file of this process: the descriptions of its exports.
+	names_memory: Handle, // The memory handle of the service ring (GRANT_SERVICE), kept for Handle_State checks.
 	names:       ring.Ring, // The service ring.
 	connections: [isolated.SERVICE_CONNECTION_CAPACITY]Connection, // The callers; a free place has no ring.
 	connected:   int, // The callers connected now.
@@ -81,6 +82,9 @@ Service :: struct {
 	// tree_grant, when set, attaches one read-only image-tree subtree grant
 	// from the root service to a connection (Storage only).
 	tree_grant: proc "contextless" (service: ^Service, ring_memory: Handle, values: ^[7]u64),
+	// public_object_publish, when set, receives a verified read-only memory
+	// handle from the root service to serve under a public path (Storage only).
+	public_object_publish: proc "contextless" (service: ^Service, memory: Handle, values: ^[7]u64),
 	// Computed: at most SERVICE_CONNECTION_CAPACITY connections can close via
 	// CALL_CLOSE before root drains Client_Closed notifications from
 	// names.completions. Queued here so Client_Closed is never dropped and one
@@ -113,6 +117,7 @@ service_open :: proc "contextless" (ctx: ^Context) -> (service: Service, ok: boo
 		ring_close(&names)
 		return {}, false
 	}
+	service.names_memory = memory
 	service.names = names
 	return service, true
 }
@@ -239,6 +244,17 @@ service_control_run :: proc "contextless" (service: ^Service) {
 			if matched {
 				service.tree_grant(service, ring_memory, &command.values)
 			}
+		case .Publish_Public_Object:
+			if service.public_object_publish == nil {
+				log(.Warning, "service: the root service sent a public object to a service that takes none: it is refused")
+				if ring_memory != 0 {
+					if _, _, through := handle_state(ring_memory, service.names_memory); through {
+						close(ring_memory)
+					}
+				}
+				continue
+			}
+			service.public_object_publish(service, ring_memory, &command.values)
 		case .Disconnect:
 			for &connection in service.connections {
 				if connection.calls.head != nil && connection.ring_memory == ring_memory && (command.tag == 0 || connection.serial == command.tag) {

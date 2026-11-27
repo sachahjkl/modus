@@ -286,10 +286,6 @@ the_start_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 		expect(t, render(t, file, "Debug_Stop_Report_Given", {{"principal", count}, {"debugger", process}, {"target", other}, {"caller", third}}), line_of_before("root: gave ", sentence.Module_Name{process}, " the kept stop report of ", sentence.Module_Name{other}, " and a connection that reads only to the store ", STORE_NAME, " of principal ", count, ", for ", sentence.Module_Name{third}))
 		expect(t, render(t, file, "Store_Name_Too_Long", {{"principal", count}, {"caller", process}}), line_of_before("root: the name of the store of ", sentence.Module_Name{process}, " for principal ", count, " has more than 31 bytes: no connection"))
 		expect(t, render(t, file, "Import_Scan_Started", {{"imports", count}, {"loaded_process", process}}), line_of_before("root: ", sentence.Module_Name{process}, " imports ", count, " modules that the boot image does not hold: the import scan reads the store ", STORE_NAME, " to find them by the hash of their bytes"))
-		font_problems := font_outlines.problem_sentences
-		for problem in font_problems {
-			expect(t, render(t, file, "Font_Outlines_Refused", {{"problem_value", count}, {"problem", problem}}), line_of_before("root: the font outlines are refused: ", problem, ", value ", count, ": they are not given"))
-		}
 		expect(t, render(t, file, "Log_Scope_Refused", {{"slot", count}, {"serial", max(u64) - count}, {"caller", process}}), line_of_before("root: the process slot ", count, " or the process serial ", max(u64) - count, " of ", sentence.Module_Name{process}, " does not fit the grant of the log service: it reads no record"))
 		expect(t, render(t, file, "Machine_Stop_Codes_Refused", {{"first_code", count}, {"second_code", max(u64)}, {"code_limit", u64(op.MACHINE_STOP_CODE_MOST)}}), line_of_before("root: Machine_Stop refused the codes ", count, " and ", max(u64), " with Argument_Refused and the record Bad_Value of the code, limit ", u64(op.MACHINE_STOP_CODE_MOST), ", and the machine runs on: as it must"))
 		expect(t, render(t, file, "Root_Ready", {{"image_modules", count}}), line_of_before("root: ok", ", ", count, " modules in the boot image"))
@@ -543,7 +539,6 @@ the_facts_with_no_field_of_the_root_service_write_the_lines_of_before :: proc(t:
 		{"Start_Policy_Choice_Absent", "root: principal 0 has chosen no start policy: the default start policy runs at the next start"},
 		{"Start_Policy_Choice_Ended", "root: principal 0 ended its choice of a start policy: the default start policy runs at the next start of the machine"},
 		{"Start_Policy_Absent", "root: the start policy is absent from the boot image: the rescue start policy starts"},
-		{"Font_Outlines_Absent", "root: the boot image has no valid font outlines: the text of the system is Spleen 8x16"},
 		{"Tpm_Service_Absent_Unmeasured", "root: no TPM service: the system is not measured into a TPM, so no key is sealed to its measure"},
 		{"Tpm_Service_Absent_Table_Full", "root: no TPM service: the table of the processes is full"},
 		{"Tpm_Service_Stopped", "root: the TPM service stopped: no key is sealed or unsealed until the machine starts again"},

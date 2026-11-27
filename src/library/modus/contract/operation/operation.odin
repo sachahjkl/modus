@@ -4059,8 +4059,10 @@ seed_strength_of_word :: proc "contextless" (word: u64) -> (strength: Seed_Stren
 // other start of `settings` has 0 and opens its window. No other process
 // reads this value.
 CONTEXT_VALUE_SETTINGS_PASS :: 17
-// The values 18 and 19 have no role: pointer themes reach the compositor
-// through storage.map_object instead of numbered context values.
+// The values 18 and 19 carry the storage module file size and the fonts-only
+// storage connection flag for processes started by root
+// (src/library/modus/system/grants.odin, GRANT_VALUE_STORAGE_FILE_SIZE and
+// GRANT_VALUE_STORAGE_FONTS_ONLY).
 // The value 20: a set of bits, bit n for the member n of the fixed ranges
 // (modus:contract/fixed_addresses, Fixed_Range): the ranges that the starter
 // mapped for this process. A set bit is the statement of the starter that

@@ -249,7 +249,6 @@ import "modus:system"
 
 #assert(len(modus.Fixed_Range) == len(fixed_addresses.Fixed_Range))
 #assert(u8(modus.Fixed_Range.Module_Files) == u8(fixed_addresses.Fixed_Range.Module_Files))
-#assert(u8(modus.Fixed_Range.Pointer_Themes) == u8(fixed_addresses.Fixed_Range.Pointer_Themes))
 #assert(u8(modus.Fixed_Range.Settings_Page) == u8(fixed_addresses.Fixed_Range.Settings_Page))
 #assert(u8(modus.Fixed_Range.Presentation_Page) == u8(fixed_addresses.Fixed_Range.Presentation_Page))
 #assert(u8(modus.Fixed_Range.Plan_Values_Page) == u8(fixed_addresses.Fixed_Range.Plan_Values_Page))
@@ -258,11 +257,9 @@ import "modus:system"
 #assert(u8(modus.Fixed_Range.Module_Tables) == u8(fixed_addresses.Fixed_Range.Module_Tables))
 #assert(u8(modus.Fixed_Range.Debug_Image) == u8(fixed_addresses.Fixed_Range.Debug_Image))
 #assert(u8(modus.Fixed_Range.Disk_Process_Page) == u8(fixed_addresses.Fixed_Range.Disk_Process_Page))
-#assert(u8(modus.Fixed_Range.Font_Outlines) == u8(fixed_addresses.Fixed_Range.Font_Outlines))
 #assert(u8(modus.Fixed_Range.Fresh_Bytes_Page) == u8(fixed_addresses.Fixed_Range.Fresh_Bytes_Page))
 #assert(u8(modus.Fixed_Range.Start_Policy_Pages) == u8(fixed_addresses.Fixed_Range.Start_Policy_Pages))
 #assert(u8(modus.Fixed_Range.Edit_Target_Page) == u8(fixed_addresses.Fixed_Range.Edit_Target_Page))
-#assert(u8(modus.Fixed_Range.Script_Fonts) == u8(fixed_addresses.Fixed_Range.Script_Fonts))
 
 // Struct sizes and field offsets.
 #assert(size_of(modus.Handle) == size_of(op.Handle))

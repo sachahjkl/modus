@@ -1,11 +1,18 @@
 #+build !freestanding
 package interface_module
 
+import "base:intrinsics"
+import "base:runtime"
+import "core:sync"
 import "core:testing"
+import "core:thread"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
+import "modus:contract/font_outlines"
+import "modus:display"
 import "modus:interface"
 import "modus:system"
+import "modus:text_rendering"
 
 // The pair of an export, as one value that a test compares.
 @(private = "file")
@@ -85,4 +92,90 @@ counts_of_the_full_answer_across_calls :: proc(t: ^testing.T) {
 	testing.expect_value(t, string(text_memory[:4]), "abcd")
 	testing.expect_value(t, text_memory[4], 0xA5)
 	testing.expect_value(t, memory[3].element, 0xA5A5_A5A5)
+}
+
+@(private = "file")
+test_places_ready: bool
+@(private = "file")
+test_places_boot: []u8
+@(private = "file")
+test_places_calls: u32
+
+@(private = "file")
+test_places_stub :: proc "contextless" () -> (boot_bytes, scripts_bytes: []u8, ok: bool) {
+	intrinsics.atomic_add_explicit(&test_places_calls, 1, .Acq_Rel)
+	if !intrinsics.atomic_load_explicit(&test_places_ready, .Acquire) {
+		return nil, nil, false
+	}
+	return test_places_boot, nil, true
+}
+
+// Before the host process calls process_fonts_open, interface_font_resolve
+// returns nil without latching None permanently; once places become available,
+// concurrent callers serialize via the Opening CAS so outlines load once.
+@(test)
+interface_font_unlatched_retry_and_concurrency :: proc(t: ^testing.T) {
+	fonts := [4]font_outlines.Font_Input {
+		{"b612", #load("../../../../resources/fonts/b612.ttf")},
+		{"b612_bold", #load("../../../../resources/fonts/b612_bold.ttf")},
+		{"paper_mono", #load("../../../../resources/fonts/paper_mono.ttf")},
+		{"paper_mono_semibold", #load("../../../../resources/fonts/paper_mono_semibold.ttf")},
+	}
+	size := font_outlines.resource_size(fonts[:])
+	words := make([]u64, (size + 7) / 8, runtime.heap_allocator())
+	defer delete(words, runtime.heap_allocator())
+	outlines_bytes := ([^]u8)(raw_data(words))[:size]
+	_, written := font_outlines.resource_write(fonts[:], outlines_bytes)
+	testing.expect(t, written)
+
+	// Reset module font state before and after the test.
+	defer {
+		intrinsics.atomic_store_explicit(&module_interface_font_state, .Unchecked, .Release)
+		module_interface_font = {}
+		text_rendering.state = {}
+		test_places_boot = nil
+		intrinsics.atomic_store_explicit(&test_places_ready, false, .Release)
+	}
+	intrinsics.atomic_store_explicit(&module_interface_font_state, .Unchecked, .Seq_Cst)
+	module_interface_font = {}
+	text_rendering.state = {}
+	test_places_boot = outlines_bytes
+	intrinsics.atomic_store_explicit(&test_places_ready, false, .Seq_Cst)
+	intrinsics.atomic_store_explicit(&test_places_calls, 0, .Seq_Cst)
+
+	// Not ready yet: returns nil and stays Unchecked (never latches None).
+	testing.expect(t, interface_font_resolve(test_places_stub) == nil)
+	testing.expect_value(t, intrinsics.atomic_load_explicit(&module_interface_font_state, .Seq_Cst), Interface_Font_State.Unchecked)
+	testing.expect_value(t, intrinsics.atomic_load_explicit(&test_places_calls, .Seq_Cst), u32(1))
+
+	// Now make places available and race 4 threads against interface_font_resolve.
+	intrinsics.atomic_store_explicit(&test_places_ready, true, .Seq_Cst)
+	intrinsics.atomic_store_explicit(&test_places_calls, 0, .Seq_Cst)
+
+	Worker :: struct {
+		barrier: ^sync.Barrier,
+		result:  ^display.Interface_Font,
+	}
+	WORKERS :: 4
+	barrier: sync.Barrier
+	sync.barrier_init(&barrier, WORKERS)
+	workers: [WORKERS]Worker
+	threads: [WORKERS]^thread.Thread
+	for i in 0 ..< WORKERS {
+		workers[i] = {barrier = &barrier}
+		threads[i] = thread.create_and_start_with_data(&workers[i], proc(data: rawptr) {
+			w := (^Worker)(data)
+			sync.barrier_wait(w.barrier)
+			w.result = interface_font_resolve(test_places_stub)
+		})
+	}
+	for th in threads {
+		thread.join(th)
+		thread.destroy(th)
+	}
+	testing.expect_value(t, intrinsics.atomic_load_explicit(&module_interface_font_state, .Acquire), Interface_Font_State.Given)
+	testing.expect_value(t, intrinsics.atomic_load_explicit(&test_places_calls, .Acquire), u32(1))
+	for w in workers {
+		testing.expect(t, w.result == &module_interface_font, "every racing thread receives the opened interface font")
+	}
 }

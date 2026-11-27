@@ -31,6 +31,7 @@ import "modus:contract/isolated"
 import module "modus:contract/module"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
+import "internal:storage/service_state"
 import "internal:storage/share_quota"
 import "internal:storage/storage_retention"
 import format "modus:contract/store"
@@ -38,7 +39,6 @@ import answers "modus:storage"
 import "base:intrinsics"
 import block_tree "internal:storage/storage_object"
 import tree "internal:storage/storage_tree"
-import "modus:principals"
 import "modus:random"
 import "modus:system"
 
@@ -278,16 +278,15 @@ place_path :: proc "contextless" (caller: ^Caller, place: i64, path: ^Path, erro
 // no store: its root is a tree that its maker chose, and a place on the
 // root of its own store would reach, and change, the whole store.
 may_name_store :: proc "contextless" (caller: ^Caller, store_name: string) -> bool {
-	if caller.connection == nil || share_of(caller.connection) != nil {
-		return false
-	}
-	if store_name == caller.store.name {
-		return true
-	}
-	if !caller.acts_for_principal {
-		return false
-	}
-	return principals.store_name_principal(store_name) == caller.principal
+	return service_state.caller_may_name_store(
+		caller.connection != nil,
+		caller.connection != nil && share_of(caller.connection) != nil,
+		caller.acts_for_principal,
+		caller.principal,
+		caller.store.name,
+		caller.store.limit,
+		store_name,
+	)
 }
 
 // connection_ended frees what the service keeps for a connection that
@@ -875,7 +874,13 @@ usage :: proc "c" (result: ^[]Usage) -> i64 {
 	caller: Caller
 	caller_of(&caller)
 	row: Usage
-	if caller.connection != nil && !disk_opened {
+	if !service_state.caller_may_read_usage(caller.connection != nil, caller.store.name, caller.store.limit) {
+		if len(result) > 0 {
+			result[0] = row
+		}
+		return 1
+	}
+	if !disk_opened {
 		// A disk that went silent before the open: no count is known.
 		row.limit = i64(share_quota.effective_usage_limit(caller.store.share_limit, caller.store.limit))
 		row.objects, row.trees, row.versions, row.blocks = USAGE_NOT_COUNTED, USAGE_NOT_COUNTED, USAGE_NOT_COUNTED, USAGE_NOT_COUNTED
@@ -1004,7 +1009,7 @@ open_store :: proc "c" (store: ^string, error: ^errors.Error_Record) -> (outcome
 	}
 	caller: Caller
 	caller_of(&caller)
-	if caller.connection == nil {
+	if caller.connection == nil || (!caller.acts_for_principal && !service_state.caller_has_own_store(caller.store.name, caller.store.limit)) {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Store)
 	}
 	// The name is copied one time: the caller can change the call region.
@@ -1420,6 +1425,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	service.principal_keys = storage_principal_keys // principal_keys.odin
 	service.principal_reclaim = storage_principal_reclaim // reclaim.odin
 	service.tree_grant = storage_tree_grant // object_cache_wiring.odin
+	service.public_object_publish = storage_public_object_publish // object_cache_wiring.odin
 	// Initialize the read-only object cache, durable pin table, and boot-image
 	// tree manifest BEFORE opening any data disk so image-tree objects serve
 	// immediately even on diskless machines or with an unusable disk.

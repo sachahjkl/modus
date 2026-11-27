@@ -5,7 +5,6 @@ import "core:net"
 import "core:os"
 import "core:strings"
 import "modus:contract/blake3"
-import "modus:contract/fixed_addresses"
 import "modus:contract/font_outlines"
 import ilp "modus:contract/interface_language_pack"
 import "modus:disk_process"
@@ -456,15 +455,11 @@ script_fonts_planned_run :: proc(part: ^Test_Part_Run, image_digits: string, set
 		}
 		append(&read, ..refused[:])
 	} else {
-		writer_fault := script_fonts_owned(&owned, " address %016x, in module ", fixed_addresses.SCRIPT_FONTS_ADDRESS)
 		mapped := [?]Step {
 			{kind = .Wait, text = script_fonts_owned(&owned, "root: the script font set %s (", digits), fails_on = "root: the script font set was not read"},
 			{kind = .Type, text = "start(\"script_fonts_writer\")"},
-			{kind = .Wait, text = script_fonts_owned(&owned, "script_fonts_writer: writes the byte at %016x, the first of the script font set", fixed_addresses.SCRIPT_FONTS_ADDRESS), fails_on = "script_fonts_writer: WRONG"},
-			// The line of the kernel names the process, then the address of
-			// the fault: the next wait searches the same line.
-			{kind = .Wait, text = "kernel: process script_fonts_writer stopped: page fault vector 14 ", any_order = true, fails_on = "script_fonts_writer: WRONG"},
-			{kind = .Wait, text = writer_fault, fails_on = "script_fonts_writer: WRONG"},
+			{kind = .Wait, text = "script_fonts_writer: writes the byte at ", fails_on = "script_fonts_writer: WRONG"},
+			{kind = .Wait, text = "kernel: process script_fonts_writer stopped: page fault vector 14 ", fails_on = "script_fonts_writer: WRONG"},
 			{kind = .Wait, text = "root: script_fonts_writer stopped: "},
 		}
 		append(&read, ..mapped[:])

@@ -194,8 +194,6 @@ Plain expressions for frequent tasks ([`docs/PROPERTIES.md`](../../../docs/PROPE
 
 ## State
 
-In progress.
-
 Built:
 
 - Strict object path parser and validator in `modus:contract/store` (`object_path.odin`, with host tests).
@@ -210,7 +208,6 @@ Built:
 - `manual` migration: `manual` maps `manual/pages` through `storage.map_object` using `Read_Only_Trees` (`manual`) and closes its temporary storage connection while keeping `.Image` solely for module export descriptions.
 - `compositor` pointer-theme migration and removal of the root resource-mapping path: `root` attaches `pointer_themes` to the display holder's storage connection, `compositor` maps `pointer_themes/posy` and `pointer_themes/system` at startup via `storage.map_object` (zero draw-frame blocking), and numbered pointer-theme context values (`6/7`, `18/19`), `resource_mapping`, `pointer_theme_choice`, and `Resource_Given` are removed.
 - Disk-backed `Private_Principal` object mapping wired into `storage.map_object`: resolves exact `/` paths in the caller's private store (and enforces cross-tree ambiguity when both an image tree and a private store match), caches verified read-only copies keyed by `(principal_id, store_index, hash)` with dedicated internal writable wipe handles for volatile-zeroing on `Principal_Locked`, `Principal_Reclaim`, store reclamation, and non-crashing `holdings == 1` eviction.
+- `font_outlines` and `script_fonts` migration off `root`'s fixed-range delivery onto `storage.map_object`: `root` publishes verified `script_fonts` read-only (`{.Give, .Read}`) to `storage` via `Service_Command.Publish_Public_Object`, attaches the `"fonts"` read-only tree grant to graphical processes, `compositor`, `terminal`, disk processes, and font test modules (using `GRANT_VALUE_STORAGE_FONTS_ONLY` + `CALL_CLOSE` / `storage.detach` for short-lived startup font connections), `display.fallback_load` maps `fonts/font_outlines` and `fonts/script_fonts` at kernel-chosen addresses once at startup and passes the mapped slices to `text_rendering_module` (`process_fonts_open` / `process_fonts_places`) and `drawing` (`drawing_fonts_set`), and fixed-range font mapping in `root/text_settings.odin` and `root/script_fonts.odin` is removed.
 
-Left:
-
-- Migrating `font_outlines` and `script_fonts` fixed-range delivery (`root/text_settings.odin`, `root/script_fonts.odin`, `display.text_settings_open`, `drawing`, `text_rendering_module`, `interface_module`) to `storage.map_object` once the pinned Odin fork updates `core:sys/modus` `CONTEXT_VALUE_STORAGE_FILE_SIZE` off slot `3` (which currently collides with `terminal` and `randomness` context values) and root-coordinated short-lived storage disconnect exists for processes without `Root_Ring`.
+Left: none.

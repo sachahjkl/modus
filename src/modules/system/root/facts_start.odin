@@ -452,14 +452,6 @@ Network_Refused :: struct {
 	network_cause: [40]u8,
 }
 
-// The font outlines of the boot image are refused, with the sentence of
-// the problem and the value that the resource has.
-@(log_fact = "root: the font outlines are refused: {problem}, value {problem_value}: they are not given")
-Font_Outlines_Refused :: struct {
-	problem_value: u64,
-	problem:       [80]u8,
-}
-
 // The process slot or the process serial of a caller does not fit the
 // grant of the log service: it reads no record.
 @(log_fact = "root: the process slot {slot} or the process serial {serial} of {caller} does not fit the grant of the log service: it reads no record")

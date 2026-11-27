@@ -35,6 +35,7 @@ import "modus:display"
 import "modus:graphics"
 import "modus:interface"
 import "modus:system"
+import "modus:text_rendering"
 
 // A rectangle of the surface: the place of an element.
 Area :: struct {
@@ -99,41 +100,60 @@ no_state: interface.Interface_State
 @(private)
 no_input: interface.Input
 
-// The interface font of the process that runs the module, found once: in
-// a direct call the caller, whose starter maps the font outlines at their
-// fixed range; in an isolated call the call host, which has none, so its
-// elements draw in the font of the cells. The state: 0 not looked at yet,
-// 1 given, 2 none. Two threads that look at once open the same outlines
-// and write the same values.
+// Closed state machine for one-time interface font discovery in this module.
+// An Opening state serializes concurrent callers via atomic CAS so two threads
+// never race on display.outlines_room, text_rendering.state, or
+// module_interface_font. When the host process has not yet registered font
+// places, the state returns to Unchecked so a later call retries cleanly.
+@(private)
+Interface_Font_State :: enum u32 {
+	Unchecked = 0,
+	Opening   = 1,
+	Given     = 2,
+	None      = 3,
+}
+
 @(private)
 module_interface_font: display.Interface_Font
 @(private)
-module_interface_font_state: u32
+module_interface_font_state: Interface_Font_State
 
-// A context with no bit set: what a host test reads, as it has no
-// context of a process.
 @(private)
-no_context: system.Context
+interface_font_resolve :: proc "contextless" (places_fn: proc "contextless" () -> (boot_bytes, scripts_bytes: []u8, ok: bool)) -> ^display.Interface_Font {
+	for {
+		state := intrinsics.atomic_load_explicit(&module_interface_font_state, .Acquire)
+		switch state {
+		case .Given:
+			return &module_interface_font
+		case .None:
+			return nil
+		case .Opening:
+			intrinsics.cpu_relax()
+		case .Unchecked:
+			if _, won := intrinsics.atomic_compare_exchange_strong_explicit(&module_interface_font_state, .Unchecked, .Opening, .Acquire, .Acquire); won {
+				boot_bytes, scripts_bytes, ok := places_fn()
+				if !ok {
+					// Host process has not called process_fonts_open yet: stay
+					// unlatched so a subsequent call picks up the fonts once
+					// registered.
+					intrinsics.atomic_store_explicit(&module_interface_font_state, .Unchecked, .Release)
+					return nil
+				}
+				next := Interface_Font_State.None
+				if outlines_problem, _ := display.fallback_load_from_bytes(boot_bytes, scripts_bytes); outlines_problem.kind == .None && display.interface_faces_opened() {
+					module_interface_font = display.INTERFACE_FONT
+					next = .Given
+				}
+				intrinsics.atomic_store_explicit(&module_interface_font_state, next, .Release)
+				return next == .Given ? &module_interface_font : nil
+			}
+		}
+	}
+}
 
 @(private)
 interface_font_of_process :: proc "contextless" () -> ^display.Interface_Font {
-	state := intrinsics.atomic_load_explicit(&module_interface_font_state, .Acquire)
-	if state == 0 {
-		context_record := &no_context
-		when ODIN_OS == .Freestanding {
-			context_record = system.context_record()
-		}
-		// The places of a text in the interface font come from its font
-		// files: this copy of the text rendering opens the outlines that
-		// the starter of the process mapped.
-		state = 2
-		if outlines_problem, _ := display.fallback_load(context_record); outlines_problem.kind == .None && display.interface_faces_opened() {
-			module_interface_font = display.INTERFACE_FONT
-			state = 1
-		}
-		intrinsics.atomic_store_explicit(&module_interface_font_state, state, .Release)
-	}
-	return state == 1 ? &module_interface_font : nil
+	return interface_font_resolve(text_rendering.written_part_places)
 }
 
 // The most records or bytes of a table of a caller, its count included: no

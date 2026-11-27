@@ -424,7 +424,12 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 the_start_policy_has_no_window :: proc(t: ^testing.T) {
 	testing.expect_value(t, start_grant_set_handles({.Start_Policy}), bit_set[Start_Grant_Set_Handle]{.Log, .Root_Ring})
 	testing.expect(t, .Display not_in start_grant_set_handles({.Start_Policy, .Inspect}))
+	testing.expect(t, .Storage_Ring not_in start_grant_set_handles({.Start_Policy}))
+	testing.expect(t, .Storage_Ring not_in start_grant_set_handles({.Clock}))
+	testing.expect(t, .Storage_Ring not_in start_grant_set_handles({.Terminal}))
+	testing.expect(t, .Storage_Ring not_in start_grant_set_handles({.Root_Ring}))
 	testing.expect(t, .Display in start_grant_set_handles({}))
+	testing.expect(t, .Storage_Ring in start_grant_set_handles({}))
 	testing.expect(t, .Display in start_grant_set_handles({.Root_Ring}))
 	testing.expect(t, .Display not_in start_grant_set_handles({.Terminal}))
 }
