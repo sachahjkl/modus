@@ -6,6 +6,18 @@ The project has steps, not separate releases. The merge of step N on `master` is
 
 What is not in a release yet is in `changelog.d/`, one fragment for each change. `modustool ship` writes a release from the fragments, commits it, tags it and pushes it. Nobody edits this file by hand.
 
+## [0.114.0] - 2026-11-27 08:27
+
+### Added
+
+- **Per-application context menus and command palettes in edit, notes, and files.** Right-clicking inside `edit`, `notes`, or `files` now opens a compact application-specific context menu, and `Ctrl+K` or `Ctrl+Shift+P` opens a fuzzy command palette bound directly to each application's actions.
+
+### Changed
+
+- **Display-driven frame pacing and live window resize.** The compositor, terminal, and `plasma` no longer cap frames to hardcoded 16 ms or 33 ms timers; the compositor paces output by display readiness and VirtIO-GPU scanout completion, and dragging any window edge or corner resizes the window live with an enlarged grab zone (8 logical pixels outside each border, 16 pixels at each corner, and the top border outside titlebar buttons).
+- **Window titlebar menus, reusable command palette, and fixed terminal status bar.** Right-clicking a window titlebar opens a compact window action menu (Maximize/Restore, Minimize, Snap, Close), `modus:interface` now tracks right-clicks and provides a reusable `Ctrl+K` / `Ctrl+Shift+P` command palette with compact context menus, and `terminal` replaces its clipped bottom action bar with a resize-safe status bar, right-click menu, and `Ctrl+Shift+P` command palette.
+- **Rich desktop widget library, redesigned settings window, and interactive GUI showcase.** `modus:interface` now provides styled button variants (`Primary`, `Secondary`, `Ghost`, `Danger`, `Sidebar_Row`) with hover/pressed/disabled feedback, `toggle_switch`, `segmented_control`, `tab_bar`, draggable `slider`, `badge`, and drag-and-drop `reorder_list`. `settings` is redesigned with a collapsible navigation sidebar, live search filter, segmented controls, right-click menu, `Ctrl+K` command palette, and slim status footer; `interface_elements` is upgraded into a resizable multi-tab interactive GUI showcase.
+
 ## [0.113.0] - 2026-11-27 04:44
 
 ### Added
@@ -2136,6 +2148,7 @@ What is not in a release yet is in `changelog.d/`, one fragment for each change.
 - **The desktop**: the compositor with a bar, a clock, windows, focus, drag and close; it draws only the damaged rectangles. The programs `monitor`, `plasma`, `life`, `paint` and `temple`; `fault` shows that a fault stops one program only.
 - **The module format**: a module is named by the BLAKE3 hash of its content. The kernel tool converts a linked ELF image to a module, builds the boot image, and tests the machine under QEMU.
 
+[0.114.0]: https://github.com/sachahjkl/modus/releases/tag/v0.114.0
 [0.113.0]: https://github.com/sachahjkl/modus/releases/tag/v0.113.0
 [0.112.0]: https://github.com/sachahjkl/modus/releases/tag/v0.112.0
 [0.111.0]: https://github.com/sachahjkl/modus/releases/tag/v0.111.0
