@@ -2,7 +2,7 @@
 // buttons with hover/pressed/disabled states, toggle switches, segmented
 // controls, draggable sliders, badges, drag-and-drop reorderable lists,
 // right-click context menu, Ctrl+K command palette, action bar, and live
-// damage-by-difference metrics (docs/INTERFACE.md, src/md/features/rich_widgets.md).
+// damage-by-difference metrics (docs/INTERFACE.md; src/md/features/rich_widgets.md).
 package interface_elements
 
 import "modus:contract/enum_word"
