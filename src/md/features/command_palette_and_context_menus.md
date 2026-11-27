@@ -24,4 +24,4 @@ A desktop where only the background owns right-click and every application lists
 
 ## State
 
-Built: `BUTTON_RIGHT` tracking in `modus:interface`, compact `Context_Menu_State` with separators and danger styling, `Command_Palette_State`, compositor titlebar and taskbar compact menus, and the resize-safe `terminal` status bar with `Follow` and `Ctrl+Shift+P` pills, right-click menu, and command palette.
+Built: `BUTTON_RIGHT` tracking in `modus:interface`, compact `Context_Menu_State` with separators and danger styling, `Command_Palette_State`, compositor titlebar and taskbar compact menus, the resize-safe `terminal` status bar with `Follow` and `Ctrl+Shift+P` pills, right-click menu, and command palette, plus native right-click menus and `Ctrl+K` command palettes in `settings`, `interface_elements`, `edit`, `notes`, and `files`.

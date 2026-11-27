@@ -59,6 +59,7 @@
 // B, over L lines` after a selection with Shift or the pointer.
 package edit
 
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/fixed_addresses"
 import "modus:contract/root_ring"
@@ -174,6 +175,84 @@ bar_items :: proc "contextless" () -> (items: [5]interface.Action_Bar_Item, coun
 	return
 }
 bar: interface.Action_Bar_State
+
+// Closed set of actions in the editor right-click menu and Ctrl+K palette.
+Edit_Menu_Action :: enum u32 {
+	None            = 0,
+	Select_All      = 1,
+	Find            = 2,
+	Undo            = 3,
+	Redo            = 4,
+	Toggle_Versions = 5,
+	Format_Lex      = 6,
+	Go_Start        = 7,
+	Go_End          = 8,
+	Open_Palette    = 9,
+}
+
+edit_ctx_menu: interface.Context_Menu_State
+edit_palette: interface.Command_Palette_State
+
+edit_ctx_menu_open :: proc "contextless" (x, y, w, h: int) {
+	interface.command_palette_close(&edit_palette)
+	items: [8]interface.Context_Menu_Item
+	n := 0
+	items[n] = {id = u32(Edit_Menu_Action.Select_All), label = "Select all", shortcut = "Ctrl+A"}; n += 1
+	items[n] = {id = u32(Edit_Menu_Action.Find), label = "Find", shortcut = "Ctrl+F"}; n += 1
+	items[n] = {id = u32(Edit_Menu_Action.Undo), label = "Undo", shortcut = "Ctrl+Z", separator_before = true}; n += 1
+	items[n] = {id = u32(Edit_Menu_Action.Redo), label = "Redo", shortcut = "Ctrl+Y"}; n += 1
+	items[n] = {id = u32(Edit_Menu_Action.Toggle_Versions), label = versions_shown ? "Hide versions" : "Show versions", shortcut = "Ctrl+H", separator_before = true}; n += 1
+	if syntax_language == .Lex {
+		items[n] = {id = u32(Edit_Menu_Action.Format_Lex), label = "Format Lex", shortcut = "Ctrl+Shift+F"}; n += 1
+	}
+	items[n] = {id = u32(Edit_Menu_Action.Open_Palette), label = "Command palette", shortcut = "Ctrl+K", separator_before = true}; n += 1
+	interface.context_menu_open_compact(&edit_ctx_menu, x, y, w, h, items[:n])
+}
+
+edit_palette_open :: proc "contextless" (h: int) {
+	interface.context_menu_close(&edit_ctx_menu)
+	items: [9]interface.Command_Palette_Item
+	n := 0
+	items[n] = {id = u32(Edit_Menu_Action.Find), label = "Find in document", category = "Search", shortcut = "Ctrl+F"}; n += 1
+	items[n] = {id = u32(Edit_Menu_Action.Select_All), label = "Select all text", category = "Edit", shortcut = "Ctrl+A"}; n += 1
+	items[n] = {id = u32(Edit_Menu_Action.Undo), label = "Undo change", category = "History", shortcut = "Ctrl+Z"}; n += 1
+	items[n] = {id = u32(Edit_Menu_Action.Redo), label = "Redo change", category = "History", shortcut = "Ctrl+Y"}; n += 1
+	items[n] = {id = u32(Edit_Menu_Action.Toggle_Versions), label = versions_shown ? "Hide versions pane" : "Show versions pane", category = "History", shortcut = "Ctrl+H"}; n += 1
+	if syntax_language == .Lex {
+		items[n] = {id = u32(Edit_Menu_Action.Format_Lex), label = "Format Lex document", category = "Format", shortcut = "Ctrl+Shift+F"}; n += 1
+	}
+	items[n] = {id = u32(Edit_Menu_Action.Go_Start), label = "Go to start of document", category = "Navigate", shortcut = "Ctrl+Home"}; n += 1
+	items[n] = {id = u32(Edit_Menu_Action.Go_End), label = "Go to end of document", category = "Navigate", shortcut = "Ctrl+End"}; n += 1
+	interface.command_palette_open(&edit_palette, "Editor commands", items[:n], h)
+}
+
+edit_menu_action_run :: proc "contextless" (action_word: u32, h: int) {
+	action, ok := enum_word.member_of_word(Edit_Menu_Action, u64(action_word))
+	if !ok {
+		return
+	}
+	switch action {
+	case .None:
+	case .Select_All:
+		key_run({character = 'a', modifiers = display.MODIFIER_CONTROL})
+	case .Find:
+		key_run({character = 'f', modifiers = display.MODIFIER_CONTROL})
+	case .Undo:
+		key_run({character = 'z', modifiers = display.MODIFIER_CONTROL})
+	case .Redo:
+		key_run({character = 'y', modifiers = display.MODIFIER_CONTROL})
+	case .Toggle_Versions:
+		key_run({character = 'h', modifiers = display.MODIFIER_CONTROL})
+	case .Format_Lex:
+		key_run({character = 'F', modifiers = display.MODIFIER_CONTROL | display.MODIFIER_SHIFT})
+	case .Go_Start:
+		key_run({code = display.KEY_HOME, modifiers = display.MODIFIER_CONTROL})
+	case .Go_End:
+		key_run({code = display.KEY_END, modifiers = display.MODIFIER_CONTROL})
+	case .Open_Palette:
+		edit_palette_open(h)
+	}
+}
 
 text: text_model.Text
 layout: text_model.Layout // Computed after each change of the text, never in a frame.
@@ -1426,6 +1505,12 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 
 	items, item_count := bar_items()
 	bar_result := interface.action_bar(&frame, area_of(boxes.action_bar), items[:item_count], &bar, {})
+	if edit_ctx_menu.open {
+		interface.context_menu_draw(table, &edit_ctx_menu)
+	}
+	if edit_palette.open {
+		interface.command_palette_draw(table, &edit_palette, window.width, window.height)
+	}
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	return bar_result
 }
@@ -1484,6 +1569,35 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// layout, which the window scrolls when it does not fit.
 				// An event over a bar with no drag of the text is the bar's.
 				place, in_layout, _ := interface.window_scroll_event(&window_memory.drawing, &window, event, .Every_Event)
+				left_pressed := (event.buttons & display.BUTTON_LEFT != 0) && (pointer_buttons_before & display.BUTTON_LEFT == 0)
+				right_pressed := (event.buttons & display.BUTTON_RIGHT != 0) && (pointer_buttons_before & display.BUTTON_RIGHT == 0)
+				if in_layout && right_pressed {
+					edit_ctx_menu_open(place.x, place.y, window.width, window.height)
+					window_memory.drawing.input.pressed = false
+					window_memory.drawing.input.wheel -= event.wheel
+					pointer_buttons_before = event.buttons
+					continue
+				}
+				if edit_palette.open {
+					res := interface.command_palette_pointer(&edit_palette, place.x, place.y, left_pressed, event.wheel, window.width, window.height)
+					if res.triggered {
+						edit_menu_action_run(res.triggered_id, window.height)
+					}
+					window_memory.drawing.input.pressed = false
+					window_memory.drawing.input.wheel -= event.wheel
+					pointer_buttons_before = event.buttons
+					continue
+				}
+				if edit_ctx_menu.open {
+					res := interface.context_menu_pointer(&edit_ctx_menu, place.x, place.y, left_pressed)
+					if res.triggered {
+						edit_menu_action_run(res.triggered_id, window.height)
+					}
+					window_memory.drawing.input.pressed = false
+					window_memory.drawing.input.wheel -= event.wheel
+					pointer_buttons_before = event.buttons
+					continue
+				}
 				if in_layout {
 					pointer_event(place)
 				} else {
@@ -1492,6 +1606,32 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Key:
 				if !event.pressed {
 					continue
+				}
+				if interface.is_command_palette_shortcut(event.code, event.character, event.modifiers) {
+					if edit_palette.open {
+						interface.command_palette_close(&edit_palette)
+					} else {
+						edit_palette_open(window.height)
+					}
+					continue
+				}
+				if edit_palette.open {
+					consumed, act := interface.command_palette_handle_key(&edit_palette, event.code, event.character, true, event.modifiers, window.height)
+					if act != 0 {
+						edit_menu_action_run(act, window.height)
+					}
+					if consumed {
+						continue
+					}
+				}
+				if edit_ctx_menu.open {
+					consumed, act := interface.context_menu_handle_key(&edit_ctx_menu, event.code, event.character, true, event.modifiers)
+					if act != 0 {
+						edit_menu_action_run(act, window.height)
+					}
+					if consumed {
+						continue
+					}
 				}
 				// The open list of the action bar takes its keys first.
 				press := interface.Key_Press{code = event.code, character = event.character, modifiers = event.modifiers}

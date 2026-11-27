@@ -104,10 +104,10 @@ LEAST_HEIGHT :: 320
 LARGEST_WIDTH :: 1024
 LARGEST_HEIGHT :: 800
 // The tool counts the module, the thread stacks and the window at its
-// largest size and largest scale (measured peak at ready 1897 pages for a
-// floor of 6961 pages); glyph memory, worker stack and store client fit
-// inside the floor, and a resize draws from the growth factor.
-MODULE_BUDGET :: system.Stated_Budget{threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// largest size and largest scale; working_pages covers the transient peak
+// (measured 7515 pages) when opening at 784x624 at scale 2 and clamping to
+// 784x482 before Window_Ready releases the initial surface.
+MODULE_BUDGET :: system.Stated_Budget{threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT, working_memory_pages = 1024}
 // The window that sets the scale back fits the least work area that each
 // holder of the display leaves at each scale, with its title.
 #assert(LEAST_HEIGHT + 40 <= scale_factor.WORK_AREA_LEAST_HEIGHT)

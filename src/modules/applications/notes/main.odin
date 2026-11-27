@@ -48,6 +48,7 @@ package notes
 
 import "base:intrinsics"
 import "modus:calendar"
+import "modus:contract/enum_word"
 import "modus:contract/value_kinds"
 import "internal:notes/note_list"
 import "internal:notes/note_session"
@@ -159,6 +160,74 @@ bar_items :: proc "contextless" (items: ^[5]interface.Action_Bar_Item) -> int {
 	return 0
 }
 bar: interface.Action_Bar_State
+
+// Closed set of actions in the notes right-click menu and Ctrl+K palette.
+Notes_Menu_Action :: enum u32 {
+	None          = 0,
+	New_Note      = 1,
+	Select_All    = 2,
+	Versions      = 3,
+	Previous_Note = 4,
+	Next_Note     = 5,
+	Delete_Note   = 6,
+	Open_Palette  = 7,
+}
+
+notes_ctx_menu: interface.Context_Menu_State
+notes_palette: interface.Command_Palette_State
+
+notes_ctx_menu_open :: proc "contextless" (x, y, w, h: int) {
+	interface.command_palette_close(&notes_palette)
+	in_notes := session.mode == .Notes
+	items := [7]interface.Context_Menu_Item{
+		{id = u32(Notes_Menu_Action.New_Note), label = "New note", shortcut = "Ctrl+N", disabled = !in_notes},
+		{id = u32(Notes_Menu_Action.Select_All), label = "Select all", shortcut = "Ctrl+A", disabled = !in_notes},
+		{id = u32(Notes_Menu_Action.Versions), label = "Versions", shortcut = "Ctrl+H", disabled = !in_notes, separator_before = true},
+		{id = u32(Notes_Menu_Action.Previous_Note), label = "Previous note", shortcut = "Ctrl+PgUp", disabled = !in_notes},
+		{id = u32(Notes_Menu_Action.Next_Note), label = "Next note", shortcut = "Ctrl+PgDn", disabled = !in_notes},
+		{id = u32(Notes_Menu_Action.Delete_Note), label = "Delete note", shortcut = "Ctrl+D", danger = true, disabled = !in_notes, separator_before = true},
+		{id = u32(Notes_Menu_Action.Open_Palette), label = "Command palette", shortcut = "Ctrl+K", separator_before = true},
+	}
+	interface.context_menu_open_compact(&notes_ctx_menu, x, y, w, h, items[:])
+}
+
+notes_palette_open :: proc "contextless" (h: int) {
+	interface.context_menu_close(&notes_ctx_menu)
+	in_notes := session.mode == .Notes
+	items := [6]interface.Command_Palette_Item{
+		{id = u32(Notes_Menu_Action.New_Note), label = "New note", category = "Notes", shortcut = "Ctrl+N", disabled = !in_notes},
+		{id = u32(Notes_Menu_Action.Versions), label = "Show note versions", category = "History", shortcut = "Ctrl+H", disabled = !in_notes},
+		{id = u32(Notes_Menu_Action.Previous_Note), label = "Previous note", category = "Navigate", shortcut = "Ctrl+PgUp", disabled = !in_notes},
+		{id = u32(Notes_Menu_Action.Next_Note), label = "Next note", category = "Navigate", shortcut = "Ctrl+PgDn", disabled = !in_notes},
+		{id = u32(Notes_Menu_Action.Select_All), label = "Select all text", category = "Edit", shortcut = "Ctrl+A", disabled = !in_notes},
+		{id = u32(Notes_Menu_Action.Delete_Note), label = "Delete current note", category = "Notes", shortcut = "Ctrl+D", danger = true, disabled = !in_notes},
+	}
+	interface.command_palette_open(&notes_palette, "Notes commands", items[:], h)
+}
+
+notes_menu_action_run :: proc "contextless" (action_word: u32, h: int) {
+	action, ok := enum_word.member_of_word(Notes_Menu_Action, u64(action_word))
+	if !ok {
+		return
+	}
+	switch action {
+	case .None:
+	case .New_Note:
+		key_run({character = 'n', modifiers = display.MODIFIER_CONTROL})
+	case .Select_All:
+		key_run({character = 'a', modifiers = display.MODIFIER_CONTROL})
+	case .Versions:
+		key_run({character = 'h', modifiers = display.MODIFIER_CONTROL})
+	case .Previous_Note:
+		key_run({code = display.KEY_PAGE_UP, modifiers = display.MODIFIER_CONTROL})
+	case .Next_Note:
+		key_run({code = display.KEY_PAGE_DOWN, modifiers = display.MODIFIER_CONTROL})
+	case .Delete_Note:
+		key_run({character = 'd', modifiers = display.MODIFIER_CONTROL})
+	case .Open_Palette:
+		notes_palette_open(h)
+	}
+}
 
 // The state of the window over the store thread: the gates of the keys,
 // and the requests whose results it waits for (internal:notes/note_session).
@@ -1251,6 +1320,12 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	items: [5]interface.Action_Bar_Item
 	count := bar_items(&items)
 	bar_result := interface.action_bar(&frame, area_of(boxes.action_bar), items[:count], &bar, {})
+	if notes_ctx_menu.open {
+		interface.context_menu_draw(table, &notes_ctx_menu)
+	}
+	if notes_palette.open {
+		interface.command_palette_draw(table, &notes_palette, window.width, window.height)
+	}
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	return bar_result
 }
@@ -1323,6 +1398,35 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// layout, which the window scrolls when it does not fit.
 				// An event over a bar with no drag of the text is the bar's.
 				place, in_layout, _ := interface.window_scroll_event(&window_memory.drawing, &window, event, .Every_Event)
+				left_pressed := (event.buttons & display.BUTTON_LEFT != 0) && (pointer_buttons_before & display.BUTTON_LEFT == 0)
+				right_pressed := (event.buttons & display.BUTTON_RIGHT != 0) && (pointer_buttons_before & display.BUTTON_RIGHT == 0)
+				if in_layout && right_pressed {
+					notes_ctx_menu_open(place.x, place.y, window.width, window.height)
+					window_memory.drawing.input.pressed = false
+					window_memory.drawing.input.wheel -= event.wheel
+					pointer_buttons_before = event.buttons
+					continue
+				}
+				if notes_palette.open {
+					res := interface.command_palette_pointer(&notes_palette, place.x, place.y, left_pressed, event.wheel, window.width, window.height)
+					if res.triggered {
+						notes_menu_action_run(res.triggered_id, window.height)
+					}
+					window_memory.drawing.input.pressed = false
+					window_memory.drawing.input.wheel -= event.wheel
+					pointer_buttons_before = event.buttons
+					continue
+				}
+				if notes_ctx_menu.open {
+					res := interface.context_menu_pointer(&notes_ctx_menu, place.x, place.y, left_pressed)
+					if res.triggered {
+						notes_menu_action_run(res.triggered_id, window.height)
+					}
+					window_memory.drawing.input.pressed = false
+					window_memory.drawing.input.wheel -= event.wheel
+					pointer_buttons_before = event.buttons
+					continue
+				}
 				if in_layout {
 					pointer_event(place)
 				} else {
@@ -1331,6 +1435,32 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Key:
 				if !event.pressed {
 					continue
+				}
+				if interface.is_command_palette_shortcut(event.code, event.character, event.modifiers) {
+					if notes_palette.open {
+						interface.command_palette_close(&notes_palette)
+					} else {
+						notes_palette_open(window.height)
+					}
+					continue
+				}
+				if notes_palette.open {
+					consumed, act := interface.command_palette_handle_key(&notes_palette, event.code, event.character, true, event.modifiers, window.height)
+					if act != 0 {
+						notes_menu_action_run(act, window.height)
+					}
+					if consumed {
+						continue
+					}
+				}
+				if notes_ctx_menu.open {
+					consumed, act := interface.context_menu_handle_key(&notes_ctx_menu, event.code, event.character, true, event.modifiers)
+					if act != 0 {
+						notes_menu_action_run(act, window.height)
+					}
+					if consumed {
+						continue
+					}
 				}
 				// The open list of the action bar takes its keys first.
 				press := interface.Key_Press{code = event.code, character = event.character, modifiers = event.modifiers}

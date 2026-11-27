@@ -270,7 +270,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64, w, h: int) ->
 		// Row 1: Styled button variants with tactile hover/active/disabled states.
 		btn_row := interface.column_take(&col, 26)
 		btn_cells: [5]interface.Area
-		btn_sizes := [5]interface.Size{interface.share(3), interface.share(2), interface.share(2), interface.share(2), interface.share(2)}
+		btn_sizes := [5]interface.Size{interface.share(4), interface.share(2), interface.share(2), interface.share(2), interface.share(2)}
 		interface.row_split(btn_row, btn_sizes[:], btn_cells[:], 6)
 		pressed := interface.button_styled(frame, btn_cells[0], interface.identity("press"), "Press this button", .Primary)
 		if pressed.activated {

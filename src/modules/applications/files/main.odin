@@ -14,6 +14,7 @@ package files
 
 import core "internal:files/files_core"
 import "modus:calendar"
+import "modus:contract/enum_word"
 import "modus:contract/text_encoding"
 import "modus:display"
 import "modus:graphics"
@@ -59,6 +60,90 @@ list_first_row: int
 inspector_first_row: int
 
 bar: interface.Action_Bar_State
+
+// Closed set of actions in the files right-click menu and Ctrl+K palette.
+Files_Menu_Action :: enum u32 {
+	None          = 0,
+	Edit_Object   = 1,
+	Versions      = 2,
+	Toggle_Hex    = 3,
+	Filter        = 4,
+	New_Object    = 5,
+	New_Tree      = 6,
+	Refresh       = 7,
+	Delete_Entry  = 8,
+	Open_Palette  = 9,
+}
+
+files_ctx_menu: interface.Context_Menu_State
+files_palette: interface.Command_Palette_State
+
+files_ctx_menu_open :: proc "contextless" (x, y, w, h: int) {
+	interface.command_palette_close(&files_palette)
+	browsing := session.mode == .Browse && session.prompt == .None
+	snap := &snapshots[active_snapshot]
+	entry, has_sel := core.snapshot_filtered_entry(snap, snap.selected_entry)
+	is_obj := browsing && has_sel && entry.kind == .Object
+	items := [9]interface.Context_Menu_Item{
+		{id = u32(Files_Menu_Action.Edit_Object), label = "Open in edit", shortcut = "Ctrl+E", disabled = !is_obj},
+		{id = u32(Files_Menu_Action.Versions), label = "Versions", shortcut = "Ctrl+H", disabled = !is_obj},
+		{id = u32(Files_Menu_Action.Toggle_Hex), label = session.inspector_mode == .Hex ? "View as text" : "View as hex", shortcut = "Ctrl+X", disabled = !browsing},
+		{id = u32(Files_Menu_Action.Filter), label = "Filter entries", shortcut = "Ctrl+F", disabled = !browsing, separator_before = true},
+		{id = u32(Files_Menu_Action.New_Object), label = "New object", shortcut = "Ctrl+N", disabled = !browsing || session.read_only},
+		{id = u32(Files_Menu_Action.New_Tree), label = "New tree", shortcut = "Ctrl+T", disabled = !browsing || session.read_only},
+		{id = u32(Files_Menu_Action.Refresh), label = "Refresh", shortcut = "Ctrl+R", disabled = !browsing},
+		{id = u32(Files_Menu_Action.Delete_Entry), label = "Delete selected", shortcut = "Ctrl+D", danger = true, disabled = !browsing || !has_sel || session.read_only, separator_before = true},
+		{id = u32(Files_Menu_Action.Open_Palette), label = "Command palette", shortcut = "Ctrl+K", separator_before = true},
+	}
+	interface.context_menu_open_compact(&files_ctx_menu, x, y, w, h, items[:])
+}
+
+files_palette_open :: proc "contextless" (h: int) {
+	interface.context_menu_close(&files_ctx_menu)
+	browsing := session.mode == .Browse && session.prompt == .None
+	snap := &snapshots[active_snapshot]
+	entry, has_sel := core.snapshot_filtered_entry(snap, snap.selected_entry)
+	is_obj := browsing && has_sel && entry.kind == .Object
+	items := [8]interface.Command_Palette_Item{
+		{id = u32(Files_Menu_Action.Edit_Object), label = "Open object in edit", category = "File", shortcut = "Ctrl+E", disabled = !is_obj},
+		{id = u32(Files_Menu_Action.Versions), label = "Show object versions", category = "History", shortcut = "Ctrl+H", disabled = !is_obj},
+		{id = u32(Files_Menu_Action.Toggle_Hex), label = "Toggle Hex / Text inspector", category = "Inspect", shortcut = "Ctrl+X", disabled = !browsing},
+		{id = u32(Files_Menu_Action.Filter), label = "Filter entries", category = "Navigate", shortcut = "Ctrl+F", disabled = !browsing},
+		{id = u32(Files_Menu_Action.New_Object), label = "New object", category = "Store", shortcut = "Ctrl+N", disabled = !browsing || session.read_only},
+		{id = u32(Files_Menu_Action.New_Tree), label = "New tree", category = "Store", shortcut = "Ctrl+T", disabled = !browsing || session.read_only},
+		{id = u32(Files_Menu_Action.Refresh), label = "Refresh store", category = "Store", shortcut = "Ctrl+R", disabled = !browsing},
+		{id = u32(Files_Menu_Action.Delete_Entry), label = "Delete selected entry", category = "Store", shortcut = "Ctrl+D", danger = true, disabled = !browsing || !has_sel || session.read_only},
+	}
+	interface.command_palette_open(&files_palette, "Files commands", items[:], h)
+}
+
+files_menu_action_run :: proc "contextless" (action_word: u32, h: int) {
+	action, ok := enum_word.member_of_word(Files_Menu_Action, u64(action_word))
+	if !ok {
+		return
+	}
+	switch action {
+	case .None:
+	case .Edit_Object:
+		key_run({character = 'e', modifiers = display.MODIFIER_CONTROL})
+	case .Versions:
+		key_run({character = 'h', modifiers = display.MODIFIER_CONTROL})
+	case .Toggle_Hex:
+		key_run({character = 'x', modifiers = display.MODIFIER_CONTROL})
+	case .Filter:
+		key_run({character = 'f', modifiers = display.MODIFIER_CONTROL})
+	case .New_Object:
+		key_run({character = 'n', modifiers = display.MODIFIER_CONTROL})
+	case .New_Tree:
+		key_run({character = 't', modifiers = display.MODIFIER_CONTROL})
+	case .Refresh:
+		key_run({character = 'r', modifiers = display.MODIFIER_CONTROL})
+	case .Delete_Entry:
+		key_run({character = 'd', modifiers = display.MODIFIER_CONTROL})
+	case .Open_Palette:
+		files_palette_open(h)
+	}
+}
 ui_request: core.Worker_Request
 ui_result: core.Worker_Result
 
@@ -871,6 +956,12 @@ draw_frame :: proc "contextless" (window: ^display.Window) -> interface.Action_B
 	items: [8]interface.Action_Bar_Item
 	count := bar_items(&items)
 	bar_result := interface.action_bar(&frame, to_area(lay.action_bar), items[:count], &bar, {})
+	if files_ctx_menu.open {
+		interface.context_menu_draw(table, &files_ctx_menu)
+	}
+	if files_palette.open {
+		interface.command_palette_draw(table, &files_palette, window.width, window.height)
+	}
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	return bar_result
 }
@@ -922,6 +1013,35 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			switch event.kind {
 			case .Pointer:
 				place, in_layout, _ := interface.window_scroll_event(&window_memory.drawing, &window, event, .Every_Event)
+				left_pressed := (event.buttons & display.BUTTON_LEFT != 0) && (pointer_buttons_before & display.BUTTON_LEFT == 0)
+				right_pressed := (event.buttons & display.BUTTON_RIGHT != 0) && (pointer_buttons_before & display.BUTTON_RIGHT == 0)
+				if in_layout && right_pressed {
+					files_ctx_menu_open(place.x, place.y, window.width, window.height)
+					window_memory.drawing.input.pressed = false
+					window_memory.drawing.input.wheel -= event.wheel
+					pointer_buttons_before = event.buttons
+					continue
+				}
+				if files_palette.open {
+					res := interface.command_palette_pointer(&files_palette, place.x, place.y, left_pressed, event.wheel, window.width, window.height)
+					if res.triggered {
+						files_menu_action_run(res.triggered_id, window.height)
+					}
+					window_memory.drawing.input.pressed = false
+					window_memory.drawing.input.wheel -= event.wheel
+					pointer_buttons_before = event.buttons
+					continue
+				}
+				if files_ctx_menu.open {
+					res := interface.context_menu_pointer(&files_ctx_menu, place.x, place.y, left_pressed)
+					if res.triggered {
+						files_menu_action_run(res.triggered_id, window.height)
+					}
+					window_memory.drawing.input.pressed = false
+					window_memory.drawing.input.wheel -= event.wheel
+					pointer_buttons_before = event.buttons
+					continue
+				}
 				if in_layout {
 					pointer_event(place)
 				} else {
@@ -930,6 +1050,32 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			case .Key:
 				if !event.pressed {
 					continue
+				}
+				if interface.is_command_palette_shortcut(event.code, event.character, event.modifiers) {
+					if files_palette.open {
+						interface.command_palette_close(&files_palette)
+					} else {
+						files_palette_open(window.height)
+					}
+					continue
+				}
+				if files_palette.open {
+					consumed, act := interface.command_palette_handle_key(&files_palette, event.code, event.character, true, event.modifiers, window.height)
+					if act != 0 {
+						files_menu_action_run(act, window.height)
+					}
+					if consumed {
+						continue
+					}
+				}
+				if files_ctx_menu.open {
+					consumed, act := interface.context_menu_handle_key(&files_ctx_menu, event.code, event.character, true, event.modifiers)
+					if act != 0 {
+						files_menu_action_run(act, window.height)
+					}
+					if consumed {
+						continue
+					}
 				}
 				press := interface.Key_Press{code = event.code, character = event.character, modifiers = event.modifiers}
 				outcome := interface.action_bar_key(&bar, press)
