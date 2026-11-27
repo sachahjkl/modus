@@ -630,7 +630,8 @@
         }
         // guestImages
         // firmware
-        // outsideSources);
+        // outsideSources
+        // lib.optionalAttrs (part == "bootstrap") cProgramSources);
     testParts = lib.genAttrs testPartNames machineTestPart;
 
     # The names of the pictures of docs/screenshots, not their bytes: the

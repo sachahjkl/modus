@@ -622,6 +622,10 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// Process_Mapping_Report through Inspect to verify 1 GiB entries and
 	// zero-allocation demotion.
 	{name = "pdpe1gb_probe", scope = .Session, grants = {.Inspect}},
+	// The probe of the live QEMU bootstrap test: runs chibicc self-hosting
+	// through c_compiler and assemble from the boot image and validates
+	// freestanding sqlite, lua, and zstd modules from its private store.
+	{name = "bootstrap_probe", scope = .Session, grants = {.Store, .Image}, terms = {store_blocks = 4096}},
 	// The writer of the test of the record output log: its end comes in
 	// its context before its first instruction, and it needs no grant. Its
 	// log budget holds 0 records (budgets.odin).

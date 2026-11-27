@@ -89,3 +89,51 @@ chibicc_builds_itself_to_the_same_bytes :: proc(t: ^testing.T) {
 	testing.expect(t, strings.has_prefix(string(text), "unit\n"), "the text of a unit starts with unit")
 	delete(text)
 }
+
+@(test)
+c_self_host_program_pack_encodes_manifest_headers_and_units :: proc(t: ^testing.T) {
+	// Refusal first: empty program is refused.
+	_, empty_ok := c_self_host_program_pack({})
+	testing.expect(t, !empty_ok, "empty C_Program must be refused")
+
+	folder := os.get_env(foundation.CHIBICC.variable, context.temp_allocator)
+	if folder == "" {
+		return
+	}
+	program, program_ok := c_self_host_program(folder)
+	if !testing.expect(t, program_ok, "the folder of chibicc holds its program") {
+		return
+	}
+	objects, packed_ok := c_self_host_program_pack(program, context.temp_allocator)
+	if !testing.expect(t, packed_ok, "c_self_host_program_pack succeeds") {
+		return
+	}
+	// 14 C sources + 1 assembly unit + chibicc_manifest + chibicc_headers = 17 objects.
+	testing.expect_value(t, len(objects), len(program.sources) + len(program.assembly) + 2)
+
+	found_manifest := false
+	found_headers := false
+	for obj in objects {
+		if obj.name == "chibicc_manifest" {
+			found_manifest = true
+			lines := strings.split_lines(strings.trim_space(string(obj.bytes)), context.temp_allocator)
+			testing.expect_value(t, len(lines), len(program.sources) + len(program.assembly))
+		}
+		if obj.name == "chibicc_headers" {
+			found_headers = true
+			// Parse every wire record and verify count matches program.headers.
+			pos := 0
+			count := 0
+			for pos < len(obj.bytes) {
+				testing.expect(t, len(obj.bytes) - pos >= 8, "header record has 8-byte prefix")
+				name_len := int(u32(obj.bytes[pos]) | u32(obj.bytes[pos + 1]) << 8 | u32(obj.bytes[pos + 2]) << 16 | u32(obj.bytes[pos + 3]) << 24)
+				content_len := int(u32(obj.bytes[pos + 4]) | u32(obj.bytes[pos + 5]) << 8 | u32(obj.bytes[pos + 6]) << 16 | u32(obj.bytes[pos + 7]) << 24)
+				pos += 8 + name_len + content_len
+				count += 1
+			}
+			testing.expect_value(t, pos, len(obj.bytes))
+			testing.expect_value(t, count, len(program.headers))
+		}
+	}
+	testing.expect(t, found_manifest && found_headers, "packed objects contain manifest and headers")
+}

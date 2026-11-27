@@ -303,6 +303,7 @@ module_builds := [?]Module_Build {
 	{name = "panel_display", source = TEST_MODULE_SOURCES + "panel_display", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "display_role_planner", source = TEST_MODULE_SOURCES + "display_role_planner", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "pdpe1gb_probe", source = TEST_MODULE_SOURCES + "pdpe1gb_probe", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
+	{name = "bootstrap_probe", source = TEST_MODULE_SOURCES + "bootstrap_probe", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "log_follower", source = TEST_MODULE_SOURCES + "log_follower", entry = true, image = true},
 	{name = "notify_border_of_the_compositor", source = TEST_MODULE_SOURCES + "notify_border_of_the_compositor", entry = true, image = true},
 	{name = "output_reader", source = TEST_MODULE_SOURCES + "output_reader", entry = true, image = true},

@@ -546,6 +546,7 @@ the_modules_of_the_operation_sequences_are_in_their_image_only :: proc(t: ^testi
 		{"panel_display", foundation.BOOT_IMAGE_PLAN_AND_AUDIT},
 		{"display_role_planner", foundation.BOOT_IMAGE_PLAN_AND_AUDIT},
 		{"pdpe1gb_probe", foundation.BOOT_IMAGE_PLAN_AND_AUDIT},
+		{"bootstrap_probe", foundation.BOOT_IMAGE_PLAN_AND_AUDIT},
 	}
 	found := 0
 	for build in foundation.module_builds {

@@ -443,6 +443,66 @@ first_difference :: proc(first, second: []u8) -> int {
 	return min(len(first), len(second))
 }
 
+// c_self_host_program_pack encodes the chibicc self-hosting sources, headers,
+// and assembly units into private-store objects for live QEMU execution in
+// bootstrap_probe:
+//   - "chibicc_manifest": lines "<kind> <object_name> <logical_name>\n"
+//     where <kind> is "C" for a C source unit and "S" for an assembly unit;
+//   - "chibicc_headers": program_files wire-format list of every header;
+//   - "src_00".., "asm_00"..: the raw unit bytes.
+c_self_host_program_pack :: proc(program: C_Program, allocator := context.temp_allocator) -> (objects: []Module_File, ok: bool) {
+	if len(program.sources) == 0 || len(program.assembly) == 0 {
+		return nil, false
+	}
+	list := make([dynamic]Module_File, allocator)
+	manifest := strings.builder_make(allocator)
+
+	for source, index in program.sources {
+		obj_name := fmt.aprintf("src_%02d", index, allocator = allocator)
+		fmt.sbprintf(&manifest, "C %s %s\n", obj_name, source.name)
+		append(&list, Module_File{name = obj_name, bytes = source.bytes})
+	}
+	for unit, index in program.assembly {
+		obj_name := fmt.aprintf("asm_%02d", index, allocator = allocator)
+		fmt.sbprintf(&manifest, "S %s %s\n", obj_name, unit.name)
+		append(&list, Module_File{name = obj_name, bytes = unit.bytes})
+	}
+
+	// Encode program.headers into the exact program_files binary list format:
+	// [u32 name_len LE][u32 content_len LE][name bytes][content bytes]...
+	header_total := 0
+	for header in program.headers {
+		name_str := string(header.name)
+		header_total += 8 + len(name_str) + int(header.size)
+	}
+	header_buf := make([]u8, header_total, allocator)
+	pos := 0
+	for header in program.headers {
+		name_str := string(header.name)
+		name_len := u32(len(name_str))
+		content_len := u32(header.size)
+		header_buf[pos + 0] = u8(name_len)
+		header_buf[pos + 1] = u8(name_len >> 8)
+		header_buf[pos + 2] = u8(name_len >> 16)
+		header_buf[pos + 3] = u8(name_len >> 24)
+		header_buf[pos + 4] = u8(content_len)
+		header_buf[pos + 5] = u8(content_len >> 8)
+		header_buf[pos + 6] = u8(content_len >> 16)
+		header_buf[pos + 7] = u8(content_len >> 24)
+		pos += 8
+		copy(header_buf[pos:], name_str)
+		pos += len(name_str)
+		if content_len > 0 {
+			copy(header_buf[pos:], header.bytes[:content_len])
+			pos += int(content_len)
+		}
+	}
+
+	append(&list, Module_File{name = "chibicc_manifest", bytes = transmute([]u8)strings.to_string(manifest)})
+	append(&list, Module_File{name = "chibicc_headers", bytes = header_buf})
+	return list[:], true
+}
+
 // run_c_self_host is the command `modustool c-self-host`.
 run_c_self_host :: proc(args: []string) -> int {
 	if len(args) != 0 {
