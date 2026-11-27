@@ -767,7 +767,7 @@ site_code_lex_fragment :: proc(b: ^strings.Builder, source: string) {
 	foundation.html_escape(b, source[position:])
 }
 
-@(private = "file")
+@(private = "package")
 site_code_lex_is_transcript :: proc(source: string) -> bool {
 	rest := source
 	for len(rest) > 0 {

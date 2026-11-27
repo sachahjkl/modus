@@ -71,6 +71,7 @@ Site_Renderer :: struct {
 	section_folders:    []string,
 	subsection_folders: []string,
 	paragraph_folders:  []string,
+	has_guide_console:  bool, // True when at least one runnable inline console widget was emitted on this page.
 }
 
 // site_renderer_context_folders gives the folders that the text around a
@@ -321,6 +322,29 @@ site_render_fence :: proc(renderer: ^Site_Renderer, lines: []string, start: int,
 	// A diagram of a guide: its picture in its place (site_diagram.odin).
 	if language == SITE_DIAGRAM_LANGUAGE && !renderer.comment && renderer.site != nil {
 		site_diagram_fence_write(renderer, strings.to_string(code_text), start + first_line_number)
+		if index >= len(lines) {
+			site_not_rendered(renderer, start + first_line_number, "a fence with no end, shown to the end of the file")
+		}
+		return index + 1
+	}
+	// A runnable Lex console block inside a guide page gets an interactive
+	// inline console widget wrapping its highlighted <pre><code> block.
+	if language == "lex" && !renderer.comment && renderer.site != nil {
+		raw_lex := strings.to_string(code_text)
+		place := fmt.tprintf("%s:%d", site_renderer_place(renderer), start + first_line_number)
+		code_html := site_code_lex_block_html(renderer.site, raw_lex, place)
+		if strings.has_prefix(renderer.page, SITE_GUIDE_FOLDER + "/") {
+			if runnable := site_guide_console_lines(raw_lex); len(runnable) > 0 {
+				site_guide_console_widget_write(renderer, b, code_html, runnable)
+				if index >= len(lines) {
+					site_not_rendered(renderer, start + first_line_number, "a fence with no end, shown to the end of the file")
+				}
+				return index + 1
+			}
+		}
+		strings.write_string(b, "<pre><code>")
+		strings.write_string(b, code_html)
+		strings.write_string(b, "</code></pre>\n")
 		if index >= len(lines) {
 			site_not_rendered(renderer, start + first_line_number, "a fence with no end, shown to the end of the file")
 		}

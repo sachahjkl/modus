@@ -58,6 +58,8 @@ site_controls := [?]Site_Control {
 	{name = "a line of the documentation tree", selector = ".tree a", form = .Row, current = ".tree a[aria-current=\"page\"]"},
 	{name = "a line of the list of the headings of a page", selector = ".outline a", form = .Row, current = ".outline a[aria-current=\"location\"]"},
 	{name = "a stage of the line of time of the start", selector = ".boot-stage-row", form = .Row},
+	{name = "the run button of an embedded guide console", selector = ".guide-console-bar button", form = .Button, current = ".guide-console-bar button[aria-expanded=\"true\"]"},
+	{name = "the link to open the full Web Console from a guide", selector = ".guide-console-bar a", form = .Button},
 }
 
 // The colors of the states of a button in one form of the page.

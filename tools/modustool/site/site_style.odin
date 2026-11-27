@@ -1048,6 +1048,8 @@ site_style_sheet :: proc(tile_rules: string) -> string {
 	// The diagrams of the guides: the same tokens, and the font of their
 	// text.
 	strings.write_string(&builder, site_diagram_rules())
+	// The embedded interactive console widgets of the guides.
+	strings.write_string(&builder, site_guide_console_rules())
 	// The colors of the states of a control, in the dark form.
 	site_control_variables(&builder, false)
 	// The colors and the widths of the tiles of the boot image: they come

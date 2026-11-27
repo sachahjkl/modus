@@ -419,7 +419,8 @@ site_guides_add :: proc(site: ^Site) -> bool {
 		if description == "" {
 			description = site_description_cut(strings.concatenate({"The guide \"", guide.title, "\" of ", SITE_SYSTEM_NAME, "."}, context.temp_allocator))
 		}
-		site_page_add(site, Site_Page{path = guide.path, title = guide.title, description = description, section = .Guides, crumbs = site_crumbs(.Guides), body = strings.to_string(b), sources = site_sources(guide.source), layout = .Documentation})
+		guide_script: string = renderer.has_guide_console ? SITE_GUIDE_CONSOLE_SCRIPT : ""
+		site_page_add(site, Site_Page{path = guide.path, title = guide.title, description = description, section = .Guides, crumbs = site_crumbs(.Guides), body = strings.to_string(b), sources = site_sources(guide.source), layout = .Documentation, script = guide_script})
 	}
 
 	// The index of the guides.
