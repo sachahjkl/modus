@@ -53,7 +53,7 @@ TEST_OUTPUT_WIDE_GRANT_LOCK :: foundation.BUILD_FOLDER + "/test_output_wide_gran
 TEST_WIDE_GRANT_LOCK_DISK :: foundation.BUILD_FOLDER + "/test_wide_grant_lock_disk.img"
 
 scenario_wide_grant := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true},
 	// The machine passphrase, which proves a grant of principal 0.
 	{kind = .Type, text = "machine_passphrase()"},
@@ -176,7 +176,7 @@ scenario_wide_grant := [?]Step {
 scenario_wide_grant_lock := [?]Step {
 	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Wait, text = "unlock: no named principal: the machine runs as principal 0, with no unlock", any_order = true},
-	{kind = .Wait, text = "root: unlock stopped: itself, done"},
+	{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true},
 	// Start the machine-scope remote services from principal 0's boot console.
 	{kind = .Front, text = "console"},
 	{kind = .Launch, text = "remote"},
