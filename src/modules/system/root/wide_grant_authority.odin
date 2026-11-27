@@ -30,9 +30,10 @@ import "modus:principals"
 import "modus:random"
 import "modus:system"
 
-// The pages of the region of the ring of a collector: one grant request.
+// The pages of the region of the ring of a collector: the startup principal
+// identifier header followed by one grant request.
 COLLECTOR_REGION_PAGES :: 1
-#assert(size_of(wide_grants.Create_Grant_Request) <= COLLECTOR_REGION_PAGES * system.PAGE_SIZE)
+#assert(wide_grants.COLLECTOR_REGION_REQUEST_AT + size_of(wide_grants.Create_Grant_Request) <= COLLECTOR_REGION_PAGES * system.PAGE_SIZE)
 
 // The key of the run: it makes the key of each principal at the start,
 // then this service erases it. It never leaves this service.
@@ -565,10 +566,10 @@ wide_grant_create_send :: proc "contextless" (now_ms: u64) -> bool {
 		return false
 	}
 	request.proof = proof
-	intrinsics.mem_copy_non_overlapping(raw_data(link.region), &request, size_of(request))
+	intrinsics.mem_copy_non_overlapping(&link.region[wide_grants.COLLECTOR_REGION_REQUEST_AT], &request, size_of(request))
 	intrinsics.mem_zero_volatile(&request, size_of(request))
 	tag := collector_tag_next(link)
-	if !system.send(&link.ring.commands, ring.Record{kind = u32(wide_grants.Collector_Ring_Command.Create_Grant), tag = tag, values = {0 = 0, 1 = flow.ends_at_ms}}) {
+	if !system.send(&link.ring.commands, ring.Record{kind = u32(wide_grants.Collector_Ring_Command.Create_Grant), tag = tag, values = {0 = wide_grants.COLLECTOR_REGION_REQUEST_AT, 1 = flow.ends_at_ms}}) {
 		return false
 	}
 	return wide_grant_flow.flow_create_sent(flow, tag) == .None

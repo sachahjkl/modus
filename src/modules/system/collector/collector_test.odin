@@ -823,3 +823,29 @@ machine_audit_space_is_readable_only_by_admitted_principals :: proc(t: ^testing.
 	error = {}
 	expect_refusal(t, answer_of(space_verify_for(restarted, &alice, i64(private_space), &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
 }
+
+// Ring command payloads must stay past the 32-byte startup principal
+// identifier header so a Create_Grant queued at start never overwrites it.
+@(test)
+collector_region_range_protects_identifier_header :: proc(t: ^testing.T) {
+	region: [4096]u8
+	saved_base := service_region_base
+	saved_bytes := service_region_bytes
+	defer {
+		service_region_base = saved_base
+		service_region_bytes = saved_bytes
+	}
+	service_region_base = &region[0]
+	service_region_bytes = len(region)
+
+	req_size := u64(size_of(wide_grants.Create_Grant_Request))
+	testing.expect(t, !region_range_valid(0, req_size), "offset 0 overlaps the identifier header")
+	testing.expect(t, !region_range_valid(1, req_size), "offset 1 overlaps the identifier header")
+	testing.expect(t, !region_range_valid(wide_grants.COLLECTOR_REGION_REQUEST_AT - 1, req_size), "offset before request start overlaps the identifier header")
+	testing.expect(t, !region_range_valid(wide_grants.COLLECTOR_REGION_REQUEST_AT, 0), "zero length is refused")
+	testing.expect(t, region_range_valid(wide_grants.COLLECTOR_REGION_REQUEST_AT, req_size), "request at COLLECTOR_REGION_REQUEST_AT is accepted")
+	testing.expect(t, region_range_valid(len(region) - req_size, req_size), "request ending at region end is accepted")
+	testing.expect(t, !region_range_valid(len(region) - req_size + 1, req_size), "request one byte past region end is refused")
+	testing.expect(t, !region_range_valid(max(u64), 1), "u64 overflow offset is refused")
+	testing.expect(t, !region_range_valid(wide_grants.COLLECTOR_REGION_REQUEST_AT, max(u64)), "u64 overflow length is refused")
+}

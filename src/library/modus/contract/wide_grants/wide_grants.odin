@@ -58,11 +58,14 @@ GENESIS_PREVIOUS_HASH :: blake3.Hash{}
 SERVICE_RING_SLOT :: 10
 SERVICE_REGION_SLOT :: 11
 CONTEXT_VALUE_PRINCIPAL_SLOT :: 4
-// At the start of a collector, the region of its ring holds the principal
-// identifier of its principal in its first 32 bytes, which the root service
-// wrote before the start; all zero for principal 0, which has none. The
-// collector copies it before its first request, which writes over it.
+// The first 32 bytes of the collector shared region hold the principal
+// identifier written by the root service before start (all zero for principal
+// 0). Command payloads start at COLLECTOR_REGION_REQUEST_AT so a Create_Grant
+// queued right after start never overwrites the identifier before the
+// collector reads it.
 COLLECTOR_REGION_IDENTIFIER_AT :: 0
+COLLECTOR_REGION_REQUEST_AT :: COLLECTOR_REGION_IDENTIFIER_AT + COLLECTOR_IDENTIFIER_SIZE
+#assert(COLLECTOR_REGION_REQUEST_AT >= COLLECTOR_REGION_IDENTIFIER_AT + COLLECTOR_IDENTIFIER_SIZE)
 CONTEXT_VALUE_AUTHORITY_KEY_FIRST_SLOT :: 5
 CONTEXT_VALUE_AUTHORITY_KEY_SLOT_COUNT :: 4
 

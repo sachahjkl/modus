@@ -276,10 +276,11 @@ act_records_read :: proc "c" (grant: i64, first: i64, last: i64, result: ^system
 }
 
 // region_range_valid checks that [offset, offset + length) lies wholly within
-// the mapped shared region without u64 addition overflow.
-@(private = "file")
+// the request area of the mapped shared region (after the startup principal
+// identifier header) without u64 addition overflow.
+@(private)
 region_range_valid :: proc "contextless" (offset: u64, length: u64) -> bool {
-	if service_region_base == nil || length == 0 || length > service_region_bytes {
+	if service_region_base == nil || length == 0 || length > service_region_bytes || offset < wide_grants.COLLECTOR_REGION_REQUEST_AT {
 		return false
 	}
 	return offset <= service_region_bytes - length
@@ -652,9 +653,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	store_port, store_open := storage_port.bind(ctx)
 	memory_port, windows := space_memory_reserve() // space_window_memory.odin
 	source_links.port = link_tables_port() // link_tables.odin
-	// The principal identifier, which the root service wrote in the region
-	// before the start: the name of the principal in each object of the
-	// store. Copied before the first request writes over it.
+	// The principal identifier written by the root service before start sits
+	// in the reserved header [0..32); ring commands start at
+	// COLLECTOR_REGION_REQUEST_AT and never overlap it.
 	identifier: [wide_grants.COLLECTOR_IDENTIFIER_SIZE]u8
 	if service_region_base != nil && service_region_bytes >= wide_grants.COLLECTOR_REGION_IDENTIFIER_AT + wide_grants.COLLECTOR_IDENTIFIER_SIZE {
 		copy(identifier[:], service_region_base[wide_grants.COLLECTOR_REGION_IDENTIFIER_AT:][:wide_grants.COLLECTOR_IDENTIFIER_SIZE])
