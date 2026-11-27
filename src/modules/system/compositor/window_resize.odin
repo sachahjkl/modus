@@ -523,6 +523,19 @@ resize_begin :: proc "contextless" (index: int, edges: bar.Resize_Edges) {
 	resize_outline_damage()
 }
 
+// window_unmaximize_on_resize clears the maximized state once a resize drag or
+// keyboard resize actually asks for a new size, keeping saved restore geometry
+// intact when a border click or canceled drag asks for no resize.
+window_unmaximize_on_resize :: proc "contextless" (client: ^Client) {
+	if !client.maximized {
+		return
+	}
+	client.maximized = false
+	system.log_fact(.Info, Window_Restored{window = window_field(client.title[:])})
+	palette_entries_refresh()
+	damage_window(client)
+}
+
 // resize_pointer_moved follows the pointer while it holds the edges of a
 // window. While the button is down, the outline moves. At the release the
 // outline goes, and the process gets the event Resized when the size
@@ -542,7 +555,9 @@ resize_pointer_moved :: proc "contextless" (held: bool) {
 	}
 	resize_outline_damage()
 	resizing = -1
-	_ = window_size_ask(client, width, height, resize_start.edges)
+	if window_size_ask(client, width, height, resize_start.edges) {
+		window_unmaximize_on_resize(client)
+	}
 }
 
 // window_size_ask asks the process of a window for a size with the one

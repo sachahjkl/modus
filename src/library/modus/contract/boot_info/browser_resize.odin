@@ -21,23 +21,25 @@ BROWSER_RESIZE_TOTAL_PAGES :: BROWSER_RESIZE_MAX_PAGES + 1
 BROWSER_RESIZE_MAGIC :: u64(0x3153_4552_5644_4F4D)
 
 Browser_Resize_Page :: struct {
-	magic:      u64, // 0:  BROWSER_RESIZE_MAGIC ("MODVRES1").
-	max_width:  u32, // 8:  Maximum pixel width backed by the framebuffer.
-	max_height: u32, // 12: Maximum pixel height backed by the framebuffer.
-	req_width:  u32, // 16: Requested viewport width from the browser host.
-	req_height: u32, // 20: Requested viewport height from the browser host.
-	req_seq:    u32, // 24: Monotonic sequence incremented by the browser host.
-	ack_width:  u32, // 28: Active compositor width after full redraw.
-	ack_height: u32, // 32: Active compositor height after full redraw.
-	ack_seq:    u32, // 36: Sequence written with .Release after screen.pixels is painted.
-	frame_seq:  u32, // 40: Monotonic frame counter written with .Release after every draw().
-	dirty_x:    u32, // 44: Left X of the bounding box painted in this frame.
-	dirty_y:    u32, // 48: Top Y of the bounding box painted in this frame.
-	dirty_w:    u32, // 52: Width of the bounding box painted in this frame.
-	dirty_h:    u32, // 56: Height of the bounding box painted in this frame.
+	magic:          u64, // 0:  BROWSER_RESIZE_MAGIC ("MODVRES1").
+	max_width:      u32, // 8:  Maximum pixel width backed by the framebuffer.
+	max_height:     u32, // 12: Maximum pixel height backed by the framebuffer.
+	req_width:      u32, // 16: Requested viewport width from the browser host.
+	req_height:     u32, // 20: Requested viewport height from the browser host.
+	req_seq:        u32, // 24: Monotonic sequence incremented by the browser host.
+	ack_width:      u32, // 28: Active compositor width after full redraw.
+	ack_height:     u32, // 32: Active compositor height after full redraw.
+	ack_seq:        u32, // 36: Sequence written with .Release after screen.pixels is painted.
+	frame_seq:      u32, // 40: Monotonic frame counter written with .Release after every draw().
+	dirty_x:        u32, // 44: Left X of the bounding box painted in this frame.
+	dirty_y:        u32, // 48: Top Y of the bounding box painted in this frame.
+	dirty_w:        u32, // 52: Width of the bounding box painted in this frame.
+	dirty_h:        u32, // 56: Height of the bounding box painted in this frame.
+	desktop_width:  u32, // 60: Active compositor logical desktop width (for 1:1 pointer mapping).
+	desktop_height: u32, // 64: Active compositor logical desktop height (for 1:1 pointer mapping).
 }
 
-#assert(size_of(Browser_Resize_Page) == 64)
+#assert(size_of(Browser_Resize_Page) == 72)
 #assert(offset_of(Browser_Resize_Page, magic) == 0)
 #assert(offset_of(Browser_Resize_Page, max_width) == 8)
 #assert(offset_of(Browser_Resize_Page, max_height) == 12)
@@ -52,3 +54,5 @@ Browser_Resize_Page :: struct {
 #assert(offset_of(Browser_Resize_Page, dirty_y) == 48)
 #assert(offset_of(Browser_Resize_Page, dirty_w) == 52)
 #assert(offset_of(Browser_Resize_Page, dirty_h) == 56)
+#assert(offset_of(Browser_Resize_Page, desktop_width) == 60)
+#assert(offset_of(Browser_Resize_Page, desktop_height) == 64)

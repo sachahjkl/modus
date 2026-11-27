@@ -405,15 +405,20 @@ for (const name of ["root::Boot_Image_Agrees", "root::Image_Checked_At_Load"]) {
   machine.memory = memory;
   machine.layout = layout;
   expect(!machine.requestResize(1000, 640), "no-op resize returns false");
+  machine.keyboard.pointer(0, 0, 1);
+  machine.keyboard.queue = [];
   expect(machine.requestResize(9999, 100), "out-of-range resize clamps and publishes");
   expect(view.getUint32(base + host.BROWSER_RESIZE_OFFSETS.req_width, true) === host.BROWSER_RESIZE_MAX_WIDTH, "req_width clamped to max");
   expect(view.getUint32(base + host.BROWSER_RESIZE_OFFSETS.req_height, true) === host.BROWSER_RESIZE_MIN_HEIGHT, "req_height clamped to min");
   expect(view.getUint32(base + host.BROWSER_RESIZE_OFFSETS.req_seq, true) === 1, "req_seq incremented to 1");
-  expect(machine.keyboard.queue.length >= 3, "zero-delta PS/2 pointer wake packet queued");
+  expect(machine.keyboard.queue.length >= 3 && (machine.keyboard.queue[0].byte & 1) === 1, "zero-delta PS/2 wake packet preserves held mouse buttons");
+  machine.keyboard.mouseButtons = 0;
   expect(!machine.syncFramebufferSize(), "syncFramebufferSize stays false before compositor ack");
 
   view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.ack_width, 1440, true);
   view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.ack_height, 900, true);
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.desktop_width, 1152, true);
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.desktop_height, 720, true);
   view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.ack_seq, 1, true);
   expect(machine.syncFramebufferSize(), "syncFramebufferSize returns true when ack_seq advances");
   expect(machine.framebufferWidth === 1440 && machine.framebufferHeight === 900, "framebuffer dimensions updated from ack");
@@ -430,6 +435,7 @@ for (const name of ["root::Boot_Image_Agrees", "root::Image_Checked_At_Load"]) {
   view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.frame_seq, 1, true);
   const firstPatch = machine.readFramePatch();
   expect(!firstPatch.unchanged && firstPatch.w === 1440 && firstPatch.h === 900, "first frame after boot/resize sends full frame");
+  expect(firstPatch.desktopWidth === 1152 && firstPatch.desktopHeight === 720, "frame patch reports logical compositor desktop dimensions");
   const unchangedPatch = machine.readFramePatch();
   expect(unchangedPatch.unchanged === true, "same frame_seq skips framebuffer scan in O(1)");
 
@@ -443,10 +449,37 @@ for (const name of ["root::Boot_Image_Agrees", "root::Image_Checked_At_Load"]) {
   const multiPatch = machine.readFramePatch();
   expect(!multiPatch.unchanged && multiPatch.x === 0 && multiPatch.y === 0 && multiPatch.w === 1440 && multiPatch.h === 900, "skipped frames fall back cleanly to full frame");
 
-  // PS/2 mouse queue never truncates a 3-byte packet when full.
+  // Zero and out-of-range desktop_width/desktop_height values are ignored without overwriting the last valid size.
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.desktop_width, 0, true);
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.desktop_height, 0, true);
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.frame_seq, 6, true);
+  const zeroDesktopPatch = machine.readFramePatch();
+  expect(zeroDesktopPatch.desktopWidth === 1152 && zeroDesktopPatch.desktopHeight === 720, "zero desktop size keeps last valid logical desktop size");
+
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.desktop_width, 1441, true);
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.desktop_height, 901, true);
+  view.setUint32(base + host.BROWSER_RESIZE_OFFSETS.frame_seq, 7, true);
+  const oversizedDesktopPatch = machine.readFramePatch();
+  expect(oversizedDesktopPatch.desktopWidth === 1152 && oversizedDesktopPatch.desktopHeight === 720, "desktop size past framebuffer dimensions is ignored");
+
+  // Full-viewport pointer resync burst fits in the PS/2 queue without dropping packets,
+  // and queue stays 3-byte aligned under flood.
+  const ps2Resync = new host.Ps2Controller();
+  ps2Resync.pointer(-1920, -1200, 0);
+  ps2Resync.pointer(1919, 1199, 0);
+  let sumX = 0, sumY = 0;
+  while (ps2Resync.queue.length >= 3) {
+    const h = ps2Resync.queue.shift().byte;
+    const dx = ps2Resync.queue.shift().byte;
+    const dy = ps2Resync.queue.shift().byte;
+    sumX += (h & 0x10) ? dx - 256 : dx;
+    sumY += (h & 0x20) ? dy - 256 : dy;
+  }
+  expect(sumX === -1 && sumY === 1, "full-viewport resync burst delivers exact net delta without truncation");
+
   const ps2 = new host.Ps2Controller();
-  for (let i = 0; i < 120; i += 1) ps2.pointer(5, 5, 0);
-  expect(ps2.queue.length % 3 === 0 && ps2.queue.length <= 256, "PS/2 mouse queue stays 3-byte aligned under flood");
+  for (let i = 0; i < 400; i += 1) ps2.pointer(5, 5, 0);
+  expect(ps2.queue.length % 3 === 0 && ps2.queue.length <= 1024, "PS/2 mouse queue stays 3-byte aligned under flood");
 
   // IntelliMouse handshake (sample rates 200, 100, 80 -> Get Device ID 0x03)
   // pauses reporting during reset/defaults until 0xF4, ignores interleaved
@@ -477,8 +510,21 @@ for (const name of ["root::Boot_Image_Agrees", "root::Image_Checked_At_Load"]) {
   ps2Wheel.wheel(2);
   expect(ps2Wheel.queue.length === 4 && ps2Wheel.queue[3].byte === 2, "IntelliMouse wheel emits 4-byte packet with Z delta");
   ps2Wheel.queue = [];
-  for (let i = 0; i < 120; i += 1) ps2Wheel.pointer(5, 5, 0, 1);
-  expect(ps2Wheel.queue.length % 4 === 0 && ps2Wheel.queue.length <= 256, "PS/2 IntelliMouse queue stays 4-byte aligned under flood");
+  ps2Wheel.pointer(-1920, -1200, 0);
+  ps2Wheel.pointer(1919, 1199, 0);
+  let wheelSumX = 0, wheelSumY = 0;
+  while (ps2Wheel.queue.length >= 4) {
+    const h = ps2Wheel.queue.shift().byte;
+    const dx = ps2Wheel.queue.shift().byte;
+    const dy = ps2Wheel.queue.shift().byte;
+    ps2Wheel.queue.shift();
+    wheelSumX += (h & 0x10) ? dx - 256 : dx;
+    wheelSumY += (h & 0x20) ? dy - 256 : dy;
+  }
+  expect(wheelSumX === -1 && wheelSumY === 1, "4-byte IntelliMouse resync burst delivers exact net delta without truncation");
+  ps2Wheel.queue = [];
+  for (let i = 0; i < 400; i += 1) ps2Wheel.pointer(5, 5, 0, 1);
+  expect(ps2Wheel.queue.length % 4 === 0 && ps2Wheel.queue.length <= 1024, "PS/2 IntelliMouse queue stays 4-byte aligned under flood");
 }
 
 if (failures.length) {

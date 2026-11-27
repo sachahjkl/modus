@@ -25,10 +25,14 @@ const pointerLockButton = document.getElementById("pointer-lock");
 const fullscreenButton = document.getElementById("fullscreen");
 const themeButton = document.getElementById("theme");
 const context = screen.getContext("2d", { alpha: false });
-let guestPointerX = Math.floor(screen.width / 2);
-let guestPointerY = Math.floor(screen.height / 2);
+let guestDesktopWidth = Math.max(1, Math.floor((screen.width * 8) / 10));
+let guestDesktopHeight = Math.max(1, Math.floor((screen.height * 8) / 10));
+let desktopSizeKnown = false;
+let guestPointerX = Math.floor(guestDesktopWidth / 2);
+let guestPointerY = Math.floor(guestDesktopHeight / 2);
 let guestPointerButtons = 0;
 let pointerSynced = false;
+let pointerResyncDeferred = false;
 let pointerLocked = false;
 let pendingPointerEvent = null;
 let pendingLockedDeltaX = 0;
@@ -45,12 +49,31 @@ function updateScreenMeta(width, height) {
   if (screenMeta) screenMeta.textContent = "boot.image · " + width + " × " + height;
 }
 
+function markPointerResyncNeeded() {
+  if (guestPointerButtons === 0) {
+    pointerSynced = false;
+    pointerResyncDeferred = false;
+  } else {
+    pointerResyncDeferred = true;
+  }
+}
+
+function applyDesktopSize(width, height) {
+  guestDesktopWidth = Math.max(1, width);
+  guestDesktopHeight = Math.max(1, height);
+  guestPointerX = Math.max(0, Math.min(guestDesktopWidth - 1, guestPointerX));
+  guestPointerY = Math.max(0, Math.min(guestDesktopHeight - 1, guestPointerY));
+}
+
 function applyCanvasSize(width, height) {
   if (screen.width === width && screen.height === height) return;
   screen.width = width;
   screen.height = height;
+  if (!desktopSizeKnown) {
+    applyDesktopSize(Math.floor((width * 8) / 10), Math.floor((height * 8) / 10));
+  }
   updateScreenMeta(width, height);
-  pointerSynced = false;
+  markPointerResyncNeeded();
 }
 
 function measureStageSize() {
@@ -217,6 +240,13 @@ function onWorkerMessage(event) {
         if (message.width && message.height && (message.width !== screen.width || message.height !== screen.height)) {
           applyCanvasSize(message.width, message.height);
         }
+        if (message.desktopWidth && message.desktopHeight) {
+          desktopSizeKnown = true;
+          if (message.desktopWidth !== guestDesktopWidth || message.desktopHeight !== guestDesktopHeight) {
+            applyDesktopSize(message.desktopWidth, message.desktopHeight);
+            markPointerResyncNeeded();
+          }
+        }
         presentPatch(message.rgba, message.x, message.y, message.w, message.h);
       }
       return;
@@ -329,13 +359,15 @@ for (const kind of ["keydown", "keyup"]) {
   });
 }
 
-// Map absolute canvas coordinates onto relative PS/2 packets so the guest
-// desktop cursor stays aligned 1:1 with the browser pointer at every scale.
+// Map browser canvas coordinates onto the compositor logical desktop space so
+// the guest cursor stays aligned 1:1 with the browser pointer at every scale.
 function canvasPointer(event) {
   const rect = screen.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return null;
-  const x = Math.max(0, Math.min(screen.width - 1, Math.round(((event.clientX - rect.left) * screen.width) / rect.width)));
-  const y = Math.max(0, Math.min(screen.height - 1, Math.round(((event.clientY - rect.top) * screen.height) / rect.height)));
+  const dw = Math.max(1, guestDesktopWidth);
+  const dh = Math.max(1, guestDesktopHeight);
+  const x = Math.max(0, Math.min(dw - 1, Math.round(((event.clientX - rect.left) * dw) / rect.width)));
+  const y = Math.max(0, Math.min(dh - 1, Math.round(((event.clientY - rect.top) * dh) / rect.height)));
   return { x, y };
 }
 
@@ -344,10 +376,14 @@ function sendPointerAt(event, forceButtons) {
   const point = canvasPointer(event);
   if (!point) return;
   const buttons = event.buttons;
-  if (!pointerSynced) {
-    // Drive the compositor pointer to the top-left clamp (0, 0) once on entry,
-    // then move directly to the exact canvas pixel.
-    worker.postMessage({ kind: "pointer", deltaX: -screen.width, deltaY: -screen.height, buttons: 0 });
+  if (pointerResyncDeferred && guestPointerButtons === 0) {
+    pointerResyncDeferred = false;
+    pointerSynced = false;
+  }
+  if (!pointerSynced && guestPointerButtons === 0) {
+    // Drive the compositor pointer to (0, 0) while no button is held using the
+    // maximum viewport span so clamp always reaches the origin regardless of scale.
+    worker.postMessage({ kind: "pointer", deltaX: -VIEWPORT_MAX_WIDTH, deltaY: -VIEWPORT_MAX_HEIGHT, buttons: 0 });
     guestPointerX = 0;
     guestPointerY = 0;
     guestPointerButtons = 0;
@@ -355,12 +391,31 @@ function sendPointerAt(event, forceButtons) {
   }
   const deltaX = point.x - guestPointerX;
   const deltaY = point.y - guestPointerY;
+  if (guestPointerButtons === 0 && buttons !== 0 && (deltaX !== 0 || deltaY !== 0)) {
+    // Move to the target pixel before asserting buttons so multi-packet PS/2
+    // moves never press and drag across intermediate pixels.
+    worker.postMessage({ kind: "pointer", deltaX, deltaY, buttons: 0 });
+    worker.postMessage({ kind: "pointer", deltaX: 0, deltaY: 0, buttons });
+    guestPointerX = point.x;
+    guestPointerY = point.y;
+    guestPointerButtons = buttons;
+    return;
+  }
   if (deltaX !== 0 || deltaY !== 0 || buttons !== guestPointerButtons || forceButtons) {
     worker.postMessage({ kind: "pointer", deltaX, deltaY, buttons });
     guestPointerX = point.x;
     guestPointerY = point.y;
     guestPointerButtons = buttons;
   }
+}
+
+function releaseHeldPointer() {
+  pendingPointerEvent = null;
+  if (worker && stage === STAGE_READY && guestPointerButtons !== 0) {
+    worker.postMessage({ kind: "pointer", deltaX: 0, deltaY: 0, buttons: 0 });
+    guestPointerButtons = 0;
+  }
+  markPointerResyncNeeded();
 }
 
 function updatePointerLockLabel() {
@@ -428,13 +483,16 @@ screen.addEventListener("contextmenu", (event) => {
 screen.addEventListener("pointerenter", (event) => {
   if (pointerLocked) return;
   pendingPointerEvent = null;
-  pointerSynced = false;
+  if (event.buttons === 0 && guestPointerButtons === 0) {
+    pointerSynced = false;
+    pointerResyncDeferred = false;
+  }
   sendPointerAt(event, false);
 });
 screen.addEventListener("pointerleave", () => {
   if (pointerLocked) return;
   pendingPointerEvent = null;
-  pointerSynced = false;
+  markPointerResyncNeeded();
 });
 screen.addEventListener("pointermove", (event) => {
   if (pointerLocked) {
@@ -459,10 +517,28 @@ for (const kind of ["pointerdown", "pointerup"]) {
       return;
     }
     pendingPointerEvent = null;
-    if (kind === "pointerdown") screen.focus();
+    if (kind === "pointerdown") {
+      screen.focus();
+      try { screen.setPointerCapture(event.pointerId); } catch {}
+    } else {
+      try {
+        if (screen.hasPointerCapture && screen.hasPointerCapture(event.pointerId)) {
+          screen.releasePointerCapture(event.pointerId);
+        }
+      } catch {}
+    }
     sendPointerAt(event, true);
   });
 }
+screen.addEventListener("pointercancel", () => {
+  if (!pointerLocked) releaseHeldPointer();
+});
+screen.addEventListener("lostpointercapture", () => {
+  if (!pointerLocked && guestPointerButtons !== 0) releaseHeldPointer();
+});
+window.addEventListener("blur", () => {
+  if (!pointerLocked && guestPointerButtons !== 0) releaseHeldPointer();
+});
 
 // Translate wheel and trackpad gestures into integer IntelliMouse wheel notches.
 let wheelPixelRemainder = 0;

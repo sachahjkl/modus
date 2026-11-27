@@ -225,7 +225,18 @@ self.onmessage = (event) => {
         return;
       }
       self.postMessage(
-        { kind: "frame", rgba: patch.rgba, x: patch.x, y: patch.y, w: patch.w, h: patch.h, width: patch.width, height: patch.height },
+        {
+          kind: "frame",
+          rgba: patch.rgba,
+          x: patch.x,
+          y: patch.y,
+          w: patch.w,
+          h: patch.h,
+          width: patch.width,
+          height: patch.height,
+          desktopWidth: patch.desktopWidth,
+          desktopHeight: patch.desktopHeight,
+        },
         [patch.rgba],
       );
       return;

@@ -41,6 +41,7 @@ browser_resize_open :: proc "contextless" (framebuffer_pages: u64) {
 	browser_resize_ack_seq = seq
 	candidate.ack_width = u32(screen.width)
 	candidate.ack_height = u32(screen.height)
+	// desktop_width and desktop_height are published in browser_resize_ack_after_frame once desktop_scale_take has run.
 	intrinsics.atomic_store_explicit(&candidate.ack_seq, seq, .Release)
 }
 
@@ -177,6 +178,8 @@ browser_resize_ack_after_frame :: proc "contextless" () {
 		return
 	}
 	resized := browser_resize_pending_seq != browser_resize_ack_seq
+	page.desktop_width = u32(max(desktop_width, 0))
+	page.desktop_height = u32(max(desktop_height, 0))
 	if resized {
 		page.dirty_x = 0
 		page.dirty_y = 0

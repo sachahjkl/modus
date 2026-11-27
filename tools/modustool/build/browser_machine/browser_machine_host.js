@@ -88,8 +88,10 @@ export const BROWSER_RESIZE_OFFSETS = {
   dirty_y: 48,
   dirty_w: 52,
   dirty_h: 56,
+  desktop_width: 60,
+  desktop_height: 64,
 };
-export const BROWSER_RESIZE_PAGE_SIZE = 64;
+export const BROWSER_RESIZE_PAGE_SIZE = 72;
 const BROWSER_RESIZE_MIN_MEMORY_BYTES = 64 * 1024 * 1024;
 
 // The words of Memory_Kind and of Pixel_Format.
@@ -202,9 +204,9 @@ const PS2_SELF_TEST_PASSED = 0xaa;
 // The configuration byte after a reset: the interrupts of both ports on,
 // the translation to scan code set 1 on.
 const PS2_DEFAULT_CONFIGURATION = 0x47;
-// A queue of the page that grows past this bound drops its oldest byte:
-// the system reads the controller slower than the reader types.
-const PS2_QUEUE_LIMIT = 256;
+// Plan value: 1024 bytes holds up to 8 full-viewport 4-byte IntelliMouse resync
+// bursts (ceil(1920 / 127) * 4 * 2 = 128 bytes each) without dropping packets.
+const PS2_QUEUE_LIMIT = 1024;
 
 // What the next byte written to the data port means.
 const Ps2DataTarget = Object.freeze({ Keyboard: 0, KeyboardArgument: 1, Configuration: 2, Mouse: 3, MouseArgument: 4 });
@@ -1438,6 +1440,8 @@ export class BrowserMachine {
     this.memoryMebibytes = memoryMebibytes;
     this.framebufferWidth = framebufferWidth;
     this.framebufferHeight = framebufferHeight;
+    this.desktopWidth = 0;
+    this.desktopHeight = 0;
     this.requestedWidth = framebufferWidth;
     this.requestedHeight = framebufferHeight;
     this.resizeSeq = 0;
@@ -1600,8 +1604,8 @@ export class BrowserMachine {
     view.setUint32(base + BROWSER_RESIZE_OFFSETS.req_width, clampedW, true);
     view.setUint32(base + BROWSER_RESIZE_OFFSETS.req_height, clampedH, true);
     view.setUint32(base + BROWSER_RESIZE_OFFSETS.req_seq, this.resizeSeq, true);
-    // Wake input -> compositor immediately instead of waiting for the 1 s bar tick.
-    this.keyboard.pointer(0, 0, 0);
+    // Wake input -> compositor immediately while preserving any held buttons.
+    this.keyboard.pointer(0, 0, this.keyboard.mouseButtons);
     return true;
   }
 
@@ -1649,6 +1653,12 @@ export class BrowserMachine {
       if (!resized && frameSeq !== 0 && frameSeq === this.lastFrameSeq) {
         return { unchanged: true };
       }
+      const dwLogical = view.getUint32(base + BROWSER_RESIZE_OFFSETS.desktop_width, true);
+      const dhLogical = view.getUint32(base + BROWSER_RESIZE_OFFSETS.desktop_height, true);
+      if (dwLogical > 0 && dwLogical <= width && dhLogical > 0 && dhLogical <= height) {
+        this.desktopWidth = dwLogical;
+        this.desktopHeight = dhLogical;
+      }
       const nextExpected = ((this.lastFrameSeq + 1) >>> 0) || 1;
       if (!resized && this.lastFrameSeq !== 0 && frameSeq === nextExpected) {
         const dx = view.getUint32(base + BROWSER_RESIZE_OFFSETS.dirty_x, true);
@@ -1675,7 +1685,9 @@ export class BrowserMachine {
         rgba32[dst++] = 0xff000000 | ((pixel & 0xff) << 16) | (pixel & 0x00ff00) | ((pixel >> 16) & 0xff);
       }
     }
-    return { unchanged: false, rgba: rgba32.buffer, x, y, w, h, width, height };
+    const desktopWidth = this.desktopWidth > 0 ? this.desktopWidth : width;
+    const desktopHeight = this.desktopHeight > 0 ? this.desktopHeight : height;
+    return { unchanged: false, rgba: rgba32.buffer, x, y, w, h, width, height, desktopWidth, desktopHeight };
   }
 
   // The pixels of the framebuffer, blue first: a view of the memory.
