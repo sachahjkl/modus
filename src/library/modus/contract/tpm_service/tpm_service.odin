@@ -150,6 +150,23 @@ Command :: enum u32 {
 	// value found of its record when the payload or its change is refused; a
 	// refusal at the border has the word 0, Pin_Refusal.None.
 	Pin_Write = 5,
+	// Seal 32 secret bytes at REGION_SECRET under the persistent storage key
+	// (or owner primary) to the TPM2_PolicyAuthorize policy described by
+	// Update_Policy_Bundle at REGION_UPDATE_POLICY, plus TPM2_PolicyPassword
+	// when values[0] is Authorization.Value. Survives signed OS updates whose
+	// version meets the TPM floor.
+	Seal_Authorized = 6,
+	// Unseal an update-surviving object in the region using Update_Policy_Bundle
+	// at REGION_UPDATE_POLICY (verifying the publisher ECDSA P-256 signature via
+	// TPM2_LoadExternal + TPM2_VerifySignature, checking PCR 7/11 + TPM2_PolicyNV
+	// on the version floor + TPM2_PolicyAuthorize, and TPM2_PolicyPassword when
+	// values[4] is Authorization.Value).
+	Unseal_Authorized = 7,
+	// Persist the primary storage key at PERSISTENT_STORAGE_KEY_HANDLE via
+	// TPM2_EvictControl, generate a random 32-byte owner hierarchy authorization
+	// value via TPM2_HierarchyChangeAuth(Owner), and seal it under the persistent
+	// storage key to the Update_Policy_Bundle at REGION_UPDATE_POLICY.
+	Owner_Protect = 8,
 }
 
 // The ring on which a request came: the border takes Seal and Unseal on the
@@ -282,11 +299,21 @@ request_of_record :: proc "contextless" (kind: u32, values: [7]u64, source: Requ
 			return {}, .Argument_Refused, errors.error_make(.Bad_Value, .None, 1, i64(values[0]))
 		}
 		return {command = command, authorization = .None}, .Succeeded, {}
-	case .Seal, .Unseal:
+	case .Seal, .Unseal, .Seal_Authorized, .Unseal_Authorized:
 		if source != .Client_Ring {
 			return other_ring(command)
 		}
-		authorization_word = command == .Seal ? values[0] : values[4]
+		authorization_word = (command == .Seal || command == .Seal_Authorized) ? values[0] : values[4]
+	case .Owner_Protect:
+		if source != .Client_Ring {
+			return other_ring(command)
+		}
+		for value, place in values {
+			if value != 0 {
+				return {}, .Argument_Refused, errors.error_make(.Bad_Value, .None, i64(place + 1), i64(min(value, 1 << 62)))
+			}
+		}
+		return {command = .Owner_Protect, authorization = .None}, .Succeeded, {}
 	case .Measure_Start_Policy:
 		// A client of the TPM ring never extends a PCR: only the root
 		// service holds the measure ring.
@@ -297,7 +324,7 @@ request_of_record :: proc "contextless" (kind: u32, values: [7]u64, source: Requ
 	}
 	authorization, authorization_ok := authorization_of_word(authorization_word)
 	if !authorization_ok {
-		return {}, .Argument_Refused, errors.error_make(.Bad_Value, .None, command == .Seal ? 1 : UNSEAL_AUTHORIZATION_ARGUMENT, cast(i64)authorization_word, i64(max(Authorization)))
+		return {}, .Argument_Refused, errors.error_make(.Bad_Value, .None, (command == .Seal || command == .Seal_Authorized) ? 1 : UNSEAL_AUTHORIZATION_ARGUMENT, cast(i64)authorization_word, i64(max(Authorization)))
 	}
 	return {command = command, authorization = authorization}, .Succeeded, {}
 }

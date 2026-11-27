@@ -76,6 +76,8 @@ Wide_Authority :: enum u64 {
 	View_Screen        = 1,
 	Send_Input         = 2,
 	Read_Semantic_Tree = 3,
+	Machine_Principals = 4, // Machine grant scope Principals (wide grant for principal 0 only).
+	Machine_System     = 5, // Machine grant scope System (wide grant for principal 0 only).
 }
 
 // Bit set of granted Wide_Authority flags.
@@ -84,7 +86,9 @@ Wide_Authorities :: bit_set[Wide_Authority;u64]
 // Bit mask of all defined Wide_Authority bits.
 WIDE_AUTHORITY_KNOWN_MASK :: (u64(1) << u64(Wide_Authority.View_Screen)) |
 	(u64(1) << u64(Wide_Authority.Send_Input)) |
-	(u64(1) << u64(Wide_Authority.Read_Semantic_Tree))
+	(u64(1) << u64(Wide_Authority.Read_Semantic_Tree)) |
+	(u64(1) << u64(Wide_Authority.Machine_Principals)) |
+	(u64(1) << u64(Wide_Authority.Machine_System))
 
 // Closed set of principal proof kinds accepted to activate a wide grant.
 // Zero means unset and is refused at the border.
@@ -301,6 +305,12 @@ wide_authorities_to_word :: proc "contextless" (authorities: Wide_Authorities) -
 	if .Read_Semantic_Tree in authorities {
 		word |= u64(1) << u64(Wide_Authority.Read_Semantic_Tree)
 	}
+	if .Machine_Principals in authorities {
+		word |= u64(1) << u64(Wide_Authority.Machine_Principals)
+	}
+	if .Machine_System in authorities {
+		word |= u64(1) << u64(Wide_Authority.Machine_System)
+	}
 	return word
 }
 
@@ -317,6 +327,12 @@ wide_authorities_from_word :: proc "contextless" (word: u64) -> (authorities: Wi
 	}
 	if word & (u64(1) << u64(Wide_Authority.Read_Semantic_Tree)) != 0 {
 		decoded += {.Read_Semantic_Tree}
+	}
+	if word & (u64(1) << u64(Wide_Authority.Machine_Principals)) != 0 {
+		decoded += {.Machine_Principals}
+	}
+	if word & (u64(1) << u64(Wide_Authority.Machine_System)) != 0 {
+		decoded += {.Machine_System}
 	}
 	return decoded, true
 }
@@ -712,30 +728,47 @@ wide_grant_terms_validate_fields :: proc "contextless" (terms: ^Wide_Grant_Terms
 	if !auth_ok {
 		return .Invalid_Authority
 	}
-	// Sending input requires screen view so the grant honestly states its reach.
-	if .Send_Input in authorities && .View_Screen not_in authorities {
-		return .Invalid_Authority
-	}
-	if terms.target_window_count == 0 {
-		return .Empty_Window_Set
-	}
-	if terms.target_window_count > MAX_TARGET_WINDOWS {
-		return .Too_Many_Windows
-	}
-	for index in u32(0) ..< terms.target_window_count {
-		window_id := terms.target_window_ids[index]
-		if window_id == 0 {
-			return .Window_Not_In_Scope
+	is_machine_grant := (authorities & MACHINE_AUTHORITIES) != {}
+	if is_machine_grant {
+		// Machine grants are wide grants for principal 0 only, never mixed with
+		// desktop agent authorities and targeting no window ids.
+		if terms.principal_id != 0 || (authorities - MACHINE_AUTHORITIES) != {} {
+			return .Invalid_Authority
 		}
-		for earlier in u32(0) ..< index {
-			if terms.target_window_ids[earlier] == window_id {
-				return .Window_Not_In_Scope
+		if terms.target_window_count != 0 {
+			return .Too_Many_Windows
+		}
+		for tail in u32(0) ..< MAX_TARGET_WINDOWS {
+			if terms.target_window_ids[tail] != 0 {
+				return .Too_Many_Windows
 			}
 		}
-	}
-	for tail in terms.target_window_count ..< MAX_TARGET_WINDOWS {
-		if terms.target_window_ids[tail] != 0 {
+	} else {
+		// Sending input requires screen view so the grant honestly states its reach.
+		if .Send_Input in authorities && .View_Screen not_in authorities {
+			return .Invalid_Authority
+		}
+		if terms.target_window_count == 0 {
+			return .Empty_Window_Set
+		}
+		if terms.target_window_count > MAX_TARGET_WINDOWS {
 			return .Too_Many_Windows
+		}
+		for index in u32(0) ..< terms.target_window_count {
+			window_id := terms.target_window_ids[index]
+			if window_id == 0 {
+				return .Window_Not_In_Scope
+			}
+			for earlier in u32(0) ..< index {
+				if terms.target_window_ids[earlier] == window_id {
+					return .Window_Not_In_Scope
+				}
+			}
+		}
+		for tail in terms.target_window_count ..< MAX_TARGET_WINDOWS {
+			if terms.target_window_ids[tail] != 0 {
+				return .Too_Many_Windows
+			}
 		}
 	}
 	if terms.duration_ms == 0 {

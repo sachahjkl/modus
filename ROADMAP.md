@@ -16,7 +16,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **A rollback that takes the data back, and the upgrade test.** `plans.rollback()` runs the backward migration of each newer module before the older module starts, and a machine test boots the image of the release before, writes each store, then boots the new image and reads them. It starts at the preparation of 1.0. [Design](src/md/features/data_evolution.md)
 - **No defence against a cut int1 once the hosts run Linux 7.3.** The kernel stops reading the bytes of a process at a debug exception with no status, when every host of the test machines runs Linux 7.3 or later, whose KVM no longer gives a cut `int1` again. A debug exception then costs no read of the process, and the kernel keeps no rule for one bug of one hypervisor.
 - **LLVM 22.** Switch the build from patched LLVM 18.1.8 to stock LLVM once upstream fixes the two reproducibility regressions measured on stock LLVM 22.1.8 (`LoopSimplifyPass` phi-operand nondeterminism in `extended_state.ll` and `X86FixupLEAs` debug-info codegen divergence on `edwards25519::ge_double`), so the flake builds no LLVM of its own. [Design](src/md/infrastructure/llvm_of_the_build.md)
-- **Several principals on one machine.** More than one named principal uses a machine, each with its own session, its own stores and its own keys, and none reads the data of another. The capacity grows only after each shared place of the system has a scope. [Design](src/md/features/several_principals.md)
 
 ## Maybe
 

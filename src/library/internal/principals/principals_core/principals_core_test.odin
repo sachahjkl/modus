@@ -207,8 +207,14 @@ principal_registration_refusals_and_capacity_overflow_keep_state_intact :: proc(
 	testing.expect_value(t, register_principal(&state, &dup_key), Principals_Refusal.Duplicate_Public_Key)
 	testing.expect(t, snapshot_domain_equal(&state, &before))
 
-	// The capacity of the machine is full: a slot past it names no
-	// principal, at its edge and at the largest number.
+	// Register remaining named principals up to MAX_PRINCIPALS - 1; once full,
+	// any slot past capacity is refused without mutating state.
+	extra_names := [?]string{"bob", "carol", "dave", "erin", "frank", "grace"}
+	for idx in u64(2) ..< MAX_PRINCIPALS {
+		inp := rd.Register_Principal_Input{principal_id = idx, public_key = make_key(u8(20 + idx))}
+		inp.name, inp.name_length = fill_name(extra_names[idx - 2])
+		testing.expect_value(t, register_principal(&state, &inp), Principals_Refusal.None)
+	}
 	testing.expect_value(t, state.counters.principal_count, u64(MAX_PRINCIPALS))
 	for past in ([?]u64{MAX_PRINCIPALS, 99, max(u64)}) {
 		before = state
@@ -271,14 +277,14 @@ session_lifecycle_protects_machine_and_updates_client_keys :: proc(t: ^testing.T
 	before = state
 	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 0, action_word = u32(rd.Session_Action.Bring_To_Front)}), Principals_Refusal.Session_State_Conflict)
 	testing.expect(t, snapshot_domain_equal(&state, &before))
-	// A second named principal has no slot: the capacity of the machine
-	// is one named principal.
+	// Register a second named principal (bob in slot 2). Under one open
+	// session at a time, unlocking bob while alice is in front is refused.
 	bob := rd.Register_Principal_Input{principal_id = 2, public_key = make_key(2)}
 	bob.name, bob.name_length = fill_name("bob")
+	testing.expect_value(t, register_principal(&state, &bob), Principals_Refusal.None)
 	before = state
-	testing.expect_value(t, register_principal(&state, &bob), Principals_Refusal.Invalid_Principal_Id)
-	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 2, action_word = u32(rd.Session_Action.Unlock)}), Principals_Refusal.Unknown_Principal)
-	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 2, action_word = u32(rd.Session_Action.Bring_To_Front)}), Principals_Refusal.Unknown_Principal)
+	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 2, action_word = u32(rd.Session_Action.Unlock)}), Principals_Refusal.Session_State_Conflict)
+	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 2, action_word = u32(rd.Session_Action.Bring_To_Front)}), Principals_Refusal.Session_State_Conflict)
 	after_refusals := state
 	after_refusals.counters.total_refusals = before.counters.total_refusals
 	testing.expect(t, snapshot_domain_equal(&after_refusals, &before))
@@ -305,6 +311,12 @@ session_lifecycle_protects_machine_and_updates_client_keys :: proc(t: ^testing.T
 	row1_locked, _ := client_key_lookup(&state, k1)
 	testing.expect(t, row0_locked.not_in_front == 0)
 	testing.expect(t, row1_locked.session_locked == 1 && row1_locked.serial > s1)
+
+	// Re-unlock bob (switching named principals cleanly after alice locked).
+	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 2, action_word = u32(rd.Session_Action.Unlock)}), Principals_Refusal.None)
+	testing.expect_value(t, principals.principal_in_front(state.seat), u64(2))
+	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 1, action_word = u32(rd.Session_Action.Unlock)}), Principals_Refusal.Session_State_Conflict)
+	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 2, action_word = u32(rd.Session_Action.Lock)}), Principals_Refusal.None)
 
 	// Re-unlock alice -> k1 gets session_locked = 0 and a newer serial.
 	testing.expect_value(t, session_transition(&state, &rd.Session_Transition_Input{principal_id = 1, action_word = u32(rd.Session_Action.Unlock)}), Principals_Refusal.None)

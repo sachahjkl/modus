@@ -204,3 +204,77 @@ slot_creation_allowed :: proc "contextless" (slots: ^Retired_Slots, slot: u64) -
 	}
 	return !slots.retired[slot]
 }
+
+// Why a grant-authorized removal of a named principal was refused.
+Removal_By_Grant_Refusal :: enum u8 {
+	None             = 0,
+	Actor_Not_Named  = 1, // Principal 0 or out-of-range actor cannot invoke grant removal.
+	Target_Not_Named = 2, // Principal 0 or out-of-range target cannot be removed.
+	Missing_Grant    = 3, // Actor does not hold the Principals machine grant scope.
+	Target_Absent    = 4, // Target slot has no recorded named principal.
+	Last_System_Grant = 5, // Target is the sole System holder while another named principal remains.
+}
+
+// removal_by_grant_allowed decides whether `actor_slot` may remove
+// `target_slot` without target's consent. Enforces named actor and target,
+// active Principals machine grant on actor, target presence, and the invariant
+// that the last System holder is never removed while another named principal
+// remains.
+removal_by_grant_allowed :: proc "contextless" (
+	actor_slot: u64,
+	target_slot: u64,
+	actor_holds_principals: bool,
+	target_exists: bool,
+	target_holds_system: bool,
+	system_holder_count: int,
+	other_named_principals_exist: bool,
+) -> Removal_By_Grant_Refusal {
+	if actor_slot == MACHINE || actor_slot >= PRINCIPAL_CAPACITY {
+		return .Actor_Not_Named
+	}
+	if target_slot == MACHINE || target_slot >= PRINCIPAL_CAPACITY {
+		return .Target_Not_Named
+	}
+	if !actor_holds_principals {
+		return .Missing_Grant
+	}
+	if !target_exists {
+		return .Target_Absent
+	}
+	if other_named_principals_exist && target_holds_system && system_holder_count <= 1 {
+		return .Last_System_Grant
+	}
+	return .None
+}
+
+// self_removal_allowed reports whether a named principal may remove itself
+// via Principal_Change(.Remove). Enforces the same last-System-holder
+// invariant as grant-authorized removal: the sole System holder cannot remove
+// itself while another named principal remains on the machine.
+self_removal_allowed :: proc "contextless" (
+	holds_system: bool,
+	system_holder_count: int,
+	other_named_principals_exist: bool,
+) -> bool {
+	if other_named_principals_exist && holds_system && system_holder_count <= 1 {
+		return false
+	}
+	return true
+}
+
+// first_principal_bootstrap_allowed reports whether a newly recorded named
+// principal should receive the bootstrap Principals and System machine grants.
+// Only true when the principal was created in this run (never during boot
+// scan), principal 0's disk grant table is loaded (No_Passphrase or Kept),
+// no machine grants exist yet, and this is the sole named principal.
+first_principal_bootstrap_allowed :: proc "contextless" (
+	created_in_this_run: bool,
+	existing_machine_grant_count: int,
+	named_principal_count: int,
+	machine_table_loaded: bool,
+) -> bool {
+	return created_in_this_run &&
+		machine_table_loaded &&
+		existing_machine_grant_count == 0 &&
+		named_principal_count == 1
+}

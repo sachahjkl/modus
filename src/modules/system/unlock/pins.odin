@@ -201,17 +201,57 @@ principal_file_removed_check :: proc "contextless" () -> (removed: bool) {
 	return removed
 }
 
-// principal_creation_allowed says if a new principal may be created: not
-// while an Active pin names the file of a principal. A Free pin from a prior
-// deliberate removal allows creation at generation + 1.
-principal_creation_allowed :: proc "contextless" () -> bool {
+// principal_creation_allowed_for says if a new principal may be created in
+// `slot`: not while an Active pin names a file in `slot`. A Free pin from a
+// prior deliberate removal allows creation at generation + 1.
+principal_creation_allowed_for :: proc "contextless" (slot: u64) -> bool {
 	principal_pin, principal_pin_read = {}, false
-	if principal_file_removed_check() {
+	if slot == principals.MACHINE || slot >= principals.PRINCIPAL_CAPACITY {
+		return false
+	}
+	if !tpm_granted {
+		principal_pin_read = true
+		return true
+	}
+	state, count, read_ok := pin_read(.Principal_File, slot)
+	if !read_ok {
+		system.log_fact(.Info, Principal_Pin_Not_Read{principal = slot})
 		system.log_fact(.Info, Principal_Creation_Refused_By_Pin{})
 		return false
 	}
-	principal_pin_read = true
+	verdict, free_pin, refusal := tpm_service.principal_file_pin_verdict(state, pin_payload[:count], slot, {}, nil, false)
+	switch verdict {
+	case .Principal_File_Pin_Mismatch, .Record_Pin_Mismatch:
+		system.log_fact(.Info, Principal_File_Pin_Mismatch{principal = slot, pin_refusal = pin_refusal_field(refusal)})
+		system.log_fact(.Info, Principal_Creation_Refused_By_Pin{})
+		return false
+	case .Free_Slot:
+		principal_pin, principal_pin_read = free_pin, true
+	case .Not_Pinned, .Accepted, .Accepted_Next:
+		principal_pin_read = true
+	}
 	return true
+}
+
+// principal_pin_generation_of reads the current TPM pin generation of `slot`
+// without mutating `principal_pin` (used before grant-authorized removal of a
+// target slot while the actor's own file is loaded).
+principal_pin_generation_of :: proc "contextless" (slot: u64) -> (generation: u64, ok: bool) {
+	if !tpm_granted {
+		return 0, true
+	}
+	state, count, read_ok := pin_read(.Principal_File, slot)
+	if !read_ok {
+		return 0, false
+	}
+	if !tpm_service.pin_state_holds_payload(state) {
+		return 0, true
+	}
+	decoded, dec_ref := tpm_attestation.principal_file_pin_decode(pin_payload[:count])
+	if dec_ref != .None {
+		return 0, false
+	}
+	return decoded.generation, true
 }
 
 // principal_pin_free writes the "free, generation g" TPM pin payload at the

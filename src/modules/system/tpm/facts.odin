@@ -257,6 +257,24 @@ Unsealed_With_Authorization :: struct {}
 @(log_fact = "tpm: unsealed 32 bytes: PCR 7 and PCR 11 hold the values of the seal")
 Unsealed :: struct {}
 
+// A seal of 32 bytes to an update-surviving publisher policy.
+@(log_fact = "tpm: sealed 32 bytes to the publisher authorized update policy: a public area of {public_area} and a private area of {private_area}")
+Sealed_Authorized :: struct {
+	public_area:  value_kinds.Size_In_Bytes,
+	private_area: value_kinds.Size_In_Bytes,
+}
+
+// An update-surviving unseal done after publisher signature and floor checks.
+@(log_fact = "tpm: unsealed 32 bytes under the publisher authorized update policy and version floor")
+Unsealed_Authorized :: struct {}
+
+// The storage primary key was persisted and the owner hierarchy received a
+// random authorization value sealed to the update policy.
+@(log_fact = "tpm: persisted the storage key at {persistent_handle} and protected the owner hierarchy with a sealed random authorization value")
+Owner_Hierarchy_Protected :: struct {
+	persistent_handle: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
 // The TPM refused an extend of PCR 12.
 @(log_fact = "tpm: the TPM refused the extend of PCR 12 (response code {response_code})")
 Extend_Refused :: struct {

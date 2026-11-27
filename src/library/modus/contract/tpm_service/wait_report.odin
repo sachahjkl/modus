@@ -88,4 +88,7 @@ command_words := [Command]string {
 	.Measure_Start_Policy = "a measure of a start policy",
 	.Pin_Read             = "a pin read",
 	.Pin_Write            = "a pin write",
+	.Seal_Authorized      = "an authorized seal",
+	.Unseal_Authorized    = "an authorized unseal",
+	.Owner_Protect        = "the owner hierarchy protection",
 }

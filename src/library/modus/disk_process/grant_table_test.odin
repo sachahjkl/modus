@@ -282,12 +282,15 @@ hostile_tables :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem, Table_File_Problem.Not_Authentic)
 	_, problem = table_decode(good[:TABLE_SIZE - 1], &key)
 	testing.expect_value(t, problem, Table_File_Problem.Wrong_Size)
-	// A table of format 1, 2 or 3 is named Older_Format, and a restore cannot help it.
+	// A table of format 1, 2, 3 or 4 is named Older_Format, and a restore cannot help it.
 	_, problem = table_decode(good[:OLDER_FORMAT_TABLE_SIZE], &key)
 	testing.expect_value(t, problem, Table_File_Problem.Older_Format)
 	_, problem = table_decode(good[:OLDER_FORMAT_2_TABLE_SIZE], &key)
 	testing.expect_value(t, problem, Table_File_Problem.Older_Format)
 	_, problem = table_decode(good[:OLDER_FORMAT_3_TABLE_SIZE], &key)
+	testing.expect_value(t, problem, Table_File_Problem.Older_Format)
+	older_4: [OLDER_FORMAT_4_TABLE_SIZE]u8
+	_, problem = table_decode(older_4[:], &key)
 	testing.expect_value(t, problem, Table_File_Problem.Older_Format)
 	// One byte past the table, and one byte past the table of format 3.
 	long: [TABLE_SIZE + 1]u8
@@ -309,10 +312,11 @@ hostile_tables :: proc(t: ^testing.T) {
 		{TABLE_OFFSET_FORMAT, u8(TABLE_FORMAT + 1), .Wrong_Format},
 		{TABLE_OFFSET_COUNT, ROW_CAPACITY + 1, .Too_Many_Rows},
 		{TABLE_OFFSET_SETTING, 2, .Bad_Setting},
-		{TABLE_OFFSET_CLIENT_KEY_COUNT + 1, 1, .Bad_Setting},
 		{TABLE_OFFSET_CLIENT_KEY_COUNT, CLIENT_KEY_CAPACITY + 1, .Bad_Client_Keys},
 		{TABLE_OFFSET_CLIENT_KEYS, 1, .Bad_Client_Keys},
-		{TABLE_OFFSET_TAG - 1, 1, .Bad_Client_Keys},
+		{TABLE_OFFSET_MACHINE_GRANT_COUNT, MACHINE_GRANT_CAPACITY + 1, .Bad_Machine_Grants},
+		{TABLE_OFFSET_MACHINE_GRANTS, 1, .Bad_Machine_Grants},
+		{TABLE_OFFSET_TAG - 1, 1, .Bad_Machine_Grants},
 		{TABLE_HEADER_SIZE + ROW_OFFSET_LENGTH, NAME_LIMIT + 1, .Bad_Row},
 		{TABLE_HEADER_SIZE + ROW_OFFSET_NICKNAME, '.', .Bad_Row},
 		{TABLE_HEADER_SIZE + ROW_OFFSET_NICKNAME + 20, 'x', .Bad_Row},

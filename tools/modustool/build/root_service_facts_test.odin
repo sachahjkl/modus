@@ -52,7 +52,7 @@ TABLE_KEYS := [?]string{"the machine key", "the key of the principal"}
 @(private = "file")
 CLIENT_USES := [?]string{"calls, view and input", "calls and view", "view and input", "view", "calls", "no use"}
 @(private = "file")
-UNLOCK_MODES := [?]string{"an unlock", "the creation of a principal", "the machine passphrase that is set", "the machine key that the TPM seals", "a change of the passphrase", "a new recovery key", "the machine key before the start policy", "the proof of a wide grant", "the removal of a principal", "a mode that names no member"}
+UNLOCK_MODES := [?]string{"an unlock", "the creation of a principal", "the machine passphrase that is set", "the machine key that the TPM seals", "a change of the passphrase", "a new recovery key", "the machine key before the start policy", "the proof of a wide grant", "the removal of a principal", "the removal of a principal by grant", "a mode that names no member"}
 @(private = "file")
 CHANGE_ENDS := [?]string{"unlock stopped before the end: the old or the new secret opens", "the passphrase is changed", "the change is cancelled: nothing changed", "the principal keys are destroyed and removed"}
 @(private = "file")
@@ -162,7 +162,7 @@ TABLE_CALL_FAILURES := [?]string{"no connection to the storage service", "the ca
 // The sentences of disk_process.table_problem_sentences that a Text field
 // holds; the three longer ones have a fact type each.
 @(private = "file")
-TABLE_PROBLEMS_IN_A_FIELD := [?]string{"the table does not have 2288 bytes", "its tag does not verify under the key of the principal: another key wrote it, or a byte changed", "the table does not start with DISKGRNT", "the table has another format number", "the table counts more than 16 rows", "the global setting of the table is not 0 or 1, or its header has a byte that is not zero", "two rows have one nickname", "two rows hold the grant start_policy", "the table of a named principal holds the grant start_policy, which only principal 0 gives", "the table has bytes that are not zero after its last row"}
+TABLE_PROBLEMS_IN_A_FIELD := [?]string{"the table does not have 1968 bytes", "its tag does not verify under the key of the principal: another key wrote it, or a byte changed", "the table does not start with DISKGRNT", "the table has another format number", "the table counts more than 16 rows", "the global setting of the table is not 0 or 1", "two rows have one nickname", "two rows hold the grant start_policy", "the table of a named principal holds the grant start_policy, which only principal 0 gives", "the table has bytes that are not zero after its last row", "the machine grants exceed 16 rows, have a zero or repeated identifier, or unknown scopes", "the table of a named principal holds a machine grant row, which only principal 0 holds"}
 @(private = "file")
 TABLE_PROBLEM_OLDER_FORMAT_CAUSE :: "it has the format of an older system (1008, 1136 or 1168 bytes), and no version of it can be restored to verify"
 TABLE_OLDER_FORMAT_TO_DO :: "to use a client again, pair it again with remote_allow, or remote_display_allow for a viewer, from a console of the principal; give each disk process its grants again"

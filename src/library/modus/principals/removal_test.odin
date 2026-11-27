@@ -192,3 +192,103 @@ create_remove_crash_resume_and_recreate_cycle :: proc(t: ^testing.T) {
 	testing.expect_value(t, pin_b.generation, u64(3))
 	testing.expect_value(t, pin_b.identifier, tpm_attestation.Identifier(id_b))
 }
+
+// Removal by a holder of the Principals machine grant: refuses principal 0 or
+// out-of-range actor/target, missing Principals grant, absent target, and
+// removing the sole System holder while another named principal remains.
+@(test)
+removal_by_grant_rules_and_multi_slot_file_names :: proc(t: ^testing.T) {
+	// Actor and target slot boundaries: 0, capacity, max(u64).
+	for bad in ([?]u64{MACHINE, PRINCIPAL_CAPACITY, max(u64)}) {
+		testing.expect_value(t, removal_by_grant_allowed(bad, 2, true, true, false, 1, true), Removal_By_Grant_Refusal.Actor_Not_Named)
+		testing.expect_value(t, removal_by_grant_allowed(1, bad, true, true, false, 1, true), Removal_By_Grant_Refusal.Target_Not_Named)
+	}
+	// Missing Principals scope.
+	testing.expect_value(t, removal_by_grant_allowed(1, 2, false, true, false, 1, true), Removal_By_Grant_Refusal.Missing_Grant)
+	// Absent target.
+	testing.expect_value(t, removal_by_grant_allowed(1, 2, true, false, false, 1, true), Removal_By_Grant_Refusal.Target_Absent)
+	// Sole System holder cannot be removed while another named principal remains.
+	testing.expect_value(t, removal_by_grant_allowed(1, 2, true, true, true, 1, true), Removal_By_Grant_Refusal.Last_System_Grant)
+	// Allowed: target does not hold System, OR another System holder exists, OR no other named principal remains.
+	testing.expect_value(t, removal_by_grant_allowed(1, 2, true, true, false, 1, true), Removal_By_Grant_Refusal.None)
+	testing.expect_value(t, removal_by_grant_allowed(1, 2, true, true, true, 2, true), Removal_By_Grant_Refusal.None)
+	testing.expect_value(t, removal_by_grant_allowed(1, 1, true, true, true, 1, false), Removal_By_Grant_Refusal.None)
+
+	// Per-slot file object names: slot 0 and past capacity refused; slot 1 uses
+	// legacy names; slots 2..PRINCIPAL_CAPACITY-1 use dotted slot names.
+	buf: [32]u8
+	_, ok0 := principal_file_object_name(&buf, MACHINE)
+	testing.expect(t, !ok0)
+	_, ok_past := principal_file_object_name(&buf, PRINCIPAL_CAPACITY)
+	testing.expect(t, !ok_past)
+	_, ok_max := principal_file_object_name(&buf, max(u64))
+	testing.expect(t, !ok_max)
+
+	n1, ok1 := principal_file_object_name(&buf, 1)
+	testing.expect(t, ok1 && n1 == "principal")
+	r1, rok1 := principal_recovery_object_name(&buf, 1)
+	testing.expect(t, rok1 && r1 == "principal_recovery")
+
+	n2, ok2 := principal_file_object_name(&buf, 2)
+	testing.expect(t, ok2 && n2 == "principal.2")
+	r2, rok2 := principal_recovery_object_name(&buf, 2)
+	testing.expect(t, rok2 && r2 == "principal_recovery.2")
+
+	n7, ok7 := principal_file_object_name(&buf, PRINCIPAL_CAPACITY - 1)
+	testing.expect(t, ok7 && n7 == "principal.7")
+	r7, rok7 := principal_recovery_object_name(&buf, PRINCIPAL_CAPACITY - 1)
+	testing.expect(t, rok7 && r7 == "principal_recovery.7")
+}
+
+// Regression tests for:
+// - Bootstrap machine-grant gating (never during boot scan or unloaded table).
+// - Explicit slot packing in Principal_Record across reboots.
+// - Self-removal last-System-holder refusal.
+// - Target pin_generation == 0 never triggers Free_Pin.
+@(test)
+bootstrap_gating_slot_packing_and_self_removal_invariants :: proc(t: ^testing.T) {
+	// First-principal bootstrap refused during boot scan (created_in_this_run == false).
+	testing.expect(t, !first_principal_bootstrap_allowed(false, 0, 1, true))
+	// Refused when principal 0's table is not loaded (e.g., Awaited/Refused).
+	testing.expect(t, !first_principal_bootstrap_allowed(true, 0, 1, false))
+	// Refused when machine grants already exist or another named principal exists.
+	testing.expect(t, !first_principal_bootstrap_allowed(true, 1, 1, true))
+	testing.expect(t, !first_principal_bootstrap_allowed(true, 0, 2, true))
+	testing.expect(t, !first_principal_bootstrap_allowed(true, 0, 0, true))
+	// Allowed only on genuine first creation with loaded empty table.
+	testing.expect(t, first_principal_bootstrap_allowed(true, 0, 1, true))
+
+	// Explicit slot packing preserves slot 0 (unspecified) and 1..PRINCIPAL_CAPACITY-1
+	// alongside both short and maximum-length (23-byte) names, and refuses slots >= capacity.
+	full_name := "abcdefghijklmnopqrstuvw" // 23 bytes == NAME_LIMIT.
+	testing.expect_value(t, len(full_name), NAME_LIMIT)
+	for slot in u64(0) ..< PRINCIPAL_CAPACITY {
+		packed := record_name_and_slot_pack(full_name, slot)
+		out_name, out_len, out_slot, ok := record_name_and_slot_unpack(packed)
+		testing.expect(t, ok)
+		testing.expect_value(t, out_slot, slot)
+		testing.expect_value(t, out_len, NAME_LIMIT)
+		testing.expect_value(t, string(out_name[:out_len]), full_name)
+	}
+	bad_raw := record_name_and_slot_pack("bob", 2)
+	bad_bytes := transmute([24]u8)bad_raw
+	bad_bytes[NAME_LIMIT] = u8(PRINCIPAL_CAPACITY)
+	_, _, bad_slot, bad_ok := record_name_and_slot_unpack(transmute([3]u64)bad_bytes)
+	testing.expect(t, !bad_ok && bad_slot == PRINCIPAL_CAPACITY)
+	bad_bytes[NAME_LIMIT] = 255
+	_, _, max_slot, max_ok := record_name_and_slot_unpack(transmute([3]u64)bad_bytes)
+	testing.expect(t, !max_ok && max_slot == 255)
+
+	// Self-removal enforces the last-System-holder invariant identically to grant removal.
+	testing.expect(t, !self_removal_allowed(true, 1, true), "sole System holder must not self-remove while another named principal exists")
+	testing.expect(t, !self_removal_allowed(true, 0, true))
+	testing.expect(t, self_removal_allowed(true, 2, true), "allowed when another System holder survives")
+	testing.expect(t, self_removal_allowed(false, 1, true), "allowed when caller does not hold System")
+	testing.expect(t, self_removal_allowed(true, 1, false), "allowed when caller is the last named principal")
+
+	// A target with pin_generation == 0 skips Free_Pin and clears marker directly.
+	no_pin_rec := Removal_Record{slot = 2, step = .Stores_Marked, pin_generation = 0, identifier = {0 = 1}}
+	testing.expect_value(t, removal_next_action(no_pin_rec, no_pin_rec.pin_generation != 0), Removal_Action.Clear_Marker)
+	with_pin_rec := Removal_Record{slot = 2, step = .Stores_Marked, pin_generation = 3, identifier = {0 = 1}}
+	testing.expect_value(t, removal_next_action(with_pin_rec, with_pin_rec.pin_generation != 0), Removal_Action.Free_Pin)
+}

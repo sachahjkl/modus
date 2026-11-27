@@ -152,7 +152,7 @@ fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, start_grant
 		return .Root_Ring in start_grant_set || .Grants_Manage in start_grant_set
 	case .Start_Edit:
 		return .Root_Ring in start_grant_set || .Open_Editor in start_grant_set
-	case .Replace, .Connect_History, .Principal_Create, .Principal_Lock, .Principals, .Palette_Provide, .Start_From_Disk, .Nickname_Move, .Machine_Passphrase, .Disk_Grant_Persistence, .Machine_Seal, .Principal_Change, .Remote_Client, .Start_Policy_Choice, .Wide_Grant_Ask:
+	case .Replace, .Connect_History, .Principal_Create, .Principal_Lock, .Principals, .Palette_Provide, .Start_From_Disk, .Nickname_Move, .Machine_Passphrase, .Disk_Grant_Persistence, .Machine_Seal, .Principal_Change, .Principal_Remove_By_Grant, .Remote_Client, .Start_Policy_Choice, .Wide_Grant_Ask:
 		return .Root_Ring in start_grant_set
 	}
 	return false

@@ -34,8 +34,9 @@ GRANT_CLIENT_TABLE :: 12
 // refuses one more with Full.
 CLIENT_CAPACITY :: 64
 // The rows of one principal at most: one principal that allows many keys
-// leaves rows to the others. Remote_Client refuses one more with Full.
-CLIENT_ROWS_OF_ONE_PRINCIPAL :: CLIENT_CAPACITY / 2
+// leaves rows to the others across PRINCIPAL_CAPACITY (8) principals.
+// Remote_Client refuses one more with Full.
+CLIENT_ROWS_OF_ONE_PRINCIPAL :: CLIENT_CAPACITY / 8
 // The places that a read of the client keys of one principal names
 // (Root_Command.Remote_Client): the rows of the client table.
 CLIENT_READ_PLACES :: CLIENT_CAPACITY

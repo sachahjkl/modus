@@ -396,11 +396,13 @@ seal :: proc "contextless" (authorization_kind: tpm_service.Authorization) -> Ou
 		authorization_bytes = authorization[:]
 	}
 	defer erase(command_bytes[:])
-	primary, primary_failed, primary_ok := storage_key()
+	primary, must_flush, primary_failed, primary_ok := persistent_or_primary_storage_key()
 	if !primary_ok {
 		return primary_failed
 	}
-	defer flush(primary)
+	defer if must_flush {
+		flush(primary)
+	}
 	// A trial session: the TPM computes the policy from the PCRs now.
 	session, session_failed, session_ok := policy_session(.Trial, authorized)
 	defer flush(session)
@@ -490,11 +492,13 @@ unseal :: proc "contextless" (public_count, private_count, creation_count, ticke
 		return object_not_authentic(tpm_service.UNSEAL_PUBLIC_AREA_ARGUMENT, 0)
 	}
 	defer erase(answer_bytes[:])
-	primary, primary_failed, primary_ok := storage_key()
+	primary, must_flush, primary_failed, primary_ok := persistent_or_primary_storage_key()
 	if !primary_ok {
 		return primary_failed
 	}
-	defer flush(primary)
+	defer if must_flush {
+		flush(primary)
+	}
 	count := tpm2.load_command(command_bytes[:], primary, public_area[:public_bytes], private_area[:private_bytes])
 	answer, step := transact(count)
 	if step != .None {
@@ -890,6 +894,12 @@ requests_serve :: proc "contextless" (requests: ^ring.Ring, source: tpm_service.
 			outcome = pin_read(command.values)
 		case .Pin_Write:
 			outcome = pin_write(command.values)
+		case .Seal_Authorized:
+			outcome = seal_authorized(request.authorization)
+		case .Unseal_Authorized:
+			outcome = unseal_authorized(command.values[0], command.values[1], command.values[2], command.values[3], request.authorization)
+		case .Owner_Protect:
+			outcome = owner_protect(seeded)
 		}
 		// After the flushes of the request, before its completion: the
 		// client learns the outcome only once the TPM is orderly again.

@@ -102,7 +102,7 @@ pin_request_of_values :: proc "contextless" (command: Command, values: [7]u64) -
 		}
 		request.bytes = int(values[2])
 		return request, true
-	case .None, .Seal, .Unseal, .Measure_Start_Policy:
+	case .None, .Seal, .Unseal, .Measure_Start_Policy, .Seal_Authorized, .Unseal_Authorized, .Owner_Protect:
 	}
 	return {}, false
 }

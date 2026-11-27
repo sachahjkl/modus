@@ -17,8 +17,9 @@ import "modus:contract/enum_word"
 // Format property: domain separation context for canonical Disk_Rows_Set digests.
 DISK_ROWS_DIGEST_DOMAIN :: "modus principals disk rows v1"
 
-// Plan value: principal slot count of the current machine design.
-PRINCIPAL_CAPACITY :: u64(2)
+// Plan value: principal slot count on one machine (principal 0 plus up to 7
+// named principals, matching modus:principals.PRINCIPAL_CAPACITY).
+PRINCIPAL_CAPACITY :: u64(8)
 
 // Plan value: bounded disk grant rows per principal snapshot transferred to root.
 DISK_GRANT_ROW_CAPACITY :: 64

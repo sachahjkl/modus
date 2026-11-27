@@ -146,8 +146,13 @@ Grant_Table :: struct {
 	// allowed, in the order of the allows, each with its set of uses. Never
 	// 32 zero bytes, never one key two times, never an invalid set of uses.
 	// They follow the global setting: no key has an exception of its own.
-	client_keys:       [CLIENT_KEY_CAPACITY]Client_Key_Row,
-	client_key_count:  int,
+	client_keys:         [CLIENT_KEY_CAPACITY]Client_Key_Row,
+	client_key_count:    int,
+	// Machine grants in principal 0's disk grant table only: each row maps a
+	// named principal's 256-bit identifier to its Machine_Scopes (Principals,
+	// System). Always persisted regardless of forget_by_default.
+	machine_grants:      [MACHINE_GRANT_CAPACITY]Machine_Grant_Row,
+	machine_grant_count: int,
 }
 
 row_nickname :: proc "contextless" (row: ^Grant_Row) -> string {
@@ -178,6 +183,9 @@ Table_Problem :: enum u8 {
 	Bad_Uses, // The client key uses are empty, unknown, or Input without View.
 	Start_Policy_Row, // The row holds the grant Start_Policy, which takes no other grant.
 	Holds_Store, // The row holds the grant store: a start policy holds the grant Start_Policy and nothing else.
+	Zero_Identifier, // The principal identifier is 32 zero bytes.
+	Bad_Machine_Scopes, // The machine scopes word is empty or names an unknown scope bit.
+	Last_System_Grant, // Removing this row or scope would remove the last System holder on the machine.
 }
 
 // start_file decides which file a start of a nickname runs, and with which
@@ -516,7 +524,7 @@ row_persists :: proc "contextless" (table: ^Grant_Table, row: ^Grant_Row) -> boo
 // The persisted table: the object that the root service keeps in a store
 // of the principal. Each number is little-endian.
 TABLE_MAGIC :: "DISKGRNT" // The first 8 bytes.
-TABLE_FORMAT :: u32(4) // A table of another format number is refused.
+TABLE_FORMAT :: u32(5) // A table of another format number is refused.
 KEY_SIZE :: 32 // The bytes of the key of the tag.
 TAG_SIZE :: 32 // The bytes of the tag: keyed BLAKE2b with an output of 32 bytes.
 TABLE_OFFSET_MAGIC :: 0 // 8 bytes.
@@ -524,7 +532,8 @@ TABLE_OFFSET_FORMAT :: 8 // u32.
 TABLE_OFFSET_COUNT :: 12 // u8: the rows that follow, ROW_CAPACITY at most.
 TABLE_OFFSET_SETTING :: 13 // u8: 1 when the global setting is to forget, else 0.
 TABLE_OFFSET_CLIENT_KEY_COUNT :: 14 // u8: the client key rows after the disk grant rows, CLIENT_KEY_CAPACITY at most.
-TABLE_HEADER_SIZE :: 16 // One zero byte after the count of the client keys.
+TABLE_OFFSET_MACHINE_GRANT_COUNT :: 15 // u8: the machine grant rows after the client keys, MACHINE_GRANT_CAPACITY at most (principal 0 only).
+TABLE_HEADER_SIZE :: 16
 // A row: the length of the nickname (u8), the nickname with zero bytes
 // after it (NAME_LIMIT bytes), the hash, the grants (u8), the persistence
 // (u8), two zero bytes.
@@ -542,21 +551,23 @@ CLIENT_KEY_ROW_SIZE :: CLIENT_KEY_SIZE + 8 // 40.
 #assert(CLIENT_KEY_ROW_SIZE == 40)
 // The client key rows follow the disk grant rows: CLIENT_KEY_ROW_SIZE bytes each.
 TABLE_OFFSET_CLIENT_KEYS :: TABLE_HEADER_SIZE + ROW_CAPACITY * ROW_SIZE // 976.
-// The tag covers each byte before it. The rows after the count of the rows,
-// and the key rows after the count of the keys, are zero bytes: the table
-// always has this size.
-TABLE_OFFSET_TAG :: TABLE_OFFSET_CLIENT_KEYS + CLIENT_KEY_CAPACITY * CLIENT_KEY_ROW_SIZE // 2256.
-TABLE_SIZE :: TABLE_OFFSET_TAG + TAG_SIZE // 2288.
-#assert(TABLE_SIZE == 2288)
-// The bytes of tables of format 1 (no client keys), format 2 (client keys
-// without uses) and format 3 (4 client keys with uses). This system does not
-// read them; the sizes name them as an older format in the log.
+// The machine grant rows follow the client key rows: MACHINE_GRANT_ROW_SIZE bytes each.
+TABLE_OFFSET_MACHINE_GRANTS :: TABLE_OFFSET_CLIENT_KEYS + CLIENT_KEY_CAPACITY * CLIENT_KEY_ROW_SIZE // 1296.
+// The tag covers each byte before it. The rows after each count are zero bytes:
+// the table always has this size.
+TABLE_OFFSET_TAG :: TABLE_OFFSET_MACHINE_GRANTS + MACHINE_GRANT_CAPACITY * MACHINE_GRANT_ROW_SIZE // 1936.
+TABLE_SIZE :: TABLE_OFFSET_TAG + TAG_SIZE // 1968.
+#assert(TABLE_SIZE == 1968)
+// The bytes of tables of formats 1 to 4. This system does not read them; the
+// sizes name them as an older format in the log.
 OLDER_FORMAT_TABLE_SIZE :: 1008
 OLDER_FORMAT_2_TABLE_SIZE :: 1136
 OLDER_FORMAT_3_TABLE_SIZE :: 1168
-#assert(OLDER_FORMAT_TABLE_SIZE != TABLE_SIZE && OLDER_FORMAT_2_TABLE_SIZE != TABLE_SIZE && OLDER_FORMAT_3_TABLE_SIZE != TABLE_SIZE)
-// The count of the client keys is one byte of the header.
+OLDER_FORMAT_4_TABLE_SIZE :: 2288
+#assert(OLDER_FORMAT_TABLE_SIZE != TABLE_SIZE && OLDER_FORMAT_2_TABLE_SIZE != TABLE_SIZE && OLDER_FORMAT_3_TABLE_SIZE != TABLE_SIZE && OLDER_FORMAT_4_TABLE_SIZE != TABLE_SIZE)
+// The counts fit in one byte of the header.
 #assert(CLIENT_KEY_CAPACITY <= 255)
+#assert(MACHINE_GRANT_CAPACITY <= 255)
 #assert(ROW_OFFSET_PERSISTENCE + 1 <= ROW_SIZE)
 
 // Why `table_decode` refused a table. The sentence of each one is in
@@ -564,12 +575,12 @@ OLDER_FORMAT_3_TABLE_SIZE :: 1168
 Table_File_Problem :: enum u8 {
 	None,
 	Wrong_Size, // Not TABLE_SIZE bytes, nor the size of an older format.
-	Older_Format, // The size of a table of the format 1, 2 or 3, which this system does not read.
+	Older_Format, // The size of a table of an older format, which this system does not read.
 	Not_Authentic, // The tag does not verify under the key: another key, or a changed byte.
 	Wrong_Magic,
 	Wrong_Format,
 	Too_Many_Rows, // A count over ROW_CAPACITY.
-	Bad_Setting, // A global setting other than 0 or 1, or a header byte that is not zero.
+	Bad_Setting, // A global setting other than 0 or 1.
 	Bad_Row, // A nickname that a grant cannot name, a hash of zero bytes, an unknown grant or persistence, the grant Start_Policy with another grant, or a byte that must be zero.
 	Two_Rows, // Two rows with one nickname.
 	Two_Start_Policies, // Two rows hold the grant Start_Policy.
@@ -578,33 +589,40 @@ Table_File_Problem :: enum u8 {
 	Start_Policy_Of_A_Named_Principal,
 	Bytes_After_Rows, // A byte after the last row is not zero.
 	Bad_Client_Keys, // More than CLIENT_KEY_CAPACITY client keys, a key of zero bytes, one key two times, or a byte after the last key that is not zero.
+	Bad_Machine_Grants, // More than MACHINE_GRANT_CAPACITY machine grants, a zero identifier, duplicate identifier, bad scope bits, or non-zero trailing bytes.
+	Machine_Grant_Of_A_Named_Principal, // The table of a named principal holds a machine grant row, which only principal 0 holds.
 }
 
 // The sentence of each problem of a persisted table, for the log.
 @(rodata)
 table_problem_sentences := [Table_File_Problem]string {
-	.None             = "",
-	.Wrong_Size       = "the table does not have 2288 bytes",
-	.Older_Format     = "the table has the size of a format of an older system (1008, 1136 or 1168 bytes), which this system does not read; no version of it can be restored to verify",
-	.Not_Authentic    = "its tag does not verify under the key of the principal: another key wrote it, or a byte changed",
-	.Wrong_Magic      = "the table does not start with DISKGRNT",
-	.Wrong_Format     = "the table has another format number",
-	.Too_Many_Rows    = "the table counts more than 16 rows",
-	.Bad_Setting      = "the global setting of the table is not 0 or 1, or its header has a byte that is not zero",
-	.Bad_Row          = "a row has a nickname that no grant names, a hash of zero bytes, an unknown grant or persistence, the grant start_policy with another grant, or a byte that must be zero",
-	.Two_Rows         = "two rows have one nickname",
-	.Two_Start_Policies = "two rows hold the grant start_policy",
-	.Start_Policy_Of_A_Named_Principal = "the table of a named principal holds the grant start_policy, which only principal 0 gives",
-	.Bytes_After_Rows = "the table has bytes that are not zero after its last row",
-	.Bad_Client_Keys  = "the client keys of remote in the table are more than 32, or one is zero bytes, or one comes two times, or its uses are refused, or a byte after the last key is not zero",
+	.None                               = "",
+	.Wrong_Size                         = "the table does not have 1968 bytes",
+	.Older_Format                       = "the table has the size of a format of an older system (1008, 1136, 1168 or 2288 bytes), which this system does not read; no version of it can be restored to verify",
+	.Not_Authentic                      = "its tag does not verify under the key of the principal: another key wrote it, or a byte changed",
+	.Wrong_Magic                        = "the table does not start with DISKGRNT",
+	.Wrong_Format                       = "the table has another format number",
+	.Too_Many_Rows                      = "the table counts more than 16 rows",
+	.Bad_Setting                        = "the global setting of the table is not 0 or 1",
+	.Bad_Row                            = "a row has a nickname that no grant names, a hash of zero bytes, an unknown grant or persistence, the grant start_policy with another grant, or a byte that must be zero",
+	.Two_Rows                           = "two rows have one nickname",
+	.Two_Start_Policies                 = "two rows hold the grant start_policy",
+	.Start_Policy_Of_A_Named_Principal  = "the table of a named principal holds the grant start_policy, which only principal 0 gives",
+	.Bytes_After_Rows                   = "the table has bytes that are not zero after its last row",
+	.Bad_Client_Keys                    = "the client keys of remote in the table are more than 8, or one is zero bytes, or one comes two times, or its uses are refused, or a byte after the last key is not zero",
+	.Bad_Machine_Grants                 = "the machine grants exceed 16 rows, have a zero or repeated identifier, or unknown scopes",
+	.Machine_Grant_Of_A_Named_Principal = "the table of a named principal holds a machine grant row, which only principal 0 holds",
 }
 
 // table_principal_problem checks a table that its tag verified against its
-// principal: the table of a named principal holds no start policy, as only
-// principal 0 chooses the start policy of the machine.
+// principal: the table of a named principal holds no start policy and no
+// machine grant row, as only principal 0 holds them.
 table_principal_problem :: proc "contextless" (table: ^Grant_Table, of_principal_0: bool) -> Table_File_Problem {
 	if !of_principal_0 && table_holds_a_start_policy(table) {
 		return .Start_Policy_Of_A_Named_Principal
+	}
+	if !of_principal_0 && table_holds_machine_grants(table) {
+		return .Machine_Grant_Of_A_Named_Principal
 	}
 	return .None
 }
@@ -684,6 +702,13 @@ table_body_encode :: proc "contextless" (table: ^Grant_Table, out: ^[TABLE_SIZE]
 		byte_order.write_u64_little_endian(row_place[CLIENT_KEY_ROW_OFFSET_USES:], 0, remote.client_uses_word(table.client_keys[place].uses))
 	}
 	out^[TABLE_OFFSET_CLIENT_KEY_COUNT] = u8(client_key_count)
+	machine_grant_count := clamp(table.machine_grant_count, 0, MACHINE_GRANT_CAPACITY)
+	for place in 0 ..< machine_grant_count {
+		row_place := out^[TABLE_OFFSET_MACHINE_GRANTS + place * MACHINE_GRANT_ROW_SIZE:][:MACHINE_GRANT_ROW_SIZE]
+		copy(row_place[MACHINE_GRANT_ROW_OFFSET_IDENTIFIER:][:MACHINE_GRANT_IDENTIFIER_SIZE], table.machine_grants[place].principal_identifier[:])
+		row_place[MACHINE_GRANT_ROW_OFFSET_SCOPES] = transmute(u8)table.machine_grants[place].scopes
+	}
+	out^[TABLE_OFFSET_MACHINE_GRANT_COUNT] = u8(machine_grant_count)
 }
 
 // table_decode reads a persisted table that a store gave. It copies the
@@ -701,7 +726,7 @@ table_decode :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8) -> (table: 
 // change them after the check. kept is zero bytes unless the tag verified.
 table_decode_kept :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8, kept: ^[TABLE_SIZE]u8) -> (table: Grant_Table, problem: Table_File_Problem) {
 	kept^ = {}
-	if len(bytes) == OLDER_FORMAT_TABLE_SIZE || len(bytes) == OLDER_FORMAT_2_TABLE_SIZE || len(bytes) == OLDER_FORMAT_3_TABLE_SIZE {
+	if len(bytes) == OLDER_FORMAT_TABLE_SIZE || len(bytes) == OLDER_FORMAT_2_TABLE_SIZE || len(bytes) == OLDER_FORMAT_3_TABLE_SIZE || len(bytes) == OLDER_FORMAT_4_TABLE_SIZE {
 		return {}, .Older_Format
 	}
 	if len(bytes) != TABLE_SIZE {
@@ -734,7 +759,7 @@ table_body_decode :: proc "contextless" (kept: ^[TABLE_SIZE]u8) -> (table: Grant
 		return {}, .Too_Many_Rows
 	}
 	setting := kept[TABLE_OFFSET_SETTING]
-	if setting > 1 || kept[TABLE_OFFSET_CLIENT_KEY_COUNT + 1] != 0 {
+	if setting > 1 {
 		return {}, .Bad_Setting
 	}
 	table.forget_by_default = setting == 1
@@ -806,9 +831,34 @@ table_body_decode :: proc "contextless" (kept: ^[TABLE_SIZE]u8) -> (table: Grant
 		table.client_keys[place] = {key = client_key, uses = uses}
 		table.client_key_count = place + 1
 	}
-	for after in kept[TABLE_OFFSET_CLIENT_KEYS + client_key_count * CLIENT_KEY_ROW_SIZE:TABLE_OFFSET_TAG] {
+	for after in kept[TABLE_OFFSET_CLIENT_KEYS + client_key_count * CLIENT_KEY_ROW_SIZE:TABLE_OFFSET_MACHINE_GRANTS] {
 		if after != 0 {
 			return {}, .Bad_Client_Keys
+		}
+	}
+	machine_grant_count := int(kept[TABLE_OFFSET_MACHINE_GRANT_COUNT])
+	if machine_grant_count > MACHINE_GRANT_CAPACITY {
+		return {}, .Bad_Machine_Grants
+	}
+	for place in 0 ..< machine_grant_count {
+		row_place := kept[TABLE_OFFSET_MACHINE_GRANTS + place * MACHINE_GRANT_ROW_SIZE:][:MACHINE_GRANT_ROW_SIZE]
+		identifier: [MACHINE_GRANT_IDENTIFIER_SIZE]u8
+		copy(identifier[:], row_place[MACHINE_GRANT_ROW_OFFSET_IDENTIFIER:][:MACHINE_GRANT_IDENTIFIER_SIZE])
+		scopes, scopes_ok := machine_scopes_from_word(u64(row_place[MACHINE_GRANT_ROW_OFFSET_SCOPES]))
+		if identifier == ([MACHINE_GRANT_IDENTIFIER_SIZE]u8{}) || !scopes_ok || table_machine_grant_find(&table, identifier) >= 0 {
+			return {}, .Bad_Machine_Grants
+		}
+		for pad in row_place[MACHINE_GRANT_ROW_OFFSET_SCOPES + 1:] {
+			if pad != 0 {
+				return {}, .Bad_Machine_Grants
+			}
+		}
+		table.machine_grants[place] = {principal_identifier = identifier, scopes = scopes}
+		table.machine_grant_count = place + 1
+	}
+	for after in kept[TABLE_OFFSET_MACHINE_GRANTS + machine_grant_count * MACHINE_GRANT_ROW_SIZE:TABLE_OFFSET_TAG] {
+		if after != 0 {
+			return {}, .Bad_Machine_Grants
 		}
 	}
 	return table, .None

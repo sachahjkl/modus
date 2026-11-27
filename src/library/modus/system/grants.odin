@@ -169,6 +169,9 @@ GRANT_VALUE_TERMINAL_ROWS :: 5
 GRANT_VALUE_UNLOCK_NAME :: 6
 // The value 14 of `unlock`: the number of the principal that asked for a change.
 GRANT_VALUE_UNLOCK_PRINCIPAL :: 14
+// The value 15 of `unlock`: the target principal slot for creation or
+// grant-authorized removal.
+GRANT_VALUE_UNLOCK_TARGET :: 15
 // The value 6 of a terminal: 1 when it shows the rates of its process.
 GRANT_VALUE_TERMINAL_MEASURE :: 6
 // The values 7, 8 and 13 of grid_terminal: the width and the height of the

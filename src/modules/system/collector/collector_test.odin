@@ -724,3 +724,102 @@ the_collector_states_the_pages_of_its_act_rings :: proc(t: ^testing.T) {
 	testing.expect_value(t, COLLECTOR_ACT_WIRING_PAGES, start_list.WIRING_PAGES_OF_THE_ASKER + u64(wide_grants.ACT_SPACES_RESERVED) * row)
 	testing.expect_value(t, MODULE_BUDGET.wiring_pages, COLLECTOR_ACT_WIRING_PAGES)
 }
+
+// On principal 0's collector, an admitted named principal acting for itself can
+// list, stat, read, and verify ONLY the machine audit space (root.machine_acts),
+// while every private space of principal 0 and every write/open export is refused.
+@(test)
+machine_audit_space_is_readable_only_by_admitted_principals :: proc(t: ^testing.T) {
+	fixture := new(Service_Fixture)
+	defer free(fixture)
+	fixture.memory.writes_allowed = -1
+	port := pr.memory_private_store_port(&fixture.memory)
+	wide_grants.space_store_init(&fixture.service.store, 0, TEST_COLLECTOR_IDENTIFIER, port, wide_grants.space_window_heap_port())
+	service := &fixture.service
+
+	audit_terms := wide_grants.Space_Terms {
+		kind_word       = i64(wide_grants.Collector_Space_Kind.Audit),
+		bound_records   = 4,
+		forwarding_word = i64(wide_grants.Space_Forwarding.Keeps),
+		record_size     = wide_grants.MACHINE_AUDIT_RECORD_SIZE,
+	}
+	audit_space, audit_ref := wide_grants.space_open(&service.store, transmute([]u8)string(wide_grants.MACHINE_AUDIT_SOURCE), transmute([]u8)string(wide_grants.MACHINE_AUDIT_OUTPUT), audit_terms)
+	testing.expect_value(t, audit_ref, wide_grants.Space_Refusal.None)
+
+	private_space, priv_ref := wide_grants.space_open(&service.store, transmute([]u8)string("storage"), transmute([]u8)string("events"), terms_of(.Audit, 4))
+	testing.expect_value(t, priv_ref, wide_grants.Space_Refusal.None)
+
+	rec := wide_grants.Machine_Audit_Record {
+		grant_serial  = 1,
+		timestamp_ms  = 500,
+		act_kind_word = u64(wide_grants.Machine_Audit_Act_Kind.Principal_Admitted),
+		scopes_word   = wide_grants.wide_authorities_to_word({.Machine_Principals}),
+	}
+	_, app_ref := wide_grants.machine_audit_append(&service.store, audit_space, &rec)
+	testing.expect_value(t, app_ref, wide_grants.Space_Refusal.None)
+
+	alice := connection_of(2, true, "console")
+	unpriv := connection_of(2, false, "app")
+	error: errors.Error_Record
+
+	// Alice lists ONLY the machine audit space.
+	rows: [8]wide_grants.Space_Row
+	row_slice := rows[:]
+	expect_answer(t, answer_of(spaces_for(service, &alice, &row_slice, &error)), 1)
+	testing.expect_value(t, rows[0].space, i64(audit_space))
+
+	// Alice reads, stats, and verifies the machine audit space cleanly.
+	heads: [4]wide_grants.Kept_Record_Head
+	bytes: [4 * wide_grants.MACHINE_AUDIT_RECORD_SIZE]u8
+	expect_answer(t, answer_of(read_all(service, &alice, i64(audit_space), heads[:], bytes[:], &error)), 1)
+	stat_row: wide_grants.Space_Row
+	expect_answer(t, answer_of(space_stats_for(service, &alice, i64(audit_space), &stat_row, &error)), 0)
+	expect_answer(t, answer_of(space_verify_for(service, &alice, i64(audit_space), &error)), 0)
+
+	// Alice is refused on principal 0's private space and on open/append.
+	error = {}
+	expect_refusal(t, answer_of(read_all(service, &alice, i64(private_space), heads[:], bytes[:], &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
+	error = {}
+	expect_refusal(t, answer_of(space_stats_for(service, &alice, i64(private_space), &stat_row, &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
+	error = {}
+	expect_refusal(t, answer_of(space_verify_for(service, &alice, i64(private_space), &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
+	source, output, open_terms := "server", "orders", terms_of(.Audit, 4)
+	error = {}
+	expect_refusal(t, answer_of(space_open_for(service, &alice, &source, &output, &open_terms, &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
+	error = {}
+	expect_refusal(t, answer_of(append_value(service, &alice, i64(audit_space), 1, &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
+
+	// Unprivileged caller of principal 2 is refused everywhere.
+	error = {}
+	expect_refusal(t, answer_of(read_all(service, &unpriv, i64(audit_space), heads[:], bytes[:], &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
+
+	// Existence oracle check: absent space and removed private space return the
+	// same Grant_Or_Right_Missing / No_Grant refusal as an active private space.
+	removed_space, rem_open_ref := wide_grants.space_open(&service.store, transmute([]u8)string("temp"), transmute([]u8)string("events"), terms_of(.Audit, 4))
+	testing.expect_value(t, rem_open_ref, wide_grants.Space_Refusal.None)
+	wide_grants.space_close(&service.store, removed_space)
+	_, rem_date_ref := wide_grants.space_closed_pass(&service.store, 600, true, 0)
+	testing.expect_value(t, rem_date_ref, wide_grants.Space_Refusal.None)
+	rem_count, rem_pass_ref := wide_grants.space_closed_pass(&service.store, 600, true, 0)
+	testing.expect_value(t, rem_pass_ref, wide_grants.Space_Refusal.None)
+	testing.expect_value(t, rem_count, 1)
+	absent_space := i64(10)
+	for probe in ([?]i64{i64(private_space), i64(removed_space), absent_space}) {
+		error = {}
+		expect_refusal(t, answer_of(read_all(service, &alice, probe, heads[:], bytes[:], &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
+		error = {}
+		expect_refusal(t, answer_of(space_stats_for(service, &alice, probe, &stat_row, &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
+		error = {}
+		expect_refusal(t, answer_of(space_verify_for(service, &alice, probe, &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
+	}
+
+	// Lazy load before space_verify_for: a freshly restarted collector whose
+	// store has not yet been read verifies root.machine_acts on the first call.
+	restarted := new(Space_Service)
+	defer free(restarted)
+	wide_grants.space_store_init(&restarted.store, 0, TEST_COLLECTOR_IDENTIFIER, port, wide_grants.space_window_heap_port())
+	error = {}
+	expect_answer(t, answer_of(space_verify_for(restarted, &alice, i64(audit_space), &error)), 0)
+	error = {}
+	expect_refusal(t, answer_of(space_verify_for(restarted, &alice, i64(private_space), &error)), .Grant_Or_Right_Missing, error, .No_Grant, .Acts_For_Principal)
+}

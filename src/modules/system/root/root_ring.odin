@@ -219,7 +219,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 			answer.outcome = connect(item, role_holder_name(.Storage), &answer.values, history = true)
 		}
 	case .Principal_Create:
-		answer.outcome = principal_create(name, &answer.values)
+		answer.outcome = principal_create(item, name, &answer.values)
 	case .Principal_Lock:
 		answer.outcome = principal_lock(&answer.values)
 	case .Principals:
@@ -300,6 +300,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		answer.outcome = grants_read_command(item, record, &answer.values)
 	case .Principal_Stores_Reclaim:
 		answer.outcome, answer.held = principal_stores_reclaim(item, record.tag, record.values, &answer.values)
+	case .Principal_Remove_By_Grant:
+		answer.outcome, answer.held = principal_remove_by_grant(item, record.tag, record.values, &answer.values)
 	}
 	return answer
 }

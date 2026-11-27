@@ -632,7 +632,9 @@ policy_authorize_command_layout_and_refusals :: proc(t: ^testing.T) {
 	approved := make_digest(0x10)
 	reference := [4]u8{0xA1, 0xA2, 0xA3, 0xA4}
 	name := make_key_name(0x20)
-	ticket := Verified_Ticket{hierarchy = .Owner, digest = make_digest(0x30)}
+	ticket_sha256 := make_digest(0x30)
+	ticket, ticket_ok := verified_ticket_make(.Owner, ticket_sha256[:])
+	testing.expect(t, ticket_ok)
 	session := u32(0x0300_0001)
 
 	expected: Expected_Writer
@@ -644,8 +646,7 @@ policy_authorize_command_layout_and_refusals :: proc(t: ^testing.T) {
 	expected_put(&expected, 0x00, 0x22)
 	expected_put_slice(&expected, name[:])
 	expected_put(&expected, 0x80, 0x22, 0x40, 0x00, 0x00, 0x01, 0x00, 0x20)
-	ticket_digest := ticket.digest
-	expected_put_slice(&expected, ticket_digest[:])
+	expected_put_slice(&expected, ticket_sha256[:])
 	testing.expect_value(t, expected.place, 130)
 
 	untouched: [256]u8
@@ -680,6 +681,10 @@ policy_authorize_command_layout_and_refusals :: proc(t: ^testing.T) {
 	testing.expect_value(t, refusal, Wire_Refusal.Key_Name_Malformed)
 	_, refusal = encode_policy_authorize(session, approved, reference[:], name[:], {hierarchy = .Owner}, untouched[:])
 	testing.expect_value(t, refusal, Wire_Refusal.Zero_Ticket_Digest)
+	_, refusal = encode_policy_authorize(session, approved, reference[:], name[:], {hierarchy = .Owner, digest = {0 = 1}, digest_len = 0}, untouched[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Zero_Ticket_Digest)
+	_, refusal = encode_policy_authorize(session, approved, reference[:], name[:], {hierarchy = .Owner, digest = {0 = 1}, digest_len = TICKET_DIGEST_LIMIT + 1}, untouched[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Zero_Ticket_Digest)
 	testing.expect(t, all_bytes_are(untouched[:], 0xEE))
 
 	// The borders of the words of a ticket and an answer.
@@ -711,6 +716,18 @@ policy_authorize_command_layout_and_refusals :: proc(t: ^testing.T) {
 	count, refusal = encode_policy_authorize(session, approved, largest_reference[:], name[:], ticket, out[:])
 	testing.expect_value(t, refusal, Wire_Refusal.None)
 	testing.expect_value(t, count, 158)
+
+	// 64-byte SHA-512 verified ticket (swtpm format) encodes cleanly.
+	sha512_digest: [TICKET_DIGEST_LIMIT]u8
+	sha512_digest[0] = 0x51
+	sha512_digest[63] = 0x20
+	ticket_512, ok_512 := verified_ticket_make(.Owner, sha512_digest[:])
+	testing.expect(t, ok_512)
+	count, refusal = encode_policy_authorize(session, approved, reference[:], name[:], ticket_512, out[:])
+	testing.expect_value(t, refusal, Wire_Refusal.None)
+	testing.expect_value(t, count, 130 + 32)
+	testing.expect_value(t, byte_order.read_u16_big_endian(out[:], 130 - 32 - 2), u16(TICKET_DIGEST_LIMIT))
+	testing.expect(t, string(out[130 - 32:130 + 32]) == string(sha512_digest[:]))
 }
 
 @(test)

@@ -13,7 +13,7 @@ import op "modus:contract/operation"
 // The persisted tables whose calls the loop waits on: one for each
 // principal. The root service checks it against principals.
 // PRINCIPAL_CAPACITY.
-ROOT_WAIT_PERSISTED_TABLES :: 2
+ROOT_WAIT_PERSISTED_TABLES :: 8
 
 // The words that the loop adds whatever runs: the event word, the change
 // count of the date page, the control ring of the compositor, the ring of

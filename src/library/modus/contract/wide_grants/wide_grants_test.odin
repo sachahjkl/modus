@@ -59,8 +59,8 @@ test_enum_border_parsers_refuse_zero_and_unknown_words :: proc(t: ^testing.T) {
 	if _, ok := wide_authority_from_word(0); ok {
 		testing.fail_now(t, "wide_authority_from_word accepted 0")
 	}
-	if _, ok := wide_authority_from_word(4); ok {
-		testing.fail_now(t, "wide_authority_from_word accepted 4")
+	if _, ok := wide_authority_from_word(6); ok {
+		testing.fail_now(t, "wide_authority_from_word accepted 6")
 	}
 	if _, ok := wide_authority_from_word(max(u64)); ok {
 		testing.fail_now(t, "wide_authority_from_word accepted max(u64)")
@@ -70,8 +70,8 @@ test_enum_border_parsers_refuse_zero_and_unknown_words :: proc(t: ^testing.T) {
 		testing.expect(t, ok && parsed == expected)
 	}
 
-	// Wide_Authorities bitmask parser: refuses 0, bit 0, bit 4, high bits, max(u64)
-	bad_masks := [?]u64{0, 1, 1 << 4, 1 << 63, WIDE_AUTHORITY_KNOWN_MASK | 1, WIDE_AUTHORITY_KNOWN_MASK | (1 << 5), max(u64)}
+	// Wide_Authorities bitmask parser: refuses 0, bit 0, bit 6, high bits, max(u64)
+	bad_masks := [?]u64{0, 1, 1 << 6, 1 << 63, WIDE_AUTHORITY_KNOWN_MASK | 1, WIDE_AUTHORITY_KNOWN_MASK | (1 << 6), max(u64)}
 	for mask in bad_masks {
 		if _, ok := wide_authorities_from_word(mask); ok {
 			testing.fail_now(t, "wide_authorities_from_word accepted invalid mask")

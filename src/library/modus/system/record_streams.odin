@@ -65,7 +65,7 @@ Serial_Counts :: struct {
 // plan value, the capacity of principals of the machine
 // (principals.PRINCIPAL_CAPACITY), which the log service asserts. A
 // principal past it has no rings that take a record.
-SCOPED_PRINCIPALS_MOST :: 2
+SCOPED_PRINCIPALS_MOST :: 8
 
 Output_State :: struct {
 	index:       u32, // The loader writes it.

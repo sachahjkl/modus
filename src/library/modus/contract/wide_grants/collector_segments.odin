@@ -459,7 +459,8 @@ segment_check :: proc "contextless" (
 	first_index := segment * SPACE_SEGMENT_RECORDS
 	switch use {
 	case .Load:
-		if space.next_serial != first_index || first_index + u64(record_count) - space.kept_first_serial > u64(space.bound) {
+		max_kept := u64(space.bound) + (space_is_machine_audit(space) ? 1 : 0)
+		if space.next_serial != first_index || first_index + u64(record_count) - space.kept_first_serial > max_kept {
 			return {}, 0, false
 		}
 	case .Compare:
@@ -744,7 +745,8 @@ space_index_load :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 				return .Store_Damaged
 			}
 		case .Closed, .Removing:
-			if closed_next_serial < kept_first || closed_next_serial - kept_first > u64(bound) || closed_at > u64(max(i64)) {
+			max_kept := u64(bound) + (space_is_machine_audit(space) ? 1 : 0)
+			if closed_next_serial < kept_first || closed_next_serial - kept_first > max_kept || closed_at > u64(max(i64)) {
 				return .Store_Damaged
 			}
 			space.closed = true

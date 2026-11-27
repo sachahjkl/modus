@@ -163,3 +163,54 @@ the_word_of_the_ring_comes_from_the_session_state :: proc(t: ^testing.T) {
 	testing.expect_value(t, principal_state_word(1, .Creating), root_ring.Principal_State.Creating)
 	testing.expect_value(t, principal_state_word(1, .Removing), root_ring.Principal_State.Removing)
 }
+
+// Admission closes the seat to any open session while a new principal is
+// created and receives its recovery key, and returns to the chooser if
+// abandoned or moves directly to Session when the new principal unlocks.
+@(test)
+admission_holds_the_seat_with_no_session :: proc(t: ^testing.T) {
+	// Admission begins only from Chooser or Session, with no principal argument.
+	for bad in ([?]Seat{{}, {state = .Unlock_Window}, {state = .Admission}}) {
+		next, ok := seat_next(bad, .Admission_Begun)
+		testing.expect(t, !ok && next == bad, "Admission_Begun accepted outside Chooser or Session")
+	}
+	_, bad_arg := seat_next({state = .Chooser}, .Admission_Begun, 1)
+	testing.expect(t, !bad_arg, "Admission_Begun accepted a principal argument")
+	from_session, from_session_ok := seat_next({state = .Session, in_front = 1}, .Admission_Begun)
+	testing.expect(t, from_session_ok && from_session.state == .Admission && from_session.in_front == MACHINE)
+
+	seat, ok := seat_next({state = .Chooser}, .Admission_Begun)
+	testing.expect(t, ok && seat.state == .Admission && seat.in_front == MACHINE)
+	testing.expect(t, !seat_has_active_session(seat))
+	testing.expect(t, !seat_allows_machine_console(seat, true))
+
+	// Unlock window and session lock are refused during Admission.
+	_, ok = seat_next(seat, .Unlock_Window_Opened)
+	testing.expect(t, !ok)
+	_, ok = seat_next(seat, .Session_Locked, 1)
+	testing.expect(t, !ok)
+	_, ok = seat_next(seat, .Session_Unlocked, MACHINE)
+	testing.expect(t, !ok)
+	_, ok = seat_next(seat, .Session_Unlocked, PRINCIPAL_CAPACITY)
+	testing.expect(t, !ok)
+	_, ok = seat_next(seat, .Admission_Ended, 1)
+	testing.expect(t, !ok)
+
+	// Abandoning admission returns to the chooser.
+	chooser, end_ok := seat_next(seat, .Admission_Ended)
+	testing.expect(t, end_ok && chooser.state == .Chooser)
+	testing.expect(t, !seat_has_active_session(chooser))
+	testing.expect(t, !seat_allows_machine_console(chooser, true))
+
+	// Completing admission unlocks the admitted principal onto the seat.
+	admitted, unlock_ok := seat_next(seat, .Session_Unlocked, 1)
+	testing.expect(t, unlock_ok && admitted.state == .Session && admitted.in_front == 1)
+	testing.expect(t, seat_has_active_session(admitted))
+	testing.expect(t, !seat_allows_machine_console(admitted, true))
+
+	// Only principal 0's sole Session (with no named principals) allows the machine console.
+	alone := Seat{state = .Session, in_front = MACHINE}
+	testing.expect(t, seat_has_active_session(alone))
+	testing.expect(t, seat_allows_machine_console(alone, false))
+	testing.expect(t, !seat_allows_machine_console(alone, true))
+}

@@ -240,7 +240,7 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 	}
 	file, _, problem_of_the_nickname := disk_process.start_file(table, name, hash)
 	switch problem_of_the_nickname {
-	case .None, .Absent, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Bad_Uses, .Start_Policy_Row, .Holds_Store:
+	case .None, .Absent, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Bad_Uses, .Start_Policy_Row, .Holds_Store, .Zero_Identifier, .Bad_Machine_Scopes, .Last_System_Grant:
 		// start_file gives only None, No_File and Other_File: the start goes on.
 	case .No_File:
 		system.log_fact(.Warning, Disk_Load_Refused_Nickname_Without_Row{principal = asker.principal, refused_process = module_name_field(name)})
@@ -601,7 +601,7 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 		// else (src/md/features/start_policy.md).
 		system.log_fact(.Warning, Disk_Grant_Refused_Start_Policy{nickname = module_name_field(nickname), grant = text_field(grant_name, 24)})
 		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .Reserved, .Grants, 1)
-	case .No_File, .Other_File, .Absent, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Bad_Uses, .Holds_Store:
+	case .No_File, .Other_File, .Absent, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Bad_Uses, .Holds_Store, .Zero_Identifier, .Bad_Machine_Scopes, .Last_System_Grant:
 		return root_ring.refuse(values, .Wrong_State, kind, .State)
 	}
 	grant_given_log(caller.principal, hash, nickname, grant_name)
@@ -688,7 +688,7 @@ disk_grant_persistence :: proc "contextless" (caller: ^Started, record: ring.Rec
 	case .Start_Policy_Row:
 		system.log_fact(.Warning, Persistence_Refused_Start_Policy{nickname = module_name_field(nickname)})
 		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .Reserved, .Grants, 1)
-	case .Absent, .No_File, .Other_File, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Bad_Uses, .Holds_Store:
+	case .Absent, .No_File, .Other_File, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Bad_Uses, .Holds_Store, .Zero_Identifier, .Bad_Machine_Scopes, .Last_System_Grant:
 		system.log_fact(.Warning, Persistence_Refused_No_Row{principal = caller.principal, nickname = module_name_field(nickname)})
 		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Grants, 1)
 	}

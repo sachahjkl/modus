@@ -184,3 +184,46 @@ reclaim_identifier_check_refuses_bad_and_unlocked_targets :: proc(t: ^testing.T)
 	_, ok = reclaim_identifier_check(&table, unlocked)
 	testing.expect(t, ok, "reclaim after Principal_Locked must be accepted")
 }
+
+// Multiple named principal slots stay strictly isolated in the storage key
+// table: slot 2 cannot open slot 1's store block, locking slot 1 leaves slot 2
+// intact, and all slots 1 ..< PRINCIPAL_CAPACITY work independently.
+@(test)
+multiple_principal_slots_are_strictly_isolated :: proc(t: ^testing.T) {
+	table: Table
+	for slot in u64(1) ..< principals.PRINCIPAL_CAPACITY {
+		id_cmd := [7]u64{slot * 10 + 1, slot * 10 + 2, slot * 10 + 3, slot * 10 + 4, slot, 0, 0}
+		key_cmd := [7]u64{slot * 100 + 1, slot * 100 + 2, slot * 100 + 3, slot * 100 + 4, slot, 0, 0}
+		o1, _ := take_checked(t, &table, .Principal_Identity, id_cmd)
+		o2, _ := take_checked(t, &table, .Principal_Storage_Key, key_cmd)
+		testing.expect_value(t, o1, Outcome.Identity_Taken)
+		testing.expect_value(t, o2, Outcome.Key_Taken)
+	}
+	k1 := held(&table, 1)
+	k2 := held(&table, 2)
+	k7 := held(&table, principals.PRINCIPAL_CAPACITY - 1)
+	testing.expect(t, k1 != nil && k2 != nil && k7 != nil)
+
+	salt := [format.OWNER_FIELD_SIZE]u8{0 = 0x42, 31 = 0x24}
+	owner1, sealed1 := owner_seal(k1, "private_notes", salt)
+	testing.expect(t, sealed1)
+	cell1, cell_ok := cell_field(k1, "private_notes")
+	testing.expect(t, cell_ok)
+
+	buf: [format.OWNER_FIELD_SIZE]u8
+	// Slot 2 and slot 7 cannot open slot 1's encrypted store block.
+	_, cross2 := owner_open(k2, &owner1, cell1, &buf)
+	testing.expect(t, !cross2 && buf == {})
+	_, cross7 := owner_open(k7, &owner1, cell1, &buf)
+	testing.expect(t, !cross7 && buf == {})
+
+	// Slot 1 opens its own store block cleanly.
+	opened_name, self_ok := owner_open(k1, &owner1, cell1, &buf)
+	testing.expect(t, self_ok && opened_name == "private_notes")
+
+	// Locking slot 1 erases slot 1 while leaving slot 2 intact.
+	lock_out, _ := take_checked(t, &table, .Principal_Locked, {4 = 1})
+	testing.expect_value(t, lock_out, Outcome.Erased)
+	testing.expect(t, held(&table, 1) == nil)
+	testing.expect(t, held(&table, 2) != nil)
+}

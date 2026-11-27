@@ -319,6 +319,38 @@ erase :: proc "contextless" (bytes: []u8) {
 	}
 }
 
+// Multi-principal chooser state discovered at Unlock start.
+Discovered_Principal :: struct {
+	slot:        u64,
+	name:        [principals.NAME_LIMIT]u8,
+	name_length: int,
+}
+discovered_principals: [principals.PRINCIPAL_CAPACITY]Discovered_Principal
+discovered_count: int
+discovered_selected: int
+
+// Target slot for Create_Principal (default 1) or Remove_Principal_By_Grant.
+creation_slot: u64 = 1
+removal_target_slot: u64
+removal_target_identifier: principals.Principal_Identifier
+removal_target_pin_generation: u64
+removal_target_name: [principals.NAME_LIMIT]u8
+removal_target_name_length: int
+
+// principal_file_object returns the store object name of `slot`.
+principal_file_object :: proc "contextless" (out: ^[32]u8, slot: u64) -> string {
+	resolved := slot != principals.MACHINE && slot < principals.PRINCIPAL_CAPACITY ? slot : 1
+	obj, _ := principals.principal_file_object_name(out, resolved)
+	return obj
+}
+
+// principal_recovery_object returns the non-TPM recovery object name of `slot`.
+principal_recovery_object :: proc "contextless" (out: ^[32]u8, slot: u64) -> string {
+	resolved := slot != principals.MACHINE && slot < principals.PRINCIPAL_CAPACITY ? slot : 1
+	obj, _ := principals.principal_recovery_object_name(out, resolved)
+	return obj
+}
+
 the_name :: proc "contextless" () -> string {
 	return string(name[:name_length])
 }
@@ -372,15 +404,19 @@ root_command :: proc "contextless" (kind: root_ring.Root_Command, values: ^[7]u6
 	}
 }
 
-// record_give gives the public part of the record to the root service, and
-// keeps the number that it answers.
-record_give :: proc "contextless" () -> bool {
+// record_give gives the public part of the record and its explicit slot to
+// the root service, and checks that the root service assigned that exact slot.
+record_give :: proc "contextless" (slot: u64) -> bool {
 	key := transmute([4]u64)signing_public_key
-	packed := principals.name_pack(the_name())
+	packed := principals.record_name_and_slot_pack(the_name(), slot)
 	record_values := [7]u64{key[0], key[1], key[2], key[3], packed[0], packed[1], packed[2]}
 	completion, answered := root_command(.Principal_Record, &record_values)
 	if !answered || completion.kind != u32(call_outcome.Call_Outcome.Succeeded) {
 		system.log_fact(.Info, Record_Not_Taken{outcome = outcome_field(completion.kind), principal_name = principal_name_field()})
+		return false
+	}
+	if slot != principals.MACHINE && completion.values[0] != slot {
+		system.log_fact(.Info, Record_Not_Taken{outcome = outcome_field(u32(call_outcome.Call_Outcome.Wrong_State)), principal_name = principal_name_field()})
 		return false
 	}
 	number = completion.values[0]
@@ -488,12 +524,14 @@ create :: proc "contextless" () {
 	if !sealed {
 		return
 	}
-	if _, status := storage.write(&client, storage.ROOT, principals.FILE_OBJECT, file_bytes[:]); status != .Ok {
+	file_obj_buf: [32]u8
+	file_obj := principal_file_object(&file_obj_buf, creation_slot)
+	if _, status := storage.write(&client, storage.ROOT, file_obj, file_bytes[:]); status != .Ok {
 		system.log_fact(.Info, Principal_File_Not_Kept{status_word = u64(status)})
 		message, message_failed = "The store did not keep the account.", true
 		return
 	}
-	if !record_give() {
+	if !record_give(creation_slot) {
 		message, message_failed = "The root service did not take the record.", true
 		return
 	}
@@ -1740,7 +1778,7 @@ principal_created_commit :: proc "contextless" () {
 	}
 	// The file holds the copy under the recovery key: a root service that
 	// does not take the record changes nothing of it.
-	if !record_give() {
+	if !record_give(creation_slot) {
 		system.log_fact(.Info, New_Principal_Record_Not_Taken{})
 		mode = .Done
 		return
@@ -1838,6 +1876,10 @@ change_proof_try :: proc "contextless" () {
 			principal_remove_execute()
 			return
 		}
+		if change_mode == .Remove_Principal_By_Grant {
+			principal_remove_by_grant_execute()
+			return
+		}
 		opened_secrets = secrets
 		mode = .New_Passphrase_First
 		message, message_failed = "Type the new passphrase.", false
@@ -1869,13 +1911,19 @@ principal_stores_reclaim :: proc "contextless" (slot: u64, id: principals.Princi
 @(private = "file")
 principal_remove_run_steps :: proc "contextless" (start_record: principals.Removal_Record) -> bool {
 	current := start_record
-	has_tpm_pin := tpm_granted && (current.pin_generation != 0 || principal_pin.generation != 0)
+	// Rely strictly on the target's durable pin_generation so an actor's TPM
+	// pin state loaded during Remove_Principal_By_Grant never leaks into
+	// target removal.
+	has_tpm_pin := tpm_granted && current.pin_generation != 0
+	file_obj_buf, rec_obj_buf: [32]u8
+	file_obj := principal_file_object(&file_obj_buf, u64(current.slot))
+	rec_obj := principal_recovery_object(&rec_obj_buf, u64(current.slot))
 	for {
 		action := principals.removal_next_action(current, has_tpm_pin)
 		switch action {
 		case .Erase_Keys:
-			object_versions_erase(principals.FILE_OBJECT)
-			object_versions_erase(principals.NON_TPM_RECOVERY_OBJECT)
+			object_versions_erase(file_obj)
+			object_versions_erase(rec_obj)
 			next, prob := principals.removal_step_advance(current, .Keys_Erased)
 			if prob != .None || !principal_remove_record_write(next) {
 				system.log_fact(.Info, Principal_Removal_Failed{principal = u64(current.slot), step = u64(current.step)})
@@ -1883,12 +1931,12 @@ principal_remove_run_steps :: proc "contextless" (start_record: principals.Remov
 			}
 			current = next
 		case .Delete_File:
-			_, file_status := storage.remove(&client, storage.ROOT, principals.FILE_OBJECT)
+			_, file_status := storage.remove(&client, storage.ROOT, file_obj)
 			if file_status != .Ok && file_status != .Absent {
 				system.log_fact(.Info, Principal_Removal_Failed{principal = u64(current.slot), step = u64(current.step)})
 				return false
 			}
-			_, rec_status := storage.remove(&client, storage.ROOT, principals.NON_TPM_RECOVERY_OBJECT)
+			_, rec_status := storage.remove(&client, storage.ROOT, rec_obj)
 			if rec_status != .Ok && rec_status != .Absent {
 				system.log_fact(.Info, Principal_Removal_Failed{principal = u64(current.slot), step = u64(current.step)})
 				return false
@@ -1956,6 +2004,29 @@ principal_remove_execute :: proc "contextless" () {
 	change_end(.Principal_Removed)
 }
 
+// principal_remove_by_grant_execute executes durable removal of
+// `removal_target_slot` after the actor holding the Principals machine grant
+// proved its own passphrase. Reads no secret of the target.
+@(private = "file")
+principal_remove_by_grant_execute :: proc "contextless" () {
+	record := principals.Removal_Record {
+		slot           = u32(removal_target_slot),
+		step           = .Marked,
+		pin_generation = removal_target_pin_generation,
+		identifier     = removal_target_identifier,
+	}
+	if !principal_remove_record_write(record) {
+		system.log_fact(.Info, Principal_Removal_Failed{principal = removal_target_slot, step = u64(record.step)})
+		change_end(.Store_Failed)
+		return
+	}
+	if !principal_remove_run_steps(record) {
+		change_end(.Store_Failed)
+		return
+	}
+	change_end(.Principal_Removed)
+}
+
 // principal_removal_resume checks for an interrupted durable removal record
 // left by a crash or power loss and finishes it idempotently before unlock
 // reads the principal file.
@@ -1998,7 +2069,7 @@ prove_start :: proc "contextless" (requested_principal: u64) {
 	if requested_principal == principals.MACHINE {
 		present = machine_record_read() == .Present
 	} else if requested_principal < principals.PRINCIPAL_CAPACITY {
-		present = principal_file_read()
+		present = principal_file_read_slot(requested_principal)
 	}
 	if problem := principals.proof_problem(requested_principal, present, machine_form, has_tpm, number); problem != .None {
 		system.log_fact(.Info, Wide_Grant_Proof_Not_Possible{principal = requested_principal, problem_code = u64(problem)})
@@ -2130,12 +2201,14 @@ recovery_key_prepare :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SI
 recovery_key_commit :: proc "contextless" () {
 	erase(recovery_text[:])
 	if principal_form == .Passphrase {
-		switch object_write(principals.NON_TPM_RECOVERY_OBJECT, renewed_non_tpm_recovery_bytes[:]) {
+		rec_obj_buf: [32]u8
+		rec_obj := principal_recovery_object(&rec_obj_buf, number)
+		switch object_write(rec_obj, renewed_non_tpm_recovery_bytes[:]) {
 		case .Kept:
 			principal_non_tpm_recovery_bytes = renewed_non_tpm_recovery_bytes
 			principal_non_tpm_recovery_present = true
 			system.log_fact(.Info, Recovery_Key_Renewal_Kept{principal = number, principal_name = principal_name_field()})
-			object_versions_erase(principals.NON_TPM_RECOVERY_OBJECT)
+			object_versions_erase(rec_obj)
 			change_end(.Recovery_Key_Changed)
 		case .Not_Kept:
 			system.log_fact(.Info, Recovery_Key_Renewal_Not_Kept{principal = number})
@@ -2150,7 +2223,8 @@ recovery_key_commit :: proc "contextless" () {
 	case .Kept:
 		principal_tpm_file, principal_tpm_file_bytes = renewed_recovery_file, renewed_recovery_bytes
 		system.log_fact(.Info, Recovery_Key_Renewal_Kept{principal = number, principal_name = principal_name_field()})
-		object_versions_erase(principals.FILE_OBJECT)
+		file_obj_buf: [32]u8
+		object_versions_erase(principal_file_object(&file_obj_buf, number))
 		change_end(.Recovery_Key_Changed)
 	case .Not_Kept:
 		system.log_fact(.Info, Recovery_Key_Renewal_Not_Kept{principal = number})
@@ -2228,7 +2302,8 @@ passphrase_change_report :: proc "contextless" (outcome: Write_Outcome, how: str
 	case .Kept:
 		system.log_fact(.Info, Passphrase_Changed{principal = number, principal_name = principal_name_field(), how = how_field(how)})
 		if erases {
-			object_versions_erase(principals.FILE_OBJECT)
+			file_obj_buf: [32]u8
+			object_versions_erase(principal_file_object(&file_obj_buf, number))
 		}
 		change_end(.Passphrase_Changed)
 	case .Not_Kept:
@@ -2269,7 +2344,9 @@ principal_file_write :: proc "contextless" (bytes: []u8) -> Write_Outcome {
 	if !pin_announce(.Principal_File, bytes) {
 		return .Not_Kept
 	}
-	outcome := object_write(principals.FILE_OBJECT, bytes)
+	target := number != principals.MACHINE ? number : creation_slot
+	file_obj_buf: [32]u8
+	outcome := object_write(principal_file_object(&file_obj_buf, target), bytes)
 	if outcome == .Kept {
 		pin_settle(.Principal_File, bytes)
 	}
@@ -2374,17 +2451,19 @@ principal_reseal :: proc "contextless" () {
 		defer erase(renewed_bytes[:])
 		verify_key: [principals.KEY_SIZE]u8
 		defer erase(verify_key[:])
+		file_obj_buf: [32]u8
+		file_obj := principal_file_object(&file_obj_buf, number)
 		if _, sealed := passphrase_file_seal(&opened_secrets, &renewed, &renewed_bytes); !sealed || !derive(typed[:typed_count], renewed.salt[:], &verify_key) || principals.record_open_verify(renewed_bytes[:], &verify_key, &opened_secrets) != .None {
 			system.log_fact(.Info, Principal_Not_Resealed{principal = number})
 		} else if !pin_announce(.Principal_File, renewed_bytes[:]) {
 			system.log_fact(.Info, Principal_Not_Resealed{principal = number})
-		} else if _, status := storage.write(&client, storage.ROOT, principals.FILE_OBJECT, renewed_bytes[:]); status != .Ok {
+		} else if _, status := storage.write(&client, storage.ROOT, file_obj, renewed_bytes[:]); status != .Ok {
 			system.log_fact(.Info, Principal_Reseal_Not_Kept{principal = number, status_word = u64(status)})
 		} else {
 			pin_settle(.Principal_File, renewed_bytes[:])
 			file, file_bytes = renewed, renewed_bytes
 			system.log_fact(.Info, Principal_Resealed{principal = number, principal_name = principal_name_field()})
-			object_versions_erase(principals.FILE_OBJECT)
+			object_versions_erase(file_obj)
 		}
 		session_start(&opened_secrets, root_ring.Principal_Key_Origin.Opened)
 		if mode != .Done {
@@ -2403,13 +2482,15 @@ principal_reseal :: proc "contextless" () {
 	case !pin_announce(.Principal_File, renewed_bytes[:]):
 		system.log_fact(.Info, Principal_Not_Resealed{principal = number})
 	case:
-		if _, status := storage.write(&client, storage.ROOT, principals.FILE_OBJECT, renewed_bytes[:]); status != .Ok {
+		file_obj_buf: [32]u8
+		file_obj := principal_file_object(&file_obj_buf, number)
+		if _, status := storage.write(&client, storage.ROOT, file_obj, renewed_bytes[:]); status != .Ok {
 			system.log_fact(.Info, Principal_Reseal_Not_Kept{principal = number, status_word = u64(status)})
 		} else {
 			pin_settle(.Principal_File, renewed_bytes[:])
 			principal_tpm_file, principal_tpm_file_bytes = renewed, renewed_bytes
 			system.log_fact(.Info, Principal_Resealed{principal = number, principal_name = principal_name_field()})
-			object_versions_erase(principals.FILE_OBJECT)
+			object_versions_erase(file_obj)
 		}
 	}
 	session_start(&opened_secrets, root_ring.Principal_Key_Origin.Opened)
@@ -2495,9 +2576,11 @@ session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, 
 	// nothing: its write can replace a file that never decoded, whose
 	// version is then the one way back to its keys.
 	if origin == .Opened {
-		object_versions_erase(principals.FILE_OBJECT)
+		file_obj_buf: [32]u8
+		object_versions_erase(principal_file_object(&file_obj_buf, number))
 		if principal_form == .Passphrase && principal_non_tpm_recovery_present {
-			object_versions_erase(principals.NON_TPM_RECOVERY_OBJECT)
+			rec_obj_buf: [32]u8
+			object_versions_erase(principal_recovery_object(&rec_obj_buf, number))
 		}
 	}
 	unlock_key: [disk_process.KEY_SIZE]u8
@@ -2614,6 +2697,9 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	note := "" // A fact at the left of the bar.
 	switch mode {
 	case .Unlock, .Done:
+		if mode == .Unlock && discovered_count > 1 {
+			note = "Tab: switch account"
+		}
 	case .Create_First:
 		label = "New account  "
 		enter_name = "Create"
@@ -2680,8 +2766,11 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		if change_mode == .Prove_Wide_Grant {
 			prompt = proof_by_machine_passphrase ? "Machine passphrase  " : "Passphrase  "
 			enter_name = "Give; empty: cancel"
-		} else if change_mode == .Remove_Principal {
+		} else if change_mode == .Remove_Principal || change_mode == .Remove_Principal_By_Grant {
 			label = "Remove account  "
+			if change_mode == .Remove_Principal_By_Grant && removal_target_name_length > 0 {
+				subject = string(removal_target_name[:removal_target_name_length])
+			}
 			enter_name = "Remove; empty: cancel"
 		}
 	case .Change_Result:
@@ -2990,20 +3079,57 @@ enter :: proc "contextless" (window: ^display.Window) {
 	typed_count = 0
 }
 
-// principal_file_read reads the file of the named principal from the store,
-// in its form, and gives its public part to the root service. It gives
-// false when the store holds no file. A file that does not decode stops
-// the process with `Refused`: its input. A store that gives no file, or a
-// record that the root service refuses, stops it with `Failed`.
-principal_file_read :: proc "contextless" () -> (found: bool) {
+// principal_header_read_slot reads only the public header (identifier, name,
+// form) of `slot`'s file without decrypting any secret key or touching the
+// active actor state. Used by Remove_Principal_By_Grant so removing a
+// principal never reads or opens any secret of that principal.
+principal_header_read_slot :: proc "contextless" (slot: u64) -> (target_id: principals.Principal_Identifier, target_name: [principals.NAME_LIMIT]u8, target_name_len: int, form: principals.Principal_Record_Form, found: bool) {
+	file_obj_buf: [32]u8
+	file_obj, obj_ok := principals.principal_file_object_name(&file_obj_buf, slot)
+	if !obj_ok {
+		return {}, {}, 0, .Unknown, false
+	}
 	buffer: [principals.PRINCIPAL_FILE_LIMIT + 1]u8
-	bytes, present, read_status := storage.read(&client, storage.ROOT, principals.FILE_OBJECT, buffer[:])
+	bytes, present, read_status := storage.read(&client, storage.ROOT, file_obj, buffer[:])
+	if read_status != .Ok || !present {
+		return {}, {}, 0, .Unknown, false
+	}
+	form = principals.principal_record_form(bytes)
+	switch form {
+	case .Passphrase:
+		decoded, _, problem := principals.file_decode(bytes)
+		if problem != .None {
+			return {}, {}, 0, .Unknown, false
+		}
+		return decoded.identifier, decoded.name, decoded.name_length, .Passphrase, true
+	case .Sealed_By_The_Tpm:
+		decoded, _, problem := principals.principal_tpm_file_decode(bytes)
+		if problem != .None {
+			return {}, {}, 0, .Unknown, false
+		}
+		return decoded.identifier, decoded.name, decoded.name_length, .Sealed_By_The_Tpm, true
+	case .Unknown:
+		return {}, {}, 0, .Unknown, false
+	}
+	return {}, {}, 0, .Unknown, false
+}
+
+// principal_file_read_slot reads the file of the named principal in `slot`
+// from the store, in its form, and gives its public part to the root service.
+// It gives false when the store holds no file for `slot` or its pin refuses.
+principal_file_read_slot :: proc "contextless" (slot: u64) -> (found: bool) {
+	file_obj_buf: [32]u8
+	file_obj, obj_ok := principals.principal_file_object_name(&file_obj_buf, slot)
+	if !obj_ok {
+		return false
+	}
+	buffer: [principals.PRINCIPAL_FILE_LIMIT + 1]u8
+	bytes, present, read_status := storage.read(&client, storage.ROOT, file_obj, buffer[:])
 	if read_status != .Ok {
 		system.log_fact(.Info, Principal_File_Not_Read{status_word = u64(read_status)})
 		system.stop(.Failed)
 	}
 	if !present {
-		_ = principal_file_removed_check()
 		return false
 	}
 	problem: principals.File_Problem
@@ -3037,7 +3163,7 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 		system.log_fact(.Info, Principal_File_Form_Unknown{})
 		system.stop(.Refused)
 	}
-	if !record_give() {
+	if !record_give(slot) {
 		system.stop(.Failed)
 	}
 	// The file decodes: it must also be the file that the TPM pins. An
@@ -3048,14 +3174,43 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 	}
 	principal_non_tpm_recovery_present = false
 	if principal_form == .Passphrase {
+		rec_obj_buf: [32]u8
+		rec_obj := principal_recovery_object(&rec_obj_buf, slot)
 		recovery_buffer: [principals.NON_TPM_RECOVERY_SIZE + 1]u8
-		recovery_bytes, recovery_present, recovery_status := storage.read(&client, storage.ROOT, principals.NON_TPM_RECOVERY_OBJECT, recovery_buffer[:])
+		recovery_bytes, recovery_present, recovery_status := storage.read(&client, storage.ROOT, rec_obj, recovery_buffer[:])
 		if recovery_status == .Ok && recovery_present {
 			if decoded, kept, decode_problem := principals.non_tpm_recovery_decode(recovery_bytes); decode_problem == .None && decoded.principal_number == number && decoded.signing_public_key == signing_public_key && decoded.unlock_public_key == unlock_public_key {
 				principal_non_tpm_recovery_bytes = kept
 				principal_non_tpm_recovery_present = true
 			}
 		}
+	}
+	return true
+}
+
+// principals_scan_all scans all named principal slots (1 ..< PRINCIPAL_CAPACITY)
+// on unlock start, records every valid principal with root, and selects the
+// first valid principal for unlock.
+principals_scan_all :: proc "contextless" () -> (found: bool) {
+	discovered_count = 0
+	discovered_selected = 0
+	for slot in u64(1) ..< principals.PRINCIPAL_CAPACITY {
+		if principal_file_read_slot(slot) {
+			discovered_principals[discovered_count] = {
+				slot        = slot,
+				name        = name,
+				name_length = name_length,
+			}
+			discovered_count += 1
+		}
+	}
+	if discovered_count == 0 {
+		_ = principal_file_removed_check()
+		return false
+	}
+	if discovered_count > 1 {
+		// Reload slot 0 of the chooser so active file, pin, and hints match it.
+		_ = principal_file_read_slot(discovered_principals[0].slot)
 	}
 	return true
 }
@@ -3225,7 +3380,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log_fact(.Info, New_Principal_Name_Refused{})
 			system.stop(.Refused)
 		}
-		if !principal_creation_allowed() {
+		target_slot := ctx.values[principals.VALUE_TARGET_PRINCIPAL]
+		creation_slot = target_slot != principals.MACHINE && target_slot < principals.PRINCIPAL_CAPACITY ? target_slot : 1
+		if !principal_creation_allowed_for(creation_slot) {
 			system.stop(.Refused)
 		}
 		mode = .Create_First
@@ -3258,7 +3415,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			change_end(.Refused, .Wrong_Principal)
 			system.stop(.Refused)
 		}
-		if !principal_file_read() {
+		if !principal_file_read_slot(requested_principal) {
 			system.log_fact(.Info, No_Principal_To_Change{})
 			change_end(.Refused, .Unknown_Form)
 			system.stop(.Refused)
@@ -3284,12 +3441,55 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			message = "Type your current passphrase."
 		}
 		system.log_fact(.Info, Change_Asked{principal = number, principal_name = principal_name_field()})
+	case .Remove_Principal_By_Grant:
+		principal_removal_resume()
+		// Actor at VALUE_PRINCIPAL removes target at VALUE_TARGET_PRINCIPAL
+		// under the Principals machine grant: read only target's public header
+		// (never its secrets), then prove only the actor's passphrase.
+		change_mode = start_mode
+		actor_slot := ctx.values[principals.VALUE_PRINCIPAL]
+		target_slot := ctx.values[principals.VALUE_TARGET_PRINCIPAL]
+		if !principals.change_principal_valid(actor_slot) || !principals.change_principal_valid(target_slot) {
+			change_refusal_log(.Wrong_Principal)
+			change_end(.Refused, .Wrong_Principal)
+			system.stop(.Refused)
+		}
+		target_id, target_nm, target_nm_len, target_form, target_found := principal_header_read_slot(target_slot)
+		if !target_found {
+			system.log_fact(.Info, No_Principal_To_Change{})
+			change_end(.Refused, .Unknown_Form)
+			system.stop(.Refused)
+		}
+		if problem := principals.change_problem(target_form, change_mode, has_tpm, seal_allowed); problem != .None {
+			change_refusal_log(problem)
+			change_end(.Refused, problem)
+			system.stop(.Refused)
+		}
+		target_pin_gen, pin_gen_ok := principal_pin_generation_of(target_slot)
+		if !pin_gen_ok {
+			change_refusal_log(.No_Tpm_Service)
+			change_end(.Refused, .No_Tpm_Service)
+			system.stop(.Refused)
+		}
+		removal_target_slot = target_slot
+		removal_target_identifier = target_id
+		removal_target_pin_generation = target_pin_gen
+		removal_target_name = target_nm
+		removal_target_name_length = target_nm_len
+		if !principal_file_read_slot(actor_slot) || !principals.change_principal_matches(actor_slot, number) {
+			change_refusal_log(.Wrong_Principal)
+			change_end(.Refused, .Wrong_Principal)
+			system.stop(.Refused)
+		}
+		mode = .Change_Current
+		message = "Type your passphrase to remove the selected account."
+		system.log_fact(.Info, Change_Asked{principal = target_slot, principal_name = principal_name_field()})
 	case .Prove_Wide_Grant:
 		principal_removal_resume()
 		prove_start(ctx.values[principals.VALUE_PRINCIPAL])
 	case .Unlock, .Unlock_Machine_Key_Held:
 		principal_removal_resume()
-		principal_found = principal_file_read()
+		principal_found = principals_scan_all()
 		// After a lock the root service holds the key of the table of
 		// principal 0 already: the machine passphrase is not asked again.
 		record_state := Record_State.Absent
@@ -3434,6 +3634,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 // bar that a press ran.
 key_run :: proc "contextless" (window: ^display.Window, press: interface.Key_Press) {
 	switch {
+	case mode == .Unlock && discovered_count > 1 && (press.character == '\t' || press.code == display.KEY_UP || press.code == display.KEY_DOWN):
+		// Cycle between discovered named principals on the chooser, clearing
+		// any typed bytes and loading the newly selected principal's file and
+		// unlock keyboard layout hints.
+		erase(typed[:])
+		typed_count = 0
+		unlock_dead_key = {}
+		if press.code == display.KEY_UP {
+			discovered_selected = (discovered_selected + discovered_count - 1) % discovered_count
+		} else {
+			discovered_selected = (discovered_selected + 1) % discovered_count
+		}
+		if principal_file_read_slot(discovered_principals[discovered_selected].slot) {
+			principal_ask()
+		}
 	case press.code == display.KEY_ESCAPE:
 		erase(typed[:])
 		typed_count = 0

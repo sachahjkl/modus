@@ -170,7 +170,7 @@ a_row_out_of_front_holds_no_view_and_no_input :: proc(t: ^testing.T) {
 client_table_holds_many_clients_and_refuses_one_past_the_last_row :: proc(t: ^testing.T) {
 	testing.expect(t, CLIENT_CAPACITY >= 64, "the client table holds fewer than 64 keys")
 	testing.expect(t, CLIENT_ROWS_OF_ONE_PRINCIPAL >= 8, "one principal holds fewer than 8 keys")
-	testing.expect_value(t, CLIENT_ROWS_OF_ONE_PRINCIPAL * 2, CLIENT_CAPACITY)
+	testing.expect_value(t, CLIENT_ROWS_OF_ONE_PRINCIPAL * 8, CLIENT_CAPACITY)
 	testing.expect(t, size_of(Client_Table) <= CLIENT_TABLE_PAGES * 4096)
 	testing.expect(t, size_of(Client_Table) > (CLIENT_TABLE_PAGES - 1) * 4096, "the client table has a page that it does not use")
 	testing.expect(t, CONNECTION_CAPACITY >= 32, "the remote service holds fewer than 32 connections")

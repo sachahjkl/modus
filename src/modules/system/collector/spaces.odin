@@ -91,8 +91,10 @@ closed_spaces_pass :: proc "contextless" (now_ms: u64) -> (deadline: u64) {
 
 // principal_reader_of gives who calls, as the root service wrote it in the
 // grant of the connection, and refuses a caller that does not act for
-// principal.
-principal_reader_of :: proc "contextless" (principal: u64, connection: ^system.Connection, error: ^errors.Error_Record) -> (reader: wide_grants.Space_Reader, failure: call_outcome.Call_Outcome, ok: bool) {
+// principal. When allow_machine_audit_read is true on principal 0's collector,
+// an admitted named principal acting for itself is passed through so the space
+// layer can restrict it strictly to the machine audit space.
+principal_reader_of :: proc "contextless" (principal: u64, connection: ^system.Connection, error: ^errors.Error_Record, allow_machine_audit_read := false) -> (reader: wide_grants.Space_Reader, failure: call_outcome.Call_Outcome, ok: bool) {
 	if connection == nil {
 		failure, _ = call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Connection)
 		return {}, failure, false
@@ -102,9 +104,15 @@ principal_reader_of :: proc "contextless" (principal: u64, connection: ^system.C
 		acts_for_principal = connection.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0,
 		name               = connection.caller,
 	}
-	if !reader.acts_for_principal || reader.principal != principal {
+	if !reader.acts_for_principal {
 		failure, _ = call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 		return {}, failure, false
+	}
+	if reader.principal != principal {
+		if !(allow_machine_audit_read && principal == 0) {
+			failure, _ = call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
+			return {}, failure, false
+		}
 	}
 	return reader, .Succeeded, true
 }
@@ -297,7 +305,7 @@ records_read_for :: proc "contextless" (
 	bytes: ^system.Bytes_To_Append,
 	error: ^errors.Error_Record,
 ) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	reader, failure, ok := principal_reader_of(service.store.principal, connection, error)
+	reader, failure, ok := principal_reader_of(service.store.principal, connection, error, allow_machine_audit_read = true)
 	if !ok {
 		return failure, 0
 	}
@@ -343,7 +351,7 @@ records_read :: proc "c" (space: i64, after: i64, limit: i64, heads: ^system.Tab
 }
 
 spaces_for :: proc "contextless" (service: ^Space_Service, connection: ^system.Connection, result: ^[]wide_grants.Space_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	reader, failure, ok := principal_reader_of(service.store.principal, connection, error)
+	reader, failure, ok := principal_reader_of(service.store.principal, connection, error, allow_machine_audit_read = true)
 	if !ok {
 		return failure, 0
 	}
@@ -368,7 +376,7 @@ spaces :: proc "c" (result: ^[]wide_grants.Space_Row, error: ^errors.Error_Recor
 }
 
 space_stats_for :: proc "contextless" (service: ^Space_Service, connection: ^system.Connection, space: i64, out: ^wide_grants.Space_Row, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	reader, failure, ok := principal_reader_of(service.store.principal, connection, error)
+	reader, failure, ok := principal_reader_of(service.store.principal, connection, error, allow_machine_audit_read = true)
 	if !ok {
 		return failure, 0
 	}
@@ -397,11 +405,23 @@ space_stats :: proc "c" (space: i64, out: ^wide_grants.Space_Row, error: ^errors
 }
 
 space_verify_for :: proc "contextless" (service: ^Space_Service, connection: ^system.Connection, space: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
-	if _, failure, ok := principal_reader_of(service.store.principal, connection, error); !ok {
+	reader, failure, ok := principal_reader_of(service.store.principal, connection, error, allow_machine_audit_read = true)
+	if !ok {
 		return failure, 0
 	}
 	if !space_number_valid(space) {
 		return space_refusal_fail(error, .Unknown_Space, 1)
+	}
+	if ready := wide_grants.space_store_ready(&service.store); ready != .None {
+		return space_refusal_fail(error, ready, 1)
+	}
+	held := wide_grants.space_of(&service.store, u32(space))
+	if held != nil {
+		if read_refusal := wide_grants.space_read_allowed(&service.store, held, &reader); read_refusal != .None {
+			return space_refusal_fail(error, read_refusal, 1)
+		}
+	} else if reader.principal != service.store.principal {
+		return space_refusal_fail(error, .Not_Principal, 1)
 	}
 	refusal, failing_serial := wide_grants.space_verify(&service.store, u32(space))
 	// A link that breaks is the one refusal with a serial as its value.

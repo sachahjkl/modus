@@ -417,7 +417,7 @@ start_policy_choice_command :: proc "contextless" (caller: ^Started, record: rin
 		return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .Reserved, .Grants, 1)
 	case .Full:
 		return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, kind, .Full, .Grants, 0, 0, disk_process.ROW_CAPACITY)
-	case .Absent, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Bad_Uses, .Start_Policy_Row:
+	case .Absent, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Bad_Uses, .Start_Policy_Row, .Zero_Identifier, .Bad_Machine_Scopes, .Last_System_Grant:
 		return root_ring.refuse(values, .Wrong_State, kind, .State)
 	}
 	row := disk_process.table_start_policy_row(table)

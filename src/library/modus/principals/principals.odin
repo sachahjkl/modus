@@ -54,9 +54,9 @@ import "modus:tpm2"
 // session needs no unlock.
 MACHINE :: 0
 MACHINE_NAME :: "machine" // The name of principal 0.
-// The records that the root service holds: principal 0 and one named
-// principal. Several named principals on one machine are not built.
-PRINCIPAL_CAPACITY :: 2
+// Plan value: principal slot count on one machine (principal 0 plus up to 7
+// named principals, matching remote.CLIENT_ROWS_OF_ONE_PRINCIPAL * 8 == 64).
+PRINCIPAL_CAPACITY :: 8
 
 // The bytes of the name of a principal: three values of a ring record, with
 // a zero byte after it.
@@ -69,6 +69,7 @@ PASSPHRASE_LIMIT :: 128 // The most bytes of a passphrase.
 VALUE_MODE :: 5 // What this start of `unlock` does: the word of an Unlock_Mode.
 VALUE_NAME :: 6 // 6, 7 and 8: the name, 24 bytes with zero bytes after it.
 VALUE_PRINCIPAL :: 14 // The number of the principal that asked for a change.
+VALUE_TARGET_PRINCIPAL :: 15 // The target principal slot for creation or grant-authorized removal.
 // 1: the firmware verified the boot program (Secure Boot was on), so
 // `unlock` may seal the machine key by the TPM and seal it again after a
 // recovery. 0: it may only unseal: a seal with Secure Boot off would trust
@@ -113,6 +114,11 @@ Unlock_Mode :: enum u64 {
 	// deletes the principal file, frees the TPM pin, and clears the marker
 	// (src/md/features/several_principals.md).
 	Remove_Principal = 9,
+	// Remove the named principal at VALUE_TARGET_PRINCIPAL on behalf of the
+	// actor principal at VALUE_PRINCIPAL who holds the Principals machine grant:
+	// proves only the actor's passphrase, reads no secret of the target, and
+	// runs the durable removal state machine on the target slot.
+	Remove_Principal_By_Grant = 10,
 }
 
 // unlock_mode_of_word reads the word of VALUE_MODE. A word that names no
@@ -149,6 +155,8 @@ mode_words :: proc "contextless" (mode: Unlock_Mode) -> string {
 		return "the proof of a wide grant"
 	case .Remove_Principal:
 		return "the removal of a principal"
+	case .Remove_Principal_By_Grant:
+		return "the removal of a principal by grant"
 	}
 	// Only a conversion that skips unlock_mode_of_word reaches this line:
 	// it is said, not taken for an unlock.
@@ -217,7 +225,7 @@ change_end_sentences := [Change_End]string {
 // Removing a TPM-sealed principal needs the right to write the free pin.
 change_problem :: proc "contextless" (form: Principal_Record_Form, mode: Unlock_Mode, has_tpm: bool, seal_allowed: bool) -> Change_Problem {
 	switch mode {
-	case .Change_Passphrase, .New_Recovery_Key, .Remove_Principal:
+	case .Change_Passphrase, .New_Recovery_Key, .Remove_Principal, .Remove_Principal_By_Grant:
 	case .Unlock, .Create_Principal, .Set_Machine_Passphrase, .Unlock_Machine_Key_Held, .Seal_Machine_Key, .Machine_Key_Without_Window, .Prove_Wide_Grant:
 		return .Unknown_Change
 	}
@@ -231,7 +239,7 @@ change_problem :: proc "contextless" (form: Principal_Record_Form, mode: Unlock_
 		if !has_tpm {
 			return .No_Tpm_Service
 		}
-		if (mode == .Change_Passphrase || mode == .Remove_Principal) && !seal_allowed {
+		if (mode == .Change_Passphrase || mode == .Remove_Principal || mode == .Remove_Principal_By_Grant) && !seal_allowed {
 			return .Seal_Not_Allowed
 		}
 	}
@@ -265,9 +273,65 @@ PUBLIC_KEY_SIZE :: 32 // The bytes of an Ed25519 or X25519 public key.
 // and the X25519 scalar (to unlock documents).
 SECRET_KEYS_SIZE :: 64
 
-// The file of a named principal: the object FILE_OBJECT in the store of
-// `unlock`. The offsets, in bytes; each number is little-endian.
+// The file of a named principal: slot 1 uses FILE_OBJECT ("principal") and
+// slots 2 ..< PRINCIPAL_CAPACITY use "principal.<slot>" in unlock's store.
 FILE_OBJECT :: "principal"
+
+// principal_file_object_name writes the store object name of a named
+// principal slot into out and returns it, or empty string for slot 0 or past
+// PRINCIPAL_CAPACITY.
+principal_file_object_name :: proc "contextless" (out: ^[32]u8, slot: u64) -> (name: string, ok: bool) {
+	out^ = {}
+	if slot == MACHINE || slot >= PRINCIPAL_CAPACITY {
+		return "", false
+	}
+	if slot == 1 {
+		n := copy(out^[:], FILE_OBJECT)
+		return string(out^[:n]), true
+	}
+	n := copy(out^[:], "principal.")
+	digits: [20]u8
+	place := len(digits)
+	value := slot
+	for {
+		place -= 1
+		digits[place] = u8('0' + value % 10)
+		value /= 10
+		if value == 0 {
+			break
+		}
+	}
+	n += copy(out^[n:len(out^) - 1], digits[place:])
+	return string(out^[:n]), true
+}
+
+// principal_recovery_object_name writes the non-TPM recovery object name of a
+// named principal slot into out (slot 1 -> "principal_recovery", slots 2.. ->
+// "principal_recovery.<slot>").
+principal_recovery_object_name :: proc "contextless" (out: ^[32]u8, slot: u64) -> (name: string, ok: bool) {
+	out^ = {}
+	if slot == MACHINE || slot >= PRINCIPAL_CAPACITY {
+		return "", false
+	}
+	if slot == 1 {
+		n := copy(out^[:], NON_TPM_RECOVERY_OBJECT)
+		return string(out^[:n]), true
+	}
+	n := copy(out^[:], "principal_recovery.")
+	digits: [20]u8
+	place := len(digits)
+	value := slot
+	for {
+		place -= 1
+		digits[place] = u8('0' + value % 10)
+		value /= 10
+		if value == 0 {
+			break
+		}
+	}
+	n += copy(out^[n:len(out^) - 1], digits[place:])
+	return string(out^[:n]), true
+}
 FILE_MAGIC :: "PRINCIPL" // The first 8 bytes of the file.
 // The format number of the file. Format 3 added authenticated Unlock_Hints
 // right after the salt; formats 1 and 2 are refused with Older_Format, and
@@ -537,6 +601,35 @@ name_unpack :: proc "contextless" (values: [3]u64) -> (name: [NAME_LIMIT]u8, len
 		length += 1
 	}
 	return
+}
+
+// record_name_and_slot_pack packs a principal name (1..NAME_LIMIT bytes) in
+// bytes 0..22 and its explicit slot number in byte 23 (0 = unspecified,
+// 1..PRINCIPAL_CAPACITY-1 = exact slot) so reboot scans preserve exact slot
+// numbers even after lower-numbered principals have been removed.
+record_name_and_slot_pack :: proc "contextless" (name: string, slot: u64) -> (values: [3]u64) {
+	bytes: [24]u8
+	copy(bytes[:NAME_LIMIT], name)
+	if slot < PRINCIPAL_CAPACITY {
+		bytes[NAME_LIMIT] = u8(slot)
+	}
+	return transmute([3]u64)bytes
+}
+
+// record_name_and_slot_unpack extracts the principal name from bytes 0..22
+// and the optional explicit slot number from byte 23. Rejects any slot byte
+// >= PRINCIPAL_CAPACITY.
+record_name_and_slot_unpack :: proc "contextless" (values: [3]u64) -> (name: [NAME_LIMIT]u8, length: int, slot: u64, slot_ok: bool) {
+	bytes := transmute([24]u8)values
+	for length < NAME_LIMIT && bytes[length] != 0 {
+		name[length] = bytes[length]
+		length += 1
+	}
+	slot = u64(bytes[NAME_LIMIT])
+	if slot >= PRINCIPAL_CAPACITY {
+		return {}, 0, slot, false
+	}
+	return name, length, slot, true
 }
 
 // store_name_write writes the name of the store that the root service gives

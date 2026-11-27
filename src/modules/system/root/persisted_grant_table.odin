@@ -943,7 +943,7 @@ table_refused_written_over_log :: proc "contextless" (principal: u64, problem: d
 		system.log_fact(.Warning, Table_Refused_Bad_Row_Written_Over{principal = principal, new_record = text_field(new_record, 32)})
 	case .Bad_Client_Keys:
 		system.log_fact(.Warning, Table_Refused_Bad_Client_Keys_Written_Over{principal = principal, new_record = text_field(new_record, 32)})
-	case .None, .Wrong_Size, .Not_Authentic, .Wrong_Magic, .Wrong_Format, .Too_Many_Rows, .Bad_Setting, .Two_Rows, .Two_Start_Policies, .Start_Policy_Of_A_Named_Principal, .Bytes_After_Rows:
+	case .None, .Wrong_Size, .Not_Authentic, .Wrong_Magic, .Wrong_Format, .Too_Many_Rows, .Bad_Setting, .Two_Rows, .Two_Start_Policies, .Start_Policy_Of_A_Named_Principal, .Bytes_After_Rows, .Bad_Machine_Grants, .Machine_Grant_Of_A_Named_Principal:
 		system.log_fact(.Warning, Table_Refused_Written_Over{principal = principal, new_record = text_field(new_record, 32), table_problem = text_field(disk_process.table_problem_sentences[problem], 104)})
 	}
 }
@@ -958,7 +958,7 @@ table_refused_kept_log :: proc "contextless" (principal: u64, problem: disk_proc
 		system.log_fact(.Warning, Table_Refused_Bad_Row_Kept{principal = principal})
 	case .Bad_Client_Keys:
 		system.log_fact(.Warning, Table_Refused_Bad_Client_Keys_Kept{principal = principal})
-	case .None, .Wrong_Size, .Not_Authentic, .Wrong_Magic, .Wrong_Format, .Too_Many_Rows, .Bad_Setting, .Two_Rows, .Two_Start_Policies, .Start_Policy_Of_A_Named_Principal, .Bytes_After_Rows:
+	case .None, .Wrong_Size, .Not_Authentic, .Wrong_Magic, .Wrong_Format, .Too_Many_Rows, .Bad_Setting, .Two_Rows, .Two_Start_Policies, .Start_Policy_Of_A_Named_Principal, .Bytes_After_Rows, .Bad_Machine_Grants, .Machine_Grant_Of_A_Named_Principal:
 		system.log_fact(.Warning, Table_Refused_Kept{principal = principal, table_problem = text_field(disk_process.table_problem_sentences[problem], 104)})
 	}
 }

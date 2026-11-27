@@ -66,12 +66,29 @@ Ticket_Hierarchy :: enum u32 {
 	Platform    = 0x4000_000C,
 }
 
+// Format property: the largest HMAC ticket digest a TPM returns (SHA-512,
+// 64 bytes; swtpm returns 64-byte digests in TPMT_TK_VERIFIED).
+TICKET_DIGEST_LIMIT :: 64
+
 // The ticket of TPM2_VerifySignature that proves that the key of the name
 // signed the approved policy (TPMT_TK_VERIFIED). The tag is fixed, so it is
-// not a field.
+// not a field. digest_len holds the byte count (1..TICKET_DIGEST_LIMIT).
 Verified_Ticket :: struct {
-	hierarchy: Ticket_Hierarchy,
-	digest:    Digest,
+	hierarchy:  Ticket_Hierarchy,
+	digest:     [TICKET_DIGEST_LIMIT]u8,
+	digest_len: u16,
+}
+
+// verified_ticket_make constructs a Verified_Ticket from a hierarchy and a
+// non-empty, non-zero digest of at most TICKET_DIGEST_LIMIT bytes.
+verified_ticket_make :: proc "contextless" (hierarchy: Ticket_Hierarchy, digest: []u8) -> (ticket: Verified_Ticket, ok: bool) {
+	if len(digest) == 0 || len(digest) > TICKET_DIGEST_LIMIT || is_all_zero(digest) {
+		return {}, false
+	}
+	ticket.hierarchy = hierarchy
+	ticket.digest_len = u16(len(digest))
+	copy(ticket.digest[:len(digest)], digest)
+	return ticket, true
 }
 
 // The header of an answer.
@@ -157,9 +174,10 @@ put_header :: proc "contextless" (writer: ^Wire_Writer, tag: Response_Tag, size:
 }
 
 // policy_authorize_size gives the bytes of TPM2_PolicyAuthorize with a
-// policy reference of reference_size bytes.
-policy_authorize_size :: proc "contextless" (reference_size: int) -> int {
-	return TPM_HEADER_SIZE + 4 + (2 + SHA256_SIZE) + (2 + reference_size) + (2 + KEY_NAME_SIZE) + (2 + 4 + 2 + SHA256_SIZE)
+// policy reference of reference_size bytes and a ticket digest of
+// ticket_digest_size bytes.
+policy_authorize_size :: proc "contextless" (reference_size: int, ticket_digest_size: int = SHA256_SIZE) -> int {
+	return TPM_HEADER_SIZE + 4 + (2 + SHA256_SIZE) + (2 + reference_size) + (2 + KEY_NAME_SIZE) + (2 + 4 + 2 + ticket_digest_size)
 }
 
 // encode_policy_authorize builds TPM2_PolicyAuthorize. The command needs no
@@ -190,11 +208,15 @@ encode_policy_authorize :: proc "contextless" (
 	   is_all_zero(key_sign_name[2:]) {
 		return 0, .Key_Name_Malformed
 	}
-	ticket_digest := check_ticket.digest
-	if is_all_zero(ticket_digest[:]) {
+	ticket_len := int(check_ticket.digest_len)
+	if ticket_len == 0 || ticket_len > TICKET_DIGEST_LIMIT {
 		return 0, .Zero_Ticket_Digest
 	}
-	size := policy_authorize_size(len(policy_ref))
+	ticket_digest := check_ticket.digest
+	if is_all_zero(ticket_digest[:ticket_len]) {
+		return 0, .Zero_Ticket_Digest
+	}
+	size := policy_authorize_size(len(policy_ref), ticket_len)
 	if len(out) < size {
 		return 0, .Buffer_Too_Small
 	}
@@ -206,7 +228,7 @@ encode_policy_authorize :: proc "contextless" (
 	put_sized(&writer, key_sign_name)
 	put_u16(&writer, TPM_ST_VERIFIED)
 	put_u32(&writer, u32(check_ticket.hierarchy))
-	put_sized(&writer, ticket_digest[:])
+	put_sized(&writer, ticket_digest[:ticket_len])
 	return size, .None
 }
 

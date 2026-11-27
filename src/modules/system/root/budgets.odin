@@ -67,6 +67,11 @@ session_budget_open :: proc "contextless" (principal: u64) {
 		system.log_fact(.Warning, Session_Budget_Open_Failed{principal = principal, status = status})
 		return
 	}
+	// Plan value: one open named session at a time holds live kernel resources
+	// (pages, processes, threads, processor, log records), while persistent
+	// storage blocks are divided across all PRINCIPAL_CAPACITY - 1 named
+	// principals on disk so no principal exhausts another's storage quota.
+	OPEN_SESSION_CAPACITY :: u64(1)
 	named_slots := u64(max(principals.PRINCIPAL_CAPACITY - 1, 1))
 	avail := session_budgets.Session_Budget_Amounts {
 		pages          = own.pages,
@@ -77,10 +82,14 @@ session_budget_open :: proc "contextless" (principal: u64) {
 		storage_blocks = session_budgets.DEFAULT_MACHINE_STORAGE_BLOCKS,
 	}
 	reserve := session_budgets.machine_reserve_for(avail)
-	per_session, ok := session_budgets.compute_session_budget(avail, reserve, named_slots)
+	per_session, ok := session_budgets.compute_session_budget(avail, reserve, OPEN_SESSION_CAPACITY)
 	if !ok {
 		system.log_fact(.Warning, Session_Budget_Open_Failed{principal = principal, status = .Budget_Or_Capacity_Exhausted})
 		return
+	}
+	storage_quota := per_session.storage_blocks / named_slots
+	if storage_quota == 0 {
+		storage_quota = 1
 	}
 	child, create_status := system.budget_create({
 		pages       = per_session.pages,
@@ -94,7 +103,7 @@ session_budget_open :: proc "contextless" (principal: u64) {
 		return
 	}
 	session_budget_handles[principal] = child
-	_ = session_budgets.ledger_init(&session_block_ledgers[principal], per_session.storage_blocks)
+	_ = session_budgets.ledger_init(&session_block_ledgers[principal], storage_quota)
 }
 
 // session_storage_blocks_charge accounts a storage connection's block quota

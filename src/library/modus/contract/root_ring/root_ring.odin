@@ -141,9 +141,11 @@ Root_Command :: enum u32 {
 	Principals = 11,
 	// Principal_Record gives the record of a named principal that `unlock`
 	// keeps in its store: values[0..3] its public key (Ed25519, 32 bytes),
-	// values[4..6] its name (1 to 23 bytes, zero bytes after it). The
-	// completion has its number in values[0]: the same record gives the
-	// same number, and a second record is refused with No_Slot.
+	// values[4..6] its name (1 to 23 bytes, zero bytes after it) with byte 23
+	// carrying the optional explicit slot number (0 = unspecified,
+	// 1..PRINCIPAL_CAPACITY-1 = exact slot to preserve numbering across reboots).
+	// The completion has its number in values[0]: the same record gives the
+	// same number, and a duplicate name/key or bad slot is refused.
 	Principal_Record = 12,
 	// Principal_Unlock starts the session of the principal with the number
 	// values[4]: `unlock` opened its sealed keys with the passphrase.
@@ -618,6 +620,13 @@ Root_Command :: enum u32 {
 	// Principals (`unlock`) sends it; completion arrives once storage flushes
 	// the marking commits on disk.
 	Principal_Stores_Reclaim = 45,
+	// Principal_Remove_By_Grant asks the root service to remove the named
+	// principal in slot `values[4]` on behalf of a caller acting for a named
+	// principal that holds the Principals machine grant (`values[0..3]` and
+	// `values[5..6]` must be 0). Starts `unlock` in Remove_Principal_By_Grant
+	// to prove the actor's passphrase without reading any secret of the target;
+	// completion arrives when `unlock` finishes or stops.
+	Principal_Remove_By_Grant = 46,
 }
 
 // The kind of a Grants_Read query, in values[0].
@@ -1080,6 +1089,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Budget_Grow            = .Each_Ring,
 	.Grants_Read            = .Root_Ring_Or_Grants_Manage,
 	.Principal_Stores_Reclaim = .Principals,
+	.Principal_Remove_By_Grant = .Root_Ring,
 }
 
 // The start grants that give a process a root ring. A process with none of
@@ -1563,6 +1573,7 @@ root_command_names := [Root_Command]string {
 	.Budget_Grow            = "Budget_Grow",
 	.Grants_Read            = "Grants_Read",
 	.Principal_Stores_Reclaim = "Principal_Stores_Reclaim",
+	.Principal_Remove_By_Grant = "Principal_Remove_By_Grant",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -1615,6 +1626,7 @@ root_first_argument_names := [Root_Command]string {
 	.Budget_Grow            = "step",
 	.Grants_Read            = "kind",
 	.Principal_Stores_Reclaim = "identifier",
+	.Principal_Remove_By_Grant = "principal",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -1668,6 +1680,7 @@ root_second_argument_names := [Root_Command]string {
 	.Budget_Grow            = "pages",
 	.Grants_Read            = "index",
 	.Principal_Stores_Reclaim = "slot",
+	.Principal_Remove_By_Grant = "target",
 }
 
 // command_of_record reads the command that an error record names: the

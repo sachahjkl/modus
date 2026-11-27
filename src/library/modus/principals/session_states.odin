@@ -8,9 +8,8 @@
 // not "the principal that is unlocked": the two agree while one session
 // runs at a time, and part when sessions run behind.
 //
-// A member exists only from the layer that builds it: Behind, Removing and
-// Admission have none yet, so no switch handles a state that no path
-// reaches.
+// A member exists only from the layer that builds it: Behind has none yet, so
+// no switch handles a state that no path reaches.
 //
 // No allocator and no kernel operation: the root service and the host
 // tests call the same procedures.
@@ -83,11 +82,12 @@ Seat_State :: enum u8 {
 	Starting, // The machine starts: no event but Machine_Alone has a meaning yet.
 	Chooser, // No session is in front, and no window of unlock shows.
 	Unlock_Window, // A window of unlock that no session asked for: the unlock or the creation.
+	Admission, // A holder of Principals admitted a new person: the holder's session left the seat while unlock creates the new principal.
 	Session, // A session is in front: Seat.in_front names its principal.
 }
 
 // The seat: its state and, in the state Session, the principal in front.
-// In the two other states in_front is principal 0 and means nothing.
+// In the other states in_front is principal 0 and means nothing.
 Seat :: struct {
 	state:    Seat_State,
 	in_front: u64,
@@ -99,6 +99,8 @@ Seat_Event :: enum u8 {
 	Named_Principal_Recorded, // A named principal has a record: principal 0 leaves the front.
 	Unlock_Window_Opened, // unlock opened its window for an unlock or a creation.
 	Unlock_Window_Closed, // That unlock stopped.
+	Admission_Begun, // A holder of Principals asked to admit a new principal: the holder's session left the seat.
+	Admission_Ended, // Admission ended without unlocking a session: returns to Chooser.
 	Session_Unlocked, // A named session comes in front: the argument names it.
 	Session_Locked, // The session in front ended.
 	Session_Removed, // The named principal was removed: returns to Chooser.
@@ -107,8 +109,8 @@ Seat_Event :: enum u8 {
 
 // seat_next gives the seat after an event, or ok false: the event has no
 // meaning there, and the caller changes nothing. principal is the
-// principal of Session_Unlocked and Session_Locked, and is 0 for each
-// other event.
+// principal of Session_Unlocked, Session_Locked, and Session_Removed, and is 0
+// for each other event.
 //
 // Example: a seat in Session with principal 1 in front refuses
 // Session_Unlocked of principal 2: one session is in front at a time.
@@ -131,8 +133,8 @@ seat_next :: proc "contextless" (seat: Seat, event: Seat_Event, principal: u64 =
 		if machine_in_front {
 			return {state = .Chooser}, true
 		}
-		// A record that comes while a named session or the chooser holds
-		// the seat changes nothing: the seat is already not principal 0.
+		// A record that comes while a named session, admission, or the chooser
+		// holds the seat changes nothing: the seat is already not principal 0.
 		return seat, true
 	case .Unlock_Window_Opened:
 		if principal == MACHINE && seat.state == .Chooser {
@@ -142,11 +144,21 @@ seat_next :: proc "contextless" (seat: Seat, event: Seat_Event, principal: u64 =
 		if principal == MACHINE && seat.state == .Unlock_Window {
 			return {state = .Chooser}, true
 		}
+	case .Admission_Begun:
+		// Admission runs alone on the seat with no session in front so the
+		// recovery key of the new principal never appears on the creator's session.
+		if principal == MACHINE && (seat.state == .Chooser || seat.state == .Session) {
+			return {state = .Admission}, true
+		}
+	case .Admission_Ended:
+		if principal == MACHINE && seat.state == .Admission {
+			return {state = .Chooser}, true
+		}
 	case .Session_Unlocked:
 		if principal == MACHINE || principal >= PRINCIPAL_CAPACITY {
 			break
 		}
-		if seat.state == .Chooser || seat.state == .Unlock_Window || machine_in_front {
+		if seat.state == .Chooser || seat.state == .Unlock_Window || seat.state == .Admission || machine_in_front {
 			return {state = .Session, in_front = principal}, true
 		}
 	case .Session_Locked:
@@ -163,6 +175,20 @@ seat_next :: proc "contextless" (seat: Seat, event: Seat_Event, principal: u64 =
 		}
 	}
 	return seat, false
+}
+
+// seat_has_active_session reports whether a session (principal 0 alone or an
+// unlocked named principal) currently owns the seat. Chooser, Unlock_Window,
+// and Admission hold no session on the seat.
+seat_has_active_session :: proc "contextless" (seat: Seat) -> bool {
+	return seat.state == .Session
+}
+
+// seat_allows_machine_console reports whether the boot console of principal 0
+// may run on the seat. Once any named principal exists, the boot console
+// closes and machine administration proceeds through machine grants only.
+seat_allows_machine_console :: proc "contextless" (seat: Seat, has_named_principal: bool) -> bool {
+	return !has_named_principal && seat.state == .Session && seat.in_front == MACHINE
 }
 
 // principal_in_front gives the principal whose session is in front, or

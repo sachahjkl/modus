@@ -676,6 +676,14 @@ space_record_hash :: proc "contextless" (previous: blake3.Hash, serial, time_ms:
 // writes the record into its segment in the private store first: a refused
 // write keeps nothing and forwards nothing.
 record_append :: proc "contextless" (store: ^Space_Store, space_number: u32, record: []u8, time_ms: u64) -> (serial: u64, refusal: Space_Refusal) {
+	return record_append_with_end_exemption(store, space_number, record, time_ms, false)
+}
+
+// record_append_with_end_exemption appends a record as record_append does,
+// and when exempt_full_end is true allows the act that ends a full audit space
+// to land even when kept records reached space.bound (rotating one oldest
+// segment first if all SPACE_AUDIT_BOUND_MOST slots are already occupied).
+record_append_with_end_exemption :: proc "contextless" (store: ^Space_Store, space_number: u32, record: []u8, time_ms: u64, exempt_full_end: bool) -> (serial: u64, refusal: Space_Refusal) {
 	if ready := space_store_ready(store); ready != .None {
 		return 0, ready
 	}
@@ -689,11 +697,25 @@ record_append :: proc "contextless" (store: ^Space_Store, space_number: u32, rec
 	if u32(len(record)) != space.record_size || len(record) > SPACE_RECORD_BYTES_MOST {
 		return 0, .Wrong_Size
 	}
+	allow_end_exemption := exempt_full_end && space_is_machine_audit(space)
+	needs_end_rotation := false
 	switch space.kind {
 	case .Audit:
-		if space.next_serial - space.kept_first_serial >= u64(space.bound) {
-			space.refused_full += 1
-			return 0, .Space_Full
+		kept := space.next_serial - space.kept_first_serial
+		if kept >= u64(space.bound) {
+			if !allow_end_exemption {
+				space.refused_full += 1
+				return 0, .Space_Full
+			}
+			// An exempt machine-audit end act lands past bound by at most one
+			// record, or rotates the oldest full segment if every segment slot
+			// is occupied. Check capacity before mutating or rotating state.
+			if kept >= SPACE_AUDIT_BOUND_MOST {
+				needs_end_rotation = true
+			} else if kept > u64(space.bound) {
+				space.refused_full += 1
+				return 0, .Space_Full
+			}
 		}
 	case .Keep:
 	case .None:
@@ -703,6 +725,11 @@ record_append :: proc "contextless" (store: ^Space_Store, space_number: u32, rec
 	if forwards && (store.forward_count >= FORWARD_QUEUE_CAPACITY || forward_count_of(store, space_number) >= FORWARD_QUEUE_PER_SPACE_LIMIT) {
 		space.refused_full += 1
 		return 0, .Forward_Full
+	}
+	if needs_end_rotation {
+		if rot_refusal := space_rotate_before(store, space_number, space.kept_first_serial + SPACE_SEGMENT_RECORDS); rot_refusal != .None {
+			return 0, rot_refusal
+		}
 	}
 	segment_hash: blake3.Hash
 	if space.kind == .Audit {
@@ -833,11 +860,17 @@ forward_done :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
 }
 
 // space_read_allowed decides whether reader reads the records of space: a
-// reader that acts for the principal of the collector, and that is not the
-// source of the space, since a server never reads its own audit.
+// reader that acts for the principal of the collector, or any admitted
+// principal acting for itself reading the machine audit space in principal 0's
+// collector, and never the source of the space itself.
 space_read_allowed :: proc "contextless" (store: ^Space_Store, space: ^Collector_Space, reader: ^Space_Reader) -> Space_Refusal {
-	if reader == nil || !reader.acts_for_principal || reader.principal != store.principal {
+	if reader == nil || !reader.acts_for_principal {
 		return .Not_Principal
+	}
+	if reader.principal != store.principal {
+		if !(store.principal == 0 && space_is_machine_audit(space)) {
+			return .Not_Principal
+		}
 	}
 	if reader.name == space.source {
 		return .Own_Space
@@ -865,6 +898,9 @@ records_read :: proc "contextless" (
 	}
 	space := space_of(store, space_number)
 	if space == nil {
+		if reader == nil || !reader.acts_for_principal || reader.principal != store.principal {
+			return 0, .Not_Principal
+		}
 		return 0, space_missing(store, space_number)
 	}
 	if allowed := space_read_allowed(store, space, reader); allowed != .None {
@@ -939,7 +975,10 @@ space_verify :: proc "contextless" (store: ^Space_Store, space_number: u32) -> (
 // space of a source is not in the rows of that source: a source does not
 // learn the counts or the last link of its own audit.
 space_rows :: proc "contextless" (store: ^Space_Store, reader: ^Space_Reader, rows: []Space_Row) -> (count: int, refusal: Space_Refusal) {
-	if reader == nil || !reader.acts_for_principal || reader.principal != store.principal {
+	if reader == nil || !reader.acts_for_principal {
+		return 0, .Not_Principal
+	}
+	if reader.principal != store.principal && store.principal != 0 {
 		return 0, .Not_Principal
 	}
 	if ready := space_store_ready(store); ready != .None {
@@ -964,6 +1003,9 @@ space_stats :: proc "contextless" (store: ^Space_Store, space_number: u32, reade
 	}
 	space := space_of(store, space_number)
 	if space == nil {
+		if reader == nil || !reader.acts_for_principal || reader.principal != store.principal {
+			return {}, .Not_Principal
+		}
 		return {}, space_missing(store, space_number)
 	}
 	if allowed := space_read_allowed(store, space, reader); allowed != .None {
@@ -984,10 +1026,10 @@ space_open_allowed :: proc "contextless" (store: ^Space_Store, source: []u8, out
 	if name_field_equal(&reader.name, source) {
 		return .Own_Space
 	}
-	// The act spaces of a wide grant open only with the grant: a caller
-	// that opened one with another record size would close the audit of
-	// the grant.
-	if space_names_act(source, output) {
+	// The act spaces of a wide grant and the machine audit space open only
+	// through the collector's own attachment path: a caller opening one with
+	// another record size would close the audit.
+	if space_names_act(source, output) || space_names_machine_audit(source, output) {
 		return .Act_Space
 	}
 	return .None

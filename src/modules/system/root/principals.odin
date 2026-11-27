@@ -9,6 +9,7 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
 import "modus:contract/system_description"
+import "modus:disk_process"
 import "modus:principals"
 import "modus:contract/root_ring"
 import "modus:contract/value_kinds"
@@ -107,7 +108,7 @@ seat_unlock_window_settle :: proc "contextless" () {
 	switch unlock_run.mode {
 	case .Unlock, .Unlock_Machine_Key_Held, .Create_Principal:
 		seat_change(.Unlock_Window_Opened)
-	case .Set_Machine_Passphrase, .Seal_Machine_Key, .Change_Passphrase, .New_Recovery_Key, .Machine_Key_Without_Window, .Prove_Wide_Grant, .Remove_Principal:
+	case .Set_Machine_Passphrase, .Seal_Machine_Key, .Change_Passphrase, .New_Recovery_Key, .Machine_Key_Without_Window, .Prove_Wide_Grant, .Remove_Principal, .Remove_Principal_By_Grant:
 	}
 }
 
@@ -144,10 +145,11 @@ Unlock_Run :: struct {
 	// passphrase. Running and Stop_Asked: what it runs for, which the line
 	// of a lock that stops it names (principal_lock).
 	mode:         principals.Unlock_Mode,
-	name:         [principals.NAME_LIMIT]u8, // Starting: the name of the principal to create.
-	name_length:  int,
-	principal:    u64, // Starting: the number of the principal that asked for a change.
-	failed_stops: int, // Below UNLOCK_RESTART_LIMIT: see above.
+	name:             [principals.NAME_LIMIT]u8, // Starting: the name of the principal to create.
+	name_length:      int,
+	principal:        u64, // Starting: the number of the principal that asked for a change.
+	target_principal: u64, // Starting: the target slot for Create_Principal or Remove_Principal_By_Grant.
+	failed_stops:     int, // Below UNLOCK_RESTART_LIMIT: see above.
 }
 
 unlock_run: Unlock_Run
@@ -197,7 +199,7 @@ principals_start :: proc "contextless" () {
 // stops at once, and the machine runs as principal 0 only), after a lock,
 // to create a principal, or to set the machine passphrase. A refusal
 // writes its record in refusal, when the caller gives one.
-unlock_start :: proc "contextless" (mode: principals.Unlock_Mode, name: string, principal: u64 = principals.MACHINE, refusal: ^[7]u64 = nil) -> call_outcome.Call_Outcome {
+unlock_start :: proc "contextless" (mode: principals.Unlock_Mode, name: string, principal: u64 = principals.MACHINE, target_principal: u64 = principals.MACHINE, refusal: ^[7]u64 = nil) -> call_outcome.Call_Outcome {
 	own_refusal: [7]u64
 	record := refusal != nil ? refusal : &own_refusal
 	// An `unlock` that runs keeps its stage: it is reaped first.
@@ -208,13 +210,16 @@ unlock_start :: proc "contextless" (mode: principals.Unlock_Mode, name: string, 
 		unlock_run.mode = mode
 		unlock_run.name_length = copy(unlock_run.name[:], name)
 		unlock_run.principal = principal
+		unlock_run.target_principal = target_principal
 		outcome = start("unlock", refusal = record)
 		unlock_run.name = {}
 		unlock_run.name_length = 0
 		unlock_run.principal = principals.MACHINE
+		unlock_run.target_principal = principals.MACHINE
 		unlock_run.stage = outcome == .Succeeded ? .Running : .Stopped
 		if outcome == .Succeeded && mode == .Create_Principal {
-			session_change(1, .Creation_Begun)
+			create_slot := target_principal != principals.MACHINE ? target_principal : 1
+			session_change(create_slot, .Creation_Begun)
 		}
 		seat_unlock_window_settle()
 	}
@@ -238,6 +243,7 @@ unlock_values_write :: proc "contextless" (values: ^system.Context_Values) {
 	packed := principals.name_pack(string(unlock_run.name[:unlock_run.name_length]))
 	system.values_put(values, system.GRANT_VALUE_UNLOCK_NAME, packed[:])
 	system.value_put(values, system.GRANT_VALUE_UNLOCK_PRINCIPAL, unlock_run.principal)
+	system.value_put(values, system.GRANT_VALUE_UNLOCK_TARGET, unlock_run.target_principal)
 }
 
 // unlock_without_window says if a start of a name is the start of `unlock`
@@ -269,37 +275,115 @@ unlock_creating :: proc "contextless" () -> bool {
 	return (unlock_run.stage == .Running || unlock_run.stage == .Stop_Asked) && unlock_run.mode == .Create_Principal
 }
 
-// A creation never runs during a session while the system holds one named
-// principal: it needs the record of principal 1 absent, so no session runs,
-// and the lock never stops a creation. With more places, a lock of another
-// session stops it; nothing is written before Enter, but a stop between the
-// file and its record must then be designed
-// (src/md/features/tpm_sealed_principal_keys.md).
-#assert(principals.PRINCIPAL_CAPACITY == 2)
+// named_principal_count counts non-absent named principal records (1 ..< PRINCIPAL_CAPACITY).
+@(private = "file")
+named_principal_count :: proc "contextless" () -> int {
+	total := 0
+	for idx in u64(1) ..< principals.PRINCIPAL_CAPACITY {
+		if principal_records[idx].state != .Absent {
+			total += 1
+		}
+	}
+	return total
+}
 
-// principal_create starts `unlock` to create a named principal.
-principal_create :: proc "contextless" (name: string, values: ^[7]u64) -> call_outcome.Call_Outcome {
+// principal_session_lock_quiet tears down an active named session without
+// starting `unlock`, leaving the seat at Chooser for immediate admission of
+// another principal so no recovery key appears on the creator's session.
+@(private = "file")
+principal_session_lock_quiet :: proc "contextless" (number: u64) {
+	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state != .In_Front {
+		return
+	}
+	wide_grant_principal_locked(number)
+	count: u64
+	for &item in started {
+		if item.process != 0 && item.principal == number {
+			if wide_grant_collector_held_at_lock(&item) {
+				count += 1
+				continue
+			}
+			started_process_stop(&item)
+			if !item.is_terminal {
+				count += 1
+			}
+		}
+	}
+	session_change(number, .Locked)
+	seat_change(.Session_Locked, number)
+	session_budget_close(number)
+	if !wide_grant_defer_storage_lock(number) {
+		storage_principal_locked(number)
+	}
+	remote_clients_session_changed(number, true)
+	system.log_fact(.Info, Session_Ended{principal = number, stopped_processes = count, principal_name = text_field(principal_name(number), 24)})
+}
+
+// principal_create starts `unlock` to create a named principal in the lowest
+// free non-retired slot. When named principals already exist, the caller must
+// act for a named principal holding the Principals machine grant, and any open
+// session is locked before admission so the new principal's recovery key never
+// appears on the creator's session.
+principal_create :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Principal_Create)
-	if principals.name_problem(name) != .None {
+	if principals.name_problem(name) != .None || name == principals.MACHINE_NAME {
 		return root_ring.refuse(values, .Argument_Refused, kind, .Bad_Value, .None, 1)
-	}
-	if principal_records[1].state == .Creating {
-		return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1)
-	}
-	// A slot freed by removal stays retired for the rest of this boot run so
-	// no stale handle can alias a newly created principal.
-	if !principals.slot_creation_allowed(&retired_slots, 1) {
-		return root_ring.refuse(values, .Wrong_State, kind, .State, .Principals, 0, 1)
-	}
-	// One named principal: several are not built.
-	if principal_records[1].state != .Absent {
-		return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, kind, .Full, .Principals, 0, 0, principals.PRINCIPAL_CAPACITY - 1)
 	}
 	if find("unlock") != nil {
 		return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1)
 	}
+	for idx in u64(1) ..< principals.PRINCIPAL_CAPACITY {
+		if principal_records[idx].state == .Creating {
+			return root_ring.refuse(values, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1)
+		}
+		if principal_records[idx].state != .Absent && principal_name(idx) == name {
+			return root_ring.refuse(values, .Name_Already_Taken, kind, .Exists, .Principals, 1)
+		}
+	}
+	existing_named := named_principal_count()
+	if existing_named > 0 {
+		if caller == nil || .Acts_For_Principal not_in grants_held(caller) {
+			return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Acts_For_Principal, 1)
+		}
+		actor := caller.principal
+		if actor == principals.MACHINE || actor >= principals.PRINCIPAL_CAPACITY || principal_records[actor].state != .In_Front || !disk_process.table_machine_grant_holds(&disk_grant_tables[principals.MACHINE], principal_records[actor].identifier, .Principals) {
+			return root_ring.refuse(values, .Grant_Or_Right_Missing, kind, .No_Grant, .Principals, 1)
+		}
+	}
+	target_slot := u64(principals.MACHINE)
+	has_retired_empty := false
+	for idx in u64(1) ..< principals.PRINCIPAL_CAPACITY {
+		if principal_records[idx].state != .Absent {
+			continue
+		}
+		if !principals.slot_creation_allowed(&retired_slots, idx) {
+			has_retired_empty = true
+			continue
+		}
+		target_slot = idx
+		break
+	}
+	if target_slot == principals.MACHINE {
+		if has_retired_empty {
+			return root_ring.refuse(values, .Wrong_State, kind, .State, .Principals, 0, 1)
+		}
+		return root_ring.refuse(values, .Budget_Or_Capacity_Exhausted, kind, .Full, .Principals, 0, 0, principals.PRINCIPAL_CAPACITY - 1)
+	}
+	entered_admission := false
+	if existing_named > 0 {
+		if seat.state == .Session && seat.in_front != principals.MACHINE {
+			principal_session_lock_quiet(seat.in_front)
+		}
+		if seat.state == .Chooser && seat_change(.Admission_Begun) {
+			entered_admission = true
+		}
+	}
 	system.log_fact(.Info, Principal_Creation_Started{principal_name = text_field(name, 24)})
-	return unlock_start(.Create_Principal, name, refusal = values)
+	outcome := unlock_start(.Create_Principal, name, target_principal = target_slot, refusal = values)
+	if outcome != .Succeeded && entered_admission && seat.state == .Admission {
+		seat_change(.Admission_Ended)
+	}
+	return outcome
 }
 
 // principal_record takes the public part of the record of a named
@@ -308,39 +392,83 @@ principal_create :: proc "contextless" (name: string, values: ^[7]u64) -> call_o
 principal_record :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Principal_Record)
 	public_key := transmute([32]u8)([4]u64{values[0], values[1], values[2], values[3]})
-	name, name_length := principals.name_unpack({values[4], values[5], values[6]})
-	if principals.name_problem(string(name[:name_length])) != .None {
+	name, name_length, requested_slot, slot_ok := principals.record_name_and_slot_unpack({values[4], values[5], values[6]})
+	if !slot_ok {
+		return root_ring.refuse(completion, .Argument_Refused, kind, .Bad_Value, .Principals, 7, i64(requested_slot), i64(principals.PRINCIPAL_CAPACITY - 1))
+	}
+	candidate_name := string(name[:name_length])
+	if principals.name_problem(candidate_name) != .None || candidate_name == principals.MACHINE_NAME {
 		return root_ring.refuse(completion, .Argument_Refused, kind, .Bad_Value, .None, 5)
 	}
-	record := &principal_records[1]
-	if record.state != .Absent && record.state != .Creating {
-		// The same record again (a second start of `unlock`) has the same
-		// number; another one has no place.
-		if record.public_key != public_key || string(record.name[:record.name_length]) != string(name[:name_length]) {
+	// Check existing recorded principals first: an exact (public_key, name)
+	// match returns the same slot; a duplicate name or public key in another
+	// slot is refused. When requested_slot != 0, preserve that exact slot
+	// across reboots so TPM pins and encrypted store names stay aligned.
+	creating_slot := u64(principals.MACHINE)
+	free_slot := u64(principals.MACHINE)
+	for idx in u64(1) ..< principals.PRINCIPAL_CAPACITY {
+		rec := &principal_records[idx]
+		if rec.state == .Creating {
+			if creating_slot == principals.MACHINE {
+				creating_slot = idx
+			}
+			continue
+		}
+		if rec.state == .Absent {
+			if free_slot == principals.MACHINE && principals.slot_creation_allowed(&retired_slots, idx) {
+				free_slot = idx
+			}
+			continue
+		}
+		same_key := rec.public_key == public_key
+		same_name := string(rec.name[:rec.name_length]) == candidate_name
+		if same_key && same_name {
+			if requested_slot != principals.MACHINE && requested_slot != idx {
+				return root_ring.refuse(completion, .Name_Already_Taken, kind, .Exists, .Principals, 7, i64(idx))
+			}
+			completion^[0] = idx
+			return .Succeeded
+		}
+		if same_key || same_name {
+			return root_ring.refuse(completion, .Name_Already_Taken, kind, .Exists, .Principals, 5)
+		}
+	}
+	slot: u64
+	if requested_slot != principals.MACHINE {
+		target := &principal_records[requested_slot]
+		if target.state != .Absent && target.state != .Creating {
+			return root_ring.refuse(completion, .Name_Already_Taken, kind, .Exists, .Principals, 7, i64(requested_slot))
+		}
+		if target.state == .Absent && !principals.slot_creation_allowed(&retired_slots, requested_slot) {
+			return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals, 7, i64(requested_slot))
+		}
+		slot = requested_slot
+	} else {
+		slot = creating_slot != principals.MACHINE ? creating_slot : free_slot
+		if slot == principals.MACHINE {
 			return root_ring.refuse(completion, .Budget_Or_Capacity_Exhausted, kind, .Full, .Principals, 0, 0, principals.PRINCIPAL_CAPACITY - 1)
 		}
-		completion^[0] = 1
-		return .Succeeded
 	}
-	if !session_change(1, .Record_Given) {
-		return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals, 0, 1)
+	if !session_change(slot, .Record_Given) {
+		return root_ring.refuse(completion, .Wrong_State, kind, .State, .Principals, 0, i64(slot))
 	}
+	record := &principal_records[slot]
 	record^ = {state = record.state, name = name, name_length = name_length, public_key = public_key}
 	seat_change(.Named_Principal_Recorded)
 	seat_unlock_window_settle()
 	// Only a record that `unlock` made in this run lets its first key write
 	// over a table that does not verify (principal_key_take).
-	principal_created_in_this_run[1] = unlock_creating()
-	completion^[0] = 1
+	principal_created_in_this_run[slot] = unlock_creating()
+	completion^[0] = slot
 	digits := system_description.hexadecimal(public_key)
-	system.log_fact(.Info, Principal_Recorded{principal_name = text_field(principal_name(1), 24), public_key_head = text_field(string(digits[:16]), 24)})
+	system.log_fact(.Info, Principal_Recorded{principal_name = text_field(principal_name(slot), 24), public_key_head = text_field(string(digits[:16]), 24)})
 	return .Succeeded
 }
 
 // principal_identifier takes the principal identifier of a record from
 // `unlock`: values[0..3] the identifier, values[4] the number. The values
 // are a copy in this service. A record keeps its first identifier: a second
-// one is refused, as a file of another principal would be.
+// one or a duplicate across slots is refused.
 principal_identifier :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> call_outcome.Call_Outcome {
 	kind := u32(root_ring.Root_Command.Principal_Identifier)
 	number := values[4]
@@ -357,6 +485,11 @@ principal_identifier :: proc "contextless" (values: [7]u64, completion: ^[7]u64)
 	if principals.identifier_is_zero(identifier[:]) {
 		return root_ring.refuse(completion, .Argument_Refused, kind, .Bad_Value, .None, 1)
 	}
+	for other in u64(1) ..< principals.PRINCIPAL_CAPACITY {
+		if other != number && principal_records[other].state != .Absent && principal_records[other].identifier == identifier {
+			return root_ring.refuse(completion, .Name_Already_Taken, kind, .Exists, .Principals, 5, i64(number))
+		}
+	}
 	record := &principal_records[number]
 	if !principals.identifier_is_zero(record.identifier[:]) {
 		if record.identifier != identifier {
@@ -365,6 +498,15 @@ principal_identifier :: proc "contextless" (values: [7]u64, completion: ^[7]u64)
 		return .Succeeded
 	}
 	record.identifier = identifier
+	// Bootstrap Principals and System scopes only when genuinely creating the
+	// first named principal in this run with principal 0's table loaded, never
+	// during a boot scan.
+	machine_table_loaded := persisted_tables[principals.MACHINE].state == .No_Passphrase || persisted_tables[principals.MACHINE].state == .Kept
+	if principals.first_principal_bootstrap_allowed(principal_created_in_this_run[number], disk_grant_tables[principals.MACHINE].machine_grant_count, named_principal_count(), machine_table_loaded) {
+		if disk_process.table_machine_grant_bootstrap_first_principal(&disk_grant_tables[principals.MACHINE], identifier) == .None {
+			persisted_table_changed(principals.MACHINE)
+		}
+	}
 	return .Succeeded
 }
 
@@ -553,8 +695,7 @@ storage_completions_drain :: proc "contextless" (holder: ^Started) {
 	if holder == nil || holder.service.head == nil {
 		return
 	}
-	limit := ring.capacity(&holder.service.completions)
-	for _ in 0 ..< limit {
+	for {
 		record, ok := root_receive(&holder.service.completions, system.name_of(holder.name[:]))
 		if !ok {
 			break
@@ -768,11 +909,15 @@ unlock_stopped :: proc "contextless" () {
 			storage_erase_owe(u64(number))
 		}
 	}
-	if principal_records[1].state == .Creating {
-		session_change(1, .Creation_Abandoned)
+	for idx in u64(1) ..< principals.PRINCIPAL_CAPACITY {
+		if principal_records[idx].state == .Creating {
+			session_change(idx, .Creation_Abandoned)
+		}
 	}
 	if seat.state == .Unlock_Window {
 		seat_change(.Unlock_Window_Closed)
+	} else if seat.state == .Admission {
+		seat_change(.Admission_Ended)
 	}
 	// The run that proves a wide grant ends by itself, and unlocks nothing:
 	// its stop is no failed unlock.
@@ -862,10 +1007,19 @@ principal_change_finish :: proc "contextless" (end: principals.Change_End, probl
 
 // principal_remove_finish tears down a removed named principal: transitions
 // to Removing, stops all session processes, closes its session budget, clears
-// its storage and client keys, retires the slot for this run, updates the
-// seat, and requests a fresh display holder.
+// its storage, client keys, and machine grant row, retires the slot for this
+// run, updates the seat if the removed principal held it, and requests a fresh
+// display holder when a session ended.
 @(private = "file")
 principal_remove_finish :: proc "contextless" (number: u64) {
+	was_in_front := seat.state == .Session && seat.in_front == number
+	removed_identifier := principal_records[number].identifier
+	other_named := 0
+	for idx in u64(1) ..< principals.PRINCIPAL_CAPACITY {
+		if idx != number && principal_records[idx].state != .Absent {
+			other_named += 1
+		}
+	}
 	session_change(number, .Removal_Begun)
 	wide_grant_principal_locked(number)
 	count: u64
@@ -884,26 +1038,86 @@ principal_remove_finish :: proc "contextless" (number: u64) {
 	session_budget_close(number)
 	storage_principal_locked(number)
 	remote_clients_principal_removed(number)
+	if !principals.identifier_is_zero(removed_identifier[:]) {
+		if disk_process.table_machine_grant_remove_principal(&disk_grant_tables[principals.MACHINE], removed_identifier, other_named == 0) == .None {
+			persisted_table_changed(principals.MACHINE)
+		}
+	}
+	persisted_table_end(number)
 	persisted_tables[number] = {state = .Awaited}
 	principal_created_in_this_run[number] = false
 	principals.slot_retire(&retired_slots, number)
 	record_state := principal_records[number].state
 	principal_records[number] = {state = record_state}
 	session_change(number, .Removal_Finished)
-	seat_change(.Session_Removed, number)
-	any_named := false
-	for idx in u64(1) ..< principals.PRINCIPAL_CAPACITY {
-		if principal_records[idx].state != .Absent {
-			any_named = true
-			break
-		}
+	if was_in_front {
+		seat_change(.Session_Removed, number)
 	}
-	if !any_named {
+	if other_named == 0 {
 		seat_change(.Last_Named_Principal_Removed, principals.MACHINE)
 	}
 	remote_clients_front_follow()
 	system.log_fact(.Info, Principal_Removed{principal = number, stopped_processes = count})
-	_ = display_holder_restart_request()
+	if was_in_front {
+		_ = display_holder_restart_request()
+	}
+}
+
+// principal_remove_by_grant removes a target named principal on behalf of an
+// actor holding the Principals machine grant without requiring target consent
+// or reading any secret of the target.
+principal_remove_by_grant :: proc "contextless" (caller: ^Started, tag: u32, values: [7]u64, completion: ^[7]u64) -> (outcome: call_outcome.Call_Outcome, held: bool) {
+	kind := u32(root_ring.Root_Command.Principal_Remove_By_Grant)
+	for index in 0 ..< len(values) {
+		if index != 4 && values[index] != 0 {
+			completion^ = root_ring.word_refusal(.Principal_Remove_By_Grant, i64(index) + 1, values[index], 0)
+			return .Argument_Refused, false
+		}
+	}
+	if caller == nil || .Acts_For_Principal not_in grants_held(caller) {
+		return root_ring.refuse(completion, .Grant_Or_Right_Missing, kind, .No_Grant, .Acts_For_Principal, 1), false
+	}
+	actor := caller.principal
+	target := values[4]
+	actor_holds_principals := false
+	if actor != principals.MACHINE && actor < principals.PRINCIPAL_CAPACITY && principal_records[actor].state == .In_Front {
+		actor_holds_principals = disk_process.table_machine_grant_holds(&disk_grant_tables[principals.MACHINE], principal_records[actor].identifier, .Principals)
+	}
+	target_exists := target != principals.MACHINE && target < principals.PRINCIPAL_CAPACITY && (principal_records[target].state == .Locked || principal_records[target].state == .In_Front)
+	target_holds_system := false
+	if target_exists {
+		target_holds_system = disk_process.table_machine_grant_holds(&disk_grant_tables[principals.MACHINE], principal_records[target].identifier, .System)
+	}
+	other_named_exist := false
+	for idx in u64(1) ..< principals.PRINCIPAL_CAPACITY {
+		if idx != target && principal_records[idx].state != .Absent {
+			other_named_exist = true
+			break
+		}
+	}
+	system_count := disk_process.table_machine_grant_count_scope(&disk_grant_tables[principals.MACHINE], .System)
+	switch principals.removal_by_grant_allowed(actor, target, actor_holds_principals, target_exists, target_holds_system, system_count, other_named_exist) {
+	case .None:
+	case .Actor_Not_Named, .Missing_Grant:
+		return root_ring.refuse(completion, .Grant_Or_Right_Missing, kind, .No_Grant, .Principals, 1), false
+	case .Target_Not_Named, .Target_Absent:
+		return root_ring.refuse(completion, .Nothing_Has_That_Name, kind, .Absent, .Principals, 5, i64(min(target, 1 << 62))), false
+	case .Last_System_Grant:
+		return root_ring.refuse(completion, .Wrong_State, kind, .Refused, .Principals, 5, i64(target)), false
+	}
+	if find("unlock") != nil || principal_change_waiting {
+		return root_ring.refuse(completion, .Callee_Busy, kind, .Busy, .Requests, 0, 1, 1), false
+	}
+	system.log_fact(.Info, Principal_Removal_Started{principal = target, principal_name = text_field(principal_name(target), 24)})
+	started_outcome := unlock_start(.Remove_Principal_By_Grant, "", actor, target, completion)
+	if started_outcome != .Succeeded {
+		return started_outcome, false
+	}
+	principal_change_waiting = true
+	principal_change_asker = caller
+	principal_change_tag = tag
+	principal_change_principal = target
+	return .Succeeded, true
 }
 
 // principal_change_forget takes a process that stops out of the change:
@@ -964,6 +1178,20 @@ principal_change_begin :: proc "contextless" (caller: ^Started, change: u64, val
 		system.log_fact(.Warning, Passphrase_Change_Refused_No_Session{})
 		return root_ring.refuse(values, .Nothing_Has_That_Name, kind, .Absent, .Principals), false
 	}
+	if asked == .Remove {
+		holds_system := disk_process.table_machine_grant_holds(&disk_grant_tables[principals.MACHINE], principal_records[number].identifier, .System)
+		system_count := disk_process.table_machine_grant_count_scope(&disk_grant_tables[principals.MACHINE], .System)
+		other_named_exist := false
+		for idx in u64(1) ..< principals.PRINCIPAL_CAPACITY {
+			if idx != number && principal_records[idx].state != .Absent {
+				other_named_exist = true
+				break
+			}
+		}
+		if !principals.self_removal_allowed(holds_system, system_count, other_named_exist) {
+			return root_ring.refuse(values, .Wrong_State, kind, .Refused, .Principals, 2, i64(number)), false
+		}
+	}
 	// A change that waits for its end is a change whose `unlock` runs, or
 	// is not reaped yet: one at a time.
 	if find("unlock") != nil || principal_change_waiting {
@@ -978,7 +1206,7 @@ principal_change_begin :: proc "contextless" (caller: ^Started, change: u64, val
 	case .Remove:
 		system.log_fact(.Info, Principal_Removal_Started{principal = number, principal_name = text_field(principal_name(number), 24)})
 	}
-	if started := unlock_start(mode, "", number, values); started != .Succeeded {
+	if started := unlock_start(mode, "", number, refusal = values); started != .Succeeded {
 		return started, false
 	}
 	return .Succeeded, true

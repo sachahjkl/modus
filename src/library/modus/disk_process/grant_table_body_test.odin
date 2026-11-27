@@ -49,7 +49,8 @@ table_body_decode_refuses_each_forged_field :: proc(t: ^testing.T) {
 		{TABLE_OFFSET_COUNT, ROW_CAPACITY + 1, .Too_Many_Rows},
 		{TABLE_OFFSET_COUNT, 255, .Too_Many_Rows},
 		{TABLE_OFFSET_SETTING, 2, .Bad_Setting},
-		{TABLE_OFFSET_CLIENT_KEY_COUNT + 1, 1, .Bad_Setting},
+		{TABLE_OFFSET_MACHINE_GRANT_COUNT, MACHINE_GRANT_CAPACITY + 1, .Bad_Machine_Grants},
+		{TABLE_OFFSET_MACHINE_GRANTS, 1, .Bad_Machine_Grants},
 		// A nickname longer than a name.
 		{TABLE_HEADER_SIZE + ROW_OFFSET_LENGTH, NAME_LIMIT + 1, .Bad_Row},
 		{TABLE_HEADER_SIZE + ROW_OFFSET_LENGTH, 255, .Bad_Row},
