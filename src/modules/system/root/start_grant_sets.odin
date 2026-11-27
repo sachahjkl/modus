@@ -32,10 +32,10 @@ Start_Grant_Set :: struct {
 // The services that a process with the grant Connect and not Root_Ring can
 // connect to: the list of its row, an empty text after the last one. The
 // longest list is the one of remote, whose clients call the services of
-// the principal: ten. A full list needs no empty text, as the reader stops
-// at the end of the array too, so the limit is that length, with no spare
-// place that no row uses.
-CALLABLE_LIMIT :: 10
+// the principal and its remote roles: eleven. A full list needs no empty text,
+// as the reader stops at the end of the array too, so the limit is that length,
+// with no spare place that no row uses.
+CALLABLE_LIMIT :: 11
 
 // The read-only image-tree subtrees granted to a process on its storage
 // connection: inline capacity sized for consumers needing up to four subtrees
@@ -393,11 +393,12 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// address of the host only (QUIC in the process, the module
 	// cryptography through its imports), the client table, which names the
 	// key of each client that a principal allowed, connections to the
-	// services of its list, each for one row of that table, and the grant
-	// to act for the principal of that row (docs/MODULE_CONTRACT.md, "A
-	// call from the host"; docs/PRINCIPALS.md, "The client keys of
+	// services of its list, each for one row of that table, the grant
+	// to act for the principal of that row, and Serve for its mesh control
+	// exports to callers that act for the principal (docs/MODULE_CONTRACT.md,
+	// "A call from the host"; docs/PRINCIPALS.md, "The client keys of
 	// remote").
-	{name = "remote", scope = .Machine, grants = {.Connect, .Network, .Acts_For_Principal, .Remote_Clients}, terms = {callable = {0 = "assistant", 1 = "compositor", 2 = "date", 3 = "debugger", 4 = "inspect", 5 = "log", 6 = "manual", 7 = "monitor", 8 = "settings", 9 = "storage"}}},
+	{name = "remote", scope = .Machine, grants = {.Connect, .Network, .Acts_For_Principal, .Remote_Clients, .Serve}, terms = {callable = {0 = "assistant", 1 = "compositor", 2 = "date", 3 = "debugger", 4 = "inspect", 5 = "log", 6 = "manual", 7 = "monitor", 8 = "recipes", 9 = "settings", 10 = "storage"}}},
 	// The remote display: a listen grant of UDP that admits the address of
 	// the host only, the client table, which names the uses of the key of
 	// each viewer that a principal allowed, and the capture face and the

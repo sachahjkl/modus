@@ -57,6 +57,8 @@ Mesh_Request_Kind :: enum u8 {
 	Object_Request  = 3,
 	Store_Offer     = 4,
 	Role_Call       = 5,
+	Relay_Deposit   = 6,
+	Relay_Collect   = 7,
 }
 
 // The end of one request.
@@ -155,7 +157,11 @@ mesh_request_kind_of_message :: proc "contextless" (message: Message) -> (kind: 
 		return .Store_Offer, true
 	case .Role_Call:
 		return .Role_Call, true
-	case .None, .Refusal, .Pairing_Element_Reply, .Pairing_Confirmed, .Object_Response, .Grant_Present, .Grant_Accepted, .Store_Offer_Reply, .Role_Reply, .Relay_Deposit, .Relay_Deposited, .Relay_Collect, .Relay_Delivery:
+	case .Relay_Deposit:
+		return .Relay_Deposit, true
+	case .Relay_Collect:
+		return .Relay_Collect, true
+	case .None, .Refusal, .Pairing_Element_Reply, .Pairing_Confirmed, .Object_Response, .Grant_Present, .Grant_Accepted, .Store_Offer_Reply, .Role_Reply, .Relay_Deposited, .Relay_Delivery:
 	}
 	return .None, false
 }
@@ -173,6 +179,10 @@ mesh_answer_message_of :: proc "contextless" (kind: Mesh_Request_Kind) -> Messag
 		return .Store_Offer_Reply
 	case .Role_Call:
 		return .Role_Reply
+	case .Relay_Deposit:
+		return .Relay_Deposited
+	case .Relay_Collect:
+		return .Relay_Delivery
 	case .None:
 	}
 	return .None
@@ -756,5 +766,93 @@ mesh_pair_join :: proc "contextless" (peer: ^Peer, link: ^Mesh_Link, transport: 
 		return result
 	}
 	result.pairing = .Ok
+	return result
+}
+
+// The end of one relay deposit on a link to a relay machine.
+Mesh_Relay_Deposit :: struct {
+	exchange: Mesh_Exchange,
+	relay:    Relay_Status,
+}
+
+// mesh_relay_deposit sends one sealed relay envelope to a paired relay machine.
+mesh_relay_deposit :: proc "contextless" (
+	link: ^Mesh_Link,
+	transport: ^Mesh_Transport,
+	token: Routing_Token,
+	sealed: []u8,
+	now_ms: u64,
+	bound_ms: u64,
+	request_buffer: []u8,
+	answer_buffer: []u8,
+) -> (result: Mesh_Relay_Deposit) {
+	request, write_status := relay_envelope_write(request_buffer, .Relay_Deposit, token, sealed)
+	if write_status != .Ok {
+		result.relay = write_status
+		result.exchange = mesh_exchange_refused(.Refused_Bad_Request)
+		return result
+	}
+	result.exchange = mesh_exchange(link, transport, request, now_ms, bound_ms, answer_buffer)
+	switch {
+	case result.exchange.outcome == .Succeeded:
+		if len(result.exchange.body) != 0 {
+			result.exchange.outcome = .Answer_Unreadable
+			result.exchange.reason = .Malformed
+			return result
+		}
+		result.relay = .Ok
+	case mesh_refused_by_peer(result.exchange) && result.exchange.reason == .Relay_Refused:
+		if status, known := enum_word.member_of_word(Relay_Status, u64(result.exchange.detail)); known {
+			result.relay = status
+		}
+	}
+	return result
+}
+
+// The end of one relay collect on a link to a relay machine.
+Mesh_Relay_Collect :: struct {
+	exchange: Mesh_Exchange,
+	relay:    Relay_Status,
+	envelope: Relay_Envelope, // View of answer_buffer when exchange.outcome == .Succeeded.
+}
+
+// mesh_relay_collect retrieves the oldest sealed relay envelope waiting for
+// token on a paired relay machine.
+mesh_relay_collect :: proc "contextless" (
+	link: ^Mesh_Link,
+	transport: ^Mesh_Transport,
+	token: Routing_Token,
+	now_ms: u64,
+	bound_ms: u64,
+	request_buffer: []u8,
+	answer_buffer: []u8,
+) -> (result: Mesh_Relay_Collect) {
+	if token_is_zero(token) {
+		result.relay = .Refused_Zero_Token
+		result.exchange = mesh_exchange_refused(.Refused_Bad_Request)
+		return result
+	}
+	request := relay_collect_write(request_buffer, token)
+	if request == nil {
+		result.relay = .Refused_Too_Large
+		result.exchange = mesh_exchange_refused(.Refused_Bad_Request)
+		return result
+	}
+	result.exchange = mesh_exchange(link, transport, request, now_ms, bound_ms, answer_buffer)
+	switch {
+	case result.exchange.outcome == .Succeeded:
+		envelope, read_status := relay_envelope_read(result.exchange.body)
+		if read_status != .Ok || envelope.token != token {
+			result.exchange.outcome = .Answer_Unreadable
+			result.exchange.reason = .Malformed
+			return result
+		}
+		result.relay = .Ok
+		result.envelope = envelope
+	case mesh_refused_by_peer(result.exchange) && result.exchange.reason == .Relay_Refused:
+		if status, known := enum_word.member_of_word(Relay_Status, u64(result.exchange.detail)); known {
+			result.relay = status
+		}
+	}
 	return result
 }

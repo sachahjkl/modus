@@ -626,3 +626,37 @@ signed_grant_from_the_wire_is_refused_past_one_day_when_revoked_and_when_damaged
 	testing.expect_value(t, signed_grant_check(&decoded, &list, other_machine, grantee_root, issued + 1, nil, pairing_test_verify), Grant_Check_Status.Refused_Wrong_Serving_Machine)
 	testing.expect_value(t, signed_grant_check(&decoded, &list, machine.machine_id, other_machine, issued + 1, nil, pairing_test_verify), Grant_Check_Status.Refused_Wrong_Grantee)
 }
+
+@(test)
+pairing_derives_matching_relay_key_distinct_from_fingerprint_and_erases_on_remove :: proc(t: ^testing.T) {
+	run: Pairing_Test_Run
+	binding := pairing_test_binding(9)
+	random_bytes := [8]u8{0x5D, 0x11, 0x92, 0xE4, 0x07, 0xBB, 0x3A, 0xFF}
+	secret, _ := pairing_code_secret_of_random(random_bytes)
+	typed := pairing_code_text(secret)
+	offerer_tag, joiner_tag := pairing_test_exchange(t, &run, typed[:], binding, binding)
+
+	joiner_row, joiner_status := pairing_confirm(&run.joiner, &run.joiner_table, offerer_tag, {.Calls}, START_MS + 30)
+	offerer_row, offerer_status := pairing_confirm(&run.offerer, &run.offerer_table, joiner_tag, {.Calls}, START_MS + 30)
+	testing.expect_value(t, joiner_status, Pairing_Status.Ok)
+	testing.expect_value(t, offerer_status, Pairing_Status.Ok)
+	// Metadata copies never expose relay_key on caller stacks.
+	testing.expect(t, bytes_all_zero(joiner_row.relay_key[:]))
+	testing.expect(t, bytes_all_zero(offerer_row.relay_key[:]))
+	found_meta, meta_ok := paired_machine_find(&run.joiner_table, OFFERER_KEY)
+	testing.expect(t, meta_ok && bytes_all_zero(found_meta.relay_key[:]))
+
+	joiner_key, joiner_key_ok := paired_machine_relay_key(&run.joiner_table, OFFERER_KEY)
+	offerer_key, offerer_key_ok := paired_machine_relay_key(&run.offerer_table, JOINER_KEY)
+	defer clear_bytes_explicitly(joiner_key[:])
+	defer clear_bytes_explicitly(offerer_key[:])
+	testing.expect(t, joiner_key_ok && offerer_key_ok)
+	testing.expect(t, !bytes_all_zero(joiner_key[:]))
+	testing.expect_value(t, joiner_key, offerer_key)
+	testing.expect(t, joiner_key != joiner_row.transcript_fingerprint)
+	// Removing the paired machine erases its relay key in place.
+	testing.expect(t, paired_machine_remove(&run.joiner_table, OFFERER_KEY))
+	testing.expect(t, bytes_all_zero(run.joiner_table.machines[0].relay_key[:]))
+	_, removed_key_ok := paired_machine_relay_key(&run.joiner_table, OFFERER_KEY)
+	testing.expect(t, !removed_key_ok)
+}

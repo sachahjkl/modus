@@ -352,6 +352,7 @@ recent: [RECENT_CAPACITY]Recent
 recent_count: u64
 
 quic_endpoint: quic_server.Endpoint
+export_service: system.Service
 requests: ring.Ring // To the root service.
 request_tag: u32
 draw_logged: bool
@@ -1157,6 +1158,16 @@ service_connections_reclaim_refused :: proc "contextless" () {
 			continue
 		}
 		if machine_wire.stream_is_mesh(call_buffers[index][:call.received]) {
+			if service_name, has_role_service := mesh_waiting_role_service(call_buffers[index][:call.received], client); has_role_service {
+				slot_name: [32]u8
+				remote.name_set(&slot_name, service_name)
+				waiting[waiting_count] = {
+					name   = slot_name,
+					row    = client.row,
+					serial = client.serial,
+				}
+				waiting_count += 1
+			}
 			continue
 		}
 		request, _, _, ok := remote.request_check(call_buffers[index][:call.received], remote.REGION_SIZE)
@@ -1380,6 +1391,10 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 	// The first word of the stream chooses the protocol: a mesh frame of a
 	// machine, or a call request of a client of the client table.
 	if machine_wire.stream_is_mesh(buffer[:received]) {
+		if mesh_role_connection_prepare(buffer[:received], client) {
+			return SERVE_PENDING
+		}
+		defer mesh_role_connection_clear()
 		length := mesh_serve(buffer, received, client.key)
 		counts.bytes_out += u64(length)
 		return length
@@ -1554,6 +1569,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	// Map the wiring ring with Receive_Handles before wide-grant act wirings arrive.
 	system.wiring_ring_open()
+	export_service, _ = system.service_open(ctx)
 	// The client table, read-only: the root service writes it, and this
 	// process cannot give a key a row.
 	client_table_address, client_table_status := system.memory_map(ctx.handles[remote.GRANT_CLIENT_TABLE], {})
@@ -1611,6 +1627,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// One isolated call in each pass: the datagrams of the connections
 		// move between two calls, for a while after a slow one.
 		served := false
+		service_calls_before := export_service.calls
+		system.service_run(&export_service)
+		service_ran := export_service.calls != service_calls_before
+		if service_ran {
+			dirty = true
+		}
 		if connections_progress(system.time()) {
 			dirty = true
 		}
@@ -1653,10 +1675,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 			}
 		}
-		if served || !ring.empty(&quic_endpoint.datagrams.completions) {
-			// The answer goes at once: the next pass writes it in its stream.
+		if served || service_ran || !ring.empty(&quic_endpoint.datagrams.completions) {
+			// The answer or newly queued outbound mesh packet goes at once.
 			continue
 		}
+		system.service_wait(&wait, &export_service)
 		system.wait_records(&wait, &quic_endpoint.datagrams.completions)
 		if has_window {
 			display.wait_events(&wait, &window)

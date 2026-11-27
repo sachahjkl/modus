@@ -30,6 +30,7 @@ MAX_SPENT_PAIRING_CODES :: 16
 MACHINE_IDENTITY_FINGERPRINT_DOMAIN :: "modus machine identity fingerprint v1"
 PAIRING_CODE_SPENT_DOMAIN :: "modus pairing code spent v1"
 PAIRING_TRANSCRIPT_DOMAIN :: "modus pairing transcript v1"
+PAIRING_RELAY_KEY_DOMAIN :: "modus pairing relay key v1"
 PAIRING_SESSION_IDENTIFIER :: "modus pairing v1"
 
 #assert(PAIRING_CODE_TEXT_SIZE * 5 == PAIRING_CODE_BITS)
@@ -92,6 +93,9 @@ Paired_Machine :: struct {
 	// A hash of the CPace session key: both machines hold the same value, and
 	// no one can derive the key from it.
 	transcript_fingerprint: blake3.Hash,
+	// Symmetric AEAD key derived from the CPace session key under a separate
+	// domain for end-to-end sealed relay envelopes between this pair.
+	relay_key:              [CPACE_SESSION_KEY_SIZE]u8,
 }
 
 Paired_Machine_Table :: struct {
@@ -477,8 +481,13 @@ pairing_confirm :: proc "contextless" (
 		source                 = .Pairing,
 		paired_at_ms           = now_ms,
 		transcript_fingerprint = blake3.derive_key(PAIRING_TRANSCRIPT_DOMAIN, session_key[:]),
+		relay_key              = blake3.derive_key(PAIRING_RELAY_KEY_DOMAIN, session_key[:]),
 	}
 	add_status := paired_machine_add(table, paired)
+	// Never leave a copy of relay_key on the caller's stack after storing it in
+	// table: relay callers read the secret explicitly through
+	// paired_machine_relay_key.
+	clear_bytes_explicitly(paired.relay_key[:])
 	if add_status != .Ok {
 		return {}, pairing_fail(session, add_status)
 	}
@@ -515,13 +524,34 @@ paired_machine_add :: proc "contextless" (table: ^Paired_Machine_Table, machine:
 	return .Ok
 }
 
+// paired_machine_find returns metadata for a paired machine with relay_key
+// zeroed so metadata lookups never copy the CPace relay secret onto caller
+// stacks. Relay sealing and opening read the secret through
+// paired_machine_relay_key and erase their copy on return.
 paired_machine_find :: proc "contextless" (table: ^Paired_Machine_Table, identity_key: [PUBLIC_KEY_SIZE]u8) -> (machine: Paired_Machine, found: bool) {
 	if table == nil || key_is_zero(identity_key) || table.count < 0 || table.count > MAX_PAIRED_MACHINES {
 		return {}, false
 	}
 	for index in 0 ..< table.count {
 		if keys_equal_constant_time(table.machines[index].identity_key, identity_key) {
-			return table.machines[index], true
+			machine = table.machines[index]
+			clear_bytes_explicitly(machine.relay_key[:])
+			return machine, true
+		}
+	}
+	return {}, false
+}
+
+// paired_machine_relay_key returns the CPace-derived relay key for a paired
+// machine. The caller must erase the returned key with clear_bytes_explicitly
+// before returning.
+paired_machine_relay_key :: proc "contextless" (table: ^Paired_Machine_Table, identity_key: [PUBLIC_KEY_SIZE]u8) -> (relay_key: [CPACE_SESSION_KEY_SIZE]u8, found: bool) {
+	if table == nil || key_is_zero(identity_key) || table.count < 0 || table.count > MAX_PAIRED_MACHINES {
+		return {}, false
+	}
+	for index in 0 ..< table.count {
+		if keys_equal_constant_time(table.machines[index].identity_key, identity_key) {
+			return table.machines[index].relay_key, true
 		}
 	}
 	return {}, false
@@ -534,8 +564,10 @@ paired_machine_remove :: proc "contextless" (table: ^Paired_Machine_Table, ident
 	}
 	for index in 0 ..< table.count {
 		if keys_equal_constant_time(table.machines[index].identity_key, identity_key) {
+			clear_bytes_explicitly(table.machines[index].relay_key[:])
 			last := table.count - 1
 			table.machines[index] = table.machines[last]
+			clear_bytes_explicitly(table.machines[last].relay_key[:])
 			table.machines[last] = {}
 			table.count = last
 			return true

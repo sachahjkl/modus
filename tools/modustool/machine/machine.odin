@@ -1270,6 +1270,9 @@ Machine_Options :: struct {
 	cache_endpoint: net.Endpoint,
 	// Local host QUIC object cache instance controlled by Release_Cache_Hold.
 	cache_running:  ^cache_server.Cache_Quic_Running,
+	// Optional multi-machine mesh virtual UDP switch and node index (peer_mesh_switch.odin).
+	mesh_switch:    ^Peer_Mesh_Switch,
+	mesh_node_id:   int,
 	tablet: Machine_Tablet, // The virtio tablet of the machine (tablet_scenario.odin).
 	// Usable-boot QMP snapshot capture options (qmp_snapshot.odin): when
 	// snapshot_capture_tag is non-empty, runs the prelude on qcow2 drives,
@@ -1351,7 +1354,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	}
 	defer tpm_stop(&tpm)
 	peer: Peer
-	if !peer_start(&peer, relay_machine_port = options.relay_machine_port != 0 ? options.relay_machine_port : QUIC_SERVER_PORT, cache_endpoint = options.cache_endpoint) {
+	if !peer_start(&peer, relay_machine_port = options.relay_machine_port != 0 ? options.relay_machine_port : QUIC_SERVER_PORT, cache_endpoint = options.cache_endpoint, mesh_switch = options.mesh_switch, mesh_node_id = options.mesh_node_id) {
 		return false
 	}
 	defer peer_stop(&peer)

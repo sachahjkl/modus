@@ -653,3 +653,92 @@ the_ends_of_a_request_name_their_outcome :: proc(t: ^testing.T) {
 		testing.expect(t, exchange.outcome != .Succeeded && !mesh_refused_by_peer(exchange))
 	}
 }
+
+@(test)
+client_relay_deposit_and_collect_enforce_route_ends_and_bounds :: proc(t: ^testing.T) {
+	sender := client_machine_make(0x61)
+	receiver := client_machine_make(0x62)
+	relay := client_machine_make(0x63)
+	defer free(sender)
+	defer free(receiver)
+	defer free(relay)
+	buffers := new(Client_Buffers)
+	defer free(buffers)
+
+	sender_network := new(Client_Network)
+	receiver_network := new(Client_Network)
+	defer free(sender_network)
+	defer free(receiver_network)
+	sender_network^ = Client_Network{client = sender, now_ms = 80_000}
+	sender_network.machines[0] = relay
+	sender_network.count = 1
+	receiver_network^ = Client_Network{client = receiver, now_ms = 80_000}
+	receiver_network.machines[0] = relay
+	receiver_network.count = 1
+	sender_transport := network_transport(sender_network)
+	receiver_transport := network_transport(receiver_network)
+
+	testing.expect(t, join_by_link(t, relay, sender, sender_network, buffers))
+	testing.expect(t, join_by_link(t, relay, receiver, receiver_network, buffers))
+	testing.expect(t, machine_grant_set(&relay.peer, client_identity(sender), {.Relay}, {}))
+	testing.expect(t, machine_grant_set(&relay.peer, client_identity(receiver), {.Relay}, {}))
+
+	shared_key := blake3.hash(transmute([]u8)string("sender-receiver relay key"))
+	token := relay_directional_routing_token(shared_key, client_identity(sender), client_identity(receiver), 1)
+	reverse_token := relay_directional_routing_token(shared_key, client_identity(receiver), client_identity(sender), 1)
+	testing.expect(t, token != reverse_token, "opposite directions in the same epoch must yield distinct routing tokens")
+	key_fwd := relay_directional_key(shared_key, client_identity(sender), client_identity(receiver))
+	key_rev := relay_directional_key(shared_key, client_identity(receiver), client_identity(sender))
+	defer machine_mesh.clear_bytes_explicitly(key_fwd[:])
+	defer machine_mesh.clear_bytes_explicitly(key_rev[:])
+	testing.expect(t, key_fwd != key_rev, "opposite directions must derive distinct AEAD keys")
+	aad_fwd := relay_envelope_aad(client_identity(sender), client_identity(receiver), token)
+	aad_rev := relay_envelope_aad(client_identity(receiver), client_identity(sender), reverse_token)
+	testing.expect(t, aad_fwd != aad_rev, "AAD must bind direction and token")
+	testing.expect_value(t, relay_route_add(&relay.peer.relay, token, client_identity(sender), client_identity(receiver)), Relay_Status.Ok)
+	testing.expect_value(t, relay_route_add(&relay.peer.relay, reverse_token, client_identity(receiver), client_identity(sender)), Relay_Status.Ok)
+
+	sender_link: Mesh_Link
+	receiver_link: Mesh_Link
+	testing.expect_value(t, mesh_connect(&sender_link, &sender.peer, &sender_transport, client_identity(relay), .Paired, 80_000, 1_000), Mesh_Client_Status.Ok)
+	testing.expect_value(t, mesh_connect(&receiver_link, &receiver.peer, &receiver_transport, client_identity(relay), .Paired, 80_000, 1_000), Mesh_Client_Status.Ok)
+
+	// An empty route refuses collect, and a zero token or short sealed body
+	// never leaves the sender.
+	empty := mesh_relay_collect(&receiver_link, &receiver_transport, token, 80_000, 1_000, buffers.request[:], buffers.answer[:])
+	testing.expect_value(t, empty.exchange.reason, Refusal_Reason.Relay_Refused)
+	testing.expect_value(t, empty.relay, Relay_Status.Refused_Empty)
+	short_sealed: [RELAY_SEALED_MINIMUM - 1]u8
+	bad_deposit := mesh_relay_deposit(&sender_link, &sender_transport, token, short_sealed[:], 80_000, 1_000, buffers.request[:], buffers.answer[:])
+	testing.expect_value(t, bad_deposit.exchange.status, Mesh_Client_Status.Refused_Bad_Request)
+	zero_token := mesh_relay_collect(&receiver_link, &receiver_transport, {}, 80_000, 1_000, buffers.request[:], buffers.answer[:])
+	testing.expect_value(t, zero_token.exchange.status, Mesh_Client_Status.Refused_Bad_Request)
+
+	// Valid deposit by the bound sender; wrong-end collect by sender is
+	// refused as unknown token; bound receiver collects the exact sealed
+	// bytes.
+	sealed: [RELAY_SEALED_MINIMUM + 8]u8
+	for &value, index in sealed {
+		value = u8(0xA0 + index)
+	}
+	deposit := mesh_relay_deposit(&sender_link, &sender_transport, token, sealed[:], 80_000, 1_000, buffers.request[:], buffers.answer[:])
+	testing.expect_value(t, deposit.exchange.outcome, call_outcome.Call_Outcome.Succeeded)
+	testing.expect_value(t, deposit.relay, Relay_Status.Ok)
+	wrong_end := mesh_relay_collect(&sender_link, &sender_transport, token, 80_000, 1_000, buffers.request[:], buffers.answer[:])
+	testing.expect_value(t, wrong_end.exchange.reason, Refusal_Reason.Relay_Refused)
+	testing.expect_value(t, wrong_end.relay, Relay_Status.Refused_Unknown_Token)
+
+	collected := mesh_relay_collect(&receiver_link, &receiver_transport, token, 80_000, 1_000, buffers.request[:], buffers.answer[:])
+	testing.expect_value(t, collected.exchange.outcome, call_outcome.Call_Outcome.Succeeded)
+	testing.expect_value(t, collected.relay, Relay_Status.Ok)
+	testing.expect_value(t, collected.envelope.token, token)
+	testing.expect(t, len(collected.envelope.sealed) == len(sealed))
+	for value, index in sealed {
+		testing.expect_value(t, collected.envelope.sealed[index], value)
+	}
+
+	// A broken link refuses both deposit and collect before sending.
+	_, _ = mesh_link_broken(&receiver_link)
+	broken := mesh_relay_collect(&receiver_link, &receiver_transport, token, 80_000, 1_000, buffers.request[:], buffers.answer[:])
+	testing.expect_value(t, broken.exchange.status, Mesh_Client_Status.Unreachable)
+}

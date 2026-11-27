@@ -77,6 +77,8 @@ Peer :: struct {
 	quic:         ^Peer_Quic, // The peer as QUIC clients (peer_quic.odin).
 	relay:        Peer_Relay, // UDP of programs of the host to the machine (peer_relay.odin).
 	cache:        Peer_Cache, // UDP forwarder for 10.0.2.100:5010 -> host cache-serve (peer_cache.odin).
+	mesh_switch:  ^Peer_Mesh_Switch, // Optional virtual UDP switch for multi-machine mesh tests (peer_mesh_switch.odin).
+	mesh_node_id: int,
 	tcp_segments: int, // TCP segments of the machine.
 	dhcp:         Peer_Dhcp, // The DHCP server of the peer (peer_dhcp.odin).
 }
@@ -90,7 +92,7 @@ peers_started: int
 // process and of this peer, so that two machine tests never share one.
 // relay_machine_port: the UDP port of the machine that the UDP relay of the
 // peer reaches (peer_relay.odin).
-peer_start :: proc(peer: ^Peer, call_socket_name := "", relay_machine_port: u16 = QUIC_SERVER_PORT, cache_endpoint: net.Endpoint = {}) -> bool {
+peer_start :: proc(peer: ^Peer, call_socket_name := "", relay_machine_port: u16 = QUIC_SERVER_PORT, cache_endpoint: net.Endpoint = {}, mesh_switch: ^Peer_Mesh_Switch = nil, mesh_node_id: int = -1) -> bool {
 	socket, err := net.make_bound_udp_socket(net.IP4_Loopback, 0)
 	if err != nil {
 		fmt.eprintfln("modustool: the peer has no UDP socket: %v", err)
@@ -168,6 +170,26 @@ peer_start :: proc(peer: ^Peer, call_socket_name := "", relay_machine_port: u16 
 	}
 	hardware_of_machine := [6]u8{0x52, 0x54, 0x00, 0x12, 0x34, 0x56}
 	peer.hardware = hardware_of_machine
+	if mesh_switch != nil {
+		if !mesh_switch_attach_peer(mesh_switch, mesh_node_id, peer) {
+			peer_cache_stop(&peer.cache)
+			peer_relay_stop(&peer.relay)
+			peer_tcp_free(peer.tcp)
+			peer_quic_free(peer.quic)
+			peer_remote_socket_stop(peer.remote)
+			peer_remote_free(peer.remote)
+			for &viewer in peer.display_viewers {
+				peer_display_free(viewer)
+				viewer = nil
+			}
+			peer.tcp, peer.quic, peer.remote = nil, nil, nil
+			net.close(machine_socket)
+			net.close(socket)
+			return false
+		}
+		peer.mesh_switch = mesh_switch
+		peer.mesh_node_id = mesh_node_id
+	}
 	peer.thread = thread.create_and_start_with_poly_data(peer, peer_run)
 	peer.call_thread = thread.create_and_start_with_poly_data(peer, peer_remote_serve_socket)
 	return true
@@ -205,6 +227,10 @@ peer_machine_socket_lent_close :: proc(peer: ^Peer) {
 peer_stop :: proc(peer: ^Peer) {
 	if peer.thread == nil {
 		return
+	}
+	if peer.mesh_switch != nil {
+		mesh_switch_detach_peer(peer.mesh_switch, peer.mesh_node_id)
+		peer.mesh_switch = nil
 	}
 	sync.atomic_store(&peer.stop, true)
 	thread.join(peer.thread)
@@ -459,6 +485,10 @@ peer_frame :: proc(peer: ^Peer, frame: []u8) {
 			// machine; another datagram of that port goes to the cases of
 			// the peer below.
 			if address_at(ip, 16) == PEER_ADDRESS && peer_relay_datagram(peer, u16(be16(payload, 0)), u16(be16(payload, 2)), payload[8:]) {
+				free_all(context.temp_allocator)
+				return
+			}
+			if peer.mesh_switch != nil && address_at(ip, 16) == PEER_ADDRESS && be16(payload, 0) == remote.LISTEN_PORT && mesh_switch_forward_from_peer(peer.mesh_switch, peer.mesh_node_id, u16(be16(payload, 2)), payload[8:]) {
 				free_all(context.temp_allocator)
 				return
 			}

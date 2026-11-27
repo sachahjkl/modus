@@ -237,3 +237,28 @@ listen_port_has_one_holder :: proc(t: ^testing.T) {
 	testing.expect(t, !listen_port_taken(false, 4433, CLIENT_FIRST, 8, held[:]))
 	testing.expect(t, !listen_port_taken(false, 0, CLIENT_FIRST, 8, held[:]), "a free place holds no port")
 }
+
+// A scoped UDP listen grant can admit and validate an outbound target remote
+// explicitly before receiving from it; zero address/port and full active tables
+// are refused without disturbing active slots.
+@(test)
+admitted_outbound_initiation_validates_and_bounds :: proc(t: ^testing.T) {
+	table: Admitted
+	testing.expect(t, !admitted_add_validated(nil, 0x0A000202, 42100, 1000))
+	testing.expect(t, !admitted_add_validated(&table, 0, 42100, 1000))
+	testing.expect(t, !admitted_add_validated(&table, 0x0A000202, 0, 1000))
+
+	testing.expect(t, admitted_add_validated(&table, 0x0A000202, 42100, 1000))
+	allowed, admitted, _, _ := admitted_send_allowed(&table, 0x0A000202, 42100, 1200)
+	testing.expect(t, allowed && admitted, "validated outbound target sends immediately without prior inbound bytes")
+
+	// Fill remaining slots with active remotes; one more is refused.
+	for index in 1 ..< datagram.ADMITTED_CAPACITY {
+		testing.expect(t, admitted_add_validated(&table, 0x0A000202, u16(42100 + index), 1000))
+	}
+	testing.expect(t, !admitted_add_validated(&table, 0x0A000202, 49000, 1000 + ADMITTED_IDLE))
+	// Past ADMITTED_IDLE, the oldest idle slot is reclaimed cleanly.
+	testing.expect(t, admitted_add_validated(&table, 0x0A000202, 49000, 1000 + ADMITTED_IDLE + 1))
+	allowed, admitted, _, _ = admitted_send_allowed(&table, 0x0A000202, 49000, 1200)
+	testing.expect(t, allowed && admitted)
+}

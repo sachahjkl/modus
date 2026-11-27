@@ -36,6 +36,10 @@ RELAY_ROUTE_CAPACITY :: 4
 RELAY_QUEUE_DEPTH :: 2 // Envelopes that wait on one route: a sender past it is refused, never dropped in silence.
 RELAY_ENVELOPE_LIFETIME_MS :: 60_000 // An envelope that waits longer is dropped: a datagram of a link is late after it.
 ROUTING_TOKEN_DOMAIN :: "modus relay routing token v1"
+RELAY_DIRECTION_KEY_DOMAIN :: "modus relay directional key v1"
+// Format property: ChaCha20-Poly1305 associated data binding sender identity,
+// receiver identity, and routing token (32 + 32 + 16 = 80 bytes).
+RELAY_AAD_SIZE :: machine_mesh.PUBLIC_KEY_SIZE + machine_mesh.PUBLIC_KEY_SIZE + ROUTING_TOKEN_SIZE
 
 Routing_Token :: [ROUTING_TOKEN_SIZE]u8
 
@@ -64,11 +68,51 @@ Relay_Status :: enum u8 {
 relay_routing_token :: proc "contextless" (shared_key: [32]u8, epoch: u64) -> (token: Routing_Token) {
 	input: [40]u8
 	key := shared_key
+	defer machine_mesh.clear_bytes_explicitly(key[:])
+	defer machine_mesh.clear_bytes_explicitly(input[:])
 	copy(input[:32], key[:])
 	byte_order.write_u64_little_endian(input[:], 32, epoch)
 	derived := blake3.derive_key(ROUTING_TOKEN_DOMAIN, input[:])
+	defer machine_mesh.clear_bytes_explicitly(derived[:])
 	copy(token[:], derived[:ROUTING_TOKEN_SIZE])
 	return token
+}
+
+// relay_directional_key derives a direction-bound AEAD key for envelopes from
+// sender to receiver, preventing reflection attacks where a relay echoes a
+// sender's own sealed envelope back to the sender.
+relay_directional_key :: proc "contextless" (shared_key: [32]u8, sender, receiver: [32]u8) -> (directional_key: [32]u8) {
+	input: [96]u8
+	key := shared_key
+	sender_copy := sender
+	receiver_copy := receiver
+	defer machine_mesh.clear_bytes_explicitly(key[:])
+	defer machine_mesh.clear_bytes_explicitly(input[:])
+	copy(input[0:32], key[:])
+	copy(input[32:64], sender_copy[:])
+	copy(input[64:96], receiver_copy[:])
+	return blake3.derive_key(RELAY_DIRECTION_KEY_DOMAIN, input[:])
+}
+
+// relay_directional_routing_token derives a direction-bound routing token for
+// sender -> receiver in epoch so a relay can host both directions of a pair in
+// the same epoch without token collision.
+relay_directional_routing_token :: proc "contextless" (shared_key: [32]u8, sender, receiver: [32]u8, epoch: u64) -> (token: Routing_Token) {
+	dir_key := relay_directional_key(shared_key, sender, receiver)
+	defer machine_mesh.clear_bytes_explicitly(dir_key[:])
+	return relay_routing_token(dir_key, epoch)
+}
+
+// relay_envelope_aad builds the 80-byte AEAD associated data binding sender,
+// receiver, and routing token for a sealed relay envelope.
+relay_envelope_aad :: proc "contextless" (sender, receiver: [32]u8, token: Routing_Token) -> (aad: [RELAY_AAD_SIZE]u8) {
+	sender_copy := sender
+	receiver_copy := receiver
+	token_copy := token
+	copy(aad[0:32], sender_copy[:])
+	copy(aad[32:64], receiver_copy[:])
+	copy(aad[64:80], token_copy[:])
+	return aad
 }
 
 @(private)

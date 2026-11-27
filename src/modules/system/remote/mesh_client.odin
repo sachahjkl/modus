@@ -63,27 +63,32 @@ Mesh_Client_Phase :: enum u8 {
 
 // One request of a link: its frame, its answer, and what its end needs.
 Mesh_Client_Request :: struct {
-	phase:            Mesh_Client_Phase,
-	kind:             machine_wire.Mesh_Request_Kind,
-	identifier:       u64, // The identifier that the caller holds: of the first request of the session for it.
+	phase:              Mesh_Client_Phase,
+	kind:               machine_wire.Mesh_Request_Kind,
+	identifier:         u64, // The identifier that the caller holds: of the first request of the session for it.
 	session_identifier: u64, // The identifier of the request of the session now: a fetch and a sync send one request for each piece and page.
-	offset:           u64, // A fetch: the offset of the piece asked now.
-	stream:           u64,
-	has_stream:       bool,
-	request_length:   int,
-	written:          int,
-	received:         int,
-	outcome:          call_outcome.Call_Outcome,
-	reason:           machine_wire.Refusal_Reason,
-	detail:           u32,
-	object_kind:      object_cache.Cache_Object_Kind,
-	hash:             blake3.Hash, // The object of a fetch, or the store of an offer.
-	fetch:            machine_wire.Object_Fetch_Status,
-	store:            machine_wire.Store_Status,
-	role_value:       i64,
-	role_result_size: int,
-	request:          [machine_wire.FRAME_LIMIT]u8,
-	answer:           [machine_wire.FRAME_LIMIT]u8,
+	offset:             u64, // A fetch: the offset of the piece asked now.
+	stream:             u64,
+	has_stream:         bool,
+	request_length:     int,
+	written:            int,
+	received:           int,
+	outcome:            call_outcome.Call_Outcome,
+	reason:             machine_wire.Refusal_Reason,
+	detail:             u32,
+	pairing_failed:     bool, // Pairing_Element tag check failed: confirm still sent to spend code on offerer.
+	object_kind:        object_cache.Cache_Object_Kind,
+	hash:               blake3.Hash, // The object of a fetch, or the store of an offer.
+	fetch:              machine_wire.Object_Fetch_Status,
+	store:              machine_wire.Store_Status,
+	role_value:         i64,
+	role_result_size:   int,
+	relay_token:        machine_wire.Routing_Token,
+	relay_peer:         [machine_mesh.PUBLIC_KEY_SIZE]u8,
+	relay_status:       machine_wire.Relay_Status,
+	relay_result_size:  int,
+	request:            [machine_wire.FRAME_LIMIT]u8,
+	answer:             [machine_wire.FRAME_LIMIT]u8,
 }
 
 Mesh_Client_Link :: struct {
@@ -148,7 +153,6 @@ mesh_client_shutdown :: proc "contextless" () {
 	mesh_client.configured = false
 }
 
-@(private = "file")
 mesh_link_find :: proc "contextless" (identity: [32]u8) -> (link: ^Mesh_Client_Link, index: int) {
 	for &item, place in mesh_client.links {
 		if item.in_use && item.session.pinned_identity == identity {
@@ -363,6 +367,78 @@ mesh_sync_store :: proc "contextless" (identity: [32]u8, store_identifier: blake
 	return begun, identifier
 }
 
+// mesh_disconnect cleanly closes an active outbound link to identity so the
+// slot can be reopened (for example transitioning from Pairing to Paired) or
+// to test link loss and reconnect.
+mesh_disconnect :: proc "contextless" (identity: [32]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	link, index := mesh_link_find(identity)
+	if link == nil {
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Connection, 1)
+	}
+	connection := &mesh_client.connections[index]
+	if connection.state != .Idle && connection.state != .Closed && connection.state != .Closing && connection.state != .Draining {
+		quic.connection_close(connection, u64(remote.Stream_Error.None), now_microseconds())
+	}
+	ended, count := machine_wire.mesh_link_broken(&link.session)
+	for end in ended[:count] {
+		mesh_request_end(link, end.identifier, end.outcome)
+	}
+	return .Succeeded, 0
+}
+
+// mesh_relay_deposit seals plaintext under the CPace relay key shared with
+// peer_identity and sends a Relay_Deposit frame to relay_identity over QUIC.
+mesh_relay_deposit :: proc "contextless" (
+	relay_identity: [32]u8,
+	peer_identity: [32]u8,
+	epoch: u64,
+	plaintext: []u8,
+	error: ^errors.Error_Record,
+) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	sealed: [machine_wire.RELAY_SEALED_LIMIT]u8
+	token, sealed_len, seal_outcome := mesh_relay_seal(peer_identity, epoch, plaintext, sealed[:], error)
+	if seal_outcome != .Succeeded {
+		return seal_outcome, 0
+	}
+	frame, write_status := machine_wire.relay_envelope_write(mesh_frame_buffer[:], .Relay_Deposit, token, sealed[:sealed_len])
+	if write_status != .Ok {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 4, i64(sealed_len), machine_wire.RELAY_SEALED_LIMIT, i64(write_status))
+	}
+	request, begun, identifier := mesh_client_begin(relay_identity, frame, error)
+	if request != nil {
+		request.relay_token = token
+		request.relay_peer = peer_identity
+	}
+	return begun, identifier
+}
+
+// mesh_relay_collect requests the oldest sealed relay envelope waiting for the
+// directional (peer_identity -> this machine) epoch routing token from
+// relay_identity over QUIC.
+mesh_relay_collect :: proc "contextless" (
+	relay_identity: [32]u8,
+	peer_identity: [32]u8,
+	epoch: u64,
+	error: ^errors.Error_Record,
+) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	relay_key, found := machine_mesh.paired_machine_relay_key(&mesh.paired, peer_identity)
+	defer machine_mesh.clear_bytes_explicitly(relay_key[:])
+	if !found {
+		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Records, 2)
+	}
+	if machine_mesh.key_is_zero(relay_key) {
+		return call_outcome.fail(error, .Wrong_State, .State, .Records, 2)
+	}
+	token := machine_wire.relay_directional_routing_token(relay_key, peer_identity, mesh.identity.public_key, epoch)
+	frame := machine_wire.relay_collect_write(mesh_frame_buffer[:], token)
+	request, begun, identifier := mesh_client_begin(relay_identity, frame, error)
+	if request != nil {
+		request.relay_token = token
+		request.relay_peer = peer_identity
+	}
+	return begun, identifier
+}
+
 // mesh_pairing_join_send sends the first pairing frame of the joiner on a
 // link of purpose Pairing; the loop sends the confirmation when the reply
 // comes.
@@ -456,6 +532,22 @@ mesh_request_result :: proc "contextless" (identity: [32]u8, identifier: u64, va
 			if result_count != nil {
 				result_count^ = copied
 			}
+		case .Relay_Deposit:
+			if ended.relay_status != .Ok {
+				return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 2, 0, 0, i64(ended.relay_status))
+			}
+		case .Relay_Collect:
+			if ended.relay_status != .Ok {
+				return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 2, 0, 0, i64(ended.relay_status))
+			}
+			if len(result) < ended.relay_result_size {
+				return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 4, i64(ended.relay_result_size), i64(len(result)))
+			}
+			copied := copy(result, ended.request[:ended.relay_result_size])
+			machine_mesh.clear_bytes_explicitly(ended.request[:ended.relay_result_size])
+			if result_count != nil {
+				result_count^ = copied
+			}
 		case .Pairing_Element, .Pairing_Confirm, .None:
 		}
 		return .Succeeded, 1
@@ -521,23 +613,40 @@ mesh_link_of_datagram :: proc "contextless" (data: []u8, from: quic.Remote) -> i
 	return -1
 }
 
+// mesh_pairing_link_close closes a finished or failed Pairing QUIC link so
+// its link slot is immediately available for a subsequent Paired link or retry.
+@(private = "file")
+mesh_pairing_link_close :: proc "contextless" (link: ^Mesh_Client_Link) {
+	if link == nil || link.session.purpose != .Pairing {
+		return
+	}
+	if _, link_index := mesh_link_find(link.session.pinned_identity); link_index >= 0 {
+		connection := &mesh_client.connections[link_index]
+		if connection.state != .Idle && connection.state != .Closing && connection.state != .Draining && connection.state != .Closed {
+			quic.connection_close(connection, u64(remote.Stream_Error.None), now_microseconds())
+		}
+		machine_wire.mesh_link_broken(&link.session)
+	}
+}
+
 // mesh_pairing_abandon ends the pairing of a pairing request that ended with
 // no answer that confirms it: a break, a bound, a reset, a refusal, a
 // malformed answer, or a confirmation that could not leave. The pairing
 // fails, which erases its secrets; the code was spent when its exchange
 // started. A confirmation that did not come back removes the row of the
-// offerer that the reply of its element wrote.
+// offerer that the reply of its element wrote, and closes the Pairing link.
 @(private = "file")
 mesh_pairing_abandon :: proc "contextless" (link: ^Mesh_Client_Link, kind: machine_wire.Mesh_Request_Kind, row_written: bool) {
 	switch kind {
 	case .Pairing_Element, .Pairing_Confirm:
-	case .None, .Object_Request, .Store_Offer, .Role_Call:
+	case .None, .Object_Request, .Store_Offer, .Role_Call, .Relay_Deposit, .Relay_Collect:
 		return
 	}
 	machine_mesh.pairing_fail(&mesh.pairing, .Refused_Exchange)
 	if kind == .Pairing_Confirm || row_written {
 		machine_wire.pairing_confirmed_accept(&mesh, link.session.pinned_identity, nil)
 	}
+	mesh_pairing_link_close(link)
 }
 
 @(private = "file")
@@ -636,31 +745,64 @@ mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Cli
 		item.role_result_size = len(reply.result)
 	case .Pairing_Element:
 		confirm, status := machine_wire.pairing_element_reply_accept(&mesh, answer, system.time(), mesh_frame_buffer[:])
-		confirm_sent := false
-		if confirm != nil {
-			// The confirm goes also when the tag of the offerer failed, so
-			// the code ends on both machines.
-			error: errors.Error_Record
-			request, _, _ := mesh_client_begin(link.session.pinned_identity, confirm, &error)
-			confirm_sent = request != nil
+		if confirm != nil && mesh_client_continue(link, item, confirm) {
+			// Continue the same request slot under the caller's identifier for
+			// Pairing_Confirm so the caller observes completion only after the
+			// offerer confirms, and no second unowned slot leaks. When the
+			// offerer tag failed, the confirm still goes so both sides spend
+			// the code, and pairing_failed ensures the final result is refused.
+			item.kind = .Pairing_Confirm
+			if status != .Ok {
+				item.pairing_failed = true
+				item.detail = u32(status)
+			}
+			return
 		}
-		if status != .Ok || !confirm_sent {
+		item.outcome = machine_wire.mesh_refusal_outcome(.Pairing_Refused)
+		item.reason = .Pairing_Refused
+		item.detail = u32(status)
+		mesh_pairing_abandon(link, .Pairing_Element, status == .Ok)
+	case .Pairing_Confirm:
+		if item.pairing_failed {
 			item.outcome = machine_wire.mesh_refusal_outcome(.Pairing_Refused)
 			item.reason = .Pairing_Refused
-			item.detail = u32(status)
-			// The reply wrote the row of the offerer when its tag held: with
-			// no confirmation on its way, that row leaves.
-			if !confirm_sent {
-				mesh_pairing_abandon(link, .Pairing_Element, true)
-			}
-		}
-	case .Pairing_Confirm:
-		if _, _, ok := machine_wire.pairing_confirmed_accept(&mesh, link.session.pinned_identity, answer); !ok {
+			mesh_pairing_abandon(link, .Pairing_Confirm, true)
+		} else if _, _, ok := machine_wire.pairing_confirmed_accept(&mesh, link.session.pinned_identity, answer); !ok {
 			// pairing_confirmed_accept removed the row; the pairing fails too.
 			item.outcome = machine_wire.mesh_refusal_outcome(.Pairing_Refused)
 			item.reason = .Pairing_Refused
 			mesh_pairing_abandon(link, .Pairing_Confirm, false)
 		}
+		// Close the completed Pairing QUIC link cleanly so a Paired link can
+		// immediately take its place.
+		mesh_pairing_link_close(link)
+	case .Relay_Deposit:
+		frame, _ := machine_wire.frame_decode(answer)
+		if len(frame.body) != 0 {
+			item.outcome = .Answer_Unreadable
+			item.reason = .Malformed
+			return
+		}
+		item.relay_status = .Ok
+	case .Relay_Collect:
+		frame, _ := machine_wire.frame_decode(answer)
+		envelope, read_status := machine_wire.relay_envelope_read(frame.body)
+		if read_status != .Ok || envelope.token != item.relay_token {
+			item.outcome = .Answer_Unreadable
+			item.reason = .Malformed
+			return
+		}
+		plain_buf: [machine_wire.RELAY_SEALED_LIMIT]u8
+		defer machine_mesh.clear_bytes_explicitly(plain_buf[:])
+		open_err: errors.Error_Record
+		plain_len, open_outcome := mesh_relay_open(item.relay_peer, item.relay_token, envelope.sealed, plain_buf[:], &open_err)
+		if open_outcome != .Succeeded {
+			item.outcome = open_outcome
+			item.reason = .Malformed
+			return
+		}
+		item.relay_result_size = copy(item.request[:], plain_buf[:plain_len])
+		item.relay_status = .Ok
 	case .None:
 	}
 }

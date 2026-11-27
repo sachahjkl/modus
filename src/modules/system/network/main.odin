@@ -469,6 +469,9 @@ header_granted :: proc "contextless" (endpoint: ^Endpoint, tag: u32, address: u3
 		complete(endpoint, tag, .Grant_Or_Right_Missing, not_granted(SEND, 3, address, port, 0))
 	case grant.listen:
 		allowed, admitted, send_limit, would_send := network.admitted_send_allowed(&endpoint.admitted, address, port, u64(count - network.UDP_HEADER))
+		if !admitted && grant.address != 0 && address == grant.address && port != 0 && network.admitted_add_validated(&endpoint.admitted, address, port, now) {
+			allowed, admitted, send_limit, would_send = network.admitted_send_allowed(&endpoint.admitted, address, port, u64(count - network.UDP_HEADER))
+		}
 		switch {
 		case allowed:
 			return true

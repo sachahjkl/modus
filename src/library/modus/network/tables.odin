@@ -203,6 +203,19 @@ admitted_validate :: proc "contextless" (table: ^Admitted, address: u32, port: u
 	return false
 }
 
+// admitted_add_validated admits and validates a remote that the local endpoint
+// initiates outbound traffic to under a scoped UDP listen grant naming that
+// address. Refuses a zero address or port, or a full table of active remotes.
+admitted_add_validated :: proc "contextless" (table: ^Admitted, address: u32, port: u16, now: u64) -> bool {
+	if table == nil || address == 0 || port == 0 {
+		return false
+	}
+	if !admitted_add(table, address, port, now) {
+		return false
+	}
+	return admitted_validate(table, address, port)
+}
+
 // saturating_add adds two counts, and stops at the largest number.
 @(private)
 saturating_add :: proc "contextless" (left, right: u64) -> u64 {

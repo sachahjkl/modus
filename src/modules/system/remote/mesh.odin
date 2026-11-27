@@ -20,12 +20,14 @@ package remote_service
 import "modus:contract/blake3"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
+import "modus:contract/isolated"
 import "modus:contract/machine_mesh"
 import "modus:contract/machine_sync"
 import "modus:contract/machine_wire"
 import "modus:contract/object_cache"
 import op "modus:contract/operation"
 import "modus:contract/remote"
+import "modus:contract/role_contract"
 import "modus:random"
 import "modus:system"
 
@@ -293,6 +295,248 @@ mesh_memory_make :: proc "contextless" (error: ^errors.Error_Record) -> (memory:
 // which still holds the request.
 mesh_answer: [machine_wire.FRAME_LIMIT]u8
 
+// Active local service connection and refusal state prepared non-blockingly
+// for the current Role_Call stream, cleared immediately after mesh_serve
+// returns via mesh_role_connection_clear.
+mesh_active_role_connection: ^Service_Connection
+mesh_active_role_client: ^Record_Client
+mesh_active_role_refusal: call_outcome.Call_Outcome
+mesh_active_role_frame_bytes: u64
+mesh_role_calls_served: u64
+
+// mesh_role_service_name maps a system role whose contract uses calls and
+// records only (no kernel handles or shared surfaces) to its service target.
+// Roles carrying handles or local hardware surfaces are refused.
+mesh_role_service_name :: proc "contextless" (role: role_contract.Role) -> (name: string, remotable: bool) {
+	switch role {
+	case .Storage:
+		return "storage", true
+	case .Settings:
+		return "settings", true
+	case .Recipes:
+		return "recipes", true
+	case .None, .Display, .Input, .Console, .Assistive, .Speech, .Terminal,
+	     .Start_Policy, .Network, .Block_Device, .Network_Device, .Sound_Device,
+	     .Entropy_Device, .Tpm, .Remote_Display, .Plans, .Projects, .Powerbox,
+	     .Disk_Processes, .Principals, .Devices:
+		return "", false
+	}
+	return "", false
+}
+
+// mesh_waiting_role_service returns the local service name that a waiting
+// mesh Role_Call stream targets, so service_connections_reclaim_refused keeps
+// a refused slot visible until serve_next observes the refusal.
+mesh_waiting_role_service :: proc "contextless" (buffer: []u8, client: ^Record_Client) -> (service_name: string, ok: bool) {
+	if client == nil || client.mesh_only || client.row < 0 {
+		return "", false
+	}
+	frame, frame_status := machine_wire.frame_decode(buffer)
+	if frame_status != .Ok || frame.message != .Role_Call {
+		return "", false
+	}
+	call, read_ok := machine_wire.role_call_read(frame.body)
+	if !read_ok {
+		return "", false
+	}
+	grant, granted := machine_wire.machine_grant_of(&mesh, client.key)
+	if !granted || .Roles not_in grant.uses || call.role not_in grant.roles {
+		return "", false
+	}
+	return mesh_role_service_name(call.role)
+}
+
+mesh_role_connection_clear :: proc "contextless" () {
+	mesh_active_role_connection = nil
+	mesh_active_role_client = nil
+	mesh_active_role_refusal = .Grant_Or_Right_Missing
+	mesh_active_role_frame_bytes = 0
+}
+
+// mesh_role_connection_prepare inspects an incoming mesh frame before
+// mesh_serve runs. When it is an authorized Role_Call for a remotable role
+// from a client bound to a client_table row, it asks connection_find for the
+// real local service connection without blocking. Returns pending = true when
+// the root Connect or service ready handshake is still in progress.
+mesh_role_connection_prepare :: proc "contextless" (buffer: []u8, client: ^Record_Client) -> (pending: bool) {
+	mesh_role_connection_clear()
+	service_name, has_service := mesh_waiting_role_service(buffer, client)
+	if !has_service {
+		return false
+	}
+	connection, refused_outcome, _, is_pending := connection_find(service_name, client)
+	if is_pending {
+		return true
+	}
+	if connection == nil {
+		mesh_active_role_refusal = refused_outcome != .Succeeded ? refused_outcome : .Callee_Unavailable
+		return false
+	}
+	mesh_active_role_connection = connection
+	mesh_active_role_client = client
+	mesh_active_role_frame_bytes = u64(len(buffer))
+	return false
+}
+
+// mesh_role_holder executes an incoming remote Role_Call against the prepared
+// local service connection for the principal of the peer's client_table row.
+@(private = "file")
+mesh_role_holder :: proc "contextless" (
+	role: role_contract.Role,
+	export: u32,
+	arguments: []u8,
+	result: []u8,
+	_: rawptr,
+) -> (value: i64, result_count: int, outcome: call_outcome.Call_Outcome) {
+	_, remotable := mesh_role_service_name(role)
+	if !remotable {
+		return 0, 0, .Operation_Unsupported
+	}
+	connection := mesh_active_role_connection
+	if connection == nil || connection.state != .Ready {
+		refusal := mesh_active_role_refusal != .Succeeded ? mesh_active_role_refusal : .Grant_Or_Right_Missing
+		return 0, 0, refusal
+	}
+	if len(arguments) > len(connection.region) {
+		return 0, 0, .Argument_Refused
+	}
+	// Under a wide grant of the key, each remote role call is an act: record
+	// it before the isolated call runs, and refuse when the act ring is full.
+	if active_client := mesh_active_role_client; active_client != nil && active_client.row >= 0 {
+		if row := client_rows[active_client.row]; row.wide_grant != 0 && row.serial == active_client.serial {
+			if act_outcome, _ := call_act_record(row.wide_grant, active_client.principal, connection.hash, mesh_active_role_frame_bytes); act_outcome == .Refused {
+				return 0, 0, .Budget_Or_Capacity_Exhausted
+			}
+		}
+	}
+	request := remote.Request {
+		export      = export,
+		record_size = u32(len(arguments)),
+	}
+	completion, path_outcome, _, called := isolated_call_make(connection, request, arguments)
+	connection.count += 1
+	connection.last_used = system.time()
+	if !called {
+		return 0, 0, path_outcome
+	}
+	call_value, call_result_outcome, _ := isolated.answer_of_completion(completion)
+	if call_result_outcome != .Succeeded {
+		return 0, 0, call_result_outcome
+	}
+	mesh_role_calls_served += 1
+	_ = result
+	return call_value, 0, .Succeeded
+}
+
+// mesh_relay_seal seals plaintext into a relay envelope ciphertext
+// (nonce || ChaCha20-Poly1305 ciphertext+tag) under the directional key
+// derived from the CPace relay key for (this machine -> peer_identity),
+// binding (sender, receiver, token) as associated data.
+mesh_relay_seal :: proc "contextless" (
+	peer_identity: [32]u8,
+	epoch: u64,
+	plaintext: []u8,
+	out_sealed: []u8,
+	error: ^errors.Error_Record,
+) -> (token: machine_wire.Routing_Token, sealed_len: int, outcome: call_outcome.Call_Outcome) {
+	if !mesh.has_identity {
+		fail_outcome, _ := call_outcome.fail(error, .Wrong_State, .State, .None, 0)
+		return {}, 0, fail_outcome
+	}
+	relay_key, found := machine_mesh.paired_machine_relay_key(&mesh.paired, peer_identity)
+	defer machine_mesh.clear_bytes_explicitly(relay_key[:])
+	if !found {
+		fail_outcome, _ := call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Records, 1)
+		return {}, 0, fail_outcome
+	}
+	if machine_mesh.key_is_zero(relay_key) {
+		fail_outcome, _ := call_outcome.fail(error, .Wrong_State, .State, .Records, 1)
+		return {}, 0, fail_outcome
+	}
+	needed := machine_wire.RELAY_SEALED_MINIMUM + len(plaintext)
+	if needed > machine_wire.RELAY_SEALED_LIMIT || needed > len(out_sealed) {
+		fail_outcome, _ := call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 3, i64(len(plaintext)), machine_wire.RELAY_SEALED_LIMIT - machine_wire.RELAY_SEALED_MINIMUM)
+		return {}, 0, fail_outcome
+	}
+	sender := mesh.identity.public_key
+	receiver := peer_identity
+	dir_key := machine_wire.relay_directional_key(relay_key, sender, receiver)
+	defer machine_mesh.clear_bytes_explicitly(dir_key[:])
+	token = machine_wire.relay_directional_routing_token(relay_key, sender, receiver, epoch)
+	aad := machine_wire.relay_envelope_aad(sender, receiver, token)
+	nonce: [machine_wire.RELAY_NONCE_SIZE]u8
+	if !random.fill_for_a_key(&process_generator, nonce[:], .Processor, error) {
+		return {}, 0, .Wrong_State
+	}
+	key_text := string(dir_key[:])
+	nonce_text := string(nonce[:])
+	aad_text := string(aad[:])
+	plain_text := string(plaintext)
+	ct_slice := out_sealed[machine_wire.RELAY_NONCE_SIZE : needed]
+	crypto_outcome, ct_count := seal_with_chacha20_poly1305(&key_text, &nonce_text, &aad_text, &plain_text, &ct_slice, error)
+	if crypto_outcome != .Succeeded {
+		return {}, 0, crypto_outcome
+	}
+	if int(ct_count) != len(plaintext) + machine_wire.RELAY_TAG_SIZE {
+		fail_outcome, _ := call_outcome.fail(error, .Wrong_State, .State, .Bytes, 4, ct_count, i64(len(plaintext) + machine_wire.RELAY_TAG_SIZE))
+		return {}, 0, fail_outcome
+	}
+	copy(out_sealed[:machine_wire.RELAY_NONCE_SIZE], nonce[:])
+	return token, needed, .Succeeded
+}
+
+// mesh_relay_open authenticates and decrypts sealed relay envelope bytes
+// (nonce || ChaCha20-Poly1305 ciphertext+tag) under the directional key
+// derived from the CPace relay key for (peer_identity -> this machine),
+// binding (sender, receiver, token) as associated data.
+mesh_relay_open :: proc "contextless" (
+	peer_identity: [32]u8,
+	token: machine_wire.Routing_Token,
+	sealed: []u8,
+	out_plaintext: []u8,
+	error: ^errors.Error_Record,
+) -> (plain_len: int, outcome: call_outcome.Call_Outcome) {
+	if !mesh.has_identity {
+		fail_outcome, _ := call_outcome.fail(error, .Wrong_State, .State, .None, 0)
+		return 0, fail_outcome
+	}
+	relay_key, found := machine_mesh.paired_machine_relay_key(&mesh.paired, peer_identity)
+	defer machine_mesh.clear_bytes_explicitly(relay_key[:])
+	if !found {
+		fail_outcome, _ := call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Records, 1)
+		return 0, fail_outcome
+	}
+	if machine_mesh.key_is_zero(relay_key) {
+		fail_outcome, _ := call_outcome.fail(error, .Wrong_State, .State, .Records, 1)
+		return 0, fail_outcome
+	}
+	if len(sealed) < machine_wire.RELAY_SEALED_MINIMUM || len(sealed) > machine_wire.RELAY_SEALED_LIMIT {
+		fail_outcome, _ := call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, 3, i64(len(sealed)), machine_wire.RELAY_SEALED_LIMIT)
+		return 0, fail_outcome
+	}
+	expected_plain := len(sealed) - machine_wire.RELAY_SEALED_MINIMUM
+	if expected_plain > len(out_plaintext) {
+		fail_outcome, _ := call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 4, i64(expected_plain), i64(len(out_plaintext)))
+		return 0, fail_outcome
+	}
+	sender := peer_identity
+	receiver := mesh.identity.public_key
+	dir_key := machine_wire.relay_directional_key(relay_key, sender, receiver)
+	defer machine_mesh.clear_bytes_explicitly(dir_key[:])
+	aad := machine_wire.relay_envelope_aad(sender, receiver, token)
+	key_text := string(dir_key[:])
+	nonce_text := string(sealed[:machine_wire.RELAY_NONCE_SIZE])
+	aad_text := string(aad[:])
+	ct_text := string(sealed[machine_wire.RELAY_NONCE_SIZE:])
+	plain_slice := out_plaintext[:expected_plain]
+	crypto_outcome, opened_count := open_with_chacha20_poly1305(&key_text, &nonce_text, &aad_text, &ct_text, &plain_slice, error)
+	if crypto_outcome != .Succeeded || int(opened_count) != expected_plain {
+		fail_outcome, _ := call_outcome.fail(error, .Data_Damaged, .Not_Authentic, .Bytes, 3)
+		return 0, fail_outcome
+	}
+	return expected_plain, .Succeeded
+}
+
 // mesh_signature_verify gives the contracts the strict Ed25519 check of the
 // module cryptography.
 mesh_signature_verify :: proc "contextless" (
@@ -319,13 +563,13 @@ mesh_fill_random :: proc "contextless" (bytes: []u8, _: rawptr) -> bool {
 }
 
 // mesh_identity_set takes the public key of this service as the machine
-// identity, and makes the state of the mesh empty. No role holder is given
-// yet: a role call of a paired machine is refused until the root service
-// gives remote a connection to the real holder for the row of that machine.
+// identity, and makes the state of the mesh empty with live local role
+// holder dispatch wired through root-granted service connections.
 mesh_identity_set :: proc "contextless" (public_key: [32]u8, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	services := machine_wire.Peer_Services {
 		signature_verify = mesh_signature_verify,
 		fill_random      = mesh_fill_random,
+		role_holder      = mesh_role_holder,
 	}
 	memory, memory_status := mesh_memory_make(error)
 	if memory_status != .Succeeded {
@@ -341,6 +585,7 @@ mesh_identity_set :: proc "contextless" (public_key: [32]u8, error: ^errors.Erro
 // buffer[:received], and the answer replaces it. peer_identity is the key
 // that the handshake proved. It gives the length of the answer.
 mesh_serve :: proc "contextless" (buffer: []u8, received: int, peer_identity: [32]u8) -> int {
+	defer mesh_role_connection_clear()
 	serve_context := machine_wire.Serve_Context {
 		peer_identity   = peer_identity,
 		channel_binding = machine_wire.channel_binding_of_identities(mesh.identity.public_key, peer_identity),
@@ -365,10 +610,11 @@ mesh_principal_set :: proc "contextless" (principal_root_public_key: [32]u8, err
 	}
 	index := mesh.paired.count - 1
 	for index >= 0 {
-		row := mesh.paired.machines[index]
+		row := &mesh.paired.machines[index]
 		if row.source == .Machine_List {
-			machine_mesh.paired_machine_remove(&mesh.paired, row.identity_key)
-			machine_wire.machine_grant_clear(&mesh, row.identity_key)
+			key := row.identity_key
+			machine_mesh.paired_machine_remove(&mesh.paired, key)
+			machine_wire.machine_grant_clear(&mesh, key)
 		}
 		index -= 1
 	}
@@ -393,7 +639,6 @@ mesh_pairing_offer :: proc "contextless" (code_text: ^[machine_mesh.PAIRING_CODE
 	if !uses_known {
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, i64(uses_word), i64(remote.client_uses_word({.Calls, .View, .Input})))
 	}
-	mesh.pairing_uses = uses
 	random_bytes: [8]u8
 	defer machine_mesh.clear_bytes_explicitly(random_bytes[:])
 	if !random.fill_for_a_key(&process_generator, random_bytes[:], .Processor, error) {
@@ -403,6 +648,7 @@ mesh_pairing_offer :: proc "contextless" (code_text: ^[machine_mesh.PAIRING_CODE
 	if status != .Ok {
 		return mesh_pairing_fail(error, status, 0)
 	}
+	mesh.pairing_uses = uses
 	code_text^ = text
 	return .Succeeded, 0
 }
@@ -417,11 +663,11 @@ mesh_pairing_join :: proc "contextless" (code_text: []u8, uses_word: u64, error:
 	if !uses_known {
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2, i64(uses_word), i64(remote.client_uses_word({.Calls, .View, .Input})))
 	}
-	mesh.pairing_uses = uses
 	status := machine_mesh.pairing_join(&mesh.pairing, mesh.identity.public_key, code_text, system.time())
 	if status != .Ok {
 		return mesh_pairing_fail(error, status, 1)
 	}
+	mesh.pairing_uses = uses
 	return .Succeeded, 0
 }
 
